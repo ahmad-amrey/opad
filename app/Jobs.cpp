@@ -88,8 +88,15 @@ JobRunner::JobRunner(ProgressStrip* strip, QObject* parent) : QObject(parent), m
 Job* JobRunner::begin(const QString& title, bool twoBars) {
   Job* j = new Job(title, twoBars, this);
   m_jobs.push_back(j);
-  connect(j, &Job::phaseChanged, this, [this, j](const QString& text, int pct) { if (j == m_shown) m_strip->setPhase(text, pct); });
-  connect(j, &Job::overallChanged, this, [this, j](int pct) { if (j == m_shown) m_strip->setOverall(pct); });
+  connect(j, &Job::phaseChanged, this, [this, j](const QString& text, int pct) {
+    j->m_lastPhase = text;
+    j->m_lastPct = pct;
+    if (j == m_shown) m_strip->setPhase(text, pct);
+  });
+  connect(j, &Job::overallChanged, this, [this, j](int pct) {
+    j->m_lastOverall = pct;
+    if (j == m_shown) m_strip->setOverall(pct);
+  });
   connect(j, &Job::finished, this, [this, j] { onFinished(j); });
   if (!m_shown && !m_showTimer.isActive()) m_showTimer.start();
   else if (m_shown) refreshStrip();  // a newer job takes over the strip
@@ -178,6 +185,8 @@ void JobRunner::refreshStrip() {
   const bool wasShown = m_shown != nullptr;
   m_shown = c;
   m_strip->begin(c->title(), c->m_twoBars);
+  if (!c->m_lastPhase.isEmpty()) m_strip->setPhase(c->m_lastPhase, c->m_lastPct);
+  if (c->m_lastOverall >= 0) m_strip->setOverall(c->m_lastOverall);
   if (!wasShown) emit stripShown(true);
 }
 

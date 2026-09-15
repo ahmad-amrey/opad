@@ -70,11 +70,27 @@ class CallbackProgress : public Message_ProgressIndicator {
  public:
   std::function<bool(double, const std::string&)> cb;
   bool cancelled = false;
+  // Reports the overall position plus the outermost named scope (e.g. the root being transferred) as
+  // "translating <name> <i>/<n>" so a UI can show that translation is a sequence of steps, not one blob.
+  // Reports "translating Part 1/4 > Part 3/57 > Transfer 12/300": every named counter from the outermost
+  // scope inwards, plus a nested fraction over those counters, so a UI can show that translation is a
+  // sequence of steps and its bar keeps moving inside a long first part.
   void Show(const Message_ProgressScope& scope, const Standard_Boolean) override {
-    if (cb) {
-      std::string what = scope.Name() ? scope.Name() : "reading";
-      if (!cb(GetPosition(), what)) cancelled = true;
+    if (!cb) return;
+    std::vector<const Message_ProgressScope*> chain;  // outermost first
+    for (const Message_ProgressScope* s = &scope; s; s = s->Parent())
+      if (s->Name() && *s->Name() && s->MaxValue() > 2) chain.insert(chain.begin(), s);  // 2-step scopes are noise
+    std::string what = "translating";
+    double frac = 0.0, weight = 1.0;
+    for (size_t i = 0; i < chain.size(); ++i) {
+      const double max = chain[i]->MaxValue();
+      const double val = std::min(std::max(chain[i]->Value(), 0.0), max - 1.0);  // Value() = steps done, may overshoot
+      frac += weight * (val / max);
+      weight /= max;
+      what += (i == 0 ? " " : " > ") + std::string(chain[i]->Name()) + " " + std::to_string(static_cast<int>(val) + 1) + "/" + std::to_string(static_cast<int>(max));
     }
+    if (chain.empty()) frac = GetPosition();
+    if (!cb(std::min(frac, 1.0), what)) cancelled = true;
   }
   Standard_Boolean UserBreak() override { return cancelled; }
 };

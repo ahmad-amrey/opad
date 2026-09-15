@@ -73,6 +73,8 @@ class Job : public QObject {
   bool m_active = true;
   std::shared_ptr<detail::JobState> m_state;
   QElapsedTimer m_clock;
+  QString m_lastPhase;                    // what the strip shows when it appears later than the update
+  int m_lastPct = -1, m_lastOverall = -1;
   std::function<bool(Job&)> m_step;       // sliced jobs only
   std::function<void(bool)> m_stepDone;
 };

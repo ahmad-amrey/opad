@@ -20,6 +20,7 @@ class MainWindow : public QMainWindow {
  public:
   MainWindow();
   void openPath(const QString& path);
+  void warmUpViewport() { m_viewport->warmUp(); }
   void setBenchSelect(bool on) { m_benchSelect = on; }  // --bench-select: select every root after loading, log, quit
 
  protected:
@@ -49,6 +50,7 @@ class MainWindow : public QMainWindow {
   void showDocument(bool has);
   void beginLoad(std::function<void()> after);
   void setLoadPhase(const QString& phase, int pct);
+  QString meshPhase() const;
   int overallPercent(const QString& phase, int pct) const;
   void scheduleSelectionSync();
   void showComponentBbox(const std::string& id, const QString& title, const QString& subtitle, const QString& nid, opad::json props);

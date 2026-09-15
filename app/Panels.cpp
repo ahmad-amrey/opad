@@ -1390,7 +1390,10 @@ ProgressStrip::ProgressStrip(QWidget* parent) : QWidget(parent) {
   l->setSpacing(6);
   m_title = new QLabel(this);
   m_title->setObjectName("progressTitle");
-  m_title->setFixedWidth(220);  // fixed so the bars never shift as the phase text changes; long text is elided
+  // The title takes every spare pixel (its width comes from the layout, not the text, so the bars never
+  // shift as the phase changes); text longer than that is elided in the middle.
+  m_title->setMinimumWidth(240);
+  m_title->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
   m_phaseBar = makeThinBar(this);
   m_phasePct = new QLabel(this);
   m_phasePct->setObjectName("tertiary");
@@ -1409,7 +1412,7 @@ ProgressStrip::ProgressStrip(QWidget* parent) : QWidget(parent) {
   m_cancel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   m_cancel->setFocusPolicy(Qt::NoFocus);
   m_cancel->setCursor(Qt::PointingHandCursor);
-  l->addWidget(m_title);
+  l->addWidget(m_title, 1);
   l->addWidget(m_phaseBar);
   l->addWidget(m_phasePct);
   l->addSpacing(16);
@@ -1418,7 +1421,7 @@ ProgressStrip::ProgressStrip(QWidget* parent) : QWidget(parent) {
   l->addWidget(m_overallPct);
   l->addSpacing(16);
   l->addWidget(m_cancel);
-  l->addStretch(1);   // absorb the surplus width so the widgets pack to the left instead of spreading
+  l->addSpacing(8);
   connect(m_cancel, &QPushButton::clicked, this, [this] {
     m_cancel->setEnabled(false);
     m_cancel->setText(tr("Cancelling\u2026"));
@@ -1428,8 +1431,14 @@ ProgressStrip::ProgressStrip(QWidget* parent) : QWidget(parent) {
 }
 
 void ProgressStrip::setTitle(const QString& text) {
+  m_fullTitle = text;
   m_title->setText(m_title->fontMetrics().elidedText(text, Qt::ElideMiddle, m_title->width()));
   m_title->setToolTip(text);
+}
+
+void ProgressStrip::resizeEvent(QResizeEvent* e) {
+  QWidget::resizeEvent(e);
+  if (!m_fullTitle.isEmpty()) setTitle(m_fullTitle);  // re-elide for the new width
 }
 
 void ProgressStrip::begin(const QString& title, bool twoBars) {

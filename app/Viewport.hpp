@@ -62,6 +62,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void standardView(const QString& name);
   void home();
 
+  void warmUp();  // create the OpenGL viewer now rather than on first paint
   void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner
   std::vector<opad::Ref> selection() const;
   // Highlights the given nodes' bodies as a sliced job; emits selectionApplied() when it has settled. Sets

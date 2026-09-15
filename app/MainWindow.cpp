@@ -55,6 +55,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   buildStatusBar();
 
   connect(m_doc, &AppDocument::changed, this, [this] {
+    trace::Scope scope("MainWindow: document changed");
     updateTitle();
     rebuildViewsMenu();
     updateChips();
@@ -70,10 +71,8 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     if (remaining > m_meshTotal) m_meshTotal = remaining;
     if (m_loadJob && m_loadDocDone) {
       if (remaining == 0) m_loadJob->finish();
-      else setLoadPhase(tr("Tessellating bodies"), m_meshTotal > 0 ? (m_meshTotal - remaining) * 100 / m_meshTotal : -1);
+      else setLoadPhase(meshPhase(), m_meshTotal > 0 ? (m_meshTotal - remaining) * 100 / m_meshTotal : -1);
     }
-    if (remaining > 0) statusBar()->showMessage(tr("Tessellating %1 bodies…").arg(remaining));
-    else statusBar()->clearMessage();
   });
   // selection.json is written on a short debounce and off the hot selection path (it inspects geometry).
   m_selFileTimer.setSingleShot(true);
@@ -91,7 +90,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     }
     if (m_afterLoad) m_afterLoad();
     m_afterLoad = nullptr;
-    if (m_meshRemaining > 0) setLoadPhase(tr("Tessellating bodies"), m_meshTotal > 0 ? (m_meshTotal - m_meshRemaining) * 100 / m_meshTotal : -1);
+    if (m_meshRemaining > 0) setLoadPhase(meshPhase(), m_meshTotal > 0 ? (m_meshTotal - m_meshRemaining) * 100 / m_meshTotal : -1);
     else m_loadJob->finish();
   });
   trace::installUiWatchdog(this);  // logs any UI-thread stall over 250 ms (OPAD_TRACE)
@@ -226,6 +225,12 @@ void MainWindow::buildActions() {
   });
   addAction("file.export", tr("&Export…"), "export", QKeySequence("Ctrl+E"), [this] { exportDialog(); });
   addAction("file.screenshot", tr("Save screens&hot…"), "export", QKeySequence("Ctrl+Shift+P"), [this] { screenshot(); });
+  addAction("file.close", tr("&Close document"), "close", QKeySequence("Ctrl+W"), [this] {
+    if (!m_doc->hasDocument || m_doc->loading || !maybeSave()) return;
+    m_viewport->clearSelection();
+    m_doc->closeDocument();  // AppDocument::changed -> showDocument(false) -> the start screen
+    statusBar()->showMessage(tr("Document closed"), 4000);
+  });
   addAction("file.quit", tr("&Quit"), "", QKeySequence::Quit, [this] { close(); });
 
   // View
@@ -354,7 +359,7 @@ void MainWindow::buildMenus() {
   QMenu* file = menuBar()->addMenu(tr("&File"));
   add(file, {"file.new", "file.open", "file.import", "file.importdoc"});
   m_recentMenu = file->addMenu(tr("Recent"));
-  add(file, {"-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
+  add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
   add(edit, {"edit.rename", "edit.hide", "edit.showall", "edit.filter", "-", "annotate.add", "annotate.resolve", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = menuBar()->addMenu(tr("&View"));
@@ -524,8 +529,10 @@ void MainWindow::buildStatusBar() {
   statusBar()->addWidget(m_statusPath);
   statusBar()->addWidget(m_statusGitIcon);
   statusBar()->addWidget(m_statusGit);
-  statusBar()->addWidget(m_statusHover, 1);
-  statusBar()->addWidget(m_progress, 1);
+  // Permanent: QStatusBar hides normal widgets while a temporary message shows and re-shows them after,
+  // which fought with the strip's own show/hide and drew the message across the bars.
+  statusBar()->addPermanentWidget(m_statusHover, 1);
+  statusBar()->addPermanentWidget(m_progress, 1);
   statusBar()->addPermanentWidget(m_statusSel);
   statusBar()->addPermanentWidget(m_statusUnits);
   statusBar()->setSizeGripEnabled(false);
@@ -545,7 +552,7 @@ void MainWindow::showDocument(bool has) {
   for (QAction* a : m_actions) {
     QString id = a->objectName();
     if (id.startsWith("view.") && id != "view.dark") a->setEnabled(has);
-    if (id.startsWith("inspect.") || id.startsWith("annotate.") || id.startsWith("select.") || id == "file.export" || id == "file.screenshot" || id == "file.save" || id == "file.saveas")
+    if (id.startsWith("inspect.") || id.startsWith("annotate.") || id.startsWith("select.") || id == "file.export" || id == "file.screenshot" || id == "file.save" || id == "file.saveas" || id == "file.close")
       a->setEnabled(has);
     if (id == "file.importdoc") a->setEnabled(m_doc->browse);
   }
@@ -1175,8 +1182,13 @@ void MainWindow::beginLoad(std::function<void()> after) {
   });
 }
 
+QString MainWindow::meshPhase() const {
+  return tr("Tessellating and displaying bodies (%1 of %2)").arg(m_meshTotal - m_meshRemaining).arg(m_meshTotal);
+}
+
 void MainWindow::setLoadPhase(const QString& phase, int pct) {
   if (!m_loadJob) return;
+  if (trace::enabled()) trace::log(QStringLiteral("load phase: %1 (%2%)").arg(phase).arg(pct));
   m_loadJob->setPhase(phase, pct);
   m_loadJob->setOverall(overallPercent(phase, pct));
 }
@@ -1226,6 +1238,12 @@ void MainWindow::runBench() {
   *conn = connect(m_viewport, &Viewport::selectionApplied, this, [this, t, conn] {
     disconnect(*conn);
     trace::log(QStringLiteral("bench: selection applied after %1 ms (%2 refs)").arg(t->elapsed()).arg(m_viewport->selection().size()));
+    trace::log(QStringLiteral("bench: camera before fit %1").arg(QString::fromStdString(m_viewport->cameraJson().dump())));
+    m_viewport->fitSelection();
+    trace::log(QStringLiteral("bench: camera after fitSelection %1").arg(QString::fromStdString(m_viewport->cameraJson().dump())));
+    m_viewport->fitAll();
+    m_viewport->fitNodes(m_doc->scene.bodies_under(m_doc->scene.roots.front()).size() > 1 ? std::vector<std::string>{m_doc->scene.bodies_under(m_doc->scene.roots.front()).front()} : m_doc->scene.roots);
+    trace::log(QStringLiteral("bench: camera after fitNodes(first body) %1").arg(QString::fromStdString(m_viewport->cameraJson().dump())));
     QTimer::singleShot(2500, qApp, &QCoreApplication::quit);
   });
   onBrowserSelection(roots);

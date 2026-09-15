@@ -1,5 +1,6 @@
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QTimer>
 #include <QSurfaceFormat>
 
 #include "CrashLog.hpp"
@@ -28,6 +29,7 @@ int main(int argc, char** argv) {
   MainWindow win;
   win.setBenchSelect(parser.isSet(bench));
   win.show();
+  QTimer::singleShot(0, &win, [&win] { win.warmUpViewport(); });  // GL init off the first-open path
   const QStringList args = parser.positionalArguments();
   if (!args.isEmpty()) win.openPath(args.first());
   return app.exec();

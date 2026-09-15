@@ -276,8 +276,11 @@ class ProgressStrip : public QWidget {
   void finish();
  signals:
   void cancelRequested();
+ protected:
+  void resizeEvent(QResizeEvent* e) override;
  private:
   void setTitle(const QString& text);
+  QString m_fullTitle;
   QLabel* m_title;
   QProgressBar* m_phaseBar;
   QLabel* m_phasePct;

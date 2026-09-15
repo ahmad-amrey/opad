@@ -101,6 +101,7 @@ Viewport::~Viewport() { *m_alive = false; }
 
 void Viewport::initViewer() {
   if (m_initialised) return;
+  trace::Scope scope("Viewport::initViewer");
   Handle(Aspect_DisplayConnection) disp = new Aspect_DisplayConnection();
   Handle(OpenGl_GraphicDriver) driver = new OpenGl_GraphicDriver(disp, Standard_False);
   driver->ChangeOptions().buffersNoSwap = Standard_False;
@@ -511,6 +512,7 @@ void Viewport::fitNodes(const std::vector<std::string>& ids) {
   for (const auto& id : ids)
     for (const auto& b : m_doc->scene.bodies_under(id))
       if (m_items.count(b)) box.Add(opad::node_world_bbox(m_doc->doc, m_doc->scene, b));
+  if (trace::enabled()) { double a, b, c, d, e, f; if (!box.IsVoid()) box.Get(a, b, c, d, e, f); trace::log(QStringLiteral("fitNodes: box void=%1 [%2 %3 %4]-[%5 %6 %7]").arg(box.IsVoid()).arg(a).arg(b).arg(c).arg(d).arg(e).arg(f)); }
   if (box.IsVoid()) return fitAll();
   m_view->FitAll(box, 0.02, Standard_False);
   m_view->Invalidate();
@@ -532,6 +534,7 @@ void Viewport::fitSelection() {
     }
     else if (it != m_nodeOf.end()) box.Add(opad::node_world_bbox(m_doc->doc, m_doc->scene, it->second));
   }
+  if (trace::enabled()) { double a = 0, b = 0, c = 0, d = 0, e = 0, f = 0; if (!box.IsVoid()) box.Get(a, b, c, d, e, f); trace::log(QStringLiteral("fitSelection: box void=%1 [%2 %3 %4]-[%5 %6 %7]").arg(box.IsVoid()).arg(a).arg(b).arg(c).arg(d).arg(e).arg(f)); }
   if (box.IsVoid()) return fitAll();
   m_view->FitAll(box, 0.02, Standard_False);
   m_view->Invalidate();
@@ -749,6 +752,17 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
   }).detach();
 }
 
+// Creates the OpenGL viewer ahead of the first document (about 0.7 s) so that opening a file does not pay
+// for it. The native child window exists while hidden, which is all OCCT needs.
+void Viewport::warmUp() {
+  if (m_initialised) return;
+  try {
+    initViewer();
+    m_view->Redraw();  // first frame compiles the shaders (~0.3 s); better here than when the document appears
+  } catch (const Standard_Failure&) {  // no context yet: paintEvent will try again once visible
+  }
+}
+
 void Viewport::requestSync() {
   if (!m_syncTimer.isActive()) m_syncTimer.start();
 }
@@ -818,13 +832,15 @@ void Viewport::sync() {
     finishSync(pendingCount, false);
     return;
   }
+  emit meshingProgress(pendingCount + static_cast<int>(toAdd.size()));
   auto ids = std::make_shared<std::vector<std::string>>(std::move(toAdd));
   auto i = std::make_shared<size_t>(0);
-  m_displayJob = m_jobs->sliced(tr("Displaying %1 bodies").arg(ids->size()), [this, ids, i](Job& j) {
+  m_displayJob = m_jobs->sliced(tr("Displaying %1 bodies").arg(ids->size()), [this, ids, i, pendingCount](Job& j) {
     if (*i >= ids->size() || m_doc->loading) return false;
     displayBody((*ids)[*i]);
     if ((++*i & 15) == 0) {
       j.setPhase(tr("Displaying %1 bodies").arg(ids->size()), static_cast<int>(*i * 100 / ids->size()));
+      emit meshingProgress(pendingCount + static_cast<int>(ids->size() - *i));
       m_view->Invalidate();
       requestRedraw();  // bodies appear as they are added
     }
@@ -863,11 +879,15 @@ void Viewport::displayBody(const std::string& id) {
   ais->Attributes()->SetTypeOfDeflection(Aspect_TOD_ABSOLUTE);
   ais->Attributes()->SetMaximalChordialDeviation(deflectionFor(n->body_key));
   ais->Attributes()->SetDeviationAngle(20.0 * M_PI / 180.0);
+  // Never let OCCT (re)mesh on the UI thread: with auto-triangulation on, building the selection entities
+  // re-runs BRepMesh for any face whose mesh is missing or coarser than asked, which froze the app for
+  // minutes on big bodies. Meshing happens once, on the worker; unmeshed faces get box sensitives.
+  ais->Attributes()->SetAutoTriangulation(Standard_False);
   ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
   ais->SetColor(qcolor(n->color));
   if (n->opacity < 1.0) ais->SetTransparency(1.0 - n->opacity);
   applyStyle(ais);
-  m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, 0, Standard_False);
+  m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, -1, Standard_False);  // selection activated below, once
   const qint64 displayMs = t.elapsed();
   activateSelection(ais);
   if (trace::enabled() && t.elapsed() > 50) trace::log(QStringLiteral("displayBody %1: display %2 ms, selection %3 ms").arg(QString::fromStdString(n->name)).arg(displayMs).arg(t.elapsed() - displayMs));
@@ -876,7 +896,7 @@ void Viewport::displayBody(const std::string& id) {
 }
 
 void Viewport::finishSync(int pendingCount, bool added) {
-  if (pendingCount == 0) emit meshingProgress(0);
+  emit meshingProgress(pendingCount);
   if (added && (m_needFit || m_items.size() <= 1)) {
     if (pendingCount == 0) m_needFit = false;  // keep re-fitting while meshes are still arriving
     m_view->FitAll(0.02, Standard_False);
@@ -958,7 +978,10 @@ void Viewport::syncWindowSize() {
 void Viewport::paintEvent(QPaintEvent*) {
   if (!m_initialised) initViewer();
   syncWindowSize();
+  QElapsedTimer frame;
+  frame.start();
   FlushViewEvents(m_ctx, m_view, Standard_True);
+  if (trace::enabled() && frame.elapsed() > 100) trace::log(QStringLiteral("slow frame: %1 ms (%2 objects)").arg(frame.elapsed()).arg(m_items.size()));
   QString hover;
   if (m_ctx->HasDetected()) {
     Handle(AIS_InteractiveObject) obj = m_ctx->DetectedInteractive();

@@ -22,6 +22,7 @@ class AppDocument : public QObject {
   bool loading = false;      // a worker thread owns the document content until loadFinished
 
   void newDocument();
+  void closeDocument();  // back to the start screen; nothing is saved here (ask first)
   void open(const QString& path);  // .opad -> load; .step/.stp -> browse mode
   void importStep(const QString& path, const QString& parent = {});
   void save();

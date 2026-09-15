@@ -1,7 +1,9 @@
 #include "AppDocument.hpp"
 
 #include "opad/geometry.hpp"
+#include "Jobs.hpp"
 
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QMetaObject>
 #include <thread>
@@ -15,7 +17,11 @@ QString phaseLabel(const std::string& what, const QString& file) {
   if (what == "reading") return AppDocument::tr("Reading %1").arg(file);
   if (what == "building") return AppDocument::tr("Building document");
   if (what == "preparing") return AppDocument::tr("Preparing bodies");
-  return AppDocument::tr("Translating geometry");
+  if (what.rfind("translating", 0) == 0) {  // "translating" or "translating <scope> <i>/<n>" from the STEP reader
+    const QString detail = QString::fromStdString(what.substr(11)).trimmed();
+    return detail.isEmpty() ? AppDocument::tr("Translating geometry") : AppDocument::tr("Translating %1").arg(detail);
+  }
+  return QString::fromStdString(what);
 }
 }  // namespace
 
@@ -26,12 +32,18 @@ AppDocument::~AppDocument() { *m_alive = false; }
 opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<bool>>& cancel, const QString& file) {
   opad::ImportOptions o;
   auto last = std::make_shared<std::pair<std::string, int>>("", -2);
+  auto lastEmit = std::make_shared<QElapsedTimer>();
+  lastEmit->start();
   auto alive = m_alive;
-  o.progress = [this, cancel, alive, last, file](double frac, const std::string& what) {
-    const bool determinate = (what == "building" || what == "preparing");  // the phases with reliable fractions
-    const int pct = (determinate && frac >= 0) ? static_cast<int>(frac * 100.0) : -1;
-    if (what != last->first || pct != last->second) {
+  o.progress = [this, cancel, alive, last, lastEmit, file](double frac, const std::string& what) {
+    const int pct = (what != "reading" && frac >= 0) ? static_cast<int>(frac * 100.0) : -1;  // reading has no progress source
+    if (trace::enabled()) trace::log(QStringLiteral("import progress: %1 %2").arg(QString::fromStdString(what)).arg(frac));
+    // The STEP reader reports thousands of sub-steps per second; the strip only needs ~20 updates/s, so
+    // intermediate ones are dropped unless the phase itself changes.
+    const bool newPhase = what.substr(0, what.find(' ')) != last->first.substr(0, last->first.find(' '));
+    if (newPhase || ((what != last->first || pct != last->second) && lastEmit->elapsed() >= 50)) {
       *last = {what, pct};
+      lastEmit->restart();
       const QString label = phaseLabel(what, file);
       if (*alive) QMetaObject::invokeMethod(this, [this, label, pct] { emit loadProgress(label, pct); }, Qt::QueuedConnection);
     }
@@ -50,7 +62,7 @@ void AppDocument::startOpen(const QString& path) {
   auto cancel = std::make_shared<std::atomic<bool>>(false);
   m_cancel = cancel;
   const bool step = isStepPath(path);
-  const QString file = QFileInfo(path).fileName();
+  const QString file = QFileInfo(path).fileName() + QStringLiteral(" (%1 MB)").arg(QFileInfo(path).size() / (1024.0 * 1024.0), 0, 'f', 0);
   opad::ImportOptions o = loadOptions(cancel, file);
   auto alive = m_alive;
   emit loadProgress(step ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1);
@@ -140,6 +152,15 @@ void AppDocument::newDocument() {
   doc = opad::Document::create();
   browse = false;
   hasDocument = true;
+  refresh();
+  emit pathChanged();
+}
+
+void AppDocument::closeDocument() {
+  if (loading) return;
+  doc = opad::Document();
+  browse = false;
+  hasDocument = false;
   refresh();
   emit pathChanged();
 }
