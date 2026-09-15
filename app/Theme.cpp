@@ -158,7 +158,7 @@ QString stylesheet(const Tokens& t) {
   s += QString("QProgressBar { background: %1; border: none; border-radius: 2px; }\n"
                "QProgressBar::chunk { background: %2; border-radius: 2px; }\n").arg(bg4, sel);
   s += QString("QLabel#progressTitle { color: %1; font-weight: 500; }\n"
-               "QPushButton#progressCancel { padding: 0 10px; border: 1px solid %2; border-radius: 3px; background: %3; color: %4; }\n"
+               "QPushButton#progressCancel { height: 18px; min-height: 18px; max-height: 18px; padding: 0 10px; font-size: 12px; border: 1px solid %2; border-radius: 3px; background: %3; color: %4; }\n"
                "QPushButton#progressCancel:hover { background: %5; }\n"
                "QPushButton#progressCancel:disabled { color: %6; }\n").arg(fg, line, bg2, fg, bg3, fg3);
   s += QString("QLabel#secondary { color: %1; font-size: 12px; } QLabel#tertiary { color: %2; font-size: 11px; }\n"

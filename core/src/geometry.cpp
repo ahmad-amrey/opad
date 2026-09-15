@@ -1,5 +1,6 @@
 #include "opad/geometry.hpp"
 
+#include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
 #include <BRepTools.hxx>
 #include <Message.hxx>
@@ -26,6 +27,7 @@ namespace opad {
 struct ShapeCache {
   std::mutex mu;
   std::unordered_map<std::string, TopoDS_Shape> shapes;
+  std::unordered_map<std::string, Bnd_Box> boxes;
 };
 
 std::shared_ptr<ShapeCache> make_shape_cache() { return std::make_shared<ShapeCache>(); }
@@ -152,6 +154,57 @@ TopoDS_Shape node_world_shape(const Document& doc, const Scene& scene, const std
     g.SetValue(r, 4, w.at(r - 1, 3));
   }
   return BRepBuilderAPI_GTransform(proto, g, Standard_True).Shape();
+}
+
+Bnd_Box body_bbox(ShapeCache& cache, const std::string& key, const TopoDS_Shape& proto) {
+  {
+    std::lock_guard<std::mutex> lock(cache.mu);
+    auto it = cache.boxes.find(key);
+    if (it != cache.boxes.end()) return it->second;
+  }
+  Bnd_Box box;
+  if (!proto.IsNull()) BRepBndLib::Add(proto, box, Standard_True);
+  std::lock_guard<std::mutex> lock(cache.mu);
+  cache.boxes[key] = box;
+  return box;
+}
+
+Bnd_Box body_bbox(const Document& doc, const std::string& key) {
+  auto& cache = *doc.shape_cache;
+  {
+    std::lock_guard<std::mutex> lock(cache.mu);
+    auto it = cache.boxes.find(key);
+    if (it != cache.boxes.end()) return it->second;
+  }
+  return body_bbox(cache, key, body_shape(doc, key));
+}
+
+void warm_shape_cache(const Document& doc, const std::function<bool(size_t, size_t)>& progress) {
+  const auto& bodies = doc.bodies();
+  for (size_t i = 0; i < bodies.size(); ++i) {
+    if (progress && !progress(i, bodies.size())) return;
+    try {
+      body_bbox(doc, bodies[i].key);  // parses the BREP via body_shape, then boxes it
+    } catch (const Error&) {
+    }
+  }
+}
+
+Bnd_Box node_world_bbox(const Document& doc, const Scene& scene, const std::string& node_id) {
+  const Node* n = scene.node(node_id);
+  if (!n || n->kind != Node::Kind::Body) throw Error("not a body node: " + node_id);
+  Bnd_Box local = body_bbox(doc, n->body_key);
+  if (local.IsVoid()) return local;
+  Mat4 w = scene.world(node_id);
+  if (w.is_identity()) return local;
+  double x0, y0, z0, x1, y1, z1;
+  local.Get(x0, y0, z0, x1, y1, z1);
+  Bnd_Box out;
+  for (int i = 0; i < 8; ++i) {
+    Vec3 p = w.apply({(i & 1) ? x1 : x0, (i & 2) ? y1 : y0, (i & 4) ? z1 : z0});
+    out.Update(p[0], p[1], p[2]);
+  }
+  return out;
 }
 
 static TopAbs_ShapeEnum abs_of(Ref::Kind k) {

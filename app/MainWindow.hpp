@@ -10,6 +10,7 @@
 
 #include "AppDocument.hpp"
 #include "EmptyState.hpp"
+#include "Jobs.hpp"
 #include "Panels.hpp"
 #include "Ribbon.hpp"
 #include "Viewport.hpp"
@@ -19,6 +20,7 @@ class MainWindow : public QMainWindow {
  public:
   MainWindow();
   void openPath(const QString& path);
+  void setBenchSelect(bool on) { m_benchSelect = on; }  // --bench-select: select every root after loading, log, quit
 
  protected:
   void closeEvent(QCloseEvent* e) override;
@@ -46,14 +48,11 @@ class MainWindow : public QMainWindow {
   bool maybeSave();
   void showDocument(bool has);
   void beginLoad(std::function<void()> after);
-  void finishLoad();
-  void showProgressStrip();
-  void updateProgress();
+  void setLoadPhase(const QString& phase, int pct);
   int overallPercent(const QString& phase, int pct) const;
-  bool selectionProgress(size_t done, size_t total);
-  void selectNodesWithProgress(const std::vector<std::string>& ids);
-  void endSelection();
   void scheduleSelectionSync();
+  void showComponentBbox(const std::string& id, const QString& title, const QString& subtitle, const QString& nid, opad::json props);
+  void runBench();
 
   void onViewportSelection();
   void onBrowserSelection(const std::vector<std::string>& ids);
@@ -106,14 +105,15 @@ class MainWindow : public QMainWindow {
   QAction* m_pinAction = nullptr;
   QAction* m_darkAction = nullptr;
   ProgressStrip* m_progress = nullptr;
-  QTimer m_loadTimer;
-  bool m_loadActive = false, m_loadDone = false, m_stripShown = false;
-  int m_meshTotal = 0, m_meshRemaining = 0, m_loadPercent = -1;
-  QString m_loadPhase;
+  JobRunner* m_jobs = nullptr;      // every long operation runs through this (see Jobs.hpp)
+  Job* m_loadJob = nullptr;         // open/import: document worker + tessellation, one job
+  Job* m_selFileJob = nullptr;      // selection.json writer
+  Job* m_propsJob = nullptr;        // component bbox for the properties panel
+  bool m_loadDocDone = false;
+  int m_meshTotal = 0, m_meshRemaining = 0;
   std::function<void()> m_afterLoad;
-  std::function<void()> m_cancelAction;   // what the strip's Cancel does for the active operation
-  bool m_selectActive = false, m_selectCancel = false, m_selectGuard = false;
   QTimer m_selFileTimer;
+  bool m_benchSelect = false;
   QDockWidget* m_browserDock = nullptr;
   QDockWidget* m_inspectorDock = nullptr;
   QDockWidget* m_timelineDock = nullptr;

@@ -139,7 +139,7 @@ bool scene_bbox(const Document& doc, const Scene& scene, const std::vector<std::
   for (const auto& id : ids) {
     const Node* n = scene.node(id);
     if (!n || n->kind != Node::Kind::Body || n->body_missing) continue;
-    BRepBndLib::Add(node_world_shape(doc, scene, id), box, Standard_False);
+    box.Add(node_world_bbox(doc, scene, id));
   }
   if (box.IsVoid()) return false;
   box.Get(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
@@ -188,7 +188,7 @@ json document_info(const Document& doc, const Scene& scene) {
   return j;
 }
 
-json node_properties(const Document& doc, const Scene& scene, const std::string& node_id) {
+json node_properties(const Document& doc, const Scene& scene, const std::string& node_id, bool geometry) {
   const Node* n = scene.node(node_id);
   if (!n) throw Error("unknown node: " + node_id);
   json j;
@@ -217,6 +217,7 @@ json node_properties(const Document& doc, const Scene& scene, const std::string&
       j["missing"] = true;
       return j;
     }
+    if (!geometry) return j;
     TopoDS_Shape world = node_world_shape(doc, scene, node_id);
     TopoDS_Shape proto = body_shape(doc, n->body_key);
     j["faces"] = subshape_count(proto, Ref::Kind::Face);
@@ -241,7 +242,7 @@ json node_properties(const Document& doc, const Scene& scene, const std::string&
     auto bodies = scene.bodies_under(node_id);
     j["bodies"] = bodies.size();
     Vec3 lo, hi;
-    if (scene_bbox(doc, scene, bodies, lo, hi)) {
+    if (geometry && scene_bbox(doc, scene, bodies, lo, hi)) {
       Bnd_Box b;
       b.Update(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
       j["bbox"] = bbox_json(b);

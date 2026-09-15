@@ -1,5 +1,7 @@
 #include "AppDocument.hpp"
 
+#include "opad/geometry.hpp"
+
 #include <QFileInfo>
 #include <QMetaObject>
 #include <thread>
@@ -12,6 +14,7 @@ bool isStepPath(const QString& path) {
 QString phaseLabel(const std::string& what, const QString& file) {
   if (what == "reading") return AppDocument::tr("Reading %1").arg(file);
   if (what == "building") return AppDocument::tr("Building document");
+  if (what == "preparing") return AppDocument::tr("Preparing bodies");
   return AppDocument::tr("Translating geometry");
 }
 }  // namespace
@@ -25,7 +28,7 @@ opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<b
   auto last = std::make_shared<std::pair<std::string, int>>("", -2);
   auto alive = m_alive;
   o.progress = [this, cancel, alive, last, file](double frac, const std::string& what) {
-    const bool determinate = (what == "building");  // the only phase with reliable fractions
+    const bool determinate = (what == "building" || what == "preparing");  // the phases with reliable fractions
     const int pct = (determinate && frac >= 0) ? static_cast<int>(frac * 100.0) : -1;
     if (what != last->first || pct != last->second) {
       *last = {what, pct};
@@ -56,6 +59,8 @@ void AppDocument::startOpen(const QString& path) {
     QString error;
     try {
       *result = step ? opad::browse_step(path.toStdString(), o) : opad::Document::load(path.toStdString());
+      // Parse the bodies here rather than on the UI thread when they are first displayed.
+      if (!*cancel) opad::warm_shape_cache(*result, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
       if (*cancel) error = QStringLiteral("cancelled");
     } catch (const std::exception& e) {
       error = QString::fromUtf8(e.what());
@@ -105,6 +110,7 @@ void AppDocument::startImport(const QString& path, const QString& parent) {
     opad::json r;
     try {
       r = opad::import_step(*work, path.toStdString(), o).to_json();
+      if (!*cancel) opad::warm_shape_cache(*work, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
       if (*cancel) error = QStringLiteral("cancelled");
     } catch (const std::exception& e) {
       error = QString::fromUtf8(e.what());

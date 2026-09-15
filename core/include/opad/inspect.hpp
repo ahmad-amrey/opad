@@ -5,7 +5,9 @@
 namespace opad {
 
 json document_info(const Document& doc, const Scene& scene);
-json node_properties(const Document& doc, const Scene& scene, const std::string& node_id);
+// geometry=false skips the measurements that walk the geometry (bbox, counts, volume, area) so the call
+// is O(1); the app fills those in separately off the click path.
+json node_properties(const Document& doc, const Scene& scene, const std::string& node_id, bool geometry = true);
 json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref);
 json measure_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b);
 json measure_angle(const Document& doc, const Scene& scene, const Ref& a, const Ref& b);

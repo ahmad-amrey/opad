@@ -24,7 +24,11 @@
 #include <vector>
 
 #include "AppDocument.hpp"
+#include "BodyShape.hpp"
 #include "Theme.hpp"
+
+class JobRunner;
+class Job;
 
 class Viewport : public QWidget, protected AIS_ViewController {
   Q_OBJECT
@@ -58,12 +62,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void standardView(const QString& name);
   void home();
 
+  void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner
   std::vector<opad::Ref> selection() const;
-  // Highlights the given nodes' bodies. Large sets are applied in chunks across the event loop so the
-  // UI never blocks; `progress` is called between chunks (return false to cancel) and `done` at the end.
-  void selectNodes(const std::vector<std::string>& ids, const std::function<bool(size_t, size_t)>& progress = {}, const std::function<void()>& done = {});
-  void cancelSelect();  // abandon an in-flight chunked selection
-  void clearSelection();
+  // Highlights the given nodes' bodies as a sliced job; emits selectionApplied() when it has settled. Sets
+  // that would take longer than ~0.5 s to highlight are shown as translucent boxes instead.
+  void selectNodes(const std::vector<std::string>& ids);
+  void clearSelection();  // emits selectionChanged() once the un-highlight has settled
   void isolate(const std::vector<std::string>& ids);  // empty = show everything again
   bool isIsolated() const { return !m_isolated.empty(); }
 
@@ -80,12 +84,14 @@ class Viewport : public QWidget, protected AIS_ViewController {
 
  signals:
   void selectionChanged();
+  void selectionApplied();  // a selectNodes() call has been applied (highlight or shade) and selection() reflects it
   void hoverChanged(const QString& text);
   void contextMenuRequested(const QPoint& globalPos);
   void meshingProgress(int remaining);
 
  public slots:
   void sync();
+  void requestSync();  // coalesces mesh arrivals: at most one sync per 50 ms
 
  protected:
   void paintEvent(QPaintEvent*) override;
@@ -111,7 +117,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void applyStyle(const Handle(AIS_Shape)& ais);
   void activateSelection(const Handle(AIS_Shape)& ais);
   void startMeshing(std::vector<std::string> keys);
-  void stepSelect();
+  void displayBody(const std::string& id);
+  void finishSync(int pendingCount, bool added);
+  void showShade(const std::vector<std::string>& ids);
+  void clearShade();
   double deflectionFor(const std::string& key);
   Graphic3d_Vec2i devicePos(const QPointF& p) const;
   void updateAnnotations();
@@ -139,16 +148,22 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::set<std::string> m_isolated;
 
   std::mutex m_meshMu;
-  std::set<std::string> m_meshed;
+  const void* m_activeCache = nullptr;  // the document's shape cache the mesh bookkeeping refers to
+  std::set<std::string> m_meshed;                                // meshed and presentation built (m_prs)
+  std::map<std::string, std::shared_ptr<BodyPrs>> m_prs;         // per key, built on the worker, consumed by displayBody
   std::set<std::string> m_meshing;
   std::set<std::string> m_meshSkipped;
   std::pair<int, int> m_lastSyncedSize{-1, -1};  // device px OCCT was last told about, for syncWindowSize
-  std::vector<Handle(AIS_Shape)> m_selTargets;   // pending chunked selection
-  size_t m_selIndex = 0;
-  std::function<bool(size_t, size_t)> m_selProgress;
-  std::function<void()> m_selDone;
+  JobRunner* m_jobs = nullptr;
+  Job* m_displayJob = nullptr;                    // in-flight sync(): bodies being added to the context
+  QTimer m_syncTimer;
+  Job* m_selJob = nullptr;                        // in-flight selectNodes
+  Job* m_filterJob = nullptr;                     // in-flight setSelectionFilter
+  std::vector<Handle(AIS_Shape)> m_selApplied;    // objects selectNodes highlighted through the context
+  std::vector<Handle(AIS_Shape)> m_shade;         // translucent boxes standing in for a large selection
+  std::vector<std::string> m_shadeBodies;         // the bodies those boxes represent (reported by selection())
+  bool m_notifyWhenApplied = false;               // clearSelection(): emit selectionChanged once settled
   std::shared_ptr<std::atomic<bool>> m_meshCancel = std::make_shared<std::atomic<bool>>(false);
-  std::map<std::string, double> m_deflection;
   std::shared_ptr<std::atomic<bool>> m_alive;
 
   QTimer m_timer;

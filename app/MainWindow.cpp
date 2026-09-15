@@ -31,9 +31,14 @@
 
 #include "Icons.hpp"
 #include "Theme.hpp"
+#include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 
+#include <Bnd_Box.hxx>
+#include <QElapsedTimer>
+
 #include <algorithm>
+#include <set>
 
 MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   setWindowTitle("OPAD");
@@ -63,49 +68,33 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_viewport, &Viewport::meshingProgress, this, [this](int remaining) {
     m_meshRemaining = remaining;
     if (remaining > m_meshTotal) m_meshTotal = remaining;
-    if (m_loadActive && m_loadDone) {
-      if (remaining == 0) {
-        finishLoad();
-      } else {
-        m_loadPhase = tr("Tessellating bodies");
-        m_loadPercent = m_meshTotal > 0 ? (m_meshTotal - remaining) * 100 / m_meshTotal : -1;
-        updateProgress();
-      }
+    if (m_loadJob && m_loadDocDone) {
+      if (remaining == 0) m_loadJob->finish();
+      else setLoadPhase(tr("Tessellating bodies"), m_meshTotal > 0 ? (m_meshTotal - remaining) * 100 / m_meshTotal : -1);
     }
     if (remaining > 0) statusBar()->showMessage(tr("Tessellating %1 bodies…").arg(remaining));
     else statusBar()->clearMessage();
   });
-  // Loads run on a worker thread; a progress dialog appears only when one takes longer than 0.5 s.
-  m_loadTimer.setSingleShot(true);
-  m_loadTimer.setInterval(500);
-  connect(&m_loadTimer, &QTimer::timeout, this, &MainWindow::showProgressStrip);
   // selection.json is written on a short debounce and off the hot selection path (it inspects geometry).
   m_selFileTimer.setSingleShot(true);
   m_selFileTimer.setInterval(250);
   connect(&m_selFileTimer, &QTimer::timeout, this, &MainWindow::writeSelectionFile);
-  connect(m_doc, &AppDocument::loadProgress, this, [this](const QString& phase, int pct) {
-    m_loadPhase = phase;
-    m_loadPercent = pct;
-    updateProgress();
-  });
+  connect(m_viewport, &Viewport::selectionApplied, this, &MainWindow::scheduleSelectionSync);
+  // Loads run on a worker thread inside AppDocument; they report into the load job (see beginLoad).
+  connect(m_doc, &AppDocument::loadProgress, this, &MainWindow::setLoadPhase);
   connect(m_doc, &AppDocument::loadFinished, this, [this](bool ok, const QString& err) {
-    m_loadDone = true;
+    m_loadDocDone = true;
+    if (!m_loadJob) return;  // already cancelled from the strip
     if (!ok) {
-      finishLoad();
-      if (err.contains("cancel", Qt::CaseInsensitive)) statusBar()->showMessage(tr("Load cancelled"), 4000);
-      else QMessageBox::warning(this, tr("OPAD"), err);
+      m_loadJob->finish(false, err);
       return;
     }
     if (m_afterLoad) m_afterLoad();
     m_afterLoad = nullptr;
-    if (m_meshRemaining > 0) {
-      m_loadPhase = tr("Tessellating bodies");
-      m_loadPercent = m_meshTotal > 0 ? (m_meshTotal - m_meshRemaining) * 100 / m_meshTotal : -1;
-      updateProgress();
-    } else {
-      finishLoad();
-    }
+    if (m_meshRemaining > 0) setLoadPhase(tr("Tessellating bodies"), m_meshTotal > 0 ? (m_meshTotal - m_meshRemaining) * 100 / m_meshTotal : -1);
+    else m_loadJob->finish();
   });
+  trace::installUiWatchdog(this);  // logs any UI-thread stall over 250 ms (OPAD_TRACE)
   connect(m_browser, &BrowserPanel::selectionChanged, this, &MainWindow::onBrowserSelection);
   connect(m_browser, &BrowserPanel::contextMenuRequested, this, [this](const QPoint& p, const std::vector<std::string>& ids) { showContextMenu(p, ids); });
   connect(m_browser, &BrowserPanel::fitRequested, m_viewport, &Viewport::fitNodes);
@@ -530,6 +519,8 @@ void MainWindow::buildStatusBar() {
   m_statusSel = new QLabel(this);
   m_statusUnits = new QLabel("mm", this);
   m_progress = new ProgressStrip(this);
+  m_jobs = new JobRunner(m_progress, this);
+  m_viewport->setJobs(m_jobs);
   statusBar()->addWidget(m_statusPath);
   statusBar()->addWidget(m_statusGitIcon);
   statusBar()->addWidget(m_statusGit);
@@ -538,7 +529,7 @@ void MainWindow::buildStatusBar() {
   statusBar()->addPermanentWidget(m_statusSel);
   statusBar()->addPermanentWidget(m_statusUnits);
   statusBar()->setSizeGripEnabled(false);
-  connect(m_progress, &ProgressStrip::cancelRequested, this, [this] { if (m_cancelAction) m_cancelAction(); });
+  connect(m_jobs, &JobRunner::stripShown, this, [this](bool shown) { m_statusHover->setVisible(!shown); });  // free room for the bars
 }
 
 // ---------------------------------------------------------------- theme (F31)
@@ -606,24 +597,32 @@ void MainWindow::refreshGit() {
     m_statusGitIcon->hide();
     return;
   }
+  // git is queried asynchronously: waiting for it here blocked the UI for up to 0.8 s per query.
   QFileInfo fi(m_doc->path());
-  QProcess git;
-  git.setWorkingDirectory(fi.absolutePath());
-  git.start("git", {"rev-parse", "--abbrev-ref", "HEAD"});
-  if (!git.waitForFinished(800) || git.exitCode() != 0) {
+  auto notInGit = [this, t] {
     m_statusGitIcon->show();
     m_statusGit->setText(QString("<span style='color:%1'>%2</span>").arg(t.fg3.name(), tr("not in git")));
-    return;
-  }
-  QString branch = QString::fromUtf8(git.readAllStandardOutput()).trimmed();
-  QProcess st;
-  st.setWorkingDirectory(fi.absolutePath());
-  st.start("git", {"status", "--porcelain", "--", fi.fileName()});
-  st.waitForFinished(800);
-  QString status = QString::fromUtf8(st.readAllStandardOutput()).trimmed();
-  QString state = status.isEmpty() ? QString() : status.startsWith("??") ? tr("untracked") : tr("modified");
-  m_statusGitIcon->show();
-  m_statusGit->setText(branch.toHtmlEscaped() + (state.isEmpty() ? QString() : QString(" <span style='color:%1'>· %2</span>").arg(t.amber.name(), state)));
+  };
+  auto* git = new QProcess(this);
+  git->setWorkingDirectory(fi.absolutePath());
+  connect(git, &QProcess::errorOccurred, this, [git, notInGit](QProcess::ProcessError) { git->deleteLater(); notInGit(); });
+  connect(git, &QProcess::finished, this, [this, git, fi, t, notInGit](int code, QProcess::ExitStatus) {
+    git->deleteLater();
+    if (code != 0) { notInGit(); return; }
+    const QString branch = QString::fromUtf8(git->readAllStandardOutput()).trimmed();
+    auto* st = new QProcess(this);
+    st->setWorkingDirectory(fi.absolutePath());
+    connect(st, &QProcess::errorOccurred, this, [st](QProcess::ProcessError) { st->deleteLater(); });
+    connect(st, &QProcess::finished, this, [this, st, branch, t](int, QProcess::ExitStatus) {
+      st->deleteLater();
+      const QString status = QString::fromUtf8(st->readAllStandardOutput()).trimmed();
+      const QString state = status.isEmpty() ? QString() : status.startsWith("??") ? tr("untracked") : tr("modified");
+      m_statusGitIcon->show();
+      m_statusGit->setText(branch.toHtmlEscaped() + (state.isEmpty() ? QString() : QString(" <span style='color:%1'>· %2</span>").arg(t.amber.name(), state)));
+    });
+    st->start("git", {"status", "--porcelain", "--", fi.fileName()});
+  });
+  git->start("git", {"rev-parse", "--abbrev-ref", "HEAD"});
 }
 
 // ---------------------------------------------------------------- selection plumbing (F22/F25)
@@ -636,12 +635,14 @@ std::vector<std::string> MainWindow::currentNodeIds() const {
 }
 
 void MainWindow::onViewportSelection() {
-  if (m_syncing || m_selectGuard) return;
+  if (m_syncing) return;
   m_syncing = true;
   auto refs = m_viewport->selection();
   std::vector<std::string> ids;
-  for (const auto& r : refs) if (std::find(ids.begin(), ids.end(), r.body) == ids.end()) ids.push_back(r.body);
-  if (ids.size() <= 2000) m_browser->setSelectedIds(ids);  // echoing thousands into the tree is O(n^2); skip it
+  std::set<std::string> seen;
+  for (const auto& r : refs)
+    if (seen.insert(r.body).second) ids.push_back(r.body);
+  m_browser->setSelectedIds(ids);
   showProperties(refs);
   if (refs.empty()) m_statusSel->clear();
   else m_statusSel->setText(QString::fromUtf8("%1 selected · %2").arg(refs.size()).arg(opad::Ref::kind_name(refs.front().kind)));
@@ -650,14 +651,14 @@ void MainWindow::onViewportSelection() {
 }
 
 void MainWindow::onBrowserSelection(const std::vector<std::string>& ids) {
-  if (m_syncing || m_selectGuard) return;
+  if (m_syncing) return;
   m_syncing = true;
   std::vector<opad::Ref> refs;
   for (const auto& id : ids) { opad::Ref r; r.body = id; refs.push_back(r); }
-  showProperties(refs);  // O(1): only the first ref is inspected
+  showProperties(refs);  // O(1): only the first ref is inspected and geometry walks are deferred to a job
   m_statusSel->setText(ids.empty() ? QString() : QString::fromUtf8("%1 selected · body").arg(ids.size()));
   m_syncing = false;
-  selectNodesWithProgress(ids);  // applies the highlight (async for big sets); writes selection.json when it settles
+  m_viewport->selectNodes(ids);  // sliced; selectionApplied() writes selection.json when it settles
 }
 
 void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
@@ -667,7 +668,10 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
   }
   try {
     const opad::Ref& r = refs.front();
-    opad::json j = r.kind == opad::Ref::Kind::Body ? opad::node_properties(m_doc->doc, m_doc->scene, r.body) : opad::inspect_ref(m_doc->doc, m_doc->scene, r);
+    const opad::Node* node = r.kind == opad::Ref::Kind::Body ? m_doc->node(r.body) : nullptr;
+    const bool component = node && node->kind == opad::Node::Kind::Component;
+    // A component's bbox walks every body under it, so it is filled in afterwards by a sliced job.
+    opad::json j = r.kind == opad::Ref::Kind::Body ? opad::node_properties(m_doc->doc, m_doc->scene, r.body, !component) : opad::inspect_ref(m_doc->doc, m_doc->scene, r);
     QString title, subtitle, id;
     if (r.kind == opad::Ref::Kind::Point) {
       title = tr("Point");
@@ -692,6 +696,7 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
     }
     if (refs.size() > 1) subtitle += tr("  (+%1 more)").arg(refs.size() - 1);
     m_props->showEntity(title, subtitle, id, j);
+    if (component) showComponentBbox(r.body, title, subtitle, id, j);
   } catch (const std::exception& e) {
     m_props->showEntity(tr("Error"), QString::fromUtf8(e.what()), QString(), opad::json::object());
   }
@@ -699,34 +704,58 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
 
 // The live selection is published for agents (F25): opad-cli selection / opad.run("selection").
 void MainWindow::writeSelectionFile() {
-  try {
-    opad::json j;
-    j["pid"] = static_cast<long long>(QCoreApplication::applicationPid());
-    j["document"] = m_doc->path().toStdString();
-    j["browse"] = m_doc->browse;
-    j["ts"] = opad::now_iso8601();
+  if (m_selFileJob) m_selFileJob->cancel();
+  struct State {
+    std::vector<opad::Ref> refs;
     opad::json sel = opad::json::array();
-    const int kDetailCap = 200;  // inspect geometry for at most this many; the rest are listed by ref only
-    int detailed = 0;
-    for (const auto& r : m_viewport->selection()) {
-      opad::json e;
-      e["ref"] = r.str();
-      e["node"] = m_doc->nodeName(r.body).toStdString();
-      if (detailed < kDetailCap) {
-        ++detailed;
-        try {
-          opad::json info = r.kind == opad::Ref::Kind::Body ? opad::node_properties(m_doc->doc, m_doc->scene, r.body) : opad::inspect_ref(m_doc->doc, m_doc->scene, r);
-          for (const char* k : {"type", "surface", "curve", "bbox", "normal", "axis", "radius", "center", "area", "volume", "length", "key"})
-            if (info.contains(k)) e[k] = info[k];
-        } catch (const std::exception&) {
+    size_t i = 0;
+  };
+  auto st = std::make_shared<State>();
+  st->refs = m_viewport->selection();
+  const size_t kDetailCap = 200;  // inspect geometry for at most this many; the rest are listed by ref only
+  m_selFileJob = m_jobs->sliced(tr("Publishing selection"), [this, st, kDetailCap](Job&) {
+    if (st->i >= st->refs.size()) return false;
+    const opad::Ref& r = st->refs[st->i];
+    opad::json e;
+    e["ref"] = r.str();
+    e["node"] = m_doc->nodeName(r.body).toStdString();
+    if (st->i < kDetailCap) {
+      try {
+        opad::json info;
+        if (r.kind == opad::Ref::Kind::Body) {
+          // Bodies get O(1) descriptors: volume/area need exact integration (seconds for a heavy body),
+          // so agents ask `inspect` for those on demand. Faces/edges are cheap to inspect fully.
+          info = opad::node_properties(m_doc->doc, m_doc->scene, r.body, false);
+          Bnd_Box b = opad::node_world_bbox(m_doc->doc, m_doc->scene, r.body);
+          if (!b.IsVoid()) {
+            double x0, y0, z0, x1, y1, z1;
+            b.Get(x0, y0, z0, x1, y1, z1);
+            info["bbox"] = {{"min", {x0, y0, z0}}, {"max", {x1, y1, z1}}, {"size", {x1 - x0, y1 - y0, z1 - z0}}, {"center", {(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2}}};
+          }
+        } else {
+          info = opad::inspect_ref(m_doc->doc, m_doc->scene, r);
         }
+        for (const char* k : {"type", "surface", "curve", "bbox", "normal", "axis", "radius", "center", "area", "volume", "length", "key"})
+          if (info.contains(k)) e[k] = info[k];
+      } catch (const std::exception&) {
       }
-      sel.push_back(e);
     }
-    j["selection"] = sel;
-    opad::write_text_file(opad::cache_dir() / "selection.json", j.dump(2));
-  } catch (const std::exception&) {
-  }
+    st->sel.push_back(std::move(e));
+    return ++st->i < st->refs.size();
+  }, [this, st](bool completed) {
+    m_selFileJob = nullptr;
+    if (!completed) return;  // a newer selection superseded this one
+    try {
+      opad::json j;
+      j["pid"] = static_cast<long long>(QCoreApplication::applicationPid());
+      j["document"] = m_doc->path().toStdString();
+      j["browse"] = m_doc->browse;
+      j["ts"] = opad::now_iso8601();
+      j["selection"] = std::move(st->sel);
+      opad::write_text_file(opad::cache_dir() / "selection.json", j.dump(2));
+    } catch (const std::exception&) {
+    }
+  });
 }
 
 void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids) {
@@ -1122,82 +1151,84 @@ void MainWindow::openPath(const QString& path) {
 }
 
 // ---------------------------------------------------------------- load progress
+// One job spans the document worker (reading/translating/building) and the viewport's tessellation.
 void MainWindow::beginLoad(std::function<void()> after) {
+  if (m_loadJob) m_loadJob->cancel();
   m_afterLoad = std::move(after);
-  m_loadActive = true;
-  m_loadDone = false;
-  m_stripShown = false;
-  m_meshTotal = 0;
-  m_loadPhase = tr("Loading…");
-  m_loadPercent = -1;
-  m_cancelAction = [this] { m_doc->cancelLoad(); m_viewport->cancelMeshing(); };
+  m_loadDocDone = false;
+  m_meshTotal = m_meshRemaining = 0;
   m_viewport->resetMeshing();
-  m_loadTimer.start();
+  m_loadJob = m_jobs->begin(tr("Loading…"), true);
+  connect(m_loadJob, &Job::cancelRequested, this, [this] {
+    m_doc->cancelLoad();
+    m_viewport->cancelMeshing();
+  });
+  connect(m_loadJob, &Job::finished, this, [this](bool ok, const QString& err) {
+    m_loadJob = nullptr;
+    m_afterLoad = nullptr;
+    if (!ok) {
+      if (err.contains("cancel", Qt::CaseInsensitive)) statusBar()->showMessage(tr("Load cancelled"), 4000);
+      else QMessageBox::warning(this, tr("OPAD"), err);
+    }
+    if (int skipped = m_viewport->skippedCount()) statusBar()->showMessage(tr("%1 bodies were not tessellated (cancelled); reopen the file to show them").arg(skipped), 8000);
+    if (m_benchSelect) QTimer::singleShot(300, this, &MainWindow::runBench);
+  });
 }
 
-void MainWindow::finishLoad() {
-  m_loadActive = false;
-  m_loadDone = false;
-  m_stripShown = false;
-  m_loadTimer.stop();
-  m_progress->finish();
-  m_statusHover->show();
-  if (int skipped = m_viewport->skippedCount()) statusBar()->showMessage(tr("%1 bodies were not tessellated (cancelled); reopen the file to show them").arg(skipped), 8000);
-}
-
-void MainWindow::showProgressStrip() {
-  if (!m_loadActive || m_stripShown) return;
-  m_stripShown = true;
-  m_statusHover->hide();  // free room in the status bar for the two bars
-  m_progress->begin(m_loadPhase, true);
-  updateProgress();
-}
-
-void MainWindow::updateProgress() {
-  if (!m_stripShown) return;
-  m_progress->setPhase(m_loadPhase, m_loadPercent);
-  m_progress->setOverall(overallPercent(m_loadPhase, m_loadPercent));
+void MainWindow::setLoadPhase(const QString& phase, int pct) {
+  if (!m_loadJob) return;
+  m_loadJob->setPhase(phase, pct);
+  m_loadJob->setOverall(overallPercent(phase, pct));
 }
 
 // Maps a phase name + within-phase percent to an overall 0-100 across reading -> building -> tessellating.
 int MainWindow::overallPercent(const QString& phase, int pct) const {
-  int base = 65, span = 35;  // tessellating (last phase) by default
+  int base = 65, span = 35;  // tessellating + displaying (last phase) by default
   if (phase.contains("Reading") || phase.contains("Opening")) { base = 0; span = 10; }
-  else if (phase.contains("Translating")) { base = 10; span = 40; }
-  else if (phase.contains("Building")) { base = 50; span = 15; }
+  else if (phase.contains("Translating")) { base = 10; span = 30; }
+  else if (phase.contains("Building")) { base = 40; span = 15; }
+  else if (phase.contains("Preparing")) { base = 55; span = 10; }
   const int within = pct < 0 ? 0 : pct;
   return base + within * span / 100;
 }
 
-// Selection can be slow for large assemblies; show the strip (with Cancel) once it is clearly big.
-bool MainWindow::selectionProgress(size_t done, size_t total) {
-  if (total < 1000) return true;  // instant for ordinary selections; no UI
-  if (!m_selectActive) {
-    m_selectActive = true;
-    m_cancelAction = [this] { m_selectCancel = true; };
-    m_statusHover->hide();
-    m_progress->begin(tr("Selecting %1 objects").arg(total), false);
-  }
-  m_progress->setPhase(tr("Selecting %1 objects").arg(total), static_cast<int>(done * 100 / std::max<size_t>(1, total)));
-  return !m_selectCancel;  // no blocking here: the viewport already yields to the event loop between chunks
+// The bbox of a component walks every body under it; it is added to the panel by a sliced job.
+void MainWindow::showComponentBbox(const std::string& id, const QString& title, const QString& subtitle, const QString& nid, opad::json props) {
+  if (m_propsJob) m_propsJob->cancel();
+  auto bodies = std::make_shared<std::vector<std::string>>(m_doc->scene.bodies_under(id));
+  auto i = std::make_shared<size_t>(0);
+  auto box = std::make_shared<Bnd_Box>();
+  m_propsJob = m_jobs->sliced(tr("Measuring %1").arg(title), [this, bodies, i, box](Job&) {
+    if (*i >= bodies->size()) return false;
+    try {
+      box->Add(opad::node_world_bbox(m_doc->doc, m_doc->scene, (*bodies)[*i]));
+    } catch (const std::exception&) {
+    }
+    return ++*i < bodies->size();
+  }, [this, box, title, subtitle, nid, props](bool completed) mutable {
+    m_propsJob = nullptr;
+    if (!completed || box->IsVoid()) return;
+    double x0, y0, z0, x1, y1, z1;
+    box->Get(x0, y0, z0, x1, y1, z1);
+    props["bbox"] = {{"min", {x0, y0, z0}}, {"max", {x1, y1, z1}}, {"size", {x1 - x0, y1 - y0, z1 - z0}}, {"center", {(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2}}};
+    m_props->showEntity(title, subtitle, nid, props);
+  });
 }
 
-void MainWindow::selectNodesWithProgress(const std::vector<std::string>& ids) {
-  m_selectCancel = false;
-  m_selectGuard = true;  // ignore selection echoes while we apply the highlight (small = now, large = async)
-  m_viewport->selectNodes(ids, [this](size_t done, size_t total) { return selectionProgress(done, total); }, [this] { endSelection(); });
-}
-
-// Called when a (possibly asynchronous) selection settles: tears down the strip and syncs selection.json.
-void MainWindow::endSelection() {
-  if (m_selectActive) {
-    m_selectActive = false;
-    m_progress->finish();
-    m_statusHover->show();
-    if (m_selectCancel) statusBar()->showMessage(tr("Selection cancelled"), 4000);
-  }
-  m_selectGuard = false;
-  scheduleSelectionSync();
+// --bench-select: select every root once the load has settled, log how long the selection takes, quit.
+void MainWindow::runBench() {
+  m_benchSelect = false;
+  const std::vector<std::string> roots = m_doc->scene.roots;
+  auto t = std::make_shared<QElapsedTimer>();
+  t->start();
+  trace::log(QStringLiteral("bench: selecting %1 roots (%2 bodies)").arg(roots.size()).arg(m_doc->scene.all_bodies().size()));
+  auto conn = std::make_shared<QMetaObject::Connection>();
+  *conn = connect(m_viewport, &Viewport::selectionApplied, this, [this, t, conn] {
+    disconnect(*conn);
+    trace::log(QStringLiteral("bench: selection applied after %1 ms (%2 refs)").arg(t->elapsed()).arg(m_viewport->selection().size()));
+    QTimer::singleShot(2500, qApp, &QCoreApplication::quit);
+  });
+  onBrowserSelection(roots);
 }
 
 void MainWindow::scheduleSelectionSync() { m_selFileTimer.start(); }

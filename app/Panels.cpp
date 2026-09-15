@@ -7,6 +7,8 @@
 #include <QDropEvent>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QItemSelection>
+#include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QKeySequenceEdit>
 #include <QMouseEvent>
@@ -24,6 +26,7 @@
 #include <functional>
 
 #include "Icons.hpp"
+#include "Jobs.hpp"
 #include "Theme.hpp"
 #include "opad/inspect.hpp"
 
@@ -371,6 +374,7 @@ QTreeWidgetItem* BrowserPanel::build(const std::string& id, QTreeWidgetItem* par
   QString name = QString::fromStdString(n->name);
   item->setText(0, name);
   item->setData(0, kIdRole, QString::fromStdString(id));
+  m_index[id] = item;
   item->setData(0, kNameRole, name);
   item->setData(0, Qt::UserRole, n->kind == opad::Node::Kind::Body ? "body" : "component");
   item->setFlags(item->flags() | Qt::ItemIsEditable | Qt::ItemIsDragEnabled | (n->kind == opad::Node::Kind::Component ? Qt::ItemIsDropEnabled : Qt::NoItemFlags));
@@ -381,6 +385,7 @@ QTreeWidgetItem* BrowserPanel::build(const std::string& id, QTreeWidgetItem* par
 }
 
 void BrowserPanel::rebuild() {
+  trace::Scope scope("BrowserPanel::rebuild");
   m_updating = true;
   std::set<std::string> expanded;
   std::vector<std::string> selected = selectedIds();
@@ -390,6 +395,7 @@ void BrowserPanel::rebuild() {
   };
   for (int i = 0; i < m_tree->topLevelItemCount(); ++i) collect(m_tree->topLevelItem(i));
   m_tree->clear();
+  m_index.clear();
   if (m_doc->hasDocument) {
     auto* root = new QTreeWidgetItem(m_tree);
     QString docName = m_doc->doc.path.empty() ? (m_doc->browse ? tr("browsing (unsaved)") : tr("Untitled")) : QString::fromStdString(m_doc->doc.path.filename().string());
@@ -424,16 +430,8 @@ void BrowserPanel::applyFilter() {
 }
 
 QTreeWidgetItem* BrowserPanel::itemFor(const std::string& id) const {
-  QString q = QString::fromStdString(id);
-  std::function<QTreeWidgetItem*(QTreeWidgetItem*)> find = [&](QTreeWidgetItem* it) -> QTreeWidgetItem* {
-    if (it->data(0, kIdRole).toString() == q) return it;
-    for (int i = 0; i < it->childCount(); ++i)
-      if (auto* r = find(it->child(i))) return r;
-    return nullptr;
-  };
-  for (int i = 0; i < m_tree->topLevelItemCount(); ++i)
-    if (auto* r = find(m_tree->topLevelItem(i))) return r;
-  return nullptr;
+  auto it = m_index.find(id);
+  return it == m_index.end() ? nullptr : it->second;
 }
 
 std::vector<std::string> BrowserPanel::selectedIds() const {
@@ -449,13 +447,16 @@ void BrowserPanel::setSelectedIds(const std::vector<std::string>& ids) {
   bool was = m_updating;
   m_updating = true;
   m_tree->clearSelection();
+  QItemSelection sel;  // one batched select: per-item setSelected is O(n) each in QTreeWidget
   QTreeWidgetItem* first = nullptr;
   for (const auto& id : ids)
     if (auto* it = itemFor(id)) {
-      it->setSelected(true);
-      for (QTreeWidgetItem* p = it->parent(); p; p = p->parent()) p->setExpanded(true);
+      for (QTreeWidgetItem* p = it->parent(); p && !p->isExpanded(); p = p->parent()) p->setExpanded(true);
+      const QModelIndex idx = m_tree->indexFromItem(it);
+      sel.select(idx, idx);
       if (!first) first = it;
     }
+  if (!sel.isEmpty()) m_tree->selectionModel()->select(sel, QItemSelectionModel::Select | QItemSelectionModel::Rows);
   if (first) m_tree->scrollToItem(first);
   m_updating = was;
   updateBreadcrumb();
@@ -1383,13 +1384,13 @@ static QProgressBar* makeThinBar(QWidget* parent) {
 
 ProgressStrip::ProgressStrip(QWidget* parent) : QWidget(parent) {
   setObjectName("progressStrip");
+  setFixedHeight(20);  // must fit inside the 24 px status bar (1 px border + item margins)
   auto* l = new QHBoxLayout(this);
   l->setContentsMargins(0, 0, 0, 0);
   l->setSpacing(6);
   m_title = new QLabel(this);
   m_title->setObjectName("progressTitle");
-  m_title->setMinimumWidth(130);        // stable width so the bars don't jump as the phase text changes
-  m_title->setMaximumWidth(240);
+  m_title->setFixedWidth(220);  // fixed so the bars never shift as the phase text changes; long text is elided
   m_phaseBar = makeThinBar(this);
   m_phasePct = new QLabel(this);
   m_phasePct->setObjectName("tertiary");
@@ -1404,7 +1405,7 @@ ProgressStrip::ProgressStrip(QWidget* parent) : QWidget(parent) {
   m_overallPct->setFixedWidth(30);
   m_cancel = new QPushButton(tr("Cancel"), this);
   m_cancel->setObjectName("progressCancel");
-  m_cancel->setFixedHeight(20);
+  m_cancel->setFixedHeight(18);
   m_cancel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   m_cancel->setFocusPolicy(Qt::NoFocus);
   m_cancel->setCursor(Qt::PointingHandCursor);
@@ -1426,8 +1427,13 @@ ProgressStrip::ProgressStrip(QWidget* parent) : QWidget(parent) {
   hide();
 }
 
+void ProgressStrip::setTitle(const QString& text) {
+  m_title->setText(m_title->fontMetrics().elidedText(text, Qt::ElideMiddle, m_title->width()));
+  m_title->setToolTip(text);
+}
+
 void ProgressStrip::begin(const QString& title, bool twoBars) {
-  m_title->setText(title);
+  setTitle(title);
   m_cancel->setEnabled(true);
   m_cancel->setText(tr("Cancel"));
   m_phaseBar->setRange(0, 100);
@@ -1442,7 +1448,7 @@ void ProgressStrip::begin(const QString& title, bool twoBars) {
 }
 
 void ProgressStrip::setPhase(const QString& text, int percent) {
-  m_title->setText(text);
+  setTitle(text);
   if (percent < 0) {
     m_phaseBar->setRange(0, 0);  // indeterminate (marching)
     m_phasePct->clear();

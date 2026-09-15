@@ -2,6 +2,7 @@
 
 #include <functional>
 
+#include <QElapsedTimer>
 #include <QTimer>
 #include <QWindow>
 
@@ -14,6 +15,7 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
 #include <Bnd_Box.hxx>
 #include <Graphic3d_TransformPers.hxx>
 #include <Image_PixMap.hxx>
@@ -45,6 +47,7 @@ Handle(Aspect_Window) opad_make_cocoa_window(void* nsview);
 
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
+#include "Jobs.hpp"
 
 namespace {
 
@@ -82,6 +85,9 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   setFocusPolicy(Qt::StrongFocus);
   setMinimumSize(200, 150);
   connect(doc, &AppDocument::changed, this, &Viewport::sync);
+  m_syncTimer.setSingleShot(true);
+  m_syncTimer.setInterval(50);
+  connect(&m_syncTimer, &QTimer::timeout, this, &Viewport::sync);
   m_timer.setInterval(16);
   connect(&m_timer, &QTimer::timeout, this, [this] {
     if (!m_initialised) return;
@@ -104,7 +110,7 @@ void Viewport::initViewer() {
   m_viewer->SetLightOn();
   m_ctx = new AIS_InteractiveContext(m_viewer);
   m_ctx->SetPixelTolerance(4);
-  m_ctx->SetAutoActivateSelection(Standard_True);
+  m_ctx->SetAutoActivateSelection(Standard_False);  // displayBody activates the current filter itself
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetDisplayMode(AIS_Shaded);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetDisplayMode(AIS_Shaded);
 
@@ -290,15 +296,31 @@ void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
 void Viewport::setSelectionFilter(SelFilter f) {
   m_filter = f;
   if (!m_initialised) return;
-  m_ctx->ClearSelected(Standard_False);
-  for (auto& [id, it] : m_items) activateSelection(it.ais);
-  requestRedraw();
-  emit selectionChanged();
+  clearSelection();
+  // Activating a selection mode builds that mode's sensitive entities per object (faces/edges), which is
+  // slow across a big assembly, so it runs as a sliced job.
+  if (m_filterJob) m_filterJob->cancel();
+  auto items = std::make_shared<std::vector<Handle(AIS_Shape)>>();
+  for (const auto& [id, it] : m_items) items->push_back(it.ais);
+  auto i = std::make_shared<size_t>(0);
+  m_filterJob = m_jobs->sliced(tr("Switching selection mode"), [this, items, i](Job&) {
+    if (*i >= items->size()) return false;
+    activateSelection((*items)[(*i)++]);
+    return *i < items->size();
+  }, [this](bool) {
+    m_filterJob = nullptr;
+    requestRedraw();
+  });
 }
 
 std::vector<opad::Ref> Viewport::selection() const {
   std::vector<opad::Ref> out;
   if (!m_initialised) return out;
+  for (const auto& b : m_shadeBodies) {  // a selection too large to highlight per object (see selectNodes)
+    opad::Ref r;
+    r.body = b;
+    out.push_back(r);
+  }
   for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected()) {
     Handle(AIS_InteractiveObject) obj = m_ctx->SelectedInteractive();
     auto it = m_nodeOf.find(obj.get());
@@ -322,80 +344,140 @@ std::vector<opad::Ref> Viewport::selection() const {
   return out;
 }
 
-void Viewport::selectNodes(const std::vector<std::string>& ids, const std::function<bool(size_t, size_t)>& progress, const std::function<void()>& done) {
+// ---------------------------------------------------------------- selection
+// Highlighting goes through the context one object at a time as a sliced job (Jobs.hpp), so the UI never
+// blocks. Once the first slice shows that highlighting the whole set would take longer than kShadeAfterMs,
+// the job stops and shades the selected region with translucent boxes instead (one per selected node);
+// selection() then reports the shaded bodies exactly as if they had been highlighted.
+namespace {
+constexpr int kShadeAfterMs = 500;  // per-object highlight is allowed this long in total, else shade
+constexpr int kMeasureMs = 10;      // how much highlighting to do before projecting the total
+}  // namespace
+
+void Viewport::setJobs(JobRunner* jobs) { m_jobs = jobs; }
+
+void Viewport::selectNodes(const std::vector<std::string>& ids) {
   if (!m_initialised) {
-    if (done) done();
+    emit selectionApplied();
     return;
   }
-  cancelSelect();  // drop any previous in-flight job
-  m_ctx->ClearSelected(Standard_False);
-  m_selTargets.clear();
+  if (m_selJob) m_selJob->cancel();  // its done(false) runs now and leaves m_selJob null
+  clearShade();
+  struct State {
+    std::vector<Handle(AIS_Shape)> undo, targets, applied;
+    size_t u = 0, i = 0;
+    bool measured = false, shade = false, cleared = false;
+    QElapsedTimer clock;
+  };
+  auto st = std::make_shared<State>();
+  st->undo = std::move(m_selApplied);
+  m_selApplied.clear();
   for (const auto& id : ids)
     for (const auto& body : m_doc->scene.bodies_under(id)) {
       auto it = m_items.find(body);
-      if (it != m_items.end()) m_selTargets.push_back(it->second.ais);
+      if (it != m_items.end()) st->targets.push_back(it->second.ais);
     }
-  m_selIndex = 0;
-  m_selProgress = progress;
-  m_selDone = done;
-  const size_t total = m_selTargets.size();
-  if (total <= 800) {  // small: apply immediately, no async overhead or latency
-    for (const auto& t : m_selTargets) m_ctx->AddOrRemoveSelected(t, Standard_False);
-    m_selTargets.clear();
+  const size_t total = st->targets.size();
+  auto step = [this, st, total](Job& j) -> bool {
+    // Phase 1: drop the previous highlight one object at a time (a bulk ClearSelected would block).
+    if (st->u < st->undo.size()) {
+      const auto& h = st->undo[st->u++];
+      if (m_ctx->IsSelected(h)) m_ctx->AddOrRemoveSelected(h, Standard_False);
+      return true;
+    }
+    if (!st->cleared) {  // whatever else is selected came from a click: a handful, cheap to clear in bulk
+      st->cleared = true;
+      m_ctx->ClearSelected(Standard_False);
+      st->clock.start();
+    }
+    // Phase 2: highlight the new set.
+    if (st->i >= total) return false;
+    const auto& h = st->targets[st->i++];
+    m_ctx->AddOrRemoveSelected(h, Standard_False);
+    st->applied.push_back(h);
+    if (!st->measured && st->clock.elapsed() >= kMeasureMs) {
+      st->measured = true;
+      const double projected = static_cast<double>(st->clock.elapsed()) * static_cast<double>(total) / static_cast<double>(st->i);
+      if (projected > kShadeAfterMs) {
+        st->shade = true;
+        for (const auto& a : st->applied)  // undo the few we did (bounded by kMeasureMs of work)
+          if (m_ctx->IsSelected(a)) m_ctx->AddOrRemoveSelected(a, Standard_False);
+        st->applied.clear();
+        st->i = total;
+        return false;
+      }
+    }
+    if ((st->i & 63) == 0) j.setPhase(tr("Selecting %1 objects").arg(total), static_cast<int>(st->i * 100 / std::max<size_t>(1, total)));
+    return st->i < total;
+  };
+  auto done = [this, st, ids](bool completed) {
+    m_selJob = nullptr;
+    m_selApplied = std::move(st->applied);
     requestRedraw();
-    if (progress) progress(total, total);
-    auto d = m_selDone;
-    m_selProgress = {};
-    m_selDone = {};
-    if (d) d();
-    return;
-  }
-  stepSelect();  // large: chunk across the event loop so the UI stays responsive and cancellable
+    if (!completed) return;  // superseded or cancelled: the next job (or the click) owns the state now
+    if (st->shade) showShade(ids);
+    const bool notify = m_notifyWhenApplied;
+    m_notifyWhenApplied = false;
+    emit selectionApplied();
+    if (notify) emit selectionChanged();
+  };
+  Q_ASSERT(m_jobs);  // wired by MainWindow before anything can be selected
+  m_selJob = m_jobs->sliced(tr("Selecting %1 objects").arg(total), step, done);
 }
 
-// One batch of a chunked selection, then yields to the event loop and reschedules itself.
-void Viewport::stepSelect() {
-  if (m_selTargets.empty()) return;
-  const size_t total = m_selTargets.size();
-  const size_t end = std::min(m_selIndex + 400, total);
-  for (; m_selIndex < end; ++m_selIndex) m_ctx->AddOrRemoveSelected(m_selTargets[m_selIndex], Standard_False);
-  const bool cancelled = m_selProgress && !m_selProgress(m_selIndex, total);
-  if (m_selIndex >= total || cancelled) {
-    requestRedraw();
-    auto d = m_selDone;
-    m_selTargets.clear();
-    m_selIndex = 0;
-    m_selProgress = {};
-    m_selDone = {};
-    if (d) d();
-    return;
+// One translucent box per selected node, covering its bodies; a stand-in for per-object highlighting.
+void Viewport::showShade(const std::vector<std::string>& ids) {
+  clearShade();
+  for (const auto& id : ids) {
+    Bnd_Box box;
+    for (const auto& b : m_doc->scene.bodies_under(id)) {
+      if (!m_items.count(b)) continue;
+      m_shadeBodies.push_back(b);
+      try {
+        box.Add(opad::node_world_bbox(m_doc->doc, m_doc->scene, b));
+      } catch (const std::exception&) {
+      }
+    }
+    if (box.IsVoid()) continue;
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    const double diag = std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0) + (z1 - z0) * (z1 - z0));
+    const double pad = std::max(1e-3, diag * 0.002);
+    Handle(AIS_Shape) s = new AIS_Shape(BRepPrimAPI_MakeBox(gp_Pnt(x0 - pad, y0 - pad, z0 - pad), gp_Pnt(x1 + pad, y1 + pad, z1 + pad)).Shape());
+    s->SetColor(occ(m_tokens.sel));
+    s->SetTransparency(0.7f);
+    s->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
+    s->Attributes()->SetFaceBoundaryDraw(Standard_True);
+    s->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.5));
+    m_ctx->Display(s, AIS_Shaded, -1, Standard_False);  // selection mode -1: never pickable
+    m_shade.push_back(s);
   }
-  QTimer::singleShot(0, this, [this] { stepSelect(); });
 }
 
-void Viewport::cancelSelect() {
-  if (m_selTargets.empty() && !m_selDone) return;
-  auto d = m_selDone;
-  m_selTargets.clear();
-  m_selIndex = 0;
-  m_selProgress = {};
-  m_selDone = {};
-  if (d) d();  // let the owner tear down its progress UI
+void Viewport::clearShade() {
+  for (const auto& s : m_shade) m_ctx->Remove(s, Standard_False);
+  m_shade.clear();
+  m_shadeBodies.clear();
 }
 
 void Viewport::clearSelection() {
   if (!m_initialised) return;
-  m_ctx->ClearSelected(Standard_False);
-  requestRedraw();
-  emit selectionChanged();
+  m_notifyWhenApplied = true;  // selectionChanged fires once the (possibly sliced) un-highlight has settled
+  selectNodes({});
 }
 
-void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const Handle(V3d_View)&) { emit selectionChanged(); }
+// A click in the 3D view: OCCT has already changed the context selection; drop any stand-ins and in-flight job.
+void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const Handle(V3d_View)&) {
+  if (m_selJob) m_selJob->cancel();
+  clearShade();
+  emit selectionChanged();
+}
 
 void Viewport::isolate(const std::vector<std::string>& ids) {
   m_isolated.clear();
   for (const auto& id : ids)
     for (const auto& b : m_doc->scene.bodies_under(id)) m_isolated.insert(b);
+  m_needFit = !ids.empty();
   sync();
   if (!ids.empty()) fitAll();
 }
@@ -427,10 +509,8 @@ void Viewport::fitNodes(const std::vector<std::string>& ids) {
   if (!m_initialised) return;
   Bnd_Box box;
   for (const auto& id : ids)
-    for (const auto& b : m_doc->scene.bodies_under(id)) {
-      auto it = m_items.find(b);
-      if (it != m_items.end()) BRepBndLib::Add(it->second.located, box, Standard_False);
-    }
+    for (const auto& b : m_doc->scene.bodies_under(id))
+      if (m_items.count(b)) box.Add(opad::node_world_bbox(m_doc->doc, m_doc->scene, b));
   if (box.IsVoid()) return fitAll();
   m_view->FitAll(box, 0.02, Standard_False);
   m_view->Invalidate();
@@ -440,9 +520,17 @@ void Viewport::fitNodes(const std::vector<std::string>& ids) {
 void Viewport::fitSelection() {
   if (!m_initialised) return;
   Bnd_Box box;
+  for (const auto& b : m_shadeBodies) box.Add(opad::node_world_bbox(m_doc->doc, m_doc->scene, b));
   for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected()) {
     Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->SelectedOwner());
-    if (!owner.IsNull() && owner->HasShape()) BRepBndLib::Add(owner->Shape(), box, Standard_False);
+    auto it = m_nodeOf.find(m_ctx->SelectedInteractive().get());
+    if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
+      TopoDS_Shape sub = owner->Shape();
+      Handle(AIS_InteractiveObject) obj = m_ctx->SelectedInteractive();
+      if (!obj.IsNull() && obj->HasTransformation()) sub = sub.Moved(TopLoc_Location(obj->LocalTransformation()));
+      BRepBndLib::Add(sub, box, Standard_True);
+    }
+    else if (it != m_nodeOf.end()) box.Add(opad::node_world_bbox(m_doc->doc, m_doc->scene, it->second));
   }
   if (box.IsVoid()) return fitAll();
   m_view->FitAll(box, 0.02, Standard_False);
@@ -596,11 +684,8 @@ void Viewport::showDimension(const opad::Vec3& a, const opad::Vec3& b, const QSt
 }
 
 // ---------------------------------------------------------------- scene sync
-double Viewport::deflectionFor(const std::string& key) {
-  auto it = m_deflection.find(key);
-  if (it != m_deflection.end()) return it->second;
-  Bnd_Box box;
-  BRepBndLib::Add(opad::body_shape(m_doc->doc, key), box, Standard_False);
+namespace {
+double deflectionForBox(const Bnd_Box& box) {
   double d = 0.1;
   if (!box.IsVoid()) {
     double x0, y0, z0, x1, y1, z1;
@@ -608,76 +693,93 @@ double Viewport::deflectionFor(const std::string& key) {
     double diag = std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0) + (z1 - z0) * (z1 - z0));
     d = std::clamp(diag * 0.0008, 0.005, 1.0);
   }
-  m_deflection[key] = d;
   return d;
 }
+}  // namespace
+
+double Viewport::deflectionFor(const std::string& key) { return deflectionForBox(opad::body_bbox(m_doc->doc, key)); }
 
 // Tessellation runs off the UI thread (F21); bodies appear once their mesh is ready.
 void Viewport::startMeshing(std::vector<std::string> keys) {
-  struct Job { TopoDS_Shape shape; std::string key; double tol; };
-  std::vector<Job> jobs;
+  struct MeshJob { TopoDS_Shape shape; std::string key; };
+  std::vector<MeshJob> jobs;
   {
     std::lock_guard<std::mutex> lock(m_meshMu);
     for (const auto& k : keys) {
       if (m_meshed.count(k) || m_meshing.count(k) || m_meshSkipped.count(k)) continue;
       m_meshing.insert(k);
-      jobs.push_back({opad::body_shape(m_doc->doc, k), k, deflectionFor(k)});
+      jobs.push_back({opad::body_shape(m_doc->doc, k), k});
     }
   }
   if (jobs.empty()) return;
   emit meshingProgress(static_cast<int>(m_meshing.size()));
   auto alive = m_alive;
   auto cancel = m_meshCancel;
-  std::thread([this, alive, cancel, jobs = std::move(jobs)]() {
+  auto cache = m_doc->doc.shape_cache;  // the worker fills the bbox cache too, so later UI queries are O(1)
+  std::thread([this, alive, cancel, cache, jobs = std::move(jobs)]() {
     for (size_t i = 0; i < jobs.size(); ++i) {
       const auto& j = jobs[i];
       if (*cancel) {
         std::lock_guard<std::mutex> lock(m_meshMu);
         for (size_t k = i; k < jobs.size(); ++k) {
           m_meshing.erase(jobs[k].key);
-          m_meshSkipped.insert(jobs[k].key);
+          if (m_activeCache == cache.get()) m_meshSkipped.insert(jobs[k].key);
         }
-        QMetaObject::invokeMethod(this, "sync", Qt::QueuedConnection);
+        QMetaObject::invokeMethod(this, "requestSync", Qt::QueuedConnection);
         return;
       }
+      std::shared_ptr<BodyPrs> prs;
       try {
-        BRepMesh_IncrementalMesh(j.shape, j.tol, Standard_False, 20.0 * M_PI / 180.0, Standard_True);
+        const Bnd_Box box = opad::body_bbox(*cache, j.key, j.shape);
+        BRepMesh_IncrementalMesh(j.shape, deflectionForBox(box), Standard_False, 20.0 * M_PI / 180.0, Standard_True);
+        prs = BodyPrs::build(j.shape, box);  // the shaded presentation, so Display() on the UI thread is cheap
       } catch (...) {
       }
       if (!*alive) return;
       {
         std::lock_guard<std::mutex> lock(m_meshMu);
         m_meshing.erase(j.key);
-        m_meshed.insert(j.key);
+        if (m_activeCache == cache.get()) {  // a newer document owns the bookkeeping otherwise
+          m_meshed.insert(j.key);
+          if (prs) m_prs[j.key] = std::move(prs);
+        }
       }
-      QMetaObject::invokeMethod(this, "sync", Qt::QueuedConnection);
+      QMetaObject::invokeMethod(this, "requestSync", Qt::QueuedConnection);
     }
   }).detach();
 }
 
+void Viewport::requestSync() {
+  if (!m_syncTimer.isActive()) m_syncTimer.start();
+}
+
+// Reconciles the context with the scene. Removals and attribute changes are applied at once (cheap);
+// bodies to display are added by a sliced job because computing a body's presentation and selection
+// entities is the expensive part and must not block the UI (see Jobs.hpp).
 void Viewport::sync() {
   if (!m_initialised || m_doc->loading) return;
+  trace::Scope scope("Viewport::sync");
   const opad::Scene& scene = m_doc->scene;
-  std::set<std::string> keep;
-  std::vector<std::string> pending;
-  bool added = false;
+  {
+    // Mesh bookkeeping is per shape cache: a new document means new TopoDS_Shapes without triangulation.
+    std::lock_guard<std::mutex> lock(m_meshMu);
+    const void* cache = m_doc->doc.shape_cache.get();
+    if (cache != m_activeCache) {
+      m_activeCache = cache;
+      m_meshed.clear();
+      m_meshSkipped.clear();
+      m_prs.clear();
+    }
+  }
+  std::set<std::string> keep, replace;
+  std::vector<std::string> pending, toAdd;
   for (const auto& id : scene.all_bodies()) {
     const opad::Node* n = scene.node(id);
     if (!n || n->body_missing || !scene.effectively_visible(id)) continue;
     if (!m_isolated.empty() && !m_isolated.count(id)) continue;
-    bool meshed;
-    {
-      std::lock_guard<std::mutex> lock(m_meshMu);
-      meshed = m_meshed.count(n->body_key) > 0;
-    }
-    if (!meshed) {
-      pending.push_back(n->body_key);
-      continue;
-    }
-    keep.insert(id);
-    opad::Mat4 world = scene.world(id);
     auto it = m_items.find(id);
-    if (it != m_items.end() && it->second.key == n->body_key && it->second.world.to_json() == world.to_json()) {
+    if (it != m_items.end() && it->second.key == n->body_key && it->second.world.m == scene.world(id).m) {
+      keep.insert(id);
       Item& item = it->second;
       if (item.color != n->color || item.opacity != n->opacity) {
         item.color = n->color;
@@ -688,43 +790,95 @@ void Viewport::sync() {
       }
       continue;
     }
-    if (it != m_items.end()) {
-      m_ctx->Remove(it->second.ais, Standard_False);
-      m_nodeOf.erase(it->second.ais.get());
-      m_items.erase(it);
+    bool meshed;
+    {
+      std::lock_guard<std::mutex> lock(m_meshMu);
+      meshed = m_meshed.count(n->body_key) > 0;
     }
-    TopoDS_Shape proto = opad::body_shape(m_doc->doc, n->body_key);
-    TopoDS_Shape located = proto;
-    if (!world.is_identity()) {
-      if (opad::mat_is_rigid(world)) located = proto.Moved(TopLoc_Location(opad::trsf_from_mat(world)));
-      else located = opad::node_world_shape(m_doc->doc, scene, id);
+    if (!meshed) {
+      pending.push_back(n->body_key);
+      continue;
     }
-    Handle(AIS_Shape) ais = new AIS_Shape(located);
-    ais->Attributes()->SetTypeOfDeflection(Aspect_TOD_ABSOLUTE);
-    ais->Attributes()->SetMaximalChordialDeviation(deflectionFor(n->body_key));
-    ais->Attributes()->SetDeviationAngle(20.0 * M_PI / 180.0);
-    ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
-    ais->SetColor(qcolor(n->color));
-    if (n->opacity < 1.0) ais->SetTransparency(1.0 - n->opacity);
-    applyStyle(ais);
-    m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, 0, Standard_False);
-    activateSelection(ais);
-    m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located};
-    m_nodeOf[ais.get()] = id;
-    added = true;
+    keep.insert(id);
+    if (it != m_items.end()) replace.insert(id);
+    toAdd.push_back(id);
   }
   for (auto it = m_items.begin(); it != m_items.end();) {
-    if (keep.count(it->first)) { ++it; continue; }
+    if (keep.count(it->first) && !replace.count(it->first)) { ++it; continue; }
     m_ctx->Remove(it->second.ais, Standard_False);
     m_nodeOf.erase(it->second.ais.get());
     it = m_items.erase(it);
   }
   if (!pending.empty()) startMeshing(pending);
-  else emit meshingProgress(0);
   updateAnnotations();
   updateClipPlanes();
+  if (m_displayJob) m_displayJob->cancel();
+  const int pendingCount = static_cast<int>(pending.size());
+  if (toAdd.empty()) {
+    finishSync(pendingCount, false);
+    return;
+  }
+  auto ids = std::make_shared<std::vector<std::string>>(std::move(toAdd));
+  auto i = std::make_shared<size_t>(0);
+  m_displayJob = m_jobs->sliced(tr("Displaying %1 bodies").arg(ids->size()), [this, ids, i](Job& j) {
+    if (*i >= ids->size() || m_doc->loading) return false;
+    displayBody((*ids)[*i]);
+    if ((++*i & 15) == 0) {
+      j.setPhase(tr("Displaying %1 bodies").arg(ids->size()), static_cast<int>(*i * 100 / ids->size()));
+      m_view->Invalidate();
+      requestRedraw();  // bodies appear as they are added
+    }
+    return *i < ids->size();
+  }, [this, pendingCount](bool completed) {
+    m_displayJob = nullptr;
+    if (completed) finishSync(pendingCount, true);
+  });
+}
+
+// Adds one body to the context: presentation + selection entities are computed here.
+void Viewport::displayBody(const std::string& id) {
+  const opad::Scene& scene = m_doc->scene;
+  const opad::Node* n = scene.node(id);
+  if (!n || n->body_missing || m_items.count(id)) return;  // the scene moved on since this was queued
+  QElapsedTimer t;
+  t.start();
+  opad::Mat4 world = scene.world(id);
+  TopoDS_Shape proto = opad::body_shape(m_doc->doc, n->body_key);
+  std::shared_ptr<BodyPrs> prs;
+  {
+    std::lock_guard<std::mutex> lock(m_meshMu);
+    auto p = m_prs.find(n->body_key);
+    if (p != m_prs.end()) prs = p->second;
+  }
+  // Rigid placements go on the object as a local transformation, so the prototype's precomputed arrays
+  // (and sub-shape ordinals) are shared by every instance; anything else gets a transformed copy.
+  TopoDS_Shape located = proto;
+  const bool rigid = world.is_identity() || opad::mat_is_rigid(world);
+  if (!rigid) {
+    located = opad::node_world_shape(m_doc->doc, scene, id);
+    prs.reset();
+  }
+  Handle(AIS_Shape) ais = new BodyShape(located, prs);
+  if (rigid && !world.is_identity()) ais->SetLocalTransformation(opad::trsf_from_mat(world));
+  ais->Attributes()->SetTypeOfDeflection(Aspect_TOD_ABSOLUTE);
+  ais->Attributes()->SetMaximalChordialDeviation(deflectionFor(n->body_key));
+  ais->Attributes()->SetDeviationAngle(20.0 * M_PI / 180.0);
+  ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
+  ais->SetColor(qcolor(n->color));
+  if (n->opacity < 1.0) ais->SetTransparency(1.0 - n->opacity);
+  applyStyle(ais);
+  m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, 0, Standard_False);
+  const qint64 displayMs = t.elapsed();
+  activateSelection(ais);
+  if (trace::enabled() && t.elapsed() > 50) trace::log(QStringLiteral("displayBody %1: display %2 ms, selection %3 ms").arg(QString::fromStdString(n->name)).arg(displayMs).arg(t.elapsed() - displayMs));
+  m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located};
+  m_nodeOf[ais.get()] = id;
+}
+
+void Viewport::finishSync(int pendingCount, bool added) {
+  if (pendingCount == 0) emit meshingProgress(0);
   if (added && (m_needFit || m_items.size() <= 1)) {
-    if (pending.empty()) m_needFit = false;  // keep re-fitting while meshes are still arriving
+    if (pendingCount == 0) m_needFit = false;  // keep re-fitting while meshes are still arriving
     m_view->FitAll(0.02, Standard_False);
   }
   m_view->Invalidate();

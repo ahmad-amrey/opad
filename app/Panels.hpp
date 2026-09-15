@@ -13,6 +13,7 @@
 #include <QTreeWidget>
 #include <QWidget>
 #include <set>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,7 @@ class BrowserTree : public QTreeWidget {
   Q_OBJECT
  public:
   explicit BrowserTree(AppDocument* doc, QWidget* parent = nullptr);
+  using QTreeWidget::indexFromItem;  // BrowserPanel selects in one batch through the selection model
  signals:
   void reparentRequested(const std::vector<std::string>& ids, const std::string& parent, int index);
   void eyeClicked(const std::string& id);
@@ -89,6 +91,7 @@ class BrowserPanel : public QWidget {
   QLineEdit* m_filter;
   QLabel* m_breadcrumb;
   QLabel* m_empty;
+  std::unordered_map<std::string, QTreeWidgetItem*> m_index;  // node id -> item, rebuilt with the tree
   bool m_updating = false;
 };
 
@@ -274,6 +277,7 @@ class ProgressStrip : public QWidget {
  signals:
   void cancelRequested();
  private:
+  void setTitle(const QString& text);
   QLabel* m_title;
   QProgressBar* m_phaseBar;
   QLabel* m_phasePct;

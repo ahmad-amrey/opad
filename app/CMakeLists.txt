@@ -20,6 +20,9 @@ set(OPAD_APP_SOURCES
   EmptyState.cpp EmptyState.hpp
   Viewport.cpp Viewport.hpp
   Panels.cpp Panels.hpp
+  Jobs.cpp Jobs.hpp
+  BodyShape.cpp BodyShape.hpp
+  CrashLog.cpp CrashLog.hpp
   MainWindow.cpp MainWindow.hpp)
 if(APPLE)
   list(APPEND OPAD_APP_SOURCES ViewportCocoa.mm)
@@ -27,6 +30,9 @@ endif()
 
 add_executable(opad WIN32 MACOSX_BUNDLE ${OPAD_APP_SOURCES})
 target_link_libraries(opad PRIVATE opad::core ${OPAD_OCCT_VIS_LIBS} Qt6::Widgets Qt6::Gui)
+if(WIN32)
+  target_link_libraries(opad PRIVATE dbghelp)
+endif()
 if(APPLE)
   target_link_libraries(opad PRIVATE "-framework Cocoa")
 endif()

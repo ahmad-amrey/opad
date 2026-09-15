@@ -2,10 +2,12 @@
 #include <QCommandLineParser>
 #include <QSurfaceFormat>
 
+#include "CrashLog.hpp"
 #include "MainWindow.hpp"
 #include "opad/core.hpp"
 
 int main(int argc, char** argv) {
+  installCrashHandler();
   opad::configure_kernel_logging();
   QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
   QApplication app(argc, argv);
@@ -18,9 +20,13 @@ int main(int argc, char** argv) {
   parser.addHelpOption();
   parser.addVersionOption();
   parser.addPositionalArgument("file", "An .opad document or a .step file to browse");
+  QCommandLineOption bench("bench-select", "Select every root once the file has loaded, log the timing (OPAD_TRACE) and quit");
+  bench.setFlags(QCommandLineOption::HiddenFromHelp);
+  parser.addOption(bench);
   parser.process(app);
 
   MainWindow win;
+  win.setBenchSelect(parser.isSet(bench));
   win.show();
   const QStringList args = parser.positionalArguments();
   if (!args.isEmpty()) win.openPath(args.first());
