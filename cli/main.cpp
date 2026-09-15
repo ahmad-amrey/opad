@@ -1,4 +1,4 @@
-// opad-cli: the headless command-line surface over the OPAD command layer (PRD section 7.1).
+// opad-cli: the headless command-line surface over the OPAD command layer.
 // Every command prints JSON on stdout; errors go to stderr as {"error": "..."} with exit code 1.
 #include <cstdio>
 #include <cstring>

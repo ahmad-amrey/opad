@@ -1,5 +1,5 @@
 # .opad documents are line-oriented, append-only text. LF keeps body-store hashes stable on every OS;
-# merge=union makes two branches that appended independent ops merge as a pure line union (PRD F7, section 10).
+# merge=union makes two branches that appended independent ops merge as a pure line union.
 *.opad text eol=lf merge=union
 *.step text
 *.stp  text

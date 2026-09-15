@@ -94,22 +94,22 @@ d.save_as("gearbox.opad")
 build123d. Build the pip package with `pip install ./python` (needs OCCT on the build machine; CI repairs the
 wheel so OCCT's shared libraries ship inside it).
 
-## Status against the PRD
+## Status
 
-Implemented: single-file format with header / JSON-Lines op log / content-addressed body store (F3-F11), all ten
-v1 ops, STEP import through XCAF with names, colours, assembly structure and instance dedup (F12), export to
-STEP (AP203/214/242), OBJ+MTL, STL (binary/ASCII, per body) and GLB (F14/F15), browse mode (F1/F2), the full CLI
-of section 7.1 plus `diff --image`, a deterministic software renderer for headless screenshots, the Python
+Implemented: single-file format with header / JSON-Lines op log / content-addressed body store, all ten
+v1 ops, STEP import through XCAF with names, colours, assembly structure and instance dedup, export to
+STEP (AP203/214/242), OBJ+MTL, STL (binary/ASCII, per body) and GLB, browse mode, the full CLI
+plus `diff --image`, a deterministic software renderer for headless screenshots, the Python
 module, the C plugin ABI with a sample exporter, the Qt app with Fusion-style navigation presets, view cube,
 display styles, grid, section planes, hierarchical browser (visibility, colour, rename, drag-to-reparent,
 isolate, filter, breadcrumb, instance badges), timeline with tombstones, properties, measurements, annotations,
 named views, command search, dark/light themes, editable shortcuts and git branch/dirty state.
 
-Not yet: the embedded Python console (F34 secondary form, may slip to v1.1 per the PRD), the MCP adapter (v1.1),
+Not yet: the embedded Python console (may slip to v1.1), the MCP adapter (v1.1),
 shadows are best-effort, interactive drag of the section plane (slider today), coarse-then-fine tessellation
 (bodies appear as their fine mesh finishes on a worker thread), signed installers and the iOS/Android core
 builds in CI (workflow present, unverified), 3MF export.
 
 ## Licence
 
-MIT. OCCT (LGPL 2.1 with exception) and Qt 6 (LGPL 3) are linked dynamically; see the PRD's licensing section.
+MIT. OCCT (LGPL 2.1 with exception) and Qt 6 (LGPL 3) are linked dynamically.

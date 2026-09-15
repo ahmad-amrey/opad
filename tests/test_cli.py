@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end tests for opad-cli, including the git merge story (PRD sections 7.1, 10).
+"""End-to-end tests for opad-cli, including the git merge story.
 
 usage: test_cli.py <path-to-opad-cli> <fixtures-dir>
 """

@@ -1,5 +1,5 @@
 #pragma once
-// The command layer (F36, section 7): everything the CLI, Python, plugins and the UI do is a named command
+// The command layer (F36): everything the CLI, Python, plugins and the UI do is a named command
 // with JSON in and JSON out. Commands taking a `doc` path load it; the GUI passes its live Document instead.
 #include <functional>
 #include <string>

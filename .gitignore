@@ -8,3 +8,4 @@ dist/
 .vscode/
 *.user
 compile_commands.json
+CLAUDE.md
