@@ -1,0 +1,378 @@
+#include "opad/document.hpp"
+
+#include <algorithm>
+#include <set>
+#include <sstream>
+
+#include "opad/scene.hpp"
+
+namespace opad {
+
+// ---------------------------------------------------------------- Header
+json Header::to_json() const {
+  json j;
+  j["uuid"] = uuid;
+  j["units"] = units;
+  j["created"] = created;
+  j["generator"] = generator;
+  return j;
+}
+
+Header Header::from_json(const json& j) {
+  Header h;
+  h.uuid = j.value("uuid", "");
+  h.units = j.value("units", "mm");
+  h.created = j.value("created", "");
+  h.generator = j.value("generator", "");
+  if (!is_uuid(h.uuid)) throw Error("header: missing or invalid document uuid");
+  return h;
+}
+
+// ---------------------------------------------------------------- Document
+Document::Document() : shape_cache(make_shape_cache()) {}
+
+Document Document::create(const std::string& units) {
+  Document d;
+  d.header.format = kFormatVersion;
+  d.header.uuid = new_uuid();
+  d.header.units = units;
+  d.header.created = now_iso8601();
+  d.header.generator = "opad/" + version_string();
+  d.dirty = true;
+  return d;
+}
+
+const std::vector<std::string>& Document::op_types() {
+  static const std::vector<std::string> t = {"import",     "reparent", "transform", "appearance", "rename",
+                                             "annotation", "measurement", "section", "view",       "delete"};
+  return t;
+}
+
+static void require(const json& op, const char* key, const char* type) {
+  if (!op.contains(key)) throw Error(std::string("op '") + op.value("op", "?") + "' is missing field '" + key + "'");
+  const json& v = op[key];
+  std::string t = type;
+  bool ok = (t == "string" && v.is_string()) || (t == "array" && v.is_array()) ||
+            (t == "object" && (v.is_object() || v.is_string())) || (t == "number" && v.is_number()) ||
+            (t == "uuid" && v.is_string() && is_uuid(v.get<std::string>())) ||
+            (t == "uuid?" && (v.is_null() || (v.is_string() && is_uuid(v.get<std::string>())))) ||
+            (t == "matrix" && v.is_array() && (v.size() == 12 || v.size() == 16));
+  if (!ok) throw Error(std::string("op '") + op.value("op", "?") + "': field '" + key + "' must be " + type);
+}
+
+static void validate_nodes(const json& nodes, int depth = 0) {
+  if (!nodes.is_array()) throw Error("import: 'nodes' must be an array");
+  if (depth > 64) throw Error("import: hierarchy too deep");
+  for (const auto& n : nodes) {
+    if (!n.is_object()) throw Error("import: node must be an object");
+    std::string type = n.value("type", "");
+    if (type != "component" && type != "body") throw Error("import: node type must be 'component' or 'body'");
+    require(n, "id", "uuid");
+    if (n.contains("transform") && !n["transform"].is_null()) require(n, "transform", "matrix");
+    if (type == "body") {
+      require(n, "key", "string");
+      if (n["key"].get<std::string>().size() != 64) throw Error("import: body key must be a sha-256 hex digest");
+    } else if (n.contains("children")) {
+      validate_nodes(n["children"], depth + 1);
+    }
+  }
+}
+
+void Document::validate_op(const json& op) {
+  if (!op.is_object()) throw Error("op must be a JSON object");
+  if (!op.contains("op") || !op["op"].is_string()) throw Error("op is missing the 'op' type field");
+  std::string type = op["op"].get<std::string>();
+  const auto& types = op_types();
+  if (std::find(types.begin(), types.end(), type) == types.end()) throw Error("unknown op type: " + type);
+  if (op.contains("id")) require(op, "id", "uuid");
+  if (type == "import") {
+    validate_nodes(op.value("nodes", json::array()));
+    if (op.contains("parent") && !op["parent"].is_null()) require(op, "parent", "uuid");
+  } else if (type == "reparent") {
+    require(op, "target", "uuid");
+    require(op, "parent", "uuid?");
+  } else if (type == "transform") {
+    require(op, "target", "uuid");
+    require(op, "matrix", "matrix");
+  } else if (type == "appearance") {
+    require(op, "target", "uuid");
+    if (!op.contains("color") && !op.contains("opacity") && !op.contains("visible") && !op.contains("locked"))
+      throw Error("appearance: needs at least one of color, opacity, visible, locked");
+    if (op.contains("color") && !(op["color"].is_array() && op["color"].size() == 3))
+      throw Error("appearance: color must be [r,g,b] in 0..1");
+  } else if (type == "rename") {
+    require(op, "target", "uuid");
+    require(op, "name", "string");
+  } else if (type == "annotation") {
+    require(op, "anchor", "object");
+    require(op, "text", "string");
+    Ref::from_json(op["anchor"]);
+  } else if (type == "measurement") {
+    require(op, "kind", "string");
+    require(op, "refs", "array");
+    for (const auto& r : op["refs"]) Ref::from_json(r);
+  } else if (type == "section") {
+    require(op, "name", "string");
+    require(op, "origin", "array");
+    require(op, "normal", "array");
+  } else if (type == "view") {
+    require(op, "name", "string");
+    require(op, "camera", "object");
+  } else if (type == "delete") {
+    require(op, "target", "uuid");
+  }
+}
+
+const Op& Document::append(json op, const std::string& author) {
+  validate_op(op);
+  // Canonical key order: op, id, ts, by, then everything else in the order given.
+  json out;
+  out["op"] = op["op"];
+  out["id"] = op.contains("id") ? op["id"] : json(new_uuid());
+  out["ts"] = op.contains("ts") ? op["ts"] : json(now_iso8601());
+  out["by"] = op.contains("by") ? op["by"] : json(author.empty() ? default_author() : author);
+  for (auto it = op.begin(); it != op.end(); ++it) {
+    if (it.key() == "op" || it.key() == "id" || it.key() == "ts" || it.key() == "by") continue;
+    out[it.key()] = it.value();
+  }
+  std::string id = out["id"].get<std::string>();
+  if (find_op(id)) throw Error("duplicate op id: " + id);
+  if (out["op"] == "delete" && !find_op(out["target"].get<std::string>()))
+    throw Error("delete: target op not found: " + out["target"].get<std::string>());
+  Op o;
+  o.id = id;
+  o.type = out["op"].get<std::string>();
+  o.raw = out.dump();
+  o.data = std::move(out);
+  ops.push_back(std::move(o));
+  dirty = true;
+  return ops.back();
+}
+
+std::string Document::add_body(const std::string& brep, json meta) {
+  if (brep.empty() || brep.back() != '\n') throw Error("body BREP text must end with a newline");
+  if (brep.find('\r') != std::string::npos) throw Error("body BREP text must use LF line endings");
+  std::string key = sha256_hex(brep);
+  if (bodies_index_.count(key)) return key;
+  BodyEntry e;
+  e.key = key;
+  e.meta = std::move(meta);
+  e.brep = brep;
+  bodies_index_[key] = bodies_.size();
+  bodies_.push_back(std::move(e));
+  dirty = true;
+  return key;
+}
+
+const BodyEntry* Document::body(const std::string& key) const {
+  auto it = bodies_index_.find(key);
+  return it == bodies_index_.end() ? nullptr : &bodies_[it->second];
+}
+
+std::vector<std::string> Document::body_keys() const {
+  std::vector<std::string> keys;
+  keys.reserve(bodies_.size());
+  for (const auto& b : bodies_) keys.push_back(b.key);
+  return keys;
+}
+
+const Op* Document::find_op(const std::string& id) const {
+  for (const auto& o : ops)
+    if (o.id == id) return &o;
+  return nullptr;
+}
+
+bool Document::is_deleted(const std::string& op_id) const {
+  Scene s = resolve(*this);
+  return std::find(s.deleted_ops.begin(), s.deleted_ops.end(), op_id) != s.deleted_ops.end();
+}
+
+static void collect_keys(const json& nodes, std::set<std::string>& keys) {
+  for (const auto& n : nodes) {
+    if (n.value("type", "") == "body") keys.insert(n.value("key", ""));
+    if (n.contains("children")) collect_keys(n["children"], keys);
+  }
+}
+
+std::vector<std::string> Document::gc() {
+  Scene s = resolve(*this);
+  std::set<std::string> deleted(s.deleted_ops.begin(), s.deleted_ops.end());
+  std::set<std::string> live;
+  for (const auto& o : ops)
+    if (o.type == "import" && !deleted.count(o.id)) collect_keys(o.data.value("nodes", json::array()), live);
+  std::vector<std::string> removed;
+  std::vector<BodyEntry> kept;
+  for (auto& b : bodies_) {
+    if (live.count(b.key)) kept.push_back(std::move(b));
+    else removed.push_back(b.key);
+  }
+  if (!removed.empty()) {
+    bodies_ = std::move(kept);
+    bodies_index_.clear();
+    for (size_t i = 0; i < bodies_.size(); ++i) bodies_index_[bodies_[i].key] = i;
+    dirty = true;
+  }
+  return removed;
+}
+
+// ---------------------------------------------------------------- format
+// Layout (all LF):
+//   #opad <format>
+//   <header json>
+//   #ops
+//   <one JSON object per line>
+//   #bodies
+//   #body <sha256> <line-count> <meta json>
+//   <line-count lines of ASCII BREP>
+//   ... repeated
+std::string Document::serialize() const {
+  std::string out;
+  size_t reserve = 256;
+  for (const auto& b : bodies_) reserve += b.brep.size() + 128;
+  for (const auto& o : ops) reserve += o.raw.size() + 1;
+  out.reserve(reserve);
+  out += "#opad ";
+  out += std::to_string(header.format);
+  out += '\n';
+  out += header.to_json().dump();
+  out += '\n';
+  out += "#ops\n";
+  for (const auto& o : ops) {
+    out += o.raw.empty() ? o.data.dump() : o.raw;
+    out += '\n';
+  }
+  out += "#bodies\n";
+  for (const auto& b : bodies_) {
+    size_t lines = static_cast<size_t>(std::count(b.brep.begin(), b.brep.end(), '\n'));
+    out += "#body ";
+    out += b.key;
+    out += ' ';
+    out += std::to_string(lines);
+    out += ' ';
+    out += b.meta.dump();
+    out += '\n';
+    out += b.brep;
+  }
+  return out;
+}
+
+Document Document::parse(const std::string& text, const std::filesystem::path& origin) {
+  Document d;
+  d.path = origin;
+  std::string where = origin.empty() ? std::string("<memory>") : origin.string();
+  auto fail = [&](size_t line, const std::string& msg) {
+    throw Error(where + ":" + std::to_string(line + 1) + ": " + msg);
+  };
+
+  // Split into lines without copying the body text more than once.
+  std::vector<std::string_view> lines;
+  {
+    size_t start = 0;
+    while (start <= text.size()) {
+      size_t nl = text.find('\n', start);
+      if (nl == std::string::npos) {
+        if (start < text.size()) lines.emplace_back(text.data() + start, text.size() - start);
+        break;
+      }
+      size_t len = nl - start;
+      if (len > 0 && text[nl - 1] == '\r') --len;
+      lines.emplace_back(text.data() + start, len);
+      start = nl + 1;
+    }
+  }
+  if (lines.size() < 2 || lines[0].rfind("#opad ", 0) != 0) fail(0, "not an OPAD document (expected '#opad <version>')");
+  int fmt = std::atoi(std::string(lines[0].substr(6)).c_str());
+  if (fmt < 1 || fmt > kFormatVersion)
+    fail(0, "unsupported format version " + std::to_string(fmt) + " (this build reads up to " +
+                std::to_string(kFormatVersion) + ")");
+  try {
+    d.header = Header::from_json(json::parse(lines[1]));
+  } catch (const json::exception& e) {
+    fail(1, std::string("bad header: ") + e.what());
+  }
+  d.header.format = fmt;
+
+  size_t i = 2;
+  if (i >= lines.size() || lines[i] != "#ops") fail(i, "expected '#ops'");
+  ++i;
+  for (; i < lines.size() && lines[i] != "#bodies"; ++i) {
+    std::string_view l = lines[i];
+    if (l.empty()) continue;
+    if (l.rfind("<<<<<<<", 0) == 0 || l.rfind("=======", 0) == 0 || l.rfind(">>>>>>>", 0) == 0)
+      fail(i, "unresolved git conflict marker");
+    if (l[0] == '#') continue;  // reserved for future section-level metadata; ignored
+    Op o;
+    try {
+      o.data = json::parse(l);
+      validate_op(o.data);
+    } catch (const json::exception& e) {
+      fail(i, std::string("bad op: ") + e.what());
+    } catch (const Error& e) {
+      fail(i, std::string("bad op: ") + e.what());
+    }
+    if (!o.data.contains("id")) fail(i, "op has no id");
+    o.id = o.data["id"].get<std::string>();
+    o.type = o.data["op"].get<std::string>();
+    o.raw = std::string(l);
+    d.ops.push_back(std::move(o));
+  }
+  if (i < lines.size() && lines[i] == "#bodies") {
+    ++i;
+    while (i < lines.size()) {
+      std::string_view l = lines[i];
+      if (l.empty()) { ++i; continue; }
+      if (l.rfind("#body ", 0) != 0) fail(i, "expected '#body <key> <lines> <meta>'");
+      std::istringstream hs{std::string(l.substr(6))};
+      std::string key;
+      size_t n = 0;
+      hs >> key >> n;
+      std::string meta_text;
+      std::getline(hs, meta_text);
+      if (key.size() != 64 || n == 0) fail(i, "bad body header");
+      if (i + n >= lines.size() + 0 && i + n > lines.size()) fail(i, "truncated body entry");
+      BodyEntry e;
+      e.key = key;
+      try {
+        e.meta = meta_text.empty() ? json::object() : json::parse(meta_text);
+      } catch (const json::exception& ex) {
+        fail(i, std::string("bad body meta: ") + ex.what());
+      }
+      e.brep.reserve(n * 40);
+      for (size_t k = 1; k <= n; ++k) {
+        if (i + k >= lines.size()) fail(i, "truncated body entry");
+        e.brep.append(lines[i + k]);
+        e.brep.push_back('\n');
+      }
+      if (sha256_hex(e.brep) != key) fail(i, "body entry content does not match its key (corrupted or edited)");
+      if (!d.bodies_index_.count(key)) {
+        d.bodies_index_[key] = d.bodies_.size();
+        d.bodies_.push_back(std::move(e));
+      }
+      i += n + 1;
+    }
+  }
+  d.persisted_ops_ = d.ops.size();
+  d.dirty = false;
+  return d;
+}
+
+Document Document::load(const std::filesystem::path& p) {
+  Document d = parse(read_text_file(p), p);
+  d.path = p;
+  return d;
+}
+
+void Document::save() {
+  if (path.empty()) throw Error("document has no path; use save_as");
+  save_as(path);
+}
+
+void Document::save_as(const std::filesystem::path& p) {
+  header.format = kFormatVersion;  // migrate on save (F9)
+  write_text_file(p, serialize());
+  path = p;
+  persisted_ops_ = ops.size();
+  dirty = false;
+}
+
+}  // namespace opad

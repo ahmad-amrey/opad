@@ -1,0 +1,42 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "vcpkg",
+      "displayName": "vcpkg (all platforms)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/vcpkg",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "msys2-mingw64",
+      "displayName": "MSYS2 MinGW-w64 (pacman packages)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/mingw64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_PREFIX_PATH": "C:/msys64/mingw64",
+        "CMAKE_C_COMPILER": "C:/msys64/mingw64/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "C:/msys64/mingw64/bin/g++.exe"
+      }
+    },
+    {
+      "name": "core-only",
+      "displayName": "core + cli only (no Qt, no Python)",
+      "inherits": "vcpkg",
+      "binaryDir": "${sourceDir}/build/core",
+      "cacheVariables": { "OPAD_BUILD_APP": "OFF", "OPAD_BUILD_PYTHON": "OFF" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "vcpkg", "configurePreset": "vcpkg" },
+    { "name": "msys2-mingw64", "configurePreset": "msys2-mingw64" },
+    { "name": "core-only", "configurePreset": "core-only" }
+  ],
+  "testPresets": [
+    { "name": "vcpkg", "configurePreset": "vcpkg", "output": { "outputOnFailure": true } },
+    { "name": "msys2-mingw64", "configurePreset": "msys2-mingw64", "output": { "outputOnFailure": true } },
+    { "name": "core-only", "configurePreset": "core-only", "output": { "outputOnFailure": true } }
+  ]
+}

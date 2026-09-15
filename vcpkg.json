@@ -1,0 +1,13 @@
+{
+  "name": "opad",
+  "version-string": "0.1.0",
+  "description": "OPAD: git-native STEP viewer",
+  "license": "MIT",
+  "dependencies": [
+    { "name": "opencascade", "features": [] },
+    "nlohmann-json",
+    "pybind11",
+    { "name": "qtbase", "default-features": false, "features": ["widgets", "opengl"], "platform": "!ios & !android" }
+  ],
+  "builtin-baseline": "b322364f06308bdd24823f9d8f03fe0cc86fd46f"
+}

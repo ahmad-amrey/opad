@@ -1,0 +1,31 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "opad"
+version = "0.1.0"
+description = "OPAD: git-native STEP viewer core - document format, STEP I/O, inspection, headless rendering"
+readme = "../README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: C++",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering",
+]
+
+[tool.scikit-build]
+# The wheel is built from the repository root CMake project with only core + the Python module enabled.
+cmake.source-dir = ".."
+cmake.args = [
+  "-DOPAD_BUILD_APP=OFF",
+  "-DOPAD_BUILD_CLI=OFF",
+  "-DOPAD_BUILD_PLUGINS=OFF",
+  "-DOPAD_BUILD_TESTS=OFF",
+  "-DOPAD_BUILD_PYTHON=ON",
+]
+wheel.packages = []
+# OCCT is a shared-library dependency: CI repairs the wheel (delvewheel / auditwheel / delocate) so the
+# TK*.dll/.so/.dylib files ship inside it. See .github/workflows/ci.yml.

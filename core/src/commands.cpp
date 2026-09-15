@@ -1,0 +1,566 @@
+#include "opad/commands.hpp"
+
+#include <algorithm>
+#include <map>
+#include <mutex>
+
+#include "opad/cache.hpp"
+#include "opad/diff.hpp"
+#include "opad/inspect.hpp"
+#include "opad/mesh.hpp"
+#include "opad/render.hpp"
+#include "opad/scene.hpp"
+#include "opad/step_io.hpp"
+
+namespace opad::commands {
+
+namespace {
+
+struct Registry {
+  std::vector<CommandInfo> infos;
+  std::map<std::string, Handler> handlers;
+  std::map<std::string, ExportFn> exporters;
+  std::recursive_mutex mu;
+};
+
+Registry& raw_registry() {
+  static Registry r;
+  return r;
+}
+
+void register_builtins();
+
+Registry& registry() {
+  static std::once_flag once;
+  std::call_once(once, register_builtins);
+  return raw_registry();
+}
+
+std::vector<std::string> str_list(const json& v) {
+  std::vector<std::string> out;
+  if (v.is_null()) return out;
+  if (v.is_string()) {
+    std::string s = v.get<std::string>();
+    size_t start = 0;
+    while (start <= s.size()) {
+      size_t comma = s.find(',', start);
+      std::string item = s.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+      while (!item.empty() && item.front() == ' ') item.erase(item.begin());
+      while (!item.empty() && item.back() == ' ') item.pop_back();
+      if (!item.empty()) out.push_back(item);
+      if (comma == std::string::npos) break;
+      start = comma + 1;
+    }
+    return out;
+  }
+  if (v.is_array())
+    for (const auto& e : v) out.push_back(e.get<std::string>());
+  return out;
+}
+
+Document& need(Document* d) {
+  if (!d) throw Error("this command needs a document: pass \"doc\"");
+  return *d;
+}
+
+bool is_step_path(const std::filesystem::path& p) {
+  std::string e = p.extension().string();
+  std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) { return std::tolower(c); });
+  return e == ".step" || e == ".stp";
+}
+
+RenderOptions render_options(const json& a) {
+  RenderOptions o;
+  o.width = a.value("width", 1280);
+  o.height = a.value("height", 720);
+  if (a.contains("size") && a["size"].is_string()) {
+    int w = 0, h = 0;
+    if (std::sscanf(a["size"].get<std::string>().c_str(), "%dx%d", &w, &h) == 2 && w > 0 && h > 0) { o.width = w; o.height = h; }
+  }
+  if (a.contains("view") && a["view"].is_string()) o.camera = Camera::preset(a["view"].get<std::string>());
+  if (a.contains("camera") && a["camera"].is_object()) {
+    o.camera = Camera::from_json(a["camera"]);
+    o.fit = a.value("fit", !(o.camera.absolute || o.camera.scale > 0));
+  }
+  o.edges = a.value("edges", true);
+  o.tolerance = a.value("tolerance", 0.2);
+  o.select = str_list(a.value("select", json()));
+  o.ignore_visibility = a.value("ignore_visibility", false);
+  if (a.contains("background") && a["background"].is_array() && a["background"].size() == 3)
+    o.background = {a["background"][0].get<float>(), a["background"][1].get<float>(), a["background"][2].get<float>()};
+  o.supersample = a.value("supersample", 2);
+  return o;
+}
+
+json op_with_target(const std::string& type, const json& a) {
+  json op;
+  op["op"] = type;
+  op["target"] = a.at("target");
+  return op;
+}
+
+void register_builtins() {
+  auto& r = raw_registry();
+  auto reg = [&](const char* name, const char* desc, json args, bool mutates, Handler h) {
+    r.infos.push_back({name, desc, std::move(args), mutates});
+    r.handlers[name] = std::move(h);
+  };
+
+  reg("version", "OPAD version", json::object(), false, [](Document*, const json&) {
+    json j;
+    j["version"] = version_string();
+    j["format"] = kFormatVersion;
+    return j;
+  });
+
+  reg("commands", "List every command with its arguments (the MCP adapter maps these 1:1)", json::object(), false,
+      [](Document*, const json&) {
+        json out = json::array();
+        for (const auto& c : list()) out.push_back({{"name", c.name}, {"description", c.description}, {"args", c.args}, {"mutates", c.mutates}});
+        return out;
+      });
+
+  reg("new", "Create an empty document", {{"doc", "path - .opad file to create"}, {"units", "string - mm (default)"}}, true,
+      [](Document*, const json& a) {
+        Document d = Document::create(a.value("units", "mm"));
+        d.save_as(a.at("doc").get<std::string>());
+        json j;
+        j["doc"] = d.path.string();
+        j["uuid"] = d.header.uuid;
+        return j;
+      });
+
+  reg("info", "Header, units, op count, bodies, bounding box", {{"doc", "path - .opad or .step"}}, false,
+      [](Document* d, const json&) { return document_info(need(d), resolve(need(d))); });
+
+  reg("ops", "The op log, optionally filtered",
+      {{"doc", "path"}, {"type", "string|array - op types to include"}, {"since", "uuid - only ops after this op"},
+       {"live_only", "bool - drop tombstoned ops"}, {"target", "uuid - only ops touching this node/op"}},
+      false, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        Scene s = resolve(doc);
+        std::vector<std::string> types = str_list(a.value("type", json()));
+        std::string since = a.value("since", ""), target = a.value("target", "");
+        bool live_only = a.value("live_only", false);
+        bool started = since.empty();
+        json out = json::array();
+        for (const auto& o : doc.ops) {
+          if (!started) { if (o.id == since) started = true; continue; }
+          if (!types.empty() && std::find(types.begin(), types.end(), o.type) == types.end()) continue;
+          bool deleted = std::find(s.deleted_ops.begin(), s.deleted_ops.end(), o.id) != s.deleted_ops.end();
+          if (live_only && deleted) continue;
+          if (!target.empty()) {
+            bool hit = o.data.value("target", "") == target;
+            if (!hit && o.data.contains("anchor")) hit = o.data["anchor"].dump().find(target) != std::string::npos;
+            if (!hit && o.data.contains("refs")) hit = o.data["refs"].dump().find(target) != std::string::npos;
+            if (!hit && o.type == "import") hit = o.data.dump().find(target) != std::string::npos;
+            if (!hit) continue;
+          }
+          json j = o.data;
+          if (deleted) j["deleted"] = true;
+          out.push_back(j);
+        }
+        return out;
+      });
+
+  reg("tree", "Component/body hierarchy", {{"doc", "path"}, {"depth", "int - max depth (default unlimited)"}}, false,
+      [](Document* d, const json& a) {
+        Scene s = resolve(need(d));
+        json j;
+        j["roots"] = s.tree_json(a.value("depth", -1));
+        json unresolved = json::array();
+        for (const auto& u : s.unresolved) unresolved.push_back({{"op", u.op_id}, {"type", u.op_type}, {"reason", u.reason}});
+        j["unresolved"] = unresolved;
+        return j;
+      });
+
+  reg("inspect", "Type, bbox, area/volume, normal, adjacent entities of a reference",
+      {{"doc", "path"}, {"ref", "string - uuid | uuid/face/N | uuid/edge/N | uuid/vertex/N | point/x,y,z"}, {"refs", "array - several refs"}},
+      false, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        Scene s = resolve(doc);
+        if (a.contains("refs")) {
+          json out = json::array();
+          for (const auto& r : str_list(a["refs"])) out.push_back(inspect_ref(doc, s, Ref::parse(r)));
+          return out;
+        }
+        if (!a.contains("ref")) throw Error("inspect: pass \"ref\" or \"refs\"");
+        return inspect_ref(doc, s, Ref::from_json(a["ref"]));
+      });
+
+  reg("properties", "Properties panel data for a node", {{"doc", "path"}, {"node", "uuid"}}, false,
+      [](Document* d, const json& a) { return node_properties(need(d), resolve(need(d)), a.at("node").get<std::string>()); });
+
+  reg("annotations", "List annotations, measurements, sections and views", {{"doc", "path"}, {"by", "string - filter annotations by author"}}, false,
+      [](Document* d, const json& a) {
+        Scene s = resolve(need(d));
+        std::string by = a.value("by", "");
+        json ann = json::array(), meas = json::array(), sec = json::array(), views = json::array();
+        for (const auto& x : s.annotations) {
+          if (!by.empty() && x.by != by) continue;
+          ann.push_back({{"id", x.id}, {"anchor", x.anchor.str()}, {"text", x.text}, {"by", x.by}, {"ts", x.ts}, {"unresolved", x.unresolved}});
+        }
+        for (const auto& m : s.measurements) {
+          json refs = json::array();
+          for (const auto& r : m.refs) refs.push_back(r.str());
+          meas.push_back({{"id", m.id}, {"kind", m.kind}, {"refs", refs}, {"result", m.result}, {"by", m.by}, {"ts", m.ts}, {"unresolved", m.unresolved}});
+        }
+        for (const auto& p : s.sections)
+          sec.push_back({{"id", p.id}, {"name", p.name}, {"origin", {p.origin[0], p.origin[1], p.origin[2]}}, {"normal", {p.normal[0], p.normal[1], p.normal[2]}}, {"enabled", p.enabled}});
+        for (const auto& v : s.views) views.push_back({{"id", v.id}, {"name", v.name}, {"camera", v.camera}});
+        json j;
+        j["annotations"] = ann;
+        j["measurements"] = meas;
+        j["sections"] = sec;
+        j["views"] = views;
+        return j;
+      });
+
+  reg("measure", "Distance, angle, radius or bbox between references; optionally pinned as a measurement op",
+      {{"doc", "path"}, {"kind", "distance|angle|radius|bbox"}, {"refs", "array - references"}, {"pin", "bool - append a measurement op"}, {"by", "string"}},
+      true, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        Scene s = resolve(doc);
+        std::string kind = a.value("kind", "distance");
+        std::vector<Ref> refs;
+        for (const auto& r : str_list(a.value("refs", json()))) refs.push_back(Ref::parse(r));
+        json res;
+        if (kind == "distance") {
+          if (refs.size() != 2) throw Error("distance needs exactly two refs");
+          res = measure_distance(doc, s, refs[0], refs[1]);
+        } else if (kind == "angle") {
+          if (refs.size() != 2) throw Error("angle needs exactly two refs");
+          res = measure_angle(doc, s, refs[0], refs[1]);
+        } else if (kind == "radius" || kind == "diameter") {
+          if (refs.size() != 1) throw Error("radius needs exactly one ref");
+          res = measure_radius(doc, s, refs[0]);
+        } else if (kind == "bbox") {
+          res = measure_bbox(doc, s, refs);
+        } else {
+          throw Error("unknown measurement kind: " + kind);
+        }
+        if (a.value("pin", false)) {
+          json op;
+          op["op"] = "measurement";
+          op["kind"] = kind;
+          json rj = json::array();
+          for (const auto& r : refs) rj.push_back(r.to_json());
+          op["refs"] = rj;
+          op["result"] = res;
+          res["pinned_op"] = doc.append(op, a.value("by", "")).id;
+        }
+        return res;
+      });
+
+  reg("append", "Validate and append one op or a list of ops", {{"doc", "path"}, {"op", "object - the op"}, {"ops", "array - several ops"}, {"by", "string - author"}},
+      true, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        json ids = json::array();
+        if (a.contains("ops")) for (const auto& o : a["ops"]) ids.push_back(doc.append(o, a.value("by", "")).id);
+        if (a.contains("op")) ids.push_back(doc.append(a["op"], a.value("by", "")).id);
+        if (ids.empty()) throw Error("append: pass \"op\" or \"ops\"");
+        json j;
+        j["appended"] = ids;
+        return j;
+      });
+
+  reg("import", "Import a STEP file into the document (F2)",
+      {{"doc", "path"}, {"file", "path - .step/.stp"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"}},
+      true, [](Document* d, const json& a) {
+        ImportOptions o;
+        o.author = a.value("by", "");
+        o.parent = a.value("parent", "");
+        o.heal = a.value("heal", true);
+        return import_step(need(d), a.at("file").get<std::string>(), o).to_json();
+      });
+
+  reg("import_brep", "Import a shape given as OCCT ASCII BREP text (build123d/CadQuery/OCP bridge)",
+      {{"doc", "path"}, {"brep", "string - BREP text"}, {"file", "path - .brep file (alternative to brep)"}, {"name", "string"}, {"by", "string"}, {"parent", "uuid"}},
+      true, [](Document* d, const json& a) {
+        ImportOptions o;
+        o.author = a.value("by", "");
+        o.parent = a.value("parent", "");
+        std::string text = a.value("brep", "");
+        if (text.empty() && a.contains("file")) text = read_text_file(a["file"].get<std::string>());
+        if (text.empty()) throw Error("import_brep: pass \"brep\" text or \"file\"");
+        return import_brep(need(d), text, a.value("name", "Body"), o).to_json();
+      });
+
+  reg("export", "Export selected objects (or everything) to step|obj|stl|glb or a plugin format",
+      {{"doc", "path"}, {"format", "step|obj|stl|glb|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
+       {"tolerance", "number - mesh deflection mm"}, {"ascii", "bool - STL text"}, {"per_body", "bool - STL one file per body"}, {"mtl", "bool - OBJ materials"}},
+      false, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        std::string fmt = a.value("format", "step");
+        if (has_exporter(fmt)) return run_exporter(fmt, doc, a);
+        ExportOptions o;
+        o.format = fmt;
+        o.select = str_list(a.value("select", json()));
+        o.step_schema = a.value("schema", "AP214");
+        o.tolerance = a.value("tolerance", 0.1);
+        o.ascii = a.value("ascii", false);
+        o.per_body = a.value("per_body", false);
+        o.mtl = a.value("mtl", true);
+        std::string out = a.value("out", "");
+        if (out.empty()) throw Error("export: \"out\" path required");
+        return export_selection(doc, resolve(doc), out, o).to_json();
+      });
+
+  reg("render", "Headless screenshot (PNG)",
+      {{"doc", "path"}, {"out", "path - .png"}, {"view", "iso|top|bottom|front|back|left|right"}, {"camera", "object - {eye,target,up,projection,scale}"},
+       {"width", "int"}, {"height", "int"}, {"select", "array|csv - node uuids"}, {"edges", "bool"}, {"background", "[r,g,b] 0..1"}, {"tolerance", "number"}},
+      false, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        RenderOptions o = render_options(a);
+        Image img = render_scene(doc, resolve(doc), o);
+        std::string out = a.value("out", "");
+        if (out.empty()) throw Error("render: \"out\" path required");
+        write_png(out, img);
+        json j;
+        j["out"] = out;
+        j["width"] = img.width;
+        j["height"] = img.height;
+        return j;
+      });
+
+  reg("diff", "Added/removed/changed ops between two documents, optionally with a geometric diff image",
+      {{"a", "path"}, {"b", "path"}, {"image", "path - optional .png"}, {"view", "string"}, {"width", "int"}, {"height", "int"}}, false,
+      [](Document*, const json& a) {
+        Document da = Document::load(a.at("a").get<std::string>());
+        Document db = Document::load(a.at("b").get<std::string>());
+        json j = diff_documents(da, db);
+        if (a.contains("image") && a["image"].is_string()) {
+          RenderOptions o = render_options(a);
+          write_png(a["image"].get<std::string>(), render_diff(da, db, o));
+          j["image"] = a["image"];
+        }
+        return j;
+      });
+
+  reg("gc", "Remove body entries no live op references", {{"doc", "path"}}, true, [](Document* d, const json&) {
+    json j;
+    j["removed"] = need(d).gc();
+    return j;
+  });
+
+  reg("mesh", "Tessellated geometry of bodies in world coordinates (for plugins and tools)",
+      {{"doc", "path"}, {"select", "array|csv"}, {"tolerance", "number"}}, false, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        Scene s = resolve(doc);
+        double tol = a.value("tolerance", 0.1);
+        json out = json::array();
+        for (const auto& id : select_bodies(s, str_list(a.value("select", json())))) {
+          const Node* n = s.node(id);
+          if (n->body_missing) continue;
+          Mesh m = tessellate_body(doc, n->body_key, tol);
+          Mat4 w = s.world(id);
+          json pos = json::array(), nrm = json::array();
+          for (size_t i = 0; i + 2 < m.positions.size(); i += 3) {
+            Vec3 p = w.apply({m.positions[i], m.positions[i + 1], m.positions[i + 2]});
+            Vec3 dn = w.apply_dir({m.normals[i], m.normals[i + 1], m.normals[i + 2]});
+            pos.push_back(p[0]); pos.push_back(p[1]); pos.push_back(p[2]);
+            nrm.push_back(dn[0]); nrm.push_back(dn[1]); nrm.push_back(dn[2]);
+          }
+          json b;
+          b["id"] = id;
+          b["name"] = n->name;
+          b["color"] = {n->color[0], n->color[1], n->color[2]};
+          b["positions"] = pos;
+          b["normals"] = nrm;
+          b["indices"] = m.indices;
+          out.push_back(b);
+        }
+        return out;
+      });
+
+  reg("annotate", "Add a text annotation anchored to a body/face/edge/point",
+      {{"doc", "path"}, {"anchor", "string - reference"}, {"text", "string"}, {"by", "string"}}, true, [](Document* d, const json& a) {
+        json op;
+        op["op"] = "annotation";
+        op["anchor"] = Ref::from_json(a.at("anchor")).to_json();
+        op["text"] = a.at("text");
+        json j;
+        j["id"] = need(d).append(op, a.value("by", "")).id;
+        return j;
+      });
+
+  reg("delete", "Tombstone an earlier op (annotation resolved, rename undone, import removed...)",
+      {{"doc", "path"}, {"target", "uuid - op id"}, {"by", "string"}}, true, [](Document* d, const json& a) {
+        json j;
+        j["id"] = need(d).append(op_with_target("delete", a), a.value("by", "")).id;
+        return j;
+      });
+
+  reg("rename", "Rename a node", {{"doc", "path"}, {"target", "uuid"}, {"name", "string"}}, true, [](Document* d, const json& a) {
+    json op = op_with_target("rename", a);
+    op["name"] = a.at("name");
+    json j;
+    j["id"] = need(d).append(op, a.value("by", "")).id;
+    return j;
+  });
+
+  reg("appearance", "Set colour/opacity/visibility/lock of a node",
+      {{"doc", "path"}, {"target", "uuid"}, {"color", "[r,g,b]"}, {"opacity", "number"}, {"visible", "bool"}, {"locked", "bool"}}, true,
+      [](Document* d, const json& a) {
+        json op = op_with_target("appearance", a);
+        for (const char* k : {"color", "opacity", "visible", "locked"}) if (a.contains(k)) op[k] = a[k];
+        json j;
+        j["id"] = need(d).append(op, a.value("by", "")).id;
+        return j;
+      });
+
+  reg("transform", "Set the local placement of a node", {{"doc", "path"}, {"target", "uuid"}, {"matrix", "[16] row-major"}}, true,
+      [](Document* d, const json& a) {
+        json op = op_with_target("transform", a);
+        op["matrix"] = Mat4::from_json(a.at("matrix")).to_json();
+        json j;
+        j["id"] = need(d).append(op, a.value("by", "")).id;
+        return j;
+      });
+
+  reg("reparent", "Move a node under another component (null = root)", {{"doc", "path"}, {"target", "uuid"}, {"parent", "uuid|null"}, {"index", "int"}}, true,
+      [](Document* d, const json& a) {
+        json op = op_with_target("reparent", a);
+        op["parent"] = a.contains("parent") ? a["parent"] : json(nullptr);
+        if (a.contains("index")) op["index"] = a["index"];
+        json j;
+        j["id"] = need(d).append(op, a.value("by", "")).id;
+        return j;
+      });
+
+  reg("section", "Add a named section plane", {{"doc", "path"}, {"name", "string"}, {"origin", "[x,y,z]"}, {"normal", "[x,y,z]"}}, true,
+      [](Document* d, const json& a) {
+        json op;
+        op["op"] = "section";
+        op["name"] = a.at("name");
+        op["origin"] = a.at("origin");
+        op["normal"] = a.at("normal");
+        json j;
+        j["id"] = need(d).append(op, a.value("by", "")).id;
+        return j;
+      });
+
+  reg("view", "Add a named camera bookmark", {{"doc", "path"}, {"name", "string"}, {"camera", "object"}}, true, [](Document* d, const json& a) {
+    json op;
+    op["op"] = "view";
+    op["name"] = a.at("name");
+    op["camera"] = a.contains("camera") ? a["camera"] : Camera::preset(a.value("preset", "iso")).to_json();
+    json j;
+    j["id"] = need(d).append(op, a.value("by", "")).id;
+    return j;
+  });
+
+  reg("cache", "Inspect or clear the user cache", {{"action", "info|clear"}}, false, [](Document*, const json& a) {
+    json j;
+    if (a.value("action", "info") == "clear") cache_clear();
+    j["dir"] = cache_dir().string();
+    j["bytes"] = cache_size_bytes();
+    return j;
+  });
+
+  // F25: the running app publishes its selection to <cache>/selection.json; agents read it here.
+  reg("selection", "Current GUI selection (uuids + descriptors) as published by the running app", json::object(), false,
+      [](Document*, const json&) {
+        json j;
+        std::filesystem::path p = cache_dir() / "selection.json";
+        std::error_code ec;
+        if (!std::filesystem::exists(p, ec)) {
+          j["available"] = false;
+          j["selection"] = json::array();
+          return j;
+        }
+        j = json::parse(read_text_file(p), nullptr, false);
+        if (j.is_discarded()) j = json{{"available", false}, {"selection", json::array()}};
+        else j["available"] = true;
+        j["file"] = p.string();
+        return j;
+      });
+}
+
+}  // namespace
+
+void register_command(const CommandInfo& info, Handler h) {
+  auto& r = registry();
+  std::lock_guard<std::recursive_mutex> lock(r.mu);
+  auto it = std::find_if(r.infos.begin(), r.infos.end(), [&](const CommandInfo& c) { return c.name == info.name; });
+  if (it != r.infos.end()) *it = info;
+  else r.infos.push_back(info);
+  r.handlers[info.name] = std::move(h);
+}
+
+std::vector<CommandInfo> list() {
+  auto& r = registry();
+  std::lock_guard<std::recursive_mutex> lock(r.mu);
+  return r.infos;
+}
+
+bool exists(const std::string& name) {
+  auto& r = registry();
+  std::lock_guard<std::recursive_mutex> lock(r.mu);
+  return r.handlers.count(name) > 0;
+}
+
+json run(const std::string& name, const json& args, Document* live) {
+  auto& r = registry();
+  Handler h;
+  CommandInfo info;
+  {
+    std::lock_guard<std::recursive_mutex> lock(r.mu);
+    auto it = r.handlers.find(name);
+    if (it == r.handlers.end()) throw Error("unknown command: " + name);
+    h = it->second;
+    info = *std::find_if(r.infos.begin(), r.infos.end(), [&](const CommandInfo& c) { return c.name == name; });
+  }
+  Document loaded;
+  Document* doc = live;
+  bool save_after = false, transient = false;
+  if (!doc && name != "new" && args.contains("doc") && args["doc"].is_string()) {
+    std::filesystem::path p = args["doc"].get<std::string>();
+    if (is_step_path(p)) {
+      loaded = browse_step(p);
+      transient = true;
+    } else {
+      loaded = Document::load(p);
+      save_after = info.mutates && args.value("save", true);
+    }
+    doc = &loaded;
+  }
+  json out = h(doc, args);
+  if (save_after && doc->dirty) doc->save();
+  if (transient && info.mutates && out.is_object()) out["transient"] = true;
+  return out;
+}
+
+void register_exporter(const std::string& format, ExportFn fn) {
+  auto& r = registry();
+  std::lock_guard<std::recursive_mutex> lock(r.mu);
+  r.exporters[format] = std::move(fn);
+}
+
+bool has_exporter(const std::string& format) {
+  auto& r = registry();
+  std::lock_guard<std::recursive_mutex> lock(r.mu);
+  return r.exporters.count(format) > 0;
+}
+
+json run_exporter(const std::string& format, const Document& doc, const json& args) {
+  ExportFn fn;
+  {
+    auto& r = registry();
+    std::lock_guard<std::recursive_mutex> lock(r.mu);
+    auto it = r.exporters.find(format);
+    if (it == r.exporters.end()) throw Error("no exporter for format: " + format);
+    fn = it->second;
+  }
+  return fn(doc, args);
+}
+
+std::vector<std::string> exporter_formats() {
+  std::vector<std::string> out = {"step", "obj", "stl", "glb"};
+  auto& r = registry();
+  std::lock_guard<std::recursive_mutex> lock(r.mu);
+  for (const auto& [k, v] : r.exporters) out.push_back(k);
+  return out;
+}
+
+}  // namespace opad::commands
