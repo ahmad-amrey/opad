@@ -1,62 +1,65 @@
 #include "MainWindow.hpp"
 
+#include <QActionGroup>
 #include <QApplication>
+#include <QButtonGroup>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QColorDialog>
-#include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QInputDialog>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QProcess>
 #include <QPushButton>
-#include <QSlider>
+#include <QRadioButton>
 #include <QStatusBar>
-#include <QStyleFactory>
-#include <QTabWidget>
 #include <QToolBar>
-#include <QToolButton>
 #include <QVBoxLayout>
 
-#include <fstream>
-
+#include "Icons.hpp"
+#include "Theme.hpp"
 #include "opad/inspect.hpp"
 
 MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   setWindowTitle("OPAD");
-  resize(1400, 900);
-  m_viewport = new Viewport(m_doc, this);
-  setCentralWidget(m_viewport);
+  setWindowIcon(icons::icon("body", theme::current().sel));
+  resize(1600, 1000);
+  setMinimumSize(1280, 800);
+  setAcceptDrops(true);
+  applyTheme(m_settings.value("ui/dark", true).toBool());
   buildActions();
   buildMenus();
-  buildToolbar();
+  buildCentral();
+  buildRibbon();
   buildDocks();
+  buildStatusBar();
 
-  m_statusPath = new QLabel(this);
-  m_statusGit = new QLabel(this);
-  m_statusSel = new QLabel(this);
-  m_statusHover = new QLabel(this);
-  statusBar()->addWidget(m_statusPath, 2);
-  statusBar()->addWidget(m_statusHover, 1);
-  statusBar()->addPermanentWidget(m_statusSel);
-  statusBar()->addPermanentWidget(m_statusGit);
-
-  connect(m_doc, &AppDocument::changed, this, [this] { updateTitle(); rebuildViewsMenu(); });
+  connect(m_doc, &AppDocument::changed, this, [this] {
+    updateTitle();
+    rebuildViewsMenu();
+    updateChips();
+    showDocument(m_doc->hasDocument);
+  });
   connect(m_doc, &AppDocument::pathChanged, this, [this] { updateTitle(); refreshGit(); });
   connect(m_doc, &AppDocument::message, this, [this](const QString& t) { statusBar()->showMessage(t, 6000); });
   connect(m_viewport, &Viewport::selectionChanged, this, &MainWindow::onViewportSelection);
   connect(m_viewport, &Viewport::hoverChanged, m_statusHover, &QLabel::setText);
   connect(m_viewport, &Viewport::contextMenuRequested, this, [this](const QPoint& p) { showContextMenu(p, currentNodeIds()); });
   connect(m_viewport, &Viewport::meshingProgress, this, [this](int remaining) {
-    if (remaining > 0) statusBar()->showMessage(tr("Tessellating %1 bodies...").arg(remaining));
+    if (remaining > 0) statusBar()->showMessage(tr("Tessellating %1 bodies…").arg(remaining));
     else statusBar()->clearMessage();
   });
   connect(m_browser, &BrowserPanel::selectionChanged, this, &MainWindow::onBrowserSelection);
@@ -64,40 +67,79 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_browser, &BrowserPanel::fitRequested, m_viewport, &Viewport::fitNodes);
   connect(m_annotations, &AnnotationsPanel::addRequested, this, &MainWindow::addAnnotation);
   connect(m_annotations, &AnnotationsPanel::resolveRequested, this, &MainWindow::deleteOp);
+  connect(m_annotations, &AnnotationsPanel::restoreRequested, this, &MainWindow::restoreOp);
   connect(m_annotations, &AnnotationsPanel::selectNode, this, [this](const std::string& id) { onBrowserSelection({id}); m_browser->setSelectedIds({id}); });
-  connect(m_timeline, &TimelineWidget::opClicked, this, &MainWindow::selectOpTargets);
-  connect(m_timeline, &TimelineWidget::deleteRequested, this, [this](const std::string& id) {
-    QMenu menu(this);
-    bool deleted = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), id) != m_doc->scene.deleted_ops.end();
-    QAction* del = menu.addAction(deleted ? tr("Restore (delete the tombstone)") : tr("Delete (tombstone)"));
-    QAction* sel = menu.addAction(tr("Select what it touches"));
-    QAction* chosen = menu.exec(QCursor::pos());
-    if (chosen == del) deleteOp(id);
-    else if (chosen == sel) selectOpTargets(id);
+  connect(m_props, &PropertiesPanel::faceChosen, this, [this](int index) {
+    auto refs = m_viewport->selection();
+    if (refs.empty()) return;
+    opad::Ref r = refs.front();
+    r.kind = opad::Ref::Kind::Face;
+    r.index = index;
+    showProperties({r});
   });
+  connect(m_section, &SectionPanel::planeChanged, this, [this] {
+    m_viewport->setSection(m_section->enabled(), m_section->origin(), m_section->normal(), m_section->caps());
+    updateChips();
+  });
+  connect(m_section, &SectionPanel::enabledChanged, this, [this](bool on) {
+    if (action("view.section")->isChecked() != on) action("view.section")->setChecked(on);
+  });
+  connect(m_section, &SectionPanel::saveRequested, this, [this](const QString& name, const opad::Vec3& o, const opad::Vec3& n) {
+    bool ok = false;
+    QString finalName = QInputDialog::getText(this, tr("Named section"), tr("Name:"), QLineEdit::Normal, name, &ok);
+    if (!ok || finalName.isEmpty()) return;
+    guarded([&] { m_doc->run("section", opad::json{{"name", finalName.toStdString()}, {"origin", o}, {"normal", n}}); });
+  });
+  connect(m_timeline, &TimelineWidget::opClicked, this, &MainWindow::selectOpTargets);
+  connect(m_timeline, &TimelineWidget::contextRequested, this, &MainWindow::timelineMenu);
+  connect(m_measureCard, &MeasureCard::pinRequested, this, &MainWindow::pinMeasurement);
+  connect(m_measureCard, &MeasureCard::clearRequested, this, &MainWindow::clearMeasurement);
+  connect(m_empty, &EmptyState::openRequested, action("file.open"), &QAction::trigger);
+  connect(m_empty, &EmptyState::importRequested, action("file.import"), &QAction::trigger);
+  connect(m_empty, &EmptyState::recentChosen, this, &MainWindow::openPath);
+  connect(m_empty, &EmptyState::filesDropped, this, [this](const QStringList& paths) { openPath(paths.first()); });
 
   m_gitTimer.setInterval(5000);
   connect(&m_gitTimer, &QTimer::timeout, this, &MainWindow::refreshGit);
   m_gitTimer.start();
 
-  applyTheme(m_settings.value("ui/dark", true).toBool());
   restoreGeometry(m_settings.value("ui/geometry").toByteArray());
-  restoreState(m_settings.value("ui/state").toByteArray());
+  if (m_settings.value("ui/layoutVersion").toInt() == 2) restoreState(m_settings.value("ui/state").toByteArray());
+  // restoreState carries the corner layout of older sessions; the design fixes it, so re-apply.
+  setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
+  setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
+  setCorner(Qt::TopLeftCorner, Qt::LeftDockWidgetArea);
+  setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
+  m_empty->setRecent(recent());
+  showDocument(false);
   updateTitle();
+  updateChips();
 }
 
 // ---------------------------------------------------------------- actions
-QAction* MainWindow::addAction(const QString& id, const QString& text, const QKeySequence& shortcut, std::function<void()> fn, bool checkable) {
+QAction* MainWindow::addAction(const QString& id, const QString& text, const QString& icon, const QKeySequence& shortcut, std::function<void()> fn, bool checkable) {
   auto* a = new QAction(text, this);
   a->setObjectName(id);
+  a->setData(icon);
+  if (!icon.isEmpty()) a->setIcon(icons::themed(icon));
   QString saved = m_settings.value("shortcuts/" + id).toString();
   a->setShortcut(saved.isEmpty() ? shortcut : QKeySequence(saved));
   a->setCheckable(checkable);
   a->setShortcutContext(Qt::WindowShortcut);
+  QString tip = text;
+  tip.remove('&');
+  if (!a->shortcut().isEmpty()) tip += "  (" + a->shortcut().toString(QKeySequence::NativeText) + ")";
+  a->setToolTip(tip);
   connect(a, &QAction::triggered, this, [this, fn] { guarded(fn); });
   m_actions << a;
   QMainWindow::addAction(a);
   return a;
+}
+
+QAction* MainWindow::action(const QString& id) const {
+  for (QAction* a : m_actions)
+    if (a->objectName() == id) return a;
+  return nullptr;
 }
 
 void MainWindow::guarded(const std::function<void()>& fn) {
@@ -110,74 +152,98 @@ void MainWindow::guarded(const std::function<void()>& fn) {
 
 void MainWindow::buildActions() {
   // File
-  addAction("file.new", tr("&New document"), QKeySequence::New, [this] { if (maybeSave()) m_doc->newDocument(); });
-  addAction("file.open", tr("&Open... (browse STEP or open .opad)"), QKeySequence::Open, [this] {
+  addAction("file.new", tr("&New document"), "doc", QKeySequence::New, [this] { if (maybeSave()) m_doc->newDocument(); });
+  addAction("file.open", tr("&Open…"), "open", QKeySequence("Ctrl+O"), [this] {
     if (!maybeSave()) return;
     QString p = QFileDialog::getOpenFileName(this, tr("Open"), m_settings.value("ui/lastDir").toString(), tr("OPAD or STEP (*.opad *.step *.stp);;OPAD document (*.opad);;STEP (*.step *.stp)"));
     if (!p.isEmpty()) openPath(p);
   });
-  addAction("file.import", tr("&Import STEP into document..."), QKeySequence("Ctrl+I"), [this] {
+  addAction("file.import", tr("&Import STEP…"), "import", QKeySequence("Ctrl+I"), [this] {
     QString p = QFileDialog::getOpenFileName(this, tr("Import STEP"), m_settings.value("ui/lastDir").toString(), tr("STEP (*.step *.stp)"));
     if (p.isEmpty()) return;
     m_settings.setValue("ui/lastDir", QFileInfo(p).absolutePath());
     auto ids = currentNodeIds();
     QString parent;
-    if (ids.size() == 1 && m_doc->node(ids[0]) && m_doc->node(ids[0])->kind == opad::Node::Kind::Component) {
-      if (QMessageBox::question(this, tr("Import"), tr("Import under the selected component \"%1\"?").arg(m_doc->nodeName(ids[0]))) == QMessageBox::Yes) parent = QString::fromStdString(ids[0]);
-    }
+    if (ids.size() == 1 && m_doc->node(ids[0]) && m_doc->node(ids[0])->kind == opad::Node::Kind::Component &&
+        QMessageBox::question(this, tr("Import"), tr("Import under the selected component “%1”?").arg(m_doc->nodeName(ids[0]))) == QMessageBox::Yes)
+      parent = QString::fromStdString(ids[0]);
     m_doc->importStep(p, parent);
+    addRecent(p);
     m_viewport->fitAll();
   });
-  addAction("file.save", tr("&Save"), QKeySequence::Save, [this] {
+  addAction("file.importdoc", tr("Import browsed STEP into a document"), "import", QKeySequence(), [this] {
+    if (!m_doc->browse) return;
+    QString src = m_settings.value("ui/lastBrowse").toString();
+    if (src.isEmpty()) throw opad::Error("No browsed STEP file to import.");
+    m_doc->importStep(src);
+    m_viewport->fitAll();
+  });
+  addAction("file.save", tr("&Save"), "save", QKeySequence("Ctrl+S"), [this] {
     if (m_doc->browse) throw opad::Error("Browse mode shows a STEP file without a document. Use Import to create one.");
-    if (m_doc->doc.path.empty()) m_actions.at(4)->trigger();
+    if (m_doc->doc.path.empty()) action("file.saveas")->trigger();
     else m_doc->save();
   });
-  addAction("file.saveas", tr("Save &As..."), QKeySequence::SaveAs, [this] {
+  addAction("file.saveas", tr("Save &As…"), "save", QKeySequence("Ctrl+Shift+S"), [this] {
     if (m_doc->browse) throw opad::Error("Browse mode shows a STEP file without a document. Use Import to create one.");
     QString p = QFileDialog::getSaveFileName(this, tr("Save document"), m_settings.value("ui/lastDir").toString(), tr("OPAD document (*.opad)"));
     if (p.isEmpty()) return;
     if (!p.endsWith(".opad", Qt::CaseInsensitive)) p += ".opad";
     m_settings.setValue("ui/lastDir", QFileInfo(p).absolutePath());
     m_doc->saveAs(p);
+    addRecent(p);
   });
-  addAction("file.export", tr("&Export..."), QKeySequence("Ctrl+E"), [this] { exportDialog(); });
-  addAction("file.screenshot", tr("Save screens&hot..."), QKeySequence("Ctrl+Shift+P"), [this] { screenshot(); });
-  addAction("file.quit", tr("&Quit"), QKeySequence::Quit, [this] { close(); });
+  addAction("file.export", tr("&Export…"), "export", QKeySequence("Ctrl+E"), [this] { exportDialog(); });
+  addAction("file.screenshot", tr("Save screens&hot…"), "export", QKeySequence("Ctrl+Shift+P"), [this] { screenshot(); });
+  addAction("file.quit", tr("&Quit"), "", QKeySequence::Quit, [this] { close(); });
 
   // View
-  addAction("view.fit", tr("&Fit all"), QKeySequence("F"), [this] { m_viewport->fitAll(); });
-  addAction("view.fitsel", tr("Fit &selection"), QKeySequence("Shift+F"), [this] { m_viewport->fitSelection(); });
-  addAction("view.home", tr("&Home view"), QKeySequence("H"), [this] { m_viewport->home(); });
+  addAction("view.fit", tr("Fit"), "fit", QKeySequence("F"), [this] { m_viewport->fitAll(); });
+  addAction("view.fitsel", tr("Fit selection"), "fit", QKeySequence("Shift+F"), [this] { m_viewport->fitSelection(); });
+  addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(); });
   for (const auto& [name, key] : std::vector<std::pair<QString, QString>>{{"top", "Ctrl+1"}, {"front", "Ctrl+2"}, {"right", "Ctrl+3"}, {"iso", "Ctrl+4"}, {"bottom", "Ctrl+5"}, {"back", "Ctrl+6"}, {"left", "Ctrl+7"}})
-    addAction("view." + name, tr("View: %1").arg(name), QKeySequence(key), [this, n = name] { m_viewport->standardView(n); });
-  QAction* ortho = addAction("view.ortho", tr("&Orthographic projection"), QKeySequence("O"), [this] {}, true);
+    addAction("view." + name, tr("View: %1").arg(name), "home", QKeySequence(key), [this, n = name] { m_viewport->standardView(n); });
+  QAction* ortho = addAction("view.ortho", tr("Orthographic"), "ortho", QKeySequence("O"), [this] {}, true);
   ortho->setChecked(true);
-  connect(ortho, &QAction::toggled, this, [this](bool on) { m_viewport->setOrthographic(on); });
-  QAction* shaded = addAction("view.shaded", tr("Display: Shaded"), QKeySequence("Alt+1"), [this] { m_viewport->setStyle(Viewport::Style::Shaded); });
-  QAction* edges = addAction("view.edges", tr("Display: Shaded with edges"), QKeySequence("Alt+2"), [this] { m_viewport->setStyle(Viewport::Style::ShadedEdges); });
-  QAction* wire = addAction("view.wire", tr("Display: Wireframe"), QKeySequence("Alt+3"), [this] { m_viewport->setStyle(Viewport::Style::Wireframe); });
-  (void)shaded; (void)edges; (void)wire;
-  QAction* grid = addAction("view.grid", tr("Ground &grid"), QKeySequence("G"), [this] {}, true);
+  connect(ortho, &QAction::toggled, this, [this](bool on) { m_viewport->setOrthographic(on); updateChips(); });
+  QAction* shaded = addAction("view.shaded", tr("Shaded"), "shaded", QKeySequence("5"), [this] {}, true);
+  QAction* edges = addAction("view.edges", tr("Shaded + edges"), "shadedEdges", QKeySequence("6"), [this] {}, true);
+  QAction* wire = addAction("view.wire", tr("Wireframe"), "wireframe", QKeySequence("7"), [this] {}, true);
+  auto* styleGroup = new QActionGroup(this);
+  for (QAction* a : {shaded, edges, wire}) styleGroup->addAction(a);
+  edges->setChecked(true);
+  connect(styleGroup, &QActionGroup::triggered, this, [this, shaded, wire](QAction* a) {
+    m_viewport->setStyle(a == shaded ? Viewport::Style::Shaded : a == wire ? Viewport::Style::Wireframe : Viewport::Style::ShadedEdges);
+    updateChips();
+  });
+  QAction* grid = addAction("view.grid", tr("Grid"), "grid", QKeySequence("G"), [this] {}, true);
   connect(grid, &QAction::toggled, this, [this](bool on) { m_viewport->setGrid(on); });
-  QAction* shadows = addAction("view.shadows", tr("Shado&ws"), QKeySequence(), [this] {}, true);
-  connect(shadows, &QAction::toggled, this, [this](bool on) { m_viewport->setShadows(on); });
-  addAction("view.section", tr("&Section analysis..."), QKeySequence("Ctrl+Shift+S"), [this] { sectionDialog(); });
-  addAction("view.isolate", tr("&Isolate selection"), QKeySequence("I"), [this] { m_viewport->isolate(currentNodeIds()); });
-  addAction("view.unisolate", tr("Show &everything (un-isolate)"), QKeySequence("Shift+I"), [this] { m_viewport->isolate({}); });
-  addAction("view.saveview", tr("Save named &view..."), QKeySequence(), [this] { saveNamedView(); });
-  m_darkAction = addAction("view.dark", tr("&Dark theme"), QKeySequence(), [this] {}, true);
-  connect(m_darkAction, &QAction::toggled, this, [this](bool on) { applyTheme(on); });
+  QAction* section = addAction("view.section", tr("Section"), "section", QKeySequence("X"), [this] {}, true);
+  connect(section, &QAction::toggled, this, [this](bool on) {
+    m_section->setEnabled(on);
+    if (on) m_inspector->setCurrentWidget(m_section);
+  });
+  addAction("view.flip", tr("Flip section"), "flip", QKeySequence("Shift+X"), [this] { m_section->flip(); });
+  addAction("view.isolate", tr("Isolate"), "isolate", QKeySequence("I"), [this] { m_viewport->isolate(currentNodeIds()); });
+  addAction("view.unisolate", tr("Show all"), "showAll", QKeySequence("Shift+I"), [this] { m_viewport->isolate({}); });
+  addAction("view.saveview", tr("Save view…"), "home", QKeySequence(), [this] { saveNamedView(); });
+  m_darkAction = addAction("view.dark", tr("&Dark theme"), "", QKeySequence(), [this] {}, true);
+  // Panel toggles: always enabled, so a closed dock can be reopened even with no document.
+  addAction("panel.browser", tr("Browser"), "browse", QKeySequence("Ctrl+1"), [this] {}, true);
+  addAction("panel.inspector", tr("Properties"), "doc", QKeySequence("Ctrl+2"), [this] {}, true);
+  addAction("panel.timeline", tr("Timeline"), "commit", QKeySequence("Ctrl+3"), [this] {}, true);
+  addAction("panel.reset", tr("Reset layout"), "restore", QKeySequence(), [this] { resetLayout(); });
+  m_darkAction->setChecked(m_settings.value("ui/dark", true).toBool());
+  connect(m_darkAction, &QAction::toggled, this, [this](bool on) { applyTheme(on); refreshIcons(); });
   for (const auto& [name, preset] : std::vector<std::pair<QString, Viewport::NavPreset>>{{"Fusion", Viewport::NavPreset::Fusion}, {"SolidWorks", Viewport::NavPreset::SolidWorks}, {"Onshape", Viewport::NavPreset::Onshape}, {"Blender", Viewport::NavPreset::Blender}}) {
-    QAction* a = addAction("nav." + name.toLower(), tr("Navigation: %1").arg(name), QKeySequence(), [this, p = preset, n = name] {
+    QAction* a = addAction("nav." + name.toLower(), tr("Navigation: %1").arg(name), "", QKeySequence(), [this, p = preset, n = name] {
       m_viewport->setNavPreset(p);
       m_settings.setValue("ui/nav", n);
       for (QAction* o : m_actions) if (o->objectName().startsWith("nav.")) o->setChecked(o->objectName() == "nav." + n.toLower());
     }, true);
-    if (m_settings.value("ui/nav", "Fusion").toString() == name) { a->setChecked(true); m_viewport->setNavPreset(preset); }
+    if (m_settings.value("ui/nav", "Fusion").toString() == name) a->setChecked(true);
   }
-  for (const auto& [name, f, key] : std::vector<std::tuple<QString, Viewport::SelFilter, QString>>{{"Bodies", Viewport::SelFilter::Body, "1"}, {"Faces", Viewport::SelFilter::Face, "2"}, {"Edges", Viewport::SelFilter::Edge, "3"}, {"Vertices", Viewport::SelFilter::Vertex, "4"}}) {
-    QAction* a = addAction("select." + name.toLower(), tr("Select: %1").arg(name), QKeySequence(key), [this, ff = f, n = name] {
+  for (const auto& [name, f, key, icon] : std::vector<std::tuple<QString, Viewport::SelFilter, QString, QString>>{{"Bodies", Viewport::SelFilter::Body, "1", "filterBodies"}, {"Faces", Viewport::SelFilter::Face, "2", "filterFaces"}, {"Edges", Viewport::SelFilter::Edge, "3", "filterEdges"}, {"Vertices", Viewport::SelFilter::Vertex, "4", "filterVertices"}}) {
+    QAction* a = addAction("select." + name.toLower(), name, icon, QKeySequence(key), [this, ff = f, n = name] {
       m_viewport->setSelectionFilter(ff);
       for (QAction* o : m_actions) if (o->objectName().startsWith("select.")) o->setChecked(o->objectName() == "select." + n.toLower());
     }, true);
@@ -185,184 +251,313 @@ void MainWindow::buildActions() {
   }
 
   // Inspect
-  addAction("inspect.distance", tr("Measure &distance (2 refs)"), QKeySequence("D"), [this] { measure("distance"); });
-  addAction("inspect.angle", tr("Measure &angle (2 refs)"), QKeySequence("A"), [this] { measure("angle"); });
-  addAction("inspect.radius", tr("Measure &radius (1 ref)"), QKeySequence("R"), [this] { measure("radius"); });
-  addAction("inspect.bbox", tr("Measure &bounding box"), QKeySequence("B"), [this] { measure("bbox"); });
-  m_pinAction = addAction("inspect.pin", tr("&Pin last measurement"), QKeySequence("P"), [this] { pinMeasurement(); });
+  addAction("inspect.distance", tr("Distance"), "distance", QKeySequence("D"), [this] { measure("distance"); });
+  addAction("inspect.angle", tr("Angle"), "angle", QKeySequence("A"), [this] { measure("angle"); });
+  addAction("inspect.radius", tr("Radius"), "radius", QKeySequence("R"), [this] { measure("radius"); });
+  addAction("inspect.bbox", tr("Bounding box"), "bbox", QKeySequence("B"), [this] { measure("bbox"); });
+  m_pinAction = addAction("inspect.pin", tr("Pin"), "pin", QKeySequence("P"), [this] { pinMeasurement(); });
   m_pinAction->setEnabled(false);
-  addAction("inspect.properties", tr("Show &properties of selection"), QKeySequence("Ctrl+P"), [this] { showProperties(m_viewport->selection()); });
+  addAction("inspect.clear", tr("Clear measurement"), "", QKeySequence("Esc"), [this] { clearMeasurement(); });
+  addAction("inspect.properties", tr("Properties"), "doc", QKeySequence("Ctrl+P"), [this] { showProperties(m_viewport->selection()); m_inspector->setCurrentWidget(m_props); });
 
   // Annotate / edit
-  addAction("annotate.add", tr("Add &annotation..."), QKeySequence("N"), [this] { addAnnotation(); });
-  addAction("edit.rename", tr("&Rename..."), QKeySequence("F2"), [this] {
+  addAction("annotate.add", tr("Note"), "annotate", QKeySequence("N"), [this] { addAnnotation(); });
+  addAction("annotate.resolve", tr("Resolve note"), "check", QKeySequence("Ctrl+Return"), [this] { resolveCurrentAnnotation(); });
+  addAction("edit.rename", tr("Rename"), "rename", QKeySequence("F2"), [this] {
     auto ids = currentNodeIds();
-    if (ids.empty()) return;
-    m_browser->startRename(ids.front());
+    if (!ids.empty()) m_browser->startRename(ids.front());
   });
-  addAction("edit.hide", tr("&Hide selection"), QKeySequence("V"), [this] {
+  addAction("edit.hide", tr("Hide"), "hide", QKeySequence("V"), [this] {
     for (const auto& id : currentNodeIds()) m_doc->run("appearance", opad::json{{"target", id}, {"visible", false}});
   });
-  addAction("edit.showall", tr("Show all hidden objects"), QKeySequence("Shift+V"), [this] {
+  addAction("edit.showall", tr("Unhide all"), "eye", QKeySequence("Shift+V"), [this] {
     for (const auto& [id, n] : m_doc->scene.nodes)
       if (!n.visible) m_doc->run("appearance", opad::json{{"target", id}, {"visible", true}});
   });
-  addAction("edit.deleteop", tr("Delete selected objects (tombstone their import)"), QKeySequence::Delete, [this] {
-    std::set<std::string> ops;
-    for (const auto& id : currentNodeIds()) if (const opad::Node* n = m_doc->node(id)) ops.insert(n->source_op);
-    if (ops.empty()) return;
-    if (QMessageBox::question(this, tr("Delete"), tr("Tombstone %1 import operation(s)? History is kept; this can be undone from the timeline.").arg(ops.size())) != QMessageBox::Yes) return;
-    for (const auto& op : ops) deleteOp(op);
+  addAction("edit.filter", tr("Filter objects"), "search", QKeySequence("Ctrl+F"), [this] { m_browser->focusFilter(); });
+  addAction("edit.delete", tr("Delete (tombstone)"), "delete", QKeySequence::Delete, [this] { deleteCurrent(); });
+  addAction("edit.restore", tr("Restore"), "restore", QKeySequence("Shift+Del"), [this] {
+    std::string id = m_timeline->currentOp();
+    if (id.empty()) throw opad::Error("Select a tombstoned marker on the timeline first.");
+    restoreOp(id);
+  });
+  addAction("edit.selecttouched", tr("Select what it touches"), "isolate", QKeySequence("T"), [this] {
+    if (!m_timeline->currentOp().empty()) selectOpTargets(m_timeline->currentOp());
   });
 
   // Tools
-  addAction("tools.commands", tr("Command &search"), QKeySequence("S"), [this] {
+  addAction("tools.commands", tr("Search commands"), "search", QKeySequence("S"), [this] {
     CommandPalette p(m_actions, this);
-    p.move(mapToGlobal(QPoint(width() / 2 - 260, 120)));
+    p.move(mapToGlobal(QPoint(width() / 2 - 280, 180)));
     p.exec();
   });
-  addAction("tools.shortcuts", tr("&Keyboard shortcuts..."), QKeySequence(), [this] { ShortcutEditor(m_actions, this).exec(); });
-  addAction("tools.cache", tr("Clear tessellation &cache"), QKeySequence(), [this] {
+  addAction("tools.shortcuts", tr("Keyboard shortcuts…"), "", QKeySequence("Ctrl+K"), [this] { ShortcutEditor(m_actions, this).exec(); });
+  addAction("tools.cache", tr("Clear tessellation cache"), "", QKeySequence(), [this] {
     opad::json r = opad::commands::run("cache", opad::json{{"action", "clear"}});
     statusBar()->showMessage(tr("Cache cleared: %1").arg(QString::fromStdString(r["dir"].get<std::string>())), 4000);
   });
-  addAction("help.about", tr("&About OPAD"), QKeySequence(), [this] {
+  addAction("help.about", tr("&About OPAD"), "", QKeySequence(), [this] {
     QMessageBox::about(this, tr("About OPAD"), tr("<b>OPAD %1</b><br>Git-native STEP viewer.<br>MIT licence. Built on Open CASCADE Technology and Qt.<br><br>Headless twin: <code>opad-cli</code>; Python: <code>import opad</code>.").arg(QString::fromStdString(opad::version_string())));
   });
 }
 
-QAction* find_action(const QList<QAction*>& list, const QString& id) {
-  for (QAction* a : list) if (a->objectName() == id) return a;
-  return nullptr;
+void MainWindow::refreshIcons() {
+  icons::clearCache();
+  for (QAction* a : m_actions) {
+    QString icon = a->data().toString();
+    if (!icon.isEmpty()) a->setIcon(icons::themed(icon));
+  }
+  setWindowIcon(icons::icon("body", theme::current().sel));
+  if (m_statusGitIcon) m_statusGitIcon->setPixmap(icons::pixmap("git", theme::current().fg2, 14, devicePixelRatioF()));
+  m_doc->refresh();
 }
 
 void MainWindow::buildMenus() {
   auto add = [&](QMenu* m, std::initializer_list<const char*> ids) {
     for (const char* id : ids) {
       if (QString(id) == "-") { m->addSeparator(); continue; }
-      if (QAction* a = find_action(m_actions, id)) m->addAction(a);
+      if (QAction* a = action(id)) m->addAction(a);
     }
   };
   QMenu* file = menuBar()->addMenu(tr("&File"));
-  add(file, {"file.new", "file.open", "file.import", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
+  add(file, {"file.new", "file.open", "file.import", "file.importdoc"});
+  m_recentMenu = file->addMenu(tr("Recent"));
+  add(file, {"-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
-  add(edit, {"edit.rename", "edit.hide", "edit.showall", "edit.deleteop", "-", "annotate.add", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
+  add(edit, {"edit.rename", "edit.hide", "edit.showall", "edit.filter", "-", "annotate.add", "annotate.resolve", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = menuBar()->addMenu(tr("&View"));
-  add(view, {"view.fit", "view.fitsel", "view.home", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "view.shadows", "-", "view.section", "view.isolate", "view.unisolate", "-", "view.saveview"});
+  add(view, {"view.fit", "view.fitsel", "view.home", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "-", "view.section", "view.flip", "view.isolate", "view.unisolate", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
   view->addSeparator();
   QMenu* nav = view->addMenu(tr("Navigation preset"));
   add(nav, {"nav.fusion", "nav.solidworks", "nav.onshape", "nav.blender"});
-  add(view, {"view.dark"});
+  add(view, {"view.dark", "-", "panel.browser", "panel.inspector", "panel.timeline", "panel.reset"});
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
-  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "-", "inspect.properties"});
+  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties"});
   QMenu* tools = menuBar()->addMenu(tr("&Tools"));
   add(tools, {"tools.commands", "tools.shortcuts", "tools.cache"});
   QMenu* help = menuBar()->addMenu(tr("&Help"));
   add(help, {"help.about"});
+  rebuildRecentMenu();
 }
 
-void MainWindow::buildToolbar() {
-  // Tabbed toolbar groups (F26): View, Inspect, Annotate, Export.
-  auto* tabs = new QTabWidget(this);
-  tabs->setDocumentMode(true);
-  tabs->setMaximumHeight(72);
-  auto makeTab = [&](const QString& title, std::initializer_list<const char*> ids) {
-    auto* bar = new QToolBar(this);
-    bar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-    for (const char* id : ids) {
-      if (QString(id) == "-") { bar->addSeparator(); continue; }
-      if (QAction* a = find_action(m_actions, id)) {
-        auto* b = new QToolButton(bar);
-        b->setDefaultAction(a);
-        b->setToolButtonStyle(Qt::ToolButtonTextOnly);
-        b->setAutoRaise(true);
-        bar->addWidget(b);
-      }
-    }
-    tabs->addTab(bar, title);
+void MainWindow::buildRibbon() {
+  m_ribbon = new RibbonBar(this);
+  auto acts = [&](std::initializer_list<const char*> ids) {
+    QList<QAction*> out;
+    for (const char* id : ids) if (QAction* a = action(id)) out << a;
+    return out;
   };
-  makeTab(tr("View"), {"view.fit", "view.home", "view.ortho", "-", "view.shaded", "view.edges", "view.wire", "view.grid", "-", "view.section", "view.isolate", "view.unisolate", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
-  makeTab(tr("Inspect"), {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "-", "inspect.properties"});
-  makeTab(tr("Annotate"), {"annotate.add", "edit.rename", "edit.hide", "edit.showall", "view.saveview"});
-  makeTab(tr("Export"), {"file.export", "file.screenshot", "file.import", "file.save"});
+  m_ribbon->addTab(tr("View"), {acts({"view.fit", "view.home", "view.ortho"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid"}), acts({"view.section", "view.isolate", "view.unisolate"}), acts({"panel.browser", "panel.inspector", "panel.timeline"})});
+  m_ribbon->addTab(tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"})});
+  m_ribbon->addTab(tr("Annotate"), {acts({"annotate.add", "annotate.resolve"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
+  m_ribbon->addTab(tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
+  m_ribbon->setSelectFilters(acts({"select.bodies", "select.faces", "select.edges", "select.vertices"}), {"1", "2", "3", "4"});
+  m_ribbon->setSearchAction(action("tools.commands"));
+  QAction* settingsAction = addAction("tools.settings", tr("Settings"), "settings", QKeySequence(), [] {});
+  auto* settings = new QMenu(this);
+  settings->addAction(action("view.dark"));
+  QMenu* navMenu = settings->addMenu(tr("Navigation preset"));
+  for (QAction* a : m_actions) if (a->objectName().startsWith("nav.")) navMenu->addAction(a);
+  settings->addSeparator();
+  settings->addAction(action("panel.browser"));
+  settings->addAction(action("panel.inspector"));
+  settings->addAction(action("panel.timeline"));
+  settings->addAction(action("panel.reset"));
+  settings->addSeparator();
+  settings->addAction(action("tools.shortcuts"));
+  settings->addAction(action("tools.cache"));
+  m_ribbon->setSettingsMenu(settingsAction, settings);
   auto* host = new QToolBar(tr("Ribbon"), this);
-  host->setObjectName("ribbon");
+  host->setObjectName("ribbonHost");
   host->setMovable(false);
-  host->addWidget(tabs);
+  host->setFloatable(false);
+  host->setContentsMargins(0, 0, 0, 0);
+  host->addWidget(m_ribbon);
   addToolBar(Qt::TopToolBarArea, host);
 }
 
+void MainWindow::buildCentral() {
+  m_stack = new QStackedWidget(this);
+  m_stack->setObjectName("central");
+  m_empty = new EmptyState(m_stack);
+  m_viewport = new Viewport(m_doc, m_stack);
+  m_stack->addWidget(m_empty);
+  m_stack->addWidget(m_viewport);
+  setCentralWidget(m_stack);
+
+  // Native child widgets float above the OpenGL surface: top-left chips, bottom-right measurement card.
+  m_chips = new ViewportChips(m_viewport);
+  m_chips->setAttribute(Qt::WA_NativeWindow);
+  m_measureCard = new MeasureCard(m_viewport);
+  m_measureCard->setAttribute(Qt::WA_NativeWindow);
+  m_measureCard->hide();
+  m_viewport->installEventFilter(this);
+}
+
 void MainWindow::buildDocks() {
+  // Right dock takes the full height; the timeline strip runs under the browser and the viewport.
+  setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
+  setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
+  setCorner(Qt::TopLeftCorner, Qt::LeftDockWidgetArea);
+  setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
+
   m_browser = new BrowserPanel(m_doc, this);
-  auto* left = new QDockWidget(tr("Browser"), this);
+  auto* left = m_browserDock = new QDockWidget(tr("Browser"), this);
   left->setObjectName("dock.browser");
+  left->setTitleBarWidget(new DockHeader(tr("Browser"), left));
   left->setWidget(m_browser);
   addDockWidget(Qt::LeftDockWidgetArea, left);
 
-  m_props = new PropertiesPanel(this);
-  auto* right = new QDockWidget(tr("Properties"), this);
-  right->setObjectName("dock.properties");
-  right->setWidget(m_props);
+  m_inspector = new QTabWidget(this);
+  m_inspector->setObjectName("inspector");
+  m_inspector->setTabPosition(QTabWidget::South);
+  m_inspector->setDocumentMode(true);
+  m_props = new PropertiesPanel(m_inspector);
+  m_annotations = new AnnotationsPanel(m_doc, m_inspector);
+  m_section = new SectionPanel(m_doc, m_inspector);
+  m_inspector->addTab(m_props, tr("Properties"));
+  m_inspector->addTab(m_annotations, tr("Annotations"));
+  m_inspector->addTab(m_section, tr("Section"));
+  auto* right = m_inspectorDock = new QDockWidget(tr("Properties"), this);
+  right->setObjectName("dock.inspector");
+  auto* rightHeader = new DockHeader(tr("Properties"), right);
+  right->setTitleBarWidget(rightHeader);
+  right->setWidget(m_inspector);
   addDockWidget(Qt::RightDockWidgetArea, right);
-
-  m_annotations = new AnnotationsPanel(m_doc, this);
-  auto* ann = new QDockWidget(tr("Annotations"), this);
-  ann->setObjectName("dock.annotations");
-  ann->setWidget(m_annotations);
-  addDockWidget(Qt::RightDockWidgetArea, ann);
-  tabifyDockWidget(right, ann);
-  right->raise();
+  connect(m_inspector, &QTabWidget::currentChanged, this, [this, rightHeader, right](int i) {
+    rightHeader->setTitle(m_inspector->tabText(i));
+    right->setWindowTitle(m_inspector->tabText(i));
+  });
 
   m_timeline = new TimelineWidget(m_doc, this);
-  auto* bottom = new QDockWidget(tr("Timeline"), this);
+  auto* bottom = m_timelineDock = new QDockWidget(tr("Timeline"), this);
   bottom->setObjectName("dock.timeline");
+  bottom->setTitleBarWidget(new QWidget(bottom));  // the strip is its own header
+  bottom->setFeatures(QDockWidget::NoDockWidgetFeatures);
   bottom->setWidget(m_timeline);
-  bottom->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
+  bottom->setFixedHeight(48);
   addDockWidget(Qt::BottomDockWidgetArea, bottom);
-  resizeDocks({left, right}, {300, 320}, Qt::Horizontal);
-  resizeDocks({bottom}, {48}, Qt::Vertical);
+
+  resizeDocks({left, right}, {352, 384}, Qt::Horizontal);
+  m_props->clear();
+
+  // Bind the panel actions to the docks' own toggle actions (both directions).
+  bindPanel(action("panel.browser"), left);
+  bindPanel(action("panel.inspector"), right);
+  bindPanel(action("panel.timeline"), bottom);
+}
+
+void MainWindow::bindPanel(QAction* a, QDockWidget* dock) {
+  if (!a || !dock) return;
+  QAction* native = dock->toggleViewAction();
+  a->setChecked(native->isChecked());
+  connect(a, &QAction::toggled, native, [native](bool on) { if (native->isChecked() != on) native->setChecked(on); });
+  connect(native, &QAction::toggled, a, [a](bool on) { if (a->isChecked() != on) a->setChecked(on); });
+  connect(a, &QAction::triggered, dock, [dock](bool on) { if (on) { dock->show(); dock->raise(); } });
+}
+
+void MainWindow::resetLayout() {
+  for (QDockWidget* d : {m_browserDock, m_inspectorDock, m_timelineDock}) {
+    if (!d) continue;
+    d->setFloating(false);
+    d->show();
+  }
+  addDockWidget(Qt::LeftDockWidgetArea, m_browserDock);
+  addDockWidget(Qt::RightDockWidgetArea, m_inspectorDock);
+  addDockWidget(Qt::BottomDockWidgetArea, m_timelineDock);
+  setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
+  setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
+  setCorner(Qt::TopLeftCorner, Qt::LeftDockWidgetArea);
+  setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
+  resizeDocks({m_browserDock, m_inspectorDock}, {352, 384}, Qt::Horizontal);
+}
+
+void MainWindow::buildStatusBar() {
+  const Tokens& t = theme::current();
+  m_statusPath = new QLabel(this);
+  m_statusPath->setFont(theme::mono(12));
+  m_statusGitIcon = new QLabel(this);
+  m_statusGitIcon->setPixmap(icons::pixmap("git", t.fg2, 14, devicePixelRatioF()));
+  m_statusGit = new QLabel(this);
+  m_statusGit->setTextFormat(Qt::RichText);
+  m_statusHover = new QLabel(this);
+  m_statusHover->setAlignment(Qt::AlignCenter);
+  m_statusHover->setObjectName("tertiary");
+  m_statusSel = new QLabel(this);
+  m_statusUnits = new QLabel("mm", this);
+  statusBar()->addWidget(m_statusPath);
+  statusBar()->addWidget(m_statusGitIcon);
+  statusBar()->addWidget(m_statusGit);
+  statusBar()->addWidget(m_statusHover, 1);
+  statusBar()->addPermanentWidget(m_statusSel);
+  statusBar()->addPermanentWidget(m_statusUnits);
+  statusBar()->setSizeGripEnabled(false);
 }
 
 // ---------------------------------------------------------------- theme (F31)
 void MainWindow::applyTheme(bool dark) {
   m_settings.setValue("ui/dark", dark);
+  theme::apply(dark);
+  if (m_viewport) m_viewport->setTokens(theme::current());
   if (m_darkAction && m_darkAction->isChecked() != dark) m_darkAction->setChecked(dark);
-  qApp->setStyle(QStyleFactory::create("Fusion"));
-  QPalette p;
-  if (dark) {
-    p.setColor(QPalette::Window, QColor(43, 45, 48));
-    p.setColor(QPalette::WindowText, QColor(230, 230, 230));
-    p.setColor(QPalette::Base, QColor(32, 33, 36));
-    p.setColor(QPalette::AlternateBase, QColor(43, 45, 48));
-    p.setColor(QPalette::ToolTipBase, QColor(60, 62, 66));
-    p.setColor(QPalette::ToolTipText, QColor(230, 230, 230));
-    p.setColor(QPalette::Text, QColor(230, 230, 230));
-    p.setColor(QPalette::Button, QColor(53, 55, 59));
-    p.setColor(QPalette::ButtonText, QColor(230, 230, 230));
-    p.setColor(QPalette::Highlight, QColor(30, 120, 210));
-    p.setColor(QPalette::HighlightedText, Qt::white);
-    p.setColor(QPalette::Mid, QColor(120, 120, 125));
-    p.setColor(QPalette::Disabled, QPalette::Text, QColor(130, 130, 130));
-    p.setColor(QPalette::Disabled, QPalette::ButtonText, QColor(130, 130, 130));
-  } else {
-    p = QStyleFactory::create("Fusion")->standardPalette();
+}
+
+void MainWindow::showDocument(bool has) {
+  m_stack->setCurrentIndex(has ? 1 : 0);
+  for (QAction* a : m_actions) {
+    QString id = a->objectName();
+    if (id.startsWith("view.") && id != "view.dark") a->setEnabled(has);
+    if (id.startsWith("inspect.") || id.startsWith("annotate.") || id.startsWith("select.") || id == "file.export" || id == "file.screenshot" || id == "file.save" || id == "file.saveas")
+      a->setEnabled(has);
+    if (id == "file.importdoc") a->setEnabled(m_doc->browse);
   }
-  qApp->setPalette(p);
-  m_viewport->setDarkTheme(dark);
+  if (m_pinAction) m_pinAction->setEnabled(has && !m_lastMeasure.is_null());
 }
 
 void MainWindow::updateTitle() {
   setWindowTitle(m_doc->title());
-  QString path = m_doc->hasDocument ? (m_doc->browse ? tr("Browsing (not saved)") : (m_doc->path().isEmpty() ? tr("Unsaved document") : m_doc->path())) : tr("No document. File > Open a .step or .opad file");
-  if (!m_doc->scene.unresolved.empty()) path += tr("   |   %1 unresolved op(s)").arg(m_doc->scene.unresolved.size());
+  QString path = m_doc->hasDocument ? (m_doc->browse ? tr("browsing: ") + m_settings.value("ui/lastBrowse").toString() : (m_doc->path().isEmpty() ? tr("unsaved document") : m_doc->path())) : tr("No document");
+  if (!m_doc->scene.unresolved.empty()) path += QString::fromUtf8("   ·   %1 unresolved").arg(m_doc->scene.unresolved.size());
   m_statusPath->setText(path);
+  if (!m_doc->hasDocument) m_statusHover->setText(QString::fromUtf8("File › Open a .step or .opad file, or drop one here"));
+  else if (m_statusHover->text().startsWith("File ")) m_statusHover->clear();
+}
+
+void MainWindow::updateChips() {
+  if (!m_chips) return;
+  QString mode = m_viewport->style() == Viewport::Style::Shaded ? tr("Shaded") : m_viewport->style() == Viewport::Style::Wireframe ? tr("Wireframe") : tr("Shaded + edges");
+  QString proj = m_viewport->isOrthographic() ? tr("Orthographic") : tr("Perspective");
+  QString section;
+  if (m_section && m_section->enabled()) {
+    opad::Vec3 o = m_section->origin(), n = m_section->normal();
+    int axis = std::fabs(n[0]) > 0.9 ? 0 : std::fabs(n[1]) > 0.9 ? 1 : 2;
+    const char axes[] = {'X', 'Y', 'Z'};
+    section = QString("Section %1 = %2 mm").arg(axes[axis]).arg(o[axis], 0, 'f', 0);
+  }
+  m_chips->set(mode, proj, section);
+  positionOverlays();
+}
+
+void MainWindow::positionOverlays() {
+  if (!m_viewport) return;
+  m_chips->move(0, 0);
+  m_chips->raise();
+  m_measureCard->move(m_viewport->width() - m_measureCard->width() - 16, m_viewport->height() - m_measureCard->height() - 16);
+  m_measureCard->raise();
+}
+
+bool MainWindow::eventFilter(QObject* o, QEvent* e) {
+  if (o == m_viewport && (e->type() == QEvent::Resize || e->type() == QEvent::Show)) positionOverlays();
+  return QMainWindow::eventFilter(o, e);
 }
 
 // ---------------------------------------------------------------- git status (F33)
 void MainWindow::refreshGit() {
+  const Tokens& t = theme::current();
   if (!m_doc->hasDocument || m_doc->browse || m_doc->doc.path.empty()) {
     m_statusGit->clear();
+    m_statusGitIcon->hide();
     return;
   }
   QFileInfo fi(m_doc->path());
@@ -370,7 +565,8 @@ void MainWindow::refreshGit() {
   git.setWorkingDirectory(fi.absolutePath());
   git.start("git", {"rev-parse", "--abbrev-ref", "HEAD"});
   if (!git.waitForFinished(800) || git.exitCode() != 0) {
-    m_statusGit->setText(tr("not in git"));
+    m_statusGitIcon->show();
+    m_statusGit->setText(QString("<span style='color:%1'>%2</span>").arg(t.fg3.name(), tr("not in git")));
     return;
   }
   QString branch = QString::fromUtf8(git.readAllStandardOutput()).trimmed();
@@ -379,8 +575,9 @@ void MainWindow::refreshGit() {
   st.start("git", {"status", "--porcelain", "--", fi.fileName()});
   st.waitForFinished(800);
   QString status = QString::fromUtf8(st.readAllStandardOutput()).trimmed();
-  QString state = status.isEmpty() ? tr("clean") : status.startsWith("??") ? tr("untracked") : tr("modified");
-  m_statusGit->setText(QString::fromUtf8("git: %1 · %2").arg(branch, state));
+  QString state = status.isEmpty() ? QString() : status.startsWith("??") ? tr("untracked") : tr("modified");
+  m_statusGitIcon->show();
+  m_statusGit->setText(branch.toHtmlEscaped() + (state.isEmpty() ? QString() : QString(" <span style='color:%1'>· %2</span>").arg(t.amber.name(), state)));
 }
 
 // ---------------------------------------------------------------- selection plumbing (F22/F25)
@@ -400,7 +597,8 @@ void MainWindow::onViewportSelection() {
   for (const auto& r : refs) if (std::find(ids.begin(), ids.end(), r.body) == ids.end()) ids.push_back(r.body);
   m_browser->setSelectedIds(ids);
   showProperties(refs);
-  m_statusSel->setText(refs.empty() ? QString() : tr("%1 selected").arg(refs.size()));
+  if (refs.empty()) m_statusSel->clear();
+  else m_statusSel->setText(QString::fromUtf8("%1 selected · %2").arg(refs.size()).arg(opad::Ref::kind_name(refs.front().kind)));
   writeSelectionFile();
   m_syncing = false;
 }
@@ -412,7 +610,7 @@ void MainWindow::onBrowserSelection(const std::vector<std::string>& ids) {
   std::vector<opad::Ref> refs;
   for (const auto& id : ids) { opad::Ref r; r.body = id; refs.push_back(r); }
   showProperties(refs);
-  m_statusSel->setText(ids.empty() ? QString() : tr("%1 selected").arg(ids.size()));
+  m_statusSel->setText(ids.empty() ? QString() : QString::fromUtf8("%1 selected · body").arg(ids.size()));
   writeSelectionFile();
   m_syncing = false;
 }
@@ -425,13 +623,32 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
   try {
     const opad::Ref& r = refs.front();
     opad::json j = r.kind == opad::Ref::Kind::Body ? opad::node_properties(m_doc->doc, m_doc->scene, r.body) : opad::inspect_ref(m_doc->doc, m_doc->scene, r);
-    QString title = QString::fromStdString(r.str());
-    if (r.kind == opad::Ref::Kind::Body) title = m_doc->nodeName(r.body);
-    else if (r.kind != opad::Ref::Kind::Point) title = QString("%1 / %2 %3").arg(m_doc->nodeName(r.body)).arg(opad::Ref::kind_name(r.kind)).arg(r.index);
-    if (refs.size() > 1) title += tr(" (+%1 more)").arg(refs.size() - 1);
-    m_props->showJson(title, j);
+    QString title, subtitle, id;
+    if (r.kind == opad::Ref::Kind::Point) {
+      title = tr("Point");
+      subtitle = QString::fromStdString(r.str());
+    } else if (r.kind == opad::Ref::Kind::Body) {
+      const opad::Node* n = m_doc->node(r.body);
+      title = m_doc->nodeName(r.body);
+      QStringList path;
+      for (const auto& p : m_doc->scene.path_to(r.body)) path << m_doc->nodeName(p);
+      subtitle = path.join(QString::fromUtf8(" › "));
+      if (n && n->kind == opad::Node::Kind::Body) {
+        auto it = m_doc->scene.instance_count.find(n->body_key);
+        if (it != m_doc->scene.instance_count.end() && it->second > 1) subtitle += QString::fromUtf8(" · %1 instances").arg(it->second);
+      }
+      id = QString::fromStdString(r.body.substr(0, 8));
+    } else {
+      QString kind = QString::fromStdString(opad::Ref::kind_name(r.kind));
+      QString geo = QString::fromStdString(j.value("surface", j.value("curve", std::string())));
+      title = QString::fromUtf8("%1%2%3").arg(kind.left(1).toUpper() + kind.mid(1), geo.isEmpty() ? QString() : QString::fromUtf8(" · "), geo);
+      subtitle = QString::fromUtf8("%1 › %2 %3").arg(m_doc->nodeName(r.body), kind).arg(r.index);
+      id = QString::fromStdString(r.body.substr(0, 8));
+    }
+    if (refs.size() > 1) subtitle += tr("  (+%1 more)").arg(refs.size() - 1);
+    m_props->showEntity(title, subtitle, id, j);
   } catch (const std::exception& e) {
-    m_props->showJson(tr("Error"), opad::json{{"error", e.what()}});
+    m_props->showEntity(tr("Error"), QString::fromUtf8(e.what()), QString(), opad::json::object());
   }
 }
 
@@ -464,13 +681,13 @@ void MainWindow::writeSelectionFile() {
 
 void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids) {
   QMenu menu(this);
-  auto add = [&](const char* id) { if (QAction* a = find_action(m_actions, id)) menu.addAction(a); };
+  auto add = [&](const char* id) { if (QAction* a = action(id)) menu.addAction(a); };
   if (!ids.empty()) {
     menu.addSection(ids.size() == 1 ? m_doc->nodeName(ids.front()) : tr("%1 objects").arg(ids.size()));
-    QAction* fit = menu.addAction(tr("Fit to"));
+    QAction* fit = menu.addAction(icons::themed("fit", 16), tr("Fit to"));
     connect(fit, &QAction::triggered, this, [this, ids] { m_viewport->fitNodes(ids); });
     add("view.isolate");
-    QAction* hideOthers = menu.addAction(tr("Hide others"));
+    QAction* hideOthers = menu.addAction(icons::themed("hide", 16), tr("Hide others"));
     connect(hideOthers, &QAction::triggered, this, [this, ids] {
       std::set<std::string> keep;
       for (const auto& id : ids) for (const auto& b : m_doc->scene.bodies_under(id)) keep.insert(b);
@@ -479,14 +696,14 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     });
     add("edit.hide");
     add("edit.rename");
-    QAction* color = menu.addAction(tr("Colour..."));
+    QAction* color = menu.addAction(icons::themed("dot", 16), tr("Colour…"));
     connect(color, &QAction::triggered, this, [this, ids] {
       QColor c = QColorDialog::getColor(Qt::gray, this, tr("Colour"));
       if (!c.isValid()) return;
       for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
     });
     const opad::Node* n = m_doc->node(ids.front());
-    QAction* lock = menu.addAction(n && n->locked ? tr("Unlock") : tr("Lock"));
+    QAction* lock = menu.addAction(icons::themed("lock", 16), n && n->locked ? tr("Unlock") : tr("Lock"));
     connect(lock, &QAction::triggered, this, [this, ids, locked = n && n->locked] {
       for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"locked", !locked}});
     });
@@ -496,7 +713,12 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     add("inspect.radius");
     add("inspect.properties");
     menu.addSeparator();
-    add("edit.deleteop");
+    QAction* del = menu.addAction(icons::themed("delete", 16), tr("Delete (tombstone import)"));
+    connect(del, &QAction::triggered, this, [this, ids] {
+      std::set<std::string> ops;
+      for (const auto& id : ids) if (const opad::Node* nn = m_doc->node(id)) ops.insert(nn->source_op);
+      for (const auto& op : ops) deleteOp(op);
+    });
   } else {
     add("view.fit");
     add("view.home");
@@ -508,19 +730,65 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
   menu.exec(globalPos);
 }
 
+void MainWindow::timelineMenu(const std::string& opId, const QPoint& globalPos) {
+  bool deleted = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) != m_doc->scene.deleted_ops.end();
+  QMenu menu(this);
+  menu.setFixedWidth(232);
+  QAction* del = menu.addAction(icons::themed("delete", 16), tr("Delete (tombstone)\tDel"));
+  del->setEnabled(!deleted);
+  QAction* restore = menu.addAction(icons::themed("restore", 16), tr("Restore\tShift+Del"));
+  restore->setEnabled(deleted);
+  QAction* sel = menu.addAction(icons::themed("isolate", 16), tr("Select what it touches\tT"));
+  menu.addSeparator();
+  QAction* copy = menu.addAction(icons::themed("commit", 16), tr("Copy op id\tCtrl+C"));
+  QAction* log = menu.addAction(icons::themed("git", 16), tr("Show in git log"));
+  QAction* chosen = menu.exec(globalPos);
+  if (chosen == del) deleteOp(opId);
+  else if (chosen == restore) restoreOp(opId);
+  else if (chosen == sel) selectOpTargets(opId);
+  else if (chosen == copy) QApplication::clipboard()->setText(QString::fromStdString(opId));
+  else if (chosen == log) {
+    if (m_doc->doc.path.empty()) throw opad::Error("Save the document in a git repository first.");
+    QFileInfo fi(m_doc->path());
+    QProcess git;
+    git.setWorkingDirectory(fi.absolutePath());
+    git.start("git", {"log", "--format=%h %ad %an  %s", "--date=short", "-S", QString::fromStdString(opId), "--", fi.fileName()});
+    git.waitForFinished(3000);
+    QString out = QString::fromUtf8(git.readAllStandardOutput()).trimmed();
+    QMessageBox::information(this, tr("git log for op %1").arg(QString::fromStdString(opId.substr(0, 8))), out.isEmpty() ? tr("Not committed yet.") : out);
+  }
+}
+
 // ---------------------------------------------------------------- inspect (F23)
 void MainWindow::measure(const QString& kind) {
   auto refs = m_viewport->selection();
   std::vector<std::string> strs;
-  for (const auto& r : refs) strs.push_back(r.str());
-  if (strs.empty()) for (const auto& id : m_browser->selectedIds()) strs.push_back(id);
+  QStringList targets;
+  for (const auto& r : refs) {
+    strs.push_back(r.str());
+    QString t = m_doc->nodeName(r.body);
+    if (r.kind != opad::Ref::Kind::Body) t += QString::fromUtf8(" › %1 %2").arg(opad::Ref::kind_name(r.kind)).arg(r.index);
+    targets << t;
+  }
+  if (strs.empty())
+    for (const auto& id : m_browser->selectedIds()) { strs.push_back(id); targets << m_doc->nodeName(id); }
+  if (strs.empty()) throw opad::Error("Pick the faces, edges or bodies to measure first (Select filter 1–4).");
   opad::json args{{"kind", kind.toStdString()}, {"refs", strs}};
   m_lastMeasure = opad::commands::run("measure", args, &m_doc->doc);
-  m_props->showJson(tr("Measurement: %1").arg(kind), m_lastMeasure);
+  m_lastMeasureTargets = targets;
+  m_measureCard->setResult(m_lastMeasure, targets);
+  m_measureCard->show();
+  positionOverlays();
   m_pinAction->setEnabled(true);
-  QString unit = QString::fromStdString(m_lastMeasure.value("unit", ""));
-  if (m_lastMeasure.contains("value")) statusBar()->showMessage(tr("%1 = %2 %3  (P to pin)").arg(kind).arg(m_lastMeasure["value"].get<double>(), 0, 'g', 7).arg(unit), 10000);
-  else statusBar()->showMessage(tr("%1 computed (see Properties)").arg(kind), 6000);
+  if (m_lastMeasure.contains("point_a") && m_lastMeasure.contains("point_b")) {
+    const auto& a = m_lastMeasure["point_a"];
+    const auto& b = m_lastMeasure["point_b"];
+    m_viewport->showDimension({a[0].get<double>(), a[1].get<double>(), a[2].get<double>()}, {b[0].get<double>(), b[1].get<double>(), b[2].get<double>()},
+                              QString("%1 mm").arg(m_lastMeasure["value"].get<double>(), 0, 'f', 3));
+  } else {
+    m_viewport->clearDimension();
+  }
+  statusBar()->showMessage(tr("%1: pick more references, P pins, Esc clears").arg(kind), 8000);
 }
 
 void MainWindow::pinMeasurement() {
@@ -532,8 +800,17 @@ void MainWindow::pinMeasurement() {
   for (const auto& r : m_lastMeasure.value("refs", opad::json::array())) refs.push_back(opad::Ref::parse(r.get<std::string>()).to_json());
   op["refs"] = refs;
   op["result"] = m_lastMeasure;
-  m_doc->run("append", opad::json{{"op", op}});
+  opad::json r = m_doc->run("append", opad::json{{"op", op}});
+  if (r.contains("appended") && !r["appended"].empty()) m_timeline->setCurrentOp(r["appended"][0].get<std::string>());
   statusBar()->showMessage(tr("Measurement pinned to the document"), 4000);
+}
+
+void MainWindow::clearMeasurement() {
+  m_lastMeasure = opad::json();
+  m_measureCard->hide();
+  m_viewport->clearDimension();
+  m_pinAction->setEnabled(false);
+  m_viewport->clearSelection();
 }
 
 void MainWindow::addAnnotation() {
@@ -541,20 +818,58 @@ void MainWindow::addAnnotation() {
   opad::Ref anchor;
   if (!refs.empty()) anchor = refs.front();
   else if (!m_browser->selectedIds().empty()) anchor.body = m_browser->selectedIds().front();
-  else throw opad::Error("Select a body, face, edge or vertex to anchor the annotation.");
+  else throw opad::Error("Select a body, face, edge or vertex to anchor the note.");
   bool ok = false;
-  QString text = QInputDialog::getMultiLineText(this, tr("Annotation on %1").arg(QString::fromStdString(anchor.str())), tr("Note:"), QString(), &ok);
+  QString where = m_doc->nodeName(anchor.body);
+  if (anchor.kind != opad::Ref::Kind::Body) where += QString::fromUtf8(" › %1 %2").arg(opad::Ref::kind_name(anchor.kind)).arg(anchor.index);
+  QString text = QInputDialog::getMultiLineText(this, tr("Note on %1").arg(where), tr("Note (Ctrl+Enter resolves it later):"), QString(), &ok);
   if (!ok || text.trimmed().isEmpty()) return;
-  m_doc->run("annotate", opad::json{{"anchor", anchor.str()}, {"text", text.toStdString()}});
+  opad::json r = m_doc->run("annotate", opad::json{{"anchor", anchor.str()}, {"text", text.toStdString()}});
+  if (r.contains("id")) m_timeline->setCurrentOp(r["id"].get<std::string>());
+  m_inspector->setCurrentWidget(m_annotations);
+}
+
+void MainWindow::resolveCurrentAnnotation() {
+  std::string id = m_annotations->currentOpId();
+  if (id.empty()) id = m_timeline->currentOp();
+  const opad::Op* op = id.empty() ? nullptr : m_doc->doc.find_op(id);
+  if (!op || op->type != "annotation") throw opad::Error("Select a note in the Annotations tab or on the timeline first.");
+  deleteOp(id);
 }
 
 void MainWindow::deleteOp(const std::string& opId) {
-  m_doc->run("delete", opad::json{{"target", opId}});
+  opad::json r = m_doc->run("delete", opad::json{{"target", opId}});
+  if (r.contains("id")) m_timeline->setCurrentOp(opId);
+}
+
+void MainWindow::restoreOp(const std::string& opId) {
+  // Restoring = tombstoning the delete op that targets it.
+  for (const auto& op : m_doc->doc.ops)
+    if (op.type == "delete" && op.data.value("target", "") == opId && !m_doc->doc.is_deleted(op.id)) {
+      m_doc->run("delete", opad::json{{"target", op.id}});
+      m_timeline->setCurrentOp(opId);
+      return;
+    }
+  throw opad::Error("That operation is not tombstoned.");
+}
+
+void MainWindow::deleteCurrent() {
+  std::string id = m_timeline->currentOp();
+  if (!id.empty() && m_timeline->hasFocus()) return deleteOp(id);
+  std::set<std::string> ops;
+  for (const auto& nid : currentNodeIds()) if (const opad::Node* n = m_doc->node(nid)) ops.insert(n->source_op);
+  if (ops.empty()) {
+    if (id.empty()) throw opad::Error("Select objects, or a marker on the timeline, to tombstone.");
+    return deleteOp(id);
+  }
+  if (QMessageBox::question(this, tr("Delete"), tr("Tombstone %1 import operation(s)? History is kept; Shift+Del on the timeline restores.").arg(ops.size())) != QMessageBox::Yes) return;
+  for (const auto& op : ops) deleteOp(op);
 }
 
 void MainWindow::selectOpTargets(const std::string& opId) {
   const opad::Op* op = m_doc->doc.find_op(opId);
   if (!op) return;
+  m_timeline->setCurrentOp(opId);
   std::vector<std::string> ids;
   const opad::json& d = op->data;
   if (d.contains("target") && d["target"].is_string() && m_doc->node(d["target"])) ids.push_back(d["target"]);
@@ -569,51 +884,123 @@ void MainWindow::selectOpTargets(const std::string& opId) {
   ids.erase(std::remove_if(ids.begin(), ids.end(), [&](const std::string& id) { return !m_doc->node(id); }), ids.end());
   m_browser->setSelectedIds(ids);
   onBrowserSelection(ids);
-  m_props->showJson(tr("Operation %1").arg(QString::fromStdString(op->type)), d);
+  m_props->showEntity(m_timeline->describe(*op), QString::fromUtf8("%1 · %2").arg(QString::fromStdString(d.value("by", "")), QString::fromStdString(d.value("ts", "")).left(16).replace('T', ' ')),
+                      QString::fromStdString(opId.substr(0, 8)), d);
 }
 
 // ---------------------------------------------------------------- export (F14/F15)
 void MainWindow::exportDialog() {
   if (!m_doc->hasDocument) throw opad::Error("Nothing to export.");
+  auto ids = currentNodeIds();
+  int selBodies = 0;
+  for (const auto& id : ids) selBodies += static_cast<int>(m_doc->scene.bodies_under(id).size());
+  int allBodies = static_cast<int>(m_doc->scene.all_bodies().size());
+
   QDialog dlg(this);
   dlg.setWindowTitle(tr("Export"));
-  auto* form = new QFormLayout(&dlg);
-  auto* format = new QComboBox(&dlg);
-  for (const auto& f : opad::commands::exporter_formats()) format->addItem(QString::fromStdString(f));
-  auto* scope = new QComboBox(&dlg);
-  auto ids = currentNodeIds();
-  scope->addItem(tr("Whole document"));
-  if (!ids.empty()) { scope->addItem(tr("Selection (%1 object(s))").arg(ids.size())); scope->setCurrentIndex(1); }
-  auto* schema = new QComboBox(&dlg);
-  schema->addItems({"AP214", "AP242", "AP203"});
+  dlg.setFixedWidth(560);
+  auto* v = new QVBoxLayout(&dlg);
+  v->setContentsMargins(16, 16, 16, 16);
+  v->setSpacing(12);
+  auto header = [&](const QString& t) { auto* l = new QLabel(t, &dlg); l->setObjectName("sectionHeader"); v->addWidget(l); };
+  header(tr("FORMAT"));
+  auto* grid = new QGridLayout();
+  auto* group = new QButtonGroup(&dlg);
+  struct Fmt { QString label, format, schema; };
+  QList<Fmt> fmts = {{"STEP AP214", "step", "AP214"}, {"STEP AP242", "step", "AP242"}, {"OBJ (+MTL)", "obj", ""}, {"STL", "stl", ""}, {"GLB", "glb", ""}};
+  for (const auto& f : opad::commands::exporter_formats())
+    if (f != "step" && f != "obj" && f != "stl" && f != "glb") fmts << Fmt{QString::fromStdString(f).toUpper() + tr(" (plugin)"), QString::fromStdString(f), ""};
+  int i = 0;
+  for (const auto& f : fmts) {
+    auto* r = new QRadioButton(f.label, &dlg);
+    r->setProperty("format", f.format);
+    r->setProperty("schema", f.schema);
+    group->addButton(r, i);
+    grid->addWidget(r, i / 2, i % 2);
+    if (i == 1) r->setChecked(true);
+    ++i;
+  }
+  v->addLayout(grid);
+  header(tr("OBJECTS"));
+  auto* scopeRow = new QHBoxLayout();
+  auto* scopeSel = new QRadioButton(QString::fromUtf8("Selection · %1 %2").arg(selBodies).arg(selBodies == 1 ? tr("body") : tr("bodies")), &dlg);
+  auto* scopeAll = new QRadioButton(QString::fromUtf8("Whole document · %1 bodies").arg(allBodies), &dlg);
+  scopeSel->setEnabled(selBodies > 0);
+  (selBodies > 0 ? scopeSel : scopeAll)->setChecked(true);
+  scopeRow->addWidget(scopeSel);
+  scopeRow->addWidget(scopeAll);
+  scopeRow->addStretch();
+  v->addLayout(scopeRow);
+  auto* form = new QFormLayout();
   auto* tol = new QDoubleSpinBox(&dlg);
   tol->setRange(0.001, 10);
   tol->setDecimals(3);
-  tol->setValue(0.1);
+  tol->setValue(0.010);
   tol->setSuffix(" mm");
+  tol->setFont(theme::mono(12));
+  form->addRow(tr("Tolerance"), tol);
+  v->addLayout(form);
+  header(tr("OPTIONS"));
+  auto* perBody = new QCheckBox(tr("One file per body (STL)"), &dlg);
+  perBody->setChecked(true);
   auto* ascii = new QCheckBox(tr("ASCII STL"), &dlg);
-  auto* perBody = new QCheckBox(tr("One STL file per body"), &dlg);
-  auto* mtl = new QCheckBox(tr("Write OBJ material library"), &dlg);
+  auto* mtl = new QCheckBox(tr("Write material library (OBJ)"), &dlg);
   mtl->setChecked(true);
-  form->addRow(tr("Format"), format);
-  form->addRow(tr("Objects"), scope);
-  form->addRow(tr("STEP schema"), schema);
-  form->addRow(tr("Mesh tolerance"), tol);
-  form->addRow(ascii);
-  form->addRow(perBody);
-  form->addRow(mtl);
-  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
-  form->addRow(buttons);
-  connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-  connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+  v->addWidget(perBody);
+  v->addWidget(ascii);
+  v->addWidget(mtl);
+  header(tr("TARGET"));
+  auto* pathRow = new QHBoxLayout();
+  auto* path = new QLineEdit(&dlg);
+  path->setObjectName("mono");
+  path->setFont(theme::mono(12));
+  QString stem = m_doc->doc.path.empty() ? "export" : QString::fromStdString(m_doc->doc.path.stem().string());
+  path->setText(QDir(m_settings.value("ui/lastDir", QDir::homePath()).toString()).filePath(stem + ".step"));
+  auto* browse = new QPushButton(tr("Browse…"), &dlg);
+  pathRow->addWidget(path, 1);
+  pathRow->addWidget(browse);
+  v->addLayout(pathRow);
+  auto* footer = new QHBoxLayout();
+  auto* summary = new QLabel(&dlg);
+  summary->setObjectName("secondary");
+  footer->addWidget(summary, 1);
+  auto* cancel = new QPushButton(tr("Cancel   Esc"), &dlg);
+  auto* ok = new QPushButton(tr("Export   Enter"), &dlg);
+  ok->setObjectName("primary");
+  ok->setDefault(true);
+  footer->addWidget(cancel);
+  footer->addWidget(ok);
+  v->addLayout(footer);
+  auto refresh = [&] {
+    auto* b = group->checkedButton();
+    QString fmt = b ? b->property("format").toString() : "step";
+    QFileInfo fi(path->text());
+    QString ext = fmt == "step" ? "step" : fmt;
+    if (fi.suffix().toLower() != ext && !(fmt == "step" && fi.suffix().toLower() == "stp")) path->setText(fi.dir().filePath(fi.completeBaseName() + "." + ext));
+    int n = scopeSel->isChecked() ? selBodies : allBodies;
+    summary->setText(QString::fromUtf8("%1 · %2 bodies · %3 mm").arg(b ? b->text() : fmt).arg(n).arg(tol->value(), 0, 'f', 3));
+    perBody->setEnabled(fmt == "stl");
+    ascii->setEnabled(fmt == "stl");
+    mtl->setEnabled(fmt == "obj");
+  };
+  connect(group, &QButtonGroup::idClicked, &dlg, [&](int) { refresh(); });
+  connect(scopeSel, &QRadioButton::toggled, &dlg, [&](bool) { refresh(); });
+  connect(tol, &QDoubleSpinBox::valueChanged, &dlg, [&](double) { refresh(); });
+  connect(browse, &QPushButton::clicked, &dlg, [&] {
+    QString p = QFileDialog::getSaveFileName(&dlg, tr("Export to"), path->text());
+    if (!p.isEmpty()) path->setText(p);
+  });
+  connect(cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
+  connect(ok, &QPushButton::clicked, &dlg, &QDialog::accept);
+  refresh();
   if (dlg.exec() != QDialog::Accepted) return;
-  QString fmt = format->currentText();
-  QString out = QFileDialog::getSaveFileName(this, tr("Export %1").arg(fmt), m_settings.value("ui/lastDir").toString(), QString("%1 (*.%1)").arg(fmt));
-  if (out.isEmpty()) return;
-  if (!out.endsWith("." + fmt, Qt::CaseInsensitive) && !(fmt == "step" && out.endsWith(".stp", Qt::CaseInsensitive))) out += "." + fmt;
-  opad::json args{{"format", fmt.toStdString()}, {"out", out.toStdString()}, {"schema", schema->currentText().toStdString()}, {"tolerance", tol->value()},
-                  {"ascii", ascii->isChecked()}, {"per_body", perBody->isChecked()}, {"mtl", mtl->isChecked()}};
-  if (scope->currentIndex() == 1) args["select"] = ids;
+  auto* b = group->checkedButton();
+  QString fmt = b->property("format").toString();
+  QString out = path->text();
+  m_settings.setValue("ui/lastDir", QFileInfo(out).absolutePath());
+  opad::json args{{"format", fmt.toStdString()}, {"out", out.toStdString()}, {"tolerance", tol->value()}, {"ascii", ascii->isChecked()}, {"per_body", perBody->isChecked()}, {"mtl", mtl->isChecked()}};
+  if (!b->property("schema").toString().isEmpty()) args["schema"] = b->property("schema").toString().toStdString();
+  if (scopeSel->isChecked()) args["select"] = ids;
   opad::json r = opad::commands::run("export", args, &m_doc->doc);
   statusBar()->showMessage(tr("Exported %1 bodies to %2").arg(r.value("bodies", 0)).arg(out), 8000);
 }
@@ -627,62 +1014,7 @@ void MainWindow::screenshot() {
   statusBar()->showMessage(tr("Saved %1").arg(out), 5000);
 }
 
-// ---------------------------------------------------------------- section (F20)
-void MainWindow::sectionDialog() {
-  if (!m_sectionDialog) {
-    m_sectionDialog = new QDialog(this);
-    m_sectionDialog->setWindowTitle(tr("Section analysis"));
-    auto* form = new QFormLayout(m_sectionDialog);
-    m_sectionOn = new QCheckBox(tr("Enable section plane"), m_sectionDialog);
-    m_sectionAxis = new QComboBox(m_sectionDialog);
-    m_sectionAxis->addItems({"X", "Y", "Z"});
-    m_sectionAxis->setCurrentIndex(2);
-    m_sectionSlider = new QSlider(Qt::Horizontal, m_sectionDialog);
-    m_sectionSlider->setRange(0, 1000);
-    m_sectionSlider->setValue(500);
-    m_sectionFlip = new QCheckBox(tr("Flip side"), m_sectionDialog);
-    auto* save = new QPushButton(tr("Save as named section..."), m_sectionDialog);
-    form->addRow(m_sectionOn);
-    form->addRow(tr("Axis"), m_sectionAxis);
-    form->addRow(tr("Offset"), m_sectionSlider);
-    form->addRow(m_sectionFlip);
-    form->addRow(save);
-    auto apply = [this] {
-      opad::Vec3 lo, hi;
-      if (!opad::scene_bbox(m_doc->doc, m_doc->scene, {}, lo, hi)) return;
-      int axis = m_sectionAxis->currentIndex();
-      double t = m_sectionSlider->value() / 1000.0;
-      opad::Vec3 origin{(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2};
-      origin[axis] = lo[axis] + t * (hi[axis] - lo[axis]);
-      opad::Vec3 normal{0, 0, 0};
-      normal[axis] = m_sectionFlip->isChecked() ? 1 : -1;
-      m_viewport->setSection(m_sectionOn->isChecked(), origin, normal);
-    };
-    connect(m_sectionOn, &QCheckBox::toggled, this, apply);
-    connect(m_sectionAxis, &QComboBox::currentIndexChanged, this, apply);
-    connect(m_sectionSlider, &QSlider::valueChanged, this, apply);
-    connect(m_sectionFlip, &QCheckBox::toggled, this, apply);
-    connect(save, &QPushButton::clicked, this, [this, apply] {
-      apply();
-      bool ok = false;
-      QString name = QInputDialog::getText(this, tr("Named section"), tr("Name:"), QLineEdit::Normal, tr("Section %1").arg(m_doc->scene.sections.size() + 1), &ok);
-      if (!ok || name.isEmpty()) return;
-      opad::Vec3 lo, hi;
-      opad::scene_bbox(m_doc->doc, m_doc->scene, {}, lo, hi);
-      int axis = m_sectionAxis->currentIndex();
-      opad::Vec3 origin{(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2};
-      origin[axis] = lo[axis] + m_sectionSlider->value() / 1000.0 * (hi[axis] - lo[axis]);
-      opad::Vec3 normal{0, 0, 0};
-      normal[axis] = m_sectionFlip->isChecked() ? 1 : -1;
-      guarded([&] { m_doc->run("section", opad::json{{"name", name.toStdString()}, {"origin", origin}, {"normal", normal}}); });
-    });
-  }
-  m_sectionOn->setChecked(true);
-  m_sectionDialog->show();
-  m_sectionDialog->raise();
-}
-
-// ---------------------------------------------------------------- named views (F6 view op)
+// ---------------------------------------------------------------- named views (view op)
 void MainWindow::saveNamedView() {
   bool ok = false;
   QString name = QInputDialog::getText(this, tr("Save view"), tr("Name:"), QLineEdit::Normal, tr("View %1").arg(m_doc->scene.views.size() + 1), &ok);
@@ -699,26 +1031,58 @@ void MainWindow::rebuildViewsMenu() {
   if (!m_viewsMenu) return;
   m_viewsMenu->clear();
   for (const auto& v : m_doc->scene.views) {
-    QAction* a = m_viewsMenu->addAction(QString::fromStdString(v.name));
+    QAction* a = m_viewsMenu->addAction(icons::themed("home", 16), QString::fromStdString(v.name));
     connect(a, &QAction::triggered, this, [this, id = v.id] { restoreNamedView(id); });
   }
-  if (!m_doc->scene.sections.empty()) {
-    m_viewsMenu->addSeparator();
-    for (const auto& s : m_doc->scene.sections) {
-      QAction* a = m_viewsMenu->addAction(tr("Section: %1").arg(QString::fromStdString(s.name)));
-      connect(a, &QAction::triggered, this, [this, s] { m_viewport->setSection(true, s.origin, s.normal); });
-    }
-  }
   if (m_viewsMenu->isEmpty()) m_viewsMenu->addAction(tr("(none saved)"))->setEnabled(false);
+}
+
+// ---------------------------------------------------------------- recent files
+QStringList MainWindow::recent() const { return m_settings.value("ui/recent").toStringList(); }
+
+void MainWindow::addRecent(const QString& path) {
+  QStringList list = recent();
+  list.removeAll(path);
+  list.prepend(path);
+  while (list.size() > 8) list.removeLast();
+  m_settings.setValue("ui/recent", list);
+  m_empty->setRecent(list);
+  rebuildRecentMenu();
+}
+
+void MainWindow::rebuildRecentMenu() {
+  if (!m_recentMenu) return;
+  m_recentMenu->clear();
+  for (const QString& p : recent()) {
+    QAction* a = m_recentMenu->addAction(icons::themed("recent", 16), p);
+    connect(a, &QAction::triggered, this, [this, p] { openPath(p); });
+  }
+  if (m_recentMenu->isEmpty()) m_recentMenu->addAction(tr("No recent files"))->setEnabled(false);
 }
 
 // ---------------------------------------------------------------- lifecycle
 void MainWindow::openPath(const QString& path) {
   guarded([&] {
+    if (!maybeSave()) return;
     m_settings.setValue("ui/lastDir", QFileInfo(path).absolutePath());
+    QString ext = QFileInfo(path).suffix().toLower();
+    if (ext == "step" || ext == "stp") m_settings.setValue("ui/lastBrowse", path);
     m_doc->open(path);
+    addRecent(path);
     m_viewport->fitAll();
   });
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent* e) {
+  if (e->mimeData()->hasUrls()) e->acceptProposedAction();
+}
+
+void MainWindow::dropEvent(QDropEvent* e) {
+  for (const QUrl& u : e->mimeData()->urls()) {
+    QString p = u.toLocalFile();
+    QString ext = QFileInfo(p).suffix().toLower();
+    if (ext == "step" || ext == "stp" || ext == "opad") { openPath(p); return; }
+  }
 }
 
 bool MainWindow::maybeSave() {
@@ -728,7 +1092,7 @@ bool MainWindow::maybeSave() {
   if (r == QMessageBox::Cancel) return false;
   if (r == QMessageBox::Save) {
     try {
-      if (m_doc->doc.path.empty()) find_action(m_actions, "file.saveas")->trigger();
+      if (m_doc->doc.path.empty()) action("file.saveas")->trigger();
       else m_doc->save();
     } catch (const std::exception& e) {
       QMessageBox::warning(this, tr("OPAD"), QString::fromUtf8(e.what()));
@@ -746,5 +1110,6 @@ void MainWindow::closeEvent(QCloseEvent* e) {
   }
   m_settings.setValue("ui/geometry", saveGeometry());
   m_settings.setValue("ui/state", saveState());
+  m_settings.setValue("ui/layoutVersion", 2);
   e->accept();
 }

@@ -14,6 +14,10 @@ set(CMAKE_AUTORCC ON)
 set(OPAD_APP_SOURCES
   main.cpp
   AppDocument.cpp AppDocument.hpp
+  Theme.cpp Theme.hpp
+  Icons.cpp Icons.hpp
+  Ribbon.cpp Ribbon.hpp
+  EmptyState.cpp EmptyState.hpp
   Viewport.cpp Viewport.hpp
   Panels.cpp Panels.hpp
   MainWindow.cpp MainWindow.hpp)

@@ -1,26 +1,133 @@
 #include "Panels.hpp"
 
 #include <QAction>
+#include <QApplication>
 #include <QColorDialog>
+#include <QDockWidget>
 #include <QDropEvent>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QKeyEvent>
 #include <QKeySequenceEdit>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPushButton>
 #include <QSettings>
+#include <QToolButton>
 #include <QToolTip>
 #include <QVBoxLayout>
 
 #include <functional>
 
+#include "Icons.hpp"
+#include "Theme.hpp"
+#include "opad/inspect.hpp"
+
 namespace {
 constexpr int kIdRole = Qt::UserRole + 1;
 constexpr int kNameRole = Qt::UserRole + 2;
+constexpr int kEyeX = 2, kSwatchX = 24, kTypeX = 42, kNameX = 66;
+
+QString fmtNum(double v) { return QString::number(v, 'g', 7); }
+
+QString fmtValue(const opad::json& v) {
+  if (v.is_number_float()) return fmtNum(v.get<double>());
+  if (v.is_array()) {
+    QStringList parts;
+    for (const auto& e : v) parts << fmtValue(e);
+    return "[" + parts.join(", ") + "]";
+  }
+  if (v.is_string()) return QString::fromStdString(v.get<std::string>());
+  if (v.is_boolean()) return v.get<bool>() ? "yes" : "no";
+  return QString::fromStdString(v.dump());
+}
+
+QColor authorColor(const std::string& by) {
+  uint h = qHash(QString::fromStdString(by));
+  return QColor::fromHsl(static_cast<int>(h % 360), 140, 130);
+}
+
+QString shortId(const std::string& id) { return QString::fromStdString(id.substr(0, 8)); }
 }  // namespace
 
+QString opTypeIcon(const std::string& type) {
+  if (type == "import") return "import";
+  if (type == "rename") return "rename";
+  if (type == "transform") return "move";
+  if (type == "appearance") return "eye";
+  if (type == "reparent") return "reparent";
+  if (type == "annotation") return "annotate";
+  if (type == "measurement") return "distance";
+  if (type == "section") return "section";
+  if (type == "view") return "home";
+  if (type == "delete") return "delete";
+  return "dot";
+}
+
+QString opGroup(const QAction* a) {
+  QString id = a->objectName();
+  if (id.startsWith("file.")) return "File";
+  if (id.startsWith("view.")) return "View";
+  if (id.startsWith("nav.")) return "Navigation";
+  if (id.startsWith("select.")) return "Select";
+  if (id.startsWith("inspect.")) return "Inspect";
+  if (id.startsWith("annotate.") || id.startsWith("edit.")) return "Edit";
+  if (id.startsWith("tools.")) return "Tools";
+  return "Help";
+}
+
+// ---------------------------------------------------------------- DockHeader
+DockHeader::DockHeader(const QString& title, QDockWidget* dock) : QWidget(dock) {
+  setObjectName("dockHeader");
+  setAttribute(Qt::WA_StyledBackground);
+  setFixedHeight(28);
+  auto* l = new QHBoxLayout(this);
+  l->setContentsMargins(8, 0, 6, 0);
+  l->setSpacing(8);
+  m_title = new QLabel(title, this);
+  m_title->setObjectName("dockTitle");
+  l->addWidget(m_title, 1);
+  const Tokens& t = theme::current();
+  auto* flt = new QToolButton(this);
+  flt->setObjectName("dockButton");
+  flt->setIcon(icons::icon("float", t.fg2));
+  flt->setIconSize(QSize(16, 16));
+  flt->setFixedSize(20, 20);
+  flt->setToolTip(tr("Float / dock"));
+  auto* close = new QToolButton(this);
+  close->setObjectName("dockButton");
+  close->setIcon(icons::icon("close", t.fg2));
+  close->setIconSize(QSize(16, 16));
+  close->setFixedSize(20, 20);
+  close->setToolTip(tr("Close panel"));
+  l->addWidget(flt);
+  l->addWidget(close);
+  connect(flt, &QToolButton::clicked, dock, [dock] { dock->setFloating(!dock->isFloating()); });
+  connect(close, &QToolButton::clicked, dock, &QDockWidget::close);
+  connect(theme::notifier(), &theme::Notifier::changed, this, [flt, close] {
+    flt->setIcon(icons::icon("float", theme::current().fg2));
+    close->setIcon(icons::icon("close", theme::current().fg2));
+  });
+}
+
+void DockHeader::setTitle(const QString& t) { m_title->setText(t); }
+
 // ---------------------------------------------------------------- BrowserTree
+BrowserTree::BrowserTree(AppDocument* doc, QWidget* parent) : QTreeWidget(parent), m_doc(doc) {
+  setIndentation(16);
+  setRootIsDecorated(true);
+  setHeaderHidden(true);
+  setColumnCount(1);
+  setMouseTracking(true);
+  setUniformRowHeights(true);
+  setSelectionMode(QAbstractItemView::ExtendedSelection);
+  setDragDropMode(QAbstractItemView::InternalMove);
+  setDefaultDropAction(Qt::MoveAction);
+  setEditTriggers(QAbstractItemView::EditKeyPressed);
+  setAttribute(Qt::WA_Hover);
+}
+
 void BrowserTree::dropEvent(QDropEvent* e) {
   QTreeWidgetItem* target = itemAt(e->position().toPoint());
   DropIndicatorPosition pos = dropIndicatorPosition();
@@ -41,37 +148,169 @@ void BrowserTree::dropEvent(QDropEvent* e) {
   }
   std::vector<std::string> ids;
   for (QTreeWidgetItem* it : selectedItems()) ids.push_back(it->data(0, kIdRole).toString().toStdString());
-  e->ignore();  // the model rebuild after the reparent op moves the items
+  e->ignore();
   if (!ids.empty()) emit reparentRequested(ids, parent, index);
+}
+
+void BrowserTree::mousePressEvent(QMouseEvent* e) {
+  QModelIndex idx = indexAt(e->pos());
+  if (idx.isValid() && e->button() == Qt::LeftButton) {
+    QRect r = visualRect(idx);
+    int x = e->pos().x() - r.left();
+    std::string id = idx.data(kIdRole).toString().toStdString();
+    if (x >= kEyeX && x < kEyeX + 18) { emit eyeClicked(id); return; }
+    if (x >= kSwatchX - 2 && x < kSwatchX + 14) { emit swatchClicked(id); return; }
+  }
+  QTreeWidget::mousePressEvent(e);
+}
+
+void BrowserTree::drawBranches(QPainter* painter, const QRect& rect, const QModelIndex& index) const {
+  if (!model()->hasChildren(index)) return;
+  const Tokens& t = theme::current();
+  QRect r(rect.right() - 16, rect.top() + 6, 16, 16);
+  painter->drawPixmap(r.topLeft(), icons::pixmap(isExpanded(index) ? "chevronDown" : "chevronRight", t.fg3, 16, devicePixelRatioF()));
+}
+
+// ---------------------------------------------------------------- BrowserDelegate
+void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& index) const {
+  const Tokens& t = theme::current();
+  std::string id = index.data(kIdRole).toString().toStdString();
+  const bool isDoc = index.data(Qt::UserRole).toString() == "document";
+  const opad::Node* n = isDoc ? nullptr : m_doc->node(id);
+  p->save();
+  p->setRenderHint(QPainter::Antialiasing);
+  QRect r = opt.rect;
+  const int fullW = opt.widget ? opt.widget->width() : r.right();
+  QRect full(0, r.top(), fullW, r.height());
+  if (opt.state & QStyle::State_Selected) {
+    p->fillRect(full, t.selbg);
+    p->fillRect(QRect(0, r.top(), 2, r.height()), t.sel);
+  } else if (opt.state & QStyle::State_MouseOver) {
+    p->fillRect(full, t.bg3);
+  }
+  if (!n && !isDoc) { p->restore(); return; }
+  bool hidden = n && !n->visible;
+  QColor text = hidden ? t.fg3 : t.fg;
+  QColor iconColor = hidden ? t.fg3 : t.fg2;
+  const qreal dpr = p->device()->devicePixelRatioF();
+  int y = r.top() + 6;
+  p->drawPixmap(r.left() + kEyeX, y, icons::pixmap(hidden ? "hide" : "eye", iconColor, 16, dpr));
+  QRectF sw(r.left() + kSwatchX, r.top() + 9, 10, 10);
+  p->setPen(QPen(t.line, 1));
+  const bool isBody = n && n->kind == opad::Node::Kind::Body;
+  if (isBody) p->setBrush(n->has_color ? QColor::fromRgbF(n->color[0], n->color[1], n->color[2]) : (hidden ? t.fg3 : t.fg2));
+  else p->setBrush(t.bg);  // components and the document: hollow square
+  p->drawRoundedRect(sw, 2, 2);
+  QString typeIcon = isDoc ? "doc" : isBody ? "body" : "component";
+  p->drawPixmap(r.left() + kTypeX, y, icons::pixmap(typeIcon, n && n->body_missing ? t.red : iconColor, 16, dpr));
+  if (isDoc) {
+    p->setFont(theme::ui(13));
+    p->setPen(t.fg);
+    p->drawText(QRect(r.left() + kNameX, r.top(), r.width() - kNameX, r.height()), Qt::AlignVCenter | Qt::AlignLeft, index.data(kNameRole).toString());
+    p->restore();
+    return;
+  }
+
+  int x = r.left() + kNameX;
+  int right = r.right() - 6;
+  // trailing badges, right to left
+  if (n->kind == opad::Node::Kind::Body) {
+    auto it = m_doc->scene.instance_count.find(n->body_key);
+    if (it != m_doc->scene.instance_count.end() && it->second > 1) {
+      QString badge = QString::fromUtf8("×%1").arg(it->second);
+      QFontMetrics mm(theme::mono(11));
+      int w = mm.horizontalAdvance(badge) + 10;
+      QRect br(right - w, r.top() + 6, w, 16);
+      p->setPen(Qt::NoPen);
+      p->setBrush(t.bg4);
+      p->drawRoundedRect(br, 8, 8);
+      p->setPen(text);
+      p->setFont(theme::mono(11));
+      p->drawText(br, Qt::AlignCenter, badge);
+      right -= w + 6;
+    }
+  }
+  if (n->locked) {
+    p->drawPixmap(right - 12, r.top() + 8, icons::pixmap("lock", t.fg2, 12, dpr));
+    right -= 18;
+  }
+  if (n->body_missing) {
+    p->setFont(theme::ui(11));
+    p->setPen(t.red);
+    QString msg = tr("missing body");
+    int w = QFontMetrics(theme::ui(11)).horizontalAdvance(msg);
+    p->drawText(QRect(right - w, r.top(), w, r.height()), Qt::AlignVCenter, msg);
+    right -= w + 4;
+    p->drawPixmap(right - 14, r.top() + 7, icons::pixmap("warning", t.red, 14, dpr));
+    right -= 18;
+  }
+  p->setFont(theme::ui(13));
+  p->setPen(text);
+  QString name = index.data(kNameRole).toString();
+  p->drawText(QRect(x, r.top(), std::max(10, right - x), r.height()), Qt::AlignVCenter | Qt::AlignLeft, QFontMetrics(theme::ui(13)).elidedText(name, Qt::ElideRight, std::max(10, right - x)));
+  p->restore();
+}
+
+QWidget* BrowserDelegate::createEditor(QWidget* parent, const QStyleOptionViewItem&, const QModelIndex&) const {
+  auto* e = new QLineEdit(parent);
+  e->setFrame(true);
+  return e;
+}
+
+void BrowserDelegate::updateEditorGeometry(QWidget* editor, const QStyleOptionViewItem& opt, const QModelIndex&) const {
+  editor->setGeometry(QRect(opt.rect.left() + kNameX - 4, opt.rect.top() + 1, opt.rect.width() - kNameX, opt.rect.height() - 2));
 }
 
 // ---------------------------------------------------------------- BrowserPanel
 BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent), m_doc(doc) {
   auto* layout = new QVBoxLayout(this);
-  layout->setContentsMargins(4, 4, 4, 4);
-  m_filter = new QLineEdit(this);
-  m_filter->setPlaceholderText(tr("Filter objects (type to search)"));
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(0);
+  // Filter + breadcrumb block, divided from the tree by a 1 px line (design: "browser dock").
+  auto* head = new QWidget(this);
+  head->setObjectName("browserHead");
+  head->setAttribute(Qt::WA_StyledBackground);
+  head->setStyleSheet(QString("QWidget#browserHead { border-bottom: 1px solid %1; }").arg(theme::css(theme::current().line)));
+  auto* hl = new QVBoxLayout(head);
+  hl->setContentsMargins(8, 8, 8, 8);
+  hl->setSpacing(8);
+  m_filter = new QLineEdit(head);
+  m_filter->setPlaceholderText(tr("Filter objects"));
   m_filter->setClearButtonEnabled(true);
-  layout->addWidget(m_filter);
-  m_breadcrumb = new QLabel(this);
-  m_breadcrumb->setTextFormat(Qt::PlainText);
-  m_breadcrumb->setStyleSheet("color: palette(mid); padding: 2px;");
-  layout->addWidget(m_breadcrumb);
-  m_tree = new BrowserTree(this);
-  m_tree->setColumnCount(3);
-  m_tree->setHeaderLabels({tr("Object"), "", ""});
-  m_tree->header()->setStretchLastSection(false);
-  m_tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-  m_tree->header()->setSectionResizeMode(1, QHeaderView::Fixed);
-  m_tree->header()->setSectionResizeMode(2, QHeaderView::Fixed);
-  m_tree->setColumnWidth(1, 24);
-  m_tree->setColumnWidth(2, 24);
-  m_tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
-  m_tree->setDragDropMode(QAbstractItemView::InternalMove);
-  m_tree->setDefaultDropAction(Qt::MoveAction);
+  QAction* searchIcon = m_filter->addAction(icons::icon("search", theme::current().fg3), QLineEdit::LeadingPosition);
+  m_filter->setToolTip(tr("Filter objects (Ctrl+F)"));
+  connect(theme::notifier(), &theme::Notifier::changed, this, [this, head, searchIcon] {
+    head->setStyleSheet(QString("QWidget#browserHead { border-bottom: 1px solid %1; }").arg(theme::css(theme::current().line)));
+    searchIcon->setIcon(icons::icon("search", theme::current().fg3));
+    updateBreadcrumb();
+    m_tree->viewport()->update();
+  });
+  m_filter->setTextMargins(0, 0, 44, 0);
+  {
+    auto* hint = new QLabel("Ctrl+F", m_filter);
+    hint->setObjectName("tertiary");
+    hint->setFont(theme::mono(11));
+    auto* fl = new QHBoxLayout(m_filter);
+    fl->setContentsMargins(0, 0, 8, 0);
+    fl->addStretch();
+    fl->addWidget(hint);
+  }
+  hl->addWidget(m_filter);
+  m_breadcrumb = new QLabel(head);
+  m_breadcrumb->setTextFormat(Qt::RichText);
+  m_breadcrumb->setFont(theme::ui(12));
+  m_breadcrumb->setFixedHeight(16);
+  hl->addWidget(m_breadcrumb);
+  layout->addWidget(head);
+  m_tree = new BrowserTree(doc, this);
+  m_tree->setStyleSheet("QTreeWidget { padding: 4px 0; }");
+  m_tree->setItemDelegate(new BrowserDelegate(doc, m_tree));
   m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
-  m_tree->setEditTriggers(QAbstractItemView::EditKeyPressed | QAbstractItemView::SelectedClicked);
   layout->addWidget(m_tree, 1);
+  m_empty = new QLabel(tr("No document"), this);
+  m_empty->setObjectName("secondary");
+  m_empty->setAlignment(Qt::AlignCenter);
+  layout->addWidget(m_empty, 1);
 
   connect(m_filter, &QLineEdit::textChanged, this, [this] { applyFilter(); });
   connect(m_tree, &QTreeWidget::itemSelectionChanged, this, [this] {
@@ -79,36 +318,30 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     updateBreadcrumb();
     emit selectionChanged(selectedIds());
   });
-  connect(m_tree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& p) {
-    emit contextMenuRequested(m_tree->viewport()->mapToGlobal(p), selectedIds());
-  });
-  connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int col) {
-    std::string id = it->data(0, kIdRole).toString().toStdString();
-    if (col == 2) {
-      const opad::Node* n = m_doc->node(id);
-      QColor start = n && n->has_color ? QColor::fromRgbF(n->color[0], n->color[1], n->color[2]) : QColor(190, 190, 195);
-      QColor c = QColorDialog::getColor(start, this, tr("Colour of %1").arg(QString::fromStdString(n ? n->name : id)));
-      if (c.isValid()) m_doc->run("appearance", opad::json{{"target", id}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
-    } else if (col == 0) {
-      emit fitRequested({id});
+  connect(m_tree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& p) { emit contextMenuRequested(m_tree->viewport()->mapToGlobal(p), selectedIds()); });
+  connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int) { emit fitRequested({it->data(0, kIdRole).toString().toStdString()}); });
+  connect(m_tree, &BrowserTree::eyeClicked, this, [this](const std::string& id) {
+    if (id.empty()) {  // document row: toggle every root
+      bool anyVisible = false;
+      for (const auto& r : m_doc->scene.roots) anyVisible = anyVisible || m_doc->node(r)->visible;
+      for (const auto& r : m_doc->scene.roots) m_doc->run("appearance", opad::json{{"target", r}, {"visible", !anyVisible}});
+      return;
     }
-  });
-  connect(m_tree, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* it, int col) {
-    if (col != 1) return;
-    std::string id = it->data(0, kIdRole).toString().toStdString();
     const opad::Node* n = m_doc->node(id);
-    if (!n) return;
-    m_doc->run("appearance", opad::json{{"target", id}, {"visible", !n->visible}});
+    if (n) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !n->visible}});
+  });
+  connect(m_tree, &BrowserTree::swatchClicked, this, [this](const std::string& id) {
+    const opad::Node* n = m_doc->node(id);
+    QColor start = n && n->has_color ? QColor::fromRgbF(n->color[0], n->color[1], n->color[2]) : QColor(190, 190, 195);
+    QColor c = QColorDialog::getColor(start, this, tr("Colour of %1").arg(QString::fromStdString(n ? n->name : id)));
+    if (c.isValid()) m_doc->run("appearance", opad::json{{"target", id}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
   });
   connect(m_tree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* it, int col) {
     if (m_updating || col != 0) return;
     std::string id = it->data(0, kIdRole).toString().toStdString();
     QString newName = it->text(0).trimmed();
     QString oldName = it->data(0, kNameRole).toString();
-    if (newName.isEmpty() || newName == oldName) {
-      rebuild();
-      return;
-    }
+    if (newName.isEmpty() || newName == oldName) { rebuild(); return; }
     m_doc->run("rename", opad::json{{"target", id}, {"name", newName.toStdString()}});
   });
   connect(m_tree, &BrowserTree::reparentRequested, this, [this](const std::vector<std::string>& ids, const std::string& parent, int index) {
@@ -116,15 +349,16 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
       opad::json op{{"target", id}};
       op["parent"] = parent.empty() ? opad::json(nullptr) : opad::json(parent);
       if (index >= 0) op["index"] = index;
-      try {
-        m_doc->run("reparent", op);
-      } catch (const std::exception& e) {
-        emit m_doc->message(QString::fromUtf8(e.what()));
-      }
+      try { m_doc->run("reparent", op); } catch (const std::exception& e) { emit m_doc->message(QString::fromUtf8(e.what())); }
     }
   });
   connect(doc, &AppDocument::changed, this, &BrowserPanel::rebuild);
   rebuild();
+}
+
+void BrowserPanel::focusFilter() {
+  m_filter->setFocus();
+  m_filter->selectAll();
 }
 
 QTreeWidgetItem* BrowserPanel::build(const std::string& id, QTreeWidgetItem* parent, std::set<std::string>& expanded) {
@@ -132,28 +366,12 @@ QTreeWidgetItem* BrowserPanel::build(const std::string& id, QTreeWidgetItem* par
   if (!n) return nullptr;
   auto* item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_tree);
   QString name = QString::fromStdString(n->name);
-  QString label = name;
-  if (n->kind == opad::Node::Kind::Body) {
-    auto it = m_doc->scene.instance_count.find(n->body_key);
-    if (it != m_doc->scene.instance_count.end() && it->second > 1) label += QString::fromUtf8("  ×%1").arg(it->second);
-    if (n->body_missing) label += tr("  [missing body]");
-  }
-  if (n->locked) label += QString::fromUtf8("  \U0001F512");
-  item->setText(0, label);
+  item->setText(0, name);
   item->setData(0, kIdRole, QString::fromStdString(id));
   item->setData(0, kNameRole, name);
   item->setData(0, Qt::UserRole, n->kind == opad::Node::Kind::Body ? "body" : "component");
   item->setFlags(item->flags() | Qt::ItemIsEditable | Qt::ItemIsDragEnabled | (n->kind == opad::Node::Kind::Component ? Qt::ItemIsDropEnabled : Qt::NoItemFlags));
-  item->setText(1, n->visible ? QString::fromUtf8("●") : QString::fromUtf8("○"));
-  item->setToolTip(1, n->visible ? tr("Visible (click to hide)") : tr("Hidden (click to show)"));
-  item->setTextAlignment(1, Qt::AlignCenter);
-  if (n->has_color) {
-    item->setBackground(2, QColor::fromRgbF(n->color[0], n->color[1], n->color[2]));
-    item->setToolTip(2, tr("Colour (double-click to change)"));
-  }
-  if (n->body_missing) item->setForeground(0, QBrush(QColor(200, 60, 40)));
-  else if (!n->visible) item->setForeground(0, QBrush(QColor(140, 140, 140)));
-  item->setToolTip(0, QString::fromStdString(id));
+  item->setToolTip(0, QString("%1\n%2").arg(name, QString::fromStdString(id)));
   for (const auto& c : n->children) build(c, item, expanded);
   item->setExpanded(expanded.empty() ? true : expanded.count(id) > 0);
   return item;
@@ -169,7 +387,20 @@ void BrowserPanel::rebuild() {
   };
   for (int i = 0; i < m_tree->topLevelItemCount(); ++i) collect(m_tree->topLevelItem(i));
   m_tree->clear();
-  for (const auto& r : m_doc->scene.roots) build(r, nullptr, expanded);
+  if (m_doc->hasDocument) {
+    auto* root = new QTreeWidgetItem(m_tree);
+    QString docName = m_doc->doc.path.empty() ? (m_doc->browse ? tr("browsing (unsaved)") : tr("Untitled")) : QString::fromStdString(m_doc->doc.path.filename().string());
+    root->setText(0, docName);
+    root->setData(0, kIdRole, QString());
+    root->setData(0, kNameRole, docName);
+    root->setData(0, Qt::UserRole, "document");
+    root->setFlags((root->flags() | Qt::ItemIsDropEnabled) & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled);
+    for (const auto& r : m_doc->scene.roots) build(r, root, expanded);
+    root->setExpanded(true);
+  }
+  bool empty = !m_doc->hasDocument;
+  m_tree->setVisible(!empty);
+  m_empty->setVisible(empty);
   applyFilter();
   setSelectedIds(selected);
   m_updating = false;
@@ -181,7 +412,7 @@ void BrowserPanel::applyFilter() {
   std::function<bool(QTreeWidgetItem*)> visit = [&](QTreeWidgetItem* it) {
     bool child_match = false;
     for (int i = 0; i < it->childCount(); ++i) child_match = visit(it->child(i)) || child_match;
-    bool self = f.isEmpty() || it->text(0).contains(f, Qt::CaseInsensitive);
+    bool self = f.isEmpty() || it->data(0, kNameRole).toString().contains(f, Qt::CaseInsensitive);
     it->setHidden(!(self || child_match));
     if (!f.isEmpty() && child_match) it->setExpanded(true);
     return self || child_match;
@@ -204,7 +435,10 @@ QTreeWidgetItem* BrowserPanel::itemFor(const std::string& id) const {
 
 std::vector<std::string> BrowserPanel::selectedIds() const {
   std::vector<std::string> ids;
-  for (QTreeWidgetItem* it : m_tree->selectedItems()) ids.push_back(it->data(0, kIdRole).toString().toStdString());
+  for (QTreeWidgetItem* it : m_tree->selectedItems()) {
+    std::string id = it->data(0, kIdRole).toString().toStdString();
+    if (!id.empty()) ids.push_back(id);
+  }
   return ids;
 }
 
@@ -229,229 +463,725 @@ void BrowserPanel::startRename(const std::string& id) {
 }
 
 void BrowserPanel::updateBreadcrumb() {
+  const Tokens& t = theme::current();
   auto ids = selectedIds();
   if (ids.empty()) {
-    m_breadcrumb->setText(m_doc->hasDocument ? tr("Document root") : QString());
+    m_breadcrumb->setText(m_doc->hasDocument ? QString("<span style='color:%1'>%2</span>").arg(t.fg2.name(), tr("Document")) : QString());
     return;
   }
   QStringList parts;
-  for (const auto& p : m_doc->scene.path_to(ids.front())) parts << m_doc->nodeName(p);
-  m_breadcrumb->setText(parts.join(QString::fromUtf8("  ›  ")));
+  auto path = m_doc->scene.path_to(ids.front());
+  for (size_t i = 0; i < path.size(); ++i) {
+    bool last = i + 1 == path.size();
+    parts << QString("<span style='color:%1'>%2</span>").arg(last ? t.fg.name() : t.fg2.name(), m_doc->nodeName(path[i]).toHtmlEscaped());
+  }
+  m_breadcrumb->setText(parts.join(QString("<span style='color:%1'> › </span>").arg(t.fg3.name())));
 }
 
 // ---------------------------------------------------------------- PropertiesPanel
 PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
   auto* layout = new QVBoxLayout(this);
-  layout->setContentsMargins(4, 4, 4, 4);
+  layout->setContentsMargins(12, 12, 12, 0);
+  layout->setSpacing(4);
+  auto* head = new QHBoxLayout();
   m_title = new QLabel(tr("Nothing selected"), this);
-  m_title->setWordWrap(true);
-  m_title->setStyleSheet("font-weight: bold; padding: 2px;");
-  layout->addWidget(m_title);
-  m_tree = new QTreeWidget(this);
-  m_tree->setColumnCount(2);
-  m_tree->setHeaderLabels({tr("Property"), tr("Value")});
-  m_tree->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-  m_tree->setRootIsDecorated(true);
-  layout->addWidget(m_tree, 1);
+  m_title->setObjectName("panelTitle");
+  head->addWidget(m_title, 1);
+  m_id = new QLabel(this);
+  m_id->setObjectName("tertiary");
+  m_id->setFont(theme::mono(11));
+  head->addWidget(m_id);
+  layout->addLayout(head);
+  m_subtitle = new QLabel(this);
+  m_subtitle->setObjectName("secondary");
+  m_subtitle->setWordWrap(true);
+  layout->addWidget(m_subtitle);
+  m_table = new QTreeWidget(this);
+  m_table->setColumnCount(2);
+  m_table->setHeaderHidden(true);
+  m_table->header()->setSectionResizeMode(0, QHeaderView::Fixed);
+  m_table->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+  m_table->setColumnWidth(0, 128);
+  m_table->setIndentation(0);
+  m_table->setRootIsDecorated(false);
+  m_table->setSelectionMode(QAbstractItemView::NoSelection);
+  m_table->setStyleSheet(QString("QTreeWidget::item { border-bottom: 1px solid %1; }").arg(theme::css(theme::current().line)));
+  layout->addWidget(m_table, 1);
+  connect(theme::notifier(), &theme::Notifier::changed, this, [this] {
+    const Tokens& t = theme::current();
+    m_table->setStyleSheet(QString("QTreeWidget::item { border-bottom: 1px solid %1; }").arg(theme::css(t.line)));
+    for (int i = 0; i < m_table->topLevelItemCount(); ++i) {
+      QTreeWidgetItem* row = m_table->topLevelItem(i);
+      row->setForeground(0, t.fg2);
+      const QString key = row->text(0);
+      row->setForeground(1, key == "key" || key == "source_op" ? t.fg3 : t.fg);
+    }
+  });
+  connect(m_table, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* it, int) {
+    if (it->data(0, Qt::UserRole).isValid()) emit faceChosen(it->data(0, Qt::UserRole).toInt());
+  });
 }
 
-static QString fmt(const opad::json& v) {
-  if (v.is_number_float()) return QString::number(v.get<double>(), 'g', 7);
-  if (v.is_array()) {
-    QStringList parts;
-    for (const auto& e : v) parts << fmt(e);
-    return "[" + parts.join(", ") + "]";
-  }
-  if (v.is_string()) return QString::fromStdString(v.get<std::string>());
-  return QString::fromStdString(v.dump());
+void PropertiesPanel::addRow(const QString& key, const opad::json& v) {
+  const Tokens& t = theme::current();
+  auto* row = new QTreeWidgetItem(m_table);
+  row->setText(0, key);
+  row->setForeground(0, t.fg2);
+  row->setText(1, fmtValue(v));
+  row->setToolTip(1, fmtValue(v));
+  if (v.is_number() || v.is_array() || (v.is_string() && key == "key")) row->setFont(1, theme::mono(12));
+  if (key == "key" || key == "source_op") row->setForeground(1, t.fg3);
 }
 
-void PropertiesPanel::add(QTreeWidgetItem* parent, const QString& key, const opad::json& v) {
-  auto* item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_tree);
-  item->setText(0, key);
-  if (v.is_object()) {
-    for (auto it = v.begin(); it != v.end(); ++it) add(item, QString::fromStdString(it.key()), it.value());
-    item->setExpanded(true);
-  } else if (v.is_array() && !v.empty() && (v[0].is_object() || v[0].is_array()) && !(v.size() <= 4 && v[0].is_number())) {
-    int i = 0;
-    for (const auto& e : v) add(item, QString::number(i++), e);
-  } else {
-    item->setText(1, fmt(v));
-    item->setToolTip(1, fmt(v));
-  }
-}
-
-void PropertiesPanel::showJson(const QString& title, const opad::json& j) {
+void PropertiesPanel::showEntity(const QString& title, const QString& subtitle, const QString& id, const opad::json& props) {
+  const Tokens& t = theme::current();
   m_title->setText(title);
-  m_tree->clear();
-  if (j.is_object())
-    for (auto it = j.begin(); it != j.end(); ++it) add(nullptr, QString::fromStdString(it.key()), it.value());
-  else
-    add(nullptr, tr("value"), j);
+  m_subtitle->setText(subtitle);
+  m_id->setText(id);
+  m_table->clear();
+  static const char* order[] = {"surface", "curve", "area", "length", "volume", "radius", "diameter", "normal", "axis", "center", "center_of_mass",
+                                "start", "end", "origin", "bbox", "faces", "edges", "vertices", "solid", "instances", "opacity", "visible", "locked",
+                                "transform", "world", "component", "key", "source_op"};
+  std::set<std::string> done;
+  auto addKey = [&](const std::string& k) {
+    if (!props.contains(k) || done.count(k)) return;
+    done.insert(k);
+    const opad::json& v = props[k];
+    if (k == "bbox" && v.is_object()) {
+      addRow("bbox min", v.value("min", opad::json::array()));
+      addRow("bbox max", v.value("max", opad::json::array()));
+      addRow("bbox size", v.value("size", opad::json::array()));
+      return;
+    }
+    if (k == "edges" && v.is_array()) return;  // listed as a section below
+    addRow(QString::fromStdString(k), v);
+  };
+  for (const char* k : order) addKey(k);
+  for (auto it = props.begin(); it != props.end(); ++it) {
+    const std::string& k = it.key();
+    if (done.count(k) || k == "id" || k == "ref" || k == "type" || k == "name" || k == "path" || k == "adjacent_faces" || k == "edges" || k == "modified_by" || k == "body" || k == "body_name" || k == "index" || k == "parent" || k == "effectively_visible" || k == "missing")
+      continue;
+    addKey(k);
+  }
+  auto section = [&](const QString& title, const opad::json& list, const QString& prefix) {
+    if (!list.is_array() || list.empty()) return;
+    auto* h = new QTreeWidgetItem(m_table);
+    h->setText(0, title);
+    h->setFont(0, theme::ui(11, QFont::Medium));
+    h->setForeground(0, t.fg3);
+    h->setFlags(Qt::ItemIsEnabled);
+    for (const auto& e : list) {
+      auto* r = new QTreeWidgetItem(m_table);
+      r->setText(0, QString("%1 %2").arg(prefix).arg(e.get<int>()));
+      r->setFont(0, theme::mono(12));
+      r->setData(0, Qt::UserRole, e.get<int>());
+      r->setToolTip(0, tr("Click to inspect"));
+    }
+  };
+  section(tr("ADJACENT FACES"), props.value("adjacent_faces", opad::json()), "face");
+  section(tr("BOUNDING EDGES"), props.value("edges", opad::json()), "edge");
 }
 
 void PropertiesPanel::clear() {
   m_title->setText(tr("Nothing selected"));
-  m_tree->clear();
+  m_subtitle->setText(tr("Click a body, or pick faces, edges and vertices with the Select filter (1–4)."));
+  m_id->clear();
+  m_table->clear();
 }
 
 // ---------------------------------------------------------------- AnnotationsPanel
 AnnotationsPanel::AnnotationsPanel(AppDocument* doc, QWidget* parent) : QWidget(parent), m_doc(doc) {
   auto* layout = new QVBoxLayout(this);
-  layout->setContentsMargins(4, 4, 4, 4);
-  auto* row = new QHBoxLayout();
+  layout->setContentsMargins(12, 8, 12, 8);
+  layout->setSpacing(8);
+  auto* bar = new QHBoxLayout();
+  bar->setSpacing(8);
   m_author = new QComboBox(this);
-  m_author->addItem(tr("All authors"));
-  row->addWidget(m_author, 1);
-  auto* add = new QPushButton(tr("Add note"), this);
-  auto* resolve = new QPushButton(tr("Resolve"), this);
-  row->addWidget(add);
-  row->addWidget(resolve);
-  layout->addLayout(row);
-  m_list = new QListWidget(this);
-  m_list->setWordWrap(true);
-  layout->addWidget(m_list, 1);
+  m_status = new QComboBox(this);
+  m_status->addItems({tr("All"), tr("Open"), tr("Unresolved"), tr("Resolved")});
+  m_count = new QLabel(this);
+  m_count->setObjectName("secondary");
+  bar->addWidget(m_author, 1);
+  bar->addWidget(m_status);
+  bar->addWidget(m_count);
+  layout->addLayout(bar);
+  auto* scroll = new QScrollArea(this);
+  scroll->setWidgetResizable(true);
+  scroll->setFrameShape(QFrame::NoFrame);
+  m_cards = new QWidget(scroll);
+  auto* cl = new QVBoxLayout(m_cards);
+  cl->setContentsMargins(0, 0, 0, 0);
+  cl->setSpacing(8);
+  cl->addStretch();
+  scroll->setWidget(m_cards);
+  layout->addWidget(scroll, 1);
+  auto* add = new QPushButton(tr("Add note   N"), this);
+  add->setObjectName("primary");
+  layout->addWidget(add);
   connect(add, &QPushButton::clicked, this, &AnnotationsPanel::addRequested);
-  connect(resolve, &QPushButton::clicked, this, [this] {
-    std::string id = currentOpId();
-    if (!id.empty()) emit resolveRequested(id);
-  });
   connect(m_author, &QComboBox::currentIndexChanged, this, [this](int) { rebuild(); });
-  connect(m_list, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* it) {
-    std::string body = it->data(Qt::UserRole + 1).toString().toStdString();
-    if (!body.empty()) emit selectNode(body);
-  });
+  connect(m_status, &QComboBox::currentIndexChanged, this, [this](int) { rebuild(); });
   connect(doc, &AppDocument::changed, this, &AnnotationsPanel::rebuild);
-}
-
-std::string AnnotationsPanel::currentOpId() const {
-  QListWidgetItem* it = m_list->currentItem();
-  return it ? it->data(Qt::UserRole).toString().toStdString() : std::string();
+  connect(theme::notifier(), &theme::Notifier::changed, this, &AnnotationsPanel::rebuild);
 }
 
 void AnnotationsPanel::rebuild() {
-  QString current = m_author->currentText();
+  const Tokens& t = theme::current();
+  QString currentAuthor = m_author->currentText();
   std::set<std::string> authors;
-  for (const auto& a : m_doc->scene.annotations) authors.insert(a.by);
+  std::set<std::string> deleted(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end());
+  std::set<std::string> unresolved;
+  for (const auto& a : m_doc->scene.annotations) if (a.unresolved) unresolved.insert(a.id);
+  for (const auto& op : m_doc->doc.ops) if (op.type == "annotation") authors.insert(op.data.value("by", ""));
   m_author->blockSignals(true);
   m_author->clear();
   m_author->addItem(tr("All authors"));
   for (const auto& a : authors) m_author->addItem(QString::fromStdString(a));
-  int idx = m_author->findText(current);
+  int idx = m_author->findText(currentAuthor);
   m_author->setCurrentIndex(idx < 0 ? 0 : idx);
   m_author->blockSignals(false);
-  std::string filter = m_author->currentIndex() > 0 ? m_author->currentText().toStdString() : std::string();
-  m_list->clear();
-  for (const auto& a : m_doc->scene.annotations) {
-    if (!filter.empty() && a.by != filter) continue;
-    QString where = a.anchor.kind == opad::Ref::Kind::Point ? tr("point") : m_doc->nodeName(a.anchor.body);
-    if (a.anchor.kind == opad::Ref::Kind::Face || a.anchor.kind == opad::Ref::Kind::Edge || a.anchor.kind == opad::Ref::Kind::Vertex)
-      where += QString(" / %1 %2").arg(opad::Ref::kind_name(a.anchor.kind)).arg(a.anchor.index);
-    auto* it = new QListWidgetItem(QString("%1\n%2 - %3%4").arg(QString::fromStdString(a.text), QString::fromStdString(a.by), where, a.unresolved ? tr("  [unresolved anchor]") : ""));
-    it->setData(Qt::UserRole, QString::fromStdString(a.id));
-    it->setData(Qt::UserRole + 1, QString::fromStdString(a.anchor.body));
-    it->setToolTip(QString::fromStdString(a.ts));
-    if (a.unresolved) it->setForeground(QBrush(QColor(200, 60, 40)));
-    m_list->addItem(it);
+  std::string filterAuthor = m_author->currentIndex() > 0 ? m_author->currentText().toStdString() : std::string();
+  int status = m_status->currentIndex();
+
+  auto* cl = static_cast<QVBoxLayout*>(m_cards->layout());
+  while (cl->count() > 1) {
+    QLayoutItem* it = cl->takeAt(0);
+    delete it->widget();
+    delete it;
   }
-  for (const auto& m : m_doc->scene.measurements) {
-    auto* it = new QListWidgetItem(tr("Measurement (%1): %2 %3").arg(QString::fromStdString(m.kind), fmt(m.result.value("value", opad::json(0.0))), QString::fromStdString(m.result.value("unit", ""))));
-    it->setData(Qt::UserRole, QString::fromStdString(m.id));
-    if (!m.refs.empty()) it->setData(Qt::UserRole + 1, QString::fromStdString(m.refs.front().body));
-    it->setForeground(QBrush(QColor(90, 120, 200)));
-    m_list->addItem(it);
+  int total = 0, shown = 0;
+  for (const auto& op : m_doc->doc.ops) {
+    if (op.type != "annotation") continue;
+    ++total;
+    std::string by = op.data.value("by", "");
+    bool resolved = deleted.count(op.id) > 0, unres = unresolved.count(op.id) > 0;
+    QString state = resolved ? "resolved" : unres ? "unresolved" : "open";
+    if (!filterAuthor.empty() && by != filterAuthor) continue;
+    if ((status == 1 && state != "open") || (status == 2 && state != "unresolved") || (status == 3 && state != "resolved")) continue;
+    ++shown;
+    opad::Ref anchor;
+    try { anchor = opad::Ref::from_json(op.data["anchor"]); } catch (...) {}
+    auto* card = new QFrame(m_cards);
+    card->setObjectName("card");
+    card->setProperty("state", state);
+    card->setCursor(Qt::PointingHandCursor);
+    auto* v = new QVBoxLayout(card);
+    v->setContentsMargins(8, 8, 8, 8);
+    v->setSpacing(6);
+    auto* head = new QHBoxLayout();
+    head->setSpacing(6);
+    auto* dot = new QLabel(card);
+    QPixmap dp(8, 8);
+    dp.fill(Qt::transparent);
+    { QPainter p(&dp); p.setRenderHint(QPainter::Antialiasing); p.setPen(Qt::NoPen); p.setBrush(unres ? t.red : authorColor(by)); p.drawEllipse(0, 0, 8, 8); }
+    dot->setPixmap(dp);
+    head->addWidget(dot);
+    auto* author = new QLabel(QString::fromStdString(by), card);
+    author->setFont(theme::ui(13, QFont::Medium));
+    head->addWidget(author);
+    auto* time = new QLabel(QString::fromStdString(op.data.value("ts", "")).left(16).replace('T', ' '), card);
+    time->setObjectName("secondary");
+    head->addWidget(time, 1);
+    auto* id = new QLabel(shortId(op.id), card);
+    id->setObjectName("tertiary");
+    id->setFont(theme::mono(11));
+    head->addWidget(id);
+    v->addLayout(head);
+    auto* text = new QLabel(QString::fromStdString(op.data.value("text", "")), card);
+    text->setWordWrap(true);
+    v->addWidget(text);
+    if (unres) {
+      auto* row = new QHBoxLayout();
+      auto* w = new QLabel(card);
+      w->setPixmap(icons::pixmap("warning", t.red, 14, devicePixelRatioF()));
+      row->addWidget(w);
+      auto* l = new QLabel(QString::fromUtf8("unresolved · target %1 no longer exists").arg(shortId(anchor.body)), card);
+      l->setStyleSheet(QString("color:%1; font-size:11px;").arg(t.red.name()));
+      row->addWidget(l, 1);
+      v->addLayout(row);
+    } else if (resolved) {
+      auto* row = new QHBoxLayout();
+      auto* c = new QLabel(card);
+      c->setPixmap(icons::pixmap("check", t.green, 14, devicePixelRatioF()));
+      row->addWidget(c);
+      auto* l = new QLabel(tr("resolved"), card);
+      l->setStyleSheet(QString("color:%1; font-size:11px;").arg(t.green.name()));
+      row->addWidget(l, 1);
+      v->addLayout(row);
+    }
+    auto* foot = new QHBoxLayout();
+    QString target = anchor.kind == opad::Ref::Kind::Point ? tr("point") : m_doc->nodeName(anchor.body);
+    if (anchor.kind != opad::Ref::Kind::Body && anchor.kind != opad::Ref::Kind::Point) target += QString(" › %1 %2").arg(opad::Ref::kind_name(anchor.kind)).arg(anchor.index);
+    auto* tl = new QLabel(target, card);
+    tl->setObjectName("tertiary");
+    tl->setFont(theme::mono(11));
+    foot->addWidget(tl, 1);
+    auto* btn = new QPushButton(resolved ? tr("Restore") : tr("Resolve"), card);
+    btn->setObjectName("outline");
+    foot->addWidget(btn);
+    v->addLayout(foot);
+    std::string opId = op.id, body = anchor.body;
+    connect(btn, &QPushButton::clicked, this, [this, opId, resolved] { if (resolved) emit restoreRequested(opId); else emit resolveRequested(opId); });
+    card->installEventFilter(this);
+    card->setProperty("opId", QString::fromStdString(opId));
+    card->setProperty("body", QString::fromStdString(body));
+    cl->insertWidget(cl->count() - 1, card);
   }
+  m_count->setText(tr("%1 of %2").arg(shown).arg(total));
+  // Click on a card: make it current and select its anchor body.
+  for (QObject* o : m_cards->children())
+    if (auto* f = qobject_cast<QFrame*>(o)) f->removeEventFilter(this), f->installEventFilter(this);
+}
+
+bool AnnotationsPanel::eventFilter(QObject* o, QEvent* e) {
+  if (e->type() == QEvent::MouseButtonPress) {
+    if (auto* card = qobject_cast<QFrame*>(o)) {
+      m_current = card->property("opId").toString().toStdString();
+      std::string body = card->property("body").toString().toStdString();
+      if (!body.empty()) emit selectNode(body);
+    }
+  }
+  return QWidget::eventFilter(o, e);
+}
+
+// ---------------------------------------------------------------- SectionPanel
+SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent), m_doc(doc) {
+  auto* layout = new QVBoxLayout(this);
+  layout->setContentsMargins(12, 8, 12, 8);
+  layout->setSpacing(8);
+  m_state = new QLabel(this);
+  m_state->setObjectName("secondary");
+  layout->addWidget(m_state);
+  auto* axisLabel = new QLabel(tr("AXIS"), this);
+  axisLabel->setObjectName("sectionHeader");
+  layout->addWidget(axisLabel);
+  auto* seg = new QWidget(this);
+  seg->setObjectName("segmented");
+  auto* sl = new QHBoxLayout(seg);
+  sl->setContentsMargins(1, 1, 1, 1);
+  sl->setSpacing(0);
+  const char* names[] = {"X", "Y", "Z", "Pick face"};
+  for (int i = 0; i < 4; ++i) {
+    auto* b = new QToolButton(seg);
+    b->setObjectName("segmentPrimary");
+    b->setText(names[i]);
+    b->setCheckable(true);
+    b->setChecked(i == 2);
+    b->setFont(i < 3 ? theme::mono(12) : theme::ui(12));
+    b->setFixedHeight(26);
+    b->setAutoRaise(true);
+    sl->addWidget(b, 1);
+    m_axisButtons << b;
+    connect(b, &QToolButton::clicked, this, [this, i] {
+      for (int k = 0; k < 4; ++k) m_axisButtons[k]->setChecked(k == i);
+      m_pick = i == 3;
+      if (!m_pick) m_axis = i;
+      emitChange();
+    });
+  }
+  layout->addWidget(seg);
+  auto* offLabel = new QLabel(tr("OFFSET"), this);
+  offLabel->setObjectName("sectionHeader");
+  layout->addWidget(offLabel);
+  auto* row = new QHBoxLayout();
+  m_slider = new QSlider(Qt::Horizontal, this);
+  m_slider->setRange(0, 1000);
+  m_slider->setValue(500);
+  row->addWidget(m_slider, 1);
+  m_value = new QLineEdit(this);
+  m_value->setObjectName("mono");
+  m_value->setFixedWidth(88);
+  m_value->setFont(theme::mono(12));
+  m_value->setAlignment(Qt::AlignRight);
+  row->addWidget(m_value);
+  layout->addLayout(row);
+  auto* toggles = new QHBoxLayout();
+  m_flipButton = new QToolButton(this);
+  m_flipButton->setObjectName("segment");
+  m_flipButton->setText(tr("Flip   Shift+X"));
+  m_flipButton->setCheckable(true);
+  m_flipButton->setFixedHeight(28);
+  m_capButton = new QToolButton(this);
+  m_capButton->setObjectName("segment");
+  m_capButton->setText(tr("Cap faces"));
+  m_capButton->setCheckable(true);
+  m_capButton->setChecked(true);
+  m_capButton->setFixedHeight(28);
+  auto styleToggles = [this] {
+    for (QToolButton* b : {m_flipButton, m_capButton})
+      b->setStyleSheet(QString("QToolButton { border: 1px solid %1; border-radius: 3px; padding: 0 10px; } QToolButton:checked { background: %2; border-color: %3; }")
+                           .arg(theme::css(theme::current().line), theme::css(theme::current().selbg), theme::css(theme::current().sel)));
+  };
+  styleToggles();
+  connect(theme::notifier(), &theme::Notifier::changed, this, styleToggles);
+  for (QToolButton* b : {m_flipButton, m_capButton}) toggles->addWidget(b);
+  toggles->addStretch();
+  layout->addLayout(toggles);
+  auto* namedLabel = new QLabel(tr("NAMED SECTIONS"), this);
+  namedLabel->setObjectName("sectionHeader");
+  layout->addWidget(namedLabel);
+  m_named = new QListWidget(this);
+  layout->addWidget(m_named, 1);
+  auto* save = new QPushButton(tr("Save as named section"), this);
+  save->setObjectName("primary");
+  layout->addWidget(save);
+
+  connect(m_slider, &QSlider::valueChanged, this, [this](int) { emitChange(); });
+  connect(m_value, &QLineEdit::editingFinished, this, [this] {
+    opad::Vec3 lo, hi;
+    if (!opad::scene_bbox(m_doc->doc, m_doc->scene, {}, lo, hi)) return;
+    double v = m_value->text().section(' ', 0, 0).toDouble();
+    double range = hi[m_axis] - lo[m_axis];
+    if (range > 0) m_slider->setValue(static_cast<int>(std::clamp((v - lo[m_axis]) / range, 0.0, 1.0) * 1000));
+  });
+  connect(m_flipButton, &QToolButton::toggled, this, [this](bool on) { m_flip = on; emitChange(); });
+  connect(m_capButton, &QToolButton::toggled, this, [this](bool) { emitChange(); });
+  connect(save, &QPushButton::clicked, this, [this] {
+    QString name = QString("Section %1").arg(m_doc->scene.sections.size() + 1);
+    emit saveRequested(name, origin(), normal());
+  });
+  connect(m_named, &QListWidget::itemActivated, this, [this](QListWidgetItem* it) { applyNamed(it->data(Qt::UserRole).toString().toStdString()); });
+  connect(doc, &AppDocument::changed, this, &SectionPanel::rebuild);
+  rebuild();
+  emitChange();
+}
+
+opad::Vec3 SectionPanel::origin() const {
+  if (m_pick) return m_pickOrigin;
+  opad::Vec3 lo{0, 0, 0}, hi{0, 0, 0};
+  if (!opad::scene_bbox(m_doc->doc, m_doc->scene, {}, lo, hi)) return {0, 0, 0};
+  opad::Vec3 o{(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2};
+  o[m_axis] = lo[m_axis] + m_slider->value() / 1000.0 * (hi[m_axis] - lo[m_axis]);
+  return o;
+}
+
+opad::Vec3 SectionPanel::normal() const {
+  if (m_pick) return m_flip ? opad::Vec3{-m_pickNormal[0], -m_pickNormal[1], -m_pickNormal[2]} : m_pickNormal;
+  opad::Vec3 n{0, 0, 0};
+  n[m_axis] = m_flip ? 1 : -1;
+  return n;
+}
+
+bool SectionPanel::caps() const { return m_capButton->isChecked(); }
+
+void SectionPanel::emitChange() {
+  const char axes[] = {'X', 'Y', 'Z'};
+  opad::Vec3 o = origin();
+  m_value->setText(QString("%1 mm").arg(o[m_axis], 0, 'f', 1));
+  m_state->setText(m_enabled ? QString::fromUtf8("Section %1 = %2 mm · drag the slider, Shift+X flips").arg(axes[m_axis]).arg(o[m_axis], 0, 'f', 1)
+                             : tr("Section off · press X or use View › Section to enable"));
+  emit planeChanged();
+}
+
+void SectionPanel::setEnabled(bool on) {
+  if (m_enabled == on) return;
+  m_enabled = on;
+  emitChange();
+  emit enabledChanged(on);
+}
+
+void SectionPanel::flip() { m_flipButton->setChecked(!m_flipButton->isChecked()); }
+
+void SectionPanel::setFromFace(const opad::Vec3& origin, const opad::Vec3& normal) {
+  m_pick = true;
+  m_pickOrigin = origin;
+  m_pickNormal = normal;
+  for (int k = 0; k < 4; ++k) m_axisButtons[k]->setChecked(k == 3);
+  emitChange();
+}
+
+void SectionPanel::rebuild() {
+  m_named->clear();
+  const char axes[] = {'X', 'Y', 'Z'};
+  for (const auto& s : m_doc->scene.sections) {
+    int axis = std::fabs(s.normal[0]) > 0.9 ? 0 : std::fabs(s.normal[1]) > 0.9 ? 1 : 2;
+    auto* it = new QListWidgetItem(icons::themed("section", 16), QString("%1        %2 = %3 mm").arg(QString::fromStdString(s.name)).arg(axes[axis]).arg(s.origin[axis], 0, 'f', 1));
+    it->setData(Qt::UserRole, QString::fromStdString(s.id));
+    it->setToolTip(tr("Double-click to apply"));
+    m_named->addItem(it);
+  }
+}
+
+void SectionPanel::applyNamed(const std::string& id) {
+  for (const auto& s : m_doc->scene.sections)
+    if (s.id == id) {
+      m_enabled = true;
+      setFromFace(s.origin, s.normal);
+      emit enabledChanged(true);
+      return;
+    }
+}
+
+// ---------------------------------------------------------------- MeasureCard
+MeasureCard::MeasureCard(QWidget* parent) : QFrame(parent) {
+  setObjectName("card");
+  setProperty("state", "measure");
+  setFixedWidth(256);
+  auto* v = new QVBoxLayout(this);
+  v->setContentsMargins(12, 10, 12, 10);
+  v->setSpacing(6);
+  m_title = new QLabel(this);
+  m_title->setFont(theme::ui(13, QFont::Medium));
+  v->addWidget(m_title);
+  m_value = new QLabel(this);
+  m_value->setFont(theme::mono(20));
+  v->addWidget(m_value);
+  m_deltas = new QLabel(this);
+  m_deltas->setFont(theme::mono(12));
+  m_deltas->setObjectName("secondary");
+  v->addWidget(m_deltas);
+  m_targets = new QLabel(this);
+  m_targets->setObjectName("secondary");
+  m_targets->setWordWrap(true);
+  v->addWidget(m_targets);
+  auto* row = new QHBoxLayout();
+  auto* pin = new QPushButton(tr("Pin to document   P"), this);
+  pin->setObjectName("primary");
+  auto* clear = new QPushButton(tr("Clear   Esc"), this);
+  row->addWidget(pin, 1);
+  row->addWidget(clear);
+  v->addLayout(row);
+  connect(pin, &QPushButton::clicked, this, &MeasureCard::pinRequested);
+  connect(clear, &QPushButton::clicked, this, &MeasureCard::clearRequested);
+}
+
+void MeasureCard::setResult(const opad::json& r, const QStringList& targets) {
+  QString kind = QString::fromStdString(r.value("kind", "measure"));
+  m_title->setText(kind.left(1).toUpper() + kind.mid(1));
+  QString unit = QString::fromStdString(r.value("unit", ""));
+  if (r.contains("value")) m_value->setText(QString("%1 %2").arg(r["value"].get<double>(), 0, 'f', 3).arg(unit));
+  else if (r.contains("size")) m_value->setText(QString("%1 × %2 × %3 mm").arg(r["size"][0].get<double>(), 0, 'f', 2).arg(r["size"][1].get<double>(), 0, 'f', 2).arg(r["size"][2].get<double>(), 0, 'f', 2));
+  if (r.contains("delta")) {
+    const auto& d = r["delta"];
+    m_deltas->setText(QString::fromUtf8("ΔX %1   ΔY %2   ΔZ %3").arg(d[0].get<double>(), 0, 'f', 3).arg(d[1].get<double>(), 0, 'f', 3).arg(d[2].get<double>(), 0, 'f', 3));
+    m_deltas->show();
+  } else if (r.contains("diameter")) {
+    m_deltas->setText(QString::fromUtf8("⌀ %1 mm").arg(r["diameter"].get<double>(), 0, 'f', 3));
+    m_deltas->show();
+  } else if (r.contains("supplement")) {
+    m_deltas->setText(QString("supplement %1°").arg(r["supplement"].get<double>(), 0, 'f', 2));
+    m_deltas->show();
+  } else {
+    m_deltas->hide();
+  }
+  m_targets->setText(targets.join(QString::fromUtf8("  ↔  ")));
+  adjustSize();
+}
+
+// ---------------------------------------------------------------- ViewportChips
+ViewportChips::ViewportChips(QWidget* parent) : QWidget(parent) {
+  setAttribute(Qt::WA_TransparentForMouseEvents);
+  setObjectName("chipsHost");
+  setAutoFillBackground(true);
+  auto paintHost = [this] {
+    QPalette pal = palette();
+    pal.setColor(QPalette::Window, theme::current().vp);
+    setPalette(pal);
+  };
+  paintHost();
+  connect(theme::notifier(), &theme::Notifier::changed, this, paintHost);
+  auto* l = new QHBoxLayout(this);
+  l->setContentsMargins(8, 8, 8, 8);
+  l->setSpacing(6);
+  m_mode = new QLabel(this);
+  m_mode->setObjectName("chip");
+  m_proj = new QLabel(this);
+  m_proj->setObjectName("chip");
+  m_section = new QLabel(this);
+  m_section->setObjectName("chipSel");
+  l->addWidget(m_mode);
+  l->addWidget(m_proj);
+  l->addWidget(m_section);
+  l->addStretch();
+}
+
+void ViewportChips::set(const QString& mode, const QString& projection, const QString& section) {
+  m_mode->setText(mode);
+  m_proj->setText(projection);
+  m_section->setText(section);
+  m_section->setVisible(!section.isEmpty());
+  adjustSize();
 }
 
 // ---------------------------------------------------------------- TimelineWidget
 TimelineWidget::TimelineWidget(AppDocument* doc, QWidget* parent) : QWidget(parent), m_doc(doc) {
+  connect(theme::notifier(), &theme::Notifier::changed, this, qOverload<>(&QWidget::update));
   setMouseTracking(true);
-  setMinimumHeight(44);
+  setFixedHeight(48);
+  setAttribute(Qt::WA_Hover);
   connect(doc, &AppDocument::changed, this, &TimelineWidget::rebuild);
 }
 
 void TimelineWidget::rebuild() {
   m_deleted = std::set<std::string>(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end());
+  m_unresolved.clear();
+  for (const auto& u : m_doc->scene.unresolved) m_unresolved.insert(u.op_id);
+  if (!m_current.empty() && !m_doc->doc.find_op(m_current)) m_current.clear();
   update();
 }
 
-double TimelineWidget::spacing() const {
-  size_t n = m_doc->doc.ops.size();
-  if (n == 0) return 24;
-  return std::clamp((width() - 40.0) / static_cast<double>(n), 6.0, 26.0);
+bool TimelineWidget::isUnresolved(const std::string& opId) const { return m_unresolved.count(opId) > 0; }
+
+QRect TimelineWidget::markerRect(int i) const {
+  const int n = static_cast<int>(m_doc->doc.ops.size());
+  const int trackStart = 112 + 16, trackEnd = width() - 72;
+  double step = 26;
+  if (n > 1 && trackStart + (n - 1) * step + 18 > trackEnd) step = std::max(6.0, static_cast<double>(trackEnd - 18 - trackStart) / (n - 1));
+  return QRect(static_cast<int>(trackStart + i * step), 15, 18, 18);
 }
 
 int TimelineWidget::indexAt(const QPoint& p) const {
-  double s = spacing();
-  int i = static_cast<int>((p.x() - 20 + s / 2) / s);
-  if (i < 0 || i >= static_cast<int>(m_doc->doc.ops.size())) return -1;
-  return i;
+  for (int i = static_cast<int>(m_doc->doc.ops.size()) - 1; i >= 0; --i)
+    if (markerRect(i).adjusted(-3, -3, 3, 3).contains(p)) return i;
+  return -1;
 }
 
-static QColor opColor(const std::string& type) {
-  if (type == "import") return QColor(70, 130, 220);
-  if (type == "annotation") return QColor(230, 160, 40);
-  if (type == "measurement") return QColor(90, 180, 120);
-  if (type == "delete") return QColor(200, 70, 60);
-  if (type == "reparent" || type == "transform") return QColor(160, 100, 200);
-  if (type == "section" || type == "view") return QColor(80, 180, 200);
-  return QColor(140, 140, 150);
+void TimelineWidget::setCurrentOp(const std::string& id) {
+  m_current = id;
+  update();
+}
+
+void TimelineWidget::step(int delta) {
+  const auto& ops = m_doc->doc.ops;
+  if (ops.empty()) return;
+  int i = -1;
+  for (size_t k = 0; k < ops.size(); ++k) if (ops[k].id == m_current) i = static_cast<int>(k);
+  i = i < 0 ? (delta > 0 ? 0 : static_cast<int>(ops.size()) - 1) : std::clamp(i + delta, 0, static_cast<int>(ops.size()) - 1);
+  m_current = ops[static_cast<size_t>(i)].id;
+  update();
+  emit opClicked(m_current);
+}
+
+QString TimelineWidget::describe(const opad::Op& op) const {
+  const opad::json& d = op.data;
+  QString target = d.contains("target") && d["target"].is_string() ? m_doc->nodeName(d["target"].get<std::string>()) : QString();
+  if (op.type == "import") return tr("Import %1").arg(QString::fromStdString(d.value("source", "")));
+  if (op.type == "rename") return tr("Rename → %1").arg(QString::fromStdString(d.value("name", "")));
+  if (op.type == "annotation") {
+    try { return tr("Note on %1").arg(m_doc->nodeName(opad::Ref::from_json(d["anchor"]).body)); } catch (...) { return tr("Note"); }
+  }
+  if (op.type == "measurement") return tr("%1 measurement").arg(QString::fromStdString(d.value("kind", "")));
+  if (op.type == "section") return tr("Section %1").arg(QString::fromStdString(d.value("name", "")));
+  if (op.type == "view") return tr("View %1").arg(QString::fromStdString(d.value("name", "")));
+  if (op.type == "delete") {
+    const opad::Op* t = m_doc->doc.find_op(d.value("target", ""));
+    return tr("Delete %1").arg(t ? QString::fromStdString(t->type) : shortId(d.value("target", "")));
+  }
+  if (op.type == "appearance") return tr("Appearance %1").arg(target);
+  if (op.type == "transform") return tr("Transform %1").arg(target);
+  if (op.type == "reparent") return tr("Reparent %1").arg(target);
+  return QString::fromStdString(op.type);
 }
 
 void TimelineWidget::paintEvent(QPaintEvent*) {
+  const Tokens& t = theme::current();
   QPainter p(this);
   p.setRenderHint(QPainter::Antialiasing);
-  p.fillRect(rect(), palette().base());
+  p.fillRect(rect(), t.bg2);
+  p.setPen(QPen(t.line, 1));
+  p.drawLine(0, 0, width(), 0);
   const auto& ops = m_doc->doc.ops;
-  const double s = spacing();
-  const int y = height() / 2;
-  p.setPen(QPen(palette().mid().color(), 1));
-  p.drawLine(12, y, width() - 12, y);
+  p.setFont(theme::ui(13, QFont::Medium));
+  p.setPen(t.fg2);
+  p.drawText(QRect(12, 6, 100, 16), Qt::AlignVCenter | Qt::AlignLeft, tr("Timeline"));
+  p.setFont(theme::mono(11));
+  p.setPen(t.fg3);
+  QString count = tr("%1 ops").arg(ops.size());
+  if (!m_deleted.empty()) count += QString::fromUtf8(" · %1 tomb").arg(m_deleted.size());
+  p.drawText(QRect(12, 24, 100, 16), Qt::AlignVCenter | Qt::AlignLeft, count);
+  p.setPen(QPen(t.line, 1));
+  p.drawLine(112, 8, 112, 40);
+  p.drawLine(width() - 72, 8, width() - 72, 40);
+  if (ops.empty() || !m_doc->hasDocument) {
+    p.setFont(theme::ui(12));
+    p.setPen(t.fg3);
+    p.drawText(QRect(128, 0, width() - 200, height()), Qt::AlignVCenter | Qt::AlignLeft, tr("One marker per operation. Import a file to start the log."));
+  }
+  const qreal dpr = devicePixelRatioF();
+  QRect last;
   for (size_t i = 0; i < ops.size(); ++i) {
-    const double x = 20 + i * s;
-    QColor c = opColor(ops[i].type);
-    bool deleted = m_deleted.count(ops[i].id) > 0;
-    QRectF r(x - 5, y - 8, 10, 16);
-    if (static_cast<int>(i) == m_hover) r.adjust(-2, -2, 2, 2);
+    QRect r = markerRect(static_cast<int>(i));
+    last = r;
+    const bool deleted = m_deleted.count(ops[i].id) > 0, unresolved = isUnresolved(ops[i].id);
+    const bool current = ops[i].id == m_current, hovered = static_cast<int>(i) == m_hover;
+    QColor fill = t.bg4, iconColor = t.fg;
+    if (ops[i].type == "annotation") { fill = t.amber; iconColor = QColor("#1e1f22"); }
+    if (current) { fill = t.sel; iconColor = t.onsel; }
+    p.setPen(Qt::NoPen);
     if (deleted) {
-      p.setPen(QPen(c, 1.5));
       p.setBrush(Qt::NoBrush);
+      p.setPen(QPen(t.fg2, 1.5, Qt::DashLine));
+      iconColor = t.fg2;
     } else {
-      p.setPen(QPen(c.darker(130), 1));
-      p.setBrush(c);
+      p.setBrush(fill);
     }
-    if (ops[i].type == "import") p.drawRect(r);
-    else if (ops[i].type == "delete") p.drawEllipse(r);
-    else p.drawRoundedRect(r, 3, 3);
+    p.drawRoundedRect(r, 2, 2);
+    if (unresolved && !deleted) {
+      p.setBrush(Qt::NoBrush);
+      p.setPen(QPen(t.red, 1.5));
+      p.drawRoundedRect(r, 2, 2);
+    }
+    if (hovered || current) {
+      p.setBrush(Qt::NoBrush);
+      p.setPen(QPen(current ? t.sel : t.hov, 1.5));
+      p.drawRoundedRect(r.adjusted(-2, -2, 2, 2), 3, 3);
+    }
+    p.drawPixmap(r.left() + 3, r.top() + 3, icons::pixmap(opTypeIcon(ops[i].type), iconColor, 12, dpr));
   }
-  if (ops.empty()) {
-    p.setPen(palette().mid().color());
-    p.drawText(rect(), Qt::AlignCenter, tr("Timeline: one marker per operation"));
+  if (!ops.empty()) {
+    int x = last.right() + 9;
+    p.setPen(Qt::NoPen);
+    p.setBrush(t.sel);
+    p.drawRect(x - 1, 8, 2, 32);
+    QPainterPath tri;
+    tri.moveTo(x - 3, 8);
+    tri.lineTo(x + 3, 8);
+    tri.lineTo(x, 12);
+    tri.closeSubpath();
+    p.drawPath(tri);
   }
+  m_prevBtn = QRect(width() - 60, 12, 24, 24);
+  m_nextBtn = QRect(width() - 32, 12, 24, 24);
+  for (const QRect& b : {m_prevBtn, m_nextBtn}) {
+    if (b.contains(mapFromGlobal(QCursor::pos()))) { p.setPen(Qt::NoPen); p.setBrush(t.bg3); p.drawRoundedRect(b, 3, 3); }
+  }
+  p.setFont(theme::ui(14));
+  p.setPen(ops.empty() ? t.fg3 : t.fg2);
+  p.drawText(m_prevBtn, Qt::AlignCenter, QString::fromUtf8("‹"));
+  p.drawText(m_nextBtn, Qt::AlignCenter, QString::fromUtf8("›"));
 }
 
 void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
   int i = indexAt(e->pos());
-  if (i != m_hover) {
-    m_hover = i;
-    update();
-  }
+  if (i != m_hover) { m_hover = i; update(); }
   if (i >= 0) {
+    const Tokens& t = theme::current();
     const opad::Op& op = m_doc->doc.ops[static_cast<size_t>(i)];
-    QString tip = QString("%1  %2\n%3  %4").arg(QString::fromStdString(op.type), m_deleted.count(op.id) ? tr("(deleted)") : "",
-                                                 QString::fromStdString(op.data.value("ts", "")), QString::fromStdString(op.data.value("by", "")));
-    for (const char* k : {"name", "text", "kind", "source"})
-      if (op.data.contains(k) && op.data[k].is_string()) tip += "\n" + QString(k) + ": " + QString::fromStdString(op.data[k].get<std::string>());
-    if (op.data.contains("target")) tip += "\ntarget: " + m_doc->nodeName(op.data["target"].get<std::string>());
-    QToolTip::showText(e->globalPosition().toPoint(), tip, this);
+    QColor sw = op.type == "annotation" ? t.amber : m_deleted.count(op.id) ? t.fg2 : t.bg4;
+    QString target;
+    if (op.data.contains("target") && op.data["target"].is_string()) target = m_doc->nodeName(op.data["target"].get<std::string>());
+    QString html = QString("<div style='width:248px'><table cellspacing='0' cellpadding='0'><tr><td style='background:%1;width:14px;height:14px;'>&nbsp;&nbsp;&nbsp;</td><td>&nbsp;<b>%2</b>&nbsp;&nbsp;<span style='color:%3;font-family:%4;font-size:11px'>%5</span></td></tr></table>"
+                           "<div style='color:%6'>%7 · %8</div>%9<div style='color:%3;font-size:11px'>%10</div></div>")
+                       .arg(sw.name(), describe(op).toHtmlEscaped(), t.fg3.name(), theme::mono().family(), shortId(op.id), t.fg2.name(),
+                            QString::fromStdString(op.data.value("by", "")).toHtmlEscaped(), QString::fromStdString(op.data.value("ts", "")).left(16).replace('T', ' '),
+                            target.isEmpty() ? QString() : QString("<div>target %1</div>").arg(target.toHtmlEscaped()),
+                            m_deleted.count(op.id) ? tr("tombstoned · right-click to restore") : isUnresolved(op.id) ? tr("unresolved · kept, never hidden") : tr("Right-click for actions"));
+    QToolTip::showText(e->globalPosition().toPoint() + QPoint(0, 8), html, this);
+  } else {
+    QToolTip::hideText();
   }
+  update();
 }
 
 void TimelineWidget::mousePressEvent(QMouseEvent* e) {
+  if (m_prevBtn.contains(e->pos())) return step(-1);
+  if (m_nextBtn.contains(e->pos())) return step(+1);
   int i = indexAt(e->pos());
   if (i < 0) return;
   const std::string id = m_doc->doc.ops[static_cast<size_t>(i)].id;
-  if (e->button() == Qt::RightButton) emit deleteRequested(id);
+  m_current = id;
+  update();
+  if (e->button() == Qt::RightButton) emit contextRequested(id, e->globalPosition().toPoint());
   else emit opClicked(id);
 }
 
@@ -461,34 +1191,129 @@ void TimelineWidget::leaveEvent(QEvent*) {
 }
 
 // ---------------------------------------------------------------- CommandPalette
-CommandPalette::CommandPalette(const QList<QAction*>& actions, QWidget* parent) : QDialog(parent), m_actions(actions) {
-  setWindowTitle(tr("Command search"));
-  setWindowFlags(windowFlags() | Qt::Popup);
-  resize(520, 360);
+namespace {
+int fuzzyScore(const QString& text, const QString& query, QList<int>* positions) {
+  if (query.isEmpty()) return 1;
+  int score = 0, qi = 0, last = -2;
+  QString lt = text.toLower(), lq = query.toLower();
+  for (int i = 0; i < lt.size() && qi < lq.size(); ++i) {
+    if (lt[i] == lq[qi]) {
+      score += (i == last + 1) ? 3 : 1;
+      if (i == 0 || lt[i - 1] == ' ') score += 2;
+      if (positions) positions->append(i);
+      last = i;
+      ++qi;
+    }
+  }
+  return qi == lq.size() ? score : 0;
+}
+
+class PaletteDelegate : public QStyledItemDelegate {
+ public:
+  QString query;
+  using QStyledItemDelegate::QStyledItemDelegate;
+  void paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& index) const override {
+    const Tokens& t = theme::current();
+    auto* a = static_cast<QAction*>(index.data(Qt::UserRole).value<void*>());
+    if (!a) return;
+    bool sel = opt.state & QStyle::State_Selected;
+    p->save();
+    p->setRenderHint(QPainter::Antialiasing);
+    if (sel) p->fillRect(opt.rect, t.sel);
+    else if (opt.state & QStyle::State_MouseOver) p->fillRect(opt.rect, t.bg4);
+    QColor fg = sel ? t.onsel : (a->isEnabled() ? t.fg : t.fg3);
+    QString iconName = a->data().toString();
+    if (!iconName.isEmpty()) p->drawPixmap(opt.rect.left() + 8, opt.rect.top() + 6, icons::pixmap(iconName, sel ? t.onsel : t.fg2, 16, p->device()->devicePixelRatioF()));
+    QString text = a->text().remove('&');
+    QList<int> pos;
+    fuzzyScore(text, query, &pos);
+    QFont normal = theme::ui(13), bold = theme::ui(13, QFont::DemiBold);
+    int x = opt.rect.left() + 32;
+    for (int i = 0; i < text.size(); ++i) {
+      bool hit = pos.contains(i);
+      p->setFont(hit ? bold : normal);
+      p->setPen(fg);
+      QString ch = text.mid(i, 1);
+      p->drawText(QRect(x, opt.rect.top(), 40, opt.rect.height()), Qt::AlignVCenter | Qt::AlignLeft, ch);
+      x += QFontMetrics(hit ? bold : normal).horizontalAdvance(ch);
+    }
+    p->setFont(theme::ui(11));
+    p->setPen(sel ? t.onsel : t.fg3);
+    p->drawText(QRect(x + 10, opt.rect.top(), 120, opt.rect.height()), Qt::AlignVCenter | Qt::AlignLeft, opGroup(a));
+    QString sc = a->shortcut().toString(QKeySequence::NativeText);
+    if (!sc.isEmpty()) {
+      QFontMetrics mm(theme::mono(11));
+      int w = mm.horizontalAdvance(sc) + 10;
+      QRect key(opt.rect.right() - w - 8, opt.rect.top() + 6, w, 16);
+      p->setPen(QPen(sel ? t.onsel : t.line, 1));
+      p->setBrush(sel ? QColor(255, 255, 255, 40) : t.bg4);
+      p->drawRoundedRect(key, 3, 3);
+      p->setFont(theme::mono(11));
+      p->setPen(sel ? t.onsel : t.fg2);
+      p->drawText(key, Qt::AlignCenter, sc);
+    }
+    p->restore();
+  }
+  QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override { return QSize(100, 28); }
+};
+}  // namespace
+
+CommandPalette::CommandPalette(const QList<QAction*>& actions, QWidget* parent) : QDialog(parent, Qt::Popup | Qt::FramelessWindowHint), m_actions(actions) {
+  setObjectName("overlay");
+  setAttribute(Qt::WA_StyledBackground);
+  setFixedWidth(560);
   auto* layout = new QVBoxLayout(this);
+  layout->setContentsMargins(1, 1, 1, 1);
+  layout->setSpacing(0);
   m_edit = new QLineEdit(this);
-  m_edit->setPlaceholderText(tr("Type a command..."));
+  m_edit->setObjectName("paletteInput");
+  m_edit->setPlaceholderText(tr("Search commands…"));
+  m_edit->addAction(icons::icon("search", theme::current().fg3), QLineEdit::LeadingPosition);
   m_list = new QListWidget(this);
+  m_list->setObjectName("paletteList");
+  m_list->setItemDelegate(new PaletteDelegate(m_list));
+  m_list->setMouseTracking(true);
+  m_list->setFixedHeight(28 * 9);
   layout->addWidget(m_edit);
-  layout->addWidget(m_list, 1);
+  layout->addWidget(m_list);
+  auto* foot = new QLabel(QString::fromUtf8("↑↓ navigate · Enter run · Esc close"), this);
+  foot->setObjectName("tertiary");
+  foot->setContentsMargins(12, 6, 12, 6);
+  layout->addWidget(foot);
   connect(m_edit, &QLineEdit::textChanged, this, &CommandPalette::refill);
   connect(m_edit, &QLineEdit::returnPressed, this, &CommandPalette::runCurrent);
-  connect(m_list, &QListWidget::itemActivated, this, [this](QListWidgetItem*) { runCurrent(); });
+  connect(m_list, &QListWidget::itemClicked, this, [this](QListWidgetItem*) { runCurrent(); });
   m_edit->installEventFilter(this);
   refill(QString());
   m_edit->setFocus();
 }
 
+bool CommandPalette::eventFilter(QObject* o, QEvent* e) {
+  if (o == m_edit && e->type() == QEvent::KeyPress) {
+    auto* k = static_cast<QKeyEvent*>(e);
+    if (k->key() == Qt::Key_Down || k->key() == Qt::Key_Up) {
+      int row = m_list->currentRow() + (k->key() == Qt::Key_Down ? 1 : -1);
+      if (row >= 0 && row < m_list->count()) m_list->setCurrentRow(row);
+      return true;
+    }
+  }
+  return QDialog::eventFilter(o, e);
+}
+
 void CommandPalette::refill(const QString& filter) {
+  static_cast<PaletteDelegate*>(m_list->itemDelegate())->query = filter;
   m_list->clear();
+  QList<QPair<int, QAction*>> scored;
   for (QAction* a : m_actions) {
     if (a->text().isEmpty() || a->isSeparator()) continue;
-    QString text = a->text().remove('&');
-    if (!filter.isEmpty() && !text.contains(filter, Qt::CaseInsensitive)) continue;
-    auto* it = new QListWidgetItem(QString("%1    %2").arg(text, a->shortcut().toString(QKeySequence::NativeText)));
+    int s = fuzzyScore(a->text().remove('&'), filter, nullptr);
+    if (s > 0) scored << qMakePair(s, a);
+  }
+  std::stable_sort(scored.begin(), scored.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+  for (const auto& [s, a] : scored) {
+    auto* it = new QListWidgetItem(m_list);
     it->setData(Qt::UserRole, QVariant::fromValue(static_cast<void*>(a)));
-    if (!a->isEnabled()) it->setForeground(QBrush(QColor(150, 150, 150)));
-    m_list->addItem(it);
+    it->setToolTip(a->toolTip());
   }
   if (m_list->count() > 0) m_list->setCurrentRow(0);
 }
@@ -504,7 +1329,7 @@ void CommandPalette::runCurrent() {
 // ---------------------------------------------------------------- ShortcutEditor
 ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions, QWidget* parent) : QDialog(parent), m_actions(actions) {
   setWindowTitle(tr("Keyboard shortcuts"));
-  resize(520, 480);
+  resize(560, 520);
   auto* layout = new QVBoxLayout(this);
   m_tree = new QTreeWidget(this);
   m_tree->setColumnCount(2);
@@ -514,16 +1339,17 @@ ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions, QWidget* parent) 
   for (QAction* a : actions) {
     if (a->text().isEmpty() || a->isSeparator()) continue;
     auto* it = new QTreeWidgetItem(m_tree);
-    it->setText(0, a->text().remove('&'));
+    it->setText(0, opGroup(a) + " › " + a->text().remove('&'));
     auto* edit = new QKeySequenceEdit(a->shortcut(), m_tree);
     m_tree->setItemWidget(it, 1, edit);
   }
   auto* row = new QHBoxLayout();
   auto* ok = new QPushButton(tr("Apply"), this);
+  ok->setObjectName("primary");
   auto* cancel = new QPushButton(tr("Cancel"), this);
   row->addStretch();
-  row->addWidget(ok);
   row->addWidget(cancel);
+  row->addWidget(ok);
   layout->addLayout(row);
   connect(ok, &QPushButton::clicked, this, &ShortcutEditor::accept);
   connect(cancel, &QPushButton::clicked, this, &ShortcutEditor::reject);

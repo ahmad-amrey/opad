@@ -6,6 +6,8 @@
 #include <Aspect_ScrollDelta.hxx>
 #include <Aspect_VKeyFlags.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <Bnd_Box.hxx>
 #include <Graphic3d_TransformPers.hxx>
@@ -13,11 +15,15 @@
 #include <OpenGl_GraphicDriver.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_LineAspect.hxx>
+#include <Prs3d_PointAspect.hxx>
 #include <Quantity_Color.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <TopExp.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <V3d_ImageDumpOptions.hxx>
+#include <V3d_Trihedron.hxx>
 #include <gp_Pln.hxx>
 #if defined(_WIN32)
 #include <WNT_Window.hxx>
@@ -57,9 +63,12 @@ Quantity_Color qcolor(const std::array<double, 3>& c) {
   return Quantity_Color(std::clamp(c[0], 0.0, 1.0), std::clamp(c[1], 0.0, 1.0), std::clamp(c[2], 0.0, 1.0), Quantity_TOC_sRGB);
 }
 
+Quantity_Color occ(const QColor& c) { return Quantity_Color(c.redF(), c.greenF(), c.blueF(), Quantity_TOC_sRGB); }
+
 }  // namespace
 
-Viewport::Viewport(AppDocument* doc, QWidget* parent) : QWidget(parent), m_doc(doc), m_alive(std::make_shared<std::atomic<bool>>(true)) {
+Viewport::Viewport(AppDocument* doc, QWidget* parent)
+    : QWidget(parent), m_doc(doc), m_tokens(theme::current()), m_alive(std::make_shared<std::atomic<bool>>(true)) {
   setAttribute(Qt::WA_PaintOnScreen);
   setAttribute(Qt::WA_NoSystemBackground);
   setAttribute(Qt::WA_NativeWindow);
@@ -91,10 +100,6 @@ void Viewport::initViewer() {
   m_ctx = new AIS_InteractiveContext(m_viewer);
   m_ctx->SetPixelTolerance(4);
   m_ctx->SetAutoActivateSelection(Standard_True);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetColor(Quantity_NOC_DEEPSKYBLUE1);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetColor(Quantity_NOC_DEEPSKYBLUE1);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetColor(Quantity_NOC_DODGERBLUE1);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(Quantity_NOC_DODGERBLUE1);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetDisplayMode(AIS_Shaded);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetDisplayMode(AIS_Shaded);
 
@@ -115,12 +120,16 @@ void Viewport::initViewer() {
   m_view->SetProj(V3d_XposYnegZpos);
 
   m_cube = new AIS_ViewCube();
-  m_cube->SetSize(55);
-  m_cube->SetBoxColor(Quantity_NOC_GRAY80);
-  m_cube->SetTextColor(Quantity_NOC_GRAY20);
-  m_cube->SetFontHeight(12);
+  m_cube->SetSize(58);
+  m_cube->SetFontHeight(11);
   m_cube->SetAxesLabels("X", "Y", "Z");
-  m_cube->SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER, Graphic3d_Vec2i(90, 90)));
+  m_cube->SetBoxSideLabel(V3d_Zpos, "TOP");
+  m_cube->SetBoxSideLabel(V3d_Zneg, "BOTTOM");
+  m_cube->SetBoxSideLabel(V3d_Yneg, "FRONT");
+  m_cube->SetBoxSideLabel(V3d_Ypos, "BACK");
+  m_cube->SetBoxSideLabel(V3d_Xpos, "RIGHT");
+  m_cube->SetBoxSideLabel(V3d_Xneg, "LEFT");
+  m_cube->SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER, Graphic3d_Vec2i(80, 76)));
   m_cube->SetViewAnimation(myViewAnimation);
   m_cube->SetFixedAnimationLoop(Standard_False);
   m_cube->SetAutoStartAnimation(Standard_True);
@@ -134,9 +143,51 @@ void Viewport::initViewer() {
   SetAllowZFocus(Standard_False);
   SetAllowDragging(Standard_False);
   setNavPreset(m_preset);
-  setDarkTheme(m_dark);
   m_initialised = true;
+  applyTokens();
   sync();
+}
+
+// ---------------------------------------------------------------- tokens
+void Viewport::setTokens(const Tokens& t) {
+  m_tokens = t;
+  if (m_initialised) applyTokens();
+}
+
+void Viewport::applyTokens() {
+  const Tokens& t = m_tokens;
+  m_view->SetBackgroundColor(occ(t.vp));
+  m_view->SetBgGradientStyle(Aspect_GradientFillMethod_None);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetColor(occ(t.hov));
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetColor(occ(t.hov));
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetTransparency(0.35f);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetTransparency(0.35f);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetColor(occ(t.sel));
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(occ(t.sel));
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetTransparency(0.5f);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetTransparency(0.35f);
+  // View cube: flat three-tone box (m-top sides, m-left edges, m-right corners), fg labels, no axes.
+  m_cube->SetBoxColor(occ(t.mtop));
+  m_cube->BoxSideStyle()->SetColor(occ(t.mtop));
+  m_cube->BoxEdgeStyle()->SetColor(occ(t.mleft));
+  m_cube->BoxCornerStyle()->SetColor(occ(t.mright));
+  m_cube->SetTextColor(occ(t.dark ? t.medge : t.medge));
+  m_cube->SetInnerColor(occ(t.mleft));
+  m_cube->SetBoxTransparency(0.0);
+  m_cube->SetDrawAxes(Standard_False);
+  m_cube->SetSize(36);
+  m_ctx->Redisplay(m_cube, Standard_False);
+  // Axis triad bottom-left: fg3 arms, fg2 labels.
+  m_view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, occ(t.fg3), 0.06, V3d_ZBUFFER);
+  Handle(V3d_Trihedron) tri = m_view->Trihedron();
+  if (!tri.IsNull()) {
+    tri->SetArrowsColor(occ(t.fg3), occ(t.fg3), occ(t.fg3));
+    tri->SetLabelsColor(occ(t.fg2));
+  }
+  setStyle(m_style);
+  updateAnnotations();
+  updateClipPlanes();
+  requestRedraw();
 }
 
 // ---------------------------------------------------------------- navigation presets (F16)
@@ -146,7 +197,6 @@ void Viewport::setNavPreset(NavPreset p) {
   map.Clear();
   const unsigned L = Aspect_VKeyMouse_LeftButton, M = Aspect_VKeyMouse_MiddleButton, R = Aspect_VKeyMouse_RightButton;
   const unsigned SHIFT = Aspect_VKeyFlags_SHIFT, CTRL = Aspect_VKeyFlags_CTRL;
-  // Left button always selects (click) or window-selects (drag); Ctrl toggles membership.
   map.Bind(L, AIS_MouseGesture_SelectRectangle);
   map.Bind(L | CTRL, AIS_MouseGesture_SelectRectangle);
   map.Bind(L | SHIFT, AIS_MouseGesture_SelectRectangle);
@@ -178,7 +228,7 @@ void Viewport::setNavPreset(NavPreset p) {
 void Viewport::applyStyle(const Handle(AIS_Shape)& ais) {
   Handle(Prs3d_Drawer) d = ais->Attributes();
   d->SetFaceBoundaryDraw(m_style == Style::ShadedEdges);
-  d->SetFaceBoundaryAspect(new Prs3d_LineAspect(m_dark ? Quantity_NOC_GRAY90 : Quantity_NOC_GRAY10, Aspect_TOL_SOLID, 1.0));
+  d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.medge), Aspect_TOL_SOLID, 1.0));
   m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, Standard_False);
 }
 
@@ -206,17 +256,6 @@ void Viewport::setShadows(bool on) {
     if (it.Value()->Type() == Graphic3d_TypeOfLightSource_Directional) it.Value()->SetCastShadows(on);
   m_view->ChangeRenderingParams().ShadowMapResolution = on ? 2048 : 1024;
   requestRedraw();
-}
-
-void Viewport::setDarkTheme(bool dark) {
-  m_dark = dark;
-  if (!m_initialised) return;
-  if (dark) m_view->SetBgGradientColors(Quantity_Color(0.16, 0.17, 0.19, Quantity_TOC_sRGB), Quantity_Color(0.09, 0.10, 0.11, Quantity_TOC_sRGB), Aspect_GradientFillMethod_Vertical);
-  else m_view->SetBgGradientColors(Quantity_Color(0.96, 0.97, 0.98, Quantity_TOC_sRGB), Quantity_Color(0.78, 0.81, 0.85, Quantity_TOC_sRGB), Aspect_GradientFillMethod_Vertical);
-  m_cube->SetBoxColor(dark ? Quantity_NOC_GRAY40 : Quantity_NOC_GRAY80);
-  m_cube->SetTextColor(dark ? Quantity_NOC_GRAY90 : Quantity_NOC_GRAY20);
-  m_ctx->Redisplay(m_cube, Standard_False);
-  setStyle(m_style);
 }
 
 void Viewport::setOrthographic(bool ortho) {
@@ -415,42 +454,76 @@ QImage Viewport::grabImage() {
 }
 
 // ---------------------------------------------------------------- section (F20)
-void Viewport::setSection(bool enabled, const opad::Vec3& origin, const opad::Vec3& normal) {
+void Viewport::setSection(bool enabled, const opad::Vec3& origin, const opad::Vec3& normal, bool caps) {
   m_sectionEnabled = enabled;
   m_sectionOrigin = origin;
   m_sectionNormal = normal;
+  m_sectionCaps = caps;
   updateClipPlanes();
   requestRedraw();
 }
 
 void Viewport::updateClipPlanes() {
   if (!m_initialised) return;
-  for (const auto& p : m_docPlanes) m_view->RemoveClipPlane(p);
-  m_docPlanes.clear();
   if (!m_sectionPlane.IsNull()) m_view->RemoveClipPlane(m_sectionPlane);
-  auto make_plane = [&](const opad::Vec3& o, const opad::Vec3& n) {
-    Handle(Graphic3d_ClipPlane) p = new Graphic3d_ClipPlane(gp_Pln(gp_Pnt(o[0], o[1], o[2]), gp_Dir(n[0], n[1], n[2])));
-    p->SetCapping(Standard_True);
-    p->SetUseObjectMaterial(Standard_True);
-    p->SetCappingColor(Quantity_NOC_GRAY60);
-    p->SetCappingHatchOn();
-    p->SetCappingHatch(Aspect_HS_DIAGONAL_45);
-    return p;
-  };
-  for (const auto& s : m_doc->scene.sections) {
-    if (!s.enabled) continue;
-    Handle(Graphic3d_ClipPlane) p = make_plane(s.origin, s.normal);
-    p->SetOn(Standard_False);  // persisted sections are listed; the user enables them from the menu
-    m_docPlanes.push_back(p);
-    m_view->AddClipPlane(p);
+  m_sectionPlane.Nullify();
+  if (!m_sectionEnabled) {
+    m_view->Invalidate();
+    return;
   }
-  if (m_sectionEnabled) {
-    m_sectionPlane = make_plane(m_sectionOrigin, m_sectionNormal);
-    m_view->AddClipPlane(m_sectionPlane);
-  } else {
-    m_sectionPlane.Nullify();
-  }
+  double len = std::sqrt(m_sectionNormal[0] * m_sectionNormal[0] + m_sectionNormal[1] * m_sectionNormal[1] + m_sectionNormal[2] * m_sectionNormal[2]);
+  if (len < 1e-9) return;
+  m_sectionPlane = new Graphic3d_ClipPlane(gp_Pln(gp_Pnt(m_sectionOrigin[0], m_sectionOrigin[1], m_sectionOrigin[2]),
+                                                  gp_Dir(m_sectionNormal[0], m_sectionNormal[1], m_sectionNormal[2])));
+  m_sectionPlane->SetCapping(m_sectionCaps);
+  m_sectionPlane->SetUseObjectMaterial(Standard_False);
+  m_sectionPlane->SetCappingColor(occ(m_tokens.cap));
+  m_sectionPlane->SetCappingHatchOff();
+  m_view->AddClipPlane(m_sectionPlane);
   m_view->Invalidate();
+}
+
+// ---------------------------------------------------------------- dimension (F23)
+void Viewport::clearDimension() {
+  if (!m_initialised) return;
+  for (const auto& o : m_dimension) m_ctx->Remove(o, Standard_False);
+  m_dimension.clear();
+  requestRedraw();
+}
+
+void Viewport::showDimension(const opad::Vec3& a, const opad::Vec3& b, const QString& label) {
+  if (!m_initialised) return;
+  clearDimension();
+  gp_Pnt pa(a[0], a[1], a[2]), pb(b[0], b[1], b[2]);
+  if (pa.Distance(pb) > 1e-9) {
+    Handle(AIS_Shape) line = new AIS_Shape(BRepBuilderAPI_MakeEdge(pa, pb).Edge());
+    line->SetColor(occ(m_tokens.sel));
+    line->SetWidth(1.5);
+    line->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    m_ctx->Display(line, Standard_False);
+    m_ctx->Deactivate(line);
+    m_dimension.push_back(line);
+  }
+  for (const gp_Pnt& p : {pa, pb}) {
+    Handle(AIS_Shape) v = new AIS_Shape(BRepBuilderAPI_MakeVertex(p).Vertex());
+    v->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O, occ(m_tokens.sel), 3.0));
+    v->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    m_ctx->Display(v, Standard_False);
+    m_ctx->Deactivate(v);
+    m_dimension.push_back(v);
+  }
+  Handle(AIS_TextLabel) text = new AIS_TextLabel();
+  text->SetText(TCollection_ExtendedString(label.toStdString().c_str(), Standard_True));
+  text->SetPosition(gp_Pnt((pa.X() + pb.X()) / 2, (pa.Y() + pb.Y()) / 2, (pa.Z() + pb.Z()) / 2));
+  text->SetHeight(12);
+  text->SetColor(occ(m_tokens.sel));
+  text->SetDisplayType(Aspect_TODT_SUBTITLE);
+  text->SetColorSubTitle(occ(m_tokens.bg2));
+  text->SetZLayer(Graphic3d_ZLayerId_Topmost);
+  m_ctx->Display(text, Standard_False);
+  m_ctx->Deactivate(text);
+  m_dimension.push_back(text);
+  requestRedraw();
 }
 
 // ---------------------------------------------------------------- scene sync
@@ -579,11 +652,12 @@ void Viewport::sync() {
 }
 
 void Viewport::updateAnnotations() {
+  if (!m_initialised) return;
   for (const auto& l : m_labels) m_ctx->Remove(l, Standard_False);
   m_labels.clear();
   for (const auto& a : m_doc->scene.annotations) {
-    if (a.unresolved) continue;
     gp_Pnt at(a.anchor.point[0], a.anchor.point[1], a.anchor.point[2]);
+    if (a.unresolved) continue;
     if (a.anchor.kind != opad::Ref::Kind::Point) {
       try {
         opad::json info = opad::inspect_ref(m_doc->doc, m_doc->scene, a.anchor);
@@ -593,14 +667,21 @@ void Viewport::updateAnnotations() {
         continue;
       }
     }
+    // Amber anchor dot with a bg2 ring, then the note text (author in parentheses).
+    Handle(AIS_Shape) dot = new AIS_Shape(BRepBuilderAPI_MakeVertex(at).Vertex());
+    dot->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL, occ(m_tokens.amber), 5.0));
+    dot->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    m_ctx->Display(dot, Standard_False);
+    m_ctx->Deactivate(dot);
+    m_labels.push_back(dot);
     Handle(AIS_TextLabel) label = new AIS_TextLabel();
-    std::string text = a.text.size() > 40 ? a.text.substr(0, 37) + "..." : a.text;
-    label->SetText(TCollection_ExtendedString((text + "  (" + a.by + ")").c_str(), Standard_True));
+    std::string text = a.text.size() > 48 ? a.text.substr(0, 45) + "..." : a.text;
+    label->SetText(TCollection_ExtendedString(("   " + text + "  (" + a.by + ")").c_str(), Standard_True));
     label->SetPosition(at);
     label->SetHeight(13);
-    label->SetColor(m_dark ? Quantity_NOC_GOLD : Quantity_NOC_DARKORANGE);
-    label->SetDisplayType(Aspect_TODT_SHADOW);
-    label->SetColorSubTitle(m_dark ? Quantity_NOC_BLACK : Quantity_NOC_WHITE);
+    label->SetColor(occ(m_tokens.amber));
+    label->SetDisplayType(Aspect_TODT_SUBTITLE);
+    label->SetColorSubTitle(occ(m_tokens.bg2));
     label->SetZLayer(Graphic3d_ZLayerId_Topmost);
     m_ctx->Display(label, Standard_False);
     m_ctx->Deactivate(label);
@@ -635,7 +716,7 @@ void Viewport::paintEvent(QPaintEvent*) {
       if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
         const TopoDS_Shape& sub = owner->Shape();
         const char* kind = sub.ShapeType() == TopAbs_FACE ? "face" : sub.ShapeType() == TopAbs_EDGE ? "edge" : "vertex";
-        hover += QString(" / %1 %2").arg(kind).arg(opad::subshape_index(m_items.at(it->second).located, sub));
+        hover += QString::fromUtf8(" › %1 %2").arg(kind).arg(opad::subshape_index(m_items.at(it->second).located, sub));
       }
     }
   }

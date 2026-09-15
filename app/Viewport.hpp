@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "AppDocument.hpp"
+#include "Theme.hpp"
 
 class Viewport : public QWidget, protected AIS_ViewController {
   Q_OBJECT
@@ -34,6 +35,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   explicit Viewport(AppDocument* doc, QWidget* parent = nullptr);
   ~Viewport() override;
 
+  void setTokens(const Tokens& t);
   void setNavPreset(NavPreset p);
   NavPreset navPreset() const { return m_preset; }
   void setStyle(Style s);
@@ -44,7 +46,6 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool isOrthographic() const;
   void setSelectionFilter(SelFilter f);
   SelFilter selectionFilter() const { return m_filter; }
-  void setDarkTheme(bool dark);
 
   void fitAll();
   void fitSelection();
@@ -58,8 +59,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void isolate(const std::vector<std::string>& ids);  // empty = show everything again
   bool isIsolated() const { return !m_isolated.empty(); }
 
-  void setSection(bool enabled, const opad::Vec3& origin, const opad::Vec3& normal);
+  void setSection(bool enabled, const opad::Vec3& origin, const opad::Vec3& normal, bool caps = true);
   bool sectionEnabled() const { return m_sectionEnabled; }
+  void showDimension(const opad::Vec3& a, const opad::Vec3& b, const QString& label);
+  void clearDimension();
 
   opad::json cameraJson() const;
   void setCameraJson(const opad::json& j);
@@ -103,23 +106,25 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Graphic3d_Vec2i devicePos(const QPointF& p) const;
   void updateAnnotations();
   void updateClipPlanes();
+  void applyTokens();
   void requestRedraw() { update(); }
 
   AppDocument* m_doc;
+  Tokens m_tokens;
   Handle(V3d_Viewer) m_viewer;
   Handle(V3d_View) m_view;
   Handle(AIS_InteractiveContext) m_ctx;
   Handle(AIS_ViewCube) m_cube;
   std::map<std::string, Item> m_items;
   std::map<const AIS_InteractiveObject*, std::string> m_nodeOf;
-  std::vector<Handle(AIS_TextLabel)> m_labels;
-  std::vector<Handle(Graphic3d_ClipPlane)> m_docPlanes;
+  std::vector<Handle(AIS_InteractiveObject)> m_labels;
+  std::vector<Handle(AIS_InteractiveObject)> m_dimension;
   Handle(Graphic3d_ClipPlane) m_sectionPlane;
 
   NavPreset m_preset = NavPreset::Fusion;
   Style m_style = Style::ShadedEdges;
   SelFilter m_filter = SelFilter::Body;
-  bool m_grid = false, m_dark = false, m_sectionEnabled = false, m_initialised = false, m_needFit = false;
+  bool m_grid = false, m_sectionEnabled = false, m_sectionCaps = true, m_initialised = false, m_needFit = false;
   opad::Vec3 m_sectionOrigin{0, 0, 0}, m_sectionNormal{0, 0, 1};
   std::set<std::string> m_isolated;
 
