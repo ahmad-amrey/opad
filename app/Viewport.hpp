@@ -15,6 +15,7 @@
 #include <QWidget>
 #include <array>
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -48,13 +49,20 @@ class Viewport : public QWidget, protected AIS_ViewController {
   SelFilter selectionFilter() const { return m_filter; }
 
   void fitAll();
+  void fitWhenReady();   // fit now if bodies are displayed, otherwise once the first meshes arrive
+  void cancelMeshing();  // stop tessellating the remaining bodies (they stay hidden until resetMeshing)
+  void resetMeshing();
+  int skippedCount() const { return static_cast<int>(m_meshSkipped.size()); }
   void fitSelection();
   void fitNodes(const std::vector<std::string>& ids);
   void standardView(const QString& name);
   void home();
 
   std::vector<opad::Ref> selection() const;
-  void selectNodes(const std::vector<std::string>& ids);
+  // Highlights the given nodes' bodies. Large sets are applied in chunks across the event loop so the
+  // UI never blocks; `progress` is called between chunks (return false to cancel) and `done` at the end.
+  void selectNodes(const std::vector<std::string>& ids, const std::function<bool(size_t, size_t)>& progress = {}, const std::function<void()>& done = {});
+  void cancelSelect();  // abandon an in-flight chunked selection
   void clearSelection();
   void isolate(const std::vector<std::string>& ids);  // empty = show everything again
   bool isIsolated() const { return !m_isolated.empty(); }
@@ -99,9 +107,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
     TopoDS_Shape located;
   };
   void initViewer();
+  void syncWindowSize();
   void applyStyle(const Handle(AIS_Shape)& ais);
   void activateSelection(const Handle(AIS_Shape)& ais);
   void startMeshing(std::vector<std::string> keys);
+  void stepSelect();
   double deflectionFor(const std::string& key);
   Graphic3d_Vec2i devicePos(const QPointF& p) const;
   void updateAnnotations();
@@ -131,6 +141,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::mutex m_meshMu;
   std::set<std::string> m_meshed;
   std::set<std::string> m_meshing;
+  std::set<std::string> m_meshSkipped;
+  std::pair<int, int> m_lastSyncedSize{-1, -1};  // device px OCCT was last told about, for syncWindowSize
+  std::vector<Handle(AIS_Shape)> m_selTargets;   // pending chunked selection
+  size_t m_selIndex = 0;
+  std::function<bool(size_t, size_t)> m_selProgress;
+  std::function<void()> m_selDone;
+  std::shared_ptr<std::atomic<bool>> m_meshCancel = std::make_shared<std::atomic<bool>>(false);
   std::map<std::string, double> m_deflection;
   std::shared_ptr<std::atomic<bool>> m_alive;
 

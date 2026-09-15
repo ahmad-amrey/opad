@@ -120,6 +120,7 @@ struct Importer {
   std::string source;
   std::map<const void*, std::string> key_by_tshape;
   int body_counter = 0;
+  int visited = 0, total = 0;  // shape labels walked / present, for a coarse "building" percentage
 
   bool label_color(const TDF_Label& l, Quantity_Color& c) {
     if (l.IsNull()) return false;
@@ -127,9 +128,10 @@ struct Importer {
            ct->GetColor(l, XCAFDoc_ColorCurv, c);
   }
 
-  void progress(const std::string& what) {
-    if (opt.progress && !opt.progress(-1, what)) throw Error("import cancelled");
+  void progress(double frac, const std::string& what) {
+    if (opt.progress && !opt.progress(frac, what)) throw Error("import cancelled");
   }
+  double fraction() const { return total > 0 ? std::min(0.99, static_cast<double>(visited) / total) : -1.0; }
 
   std::string store(TopoDS_Shape proto, const std::string& name, const Quantity_Color* color) {
     const void* ts = proto.TShape().get();
@@ -171,11 +173,12 @@ struct Importer {
     if (!loc.IsIdentity()) n["transform"] = mat_from_trsf(loc.Transformation()).to_json();
     if (color) n["color"] = {color->Red(), color->Green(), color->Blue()};
     ++res.bodies;
-    if (++body_counter % 25 == 0) progress("importing bodies");
+    if (++body_counter % 25 == 0) progress(fraction(), "building");
     return n;
   }
 
   json walk(const TDF_Label& label, const std::string& fallback_name) {
+    if (++visited % 10 == 1) progress(fraction(), "building");
     TDF_Label ref = label;
     TopLoc_Location loc;
     if (st->IsReference(label)) {
@@ -258,6 +261,7 @@ ImportResult import_step(Document& doc, const std::filesystem::path& step, const
   reader.SetPropsMode(Standard_False);
   Interface_Static::SetCVal("xstep.cascade.unit", "MM");
 
+  if (opt.progress && !opt.progress(-1, "reading")) throw Error("import cancelled");
   IFSelect_ReturnStatus status;
   try {
     status = reader.ReadFile(step.string().c_str());
@@ -281,6 +285,12 @@ ImportResult import_step(Document& doc, const std::filesystem::path& step, const
                step.filename().string(), {}, 0};
   TDF_LabelSequence free_shapes;
   imp.st->GetFreeShapes(free_shapes);
+  {
+    TDF_LabelSequence all;
+    imp.st->GetShapes(all);
+    imp.total = all.Length();
+  }
+  imp.progress(0.0, "building");
   json nodes = json::array();
   std::string stem = step.stem().string();
   for (int i = 1; i <= free_shapes.Length(); ++i)

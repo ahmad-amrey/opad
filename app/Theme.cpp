@@ -155,6 +155,12 @@ QString stylesheet(const Tokens& t) {
                "QCheckBox::indicator:checked { background: %3; border-color: %4; }\n"
                "QRadioButton::indicator { width: 14px; height: 14px; border: 1px solid %1; border-radius: 7px; background: %2; }\n"
                "QRadioButton::indicator:checked { background: %4; border: 3px solid %2; }\n").arg(line, bg2, selbg, sel);
+  s += QString("QProgressBar { background: %1; border: none; border-radius: 2px; }\n"
+               "QProgressBar::chunk { background: %2; border-radius: 2px; }\n").arg(bg4, sel);
+  s += QString("QLabel#progressTitle { color: %1; font-weight: 500; }\n"
+               "QPushButton#progressCancel { padding: 0 10px; border: 1px solid %2; border-radius: 3px; background: %3; color: %4; }\n"
+               "QPushButton#progressCancel:hover { background: %5; }\n"
+               "QPushButton#progressCancel:disabled { color: %6; }\n").arg(fg, line, bg2, fg, bg3, fg3);
   s += QString("QLabel#secondary { color: %1; font-size: 12px; } QLabel#tertiary { color: %2; font-size: 11px; }\n"
                "QLabel#sectionHeader { color: %2; font-size: 11px; letter-spacing: 0.04em; font-weight: 500; padding: 8px 0 4px 0; }\n"
                "QLabel#panelTitle { font-size: 14px; font-weight: 500; }\n"

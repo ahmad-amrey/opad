@@ -45,6 +45,15 @@ class MainWindow : public QMainWindow {
   void guarded(const std::function<void()>& fn);
   bool maybeSave();
   void showDocument(bool has);
+  void beginLoad(std::function<void()> after);
+  void finishLoad();
+  void showProgressStrip();
+  void updateProgress();
+  int overallPercent(const QString& phase, int pct) const;
+  bool selectionProgress(size_t done, size_t total);
+  void selectNodesWithProgress(const std::vector<std::string>& ids);
+  void endSelection();
+  void scheduleSelectionSync();
 
   void onViewportSelection();
   void onBrowserSelection(const std::vector<std::string>& ids);
@@ -96,6 +105,15 @@ class MainWindow : public QMainWindow {
   QList<QAction*> m_actions;
   QAction* m_pinAction = nullptr;
   QAction* m_darkAction = nullptr;
+  ProgressStrip* m_progress = nullptr;
+  QTimer m_loadTimer;
+  bool m_loadActive = false, m_loadDone = false, m_stripShown = false;
+  int m_meshTotal = 0, m_meshRemaining = 0, m_loadPercent = -1;
+  QString m_loadPhase;
+  std::function<void()> m_afterLoad;
+  std::function<void()> m_cancelAction;   // what the strip's Cancel does for the active operation
+  bool m_selectActive = false, m_selectCancel = false, m_selectGuard = false;
+  QTimer m_selFileTimer;
   QDockWidget* m_browserDock = nullptr;
   QDockWidget* m_inspectorDock = nullptr;
   QDockWidget* m_timelineDock = nullptr;

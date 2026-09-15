@@ -1,5 +1,10 @@
 #include "Viewport.hpp"
 
+#include <functional>
+
+#include <QTimer>
+#include <QWindow>
+
 #include <AIS_AnimationCamera.hxx>
 #include <AIS_ViewCube.hxx>
 #include <Aspect_DisplayConnection.hxx>
@@ -317,16 +322,65 @@ std::vector<opad::Ref> Viewport::selection() const {
   return out;
 }
 
-void Viewport::selectNodes(const std::vector<std::string>& ids) {
-  if (!m_initialised) return;
+void Viewport::selectNodes(const std::vector<std::string>& ids, const std::function<bool(size_t, size_t)>& progress, const std::function<void()>& done) {
+  if (!m_initialised) {
+    if (done) done();
+    return;
+  }
+  cancelSelect();  // drop any previous in-flight job
   m_ctx->ClearSelected(Standard_False);
-  for (const auto& id : ids) {
+  m_selTargets.clear();
+  for (const auto& id : ids)
     for (const auto& body : m_doc->scene.bodies_under(id)) {
       auto it = m_items.find(body);
-      if (it != m_items.end()) m_ctx->AddOrRemoveSelected(it->second.ais, Standard_False);
+      if (it != m_items.end()) m_selTargets.push_back(it->second.ais);
     }
+  m_selIndex = 0;
+  m_selProgress = progress;
+  m_selDone = done;
+  const size_t total = m_selTargets.size();
+  if (total <= 800) {  // small: apply immediately, no async overhead or latency
+    for (const auto& t : m_selTargets) m_ctx->AddOrRemoveSelected(t, Standard_False);
+    m_selTargets.clear();
+    requestRedraw();
+    if (progress) progress(total, total);
+    auto d = m_selDone;
+    m_selProgress = {};
+    m_selDone = {};
+    if (d) d();
+    return;
   }
-  requestRedraw();
+  stepSelect();  // large: chunk across the event loop so the UI stays responsive and cancellable
+}
+
+// One batch of a chunked selection, then yields to the event loop and reschedules itself.
+void Viewport::stepSelect() {
+  if (m_selTargets.empty()) return;
+  const size_t total = m_selTargets.size();
+  const size_t end = std::min(m_selIndex + 400, total);
+  for (; m_selIndex < end; ++m_selIndex) m_ctx->AddOrRemoveSelected(m_selTargets[m_selIndex], Standard_False);
+  const bool cancelled = m_selProgress && !m_selProgress(m_selIndex, total);
+  if (m_selIndex >= total || cancelled) {
+    requestRedraw();
+    auto d = m_selDone;
+    m_selTargets.clear();
+    m_selIndex = 0;
+    m_selProgress = {};
+    m_selDone = {};
+    if (d) d();
+    return;
+  }
+  QTimer::singleShot(0, this, [this] { stepSelect(); });
+}
+
+void Viewport::cancelSelect() {
+  if (m_selTargets.empty() && !m_selDone) return;
+  auto d = m_selDone;
+  m_selTargets.clear();
+  m_selIndex = 0;
+  m_selProgress = {};
+  m_selDone = {};
+  if (d) d();  // let the owner tear down its progress UI
 }
 
 void Viewport::clearSelection() {
@@ -352,6 +406,21 @@ void Viewport::fitAll() {
   m_view->FitAll(0.02, Standard_False);
   m_view->Invalidate();
   requestRedraw();
+}
+
+void Viewport::fitWhenReady() {
+  m_needFit = true;
+  if (!m_items.empty()) fitAll();
+}
+
+void Viewport::cancelMeshing() {
+  *m_meshCancel = true;
+  m_meshCancel = std::make_shared<std::atomic<bool>>(false);
+}
+
+void Viewport::resetMeshing() {
+  std::lock_guard<std::mutex> lock(m_meshMu);
+  m_meshSkipped.clear();
 }
 
 void Viewport::fitNodes(const std::vector<std::string>& ids) {
@@ -550,7 +619,7 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
   {
     std::lock_guard<std::mutex> lock(m_meshMu);
     for (const auto& k : keys) {
-      if (m_meshed.count(k) || m_meshing.count(k)) continue;
+      if (m_meshed.count(k) || m_meshing.count(k) || m_meshSkipped.count(k)) continue;
       m_meshing.insert(k);
       jobs.push_back({opad::body_shape(m_doc->doc, k), k, deflectionFor(k)});
     }
@@ -558,8 +627,19 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
   if (jobs.empty()) return;
   emit meshingProgress(static_cast<int>(m_meshing.size()));
   auto alive = m_alive;
-  std::thread([this, alive, jobs = std::move(jobs)]() {
-    for (const auto& j : jobs) {
+  auto cancel = m_meshCancel;
+  std::thread([this, alive, cancel, jobs = std::move(jobs)]() {
+    for (size_t i = 0; i < jobs.size(); ++i) {
+      const auto& j = jobs[i];
+      if (*cancel) {
+        std::lock_guard<std::mutex> lock(m_meshMu);
+        for (size_t k = i; k < jobs.size(); ++k) {
+          m_meshing.erase(jobs[k].key);
+          m_meshSkipped.insert(jobs[k].key);
+        }
+        QMetaObject::invokeMethod(this, "sync", Qt::QueuedConnection);
+        return;
+      }
       try {
         BRepMesh_IncrementalMesh(j.shape, j.tol, Standard_False, 20.0 * M_PI / 180.0, Standard_True);
       } catch (...) {
@@ -576,7 +656,7 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
 }
 
 void Viewport::sync() {
-  if (!m_initialised) return;
+  if (!m_initialised || m_doc->loading) return;
   const opad::Scene& scene = m_doc->scene;
   std::set<std::string> keep;
   std::vector<std::string> pending;
@@ -644,7 +724,7 @@ void Viewport::sync() {
   updateAnnotations();
   updateClipPlanes();
   if (added && (m_needFit || m_items.size() <= 1)) {
-    m_needFit = false;
+    if (pending.empty()) m_needFit = false;  // keep re-fitting while meshes are still arriving
     m_view->FitAll(0.02, Standard_False);
   }
   m_view->Invalidate();
@@ -701,10 +781,29 @@ void Viewport::showEvent(QShowEvent* e) {
     m_needFit = true;
     initViewer();
   }
+  // The stacked layout may resize us after the native window was created; re-check once shown.
+  QTimer::singleShot(0, this, [this] { syncWindowSize(); requestRedraw(); });
+}
+
+// Keeps the OCCT window in step with the widget. A native child that was created while hidden can keep
+// its initial size until the next real resize, which left the 3D view drawing in a corner (open from Recent).
+void Viewport::syncWindowSize() {
+  if (!m_initialised || m_view.IsNull() || m_view->Window().IsNull()) return;
+  const qreal dpr = devicePixelRatioF();
+  const int wantW = qRound(width() * dpr), wantH = qRound(height() * dpr);
+  // Compare against what OCCT was last told, not the HWND (Qt keeps that in sync, so it always
+  // matched and MustBeResized never fired -> the view kept its stale startup size in a corner).
+  if (wantW == m_lastSyncedSize.first && wantH == m_lastSyncedSize.second) return;
+  m_lastSyncedSize = {wantW, wantH};
+  if (QWindow* native = windowHandle()) native->resize(size());
+  m_view->MustBeResized();
+  m_view->Invalidate();
+  requestRedraw();
 }
 
 void Viewport::paintEvent(QPaintEvent*) {
   if (!m_initialised) initViewer();
+  syncWindowSize();
   FlushViewEvents(m_ctx, m_view, Standard_True);
   QString hover;
   if (m_ctx->HasDetected()) {
@@ -730,6 +829,7 @@ void Viewport::resizeEvent(QResizeEvent*) {
   if (!m_initialised) return;
   m_view->MustBeResized();
   m_view->Invalidate();
+  requestRedraw();
 }
 
 void Viewport::mousePressEvent(QMouseEvent* e) {
