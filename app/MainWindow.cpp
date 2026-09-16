@@ -312,6 +312,7 @@ void MainWindow::buildActions() {
       if (!n.visible) m_doc->run("appearance", opad::json{{"target", id}, {"visible", true}});
   });
   addAction("edit.filter", tr("Filter objects"), "search", QKeySequence("Ctrl+F"), [this] { m_browser->focusFilter(); });
+  addAction("edit.selectparent", tr("Select parent"), "chevronUp", QKeySequence("Ctrl+Up"), [this] { m_browser->selectParent(); });
   addAction("edit.delete", tr("Delete (tombstone)"), "delete", QKeySequence::Delete, [this] { deleteCurrent(); });
   addAction("edit.restore", tr("Restore"), "restore", QKeySequence("Shift+Del"), [this] {
     std::string id = m_timeline->currentOp();
@@ -361,7 +362,7 @@ void MainWindow::buildMenus() {
   m_recentMenu = file->addMenu(tr("Recent"));
   add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
-  add(edit, {"edit.rename", "edit.hide", "edit.showall", "edit.filter", "-", "annotate.add", "annotate.resolve", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
+  add(edit, {"edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.resolve", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = menuBar()->addMenu(tr("&View"));
   add(view, {"view.fit", "view.fitsel", "view.home", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "-", "view.section", "view.flip", "view.isolate", "view.unisolate", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
@@ -772,6 +773,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     menu.addSection(ids.size() == 1 ? m_doc->nodeName(ids.front()) : tr("%1 objects").arg(ids.size()));
     QAction* fit = menu.addAction(icons::themed("fit", 16), tr("Fit to"));
     connect(fit, &QAction::triggered, this, [this, ids] { m_viewport->fitNodes(ids); });
+    add("edit.selectparent");
     add("view.isolate");
     QAction* hideOthers = menu.addAction(icons::themed("hide", 16), tr("Hide others"));
     connect(hideOthers, &QAction::triggered, this, [this, ids] {
@@ -1244,7 +1246,26 @@ void MainWindow::runBench() {
     m_viewport->fitAll();
     m_viewport->fitNodes(m_doc->scene.bodies_under(m_doc->scene.roots.front()).size() > 1 ? std::vector<std::string>{m_doc->scene.bodies_under(m_doc->scene.roots.front()).front()} : m_doc->scene.roots);
     trace::log(QStringLiteral("bench: camera after fitNodes(first body) %1").arg(QString::fromStdString(m_viewport->cameraJson().dump())));
-    QTimer::singleShot(2500, qApp, &QCoreApplication::quit);
+    // Phase 2: the deepest leaf, selected from the browser as a user would, then Fit selection.
+    std::string leaf;
+    size_t depth = 0;
+    for (const auto& b : m_doc->scene.all_bodies()) {
+      const size_t d = m_doc->scene.path_to(b).size();
+      if (d > depth) { depth = d; leaf = b; }
+    }
+    auto conn2 = std::make_shared<QMetaObject::Connection>();
+    *conn2 = connect(m_viewport, &Viewport::selectionApplied, this, [this, conn2, leaf] {
+      disconnect(*conn2);
+      trace::log(QStringLiteral("bench: leaf %1 selected (%2 refs)").arg(m_doc->nodeName(leaf)).arg(m_viewport->selection().size()));
+      m_viewport->fitAll();
+      trace::log(QStringLiteral("bench: camera after fitAll %1").arg(QString::fromStdString(m_viewport->cameraJson().dump())));
+      m_viewport->fitSelection();
+      trace::log(QStringLiteral("bench: camera after fitSelection(leaf) %1").arg(QString::fromStdString(m_viewport->cameraJson().dump())));
+      m_viewport->benchPick();
+      QTimer::singleShot(2500, qApp, &QCoreApplication::quit);
+    });
+    m_browser->setSelectedIds({leaf});
+    onBrowserSelection({leaf});
   });
   onBrowserSelection(roots);
 }

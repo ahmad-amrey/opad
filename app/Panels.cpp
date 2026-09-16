@@ -57,6 +57,19 @@ QColor authorColor(const std::string& by) {
 QString shortId(const std::string& id) { return QString::fromStdString(id.substr(0, 8)); }
 }  // namespace
 
+// Ops the timeline draws. Visibility toggles, notes and pinned measurements are view state with their own
+// UI (browser eye, Annotations tab, measurement card) and would bury the structural history; their
+// tombstones go with them.
+bool timelineShows(const opad::Document& doc, const opad::Op& op) {
+  if (op.type == "annotation" || op.type == "measurement") return false;
+  if (op.type == "appearance" && op.data.contains("visible")) return false;
+  if (op.type == "delete") {
+    const opad::Op* t = doc.find_op(op.data.value("target", ""));
+    return !t || timelineShows(doc, *t);
+  }
+  return true;
+}
+
 QString opTypeIcon(const std::string& type) {
   if (type == "import") return "import";
   if (type == "rename") return "rename";
@@ -288,6 +301,9 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   connect(theme::notifier(), &theme::Notifier::changed, this, [this, head, searchIcon] {
     head->setStyleSheet(QString("QWidget#browserHead { border-bottom: 1px solid %1; }").arg(theme::css(theme::current().line)));
     searchIcon->setIcon(icons::icon("search", theme::current().fg3));
+    m_parentBtn->setIcon(icons::icon("chevronUp", theme::current().fg3));
+    m_expandBtn->setIcon(icons::icon("plus", theme::current().fg3));
+    m_collapseBtn->setIcon(icons::icon("min", theme::current().fg3));
     updateBreadcrumb();
     m_tree->viewport()->update();
   });
@@ -302,11 +318,35 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     fl->addWidget(hint);
   }
   hl->addWidget(m_filter);
+  auto* crumbRow = new QHBoxLayout();
+  crumbRow->setContentsMargins(0, 0, 0, 0);
+  crumbRow->setSpacing(2);
   m_breadcrumb = new QLabel(head);
   m_breadcrumb->setTextFormat(Qt::RichText);
   m_breadcrumb->setFont(theme::ui(12));
   m_breadcrumb->setFixedHeight(16);
-  hl->addWidget(m_breadcrumb);
+  m_breadcrumb->setOpenExternalLinks(false);
+  m_breadcrumb->setTextInteractionFlags(Qt::LinksAccessibleByMouse);  // each parent is a link that selects it
+  connect(m_breadcrumb, &QLabel::linkActivated, this, [this](const QString& href) { selectIds({href.toStdString()}); });
+  crumbRow->addWidget(m_breadcrumb, 1);
+  auto button = [&](const char* icon, const QString& tip) {
+    auto* b = new QToolButton(head);
+    b->setAutoRaise(true);
+    b->setFixedSize(18, 16);
+    b->setIconSize(QSize(14, 14));
+    b->setToolTip(tip);
+    b->setCursor(Qt::PointingHandCursor);
+    b->setIcon(icons::icon(icon, theme::current().fg3));
+    crumbRow->addWidget(b);
+    return b;
+  };
+  m_parentBtn = button("chevronUp", tr("Select parent (Ctrl+Up)"));
+  m_expandBtn = button("plus", tr("Expand all"));
+  m_collapseBtn = button("min", tr("Collapse all"));
+  connect(m_parentBtn, &QToolButton::clicked, this, &BrowserPanel::selectParent);
+  connect(m_expandBtn, &QToolButton::clicked, this, &BrowserPanel::expandAll);
+  connect(m_collapseBtn, &QToolButton::clicked, this, &BrowserPanel::collapseAll);
+  hl->addLayout(crumbRow);
   layout->addWidget(head);
   m_tree = new BrowserTree(doc, this);
   m_tree->setStyleSheet("QTreeWidget { padding: 4px 0; }");
@@ -462,6 +502,28 @@ void BrowserPanel::setSelectedIds(const std::vector<std::string>& ids) {
   updateBreadcrumb();
 }
 
+void BrowserPanel::selectIds(const std::vector<std::string>& ids) {
+  setSelectedIds(ids);
+  emit selectionChanged(selectedIds());
+}
+
+void BrowserPanel::selectParent() {
+  std::vector<std::string> parents;
+  for (const auto& id : selectedIds()) {
+    const opad::Node* n = m_doc->node(id);
+    if (!n || n->parent.empty()) continue;  // a root has no parent to go to
+    if (std::find(parents.begin(), parents.end(), n->parent) == parents.end()) parents.push_back(n->parent);
+  }
+  if (!parents.empty()) selectIds(parents);
+}
+
+void BrowserPanel::expandAll() { m_tree->expandAll(); }
+
+void BrowserPanel::collapseAll() {
+  m_tree->collapseAll();
+  if (m_tree->topLevelItemCount() > 0) m_tree->topLevelItem(0)->setExpanded(true);  // keep the roots in view
+}
+
 void BrowserPanel::startRename(const std::string& id) {
   if (auto* it = itemFor(id)) m_tree->editItem(it, 0);
 }
@@ -477,7 +539,9 @@ void BrowserPanel::updateBreadcrumb() {
   auto path = m_doc->scene.path_to(ids.front());
   for (size_t i = 0; i < path.size(); ++i) {
     bool last = i + 1 == path.size();
-    parts << QString("<span style='color:%1'>%2</span>").arg(last ? t.fg.name() : t.fg2.name(), m_doc->nodeName(path[i]).toHtmlEscaped());
+    const QString name = m_doc->nodeName(path[i]).toHtmlEscaped();
+    if (last) parts << QString("<span style='color:%1'>%2</span>").arg(t.fg.name(), name);
+    else parts << QString("<a href='%1' style='color:%2;text-decoration:none'>%3</a>").arg(QString::fromStdString(path[i]).toHtmlEscaped(), t.fg2.name(), name);
   }
   m_breadcrumb->setText(parts.join(QString("<span style='color:%1'> › </span>").arg(t.fg3.name())));
 }
@@ -1014,6 +1078,7 @@ TimelineWidget::TimelineWidget(AppDocument* doc, QWidget* parent) : QWidget(pare
   setFixedHeight(48);
   setAttribute(Qt::WA_Hover);
   connect(doc, &AppDocument::changed, this, &TimelineWidget::rebuild);
+  rebuild();
 }
 
 void TimelineWidget::rebuild() {
@@ -1021,13 +1086,16 @@ void TimelineWidget::rebuild() {
   m_unresolved.clear();
   for (const auto& u : m_doc->scene.unresolved) m_unresolved.insert(u.op_id);
   if (!m_current.empty() && !m_doc->doc.find_op(m_current)) m_current.clear();
+  m_shown.clear();
+  for (size_t i = 0; i < m_doc->doc.ops.size(); ++i)
+    if (timelineShows(m_doc->doc, m_doc->doc.ops[i])) m_shown.push_back(i);
   update();
 }
 
 bool TimelineWidget::isUnresolved(const std::string& opId) const { return m_unresolved.count(opId) > 0; }
 
 QRect TimelineWidget::markerRect(int i) const {
-  const int n = static_cast<int>(m_doc->doc.ops.size());
+  const int n = static_cast<int>(m_shown.size());
   const int trackStart = 112 + 16, trackEnd = width() - 72;
   double step = 26;
   if (n > 1 && trackStart + (n - 1) * step + 18 > trackEnd) step = std::max(6.0, static_cast<double>(trackEnd - 18 - trackStart) / (n - 1));
@@ -1035,7 +1103,7 @@ QRect TimelineWidget::markerRect(int i) const {
 }
 
 int TimelineWidget::indexAt(const QPoint& p) const {
-  for (int i = static_cast<int>(m_doc->doc.ops.size()) - 1; i >= 0; --i)
+  for (int i = static_cast<int>(m_shown.size()) - 1; i >= 0; --i)
     if (markerRect(i).adjusted(-3, -3, 3, 3).contains(p)) return i;
   return -1;
 }
@@ -1047,11 +1115,12 @@ void TimelineWidget::setCurrentOp(const std::string& id) {
 
 void TimelineWidget::step(int delta) {
   const auto& ops = m_doc->doc.ops;
-  if (ops.empty()) return;
+  if (m_shown.empty()) return;
   int i = -1;
-  for (size_t k = 0; k < ops.size(); ++k) if (ops[k].id == m_current) i = static_cast<int>(k);
-  i = i < 0 ? (delta > 0 ? 0 : static_cast<int>(ops.size()) - 1) : std::clamp(i + delta, 0, static_cast<int>(ops.size()) - 1);
-  m_current = ops[static_cast<size_t>(i)].id;
+  for (size_t k = 0; k < m_shown.size(); ++k) if (ops[m_shown[k]].id == m_current) i = static_cast<int>(k);
+  const int n = static_cast<int>(m_shown.size());
+  i = i < 0 ? (delta > 0 ? 0 : n - 1) : std::clamp(i + delta, 0, n - 1);
+  m_current = ops[m_shown[static_cast<size_t>(i)]].id;
   update();
   emit opClicked(m_current);
 }
@@ -1090,24 +1159,27 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
   p.drawText(QRect(12, 6, 100, 16), Qt::AlignVCenter | Qt::AlignLeft, tr("Timeline"));
   p.setFont(theme::mono(11));
   p.setPen(t.fg3);
-  QString count = tr("%1 ops").arg(ops.size());
-  if (!m_deleted.empty()) count += QString::fromUtf8(" · %1 tomb").arg(m_deleted.size());
+  size_t tomb = 0;
+  for (size_t i : m_shown) tomb += m_deleted.count(ops[i].id);
+  QString count = tr("%1 ops").arg(m_shown.size());
+  if (tomb > 0) count += QString::fromUtf8(" · %1 tomb").arg(tomb);
   p.drawText(QRect(12, 24, 100, 16), Qt::AlignVCenter | Qt::AlignLeft, count);
   p.setPen(QPen(t.line, 1));
   p.drawLine(112, 8, 112, 40);
   p.drawLine(width() - 72, 8, width() - 72, 40);
-  if (ops.empty() || !m_doc->hasDocument) {
+  if (m_shown.empty() || !m_doc->hasDocument) {
     p.setFont(theme::ui(12));
     p.setPen(t.fg3);
     p.drawText(QRect(128, 0, width() - 200, height()), Qt::AlignVCenter | Qt::AlignLeft, tr("One marker per operation. Import a file to start the log."));
   }
   const qreal dpr = devicePixelRatioF();
   QRect last;
-  for (size_t i = 0; i < ops.size(); ++i) {
-    QRect r = markerRect(static_cast<int>(i));
+  for (size_t k = 0; k < m_shown.size(); ++k) {
+    const size_t i = m_shown[k];
+    QRect r = markerRect(static_cast<int>(k));
     last = r;
     const bool deleted = m_deleted.count(ops[i].id) > 0, unresolved = isUnresolved(ops[i].id);
-    const bool current = ops[i].id == m_current, hovered = static_cast<int>(i) == m_hover;
+    const bool current = ops[i].id == m_current, hovered = static_cast<int>(k) == m_hover;
     QColor fill = t.bg4, iconColor = t.fg;
     if (ops[i].type == "annotation") { fill = t.amber; iconColor = QColor("#1e1f22"); }
     if (current) { fill = t.sel; iconColor = t.onsel; }
@@ -1132,7 +1204,7 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     }
     p.drawPixmap(r.left() + 3, r.top() + 3, icons::pixmap(opTypeIcon(ops[i].type), iconColor, 12, dpr));
   }
-  if (!ops.empty()) {
+  if (!m_shown.empty()) {
     int x = last.right() + 9;
     p.setPen(Qt::NoPen);
     p.setBrush(t.sel);
@@ -1150,7 +1222,7 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     if (b.contains(mapFromGlobal(QCursor::pos()))) { p.setPen(Qt::NoPen); p.setBrush(t.bg3); p.drawRoundedRect(b, 3, 3); }
   }
   p.setFont(theme::ui(14));
-  p.setPen(ops.empty() ? t.fg3 : t.fg2);
+  p.setPen(m_shown.empty() ? t.fg3 : t.fg2);
   p.drawText(m_prevBtn, Qt::AlignCenter, QString::fromUtf8("‹"));
   p.drawText(m_nextBtn, Qt::AlignCenter, QString::fromUtf8("›"));
 }
@@ -1160,7 +1232,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
   if (i != m_hover) { m_hover = i; update(); }
   if (i >= 0) {
     const Tokens& t = theme::current();
-    const opad::Op& op = m_doc->doc.ops[static_cast<size_t>(i)];
+    const opad::Op& op = m_doc->doc.ops[m_shown[static_cast<size_t>(i)]];
     QColor sw = op.type == "annotation" ? t.amber : m_deleted.count(op.id) ? t.fg2 : t.bg4;
     QString target;
     if (op.data.contains("target") && op.data["target"].is_string()) target = m_doc->nodeName(op.data["target"].get<std::string>());
@@ -1182,7 +1254,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
   if (m_nextBtn.contains(e->pos())) return step(+1);
   int i = indexAt(e->pos());
   if (i < 0) return;
-  const std::string id = m_doc->doc.ops[static_cast<size_t>(i)].id;
+  const std::string id = m_doc->doc.ops[m_shown[static_cast<size_t>(i)]].id;
   m_current = id;
   update();
   if (e->button() == Qt::RightButton) emit contextRequested(id, e->globalPosition().toPoint());

@@ -146,6 +146,7 @@ void Viewport::initViewer() {
   m_cube->SetFixedAnimationLoop(Standard_False);
   m_cube->SetAutoStartAnimation(Standard_True);
   m_ctx->Display(m_cube, Standard_False);
+  m_ctx->Activate(m_cube, 0);  // auto-activation is off (see above), so the cube asks for its picking mode itself
 
   SetRotationMode(AIS_RotationMode_BndBoxActive);
   SetLockOrbitZUp(Standard_True);
@@ -155,6 +156,9 @@ void Viewport::initViewer() {
   SetAllowZFocus(Standard_False);
   SetAllowDragging(Standard_False);
   setNavPreset(m_preset);
+  // OCCT counts a press/release pair as a click only within 3 device pixels; a click that drifts more becomes
+  // a rubber band that selects nothing. Allow a little hand jitter, scaled for high-DPI screens.
+  myMouseClickThreshold = 5.0 * devicePixelRatioF();
   m_initialised = true;
   applyTokens();
   sync();
@@ -199,7 +203,7 @@ void Viewport::applyTokens() {
   setStyle(m_style);
   updateAnnotations();
   updateClipPlanes();
-  requestRedraw();
+  redrawScene();
 }
 
 // ---------------------------------------------------------------- navigation presets (F16)
@@ -251,7 +255,7 @@ void Viewport::setStyle(Style s) {
     applyStyle(it.ais);
     m_ctx->Redisplay(it.ais, Standard_False);
   }
-  requestRedraw();
+  redrawScene();
 }
 
 void Viewport::setGrid(bool on) {
@@ -259,7 +263,7 @@ void Viewport::setGrid(bool on) {
   if (!m_initialised) return;
   if (on) m_viewer->ActivateGrid(Aspect_GT_Rectangular, Aspect_GDM_Lines);
   else m_viewer->DeactivateGrid();
-  requestRedraw();
+  redrawScene();
 }
 
 void Viewport::setShadows(bool on) {
@@ -267,14 +271,14 @@ void Viewport::setShadows(bool on) {
   for (V3d_ListOfLightIterator it = m_viewer->ActiveLightIterator(); it.More(); it.Next())
     if (it.Value()->Type() == Graphic3d_TypeOfLightSource_Directional) it.Value()->SetCastShadows(on);
   m_view->ChangeRenderingParams().ShadowMapResolution = on ? 2048 : 1024;
-  requestRedraw();
+  redrawScene();
 }
 
 void Viewport::setOrthographic(bool ortho) {
   if (!m_initialised) return;
   m_view->Camera()->SetProjectionType(ortho ? Graphic3d_Camera::Projection_Orthographic : Graphic3d_Camera::Projection_Perspective);
   m_view->Invalidate();
-  requestRedraw();
+  redrawScene();
 }
 
 bool Viewport::isOrthographic() const {
@@ -283,6 +287,7 @@ bool Viewport::isOrthographic() const {
 
 // ---------------------------------------------------------------- selection (F22)
 void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
+  m_ctx->Load(ais, -1);  // register with the selection manager (picking BVH); Display() with mode -1 does not
   m_ctx->Deactivate(ais);
   TopAbs_ShapeEnum t = TopAbs_SHAPE;
   switch (m_filter) {
@@ -310,7 +315,7 @@ void Viewport::setSelectionFilter(SelFilter f) {
     return *i < items->size();
   }, [this](bool) {
     m_filterJob = nullptr;
-    requestRedraw();
+    redrawScene();
   });
 }
 
@@ -414,7 +419,7 @@ void Viewport::selectNodes(const std::vector<std::string>& ids) {
   auto done = [this, st, ids](bool completed) {
     m_selJob = nullptr;
     m_selApplied = std::move(st->applied);
-    requestRedraw();
+    redrawScene();
     if (!completed) return;  // superseded or cancelled: the next job (or the click) owns the state now
     if (st->shade) showShade(ids);
     const bool notify = m_notifyWhenApplied;
@@ -471,6 +476,9 @@ void Viewport::clearSelection() {
 void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const Handle(V3d_View)&) {
   if (m_selJob) m_selJob->cancel();
   clearShade();
+  m_needFit = false;
+  redrawScene();
+  if (trace::enabled()) trace::log(QStringLiteral("3D click: %1 selected in context").arg(m_ctx->NbSelected()));
   emit selectionChanged();
 }
 
@@ -508,6 +516,7 @@ void Viewport::resetMeshing() {
 
 void Viewport::fitNodes(const std::vector<std::string>& ids) {
   if (!m_initialised) return;
+  m_needFit = false;
   Bnd_Box box;
   for (const auto& id : ids)
     for (const auto& b : m_doc->scene.bodies_under(id))
@@ -521,6 +530,7 @@ void Viewport::fitNodes(const std::vector<std::string>& ids) {
 
 void Viewport::fitSelection() {
   if (!m_initialised) return;
+  m_needFit = false;
   Bnd_Box box;
   for (const auto& b : m_shadeBodies) box.Add(opad::node_world_bbox(m_doc->doc, m_doc->scene, b));
   for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected()) {
@@ -543,6 +553,7 @@ void Viewport::fitSelection() {
 
 void Viewport::standardView(const QString& name) {
   if (!m_initialised) return;
+  m_needFit = false;
   V3d_TypeOfOrientation o = V3d_XposYnegZpos;
   if (name == "top") o = V3d_Zpos;
   else if (name == "bottom") o = V3d_Zneg;
@@ -573,6 +584,7 @@ opad::json Viewport::cameraJson() const {
 
 void Viewport::setCameraJson(const opad::json& j) {
   if (!m_initialised) return;
+  m_needFit = false;
   opad::Camera cam = opad::Camera::from_json(j);
   Handle(Graphic3d_Camera) c = m_view->Camera();
   c->SetProjectionType(cam.perspective ? Graphic3d_Camera::Projection_Perspective : Graphic3d_Camera::Projection_Orthographic);
@@ -620,7 +632,7 @@ void Viewport::setSection(bool enabled, const opad::Vec3& origin, const opad::Ve
   m_sectionNormal = normal;
   m_sectionCaps = caps;
   updateClipPlanes();
-  requestRedraw();
+  redrawScene();
 }
 
 void Viewport::updateClipPlanes() {
@@ -648,7 +660,7 @@ void Viewport::clearDimension() {
   if (!m_initialised) return;
   for (const auto& o : m_dimension) m_ctx->Remove(o, Standard_False);
   m_dimension.clear();
-  requestRedraw();
+  redrawScene();
 }
 
 void Viewport::showDimension(const opad::Vec3& a, const opad::Vec3& b, const QString& label) {
@@ -683,7 +695,7 @@ void Viewport::showDimension(const opad::Vec3& a, const opad::Vec3& b, const QSt
   m_ctx->Display(text, Standard_False);
   m_ctx->Deactivate(text);
   m_dimension.push_back(text);
-  requestRedraw();
+  redrawScene();
 }
 
 // ---------------------------------------------------------------- scene sync
@@ -750,6 +762,26 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
       QMetaObject::invokeMethod(this, "requestSync", Qt::QueuedConnection);
     }
   }).detach();
+}
+
+void Viewport::benchPick() {
+  if (!m_initialised) return;
+  m_view->Redraw();  // a frame first: the picker clips to the camera z range, which only Redraw (AutoZFit) updates
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
+  m_ctx->MoveTo(w / 2, h / 2, m_view, Standard_False);
+  QString hit = QStringLiteral("nothing");
+  if (m_ctx->HasDetected()) {
+    auto it = m_nodeOf.find(m_ctx->DetectedInteractive().get());
+    hit = it == m_nodeOf.end() ? QStringLiteral("non-body") : m_doc->nodeName(it->second);
+  }
+  m_ctx->ClearSelected(Standard_False);
+  const Graphic3d_Vec2i pt(w / 2, h / 2);  // a click as the mouse handlers deliver it
+  UpdateMousePosition(pt, Aspect_VKeyMouse_NONE, Aspect_VKeyFlags_NONE, false);
+  UpdateMouseButtons(pt, Aspect_VKeyMouse_LeftButton, Aspect_VKeyFlags_NONE, false);
+  UpdateMouseButtons(pt, Aspect_VKeyMouse_NONE, Aspect_VKeyFlags_NONE, false);
+  FlushViewEvents(m_ctx, m_view, Standard_True);
+  trace::log(QStringLiteral("bench: pick at view centre detected %1; click selected %2").arg(hit).arg(m_ctx->NbSelected()));
 }
 
 // Creates the OpenGL viewer ahead of the first document (about 0.7 s) so that opening a file does not pay
@@ -897,10 +929,10 @@ void Viewport::displayBody(const std::string& id) {
 
 void Viewport::finishSync(int pendingCount, bool added) {
   emit meshingProgress(pendingCount);
-  if (added && (m_needFit || m_items.size() <= 1)) {
-    if (pendingCount == 0) m_needFit = false;  // keep re-fitting while meshes are still arriving
-    m_view->FitAll(0.02, Standard_False);
-  }
+  // Keep fitting while a load is still streaming bodies in, but only until the user moves the camera:
+  // every fit, orbit or zoom of theirs clears m_needFit so a later batch never snaps the view back.
+  if (added && (m_needFit || m_items.size() <= 1)) m_view->FitAll(0.02, Standard_False);
+  if (pendingCount == 0) m_needFit = false;
   m_view->Invalidate();
   requestRedraw();
 }
@@ -1025,11 +1057,13 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
 }
 
 void Viewport::mouseMoveEvent(QMouseEvent* e) {
+  if (e->buttons() != Qt::NoButton) m_needFit = false;  // a drag: the user owns the camera now
   if (m_initialised && UpdateMousePosition(devicePos(e->position()), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
 }
 
 void Viewport::wheelEvent(QWheelEvent* e) {
   if (!m_initialised) return;
+  m_needFit = false;
   const double delta = e->angleDelta().y() / 8.0;
   if (UpdateZoom(Aspect_ScrollDelta(devicePos(e->position()), delta))) requestRedraw();
 }

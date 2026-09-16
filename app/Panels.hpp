@@ -10,6 +10,7 @@
 #include <QScrollArea>
 #include <QSlider>
 #include <QStyledItemDelegate>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QWidget>
 #include <set>
@@ -71,6 +72,10 @@ class BrowserPanel : public QWidget {
   void setSelectedIds(const std::vector<std::string>& ids);
   void startRename(const std::string& id);
   void focusFilter();
+  void selectIds(const std::vector<std::string>& ids);  // like a click: selects and emits selectionChanged
+  void selectParent();  // replaces the selection by its parents
+  void expandAll();
+  void collapseAll();  // everything but the document row
 
  signals:
   void selectionChanged(const std::vector<std::string>& ids);
@@ -90,6 +95,7 @@ class BrowserPanel : public QWidget {
   BrowserTree* m_tree;
   QLineEdit* m_filter;
   QLabel* m_breadcrumb;
+  QToolButton *m_parentBtn, *m_expandBtn, *m_collapseBtn;
   QLabel* m_empty;
   std::unordered_map<std::string, QTreeWidgetItem*> m_index;  // node id -> item, rebuilt with the tree
   bool m_updating = false;
@@ -231,7 +237,8 @@ class TimelineWidget : public QWidget {
   bool isUnresolved(const std::string& opId) const;
   AppDocument* m_doc;
   std::set<std::string> m_deleted, m_unresolved;
-  int m_hover = -1;
+  std::vector<size_t> m_shown;  // indices into doc.ops drawn as markers (see timelineShows)
+  int m_hover = -1;             // marker index (into m_shown)
   std::string m_current;
   QRect m_prevBtn, m_nextBtn;
 };

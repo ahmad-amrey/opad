@@ -63,6 +63,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void home();
 
   void warmUp();  // create the OpenGL viewer now rather than on first paint
+  void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
   void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner
   std::vector<opad::Ref> selection() const;
   // Highlights the given nodes' bodies as a sliced job; emits selectionApplied() when it has settled. Sets
@@ -128,6 +129,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void updateClipPlanes();
   void applyTokens();
   void requestRedraw() { update(); }
+  // After a change made through the context without an update (Display/Redisplay/selection with
+  // theToUpdateViewer=false): the view must be invalidated, or FlushViewEvents finds nothing to redraw and
+  // the change only shows on the next orbit.
+  void redrawScene() { if (m_initialised) m_view->Invalidate(); requestRedraw(); }
 
   AppDocument* m_doc;
   Tokens m_tokens;
