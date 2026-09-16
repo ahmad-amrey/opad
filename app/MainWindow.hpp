@@ -28,6 +28,8 @@ class MainWindow : public QMainWindow {
   void dragEnterEvent(QDragEnterEvent* e) override;
   void dropEvent(QDropEvent* e) override;
   bool eventFilter(QObject* o, QEvent* e) override;
+  void resizeEvent(QResizeEvent* e) override;
+  void moveEvent(QMoveEvent* e) override;
 
  private:
   QAction* addAction(const QString& id, const QString& text, const QString& icon, const QKeySequence& shortcut, std::function<void()> fn, bool checkable = false);
@@ -77,6 +79,7 @@ class MainWindow : public QMainWindow {
   void deleteCurrent();
   void writeSelectionFile();
   void positionOverlays();
+  void setLoading(bool on);  // shade + spinner over the workspace, input blocked, until the load job ends
   void addRecent(const QString& path);
   QStringList recent() const;
   void rebuildRecentMenu();
@@ -91,6 +94,8 @@ class MainWindow : public QMainWindow {
   QToolButton* m_rollLeft = nullptr;   // 90 degree turns about the view axis, either side of the cube
   QToolButton* m_rollRight = nullptr;
   MeasureCard* m_measureCard = nullptr;
+  LoadShade* m_loadShade = nullptr;
+  bool m_timelineHiddenByViewer = false;
   RibbonBar* m_ribbon = nullptr;
   BrowserPanel* m_browser = nullptr;
   QTabWidget* m_inspector = nullptr;

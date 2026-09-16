@@ -1,6 +1,9 @@
 #include "MainWindow.hpp"
 
 #include <QToolButton>
+#include <QResizeEvent>
+#include <QMoveEvent>
+#include <QFileDialog>
 
 #include <QActionGroup>
 #include <QApplication>
@@ -168,7 +171,10 @@ QAction* MainWindow::addAction(const QString& id, const QString& text, const QSt
   tip.remove('&');
   if (!a->shortcut().isEmpty()) tip += "  (" + a->shortcut().toString(QKeySequence::NativeText) + ")";
   a->setToolTip(tip);
-  connect(a, &QAction::triggered, this, [this, fn] { guarded(fn); });
+  connect(a, &QAction::triggered, this, [this, fn, id] {
+    if (m_loadJob && !id.startsWith("file.") && !id.startsWith("panel.") && id != "view.dark") return;  // loading: workspace is locked
+    guarded(fn);
+  });
   m_actions << a;
   QMainWindow::addAction(a);
   return a;
@@ -208,15 +214,21 @@ void MainWindow::buildActions() {
     beginLoad([this, p] { addRecent(p); m_viewport->fitWhenReady(); });
     m_doc->startImport(p, parent);
   });
-  addAction("file.importdoc", tr("Import browsed STEP into a document"), "import", QKeySequence(), [this] {
+  addAction("file.importdoc", tr("Export to OPAD document…"), "save", QKeySequence("Ctrl+Shift+E"), [this] {
     if (!m_doc->browse) return;
     QString src = m_settings.value("ui/lastBrowse").toString();
-    if (src.isEmpty()) throw opad::Error("No browsed STEP file to import.");
-    beginLoad([this] { m_viewport->fitWhenReady(); });
+    if (src.isEmpty()) throw opad::Error("No STEP file is being viewed.");
+    QString dest = QFileDialog::getSaveFileName(this, tr("Export to OPAD document"), QFileInfo(src).completeBaseName() + ".opad", tr("OPAD document (*.opad)"));
+    if (dest.isEmpty()) return;
+    // Leaves viewer mode: a full import (healing, BREP text, content keys) into a fresh document, saved on arrival.
+    beginLoad([this, dest] {
+      guarded([this, dest] { m_doc->saveAs(dest); addRecent(dest); });
+      m_viewport->fitWhenReady();
+    });
     m_doc->startImport(src);
   });
   addAction("file.save", tr("&Save"), "save", QKeySequence("Ctrl+S"), [this] {
-    if (m_doc->browse) throw opad::Error("Browse mode shows a STEP file without a document. Use Import to create one.");
+    if (m_doc->browse) { action("file.importdoc")->trigger(); return; }  // viewer mode: saving means exporting
     if (m_doc->doc.path.empty()) action("file.saveas")->trigger();
     else m_doc->save();
   });
@@ -438,6 +450,8 @@ void MainWindow::buildCentral() {
   m_measureCard = new MeasureCard(m_viewport);
   m_measureCard->setAttribute(Qt::WA_NativeWindow);
   m_measureCard->hide();
+  m_loadShade = new LoadShade(this);
+  m_loadShade->hide();
   // Home button with its shortcut hint, floating at the top-left of the view cube (design: navigation cube).
   m_homeBtn = new QWidget(m_viewport);
   m_homeBtn->setAttribute(Qt::WA_NativeWindow);
@@ -609,13 +623,19 @@ void MainWindow::showDocument(bool has) {
     if (id.startsWith("inspect.") || id.startsWith("annotate.") || id.startsWith("select.") || id == "file.export" || id == "file.screenshot" || id == "file.save" || id == "file.saveas" || id == "file.close")
       a->setEnabled(has);
     if (id == "file.importdoc") a->setEnabled(m_doc->browse);
+    // Viewer mode: nothing that edits the document. View state (hide, isolate, section, measure) stays.
+    if (m_doc->browse && (id == "edit.rename" || id == "edit.delete" || id == "edit.restore" || id.startsWith("annotate.") || id == "view.saveview" || id == "inspect.pin")) a->setEnabled(false);
   }
-  if (m_pinAction) m_pinAction->setEnabled(has && !m_lastMeasure.is_null());
+  if (m_pinAction) m_pinAction->setEnabled(has && !m_lastMeasure.is_null() && !m_doc->browse);
+  m_browser->setViewerMode(m_doc->browse);
+  m_inspector->setTabVisible(m_inspector->indexOf(m_annotations), !m_doc->browse);
+  if (m_doc->browse && m_timelineDock->isVisible()) { m_timelineDock->hide(); m_timelineHiddenByViewer = true; }
+  else if (!m_doc->browse && m_timelineHiddenByViewer) { m_timelineDock->show(); m_timelineHiddenByViewer = false; }
 }
 
 void MainWindow::updateTitle() {
   setWindowTitle(m_doc->title());
-  QString path = m_doc->hasDocument ? (m_doc->browse ? tr("browsing: ") + m_settings.value("ui/lastBrowse").toString() : (m_doc->path().isEmpty() ? tr("unsaved document") : m_doc->path())) : tr("No document");
+  QString path = m_doc->hasDocument ? (m_doc->browse ? tr("viewing: ") + m_settings.value("ui/lastBrowse").toString() : (m_doc->path().isEmpty() ? tr("unsaved document") : m_doc->path())) : tr("No document");
   if (!m_doc->scene.unresolved.empty()) path += QString::fromUtf8("   ·   %1 unresolved").arg(m_doc->scene.unresolved.size());
   m_statusPath->setText(path);
   if (!m_doc->hasDocument) m_statusHover->setText(QString::fromUtf8("File › Open a .step or .opad file, or drop one here"));
@@ -648,9 +668,33 @@ void MainWindow::positionOverlays() {
   m_rollLeft->raise();
   m_rollRight->move(m_viewport->width() - 40, 150);
   m_rollRight->raise();
+  if (m_loadShade->isVisible()) {
+    QRect area = m_stack->geometry();  // the workspace: central area plus the docked panels
+    for (QDockWidget* d : {m_browserDock, m_inspectorDock, m_timelineDock})
+      if (d && d->isVisible() && !d->isFloating()) area |= d->geometry();
+    m_loadShade->place(QRect(mapToGlobal(area.topLeft()), area.size()), m_viewport->mapToGlobal(m_viewport->rect().center()));
+  }
   if (trace::enabled()) trace::log(QStringLiteral("viewport at %1,%2 size %3x%4").arg(m_viewport->mapToGlobal(QPoint(0, 0)).x()).arg(m_viewport->mapToGlobal(QPoint(0, 0)).y()).arg(m_viewport->width()).arg(m_viewport->height()));
   m_measureCard->move(m_viewport->width() - m_measureCard->width() - 16, m_viewport->height() - m_measureCard->height() - 16);
   m_measureCard->raise();
+}
+
+void MainWindow::resizeEvent(QResizeEvent* e) {
+  QMainWindow::resizeEvent(e);
+  positionOverlays();
+}
+
+void MainWindow::moveEvent(QMoveEvent* e) {
+  QMainWindow::moveEvent(e);
+  positionOverlays();
+}
+
+void MainWindow::setLoading(bool on) {
+  m_stack->setCurrentIndex(on || m_doc->hasDocument ? 1 : 0);  // the viewport (dimmed, spinner) rather than the start page while loading
+  m_viewport->setBlocked(on);
+  m_loadShade->setVisible(on);
+  for (QWidget* w : {static_cast<QWidget*>(m_browser), static_cast<QWidget*>(m_inspector), static_cast<QWidget*>(m_timeline)}) w->setEnabled(!on);
+  if (on) positionOverlays();
 }
 
 bool MainWindow::eventFilter(QObject* o, QEvent* e) {
@@ -774,6 +818,7 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
 // The live selection is published for agents (F25): opad-cli selection / opad.run("selection").
 void MainWindow::writeSelectionFile() {
   if (m_selFileJob) m_selFileJob->cancel();
+  if (m_doc->browse) return;  // viewer mode: no agent channel
   struct State {
     std::vector<opad::Ref> refs;
     opad::json sel = opad::json::array();
@@ -829,7 +874,7 @@ void MainWindow::writeSelectionFile() {
 
 void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids) {
   QMenu menu(this);
-  auto add = [&](const char* id) { if (QAction* a = action(id)) menu.addAction(a); };
+  auto add = [&](const char* id) { if (QAction* a = action(id); a && (!m_doc->browse || a->isEnabled())) menu.addAction(a); };  // viewer mode: editing entries are not offered
   if (!ids.empty()) {
     menu.addSection(ids.size() == 1 ? m_doc->nodeName(ids.front()) : tr("%1 objects").arg(ids.size()));
     QAction* fit = menu.addAction(icons::themed("fit", 16), tr("Fit to"));
@@ -846,6 +891,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     add("edit.hide");
     add("edit.rename");
     QAction* color = menu.addAction(icons::themed("dot", 16), tr("Colour…"));
+    color->setVisible(!m_doc->browse);
     connect(color, &QAction::triggered, this, [this, ids] {
       QColor c = QColorDialog::getColor(Qt::gray, this, tr("Colour"));
       if (!c.isValid()) return;
@@ -853,6 +899,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     });
     const opad::Node* n = m_doc->node(ids.front());
     QAction* lock = menu.addAction(icons::themed("lock", 16), n && n->locked ? tr("Unlock") : tr("Lock"));
+    lock->setVisible(!m_doc->browse);
     connect(lock, &QAction::triggered, this, [this, ids, locked = n && n->locked] {
       for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"locked", !locked}});
     });
@@ -863,6 +910,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     add("inspect.properties");
     menu.addSeparator();
     QAction* del = menu.addAction(icons::themed("delete", 16), tr("Delete (tombstone import)"));
+    del->setVisible(!m_doc->browse);
     connect(del, &QAction::triggered, this, [this, ids] {
       std::set<std::string> ops;
       for (const auto& id : ids) if (const opad::Node* nn = m_doc->node(id)) ops.insert(nn->source_op);
@@ -928,7 +976,7 @@ void MainWindow::measure(const QString& kind) {
   m_measureCard->setResult(m_lastMeasure, targets);
   m_measureCard->show();
   positionOverlays();
-  m_pinAction->setEnabled(true);
+  m_pinAction->setEnabled(!m_doc->browse);
   if (m_lastMeasure.contains("point_a") && m_lastMeasure.contains("point_b")) {
     const auto& a = m_lastMeasure["point_a"];
     const auto& b = m_lastMeasure["point_b"];
@@ -1229,6 +1277,7 @@ void MainWindow::beginLoad(std::function<void()> after) {
   m_meshTotal = m_meshRemaining = 0;
   m_viewport->resetMeshing();
   m_loadJob = m_jobs->begin(tr("Loading…"), true);
+  setLoading(true);
   connect(m_loadJob, &Job::cancelRequested, this, [this] {
     m_doc->cancelLoad();
     m_viewport->cancelMeshing();
@@ -1236,6 +1285,7 @@ void MainWindow::beginLoad(std::function<void()> after) {
   connect(m_loadJob, &Job::finished, this, [this](bool ok, const QString& err) {
     m_loadJob = nullptr;
     m_afterLoad = nullptr;
+    setLoading(false);
     if (!ok) {
       if (err.contains("cancel", Qt::CaseInsensitive)) statusBar()->showMessage(tr("Load cancelled"), 4000);
       else QMessageBox::warning(this, tr("OPAD"), err);

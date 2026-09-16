@@ -34,6 +34,14 @@ target_link_libraries(opad PRIVATE opad::core ${OPAD_OCCT_VIS_LIBS} Qt6::Widgets
 if(WIN32)
   target_link_libraries(opad PRIVATE dbghelp)
 endif()
+if(MINGW)
+  # Git for Windows ships its own, incompatible libstdc++-6.dll and puts it first on the PATH of Git Bash and
+  # VS Code terminals. Keeping the toolchain's runtime next to the exe makes the loader take it first, always.
+  get_filename_component(_opad_gcc_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
+  foreach(_rt libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
+    add_custom_command(TARGET opad POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_opad_gcc_bin}/${_rt}" "$<TARGET_FILE_DIR:opad>/${_rt}")
+  endforeach()
+endif()
 if(APPLE)
   target_link_libraries(opad PRIVATE "-framework Cocoa")
 endif()

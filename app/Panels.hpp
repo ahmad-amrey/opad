@@ -10,6 +10,7 @@
 #include <QScrollArea>
 #include <QSlider>
 #include <QStyledItemDelegate>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QWidget>
@@ -77,6 +78,7 @@ class BrowserPanel : public QWidget {
   void expandAll();
   void collapseAll();  // everything but the document row
   void scrollToSelected();
+  void setViewerMode(bool on);  // no rename, drag-to-reparent or colour edits
 
  signals:
   void selectionChanged(const std::vector<std::string>& ids);
@@ -100,6 +102,7 @@ class BrowserPanel : public QWidget {
   QLabel* m_empty;
   std::unordered_map<std::string, QTreeWidgetItem*> m_index;  // node id -> item, rebuilt with the tree
   bool m_updating = false;
+  bool m_viewer = false;
 };
 
 // ---------------------------------------------------------------- properties
@@ -268,6 +271,25 @@ class ShortcutEditor : public QDialog {
  private:
   QList<QAction*> m_actions;
   QTreeWidget* m_tree;
+};
+
+// ---------------------------------------------------------------- loading shade
+// While a file loads, a frameless translucent tool window (owned by the main window, so it stays above it and
+// hides with it) covers the workspace: docks and the OpenGL viewport alike, which a child widget could not
+// do. It darkens everything, shows a spinner and swallows mouse input; shortcuts are held back by MainWindow.
+class LoadShade : public QWidget {
+  Q_OBJECT
+ public:
+  explicit LoadShade(QWidget* owner);
+  void place(const QRect& globalArea, const QPoint& spinnerCentreGlobal);  // cover this screen area, spinner here
+ protected:
+  void paintEvent(QPaintEvent*) override;
+  void showEvent(QShowEvent*) override;
+  void hideEvent(QHideEvent*) override;
+ private:
+  QTimer m_timer;
+  int m_angle = 0;
+  QPoint m_spinner;  // local
 };
 
 // ---------------------------------------------------------------- progress strip (bottom of the window)

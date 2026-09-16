@@ -380,13 +380,14 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     if (n) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !n->visible}});
   });
   connect(m_tree, &BrowserTree::swatchClicked, this, [this](const std::string& id) {
+    if (m_viewer) return;
     const opad::Node* n = m_doc->node(id);
     QColor start = n && n->has_color ? QColor::fromRgbF(n->color[0], n->color[1], n->color[2]) : QColor(190, 190, 195);
     QColor c = QColorDialog::getColor(start, this, tr("Colour of %1").arg(QString::fromStdString(n ? n->name : id)));
     if (c.isValid()) m_doc->run("appearance", opad::json{{"target", id}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
   });
   connect(m_tree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* it, int col) {
-    if (m_updating || col != 0) return;
+    if (m_updating || col != 0 || m_viewer) return;
     std::string id = it->data(0, kIdRole).toString().toStdString();
     QString newName = it->text(0).trimmed();
     QString oldName = it->data(0, kNameRole).toString();
@@ -441,7 +442,7 @@ void BrowserPanel::rebuild() {
   m_index.clear();
   if (m_doc->hasDocument) {
     auto* root = new QTreeWidgetItem(m_tree);
-    QString docName = m_doc->doc.path.empty() ? (m_doc->browse ? tr("browsing (unsaved)") : tr("Untitled")) : QString::fromStdString(m_doc->doc.path.filename().string());
+    QString docName = m_doc->doc.path.empty() ? (m_doc->browse ? tr("Viewer") : tr("Untitled")) : QString::fromStdString(m_doc->doc.path.filename().string());
     root->setText(0, docName);
     root->setData(0, kIdRole, QString());
     root->setData(0, kNameRole, docName);
@@ -518,6 +519,12 @@ void BrowserPanel::selectParent() {
     if (std::find(parents.begin(), parents.end(), n->parent) == parents.end()) parents.push_back(n->parent);
   }
   if (!parents.empty()) selectIds(parents);
+}
+
+void BrowserPanel::setViewerMode(bool on) {
+  m_viewer = on;
+  m_tree->setDragDropMode(on ? QAbstractItemView::NoDragDrop : QAbstractItemView::InternalMove);
+  m_tree->setEditTriggers(on ? QAbstractItemView::NoEditTriggers : QAbstractItemView::EditKeyPressed);
 }
 
 void BrowserPanel::expandAll() { m_tree->expandAll(); }
@@ -1459,6 +1466,45 @@ void ShortcutEditor::accept() {
     settings.setValue("shortcuts/" + a->objectName(), edit->keySequence().toString());
   }
   QDialog::accept();
+}
+
+// ---------------------------------------------------------------- LoadShade
+LoadShade::LoadShade(QWidget* owner) : QWidget(owner, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus) {
+  setAttribute(Qt::WA_TranslucentBackground);
+  setAttribute(Qt::WA_ShowWithoutActivating);
+  setCursor(Qt::BusyCursor);
+  m_timer.setInterval(30);
+  connect(&m_timer, &QTimer::timeout, this, [this] {
+    m_angle = (m_angle + 10) % 360;
+    update(QRect(m_spinner - QPoint(40, 40), QSize(80, 80)));
+  });
+  connect(theme::notifier(), &theme::Notifier::changed, this, qOverload<>(&QWidget::update));
+}
+
+void LoadShade::place(const QRect& globalArea, const QPoint& spinnerCentreGlobal) {
+  setGeometry(globalArea);
+  m_spinner = spinnerCentreGlobal - globalArea.topLeft();
+  update();
+}
+
+void LoadShade::showEvent(QShowEvent*) { m_timer.start(); }
+void LoadShade::hideEvent(QHideEvent*) { m_timer.stop(); }
+
+void LoadShade::paintEvent(QPaintEvent*) {
+  const Tokens& t = theme::current();
+  QPainter p(this);
+  p.setRenderHint(QPainter::Antialiasing);
+  p.fillRect(rect(), QColor(0, 0, 0, t.dark ? 120 : 80));  // a real darkening, in both themes
+  const QRect card(m_spinner.x() - 36, m_spinner.y() - 36, 72, 72);
+  p.setPen(QPen(t.line, 1));
+  p.setBrush(t.bg2);
+  p.drawRoundedRect(card, 6, 6);
+  const QRect ring = card.adjusted(20, 20, -20, -20);
+  p.setPen(QPen(t.bg4, 3));
+  p.setBrush(Qt::NoBrush);
+  p.drawEllipse(ring);
+  p.setPen(QPen(t.sel, 3, Qt::SolidLine, Qt::RoundCap));
+  p.drawArc(ring, (90 - m_angle) * 16, -100 * 16);
 }
 
 // ---------------------------------------------------------------- ProgressStrip

@@ -107,6 +107,8 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
 
 Viewport::~Viewport() { *m_alive = false; }
 
+void Viewport::setBlocked(bool on) { m_blocked = on; }
+
 void Viewport::benchShot(const QString& path) {
   if (!m_initialised) return;
   Standard_Integer w = 0, h = 0;
@@ -1118,6 +1120,7 @@ void Viewport::resizeEvent(QResizeEvent*) {
 }
 
 void Viewport::mousePressEvent(QMouseEvent* e) {
+  if (m_blocked) return;
   setFocus();
   m_pressPos = e->pos();
   m_rightPress = e->button() == Qt::RightButton;
@@ -1131,6 +1134,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
 }
 
 void Viewport::mouseReleaseEvent(QMouseEvent* e) {
+  if (m_blocked) return;
   if (m_initialised && UpdateMouseButtons(devicePos(e->position()), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
   if (m_cubeGesture && e->button() == Qt::LeftButton) {
     m_cubeGesture = false;
@@ -1143,12 +1147,13 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
 }
 
 void Viewport::mouseMoveEvent(QMouseEvent* e) {
+  if (m_blocked) return;
   if (e->buttons() != Qt::NoButton) m_needFit = false;  // a drag: the user owns the camera now
   if (m_initialised && UpdateMousePosition(devicePos(e->position()), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
 }
 
 void Viewport::wheelEvent(QWheelEvent* e) {
-  if (!m_initialised) return;
+  if (!m_initialised || m_blocked) return;
   m_needFit = false;
   const double delta = e->angleDelta().y() / 8.0;
   if (UpdateZoom(Aspect_ScrollDelta(devicePos(e->position()), delta))) requestRedraw();

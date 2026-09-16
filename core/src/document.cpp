@@ -164,6 +164,23 @@ std::string Document::add_body(const std::string& brep, json meta) {
   return key;
 }
 
+std::string Document::add_live_body(const std::string& key, json meta) {
+  if (bodies_index_.count(key)) return key;
+  BodyEntry e;
+  e.key = key;
+  e.meta = std::move(meta);
+  bodies_index_[key] = bodies_.size();
+  bodies_.push_back(std::move(e));
+  dirty = true;
+  return key;
+}
+
+bool Document::has_live_bodies() const {
+  for (const auto& b : bodies_)
+    if (b.brep.empty()) return true;
+  return false;
+}
+
 const BodyEntry* Document::body(const std::string& key) const {
   auto it = bodies_index_.find(key);
   return it == bodies_index_.end() ? nullptr : &bodies_[it->second];
@@ -226,6 +243,7 @@ std::vector<std::string> Document::gc() {
 //   <line-count lines of ASCII BREP>
 //   ... repeated
 std::string Document::serialize() const {
+  if (has_live_bodies()) throw Error("viewer-mode document: its bodies have no BREP text; export it to an .opad document first");
   std::string out;
   size_t reserve = 256;
   for (const auto& b : bodies_) reserve += b.brep.size() + 128;

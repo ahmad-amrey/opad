@@ -107,6 +107,11 @@ TopoDS_Shape body_shape(const Document& doc, const std::string& key) {
   return s;
 }
 
+void cache_shape(const Document& doc, const std::string& key, const TopoDS_Shape& shape) {
+  std::lock_guard<std::mutex> lock(doc.shape_cache->mu);
+  doc.shape_cache->shapes[key] = shape;
+}
+
 bool mat_is_rigid(const Mat4& m) {
   // Columns of the 3x3 block must be mutually orthogonal and of equal length (uniform scale allowed).
   double len[3];

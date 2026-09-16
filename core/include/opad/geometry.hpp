@@ -15,6 +15,8 @@ TopoDS_Shape shape_from_brep(const std::string& brep);
 
 // Prototype shape (identity placement) of a body-store entry; cached per document.
 TopoDS_Shape body_shape(const Document& doc, const std::string& key);
+// Viewer mode: registers a live shape under `key` so body_shape() never has to parse BREP text for it.
+void cache_shape(const Document& doc, const std::string& key, const TopoDS_Shape& shape);
 // Shape of a body node placed in world coordinates.
 TopoDS_Shape node_world_shape(const Document& doc, const Scene& scene, const std::string& node_id);
 // Parses every body entry into the cache (and computes its bbox) so later body_shape/body_bbox calls are

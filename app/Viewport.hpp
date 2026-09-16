@@ -64,6 +64,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void rollView(double degrees);  // animated turn about the view axis; positive = counter-clockwise on screen
 
   void warmUp();  // create the OpenGL viewer now rather than on first paint
+  void setBlocked(bool on);  // while a file loads: mouse input is ignored (the shade window covers the view)
   void benchShot(const QString& path);  // --bench-select with OPAD_BENCH_SHOT: hover the view cube, save a frame
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
   void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner
@@ -182,5 +183,6 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QString m_hover;
   QPoint m_pressPos;
   bool m_rightPress = false;
+  bool m_blocked = false;
   bool m_cubeGesture = false;  // this left press started on the view cube: dragging orbits instead of rubber-banding
 };

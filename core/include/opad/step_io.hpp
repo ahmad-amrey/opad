@@ -10,6 +10,8 @@ namespace opad {
 
 struct ImportOptions {
   bool heal = true;      // run ShapeFix on bodies that fail BRepCheck
+  bool viewer = false;   // viewer mode: keep the reader's shapes live in the shape cache; no healing, no BREP
+                         // text, no content hashing. Much faster, but such a document cannot be saved.
   std::string author;    // recorded on the op ("by")
   std::string parent;    // uuid of the component to import under; empty = root
   std::function<bool(double, const std::string&)> progress;  // return false to cancel

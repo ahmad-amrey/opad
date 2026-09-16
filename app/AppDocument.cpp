@@ -64,6 +64,7 @@ void AppDocument::startOpen(const QString& path) {
   const bool step = isStepPath(path);
   const QString file = QFileInfo(path).fileName() + QStringLiteral(" (%1 MB)").arg(QFileInfo(path).size() / (1024.0 * 1024.0), 0, 'f', 0);
   opad::ImportOptions o = loadOptions(cancel, file);
+  o.viewer = step;  // a STEP opened directly is viewed, not imported: no healing, BREP text or hashing
   auto alive = m_alive;
   emit loadProgress(step ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1);
   std::thread([this, alive, cancel, path, step, o]() {
@@ -199,14 +200,14 @@ void AppDocument::importStep(const QString& path, const QString& parent) {
 }
 
 void AppDocument::save() {
-  if (browse) throw opad::Error("browse mode: import the STEP file to create a document first");
+  if (browse) throw opad::Error("viewer mode: export to an OPAD document first");
   doc.save();
   emit pathChanged();
   emit message(tr("Saved %1").arg(path()));
 }
 
 void AppDocument::saveAs(const QString& path) {
-  if (browse) throw opad::Error("browse mode: import the STEP file to create a document first");
+  if (browse) throw opad::Error("viewer mode: export to an OPAD document first");
   doc.save_as(path.toStdString());
   emit pathChanged();
   emit message(tr("Saved %1").arg(path));
@@ -226,7 +227,7 @@ void AppDocument::refresh() {
 QString AppDocument::title() const {
   if (!hasDocument) return tr("OPAD");
   QString name = doc.path.empty() ? tr("Untitled") : QString::fromStdString(doc.path.filename().string());
-  if (browse) name = tr("[browse] ") + name;
+  if (browse) name = tr("[viewer] ") + name;
   if (isDirty()) name += "*";
   return name + " - OPAD";
 }

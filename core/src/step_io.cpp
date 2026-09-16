@@ -137,6 +137,7 @@ struct Importer {
   std::map<const void*, std::string> key_by_tshape;
   int body_counter = 0;
   int visited = 0, total = 0;  // shape labels walked / present, for a coarse "building" percentage
+  int live_counter = 0;        // viewer mode: sequential keys for live (never hashed) bodies
 
   bool label_color(const TDF_Label& l, Quantity_Color& c) {
     if (l.IsNull()) return false;
@@ -153,6 +154,21 @@ struct Importer {
     const void* ts = proto.TShape().get();
     auto it = key_by_tshape.find(ts);
     if (it != key_by_tshape.end() && proto.Location().IsIdentity()) return it->second;
+    if (opt.viewer) {
+      // Viewer mode skips everything that only serves persistence: the validity check and healing, the BREP
+      // text and its SHA-256 key, and the later re-parse of that text. The reader's shape is cached as is.
+      std::string key = sha256_hex("live:" + std::to_string(++live_counter));  // keys must look like content hashes
+      json meta;
+      meta["name"] = name;
+      if (color) meta["color"] = {color->Red(), color->Green(), color->Blue()};
+      meta["units"] = "mm";
+      meta["source"] = source;
+      ++res.new_entries;
+      doc.add_live_body(key, meta);
+      cache_shape(doc, key, proto);
+      key_by_tshape[ts] = key;
+      return key;
+    }
     if (opt.heal) {
       BRepCheck_Analyzer ana(proto);
       if (!ana.IsValid()) {
