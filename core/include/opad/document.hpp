@@ -70,6 +70,11 @@ class Document {
   // Removes body entries that no live (non-tombstoned) op references. Returns removed keys.
   std::vector<std::string> gc();
 
+  // Undo support: removes every op after the first `count` (returning them, persisted text intact) and puts
+  // them back. A restored op serialises byte-identically, so undo + redo + save leaves the file unchanged.
+  std::vector<Op> truncate_ops(size_t count);
+  void restore_ops(std::vector<Op> removed);
+
   const Op* find_op(const std::string& id) const;
   bool is_deleted(const std::string& op_id) const;
 

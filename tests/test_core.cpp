@@ -82,6 +82,36 @@ TEST(ref_parse_and_format) {
   CHECK_THROWS(Ref::parse(id + "/face"));
 }
 
+TEST(undo_truncate_and_restore_keep_persisted_text) {
+  Document d = Document::create();
+  std::string key = d.add_body(kFakeBrep, json{{"name", "Fake"}});
+  std::string body_id = new_uuid();
+  json imp;
+  imp["op"] = "import";
+  imp["source"] = "fake.step";
+  imp["nodes"] = json::array({body_node(key, "Fake", body_id)});
+  d.append(imp, "alice");
+  const std::string saved = d.serialize();  // as if written to disk: raw lines are now pinned
+  Document d2 = Document::parse(saved);
+  json ren;
+  ren["op"] = "rename";
+  ren["target"] = body_id;
+  ren["name"] = "Renamed";
+  d2.append(ren);
+  const std::string edited = d2.serialize();
+  CHECK(edited != saved);
+  std::vector<Op> popped = d2.truncate_ops(1);  // undo the rename
+  CHECK_EQ(popped.size(), 1u);
+  CHECK_EQ(d2.serialize(), saved);
+  d2.restore_ops(popped);  // redo
+  CHECK_EQ(d2.serialize(), edited);
+  std::vector<Op> both = d2.truncate_ops(0);  // undo past the saved import as well
+  CHECK_EQ(both.size(), 2u);
+  CHECK_EQ(d2.ops.size(), 0u);
+  d2.restore_ops(both);
+  CHECK_EQ(d2.serialize(), edited);  // the persisted import line came back byte-identical
+}
+
 TEST(document_roundtrip_is_byte_stable) {
   Document d = Document::create();
   std::string key = d.add_body(kFakeBrep, json{{"name", "Fake"}});

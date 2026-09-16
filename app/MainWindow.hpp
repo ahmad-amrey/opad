@@ -64,6 +64,7 @@ class MainWindow : public QMainWindow {
   void showContextMenu(const QPoint& globalPos, std::vector<std::string> ids);
   void timelineMenu(const std::string& opId, const QPoint& globalPos);
   void measure(const QString& kind);
+  void updateUndoActions();
   void sectionFromFace(const opad::Ref& face);  // "Pick face": a planar face sets the section plane
   void pinMeasurement();
   void clearMeasurement();

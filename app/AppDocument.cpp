@@ -5,6 +5,7 @@
 
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <algorithm>
 #include <QMetaObject>
 #include <thread>
 
@@ -88,6 +89,8 @@ void AppDocument::startOpen(const QString& path) {
       doc = std::move(*result);
       browse = step;
       hasDocument = true;
+      clearHistory();
+      markSaved();
       refresh();
       emit pathChanged();
       if (step) emit message(tr("Browsing %1 (nothing is saved; use Import to create a document)").arg(QFileInfo(path).fileName()));
@@ -103,6 +106,8 @@ void AppDocument::startImport(const QString& path, const QString& parent) {
     doc = opad::Document::create();
     browse = false;
     hasDocument = true;
+    clearHistory();
+    markSaved();  // an empty, unsaved document: anything imported makes it dirty
     emit pathChanged();
   }
   loading = true;
@@ -138,7 +143,9 @@ void AppDocument::startImport(const QString& path, const QString& parent) {
       }
       doc = std::move(*work);
       loading = false;
+      if (error.isEmpty()) recordStep(tr("import"), opsBefore);
       refresh();
+      emit undoChanged();
       if (!error.isEmpty()) {
         emit loadFinished(false, error);
         return;
@@ -153,6 +160,8 @@ void AppDocument::newDocument() {
   doc = opad::Document::create();
   browse = false;
   hasDocument = true;
+  clearHistory();
+  markSaved();
   refresh();
   emit pathChanged();
 }
@@ -162,6 +171,8 @@ void AppDocument::closeDocument() {
   doc = opad::Document();
   browse = false;
   hasDocument = false;
+  clearHistory();
+  markSaved();
   refresh();
   emit pathChanged();
 }
@@ -178,6 +189,8 @@ void AppDocument::open(const QString& path) {
     emit message(tr("Opened %1").arg(path));
   }
   hasDocument = true;
+  clearHistory();
+  markSaved();
   refresh();
   emit pathChanged();
 }
@@ -187,6 +200,8 @@ void AppDocument::importStep(const QString& path, const QString& parent) {
     doc = opad::Document::create();
     browse = false;
     hasDocument = true;
+    clearHistory();
+    markSaved();
     emit pathChanged();
   }
   opad::json args;
@@ -202,6 +217,7 @@ void AppDocument::importStep(const QString& path, const QString& parent) {
 void AppDocument::save() {
   if (browse) throw opad::Error("viewer mode: export to an OPAD document first");
   doc.save();
+  markSaved();
   emit pathChanged();
   emit message(tr("Saved %1").arg(path()));
 }
@@ -209,19 +225,99 @@ void AppDocument::save() {
 void AppDocument::saveAs(const QString& path) {
   if (browse) throw opad::Error("viewer mode: export to an OPAD document first");
   doc.save_as(path.toStdString());
+  markSaved();
   emit pathChanged();
   emit message(tr("Saved %1").arg(path));
 }
 
 opad::json AppDocument::run(const std::string& command, opad::json args) {
+  const size_t before = doc.ops.size();
   opad::json out = opad::commands::run(command, args, &doc);
+  recordStep(labelFor(command, args), before);
   refresh();
   return out;
 }
 
 void AppDocument::refresh() {
   scene = hasDocument ? opad::resolve(doc) : opad::Scene{};
+  updateDirty();
   emit changed();
+}
+
+// ---------------------------------------------------------------- undo / redo
+void AppDocument::recordStep(const QString& label, size_t opsBefore) {
+  if (doc.ops.size() <= opsBefore) return;  // the command appended nothing
+  m_undo.push_back(Step{label, doc.ops.size() - opsBefore, {}});
+  m_redo.clear();
+  while (static_cast<int>(m_undo.size()) > m_undoLimit) m_undo.erase(m_undo.begin());
+  emit undoChanged();
+}
+
+void AppDocument::undo() {
+  if (!canUndo()) return;
+  Step s = std::move(m_undo.back());
+  m_undo.pop_back();
+  s.ops = doc.truncate_ops(doc.ops.size() - std::min(s.count, doc.ops.size()));
+  m_redo.push_back(std::move(s));
+  refresh();
+  emit undoChanged();
+}
+
+void AppDocument::redo() {
+  if (!canRedo()) return;
+  Step s = std::move(m_redo.back());
+  m_redo.pop_back();
+  s.count = s.ops.size();
+  doc.restore_ops(std::move(s.ops));
+  s.ops.clear();
+  m_undo.push_back(std::move(s));
+  refresh();
+  emit undoChanged();
+}
+
+void AppDocument::setUndoLimit(int steps) {
+  m_undoLimit = std::clamp(steps, 1, 1000);
+  while (static_cast<int>(m_undo.size()) > m_undoLimit) m_undo.erase(m_undo.begin());
+  emit undoChanged();
+}
+
+void AppDocument::clearHistory() {
+  m_undo.clear();
+  m_redo.clear();
+  emit undoChanged();
+}
+
+void AppDocument::markSaved() {
+  m_savedIds.clear();
+  for (const auto& o : doc.ops) m_savedIds.push_back(o.id);
+  m_savedBodies = doc.body_count();
+  doc.dirty = false;
+}
+
+void AppDocument::updateDirty() {
+  if (!hasDocument) return;
+  bool same = doc.ops.size() == m_savedIds.size() && doc.body_count() == m_savedBodies;
+  for (size_t i = 0; same && i < m_savedIds.size(); ++i) same = doc.ops[i].id == m_savedIds[i];
+  doc.dirty = !same;
+}
+
+QString AppDocument::labelFor(const std::string& command, const opad::json& args) {
+  if (command == "appearance") {
+    if (args.contains("visible")) return args["visible"].get<bool>() ? tr("show") : tr("hide");
+    if (args.contains("color")) return tr("colour");
+    if (args.contains("locked")) return args["locked"].get<bool>() ? tr("lock") : tr("unlock");
+    return tr("appearance");
+  }
+  if (command == "rename") return tr("rename");
+  if (command == "reparent") return tr("move");
+  if (command == "delete") return tr("delete");
+  if (command == "annotate") return tr("note");
+  if (command == "append") return tr("pin measurement");
+  if (command == "section") return tr("named section");
+  if (command == "view") return tr("named view");
+  if (command == "import") return tr("import");
+  if (command == "transform") return tr("transform");
+  return QString::fromStdString(command);
 }
 
 QString AppDocument::title() const {

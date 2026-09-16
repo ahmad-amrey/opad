@@ -181,6 +181,22 @@ bool Document::has_live_bodies() const {
   return false;
 }
 
+std::vector<Op> Document::truncate_ops(size_t count) {
+  if (count >= ops.size()) return {};
+  std::vector<Op> removed(ops.begin() + static_cast<std::ptrdiff_t>(count), ops.end());
+  ops.resize(count);
+  dirty = true;
+  return removed;
+}
+
+void Document::restore_ops(std::vector<Op> removed) {
+  for (auto& o : removed) {
+    if (find_op(o.id)) throw Error("restore: duplicate op id: " + o.id);
+    ops.push_back(std::move(o));
+  }
+  dirty = true;
+}
+
 const BodyEntry* Document::body(const std::string& key) const {
   auto it = bodies_index_.find(key);
   return it == bodies_index_.end() ? nullptr : &bodies_[it->second];

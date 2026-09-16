@@ -324,6 +324,9 @@ void MainWindow::buildActions() {
   // Annotate / edit
   addAction("annotate.add", tr("Note"), "annotate", QKeySequence("N"), [this] { addAnnotation(); });
   addAction("annotate.resolve", tr("Resolve note"), "check", QKeySequence("Ctrl+Return"), [this] { resolveCurrentAnnotation(); });
+  addAction("edit.undo", tr("&Undo"), "rollLeft", QKeySequence::Undo, [this] { m_doc->undo(); });
+  addAction("edit.redo", tr("&Redo"), "rollRight", QKeySequence::Redo, [this] { m_doc->redo(); });
+  connect(m_doc, &AppDocument::undoChanged, this, &MainWindow::updateUndoActions);
   addAction("edit.rename", tr("Rename"), "rename", QKeySequence("F2"), [this] {
     auto ids = currentNodeIds();
     if (!ids.empty()) m_browser->startRename(ids.front());
@@ -354,6 +357,14 @@ void MainWindow::buildActions() {
     p.exec();
   });
   addAction("tools.shortcuts", tr("Keyboard shortcuts…"), "", QKeySequence("Ctrl+K"), [this] { ShortcutEditor(m_actions, this).exec(); });
+  m_doc->setUndoLimit(m_settings.value("edit/undoDepth", 50).toInt());
+  addAction("tools.undodepth", tr("Undo history…"), "", QKeySequence(), [this] {
+    bool ok = false;
+    const int n = QInputDialog::getInt(this, tr("Undo history"), tr("Steps kept for undo (1–1000):"), m_doc->undoLimit(), 1, 1000, 1, &ok);
+    if (!ok) return;
+    m_settings.setValue("edit/undoDepth", n);
+    m_doc->setUndoLimit(n);
+  });
   addAction("tools.cache", tr("Clear tessellation cache"), "", QKeySequence(), [this] {
     opad::json r = opad::commands::run("cache", opad::json{{"action", "clear"}});
     statusBar()->showMessage(tr("Cache cleared: %1").arg(QString::fromStdString(r["dir"].get<std::string>())), 4000);
@@ -386,7 +397,7 @@ void MainWindow::buildMenus() {
   m_recentMenu = file->addMenu(tr("Recent"));
   add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
-  add(edit, {"edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.resolve", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
+  add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.resolve", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = menuBar()->addMenu(tr("&View"));
   add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "-", "view.section", "view.flip", "view.isolate", "view.unisolate", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
@@ -428,6 +439,7 @@ void MainWindow::buildRibbon() {
   settings->addAction(action("panel.reset"));
   settings->addSeparator();
   settings->addAction(action("tools.shortcuts"));
+  settings->addAction(action("tools.undodepth"));
   settings->addAction(action("tools.cache"));
   m_ribbon->setSettingsMenu(settingsAction, settings);
   auto* host = new QToolBar(tr("Ribbon"), this);
@@ -635,6 +647,7 @@ void MainWindow::showDocument(bool has) {
   }
   if (m_pinAction) m_pinAction->setEnabled(has && !m_lastMeasure.is_null() && !m_doc->browse);
   m_browser->setViewerMode(m_doc->browse);
+  updateUndoActions();
   m_inspector->setTabVisible(m_inspector->indexOf(m_annotations), !m_doc->browse);
   if (m_doc->browse && m_timelineDock->isVisible()) { m_timelineDock->hide(); m_timelineHiddenByViewer = true; }
   else if (!m_doc->browse && m_timelineHiddenByViewer) { m_timelineDock->show(); m_timelineHiddenByViewer = false; }
@@ -983,6 +996,16 @@ void MainWindow::sectionFromFace(const opad::Ref& face) {
     if (trace::enabled()) trace::log(QStringLiteral("section from face failed: %1").arg(QString::fromUtf8(e.what())));
     statusBar()->showMessage(QString::fromUtf8(e.what()), 5000);
   }
+}
+
+void MainWindow::updateUndoActions() {
+  QAction* u = action("edit.undo");
+  QAction* r = action("edit.redo");
+  if (!u || !r) return;
+  u->setEnabled(m_doc->hasDocument && m_doc->canUndo());
+  r->setEnabled(m_doc->hasDocument && m_doc->canRedo());
+  u->setText(m_doc->canUndo() ? tr("&Undo %1").arg(m_doc->undoLabel()) : tr("&Undo"));
+  r->setText(m_doc->canRedo() ? tr("&Redo %1").arg(m_doc->redoLabel()) : tr("&Redo"));
 }
 
 void MainWindow::measure(const QString& kind) {
@@ -1402,6 +1425,15 @@ void MainWindow::runBench() {
       trace::log(QStringLiteral("bench: camera after fitSelection(leaf) %1").arg(QString::fromStdString(m_viewport->cameraJson().dump())));
       m_viewport->benchPick();
       m_section->beginPick();  // then a face pick must set the section plane (logged as "section from face")
+      // Undo/redo: hide the leaf, undo back to the saved state (clean again), redo.
+      const size_t n0 = m_doc->doc.ops.size();
+      m_doc->run("appearance", opad::json{{"target", leaf}, {"visible", false}});
+      const bool d1 = m_doc->doc.dirty, u1 = m_doc->canUndo();
+      m_doc->undo();
+      const bool d2 = m_doc->doc.dirty;
+      const size_t n2 = m_doc->doc.ops.size();
+      m_doc->redo();
+      trace::log(QStringLiteral("bench: undo/redo: after hide dirty=%1 canUndo=%2; after undo dirty=%3 ops %4->%5; after redo dirty=%6 ops %7 canRedo=%8").arg(d1).arg(u1).arg(d2).arg(n0).arg(n2).arg(m_doc->doc.dirty).arg(m_doc->doc.ops.size()).arg(m_doc->canRedo()));
       QTimer::singleShot(1500, this, [this] { m_viewport->fitAll(); m_viewport->benchPick(); });  // the board: a planar face at the centre
       if (const QByteArray shot = qgetenv("OPAD_BENCH_SHOT"); !shot.isEmpty()) m_viewport->benchShot(QString::fromLocal8Bit(shot));
       QTimer::singleShot(4000, qApp, &QCoreApplication::quit);
