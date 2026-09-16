@@ -111,6 +111,17 @@ void Viewport::setBlocked(bool on) { m_blocked = on; }
 
 void Viewport::benchShot(const QString& path) {
   if (!m_initialised) return;
+  if (const QByteArray sel = qgetenv("OPAD_BENCH_SELECT"); !sel.isEmpty()) {  // select bodies by node name, synchronously
+    m_ctx->ClearSelected(Standard_False);
+    for (const auto& [id, it] : m_items)
+      if (m_doc->nodeName(id) == QString::fromUtf8(sel)) m_ctx->AddOrRemoveSelected(it.ais, Standard_False);
+  }
+  applySelectionLayers();
+  if (trace::enabled()) trace::log(QStringLiteral("bench: shot with %1 selected, layer of selected style %2").arg(m_ctx->NbSelected()).arg(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->ZLayer()));
+  if (const QByteArray view = qgetenv("OPAD_BENCH_VIEW"); !view.isEmpty()) {  // an unanimated camera for the frame dump
+    m_view->SetProj(view == "bottom" ? V3d_Zneg : view == "top" ? V3d_Zpos : V3d_XposYnegZpos);
+    m_view->FitAll(0.02, Standard_False);
+  }
   Standard_Integer w = 0, h = 0;
   m_view->Window()->Size(w, h);
   // Hover point relative to the cube centre (default: the TOP face); OPAD_BENCH_HOVER="dx,dy" overrides it.
@@ -210,6 +221,10 @@ void Viewport::applyTokens() {
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(occ(t.sel));
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetTransparency(0.5f);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetTransparency(0.35f);
+  // X-ray selection: the highlight is drawn in the Topmost layer, which has its own depth buffer,
+  // so a selected object shows through whatever is in front of it.
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetZLayer(Graphic3d_ZLayerId_Topmost);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetZLayer(Graphic3d_ZLayerId_Topmost);
   // View cube per the design: flat three-tone box with dark labels, thin X/Y/Z axes in red/green/blue along
   // the lower edges, and the hovered face/edge/corner filled with the hover accent to show where a click goes.
   m_cube->SetBoxColor(occ(t.mtop));
@@ -364,6 +379,7 @@ void Viewport::setSelectionFilter(SelFilter f) {
     return *i < items->size();
   }, [this](bool) {
     m_filterJob = nullptr;
+    applySelectionLayers();
     redrawScene();
   });
 }
@@ -468,6 +484,7 @@ void Viewport::selectNodes(const std::vector<std::string>& ids) {
   auto done = [this, st, ids](bool completed) {
     m_selJob = nullptr;
     m_selApplied = std::move(st->applied);
+    applySelectionLayers();
     redrawScene();
     if (!completed) return;  // superseded or cancelled: the next job (or the click) owns the state now
     if (st->shade) showShade(ids);
@@ -478,6 +495,17 @@ void Viewport::selectNodes(const std::vector<std::string>& ids) {
   };
   Q_ASSERT(m_jobs);  // wired by MainWindow before anything can be selected
   m_selJob = m_jobs->sliced(tr("Selecting %1 objects").arg(total), step, done);
+}
+
+// X-ray selection. OCCT recolours a selected object's own structure in place (no separate highlight structure
+// for whole objects), so the object's layer decides whether the highlight shows through others: selected bodies
+// move to Topmost, which has its own depth buffer, and back to Default when deselected. Face/edge highlights
+// are separate structures and follow the highlight style's layer (also Topmost).
+void Viewport::applySelectionLayers() {
+  for (auto& [id, it] : m_items) {
+    const Graphic3d_ZLayerId want = m_ctx->IsSelected(it.ais) ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Default;
+    if (it.ais->ZLayer() != want) m_ctx->SetZLayer(it.ais, want);
+  }
 }
 
 // One translucent box per selected node, covering its bodies; a stand-in for per-object highlighting.
@@ -504,6 +532,7 @@ void Viewport::showShade(const std::vector<std::string>& ids) {
     s->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
     s->Attributes()->SetFaceBoundaryDraw(Standard_True);
     s->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.5));
+    s->SetZLayer(Graphic3d_ZLayerId_Topmost);  // same X-ray treatment as per-object highlights
     m_ctx->Display(s, AIS_Shaded, -1, Standard_False);  // selection mode -1: never pickable
     m_shade.push_back(s);
   }
@@ -526,6 +555,7 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
   if (m_selJob) m_selJob->cancel();
   clearShade();
   m_needFit = false;
+  applySelectionLayers();
   redrawScene();
   if (trace::enabled()) trace::log(QStringLiteral("3D click: %1 selected in context").arg(m_ctx->NbSelected()));
   emit selectionChanged();

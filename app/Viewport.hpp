@@ -129,6 +129,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void displayBody(const std::string& id);
   void finishSync(int pendingCount, bool added);
   void showShade(const std::vector<std::string>& ids);
+  void applySelectionLayers();  // selected bodies live in the Topmost layer (own depth buffer): X-ray through occluders
   void clearShade();
   double deflectionFor(const std::string& key);
   Graphic3d_Vec2i devicePos(const QPointF& p) const;
