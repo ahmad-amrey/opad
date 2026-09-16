@@ -155,8 +155,11 @@ class SectionPanel : public QWidget {
   opad::Vec3 origin() const;
   opad::Vec3 normal() const;
   bool caps() const;
+  bool picking() const { return m_pick; }  // "Pick face" is active: the next planar face picked in the view sets the plane
+  void beginPick();                          // what the "Pick face" button does
  signals:
   void planeChanged();
+  void pickRequested();  // the user wants to pick a face: switch the select filter to faces
   void saveRequested(const QString& name, const opad::Vec3& origin, const opad::Vec3& normal);
   void enabledChanged(bool on);
  public slots:

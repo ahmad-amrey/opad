@@ -134,6 +134,7 @@ void DockHeader::setTitle(const QString& t) { m_title->setText(t); }
 
 // ---------------------------------------------------------------- BrowserTree
 BrowserTree::BrowserTree(AppDocument* doc, QWidget* parent) : QTreeWidget(parent), m_doc(doc) {
+  setObjectName("browserTree");  // the delegate paints whole rows; the style must not add its own selection (Theme.cpp)
   setIndentation(16);
   setRootIsDecorated(true);
   setHeaderHidden(true);
@@ -202,8 +203,7 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   const int fullW = opt.widget ? opt.widget->width() : r.right();
   QRect full(0, r.top(), fullW, r.height());
   if (opt.state & QStyle::State_Selected) {
-    p->fillRect(full, t.selbg);
-    p->fillRect(QRect(0, r.top(), 2, r.height()), t.sel);
+    p->fillRect(full, t.selbg);  // design: one translucent tint across the whole row, indent included
   } else if (opt.state & QStyle::State_MouseOver) {
     p->fillRect(full, t.bg3);
   }
@@ -860,9 +860,10 @@ SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     sl->addWidget(b, 1);
     m_axisButtons << b;
     connect(b, &QToolButton::clicked, this, [this, i] {
+      if (i == 3) { beginPick(); return; }
       for (int k = 0; k < 4; ++k) m_axisButtons[k]->setChecked(k == i);
-      m_pick = i == 3;
-      if (!m_pick) m_axis = i;
+      m_pick = false;
+      m_axis = i;
       emitChange();
     });
   }
@@ -968,6 +969,13 @@ void SectionPanel::setEnabled(bool on) {
 }
 
 void SectionPanel::flip() { m_flipButton->setChecked(!m_flipButton->isChecked()); }
+
+void SectionPanel::beginPick() {
+  m_pick = true;
+  for (int k = 0; k < 4; ++k) m_axisButtons[k]->setChecked(k == 3);
+  m_state->setText(tr("Pick face · click a planar face in the 3D view"));
+  emit pickRequested();
+}
 
 void SectionPanel::setFromFace(const opad::Vec3& origin, const opad::Vec3& normal) {
   m_pick = true;

@@ -122,6 +122,10 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     m_viewport->setSection(m_section->enabled(), m_section->origin(), m_section->normal(), m_section->caps());
     updateChips();
   });
+  connect(m_section, &SectionPanel::pickRequested, this, [this] {
+    if (m_viewport->selectionFilter() != Viewport::SelFilter::Face) action("select.faces")->trigger();
+    statusBar()->showMessage(tr("Section: click a planar face in the 3D view to set the plane"), 6000);
+  });
   connect(m_section, &SectionPanel::enabledChanged, this, [this](bool on) {
     if (action("view.section")->isChecked() != on) action("view.section")->setChecked(on);
   });
@@ -406,7 +410,7 @@ void MainWindow::buildRibbon() {
     for (const char* id : ids) if (QAction* a = action(id)) out << a;
     return out;
   };
-  m_ribbon->addTab(tr("View"), {acts({"view.fit", "view.home", "view.ortho"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid"}), acts({"view.section", "view.isolate", "view.unisolate"}), acts({"panel.browser", "panel.inspector", "panel.timeline"})});
+  m_ribbon->addTab(tr("View"), {acts({"view.fit", "view.home", "view.ortho"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid"}), acts({"view.section", "view.isolate", "view.unisolate"})});
   m_ribbon->addTab(tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"})});
   m_ribbon->addTab(tr("Annotate"), {acts({"annotate.add", "annotate.resolve"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
   m_ribbon->addTab(tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
@@ -557,9 +561,12 @@ void MainWindow::bindPanel(QAction* a, QDockWidget* dock) {
   if (!a || !dock) return;
   QAction* native = dock->toggleViewAction();
   a->setChecked(native->isChecked());
-  connect(a, &QAction::toggled, native, [native](bool on) { if (native->isChecked() != on) native->setChecked(on); });
-  connect(native, &QAction::toggled, a, [a](bool on) { if (a->isChecked() != on) a->setChecked(on); });
-  connect(a, &QAction::triggered, dock, [dock](bool on) { if (on) { dock->show(); dock->raise(); } });
+  // The dock's own action only reacts to being triggered, not to setChecked, so drive the dock directly.
+  connect(native, &QAction::toggled, a, [a](bool on) { if (a->isChecked() != on) a->setChecked(on); });  // closed via its X
+  connect(a, &QAction::triggered, dock, [dock](bool on) {
+    dock->setVisible(on);
+    if (on) dock->raise();
+  });
 }
 
 void MainWindow::resetLayout() {
@@ -756,6 +763,7 @@ void MainWindow::onViewportSelection() {
   for (const auto& r : refs)
     if (seen.insert(r.body).second) ids.push_back(r.body);
   m_browser->setSelectedIds(ids);
+  if (m_section && m_section->picking() && !refs.empty() && refs.front().kind == opad::Ref::Kind::Face) sectionFromFace(refs.front());
   showProperties(refs);
   if (refs.empty()) m_statusSel->clear();
   else m_statusSel->setText(QString::fromUtf8("%1 selected · %2").arg(refs.size()).arg(opad::Ref::kind_name(refs.front().kind)));
@@ -957,6 +965,26 @@ void MainWindow::timelineMenu(const std::string& opId, const QPoint& globalPos) 
 }
 
 // ---------------------------------------------------------------- inspect (F23)
+void MainWindow::sectionFromFace(const opad::Ref& face) {
+  try {
+    opad::json info = opad::inspect_ref(m_doc->doc, m_doc->scene, face);
+    if (!info.contains("normal") || !info.contains("center")) {
+      if (trace::enabled()) trace::log(QStringLiteral("section from face: not planar (%1)").arg(QString::fromStdString(info.value("surface", "?"))));
+      statusBar()->showMessage(tr("Section: that face is %1; pick a planar face").arg(QString::fromStdString(info.value("surface", "not planar"))), 5000);
+      return;
+    }
+    const opad::Vec3 o{info["center"][0].get<double>(), info["center"][1].get<double>(), info["center"][2].get<double>()};
+    const opad::Vec3 n{info["normal"][0].get<double>(), info["normal"][1].get<double>(), info["normal"][2].get<double>()};
+    if (trace::enabled()) trace::log(QStringLiteral("section from face: origin %1 %2 %3 normal %4 %5 %6").arg(o[0]).arg(o[1]).arg(o[2]).arg(n[0]).arg(n[1]).arg(n[2]));
+    m_section->setFromFace(o, n);
+    m_section->setEnabled(true);
+    statusBar()->showMessage(tr("Section plane set from the picked face (Shift+X flips it)"), 5000);
+  } catch (const std::exception& e) {
+    if (trace::enabled()) trace::log(QStringLiteral("section from face failed: %1").arg(QString::fromUtf8(e.what())));
+    statusBar()->showMessage(QString::fromUtf8(e.what()), 5000);
+  }
+}
+
 void MainWindow::measure(const QString& kind) {
   auto refs = m_viewport->selection();
   std::vector<std::string> strs;
@@ -1373,8 +1401,10 @@ void MainWindow::runBench() {
       m_viewport->fitSelection();
       trace::log(QStringLiteral("bench: camera after fitSelection(leaf) %1").arg(QString::fromStdString(m_viewport->cameraJson().dump())));
       m_viewport->benchPick();
+      m_section->beginPick();  // then a face pick must set the section plane (logged as "section from face")
+      QTimer::singleShot(1500, this, [this] { m_viewport->fitAll(); m_viewport->benchPick(); });  // the board: a planar face at the centre
       if (const QByteArray shot = qgetenv("OPAD_BENCH_SHOT"); !shot.isEmpty()) m_viewport->benchShot(QString::fromLocal8Bit(shot));
-      QTimer::singleShot(2500, qApp, &QCoreApplication::quit);
+      QTimer::singleShot(4000, qApp, &QCoreApplication::quit);
     });
     m_browser->setSelectedIds({leaf});
     onBrowserSelection({leaf});

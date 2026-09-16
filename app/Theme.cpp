@@ -132,6 +132,8 @@ QString stylesheet(const Tokens& t) {
                "QTreeWidget::item, QTreeView::item, QListWidget::item { height: 28px; border: none; }\n"
                "QTreeWidget::item:hover, QListWidget::item:hover { background: %2; }\n"
                "QTreeWidget::item:selected, QListWidget::item:selected { background: %3; color: %4; }\n"
+               "QTreeWidget#browserTree { show-decoration-selected: 0; }\n"
+               "QTreeWidget#browserTree::item:selected, QTreeWidget#browserTree::item:hover { background: transparent; color: %4; }\n"
                "QTreeView::branch { background: transparent; }\n"
                "QHeaderView::section { background: %1; color: %5; border: none; border-bottom: 1px solid %6; height: 24px; padding-left: 8px; font-size: 11px; text-transform: uppercase; }\n").arg(bg, bg3, selbg, fg, fg3, line);
   s += QString("QTabWidget#inspector::pane { border: none; border-top: 1px solid %1; }\n"
