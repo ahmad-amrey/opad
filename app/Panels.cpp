@@ -302,8 +302,9 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     head->setStyleSheet(QString("QWidget#browserHead { border-bottom: 1px solid %1; }").arg(theme::css(theme::current().line)));
     searchIcon->setIcon(icons::icon("search", theme::current().fg3));
     m_parentBtn->setIcon(icons::icon("chevronUp", theme::current().fg3));
-    m_expandBtn->setIcon(icons::icon("plus", theme::current().fg3));
-    m_collapseBtn->setIcon(icons::icon("min", theme::current().fg3));
+    m_locateBtn->setIcon(icons::icon("locate", theme::current().fg3));
+    m_expandBtn->setIcon(icons::icon("expandAll", theme::current().fg3));
+    m_collapseBtn->setIcon(icons::icon("collapseAll", theme::current().fg3));
     updateBreadcrumb();
     m_tree->viewport()->update();
   });
@@ -341,9 +342,11 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     return b;
   };
   m_parentBtn = button("chevronUp", tr("Select parent (Ctrl+Up)"));
-  m_expandBtn = button("plus", tr("Expand all"));
-  m_collapseBtn = button("min", tr("Collapse all"));
+  m_locateBtn = button("locate", tr("Scroll to the selected object"));
+  m_expandBtn = button("expandAll", tr("Expand all"));
+  m_collapseBtn = button("collapseAll", tr("Collapse all"));
   connect(m_parentBtn, &QToolButton::clicked, this, &BrowserPanel::selectParent);
+  connect(m_locateBtn, &QToolButton::clicked, this, &BrowserPanel::scrollToSelected);
   connect(m_expandBtn, &QToolButton::clicked, this, &BrowserPanel::expandAll);
   connect(m_collapseBtn, &QToolButton::clicked, this, &BrowserPanel::collapseAll);
   hl->addLayout(crumbRow);
@@ -518,6 +521,15 @@ void BrowserPanel::selectParent() {
 }
 
 void BrowserPanel::expandAll() { m_tree->expandAll(); }
+
+void BrowserPanel::scrollToSelected() {
+  const auto ids = selectedIds();
+  if (ids.empty()) return;
+  QTreeWidgetItem* it = itemFor(ids.front());
+  if (!it) return;
+  for (QTreeWidgetItem* p = it->parent(); p; p = p->parent()) p->setExpanded(true);
+  m_tree->scrollToItem(it, QAbstractItemView::PositionAtCenter);
+}
 
 void BrowserPanel::collapseAll() {
   m_tree->collapseAll();
@@ -1057,17 +1069,22 @@ ViewportChips::ViewportChips(QWidget* parent) : QWidget(parent) {
   m_proj->setObjectName("chip");
   m_section = new QLabel(this);
   m_section->setObjectName("chipSel");
+  m_isolate = new QLabel(this);
+  m_isolate->setObjectName("chipSel");
   l->addWidget(m_mode);
   l->addWidget(m_proj);
   l->addWidget(m_section);
+  l->addWidget(m_isolate);
   l->addStretch();
 }
 
-void ViewportChips::set(const QString& mode, const QString& projection, const QString& section) {
+void ViewportChips::set(const QString& mode, const QString& projection, const QString& section, const QString& isolate) {
   m_mode->setText(mode);
   m_proj->setText(projection);
   m_section->setText(section);
   m_section->setVisible(!section.isEmpty());
+  m_isolate->setText(isolate);
+  m_isolate->setVisible(!isolate.isEmpty());
   adjustSize();
 }
 

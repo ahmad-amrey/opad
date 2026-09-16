@@ -1,5 +1,7 @@
 #include "MainWindow.hpp"
 
+#include <QToolButton>
+
 #include <QActionGroup>
 #include <QApplication>
 #include <QButtonGroup>
@@ -66,6 +68,10 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_viewport, &Viewport::selectionChanged, this, &MainWindow::onViewportSelection);
   connect(m_viewport, &Viewport::hoverChanged, m_statusHover, &QLabel::setText);
   connect(m_viewport, &Viewport::contextMenuRequested, this, [this](const QPoint& p) { showContextMenu(p, currentNodeIds()); });
+  connect(m_viewport, &Viewport::isolationChanged, this, [this] {
+    action("view.unisolate")->setEnabled(m_viewport->isIsolated());
+    updateChips();
+  });
   connect(m_viewport, &Viewport::meshingProgress, this, [this](int remaining) {
     m_meshRemaining = remaining;
     if (remaining > m_meshTotal) m_meshTotal = remaining;
@@ -234,9 +240,11 @@ void MainWindow::buildActions() {
   addAction("file.quit", tr("&Quit"), "", QKeySequence::Quit, [this] { close(); });
 
   // View
-  addAction("view.fit", tr("Fit"), "fit", QKeySequence("F"), [this] { m_viewport->fitAll(); });
-  addAction("view.fitsel", tr("Fit selection"), "fit", QKeySequence("Shift+F"), [this] { m_viewport->fitSelection(); });
+  addAction("view.fit", tr("Fit"), "fit", QKeySequence("F"), [this] { m_viewport->fitSelection(); });  // the selection, or everything when nothing is selected
+  addAction("view.fitall", tr("Fit all"), "fit", QKeySequence("Shift+F"), [this] { m_viewport->fitAll(); });
   addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(); });
+  addAction("view.rollleft", tr("Turn 90° left"), "rollLeft", QKeySequence(), [this] { m_viewport->rollView(90); });
+  addAction("view.rollright", tr("Turn 90° right"), "rollRight", QKeySequence(), [this] { m_viewport->rollView(-90); });
   for (const auto& [name, key] : std::vector<std::pair<QString, QString>>{{"top", "Ctrl+1"}, {"front", "Ctrl+2"}, {"right", "Ctrl+3"}, {"iso", "Ctrl+4"}, {"bottom", "Ctrl+5"}, {"back", "Ctrl+6"}, {"left", "Ctrl+7"}})
     addAction("view." + name, tr("View: %1").arg(name), "home", QKeySequence(key), [this, n = name] { m_viewport->standardView(n); });
   QAction* ortho = addAction("view.ortho", tr("Orthographic"), "ortho", QKeySequence("O"), [this] {}, true);
@@ -261,7 +269,7 @@ void MainWindow::buildActions() {
   });
   addAction("view.flip", tr("Flip section"), "flip", QKeySequence("Shift+X"), [this] { m_section->flip(); });
   addAction("view.isolate", tr("Isolate"), "isolate", QKeySequence("I"), [this] { m_viewport->isolate(currentNodeIds()); });
-  addAction("view.unisolate", tr("Show all"), "showAll", QKeySequence("Shift+I"), [this] { m_viewport->isolate({}); });
+  addAction("view.unisolate", tr("Exit isolate"), "showAll", QKeySequence("Shift+I"), [this] { m_viewport->isolate({}); });
   addAction("view.saveview", tr("Save view…"), "home", QKeySequence(), [this] { saveNamedView(); });
   m_darkAction = addAction("view.dark", tr("&Dark theme"), "", QKeySequence(), [this] {}, true);
   // Panel toggles: always enabled, so a closed dock can be reopened even with no document.
@@ -364,7 +372,7 @@ void MainWindow::buildMenus() {
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
   add(edit, {"edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.resolve", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = menuBar()->addMenu(tr("&View"));
-  add(view, {"view.fit", "view.fitsel", "view.home", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "-", "view.section", "view.flip", "view.isolate", "view.unisolate", "-", "view.saveview"});
+  add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "-", "view.section", "view.flip", "view.isolate", "view.unisolate", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
   view->addSeparator();
   QMenu* nav = view->addMenu(tr("Navigation preset"));
@@ -430,6 +438,51 @@ void MainWindow::buildCentral() {
   m_measureCard = new MeasureCard(m_viewport);
   m_measureCard->setAttribute(Qt::WA_NativeWindow);
   m_measureCard->hide();
+  // Home button with its shortcut hint, floating at the top-left of the view cube (design: navigation cube).
+  m_homeBtn = new QWidget(m_viewport);
+  m_homeBtn->setAttribute(Qt::WA_NativeWindow);
+  m_homeBtn->setAutoFillBackground(true);
+  auto* hl = new QVBoxLayout(m_homeBtn);
+  hl->setContentsMargins(0, 0, 0, 0);
+  hl->setSpacing(2);
+  auto* home = new QToolButton(m_homeBtn);
+  home->setObjectName("vpButton");
+  home->setFixedSize(30, 30);
+  home->setIconSize(QSize(16, 16));
+  home->setCursor(Qt::PointingHandCursor);
+  home->setToolTip(tr("Home view (H)"));
+  connect(home, &QToolButton::clicked, this, [this] { m_viewport->home(); });
+  auto* hint = new QLabel(QStringLiteral("H"), m_homeBtn);
+  hint->setObjectName("tertiary");
+  hint->setFont(theme::mono(11));
+  hint->setAlignment(Qt::AlignHCenter);
+  hl->addWidget(home, 0, Qt::AlignHCenter);
+  hl->addWidget(hint);
+  // Turn-90° buttons on either side of the cube (the arc arrows of the design).
+  auto rollButton = [this](const char* icon, const QString& tip, double degrees) {
+    auto* b = new QToolButton(m_viewport);
+    b->setAttribute(Qt::WA_NativeWindow);
+    b->setObjectName("vpButton");
+    b->setFixedSize(30, 30);
+    b->setIconSize(QSize(18, 18));
+    b->setCursor(Qt::PointingHandCursor);
+    b->setToolTip(tip);
+    b->setIcon(icons::icon(icon, theme::current().fg));
+    connect(b, &QToolButton::clicked, this, [this, degrees] { m_viewport->rollView(degrees); });
+    return b;
+  };
+  m_rollLeft = rollButton("rollLeft", tr("Turn the view 90° left"), 90);
+  m_rollRight = rollButton("rollRight", tr("Turn the view 90° right"), -90);
+  auto paintHome = [this, home] {
+    QPalette pal = m_homeBtn->palette();
+    pal.setColor(QPalette::Window, theme::current().vp);
+    m_homeBtn->setPalette(pal);
+    home->setIcon(icons::icon("home", theme::current().fg));
+    m_rollLeft->setIcon(icons::icon("rollLeft", theme::current().fg));
+    m_rollRight->setIcon(icons::icon("rollRight", theme::current().fg));
+  };
+  paintHome();
+  connect(theme::notifier(), &theme::Notifier::changed, this, paintHome);
   m_viewport->installEventFilter(this);
 }
 
@@ -552,7 +605,7 @@ void MainWindow::showDocument(bool has) {
   m_stack->setCurrentIndex(has ? 1 : 0);
   for (QAction* a : m_actions) {
     QString id = a->objectName();
-    if (id.startsWith("view.") && id != "view.dark") a->setEnabled(has);
+    if (id.startsWith("view.") && id != "view.dark") a->setEnabled(has && (id != "view.unisolate" || m_viewport->isIsolated()));
     if (id.startsWith("inspect.") || id.startsWith("annotate.") || id.startsWith("select.") || id == "file.export" || id == "file.screenshot" || id == "file.save" || id == "file.saveas" || id == "file.close")
       a->setEnabled(has);
     if (id == "file.importdoc") a->setEnabled(m_doc->browse);
@@ -580,7 +633,7 @@ void MainWindow::updateChips() {
     const char axes[] = {'X', 'Y', 'Z'};
     section = QString("Section %1 = %2 mm").arg(axes[axis]).arg(o[axis], 0, 'f', 0);
   }
-  m_chips->set(mode, proj, section);
+  m_chips->set(mode, proj, section, m_viewport->isIsolated() ? tr("Isolated · %1 bodies").arg(m_viewport->isolatedCount()) : QString());
   positionOverlays();
 }
 
@@ -588,6 +641,14 @@ void MainWindow::positionOverlays() {
   if (!m_viewport) return;
   m_chips->move(0, 0);
   m_chips->raise();
+  m_homeBtn->adjustSize();
+  m_homeBtn->move(m_viewport->width() - 200, 12);  // left of the cube's axes, level with its top
+  m_homeBtn->raise();
+  m_rollLeft->move(m_viewport->width() - 200, 150);  // lower-left and lower-right of the cube
+  m_rollLeft->raise();
+  m_rollRight->move(m_viewport->width() - 40, 150);
+  m_rollRight->raise();
+  if (trace::enabled()) trace::log(QStringLiteral("viewport at %1,%2 size %3x%4").arg(m_viewport->mapToGlobal(QPoint(0, 0)).x()).arg(m_viewport->mapToGlobal(QPoint(0, 0)).y()).arg(m_viewport->width()).arg(m_viewport->height()));
   m_measureCard->move(m_viewport->width() - m_measureCard->width() - 16, m_viewport->height() - m_measureCard->height() - 16);
   m_measureCard->raise();
 }
@@ -1262,6 +1323,7 @@ void MainWindow::runBench() {
       m_viewport->fitSelection();
       trace::log(QStringLiteral("bench: camera after fitSelection(leaf) %1").arg(QString::fromStdString(m_viewport->cameraJson().dump())));
       m_viewport->benchPick();
+      if (const QByteArray shot = qgetenv("OPAD_BENCH_SHOT"); !shot.isEmpty()) m_viewport->benchShot(QString::fromLocal8Bit(shot));
       QTimer::singleShot(2500, qApp, &QCoreApplication::quit);
     });
     m_browser->setSelectedIds({leaf});

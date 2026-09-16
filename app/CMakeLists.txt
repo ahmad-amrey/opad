@@ -22,6 +22,7 @@ set(OPAD_APP_SOURCES
   Panels.cpp Panels.hpp
   Jobs.cpp Jobs.hpp
   BodyShape.cpp BodyShape.hpp
+  NavCube.cpp NavCube.hpp
   CrashLog.cpp CrashLog.hpp
   MainWindow.cpp MainWindow.hpp)
 if(APPLE)

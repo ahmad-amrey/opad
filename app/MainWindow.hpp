@@ -87,6 +87,9 @@ class MainWindow : public QMainWindow {
   EmptyState* m_empty = nullptr;
   Viewport* m_viewport = nullptr;
   ViewportChips* m_chips = nullptr;
+  QWidget* m_homeBtn = nullptr;  // floating Home button above the view cube
+  QToolButton* m_rollLeft = nullptr;   // 90 degree turns about the view axis, either side of the cube
+  QToolButton* m_rollRight = nullptr;
   MeasureCard* m_measureCard = nullptr;
   RibbonBar* m_ribbon = nullptr;
   BrowserPanel* m_browser = nullptr;

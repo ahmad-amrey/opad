@@ -30,7 +30,6 @@
 #include <TopoDS_Vertex.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <V3d_ImageDumpOptions.hxx>
-#include <V3d_Trihedron.hxx>
 #include <gp_Pln.hxx>
 #if defined(_WIN32)
 #include <WNT_Window.hxx>
@@ -48,6 +47,15 @@ Handle(Aspect_Window) opad_make_cocoa_window(void* nsview);
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 #include "Jobs.hpp"
+#include "NavCube.hpp"
+#include <TColStd_ListOfInteger.hxx>
+#include <Prs3d_DatumAspect.hxx>
+#include <Prs3d_ShadingAspect.hxx>
+#include <Prs3d_TextAspect.hxx>
+
+namespace {
+constexpr int kCubeOffsetX = 100, kCubeOffsetY = 104;  // view cube centre from the top-right corner, in px
+}  // namespace
 
 namespace {
 
@@ -99,6 +107,23 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
 
 Viewport::~Viewport() { *m_alive = false; }
 
+void Viewport::benchShot(const QString& path) {
+  if (!m_initialised) return;
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
+  // Hover point relative to the cube centre (default: the TOP face); OPAD_BENCH_HOVER="dx,dy" overrides it.
+  int dx = 0, dy = -36;
+  const QByteArray hoverEnv = qgetenv("OPAD_BENCH_HOVER");
+  if (hoverEnv.contains(',')) { dx = hoverEnv.split(',')[0].toInt(); dy = hoverEnv.split(',')[1].toInt(); }
+  m_ctx->MoveTo(w - kCubeOffsetX + dx, kCubeOffsetY + dy, m_view, Standard_False);
+  TColStd_ListOfInteger cubeModes;
+  m_ctx->ActivatedModes(m_cube, cubeModes);
+  trace::log(QStringLiteral("bench: cube hover at (%1,%2): detected=%3 isCube=%4 cubeModes=%5 cubeHasSel0=%6").arg(w - kCubeOffsetX + dx).arg(kCubeOffsetY + dy).arg(m_ctx->HasDetected()).arg(m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube).arg(cubeModes.Size()).arg(m_cube->HasSelection(0)));
+  m_view->Redraw();
+  m_view->RedrawImmediate();
+  grabImage().save(path);
+}
+
 void Viewport::initViewer() {
   if (m_initialised) return;
   trace::Scope scope("Viewport::initViewer");
@@ -131,7 +156,7 @@ void Viewport::initViewer() {
   m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
   m_view->SetProj(V3d_XposYnegZpos);
 
-  m_cube = new AIS_ViewCube();
+  m_cube = new NavCube();  // a plain cube whose edges and corners are still hover/click targets
   m_cube->SetSize(58);
   m_cube->SetFontHeight(11);
   m_cube->SetAxesLabels("X", "Y", "Z");
@@ -141,12 +166,13 @@ void Viewport::initViewer() {
   m_cube->SetBoxSideLabel(V3d_Ypos, "BACK");
   m_cube->SetBoxSideLabel(V3d_Xpos, "RIGHT");
   m_cube->SetBoxSideLabel(V3d_Xneg, "LEFT");
-  m_cube->SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER, Graphic3d_Vec2i(80, 76)));
+  m_cube->SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER, Graphic3d_Vec2i(kCubeOffsetX, kCubeOffsetY)));
   m_cube->SetViewAnimation(myViewAnimation);
   m_cube->SetFixedAnimationLoop(Standard_False);
   m_cube->SetAutoStartAnimation(Standard_True);
   m_ctx->Display(m_cube, Standard_False);
-  m_ctx->Activate(m_cube, 0);  // auto-activation is off (see above), so the cube asks for its picking mode itself
+  m_ctx->Load(m_cube, -1);  // register with the selection manager: Display() with auto-activation off does not
+  m_ctx->Activate(m_cube, 0);
 
   SetRotationMode(AIS_RotationMode_BndBoxActive);
   SetLockOrbitZUp(Standard_True);
@@ -182,24 +208,45 @@ void Viewport::applyTokens() {
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(occ(t.sel));
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetTransparency(0.5f);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetTransparency(0.35f);
-  // View cube: flat three-tone box (m-top sides, m-left edges, m-right corners), fg labels, no axes.
+  // View cube per the design: flat three-tone box with dark labels, thin X/Y/Z axes in red/green/blue along
+  // the lower edges, and the hovered face/edge/corner filled with the hover accent to show where a click goes.
   m_cube->SetBoxColor(occ(t.mtop));
   m_cube->BoxSideStyle()->SetColor(occ(t.mtop));
-  m_cube->BoxEdgeStyle()->SetColor(occ(t.mleft));
-  m_cube->BoxCornerStyle()->SetColor(occ(t.mright));
-  m_cube->SetTextColor(occ(t.dark ? t.medge : t.medge));
+  m_cube->BoxEdgeStyle()->SetColor(occ(t.mtop));    // edge and corner bands are drawn on the faces: same colour = invisible
+  m_cube->BoxCornerStyle()->SetColor(occ(t.mtop));
+  m_cube->SetTextColor(occ(t.medge));
   m_cube->SetInnerColor(occ(t.mleft));
   m_cube->SetBoxTransparency(0.0);
-  m_cube->SetDrawAxes(Standard_False);
-  m_cube->SetSize(36);
-  m_ctx->Redisplay(m_cube, Standard_False);
-  // Axis triad bottom-left: fg3 arms, fg2 labels.
-  m_view->TriedronDisplay(Aspect_TOTP_LEFT_LOWER, occ(t.fg3), 0.06, V3d_ZBUFFER);
-  Handle(V3d_Trihedron) tri = m_view->Trihedron();
-  if (!tri.IsNull()) {
-    tri->SetArrowsColor(occ(t.fg3), occ(t.fg3), occ(t.fg3));
-    tri->SetLabelsColor(occ(t.fg2));
+  m_cube->SetSize(64);
+  m_cube->SetRoundRadius(0.0);  // a plain cube: no bevelled edges or corners
+  m_cube->SetBoxFacetExtension(0.0);
+  m_cube->SetBoxEdgeGap(0.0);
+  m_cube->SetBoxEdgeMinSize(0.0);
+  m_cube->SetBoxCornerMinSize(0.0);
+  m_cube->Attributes()->SetFaceBoundaryDraw(Standard_True);  // crisp edges between the faces, as in the design
+  m_cube->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(t.medge), Aspect_TOL_SOLID, 1.0));
+  m_cube->SetDrawAxes(Standard_True);
+  m_cube->SetAxesPadding(6);
+  m_cube->SetAxesRadius(0.6);
+  m_cube->SetAxesConeRadius(1.2);
+  m_cube->SetAxesSphereRadius(1.0);
+  const QColor axisColor[3] = {t.dark ? QColor("#e05a52") : QColor("#c62828"), t.dark ? QColor("#4fc46a") : QColor("#2e7d32"), t.dark ? QColor("#5b95f5") : QColor("#1e5fd1")};
+  const Prs3d_DatumParts axisPart[3] = {Prs3d_DatumParts_XAxis, Prs3d_DatumParts_YAxis, Prs3d_DatumParts_ZAxis};
+  Handle(Prs3d_DatumAspect) axes = m_cube->Attributes()->DatumAspect();
+  for (int i = 0; i < 3; ++i) {
+    axes->ShadingAspect(axisPart[i])->SetColor(occ(axisColor[i]));
+    axes->LineAspect(axisPart[i])->SetColor(occ(axisColor[i]));
+    axes->TextAspect(axisPart[i])->SetColor(occ(axisColor[i]));
+    axes->TextAspect(axisPart[i])->SetHeight(11);
   }
+  // The cube draws its hover fill with the dynamic-highlight drawer's shading aspect (not its colour), so
+  // recolour the aspect OCCT set up rather than replacing the drawer.
+  m_cube->DynamicHilightAttributes()->ShadingAspect()->SetColor(occ(t.hov));
+  m_cube->DynamicHilightAttributes()->ShadingAspect()->SetTransparency(0.3f);
+  // Edge and corner fills lie in the face planes (NavCube); pull the fill a hair towards the eye so it wins
+  // the depth test instead of fighting the face.
+  m_cube->DynamicHilightAttributes()->ShadingAspect()->Aspect()->SetPolygonOffsets(Aspect_POM_Fill, -1.0f, -1.0f);
+  m_ctx->Redisplay(m_cube, Standard_False);
   setStyle(m_style);
   updateAnnotations();
   updateClipPlanes();
@@ -486,9 +533,10 @@ void Viewport::isolate(const std::vector<std::string>& ids) {
   m_isolated.clear();
   for (const auto& id : ids)
     for (const auto& b : m_doc->scene.bodies_under(id)) m_isolated.insert(b);
-  m_needFit = !ids.empty();
+  m_needFit = !m_isolated.empty();
   sync();
-  if (!ids.empty()) fitAll();
+  if (!m_isolated.empty()) fitAll();
+  emit isolationChanged();
 }
 
 // ---------------------------------------------------------------- camera (F17/F18)
@@ -567,6 +615,22 @@ void Viewport::standardView(const QString& name) {
 }
 
 void Viewport::home() { standardView("iso"); }
+
+void Viewport::rollView(double degrees) {
+  if (!m_initialised) return;
+  m_needFit = false;
+  Handle(Graphic3d_Camera) cam = m_view->Camera();
+  Handle(Graphic3d_Camera) start = new Graphic3d_Camera(*cam), end = new Graphic3d_Camera(*cam);
+  gp_Dir up = cam->Up();
+  up.Rotate(gp_Ax1(gp::Origin(), cam->Direction()), degrees * M_PI / 180.0);  // about the axis into the screen
+  end->SetUp(up);
+  myViewAnimation->SetView(m_view);
+  myViewAnimation->SetCameraStart(start);
+  myViewAnimation->SetCameraEnd(end);
+  myViewAnimation->SetOwnDuration(0.25);
+  myViewAnimation->StartTimer(0.0, 1.0, Standard_True);  // the 16 ms timer redraws while it runs
+  requestRedraw();
+}
 
 opad::json Viewport::cameraJson() const {
   opad::json j;
@@ -817,12 +881,24 @@ void Viewport::sync() {
       m_prs.clear();
     }
   }
+  if (!m_isolated.empty()) {  // the mode ends by itself once every isolated object is gone (deleted)
+    bool any = false;
+    for (const auto& id : m_isolated) {
+      const opad::Node* n = scene.node(id);
+      if (n && !n->body_missing) { any = true; break; }
+    }
+    if (!any) {
+      m_isolated.clear();
+      emit isolationChanged();
+    }
+  }
   std::set<std::string> keep, replace;
   std::vector<std::string> pending, toAdd;
   for (const auto& id : scene.all_bodies()) {
     const opad::Node* n = scene.node(id);
-    if (!n || n->body_missing || !scene.effectively_visible(id)) continue;
-    if (!m_isolated.empty() && !m_isolated.count(id)) continue;
+    if (!n || n->body_missing) continue;
+    // Isolate mode shows exactly the isolated set and ignores visibility flags; otherwise the flags rule.
+    if (!m_isolated.empty() ? !m_isolated.count(id) : !scene.effectively_visible(id)) continue;
     auto it = m_items.find(id);
     if (it != m_items.end() && it->second.key == n->body_key && it->second.world.m == scene.world(id).m) {
       keep.insert(id);
@@ -1045,11 +1121,21 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   setFocus();
   m_pressPos = e->pos();
   m_rightPress = e->button() == Qt::RightButton;
+  // A left press on the view cube: dragging orbits the view (the cube turns with it); a click without movement
+  // still goes through the controller's click path and snaps to the picked side.
+  if (m_initialised && e->button() == Qt::LeftButton && e->modifiers() == Qt::NoModifier && m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube) {
+    ChangeMouseGestureMap().Bind(Aspect_VKeyMouse_LeftButton, AIS_MouseGesture_RotateOrbit);
+    m_cubeGesture = true;
+  }
   if (m_initialised && UpdateMouseButtons(devicePos(e->position()), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
 }
 
 void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   if (m_initialised && UpdateMouseButtons(devicePos(e->position()), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
+  if (m_cubeGesture && e->button() == Qt::LeftButton) {
+    m_cubeGesture = false;
+    ChangeMouseGestureMap().Bind(Aspect_VKeyMouse_LeftButton, AIS_MouseGesture_SelectRectangle);
+  }
   if (m_rightPress && e->button() == Qt::RightButton && (e->pos() - m_pressPos).manhattanLength() < 4) {
     m_rightPress = false;
     emit contextMenuRequested(e->globalPosition().toPoint());

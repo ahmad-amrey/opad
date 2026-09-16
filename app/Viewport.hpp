@@ -61,8 +61,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void fitNodes(const std::vector<std::string>& ids);
   void standardView(const QString& name);
   void home();
+  void rollView(double degrees);  // animated turn about the view axis; positive = counter-clockwise on screen
 
   void warmUp();  // create the OpenGL viewer now rather than on first paint
+  void benchShot(const QString& path);  // --bench-select with OPAD_BENCH_SHOT: hover the view cube, save a frame
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
   void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner
   std::vector<opad::Ref> selection() const;
@@ -70,8 +72,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // that would take longer than ~0.5 s to highlight are shown as translucent boxes instead.
   void selectNodes(const std::vector<std::string>& ids);
   void clearSelection();  // emits selectionChanged() once the un-highlight has settled
-  void isolate(const std::vector<std::string>& ids);  // empty = show everything again
+  // Isolate mode: exactly these nodes' bodies are shown, whatever their visibility flags say, until
+  // isolate({}) or until none of them exists any more (all deleted). isolationChanged() reports both.
+  void isolate(const std::vector<std::string>& ids);  // empty = exit the mode
   bool isIsolated() const { return !m_isolated.empty(); }
+  int isolatedCount() const { return static_cast<int>(m_isolated.size()); }
 
   void setSection(bool enabled, const opad::Vec3& origin, const opad::Vec3& normal, bool caps = true);
   bool sectionEnabled() const { return m_sectionEnabled; }
@@ -90,6 +95,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void hoverChanged(const QString& text);
   void contextMenuRequested(const QPoint& globalPos);
   void meshingProgress(int remaining);
+  void isolationChanged();  // entered, left, or left because every isolated object was deleted
 
  public slots:
   void sync();
@@ -176,4 +182,5 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QString m_hover;
   QPoint m_pressPos;
   bool m_rightPress = false;
+  bool m_cubeGesture = false;  // this left press started on the view cube: dragging orbits instead of rubber-banding
 };

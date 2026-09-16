@@ -76,6 +76,7 @@ class BrowserPanel : public QWidget {
   void selectParent();  // replaces the selection by its parents
   void expandAll();
   void collapseAll();  // everything but the document row
+  void scrollToSelected();
 
  signals:
   void selectionChanged(const std::vector<std::string>& ids);
@@ -95,7 +96,7 @@ class BrowserPanel : public QWidget {
   BrowserTree* m_tree;
   QLineEdit* m_filter;
   QLabel* m_breadcrumb;
-  QToolButton *m_parentBtn, *m_expandBtn, *m_collapseBtn;
+  QToolButton *m_parentBtn, *m_locateBtn, *m_expandBtn, *m_collapseBtn;
   QLabel* m_empty;
   std::unordered_map<std::string, QTreeWidgetItem*> m_index;  // node id -> item, rebuilt with the tree
   bool m_updating = false;
@@ -199,11 +200,12 @@ class ViewportChips : public QWidget {
   Q_OBJECT
  public:
   explicit ViewportChips(QWidget* parent = nullptr);
-  void set(const QString& mode, const QString& projection, const QString& section);
+  void set(const QString& mode, const QString& projection, const QString& section, const QString& isolate);
  private:
   QLabel* m_mode;
   QLabel* m_proj;
   QLabel* m_section;
+  QLabel* m_isolate;
 };
 
 // ---------------------------------------------------------------- timeline
