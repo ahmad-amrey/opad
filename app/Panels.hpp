@@ -153,6 +153,7 @@ class SectionPanel : public QWidget {
   explicit SectionPanel(AppDocument* doc, QWidget* parent = nullptr);
   bool enabled() const { return m_enabled; }
   opad::Vec3 origin() const;
+  bool pickRange(double& dmin, double& dmax) const;  // the model's extent along the picked normal
   opad::Vec3 normal() const;
   bool caps() const;
   bool picking() const { return m_pick; }  // "Pick face" is active: the next planar face picked in the view sets the plane

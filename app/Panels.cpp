@@ -919,6 +919,11 @@ SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     opad::Vec3 lo, hi;
     if (!opad::scene_bbox(m_doc->doc, m_doc->scene, {}, lo, hi)) return;
     double v = m_value->text().section(' ', 0, 0).toDouble();
+    if (m_pick) {
+      double dmin, dmax;
+      if (pickRange(dmin, dmax)) m_slider->setValue(static_cast<int>(std::clamp((v - dmin) / (dmax - dmin), 0.0, 1.0) * 1000));
+      return;
+    }
     double range = hi[m_axis] - lo[m_axis];
     if (range > 0) m_slider->setValue(static_cast<int>(std::clamp((v - lo[m_axis]) / range, 0.0, 1.0) * 1000));
   });
@@ -934,8 +939,29 @@ SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   emitChange();
 }
 
+bool SectionPanel::pickRange(double& dmin, double& dmax) const {
+  opad::Vec3 lo, hi;
+  if (!opad::scene_bbox(m_doc->doc, m_doc->scene, {}, lo, hi)) return false;
+  dmin = 1e300;
+  dmax = -1e300;
+  for (int i = 0; i < 8; ++i) {
+    const double x = (i & 1) ? hi[0] : lo[0], y = (i & 2) ? hi[1] : lo[1], z = (i & 4) ? hi[2] : lo[2];
+    const double d = x * m_pickNormal[0] + y * m_pickNormal[1] + z * m_pickNormal[2];
+    dmin = std::min(dmin, d);
+    dmax = std::max(dmax, d);
+  }
+  return dmax > dmin;
+}
+
 opad::Vec3 SectionPanel::origin() const {
-  if (m_pick) return m_pickOrigin;
+  if (m_pick) {
+    // The slider slides the picked plane along its normal; 0..1000 spans the model in that direction.
+    double dmin, dmax;
+    if (!pickRange(dmin, dmax)) return m_pickOrigin;
+    const double d = dmin + m_slider->value() / 1000.0 * (dmax - dmin);
+    const double d0 = m_pickOrigin[0] * m_pickNormal[0] + m_pickOrigin[1] * m_pickNormal[1] + m_pickOrigin[2] * m_pickNormal[2];
+    return {m_pickOrigin[0] + m_pickNormal[0] * (d - d0), m_pickOrigin[1] + m_pickNormal[1] * (d - d0), m_pickOrigin[2] + m_pickNormal[2] * (d - d0)};
+  }
   opad::Vec3 lo{0, 0, 0}, hi{0, 0, 0};
   if (!opad::scene_bbox(m_doc->doc, m_doc->scene, {}, lo, hi)) return {0, 0, 0};
   opad::Vec3 o{(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2};
@@ -955,9 +981,11 @@ bool SectionPanel::caps() const { return m_capButton->isChecked(); }
 void SectionPanel::emitChange() {
   const char axes[] = {'X', 'Y', 'Z'};
   opad::Vec3 o = origin();
-  m_value->setText(QString("%1 mm").arg(o[m_axis], 0, 'f', 1));
-  m_state->setText(m_enabled ? QString::fromUtf8("Section %1 = %2 mm · drag the slider, Shift+X flips").arg(axes[m_axis]).arg(o[m_axis], 0, 'f', 1)
-                             : tr("Section off · press X or use View › Section to enable"));
+  const double along = m_pick ? o[0] * m_pickNormal[0] + o[1] * m_pickNormal[1] + o[2] * m_pickNormal[2] : o[m_axis];  // pick mode: distance along the face normal
+  m_value->setText(QString("%1 mm").arg(along, 0, 'f', 1));
+  m_state->setText(!m_enabled ? tr("Section off · press X or use View › Section to enable")
+                   : m_pick ? QString::fromUtf8("Section along the picked face = %1 mm · drag the slider, Shift+X flips").arg(along, 0, 'f', 1)
+                            : QString::fromUtf8("Section %1 = %2 mm · drag the slider, Shift+X flips").arg(axes[m_axis]).arg(o[m_axis], 0, 'f', 1));
   emit planeChanged();
 }
 
@@ -982,6 +1010,12 @@ void SectionPanel::setFromFace(const opad::Vec3& origin, const opad::Vec3& norma
   m_pickOrigin = origin;
   m_pickNormal = normal;
   for (int k = 0; k < 4; ++k) m_axisButtons[k]->setChecked(k == 3);
+  double dmin, dmax;
+  if (pickRange(dmin, dmax)) {  // start the slider at the face itself, so the plane does not jump
+    const double d0 = origin[0] * normal[0] + origin[1] * normal[1] + origin[2] * normal[2];
+    QSignalBlocker block(m_slider);
+    m_slider->setValue(static_cast<int>(std::clamp((d0 - dmin) / (dmax - dmin), 0.0, 1.0) * 1000));
+  }
   emitChange();
 }
 
