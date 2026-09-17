@@ -22,21 +22,45 @@
       }
     },
     {
+      "name": "linux",
+      "displayName": "Linux (distro packages)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
       "name": "core-only",
       "displayName": "core + cli only (no Qt, no Python)",
       "inherits": "vcpkg",
       "binaryDir": "${sourceDir}/build/core",
       "cacheVariables": { "OPAD_BUILD_APP": "OFF", "OPAD_BUILD_PYTHON": "OFF" }
+    },
+    {
+      "name": "linux-mingw64",
+      "displayName": "Linux -> Windows x64 cross build (vcpkg + mingw-w64)",
+      "inherits": "vcpkg",
+      "binaryDir": "${sourceDir}/build/mingw64-cross",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-dynamic",
+        "OPAD_BUILD_PYTHON": "OFF",
+        "CMAKE_CROSSCOMPILING_EMULATOR": "wine"
+      }
     }
   ],
   "buildPresets": [
     { "name": "vcpkg", "configurePreset": "vcpkg" },
     { "name": "msys2-mingw64", "configurePreset": "msys2-mingw64" },
-    { "name": "core-only", "configurePreset": "core-only" }
+    { "name": "core-only", "configurePreset": "core-only" },
+    { "name": "linux", "configurePreset": "linux" },
+    { "name": "linux-mingw64", "configurePreset": "linux-mingw64" }
   ],
   "testPresets": [
     { "name": "vcpkg", "configurePreset": "vcpkg", "output": { "outputOnFailure": true } },
     { "name": "msys2-mingw64", "configurePreset": "msys2-mingw64", "output": { "outputOnFailure": true } },
-    { "name": "core-only", "configurePreset": "core-only", "output": { "outputOnFailure": true } }
+    { "name": "core-only", "configurePreset": "core-only", "output": { "outputOnFailure": true } },
+    { "name": "linux", "configurePreset": "linux", "output": { "outputOnFailure": true } },
+    { "name": "linux-mingw64", "configurePreset": "linux-mingw64", "output": { "outputOnFailure": true } }
   ]
 }

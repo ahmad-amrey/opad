@@ -6,6 +6,7 @@
 #include <Prs3d_Presentation.hxx>
 #include <Prs3d_ShadingAspect.hxx>
 #include <PrsMgr_PresentationManager.hxx>
+#include <Standard_Version.hxx>
 #include <V3d.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
@@ -103,7 +104,11 @@ void NavCube::HilightOwnerWithColor(const Handle(PrsMgr_PresentationManager)& mg
   const Graphic3d_ZLayerId layer = style->ZLayer() != Graphic3d_ZLayerId_UNKNOWN ? style->ZLayer() : myDrawer->ZLayer();
   Handle(Prs3d_Presentation) prs = GetHilightPresentation(mgr);
   prs->Clear();
+#if OCC_VERSION_HEX >= 0x070700
   prs->CStructure()->ViewAffinity = ViewAffinity();
+#else
+  prs->CStructure()->ViewAffinity = mgr->StructureManager()->ObjectAffinity(Handle(Standard_Transient)(this));
+#endif
   prs->SetTransformPersistence(TransformPersistence());
   prs->SetZLayer(layer);
   Handle(Graphic3d_Group) group = prs->NewGroup();

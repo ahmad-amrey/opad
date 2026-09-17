@@ -11,12 +11,13 @@ import sys
 import tempfile
 
 CLI = os.path.abspath(sys.argv[1])
+EMULATOR = os.environ.get("OPAD_TEST_EMULATOR", "").split()  # e.g. wine, for a cross-built opad-cli.exe
 FIXTURES = os.path.abspath(sys.argv[2])
 FAILED = 0
 
 
 def run(*args, expect_ok=True, stdin=None):
-    p = subprocess.run([CLI, *args], capture_output=True, text=True, input=stdin)
+    p = subprocess.run([*EMULATOR, CLI, *args], capture_output=True, text=True, input=stdin)
     if expect_ok and p.returncode != 0:
         raise AssertionError(f"opad-cli {' '.join(args)} failed:\n{p.stderr}")
     if not expect_ok and p.returncode == 0:

@@ -1,5 +1,6 @@
 #include "BodyShape.hpp"
 
+#include <AIS_DisplayMode.hxx>
 #include <BRep_Tool.hxx>
 #include <Graphic3d_Group.hxx>
 #include <Prs3d_LineAspect.hxx>

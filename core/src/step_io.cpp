@@ -609,14 +609,16 @@ ExportResult export_selection(const Document& doc, const Scene& scene, const std
 
   if (fmt == "step" || fmt == "stp") {
     Handle(TDocStd_Document) xdoc = build_xcaf(doc, scene, bodies, false, opt.tolerance);
-    STEPCAFControl_Writer writer;
-    writer.SetColorMode(Standard_True);
-    writer.SetNameMode(Standard_True);
+    // Set the writer parameters before constructing the writer: OCCT 7.6 stamps FILE_SCHEMA when the writer's
+    // model is created, so a schema set afterwards only reaches the data section.
     std::string schema = opt.step_schema;
     std::transform(schema.begin(), schema.end(), schema.begin(), [](unsigned char c) { return std::toupper(c); });
     Interface_Static::SetCVal("write.step.schema", schema == "AP242" ? "AP242DIS" : schema == "AP203" ? "AP203" : "AP214");
     Interface_Static::SetCVal("write.step.unit", "MM");
     Interface_Static::SetCVal("write.step.product.name", out.stem().string().c_str());
+    STEPCAFControl_Writer writer;
+    writer.SetColorMode(Standard_True);
+    writer.SetNameMode(Standard_True);
     try {
       if (!writer.Transfer(xdoc, STEPControl_AsIs)) throw Error("STEP transfer failed");
       if (writer.Write(out.string().c_str()) != IFSelect_RetDone) throw Error("STEP write failed: " + out.string());

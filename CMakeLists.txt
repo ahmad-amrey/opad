@@ -28,6 +28,9 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
+if(MINGW)
+  include(cmake/mingw.cmake)  # thread-model check, runtime DLLs staged in bin/
+endif()
 
 find_package(OpenCASCADE CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)

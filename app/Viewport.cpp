@@ -159,7 +159,7 @@ void Viewport::initViewer() {
 #elif defined(__APPLE__)
   Handle(Aspect_Window) win = opad_make_cocoa_window(reinterpret_cast<void*>(winId()));
 #else
-  Handle(Xw_Window) win = new Xw_Window(disp, static_cast<Window>(winId()));
+  Handle(Xw_Window) win = new Xw_Window(disp, static_cast<Aspect_Drawable>(winId()));
 #endif
   m_view->SetWindow(win);
   if (!win->IsMapped()) win->Map();

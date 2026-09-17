@@ -1,9 +1,19 @@
 #include "opad/mesh.hpp"
 
-#include <BRepLib_ToolTriangulatedShape.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRep_Tool.hxx>
 #include <Poly_Triangulation.hxx>
+#include <Standard_Version.hxx>
+#if OCC_VERSION_HEX >= 0x070800
+#include <BRepLib_ToolTriangulatedShape.hxx>
+#else
+#include <Geom_Surface.hxx>
+#include <GeomLib.hxx>
+#include <Poly.hxx>
+#include <Poly_Connect.hxx>
+#include <Precision.hxx>
+#include <TopLoc_Location.hxx>
+#endif
 #include <TopExp.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
@@ -20,6 +30,49 @@
 
 namespace opad {
 
+namespace {
+
+// Per-node normals for a face triangulation. OCCT 7.8 ships this as BRepLib_ToolTriangulatedShape::ComputeNormals;
+// 7.6/7.7 only have it in the visualisation toolkit (StdPrs), which core must not link, so this mirrors that
+// algorithm: the surface normal at each node's UV, falling back to the average of the adjacent triangle normals
+// where the surface normal is degenerate. Orientation is not applied here; the caller reverses for REVERSED faces.
+void compute_normals(const TopoDS_Face& face, const Handle(Poly_Triangulation)& tri) {
+#if OCC_VERSION_HEX >= 0x070800
+  BRepLib_ToolTriangulatedShape::ComputeNormals(face, tri);
+#else
+  if (tri.IsNull() || tri->HasNormals()) return;
+  const TopoDS_Face zero_face = TopoDS::Face(face.Located(TopLoc_Location()));
+  Handle(Geom_Surface) surf = BRep_Tool::Surface(zero_face);
+  if (!tri->HasUVNodes() || surf.IsNull()) {
+    Poly::ComputeNormals(tri);
+    return;
+  }
+  const double tol = Precision::Confusion();
+  Poly_Connect connect;
+  tri->AddNormals();
+  for (int ni = 1; ni <= tri->NbNodes(); ++ni) {
+    gp_Dir n;
+    if (GeomLib::NormEstim(surf, tri->UVNode(ni), tol, n) > 1) {
+      if (connect.Triangulation() != tri) connect.Load(tri);
+      gp_XYZ sum(0.0, 0.0, 0.0);
+      for (connect.Initialize(ni); connect.More(); connect.Next()) {
+        int a, b, c;
+        tri->Triangle(connect.Value()).Get(a, b, c);
+        const gp_XYZ v1 = tri->Node(b).Coord() - tri->Node(a).Coord();
+        const gp_XYZ v2 = tri->Node(c).Coord() - tri->Node(b).Coord();
+        const gp_XYZ cross = v1 ^ v2;
+        const double len = cross.Modulus();
+        if (len >= tol) sum += cross / len;
+      }
+      n = sum.Modulus() > tol ? gp_Dir(sum) : gp::DZ();
+    }
+    tri->SetNormal(ni, n);
+  }
+#endif
+}
+
+}  // namespace
+
 Mesh tessellate(const TopoDS_Shape& s, double linear_tol, double angular_deg) {
   Mesh mesh;
   if (s.IsNull()) return mesh;
@@ -33,7 +86,7 @@ Mesh tessellate(const TopoDS_Shape& s, double linear_tol, double angular_deg) {
     TopLoc_Location loc;
     Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
     if (tri.IsNull() || tri->NbTriangles() == 0) continue;
-    if (!tri->HasNormals()) BRepLib_ToolTriangulatedShape::ComputeNormals(face, tri);
+    if (!tri->HasNormals()) compute_normals(face, tri);
     const gp_Trsf trsf = loc.Transformation();
     const bool reversed = face.Orientation() == TopAbs_REVERSED;
     const uint32_t base = static_cast<uint32_t>(mesh.positions.size() / 3);

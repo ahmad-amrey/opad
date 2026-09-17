@@ -6,7 +6,7 @@
   "dependencies": [
     { "name": "opencascade", "features": [] },
     "nlohmann-json",
-    "pybind11",
+    { "name": "pybind11", "platform": "!mingw" },
     { "name": "qtbase", "default-features": false, "features": ["widgets", "opengl"], "platform": "!ios & !android" }
   ],
   "builtin-baseline": "b322364f06308bdd24823f9d8f03fe0cc86fd46f"

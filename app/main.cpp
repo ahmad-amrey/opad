@@ -10,6 +10,12 @@
 int main(int argc, char** argv) {
   installCrashHandler();
   opad::configure_kernel_logging();
+#if !defined(_WIN32) && !defined(__APPLE__)
+  // The viewport hands winId() to OCCT as an X11 window (Xw_Window). Under the Wayland platform plugin that is a
+  // wl_surface handle instead and the first X request fails with BadWindow, so run on X11 (XWayland) unless the
+  // user chose a platform explicitly.
+  if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "xcb");
+#endif
   QApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
   QApplication app(argc, argv);
   QApplication::setApplicationName("OPAD");

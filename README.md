@@ -53,9 +53,24 @@ cmake --preset msys2-mingw64 && cmake --build --preset msys2-mingw64 && ctest --
 **Ubuntu 24.04:**
 
 ```
-sudo apt install cmake ninja-build g++ libocct-*-dev qt6-base-dev nlohmann-json3-dev pybind11-dev python3-dev
-cmake -S . -B build -G Ninja && cmake --build build && ctest --test-dir build
+sudo apt install cmake ninja-build g++ libocct-*-dev libtbb-dev qt6-base-dev nlohmann-json3-dev pybind11-dev python3-dev libgl1-mesa-dev
+cmake --preset linux && cmake --build --preset linux && ctest --preset linux
 ```
+
+**Cross-compiling for Windows on Linux (vcpkg + mingw-w64, Ubuntu/Debian):**
+
+```
+sudo apt install g++-mingw-w64-x86-64-posix wine   # wine only to run the tests
+sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+export VCPKG_ROOT=/path/to/vcpkg
+cmake --preset linux-mingw64 && cmake --build --preset linux-mingw64 && ctest --preset linux-mingw64
+```
+
+The posix thread flavour is required (the configure step refuses win32). The first configure builds OCCT and Qt
+from source through vcpkg, which takes hours; later runs use vcpkg's binary cache. `build/mingw64-cross/bin`
+ends up self-contained (all DLLs and Qt's platform plugin staged next to the executables), ready to zip.
+The Python module is off in this preset since it needs a Windows Python to link against.
 
 Options: `OPAD_BUILD_APP`, `OPAD_BUILD_CLI`, `OPAD_BUILD_PYTHON`, `OPAD_BUILD_PLUGINS`, `OPAD_BUILD_TESTS` (all ON).
 The `core-only` preset builds just the library and CLI.
