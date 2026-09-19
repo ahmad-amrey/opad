@@ -18,9 +18,7 @@ set_tests_properties(step PROPERTIES FIXTURES_REQUIRED step_fixtures ENVIRONMENT
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND AND OPAD_BUILD_CLI)
   add_test(NAME cli COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_cli.py $<TARGET_FILE:opad-cli> ${OPAD_FIXTURE_DIR})
-  string(REPLACE ";" " " _opad_emulator "${CMAKE_CROSSCOMPILING_EMULATOR}")
-  set_tests_properties(cli PROPERTIES FIXTURES_REQUIRED step_fixtures
-    ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache;OPAD_TEST_EMULATOR=${_opad_emulator}")
+  set_tests_properties(cli PROPERTIES FIXTURES_REQUIRED step_fixtures ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache")
 endif()
 
 if(OPAD_BUILD_PLUGINS)

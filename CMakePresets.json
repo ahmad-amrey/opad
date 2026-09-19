@@ -1,21 +1,20 @@
 {
   "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
   "configurePresets": [
     {
-      "name": "vcpkg",
-      "displayName": "vcpkg (all platforms)",
+      "name": "base",
+      "hidden": true,
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/vcpkg",
-      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
     },
     {
-      "name": "msys2-mingw64",
-      "displayName": "MSYS2 MinGW-w64 (pacman packages)",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/mingw64",
+      "name": "windows",
+      "displayName": "Windows (MSYS2 MinGW-w64, pacman packages)",
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_PREFIX_PATH": "C:/msys64/mingw64",
         "CMAKE_C_COMPILER": "C:/msys64/mingw64/bin/gcc.exe",
         "CMAKE_CXX_COMPILER": "C:/msys64/mingw64/bin/g++.exe"
@@ -24,43 +23,33 @@
     {
       "name": "linux",
       "displayName": "Linux (distro packages)",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/linux",
-      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
     },
     {
-      "name": "core-only",
-      "displayName": "core + cli only (no Qt, no Python)",
-      "inherits": "vcpkg",
-      "binaryDir": "${sourceDir}/build/core",
-      "cacheVariables": { "OPAD_BUILD_APP": "OFF", "OPAD_BUILD_PYTHON": "OFF" }
-    },
-    {
-      "name": "linux-mingw64",
-      "displayName": "Linux -> Windows x64 cross build (vcpkg + mingw-w64)",
-      "inherits": "vcpkg",
-      "binaryDir": "${sourceDir}/build/mingw64-cross",
-      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
-      "cacheVariables": {
-        "VCPKG_TARGET_TRIPLET": "x64-mingw-dynamic",
-        "OPAD_BUILD_PYTHON": "OFF",
-        "CMAKE_CROSSCOMPILING_EMULATOR": "wine"
-      }
+      "name": "macos",
+      "displayName": "macOS (Homebrew packages)",
+      "inherits": "base",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Darwin" },
+      "cacheVariables": { "CMAKE_PREFIX_PATH": "/opt/homebrew;/usr/local" }
     }
   ],
   "buildPresets": [
-    { "name": "vcpkg", "configurePreset": "vcpkg" },
-    { "name": "msys2-mingw64", "configurePreset": "msys2-mingw64" },
-    { "name": "core-only", "configurePreset": "core-only" },
+    { "name": "windows", "configurePreset": "windows" },
     { "name": "linux", "configurePreset": "linux" },
-    { "name": "linux-mingw64", "configurePreset": "linux-mingw64" }
+    { "name": "macos", "configurePreset": "macos" }
   ],
   "testPresets": [
-    { "name": "vcpkg", "configurePreset": "vcpkg", "output": { "outputOnFailure": true } },
-    { "name": "msys2-mingw64", "configurePreset": "msys2-mingw64", "output": { "outputOnFailure": true } },
-    { "name": "core-only", "configurePreset": "core-only", "output": { "outputOnFailure": true } },
+    { "name": "windows", "configurePreset": "windows", "output": { "outputOnFailure": true } },
     { "name": "linux", "configurePreset": "linux", "output": { "outputOnFailure": true } },
-    { "name": "linux-mingw64", "configurePreset": "linux-mingw64", "output": { "outputOnFailure": true } }
+    { "name": "macos", "configurePreset": "macos", "output": { "outputOnFailure": true } }
+  ],
+  "workflowPresets": [
+    { "name": "windows", "steps": [
+      { "type": "configure", "name": "windows" }, { "type": "build", "name": "windows" }, { "type": "test", "name": "windows" } ] },
+    { "name": "linux", "steps": [
+      { "type": "configure", "name": "linux" }, { "type": "build", "name": "linux" }, { "type": "test", "name": "linux" } ] },
+    { "name": "macos", "steps": [
+      { "type": "configure", "name": "macos" }, { "type": "build", "name": "macos" }, { "type": "test", "name": "macos" } ] }
   ]
 }

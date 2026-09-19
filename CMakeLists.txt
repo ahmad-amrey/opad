@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.25)
+
 project(opad VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -29,7 +30,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 if(MINGW)
-  include(cmake/mingw.cmake)  # thread-model check, runtime DLLs staged in bin/
+  include(cmake/mingw.cmake)  # runtime DLLs staged in bin/
 endif()
 
 find_package(OpenCASCADE CONFIG REQUIRED)

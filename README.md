@@ -33,50 +33,33 @@ git add review.opad && git commit -m "review gearbox"
 
 ## Building
 
-Dependencies: CMake 3.24+, a C++20 compiler, Open CASCADE Technology 7.6+ (7.8+ recommended), nlohmann-json,
+OPAD builds natively on each OS against that OS's own packages: install the dependencies, then one command
+configures, builds and tests.
+
+| Host and target | Install | Build |
+|---|---|---|
+| Windows | [MSYS2](https://www.msys2.org), then in its shell: `pacman -S mingw-w64-x86_64-{cmake,ninja,gcc,opencascade,qt6-base,nlohmann-json,pybind11,python}` | `cmake --workflow --preset windows` |
+| Linux (Ubuntu 24.04) | `sudo apt install cmake ninja-build g++ libocct-*-dev libtbb-dev qt6-base-dev nlohmann-json3-dev pybind11-dev python3-dev libgl1-mesa-dev` | `cmake --workflow --preset linux` |
+| macOS | `xcode-select --install`, then `brew install cmake ninja opencascade qt nlohmann-json pybind11 python` | `cmake --workflow --preset macos` |
+
+The three steps can also be run one by one: `cmake --preset <os>`, `cmake --build --preset <os>`,
+`ctest --preset <os>`. Outputs land in `build/<os>/bin`: `opad` (app), `opad-cli`, `opad.pyd`/`opad.so`, the sample
+plugin and the test binaries. `tests/fixtures.cpp` generates the STEP fixtures used by the tests.
+
+Requirements: CMake 3.25+, a C++20 compiler, Open CASCADE Technology 7.6+ (7.8+ recommended), nlohmann-json,
 pybind11 (optional), Qt 6 Widgets (optional, app only).
 
-**vcpkg (Windows/macOS/Linux):**
-
-```
-export VCPKG_ROOT=/path/to/vcpkg
-cmake --preset vcpkg && cmake --build --preset vcpkg && ctest --preset vcpkg
-```
-
-**MSYS2 on Windows (fast, prebuilt packages):**
-
-```
-pacman -S mingw-w64-x86_64-{cmake,ninja,gcc,opencascade,qt6-base,nlohmann-json,pybind11,python}
-cmake --preset msys2-mingw64 && cmake --build --preset msys2-mingw64 && ctest --preset msys2-mingw64
-```
-
-**Ubuntu 24.04:**
-
-```
-sudo apt install cmake ninja-build g++ libocct-*-dev libtbb-dev qt6-base-dev nlohmann-json3-dev pybind11-dev python3-dev libgl1-mesa-dev
-cmake --preset linux && cmake --build --preset linux && ctest --preset linux
-```
-
-**Cross-compiling for Windows on Linux (vcpkg + mingw-w64, Ubuntu/Debian):**
-
-```
-sudo apt install g++-mingw-w64-x86-64-posix wine   # wine only to run the tests
-sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
-sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
-export VCPKG_ROOT=/path/to/vcpkg
-cmake --preset linux-mingw64 && cmake --build --preset linux-mingw64 && ctest --preset linux-mingw64
-```
-
-The posix thread flavour is required (the configure step refuses win32). The first configure builds OCCT and Qt
-from source through vcpkg, which takes hours; later runs use vcpkg's binary cache. `build/mingw64-cross/bin`
-ends up self-contained (all DLLs and Qt's platform plugin staged next to the executables), ready to zip.
-The Python module is off in this preset since it needs a Windows Python to link against.
-
-Options: `OPAD_BUILD_APP`, `OPAD_BUILD_CLI`, `OPAD_BUILD_PYTHON`, `OPAD_BUILD_PLUGINS`, `OPAD_BUILD_TESTS` (all ON).
-The `core-only` preset builds just the library and CLI.
-
-Build outputs land in `build/<preset>/bin`: `opad` (app), `opad-cli`, `opad.pyd`/`opad.so`, the sample plugin and
-the test binaries. `tests/fixtures.cpp` generates the STEP fixtures used by the tests.
+- **Windows:** run the commands with `C:\msys64\mingw64\bin` first on PATH. The preset expects MSYS2 in `C:\msys64`;
+  for another location override `CMAKE_PREFIX_PATH`, `CMAKE_C_COMPILER` and `CMAKE_CXX_COMPILER` with `-D` or in a
+  `CMakeUserPresets.json`. The build stages GCC's runtime DLLs next to the executables, because Git for Windows
+  puts an incompatible `libstdc++-6.dll` first on the PATH of its shells.
+- **Linux:** other distros need the same packages under their own names. On Wayland the app runs through
+  XWayland, since OCCT's viewer needs an X11 window.
+- **Options:** `OPAD_BUILD_APP`, `OPAD_BUILD_CLI`, `OPAD_BUILD_PYTHON`, `OPAD_BUILD_PLUGINS`, `OPAD_BUILD_TESTS`
+  (all ON). Pass them on the configure step, e.g. `cmake --preset linux -DOPAD_BUILD_APP=OFF` for core and CLI only.
+- **Adding a target** (another toolchain, architecture or package source): add a configure preset in
+  `CMakePresets.json` that inherits `base` and sets what differs (compiler, `CMAKE_PREFIX_PATH`, toolchain file),
+  plus matching build, test and workflow entries. It gets its own `build/<preset>` tree automatically.
 
 ## Using it in a git repository
 
@@ -122,8 +105,7 @@ named views, command search, dark/light themes, editable shortcuts and git branc
 
 Not yet: the embedded Python console (may slip to v1.1), the MCP adapter (v1.1),
 shadows are best-effort, interactive drag of the section plane (slider today), coarse-then-fine tessellation
-(bodies appear as their fine mesh finishes on a worker thread), signed installers and the iOS/Android core
-builds in CI (workflow present, unverified), 3MF export.
+(bodies appear as their fine mesh finishes on a worker thread), signed installers, CI and the iOS/Android core builds, 3MF export.
 
 ## Licence
 
