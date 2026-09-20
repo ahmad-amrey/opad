@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "AppDocument.hpp"
+#include "Theme.hpp"
 
 // ---------------------------------------------------------------- dock header (28 px: title 500 fg2, float/close 16 px)
 class QDockWidget;
@@ -33,6 +34,51 @@ class DockHeader : public QWidget {
   QSize minimumSizeHint() const override { return QSize(0, 28); }
  private:
   QLabel* m_title;
+};
+
+// ---------------------------------------------------------------- floating tool panel
+// Replaces the fixed right dock (handoff: "Floating tool panel"). A frameless tool window owned by the main
+// window, so it sits over the OpenGL viewport and hides with it. Header 32 px (drag handle; double-click puts
+// it back at its default place): icon, title 500, context fg3, pin, close. Anchored to the viewport's top-right
+// corner: MainWindow calls anchorTo() whenever the viewport moves. Place and size persist per panel id.
+class ToolPanel : public QWidget {
+  Q_OBJECT
+ public:
+  ToolPanel(const QString& id, const QString& icon, QColor Tokens::* tint, const QString& title, QWidget* content, int preferredHeight, QWidget* owner);
+  void setContext(const QString& text);
+  bool pinned() const { return m_pin->isChecked(); }
+  bool userPlaced() const { return m_userPlaced; }
+  void setDefaultTop(int top) { if (!m_userPlaced) m_offset.setY(top); }
+  int bottom() const { return m_offset.y() + height() - 2 * kMargin; }  // in viewport coordinates
+  void anchorTo(const QRect& viewportGlobal);
+  static constexpr int kMargin = 6;  // translucent rim the shadow is painted in
+ signals:
+  void visibilityChanged(bool visible);
+ protected:
+  void paintEvent(QPaintEvent*) override;
+  void mousePressEvent(QMouseEvent* e) override;
+  void mouseMoveEvent(QMouseEvent* e) override;
+  void mouseReleaseEvent(QMouseEvent* e) override;
+  void mouseDoubleClickEvent(QMouseEvent* e) override;
+  void keyPressEvent(QKeyEvent* e) override;
+  void resizeEvent(QResizeEvent* e) override;
+  void showEvent(QShowEvent*) override { emit visibilityChanged(true); }
+  void hideEvent(QHideEvent*) override { emit visibilityChanged(false); }
+ private:
+  friend class ToolPanelGrip;
+  void userPlacedNow();  // after a drag or a grip resize: remember where the panel is
+  void refreshIcons();
+  QString m_id, m_iconName;
+  QColor Tokens::* m_tint;  // header icon colour: sel for inspect tools, amber for annotations, fg2 for selection
+  QLabel *m_icon, *m_context;
+  QToolButton *m_pin, *m_close;
+  QWidget* m_grip;
+  QRect m_anchor;                    // the viewport, global
+  QPoint m_offset{8, 186};           // frame's top-right corner: x px left of the viewport's right edge, y px below its top
+  QSize m_defaultSize;
+  bool m_userPlaced = false;
+  bool m_dragging = false;
+  QPoint m_dragFrom, m_posFrom;
 };
 
 // ---------------------------------------------------------------- browser

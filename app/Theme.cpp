@@ -136,10 +136,8 @@ QString stylesheet(const Tokens& t) {
                "QTreeWidget#browserTree::item:selected, QTreeWidget#browserTree::item:hover { background: transparent; color: %4; }\n"
                "QTreeView::branch { background: transparent; }\n"
                "QHeaderView::section { background: %1; color: %5; border: none; border-bottom: 1px solid %6; height: 24px; padding-left: 8px; font-size: 11px; text-transform: uppercase; }\n").arg(bg, bg3, selbg, fg, fg3, line);
-  s += QString("QTabWidget#inspector::pane { border: none; border-top: 1px solid %1; }\n"
-               "QTabWidget#inspector > QTabBar::tab { height: 28px; padding: 0 12px; color: %2; background: transparent; border: none; border-top: 2px solid transparent; }\n"
-               "QTabWidget#inspector > QTabBar::tab:selected { background: %3; color: %4; border-top: 2px solid %5; }\n"
-               "QTabWidget#inspector > QTabBar::tab:hover { background: %3; }\n").arg(line, fg2, bg3, fg, sel);
+  s += QString("QLabel#toolPanelTitle { font-weight: 500; }\n"
+               "QLabel#toolPanelContext { color: %1; font-size: 12px; }\n").arg(fg3);
   s += QString("QStatusBar { background: %1; border-top: 1px solid %2; min-height: 24px; max-height: 24px; color: %3; font-size: 12px; }\n"
                "QStatusBar::item { border: none; }\n"
                "QStatusBar QLabel { color: %3; font-size: 12px; }\n").arg(bg, line, fg2);

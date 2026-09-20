@@ -281,7 +281,8 @@ void MainWindow::buildActions() {
   QAction* section = addAction("view.section", tr("Section"), "section", QKeySequence("X"), [this] {}, true);
   connect(section, &QAction::toggled, this, [this](bool on) {
     m_section->setEnabled(on);
-    if (on) m_inspector->setCurrentWidget(m_section);
+    if (on) openPanel(m_sectionPanel);
+    else m_sectionPanel->hide();
   });
   addAction("view.flip", tr("Flip section"), "flip", QKeySequence("Shift+X"), [this] { m_section->flip(); });
   addAction("view.isolate", tr("Isolate"), "isolate", QKeySequence("I"), [this] { m_viewport->isolate(currentNodeIds()); });
@@ -290,7 +291,8 @@ void MainWindow::buildActions() {
   m_darkAction = addAction("view.dark", tr("&Dark theme"), "", QKeySequence(), [this] {}, true);
   // Panel toggles: always enabled, so a closed dock can be reopened even with no document.
   addAction("panel.browser", tr("Browser"), "browse", QKeySequence("Ctrl+1"), [this] {}, true);
-  addAction("panel.inspector", tr("Properties"), "doc", QKeySequence("Ctrl+2"), [this] {}, true);
+  addAction("panel.annotations", tr("Annotations"), "annotate", QKeySequence("Ctrl+2"), [this] {}, true);
+  addAction("panel.section", tr("Section panel"), "section", QKeySequence(), [this] {}, true);
   addAction("panel.timeline", tr("Timeline"), "commit", QKeySequence("Ctrl+3"), [this] {}, true);
   addAction("panel.reset", tr("Reset layout"), "restore", QKeySequence(), [this] { resetLayout(); });
   m_darkAction->setChecked(m_settings.value("ui/dark", true).toBool());
@@ -318,8 +320,13 @@ void MainWindow::buildActions() {
   addAction("inspect.bbox", tr("Bounding box"), "bbox", QKeySequence("B"), [this] { measure("bbox"); });
   m_pinAction = addAction("inspect.pin", tr("Pin"), "pin", QKeySequence("P"), [this] { pinMeasurement(); });
   m_pinAction->setEnabled(false);
-  addAction("inspect.clear", tr("Clear measurement"), "", QKeySequence("Esc"), [this] { clearMeasurement(); });
-  addAction("inspect.properties", tr("Properties"), "doc", QKeySequence("Ctrl+P"), [this] { showProperties(m_viewport->selection()); m_inspector->setCurrentWidget(m_props); });
+  addAction("inspect.clear", tr("Clear measurement"), "", QKeySequence("Esc"), [this] { if (!closeTopPanel()) clearMeasurement(); });  // Esc closes a tool panel first
+  addAction("inspect.properties", tr("Properties"), "doc", QKeySequence("Ctrl+P"), [this] {
+    if (m_selRefs.empty()) m_selRefs = m_viewport->selection();
+    if (m_selRefs.empty()) throw opad::Error("Select something to see its properties.");
+    showProperties(m_selRefs);
+    openPanel(m_propsPanel);
+  });
 
   // Annotate / edit
   addAction("annotate.add", tr("Note"), "annotate", QKeySequence("N"), [this] { addAnnotation(); });
@@ -404,7 +411,7 @@ void MainWindow::buildMenus() {
   view->addSeparator();
   QMenu* nav = view->addMenu(tr("Navigation preset"));
   add(nav, {"nav.fusion", "nav.solidworks", "nav.onshape", "nav.blender"});
-  add(view, {"view.dark", "-", "panel.browser", "panel.inspector", "panel.timeline", "panel.reset"});
+  add(view, {"view.dark", "-", "panel.browser", "panel.annotations", "panel.section", "panel.timeline", "panel.reset"});
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
   add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties"});
   QMenu* tools = menuBar()->addMenu(tr("&Tools"));
@@ -434,7 +441,7 @@ void MainWindow::buildRibbon() {
   for (QAction* a : m_actions) if (a->objectName().startsWith("nav.")) navMenu->addAction(a);
   settings->addSeparator();
   settings->addAction(action("panel.browser"));
-  settings->addAction(action("panel.inspector"));
+  settings->addAction(action("panel.annotations"));
   settings->addAction(action("panel.timeline"));
   settings->addAction(action("panel.reset"));
   settings->addSeparator();
@@ -517,7 +524,8 @@ void MainWindow::buildCentral() {
 }
 
 void MainWindow::buildDocks() {
-  // Right dock takes the full height; the timeline strip runs under the browser and the viewport.
+  // The timeline strip runs under the browser and the viewport. There is no right dock: properties,
+  // annotations and section are floating tool panels over the viewport.
   setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
   setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
   setCorner(Qt::TopLeftCorner, Qt::LeftDockWidgetArea);
@@ -530,25 +538,15 @@ void MainWindow::buildDocks() {
   left->setWidget(m_browser);
   addDockWidget(Qt::LeftDockWidgetArea, left);
 
-  m_inspector = new QTabWidget(this);
-  m_inspector->setObjectName("inspector");
-  m_inspector->setTabPosition(QTabWidget::South);
-  m_inspector->setDocumentMode(true);
-  m_props = new PropertiesPanel(m_inspector);
-  m_annotations = new AnnotationsPanel(m_doc, m_inspector);
-  m_section = new SectionPanel(m_doc, m_inspector);
-  m_inspector->addTab(m_props, tr("Properties"));
-  m_inspector->addTab(m_annotations, tr("Annotations"));
-  m_inspector->addTab(m_section, tr("Section"));
-  auto* right = m_inspectorDock = new QDockWidget(tr("Properties"), this);
-  right->setObjectName("dock.inspector");
-  auto* rightHeader = new DockHeader(tr("Properties"), right);
-  right->setTitleBarWidget(rightHeader);
-  right->setWidget(m_inspector);
-  addDockWidget(Qt::RightDockWidgetArea, right);
-  connect(m_inspector, &QTabWidget::currentChanged, this, [this, rightHeader, right](int i) {
-    rightHeader->setTitle(m_inspector->tabText(i));
-    right->setWindowTitle(m_inspector->tabText(i));
+  m_props = new PropertiesPanel(this);
+  m_annotations = new AnnotationsPanel(m_doc, this);
+  m_section = new SectionPanel(m_doc, this);
+  m_propsPanel = new ToolPanel("properties", "body", &Tokens::fg2, tr("Properties"), m_props, 420, this);
+  m_annotationsPanel = new ToolPanel("annotations", "annotate", &Tokens::amber, tr("Annotations"), m_annotations, 520, this);
+  m_sectionPanel = new ToolPanel("section", "section", &Tokens::sel, tr("Section"), m_section, 420, this);
+  m_panels = {m_propsPanel, m_annotationsPanel, m_sectionPanel};
+  connect(m_propsPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
+    if (!on && m_propsJob) m_propsJob->cancel();  // nobody is looking at the component bbox any more
   });
 
   m_timeline = new TimelineWidget(m_doc, this);
@@ -560,12 +558,13 @@ void MainWindow::buildDocks() {
   bottom->setFixedHeight(48);
   addDockWidget(Qt::BottomDockWidgetArea, bottom);
 
-  resizeDocks({left, right}, {352, 384}, Qt::Horizontal);
+  resizeDocks({left}, {352}, Qt::Horizontal);
   m_props->clear();
 
   // Bind the panel actions to the docks' own toggle actions (both directions).
   bindPanel(action("panel.browser"), left);
-  bindPanel(action("panel.inspector"), right);
+  bindPanel(action("panel.annotations"), m_annotationsPanel);
+  bindPanel(action("panel.section"), m_sectionPanel);
   bindPanel(action("panel.timeline"), bottom);
 }
 
@@ -581,20 +580,49 @@ void MainWindow::bindPanel(QAction* a, QDockWidget* dock) {
   });
 }
 
+void MainWindow::bindPanel(QAction* a, ToolPanel* panel) {
+  connect(panel, &ToolPanel::visibilityChanged, a, [a](bool on) { if (a->isChecked() != on) a->setChecked(on); });
+  connect(a, &QAction::triggered, panel, [this, panel](bool on) {
+    if (on) openPanel(panel);
+    else panel->hide();
+  });
+}
+
+void MainWindow::openPanel(ToolPanel* panel) {
+  int top = 186;  // below the view cube; pinned panels already there push it down, 8 px apart
+  for (ToolPanel* o : m_panels) {
+    if (o == panel || !o->isVisible()) continue;
+    if (!o->pinned()) o->hide();
+    else if (!o->userPlaced()) top = std::max(top, o->bottom() + 8);
+  }
+  if (!panel->isVisible()) panel->setDefaultTop(top);
+  panel->anchorTo(QRect(m_viewport->mapToGlobal(QPoint(0, 0)), m_viewport->size()));
+  panel->show();
+  panel->raise();
+}
+
+bool MainWindow::closeTopPanel() {
+  for (ToolPanel* p : m_panels)
+    if (p->isVisible() && !p->pinned()) {
+      p->hide();
+      return true;
+    }
+  return false;
+}
+
 void MainWindow::resetLayout() {
-  for (QDockWidget* d : {m_browserDock, m_inspectorDock, m_timelineDock}) {
+  for (QDockWidget* d : {m_browserDock, m_timelineDock}) {
     if (!d) continue;
     d->setFloating(false);
     d->show();
   }
   addDockWidget(Qt::LeftDockWidgetArea, m_browserDock);
-  addDockWidget(Qt::RightDockWidgetArea, m_inspectorDock);
   addDockWidget(Qt::BottomDockWidgetArea, m_timelineDock);
   setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
   setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
   setCorner(Qt::TopLeftCorner, Qt::LeftDockWidgetArea);
   setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
-  resizeDocks({m_browserDock, m_inspectorDock}, {352, 384}, Qt::Horizontal);
+  resizeDocks({m_browserDock}, {352}, Qt::Horizontal);
 }
 
 void MainWindow::buildStatusBar() {
@@ -648,7 +676,11 @@ void MainWindow::showDocument(bool has) {
   if (m_pinAction) m_pinAction->setEnabled(has && !m_lastMeasure.is_null() && !m_doc->browse);
   m_browser->setViewerMode(m_doc->browse);
   updateUndoActions();
-  m_inspector->setTabVisible(m_inspector->indexOf(m_annotations), !m_doc->browse);
+  action("panel.annotations")->setEnabled(has && !m_doc->browse);
+  action("panel.section")->setEnabled(has);
+  if (!has) m_selRefs.clear();
+  for (ToolPanel* p : m_panels)
+    if (!has || (p == m_annotationsPanel && m_doc->browse)) p->hide();
   if (m_doc->browse && m_timelineDock->isVisible()) { m_timelineDock->hide(); m_timelineHiddenByViewer = true; }
   else if (!m_doc->browse && m_timelineHiddenByViewer) { m_timelineDock->show(); m_timelineHiddenByViewer = false; }
 }
@@ -690,13 +722,16 @@ void MainWindow::positionOverlays() {
   m_rollRight->raise();
   if (m_loadShade->isVisible()) {
     QRect area = m_stack->geometry();  // the workspace: central area plus the docked panels
-    for (QDockWidget* d : {m_browserDock, m_inspectorDock, m_timelineDock})
+    for (QDockWidget* d : {m_browserDock, m_timelineDock})
       if (d && d->isVisible() && !d->isFloating()) area |= d->geometry();
     m_loadShade->place(QRect(mapToGlobal(area.topLeft()), area.size()), m_viewport->mapToGlobal(m_viewport->rect().center()));
   }
   if (trace::enabled()) trace::log(QStringLiteral("viewport at %1,%2 size %3x%4").arg(m_viewport->mapToGlobal(QPoint(0, 0)).x()).arg(m_viewport->mapToGlobal(QPoint(0, 0)).y()).arg(m_viewport->width()).arg(m_viewport->height()));
   m_measureCard->move(m_viewport->width() - m_measureCard->width() - 16, m_viewport->height() - m_measureCard->height() - 16);
   m_measureCard->raise();
+  const QRect vp(m_viewport->mapToGlobal(QPoint(0, 0)), m_viewport->size());
+  for (ToolPanel* p : m_panels)
+    if (p->isVisible()) p->anchorTo(vp);  // the panels follow the viewport's top-right corner
 }
 
 void MainWindow::resizeEvent(QResizeEvent* e) {
@@ -713,7 +748,7 @@ void MainWindow::setLoading(bool on) {
   m_stack->setCurrentIndex(on || m_doc->hasDocument ? 1 : 0);  // the viewport (dimmed, spinner) rather than the start page while loading
   m_viewport->setBlocked(on);
   m_loadShade->setVisible(on);
-  for (QWidget* w : {static_cast<QWidget*>(m_browser), static_cast<QWidget*>(m_inspector), static_cast<QWidget*>(m_timeline)}) w->setEnabled(!on);
+  for (QWidget* w : std::initializer_list<QWidget*>{m_browser, m_timeline, m_propsPanel, m_annotationsPanel, m_sectionPanel}) w->setEnabled(!on);
   if (on) positionOverlays();
 }
 
@@ -777,7 +812,7 @@ void MainWindow::onViewportSelection() {
     if (seen.insert(r.body).second) ids.push_back(r.body);
   m_browser->setSelectedIds(ids);
   if (m_section && m_section->picking() && !refs.empty() && refs.front().kind == opad::Ref::Kind::Face) sectionFromFace(refs.front());
-  showProperties(refs);
+  selectionMoved(refs);
   if (refs.empty()) m_statusSel->clear();
   else m_statusSel->setText(QString::fromUtf8("%1 selected · %2").arg(refs.size()).arg(opad::Ref::kind_name(refs.front().kind)));
   scheduleSelectionSync();
@@ -789,14 +824,24 @@ void MainWindow::onBrowserSelection(const std::vector<std::string>& ids) {
   m_syncing = true;
   std::vector<opad::Ref> refs;
   for (const auto& id : ids) { opad::Ref r; r.body = id; refs.push_back(r); }
-  showProperties(refs);  // O(1): only the first ref is inspected and geometry walks are deferred to a job
+  selectionMoved(refs);
   m_statusSel->setText(ids.empty() ? QString() : QString::fromUtf8("%1 selected · body").arg(ids.size()));
   m_syncing = false;
   m_viewport->selectNodes(ids);  // sliced; selectionApplied() writes selection.json when it settles
 }
 
+// The Properties panel belongs to one selection: it is opened from the context menu (or Ctrl+P), and a new
+// selection closes it. Pinned, it stays and follows the selection. Nothing is inspected while it is closed.
+void MainWindow::selectionMoved(const std::vector<opad::Ref>& refs) {
+  m_selRefs = refs;
+  if (!m_propsPanel->isVisible()) return;
+  if (m_propsPanel->pinned()) showProperties(refs);  // O(1): only the first ref is inspected and geometry walks are deferred to a job
+  else m_propsPanel->hide();
+}
+
 void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
   if (refs.empty()) {
+    m_propsPanel->setContext(QString());
     m_props->clear();
     return;
   }
@@ -829,6 +874,7 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
       id = QString::fromStdString(r.body.substr(0, 8));
     }
     if (refs.size() > 1) subtitle += tr("  (+%1 more)").arg(refs.size() - 1);
+    m_propsPanel->setContext(r.kind == opad::Ref::Kind::Body || r.kind == opad::Ref::Kind::Point ? title : subtitle);
     m_props->showEntity(title, subtitle, id, j);
     if (component) showComponentBbox(r.body, title, subtitle, id, j);
   } catch (const std::exception& e) {
@@ -1074,14 +1120,14 @@ void MainWindow::addAnnotation() {
   if (!ok || text.trimmed().isEmpty()) return;
   opad::json r = m_doc->run("annotate", opad::json{{"anchor", anchor.str()}, {"text", text.toStdString()}});
   if (r.contains("id")) m_timeline->setCurrentOp(r["id"].get<std::string>());
-  m_inspector->setCurrentWidget(m_annotations);
+  openPanel(m_annotationsPanel);
 }
 
 void MainWindow::resolveCurrentAnnotation() {
   std::string id = m_annotations->currentOpId();
   if (id.empty()) id = m_timeline->currentOp();
   const opad::Op* op = id.empty() ? nullptr : m_doc->doc.find_op(id);
-  if (!op || op->type != "annotation") throw opad::Error("Select a note in the Annotations tab or on the timeline first.");
+  if (!op || op->type != "annotation") throw opad::Error("Select a note in the Annotations panel or on the timeline first.");
   deleteOp(id);
 }
 
@@ -1132,6 +1178,8 @@ void MainWindow::selectOpTargets(const std::string& opId) {
   ids.erase(std::remove_if(ids.begin(), ids.end(), [&](const std::string& id) { return !m_doc->node(id); }), ids.end());
   m_browser->setSelectedIds(ids);
   onBrowserSelection(ids);
+  if (!m_propsPanel->isVisible()) return;  // pinned open: show the operation itself
+  m_propsPanel->setContext(QString::fromStdString(opId.substr(0, 8)));
   m_props->showEntity(m_timeline->describe(*op), QString::fromUtf8("%1 · %2").arg(QString::fromStdString(d.value("by", "")), QString::fromStdString(d.value("ts", "")).left(16).replace('T', ' ')),
                       QString::fromStdString(opId.substr(0, 8)), d);
 }

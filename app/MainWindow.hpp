@@ -4,7 +4,6 @@
 #include <QMainWindow>
 #include <QSettings>
 #include <QStackedWidget>
-#include <QTabWidget>
 #include <QTimer>
 #include <functional>
 
@@ -60,7 +59,11 @@ class MainWindow : public QMainWindow {
 
   void onViewportSelection();
   void onBrowserSelection(const std::vector<std::string>& ids);
-  void showProperties(const std::vector<opad::Ref>& refs);
+  void showProperties(const std::vector<opad::Ref>& refs);  // fills the Properties panel; it is opened only from the context menu
+  void selectionMoved(const std::vector<opad::Ref>& refs);
+  void openPanel(ToolPanel* panel);  // places it over the viewport; replaces the other unpinned panels
+  bool closeTopPanel();              // Esc: hides one unpinned panel
+  void bindPanel(QAction* a, ToolPanel* panel);
   void showContextMenu(const QPoint& globalPos, std::vector<std::string> ids);
   void timelineMenu(const std::string& opId, const QPoint& globalPos);
   void measure(const QString& kind);
@@ -100,10 +103,14 @@ class MainWindow : public QMainWindow {
   bool m_timelineHiddenByViewer = false;
   RibbonBar* m_ribbon = nullptr;
   BrowserPanel* m_browser = nullptr;
-  QTabWidget* m_inspector = nullptr;
   PropertiesPanel* m_props = nullptr;
   AnnotationsPanel* m_annotations = nullptr;
   SectionPanel* m_section = nullptr;
+  ToolPanel* m_propsPanel = nullptr;  // floating tool panels over the viewport (no fixed right dock)
+  ToolPanel* m_annotationsPanel = nullptr;
+  ToolPanel* m_sectionPanel = nullptr;
+  QList<ToolPanel*> m_panels;
+  std::vector<opad::Ref> m_selRefs;   // the current selection as last reported by the viewport or the browser
   TimelineWidget* m_timeline = nullptr;
   QMenu* m_viewsMenu = nullptr;
   QMenu* m_recentMenu = nullptr;
@@ -127,7 +134,6 @@ class MainWindow : public QMainWindow {
   QTimer m_selFileTimer;
   bool m_benchSelect = false;
   QDockWidget* m_browserDock = nullptr;
-  QDockWidget* m_inspectorDock = nullptr;
   QDockWidget* m_timelineDock = nullptr;
   opad::json m_lastMeasure;
   QStringList m_lastMeasureTargets;

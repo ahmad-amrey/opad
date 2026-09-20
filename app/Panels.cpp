@@ -5,6 +5,7 @@
 #include <QColorDialog>
 #include <QDockWidget>
 #include <QDropEvent>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelection>
@@ -15,6 +16,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QProgressBar>
+#include <QScreen>
 #include <QSizePolicy>
 #include <QPushButton>
 #include <QSettings>
@@ -131,6 +133,190 @@ DockHeader::DockHeader(const QString& title, QDockWidget* dock) : QWidget(dock) 
 }
 
 void DockHeader::setTitle(const QString& t) { m_title->setText(t); }
+
+// ---------------------------------------------------------------- ToolPanel
+// Corner grip: resizes the panel from its bottom-right corner within the panel's min/max size.
+class ToolPanelGrip : public QWidget {
+ public:
+  explicit ToolPanelGrip(ToolPanel* panel) : QWidget(panel), m_panel(panel) {
+    setFixedSize(12, 12);
+    setCursor(Qt::SizeFDiagCursor);
+  }
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter p(this);
+    p.setPen(QPen(theme::current().fg3, 1));
+    p.drawLine(3, 10, 10, 3);
+    p.drawLine(7, 10, 10, 7);
+  }
+  void mousePressEvent(QMouseEvent* e) override {
+    m_from = e->globalPosition().toPoint();
+    m_size = m_panel->size();
+  }
+  void mouseMoveEvent(QMouseEvent* e) override {
+    if (!(e->buttons() & Qt::LeftButton)) return;
+    const QPoint d = e->globalPosition().toPoint() - m_from;
+    m_panel->resize((m_size + QSize(d.x(), d.y())).expandedTo(m_panel->minimumSize()).boundedTo(m_panel->maximumSize()));
+  }
+  void mouseReleaseEvent(QMouseEvent*) override { m_panel->userPlacedNow(); }
+ private:
+  ToolPanel* m_panel;
+  QPoint m_from;
+  QSize m_size;
+};
+
+ToolPanel::ToolPanel(const QString& id, const QString& icon, QColor Tokens::* tint, const QString& title, QWidget* content, int preferredHeight, QWidget* owner)
+    : QWidget(owner, Qt::Tool | Qt::FramelessWindowHint), m_id(id), m_iconName(icon), m_tint(tint) {
+  setAttribute(Qt::WA_TranslucentBackground);
+  setAttribute(Qt::WA_ShowWithoutActivating);
+  setWindowTitle(title);
+  const int m = kMargin;
+  setMinimumSize(280 + 2 * m, 120 + 2 * m);
+  setMaximumWidth(480 + 2 * m);
+  m_defaultSize = QSize(336 + 2 * m, preferredHeight + 2 * m);
+
+  auto* outer = new QVBoxLayout(this);
+  outer->setContentsMargins(m + 1, m + 1, m + 1, m + 1);  // shadow rim + the 1 px border
+  outer->setSpacing(0);
+  auto* header = new QWidget(this);  // takes no mouse events itself: a press on it reaches the panel and drags it
+  header->setFixedHeight(32);
+  auto* h = new QHBoxLayout(header);
+  h->setContentsMargins(8, 0, 6, 0);
+  h->setSpacing(8);
+  m_icon = new QLabel(header);
+  m_icon->setFixedSize(16, 16);
+  auto* name = new QLabel(title, header);
+  name->setObjectName("toolPanelTitle");
+  m_context = new QLabel(header);
+  m_context->setObjectName("toolPanelContext");
+  m_context->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);  // truncates instead of widening the panel
+  m_pin = new QToolButton(header);
+  m_pin->setCheckable(true);
+  m_pin->setToolTip(tr("Keep open"));
+  m_close = new QToolButton(header);
+  m_close->setToolTip(tr("Close  (Esc)"));
+  for (QToolButton* b : {m_pin, m_close}) {
+    b->setObjectName("dockButton");
+    b->setIconSize(QSize(16, 16));
+    b->setFixedSize(20, 20);
+    b->setFocusPolicy(Qt::NoFocus);
+  }
+  h->addWidget(m_icon);
+  h->addWidget(name);
+  h->addWidget(m_context, 1);
+  h->addWidget(m_pin);
+  h->addWidget(m_close);
+  outer->addWidget(header);
+  outer->addSpacing(1);  // the header's bottom line (painted)
+  content->setParent(this);
+  outer->addWidget(content, 1);
+  m_grip = new ToolPanelGrip(this);
+
+  QSettings settings;
+  const QString key = "panels/" + m_id;
+  m_pin->setChecked(settings.value(key + "/pinned", false).toBool());
+  if (settings.contains(key + "/offset")) {
+    m_offset = settings.value(key + "/offset").toPoint();
+    m_userPlaced = true;
+  }
+  resize(settings.value(key + "/size", m_defaultSize).toSize());
+
+  connect(m_close, &QToolButton::clicked, this, &QWidget::hide);
+  connect(m_pin, &QToolButton::toggled, this, [this, key](bool on) {
+    QSettings().setValue(key + "/pinned", on);
+    refreshIcons();
+  });
+  connect(theme::notifier(), &theme::Notifier::changed, this, [this] { refreshIcons(); update(); });
+  refreshIcons();
+}
+
+void ToolPanel::refreshIcons() {
+  const Tokens& t = theme::current();
+  m_icon->setPixmap(icons::pixmap(m_iconName, t.*m_tint, 16, devicePixelRatioF()));
+  m_pin->setIcon(icons::icon("pin", m_pin->isChecked() ? t.sel : t.fg2));
+  m_close->setIcon(icons::icon("close", t.fg2));
+}
+
+void ToolPanel::setContext(const QString& text) {
+  m_context->setText(text);
+  m_context->setToolTip(text);
+}
+
+void ToolPanel::anchorTo(const QRect& viewportGlobal) {
+  m_anchor = viewportGlobal;
+  const int m = kMargin;
+  auto target = [&] { return QPoint(m_anchor.right() + 1 - m_offset.x() - (width() - m), m_anchor.top() + m_offset.y() - m); };
+  // A remembered place that is on no screen any more (monitor gone) falls back to the default one.
+  if (m_userPlaced && !QGuiApplication::screenAt(target() + QPoint(width() / 2, m + 16))) {
+    m_userPlaced = false;
+    m_offset = QPoint(8, 186);
+  }
+  if (!m_userPlaced) resize(m_defaultSize.width(), std::min(m_defaultSize.height(), std::max(120, m_anchor.height() - 194) + 2 * m));
+  move(target());
+}
+
+void ToolPanel::userPlacedNow() {
+  const int m = kMargin;
+  m_userPlaced = true;
+  m_offset = QPoint(m_anchor.right() + 1 - (x() + width() - m), y() + m - m_anchor.top());
+  QSettings settings;
+  settings.setValue("panels/" + m_id + "/offset", m_offset);
+  settings.setValue("panels/" + m_id + "/size", size());
+}
+
+void ToolPanel::paintEvent(QPaintEvent*) {
+  const Tokens& t = theme::current();
+  const int m = kMargin;
+  QPainter p(this);
+  p.setRenderHint(QPainter::Antialiasing);
+  const QRectF frame = QRectF(rect()).adjusted(m, m, -m, -m);
+  p.setPen(Qt::NoPen);
+  p.setBrush(QColor(0, 0, 0, 9));  // shadow 0 2 6: stacked rims, densest next to the frame
+  for (int i = m; i >= 1; --i) p.drawRoundedRect(frame.adjusted(-i, 2 - i, i, std::min(i + 2, m)), 4 + i, 4 + i);
+  p.setPen(QPen(t.line, 1));
+  p.setBrush(t.bg2);
+  p.drawRoundedRect(frame.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4);
+  p.setRenderHint(QPainter::Antialiasing, false);
+  p.drawLine(m + 1, m + 33, width() - m - 2, m + 33);
+}
+
+void ToolPanel::resizeEvent(QResizeEvent* e) {
+  QWidget::resizeEvent(e);
+  m_grip->move(width() - kMargin - 1 - m_grip->width(), height() - kMargin - 1 - m_grip->height());
+  m_grip->raise();
+}
+
+void ToolPanel::mousePressEvent(QMouseEvent* e) {
+  if (e->button() != Qt::LeftButton || e->position().y() > kMargin + 33) return QWidget::mousePressEvent(e);
+  m_dragging = true;
+  m_dragFrom = e->globalPosition().toPoint();
+  m_posFrom = pos();
+}
+
+void ToolPanel::mouseMoveEvent(QMouseEvent* e) {
+  if (m_dragging) move(m_posFrom + e->globalPosition().toPoint() - m_dragFrom);
+}
+
+void ToolPanel::mouseReleaseEvent(QMouseEvent*) {
+  if (m_dragging && pos() != m_posFrom) userPlacedNow();
+  m_dragging = false;
+}
+
+void ToolPanel::mouseDoubleClickEvent(QMouseEvent* e) {
+  if (e->position().y() > kMargin + 33) return;
+  m_dragging = false;
+  m_userPlaced = false;
+  m_offset = QPoint(8, 186);
+  QSettings settings;
+  settings.remove("panels/" + m_id + "/offset");
+  settings.remove("panels/" + m_id + "/size");
+  anchorTo(m_anchor);
+}
+
+void ToolPanel::keyPressEvent(QKeyEvent* e) {
+  if (e->key() == Qt::Key_Escape) hide();
+  else QWidget::keyPressEvent(e);
+}
 
 // ---------------------------------------------------------------- BrowserTree
 BrowserTree::BrowserTree(AppDocument* doc, QWidget* parent) : QTreeWidget(parent), m_doc(doc) {
