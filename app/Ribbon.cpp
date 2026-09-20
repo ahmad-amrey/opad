@@ -40,14 +40,19 @@ void SegmentButton::paintEvent(QPaintEvent*) {
   if (!isEnabled()) textColor = t.fg3;
   p.setFont(theme::ui(12));
   p.setPen(textColor);
-  QFontMetrics fm(theme::ui(12));
-  int x = 10;
-  p.drawText(QRect(x, 0, fm.horizontalAdvance(text()) + 2, height()), Qt::AlignVCenter | Qt::AlignLeft, text());
-  x += fm.horizontalAdvance(text()) + 6;
+  // Label then key hint in reading order (mirrored in a right-to-left UI), both on one baseline: centring each
+  // in its own rect put Arabic labels, drawn with a fallback font, off the digits' line.
+  QFontMetrics fm(theme::ui(12)), mm(theme::mono(11));
+  const bool rtl = layoutDirection() == Qt::RightToLeft;
+  p.setLayoutDirection(Qt::LeftToRight);  // positions below are absolute
+  const int baseline = (height() + fm.ascent() - fm.descent()) / 2;
+  const int textW = fm.horizontalAdvance(text());
+  const int hintW = m_hint.isEmpty() ? 0 : mm.horizontalAdvance(m_hint);
+  p.drawText(rtl ? width() - 10 - textW : 10, baseline, text());
   if (!m_hint.isEmpty()) {
     p.setFont(theme::mono(11));
     p.setPen(isChecked() && primary ? t.onsel : t.fg3);
-    p.drawText(QRect(x, 0, width() - x, height()), Qt::AlignVCenter | Qt::AlignLeft, m_hint);
+    p.drawText(rtl ? width() - 10 - textW - 6 - hintW : 10 + textW + 6, baseline, m_hint);
   }
 }
 
@@ -65,11 +70,14 @@ void SearchField::paintEvent(QPaintEvent*) {
   p.setPen(QPen(underMouse() ? t.fg3 : t.line, 1));
   p.setBrush(t.bg);
   p.drawRoundedRect(QRectF(0.5, 0.5, width() - 1, height() - 1), 3, 3);
-  p.drawPixmap(8, 6, icons::pixmap("search", t.fg3, 16, devicePixelRatioF()));
+  // Icon, placeholder, key badge in reading order; positions are absolute, so mirror them by hand.
+  const bool rtl = layoutDirection() == Qt::RightToLeft;
+  p.setLayoutDirection(Qt::LeftToRight);
+  p.drawPixmap(rtl ? width() - 24 : 8, 6, icons::pixmap("search", t.fg3, 16, devicePixelRatioF()));
   p.setFont(theme::ui(12));
   p.setPen(t.fg3);
-  p.drawText(QRect(30, 0, 130, height()), Qt::AlignVCenter | Qt::AlignLeft, tr("Search commands"));
-  QRect key(width() - 26, 6, 18, 16);
+  p.drawText(QRect(rtl ? width() - 160 : 30, 0, 130, height()), Qt::AlignVCenter | (rtl ? Qt::AlignRight : Qt::AlignLeft), tr("Search commands"));
+  QRect key(rtl ? 8 : width() - 26, 6, 18, 16);
   p.setPen(QPen(t.line, 1));
   p.setBrush(t.bg4);
   p.drawRoundedRect(key, 3, 3);

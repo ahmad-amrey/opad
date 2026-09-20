@@ -24,6 +24,7 @@ set(OPAD_APP_SOURCES
   BodyShape.cpp BodyShape.hpp
   NavCube.cpp NavCube.hpp
   CrashLog.cpp CrashLog.hpp
+  I18n.cpp I18n.hpp i18n.qrc
   MainWindow.cpp MainWindow.hpp)
 if(APPLE)
   list(APPEND OPAD_APP_SOURCES ViewportCocoa.mm)

@@ -4,6 +4,7 @@
 #include <QSurfaceFormat>
 
 #include "CrashLog.hpp"
+#include "I18n.hpp"
 #include "MainWindow.hpp"
 #include "opad/core.hpp"
 
@@ -21,6 +22,7 @@ int main(int argc, char** argv) {
   QApplication::setApplicationName("OPAD");
   QApplication::setOrganizationName("opad");
   QApplication::setApplicationVersion(QString::fromStdString(opad::version_string()));
+  i18n::install(app);  // before any widget exists: translator and layout direction (needs the names above for QSettings)
 
   QCommandLineParser parser;
   parser.setApplicationDescription("OPAD: git-native STEP viewer");

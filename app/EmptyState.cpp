@@ -80,7 +80,7 @@ EmptyState::EmptyState(QWidget* parent) : QWidget(parent) {
   auto* open = new QPushButton(icons::icon("open", theme::current().onsel), tr("Open   Ctrl+O"), column);
   open->setObjectName("primary");
   auto* import = new QPushButton(icons::themed("import", 16), tr("Import   Ctrl+I"), column);
-  m_recentButton = new QPushButton(icons::themed("recent", 16), QString::fromUtf8("Recent ▾"), column);
+  m_recentButton = new QPushButton(icons::themed("recent", 16), tr("Recent ▾"), column);
   buttons->addWidget(open);
   buttons->addWidget(import);
   connect(theme::notifier(), &theme::Notifier::changed, this, [open, import, this] {

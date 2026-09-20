@@ -37,6 +37,7 @@
 #include "Icons.hpp"
 #include "Theme.hpp"
 #include "opad/geometry.hpp"
+#include "I18n.hpp"
 #include "opad/inspect.hpp"
 
 #include <Bnd_Box.hxx>
@@ -194,7 +195,7 @@ void MainWindow::guarded(const std::function<void()>& fn) {
   try {
     fn();
   } catch (const std::exception& e) {
-    QMessageBox::warning(this, tr("OPAD"), QString::fromUtf8(e.what()));
+    QMessageBox::warning(this, tr("OPAD"), i18n::t(QString::fromUtf8(e.what())));
   }
 }
 
@@ -306,7 +307,7 @@ void MainWindow::buildActions() {
     if (m_settings.value("ui/nav", "Fusion").toString() == name) a->setChecked(true);
   }
   for (const auto& [name, f, key, icon] : std::vector<std::tuple<QString, Viewport::SelFilter, QString, QString>>{{"Bodies", Viewport::SelFilter::Body, "1", "filterBodies"}, {"Faces", Viewport::SelFilter::Face, "2", "filterFaces"}, {"Edges", Viewport::SelFilter::Edge, "3", "filterEdges"}, {"Vertices", Viewport::SelFilter::Vertex, "4", "filterVertices"}}) {
-    QAction* a = addAction("select." + name.toLower(), name, icon, QKeySequence(key), [this, ff = f, n = name] {
+    QAction* a = addAction("select." + name.toLower(), i18n::t(name), icon, QKeySequence(key), [this, ff = f, n = name] {
       m_viewport->setSelectionFilter(ff);
       for (QAction* o : m_actions) if (o->objectName().startsWith("select.")) o->setChecked(o->objectName() == "select." + n.toLower());
     }, true);
@@ -444,6 +445,19 @@ void MainWindow::buildRibbon() {
   settings->addAction(action("panel.annotations"));
   settings->addAction(action("panel.timeline"));
   settings->addAction(action("panel.reset"));
+  settings->addSeparator();
+  QMenu* langMenu = settings->addMenu(tr("Language"));
+  auto* langGroup = new QActionGroup(langMenu);
+  for (const i18n::Language& l : i18n::languages()) {
+    QAction* a = langMenu->addAction(l.name);
+    a->setCheckable(true);
+    a->setChecked(l.code == i18n::current());
+    langGroup->addAction(a);
+    connect(a, &QAction::triggered, this, [this, code = l.code] {
+      i18n::setLanguage(code);
+      if (code != i18n::current()) QMessageBox::information(this, tr("Language"), tr("The language changes the next time OPAD starts."));
+    });
+  }
   settings->addSeparator();
   settings->addAction(action("tools.shortcuts"));
   settings->addAction(action("tools.undodepth"));
@@ -688,10 +702,10 @@ void MainWindow::showDocument(bool has) {
 void MainWindow::updateTitle() {
   setWindowTitle(m_doc->title());
   QString path = m_doc->hasDocument ? (m_doc->browse ? tr("viewing: ") + m_settings.value("ui/lastBrowse").toString() : (m_doc->path().isEmpty() ? tr("unsaved document") : m_doc->path())) : tr("No document");
-  if (!m_doc->scene.unresolved.empty()) path += QString::fromUtf8("   ·   %1 unresolved").arg(m_doc->scene.unresolved.size());
+  if (!m_doc->scene.unresolved.empty()) path += tr("   ·   %1 unresolved").arg(m_doc->scene.unresolved.size());
   m_statusPath->setText(path);
-  if (!m_doc->hasDocument) m_statusHover->setText(QString::fromUtf8("File › Open a .step or .opad file, or drop one here"));
-  else if (m_statusHover->text().startsWith("File ")) m_statusHover->clear();
+  if (!m_doc->hasDocument) m_statusHover->setText(tr("File › Open a .step or .opad file, or drop one here"));
+  else if (m_statusHover->text() == tr("File › Open a .step or .opad file, or drop one here")) m_statusHover->clear();
 }
 
 void MainWindow::updateChips() {
@@ -814,7 +828,7 @@ void MainWindow::onViewportSelection() {
   if (m_section && m_section->picking() && !refs.empty() && refs.front().kind == opad::Ref::Kind::Face) sectionFromFace(refs.front());
   selectionMoved(refs);
   if (refs.empty()) m_statusSel->clear();
-  else m_statusSel->setText(QString::fromUtf8("%1 selected · %2").arg(refs.size()).arg(opad::Ref::kind_name(refs.front().kind)));
+  else m_statusSel->setText(tr("%1 selected · %2").arg(refs.size()).arg(i18n::t(opad::Ref::kind_name(refs.front().kind))));
   scheduleSelectionSync();
   m_syncing = false;
 }
@@ -825,7 +839,7 @@ void MainWindow::onBrowserSelection(const std::vector<std::string>& ids) {
   std::vector<opad::Ref> refs;
   for (const auto& id : ids) { opad::Ref r; r.body = id; refs.push_back(r); }
   selectionMoved(refs);
-  m_statusSel->setText(ids.empty() ? QString() : QString::fromUtf8("%1 selected · body").arg(ids.size()));
+  m_statusSel->setText(ids.empty() ? QString() : tr("%1 selected · body").arg(ids.size()));
   m_syncing = false;
   m_viewport->selectNodes(ids);  // sliced; selectionApplied() writes selection.json when it settles
 }
@@ -863,11 +877,11 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
       subtitle = path.join(QString::fromUtf8(" › "));
       if (n && n->kind == opad::Node::Kind::Body) {
         auto it = m_doc->scene.instance_count.find(n->body_key);
-        if (it != m_doc->scene.instance_count.end() && it->second > 1) subtitle += QString::fromUtf8(" · %1 instances").arg(it->second);
+        if (it != m_doc->scene.instance_count.end() && it->second > 1) subtitle += tr(" · %1 instances").arg(it->second);
       }
       id = QString::fromStdString(r.body.substr(0, 8));
     } else {
-      QString kind = QString::fromStdString(opad::Ref::kind_name(r.kind));
+      QString kind = i18n::t(opad::Ref::kind_name(r.kind));
       QString geo = QString::fromStdString(j.value("surface", j.value("curve", std::string())));
       title = QString::fromUtf8("%1%2%3").arg(kind.left(1).toUpper() + kind.mid(1), geo.isEmpty() ? QString() : QString::fromUtf8(" · "), geo);
       subtitle = QString::fromUtf8("%1 › %2 %3").arg(m_doc->nodeName(r.body), kind).arg(r.index);
@@ -1061,7 +1075,7 @@ void MainWindow::measure(const QString& kind) {
   for (const auto& r : refs) {
     strs.push_back(r.str());
     QString t = m_doc->nodeName(r.body);
-    if (r.kind != opad::Ref::Kind::Body) t += QString::fromUtf8(" › %1 %2").arg(opad::Ref::kind_name(r.kind)).arg(r.index);
+    if (r.kind != opad::Ref::Kind::Body) t += QString::fromUtf8(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(r.kind))).arg(r.index);
     targets << t;
   }
   if (strs.empty())
@@ -1115,7 +1129,7 @@ void MainWindow::addAnnotation() {
   else throw opad::Error("Select a body, face, edge or vertex to anchor the note.");
   bool ok = false;
   QString where = m_doc->nodeName(anchor.body);
-  if (anchor.kind != opad::Ref::Kind::Body) where += QString::fromUtf8(" › %1 %2").arg(opad::Ref::kind_name(anchor.kind)).arg(anchor.index);
+  if (anchor.kind != opad::Ref::Kind::Body) where += QString::fromUtf8(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(anchor.kind))).arg(anchor.index);
   QString text = QInputDialog::getMultiLineText(this, tr("Note on %1").arg(where), tr("Note (Ctrl+Enter resolves it later):"), QString(), &ok);
   if (!ok || text.trimmed().isEmpty()) return;
   opad::json r = m_doc->run("annotate", opad::json{{"anchor", anchor.str()}, {"text", text.toStdString()}});
@@ -1220,7 +1234,7 @@ void MainWindow::exportDialog() {
   header(tr("OBJECTS"));
   auto* scopeRow = new QHBoxLayout();
   auto* scopeSel = new QRadioButton(QString::fromUtf8("Selection · %1 %2").arg(selBodies).arg(selBodies == 1 ? tr("body") : tr("bodies")), &dlg);
-  auto* scopeAll = new QRadioButton(QString::fromUtf8("Whole document · %1 bodies").arg(allBodies), &dlg);
+  auto* scopeAll = new QRadioButton(tr("Whole document · %1 bodies").arg(allBodies), &dlg);
   scopeSel->setEnabled(selBodies > 0);
   (selBodies > 0 ? scopeSel : scopeAll)->setChecked(true);
   scopeRow->addWidget(scopeSel);
@@ -1274,7 +1288,7 @@ void MainWindow::exportDialog() {
     QString ext = fmt == "step" ? "step" : fmt;
     if (fi.suffix().toLower() != ext && !(fmt == "step" && fi.suffix().toLower() == "stp")) path->setText(fi.dir().filePath(fi.completeBaseName() + "." + ext));
     int n = scopeSel->isChecked() ? selBodies : allBodies;
-    summary->setText(QString::fromUtf8("%1 · %2 bodies · %3 mm").arg(b ? b->text() : fmt).arg(n).arg(tol->value(), 0, 'f', 3));
+    summary->setText(tr("%1 · %2 bodies · %3 mm").arg(b ? b->text() : fmt).arg(n).arg(tol->value(), 0, 'f', 3));
     perBody->setEnabled(fmt == "stl");
     ascii->setEnabled(fmt == "stl");
     mtl->setEnabled(fmt == "obj");
@@ -1568,6 +1582,7 @@ void MainWindow::closeEvent(QCloseEvent* e) {
     return;
   }
   m_settings.setValue("ui/geometry", saveGeometry());
+  if (m_timelineHiddenByViewer) m_timelineDock->show();  // viewer mode hid it; do not save that as the user's layout
   m_settings.setValue("ui/state", saveState());
   m_settings.setValue("ui/layoutVersion", 2);
   e->accept();

@@ -160,8 +160,14 @@ class PropertiesPanel : public QWidget {
   void clear();
  signals:
   void faceChosen(int index);
+ protected:
+  bool eventFilter(QObject* o, QEvent* e) override;
  private:
   void addRow(const QString& key, const opad::json& v);
+  void fill();
+  opad::json m_props;      // what is shown, kept to lay the rows out again when the width changes
+  int m_filledWidth = -1;  // value column width the rows were laid out for
+  bool m_splitVectors = false;  // some vector did not fit on one line at that width
   QLabel* m_title;
   QLabel* m_id;
   QLabel* m_subtitle;

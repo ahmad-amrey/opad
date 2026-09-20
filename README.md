@@ -61,6 +61,17 @@ pybind11 (optional), Qt 6 Widgets (optional, app only).
   `CMakePresets.json` that inherits `base` and sets what differs (compiler, `CMAKE_PREFIX_PATH`, toolchain file),
   plus matching build, test and workflow entries. It gets its own `build/<preset>` tree automatically.
 
+## Languages
+
+The desktop app ships English and Arabic (right-to-left); pick one under Settings (the gear) > Language, it applies
+at the next start. Without a choice the system language is used when there is a translation for it.
+
+A translation is one JSON file, `app/i18n/<code>.json`: `{ "source text": "translation" }`, plus `"@name"` (the
+language's own name) and `"@rtl"`. To add a language, copy `ar.json`, translate the values, and list the file in
+`app/i18n.qrc`; no Qt Linguist tools are involved. `python tools/i18n_check.py` lists the strings a file does not
+cover yet. A file `i18n/<code>.json` next to `opad.exe` overrides the built-in one, so a translation can be tried
+without rebuilding.
+
 ## Using it in a git repository
 
 Add this to the repository's `.gitattributes` (the OPAD repo itself ships the same file):

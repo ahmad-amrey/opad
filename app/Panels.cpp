@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <functional>
 
+#include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "Theme.hpp"
@@ -35,6 +36,7 @@
 namespace {
 constexpr int kIdRole = Qt::UserRole + 1;
 constexpr int kNameRole = Qt::UserRole + 2;
+constexpr int kPropKeyRole = Qt::UserRole + 3;  // properties table: the untranslated property name
 constexpr int kEyeX = 2, kSwatchX = 24, kTypeX = 42, kNameX = 66;
 
 QString fmtNum(double v) { return QString::number(v, 'g', 7); }
@@ -47,8 +49,22 @@ QString fmtValue(const opad::json& v) {
     return "[" + parts.join(", ") + "]";
   }
   if (v.is_string()) return QString::fromStdString(v.get<std::string>());
-  if (v.is_boolean()) return v.get<bool>() ? "yes" : "no";
+  if (v.is_boolean()) return i18n::t(v.get<bool>() ? "yes" : "no");
   return QString::fromStdString(v.dump());
+}
+
+// A point or direction on one line, as in the design: "(0.707, 0.707, 0)". Three decimals, trailing zeros dropped.
+QString fmtComponent(double v) {
+  QString s = QString::number(v, 'f', 3);
+  while (s.endsWith('0')) s.chop(1);
+  if (s.endsWith('.')) s.chop(1);
+  return s == "-0" ? QString("0") : s;
+}
+
+bool isVector(const opad::json& v) {
+  if (!v.is_array() || v.size() < 2 || v.size() > 4) return false;
+  for (const auto& e : v) if (!e.is_number()) return false;
+  return true;
 }
 
 QColor authorColor(const std::string& by) {
@@ -384,6 +400,7 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   const bool isDoc = index.data(Qt::UserRole).toString() == "document";
   const opad::Node* n = isDoc ? nullptr : m_doc->node(id);
   p->save();
+  p->setLayoutDirection(Qt::LeftToRight);  // fixed columns (see BrowserPanel); otherwise AlignLeft means right in an RTL UI
   p->setRenderHint(QPainter::Antialiasing);
   QRect r = opt.rect;
   const int fullW = opt.widget ? opt.widget->width() : r.right();
@@ -538,6 +555,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   hl->addLayout(crumbRow);
   layout->addWidget(head);
   m_tree = new BrowserTree(doc, this);
+  m_tree->setLayoutDirection(Qt::LeftToRight);  // the delegate paints fixed left-to-right columns; names are model data
   m_tree->setStyleSheet("QTreeWidget { padding: 4px 0; }");
   m_tree->setItemDelegate(new BrowserDelegate(doc, m_tree));
   m_tree->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -786,10 +804,11 @@ PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
     for (int i = 0; i < m_table->topLevelItemCount(); ++i) {
       QTreeWidgetItem* row = m_table->topLevelItem(i);
       row->setForeground(0, t.fg2);
-      const QString key = row->text(0);
+      const QString key = row->data(0, kPropKeyRole).toString();
       row->setForeground(1, key == "key" || key == "source_op" ? t.fg3 : t.fg);
     }
   });
+  m_table->viewport()->installEventFilter(this);
   connect(m_table, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* it, int) {
     if (it->data(0, Qt::UserRole).isValid()) emit faceChosen(it->data(0, Qt::UserRole).toInt());
   });
@@ -798,19 +817,61 @@ PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
 void PropertiesPanel::addRow(const QString& key, const opad::json& v) {
   const Tokens& t = theme::current();
   auto* row = new QTreeWidgetItem(m_table);
-  row->setText(0, key);
+  row->setText(0, i18n::t(key));  // property names come from the core as data
+  row->setData(0, kPropKeyRole, key);
   row->setForeground(0, t.fg2);
-  row->setText(1, fmtValue(v));
   row->setToolTip(1, fmtValue(v));
+  if (isVector(v)) {
+    // Never elide a coordinate: a vector that does not fit the value column gets one row per component.
+    QStringList parts;
+    for (const auto& e : v) parts << fmtComponent(e.get<double>());
+    const QString line = "(" + parts.join(", ") + ")";
+    if (QFontMetrics(theme::mono(12)).horizontalAdvance(line) + 16 > m_filledWidth) {
+      m_splitVectors = true;
+      static const char* axes[] = {"X", "Y", "Z", "W"};
+      for (int i = 0; i < parts.size(); ++i) {
+        auto* c = new QTreeWidgetItem(m_table);
+        c->setText(0, QString("    ") + axes[i]);
+        c->setForeground(0, t.fg3);
+        c->setText(1, QChar(0x202A) + parts[i] + QChar(0x202C));
+        c->setFont(1, theme::mono(12));
+        c->setToolTip(1, fmtNum(v[i].get<double>()));
+      }
+      return;
+    }
+    row->setText(1, QChar(0x202A) + line + QChar(0x202C));
+    row->setFont(1, theme::mono(12));
+    return;
+  }
+  row->setText(1, QChar(0x202A) + fmtValue(v) + QChar(0x202C));  // LRE..PDF: numbers and vectors keep their order in a right-to-left UI
   if (v.is_number() || v.is_array() || (v.is_string() && key == "key")) row->setFont(1, theme::mono(12));
   if (key == "key" || key == "source_op") row->setForeground(1, t.fg3);
 }
 
 void PropertiesPanel::showEntity(const QString& title, const QString& subtitle, const QString& id, const opad::json& props) {
-  const Tokens& t = theme::current();
   m_title->setText(title);
   m_subtitle->setText(subtitle);
   m_id->setText(id);
+  m_props = props;
+  fill();
+}
+
+// Vectors are laid out for the value column's width (one line, or a row per component): redo them when it changes.
+// The width is the table viewport's, which settles after the panel's own resize (and moves with the scroll bar).
+bool PropertiesPanel::eventFilter(QObject* o, QEvent* e) {
+  if (o == m_table->viewport() && e->type() == QEvent::Resize)
+    QTimer::singleShot(0, this, [this] {
+      const int w = m_table->viewport()->width() - m_table->columnWidth(0);
+      if (w != m_filledWidth && !m_props.is_null() && (m_splitVectors || w < m_filledWidth)) fill();
+    });
+  return QWidget::eventFilter(o, e);
+}
+
+void PropertiesPanel::fill() {
+  const Tokens& t = theme::current();
+  const opad::json& props = m_props;
+  m_filledWidth = m_table->viewport()->width() - m_table->columnWidth(0);
+  m_splitVectors = false;
   m_table->clear();
   static const char* order[] = {"surface", "curve", "area", "length", "volume", "radius", "diameter", "normal", "axis", "center", "center_of_mass",
                                 "start", "end", "origin", "bbox", "faces", "edges", "vertices", "solid", "instances", "opacity", "visible", "locked",
@@ -845,7 +906,7 @@ void PropertiesPanel::showEntity(const QString& title, const QString& subtitle, 
     h->setFlags(Qt::ItemIsEnabled);
     for (const auto& e : list) {
       auto* r = new QTreeWidgetItem(m_table);
-      r->setText(0, QString("%1 %2").arg(prefix).arg(e.get<int>()));
+      r->setText(0, QString("%1 %2").arg(i18n::t(prefix)).arg(e.get<int>()));
       r->setFont(0, theme::mono(12));
       r->setData(0, Qt::UserRole, e.get<int>());
       r->setToolTip(0, tr("Click to inspect"));
@@ -859,6 +920,7 @@ void PropertiesPanel::clear() {
   m_title->setText(tr("Nothing selected"));
   m_subtitle->setText(tr("Click a body, or pick faces, edges and vertices with the Select filter (1–4)."));
   m_id->clear();
+  m_props = opad::json();
   m_table->clear();
 }
 
@@ -968,7 +1030,7 @@ void AnnotationsPanel::rebuild() {
       auto* w = new QLabel(card);
       w->setPixmap(icons::pixmap("warning", t.red, 14, devicePixelRatioF()));
       row->addWidget(w);
-      auto* l = new QLabel(QString::fromUtf8("unresolved · target %1 no longer exists").arg(shortId(anchor.body)), card);
+      auto* l = new QLabel(tr("unresolved · target %1 no longer exists").arg(shortId(anchor.body)), card);
       l->setStyleSheet(QString("color:%1; font-size:11px;").arg(t.red.name()));
       row->addWidget(l, 1);
       v->addLayout(row);
@@ -984,7 +1046,7 @@ void AnnotationsPanel::rebuild() {
     }
     auto* foot = new QHBoxLayout();
     QString target = anchor.kind == opad::Ref::Kind::Point ? tr("point") : m_doc->nodeName(anchor.body);
-    if (anchor.kind != opad::Ref::Kind::Body && anchor.kind != opad::Ref::Kind::Point) target += QString(" › %1 %2").arg(opad::Ref::kind_name(anchor.kind)).arg(anchor.index);
+    if (anchor.kind != opad::Ref::Kind::Body && anchor.kind != opad::Ref::Kind::Point) target += QString(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(anchor.kind))).arg(anchor.index);
     auto* tl = new QLabel(target, card);
     tl->setObjectName("tertiary");
     tl->setFont(theme::mono(11));
@@ -1170,8 +1232,8 @@ void SectionPanel::emitChange() {
   const double along = m_pick ? o[0] * m_pickNormal[0] + o[1] * m_pickNormal[1] + o[2] * m_pickNormal[2] : o[m_axis];  // pick mode: distance along the face normal
   m_value->setText(QString("%1 mm").arg(along, 0, 'f', 1));
   m_state->setText(!m_enabled ? tr("Section off · press X or use View › Section to enable")
-                   : m_pick ? QString::fromUtf8("Section along the picked face = %1 mm · drag the slider, Shift+X flips").arg(along, 0, 'f', 1)
-                            : QString::fromUtf8("Section %1 = %2 mm · drag the slider, Shift+X flips").arg(axes[m_axis]).arg(o[m_axis], 0, 'f', 1));
+                   : m_pick ? tr("Section along the picked face = %1 mm · drag the slider, Shift+X flips").arg(along, 0, 'f', 1)
+                            : tr("Section %1 = %2 mm · drag the slider, Shift+X flips").arg(axes[m_axis]).arg(o[m_axis], 0, 'f', 1));
   emit planeChanged();
 }
 
@@ -1401,6 +1463,7 @@ QString TimelineWidget::describe(const opad::Op& op) const {
 void TimelineWidget::paintEvent(QPaintEvent*) {
   const Tokens& t = theme::current();
   QPainter p(this);
+  p.setLayoutDirection(Qt::LeftToRight);  // the strip's geometry is fixed; time runs left to right in every language
   p.setRenderHint(QPainter::Antialiasing);
   p.fillRect(rect(), t.bg2);
   p.setPen(QPen(t.line, 1));
@@ -1414,7 +1477,7 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
   size_t tomb = 0;
   for (size_t i : m_shown) tomb += m_deleted.count(ops[i].id);
   QString count = tr("%1 ops").arg(m_shown.size());
-  if (tomb > 0) count += QString::fromUtf8(" · %1 tomb").arg(tomb);
+  if (tomb > 0) count += tr(" · %1 tomb").arg(tomb);
   p.drawText(QRect(12, 24, 100, 16), Qt::AlignVCenter | Qt::AlignLeft, count);
   p.setPen(QPen(t.line, 1));
   p.drawLine(112, 8, 112, 40);
@@ -1604,7 +1667,7 @@ CommandPalette::CommandPalette(const QList<QAction*>& actions, QWidget* parent) 
   m_list->setFixedHeight(28 * 9);
   layout->addWidget(m_edit);
   layout->addWidget(m_list);
-  auto* foot = new QLabel(QString::fromUtf8("↑↓ navigate · Enter run · Esc close"), this);
+  auto* foot = new QLabel(tr("↑↓ navigate · Enter run · Esc close"), this);
   foot->setObjectName("tertiary");
   foot->setContentsMargins(12, 6, 12, 6);
   layout->addWidget(foot);
