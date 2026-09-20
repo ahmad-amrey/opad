@@ -1424,7 +1424,7 @@ void MainWindow::runBench() {
       m_viewport->fitSelection();
       trace::log(QStringLiteral("bench: camera after fitSelection(leaf) %1").arg(QString::fromStdString(m_viewport->cameraJson().dump())));
       m_viewport->benchPick();
-      m_section->beginPick();  // then a face pick must set the section plane (logged as "section from face")
+      if (!qEnvironmentVariableIsSet("OPAD_BENCH_FILTER")) m_section->beginPick();  // then a face pick must set the section plane (logged as "section from face")
       // Undo/redo: hide the leaf, undo back to the saved state (clean again), redo.
       const size_t n0 = m_doc->doc.ops.size();
       m_doc->run("appearance", opad::json{{"target", leaf}, {"visible", false}});
@@ -1436,6 +1436,44 @@ void MainWindow::runBench() {
       trace::log(QStringLiteral("bench: undo/redo: after hide dirty=%1 canUndo=%2; after undo dirty=%3 ops %4->%5; after redo dirty=%6 ops %7 canRedo=%8").arg(d1).arg(u1).arg(d2).arg(n0).arg(n2).arg(m_doc->doc.dirty).arg(m_doc->doc.ops.size()).arg(m_doc->canRedo()));
       QTimer::singleShot(1500, this, [this] { m_viewport->fitAll(); m_viewport->benchPick(); });  // the board: a planar face at the centre
       if (const QByteArray shot = qgetenv("OPAD_BENCH_SHOT"); !shot.isEmpty()) m_viewport->benchShot(QString::fromLocal8Bit(shot));
+      // OPAD_BENCH_FILTER=face|edge|vertex: switch the selection mode, time it, then pick a sub-shape.
+      if (const QByteArray filter = qgetenv("OPAD_BENCH_FILTER"); !filter.isEmpty()) {
+        QTimer::singleShot(3000, this, [this, filter] {
+          auto ft = std::make_shared<QElapsedTimer>();
+          ft->start();
+          connect(m_viewport, &Viewport::filterApplied, this, [this, ft, filter] {
+            trace::log(QStringLiteral("bench: filter %1 applied after %2 ms").arg(QString::fromLatin1(filter)).arg(ft->elapsed()));
+            m_viewport->fitNodes({m_viewport->benchHeaviest()});
+            m_viewport->benchPick();
+            const auto refs = m_viewport->selection();
+            trace::log(QStringLiteral("bench: sub-shape pick: %1 refs, kind %2 index %3").arg(refs.size()).arg(refs.empty() ? -1 : static_cast<int>(refs.front().kind)).arg(refs.empty() ? -1 : refs.front().index));
+            if (const QByteArray shot = qgetenv("OPAD_BENCH_SUBSHOT"); !shot.isEmpty()) m_viewport->benchSubShot(QString::fromLocal8Bit(shot));
+            if (!qEnvironmentVariableIsSet("OPAD_BENCH_BAND")) {
+              QTimer::singleShot(1000, qApp, &QCoreApplication::quit);
+              return;
+            }
+            // OPAD_BENCH_BAND: rubber band over everything in this mode, then clear it; the watchdog logs stalls.
+            QTimer::singleShot(500, this, [this] {
+              auto ht = std::make_shared<QElapsedTimer>();
+              ht->start();
+              connect(m_viewport, &Viewport::subHighlightApplied, this, [ht] { trace::log(QStringLiteral("bench: band highlight shown after %1 ms").arg(ht->elapsed())); });
+              m_viewport->benchBand();
+              QTimer::singleShot(6000, this, [this] {
+                if (const QByteArray shot = qgetenv("OPAD_BENCH_BANDSHOT"); !shot.isEmpty()) m_viewport->grabImage().save(QString::fromLocal8Bit(shot));
+                auto ct = std::make_shared<QElapsedTimer>();
+                ct->start();
+                connect(m_viewport, &Viewport::selectionApplied, this, [ct] {
+                  trace::log(QStringLiteral("bench: band cleared after %1 ms").arg(ct->elapsed()));
+                  QTimer::singleShot(1500, qApp, &QCoreApplication::quit);
+                });
+                m_viewport->clearSelection();
+              });
+            });
+          });
+          m_viewport->setSelectionFilter(filter == "edge" ? Viewport::SelFilter::Edge : filter == "vertex" ? Viewport::SelFilter::Vertex : Viewport::SelFilter::Face);
+        });
+        return;
+      }
       QTimer::singleShot(4000, qApp, &QCoreApplication::quit);
     });
     m_browser->setSelectedIds({leaf});

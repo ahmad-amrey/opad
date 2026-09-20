@@ -66,6 +66,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void warmUp();  // create the OpenGL viewer now rather than on first paint
   void setBlocked(bool on);  // while a file loads: mouse input is ignored (the shade window covers the view)
   void benchShot(const QString& path);  // --bench-select with OPAD_BENCH_SHOT: hover the view cube, save a frame
+  std::string benchHeaviest() const;       // OPAD_BENCH_FILTER: the body with the most faces, the pick target
+  void benchBand();                        // OPAD_BENCH_BAND: rubber band over the whole view in the current mode
+  void benchSubShot(const QString& path);  // OPAD_BENCH_SUBSHOT: frame from behind the picked sub-shape (X-ray check)
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
   void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner
   std::vector<opad::Ref> selection() const;
@@ -93,6 +96,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
  signals:
   void selectionChanged();
   void selectionApplied();  // a selectNodes() call has been applied (highlight or shade) and selection() reflects it
+  void subHighlightApplied();  // the highlight of a sub-shape selection has been built and displayed
+  void filterApplied();     // a setSelectionFilter() call has reached every displayed body
   void hoverChanged(const QString& text);
   void contextMenuRequested(const QPoint& globalPos);
   void meshingProgress(int remaining);
@@ -129,6 +134,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void displayBody(const std::string& id);
   void finishSync(int pendingCount, bool added);
   void showShade(const std::vector<std::string>& ids);
+  void refreshSubHighlight();   // rebuilds m_subHl from the context's selected faces/edges/vertices (sliced)
   void applySelectionLayers();  // selected bodies live in the Topmost layer (own depth buffer): X-ray through occluders
   void clearShade();
   double deflectionFor(const std::string& key);
@@ -172,6 +178,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Job* m_displayJob = nullptr;                    // in-flight sync(): bodies being added to the context
   QTimer m_syncTimer;
   Job* m_selJob = nullptr;                        // in-flight selectNodes
+  Handle(SubHighlight) m_subHl;                   // every selected sub-shape, one object in the Topmost layer
+  Job* m_subJob = nullptr;                        // in-flight refreshSubHighlight
   Job* m_filterJob = nullptr;                     // in-flight setSelectionFilter
   std::vector<Handle(AIS_Shape)> m_selApplied;    // objects selectNodes highlighted through the context
   std::vector<Handle(AIS_Shape)> m_shade;         // translucent boxes standing in for a large selection
@@ -182,6 +190,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
 
   QTimer m_timer;
   QString m_hover;
+  const Standard_Transient* m_hoverOwner = nullptr;  // owner m_hover was built for (identity only, never dereferenced)
   QPoint m_pressPos;
   bool m_rightPress = false;
   bool m_blocked = false;

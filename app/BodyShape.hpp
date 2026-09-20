@@ -6,7 +6,11 @@
 #include <Bnd_Box.hxx>
 #include <Graphic3d_ArrayOfSegments.hxx>
 #include <Graphic3d_ArrayOfTriangles.hxx>
+#include <Graphic3d_ArrayOfPoints.hxx>
+#include <Quantity_Color.hxx>
+#include <StdSelect_BRepOwner.hxx>
 #include <memory>
+#include <vector>
 
 // Per body-store key; shared by every instance of that body. Built off the UI thread.
 struct BodyPrs {
@@ -24,7 +28,43 @@ class BodyShape : public AIS_Shape {
 
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
+  // Sub-shape modes: the stock owners are swapped for SubShapeOwner.
+  void ComputeSelection(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode) override;
 
  private:
   std::shared_ptr<const BodyPrs> m_prs;
+};
+
+// Owner of one face, edge or vertex of a BodyShape. It knows its ordinal within the body and leaves the
+// selected highlight to the viewport (SubHighlight); only the hover highlight goes through OCCT.
+class SubShapeOwner : public StdSelect_BRepOwner {
+  DEFINE_STANDARD_RTTI_INLINE(SubShapeOwner, StdSelect_BRepOwner)
+ public:
+  SubShapeOwner(const TopoDS_Shape& sub, const Handle(SelectMgr_SelectableObject)& body, int priority, int index)
+      : StdSelect_BRepOwner(sub, body, priority, Standard_True), m_index(index) {}
+  int index() const { return m_index; }  // as opad::subshape_index: 0-based, -1 when unknown
+
+  void HilightWithColor(const Handle(PrsMgr_PresentationManager)& pm, const Handle(Prs3d_Drawer)& style, const Standard_Integer mode) override;
+  void Unhilight(const Handle(PrsMgr_PresentationManager)& pm, const Standard_Integer mode) override;
+
+ private:
+  int m_index;
+};
+
+// Every selected sub-shape in one object: a few primitive arrays in world coordinates, filled by
+// Viewport::refreshSubHighlight from the bodies' existing meshes. Never pickable.
+class SubHighlight : public AIS_InteractiveObject {
+  DEFINE_STANDARD_RTTI_INLINE(SubHighlight, AIS_InteractiveObject)
+ public:
+  explicit SubHighlight(const Quantity_Color& color) : m_color(color) {}
+  std::vector<Handle(Graphic3d_ArrayOfTriangles)> m_triangles;
+  std::vector<Handle(Graphic3d_ArrayOfSegments)> m_segments;
+  std::vector<Handle(Graphic3d_ArrayOfPoints)> m_points;
+
+ protected:
+  void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
+  void ComputeSelection(const Handle(SelectMgr_Selection)&, const Standard_Integer) override {}
+
+ private:
+  Quantity_Color m_color;
 };

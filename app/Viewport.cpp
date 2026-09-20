@@ -11,11 +11,16 @@
 #include <Aspect_DisplayConnection.hxx>
 #include <Aspect_ScrollDelta.hxx>
 #include <Aspect_VKeyFlags.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRep_Tool.hxx>
+#include <Poly_Polygon3D.hxx>
+#include <Poly_PolygonOnTriangulation.hxx>
+#include <Poly_Triangulation.hxx>
 #include <Bnd_Box.hxx>
 #include <Graphic3d_TransformPers.hxx>
 #include <Image_PixMap.hxx>
@@ -26,6 +31,7 @@
 #include <Quantity_Color.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <TopExp.hxx>
+#include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -137,6 +143,46 @@ void Viewport::benchShot(const QString& path) {
   grabImage().save(path);
 }
 
+// The displayed body with the most faces: where sub-shape picking is at its most expensive.
+std::string Viewport::benchHeaviest() const {
+  std::string best;
+  int most = -1;
+  for (const auto& [id, it] : m_items) {
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(it.located, TopAbs_FACE, faces);
+    if (faces.Extent() > most) { most = faces.Extent(); best = id; }
+  }
+  if (trace::enabled()) trace::log(QStringLiteral("bench: heaviest body %1 (%2 faces)").arg(m_doc->nodeName(best)).arg(most));
+  return best;
+}
+
+// A rubber band over the whole view in the current mode: the mass sub-shape selection case.
+void Viewport::benchBand() {
+  if (!m_initialised) return;
+  m_view->FitAll(0.02, Standard_False);
+  m_view->Redraw();
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
+  QElapsedTimer clock;
+  clock.start();
+  m_ctx->SelectRectangle(Graphic3d_Vec2i(0, 0), Graphic3d_Vec2i(w, h), m_view);
+  const qint64 pickMs = clock.restart();
+  OnSelectionChanged(m_ctx, m_view);
+  const qint64 notifyMs = clock.restart();
+  trace::log(QStringLiteral("bench: band selected %1 (OCCT %2 ms, handlers %3 ms)").arg(m_ctx->NbSelected()).arg(pickMs).arg(notifyMs));
+}
+
+// The picked sub-shape seen from the opposite side, where the rest of the model is in front of it.
+void Viewport::benchSubShot(const QString& path) {
+  if (!m_initialised) return;
+  Standard_Real x = 0, y = 0, z = 0;
+  m_view->Proj(x, y, z);
+  m_view->SetProj(-x, -y, -z);
+  m_view->FitAll(0.02, Standard_False);
+  m_view->Redraw();
+  grabImage().save(path);
+}
+
 void Viewport::initViewer() {
   if (m_initialised) return;
   trace::Scope scope("Viewport::initViewer");
@@ -152,6 +198,12 @@ void Viewport::initViewer() {
   m_ctx->SetAutoActivateSelection(Standard_False);  // displayBody activates the current filter itself
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetDisplayMode(AIS_Shaded);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetDisplayMode(AIS_Shaded);
+  // A face/edge highlight is its own presentation, built with the highlight drawer rather than the body's.
+  // Same rule as for bodies (displayBody): OCCT must never be able to mesh on the UI thread, so these drawers
+  // get auto-triangulation off too and highlight the worker's mesh. Precaution: no stall was measured from it.
+  m_ctx->DefaultDrawer()->SetAutoTriangulation(Standard_False);
+  for (const Prs3d_TypeOfHighlight h : {Prs3d_TypeOfHighlight_Selected, Prs3d_TypeOfHighlight_Dynamic, Prs3d_TypeOfHighlight_LocalSelected, Prs3d_TypeOfHighlight_LocalDynamic})
+    m_ctx->HighlightStyle(h)->SetAutoTriangulation(Standard_False);
 
   m_view = m_viewer->CreateView();
 #if defined(_WIN32)
@@ -225,6 +277,7 @@ void Viewport::applyTokens() {
   // so a selected object shows through whatever is in front of it.
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetZLayer(Graphic3d_ZLayerId_Topmost);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetZLayer(Graphic3d_ZLayerId_Topmost);
+  if (!m_subHl.IsNull()) refreshSubHighlight();  // drawn by us in the selection colour
   // View cube per the design: flat three-tone box with dark labels, thin X/Y/Z axes in red/green/blue along
   // the lower edges, and the hovered face/edge/corner filled with the hover accent to show where a click goes.
   m_cube->SetBoxColor(occ(t.mtop));
@@ -365,6 +418,7 @@ void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
 
 void Viewport::setSelectionFilter(SelFilter f) {
   m_filter = f;
+  m_hoverOwner = nullptr;  // owners are rebuilt per mode; an address may be reused
   if (!m_initialised) return;
   clearSelection();
   // Activating a selection mode builds that mode's sensitive entities per object (faces/edges), which is
@@ -377,10 +431,11 @@ void Viewport::setSelectionFilter(SelFilter f) {
     if (*i >= items->size()) return false;
     activateSelection((*items)[(*i)++]);
     return *i < items->size();
-  }, [this](bool) {
+  }, [this](bool completed) {
     m_filterJob = nullptr;
     applySelectionLayers();
     redrawScene();
+    if (completed) emit filterApplied();
   });
 }
 
@@ -408,7 +463,10 @@ std::vector<opad::Ref> Viewport::selection() const {
         case TopAbs_VERTEX: r.kind = opad::Ref::Kind::Vertex; break;
         default: break;
       }
-      if (r.kind != opad::Ref::Kind::Body) r.index = opad::subshape_index(item.located, sub);
+      if (r.kind != opad::Ref::Kind::Body) {
+        Handle(SubShapeOwner) mine = Handle(SubShapeOwner)::DownCast(owner);  // knows its ordinal: no walk over the body
+        r.index = mine.IsNull() ? opad::subshape_index(item.located, sub) : mine->index();
+      }
     }
     out.push_back(r);
   }
@@ -485,6 +543,7 @@ void Viewport::selectNodes(const std::vector<std::string>& ids) {
     m_selJob = nullptr;
     m_selApplied = std::move(st->applied);
     applySelectionLayers();
+    refreshSubHighlight();
     redrawScene();
     if (!completed) return;  // superseded or cancelled: the next job (or the click) owns the state now
     if (st->shade) showShade(ids);
@@ -495,6 +554,117 @@ void Viewport::selectNodes(const std::vector<std::string>& ids) {
   };
   Q_ASSERT(m_jobs);  // wired by MainWindow before anything can be selected
   m_selJob = m_jobs->sliced(tr("Selecting %1 objects").arg(total), step, done);
+}
+
+// The selected faces, edges and vertices, drawn as one object (SubHighlight) in the Topmost layer, so they
+// show through like selected bodies. OCCT would build one presentation per selected sub-shape inside the click
+// (seconds to minutes for a rubber band over thousands); here their geometry is copied out of the bodies'
+// existing meshes, one sub-shape per step of a sliced job, into a few large primitive arrays.
+void Viewport::refreshSubHighlight() {
+  if (m_subJob) m_subJob->cancel();
+  if (!m_subHl.IsNull()) {
+    m_ctx->Remove(m_subHl, Standard_False);
+    m_subHl.Nullify();
+  }
+  struct State {
+    std::vector<Handle(SubShapeOwner)> owners;
+    size_t i = 0;
+    std::vector<gp_Pnt> tv, sv, pv;  // the chunk being filled: triangle nodes, segment ends, points
+    std::vector<int> ti;             // triangle indices into tv, 1-based
+    Handle(SubHighlight) hl;
+  };
+  auto st = std::make_shared<State>();
+  for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected()) {
+    Handle(SubShapeOwner) o = Handle(SubShapeOwner)::DownCast(m_ctx->SelectedOwner());
+    if (!o.IsNull()) st->owners.push_back(o);
+  }
+  if (st->owners.empty()) return;
+  st->hl = new SubHighlight(occ(m_tokens.sel));
+  constexpr size_t kChunk = 200000;  // nodes per primitive array: turning a chunk into an array stays a small step
+  auto flush = [st](bool all) {
+    if (!st->tv.empty() && (all || st->tv.size() >= kChunk)) {
+      Handle(Graphic3d_ArrayOfTriangles) a = new Graphic3d_ArrayOfTriangles(static_cast<int>(st->tv.size()), static_cast<int>(st->ti.size()));
+      for (const gp_Pnt& p : st->tv) a->AddVertex(p);
+      for (const int k : st->ti) a->AddEdge(k);
+      st->hl->m_triangles.push_back(a);
+      st->tv.clear();
+      st->ti.clear();
+    }
+    if (!st->sv.empty() && (all || st->sv.size() >= kChunk)) {
+      Handle(Graphic3d_ArrayOfSegments) a = new Graphic3d_ArrayOfSegments(static_cast<int>(st->sv.size()));
+      for (const gp_Pnt& p : st->sv) a->AddVertex(p);
+      st->hl->m_segments.push_back(a);
+      st->sv.clear();
+    }
+    if (!st->pv.empty() && (all || st->pv.size() >= kChunk)) {
+      Handle(Graphic3d_ArrayOfPoints) a = new Graphic3d_ArrayOfPoints(static_cast<int>(st->pv.size()));
+      for (const gp_Pnt& p : st->pv) a->AddVertex(p);
+      st->hl->m_points.push_back(a);
+      st->pv.clear();
+    }
+  };
+  auto step = [st, flush]() -> bool {
+    if (st->i >= st->owners.size()) return false;
+    const Handle(SubShapeOwner)& o = st->owners[st->i++];
+    const TopoDS_Shape& sub = o->Shape();
+    gp_Trsf body;  // rigid placements live on the object, not in the shape (displayBody)
+    if (Handle(AIS_InteractiveObject) obj = Handle(AIS_InteractiveObject)::DownCast(o->Selectable()); !obj.IsNull()) body = obj->LocalTransformation();
+    TopLoc_Location loc;
+    if (sub.ShapeType() == TopAbs_FACE) {
+      Handle(Poly_Triangulation) t = BRep_Tool::Triangulation(TopoDS::Face(sub), loc);
+      if (!t.IsNull()) {
+        const gp_Trsf w = body * loc.Transformation();
+        const int base = static_cast<int>(st->tv.size());
+        for (int n = 1; n <= t->NbNodes(); ++n) st->tv.push_back(t->Node(n).Transformed(w));
+        for (int k = 1; k <= t->NbTriangles(); ++k) {
+          int a, b, c;
+          t->Triangle(k).Get(a, b, c);
+          st->ti.insert(st->ti.end(), {base + a, base + b, base + c});
+        }
+      }
+    } else if (sub.ShapeType() == TopAbs_EDGE) {
+      const TopoDS_Edge& e = TopoDS::Edge(sub);
+      std::vector<gp_Pnt> line;
+      Handle(Poly_PolygonOnTriangulation) poly;
+      Handle(Poly_Triangulation) t;
+      BRep_Tool::PolygonOnTriangulation(e, poly, t, loc);
+      if (!poly.IsNull() && !t.IsNull()) {
+        for (int n = 1; n <= poly->NbNodes(); ++n) line.push_back(t->Node(poly->Node(n)));
+      } else if (Handle(Poly_Polygon3D) p3 = BRep_Tool::Polygon3D(e, loc); !p3.IsNull()) {
+        for (int n = 1; n <= p3->NbNodes(); ++n) line.push_back(p3->Nodes().Value(n));
+      } else if (!BRep_Tool::Degenerated(e)) {  // unmeshed: a coarse sampling of the curve
+        loc = TopLoc_Location();
+        BRepAdaptor_Curve c(e);
+        constexpr int kSamples = 24;
+        for (int n = 0; n <= kSamples; ++n) line.push_back(c.Value(c.FirstParameter() + (c.LastParameter() - c.FirstParameter()) * n / kSamples));
+      }
+      const gp_Trsf w = body * loc.Transformation();
+      for (size_t n = 1; n < line.size(); ++n) {
+        st->sv.push_back(line[n - 1].Transformed(w));
+        st->sv.push_back(line[n].Transformed(w));
+      }
+    } else if (sub.ShapeType() == TopAbs_VERTEX) {
+      st->pv.push_back(BRep_Tool::Pnt(TopoDS::Vertex(sub)).Transformed(body));
+    }
+    flush(false);
+    return st->i < st->owners.size();
+  };
+  auto done = [this, st, flush](bool completed) {
+    m_subJob = nullptr;
+    if (!completed) return;  // superseded by a newer selection
+    flush(true);
+    m_subHl = st->hl;
+    m_subHl->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    m_ctx->Display(m_subHl, 0, -1, Standard_False);  // selection mode -1: never pickable
+    redrawScene();
+    emit subHighlightApplied();
+  };
+  if (st->owners.size() <= 64) {  // a click: no reason to wait for the next event-loop turn
+    while (step()) {}
+    done(true);
+    return;
+  }
+  m_subJob = m_jobs->sliced(tr("Highlighting %1 selected").arg(st->owners.size()), [step](Job&) { return step(); }, done);
 }
 
 // X-ray selection. OCCT recolours a selected object's own structure in place (no separate highlight structure
@@ -556,6 +726,7 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
   clearShade();
   m_needFit = false;
   applySelectionLayers();
+  refreshSubHighlight();
   redrawScene();
   if (trace::enabled()) trace::log(QStringLiteral("3D click: %1 selected in context").arg(m_ctx->NbSelected()));
   emit selectionChanged();
@@ -865,7 +1036,12 @@ void Viewport::benchPick() {
   m_view->Redraw();  // a frame first: the picker clips to the camera z range, which only Redraw (AutoZFit) updates
   Standard_Integer w = 0, h = 0;
   m_view->Window()->Size(w, h);
+  QElapsedTimer clock;
+  clock.start();
   m_ctx->MoveTo(w / 2, h / 2, m_view, Standard_False);
+  const qint64 firstMs = clock.restart();  // the first pick after a mode switch also builds the picking BVHs
+  m_ctx->MoveTo(w / 2 + 3, h / 2 + 3, m_view, Standard_False);
+  const qint64 nextMs = clock.restart();
   QString hit = QStringLiteral("nothing");
   if (m_ctx->HasDetected()) {
     auto it = m_nodeOf.find(m_ctx->DetectedInteractive().get());
@@ -877,7 +1053,7 @@ void Viewport::benchPick() {
   UpdateMouseButtons(pt, Aspect_VKeyMouse_LeftButton, Aspect_VKeyFlags_NONE, false);
   UpdateMouseButtons(pt, Aspect_VKeyMouse_NONE, Aspect_VKeyFlags_NONE, false);
   FlushViewEvents(m_ctx, m_view, Standard_True);
-  trace::log(QStringLiteral("bench: pick at view centre detected %1; click selected %2").arg(hit).arg(m_ctx->NbSelected()));
+  trace::log(QStringLiteral("bench: pick at view centre detected %1; click selected %2 (hover %3 ms, next hover %4 ms, click %5 ms)").arg(hit).arg(m_ctx->NbSelected()).arg(firstMs).arg(nextMs).arg(clock.elapsed()));
 }
 
 // Creates the OpenGL viewer ahead of the first document (about 0.7 s) so that opening a file does not pay
@@ -957,12 +1133,15 @@ void Viewport::sync() {
     if (it != m_items.end()) replace.insert(id);
     toAdd.push_back(id);
   }
+  bool removed = false;
   for (auto it = m_items.begin(); it != m_items.end();) {
     if (keep.count(it->first) && !replace.count(it->first)) { ++it; continue; }
     m_ctx->Remove(it->second.ais, Standard_False);
     m_nodeOf.erase(it->second.ais.get());
     it = m_items.erase(it);
+    removed = true;
   }
+  if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // Remove() dropped that body's selected sub-shapes
   if (!pending.empty()) startMeshing(pending);
   updateAnnotations();
   updateClipPlanes();
@@ -1122,6 +1301,10 @@ void Viewport::paintEvent(QPaintEvent*) {
   frame.start();
   FlushViewEvents(m_ctx, m_view, Standard_True);
   if (trace::enabled() && frame.elapsed() > 100) trace::log(QStringLiteral("slow frame: %1 ms (%2 objects)").arg(frame.elapsed()).arg(m_items.size()));
+  // The label needs the sub-shape's ordinal, a walk over the whole body: only when the hovered owner changes.
+  const Standard_Transient* hoverOwner = m_ctx->HasDetected() ? m_ctx->DetectedOwner().get() : nullptr;
+  if (hoverOwner == m_hoverOwner) return;
+  m_hoverOwner = hoverOwner;
   QString hover;
   if (m_ctx->HasDetected()) {
     Handle(AIS_InteractiveObject) obj = m_ctx->DetectedInteractive();
@@ -1132,7 +1315,8 @@ void Viewport::paintEvent(QPaintEvent*) {
       if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
         const TopoDS_Shape& sub = owner->Shape();
         const char* kind = sub.ShapeType() == TopAbs_FACE ? "face" : sub.ShapeType() == TopAbs_EDGE ? "edge" : "vertex";
-        hover += QString::fromUtf8(" › %1 %2").arg(kind).arg(opad::subshape_index(m_items.at(it->second).located, sub));
+        Handle(SubShapeOwner) mine = Handle(SubShapeOwner)::DownCast(owner);
+        hover += QString::fromUtf8(" › %1 %2").arg(kind).arg(mine.IsNull() ? opad::subshape_index(m_items.at(it->second).located, sub) : mine->index());
       }
     }
   }
