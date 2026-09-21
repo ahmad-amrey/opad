@@ -166,6 +166,24 @@ TEST(inspect_faces_edges_and_measure) {
   json ang = measure_angle(d, s, Ref::parse(block + "/face/" + std::to_string(top)), Ref::parse(block + "/face/" + std::to_string(cyl)));
   CHECK_NEAR(ang["value"].get<double>(), 0.0, 1e-9);
   CHECK(ang["origin"].is_array() && ang["origin"].size() == 3);
+  CHECK(!ang.contains("vertex"));  // a normal against an axis: nothing to construct
+  // Two faces of the box: the diagram's vertex lies on their common edge, each ray in its own face, and the
+  // drawn angle is the measured one.
+  int side = -1;
+  for (int i = 0; i < nfaces && side < 0; ++i) {
+    json f = inspect_ref(d, s, Ref::parse(block + "/face/" + std::to_string(i)));
+    if (f["surface"] == "plane" && std::fabs(f["normal"][0].get<double>() - 1.0) < 1e-9) side = i;
+  }
+  CHECK(side >= 0);
+  json corner = measure_angle(d, s, Ref::parse(block + "/face/" + std::to_string(top)), Ref::parse(block + "/face/" + std::to_string(side)));
+  CHECK_NEAR(corner["value"].get<double>(), 90.0, 1e-9);
+  CHECK(corner.contains("vertex"));
+  CHECK_NEAR(corner["vertex"][0].get<double>(), corner["point_b"][0].get<double>(), 1e-9);  // in the side face's plane
+  CHECK_NEAR(corner["vertex"][2].get<double>(), corner["point_a"][2].get<double>(), 1e-9);  // and in the top's
+  CHECK_NEAR(corner["ray_a"][2].get<double>(), 0.0, 1e-9);
+  CHECK_NEAR(corner["ray_b"][0].get<double>(), 0.0, 1e-9);
+  CHECK_NEAR(std::fabs(corner["ray_a"][0].get<double>()), 1.0, 1e-9);
+  CHECK(corner["reach_a"].get<double>() > 0 && corner["reach_b"].get<double>() > 0);
   // Distance from a point to the body.
   json dist = measure_distance(d, s, Ref::parse("point/5,5,50"), Ref::parse(block));
   CHECK_NEAR(dist["value"].get<double>(), 30.0, 1e-6);

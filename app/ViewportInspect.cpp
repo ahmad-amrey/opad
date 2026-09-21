@@ -304,11 +304,35 @@ void Viewport::refreshMeasurement(bool force) {
             tr("%1 %2 mm").arg(QChar("XYZ"[i])).arg(number(hi.Coord(i+1)-lo.Coord(i+1))), axes[i], -normal, 12);
     }
   } else if (kind == "angle" && r.contains("origin")) {
-    const gp_Pnt origin = point(r["origin"]);
-    const gp_Vec a(point(r["direction_a"]).XYZ()), b(point(r["direction_b"]).XYZ());
-    const double radius = 70 * pixelAt(origin), angle = r["value"].get<double>() * M_PI / 180.0;
-    arrow(origin, origin.Translated(a * radius * 1.3), m_tokens.hov);
-    arrow(origin, origin.Translated(b * radius * 1.3), m_tokens.amber);
+    // With a construction from the core the diagram sits on the objects: rays from the vertex where they meet,
+    // along each of them, and the arc through the nearer one. Otherwise (parallel, or a line against a normal;
+    // results pinned before the construction existed) the two directions are compared at the first object.
+    const bool built = r.contains("vertex");
+    const gp_Pnt origin = point(r[built ? "vertex" : "origin"]);
+    const gp_Vec a(point(r[built ? "ray_a" : "direction_a"]).XYZ()), b(point(r[built ? "ray_b" : "direction_b"]).XYZ());
+    const double angle = a.Angle(b);
+    double radius = 70 * pixelAt(origin);
+    if (built) {
+      const double reachA = r["reach_a"].get<double>(), reachB = r["reach_b"].get<double>(), glyph = radius;
+      if (std::min(reachA, reachB) > 40 * pixelAt(origin)) radius = std::min(reachA, reachB);
+      // Solid as far as the arc, dashed on to the object itself.
+      auto ray = [&](const gp_Pnt& from, const gp_Vec& dir, double reach, const QColor& c) {
+        const double solid = std::max(radius * 1.15, glyph * 0.5);
+        graphic->lines.push_back({from, from.Translated(dir * solid), c, false});
+        if (reach > solid) graphic->lines.push_back({from.Translated(dir * solid), from.Translated(dir * reach), c});
+      };
+      ray(origin, a, reachA, m_tokens.hov);
+      const gp_Pnt originB = point(r["vertex_b"]);
+      if (!samePoint(origin, originB)) graphic->lines.push_back({origin, originB, m_tokens.fg3});  // skew lines: b is compared moved over
+      // The angle may be against b's extension beyond the vertex; the dashes still lead to b itself.
+      const bool direct = samePoint(origin, originB) && !r.value("ray_b_extended", false);
+      ray(origin, b, direct ? reachB : 0, m_tokens.amber);
+      if (!direct && reachB > 0) graphic->lines.push_back({originB, point(r["point_b"]), m_tokens.amber});
+    } else {
+      arrow(origin, origin.Translated(a * radius * 1.3), m_tokens.hov);
+      arrow(origin, origin.Translated(b * radius * 1.3), m_tokens.amber);
+      if (r.contains("point_b")) graphic->lines.push_back({point(r["point_b"]), origin, m_tokens.fg3});
+    }
     gp_Vec tangent = b - a * a.Dot(b);
     if (tangent.SquareMagnitude() < 1e-12) {
       tangent = up - a * a.Dot(up);
@@ -328,8 +352,8 @@ void Viewport::refreshMeasurement(bool force) {
     }
     label(origin.Translated((a * std::cos(angle / 2) + tangent * std::sin(angle / 2)) * radius),
           tr("%1°").arg(number(r["value"].get<double>())), m_tokens.fg, 0, 24);
-    label(origin.Translated(a * radius * 1.3), tr("1"), m_tokens.sel, -15, -18);
-    label(origin.Translated(b * radius * 1.3), tr("2"), m_tokens.amber, 15, -18);
+    label(built ? point(r["point_a"]) : origin.Translated(a * radius * 1.3), tr("1"), m_tokens.sel, -15, -18);
+    label(built ? point(r["point_b"]) : origin.Translated(b * radius * 1.3), tr("2"), m_tokens.amber, 15, -18);
   }
   display(graphic);
   for (const auto& text : labels) display(text);

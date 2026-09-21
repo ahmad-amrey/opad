@@ -111,32 +111,40 @@ TopoDS_Shape ref_shape(const Document& doc, const Scene& scene, const Ref& ref) 
 }
 
 // Direction associated with a reference (planar normal, line direction, axis of revolution).
-bool ref_direction(const Document& doc, const Scene& scene, const Ref& ref, gp_Dir& out, std::string& what) {
+// `at` is a point of the reference the direction belongs to: on the face for a normal, the middle of a line or
+// chord, and on the axis (beside the face, or the curve's centre) for an axis.
+bool ref_direction(const Document& doc, const Scene& scene, const Ref& ref, gp_Dir& out, std::string& what, gp_Pnt& at) {
   TopoDS_Shape s = ref_shape(doc, scene, ref);
   if (ref.kind == Ref::Kind::Face) {
     BRepAdaptor_Surface surf(TopoDS::Face(s));
+    const gp_Pnt mid = surf.Value((surf.FirstUParameter() + surf.LastUParameter()) * 0.5, (surf.FirstVParameter() + surf.LastVParameter()) * 0.5);
+    auto axis = [&](const gp_Ax1& ax) {
+      out = ax.Direction(); what = "axis";
+      at = ax.Location().Translated(gp_Vec(ax.Direction()) * gp_Vec(ax.Location(), mid).Dot(gp_Vec(ax.Direction())));
+      return true;
+    };
     switch (surf.GetType()) {
       case GeomAbs_Plane: {
         gp_Dir n = surf.Plane().Axis().Direction();
         if (s.Orientation() == TopAbs_REVERSED) n.Reverse();
-        out = n; what = "normal"; return true;
+        out = n; what = "normal"; at = mid; return true;
       }
-      case GeomAbs_Cylinder: out = surf.Cylinder().Axis().Direction(); what = "axis"; return true;
-      case GeomAbs_Cone: out = surf.Cone().Axis().Direction(); what = "axis"; return true;
-      case GeomAbs_Torus: out = surf.Torus().Axis().Direction(); what = "axis"; return true;
+      case GeomAbs_Cylinder: return axis(surf.Cylinder().Axis());
+      case GeomAbs_Cone: return axis(surf.Cone().Axis());
+      case GeomAbs_Torus: return axis(surf.Torus().Axis());
       default: return false;
     }
   }
   if (ref.kind == Ref::Kind::Edge) {
     BRepAdaptor_Curve c(TopoDS::Edge(s));
     switch (c.GetType()) {
-      case GeomAbs_Line: out = c.Line().Direction(); what = "direction"; return true;
-      case GeomAbs_Circle: out = c.Circle().Axis().Direction(); what = "axis"; return true;
-      case GeomAbs_Ellipse: out = c.Ellipse().Axis().Direction(); what = "axis"; return true;
+      case GeomAbs_Line: out = c.Line().Direction(); what = "direction"; at = c.Value((c.FirstParameter() + c.LastParameter()) * 0.5); return true;
+      case GeomAbs_Circle: out = c.Circle().Axis().Direction(); what = "axis"; at = c.Circle().Location(); return true;
+      case GeomAbs_Ellipse: out = c.Ellipse().Axis().Direction(); what = "axis"; at = c.Ellipse().Location(); return true;
       default: {
         gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
         if (a.Distance(b) < 1e-9) return false;
-        out = gp_Dir(gp_Vec(a, b)); what = "chord"; return true;
+        out = gp_Dir(gp_Vec(a, b)); what = "chord"; at = gp_Pnt((a.XYZ() + b.XYZ()) * 0.5); return true;
       }
     }
   }
@@ -731,9 +739,10 @@ json measure_edge_distance(const Document& doc, const Scene& scene, const Ref& a
 
 json measure_angle(const Document& doc, const Scene& scene, const Ref& a, const Ref& b) {
   gp_Dir da, db;
+  gp_Pnt pa, pb;
   std::string wa, wb;
-  if (!ref_direction(doc, scene, a, da, wa)) throw Error("reference has no direction (need a planar face, line, circle or cylinder): " + a.str());
-  if (!ref_direction(doc, scene, b, db, wb)) throw Error("reference has no direction (need a planar face, line, circle or cylinder): " + b.str());
+  if (!ref_direction(doc, scene, a, da, wa, pa)) throw Error("reference has no direction (need a planar face, line, circle or cylinder): " + a.str());
+  if (!ref_direction(doc, scene, b, db, wb, pb)) throw Error("reference has no direction (need a planar face, line, circle or cylinder): " + b.str());
   double ang = da.Angle(db) * 180.0 / M_PI;
   json j;
   j["kind"] = "angle";
@@ -745,9 +754,63 @@ json measure_angle(const Document& doc, const Scene& scene, const Ref& a, const 
   j["direction_b"] = dir(db);
   j["meaning_a"] = wa;
   j["meaning_b"] = wb;
-  // Common origin for the direction comparison diagram (directions need not intersect).
-  const json bounds = bbox_json(shape_bbox(ref_shape(doc, scene, a)));
-  j["origin"] = bounds["center"];
+  j["point_a"] = pnt(pa);
+  j["point_b"] = pnt(pb);
+  j["origin"] = pnt(pa);  // where the two directions are compared when there is no construction below
+
+  // The diagram on the objects themselves: the vertex where the two lines (or the two planes, seen along their
+  // common line) meet, and from it one ray along each object, towards it. `reach` is how far along its ray the
+  // object's own point lies. The rays include either the angle or its supplement; in the latter case ray b is
+  // the extension of its object beyond the vertex (`ray_b_extended`), so that the drawn angle is the value.
+  const gp_Vec va(da), vb(db);
+  const bool normal_a = wa == "normal", normal_b = wb == "normal";
+  gp_Pnt vertex, vertex_b;
+  gp_Vec ray_a, ray_b;
+  double reach_a = 0, reach_b = 0;
+  bool built = false;
+  if (!normal_a && !normal_b) {  // two lines: the closest points of one to the other (the same point when they meet)
+    const gp_Vec w(pb, pa);
+    const double dot = va.Dot(vb), d = va.Dot(w), e = vb.Dot(w), denom = 1.0 - dot * dot;
+    if (denom > 1e-6) {
+      const double s = (dot * e - d) / denom, t = (e - dot * d) / denom;
+      vertex = pa.Translated(va * s);
+      vertex_b = pb.Translated(vb * t);
+      ray_a = s > 0 ? -va : va;
+      ray_b = t > 0 ? -vb : vb;
+      reach_a = std::abs(s);
+      reach_b = std::abs(t);
+      built = true;
+    }
+  } else if (normal_a && normal_b) {  // two planes: a section across their common line
+    const gp_Vec along = va.Crossed(vb);
+    if (along.SquareMagnitude() > 1e-6) {
+      const double ha = va.Dot(gp_Vec(pa.XYZ())), hb = vb.Dot(gp_Vec(pb.XYZ()));
+      const gp_Vec t = along.Normalized();
+      const gp_Pnt on_line(((vb * ha - va * hb).Crossed(along) / along.SquareMagnitude()).XYZ());
+      const gp_Pnt middle((pa.XYZ() + pb.XYZ()) * 0.5);
+      vertex = vertex_b = on_line.Translated(t * gp_Vec(on_line, middle).Dot(t));
+      ray_a = t.Crossed(va);
+      ray_b = t.Crossed(vb);
+      reach_a = gp_Vec(vertex, pa).Dot(ray_a);
+      reach_b = gp_Vec(vertex, pb).Dot(ray_b);
+      if (reach_a < 0) { ray_a.Reverse(); reach_a = -reach_a; }
+      if (reach_b < 0) { ray_b.Reverse(); reach_b = -reach_b; }
+      built = true;
+    }
+  }
+  if (built) {
+    const double drawn = ray_a.Angle(ray_b) * 180.0 / M_PI;
+    const bool extended = std::abs(drawn - ang) > std::abs(180.0 - drawn - ang);
+    if (extended) ray_b.Reverse();
+    j["vertex"] = pnt(vertex);
+    j["vertex_b"] = pnt(vertex_b);
+    j["ray_a"] = {ray_a.X(), ray_a.Y(), ray_a.Z()};
+    j["ray_b"] = {ray_b.X(), ray_b.Y(), ray_b.Z()};
+    j["reach_a"] = reach_a;
+    j["reach_b"] = reach_b;
+    j["ray_b_extended"] = extended;
+    j["origin"] = j["vertex"];
+  }
   return j;
 }
 
