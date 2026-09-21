@@ -61,6 +61,7 @@ const QHash<QString, QString>& table() {
       {"flip", R"(<path d="M12 3v18M9 8L4 12l5 4zM15 8l5 4-5 4z"/>)"},
       {"warning", R"(<path d="M12 3l10 18H2z"/><path d="M12 10v4M12 18h.01"/>)"},
       {"check", R"(<path d="M5 12l5 5L20 7"/>)"},
+      {"issue", R"(<circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/>)"},
       {"dot", R"(<circle cx="12" cy="12" r="3" fill="currentColor"/>)"},
       {"recent", R"(<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>)"},
       {"step", R"(<path d="M6 4h12M6 20h12M12 4v16"/><path d="M8 8l4 4-4 4M16 8l-4 4 4 4" opacity=".5"/>)"},

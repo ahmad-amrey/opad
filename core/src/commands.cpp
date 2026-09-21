@@ -201,7 +201,7 @@ void register_builtins() {
         json ann = json::array(), meas = json::array(), sec = json::array(), views = json::array();
         for (const auto& x : s.annotations) {
           if (!by.empty() && x.by != by) continue;
-          ann.push_back({{"id", x.id}, {"anchor", x.anchor.str()}, {"text", x.text}, {"by", x.by}, {"ts", x.ts}, {"unresolved", x.unresolved}});
+          ann.push_back({{"id", x.id}, {"anchor", x.anchor.str()}, {"text", x.text}, {"style", x.style}, {"by", x.by}, {"ts", x.ts}, {"unresolved", x.unresolved}});
         }
         for (const auto& m : s.measurements) {
           json refs = json::array();
@@ -377,11 +377,12 @@ void register_builtins() {
       });
 
   reg("annotate", "Add a text annotation anchored to a body/face/edge/point",
-      {{"doc", "path"}, {"anchor", "string - reference"}, {"text", "string"}, {"by", "string"}}, true, [](Document* d, const json& a) {
+      {{"doc", "path"}, {"anchor", "string - reference"}, {"text", "string"}, {"style", "ok|warning|issue|note - default note"}, {"by", "string"}}, true, [](Document* d, const json& a) {
         json op;
         op["op"] = "annotation";
         op["anchor"] = Ref::from_json(a.at("anchor")).to_json();
         op["text"] = a.at("text");
+        if (a.contains("style")) op["style"] = a["style"];
         json j;
         j["id"] = need(d).append(op, a.value("by", "")).id;
         return j;

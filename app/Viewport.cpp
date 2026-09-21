@@ -128,6 +128,8 @@ void Viewport::benchShot(const QString& path) {
   if (const QByteArray view = qgetenv("OPAD_BENCH_VIEW"); !view.isEmpty()) {  // an unanimated camera for the frame dump
     m_view->SetProj(view == "bottom" ? V3d_Zneg : view == "top" ? V3d_Zpos : V3d_XposYnegZpos);
     m_view->FitAll(0.02, Standard_False);
+    m_view->Redraw();
+    emit notesMoved();  // the note cards follow the camera through a queued signal; the dump wants them placed now
   }
   Standard_Integer w = 0, h = 0;
   m_view->Window()->Size(w, h);
@@ -735,6 +737,7 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   QElapsedTimer clock;
   clock.start();
   refreshMeasurement();
+  noteCameraMoved();
   AIS_ViewController::handleViewRedraw(ctx, view);
   if (trace::enabled() && clock.elapsed() > 50) trace::log(QStringLiteral("slow frame part: redraw %1 ms").arg(clock.elapsed()));
 }
@@ -1338,44 +1341,6 @@ void Viewport::finishSync(int pendingCount, bool added) {
   if (pendingCount == 0) m_needFit = false;
   m_view->Invalidate();
   requestRedraw();
-}
-
-void Viewport::updateAnnotations() {
-  if (!m_initialised) return;
-  for (const auto& l : m_labels) m_ctx->Remove(l, Standard_False);
-  m_labels.clear();
-  for (const auto& a : m_doc->scene.annotations) {
-    gp_Pnt at(a.anchor.point[0], a.anchor.point[1], a.anchor.point[2]);
-    if (a.unresolved) continue;
-    if (a.anchor.kind != opad::Ref::Kind::Point) {
-      try {
-        opad::json info = opad::inspect_ref(m_doc->doc, m_doc->scene, a.anchor);
-        opad::json c = info.contains("center") ? info["center"] : info.contains("point") ? info["point"] : info.contains("start") ? info["start"] : info["bbox"]["center"];
-        at = gp_Pnt(c[0].get<double>(), c[1].get<double>(), c[2].get<double>());
-      } catch (const std::exception&) {
-        continue;
-      }
-    }
-    // Amber anchor dot with a bg2 ring, then the note text (author in parentheses).
-    Handle(AIS_Shape) dot = new AIS_Shape(BRepBuilderAPI_MakeVertex(at).Vertex());
-    dot->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL, occ(m_tokens.amber), 5.0));
-    dot->SetZLayer(Graphic3d_ZLayerId_Topmost);
-    m_ctx->Display(dot, Standard_False);
-    m_ctx->Deactivate(dot);
-    m_labels.push_back(dot);
-    Handle(AIS_TextLabel) label = new AIS_TextLabel();
-    std::string text = a.text.size() > 48 ? a.text.substr(0, 45) + "..." : a.text;
-    label->SetText(TCollection_ExtendedString(("   " + text + "  (" + a.by + ")").c_str(), Standard_True));
-    label->SetPosition(at);
-    label->SetHeight(13);
-    label->SetColor(occ(m_tokens.amber));
-    label->SetDisplayType(Aspect_TODT_SUBTITLE);
-    label->SetColorSubTitle(occ(m_tokens.bg2));
-    label->SetZLayer(Graphic3d_ZLayerId_Topmost);
-    m_ctx->Display(label, Standard_False);
-    m_ctx->Deactivate(label);
-    m_labels.push_back(label);
-  }
 }
 
 // ---------------------------------------------------------------- Qt events

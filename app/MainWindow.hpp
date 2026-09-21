@@ -12,6 +12,7 @@
 #include "EmptyState.hpp"
 #include "GuidedTool.hpp"
 #include "Jobs.hpp"
+#include "Notes.hpp"
 #include "Panels.hpp"
 #include "Ribbon.hpp"
 #include "Viewport.hpp"
@@ -89,6 +90,7 @@ class MainWindow : public QMainWindow {
   void clearMeasurement();
   void addAnnotation();
   void resolveCurrentAnnotation();
+  void restyleAnnotation(const std::string& opId, const std::string& style);  // an edit op on the note
   void exportDialog();
   void screenshot();
   void saveNamedView();
@@ -135,6 +137,7 @@ class MainWindow : public QMainWindow {
   BrowserPanel* m_browser = nullptr;
   PropertiesPanel* m_props = nullptr;
   AnnotationsPanel* m_annotations = nullptr;
+  NoteCards* m_noteCards = nullptr;  // one card beside every open note, over the viewport
   SectionPanel* m_section = nullptr;
   ToolPanel* m_propsPanel = nullptr;  // floating tool panels over the viewport (no fixed right dock)
   ToolPanel* m_annotationsPanel = nullptr;

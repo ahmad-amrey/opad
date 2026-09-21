@@ -1,5 +1,7 @@
 #include "Panels.hpp"
 
+#include "Notes.hpp"
+
 #include <QAction>
 #include <QApplication>
 #include <QColorDialog>
@@ -65,11 +67,6 @@ bool isVector(const opad::json& v) {
   if (!v.is_array() || v.size() < 2 || v.size() > 4) return false;
   for (const auto& e : v) if (!e.is_number()) return false;
   return true;
-}
-
-QColor authorColor(const std::string& by) {
-  uint h = qHash(QString::fromStdString(by));
-  return QColor::fromHsl(static_cast<int>(h % 360), 140, 130);
 }
 
 QString shortId(const std::string& id) { return QString::fromStdString(id.substr(0, 8)); }
@@ -1078,7 +1075,6 @@ AnnotationsPanel::AnnotationsPanel(AppDocument* doc, QWidget* parent) : QWidget(
 }
 
 void AnnotationsPanel::rebuild() {
-  const Tokens& t = theme::current();
   QString currentAuthor = m_author->currentText();
   std::set<std::string> authors;
   std::set<std::string> deleted(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end());
@@ -1113,87 +1109,24 @@ void AnnotationsPanel::rebuild() {
     ++shown;
     opad::Ref anchor;
     try { anchor = opad::Ref::from_json(op.data["anchor"]); } catch (...) {}
-    auto* card = new QFrame(m_cards);
-    card->setObjectName("card");
-    card->setProperty("state", state);
-    card->setCursor(Qt::PointingHandCursor);
-    auto* v = new QVBoxLayout(card);
-    v->setContentsMargins(8, 8, 8, 8);
-    v->setSpacing(6);
-    auto* head = new QHBoxLayout();
-    head->setSpacing(6);
-    auto* dot = new QLabel(card);
-    QPixmap dp(8, 8);
-    dp.fill(Qt::transparent);
-    { QPainter p(&dp); p.setRenderHint(QPainter::Antialiasing); p.setPen(Qt::NoPen); p.setBrush(unres ? t.red : authorColor(by)); p.drawEllipse(0, 0, 8, 8); }
-    dot->setPixmap(dp);
-    head->addWidget(dot);
-    auto* author = new QLabel(QString::fromStdString(by), card);
-    author->setFont(theme::ui(13, QFont::Medium));
-    head->addWidget(author);
-    auto* time = new QLabel(QString::fromStdString(op.data.value("ts", "")).left(16).replace('T', ' '), card);
-    time->setObjectName("secondary");
-    head->addWidget(time, 1);
-    auto* id = new QLabel(shortId(op.id), card);
-    id->setObjectName("tertiary");
-    id->setFont(theme::mono(11));
-    head->addWidget(id);
-    v->addLayout(head);
-    auto* text = new QLabel(QString::fromStdString(op.data.value("text", "")), card);
-    text->setWordWrap(true);
-    v->addWidget(text);
-    if (unres) {
-      auto* row = new QHBoxLayout();
-      auto* w = new QLabel(card);
-      w->setPixmap(icons::pixmap("warning", t.red, 14, devicePixelRatioF()));
-      row->addWidget(w);
-      auto* l = new QLabel(tr("unresolved · target %1 no longer exists").arg(shortId(anchor.body)), card);
-      l->setStyleSheet(QString("color:%1; font-size:11px;").arg(t.red.name()));
-      row->addWidget(l, 1);
-      v->addLayout(row);
-    } else if (resolved) {
-      auto* row = new QHBoxLayout();
-      auto* c = new QLabel(card);
-      c->setPixmap(icons::pixmap("check", t.green, 14, devicePixelRatioF()));
-      row->addWidget(c);
-      auto* l = new QLabel(tr("resolved"), card);
-      l->setStyleSheet(QString("color:%1; font-size:11px;").arg(t.green.name()));
-      row->addWidget(l, 1);
-      v->addLayout(row);
-    }
-    auto* foot = new QHBoxLayout();
-    QString target = anchor.kind == opad::Ref::Kind::Point ? tr("point") : m_doc->nodeName(anchor.body);
-    if (anchor.kind != opad::Ref::Kind::Body && anchor.kind != opad::Ref::Kind::Point) target += QString(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(anchor.kind))).arg(anchor.index);
-    auto* tl = new QLabel(target, card);
-    tl->setObjectName("tertiary");
-    tl->setFont(theme::mono(11));
-    foot->addWidget(tl, 1);
-    auto* btn = new QPushButton(resolved ? tr("Restore") : tr("Resolve"), card);
-    btn->setObjectName("outline");
-    foot->addWidget(btn);
-    v->addLayout(foot);
-    std::string opId = op.id, body = anchor.body;
-    connect(btn, &QPushButton::clicked, this, [this, opId, resolved] { if (resolved) emit restoreRequested(opId); else emit resolveRequested(opId); });
-    card->installEventFilter(this);
-    card->setProperty("opId", QString::fromStdString(opId));
-    card->setProperty("body", QString::fromStdString(body));
+    NoteInfo n;
+    n.id = op.id; n.by = by; n.ts = op.data.value("ts", ""); n.text = op.data.value("text", ""); n.body = anchor.body;
+    n.style = op.data.value("style", "note");
+    for (const auto& a : m_doc->scene.annotations) if (a.id == op.id) n.style = a.style;  // after edits
+    n.state = state;
+    n.target = anchor.kind == opad::Ref::Kind::Point ? tr("point") : m_doc->nodeName(anchor.body);
+    if (anchor.kind != opad::Ref::Kind::Body && anchor.kind != opad::Ref::Kind::Point) n.target += QString(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(anchor.kind))).arg(anchor.index);
+    auto* card = new NoteCard(n, m_cards);
+    connect(card, &NoteCard::resolveRequested, this, &AnnotationsPanel::resolveRequested);
+    connect(card, &NoteCard::restoreRequested, this, &AnnotationsPanel::restoreRequested);
+    connect(card, &NoteCard::styleRequested, this, &AnnotationsPanel::styleRequested);
+    connect(card, &NoteCard::pressed, this, [this, card] {
+      m_current = card->note().id;
+      if (!card->note().body.empty()) emit selectNode(card->note().body);
+    });
     cl->insertWidget(cl->count() - 1, card);
   }
   m_count->setText(tr("%1 of %2").arg(shown).arg(total));
-  // Click on a card: make it current and select its anchor body.
-  for (QObject* o : m_cards->children())
-    if (auto* f = qobject_cast<QFrame*>(o)) f->removeEventFilter(this), f->installEventFilter(this);
-}
-
-bool AnnotationsPanel::eventFilter(QObject* o, QEvent* e) {
-  if (e->type() == QEvent::MouseButtonPress) {
-    if (auto* card = qobject_cast<QFrame*>(o)) {
-      m_current = card->property("opId").toString().toStdString();
-      std::string body = card->property("body").toString().toStdString();
-      if (!body.empty()) emit selectNode(body);
-    }
-  }
-  return QWidget::eventFilter(o, e);
 }
 
 // ---------------------------------------------------------------- SectionPanel

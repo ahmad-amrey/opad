@@ -236,6 +236,14 @@ TEST(resolve_hierarchy_and_edits) {
   CHECK(s.annotations[0].unresolved);
   CHECK(!s.annotations[1].unresolved);
   CHECK_EQ(s.tree_json().size(), 1u);
+
+  // A note's tag: "note" unless given, checked on append, and changed later by an edit op.
+  CHECK_EQ(s.annotations[1].style, "note");
+  const std::string tagged = d.append(json{{"op", "annotation"}, {"anchor", Ref::parse(b1).to_json()}, {"text", "burr"}, {"style", "issue"}}).id;
+  CHECK_THROWS(d.append(json{{"op", "annotation"}, {"anchor", Ref::parse(b1).to_json()}, {"text", "x"}, {"style", "loud"}}));
+  CHECK_EQ(resolve(d).annotations[2].style, "issue");
+  d.append(json{{"op", "edit"}, {"target", tagged}, {"set", {{"style", "ok"}}}});
+  CHECK_EQ(resolve(d).annotations[2].style, "ok");
 }
 
 TEST(tombstones_and_gc) {

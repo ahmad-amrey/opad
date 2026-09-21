@@ -33,8 +33,11 @@ struct Annotation {
   std::string id;  // == op id
   Ref anchor;
   std::string text, by, ts;
+  std::string style = "note";  // one of annotation_styles(); how the note is drawn, not whether it is open
   bool unresolved = false;
 };
+// The tags a note can carry: ok, warning, issue, note (the default, also for a tag this version does not know).
+const std::vector<std::string>& annotation_styles();
 
 struct Measurement {
   std::string id;

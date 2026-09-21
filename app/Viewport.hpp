@@ -145,6 +145,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool planePoint(const QPointF& widgetPos, const opad::Frame& frame, double& u, double& v) const;
   double pixelSize() const;                    // world units per widget pixel at the view's focus
   QPoint widgetPoint(const opad::Vec3& world) const;
+  // Notes: NoteCards places one card per open note and tells the view where each pointer ends (widget
+  // coordinates); notesMoved() follows every camera move or scene change so it can place them again.
+  bool noteAnchor(const std::string& opId, QPoint& out) const;  // false: unknown, or behind the eye
+  void setNoteLeaders(const std::map<std::string, QPoint>& ends, bool shown);  // shown=false: notes hidden, nothing drawn
   // Objects owned by an editor (the sketch being drawn, its dimensions): never pickable, drawn on top.
   void showOverlay(const Handle(AIS_InteractiveObject)& obj);
   void updateOverlay(const Handle(AIS_InteractiveObject)& obj);
@@ -163,6 +167,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QPaintEngine* paintEngine() const override { return nullptr; }
 
  signals:
+  void notesMoved();
   void selectionChanged();
   void measurementAnchorPicked(int side, const opad::Vec3& point);
   void selectionApplied();  // a selectNodes() call has been applied (highlight or shade) and selection() reflects it
@@ -217,6 +222,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   double deflectionFor(const std::string& key);
   Graphic3d_Vec2i devicePos(const QPointF& p) const;
   void updateAnnotations();
+  void noteCameraMoved();
   void updateClipPlanes();
   void applyTokens();
   void refreshMeasurement(bool force = false);
@@ -240,6 +246,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   opad::json m_measurement;
   Graphic3d_WorldViewProjState m_measureCamera;
   QSize m_measureSize;
+  struct NoteMark { gp_Pnt at; std::string style; };
+  std::map<std::string, NoteMark> m_notes;  // open notes by op id
+  Graphic3d_WorldViewProjState m_noteCamera;
+  QSize m_noteSize;
   bool m_measureComponents = true;
   struct MeasurementAnchor { int side; opad::Vec3 point; };
   std::vector<MeasurementAnchor> m_measureAnchors;  // same candidates for drawing and hit testing

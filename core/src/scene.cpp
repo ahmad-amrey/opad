@@ -369,6 +369,10 @@ struct SceneBuilder::Impl {
       a.text = d["text"].get<std::string>();
       a.by = d.value("by", "");
       a.ts = d.value("ts", "");
+      if (d.contains("style") && d["style"].is_string()) {
+        const auto& styles = annotation_styles();
+        if (std::find(styles.begin(), styles.end(), d["style"].get<std::string>()) != styles.end()) a.style = d["style"].get<std::string>();
+      }
       if (!ref_ok(a.anchor)) {
         a.unresolved = true;
         unresolved(id, type, "annotation anchor body " + a.anchor.body + " does not exist");
@@ -456,6 +460,11 @@ void SceneBuilder::apply(const std::string& id, const std::string& type, const j
 void SceneBuilder::finish() { m->finish(); }
 Scene& SceneBuilder::scene() { return m->scene; }
 Scene SceneBuilder::take() { return std::move(m->scene); }
+
+const std::vector<std::string>& annotation_styles() {
+  static const std::vector<std::string> styles = {"ok", "warning", "issue", "note"};
+  return styles;
+}
 
 std::vector<EffectiveOp> effective_ops(const Document& doc, std::vector<std::string>* deleted_out) {
   std::vector<const Op*> ops;

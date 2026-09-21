@@ -194,10 +194,9 @@ class AnnotationsPanel : public QWidget {
   void addRequested();
   void resolveRequested(const std::string& opId);
   void restoreRequested(const std::string& opId);
+  void styleRequested(const std::string& opId, const std::string& style);  // re-tag: an edit op
  public slots:
   void rebuild();
- protected:
-  bool eventFilter(QObject* o, QEvent* e) override;
  private:
   AppDocument* m_doc;
   QComboBox* m_author;

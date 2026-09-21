@@ -115,7 +115,15 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_annotations, &AnnotationsPanel::addRequested, this, &MainWindow::addAnnotation);
   connect(m_annotations, &AnnotationsPanel::resolveRequested, this, &MainWindow::deleteOp);
   connect(m_annotations, &AnnotationsPanel::restoreRequested, this, &MainWindow::restoreOp);
+  connect(m_annotations, &AnnotationsPanel::styleRequested, this, &MainWindow::restyleAnnotation);
   connect(m_annotations, &AnnotationsPanel::selectNode, this, [this](const std::string& id) { onBrowserSelection({id}); m_browser->setSelectedIds({id}); });
+  m_noteCards = new NoteCards(m_doc, m_viewport, this);
+  connect(m_noteCards, &NoteCards::resolveRequested, this, &MainWindow::deleteOp);
+  connect(m_noteCards, &NoteCards::styleRequested, this, &MainWindow::restyleAnnotation);
+  connect(m_noteCards, &NoteCards::pressed, this, [this](const std::string& opId, const std::string& body) {
+    m_timeline->setCurrentOp(opId);
+    if (!body.empty()) { onBrowserSelection({body}); m_browser->setSelectedIds({body}); }
+  });
   connect(m_props, &PropertiesPanel::faceChosen, this, [this](int index) {
     auto refs = m_viewport->selection();
     if (refs.empty()) return;
@@ -398,6 +406,9 @@ void MainWindow::buildActions() {
   // Annotate / edit
   addAction("annotate.add", tr("Note"), "annotate", QKeySequence("N"), [this] { toggleTool("note"); }, true);
   addAction("annotate.resolve", tr("Resolve note"), "check", QKeySequence("Ctrl+Return"), [this] { resolveCurrentAnnotation(); });
+  QAction* notes = addAction("annotate.show", tr("Show notes"), "annotate", QKeySequence("Shift+N"), [this] {}, true);
+  notes->setChecked(m_settings.value("ui/notes", true).toBool());  // m_noteCards reads the same key once the viewport exists
+  connect(notes, &QAction::toggled, this, [this](bool on) { if (m_noteCards) m_noteCards->setShown(on); });
   addAction("edit.undo", tr("&Undo"), "rollLeft", QKeySequence::Undo, [this] {
     if (m_design->sketchActive()) return m_design->sketch()->undo();  // a sketch has its own history until it is finished
     if (m_design->ownsSelection() || m_design->busy()) return;
@@ -478,7 +489,7 @@ void MainWindow::buildMenus() {
   m_recentMenu = file->addMenu(tr("Recent"));
   add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
-  add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.resolve", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
+  add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = menuBar()->addMenu(tr("&View"));
   add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "-", "view.section", "view.flip", "view.isolate", "view.unisolate", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
@@ -519,7 +530,7 @@ void MainWindow::buildRibbon() {
   m_sketchWorkspace = m_ribbon->addWorkspace(sketchWs);
   m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid"}), acts({"view.section", "view.isolate", "view.unisolate"})});
   m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"})});
-  m_ribbon->addTab(review, tr("Annotate"), {acts({"annotate.add", "annotate.resolve"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
+  m_ribbon->addTab(review, tr("Annotate"), {acts({"annotate.add", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
   m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
   m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
                                          acts({"design.box", "design.cylinder", "design.sphere", "design.cone", "design.torus"}), acts({"design.parameters"})});
@@ -1593,12 +1604,11 @@ void MainWindow::addAnnotation() {
   if (!refs.empty()) anchor = refs.front();
   else if (!m_browser->selectedIds().empty()) anchor.body = m_browser->selectedIds().front();
   else throw opad::Error("Select a body, face, edge or vertex to anchor the note.");
-  bool ok = false;
   QString where = m_doc->nodeName(anchor.body);
   if (anchor.kind != opad::Ref::Kind::Body) where += QString::fromUtf8(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(anchor.kind))).arg(anchor.index);
-  QString text = QInputDialog::getMultiLineText(this, tr("Note on %1").arg(where), tr("Note (Ctrl+Enter resolves it later):"), QString(), &ok);
-  if (!ok || text.trimmed().isEmpty()) return;
-  opad::json r = m_doc->run("annotate", opad::json{{"anchor", anchor.str()}, {"text", text.toStdString()}});
+  NoteDialog dlg(where, this);
+  if (dlg.exec() != QDialog::Accepted || dlg.text().trimmed().isEmpty()) return;
+  opad::json r = m_doc->run("annotate", opad::json{{"anchor", anchor.str()}, {"text", dlg.text().toStdString()}, {"style", dlg.style()}});
   if (r.contains("id")) m_timeline->setCurrentOp(r["id"].get<std::string>());
   openPanel(m_annotationsPanel);
 }
@@ -1609,6 +1619,12 @@ void MainWindow::resolveCurrentAnnotation() {
   const opad::Op* op = id.empty() ? nullptr : m_doc->doc.find_op(id);
   if (!op || op->type != "annotation") throw opad::Error("Select a note in the Annotations panel or on the timeline first.");
   deleteOp(id);
+}
+
+void MainWindow::restyleAnnotation(const std::string& opId, const std::string& style) {
+  const opad::Op* op = m_doc->doc.find_op(opId);
+  if (!op || op->type != "annotation") return;
+  guarded([&] { m_doc->run("append", opad::json{{"op", opad::json{{"op", "edit"}, {"target", opId}, {"set", {{"style", style}}}}}}); });
 }
 
 void MainWindow::deleteOp(const std::string& opId) {

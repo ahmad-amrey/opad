@@ -108,6 +108,11 @@ void Document::validate_op(const json& op) {
     require(op, "anchor", "object");
     require(op, "text", "string");
     Ref::from_json(op["anchor"]);
+    if (op.contains("style")) {
+      const auto& styles = annotation_styles();
+      if (!op["style"].is_string() || std::find(styles.begin(), styles.end(), op["style"].get<std::string>()) == styles.end())
+        throw Error("annotation: style must be one of ok, warning, issue, note");
+    }
   } else if (type == "measurement") {
     require(op, "kind", "string");
     require(op, "refs", "array");
