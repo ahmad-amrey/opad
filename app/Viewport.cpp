@@ -264,6 +264,7 @@ void Viewport::setTokens(const Tokens& t) {
 
 void Viewport::applyTokens() {
   const Tokens& t = m_tokens;
+  refreshMeasurement(true);
   m_view->SetBackgroundColor(occ(t.vp));
   m_view->SetBgGradientStyle(Aspect_GradientFillMethod_None);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetColor(occ(t.hov));
@@ -733,6 +734,7 @@ void Viewport::handleMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Han
 void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) {
   QElapsedTimer clock;
   clock.start();
+  refreshMeasurement();
   AIS_ViewController::handleViewRedraw(ctx, view);
   if (trace::enabled() && clock.elapsed() > 50) trace::log(QStringLiteral("slow frame part: redraw %1 ms").arg(clock.elapsed()));
 }
@@ -1037,48 +1039,6 @@ void Viewport::showPreview(const opad::Vec3& a, const opad::Vec3& b, const QStri
     m_ctx->Deactivate(text);
     m_preview.push_back(text);
   }
-  redrawScene();
-}
-
-void Viewport::clearDimension() {
-  if (!m_initialised) return;
-  for (const auto& o : m_dimension) m_ctx->Remove(o, Standard_False);
-  m_dimension.clear();
-  redrawScene();
-}
-
-void Viewport::showDimension(const opad::Vec3& a, const opad::Vec3& b, const QString& label) {
-  if (!m_initialised) return;
-  clearDimension();
-  gp_Pnt pa(a[0], a[1], a[2]), pb(b[0], b[1], b[2]);
-  if (pa.Distance(pb) > 1e-9) {
-    Handle(AIS_Shape) line = new AIS_Shape(BRepBuilderAPI_MakeEdge(pa, pb).Edge());
-    line->SetColor(occ(m_tokens.sel));
-    line->SetWidth(1.5);
-    line->SetZLayer(Graphic3d_ZLayerId_Topmost);
-    m_ctx->Display(line, Standard_False);
-    m_ctx->Deactivate(line);
-    m_dimension.push_back(line);
-  }
-  for (const gp_Pnt& p : {pa, pb}) {
-    Handle(AIS_Shape) v = new AIS_Shape(BRepBuilderAPI_MakeVertex(p).Vertex());
-    v->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O, occ(m_tokens.sel), 3.0));
-    v->SetZLayer(Graphic3d_ZLayerId_Topmost);
-    m_ctx->Display(v, Standard_False);
-    m_ctx->Deactivate(v);
-    m_dimension.push_back(v);
-  }
-  Handle(AIS_TextLabel) text = new AIS_TextLabel();
-  text->SetText(TCollection_ExtendedString(label.toStdString().c_str(), Standard_True));
-  text->SetPosition(gp_Pnt((pa.X() + pb.X()) / 2, (pa.Y() + pb.Y()) / 2, (pa.Z() + pb.Z()) / 2));
-  text->SetHeight(12);
-  text->SetColor(occ(m_tokens.sel));
-  text->SetDisplayType(Aspect_TODT_SUBTITLE);
-  text->SetColorSubTitle(occ(m_tokens.bg2));
-  text->SetZLayer(Graphic3d_ZLayerId_Topmost);
-  m_ctx->Display(text, Standard_False);
-  m_ctx->Deactivate(text);
-  m_dimension.push_back(text);
   redrawScene();
 }
 

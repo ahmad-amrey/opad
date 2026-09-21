@@ -596,6 +596,9 @@ json measure_angle(const Document& doc, const Scene& scene, const Ref& a, const 
   j["direction_b"] = dir(db);
   j["meaning_a"] = wa;
   j["meaning_b"] = wb;
+  // Common origin for the direction comparison diagram (directions need not intersect).
+  const json bounds = bbox_json(shape_bbox(ref_shape(doc, scene, a)));
+  j["origin"] = bounds["center"];
   return j;
 }
 
@@ -610,6 +613,25 @@ json measure_radius(const Document& doc, const Scene& scene, const Ref& a) {
   j["unit"] = "mm";
   if (info.contains("center")) j["center"] = info["center"];
   if (info.contains("axis")) j["axis"] = info["axis"];
+  // Radius endpoints on the analytic geometry, including a cylinder's axis rather than
+  // the surface's centre of mass (which is off-axis for a trimmed cylindrical face).
+  const TopoDS_Shape shape = ref_shape(doc, scene, a);
+  gp_Pnt center, rim;
+  if (a.kind == Ref::Kind::Edge) {
+    BRepAdaptor_Curve curve(TopoDS::Edge(shape));
+    center = curve.Circle().Location();
+    rim = curve.Value((curve.FirstParameter() + curve.LastParameter()) * 0.5);
+  } else {
+    BRepAdaptor_Surface surface(TopoDS::Face(shape));
+    rim = surface.Value((surface.FirstUParameter() + surface.LastUParameter()) * 0.5,
+                        (surface.FirstVParameter() + surface.LastVParameter()) * 0.5);
+    if (surface.GetType() == GeomAbs_Cylinder) {
+      const gp_Ax1 axis = surface.Cylinder().Axis();
+      center = axis.Location().Translated(gp_Vec(axis.Direction()) * gp_Vec(axis.Location(), rim).Dot(gp_Vec(axis.Direction())));
+    } else center = surface.Sphere().Location();
+  }
+  j["point_a"] = pnt(center);
+  j["point_b"] = pnt(rim);
   return j;
 }
 

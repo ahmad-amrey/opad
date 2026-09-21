@@ -156,34 +156,59 @@ DockHeader::DockHeader(const QString& title, QDockWidget* dock) : QWidget(dock) 
 void DockHeader::setTitle(const QString& t) { m_title->setText(t); }
 
 // ---------------------------------------------------------------- ToolPanel
-// Corner grip: resizes the panel from its bottom-right corner within the panel's min/max size.
+// Right-anchored panels grow into the viewport from their bottom-left corner.
 class ToolPanelGrip : public QWidget {
  public:
   explicit ToolPanelGrip(ToolPanel* panel) : QWidget(panel), m_panel(panel) {
     setFixedSize(12, 12);
-    setCursor(Qt::SizeFDiagCursor);
+    setCursor(Qt::SizeBDiagCursor);
   }
  protected:
   void paintEvent(QPaintEvent*) override {
     QPainter p(this);
     p.setPen(QPen(theme::current().fg3, 1));
-    p.drawLine(3, 10, 10, 3);
-    p.drawLine(7, 10, 10, 7);
+    p.drawLine(1, 3, 8, 10);
+    p.drawLine(1, 7, 4, 10);
   }
   void mousePressEvent(QMouseEvent* e) override {
+    if (e->button() != Qt::LeftButton) return;
     m_from = e->globalPosition().toPoint();
-    m_size = m_panel->size();
+    m_geometry = m_panel->geometry();
+    m_panel->m_resizing = true;
+    m_limit = m_panel->maximumSize();
+    if (QScreen* screen = QGuiApplication::screenAt(m_geometry.center())) {
+      QRect area = screen->availableGeometry();
+      if (!m_panel->m_anchor.isEmpty()) area = area.intersected(m_panel->m_anchor).adjusted(8, 8, -8, -8);
+      if (!area.isEmpty()) m_limit = m_limit.boundedTo(QSize(m_geometry.right() + 1 - area.left(), area.bottom() + 1 - m_geometry.top()));
+    }
+    m_limit = m_limit.expandedTo(m_panel->minimumSize());
+    e->accept();
   }
   void mouseMoveEvent(QMouseEvent* e) override {
-    if (!(e->buttons() & Qt::LeftButton)) return;
+    if (!m_panel->m_resizing || !(e->buttons() & Qt::LeftButton)) return;
     const QPoint d = e->globalPosition().toPoint() - m_from;
-    m_panel->resize((m_size + QSize(d.x(), d.y())).expandedTo(m_panel->minimumSize()).boundedTo(m_panel->maximumSize()));
+    const QSize size = (m_geometry.size() + QSize(-d.x(), d.y())).expandedTo(m_panel->minimumSize()).boundedTo(m_limit);
+    m_panel->setGeometry(QRect(QPoint(m_geometry.right() + 1 - size.width(), m_geometry.top()), size));
+    e->accept();
   }
-  void mouseReleaseEvent(QMouseEvent*) override { m_panel->userPlacedNow(); }
+  void mouseReleaseEvent(QMouseEvent* e) override {
+    if (e->button() != Qt::LeftButton || !m_panel->m_resizing) return;
+    finishResize();
+    e->accept();
+  }
+  bool event(QEvent* e) override {
+    if (e->type() == QEvent::UngrabMouse && m_panel->m_resizing) finishResize();
+    return QWidget::event(e);
+  }
  private:
+  void finishResize() {
+    m_panel->m_resizing = false;
+    if (m_panel->geometry() != m_geometry) m_panel->userPlacedNow();
+  }
   ToolPanel* m_panel;
   QPoint m_from;
-  QSize m_size;
+  QRect m_geometry;
+  QSize m_limit;
 };
 
 ToolPanel::ToolPanel(const QString& id, const QString& icon, QColor Tokens::* tint, const QString& title, QWidget* content, int preferredHeight, QWidget* owner)
@@ -272,8 +297,33 @@ void ToolPanel::setContext(const QString& text) {
 
 void ToolPanel::anchorTo(const QRect& viewportGlobal) {
   m_anchor = viewportGlobal;
+  if (m_resizing) return;  // content fitting must not fight a live grip drag
   const int m = kMargin;
   auto target = [&] { return QPoint(m_anchor.right() + 1 - m_offset.x() - (width() - m), m_anchor.top() + m_offset.y() - m); };
+  if (m_contentSizeHint) {
+    QScreen* screen = QGuiApplication::screenAt(m_anchor.center());
+    if (!screen) screen = this->screen();
+    if (!screen) return;
+    QRect area = m_anchor.intersected(screen->availableGeometry()).adjusted(8, 8, -8, -8);
+    if (area.width() < 1 || area.height() < 1) area = screen->availableGeometry();
+    // Logical pixels: Qt handles DPI. Clamp saved sizes and positions as well as
+    // new ones, including a removed monitor or a viewport smaller than the defaults.
+    const QSize maximum(std::max(1, std::min(560 + 2 * m + 2, area.width())),
+                        std::max(1, std::min(720 + 2 * m + 2, area.height())));
+    setMinimumSize(std::min(360 + 2 * m + 2, maximum.width()), std::min(160, maximum.height()));
+    setMaximumSize(maximum);
+    const int inset = 2 * m + 2;
+    const int preferredWidth = m_contentSizeHint(0).width() + inset;
+    const int w = std::clamp(m_userPlaced ? width() : preferredWidth, minimumWidth(), maximumWidth());
+    const int wantedHeight = m_contentSizeHint(std::max(1, w - inset)).height() + inset + 33;
+    const int h = std::clamp(m_userPlaced ? std::max(height(), wantedHeight) : wantedHeight, minimumHeight(), maximumHeight());
+    resize(w, h);
+    QPoint pos = target();
+    pos.setX(std::clamp(pos.x(), area.left(), area.right() + 1 - width()));
+    pos.setY(std::clamp(pos.y(), area.top(), area.bottom() + 1 - height()));
+    move(pos);
+    return;
+  }
   // A remembered place that is on no screen any more (monitor gone) falls back to the default one.
   if (m_userPlaced && !QGuiApplication::screenAt(target() + QPoint(width() / 2, m + 16))) {
     m_userPlaced = false;
@@ -281,6 +331,23 @@ void ToolPanel::anchorTo(const QRect& viewportGlobal) {
   }
   if (!m_userPlaced) resize(m_defaultSize.width(), std::min(m_defaultSize.height(), std::max(120, m_anchor.height() - 194) + 2 * m));
   move(target());
+}
+
+void ToolPanel::setContentSizeHint(std::function<QSize(int)> hint) {
+  m_contentSizeHint = std::move(hint);
+  // The scrollable content, rather than the outer layout's minimum hint, owns
+  // overflow when available space is smaller than a normal panel.
+  if (m_contentSizeHint) layout()->setSizeConstraint(QLayout::SetNoConstraint);
+  requestContentFit();
+}
+
+void ToolPanel::requestContentFit() {
+  if (m_resizing || m_contentFitPending) return;
+  m_contentFitPending = true;
+  QTimer::singleShot(0, this, [this] {
+    m_contentFitPending = false;
+    if (isVisible() && !m_anchor.isEmpty()) anchorTo(m_anchor);
+  });
 }
 
 void ToolPanel::userPlacedNow() {
@@ -310,7 +377,7 @@ void ToolPanel::paintEvent(QPaintEvent*) {
 
 void ToolPanel::resizeEvent(QResizeEvent* e) {
   QWidget::resizeEvent(e);
-  m_grip->move(width() - kMargin - 1 - m_grip->width(), height() - kMargin - 1 - m_grip->height());
+  m_grip->move(kMargin + 1, height() - kMargin - 1 - m_grip->height());
   m_grip->raise();
 }
 

@@ -8,6 +8,8 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QCheckBox>
+#include <QScrollArea>
 
 struct ToolStep {
   QString label;   // "Select first face": follows the active selection filter
@@ -49,13 +51,26 @@ class ToolStepsPanel : public QWidget {
   void setSummary(const QString& title, const QString& subtitle, const QString& state);
   void setResult(const QList<QPair<QString, QString>>& rows);  // empty: nothing to show yet
   void setFooter(bool visible, bool canPin);
+  void setComponentsState(bool visible, bool checked);
+  QSize preferredSize(int width);
  signals:
   void clearRequested();
   void pinRequested();
+  void componentsChanged(bool on);
+  void contentSizeChanged();
+ protected:
+  void resizeEvent(QResizeEvent* event) override;
+  bool eventFilter(QObject* object, QEvent* event) override;
  private:
+  void sizeResults(int width);
   QVBoxLayout* m_stepRows;
   QLabel *m_title, *m_subtitle, *m_state;
-  QTreeWidget* m_grid;
+  QTreeWidget* m_grid = nullptr;
   QWidget* m_footer;
   QPushButton* m_pin;
+  QCheckBox* m_components;
+  QPushButton* m_copy;
+  QScrollArea* m_scroll;
+  QWidget* m_body;
+  int m_nameWidth = 0, m_keyWidth = 80, m_valueWidth = 120;
 };

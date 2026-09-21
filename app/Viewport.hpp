@@ -100,7 +100,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
 
   void setSection(bool enabled, const opad::Vec3& origin, const opad::Vec3& normal, bool caps = true);
   bool sectionEnabled() const { return m_sectionEnabled; }
-  void showDimension(const opad::Vec3& a, const opad::Vec3& b, const QString& label);
+  void showMeasurement(const opad::json& result);
+  void setMeasurementComponents(bool on);
+  bool measurementComponents() const { return m_measureComponents; }
+  bool measurementHasMultipleAxes() const;
   void clearDimension();
 
   // Guided tools (distance, angle, ...: the tool asks for one pick per step). While accumulating, a plain click
@@ -214,6 +217,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void updateAnnotations();
   void updateClipPlanes();
   void applyTokens();
+  void refreshMeasurement(bool force = false);
   void requestRedraw() { update(); }
   // After a change made through the context without an update (Display/Redisplay/selection with
   // theToUpdateViewer=false): the view must be invalidated, or FlushViewEvents finds nothing to redraw and
@@ -230,6 +234,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::map<const AIS_InteractiveObject*, std::string> m_nodeOf;
   std::vector<Handle(AIS_InteractiveObject)> m_labels;
   std::vector<Handle(AIS_InteractiveObject)> m_dimension;
+  opad::json m_measurement;
+  Graphic3d_WorldViewProjState m_measureCamera;
+  QSize m_measureSize;
+  bool m_measureComponents = true;
   std::vector<Handle(AIS_InteractiveObject)> m_pickMarkers, m_preview;
   opad::Vec3 m_lastPick{0, 0, 0};
   bool m_hasLastPick = false;

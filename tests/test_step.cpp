@@ -112,11 +112,38 @@ TEST(inspect_faces_edges_and_measure) {
   CHECK(hole["adjacent_faces"].size() == 2);
   json rad = measure_radius(d, s, Ref::parse(block + "/face/" + std::to_string(cyl)));
   CHECK_NEAR(rad["diameter"].get<double>(), 8.0, 1e-9);
+  // The displayed radius must start on the hole's axis and end on its surface.
+  double radiusSq = 0;
+  for (int i = 0; i < 3; ++i) {
+    const double delta = rad["point_b"][i].get<double>() - rad["point_a"][i].get<double>();
+    radiusSq += delta * delta;
+  }
+  CHECK_NEAR(std::sqrt(radiusSq), 4.0, 1e-9);
+  CHECK_NEAR(rad["point_a"][2].get<double>(), rad["point_b"][2].get<double>(), 1e-9);
+  CHECK_NEAR(rad["point_a"][0].get<double>(), hole["axis_origin"][0].get<double>(), 1e-9);
+  CHECK_NEAR(rad["point_a"][1].get<double>(), hole["axis_origin"][1].get<double>(), 1e-9);
+  int circularEdges = 0;
+  for (const auto& index : hole["edges"]) {
+    const Ref edge = Ref::parse(block + "/edge/" + std::to_string(index.get<int>()));
+    const json info = inspect_ref(d, s, edge);
+    if (info["curve"] != "circle") continue;
+    ++circularEdges;
+    const json circle = measure_radius(d, s, edge);
+    double lengthSq = 0;
+    for (int i = 0; i < 3; ++i) {
+      CHECK_NEAR(circle["point_a"][i].get<double>(), info["center"][i].get<double>(), 1e-9);
+      const double delta = circle["point_b"][i].get<double>() - circle["point_a"][i].get<double>();
+      lengthSq += delta * delta;
+    }
+    CHECK_NEAR(std::sqrt(lengthSq), circle["value"].get<double>(), 1e-9);
+  }
+  CHECK(circularEdges > 0);
   json topf = inspect_ref(d, s, Ref::parse(block + "/face/" + std::to_string(top)));
   CHECK_NEAR(topf["area"].get<double>(), 40.0 * 30 - M_PI * 16, 1e-6);
   // Angle between the hole axis and the top face normal is 0.
   json ang = measure_angle(d, s, Ref::parse(block + "/face/" + std::to_string(top)), Ref::parse(block + "/face/" + std::to_string(cyl)));
   CHECK_NEAR(ang["value"].get<double>(), 0.0, 1e-9);
+  CHECK(ang["origin"].is_array() && ang["origin"].size() == 3);
   // Distance from a point to the body.
   json dist = measure_distance(d, s, Ref::parse("point/5,5,50"), Ref::parse(block));
   CHECK_NEAR(dist["value"].get<double>(), 30.0, 1e-6);

@@ -14,6 +14,7 @@
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QWidget>
+#include <functional>
 #include <set>
 #include <unordered_map>
 #include <string>
@@ -52,6 +53,9 @@ class ToolPanel : public QWidget {
   void setDefaultTop(int top) { if (!m_userPlaced) m_offset.setY(top); }
   int bottom() const { return m_offset.y() + height() - 2 * kMargin; }  // in viewport coordinates
   void anchorTo(const QRect& viewportGlobal);
+  // Opt-in content fitting for inspect results; other floating panels keep their saved sizing.
+  void setContentSizeHint(std::function<QSize(int)> hint);
+  void requestContentFit();
   static constexpr int kMargin = 6;  // translucent rim the shadow is painted in
  signals:
   void visibilityChanged(bool visible);
@@ -77,8 +81,11 @@ class ToolPanel : public QWidget {
   QRect m_anchor;                    // the viewport, global
   QPoint m_offset{8, 186};           // frame's top-right corner: x px left of the viewport's right edge, y px below its top
   QSize m_defaultSize;
+  std::function<QSize(int)> m_contentSizeHint;
+  bool m_contentFitPending = false;
   bool m_userPlaced = false;
   bool m_dragging = false;
+  bool m_resizing = false;
   QPoint m_dragFrom, m_posFrom;
 };
 

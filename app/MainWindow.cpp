@@ -35,6 +35,7 @@
 #include <QVBoxLayout>
 
 #include <QKeyEvent>
+#include <cmath>
 
 #include "Icons.hpp"
 #include "Theme.hpp"
@@ -141,6 +142,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_timeline, &TimelineWidget::contextRequested, this, &MainWindow::timelineMenu);
   connect(m_toolSteps, &ToolStepsPanel::pinRequested, this, [this] { guarded([this] { pinMeasurement(); }); });
   connect(m_toolSteps, &ToolStepsPanel::clearRequested, this, &MainWindow::toolEscape);
+  connect(m_toolSteps, &ToolStepsPanel::componentsChanged, m_viewport, &Viewport::setMeasurementComponents);
   connect(m_toolPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
     if (!on && toolMeasures()) cancelTool();  // closing the tool's panel leaves the tool
   });
@@ -642,6 +644,8 @@ void MainWindow::buildDocks() {
   m_sectionPanel = new ToolPanel("section", "section", &Tokens::sel, tr("Section"), m_section, 420, this);
   m_toolSteps = new ToolStepsPanel(this);
   m_toolPanel = new ToolPanel("tool", "distance", &Tokens::sel, tr("Distance"), m_toolSteps, 360, this);
+  m_toolPanel->setContentSizeHint([this](int width) { return m_toolSteps->preferredSize(width); });
+  connect(m_toolSteps, &ToolStepsPanel::contentSizeChanged, m_toolPanel, &ToolPanel::requestContentFit);
   m_panels = {m_propsPanel, m_annotationsPanel, m_sectionPanel, m_toolPanel};
   connect(m_propsPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
     if (!on && m_propsJob) m_propsJob->cancel();  // nobody is looking at the component bbox any more
@@ -1448,12 +1452,7 @@ void MainWindow::runToolMeasure() {
     }
     m_lastMeasure = *result;
     m_pinAction->setEnabled(!m_doc->browse);
-    if (m_lastMeasure.contains("point_a") && m_lastMeasure.contains("point_b") && m_lastMeasure.contains("value")) {
-      const auto& a = m_lastMeasure["point_a"];
-      const auto& b = m_lastMeasure["point_b"];
-      m_viewport->showDimension({a[0].get<double>(), a[1].get<double>(), a[2].get<double>()}, {b[0].get<double>(), b[1].get<double>(), b[2].get<double>()},
-                                QString("%1 mm").arg(m_lastMeasure["value"].get<double>(), 0, 'f', 3));
-    }
+    m_viewport->showMeasurement(m_lastMeasure);
     refreshToolUi();
   });
 }
@@ -1463,7 +1462,7 @@ void MainWindow::refreshToolUi() {
   const QList<ToolStep> steps = toolSteps();
   const int picked = static_cast<int>(m_toolPicks.size());
   const bool done = !m_lastMeasure.is_null();
-  m_prompt->set(m_tool.icon, m_tool.title, steps, done ? tr("P pin · Esc clear · 1–4 filter") : tr("Esc cancel · 1–4 change filter"));
+  m_prompt->set(m_tool.icon, m_tool.title, steps, done ? (m_doc->browse ? tr("Esc clear · 1–4 filter") : tr("P pin · Esc clear · 1–4 filter")) : picked ? tr("Esc back · 1–4 change filter") : tr("Esc cancel · 1–4 change filter"));
   m_prompt->show();
   positionOverlays();
   if (!toolMeasures()) return;
@@ -1473,19 +1472,27 @@ void MainWindow::refreshToolUi() {
   m_toolPanel->setContext(tr("%1 · %2 of %3").arg(kinds.toLower()).arg(picked).arg(m_tool.steps));
   m_toolSteps->setSteps(steps, m_toolHover);
   const QString waiting = picked < steps.size() ? steps[picked].label : tr("Measuring…");
-  m_toolSteps->setSummary(m_tool.title, done ? tr("result · not yet in document") : waiting, done ? tr("unpinned") : QString());
+  QString explanation = waiting;
+  if (done) {
+    if (m_tool.id == "distance") explanation = tr("Shortest distance between the selections. Δ = point 2 − point 1 in world axes.");
+    else if (m_tool.id == "angle") explanation = tr("Directions compared at a common origin. Planar faces use their normals; curved faces use their axes.");
+    else if (m_tool.id == "radius") explanation = tr("Radius from the center or cylinder axis to the surface.");
+    else explanation = tr("Bounding box aligned with the world X, Y and Z axes.");
+  }
+  m_toolSteps->setSummary(m_tool.title, explanation, done && !m_doc->browse ? tr("unpinned") : QString());
+  m_toolSteps->setComponentsState(done && m_viewport->measurementHasMultipleAxes(), m_viewport->measurementComponents());
   QList<QPair<QString, QString>> rows;
   if (done) {
     const opad::json& r = m_lastMeasure;
-    auto num = [](const opad::json& v, int decimals) { return QString::number(v.get<double>(), 'f', decimals); };
+    auto num = [](const opad::json& v, int decimals) { double n = v.get<double>(); return QString::number(std::abs(n) < 0.5 * std::pow(10.0, -decimals) ? 0.0 : n, 'f', decimals); };
     const QString unit = QString::fromStdString(r.value("unit", "mm"));
     if (r.contains("value")) rows << qMakePair(m_tool.title, QString("%1 %2").arg(num(r["value"], 3), unit));
     if (r.contains("delta"))
-      for (int i = 0; i < 3; ++i) rows << qMakePair(QString::fromUtf8("Δ%1").arg(QChar("XYZ"[i])), num(r["delta"][i], 3) + " mm");
+      for (int i = 0; i < 3; ++i) rows << qMakePair(tr("Δ%1").arg(QChar("XYZ"[i])), (r["delta"][i].get<double>() >= 0.0005 ? "+" : "") + num(r["delta"][i], 3) + " mm");
     if (r.contains("supplement")) rows << qMakePair(tr("Supplement"), num(r["supplement"], 2) + QString::fromUtf8("°"));
     if (r.contains("diameter")) rows << qMakePair(tr("Diameter"), num(r["diameter"], 3) + " mm");
     for (const char* k : {"size", "min", "max"})
-      if (r.contains(k) && r[k].is_array() && r[k].size() == 3) rows << qMakePair(i18n::t(QString("bbox %1").arg(k)), QString("(%1, %2, %3)").arg(num(r[k][0], 3), num(r[k][1], 3), num(r[k][2], 3)));
+      if (r.contains(k) && r[k].is_array() && r[k].size() == 3) rows << qMakePair(i18n::t(QString("bbox %1").arg(k)), QString("(%1, %2, %3) mm").arg(num(r[k][0], 3), num(r[k][1], 3), num(r[k][2], 3)));
     if (r.contains("relation") && r["relation"].is_string()) rows << qMakePair(tr("Relation"), i18n::t(QString::fromStdString(r["relation"].get<std::string>())));
   }
   m_toolSteps->setResult(rows);
@@ -1859,6 +1866,31 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
   m_benchSelect = false;
+  // Deterministic presentation smoke check: a saved measurement JSON and output prefix.
+  if (const QString source = qEnvironmentVariable("OPAD_BENCH_MEASUREMENT"); !source.isEmpty()) {
+    const opad::json result = opad::json::parse(opad::read_text_file(source.toStdString()));
+    startTool(QString::fromStdString(result.value("kind", "distance")));
+    QTimer::singleShot(1000, this, [this, result] {
+      if (const QString view = qEnvironmentVariable("OPAD_BENCH_VIEW"); !view.isEmpty()) {
+        if (view == "perspective") m_viewport->setOrthographic(false);
+        else m_viewport->standardView(view);
+      }
+      if (qEnvironmentVariable("OPAD_BENCH_THEME") == "light") {
+        theme::apply(false);
+        m_viewport->setTokens(theme::current());
+      }
+      m_lastMeasure = result;
+      m_viewport->showMeasurement(result);
+      refreshToolUi();
+      QTimer::singleShot(300, this, [this] {
+        const QString shot = qEnvironmentVariable("OPAD_BENCH_UISHOT");
+        m_viewport->grabImage().save(shot + ".viewport.png");
+        m_toolPanel->grab().save(shot + ".panel.png");
+        QCoreApplication::quit();
+      });
+    });
+    return;
+  }
   // OPAD_BENCH_DESIGN=<png>: sketch + extrude through the design controller, dump the frame, quit.
   if (const QString shot = qEnvironmentVariable("OPAD_BENCH_DESIGN"); !shot.isEmpty()) {
     setWorkspace(1);
@@ -1922,6 +1954,7 @@ void MainWindow::runBench() {
       if (const QString ui = qEnvironmentVariable("OPAD_BENCH_UISHOT"); !ui.isEmpty()) {
         m_prompt->grab().save(ui + ".prompt.png");
         m_toolPanel->grab().save(ui + ".panel.png");
+        m_viewport->grabImage().save(ui + ".viewport.png");
       }
       toolEscape();
     });

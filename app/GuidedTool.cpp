@@ -4,6 +4,13 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QPainter>
+#include <QApplication>
+#include <QClipboard>
+#include <QSignalBlocker>
+#include <QTextLayout>
+#include <QScrollBar>
+#include <QStyle>
+#include <algorithm>
 
 #include "Icons.hpp"
 #include "Theme.hpp"
@@ -114,8 +121,70 @@ void PromptBar::paintEvent(QPaintEvent*) {
 }
 
 // ---------------------------------------------------------------- ToolStepsPanel
+namespace {
+// Use the full row width for a selected name. Bound wrapping to two lines, retain
+// the entity suffix when eliding, and expose the complete plain-text name on hover.
+class SelectionNameLabel : public QLabel {
+ public:
+  explicit SelectionNameLabel(const QString& name, QWidget* parent) : QLabel(name, parent) {
+    setTextFormat(Qt::PlainText);
+    setToolTip("<qt>" + name.toHtmlEscaped() + "</qt>");
+    setAccessibleName(name);
+    QSizePolicy policy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    policy.setHeightForWidth(true);
+    setSizePolicy(policy);
+    setMinimumWidth(0);
+  }
+  QSize sizeHint() const override { return QSize(380, heightForWidth(380)); }
+  QSize minimumSizeHint() const override { return QSize(0, fontMetrics().height()); }
+  int heightForWidth(int width) const override {
+    return lines(width).size() * fontMetrics().height();
+  }
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setFont(font());
+    painter.setPen(palette().color(QPalette::WindowText));
+    int y = 0;
+    for (const QString& line : lines(width())) {
+      painter.drawText(QRect(0, y, width(), fontMetrics().height()), Qt::AlignLeading | Qt::AlignVCenter | Qt::TextSingleLine, line);
+      y += fontMetrics().height();
+    }
+  }
+ private:
+  QStringList lines(int width) const {
+    width = std::max(1, width);
+    const QString name = text().simplified();  // embedded newlines must not defeat the height cap
+    QTextLayout layout(name, font());
+    QTextOption option;
+    option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    layout.setTextOption(option);
+    layout.beginLayout();
+    QTextLine first = layout.createLine();
+    if (!first.isValid()) { layout.endLayout(); return {QString()}; }
+    first.setLineWidth(width);
+    const int split = first.textLength();
+    layout.endLayout();
+    if (split >= name.size()) return {name};
+    return {name.left(split).trimmed(), fontMetrics().elidedText(name.mid(split).trimmed(), Qt::ElideMiddle, width)};
+  }
+};
+}  // namespace
+
 ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
-  auto* layout = new QVBoxLayout(this);
+  auto* outer = new QVBoxLayout(this);
+  outer->setContentsMargins(0, 0, 0, 0);
+  outer->setSpacing(0);
+  m_scroll = new QScrollArea(this);
+  m_scroll->setFrameShape(QFrame::NoFrame);
+  m_scroll->setWidgetResizable(true);
+  m_scroll->setMinimumSize(0, 0);
+  m_scroll->viewport()->installEventFilter(this);
+  m_body = new QWidget(m_scroll);
+  m_scroll->setWidget(m_body);
+  m_body->setAutoFillBackground(false);
+  outer->addWidget(m_scroll, 1);
+  auto* layout = new QVBoxLayout(m_body);
   layout->setContentsMargins(0, 8, 0, 0);
   layout->setSpacing(0);
   auto* steps = new QWidget(this);
@@ -147,11 +216,23 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
   sl->addWidget(m_subtitle);
   layout->addWidget(summary);
 
+  m_components = new QCheckBox(tr("Show ΔX, ΔY, ΔZ arrows"), this);
+  m_components->setChecked(true);
+  m_components->setToolTip(tr("Signed world-axis components from point 1 to point 2. Red X, green Y, blue Z."));
+  m_components->hide();
+  auto* componentRow = new QHBoxLayout();
+  componentRow->setContentsMargins(12, 4, 12, 4);
+  componentRow->addWidget(m_components);
+  layout->addLayout(componentRow);
+  connect(m_components, &QCheckBox::toggled, this, &ToolStepsPanel::componentsChanged);
+
   m_grid = new QTreeWidget(this);
   m_grid->setColumnCount(2);
   m_grid->setHeaderHidden(true);
   m_grid->header()->setSectionResizeMode(0, QHeaderView::Fixed);
-  m_grid->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+  m_grid->header()->setSectionResizeMode(1, QHeaderView::Fixed);
+  m_grid->header()->setStretchLastSection(false);
+  m_grid->setTextElideMode(Qt::ElideNone);
   m_grid->setColumnWidth(0, 128);
   m_grid->setIndentation(0);
   m_grid->setRootIsDecorated(false);
@@ -160,7 +241,8 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
   auto* gridRow = new QHBoxLayout();  // the grid lines stop 12 px short of the panel's edges, like the summary text
   gridRow->setContentsMargins(12, 0, 12, 0);
   gridRow->addWidget(m_grid);
-  layout->addLayout(gridRow, 1);
+  layout->addLayout(gridRow);
+  layout->addStretch(1);
 
   m_footer = new QWidget(this);
   m_footer->setFixedHeight(40);
@@ -168,26 +250,44 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
   auto* fl = new QHBoxLayout(m_footer);
   fl->setContentsMargins(12, 0, 12, 0);
   fl->setSpacing(8);
-  auto* hint = new QLabel(tr("Writes one measurement op"), m_footer);
-  hint->setObjectName("tertiary");
-  hint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);  // single line, clipped
+  m_copy = new QPushButton(tr("Copy"), m_footer);
+  m_copy->setToolTip(tr("Copy measurement values"));
   auto* clear = new QPushButton(tr("Clear   Esc"), m_footer);
   m_pin = new QPushButton(tr("Pin to document   P"), m_footer);
   m_pin->setObjectName("primary");
   for (QPushButton* b : {clear, m_pin}) b->setFocusPolicy(Qt::NoFocus);  // Esc / P / Enter stay with the main window
-  fl->addWidget(hint, 1);
+  fl->addWidget(m_copy);
+  fl->addStretch(1);
   fl->addWidget(clear);
   fl->addWidget(m_pin);
-  layout->addWidget(m_footer);
+  outer->addWidget(m_footer);
   m_footer->hide();
   connect(clear, &QPushButton::clicked, this, &ToolStepsPanel::clearRequested);
   connect(m_pin, &QPushButton::clicked, this, &ToolStepsPanel::pinRequested);
+  connect(m_copy, &QPushButton::clicked, this, [this] {
+    QStringList lines;
+    for (int i = 0; i < m_grid->topLevelItemCount(); ++i) {
+      const auto* row = m_grid->topLevelItem(i);
+      QString value = row->text(1);
+      value.remove(QChar(0x202A)); value.remove(QChar(0x202C));
+      lines << row->text(0) + "\t" + value;
+    }
+    QApplication::clipboard()->setText(lines.join('\n'));
+  });
 
   auto restyle = [this, rule] {
     const Tokens& t = theme::current();
     rule->setStyleSheet(QString("background: %1;").arg(theme::css(t.line)));
     m_grid->setStyleSheet(QString("QTreeWidget::item { border-bottom: 1px solid %1; }").arg(theme::css(t.line)));
     m_footer->setStyleSheet(QString("QWidget#toolFooter { border-top: 1px solid %1; }").arg(theme::css(t.line)));
+    QList<QPair<QString, QString>> rows;
+    for (int i = 0; i < m_grid->topLevelItemCount(); ++i) {
+      auto* row = m_grid->topLevelItem(i);
+      QString value = row->text(1);
+      value.remove(QChar(0x202A)); value.remove(QChar(0x202C));
+      rows << qMakePair(row->text(0), value);
+    }
+    setResult(rows);
   };
   restyle();
   connect(theme::notifier(), &theme::Notifier::changed, this, restyle);
@@ -195,6 +295,7 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
 
 void ToolStepsPanel::setSteps(const QList<ToolStep>& steps, const QString& hover) {
   const Tokens& t = theme::current();
+  m_nameWidth = 0;
   while (QLayoutItem* it = m_stepRows->takeAt(0)) {
     delete it->widget();
     delete it;
@@ -206,48 +307,130 @@ void ToolStepsPanel::setSteps(const QList<ToolStep>& steps, const QString& hover
     if (state == StepState::Waiting) waitingSeen = true;
     auto* row = new QFrame(this);
     row->setObjectName("stepRow");
-    row->setFixedHeight(28);
     row->setStyleSheet(state == StepState::Waiting
                            ? QString("QFrame#stepRow { background: %1; border: 1px solid %2; border-radius: 3px; } QLabel { background: transparent; }").arg(theme::css(t.selbg), theme::css(t.sel))
                            : QString("QFrame#stepRow { border: 1px solid transparent; } QLabel { background: transparent; }"));
     auto* l = new QHBoxLayout(row);
-    l->setContentsMargins(6, 0, 8, 0);
+    l->setContentsMargins(6, 5, 8, 5);
     l->setSpacing(8);
     auto* ring = new QLabel(row);
     ring->setPixmap(stepRing(state, i + 1, devicePixelRatioF()));
+    ring->setFixedSize(16, 16);
     auto* label = new QLabel(s.label, row);
     label->setStyleSheet(QString("color: %1;").arg(theme::css(state == StepState::Pending ? t.fg3 : t.fg)));
-    auto* target = new QLabel(state == StepState::Done ? s.picked : state == StepState::Waiting && !hover.isEmpty() ? tr("hover: %1").arg(hover) : QString(), row);
+    const QString name = state == StepState::Done ? s.picked : state == StepState::Waiting && !hover.isEmpty() ? tr("hover: %1").arg(hover) : QString();
+    auto* target = new SelectionNameLabel(name, row);
     target->setFont(theme::mono(11));
     target->setStyleSheet(QString("color: %1;").arg(theme::css(state == StepState::Waiting ? t.sel : t.fg2)));
-    target->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    target->setAlignment(Qt::AlignVCenter | Qt::AlignRight);
-    l->addWidget(ring);
-    l->addWidget(label);
-    l->addWidget(target, 1);
+    target->setVisible(!name.isEmpty());
+    m_nameWidth = std::max(m_nameWidth, target->fontMetrics().horizontalAdvance(name.simplified()));
+    auto* text = new QVBoxLayout();
+    text->setSpacing(3);
+    label->setTextFormat(Qt::PlainText);
+    label->setWordWrap(true);
+    text->addWidget(label);
+    text->addWidget(target);
+    l->addWidget(ring, 0, Qt::AlignTop);
+    l->addLayout(text, 1);
     m_stepRows->addWidget(row);
   }
+  emit contentSizeChanged();
 }
 
 void ToolStepsPanel::setSummary(const QString& title, const QString& subtitle, const QString& state) {
   m_title->setText(title);
   m_subtitle->setText(subtitle);
   m_state->setText(state);
+  emit contentSizeChanged();
 }
 
 void ToolStepsPanel::setResult(const QList<QPair<QString, QString>>& rows) {
   const Tokens& t = theme::current();
   m_grid->clear();
+  m_keyWidth = 48;
+  m_valueWidth = 80;
   for (const auto& [key, value] : rows) {
     auto* row = new QTreeWidgetItem(m_grid);
     row->setText(0, key);
     row->setForeground(0, t.fg2);
     row->setText(1, QChar(0x202A) + value + QChar(0x202C));  // values keep their order in a right-to-left UI
     row->setFont(1, theme::mono(12));
+    row->setToolTip(0, key);
+    row->setToolTip(1, value);
+    row->setSizeHint(0, QSize(0, 30));
+    if (key.startsWith(QChar(0x0394)) && key.size() == 2) {
+      const QColor c = key.endsWith('X') ? t.red : key.endsWith('Y') ? t.green : t.dark ? QColor("#76b5ff") : QColor("#2067be");
+      row->setForeground(0, c);
+      row->setForeground(1, c);
+    } else if (m_grid->topLevelItemCount() == 1) {
+      QFont font = theme::mono(15); font.setBold(true);
+      row->setFont(1, font);
+      row->setForeground(1, t.sel);
+      row->setSizeHint(0, QSize(0, 38));
+    }
+    m_keyWidth = std::max(m_keyWidth, QFontMetrics(m_grid->font()).horizontalAdvance(key) + 16);
+    m_valueWidth = std::max(m_valueWidth, QFontMetrics(row->font(1)).horizontalAdvance(value) + 20);
   }
+  m_keyWidth = std::min(m_keyWidth, 140);
+  m_valueWidth = std::min(m_valueWidth, 1200);
+  m_grid->setVisible(!rows.isEmpty());
+  sizeResults(std::max(1, m_scroll->viewport()->width()));
+  emit contentSizeChanged();
 }
 
 void ToolStepsPanel::setFooter(bool visible, bool canPin) {
   m_footer->setVisible(visible);
   m_pin->setEnabled(canPin);
+  emit contentSizeChanged();
+}
+
+void ToolStepsPanel::setComponentsState(bool visible, bool checked) {
+  const QSignalBlocker blocker(m_components);
+  m_components->setChecked(checked);
+  m_components->setVisible(visible);
+  emit contentSizeChanged();
+}
+
+void ToolStepsPanel::sizeResults(int width) {
+  const bool manyRows = m_grid->topLevelItemCount() > 8;
+  m_grid->setVerticalScrollBarPolicy(manyRows ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
+  const int available = std::max(1, width - 26 - 2 * m_grid->frameWidth()
+                                   - (manyRows ? m_grid->style()->pixelMetric(QStyle::PM_ScrollBarExtent) : 0));
+  m_grid->setColumnWidth(0, m_keyWidth);
+  m_grid->setColumnWidth(1, std::max(m_valueWidth, available - m_keyWidth));
+  int height = 2 * m_grid->frameWidth() + 4;
+  // Ordinary inspect results fit completely. Future longer result lists scroll.
+  for (int i = 0; i < std::min(8, m_grid->topLevelItemCount()); ++i)
+    height += std::max({m_grid->sizeHintForRow(i), m_grid->topLevelItem(i)->sizeHint(0).height(), QFontMetrics(m_grid->topLevelItem(i)->font(1)).height() + 10});
+  if (m_keyWidth + m_valueWidth > available) height += m_grid->style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+  m_grid->setFixedHeight(height);
+}
+
+QSize ToolStepsPanel::preferredSize(int width) {
+  const int preferredWidth = std::clamp(std::max({380, m_nameWidth + 56, m_keyWidth + m_valueWidth + 28,
+                                                m_footer->minimumSizeHint().width()}), 380, 560);
+  if (width <= 0) return QSize(preferredWidth, 0);
+  m_body->ensurePolished();
+  const int contentWidth = std::max(1, width - (m_scroll->verticalScrollBar()->isVisible()
+                                     ? m_scroll->style()->pixelMetric(QStyle::PM_ScrollBarExtent) : 0));
+  sizeResults(contentWidth);
+  m_body->layout()->invalidate();
+  m_body->layout()->activate();
+  const int bodyHeight = std::max(m_body->layout()->totalMinimumSize().height(), m_body->layout()->totalHeightForWidth(contentWidth));
+  return QSize(preferredWidth, bodyHeight + (m_footer->isHidden() ? 0 : m_footer->height()) + 4);
+}
+
+void ToolStepsPanel::resizeEvent(QResizeEvent* event) {
+  QWidget::resizeEvent(event);
+  if (!m_grid) return;
+  sizeResults(std::max(1, width() - (m_scroll->verticalScrollBar()->isVisible() ? m_scroll->style()->pixelMetric(QStyle::PM_ScrollBarExtent) : 0)));
+  emit contentSizeChanged();
+}
+
+bool ToolStepsPanel::eventFilter(QObject* object, QEvent* event) {
+  if (object == m_scroll->viewport() && event->type() == QEvent::Resize && m_grid) {
+    sizeResults(std::max(1, m_scroll->viewport()->width()));
+    emit contentSizeChanged();
+  }
+  return QWidget::eventFilter(object, event);
 }
