@@ -84,8 +84,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::string benchHeaviest() const;       // OPAD_BENCH_FILTER: the body with the most faces, the pick target
   void benchBand();                        // OPAD_BENCH_BAND: rubber band over the whole view in the current mode
   void benchSubShot(const QString& path);  // OPAD_BENCH_SUBSHOT: frame from behind the picked sub-shape (X-ray check)
-  void benchCubeClick(bool miss);  // OPAD_BENCH_CUBECLICK: a click on the view cube (or on nothing) while a tool holds its picks
-  void benchClick(double fx, double fy);// OPAD_BENCH_TOOL: a left click at this fraction of the view, as the mouse handlers deliver it
+  void benchClick(double fx, double fy);  // OPAD_BENCH_TOOL: a left click at this fraction of the view, as the mouse handlers deliver it
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
   void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner
   std::vector<opad::Ref> selection() const;

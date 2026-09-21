@@ -1917,8 +1917,6 @@ void MainWindow::runBench() {
     QTimer::singleShot(1500, this, [this, spec, state] { startTool(spec[0]); state("started"); });
     QTimer::singleShot(2300, this, [this, state] { m_viewport->benchClick(0.5, 0.5); QTimer::singleShot(700, this, [state] { state("after click 1"); }); });
     QTimer::singleShot(4500, this, [this, state, second] { m_viewport->benchClick(second.value(0).toDouble(), second.value(1).toDouble()); QTimer::singleShot(700, this, [state] { state("after click 2"); }); });
-    if (qEnvironmentVariableIsSet("OPAD_BENCH_CUBECLICK"))  // a click on the view cube while the result is up: must not measure again
-      QTimer::singleShot(13000, this, [this, state] { state("before cube click"); m_viewport->benchCubeClick(qEnvironmentVariable("OPAD_BENCH_CUBECLICK") == "miss"); });
     QTimer::singleShot(14000, this, [this, state] {
       state("settled");
       if (const QString ui = qEnvironmentVariable("OPAD_BENCH_UISHOT"); !ui.isEmpty()) {

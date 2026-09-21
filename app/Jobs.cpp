@@ -107,7 +107,10 @@ Job* JobRunner::async(const QString& title, std::function<void(Progress)> work, 
   Job* j = begin(title, false);
   if (done) connect(j, &Job::finished, j, [done](bool ok, const QString& e) { done(ok, e); });
   Progress p = j->progress();
-  std::thread([p, work = std::move(work)]() {
+  // Qt adopts std::threads that post progress. On MinGW/Qt 6.10 their TLS cleanup can fault on exit,
+  // pausing the whole process in Windows Error Reporting after the result has already arrived.
+  // Let Qt own the native thread and its teardown. Keep it parentless: cancelling a Job must not wait.
+  auto* worker = QThread::create([p, work = std::move(work)]() {
     bool ok = true;
     QString err;
     try {
@@ -125,7 +128,9 @@ Job* JobRunner::async(const QString& title, std::function<void(Progress)> work, 
     }
     // Finish through the shared state: the Job may already be gone (window closed), in which case this is a no-op.
     p.m_s->post([ok, err](Job& j) { j.finish(ok, err); });
-  }).detach();
+  });
+  connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+  worker->start();
   return j;
 }
 

@@ -1182,23 +1182,6 @@ void Viewport::benchClick(double fx, double fy) {
   trace::log(QStringLiteral("bench: mouse click posted at %1,%2").arg(pt.x()).arg(pt.y()));
 }
 
-// A left click on the view cube's TOP face, through the mouse handlers (OPAD_BENCH_CUBECLICK); `miss` clicks the
-// view's empty bottom-left corner instead.
-void Viewport::benchCubeClick(bool miss) {
-  if (!m_initialised) return;
-  Standard_Integer w = 0, h = 0;
-  m_view->Window()->Size(w, h);
-  const qreal dpr = devicePixelRatioF();
-  const Graphic3d_Vec2i at = miss ? Graphic3d_Vec2i(4, h - 4) : Graphic3d_Vec2i(w - kCubeOffsetX, kCubeOffsetY - 36);
-  const QPointF local(at.x() / dpr, at.y() / dpr);
-  m_ctx->MoveTo(at.x(), at.y(), m_view, Standard_False);  // the press handler asks what is hovered
-  for (const auto& [type, button, buttons] : {std::tuple{QEvent::MouseMove, Qt::NoButton, Qt::NoButton}, std::tuple{QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton}, std::tuple{QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton}})
-    QCoreApplication::postEvent(this, new QMouseEvent(type, local, mapToGlobal(local), button, Qt::MouseButtons(buttons), Qt::NoModifier));
-  auto eye = [this] { Standard_Real x, y, z; m_view->Proj(x, y, z); return QStringLiteral("%1,%2,%3").arg(x, 0, 'f', 2).arg(y, 0, 'f', 2).arg(z, 0, 'f', 2); };
-  trace::log(QStringLiteral("bench: cube click posted, view direction %1").arg(eye()));
-  QTimer::singleShot(900, this, [eye] { trace::log(QStringLiteral("bench: after cube click, view direction %1").arg(eye())); });
-}
-
 void Viewport::benchPick() {
   if (!m_initialised) return;
   m_view->Redraw();  // a frame first: the picker clips to the camera z range, which only Redraw (AutoZFit) updates
@@ -1470,8 +1453,6 @@ void Viewport::paintEvent(QPaintEvent*) {
   frame.start();
   FlushViewEvents(m_ctx, m_view, Standard_True);
   if (trace::enabled() && frame.elapsed() > 100) trace::log(QStringLiteral("slow frame: %1 ms (%2 objects)").arg(frame.elapsed()).arg(m_items.size()));
-  static const bool everyFrame = qEnvironmentVariableIsSet("OPAD_TRACE_FRAMES");
-  if (everyFrame && trace::enabled()) trace::log(QStringLiteral("frame: %1 ms").arg(frame.elapsed()));
   // The label needs the sub-shape's ordinal, a walk over the whole body: only when the hovered owner changes.
   const Standard_Transient* hoverOwner = m_ctx->HasDetected() ? m_ctx->DetectedOwner().get() : nullptr;
   if (hoverOwner == m_hoverOwner) return;
