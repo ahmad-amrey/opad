@@ -491,9 +491,9 @@ void MainWindow::buildRibbon() {
   m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"})});
   m_ribbon->addTab(review, tr("Annotate"), {acts({"annotate.add", "annotate.resolve"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
   m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
-  m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe"}),
+  m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
                                          acts({"design.box", "design.cylinder", "design.sphere", "design.cone", "design.torus"}), acts({"design.parameters"})});
-  m_ribbon->addTab(design, tr("Modify"), {acts({"design.offset_face", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.scale"}),
+  m_ribbon->addTab(design, tr("Modify"), {acts({"design.offset_face", "design.thicken", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.scale"}),
                                           acts({"design.combine", "design.split", "design.move", "design.remove"}),
                                           acts({"design.mirror", "design.pattern_rect", "design.pattern_circ"})});
   m_ribbon->addTab(design, tr("Construct"), {acts({"design.plane", "design.axis"}), acts({"design.parameters", "design.edit", "design.regenerate"})});
@@ -502,7 +502,7 @@ void MainWindow::buildRibbon() {
   m_ribbon->addTab(design, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
   m_ribbon->addTab(m_sketchWorkspace, tr("Sketch"), {acts({"sketch.finish", "sketch.cancel"}), acts({"sketch.select", "sketch.line", "sketch.rect", "sketch.crect", "sketch.circle", "sketch.circle3", "sketch.arc3", "sketch.arcc"}),
                                                      acts({"sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline", "sketch.point"}), acts({"sketch.dimension", "sketch.construction"})});
-  m_ribbon->addTab(m_sketchWorkspace, tr("Modify + constrain"), {acts({"sketch.finish"}), acts({"sketch.select", "sketch.fillet", "sketch.trim", "sketch.mirror", "sketch.dimension"}),
+  m_ribbon->addTab(m_sketchWorkspace, tr("Modify + constrain"), {acts({"sketch.finish"}), acts({"sketch.select", "sketch.fillet", "sketch.trim", "sketch.offset", "sketch.mirror", "sketch.project", "sketch.dimension"}),
                                                                  acts({"sketch.c.horizontal", "sketch.c.vertical", "sketch.c.coincident", "sketch.c.parallel", "sketch.c.perpendicular", "sketch.c.tangent"}),
                                                                  acts({"sketch.c.equal", "sketch.c.concentric", "sketch.c.midpoint", "sketch.c.symmetric", "sketch.c.collinear", "sketch.c.fix"})});
   m_ribbon->setWorkspace(m_settings.value("ui/workspace", 0).toInt() == 1 ? design : review);
@@ -832,6 +832,7 @@ void MainWindow::buildDesignActions() {
            {"circle", tr("Circle"), "circle"}, {"circle3", tr("3-point circle"), "circle3"}, {"arc3", tr("3-point arc"), "arc3"}, {"arcc", tr("Centre arc"), "arcc"},
            {"polygon", tr("Polygon"), "polygon"}, {"slot", tr("Slot"), "slot"}, {"ellipse", tr("Ellipse"), "ellipse"}, {"spline", tr("Spline"), "spline"},
            {"point", tr("Point"), "point"}, {"fillet", tr("Sketch fillet"), "fillet"}, {"trim", tr("Trim"), "trim"}, {"mirror", tr("Mirror"), "mirror"},
+           {"offset", tr("Offset"), "offset"}, {"project", tr("Project"), "project"},
            {"dimension", tr("Dimension"), "dimension"}, {"c:horizontal", tr("Horizontal"), "cHorizontal"}, {"c:vertical", tr("Vertical"), "cVertical"},
            {"c:coincident", tr("Coincident"), "cCoincident"}, {"c:parallel", tr("Parallel"), "cParallel"}, {"c:perpendicular", tr("Perpendicular"), "cPerpendicular"},
            {"c:tangent", tr("Tangent"), "cTangent"}, {"c:equal", tr("Equal"), "cEqual"}, {"c:concentric", tr("Concentric"), "cConcentric"}, {"c:midpoint", tr("Midpoint"), "cMidpoint"},
@@ -1860,7 +1861,7 @@ void MainWindow::runBench() {
   if (const QString shot = qEnvironmentVariable("OPAD_BENCH_DESIGN"); !shot.isEmpty()) {
     setWorkspace(1);
     m_design->bench();
-    QTimer::singleShot(6000, this, [this, shot] {
+    QTimer::singleShot(9000, this, [this, shot] {
       trace::log(QStringLiteral("bench: design: %1 bodies, %2 features, %3 unresolved").arg(m_doc->scene.all_bodies().size()).arg(m_doc->scene.features.size()).arg(m_doc->scene.unresolved.size()));
       m_viewport->benchDesignShot(shot);
       if (const QByteArray ui = qgetenv("OPAD_BENCH_UISHOT"); !ui.isEmpty()) grab().save(QString::fromLocal8Bit(ui));

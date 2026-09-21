@@ -250,7 +250,7 @@ void FeaturePanel::refreshVisibility() {
       QString what;
       if (n == 1 && singlePick(in.type)) {
         const opad::json& one = p;
-        if (one.contains("base")) what = QString::fromStdString(one["base"].get<std::string>()).toUpper() + (in.type == "plane" ? tr(" plane") : tr(" axis"));
+        if (one.contains("base")) what = (in.type == "plane" ? tr("%1 plane") : tr("%1 axis")).arg(QString::fromStdString(one["base"].get<std::string>()).toUpper());
         else if (one.contains("sketch")) what = tr("Sketch");
         else if (one.contains("feature")) what = tr("Construction");
         else what = in.type == "plane" ? tr("Face") : tr("Edge");
@@ -309,6 +309,16 @@ void FeaturePanel::setPicks(const QString& name, const opad::json& picks) {
 opad::json FeaturePanel::picks(const QString& name) const {
   const std::string key = name.toStdString();
   return m_values.contains(key) ? m_values[key] : opad::json();
+}
+
+void FeaturePanel::setValue(const QString& name, const opad::json& value) {
+  auto it = m_widgets.find(name);
+  if (it == m_widgets.end()) return;
+  if (it->second.expr && value.is_string()) it->second.expr->setText(QString::fromStdString(value.get<std::string>()));
+  else if (it->second.combo && value.is_string()) it->second.combo->setCurrentIndex(std::max(0, it->second.combo->findData(QString::fromStdString(value.get<std::string>()))));
+  else if (it->second.check && value.is_boolean()) it->second.check->setChecked(value.get<bool>());
+  refreshVisibility();
+  emit inputsChanged();
 }
 
 void FeaturePanel::setStatus(const QString& text, bool error) {

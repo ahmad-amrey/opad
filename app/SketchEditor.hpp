@@ -95,6 +95,8 @@ class SketchEditor : public QObject, public SketchInput {
   void filletAt(const Hit& h, double u, double v);
   void trimAt(const Hit& h, double u, double v);
   void mirrorSelection(int axisLine);
+  void offsetSelection();
+  void projectHovered();
   std::vector<std::pair<double, double>> sampled(const opad::design::SkEntity& e) const;  // polyline of a curve, sketch coordinates
   double distanceTo(const opad::design::SkEntity& e, double u, double v) const;
   void labelPosition(const opad::design::SkConstraint& c, double& u, double& v) const;

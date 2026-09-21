@@ -146,6 +146,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void updateOverlay(const Handle(AIS_InteractiveObject)& obj);
   void removeOverlay(const Handle(AIS_InteractiveObject)& obj);
   const Tokens& tokens() const { return m_tokens; }
+  // Sketch "Project": lets body edges be hovered while the editor keeps the clicks, and hands over the edge
+  // under the mouse (world coordinates).
+  void setEdgeHover(bool on);
+  bool hoveredEdge(TopoDS_Shape& edge) const;
   void benchDesignShot(const QString& path);  // OPAD_BENCH_DESIGN: fit, redraw, dump the 3D frame
 
   opad::json cameraJson() const;

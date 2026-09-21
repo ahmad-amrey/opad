@@ -213,6 +213,27 @@ void Viewport::clearPreviewBodies() {
   redrawScene();
 }
 
+void Viewport::setEdgeHover(bool on) {
+  if (!m_initialised) return;
+  if (on) {
+    m_bodiesPickable = true;
+    setSelectionFilter(SelFilter::Edge);
+  } else {
+    m_bodiesPickable = true;  // so the call below is not a no-op
+    setBodiesPickable(false);
+  }
+}
+
+bool Viewport::hoveredEdge(TopoDS_Shape& edge) const {
+  if (!m_initialised || !m_ctx->HasDetected()) return false;
+  Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
+  if (owner.IsNull() || !owner->HasShape() || owner->Shape().ShapeType() != TopAbs_EDGE) return false;
+  edge = owner->Shape();
+  Handle(AIS_InteractiveObject) obj = m_ctx->DetectedInteractive();
+  if (!obj.IsNull() && obj->HasTransformation()) edge = edge.Moved(TopLoc_Location(obj->LocalTransformation()));
+  return true;
+}
+
 // ---------------------------------------------------------------- overlays
 void Viewport::showOverlay(const Handle(AIS_InteractiveObject)& obj) {
   if (!m_initialised || obj.IsNull()) return;

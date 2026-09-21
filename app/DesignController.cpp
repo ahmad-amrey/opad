@@ -608,6 +608,25 @@ void DesignController::bench() {
     startFeature("extrude");
     m_form->setPicks("profiles", opad::json::array({opad::json{{"sketch", sk}, {"at", {3.0, 3.0}}}}));
     runPreview(true);
+    // Edit the extrude with the timeline rolled back, then fillet four edges of the result.
+    QTimer::singleShot(1500, this, [this] {
+      if (m_doc->scene.features.empty()) return trace::log(QStringLiteral("bench: design: the extrude did not commit"));
+      const std::string extrude = m_doc->scene.features.front().id;
+      editOp(extrude);
+      trace::log(QStringLiteral("bench: design: editing, rolled back to %1 bodies").arg(m_doc->scene.all_bodies().size()));
+      m_form->setValue("distance", "6 mm * 2");
+      runPreview(true);
+    });
+    QTimer::singleShot(3000, this, [this] {
+      if (m_doc->scene.all_bodies().empty()) return;
+      const std::string body = m_doc->scene.all_bodies().front();
+      startFeature("fillet");
+      opad::json edges = opad::json::array();
+      for (int i : {0, 2, 4, 6}) edges.push_back(opad::json{{"body", body}, {"kind", "edge"}, {"index", i}});
+      m_form->setPicks("edges", edges);
+      m_form->setValue("radius", "1.5 mm");
+      runPreview(true);
+    });
   });
   });
 }

@@ -17,7 +17,11 @@
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepGProp.hxx>
 #include <BRepOffsetAPI_DraftAngle.hxx>
+#include <BRepLib.hxx>
 #include <BRepOffsetAPI_MakeOffsetShape.hxx>
+#include <BRepOffset_MakeOffset.hxx>
+#include <Geom2d_Line.hxx>
+#include <Geom_CylindricalSurface.hxx>
 #include <BRepOffsetAPI_MakePipeShell.hxx>
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
@@ -122,6 +126,12 @@ std::vector<FeatureSpec> build_specs() {
       {pick("profiles", "Profiles", "profiles", 2, 0), in("ruled", "Straight sides (ruled)", "bool", false)}, "new");
   add("pipe", "Pipe", "pipe", "create", "A round section along a path.",
       {in("path", "Path", "path"), in("diameter", "Diameter", "length", "10 mm"), in("hollow", "Hollow", "bool", false), in("thickness", "Wall thickness", "length", "1 mm", "hollow=true")}, "new");
+  add("coil", "Coil", "coil", "create", "A round or square section wound about an axis: springs, threads.",
+      placed({in("diameter", "Coil diameter", "length", "20 mm"), in("pitch", "Pitch", "length", "5 mm"), in("turns", "Turns", "number", "5"),
+              choice("section", "Section", {"circle", "square"}), in("size", "Section size", "length", "2 mm"), in("left", "Left-handed", "bool", false)}),
+      "new");
+  add("thicken", "Thicken", "thicken", "create", "Give faces a thickness: a solid skin over the picked faces.",
+      {pick("faces", "Faces", "faces", 1, 0), in("thickness", "Thickness", "length", "2 mm"), in("flip", "Other side", "bool", false)}, "new");
   add("hole", "Hole", "hole", "create", "Drill at sketch points, into the material behind the sketch.",
       {pick("points", "Sketch points", "points", 1, 0), choice("type", "Type", {"simple", "counterbore", "countersink"}), in("diameter", "Diameter", "length", "5 mm"),
        choice("extent", "Extent", {"distance", "all"}), in("depth", "Depth", "length", "10 mm", "extent=distance"), choice("tip", "Bottom", {"flat", "angled"}, "extent=distance"),
@@ -721,6 +731,63 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       s = boolean(BoolOp::Cut, s, swept(d / 2 - wall));
     }
     apply_operation(ctx, in, s, out, "Pipe");
+    return out;
+  }
+  if (kind == "coil") {
+    const Frame frame = ctx.plane(in.value("plane", json{{"base", "xy"}}));
+    const gp_Trsf place = placement(frame, in.contains("x") ? ctx.length(in, "x") : 0.0, in.contains("y") ? ctx.length(in, "y") : 0.0);
+    const double d = ctx.length(in, "diameter"), pitch = ctx.length(in, "pitch"), turns = ctx.number(in, "turns"), size = ctx.length(in, "size");
+    if (d <= 0 || pitch <= 0 || turns <= 0 || size <= 0) throw Error("the coil sizes must be positive");
+    if (size >= d / 2) throw Error("the section must be smaller than the coil radius");
+    if (turns > 500) throw Error("that is more than 500 turns");
+    // A helix is a straight line in the (angle, height) parameter space of a cylinder.
+    const double r = d / 2, hand = in.value("left", false) ? -1.0 : 1.0;
+    Handle(Geom_CylindricalSurface) cyl = new Geom_CylindricalSurface(gp_Ax3(), r);
+    Handle(Geom2d_Line) line = new Geom2d_Line(gp_Pnt2d(0, 0), gp_Dir2d(hand * 2 * M_PI, pitch));
+    const double len = turns * std::hypot(2 * M_PI, pitch);
+    TopoDS_Edge helix = BRepBuilderAPI_MakeEdge(line, cyl, 0.0, len).Edge();
+    BRepLib::BuildCurves3d(helix);
+    const TopoDS_Wire spine = BRepBuilderAPI_MakeWire(helix).Wire();
+    // Section at the start of the helix, in the plane normal to it.
+    const gp_Dir tangent(gp_Vec(0, hand * 2 * M_PI * r, pitch));
+    const gp_Ax2 ax(gp_Pnt(r, 0, 0), tangent, gp_Dir(1, 0, 0));
+    TopoDS_Wire section;
+    if (in.value("section", "circle") == "circle") {
+      section = BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(gp_Circ(ax, size / 2)).Edge()).Wire();
+    } else {
+      const gp_Vec u(ax.XDirection()), v(ax.YDirection());
+      const gp_Pnt c = ax.Location();
+      const gp_Pnt p[4] = {c.Translated(u * (-size / 2) + v * (-size / 2)), c.Translated(u * (size / 2) + v * (-size / 2)), c.Translated(u * (size / 2) + v * (size / 2)), c.Translated(u * (-size / 2) + v * (size / 2))};
+      BRepBuilderAPI_MakeWire mw;
+      for (int i = 0; i < 4; ++i) mw.Add(BRepBuilderAPI_MakeEdge(p[i], p[(i + 1) % 4]).Edge());
+      section = mw.Wire();
+    }
+    BRepOffsetAPI_MakePipeShell mk(spine);
+    mk.SetMode(gp_Dir(0, 0, 1));  // keep the section upright about the coil axis: no twisting along the helix
+    mk.Add(section);
+    mk.Build();
+    if (!mk.IsDone() || !mk.MakeSolid()) throw Error("the coil could not be built (section too large for the pitch?)");
+    apply_operation(ctx, in, moved(outward(mk.Shape()), place), out, "Coil");
+    return out;
+  }
+  if (kind == "thicken") {
+    const double t = ctx.length(in, "thickness") * (in.value("flip", false) ? -1.0 : 1.0);
+    if (std::fabs(t) < 1e-9) throw Error("the thickness is zero");
+    std::vector<TopoDS_Shape> skins;
+    for (const auto& [node, faces] : by_body(ctx, in.value("faces", json()), TopAbs_FACE, "faces")) {
+      ctx.check_cancel();
+      TopoDS_Compound comp;
+      BRep_Builder bb;
+      bb.MakeCompound(comp);
+      for (const auto& f : faces) bb.Add(comp, BRepBuilderAPI_Copy(f).Shape());
+      BRepOffset_MakeOffset off;
+      off.Initialize(comp, t, 1e-5, BRepOffset_Skin, Standard_False, Standard_False, GeomAbs_Intersection, Standard_True /* thickening */);
+      off.MakeOffsetShape();
+      if (!off.IsDone()) throw Error("these faces cannot be thickened by that much");
+      for (const auto& s : solids_of(off.Shape())) skins.push_back(outward(s));
+    }
+    if (skins.empty()) throw Error("these faces cannot be thickened by that much");
+    apply_operation(ctx, in, compound_of(skins), out);
     return out;
   }
   if (kind == "hole") {

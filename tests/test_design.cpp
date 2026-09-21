@@ -388,4 +388,29 @@ TEST(construction_sweep_loft_pipe) {
   CHECK(resolve(doc).unresolved.empty());
 }
 
+TEST(coil_and_thicken) {
+  Document doc = Document::create();
+  feature_cmd(doc, "coil", {{"diameter", "20 mm"}, {"pitch", "5 mm"}, {"turns", "4"}, {"size", "2 mm"}});
+  // Wire length of a helix times the section area.
+  const double length = 4 * std::hypot(2 * M_PI * 10, 5.0);
+  CHECK_NEAR(total_volume(doc), length * M_PI, length * M_PI * 0.02);
+  feature_cmd(doc, "box", {{"x", "100 mm"}, {"length", "20 mm"}, {"width", "20 mm"}, {"height", "10 mm"}});
+  Scene s = resolve(doc);
+  std::string box;
+  for (const auto& b : s.all_bodies())
+    if (s.node(b)->name.rfind("Body", 0) == 0) box = b;
+  Ref top;
+  top.body = box;
+  top.kind = Ref::Kind::Face;
+  for (int i = 0; i < 6; ++i) {
+    top.index = i;
+    const json info = inspect_ref(doc, s, top);
+    if (info.contains("normal") && info["normal"][2].get<double>() > 0.99) break;
+  }
+  const double before = total_volume(doc);
+  feature_cmd(doc, "thicken", {{"faces", json::array({make_ref(doc, s, top)})}, {"thickness", "3 mm"}});
+  CHECK_NEAR(total_volume(doc) - before, 20 * 20 * 3, 1e-4);
+  CHECK(resolve(doc).unresolved.empty());
+}
+
 CHECK_MAIN()

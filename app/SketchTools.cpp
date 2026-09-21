@@ -1,6 +1,12 @@
 // SketchEditor, the tools: what a click means for each of them, constraints, dimensions, fillet, trim, mirror.
 #include "SketchEditor.hpp"
 
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepOffsetAPI_MakeOffset.hxx>
+#include <Standard_Failure.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <cmath>
@@ -9,6 +15,7 @@
 #include "Jobs.hpp"
 #include "Theme.hpp"
 #include "opad/design/expr.hpp"
+#include "opad/design/sketch_geom.hpp"
 
 using namespace opad::design;
 using CT = SkConstraint::Type;
@@ -61,6 +68,8 @@ void SketchEditor::setTool(const QString& tool) {
     emit status(tr("Mirror: select the curves first, then start Mirror and click the mirror line."));
     return;
   }
+  if (tool == "offset") return offsetSelection();  // acts on the selection at once; not a mode
+  if ((m_tool == "project") != (tool == "project")) m_viewport->setEdgeHover(tool == "project");
   if (tool == "polygon") {
     bool ok = false;
     const int n = QInputDialog::getInt(m_viewport, tr("Polygon"), tr("Number of sides:"), m_polygonSides, 3, 64, 1, &ok);
@@ -93,6 +102,7 @@ void SketchEditor::toolPrompt() {
   else if (m_tool == "fillet") t = tr("Sketch fillet: click the corner where two lines meet");
   else if (m_tool == "trim") t = tr("Trim: click the part of a curve to remove");
   else if (m_tool == "mirror") t = tr("Mirror: click the mirror line");
+  else if (m_tool == "project") t = tr("Project: click straight or circular edges of bodies; they become fixed reference curves");
   else if (m_tool == "dimension") t = m_placingDim ? tr("Dimension: click where the value should sit (or pick a second entity)") : tr("Dimension: pick a line, a circle, an arc, or two points");
   else if (m_tool.startsWith("c:")) t = tr("%1: pick the geometry it applies to").arg(i18n::t(m_tool.mid(2).left(1).toUpper() + m_tool.mid(3)));
   emit status(t);
@@ -122,6 +132,7 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
   const Hit hit = hitTest(s.u, s.v);
   if (m_tool.startsWith("c:")) return constraintClick(hit);
   if (m_tool == "dimension") return dimensionClick(hit, s.u, s.v);
+  if (m_tool == "project") return projectHovered();
   if (m_tool == "fillet") return filletAt(hit, s.u, s.v);
   if (m_tool == "trim") return trimAt(hit, s.u, s.v);
   if (m_tool == "mirror") {
@@ -859,6 +870,102 @@ void SketchEditor::mirrorSelection(int axisLine) {
   }
   m_sel.clear();
   if (end_change(tr("Mirror"))) setTool("select");
+}
+
+// ---------------------------------------------------------------- offset, project
+// Offsets the selected chain of lines and arcs by a distance (negative = the other side). The copy is plain
+// geometry: dimension it, or constrain it to the original, as needed.
+void SketchEditor::offsetSelection() {
+  std::vector<int> ids;
+  for (int id : m_sel)
+    if (const SkEntity* e = m_sk.entity(id); e && (e->type == ET::Line || e->type == ET::Arc || e->type == ET::Circle)) ids.push_back(id);
+  if (ids.empty()) return emit status(tr("Offset: select a connected chain of lines, arcs or a circle first"));
+  bool ok = false;
+  const QString text = QInputDialog::getText(m_viewport, tr("Offset"), tr("Distance (negative = the other side):"), QLineEdit::Normal, "5 mm", &ok).trimmed();
+  if (!ok || text.isEmpty()) return;
+  try {
+    const double d = paramTable(m_doc->scene).length(text.toStdString());
+    const TopoDS_Wire wire = sketch_wire(m_sk, opad::Frame(), ids);
+    BRepOffsetAPI_MakeOffset off(wire, GeomAbs_Arc);
+    off.Perform(d);
+    if (!off.IsDone() || off.Shape().IsNull()) throw opad::Error("that offset distance leaves nothing");
+    begin_change();
+    std::map<std::pair<long long, long long>, int> points;  // the copy's curves share their end points
+    auto point = [&](const gp_Pnt& p) {
+      const std::pair<long long, long long> key{std::llround(p.X() * 1e6), std::llround(p.Y() * 1e6)};
+      auto it = points.find(key);
+      return it != points.end() ? it->second : points[key] = m_sk.add_point(p.X(), p.Y());
+    };
+    int made = 0;
+    for (TopExp_Explorer ex(off.Shape(), TopAbs_EDGE); ex.More(); ex.Next()) {
+      BRepAdaptor_Curve c(TopoDS::Edge(ex.Current()));
+      const gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
+      if (c.GetType() == GeomAbs_Line) {
+        if (a.Distance(b) > 1e-7) { m_sk.add_line(point(a), point(b)); ++made; }
+      } else if (c.GetType() == GeomAbs_Circle) {
+        const gp_Circ k = c.Circle();
+        if (a.Distance(b) < 1e-7 && std::fabs(c.LastParameter() - c.FirstParameter()) > 6) {
+          m_sk.add_circle(point(k.Location()), k.Radius());
+        } else {
+          const bool ccw = k.Axis().Direction().Z() > 0;  // parameters run counter-clockwise about the circle's own axis
+          m_sk.add_arc(point(k.Location()), point(ccw ? a : b), point(ccw ? b : a));
+        }
+        ++made;
+      }
+    }
+    if (made == 0) {
+      cancel_change();
+      throw opad::Error("that offset distance leaves nothing");
+    }
+    end_change(tr("Offset"));
+  } catch (const Standard_Failure&) {
+    cancel_change();
+    emit status(tr("Offset: the selection must be one connected chain, and the distance must fit"));
+  } catch (const std::exception& e) {
+    cancel_change();
+    emit status(i18n::t(QString::fromUtf8(e.what())));
+  }
+}
+
+// Body edges as fixed reference curves in the sketch (not associative: project again after the body changes).
+void SketchEditor::projectHovered() {
+  TopoDS_Shape shape;
+  if (!m_viewport->hoveredEdge(shape)) return emit status(tr("Project: point at an edge of a body and click"));
+  BRepAdaptor_Curve c(TopoDS::Edge(shape));
+  auto local = [&](const gp_Pnt& p, double& u, double& v) { m_frame.to_local({p.X(), p.Y(), p.Z()}, u, v); };
+  const opad::Vec3 n = m_frame.normal();
+  double au, av, bu, bv;
+  local(c.Value(c.FirstParameter()), au, av);
+  local(c.Value(c.LastParameter()), bu, bv);
+  begin_change();
+  if (c.GetType() == GeomAbs_Line) {
+    if (std::hypot(bu - au, bv - av) < 1e-7) {
+      cancel_change();
+      return emit status(tr("Project: that edge is perpendicular to the sketch plane"));
+    }
+    const int line = m_sk.add_line(m_sk.add_point(au, av, true), m_sk.add_point(bu, bv, true));
+    m_sk.entity(line)->fixed = true;
+  } else if (c.GetType() == GeomAbs_Circle && std::fabs(std::fabs(c.Circle().Axis().Direction().Dot(gp_Dir(n[0], n[1], n[2]))) - 1.0) < 1e-9) {
+    double cu, cv;
+    local(c.Circle().Location(), cu, cv);
+    const int centre = m_sk.add_point(cu, cv, true);
+    int made = 0;
+    if (std::hypot(bu - au, bv - av) < 1e-7) {
+      made = m_sk.add_circle(centre, c.Circle().Radius());
+    } else {
+      double mu, mv;  // which way round: the arc's mid point tells
+      local(c.Value((c.FirstParameter() + c.LastParameter()) / 2), mu, mv);
+      const double a0 = std::atan2(av - cv, au - cu), a1 = std::atan2(bv - cv, bu - cu), am = std::atan2(mv - cv, mu - cu);
+      const bool ccw = norm_angle(am - a0) < norm_angle(a1 - a0);
+      const int ps = m_sk.add_point(au, av, true), pe = m_sk.add_point(bu, bv, true);
+      made = m_sk.add_arc(centre, ccw ? ps : pe, ccw ? pe : ps);
+    }
+    m_sk.entity(made)->fixed = true;
+  } else {
+    cancel_change();
+    return emit status(tr("Project: only straight edges, and circles parallel to the sketch plane, can be projected"));
+  }
+  end_change(tr("Project"));
 }
 
 bool SketchEditor::eventFilter(QObject* o, QEvent* e) {

@@ -69,6 +69,7 @@ class FeaturePanel : public QWidget {
   void setPicks(const QString& input, const opad::json& picks);
   opad::json picks(const QString& input) const;
   void setStatus(const QString& text, bool error);
+  void setValue(const QString& input, const opad::json& value);  // expression, choice or flag, as the user would type it
   void activate(const QString& input);  // empty: none
   void activateNextPick();              // the first shown pick input that still needs picks
  signals:
