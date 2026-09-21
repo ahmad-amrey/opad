@@ -1,5 +1,8 @@
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QDir>
+#include <QFile>
+#include <QSettings>
 #include <QTimer>
 #include <QSurfaceFormat>
 
@@ -22,6 +25,14 @@ int main(int argc, char** argv) {
   QApplication::setApplicationName("OPAD");
   QApplication::setOrganizationName("opad");
   QApplication::setApplicationVersion(QString::fromStdString(opad::version_string()));
+  // Portable build (the `opad-portable` package drops this marker beside the exe): settings and cache stay in
+  // <exe dir>/data instead of the registry and %LOCALAPPDATA%, so the folder can move between machines.
+  if (const QString dir = QApplication::applicationDirPath(); QFile::exists(dir + "/opad.portable")) {
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dir + "/data");
+    if (qEnvironmentVariableIsEmpty("OPAD_CACHE_DIR"))
+      qputenv("OPAD_CACHE_DIR", QDir::toNativeSeparators(dir + "/data/cache").toLocal8Bit());
+  }
   i18n::install(app);  // before any widget exists: translator and layout direction (needs the names above for QSettings)
 
   QCommandLineParser parser;

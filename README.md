@@ -53,6 +53,12 @@ pybind11 (optional), Qt 6 Widgets (optional, app only).
   for another location override `CMAKE_PREFIX_PATH`, `CMAKE_C_COMPILER` and `CMAKE_CXX_COMPILER` with `-D` or in a
   `CMakeUserPresets.json`. The build stages GCC's runtime DLLs next to the executables, because Git for Windows
   puts an incompatible `libstdc++-6.dll` first on the PATH of its shells.
+- **Windows portable package:** `cmake --build --preset windows-portable` (or `cmake --workflow --preset
+  windows-portable` for configure, build, test and package) writes `build/windows/portable/OPAD-<version>-windows-x64`
+  and the same folder zipped. It holds `opad.exe`, `opad-cli.exe` and every DLL and Qt plugin they load, so it runs
+  on a machine with no MSYS2, Qt or OCCT. The `opad.portable` file beside the exe makes the app keep settings and
+  cache in the folder's `data` directory instead of the registry and `%LOCALAPPDATA%`. The exe icon is the logo's
+  cube mark; `python tools/make_icon.py <opad_logo.png>` (Pillow, numpy) regenerates `app/res` when the logo changes.
 - **Linux:** other distros need the same packages under their own names. On Wayland the app runs through
   XWayland, since OCCT's viewer needs an X11 window.
 - **Options:** `OPAD_BUILD_APP`, `OPAD_BUILD_CLI`, `OPAD_BUILD_PYTHON`, `OPAD_BUILD_PLUGINS`, `OPAD_BUILD_TESTS`

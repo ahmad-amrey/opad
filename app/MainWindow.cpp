@@ -49,7 +49,7 @@
 
 MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   setWindowTitle("OPAD");
-  setWindowIcon(icons::icon("body", theme::current().sel));
+  setWindowIcon(icons::appIcon());
   resize(1600, 1000);
   setMinimumSize(1280, 800);
   setAcceptDrops(true);
@@ -426,7 +426,6 @@ void MainWindow::refreshIcons() {
     QString icon = a->data().toString();
     if (!icon.isEmpty()) a->setIcon(icons::themed(icon));
   }
-  setWindowIcon(icons::icon("body", theme::current().sel));
   if (m_statusGitIcon) m_statusGitIcon->setPixmap(icons::pixmap("git", theme::current().fg2, 14, devicePixelRatioF()));
   m_doc->refresh();
 }

@@ -26,9 +26,17 @@ set(OPAD_APP_SOURCES
   NavCube.cpp NavCube.hpp
   CrashLog.cpp CrashLog.hpp
   I18n.cpp I18n.hpp i18n.qrc
+  res.qrc
   MainWindow.cpp MainWindow.hpp)
 if(APPLE)
   list(APPEND OPAD_APP_SOURCES ViewportCocoa.mm)
+endif()
+if(WIN32)
+  # Exe icon (res/opad.ico, cut from the logo by tools/make_icon.py) and version info.
+  enable_language(RC)
+  configure_file(res/opad.rc.in ${CMAKE_CURRENT_BINARY_DIR}/opad.rc @ONLY)
+  list(APPEND OPAD_APP_SOURCES ${CMAKE_CURRENT_BINARY_DIR}/opad.rc)
+  set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/opad.rc PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/res/opad.ico)
 endif()
 
 add_executable(opad WIN32 MACOSX_BUNDLE ${OPAD_APP_SOURCES})
@@ -40,3 +48,7 @@ if(APPLE)
   target_link_libraries(opad PRIVATE "-framework Cocoa")
 endif()
 install(TARGETS opad RUNTIME DESTINATION bin BUNDLE DESTINATION .)
+
+if(WIN32)
+  include(${PROJECT_SOURCE_DIR}/cmake/portable.cmake)  # target opad-portable
+endif()

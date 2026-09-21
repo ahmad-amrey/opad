@@ -36,6 +36,8 @@
   ],
   "buildPresets": [
     { "name": "windows", "configurePreset": "windows" },
+    { "name": "windows-portable", "displayName": "Windows portable folder + zip (build/windows/portable)",
+      "configurePreset": "windows", "targets": ["opad-portable"] },
     { "name": "linux", "configurePreset": "linux" },
     { "name": "macos", "configurePreset": "macos" }
   ],
@@ -47,6 +49,9 @@
   "workflowPresets": [
     { "name": "windows", "steps": [
       { "type": "configure", "name": "windows" }, { "type": "build", "name": "windows" }, { "type": "test", "name": "windows" } ] },
+    { "name": "windows-portable", "steps": [
+      { "type": "configure", "name": "windows" }, { "type": "build", "name": "windows" }, { "type": "test", "name": "windows" },
+      { "type": "build", "name": "windows-portable" } ] },
     { "name": "linux", "steps": [
       { "type": "configure", "name": "linux" }, { "type": "build", "name": "linux" }, { "type": "test", "name": "linux" } ] },
     { "name": "macos", "steps": [

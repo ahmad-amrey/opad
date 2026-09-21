@@ -288,6 +288,12 @@ QIcon themed(const QString& name, int size) {
   return icon(name, t.fg, t.fg3, t.onsel, size);
 }
 
+QIcon appIcon() {
+  QIcon ic;
+  for (int size : {16, 24, 32, 48, 64, 256}) ic.addFile(QString(":/res/opad-%1.png").arg(size), QSize(size, size));
+  return ic;
+}
+
 void clearCache() { g_cache.clear(); }
 
 QString gripFile(const QColor& color, bool vertical) {
