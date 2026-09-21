@@ -738,6 +738,13 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
 }
 
 void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const Handle(V3d_View)&) {
+  // The controller reports every click, also one on the view cube: that turns the camera and selects nothing,
+  // and telling the listeners would run a guided tool's measure again on the same picks.
+  if (m_cubeClick) {
+    m_cubeClick = false;
+    if (trace::enabled()) trace::log(QStringLiteral("3D click: on the view cube, %1 stay selected").arg(m_ctx->NbSelected()));
+    return;
+  }
   if (m_selJob) m_selJob->cancel();
   m_hasLastPick = m_ctx->HasDetected() && m_ctx->MainSelector()->NbPicked() > 0;  // guided tools mark where the click landed
   if (m_hasLastPick) {
@@ -946,6 +953,7 @@ void Viewport::updateClipPlanes() {
 // ---------------------------------------------------------------- dimension (F23)
 // ---------------------------------------------------------------- guided-tool picking
 void Viewport::setPickAccumulate(bool on) {
+  m_pickAccumulate = on;
   ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, on ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
   if (!on) {
     showPickMarkers({});
@@ -1172,6 +1180,23 @@ void Viewport::benchClick(double fx, double fy) {
   for (int i = 1; i <= 160; ++i)  // ~8 s of hovering, back and forth across the neighbourhood: past a long body-to-body measure
     QTimer::singleShot(50 * i, this, [send, pt, i, w] { send(QEvent::MouseMove, Graphic3d_Vec2i(pt.x() + ((i % 20) - 10) * w / 50, pt.y() + (i % 5) * 9), Qt::NoButton, Qt::NoButton); });
   trace::log(QStringLiteral("bench: mouse click posted at %1,%2").arg(pt.x()).arg(pt.y()));
+}
+
+// A left click on the view cube's TOP face, through the mouse handlers (OPAD_BENCH_CUBECLICK); `miss` clicks the
+// view's empty bottom-left corner instead.
+void Viewport::benchCubeClick(bool miss) {
+  if (!m_initialised) return;
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
+  const qreal dpr = devicePixelRatioF();
+  const Graphic3d_Vec2i at = miss ? Graphic3d_Vec2i(4, h - 4) : Graphic3d_Vec2i(w - kCubeOffsetX, kCubeOffsetY - 36);
+  const QPointF local(at.x() / dpr, at.y() / dpr);
+  m_ctx->MoveTo(at.x(), at.y(), m_view, Standard_False);  // the press handler asks what is hovered
+  for (const auto& [type, button, buttons] : {std::tuple{QEvent::MouseMove, Qt::NoButton, Qt::NoButton}, std::tuple{QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton}, std::tuple{QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton}})
+    QCoreApplication::postEvent(this, new QMouseEvent(type, local, mapToGlobal(local), button, Qt::MouseButtons(buttons), Qt::NoModifier));
+  auto eye = [this] { Standard_Real x, y, z; m_view->Proj(x, y, z); return QStringLiteral("%1,%2,%3").arg(x, 0, 'f', 2).arg(y, 0, 'f', 2).arg(z, 0, 'f', 2); };
+  trace::log(QStringLiteral("bench: cube click posted, view direction %1").arg(eye()));
+  QTimer::singleShot(900, this, [eye] { trace::log(QStringLiteral("bench: after cube click, view direction %1").arg(eye())); });
 }
 
 void Viewport::benchPick() {
@@ -1445,6 +1470,8 @@ void Viewport::paintEvent(QPaintEvent*) {
   frame.start();
   FlushViewEvents(m_ctx, m_view, Standard_True);
   if (trace::enabled() && frame.elapsed() > 100) trace::log(QStringLiteral("slow frame: %1 ms (%2 objects)").arg(frame.elapsed()).arg(m_items.size()));
+  static const bool everyFrame = qEnvironmentVariableIsSet("OPAD_TRACE_FRAMES");
+  if (everyFrame && trace::enabled()) trace::log(QStringLiteral("frame: %1 ms").arg(frame.elapsed()));
   // The label needs the sub-shape's ordinal, a walk over the whole body: only when the hovered owner changes.
   const Standard_Transient* hoverOwner = m_ctx->HasDetected() ? m_ctx->DetectedOwner().get() : nullptr;
   if (hoverOwner == m_hoverOwner) return;
@@ -1485,6 +1512,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   setFocus();
   m_pressPos = e->pos();
   m_rightPress = e->button() == Qt::RightButton;
+  m_cubeClick = false;
   // Sketching: the left button belongs to the sketch editor, except on the view cube.
   if (m_sketchInput && m_initialised && e->button() == Qt::LeftButton && !(m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube)) {
     double u, v;
@@ -1499,6 +1527,10 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   if (m_initialised && e->button() == Qt::LeftButton && e->modifiers() == Qt::NoModifier && m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube) {
     ChangeMouseGestureMap().Bind(Aspect_VKeyMouse_LeftButton, AIS_MouseGesture_RotateOrbit);
     m_cubeGesture = true;
+    m_cubeClick = true;
+    m_needFit = false;
+    // Only the Replace scheme hands a click to the cube (HandleMouseClick); a guided tool's XOR would toggle it as a pick.
+    ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, AIS_SelectionScheme_Replace);
   }
   if (m_initialised && UpdateMouseButtons(devicePos(e->position()), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
 }
@@ -1515,6 +1547,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   if (m_cubeGesture && e->button() == Qt::LeftButton) {
     m_cubeGesture = false;
     ChangeMouseGestureMap().Bind(Aspect_VKeyMouse_LeftButton, AIS_MouseGesture_SelectRectangle);
+    ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, m_pickAccumulate ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
   }
   if (m_rightPress && e->button() == Qt::RightButton && (e->pos() - m_pressPos).manhattanLength() < 4) {
     m_rightPress = false;

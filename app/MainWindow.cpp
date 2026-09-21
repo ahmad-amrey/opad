@@ -1395,6 +1395,8 @@ void MainWindow::toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromC
     if (fromClick && static_cast<int>(m_toolPicks.size()) == m_tool.steps) return m_viewport->keepLastSelected();  // a pick after the last step starts over
     picks.resize(m_tool.steps);  // a rubber band caught more than the tool asks for
   }
+  // A click that changed nothing (on empty space: XOR keeps the picks) must not throw the result away and measure again.
+  if (fromClick && std::equal(picks.begin(), picks.end(), m_toolPicks.begin(), m_toolPicks.end(), [](const opad::Ref& a, const opad::Ref& b) { return a.str() == b.str(); })) return;
   opad::Vec3 at{0, 0, 0};
   const bool hasPoint = fromClick && picks.size() == m_toolPoints.size() + 1 && m_viewport->lastPickPoint(at);
   if (picks.size() > m_toolPoints.size()) {
@@ -1915,6 +1917,8 @@ void MainWindow::runBench() {
     QTimer::singleShot(1500, this, [this, spec, state] { startTool(spec[0]); state("started"); });
     QTimer::singleShot(2300, this, [this, state] { m_viewport->benchClick(0.5, 0.5); QTimer::singleShot(700, this, [state] { state("after click 1"); }); });
     QTimer::singleShot(4500, this, [this, state, second] { m_viewport->benchClick(second.value(0).toDouble(), second.value(1).toDouble()); QTimer::singleShot(700, this, [state] { state("after click 2"); }); });
+    if (qEnvironmentVariableIsSet("OPAD_BENCH_CUBECLICK"))  // a click on the view cube while the result is up: must not measure again
+      QTimer::singleShot(13000, this, [this, state] { state("before cube click"); m_viewport->benchCubeClick(qEnvironmentVariable("OPAD_BENCH_CUBECLICK") == "miss"); });
     QTimer::singleShot(14000, this, [this, state] {
       state("settled");
       if (const QString ui = qEnvironmentVariable("OPAD_BENCH_UISHOT"); !ui.isEmpty()) {
