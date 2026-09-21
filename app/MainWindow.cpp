@@ -291,10 +291,25 @@ void MainWindow::buildActions() {
   addAction("view.saveview", tr("Save view…"), "home", QKeySequence(), [this] { saveNamedView(); });
   m_darkAction = addAction("view.dark", tr("&Dark theme"), "", QKeySequence(), [this] {}, true);
   // Panel toggles: always enabled, so a closed dock can be reopened even with no document.
-  addAction("panel.browser", tr("Browser"), "browse", QKeySequence("Ctrl+1"), [this] {}, true);
-  addAction("panel.annotations", tr("Annotations"), "annotate", QKeySequence("Ctrl+2"), [this] {}, true);
+  // Ctrl+1/2/3 belong to the workspaces (handoff), so the panels use Alt.
+  addAction("panel.browser", tr("Browser"), "browse", QKeySequence("Alt+1"), [this] {}, true);
+  addAction("panel.annotations", tr("Annotations"), "annotate", QKeySequence("Alt+2"), [this] {}, true);
   addAction("panel.section", tr("Section panel"), "section", QKeySequence(), [this] {}, true);
-  addAction("panel.timeline", tr("Timeline"), "commit", QKeySequence("Ctrl+3"), [this] {}, true);
+  addAction("panel.timeline", tr("Timeline"), "commit", QKeySequence("Alt+3"), [this] {}, true);
+  // Workspaces: one document, one timeline; a workspace only changes the ribbon's tabs and tools.
+  auto* wsGroup = new QActionGroup(this);
+  wsGroup->addAction(addAction("workspace.review", tr("Review workspace"), "eye", QKeySequence("Ctrl+1"), [this] { setWorkspace(0); }, true));
+  wsGroup->addAction(addAction("workspace.design", tr("Design workspace"), "component", QKeySequence("Ctrl+2"), [this] { setWorkspace(1); }, true));
+  // Design tools that do not exist yet: shown in their place in the ribbon, disabled, no shortcut until they work.
+  for (const auto& [id, text, icon] : std::vector<std::tuple<QString, QString, QString>>{
+           {"design.reparent", tr("Reparent"), "reparent"}, {"design.newcomponent", tr("New component"), "plus"}, {"design.move", tr("Move"), "move"},
+           {"design.rotate", tr("Rotate"), "restore"}, {"design.align", tr("Align"), "fit"}, {"design.reset", tr("Reset to import"), "home"},
+           {"design.snap", tr("Snap"), "grid"}, {"design.colour", tr("Colour"), "shaded"}, {"design.opacity", tr("Opacity"), "wireframe"},
+           {"design.lock", tr("Lock"), "lock"}}) {
+    QAction* a = addAction(id, text, icon, QKeySequence(), [] {});
+    a->setEnabled(false);
+    a->setToolTip(tr("%1 (not available yet)").arg(text));
+  }
   addAction("panel.reset", tr("Reset layout"), "restore", QKeySequence(), [this] { resetLayout(); });
   m_darkAction->setChecked(m_settings.value("ui/dark", true).toBool());
   connect(m_darkAction, &QAction::toggled, this, [this](bool on) { applyTheme(on); refreshIcons(); });
@@ -412,7 +427,7 @@ void MainWindow::buildMenus() {
   view->addSeparator();
   QMenu* nav = view->addMenu(tr("Navigation preset"));
   add(nav, {"nav.fusion", "nav.solidworks", "nav.onshape", "nav.blender"});
-  add(view, {"view.dark", "-", "panel.browser", "panel.annotations", "panel.section", "panel.timeline", "panel.reset"});
+  add(view, {"view.dark", "-", "workspace.review", "workspace.design", "-", "panel.browser", "panel.annotations", "panel.section", "panel.timeline", "panel.reset"});
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
   add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties"});
   QMenu* tools = menuBar()->addMenu(tr("&Tools"));
@@ -422,6 +437,8 @@ void MainWindow::buildMenus() {
   rebuildRecentMenu();
 }
 
+void MainWindow::setWorkspace(int index) { m_ribbon->setWorkspace(index); }
+
 void MainWindow::buildRibbon() {
   m_ribbon = new RibbonBar(this);
   auto acts = [&](std::initializer_list<const char*> ids) {
@@ -429,10 +446,24 @@ void MainWindow::buildRibbon() {
     for (const char* id : ids) if (QAction* a = action(id)) out << a;
     return out;
   };
-  m_ribbon->addTab(tr("View"), {acts({"view.fit", "view.home", "view.ortho"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid"}), acts({"view.section", "view.isolate", "view.unisolate"})});
-  m_ribbon->addTab(tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"})});
-  m_ribbon->addTab(tr("Annotate"), {acts({"annotate.add", "annotate.resolve"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
-  m_ribbon->addTab(tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
+  const int review = m_ribbon->addWorkspace({tr("Review"), "eye", "Ctrl+1", tr("Look, measure, annotate. Nothing here changes geometry or structure."), tr("ops: annotation · measurement · section · view")});
+  const int design = m_ribbon->addWorkspace({tr("Design"), "component", "Ctrl+2", tr("Arrange the assembly: import, reparent, move, colour, rename."), tr("ops: import · reparent · transform · appearance · rename · delete")});
+  m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid"}), acts({"view.section", "view.isolate", "view.unisolate"})});
+  m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"})});
+  m_ribbon->addTab(review, tr("Annotate"), {acts({"annotate.add", "annotate.resolve"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
+  m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
+  m_ribbon->addTab(design, tr("Assemble"), {acts({"file.import", "design.reparent", "design.newcomponent"}), acts({"edit.rename", "edit.delete", "edit.restore"})});
+  m_ribbon->addTab(design, tr("Transform"), {acts({"design.move", "design.rotate", "design.align"}), acts({"design.reset", "design.snap"})});
+  m_ribbon->addTab(design, tr("Appearance"), {acts({"design.colour", "design.opacity"}), acts({"edit.hide", "design.lock", "view.isolate"})});
+  m_ribbon->addTab(design, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
+  m_ribbon->setWorkspace(m_settings.value("ui/workspace", 0).toInt() == 1 ? design : review);
+  action(m_ribbon->workspace() == design ? "workspace.design" : "workspace.review")->setChecked(true);
+  connect(m_ribbon, &RibbonBar::workspaceChanged, this, [this](int i) {  // from the shortcuts or the chip's list
+    m_settings.setValue("ui/workspace", i);
+    action(i == 1 ? "workspace.design" : "workspace.review")->setChecked(true);
+    if (i == 1 && m_doc->hasDocument && m_viewport->selectionFilter() != Viewport::SelFilter::Body) action("select.bodies")->trigger();  // Design works on bodies
+    statusBar()->showMessage(tr("%1 workspace · Ctrl+1 / 2 switch workspace").arg(i == 1 ? tr("Design") : tr("Review")), 4000);
+  });
   m_ribbon->setSelectFilters(acts({"select.bodies", "select.faces", "select.edges", "select.vertices"}), {"1", "2", "3", "4"});
   m_ribbon->setSearchAction(action("tools.commands"));
   QAction* settingsAction = addAction("tools.settings", tr("Settings"), "settings", QKeySequence(), [] {});
@@ -1498,6 +1529,11 @@ void MainWindow::runBench() {
       trace::log(QStringLiteral("bench: undo/redo: after hide dirty=%1 canUndo=%2; after undo dirty=%3 ops %4->%5; after redo dirty=%6 ops %7 canRedo=%8").arg(d1).arg(u1).arg(d2).arg(n0).arg(n2).arg(m_doc->doc.dirty).arg(m_doc->doc.ops.size()).arg(m_doc->canRedo()));
       QTimer::singleShot(1500, this, [this] { m_viewport->fitAll(); m_viewport->benchPick(); });  // the board: a planar face at the centre
       if (const QByteArray shot = qgetenv("OPAD_BENCH_SHOT"); !shot.isEmpty()) m_viewport->benchShot(QString::fromLocal8Bit(shot));
+      // The widget side of the window (ribbon, docks, splitters; the native viewport comes out blank): a UI check
+      // that needs no mouse or keyboard driving. OPAD_BENCH_WORKSPACE=1 switches to Design first.
+      if (qEnvironmentVariableIntValue("OPAD_BENCH_WORKSPACE") == 1) setWorkspace(1);
+      if (const QByteArray ui = qgetenv("OPAD_BENCH_UISHOT"); !ui.isEmpty())
+        QTimer::singleShot(300, this, [this, ui] { grab().save(QString::fromLocal8Bit(ui)); });  // after the layout has settled
       // OPAD_BENCH_FILTER=face|edge|vertex: switch the selection mode, time it, then pick a sub-shape.
       if (const QByteArray filter = qgetenv("OPAD_BENCH_FILTER"); !filter.isEmpty()) {
         QTimer::singleShot(3000, this, [this, filter] {

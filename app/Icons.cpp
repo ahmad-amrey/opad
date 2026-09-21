@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QHash>
+#include <QImage>
 #include <QPainter>
 #include <QPainterPath>
 #include <QRegularExpression>
@@ -288,6 +289,21 @@ QIcon themed(const QString& name, int size) {
 }
 
 void clearCache() { g_cache.clear(); }
+
+QString gripFile(const QColor& color, bool vertical) {
+  QString dir = QString::fromStdString((opad::cache_dir() / "ui-icons").string());
+  QDir().mkpath(dir);
+  QString path = QString("%1/grip-%2-%3.png").arg(dir, vertical ? "v" : "h", color.name(QColor::HexArgb).mid(1));
+  if (!QFile::exists(path)) {
+    QImage img(vertical ? QSize(2, 14) : QSize(14, 2), QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::transparent);
+    for (int i = 0; i < 14; i += 4)  // four 2 px dots, 2 px apart
+      for (int a = 0; a < 2; ++a)
+        for (int b = 0; b < 2; ++b) img.setPixelColor(vertical ? QPoint(a, i + b) : QPoint(i + b, a), color);
+    img.save(path);
+  }
+  return path.replace('\\', '/');
+}
 
 QString file(const QString& name, const QColor& color, int size) {
   QString dir = QString::fromStdString((opad::cache_dir() / "ui-icons").string());

@@ -71,7 +71,13 @@ QString stylesheet(const Tokens& t) {
   QString s;
   s += QString("* { font-family: '%1'; font-size: 13px; color: %2; }\n").arg(uiF, fg);
   s += QString("QMainWindow, QDialog, QWidget#central { background: %1; }\n").arg(bg);
-  s += QString("QMainWindow::separator { background: %1; width: 5px; height: 5px; border-left: 1px solid %2; border-right: 1px solid %2; }\n").arg(bg, line);
+  // Splitters: 5 px, bg fill, 1 px line each side, centred dotted grip in fg3 that says the bar can be dragged.
+  // Qt names the separator after its own shape: :vertical is the upright bar beside the browser, :horizontal the
+  // one above the timeline. (Swapped, the upright bar gets top/bottom borders, i.e. none, and sideways dots.)
+  s += QString("QMainWindow::separator { background: %1; width: 5px; height: 5px; }\n"
+               "QMainWindow::separator:vertical { border-left: 1px solid %2; border-right: 1px solid %2; image: url(%3); }\n"
+               "QMainWindow::separator:horizontal { border-top: 1px solid %2; border-bottom: 1px solid %2; image: url(%4); }\n")
+           .arg(bg, line, icons::gripFile(t.fg3, true), icons::gripFile(t.fg3, false));
   s += QString("QMenuBar { background: %1; min-height: 24px; max-height: 24px; padding: 0; }\n"
                "QMenuBar::item { padding: 0 8px; height: 24px; color: %2; background: transparent; }\n"
                "QMenuBar::item:selected { background: %3; color: %4; }\n").arg(bg, fg, bg3, fg);

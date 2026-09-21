@@ -36,6 +36,7 @@ class MainWindow : public QMainWindow {
   void buildActions();
   void buildMenus();
   void buildRibbon();
+  void setWorkspace(int index);  // 0 Review, 1 Design: swaps the ribbon tab set (same document, same timeline)
   void buildCentral();
   void buildDocks();
   void bindPanel(QAction* a, QDockWidget* dock);
