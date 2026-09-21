@@ -201,7 +201,7 @@ ToolPanel::ToolPanel(const QString& id, const QString& icon, QColor Tokens::* ti
   h->setSpacing(8);
   m_icon = new QLabel(header);
   m_icon->setFixedSize(16, 16);
-  auto* name = new QLabel(title, header);
+  auto* name = m_name = new QLabel(title, header);
   name->setObjectName("toolPanelTitle");
   m_context = new QLabel(header);
   m_context->setObjectName("toolPanelContext");
@@ -251,6 +251,13 @@ void ToolPanel::refreshIcons() {
   m_icon->setPixmap(icons::pixmap(m_iconName, t.*m_tint, 16, devicePixelRatioF()));
   m_pin->setIcon(icons::icon("pin", m_pin->isChecked() ? t.sel : t.fg2));
   m_close->setIcon(icons::icon("close", t.fg2));
+}
+
+void ToolPanel::setHeader(const QString& icon, const QString& title) {
+  m_iconName = icon;
+  m_name->setText(title);
+  setWindowTitle(title);
+  refreshIcons();
 }
 
 void ToolPanel::setContext(const QString& text) {
@@ -1287,62 +1294,6 @@ void SectionPanel::applyNamed(const std::string& id) {
       emit enabledChanged(true);
       return;
     }
-}
-
-// ---------------------------------------------------------------- MeasureCard
-MeasureCard::MeasureCard(QWidget* parent) : QFrame(parent) {
-  setObjectName("card");
-  setProperty("state", "measure");
-  setFixedWidth(256);
-  auto* v = new QVBoxLayout(this);
-  v->setContentsMargins(12, 10, 12, 10);
-  v->setSpacing(6);
-  m_title = new QLabel(this);
-  m_title->setFont(theme::ui(13, QFont::Medium));
-  v->addWidget(m_title);
-  m_value = new QLabel(this);
-  m_value->setFont(theme::mono(20));
-  v->addWidget(m_value);
-  m_deltas = new QLabel(this);
-  m_deltas->setFont(theme::mono(12));
-  m_deltas->setObjectName("secondary");
-  v->addWidget(m_deltas);
-  m_targets = new QLabel(this);
-  m_targets->setObjectName("secondary");
-  m_targets->setWordWrap(true);
-  v->addWidget(m_targets);
-  auto* row = new QHBoxLayout();
-  auto* pin = new QPushButton(tr("Pin to document   P"), this);
-  pin->setObjectName("primary");
-  auto* clear = new QPushButton(tr("Clear   Esc"), this);
-  row->addWidget(pin, 1);
-  row->addWidget(clear);
-  v->addLayout(row);
-  connect(pin, &QPushButton::clicked, this, &MeasureCard::pinRequested);
-  connect(clear, &QPushButton::clicked, this, &MeasureCard::clearRequested);
-}
-
-void MeasureCard::setResult(const opad::json& r, const QStringList& targets) {
-  QString kind = QString::fromStdString(r.value("kind", "measure"));
-  m_title->setText(kind.left(1).toUpper() + kind.mid(1));
-  QString unit = QString::fromStdString(r.value("unit", ""));
-  if (r.contains("value")) m_value->setText(QString("%1 %2").arg(r["value"].get<double>(), 0, 'f', 3).arg(unit));
-  else if (r.contains("size")) m_value->setText(QString("%1 × %2 × %3 mm").arg(r["size"][0].get<double>(), 0, 'f', 2).arg(r["size"][1].get<double>(), 0, 'f', 2).arg(r["size"][2].get<double>(), 0, 'f', 2));
-  if (r.contains("delta")) {
-    const auto& d = r["delta"];
-    m_deltas->setText(QString::fromUtf8("ΔX %1   ΔY %2   ΔZ %3").arg(d[0].get<double>(), 0, 'f', 3).arg(d[1].get<double>(), 0, 'f', 3).arg(d[2].get<double>(), 0, 'f', 3));
-    m_deltas->show();
-  } else if (r.contains("diameter")) {
-    m_deltas->setText(QString::fromUtf8("⌀ %1 mm").arg(r["diameter"].get<double>(), 0, 'f', 3));
-    m_deltas->show();
-  } else if (r.contains("supplement")) {
-    m_deltas->setText(QString("supplement %1°").arg(r["supplement"].get<double>(), 0, 'f', 2));
-    m_deltas->show();
-  } else {
-    m_deltas->hide();
-  }
-  m_targets->setText(targets.join(QString::fromUtf8("  ↔  ")));
-  adjustSize();
 }
 
 // ---------------------------------------------------------------- ViewportChips

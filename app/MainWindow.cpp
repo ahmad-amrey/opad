@@ -44,6 +44,7 @@
 #include <QElapsedTimer>
 
 #include <algorithm>
+#include <utility>
 #include <set>
 
 MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
@@ -123,10 +124,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     m_viewport->setSection(m_section->enabled(), m_section->origin(), m_section->normal(), m_section->caps());
     updateChips();
   });
-  connect(m_section, &SectionPanel::pickRequested, this, [this] {
-    if (m_viewport->selectionFilter() != Viewport::SelFilter::Face) action("select.faces")->trigger();
-    statusBar()->showMessage(tr("Section: click a planar face in the 3D view to set the plane"), 6000);
-  });
+  connect(m_section, &SectionPanel::pickRequested, this, [this] { startTool("sectionface"); });
   connect(m_section, &SectionPanel::enabledChanged, this, [this](bool on) {
     if (action("view.section")->isChecked() != on) action("view.section")->setChecked(on);
   });
@@ -138,8 +136,24 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   });
   connect(m_timeline, &TimelineWidget::opClicked, this, &MainWindow::selectOpTargets);
   connect(m_timeline, &TimelineWidget::contextRequested, this, &MainWindow::timelineMenu);
-  connect(m_measureCard, &MeasureCard::pinRequested, this, &MainWindow::pinMeasurement);
-  connect(m_measureCard, &MeasureCard::clearRequested, this, &MainWindow::clearMeasurement);
+  connect(m_toolSteps, &ToolStepsPanel::pinRequested, this, [this] { guarded([this] { pinMeasurement(); }); });
+  connect(m_toolSteps, &ToolStepsPanel::clearRequested, this, &MainWindow::toolEscape);
+  connect(m_toolPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
+    if (!on && toolMeasures()) cancelTool();  // closing the tool's panel leaves the tool
+  });
+  connect(m_viewport, &Viewport::hoverChanged, this, [this](const QString& text) {
+    if (m_tool.id.isEmpty() || text == m_toolHover) return;
+    m_toolHover = text;
+    if (toolMeasures() && static_cast<int>(m_toolPicks.size()) < m_tool.steps) m_toolSteps->setSteps(toolSteps(), m_toolHover);
+  });
+  // Distance, one end picked: a dashed line to where the mouse meets the hovered candidate, point to point ("≈").
+  connect(m_viewport, &Viewport::hoverPoint, this, [this](bool valid, const opad::Vec3& p) {
+    if (m_tool.id != "distance" || m_toolPicks.size() != 1 || m_toolPoints.empty() || !m_toolPoints[0].first) return;
+    if (!valid) return m_viewport->clearPreview();
+    const opad::Vec3& a = m_toolPoints[0].second;
+    const double d = std::sqrt((a[0] - p[0]) * (a[0] - p[0]) + (a[1] - p[1]) * (a[1] - p[1]) + (a[2] - p[2]) * (a[2] - p[2]));
+    m_viewport->showPreview(a, p, QString::fromUtf8("≈ %1 mm").arg(d, 0, 'f', 1));
+  });
   connect(m_empty, &EmptyState::openRequested, action("file.open"), &QAction::trigger);
   connect(m_empty, &EmptyState::importRequested, action("file.import"), &QAction::trigger);
   connect(m_empty, &EmptyState::recentChosen, this, &MainWindow::openPath);
@@ -324,19 +338,28 @@ void MainWindow::buildActions() {
   for (const auto& [name, f, key, icon] : std::vector<std::tuple<QString, Viewport::SelFilter, QString, QString>>{{"Bodies", Viewport::SelFilter::Body, "1", "filterBodies"}, {"Faces", Viewport::SelFilter::Face, "2", "filterFaces"}, {"Edges", Viewport::SelFilter::Edge, "3", "filterEdges"}, {"Vertices", Viewport::SelFilter::Vertex, "4", "filterVertices"}}) {
     QAction* a = addAction("select." + name.toLower(), i18n::t(name), icon, QKeySequence(key), [this, ff = f, n = name] {
       m_viewport->setSelectionFilter(ff);
+      if (!m_tool.id.isEmpty()) {  // mid-tool: the steps are reworded for the new filter and start over
+        m_viewport->clearSelection();
+        m_toolPicks.clear();
+        m_toolPoints.clear();
+        refreshToolUi();
+      }
       for (QAction* o : m_actions) if (o->objectName().startsWith("select.")) o->setChecked(o->objectName() == "select." + n.toLower());
     }, true);
     if (f == Viewport::SelFilter::Body) a->setChecked(true);
   }
 
   // Inspect
-  addAction("inspect.distance", tr("Distance"), "distance", QKeySequence("D"), [this] { measure("distance"); });
-  addAction("inspect.angle", tr("Angle"), "angle", QKeySequence("A"), [this] { measure("angle"); });
-  addAction("inspect.radius", tr("Radius"), "radius", QKeySequence("R"), [this] { measure("radius"); });
-  addAction("inspect.bbox", tr("Bounding box"), "bbox", QKeySequence("B"), [this] { measure("bbox"); });
+  addAction("inspect.distance", tr("Distance"), "distance", QKeySequence("D"), [this] { toggleTool("distance"); }, true);
+  addAction("inspect.angle", tr("Angle"), "angle", QKeySequence("A"), [this] { toggleTool("angle"); }, true);
+  addAction("inspect.radius", tr("Radius"), "radius", QKeySequence("R"), [this] { toggleTool("radius"); }, true);
+  addAction("inspect.bbox", tr("Bounding box"), "bbox", QKeySequence("B"), [this] { toggleTool("bbox"); }, true);
   m_pinAction = addAction("inspect.pin", tr("Pin"), "pin", QKeySequence("P"), [this] { pinMeasurement(); });
   m_pinAction->setEnabled(false);
-  addAction("inspect.clear", tr("Clear measurement"), "", QKeySequence("Esc"), [this] { if (!closeTopPanel()) clearMeasurement(); });  // Esc closes a tool panel first
+  addAction("inspect.clear", tr("Clear measurement"), "", QKeySequence("Esc"), [this] {
+    if (!m_tool.id.isEmpty()) toolEscape();
+    else if (!closeTopPanel()) clearMeasurement();
+  });  // Esc closes a tool panel first
   addAction("inspect.properties", tr("Properties"), "doc", QKeySequence("Ctrl+P"), [this] {
     if (m_selRefs.empty()) m_selRefs = m_viewport->selection();
     if (m_selRefs.empty()) throw opad::Error("Select something to see its properties.");
@@ -345,7 +368,7 @@ void MainWindow::buildActions() {
   });
 
   // Annotate / edit
-  addAction("annotate.add", tr("Note"), "annotate", QKeySequence("N"), [this] { addAnnotation(); });
+  addAction("annotate.add", tr("Note"), "annotate", QKeySequence("N"), [this] { toggleTool("note"); }, true);
   addAction("annotate.resolve", tr("Resolve note"), "check", QKeySequence("Ctrl+Return"), [this] { resolveCurrentAnnotation(); });
   addAction("edit.undo", tr("&Undo"), "rollLeft", QKeySequence::Undo, [this] { m_doc->undo(); });
   addAction("edit.redo", tr("&Redo"), "rollRight", QKeySequence::Redo, [this] { m_doc->redo(); });
@@ -515,9 +538,9 @@ void MainWindow::buildCentral() {
   // Native child widgets float above the OpenGL surface: top-left chips, bottom-right measurement card.
   m_chips = new ViewportChips(m_viewport);
   m_chips->setAttribute(Qt::WA_NativeWindow);
-  m_measureCard = new MeasureCard(m_viewport);
-  m_measureCard->setAttribute(Qt::WA_NativeWindow);
-  m_measureCard->hide();
+  m_prompt = new PromptBar(m_viewport);
+  m_prompt->setAttribute(Qt::WA_NativeWindow);
+  m_prompt->hide();
   m_loadShade = new LoadShade(this);
   m_loadShade->hide();
   // Home button with its shortcut hint, floating at the top-left of the view cube (design: navigation cube).
@@ -589,7 +612,9 @@ void MainWindow::buildDocks() {
   m_propsPanel = new ToolPanel("properties", "body", &Tokens::fg2, tr("Properties"), m_props, 420, this);
   m_annotationsPanel = new ToolPanel("annotations", "annotate", &Tokens::amber, tr("Annotations"), m_annotations, 520, this);
   m_sectionPanel = new ToolPanel("section", "section", &Tokens::sel, tr("Section"), m_section, 420, this);
-  m_panels = {m_propsPanel, m_annotationsPanel, m_sectionPanel};
+  m_toolSteps = new ToolStepsPanel(this);
+  m_toolPanel = new ToolPanel("tool", "distance", &Tokens::sel, tr("Distance"), m_toolSteps, 360, this);
+  m_panels = {m_propsPanel, m_annotationsPanel, m_sectionPanel, m_toolPanel};
   connect(m_propsPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
     if (!on && m_propsJob) m_propsJob->cancel();  // nobody is looking at the component bbox any more
   });
@@ -724,6 +749,7 @@ void MainWindow::showDocument(bool has) {
   action("panel.annotations")->setEnabled(has && !m_doc->browse);
   action("panel.section")->setEnabled(has);
   if (!has) m_selRefs.clear();
+  if (!has) cancelTool();
   for (ToolPanel* p : m_panels)
     if (!has || (p == m_annotationsPanel && m_doc->browse)) p->hide();
   if (m_doc->browse && m_timelineDock->isVisible()) { m_timelineDock->hide(); m_timelineHiddenByViewer = true; }
@@ -772,8 +798,10 @@ void MainWindow::positionOverlays() {
     m_loadShade->place(QRect(mapToGlobal(area.topLeft()), area.size()), m_viewport->mapToGlobal(m_viewport->rect().center()));
   }
   if (trace::enabled()) trace::log(QStringLiteral("viewport at %1,%2 size %3x%4").arg(m_viewport->mapToGlobal(QPoint(0, 0)).x()).arg(m_viewport->mapToGlobal(QPoint(0, 0)).y()).arg(m_viewport->width()).arg(m_viewport->height()));
-  m_measureCard->move(m_viewport->width() - m_measureCard->width() - 16, m_viewport->height() - m_measureCard->height() - 16);
-  m_measureCard->raise();
+  if (m_prompt->isVisible()) {
+    m_prompt->move(std::max(8, (m_viewport->width() - m_prompt->width()) / 2), 44);
+    m_prompt->raise();
+  }
   const QRect vp(m_viewport->mapToGlobal(QPoint(0, 0)), m_viewport->size());
   for (ToolPanel* p : m_panels)
     if (p->isVisible()) p->anchorTo(vp);  // the panels follow the viewport's top-right corner
@@ -793,7 +821,7 @@ void MainWindow::setLoading(bool on) {
   m_stack->setCurrentIndex(on || m_doc->hasDocument ? 1 : 0);  // the viewport (dimmed, spinner) rather than the start page while loading
   m_viewport->setBlocked(on);
   m_loadShade->setVisible(on);
-  for (QWidget* w : std::initializer_list<QWidget*>{m_browser, m_timeline, m_propsPanel, m_annotationsPanel, m_sectionPanel}) w->setEnabled(!on);
+  for (QWidget* w : std::initializer_list<QWidget*>{m_browser, m_timeline, m_propsPanel, m_annotationsPanel, m_sectionPanel, m_toolPanel}) w->setEnabled(!on);
   if (on) positionOverlays();
 }
 
@@ -858,6 +886,7 @@ void MainWindow::onViewportSelection() {
   m_browser->setSelectedIds(ids);
   if (m_section && m_section->picking() && !refs.empty() && refs.front().kind == opad::Ref::Kind::Face) sectionFromFace(refs.front());
   selectionMoved(refs);
+  if (!m_tool.id.isEmpty()) toolPicksChanged(refs, true);
   if (refs.empty()) m_statusSel->clear();
   else m_statusSel->setText(tr("%1 selected · %2").arg(refs.size()).arg(i18n::t(opad::Ref::kind_name(refs.front().kind))));
   scheduleSelectionSync();
@@ -870,6 +899,7 @@ void MainWindow::onBrowserSelection(const std::vector<std::string>& ids) {
   std::vector<opad::Ref> refs;
   for (const auto& id : ids) { opad::Ref r; r.body = id; refs.push_back(r); }
   selectionMoved(refs);
+  if (!m_tool.id.isEmpty()) toolPicksChanged(refs, false);
   m_statusSel->setText(ids.empty() ? QString() : tr("%1 selected · body").arg(ids.size()));
   m_syncing = false;
   m_viewport->selectNodes(ids);  // sliced; selectionApplied() writes selection.json when it settles
@@ -1099,35 +1129,190 @@ void MainWindow::updateUndoActions() {
   r->setText(m_doc->canRedo() ? tr("&Redo %1").arg(m_doc->redoLabel()) : tr("&Redo"));
 }
 
-void MainWindow::measure(const QString& kind) {
-  auto refs = m_viewport->selection();
-  std::vector<std::string> strs;
-  QStringList targets;
-  for (const auto& r : refs) {
-    strs.push_back(r.str());
-    QString t = m_doc->nodeName(r.body);
-    if (r.kind != opad::Ref::Kind::Body) t += QString::fromUtf8(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(r.kind))).arg(r.index);
-    targets << t;
+// ---------------------------------------------------------------- guided tools
+// Start the tool, then pick: the prompt bar and the tool panel walk through the steps. The viewport accumulates
+// clicks while a tool runs, so its selection *is* the ordered pick list; everything here follows from
+// toolPicksChanged(). A selection made before the tool was started is taken as its first picks.
+QString MainWindow::refLabel(const opad::Ref& r) const {
+  QString t = m_doc->nodeName(r.body);
+  if (r.kind != opad::Ref::Kind::Body) t += QString::fromUtf8(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(r.kind))).arg(r.index);
+  return t;
+}
+
+QList<ToolStep> MainWindow::toolSteps() const {
+  const Viewport::SelFilter f = m_viewport->selectionFilter();
+  const QString kind = i18n::t(m_tool.id == "sectionface" ? "face" : f == Viewport::SelFilter::Face ? "face" : f == Viewport::SelFilter::Edge ? "edge" : f == Viewport::SelFilter::Vertex ? "vertex" : "body");
+  QList<ToolStep> steps;
+  for (int i = 0; i < m_tool.steps; ++i) {
+    ToolStep s;
+    s.label = m_tool.id == "sectionface" ? tr("Select a planar face") : m_tool.steps == 1 ? tr("Select a %1").arg(kind) : i == 0 ? tr("Select first %1").arg(kind) : tr("Select second %1").arg(kind);
+    if (i < static_cast<int>(m_toolPicks.size())) s.picked = refLabel(m_toolPicks[i]);
+    steps << s;
   }
-  if (strs.empty())
-    for (const auto& id : m_browser->selectedIds()) { strs.push_back(id); targets << m_doc->nodeName(id); }
-  if (strs.empty()) throw opad::Error("Pick the faces, edges or bodies to measure first (Select filter 1–4).");
-  opad::json args{{"kind", kind.toStdString()}, {"refs", strs}};
-  m_lastMeasure = opad::commands::run("measure", args, &m_doc->doc);
-  m_lastMeasureTargets = targets;
-  m_measureCard->setResult(m_lastMeasure, targets);
-  m_measureCard->show();
-  positionOverlays();
-  m_pinAction->setEnabled(!m_doc->browse);
-  if (m_lastMeasure.contains("point_a") && m_lastMeasure.contains("point_b")) {
-    const auto& a = m_lastMeasure["point_a"];
-    const auto& b = m_lastMeasure["point_b"];
-    m_viewport->showDimension({a[0].get<double>(), a[1].get<double>(), a[2].get<double>()}, {b[0].get<double>(), b[1].get<double>(), b[2].get<double>()},
-                              QString("%1 mm").arg(m_lastMeasure["value"].get<double>(), 0, 'f', 3));
+  return steps;
+}
+
+void MainWindow::toggleTool(const QString& id) {
+  if (m_tool.id == id) cancelTool();
+  else startTool(id);
+}
+
+void MainWindow::startTool(const QString& id) {
+  if (!m_doc->hasDocument) return;
+  if (!m_tool.id.isEmpty()) cancelTool();
+  static const std::map<QString, std::tuple<const char*, const char*, int>> kTools = {
+      {"distance", {QT_TR_NOOP("Distance"), "distance", 2}}, {"angle", {QT_TR_NOOP("Angle"), "angle", 2}},       {"radius", {QT_TR_NOOP("Radius"), "radius", 1}},
+      {"bbox", {QT_TR_NOOP("Bounding box"), "bbox", 1}},     {"note", {QT_TR_NOOP("Note"), "annotate", 1}},      {"sectionface", {QT_TR_NOOP("Section"), "section", 1}}};
+  const auto it = kTools.find(id);
+  if (it == kTools.end()) return;
+  m_tool = Tool{id, tr(std::get<0>(it->second)), std::get<1>(it->second), std::get<2>(it->second)};
+  m_toolPicks.clear();
+  m_toolPoints.clear();
+  m_toolHover.clear();
+  ++m_toolRun;
+  // Angles and radii need faces or edges; the section plane needs a face.
+  const Viewport::SelFilter f = m_viewport->selectionFilter();
+  const bool wantFaces = id == "sectionface" ? f != Viewport::SelFilter::Face : (id == "angle" || id == "radius") && (f == Viewport::SelFilter::Body || f == Viewport::SelFilter::Vertex);
+  m_viewport->setPickAccumulate(true);
+  for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "annotate.add"})
+    action(a)->setChecked(id == QString(a).section('.', 1) || (id == "note" && QString(a) == "annotate.add"));
+  if (toolMeasures()) {
+    m_toolPanel->setHeader(m_tool.icon, m_tool.title);
+    openPanel(m_toolPanel);
+  }
+  if (wantFaces) {
+    action("select.faces")->trigger();  // clears the picks and refreshes the prompt (see the select actions)
   } else {
-    m_viewport->clearDimension();
+    const auto before = m_viewport->selection();  // selected first, tool second still works
+    if (!before.empty() && static_cast<int>(before.size()) <= m_tool.steps) toolPicksChanged(before, false);
+    else if (!before.empty()) m_viewport->clearSelection();
   }
-  statusBar()->showMessage(tr("%1: pick more references, P pins, Esc clears").arg(kind), 8000);
+  if (!m_tool.id.isEmpty()) refreshToolUi();
+}
+
+void MainWindow::cancelTool() {
+  if (m_tool.id.isEmpty()) return;
+  m_tool = Tool();  // first: hiding the panel below reports back here
+  ++m_toolRun;
+  if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();
+  m_toolPicks.clear();
+  m_toolPoints.clear();
+  for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "annotate.add"}) action(a)->setChecked(false);
+  m_viewport->setPickAccumulate(false);
+  m_prompt->hide();
+  m_toolPanel->hide();
+  clearMeasurement();
+}
+
+void MainWindow::toolEscape() {
+  if (!m_lastMeasure.is_null()) m_viewport->clearSelection();  // a result is showing: clear it and measure again
+  else if (!m_toolPicks.empty()) m_viewport->deselectLast();   // one step back
+  else cancelTool();
+}
+
+void MainWindow::toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromClick) {
+  if (m_tool.id == "sectionface") {  // the pick itself is handled with the section panel (sectionFromFace)
+    if (!refs.empty()) cancelTool();
+    return;
+  }
+  std::vector<opad::Ref> picks = refs;
+  if (static_cast<int>(picks.size()) > m_tool.steps) {
+    if (fromClick && static_cast<int>(m_toolPicks.size()) == m_tool.steps) return m_viewport->keepLastSelected();  // a pick after the last step starts over
+    picks.resize(m_tool.steps);  // a rubber band caught more than the tool asks for
+  }
+  opad::Vec3 at{0, 0, 0};
+  const bool hasPoint = fromClick && picks.size() == m_toolPoints.size() + 1 && m_viewport->lastPickPoint(at);
+  if (picks.size() > m_toolPoints.size()) {
+    while (m_toolPoints.size() + 1 < picks.size()) m_toolPoints.push_back({false, at});
+    m_toolPoints.push_back({hasPoint, at});
+  } else {
+    m_toolPoints.resize(picks.size());
+  }
+  m_toolPicks = picks;
+  ++m_toolRun;
+  if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();  // a superseded measure must stop computing, not just be ignored
+  m_lastMeasure = opad::json();
+  m_pinAction->setEnabled(false);
+  m_viewport->clearDimension();
+  m_viewport->clearPreview();
+  std::vector<opad::Vec3> marks;
+  for (const auto& p : m_toolPoints) if (p.first) marks.push_back(p.second);
+  m_viewport->showPickMarkers(marks);
+  if (static_cast<int>(picks.size()) == m_tool.steps) {
+    if (m_tool.id == "note") {
+      guarded([this] { addAnnotation(); });
+      return cancelTool();
+    }
+    runToolMeasure();
+  }
+  refreshToolUi();
+}
+
+// The measurement is exact geometry (BRepExtrema, BRepGProp): on a worker, never in the click handler.
+void MainWindow::runToolMeasure() {
+  const std::vector<opad::Ref> refs = m_toolPicks;
+  const int run = m_toolRun;
+  auto result = std::make_shared<opad::json>();
+  const QString kind = m_tool.id;
+  // Straight to the measure functions with the app's resolved scene; the "measure" command would resolve the
+  // whole scene from the op log again on every call.
+  if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();
+  m_measureJob = m_jobs->async(tr("Measuring %1").arg(m_tool.title), [this, refs, kind, result](Progress progress) {
+    if (kind == "distance") *result = opad::measure_distance(m_doc->doc, m_doc->scene, refs.at(0), refs.at(1), [progress] { return progress.cancelled(); });
+    else if (kind == "angle") *result = opad::measure_angle(m_doc->doc, m_doc->scene, refs.at(0), refs.at(1));
+    else if (kind == "radius") *result = opad::measure_radius(m_doc->doc, m_doc->scene, refs.at(0));
+    else *result = opad::measure_bbox(m_doc->doc, m_doc->scene, refs);
+  }, [this, run, result](bool ok, const QString& error) {
+    if (run == m_toolRun) m_measureJob = nullptr;
+    if (run != m_toolRun || m_tool.id.isEmpty()) return;  // the picks moved on
+    if (!ok) {
+      statusBar()->showMessage(i18n::t(error), 6000);
+      return m_viewport->deselectLast();  // that pick does not work for this tool: ask for it again
+    }
+    m_lastMeasure = *result;
+    m_pinAction->setEnabled(!m_doc->browse);
+    if (m_lastMeasure.contains("point_a") && m_lastMeasure.contains("point_b") && m_lastMeasure.contains("value")) {
+      const auto& a = m_lastMeasure["point_a"];
+      const auto& b = m_lastMeasure["point_b"];
+      m_viewport->showDimension({a[0].get<double>(), a[1].get<double>(), a[2].get<double>()}, {b[0].get<double>(), b[1].get<double>(), b[2].get<double>()},
+                                QString("%1 mm").arg(m_lastMeasure["value"].get<double>(), 0, 'f', 3));
+    }
+    refreshToolUi();
+  });
+}
+
+void MainWindow::refreshToolUi() {
+  if (m_tool.id.isEmpty()) return;
+  const QList<ToolStep> steps = toolSteps();
+  const int picked = static_cast<int>(m_toolPicks.size());
+  const bool done = !m_lastMeasure.is_null();
+  m_prompt->set(m_tool.icon, m_tool.title, steps, done ? tr("P pin · Esc clear · 1–4 filter") : tr("Esc cancel · 1–4 change filter"));
+  m_prompt->show();
+  positionOverlays();
+  if (!toolMeasures()) return;
+
+  const Viewport::SelFilter f = m_viewport->selectionFilter();
+  const QString kinds = i18n::t(f == Viewport::SelFilter::Face ? "Faces" : f == Viewport::SelFilter::Edge ? "Edges" : f == Viewport::SelFilter::Vertex ? "Vertices" : "Bodies");
+  m_toolPanel->setContext(tr("%1 · %2 of %3").arg(kinds.toLower()).arg(picked).arg(m_tool.steps));
+  m_toolSteps->setSteps(steps, m_toolHover);
+  const QString waiting = picked < steps.size() ? steps[picked].label : tr("Measuring…");
+  m_toolSteps->setSummary(m_tool.title, done ? tr("result · not yet in document") : waiting, done ? tr("unpinned") : QString());
+  QList<QPair<QString, QString>> rows;
+  if (done) {
+    const opad::json& r = m_lastMeasure;
+    auto num = [](const opad::json& v, int decimals) { return QString::number(v.get<double>(), 'f', decimals); };
+    const QString unit = QString::fromStdString(r.value("unit", "mm"));
+    if (r.contains("value")) rows << qMakePair(m_tool.title, QString("%1 %2").arg(num(r["value"], 3), unit));
+    if (r.contains("delta"))
+      for (int i = 0; i < 3; ++i) rows << qMakePair(QString::fromUtf8("Δ%1").arg(QChar("XYZ"[i])), num(r["delta"][i], 3) + " mm");
+    if (r.contains("supplement")) rows << qMakePair(tr("Supplement"), num(r["supplement"], 2) + QString::fromUtf8("°"));
+    if (r.contains("diameter")) rows << qMakePair(tr("Diameter"), num(r["diameter"], 3) + " mm");
+    for (const char* k : {"size", "min", "max"})
+      if (r.contains(k) && r[k].is_array() && r[k].size() == 3) rows << qMakePair(i18n::t(QString("bbox %1").arg(k)), QString("(%1, %2, %3)").arg(num(r[k][0], 3), num(r[k][1], 3), num(r[k][2], 3)));
+    if (r.contains("relation") && r["relation"].is_string()) rows << qMakePair(tr("Relation"), i18n::t(QString::fromStdString(r["relation"].get<std::string>())));
+  }
+  m_toolSteps->setResult(rows);
+  m_toolSteps->setFooter(done, !m_doc->browse);
 }
 
 void MainWindow::pinMeasurement() {
@@ -1142,11 +1327,11 @@ void MainWindow::pinMeasurement() {
   opad::json r = m_doc->run("append", opad::json{{"op", op}});
   if (r.contains("appended") && !r["appended"].empty()) m_timeline->setCurrentOp(r["appended"][0].get<std::string>());
   statusBar()->showMessage(tr("Measurement pinned to the document"), 4000);
+  if (!m_tool.id.isEmpty()) m_viewport->clearSelection();  // the tool stays on for the next measurement
 }
 
 void MainWindow::clearMeasurement() {
   m_lastMeasure = opad::json();
-  m_measureCard->hide();
   m_viewport->clearDimension();
   m_pinAction->setEnabled(false);
   m_viewport->clearSelection();
@@ -1487,6 +1672,72 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
   m_benchSelect = false;
+  // OPAD_BENCH_DISTANCE=<n>: time body-to-body distance between the n bodies with the most faces (every pair),
+  // on a worker like the tool does. The worst case for measure_distance; compare values with opad-cli measure.
+  if (const int n = qEnvironmentVariableIntValue("OPAD_BENCH_DISTANCE"); n > 1) {
+    const std::vector<std::string> bodies = m_doc->scene.all_bodies();
+    m_jobs->async(tr("Measuring %1").arg(tr("Distance")), [this, bodies, n](Progress) {
+      std::vector<std::pair<int, std::string>> heavy;  // counting faces walks each body: on the worker
+      for (const auto& b : bodies) {
+        try {
+          heavy.push_back({opad::subshape_count(opad::node_world_shape(m_doc->doc, m_doc->scene, b), opad::Ref::Kind::Face), b});
+        } catch (const std::exception&) {
+        }
+      }
+      std::sort(heavy.rbegin(), heavy.rend());
+      heavy.resize(std::min<size_t>(heavy.size(), static_cast<size_t>(n)));
+      for (size_t i = 0; i < heavy.size(); ++i)
+        for (size_t k = i + 1; k < heavy.size(); ++k) {
+          opad::Ref a, b;
+          a.body = heavy[i].second;
+          b.body = heavy[k].second;
+          QElapsedTimer clock;
+          clock.start();
+          QString out;
+          try {
+            out = QString::number(opad::measure_distance(m_doc->doc, m_doc->scene, a, b)["value"].get<double>(), 'g', 15);
+          } catch (const std::exception& e) {
+            out = QString::fromUtf8(e.what());
+          }
+          trace::log(QStringLiteral("bench: distance %1 (%2 faces) <-> %3 (%4 faces) = %5 in %6 ms").arg(QString::fromStdString(a.body)).arg(heavy[i].first).arg(QString::fromStdString(b.body)).arg(heavy[k].first).arg(out).arg(clock.elapsed()));
+        }
+    }, [](bool, const QString&) { QCoreApplication::quit(); });
+    return;
+  }
+  // OPAD_BENCH_TOOL=<distance|angle|radius|bbox>[,faces]: walk a guided tool without a mouse. Start it, click twice
+  // through the view controller, log the tool's state after each, dump the prompt bar and the panel next to
+  // OPAD_BENCH_UISHOT, step back with Esc, quit.
+  if (const QStringList spec = qEnvironmentVariable("OPAD_BENCH_TOOL").split(',', Qt::SkipEmptyParts); !spec.isEmpty()) {
+    auto state = [this](const char* when) {
+      trace::log(QStringLiteral("bench: tool '%1' %2: %3 picks, result %4").arg(m_tool.id, when).arg(m_toolPicks.size()).arg(QString::fromStdString(m_lastMeasure.dump()).left(240)));
+    };
+    m_viewport->fitAll();
+    const QStringList second = qEnvironmentVariable("OPAD_BENCH_CLICK2", "0.38,0.62").split(',');  // where the second pick goes, as view fractions
+    auto walk = [this, spec, state, second] {
+    QTimer::singleShot(1500, this, [this, spec, state] { startTool(spec[0]); state("started"); });
+    QTimer::singleShot(2300, this, [this, state] { m_viewport->benchClick(0.5, 0.5); QTimer::singleShot(700, this, [state] { state("after click 1"); }); });
+    QTimer::singleShot(4500, this, [this, state, second] { m_viewport->benchClick(second.value(0).toDouble(), second.value(1).toDouble()); QTimer::singleShot(700, this, [state] { state("after click 2"); }); });
+    QTimer::singleShot(14000, this, [this, state] {
+      state("settled");
+      if (const QString ui = qEnvironmentVariable("OPAD_BENCH_UISHOT"); !ui.isEmpty()) {
+        m_prompt->grab().save(ui + ".prompt.png");
+        m_toolPanel->grab().save(ui + ".panel.png");
+      }
+      toolEscape();
+    });
+    QTimer::singleShot(14800, this, [this, state] { state("after Esc"); toolEscape(); toolEscape(); state("after Esc x3"); });
+    QTimer::singleShot(15500, qApp, &QCoreApplication::quit);
+    };
+    // On a big model the filter switch is a sliced job: picking before it has reached every body hits nothing.
+    if (spec.size() > 1) {
+      auto once = std::make_shared<QMetaObject::Connection>();
+      *once = connect(m_viewport, &Viewport::filterApplied, this, [once, walk] { disconnect(*once); walk(); });
+      action("select." + spec[1])->trigger();
+    } else {
+      walk();
+    }
+    return;
+  }
   const std::vector<std::string> roots = m_doc->scene.roots;
   auto t = std::make_shared<QElapsedTimer>();
   t->start();

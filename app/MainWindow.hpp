@@ -9,6 +9,7 @@
 
 #include "AppDocument.hpp"
 #include "EmptyState.hpp"
+#include "GuidedTool.hpp"
 #include "Jobs.hpp"
 #include "Panels.hpp"
 #include "Ribbon.hpp"
@@ -67,7 +68,17 @@ class MainWindow : public QMainWindow {
   void bindPanel(QAction* a, ToolPanel* panel);
   void showContextMenu(const QPoint& globalPos, std::vector<std::string> ids);
   void timelineMenu(const std::string& opId, const QPoint& globalPos);
-  void measure(const QString& kind);
+  // Guided tools: the tool is started first and asks for its picks one step at a time (see GuidedTool.hpp).
+  void toggleTool(const QString& id);  // distance, angle, radius, bbox, note, sectionface
+  void startTool(const QString& id);
+  void cancelTool();
+  void toolEscape();  // Esc: result -> measure again; otherwise one step back; with no pick left, leave the tool
+  void toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromClick);
+  void runToolMeasure();
+  void refreshToolUi();
+  QList<ToolStep> toolSteps() const;
+  QString refLabel(const opad::Ref& r) const;
+  bool toolMeasures() const { return m_tool.id == "distance" || m_tool.id == "angle" || m_tool.id == "radius" || m_tool.id == "bbox"; }
   void updateUndoActions();
   void sectionFromFace(const opad::Ref& face);  // "Pick face": a planar face sets the section plane
   void pinMeasurement();
@@ -99,7 +110,18 @@ class MainWindow : public QMainWindow {
   QWidget* m_homeBtn = nullptr;  // floating Home button above the view cube
   QToolButton* m_rollLeft = nullptr;   // 90 degree turns about the view axis, either side of the cube
   QToolButton* m_rollRight = nullptr;
-  MeasureCard* m_measureCard = nullptr;
+  struct Tool {
+    QString id, title, icon;
+    int steps = 0;
+  };
+  Tool m_tool;  // id empty: no tool is running
+  std::vector<opad::Ref> m_toolPicks;
+  std::vector<std::pair<bool, opad::Vec3>> m_toolPoints;  // where each pick was clicked (false: picked some other way)
+  int m_toolRun = 0;  // bumps whenever the picks change: a measure result for an older run is dropped
+  QString m_toolHover;
+  PromptBar* m_prompt = nullptr;
+  ToolStepsPanel* m_toolSteps = nullptr;
+  ToolPanel* m_toolPanel = nullptr;
   LoadShade* m_loadShade = nullptr;
   bool m_timelineHiddenByViewer = false;
   RibbonBar* m_ribbon = nullptr;
@@ -128,6 +150,7 @@ class MainWindow : public QMainWindow {
   JobRunner* m_jobs = nullptr;      // every long operation runs through this (see Jobs.hpp)
   Job* m_loadJob = nullptr;         // open/import: document worker + tessellation, one job
   Job* m_selFileJob = nullptr;      // selection.json writer
+  Job* m_measureJob = nullptr;      // the guided tool's measurement; cancelled as soon as the picks move on
   Job* m_propsJob = nullptr;        // component bbox for the properties panel
   bool m_loadDocDone = false;
   int m_meshTotal = 0, m_meshRemaining = 0;
@@ -137,7 +160,6 @@ class MainWindow : public QMainWindow {
   QDockWidget* m_browserDock = nullptr;
   QDockWidget* m_timelineDock = nullptr;
   opad::json m_lastMeasure;
-  QStringList m_lastMeasureTargets;
   QSettings m_settings;
   QTimer m_gitTimer;
   bool m_syncing = false;

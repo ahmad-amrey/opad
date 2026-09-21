@@ -1,6 +1,6 @@
 #pragma once
 // Secondary UI, styled per design_handoff_opad_desktop_ui: browser (F27), properties (F24), annotations (F32),
-// section tab (F20), timeline (F28), measurement card (F23), command search (F30), shortcut editor (F31).
+// section tab (F20), timeline (F28), command search (F30), shortcut editor (F31).
 #include <QComboBox>
 #include <QDialog>
 #include <QFrame>
@@ -46,6 +46,7 @@ class ToolPanel : public QWidget {
  public:
   ToolPanel(const QString& id, const QString& icon, QColor Tokens::* tint, const QString& title, QWidget* content, int preferredHeight, QWidget* owner);
   void setContext(const QString& text);
+  void setHeader(const QString& icon, const QString& title);  // one panel serves every guided tool
   bool pinned() const { return m_pin->isChecked(); }
   bool userPlaced() const { return m_userPlaced; }
   void setDefaultTop(int top) { if (!m_userPlaced) m_offset.setY(top); }
@@ -70,7 +71,7 @@ class ToolPanel : public QWidget {
   void refreshIcons();
   QString m_id, m_iconName;
   QColor Tokens::* m_tint;  // header icon colour: sel for inspect tools, amber for annotations, fg2 for selection
-  QLabel *m_icon, *m_context;
+  QLabel *m_icon, *m_name, *m_context;
   QToolButton *m_pin, *m_close;
   QWidget* m_grip;
   QRect m_anchor;                    // the viewport, global
@@ -236,22 +237,6 @@ class SectionPanel : public QWidget {
   QToolButton* m_capButton;
   QListWidget* m_named;
   QLabel* m_state;
-};
-
-// ---------------------------------------------------------------- measurement card (F23)
-class MeasureCard : public QFrame {
-  Q_OBJECT
- public:
-  explicit MeasureCard(QWidget* parent = nullptr);
-  void setResult(const opad::json& result, const QStringList& targets);
- signals:
-  void pinRequested();
-  void clearRequested();
- private:
-  QLabel* m_title;
-  QLabel* m_value;
-  QLabel* m_deltas;
-  QLabel* m_targets;
 };
 
 // ---------------------------------------------------------------- viewport chips

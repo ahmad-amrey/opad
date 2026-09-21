@@ -69,6 +69,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::string benchHeaviest() const;       // OPAD_BENCH_FILTER: the body with the most faces, the pick target
   void benchBand();                        // OPAD_BENCH_BAND: rubber band over the whole view in the current mode
   void benchSubShot(const QString& path);  // OPAD_BENCH_SUBSHOT: frame from behind the picked sub-shape (X-ray check)
+  void benchClick(double fx, double fy);  // OPAD_BENCH_TOOL: a left click at this fraction of the view, as the mouse handlers deliver it
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
   void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner
   std::vector<opad::Ref> selection() const;
@@ -87,6 +88,17 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showDimension(const opad::Vec3& a, const opad::Vec3& b, const QString& label);
   void clearDimension();
 
+  // Guided tools (distance, angle, ...: the tool asks for one pick per step). While accumulating, a plain click
+  // adds to the selection (or takes a picked item out again) instead of replacing it, so selection() is the
+  // tool's ordered pick list.
+  void setPickAccumulate(bool on);
+  void deselectLast();      // one step back
+  void keepLastSelected();  // a pick after the last step starts over from that pick
+  bool lastPickPoint(opad::Vec3& p) const;  // where the last click hit the geometry
+  void showPickMarkers(const std::vector<opad::Vec3>& points);  // numbered end markers, 1-based
+  void showPreview(const opad::Vec3& a, const opad::Vec3& b, const QString& label);  // dashed hov line to the hovered candidate
+  void clearPreview();
+
   opad::json cameraJson() const;
   void setCameraJson(const opad::json& j);
   QImage grabImage();
@@ -99,6 +111,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void subHighlightApplied();  // the highlight of a sub-shape selection has been built and displayed
   void filterApplied();     // a setSelectionFilter() call has reached every displayed body
   void hoverChanged(const QString& text);
+  void hoverPoint(bool valid, const opad::Vec3& point);  // with hoverChanged: where the mouse met the hovered entity
   void contextMenuRequested(const QPoint& globalPos);
   void meshingProgress(int remaining);
   void isolationChanged();  // entered, left, or left because every isolated object was deleted
@@ -116,6 +129,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void mouseMoveEvent(QMouseEvent*) override;
   void wheelEvent(QWheelEvent*) override;
   void OnSelectionChanged(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
+  // Timed when OPAD_TRACE is set: a slow frame is either picking under the mouse or the redraw itself.
+  void handleMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
+  void handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
 
  private:
   struct Item {
@@ -158,6 +174,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::map<const AIS_InteractiveObject*, std::string> m_nodeOf;
   std::vector<Handle(AIS_InteractiveObject)> m_labels;
   std::vector<Handle(AIS_InteractiveObject)> m_dimension;
+  std::vector<Handle(AIS_InteractiveObject)> m_pickMarkers, m_preview;
+  opad::Vec3 m_lastPick{0, 0, 0};
+  bool m_hasLastPick = false;
   Handle(Graphic3d_ClipPlane) m_sectionPlane;
 
   NavPreset m_preset = NavPreset::Fusion;

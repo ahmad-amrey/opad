@@ -45,6 +45,7 @@ Handle(Aspect_Window) opad_make_cocoa_window(void* nsview);
 #include <Xw_Window.hxx>
 #endif
 
+#include <QCoreApplication>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <cmath>
@@ -721,8 +722,27 @@ void Viewport::clearSelection() {
 }
 
 // A click in the 3D view: OCCT has already changed the context selection; drop any stand-ins and in-flight job.
+void Viewport::handleMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) {
+  QElapsedTimer clock;
+  clock.start();
+  AIS_ViewController::handleMoveTo(ctx, view);
+  if (trace::enabled() && clock.elapsed() > 50) trace::log(QStringLiteral("slow frame part: picking/hover highlight %1 ms").arg(clock.elapsed()));
+}
+
+void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) {
+  QElapsedTimer clock;
+  clock.start();
+  AIS_ViewController::handleViewRedraw(ctx, view);
+  if (trace::enabled() && clock.elapsed() > 50) trace::log(QStringLiteral("slow frame part: redraw %1 ms").arg(clock.elapsed()));
+}
+
 void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const Handle(V3d_View)&) {
   if (m_selJob) m_selJob->cancel();
+  m_hasLastPick = m_ctx->HasDetected() && m_ctx->MainSelector()->NbPicked() > 0;  // guided tools mark where the click landed
+  if (m_hasLastPick) {
+    const gp_Pnt p = m_ctx->MainSelector()->PickedPoint(1);
+    m_lastPick = {p.X(), p.Y(), p.Z()};
+  }
   clearShade();
   m_needFit = false;
   applySelectionLayers();
@@ -923,6 +943,94 @@ void Viewport::updateClipPlanes() {
 }
 
 // ---------------------------------------------------------------- dimension (F23)
+// ---------------------------------------------------------------- guided-tool picking
+void Viewport::setPickAccumulate(bool on) {
+  ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, on ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
+  if (!on) {
+    showPickMarkers({});
+    clearPreview();
+  }
+}
+
+void Viewport::deselectLast() {
+  if (!m_initialised) return;
+  Handle(SelectMgr_EntityOwner) last;
+  for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected()) last = m_ctx->SelectedOwner();
+  if (last.IsNull()) return;
+  m_ctx->AddOrRemoveSelected(last, Standard_False);
+  OnSelectionChanged(m_ctx, m_view);
+}
+
+void Viewport::keepLastSelected() {
+  if (!m_initialised) return;
+  std::vector<Handle(SelectMgr_EntityOwner)> owners;
+  for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected()) owners.push_back(m_ctx->SelectedOwner());
+  if (owners.size() < 2) return;
+  owners.pop_back();
+  for (const auto& o : owners) m_ctx->AddOrRemoveSelected(o, Standard_False);
+  OnSelectionChanged(m_ctx, m_view);
+}
+
+bool Viewport::lastPickPoint(opad::Vec3& p) const {
+  p = m_lastPick;
+  return m_hasLastPick;
+}
+
+void Viewport::showPickMarkers(const std::vector<opad::Vec3>& points) {
+  if (!m_initialised) return;
+  for (const auto& o : m_pickMarkers) m_ctx->Remove(o, Standard_False);
+  m_pickMarkers.clear();
+  int n = 0;
+  for (const opad::Vec3& p : points) {
+    Handle(AIS_TextLabel) mark = new AIS_TextLabel();
+    mark->SetText(TCollection_ExtendedString(QString(" %1 ").arg(++n).toStdString().c_str(), Standard_True));
+    mark->SetPosition(gp_Pnt(p[0], p[1], p[2]));
+    mark->SetHeight(11);
+    mark->SetColor(occ(m_tokens.onsel));
+    mark->SetDisplayType(Aspect_TODT_SUBTITLE);
+    mark->SetColorSubTitle(occ(m_tokens.sel));
+    mark->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    m_ctx->Display(mark, Standard_False);
+    m_ctx->Deactivate(mark);
+    m_pickMarkers.push_back(mark);
+  }
+  redrawScene();
+}
+
+void Viewport::clearPreview() {
+  if (!m_initialised || m_preview.empty()) return;
+  for (const auto& o : m_preview) m_ctx->Remove(o, Standard_False);
+  m_preview.clear();
+  redrawScene();
+}
+
+void Viewport::showPreview(const opad::Vec3& a, const opad::Vec3& b, const QString& label) {
+  if (!m_initialised) return;
+  for (const auto& o : m_preview) m_ctx->Remove(o, Standard_False);
+  m_preview.clear();
+  gp_Pnt pa(a[0], a[1], a[2]), pb(b[0], b[1], b[2]);
+  if (pa.Distance(pb) > 1e-9) {
+    Handle(AIS_Shape) line = new AIS_Shape(BRepBuilderAPI_MakeEdge(pa, pb).Edge());
+    line->Attributes()->SetWireAspect(new Prs3d_LineAspect(occ(m_tokens.hov), Aspect_TOL_DASH, 1.5));
+    line->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    m_ctx->Display(line, Standard_False);
+    m_ctx->Deactivate(line);
+    m_preview.push_back(line);
+    Handle(AIS_TextLabel) text = new AIS_TextLabel();
+    text->SetText(TCollection_ExtendedString(label.toStdString().c_str(), Standard_True));
+    text->SetPosition(gp_Pnt((pa.X() + pb.X()) / 2, (pa.Y() + pb.Y()) / 2, (pa.Z() + pb.Z()) / 2));
+    text->SetHeight(12);
+    text->SetColor(occ(m_tokens.hov));
+    text->SetDisplayType(Aspect_TODT_SUBTITLE);
+    text->SetColorSubTitle(occ(m_tokens.bg2));
+    text->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    m_ctx->Display(text, Standard_False);
+    m_ctx->Deactivate(text);
+    m_preview.push_back(text);
+  }
+  redrawScene();
+}
+
 void Viewport::clearDimension() {
   if (!m_initialised) return;
   for (const auto& o : m_dimension) m_ctx->Remove(o, Standard_False);
@@ -1029,6 +1137,40 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
       QMetaObject::invokeMethod(this, "requestSync", Qt::QueuedConnection);
     }
   }).detach();
+}
+
+void Viewport::benchClick(double fx, double fy) {
+  if (!m_initialised) return;
+  m_view->Redraw();  // see benchPick: the picker needs a frame after a camera change
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
+  // Spiral out from the asked-for spot to the nearest one over a body entity that is not picked yet: a big
+  // assembly has holes, and a second click on the same face would un-pick it.
+  Graphic3d_Vec2i pt(static_cast<int>(w * fx), static_cast<int>(h * fy));
+  for (int ring = 0, found = 0; ring < 30 && !found; ++ring)
+    for (int k = 0; k < (ring == 0 ? 1 : 16) && !found; ++k) {
+      const double ang = k * 0.39269908169872414;
+      const Graphic3d_Vec2i q(pt.x() + static_cast<int>(ring * 0.02 * w * std::cos(ang)), pt.y() + static_cast<int>(ring * 0.02 * h * std::sin(ang)));
+      if (q.x() < 0 || q.y() < 0 || q.x() >= w || q.y() >= h) continue;
+      m_ctx->MoveTo(q.x(), q.y(), m_view, Standard_False);
+      if (m_ctx->HasDetected() && m_nodeOf.count(m_ctx->DetectedInteractive().get()) && !m_ctx->IsSelected(m_ctx->DetectedOwner())) {
+        pt = q;
+        found = 1;
+      }
+    }
+  // Through the widget's own mouse handlers and paint path, as real input arrives: move, press, release, then
+  // the pointer wanders over neighbouring entities (hover labels, the tool's preview line).
+  const qreal dpr = devicePixelRatioF();
+  auto send = [this, dpr](QEvent::Type type, const Graphic3d_Vec2i& at, Qt::MouseButton button, Qt::MouseButtons buttons) {
+    const QPointF local(at.x() / dpr, at.y() / dpr);
+    QCoreApplication::postEvent(this, new QMouseEvent(type, local, mapToGlobal(local), button, buttons, Qt::NoModifier));
+  };
+  send(QEvent::MouseMove, pt, Qt::NoButton, Qt::NoButton);
+  send(QEvent::MouseButtonPress, pt, Qt::LeftButton, Qt::LeftButton);
+  send(QEvent::MouseButtonRelease, pt, Qt::LeftButton, Qt::NoButton);
+  for (int i = 1; i <= 160; ++i)  // ~8 s of hovering, back and forth across the neighbourhood: past a long body-to-body measure
+    QTimer::singleShot(50 * i, this, [send, pt, i, w] { send(QEvent::MouseMove, Graphic3d_Vec2i(pt.x() + ((i % 20) - 10) * w / 50, pt.y() + (i % 5) * 9), Qt::NoButton, Qt::NoButton); });
+  trace::log(QStringLiteral("bench: mouse click posted at %1,%2").arg(pt.x()).arg(pt.y()));
 }
 
 void Viewport::benchPick() {
@@ -1324,6 +1466,9 @@ void Viewport::paintEvent(QPaintEvent*) {
     m_hover = hover;
     emit hoverChanged(hover);
   }
+  const bool onGeometry = !hover.isEmpty() && m_ctx->MainSelector()->NbPicked() > 0;
+  const gp_Pnt hp = onGeometry ? m_ctx->MainSelector()->PickedPoint(1) : gp_Pnt();
+  emit hoverPoint(onGeometry, opad::Vec3{hp.X(), hp.Y(), hp.Z()});
 }
 
 void Viewport::resizeEvent(QResizeEvent*) {

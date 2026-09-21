@@ -21,6 +21,7 @@ set(OPAD_APP_SOURCES
   Viewport.cpp Viewport.hpp
   Panels.cpp Panels.hpp
   Jobs.cpp Jobs.hpp
+  GuidedTool.cpp GuidedTool.hpp
   BodyShape.cpp BodyShape.hpp
   NavCube.cpp NavCube.hpp
   CrashLog.cpp CrashLog.hpp

@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include "document.hpp"
 #include "scene.hpp"
 
@@ -9,7 +10,9 @@ json document_info(const Document& doc, const Scene& scene);
 // is O(1); the app fills those in separately off the click path.
 json node_properties(const Document& doc, const Scene& scene, const std::string& node_id, bool geometry = true);
 json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref);
-json measure_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b);
+// cancelled: polled while the distance is computed (a body-to-body distance can take a while); a true
+// answer ends it with Error("cancelled").
+json measure_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b, const std::function<bool()>& cancelled = {});
 json measure_angle(const Document& doc, const Scene& scene, const Ref& a, const Ref& b);
 json measure_radius(const Document& doc, const Scene& scene, const Ref& a);
 json measure_bbox(const Document& doc, const Scene& scene, const std::vector<Ref>& refs);
