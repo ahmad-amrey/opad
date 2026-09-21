@@ -10,9 +10,12 @@
 #include "opad/mesh.hpp"
 #include "opad/render.hpp"
 #include "opad/scene.hpp"
+#include "opad/design/feature.hpp"
 #include "opad/step_io.hpp"
 
 namespace opad::commands {
+
+void register_design_commands(const std::function<void(const CommandInfo&, Handler)>& add);  // design/commands_design.cpp
 
 namespace {
 
@@ -386,8 +389,12 @@ void register_builtins() {
 
   reg("delete", "Tombstone an earlier op (annotation resolved, rename undone, import removed...)",
       {{"doc", "path"}, {"target", "uuid - op id"}, {"by", "string"}}, true, [](Document* d, const json& a) {
-        json j;
-        j["id"] = need(d).append(op_with_target("delete", a), a.value("by", "")).id;
+        // Through the design engine: tombstoning (or restoring) a sketch or feature changes what the later
+        // features produce, and that is recomputed in the same step.
+        json op = op_with_target("delete", a);
+        op["id"] = new_uuid();
+        json j = design::apply_ops(need(d), {op}, a.value("by", ""));
+        j["id"] = op["id"];
         return j;
       });
 
@@ -475,6 +482,11 @@ void register_builtins() {
         j["file"] = p.string();
         return j;
       });
+
+  register_design_commands([&](const CommandInfo& info, Handler h) {
+    r.infos.push_back(info);
+    r.handlers[info.name] = std::move(h);
+  });
 }
 
 }  // namespace

@@ -1,5 +1,6 @@
 #pragma once
 #include <map>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -59,6 +60,45 @@ struct Unresolved {
   std::string op_id, op_type, reason;
 };
 
+// ---- design (param / sketch / feature ops). Replay never runs the kernel or the sketch solver: a sketch
+// carries its solved coordinates and a feature the keys of the bodies it produced (see docs/design.md).
+struct Param {
+  std::string id, name, expr, comment;
+  double value = 0;    // mm, radians or a plain number
+  int len = 0;         // power of length (1 = a length)
+  bool angle = false;
+  std::string shown;   // "12.5 mm"
+  std::string error;   // bad expression, unknown name, cycle
+};
+
+// Right-handed sketch/construction plane frame in world coordinates (unit vectors).
+struct Frame {
+  Vec3 origin{0, 0, 0}, x{1, 0, 0}, y{0, 1, 0};
+  Vec3 normal() const;
+  Vec3 to_world(double u, double v) const;
+  void to_local(const Vec3& p, double& u, double& v) const;
+  json to_json() const;
+  static Frame from_json(const json& j);
+};
+
+struct SketchItem {
+  std::string id, name;
+  json plane;     // how the plane was chosen: {"base":"xy"} | {"face":ref} | {"feature":id}
+  Frame frame;
+  json geometry;  // solved: {"points":[..],"entities":[..],"constraints":[..]} (design/sketch.hpp)
+  bool visible = true;
+  bool consumed = false;  // some feature uses it: hidden unless shown explicitly
+  int dof = -1;
+  std::string error;
+};
+
+struct Feature {
+  std::string id, kind, name;
+  json inputs, result;
+  bool suppressed = false;
+  std::string error;
+};
+
 struct Scene {
   std::vector<std::string> roots;
   std::unordered_map<std::string, Node> nodes;
@@ -67,6 +107,9 @@ struct Scene {
   std::vector<SectionPlane> sections;
   std::vector<ViewBookmark> views;
   std::vector<Unresolved> unresolved;
+  std::vector<Param> params;
+  std::vector<SketchItem> sketches;
+  std::vector<Feature> features;
   std::vector<std::string> deleted_ops;  // ids of tombstoned ops
   std::unordered_map<std::string, int> instance_count;  // body key -> number of body nodes
 
@@ -77,8 +120,44 @@ struct Scene {
   std::vector<std::string> all_bodies() const;
   std::vector<std::string> path_to(const std::string& id) const;  // root..id
   json tree_json(int max_depth = -1) const;
+  const SketchItem* sketch(const std::string& id) const;
+  const Feature* feature(const std::string& id) const;
+  const Param* param(const std::string& name) const;
 };
 
-Scene resolve(const Document& doc);
+// The log as replay sees it: tombstoned ops dropped, `edit` ops merged into their targets (later edits win,
+// key by key) and `regen` results put in place of the results the ops were written with. `edit`, `regen` and
+// `delete` ops themselves are not part of it.
+struct EffectiveOp {
+  const Op* op = nullptr;
+  std::shared_ptr<json> patched;  // only ops an edit or a regen touched carry their own copy
+  const json& data() const { return patched ? *patched : op->data; }
+  json& edit() {
+    if (!patched) patched = std::make_shared<json>(op->data);
+    return *patched;
+  }
+};
+std::vector<EffectiveOp> effective_ops(const Document& doc, std::vector<std::string>* deleted = nullptr);
+// The same over any op list (the design engine plans with ops that are not in the document yet).
+std::vector<EffectiveOp> effective_ops(const std::vector<const Op*>& ops, std::vector<std::string>* deleted = nullptr);
+
+// Replay, one op at a time. resolve() drives it from the stored log; the design engine drives it while it
+// recomputes results, so both see the same state.
+class SceneBuilder {
+ public:
+  explicit SceneBuilder(const Document& doc);
+  ~SceneBuilder();
+  void apply(const std::string& id, const std::string& type, const json& data);
+  void finish();  // parameter values, sketch visibility
+  Scene& scene();
+  Scene take();
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> m;
+};
+
+// `until`: stop before this op (the state an earlier feature was computed in; timeline roll-back).
+Scene resolve(const Document& doc, const std::string& until = {});
 
 }  // namespace opad

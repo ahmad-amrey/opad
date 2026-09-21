@@ -1,0 +1,121 @@
+#pragma once
+// 2D sketch model: points, curves on them, geometric constraints and driving dimensions, plus the numeric
+// solver. Pure maths (no OCCT): the wire/profile builders that need the kernel live in sketch_geom.hpp.
+//
+// Everything has an integer id, unique inside the sketch across points, entities and constraints, so a
+// reference is one number. Coordinates are sketch-plane (u, v) in mm; angles in radians.
+#include <map>
+#include <string>
+#include <vector>
+
+#include "../json.hpp"
+#include "../util.hpp"
+
+namespace opad::design {
+
+struct SkPoint {
+  int id = 0;
+  double x = 0, y = 0;
+  bool fixed = false;  // projected/reference geometry: the solver never moves it
+};
+
+struct SkEntity {
+  enum class Type { Point, Line, Circle, Arc, Ellipse, Spline };
+  int id = 0;
+  Type type = Type::Line;
+  // Point: p[0]. Line: p[0] -> p[1]. Circle: p[0] centre + r. Arc: p[0] centre, counter-clockwise from p[1] to
+  // p[2] (the solver keeps both ends at one radius). Ellipse: p[0] centre, p[1] end of the major axis + r =
+  // minor radius. Spline: p = fit points, interpolated in order.
+  std::vector<int> p;
+  double r = 0;
+  bool construction = false;  // guide geometry: never part of a profile
+  bool fixed = false;         // projected/reference: r is not a solver variable either
+  static const char* type_name(Type t);
+  static Type type_from_name(const std::string& s);
+};
+
+struct SkConstraint {
+  enum class Type {
+    // geometric
+    Coincident,     // [point, point] or [point, line|circle|arc]: point on the (infinite) curve
+    Horizontal,     // [line] or [point, point]
+    Vertical,       // [line] or [point, point]
+    Parallel,       // [line, line]
+    Perpendicular,  // [line, line]
+    Collinear,      // [line, line]
+    Tangent,        // [line, circle|arc] or [circle|arc, circle|arc]
+    Equal,          // [line, line] length, or [circle|arc, circle|arc] radius
+    Concentric,     // [circle|arc, circle|arc]
+    Midpoint,       // [point, line]
+    Symmetric,      // [point, point, line]: mirror images about the line
+    Fix,            // [point] or [entity]: stays where it is now
+    // driving dimensions (value in mm or radians)
+    Distance,       // [point, point], [point, line], [line] = its length, or [line, line] (parallel lines)
+    HDistance,      // [point, point] along u
+    VDistance,      // [point, point] along v
+    Radius,         // [circle|arc]
+    Diameter,       // [circle|arc]
+    Angle           // [line, line], between their directions p0->p1, 0..pi
+  };
+  int id = 0;
+  Type type = Type::Coincident;
+  std::vector<int> refs;
+  double value = 0;       // dimensions: the evaluated value the solver drives to
+  std::string expr;       // dimensions: the expression as typed ("width / 2", "12 mm"); empty = plain value
+  double pos[2] = {0, 0}; // dimensions: where the label sits (display only)
+  bool is_dimension() const { return type >= Type::Distance; }
+  static const char* type_name(Type t);
+  static Type type_from_name(const std::string& s);
+};
+
+struct Sketch {
+  std::vector<SkPoint> points;
+  std::vector<SkEntity> entities;
+  std::vector<SkConstraint> constraints;
+
+  SkPoint* point(int id);
+  const SkPoint* point(int id) const;
+  SkEntity* entity(int id);
+  const SkEntity* entity(int id) const;
+  SkConstraint* constraint(int id);
+  int next_id() const;  // 1 + the largest id in use
+
+  // Convenience builders (ids are allocated here). They add no constraints.
+  int add_point(double x, double y, bool fixed = false);
+  int add_line(int p0, int p1, bool construction = false);
+  int add_circle(int centre, double r, bool construction = false);
+  int add_arc(int centre, int start, int end, bool construction = false);  // ccw from start to end
+  int add_constraint(SkConstraint::Type t, std::vector<int> refs, double value = 0, const std::string& expr = {});
+  // Removes an entity or constraint (or a point nobody uses), and every constraint that referenced it; points
+  // left without any entity go with it.
+  void remove(int id);
+
+  json to_json() const;                   // {"points":[..],"entities":[..],"constraints":[..]}
+  static Sketch from_json(const json& j); // throws Error on dangling references or unknown types
+  void validate() const;
+};
+
+// ---------------------------------------------------------------- solver
+struct SolveOptions {
+  // Dragging: these points are pulled towards a target with a weak spring while every constraint holds.
+  struct Drag { int point; double x, y; };
+  std::vector<Drag> drags;
+  int max_iterations = 100;
+  double tolerance = 1e-8;  // on each constraint residual (mm or rad)
+};
+
+struct SolveResult {
+  bool converged = false;
+  int dof = 0;                  // remaining degrees of freedom (0 = fully constrained)
+  double residual = 0;          // largest constraint residual left
+  std::vector<int> failed;      // constraints whose residual is above tolerance (conflicting / unreachable)
+  std::vector<int> redundant;   // constraints that add no information (dependent rows), when fully analysed
+  std::vector<int> free_points; // points that can still move (for colouring under-constrained geometry)
+};
+
+// Moves the points (and radii) so every constraint holds, staying as close to the current positions as
+// possible (so the sketch does not flip or jump). On failure the sketch is left at the best attempt only when
+// `keep_best` is set; otherwise it is restored.
+SolveResult solve(Sketch& sk, const SolveOptions& opt = {}, bool keep_best = false);
+
+}  // namespace opad::design

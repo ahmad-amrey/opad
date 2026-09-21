@@ -8,6 +8,15 @@ add_test(NAME core COMMAND opad-test-core)
 add_executable(opad-test-step test_step.cpp)
 target_link_libraries(opad-test-step PRIVATE opad::core)
 
+add_executable(opad-test-sketch test_sketch.cpp)
+target_link_libraries(opad-test-sketch PRIVATE opad::core)
+add_test(NAME sketch COMMAND opad-test-sketch)
+
+add_executable(opad-test-design test_design.cpp)
+target_link_libraries(opad-test-design PRIVATE opad::core)
+add_test(NAME design COMMAND opad-test-design)
+set_tests_properties(design PROPERTIES ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache")
+
 set(OPAD_FIXTURE_DIR ${CMAKE_BINARY_DIR}/fixtures)
 add_test(NAME fixtures COMMAND opad-fixtures ${OPAD_FIXTURE_DIR})
 set_tests_properties(fixtures PROPERTIES FIXTURES_SETUP step_fixtures)

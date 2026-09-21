@@ -43,8 +43,9 @@ Document Document::create(const std::string& units) {
 }
 
 const std::vector<std::string>& Document::op_types() {
-  static const std::vector<std::string> t = {"import",     "reparent", "transform", "appearance", "rename",
-                                             "annotation", "measurement", "section", "view",       "delete"};
+  static const std::vector<std::string> t = {"import",     "reparent",    "transform", "appearance", "rename", "annotation",
+                                             "measurement", "section",    "view",      "delete",     "param",  "sketch",
+                                             "feature",    "edit",        "regen"};
   return t;
 }
 
@@ -120,6 +121,23 @@ void Document::validate_op(const json& op) {
     require(op, "camera", "object");
   } else if (type == "delete") {
     require(op, "target", "uuid");
+  } else if (type == "param") {
+    require(op, "name", "string");
+    require(op, "expr", "string");
+  } else if (type == "sketch") {
+    require(op, "name", "string");
+    if (!op.contains("plane") || !op["plane"].is_object()) throw Error("sketch: 'plane' must be an object");
+    if (!op.contains("geometry") || !op["geometry"].is_object()) throw Error("sketch: 'geometry' must be an object");
+  } else if (type == "feature") {
+    require(op, "kind", "string");
+    require(op, "name", "string");
+    if (!op.contains("inputs") || !op["inputs"].is_object()) throw Error("feature: 'inputs' must be an object");
+    if (op.contains("result") && !op["result"].is_object()) throw Error("feature: 'result' must be an object");
+  } else if (type == "edit") {
+    require(op, "target", "uuid");
+    if (!op.contains("set") || !op["set"].is_object()) throw Error("edit: 'set' must be an object");
+  } else if (type == "regen") {
+    if (!op.contains("results") || !op["results"].is_object()) throw Error("regen: 'results' must be an object");
   }
 }
 
@@ -137,8 +155,8 @@ const Op& Document::append(json op, const std::string& author) {
   }
   std::string id = out["id"].get<std::string>();
   if (find_op(id)) throw Error("duplicate op id: " + id);
-  if (out["op"] == "delete" && !find_op(out["target"].get<std::string>()))
-    throw Error("delete: target op not found: " + out["target"].get<std::string>());
+  if ((out["op"] == "delete" || out["op"] == "edit") && !find_op(out["target"].get<std::string>()))
+    throw Error(out["op"].get<std::string>() + ": target op not found: " + out["target"].get<std::string>());
   Op o;
   o.id = id;
   o.type = out["op"].get<std::string>();
@@ -228,11 +246,14 @@ static void collect_keys(const json& nodes, std::set<std::string>& keys) {
 }
 
 std::vector<std::string> Document::gc() {
-  Scene s = resolve(*this);
-  std::set<std::string> deleted(s.deleted_ops.begin(), s.deleted_ops.end());
   std::set<std::string> live;
-  for (const auto& o : ops)
-    if (o.type == "import" && !deleted.count(o.id)) collect_keys(o.data.value("nodes", json::array()), live);
+  // Feature results keep every intermediate state alive (the body before a fillet is what the fillet is
+  // recomputed from); results an edit has superseded are not part of the effective log and go.
+  for (const auto& o : effective_ops(*this)) {
+    if (o.op->type == "import") collect_keys(o.data().value("nodes", json::array()), live);
+    else if (o.op->type == "feature" && o.data().contains("result"))
+      for (const auto& b : o.data()["result"].value("bodies", json::array())) live.insert(b.value("key", ""));
+  }
   std::vector<std::string> removed;
   std::vector<BodyEntry> kept;
   for (auto& b : bodies_) {

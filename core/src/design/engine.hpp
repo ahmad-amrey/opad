@@ -1,0 +1,66 @@
+#pragma once
+// Internal to the design engine: the state a feature is computed in, and what it hands back.
+#include <TopoDS_Shape.hxx>
+#include <gp_Ax1.hxx>
+#include <gp_Trsf.hxx>
+
+#include <map>
+#include <string>
+#include <vector>
+
+#include "opad/design/feature.hpp"
+#include "opad/design/sketch.hpp"
+#include "opad/design/sketch_geom.hpp"
+
+namespace opad::design {
+
+struct ResolvedRef {
+  std::string node;
+  TopoDS_Shape sub;  // in world coordinates
+  int index = -1;    // where it is now (may differ from the stored ordinal after a topology change)
+};
+
+struct Ctx {
+  const Document& doc;
+  const ParamTable& params;
+  const Scene& scene;  // the state just before this feature
+  const std::map<std::string, TopoDS_Shape>& fresh;  // bodies made earlier in the same plan, by key
+  Cancel cancel;
+
+  void check_cancel() const;
+  TopoDS_Shape key_shape(const std::string& key) const;
+  TopoDS_Shape node_shape(const std::string& node) const;  // body node, world coordinates
+  gp_Trsf node_trsf(const std::string& node) const;        // node -> world (identity for "")
+  ResolvedRef resolve(const json& ref) const;               // body / face / edge / vertex reference, hint-aware
+  std::vector<ResolvedRef> resolve_all(const json& refs) const;
+
+  double length(const json& inputs, const char* name) const;
+  double angle(const json& inputs, const char* name) const;
+  double number(const json& inputs, const char* name) const;
+  int count(const json& inputs, const char* name) const;
+
+  // Sketch by id (solved state of this moment) and its frame.
+  Sketch sketch(const std::string& id, Frame* frame = nullptr) const;
+  Frame plane(const json& plane_input) const;  // {"base"} | {"face":ref} | {"feature":id}
+  gp_Ax1 axis(const json& axis_input) const;   // {"base"} | {"edge":ref} | {"face":ref} | {"sketch","entity"} | {"feature":id}
+};
+
+// What a feature produced, in world coordinates. The engine turns it into body-store entries and node ids.
+struct Out {
+  struct Body {
+    std::string node;  // existing node it replaces, or empty for a new body
+    TopoDS_Shape shape;
+    std::string name;  // new bodies: suggested name prefix (default "Body")
+  };
+  std::vector<Body> bodies;
+  std::vector<std::string> removed;
+  std::vector<std::string> used_targets;  // creation features with automatic targets: who took part
+  json extra = json::object();            // construction geometry: {"plane":frame} / {"axis":{origin,dir}}
+};
+
+Out compute_feature(const Ctx& ctx, const std::string& kind, const json& inputs);
+
+// Geometric fingerprint of a sub-shape in world coordinates (centre + size + the body's entity counts).
+json ref_hint(const TopoDS_Shape& body_world, const TopoDS_Shape& sub);
+
+}  // namespace opad::design

@@ -9,3 +9,4 @@ dist/
 *.user
 compile_commands.json
 CLAUDE.md
+.claude/
