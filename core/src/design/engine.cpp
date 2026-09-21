@@ -349,7 +349,7 @@ struct Walk {
     }
   }
 
-  json materialize(const Ctx& ctx, const Out& out, const json& previous) {
+  json materialize(const Ctx& ctx, const Out& out, const json& previous, const std::string& op_id) {
     json result = json::object();
     json bodies = json::array();
     std::vector<json> prev_new;
@@ -390,12 +390,12 @@ struct Walk {
       }
       fresh[key] = local;
       bodies.push_back(entry);
-      plan.changed.push_back({entry["id"].get<std::string>(), std::make_shared<TopoDS_Shape>(b.shape), false});
+      plan.changed.push_back({op_id, entry["id"].get<std::string>(), std::make_shared<TopoDS_Shape>(b.shape), false});
     }
     if (!bodies.empty()) result["bodies"] = bodies;
     if (!out.removed.empty()) {
       result["removed"] = out.removed;
-      for (const auto& r : out.removed) plan.changed.push_back({r, nullptr, true});
+      for (const auto& r : out.removed) plan.changed.push_back({op_id, r, nullptr, true});
     }
     for (const auto& [k, v] : out.extra.items()) result[k] = v;
     return result;
@@ -524,7 +524,7 @@ struct Walk {
                 fp = feature_fingerprint(builder.scene(), params, kind, inputs);
               }
             }
-            result = materialize(ctx, out, stored);
+            result = materialize(ctx, out, stored, id);
           } catch (const Standard_Failure& ex) {
             result = {{"error", std::string("the modelling kernel failed: ") + ex.GetMessageString()}};
           } catch (const std::exception& ex) {
@@ -717,6 +717,26 @@ json make_ref(const Document& doc, const Scene& scene, const Ref& ref) {
   const TopoDS_Shape body = node_world_shape(doc, scene, ref.body);
   j["hint"] = ref_hint(body, subshape(body, ref.kind, ref.index));
   return j;
+}
+
+json hint_refs(const Document& doc, const Scene& scene, json inputs) {
+  std::function<void(json&)> walk = [&](json& j) {
+    if (j.is_array()) {
+      for (auto& v : j) walk(v);
+    } else if (j.is_object()) {
+      if (j.contains("body") && j.contains("kind") && j["kind"].is_string() && !j.contains("hint")) {
+        try {
+          const Ref r = Ref::from_json(j);
+          if (r.kind == Ref::Kind::Face || r.kind == Ref::Kind::Edge || r.kind == Ref::Kind::Vertex) j = make_ref(doc, scene, r);
+        } catch (const std::exception&) {  // a stale reference: the feature reports it
+        }
+        return;
+      }
+      for (auto& [k, v] : j.items()) walk(v);
+    }
+  };
+  walk(inputs);
+  return inputs;
 }
 
 }  // namespace opad::design

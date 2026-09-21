@@ -80,6 +80,9 @@ QString shortId(const std::string& id) { return QString::fromStdString(id.substr
 // tombstones go with them.
 bool timelineShows(const opad::Document& doc, const opad::Op& op) {
   if (op.type == "annotation" || op.type == "measurement") return false;
+  // The design history shows sketches and features; edits and the results they regenerate are how those
+  // changed, not steps of their own, and parameters live in their dialog.
+  if (op.type == "edit" || op.type == "regen" || op.type == "param") return false;
   if (op.type == "appearance" && op.data.contains("visible")) return false;
   if (op.type == "delete") {
     const opad::Op* t = doc.find_op(op.data.value("target", ""));
@@ -99,6 +102,8 @@ QString opTypeIcon(const std::string& type) {
   if (type == "section") return "section";
   if (type == "view") return "home";
   if (type == "delete") return "delete";
+  if (type == "sketch") return "sketch";
+  if (type == "feature") return "box";
   return "dot";
 }
 
@@ -417,6 +422,19 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   } else if (opt.state & QStyle::State_MouseOver) {
     p->fillRect(full, t.bg3);
   }
+  const QString rowKind = index.data(Qt::UserRole).toString();
+  if (rowKind == "folder" || rowKind == "sketch") {
+    const opad::SketchItem* sk = rowKind == "sketch" ? m_doc->scene.sketch(id) : nullptr;
+    const bool off = sk && !sk->visible;
+    const qreal ratio = p->device()->devicePixelRatioF();
+    if (sk) p->drawPixmap(r.left() + kEyeX, r.top() + 6, icons::pixmap(off ? "hide" : "eye", off ? t.fg3 : t.fg2, 16, ratio));
+    p->drawPixmap(r.left() + kTypeX, r.top() + 6, icons::pixmap(sk ? "sketch" : "open", sk && !sk->error.empty() ? t.red : off ? t.fg3 : t.fg2, 16, ratio));
+    p->setFont(theme::ui(13));
+    p->setPen(off ? t.fg3 : rowKind == "folder" ? t.fg2 : t.fg);
+    p->drawText(QRect(r.left() + kNameX, r.top(), r.width() - kNameX, r.height()), Qt::AlignVCenter | Qt::AlignLeft, index.data(kNameRole).toString());
+    p->restore();
+    return;
+  }
   if (!n && !isDoc) { p->restore(); return; }
   bool hidden = n && !n->visible;
   QColor text = hidden ? t.fg3 : t.fg;
@@ -579,7 +597,11 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     emit selectionChanged(selectedIds());
   });
   connect(m_tree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& p) { emit contextMenuRequested(m_tree->viewport()->mapToGlobal(p), selectedIds()); });
-  connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int) { emit fitRequested({it->data(0, kIdRole).toString().toStdString()}); });
+  connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int) {
+    const std::string id = it->data(0, kIdRole).toString().toStdString();
+    if (it->data(0, Qt::UserRole).toString() == "sketch") emit sketchActivated(id);
+    else if (!id.empty()) emit fitRequested({id});
+  });
   connect(m_tree, &BrowserTree::eyeClicked, this, [this](const std::string& id) {
     if (id.empty()) {  // document row: toggle every root
       bool anyVisible = false;
@@ -589,6 +611,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     }
     const opad::Node* n = m_doc->node(id);
     if (n) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !n->visible}});
+    else if (const opad::SketchItem* s = m_doc->scene.sketch(id)) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !s->visible}});
   });
   connect(m_tree, &BrowserTree::swatchClicked, this, [this](const std::string& id) {
     if (m_viewer) return;
@@ -645,7 +668,7 @@ void BrowserPanel::rebuild() {
   std::set<std::string> expanded;
   std::vector<std::string> selected = selectedIds();
   std::function<void(QTreeWidgetItem*)> collect = [&](QTreeWidgetItem* it) {
-    if (it->isExpanded()) expanded.insert(it->data(0, kIdRole).toString().toStdString());
+    if (it->isExpanded()) expanded.insert(it->data(0, Qt::UserRole).toString() == "folder" ? std::string("folder:sketches") : it->data(0, kIdRole).toString().toStdString());
     for (int i = 0; i < it->childCount(); ++i) collect(it->child(i));
   };
   for (int i = 0; i < m_tree->topLevelItemCount(); ++i) collect(m_tree->topLevelItem(i));
@@ -659,6 +682,26 @@ void BrowserPanel::rebuild() {
     root->setData(0, kNameRole, docName);
     root->setData(0, Qt::UserRole, "document");
     root->setFlags((root->flags() | Qt::ItemIsDropEnabled) & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled);
+    if (!m_doc->scene.sketches.empty()) {
+      auto* folder = new QTreeWidgetItem(root);
+      folder->setText(0, tr("Sketches"));
+      folder->setData(0, kIdRole, QString());
+      folder->setData(0, kNameRole, tr("Sketches"));
+      folder->setData(0, Qt::UserRole, "folder");
+      folder->setFlags(folder->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled & ~Qt::ItemIsSelectable);
+      for (const auto& s : m_doc->scene.sketches) {
+        auto* item = new QTreeWidgetItem(folder);
+        const QString name = QString::fromStdString(s.name);
+        item->setText(0, name);
+        item->setData(0, kIdRole, QString::fromStdString(s.id));
+        item->setData(0, kNameRole, name);
+        item->setData(0, Qt::UserRole, "sketch");
+        item->setFlags(item->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled);
+        item->setToolTip(0, s.error.empty() ? tr("%1\nDouble-click to edit").arg(name) : QString::fromStdString(s.error));
+        m_index[s.id] = item;
+      }
+      folder->setExpanded(expanded.empty() || expanded.count("folder:sketches") > 0);
+    }
     for (const auto& r : m_doc->scene.roots) build(r, root, expanded);
     root->setExpanded(true);
   }
@@ -1405,6 +1448,12 @@ QString TimelineWidget::describe(const opad::Op& op) const {
     const opad::Op* t = m_doc->doc.find_op(d.value("target", ""));
     return tr("Delete %1").arg(t ? QString::fromStdString(t->type) : shortId(d.value("target", "")));
   }
+  if (op.type == "sketch" || op.type == "feature") {
+    // The name an edit may have changed; the scene has it unless the timeline is rolled back past this op.
+    if (const opad::SketchItem* s = m_doc->scene.sketch(op.id)) return QString::fromStdString(s->name);
+    if (const opad::Feature* f = m_doc->scene.feature(op.id)) return QString::fromStdString(f->name) + (f->suppressed ? tr(" (suppressed)") : QString()) + (f->error.empty() ? QString() : QString::fromUtf8(" — ") + i18n::t(QString::fromStdString(f->error)));
+    return QString::fromStdString(d.value("name", op.type));
+  }
   if (op.type == "appearance") return tr("Appearance %1").arg(target);
   if (op.type == "transform") return tr("Transform %1").arg(target);
   if (op.type == "reparent") return tr("Reparent %1").arg(target);
@@ -1468,7 +1517,15 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
       p.setPen(QPen(current ? t.sel : t.hov, 1.5));
       p.drawRoundedRect(r.adjusted(-2, -2, 2, 2), 3, 3);
     }
-    p.drawPixmap(r.left() + 3, r.top() + 3, icons::pixmap(opTypeIcon(ops[i].type), iconColor, 12, dpr));
+    // Rolled back (a feature or sketch is being edited): what comes after is not part of the shown state.
+    const bool beyond = !m_doc->rollback().empty() && [&] {
+      for (size_t q = 0; q < ops.size(); ++q)
+        if (ops[q].id == m_doc->rollback()) return i >= q;
+      return false;
+    }();
+    const opad::Feature* feat = ops[i].type == "feature" ? m_doc->scene.feature(ops[i].id) : nullptr;
+    if (beyond || (feat && feat->suppressed)) iconColor = t.fg3;
+    p.drawPixmap(r.left() + 3, r.top() + 3, icons::pixmap(iconFor(ops[i]), iconColor, 12, dpr));
   }
   if (!m_shown.empty()) {
     int x = last.right() + 9;
@@ -1513,6 +1570,19 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
     QToolTip::hideText();
   }
   update();
+}
+
+QString TimelineWidget::iconFor(const opad::Op& op) const {
+  if (op.type == "feature")
+    if (const auto* spec = opad::design::feature_spec(op.data.value("kind", ""))) return QString::fromStdString(spec->icon);
+  return opTypeIcon(op.type);
+}
+
+void TimelineWidget::mouseDoubleClickEvent(QMouseEvent* e) {
+  const int i = indexAt(e->pos());
+  if (i < 0) return;
+  const opad::Op& op = m_doc->doc.ops[m_shown[static_cast<size_t>(i)]];
+  if ((op.type == "feature" || op.type == "sketch") && !m_deleted.count(op.id)) emit opActivated(op.id);
 }
 
 void TimelineWidget::mousePressEvent(QMouseEvent* e) {

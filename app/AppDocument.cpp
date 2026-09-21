@@ -231,6 +231,7 @@ void AppDocument::saveAs(const QString& path) {
 }
 
 opad::json AppDocument::run(const std::string& command, opad::json args) {
+  if (designBusy) throw opad::Error("The design is being recomputed; try again in a moment.");
   const size_t before = doc.ops.size();
   opad::json out = opad::commands::run(command, args, &doc);
   recordStep(labelFor(command, args), before);
@@ -238,8 +239,23 @@ opad::json AppDocument::run(const std::string& command, opad::json args) {
   return out;
 }
 
+opad::json AppDocument::commitPlan(opad::design::Plan&& plan, const QString& label) {
+  const size_t before = doc.ops.size();
+  opad::json report = opad::design::commit(doc, std::move(plan));
+  recordStep(label, before);
+  refresh();
+  return report;
+}
+
+void AppDocument::setRollback(const std::string& opId) {
+  if (m_rollback == opId) return;
+  m_rollback = opId;
+  refresh();
+}
+
 void AppDocument::refresh() {
-  scene = hasDocument ? opad::resolve(doc) : opad::Scene{};
+  if (!m_rollback.empty() && !doc.find_op(m_rollback)) m_rollback.clear();  // undone or closed
+  scene = hasDocument ? opad::resolve(doc, m_rollback) : opad::Scene{};
   updateDirty();
   emit changed();
 }
@@ -296,7 +312,8 @@ void AppDocument::markSaved() {
 
 void AppDocument::updateDirty() {
   if (!hasDocument) return;
-  bool same = doc.ops.size() == m_savedIds.size() && doc.body_count() == m_savedBodies;
+  // Entries left behind by an undone import or feature are not a change: the same log refers to the same bodies.
+  bool same = doc.ops.size() == m_savedIds.size();
   for (size_t i = 0; same && i < m_savedIds.size(); ++i) same = doc.ops[i].id == m_savedIds[i];
   doc.dirty = !same;
 }
@@ -317,6 +334,7 @@ QString AppDocument::labelFor(const std::string& command, const opad::json& args
   if (command == "view") return tr("named view");
   if (command == "import") return tr("import");
   if (command == "transform") return tr("transform");
+  if (command == "component") return tr("new component");
   return QString::fromStdString(command);
 }
 

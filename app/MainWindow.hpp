@@ -8,6 +8,7 @@
 #include <functional>
 
 #include "AppDocument.hpp"
+#include "DesignController.hpp"
 #include "EmptyState.hpp"
 #include "GuidedTool.hpp"
 #include "Jobs.hpp"
@@ -37,6 +38,9 @@ class MainWindow : public QMainWindow {
   void buildActions();
   void buildMenus();
   void buildRibbon();
+  void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")
+  void buildDesign();         // the controller, its floating panel and the wiring
+  void updateDesignState();   // sketch mode <-> ribbon tab set, action enabling
   void setWorkspace(int index);  // 0 Review, 1 Design: swaps the ribbon tab set (same document, same timeline)
   void buildCentral();
   void buildDocks();
@@ -103,6 +107,9 @@ class MainWindow : public QMainWindow {
   std::vector<std::string> currentNodeIds() const;
 
   AppDocument* m_doc = nullptr;
+  DesignController* m_design = nullptr;
+  ToolPanel* m_featurePanel = nullptr;
+  int m_sketchWorkspace = -1, m_workspaceBeforeSketch = 0;
   QStackedWidget* m_stack = nullptr;
   EmptyState* m_empty = nullptr;
   Viewport* m_viewport = nullptr;

@@ -38,6 +38,7 @@ class SearchField : public QAbstractButton {
 struct Workspace {
   QString name, icon, key;   // key: the shortcut as shown, e.g. "Ctrl+1"
   QString description, ops;  // dropdown copy: what it is for, and the op types it writes
+  bool contextual = false;   // entered by the app (sketch mode), never offered in the switcher's list
 };
 
 // Switcher chip: 26 px, bg2, 1 px line, icon in sel + name 500 + mono key + chevron.

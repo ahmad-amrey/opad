@@ -1,0 +1,143 @@
+#pragma once
+// The sketch editor: draws and constrains one sketch on its plane. It takes the left mouse button and plain
+// keys from the viewport (SketchInput), keeps its own undo stack, solves after every change (a change the
+// solver cannot satisfy is refused, so a sketch is never left over-constrained) and draws everything itself
+// through one overlay object. Nothing reaches the document until the controller finishes the sketch.
+#include <AIS_InteractiveObject.hxx>
+#include <QLineEdit>
+#include <QObject>
+#include <QTimer>
+#include <array>
+#include <map>
+#include <set>
+
+#include "AppDocument.hpp"
+#include "Viewport.hpp"
+#include "opad/design/sketch.hpp"
+
+class JobRunner;
+class Job;
+
+class SketchEditor : public QObject, public SketchInput {
+  Q_OBJECT
+ public:
+  SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs, QObject* parent = nullptr);
+  ~SketchEditor() override;
+
+  // `sketchId` empty: a new sketch. `geometry` is what it holds so far (empty object for a new one).
+  void begin(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry);
+  void end();
+  bool active() const { return m_active; }
+  const std::string& sketchId() const { return m_id; }
+  QString name() const { return m_name; }
+  opad::json plane() const { return m_plane; }
+  opad::json geometry() const { return m_sk.to_json(); }
+  bool modified() const { return m_modified; }
+  bool empty() const;  // nothing but the origin
+
+  // Tools: select, line, rect, crect, circle, circle3, arc3, arcc, polygon, slot, point, spline, ellipse, fillet,
+  // trim, mirror, dimension, and "c:<constraint>" (horizontal, vertical, coincident, parallel, perpendicular,
+  // tangent, equal, concentric, midpoint, symmetric, collinear, fix).
+  void setTool(const QString& tool);
+  QString tool() const { return m_tool; }
+  void toggleConstruction();
+  void deleteSelection();
+  bool canUndo() const { return !m_undo.empty(); }
+  bool canRedo() const { return !m_redo.empty(); }
+  void undo();
+  void redo();
+  int dof() const { return m_solved.dof; }
+  void bench(const QString& script);  // OPAD_BENCH_DESIGN: draws a dimensioned rectangle with a hole through the tool code paths
+
+  // SketchInput
+  void sketchPress(double u, double v, Qt::KeyboardModifiers mods) override;
+  void sketchMove(double u, double v, Qt::KeyboardModifiers mods, bool dragging) override;
+  void sketchRelease(double u, double v, Qt::KeyboardModifiers mods) override;
+  void sketchDoubleClick(double u, double v) override;
+  bool sketchKey(QKeyEvent* e) override;
+
+ protected:
+  bool eventFilter(QObject* o, QEvent* e) override;  // Esc in the dimension field
+
+ signals:
+  void toolChanged(const QString& tool);
+  void status(const QString& text);  // what the tool waits for, or why a change was refused
+  void changed();                    // geometry, selection or undo state
+
+ private:
+  struct Snap {
+    double u = 0, v = 0;
+    int point = 0;     // an existing point to reuse
+    int entity = 0;    // a curve the new point will lie on
+    bool horizontal = false, vertical = false;  // relative to the previous click
+  };
+  struct Hit {
+    enum Kind { None, Point, Entity, Dimension } kind = None;
+    int id = 0;
+  };
+  Snap snap(double u, double v, bool infer = true) const;
+  Hit hitTest(double u, double v) const;
+  double tol() const;  // pick distance in sketch units
+  int pointFor(const Snap& s);           // reuse or create (with the on-curve constraint)
+  void begin_change();                   // snapshot for undo
+  bool end_change(const QString& what);  // solve; false = refused and rolled back
+  void cancel_change();
+  void rebuild();                        // redraw the overlay
+  void scheduleFill();
+  void click(const Snap& s, Qt::KeyboardModifiers mods);
+  void finishChain();
+  bool applyConstraint(opad::design::SkConstraint::Type type, const std::vector<int>& ids, bool quiet);
+  void constraintClick(const Hit& h);
+  void dimensionClick(const Hit& h, double u, double v);
+  void placeDimension(double u, double v);
+  void editDimension(int id, bool fresh);
+  void commitDimensionEdit();
+  void filletAt(const Hit& h, double u, double v);
+  void trimAt(const Hit& h, double u, double v);
+  void mirrorSelection(int axisLine);
+  std::vector<std::pair<double, double>> sampled(const opad::design::SkEntity& e) const;  // polyline of a curve, sketch coordinates
+  double distanceTo(const opad::design::SkEntity& e, double u, double v) const;
+  void labelPosition(const opad::design::SkConstraint& c, double& u, double& v) const;
+  QString dimensionText(const opad::design::SkConstraint& c) const;
+  void toolPrompt();
+  bool isFixedPoint(int id) const;
+
+  AppDocument* m_doc;
+  Viewport* m_viewport;
+  JobRunner* m_jobs;
+  bool m_active = false, m_modified = false;
+  std::string m_id;
+  QString m_name;
+  opad::json m_plane;
+  opad::Frame m_frame;
+  opad::design::Sketch m_sk;
+  opad::design::SolveResult m_solved;
+  std::vector<opad::design::Sketch> m_undo, m_redo;
+  opad::design::Sketch m_before;  // the state a change started from
+  bool m_inChange = false;
+
+  QString m_tool = "select";
+  std::vector<Snap> m_clicks;      // of the running tool
+  std::vector<int> m_chain;        // points of the polyline / spline being drawn
+  std::vector<int> m_picked;       // constraint / dimension tool picks
+  int m_polygonSides = 6;
+  opad::design::SkConstraint m_pendingDim;  // picked, waiting for its place
+  bool m_placingDim = false;
+  std::vector<int> m_sel;
+  Hit m_hover;
+  Snap m_cursor;
+  bool m_haveCursor = false;
+  // dragging with the select tool
+  bool m_dragging = false, m_dragMoved = false;
+  Hit m_dragHit;
+  double m_dragU = 0, m_dragV = 0;
+  std::vector<std::pair<int, std::pair<double, double>>> m_dragStart;  // point -> where it was
+
+  Handle(AIS_InteractiveObject) m_prs;  // a SketchPrs (SketchEditor.cpp)
+  QLineEdit* m_dimEdit = nullptr;
+  int m_dimEditing = 0;
+  bool m_dimFresh = false;
+  QTimer m_fillTimer;
+  Job* m_fillJob = nullptr;
+  std::vector<opad::Vec3> m_fill;  // triangles of the closed regions, world coordinates
+};

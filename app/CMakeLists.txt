@@ -18,7 +18,10 @@ set(OPAD_APP_SOURCES
   Icons.cpp Icons.hpp
   Ribbon.cpp Ribbon.hpp
   EmptyState.cpp EmptyState.hpp
-  Viewport.cpp Viewport.hpp
+  Viewport.cpp ViewportDesign.cpp Viewport.hpp
+  DesignController.cpp DesignController.hpp
+  DesignPanels.cpp DesignPanels.hpp
+  SketchEditor.cpp SketchTools.cpp SketchEditor.hpp
   Panels.cpp Panels.hpp
   Jobs.cpp Jobs.hpp
   GuidedTool.cpp GuidedTool.hpp

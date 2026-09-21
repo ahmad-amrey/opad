@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "opad/core.hpp"
+#include "opad/design/feature.hpp"
 #include "opad/step_io.hpp"
 
 class AppDocument : public QObject {
@@ -28,6 +29,16 @@ class AppDocument : public QObject {
   void save();
   void saveAs(const QString& path);
   opad::json run(const std::string& command, opad::json args);
+
+  // Design changes are planned on a worker (design::plan_ops reads the document, see DesignController) and
+  // committed here. While a plan is being computed the document must not change under it: designBusy makes
+  // run() and commitPlan() refuse.
+  bool designBusy = false;
+  opad::json commitPlan(opad::design::Plan&& plan, const QString& label);
+  // Roll-back: the scene is replayed up to (not including) this op. Editing a feature or a sketch shows the
+  // model as it was when that op was computed, which is what its references mean. Empty = the whole log.
+  void setRollback(const std::string& opId);
+  const std::string& rollback() const { return m_rollback; }
 
   // Long loads run off the UI thread; progress and the result come back through the signals below.
   void startOpen(const QString& path);
@@ -74,6 +85,7 @@ class AppDocument : public QObject {
   void markSaved();      // snapshot the state the file holds (or the empty state of a new document)
   void updateDirty();    // dirty = log or body store differs from the snapshot
   static QString labelFor(const std::string& command, const opad::json& args);
+  std::string m_rollback;
   std::vector<Step> m_undo, m_redo;
   int m_undoLimit = 50;
   std::vector<std::string> m_savedIds;

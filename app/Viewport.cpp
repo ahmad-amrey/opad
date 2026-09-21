@@ -407,6 +407,7 @@ bool Viewport::isOrthographic() const {
 void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
   m_ctx->Load(ais, -1);  // register with the selection manager (picking BVH); Display() with mode -1 does not
   m_ctx->Deactivate(ais);
+  if (!m_bodiesPickable) return;  // sketching, or a feature input that only takes sketch regions / planes
   TopAbs_ShapeEnum t = TopAbs_SHAPE;
   switch (m_filter) {
     case SelFilter::Body: t = TopAbs_SHAPE; break;
@@ -1285,6 +1286,7 @@ void Viewport::sync() {
   }
   if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // Remove() dropped that body's selected sub-shapes
   if (!pending.empty()) startMeshing(pending);
+  syncSketches();
   updateAnnotations();
   updateClipPlanes();
   if (m_displayJob) m_displayJob->cancel();
@@ -1483,6 +1485,15 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   setFocus();
   m_pressPos = e->pos();
   m_rightPress = e->button() == Qt::RightButton;
+  // Sketching: the left button belongs to the sketch editor, except on the view cube.
+  if (m_sketchInput && m_initialised && e->button() == Qt::LeftButton && !(m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube)) {
+    double u, v;
+    if (planePoint(e->position(), m_sketchFrame, u, v)) {
+      m_sketchDrag = true;
+      m_sketchInput->sketchPress(u, v, e->modifiers());
+    }
+    return;
+  }
   // A left press on the view cube: dragging orbits the view (the cube turns with it); a click without movement
   // still goes through the controller's click path and snaps to the picked side.
   if (m_initialised && e->button() == Qt::LeftButton && e->modifiers() == Qt::NoModifier && m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube) {
@@ -1494,6 +1505,12 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
 
 void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   if (m_blocked) return;
+  if (m_sketchDrag && e->button() == Qt::LeftButton) {
+    m_sketchDrag = false;
+    double u, v;
+    if (m_sketchInput && planePoint(e->position(), m_sketchFrame, u, v)) m_sketchInput->sketchRelease(u, v, e->modifiers());
+    return;
+  }
   if (m_initialised && UpdateMouseButtons(devicePos(e->position()), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
   if (m_cubeGesture && e->button() == Qt::LeftButton) {
     m_cubeGesture = false;
@@ -1507,6 +1524,11 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
 
 void Viewport::mouseMoveEvent(QMouseEvent* e) {
   if (m_blocked) return;
+  if (m_sketchInput) {
+    double u, v;
+    if (planePoint(e->position(), m_sketchFrame, u, v)) m_sketchInput->sketchMove(u, v, e->modifiers(), m_sketchDrag);
+    if (m_sketchDrag) return;  // not a rubber band
+  }
   if (e->buttons() != Qt::NoButton) m_needFit = false;  // a drag: the user owns the camera now
   if (m_initialised && UpdateMousePosition(devicePos(e->position()), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
 }

@@ -62,7 +62,12 @@ struct Plan {
   std::vector<NewBody> bodies;  // entries the results refer to
   json report;                  // {"id":..., "regenerated":[...], "errors":[{"op","name","error"}]}
   // Preview: the bodies the change leaves different, in world coordinates (node id empty = a new body).
-  struct Changed { std::string node; std::shared_ptr<TopoDS_Shape> shape; bool removed = false; };
+  struct Changed {
+    std::string op;    // the sketch/feature that produced it (a preview shows the edited feature's own effect)
+    std::string node;
+    std::shared_ptr<TopoDS_Shape> shape;
+    bool removed = false;
+  };
   std::vector<Changed> changed;
 };
 
@@ -95,5 +100,8 @@ std::vector<std::string> param_users(const Document& doc, const std::string& nam
 Frame resolve_plane(const Document& doc, const Scene& scene, const json& plane);
 // A reference with its geometric fingerprint, which lets it survive a change of the body's topology.
 json make_ref(const Document& doc, const Scene& scene, const Ref& ref);
+// Feature inputs with a hint added to every face/edge/vertex reference that has none (the app picks plain
+// references in its click handler and leaves this geometry walk to the worker).
+json hint_refs(const Document& doc, const Scene& scene, json inputs);
 
 }  // namespace opad::design

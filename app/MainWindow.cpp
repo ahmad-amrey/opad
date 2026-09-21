@@ -34,6 +34,8 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 
+#include <QKeyEvent>
+
 #include "Icons.hpp"
 #include "Theme.hpp"
 #include "opad/geometry.hpp"
@@ -60,6 +62,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   buildRibbon();
   buildDocks();
   buildStatusBar();
+  buildDesign();
 
   connect(m_doc, &AppDocument::changed, this, [this] {
     trace::Scope scope("MainWindow: document changed");
@@ -314,16 +317,7 @@ void MainWindow::buildActions() {
   auto* wsGroup = new QActionGroup(this);
   wsGroup->addAction(addAction("workspace.review", tr("Review workspace"), "eye", QKeySequence("Ctrl+1"), [this] { setWorkspace(0); }, true));
   wsGroup->addAction(addAction("workspace.design", tr("Design workspace"), "component", QKeySequence("Ctrl+2"), [this] { setWorkspace(1); }, true));
-  // Design tools that do not exist yet: shown in their place in the ribbon, disabled, no shortcut until they work.
-  for (const auto& [id, text, icon] : std::vector<std::tuple<QString, QString, QString>>{
-           {"design.reparent", tr("Reparent"), "reparent"}, {"design.newcomponent", tr("New component"), "plus"}, {"design.move", tr("Move"), "move"},
-           {"design.rotate", tr("Rotate"), "restore"}, {"design.align", tr("Align"), "fit"}, {"design.reset", tr("Reset to import"), "home"},
-           {"design.snap", tr("Snap"), "grid"}, {"design.colour", tr("Colour"), "shaded"}, {"design.opacity", tr("Opacity"), "wireframe"},
-           {"design.lock", tr("Lock"), "lock"}}) {
-    QAction* a = addAction(id, text, icon, QKeySequence(), [] {});
-    a->setEnabled(false);
-    a->setToolTip(tr("%1 (not available yet)").arg(text));
-  }
+  buildDesignActions();
   addAction("panel.reset", tr("Reset layout"), "restore", QKeySequence(), [this] { resetLayout(); });
   m_darkAction->setChecked(m_settings.value("ui/dark", true).toBool());
   connect(m_darkAction, &QAction::toggled, this, [this](bool on) { applyTheme(on); refreshIcons(); });
@@ -357,7 +351,11 @@ void MainWindow::buildActions() {
   m_pinAction = addAction("inspect.pin", tr("Pin"), "pin", QKeySequence("P"), [this] { pinMeasurement(); });
   m_pinAction->setEnabled(false);
   addAction("inspect.clear", tr("Clear measurement"), "", QKeySequence("Esc"), [this] {
-    if (!m_tool.id.isEmpty()) toolEscape();
+    if (m_design->sketchActive()) {  // the viewport did not have the focus: same as Esc in the sketch
+      QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+      m_design->sketch()->sketchKey(&esc);
+    } else if (m_design->escape()) {
+    } else if (!m_tool.id.isEmpty()) toolEscape();
     else if (!closeTopPanel()) clearMeasurement();
   });  // Esc closes a tool panel first
   addAction("inspect.properties", tr("Properties"), "doc", QKeySequence("Ctrl+P"), [this] {
@@ -370,8 +368,16 @@ void MainWindow::buildActions() {
   // Annotate / edit
   addAction("annotate.add", tr("Note"), "annotate", QKeySequence("N"), [this] { toggleTool("note"); }, true);
   addAction("annotate.resolve", tr("Resolve note"), "check", QKeySequence("Ctrl+Return"), [this] { resolveCurrentAnnotation(); });
-  addAction("edit.undo", tr("&Undo"), "rollLeft", QKeySequence::Undo, [this] { m_doc->undo(); });
-  addAction("edit.redo", tr("&Redo"), "rollRight", QKeySequence::Redo, [this] { m_doc->redo(); });
+  addAction("edit.undo", tr("&Undo"), "rollLeft", QKeySequence::Undo, [this] {
+    if (m_design->sketchActive()) return m_design->sketch()->undo();  // a sketch has its own history until it is finished
+    if (m_design->ownsSelection() || m_design->busy()) return;
+    m_doc->undo();
+  });
+  addAction("edit.redo", tr("&Redo"), "rollRight", QKeySequence::Redo, [this] {
+    if (m_design->sketchActive()) return m_design->sketch()->redo();
+    if (m_design->ownsSelection() || m_design->busy()) return;
+    m_doc->redo();
+  });
   connect(m_doc, &AppDocument::undoChanged, this, &MainWindow::updateUndoActions);
   addAction("edit.rename", tr("Rename"), "rename", QKeySequence("F2"), [this] {
     auto ids = currentNodeIds();
@@ -452,6 +458,14 @@ void MainWindow::buildMenus() {
   add(view, {"view.dark", "-", "workspace.review", "workspace.design", "-", "panel.browser", "panel.annotations", "panel.section", "panel.timeline", "panel.reset"});
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
   add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties"});
+  QMenu* designMenu = menuBar()->addMenu(tr("&Design"));
+  add(designMenu, {"design.sketch", "design.parameters", "-"});
+  for (const char* group : {"create", "modify", "combine", "pattern", "body", "construct"}) {
+    QMenu* sub = designMenu->addMenu(i18n::t(QString(group).left(1).toUpper() + QString(group).mid(1)));
+    for (const auto& spec : opad::design::feature_specs())
+      if (spec.group == group) sub->addAction(action("design." + QString::fromStdString(spec.kind)));
+  }
+  add(designMenu, {"-", "design.edit", "design.regenerate", "-", "design.newcomponent", "design.reparent", "design.colour", "design.opacity", "design.lock"});
   QMenu* tools = menuBar()->addMenu(tr("&Tools"));
   add(tools, {"tools.commands", "tools.shortcuts", "tools.cache"});
   QMenu* help = menuBar()->addMenu(tr("&Help"));
@@ -469,18 +483,33 @@ void MainWindow::buildRibbon() {
     return out;
   };
   const int review = m_ribbon->addWorkspace({tr("Review"), "eye", "Ctrl+1", tr("Look, measure, annotate. Nothing here changes geometry or structure."), tr("ops: annotation · measurement · section · view")});
-  const int design = m_ribbon->addWorkspace({tr("Design"), "component", "Ctrl+2", tr("Arrange the assembly: import, reparent, move, colour, rename."), tr("ops: import · reparent · transform · appearance · rename · delete")});
+  const int design = m_ribbon->addWorkspace({tr("Design"), "component", "Ctrl+2", tr("Model parts: sketches, features, parameters; arrange the assembly."), tr("ops: param · sketch · feature · edit · regen · import · reparent · appearance")});
+  Workspace sketchWs{tr("Sketch"), "sketch", "", tr("Drawing a sketch. Finish sketch returns to Design."), tr("ops: sketch · edit")};
+  sketchWs.contextual = true;
+  m_sketchWorkspace = m_ribbon->addWorkspace(sketchWs);
   m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid"}), acts({"view.section", "view.isolate", "view.unisolate"})});
   m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"})});
   m_ribbon->addTab(review, tr("Annotate"), {acts({"annotate.add", "annotate.resolve"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
   m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
-  m_ribbon->addTab(design, tr("Assemble"), {acts({"file.import", "design.reparent", "design.newcomponent"}), acts({"edit.rename", "edit.delete", "edit.restore"})});
-  m_ribbon->addTab(design, tr("Transform"), {acts({"design.move", "design.rotate", "design.align"}), acts({"design.reset", "design.snap"})});
-  m_ribbon->addTab(design, tr("Appearance"), {acts({"design.colour", "design.opacity"}), acts({"edit.hide", "design.lock", "view.isolate"})});
+  m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe"}),
+                                         acts({"design.box", "design.cylinder", "design.sphere", "design.cone", "design.torus"}), acts({"design.parameters"})});
+  m_ribbon->addTab(design, tr("Modify"), {acts({"design.offset_face", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.scale"}),
+                                          acts({"design.combine", "design.split", "design.move", "design.remove"}),
+                                          acts({"design.mirror", "design.pattern_rect", "design.pattern_circ"})});
+  m_ribbon->addTab(design, tr("Construct"), {acts({"design.plane", "design.axis"}), acts({"design.parameters", "design.edit", "design.regenerate"})});
+  m_ribbon->addTab(design, tr("Assemble"), {acts({"file.import", "design.newcomponent", "design.reparent"}), acts({"edit.rename", "edit.delete", "edit.restore"}),
+                                            acts({"design.colour", "design.opacity", "design.lock", "edit.hide", "view.isolate"})});
   m_ribbon->addTab(design, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
+  m_ribbon->addTab(m_sketchWorkspace, tr("Sketch"), {acts({"sketch.finish", "sketch.cancel"}), acts({"sketch.select", "sketch.line", "sketch.rect", "sketch.crect", "sketch.circle", "sketch.circle3", "sketch.arc3", "sketch.arcc"}),
+                                                     acts({"sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline", "sketch.point"}), acts({"sketch.dimension", "sketch.construction"})});
+  m_ribbon->addTab(m_sketchWorkspace, tr("Modify + constrain"), {acts({"sketch.finish"}), acts({"sketch.select", "sketch.fillet", "sketch.trim", "sketch.mirror", "sketch.dimension"}),
+                                                                 acts({"sketch.c.horizontal", "sketch.c.vertical", "sketch.c.coincident", "sketch.c.parallel", "sketch.c.perpendicular", "sketch.c.tangent"}),
+                                                                 acts({"sketch.c.equal", "sketch.c.concentric", "sketch.c.midpoint", "sketch.c.symmetric", "sketch.c.collinear", "sketch.c.fix"})});
   m_ribbon->setWorkspace(m_settings.value("ui/workspace", 0).toInt() == 1 ? design : review);
   action(m_ribbon->workspace() == design ? "workspace.design" : "workspace.review")->setChecked(true);
   connect(m_ribbon, &RibbonBar::workspaceChanged, this, [this](int i) {  // from the shortcuts or the chip's list
+    if (i == m_sketchWorkspace) return;  // contextual: entered and left with the sketch, never remembered
+    if (m_design && m_design->sketchActive()) return m_ribbon->setWorkspace(m_sketchWorkspace);  // a sketch is open: finish it first
     m_settings.setValue("ui/workspace", i);
     action(i == 1 ? "workspace.design" : "workspace.review")->setChecked(true);
     if (i == 1 && m_doc->hasDocument && m_viewport->selectionFilter() != Viewport::SelFilter::Body) action("select.bodies")->trigger();  // Design works on bodies
@@ -723,6 +752,140 @@ void MainWindow::buildStatusBar() {
   connect(m_jobs, &JobRunner::stripShown, this, [this](bool shown) { m_statusHover->setVisible(!shown); });  // free room for the bars
 }
 
+// ---------------------------------------------------------------- design workspace
+// Feature tools come from the core's spec table (one action per kind, the form is generic); sketch tools are
+// only live while a sketch is open, when the ribbon shows the contextual Sketch tab set.
+void MainWindow::buildDesignActions() {
+  addAction("design.sketch", tr("New sketch"), "sketch", QKeySequence(), [this] { m_design->startSketch(); });
+  static const std::map<std::string, const char*> kKeys = {{"extrude", "E"}, {"offset_face", "Q"}, {"move", "M"}};
+  for (const auto& spec : opad::design::feature_specs()) {
+    const QString kind = QString::fromStdString(spec.kind);
+    const auto key = kKeys.find(spec.kind);
+    QAction* a = addAction("design." + kind, i18n::t(QString::fromStdString(spec.label)), QString::fromStdString(spec.icon), key == kKeys.end() ? QKeySequence() : QKeySequence(key->second),
+                           [this, kind] { m_design->startFeature(kind); });
+    a->setToolTip(a->toolTip() + "\n" + i18n::t(QString::fromStdString(spec.hint)));
+  }
+  addAction("design.parameters", tr("Parameters"), "fx", QKeySequence("Ctrl+Shift+U"), [this] { m_design->showParameters(); });
+  addAction("design.regenerate", tr("Regenerate"), "regen", QKeySequence(), [this] { m_design->regenerate(true); });
+  addAction("design.edit", tr("Edit feature"), "rename", QKeySequence(), [this] {
+    const std::string id = m_timeline->currentOp();
+    const opad::Op* op = id.empty() ? nullptr : m_doc->doc.find_op(id);
+    if (!op || (op->type != "feature" && op->type != "sketch")) throw opad::Error("Select a feature or a sketch on the timeline first (or double-click it).");
+    m_design->editOp(id);
+  });
+  addAction("design.newcomponent", tr("New component"), "plus", QKeySequence(), [this] {
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("New component"), tr("Name:"), QLineEdit::Normal, tr("Component"), &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    opad::json args{{"name", name.trimmed().toStdString()}};
+    const auto ids = currentNodeIds();
+    if (ids.size() == 1 && m_doc->node(ids[0]) && m_doc->node(ids[0])->kind == opad::Node::Kind::Component) args["parent"] = ids[0];
+    m_doc->run("component", args);
+  });
+  addAction("design.reparent", tr("Reparent"), "reparent", QKeySequence(), [this] {
+    const auto ids = currentNodeIds();
+    if (ids.empty()) throw opad::Error("Select the objects to move under another component first.");
+    QStringList names{tr("(document root)")};
+    std::vector<std::string> targets{""};
+    for (const auto& [id, n] : m_doc->scene.nodes)
+      if (n.kind == opad::Node::Kind::Component && std::find(ids.begin(), ids.end(), id) == ids.end()) {
+        QStringList path;
+        for (const auto& p : m_doc->scene.path_to(id)) path << m_doc->nodeName(p);
+        names << path.join(QString::fromUtf8(" › "));
+        targets.push_back(id);
+      }
+    bool ok = false;
+    const QString chosen = QInputDialog::getItem(this, tr("Reparent"), tr("Move under:"), names, 0, false, &ok);
+    if (!ok) return;
+    const std::string& parent = targets[static_cast<size_t>(names.indexOf(chosen))];
+    for (const auto& id : ids) m_doc->run("reparent", opad::json{{"target", id}, {"parent", parent.empty() ? opad::json(nullptr) : opad::json(parent)}});
+  });
+  addAction("design.colour", tr("Colour"), "shaded", QKeySequence(), [this] {
+    const auto ids = currentNodeIds();
+    if (ids.empty()) throw opad::Error("Select the objects to colour first.");
+    const QColor c = QColorDialog::getColor(Qt::gray, this, tr("Colour"));
+    if (!c.isValid()) return;
+    for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
+  });
+  addAction("design.opacity", tr("Opacity"), "wireframe", QKeySequence(), [this] {
+    const auto ids = currentNodeIds();
+    if (ids.empty()) throw opad::Error("Select the objects to make see-through first.");
+    bool ok = false;
+    const opad::Node* n = m_doc->node(ids.front());
+    const int pct = QInputDialog::getInt(this, tr("Opacity"), tr("Opacity (10–100 %):"), n ? static_cast<int>(n->opacity * 100) : 100, 10, 100, 10, &ok);
+    if (!ok) return;
+    for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"opacity", pct / 100.0}});
+  });
+  addAction("design.lock", tr("Lock"), "lock", QKeySequence(), [this] {
+    const auto ids = currentNodeIds();
+    if (ids.empty()) throw opad::Error("Select the objects to lock or unlock first.");
+    const opad::Node* n = m_doc->node(ids.front());
+    for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"locked", !(n && n->locked)}});
+  });
+
+  // Sketch mode.
+  addAction("sketch.finish", tr("Finish sketch"), "finish", QKeySequence("Ctrl+Return"), [this] { m_design->finishSketch(); });
+  addAction("sketch.cancel", tr("Cancel sketch"), "close", QKeySequence(), [this] { m_design->cancelSketch(); });
+  auto* tools = new QActionGroup(this);
+  for (const auto& [tool, text, icon] : std::vector<std::tuple<QString, QString, QString>>{
+           {"select", tr("Select"), "cursor"}, {"line", tr("Line"), "line"}, {"rect", tr("Rectangle"), "rect"}, {"crect", tr("Centre rectangle"), "crect"},
+           {"circle", tr("Circle"), "circle"}, {"circle3", tr("3-point circle"), "circle3"}, {"arc3", tr("3-point arc"), "arc3"}, {"arcc", tr("Centre arc"), "arcc"},
+           {"polygon", tr("Polygon"), "polygon"}, {"slot", tr("Slot"), "slot"}, {"ellipse", tr("Ellipse"), "ellipse"}, {"spline", tr("Spline"), "spline"},
+           {"point", tr("Point"), "point"}, {"fillet", tr("Sketch fillet"), "fillet"}, {"trim", tr("Trim"), "trim"}, {"mirror", tr("Mirror"), "mirror"},
+           {"dimension", tr("Dimension"), "dimension"}, {"c:horizontal", tr("Horizontal"), "cHorizontal"}, {"c:vertical", tr("Vertical"), "cVertical"},
+           {"c:coincident", tr("Coincident"), "cCoincident"}, {"c:parallel", tr("Parallel"), "cParallel"}, {"c:perpendicular", tr("Perpendicular"), "cPerpendicular"},
+           {"c:tangent", tr("Tangent"), "cTangent"}, {"c:equal", tr("Equal"), "cEqual"}, {"c:concentric", tr("Concentric"), "cConcentric"}, {"c:midpoint", tr("Midpoint"), "cMidpoint"},
+           {"c:symmetric", tr("Symmetric"), "cSymmetric"}, {"c:collinear", tr("Collinear"), "cCollinear"}, {"c:fix", tr("Fix"), "cFix"}}) {
+    QAction* a = addAction("sketch." + QString(tool).replace(':', '.'), text, icon, QKeySequence(), [this, t = tool] { m_design->sketch()->setTool(t); }, true);
+    a->setProperty("sketchTool", tool);
+    tools->addAction(a);
+  }
+  addAction("sketch.construction", tr("Construction"), "construction", QKeySequence(), [this] { m_design->sketch()->toggleConstruction(); });
+}
+
+void MainWindow::buildDesign() {
+  m_design = new DesignController(m_doc, m_viewport, m_jobs, this);
+  m_featurePanel = new ToolPanel("feature", "extrude", &Tokens::sel, tr("Feature"), m_design->featurePanel(), 560, this);
+  m_panels << m_featurePanel;
+  m_design->setPanel(m_featurePanel, [this](ToolPanel* p) { openPanel(p); });
+  connect(m_design, &DesignController::status, this, [this](const QString& text) { m_statusHover->setText(text); });
+  connect(m_design, &DesignController::failed, this, [this](const QString& error) { QMessageBox::warning(this, tr("OPAD"), i18n::t(error)); });
+  connect(m_design, &DesignController::stateChanged, this, &MainWindow::updateDesignState);
+  connect(m_timeline, &TimelineWidget::opActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });
+  connect(m_browser, &BrowserPanel::sketchActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });
+  updateDesignState();
+}
+
+// Sketch mode swaps the ribbon to its own tab set and back; tool buttons follow the editor's tool.
+void MainWindow::updateDesignState() {
+  const bool sketching = m_design->sketchActive();
+  const bool has = m_doc->hasDocument && !m_doc->browse;
+  if (sketching && m_ribbon->workspace() != m_sketchWorkspace) {
+    m_workspaceBeforeSketch = m_ribbon->workspace();
+    m_ribbon->setWorkspace(m_sketchWorkspace);
+  } else if (!sketching && m_ribbon->workspace() == m_sketchWorkspace) {
+    m_ribbon->setWorkspace(m_workspaceBeforeSketch);
+  }
+  const QString tool = sketching ? m_design->sketch()->tool() : QString();
+  for (QAction* a : m_actions) {
+    const QString id = a->objectName();
+    if (id.startsWith("sketch.")) {
+      a->setEnabled(sketching);
+      if (a->isCheckable()) a->setChecked(sketching && a->property("sketchTool").toString() == tool);
+    } else if (id.startsWith("design.")) {
+      a->setEnabled(has && !m_doc->loading);
+    } else if (id.startsWith("select.") || id.startsWith("inspect.") || id.startsWith("annotate.")) {
+      if (m_doc->hasDocument) a->setEnabled(!sketching || id == "inspect.clear");  // the left button draws while sketching
+    }
+  }
+  m_browser->setEnabled(!sketching);
+  updateUndoActions();
+  if (sketching) {
+    const int dof = m_design->sketch()->dof();
+    m_statusSel->setText(dof == 0 ? tr("Sketch fully constrained") : tr("Sketch · %1 degrees of freedom").arg(dof));
+  }
+}
+
 // ---------------------------------------------------------------- theme (F31)
 void MainWindow::applyTheme(bool dark) {
   m_settings.setValue("ui/dark", dark);
@@ -743,6 +906,7 @@ void MainWindow::showDocument(bool has) {
     if (m_doc->browse && (id == "edit.rename" || id == "edit.delete" || id == "edit.restore" || id.startsWith("annotate.") || id == "view.saveview" || id == "inspect.pin")) a->setEnabled(false);
   }
   if (m_pinAction) m_pinAction->setEnabled(has && !m_lastMeasure.is_null() && !m_doc->browse);
+  if (m_design) updateDesignState();
   m_browser->setViewerMode(m_doc->browse);
   updateUndoActions();
   action("panel.annotations")->setEnabled(has && !m_doc->browse);
@@ -820,7 +984,7 @@ void MainWindow::setLoading(bool on) {
   m_stack->setCurrentIndex(on || m_doc->hasDocument ? 1 : 0);  // the viewport (dimmed, spinner) rather than the start page while loading
   m_viewport->setBlocked(on);
   m_loadShade->setVisible(on);
-  for (QWidget* w : std::initializer_list<QWidget*>{m_browser, m_timeline, m_propsPanel, m_annotationsPanel, m_sectionPanel, m_toolPanel}) w->setEnabled(!on);
+  for (QWidget* w : std::initializer_list<QWidget*>{m_browser, m_timeline, m_propsPanel, m_annotationsPanel, m_sectionPanel, m_toolPanel, m_featurePanel}) w->setEnabled(!on);
   if (on) positionOverlays();
 }
 
@@ -875,6 +1039,7 @@ std::vector<std::string> MainWindow::currentNodeIds() const {
 }
 
 void MainWindow::onViewportSelection() {
+  if (m_design->ownsSelection()) return m_design->viewportSelectionChanged();  // picks for a feature input or a sketch plane
   if (m_syncing) return;
   m_syncing = true;
   auto refs = m_viewport->selection();
@@ -1076,12 +1241,21 @@ void MainWindow::timelineMenu(const std::string& opId, const QPoint& globalPos) 
   del->setEnabled(!deleted);
   QAction* restore = menu.addAction(icons::themed("restore", 16), tr("Restore\tShift+Del"));
   restore->setEnabled(deleted);
+  const opad::Op* menuOp = m_doc->doc.find_op(opId);
+  const bool designOp = menuOp && (menuOp->type == "feature" || menuOp->type == "sketch") && !deleted;
+  const opad::Feature* feat = m_doc->scene.feature(opId);
+  QAction* editOp = designOp ? menu.addAction(icons::themed("rename", 16), menuOp->type == "sketch" ? tr("Edit sketch") : tr("Edit feature")) : nullptr;
+  QAction* suppress = designOp && feat ? menu.addAction(icons::themed(feat->suppressed ? "eye" : "hide", 16), feat->suppressed ? tr("Unsuppress") : tr("Suppress")) : nullptr;
+  if (designOp) menu.addSeparator();
   QAction* sel = menu.addAction(icons::themed("isolate", 16), tr("Select what it touches\tT"));
   menu.addSeparator();
   QAction* copy = menu.addAction(icons::themed("commit", 16), tr("Copy op id\tCtrl+C"));
   QAction* log = menu.addAction(icons::themed("git", 16), tr("Show in git log"));
   QAction* chosen = menu.exec(globalPos);
-  if (chosen == del) deleteOp(opId);
+  if (!chosen) return;
+  if (chosen == editOp) m_design->editOp(opId);
+  else if (chosen == suppress) m_design->setSuppressed(opId, !feat->suppressed);
+  else if (chosen == del) deleteOp(opId);
   else if (chosen == restore) restoreOp(opId);
   else if (chosen == sel) selectOpTargets(opId);
   else if (chosen == copy) QApplication::clipboard()->setText(QString::fromStdString(opId));
@@ -1157,7 +1331,8 @@ void MainWindow::toggleTool(const QString& id) {
 }
 
 void MainWindow::startTool(const QString& id) {
-  if (!m_doc->hasDocument) return;
+  if (!m_doc->hasDocument || m_design->sketchActive()) return;
+  m_design->escape();  // a feature panel or a plane pick gives way
   if (!m_tool.id.isEmpty()) cancelTool();
   static const std::map<QString, std::tuple<const char*, const char*, int>> kTools = {
       {"distance", {QT_TR_NOOP("Distance"), "distance", 2}}, {"angle", {QT_TR_NOOP("Angle"), "angle", 2}},       {"radius", {QT_TR_NOOP("Radius"), "radius", 1}},
@@ -1361,6 +1536,11 @@ void MainWindow::resolveCurrentAnnotation() {
 }
 
 void MainWindow::deleteOp(const std::string& opId) {
+  // With a design history a tombstone changes what later features produce: planned on a worker.
+  if (!m_doc->scene.features.empty() || !m_doc->scene.sketches.empty()) {
+    m_design->applyOps({opad::json{{"op", "delete"}, {"target", opId}}}, tr("delete"));
+    return m_timeline->setCurrentOp(opId);
+  }
   opad::json r = m_doc->run("delete", opad::json{{"target", opId}});
   if (r.contains("id")) m_timeline->setCurrentOp(opId);
 }
@@ -1369,7 +1549,10 @@ void MainWindow::restoreOp(const std::string& opId) {
   // Restoring = tombstoning the delete op that targets it.
   for (const auto& op : m_doc->doc.ops)
     if (op.type == "delete" && op.data.value("target", "") == opId && !m_doc->doc.is_deleted(op.id)) {
-      m_doc->run("delete", opad::json{{"target", op.id}});
+      if (!m_doc->scene.features.empty() || !m_doc->scene.sketches.empty() || m_doc->doc.find_op(opId)->type == "feature" || m_doc->doc.find_op(opId)->type == "sketch")
+        m_design->applyOps({opad::json{{"op", "delete"}, {"target", op.id}}}, tr("restore"));
+      else
+        m_doc->run("delete", opad::json{{"target", op.id}});
       m_timeline->setCurrentOp(opId);
       return;
     }
@@ -1398,6 +1581,8 @@ void MainWindow::selectOpTargets(const std::string& opId) {
   if (d.contains("target") && d["target"].is_string() && m_doc->node(d["target"])) ids.push_back(d["target"]);
   if (d.contains("anchor")) { try { ids.push_back(opad::Ref::from_json(d["anchor"]).body); } catch (...) {} }
   if (d.contains("refs")) for (const auto& r : d["refs"]) { try { ids.push_back(opad::Ref::from_json(r).body); } catch (...) {} }
+  if (const opad::Feature* f = m_doc->scene.feature(opId))
+    for (const auto& b : f->result.value("bodies", opad::json::array())) ids.push_back(b.value("id", ""));
   if (op->type == "import") {
     std::function<void(const opad::json&)> walk = [&](const opad::json& nodes) {
       for (const auto& n : nodes) { ids.push_back(n.value("id", "")); if (n.contains("children")) walk(n["children"]); }
@@ -1671,6 +1856,19 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
   m_benchSelect = false;
+  // OPAD_BENCH_DESIGN=<png>: sketch + extrude through the design controller, dump the frame, quit.
+  if (const QString shot = qEnvironmentVariable("OPAD_BENCH_DESIGN"); !shot.isEmpty()) {
+    setWorkspace(1);
+    m_design->bench();
+    QTimer::singleShot(6000, this, [this, shot] {
+      trace::log(QStringLiteral("bench: design: %1 bodies, %2 features, %3 unresolved").arg(m_doc->scene.all_bodies().size()).arg(m_doc->scene.features.size()).arg(m_doc->scene.unresolved.size()));
+      m_viewport->benchDesignShot(shot);
+      if (const QByteArray ui = qgetenv("OPAD_BENCH_UISHOT"); !ui.isEmpty()) grab().save(QString::fromLocal8Bit(ui));
+      guarded([this] { m_doc->save(); });  // the round trip through the file, and no "unsaved changes" question on the way out
+      QTimer::singleShot(500, qApp, &QCoreApplication::quit);
+    });
+    return;
+  }
   // OPAD_BENCH_DISTANCE=<n>: time body-to-body distance between the n bodies with the most faces (every pair),
   // on a worker like the tool does. The worst case for measure_distance; compare values with opad-cli measure.
   if (const int n = qEnvironmentVariableIntValue("OPAD_BENCH_DISTANCE"); n > 1) {

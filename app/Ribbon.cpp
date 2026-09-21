@@ -204,7 +204,7 @@ void RibbonBar::showWorkspaceMenu() {
   col->setContentsMargins(5, 5, 5, 5);  // 4 px padding + the border
   col->setSpacing(2);
   for (int i = 0; i < m_workspaces.size(); ++i)
-    col->addWidget(new WorkspaceRow(m_workspaces[i], i == m_workspace, [this, menu, i] {
+    if (!m_workspaces[i].contextual) col->addWidget(new WorkspaceRow(m_workspaces[i], i == m_workspace, [this, menu, i] {
       menu->close();
       setWorkspace(i);
     }, menu));

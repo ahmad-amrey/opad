@@ -131,6 +131,7 @@ class BrowserPanel : public QWidget {
   void selectionChanged(const std::vector<std::string>& ids);
   void contextMenuRequested(const QPoint& globalPos, const std::vector<std::string>& ids);
   void fitRequested(const std::vector<std::string>& ids);
+  void sketchActivated(const std::string& sketchId);  // double-click on a sketch row: edit it
 
  public slots:
   void rebuild();
@@ -266,6 +267,7 @@ class TimelineWidget : public QWidget {
 
  signals:
   void opClicked(const std::string& opId);
+  void opActivated(const std::string& opId);  // double-click: edit a feature or a sketch
   void contextRequested(const std::string& opId, const QPoint& globalPos);
 
  public slots:
@@ -275,9 +277,11 @@ class TimelineWidget : public QWidget {
   void paintEvent(QPaintEvent*) override;
   void mouseMoveEvent(QMouseEvent*) override;
   void mousePressEvent(QMouseEvent*) override;
+  void mouseDoubleClickEvent(QMouseEvent*) override;
   void leaveEvent(QEvent*) override;
 
  private:
+  QString iconFor(const opad::Op& op) const;
   int indexAt(const QPoint& p) const;
   QRect markerRect(int i) const;
   bool isUnresolved(const std::string& opId) const;

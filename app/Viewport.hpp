@@ -23,12 +23,27 @@
 #include <string>
 #include <vector>
 
+#include <TopoDS_Shape.hxx>
+
 #include "AppDocument.hpp"
 #include "BodyShape.hpp"
 #include "Theme.hpp"
 
 class JobRunner;
 class Job;
+class QKeyEvent;
+
+// Sketch editing (SketchEditor) takes the left mouse button and the keyboard while it is active; positions
+// arrive in sketch-plane coordinates. Navigation (middle/right button, wheel, view cube) stays with the view.
+class SketchInput {
+ public:
+  virtual ~SketchInput() = default;
+  virtual void sketchPress(double u, double v, Qt::KeyboardModifiers mods) = 0;
+  virtual void sketchMove(double u, double v, Qt::KeyboardModifiers mods, bool dragging) = 0;
+  virtual void sketchRelease(double u, double v, Qt::KeyboardModifiers mods) = 0;
+  virtual void sketchDoubleClick(double u, double v) = 0;
+  virtual bool sketchKey(QKeyEvent* e) = 0;  // true = handled
+};
 
 class Viewport : public QWidget, protected AIS_ViewController {
   Q_OBJECT
@@ -99,6 +114,40 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showPreview(const opad::Vec3& a, const opad::Vec3& b, const QString& label);  // dashed hov line to the hovered candidate
   void clearPreview();
 
+  // ---- design (ViewportDesign.cpp)
+  // Things a feature input can pick that are not part of a body: sketch regions, sketch points and lines,
+  // origin planes and axes, construction planes. Shown translucent, picked like anything else; ids are the
+  // caller's. While candidates are shown, selection() still reports body picks and selectedCandidates() these.
+  struct Candidate {
+    std::string id;
+    TopoDS_Shape shape;
+    bool strong = false;  // drawn more solid (construction planes among faint origin planes)
+  };
+  void showCandidates(const std::vector<Candidate>& candidates);
+  void clearCandidates();
+  std::vector<std::string> selectedCandidates() const;  // in pick order
+  // Makes the context selection exactly these (bodies, faces/edges/vertices by ordinal, candidates).
+  void selectRefs(const std::vector<opad::Ref>& refs, const std::vector<std::string>& candidates = {});
+  void setBodiesPickable(bool on);  // off: only candidates can be picked (choosing a sketch plane, a profile)
+  // Feature preview: these shapes (world coordinates, already meshed by the worker) are drawn in place of the
+  // nodes they change; `hidden` nodes are not drawn at all (consumed tools, removed bodies).
+  void setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_Shape>>& shapes, const std::vector<std::string>& hidden);
+  void clearPreviewBodies();
+  // Sketch editing.
+  void beginSketchInput(SketchInput* input, const opad::Frame& frame, const std::string& hiddenSketch);
+  void endSketchInput();
+  bool sketching() const { return m_sketchInput != nullptr; }
+  void lookAt(const opad::Frame& frame, bool fit = true);  // camera along the plane normal, plane x to the right
+  bool planePoint(const QPointF& widgetPos, const opad::Frame& frame, double& u, double& v) const;
+  double pixelSize() const;                    // world units per widget pixel at the view's focus
+  QPoint widgetPoint(const opad::Vec3& world) const;
+  // Objects owned by an editor (the sketch being drawn, its dimensions): never pickable, drawn on top.
+  void showOverlay(const Handle(AIS_InteractiveObject)& obj);
+  void updateOverlay(const Handle(AIS_InteractiveObject)& obj);
+  void removeOverlay(const Handle(AIS_InteractiveObject)& obj);
+  const Tokens& tokens() const { return m_tokens; }
+  void benchDesignShot(const QString& path);  // OPAD_BENCH_DESIGN: fit, redraw, dump the 3D frame
+
   opad::json cameraJson() const;
   void setCameraJson(const opad::json& j);
   QImage grabImage();
@@ -127,6 +176,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void mousePressEvent(QMouseEvent*) override;
   void mouseReleaseEvent(QMouseEvent*) override;
   void mouseMoveEvent(QMouseEvent*) override;
+  void mouseDoubleClickEvent(QMouseEvent*) override;
+  bool event(QEvent* e) override;  // sketching: plain keys reach the editor before the window's shortcuts
+  void keyPressEvent(QKeyEvent*) override;
   void wheelEvent(QWheelEvent*) override;
   void OnSelectionChanged(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
   // Timed when OPAD_TRACE is set: a slow frame is either picking under the mouse or the redraw itself.
@@ -206,6 +258,22 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_notifyWhenApplied = false;               // clearSelection(): emit selectionChanged once settled
   std::shared_ptr<std::atomic<bool>> m_meshCancel = std::make_shared<std::atomic<bool>>(false);
   std::shared_ptr<std::atomic<bool>> m_alive;
+
+  // design
+  void syncSketches();  // the scene's visible sketches as wire objects
+  struct SketchWire {
+    Handle(AIS_Shape) ais;
+    std::string stamp;  // geometry + frame it was built from
+  };
+  std::map<std::string, SketchWire> m_sketchWires;
+  std::string m_hiddenSketch;  // being edited: the editor draws it
+  std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_candidates;
+  std::vector<Handle(AIS_Shape)> m_previewBodies;
+  std::set<std::string> m_previewHidden;  // nodes whose own object is erased while the preview shows
+  bool m_bodiesPickable = true;
+  SketchInput* m_sketchInput = nullptr;
+  opad::Frame m_sketchFrame;
+  bool m_sketchDrag = false;
 
   QTimer m_timer;
   QString m_hover;
