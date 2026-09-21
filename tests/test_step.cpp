@@ -123,11 +123,13 @@ TEST(inspect_faces_edges_and_measure) {
   CHECK_NEAR(rad["point_a"][0].get<double>(), hole["axis_origin"][0].get<double>(), 1e-9);
   CHECK_NEAR(rad["point_a"][1].get<double>(), hole["axis_origin"][1].get<double>(), 1e-9);
   int circularEdges = 0;
+  std::vector<Ref> circleRefs;
   for (const auto& index : hole["edges"]) {
     const Ref edge = Ref::parse(block + "/edge/" + std::to_string(index.get<int>()));
     const json info = inspect_ref(d, s, edge);
     if (info["curve"] != "circle") continue;
     ++circularEdges;
+    circleRefs.push_back(edge);
     const json circle = measure_radius(d, s, edge);
     double lengthSq = 0;
     for (int i = 0; i < 3; ++i) {
@@ -138,6 +140,26 @@ TEST(inspect_faces_edges_and_measure) {
     CHECK_NEAR(std::sqrt(lengthSq), circle["value"].get<double>(), 1e-9);
   }
   CHECK(circularEdges > 0);
+  CHECK(circleRefs.size() >= 2);
+  const json edgeA = inspect_ref(d, s, circleRefs[0]), edgeB = inspect_ref(d, s, circleRefs[1]);
+  Vec3 pickedA, pickedB;
+  for (int i = 0; i < 3; ++i) {
+    pickedA[i] = edgeA["start"][i].get<double>();
+    pickedB[i] = edgeB["start"][i].get<double>();
+  }
+  const json anchored = measure_edge_distance(d, s, circleRefs[0], circleRefs[1], pickedA, pickedB, 0.5);
+  CHECK(anchored["anchors"].is_array() && anchored["anchors"].size() >= 3);
+  CHECK_EQ(anchored["anchor_index"].get<int>(), 0);
+  bool hasClosest = false, hasFarthest = false;
+  double closestValue = 0, farthestValue = 0;
+  for (const auto& option : anchored["anchors"]) {
+    if (option["kind"] == "closest") { hasClosest = true; closestValue = option["value"].get<double>(); }
+    if (option["kind"] == "farthest") { hasFarthest = true; farthestValue = option["value"].get<double>(); }
+    CHECK(option["point_a"].size() == 3 && option["point_b"].size() == 3);
+  }
+  CHECK(hasClosest && hasFarthest);
+  CHECK(farthestValue + 1e-9 >= closestValue);
+  for (int i = 0; i < 3; ++i) CHECK_NEAR(anchored["point_a"][i].get<double>(), pickedA[i], 1e-7);
   json topf = inspect_ref(d, s, Ref::parse(block + "/face/" + std::to_string(top)));
   CHECK_NEAR(topf["area"].get<double>(), 40.0 * 30 - M_PI * 16, 1e-6);
   // Angle between the hole axis and the top face normal is 0.

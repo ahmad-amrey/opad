@@ -143,6 +143,34 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_toolSteps, &ToolStepsPanel::pinRequested, this, [this] { guarded([this] { pinMeasurement(); }); });
   connect(m_toolSteps, &ToolStepsPanel::clearRequested, this, &MainWindow::toolEscape);
   connect(m_toolSteps, &ToolStepsPanel::componentsChanged, m_viewport, &Viewport::setMeasurementComponents);
+  connect(m_toolSteps, &ToolStepsPanel::anchorChanged, this, [this](int index) {
+    if (!m_lastMeasure.contains("anchors") || index < 0 || index >= static_cast<int>(m_lastMeasure["anchors"].size())) return;
+    const opad::json& anchor = m_lastMeasure["anchors"][index];
+    for (const char* key : {"value", "point_a", "point_b", "delta"}) m_lastMeasure[key] = anchor[key];
+    m_lastMeasure["anchor_index"] = index;
+    m_viewport->showMeasurement(m_lastMeasure);
+    refreshToolUi();
+  });
+  connect(m_viewport, &Viewport::measurementAnchorPicked, this, [this](int side, const opad::Vec3& point) {
+    if (m_tool.id != "distance" || !m_lastMeasure.contains("anchors") || side < 0 || side > 1) return;
+    m_lastMeasure[side == 0 ? "point_a" : "point_b"] = point;
+    double squared = 0;
+    for (int axis = 0; axis < 3; ++axis) {
+      const double delta = m_lastMeasure["point_b"][axis].get<double>() - m_lastMeasure["point_a"][axis].get<double>();
+      m_lastMeasure["delta"][axis] = delta;
+      squared += delta * delta;
+    }
+    m_lastMeasure["value"] = std::sqrt(squared);
+    auto& options = m_lastMeasure["anchors"];
+    int index = -1;
+    for (size_t i = 0; i < options.size(); ++i)
+      if (options[i].value("kind", "") == "custom") { index = static_cast<int>(i); break; }
+    if (index < 0) { index = static_cast<int>(options.size()); options.push_back({{"kind", "custom"}}); }
+    for (const char* key : {"value", "point_a", "point_b", "delta"}) options[index][key] = m_lastMeasure[key];
+    m_lastMeasure["anchor_index"] = index;
+    m_viewport->showMeasurement(m_lastMeasure);
+    refreshToolUi();
+  });
   connect(m_toolPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
     if (!on && toolMeasures()) cancelTool();  // closing the tool's panel leaves the tool
   });
@@ -1352,7 +1380,7 @@ void MainWindow::startTool(const QString& id) {
   // Angles and radii need faces or edges; the section plane needs a face.
   const Viewport::SelFilter f = m_viewport->selectionFilter();
   const bool wantFaces = id == "sectionface" ? f != Viewport::SelFilter::Face : (id == "angle" || id == "radius") && (f == Viewport::SelFilter::Body || f == Viewport::SelFilter::Vertex);
-  m_viewport->setPickAccumulate(true);
+  m_viewport->setPickAccumulate(true, id == "distance");
   for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "annotate.add"})
     action(a)->setChecked(id == QString(a).section('.', 1) || (id == "note" && QString(a) == "annotate.add"));
   if (toolMeasures()) {
@@ -1416,6 +1444,8 @@ void MainWindow::toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromC
   m_pinAction->setEnabled(false);
   m_viewport->clearDimension();
   m_viewport->clearPreview();
+  m_viewport->setMeasurementSelectionLocked(m_tool.id == "distance" && picks.size() == 2
+      && picks[0].kind == opad::Ref::Kind::Edge && picks[1].kind == opad::Ref::Kind::Edge);
   std::vector<opad::Vec3> marks;
   for (const auto& p : m_toolPoints) if (p.first) marks.push_back(p.second);
   m_viewport->showPickMarkers(marks);
@@ -1432,14 +1462,25 @@ void MainWindow::toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromC
 // The measurement is exact geometry (BRepExtrema, BRepGProp): on a worker, never in the click handler.
 void MainWindow::runToolMeasure() {
   const std::vector<opad::Ref> refs = m_toolPicks;
+  const auto pickedPoints = m_toolPoints;
+  const double snapTolerance = m_viewport->pixelSize() * 14.0;
   const int run = m_toolRun;
   auto result = std::make_shared<opad::json>();
   const QString kind = m_tool.id;
   // Straight to the measure functions with the app's resolved scene; the "measure" command would resolve the
   // whole scene from the op log again on every call.
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();
-  m_measureJob = m_jobs->async(tr("Measuring %1").arg(m_tool.title), [this, refs, kind, result](Progress progress) {
-    if (kind == "distance") *result = opad::measure_distance(m_doc->doc, m_doc->scene, refs.at(0), refs.at(1), [progress] { return progress.cancelled(); });
+  m_measureJob = m_jobs->async(tr("Measuring %1").arg(m_tool.title), [this, refs, pickedPoints, snapTolerance, kind, result](Progress progress) {
+    if (kind == "distance" && refs.at(0).kind == opad::Ref::Kind::Edge && refs.at(1).kind == opad::Ref::Kind::Edge) {
+      const bool clicked = pickedPoints.size() >= 2 && pickedPoints[0].first && pickedPoints[1].first;
+      opad::json closest;
+      if (!clicked) closest = opad::measure_distance(m_doc->doc, m_doc->scene, refs[0], refs[1], [progress] { return progress.cancelled(); });
+      *result = opad::measure_edge_distance(m_doc->doc, m_doc->scene, refs[0], refs[1],
+          clicked ? pickedPoints[0].second : closest["point_a"].get<opad::Vec3>(),
+          clicked ? pickedPoints[1].second : closest["point_b"].get<opad::Vec3>(),
+          clicked ? snapTolerance : 0.0, [progress] { return progress.cancelled(); });
+    }
+    else if (kind == "distance") *result = opad::measure_distance(m_doc->doc, m_doc->scene, refs.at(0), refs.at(1), [progress] { return progress.cancelled(); });
     else if (kind == "angle") *result = opad::measure_angle(m_doc->doc, m_doc->scene, refs.at(0), refs.at(1));
     else if (kind == "radius") *result = opad::measure_radius(m_doc->doc, m_doc->scene, refs.at(0));
     else *result = opad::measure_bbox(m_doc->doc, m_doc->scene, refs);
@@ -1474,12 +1515,37 @@ void MainWindow::refreshToolUi() {
   const QString waiting = picked < steps.size() ? steps[picked].label : tr("Measuring…");
   QString explanation = waiting;
   if (done) {
-    if (m_tool.id == "distance") explanation = tr("Shortest distance between the selections. Δ = point 2 − point 1 in world axes.");
+    if (m_tool.id == "distance" && m_lastMeasure.contains("anchors")) explanation = tr("Click an anchor marker to move that measurement point. Edges stay selected until Esc or Clear. Choose a preset pair below.");
+    else if (m_tool.id == "distance") explanation = tr("Shortest distance between the selections. Δ = point 2 − point 1 in world axes.");
     else if (m_tool.id == "angle") explanation = tr("Directions compared at a common origin. Planar faces use their normals; curved faces use their axes.");
     else if (m_tool.id == "radius") explanation = tr("Radius from the center or cylinder axis to the surface.");
     else explanation = tr("Bounding box aligned with the world X, Y and Z axes.");
   }
   m_toolSteps->setSummary(m_tool.title, explanation, done && !m_doc->browse ? tr("unpinned") : QString());
+  QStringList anchorLabels;
+  int anchorIndex = 0;
+  if (done && m_lastMeasure.contains("anchors")) {
+    anchorIndex = m_lastMeasure.value("anchor_index", 0);
+    for (const auto& anchor : m_lastMeasure["anchors"]) {
+      const std::string key = anchor.value("kind", "picked");
+      if (key == "picked") anchorLabels << tr("Picked points");
+      else if (key == "custom") anchorLabels << tr("Selected anchors");
+      else if (key == "closest") anchorLabels << tr("Closest points");
+      else if (key == "farthest") anchorLabels << tr("Farthest points");
+      else if (key == "edge1_start") anchorLabels << tr("Edge 1 start → nearest");
+      else if (key == "edge1_end") anchorLabels << tr("Edge 1 end → nearest");
+      else if (key == "edge1_midpoint") anchorLabels << tr("Edge 1 midpoint → nearest");
+      else if (key == "edge1_quarter") anchorLabels << tr("Edge 1 quarter → nearest");
+      else if (key == "edge1_three_quarter") anchorLabels << tr("Edge 1 three-quarter → nearest");
+      else if (key == "edge2_start") anchorLabels << tr("Nearest → edge 2 start");
+      else if (key == "edge2_end") anchorLabels << tr("Nearest → edge 2 end");
+      else if (key == "edge2_midpoint") anchorLabels << tr("Nearest → edge 2 midpoint");
+      else if (key == "edge2_quarter") anchorLabels << tr("Nearest → edge 2 quarter");
+      else if (key == "edge2_three_quarter") anchorLabels << tr("Nearest → edge 2 three-quarter");
+      else anchorLabels << tr("Curve points of interest");
+    }
+  }
+  m_toolSteps->setAnchorOptions(anchorLabels, anchorIndex);
   m_toolSteps->setComponentsState(done && m_viewport->measurementHasMultipleAxes(), m_viewport->measurementComponents());
   QList<QPair<QString, QString>> rows;
   if (done) {

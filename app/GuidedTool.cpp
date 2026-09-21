@@ -216,6 +216,21 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
   sl->addWidget(m_subtitle);
   layout->addWidget(summary);
 
+  m_anchorRow = new QWidget(this);
+  auto* anchorLayout = new QHBoxLayout(m_anchorRow);
+  anchorLayout->setContentsMargins(12, 4, 12, 4);
+  anchorLayout->setSpacing(8);
+  auto* anchorLabel = new QLabel(tr("Anchors"), m_anchorRow);
+  anchorLabel->setObjectName("secondary");
+  m_anchors = new QComboBox(m_anchorRow);
+  m_anchors->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  m_anchors->setToolTip(tr("Choose which points on the selected edges define the measurement."));
+  anchorLayout->addWidget(anchorLabel);
+  anchorLayout->addWidget(m_anchors, 1);
+  layout->addWidget(m_anchorRow);
+  m_anchorRow->hide();
+  connect(m_anchors, qOverload<int>(&QComboBox::currentIndexChanged), this, &ToolStepsPanel::anchorChanged);
+
   m_components = new QCheckBox(tr("Show ΔX, ΔY, ΔZ arrows"), this);
   m_components->setChecked(true);
   m_components->setToolTip(tr("Signed world-axis components from point 1 to point 2. Red X, green Y, blue Z."));
@@ -388,6 +403,15 @@ void ToolStepsPanel::setComponentsState(bool visible, bool checked) {
   const QSignalBlocker blocker(m_components);
   m_components->setChecked(checked);
   m_components->setVisible(visible);
+  emit contentSizeChanged();
+}
+
+void ToolStepsPanel::setAnchorOptions(const QStringList& labels, int current) {
+  const QSignalBlocker blocker(m_anchors);
+  m_anchors->clear();
+  m_anchors->addItems(labels);
+  if (!labels.isEmpty()) m_anchors->setCurrentIndex(std::clamp(current, 0, static_cast<int>(labels.size()) - 1));
+  m_anchorRow->setVisible(labels.size() > 1);
   emit contentSizeChanged();
 }
 

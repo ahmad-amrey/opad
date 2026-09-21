@@ -5,6 +5,8 @@
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
+#include <BRepExtrema_ExtCC.hxx>
+#include <BRepExtrema_ExtPC.hxx>
 #include <BRepExtrema_TriangleSet.hxx>
 #include <BVH_PairDistance.hxx>
 #include <BVH_Tools.hxx>
@@ -40,6 +42,7 @@ namespace opad {
 namespace {
 
 json pnt(const gp_Pnt& p) { return {p.X(), p.Y(), p.Z()}; }
+gp_Pnt json_pnt(const json& p) { return gp_Pnt(p[0].get<double>(), p[1].get<double>(), p[2].get<double>()); }
 json dir(const gp_Dir& d) { return {d.X(), d.Y(), d.Z()}; }
 json vec(const Vec3& v) { return {v[0], v[1], v[2]}; }
 
@@ -500,6 +503,58 @@ struct Closest {
   gp_Pnt a, b;
 };
 
+struct EdgePoint {
+  std::string name;
+  gp_Pnt point;
+};
+
+struct DistanceAnchor {
+  std::string kind;
+  gp_Pnt a, b;
+};
+
+bool samePoint(const gp_Pnt& a, const gp_Pnt& b) { return a.SquareDistance(b) <= 1e-14; }
+
+void addEdgePoint(std::vector<EdgePoint>& points, const std::string& name, const gp_Pnt& point) {
+  for (const auto& p : points)
+    if (samePoint(p.point, point)) return;
+  points.push_back({name, point});
+}
+
+std::vector<EdgePoint> edgePoints(const TopoDS_Edge& edge) {
+  BRepAdaptor_Curve curve(edge);
+  const double first = curve.FirstParameter(), last = curve.LastParameter();
+  std::vector<EdgePoint> points;
+  if (!std::isfinite(first) || !std::isfinite(last)) return points;
+  const gp_Pnt start = curve.Value(first), end = curve.Value(last);
+  addEdgePoint(points, "start", start);
+  if (!samePoint(start, end)) addEdgePoint(points, "end", end);
+  addEdgePoint(points, "midpoint", curve.Value((first + last) * 0.5));
+  // A closed circle has no visually privileged seam. Quarter points make its familiar cardinal anchors
+  // available, while curve/curve extrema below add the points nearest and farthest from the other edge.
+  if (curve.GetType() == GeomAbs_Circle && samePoint(start, end)) {
+    addEdgePoint(points, "quarter", curve.Value(first + (last - first) * 0.25));
+    addEdgePoint(points, "three_quarter", curve.Value(first + (last - first) * 0.75));
+  }
+  return points;
+}
+
+void addAnchor(std::vector<DistanceAnchor>& anchors, const std::string& kind, const gp_Pnt& a, const gp_Pnt& b) {
+  for (const auto& option : anchors) {
+    if (option.kind == kind && samePoint(option.a, a) && samePoint(option.b, b)) return;
+    // Keep the named closest/farthest choices even when one currently coincides with the picked anchors.
+    // Their meaning remains useful, and a user should always be able to request either extreme explicitly.
+    if (kind != "closest" && kind != "farthest" && samePoint(option.a, a) && samePoint(option.b, b)) return;
+  }
+  anchors.push_back({kind, a, b});
+}
+
+json anchorJson(const DistanceAnchor& option) {
+  const gp_Vec delta(option.a, option.b);
+  return {{"kind", option.kind}, {"value", option.a.Distance(option.b)}, {"point_a", pnt(option.a)},
+          {"point_b", pnt(option.b)}, {"delta", {delta.X(), delta.Y(), delta.Z()}}};
+}
+
 // Exact minimum between two shapes; only the minimum is searched (the default also looks for maxima).
 void exactDistance(const TopoDS_Shape& s1, const TopoDS_Shape& s2, bool parallel, const std::function<bool()>& cancelled, Closest& best) {
   BRepExtrema_DistShapeShape dist;
@@ -578,6 +633,100 @@ json measure_distance(const Document& doc, const Scene& scene, const Ref& a, con
   j["point_b"] = pnt(best.b);
   j["delta"] = {best.b.X() - best.a.X(), best.b.Y() - best.a.Y(), best.b.Z() - best.a.Z()};
   return j;
+}
+
+json measure_edge_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b,
+                           const Vec3& picked_a, const Vec3& picked_b, double snap_tolerance,
+                           const std::function<bool()>& cancelled) {
+  if (a.kind != Ref::Kind::Edge || b.kind != Ref::Kind::Edge)
+    return measure_distance(doc, scene, a, b, cancelled);
+  const TopoDS_Edge edge_a = TopoDS::Edge(ref_shape(doc, scene, a));
+  const TopoDS_Edge edge_b = TopoDS::Edge(ref_shape(doc, scene, b));
+  json result = measure_distance(doc, scene, a, b, cancelled);
+  std::vector<EdgePoint> points_a = edgePoints(edge_a), points_b = edgePoints(edge_b);
+  std::vector<DistanceAnchor> extrema;
+
+  BRepExtrema_ExtCC cc(edge_a, edge_b);
+  if (cc.IsDone() && !cc.IsParallel()) {
+    for (int i = 1; i <= cc.NbExt(); ++i) {
+      const gp_Pnt pa = cc.PointOnE1(i), pb = cc.PointOnE2(i);
+      addAnchor(extrema, "extremum", pa, pb);
+      addEdgePoint(points_a, "extremum", pa);
+      addEdgePoint(points_b, "extremum", pb);
+    }
+  }
+  // Curve/curve extrema do not include every trimmed-boundary case. In particular, the far side of a
+  // circle relative to the endpoint of another edge is a point/curve extremum.
+  const std::vector<EdgePoint> base_a = points_a, base_b = points_b;
+  for (const auto& fixed : base_a) {
+    BRepExtrema_ExtPC pc(BRepBuilderAPI_MakeVertex(fixed.point).Vertex(), edge_b);
+    if (!pc.IsDone()) continue;
+    for (int i = 1; i <= pc.NbExt(); ++i) {
+      const gp_Pnt other = pc.Point(i);
+      addAnchor(extrema, "extremum", fixed.point, other);
+      addEdgePoint(points_b, "extremum", other);
+    }
+  }
+  for (const auto& fixed : base_b) {
+    BRepExtrema_ExtPC pc(BRepBuilderAPI_MakeVertex(fixed.point).Vertex(), edge_a);
+    if (!pc.IsDone()) continue;
+    for (int i = 1; i <= pc.NbExt(); ++i) {
+      const gp_Pnt other = pc.Point(i);
+      addAnchor(extrema, "extremum", other, fixed.point);
+      addEdgePoint(points_a, "extremum", other);
+    }
+  }
+
+  auto project = [&](const gp_Pnt& point, const TopoDS_Edge& edge, bool pointFirst) {
+    Closest nearest;
+    const TopoDS_Shape vertex = BRepBuilderAPI_MakeVertex(point);
+    if (pointFirst) exactDistance(vertex, edge, false, cancelled, nearest);
+    else exactDistance(edge, vertex, false, cancelled, nearest);
+    if (nearest.value == std::numeric_limits<double>::max()) return point;
+    return pointFirst ? nearest.b : nearest.a;
+  };
+  auto snap = [&](const gp_Pnt& picked, const TopoDS_Edge& edge, const std::vector<EdgePoint>& points, bool pointFirst) {
+    const gp_Pnt projected = project(picked, edge, pointFirst);
+    gp_Pnt snapped = projected;
+    double best = std::max(snap_tolerance, 1e-9);
+    for (const auto& candidate : points) {
+      const double distance = projected.Distance(candidate.point);
+      if (distance <= best) { best = distance; snapped = candidate.point; }
+    }
+    return snapped;
+  };
+
+  std::vector<DistanceAnchor> options;
+  const gp_Pnt picked1(picked_a[0], picked_a[1], picked_a[2]), picked2(picked_b[0], picked_b[1], picked_b[2]);
+  addAnchor(options, "picked", snap(picked1, edge_a, points_a, true), snap(picked2, edge_b, points_b, false));
+  addAnchor(options, "closest", json_pnt(result["point_a"]), json_pnt(result["point_b"]));
+
+  // The farthest of the curve/curve stationary pairs and trimmed endpoint pairs is a useful opposite
+  // extreme for circles, arcs and splines. Endpoint-to-edge options below cover their boundary extrema.
+  DistanceAnchor farthest{"farthest", options.front().a, options.front().b};
+  for (const auto& option : extrema)
+    if (option.a.SquareDistance(option.b) > farthest.a.SquareDistance(farthest.b)) farthest = {"farthest", option.a, option.b};
+  for (const auto& pa : points_a)
+    for (const auto& pb : points_b)
+      if (pa.point.SquareDistance(pb.point) > farthest.a.SquareDistance(farthest.b)) farthest = {"farthest", pa.point, pb.point};
+  addAnchor(options, "farthest", farthest.a, farthest.b);
+
+  auto pointOptions = [&](const std::vector<EdgePoint>& points, const TopoDS_Edge& other, bool fromA) {
+    for (const auto& candidate : points) {
+      if (candidate.name == "extremum") continue;
+      const gp_Pnt nearest = project(candidate.point, other, fromA);
+      addAnchor(options, std::string(fromA ? "edge1_" : "edge2_") + candidate.name,
+                fromA ? candidate.point : nearest, fromA ? nearest : candidate.point);
+    }
+  };
+  pointOptions(points_a, edge_b, true);
+  pointOptions(points_b, edge_a, false);
+
+  result["anchors"] = json::array();
+  for (const auto& option : options) result["anchors"].push_back(anchorJson(option));
+  result["anchor_index"] = 0;
+  for (const char* key : {"value", "point_a", "point_b", "delta"}) result[key] = result["anchors"][0][key];
+  return result;
 }
 
 json measure_angle(const Document& doc, const Scene& scene, const Ref& a, const Ref& b) {

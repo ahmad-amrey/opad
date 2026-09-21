@@ -17,6 +17,7 @@ namespace {
 Quantity_Color color(const QColor& c) { return Quantity_Color(c.redF(), c.greenF(), c.blueF(), Quantity_TOC_sRGB); }
 gp_Pnt point(const opad::json& j) { return gp_Pnt(j[0].get<double>(), j[1].get<double>(), j[2].get<double>()); }
 QString number(double v) { return QString::number(std::abs(v) < 0.0005 ? 0.0 : v, 'f', 3); }
+bool samePoint(const gp_Pnt& a, const gp_Pnt& b) { return a.SquareDistance(b) <= 1e-14; }
 int componentCount(const gp_Pnt& a, const gp_Pnt& b) {
   int count = 0;
   for (int axis = 1; axis <= 3; ++axis)
@@ -33,7 +34,8 @@ class InspectGraphic : public AIS_InteractiveObject {
   std::vector<Arrow> arrows;
   std::vector<Line> lines;
   std::vector<gp_Pnt> endpoints;
-  QColor endpointColor;
+  std::vector<gp_Pnt> snapPoints;
+  QColor endpointColor, snapPointColor;
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs, Standard_Integer) override {
     for (const auto& l : lines) {
@@ -71,6 +73,14 @@ class InspectGraphic : public AIS_InteractiveObject {
       for (const auto& p : endpoints) points->AddVertex(p);
       group->AddPrimitiveArray(points);
     }
+    if (!snapPoints.empty()) {
+      auto group = prs->NewGroup();
+      Handle(Prs3d_PointAspect) style = new Prs3d_PointAspect(Aspect_TOM_RING2, color(snapPointColor), 5);
+      group->SetGroupPrimitivesAspect(style->Aspect());
+      Handle(Graphic3d_ArrayOfPoints) points = new Graphic3d_ArrayOfPoints(static_cast<int>(snapPoints.size()));
+      for (const auto& p : snapPoints) points->AddVertex(p);
+      group->AddPrimitiveArray(points);
+    }
   }
   void ComputeSelection(const Handle(SelectMgr_Selection)&, Standard_Integer) override {}
 };
@@ -78,6 +88,10 @@ class InspectGraphic : public AIS_InteractiveObject {
 
 void Viewport::clearDimension() {
   m_measurement = opad::json();
+  m_measureAnchors.clear();
+  m_measureSelectionLocked = false;
+  unsetCursor();
+  setToolTip(QString());
   m_measureCamera.Reset();
   if (!m_initialised) return;
   for (const auto& o : m_dimension) m_ctx->Remove(o, Standard_False);
@@ -86,10 +100,23 @@ void Viewport::clearDimension() {
 }
 
 void Viewport::showMeasurement(const opad::json& result) {
+  const bool sameMeasurement = !m_measurement.is_null() && m_measurement.value("refs", opad::json::array()) == result.value("refs", opad::json::array());
   m_measurement = result;
+  m_measureAnchors.clear();
+  if (result.contains("anchors")) {
+    for (const auto& option : result["anchors"]) {
+      for (int side = 0; side < 2; ++side) {
+        const opad::Vec3 candidate = option[side == 0 ? "point_a" : "point_b"].get<opad::Vec3>();
+        const gp_Pnt p(candidate[0], candidate[1], candidate[2]);
+        if (std::none_of(m_measureAnchors.begin(), m_measureAnchors.end(), [&](const MeasurementAnchor& other) {
+              return other.side == side && samePoint(p, gp_Pnt(other.point[0], other.point[1], other.point[2]));
+            })) m_measureAnchors.push_back({side, candidate});
+      }
+    }
+  }
   // New diagonal measurements show the distance and its components together.
   // An aligned measurement always uses its one axis arrow instead.
-  m_measureComponents = true;
+  if (!sameMeasurement) m_measureComponents = true;
   // Finished markers belong at the exact extrema, rather than the approximate mouse hits.
   showPickMarkers({});
   clearPreview();
@@ -107,6 +134,23 @@ bool Viewport::measurementHasMultipleAxes() const {
   return !m_measurement.is_null() && m_measurement.value("kind", "distance") == "distance"
       && m_measurement.contains("point_a") && m_measurement.contains("point_b")
       && componentCount(point(m_measurement["point_a"]), point(m_measurement["point_b"])) > 1;
+}
+
+int Viewport::measurementAnchorAt(const QPointF& position) const {
+  if (!m_initialised || !m_measureSelectionLocked) return -1;
+  int nearest = -1;
+  double best = 12.0 * 12.0;  // logical pixels: stable at every zoom and display scale
+  for (size_t i = 0; i < m_measureAnchors.size(); ++i) {
+    const auto& candidate = m_measureAnchors[i];
+    const QPointF at = widgetPoint(candidate.point);
+    const QPointF delta = at - position;
+    double score = QPointF::dotProduct(delta, delta);
+    // At a shared projected position, prefer an anchor which would change an endpoint.
+    const auto& selected = m_measurement[candidate.side == 0 ? "point_a" : "point_b"];
+    if (samePoint(point(selected), gp_Pnt(candidate.point[0], candidate.point[1], candidate.point[2]))) score += 0.25;
+    if (score < best) { best = score; nearest = static_cast<int>(i); }
+  }
+  return nearest;
 }
 
 void Viewport::refreshMeasurement(bool force) {
@@ -131,6 +175,7 @@ void Viewport::refreshMeasurement(bool force) {
   };
   Handle(InspectGraphic) graphic = new InspectGraphic();
   graphic->endpointColor = m_tokens.fg;
+  graphic->snapPointColor = m_tokens.hov;
   const gp_Vec up(camera->OrthogonalizedUp());
   const gp_Vec right = gp_Vec(camera->Direction()).Crossed(up);
   // Perspective scale is evaluated at the annotation, not at the camera target.
@@ -202,8 +247,14 @@ void Viewport::refreshMeasurement(bool force) {
     const int components = componentCount(a, b);
     const bool aligned = kind == "distance" && components == 1;
     graphic->endpoints = {a, b};
+    for (const auto& anchor : m_measureAnchors) {
+      const gp_Pnt candidate(anchor.point[0], anchor.point[1], anchor.point[2]);
+      if (samePoint(candidate, a) || samePoint(candidate, b)) continue;
+      if (std::none_of(graphic->snapPoints.begin(), graphic->snapPoints.end(), [&](const gp_Pnt& p) { return samePoint(p, candidate); }))
+        graphic->snapPoints.push_back(candidate);
+    }
     if (!aligned) {
-      // Offset the total distance from the component path with witness lines.
+      // Both tips terminate at the measured points; only the label is offset.
       QPointF normal = screenNormal(a, b);
       auto clearance = [&](const QPointF& direction) {
         double space = 1e20;
@@ -214,13 +265,7 @@ void Viewport::refreshMeasurement(bool force) {
         return space;
       };
       if (clearance(normal) < 8 && clearance(-normal) > clearance(normal)) normal = -normal;
-      const gp_Vec offset = kind == "distance" && a.Distance(b) > 1e-9
-                                ? (right * normal.x() - up * normal.y()) * (24 * pixelAt(a)) : gp_Vec();
-      arrow(a.Translated(offset), b.Translated(offset), m_tokens.fg, kind == "distance");
-      if (offset.SquareMagnitude() > 0) {
-        graphic->lines.push_back({a, a.Translated(offset), m_tokens.fg3});
-        graphic->lines.push_back({b, b.Translated(offset), m_tokens.fg3});
-      }
+      arrow(a, b, m_tokens.fg, kind == "distance");
       beside(gp_Pnt((a.X()+b.X())/2, (a.Y()+b.Y())/2, (a.Z()+b.Z())/2),
             (kind == "distance" ? tr("Distance %1 mm") : tr("R %1 mm")).arg(number(r["value"].get<double>())), m_tokens.fg, normal, kind == "distance" ? 36 : 16);
     }

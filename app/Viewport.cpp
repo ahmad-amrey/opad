@@ -954,10 +954,12 @@ void Viewport::updateClipPlanes() {
 
 // ---------------------------------------------------------------- dimension (F23)
 // ---------------------------------------------------------------- guided-tool picking
-void Viewport::setPickAccumulate(bool on) {
+void Viewport::setPickAccumulate(bool on, bool retainPicks) {
   m_pickAccumulate = on;
+  m_retainToolPicks = on && retainPicks;
   ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, on ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
   if (!on) {
+    m_measureSelectionLocked = false;
     showPickMarkers({});
     clearPreview();
   }
@@ -1473,11 +1475,31 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
     // Only the Replace scheme hands a click to the cube (HandleMouseClick); a guided tool's XOR would toggle it as a pick.
     ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, AIS_SelectionScheme_Replace);
   }
+  // Capture the entire gesture before OCCT can toggle an edge or begin a selection rectangle.
+  // Middle/right navigation and the view cube retain their usual controls.
+  if (!m_cubeGesture && e->button() == Qt::LeftButton && m_initialised
+      && (m_measureSelectionLocked || (m_retainToolPicks && m_ctx->HasDetected() && m_ctx->IsSelected(m_ctx->DetectedOwner())))) {
+    m_measureAnchorPress = true;
+    e->accept();
+    return;
+  }
   if (m_initialised && UpdateMouseButtons(devicePos(e->position()), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
 }
 
 void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   if (m_blocked) return;
+  if (m_measureAnchorPress && e->button() == Qt::LeftButton) {
+    m_measureAnchorPress = false;
+    if ((e->pos() - m_pressPos).manhattanLength() < 4) {
+      const int index = measurementAnchorAt(e->position());
+      if (index >= 0) {
+        const auto anchor = m_measureAnchors[index];
+        emit measurementAnchorPicked(anchor.side, anchor.point);
+      }
+    }
+    e->accept();
+    return;
+  }
   if (m_sketchDrag && e->button() == Qt::LeftButton) {
     m_sketchDrag = false;
     double u, v;
@@ -1498,6 +1520,17 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
 
 void Viewport::mouseMoveEvent(QMouseEvent* e) {
   if (m_blocked) return;
+  if (m_measureAnchorPress) return;
+  if (m_measureSelectionLocked && e->buttons() == Qt::NoButton) {
+    const int index = measurementAnchorAt(e->position());
+    if (index >= 0) {
+      setCursor(Qt::PointingHandCursor);
+      setToolTip(tr("Set measurement point %1 here").arg(m_measureAnchors[index].side + 1));
+    } else {
+      unsetCursor();
+      setToolTip(QString());
+    }
+  }
   if (m_sketchInput) {
     double u, v;
     if (planePoint(e->position(), m_sketchFrame, u, v)) m_sketchInput->sketchMove(u, v, e->modifiers(), m_sketchDrag);

@@ -9,6 +9,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QScrollArea>
 
 struct ToolStep {
@@ -52,11 +53,13 @@ class ToolStepsPanel : public QWidget {
   void setResult(const QList<QPair<QString, QString>>& rows);  // empty: nothing to show yet
   void setFooter(bool visible, bool canPin);
   void setComponentsState(bool visible, bool checked);
+  void setAnchorOptions(const QStringList& labels, int current);
   QSize preferredSize(int width);
  signals:
   void clearRequested();
   void pinRequested();
   void componentsChanged(bool on);
+  void anchorChanged(int index);
   void contentSizeChanged();
  protected:
   void resizeEvent(QResizeEvent* event) override;
@@ -69,6 +72,8 @@ class ToolStepsPanel : public QWidget {
   QWidget* m_footer;
   QPushButton* m_pin;
   QCheckBox* m_components;
+  QWidget* m_anchorRow;
+  QComboBox* m_anchors;
   QPushButton* m_copy;
   QScrollArea* m_scroll;
   QWidget* m_body;

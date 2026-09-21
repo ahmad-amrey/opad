@@ -105,11 +105,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool measurementComponents() const { return m_measureComponents; }
   bool measurementHasMultipleAxes() const;
   void clearDimension();
+  void setMeasurementSelectionLocked(bool locked) { m_measureSelectionLocked = locked; }
 
   // Guided tools (distance, angle, ...: the tool asks for one pick per step). While accumulating, a plain click
   // adds to the selection (or takes a picked item out again) instead of replacing it, so selection() is the
   // tool's ordered pick list.
-  void setPickAccumulate(bool on);
+  void setPickAccumulate(bool on, bool retainPicks = false);
   void deselectLast();      // one step back
   void keepLastSelected();  // a pick after the last step starts over from that pick
   bool lastPickPoint(opad::Vec3& p) const;  // where the last click hit the geometry
@@ -163,6 +164,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
 
  signals:
   void selectionChanged();
+  void measurementAnchorPicked(int side, const opad::Vec3& point);
   void selectionApplied();  // a selectNodes() call has been applied (highlight or shade) and selection() reflects it
   void subHighlightApplied();  // the highlight of a sub-shape selection has been built and displayed
   void filterApplied();     // a setSelectionFilter() call has reached every displayed body
@@ -218,6 +220,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void updateClipPlanes();
   void applyTokens();
   void refreshMeasurement(bool force = false);
+  int measurementAnchorAt(const QPointF& position) const;
   void requestRedraw() { update(); }
   // After a change made through the context without an update (Display/Redisplay/selection with
   // theToUpdateViewer=false): the view must be invalidated, or FlushViewEvents finds nothing to redraw and
@@ -238,6 +241,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Graphic3d_WorldViewProjState m_measureCamera;
   QSize m_measureSize;
   bool m_measureComponents = true;
+  struct MeasurementAnchor { int side; opad::Vec3 point; };
+  std::vector<MeasurementAnchor> m_measureAnchors;  // same candidates for drawing and hit testing
+  bool m_measureSelectionLocked = false, m_measureAnchorPress = false, m_retainToolPicks = false;
   std::vector<Handle(AIS_InteractiveObject)> m_pickMarkers, m_preview;
   opad::Vec3 m_lastPick{0, 0, 0};
   bool m_hasLastPick = false;
