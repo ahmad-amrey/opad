@@ -1093,7 +1093,9 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
       try {
         const Bnd_Box box = opad::body_bbox(*cache, j.key, j.shape);
         BRepMesh_IncrementalMesh(j.shape, deflectionForBox(box), Standard_False, 20.0 * M_PI / 180.0, Standard_True);
-        prs = BodyPrs::build(j.shape, box);  // the shaded presentation, so Display() on the UI thread is cheap
+        // The box from before the mesh is only good for the deflection: it follows the surfaces' poles, and one
+        // small body with a 10 m box zoomed Fit All out of the whole Engine. The presentation gets the mesh's box.
+        prs = BodyPrs::build(j.shape, opad::refine_body_bbox(*cache, j.key, j.shape));  // so Display() on the UI thread is cheap
       } catch (...) {
       }
       if (!*alive) return;

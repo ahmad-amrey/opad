@@ -174,6 +174,15 @@ Bnd_Box body_bbox(ShapeCache& cache, const std::string& key, const TopoDS_Shape&
   return box;
 }
 
+Bnd_Box refine_body_bbox(ShapeCache& cache, const std::string& key, const TopoDS_Shape& meshed) {
+  Bnd_Box box;
+  if (!meshed.IsNull()) BRepBndLib::Add(meshed, box, Standard_True);
+  if (box.IsVoid()) return body_bbox(cache, key, meshed);  // nothing meshed: keep what there is
+  std::lock_guard<std::mutex> lock(cache.mu);
+  cache.boxes[key] = box;
+  return box;
+}
+
 Bnd_Box body_bbox(const Document& doc, const std::string& key) {
   auto& cache = *doc.shape_cache;
   {

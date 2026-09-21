@@ -26,6 +26,9 @@ void warm_shape_cache(const Document& doc, const std::function<bool(size_t, size
 // walks the geometry (or the triangulation when present); the app warms it on the meshing thread.
 Bnd_Box body_bbox(const Document& doc, const std::string& key);
 Bnd_Box body_bbox(ShapeCache& cache, const std::string& key, const TopoDS_Shape& proto);  // same, for callers that hold the cache
+// Replaces the cached box by the one of the body's triangulation. The box of an unmeshed body comes from its
+// surfaces' poles and untrimmed extents, which can reach metres beyond a small part (and Fit All with it).
+Bnd_Box refine_body_bbox(ShapeCache& cache, const std::string& key, const TopoDS_Shape& meshed);
 // World-space box of a body node: the cached prototype box with its corners transformed (O(1) per node).
 Bnd_Box node_world_bbox(const Document& doc, const Scene& scene, const std::string& node_id);
 // Sub-shape by ordinal in the prototype (faces/edges/vertices are enumerated in TopExp_Explorer order).
