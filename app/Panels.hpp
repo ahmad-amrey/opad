@@ -227,10 +227,12 @@ class SectionPanel : public QWidget {
   void setEnabled(bool on);
   void flip();
   void setFromFace(const opad::Vec3& origin, const opad::Vec3& normal);
+  void setOrigin(const opad::Vec3& origin);  // the plane was dragged in the view: move the slider to it (clamped to the model)
   void rebuild();
   void applyNamed(const std::string& id);
  private:
   void emitChange();
+  void setAlong(double along);  // slider from a distance along the axis (or the picked normal)
   AppDocument* m_doc;
   bool m_enabled = false;
   int m_axis = 2;

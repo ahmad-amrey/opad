@@ -267,6 +267,7 @@ void Viewport::setTokens(const Tokens& t) {
 void Viewport::applyTokens() {
   const Tokens& t = m_tokens;
   refreshMeasurement(true);
+  updateSectionGizmo();  // its colours are baked in
   m_view->SetBackgroundColor(occ(t.vp));
   m_view->SetBgGradientStyle(Aspect_GradientFillMethod_None);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetColor(occ(t.hov));
@@ -932,6 +933,7 @@ void Viewport::setSection(bool enabled, const opad::Vec3& origin, const opad::Ve
   m_sectionNormal = normal;
   m_sectionCaps = caps;
   updateClipPlanes();
+  updateSectionGizmo();
   redrawScene();
 }
 
@@ -1339,6 +1341,7 @@ void Viewport::finishSync(int pendingCount, bool added) {
   // every fit, orbit or zoom of theirs clears m_needFit so a later batch never snaps the view back.
   if (added && (m_needFit || m_items.size() <= 1)) m_view->FitAll(0.02, Standard_False);
   if (pendingCount == 0) m_needFit = false;
+  if (m_sectionEnabled) updateSectionGizmo();  // the model's extent may have changed
   m_view->Invalidate();
   requestRedraw();
 }
@@ -1423,6 +1426,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   m_pressPos = e->pos();
   m_rightPress = e->button() == Qt::RightButton;
   m_cubeClick = false;
+  if (sectionMousePress(e)) return;  // a press on the section plane's handle strip starts a drag, never a selection
   // Sketching: the left button belongs to the sketch editor, except on the view cube.
   if (m_sketchInput && m_initialised && e->button() == Qt::LeftButton && !(m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube)) {
     double u, v;
@@ -1455,6 +1459,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
 
 void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   if (m_blocked) return;
+  if (sectionMouseRelease(e)) return;
   if (m_measureAnchorPress && e->button() == Qt::LeftButton) {
     m_measureAnchorPress = false;
     if ((e->pos() - m_pressPos).manhattanLength() < 4) {
@@ -1488,7 +1493,8 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
 void Viewport::mouseMoveEvent(QMouseEvent* e) {
   if (m_blocked) return;
   if (m_measureAnchorPress) return;
-  if (m_measureSelectionLocked && e->buttons() == Qt::NoButton) {
+  if (sectionMouseMove(e)) return;  // dragging the section plane
+  if (m_measureSelectionLocked && e->buttons() == Qt::NoButton && m_sectionHover < 0) {
     const int index = measurementAnchorAt(e->position());
     if (index >= 0) {
       setCursor(Qt::PointingHandCursor);

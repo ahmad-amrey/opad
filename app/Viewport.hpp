@@ -98,8 +98,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool isIsolated() const { return !m_isolated.empty(); }
   int isolatedCount() const { return static_cast<int>(m_isolated.size()); }
 
+  // Section: the clip plane, and its gizmo (ViewportSection.cpp): the plane's outline over the model, edges only,
+  // sized to the model's extent in the plane. A strip inside each side is a drag handle: hovering it shows a
+  // two-headed arrow along the normal, dragging moves the plane and reports the new origin (sectionDragged).
   void setSection(bool enabled, const opad::Vec3& origin, const opad::Vec3& normal, bool caps = true);
   bool sectionEnabled() const { return m_sectionEnabled; }
+  int sectionHover() const { return m_sectionHover; }      // side whose handle is under the mouse, -1 = none
+  bool benchSectionHandle(QPointF& at) const;              // OPAD_BENCH_SECTION: a widget point on a handle strip
   void showMeasurement(const opad::json& result);
   void setMeasurementComponents(bool on);
   bool measurementComponents() const { return m_measureComponents; }
@@ -178,6 +183,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void contextMenuRequested(const QPoint& globalPos);
   void meshingProgress(int remaining);
   void isolationChanged();  // entered, left, or left because every isolated object was deleted
+  void sectionDragged(const opad::Vec3& origin);  // the section plane's handle was dragged here
 
  public slots:
   void sync();
@@ -224,6 +230,15 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void updateAnnotations();
   void noteCameraMoved();
   void updateClipPlanes();
+  // section gizmo (ViewportSection.cpp)
+  void updateSectionGizmo();   // rebuilds the outline from the plane and the model's extent; drops it when off
+  void refreshSectionGizmo();  // re-displays the object from the kept outline and the hover state
+  int sectionHandleAt(const QPointF& widgetPos, double& t) const;  // side 0-3 under the mouse (t: where along it), -1
+  bool sectionDragDelta(const QPointF& from, const QPointF& to, double& along) const;
+  void setSectionHover(int side, double t);
+  bool sectionMousePress(QMouseEvent* e);    // true = the gizmo took the event
+  bool sectionMouseMove(QMouseEvent* e);
+  bool sectionMouseRelease(QMouseEvent* e);
   void applyTokens();
   void refreshMeasurement(bool force = false);
   int measurementAnchorAt(const QPointF& position) const;
@@ -258,6 +273,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   opad::Vec3 m_lastPick{0, 0, 0};
   bool m_hasLastPick = false;
   Handle(Graphic3d_ClipPlane) m_sectionPlane;
+  Handle(AIS_InteractiveObject) m_sectionGizmo;    // SectionGizmo (ViewportSection.cpp)
+  std::array<opad::Vec3, 4> m_sectionCorners{};    // the outline, for the widget-space hit test
+  bool m_sectionHasPlane = false, m_sectionDrag = false;
+  int m_sectionHover = -1;                         // side whose handle strip is under the mouse
+  double m_sectionHoverT = 0;                      // where along that side (0..1) the arrow sits
+  QPointF m_sectionDragFrom;
+  opad::Vec3 m_sectionDragOrigin{0, 0, 0};
 
   NavPreset m_preset = NavPreset::Fusion;
   Style m_style = Style::ShadedEdges;

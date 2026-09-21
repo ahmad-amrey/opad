@@ -1213,18 +1213,7 @@ SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   layout->addWidget(save);
 
   connect(m_slider, &QSlider::valueChanged, this, [this](int) { emitChange(); });
-  connect(m_value, &QLineEdit::editingFinished, this, [this] {
-    opad::Vec3 lo, hi;
-    if (!opad::scene_bbox(m_doc->doc, m_doc->scene, {}, lo, hi)) return;
-    double v = m_value->text().section(' ', 0, 0).toDouble();
-    if (m_pick) {
-      double dmin, dmax;
-      if (pickRange(dmin, dmax)) m_slider->setValue(static_cast<int>(std::clamp((v - dmin) / (dmax - dmin), 0.0, 1.0) * 1000));
-      return;
-    }
-    double range = hi[m_axis] - lo[m_axis];
-    if (range > 0) m_slider->setValue(static_cast<int>(std::clamp((v - lo[m_axis]) / range, 0.0, 1.0) * 1000));
-  });
+  connect(m_value, &QLineEdit::editingFinished, this, [this] { setAlong(m_value->text().section(' ', 0, 0).toDouble()); });
   connect(m_flipButton, &QToolButton::toggled, this, [this](bool on) { m_flip = on; emitChange(); });
   connect(m_capButton, &QToolButton::toggled, this, [this](bool) { emitChange(); });
   connect(save, &QPushButton::clicked, this, [this] {
@@ -1276,14 +1265,31 @@ opad::Vec3 SectionPanel::normal() const {
 
 bool SectionPanel::caps() const { return m_capButton->isChecked(); }
 
+void SectionPanel::setAlong(double along) {
+  if (m_pick) {
+    double dmin, dmax;
+    if (pickRange(dmin, dmax)) m_slider->setValue(static_cast<int>(std::clamp((along - dmin) / (dmax - dmin), 0.0, 1.0) * 1000));
+    return;
+  }
+  opad::Vec3 lo, hi;
+  if (!opad::scene_bbox(m_doc->doc, m_doc->scene, {}, lo, hi)) return;
+  const double range = hi[m_axis] - lo[m_axis];
+  if (range > 0) m_slider->setValue(static_cast<int>(std::clamp((along - lo[m_axis]) / range, 0.0, 1.0) * 1000));
+}
+
+void SectionPanel::setOrigin(const opad::Vec3& o) {
+  // The slider's valueChanged re-emits planeChanged, so the view follows (at the slider's 1/1000 resolution).
+  setAlong(m_pick ? o[0] * m_pickNormal[0] + o[1] * m_pickNormal[1] + o[2] * m_pickNormal[2] : o[m_axis]);
+}
+
 void SectionPanel::emitChange() {
   const char axes[] = {'X', 'Y', 'Z'};
   opad::Vec3 o = origin();
   const double along = m_pick ? o[0] * m_pickNormal[0] + o[1] * m_pickNormal[1] + o[2] * m_pickNormal[2] : o[m_axis];  // pick mode: distance along the face normal
   m_value->setText(QString("%1 mm").arg(along, 0, 'f', 1));
-  m_state->setText(!m_enabled ? tr("Section off · press X or use View › Section to enable")
-                   : m_pick ? tr("Section along the picked face = %1 mm · drag the slider, Shift+X flips").arg(along, 0, 'f', 1)
-                            : tr("Section %1 = %2 mm · drag the slider, Shift+X flips").arg(axes[m_axis]).arg(o[m_axis], 0, 'f', 1));
+  m_state->setText(!m_enabled ? tr("Section off · press X or use Inspect › Section to enable")
+                   : m_pick ? tr("Section along the picked face = %1 mm · drag the slider or the plane's edge, Shift+X flips").arg(along, 0, 'f', 1)
+                            : tr("Section %1 = %2 mm · drag the slider or the plane's edge, Shift+X flips").arg(axes[m_axis]).arg(o[m_axis], 0, 'f', 1));
   emit planeChanged();
 }
 

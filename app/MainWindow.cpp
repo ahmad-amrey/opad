@@ -136,9 +136,10 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     m_viewport->setSection(m_section->enabled(), m_section->origin(), m_section->normal(), m_section->caps());
     updateChips();
   });
+  connect(m_viewport, &Viewport::sectionDragged, m_section, &SectionPanel::setOrigin);  // the plane's edge handle -> slider -> planeChanged
   connect(m_section, &SectionPanel::pickRequested, this, [this] { startTool("sectionface"); });
   connect(m_section, &SectionPanel::enabledChanged, this, [this](bool on) {
-    if (action("view.section")->isChecked() != on) action("view.section")->setChecked(on);
+    if (action("inspect.section")->isChecked() != on) action("inspect.section")->setChecked(on);
   });
   connect(m_section, &SectionPanel::saveRequested, this, [this](const QString& name, const opad::Vec3& o, const opad::Vec3& n) {
     bool ok = false;
@@ -334,13 +335,6 @@ void MainWindow::buildActions() {
   });
   QAction* grid = addAction("view.grid", tr("Grid"), "grid", QKeySequence("G"), [this] {}, true);
   connect(grid, &QAction::toggled, this, [this](bool on) { m_viewport->setGrid(on); });
-  QAction* section = addAction("view.section", tr("Section"), "section", QKeySequence("X"), [this] {}, true);
-  connect(section, &QAction::toggled, this, [this](bool on) {
-    m_section->setEnabled(on);
-    if (on) openPanel(m_sectionPanel);
-    else m_sectionPanel->hide();
-  });
-  addAction("view.flip", tr("Flip section"), "flip", QKeySequence("Shift+X"), [this] { m_section->flip(); });
   addAction("view.isolate", tr("Isolate"), "isolate", QKeySequence("I"), [this] { m_viewport->isolate(currentNodeIds()); });
   addAction("view.unisolate", tr("Exit isolate"), "showAll", QKeySequence("Shift+I"), [this] { m_viewport->isolate({}); });
   addAction("view.saveview", tr("Save view…"), "home", QKeySequence(), [this] { saveNamedView(); });
@@ -402,6 +396,14 @@ void MainWindow::buildActions() {
     showProperties(m_selRefs);
     openPanel(m_propsPanel);
   });
+  // Section is an inspection: it looks inside without changing anything.
+  QAction* section = addAction("inspect.section", tr("Section"), "section", QKeySequence("X"), [this] {}, true);
+  connect(section, &QAction::toggled, this, [this](bool on) {
+    m_section->setEnabled(on);
+    if (on) openPanel(m_sectionPanel);
+    else m_sectionPanel->hide();
+  });
+  addAction("inspect.flip", tr("Flip section"), "flip", QKeySequence("Shift+X"), [this] { m_section->flip(); });
 
   // Annotate / edit
   addAction("annotate.add", tr("Note"), "annotate", QKeySequence("N"), [this] { toggleTool("note"); }, true);
@@ -491,14 +493,14 @@ void MainWindow::buildMenus() {
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
   add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = menuBar()->addMenu(tr("&View"));
-  add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "-", "view.section", "view.flip", "view.isolate", "view.unisolate", "-", "view.saveview"});
+  add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "-", "view.isolate", "view.unisolate", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
   view->addSeparator();
   QMenu* nav = view->addMenu(tr("Navigation preset"));
   add(nav, {"nav.fusion", "nav.solidworks", "nav.onshape", "nav.blender"});
   add(view, {"view.dark", "-", "workspace.review", "workspace.design", "-", "panel.browser", "panel.annotations", "panel.section", "panel.timeline", "panel.reset"});
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
-  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties"});
+  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "-", "inspect.section", "inspect.flip"});
   QMenu* designMenu = menuBar()->addMenu(tr("&Design"));
   add(designMenu, {"design.sketch", "design.parameters", "-"});
   for (const char* group : {"create", "modify", "combine", "pattern", "body", "construct"}) {
@@ -528,8 +530,8 @@ void MainWindow::buildRibbon() {
   Workspace sketchWs{tr("Sketch"), "sketch", "", tr("Drawing a sketch. Finish sketch returns to Design."), tr("ops: sketch · edit")};
   sketchWs.contextual = true;
   m_sketchWorkspace = m_ribbon->addWorkspace(sketchWs);
-  m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid"}), acts({"view.section", "view.isolate", "view.unisolate"})});
-  m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"})});
+  m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid"}), acts({"view.isolate", "view.unisolate"})});
+  m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"}), acts({"inspect.section", "inspect.flip"})});
   m_ribbon->addTab(review, tr("Annotate"), {acts({"annotate.add", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
   m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
   m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
@@ -2016,6 +2018,45 @@ void MainWindow::runBench() {
           trace::log(QStringLiteral("bench: distance %1 (%2 faces) <-> %3 (%4 faces) = %5 in %6 ms").arg(QString::fromStdString(a.body)).arg(heavy[i].first).arg(QString::fromStdString(b.body)).arg(heavy[k].first).arg(out).arg(clock.elapsed()));
         }
     }, [](bool, const QString&) { QCoreApplication::quit(); });
+    return;
+  }
+  // OPAD_BENCH_SECTION=<png>: section on (Z through the model's middle), then hover and drag the plane outline's
+  // handle strip through synthetic mouse events on the viewport widget: logs the hovered side and the plane's
+  // origin before and after the drag, dumps the frame with the handle hovered, quits.
+  if (const QString shot = qEnvironmentVariable("OPAD_BENCH_SECTION"); !shot.isEmpty()) {
+    m_viewport->fitAll();
+    QTimer::singleShot(1500, this, [this] { action("inspect.section")->setChecked(true); });
+    QTimer::singleShot(2500, this, [this, shot] {
+      auto vec = [](const opad::Vec3& v) { return QStringLiteral("(%1 %2 %3)").arg(v[0], 0, 'f', 2).arg(v[1], 0, 'f', 2).arg(v[2], 0, 'f', 2); };
+      auto mouse = [this](QEvent::Type type, const QPointF& at, Qt::MouseButton button, Qt::MouseButtons held) {
+        QMouseEvent e(type, at, m_viewport->mapToGlobal(at), button, held, Qt::NoModifier);
+        QCoreApplication::sendEvent(m_viewport, &e);
+      };
+      QPointF at;
+      if (!m_viewport->benchSectionHandle(at)) {
+        trace::log(QStringLiteral("bench: section: no plane outline (section %1)").arg(m_viewport->sectionEnabled()));
+        QCoreApplication::quit();
+        return;
+      }
+      mouse(QEvent::MouseMove, at, Qt::NoButton, Qt::NoButton);
+      const opad::Vec3 before = m_section->origin();
+      trace::log(QStringLiteral("bench: section: handle at %1,%2 hover side %3 cursor %4 origin %5").arg(at.x()).arg(at.y()).arg(m_viewport->sectionHover()).arg(m_viewport->cursor().shape()).arg(vec(before)));
+      QTimer::singleShot(300, this, [this, shot, at, mouse, vec, before] {
+        m_viewport->grabImage().save(shot);  // hovered: outline + arrow
+        mouse(QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton);
+        for (int step = 1; step <= 4; ++step) mouse(QEvent::MouseMove, at + QPointF(0, -20.0 * step), Qt::NoButton, Qt::LeftButton);
+        const opad::Vec3 dragged = m_section->origin();
+        mouse(QEvent::MouseButtonRelease, at + QPointF(0, -80), Qt::LeftButton, Qt::NoButton);
+        const opad::Vec3 after = m_section->origin();
+        const double moved = std::sqrt((after[0] - before[0]) * (after[0] - before[0]) + (after[1] - before[1]) * (after[1] - before[1]) + (after[2] - before[2]) * (after[2] - before[2]));
+        trace::log(QStringLiteral("bench: section: dragged 80 px up: origin %1 -> %2 (moved %3 mm, released %4, selected %5, hover side %6)")
+                       .arg(vec(before), vec(after)).arg(moved, 0, 'f', 2).arg(dragged == after).arg(m_viewport->selection().size()).arg(m_viewport->sectionHover()));
+        QTimer::singleShot(300, this, [this, shot] {
+          m_viewport->grabImage().save(shot.left(shot.size() - 4) + ".dragged.png");
+          QCoreApplication::quit();
+        });
+      });
+    });
     return;
   }
   // OPAD_BENCH_TOOL=<distance|angle|radius|bbox>[,faces]: walk a guided tool without a mouse. Start it, click twice
