@@ -1,6 +1,9 @@
 #include "opad/geometry.hpp"
 
 #include <BRepBndLib.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <TopoDS.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
 #include <BRepTools.hxx>
 #include <Message.hxx>
@@ -232,6 +235,11 @@ static TopAbs_ShapeEnum abs_of(Ref::Kind k) {
 
 TopoDS_Shape subshape(const TopoDS_Shape& proto, Ref::Kind kind, int index) {
   if (kind == Ref::Kind::Body) return proto;
+  if (kind == Ref::Kind::Center) {
+    BRepAdaptor_Curve curve(TopoDS::Edge(subshape(proto, Ref::Kind::Edge, index)));
+    if (curve.GetType() != GeomAbs_Circle) throw Error("center requires a circular edge");
+    return BRepBuilderAPI_MakeVertex(curve.Circle().Location()).Vertex();
+  }
   TopTools_IndexedMapOfShape map;
   TopExp::MapShapes(proto, abs_of(kind), map);
   if (index < 0 || index >= map.Extent())

@@ -1360,7 +1360,9 @@ QString MainWindow::refLabel(const opad::Ref& r) const {
 
 QList<ToolStep> MainWindow::toolSteps() const {
   const Viewport::SelFilter f = m_viewport->selectionFilter();
-  const QString kind = i18n::t(m_tool.id == "sectionface" ? "face" : f == Viewport::SelFilter::Face ? "face" : f == Viewport::SelFilter::Edge ? "edge" : f == Viewport::SelFilter::Vertex ? "vertex" : "body");
+  const QString kind = f == Viewport::SelFilter::Vertex && m_tool.id != "sectionface"
+      ? (m_tool.id == "radius" ? tr("circle center") : tr("vertex or center"))
+      : i18n::t(m_tool.id == "sectionface" || f == Viewport::SelFilter::Face ? "face" : f == Viewport::SelFilter::Edge ? "edge" : "body");
   QList<ToolStep> steps;
   for (int i = 0; i < m_tool.steps; ++i) {
     ToolStep s;
@@ -1390,9 +1392,9 @@ void MainWindow::startTool(const QString& id) {
   m_toolPoints.clear();
   m_toolHover.clear();
   ++m_toolRun;
-  // Angles and radii need faces or edges; the section plane needs a face.
+  // Angles need faces/edges; radii also accept discovered centers. The section plane needs a face.
   const Viewport::SelFilter f = m_viewport->selectionFilter();
-  const bool wantFaces = id == "sectionface" ? f != Viewport::SelFilter::Face : (id == "angle" || id == "radius") && (f == Viewport::SelFilter::Body || f == Viewport::SelFilter::Vertex);
+  const bool wantFaces = id == "sectionface" ? f != Viewport::SelFilter::Face : ((id == "angle" || id == "radius") && f == Viewport::SelFilter::Body) || (id == "angle" && f == Viewport::SelFilter::Vertex);
   m_viewport->setPickAccumulate(true, id == "distance");
   for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "annotate.add"})
     action(a)->setChecked(id == QString(a).section('.', 1) || (id == "note" && QString(a) == "annotate.add"));
@@ -1516,7 +1518,8 @@ void MainWindow::refreshToolUi() {
   const QList<ToolStep> steps = toolSteps();
   const int picked = static_cast<int>(m_toolPicks.size());
   const bool done = !m_lastMeasure.is_null();
-  m_prompt->set(m_tool.icon, m_tool.title, steps, done ? (m_doc->browse ? tr("Esc clear · 1–4 filter") : tr("P pin · Esc clear · 1–4 filter")) : picked ? tr("Esc back · 1–4 change filter") : tr("Esc cancel · 1–4 change filter"));
+  m_prompt->set(m_tool.icon, m_tool.title, steps, m_viewport->selectionFilter() == Viewport::SelFilter::Vertex && !done
+      ? tr("Hover arc · Shift lock center · Esc back") : done ? (m_doc->browse ? tr("Esc clear · 1–4 filter") : tr("P pin · Esc clear · 1–4 filter")) : picked ? tr("Esc back · 1–4 change filter") : tr("Esc cancel · 1–4 change filter"));
   m_prompt->show();
   positionOverlays();
   if (!toolMeasures()) return;
@@ -1950,6 +1953,48 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
   m_benchSelect = false;
+  if (qEnvironmentVariableIsSet("OPAD_BENCH_PICKING")) {
+    auto once = std::make_shared<QMetaObject::Connection>();
+    *once = connect(m_viewport, &Viewport::filterApplied, this, [this, once] {
+      disconnect(*once);
+      QTimer::singleShot(500, this, [this] {
+        startTool("distance");
+        if (!m_viewport->benchPicking()) return QCoreApplication::exit(2);
+        QTimer::singleShot(1500, this, [this] {
+          const bool ok = m_toolPicks.size() == 2 && m_lastMeasure.value("kind", "") == "distance";
+          trace::log(QStringLiteral("bench: picking guided distance %1: %2").arg(ok ? "PASS" : "FAIL", QString::fromStdString(m_lastMeasure.dump())));
+          if (const QString shot = qEnvironmentVariable("OPAD_BENCH_UISHOT"); !shot.isEmpty()) {
+            m_viewport->grabImage().save(shot + ".viewport.png");
+            m_toolPanel->grab().save(shot + ".panel.png");
+            m_prompt->grab().save(shot + ".prompt.png");
+          }
+          if (!ok) return QCoreApplication::exit(2);
+          const auto center = m_toolPicks.front();
+          cancelTool();
+          m_viewport->selectRefs({center});
+          startTool("radius");
+          QTimer::singleShot(1500, this, [this] {
+            const bool radiusOk = m_viewport->selectionFilter() == Viewport::SelFilter::Vertex
+                && m_lastMeasure.value("kind", "") == "radius" && m_lastMeasure.contains("diameter");
+            trace::log(QStringLiteral("bench: picking guided radius %1: %2").arg(radiusOk ? "PASS" : "FAIL", QString::fromStdString(m_lastMeasure.dump())));
+            if (const QString shot = qEnvironmentVariable("OPAD_BENCH_UISHOT"); !shot.isEmpty()) {
+              m_viewport->grabImage().save(shot + ".radius.png");
+              m_toolPanel->grab().save(shot + ".radius-panel.png");
+            }
+            if (!radiusOk) return QCoreApplication::exit(2);
+            toolEscape();
+            QTimer::singleShot(200, this, [this] {
+              const bool cleared = m_viewport->selection().empty();
+              trace::log(QStringLiteral("bench: picking Esc clears centers %1").arg(cleared ? "PASS" : "FAIL"));
+              QCoreApplication::exit(cleared ? 0 : 2);
+            });
+          });
+        });
+      });
+    });
+    m_viewport->setSelectionFilter(Viewport::SelFilter::Vertex);
+    return;
+  }
   // Deterministic presentation smoke check: a saved measurement JSON and output prefix.
   if (const QString source = qEnvironmentVariable("OPAD_BENCH_MEASUREMENT"); !source.isEmpty()) {
     const opad::json result = opad::json::parse(opad::read_text_file(source.toStdString()));

@@ -8,6 +8,7 @@
 #include <AIS_ViewCube.hxx>
 #include <Graphic3d_ClipPlane.hxx>
 #include <V3d_View.hxx>
+#include <SelectMgr_SelectionManager.hxx>
 #include <V3d_Viewer.hxx>
 
 #include <QImage>
@@ -85,6 +86,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void benchBand();                        // OPAD_BENCH_BAND: rubber band over the whole view in the current mode
   void benchSubShot(const QString& path);  // OPAD_BENCH_SUBSHOT: frame from behind the picked sub-shape (X-ray check)
   void benchClick(double fx, double fy);  // OPAD_BENCH_TOOL: a left click at this fraction of the view, as the mouse handlers deliver it
+  bool benchPicking();  // OPAD_BENCH_PICKING: circle discovery, locking, exact picks and orbit regression
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
   void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner
   std::vector<opad::Ref> selection() const;
@@ -197,11 +199,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void mouseReleaseEvent(QMouseEvent*) override;
   void mouseMoveEvent(QMouseEvent*) override;
   void mouseDoubleClickEvent(QMouseEvent*) override;
+  bool eventFilter(QObject* object, QEvent* e) override;
   bool event(QEvent* e) override;  // sketching: plain keys reach the editor before the window's shortcuts
   void keyPressEvent(QKeyEvent*) override;
   void wheelEvent(QWheelEvent*) override;
   void OnSelectionChanged(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
   // Timed when OPAD_TRACE is set: a slow frame is either picking under the mouse or the redraw itself.
+  gp_Pnt GravityPoint(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
   void handleMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
   void handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
 
@@ -213,8 +217,16 @@ class Viewport : public QWidget, protected AIS_ViewController {
     std::array<double, 3> color;
     double opacity;
     TopoDS_Shape located;
+    Handle(NavigationShape) navigation;
   };
   void initViewer();
+  Handle(AIS_Shape) centerMarker(const opad::Ref& ref, const gp_Pnt& point);
+  void discoverCenter();
+  void clearCenters();
+  bool toggleCenterLock();
+  bool navigationPoint(const Graphic3d_Vec2i& cursor, gp_Pnt& point);
+  gp_Pnt orbitPoint(const Graphic3d_Vec2i& cursor);
+  void focusCube();
   void syncWindowSize();
   void applyStyle(const Handle(AIS_Shape)& ais);
   void activateSelection(const Handle(AIS_Shape)& ais);
@@ -254,6 +266,14 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Handle(V3d_View) m_view;
   Handle(AIS_InteractiveContext) m_ctx;
   Handle(AIS_ViewCube) m_cube;
+  Handle(SelectMgr_ViewerSelector) m_navSelector;
+  Handle(SelectMgr_SelectionManager) m_navSelection;
+  std::map<const SelectMgr_SelectableObject*, std::string> m_navNodes;
+  struct CenterMarker { opad::Ref ref; gp_Pnt point; Handle(AIS_Shape) ais; };
+  std::map<std::string, CenterMarker> m_centers;
+  std::map<const AIS_InteractiveObject*, std::string> m_centerObjects;
+  std::string m_activeCenter;
+  bool m_centerLocked = false;
   std::map<std::string, Item> m_items;
   std::map<const AIS_InteractiveObject*, std::string> m_nodeOf;
   std::vector<Handle(AIS_InteractiveObject)> m_labels;

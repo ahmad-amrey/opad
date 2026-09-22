@@ -275,6 +275,16 @@ json node_properties(const Document& doc, const Scene& scene, const std::string&
 }
 
 json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref) {
+  if (ref.kind == Ref::Kind::Center) {
+    Ref edge = ref;
+    edge.kind = Ref::Kind::Edge;
+    BRepAdaptor_Curve curve(TopoDS::Edge(ref_shape(doc, scene, edge)));
+    if (curve.GetType() != GeomAbs_Circle) throw Error("center requires a circular edge");
+    const gp_Circ circle = curve.Circle();
+    return {{"ref", ref.str()}, {"type", "center"}, {"body", ref.body}, {"index", ref.index},
+            {"point", pnt(circle.Location())}, {"center", pnt(circle.Location())},
+            {"radius", circle.Radius()}, {"diameter", 2 * circle.Radius()}, {"axis", dir(circle.Axis().Direction())}};
+  }
   if (ref.kind == Ref::Kind::Point) {
     json j;
     j["ref"] = ref.str();
@@ -815,6 +825,13 @@ json measure_angle(const Document& doc, const Scene& scene, const Ref& a, const 
 }
 
 json measure_radius(const Document& doc, const Scene& scene, const Ref& a) {
+  if (a.kind == Ref::Kind::Center) {
+    Ref edge = a;
+    edge.kind = Ref::Kind::Edge;
+    json result = measure_radius(doc, scene, edge);
+    result["refs"] = {a.str()};
+    return result;
+  }
   json info = inspect_ref(doc, scene, a);
   if (!info.contains("radius")) throw Error("reference has no radius (need a cylindrical/spherical face or circular edge): " + a.str());
   json j;

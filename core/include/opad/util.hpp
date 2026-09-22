@@ -48,10 +48,10 @@ struct Mat4 {
 // A reference to geometry: a body node, or a face/edge/vertex inside it (by ordinal in the immutable
 // content-addressed body entry, hence stable), or a free 3D point.
 struct Ref {
-  enum class Kind { Body, Face, Edge, Vertex, Point };
+  enum class Kind { Body, Face, Edge, Vertex, Point, Center };
   std::string body;  // node uuid; empty for Point
   Kind kind = Kind::Body;
-  int index = -1;    // ordinal for Face/Edge/Vertex
+  int index = -1;    // ordinal for Face/Edge/Vertex; Center uses its circular edge ordinal
   Vec3 point{0, 0, 0};
 
   std::string str() const;

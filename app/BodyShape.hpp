@@ -9,13 +9,22 @@
 #include <Graphic3d_ArrayOfPoints.hxx>
 #include <Quantity_Color.hxx>
 #include <StdSelect_BRepOwner.hxx>
+#include <Select3D_SensitiveEntity.hxx>
 #include <memory>
+#include <map>
 #include <vector>
 
 // Per body-store key; shared by every instance of that body. Built off the UI thread.
 struct BodyPrs {
   Handle(Graphic3d_ArrayOfTriangles) triangles;
   Handle(Graphic3d_ArrayOfSegments) boundaries;  // face boundaries, for the shaded-with-edges style
+  struct Circle {
+    TopoDS_Shape edge;
+    gp_Pnt center;
+    Handle(Select3D_SensitiveEntity) sensitive;
+  };
+  std::map<int, Circle> circles;  // edge ordinals, including trimmed circular arcs
+  Handle(Select3D_SensitiveEntity) navigation;  // triangles + BVH, shared by instances
   bool closed = false;                           // closed solid: back faces can be culled
   Bnd_Box box;                                   // of the prototype; spares Display() a pass over every vertex
   static std::shared_ptr<BodyPrs> build(const TopoDS_Shape& meshedProto, const Bnd_Box& box);  // worker thread; needs triangulation
@@ -49,6 +58,50 @@ class SubShapeOwner : public StdSelect_BRepOwner {
 
  private:
   int m_index;
+};
+
+// Discovery owners are hover targets only; the separately displayed center is the pick target.
+class CircleOwner : public SubShapeOwner {
+  DEFINE_STANDARD_RTTI_INLINE(CircleOwner, SubShapeOwner)
+ public:
+  CircleOwner(const BodyPrs::Circle& circle, const Handle(SelectMgr_SelectableObject)& body, int index)
+      : SubShapeOwner(circle.edge, body, 3, index), center(circle.center) {}
+  gp_Pnt center;
+};
+
+// A cheap instance of a worker-built sensitive. Matches runs only on the UI thread; the shared
+// prototype's traversal scratch state is never accessed concurrently. No per-instance BVH rebuild.
+class SharedSensitive : public Select3D_SensitiveEntity {
+  DEFINE_STANDARD_RTTI_INLINE(SharedSensitive, Select3D_SensitiveEntity)
+ public:
+  SharedSensitive(const Handle(SelectMgr_EntityOwner)& owner, const Handle(Select3D_SensitiveEntity)& prototype)
+      : Select3D_SensitiveEntity(owner), m_prototype(prototype) { SetSensitivityFactor(prototype->SensitivityFactor()); }
+  Standard_Boolean Matches(SelectBasics_SelectingVolumeManager& mgr, SelectBasics_PickResult& result) override { return m_prototype->Matches(mgr, result); }
+  Standard_Integer NbSubElements() const override { return m_prototype->NbSubElements(); }
+  Select3D_BndBox3d BoundingBox() override { return m_prototype->BoundingBox(); }
+  gp_Pnt CenterOfGeometry() const override { return m_prototype->CenterOfGeometry(); }
+  Standard_Boolean ToBuildBVH() const override { return false; }
+ private:
+  Handle(Select3D_SensitiveEntity) m_prototype;
+};
+
+// Only registered with the navigation selector, never displayed or activated in the UI selection.
+class NavigationShape : public AIS_InteractiveObject {
+  DEFINE_STANDARD_RTTI_INLINE(NavigationShape, AIS_InteractiveObject)
+ public:
+  explicit NavigationShape(const Handle(Select3D_SensitiveEntity)& prototype) : m_prototype(prototype) {}
+  void BoundingBox(Bnd_Box& box) override {
+    const auto bounds = m_prototype->BoundingBox();
+    Bnd_Box local;
+    local.Update(bounds.CornerMin().x(), bounds.CornerMin().y(), bounds.CornerMin().z(),
+                 bounds.CornerMax().x(), bounds.CornerMax().y(), bounds.CornerMax().z());
+    box = local.Transformed(Transformation());
+  }
+ protected:
+  void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)&, Standard_Integer) override {}
+  void ComputeSelection(const Handle(SelectMgr_Selection)& selection, Standard_Integer) override;
+ private:
+  Handle(Select3D_SensitiveEntity) m_prototype;
 };
 
 // Every selected sub-shape in one object: a few primitive arrays in world coordinates, filled by

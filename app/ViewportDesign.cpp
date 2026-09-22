@@ -19,6 +19,7 @@
 #include <QMouseEvent>
 
 #include "Jobs.hpp"
+#include "opad/geometry.hpp"
 #include "opad/design/sketch.hpp"
 #include "opad/design/sketch_geom.hpp"
 
@@ -131,6 +132,16 @@ void Viewport::selectRefs(const std::vector<opad::Ref>& refs, const std::vector<
     auto it = m_items.find(r.body);
     if (it == m_items.end()) continue;
     const Handle(AIS_Shape)& ais = it->second.ais;
+    if (r.kind == opad::Ref::Kind::Center) {
+      std::shared_ptr<BodyPrs> prs;
+      { std::lock_guard<std::mutex> lock(m_meshMu); auto p = m_prs.find(it->second.key); if (p != m_prs.end()) prs = p->second; }
+      if (prs && opad::mat_is_rigid(it->second.world) && prs->circles.count(r.index)) {
+        gp_Pnt point = prs->circles.at(r.index).center.Transformed(ais->Transformation());
+        Handle(AIS_Shape) marker = centerMarker(r, point);
+        if (!m_ctx->IsSelected(marker)) m_ctx->AddOrRemoveSelected(marker, false);
+      }
+      continue;
+    }
     if (r.kind == opad::Ref::Kind::Body) {
       m_ctx->AddOrRemoveSelected(ais, Standard_False);
       m_selApplied.push_back(ais);
@@ -157,6 +168,7 @@ void Viewport::selectRefs(const std::vector<opad::Ref>& refs, const std::vector<
 void Viewport::setBodiesPickable(bool on) {
   if (m_bodiesPickable == on) return;
   m_bodiesPickable = on;
+  if (!on) clearCenters();
   if (!m_initialised) return;
   if (on) return setSelectionFilter(m_filter);  // sliced: re-activates every body in the current mode
   if (m_filterJob) m_filterJob->cancel();
@@ -351,6 +363,7 @@ bool Viewport::event(QEvent* e) {
 
 void Viewport::keyPressEvent(QKeyEvent* e) {
   if (m_sketchInput) return e->accept();  // already handled (or refused) at the shortcut-override stage
+  if (e->key() == Qt::Key_Shift && !e->isAutoRepeat() && toggleCenterLock()) return e->accept();
   QWidget::keyPressEvent(e);
 }
 

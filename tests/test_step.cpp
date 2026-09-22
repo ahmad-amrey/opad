@@ -4,6 +4,11 @@
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRep_Tool.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Edge.hxx>
+#include <gp_Circ.hxx>
 
 #include "check.hpp"
 #include "opad/core.hpp"
@@ -25,6 +30,36 @@ static std::string find_node(const Scene& s, const std::string& name) {
 }
 
 static std::string read_file(const fs::path& p) { return read_text_file(p); }
+
+TEST(trimmed_arc_centers_follow_instance_transforms) {
+  Document d = Document::create();
+  const gp_Circ circle(gp_Ax2(gp_Pnt(2, 3, 4), gp_Dir(0, 0, 1)), 7);
+  const TopoDS_Shape arc = BRepBuilderAPI_MakeEdge(circle, 0.2, 1.4).Shape();
+  cache_shape(d, "arc", arc);
+  Scene scene;
+  Node first;
+  first.id = new_uuid(); first.kind = Node::Kind::Body; first.body_key = "arc";
+  first.local = Mat4::translation(10, -20, 30);
+  Node second = first;
+  second.id = new_uuid(); second.local = Mat4::translation(13, -16, 30);
+  scene.nodes[first.id] = first; scene.nodes[second.id] = second;
+  Ref a, b;
+  a.body = first.id; a.kind = Ref::Kind::Center; a.index = 0;
+  b = a; b.body = second.id;
+  const json info = inspect_ref(d, scene, a);
+  CHECK_NEAR(info["point"][0].get<double>(), 12, 1e-9);
+  CHECK_NEAR(info["point"][1].get<double>(), -17, 1e-9);
+  CHECK_NEAR(info["point"][2].get<double>(), 34, 1e-9);
+  CHECK_NEAR(measure_distance(d, scene, a, b)["value"].get<double>(), 5, 1e-9);
+  const json radius = measure_radius(d, scene, a);
+  CHECK_NEAR(radius["value"].get<double>(), 7, 1e-9);
+  CHECK_NEAR(radius["diameter"].get<double>(), 14, 1e-9);
+  Ref rim = a; rim.kind = Ref::Kind::Edge;
+  CHECK_NEAR(measure_distance(d, scene, a, rim)["value"].get<double>(), 7, 1e-7);
+  CHECK_THROWS(subshape(arc, Ref::Kind::Center, 4));
+  const TopoDS_Shape line = BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0), gp_Pnt(1, 0, 0)).Shape();
+  CHECK_THROWS(subshape(line, Ref::Kind::Center, 0));
+}
 
 TEST(import_single_body_box) {
   Document d = Document::create();
@@ -141,6 +176,19 @@ TEST(inspect_faces_edges_and_measure) {
   }
   CHECK(circularEdges > 0);
   CHECK(circleRefs.size() >= 2);
+  Ref centerA = circleRefs[0], centerB = circleRefs[1];
+  centerA.kind = centerB.kind = Ref::Kind::Center;
+  CHECK_EQ(Ref::parse(centerA.str()).to_json(), centerA.to_json());
+  CHECK_EQ(Ref::from_json(centerB.to_json()).str(), centerB.str());
+  const json centers = measure_distance(d, s, centerA, centerB);
+  CHECK_NEAR(centers["value"].get<double>(), 20.0, 1e-9);  // the hole's end circles, not the rim pick points
+  const json centerRadius = measure_radius(d, s, centerA);
+  CHECK_NEAR(centerRadius["value"].get<double>(), 4.0, 1e-9);
+  CHECK_NEAR(centerRadius["diameter"].get<double>(), 8.0, 1e-9);
+  CHECK_EQ(centerRadius["refs"][0].get<std::string>(), centerA.str());
+  const json centerInfo = inspect_ref(d, s, centerA);
+  CHECK_EQ(centerInfo["type"], "center");
+  CHECK_EQ(centerInfo["point"], centerInfo["center"]);
   const json edgeA = inspect_ref(d, s, circleRefs[0]), edgeB = inspect_ref(d, s, circleRefs[1]);
   Vec3 pickedA, pickedB;
   for (int i = 0; i < 3; ++i) {

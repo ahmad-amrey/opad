@@ -13,6 +13,8 @@ class NavCube : public AIS_ViewCube {
   NavCube();
 
  protected:
+  // A cube click changes orientation about the visible focus, preserving the user's zoom.
+  void viewFitAll(const Handle(V3d_View)&, const Handle(Graphic3d_Camera)&) override {}
   // Base ComputeSelection/Compute path: sides only (edge and corner drawing is off).
   void ComputeSelection(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode) override;
   void HilightOwnerWithColor(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Drawer)& style, const Handle(SelectMgr_EntityOwner)& owner) override;

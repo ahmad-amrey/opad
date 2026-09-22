@@ -257,6 +257,7 @@ const char* Ref::kind_name(Kind k) {
     case Kind::Face: return "face";
     case Kind::Edge: return "edge";
     case Kind::Vertex: return "vertex";
+    case Kind::Center: return "center";
     case Kind::Point: return "point";
   }
   return "body";
@@ -267,6 +268,7 @@ static Ref::Kind kind_from_name(std::string_view s) {
   if (s == "face") return Ref::Kind::Face;
   if (s == "edge") return Ref::Kind::Edge;
   if (s == "vertex") return Ref::Kind::Vertex;
+  if (s == "center") return Ref::Kind::Center;
   if (s == "point") return Ref::Kind::Point;
   throw Error("unknown reference kind: " + std::string(s));
 }

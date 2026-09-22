@@ -98,6 +98,7 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   setAttribute(Qt::WA_OpaquePaintEvent);
   setMouseTracking(true);
   setFocusPolicy(Qt::StrongFocus);
+  QCoreApplication::instance()->installEventFilter(this);
   setMinimumSize(200, 150);
   connect(doc, &AppDocument::changed, this, &Viewport::sync);
   m_syncTimer.setSingleShot(true);
@@ -224,6 +225,11 @@ void Viewport::initViewer() {
   m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
   m_view->SetProj(V3d_XposYnegZpos);
 
+  m_navSelector = new SelectMgr_ViewerSelector();
+  m_navSelector->SetPixelTolerance(1);
+  m_navSelector->SetPickClosest(true);
+  m_navSelector->SetDepthTolerance(SelectMgr_TypeOfDepthTolerance_Uniform, 0.0);
+  m_navSelection = new SelectMgr_SelectionManager(m_navSelector);
   m_cube = new NavCube();  // a plain cube whose edges and corners are still hover/click targets
   m_cube->SetSize(58);
   m_cube->SetFontHeight(11);
@@ -455,6 +461,9 @@ std::vector<opad::Ref> Viewport::selection() const {
   }
   for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected()) {
     Handle(AIS_InteractiveObject) obj = m_ctx->SelectedInteractive();
+    auto center = m_centerObjects.find(obj.get());
+    if (center != m_centerObjects.end()) { out.push_back(m_centers.at(center->second).ref); continue; }
+    if (!Handle(CircleOwner)::DownCast(m_ctx->SelectedOwner()).IsNull()) continue;
     auto it = m_nodeOf.find(obj.get());
     if (it == m_nodeOf.end()) continue;
     opad::Ref r;
@@ -582,7 +591,7 @@ void Viewport::refreshSubHighlight() {
   auto st = std::make_shared<State>();
   for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected()) {
     Handle(SubShapeOwner) o = Handle(SubShapeOwner)::DownCast(m_ctx->SelectedOwner());
-    if (!o.IsNull()) st->owners.push_back(o);
+    if (!o.IsNull() && Handle(CircleOwner)::DownCast(o).IsNull()) st->owners.push_back(o);
   }
   if (st->owners.empty()) return;
   st->hl = new SubHighlight(occ(m_tokens.sel));
@@ -722,6 +731,7 @@ void Viewport::clearShade() {
 
 void Viewport::clearSelection() {
   if (!m_initialised) return;
+  clearCenters();
   m_notifyWhenApplied = true;  // selectionChanged fires once the (possibly sliced) un-highlight has settled
   selectNodes({});
 }
@@ -751,11 +761,30 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
     if (trace::enabled()) trace::log(QStringLiteral("3D click: on the view cube, %1 stay selected").arg(m_ctx->NbSelected()));
     return;
   }
+  // Arc discovery targets must never become edge picks through a rubber band.
+  std::vector<Handle(SelectMgr_EntityOwner)> discovery;
+  for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected())
+    if (!Handle(CircleOwner)::DownCast(m_ctx->SelectedOwner()).IsNull()) discovery.push_back(m_ctx->SelectedOwner());
+  for (const auto& owner : discovery) m_ctx->AddOrRemoveSelected(owner, false);
   if (m_selJob) m_selJob->cancel();
   m_hasLastPick = m_ctx->HasDetected() && m_ctx->MainSelector()->NbPicked() > 0;  // guided tools mark where the click landed
   if (m_hasLastPick) {
     const gp_Pnt p = m_ctx->MainSelector()->PickedPoint(1);
     m_lastPick = {p.X(), p.Y(), p.Z()};
+    auto center = m_centerObjects.find(m_ctx->DetectedInteractive().get());
+    if (center != m_centerObjects.end()) {
+      const gp_Pnt& exact = m_centers.at(center->second).point;
+      m_lastPick = {exact.X(), exact.Y(), exact.Z()};
+      m_centers.at(center->second).ais->GlobalSelOwner()->SetPriority(5);
+      m_centerLocked = false;  // the selected marker persists; discover the next circle
+      m_activeCenter.clear();
+    }
+  }
+  for (auto it = m_centers.begin(); it != m_centers.end();) {
+    if (it->first == m_activeCenter || m_ctx->IsSelected(it->second.ais)) { ++it; continue; }
+    m_centerObjects.erase(it->second.ais.get());
+    m_ctx->Remove(it->second.ais, false);
+    it = m_centers.erase(it);
   }
   clearShade();
   m_needFit = false;
@@ -1256,6 +1285,11 @@ void Viewport::sync() {
   bool removed = false;
   for (auto it = m_items.begin(); it != m_items.end();) {
     if (keep.count(it->first) && !replace.count(it->first)) { ++it; continue; }
+    clearCenters();  // topology, placement or visibility changed: no stale source circles
+    if (!it->second.navigation.IsNull()) {
+      m_navNodes.erase(it->second.navigation.get());
+      m_navSelection->Remove(it->second.navigation);
+    }
     m_ctx->Remove(it->second.ais, Standard_False);
     m_nodeOf.erase(it->second.ais.get());
     it = m_items.erase(it);
@@ -1331,8 +1365,16 @@ void Viewport::displayBody(const std::string& id) {
   const qint64 displayMs = t.elapsed();
   activateSelection(ais);
   if (trace::enabled() && t.elapsed() > 50) trace::log(QStringLiteral("displayBody %1: display %2 ms, selection %3 ms").arg(QString::fromStdString(n->name)).arg(displayMs).arg(t.elapsed() - displayMs));
-  m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located};
+  m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located, {}};
   m_nodeOf[ais.get()] = id;
+  if (prs && !prs->navigation.IsNull()) {
+    Handle(NavigationShape) nav = new NavigationShape(prs->navigation);
+    if (rigid && !world.is_identity()) nav->SetLocalTransformation(opad::trsf_from_mat(world));
+    m_navSelection->Load(nav, -1);
+    m_navSelection->Activate(nav, 0);
+    m_items[id].navigation = nav;
+    m_navNodes[nav.get()] = id;
+  }
 }
 
 void Viewport::finishSync(int pendingCount, bool added) {
@@ -1389,6 +1431,7 @@ void Viewport::paintEvent(QPaintEvent*) {
   const Standard_Transient* hoverOwner = m_ctx->HasDetected() ? m_ctx->DetectedOwner().get() : nullptr;
   if (hoverOwner == m_hoverOwner) return;
   m_hoverOwner = hoverOwner;
+  discoverCenter();
   QString hover;
   if (m_ctx->HasDetected()) {
     Handle(AIS_InteractiveObject) obj = m_ctx->DetectedInteractive();
@@ -1404,12 +1447,25 @@ void Viewport::paintEvent(QPaintEvent*) {
       }
     }
   }
+  if (!m_activeCenter.empty()) {
+    hover += hover.isEmpty() ? QString() : QStringLiteral(" · ");
+    hover += m_centerLocked ? tr("Center locked · click center · Shift unlock") : tr("Circle center · Shift lock · click center");
+  } else if (m_ctx->HasDetected() && m_centerObjects.count(m_ctx->DetectedInteractive().get())) {
+    hover = tr("Circle center");
+  }
   if (hover != m_hover) {
     m_hover = hover;
     emit hoverChanged(hover);
   }
-  const bool onGeometry = !hover.isEmpty() && m_ctx->MainSelector()->NbPicked() > 0;
-  const gp_Pnt hp = onGeometry ? m_ctx->MainSelector()->PickedPoint(1) : gp_Pnt();
+  const bool onGeometry = m_ctx->HasDetected() && m_ctx->MainSelector()->NbPicked() > 0
+      && (m_nodeOf.count(m_ctx->DetectedInteractive().get()) || m_centerObjects.count(m_ctx->DetectedInteractive().get()));
+  gp_Pnt hp = onGeometry ? m_ctx->MainSelector()->PickedPoint(1) : gp_Pnt();
+  if (onGeometry) {
+    auto center = m_centerObjects.find(m_ctx->DetectedInteractive().get());
+    Handle(CircleOwner) circle = Handle(CircleOwner)::DownCast(m_ctx->DetectedOwner());
+    if (center != m_centerObjects.end()) hp = m_centers.at(center->second).point;
+    else if (!circle.IsNull()) hp = circle->center.Transformed(m_ctx->DetectedInteractive()->Transformation());
+  }
   emit hoverPoint(onGeometry, opad::Vec3{hp.X(), hp.Y(), hp.Z()});
 }
 
@@ -1440,6 +1496,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   // still goes through the controller's click path and snaps to the picked side.
   if (m_initialised && e->button() == Qt::LeftButton && e->modifiers() == Qt::NoModifier && m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube) {
     ChangeMouseGestureMap().Bind(Aspect_VKeyMouse_LeftButton, AIS_MouseGesture_RotateOrbit);
+    focusCube();
     m_cubeGesture = true;
     m_cubeClick = true;
     m_needFit = false;

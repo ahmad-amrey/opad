@@ -2,6 +2,9 @@
 
 #include <AIS_DisplayMode.hxx>
 #include <BRep_Tool.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <Select3D_SensitiveCurve.hxx>
+#include <Select3D_SensitivePrimitiveArray.hxx>
 #include <Graphic3d_AspectFillArea3d.hxx>
 #include <Graphic3d_AspectLine3d.hxx>
 #include <Graphic3d_AspectMarker3d.hxx>
@@ -60,6 +63,26 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
   p->box = box;
   p->triangles = StdPrs_ShadedShape::FillTriangles(meshedProto);
   p->boundaries = StdPrs_ShadedShape::FillFaceBoundaries(meshedProto);
+  if (!p->triangles.IsNull()) {
+    Handle(Select3D_SensitivePrimitiveArray) triangles = new Select3D_SensitivePrimitiveArray(nullptr);
+    if (triangles->InitTriangulation(p->triangles->Attributes(), p->triangles->Indices(), TopLoc_Location())) {
+      triangles->BVH();
+      p->navigation = triangles;
+    }
+  }
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(meshedProto, TopAbs_EDGE, edges);
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    if (BRep_Tool::Degenerated(TopoDS::Edge(edges(i)))) continue;
+    BRepAdaptor_Curve curve(TopoDS::Edge(edges(i)));
+    if (curve.GetType() != GeomAbs_Circle) continue;
+    TColgp_Array1OfPnt points(1, 257);
+    for (int j = 1; j <= points.Length(); ++j)
+      points(j) = curve.Value(curve.FirstParameter() + (curve.LastParameter() - curve.FirstParameter()) * (j - 1) / 256.0);
+    Handle(Select3D_SensitiveCurve) sensitive = new Select3D_SensitiveCurve(nullptr, points);
+    sensitive->BVH();
+    p->circles.emplace(i - 1, Circle{edges(i), curve.Circle().Location(), sensitive});
+  }
   p->closed = true;
   for (TopExp_Explorer e(meshedProto, TopAbs_SHELL); e.More(); e.Next())
     if (!BRep_Tool::IsClosed(e.Current())) { p->closed = false; break; }
@@ -110,4 +133,11 @@ void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, c
     }
     sens->Set(mine);
   }
+  if (mode == AIS_Shape::SelectionMode(TopAbs_VERTEX) && m_prs)
+    for (const auto& [index, circle] : m_prs->circles)
+      selection->Add(new SharedSensitive(new CircleOwner(circle, this, index), circle.sensitive));
+}
+
+void NavigationShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, Standard_Integer) {
+  if (!m_prototype.IsNull()) selection->Add(new SharedSensitive(new SelectMgr_EntityOwner(this), m_prototype));
 }

@@ -861,5 +861,12 @@
  "Nearest → edge 2 midpoint": "الأقرب ← منتصف الحافة 2",
  "Nearest → edge 2 quarter": "الأقرب ← ربع الحافة 2",
  "Nearest → edge 2 three-quarter": "الأقرب ← ثلاثة أرباع الحافة 2",
- "Curve points of interest": "نقاط الاهتمام على المنحنى"
+ "Curve points of interest": "نقاط الاهتمام على المنحنى",
+ "Circle center": "مركز الدائرة",
+ "Center locked · click center · Shift unlock": "المركز مثبت · انقر المركز · Shift لإلغاء التثبيت",
+ "Circle center · Shift lock · click center": "مركز الدائرة · Shift للتثبيت · انقر المركز",
+ "Hover arc · Shift lock center · Esc back": "مرر فوق قوس · Shift لتثبيت المركز · Esc للرجوع",
+ "center requires a circular edge": "يتطلب المركز حافة دائرية",
+ "circle center": "مركز دائرة",
+ "vertex or center": "رأس أو مركز"
 }
