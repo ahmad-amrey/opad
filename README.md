@@ -31,6 +31,12 @@ git add review.opad && git commit -m "review gearbox"
 | `tests/` | Headless tests: format, geometry, CLI, git merge story, plugin, Python |
 | `docs/` | [File format](docs/format.md), [CLI reference](docs/cli.md), [architecture](docs/architecture.md) |
 
+## Trackpad navigation
+
+In the 3D viewport, drag with two fingers to pan, hold Shift while dragging with two fingers to orbit, and pinch
+to zoom around the pointer. These gestures work independently of the selected mouse navigation preset. A mouse
+wheel continues to zoom.
+
 ## Building
 
 OPAD builds natively on each OS against that OS's own packages: install the dependencies, then one command

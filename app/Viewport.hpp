@@ -33,6 +33,7 @@
 class JobRunner;
 class Job;
 class QKeyEvent;
+class QNativeGestureEvent;
 
 // Sketch editing (SketchEditor) takes the left mouse button and the keyboard while it is active; positions
 // arrive in sketch-plane coordinates. Navigation (middle/right button, wheel, view cube) stays with the view.
@@ -220,6 +221,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
     Handle(NavigationShape) navigation;
   };
   void initViewer();
+  void trackpadScroll(const QPointF& position, const QPointF& delta, bool orbit);
+  void finishTrackpadScroll();
+  void zoomAt(const QPointF& position, qreal scaleFactor);
+  bool handleNativeGesture(QNativeGestureEvent* event);
   Handle(AIS_Shape) centerMarker(const opad::Ref& ref, const gp_Pnt& point);
   void discoverCenter();
   void clearCenters();
@@ -316,6 +321,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::set<std::string> m_meshing;
   std::set<std::string> m_meshSkipped;
   std::pair<int, int> m_lastSyncedSize{-1, -1};  // Qt size and display-scale stamp for syncWindowSize
+  qreal m_cubeScale = 1.0;  // OCCT backing pixels per Qt point
   JobRunner* m_jobs = nullptr;
   Job* m_displayJob = nullptr;                    // in-flight sync(): bodies being added to the context
   QTimer m_syncTimer;
@@ -347,6 +353,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_sketchDrag = false;
 
   QTimer m_timer;
+  QTimer m_trackpadEndTimer;
+  enum class TrackpadMode { None, Pan, Orbit };
+  TrackpadMode m_trackpadMode = TrackpadMode::None;
+  QPointF m_trackpadCursor, m_trackpadAnchor;
+  bool m_nativePinching = false;
   QString m_hover;
   const Standard_Transient* m_hoverOwner = nullptr;  // owner m_hover was built for (identity only, never dereferenced)
   QPoint m_pressPos;

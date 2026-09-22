@@ -9,6 +9,11 @@
 #include <QCoreApplication>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QNativeGestureEvent>
+#include <QPointingDevice>
+#include <QGestureEvent>
+#include <QPinchGesture>
+#include <QWheelEvent>
 #include <TopoDS.hxx>
 #include <cmath>
 #include <gp_Pln.hxx>
@@ -47,6 +52,78 @@ bool Viewport::benchPicking() {
     require(selector->NbPicked() == 1 && std::abs(selector->PickedPoint(1).Z() - 10) < 1e-6, "navigation ignored deactivation");
     trace::log(QStringLiteral("bench: picking nearest surface / transformed instances PASS"));
 
+    // Exercise Qt's trackpad event path, including the virtual drag that drives OCCT's existing gestures.
+    const Handle(Graphic3d_Camera) beforeTrackpad = new Graphic3d_Camera(*m_view->Camera());
+    const QPointF gesturePoint(width() * 0.5, height() * 0.5);
+    QPointingDevice touchpad("bench trackpad", 1, QInputDevice::DeviceType::TouchPad,
+                            QPointingDevice::PointerType::Finger, QInputDevice::Capability::Position, 2, 0);
+    auto scroll = [&](QPoint pixels, Qt::KeyboardModifiers modifiers, Qt::ScrollPhase phase) {
+      QWheelEvent event(gesturePoint, mapToGlobal(gesturePoint), pixels, {}, Qt::NoButton,
+                        modifiers, phase, true, Qt::MouseEventNotSynthesized, &touchpad);
+      QCoreApplication::sendEvent(this, &event);
+      paintEvent(nullptr);
+    };
+    const opad::Vec3 centerWorld{beforeTrackpad->Center().X(), beforeTrackpad->Center().Y(), beforeTrackpad->Center().Z()};
+    const QPoint beforePan = widgetPoint(centerWorld);
+    scroll({}, Qt::NoModifier, Qt::ScrollBegin);
+    scroll({40, 20}, Qt::NoModifier, Qt::ScrollUpdate);
+    scroll({}, Qt::NoModifier, Qt::ScrollEnd);
+    const QPoint panDelta = widgetPoint(centerWorld) - beforePan;
+    require(std::abs(panDelta.x() - 40) <= 3 && std::abs(panDelta.y() - 20) <= 3,
+            "trackpad two-finger pan did not follow the scroll delta");
+    m_view->SetCamera(new Graphic3d_Camera(*beforeTrackpad));
+    m_view->Redraw();
+    scroll({}, Qt::ShiftModifier, Qt::ScrollBegin);
+    scroll({40, 20}, Qt::ShiftModifier, Qt::ScrollUpdate);
+    scroll({}, Qt::ShiftModifier, Qt::ScrollEnd);
+    require(!beforeTrackpad->Direction().IsEqual(m_view->Camera()->Direction(), 1e-6),
+            "Shift plus trackpad scroll did not orbit");
+    m_view->SetCamera(new Graphic3d_Camera(*beforeTrackpad));
+    m_view->Redraw();
+    QNativeGestureEvent pinch(Qt::ZoomNativeGesture, &touchpad, 2, gesturePoint,
+                              mapTo(window(), gesturePoint), mapToGlobal(gesturePoint), 0.2, {});
+    QCoreApplication::sendEvent(this, &pinch);
+    paintEvent(nullptr);
+    require(std::abs(m_view->Camera()->Scale() / beforeTrackpad->Scale() - 1.0 / 1.2) < 0.03,
+            "trackpad pinch did not zoom");
+    const double afterPinchIn = m_view->Camera()->Scale();
+    QNativeGestureEvent pinchOut(Qt::ZoomNativeGesture, &touchpad, 2, gesturePoint,
+                                 mapTo(window(), gesturePoint), mapToGlobal(gesturePoint), -0.2, {});
+    QCoreApplication::sendEvent(this, &pinchOut);
+    paintEvent(nullptr);
+    require(m_view->Camera()->Scale() > afterPinchIn, "trackpad pinch-in did not zoom out");
+    QNativeGestureEvent pinchEnd(Qt::EndNativeGesture, &touchpad, 0, gesturePoint,
+                                 mapTo(window(), gesturePoint), mapToGlobal(gesturePoint), 0.0, {});
+    QCoreApplication::sendEvent(this, &pinchEnd);
+    m_view->SetCamera(new Graphic3d_Camera(*beforeTrackpad));
+    m_view->Redraw();
+    scroll({0, 15}, Qt::ControlModifier, Qt::ScrollUpdate);  // Windows touchpads can report pinch as Ctrl+wheel
+    require(m_view->Camera()->Scale() < beforeTrackpad->Scale(), "Ctrl plus trackpad scroll did not zoom");
+    m_view->SetCamera(new Graphic3d_Camera(*beforeTrackpad));
+    m_view->Redraw();
+    QPinchGesture fallbackPinch;
+    fallbackPinch.setScaleFactor(1.2);
+    fallbackPinch.setChangeFlags(QPinchGesture::ScaleFactorChanged);
+    fallbackPinch.setHotSpot(mapToGlobal(gesturePoint));
+    QGestureEvent fallbackEvent({&fallbackPinch});
+    event(&fallbackEvent);  // macOS does not grab this fallback gesture; exercise the handler directly
+    paintEvent(nullptr);
+    require(std::abs(m_view->Camera()->Scale() / beforeTrackpad->Scale() - 1.0 / 1.2) < 0.03,
+            "Qt pinch gesture fallback did not zoom");
+    m_view->SetCamera(new Graphic3d_Camera(*beforeTrackpad));
+    m_view->Redraw();
+    QPointingDevice mouse("bench mouse", 2, QInputDevice::DeviceType::Mouse,
+                          QPointingDevice::PointerType::Generic, QInputDevice::Capability::Position, 1, 3);
+    QWheelEvent mouseWheel(gesturePoint, mapToGlobal(gesturePoint), {}, {0, 120}, Qt::NoButton,
+                           Qt::NoModifier, Qt::NoScrollPhase, false, Qt::MouseEventNotSynthesized, &mouse);
+    QCoreApplication::sendEvent(this, &mouseWheel);
+    paintEvent(nullptr);
+    require(m_view->Camera()->Scale() < beforeTrackpad->Scale(), "mouse wheel no longer zooms");
+    m_view->SetCamera(new Graphic3d_Camera(*beforeTrackpad));
+    m_view->Redraw();
+    require(selection().empty(), "trackpad navigation selected an object");
+    trace::log(QStringLiteral("bench: picking trackpad pan / Shift orbit / pinch / mouse wheel PASS"));
+
     // Exercise the real scene selector before fitting one part for center discovery.
     QElapsedTimer timer;
     timer.start();
@@ -72,6 +149,31 @@ bool Viewport::benchPicking() {
     focusCube();
     require(std::abs(m_view->Camera()->Scale() - scale) < 1e-7 && direction.IsEqual(m_view->Camera()->Direction(), 1e-7), "cube focus moved or zoomed the image");
     trace::log(QStringLiteral("bench: picking empty-space and cube focus PASS"));
+
+    // A direct press on the cube must use that press location even when the last hover was over a body.
+#if defined(__APPLE__)
+    require(std::abs(viewScale().x() - devicePixelRatioF()) < 0.01,
+            "Cocoa viewport size does not match its Retina backing pixels");
+#endif
+    m_ctx->MoveTo(devicePos(orbitCursor).x(), devicePos(orbitCursor).y(), m_view, Standard_False);
+    const QPoint cubePoint(width() - 100, 68);
+    auto cubeMouse = [this](QEvent::Type type, QPoint p, Qt::MouseButton button, Qt::MouseButtons buttons) {
+      QMouseEvent event(type, QPointF(p), mapToGlobal(QPointF(p)), button, buttons, Qt::NoModifier);
+      QCoreApplication::sendEvent(this, &event);
+    };
+    const Handle(Graphic3d_Camera) beforeCubeDrag = new Graphic3d_Camera(*m_view->Camera());
+    cubeMouse(QEvent::MouseButtonPress, cubePoint, Qt::LeftButton, Qt::LeftButton);
+    require(m_cubeGesture, "direct cube press did not start cube orbit");
+    cubeMouse(QEvent::MouseMove, cubePoint + QPoint(60, 30), Qt::NoButton, Qt::LeftButton);
+    paintEvent(nullptr);
+    cubeMouse(QEvent::MouseButtonRelease, cubePoint + QPoint(60, 30), Qt::LeftButton, Qt::NoButton);
+    paintEvent(nullptr);
+    require(!m_cubeGesture, "cube drag did not finish");
+    require(!beforeCubeDrag->Direction().IsEqual(m_view->Camera()->Direction(), 1e-6),
+            "cube drag did not orbit");
+    m_view->SetCamera(new Graphic3d_Camera(*beforeCubeDrag));
+    m_view->Redraw();
+    trace::log(QStringLiteral("bench: picking direct cube press and drag PASS"));
 
     Handle(Graphic3d_Camera) savedCamera = new Graphic3d_Camera(*m_view->Camera());
     m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Perspective);

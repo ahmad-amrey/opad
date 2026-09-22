@@ -17,6 +17,10 @@
 
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QNativeGestureEvent>
+#include <QGestureEvent>
+#include <QPinchGesture>
+#include <QCursor>
 
 #include "Jobs.hpp"
 #include "opad/geometry.hpp"
@@ -349,6 +353,19 @@ void Viewport::mouseDoubleClickEvent(QMouseEvent* e) {
 }
 
 bool Viewport::event(QEvent* e) {
+  if (e->type() == QEvent::NativeGesture && handleNativeGesture(static_cast<QNativeGestureEvent*>(e))) return true;
+  if (e->type() == QEvent::Gesture) {
+    auto* gestures = static_cast<QGestureEvent*>(e);
+    if (auto* pinch = static_cast<QPinchGesture*>(gestures->gesture(Qt::PinchGesture))) {
+      if (m_initialised && !m_blocked && (pinch->changeFlags() & QPinchGesture::ScaleFactorChanged)) {
+        finishTrackpadScroll();
+        const QPointF position = pinch->hasHotSpot() ? mapFromGlobal(pinch->hotSpot()) : mapFromGlobal(QCursor::pos());
+        zoomAt(position, pinch->scaleFactor());
+      }
+      gestures->accept(pinch);
+      return true;
+    }
+  }
   // A window shortcut (D = Distance, L, C, Esc, Del ...) would swallow the key; while sketching the editor gets
   // first refusal on unmodified keys, and what it does not handle falls through to the shortcut as usual.
   if (e->type() == QEvent::ShortcutOverride && m_sketchInput) {

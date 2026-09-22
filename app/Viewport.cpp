@@ -46,7 +46,9 @@ Handle(Aspect_Window) opad_make_cocoa_window(void* nsview);
 #endif
 
 #include <QCoreApplication>
+#include <QInputDevice>
 #include <QMouseEvent>
+#include <QNativeGestureEvent>
 #include <QWheelEvent>
 #include <cmath>
 #include <thread>
@@ -61,7 +63,7 @@ Handle(Aspect_Window) opad_make_cocoa_window(void* nsview);
 #include <Prs3d_TextAspect.hxx>
 
 namespace {
-constexpr int kCubeOffsetX = 100, kCubeOffsetY = 104;  // view cube centre from the top-right corner, in px
+constexpr int kCubeOffsetX = 100, kCubeOffsetY = 104;  // view cube centre from the top-right corner, in Qt points
 }  // namespace
 
 namespace {
@@ -111,11 +113,23 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
     else if (toAskNextFrame()) requestRedraw();
   });
   m_timer.start();
+  m_trackpadEndTimer.setSingleShot(true);
+  m_trackpadEndTimer.setInterval(180);  // platforms without ScrollEnd still need to release the virtual drag
+  connect(&m_trackpadEndTimer, &QTimer::timeout, this, &Viewport::finishTrackpadScroll);
+#if !defined(__APPLE__)
+  grabGesture(Qt::PinchGesture);  // fallback for touch devices without native pinch events
+#endif
 }
 
 Viewport::~Viewport() { *m_alive = false; }
 
-void Viewport::setBlocked(bool on) { m_blocked = on; }
+void Viewport::setBlocked(bool on) {
+  if (on) {
+    finishTrackpadScroll();
+    m_nativePinching = false;
+  }
+  m_blocked = on;
+}
 
 void Viewport::benchShot(const QString& path) {
   if (!m_initialised) return;
@@ -138,10 +152,12 @@ void Viewport::benchShot(const QString& path) {
   int dx = 0, dy = -36;
   const QByteArray hoverEnv = qgetenv("OPAD_BENCH_HOVER");
   if (hoverEnv.contains(',')) { dx = hoverEnv.split(',')[0].toInt(); dy = hoverEnv.split(',')[1].toInt(); }
-  m_ctx->MoveTo(w - kCubeOffsetX + dx, kCubeOffsetY + dy, m_view, Standard_False);
+  const int cubeX = w - qRound(kCubeOffsetX * m_cubeScale) + qRound(dx * m_cubeScale);
+  const int cubeY = qRound((kCubeOffsetY + dy) * m_cubeScale);
+  m_ctx->MoveTo(cubeX, cubeY, m_view, Standard_False);
   TColStd_ListOfInteger cubeModes;
   m_ctx->ActivatedModes(m_cube, cubeModes);
-  trace::log(QStringLiteral("bench: cube hover at (%1,%2): detected=%3 isCube=%4 cubeModes=%5 cubeHasSel0=%6").arg(w - kCubeOffsetX + dx).arg(kCubeOffsetY + dy).arg(m_ctx->HasDetected()).arg(m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube).arg(cubeModes.Size()).arg(m_cube->HasSelection(0)));
+  trace::log(QStringLiteral("bench: cube hover at (%1,%2): detected=%3 isCube=%4 cubeModes=%5 cubeHasSel0=%6").arg(cubeX).arg(cubeY).arg(m_ctx->HasDetected()).arg(m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube).arg(cubeModes.Size()).arg(m_cube->HasSelection(0)));
   m_view->Redraw();
   m_view->RedrawImmediate();
   grabImage().save(path);
@@ -231,8 +247,9 @@ void Viewport::initViewer() {
   m_navSelector->SetDepthTolerance(SelectMgr_TypeOfDepthTolerance_Uniform, 0.0);
   m_navSelection = new SelectMgr_SelectionManager(m_navSelector);
   m_cube = new NavCube();  // a plain cube whose edges and corners are still hover/click targets
-  m_cube->SetSize(58);
-  m_cube->SetFontHeight(11);
+  m_cubeScale = viewScale().x();
+  m_cube->SetSize(58 * m_cubeScale);
+  m_cube->SetFontHeight(11 * m_cubeScale);
   m_cube->SetAxesLabels("X", "Y", "Z");
   m_cube->SetBoxSideLabel(V3d_Zpos, "TOP");
   m_cube->SetBoxSideLabel(V3d_Zneg, "BOTTOM");
@@ -240,7 +257,8 @@ void Viewport::initViewer() {
   m_cube->SetBoxSideLabel(V3d_Ypos, "BACK");
   m_cube->SetBoxSideLabel(V3d_Xpos, "RIGHT");
   m_cube->SetBoxSideLabel(V3d_Xneg, "LEFT");
-  m_cube->SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER, Graphic3d_Vec2i(kCubeOffsetX, kCubeOffsetY)));
+  m_cube->SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER,
+      Graphic3d_Vec2i(qRound(kCubeOffsetX * m_cubeScale), qRound(kCubeOffsetY * m_cubeScale))));
   m_cube->SetViewAnimation(myViewAnimation);
   m_cube->SetFixedAnimationLoop(Standard_False);
   m_cube->SetAutoStartAnimation(Standard_True);
@@ -298,7 +316,7 @@ void Viewport::applyTokens() {
   m_cube->SetTextColor(occ(t.medge));
   m_cube->SetInnerColor(occ(t.mleft));
   m_cube->SetBoxTransparency(0.0);
-  m_cube->SetSize(64);
+  m_cube->SetSize(64 * m_cubeScale);
   m_cube->SetRoundRadius(0.0);  // a plain cube: no bevelled edges or corners
   m_cube->SetBoxFacetExtension(0.0);
   m_cube->SetBoxEdgeGap(0.0);
@@ -307,10 +325,10 @@ void Viewport::applyTokens() {
   m_cube->Attributes()->SetFaceBoundaryDraw(Standard_True);  // crisp edges between the faces, as in the design
   m_cube->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(t.medge), Aspect_TOL_SOLID, 1.0));
   m_cube->SetDrawAxes(Standard_True);
-  m_cube->SetAxesPadding(6);
-  m_cube->SetAxesRadius(0.6);
-  m_cube->SetAxesConeRadius(1.2);
-  m_cube->SetAxesSphereRadius(1.0);
+  m_cube->SetAxesPadding(6 * m_cubeScale);
+  m_cube->SetAxesRadius(0.6 * m_cubeScale);
+  m_cube->SetAxesConeRadius(1.2 * m_cubeScale);
+  m_cube->SetAxesSphereRadius(1.0 * m_cubeScale);
   const QColor axisColor[3] = {t.dark ? QColor("#e05a52") : QColor("#c62828"), t.dark ? QColor("#4fc46a") : QColor("#2e7d32"), t.dark ? QColor("#5b95f5") : QColor("#1e5fd1")};
   const Prs3d_DatumParts axisPart[3] = {Prs3d_DatumParts_XAxis, Prs3d_DatumParts_YAxis, Prs3d_DatumParts_ZAxis};
   Handle(Prs3d_DatumAspect) axes = m_cube->Attributes()->DatumAspect();
@@ -336,6 +354,7 @@ void Viewport::applyTokens() {
 
 // ---------------------------------------------------------------- navigation presets (F16)
 void Viewport::setNavPreset(NavPreset p) {
+  finishTrackpadScroll();
   m_preset = p;
   AIS_MouseGestureMap& map = ChangeMouseGestureMap();
   map.Clear();
@@ -366,6 +385,9 @@ void Viewport::setNavPreset(NavPreset p) {
       map.Bind(M | CTRL, AIS_MouseGesture_Zoom);
       break;
   }
+  // Meta is reserved for synthetic trackpad drags; qt_flags() does not pass it from physical mouse events.
+  map.Bind(M | Aspect_VKeyFlags_META, AIS_MouseGesture_Pan);
+  map.Bind(M | Aspect_VKeyFlags_META | SHIFT, AIS_MouseGesture_RotateOrbit);
 }
 
 // ---------------------------------------------------------------- display styles (F19)
@@ -1424,6 +1446,19 @@ void Viewport::syncWindowSize() {
   m_lastSyncedSize = {wantW, wantH};
   if (QWindow* native = windowHandle()) native->resize(size());
   m_view->MustBeResized();
+  const qreal cubeScale = viewScale().x();
+  if (!m_cube.IsNull() && !qFuzzyCompare(cubeScale, m_cubeScale)) {
+    m_cubeScale = cubeScale;
+    m_cube->SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER,
+        Graphic3d_Vec2i(qRound(kCubeOffsetX * m_cubeScale), qRound(kCubeOffsetY * m_cubeScale))));
+    m_cube->SetSize(64 * m_cubeScale);
+    m_cube->SetFontHeight(11 * m_cubeScale);
+    m_cube->SetAxesPadding(6 * m_cubeScale);
+    m_cube->SetAxesRadius(0.6 * m_cubeScale);
+    m_cube->SetAxesConeRadius(1.2 * m_cubeScale);
+    m_cube->SetAxesSphereRadius(1.0 * m_cubeScale);
+    m_ctx->Redisplay(m_cube, Standard_False);
+  }
   if (trace::enabled()) {
     Standard_Integer viewW = 0, viewH = 0;
     m_view->Window()->Size(viewW, viewH);
@@ -1485,6 +1520,7 @@ void Viewport::paintEvent(QPaintEvent*) {
 
 void Viewport::resizeEvent(QResizeEvent*) {
   if (!m_initialised) return;
+  finishTrackpadScroll();
   m_view->MustBeResized();
   m_view->Invalidate();
   requestRedraw();
@@ -1492,11 +1528,23 @@ void Viewport::resizeEvent(QResizeEvent*) {
 
 void Viewport::mousePressEvent(QMouseEvent* e) {
   if (m_blocked) return;
+  finishTrackpadScroll();
+  m_nativePinching = false;
   setFocus();
   m_pressPos = e->pos();
   m_rightPress = e->button() == Qt::RightButton;
   m_cubeClick = false;
   if (sectionMousePress(e)) return;  // a press on the section plane's handle strip starts a drag, never a selection
+  // A press can arrive without a preceding hover. Refresh only near the cube (or when the old hover was
+  // the cube) so the gesture below uses this press's owner without an extra scene pick on every model click.
+  const QPointF cubeCenter(width() - kCubeOffsetX, kCubeOffsetY);
+  const bool nearCube = qAbs(e->position().x() - cubeCenter.x()) <= 96
+      && qAbs(e->position().y() - cubeCenter.y()) <= 96;
+  if (m_initialised && e->button() == Qt::LeftButton
+      && (nearCube || (m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube))) {
+    const Graphic3d_Vec2i at = devicePos(e->position());
+    m_ctx->MoveTo(at.x(), at.y(), m_view, Standard_False);
+  }
   // Sketching: the left button belongs to the sketch editor, except on the view cube.
   if (m_sketchInput && m_initialised && e->button() == Qt::LeftButton && !(m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube)) {
     double u, v;
@@ -1563,6 +1611,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
 
 void Viewport::mouseMoveEvent(QMouseEvent* e) {
   if (m_blocked) return;
+  if (m_trackpadMode != TrackpadMode::None && e->buttons() == Qt::NoButton) finishTrackpadScroll();
   if (m_measureAnchorPress) return;
   if (sectionMouseMove(e)) return;  // dragging the section plane
   if (m_measureSelectionLocked && e->buttons() == Qt::NoButton && m_sectionHover < 0) {
@@ -1586,7 +1635,93 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
 
 void Viewport::wheelEvent(QWheelEvent* e) {
   if (!m_initialised || m_blocked) return;
+  const bool trackpad = (e->device() && e->device()->type() == QInputDevice::DeviceType::TouchPad)
+      || (!e->pixelDelta().isNull() && e->phase() != Qt::NoScrollPhase);
+  if (trackpad) {
+    if (m_nativePinching) { e->accept(); return; }
+    const QPointF delta = !e->pixelDelta().isNull() ? QPointF(e->pixelDelta()) : QPointF(e->angleDelta()) / 8.0;
+    if (e->modifiers() & Qt::ControlModifier) {
+      finishTrackpadScroll();
+      if (delta.y() != 0.0) {
+        m_needFit = false;
+        UpdateZoom(Aspect_ScrollDelta(devicePos(e->position()), delta.y()));
+        requestRedraw();
+      }
+    } else if (!delta.isNull()) {
+      trackpadScroll(e->position(), delta, bool(e->modifiers() & Qt::ShiftModifier));
+    }
+    if (e->phase() == Qt::ScrollEnd) finishTrackpadScroll();
+    e->accept();
+    return;
+  }
+  finishTrackpadScroll();
   m_needFit = false;
   const double delta = e->angleDelta().y() / 8.0;
   if (UpdateZoom(Aspect_ScrollDelta(devicePos(e->position()), delta))) requestRedraw();
+}
+
+void Viewport::trackpadScroll(const QPointF& position, const QPointF& delta, bool orbit) {
+  if (delta.isNull()) return;
+  const TrackpadMode mode = orbit ? TrackpadMode::Orbit : TrackpadMode::Pan;
+  if (mode != m_trackpadMode) {
+    finishTrackpadScroll();
+    m_trackpadCursor = position;
+    m_trackpadMode = mode;
+    const Aspect_VKeyFlags flags = Aspect_VKeyFlags_META | (orbit ? Aspect_VKeyFlags_SHIFT : 0);
+    UpdateMouseButtons(devicePos(m_trackpadCursor), Aspect_VKeyMouse_MiddleButton, flags, false);
+  }
+  m_trackpadAnchor = position;
+  m_trackpadCursor += delta;
+  const Aspect_VKeyFlags flags = Aspect_VKeyFlags_META | (orbit ? Aspect_VKeyFlags_SHIFT : 0);
+  UpdateMousePosition(devicePos(m_trackpadCursor), Aspect_VKeyMouse_MiddleButton, flags, false);
+  m_needFit = false;
+  m_trackpadEndTimer.start();
+  requestRedraw();
+}
+
+void Viewport::finishTrackpadScroll() {
+  m_trackpadEndTimer.stop();
+  if (m_trackpadMode == TrackpadMode::None) return;
+  const Aspect_VKeyFlags flags = Aspect_VKeyFlags_META
+      | (m_trackpadMode == TrackpadMode::Orbit ? Aspect_VKeyFlags_SHIFT : 0);
+  UpdateMouseButtons(devicePos(m_trackpadCursor), Aspect_VKeyMouse_NONE, flags, false);
+  m_trackpadMode = TrackpadMode::None;
+  UpdateMousePosition(devicePos(m_trackpadAnchor), Aspect_VKeyMouse_NONE, Aspect_VKeyFlags_NONE, false);
+  requestRedraw();
+}
+
+void Viewport::zoomAt(const QPointF& position, qreal scaleFactor) {
+  if (scaleFactor <= 0.0 || scaleFactor == 1.0) return;
+  // OCCT maps a positive scroll delta of 100 to a 2x zoom, and a negative delta of -100 to 0.5x.
+  const double delta = scaleFactor > 1.0 ? 100.0 * (scaleFactor - 1.0)
+                                         : -100.0 * (1.0 / scaleFactor - 1.0);
+  m_needFit = false;
+  UpdateZoom(Aspect_ScrollDelta(devicePos(position), delta));
+  requestRedraw();
+}
+
+bool Viewport::handleNativeGesture(QNativeGestureEvent* e) {
+  if (!m_initialised || m_blocked) return false;
+  switch (e->gestureType()) {
+    case Qt::BeginNativeGesture:
+      m_nativePinching = false;
+      e->accept();
+      return true;
+    case Qt::EndNativeGesture:
+      m_nativePinching = false;
+      e->accept();
+      return true;
+    case Qt::ZoomNativeGesture:
+      finishTrackpadScroll();
+      m_nativePinching = true;
+      zoomAt(e->position(), std::clamp(1.0 + e->value(), 0.05, 20.0));
+      e->accept();
+      return true;
+    case Qt::PanNativeGesture:
+      if (!m_nativePinching) trackpadScroll(e->position(), e->delta(), false);
+      e->accept();
+      return true;
+    default:
+      return false;
+  }
 }
