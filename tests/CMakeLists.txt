@@ -21,6 +21,7 @@ add_executable(opad-test-core test_core.cpp)
 target_link_libraries(opad-test-core PRIVATE opad::core)
 add_test(NAME core COMMAND opad-test-core)
 
+
 add_executable(opad-test-step test_step.cpp)
 target_link_libraries(opad-test-step PRIVATE opad::core)
 
@@ -42,6 +43,8 @@ set_tests_properties(step PROPERTIES FIXTURES_REQUIRED step_fixtures ENVIRONMENT
 
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND AND OPAD_BUILD_CLI)
+  add_test(NAME mcp COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_mcp.py $<TARGET_FILE:opad-cli>)
+  set_tests_properties(mcp PROPERTIES TIMEOUT 45 ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache")
   add_test(NAME cli COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_cli.py $<TARGET_FILE:opad-cli> ${OPAD_FIXTURE_DIR})
   set_tests_properties(cli PROPERTIES FIXTURES_REQUIRED step_fixtures ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache")
 endif()

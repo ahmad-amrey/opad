@@ -10,6 +10,7 @@
 #include "opad/core.hpp"
 
 using opad::json;
+int opad_mcp();
 
 namespace {
 
@@ -62,6 +63,7 @@ std::string read_all(std::istream& in) {
 
 int main(int argc, char** argv) {
   opad::configure_kernel_logging();
+  if (argc == 2 && std::string(argv[1]) == "mcp") return opad_mcp();
   std::vector<std::string> plugins;
   bool compact = false;
   std::string command;
