@@ -5,6 +5,8 @@
 
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QSettings>
+#include <Standard_Failure.hxx>
 #include <algorithm>
 #include <QMetaObject>
 #include <thread>
@@ -32,6 +34,7 @@ AppDocument::~AppDocument() { *m_alive = false; }
 
 opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<bool>>& cancel, const QString& file) {
   opad::ImportOptions o;
+  o.author = QSettings().value("user/name").toString().trimmed().toStdString();
   auto last = std::make_shared<std::pair<std::string, int>>("", -2);
   auto lastEmit = std::make_shared<QElapsedTimer>();
   lastEmit->start();
@@ -65,17 +68,21 @@ void AppDocument::startOpen(const QString& path) {
   const bool step = isStepPath(path);
   const QString file = QFileInfo(path).fileName() + QStringLiteral(" (%1 MB)").arg(QFileInfo(path).size() / (1024.0 * 1024.0), 0, 'f', 0);
   opad::ImportOptions o = loadOptions(cancel, file);
-  o.viewer = step;  // a STEP opened directly is viewed, not imported: no healing, BREP text or hashing
   auto alive = m_alive;
   emit loadProgress(step ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1);
   std::thread([this, alive, cancel, path, step, o]() {
     auto result = std::make_shared<opad::Document>();
     QString error;
     try {
-      *result = step ? opad::browse_step(path.toStdString(), o) : opad::Document::load(path.toStdString());
+      if (step) {
+        *result = opad::Document::create();
+        opad::import_step(*result, path.toStdString(), o);
+      } else *result = opad::Document::load(path.toStdString());
       // Parse the bodies here rather than on the UI thread when they are first displayed.
       if (!*cancel) opad::warm_shape_cache(*result, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
       if (*cancel) error = QStringLiteral("cancelled");
+    } catch (const Standard_Failure& e) {
+      error = QString::fromUtf8(e.GetMessageString());
     } catch (const std::exception& e) {
       error = QString::fromUtf8(e.what());
     }
@@ -87,13 +94,14 @@ void AppDocument::startOpen(const QString& path) {
         return;
       }
       doc = std::move(*result);
-      browse = step;
+      browse = false;
       hasDocument = true;
       clearHistory();
       markSaved();
+      if (step) m_savedIds.clear();  // imported content has not been saved as an OPAD document
       refresh();
       emit pathChanged();
-      if (step) emit message(tr("Browsing %1 (nothing is saved; use Import to create a document)").arg(QFileInfo(path).fileName()));
+      if (step) emit message(tr("Imported %1 into a new document").arg(QFileInfo(path).fileName()));
       else emit message(tr("Opened %1").arg(path));
       emit loadFinished(true, {});
     }, Qt::QueuedConnection);
@@ -130,6 +138,8 @@ void AppDocument::startImport(const QString& path, const QString& parent) {
       r = opad::import_step(*work, path.toStdString(), o).to_json();
       if (!*cancel) opad::warm_shape_cache(*work, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
       if (*cancel) error = QStringLiteral("cancelled");
+    } catch (const Standard_Failure& e) {
+      error = QString::fromUtf8(e.GetMessageString());
     } catch (const std::exception& e) {
       error = QString::fromUtf8(e.what());
     }
@@ -179,18 +189,23 @@ void AppDocument::closeDocument() {
 
 void AppDocument::open(const QString& path) {
   QString ext = QFileInfo(path).suffix().toLower();
+  opad::Document next;
   if (ext == "step" || ext == "stp") {
-    doc = opad::browse_step(path.toStdString());
-    browse = true;
-    emit message(tr("Browsing %1 (nothing is saved; use Import to create a document)").arg(QFileInfo(path).fileName()));
+    next = opad::Document::create();
+    opad::ImportOptions options;
+    options.author = QSettings().value("user/name").toString().trimmed().toStdString();
+    opad::import_step(next, path.toStdString(), options);
+    emit message(tr("Imported %1 into a new document").arg(QFileInfo(path).fileName()));
   } else {
-    doc = opad::Document::load(path.toStdString());
-    browse = false;
+    next = opad::Document::load(path.toStdString());
     emit message(tr("Opened %1").arg(path));
   }
+  doc = std::move(next);
+  browse = false;
   hasDocument = true;
   clearHistory();
   markSaved();
+  if (ext == "step" || ext == "stp") m_savedIds.clear();
   refresh();
   emit pathChanged();
 }
@@ -233,6 +248,7 @@ void AppDocument::saveAs(const QString& path) {
 opad::json AppDocument::run(const std::string& command, opad::json args) {
   if (designBusy) throw opad::Error("The design is being recomputed; try again in a moment.");
   const size_t before = doc.ops.size();
+  if (!args.contains("by")) args["by"] = QSettings().value("user/name").toString().trimmed().toStdString();
   opad::json out = opad::commands::run(command, args, &doc);
   recordStep(labelFor(command, args), before);
   refresh();

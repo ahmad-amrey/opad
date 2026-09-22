@@ -105,6 +105,7 @@ void Document::validate_op(const json& op) {
     require(op, "target", "uuid");
     require(op, "name", "string");
   } else if (type == "annotation") {
+    if (op.contains("reply_to")) require(op, "reply_to", "uuid");
     require(op, "anchor", "object");
     require(op, "text", "string");
     Ref::from_json(op["anchor"]);
@@ -388,8 +389,10 @@ Document Document::parse(const std::string& text, const std::filesystem::path& o
       hs >> key >> n;
       std::string meta_text;
       std::getline(hs, meta_text);
-      if (key.size() != 64 || n == 0) fail(i, "bad body header");
-      if (i + n >= lines.size() + 0 && i + n > lines.size()) fail(i, "truncated body entry");
+      if (!hs || key.size() != 64 || n == 0 || key.find_first_not_of("0123456789abcdef") != std::string::npos)
+        fail(i, "bad body header");
+      // Subtract before comparing: hostile counts must not overflow or trigger huge allocations.
+      if (n > lines.size() - i - 1) fail(i, "truncated body entry");
       BodyEntry e;
       e.key = key;
       try {
@@ -397,7 +400,7 @@ Document Document::parse(const std::string& text, const std::filesystem::path& o
       } catch (const json::exception& ex) {
         fail(i, std::string("bad body meta: ") + ex.what());
       }
-      e.brep.reserve(n * 40);
+      if (!e.meta.is_object()) fail(i, "body metadata must be an object");
       for (size_t k = 1; k <= n; ++k) {
         if (i + k >= lines.size()) fail(i, "truncated body entry");
         e.brep.append(lines[i + k]);

@@ -1,6 +1,18 @@
 add_executable(opad-fixtures fixtures.cpp)
 target_link_libraries(opad-fixtures PRIVATE opad::core)
 
+if(OPAD_BUILD_APP)
+  find_package(Qt6 COMPONENTS Widgets QUIET)
+endif()
+if(TARGET Qt6::Widgets)
+  add_executable(opad-test-app-document test_app_document.cpp ../app/AppDocument.cpp ../app/AppDocument.hpp)
+  set_target_properties(opad-test-app-document PROPERTIES AUTOMOC ON)
+  target_include_directories(opad-test-app-document PRIVATE ../app)
+  target_link_libraries(opad-test-app-document PRIVATE opad::core Qt6::Widgets)
+  add_test(NAME app-document COMMAND opad-test-app-document ${CMAKE_BINARY_DIR}/fixtures)
+  set_tests_properties(app-document PROPERTIES FIXTURES_REQUIRED step_fixtures TIMEOUT 40)
+endif()
+
 add_executable(opad-test-core test_core.cpp)
 target_link_libraries(opad-test-core PRIVATE opad::core)
 add_test(NAME core COMMAND opad-test-core)

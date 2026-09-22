@@ -189,6 +189,7 @@ struct Importer {
     meta["source"] = source;
     if (!doc.has_body(key)) ++res.new_entries;
     doc.add_body(brep, meta);
+    cache_shape(doc, key, proto);  // retain translated/healed geometry; do not parse our own BREP again
     key_by_tshape[ts] = key;
     return key;
   }

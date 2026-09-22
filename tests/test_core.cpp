@@ -295,4 +295,11 @@ TEST(missing_body_entry_is_flagged_not_dropped) {
   CHECK(s.tree_json()[0].value("missing", false));
 }
 
+TEST(corrupt_body_counts_are_rejected_before_allocation) {
+  const std::string prefix = Document::create().serialize();
+  for (const std::string count : {"18446744073709551615", "-1", "999999999", "2"}) {
+    CHECK_THROWS(Document::parse(prefix + "#body " + std::string(64, 'a') + " " + count + " {}\nx\n"));
+  }
+}
+
 CHECK_MAIN()

@@ -24,7 +24,7 @@ class AppDocument : public QObject {
 
   void newDocument();
   void closeDocument();  // back to the start screen; nothing is saved here (ask first)
-  void open(const QString& path);  // .opad -> load; .step/.stp -> browse mode
+  void open(const QString& path);  // .opad -> load; .step/.stp -> import into a new document
   void importStep(const QString& path, const QString& parent = {});
   void save();
   void saveAs(const QString& path);
