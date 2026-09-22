@@ -64,6 +64,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Style style() const { return m_style; }
   void setGrid(bool on);
   void setShadows(bool on);
+  void setRenderQuality(int level);
+  void setSceneBackground(int style);
+  void setTwoDimensional(bool on);
+  bool twoDimensional() const { return m_twoDimensional; }
   void setOrthographic(bool ortho);
   bool isOrthographic() const;
   void setSelectionFilter(SelFilter f);
@@ -211,6 +215,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
 
  private:
+  int m_renderQuality = 0, m_sceneBackground = 0;
+  bool m_twoDimensional = false;
   struct Item {
     Handle(AIS_Shape) ais;
     std::string key;

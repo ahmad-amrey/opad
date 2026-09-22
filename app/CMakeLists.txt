@@ -19,6 +19,7 @@ set(OPAD_APP_SOURCES
   Ribbon.cpp Ribbon.hpp
   EmptyState.cpp EmptyState.hpp
   Viewport.cpp ViewportPicking.cpp ViewportPickingBench.cpp ViewportDesign.cpp ViewportInspect.cpp ViewportNotes.cpp ViewportSection.cpp Viewport.hpp
+  ViewportSettings.cpp
   Notes.cpp Notes.hpp
   DesignController.cpp DesignController.hpp
   DesignPanels.cpp DesignPanels.hpp

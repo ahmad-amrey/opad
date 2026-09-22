@@ -206,7 +206,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   m_gitTimer.start();
 
   restoreGeometry(m_settings.value("ui/geometry").toByteArray());
-  if (m_settings.value("ui/layoutVersion").toInt() == 2) restoreState(m_settings.value("ui/state").toByteArray());
+  if (m_settings.value("ui/layoutVersion").toInt() == 3) restoreState(m_settings.value("ui/state").toByteArray());
   // restoreState carries the corner layout of older sessions; the design fixes it, so re-apply.
   setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
   setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
@@ -318,7 +318,7 @@ void MainWindow::buildActions() {
   addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(); });
   addAction("view.rollleft", tr("Turn 90° left"), "rollLeft", QKeySequence(), [this] { m_viewport->rollView(90); });
   addAction("view.rollright", tr("Turn 90° right"), "rollRight", QKeySequence(), [this] { m_viewport->rollView(-90); });
-  for (const auto& [name, key] : std::vector<std::pair<QString, QString>>{{"top", "Ctrl+1"}, {"front", "Ctrl+2"}, {"right", "Ctrl+3"}, {"iso", "Ctrl+4"}, {"bottom", "Ctrl+5"}, {"back", "Ctrl+6"}, {"left", "Ctrl+7"}})
+  for (const auto& [name, key] : std::vector<std::pair<QString, QString>>{{"top", "Ctrl+Alt+1"}, {"front", "Ctrl+Alt+2"}, {"right", "Ctrl+Alt+3"}, {"iso", "Ctrl+Alt+4"}, {"bottom", "Ctrl+Alt+5"}, {"back", "Ctrl+Alt+6"}, {"left", "Ctrl+Alt+7"}})
     addAction("view." + name, tr("View: %1").arg(name), "home", QKeySequence(key), [this, n = name] { m_viewport->standardView(n); });
   QAction* ortho = addAction("view.ortho", tr("Orthographic"), "ortho", QKeySequence("O"), [this] {}, true);
   ortho->setChecked(true);
@@ -434,7 +434,7 @@ void MainWindow::buildActions() {
     for (const auto& [id, n] : m_doc->scene.nodes)
       if (!n.visible) m_doc->run("appearance", opad::json{{"target", id}, {"visible", true}});
   });
-  addAction("edit.filter", tr("Filter objects"), "search", QKeySequence("Ctrl+F"), [this] { m_browser->focusFilter(); });
+  addAction("edit.filter", tr("Filter objects"), "search", QKeySequence("Ctrl+F"), [this] { m_browserOverlay->reveal(); m_browser->focusFilter(); });
   addAction("edit.selectparent", tr("Select parent"), "chevronUp", QKeySequence("Ctrl+Up"), [this] { m_browser->selectParent(); });
   addAction("edit.delete", tr("Delete (tombstone)"), "delete", QKeySequence::Delete, [this] { deleteCurrent(); });
   addAction("edit.restore", tr("Restore"), "restore", QKeySequence("Shift+Del"), [this] {
@@ -453,6 +453,12 @@ void MainWindow::buildActions() {
     p.exec();
   });
   addAction("tools.shortcuts", tr("Keyboard shortcuts…"), "", QKeySequence("Ctrl+K"), [this] { ShortcutEditor(m_actions, this).exec(); });
+  addAction("tools.author", tr("Your name..."), "", QKeySequence(), [this] {
+    bool ok = false;
+    QString name = QInputDialog::getText(this, tr("Your name"), tr("Name recorded on annotations and changes:"),
+        QLineEdit::Normal, m_settings.value("user/name", QString::fromStdString(opad::default_author())).toString(), &ok);
+    if (ok) m_settings.setValue("user/name", name.trimmed());
+  });
   m_doc->setUndoLimit(m_settings.value("edit/undoDepth", 50).toInt());
   addAction("tools.undodepth", tr("Undo history…"), "", QKeySequence(), [this] {
     bool ok = false;
@@ -564,10 +570,40 @@ void MainWindow::buildRibbon() {
   QAction* settingsAction = addAction("tools.settings", tr("Settings"), "settings", QKeySequence(), [] {});
   auto* settings = new QMenu(this);
   settings->addAction(action("view.dark"));
+  auto* quality = settings->addMenu(tr("Rendering quality"));
+  auto* qualityGroup = new QActionGroup(quality);
+  const QStringList qualities = {tr("1 - Classic"), tr("2 - Technical flat"), tr("3 - Studio"), tr("4 - Studio fine"), tr("5 - Ray traced shadows"), tr("6 - Ray traced reflections")};
+  for (int i = 0; i < qualities.size(); ++i) {
+    auto* a = quality->addAction(qualities[i]);
+    a->setCheckable(true); qualityGroup->addAction(a);
+    a->setChecked(m_settings.value("view/quality", 0).toInt() == i);
+    connect(a, &QAction::triggered, this, [this, i] { m_viewport->setRenderQuality(i); });
+  }
+  quality->setToolTipsVisible(true);
+  for (auto* a : quality->actions()) a->setToolTip(tr("Ray tracing requires a compatible OpenGL driver; use Classic if unavailable."));
+  auto* background = settings->addMenu(tr("Scene background"));
+  auto* backgroundGroup = new QActionGroup(background);
+  const QStringList backgrounds = {tr("Theme"), tr("Studio gradient"), tr("White"), tr("Dark slate")};
+  for (int i = 0; i < backgrounds.size(); ++i) {
+    auto* a = background->addAction(backgrounds[i]);
+    a->setCheckable(true); backgroundGroup->addAction(a);
+    a->setChecked(m_settings.value("view/background", 0).toInt() == i);
+    connect(a, &QAction::triggered, this, [this, i] { m_viewport->setSceneBackground(i); });
+  }
+  auto* flat = settings->addAction(tr("2D projection mode"));
+  flat->setCheckable(true);
+  connect(flat, &QAction::toggled, this, [this](bool on) {
+    m_viewport->setTwoDimensional(on);
+    m_homeBtn->setVisible(!on); m_rollLeft->setVisible(!on); m_rollRight->setVisible(!on);
+  });
   QMenu* navMenu = settings->addMenu(tr("Navigation preset"));
   for (QAction* a : m_actions) if (a->objectName().startsWith("nav.")) navMenu->addAction(a);
   settings->addSeparator();
   settings->addAction(action("panel.browser"));
+  auto* autoBrowser = settings->addAction(tr("Auto-hide scene browser"));
+  autoBrowser->setCheckable(true);
+  autoBrowser->setChecked(m_settings.value("ui/browserAutoHide", true).toBool());
+  connect(autoBrowser, &QAction::toggled, this, [this](bool on) { m_browserOverlay->setAutoHide(on); });
   settings->addAction(action("panel.annotations"));
   settings->addAction(action("panel.timeline"));
   settings->addAction(action("panel.reset"));
@@ -585,6 +621,7 @@ void MainWindow::buildRibbon() {
     });
   }
   settings->addSeparator();
+  settings->addAction(action("tools.author"));
   settings->addAction(action("tools.shortcuts"));
   settings->addAction(action("tools.undodepth"));
   settings->addAction(action("tools.cache"));
@@ -672,11 +709,9 @@ void MainWindow::buildDocks() {
   setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
 
   m_browser = new BrowserPanel(m_doc, this);
-  auto* left = m_browserDock = new QDockWidget(tr("Browser"), this);
-  left->setObjectName("dock.browser");
-  left->setTitleBarWidget(new DockHeader(tr("Browser"), left));
-  left->setWidget(m_browser);
-  addDockWidget(Qt::LeftDockWidgetArea, left);
+  m_browserOverlay = new BrowserOverlay(m_browser, m_viewport);
+  m_browserOverlay->place();
+
 
   m_props = new PropertiesPanel(this);
   m_annotations = new AnnotationsPanel(m_doc, this);
@@ -702,11 +737,15 @@ void MainWindow::buildDocks() {
   bottom->setFixedHeight(48);
   addDockWidget(Qt::BottomDockWidgetArea, bottom);
 
-  resizeDocks({left}, {352}, Qt::Horizontal);
+
   m_props->clear();
 
   // Bind the panel actions to the docks' own toggle actions (both directions).
-  bindPanel(action("panel.browser"), left);
+  action("panel.browser")->setChecked(true);
+  connect(action("panel.browser"), &QAction::triggered, this, [this](bool on) {
+    m_browserOverlay->setVisible(on);
+    if (on) m_browserOverlay->reveal();
+  });
   bindPanel(action("panel.annotations"), m_annotationsPanel);
   bindPanel(action("panel.section"), m_sectionPanel);
   bindPanel(action("panel.timeline"), bottom);
@@ -755,24 +794,26 @@ bool MainWindow::closeTopPanel() {
 }
 
 void MainWindow::resetLayout() {
-  for (QDockWidget* d : {m_browserDock, m_timelineDock}) {
+  for (QDockWidget* d : {m_timelineDock}) {
     if (!d) continue;
     d->setFloating(false);
     d->show();
   }
-  addDockWidget(Qt::LeftDockWidgetArea, m_browserDock);
+  m_browserOverlay->show();
+  m_browserOverlay->place();
   addDockWidget(Qt::BottomDockWidgetArea, m_timelineDock);
   setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
   setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
   setCorner(Qt::TopLeftCorner, Qt::LeftDockWidgetArea);
   setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
-  resizeDocks({m_browserDock}, {352}, Qt::Horizontal);
+
 }
 
 void MainWindow::buildStatusBar() {
   const Tokens& t = theme::current();
   m_statusPath = new QLabel(this);
   m_statusPath->setFont(theme::mono(12));
+  m_statusPath->setContentsMargins(12, 2, 4, 2);
   m_statusGitIcon = new QLabel(this);
   m_statusGitIcon->setPixmap(icons::pixmap("git", t.fg2, 14, devicePixelRatioF()));
   m_statusGit = new QLabel(this);
@@ -782,6 +823,8 @@ void MainWindow::buildStatusBar() {
   m_statusHover->setObjectName("tertiary");
   m_statusSel = new QLabel(this);
   m_statusUnits = new QLabel("mm", this);
+  m_statusUnits->setContentsMargins(6, 2, 14, 2);
+  m_statusUnits->setMinimumWidth(m_statusUnits->sizeHint().width());
   m_progress = new ProgressStrip(this);
   m_jobs = new JobRunner(m_progress, this);
   m_viewport->setJobs(m_jobs);
@@ -992,6 +1035,7 @@ void MainWindow::updateChips() {
 
 void MainWindow::positionOverlays() {
   if (!m_viewport) return;
+  if (m_browserOverlay) m_browserOverlay->place();
   m_chips->move(0, 0);
   m_chips->raise();
   m_homeBtn->adjustSize();
@@ -1003,7 +1047,7 @@ void MainWindow::positionOverlays() {
   m_rollRight->raise();
   if (m_loadShade->isVisible()) {
     QRect area = m_stack->geometry();  // the workspace: central area plus the docked panels
-    for (QDockWidget* d : {m_browserDock, m_timelineDock})
+    for (QDockWidget* d : {m_timelineDock})
       if (d && d->isVisible() && !d->isFloating()) area |= d->geometry();
     m_loadShade->place(QRect(mapToGlobal(area.topLeft()), area.size()), m_viewport->mapToGlobal(m_viewport->rect().center()));
   }
@@ -2273,6 +2317,6 @@ void MainWindow::closeEvent(QCloseEvent* e) {
   m_settings.setValue("ui/geometry", saveGeometry());
   if (m_timelineHiddenByViewer) m_timelineDock->show();  // viewer mode hid it; do not save that as the user's layout
   m_settings.setValue("ui/state", saveState());
-  m_settings.setValue("ui/layoutVersion", 2);
+  m_settings.setValue("ui/layoutVersion", 3);
   e->accept();
 }

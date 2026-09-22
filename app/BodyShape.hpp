@@ -22,6 +22,7 @@ struct BodyPrs {
     TopoDS_Shape edge;
     gp_Pnt center;
     Handle(Select3D_SensitiveEntity) sensitive;
+    int canonical = -1;
   };
   std::map<int, Circle> circles;  // edge ordinals, including trimmed circular arcs
   Handle(Select3D_SensitiveEntity) navigation;  // triangles + BVH, shared by instances

@@ -2,6 +2,10 @@
 
 #include <AIS_DisplayMode.hxx>
 #include <BRep_Tool.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
+#include <cmath>
+#include <algorithm>
 #include <BRepAdaptor_Curve.hxx>
 #include <Select3D_SensitiveCurve.hxx>
 #include <Select3D_SensitivePrimitiveArray.hxx>
@@ -83,6 +87,38 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     sensitive->BVH();
     p->circles.emplace(i - 1, Circle{edges(i), curve.Circle().Location(), sensitive});
   }
+  // STEP often splits a closed circle at seam vertices. Group co-circular arcs only
+  // when their angular intervals cover a complete revolution (overlaps don't count twice).
+  std::map<std::array<long long, 7>, std::vector<int>> groups;
+  for (const auto& [index, entry] : p->circles) {
+    const gp_Circ c = BRepAdaptor_Curve(TopoDS::Edge(entry.edge)).Circle();
+    gp_Dir axis = c.Axis().Direction();
+    if (axis.Z() < 0 || (axis.Z() == 0 && (axis.Y() < 0 || (axis.Y() == 0 && axis.X() < 0)))) axis.Reverse();
+    auto q = [](double x) { return std::llround(x * 1e6); };
+    groups[{q(c.Location().X()), q(c.Location().Y()), q(c.Location().Z()), q(c.Radius()), q(axis.X()), q(axis.Y()), q(axis.Z())}].push_back(index);
+  }
+  for (const auto& [key, indices] : groups) {
+    if (indices.size() < 2) continue;
+    const gp_Circ base = BRepAdaptor_Curve(TopoDS::Edge(p->circles.at(indices.front()).edge)).Circle();
+    std::vector<std::pair<double, double>> spans;
+    for (int index : indices) {
+      BRepAdaptor_Curve curve(TopoDS::Edge(p->circles.at(index).edge));
+      const bool same = curve.Circle().Axis().Direction().Dot(base.Axis().Direction()) > 0;
+      gp_Vec v(base.Location(), curve.Value(same ? curve.FirstParameter() : curve.LastParameter()));
+      double start = std::atan2(v.Dot(gp_Vec(base.Position().YDirection())), v.Dot(gp_Vec(base.Position().XDirection())));
+      if (start < 0) start += 2 * M_PI;
+      const double end = start + std::min(2 * M_PI, std::abs(curve.LastParameter() - curve.FirstParameter()));
+      spans.emplace_back(start, std::min(end, 2 * M_PI));
+      if (end > 2 * M_PI) spans.emplace_back(0, end - 2 * M_PI);
+    }
+    std::sort(spans.begin(), spans.end());
+    double reach = 0; bool closed = true;
+    for (auto [first, last] : spans) { if (first > reach + 1e-7) { closed = false; break; } reach = std::max(reach, last); }
+    if (!closed || reach < 2 * M_PI - 1e-7) continue;
+    TopoDS_Compound whole; BRep_Builder builder; builder.MakeCompound(whole);
+    for (int index : indices) builder.Add(whole, p->circles.at(index).edge);
+    for (int index : indices) { p->circles.at(index).edge = whole; p->circles.at(index).canonical = indices.front(); }
+  }
   p->closed = true;
   for (TopExp_Explorer e(meshedProto, TopAbs_SHELL); e.More(); e.Next())
     if (!BRep_Tool::IsClosed(e.Current())) { p->closed = false; break; }
@@ -127,7 +163,7 @@ void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, c
     Handle(SelectMgr_EntityOwner) mine;
     if (!swapped.Find(old, mine)) {
       Handle(SubShapeOwner) o = new SubShapeOwner(old->Shape(), this, old->Priority(), ordinals.FindIndex(old->Shape()) - 1);
-      o->SetHilightMode(old->HilightMode());
+      o->SetHilightMode(old->Shape().ShapeType() == TopAbs_FACE ? AIS_Shaded : old->HilightMode());
       mine = o;
       swapped.Bind(old, mine);
     }
@@ -135,7 +171,7 @@ void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, c
   }
   if (mode == AIS_Shape::SelectionMode(TopAbs_VERTEX) && m_prs)
     for (const auto& [index, circle] : m_prs->circles)
-      selection->Add(new SharedSensitive(new CircleOwner(circle, this, index), circle.sensitive));
+      selection->Add(new SharedSensitive(new CircleOwner(circle, this, circle.canonical < 0 ? index : circle.canonical), circle.sensitive));
 }
 
 void NavigationShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, Standard_Integer) {

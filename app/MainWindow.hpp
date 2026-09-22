@@ -16,6 +16,7 @@
 #include "Panels.hpp"
 #include "Ribbon.hpp"
 #include "Viewport.hpp"
+#include "BrowserOverlay.hpp"
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
@@ -167,7 +168,7 @@ class MainWindow : public QMainWindow {
   std::function<void()> m_afterLoad;
   QTimer m_selFileTimer;
   bool m_benchSelect = false;
-  QDockWidget* m_browserDock = nullptr;
+  BrowserOverlay* m_browserOverlay = nullptr;
   QDockWidget* m_timelineDock = nullptr;
   opad::json m_lastMeasure;
   QSettings m_settings;

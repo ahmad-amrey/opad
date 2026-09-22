@@ -16,7 +16,7 @@ Handle(AIS_Shape) Viewport::centerMarker(const opad::Ref& ref, const gp_Pnt& poi
   if (found != m_centers.end()) return found->second.ais;
   Handle(AIS_Shape) marker = new AIS_Shape(BRepBuilderAPI_MakeVertex(point).Vertex());
   const QColor color = m_tokens.sel;
-  marker->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_PLUS,
+  marker->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O,
       Quantity_Color(color.redF(), color.greenF(), color.blueF(), Quantity_TOC_sRGB), 3.0));
   marker->SetZLayer(Graphic3d_ZLayerId_Topmost);
   m_ctx->Display(marker, 0, -1, false);
@@ -65,6 +65,11 @@ bool Viewport::eventFilter(QObject* object, QEvent* e) {
 bool Viewport::toggleCenterLock() {
   if (!m_initialised || m_blocked || m_filter != SelFilter::Vertex || m_activeCenter.empty() || QApplication::mouseButtons() != Qt::NoButton) return false;
   m_centerLocked = !m_centerLocked;
+  auto active = m_centers.find(m_activeCenter);
+  if (active != m_centers.end()) {
+    active->second.ais->Attributes()->PointAspect()->SetScale(m_centerLocked ? 5.0 : 3.0);
+    active->second.ais->SynchronizeAspects();
+  }
   m_hoverOwner = nullptr;
   const QString hint = m_centerLocked ? tr("Center locked · click center · Shift unlock") : tr("Circle center · Shift lock · click center");
   m_hover = hint;

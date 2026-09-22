@@ -1,3 +1,5 @@
+#include <QSettings>
+#include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
 
 #include <functional>
@@ -279,7 +281,10 @@ void Viewport::initViewer() {
   // a rubber band that selects nothing. Allow a little hand jitter, scaled for high-DPI screens.
   myMouseClickThreshold = 5.0 * viewScale().x();
   m_initialised = true;
+  m_sceneBackground = QSettings().value("view/background", 0).toInt();
   applyTokens();
+  setRenderQuality(QSettings().value("view/quality", 0).toInt());
+  setSceneBackground(QSettings().value("view/background", 0).toInt());
   sync();
 }
 
@@ -295,10 +300,13 @@ void Viewport::applyTokens() {
   updateSectionGizmo();  // its colours are baked in
   m_view->SetBackgroundColor(occ(t.vp));
   m_view->SetBgGradientStyle(Aspect_GradientFillMethod_None);
+  setSceneBackground(m_sceneBackground);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetColor(occ(t.hov));
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetColor(occ(t.hov));
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetTransparency(0.35f);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetTransparency(0.35f);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetDisplayMode(AIS_Shaded);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetFaceBoundaryDraw(false);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetColor(occ(t.sel));
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(occ(t.sel));
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetTransparency(0.5f);
@@ -808,6 +816,11 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
     m_centerObjects.erase(it->second.ais.get());
     m_ctx->Remove(it->second.ais, false);
     it = m_centers.erase(it);
+  }
+  for (const auto& [key, marker] : m_centers) {
+    marker.ais->Attributes()->PointAspect()->SetTypeOfMarker(m_ctx->IsSelected(marker.ais) ? Aspect_TOM_BALL : Aspect_TOM_O);
+    marker.ais->Attributes()->PointAspect()->SetScale(3.0);
+    marker.ais->SynchronizeAspects();
   }
   clearShade();
   m_needFit = false;
@@ -1382,6 +1395,11 @@ void Viewport::displayBody(const std::string& id) {
   ais->Attributes()->SetAutoTriangulation(Standard_False);
   ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
   ais->SetColor(qcolor(n->color));
+  // Stable, bounded depth bias breaks coplanar ties without moving CAD geometry.
+  // UUID bytes give instances different priorities, independent of display/selection order.
+  unsigned bias = 2166136261u;
+  for (unsigned char c : id) bias = (bias ^ c) * 16777619u;
+  ais->SetPolygonOffsets(Aspect_POM_Fill, 1.0f, 1.0f + 15.0f * float(bias & 0xffffu) / 65535.0f);
   if (n->opacity < 1.0) ais->SetTransparency(1.0 - n->opacity);
   applyStyle(ais);
   m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, -1, Standard_False);  // selection activated below, once
@@ -1676,6 +1694,7 @@ void Viewport::wheelEvent(QWheelEvent* e) {
 }
 
 void Viewport::trackpadScroll(const QPointF& position, const QPointF& delta, bool orbit) {
+  orbit = orbit && !m_twoDimensional;
   if (delta.isNull()) return;
   const TrackpadMode mode = orbit ? TrackpadMode::Orbit : TrackpadMode::Pan;
   if (mode != m_trackpadMode) {
