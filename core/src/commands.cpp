@@ -201,7 +201,7 @@ void register_builtins() {
         json ann = json::array(), meas = json::array(), sec = json::array(), views = json::array();
         for (const auto& x : s.annotations) {
           if (!by.empty() && x.by != by) continue;
-          ann.push_back({{"id", x.id}, {"anchor", x.anchor.str()}, {"text", x.text}, {"style", x.style}, {"by", x.by}, {"ts", x.ts}, {"unresolved", x.unresolved}});
+          ann.push_back({{"id", x.id}, {"anchor", x.anchor.str()}, {"text", x.text}, {"style", x.style}, {"by", x.by}, {"ts", x.ts}, {"unresolved", x.unresolved}, {"comments", x.comments}});
         }
         for (const auto& m : s.measurements) {
           json refs = json::array();
@@ -383,6 +383,11 @@ void register_builtins() {
         op["anchor"] = Ref::from_json(a.at("anchor")).to_json();
         op["text"] = a.at("text");
         if (a.contains("style")) op["style"] = a["style"];
+        if (a.contains("reply_to")) {
+          const auto* parent = need(d).find_op(a.at("reply_to").get<std::string>());
+          if (!parent || parent->type != "annotation" || parent->data.contains("reply_to")) throw Error("comment parent must be a top-level annotation");
+          op["reply_to"] = parent->id;
+        }
         json j;
         j["id"] = need(d).append(op, a.value("by", "")).id;
         return j;

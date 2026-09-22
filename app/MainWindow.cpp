@@ -1,3 +1,4 @@
+#include <QPlainTextEdit>
 #include "MainWindow.hpp"
 
 #include <QToolButton>
@@ -1656,11 +1657,27 @@ void MainWindow::addAnnotation() {
   else throw opad::Error("Select a body, face, edge or vertex to anchor the note.");
   QString where = m_doc->nodeName(anchor.body);
   if (anchor.kind != opad::Ref::Kind::Body) where += QString::fromUtf8(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(anchor.kind))).arg(anchor.index);
-  NoteDialog dlg(where, this);
-  if (dlg.exec() != QDialog::Accepted || dlg.text().trimmed().isEmpty()) return;
-  opad::json r = m_doc->run("annotate", opad::json{{"anchor", anchor.str()}, {"text", dlg.text().toStdString()}, {"style", dlg.style()}});
-  if (r.contains("id")) m_timeline->setCurrentOp(r["id"].get<std::string>());
-  openPanel(m_annotationsPanel);
+  auto* card = new QFrame(m_viewport);
+  card->setAttribute(Qt::WA_NativeWindow);
+  card->setObjectName("card"); card->setFixedWidth(320);
+  auto* layout = new QVBoxLayout(card);
+  auto* title = new QLabel(tr("Note on %1").arg(where), card); title->setWordWrap(true); title->setTextFormat(Qt::PlainText); layout->addWidget(title);
+  auto* type = new QComboBox(card);
+  for (const auto& style : notes::styles()) type->addItem(i18n::t(style.label), QString::fromLatin1(style.id));
+  type->setCurrentIndex(3); layout->addWidget(type);
+  auto* text = new QPlainTextEdit(card); text->setPlaceholderText(tr("Write a note...")); text->setMaximumHeight(110); layout->addWidget(text);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, card); layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::rejected, card, &QObject::deleteLater);
+  connect(buttons, &QDialogButtonBox::accepted, card, [this, card, anchor, text, type] {
+    if (text->toPlainText().trimmed().isEmpty()) return;
+    guarded([&] {
+      m_doc->run("annotate", {{"anchor", anchor.str()}, {"text", text->toPlainText().trimmed().toStdString()}, {"style", type->currentData().toString().toStdString()}});
+      m_noteCards->setShown(true); card->deleteLater();
+    });
+  });
+  connect(m_doc, &AppDocument::pathChanged, card, &QObject::deleteLater);
+  card->adjustSize(); card->move(std::max(8, (m_viewport->width() - card->width()) / 2), 70); card->show(); card->raise(); text->setFocus();
+
 }
 
 void MainWindow::resolveCurrentAnnotation() {

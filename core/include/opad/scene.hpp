@@ -34,6 +34,8 @@ struct Annotation {
   Ref anchor;
   std::string text, by, ts;
   std::string style = "note";  // one of annotation_styles(); how the note is drawn, not whether it is open
+  std::string reply_to;
+  json comments = json::array();
   bool unresolved = false;
 };
 // The tags a note can carry: ok, warning, issue, note (the default, also for a tag this version does not know).

@@ -1,3 +1,5 @@
+#include <QTimer>
+#include <QMessageBox>
 #include "Notes.hpp"
 
 #include <QDialogButtonBox>
@@ -35,7 +37,7 @@ const Style& style(const std::string& id) {
 }  // namespace notes
 
 // ---------------------------------------------------------------- NoteCard
-NoteCard::NoteCard(const NoteInfo& note, QWidget* parent) : QFrame(parent), m_note(note) {
+NoteCard::NoteCard(const NoteInfo& note, QWidget* parent, AppDocument* doc) : QFrame(parent), m_note(note) {
   const Tokens& t = theme::current();
   const notes::Style& look = notes::style(note.style);
   const bool open = note.state == "open", resolved = note.state == "resolved";
@@ -86,6 +88,48 @@ NoteCard::NoteCard(const NoteInfo& note, QWidget* parent) : QFrame(parent), m_no
   text->setWordWrap(true);
   text->setTextFormat(Qt::PlainText);
   v->addWidget(text);
+  for (const auto& comment : note.comments) {
+    auto* reply = new QLabel(QString::fromStdString(comment.value("by", "") + ": " + comment.value("text", "")), this);
+    reply->setTextFormat(Qt::PlainText); reply->setWordWrap(true); v->addWidget(reply);
+  }
+  if (open && doc) {
+    auto* edit = new QPlainTextEdit(QString::fromStdString(note.text), this);
+    edit->setMaximumHeight(90); edit->hide(); v->addWidget(edit);
+    auto* buttons = new QHBoxLayout();
+    auto* editButton = new QPushButton(tr("Edit"), this);
+    auto* commentButton = new QPushButton(tr("Comment"), this);
+    auto* saveButton = new QPushButton(tr("Save"), this); saveButton->hide();
+    auto* cancelButton = new QPushButton(tr("Cancel"), this); cancelButton->hide();
+    buttons->addWidget(editButton); buttons->addWidget(commentButton); buttons->addWidget(saveButton); buttons->addWidget(cancelButton); v->addLayout(buttons);
+    auto commenting = std::make_shared<bool>(false);
+    auto begin = [=, this](bool comment) {
+      *commenting = comment; edit->setPlainText(comment ? QString() : QString::fromStdString(note.text));
+      edit->setPlaceholderText(comment ? tr("Write a comment...") : tr("Edit note..."));
+      edit->show(); saveButton->show(); cancelButton->show(); editButton->hide(); commentButton->hide(); edit->setFocus(); adjustSize();
+    };
+    connect(editButton, &QPushButton::clicked, this, [=] { begin(false); });
+    connect(commentButton, &QPushButton::clicked, this, [=] { begin(true); });
+    connect(cancelButton, &QPushButton::clicked, this, [=, this] {
+      edit->hide(); saveButton->hide(); cancelButton->hide(); editButton->show(); commentButton->show(); adjustSize();
+    });
+    connect(saveButton, &QPushButton::clicked, this, [=] {
+      const std::string value = edit->toPlainText().trimmed().toStdString();
+      if (value.empty()) return;
+      const bool comment = *commenting;
+      QTimer::singleShot(0, doc, [doc, note, value, comment] {
+        try {
+          opad::json op;
+          if (comment) {
+            const auto* parent = doc->doc.find_op(note.id);
+            if (!parent) return;
+            op = {{"op", "annotation"}, {"anchor", parent->data.at("anchor")}, {"text", value}, {"reply_to", note.id}};
+          } else op = {{"op", "edit"}, {"target", note.id}, {"set", {{"text", value}}}};
+          doc->run("append", {{"op", op}});
+        } catch (const std::exception& e) { QMessageBox::warning(nullptr, tr("Note"), QString::fromUtf8(e.what())); }
+      });
+    });
+  }
+
 
   if (!open) {
     auto* row = new QHBoxLayout();
@@ -141,10 +185,10 @@ void NoteCards::rebuild() {
     for (const auto& a : m_doc->scene.annotations) {
       if (a.unresolved) continue;  // no anchor to stand beside; the panel lists it
       NoteInfo n;
-      n.id = a.id; n.by = a.by; n.ts = a.ts; n.text = a.text; n.style = a.style; n.body = a.anchor.body;
+      n.id = a.id; n.by = a.by; n.ts = a.ts; n.text = a.text; n.style = a.style; n.body = a.anchor.body; n.comments = a.comments;
       n.target = a.anchor.kind == opad::Ref::Kind::Point ? tr("point") : m_doc->nodeName(a.anchor.body);
       if (a.anchor.kind != opad::Ref::Kind::Body && a.anchor.kind != opad::Ref::Kind::Point) n.target += QString(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(a.anchor.kind))).arg(a.anchor.index);
-      auto* card = new NoteCard(n, m_viewport);
+      auto* card = new NoteCard(n, m_viewport, m_doc);
       card->setAttribute(Qt::WA_NativeWindow);  // over the native 3D window, like the chips
       card->setFixedWidth(280);
       card->adjustSize();

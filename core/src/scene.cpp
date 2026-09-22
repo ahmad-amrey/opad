@@ -364,6 +364,7 @@ struct SceneBuilder::Impl {
       if (Node* n = target_of(id, type, d)) n->name = d["name"].get<std::string>();
     } else if (type == "annotation") {
       Annotation a;
+      a.reply_to = d.value("reply_to", "");
       a.id = id;
       a.anchor = Ref::from_json(d["anchor"]);
       a.text = d["text"].get<std::string>();
@@ -434,6 +435,14 @@ struct SceneBuilder::Impl {
   }
 
   void finish() {
+    // Replies are independent append-only operations, so concurrent comments merge cleanly.
+    for (const auto& reply : scene.annotations) {
+      if (reply.reply_to.empty()) continue;
+      for (auto& parent : scene.annotations)
+        if (parent.id == reply.reply_to)
+          parent.comments.push_back(json{{"id", reply.id}, {"text", reply.text}, {"by", reply.by}, {"ts", reply.ts}});
+    }
+    std::erase_if(scene.annotations, [](const Annotation& a) { return !a.reply_to.empty(); });
     std::vector<design::ParamDef> defs;
     for (const auto& p : scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
     design::ParamTable table(defs);

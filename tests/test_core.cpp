@@ -302,4 +302,20 @@ TEST(corrupt_body_counts_are_rejected_before_allocation) {
   }
 }
 
+TEST(annotation_edits_and_independent_comments_roundtrip) {
+  Document d = Document::create();
+  const auto id=d.append({{"op","annotation"},{"anchor","point/0,0,0"},{"text","Draft"}},"Alice").id;
+  d.append({{"op","annotation"},{"anchor","point/0,0,0"},{"text","First reply"},{"reply_to",id}},"Bob");
+  d.append({{"op","annotation"},{"anchor","point/0,0,0"},{"text","Second reply"},{"reply_to",id}},"Carol");
+  d.append({{"op","edit"},{"target",id},{"set",{{"text","Updated"},{"style","warning"}}}},"Alice");
+  auto scene=resolve(Document::parse(d.serialize()));
+  CHECK_EQ(scene.annotations.size(),1u);
+  CHECK_EQ(scene.annotations[0].text,"Updated");
+  CHECK_EQ(scene.annotations[0].style,"warning");
+  CHECK_EQ(scene.annotations[0].comments.size(),2u);
+  CHECK_EQ(scene.annotations[0].comments[1]["by"],"Carol");
+  d.append({{"op","delete"},{"target",id}});
+  CHECK(resolve(d).annotations.empty());
+}
+
 CHECK_MAIN()

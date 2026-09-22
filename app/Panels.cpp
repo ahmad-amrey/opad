@@ -1099,7 +1099,7 @@ void AnnotationsPanel::rebuild() {
   }
   int total = 0, shown = 0;
   for (const auto& op : m_doc->doc.ops) {
-    if (op.type != "annotation") continue;
+    if (op.type != "annotation" || op.data.contains("reply_to")) continue;
     ++total;
     std::string by = op.data.value("by", "");
     bool resolved = deleted.count(op.id) > 0, unres = unresolved.count(op.id) > 0;
@@ -1112,11 +1112,11 @@ void AnnotationsPanel::rebuild() {
     NoteInfo n;
     n.id = op.id; n.by = by; n.ts = op.data.value("ts", ""); n.text = op.data.value("text", ""); n.body = anchor.body;
     n.style = op.data.value("style", "note");
-    for (const auto& a : m_doc->scene.annotations) if (a.id == op.id) n.style = a.style;  // after edits
+    for (const auto& a : m_doc->scene.annotations) if (a.id == op.id) { n.style = a.style; n.text = a.text; n.comments = a.comments; }  // after edits
     n.state = state;
     n.target = anchor.kind == opad::Ref::Kind::Point ? tr("point") : m_doc->nodeName(anchor.body);
     if (anchor.kind != opad::Ref::Kind::Body && anchor.kind != opad::Ref::Kind::Point) n.target += QString(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(anchor.kind))).arg(anchor.index);
-    auto* card = new NoteCard(n, m_cards);
+    auto* card = new NoteCard(n, m_cards, m_doc);
     connect(card, &NoteCard::resolveRequested, this, &AnnotationsPanel::resolveRequested);
     connect(card, &NoteCard::restoreRequested, this, &AnnotationsPanel::restoreRequested);
     connect(card, &NoteCard::styleRequested, this, &AnnotationsPanel::styleRequested);

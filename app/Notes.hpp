@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "Theme.hpp"
+#include "opad/json.hpp"
 
 class AppDocument;
 class QPlainTextEdit;
@@ -35,12 +36,13 @@ struct NoteInfo {
   std::string id, by, ts, text, style, body;
   QString target;          // "Clamp block › face 12"
   QString state = "open";  // open | unresolved | resolved
+  opad::json comments = opad::json::array();
 };
 
 class NoteCard : public QFrame {
   Q_OBJECT
  public:
-  NoteCard(const NoteInfo& note, QWidget* parent);
+  NoteCard(const NoteInfo& note, QWidget* parent, AppDocument* doc = nullptr);
   const NoteInfo& note() const { return m_note; }
  signals:
   void pressed();

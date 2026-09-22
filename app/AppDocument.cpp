@@ -257,7 +257,7 @@ opad::json AppDocument::run(const std::string& command, opad::json args) {
 
 opad::json AppDocument::commitPlan(opad::design::Plan&& plan, const QString& label) {
   const size_t before = doc.ops.size();
-  opad::json report = opad::design::commit(doc, std::move(plan));
+  opad::json report = opad::design::commit(doc, std::move(plan), QSettings().value("user/name").toString().trimmed().toStdString());
   recordStep(label, before);
   refresh();
   return report;
