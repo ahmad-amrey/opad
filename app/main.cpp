@@ -8,6 +8,7 @@
 
 #include "CrashLog.hpp"
 #include "I18n.hpp"
+#include "Icons.hpp"
 #include "MainWindow.hpp"
 #include "opad/core.hpp"
 
@@ -25,6 +26,7 @@ int main(int argc, char** argv) {
   QApplication::setApplicationName("OPAD");
   QApplication::setOrganizationName("opad");
   QApplication::setApplicationVersion(QString::fromStdString(opad::version_string()));
+  QApplication::setWindowIcon(icons::appIcon());
   // Portable runs keep settings and cache beside the exe instead of the registry and %LOCALAPPDATA%, so the program
   // can move between machines: always in the single-file build (<exe dir>/opad-data), and in the folder package
   // when the `opad.portable` marker sits beside the exe (<exe dir>/data).

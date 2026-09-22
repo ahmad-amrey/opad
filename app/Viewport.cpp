@@ -258,7 +258,7 @@ void Viewport::initViewer() {
   setNavPreset(m_preset);
   // OCCT counts a press/release pair as a click only within 3 device pixels; a click that drifts more becomes
   // a rubber band that selects nothing. Allow a little hand jitter, scaled for high-DPI screens.
-  myMouseClickThreshold = 5.0 * devicePixelRatioF();
+  myMouseClickThreshold = 5.0 * viewScale().x();
   m_initialised = true;
   applyTokens();
   sync();
@@ -1167,9 +1167,9 @@ void Viewport::benchClick(double fx, double fy) {
     }
   // Through the widget's own mouse handlers and paint path, as real input arrives: move, press, release, then
   // the pointer wanders over neighbouring entities (hover labels, the tool's preview line).
-  const qreal dpr = devicePixelRatioF();
-  auto send = [this, dpr](QEvent::Type type, const Graphic3d_Vec2i& at, Qt::MouseButton button, Qt::MouseButtons buttons) {
-    const QPointF local(at.x() / dpr, at.y() / dpr);
+  const QPointF scale = viewScale();
+  auto send = [this, scale](QEvent::Type type, const Graphic3d_Vec2i& at, Qt::MouseButton button, Qt::MouseButtons buttons) {
+    const QPointF local(at.x() / scale.x(), at.y() / scale.y());
     QCoreApplication::postEvent(this, new QMouseEvent(type, local, mapToGlobal(local), button, buttons, Qt::NoModifier));
   };
   send(QEvent::MouseMove, pt, Qt::NoButton, Qt::NoButton);
@@ -1389,9 +1389,17 @@ void Viewport::finishSync(int pendingCount, bool added) {
 }
 
 // ---------------------------------------------------------------- Qt events
+QPointF Viewport::viewScale() const {
+  Standard_Integer viewW = 0, viewH = 0;
+  if (!m_view.IsNull() && !m_view->Window().IsNull()) m_view->Window()->Size(viewW, viewH);
+  const qreal fallback = devicePixelRatioF();
+  return {width() > 0 && viewW > 0 ? qreal(viewW) / width() : fallback,
+          height() > 0 && viewH > 0 ? qreal(viewH) / height() : fallback};
+}
+
 Graphic3d_Vec2i Viewport::devicePos(const QPointF& p) const {
-  const double s = devicePixelRatioF();
-  return Graphic3d_Vec2i(static_cast<int>(p.x() * s), static_cast<int>(p.y() * s));
+  const QPointF scale = viewScale();
+  return Graphic3d_Vec2i(qRound(p.x() * scale.x()), qRound(p.y() * scale.y()));
 }
 
 void Viewport::showEvent(QShowEvent* e) {
@@ -1410,12 +1418,18 @@ void Viewport::syncWindowSize() {
   if (!m_initialised || m_view.IsNull() || m_view->Window().IsNull()) return;
   const qreal dpr = devicePixelRatioF();
   const int wantW = qRound(width() * dpr), wantH = qRound(height() * dpr);
-  // Compare against what OCCT was last told, not the HWND (Qt keeps that in sync, so it always
-  // matched and MustBeResized never fired -> the view kept its stale startup size in a corner).
+  // Cache Qt's size and display scale so a hidden native child gets an OCCT resize when shown.
+  // The OCCT Cocoa window can report logical points here even when Qt's display scale is 2.
   if (wantW == m_lastSyncedSize.first && wantH == m_lastSyncedSize.second) return;
   m_lastSyncedSize = {wantW, wantH};
   if (QWindow* native = windowHandle()) native->resize(size());
   m_view->MustBeResized();
+  if (trace::enabled()) {
+    Standard_Integer viewW = 0, viewH = 0;
+    m_view->Window()->Size(viewW, viewH);
+    trace::log(QStringLiteral("viewport coordinates: Qt %1x%2, OCCT %3x%4, display scale %5")
+                   .arg(width()).arg(height()).arg(viewW).arg(viewH).arg(dpr));
+  }
   m_view->Invalidate();
   requestRedraw();
 }

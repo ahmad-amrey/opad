@@ -223,7 +223,7 @@ void Viewport::refreshMeasurement(bool force) {
     Handle(AIS_TextLabel) text = new AIS_TextLabel();
     text->SetText(TCollection_ExtendedString((" " + caption + " ").toUtf8().constData(), Standard_True));
     text->SetPosition(at);
-    text->SetHeight(13 * devicePixelRatioF());
+    text->SetHeight(13 * viewScale().x());
     text->SetFont(theme::ui().family().toUtf8().constData());
     text->SetHJustification(Graphic3d_HTA_CENTER);
     text->SetVJustification(Graphic3d_VTA_CENTER);

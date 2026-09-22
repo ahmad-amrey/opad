@@ -34,6 +34,28 @@ set(OPAD_APP_SOURCES
   MainWindow.cpp MainWindow.hpp)
 if(APPLE)
   list(APPEND OPAD_APP_SOURCES ViewportCocoa.mm)
+  find_program(OPAD_SIPS NAMES sips REQUIRED)
+  find_program(OPAD_ICONUTIL NAMES iconutil REQUIRED)
+  set(_opad_mac_iconset "${CMAKE_CURRENT_BINARY_DIR}/opad.iconset")
+  set(_opad_mac_icon "${CMAKE_CURRENT_BINARY_DIR}/opad-full.icns")
+  set(_opad_icon_source "${CMAKE_CURRENT_SOURCE_DIR}/res/opad-256.png")
+  add_custom_command(OUTPUT "${_opad_mac_icon}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${_opad_mac_iconset}"
+    COMMAND "${OPAD_SIPS}" -z 16 16 "${_opad_icon_source}" --out "${_opad_mac_iconset}/icon_16x16.png"
+    COMMAND "${OPAD_SIPS}" -z 32 32 "${_opad_icon_source}" --out "${_opad_mac_iconset}/icon_16x16@2x.png"
+    COMMAND "${OPAD_SIPS}" -z 32 32 "${_opad_icon_source}" --out "${_opad_mac_iconset}/icon_32x32.png"
+    COMMAND "${OPAD_SIPS}" -z 64 64 "${_opad_icon_source}" --out "${_opad_mac_iconset}/icon_32x32@2x.png"
+    COMMAND "${OPAD_SIPS}" -z 128 128 "${_opad_icon_source}" --out "${_opad_mac_iconset}/icon_128x128.png"
+    COMMAND "${OPAD_SIPS}" -z 256 256 "${_opad_icon_source}" --out "${_opad_mac_iconset}/icon_128x128@2x.png"
+    COMMAND "${OPAD_SIPS}" -z 256 256 "${_opad_icon_source}" --out "${_opad_mac_iconset}/icon_256x256.png"
+    COMMAND "${OPAD_SIPS}" -z 512 512 "${_opad_icon_source}" --out "${_opad_mac_iconset}/icon_256x256@2x.png"
+    COMMAND "${OPAD_SIPS}" -z 512 512 "${_opad_icon_source}" --out "${_opad_mac_iconset}/icon_512x512.png"
+    COMMAND "${OPAD_SIPS}" -z 1024 1024 "${_opad_icon_source}" --out "${_opad_mac_iconset}/icon_512x512@2x.png"
+    COMMAND "${OPAD_ICONUTIL}" -c icns "${_opad_mac_iconset}" -o "${_opad_mac_icon}"
+    DEPENDS "${_opad_icon_source}" "${CMAKE_CURRENT_LIST_FILE}"
+    VERBATIM)
+  set_source_files_properties("${_opad_mac_icon}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+  list(APPEND OPAD_APP_SOURCES "${_opad_mac_icon}")
 endif()
 if(WIN32)
   # Exe icon (res/opad.ico, cut from the logo by tools/make_icon.py) and version info.
@@ -49,6 +71,12 @@ if(WIN32)
   target_link_libraries(opad PRIVATE dbghelp)
 endif()
 if(APPLE)
+  set_target_properties(opad PROPERTIES
+    MACOSX_BUNDLE_GUI_IDENTIFIER com.opad.OPAD
+    MACOSX_BUNDLE_BUNDLE_NAME OPAD
+    MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
+    MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
+    MACOSX_BUNDLE_ICON_FILE opad-full.icns)
   target_link_libraries(opad PRIVATE "-framework Cocoa")
 endif()
 if(OPAD_STATIC)

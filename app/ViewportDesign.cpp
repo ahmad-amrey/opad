@@ -317,9 +317,9 @@ void Viewport::lookAt(const opad::Frame& frame, bool fit) {
 
 bool Viewport::planePoint(const QPointF& widgetPos, const opad::Frame& frame, double& u, double& v) const {
   if (!m_initialised) return false;
-  const qreal s = devicePixelRatioF();
+  const Graphic3d_Vec2i pos = devicePos(widgetPos);
   Standard_Real x, y, z, dx, dy, dz;
-  m_view->ConvertWithProj(static_cast<int>(widgetPos.x() * s), static_cast<int>(widgetPos.y() * s), x, y, z, dx, dy, dz);
+  m_view->ConvertWithProj(pos.x(), pos.y(), x, y, z, dx, dy, dz);
   const opad::Vec3 n = frame.normal();
   const double denom = dx * n[0] + dy * n[1] + dz * n[2];
   if (std::fabs(denom) < 1e-9) return false;  // looking along the plane
@@ -330,15 +330,15 @@ bool Viewport::planePoint(const QPointF& widgetPos, const opad::Frame& frame, do
 
 double Viewport::pixelSize() const {
   if (!m_initialised) return 1.0;
-  return m_view->Convert(1) * devicePixelRatioF();  // Convert() takes device pixels; callers think in widget pixels
+  return m_view->Convert(1) * viewScale().x();  // Convert() takes view pixels; callers think in widget points
 }
 
 QPoint Viewport::widgetPoint(const opad::Vec3& world) const {
   if (!m_initialised) return {};
   Standard_Integer px = 0, py = 0;
   m_view->Convert(world[0], world[1], world[2], px, py);
-  const qreal s = devicePixelRatioF();
-  return QPoint(static_cast<int>(px / s), static_cast<int>(py / s));
+  const QPointF scale = viewScale();
+  return QPoint(qRound(px / scale.x()), qRound(py / scale.y()));
 }
 
 void Viewport::mouseDoubleClickEvent(QMouseEvent* e) {

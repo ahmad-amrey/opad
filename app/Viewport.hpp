@@ -238,6 +238,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void applySelectionLayers();  // selected bodies live in the Topmost layer (own depth buffer): X-ray through occluders
   void clearShade();
   double deflectionFor(const std::string& key);
+  QPointF viewScale() const;  // OCCT view coordinates per Qt widget point
   Graphic3d_Vec2i devicePos(const QPointF& p) const;
   void updateAnnotations();
   void noteCameraMoved();
@@ -314,7 +315,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::map<std::string, std::shared_ptr<BodyPrs>> m_prs;         // per key, built on the worker, consumed by displayBody
   std::set<std::string> m_meshing;
   std::set<std::string> m_meshSkipped;
-  std::pair<int, int> m_lastSyncedSize{-1, -1};  // device px OCCT was last told about, for syncWindowSize
+  std::pair<int, int> m_lastSyncedSize{-1, -1};  // Qt size and display-scale stamp for syncWindowSize
   JobRunner* m_jobs = nullptr;
   Job* m_displayJob = nullptr;                    // in-flight sync(): bodies being added to the context
   QTimer m_syncTimer;
