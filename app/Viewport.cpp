@@ -3,6 +3,7 @@
 #include <functional>
 
 #include <QElapsedTimer>
+#include <QScopedValueRollback>
 #include <QTimer>
 #include <QWindow>
 
@@ -1470,11 +1471,25 @@ void Viewport::syncWindowSize() {
 }
 
 void Viewport::paintEvent(QPaintEvent*) {
+  // A selection callback can open a modal dialog (for example, adding a note). Its nested Qt
+  // event loop may deliver another paint before OCCT finishes iterating its pending click points.
+  // A second FlushViewEvents() would clear that sequence and invalidate the outer iterator.
+  if (m_flushingViewEvents) {
+    m_repaintAfterFlush = true;
+    return;
+  }
   if (!m_initialised) initViewer();
   syncWindowSize();
   QElapsedTimer frame;
   frame.start();
-  FlushViewEvents(m_ctx, m_view, Standard_True);
+  {
+    QScopedValueRollback<bool> flushing(m_flushingViewEvents, true);
+    FlushViewEvents(m_ctx, m_view, Standard_True);
+  }
+  if (m_repaintAfterFlush) {
+    m_repaintAfterFlush = false;
+    requestRedraw();
+  }
   if (trace::enabled() && frame.elapsed() > 100) trace::log(QStringLiteral("slow frame: %1 ms (%2 objects)").arg(frame.elapsed()).arg(m_items.size()));
   // The label needs the sub-shape's ordinal, a walk over the whole body: only when the hovered owner changes.
   const Standard_Transient* hoverOwner = m_ctx->HasDetected() ? m_ctx->DetectedOwner().get() : nullptr;

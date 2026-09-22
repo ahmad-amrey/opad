@@ -311,6 +311,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Style m_style = Style::ShadedEdges;
   SelFilter m_filter = SelFilter::Body;
   bool m_grid = false, m_sectionEnabled = false, m_sectionCaps = true, m_initialised = false, m_needFit = false;
+  bool m_flushingViewEvents = false, m_repaintAfterFlush = false;
   opad::Vec3 m_sectionOrigin{0, 0, 0}, m_sectionNormal{0, 0, 1};
   std::set<std::string> m_isolated;
 

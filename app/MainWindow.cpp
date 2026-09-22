@@ -310,7 +310,7 @@ void MainWindow::buildActions() {
     m_doc->closeDocument();  // AppDocument::changed -> showDocument(false) -> the start screen
     statusBar()->showMessage(tr("Document closed"), 4000);
   });
-  addAction("file.quit", tr("&Quit"), "", QKeySequence::Quit, [this] { close(); });
+  addAction("file.quit", tr("&Quit"), "", QKeySequence::Quit, [this] { close(); })->setMenuRole(QAction::QuitRole);
 
   // View
   addAction("view.fit", tr("Fit"), "fit", QKeySequence("F"), [this] { m_viewport->fitSelection(); });  // the selection, or everything when nothing is selected
@@ -336,7 +336,8 @@ void MainWindow::buildActions() {
   QAction* grid = addAction("view.grid", tr("Grid"), "grid", QKeySequence("G"), [this] {}, true);
   connect(grid, &QAction::toggled, this, [this](bool on) { m_viewport->setGrid(on); });
   addAction("view.isolate", tr("Isolate"), "isolate", QKeySequence("I"), [this] { m_viewport->isolate(currentNodeIds()); });
-  addAction("view.unisolate", tr("Exit isolate"), "showAll", QKeySequence("Shift+I"), [this] { m_viewport->isolate({}); });
+  // macOS treats any action starting with "Exit" as Quit unless its menu role is explicit.
+  addAction("view.unisolate", tr("Exit isolate"), "showAll", QKeySequence("Shift+I"), [this] { m_viewport->isolate({}); })->setMenuRole(QAction::NoRole);
   addAction("view.saveview", tr("Save view…"), "home", QKeySequence(), [this] { saveNamedView(); });
   m_darkAction = addAction("view.dark", tr("&Dark theme"), "", QKeySequence(), [this] {}, true);
   // Panel toggles: always enabled, so a closed dock can be reopened even with no document.
