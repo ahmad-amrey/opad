@@ -53,7 +53,19 @@ pybind11 (optional), Qt 6 Widgets (optional, app only).
   for another location override `CMAKE_PREFIX_PATH`, `CMAKE_C_COMPILER` and `CMAKE_CXX_COMPILER` with `-D` or in a
   `CMakeUserPresets.json`. The build stages GCC's runtime DLLs next to the executables, because Git for Windows
   puts an incompatible `libstdc++-6.dll` first on the PATH of its shells.
-- **Windows portable package:** `cmake --build --preset windows-portable` (or `cmake --workflow --preset
+- **Single-file executable (Windows):** `cmake --workflow --preset windows-single` writes
+  `build/windows-static/single/OPAD-<version>-windows-x64.exe` (and `opad-cli-<version>-windows-x64.exe`): one exe
+  with Qt, OCCT and everything else linked in, nothing to unpack, no MSYS2 on the target machine. It keeps its
+  settings and cache in an `opad-data` folder beside itself. The build needs `pacman -S mingw-w64-x86_64-{qt6-static,rapidjson,pkgconf}`
+  on top of the packages above; the first configure downloads the OCCT source and builds its toolkits statically
+  into `build/windows-static/occt` (once, about 15 minutes; the OS packages ship OCCT as DLLs only). The target
+  fails if the exe imports anything but Windows' own DLLs.
+- **Single file on Linux and macOS:** `cmake --workflow --preset linux-single` builds
+  `build/linux/single/OPAD-<version>-linux-x86_64.AppImage` with [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy)
+  and its Qt plugin (both on PATH); `cmake --workflow --preset macos-single` builds
+  `build/macos/single/OPAD-<version>-macos.dmg` with macdeployqt. Both run the OS-package build and bundle its
+  libraries; `cmake --build --preset <os>-single` runs just the packaging step.
+- **Windows portable folder:** `cmake --build --preset windows-portable` (or `cmake --workflow --preset
   windows-portable` for configure, build, test and package) writes `build/windows/portable/OPAD-<version>-windows-x64`
   and the same folder zipped. It holds `opad.exe`, `opad-cli.exe` and every DLL and Qt plugin they load, so it runs
   on a machine with no MSYS2, Qt or OCCT. The `opad.portable` file beside the exe makes the app keep settings and
@@ -63,6 +75,7 @@ pybind11 (optional), Qt 6 Widgets (optional, app only).
   XWayland, since OCCT's viewer needs an X11 window.
 - **Options:** `OPAD_BUILD_APP`, `OPAD_BUILD_CLI`, `OPAD_BUILD_PYTHON`, `OPAD_BUILD_PLUGINS`, `OPAD_BUILD_TESTS`
   (all ON). Pass them on the configure step, e.g. `cmake --preset linux -DOPAD_BUILD_APP=OFF` for core and CLI only.
+  `OPAD_STATIC` (OFF; the `windows-static` preset turns it on) links everything statically, see above.
 - **Adding a target** (another toolchain, architecture or package source): add a configure preset in
   `CMakePresets.json` that inherits `base` and sets what differs (compiler, `CMAKE_PREFIX_PATH`, toolchain file),
   plus matching build, test and workflow entries. It gets its own `build/<preset>` tree automatically.

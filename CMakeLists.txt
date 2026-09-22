@@ -13,6 +13,7 @@ option(OPAD_BUILD_APP     "Build the Qt 6 desktop application"   ON)
 option(OPAD_BUILD_PYTHON  "Build the pybind11 'opad' module"     ON)
 option(OPAD_BUILD_PLUGINS "Build the sample C-ABI plugin"        ON)
 option(OPAD_BUILD_TESTS   "Build headless tests"                 ON)
+option(OPAD_STATIC        "Single-file build: static Qt and OCCT, one self-contained executable (see cmake/occt_static.cmake)" OFF)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
@@ -29,10 +30,14 @@ endif()
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
-if(MINGW)
+if(MINGW AND NOT OPAD_STATIC)
   include(cmake/mingw.cmake)  # runtime DLLs staged in bin/
 endif()
 
+if(OPAD_STATIC)
+  include(cmake/static.cmake)       # link flags of the single-file build
+  include(cmake/occt_static.cmake)  # builds the static OCCT toolkits once, sets OpenCASCADE_DIR
+endif()
 find_package(OpenCASCADE CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 

@@ -21,6 +21,18 @@
       }
     },
     {
+      "name": "windows-static",
+      "displayName": "Windows single-file exe (MSYS2 qt6-static, OCCT built static once)",
+      "inherits": "windows",
+      "cacheVariables": {
+        "OPAD_STATIC": "ON",
+        "OPAD_STATIC_PREFIX": "C:/msys64/mingw64",
+        "CMAKE_PREFIX_PATH": "C:/msys64/mingw64/qt6-static;C:/msys64/mingw64",
+        "OPAD_BUILD_PYTHON": "OFF",
+        "OPAD_BUILD_PLUGINS": "OFF"
+      }
+    },
+    {
       "name": "linux",
       "displayName": "Linux (distro packages)",
       "inherits": "base",
@@ -38,11 +50,19 @@
     { "name": "windows", "configurePreset": "windows" },
     { "name": "windows-portable", "displayName": "Windows portable folder + zip (build/windows/portable)",
       "configurePreset": "windows", "targets": ["opad-portable"] },
+    { "name": "windows-static", "configurePreset": "windows-static" },
+    { "name": "windows-single", "displayName": "Windows single-file exe (build/windows-static/single)",
+      "configurePreset": "windows-static", "targets": ["opad-single"] },
     { "name": "linux", "configurePreset": "linux" },
-    { "name": "macos", "configurePreset": "macos" }
+    { "name": "linux-single", "displayName": "Linux AppImage (build/linux/single)",
+      "configurePreset": "linux", "targets": ["opad-single"] },
+    { "name": "macos", "configurePreset": "macos" },
+    { "name": "macos-single", "displayName": "macOS app bundle + dmg (build/macos/single)",
+      "configurePreset": "macos", "targets": ["opad-single"] }
   ],
   "testPresets": [
     { "name": "windows", "configurePreset": "windows", "output": { "outputOnFailure": true } },
+    { "name": "windows-static", "configurePreset": "windows-static", "output": { "outputOnFailure": true } },
     { "name": "linux", "configurePreset": "linux", "output": { "outputOnFailure": true } },
     { "name": "macos", "configurePreset": "macos", "output": { "outputOnFailure": true } }
   ],
@@ -52,9 +72,18 @@
     { "name": "windows-portable", "steps": [
       { "type": "configure", "name": "windows" }, { "type": "build", "name": "windows" }, { "type": "test", "name": "windows" },
       { "type": "build", "name": "windows-portable" } ] },
+    { "name": "windows-single", "steps": [
+      { "type": "configure", "name": "windows-static" }, { "type": "build", "name": "windows-static" }, { "type": "test", "name": "windows-static" },
+      { "type": "build", "name": "windows-single" } ] },
     { "name": "linux", "steps": [
       { "type": "configure", "name": "linux" }, { "type": "build", "name": "linux" }, { "type": "test", "name": "linux" } ] },
+    { "name": "linux-single", "steps": [
+      { "type": "configure", "name": "linux" }, { "type": "build", "name": "linux" }, { "type": "test", "name": "linux" },
+      { "type": "build", "name": "linux-single" } ] },
     { "name": "macos", "steps": [
-      { "type": "configure", "name": "macos" }, { "type": "build", "name": "macos" }, { "type": "test", "name": "macos" } ] }
+      { "type": "configure", "name": "macos" }, { "type": "build", "name": "macos" }, { "type": "test", "name": "macos" } ] },
+    { "name": "macos-single", "steps": [
+      { "type": "configure", "name": "macos" }, { "type": "build", "name": "macos" }, { "type": "test", "name": "macos" },
+      { "type": "build", "name": "macos-single" } ] }
   ]
 }

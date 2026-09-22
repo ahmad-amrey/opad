@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=OPAD
+Comment=Git-native STEP viewer and parametric modeller
+Exec=opad %f
+Icon=opad
+Terminal=false
+Categories=Graphics;Engineering;
+MimeType=model/step;application/x-opad;
