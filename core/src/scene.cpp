@@ -120,6 +120,7 @@ json Scene::tree_json(int max_depth) const {
     j["type"] = n->kind == Node::Kind::Body ? "body" : "component";
     j["name"] = n->name;
     if (n->kind == Node::Kind::Body) {
+      j["representation"] = n->representation;
       j["key"] = n->body_key;
       auto it = instance_count.find(n->body_key);
       j["instances"] = it == instance_count.end() ? 1 : it->second;
@@ -203,6 +204,7 @@ struct SceneBuilder::Impl {
       }
       n.kind = jn.value("type", "component") == "body" ? Node::Kind::Body : Node::Kind::Component;
       n.name = jn.value("name", n.kind == Node::Kind::Body ? "Body" : "Component");
+      n.representation = jn.value("representation", "solid");
       if (jn.contains("transform")) n.local = Mat4::from_json(jn["transform"]);
       if (jn.contains("color") && jn["color"].is_array() && jn["color"].size() == 3) {
         n.has_color = true;

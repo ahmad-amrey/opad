@@ -18,6 +18,7 @@ struct Node {
   std::string parent;  // empty = document root
   std::vector<std::string> children;
   std::string body_key;  // Body only
+  std::string representation = "solid";  // solid | mesh | drawing2d
   bool body_missing = false;  // Body whose key is not in the store (F8)
   Mat4 local;
   bool has_color = false;

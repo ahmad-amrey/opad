@@ -90,6 +90,7 @@ gp_Trsf Ctx::node_trsf(const std::string& node) const {
 TopoDS_Shape Ctx::node_shape(const std::string& node) const {
   const Node* n = scene.node(node);
   if (!n || n->kind != Node::Kind::Body) throw Error("a referenced body no longer exists");
+  if (n->representation == "mesh") throw Error("Mesh objects are view-only; solid modelling requires a CAD body");
   TopoDS_Shape proto = key_shape(n->body_key);
   const gp_Trsf t = node_trsf(node);
   return t.Form() == gp_Identity ? proto : proto.Moved(TopLoc_Location(t));

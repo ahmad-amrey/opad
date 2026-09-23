@@ -106,6 +106,9 @@ PYBIND11_MODULE(opad, m) {
       .def("import_step", [](opad::Document& d, const std::string& file, const std::string& by, const std::string& parent, bool heal) {
              return to_py(opad::commands::run("import", json{{"file", file}, {"by", by}, {"parent", parent}, {"heal", heal}}, &d));
            }, "file"_a, "by"_a = "", "parent"_a = "", "heal"_a = true)
+      .def("import_file", [](opad::Document& d, const std::string& file, const std::string& by, const std::string& parent) {
+             return to_py(opad::commands::run("import", json{{"file", file}, {"by", by}, {"parent", parent}}, &d));
+           }, "file"_a, "by"_a = "", "parent"_a = "", "Import STEP, DXF, SVG, DWG via converter, STL or OBJ.")
       .def("import_brep", [](opad::Document& d, const std::string& brep, const std::string& name, const std::string& by, const std::string& parent) {
              return to_py(opad::commands::run("import_brep", json{{"brep", brep}, {"name", name}, {"by", by}, {"parent", parent}}, &d));
            }, "brep"_a, "name"_a = "Body", "by"_a = "", "parent"_a = "",

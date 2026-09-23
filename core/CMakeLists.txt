@@ -8,6 +8,7 @@ add_library(opad_core STATIC
   src/cache.cpp
   src/mesh.cpp
   src/step_io.cpp
+  src/drawing_io.cpp
   src/inspect.cpp
   src/render.cpp
   src/diff.cpp

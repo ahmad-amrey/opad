@@ -427,7 +427,7 @@ void apply_operation(const Ctx& ctx, const json& inputs, const TopoDS_Shape& too
     const Bnd_Box tb = box_of(tool);
     for (const auto& id : ctx.scene.all_bodies()) {
       const Node* n = ctx.scene.node(id);
-      if (!n || (n->body_missing && !ctx.fresh.count(n->body_key))) continue;
+      if (!n || n->representation != "solid" || (n->body_missing && !ctx.fresh.count(n->body_key))) continue;
       if (!box_of(ctx.node_shape(id)).IsOut(tb)) targets.push_back(id);
     }
   }

@@ -12,6 +12,7 @@
 #include "opad/scene.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/step_io.hpp"
+#include "opad/drawing_io.hpp"
 
 namespace opad::commands {
 
@@ -267,14 +268,14 @@ void register_builtins() {
         return j;
       });
 
-  reg("import", "Import a STEP file into the document (F2)",
-      {{"doc", "path"}, {"file", "path - .step/.stp"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"}},
+  reg("import", "Import STEP, DXF, SVG, DWG (converter), STL or OBJ into the document",
+      {{"doc", "path"}, {"file", "path - .step/.stp/.dxf/.svg/.dwg/.stl/.obj"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"}},
       true, [](Document* d, const json& a) {
         ImportOptions o;
         o.author = a.value("by", "");
         o.parent = a.value("parent", "");
         o.heal = a.value("heal", true);
-        return import_step(need(d), a.at("file").get<std::string>(), o).to_json();
+        return import_file(need(d), a.at("file").get<std::string>(), o).to_json();
       });
 
   reg("import_brep", "Import a shape given as OCCT ASCII BREP text (build123d/CadQuery/OCP bridge)",
@@ -289,8 +290,8 @@ void register_builtins() {
         return import_brep(need(d), text, a.value("name", "Body"), o).to_json();
       });
 
-  reg("export", "Export selected objects (or everything) to step|obj|stl|glb or a plugin format",
-      {{"doc", "path"}, {"format", "step|obj|stl|glb|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
+  reg("export", "Export selected objects (or everything) to step|obj|stl|glb|dxf|svg|dwg or a plugin format",
+      {{"doc", "path"}, {"format", "step|obj|stl|glb|dxf|svg|dwg|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
        {"tolerance", "number - mesh deflection mm"}, {"ascii", "bool - STL text"}, {"per_body", "bool - STL one file per body"}, {"mtl", "bool - OBJ materials"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
@@ -306,6 +307,7 @@ void register_builtins() {
         o.mtl = a.value("mtl", true);
         std::string out = a.value("out", "");
         if (out.empty()) throw Error("export: \"out\" path required");
+        if (fmt == "svg" || fmt == "dxf" || fmt == "dwg") return export_drawing(doc, resolve(doc), out, o).to_json();
         return export_selection(doc, resolve(doc), out, o).to_json();
       });
 
@@ -574,7 +576,7 @@ json run_exporter(const std::string& format, const Document& doc, const json& ar
 }
 
 std::vector<std::string> exporter_formats() {
-  std::vector<std::string> out = {"step", "obj", "stl", "glb"};
+  std::vector<std::string> out = {"step", "obj", "stl", "glb", "dxf", "svg", "dwg"};
   auto& r = registry();
   std::lock_guard<std::recursive_mutex> lock(r.mu);
   for (const auto& [k, v] : r.exporters) out.push_back(k);
