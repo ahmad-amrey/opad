@@ -14,6 +14,9 @@
 #include <QWindow>
 
 #include <AIS_AnimationCamera.hxx>
+#include <AIS_TexturedShape.hxx>
+#include <QPainter>
+#include <cstring>
 #include <AIS_ViewCube.hxx>
 #include <Aspect_DisplayConnection.hxx>
 #include <Aspect_ScrollDelta.hxx>
@@ -415,7 +418,7 @@ void Viewport::applyStyle(const Handle(AIS_Shape)& ais) {
   Handle(Prs3d_Drawer) d = ais->Attributes();
   d->SetFaceBoundaryDraw(m_style == Style::ShadedEdges);
   d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.medge), Aspect_TOL_SOLID, 1.0));
-  m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, Standard_False);
+  m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, Standard_False);
 }
 
 void Viewport::setStyle(Style s) {
@@ -1393,6 +1396,33 @@ void Viewport::displayBody(const std::string& id) {
     prs.reset();
   }
   Handle(AIS_Shape) ais = new BodyShape(located, prs);
+  if(!n->raster.is_null()) {
+    const std::string href=n->raster.value("href","");
+    const auto comma=href.find(',');
+    if(href.rfind("data:image/",0)==0 && comma!=std::string::npos && href.substr(0,comma).find(";base64")!=std::string::npos) {
+      QImage image=QImage::fromData(QByteArray::fromBase64(QByteArray::fromStdString(href.substr(comma+1))));
+      if(!image.isNull()) {
+        const auto& corners=n->raster.at("corners");
+        auto point=[&](int i) { return gp_Pnt(corners[i][0].get<double>(),corners[i][1].get<double>(),corners[i][2].get<double>()); };
+        const double ratio=point(0).Distance(point(1))/std::max(1e-12,point(0).Distance(point(2)));
+        const auto aspect=n->raster.value("preserveAspectRatio","");
+        if(aspect!="none") {
+          const int h=std::min(2048,std::max(image.height(),int(image.width()/ratio)));
+          const int w=std::clamp(int(h*ratio),1,4096);
+          QImage canvas(w,h,QImage::Format_RGBA8888); canvas.fill(Qt::transparent);
+          const auto scaled=image.scaled(w,h,aspect.find("slice")!=std::string::npos?Qt::KeepAspectRatioByExpanding:Qt::KeepAspectRatio,Qt::SmoothTransformation);
+          QPainter painter(&canvas); painter.drawImage((w-scaled.width())/2,(h-scaled.height())/2,scaled); painter.end(); image=canvas;
+        }
+        image=image.convertToFormat(QImage::Format_RGBA8888);
+        Handle(Image_PixMap) pixels=new Image_PixMap();
+        pixels->InitTrash(Image_Format_RGBA,image.width(),image.height()); pixels->SetTopDown(false);
+        for(int row=0;row<image.height();++row) std::memcpy(pixels->ChangeRow(row),image.constScanLine(row),image.width()*4);
+        Handle(AIS_TexturedShape) textured=new AIS_TexturedShape(located);
+        textured->SetTexturePixMap(pixels); textured->SetTextureMapOn(); textured->DisableTextureModulate(); textured->SetTextureRepeat(false);
+        ais=textured;
+      } else emit hoverChanged(tr("Embedded image could not be decoded; showing its frame"));
+    }
+  }
   if (rigid && !world.is_identity()) ais->SetLocalTransformation(opad::trsf_from_mat(world));
   ais->Attributes()->SetTypeOfDeflection(Aspect_TOD_ABSOLUTE);
   ais->Attributes()->SetMaximalChordialDeviation(deflectionFor(n->body_key));
@@ -1405,7 +1435,7 @@ void Viewport::displayBody(const std::string& id) {
   ais->SetColor(qcolor(n->color));
   if (n->opacity < 1.0) ais->SetTransparency(1.0 - n->opacity);
   applyStyle(ais);
-  m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, -1, Standard_False);  // selection activated below, once
+  m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, -1, Standard_False);  // selection activated below, once
   const qint64 displayMs = t.elapsed();
   activateSelection(ais);
   if (trace::enabled() && t.elapsed() > 50) trace::log(QStringLiteral("displayBody %1: display %2 ms, selection %3 ms").arg(QString::fromStdString(n->name)).arg(displayMs).arg(t.elapsed() - displayMs));

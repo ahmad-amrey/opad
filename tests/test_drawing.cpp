@@ -65,6 +65,40 @@ TEST(svg_arc_and_nested_transform) {
   double x0,y0,z0,x1,y1,z1;node_world_bbox(d,s,s.all_bodies()[0]).Get(x0,y0,z0,x1,y1,z1);
   CHECK_NEAR(x0,10,1e-4);CHECK_NEAR(x1,30,1e-4);CHECK_NEAR(y1-y0,10,1e-4);
 }
+TEST(svg_editor_metadata_references_shapes_and_text) {
+  Files f;
+  write_text_file(f.dir/"editor.svg",R"svg(<svg xmlns="http://www.w3.org/2000/svg" xmlns:sodipodi="editor" width="100mm" viewBox="0 0 100 100">
+    <sodipodi:namedview><sodipodi:guide/></sodipodi:namedview>
+    <defs><g id="part"><ellipse cx="5" cy="5" rx="4" ry="2"/><rect x="0" y="0" width="10" height="10" rx="2"/></g></defs>
+    <g id="Layer"><use href="#part" x="20" y="10"/><text x="5" y="40" font-size="8">CAD</text></g>
+  </svg>)svg");
+  auto d=Document::create(); const auto result=import_file(d,f.dir/"editor.svg"); const auto scene=resolve(d);
+  CHECK(result.warnings.empty()); CHECK_EQ(scene.all_bodies().size(),2u);
+  int edges=0; for(const auto& id:scene.all_bodies()) edges+=subshape_count(node_world_shape(d,scene,id),Ref::Kind::Edge);
+  CHECK(edges>9);
+}
+TEST(svg_embedded_image_survives_opad_and_svg_roundtrip) {
+  Files f;
+  const std::string data="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jU1sAAAAASUVORK5CYII=";
+  write_text_file(f.dir/"image.svg","<svg width=\"100mm\" viewBox=\"0 0 100 100\"><image x=\"10\" y=\"20\" width=\"30\" height=\"40\" href=\""+data+"\"/></svg>");
+  auto d=Document::create(); import_file(d,f.dir/"image.svg"); d=Document::parse(d.serialize());
+  auto scene=resolve(d); auto id=scene.all_bodies()[0]; CHECK_EQ(scene.node(id)->raster["href"],data);
+  auto box=node_world_bbox(d,scene,id); CHECK_NEAR(box.CornerMin().X(),10,1e-5); CHECK_NEAR(box.CornerMin().Y(),-60,1e-5);
+  ExportOptions options; options.format="svg"; export_drawing(d,scene,f.dir/"out.svg",options);
+  auto round=Document::create(); import_file(round,f.dir/"out.svg"); scene=resolve(round); id=scene.all_bodies()[0];
+  CHECK_EQ(scene.node(id)->raster["href"],data);
+  box=node_world_bbox(round,scene,id); CHECK_NEAR(box.CornerMin().X(),10,1e-5); CHECK_NEAR(box.CornerMin().Y(),-60,1e-5);
+}
+TEST(svg_unsupported_effects_are_reported_and_source_preserved) {
+  Files f; const std::string source="<svg><filter id=\"effect\"/><rect width=\"10\" height=\"10\"/></svg>";
+  write_text_file(f.dir/"effect.svg",source); auto d=Document::create(); const auto result=import_file(d,f.dir/"effect.svg");
+  CHECK(!result.warnings.empty()); CHECK(d.serialize().find("svg_source")!=std::string::npos);
+  CHECK_EQ(resolve(d).all_bodies().size(),1u);
+  const auto before=d.serialize();
+  write_text_file(f.dir/"cycle.svg","<svg><defs><g id=\"a\"><use href=\"#a\"/></g></defs><use href=\"#a\"/></svg>");
+  CHECK_THROWS(import_file(d,f.dir/"cycle.svg")); CHECK_EQ(d.serialize(),before);
+}
+
 TEST(bad_drawings_leave_document_unchanged) {
   Files f;auto d=Document::create();auto before=d.serialize();
   write_text_file(f.dir/"bad.dxf","0\nSECTION\n2\nENTITIES\n0\nLINE\n10\nnan\n0\nENDSEC\n0\nEOF\n");

@@ -74,10 +74,12 @@ void AppDocument::startOpen(const QString& path) {
   std::thread([this, alive, cancel, path, external, o]() {
     auto result = std::make_shared<opad::Document>();
     QString error;
+    QStringList warnings;
     try {
       if (external) {
         *result = opad::Document::create();
-        opad::import_file(*result, path.toStdString(), o);
+        const auto imported=opad::import_file(*result, path.toStdString(), o);
+        for(const auto& warning:imported.warnings) warnings.append(QString::fromStdString(warning));
       } else *result = opad::Document::load(path.toStdString());
       // Parse the bodies here rather than on the UI thread when they are first displayed.
       if (!*cancel) opad::warm_shape_cache(*result, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
@@ -88,7 +90,7 @@ void AppDocument::startOpen(const QString& path) {
       error = QString::fromUtf8(e.what());
     }
     if (!*alive) return;
-    QMetaObject::invokeMethod(this, [this, result, error, path, external] {
+    QMetaObject::invokeMethod(this, [this, result, error, path, external, warnings] {
       loading = false;
       if (!error.isEmpty()) {
         emit loadFinished(false, error);
@@ -104,6 +106,7 @@ void AppDocument::startOpen(const QString& path) {
       emit pathChanged();
       if (external) emit message(tr("Imported %1 into a new document").arg(QFileInfo(path).fileName()));
       else emit message(tr("Opened %1").arg(path));
+      if(!warnings.isEmpty()) emit message(warnings.join("; "));
       emit loadFinished(true, {});
     }, Qt::QueuedConnection);
   }).detach();

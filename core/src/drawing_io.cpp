@@ -1,6 +1,10 @@
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <gp_Pln.hxx>
+#include <StdPrs_BRepTextBuilder.hxx>
+#include <StdPrs_BRepFont.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
@@ -103,6 +107,8 @@ double number(const std::string& s) {
 struct Drawing {
   std::map<std::string, TopoDS_Compound> layers;
   std::map<std::string, bool> visible;
+  std::map<std::string, json> images;
+  std::vector<std::string> warnings;
   BRep_Builder builder;
   Mat4 transform;
   void add(const std::string& layer, const TopoDS_Shape& s) {
@@ -290,56 +296,158 @@ Drawing read_dxf(const std::filesystem::path& file) {
   return out;
 }
 
+std::string base64(const std::string& bytes) {
+  static constexpr char alphabet[]="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string out;
+  for(size_t i=0;i<bytes.size();i+=3) {
+    unsigned bits=unsigned((unsigned char)bytes[i])<<16;
+    if(i+1<bytes.size()) bits|=unsigned((unsigned char)bytes[i+1])<<8;
+    if(i+2<bytes.size()) bits|=unsigned((unsigned char)bytes[i+2]);
+    out+=alphabet[(bits>>18)&63]; out+=alphabet[(bits>>12)&63];
+    out+=i+1<bytes.size()?alphabet[(bits>>6)&63]:'='; out+=i+2<bytes.size()?alphabet[bits&63]:'=';
+  }
+  return out;
+}
+
 Drawing read_svg(const std::filesystem::path& file) {
   const std::string text=read_text_file(file);
   if(text.find("<!DOCTYPE")!=std::string::npos || text.find("<!ENTITY")!=std::string::npos) throw Error("SVG external entities/DOCTYPE are not supported");
   LDOMParser parser; std::istringstream stream(text);
   if(parser.parse(stream)) throw Error("invalid SVG XML");
   auto root=parser.getDocument().getDocumentElement();
-  if(std::string(root.getTagName().GetString())!="svg") throw Error("expected SVG root");
+  auto local=[](std::string tag) { const auto colon=tag.find(':'); return colon==std::string::npos?tag:tag.substr(colon+1); };
+  if(local(root.getTagName().GetString())!="svg") throw Error("expected SVG root");
   Drawing out;
-  std::function<void(const LDOM_Element&,std::string,int)> walk;
-  walk=[&](const LDOM_Element& e, std::string layer, int depth) {
+  std::map<std::string,LDOM_Element> ids;
+  std::function<void(const LDOM_Element&,int)> index;
+  index=[&](const LDOM_Element& e,int depth) {
     if(depth>64) throw Error("SVG hierarchy too deep");
+    const auto id=xml_text(e.getAttribute("id")); if(!id.empty()) ids.insert_or_assign(id,e);
+    for(auto child=e.getFirstChild();!child.isNull();child=child.getNextSibling())
+      if(child.getNodeType()==LDOM_Node::ELEMENT_NODE) index(static_cast<const LDOM_Element&>(child),depth+1);
+  };
+  index(root,0);
+  auto length=[](const std::string& value) {
+    size_t used=0; double n=std::stod(value,&used); const auto unit=value.substr(used);
+    const double factor=unit.empty()||unit=="px"?1:unit=="mm"?96/25.4:unit=="cm"?960/25.4:unit=="in"?96:unit=="pt"?96/72.0:unit=="pc"?16:0;
+    if(!factor||!std::isfinite(n)||std::abs(n)>1e12) throw Error("unsupported SVG length: "+value);
+    return n*factor;
+  };
+  std::function<void(const LDOM_Element&,std::string,int)> walk;
+  walk=[&](const LDOM_Element& e,std::string layer,int depth) {
+    if(depth>64) throw Error("SVG reference cycle or hierarchy too deep");
     auto attr=[&](const char* key) { return xml_text(e.getAttribute(key)); };
-    auto num=[&](const char* key,double fallback=0) { auto s=attr(key); return s.empty()?fallback:number(s); };
-    const std::string tag=e.getTagName().GetString();
-    if(tag=="defs" || tag=="metadata" || tag=="title" || tag=="desc") return;
+    auto property=[&](const char* key,const std::string& fallback) {
+      auto value=attr(key); if(!value.empty()) return value;
+      std::istringstream css(attr("style")); std::string declaration;
+      while(std::getline(css,declaration,';')) {
+        const auto colon=declaration.find(':'); if(colon==std::string::npos) continue;
+        auto trim=[](std::string v) { auto a=v.find_first_not_of(" \t\r\n"); auto b=v.find_last_not_of(" \t\r\n"); return a==std::string::npos?std::string():v.substr(a,b-a+1); };
+        if(trim(declaration.substr(0,colon))==key) return trim(declaration.substr(colon+1));
+      }
+      return fallback;
+    };
+    auto num=[&](const char* key,double fallback=0) { const auto value=attr(key); return value.empty()?fallback:length(value); };
+    const std::string full=e.getTagName().GetString(),tag=local(full);
+    // Editor metadata and non-rendering resources must never reject a valid drawing.
+    if(tag=="defs"||tag=="metadata"||tag=="title"||tag=="desc"||tag=="style"||tag=="namedview"
+       || (full.find(':')!=std::string::npos && full.substr(0,full.find(':'))!="svg")) return;
+    if(property("display","")=="none"||property("visibility","")=="hidden") return;
     const Mat4 parent=out.transform;
-    if(!attr("transform").empty())out.transform=parent*svg_transform(attr("transform"));
-    if(tag=="g" && !attr("id").empty()) layer=attr("id");
-    if(tag=="line") out.line(layer,num("x1"),-num("y1"),num("x2"),-num("y2"));
-    else if(tag=="path") svg_path(out,layer,attr("d"));
-    else if(tag=="circle") out.circle(layer,num("cx"),-num("cy"),num("r"));
-    else if(tag=="rect") {
-      if(num("rx")!=0 || num("ry")!=0) throw Error("SVG rounded rectangles must be converted to paths");
-      double x=num("x"), y=-num("y"), w=num("width"), h=num("height");
-      if(w<=0 || h<=0) throw Error("invalid SVG rectangle size");
-      out.line(layer,x,y,x+w,y); out.line(layer,x+w,y,x+w,y-h); out.line(layer,x+w,y-h,x,y-h); out.line(layer,x,y-h,x,y);
-    } else if(tag=="polyline" || tag=="polygon") {
-      std::string coords=attr("points"); std::replace(coords.begin(),coords.end(),',',' '); std::istringstream ss(coords);
-      std::vector<std::array<double,2>> p; std::string x,y;
-      while(ss>>x) { if(!(ss>>y)) throw Error("invalid SVG points"); p.push_back({number(x),-number(y)}); }
-      for(size_t i=1;i<p.size();++i) out.line(layer,p[i-1][0],p[i-1][1],p[i][0],p[i][1]);
-      if(tag=="polygon" && p.size()>2) out.line(layer,p.back()[0],p.back()[1],p.front()[0],p.front()[1]);
-    } else if(tag!="svg" && tag!="g") throw Error("Unsupported SVG element: " + tag + ". Convert to lines, polylines, rectangles or circles first.");
-    for(auto child=e.getFirstChild(); !child.isNull(); child=child.getNextSibling())
-      if(child.getNodeType()==LDOM_Node::ELEMENT_NODE) walk(static_cast<const LDOM_Element&>(child),layer,depth+1);
+    if(!attr("transform").empty()) out.transform=parent*svg_transform(attr("transform"));
+    if(tag=="g"&&!attr("id").empty()) layer=attr("inkscape:label").empty()?attr("id"):attr("inkscape:label");
+    if(!attr("clip-path").empty()||!attr("mask").empty()) out.warnings.push_back("SVG clipping/masking retained in source; imported curves are unclipped");
+    if(tag=="use") {
+      auto href=attr("href"); if(href.empty()) href=attr("xlink:href");
+      if(href.size()>1 && href[0]=='#' && ids.count(href.substr(1))) {
+        out.transform=out.transform*Mat4::translation(num("x"),-num("y"),0);
+        walk(ids.at(href.substr(1)),layer,depth+1);
+      } else out.warnings.push_back("Unresolved SVG use reference: "+href);
+    } else if(tag=="line") out.line(layer,num("x1"),-num("y1"),num("x2"),-num("y2"));
+    else if(tag=="path") { if(!attr("d").empty()) svg_path(out,layer,attr("d")); }
+    else if(tag=="circle") { if(num("r")>0) out.circle(layer,num("cx"),-num("cy"),num("r")); }
+    else if(tag=="ellipse") {
+      double rx=num("rx"),ry=num("ry"); if(rx>0&&ry>0) {
+        gp_Ax2 axis(gp_Pnt(num("cx"),-num("cy"),0),gp::DZ(),rx>=ry?gp::DX():gp::DY());
+        out.add(layer,BRepBuilderAPI_MakeEdge(gp_Elips(axis,std::max(rx,ry),std::min(rx,ry))).Edge());
+      }
+    } else if(tag=="rect") {
+      const double x=num("x"),y=num("y"),w=num("width"),h=num("height");
+      if(w<0||h<0) throw Error("invalid SVG rectangle size");
+      if(w>0&&h>0) {
+        const double rx=std::clamp(num("rx",num("ry")),0.0,w/2),ry=std::clamp(num("ry",num("rx")),0.0,h/2);
+        if(rx>0&&ry>0) {
+          std::ostringstream path; path.precision(17);
+          path<<"M"<<x+rx<<' '<<y<<" H"<<x+w-rx<<" A"<<rx<<' '<<ry<<" 0 0 1 "<<x+w<<' '<<y+ry
+              <<" V"<<y+h-ry<<" A"<<rx<<' '<<ry<<" 0 0 1 "<<x+w-rx<<' '<<y+h
+              <<" H"<<x+rx<<" A"<<rx<<' '<<ry<<" 0 0 1 "<<x<<' '<<y+h-ry
+              <<" V"<<y+ry<<" A"<<rx<<' '<<ry<<" 0 0 1 "<<x+rx<<' '<<y<<" Z";
+          svg_path(out,layer,path.str());
+        } else { out.line(layer,x,-y,x+w,-y); out.line(layer,x+w,-y,x+w,-y-h); out.line(layer,x+w,-y-h,x,-y-h); out.line(layer,x,-y-h,x,-y); }
+      }
+    } else if(tag=="polyline"||tag=="polygon") {
+      SvgNumbers values{attr("points")}; std::vector<std::array<double,2>> points;
+      while(!values.end()) { double x=values.next(),y=values.next(); points.push_back({x,-y}); }
+      for(size_t i=1;i<points.size();++i) out.line(layer,points[i-1][0],points[i-1][1],points[i][0],points[i][1]);
+      if(tag=="polygon"&&points.size()>2) out.line(layer,points.back()[0],points.back()[1],points.front()[0],points.front()[1]);
+    } else if(tag=="image") {
+      const double x=num("x"),y=num("y"),w=num("width"),h=num("height");
+      if(w>0&&h>0) {
+        auto href=attr("href"); if(href.empty()) href=attr("xlink:href");
+        if(!href.empty()&&href.rfind("data:",0)!=0&&href.find("://")==std::string::npos) {
+          const auto path=file.parent_path()/std::filesystem::u8path(href);
+          if(std::filesystem::exists(path)) {
+            const auto ext=extension(path); const auto mime=ext==".jpg"||ext==".jpeg"?"image/jpeg":ext==".png"?"image/png":ext==".bmp"?"image/bmp":"application/octet-stream";
+            href="data:"+std::string(mime)+";base64,"+base64(read_text_file(path));
+          }
+        }
+        const std::string imageLayer=layer+" / Image "+std::to_string(out.images.size()+1);
+        out.add(imageLayer,BRepBuilderAPI_MakeFace(gp_Pln(gp::XOY()),x,x+w,-y-h,-y).Face());
+        json corners=json::array();
+        for(auto p:std::array<Vec3,3>{{{x,-y,0},{x+w,-y,0},{x,-y-h,0}}}) {
+          Vec3 q{}; for(int r=0;r<3;++r) {q[r]=out.transform.at(r,3);for(int c=0;c<3;++c)q[r]+=out.transform.at(r,c)*p[c];} corners.push_back(q);
+        }
+        out.images[imageLayer]={{"href",href},{"corners",corners},{"preserveAspectRatio",attr("preserveAspectRatio")}};
+        if(href.rfind("data:image/",0)!=0) out.warnings.push_back("Image reference unavailable; its frame and source reference were retained: "+href.substr(0,160));
+      }
+    } else if(tag=="text") {
+      std::string value;
+      std::function<void(const LDOM_Node&)> content=[&](const LDOM_Node& node) {
+        if(node.getNodeType()==LDOM_Node::TEXT_NODE||node.getNodeType()==LDOM_Node::CDATA_SECTION_NODE) value+=xml_text(node.getNodeValue());
+        for(auto child=node.getFirstChild();!child.isNull();child=child.getNextSibling()) content(child);
+      };
+      content(e);
+      if(!value.empty()) {
+        StdPrs_BRepFont font;
+        const double size=length(property("font-size","16"));
+        const auto family=property("font-family","sans-serif");
+        if(size>0&&font.FindAndInit(family.c_str(),Font_FA_Regular,size)) {
+          const auto align=property("text-anchor","");
+          const auto h=align=="middle"?Graphic3d_HTA_CENTER:align=="end"?Graphic3d_HTA_RIGHT:Graphic3d_HTA_LEFT;
+          const auto shape=StdPrs_BRepTextBuilder().Perform(font,NCollection_String(value.c_str()),gp_Ax3(gp_Pnt(num("x"),-num("y"),0),gp::DZ()),h,Graphic3d_VTA_BOTTOM);
+          out.add(layer,shape);
+        } else out.warnings.push_back("SVG text font unavailable; text retained in source");
+      }
+    } else if(tag!="svg"&&tag!="g"&&tag!="symbol"&&tag!="a"&&tag!="switch") {
+      out.warnings.push_back("SVG element retained in source: "+full);
+    }
+    if(tag!="use"&&tag!="text")
+      for(auto child=e.getFirstChild();!child.isNull();child=child.getNextSibling())
+        if(child.getNodeType()==LDOM_Node::ELEMENT_NODE) walk(static_cast<const LDOM_Element&>(child),layer,depth+1);
     out.transform=parent;
   };
   walk(root,"0",0);
-  // SVG user units default to CSS pixels. Physical width + viewBox establishes mm per user unit.
   double scale=25.4/96.0;
-  const std::string width=xml_text(root.getAttribute("width")), viewbox=xml_text(root.getAttribute("viewBox"));
-  if(!width.empty()) {
-    size_t used=0; double physical=std::stod(width,&used); const std::string unit=width.substr(used);
-    double factor=unit=="mm"?1:unit=="cm"?10:unit=="in"?25.4:unit=="pt"?25.4/72:unit.empty()||unit=="px"?25.4/96:0;
-    if(!factor || !std::isfinite(physical) || physical<=0) throw Error("unsupported SVG width units");
-    if(!viewbox.empty()) { SvgNumbers vb{viewbox}; vb.next();vb.next();double w=vb.next();vb.next(); if(w<=0 || !vb.end())throw Error("invalid SVG viewBox"); scale=physical*factor/w; }
+  const auto width=xml_text(root.getAttribute("width")),viewbox=xml_text(root.getAttribute("viewBox"));
+  if(!width.empty()&&width.back()!='%'&&!viewbox.empty()) {
+    SvgNumbers vb{viewbox}; vb.next();vb.next();const double w=vb.next(),h=vb.next();
+    if(w<=0||h<=0||!vb.end()) throw Error("invalid SVG viewBox");
+    scale=length(width)*25.4/96/w;
   }
   gp_Trsf scaling; scaling.SetScale(gp_Pnt(0,0,0),scale);
   for(auto& [name,shape]:out.layers) shape=TopoDS::Compound(BRepBuilderAPI_Transform(shape,scaling,true).Shape());
-  if(out.layers.empty()) throw Error("SVG contains no supported geometry");
+  for(auto& [name,image]:out.images) for(auto& point:image["corners"]) for(auto& v:point) v=v.get<double>()*scale;
+  if(out.layers.empty()) throw Error("SVG contains no drawable geometry");
   return out;
 }
 
@@ -399,7 +507,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     else if(ext==".dxf") drawing=read_dxf(file);
     else if(ext==".svg") drawing=read_svg(file);
     else throw Error("unsupported import format: " + ext);
-    ImportResult result; json children=json::array();
+    ImportResult result; result.warnings=drawing.warnings; json children=json::array();
     // Parse fully before touching the document. Stage stores and op so cancellation is atomic.
     Document staged=doc;
     for(const auto& [name, shape]:drawing.layers) {
@@ -411,12 +519,14 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
       const auto key=staged.add_body(brep,{{"representation",mesh?"mesh":"drawing2d"},{"layer",name},{"source",file.filename().string()}});
       cache_shape(staged,key,shape);
       json body={{"type","body"},{"id",new_uuid()},{"name",name},{"key",key},{"representation",mesh?"mesh":"drawing2d"}};
+      if(drawing.images.count(name)) body["raster"]=drawing.images.at(name);
       if(!mesh) children.push_back({{"type","component"},{"id",new_uuid()},{"name",name},{"visible",!drawing.visible.count(name)||drawing.visible.at(name)},{"children",json::array({body})}});
       else children.push_back(body);
       ++result.bodies;
     }
     json root={{"type","component"},{"id",new_uuid()},{"name",file.stem().string()},{"children",children}};
     json op={{"op","import"},{"source",file.filename().string()},{"nodes",json::array({root})}};
+    if(ext==".svg" && !drawing.warnings.empty()) { op["svg_source"]=read_text_file(file); op["warnings"]=drawing.warnings; }
     if(!options.parent.empty()) op["parent"]=options.parent;
     result.op_id=staged.append(op,options.author).id; result.components=mesh?1:int(children.size())+1;
     result.new_entries=int(staged.body_count()-doc.body_count()); doc=std::move(staged); return result;
@@ -446,6 +556,21 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
     std::string layer=n->name;
     std::replace(layer.begin(),layer.end(),'\n','_'); std::replace(layer.begin(),layer.end(),'\r','_');
     if(svg) body<<"<g id=\""<<xml(layer)<<"\">\n";
+    if(!n->raster.is_null()) {
+      if(!svg) throw Error("Raster images require SVG export; DXF raster references are not supported");
+      const auto world=scene.world(id);
+      std::array<Vec3,3> p;
+      for(int i=0;i<3;++i) p[i]=world.apply(n->raster.at("corners").at(i).get<Vec3>());
+      for(int i=0;i<4;++i) {
+        Vec3 q=i<3?p[i]:Vec3{p[1][0]+p[2][0]-p[0][0],p[1][1]+p[2][1]-p[0][1],0};
+        xmin=std::min(xmin,q[0]);xmax=std::max(xmax,q[0]);ymin=std::min(ymin,-q[1]);ymax=std::max(ymax,-q[1]);
+      }
+      body<<"<image width=\"1\" height=\"1\" preserveAspectRatio=\""<<xml(n->raster.value("preserveAspectRatio",""))
+          <<"\" transform=\"matrix("<<p[1][0]-p[0][0]<<' '<<-(p[1][1]-p[0][1])<<' '
+          <<p[2][0]-p[0][0]<<' '<<-(p[2][1]-p[0][1])<<' '<<p[0][0]<<' '<<-p[0][1]
+          <<")\" href=\""<<xml(n->raster.value("href",""))<<"\"/>\n</g>\n";
+      ++bodies; continue;
+    }
     auto shape=node_world_shape(doc,scene,id);
     for(TopExp_Explorer it(shape,TopAbs_EDGE);it.More();it.Next()) {
       BRepAdaptor_Curve c(TopoDS::Edge(it.Current()));

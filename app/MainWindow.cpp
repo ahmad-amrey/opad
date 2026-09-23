@@ -2035,6 +2035,11 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
   m_benchSelect = false;
+  if(const QString shot=qEnvironmentVariable("OPAD_BENCH_SCENE");!shot.isEmpty()) {
+    m_viewport->standardView("top");
+    QTimer::singleShot(700,this,[this,shot] { m_viewport->fitAll(); QCoreApplication::exit(m_viewport->grabImage().save(shot)?0:2); });
+    return;
+  }
   if (qEnvironmentVariableIsSet("OPAD_BENCH_PICKING")) {
     auto once = std::make_shared<QMetaObject::Connection>();
     *once = connect(m_viewport, &Viewport::filterApplied, this, [this, once] {
