@@ -30,6 +30,10 @@ int main(int argc, char** argv) {
     CHECK_EQ(doc.scene.all_bodies().size(), bodies);
     CHECK_THROWS(doc.open(tmp.path() + "/missing.step"));
     CHECK_EQ(doc.scene.all_bodies().size(), bodies);
+    const QString broken = tmp.path() + "/broken.step";
+    opad::write_text_file(broken.toStdString(), "ISO-10303-21;\nDATA;\n#1=broken(");
+    CHECK_THROWS(doc.open(broken));
+    CHECK_EQ(doc.scene.all_bodies().size(), bodies);
     QEventLoop loop;
     bool success = false;
     QObject::connect(&doc, &AppDocument::loadFinished, &loop, [&](bool ok, const QString&) { success = ok; loop.quit(); });

@@ -35,6 +35,10 @@ TEST(mesh_is_persistent_and_view_only) {
   auto d=Document::create();import_file(d,f.dir/"mesh.obj");auto saved=Document::parse(d.serialize());auto s=resolve(saved);
   CHECK_EQ(s.node(s.all_bodies()[0])->representation,"mesh");
   CHECK_EQ(tessellate(node_world_shape(saved,s,s.all_bodies()[0]),0.1).triangle_count(),1u);
+  ExportOptions options; options.format="step";
+  CHECK_THROWS(export_selection(saved,s,f.dir/"mesh.step",options));
+  options.format="dxf";
+  CHECK_THROWS(export_drawing(saved,s,f.dir/"mesh.dxf",options));
 }
 TEST(svg_arc_and_nested_transform) {
   Files f;write_text_file(f.dir/"arc.svg","<svg width=\"100mm\" viewBox=\"0 0 100 100\"><g transform=\"translate(10,20)\"><path d=\"M0 0 A10 10 0 0 1 20 0\"/></g></svg>");

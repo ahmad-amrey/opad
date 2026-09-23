@@ -226,6 +226,16 @@ bool Viewport::benchPicking() {
     clearCenters();setTwoDimensional(false);m_view->SetCamera(new Graphic3d_Camera(*savedCamera));
     trace::log(QStringLiteral("bench: 2D orbit lock / extension point PASS"));
 
+    const int previousQuality = m_renderQuality;
+    for (int level = 0; level < 6; ++level) {
+      setRenderQuality(level);
+      m_view->Redraw();
+      const QString shots = QString::fromLocal8Bit(qgetenv("OPAD_BENCH_QUALITY"));
+      if (!shots.isEmpty()) require(grabImage().save(shots + QString::number(level) + ".png"), "render preset screenshot failed");
+    }
+    setRenderQuality(previousQuality);
+    trace::log(QStringLiteral("bench: six rendering presets PASS"));
+
     auto move = [this](const QPoint& p) {
       QMouseEvent e(QEvent::MouseMove, QPointF(p), mapToGlobal(QPointF(p)), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
       QCoreApplication::sendEvent(this, &e);

@@ -1,12 +1,13 @@
-# OPAD - git-native STEP viewer
+# OPAD - git-native CAD and review
 
 OPAD opens STEP files (AP203/AP214/AP242, assemblies included), saves what you do with them in a single
 plain-text `.opad` file that diffs and merges cleanly in git, and exposes everything it can do to scripts and
-AI agents through a headless CLI and a Python module. The desktop app follows Autodesk Fusion's navigation
+AI agents through a headless CLI, a Python module and a [stdio MCP server](docs/mcp.md). The desktop app follows Autodesk Fusion's navigation
 and screen layout so Fusion users feel at home.
 
-v1 is a **viewer and review tool**, not a modeller: import, inspect, measure, section, annotate, export,
-commit.
+OPAD combines CAD modelling, review and a 2D drafting foundation: import, inspect, measure,
+section, annotate, sketch, build features and export. [Drawing and mesh support](docs/drawings.md)
+describes supported DXF/SVG entities, mesh reference objects and the optional DWG converter.
 
 ```
 opad-cli new review.opad
@@ -36,6 +37,22 @@ git add review.opad && git commit -m "review gearbox"
 In the 3D viewport, drag with two fingers to pan, hold Shift while dragging with two fingers to orbit, and pinch
 to zoom around the pointer. These gestures work independently of the selected mouse navigation preset. A mouse
 wheel continues to zoom.
+
+## Desktop viewing and review
+
+Open imports external geometry into a fresh, saveable document; Import adds to the current one.
+Settings offers six rendering presets (Classic, Technical flat, Studio, Studio fine, ray traced
+shadows and ray traced reflections), four backgrounds and a configurable auto-hide scene browser.
+Unsupported ray tracing falls back to raster rendering. Coplanar faces receive a small display depth
+bias to reduce flickering without changing model geometry.
+
+Use Settings > 2D projection mode to lock the camera for drawings or model projections. Hover an
+endpoint to acquire an extension/alignment guide; Shift locks its direction. Layers live in the
+browser, and imported mesh and drawing objects are labelled. See [tracking details](docs/drawings.md).
+
+Workspace shortcuts are Ctrl+1/2 (Command+1/2 on macOS); standard views use Ctrl+Alt+1 through 7.
+Annotations are created and edited inline, with type selection and comment threads. Set your display
+name in Settings to identify new annotations, comments and design operations.
 
 ## Building
 
@@ -139,7 +156,7 @@ display styles, grid, section planes, hierarchical browser (visibility, colour, 
 isolate, filter, breadcrumb, instance badges), timeline with tombstones, properties, measurements, annotations,
 named views, command search, dark/light themes, editable shortcuts and git branch/dirty state.
 
-Not yet: the embedded Python console (may slip to v1.1), the MCP adapter (v1.1),
+Not yet: the embedded Python console (may slip to v1.1), full DWG/AutoCAD entity coverage,
 shadows are best-effort, interactive drag of the section plane (slider today), coarse-then-fine tessellation
 (bodies appear as their fine mesh finishes on a worker thread), signed installers, CI and the iOS/Android core builds, 3MF export.
 
