@@ -220,6 +220,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   int m_renderQuality = 0, m_sceneBackground = 1;
   void updateDepthBias();
   bool m_twoDimensional = false;
+  Handle(Graphic3d_Camera) m_threeDimensionalCamera;
+  QPointF m_dragOffset;
   void updateTracking();
   void clearTracking();
   bool m_trackingEnabled = true, m_haveTrackingAnchor = false, m_trackingLocked = false;

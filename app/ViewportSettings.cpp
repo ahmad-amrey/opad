@@ -3,6 +3,7 @@
 #include <Graphic3d_RenderingParams.hxx>
 #include <Graphic3d_GraphicDriver.hxx>
 #include <Graphic3d_TypeOfLimit.hxx>
+#include <AIS_AnimationCamera.hxx>
 #include <QSettings>
 #include <algorithm>
 
@@ -50,13 +51,42 @@ void Viewport::setSceneBackground(int style) {
 }
 
 void Viewport::setTwoDimensional(bool on) {
+  const bool entering = on && m_threeDimensionalCamera.IsNull();
   m_twoDimensional = on;
   if (!m_initialised) return;
+  finishTrackpadScroll();
+  myViewAnimation->Stop();
+  ResetViewInput();
+  myUI.Reset(); myGL.Reset();
+  m_cubeGesture = m_cubeClick = false;
+  m_dragOffset = {};
   clearTracking();
   SetAllowRotation(!on);
+  SetRotationMode(AIS_RotationMode_BndBoxActive);
+  setNavPreset(m_preset);
   if (on) {
+    if (entering) {
+      m_threeDimensionalCamera = new Graphic3d_Camera(*m_view->Camera());
+      const auto d = m_view->Camera()->Direction();
+      // Snap to the closest principal plane without an animation that can leak
+      // an oblique orientation into drafting input.
+      if (std::abs(d.Z()) >= std::max(std::abs(d.X()), std::abs(d.Y())))
+        m_view->SetProj(d.Z() < 0 ? V3d_Zpos : V3d_Zneg);
+      else if (std::abs(d.X()) >= std::abs(d.Y())) m_view->SetProj(d.X() < 0 ? V3d_Xpos : V3d_Xneg);
+      else m_view->SetProj(d.Y() < 0 ? V3d_Ypos : V3d_Yneg);
+    }
     setOrthographic(true);
+    m_ctx->Deactivate(m_cube);
     m_ctx->Erase(m_cube, false);
-  } else m_ctx->Display(m_cube, false);
+  } else {
+    if (!m_threeDimensionalCamera.IsNull()) {
+      m_view->SetCamera(new Graphic3d_Camera(*m_threeDimensionalCamera));
+      m_threeDimensionalCamera.Nullify();
+    }
+    m_ctx->Display(m_cube, false);
+    m_ctx->Activate(m_cube, 0);
+  }
+  m_ctx->ClearDetected(false);
+  ResetPreviousMoveTo();
   redrawScene();
 }

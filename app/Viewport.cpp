@@ -2,6 +2,9 @@
 #include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
 #include "DepthBias.hpp"
+#include "CursorWrap.hpp"
+#include <QScreen>
+#include <QApplication>
 
 #include <functional>
 
@@ -401,6 +404,10 @@ void Viewport::setNavPreset(NavPreset p) {
   // Meta is reserved for synthetic trackpad drags; qt_flags() does not pass it from physical mouse events.
   map.Bind(M | Aspect_VKeyFlags_META, AIS_MouseGesture_Pan);
   map.Bind(M | Aspect_VKeyFlags_META | SHIFT, AIS_MouseGesture_RotateOrbit);
+  if (m_twoDimensional)
+    for (AIS_MouseGestureMap::Iterator it(map); it.More(); it.Next())
+      if (it.Value() == AIS_MouseGesture_RotateOrbit || it.Value() == AIS_MouseGesture_RotateView)
+        it.ChangeValue() = AIS_MouseGesture_Pan;
 }
 
 // ---------------------------------------------------------------- display styles (F19)
@@ -906,6 +913,7 @@ void Viewport::fitSelection() {
 }
 
 void Viewport::standardView(const QString& name) {
+  if (m_twoDimensional && name == "iso") return;
   if (!m_initialised) return;
   m_needFit = false;
   V3d_TypeOfOrientation o = V3d_XposYnegZpos;
@@ -1582,6 +1590,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   finishTrackpadScroll();
   m_nativePinching = false;
   setFocus();
+  m_dragOffset = {};
   m_pressPos = e->pos();
   m_rightPress = e->button() == Qt::RightButton;
   m_cubeClick = false;
@@ -1607,7 +1616,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   }
   // A left press on the view cube: dragging orbits the view (the cube turns with it); a click without movement
   // still goes through the controller's click path and snaps to the picked side.
-  if (m_initialised && e->button() == Qt::LeftButton && e->modifiers() == Qt::NoModifier && m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube) {
+  if (m_initialised && !m_twoDimensional && e->button() == Qt::LeftButton && e->modifiers() == Qt::NoModifier && m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube) {
     ChangeMouseGestureMap().Bind(Aspect_VKeyMouse_LeftButton, AIS_MouseGesture_RotateOrbit);
     focusCube();
     m_cubeGesture = true;
@@ -1632,7 +1641,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   if (sectionMouseRelease(e)) return;
   if (m_measureAnchorPress && e->button() == Qt::LeftButton) {
     m_measureAnchorPress = false;
-    if ((e->pos() - m_pressPos).manhattanLength() < 4) {
+    if ((e->position() + m_dragOffset - m_pressPos).manhattanLength() < 4) {
       const int index = measurementAnchorAt(e->position());
       if (index >= 0) {
         const auto anchor = m_measureAnchors[index];
@@ -1648,16 +1657,17 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
     if (m_sketchInput && planePoint(e->position(), m_sketchFrame, u, v)) m_sketchInput->sketchRelease(u, v, e->modifiers());
     return;
   }
-  if (m_initialised && UpdateMouseButtons(devicePos(e->position()), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
+  if (m_initialised && UpdateMouseButtons(devicePos(e->position() + m_dragOffset), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
   if (m_cubeGesture && e->button() == Qt::LeftButton) {
     m_cubeGesture = false;
     ChangeMouseGestureMap().Bind(Aspect_VKeyMouse_LeftButton, AIS_MouseGesture_SelectRectangle);
     ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, m_pickAccumulate ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
   }
-  if (m_rightPress && e->button() == Qt::RightButton && (e->pos() - m_pressPos).manhattanLength() < 4) {
+  if (m_rightPress && e->button() == Qt::RightButton && (e->position() + m_dragOffset - m_pressPos).manhattanLength() < 4) {
     m_rightPress = false;
     emit contextMenuRequested(e->globalPosition().toPoint());
   }
+  if (e->buttons() == Qt::NoButton) m_dragOffset = {};
 }
 
 void Viewport::mouseMoveEvent(QMouseEvent* e) {
@@ -1683,7 +1693,24 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
     if (m_sketchDrag) return;  // not a rubber band
   }
   if (e->buttons() != Qt::NoButton) m_needFit = false;  // a drag: the user owns the camera now
-  if (m_initialised && UpdateMousePosition(devicePos(e->position()), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
+  if (m_initialised && UpdateMousePosition(devicePos(e->position() + m_dragOffset), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
+  const bool navigation = myMouseActiveGesture == AIS_MouseGesture_Pan
+      || myMouseActiveGesture == AIS_MouseGesture_RotateOrbit || myMouseActiveGesture == AIS_MouseGesture_RotateView
+      || myMouseActiveGesture == AIS_MouseGesture_Zoom || myMouseActiveGesture == AIS_MouseGesture_ZoomVertical;
+  if (navigation && e->buttons() != Qt::NoButton && e->spontaneous()
+      && QGuiApplication::platformName() != "wayland") {
+    const QPoint global = e->globalPosition().toPoint();
+    if (auto* screen = QGuiApplication::screenAt(global)) {
+      const QPoint target = wrappedCursor(global, screen->geometry());
+      if (target != global) {
+        // Keep controller coordinates continuous across the warp, including its
+        // generated move event; the scene never sees a display-width jump.
+        m_dragOffset += global - target;
+        QCursor::setPos(target);
+        if (QCursor::pos() != target) m_dragOffset -= global - target;
+      }
+    }
+  }
 }
 
 void Viewport::wheelEvent(QWheelEvent* e) {

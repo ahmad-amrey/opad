@@ -3,6 +3,7 @@
 #include "Viewport.hpp"
 #include "Jobs.hpp"
 #include "NavCube.hpp"
+#include "CursorWrap.hpp"
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
@@ -284,7 +285,12 @@ bool Viewport::benchPicking() {
     trace::log(QStringLiteral("bench: picking perspective / clipping / Qt orbit pivot PASS"));
 
     // Drafting locks the camera and produces exact world-space point references on extension guides.
+    const Handle(Graphic3d_Camera) before2d = new Graphic3d_Camera(*m_view->Camera());
     setTwoDimensional(true);
+    const auto planar = m_view->Camera()->Direction();
+    require(std::max({std::abs(planar.X()),std::abs(planar.Y()),std::abs(planar.Z())}) > 1.0-1e-10,
+            "2D entry did not snap to a principal plane");
+    require(!m_ctx->IsDisplayed(m_cube) && isOrthographic(), "2D cube/projection state is wrong");
     m_view->SetProj(V3d_Zpos);
     m_view->Redraw();
     if (qEnvironmentVariableIsSet("OPAD_BENCH_ORBIT_PERF")) {
@@ -316,7 +322,24 @@ bool Viewport::benchPicking() {
     trackpadScroll(QPointF(width()/2,height()/2),QPointF(20,10),true);
     FlushViewEvents(m_ctx,m_view,true);finishTrackpadScroll();
     require(flatDirection.IsEqual(m_view->Camera()->Direction(),1e-8), "2D mode allowed trackpad orbit");
-    clearCenters();setTwoDimensional(false);m_view->SetCamera(new Graphic3d_Camera(*savedCamera));
+    clearCenters(); setTwoDimensional(false);
+    require(before2d->Direction().IsEqual(m_view->Camera()->Direction(),1e-10)
+            && before2d->Eye().Distance(m_view->Camera()->Eye())<1e-8
+            && before2d->ProjectionType()==m_view->Camera()->ProjectionType(), "3D camera was not restored");
+    cubeMouse(QEvent::MouseButtonPress, cubePoint, Qt::LeftButton, Qt::LeftButton);
+    require(m_cubeGesture, "cube inactive after leaving 2D");
+    cubeMouse(QEvent::MouseMove, cubePoint + QPoint(40,20), Qt::NoButton, Qt::LeftButton);
+    paintEvent(nullptr);
+    cubeMouse(QEvent::MouseButtonRelease, cubePoint + QPoint(40,20), Qt::LeftButton, Qt::NoButton);
+    paintEvent(nullptr);
+    require(!before2d->Direction().IsEqual(m_view->Camera()->Direction(),1e-6), "3D orbit not restored");
+    // Cursor arithmetic is tested without moving the user's OS pointer.
+    const QRect screen(-1920,0,1920,1080);
+    const QPoint edge(-1,400), wrapped=wrappedCursor(edge,screen);
+    require(wrapped==QPoint(-1918,400), "display edge wrap target is wrong");
+    const QPoint offset=edge-wrapped;
+    require(wrapped+offset==edge && wrapped+QPoint(5,0)+offset==edge+QPoint(5,0), "warp introduced motion jump");
+    m_view->SetCamera(new Graphic3d_Camera(*savedCamera));
     trace::log(QStringLiteral("bench: 2D orbit lock / extension point PASS"));
 
     const int previousQuality = m_renderQuality;
