@@ -1,6 +1,7 @@
 #include "AppDocument.hpp"
 
 #include "opad/geometry.hpp"
+#include "opad/drawing_io.hpp"
 #include "Jobs.hpp"
 
 #include <QElapsedTimer>
@@ -12,9 +13,9 @@
 #include <thread>
 
 namespace {
-bool isStepPath(const QString& path) {
+bool isExternalPath(const QString& path) {
   QString ext = QFileInfo(path).suffix().toLower();
-  return ext == "step" || ext == "stp";
+  return ext != "opad";
 }
 QString phaseLabel(const std::string& what, const QString& file) {
   if (what == "reading") return AppDocument::tr("Reading %1").arg(file);
@@ -65,18 +66,18 @@ void AppDocument::startOpen(const QString& path) {
   loading = true;
   auto cancel = std::make_shared<std::atomic<bool>>(false);
   m_cancel = cancel;
-  const bool step = isStepPath(path);
+  const bool external = isExternalPath(path);
   const QString file = QFileInfo(path).fileName() + QStringLiteral(" (%1 MB)").arg(QFileInfo(path).size() / (1024.0 * 1024.0), 0, 'f', 0);
   opad::ImportOptions o = loadOptions(cancel, file);
   auto alive = m_alive;
-  emit loadProgress(step ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1);
-  std::thread([this, alive, cancel, path, step, o]() {
+  emit loadProgress(external ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1);
+  std::thread([this, alive, cancel, path, external, o]() {
     auto result = std::make_shared<opad::Document>();
     QString error;
     try {
-      if (step) {
+      if (external) {
         *result = opad::Document::create();
-        opad::import_step(*result, path.toStdString(), o);
+        opad::import_file(*result, path.toStdString(), o);
       } else *result = opad::Document::load(path.toStdString());
       // Parse the bodies here rather than on the UI thread when they are first displayed.
       if (!*cancel) opad::warm_shape_cache(*result, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
@@ -87,7 +88,7 @@ void AppDocument::startOpen(const QString& path) {
       error = QString::fromUtf8(e.what());
     }
     if (!*alive) return;
-    QMetaObject::invokeMethod(this, [this, result, error, path, step] {
+    QMetaObject::invokeMethod(this, [this, result, error, path, external] {
       loading = false;
       if (!error.isEmpty()) {
         emit loadFinished(false, error);
@@ -98,10 +99,10 @@ void AppDocument::startOpen(const QString& path) {
       hasDocument = true;
       clearHistory();
       markSaved();
-      if (step) m_savedIds.clear();  // imported content has not been saved as an OPAD document
+      if (external) m_savedIds.clear();  // imported content has not been saved as an OPAD document
       refresh();
       emit pathChanged();
-      if (step) emit message(tr("Imported %1 into a new document").arg(QFileInfo(path).fileName()));
+      if (external) emit message(tr("Imported %1 into a new document").arg(QFileInfo(path).fileName()));
       else emit message(tr("Opened %1").arg(path));
       emit loadFinished(true, {});
     }, Qt::QueuedConnection);
@@ -135,7 +136,7 @@ void AppDocument::startImport(const QString& path, const QString& parent) {
     QString error;
     opad::json r;
     try {
-      r = opad::import_step(*work, path.toStdString(), o).to_json();
+      r = opad::import_file(*work, path.toStdString(), o).to_json();
       if (!*cancel) opad::warm_shape_cache(*work, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
       if (*cancel) error = QStringLiteral("cancelled");
     } catch (const Standard_Failure& e) {
@@ -190,11 +191,11 @@ void AppDocument::closeDocument() {
 void AppDocument::open(const QString& path) {
   QString ext = QFileInfo(path).suffix().toLower();
   opad::Document next;
-  if (ext == "step" || ext == "stp") {
+  if (ext != "opad") {
     next = opad::Document::create();
     opad::ImportOptions options;
     options.author = QSettings().value("user/name").toString().trimmed().toStdString();
-    opad::import_step(next, path.toStdString(), options);
+    opad::import_file(next, path.toStdString(), options);
     emit message(tr("Imported %1 into a new document").arg(QFileInfo(path).fileName()));
   } else {
     next = opad::Document::load(path.toStdString());
@@ -205,7 +206,7 @@ void AppDocument::open(const QString& path) {
   hasDocument = true;
   clearHistory();
   markSaved();
-  if (ext == "step" || ext == "stp") m_savedIds.clear();
+  if (ext != "opad") m_savedIds.clear();
   refresh();
   emit pathChanged();
 }

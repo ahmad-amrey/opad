@@ -68,6 +68,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setSceneBackground(int style);
   void setTwoDimensional(bool on);
   bool twoDimensional() const { return m_twoDimensional; }
+  void setTracking(bool on) { m_trackingEnabled = on; }
   void setOrthographic(bool ortho);
   bool isOrthographic() const;
   void setSelectionFilter(SelFilter f);
@@ -217,6 +218,16 @@ class Viewport : public QWidget, protected AIS_ViewController {
  private:
   int m_renderQuality = 0, m_sceneBackground = 0;
   bool m_twoDimensional = false;
+  void updateTracking();
+  void clearTracking();
+  bool m_trackingEnabled = true, m_haveTrackingAnchor = false, m_trackingLocked = false;
+  bool m_trackingDirty = false;
+  QPointF m_trackingCursor;
+  gp_Pnt m_trackingAnchor;
+  gp_Vec m_trackingDirection, m_trackingLockDirection;
+  bool m_trackingHasDirection = false;
+  Handle(AIS_Shape) m_trackingGuide;
+  std::string m_trackingMarker;
   struct Item {
     Handle(AIS_Shape) ais;
     std::string key;

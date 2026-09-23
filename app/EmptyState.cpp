@@ -63,7 +63,7 @@ EmptyState::EmptyState(QWidget* parent) : QWidget(parent) {
   ic->setAlignment(Qt::AlignCenter);
   connect(theme::notifier(), &theme::Notifier::changed, ic, [this, ic] { ic->setPixmap(icons::pixmap("import", theme::current().fg2, 40, devicePixelRatioF())); });
   z->addWidget(ic);
-  auto* title = new QLabel(tr("Drop a STEP or .opad file"), zone);
+  auto* title = new QLabel(tr("Drop a design file"), zone);
   title->setFont(theme::ui(20, QFont::Medium));
   title->setAlignment(Qt::AlignCenter);
   z->addWidget(title);
@@ -95,7 +95,7 @@ EmptyState::EmptyState(QWidget* parent) : QWidget(parent) {
 
   auto* cards = new QHBoxLayout();
   cards->setSpacing(16);
-  cards->addWidget(infoCard("browse", tr("Browse"), tr("Open a STEP file to look at it right away. Nothing is written; measurements and notes are discarded when you close it."), column));
+  cards->addWidget(infoCard("browse", tr("Browse"), tr("Open a design in a new document, then save geometry, measurements and notes together as OPAD."), column));
   cards->addWidget(infoCard("import", tr("Import"), tr("Bring the STEP into an .opad document. Geometry is stored once, every later change is one operation, and the file diffs and merges in git."), column));
   col->addLayout(cards);
 

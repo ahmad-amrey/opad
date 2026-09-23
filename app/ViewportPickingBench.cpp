@@ -206,6 +206,26 @@ bool Viewport::benchPicking() {
     setNavPreset(oldPreset);
     trace::log(QStringLiteral("bench: picking perspective / clipping / Qt orbit pivot PASS"));
 
+    // Drafting locks the camera and produces exact world-space point references on extension guides.
+    setTwoDimensional(true);
+    m_view->SetProj(V3d_Zpos);
+    m_view->Redraw();
+    m_ctx->ClearDetected(false);
+    m_haveTrackingAnchor=true; m_trackingAnchor=gp_Pnt(0,0,0);
+    m_trackingDirection=gp_Vec(1,0,0); m_trackingHasDirection=true;
+    const double reach=pixelSize()*40;
+    m_trackingCursor=widgetPoint({reach,0,0}); m_trackingDirty=true;
+    updateTracking();
+    require(!m_trackingMarker.empty(), "extension tracking did not create a point");
+    auto tracked=m_centers.at(m_trackingMarker).ref;
+    require(tracked.kind==opad::Ref::Kind::Point && std::abs(tracked.point[1])<1e-8, "tracking point left its extension line");
+    const gp_Dir flatDirection=m_view->Camera()->Direction();
+    trackpadScroll(QPointF(width()/2,height()/2),QPointF(20,10),true);
+    FlushViewEvents(m_ctx,m_view,true);finishTrackpadScroll();
+    require(flatDirection.IsEqual(m_view->Camera()->Direction(),1e-8), "2D mode allowed trackpad orbit");
+    clearCenters();setTwoDimensional(false);m_view->SetCamera(new Graphic3d_Camera(*savedCamera));
+    trace::log(QStringLiteral("bench: 2D orbit lock / extension point PASS"));
+
     auto move = [this](const QPoint& p) {
       QMouseEvent e(QEvent::MouseMove, QPointF(p), mapToGlobal(QPointF(p)), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
       QCoreApplication::sendEvent(this, &e);

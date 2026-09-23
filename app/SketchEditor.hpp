@@ -70,6 +70,7 @@ class SketchEditor : public QObject, public SketchInput {
     int point = 0;     // an existing point to reuse
     int entity = 0;    // a curve the new point will lie on
     bool horizontal = false, vertical = false;  // relative to the previous click
+    bool tracking = false;
   };
   struct Hit {
     enum Kind { None, Point, Entity, Dimension } kind = None;
@@ -129,6 +130,9 @@ class SketchEditor : public QObject, public SketchInput {
   Hit m_hover;
   Snap m_cursor;
   bool m_haveCursor = false;
+  int m_trackingPoint = 0;
+  bool m_inferenceLocked = false;
+  double m_lockX = 0, m_lockY = 0, m_lockDx = 1, m_lockDy = 0;
   // dragging with the select tool
   bool m_dragging = false, m_dragMoved = false;
   Hit m_dragHit;

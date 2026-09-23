@@ -558,6 +558,8 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   p->setFont(theme::ui(13));
   p->setPen(text);
   QString name = index.data(kNameRole).toString();
+  if (n->kind == opad::Node::Kind::Body && n->representation != "solid")
+    name += n->representation == "mesh" ? tr(" [mesh]") : tr(" [2D]");
   p->drawText(QRect(x, r.top(), std::max(10, right - x), r.height()), Qt::AlignVCenter | Qt::AlignLeft, QFontMetrics(theme::ui(13)).elidedText(name, Qt::ElideRight, std::max(10, right - x)));
   p->restore();
 }

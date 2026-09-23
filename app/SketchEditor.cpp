@@ -144,6 +144,7 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
 SketchEditor::~SketchEditor() = default;
 
 void SketchEditor::begin(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry) {
+  m_trackingPoint = 0; m_inferenceLocked = false;
   m_id = sketchId;
   m_name = name;
   m_plane = plane;
@@ -354,6 +355,11 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   s.u = u;
   s.v = v;
   const double t = tol();
+  if (m_inferenceLocked && infer) {
+    const double along=(u-m_lockX)*m_lockDx+(v-m_lockY)*m_lockDy;
+    s.u=m_lockX+along*m_lockDx; s.v=m_lockY+along*m_lockDy; s.tracking=true; return s;
+  }
+
   double best = t;
   for (const auto& p : m_sk.points) {
     if (!m_chain.empty() && p.id == m_chain.back()) continue;  // not onto the point the segment starts at
@@ -364,7 +370,11 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   best = t;
   for (const auto& e : m_sk.entities) {
     if (e.type != SkEntity::Type::Line && e.type != SkEntity::Type::Circle && e.type != SkEntity::Type::Arc) continue;
-    const double d = distanceTo(e, u, v);
+    double d = distanceTo(e, u, v);
+    if (e.type==SkEntity::Type::Line && e.p.size()==2 && (e.p[0]==m_trackingPoint || e.p[1]==m_trackingPoint)) {
+      const auto *a=m_sk.point(e.p[0]), *b=m_sk.point(e.p[1]);
+      if(a && b) { const double dx=b->x-a->x,dy=b->y-a->y,len=std::hypot(dx,dy); if(len>1e-9) d=std::abs((u-a->x)*dy-(v-a->y)*dx)/len; }
+    }
     if (d >= best) continue;
     best = d;
     s.entity = e.id;
@@ -383,6 +393,11 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
     }
   }
   if (s.entity || !infer) return s;
+  if (const auto* reference=m_sk.point(m_trackingPoint)) {
+    if(std::abs(u-reference->x)<t) { s.u=reference->x; s.tracking=true; }
+    if(std::abs(v-reference->y)<t) { s.v=reference->y; s.tracking=true; }
+    if(s.tracking) return s;
+  }
   // Horizontal / vertical inference against the previous click of a line-like tool.
   const bool lineLike = m_tool == "line" && !m_chain.empty();
   if (lineLike) {
@@ -441,7 +456,7 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
   click(snap(u, v), mods);
 }
 
-void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers, bool dragging) {
+void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bool dragging) {
   if (!m_active) return;
   if (m_tool == "select" && dragging && m_dragging) {
     if (!m_dragMoved && std::hypot(u - m_dragU, v - m_dragV) < 0.5 * tol()) return;
@@ -481,6 +496,16 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers, bool dr
     return;
   }
   const Hit h = hitTest(u, v);
+  const bool shift=mods.testFlag(Qt::ShiftModifier);
+  if(!shift) m_inferenceLocked=false;
+  if(h.kind==Hit::Point && !shift) m_trackingPoint=h.id;
+  if(shift && !m_inferenceLocked && m_haveCursor && m_tool!="select") {
+    const auto* base=m_sk.point(!m_chain.empty()?m_chain.back():m_trackingPoint);
+    if(base) {
+      const double dx=m_cursor.u-base->x,dy=m_cursor.v-base->y,len=std::hypot(dx,dy);
+      if(len>1e-9) { m_lockX=base->x;m_lockY=base->y;m_lockDx=dx/len;m_lockDy=dy/len;m_inferenceLocked=true; }
+    }
+  }
   const Snap s = snap(u, v);
   const bool redraw = h.kind != m_hover.kind || h.id != m_hover.id || m_tool != "select" || m_placingDim;
   m_hover = h;
@@ -792,6 +817,12 @@ void SketchEditor::rebuild() {
       }
     }
     d.bigPoints.push_back({W(cu, cv), m_cursor.point || m_cursor.entity ? t.green : rb});
+    if (const auto* reference=m_sk.point(m_trackingPoint)) {
+      if(m_cursor.tracking || m_cursor.entity) {
+        d.dashed.push_back({W(reference->x,reference->y),W(cu,cv),t.green});
+        d.texts.push_back({W(cu+14*px,cv+12*px),m_inferenceLocked?tr("Locked"):tr("Tracking"),t.green});
+      }
+    }
     if (m_cursor.horizontal) d.texts.push_back({W(cu + 14 * px, cv + 12 * px), "H", t.green});
     if (m_cursor.vertical) d.texts.push_back({W(cu + 14 * px, cv + 12 * px), "V", t.green});
   }

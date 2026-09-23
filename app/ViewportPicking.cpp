@@ -55,6 +55,13 @@ void Viewport::discoverCenter() {
 }
 
 bool Viewport::eventFilter(QObject* object, QEvent* e) {
+  if ((e->type() == QEvent::KeyPress || e->type() == QEvent::KeyRelease) && underMouse()) {
+    auto* key = static_cast<QKeyEvent*>(e);
+    if (key->key() == Qt::Key_Shift && !key->isAutoRepeat()) {
+      m_trackingDirty = true;
+      redrawScene();
+    }
+  }
   if (object != this && e->type() == QEvent::KeyPress && underMouse() && window()->isActiveWindow() && !m_sketchInput) {
     auto* key = static_cast<QKeyEvent*>(e);
     if (key->key() == Qt::Key_Shift && !key->isAutoRepeat() && toggleCenterLock()) return true;
@@ -79,6 +86,7 @@ bool Viewport::toggleCenterLock() {
 }
 
 void Viewport::clearCenters() {
+  clearTracking();
   if (!m_initialised) return;
   for (const auto& [key, center] : m_centers) m_ctx->Remove(center.ais, false);
   m_centers.clear();

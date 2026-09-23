@@ -285,6 +285,7 @@ void Viewport::initViewer() {
   applyTokens();
   setRenderQuality(QSettings().value("view/quality", 0).toInt());
   setSceneBackground(QSettings().value("view/background", 0).toInt());
+  setTwoDimensional(m_twoDimensional);
   sync();
 }
 
@@ -1509,6 +1510,7 @@ void Viewport::paintEvent(QPaintEvent*) {
     requestRedraw();
   }
   if (trace::enabled() && frame.elapsed() > 100) trace::log(QStringLiteral("slow frame: %1 ms (%2 objects)").arg(frame.elapsed()).arg(m_items.size()));
+  updateTracking();
   // The label needs the sub-shape's ordinal, a walk over the whole body: only when the hovered owner changes.
   const Standard_Transient* hoverOwner = m_ctx->HasDetected() ? m_ctx->DetectedOwner().get() : nullptr;
   if (hoverOwner == m_hoverOwner) return;
@@ -1643,6 +1645,8 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
 }
 
 void Viewport::mouseMoveEvent(QMouseEvent* e) {
+  m_trackingCursor = e->position();
+  m_trackingDirty = true;
   if (m_blocked) return;
   if (m_trackpadMode != TrackpadMode::None && e->buttons() == Qt::NoButton) finishTrackpadScroll();
   if (m_measureAnchorPress) return;

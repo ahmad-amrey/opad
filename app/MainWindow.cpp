@@ -73,6 +73,13 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     updateChips();
     showDocument(m_doc->hasDocument);
   });
+  connect(m_doc, &AppDocument::loadFinished, this, [this](bool ok, const QString&) {
+    if (!ok) return;
+    const auto bodies = m_doc->scene.all_bodies();
+    const bool drawing = !bodies.empty() && std::all_of(bodies.begin(), bodies.end(), [this](const auto& id) { return m_doc->scene.node(id)->representation == "drawing2d"; });
+    if (auto* flat = findChild<QAction*>("view.2d")) flat->setChecked(drawing);
+    if (drawing) { m_viewport->standardView("top"); m_viewport->setSelectionFilter(Viewport::SelFilter::Edge); }
+  });
   connect(m_doc, &AppDocument::pathChanged, this, [this] { updateTitle(); refreshGit(); });
   connect(m_doc, &AppDocument::message, this, [this](const QString& t) { statusBar()->showMessage(t, 6000); });
   connect(m_viewport, &Viewport::selectionChanged, this, &MainWindow::onViewportSelection);
@@ -261,11 +268,11 @@ void MainWindow::buildActions() {
   addAction("file.new", tr("&New document"), "doc", QKeySequence::New, [this] { if (maybeSave()) m_doc->newDocument(); });
   addAction("file.open", tr("&Open…"), "open", QKeySequence("Ctrl+O"), [this] {
     if (!maybeSave()) return;
-    QString p = QFileDialog::getOpenFileName(this, tr("Open"), m_settings.value("ui/lastDir").toString(), tr("OPAD or STEP (*.opad *.step *.stp);;OPAD document (*.opad);;STEP (*.step *.stp)"));
+    QString p = QFileDialog::getOpenFileName(this, tr("Open"), m_settings.value("ui/lastDir").toString(), tr("Design files (*.opad *.step *.stp *.dxf *.svg *.dwg *.stl *.obj);;OPAD document (*.opad);;STEP (*.step *.stp);;2D drawings (*.dxf *.svg *.dwg);;Meshes (*.stl *.obj)"));
     if (!p.isEmpty()) openPath(p);
   });
   addAction("file.import", tr("&Import STEP…"), "import", QKeySequence("Ctrl+I"), [this] {
-    QString p = QFileDialog::getOpenFileName(this, tr("Import STEP"), m_settings.value("ui/lastDir").toString(), tr("STEP (*.step *.stp)"));
+    QString p = QFileDialog::getOpenFileName(this, tr("Import design"), m_settings.value("ui/lastDir").toString(), tr("Design files (*.step *.stp *.dxf *.svg *.dwg *.stl *.obj)"));
     if (p.isEmpty()) return;
     m_settings.setValue("ui/lastDir", QFileInfo(p).absolutePath());
     auto ids = currentNodeIds();
@@ -592,6 +599,7 @@ void MainWindow::buildRibbon() {
     connect(a, &QAction::triggered, this, [this, i] { m_viewport->setSceneBackground(i); });
   }
   auto* flat = settings->addAction(tr("2D projection mode"));
+  flat->setObjectName("view.2d");
   flat->setCheckable(true);
   connect(flat, &QAction::toggled, this, [this](bool on) {
     m_viewport->setTwoDimensional(on);
@@ -1776,7 +1784,7 @@ void MainWindow::exportDialog() {
   auto* grid = new QGridLayout();
   auto* group = new QButtonGroup(&dlg);
   struct Fmt { QString label, format, schema; };
-  QList<Fmt> fmts = {{"STEP AP214", "step", "AP214"}, {"STEP AP242", "step", "AP242"}, {"OBJ (+MTL)", "obj", ""}, {"STL", "stl", ""}, {"GLB", "glb", ""}};
+  QList<Fmt> fmts = {{"STEP AP214", "step", "AP214"}, {"STEP AP242", "step", "AP242"}, {"OBJ (+MTL)", "obj", ""}, {"STL", "stl", ""}, {"GLB", "glb", ""}, {"DXF (XY projection)", "dxf", ""}, {"SVG (XY projection)", "svg", ""}, {"DWG (converter)", "dwg", ""}};
   for (const auto& f : opad::commands::exporter_formats())
     if (f != "step" && f != "obj" && f != "stl" && f != "glb") fmts << Fmt{QString::fromStdString(f).toUpper() + tr(" (plugin)"), QString::fromStdString(f), ""};
   int i = 0;
@@ -2304,7 +2312,7 @@ void MainWindow::dropEvent(QDropEvent* e) {
   for (const QUrl& u : e->mimeData()->urls()) {
     QString p = u.toLocalFile();
     QString ext = QFileInfo(p).suffix().toLower();
-    if (ext == "step" || ext == "stp" || ext == "opad") { openPath(p); return; }
+    if (QStringList{"step", "stp", "opad", "dxf", "svg", "dwg", "stl", "obj"}.contains(ext)) { openPath(p); return; }
   }
 }
 

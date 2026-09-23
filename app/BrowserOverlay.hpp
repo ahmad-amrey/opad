@@ -23,6 +23,8 @@ class BrowserOverlay : public QFrame {
     m_animation.setDuration(180); m_animation.setEasingCurve(QEasingCurve::OutCubic);
     connect(&m_animation, &QPropertyAnimation::valueChanged, this, [this] { resize(width(), maximumHeight()); });
     m_auto = QSettings().value("ui/browserAutoHide", true).toBool();
+    m_expanded = !m_auto;
+    if (!m_expanded) m_header->setStyleSheet("color: palette(mid); background: rgba(100,110,120,35);");
     setMaximumHeight(m_auto ? 30 : m_expandedHeight); resize(320, maximumHeight());
     m_poll.setInterval(100);
     connect(&m_poll, &QTimer::timeout, this, [this] {

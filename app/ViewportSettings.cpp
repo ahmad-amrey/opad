@@ -1,6 +1,8 @@
 #include "Viewport.hpp"
 #include <Graphic3d_Camera.hxx>
 #include <Graphic3d_RenderingParams.hxx>
+#include <Graphic3d_GraphicDriver.hxx>
+#include <Graphic3d_TypeOfLimit.hxx>
 #include <QSettings>
 #include <algorithm>
 
@@ -9,8 +11,10 @@ void Viewport::setRenderQuality(int level) {
   QSettings().setValue("view/quality", m_renderQuality);
   if (!m_initialised) return;
   auto& p = m_view->ChangeRenderingParams();
-  p.Method = m_renderQuality >= 4 ? Graphic3d_RM_RAYTRACING : Graphic3d_RM_RASTERIZATION;
-  p.NbMsaaSamples = m_renderQuality >= 4 ? 0 : 4;
+  const bool rayTracing = m_renderQuality >= 4 && m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_HasRayTracing);
+  p.Method = rayTracing ? Graphic3d_RM_RAYTRACING : Graphic3d_RM_RASTERIZATION;
+  p.NbMsaaSamples = rayTracing ? 0 : std::min(4, m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_MaxMsaa));
+  if (m_renderQuality >= 4 && !rayTracing) emit hoverChanged(tr("Ray tracing unavailable on this driver; using Studio rendering"));
   p.RenderResolutionScale = m_renderQuality == 3 ? 1.25f : 1.0f;
   p.ShadingModel = m_renderQuality == 1 ? Graphic3d_TypeOfShadingModel_Unlit : Graphic3d_TypeOfShadingModel_Phong;
   p.IsShadowEnabled = m_renderQuality >= 2;
@@ -39,6 +43,7 @@ void Viewport::setSceneBackground(int style) {
 void Viewport::setTwoDimensional(bool on) {
   m_twoDimensional = on;
   if (!m_initialised) return;
+  clearTracking();
   SetAllowRotation(!on);
   if (on) {
     setOrthographic(true);
