@@ -6,23 +6,32 @@
 #include <QSettings>
 #include <algorithm>
 
+int Viewport::savedRenderQuality() {
+  QSettings settings;
+  if (!settings.contains("view/qualityV2")) {
+    const int old = settings.value("view/quality", 1).toInt();
+    settings.setValue("view/qualityV2", old <= 1 ? 0 : old <= 3 ? 1 : 2);
+  }
+  return std::clamp(settings.value("view/qualityV2").toInt(), 0, 2);
+}
+
 void Viewport::setRenderQuality(int level) {
-  m_renderQuality = std::clamp(level, 0, 5);
-  QSettings().setValue("view/quality", m_renderQuality);
+  m_renderQuality = std::clamp(level, 0, 2);
+  QSettings().setValue("view/qualityV2", m_renderQuality);
   if (!m_initialised) return;
   auto& p = m_view->ChangeRenderingParams();
-  const bool rayTracing = m_renderQuality >= 4 && m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_HasRayTracing);
+  const bool rayTracing = m_renderQuality == 2 && m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_HasRayTracing);
   p.Method = rayTracing ? Graphic3d_RM_RAYTRACING : Graphic3d_RM_RASTERIZATION;
   p.NbMsaaSamples = rayTracing ? 0 : std::min(4, m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_MaxMsaa));
-  if (m_renderQuality >= 4 && !rayTracing) emit hoverChanged(tr("Ray tracing unavailable on this driver; using Studio rendering"));
-  p.RenderResolutionScale = m_renderQuality == 3 ? 1.25f : 1.0f;
-  p.ShadingModel = m_renderQuality == 1 ? Graphic3d_TypeOfShadingModel_Unlit : Graphic3d_TypeOfShadingModel_Phong;
-  p.IsShadowEnabled = m_renderQuality >= 2;
-  p.IsReflectionEnabled = m_renderQuality == 5;
-  p.IsAntialiasingEnabled = m_renderQuality >= 4;
+  if (m_renderQuality == 2 && !rayTracing) emit hoverChanged(tr("Ray tracing unavailable on this driver; using Studio rendering"));
+  p.RenderResolutionScale = m_renderQuality == 1 ? 1.25f : 1.0f;
+  p.ShadingModel = m_renderQuality == 0 ? Graphic3d_TypeOfShadingModel_Unlit : Graphic3d_TypeOfShadingModel_Phong;
+  p.IsShadowEnabled = m_renderQuality >= 1;
+  p.IsReflectionEnabled = false;
+  p.IsAntialiasingEnabled = rayTracing;
   p.IsGlobalIlluminationEnabled = false;  // bounded interactive cost; no progressive path-tracing stall
-  p.RaytracingDepth = m_renderQuality == 5 ? 3 : 2;
-  setShadows(m_renderQuality >= 2);
+  p.RaytracingDepth = 2;
+  setShadows(m_renderQuality >= 1);
   m_view->Invalidate();
   redrawScene();
 }

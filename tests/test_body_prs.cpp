@@ -1,4 +1,5 @@
 #include "BodyShape.hpp"
+#include "DepthBias.hpp"
 #include "check.hpp"
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRep_Builder.hxx>
@@ -21,6 +22,19 @@ class CountingVolume : public SelectMgr_SelectingVolumeManager {
     return SelectMgr_SelectingVolumeManager::OverlapsTriangle(a, b, c, sensitivity, result);
   }
 };
+}
+
+TEST(coincident_parts_have_distinct_depth_slots) {
+  Bnd_Box a(gp_Pnt(0,0,0), gp_Pnt(10,10,10));
+  Bnd_Box touching(gp_Pnt(10,0,0), gp_Pnt(20,10,10));
+  Bnd_Box separate(gp_Pnt(30,0,0), gp_Pnt(40,10,10));
+  std::vector<Bnd_Box> boxes(100, a);
+  boxes.push_back(touching); boxes.push_back(separate);
+  const auto ranks = depthSlots(boxes);
+  std::set<int> distinct(ranks.begin(), ranks.begin()+101);
+  CHECK_EQ(distinct.size(), 101u);
+  CHECK_EQ(ranks.back(), 0);
+  CHECK(ranks == depthSlots(boxes));
 }
 
 TEST(navigation_area_query_stops_after_first_triangle_hit) {

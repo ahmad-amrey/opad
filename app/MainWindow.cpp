@@ -580,22 +580,22 @@ void MainWindow::buildRibbon() {
   settings->addAction(action("view.dark"));
   auto* quality = settings->addMenu(tr("Rendering quality"));
   auto* qualityGroup = new QActionGroup(quality);
-  const QStringList qualities = {tr("1 - Classic"), tr("2 - Technical flat"), tr("3 - Studio"), tr("4 - Studio fine"), tr("5 - Ray traced shadows"), tr("6 - Ray traced reflections")};
+  const QStringList qualities = {tr("Draft"), tr("Studio"), tr("Realistic shadows")};
   for (int i = 0; i < qualities.size(); ++i) {
     auto* a = quality->addAction(qualities[i]);
     a->setCheckable(true); qualityGroup->addAction(a);
-    a->setChecked(m_settings.value("view/quality", 0).toInt() == i);
+    a->setChecked(Viewport::savedRenderQuality() == i);
     connect(a, &QAction::triggered, this, [this, i] { m_viewport->setRenderQuality(i); });
   }
   quality->setToolTipsVisible(true);
-  for (auto* a : quality->actions()) a->setToolTip(tr("Ray tracing requires a compatible OpenGL driver; use Classic if unavailable."));
+  for (auto* a : quality->actions()) a->setToolTip(tr("Ray tracing requires a compatible OpenGL driver; Studio is used when unavailable."));
   auto* background = settings->addMenu(tr("Scene background"));
   auto* backgroundGroup = new QActionGroup(background);
   const QStringList backgrounds = {tr("Theme"), tr("Studio gradient"), tr("White"), tr("Dark slate")};
   for (int i = 0; i < backgrounds.size(); ++i) {
     auto* a = background->addAction(backgrounds[i]);
     a->setCheckable(true); backgroundGroup->addAction(a);
-    a->setChecked(m_settings.value("view/background", 0).toInt() == i);
+    a->setChecked(m_settings.value("view/background", 1).toInt() == i);
     connect(a, &QAction::triggered, this, [this, i] { m_viewport->setSceneBackground(i); });
   }
   auto* flat = settings->addAction(tr("2D projection mode"));

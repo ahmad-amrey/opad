@@ -1,6 +1,7 @@
 #include <QSettings>
 #include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
+#include "DepthBias.hpp"
 
 #include <functional>
 
@@ -283,10 +284,10 @@ void Viewport::initViewer() {
   // a rubber band that selects nothing. Allow a little hand jitter, scaled for high-DPI screens.
   myMouseClickThreshold = 5.0 * viewScale().x();
   m_initialised = true;
-  m_sceneBackground = QSettings().value("view/background", 0).toInt();
+  m_sceneBackground = QSettings().value("view/background", 1).toInt();
   applyTokens();
-  setRenderQuality(QSettings().value("view/quality", 0).toInt());
-  setSceneBackground(QSettings().value("view/background", 0).toInt());
+  setRenderQuality(savedRenderQuality());
+  setSceneBackground(QSettings().value("view/background", 1).toInt());
   setTwoDimensional(m_twoDimensional);
   sync();
 }
@@ -1398,11 +1399,6 @@ void Viewport::displayBody(const std::string& id) {
   ais->Attributes()->SetAutoTriangulation(Standard_False);
   ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
   ais->SetColor(qcolor(n->color));
-  // Stable, bounded depth bias breaks coplanar ties without moving CAD geometry.
-  // UUID bytes give instances different priorities, independent of display/selection order.
-  unsigned bias = 2166136261u;
-  for (unsigned char c : id) bias = (bias ^ c) * 16777619u;
-  ais->SetPolygonOffsets(Aspect_POM_Fill, 1.0f, 1.0f + 15.0f * float(bias & 0xffffu) / 65535.0f);
   if (n->opacity < 1.0) ais->SetTransparency(1.0 - n->opacity);
   applyStyle(ais);
   m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, -1, Standard_False);  // selection activated below, once
@@ -1421,7 +1417,25 @@ void Viewport::displayBody(const std::string& id) {
   }
 }
 
+void Viewport::updateDepthBias() {
+  std::vector<Bnd_Box> boxes;
+  for (const auto& [id, item] : m_items) {
+    Bnd_Box box;
+    item.ais->BoundingBox(box);
+    boxes.push_back(box);
+  }
+  const auto ranks = depthSlots(boxes);
+  size_t i = 0;
+  for (const auto& [id, item] : m_items) {
+    // Whole depth units, with slope separation for oblique coplanar faces.
+    // Fractional hash offsets used to quantize to the same depth and flicker.
+    const int slot = ranks[i++];
+    item.ais->SetPolygonOffsets(Aspect_POM_Fill, 1.0f + 0.25f * slot, 1.0f + 4.0f * slot);
+  }
+}
+
 void Viewport::finishSync(int pendingCount, bool added) {
+  if (added) updateDepthBias();
   emit meshingProgress(pendingCount);
   // Keep fitting while a load is still streaming bodies in, but only until the user moves the camera:
   // every fit, orbit or zoom of theirs clears m_needFit so a later batch never snaps the view back.

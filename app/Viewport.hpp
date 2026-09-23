@@ -65,6 +65,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setGrid(bool on);
   void setShadows(bool on);
   void setRenderQuality(int level);
+  static int savedRenderQuality();
   void setSceneBackground(int style);
   void setTwoDimensional(bool on);
   bool twoDimensional() const { return m_twoDimensional; }
@@ -216,7 +217,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
 
  private:
-  int m_renderQuality = 0, m_sceneBackground = 0;
+  int m_renderQuality = 0, m_sceneBackground = 1;
+  void updateDepthBias();
   bool m_twoDimensional = false;
   void updateTracking();
   void clearTracking();
