@@ -380,7 +380,7 @@ bool Viewport::event(QEvent* e) {
 
 void Viewport::keyPressEvent(QKeyEvent* e) {
   if (m_sketchInput) return e->accept();  // already handled (or refused) at the shortcut-override stage
-  if (e->key() == Qt::Key_Shift && !e->isAutoRepeat() && toggleCenterLock()) return e->accept();
+  if (inferenceKey(e)) return e->accept();
   QWidget::keyPressEvent(e);
 }
 

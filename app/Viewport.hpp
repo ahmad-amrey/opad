@@ -12,6 +12,7 @@
 #include <V3d_Viewer.hxx>
 
 #include <QImage>
+#include <QElapsedTimer>
 #include <QTimer>
 #include <QWidget>
 #include <array>
@@ -69,7 +70,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setSceneBackground(int style);
   void setTwoDimensional(bool on);
   bool twoDimensional() const { return m_twoDimensional; }
-  void setTracking(bool on) { m_trackingEnabled = on; }
+  void setTracking(bool on);
+  void setExtensionTracking(bool on);
   void setOrthographic(bool ortho);
   bool isOrthographic() const;
   void setSelectionFilter(SelFilter f);
@@ -225,6 +227,16 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void updateTracking();
   void clearTracking();
   bool m_trackingEnabled = true, m_haveTrackingAnchor = false, m_trackingLocked = false;
+  bool m_extensionEnabled = true, m_shiftHeld = false;
+  QElapsedTimer m_shiftClock;
+  int m_inferenceChoice = 0;
+  struct TrackingAnchor { gp_Pnt point; gp_Vec direction; bool hasDirection; };
+  struct TrackingCandidate { gp_Pnt anchor, point; gp_Vec direction; bool intersection = false; gp_Pnt secondAnchor; };
+  std::vector<TrackingAnchor> m_trackingAnchors;
+  std::vector<TrackingCandidate> m_trackingCandidates;
+  TrackingCandidate m_lockedTracking;
+  bool inferenceKey(QKeyEvent* event);
+  void refreshCenterStyles();
   bool m_trackingDirty = false;
   QPointF m_trackingCursor;
   gp_Pnt m_trackingAnchor;
@@ -249,7 +261,6 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Handle(AIS_Shape) centerMarker(const opad::Ref& ref, const gp_Pnt& point);
   void discoverCenter();
   void clearCenters();
-  bool toggleCenterLock();
   bool navigationPoint(const Graphic3d_Vec2i& cursor, gp_Pnt& point);
   gp_Pnt centralOrbitPoint();
   gp_Pnt orbitPoint(const Graphic3d_Vec2i& cursor);

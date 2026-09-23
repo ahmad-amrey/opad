@@ -318,6 +318,22 @@ bool Viewport::benchPicking() {
     require(!m_trackingMarker.empty(), "extension tracking did not create a point");
     auto tracked=m_centers.at(m_trackingMarker).ref;
     require(tracked.kind==opad::Ref::Kind::Point && std::abs(tracked.point[1])<1e-8, "tracking point left its extension line");
+    m_trackingAnchors={{gp_Pnt(0,reach,0),gp_Vec(1,0,0),true},{gp_Pnt(reach,0,0),gp_Vec(0,1,0),true}};
+    m_trackingCursor=widgetPoint({reach,reach,0}); m_trackingDirty=true; updateTracking();
+    require(!m_trackingCandidates.empty() && m_trackingCandidates.front().intersection,
+            "two extensions did not produce a composite intersection");
+    require(m_trackingCandidates.front().point.Distance(gp_Pnt(reach,reach,0))<1e-7,"incorrect intersection");
+    opad::Ref candidateCenter; candidateCenter.kind=opad::Ref::Kind::Point; candidateCenter.point={0,0,0};
+    centerMarker(candidateCenter,gp_Pnt(0,0,0)); m_activeCenter=candidateCenter.str(); m_inferenceChoice=0;
+    QKeyEvent down(QEvent::KeyPress,Qt::Key_Shift,Qt::ShiftModifier),up(QEvent::KeyRelease,Qt::Key_Shift,Qt::NoModifier);
+    inferenceKey(&down); require(m_centerLocked && !m_trackingLocked,"Shift locked two targets at once");
+    inferenceKey(&up); require(m_inferenceChoice==1,"Shift tap did not cycle to tracking");
+    inferenceKey(&down); require(m_trackingLocked && !m_centerLocked,"Shift did not lock selected inference");
+    inferenceKey(&up); m_activeCenter.clear(); clearTracking();
+    m_trackingAnchors={{gp_Pnt(0,reach,0),gp_Vec(1,0,0),true},{gp_Pnt(reach,0,reach),gp_Vec(0,1,0),true}};
+    m_trackingDirty=true; updateTracking();
+    for(const auto& c:m_trackingCandidates) require(!c.intersection,"skew 3D lines produced a false intersection");
+    clearTracking();
     const gp_Dir flatDirection=m_view->Camera()->Direction();
     trackpadScroll(QPointF(width()/2,height()/2),QPointF(20,10),true);
     FlushViewEvents(m_ctx,m_view,true);finishTrackpadScroll();
@@ -357,9 +373,9 @@ bool Viewport::benchPicking() {
       QCoreApplication::sendEvent(this, &e);
       paintEvent(nullptr);
     };
-    auto shift = [this] {
-      QKeyEvent e(QEvent::KeyPress, Qt::Key_Shift, Qt::ShiftModifier);
-      QCoreApplication::sendEvent(this, &e);
+    auto shift = [this](bool down) {
+      QKeyEvent e(down ? QEvent::KeyPress : QEvent::KeyRelease, Qt::Key_Shift, down ? Qt::ShiftModifier : Qt::NoModifier);
+      inferenceKey(&e);
     };
     auto click = [this](const QPoint& p) {
       QMouseEvent press(QEvent::MouseButtonPress, QPointF(p), mapToGlobal(QPointF(p)), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
@@ -390,15 +406,16 @@ bool Viewport::benchPicking() {
           if (m_activeCenter == ref.str()) { discovered = true; break; }
         }
         if (!discovered) continue;
-        shift();
+        shift(true);
         require(m_centerLocked, "Shift did not lock the discovered center");
-        shift();
+        shift(false);
         require(!m_centerLocked, "second Shift did not unlock the center");
-        shift();
+        m_inferenceChoice=0; shift(true);
         if (const QString shot = qEnvironmentVariable("OPAD_BENCH_UISHOT"); !shot.isEmpty()) grabImage().save(shot + ".center.png");
         move(target);
         require(m_activeCenter == ref.str(), "locked center changed while approaching it");
         click(target);
+        shift(false);
         const auto refs = selection();
         if (refs.empty() || refs.back().str() != ref.str()) { m_centerLocked = false; continue; }
         require(refs.back().kind == opad::Ref::Kind::Center, "center was selected as an edge or body");

@@ -55,37 +55,57 @@ void Viewport::discoverCenter() {
   for (const auto& [key, marker] : m_centers) marker.ais->GlobalSelOwner()->SetPriority(5);
   centerMarker(ref, circle->center.Transformed(m_items.at(ref.body).ais->Transformation()))->GlobalSelOwner()->SetPriority(10);
   m_activeCenter = ref.str();
+  m_inferenceChoice = 0; refreshCenterStyles();
+}
+
+void Viewport::refreshCenterStyles() {
+  if (!m_initialised) return;
+  for (const auto& [key, marker] : m_centers) {
+    const bool selected=m_ctx->IsSelected(marker.ais);
+    const bool center=key==m_activeCenter, tracking=key==m_trackingMarker;
+    const bool candidate=(center && m_inferenceChoice==0)
+        || (tracking && (m_activeCenter.empty() || m_inferenceChoice>0));
+    const bool locked=(center && m_centerLocked) || (tracking && m_trackingLocked);
+    auto aspect=marker.ais->Attributes()->PointAspect();
+    aspect->SetTypeOfMarker(selected ? Aspect_TOM_O_PLUS : Aspect_TOM_O);
+    aspect->SetScale(selected ? 4.0 : locked ? 7.0 : candidate ? 5.0 : 3.0);
+    marker.ais->SynchronizeAspects();
+  }
+}
+
+bool Viewport::inferenceKey(QKeyEvent* key) {
+  if (key->key()!=Qt::Key_Shift || key->isAutoRepeat() || m_sketchInput || m_blocked || !m_initialised) return false;
+  if (key->type()==QEvent::KeyPress) {
+    if (m_shiftHeld || QApplication::mouseButtons()!=Qt::NoButton) return false;
+    const bool center=!m_activeCenter.empty();
+    const int count=int(m_trackingCandidates.size())+int(center);
+    if (!count) return false;
+    m_inferenceChoice=std::clamp(m_inferenceChoice,0,count-1);
+    m_shiftHeld=true; m_shiftClock.start();
+    m_centerLocked=center && m_inferenceChoice==0;
+    m_trackingLocked=!m_centerLocked;
+    if(m_trackingLocked) m_lockedTracking=m_trackingCandidates[m_inferenceChoice-int(center)];
+  } else {
+    if (!m_shiftHeld) return false;
+    const bool tap=m_shiftClock.elapsed()<250;
+    m_shiftHeld=m_centerLocked=m_trackingLocked=false;
+    const int count=int(m_trackingCandidates.size())+int(!m_activeCenter.empty());
+    if(tap && count>1) m_inferenceChoice=(m_inferenceChoice+1)%count;
+  }
+  m_trackingDirty=true; m_hoverOwner=nullptr;
+  refreshCenterStyles();
+  emit hoverChanged(m_centerLocked ? tr("Center locked - release Shift to unlock") : tr("Tap Shift to cycle enlarged targets; hold Shift to lock"));
+  redrawScene(); return true;
 }
 
 bool Viewport::eventFilter(QObject* object, QEvent* e) {
-  if ((e->type() == QEvent::KeyPress || e->type() == QEvent::KeyRelease) && underMouse()) {
-    auto* key = static_cast<QKeyEvent*>(e);
-    if (key->key() == Qt::Key_Shift && !key->isAutoRepeat()) {
-      m_trackingDirty = true;
-      redrawScene();
-    }
+  if ((e->type()==QEvent::KeyPress || e->type()==QEvent::KeyRelease)
+      && (object==this || underMouse() || m_shiftHeld) && window()->isActiveWindow())
+    if(inferenceKey(static_cast<QKeyEvent*>(e))) return true;
+  if (e->type()==QEvent::WindowDeactivate && object==window()) {
+    m_shiftHeld=m_centerLocked=m_trackingLocked=false; refreshCenterStyles();
   }
-  if (object != this && e->type() == QEvent::KeyPress && underMouse() && window()->isActiveWindow() && !m_sketchInput) {
-    auto* key = static_cast<QKeyEvent*>(e);
-    if (key->key() == Qt::Key_Shift && !key->isAutoRepeat() && toggleCenterLock()) return true;
-  }
-  return QWidget::eventFilter(object, e);
-}
-
-bool Viewport::toggleCenterLock() {
-  if (!m_initialised || m_blocked || m_filter != SelFilter::Vertex || m_activeCenter.empty() || QApplication::mouseButtons() != Qt::NoButton) return false;
-  m_centerLocked = !m_centerLocked;
-  auto active = m_centers.find(m_activeCenter);
-  if (active != m_centers.end()) {
-    active->second.ais->Attributes()->PointAspect()->SetScale(m_centerLocked ? 5.0 : 3.0);
-    active->second.ais->SynchronizeAspects();
-  }
-  m_hoverOwner = nullptr;
-  const QString hint = m_centerLocked ? tr("Center locked · click center · Shift unlock") : tr("Circle center · Shift lock · click center");
-  m_hover = hint;
-  emit hoverChanged(hint);
-  redrawScene();
-  return true;
+  return QWidget::eventFilter(object,e);
 }
 
 void Viewport::clearCenters() {
@@ -96,6 +116,7 @@ void Viewport::clearCenters() {
   m_centerObjects.clear();
   m_activeCenter.clear();
   m_centerLocked = false;
+  m_shiftHeld = false;
   m_hoverOwner = nullptr;
 }
 

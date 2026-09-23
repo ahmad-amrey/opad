@@ -828,11 +828,7 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
     m_ctx->Remove(it->second.ais, false);
     it = m_centers.erase(it);
   }
-  for (const auto& [key, marker] : m_centers) {
-    marker.ais->Attributes()->PointAspect()->SetTypeOfMarker(m_ctx->IsSelected(marker.ais) ? Aspect_TOM_BALL : Aspect_TOM_O);
-    marker.ais->Attributes()->PointAspect()->SetScale(3.0);
-    marker.ais->SynchronizeAspects();
-  }
+  refreshCenterStyles();
   clearShade();
   m_needFit = false;
   applySelectionLayers();

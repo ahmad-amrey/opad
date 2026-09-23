@@ -844,6 +844,16 @@ void MainWindow::buildStatusBar() {
   // which fought with the strip's own show/hide and drew the message across the bars.
   statusBar()->addPermanentWidget(m_statusHover, 1);
   statusBar()->addPermanentWidget(m_progress, 1);
+  for (const auto& spec : {std::pair{"view.extensions", "Extensions"}, std::pair{"view.tracking", "Tracking"}}) {
+    const bool extension=QString(spec.first)=="view.extensions";
+    auto* a=addAction(spec.first, tr(spec.second), "", QKeySequence(extension ? "F11" : "F12"), [] {}, true);
+    a->setChecked(m_settings.value(extension ? "view/extensions" : "view/tracking", true).toBool());
+    a->setToolTip(extension ? tr("Extend acquired edges (F11)") : tr("Track alignment from acquired points (F12)"));
+    auto apply=[this,extension](bool on) { if(extension) m_viewport->setExtensionTracking(on); else m_viewport->setTracking(on); };
+    connect(a,&QAction::toggled,this,apply); apply(a->isChecked());
+    auto* button=new QToolButton(this); button->setDefaultAction(a); button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    button->setFocusPolicy(Qt::NoFocus); statusBar()->addPermanentWidget(button);
+  }
   statusBar()->addPermanentWidget(m_statusSel);
   statusBar()->addPermanentWidget(m_statusUnits);
   statusBar()->setSizeGripEnabled(false);
