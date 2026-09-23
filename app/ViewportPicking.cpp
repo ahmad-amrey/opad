@@ -181,7 +181,9 @@ gp_Pnt Viewport::centralOrbitPoint() {
 }
 
 gp_Pnt Viewport::GravityPoint(const Handle(AIS_InteractiveContext)&, const Handle(V3d_View)&) {
-  if (m_cubeGesture) return centralOrbitPoint();
+  // focusCube() acquired this point on press; don't repeat the search when the
+  // same press becomes a drag.
+  if (m_cubeGesture) return Handle(NavCube)::DownCast(m_cube)->orbitPoint();
   return orbitPoint(Graphic3d_Vec2i(int(myGL.OrbitRotation.PointStart.x()), int(myGL.OrbitRotation.PointStart.y())));
 }
 

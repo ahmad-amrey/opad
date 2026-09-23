@@ -27,6 +27,7 @@ class NavCube : public AIS_ViewCube {
  public:
   NavCube();
   void setOrbitPoint(const gp_Pnt& point) { m_orbitPoint = point; }
+  const gp_Pnt& orbitPoint() const { return m_orbitPoint; }
 
  protected:
   // A cube click changes orientation about the visible focus, preserving the user's zoom.

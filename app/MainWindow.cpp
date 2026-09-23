@@ -2030,6 +2030,7 @@ void MainWindow::runBench() {
       QTimer::singleShot(500, this, [this] {
         startTool("distance");
         if (!m_viewport->benchPicking()) return QCoreApplication::exit(2);
+        if (qEnvironmentVariableIsSet("OPAD_BENCH_ORBIT_PERF")) return QCoreApplication::exit(0);
         QTimer::singleShot(1500, this, [this] {
           const bool ok = m_toolPicks.size() == 2 && m_lastMeasure.value("kind", "") == "distance";
           trace::log(QStringLiteral("bench: picking guided distance %1: %2").arg(ok ? "PASS" : "FAIL", QString::fromStdString(m_lastMeasure.dump())));

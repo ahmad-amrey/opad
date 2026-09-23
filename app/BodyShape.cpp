@@ -62,13 +62,47 @@ void SubHighlight::Compute(const Handle(PrsMgr_PresentationManager)&, const Hand
   }
 }
 
+namespace {
+// Orbit fallback asks whether a screen region contains any geometry, not which
+// triangles it contains. OCCT's ordinary area selection enumerates all matching
+// primitives, making the first large region expensive on detailed models.
+class NavigationTriangles : public Select3D_SensitivePrimitiveArray {
+ public:
+  NavigationTriangles() : Select3D_SensitivePrimitiveArray(nullptr) {}
+  Standard_Boolean Matches(SelectBasics_SelectingVolumeManager& volume, SelectBasics_PickResult& result) override {
+    if (volume.GetActiveSelectionType() == SelectMgr_SelectionType_Point || !volume.IsOverlapAllowed())
+      return Select3D_SensitivePrimitiveArray::Matches(volume, result);
+    if (Size() == 0) return false;
+    const auto& tree = myContent.GetBVH();  // already built by the mesh worker
+    std::vector<int> pending{0};
+    while (!pending.empty()) {
+      const int node = pending.back(); pending.pop_back();
+      if (!volume.OverlapsBox(tree->MinPoint(node), tree->MaxPoint(node))) continue;
+      const auto& data = tree->NodeInfoBuffer()[node];
+      if (data.x() == 0) {
+        pending.push_back(data.y()); pending.push_back(data.z());
+      } else {
+        for (int element = data.y(); element <= data.z(); ++element) {
+          if (overlapsElement(result, volume, element, false)) {
+            myDetectedIdx = element;
+            result.SetDistToGeomCenter(distanceToCOG(volume));
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+};
+}
+
 std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const Bnd_Box& box) {
   auto p = std::make_shared<BodyPrs>();
   p->box = box;
   p->triangles = StdPrs_ShadedShape::FillTriangles(meshedProto);
   p->boundaries = StdPrs_ShadedShape::FillFaceBoundaries(meshedProto);
   if (!p->triangles.IsNull()) {
-    Handle(Select3D_SensitivePrimitiveArray) triangles = new Select3D_SensitivePrimitiveArray(nullptr);
+    Handle(Select3D_SensitivePrimitiveArray) triangles = new NavigationTriangles();
     if (triangles->InitTriangulation(p->triangles->Attributes(), p->triangles->Indices(), TopLoc_Location())) {
       triangles->BVH();
       p->navigation = triangles;

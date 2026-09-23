@@ -287,6 +287,22 @@ bool Viewport::benchPicking() {
     setTwoDimensional(true);
     m_view->SetProj(V3d_Zpos);
     m_view->Redraw();
+    if (qEnvironmentVariableIsSet("OPAD_BENCH_ORBIT_PERF")) {
+      const auto camera = new Graphic3d_Camera(*m_view->Camera());
+      const gp_Vec side = gp_Vec(camera->Direction()).Crossed(gp_Vec(camera->Up()));
+      for (double offset : {0.0, 0.4, 0.8, 1.2}) {
+        m_view->SetCamera(new Graphic3d_Camera(*camera));
+        const gp_Vec shift = side * (camera->Scale() * offset);
+        m_view->Camera()->SetEyeAndCenter(camera->Eye().Translated(shift), camera->Center().Translated(shift));
+        m_view->Redraw();
+        QElapsedTimer timer; timer.start();
+        const gp_Pnt pivot = centralOrbitPoint();
+        trace::log(QStringLiteral("bench: orbit performance offset=%1 bodies=%2 time=%3 ms pivot=%4,%5,%6")
+                   .arg(offset).arg(m_items.size()).arg(timer.nsecsElapsed()/1e6,0,'f',3).arg(pivot.X()).arg(pivot.Y()).arg(pivot.Z()));
+      }
+      m_view->SetCamera(camera);
+      return true;
+    }
     m_ctx->ClearDetected(false);
     m_haveTrackingAnchor=true; m_trackingAnchor=gp_Pnt(0,0,0);
     m_trackingDirection=gp_Vec(1,0,0); m_trackingHasDirection=true;
