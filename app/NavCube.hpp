@@ -6,20 +6,37 @@
 // only for picking and for the hover fill (nothing extra is drawn on the cube itself, so nothing fights
 // the faces for depth).
 #include <AIS_ViewCube.hxx>
+#include <AIS_AnimationCamera.hxx>
+
+// Keep the picked surface fixed throughout cube orientation animation, including
+// when it projects away from the viewport center. Other camera animations are unchanged.
+class OrbitCameraAnimation : public AIS_AnimationCamera {
+  DEFINE_STANDARD_RTTI_INLINE(OrbitCameraAnimation, AIS_AnimationCamera)
+ public:
+  OrbitCameraAnimation(const Handle(V3d_View)& view) : AIS_AnimationCamera("ViewCamera", view) {}
+  void setOrbitPoint(const Handle(Graphic3d_Camera)& start, const gp_Pnt& point) { m_start = start; m_point = point; }
+ protected:
+  void update(const AIS_AnimationProgress& progress) override;
+ private:
+  Handle(Graphic3d_Camera) m_start;
+  gp_Pnt m_point;
+};
 
 class NavCube : public AIS_ViewCube {
   DEFINE_STANDARD_RTTI_INLINE(NavCube, AIS_ViewCube)
  public:
   NavCube();
+  void setOrbitPoint(const gp_Pnt& point) { m_orbitPoint = point; }
 
  protected:
   // A cube click changes orientation about the visible focus, preserving the user's zoom.
-  void viewFitAll(const Handle(V3d_View)&, const Handle(Graphic3d_Camera)&) override {}
+  void viewFitAll(const Handle(V3d_View)&, const Handle(Graphic3d_Camera)&) override;
   // Base ComputeSelection/Compute path: sides only (edge and corner drawing is off).
   void ComputeSelection(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode) override;
   void HilightOwnerWithColor(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Drawer)& style, const Handle(SelectMgr_EntityOwner)& owner) override;
 
  private:
+  gp_Pnt m_orbitPoint;
   // Sides from the base geometry; edges and corners as bands/squares in the face planes. Picking gives them
   // priority corner > edge > side, since coplanar entities tie on depth.
   void partTriangles(const Handle(Graphic3d_ArrayOfTriangles)& tris, Standard_Integer& nbNodes, Standard_Integer& nbTris, V3d_TypeOfOrientation dir) const;

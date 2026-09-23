@@ -1,5 +1,6 @@
 // Exact circle-center discovery and navigation picking independent of the selection filter.
 #include "Viewport.hpp"
+#include "NavCube.hpp"
 
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <Graphic3d_Camera.hxx>
@@ -9,6 +10,8 @@
 #include <QKeyEvent>
 #include "Jobs.hpp"
 #include <cmath>
+#include <queue>
+#include <algorithm>
 
 Handle(AIS_Shape) Viewport::centerMarker(const opad::Ref& ref, const gp_Pnt& point) {
   const std::string key = ref.str();
@@ -113,28 +116,75 @@ bool Viewport::navigationPoint(const Graphic3d_Vec2i& cursor, gp_Pnt& point) {
 gp_Pnt Viewport::orbitPoint(const Graphic3d_Vec2i& cursor) {
   gp_Pnt point;
   if (navigationPoint(cursor, point)) return point;
-  // Empty space: intersect the cursor ray with the current camera's focus plane. This pivot is
-  // under the cursor even after panning/zooming far away from the model's bounding-box center.
-  double x, y, z, dx, dy, dz;
-  m_view->ConvertWithProj(cursor.x(), cursor.y(), x, y, z, dx, dy, dz);
-  const gp_Vec ray(dx, dy, dz), normal(m_view->Camera()->Direction());
-  const double denominator = ray.Dot(normal);
-  if (std::abs(denominator) < 1e-12) return m_view->Camera()->Center();
-  return gp_Pnt(x, y, z).Translated(ray * (gp_Vec(gp_Pnt(x, y, z), m_view->Camera()->Center()).Dot(normal) / denominator));
+  return centralOrbitPoint();
+}
+
+gp_Pnt Viewport::centralOrbitPoint() {
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
+  const int cx = w / 2, cy = h / 2;
+  gp_Pnt point;
+  // Expanded triangle picks can return a vertex far from the requested ray near
+  // a silhouette. Reject those candidates instead of orbiting about a distant corner.
+  auto pick = [&](int x, int y) {
+    if (!navigationPoint(Graphic3d_Vec2i(x, y), point)) return false;
+    Standard_Integer px, py;
+    m_view->Convert(point.X(), point.Y(), point.Z(), px, py);
+    return std::abs(px - x) <= 2 && std::abs(py - y) <= 2;
+  };
+  if (m_navSelector.IsNull()) return m_view->Camera()->Center();
+  if (pick(cx, cy)) return point;
+
+  // Search screen regions nearest the center first. Rectangle picks use the existing
+  // mesh BVHs to discard empty regions, so holes and small/off-center parts are found
+  // without walking every triangle or relying on a sparse grid of sample rays.
+  struct Region {
+    int x0, y0, x1, y1;
+    double distance;
+    bool operator<(const Region& other) const { return distance > other.distance; }
+  };
+  std::priority_queue<Region> regions;
+  auto add = [&](int x0, int y0, int x1, int y1) {
+    const double dx = cx - std::clamp(cx, x0, x1), dy = cy - std::clamp(cy, y0, y1);
+    regions.push({x0, y0, x1, y1, dx * dx + dy * dy});
+  };
+  if (w <= 0 || h <= 0 || m_navSelector.IsNull()) return m_view->Camera()->Center();
+  add(0, 0, w - 1, h - 1);
+  m_navSelector->AllowOverlapDetection(true);
+  while (!regions.empty()) {
+    const Region r = regions.top(); regions.pop();
+    if (r.x1 - r.x0 <= 1 && r.y1 - r.y0 <= 1) {
+      // Point picking resolves the frontmost non-clipped surface, regardless of
+      // selection filter. Accuracy is within the existing one-pixel pick tolerance.
+      if (pick((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)) return point;
+      continue;
+    }
+    m_navSelector->Pick(r.x0, r.y0, r.x1, r.y1, m_view);
+    bool occupied = false;
+    for (int i = 1; i <= m_navSelector->NbPicked(); ++i) {
+      auto node = m_navNodes.find(m_navSelector->Picked(i)->Selectable().get());
+      if (node == m_navNodes.end()) continue;
+      auto item = m_items.find(node->second);
+      if (item != m_items.end() && m_ctx->IsDisplayed(item->second.ais)) { occupied = true; break; }
+    }
+    if (!occupied) continue;
+    if (r.x1 - r.x0 >= r.y1 - r.y0) {
+      const int mid = (r.x0 + r.x1) / 2;
+      add(r.x0, r.y0, mid, r.y1); add(mid, r.y0, r.x1, r.y1);
+    } else {
+      const int mid = (r.y0 + r.y1) / 2;
+      add(r.x0, r.y0, r.x1, mid); add(r.x0, mid, r.x1, r.y1);
+    }
+  }
+  // No visible geometry (empty document or model entirely outside the view).
+  return m_view->Camera()->Center();
 }
 
 gp_Pnt Viewport::GravityPoint(const Handle(AIS_InteractiveContext)&, const Handle(V3d_View)&) {
-  const Graphic3d_Vec2i cursor = m_cubeGesture
-      ? devicePos(QPointF(width() * 0.5, height() * 0.5))
-      : Graphic3d_Vec2i(int(myGL.OrbitRotation.PointStart.x()), int(myGL.OrbitRotation.PointStart.y()));
-  return orbitPoint(cursor);
+  if (m_cubeGesture) return centralOrbitPoint();
+  return orbitPoint(Graphic3d_Vec2i(int(myGL.OrbitRotation.PointStart.x()), int(myGL.OrbitRotation.PointStart.y())));
 }
 
 void Viewport::focusCube() {
-  const Handle(Graphic3d_Camera)& camera = m_view->Camera();
-  const gp_Pnt surface = orbitPoint(devicePos(QPointF(width() * 0.5, height() * 0.5)));
-  // Change only depth on the central view ray: preserve direction, image position and zoom.
-  const gp_Vec direction(camera->Direction());
-  const double depth = gp_Vec(camera->Eye(), surface).Dot(direction);
-  if (depth > 1e-7) camera->SetCenter(camera->Eye().Translated(direction * depth));
+  Handle(NavCube)::DownCast(m_cube)->setOrbitPoint(centralOrbitPoint());
 }

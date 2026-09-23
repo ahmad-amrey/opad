@@ -2,6 +2,7 @@
 // Qt events stay within this widget; this never moves the OS cursor or drives the user's desktop.
 #include "Viewport.hpp"
 #include "Jobs.hpp"
+#include "NavCube.hpp"
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
@@ -51,6 +52,80 @@ bool Viewport::benchPicking() {
     selector->Pick(gp_Ax1(gp_Pnt(0, 0, 100), gp_Dir(0, 0, -1)), m_view);
     require(selector->NbPicked() == 1 && std::abs(selector->PickedPoint(1).Z() - 10) < 1e-6, "navigation ignored deactivation");
     trace::log(QStringLiteral("bench: picking nearest surface / transformed instances PASS"));
+
+    // A gap at the viewport center: choose the nearest projected part and its front
+    // surface, independent of selection, hidden bodies and the mouse's empty location.
+    {
+      const Handle(Graphic3d_Camera) camera = new Graphic3d_Camera(*m_view->Camera());
+      auto items = std::move(m_items);
+      auto nodes = std::move(m_navNodes);
+      const auto oldSelector = m_navSelector;
+      const auto oldManager = m_navSelection;
+      m_items.clear(); m_navNodes.clear();
+      m_navSelector = selector; m_navSelection = manager;
+      selector->SetPixelTolerance(1);
+      selector->SetDepthTolerance(SelectMgr_TypeOfDepthTolerance_Uniform, 0.0);
+      placement.SetTranslation(gp_Vec(30, 0, 20)); nearShape->SetLocalTransformation(placement);
+      placement.SetTranslation(gp_Vec(30, 0, 0)); farShape->SetLocalTransformation(placement);
+      manager->Update(nearShape, true); manager->Update(farShape, true);
+      manager->Activate(nearShape);
+      Handle(AIS_Shape) nearAis = new AIS_Shape(box), farAis = new AIS_Shape(box);
+      nearAis->SetLocalTransformation(nearShape->Transformation());
+      farAis->SetLocalTransformation(farShape->Transformation());
+      m_ctx->Display(nearAis, false); m_ctx->Display(farAis, false);
+      m_items["near"].ais = nearAis; m_items["far"].ais = farAis;
+      m_navNodes[nearShape.get()] = "near"; m_navNodes[farShape.get()] = "far";
+      m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+      m_view->Camera()->SetEyeAndCenter(gp_Pnt(0, 0, 100), gp_Pnt(0, 0, 0));
+      m_view->Camera()->SetUp(gp::DY()); m_view->Camera()->SetScale(100);
+      m_view->Redraw();
+      const auto center = devicePos(QPointF(width()/2.0, height()/2.0));
+      gp_Pnt picked;
+      require(!navigationPoint(center, picked), "off-center test unexpectedly hits geometry at center");
+      QElapsedTimer searchTimer; searchTimer.start();
+      picked = orbitPoint(devicePos(QPointF(-200, -200)));
+      require(std::abs(picked.X()-20) < pixelSize()*3 && std::abs(picked.Y()) < pixelSize()*3
+              && std::abs(picked.Z()-30) < 1e-6, "central fallback missed closest foreground geometry");
+      trace::log(QStringLiteral("bench: off-center orbit search %1 ms").arg(searchTimer.elapsed()));
+      m_ctx->Erase(nearAis, false);
+      require(std::abs(centralOrbitPoint().Z()-10) < 1e-6, "central fallback picked a hidden part");
+      m_ctx->Display(nearAis, false);
+      m_view->AddClipPlane(clip);
+      require(std::abs(centralOrbitPoint().Z()-10) < 1e-6, "central fallback picked clipped geometry");
+      m_view->RemoveClipPlane(clip);
+      Handle(Graphic3d_ClipPlane) allClipped = new Graphic3d_ClipPlane(gp_Pln(gp_Pnt(0,0,-5), gp_Dir(0,0,-1)));
+      m_view->AddClipPlane(allClipped);
+      require(centralOrbitPoint().Distance(m_view->Camera()->Center()) < 1e-6,
+              "fully clipped scene did not retain camera focus");
+      m_view->RemoveClipPlane(allClipped);
+      for (auto projection : {Graphic3d_Camera::Projection_Orthographic, Graphic3d_Camera::Projection_Perspective}) {
+        m_view->Camera()->SetProjectionType(projection);
+        m_view->Redraw();
+        picked = centralOrbitPoint();
+        const gp_Pnt position = m_view->Camera()->ConvertWorld2View(picked);
+        const gp_Dir startDirection = m_view->Camera()->Direction();
+        focusCube();
+        m_ctx->MoveTo(center.x(), center.y(), m_view, false);
+        m_cube->StartAnimation(new AIS_ViewCubeOwner(m_cube.get(), V3d_Xpos));
+        for (double time : {0.25, 0.5}) {
+          myViewAnimation->Update(time);
+          require(position.Distance(m_view->Camera()->ConvertWorld2View(picked)) < 1e-6,
+                  "cube animation drifted away from its off-center orbit point");
+        }
+        require(!startDirection.IsEqual(m_view->Camera()->Direction(), 1e-6), "cube animation did not rotate");
+        myViewAnimation->Stop();
+        m_view->Camera()->SetEyeAndCenter(gp_Pnt(0, 0, 100), gp_Pnt(0, 0, 0));
+        m_view->Camera()->SetUp(gp::DY());
+      }
+      m_ctx->Erase(nearAis, false); m_ctx->Erase(farAis, false);
+      require(centralOrbitPoint().Distance(m_view->Camera()->Center()) < 1e-6,
+              "empty scene did not retain camera focus");
+      m_ctx->Remove(nearAis, false); m_ctx->Remove(farAis, false);
+      m_items = std::move(items); m_navNodes = std::move(nodes);
+      m_navSelector = oldSelector; m_navSelection = oldManager;
+      m_view->SetCamera(camera); m_view->Redraw();
+      trace::log(QStringLiteral("bench: central orbit gap / hidden / clipping / cube animation PASS"));
+    }
 
     // Exercise Qt's trackpad event path, including the virtual drag that drives OCCT's existing gestures.
     const Handle(Graphic3d_Camera) beforeTrackpad = new Graphic3d_Camera(*m_view->Camera());
@@ -142,8 +217,10 @@ bool Viewport::benchPicking() {
     trace::log(QStringLiteral("bench: picking navigation 81 rays: %1 ms, %2 hits, %3 bodies").arg(timer.elapsed()).arg(hits).arg(m_items.size()));
     const Graphic3d_Vec2i empty = devicePos(QPointF(-200, -200));
     const gp_Pnt fallback = orbitPoint(empty);
-    const QPoint projection = widgetPoint({fallback.X(), fallback.Y(), fallback.Z()});
-    require((projection - QPoint(-200, -200)).manhattanLength() <= 2, "empty-space pivot is not under the cursor");
+    require(fallback.Distance(centralOrbitPoint()) < 1e-7, "empty-space pivot did not use central geometry");
+    gp_Pnt directTarget;
+    require(navigationPoint(devicePos(orbitCursor), directTarget)
+            && orbitPoint(devicePos(orbitCursor)).Distance(directTarget) < 1e-7, "surface under cursor lost orbit priority");
     const double scale = m_view->Camera()->Scale();
     const gp_Dir direction = m_view->Camera()->Direction();
     focusCube();
@@ -178,8 +255,8 @@ bool Viewport::benchPicking() {
     Handle(Graphic3d_Camera) savedCamera = new Graphic3d_Camera(*m_view->Camera());
     m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Perspective);
     const gp_Pnt perspectiveFallback = orbitPoint(empty);
-    require((widgetPoint({perspectiveFallback.X(), perspectiveFallback.Y(), perspectiveFallback.Z()}) - QPoint(-200, -200)).manhattanLength() <= 2,
-        "perspective empty-space pivot is not under the cursor");
+    require(perspectiveFallback.Distance(centralOrbitPoint()) < 1e-7,
+        "perspective empty-space pivot did not use central geometry");
     const gp_Pnt eyeBefore = m_view->Camera()->Eye();
     const gp_Dir dirBefore = m_view->Camera()->Direction();
     const double fovBefore = m_view->Camera()->FOVy();

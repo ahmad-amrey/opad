@@ -8,6 +8,7 @@
 #include <PrsMgr_PresentationManager.hxx>
 #include <Standard_Version.hxx>
 #include <V3d.hxx>
+#include <V3d_View.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
 
@@ -16,6 +17,20 @@
 NavCube::NavCube() {
   SetDrawEdges(Standard_False);     // the bevel facets are what the base draws for edges and corners;
   SetDrawVertices(Standard_False);  // this cube has none, its edge/corner parts exist only for picking
+}
+
+void OrbitCameraAnimation::update(const AIS_AnimationProgress& progress) {
+  AIS_AnimationCamera::update(progress);
+  if (myView.IsNull() || m_start.IsNull() || myCamStart != m_start) return;
+  const auto& camera = myView->Camera();
+  const gp_Pnt original = m_start->ConvertWorld2View(m_point);
+  const gp_Vec shift(camera->ConvertView2World(original), m_point);
+  camera->SetEyeAndCenter(camera->Eye().Translated(shift), camera->Center().Translated(shift));
+}
+
+void NavCube::viewFitAll(const Handle(V3d_View)&, const Handle(Graphic3d_Camera)&) {
+  auto animation = Handle(OrbitCameraAnimation)::DownCast(myViewAnimation);
+  if (!animation.IsNull()) animation->setOrbitPoint(myStartState, m_orbitPoint);
 }
 
 // One quad on the face whose outward normal is `axis` with `sign`, spanning lo..hi on the other two axes.

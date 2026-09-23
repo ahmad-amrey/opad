@@ -247,6 +247,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void clearCenters();
   bool toggleCenterLock();
   bool navigationPoint(const Graphic3d_Vec2i& cursor, gp_Pnt& point);
+  gp_Pnt centralOrbitPoint();
   gp_Pnt orbitPoint(const Graphic3d_Vec2i& cursor);
   void focusCube();
   void syncWindowSize();

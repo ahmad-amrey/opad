@@ -262,6 +262,8 @@ void Viewport::initViewer() {
   m_cube->SetBoxSideLabel(V3d_Xneg, "LEFT");
   m_cube->SetTransformPersistence(new Graphic3d_TransformPers(Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER,
       Graphic3d_Vec2i(qRound(kCubeOffsetX * m_cubeScale), qRound(kCubeOffsetY * m_cubeScale))));
+  SetViewAnimation(new OrbitCameraAnimation(m_view));
+  myViewAnimation->SetOwnDuration(0.5);
   m_cube->SetViewAnimation(myViewAnimation);
   m_cube->SetFixedAnimationLoop(Standard_False);
   m_cube->SetAutoStartAnimation(Standard_True);
