@@ -157,9 +157,11 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     for (int index : indices) builder.Add(whole, p->circles.at(index).edge);
     for (int index : indices) { p->circles.at(index).edge = whole; p->circles.at(index).canonical = indices.front(); }
   }
-  p->closed = true;
-  for (TopExp_Explorer e(meshedProto, TopAbs_SHELL); e.More(); e.Next())
+  p->closed = false;
+  for (TopExp_Explorer e(meshedProto, TopAbs_SHELL); e.More(); e.Next()) {
+    p->closed = true;
     if (!BRep_Tool::IsClosed(e.Current())) { p->closed = false; break; }
+  }
   if (meshedProto.ShapeType() > TopAbs_SHELL) p->closed = false;  // a bare face or lower
   return p;
 }

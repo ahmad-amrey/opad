@@ -46,6 +46,7 @@ TEST(mesh_facets_edges_vertices_are_measurable_after_roundtrip) {
   auto d=Document::create(); import_file(d,f.dir/"mesh.obj"); d=Document::parse(d.serialize()); const auto scene=resolve(d);
   const auto id=scene.all_bodies()[0]; const auto shape=node_world_shape(d,scene,id);
   CHECK_EQ(subshape_count(shape,Ref::Kind::Face),2);
+  CHECK_NEAR(node_properties(d,scene,id)["area"].get<double>(),100,1e-7);
   CHECK_EQ(subshape_count(shape,Ref::Kind::Edge),6);
   CHECK_EQ(subshape_count(shape,Ref::Kind::Vertex),4);
   Ref a; a.body=id; a.kind=Ref::Kind::Vertex; a.index=0;

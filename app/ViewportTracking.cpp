@@ -89,7 +89,7 @@ void Viewport::updateTracking() {
       bool duplicate = false;
       for (const auto& line : lines)
         if (line.anchor.Distance(anchor.point)<1e-7 && line.direction.Crossed(d).SquareMagnitude()<1e-12) duplicate = true;
-      if (!duplicate) lines.push_back({anchor.point,{},d});
+      if (!duplicate) lines.push_back({anchor.point,{},d,false,{}});
     }
   }
   auto project = [&](TrackingCandidate& candidate) {

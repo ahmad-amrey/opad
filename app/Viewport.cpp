@@ -449,6 +449,7 @@ void Viewport::setShadows(bool on) {
 
 void Viewport::setOrthographic(bool ortho) {
   if (!m_initialised) return;
+  if (m_twoDimensional) ortho=true;
   m_view->Camera()->SetProjectionType(ortho ? Graphic3d_Camera::Projection_Orthographic : Graphic3d_Camera::Projection_Perspective);
   m_view->Invalidate();
   redrawScene();
@@ -912,7 +913,7 @@ void Viewport::fitSelection() {
 }
 
 void Viewport::standardView(const QString& name) {
-  if (m_twoDimensional && name == "iso") return;
+  if (m_twoDimensional && name.startsWith("iso")) return;
   if (!m_initialised) return;
   m_needFit = false;
   V3d_TypeOfOrientation o = V3d_XposYnegZpos;
@@ -930,7 +931,7 @@ void Viewport::standardView(const QString& name) {
 void Viewport::home() { standardView("iso"); }
 
 void Viewport::rollView(double degrees) {
-  if (!m_initialised) return;
+  if (!m_initialised || m_twoDimensional) return;
   m_needFit = false;
   Handle(Graphic3d_Camera) cam = m_view->Camera();
   Handle(Graphic3d_Camera) start = new Graphic3d_Camera(*cam), end = new Graphic3d_Camera(*cam);
@@ -1407,8 +1408,8 @@ void Viewport::displayBody(const std::string& id) {
         const double ratio=point(0).Distance(point(1))/std::max(1e-12,point(0).Distance(point(2)));
         const auto aspect=n->raster.value("preserveAspectRatio","");
         if(aspect!="none") {
-          const int h=std::min(2048,std::max(image.height(),int(image.width()/ratio)));
-          const int w=std::clamp(int(h*ratio),1,4096);
+          const int h=int(std::clamp(std::max(double(image.height()),image.width()/ratio),1.0,2048.0));
+          const int w=int(std::clamp(h*ratio,1.0,4096.0));
           QImage canvas(w,h,QImage::Format_RGBA8888); canvas.fill(Qt::transparent);
           const auto scaled=image.scaled(w,h,aspect.find("slice")!=std::string::npos?Qt::KeepAspectRatioByExpanding:Qt::KeepAspectRatio,Qt::SmoothTransformation);
           QPainter painter(&canvas); painter.drawImage((w-scaled.width())/2,(h-scaled.height())/2,scaled); painter.end(); image=canvas;

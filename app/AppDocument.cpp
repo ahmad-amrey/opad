@@ -165,6 +165,10 @@ void AppDocument::startImport(const QString& path, const QString& parent) {
         return;
       }
       emit message(tr("Imported %1: %2 bodies, %3 new body entries").arg(QFileInfo(path).fileName()).arg(r.value("bodies", 0)).arg(r.value("new_entries", 0)));
+      if(r.contains("warnings") && !r["warnings"].empty()) {
+        QStringList warnings; for(const auto& w:r["warnings"]) warnings.append(QString::fromStdString(w.get<std::string>()));
+        emit message(warnings.join("; "));
+      }
       emit loadFinished(true, {});
     }, Qt::QueuedConnection);
   }).detach();

@@ -128,6 +128,34 @@ bool Viewport::benchPicking() {
       trace::log(QStringLiteral("bench: central orbit gap / hidden / clipping / cube animation PASS"));
     }
 
+    // Pixel regression for coincident surfaces: all interior samples must use
+    // one stable material, at both a normal and a grazing viewing angle.
+    {
+      const Handle(Graphic3d_Camera) camera=new Graphic3d_Camera(*m_view->Camera());
+      const int quality=m_renderQuality;
+      auto items=std::move(m_items); m_items.clear();
+      std::vector<Handle(AIS_Shape)> visible;
+      for(const auto& [id,item]:items) if(m_ctx->IsDisplayed(item.ais)) { visible.push_back(item.ais); m_ctx->Erase(item.ais,false); }
+      Handle(AIS_Shape) red=new BodyShape(box,prs),green=new BodyShape(box,prs);
+      red->SetColor(Quantity_Color(1,0,0,Quantity_TOC_RGB)); green->SetColor(Quantity_Color(0,1,0,Quantity_TOC_RGB));
+      m_ctx->Display(red,1,-1,false); m_ctx->Display(green,1,-1,false);
+      m_items["a"].ais=red; m_items["b"].ais=green; updateDepthBias(); setRenderQuality(0);
+      m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+      for(const gp_Pnt eye:{gp_Pnt(0,0,100),gp_Pnt(0,-100,35)}) {
+        m_view->Camera()->SetEyeAndCenter(eye,gp_Pnt(0,0,10)); m_view->Camera()->SetUp(gp::DY()); m_view->Camera()->SetScale(60);
+        m_view->Redraw(); const QImage frame=grabImage();
+        for(int y=-6;y<=6;y+=3) for(int x=-6;x<=6;x+=3) {
+          const QPoint at=widgetPoint({double(x),double(y),10});
+          const QColor pixel=frame.pixelColor(qRound(at.x()*double(frame.width())/width()),qRound(at.y()*double(frame.height())/height()));
+          require(pixel.red()>180 && pixel.green()<70,"coincident faces have mixed or unstable depth ordering");
+        }
+      }
+      m_ctx->Remove(red,false); m_ctx->Remove(green,false); m_items=std::move(items);
+      for(const auto& shape:visible) { m_ctx->Display(shape,false); activateSelection(shape); }
+      setRenderQuality(quality); m_view->SetCamera(camera); m_view->Redraw();
+      trace::log(QStringLiteral("bench: coincident surface pixel regression PASS"));
+    }
+
     // Exercise Qt's trackpad event path, including the virtual drag that drives OCCT's existing gestures.
     const Handle(Graphic3d_Camera) beforeTrackpad = new Graphic3d_Camera(*m_view->Camera());
     const QPointF gesturePoint(width() * 0.5, height() * 0.5);

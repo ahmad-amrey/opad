@@ -33,6 +33,9 @@ target_link_libraries(opad_core
   PUBLIC ${OPAD_OCCT_LIBS} nlohmann_json::nlohmann_json
   PRIVATE ${CMAKE_DL_LIBS})
 target_compile_definitions(opad_core PUBLIC _USE_MATH_DEFINES)
+if(TARGET TKV3d AND TARGET TKService)
+  target_compile_definitions(opad_core PRIVATE OPAD_HAVE_FONT=1)
+endif()
 if(OPAD_HAVE_GLTF)
   target_compile_definitions(opad_core PRIVATE OPAD_HAVE_GLTF=1)
 endif()

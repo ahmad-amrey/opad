@@ -100,9 +100,11 @@ bool Viewport::inferenceKey(QKeyEvent* key) {
 
 bool Viewport::eventFilter(QObject* object, QEvent* e) {
   if ((e->type()==QEvent::KeyPress || e->type()==QEvent::KeyRelease)
-      && (object==this || underMouse() || m_shiftHeld) && window()->isActiveWindow())
+      && (object==this || underMouse() || m_shiftHeld)
+      && (window()->isActiveWindow() || m_shiftHeld
+          || (QApplication::activeWindow() && window()->isAncestorOf(QApplication::activeWindow()))))
     if(inferenceKey(static_cast<QKeyEvent*>(e))) return true;
-  if (e->type()==QEvent::WindowDeactivate && object==window()) {
+  if (e->type()==QEvent::ApplicationDeactivate) {
     m_shiftHeld=m_centerLocked=m_trackingLocked=false; refreshCenterStyles();
   }
   return QWidget::eventFilter(object,e);

@@ -3,8 +3,10 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <gp_Pln.hxx>
+#ifdef OPAD_HAVE_FONT
 #include <StdPrs_BRepTextBuilder.hxx>
 #include <StdPrs_BRepFont.hxx>
+#endif
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
@@ -418,6 +420,7 @@ Drawing read_svg(const std::filesystem::path& file) {
       };
       content(e);
       if(!value.empty()) {
+#ifdef OPAD_HAVE_FONT
         StdPrs_BRepFont font;
         const double size=length(property("font-size","16"));
         const auto family=property("font-family","sans-serif");
@@ -427,6 +430,9 @@ Drawing read_svg(const std::filesystem::path& file) {
           const auto shape=StdPrs_BRepTextBuilder().Perform(font,NCollection_String(value.c_str()),gp_Ax3(gp_Pnt(num("x"),-num("y"),0),gp::DZ()),h,Graphic3d_VTA_BOTTOM);
           out.add(layer,shape);
         } else out.warnings.push_back("SVG text font unavailable; text retained in source");
+#else
+        out.warnings.push_back("SVG text outlines need OCCT font support; text retained in source");
+#endif
       }
     } else if(tag!="svg"&&tag!="g"&&tag!="symbol"&&tag!="a"&&tag!="switch") {
       out.warnings.push_back("SVG element retained in source: "+full);
