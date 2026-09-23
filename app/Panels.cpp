@@ -1,3 +1,4 @@
+#include <QShortcut>
 #include "Panels.hpp"
 
 #include "Notes.hpp"
@@ -213,6 +214,9 @@ ToolPanel::ToolPanel(const QString& id, const QString& icon, QColor Tokens::* ti
   setAttribute(Qt::WA_TranslucentBackground);
   setAttribute(Qt::WA_ShowWithoutActivating);
   setWindowTitle(title);
+  auto* escape=new QShortcut(QKeySequence(Qt::Key_Escape),this);
+  escape->setContext(Qt::WidgetWithChildrenShortcut);
+  connect(escape,&QShortcut::activated,this,[this] { if(m_escapeHandler) m_escapeHandler(); else hide(); });
   const int m = kMargin;
   setMinimumSize(280 + 2 * m, 120 + 2 * m);
   setMaximumWidth(480 + 2 * m);
@@ -406,7 +410,7 @@ void ToolPanel::mouseDoubleClickEvent(QMouseEvent* e) {
 }
 
 void ToolPanel::keyPressEvent(QKeyEvent* e) {
-  if (e->key() == Qt::Key_Escape) hide();
+  if (e->key() == Qt::Key_Escape) { if(m_escapeHandler) m_escapeHandler(); else hide(); }
   else QWidget::keyPressEvent(e);
 }
 
@@ -585,7 +589,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   head->setAttribute(Qt::WA_StyledBackground);
   head->setStyleSheet(QString("QWidget#browserHead { border-bottom: 1px solid %1; }").arg(theme::css(theme::current().line)));
   auto* hl = new QVBoxLayout(head);
-  hl->setContentsMargins(8, 12, 8, 12);
+  hl->setContentsMargins(8, 6, 8, 6);
   hl->setSpacing(8);
   m_filter = new QLineEdit(head);
   m_filter->setPlaceholderText(tr("Filter objects"));

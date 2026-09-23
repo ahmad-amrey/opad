@@ -47,6 +47,7 @@ class ToolPanel : public QWidget {
  public:
   ToolPanel(const QString& id, const QString& icon, QColor Tokens::* tint, const QString& title, QWidget* content, int preferredHeight, QWidget* owner);
   void setContext(const QString& text);
+  void setEscapeHandler(std::function<void()> handler) { m_escapeHandler=std::move(handler); }
   void setHeader(const QString& icon, const QString& title);  // one panel serves every guided tool
   bool pinned() const { return m_pin->isChecked(); }
   bool userPlaced() const { return m_userPlaced; }
@@ -73,6 +74,7 @@ class ToolPanel : public QWidget {
   friend class ToolPanelGrip;
   void userPlacedNow();  // after a drag or a grip resize: remember where the panel is
   void refreshIcons();
+  std::function<void()> m_escapeHandler;
   QString m_id, m_iconName;
   QColor Tokens::* m_tint;  // header icon colour: sel for inspect tools, amber for annotations, fg2 for selection
   QLabel *m_icon, *m_name, *m_context;

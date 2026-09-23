@@ -188,6 +188,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     m_viewport->showMeasurement(m_lastMeasure);
     refreshToolUi();
   });
+  m_toolPanel->setEscapeHandler([this] { toolEscape(); });
   connect(m_toolPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
     if (!on && toolMeasures()) cancelTool();  // closing the tool's panel leaves the tool
   });
@@ -719,6 +720,7 @@ void MainWindow::buildDocks() {
 
   m_browser = new BrowserPanel(m_doc, this);
   m_browserOverlay = new BrowserOverlay(m_browser, m_viewport);
+  connect(m_doc,&AppDocument::changed,m_browserOverlay,[this] { m_browserOverlay->refresh(); });
   m_browserOverlay->place();
 
 
@@ -2063,8 +2065,14 @@ void MainWindow::runBench() {
               m_toolPanel->grab().save(shot + ".radius-panel.png");
             }
             if (!radiusOk) return QCoreApplication::exit(2);
-            toolEscape();
-            QTimer::singleShot(200, this, [this] {
+            // Route Escape from a child of the floating measurement window.
+            QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);
+            QCoreApplication::sendEvent(m_toolSteps,&escape);
+            if(const QString shot=qEnvironmentVariable("OPAD_BENCH_UISHOT");!shot.isEmpty()) {
+              m_browserOverlay->setAutoHide(true);
+              QTimer::singleShot(190,this,[this,shot] { m_browserOverlay->grab().save(shot+".browser.png"); });
+            }
+            QTimer::singleShot(250, this, [this] {
               const bool cleared = m_viewport->selection().empty();
               trace::log(QStringLiteral("bench: picking Esc clears centers %1").arg(cleared ? "PASS" : "FAIL"));
               QCoreApplication::exit(cleared ? 0 : 2);
