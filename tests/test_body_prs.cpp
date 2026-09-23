@@ -11,6 +11,9 @@
 #include <SelectMgr_SelectingVolumeManager.hxx>
 #include <Select3D_SensitivePrimitiveArray.hxx>
 #include <Graphic3d_Camera.hxx>
+#include <SelectMgr_Selection.hxx>
+#include <SelectMgr_SensitiveEntity.hxx>
+#include <BRep_Tool.hxx>
 
 namespace {
 class CountingVolume : public SelectMgr_SelectingVolumeManager {
@@ -22,6 +25,36 @@ class CountingVolume : public SelectMgr_SelectingVolumeManager {
     return SelectMgr_SelectingVolumeManager::OverlapsTriangle(a, b, c, sensitivity, result);
   }
 };
+}
+
+TEST(mesh_selection_has_independent_facet_edge_and_vertex_owners) {
+  struct TestBody : BodyShape { using BodyShape::BodyShape; using BodyShape::ComputeSelection; };
+  Handle(Poly_Triangulation) mesh=new Poly_Triangulation(4,2,false);
+  mesh->SetNode(1,gp_Pnt(0,0,0)); mesh->SetNode(2,gp_Pnt(10,0,0));
+  mesh->SetNode(3,gp_Pnt(0,10,0)); mesh->SetNode(4,gp_Pnt(10,10,0));
+  mesh->SetTriangle(1,Poly_Triangle(1,2,3)); mesh->SetTriangle(2,Poly_Triangle(2,4,3));
+  TopoDS_Face face; BRep_Builder().MakeFace(face,mesh);
+  Handle(TestBody) body=new TestBody(face,BodyPrs::build(face,Bnd_Box()));
+  Handle(Graphic3d_Camera) camera=new Graphic3d_Camera();
+  camera->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+  camera->SetEyeAndCenter(gp_Pnt(5,5,100),gp_Pnt(5,5,0)); camera->SetUp(gp::DY()); camera->SetScale(20);
+  for(const auto [type,count]:{std::pair{TopAbs_FACE,2},std::pair{TopAbs_EDGE,6},std::pair{TopAbs_VERTEX,4}}) {
+    Handle(SelectMgr_Selection) selection=new SelectMgr_Selection(AIS_Shape::SelectionMode(type));
+    body->ComputeSelection(selection,AIS_Shape::SelectionMode(type));
+    CHECK_EQ(selection->Entities().Size(),count);
+    SelectMgr_SelectingVolumeManager volume;
+    volume.InitBoxSelectingVolume(gp_Pnt2d(0,0),gp_Pnt2d(1000,1000));
+    volume.SetCamera(camera); volume.SetWindowSize(1000,1000); volume.AllowOverlapDetection(true); volume.BuildSelectingVolume();
+    std::set<int> owners;
+    for(const auto& entity:selection->Entities()) {
+      SelectBasics_PickResult result;
+      CHECK(entity->BaseSensitive()->Matches(volume,result));
+      auto owner=Handle(SubShapeOwner)::DownCast(entity->BaseSensitive()->OwnerId());
+      CHECK(!owner.IsNull() && owner->HasShape());
+      CHECK_EQ(owner->Shape().ShapeType(),type); owners.insert(owner->index());
+    }
+    CHECK_EQ(owners.size(),size_t(count));
+  }
 }
 
 TEST(coincident_parts_have_distinct_depth_slots) {

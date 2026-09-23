@@ -1,4 +1,8 @@
 #include "BodyShape.hpp"
+#include "opad/geometry.hpp"
+#include <Select3D_SensitiveTriangle.hxx>
+#include <Select3D_SensitiveSegment.hxx>
+#include <Select3D_SensitivePoint.hxx>
 
 #include <AIS_DisplayMode.hxx>
 #include <BRep_Tool.hxx>
@@ -182,7 +186,61 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
   }
 }
 
+namespace {
+// Facets remain compact triangulations in the document. Construct an analytic
+// triangle/segment/vertex only when that primitive is actually picked.
+class MeshOwner : public SubShapeOwner {
+ public:
+  MeshOwner(const TopoDS_Shape& mesh, const Handle(SelectMgr_SelectableObject)& body, opad::Ref::Kind kind, int index)
+      : SubShapeOwner({},body,kind==opad::Ref::Kind::Vertex?9:kind==opad::Ref::Kind::Edge?7:5,index), m_mesh(mesh), m_kind(kind) {
+    SetHilightMode(kind==opad::Ref::Kind::Face?AIS_Shaded:AIS_WireFrame);
+  }
+  void prepare() { if(myShape.IsNull()) myShape=opad::subshape(m_mesh,m_kind,index()); }
+  void HilightWithColor(const Handle(PrsMgr_PresentationManager)& pm,const Handle(Prs3d_Drawer)& style,Standard_Integer mode) override {
+    prepare(); SubShapeOwner::HilightWithColor(pm,style,mode);
+  }
+ private:
+  TopoDS_Shape m_mesh;
+  opad::Ref::Kind m_kind;
+};
+template<class Sensitive> class MeshSensitive : public Sensitive {
+ public:
+  template<class... Args> MeshSensitive(const Handle(MeshOwner)& owner,Args&&... args)
+      : Sensitive(owner,std::forward<Args>(args)...),m_owner(owner) {}
+  Standard_Boolean Matches(SelectBasics_SelectingVolumeManager& mgr,SelectBasics_PickResult& result) override {
+    if(!Sensitive::Matches(mgr,result)) return false;
+    m_owner->prepare(); return true;
+  }
+ private:
+  Handle(MeshOwner) m_owner;
+};
+}
+
 void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode) {
+  if(mode!=0 && opad::is_mesh_shape(myshape)) {
+    const auto type=AIS_Shape::SelectionType(mode);
+    const auto kind=type==TopAbs_FACE?opad::Ref::Kind::Face:type==TopAbs_EDGE?opad::Ref::Kind::Edge:opad::Ref::Kind::Vertex;
+    int index=0;
+    for(TopExp_Explorer faces(myshape,TopAbs_FACE);faces.More();faces.Next()) {
+      TopLoc_Location location;
+      const auto mesh=BRep_Tool::Triangulation(TopoDS::Face(faces.Current()),location);
+      if(mesh.IsNull()) continue;
+      auto point=[&](int i) { return mesh->Node(i).Transformed(location.Transformation()); };
+      auto owner=[&] { return Handle(MeshOwner)(new MeshOwner(myshape,this,kind,index++)); };
+      if(type==TopAbs_VERTEX) {
+        for(int i=1;i<=mesh->NbNodes();++i) selection->Add(new MeshSensitive<Select3D_SensitivePoint>(owner(),point(i)));
+      } else for(int i=1;i<=mesh->NbTriangles();++i) {
+        int a,b,c; mesh->Triangle(i).Get(a,b,c);
+        if(type==TopAbs_FACE) selection->Add(new MeshSensitive<Select3D_SensitiveTriangle>(owner(),point(a),point(b),point(c)));
+        else {
+          selection->Add(new MeshSensitive<Select3D_SensitiveSegment>(owner(),point(a),point(b)));
+          selection->Add(new MeshSensitive<Select3D_SensitiveSegment>(owner(),point(b),point(c)));
+          selection->Add(new MeshSensitive<Select3D_SensitiveSegment>(owner(),point(c),point(a)));
+        }
+      }
+    }
+    return;
+  }
   AIS_Shape::ComputeSelection(selection, mode);
   if (mode == 0) return;  // whole body: highlighted in place, see Viewport::applySelectionLayers
   // The ordinal of each sub-shape is worked out here, once per body and mode: looking it up per selected

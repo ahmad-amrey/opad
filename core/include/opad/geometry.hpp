@@ -31,6 +31,8 @@ Bnd_Box body_bbox(ShapeCache& cache, const std::string& key, const TopoDS_Shape&
 Bnd_Box refine_body_bbox(ShapeCache& cache, const std::string& key, const TopoDS_Shape& meshed);
 // World-space box of a body node: the cached prototype box with its corners transformed (O(1) per node).
 Bnd_Box node_world_bbox(const Document& doc, const Scene& scene, const std::string& node_id);
+// Triangulation-only bodies use facet, facet-side and mesh-node ordinals.
+bool is_mesh_shape(const TopoDS_Shape& shape);
 // Sub-shape by ordinal in the prototype (faces/edges/vertices are enumerated in TopExp_Explorer order).
 TopoDS_Shape subshape(const TopoDS_Shape& proto, Ref::Kind kind, int index);
 int subshape_count(const TopoDS_Shape& proto, Ref::Kind kind);

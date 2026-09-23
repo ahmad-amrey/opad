@@ -3,6 +3,13 @@
 #include <BRepBndLib.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRep_Tool.hxx>
+#include <Poly_Triangulation.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
 #include <BRepTools.hxx>
@@ -233,6 +240,35 @@ static TopAbs_ShapeEnum abs_of(Ref::Kind k) {
   }
 }
 
+bool is_mesh_shape(const TopoDS_Shape& shape) {
+  TopExp_Explorer faces(shape,TopAbs_FACE);
+  return faces.More() && BRep_Tool::Surface(TopoDS::Face(faces.Current())).IsNull();
+}
+
+static TopoDS_Shape mesh_subshape(const TopoDS_Shape& shape, Ref::Kind kind, int index) {
+  if(index<0) throw Error("mesh sub-shape index out of range");
+  for(TopExp_Explorer faces(shape,TopAbs_FACE);faces.More();faces.Next()) {
+    TopLoc_Location location;
+    const auto mesh=BRep_Tool::Triangulation(TopoDS::Face(faces.Current()),location);
+    if(mesh.IsNull()) continue;
+    const int count=kind==Ref::Kind::Vertex ? mesh->NbNodes() : mesh->NbTriangles()*(kind==Ref::Kind::Edge?3:1);
+    if(index>=count) { index-=count; continue; }
+    auto point=[&](int i) { return mesh->Node(i).Transformed(location.Transformation()); };
+    if(kind==Ref::Kind::Vertex) return BRepBuilderAPI_MakeVertex(point(index+1)).Vertex();
+    int a,b,c; mesh->Triangle(kind==Ref::Kind::Edge?index/3+1:index+1).Get(a,b,c);
+    const int v[]={a,b,c};
+    if(kind==Ref::Kind::Edge) return BRepBuilderAPI_MakeEdge(point(v[index%3]),point(v[(index+1)%3])).Edge();
+    BRepBuilderAPI_MakePolygon wire(point(a),point(b),point(c),true);
+    TopoDS_Face face=BRepBuilderAPI_MakeFace(wire.Wire());
+    // Preserve a tiny triangulation for shaded hover/selection without meshing.
+    Handle(Poly_Triangulation) triangle=new Poly_Triangulation(3,1,false);
+    triangle->SetNode(1,point(a)); triangle->SetNode(2,point(b)); triangle->SetNode(3,point(c));
+    triangle->SetTriangle(1,Poly_Triangle(1,2,3)); BRep_Builder().UpdateFace(face,triangle);
+    return face;
+  }
+  throw Error("mesh sub-shape index out of range");
+}
+
 TopoDS_Shape subshape(const TopoDS_Shape& proto, Ref::Kind kind, int index) {
   if (kind == Ref::Kind::Body) return proto;
   if (kind == Ref::Kind::Center) {
@@ -240,6 +276,7 @@ TopoDS_Shape subshape(const TopoDS_Shape& proto, Ref::Kind kind, int index) {
     if (curve.GetType() != GeomAbs_Circle) throw Error("center requires a circular edge");
     return BRepBuilderAPI_MakeVertex(curve.Circle().Location()).Vertex();
   }
+  if (is_mesh_shape(proto)) return mesh_subshape(proto,kind,index);
   TopTools_IndexedMapOfShape map;
   TopExp::MapShapes(proto, abs_of(kind), map);
   if (index < 0 || index >= map.Extent())
@@ -250,6 +287,14 @@ TopoDS_Shape subshape(const TopoDS_Shape& proto, Ref::Kind kind, int index) {
 
 int subshape_count(const TopoDS_Shape& proto, Ref::Kind kind) {
   if (kind == Ref::Kind::Body) return 1;
+  if(is_mesh_shape(proto)) {
+    int count=0;
+    for(TopExp_Explorer faces(proto,TopAbs_FACE);faces.More();faces.Next()) {
+      TopLoc_Location location; const auto mesh=BRep_Tool::Triangulation(TopoDS::Face(faces.Current()),location);
+      if(!mesh.IsNull()) count+=kind==Ref::Kind::Vertex ? mesh->NbNodes() : mesh->NbTriangles()*(kind==Ref::Kind::Edge?3:1);
+    }
+    return count;
+  }
   TopTools_IndexedMapOfShape map;
   TopExp::MapShapes(proto, abs_of(kind), map);
   return map.Extent();

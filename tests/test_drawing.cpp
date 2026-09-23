@@ -2,6 +2,7 @@
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
+#include "opad/inspect.hpp"
 #include <TopoDS_Shape.hxx>
 #include <filesystem>
 
@@ -40,6 +41,24 @@ TEST(mesh_is_persistent_and_view_only) {
   options.format="dxf";
   CHECK_THROWS(export_drawing(saved,s,f.dir/"mesh.dxf",options));
 }
+TEST(mesh_facets_edges_vertices_are_measurable_after_roundtrip) {
+  Files f; write_text_file(f.dir/"mesh.obj","v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\nf 1 2 3\nf 1 2 4\n");
+  auto d=Document::create(); import_file(d,f.dir/"mesh.obj"); d=Document::parse(d.serialize()); const auto scene=resolve(d);
+  const auto id=scene.all_bodies()[0]; const auto shape=node_world_shape(d,scene,id);
+  CHECK_EQ(subshape_count(shape,Ref::Kind::Face),2);
+  CHECK_EQ(subshape_count(shape,Ref::Kind::Edge),6);
+  CHECK_EQ(subshape_count(shape,Ref::Kind::Vertex),4);
+  Ref a; a.body=id; a.kind=Ref::Kind::Vertex; a.index=0;
+  Ref b=a; b.index=1;
+  CHECK_NEAR(measure_distance(d,scene,a,b)["value"].get<double>(),10,1e-7);
+  a.kind=Ref::Kind::Face; b.kind=Ref::Kind::Face;
+  CHECK_NEAR(inspect_ref(d,scene,a)["area"].get<double>(),50,1e-7);
+  CHECK_NEAR(measure_angle(d,scene,a,b)["value"].get<double>(),90,1e-7);
+  a.kind=Ref::Kind::Edge;
+  CHECK_NEAR(inspect_ref(d,scene,a)["length"].get<double>(),10,1e-7);
+  CHECK_THROWS(subshape(shape,Ref::Kind::Face,2));
+}
+
 TEST(svg_arc_and_nested_transform) {
   Files f;write_text_file(f.dir/"arc.svg","<svg width=\"100mm\" viewBox=\"0 0 100 100\"><g transform=\"translate(10,20)\"><path d=\"M0 0 A10 10 0 0 1 20 0\"/></g></svg>");
   auto d=Document::create();import_file(d,f.dir/"arc.svg");auto s=resolve(d);
