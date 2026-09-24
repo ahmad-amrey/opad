@@ -1,3 +1,4 @@
+#include "opad/design/sketch_edit.hpp"
 #include "SketchEditor.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
@@ -201,6 +202,7 @@ void SketchEditor::scheduleFill() { m_fillTimer.start(); }
 
 // ---------------------------------------------------------------- undo
 void SketchEditor::begin_change() {
+  m_dangling.clear();
   m_before = m_sk;
   m_inChange = true;
 }
@@ -427,6 +429,7 @@ int SketchEditor::pointFor(const Snap& s) {
 // ---------------------------------------------------------------- input
 void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
   if (!m_active) return;
+  if ((m_tool=="select" || (m_tool=="spline" && m_chain.empty())) && mods.testFlag(Qt::AltModifier)) return insertSplineNode(u,v);
   if (m_dimEdit && m_dimEdit->isVisible()) commitDimensionEdit();
   if (m_tool == "select") {
     const Hit h = hitTest(u, v);
@@ -537,8 +540,9 @@ void SketchEditor::sketchRelease(double, double, Qt::KeyboardModifiers) {
 
 void SketchEditor::sketchDoubleClick(double u, double v) {
   if (!m_active) return;
-  if (m_tool == "line" || m_tool == "spline") return finishChain();
+  if (m_tool == "line" || (m_tool == "spline" && !m_chain.empty())) return finishChain();
   const Hit h = hitTest(u, v);
+  if((m_tool=="select" || m_tool=="spline") && h.kind==Hit::Point) {m_sel={h.id};editSplineNode();return;}
   if (h.kind == Hit::Dimension) editDimension(h.id, false);
 }
 
@@ -665,6 +669,7 @@ void SketchEditor::rebuild() {
     const bool hot = selected.count(p.id) || picked.count(p.id) || (m_hover.kind == Hit::Point && m_hover.id == p.id);
     const QColor c = hot ? t.hov : p.fixed ? t.green : freePts.count(p.id) ? t.sel : t.fg;
     (hot ? d.bigPoints : d.points).push_back({W(p.x, p.y), c});
+    if(m_dangling.count(p.id)) d.bigPoints.push_back({W(p.x,p.y),t.red});
   }
 
   // Constraint glyphs next to what they hold.
@@ -799,6 +804,12 @@ void SketchEditor::rebuild() {
     dimension(c, true);
   }
 
+  for(const auto& e:m_sk.entities) if(e.type==SkEntity::Type::Spline && e.degree) {
+    for(size_t i=1;i<e.p.size();++i) {
+      const auto* a=m_sk.point(e.p[i-1]);const auto* b=m_sk.point(e.p[i]);
+      if(a && b) d.thin.push_back({W(a->x,a->y),W(b->x,b->y),t.fg3});
+    }
+  }
   // Rubber band of the running tool.
   if (m_haveCursor && m_tool != "select") {
     const QColor rb = t.hov;
@@ -807,7 +818,15 @@ void SketchEditor::rebuild() {
     auto circle = [&](double x, double y, double r) {
       for (int i = 0; i < 72; ++i) seg(x + r * std::cos(i * M_PI / 36), y + r * std::sin(i * M_PI / 36), x + r * std::cos((i + 1) * M_PI / 36), y + r * std::sin((i + 1) * M_PI / 36));
     };
-    if ((m_tool == "line" || m_tool == "spline") && !m_chain.empty()) {
+    if (m_tool=="spline" && !m_chain.empty()) {
+      Sketch preview=m_sk;auto nodes=m_chain;
+      if(const auto* last=preview.point(nodes.back());last && std::hypot(last->x-cu,last->y-cv)>1e-7) nodes.push_back(preview.add_point(cu,cv));
+      if(nodes.size()>=2) {
+        const int id=add_cubic_spline(preview,nodes);auto edge=entity_edge(preview,*preview.entity(id),opad::Frame{});
+        if(!edge.IsNull()) {BRepAdaptor_Curve c(edge);auto previous=c.Value(c.FirstParameter());const int samples=int(nodes.size())*24;
+          for(int i=1;i<=samples;++i) {auto at=c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*i/samples);seg(previous.X(),previous.Y(),at.X(),at.Y());previous=at;}}
+      }
+    } else if (m_tool == "line" && !m_chain.empty()) {
       if (const SkPoint* p = m_sk.point(m_chain.back())) seg(p->x, p->y, cu, cv);
     } else if (!m_clicks.empty()) {
       const Snap& a = m_clicks[0];

@@ -590,7 +590,7 @@ void MainWindow::buildRibbon() {
   m_ribbon->addTab(design,tr("View"),{acts({"view.fit","view.home","view.2d","view.ortho"}),acts({"view.shaded","view.edges","view.wire","view.grid","view.gridSettings","select.through"})});
   m_ribbon->addTab(design, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
   m_ribbon->addTab(m_sketchWorkspace, tr("Sketch"), {acts({"sketch.finish", "sketch.cancel"}), acts({"sketch.select", "sketch.line", "sketch.rect", "sketch.crect", "sketch.circle", "sketch.circle3", "sketch.arc3", "sketch.arcc"}),
-                                                     acts({"sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline", "sketch.point"}), acts({"sketch.dimension", "sketch.construction"})});
+                                                     acts({"sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline", "sketch.point"}), acts({"sketch.dimension", "sketch.construction", "sketch.node", "sketch.openEnds"})});
   m_ribbon->addTab(m_sketchWorkspace, tr("Modify + constrain"), {acts({"sketch.finish"}), acts({"sketch.select", "sketch.fillet", "sketch.trim", "sketch.offset", "sketch.mirror", "sketch.project", "sketch.dimension"}),
                                                                  acts({"sketch.c.horizontal", "sketch.c.vertical", "sketch.c.coincident", "sketch.c.parallel", "sketch.c.perpendicular", "sketch.c.tangent"}),
                                                                  acts({"sketch.c.equal", "sketch.c.concentric", "sketch.c.midpoint", "sketch.c.symmetric", "sketch.c.collinear", "sketch.c.fix"})});
@@ -976,6 +976,8 @@ void MainWindow::buildDesignActions() {
   // Sketch mode.
   addAction("sketch.finish", tr("Finish sketch"), "finish", QKeySequence("Ctrl+Return"), [this] { m_design->finishSketch(); });
   addAction("sketch.cancel", tr("Cancel sketch"), "close", QKeySequence(), [this] { m_design->cancelSketch(); });
+  addAction("sketch.node",tr("Spline node weights"),"spline",QKeySequence("Alt+W"),[this]{m_design->sketch()->editSplineNode();});
+  addAction("sketch.openEnds",tr("Find open ends"),"point",QKeySequence("Alt+E"),[this]{m_design->sketch()->findOpenVertices();});
   auto* tools = new QActionGroup(this);
   for (const auto& [tool, text, icon] : std::vector<std::tuple<QString, QString, QString>>{
            {"select", tr("Select"), "cursor"}, {"line", tr("Line"), "line"}, {"rect", tr("Rectangle"), "rect"}, {"crect", tr("Centre rectangle"), "crect"},

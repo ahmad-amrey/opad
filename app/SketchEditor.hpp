@@ -40,6 +40,9 @@ class SketchEditor : public QObject, public SketchInput {
   // tangent, equal, concentric, midpoint, symmetric, collinear, fix).
   void setTool(const QString& tool);
   QString tool() const { return m_tool; }
+  void editSplineNode();
+  void findOpenVertices();
+  void insertSplineNode(double u,double v);
   void toggleConstruction();
   void deleteSelection();
   bool canUndo() const { return !m_undo.empty(); }
@@ -127,6 +130,7 @@ class SketchEditor : public QObject, public SketchInput {
   opad::design::SkConstraint m_pendingDim;  // picked, waiting for its place
   bool m_placingDim = false;
   std::vector<int> m_sel;
+  std::set<int> m_dangling;
   Hit m_hover;
   Snap m_cursor;
   bool m_haveCursor = false;

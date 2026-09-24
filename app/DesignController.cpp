@@ -621,6 +621,7 @@ void DesignController::bench() {
   enterSketch({}, "Sketch1", opad::json{{"base", "xy"}, {"frame", frame.to_json()}}, frame, opad::json::object());
   QTimer::singleShot(700, this, [this] {  // the look-at animation has ended: pick distances are in pixels
   m_sketch->bench({});
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SPLINE")) return;
   if (const QString shot = qEnvironmentVariable("OPAD_BENCH_SKETCHSHOT"); !shot.isEmpty()) m_viewport->grabImage().save(shot);  // the editor's overlay: curves, dimensions, glyphs
   finishSketch([this] {
     trace::log(QStringLiteral("bench: design: sketch committed, %1 sketches in the scene").arg(m_doc->scene.sketches.size()));

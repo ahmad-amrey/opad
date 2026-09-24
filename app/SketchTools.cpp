@@ -1,3 +1,4 @@
+#include "opad/design/sketch_edit.hpp"
 // SketchEditor, the tools: what a click means for each of them, constraints, dimensions, fillet, trim, mirror.
 #include "SketchEditor.hpp"
 
@@ -98,7 +99,7 @@ void SketchEditor::toolPrompt() {
   else if (m_tool == "slot") t = n == 0 ? tr("Slot: click the first centre") : n == 1 ? tr("Slot: click the second centre") : tr("Slot: click to set the width");
   else if (m_tool == "ellipse") t = n == 0 ? tr("Ellipse: click the centre") : n == 1 ? tr("Ellipse: click the end of the first axis") : tr("Ellipse: click to set the second axis");
   else if (m_tool == "point") t = tr("Point: click to place (holes are drilled at sketch points)");
-  else if (m_tool == "spline") t = tr("Spline: click the points it passes through · Enter or double-click ends it");
+  else if (m_tool == "spline") t = tr("Spline: click nodes; Enter finishes. Alt-click a finished spline to insert a node; double-click a node to edit weights.");
   else if (m_tool == "fillet") t = tr("Sketch fillet: click the corner where two lines meet");
   else if (m_tool == "trim") t = tr("Trim: click the part of a curve to remove");
   else if (m_tool == "mirror") t = tr("Mirror: click the mirror line");
@@ -112,11 +113,7 @@ void SketchEditor::toolPrompt() {
 void SketchEditor::finishChain() {
   if (m_tool == "spline" && m_chain.size() >= 2) {
     begin_change();
-    SkEntity e;
-    e.id = m_sk.next_id();
-    e.type = ET::Spline;
-    e.p = m_chain;
-    m_sk.entities.push_back(e);
+    add_cubic_spline(m_sk,m_chain);
     end_change(tr("Spline"));
   } else if (m_chain.size() == 1) {
     // A start point that never got its segment.
@@ -983,6 +980,22 @@ bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
 // Drives the tools the way the mouse does (sketch coordinates instead of pixels), so a headless run covers the
 // same code as a user: a 40 x 25 rectangle from the origin with a hole, width and height dimensioned.
 void SketchEditor::bench(const QString&) {
+  if(const QString shot=qEnvironmentVariable("OPAD_BENCH_SPLINE");!shot.isEmpty()) {
+    m_viewport->setCameraJson({{"eye",{20,8,100}},{"target",{20,8,0}},{"up",{0,1,0}},{"scale",65},{"projection","orthographic"},{"absolute",true}});
+    m_viewport->setGridSnap(false);setTool("spline");
+    for(const auto& p:std::vector<std::pair<double,double>>{{0,0},{12,18},{30,3}}) {sketchMove(p.first,p.second,Qt::NoModifier,false);sketchPress(p.first,p.second,Qt::NoModifier);}
+    sketchMove(45,14,Qt::NoModifier,false);m_viewport->grabImage().save(shot+".live.png");
+    finishChain();const auto id=m_sk.entities.back().id;const auto count=m_sk.entity(id)->p.size();
+    BRepAdaptor_Curve curve(entity_edge(m_sk,*m_sk.entity(id),opad::Frame{}));auto at=curve.Value(0.6);
+    setTool("select");sketchPress(at.X(),at.Y(),Qt::AltModifier);
+    const bool inserted=m_sk.entity(id)->p.size()>count;
+    m_sk.entity(id)->weights[1]=0.6;m_sk.entity(id)->weights[2]=1.8;rebuild();
+    m_viewport->grabImage().save(shot+".nodes.png");findOpenVertices();
+    trace::log(QString("bench: spline live preview / insert node / asymmetric weights %1").arg(inserted?"PASS":"FAIL"));
+    QTimer::singleShot(500,this,[this,inserted]{const bool ends=m_dangling.size()==2;trace::log(QString("bench: spline open ends %1").arg(ends?"PASS":"FAIL"));QCoreApplication::exit(inserted && ends?0:2);});
+    return;
+  }
+
   const bool grid=m_viewport->gridSnap(); const double step=m_viewport->gridStep();
   m_viewport->setGridSnap(true); const auto snapped=snap(1.24*step,2.34*step);
   if(std::abs(snapped.u-step)>1e-9 || std::abs(snapped.v-2*step)>1e-9) throw opad::Error("grid snap missed its lattice");

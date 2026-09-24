@@ -66,7 +66,8 @@ void reconstruct(Sketch& sk,double tolerance) {
           gp_Pnt mid((p.X()+q.X())/2,(p.Y()+q.Y())/2,0);
           good &= std::abs(c.Distance(p)-r)<=tolerance && std::abs(c.Distance(q)-r)<=tolerance && std::abs(c.Distance(mid)-r)<=tolerance;
           const double turn=std::atan2((p.X()-c.X())*(q.Y()-c.Y())-(p.Y()-c.Y())*(q.X()-c.X()),(p.X()-c.X())*(q.X()-c.X())+(p.Y()-c.Y())*(q.Y()-c.Y()));
-          if(sweep*turn<0) good=false; sweep+=turn;
+          if(sweep*turn<0) good=false;
+          sweep+=turn;
         }
         if(good && (closed || std::abs(sweep)<2*M_PI-1e-7)) {
           SkEntity e=original;e.type=SkEntity::Type::Arc; int first=chain.front(),last=chain.back(); if(sweep<0) std::swap(first,last);

@@ -2,6 +2,7 @@
 
 #include <BOPAlgo_Tools.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
@@ -159,6 +160,18 @@ bool interior_point(const TopoDS_Face& face, const Frame& frame, double& u, doub
     frame.to_local({i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0}, pu, pv);
     u0 = std::min(u0, pu); u1 = std::max(u1, pu);
     v0 = std::min(v0, pv); v1 = std::max(v1, pv);
+  }
+  // Thin rings and slivers may lie between all grid samples. Probe on both sides
+  // of a boundary tangent, shrinking the offset until the classifier finds the face.
+  const double scale=std::max(u1-u0,v1-v0);
+  for(TopExp_Explorer ex(face,TopAbs_EDGE);ex.More();ex.Next()) {
+    BRepAdaptor_Curve curve(TopoDS::Edge(ex.Current()));gp_Pnt at;gp_Vec tangent;
+    curve.D1((curve.FirstParameter()+curve.LastParameter())*0.5,at,tangent);
+    gp_Vec inward=gp_Vec(dir(frame.normal())).Crossed(tangent);
+    if(inward.SquareMagnitude()<1e-20) continue;
+    inward.Normalize();
+    for(double offset=scale*0.001;offset>1e-7;offset*=0.25)
+      if(accept(at.Translated(inward*offset)) || accept(at.Translated(inward*-offset))) return true;
   }
   // Classification is sufficient: no all-edge distance query for every grid point.
   for (int n : {7, 15, 41, 101})

@@ -1,3 +1,5 @@
+#include "opad/design/sketch_edit.hpp"
+#include <BRepAdaptor_Curve.hxx>
 // Design engine: expressions, parameters, sketches -> profiles, features, regeneration, history edits.
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
@@ -119,6 +121,12 @@ TEST(sketch_regions) {
   Sketch guide;
   guide.add_circle(guide.add_point(0, 0), 5, true);
   CHECK(sketch_regions(guide, f).empty());
+}
+
+TEST(thin_ring_profile_is_not_lost_between_grid_samples) {
+  Sketch sk;sk.add_circle(sk.add_point(0,0),100);sk.add_circle(sk.add_point(0,0),99.999);
+  const auto regions=sketch_regions(sk,Frame{});CHECK_EQ(regions.size(),2u);
+  for(const auto& r:regions) CHECK_EQ(region_at(regions,Frame{},r.u,r.v),int(&r-regions.data()));
 }
 
 TEST(primitives_and_operations) {
@@ -414,3 +422,24 @@ TEST(coil_and_thicken) {
 }
 
 CHECK_MAIN()
+
+TEST(spline_nodes_insert_without_shape_change_and_weights_persist) {
+  Sketch sk;std::vector<int> nodes={sk.add_point(0,0),sk.add_point(10,8),sk.add_point(20,0)};
+  const int id=add_cubic_spline(sk,nodes);sk.validate();
+  BRepAdaptor_Curve before(entity_edge(sk,*sk.entity(id),Frame{}));std::vector<gp_Pnt> samples;
+  for(int i=0;i<=40;++i)samples.push_back(before.Value(i/20.0));
+  const int inserted=insert_spline_node(sk,id,5,4);CHECK(sk.point(inserted));sk.validate();
+  BRepAdaptor_Curve after(entity_edge(sk,*sk.entity(id),Frame{}));
+  for(int i=0;i<=40;++i)CHECK_NEAR(samples[i].Distance(after.Value(i/20.0)),0,1e-7);
+  sk.entity(id)->weights[1]=0.5;sk.entity(id)->weights[2]=2.0;
+  auto round=Sketch::from_json(sk.to_json());CHECK_NEAR(round.entity(id)->weights[1],0.5,1e-9);CHECK_NEAR(round.entity(id)->weights[2],2,1e-9);
+  CHECK(!entity_edge(round,*round.entity(id),Frame{}).IsNull());
+}
+TEST(open_endpoint_detection_handles_t_junctions_and_construction) {
+  Sketch sk;int a=sk.add_point(0,0),b=sk.add_point(10,0),c=sk.add_point(5,0),d=sk.add_point(5,5);
+  sk.add_line(a,b);sk.add_line(c,d);auto ends=dangling_vertices(sk);
+  CHECK_EQ(ends.size(),3u);CHECK(std::find(ends.begin(),ends.end(),c)==ends.end());
+  sk.add_line(a,d);sk.add_line(d,b);CHECK(dangling_vertices(sk).empty());
+  sk.add_line(sk.add_point(30,0),sk.add_point(31,0),true);CHECK(dangling_vertices(sk).empty());
+  Sketch circle;circle.add_circle(circle.add_point(0,0),10);CHECK(dangling_vertices(circle).empty());
+}
