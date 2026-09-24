@@ -140,6 +140,7 @@ class BrowserPanel : public QWidget {
   void selectionChanged(const std::vector<std::string>& ids);
   void contextMenuRequested(const QPoint& globalPos, const std::vector<std::string>& ids);
   void fitRequested(const std::vector<std::string>& ids);
+  void autoHideChanged(bool on);
   void sketchActivated(const std::string& sketchId);  // double-click on a sketch row: edit it
 
  public slots:

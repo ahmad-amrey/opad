@@ -1468,6 +1468,15 @@ void Viewport::displayBody(const std::string& id) {
   ais->SetColor(qcolor(n->color));
   if (n->opacity < 1.0) ais->SetTransparency(1.0 - n->opacity);
   applyStyle(ais);
+  if(n->representation=="drawing2d" && n->raster.is_null()) {
+    Handle(Prs3d_Drawer) selected=new Prs3d_Drawer();selected->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected));
+    selected->SetDisplayMode(AIS_WireFrame);selected->SetColor(Quantity_Color(0.62,0.35,0.96,Quantity_TOC_sRGB));
+    selected->SetLineAspect(new Prs3d_LineAspect(selected->Color(),Aspect_TOL_SOLID,3));
+    selected->SetWireAspect(new Prs3d_LineAspect(selected->Color(),Aspect_TOL_SOLID,3));
+    ais->SetHilightAttributes(selected);
+    Handle(Prs3d_Drawer) hover=new Prs3d_Drawer();hover->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic));
+    hover->SetDisplayMode(AIS_WireFrame);hover->SetColor(Quantity_NOC_WHITE);ais->SetDynamicHilightAttributes(hover);
+  }
   m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, -1, Standard_False);  // selection activated below, once
   const qint64 displayMs = t.elapsed();
   activateSelection(ais);

@@ -517,6 +517,8 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   else p->setBrush(t.bg);  // components and the document: hollow square
   p->drawRoundedRect(sw, 2, 2);
   QString typeIcon = isDoc ? "doc" : isBody ? (n->representation=="drawing2d" ? "drawing" : n->representation=="mesh" ? "mesh" : "body") : "component";
+  const auto category=index.data(Qt::UserRole+4).toString();
+  if(category=="drawing2d") typeIcon="drawing"; else if(category=="mesh") typeIcon="mesh";
   p->drawPixmap(r.left() + kTypeX, y, icons::pixmap(typeIcon, n && n->body_missing ? t.red : iconColor, 16, dpr));
   if (isDoc) {
     p->setFont(theme::ui(13));
@@ -640,6 +642,10 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     return b;
   };
   m_parentBtn = button("chevronUp", tr("Select parent (Ctrl+Up)"));
+  auto* pin=button("pin",tr("Keep browser expanded"));pin->setCheckable(true);
+  pin->setChecked(!QSettings().value("ui/browserAutoHide",true).toBool());
+  pin->setStyleSheet("QToolButton:checked { background: #865bce; border: 1px solid #cab0ff; border-radius: 3px; }");
+  connect(pin,&QToolButton::toggled,this,[this](bool on){ emit autoHideChanged(!on); });
   m_locateBtn = button("locate", tr("Scroll to the selected object"));
   m_expandBtn = button("expandAll", tr("Expand all"));
   m_collapseBtn = button("collapseAll", tr("Collapse all"));
@@ -728,6 +734,12 @@ QTreeWidgetItem* BrowserPanel::build(const std::string& id, QTreeWidgetItem* par
   item->setFlags(item->flags() | Qt::ItemIsEditable | Qt::ItemIsDragEnabled | (n->kind == opad::Node::Kind::Component ? Qt::ItemIsDropEnabled : Qt::NoItemFlags));
   item->setToolTip(0, QString("%1\n%2").arg(name, QString::fromStdString(id)));
   for (const auto& c : n->children) build(c, item, expanded);
+  QString category=QString::fromStdString(n->representation);
+  if(n->kind!=opad::Node::Kind::Body) {
+    category=item->childCount()?item->child(0)->data(0,Qt::UserRole+4).toString():QString();
+    for(int i=1;i<item->childCount();++i) if(item->child(i)->data(0,Qt::UserRole+4).toString()!=category) {category.clear();break;}
+  }
+  item->setData(0,Qt::UserRole+4,category);
   item->setExpanded(expanded.empty() ? true : expanded.count(id) > 0);
   return item;
 }
@@ -773,6 +785,10 @@ void BrowserPanel::rebuild() {
       folder->setExpanded(expanded.empty() || expanded.count("folder:sketches") > 0);
     }
     for (const auto& r : m_doc->scene.roots) build(r, root, expanded);
+    QString category;
+    if(root->childCount()) category=root->child(0)->data(0,Qt::UserRole+4).toString();
+    for(int i=1;i<root->childCount();++i) if(root->child(i)->data(0,Qt::UserRole+4).toString()!=category) {category.clear();break;}
+    root->setData(0,Qt::UserRole+4,category);
     root->setExpanded(true);
   }
   bool empty = !m_doc->hasDocument;

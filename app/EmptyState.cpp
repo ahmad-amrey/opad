@@ -79,13 +79,13 @@ EmptyState::EmptyState(QWidget* parent) : QWidget(parent) {
   buttons->addStretch();
   auto* open = new QPushButton(icons::icon("open", theme::current().onsel), tr("Open   Ctrl+O"), column);
   open->setObjectName("primary");
-  auto* import = new QPushButton(icons::themed("import", 16), tr("Import   Ctrl+I"), column);
+  auto* import = new QPushButton(icons::themed("doc", 16), tr("New Document   Ctrl+N"), column);
   m_recentButton = new QPushButton(icons::themed("recent", 16), tr("Recent ▾"), column);
   buttons->addWidget(open);
   buttons->addWidget(import);
   connect(theme::notifier(), &theme::Notifier::changed, this, [open, import, this] {
     open->setIcon(icons::icon("open", theme::current().onsel));
-    import->setIcon(icons::themed("import", 16));
+    import->setIcon(icons::themed("doc", 16));
     m_recentButton->setIcon(icons::themed("recent", 16));
     setRecent(m_paths);
   });

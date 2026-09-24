@@ -214,7 +214,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     m_viewport->showPreview(a, p, QString::fromUtf8("≈ %1 mm").arg(d, 0, 'f', 1));
   });
   connect(m_empty, &EmptyState::openRequested, action("file.open"), &QAction::trigger);
-  connect(m_empty, &EmptyState::importRequested, action("file.import"), &QAction::trigger);
+  connect(m_empty, &EmptyState::importRequested, action("file.new"), &QAction::trigger);
   connect(m_empty, &EmptyState::recentChosen, this, &MainWindow::openPath);
   connect(m_empty, &EmptyState::filesDropped, this, [this](const QStringList& paths) { openPath(paths.first()); });
 
@@ -337,6 +337,14 @@ void MainWindow::buildActions() {
   addAction("view.rollright", tr("Turn 90° right"), "rollRight", QKeySequence(), [this] { m_viewport->rollView(-90); });
   for (const auto& [name, key] : std::vector<std::pair<QString, QString>>{{"top", "Ctrl+Alt+1"}, {"front", "Ctrl+Alt+2"}, {"right", "Ctrl+Alt+3"}, {"iso", "Ctrl+Alt+4"}, {"bottom", "Ctrl+Alt+5"}, {"back", "Ctrl+Alt+6"}, {"left", "Ctrl+Alt+7"}})
     addAction("view." + name, tr("View: %1").arg(name), "home", QKeySequence(key), [this, n = name] { m_viewport->standardView(n); });
+  auto* flat = addAction("view.2d",tr("2D mode"),"drawing",QKeySequence("Ctrl+Alt+D"),[this]{},true);
+  flat->setObjectName("view.2d");
+  flat->setCheckable(true);
+  connect(flat, &QAction::toggled, this, [this](bool on) {
+    m_viewport->setTwoDimensional(on);
+    if (m_browserOverlay && action("panel.browser")->isChecked()) { m_browserOverlay->setVisible(m_doc->hasDocument); m_browserOverlay->raise(); }
+    m_homeBtn->setVisible(!on); m_rollLeft->setVisible(!on); m_rollRight->setVisible(!on);
+  });
   QAction* ortho = addAction("view.ortho", tr("Orthographic"), "ortho", QKeySequence("O"), [this] {}, true);
   ortho->setChecked(true);
   connect(ortho, &QAction::toggled, this, [this](bool on) { m_viewport->setOrthographic(on); updateChips(); });
@@ -555,7 +563,7 @@ void MainWindow::buildRibbon() {
   Workspace sketchWs{tr("Sketch"), "sketch", "", tr("Drawing a sketch. Finish sketch returns to Design."), tr("ops: sketch · edit")};
   sketchWs.contextual = true;
   m_sketchWorkspace = m_ribbon->addWorkspace(sketchWs);
-  m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid"}), acts({"view.isolate", "view.unisolate"})});
+  m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho", "view.2d"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid"}), acts({"view.isolate", "view.unisolate"})});
   m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"}), acts({"inspect.section", "inspect.flip"})});
   m_ribbon->addTab(review, tr("Annotate"), {acts({"annotate.add", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
   m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
@@ -567,6 +575,7 @@ void MainWindow::buildRibbon() {
   m_ribbon->addTab(design, tr("Construct"), {acts({"design.plane", "design.axis"}), acts({"design.parameters", "design.edit", "design.regenerate"})});
   m_ribbon->addTab(design, tr("Assemble"), {acts({"file.import", "design.newcomponent", "design.reparent"}), acts({"edit.rename", "edit.delete", "edit.restore"}),
                                             acts({"design.colour", "design.opacity", "design.lock", "edit.hide", "view.isolate"})});
+  m_ribbon->addTab(design,tr("View"),{acts({"view.fit","view.home","view.2d","view.ortho"}),acts({"view.shaded","view.edges","view.wire","view.grid"})});
   m_ribbon->addTab(design, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
   m_ribbon->addTab(m_sketchWorkspace, tr("Sketch"), {acts({"sketch.finish", "sketch.cancel"}), acts({"sketch.select", "sketch.line", "sketch.rect", "sketch.crect", "sketch.circle", "sketch.circle3", "sketch.arc3", "sketch.arcc"}),
                                                      acts({"sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline", "sketch.point"}), acts({"sketch.dimension", "sketch.construction"})});
@@ -608,13 +617,6 @@ void MainWindow::buildRibbon() {
     a->setChecked(m_settings.value("view/background", 1).toInt() == i);
     connect(a, &QAction::triggered, this, [this, i] { m_viewport->setSceneBackground(i); });
   }
-  auto* flat = settings->addAction(tr("2D projection mode"));
-  flat->setObjectName("view.2d");
-  flat->setCheckable(true);
-  connect(flat, &QAction::toggled, this, [this](bool on) {
-    m_viewport->setTwoDimensional(on);
-    m_homeBtn->setVisible(!on); m_rollLeft->setVisible(!on); m_rollRight->setVisible(!on);
-  });
   QMenu* navMenu = settings->addMenu(tr("Navigation preset"));
   for (QAction* a : m_actions) if (a->objectName().startsWith("nav.")) navMenu->addAction(a);
   settings->addSeparator();
@@ -729,6 +731,7 @@ void MainWindow::buildDocks() {
 
   m_browser = new BrowserPanel(m_doc, this);
   m_browserOverlay = new BrowserOverlay(m_browser, m_viewport);
+  connect(m_browser,&BrowserPanel::autoHideChanged,m_browserOverlay,[this](bool on){m_browserOverlay->setAutoHide(on);});
   connect(m_doc,&AppDocument::changed,m_browserOverlay,[this] { m_browserOverlay->refresh(); });
   m_browserOverlay->place();
 
@@ -1031,6 +1034,7 @@ void MainWindow::applyTheme(bool dark) {
 
 void MainWindow::showDocument(bool has) {
   m_stack->setCurrentIndex(has ? 1 : 0);
+  m_browserOverlay->setVisible(has && action("panel.browser")->isChecked());
   for (QAction* a : m_actions) {
     QString id = a->objectName();
     if (id.startsWith("view.") && id != "view.dark") a->setEnabled(has && (id != "view.unisolate" || m_viewport->isIsolated()));
