@@ -408,6 +408,9 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
       else if (std::fabs(dx) < t && std::fabs(dy) > 3 * t) { s.u = from->x; s.vertical = true; }
     }
   }
+  if(m_viewport->gridSnap() && !s.horizontal && !s.vertical) {
+    const double step=m_viewport->gridStep(); s.u=std::round(s.u/step)*step; s.v=std::round(s.v/step)*step;
+  }
   return s;
 }
 

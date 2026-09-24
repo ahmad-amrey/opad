@@ -516,7 +516,7 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   if (isBody) p->setBrush(n->has_color ? QColor::fromRgbF(n->color[0], n->color[1], n->color[2]) : (hidden ? t.fg3 : t.fg2));
   else p->setBrush(t.bg);  // components and the document: hollow square
   p->drawRoundedRect(sw, 2, 2);
-  QString typeIcon = isDoc ? "doc" : isBody ? "body" : "component";
+  QString typeIcon = isDoc ? "doc" : isBody ? (n->representation=="drawing2d" ? "drawing" : n->representation=="mesh" ? "mesh" : "body") : "component";
   p->drawPixmap(r.left() + kTypeX, y, icons::pixmap(typeIcon, n && n->body_missing ? t.red : iconColor, 16, dpr));
   if (isDoc) {
     p->setFont(theme::ui(13));

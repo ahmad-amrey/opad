@@ -441,7 +441,7 @@ void Viewport::setGrid(bool on) {
 }
 
 void Viewport::updateGridExtent() {
-  if (!m_initialised || !m_grid) return;
+  if (!m_initialised) return;
   Bnd_Box bounds;
   for (const auto& [id,item]:m_items) { Bnd_Box b; item.ais->BoundingBox(b); bounds.Add(b); }
   for (const auto& [id,wire]:m_sketchWires) { Bnd_Box b; wire.ais->BoundingBox(b); bounds.Add(b); }
@@ -451,6 +451,7 @@ void Viewport::updateGridExtent() {
     extent=std::max({extent,std::abs(lo.X()),std::abs(lo.Y()),std::abs(lo.Z()),std::abs(hi.X()),std::abs(hi.Y()),std::abs(hi.Z())})*1.1;
   }
   const double step=std::pow(10.0,std::floor(std::log10(extent/10.0)));
+  m_gridStep=step;
   m_viewer->SetRectangularGridValues(0,0,step,step,0);
   m_viewer->SetRectangularGridGraphicValues(extent,extent,0);
 }

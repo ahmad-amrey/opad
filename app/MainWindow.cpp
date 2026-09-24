@@ -272,7 +272,7 @@ void MainWindow::buildActions() {
     QString p = QFileDialog::getOpenFileName(this, tr("Open"), m_settings.value("ui/lastDir").toString(), tr("Design files (*.opad *.step *.stp *.dxf *.svg *.dwg *.stl *.obj);;OPAD document (*.opad);;STEP (*.step *.stp);;2D drawings (*.dxf *.svg *.dwg);;Meshes (*.stl *.obj)"));
     if (!p.isEmpty()) openPath(p);
   });
-  addAction("file.import", tr("&Import STEP…"), "import", QKeySequence("Ctrl+I"), [this] {
+  addAction("file.import", tr("&Import…"), "import", QKeySequence("Ctrl+I"), [this] {
     QString p = QFileDialog::getOpenFileName(this, tr("Import design"), m_settings.value("ui/lastDir").toString(), tr("Design files (*.step *.stp *.dxf *.svg *.dwg *.stl *.obj)"));
     if (p.isEmpty()) return;
     m_settings.setValue("ui/lastDir", QFileInfo(p).absolutePath());
@@ -846,14 +846,28 @@ void MainWindow::buildStatusBar() {
   // which fought with the strip's own show/hide and drew the message across the bars.
   statusBar()->addPermanentWidget(m_statusHover, 1);
   statusBar()->addPermanentWidget(m_progress, 1);
-  for (const auto& spec : {std::pair{"view.extensions", "Extensions"}, std::pair{"view.tracking", "Tracking"}}) {
-    const bool extension=QString(spec.first)=="view.extensions";
-    auto* a=addAction(spec.first, tr(spec.second), "", QKeySequence(extension ? "F11" : "F12"), [] {}, true);
-    a->setChecked(m_settings.value(extension ? "view/extensions" : "view/tracking", true).toBool());
-    a->setToolTip(extension ? tr("Extend acquired edges (F11)") : tr("Track alignment from acquired points (F12)"));
-    auto apply=[this,extension](bool on) { if(extension) m_viewport->setExtensionTracking(on); else m_viewport->setTracking(on); };
+  struct Toggle { const char* id; const char* label; const char* icon; const char* key; const char* setting; bool defaultOn; };
+  for(const auto& spec : {Toggle{"view.extensions","Extensions","extensions","F11","view/extensions",true},
+      Toggle{"view.tracking","Tracking","tracking","F12","view/tracking",true},
+      Toggle{"view.gridSnap","Grid snapping","grid","F9","view/gridSnap",false}}) {
+    auto* a=addAction(spec.id,tr(spec.label),spec.icon,QKeySequence(spec.key),[] {},true);
+    a->setChecked(m_settings.value(spec.setting,spec.defaultOn).toBool());
+    a->setToolTip(tr(spec.label)+QString(" (%1)").arg(spec.key));
+    auto apply=[this,spec](bool on) {
+      m_settings.setValue(spec.setting,on);
+      if(QString(spec.id)=="view.extensions") m_viewport->setExtensionTracking(on);
+      else if(QString(spec.id)=="view.tracking") m_viewport->setTracking(on);
+      else m_viewport->setGridSnap(on);
+    };
     connect(a,&QAction::toggled,this,apply); apply(a->isChecked());
-    auto* button=new QToolButton(this); button->setDefaultAction(a); button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    auto* button=new QToolButton(this); button->setDefaultAction(a); button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    button->setAccessibleName(tr(spec.label)); button->setIconSize({18,18}); button->setFixedSize(30,26);
+    auto paint=[button,a,spec] {
+      const auto& t=theme::current();
+      a->setIcon(icons::icon(spec.icon,a->isChecked()?t.onsel:t.fg2));
+      button->setStyleSheet(QString("QToolButton { border: 1px solid %1; border-radius: 3px; background: %2; } QToolButton:checked { background: %3; border: 2px solid %3; } QToolButton:hover { border-color: %3; }").arg(t.line.name(),t.bg2.name(),t.sel.name()));
+    };
+    connect(theme::notifier(),&theme::Notifier::changed,button,paint); connect(a,&QAction::toggled,button,paint); paint();
     button->setFocusPolicy(Qt::NoFocus); statusBar()->addPermanentWidget(button);
   }
   statusBar()->addPermanentWidget(m_statusSel);
@@ -2040,6 +2054,17 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
   m_benchSelect = false;
+  if(const QString shot=qEnvironmentVariable("OPAD_BENCH_STATUS");!shot.isEmpty()) {
+    QTimer::singleShot(700,this,[this,shot] {
+      const bool dark=theme::current().dark;
+      const bool a=action("view.extensions")->isChecked(),b=action("view.tracking")->isChecked(),c=action("view.gridSnap")->isChecked();
+      action("view.extensions")->setChecked(true); action("view.tracking")->setChecked(false); action("view.gridSnap")->setChecked(true);
+      theme::apply(true); statusBar()->grab().save(shot+".dark.png");
+      theme::apply(false); statusBar()->grab().save(shot+".light.png");
+      action("view.extensions")->setChecked(a); action("view.tracking")->setChecked(b); action("view.gridSnap")->setChecked(c); theme::apply(dark);
+      QCoreApplication::exit(action("file.import")->text().contains("STEP")?2:0);
+    }); return;
+  }
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_SCENE");!shot.isEmpty()) {
     m_viewport->standardView("top");
     QTimer::singleShot(700,this,[this,shot] { m_viewport->fitAll(); QCoreApplication::exit(m_viewport->grabImage().save(shot)?0:2); });

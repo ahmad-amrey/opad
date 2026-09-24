@@ -47,7 +47,7 @@
  "&Open…": "فتح…",
  "Open": "فتح",
  "OPAD or STEP (*.opad *.step *.stp);;OPAD document (*.opad);;STEP (*.step *.stp)": "OPAD أو STEP (*.opad *.step *.stp);;مستند OPAD (*.opad);;STEP (*.step *.stp)",
- "&Import STEP…": "استيراد STEP…",
+ "&Import…": "استيراد…",
  "Import STEP": "استيراد STEP",
  "STEP (*.step *.stp)": "STEP (*.step *.stp)",
  "Import under the selected component “%1”?": "هل تريد الاستيراد تحت المكوّن المحدد «%1»؟",

@@ -65,6 +65,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setStyle(Style s);
   Style style() const { return m_style; }
   void setGrid(bool on);
+  void setGridSnap(bool on) { m_gridSnap=on; }
+  bool gridSnap() const { return m_gridSnap; }
+  double gridStep() const { return m_gridStep; }
   opad::json circleInfo(const opad::Ref& ref) const;
   void setShadows(bool on);
   void setRenderQuality(int level);
@@ -348,6 +351,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   NavPreset m_preset = NavPreset::Fusion;
   Style m_style = Style::ShadedEdges;
   SelFilter m_filter = SelFilter::Body;
+  bool m_gridSnap=false;
+  double m_gridStep=10;
   bool m_grid = false, m_sectionEnabled = false, m_sectionCaps = true, m_initialised = false, m_needFit = false;
   bool m_flushingViewEvents = false, m_repaintAfterFlush = false;
   opad::Vec3 m_sectionOrigin{0, 0, 0}, m_sectionNormal{0, 0, 1};
