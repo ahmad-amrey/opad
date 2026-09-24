@@ -17,6 +17,7 @@ add_library(opad_core STATIC
   src/plugin_host.cpp
   src/design/expr.cpp
   src/design/sketch.cpp
+  src/design/drawing_sketch.cpp
   src/design/solver.cpp
   src/design/sketch_geom.cpp
   src/design/engine.cpp

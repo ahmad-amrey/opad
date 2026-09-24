@@ -518,7 +518,7 @@ void MainWindow::buildMenus() {
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
   add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "-", "inspect.section", "inspect.flip"});
   QMenu* designMenu = menuBar()->addMenu(tr("&Design"));
-  add(designMenu, {"design.sketch", "design.parameters", "-"});
+  add(designMenu, {"design.sketch", "design.convertDrawing", "design.parameters", "-"});
   for (const char* group : {"create", "modify", "combine", "pattern", "body", "construct"}) {
     QMenu* sub = designMenu->addMenu(i18n::t(QString(group).left(1).toUpper() + QString(group).mid(1)));
     for (const auto& spec : opad::design::feature_specs())
@@ -550,7 +550,7 @@ void MainWindow::buildRibbon() {
   m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"}), acts({"inspect.section", "inspect.flip"})});
   m_ribbon->addTab(review, tr("Annotate"), {acts({"annotate.add", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
   m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
-  m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
+  m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.convertDrawing", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
                                          acts({"design.box", "design.cylinder", "design.sphere", "design.cone", "design.torus"}), acts({"design.parameters"})});
   m_ribbon->addTab(design, tr("Modify"), {acts({"design.offset_face", "design.thicken", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.scale"}),
                                           acts({"design.combine", "design.split", "design.move", "design.remove"}),
@@ -880,6 +880,7 @@ void MainWindow::buildStatusBar() {
 // Feature tools come from the core's spec table (one action per kind, the form is generic); sketch tools are
 // only live while a sketch is open, when the ribbon shows the contextual Sketch tab set.
 void MainWindow::buildDesignActions() {
+  addAction("design.convertDrawing",tr("Drawing to sketch"),"drawing",QKeySequence(),[this] { drawingToSketch(); });
   addAction("design.sketch", tr("New sketch"), "sketch", QKeySequence(), [this] { m_design->startSketch(); });
   static const std::map<std::string, const char*> kKeys = {{"extrude", "E"}, {"offset_face", "Q"}, {"move", "M"}};
   for (const auto& spec : opad::design::feature_specs()) {
@@ -1311,6 +1312,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     menu.addSection(ids.size() == 1 ? m_doc->nodeName(ids.front()) : tr("%1 objects").arg(ids.size()));
     QAction* fit = menu.addAction(icons::themed("fit", 16), tr("Fit to"));
     connect(fit, &QAction::triggered, this, [this, ids] { m_viewport->fitNodes(ids); });
+    add("design.convertDrawing");
     add("edit.selectparent");
     add("view.isolate");
     QAction* hideOthers = menu.addAction(icons::themed("hide", 16), tr("Hide others"));
@@ -2054,6 +2056,7 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
   m_benchSelect = false;
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD")) { drawingToSketch(); if(!qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")) QCoreApplication::exit(0); return; }
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_STATUS");!shot.isEmpty()) {
     QTimer::singleShot(700,this,[this,shot] {
       const bool dark=theme::current().dark;

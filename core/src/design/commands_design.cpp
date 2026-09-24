@@ -4,6 +4,8 @@
 #include "opad/commands.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch.hpp"
+#include "opad/design/drawing_sketch.hpp"
+#include "opad/design/sketch_geom.hpp"
 #include "opad/scene.hpp"
 
 namespace opad::commands {
@@ -137,6 +139,14 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         const std::string name = a.contains("name") ? a["name"].get<std::string>() : design::next_name(s, "Sketch");
         return design::apply_ops(doc, {design::make_sketch_op(name, plane, geometry)}, a.value("by", ""));
       });
+
+  reg("drawing_to_sketch", "Project chosen drawing layers into one editable sketch", {{"layers","array of {id, construction}"},{"plane","xy|xz|yz"},{"name","string"},{"tolerance","number, mm"}},true,[](Document* d,const json& a) {
+    auto& doc=need(d); const auto scene=resolve(doc); std::vector<design::DrawingLayer> layers;
+    for(const auto& layer:a.at("layers")) layers.push_back({layer.at("id").get<std::string>(),layer.value("construction",false)});
+    const std::string base=a.value("plane","xy"); const auto frame=design::base_frame(base);
+    const auto sketch=design::drawing_sketch(doc,scene,layers,frame,a.value("tolerance",0.01));
+    return design::apply_ops(doc,{design::make_sketch_op(a.value("name","Converted drawing"),json{{"base",base},{"frame",frame.to_json()}},sketch.to_json())},a.value("by",""));
+  });
 
   reg("sketch_edit", "Replace a sketch's geometry (and optionally its name); features built on it are regenerated",
       {{"doc", "path"}, {"target", "uuid - sketch op id"}, {"geometry", "object"}, {"name", "string"}, {"by", "string"}}, true, [](Document* d, const json& a) {

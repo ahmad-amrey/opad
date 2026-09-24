@@ -3,6 +3,9 @@
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
 #include "opad/inspect.hpp"
+#include "opad/commands.hpp"
+#include "opad/design/drawing_sketch.hpp"
+#include "opad/design/sketch_geom.hpp"
 #include <TopoDS_Shape.hxx>
 #include <filesystem>
 
@@ -124,4 +127,21 @@ TEST(mesh_circle_centers_and_segments_survive_roundtrip) {
   CHECK_EQ(inspect_ref(d,scene,a)["segments"].get<int>(),24);
   a.kind=Ref::Kind::Edge;
   CHECK_NEAR(measure_radius(d,scene,a)["value"].get<double>(),10,1e-4);
+}
+
+TEST(drawing_layers_convert_to_editable_extrudable_sketch) {
+  Files f;write_text_file(f.dir/"layers.svg",R"(<svg width="40mm" viewBox="0 0 40 40"><g id="Outline"><rect width="20" height="10"/></g><g id="Guide"><circle cx="5" cy="5" r="2"/></g><g id="Excluded"><circle cx="30" cy="30" r="1"/></g></svg>)");
+  auto d=Document::create();import_file(d,f.dir/"layers.svg");auto scene=resolve(d);json layers=json::array();
+  for(auto id:scene.all_bodies()) { const auto name=scene.node(id)->name; if(name!="Excluded") layers.push_back({{"id",id},{"construction",name=="Guide"}}); }
+  commands::run("drawing_to_sketch",{{"layers",layers},{"plane","xy"},{"name","Editable"}},&d);
+  scene=resolve(d); CHECK_EQ(scene.sketches.size(),1u);const auto id=scene.sketches[0].id;
+  const auto sk=design::Sketch::from_json(scene.sketches[0].geometry); CHECK_EQ(sk.entities.size(),5u);
+  int guides=0; for(const auto& e:sk.entities) guides+=e.construction; CHECK_EQ(guides,1);
+  const auto regions=design::sketch_regions(sk,scene.sketches[0].frame); CHECK_EQ(regions.size(),1u);CHECK_NEAR(regions[0].area,200,1e-6);
+  Ref edge; edge.body=id;edge.kind=Ref::Kind::Edge;edge.index=0;CHECK(inspect_ref(d,scene,edge).contains("curve"));
+  Ref center=edge; for(int i=0;i<5;++i) { edge.index=i; if(inspect_ref(d,scene,edge).contains("diameter")) center.index=i; } center.kind=Ref::Kind::Center; CHECK_NEAR(inspect_ref(d,scene,center)["diameter"].get<double>(),4,1e-6);
+  commands::run("feature",{{"kind","extrude"},{"inputs",{{"profiles",json::array({json{{"sketch",id},{"at",{10,-5}}}})},{"distance",5}}}},&d);
+  scene=resolve(d);CHECK_EQ(scene.features.size(),1u);CHECK(scene.features[0].error.empty());
+  auto saved=Document::parse(d.serialize());CHECK_EQ(resolve(saved).sketches[0].geometry["entities"].size(),5u);
+  CHECK_THROWS(commands::run("drawing_to_sketch",{{"layers",json::array()}},&d));
 }
