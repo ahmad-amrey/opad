@@ -92,6 +92,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     if (auto* flat = findChild<QAction*>("view.2d")) flat->setChecked(drawing);
     if (drawing) { m_viewport->standardView("top"); m_viewport->setSelectionFilter(Viewport::SelFilter::Edge); }
   });
+  connect(m_doc, &AppDocument::newDocumentCreated, m_viewport, &Viewport::home);
   connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); refreshGit(); });
   connect(m_doc, &AppDocument::message, this, [this](const QString& t) { statusBar()->showMessage(t, 6000); });
   connect(m_viewport, &Viewport::selectionChanged, this, &MainWindow::onViewportSelection);
@@ -132,7 +133,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_browser, &BrowserPanel::selectionChanged, this, &MainWindow::onBrowserSelection);
   connect(m_browser, &BrowserPanel::contextMenuRequested, this, [this](const QPoint& p, const std::vector<std::string>& ids) { showContextMenu(p, ids); });
   connect(m_browser, &BrowserPanel::fitRequested, m_viewport, &Viewport::fitNodes);
-  connect(m_annotations, &AnnotationsPanel::addRequested, this, &MainWindow::addAnnotation);
+  connect(m_annotations, &AnnotationsPanel::addRequested, this, [this] { toggleTool("note"); });
   connect(m_annotations, &AnnotationsPanel::resolveRequested, this, &MainWindow::deleteOp);
   connect(m_annotations, &AnnotationsPanel::restoreRequested, this, &MainWindow::restoreOp);
   connect(m_annotations, &AnnotationsPanel::styleRequested, this, &MainWindow::restyleAnnotation);
@@ -596,7 +597,7 @@ void MainWindow::buildRibbon() {
   m_sketchWorkspace = m_ribbon->addWorkspace(sketchWs);
   m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho", "view.2d"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"}), acts({"view.isolate", "view.unisolate"})});
   m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"}), acts({"inspect.section", "inspect.flip"})});
-  m_ribbon->addTab(review, tr("Annotate"), {acts({"annotate.add", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
+  m_ribbon->addTab(review, tr("Annotate"), {acts({"panel.annotations", "annotate.add", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
   m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
   m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.convertDrawing", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
                                          acts({"design.box", "design.cylinder", "design.sphere", "design.cone", "design.torus"}), acts({"design.parameters"})});

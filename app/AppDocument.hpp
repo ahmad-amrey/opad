@@ -67,6 +67,7 @@ class AppDocument : public QObject {
   QString nodeName(const std::string& id) const;
 
  signals:
+  void newDocumentCreated();
   void aboutToReplace();  // end transient tools before changing document identity
   void changed();
   void pathChanged();

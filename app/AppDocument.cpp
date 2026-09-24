@@ -188,6 +188,7 @@ void AppDocument::newDocument() {
   markSaved();
   refresh();
   emit pathChanged();
+  emit newDocumentCreated();
 }
 
 void AppDocument::closeDocument() {
