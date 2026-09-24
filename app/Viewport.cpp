@@ -1908,7 +1908,8 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
       setToolTip(QString());
     }
   }
-  if (m_sketchInput) {
+  // Camera gestures do not need sketch hover, snapping, or geometry updates.
+  if (m_sketchInput && (m_sketchDrag || e->buttons()==Qt::NoButton)) {
     double u, v;
     if (planePoint(e->position(), m_sketchFrame, u, v)) m_sketchInput->sketchMove(u, v, e->modifiers(), m_sketchDrag);
     if (m_sketchDrag) return;  // not a rubber band

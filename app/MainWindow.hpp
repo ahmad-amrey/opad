@@ -68,6 +68,7 @@ class MainWindow : public QMainWindow {
   void showComponentBbox(const std::string& id, const QString& title, const QString& subtitle, const QString& nid, opad::json props);
   void runBench();
   bool benchTodo5();
+  bool benchLargeSketch();
 
   void onViewportSelection();
   void onBrowserSelection(const std::vector<std::string>& ids);

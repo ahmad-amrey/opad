@@ -24,7 +24,7 @@ set(OPAD_APP_SOURCES
   Notes.cpp Notes.hpp
   DesignController.cpp DesignController.hpp PlanePicker.cpp PlanePicker.hpp
   DesignPanels.cpp DesignPanels.hpp
-  SketchEditor.cpp SketchNodes.cpp SketchTools.cpp SketchEditor.hpp
+  SketchEditor.cpp SketchNodes.cpp SketchTools.cpp SketchEditor.hpp SketchGeometryCache.cpp SketchGeometryCache.hpp
   SketchPanel.cpp SketchPanel.hpp SketchWorkflow.cpp
   SketchPrimitives.cpp
   SketchModify.cpp
@@ -38,7 +38,7 @@ set(OPAD_APP_SOURCES
   CrashLog.cpp CrashLog.hpp
   I18n.cpp I18n.hpp i18n.qrc
   res.qrc
-  MainWindow.cpp MainWindow.hpp DrawingWizard.cpp ExportDialog.cpp Todo5Bench.cpp)
+  MainWindow.cpp MainWindow.hpp DrawingWizard.cpp ExportDialog.cpp Todo5Bench.cpp LargeSketchBench.cpp)
 if(APPLE)
   list(APPEND OPAD_APP_SOURCES ViewportCocoa.mm)
   find_program(OPAD_SIPS NAMES sips REQUIRED)

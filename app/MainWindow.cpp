@@ -2061,6 +2061,7 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
+  if(benchLargeSketch())return;
   if(benchTodo5())return;
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_NAVIGATION");!mode.isEmpty()) {
     if(mode=="write") {

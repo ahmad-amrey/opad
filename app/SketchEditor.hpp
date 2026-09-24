@@ -7,6 +7,7 @@
 #include <QLineEdit>
 #include <QObject>
 #include <QTimer>
+#include <QPointer>
 #include <array>
 #include <map>
 #include <set>
@@ -18,6 +19,7 @@
 
 class JobRunner;
 class Job;
+class SketchGeometryCache;
 
 class SketchEditor : public QObject, public SketchInput {
   Q_OBJECT
@@ -62,7 +64,7 @@ class SketchEditor : public QObject, public SketchInput {
   void deleteSelection();
   void fitSketch();
   void analyseSketch();
-  bool busy() const {return m_editJob!=nullptr;}
+  bool busy() const {return m_editJob!=nullptr || !m_geometryJob.isNull();}
   bool canUndo() const { return !m_undo.empty(); }
   bool canRedo() const { return !m_redo.empty(); }
   void undo();
@@ -73,6 +75,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchPrimitives();
   void benchModify();
   void benchDrag();
+  void benchLarge(const QString& output, opad::json metrics);
 
   // SketchInput
   void sketchPress(double u, double v, Qt::KeyboardModifiers mods) override;
@@ -121,6 +124,8 @@ class SketchEditor : public QObject, public SketchInput {
   bool end_change(const QString& what);  // solve; false = refused and rolled back
   void cancel_change();
   void rebuild();                        // redraw the overlay
+  void updateTransient();
+  bool prepareGeometry();
   void scheduleFill();
   void click(const Snap& s, Qt::KeyboardModifiers mods);
   void finishChain();
@@ -205,6 +210,10 @@ class SketchEditor : public QObject, public SketchInput {
   std::vector<std::pair<int, std::pair<double, double>>> m_dragStart;  // point -> where it was
 
   Handle(AIS_InteractiveObject) m_prs;  // a SketchPrs (SketchEditor.cpp)
+  Handle(AIS_InteractiveObject) m_transientPrs;
+  std::shared_ptr<SketchGeometryCache> m_geometry;
+  QPointer<Job> m_geometryJob;
+  int m_geometryRevision=0,m_fillRevision=0;
   QLineEdit* m_dimEdit = nullptr;
   int m_dimEditing = 0;
   bool m_dimFresh = false;

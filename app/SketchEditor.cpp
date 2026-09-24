@@ -1,6 +1,7 @@
 #include "CurveSamples.hpp"
 #include "opad/design/sketch_edit.hpp"
 #include "SketchEditor.hpp"
+#include "SketchGeometryCache.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
@@ -123,11 +124,13 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
     if (!m_active) return;
     if (m_fillJob) m_fillJob->cancel();
     // Finding the closed regions is kernel work: on a worker, from a copy of the sketch.
+    const int session=m_session,revision=m_fillRevision;
     auto sk = std::make_shared<Sketch>(m_sk);
     auto out = std::make_shared<std::vector<opad::Vec3>>();
     const opad::Frame frame = m_frame;
-    m_fillJob = m_jobs->async(tr("Finding profiles"), [sk, out, frame](Progress) {
+    m_fillJob = m_jobs->async(tr("Finding profiles"), [sk, out, frame](Progress progress) {
       for (const auto& region : sketch_regions(*sk, frame)) {
+        if(progress.cancelled())return;
         BRepMesh_IncrementalMesh(region.face, 0.05, Standard_False, 0.2, Standard_False);
         TopLoc_Location loc;
         Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(region.face, loc);
@@ -141,7 +144,8 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
           }
         }
       }
-    }, [this, out](bool ok, const QString&) {
+    }, [this, out,session,revision](bool ok, const QString&) {
+      if(session!=m_session||revision!=m_fillRevision)return;
       m_fillJob = nullptr;
       if (!ok || !m_active) return;
       m_fill = std::move(*out);
@@ -153,6 +157,7 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
 SketchEditor::~SketchEditor() = default;
 
 void SketchEditor::begin(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry) {
+  ++m_geometryRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   ++m_session;m_toolPreview.reset();m_previewRequested=false;
   m_trackingPoint = 0; m_inferenceLocked = false;m_dragging=false;m_dragMoved=false;m_dragPending=false;m_dragReleased=false;m_inChange=false;m_options.clear();m_conflicts.clear();
   m_id = sketchId;
@@ -175,9 +180,11 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
   m_active = true;
   m_tool = "select";
   m_prs = new SketchPrs();m_prs->SetInfiniteState(true); // axes must not inflate camera fitting
+  m_transientPrs=new SketchPrs();m_transientPrs->SetInfiniteState(true);
   m_cameraBefore = m_viewport->cameraJson();m_sectionBefore=m_viewport->sectionState();m_imagesStamp.clear();
   m_viewport->beginSketchInput(this, frame, sketchId);
   m_viewport->showOverlay(m_prs);
+  m_viewport->showOverlay(m_transientPrs);
   fitSketch();analyseSketch();
   rebuild();
   scheduleFill();
@@ -188,6 +195,7 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
 
 void SketchEditor::end() {
   if (!m_active) return;
+  ++m_geometryRevision;++m_fillRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   m_viewport->setEdgeHover(false);
   ++m_imageRevision;if(m_imageJob)m_imageJob->cancel();m_imageJob=nullptr;
   for(const auto& prs:m_imagePrs)m_viewport->removeOverlay(prs);m_imagePrs.clear();
@@ -195,9 +203,10 @@ void SketchEditor::end() {
   ++m_session;if(m_editJob)m_editJob->cancel();m_editJob=nullptr;
   m_active = false;m_toolPreview.reset();
   m_fillTimer.stop();
-  if (m_fillJob) m_fillJob->cancel();
+  if (m_fillJob) m_fillJob->cancel();m_fillJob=nullptr;
   if (m_dimEdit) m_dimEdit->hide();
   m_viewport->removeOverlay(m_prs);
+  m_viewport->removeOverlay(m_transientPrs);m_transientPrs.Nullify();
   m_prs.Nullify();
   m_viewport->endSketchInput();
   m_viewport->setCameraJson(m_cameraBefore);
@@ -213,7 +222,7 @@ bool SketchEditor::isFixedPoint(int id) const {
 
 double SketchEditor::tol() const { return 8.0 * m_viewport->pixelSize(); }
 
-void SketchEditor::scheduleFill() { m_fillTimer.start(); }
+void SketchEditor::scheduleFill() { ++m_fillRevision;if(m_fillJob)m_fillJob->cancel();m_fillJob=nullptr;m_fillTimer.start(); }
 
 // ---------------------------------------------------------------- undo
 void SketchEditor::begin_change() {
@@ -316,6 +325,7 @@ void SketchEditor::redo() {
 
 // ---------------------------------------------------------------- geometry queries
 std::vector<std::pair<double, double>> SketchEditor::sampled(const SkEntity& e) const {
+  if(m_geometry)if(const auto* cached=m_geometry->samples(m_sk,e))return *cached;
   std::vector<std::pair<double, double>> out;
   if(e.type==SkEntity::Type::Point) return out;
   const auto edge=entity_edge(m_sk,e,opad::Frame());
@@ -344,10 +354,13 @@ double SketchEditor::distanceTo(const SkEntity& e, double u, double v) const {
 }
 
 SketchEditor::Hit SketchEditor::hitTest(double u, double v) const {
+  if(!m_geometry || m_geometryJob)return {};
   const double t = tol();
+  const auto localCandidates=m_geometry->query(u-t*1.1,v-t*1.1,u+t*1.1,v+t*1.1);
   Hit hit;
   double best = t;
-  for (const auto& p : m_sk.points) {
+  for (size_t index : localCandidates.points) {
+    const auto& p=m_sk.points[index];
     if (!selectable(p.id)) continue;
     const double d = std::hypot(p.x - u, p.y - v);
     if (d < best) { best = d; hit = {Hit::Point, p.id}; }
@@ -361,7 +374,8 @@ SketchEditor::Hit SketchEditor::hitTest(double u, double v) const {
   }
   best = t;
   for(const auto& [id,x,y]:m_glyphHits)if(selectable(id) && std::fabs(x-u)<t && std::fabs(y-v)<t)return {Hit::Dimension,id};
-  for (const auto& e : m_sk.entities) {
+  for (size_t index : localCandidates.entities) {
+    const auto& e=m_sk.entities[index];
     if (!selectable(e.id)) continue;
     const double d = distanceTo(e, u, v);
     if (d < best) { best = d; hit = {Hit::Entity, e.id}; }
@@ -373,11 +387,18 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   Snap s;
   s.u = u;
   s.v = v;
-  if(!infer)return s; // Alt suppresses both inference and automatic coincidence
+  if(!infer || !m_geometry || m_geometryJob)return s; // Alt suppresses both inference and automatic coincidence
   const double t = tol();
+  const auto localCandidates=m_geometry->query(u-t*1.1,v-t*1.1,u+t*1.1,v+t*1.1);
   auto enabled=[](const char* name){return QSettings().value(QString("sketch/snap/")+name,true).toBool();};
   const bool automatic=enabled("inference");
   const bool extensions=QSettings().value("view/extensions",true).toBool(), tracking=QSettings().value("view/tracking",true).toBool();
+  auto nearestEntities=localCandidates.entities;
+  // A tracked line's extension can be outside its finite bounding box.
+  if(extensions && m_trackingPoint)for(size_t i=0;i<m_sk.entities.size();++i){const auto& e=m_sk.entities[i];
+    if(e.type==SkEntity::Type::Line && std::find(e.p.begin(),e.p.end(),m_trackingPoint)!=e.p.end())nearestEntities.push_back(i);
+  }
+  std::sort(nearestEntities.begin(),nearestEntities.end());nearestEntities.erase(std::unique(nearestEntities.begin(),nearestEntities.end()),nearestEntities.end());
   if (m_inferenceLocked && infer) {
     const double along=(u-m_lockX)*m_lockDx+(v-m_lockY)*m_lockDy;
     s.u=m_lockX+along*m_lockDx; s.v=m_lockY+along*m_lockDy; s.tracking=true; return s;
@@ -386,7 +407,8 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   double best = t;
   std::set<int> centers;
   for(const auto& e:m_sk.entities)if(e.type==SkEntity::Type::Circle || e.type==SkEntity::Type::Arc || e.type==SkEntity::Type::Ellipse)centers.insert(e.p[0]);
-  for (const auto& p : m_sk.points) {
+  for (size_t index : localCandidates.points) {
+    const auto& p=m_sk.points[index];
     if(!(centers.count(p.id)?enabled("center"):enabled("endpoint")))continue;
     if (!m_chain.empty() && p.id == m_chain.back()) continue;  // not onto the point the segment starts at
     const double d = std::hypot(p.x - u, p.y - v);
@@ -395,7 +417,8 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   if (s.point) return s;
   auto candidate=[&](double x,double y){double d=std::hypot(x-u,y-v);if(d<best){best=d;s.u=x;s.v=y;s.tracking=true;}};
   std::vector<const SkEntity*> nearby;
-  for(const auto& e:m_sk.entities) {
+  for(size_t index:localCandidates.entities) {
+    const auto& e=m_sk.entities[index];
     if(e.type==SkEntity::Type::Line) {
       const auto *a=m_sk.point(e.p[0]),*b=m_sk.point(e.p[1]);
       if(enabled("midpoint"))candidate((a->x+b->x)/2,(a->y+b->y)/2);
@@ -423,7 +446,8 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   }
   if(s.tracking)return s;
   best = t;
-  for (const auto& e : m_sk.entities) {
+  for (size_t index : nearestEntities) {
+    const auto& e=m_sk.entities[index];
     if(!enabled("nearest"))break;
     if (e.type != SkEntity::Type::Line && e.type != SkEntity::Type::Circle && e.type != SkEntity::Type::Arc) continue;
     double d = distanceTo(e, u, v);
@@ -486,7 +510,7 @@ int SketchEditor::pointFor(const Snap& s) {
 // ---------------------------------------------------------------- input
 void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
   invalidatePreview();
-  if (!m_active || m_editJob) return;
+  if (!m_active || m_editJob || m_geometryJob) return;
   if ((m_tool=="select" || (m_tool=="spline" && m_chain.empty())) && mods.testFlag(Qt::AltModifier)) return insertSplineNode(u,v);
   if (m_dimEdit && m_dimEdit->isVisible()) commitDimensionEdit();
   if (m_tool == "select") {
@@ -527,7 +551,7 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
 
 void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bool dragging) {
   if (!m_active) return;
-  if(m_boxSelecting && dragging) {m_boxU=u;m_boxV=v;rebuild();return;}
+  if(m_boxSelecting && dragging) {m_boxU=u;m_boxV=v;updateTransient();return;}
   if (m_tool == "select" && dragging && m_dragging) {
     if(m_editJob){m_dragPending=true;m_dragNextU=u;m_dragNextV=v;return;}
     if (!m_dragMoved && std::hypot(u - m_dragU, v - m_dragV) < 0.5 * tol()) return;
@@ -591,12 +615,13 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
       if(len>1e-9) { m_lockX=base->x;m_lockY=base->y;m_lockDx=dx/len;m_lockDy=dy/len;m_inferenceLocked=true; }
     }
   }
-  const Snap s = snap(u, v, !mods.testFlag(Qt::AltModifier));
+  const Snap s = m_tool=="select"?Snap{u,v}:snap(u, v, !mods.testFlag(Qt::AltModifier));
   const bool redraw = h.kind != m_hover.kind || h.id != m_hover.id || m_tool != "select" || m_placingDim;
+  const bool dimensionHover=h.kind==Hit::Dimension||m_hover.kind==Hit::Dimension;
   m_hover = h;
   m_cursor = s;
   m_haveCursor = true;
-  if (redraw) rebuild();
+  if (redraw) {if(m_placingDim||dimensionHover)rebuild();else updateTransient();}
 }
 
 void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
@@ -611,12 +636,14 @@ void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
         auto clip=[&](double p,double q){if(std::fabs(p)<1e-15)return q>=0;double r=q/p;if(p<0)low=std::max(low,r);else high=std::min(high,r);return low<=high;};
         return clip(ax-bx,ax-x0)&&clip(bx-ax,x1-ax)&&clip(ay-by,ay-y0)&&clip(by-ay,y1-ay);
       };
-      for(const auto& e:m_sk.entities)if(selectable(e.id)) {
+      const auto candidates=m_geometry->query(x0-tol()*.1,y0-tol()*.1,x1+tol()*.1,y1+tol()*.1);
+      std::set<int> selected(m_sel.begin(),m_sel.end());
+      for(size_t index:candidates.entities){const auto& e=m_sk.entities[index];if(!selectable(e.id))continue;
         const auto pts=sampled(e);bool all=!pts.empty(),any=false;
         for(size_t i=0;i<pts.size();++i) {bool in=inside(pts[i].first,pts[i].second);all&=in;any|=in;if(i)any|=crosses(pts[i-1].first,pts[i-1].second,pts[i].first,pts[i].second);}
-        if(crossing?any:all)if(std::find(m_sel.begin(),m_sel.end(),e.id)==m_sel.end())m_sel.push_back(e.id);
+        if(crossing?any:all)if(selected.insert(e.id).second)m_sel.push_back(e.id);
       }
-      for(const auto& p:m_sk.points)if(selectable(p.id)&&inside(p.x,p.y))if(std::find(m_sel.begin(),m_sel.end(),p.id)==m_sel.end())m_sel.push_back(p.id);
+      for(size_t index:candidates.points){const auto& p=m_sk.points[index];if(selectable(p.id)&&inside(p.x,p.y)&&selected.insert(p.id).second)m_sel.push_back(p.id);}
       for(const auto& c:m_sk.constraints)if(selectable(c.id)) {double x,y;labelPosition(c,x,y);if(inside(x,y))m_sel.push_back(c.id);}
     }
     rebuild();emit changed();return;
@@ -721,7 +748,35 @@ void SketchEditor::toggleConstruction() {
 }
 
 // ---------------------------------------------------------------- drawing
+bool SketchEditor::prepareGeometry() {
+  const double deflection=std::max(1e-7,m_viewport->pixelSize()*.25);
+  if(m_geometry && m_geometry->matches(m_sk,deflection)) {
+    if(m_geometryJob){++m_geometryRevision;m_geometryJob->cancel();m_geometryJob=nullptr;}
+    return true;
+  }
+  if(m_geometryJob)return false; // Coalesce redraws; completion rechecks the current geometry and zoom.
+  const int revision=++m_geometryRevision;
+  if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;
+  m_samplePixelSize=m_viewport->pixelSize();
+  if(m_sk.points.size()<=300) {
+    m_geometry=m_geometry?std::make_shared<SketchGeometryCache>(*m_geometry):std::make_shared<SketchGeometryCache>();
+    m_geometry->update(m_sk,deflection);return true;
+  }
+  auto snapshot=std::make_shared<Sketch>(m_sk);const auto previous=m_geometry;
+  auto result=std::make_shared<std::shared_ptr<SketchGeometryCache>>();QPointer<SketchEditor> guard(this);
+  m_geometryJob=m_jobs->async(tr("Preparing sketch curves"),[snapshot,previous,result,deflection](Progress p){
+    if(p.cancelled())return;
+    *result=previous?std::make_shared<SketchGeometryCache>(*previous):std::make_shared<SketchGeometryCache>();
+    (*result)->update(*snapshot,deflection);
+  },[this,guard,result,revision](bool ok,const QString& error){
+    if(!guard||!m_active||revision!=m_geometryRevision)return;m_geometryJob=nullptr;
+    if(!ok){emit status(error);return;}
+    m_geometry=*result;rebuild();
+  });return false;
+}
+
 void SketchEditor::rebuild() {
+  if(m_prs.IsNull() || !prepareGeometry())return;
   refreshImages();
   if (m_prs.IsNull()) return;
   const Tokens& t = m_viewport->tokens();
@@ -738,21 +793,12 @@ void SketchEditor::rebuild() {
   d.textBack = t.bg2;
   auto W = [&](double u, double v) { return m_frame.to_world(u, v); };
   const double px = m_viewport->pixelSize();
-  if(m_boxSelecting) {
-    const QColor color=m_boxU<m_dragU?t.green:t.sel;
-    auto& lines=m_boxU<m_dragU?d.dashed:d.thin;
-    lines.push_back({W(m_dragU,m_dragV),W(m_boxU,m_dragV),color});
-    lines.push_back({W(m_boxU,m_dragV),W(m_boxU,m_boxV),color});
-    lines.push_back({W(m_boxU,m_boxV),W(m_dragU,m_boxV),color});
-    lines.push_back({W(m_dragU,m_boxV),W(m_dragU,m_dragV),color});
-  }
   m_samplePixelSize=px;
   const std::set<int> freePts(m_solved.free_points.begin(), m_solved.free_points.end());
   const std::set<int> selected(m_sel.begin(), m_sel.end());
   const std::set<int> picked(m_picked.begin(), m_picked.end());
   auto entityColor = [&](const SkEntity& e) {
     if (selected.count(e.id) || picked.count(e.id)) return t.hov;
-    if (m_hover.kind == Hit::Entity && m_hover.id == e.id) return t.hov.lighter(115);
     if (!e.source.is_null())return t.amber;
     if (e.fixed) return t.green;
     bool free = false;
@@ -782,7 +828,7 @@ void SketchEditor::rebuild() {
     for (size_t i = 0; i + 1 < pts.size(); ++i) into.push_back({W(pts[i].first, pts[i].second), W(pts[i + 1].first, pts[i + 1].second), c});
   }
   for (const auto& p : m_sk.points) {
-    const bool hot = selected.count(p.id) || picked.count(p.id) || (m_hover.kind == Hit::Point && m_hover.id == p.id);
+    const bool hot = selected.count(p.id) || picked.count(p.id);
     const QColor c = hot ? t.hov : p.fixed ? t.green : freePts.count(p.id) ? t.sel : t.fg;
     (hot ? d.bigPoints : d.points).push_back({W(p.x, p.y), c});
     if(m_dangling.count(p.id)) d.bigPoints.push_back({W(p.x,p.y),t.red});
@@ -819,7 +865,7 @@ void SketchEditor::rebuild() {
         gu = pts[pts.size() / 2].first;
         gv = pts[pts.size() / 2].second;
         if (e->type == SkEntity::Type::Line) { gu = (pts[0].first + pts[1].first) / 2; gv = (pts[0].second + pts[1].second) / 2; }
-      } else if (const SkPoint* p = m_sk.point(ref)) {
+      } else if (const SkPoint* p = m_geometry->point(m_sk,ref)) {
         gu = p->x;
         gv = p->y;
       } else {
@@ -838,7 +884,7 @@ void SketchEditor::rebuild() {
     double lu, lv;
     labelPosition(c, lu, lv);
     auto P = [&](int id, double& x, double& y) {
-      if (const SkPoint* p = m_sk.point(id)) { x = p->x; y = p->y; return true; }
+      if (const SkPoint* p = m_geometry->point(m_sk,id)) { x = p->x; y = p->y; return true; }
       return false;
     };
     auto ends = [&](double& ax, double& ay, double& bx, double& by) {
@@ -926,9 +972,34 @@ void SketchEditor::rebuild() {
 
   for(const auto& e:m_sk.entities) if(e.type==SkEntity::Type::Spline && e.degree) {
     for(size_t i=1;i<e.p.size();++i) {
-      const auto* a=m_sk.point(e.p[i-1]);const auto* b=m_sk.point(e.p[i]);
+      const auto* a=m_geometry->point(m_sk,e.p[i-1]);const auto* b=m_geometry->point(m_sk,e.p[i]);
       if(a && b) d.thin.push_back({W(a->x,a->y),W(b->x,b->y),t.fg3});
     }
+  }
+  m_prs->SetToUpdate();
+  m_viewport->updateOverlay(m_prs);
+  updateTransient();
+}
+
+void SketchEditor::updateTransient() {
+  if(m_transientPrs.IsNull() || !m_geometry || m_geometryJob)return;
+  auto& d=*static_cast<SketchPrs*>(m_transientPrs.get());
+  d.solid.clear();d.thin.clear();d.dashed.clear();d.points.clear();d.bigPoints.clear();d.texts.clear();
+  const auto& t=m_viewport->tokens();d.textBack=t.bg2;
+  auto W=[&](double u,double v){return m_frame.to_world(u,v);};
+  const double px=m_viewport->pixelSize();
+  if(m_hover.kind==Hit::Point) {
+    if(const auto* p=m_geometry->point(m_sk,m_hover.id))d.bigPoints.push_back({W(p->x,p->y),t.hov});
+  } else if(m_hover.kind==Hit::Entity) {
+    if(const auto* e=m_sk.entity(m_hover.id)){const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i)d.solid.push_back({W(pts[i-1].first,pts[i-1].second),W(pts[i].first,pts[i].second),t.hov.lighter(115)});}
+  }
+  if(m_boxSelecting) {
+    const QColor color=m_boxU<m_dragU?t.green:t.sel;
+    auto& lines=m_boxU<m_dragU?d.dashed:d.thin;
+    lines.push_back({W(m_dragU,m_dragV),W(m_boxU,m_dragV),color});
+    lines.push_back({W(m_boxU,m_dragV),W(m_boxU,m_boxV),color});
+    lines.push_back({W(m_boxU,m_boxV),W(m_dragU,m_boxV),color});
+    lines.push_back({W(m_dragU,m_boxV),W(m_dragU,m_dragV),color});
   }
   // Rubber band of the running tool.
   if (m_haveCursor && m_tool != "select") {
@@ -947,7 +1018,7 @@ void SketchEditor::rebuild() {
           for(int i=1;i<=samples;++i) {auto at=c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*i/samples);seg(previous.X(),previous.Y(),at.X(),at.Y());previous=at;}}
       }
     } else if (m_tool == "line" && !m_chain.empty()) {
-      if (const SkPoint* p = m_sk.point(m_chain.back())) seg(p->x, p->y, cu, cv);
+      if (const SkPoint* p = m_geometry->point(m_sk,m_chain.back())) seg(p->x, p->y, cu, cv);
     } else if (!m_clicks.empty()) {
       const Snap& a = m_clicks[0];
       if (m_tool == "rect") { seg(a.u, a.v, cu, a.v); seg(cu, a.v, cu, cv); seg(cu, cv, a.u, cv); seg(a.u, cv, a.u, a.v); }
@@ -969,7 +1040,7 @@ void SketchEditor::rebuild() {
       for(size_t i=1;i<pts.size();++i)seg(pts[i-1].X(),pts[i-1].Y(),pts[i].X(),pts[i].Y());
     }
     d.bigPoints.push_back({W(cu, cv), m_cursor.point || m_cursor.entity ? t.green : rb});
-    if (const auto* reference=m_sk.point(m_trackingPoint); QSettings().value("view/tracking",true).toBool() && reference) {
+    if (const auto* reference=m_geometry->point(m_sk,m_trackingPoint); QSettings().value("view/tracking",true).toBool() && reference) {
       if(m_cursor.tracking || m_cursor.entity) {
         d.dashed.push_back({W(reference->x,reference->y),W(cu,cv),t.green});
         d.texts.push_back({W(cu+14*px,cv+12*px),m_inferenceLocked?tr("Locked"):tr("Tracking"),t.green});
@@ -981,11 +1052,10 @@ void SketchEditor::rebuild() {
   if(m_toolPreview)for(const auto& e:m_toolPreview->entities) {
     bool same=false;
     if(const auto* old=m_sk.entity(e.id);old && old->type==e.type && old->p==e.p && old->r==e.r && old->weights==e.weights) {
-      same=true;for(int id:e.p){const auto* p=m_sk.point(id);const auto* q=m_toolPreview->point(id);if(!p||p->x!=q->x||p->y!=q->y){same=false;break;}}
+      same=true;for(int id:e.p){const auto* p=m_geometry->point(m_sk,id);const auto* q=m_toolPreview->point(id);if(!p||p->x!=q->x||p->y!=q->y){same=false;break;}}
     }
     if(same)continue;const auto edge=entity_edge(*m_toolPreview,e,opad::Frame{});if(edge.IsNull())continue;const auto pts=curveSamples(edge,px*.25);
     for(size_t i=1;i<pts.size();++i)d.dashed.push_back({W(pts[i-1].X(),pts[i-1].Y()),W(pts[i].X(),pts[i].Y()),t.amber});
   }
-  m_prs->SetToUpdate();
-  m_viewport->updateOverlay(m_prs);
+  m_transientPrs->SetToUpdate();m_viewport->updateOverlay(m_transientPrs);
 }
