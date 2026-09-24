@@ -33,6 +33,8 @@ const Style& style(const std::string& id);  // an unknown id is "note"
 }  // namespace notes
 
 struct NoteInfo {
+  bool measurement=false;
+  QString value;
   std::string id, by, ts, text, style, body;
   QString target;          // "Clamp block › face 12"
   QString state = "open";  // open | unresolved | resolved

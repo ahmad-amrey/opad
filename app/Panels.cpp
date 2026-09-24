@@ -1102,7 +1102,8 @@ void AnnotationsPanel::rebuild() {
   std::set<std::string> deleted(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end());
   std::set<std::string> unresolved;
   for (const auto& a : m_doc->scene.annotations) if (a.unresolved) unresolved.insert(a.id);
-  for (const auto& op : m_doc->doc.ops) if (op.type == "annotation") authors.insert(op.data.value("by", ""));
+  for (const auto& m : m_doc->scene.measurements) if(m.unresolved) unresolved.insert(m.id);
+  for (const auto& op : m_doc->doc.ops) if (op.type == "annotation" || op.type == "measurement") authors.insert(op.data.value("by", ""));
   m_author->blockSignals(true);
   m_author->clear();
   m_author->addItem(tr("All authors"));
@@ -1121,7 +1122,7 @@ void AnnotationsPanel::rebuild() {
   }
   int total = 0, shown = 0;
   for (const auto& op : m_doc->doc.ops) {
-    if (op.type != "annotation" || op.data.contains("reply_to")) continue;
+    if ((op.type != "annotation" && op.type != "measurement") || op.data.contains("reply_to")) continue;
     ++total;
     std::string by = op.data.value("by", "");
     bool resolved = deleted.count(op.id) > 0, unres = unresolved.count(op.id) > 0;
@@ -1130,11 +1131,19 @@ void AnnotationsPanel::rebuild() {
     if ((status == 1 && state != "open") || (status == 2 && state != "unresolved") || (status == 3 && state != "resolved")) continue;
     ++shown;
     opad::Ref anchor;
-    try { anchor = opad::Ref::from_json(op.data["anchor"]); } catch (...) {}
+    try { anchor = opad::Ref::from_json(op.type=="measurement"?op.data.at("refs").at(0):op.data.at("anchor")); } catch (...) {}
     NoteInfo n;
     n.id = op.id; n.by = by; n.ts = op.data.value("ts", ""); n.text = op.data.value("text", ""); n.body = anchor.body;
     n.style = op.data.value("style", "note");
     for (const auto& a : m_doc->scene.annotations) if (a.id == op.id) { n.style = a.style; n.text = a.text; n.comments = a.comments; }  // after edits
+    if(op.type=="measurement") {
+      n.measurement=true;
+      const auto result=op.data.value("result",opad::json::object());
+      n.value=tr("%1 measurement").arg(i18n::t(QString::fromStdString(op.data.value("kind",""))));
+      if(result.contains("value") && result["value"].is_number()) n.value+=QString(" ? %1 %2").arg(result["value"].get<double>(),0,'g',9).arg(QString::fromStdString(result.value("unit","mm")));
+      else if(result.contains("size")) n.value+=QString(" ? %1 mm").arg(QString::fromStdString(result["size"].dump()));
+      for(const auto& m:m_doc->scene.measurements) if(m.id==op.id) {n.text=m.text;n.style=m.style;n.comments=m.comments;}
+    }
     n.state = state;
     n.target = anchor.kind == opad::Ref::Kind::Point ? tr("point") : m_doc->nodeName(anchor.body);
     if (anchor.kind != opad::Ref::Kind::Body && anchor.kind != opad::Ref::Kind::Point) n.target += QString(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(anchor.kind))).arg(anchor.index);

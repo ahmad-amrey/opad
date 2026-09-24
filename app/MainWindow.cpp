@@ -1,4 +1,5 @@
 #include <QPlainTextEdit>
+#include <QPointer>
 #include "MainWindow.hpp"
 
 #include <QToolButton>
@@ -166,7 +167,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     guarded([&] { m_doc->run("section", opad::json{{"name", finalName.toStdString()}, {"origin", o}, {"normal", n}}); });
   });
   connect(m_timeline, &TimelineWidget::opClicked, this, &MainWindow::selectOpTargets);
-  connect(m_timeline, &TimelineWidget::contextRequested, this, &MainWindow::timelineMenu);
+  connect(m_timeline, &TimelineWidget::contextRequested, this, [this](const std::string& id,const QPoint& point) { guarded([&] { timelineMenu(id,point); }); });
   connect(m_toolSteps, &ToolStepsPanel::pinRequested, this, [this] { guarded([this] { pinMeasurement(); }); });
   connect(m_toolSteps, &ToolStepsPanel::clearRequested, this, &MainWindow::toolEscape);
   connect(m_toolSteps, &ToolStepsPanel::componentsChanged, m_viewport, &Viewport::setMeasurementComponents);
@@ -1415,7 +1416,9 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
   menu.exec(globalPos);
 }
 
-void MainWindow::timelineMenu(const std::string& opId, const QPoint& globalPos) {
+void MainWindow::timelineMenu(const std::string& requestedId, const QPoint& globalPos) {
+  const std::string opId=requestedId;
+  const auto generation=m_doc->generation;
   bool deleted = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) != m_doc->scene.deleted_ops.end();
   QMenu menu(this);
   menu.setFixedWidth(232);
@@ -1426,6 +1429,7 @@ void MainWindow::timelineMenu(const std::string& opId, const QPoint& globalPos) 
   const opad::Op* menuOp = m_doc->doc.find_op(opId);
   const bool designOp = menuOp && (menuOp->type == "feature" || menuOp->type == "sketch") && !deleted;
   const opad::Feature* feat = m_doc->scene.feature(opId);
+  const bool suppressed=feat && feat->suppressed;
   QAction* editOp = designOp ? menu.addAction(icons::themed("rename", 16), menuOp->type == "sketch" ? tr("Edit sketch") : tr("Edit feature")) : nullptr;
   QAction* suppress = designOp && feat ? menu.addAction(icons::themed(feat->suppressed ? "eye" : "hide", 16), feat->suppressed ? tr("Unsuppress") : tr("Suppress")) : nullptr;
   QAction* exportSketch=designOp && menuOp->type=="sketch" ? menu.addAction(icons::themed("export",16),tr("Export sketch")) : nullptr;
@@ -1435,24 +1439,42 @@ void MainWindow::timelineMenu(const std::string& opId, const QPoint& globalPos) 
   QAction* copy = menu.addAction(icons::themed("commit", 16), tr("Copy op id\tCtrl+C"));
   QAction* log = menu.addAction(icons::themed("git", 16), tr("Show in git log"));
   QAction* chosen = menu.exec(globalPos);
-  if (!chosen) return;
+  if (!chosen || generation!=m_doc->generation) return;
   if (chosen == exportSketch) exportDialog({opId});
   else if (chosen == editOp) m_design->editOp(opId);
-  else if (chosen == suppress) m_design->setSuppressed(opId, !feat->suppressed);
+  else if (chosen == suppress) m_design->setSuppressed(opId, !suppressed);
   else if (chosen == del) deleteOp(opId);
   else if (chosen == restore) restoreOp(opId);
   else if (chosen == sel) selectOpTargets(opId);
   else if (chosen == copy) QApplication::clipboard()->setText(QString::fromStdString(opId));
-  else if (chosen == log) {
-    if (m_doc->doc.path.empty()) throw opad::Error("Save the document in a git repository first.");
-    QFileInfo fi(m_doc->path());
-    QProcess git;
-    git.setWorkingDirectory(fi.absolutePath());
-    git.start("git", {"log", "--format=%h %ad %an  %s", "--date=short", "-S", QString::fromStdString(opId), "--", fi.fileName()});
-    git.waitForFinished(3000);
-    QString out = QString::fromUtf8(git.readAllStandardOutput()).trimmed();
-    QMessageBox::information(this, tr("git log for op %1").arg(QString::fromStdString(opId.substr(0, 8))), out.isEmpty() ? tr("Not committed yet.") : out);
-  }
+  else if (chosen == log) showOpGitLog(opId,m_doc->path());
+}
+
+void MainWindow::showOpGitLog(const std::string& opId,const QString& path) {
+  auto* dialog=new QDialog(this); dialog->setObjectName("opGitLog"); dialog->setAttribute(Qt::WA_DeleteOnClose);
+  dialog->setWindowTitle(tr("git log for op %1").arg(QString::fromStdString(opId.substr(0,8)))); dialog->resize(700,400);
+  auto* layout=new QVBoxLayout(dialog); auto* output=new QPlainTextEdit(dialog); output->setReadOnly(true); layout->addWidget(output);
+  dialog->show();
+  if(path.isEmpty()) { output->setPlainText(tr("Save the document in a git repository first.")); dialog->setProperty("finished",true); return; }
+  output->setPlainText(tr("Reading Git history..."));
+  auto* git=new QProcess(this); const QFileInfo file(path); git->setWorkingDirectory(file.absolutePath());
+  auto* timeout=new QTimer(git); timeout->setSingleShot(true);
+  connect(timeout,&QTimer::timeout,git,[git] {git->setProperty("timedOut",true);git->kill();});
+  connect(dialog,&QObject::destroyed,git,[git] { if(git->state()!=QProcess::NotRunning) git->kill(); });
+  connect(git,&QProcess::errorOccurred,dialog,[=](QProcess::ProcessError error) {
+    if(error==QProcess::FailedToStart) { output->setPlainText(git->errorString()); dialog->setProperty("finished",true); git->deleteLater(); }
+  });
+  connect(git,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),dialog,[=](int code,QProcess::ExitStatus status) {
+    timeout->stop();
+    QString text=QString::fromUtf8(git->readAllStandardOutput()).trimmed();
+    if(git->property("timedOut").toBool()) text=tr("Git history timed out.");
+    else if(code!=0 || status!=QProcess::NormalExit) text=QString::fromUtf8(git->readAllStandardError()).trimmed();
+    else if(text.isEmpty()) text=tr("Not committed yet.");
+    output->setPlainText(text); dialog->setProperty("finished",true);
+  });
+  connect(git,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),git,&QObject::deleteLater);
+  git->start("git",{"log","--format=%h %ad %an  %s","--date=short","-S",QString::fromStdString(opId),"--",file.fileName()});
+  timeout->start(10000);
 }
 
 // ---------------------------------------------------------------- inspect (F23)
@@ -1737,7 +1759,7 @@ void MainWindow::pinMeasurement() {
   op["result"] = m_lastMeasure;
   opad::json r = m_doc->run("append", opad::json{{"op", op}});
   if (r.contains("appended") && !r["appended"].empty()) m_timeline->setCurrentOp(r["appended"][0].get<std::string>());
-  statusBar()->showMessage(tr("Measurement pinned to the document"), 4000);
+  statusBar()->showMessage(tr("Measurement pinned. Manage it in Annotations (Alt+2)."), 4000);
   if (!m_tool.id.isEmpty()) m_viewport->clearSelection();  // the tool stays on for the next measurement
 }
 
@@ -1783,13 +1805,13 @@ void MainWindow::resolveCurrentAnnotation() {
   std::string id = m_annotations->currentOpId();
   if (id.empty()) id = m_timeline->currentOp();
   const opad::Op* op = id.empty() ? nullptr : m_doc->doc.find_op(id);
-  if (!op || op->type != "annotation") throw opad::Error("Select a note in the Annotations panel or on the timeline first.");
+  if (!op || (op->type != "annotation" && op->type != "measurement")) throw opad::Error("Select a note in the Annotations panel or on the timeline first.");
   deleteOp(id);
 }
 
 void MainWindow::restyleAnnotation(const std::string& opId, const std::string& style) {
   const opad::Op* op = m_doc->doc.find_op(opId);
-  if (!op || op->type != "annotation") return;
+  if (!op || (op->type != "annotation" && op->type != "measurement")) return;
   guarded([&] { m_doc->run("append", opad::json{{"op", opad::json{{"op", "edit"}, {"target", opId}, {"set", {{"style", style}}}}}}); });
 }
 
@@ -2009,6 +2031,28 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_REVIEW")) {
+    m_doc->newDocument();
+    const auto id=m_doc->run("append",{{"op",{{"op","measurement"},{"kind","distance"},{"refs",{"point/0,0,0","point/3,0,0"}},{"result",{{"value",3},{"unit","mm"}}}}}})["appended"][0].get<std::string>();
+    const auto cards=m_annotations->findChildren<NoteCard*>();
+    if(cards.size()!=1 || !cards[0]->note().measurement || !cards[0]->note().value.contains("3")) {QCoreApplication::exit(2);return;}
+    deleteOp(id); if(!m_doc->scene.measurements.empty()) {QCoreApplication::exit(2);return;}
+    restoreOp(id); if(m_doc->scene.measurements.size()!=1) {QCoreApplication::exit(2);return;}
+    showOpGitLog(id,{});
+    auto* unsaved=findChild<QDialog*>("opGitLog");
+    if(!unsaved || !unsaved->property("finished").toBool()) {QCoreApplication::exit(2);return;}
+    unsaved->setObjectName("closedGitLog");unsaved->close();
+    showOpGitLog(id,qEnvironmentVariable("OPAD_BENCH_REVIEW"));
+    QPointer<QDialog> log=findChild<QDialog*>("opGitLog");
+    auto* poll=new QTimer(this);poll->setInterval(50);
+    connect(poll,&QTimer::timeout,this,[=] {
+      if(!log || !log->property("finished").toBool()) return;
+      const auto text=log->findChild<QPlainTextEdit*>()->toPlainText();
+      trace::log("bench: review measurement remove/restore and Git log PASS: "+text);
+      QCoreApplication::exit(text.isEmpty()?2:0);
+    });poll->start();return;
+  }
+
   m_benchSelect = false;
   if (const auto next=qEnvironmentVariable("OPAD_BENCH_IMPORT_NEXT"); !next.isEmpty()) {
     connect(m_doc,&AppDocument::loadFinished,this,[this](bool ok,const QString& error) {

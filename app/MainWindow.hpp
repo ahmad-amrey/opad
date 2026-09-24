@@ -54,6 +54,7 @@ class MainWindow : public QMainWindow {
   void updateTitle();
   void updateChips();
   void refreshGit();
+  void showOpGitLog(const std::string& opId,const QString& path);
   void saveLastView();
   QString m_viewPath;
   void guarded(const std::function<void()>& fn);

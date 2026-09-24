@@ -44,6 +44,8 @@ struct Annotation {
 const std::vector<std::string>& annotation_styles();
 
 struct Measurement {
+  std::string text, style = "note";
+  json comments = json::array();
   std::string id;
   std::string kind;  // distance | angle | radius | diameter | bbox
   std::vector<Ref> refs;

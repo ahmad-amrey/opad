@@ -385,6 +385,7 @@ struct SceneBuilder::Impl {
       scene.annotations.push_back(a);
     } else if (type == "measurement") {
       Measurement m;
+      m.text=d.value("text", ""); m.style=d.value("style", "note");
       m.id = id;
       m.kind = d["kind"].get<std::string>();
       for (const auto& r : d["refs"]) m.refs.push_back(Ref::from_json(r));
@@ -445,6 +446,9 @@ struct SceneBuilder::Impl {
       for (auto& parent : scene.annotations)
         if (parent.id == reply.reply_to)
           parent.comments.push_back(json{{"id", reply.id}, {"text", reply.text}, {"by", reply.by}, {"ts", reply.ts}});
+      for(auto& parent:scene.measurements)
+        if(parent.id==reply.reply_to)
+          parent.comments.push_back(json{{"id",reply.id},{"text",reply.text},{"by",reply.by},{"ts",reply.ts}});
     }
     std::erase_if(scene.annotations, [](const Annotation& a) { return !a.reply_to.empty(); });
     std::vector<design::ParamDef> defs;

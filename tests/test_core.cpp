@@ -318,4 +318,20 @@ TEST(annotation_edits_and_independent_comments_roundtrip) {
   CHECK(resolve(d).annotations.empty());
 }
 
+TEST(pinned_measurement_comments_remove_restore_roundtrip) {
+  Document d=Document::create();
+  const auto id=d.append({{"op","measurement"},{"kind","distance"},{"refs",{"point/0,0,0","point/3,0,0"}},{"result",{{"value",3},{"unit","mm"}}}},"Alice").id;
+  d.append({{"op","annotation"},{"anchor","point/0,0,0"},{"text","Check tolerance"},{"reply_to",id}},"Bob");
+  d.append({{"op","edit"},{"target",id},{"set",{{"text","Clearance"}}}});
+  auto scene=resolve(Document::parse(d.serialize()));
+  CHECK_EQ(scene.measurements.size(),1u); CHECK(scene.annotations.empty());
+  CHECK_EQ(scene.measurements[0].comments.size(),1u); CHECK_EQ(scene.measurements[0].comments[0]["by"],"Bob");
+  CHECK_EQ(scene.measurements[0].text,"Clearance"); CHECK_EQ(scene.measurements[0].result["value"],3);
+  const auto removed=d.append({{"op","delete"},{"target",id}}).id;
+  CHECK(resolve(d).measurements.empty());
+  d.append({{"op","delete"},{"target",removed}});
+  scene=resolve(Document::parse(d.serialize()));
+  CHECK_EQ(scene.measurements.size(),1u); CHECK_EQ(scene.measurements[0].comments.size(),1u);
+}
+
 CHECK_MAIN()

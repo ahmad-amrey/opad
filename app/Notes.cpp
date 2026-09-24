@@ -84,6 +84,9 @@ NoteCard::NoteCard(const NoteInfo& note, QWidget* parent, AppDocument* doc) : QF
   head->addWidget(id);
   v->addLayout(head);
 
+  if(note.measurement) {
+    auto* value=new QLabel(note.value,this); value->setWordWrap(true); value->setTextFormat(Qt::PlainText); v->addWidget(value);
+  }
   auto* text = new QLabel(QString::fromStdString(note.text), this);
   text->setWordWrap(true);
   text->setTextFormat(Qt::PlainText);
@@ -122,7 +125,8 @@ NoteCard::NoteCard(const NoteInfo& note, QWidget* parent, AppDocument* doc) : QF
           if (comment) {
             const auto* parent = doc->doc.find_op(note.id);
             if (!parent) return;
-            op = {{"op", "annotation"}, {"anchor", parent->data.at("anchor")}, {"text", value}, {"reply_to", note.id}};
+            const auto anchor=parent->type=="measurement" ? (parent->data.at("refs").empty()?opad::json("point/0,0,0"):parent->data.at("refs").front()) : parent->data.at("anchor");
+            op = {{"op", "annotation"}, {"anchor", anchor}, {"text", value}, {"reply_to", note.id}};
           } else op = {{"op", "edit"}, {"target", note.id}, {"set", {{"text", value}}}};
           doc->run("append", {{"op", op}});
         } catch (const std::exception& e) { QMessageBox::warning(nullptr, tr("Note"), QString::fromUtf8(e.what())); }
@@ -147,7 +151,7 @@ NoteCard::NoteCard(const NoteInfo& note, QWidget* parent, AppDocument* doc) : QF
   target->setObjectName("tertiary");
   target->setFont(theme::mono(11));
   foot->addWidget(target, 1);
-  auto* btn = new QPushButton(resolved ? tr("Restore") : tr("Resolve"), this);
+  auto* btn = new QPushButton(resolved ? tr("Restore") : note.measurement ? tr("Remove") : tr("Resolve"), this);
   btn->setObjectName("outline");
   if (!resolved) btn->setIcon(QIcon(icons::pixmap("check", t.fg, 14, devicePixelRatioF())));
   foot->addWidget(btn);

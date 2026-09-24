@@ -1,4 +1,7 @@
 {
+ "Reading Git history...": "جارٍ قراءة سجل Git...",
+ "Git history timed out.": "انتهت مهلة قراءة سجل Git.",
+ "Measurement pinned. Manage it in Annotations (Alt+2).": "تم تثبيت القياس. يمكنك إدارته في التعليقات (Alt+2).",
  "Select through objects": "التحديد عبر الأجسام",
  "Align view to plane": "محاذاة العرض مع مستوى",
  "Pick a plane": "اختر مستوى",
