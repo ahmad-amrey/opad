@@ -983,6 +983,13 @@ bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
 // Drives the tools the way the mouse does (sketch coordinates instead of pixels), so a headless run covers the
 // same code as a user: a 40 x 25 rectangle from the origin with a hole, width and height dimensioned.
 void SketchEditor::bench(const QString&) {
+  const bool grid=m_viewport->gridSnap(); const double step=m_viewport->gridStep();
+  m_viewport->setGridSnap(true); const auto snapped=snap(1.24*step,2.34*step);
+  if(std::abs(snapped.u-step)>1e-9 || std::abs(snapped.v-2*step)>1e-9) throw opad::Error("grid snap missed its lattice");
+  m_viewport->setGridSnap(false); const auto free=snap(1.24*step,2.34*step);
+  if(std::abs(free.u-1.24*step)>1e-9) throw opad::Error("disabled grid snap changed a free point");
+  m_viewport->setGridSnap(grid);
+  trace::log(QStringLiteral("bench: grid snapping toggle PASS"));
   auto press = [this](double u, double v) {
     sketchMove(u, v, Qt::NoModifier, false);
     sketchPress(u, v, Qt::NoModifier);

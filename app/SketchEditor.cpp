@@ -17,6 +17,7 @@
 #include <TopoDS.hxx>
 
 #include <QKeyEvent>
+#include <QSettings>
 #include <cmath>
 
 #include "I18n.hpp"
@@ -355,6 +356,7 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   s.u = u;
   s.v = v;
   const double t = tol();
+  const bool extensions=QSettings().value("view/extensions",true).toBool(), tracking=QSettings().value("view/tracking",true).toBool();
   if (m_inferenceLocked && infer) {
     const double along=(u-m_lockX)*m_lockDx+(v-m_lockY)*m_lockDy;
     s.u=m_lockX+along*m_lockDx; s.v=m_lockY+along*m_lockDy; s.tracking=true; return s;
@@ -371,7 +373,7 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   for (const auto& e : m_sk.entities) {
     if (e.type != SkEntity::Type::Line && e.type != SkEntity::Type::Circle && e.type != SkEntity::Type::Arc) continue;
     double d = distanceTo(e, u, v);
-    if (e.type==SkEntity::Type::Line && e.p.size()==2 && (e.p[0]==m_trackingPoint || e.p[1]==m_trackingPoint)) {
+    if (extensions && e.type==SkEntity::Type::Line && e.p.size()==2 && (e.p[0]==m_trackingPoint || e.p[1]==m_trackingPoint)) {
       const auto *a=m_sk.point(e.p[0]), *b=m_sk.point(e.p[1]);
       if(a && b) { const double dx=b->x-a->x,dy=b->y-a->y,len=std::hypot(dx,dy); if(len>1e-9) d=std::abs((u-a->x)*dy-(v-a->y)*dx)/len; }
     }
@@ -393,14 +395,14 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
     }
   }
   if (s.entity || !infer) return s;
-  if (const auto* reference=m_sk.point(m_trackingPoint)) {
+  if (const auto* reference=m_sk.point(m_trackingPoint); tracking && reference) {
     if(std::abs(u-reference->x)<t) { s.u=reference->x; s.tracking=true; }
     if(std::abs(v-reference->y)<t) { s.v=reference->y; s.tracking=true; }
     if(s.tracking) return s;
   }
   // Horizontal / vertical inference against the previous click of a line-like tool.
   const bool lineLike = m_tool == "line" && !m_chain.empty();
-  if (lineLike) {
+  if (lineLike && tracking) {
     const SkPoint* from = m_sk.point(m_chain.back());
     if (from) {
       const double dx = u - from->x, dy = v - from->y;
@@ -820,7 +822,7 @@ void SketchEditor::rebuild() {
       }
     }
     d.bigPoints.push_back({W(cu, cv), m_cursor.point || m_cursor.entity ? t.green : rb});
-    if (const auto* reference=m_sk.point(m_trackingPoint)) {
+    if (const auto* reference=m_sk.point(m_trackingPoint); QSettings().value("view/tracking",true).toBool() && reference) {
       if(m_cursor.tracking || m_cursor.entity) {
         d.dashed.push_back({W(reference->x,reference->y),W(cu,cv),t.green});
         d.texts.push_back({W(cu+14*px,cv+12*px),m_inferenceLocked?tr("Locked"):tr("Tracking"),t.green});

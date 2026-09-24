@@ -234,9 +234,10 @@ gp_Pnt Viewport::drawingOrbitPoint() {
     const auto& points=p->second->drawingSegments;
     for(size_t i=0;i+1<points.size();i+=2) segment(points[i].Transformed(item.ais->Transformation()),points[i+1].Transformed(item.ais->Transformation()));
   }
-  for(const auto& [id,wire]:m_sketchWires) for(TopExp_Explorer e(wire.ais->Shape(),TopAbs_EDGE);e.More();e.Next()) {
-    BRepAdaptor_Curve c(TopoDS::Edge(e.Current())); const int n=c.GetType()==GeomAbs_Line?1:128;
-    for(int j=0;j<n;++j) segment(c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*j/n),c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*(j+1)/n));
+  for(const auto& [id,wire]:m_sketchWires) {
+    if(!m_ctx->IsDisplayed(wire.ais) || !wire.prs) continue;
+    const auto& points=wire.prs->drawingSegments;
+    for(size_t i=0;i+1<points.size();i+=2) segment(points[i],points[i+1]);
   }
   return best;
 }

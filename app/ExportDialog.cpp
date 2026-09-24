@@ -45,6 +45,7 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   int i = 0;
   for (const auto& f : fmts) {
     auto* r = new QRadioButton(f.label, &dlg);
+    r->setStyleSheet(QString("QRadioButton:disabled { color: %1; }").arg(theme::current().fg3.name()));
     r->setProperty("format", f.format);
     r->setProperty("schema", f.schema);
     group->addButton(r, i);
@@ -87,6 +88,7 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   path->setObjectName("mono");
   path->setFont(theme::mono(12));
   QString stem = m_doc->doc.path.empty() ? "export" : QString::fromStdString(m_doc->doc.path.stem().string());
+  if(ids.size()==1) { const auto* sk=m_doc->scene.sketch(ids[0]); stem=sk?QString::fromStdString(sk->name):m_doc->nodeName(ids[0]); for(const QChar c:QString("<>:\"/\\|?*")) stem.replace(c,'_'); }
   path->setText(QDir(m_settings.value("ui/lastDir", QDir::homePath()).toString()).filePath(stem + ".step"));
   auto* browse = new QPushButton(tr("Browse…"), &dlg);
   pathRow->addWidget(path, 1);

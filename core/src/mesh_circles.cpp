@@ -13,7 +13,7 @@
 namespace opad {
 std::vector<MeshCircle> mesh_circles(const TopoDS_Shape& shape) {
   if (!is_mesh_shape(shape)) return {};
-  Bnd_Box box; BRepBndLib::Add(shape,box);
+  Bnd_Box box; BRepBndLib::Add(shape,box); if(box.IsVoid()) return {};
   const double tolerance=std::max(1e-7,box.CornerMin().Distance(box.CornerMax())*1e-7);
   std::map<std::array<long long,3>,int> welded;
   std::vector<gp_Pnt> points;
@@ -58,7 +58,8 @@ std::vector<MeshCircle> mesh_circles(const TopoDS_Shape& shape) {
       const gp_Vec v(circle.Location(),points[ring[i]]), w(circle.Location(),points[ring[(i+1)%ring.size()]]);
       if(std::abs(v.Magnitude()-circle.Radius())>tol || std::abs(v.Dot(gp_Vec(circle.Axis().Direction())))>tol) valid=false;
       const double angle=std::atan2(gp_Vec(circle.Axis().Direction()).Dot(v.Crossed(w)),v.Dot(w));
-      if(std::abs(angle)>M_PI/2) valid=false; winding+=angle;
+      if(std::abs(angle)>M_PI/2) valid=false;
+      winding+=angle;
     }
     if(!valid || std::abs(std::abs(winding)-2*M_PI)>1e-4) continue;
     MeshCircle result; result.circle=circle; result.segments=int(ring.size());

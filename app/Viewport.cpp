@@ -909,9 +909,11 @@ void Viewport::fitNodes(const std::vector<std::string>& ids) {
   if (!m_initialised) return;
   m_needFit = false;
   Bnd_Box box;
-  for (const auto& id : ids)
+  for (const auto& id : ids) {
+    if(m_doc->scene.sketch(id)) box.Add(opad::node_world_bbox(m_doc->doc,m_doc->scene,id));
     for (const auto& b : m_doc->scene.bodies_under(id))
       if (m_items.count(b)) box.Add(opad::node_world_bbox(m_doc->doc, m_doc->scene, b));
+  }
   if (trace::enabled()) { double a, b, c, d, e, f; if (!box.IsVoid()) box.Get(a, b, c, d, e, f); trace::log(QStringLiteral("fitNodes: box void=%1 [%2 %3 %4]-[%5 %6 %7]").arg(box.IsVoid()).arg(a).arg(b).arg(c).arg(d).arg(e).arg(f)); }
   if (box.IsVoid()) return fitAll();
   m_view->FitAll(box, 0.02, Standard_False);
@@ -1659,8 +1661,8 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   finishTrackpadScroll();
   m_nativePinching = false;
   setFocus();
-  m_dragOffset = {}; m_warpGate.pending = false;
-  m_pressPos = e->pos();
+  if(e->buttons()==e->button()) { m_dragOffset = {}; m_warpGate.pending = false; }
+  m_pressPos = (e->position()+m_dragOffset).toPoint();
   m_rightPress = e->button() == Qt::RightButton;
   m_cubeClick = false;
   if (sectionMousePress(e)) return;  // a press on the section plane's handle strip starts a drag, never a selection
@@ -1708,7 +1710,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
     e->accept();
     return;
   }
-  if (m_initialised && UpdateMouseButtons(devicePos(e->position()), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
+  if (m_initialised && UpdateMouseButtons(devicePos(e->position()+m_dragOffset), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
 }
 
 void Viewport::mouseReleaseEvent(QMouseEvent* e) {
@@ -1742,7 +1744,9 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
     if (m_sketchInput && planePoint(e->position(), m_sketchFrame, u, v)) m_sketchInput->sketchRelease(u, v, e->modifiers());
     return;
   }
-  if (m_initialised && UpdateMouseButtons(devicePos(e->position() + m_dragOffset), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
+  QPointF releasePosition=e->position();
+  if(m_warpGate.pending && !m_warpGate.accept(e->globalPosition().toPoint())) releasePosition=mapFromGlobal(m_warpGate.to);
+  if (m_initialised && UpdateMouseButtons(devicePos(releasePosition + m_dragOffset), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
   if (m_cubeGesture && e->button() == Qt::LeftButton) {
     m_cubeGesture = false;
     ChangeMouseGestureMap().Bind(Aspect_VKeyMouse_LeftButton, AIS_MouseGesture_SelectRectangle);
@@ -1752,7 +1756,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
     m_rightPress = false;
     emit contextMenuRequested(e->globalPosition().toPoint());
   }
-  if (e->buttons() == Qt::NoButton) m_dragOffset = {};
+  if (e->buttons() == Qt::NoButton) { m_dragOffset = {}; m_warpGate.pending=false; }
 }
 
 void Viewport::mouseMoveEvent(QMouseEvent* e) {

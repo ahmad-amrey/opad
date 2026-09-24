@@ -7,6 +7,7 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBndLib.hxx>
 #include <QCoreApplication>
 #include <QKeyEvent>
@@ -147,6 +148,7 @@ bool Viewport::benchPicking() {
       m_items["a"].ais=red; m_items["b"].ais=green; updateDepthBias(); setRenderQuality(0);
       m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
       for (int level : {0,1,2}) { setRenderQuality(level);
+      trace::log(QString("bench: render mode %1 uses %2").arg(level).arg(m_view->RenderingParams().Method==Graphic3d_RM_RAYTRACING?"ray tracing":"rasterization"));
       for(const gp_Pnt eye:{gp_Pnt(0,0,100),gp_Pnt(0,-100,35)}) {
         m_view->Camera()->SetEyeAndCenter(eye,gp_Pnt(0,0,10)); m_view->Camera()->SetUp(gp::DY()); m_view->Camera()->SetScale(60);
         m_view->Redraw(); const QImage frame=grabImage();
@@ -162,6 +164,22 @@ bool Viewport::benchPicking() {
       for(const auto& shape:visible) { m_ctx->Display(shape,false); activateSelection(shape); }
       setRenderQuality(quality); m_view->SetCamera(camera); m_view->Redraw();
       trace::log(QStringLiteral("bench: coincident surface pixel regression PASS"));
+    }
+
+    {
+      const auto camera=new Graphic3d_Camera(*m_view->Camera());
+      auto items=std::move(m_items); auto sketches=std::move(m_sketchWires); m_items.clear(); m_sketchWires.clear();
+      const auto line=BRepBuilderAPI_MakeEdge(gp_Pnt(500,-10,0),gp_Pnt(500,10,0)).Shape(); Bnd_Box bounds; BRepBndLib::Add(line,bounds);
+      auto drawing=BodyPrs::build(line,bounds); Handle(AIS_Shape) ais=new BodyShape(line,drawing); m_ctx->Display(ais,0,-1,false);
+      m_prs["bench-drawing"]=drawing; m_items["bench-drawing"].ais=ais; m_items["bench-drawing"].key="bench-drawing";
+      m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic); m_view->Camera()->SetEyeAndCenter(gp_Pnt(0,0,100),gp_Pnt(0,0,0)); m_view->Camera()->SetUp(gp::DY()); m_view->Redraw();
+      require(centralOrbitPoint().Distance(gp_Pnt(500,0,0))<pixelSize()*2,"drawing-only orbit missed the drawing");
+      const bool grid=m_grid; setGrid(true); double sx,sy,offset; m_viewer->RectangularGridGraphicValues(sx,sy,offset);
+      require(sx>=550 && sy>=550,"grid did not cover the scene bounds");
+      m_items.clear();m_sketchWires["bench-sketch"]={ais,drawing,"bench"};
+      require(centralOrbitPoint().Distance(gp_Pnt(500,0,0))<pixelSize()*2,"sketch-only orbit missed the sketch");
+      m_ctx->Remove(ais,false);m_prs.erase("bench-drawing");m_items=std::move(items);m_sketchWires=std::move(sketches);setGrid(grid);m_view->SetCamera(camera);m_view->Redraw();
+      trace::log(QStringLiteral("bench: drawing/sketch orbit fallback and grid extent PASS"));
     }
 
     // Exercise Qt's trackpad event path, including the virtual drag that drives OCCT's existing gestures.

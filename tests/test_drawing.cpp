@@ -128,6 +128,13 @@ TEST(mesh_circle_centers_and_segments_survive_roundtrip) {
   CHECK_EQ(inspect_ref(d,scene,a)["segments"].get<int>(),24);
   a.kind=Ref::Kind::Edge;
   CHECK_NEAR(measure_radius(d,scene,a)["value"].get<double>(),10,1e-4);
+  ExportOptions mesh;mesh.format="stl";mesh.select={id};mesh.per_body=false;export_selection(d,scene,f.dir/"tube.stl",mesh);
+  auto stl=Document::create();import_file(stl,f.dir/"tube.stl");const auto ss=resolve(stl);CHECK_EQ(mesh_circles(node_world_shape(stl,ss,ss.all_bodies()[0])).size(),2u);
+  std::ostringstream ellipse;
+  for(int z=0;z<2;++z) for(int i=0;i<24;++i) ellipse<<"v "<<12*cos(2*M_PI*i/24)<<" "<<10*sin(2*M_PI*i/24)<<" "<<z*20<<"\n";
+  for(int i=0;i<24;++i) {int a=i+1,b=(i+1)%24+1;ellipse<<"f "<<a<<" "<<b<<" "<<b+24<<"\nf "<<a<<" "<<b+24<<" "<<a+24<<"\n";}
+  write_text_file(f.dir/"ellipse.obj",ellipse.str());auto e=Document::create();import_file(e,f.dir/"ellipse.obj");auto es=resolve(e);CHECK(mesh_circles(node_world_shape(e,es,es.all_bodies()[0])).empty());
+
 }
 
 TEST(drawing_layers_convert_to_editable_extrudable_sketch) {
@@ -169,6 +176,6 @@ TEST(individual_solids_and_meshes_export_without_their_neighbors) {
     const auto path=f.dir/(std::string("one.")+format);CHECK_EQ(export_selection(d,scene,path,o).bodies,1);
     auto round=Document::create();import_file(round,path);const auto rs=resolve(round);CHECK_EQ(rs.all_bodies().size(),1u);
     auto box=node_world_bbox(round,rs,rs.all_bodies()[0]);CHECK(box.CornerMax().X()<11);
-    if(std::string(format)!="step") { ExportOptions mesh;o.format=format;mesh.format=format;mesh.select={rs.all_bodies()[0]};mesh.per_body=false;CHECK_EQ(export_selection(round,rs,f.dir/(std::string("mesh.")+format),mesh).bodies,1); }
+    if(std::string(format)!="step") { ExportOptions mesh;mesh.format=format;mesh.select={rs.all_bodies()[0]};mesh.per_body=false;CHECK_EQ(export_selection(round,rs,f.dir/(std::string("mesh.")+format),mesh).bodies,1); }
   }
 }

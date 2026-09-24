@@ -128,7 +128,7 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
       points(j) = curve.Value(curve.FirstParameter() + (curve.LastParameter() - curve.FirstParameter()) * (j - 1) / 256.0);
     Handle(Select3D_SensitiveCurve) sensitive = new Select3D_SensitiveCurve(nullptr, points);
     sensitive->BVH();
-    p->circles.emplace(i - 1, Circle{edges(i), curve.Circle().Location(), sensitive});
+    p->circles.emplace(i - 1, Circle{edges(i), curve.Circle().Location(), sensitive,-1,0,0,{}});
   }
   // STEP often splits a closed circle at seam vertices. Group co-circular arcs only
   // when their angular intervals cover a complete revolution (overlaps don't count twice).

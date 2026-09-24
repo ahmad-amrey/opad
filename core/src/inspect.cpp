@@ -214,6 +214,11 @@ json document_info(const Document& doc, const Scene& scene) {
 }
 
 json node_properties(const Document& doc, const Scene& scene, const std::string& node_id, bool geometry) {
+  if(const auto* sk=scene.sketch(node_id)) {
+    json out={{"id",sk->id},{"name",sk->name},{"type","sketch"},{"visible",sk->visible},{"entities",sk->geometry.value("entities",json::array()).size()},{"frame",sk->frame.to_json()}};
+    if(geometry) out["bbox"]=bbox_json(node_world_bbox(doc,scene,node_id));
+    return out;
+  }
   const Node* n = scene.node(node_id);
   if (!n) throw Error("unknown node: " + node_id);
   json j;
