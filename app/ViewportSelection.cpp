@@ -3,7 +3,7 @@
 #include <AIS_RubberBand.hxx>
 #include <SelectMgr_ViewerSelector.hxx>
 #include <Graphic3d_Camera.hxx>
-#include <QSettings>
+#include <QElapsedTimer>
 #include <algorithm>
 #include <set>
 
@@ -30,33 +30,55 @@ void Viewport::handleSelectionPoly(const Handle(AIS_InteractiveContext)& ctx,con
   struct State {
     std::vector<Handle(SelectMgr_EntityOwner)> candidates,visible;
     std::set<const SelectMgr_EntityOwner*> remaining;
+    std::vector<QPoint> seeds;
+    size_t seeded=0,published=0;
+    bool started=false;
+    QElapsedTimer feedback;
     int x=0,y=0,stride=8;
   };
-  auto state=std::make_shared<State>();state->x=left;state->y=top;
+  auto state=std::make_shared<State>();state->x=left;state->y=top;state->feedback.start();
   for(int i=1;i<=selector->NbPicked();++i) {
     auto owner=selector->Picked(i);
-    if(Handle(CircleOwner)::DownCast(owner).IsNull() && m_nodeOf.count(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get())) {state->candidates.push_back(owner);state->remaining.insert(owner.get());}
+    if(Handle(CircleOwner)::DownCast(owner).IsNull() && m_nodeOf.count(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get())) {state->candidates.push_back(owner);state->remaining.insert(owner.get());
+      const auto center=selector->PickedEntity(i)->CenterOfGeometry().Transformed(owner->Selectable()->Transformation());
+      int x,y;view->Convert(center.X(),center.Y(),center.Z(),x,y);
+      state->seeds.emplace_back(std::clamp(x,left,right),std::clamp(y,top,bottom));
+    }
   }
   const auto scheme=myGL.Selection.Scheme;
-  auto finish=[this,state,scheme](bool ok) {
-    m_boxJob=nullptr;if(!ok) return;
+  const auto generation=m_doc->generation;const auto camera=view->Camera()->WorldViewProjState();
+  // Publish each owner once: repeated XOR batches would otherwise undo earlier hits.
+  auto publish=[this,state,scheme](bool force) {
+    if(!force && (state->published==state->visible.size() || (state->started && state->feedback.elapsed()<16))) return;
     AIS_NArray1OfEntityOwner owners;
-    if(!state->visible.empty()) {owners.Resize(1,int(state->visible.size()),false);for(size_t i=0;i<state->visible.size();++i)owners.SetValue(int(i)+1,state->visible[i]);}
-    m_ctx->Select(owners,scheme);OnSelectionChanged(m_ctx,m_view);redrawScene();
+    const size_t count=state->visible.size()-state->published;
+    if(count) {owners.Resize(1,int(count),false);for(size_t i=0;i<count;++i) owners.SetValue(int(i)+1,state->visible[state->published+i]);}
+    auto next=scheme;
+    if(state->started && (scheme==AIS_SelectionScheme_Replace || scheme==AIS_SelectionScheme_ReplaceExtra)) next=AIS_SelectionScheme_Add;
+    m_ctx->Select(owners,next);
+    if(!state->started && trace::enabled()) trace::log(QString("box: first feedback %1 ms").arg(state->feedback.elapsed()));
+    state->started=true;state->published=state->visible.size();state->feedback.restart();
+    OnSelectionChanged(m_ctx,m_view);redrawScene();
+  };
+  auto finish=[this,state,publish,generation](bool ok) {
+    m_boxJob=nullptr;
+    if(generation!=m_doc->generation) return;
+    if(ok) publish(true);
   };
   if(trace::enabled()) trace::log(QString("box: crossing=%1 through=%2 candidates=%3").arg(m_boxCrossing).arg(m_selectThrough).arg(state->candidates.size()));
   if(m_selectThrough || state->candidates.empty()) {state->visible=state->candidates;finish(true);return;}
-  const auto generation=m_doc->generation;const auto camera=view->Camera()->WorldViewProjState();
   // Visibility is tested against foreground geometry, in short cancellable slices.
   // A coarse pass resolves normal selections quickly; pixel coverage catches thin
   // edges and narrow exposed portions in the remaining candidates.
   m_boxJob=m_jobs->sliced(tr("Selecting visible objects"),[=,this](Job& job) {
     if(generation!=m_doc->generation || camera!=view->Camera()->WorldViewProjState()) {job.cancel();return false;}
     if(state->remaining.empty()) return false;
-    for(int count=0;count<32;++count) {
-      selector->Pick(state->x,state->y,view);
+    for(int count=0;count<8;++count) {
+      const bool seed=state->seeded<state->seeds.size();
+      const QPoint pixel=seed?state->seeds[state->seeded++]:QPoint(state->x,state->y);
+      selector->Pick(pixel.x(),pixel.y(),view);
       if(selector->NbPicked()) {
-        m_navSelector->Pick(state->x,state->y,view);
+        m_navSelector->Pick(pixel.x(),pixel.y(),view);
         const bool haveFront=m_navSelector->NbPicked()>0;
         const gp_Pnt front=haveFront?m_navSelector->PickedPoint(1):selector->PickedPoint(1);
         for(int rank=1;rank<=selector->NbPicked();++rank) {
@@ -66,6 +88,9 @@ void Viewport::handleSelectionPoly(const Handle(AIS_InteractiveContext)& ctx,con
           break;
         }
       }
+      publish(false);
+      if(state->remaining.empty()) return false;
+      if(seed) continue;
       state->x+=state->stride;
       if(state->x>right) {state->x=left;state->y+=state->stride;}
       if(state->y>bottom) {

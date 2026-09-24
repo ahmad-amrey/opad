@@ -569,7 +569,9 @@ std::vector<opad::Ref> Viewport::selection() const {
     opad::Ref r;
     r.body = it->second;
     Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->SelectedOwner());
-    if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
+    const auto mine=Handle(SubShapeOwner)::DownCast(owner);
+    if(!mine.IsNull() && m_filter!=SelFilter::Body) {r.kind=mine->kind();r.index=mine->index();}
+    else if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
       const TopoDS_Shape& sub = owner->Shape();
       const auto shape=Handle(AIS_Shape)::DownCast(obj)->Shape();
       switch (sub.ShapeType()) {
@@ -721,6 +723,7 @@ void Viewport::refreshSubHighlight() {
   auto step = [st, flush]() -> bool {
     if (st->i >= st->owners.size()) return false;
     const Handle(SubShapeOwner)& o = st->owners[st->i++];
+    o->prepare();
     const TopoDS_Shape& sub = o->Shape();
     gp_Trsf body;  // rigid placements live on the object, not in the shape (displayBody)
     if (Handle(AIS_InteractiveObject) obj = Handle(AIS_InteractiveObject)::DownCast(o->Selectable()); !obj.IsNull()) body = obj->LocalTransformation();
@@ -1007,6 +1010,7 @@ void Viewport::fitSelection() {
   for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected()) {
     Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->SelectedOwner());
     auto it = m_nodeOf.find(m_ctx->SelectedInteractive().get());
+    if(const auto sub=Handle(SubShapeOwner)::DownCast(owner);!sub.IsNull()) sub->prepare();
     if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
       TopoDS_Shape sub = owner->Shape();
       Handle(AIS_InteractiveObject) obj = m_ctx->SelectedInteractive();

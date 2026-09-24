@@ -50,7 +50,10 @@ TEST(mesh_selection_has_independent_facet_edge_and_vertex_owners) {
       SelectBasics_PickResult result;
       CHECK(entity->BaseSensitive()->Matches(volume,result));
       auto owner=Handle(SubShapeOwner)::DownCast(entity->BaseSensitive()->OwnerId());
-      CHECK(!owner.IsNull() && owner->HasShape());
+      CHECK(!owner.IsNull());
+      CHECK(!owner->HasShape()); // A box candidate must not construct analytic geometry.
+      owner->prepare();
+      CHECK(owner->HasShape());
       CHECK_EQ(owner->Shape().ShapeType(),type); owners.insert(owner->index());
     }
     CHECK_EQ(owners.size(),size_t(count));
@@ -82,7 +85,7 @@ TEST(mesh_circle_rim_retains_vertex_and_center_targets) {
     SelectBasics_PickResult result;if(!entity->BaseSensitive()->Matches(volume,result)) continue;
     auto owner=Handle(CircleOwner)::DownCast(entity->BaseSensitive()->OwnerId());
     if(!owner.IsNull()) {CHECK_NEAR(owner->center.Distance(gp::Origin()),0,1e-7);++centers;}
-    else {auto vertex=Handle(SubShapeOwner)::DownCast(entity->BaseSensitive()->OwnerId());CHECK(!vertex.IsNull());CHECK_EQ(vertex->Shape().ShapeType(),TopAbs_VERTEX);++vertices;}
+    else {auto vertex=Handle(SubShapeOwner)::DownCast(entity->BaseSensitive()->OwnerId());CHECK(!vertex.IsNull());vertex->prepare();CHECK_EQ(vertex->Shape().ShapeType(),TopAbs_VERTEX);++vertices;}
   }
   CHECK(centers>0);CHECK(vertices>0);
 }

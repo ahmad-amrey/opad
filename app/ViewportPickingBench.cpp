@@ -120,17 +120,34 @@ bool Viewport::benchPicking() {
         m_nodeOf[nearAis.get()]="near";m_nodeOf[farAis.get()]="far";
         m_ctx->Load(nearAis,-1);m_ctx->Load(farAis,-1);m_ctx->Activate(nearAis,0);m_ctx->Activate(farAis,0);
         const bool oldThrough=m_selectThrough;
-        auto rectangle=[&](double x0,double x1,bool through) {
+        auto rectangle=[&](double x0,double x1,bool through,AIS_SelectionScheme scheme=AIS_SelectionScheme_Replace) {
+          QElapsedTimer duration;duration.start();
+          qint64 first=-1;
           m_selectThrough=through;
           UpdateRubberBand(devicePos(widgetPoint({x0,11,0})),devicePos(widgetPoint({x1,-11,0})));
-          myGL.Selection=myUI.Selection;myGL.Selection.Scheme=AIS_SelectionScheme_Replace;myGL.Selection.ToApplyTool=true;
+          myGL.Selection=myUI.Selection;myGL.Selection.Scheme=scheme;myGL.Selection.ToApplyTool=true;
           handleSelectionPoly(m_ctx,m_view);
-          QElapsedTimer wait;wait.start();while(m_boxJob && wait.elapsed()<15000) QCoreApplication::processEvents(QEventLoop::AllEvents,10);
+          QElapsedTimer wait;wait.start();while(m_boxJob && wait.elapsed()<15000) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents,10);
+            if(first<0 && m_ctx->NbSelected()) first=duration.elapsed();
+          }
+          if(!through && scheme==AIS_SelectionScheme_Replace) {
+            trace::log(QString("bench: box first feedback=%1 ms, completion=%2 ms").arg(first).arg(duration.elapsed()));
+            require(first>=0 && first<200,"box feedback exceeded 200 ms");
+          }
           require(!m_boxJob,"visible box selection timed out");
         };
         rectangle(30,41,true);require(!m_ctx->IsSelected(nearAis),"enclosing box selected a partially covered body");
         rectangle(41,30,true);require(m_ctx->IsSelected(nearAis) && m_ctx->IsSelected(farAis),"crossing box missed overlapping bodies");
+        m_ctx->ClearSelected(false);applySelectionLayers();
         rectangle(19,41,false);require(m_ctx->IsSelected(nearAis) && !m_ctx->IsSelected(farAis),"visible-only box selected an occluded body");
+        placement.SetTranslation(gp_Vec(31,0,0));farAis->SetLocalTransformation(placement);farShape->SetLocalTransformation(placement);
+        m_ctx->Redisplay(farAis,false);m_ctx->RecomputeSelectionOnly(farAis);manager->Update(farShape,true);m_view->Redraw();
+        m_ctx->ClearSelected(false);applySelectionLayers();
+        rectangle(19,42,false);require(m_ctx->IsSelected(nearAis) && m_ctx->IsSelected(farAis),"visible box missed a narrow exposed part");
+        rectangle(19,42,false,AIS_SelectionScheme_XOR);require(!m_ctx->IsSelected(nearAis) && !m_ctx->IsSelected(farAis),"progressive XOR toggled an owner twice");
+        placement.SetTranslation(gp_Vec(30,0,0));farAis->SetLocalTransformation(placement);farShape->SetLocalTransformation(placement);
+        manager->Update(farShape,true);
         m_selectThrough=oldThrough;
         m_ctx->ClearSelected(false);m_ctx->Deactivate(nearAis);m_ctx->Deactivate(farAis);
         m_nodeOf.erase(nearAis.get());m_nodeOf.erase(farAis.get());

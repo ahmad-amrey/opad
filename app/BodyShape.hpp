@@ -3,6 +3,7 @@
 // plain AIS_Shape walks the triangulation (and its face boundaries) on the UI thread, which takes hundreds
 // of milliseconds for a heavy body; here Display() only hands the ready arrays to the graphic driver.
 #include <AIS_Shape.hxx>
+#include "opad/util.hpp"
 #include <Bnd_Box.hxx>
 #include <Graphic3d_ArrayOfSegments.hxx>
 #include <Graphic3d_ArrayOfTriangles.hxx>
@@ -64,6 +65,10 @@ class SubShapeOwner : public StdSelect_BRepOwner {
  public:
   SubShapeOwner(const TopoDS_Shape& sub, const Handle(SelectMgr_SelectableObject)& body, int priority, int index)
       : StdSelect_BRepOwner(sub, body, priority, Standard_True), m_index(index) {}
+  virtual void prepare() {}
+  virtual opad::Ref::Kind kind() const {
+    return myShape.IsNull()?opad::Ref::Kind::Body:myShape.ShapeType()==TopAbs_FACE?opad::Ref::Kind::Face:myShape.ShapeType()==TopAbs_EDGE?opad::Ref::Kind::Edge:opad::Ref::Kind::Vertex;
+  }
   std::shared_ptr<const std::vector<gp_Pnt>> curve;
   int index() const { return m_index; }  // as opad::subshape_index: 0-based, -1 when unknown
 

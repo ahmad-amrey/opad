@@ -289,25 +289,17 @@ class MeshOwner : public SubShapeOwner {
       : SubShapeOwner({},body,kind==opad::Ref::Kind::Vertex?9:kind==opad::Ref::Kind::Edge?7:5,index), m_mesh(mesh), m_kind(kind) {
     SetHilightMode(kind==opad::Ref::Kind::Face?AIS_Shaded:AIS_WireFrame);
   }
-  void prepare() { if(myShape.IsNull()) myShape=opad::subshape(m_mesh,m_kind,index()); }
+  opad::Ref::Kind kind() const override { return m_kind; }
+  void prepare() override { if(myShape.IsNull()) myShape=opad::subshape(m_mesh,m_kind,index()); }
   void HilightWithColor(const Handle(PrsMgr_PresentationManager)& pm,const Handle(Prs3d_Drawer)& style,Standard_Integer mode) override {
-    prepare(); SubShapeOwner::HilightWithColor(pm,style,mode);
+    if(pm->IsImmediateModeOn()) prepare();
+    SubShapeOwner::HilightWithColor(pm,style,mode);
   }
  private:
   TopoDS_Shape m_mesh;
   opad::Ref::Kind m_kind;
 };
-template<class Sensitive> class MeshSensitive : public Sensitive {
- public:
-  template<class... Args> MeshSensitive(const Handle(MeshOwner)& owner,Args&&... args)
-      : Sensitive(owner,std::forward<Args>(args)...),m_owner(owner) {}
-  Standard_Boolean Matches(SelectBasics_SelectingVolumeManager& mgr,SelectBasics_PickResult& result) override {
-    if(!Sensitive::Matches(mgr,result)) return false;
-    m_owner->prepare(); return true;
-  }
- private:
-  Handle(MeshOwner) m_owner;
-};
+template<class Sensitive> using MeshSensitive=Sensitive;
 }
 
 void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode) {
