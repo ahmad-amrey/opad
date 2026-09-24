@@ -66,8 +66,7 @@ void Viewport::refreshCenterStyles() {
   for (const auto& [key, marker] : m_centers) {
     const bool selected=m_ctx->IsSelected(marker.ais);
     const bool center=key==m_activeCenter, tracking=key==m_trackingMarker;
-    const bool candidate=(center && m_inferenceChoice==0)
-        || (tracking && (m_activeCenter.empty() || m_inferenceChoice>0));
+    const bool candidate=tracking;
     const bool locked=(center && m_centerLocked) || (tracking && m_trackingLocked);
     auto aspect=marker.ais->Attributes()->PointAspect();
     aspect->SetTypeOfMarker(selected ? Aspect_TOM_O_PLUS : Aspect_TOM_O);
@@ -80,19 +79,18 @@ bool Viewport::inferenceKey(QKeyEvent* key) {
   if (key->key()!=Qt::Key_Shift || key->isAutoRepeat() || m_sketchInput || m_blocked || !m_initialised) return false;
   if (key->type()==QEvent::KeyPress) {
     if (m_shiftHeld || QApplication::mouseButtons()!=Qt::NoButton) return false;
-    const bool center=!m_activeCenter.empty();
-    const int count=int(m_trackingCandidates.size())+int(center);
+    const int count=int(m_trackingCandidates.size());
     if (!count) return false;
     m_inferenceChoice=std::clamp(m_inferenceChoice,0,count-1);
     m_shiftHeld=true; m_shiftClock.start();
-    m_centerLocked=center && m_inferenceChoice==0;
-    m_trackingLocked=!m_centerLocked;
-    if(m_trackingLocked) m_lockedTracking=m_trackingCandidates[m_inferenceChoice-int(center)];
+    m_centerLocked=false;
+    m_trackingLocked=true;
+    m_lockedTracking=m_trackingCandidates[m_inferenceChoice];
   } else {
     if (!m_shiftHeld) return false;
     const bool tap=m_shiftClock.elapsed()<250;
     m_shiftHeld=m_centerLocked=m_trackingLocked=false;
-    const int count=int(m_trackingCandidates.size())+int(!m_activeCenter.empty());
+    const int count=int(m_trackingCandidates.size());
     if(tap && count>1) m_inferenceChoice=(m_inferenceChoice+1)%count;
   }
   m_trackingDirty=true; m_hoverOwner=nullptr;

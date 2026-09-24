@@ -20,6 +20,7 @@ class AppDocument : public QObject {
   opad::Scene scene;
   bool browse = false;       // F1: transient view of a STEP file, nothing is persisted
   bool hasDocument = false;
+  unsigned long long generation = 0;
   bool loading = false;      // a worker thread owns the document content until loadFinished
 
   void newDocument();
@@ -66,6 +67,7 @@ class AppDocument : public QObject {
   QString nodeName(const std::string& id) const;
 
  signals:
+  void aboutToReplace();  // end transient tools before changing document identity
   void changed();
   void pathChanged();
   void message(const QString& text);

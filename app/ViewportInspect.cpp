@@ -96,6 +96,7 @@ void Viewport::clearDimension() {
   if (!m_initialised) return;
   for (const auto& o : m_dimension) m_ctx->Remove(o, Standard_False);
   m_dimension.clear();
+  refreshMeasurement(true);
   redrawScene();
 }
 
@@ -154,7 +155,7 @@ int Viewport::measurementAnchorAt(const QPointF& position) const {
 }
 
 void Viewport::refreshMeasurement(bool force) {
-  if (!m_initialised || m_measurement.is_null()) return;
+  if (!m_initialised) return;
   const auto& camera = m_view->Camera();
   const auto state = camera->WorldViewProjState();
   const QSize pixels(qRound(width() * devicePixelRatioF()), qRound(height() * devicePixelRatioF()));
@@ -173,6 +174,11 @@ void Viewport::refreshMeasurement(bool force) {
     m_ctx->Display(object, 0, -1, Standard_False);
     m_dimension.push_back(object);
   };
+  std::vector<opad::json> results;
+  for (const auto& saved : m_doc->scene.measurements)
+    if (!saved.unresolved && saved.result != m_measurement) results.push_back(saved.result);
+  if (!m_measurement.is_null()) results.push_back(m_measurement);
+  for (const auto& r : results) {
   Handle(InspectGraphic) graphic = new InspectGraphic();
   graphic->endpointColor = m_tokens.fg;
   graphic->snapPointColor = m_tokens.hov;
@@ -239,15 +245,14 @@ void Viewport::refreshMeasurement(bool force) {
     label(anchor, caption, c, normal.x() * distance, -normal.y() * distance);
   };
   const QColor axes[] = {m_tokens.red, m_tokens.green, m_tokens.dark ? QColor("#76b5ff") : QColor("#2067be")};
-  const auto& r = m_measurement;
   const std::string kind = r.value("kind", "distance");
   if (kind == "distance" || kind == "radius") {
-    if (!r.contains("point_a") || !r.contains("point_b")) return;
+    if (!r.contains("point_a") || !r.contains("point_b")) continue;
     const gp_Pnt a = point(r["point_a"]), b = point(r["point_b"]);
     const int components = componentCount(a, b);
     const bool aligned = kind == "distance" && components == 1;
     graphic->endpoints = {a, b};
-    for (const auto& anchor : m_measureAnchors) {
+    if (r == m_measurement) for (const auto& anchor : m_measureAnchors) {
       const gp_Pnt candidate(anchor.point[0], anchor.point[1], anchor.point[2]);
       if (samePoint(candidate, a) || samePoint(candidate, b)) continue;
       if (std::none_of(graphic->snapPoints.begin(), graphic->snapPoints.end(), [&](const gp_Pnt& p) { return samePoint(p, candidate); }))
@@ -357,5 +362,6 @@ void Viewport::refreshMeasurement(bool force) {
   }
   display(graphic);
   for (const auto& text : labels) display(text);
+  }
   m_view->Invalidate();
 }

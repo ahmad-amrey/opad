@@ -66,6 +66,14 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   buildStatusBar();
   buildDesign();
 
+  connect(m_doc, &AppDocument::aboutToReplace, this, [this] {
+    cancelTool();
+    clearMeasurement();
+    m_viewport->clearPreviewBodies();
+    m_viewport->clearCandidates();
+    m_viewport->isolate({});
+    if (action("inspect.section")->isChecked()) action("inspect.section")->setChecked(false);
+  });
   connect(m_doc, &AppDocument::changed, this, [this] {
     trace::Scope scope("MainWindow: document changed");
     updateTitle();
@@ -391,6 +399,7 @@ void MainWindow::buildActions() {
   addAction("inspect.radius", tr("Radius"), "radius", QKeySequence("R"), [this] { toggleTool("radius"); }, true);
   addAction("inspect.bbox", tr("Bounding box"), "bbox", QKeySequence("B"), [this] { toggleTool("bbox"); }, true);
   m_pinAction = addAction("inspect.pin", tr("Pin"), "pin", QKeySequence("P"), [this] { pinMeasurement(); });
+  m_pinAction->setShortcutContext(Qt::ApplicationShortcut);
   m_pinAction->setEnabled(false);
   addAction("inspect.clear", tr("Clear measurement"), "", QKeySequence("Esc"), [this] {
     if (m_design->sketchActive()) {  // the viewport did not have the focus: same as Esc in the sketch
@@ -1571,20 +1580,22 @@ void MainWindow::runToolMeasure() {
   // Straight to the measure functions with the app's resolved scene; the "measure" command would resolve the
   // whole scene from the op log again on every call.
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();
-  m_measureJob = m_jobs->async(tr("Measuring %1").arg(m_tool.title), [this, refs, pickedPoints, snapTolerance, kind, result](Progress progress) {
+  auto document = std::make_shared<opad::Document>(m_doc->doc);
+  auto scene = std::make_shared<opad::Scene>(m_doc->scene);
+  m_measureJob = m_jobs->async(tr("Measuring %1").arg(m_tool.title), [document, scene, refs, pickedPoints, snapTolerance, kind, result](Progress progress) {
     if (kind == "distance" && refs.at(0).kind == opad::Ref::Kind::Edge && refs.at(1).kind == opad::Ref::Kind::Edge) {
       const bool clicked = pickedPoints.size() >= 2 && pickedPoints[0].first && pickedPoints[1].first;
       opad::json closest;
-      if (!clicked) closest = opad::measure_distance(m_doc->doc, m_doc->scene, refs[0], refs[1], [progress] { return progress.cancelled(); });
-      *result = opad::measure_edge_distance(m_doc->doc, m_doc->scene, refs[0], refs[1],
+      if (!clicked) closest = opad::measure_distance(*document, *scene, refs[0], refs[1], [progress] { return progress.cancelled(); });
+      *result = opad::measure_edge_distance(*document, *scene, refs[0], refs[1],
           clicked ? pickedPoints[0].second : closest["point_a"].get<opad::Vec3>(),
           clicked ? pickedPoints[1].second : closest["point_b"].get<opad::Vec3>(),
           clicked ? snapTolerance : 0.0, [progress] { return progress.cancelled(); });
     }
-    else if (kind == "distance") *result = opad::measure_distance(m_doc->doc, m_doc->scene, refs.at(0), refs.at(1), [progress] { return progress.cancelled(); });
-    else if (kind == "angle") *result = opad::measure_angle(m_doc->doc, m_doc->scene, refs.at(0), refs.at(1));
-    else if (kind == "radius") *result = opad::measure_radius(m_doc->doc, m_doc->scene, refs.at(0));
-    else *result = opad::measure_bbox(m_doc->doc, m_doc->scene, refs);
+    else if (kind == "distance") *result = opad::measure_distance(*document, *scene, refs.at(0), refs.at(1), [progress] { return progress.cancelled(); });
+    else if (kind == "angle") *result = opad::measure_angle(*document, *scene, refs.at(0), refs.at(1));
+    else if (kind == "radius") *result = opad::measure_radius(*document, *scene, refs.at(0));
+    else *result = opad::measure_bbox(*document, *scene, refs);
   }, [this, run, result](bool ok, const QString& error) {
     if (run == m_toolRun) m_measureJob = nullptr;
     if (run != m_toolRun || m_tool.id.isEmpty()) return;  // the picks moved on
@@ -1605,7 +1616,7 @@ void MainWindow::refreshToolUi() {
   const int picked = static_cast<int>(m_toolPicks.size());
   const bool done = !m_lastMeasure.is_null();
   m_prompt->set(m_tool.icon, m_tool.title, steps, m_viewport->selectionFilter() == Viewport::SelFilter::Vertex && !done
-      ? tr("Hover arc · Shift lock center · Esc back") : done ? (m_doc->browse ? tr("Esc clear · 1–4 filter") : tr("P pin · Esc clear · 1–4 filter")) : picked ? tr("Esc back · 1–4 change filter") : tr("Esc cancel · 1–4 change filter"));
+      ? tr("Click arc to select center · Esc back") : done ? (m_doc->browse ? tr("Esc clear · 1–4 filter") : tr("P pin · Esc clear · 1–4 filter")) : picked ? tr("Esc back · 1–4 change filter") : tr("Esc cancel · 1–4 change filter"));
   m_prompt->show();
   positionOverlays();
   if (!toolMeasures()) return;
@@ -1945,6 +1956,20 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
   m_benchSelect = false;
+  if (const auto next=qEnvironmentVariable("OPAD_BENCH_IMPORT_NEXT"); !next.isEmpty()) {
+    connect(m_doc,&AppDocument::loadFinished,this,[this](bool ok,const QString& error) {
+      if (!ok) { trace::log(error); QCoreApplication::exit(2); return; }
+      QTimer::singleShot(3500,this,[this] {
+        const bool imported=m_doc->scene.all_bodies().size()>=2;
+        m_doc->newDocument();
+        const bool clean=!m_design->sketchActive() && m_lastMeasure.is_null() && m_doc->scene.all_bodies().empty();
+        trace::log(QString("bench: sequential import %1; document reset %2").arg(imported).arg(clean));
+        QCoreApplication::exit(imported && clean?0:2);
+      });
+    });
+    m_doc->startImport(next); return;
+  }
+
   if(qEnvironmentVariableIsSet("OPAD_BENCH_EXPORT_DIALOG")) { exportDialog(); QCoreApplication::exit(0); return; }
   if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD")) { drawingToSketch(); if(!qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")) QCoreApplication::exit(0); return; }
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_STATUS");!shot.isEmpty()) {

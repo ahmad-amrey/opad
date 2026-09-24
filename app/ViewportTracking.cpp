@@ -120,10 +120,9 @@ void Viewport::updateTracking() {
     for (auto line : lines) if(project(line) && distance(line.point)<10 && line.point.Distance(line.anchor)>pixelSize()*3)
       m_trackingCandidates.push_back(line);
   }
-  const bool centerAvailable = !m_activeCenter.empty();
-  const int count = int(m_trackingCandidates.size()) + int(centerAvailable);
+  const int count = int(m_trackingCandidates.size());
   if (count) m_inferenceChoice = std::clamp(m_inferenceChoice,0,count-1);
-  const int chosen = m_inferenceChoice-int(centerAvailable);
+  const int chosen = m_inferenceChoice;
   TrackingCandidate candidate;
   bool found = false;
   if (m_trackingLocked) {

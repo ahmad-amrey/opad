@@ -179,6 +179,7 @@ void SketchEditor::end() {
   if (!m_active) return;
   if (m_tool == "project") m_viewport->setEdgeHover(false);
   m_active = false;
+  m_fillTimer.stop();
   if (m_fillJob) m_fillJob->cancel();
   if (m_dimEdit) m_dimEdit->hide();
   m_viewport->removeOverlay(m_prs);

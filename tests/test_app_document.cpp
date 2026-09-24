@@ -43,6 +43,20 @@ int main(int argc, char** argv) {
     CHECK(success && doc.isDirty() && !doc.browse);
     doc.saveAs(tmp.path() + "/async.opad");
     CHECK_EQ(opad::resolve(opad::Document::load((tmp.path() + "/async.opad").toStdString())).all_bodies().size(), bodies);
+    const auto liveCache=doc.doc.shape_cache;
+    doc.startImport(step);
+    CHECK(doc.doc.shape_cache==liveCache);
+    CHECK_EQ(opad::resolve(doc.doc).all_bodies().size(),bodies);
+    loop.exec();
+    CHECK(success);
+    CHECK_EQ(doc.scene.all_bodies().size(),bodies*2);
+    int resets=0;
+    QObject::connect(&doc,&AppDocument::aboutToReplace,&doc,[&]{++resets;});
+    const auto generation=doc.generation;
+    doc.newDocument();
+    CHECK_EQ(resets,1); CHECK_EQ(doc.generation,generation+1);
+    CHECK(doc.scene.all_bodies().empty());
+    doc.closeDocument(); CHECK_EQ(resets,2);
     return 0;
   } catch (const std::exception& e) {
     std::fprintf(stderr, "%s\n", e.what());

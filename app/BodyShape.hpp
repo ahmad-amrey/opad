@@ -74,7 +74,7 @@ class CircleOwner : public SubShapeOwner {
   DEFINE_STANDARD_RTTI_INLINE(CircleOwner, SubShapeOwner)
  public:
   CircleOwner(const BodyPrs::Circle& circle, const Handle(SelectMgr_SelectableObject)& body, int index)
-      : SubShapeOwner(circle.edge, body, 3, index), center(circle.center) {}
+      : SubShapeOwner(circle.edge, body, circle.segments ? 12 : 3, index), center(circle.center) {}
   gp_Pnt center;
 };
 

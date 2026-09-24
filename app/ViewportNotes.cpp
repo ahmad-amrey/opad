@@ -55,6 +55,7 @@ class NoteGraphic : public AIS_InteractiveObject {
 // Where each open note is anchored, from the scene; the cards follow through notesMoved.
 void Viewport::updateAnnotations() {
   if (!m_initialised) return;
+  refreshMeasurement(true);
   m_notes.clear();
   for (const auto& a : m_doc->scene.annotations) {
     if (a.unresolved) continue;

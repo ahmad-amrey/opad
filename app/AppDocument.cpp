@@ -96,6 +96,9 @@ void AppDocument::startOpen(const QString& path) {
         emit loadFinished(false, error);
         return;
       }
+      emit aboutToReplace();
+      ++generation;
+      m_rollback.clear();
       doc = std::move(*result);
       browse = false;
       hasDocument = true;
@@ -128,9 +131,8 @@ void AppDocument::startImport(const QString& path, const QString& parent) {
   const QString file = QFileInfo(path).fileName();
   opad::ImportOptions o = loadOptions(cancel, file);
   o.parent = parent.toStdString();
-  // The worker owns the document while importing; the live one is empty until the result lands.
-  auto work = std::make_shared<opad::Document>(std::move(doc));
-  doc = opad::Document();
+  // Import into a snapshot: selection/render callbacks retain a valid live document.
+  auto work = std::make_shared<opad::Document>(doc);
   const size_t opsBefore = work->ops.size();
   const bool dirtyBefore = work->dirty;
   auto alive = m_alive;
@@ -175,6 +177,10 @@ void AppDocument::startImport(const QString& path, const QString& parent) {
 }
 
 void AppDocument::newDocument() {
+  if (loading) return;
+  emit aboutToReplace();
+  ++generation;
+  m_rollback.clear();
   doc = opad::Document::create();
   browse = false;
   hasDocument = true;
@@ -186,6 +192,9 @@ void AppDocument::newDocument() {
 
 void AppDocument::closeDocument() {
   if (loading) return;
+  emit aboutToReplace();
+  ++generation;
+  m_rollback.clear();
   doc = opad::Document();
   browse = false;
   hasDocument = false;
@@ -208,6 +217,9 @@ void AppDocument::open(const QString& path) {
     next = opad::Document::load(path.toStdString());
     emit message(tr("Opened %1").arg(path));
   }
+  emit aboutToReplace();
+  ++generation;
+  m_rollback.clear();
   doc = std::move(next);
   browse = false;
   hasDocument = true;

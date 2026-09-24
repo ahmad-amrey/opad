@@ -53,6 +53,14 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
     : QObject(window), m_doc(doc), m_viewport(viewport), m_jobs(jobs), m_window(window) {
   m_form = new FeaturePanel(doc, window);
   m_sketch = new SketchEditor(doc, viewport, jobs, this);
+  connect(doc, &AppDocument::aboutToReplace, this, [this] {
+    endFeature();
+    if (m_pickPlane) escape();
+    m_sketch->end();
+    if (m_params) m_params->hide();
+    m_doc->designBusy = false;
+    emit stateChanged();
+  });
   m_previewTimer.setSingleShot(true);
   m_previewTimer.setInterval(280);
   connect(&m_previewTimer, &QTimer::timeout, this, [this] { runPreview(false); });
@@ -83,13 +91,15 @@ void DesignController::applyOps(std::vector<opad::json> ops, const QString& labe
   };
   if (m_doc->designBusy) return report(false, tr("The design is still being recomputed; try again in a moment."));
   m_doc->designBusy = true;
+  const auto generation = m_doc->generation;
   auto plan = std::make_shared<Plan>();
-  const opad::Document* doc = &m_doc->doc;
+  auto doc = std::make_shared<opad::Document>(m_doc->doc);
   m_jobs->async(tr("Updating the design"), [doc, ops, plan](Progress p) {
     Reading reading;
     *plan = plan_ops(*doc, ops, true, [p] { return p.cancelled(); });
-  }, [this, plan, label, report](bool ok, const QString& error) {
-    whenNobodyReads(this, [this, plan, label, report, ok, error] {
+  }, [this, plan, label, report, generation](bool ok, const QString& error) {
+    whenNobodyReads(this, [this, plan, label, report, ok, error, generation] {
+      if (generation != m_doc->generation) return;
       m_doc->designBusy = false;
       if (!ok) return report(false, error);
       try {
@@ -107,13 +117,15 @@ void DesignController::applyOps(std::vector<opad::json> ops, const QString& labe
 void DesignController::regenerate(bool force) {
   if (!m_doc->hasDocument || m_doc->browse || m_doc->designBusy) return;
   m_doc->designBusy = true;
+  const auto generation = m_doc->generation;
   auto plan = std::make_shared<Plan>();
-  const opad::Document* doc = &m_doc->doc;
+  auto doc = std::make_shared<opad::Document>(m_doc->doc);
   m_jobs->async(tr("Regenerating the design"), [doc, plan, force](Progress p) {
     Reading reading;
     *plan = plan_regenerate(*doc, force, [p] { return p.cancelled(); });
-  }, [this, plan](bool ok, const QString& error) {
-    whenNobodyReads(this, [this, plan, ok, error] {
+  }, [this, plan, generation](bool ok, const QString& error) {
+    whenNobodyReads(this, [this, plan, ok, error, generation] {
+      if (generation != m_doc->generation) return;
       m_doc->designBusy = false;
       if (!ok) return emit failed(error);
       const bool nothing = plan->ops.empty();
@@ -463,9 +475,10 @@ void DesignController::runPreview(bool commit) {
   const std::string target = m_editing.empty() ? m_newId : m_editing;
   const std::string kind = m_form->spec()->kind;
   const bool editing = !m_editing.empty();
+  const auto generation = m_doc->generation;
   auto plan = std::make_shared<Plan>();
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);  // the rolled-back state the picks were made in
-  const opad::Document* doc = &m_doc->doc;
+  auto doc = std::make_shared<opad::Document>(m_doc->doc);
   m_form->setStatus(tr("Computing…"), false);
   m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan](Progress p) {
     Reading reading;

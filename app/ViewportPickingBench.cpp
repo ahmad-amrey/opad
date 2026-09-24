@@ -386,8 +386,8 @@ bool Viewport::benchPicking() {
     opad::Ref candidateCenter; candidateCenter.kind=opad::Ref::Kind::Point; candidateCenter.point={0,0,0};
     centerMarker(candidateCenter,gp_Pnt(0,0,0)); m_activeCenter=candidateCenter.str(); m_inferenceChoice=0;
     QKeyEvent down(QEvent::KeyPress,Qt::Key_Shift,Qt::ShiftModifier),up(QEvent::KeyRelease,Qt::Key_Shift,Qt::NoModifier);
-    inferenceKey(&down); require(m_centerLocked && !m_trackingLocked,"Shift locked two targets at once");
-    inferenceKey(&up); require(m_inferenceChoice==1,"Shift tap did not cycle to tracking");
+    inferenceKey(&down); require(!m_centerLocked && m_trackingLocked,"Shift must only lock tracking/extension");
+    inferenceKey(&up);
     inferenceKey(&down); require(m_trackingLocked && !m_centerLocked,"Shift did not lock selected inference");
     inferenceKey(&up); m_activeCenter.clear(); clearTracking();
     m_trackingAnchors={{gp_Pnt(0,reach,0),gp_Vec(1,0,0),true},{gp_Pnt(reach,0,reach),gp_Vec(0,1,0),true}};
@@ -468,20 +468,14 @@ bool Viewport::benchPicking() {
         if (!discovered) continue;
         if(picked.empty()) { click(rimTarget); picked.push_back(ref); require(!selection().empty() && selection().back().str()==ref.str(),"rim click did not select its center"); continue; }
         shift(true);
-        require(m_centerLocked, "Shift did not lock the discovered center");
+        require(!m_centerLocked, "Shift must not lock circle centers");
         shift(false);
-        require(!m_centerLocked, "second Shift did not unlock the center");
-        m_inferenceChoice=0; shift(true);
-        if (const QString shot = qEnvironmentVariable("OPAD_BENCH_UISHOT"); !shot.isEmpty()) grabImage().save(shot + ".center.png");
-        move(target);
-        require(m_activeCenter == ref.str(), "locked center changed while approaching it");
-        click(target);
-        shift(false);
+        click(rimTarget);
         const auto refs = selection();
         if (refs.empty() || refs.back().str() != ref.str()) { m_centerLocked = false; continue; }
         require(refs.back().kind == opad::Ref::Kind::Center, "center was selected as an edge or body");
         picked.push_back(ref);
-        trace::log(QStringLiteral("bench: picking center %1 via Qt hover / Shift / click PASS").arg(QString::fromStdString(ref.str())));
+        trace::log(QStringLiteral("bench: picking center %1 via Qt rim click PASS").arg(QString::fromStdString(ref.str())));
         if (picked.size() == 2) break;
       }
       if (picked.size() == 2) break;
