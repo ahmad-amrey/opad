@@ -15,7 +15,7 @@
 #include <map>
 #include <vector>
 
-inline Quantity_Color selectionTint() { return Quantity_Color(0.70,0.86,0.74,Quantity_TOC_sRGB); }
+inline Quantity_Color selectionTint() { return Quantity_Color(0.70,0.70,0.70,Quantity_TOC_sRGB); }
 
 // Per body-store key; shared by every instance of that body. Built off the UI thread.
 struct BodyPrs {
