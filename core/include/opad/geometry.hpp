@@ -1,6 +1,8 @@
 #pragma once
 // OCCT bridge: BREP text <-> TopoDS_Shape, sub-shape ordinals, transforms.
 #include <Bnd_Box.hxx>
+#include <gp_Circ.hxx>
+#include <map>
 #include <functional>
 #include <TopoDS_Shape.hxx>
 #include <gp_Trsf.hxx>
@@ -33,6 +35,8 @@ Bnd_Box refine_body_bbox(ShapeCache& cache, const std::string& key, const TopoDS
 Bnd_Box node_world_bbox(const Document& doc, const Scene& scene, const std::string& node_id);
 // Triangulation-only bodies use facet, facet-side and mesh-node ordinals.
 bool is_mesh_shape(const TopoDS_Shape& shape);
+struct MeshCircle { gp_Circ circle; int index=0, segments=0; std::vector<int> edges; std::vector<gp_Pnt> rim; };
+std::vector<MeshCircle> mesh_circles(const TopoDS_Shape& shape);
 // Sub-shape by ordinal in the prototype (faces/edges/vertices are enumerated in TopExp_Explorer order).
 TopoDS_Shape subshape(const TopoDS_Shape& proto, Ref::Kind kind, int index);
 int subshape_count(const TopoDS_Shape& proto, Ref::Kind kind);

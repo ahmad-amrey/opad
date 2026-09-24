@@ -56,7 +56,7 @@ void Viewport::discoverCenter() {
     m_centers.erase(previous);
   }
   for (const auto& [key, marker] : m_centers) marker.ais->GlobalSelOwner()->SetPriority(5);
-  centerMarker(ref, circle->center.Transformed(m_items.at(ref.body).ais->Transformation()))->GlobalSelOwner()->SetPriority(10);
+  centerMarker(ref, circle->center.Transformed(m_ctx->DetectedInteractive()->Transformation()))->GlobalSelOwner()->SetPriority(10);
   m_activeCenter = ref.str();
   m_inferenceChoice = 0; refreshCenterStyles();
 }
@@ -239,4 +239,22 @@ gp_Pnt Viewport::drawingOrbitPoint() {
     for(int j=0;j<n;++j) segment(c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*j/n),c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*(j+1)/n));
   }
   return best;
+}
+
+
+opad::json Viewport::circleInfo(const opad::Ref& ref) const {
+  std::shared_ptr<BodyPrs> prs; double scale=1;
+  if(auto sk=m_sketchWires.find(ref.body);sk!=m_sketchWires.end()) prs=sk->second.prs;
+  else { auto body=m_items.find(ref.body); if(body==m_items.end()) return {};
+    auto found=m_prs.find(body->second.key); if(found==m_prs.end()) return {}; prs=found->second;
+    scale=std::abs(body->second.ais->Transformation().ScaleFactor());
+  }
+  for(const auto& [id,c]:prs->circles) {
+    if(id!=ref.index && std::find(c.meshEdges.begin(),c.meshEdges.end(),ref.index)==c.meshEdges.end()) continue;
+    if(ref.kind!=opad::Ref::Kind::Center && ref.kind!=opad::Ref::Kind::Edge) return {};
+    opad::json info={{"diameter",2*c.radius*scale}};
+    if(c.segments) info["segments"]=c.segments;
+    return info;
+  }
+  return {};
 }

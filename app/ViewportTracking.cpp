@@ -33,7 +33,7 @@ void Viewport::clearTracking() {
 }
 
 void Viewport::updateTracking() {
-  if (!m_trackingDirty) return;
+  if (!m_trackingDirty || !m_snapClick.empty()) return;
   m_trackingDirty = false;
   if (!m_initialised) return;
   if ((!m_trackingEnabled && !m_extensionEnabled) || m_sketchInput || m_blocked || (!m_twoDimensional && !m_pickAccumulate)) {

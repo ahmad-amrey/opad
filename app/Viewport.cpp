@@ -500,6 +500,7 @@ void Viewport::setSelectionFilter(SelFilter f) {
   if (m_filterJob) m_filterJob->cancel();
   auto items = std::make_shared<std::vector<Handle(AIS_Shape)>>();
   for (const auto& [id, it] : m_items) items->push_back(it.ais);
+  for (const auto& [id, it] : m_sketchWires) items->push_back(it.ais);
   auto i = std::make_shared<size_t>(0);
   m_filterJob = m_jobs->sliced(tr("Switching selection mode"), [this, items, i](Job&) {
     if (*i >= items->size()) return false;
@@ -533,7 +534,7 @@ std::vector<opad::Ref> Viewport::selection() const {
     Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->SelectedOwner());
     if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
       const TopoDS_Shape& sub = owner->Shape();
-      const Item& item = m_items.at(it->second);
+      const auto shape=Handle(AIS_Shape)::DownCast(obj)->Shape();
       switch (sub.ShapeType()) {
         case TopAbs_FACE: r.kind = opad::Ref::Kind::Face; break;
         case TopAbs_EDGE: r.kind = opad::Ref::Kind::Edge; break;
@@ -542,7 +543,7 @@ std::vector<opad::Ref> Viewport::selection() const {
       }
       if (r.kind != opad::Ref::Kind::Body) {
         Handle(SubShapeOwner) mine = Handle(SubShapeOwner)::DownCast(owner);  // knows its ordinal: no walk over the body
-        r.index = mine.IsNull() ? opad::subshape_index(item.located, sub) : mine->index();
+        r.index = mine.IsNull() ? opad::subshape_index(shape, sub) : mine->index();
       }
     }
     out.push_back(r);
@@ -827,11 +828,22 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
   std::vector<Handle(SelectMgr_EntityOwner)> discovery;
   for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected())
     if (!Handle(CircleOwner)::DownCast(m_ctx->SelectedOwner()).IsNull()) discovery.push_back(m_ctx->SelectedOwner());
-  for (const auto& owner : discovery) m_ctx->AddOrRemoveSelected(owner, false);
+  for (const auto& owner : discovery) {
+    const auto circle=Handle(CircleOwner)::DownCast(owner);
+    auto node=m_nodeOf.find(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get());
+    m_ctx->AddOrRemoveSelected(owner,false);
+    if(node!=m_nodeOf.end()) {
+      opad::Ref ref; ref.kind=opad::Ref::Kind::Center; ref.body=node->second; ref.index=circle->index();
+      const gp_Pnt at=circle->center.Transformed(owner->Selectable()->Transformation());
+      m_ctx->AddOrRemoveSelected(centerMarker(ref,at),false);
+    }
+  }
   if (m_selJob) m_selJob->cancel();
   m_hasLastPick = m_ctx->HasDetected() && m_ctx->MainSelector()->NbPicked() > 0;  // guided tools mark where the click landed
   if (m_hasLastPick) {
-    const gp_Pnt p = m_ctx->MainSelector()->PickedPoint(1);
+    gp_Pnt p = m_ctx->MainSelector()->PickedPoint(1);
+    const auto circle=Handle(CircleOwner)::DownCast(m_ctx->DetectedOwner());
+    if(!circle.IsNull()) p=circle->center.Transformed(m_ctx->DetectedInteractive()->Transformation());
     m_lastPick = {p.X(), p.Y(), p.Z()};
     auto center = m_centerObjects.find(m_ctx->DetectedInteractive().get());
     if (center != m_centerObjects.end()) {
@@ -848,6 +860,7 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
     m_ctx->Remove(it->second.ais, false);
     it = m_centers.erase(it);
   }
+  if(!m_snapClick.empty() && m_centers.count(m_snapClick)) { m_lastPick=m_centers.at(m_snapClick).ref.point; m_hasLastPick=true; }
   refreshCenterStyles();
   clearShade();
   m_needFit = false;
@@ -1598,7 +1611,15 @@ void Viewport::paintEvent(QPaintEvent*) {
         const TopoDS_Shape& sub = owner->Shape();
         const char* kind = sub.ShapeType() == TopAbs_FACE ? "face" : sub.ShapeType() == TopAbs_EDGE ? "edge" : "vertex";
         Handle(SubShapeOwner) mine = Handle(SubShapeOwner)::DownCast(owner);
-        hover += QString::fromUtf8(" › %1 %2").arg(kind).arg(mine.IsNull() ? opad::subshape_index(m_items.at(it->second).located, sub) : mine->index());
+        hover += QString::fromUtf8(" › %1 %2").arg(kind).arg(mine.IsNull() ? opad::subshape_index(Handle(AIS_Shape)::DownCast(obj)->Shape(), sub) : mine->index());
+        if(!mine.IsNull()) {
+          opad::Ref ref; ref.body=it->second; ref.kind=Handle(CircleOwner)::DownCast(mine).IsNull()?opad::Ref::Kind::Edge:opad::Ref::Kind::Center; ref.index=mine->index();
+          if(sub.ShapeType()==TopAbs_EDGE || ref.kind==opad::Ref::Kind::Center) {
+            const auto info=circleInfo(ref);
+            if(info.contains("diameter")) hover+=tr(" | Diameter %1 mm").arg(info["diameter"].get<double>(),0,'f',3);
+            if(info.contains("segments")) hover+=tr(" | %1 segments (approximate)").arg(info["segments"].get<int>());
+          }
+        }
       }
     }
   }
@@ -1672,6 +1693,12 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
     // Only the Replace scheme hands a click to the cube (HandleMouseClick); a guided tool's XOR would toggle it as a pick.
     ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, AIS_SelectionScheme_Replace);
   }
+  if (!m_cubeGesture && e->button()==Qt::LeftButton && m_initialised && m_pickAccumulate && !m_measureSelectionLocked) {
+    auto tracked=m_centers.find(m_trackingMarker);
+    if(tracked!=m_centers.end() && (QPointF(widgetPoint(tracked->second.ref.point))-e->position()).manhattanLength()<16) {
+      m_snapClick=m_trackingMarker; e->accept(); return;
+    }
+  }
   // Capture the entire gesture before OCCT can toggle an edge or begin a selection rectangle.
   // Middle/right navigation and the view cube retain their usual controls.
   if (!m_cubeGesture && e->button() == Qt::LeftButton && m_initialised
@@ -1686,6 +1713,16 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
 void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   if (m_blocked) return;
   if (sectionMouseRelease(e)) return;
+  if (!m_snapClick.empty() && e->button()==Qt::LeftButton) {
+    const auto key=m_snapClick;
+    auto marker=m_centers.find(key);
+    if(marker!=m_centers.end() && (e->position()-m_pressPos).manhattanLength()<4) {
+      const auto ref=marker->second.ref; m_ctx->AddOrRemoveSelected(marker->second.ais,false);
+      // Retain the exact acquired point rather than a stale selector hit.
+      OnSelectionChanged(m_ctx,m_view);
+    }
+    m_snapClick.clear(); e->accept(); return;
+  }
   if (m_measureAnchorPress && e->button() == Qt::LeftButton) {
     m_measureAnchorPress = false;
     if ((e->position() + m_dragOffset - m_pressPos).manhattanLength() < 4) {

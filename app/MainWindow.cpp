@@ -1643,6 +1643,11 @@ void MainWindow::refreshToolUi() {
       if (r.contains(k) && r[k].is_array() && r[k].size() == 3) rows << qMakePair(i18n::t(QString("bbox %1").arg(k)), QString("(%1, %2, %3) mm").arg(num(r[k][0], 3), num(r[k][1], 3), num(r[k][2], 3)));
     if (r.contains("relation") && r["relation"].is_string()) rows << qMakePair(tr("Relation"), i18n::t(QString::fromStdString(r["relation"].get<std::string>())));
   }
+  for(size_t i=0;i<m_toolPicks.size();++i) {
+    const auto info=m_viewport->circleInfo(m_toolPicks[i]);
+    if(info.contains("diameter")) rows << qMakePair(tr("Circle %1 diameter").arg(i+1),QString::number(info["diameter"].get<double>(),'f',3)+" mm");
+    if(info.contains("segments")) rows << qMakePair(tr("Circle %1 mesh segments (approximate)").arg(i+1),QString::number(info["segments"].get<int>()));
+  }
   m_toolSteps->setResult(rows);
   m_toolSteps->setFooter(done, !m_doc->browse);
 }

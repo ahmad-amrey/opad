@@ -65,6 +65,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setStyle(Style s);
   Style style() const { return m_style; }
   void setGrid(bool on);
+  opad::json circleInfo(const opad::Ref& ref) const;
   void setShadows(bool on);
   void setRenderQuality(int level);
   static int savedRenderQuality();
@@ -247,7 +248,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   gp_Vec m_trackingDirection, m_trackingLockDirection;
   bool m_trackingHasDirection = false;
   Handle(AIS_Shape) m_trackingGuide;
-  std::string m_trackingMarker;
+  std::string m_trackingMarker, m_snapClick;
   struct Item {
     Handle(AIS_Shape) ais;
     std::string key;
@@ -378,6 +379,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void syncSketches();  // the scene's visible sketches as wire objects
   struct SketchWire {
     Handle(AIS_Shape) ais;
+    std::shared_ptr<BodyPrs> prs;
     std::string stamp;  // geometry + frame it was built from
   };
   std::map<std::string, SketchWire> m_sketchWires;

@@ -5,6 +5,7 @@
 #include <AIS_AnimationCamera.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepBndLib.hxx>
 #include <BRep_Builder.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <Prs3d_LineAspect.hxx>
@@ -41,7 +42,7 @@ void Viewport::syncSketches() {
     const std::string stamp = s.geometry.dump() + s.frame.to_json().dump();
     auto it = m_sketchWires.find(s.id);
     if (it != m_sketchWires.end() && it->second.stamp == stamp) continue;
-    if (it != m_sketchWires.end()) m_ctx->Remove(it->second.ais, Standard_False);
+    if (it != m_sketchWires.end()) { m_nodeOf.erase(it->second.ais.get()); m_ctx->Remove(it->second.ais, Standard_False); }
     TopoDS_Compound comp;
     BRep_Builder bb;
     bb.MakeCompound(comp);
@@ -63,17 +64,19 @@ void Viewport::syncSketches() {
       keep.erase(s.id);
       continue;
     }
-    Handle(AIS_Shape) ais = new AIS_Shape(comp);
+    Bnd_Box bounds; BRepBndLib::Add(comp,bounds); auto prs=BodyPrs::build(comp,bounds);
+    Handle(AIS_Shape) ais = new BodyShape(comp,prs);
     ais->Attributes()->SetWireAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.5));
     ais->Attributes()->SetLineAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.5));
     ais->Attributes()->SetFreeBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.5));
     ais->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_POINT, occ(m_tokens.sel), 2.0));
     m_ctx->Display(ais, AIS_WireFrame, -1, Standard_False);
-    m_sketchWires[s.id] = SketchWire{ais, stamp};
+    activateSelection(ais); m_nodeOf[ais.get()]=s.id;
+    m_sketchWires[s.id] = SketchWire{ais, prs, stamp};
   }
   for (auto it = m_sketchWires.begin(); it != m_sketchWires.end();) {
     if (keep.count(it->first)) { ++it; continue; }
-    m_ctx->Remove(it->second.ais, Standard_False);
+    m_nodeOf.erase(it->second.ais.get()); m_ctx->Remove(it->second.ais, Standard_False);
     it = m_sketchWires.erase(it);
   }
 }
@@ -134,12 +137,14 @@ void Viewport::selectRefs(const std::vector<opad::Ref>& refs, const std::vector<
   m_selApplied.clear();
   for (const auto& r : refs) {
     auto it = m_items.find(r.body);
-    if (it == m_items.end()) continue;
-    const Handle(AIS_Shape)& ais = it->second.ais;
+    auto sk=m_sketchWires.find(r.body);
+    if (it == m_items.end() && sk==m_sketchWires.end()) continue;
+    const Handle(AIS_Shape)& ais = it!=m_items.end()?it->second.ais:sk->second.ais;
     if (r.kind == opad::Ref::Kind::Center) {
       std::shared_ptr<BodyPrs> prs;
-      { std::lock_guard<std::mutex> lock(m_meshMu); auto p = m_prs.find(it->second.key); if (p != m_prs.end()) prs = p->second; }
-      if (prs && opad::mat_is_rigid(it->second.world) && prs->circles.count(r.index)) {
+      if(sk!=m_sketchWires.end()) prs=sk->second.prs;
+      else { std::lock_guard<std::mutex> lock(m_meshMu); auto p = m_prs.find(it->second.key); if (p != m_prs.end()) prs = p->second; }
+      if (prs && prs->circles.count(r.index)) {
         gp_Pnt point = prs->circles.at(r.index).center.Transformed(ais->Transformation());
         Handle(AIS_Shape) marker = centerMarker(r, point);
         if (!m_ctx->IsSelected(marker)) m_ctx->AddOrRemoveSelected(marker, false);

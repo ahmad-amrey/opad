@@ -1,4 +1,5 @@
 #include "BodyShape.hpp"
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include "opad/geometry.hpp"
 #include <Select3D_SensitiveTriangle.hxx>
 #include <Select3D_SensitiveSegment.hxx>
@@ -161,6 +162,21 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     for (int index : indices) builder.Add(whole, p->circles.at(index).edge);
     for (int index : indices) { p->circles.at(index).edge = whole; p->circles.at(index).canonical = indices.front(); }
   }
+  for(auto& [id,c]:p->circles) {
+    // Grouped circular arcs keep the radius of their canonical analytic edge.
+    BRepAdaptor_Curve curve(TopoDS::Edge(edges(id+1))); c.radius=curve.Circle().Radius();
+  }
+  for(const auto& fit:opad::mesh_circles(meshedProto)) {
+    TColgp_Array1OfPnt points(1,fit.segments+1);
+    BRep_Builder builder; TopoDS_Compound rim; builder.MakeCompound(rim);
+    for(int i=0;i<fit.segments;++i) {
+      points(i+1)=fit.rim[i];
+      builder.Add(rim,BRepBuilderAPI_MakeEdge(fit.rim[i],fit.rim[(i+1)%fit.segments]).Edge());
+    }
+    points(fit.segments+1)=fit.rim.front();
+    Handle(Select3D_SensitiveCurve) sensitive=new Select3D_SensitiveCurve(nullptr,points); sensitive->BVH();
+    p->circles.emplace(fit.index,Circle{rim,fit.circle.Location(),sensitive,fit.index,fit.circle.Radius(),fit.segments,fit.edges});
+  }
   p->closed = false;
   for (TopExp_Explorer e(meshedProto, TopAbs_SHELL); e.More(); e.Next()) {
     p->closed = true;
@@ -256,6 +272,8 @@ void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, c
         }
       }
     }
+    if(type==TopAbs_VERTEX && m_prs) for(const auto& [index,circle]:m_prs->circles)
+      selection->Add(new SharedSensitive(new CircleOwner(circle,this,index),circle.sensitive));
     return;
   }
   AIS_Shape::ComputeSelection(selection, mode);

@@ -98,7 +98,9 @@ const char* curve_type(GeomAbs_CurveType t) {
 // World-space shape for a reference.
 TopoDS_Shape ref_shape(const Document& doc, const Scene& scene, const Ref& ref) {
   if (ref.kind == Ref::Kind::Point) return BRepBuilderAPI_MakeVertex(gp_Pnt(ref.point[0], ref.point[1], ref.point[2]));
-  const Node* n = scene.node(ref.body);
+  Node sketchNode;
+  if(const auto* sk=scene.sketch(ref.body)) { sketchNode.kind=Node::Kind::Body; sketchNode.name=sk->name; }
+  const Node* n = scene.sketch(ref.body)?&sketchNode:scene.node(ref.body);
   if (!n) throw Error("unknown node: " + ref.body);
   if (n->kind != Node::Kind::Body) {
     if (ref.kind != Ref::Kind::Body) throw Error("sub-shape references need a body node: " + ref.str());
@@ -275,6 +277,17 @@ json node_properties(const Document& doc, const Scene& scene, const std::string&
 }
 
 json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref) {
+  if ((ref.kind==Ref::Kind::Center || ref.kind==Ref::Kind::Edge) && scene.node(ref.body)
+      && scene.node(ref.body)->representation=="mesh") {
+    for(const auto& fit:mesh_circles(node_world_shape(doc,scene,ref.body))) {
+      if((ref.kind==Ref::Kind::Center && fit.index==ref.index) || (ref.kind==Ref::Kind::Edge && std::find(fit.edges.begin(),fit.edges.end(),ref.index)!=fit.edges.end())) {
+        const auto& c=fit.circle;
+        return {{"ref",ref.str()},{"type",ref.kind==Ref::Kind::Center?"center":"edge"},{"curve","faceted circle"},
+          {"point",pnt(c.Location())},{"center",pnt(c.Location())},{"radius",c.Radius()},{"diameter",2*c.Radius()},
+          {"axis",dir(c.Axis().Direction())},{"segments",fit.segments},{"approximate",true}};
+      }
+    }
+  }
   if (ref.kind == Ref::Kind::Center) {
     Ref edge = ref;
     edge.kind = Ref::Kind::Edge;
@@ -293,14 +306,17 @@ json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref) {
     return j;
   }
   if (ref.kind == Ref::Kind::Body) {
+    if(const auto* sk=scene.sketch(ref.body)) return {{"ref",ref.str()},{"type","sketch"},{"name",sk->name}};
     json j = node_properties(doc, scene, ref.body);
     j["ref"] = ref.str();
     return j;
   }
-  const Node* n = scene.node(ref.body);
+  Node sketchNode;
+  if(const auto* sk=scene.sketch(ref.body)) { sketchNode.kind=Node::Kind::Body; sketchNode.name=sk->name; }
+  const Node* n = scene.sketch(ref.body)?&sketchNode:scene.node(ref.body);
   if (!n) throw Error("unknown node: " + ref.body);
   if (n->kind != Node::Kind::Body || n->body_missing) throw Error("not an available body: " + ref.body);
-  TopoDS_Shape proto = body_shape(doc, n->body_key);
+  TopoDS_Shape proto = scene.sketch(ref.body)?node_world_shape(doc,scene,ref.body):body_shape(doc, n->body_key);
   TopoDS_Shape world_body = node_world_shape(doc, scene, ref.body);
   TopoDS_Shape sub = subshape(world_body, ref.kind, ref.index);
   json j;
@@ -825,6 +841,15 @@ json measure_angle(const Document& doc, const Scene& scene, const Ref& a, const 
 }
 
 json measure_radius(const Document& doc, const Scene& scene, const Ref& a) {
+  if (scene.node(a.body) && scene.node(a.body)->representation=="mesh") {
+    const auto info=inspect_ref(doc,scene,a);
+    if(info.contains("radius")) {
+      auto result=info; result["kind"]="radius"; result["refs"]={a.str()}; result["value"]=info["radius"]; result["unit"]="mm";
+      result["point_a"]=info["center"];
+      for(const auto& c:mesh_circles(node_world_shape(doc,scene,a.body))) if(c.index==a.index || std::find(c.edges.begin(),c.edges.end(),a.index)!=c.edges.end()) {result["point_b"]=pnt(c.rim.front()); break;}
+      return result;
+    }
+  }
   if (a.kind == Ref::Kind::Center) {
     Ref edge = a;
     edge.kind = Ref::Kind::Edge;

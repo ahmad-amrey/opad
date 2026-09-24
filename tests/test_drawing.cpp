@@ -110,3 +110,18 @@ TEST(bad_drawings_leave_document_unchanged) {
 }
 CHECK_MAIN()
 
+
+TEST(mesh_circle_centers_and_segments_survive_roundtrip) {
+  Files f; std::ostringstream obj;
+  for(int z=0;z<2;++z) for(int i=0;i<24;++i) obj << "v " << 10*cos(2*M_PI*i/24) << " " << 10*sin(2*M_PI*i/24) << " " << z*20 << "\n";
+  for(int i=0;i<24;++i) { const int a=i+1,b=(i+1)%24+1; obj<<"f "<<a<<" "<<b<<" "<<b+24<<"\nf "<<a<<" "<<b+24<<" "<<a+24<<"\n"; }
+  write_text_file(f.dir/"tube.obj",obj.str()); auto d=Document::create(); import_file(d,f.dir/"tube.obj");
+  d=Document::parse(d.serialize()); const auto scene=resolve(d); const auto id=scene.all_bodies()[0];
+  const auto rings=mesh_circles(node_world_shape(d,scene,id)); CHECK_EQ(rings.size(),2u);
+  Ref a; a.body=id; a.kind=Ref::Kind::Center; a.index=rings[0].index; Ref b=a; b.index=rings[1].index;
+  CHECK_NEAR(measure_distance(d,scene,a,b)["value"].get<double>(),20,1e-4);
+  CHECK_NEAR(inspect_ref(d,scene,a)["diameter"].get<double>(),20,1e-4);
+  CHECK_EQ(inspect_ref(d,scene,a)["segments"].get<int>(),24);
+  a.kind=Ref::Kind::Edge;
+  CHECK_NEAR(measure_radius(d,scene,a)["value"].get<double>(),10,1e-4);
+}

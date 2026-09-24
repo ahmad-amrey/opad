@@ -23,6 +23,9 @@ struct BodyPrs {
     gp_Pnt center;
     Handle(Select3D_SensitiveEntity) sensitive;
     int canonical = -1;
+    double radius=0;
+    int segments=0;
+    std::vector<int> meshEdges;
   };
   std::map<int, Circle> circles;  // edge ordinals, including trimmed circular arcs
   Handle(Select3D_SensitiveEntity) navigation;  // triangles + BVH, shared by instances

@@ -1,4 +1,7 @@
 #include "opad/geometry.hpp"
+#include "opad/design/sketch_geom.hpp"
+#include "opad/design/sketch.hpp"
+#include <TopoDS_Compound.hxx>
 
 #include <BRepBndLib.hxx>
 #include <BRepAdaptor_Curve.hxx>
@@ -157,6 +160,11 @@ gp_Trsf trsf_from_mat(const Mat4& m) {
 }
 
 TopoDS_Shape node_world_shape(const Document& doc, const Scene& scene, const std::string& node_id) {
+  if(const auto* sk=scene.sketch(node_id)) {
+    TopoDS_Compound shape; BRep_Builder builder; builder.MakeCompound(shape);
+    for(const auto& edge:design::sketch_edges(design::Sketch::from_json(sk->geometry),sk->frame,true)) builder.Add(shape,edge);
+    return shape;
+  }
   const Node* n = scene.node(node_id);
   if (!n || n->kind != Node::Kind::Body) throw Error("not a body node: " + node_id);
   TopoDS_Shape proto = body_shape(doc, n->body_key);
@@ -215,6 +223,7 @@ void warm_shape_cache(const Document& doc, const std::function<bool(size_t, size
 }
 
 Bnd_Box node_world_bbox(const Document& doc, const Scene& scene, const std::string& node_id) {
+  if(scene.sketch(node_id)) { Bnd_Box b; BRepBndLib::Add(node_world_shape(doc,scene,node_id),b); return b; }
   const Node* n = scene.node(node_id);
   if (!n || n->kind != Node::Kind::Body) throw Error("not a body node: " + node_id);
   Bnd_Box local = body_bbox(doc, n->body_key);
@@ -271,6 +280,10 @@ static TopoDS_Shape mesh_subshape(const TopoDS_Shape& shape, Ref::Kind kind, int
 
 TopoDS_Shape subshape(const TopoDS_Shape& proto, Ref::Kind kind, int index) {
   if (kind == Ref::Kind::Body) return proto;
+  if (kind == Ref::Kind::Center && is_mesh_shape(proto)) {
+    for(const auto& c:mesh_circles(proto)) if(c.index==index) return BRepBuilderAPI_MakeVertex(c.circle.Location()).Vertex();
+    throw Error("mesh circle center no longer exists");
+  }
   if (kind == Ref::Kind::Center) {
     BRepAdaptor_Curve curve(TopoDS::Edge(subshape(proto, Ref::Kind::Edge, index)));
     if (curve.GetType() != GeomAbs_Circle) throw Error("center requires a circular edge");

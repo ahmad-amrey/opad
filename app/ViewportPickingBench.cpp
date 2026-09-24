@@ -354,6 +354,12 @@ bool Viewport::benchPicking() {
     require(!m_trackingMarker.empty(), "extension tracking did not create a point");
     auto tracked=m_centers.at(m_trackingMarker).ref;
     require(tracked.kind==opad::Ref::Kind::Point && std::abs(tracked.point[1])<1e-8, "tracking point left its extension line");
+    setPickAccumulate(true,true);
+    QMouseEvent extensionPress(QEvent::MouseButtonPress,m_trackingCursor,mapToGlobal(m_trackingCursor),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+    QMouseEvent extensionRelease(QEvent::MouseButtonRelease,m_trackingCursor,mapToGlobal(m_trackingCursor),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+    QCoreApplication::sendEvent(this,&extensionPress); QCoreApplication::sendEvent(this,&extensionRelease);
+    require(!selection().empty() && selection().back().kind==opad::Ref::Kind::Point,"extension was not selectable in measurement mode");
+    m_ctx->ClearSelected(false); setPickAccumulate(false);
     m_trackingAnchors={{gp_Pnt(0,reach,0),gp_Vec(1,0,0),true},{gp_Pnt(reach,0,0),gp_Vec(0,1,0),true}};
     m_trackingCursor=widgetPoint({reach,reach,0}); m_trackingDirty=true; updateTracking();
     require(!m_trackingCandidates.empty() && m_trackingCandidates.front().intersection,
@@ -434,14 +440,15 @@ bool Viewport::benchPicking() {
         if (!rect().adjusted(12, 12, -12, -12).contains(target)) continue;
         opad::Ref ref; ref.body = id; ref.kind = opad::Ref::Kind::Center; ref.index = index;
         BRepAdaptor_Curve curve(TopoDS::Edge(circle.edge));
-        bool discovered = false;
+        bool discovered = false; QPoint rimTarget;
         for (int sample = 1; sample < 32; ++sample) {
           gp_Pnt rim = curve.Value(curve.FirstParameter() + (curve.LastParameter() - curve.FirstParameter()) * sample / 32.0);
           rim.Transform(item.ais->Transformation());
           move(widgetPoint({rim.X(), rim.Y(), rim.Z()}));
-          if (m_activeCenter == ref.str()) { discovered = true; break; }
+          if (m_activeCenter == ref.str()) { rimTarget=widgetPoint({rim.X(),rim.Y(),rim.Z()}); discovered = true; break; }
         }
         if (!discovered) continue;
+        if(picked.empty()) { click(rimTarget); picked.push_back(ref); require(!selection().empty() && selection().back().str()==ref.str(),"rim click did not select its center"); continue; }
         shift(true);
         require(m_centerLocked, "Shift did not lock the discovered center");
         shift(false);
