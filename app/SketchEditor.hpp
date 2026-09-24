@@ -13,6 +13,7 @@
 
 #include "AppDocument.hpp"
 #include "Viewport.hpp"
+#include "GuidedTool.hpp"
 #include "opad/design/sketch.hpp"
 
 class JobRunner;
@@ -40,6 +41,15 @@ class SketchEditor : public QObject, public SketchInput {
   // trim, mirror, dimension, and "c:<constraint>" (horizontal, vertical, coincident, parallel, perpendicular,
   // tangent, equal, concentric, midpoint, symmetric, collinear, fix).
   void setTool(const QString& tool);
+  QList<ToolStep> toolSteps() const;
+  QString option(const QString& key, const QString& fallback = {}) const { return m_options.value(key, fallback); }
+  void applyTool();
+  void placePrecise(const QString& u, const QString& v, int mode);
+  void stepBack();
+  void toggleReference();
+  void selectConnected();
+  void selectType();
+  void redefinePlane(const opad::json& plane, const opad::Frame& frame);
   QString tool() const { return m_tool; }
   void editSplineNode();
   void findOpenVertices();
@@ -52,6 +62,7 @@ class SketchEditor : public QObject, public SketchInput {
   void redo();
   int dof() const { return m_solved.dof; }
   void bench(const QString& script);  // OPAD_BENCH_DESIGN: draws a dimensioned rectangle with a hole through the tool code paths
+  void benchWorkflow();
 
   // SketchInput
   void sketchPress(double u, double v, Qt::KeyboardModifiers mods) override;
@@ -67,8 +78,12 @@ class SketchEditor : public QObject, public SketchInput {
   void toolChanged(const QString& tool);
   void status(const QString& text);  // what the tool waits for, or why a change was refused
   void changed();                    // geometry, selection or undo state
+  void workflowChanged();
 
  private:
+  friend class SketchPanel;
+  opad::design::SolveOptions solveOptions() const;
+  bool selectable(int id) const;
   struct Snap {
     double u = 0, v = 0;
     int point = 0;     // an existing point to reuse
@@ -117,6 +132,13 @@ class SketchEditor : public QObject, public SketchInput {
   QString m_name;
   opad::json m_plane;
   opad::json m_initialGeometry;
+  opad::json m_cameraBefore;
+  QMap<QString,QString> m_options;
+  bool m_panelFieldsDirty = false;
+  QString m_selectionFilter = "all";
+  std::vector<std::tuple<int,double,double>> m_glyphHits;
+  bool m_boxSelecting = false;
+  double m_boxU=0,m_boxV=0;
   opad::Frame m_frame;
   opad::design::Sketch m_sk;
   opad::design::SolveResult m_solved;
@@ -127,6 +149,7 @@ class SketchEditor : public QObject, public SketchInput {
   QString m_tool = "select";
   std::vector<Snap> m_clicks;      // of the running tool
   std::vector<int> m_chain;        // points of the polyline / spline being drawn
+  size_t m_chainUndoStart=0;
   std::vector<int> m_picked;       // constraint / dimension tool picks
   int m_polygonSides = 6;
   opad::design::SkConstraint m_pendingDim;  // picked, waiting for its place

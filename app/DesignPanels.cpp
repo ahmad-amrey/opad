@@ -359,7 +359,7 @@ void FeaturePanel::keyPressEvent(QKeyEvent* e) {
 
 // ---------------------------------------------------------------- ParametersDialog
 ParametersDialog::ParametersDialog(AppDocument* doc, std::function<void(std::vector<opad::json>, QString)> apply, QWidget* parent)
-    : QDialog(parent), m_doc(doc), m_apply(std::move(apply)) {
+    : QWidget(parent), m_doc(doc), m_apply(std::move(apply)) {
   setWindowTitle(tr("Parameters"));
   resize(720, 420);
   auto* v = new QVBoxLayout(this);
@@ -397,7 +397,7 @@ ParametersDialog::ParametersDialog(AppDocument* doc, std::function<void(std::vec
   v->addLayout(row);
   connect(add, &QPushButton::clicked, this, &ParametersDialog::addParameter);
   connect(remove, &QPushButton::clicked, this, &ParametersDialog::removeCurrent);
-  connect(close, &QPushButton::clicked, this, &QDialog::close);
+  connect(close, &QPushButton::clicked, this, &ParametersDialog::closeRequested);
   connect(m_table, &QTreeWidget::itemChanged, this, &ParametersDialog::itemEdited);
   connect(doc, &AppDocument::changed, this, &ParametersDialog::rebuild);
   rebuild();
@@ -439,7 +439,7 @@ void ParametersDialog::addParameter() {
   m_status->clear();
   QString name;
   for (int i = 1;; ++i) {
-    name = QString("d%1").arg(i);
+    name = QString("parameter%1").arg(i);
     if (!m_doc->scene.param(name.toStdString())) break;
   }
   m_apply({opad::design::make_param_op(name.toStdString(), "10 mm")}, tr("new parameter"));

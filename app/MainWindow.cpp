@@ -608,11 +608,14 @@ void MainWindow::buildRibbon() {
                                             acts({"design.colour", "design.opacity", "design.lock", "edit.hide", "view.isolate"})});
   m_ribbon->addTab(design,tr("View"),{acts({"view.fit","view.home","view.2d","view.ortho"}),acts({"view.shaded","view.edges","view.wire","view.grid","view.gridSettings","select.through"})});
   m_ribbon->addTab(design, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
-  m_ribbon->addTab(m_sketchWorkspace, tr("Sketch"), {acts({"sketch.finish", "sketch.cancel"}), acts({"sketch.select", "sketch.line", "sketch.rect", "sketch.crect", "sketch.circle", "sketch.circle3", "sketch.arc3", "sketch.arcc"}),
-                                                     acts({"sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline", "sketch.point"}), acts({"sketch.dimension", "sketch.construction", "sketch.node", "sketch.openEnds"})});
-  m_ribbon->addTab(m_sketchWorkspace, tr("Modify + constrain"), {acts({"sketch.finish"}), acts({"sketch.select", "sketch.fillet", "sketch.trim", "sketch.offset", "sketch.mirror", "sketch.project", "sketch.dimension"}),
-                                                                 acts({"sketch.c.horizontal", "sketch.c.vertical", "sketch.c.coincident", "sketch.c.parallel", "sketch.c.perpendicular", "sketch.c.tangent"}),
-                                                                 acts({"sketch.c.equal", "sketch.c.concentric", "sketch.c.midpoint", "sketch.c.symmetric", "sketch.c.collinear", "sketch.c.fix"})});
+  m_ribbon->addTab(m_sketchWorkspace, tr("Create"), {acts({"sketch.finish", "sketch.cancel", "sketch.panel"}),
+      acts({"sketch.line", "sketch.rect", "sketch.circle", "sketch.arc3", "sketch.spline", "sketch.ellipse", "sketch.slot", "sketch.polygon", "sketch.point"})});
+  m_ribbon->addTab(m_sketchWorkspace, tr("Modify"), {acts({"sketch.finish", "sketch.panel"}),
+      acts({"sketch.select", "sketch.trim", "sketch.fillet", "sketch.offset", "sketch.mirror", "sketch.construction", "sketch.node", "sketch.openEnds"})});
+  m_ribbon->addTab(m_sketchWorkspace, tr("Constrain"), {acts({"sketch.finish", "sketch.panel", "sketch.dimension"}),
+      acts({"sketch.c.horizontal", "sketch.c.vertical", "sketch.c.coincident", "sketch.c.parallel", "sketch.c.perpendicular", "sketch.c.tangent", "sketch.c.fix"})});
+  m_ribbon->addTab(m_sketchWorkspace, tr("Reference"), {acts({"sketch.finish", "sketch.panel"}),
+      acts({"sketch.project", "sketch.replane", "design.parameters", "view.grid", "view.gridSettings"})});
   m_ribbon->setWorkspace(m_settings.value("ui/workspace", 0).toInt() == 1 ? design : review);
   action(m_ribbon->workspace() == design ? "workspace.design" : "workspace.review")->setChecked(true);
   connect(m_ribbon, &RibbonBar::workspaceChanged, this, [this](int i) {  // from the shortcuts or the chip's list
@@ -999,6 +1002,8 @@ void MainWindow::buildDesignActions() {
 
   // Sketch mode.
   addAction("sketch.finish", tr("Finish sketch"), "finish", QKeySequence("Ctrl+Return"), [this] { m_design->finishSketch(); });
+  addAction("sketch.panel",tr("Sketch tools"),"sketch",QKeySequence("Ctrl+Alt+S"),[this]{m_design->showSketchPanel();});
+  addAction("sketch.replane",tr("Redefine sketch plane"),"plane",QKeySequence(),[this]{m_design->redefineSketchPlane();});
   addAction("sketch.cancel", tr("Cancel sketch"), "close", QKeySequence(), [this] { m_design->cancelSketch(); });
   addAction("sketch.node",tr("Spline node weights"),"spline",QKeySequence("Alt+W"),[this]{m_design->sketch()->editSplineNode();});
   addAction("sketch.openEnds",tr("Find open ends"),"point",QKeySequence("Alt+E"),[this]{m_design->sketch()->findOpenVertices();});
@@ -1025,6 +1030,16 @@ void MainWindow::buildDesign() {
   m_featurePanel = new ToolPanel("feature", "extrude", &Tokens::sel, tr("Feature"), m_design->featurePanel(), 560, this);
   m_panels << m_featurePanel;
   m_design->setPanel(m_featurePanel, [this](ToolPanel* p) { openPanel(p); });
+  auto* parameters=m_design->parametersWidget();
+  auto* parametersPanel=new ToolPanel("parameters","fx",&Tokens::sel,tr("Parameters"),parameters,480,this);
+  m_panels<<parametersPanel;m_design->setParametersPanel(parametersPanel);
+  connect(parameters,&ParametersDialog::closeRequested,parametersPanel,&ToolPanel::hide);
+  auto* sketchContent=new SketchPanel(m_design->sketch(),this);
+  auto* sketchPanel=new ToolPanel("sketch","sketch",&Tokens::sel,tr("Sketch tools"),sketchContent,620,this);
+  m_panels<<sketchPanel;
+  m_design->setSketchPanel(sketchPanel);
+  sketchPanel->setEscapeHandler([this]{m_design->sketch()->stepBack();});
+  connect(sketchContent,&SketchPanel::finishRequested,this,[this]{m_design->finishSketch();});
   connect(m_design, &DesignController::status, this, [this](const QString& text) { m_statusHover->setText(text); });
   connect(m_design, &DesignController::failed, this, [this](const QString& error) { QMessageBox::warning(this, tr("OPAD"), i18n::t(error)); });
   connect(m_design, &DesignController::stateChanged, this, &MainWindow::updateDesignState);
@@ -1059,6 +1074,9 @@ void MainWindow::updateDesignState() {
   if(m_design->pickingPlane()) {
     m_prompt->set("plane",tr("Pick a plane"),{{tr("Select an origin plane or a planar face"),{}}},tr("Esc cancels"));
     m_prompt->show(); positionOverlays();
+  } else if(sketching) {
+    m_prompt->set("sketch",tr("Sketch"),m_design->sketch()->toolSteps(),tr("Esc steps back"));
+    m_prompt->show();positionOverlays();
   } else if(m_tool.id.isEmpty()) m_prompt->hide();
   m_browser->setEnabled(!sketching);
   updateUndoActions();
@@ -1365,6 +1383,13 @@ void MainWindow::writeSelectionFile() {
 }
 
 void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids) {
+  if(m_design->sketchActive()) {
+    QMenu menu(this);
+    for(const char* id:{"sketch.construction","sketch.dimension","sketch.c.horizontal","sketch.c.vertical","sketch.c.coincident","sketch.c.tangent","sketch.c.fix","sketch.node","sketch.openEnds"})menu.addAction(action(id));
+    menu.addSeparator();menu.addAction(tr("Driving / reference"),m_design->sketch(),&SketchEditor::toggleReference);
+    menu.addAction(tr("Delete"),m_design->sketch(),&SketchEditor::deleteSelection);
+    menu.exec(globalPos);return;
+  }
   QMenu menu(this);
   auto add = [&](const char* id) { if (QAction* a = action(id); a && (!m_doc->browse || a->isEnabled())) menu.addAction(a); };  // viewer mode: editing entries are not offered
   if (!ids.empty()) {

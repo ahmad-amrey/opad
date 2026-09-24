@@ -28,17 +28,11 @@ void SketchEditor::editSplineNode() {
   }
   if(!entity) return emit status(tr("Choose a control node on an editable spline."));
   const auto* spline=m_sk.entity(entity);
-  QDialog dialog(m_viewport);dialog.setWindowTitle(tr("Spline node"));auto* layout=new QVBoxLayout(&dialog);auto* form=new QFormLayout;layout->addLayout(form);
-  auto* hint=new QLabel(tr("Each control pole has its own weight. Incoming and outgoing handles can be moved independently in the sketch."),&dialog);hint->setWordWrap(true);layout->addWidget(hint);
-  std::vector<std::pair<int,QDoubleSpinBox*>> weights;
-  auto weight=[&](int i,const QString& title){auto* spin=new QDoubleSpinBox(&dialog);spin->setDecimals(4);spin->setRange(0.001,1000);spin->setValue(spline->weights[i]);form->addRow(title,spin);weights.push_back({i,spin});};
-  weight(index,tr("Node weight"));
-  const bool bezier=spline->degree==3 && std::all_of(spline->multiplicities.begin()+1,spline->multiplicities.end()-1,[](int n){return n==3;});
-  if(bezier && index%3==0) {if(index>0) weight(index-1,tr("Incoming handle weight"));if(index+1<int(spline->p.size())) weight(index+1,tr("Outgoing handle weight"));}
-  auto* buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog);layout->addWidget(buttons);
-  connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
-  if(dialog.exec()!=QDialog::Accepted) return;
-  begin_change();auto* edited=m_sk.entity(entity);for(const auto& [i,spin]:weights)edited->weights[i]=spin->value();end_change(tr("Spline node weights"));
+  m_options["weight"]=QString::number(spline->weights[index],'g',12);
+  m_options["incoming"]=QString::number(index>0?spline->weights[index-1]:1,'g',12);
+  m_options["outgoing"]=QString::number(index+1<int(spline->p.size())?spline->weights[index+1]:1,'g',12);
+  setTool("node");
+
 }
 
 void SketchEditor::findOpenVertices() {

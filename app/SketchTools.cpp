@@ -49,7 +49,7 @@ double norm_angle(double a) {  // into [0, 2 pi)
 // ---------------------------------------------------------------- tool selection
 void SketchEditor::setTool(const QString& tool) {
   if (!m_active) return;
-  if (m_chain.size() > 1) finishChain();
+  if (!m_chain.empty()) finishChain();
   cancel_change();
   m_clicks.clear();
   m_chain.clear();
@@ -65,20 +65,11 @@ void SketchEditor::setTool(const QString& tool) {
       return;
     }
   }
-  if (tool == "mirror" && m_sel.empty()) {
-    emit status(tr("Mirror: select the curves first, then start Mirror and click the mirror line."));
-    return;
-  }
-  if (tool == "offset") return offsetSelection();  // acts on the selection at once; not a mode
   if ((m_tool == "project") != (tool == "project")) m_viewport->setEdgeHover(tool == "project");
-  if (tool == "polygon") {
-    bool ok = false;
-    const int n = QInputDialog::getInt(m_viewport, tr("Polygon"), tr("Number of sides:"), m_polygonSides, 3, 64, 1, &ok);
-    if (!ok) return;
-    m_polygonSides = n;
-  }
+  m_dimEditing = 0;
+  m_panelFieldsDirty = true;
   m_tool = tool;
-  if (tool != "mirror") m_sel.clear();
+  if (tool != "mirror" && tool != "offset" && tool != "node") m_sel.clear();
   emit toolChanged(m_tool);
   toolPrompt();
   rebuild();
@@ -107,6 +98,7 @@ void SketchEditor::toolPrompt() {
   else if (m_tool == "dimension") t = m_placingDim ? tr("Dimension: click where the value should sit (or pick a second entity)") : tr("Dimension: pick a line, a circle, an arc, or two points");
   else if (m_tool.startsWith("c:")) t = tr("%1: pick the geometry it applies to").arg(i18n::t(m_tool.mid(2).left(1).toUpper() + m_tool.mid(3)));
   emit status(t);
+  emit workflowChanged();
 }
 
 // ---------------------------------------------------------------- clicks
@@ -119,6 +111,7 @@ void SketchEditor::finishChain() {
     // A start point that never got its segment.
     m_sk.remove(m_chain.front());
   }
+  if(!m_chain.empty() && m_undo.size()>m_chainUndoStart+1)m_undo.erase(m_undo.begin()+m_chainUndoStart+1,m_undo.end());
   m_chain.clear();
   m_clicks.clear();
   toolPrompt();
@@ -130,6 +123,15 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
   if (m_tool.startsWith("c:")) return constraintClick(hit);
   if (m_tool == "dimension") return dimensionClick(hit, s.u, s.v);
   if (m_tool == "project") return projectHovered();
+  if (m_tool == "offset" || m_tool == "node") {
+    const Hit h=hitTest(s.u,s.v);
+    if(h.kind!=Hit::None) {
+      auto it=std::find(m_sel.begin(),m_sel.end(),h.id);
+      if(it==m_sel.end())m_sel.push_back(h.id);else m_sel.erase(it);
+      rebuild();emit changed();toolPrompt();
+    }
+    return;
+  }
   if (m_tool == "fillet") return filletAt(hit, s.u, s.v);
   if (m_tool == "trim") return trimAt(hit, s.u, s.v);
   if (m_tool == "mirror") {
@@ -139,6 +141,7 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
   }
 
   if (m_tool == "line" || m_tool == "spline") {
+    if(m_chain.empty())m_chainUndoStart=m_undo.size();
     begin_change();
     const int p = pointFor(s);
     if (m_chain.empty()) {
@@ -159,8 +162,7 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     if (!end_change(tr("Line"))) return;
     m_chain.push_back(p);
     if (closes) {  // back at the start: the profile is closed, the chain is done
-      m_chain.clear();
-      toolPrompt();
+      finishChain();
     }
     return;
   }
@@ -256,6 +258,9 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     return done(tr("Arc"));
   }
   if (m_tool == "polygon" && n == 2) {
+    bool valid=false;const int sides=option("sides","6").toInt(&valid);
+    if(!valid || sides<3 || sides>256) {m_clicks.pop_back();emit status(tr("Use between 3 and 256 polygon sides."));return;}
+    m_polygonSides=sides;
     const Snap& o = m_clicks[0];
     const double r = std::hypot(s.u - o.u, s.v - o.v), a0 = std::atan2(s.v - o.v, s.u - o.u);
     if (r < 1e-6) { m_clicks.pop_back(); return; }
@@ -404,6 +409,7 @@ QString SketchEditor::dimensionText(const SkConstraint& c) const {
   bool plain = false;
   QString::fromStdString(c.expr).toDouble(&plain);
   if (!c.expr.empty() && !plain) value = QStringLiteral("fx: ") + value;
+  if (c.reference) value = "(" + value + ")";
   return value;
 }
 
@@ -548,41 +554,32 @@ void SketchEditor::placeDimension(double u, double v) {
 void SketchEditor::editDimension(int id, bool fresh) {
   const SkConstraint* c = m_sk.constraint(id);
   if (!c || !c->is_dimension()) return;
-  if (!m_dimEdit) {
-    m_dimEdit = new QLineEdit(m_viewport);
-    m_dimEdit->setAttribute(Qt::WA_NativeWindow);  // a plain child would sit under the OpenGL surface
-    m_dimEdit->setFont(theme::mono(12));
-    m_dimEdit->setAlignment(Qt::AlignCenter);
-    m_dimEdit->setFixedSize(132, 28);
-    m_dimEdit->installEventFilter(this);
-    connect(m_dimEdit, &QLineEdit::returnPressed, this, &SketchEditor::commitDimensionEdit);
-  }
+  if (!m_dimEdit) m_dimEdit = new QLineEdit(m_viewport);
+  if (m_tool != "dimension") setTool("dimension");
+
   m_dimEditing = id;
   m_dimFresh = fresh;
   const QString shown = !c->expr.empty() ? QString::fromStdString(c->expr) : c->type == CT::Angle ? trimmedNumber(c->value * 180 / M_PI, 4) + " deg" : trimmedNumber(c->value, 4) + " mm";
   m_dimEdit->setText(shown);
-  double lu, lv;
-  labelPosition(*c, lu, lv);
-  const QPoint at = m_viewport->widgetPoint(m_frame.to_world(lu, lv));
-  m_dimEdit->move(at.x() - m_dimEdit->width() / 2, at.y() - m_dimEdit->height() / 2);
-  m_dimEdit->show();
-  m_dimEdit->raise();
-  m_dimEdit->setFocus();
-  m_dimEdit->selectAll();
+  m_options["expression"] = shown;
+  m_options["reference"] = c->reference ? "1" : "0";
+  m_panelFieldsDirty = true;
+  emit toolChanged(m_tool);
+  emit workflowChanged();
+
   rebuild();
 }
 
 void SketchEditor::commitDimensionEdit() {
-  if (!m_dimEdit || !m_dimEdit->isVisible()) return;
+  if (!m_dimEdit || !m_dimEditing) return;
   const QString text = m_dimEdit->text().trimmed();
   m_dimEdit->hide();
   m_viewport->setFocus();
   SkConstraint* c = m_sk.constraint(m_dimEditing);
-  m_dimEditing = 0;
   if (!c || text.isEmpty()) return rebuild();
   double value = 0;
   try {
-    value = paramTable(m_doc->scene).as(c->type == CT::Angle ? Dim::Angle : Dim::Length, text.toStdString());
+    value = sketch_parameters(m_sk, paramTable(m_doc->scene)).as(c->type == CT::Angle ? Dim::Angle : Dim::Length, text.toStdString());
   } catch (const std::exception& e) {
     emit status(i18n::t(QString::fromUtf8(e.what())));
     return rebuild();
@@ -594,13 +591,19 @@ void SketchEditor::commitDimensionEdit() {
   bool plain = false;
   text.toDouble(&plain);
   const std::string expr = plain ? std::string() : text.toStdString();
-  if (std::fabs(value - c->value) < 1e-12 && expr == c->expr) return rebuild();
+  if (std::fabs(value - c->value) < 1e-12 && expr == c->expr && c->reference == (option("reference", "0") == "1")) return rebuild();
   const int id = c->id;
   begin_change();
   c = m_sk.constraint(id);
   c->value = value;
   c->expr = expr;
-  end_change(tr("Dimension"));
+  c->reference = option("reference", "0") == "1";
+  if (c->reference) c->expr.clear();
+  if(end_change(tr("Dimension"))) {
+    if(m_dimFresh && m_undo.size()>1)m_undo.pop_back(); // placement and its value are one user edit
+    m_dimFresh=false;m_dimEditing=0;
+  }
+  m_panelFieldsDirty = true; emit workflowChanged();
 }
 
 // ---------------------------------------------------------------- sketch fillet
@@ -610,9 +613,7 @@ void SketchEditor::filletAt(const Hit& h, double, double) {
   for (auto& e : m_sk.entities)
     if (e.type == ET::Line && (e.p[0] == h.id || e.p[1] == h.id)) lines.push_back(&e);
   if (lines.size() != 2) return emit status(tr("Sketch fillet: exactly two lines must meet at that point"));
-  bool ok = false;
-  const QString text = QInputDialog::getText(m_viewport, tr("Sketch fillet"), tr("Radius (a value or an expression):"), QLineEdit::Normal, "2 mm", &ok).trimmed();
-  if (!ok || text.isEmpty()) return;
+  const QString text = option("radius", "2 mm");
   double r = 0;
   try {
     r = paramTable(m_doc->scene).length(text.toStdString());
@@ -877,9 +878,7 @@ void SketchEditor::offsetSelection() {
   for (int id : m_sel)
     if (const SkEntity* e = m_sk.entity(id); e && (e->type == ET::Line || e->type == ET::Arc || e->type == ET::Circle)) ids.push_back(id);
   if (ids.empty()) return emit status(tr("Offset: select a connected chain of lines, arcs or a circle first"));
-  bool ok = false;
-  const QString text = QInputDialog::getText(m_viewport, tr("Offset"), tr("Distance (negative = the other side):"), QLineEdit::Normal, "5 mm", &ok).trimmed();
-  if (!ok || text.isEmpty()) return;
+  const QString text = option("distance", "5 mm");
   try {
     const double d = paramTable(m_doc->scene).length(text.toStdString());
     const TopoDS_Wire wire = sketch_wire(m_sk, opad::Frame(), ids);
@@ -980,6 +979,7 @@ bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
 // Drives the tools the way the mouse does (sketch coordinates instead of pixels), so a headless run covers the
 // same code as a user: a 40 x 25 rectangle from the origin with a hole, width and height dimensioned.
 void SketchEditor::bench(const QString&) {
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW"))return benchWorkflow();
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_SPLINE");!shot.isEmpty()) {
     m_viewport->setCameraJson({{"eye",{20,8,100}},{"target",{20,8,0}},{"up",{0,1,0}},{"scale",65},{"projection","orthographic"},{"absolute",true}});
     m_viewport->setGridSnap(false);setTool("spline");
@@ -1009,7 +1009,7 @@ void SketchEditor::bench(const QString&) {
     sketchRelease(u, v, Qt::NoModifier);
   };
   auto type = [this](const QString& text) {
-    if (!m_dimEdit || !m_dimEdit->isVisible()) return trace::log(QStringLiteral("bench: sketch: no dimension editor open"));
+    if (!m_dimEdit || !m_dimEditing) return trace::log(QStringLiteral("bench: sketch: no dimension editor open"));
     m_dimEdit->setText(text);
     commitDimensionEdit();
   };

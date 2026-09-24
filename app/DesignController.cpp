@@ -139,7 +139,7 @@ void DesignController::setSuppressed(const std::string& featureId, bool on) {
   applyOps({make_edit_op(featureId, opad::json{{"suppressed", on}})}, on ? tr("suppress") : tr("unsuppress"));
 }
 
-void DesignController::showParameters() {
+ParametersDialog* DesignController::parametersWidget() {
   if (!m_params) {
     m_params = new ParametersDialog(m_doc, [this](std::vector<opad::json> ops, QString label) {
       applyOps(std::move(ops), label, [this](bool ok, const QString& error) {
@@ -147,10 +147,12 @@ void DesignController::showParameters() {
       });
     }, m_window);
   }
+  return m_params;
+}
+void DesignController::showParameters() {
+  parametersWidget();
   m_params->rebuild();
-  m_params->show();
-  m_params->raise();
-  m_params->activateWindow();
+  if(m_parametersPanel && m_openPanel)m_openPanel(m_parametersPanel);
 }
 
 // ---------------------------------------------------------------- features
@@ -535,6 +537,22 @@ void DesignController::startSketch() {
   beginPlanePick();
 }
 
+void DesignController::setSketchPanel(ToolPanel* panel) {
+  m_sketchPanel=panel;
+  connect(m_sketch,&SketchEditor::toolChanged,this,[this]{showSketchPanel();});
+  connect(m_sketch,&SketchEditor::workflowChanged,this,&DesignController::stateChanged);
+  connect(m_sketch,&SketchEditor::changed,this,[this]{if(!m_sketch->active() && m_sketchPanel)m_sketchPanel->hide();});
+}
+void DesignController::showSketchPanel() {
+  if(m_sketch->active() && m_sketchPanel && m_openPanel)m_openPanel(m_sketchPanel);
+}
+void DesignController::redefineSketchPlane() {
+  if(!m_sketch->active() || m_doc->designBusy)return;
+  m_viewport->endSketchInput();m_replaning=true;
+  m_planePicked=[this](opad::json plane,opad::Frame frame){m_sketch->redefinePlane(plane,frame);};
+  beginPlanePick();
+}
+
 void DesignController::beginPlanePick() {
   if (m_featureOn) endFeature();
   m_pickPlane = true;
@@ -569,6 +587,11 @@ bool DesignController::escape() {
     m_viewport->clearSelection();
     if (m_viewport->selectionFilter() != m_filterBefore) m_viewport->setSelectionFilter(m_filterBefore);
     m_activating = false;
+    if(m_replaning) {
+      m_replaning=false;
+      const auto plane=m_sketch->plane();
+      m_viewport->beginSketchInput(m_sketch,opad::Frame::from_json(plane.value("frame",opad::json())),m_sketch->sketchId());
+    }
     emit status(QString());
     emit stateChanged();
     return true;
@@ -628,7 +651,7 @@ void DesignController::bench() {
   enterSketch({}, "Sketch1", opad::json{{"base", "xy"}, {"frame", frame.to_json()}}, frame, opad::json::object());
   QTimer::singleShot(700, this, [this] {  // the look-at animation has ended: pick distances are in pixels
   m_sketch->bench({});
-  if(qEnvironmentVariableIsSet("OPAD_BENCH_SPLINE")) return;
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SPLINE") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW")) return;
   if (const QString shot = qEnvironmentVariable("OPAD_BENCH_SKETCHSHOT"); !shot.isEmpty()) m_viewport->grabImage().save(shot);  // the editor's overlay: curves, dimensions, glyphs
   finishSketch([this] {
     trace::log(QStringLiteral("bench: design: sketch committed, %1 sketches in the scene").arg(m_doc->scene.sketches.size()));

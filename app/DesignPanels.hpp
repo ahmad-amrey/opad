@@ -102,7 +102,7 @@ class FeaturePanel : public QWidget {
 };
 
 // Modeless "Change parameters" dialog: name, expression, value, comment; rows are edited in place.
-class ParametersDialog : public QDialog {
+class ParametersDialog : public QWidget {
   Q_OBJECT
  public:
   // `apply(ops, label)` hands design ops to the controller (planned on a worker, committed, reported back
@@ -111,6 +111,8 @@ class ParametersDialog : public QDialog {
   void failed(const QString& error);  // the last change was refused
  public slots:
   void rebuild();
+ signals:
+  void closeRequested();
  private:
   void addParameter();
   void removeCurrent();

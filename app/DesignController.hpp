@@ -11,6 +11,7 @@
 #include "Jobs.hpp"
 #include "Panels.hpp"
 #include "SketchEditor.hpp"
+#include "SketchPanel.hpp"
 #include "Viewport.hpp"
 
 class DesignController : public QObject {
@@ -20,6 +21,9 @@ class DesignController : public QObject {
   FeaturePanel* featurePanel() const { return m_form; }
   SketchEditor* sketch() const { return m_sketch; }
   void setPanel(ToolPanel* panel, std::function<void(ToolPanel*)> open);  // the floating panel the form lives in
+  void setSketchPanel(ToolPanel* panel);
+  void showSketchPanel();
+  void redefineSketchPlane();
 
   void startFeature(const QString& kind);
   void editOp(const std::string& opId);  // a feature or a sketch, rolled back to when it was made
@@ -28,6 +32,8 @@ class DesignController : public QObject {
   void finishSketch(std::function<void()> then = {});
   void cancelSketch();
   void showParameters();
+  ParametersDialog* parametersWidget();
+  void setParametersPanel(ToolPanel* panel) { m_parametersPanel=panel; }
   void regenerate(bool force);
   void setSuppressed(const std::string& featureId, bool on);
   // Plans `ops` on a worker and commits them. `done(ok, error)` runs on the UI thread.
@@ -64,9 +70,12 @@ class DesignController : public QObject {
   QWidget* m_window;
   FeaturePanel* m_form;
   ToolPanel* m_panel = nullptr;
+  ToolPanel* m_sketchPanel = nullptr;
+  bool m_replaning = false;
   std::function<void(ToolPanel*)> m_openPanel;
   SketchEditor* m_sketch;
   ParametersDialog* m_params = nullptr;
+  ToolPanel* m_parametersPanel = nullptr;
 
   bool m_featureOn = false;
   std::string m_editing;        // feature op being edited (empty: a new one)
