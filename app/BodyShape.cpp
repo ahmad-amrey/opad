@@ -117,6 +117,10 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
   for (int i = 1; i <= edges.Extent(); ++i) {
     if (BRep_Tool::Degenerated(TopoDS::Edge(edges(i)))) continue;
     BRepAdaptor_Curve curve(TopoDS::Edge(edges(i)));
+    if (p->triangles.IsNull()) {
+      const int n=curve.GetType()==GeomAbs_Line?1:128;
+      for(int j=0;j<n;++j) { p->drawingSegments.push_back(curve.Value(curve.FirstParameter()+(curve.LastParameter()-curve.FirstParameter())*j/n)); p->drawingSegments.push_back(curve.Value(curve.FirstParameter()+(curve.LastParameter()-curve.FirstParameter())*(j+1)/n)); }
+    }
     if (curve.GetType() != GeomAbs_Circle) continue;
     TColgp_Array1OfPnt points(1, 257);
     for (int j = 1; j <= points.Length(); ++j)
@@ -178,7 +182,18 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
   Handle(Graphic3d_Group) g = prs->NewGroup();
   g->SetClosed(m_prs->closed);
   g->SetGroupPrimitivesAspect(myDrawer->ShadingAspect()->Aspect());
-  g->AddPrimitiveArray(m_prs->triangles, !haveBox);
+  // Ray intersections do not use raster depth offsets. Separate only the render
+  // skin along its normals; the analytic shape, selection and exports stay exact.
+  if (m_rayBias!=0 && m_rayTriangles.IsNull()) {
+    const auto& src=m_prs->triangles;
+    m_rayTriangles=new Graphic3d_ArrayOfTriangles(src->VertexNumber(),src->EdgeNumber(),true);
+    for(int i=1;i<=src->VertexNumber();++i) {
+      const gp_Dir n=src->VertexNormal(i);
+      m_rayTriangles->AddVertex(src->Vertice(i).Translated(gp_Vec(n)*m_rayBias),n);
+    }
+    for(int i=1;i<=src->EdgeNumber();++i) m_rayTriangles->AddEdge(src->Edge(i));
+  }
+  g->AddPrimitiveArray(m_rayTriangles.IsNull()?m_prs->triangles:m_rayTriangles, !haveBox);
   if (haveBox) g->SetMinMaxValues(x0, y0, z0, x1, y1, z1);
   if (myDrawer->FaceBoundaryDraw() && !m_prs->boundaries.IsNull()) {
     Handle(Graphic3d_Group) e = prs->NewGroup();

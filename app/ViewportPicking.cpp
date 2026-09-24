@@ -3,6 +3,9 @@
 #include "NavCube.hpp"
 
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 #include <Graphic3d_Camera.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <Prs3d_PointAspect.hxx>
@@ -155,7 +158,7 @@ gp_Pnt Viewport::centralOrbitPoint() {
     m_view->Convert(point.X(), point.Y(), point.Z(), px, py);
     return std::abs(px - x) <= 2 && std::abs(py - y) <= 2;
   };
-  if (m_navSelector.IsNull()) return m_view->Camera()->Center();
+  if (m_navSelector.IsNull()) return drawingOrbitPoint();
   if (pick(cx, cy)) return point;
 
   // Search screen regions nearest the center first. Rectangle picks use the existing
@@ -171,7 +174,7 @@ gp_Pnt Viewport::centralOrbitPoint() {
     const double dx = cx - std::clamp(cx, x0, x1), dy = cy - std::clamp(cy, y0, y1);
     regions.push({x0, y0, x1, y1, dx * dx + dy * dy});
   };
-  if (w <= 0 || h <= 0 || m_navSelector.IsNull()) return m_view->Camera()->Center();
+  if (w <= 0 || h <= 0 || m_navSelector.IsNull()) return drawingOrbitPoint();
   add(0, 0, w - 1, h - 1);
   m_navSelector->AllowOverlapDetection(true);
   while (!regions.empty()) {
@@ -200,7 +203,7 @@ gp_Pnt Viewport::centralOrbitPoint() {
     }
   }
   // No visible geometry (empty document or model entirely outside the view).
-  return m_view->Camera()->Center();
+  return drawingOrbitPoint();
 }
 
 gp_Pnt Viewport::GravityPoint(const Handle(AIS_InteractiveContext)&, const Handle(V3d_View)&) {
@@ -212,4 +215,28 @@ gp_Pnt Viewport::GravityPoint(const Handle(AIS_InteractiveContext)&, const Handl
 
 void Viewport::focusCube() {
   Handle(NavCube)::DownCast(m_cube)->setOrbitPoint(centralOrbitPoint());
+}
+
+
+gp_Pnt Viewport::drawingOrbitPoint() {
+  gp_Pnt best=m_view->Camera()->Center(); double distance=1e100;
+  const QPointF middle(width()/2.0,height()/2.0);
+  auto segment=[&](gp_Pnt a,gp_Pnt b) {
+    const QPointF pa=widgetPoint({a.X(),a.Y(),a.Z()}), pb=widgetPoint({b.X(),b.Y(),b.Z()}), d=pb-pa;
+    const double len=QPointF::dotProduct(d,d);
+    const double t=len>0?std::clamp(QPointF::dotProduct(middle-pa,d)/len,0.0,1.0):0;
+    const auto delta=pa+d*t-middle; const double sq=QPointF::dotProduct(delta,delta);
+    if (sq<distance) { distance=sq; best=a.Translated(gp_Vec(a,b)*t); }
+  };
+  for (const auto& [id,item]:m_items) {
+    if(!m_ctx->IsDisplayed(item.ais)) continue;
+    auto p=m_prs.find(item.key); if(p==m_prs.end()) continue;
+    const auto& points=p->second->drawingSegments;
+    for(size_t i=0;i+1<points.size();i+=2) segment(points[i].Transformed(item.ais->Transformation()),points[i+1].Transformed(item.ais->Transformation()));
+  }
+  for(const auto& [id,wire]:m_sketchWires) for(TopExp_Explorer e(wire.ais->Shape(),TopAbs_EDGE);e.More();e.Next()) {
+    BRepAdaptor_Curve c(TopoDS::Edge(e.Current())); const int n=c.GetType()==GeomAbs_Line?1:128;
+    for(int j=0;j<n;++j) segment(c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*j/n),c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*(j+1)/n));
+  }
+  return best;
 }

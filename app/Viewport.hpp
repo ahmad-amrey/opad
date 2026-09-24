@@ -1,4 +1,5 @@
 #pragma once
+#include "CursorWrap.hpp"
 // The 3D viewport: OCCT AIS/V3d rendering inside a native Qt widget, driven by AIS_ViewController
 // (navigation gestures, hover pre-highlight, click/rubber-band selection, view-cube animation).
 #include <AIS_InteractiveContext.hxx>
@@ -224,6 +225,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_twoDimensional = false;
   Handle(Graphic3d_Camera) m_threeDimensionalCamera;
   QPointF m_dragOffset;
+  CursorWarpGate m_warpGate;
+  void updateGridExtent();
+  gp_Pnt drawingOrbitPoint();
   void updateTracking();
   void clearTracking();
   bool m_trackingEnabled = true, m_haveTrackingAnchor = false, m_trackingLocked = false;

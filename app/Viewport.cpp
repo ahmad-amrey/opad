@@ -434,9 +434,25 @@ void Viewport::setStyle(Style s) {
 void Viewport::setGrid(bool on) {
   m_grid = on;
   if (!m_initialised) return;
+  updateGridExtent();
   if (on) m_viewer->ActivateGrid(Aspect_GT_Rectangular, Aspect_GDM_Lines);
   else m_viewer->DeactivateGrid();
   redrawScene();
+}
+
+void Viewport::updateGridExtent() {
+  if (!m_initialised || !m_grid) return;
+  Bnd_Box bounds;
+  for (const auto& [id,item]:m_items) { Bnd_Box b; item.ais->BoundingBox(b); bounds.Add(b); }
+  for (const auto& [id,wire]:m_sketchWires) { Bnd_Box b; wire.ais->BoundingBox(b); bounds.Add(b); }
+  double extent=100;
+  if (!bounds.IsVoid()) {
+    const auto lo=bounds.CornerMin(), hi=bounds.CornerMax();
+    extent=std::max({extent,std::abs(lo.X()),std::abs(lo.Y()),std::abs(lo.Z()),std::abs(hi.X()),std::abs(hi.Y()),std::abs(hi.Z())})*1.1;
+  }
+  const double step=std::pow(10.0,std::floor(std::log10(extent/10.0)));
+  m_viewer->SetRectangularGridValues(0,0,step,step,0);
+  m_viewer->SetRectangularGridGraphicValues(extent,extent,0);
 }
 
 void Viewport::setShadows(bool on) {
@@ -1465,12 +1481,16 @@ void Viewport::updateDepthBias() {
     // Whole depth units, with slope separation for oblique coplanar faces.
     // Fractional hash offsets used to quantize to the same depth and flicker.
     const int slot = ranks[i++];
+    const auto body=Handle(BodyShape)::DownCast(item.ais);
+    const double extent=boxes[i-1].IsVoid()?1:boxes[i-1].CornerMin().Distance(boxes[i-1].CornerMax());
+    if (!body.IsNull() && body->setRayBias(m_renderQuality==2 ? -slot*std::max(1e-5,extent*2e-6) : 0)) m_ctx->Redisplay(body,false);
     item.ais->SetPolygonOffsets(Aspect_POM_Fill, 1.0f + 0.25f * slot, 1.0f + 4.0f * slot);
   }
 }
 
 void Viewport::finishSync(int pendingCount, bool added) {
   if (added) updateDepthBias();
+  updateGridExtent();
   emit meshingProgress(pendingCount);
   // Keep fitting while a load is still streaming bodies in, but only until the user moves the camera:
   // every fit, orbit or zoom of theirs clears m_needFit so a later batch never snaps the view back.
@@ -1617,7 +1637,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   finishTrackpadScroll();
   m_nativePinching = false;
   setFocus();
-  m_dragOffset = {};
+  m_dragOffset = {}; m_warpGate.pending = false;
   m_pressPos = e->pos();
   m_rightPress = e->button() == Qt::RightButton;
   m_cubeClick = false;
@@ -1698,6 +1718,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
 }
 
 void Viewport::mouseMoveEvent(QMouseEvent* e) {
+  if (e->buttons() != Qt::NoButton && !m_warpGate.accept(e->globalPosition().toPoint())) return;
   m_trackingCursor = e->position();
   m_trackingDirty = true;
   if (m_blocked) return;
@@ -1733,8 +1754,9 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
         // Keep controller coordinates continuous across the warp, including its
         // generated move event; the scene never sees a display-width jump.
         m_dragOffset += global - target;
+        m_warpGate.begin(global, target);
         QCursor::setPos(target);
-        if (QCursor::pos() != target) m_dragOffset -= global - target;
+        if (QCursor::pos() != target) { m_dragOffset -= global - target; m_warpGate.pending=false; }
       }
     }
   }

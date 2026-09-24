@@ -27,6 +27,7 @@ struct BodyPrs {
   std::map<int, Circle> circles;  // edge ordinals, including trimmed circular arcs
   Handle(Select3D_SensitiveEntity) navigation;  // triangles + BVH, shared by instances
   bool closed = false;                           // closed solid: back faces can be culled
+  std::vector<gp_Pnt> drawingSegments; // sampled pairs for drawing-only orbit fallback
   Bnd_Box box;                                   // of the prototype; spares Display() a pass over every vertex
   static std::shared_ptr<BodyPrs> build(const TopoDS_Shape& meshedProto, const Bnd_Box& box);  // worker thread; needs triangulation
 };
@@ -36,6 +37,8 @@ class BodyShape : public AIS_Shape {
  public:
   BodyShape(const TopoDS_Shape& proto, std::shared_ptr<const BodyPrs> prs) : AIS_Shape(proto), m_prs(std::move(prs)) {}
 
+ public:
+  bool setRayBias(double offset) { if (offset==m_rayBias) return false; m_rayBias=offset; m_rayTriangles.Nullify(); SetToUpdate(); return true; }
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
   // Sub-shape modes: the stock owners are swapped for SubShapeOwner.
@@ -43,6 +46,8 @@ class BodyShape : public AIS_Shape {
 
  private:
   std::shared_ptr<const BodyPrs> m_prs;
+  double m_rayBias=0;
+  Handle(Graphic3d_ArrayOfTriangles) m_rayTriangles;
 };
 
 // Owner of one face, edge or vertex of a BodyShape. It knows its ordinal within the body and leaves the

@@ -33,6 +33,7 @@ void Viewport::setRenderQuality(int level) {
   p.IsGlobalIlluminationEnabled = false;  // bounded interactive cost; no progressive path-tracing stall
   p.RaytracingDepth = 2;
   setShadows(m_renderQuality >= 1);
+  updateDepthBias();
   m_view->Invalidate();
   redrawScene();
 }

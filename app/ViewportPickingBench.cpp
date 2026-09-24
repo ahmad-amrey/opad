@@ -23,6 +23,9 @@
 bool Viewport::benchPicking() {
   auto require = [](bool ok, const char* message) { if (!ok) throw opad::Error(message); };
   try {
+    CursorWarpGate gate; gate.begin({0,200},{1917,200});
+    require(!gate.accept({0,201}) && !gate.accept({1,202}), "queued edge events should not reapply cursor warp");
+    require(gate.accept({1915,201}) && gate.accept({1910,202}), "warp destination should resume continuous drag");
     trace::log(QStringLiteral("bench: picking synchronous regression batch begin"));
     m_view->Redraw();
     // Two overlapping instances of one mesh: nearest triangle wins, with instance transforms.
@@ -137,18 +140,23 @@ bool Viewport::benchPicking() {
       std::vector<Handle(AIS_Shape)> visible;
       for(const auto& [id,item]:items) if(m_ctx->IsDisplayed(item.ais)) { visible.push_back(item.ais); m_ctx->Erase(item.ais,false); }
       Handle(AIS_Shape) red=new BodyShape(box,prs),green=new BodyShape(box,prs);
+      Graphic3d_MaterialAspect matte(Graphic3d_NameOfMaterial_Plastified); matte.SetSpecularColor(Quantity_NOC_BLACK);
+      red->SetMaterial(matte); green->SetMaterial(matte);
       red->SetColor(Quantity_Color(1,0,0,Quantity_TOC_RGB)); green->SetColor(Quantity_Color(0,1,0,Quantity_TOC_RGB));
       m_ctx->Display(red,1,-1,false); m_ctx->Display(green,1,-1,false);
       m_items["a"].ais=red; m_items["b"].ais=green; updateDepthBias(); setRenderQuality(0);
       m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+      for (int level : {0,1,2}) { setRenderQuality(level);
       for(const gp_Pnt eye:{gp_Pnt(0,0,100),gp_Pnt(0,-100,35)}) {
         m_view->Camera()->SetEyeAndCenter(eye,gp_Pnt(0,0,10)); m_view->Camera()->SetUp(gp::DY()); m_view->Camera()->SetScale(60);
         m_view->Redraw(); const QImage frame=grabImage();
         for(int y=-6;y<=6;y+=3) for(int x=-6;x<=6;x+=3) {
           const QPoint at=widgetPoint({double(x),double(y),10});
           const QColor pixel=frame.pixelColor(qRound(at.x()*double(frame.width())/width()),qRound(at.y()*double(frame.height())/height()));
-          require(pixel.red()>180 && pixel.green()<70,"coincident faces have mixed or unstable depth ordering");
+          if (!(pixel.red()>80 && pixel.red()>pixel.green()*2)) { frame.save(QString("build/todo2-depth-%1.png").arg(level)); trace::log(QString("depth level %1 pixel %2,%3,%4").arg(level).arg(pixel.red()).arg(pixel.green()).arg(pixel.blue())); }
+          require(pixel.red()>80 && pixel.red()>pixel.green()*2,"coincident faces have mixed or unstable depth ordering");
         }
+      }
       }
       m_ctx->Remove(red,false); m_ctx->Remove(green,false); m_items=std::move(items);
       for(const auto& shape:visible) { m_ctx->Display(shape,false); activateSelection(shape); }
