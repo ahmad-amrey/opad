@@ -1,4 +1,8 @@
 #include "opad/drawing_io.hpp"
+#include <set>
+#include "opad/design/sketch_geom.hpp"
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopExp.hxx>
 #include "opad/geometry.hpp"
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -555,9 +559,19 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
     if(svg) body<<"<line x1=\""<<a.X()<<"\" y1=\""<<-a.Y()<<"\" x2=\""<<b.X()<<"\" y2=\""<<-b.Y()<<"\"/>\n";
     else body<<"0\nLINE\n8\n"<<layer<<"\n10\n"<<a.X()<<"\n20\n"<<a.Y()<<"\n11\n"<<b.X()<<"\n21\n"<<b.Y()<<'\n';
   };
-  for(const auto& id:select_bodies(scene,options.select)) {
-    if(!scene.effectively_visible(id)) continue;
-    const Node* n=scene.node(id);
+  std::vector<std::string> nodes, sketches;
+  for(const auto& id:options.select) { if(scene.sketch(id)) sketches.push_back(id); else nodes.push_back(id); }
+  std::vector<std::string> objects;
+  if(options.select.empty() || !nodes.empty()) objects=select_bodies(scene,nodes);
+  if(options.select.empty()) for(const auto& sk:scene.sketches) if(sk.visible) sketches.push_back(sk.id);
+  objects.insert(objects.end(),sketches.begin(),sketches.end());
+  std::set<std::string> seen;
+  for(const auto& id:objects) {
+    if(!seen.insert(id).second) continue;
+    const auto* sketch=scene.sketch(id);
+    if(options.select.empty() && !sketch && !scene.effectively_visible(id)) continue;
+    Node sketchNode; if(sketch) {sketchNode.name=sketch->name;sketchNode.representation="drawing2d";}
+    const Node* n=sketch?&sketchNode:scene.node(id);
     if (n->representation == "mesh") throw Error("mesh reference objects require STL, OBJ or GLB export");
     std::string layer=n->name;
     std::replace(layer.begin(),layer.end(),'\n','_'); std::replace(layer.begin(),layer.end(),'\r','_');
@@ -578,8 +592,15 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
       ++bodies; continue;
     }
     auto shape=node_world_shape(doc,scene,id);
-    for(TopExp_Explorer it(shape,TopAbs_EDGE);it.More();it.Next()) {
-      BRepAdaptor_Curve c(TopoDS::Edge(it.Current()));
+    if(sketch) {
+      // A sketch exports in its own 2D coordinates, independent of its world plane.
+      TopoDS_Compound local; BRep_Builder builder; builder.MakeCompound(local);
+      for(const auto& edge:design::sketch_edges(design::Sketch::from_json(sketch->geometry),Frame{},true)) builder.Add(local,edge);
+      shape=local;
+    }
+    TopTools_IndexedMapOfShape edges; TopExp::MapShapes(shape,TopAbs_EDGE,edges);
+    for(int edgeIndex=1;edgeIndex<=edges.Extent();++edgeIndex) {
+      BRepAdaptor_Curve c(TopoDS::Edge(edges(edgeIndex)));
       if(c.GetType()==GeomAbs_Circle && std::abs(c.Circle().Axis().Direction().Z())>1-1e-9) {
         const auto circle=c.Circle(); const auto center=circle.Location(); const double r=circle.Radius();
         const bool full=std::abs(c.LastParameter()-c.FirstParameter())>=2*M_PI-1e-8;
@@ -604,6 +625,8 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
   std::ostringstream out; out.precision(17);
   if(svg) out<<"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\""<<xmax-xmin+2<<"mm\" height=\""<<ymax-ymin+2<<"mm\" viewBox=\""<<xmin-1<<' '<<ymin-1<<' '<<xmax-xmin+2<<' '<<ymax-ymin+2<<"\" fill=\"none\" stroke=\"black\" stroke-width=\"0.2\">\n"<<body.str()<<"</svg>\n";
   else out<<"0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n"<<body.str()<<"0\nENDSEC\n0\nEOF\n";
+  if(!bodies) throw Error("No drawing objects selected for export");
+  if(file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
   write_text_file(file,out.str()); return {{file},bodies};
 }
 }

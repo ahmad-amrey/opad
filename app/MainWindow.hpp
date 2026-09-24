@@ -92,7 +92,7 @@ class MainWindow : public QMainWindow {
   void addAnnotation();
   void resolveCurrentAnnotation();
   void restyleAnnotation(const std::string& opId, const std::string& style);  // an edit op on the note
-  void exportDialog();
+  void exportDialog(std::vector<std::string> ids = {});
   void drawingToSketch();
   void screenshot();
   void saveNamedView();

@@ -597,7 +597,9 @@ Handle(TDocStd_Document) build_xcaf(const Document& doc, const Scene& scene, con
 
 ExportResult export_selection(const Document& doc, const Scene& scene, const std::filesystem::path& out,
                               const ExportOptions& opt) {
-  if (opt.format == "step")
+  for(const auto& id:opt.select) if(scene.sketch(id)) throw Error("Sketches export as DXF, SVG or DWG; select a solid or mesh for this format");
+  for(const auto& id:select_bodies(scene,opt.select)) if(scene.node(id)->representation=="drawing2d") throw Error("2D drawings export as DXF, SVG or DWG");
+  if (opt.format == "step" || opt.format == "stp")
     for (const auto& id : select_bodies(scene, opt.select))
       if (scene.node(id)->representation == "mesh") throw Error("Mesh objects cannot be exported as CAD solids; choose STL, OBJ or GLB");
   ExportResult res;

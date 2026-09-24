@@ -7,6 +7,7 @@
 #include "opad/design/drawing_sketch.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include <TopoDS_Shape.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
 #include <filesystem>
 
 using namespace opad;
@@ -144,4 +145,30 @@ TEST(drawing_layers_convert_to_editable_extrudable_sketch) {
   scene=resolve(d);CHECK_EQ(scene.features.size(),1u);CHECK(scene.features[0].error.empty());
   auto saved=Document::parse(d.serialize());CHECK_EQ(resolve(saved).sketches[0].geometry["entities"].size(),5u);
   CHECK_THROWS(commands::run("drawing_to_sketch",{{"layers",json::array()}},&d));
+}
+
+TEST(individual_sketch_exports_in_its_own_plane_even_when_hidden) {
+  Files f; auto d=Document::create(); design::Sketch sk; sk.add_circle(sk.add_point(12,8),3);
+  commands::run("sketch",{{"name","Vertical circle"},{"plane",{{"base","yz"}}},{"geometry",sk.to_json()}},&d);
+  auto scene=resolve(d);const auto id=scene.sketches[0].id; commands::run("appearance",{{"target",id},{"visible",false}},&d);scene=resolve(d);
+  for(const auto* format:{"svg","dxf"}) {
+    ExportOptions o;o.format=format;o.select={id};const auto path=f.dir/(std::string("sketch.")+format);
+    CHECK_EQ(export_drawing(d,scene,path,o).bodies,1);
+    auto round=Document::create();import_file(round,path);const auto rs=resolve(round);Ref edge;edge.body=rs.all_bodies()[0];edge.kind=Ref::Kind::Edge;edge.index=0;
+    const auto info=inspect_ref(round,rs,edge);CHECK_NEAR(info["diameter"].get<double>(),6,1e-6);CHECK_NEAR(info["center"][0].get<double>(),12,1e-6);CHECK_NEAR(info["center"][1].get<double>(),8,1e-6);
+  }
+  ExportOptions wrong;wrong.select={id};CHECK_THROWS(export_selection(d,scene,f.dir/"bad.step",wrong));
+}
+TEST(individual_solids_and_meshes_export_without_their_neighbors) {
+  Files f;auto d=Document::create();Scene scene;
+  cache_shape(d,"box",BRepPrimAPI_MakeBox(10,20,30).Shape());
+  Node n;n.id="one";n.name="Box";n.kind=Node::Kind::Body;n.body_key="box";scene.nodes[n.id]=n;scene.roots.push_back(n.id);
+  n.id="neighbor";n.local=Mat4::translation(100,0,0);scene.nodes[n.id]=n;scene.roots.push_back(n.id);
+  for(const auto* format:{"step","obj","stl"}) {
+    ExportOptions o;o.format=format;o.select={"one"};o.per_body=false;
+    const auto path=f.dir/(std::string("one.")+format);CHECK_EQ(export_selection(d,scene,path,o).bodies,1);
+    auto round=Document::create();import_file(round,path);const auto rs=resolve(round);CHECK_EQ(rs.all_bodies().size(),1u);
+    auto box=node_world_bbox(round,rs,rs.all_bodies()[0]);CHECK(box.CornerMax().X()<11);
+    if(std::string(format)!="step") { ExportOptions mesh;o.format=format;mesh.format=format;mesh.select={rs.all_bodies()[0]};mesh.per_body=false;CHECK_EQ(export_selection(round,rs,f.dir/(std::string("mesh.")+format),mesh).bodies,1); }
+  }
 }

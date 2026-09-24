@@ -1313,6 +1313,8 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     QAction* fit = menu.addAction(icons::themed("fit", 16), tr("Fit to"));
     connect(fit, &QAction::triggered, this, [this, ids] { m_viewport->fitNodes(ids); });
     add("design.convertDrawing");
+    auto* exportObject=menu.addAction(icons::themed("export",16),tr("Export selected objects"));
+    connect(exportObject,&QAction::triggered,this,[this,ids] { guarded([&] { exportDialog(ids); }); });
     add("edit.selectparent");
     add("view.isolate");
     QAction* hideOthers = menu.addAction(icons::themed("hide", 16), tr("Hide others"));
@@ -1374,6 +1376,7 @@ void MainWindow::timelineMenu(const std::string& opId, const QPoint& globalPos) 
   const opad::Feature* feat = m_doc->scene.feature(opId);
   QAction* editOp = designOp ? menu.addAction(icons::themed("rename", 16), menuOp->type == "sketch" ? tr("Edit sketch") : tr("Edit feature")) : nullptr;
   QAction* suppress = designOp && feat ? menu.addAction(icons::themed(feat->suppressed ? "eye" : "hide", 16), feat->suppressed ? tr("Unsuppress") : tr("Suppress")) : nullptr;
+  QAction* exportSketch=designOp && menuOp->type=="sketch" ? menu.addAction(icons::themed("export",16),tr("Export sketch")) : nullptr;
   if (designOp) menu.addSeparator();
   QAction* sel = menu.addAction(icons::themed("isolate", 16), tr("Select what it touches\tT"));
   menu.addSeparator();
@@ -1381,7 +1384,8 @@ void MainWindow::timelineMenu(const std::string& opId, const QPoint& globalPos) 
   QAction* log = menu.addAction(icons::themed("git", 16), tr("Show in git log"));
   QAction* chosen = menu.exec(globalPos);
   if (!chosen) return;
-  if (chosen == editOp) m_design->editOp(opId);
+  if (chosen == exportSketch) exportDialog({opId});
+  else if (chosen == editOp) m_design->editOp(opId);
   else if (chosen == suppress) m_design->setSuppressed(opId, !feat->suppressed);
   else if (chosen == del) deleteOp(opId);
   else if (chosen == restore) restoreOp(opId);
@@ -1799,121 +1803,6 @@ void MainWindow::selectOpTargets(const std::string& opId) {
 }
 
 // ---------------------------------------------------------------- export (F14/F15)
-void MainWindow::exportDialog() {
-  if (!m_doc->hasDocument) throw opad::Error("Nothing to export.");
-  auto ids = currentNodeIds();
-  int selBodies = 0;
-  for (const auto& id : ids) selBodies += static_cast<int>(m_doc->scene.bodies_under(id).size());
-  int allBodies = static_cast<int>(m_doc->scene.all_bodies().size());
-
-  QDialog dlg(this);
-  dlg.setWindowTitle(tr("Export"));
-  dlg.setFixedWidth(560);
-  auto* v = new QVBoxLayout(&dlg);
-  v->setContentsMargins(16, 16, 16, 16);
-  v->setSpacing(12);
-  auto header = [&](const QString& t) { auto* l = new QLabel(t, &dlg); l->setObjectName("sectionHeader"); v->addWidget(l); };
-  header(tr("FORMAT"));
-  auto* grid = new QGridLayout();
-  auto* group = new QButtonGroup(&dlg);
-  struct Fmt { QString label, format, schema; };
-  QList<Fmt> fmts = {{"STEP AP214", "step", "AP214"}, {"STEP AP242", "step", "AP242"}, {"OBJ (+MTL)", "obj", ""}, {"STL", "stl", ""}, {"GLB", "glb", ""}, {"DXF (XY projection)", "dxf", ""}, {"SVG (XY projection)", "svg", ""}, {"DWG (converter)", "dwg", ""}};
-  for (const auto& f : opad::commands::exporter_formats())
-    if (f != "step" && f != "obj" && f != "stl" && f != "glb") fmts << Fmt{QString::fromStdString(f).toUpper() + tr(" (plugin)"), QString::fromStdString(f), ""};
-  int i = 0;
-  for (const auto& f : fmts) {
-    auto* r = new QRadioButton(f.label, &dlg);
-    r->setProperty("format", f.format);
-    r->setProperty("schema", f.schema);
-    group->addButton(r, i);
-    grid->addWidget(r, i / 2, i % 2);
-    if (i == 1) r->setChecked(true);
-    ++i;
-  }
-  v->addLayout(grid);
-  header(tr("OBJECTS"));
-  auto* scopeRow = new QHBoxLayout();
-  auto* scopeSel = new QRadioButton(QString::fromUtf8("Selection · %1 %2").arg(selBodies).arg(selBodies == 1 ? tr("body") : tr("bodies")), &dlg);
-  auto* scopeAll = new QRadioButton(tr("Whole document · %1 bodies").arg(allBodies), &dlg);
-  scopeSel->setEnabled(selBodies > 0);
-  (selBodies > 0 ? scopeSel : scopeAll)->setChecked(true);
-  scopeRow->addWidget(scopeSel);
-  scopeRow->addWidget(scopeAll);
-  scopeRow->addStretch();
-  v->addLayout(scopeRow);
-  auto* form = new QFormLayout();
-  auto* tol = new QDoubleSpinBox(&dlg);
-  tol->setRange(0.001, 10);
-  tol->setDecimals(3);
-  tol->setValue(0.010);
-  tol->setSuffix(" mm");
-  tol->setFont(theme::mono(12));
-  form->addRow(tr("Tolerance"), tol);
-  v->addLayout(form);
-  header(tr("OPTIONS"));
-  auto* perBody = new QCheckBox(tr("One file per body (STL)"), &dlg);
-  perBody->setChecked(true);
-  auto* ascii = new QCheckBox(tr("ASCII STL"), &dlg);
-  auto* mtl = new QCheckBox(tr("Write material library (OBJ)"), &dlg);
-  mtl->setChecked(true);
-  v->addWidget(perBody);
-  v->addWidget(ascii);
-  v->addWidget(mtl);
-  header(tr("TARGET"));
-  auto* pathRow = new QHBoxLayout();
-  auto* path = new QLineEdit(&dlg);
-  path->setObjectName("mono");
-  path->setFont(theme::mono(12));
-  QString stem = m_doc->doc.path.empty() ? "export" : QString::fromStdString(m_doc->doc.path.stem().string());
-  path->setText(QDir(m_settings.value("ui/lastDir", QDir::homePath()).toString()).filePath(stem + ".step"));
-  auto* browse = new QPushButton(tr("Browse…"), &dlg);
-  pathRow->addWidget(path, 1);
-  pathRow->addWidget(browse);
-  v->addLayout(pathRow);
-  auto* footer = new QHBoxLayout();
-  auto* summary = new QLabel(&dlg);
-  summary->setObjectName("secondary");
-  footer->addWidget(summary, 1);
-  auto* cancel = new QPushButton(tr("Cancel   Esc"), &dlg);
-  auto* ok = new QPushButton(tr("Export   Enter"), &dlg);
-  ok->setObjectName("primary");
-  ok->setDefault(true);
-  footer->addWidget(cancel);
-  footer->addWidget(ok);
-  v->addLayout(footer);
-  auto refresh = [&] {
-    auto* b = group->checkedButton();
-    QString fmt = b ? b->property("format").toString() : "step";
-    QFileInfo fi(path->text());
-    QString ext = fmt == "step" ? "step" : fmt;
-    if (fi.suffix().toLower() != ext && !(fmt == "step" && fi.suffix().toLower() == "stp")) path->setText(fi.dir().filePath(fi.completeBaseName() + "." + ext));
-    int n = scopeSel->isChecked() ? selBodies : allBodies;
-    summary->setText(tr("%1 · %2 bodies · %3 mm").arg(b ? b->text() : fmt).arg(n).arg(tol->value(), 0, 'f', 3));
-    perBody->setEnabled(fmt == "stl");
-    ascii->setEnabled(fmt == "stl");
-    mtl->setEnabled(fmt == "obj");
-  };
-  connect(group, &QButtonGroup::idClicked, &dlg, [&](int) { refresh(); });
-  connect(scopeSel, &QRadioButton::toggled, &dlg, [&](bool) { refresh(); });
-  connect(tol, &QDoubleSpinBox::valueChanged, &dlg, [&](double) { refresh(); });
-  connect(browse, &QPushButton::clicked, &dlg, [&] {
-    QString p = QFileDialog::getSaveFileName(&dlg, tr("Export to"), path->text());
-    if (!p.isEmpty()) path->setText(p);
-  });
-  connect(cancel, &QPushButton::clicked, &dlg, &QDialog::reject);
-  connect(ok, &QPushButton::clicked, &dlg, &QDialog::accept);
-  refresh();
-  if (dlg.exec() != QDialog::Accepted) return;
-  auto* b = group->checkedButton();
-  QString fmt = b->property("format").toString();
-  QString out = path->text();
-  m_settings.setValue("ui/lastDir", QFileInfo(out).absolutePath());
-  opad::json args{{"format", fmt.toStdString()}, {"out", out.toStdString()}, {"tolerance", tol->value()}, {"ascii", ascii->isChecked()}, {"per_body", perBody->isChecked()}, {"mtl", mtl->isChecked()}};
-  if (!b->property("schema").toString().isEmpty()) args["schema"] = b->property("schema").toString().toStdString();
-  if (scopeSel->isChecked()) args["select"] = ids;
-  opad::json r = opad::commands::run("export", args, &m_doc->doc);
-  statusBar()->showMessage(tr("Exported %1 bodies to %2").arg(r.value("bodies", 0)).arg(out), 8000);
-}
 
 void MainWindow::screenshot() {
   QString out = QFileDialog::getSaveFileName(this, tr("Save screenshot"), m_settings.value("ui/lastDir").toString(), tr("PNG image (*.png)"));
@@ -2056,6 +1945,7 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
   m_benchSelect = false;
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_EXPORT_DIALOG")) { exportDialog(); QCoreApplication::exit(0); return; }
   if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD")) { drawingToSketch(); if(!qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")) QCoreApplication::exit(0); return; }
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_STATUS");!shot.isEmpty()) {
     QTimer::singleShot(700,this,[this,shot] {
