@@ -54,6 +54,8 @@ class MainWindow : public QMainWindow {
   void updateTitle();
   void updateChips();
   void refreshGit();
+  void saveLastView();
+  QString m_viewPath;
   void guarded(const std::function<void()>& fn);
   bool maybeSave();
   void showDocument(bool has);
@@ -121,6 +123,7 @@ class MainWindow : public QMainWindow {
   QWidget* m_homeBtn = nullptr;  // floating Home button above the view cube
   QToolButton* m_rollLeft = nullptr;   // 90 degree turns about the view axis, either side of the cube
   QToolButton* m_rollRight = nullptr;
+  QToolButton* m_alignPlane = nullptr;
   struct Tool {
     QString id, title, icon;
     int steps = 0;

@@ -522,13 +522,20 @@ void DesignController::runPreview(bool commit) {
 
 // ---------------------------------------------------------------- sketches
 void DesignController::pickSketchPlane(std::function<void(opad::json,opad::Frame)> done) {
-  startSketch(); m_planePicked=std::move(done);
+  if(!m_doc->hasDocument || m_sketch->active()) return;
+  if(m_pickPlane) escape();
+  m_planePicked=std::move(done);
+  beginPlanePick();
 }
 
 void DesignController::startSketch() {
   m_planePicked={};
   if (!m_doc->hasDocument || m_doc->browse) return;
   if (m_sketch->active()) return;
+  beginPlanePick();
+}
+
+void DesignController::beginPlanePick() {
   if (m_featureOn) endFeature();
   m_pickPlane = true;
   m_filterBefore = m_viewport->selectionFilter();

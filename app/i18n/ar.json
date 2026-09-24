@@ -1,4 +1,9 @@
 {
+ "Select through objects": "التحديد عبر الأجسام",
+ "Align view to plane": "محاذاة العرض مع مستوى",
+ "Pick a plane": "اختر مستوى",
+ "Select an origin plane or a planar face": "اختر مستوى أصلياً أو وجهاً مستوياً",
+ "Esc cancels": "Esc للإلغاء",
  "@name": "العربية",
  "@rtl": true,
 

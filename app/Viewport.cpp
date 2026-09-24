@@ -265,7 +265,7 @@ void Viewport::initViewer() {
   m_view->ChangeRenderingParams().NbMsaaSamples = 4;
   m_view->ChangeRenderingParams().RenderResolutionScale = 1.0f;
   m_view->SetImmediateUpdate(Standard_False);
-  m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+  m_view->Camera()->SetProjectionType(QSettings().value("view/orthographic",true).toBool()?Graphic3d_Camera::Projection_Orthographic:Graphic3d_Camera::Projection_Perspective);
   m_view->SetProj(V3d_XposYnegZpos);
 
   m_navSelector = new SelectMgr_ViewerSelector();
@@ -311,6 +311,7 @@ void Viewport::initViewer() {
   applyTokens();
   setRenderQuality(savedRenderQuality());
   setSceneBackground(QSettings().value("view/background", 1).toInt());
+  setGrid(m_grid);
   setTwoDimensional(m_twoDimensional);
   sync();
 }
@@ -1037,8 +1038,14 @@ void Viewport::home() {
   if(!m_initialised) return;
   myViewAnimation->Stop();m_needFit=false;
   if(!m_twoDimensional) m_view->SetProj(V3d_XposYnegZpos);
-  const auto camera=m_view->Camera();const gp_Vec offset(camera->Center(),gp::Origin());
-  camera->SetEyeAndCenter(camera->Eye().Translated(offset),gp::Origin());
+  Bnd_Box bounds;
+  for(const auto& [id,item]:m_items) { Bnd_Box b; item.ais->BoundingBox(b); bounds.Add(b); }
+  for(const auto& [id,wire]:m_sketchWires) { Bnd_Box b; wire.ais->BoundingBox(b); bounds.Add(b); }
+  if(bounds.IsVoid()) {
+    const double extent=std::max(1.0,QSettings().value("view/gridExtent",100.0).toDouble());
+    bounds.Add(gp_Pnt(-extent,-extent,0)); bounds.Add(gp_Pnt(extent,extent,0));
+  }
+  m_view->FitAll(bounds,0.02,Standard_False);
   m_view->Invalidate();requestRedraw();
 }
 void Viewport::configureGrid(double spacing,double extent) {

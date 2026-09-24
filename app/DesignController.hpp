@@ -48,6 +48,7 @@ class DesignController : public QObject {
   void failed(const QString& error);    // an apply that had no `done` of its own
 
  private:
+  void beginPlanePick();
   void endFeature();
   void activateInput(const QString& name);
   void showCandidatesFor(const QString& type);

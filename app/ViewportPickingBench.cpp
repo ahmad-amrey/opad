@@ -488,9 +488,16 @@ bool Viewport::benchPicking() {
       require(wrappedDesktopCursor(QPoint(2559,500),screens)==QPoint(-1918,500),"cursor did not wrap across full desktop");
       require(wrappedDesktopCursor(QPoint(2559,1300),screens)==QPoint(2,1300),"offset monitor wrap landed outside display");
       auto beforeHome=new Graphic3d_Camera(*m_view->Camera());
-      home();require(m_view->Camera()->Center().Distance(gp::Origin())<1e-9,"Home did not center the origin");
+      home();
+      require(m_view->Camera()->Scale()>0,"Home produced an invalid scale");
+      for(const auto& [id,item]:m_items) {
+        Bnd_Box box; item.ais->BoundingBox(box); if(box.IsVoid()) continue;
+        const auto lo=box.CornerMin(),hi=box.CornerMax();
+        for(int i=0;i<8;++i) { double x,y; m_view->Project(i&1?hi.X():lo.X(),i&2?hi.Y():lo.Y(),i&4?hi.Z():lo.Z(),x,y);
+          double w,h; m_view->Size(w,h); require(std::abs(x)<=w*.51 && std::abs(y)<=h*.51,"Home clipped scene bounds"); }
+      }
       m_view->SetCamera(beforeHome);
-      trace::log(QStringLiteral("bench: desktop topology / origin Home PASS"));
+      trace::log(QStringLiteral("bench: desktop topology / fitted Home PASS"));
     }
     auto move = [this](const QPoint& p,Qt::KeyboardModifiers mods=Qt::NoModifier) {
       QMouseEvent e(QEvent::MouseMove, QPointF(p), mapToGlobal(QPointF(p)), Qt::NoButton, Qt::NoButton, mods);

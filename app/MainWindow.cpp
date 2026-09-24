@@ -67,6 +67,8 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   buildDesign();
 
   connect(m_doc, &AppDocument::aboutToReplace, this, [this] {
+    saveLastView();
+    m_viewPath.clear();
     cancelTool();
     clearMeasurement();
     m_viewport->clearPreviewBodies();
@@ -229,6 +231,10 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
   setCorner(Qt::TopLeftCorner, Qt::LeftDockWidgetArea);
   setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
+  action("view.grid")->setChecked(m_settings.value("view/grid",false).toBool());
+  action("view.ortho")->setChecked(m_settings.value("view/orthographic",true).toBool());
+  const auto style=m_settings.value("view/style","view.edges").toString();
+  if(style=="view.shaded" || style=="view.edges" || style=="view.wire") action(style)->trigger();
   m_empty->setRecent(recent());
   showDocument(false);
   updateTitle();
@@ -333,6 +339,11 @@ void MainWindow::buildActions() {
   addAction("view.fit", tr("Fit"), "fit", QKeySequence("F"), [this] { m_viewport->fitSelection(); });  // the selection, or everything when nothing is selected
   addAction("view.fitall", tr("Fit all"), "fit", QKeySequence("Shift+F"), [this] { m_viewport->fitAll(); });
   addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(); });
+  addAction("view.alignPlane",tr("Align view to plane"),"plane",QKeySequence("Ctrl+Alt+0"),[this] {
+    if(m_design->sketchActive()) return;
+    cancelTool();
+    m_design->pickSketchPlane([this](opad::json,opad::Frame frame) { m_viewport->lookAt(frame); });
+  });
   addAction("view.rollleft", tr("Turn 90° left"), "rollLeft", QKeySequence(), [this] { m_viewport->rollView(90); });
   addAction("view.rollright", tr("Turn 90° right"), "rollRight", QKeySequence(), [this] { m_viewport->rollView(-90); });
   for (const auto& [name, key] : std::vector<std::pair<QString, QString>>{{"top", "Ctrl+Alt+1"}, {"front", "Ctrl+Alt+2"}, {"right", "Ctrl+Alt+3"}, {"iso", "Ctrl+Alt+4"}, {"bottom", "Ctrl+Alt+5"}, {"back", "Ctrl+Alt+6"}, {"left", "Ctrl+Alt+7"}})
@@ -343,11 +354,11 @@ void MainWindow::buildActions() {
   connect(flat, &QAction::toggled, this, [this](bool on) {
     m_viewport->setTwoDimensional(on);
     if (m_browserOverlay && action("panel.browser")->isChecked()) { m_browserOverlay->setVisible(m_doc->hasDocument); m_browserOverlay->raise(); }
-    m_homeBtn->setVisible(!on); m_rollLeft->setVisible(!on); m_rollRight->setVisible(!on);
+    m_homeBtn->setVisible(!on); m_rollLeft->setVisible(!on); m_rollRight->setVisible(!on); m_alignPlane->setVisible(!on);
   });
   QAction* ortho = addAction("view.ortho", tr("Orthographic"), "ortho", QKeySequence("O"), [this] {}, true);
   ortho->setChecked(true);
-  connect(ortho, &QAction::toggled, this, [this](bool on) { m_viewport->setOrthographic(on); updateChips(); });
+  connect(ortho, &QAction::toggled, this, [this](bool on) { m_viewport->setOrthographic(on); m_settings.setValue("view/orthographic",on); updateChips(); });
   QAction* shaded = addAction("view.shaded", tr("Shaded"), "shaded", QKeySequence("5"), [this] {}, true);
   QAction* edges = addAction("view.edges", tr("Shaded + edges"), "shadedEdges", QKeySequence("6"), [this] {}, true);
   QAction* wire = addAction("view.wire", tr("Wireframe"), "wireframe", QKeySequence("7"), [this] {}, true);
@@ -355,11 +366,12 @@ void MainWindow::buildActions() {
   for (QAction* a : {shaded, edges, wire}) styleGroup->addAction(a);
   edges->setChecked(true);
   connect(styleGroup, &QActionGroup::triggered, this, [this, shaded, wire](QAction* a) {
+    m_settings.setValue("view/style",a->objectName());
     m_viewport->setStyle(a == shaded ? Viewport::Style::Shaded : a == wire ? Viewport::Style::Wireframe : Viewport::Style::ShadedEdges);
     updateChips();
   });
   QAction* grid = addAction("view.grid", tr("Grid"), "grid", QKeySequence("G"), [this] {}, true);
-  connect(grid, &QAction::toggled, this, [this](bool on) { m_viewport->setGrid(on); });
+  connect(grid, &QAction::toggled, this, [this](bool on) { m_viewport->setGrid(on); m_settings.setValue("view/grid",on); });
   addAction("view.gridSettings",tr("Grid settings"),"grid",QKeySequence("S"),[this] {
     auto* dialog=new QDialog(this,Qt::Tool);dialog->setAttribute(Qt::WA_DeleteOnClose);dialog->setWindowTitle(tr("Grid settings"));
     auto* form=new QFormLayout(dialog);auto* spacing=new QDoubleSpinBox(dialog);spacing->setRange(0,100000);spacing->setDecimals(3);spacing->setSpecialValueText(tr("Automatic"));spacing->setValue(m_settings.value("view/gridSpacing",0).toDouble());
@@ -369,7 +381,7 @@ void MainWindow::buildActions() {
     connect(spacing,&QDoubleSpinBox::valueChanged,dialog,changed);connect(extent,&QDoubleSpinBox::valueChanged,dialog,changed);
     action("view.grid")->setChecked(true);dialog->show();
   });
-  auto* through=addAction("select.through",tr("Select occluded objects"),"wireframe",QKeySequence("Alt+X"),[this]{},true);
+  auto* through=addAction("select.through",tr("Select through objects"),"wireframe",QKeySequence("Alt+X"),[this]{},true);
   through->setChecked(m_settings.value("view/selectThrough",false).toBool());
   connect(through,&QAction::toggled,this,[this](bool on){m_settings.setValue("view/selectThrough",on);m_viewport->setSelectThrough(on);});
   addAction("view.isolate", tr("Isolate"), "isolate", QKeySequence("I"), [this] { m_viewport->isolate(currentNodeIds()); });
@@ -721,6 +733,11 @@ void MainWindow::buildCentral() {
   };
   m_rollLeft = rollButton("rollLeft", tr("Turn the view 90° left"), 90);
   m_rollRight = rollButton("rollRight", tr("Turn the view 90° right"), -90);
+  m_alignPlane = new QToolButton(m_viewport);
+  m_alignPlane->setAttribute(Qt::WA_NativeWindow);
+  m_alignPlane->setObjectName("vpButton");
+  m_alignPlane->setFixedSize(30,30);
+  m_alignPlane->setDefaultAction(action("view.alignPlane"));
   auto paintHome = [this, home] {
     QPalette pal = m_homeBtn->palette();
     pal.setColor(QPalette::Window, theme::current().vp);
@@ -1031,6 +1048,11 @@ void MainWindow::updateDesignState() {
       if (m_doc->hasDocument) a->setEnabled(!sketching || id == "inspect.clear");  // the left button draws while sketching
     }
   }
+  action("view.alignPlane")->setEnabled(m_doc->hasDocument && !sketching && !m_doc->loading);
+  if(m_design->pickingPlane()) {
+    m_prompt->set("plane",tr("Pick a plane"),{{tr("Select an origin plane or a planar face"),{}}},tr("Esc cancels"));
+    m_prompt->show(); positionOverlays();
+  } else if(m_tool.id.isEmpty()) m_prompt->hide();
   m_browser->setEnabled(!sketching);
   updateUndoActions();
   if (sketching) {
@@ -1109,6 +1131,8 @@ void MainWindow::positionOverlays() {
   m_rollLeft->raise();
   m_rollRight->move(m_viewport->width() - 40, 150);
   m_rollRight->raise();
+  m_alignPlane->move(m_viewport->width()-120,150);
+  m_alignPlane->raise();
   if (m_loadShade->isVisible()) {
     QRect area = m_stack->geometry();  // the workspace: central area plus the docked panels
     for (QDockWidget* d : {m_timelineDock})
@@ -1922,6 +1946,17 @@ void MainWindow::beginLoad(std::function<void()> after) {
       if (err.contains("cancel", Qt::CaseInsensitive)) statusBar()->showMessage(tr("Load cancelled"), 4000);
       else QMessageBox::warning(this, tr("OPAD"), err);
     }
+    if(ok) {
+      m_viewPath=m_doc->browse?m_settings.value("ui/lastBrowse").toString():m_doc->path();
+      if(!m_benchSelect && !m_viewPath.isEmpty() && m_settings.value("view/lastPath").toString()==m_viewPath) {
+        try {
+          const auto camera=opad::json::parse(m_settings.value("view/lastCamera").toString().toStdString());
+          action("view.2d")->setChecked(m_settings.value("view/last2d",false).toBool());
+          action("view.ortho")->setChecked(camera.value("projection","")=="orthographic");
+          m_viewport->setCameraJson(camera);
+        } catch(const std::exception&) { /* Ignore stale settings from another version. */ }
+      }
+    }
     if (int skipped = m_viewport->skippedCount()) statusBar()->showMessage(tr("%1 bodies were not tessellated (cancelled); reopen the file to show them").arg(skipped), 8000);
     if (m_benchSelect) QTimer::singleShot(300, this, &MainWindow::runBench);
   });
@@ -2332,11 +2367,20 @@ bool MainWindow::maybeSave() {
   return true;
 }
 
+void MainWindow::saveLastView() {
+  if(m_benchSelect || m_viewPath.isEmpty() || (m_design && m_design->sketchActive())) return;
+  const auto camera=m_viewport->cameraJson(); if(camera.empty()) return;
+  m_settings.setValue("view/lastPath",m_viewPath);
+  m_settings.setValue("view/lastCamera",QString::fromStdString(camera.dump()));
+  m_settings.setValue("view/last2d",action("view.2d")->isChecked());
+}
+
 void MainWindow::closeEvent(QCloseEvent* e) {
   if (!maybeSave()) {
     e->ignore();
     return;
   }
+  saveLastView();
   m_settings.setValue("ui/geometry", saveGeometry());
   if (m_timelineHiddenByViewer) m_timelineDock->show();  // viewer mode hid it; do not save that as the user's layout
   m_settings.setValue("ui/state", saveState());
