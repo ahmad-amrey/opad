@@ -493,9 +493,10 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   const QString rowKind = index.data(Qt::UserRole).toString();
   if (rowKind == "folder" || rowKind == "sketch") {
     const opad::SketchItem* sk = rowKind == "sketch" ? m_doc->scene.sketch(id) : nullptr;
-    const bool off = sk && !sk->visible;
+    const bool editing=index.data(Qt::UserRole+8).toBool();
+    const bool off = editing?!index.data(Qt::UserRole+9).toBool():sk && !sk->visible;
     const qreal ratio = p->device()->devicePixelRatioF();
-    if (sk) p->drawPixmap(r.left() + kEyeX, r.top() + 6, icons::pixmap(off ? "hide" : "eye", off ? t.fg3 : t.fg2, 16, ratio));
+    if (sk || editing) p->drawPixmap(r.left() + kEyeX, r.top() + 6, icons::pixmap(off ? "hide" : "eye", off ? t.fg3 : t.fg2, 16, ratio));
     p->drawPixmap(r.left() + kTypeX, r.top() + 6, icons::pixmap(sk ? "sketch" : "open", sk && !sk->error.empty() ? t.red : off ? t.fg3 : t.fg2, 16, ratio));
     p->setFont(theme::ui(13));
     p->setPen(off ? t.fg3 : rowKind == "folder" ? t.fg2 : t.fg);
@@ -679,6 +680,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     else if (!id.empty()) emit fitRequested({id});
   });
   connect(m_tree, &BrowserTree::eyeClicked, this, [this](const std::string& id) {
+    if(!m_editedSketch.empty() && id==m_editedSketch){emit editedSketchVisibilityRequested();return;}
     if (id.empty()) {  // document row: toggle every root
       bool anyVisible = false;
       for (const auto& r : m_doc->scene.roots) anyVisible = anyVisible || m_doc->node(r)->visible;
@@ -719,6 +721,10 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
 void BrowserPanel::focusFilter() {
   m_filter->setFocus();
   m_filter->selectAll();
+}
+void BrowserPanel::setEditedSketch(const std::string& id,const QString& name,bool visible) {
+  if(m_editedSketch==id && m_editedName==name && m_editedVisible==visible)return;
+  m_editedSketch=id;m_editedName=name;m_editedVisible=visible;rebuild();
 }
 
 QTreeWidgetItem* BrowserPanel::build(const std::string& id, QTreeWidgetItem* parent, std::set<std::string>& expanded) {
@@ -764,7 +770,7 @@ void BrowserPanel::rebuild() {
     root->setData(0, kNameRole, docName);
     root->setData(0, Qt::UserRole, "document");
     root->setFlags((root->flags() | Qt::ItemIsDropEnabled) & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled);
-    if (!m_doc->scene.sketches.empty()) {
+    if (!m_doc->scene.sketches.empty() || !m_editedSketch.empty()) {
       auto* folder = new QTreeWidgetItem(root);
       folder->setText(0, tr("Sketches"));
       folder->setData(0, kIdRole, QString());
@@ -782,7 +788,14 @@ void BrowserPanel::rebuild() {
         item->setToolTip(0, s.error.empty() ? tr("%1\nDouble-click to edit").arg(name) : QString::fromStdString(s.error));
         m_index[s.id] = item;
       }
-      folder->setExpanded(expanded.empty() || expanded.count("folder:sketches") > 0);
+      if(!m_editedSketch.empty()) {
+        auto* item=itemFor(m_editedSketch);
+        if(!item){item=new QTreeWidgetItem(folder);item->setData(0,kIdRole,QString::fromStdString(m_editedSketch));item->setData(0,Qt::UserRole,"sketch");m_index[m_editedSketch]=item;}
+        const auto label=tr("%1 (editing)").arg(m_editedName);
+        item->setText(0,label);item->setData(0,kNameRole,label);item->setData(0,Qt::UserRole+8,true);item->setData(0,Qt::UserRole+9,m_editedVisible);
+        item->setFlags(item->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled);
+      }
+      folder->setExpanded(!m_editedSketch.empty() || expanded.empty() || expanded.count("folder:sketches") > 0);
     }
     for (const auto& r : m_doc->scene.roots) build(r, root, expanded);
     QString category;

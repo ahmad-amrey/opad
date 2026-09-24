@@ -59,14 +59,12 @@ PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget
   m_construction=new QCheckBox(tr("Show construction planes"),body);m_construction->setObjectName("constructionPlanes");layout->addWidget(m_construction);
   connect(m_construction,&QCheckBox::toggled,this,[this]{constructionPlanes();});
   m_originControls=new QWidget(body);auto* form=new QFormLayout(m_originControls);form->setContentsMargins(0,0,0,0);
-  m_snap=new QComboBox(body);m_snap->setObjectName("originPicking");m_snap->addItems({tr("Point on plane"),tr("Vertex"),tr("Circle or arc center")});m_snap->setCurrentIndex(1);form->addRow(tr("Origin picking"),m_snap);
   m_u=new QLineEdit(body);m_v=new QLineEdit(body);form->addRow(tr("Plane X (mm)"),m_u);form->addRow(tr("Plane Y (mm)"),m_v);
   auto* explanation=new QLabel(tr("Coordinates use the selected plane's original axes and origin. Off-plane references are projected onto it."),body);explanation->setWordWrap(true);form->addRow(explanation);
   auto* reset=new QPushButton(tr("Reset origin"),body);form->addRow(reset);layout->addWidget(m_originControls);
   connect(reset,&QPushButton::clicked,this,[this]{++m_serial;if(m_job)m_job->cancel();m_job=nullptr;m_origin={{"world",{0,0,0}}};m_frame=m_supportFrame;double u,v;m_supportFrame.to_local({0,0,0},u,v);m_frame.origin=m_supportFrame.to_world(u,v);refresh();});
   auto numeric=[this]{if(m_refreshing)return;try{std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});ParamTable params(defs);setOrigin(params.length(m_u->text().toStdString()),params.length(m_v->text().toStdString()));}catch(const std::exception& e){m_status->setText(QString::fromUtf8(e.what()));m_apply->setEnabled(false);}};
   connect(m_u,&QLineEdit::editingFinished,this,numeric);connect(m_v,&QLineEdit::editingFinished,this,numeric);
-  connect(m_snap,&QComboBox::currentIndexChanged,this,[this]{if(m_originStage)m_view->setSelectionFilter(m_snap->currentIndex()==2?Viewport::SelFilter::Edge:Viewport::SelFilter::Vertex);});
   m_status=new QLabel(body);m_status->setWordWrap(true);layout->addWidget(m_status);layout->addStretch();auto* footer=new QHBoxLayout;layout->addLayout(footer);
   m_back=new QPushButton(tr("Back"),body);m_apply=new QPushButton(tr("Apply"),body);auto* cancelButton=new QPushButton(tr("Cancel"),body);footer->addWidget(m_back);footer->addWidget(m_apply);footer->addWidget(cancelButton);
   connect(m_back,&QPushButton::clicked,this,&PlanePicker::back);connect(m_apply,&QPushButton::clicked,this,&PlanePicker::apply);connect(cancelButton,&QPushButton::clicked,this,&PlanePicker::cancel);
@@ -78,16 +76,19 @@ PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget
 }
 
 void PlanePicker::start(bool positionOrigin,std::function<void(ToolPanel*)> open) {
+  const auto selected=m_view->selection();
   stop();m_cameraBefore=m_view->cameraJson();m_active=true;m_positionOrigin=positionOrigin;m_originStage=false;m_oldFilter=m_view->selectionFilter();m_tiles->selected=-1;m_status->clear();m_construction->setChecked(false);
   m_view->clearSelection();m_view->clearCandidates();m_view->setSelectionFilter(Viewport::SelFilter::Face);m_tiles->move(std::max(8,m_view->width()-450),42);m_tiles->show();refresh();open(m_panel);
-  if(m_view->twoDimensional()) {
+  if(selected.size()==1 && selected.front().kind==opad::Ref::Kind::Face) {
+    m_positionOrigin=false;choose({{"face",selected.front().to_json()}});
+  } else if(m_view->twoDimensional()) {
     const auto frame=m_view->cameraPlane();choose({{"frame",frame.to_json()}});
   }
 }
-void PlanePicker::stop() {
+void PlanePicker::stop(bool restoreCamera) {
   const bool wasActive=m_active;m_active=false;m_originStage=false;m_drag=false;m_mouseDown=false;++m_serial;++m_candidateSerial;
   if(m_job)m_job->cancel();m_job=nullptr;preview(nullptr);m_tiles->hide();m_panel->hide();
-  if(wasActive){m_view->setCameraJson(m_cameraBefore);m_view->clearCandidates();m_view->clearSelection();m_view->setSelectionFilter(m_oldFilter);}
+  if(wasActive){if(restoreCamera)m_view->setCameraJson(m_cameraBefore);m_view->clearCandidates();m_view->clearSelection();m_view->setSelectionFilter(m_oldFilter);}
 }
 void PlanePicker::cancel(){if(!m_active)return;stop();emit cancelled();}
 void PlanePicker::choose(const opad::json& support) {
@@ -96,9 +97,9 @@ void PlanePicker::choose(const opad::json& support) {
   m_status->setText(tr("Resolving sketch plane"));m_apply->setEnabled(false);
   m_job=m_jobs->async(tr("Resolving sketch plane"),[doc,scene,plane,frame](Progress p){if(p.cancelled())return;*frame=resolve_plane(*doc,*scene,*plane);if(plane->contains("face"))(*plane)["face"]=make_ref(*doc,*scene,opad::Ref::from_json(plane->at("face")));},[this,guard,serial,plane,frame](bool ok,const QString& error){
     if(!guard||!m_active||serial!=m_serial)return;m_job=nullptr;if(!ok){m_status->setText(error);return;}m_status->clear();m_support=*plane;m_supportFrame=*frame;m_frame=*frame;
-    if(!m_positionOrigin){const auto value=*plane;const auto f=*frame;stop();emit accepted(value,f);return;}
+    if(!m_positionOrigin){const auto value=*plane;const auto f=*frame;stop(false);emit accepted(value,f);return;}
     m_view->lookAt(*frame,true,false);m_originStage=true;m_origin={{"world",{0,0,0}}};double u,v;frame->to_local({0,0,0},u,v);m_frame.origin=frame->to_world(u,v);
-    ++m_candidateSerial;m_view->clearCandidates();m_tiles->hide();m_view->clearSelection();m_view->setSelectionFilter(m_snap->currentIndex()==2?Viewport::SelFilter::Edge:Viewport::SelFilter::Vertex);refresh();
+    ++m_candidateSerial;m_view->clearCandidates();m_tiles->hide();m_view->clearSelection();m_view->setSelectionFilter(Viewport::SelFilter::Vertex);refresh();
   });
 }
 void PlanePicker::selectionChanged() {
@@ -107,7 +108,7 @@ void PlanePicker::selectionChanged() {
 }
 void PlanePicker::back(){if(!m_active)return;++m_serial;if(m_job)m_job->cancel();m_job=nullptr;m_originStage=false;m_view->setCameraJson(m_cameraBefore);m_view->setSelectionFilter(Viewport::SelFilter::Face);preview(nullptr);m_tiles->show();constructionPlanes();refresh();}
 void PlanePicker::setOrigin(double u,double v){if(!m_originStage||!std::isfinite(u)||!std::isfinite(v))return;++m_serial;if(m_job)m_job->cancel();m_job=nullptr;m_origin={{"uv",{u,v}}};m_frame=m_supportFrame;m_frame.origin=m_supportFrame.to_world(u,v);m_status->clear();refresh();}
-void PlanePicker::apply(){if(!m_active||!m_originStage||m_job)return;const opad::json plane={{"support",m_support},{"origin",m_origin},{"frame",m_frame.to_json()}};const auto frame=m_frame;stop();emit accepted(plane,frame);}
+void PlanePicker::apply(){if(!m_active||!m_originStage||m_job)return;const opad::json plane={{"support",m_support},{"origin",m_origin},{"frame",m_frame.to_json()}};const auto frame=m_frame;stop(false);emit accepted(plane,frame);}
 void PlanePicker::refresh(){
   m_refreshing=true;
   QList<ToolStep> steps;steps.push_back({tr("Choose plane"),m_originStage?tr("Ready"):QString()});
@@ -141,17 +142,22 @@ bool PlanePicker::eventFilter(QObject* object,QEvent* event){
   if(!m_originStage)return false;
   if(event->type()==QEvent::MouseButtonPress){auto* e=static_cast<QMouseEvent*>(event);if(e->button()!=Qt::LeftButton||QRect(m_view->width()-205,0,205,185).contains(e->position().toPoint()))return false;
     m_mouseDown=true;setProperty("originHoverRef",QString());const auto marker=m_view->widgetPoint(m_frame.origin);m_drag=(marker-e->position().toPoint()).manhattanLength()<18;
-    opad::Ref ref;if(!m_drag&&m_snap->currentIndex()!=0&&m_view->referenceAt(e->position(),ref)){pickOrigin(ref);return true;}
-    double u,v;if(m_view->planePoint(e->position(),m_supportFrame,u,v)){setOrigin(u,v);m_drag=true;}return true;
+    placeOrigin(e->position());m_drag=true;return true;
   }
   if(event->type()==QEvent::MouseMove&&m_drag){auto* e=static_cast<QMouseEvent*>(event);
-    opad::Ref ref;
-    if(m_snap->currentIndex()!=0 && m_view->referenceAt(e->position(),ref)) {
-      const auto key=QString::fromStdString(ref.str());
-      if(property("originHoverRef").toString()!=key){setProperty("originHoverRef",key);pickOrigin(ref);}
-      return true;
-    }
-    setProperty("originHoverRef",QString());double u,v;if(m_view->planePoint(e->position(),m_supportFrame,u,v))setOrigin(u,v);return true;}
-  if(event->type()==QEvent::MouseButtonRelease&&m_mouseDown){auto* e=static_cast<QMouseEvent*>(event);if(e->button()==Qt::LeftButton){m_mouseDown=false;m_drag=false;opad::Ref ref;if(m_snap->currentIndex()!=0&&m_view->referenceAt(e->position(),ref))pickOrigin(ref);return true;}}
+    placeOrigin(e->position());return true;}
+  if(event->type()==QEvent::MouseButtonRelease&&m_mouseDown){auto* e=static_cast<QMouseEvent*>(event);if(e->button()==Qt::LeftButton){m_mouseDown=false;m_drag=false;placeOrigin(e->position());return true;}}
   return false;
+}
+void PlanePicker::placeOrigin(const QPointF& point) {
+  opad::Ref ref;
+  if(m_view->originReferenceAt(point,ref)) {
+    const auto key=QString::fromStdString(ref.str());
+    if(property("originHoverRef").toString()!=key){setProperty("originHoverRef",key);pickOrigin(ref);}
+    return;
+  }
+  setProperty("originHoverRef",QString());double u,v;
+  if(!m_view->planePoint(point,m_supportFrame,u,v))return;
+  if(m_view->gridSnap()){const double step=m_view->gridStep();u=std::round(u/step)*step;v=std::round(v/step)*step;}
+  setOrigin(u,v);
 }

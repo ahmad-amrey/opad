@@ -32,14 +32,15 @@ class PlanePicker : public QObject {
  protected:
   bool eventFilter(QObject*,QEvent*) override;
  private:
-  void stop();
+  void stop(bool restoreCamera = true);
+  void placeOrigin(const QPointF& point);
   void refresh();
   void constructionPlanes();
   void preview(const opad::Frame* frame);
   void pickOrigin(const opad::Ref&);
   AppDocument* m_doc;Viewport* m_view;JobRunner* m_jobs;
   ToolPanel* m_panel;PlaneTiles* m_tiles;ToolStepsPanel* m_steps;
-  QWidget* m_originControls;QLineEdit *m_u,*m_v;QComboBox* m_snap;QCheckBox* m_construction;QLabel* m_status;
+  QWidget* m_originControls;QLineEdit *m_u,*m_v;QCheckBox* m_construction;QLabel* m_status;
   QPushButton *m_apply,*m_back;
   bool m_active=false,m_positionOrigin=false,m_originStage=false,m_drag=false,m_mouseDown=false,m_refreshing=false;
   int m_serial=0,m_candidateSerial=0;

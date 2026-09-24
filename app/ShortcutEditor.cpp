@@ -2,6 +2,7 @@
 #include <QDialogButtonBox>
 #include <QHeaderView>
 #include <QKeySequenceEdit>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
@@ -17,7 +18,7 @@ Scope scope(const QString& id) {
   if(id.startsWith("sketch."))return SketchOnly;
   if(id.startsWith("select.") || id.startsWith("annotate.") ||
       (id.startsWith("inspect.") && id!="inspect.clear") ||
-      id=="edit.selecttouched" || id=="view.alignPlane")return OutsideSketch;
+      id=="edit.selecttouched")return OutsideSketch;
   return Everywhere;
 }
 bool overlaps(const QString& a,const QString& b) {
@@ -60,6 +61,24 @@ void initialize(QAction* a,const QKeySequence& key,QSettings& settings) {
 }
 
 namespace {
+// Qt reports Shift+2 as Key_At on layouts such as US English. Preserve the
+// physical digit shortcut, including its Shift modifier, in both editor fields.
+class ShortcutCapture : public QKeySequenceEdit {
+ public:
+  using QKeySequenceEdit::QKeySequenceEdit;
+ protected:
+  void keyPressEvent(QKeyEvent* event) override {
+    if(event->modifiers().testFlag(Qt::ShiftModifier)) {
+      const QString symbols=")!@#$%^&*(";
+      const int digit=symbols.indexOf(QChar(event->key()));
+      if(digit>=0) {
+        QKeyEvent normalized(event->type(),Qt::Key_0+digit,event->modifiers(),event->nativeScanCode(),event->nativeVirtualKey(),event->nativeModifiers(),QString::number(digit),event->isAutoRepeat(),event->count());
+        QKeySequenceEdit::keyPressEvent(&normalized);emit keySequenceChanged(keySequence());return;
+      }
+    }
+    QKeySequenceEdit::keyPressEvent(event);
+  }
+};
 QStringList groups(const QString& id) {
   using T=ShortcutEditor;
   if(id.startsWith("view.")) {
@@ -101,7 +120,7 @@ ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions,QWidget* parent):Q
   m_search=new QLineEdit(this);m_search->setObjectName("shortcutSearch");m_search->setPlaceholderText(tr("Search commands, categories or shortcuts…"));m_search->setClearButtonEnabled(true);layout->addWidget(m_search);
   auto* lookupRow=new QHBoxLayout;
   lookupRow->addWidget(new QLabel(tr("Find shortcut:"),this));
-  m_lookup=new QKeySequenceEdit(this);m_lookup->setObjectName("shortcutLookup");m_lookup->setClearButtonEnabled(true);m_lookup->setLayoutDirection(Qt::LeftToRight);m_lookup->findChild<QLineEdit*>()->setPlaceholderText(tr("Press shortcut"));lookupRow->addWidget(m_lookup,1);
+  m_lookup=new ShortcutCapture(this);m_lookup->setObjectName("shortcutLookup");m_lookup->setClearButtonEnabled(true);m_lookup->setLayoutDirection(Qt::LeftToRight);m_lookup->findChild<QLineEdit*>()->setPlaceholderText(tr("Press shortcut"));lookupRow->addWidget(m_lookup,1);
   auto* clearSearch=new QPushButton(tr("Clear filters"),this);lookupRow->addWidget(clearSearch);layout->addLayout(lookupRow);
   auto* hint=new QLabel(tr("Type a command name or press a shortcut above to find its assignments. Select a command below to change it."),this);hint->setWordWrap(true);layout->addWidget(hint);
   m_tree=new QTreeWidget(this);m_tree->setObjectName("shortcutTree");m_tree->setColumnCount(3);m_tree->setHeaderLabels({tr("Command"),tr("Shortcut"),tr("Context")});
@@ -130,7 +149,7 @@ ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions,QWidget* parent):Q
   m_details=new QLabel(this);m_details->setWordWrap(true);layout->addWidget(m_details);
   auto* bindingRow=new QHBoxLayout;
   bindingRow->addWidget(new QLabel(tr("Assign shortcut:"),this));
-  m_binding=new QKeySequenceEdit(this);m_binding->setObjectName("shortcutBinding");m_binding->setClearButtonEnabled(true);m_binding->setLayoutDirection(Qt::LeftToRight);m_binding->findChild<QLineEdit*>()->setPlaceholderText(tr("Press shortcut"));bindingRow->addWidget(m_binding,1);
+  m_binding=new ShortcutCapture(this);m_binding->setObjectName("shortcutBinding");m_binding->setClearButtonEnabled(true);m_binding->setLayoutDirection(Qt::LeftToRight);m_binding->findChild<QLineEdit*>()->setPlaceholderText(tr("Press shortcut"));bindingRow->addWidget(m_binding,1);
   auto* change=new QPushButton(tr("Assign"),this);change->setObjectName("shortcutAssign");bindingRow->addWidget(change);
   auto* reset=new QPushButton(tr("Restore default"),this);reset->setObjectName("shortcutReset");bindingRow->addWidget(reset);layout->addLayout(bindingRow);
   auto* footer=new QDialogButtonBox(QDialogButtonBox::Apply|QDialogButtonBox::Cancel,this);layout->addWidget(footer);

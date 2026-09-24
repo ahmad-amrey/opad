@@ -343,7 +343,7 @@ void MainWindow::buildActions() {
   addAction("view.fitall", tr("Fit all"), "fit", QKeySequence("Shift+F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitAll(); });
   addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(); });
   addAction("view.alignPlane",tr("Align view to plane"),"plane",QKeySequence("Shift+A"),[this] {
-    if(m_design->sketchActive()) return;
+    if(m_design->sketchActive()) {m_viewport->lookAt(m_design->sketch()->frame(),false,false);return;}
     cancelTool();
     m_design->pickSketchPlane([this](opad::json,opad::Frame frame) { m_viewport->lookAt(frame,true,false); });
   });
@@ -594,7 +594,7 @@ void MainWindow::buildRibbon() {
   m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"}), acts({"inspect.section", "inspect.flip"})});
   m_ribbon->addTab(review, tr("Annotate"), {acts({"panel.annotations", "annotate.add", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
   m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
-  m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.convertDrawing", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
+  m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
                                          acts({"design.box", "design.cylinder", "design.sphere", "design.cone", "design.torus"}), acts({"design.parameters"})});
   m_ribbon->addTab(design, tr("Modify"), {acts({"design.offset_face", "design.thicken", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.scale"}),
                                           acts({"design.combine", "design.split", "design.move", "design.remove"}),
@@ -604,7 +604,7 @@ void MainWindow::buildRibbon() {
                                             acts({"design.colour", "design.opacity", "design.lock", "edit.hide", "view.isolate"})});
   m_ribbon->addTab(design,tr("View"),{acts({"view.fit","view.home","view.2d","view.ortho"}),acts({"view.shaded","view.edges","view.wire","view.grid","view.gridSettings","select.through"})});
   m_ribbon->addTab(design, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
-  m_ribbon->addTab(m_sketchWorkspace, tr("Create"), {acts({"sketch.finish", "sketch.cancel", "sketch.panel"}),
+  m_ribbon->addTab(m_sketchWorkspace, tr("Create"), {acts({"sketch.finish", "sketch.cancel", "view.2d", "view.alignPlane"}),
       acts({"sketch.line", "sketch.rect", "sketch.circle", "sketch.arc3", "sketch.spline", "sketch.ellipse", "sketch.slot", "sketch.polygon", "sketch.point"})});
   m_ribbon->addTab(m_sketchWorkspace, tr("Modify"), {acts({"sketch.finish", "sketch.panel"}),
       acts({"sketch.select", "sketch.trim", "sketch.fillet", "sketch.offset", "sketch.mirror", "sketch.construction", "sketch.node", "sketch.openEnds"})});
@@ -1045,6 +1045,7 @@ void MainWindow::buildDesign() {
   connect(m_design, &DesignController::stateChanged, this, &MainWindow::updateDesignState);
   connect(m_timeline, &TimelineWidget::opActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });
   connect(m_browser, &BrowserPanel::sketchActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });
+  connect(m_browser,&BrowserPanel::editedSketchVisibilityRequested,this,[this]{auto* sketch=m_design->sketch();sketch->setVisible(!sketch->visible());});
   updateDesignState();
 }
 
@@ -1070,14 +1071,15 @@ void MainWindow::updateDesignState() {
       if (m_doc->hasDocument) a->setEnabled(!sketching || id == "inspect.clear");  // the left button draws while sketching
     }
   }
-  action("view.alignPlane")->setEnabled(m_doc->hasDocument && !sketching && !m_doc->loading);
+  action("view.alignPlane")->setEnabled(m_doc->hasDocument && !m_doc->loading);
   if(m_design->pickingPlane()) {
     m_prompt->hide(); // The side panel guides this flow; leave the corner selector unobstructed.
   } else if(sketching) {
     m_prompt->set("sketch",tr("Sketch"),m_design->sketch()->toolSteps(),tr("Esc steps back"));
     m_prompt->show();positionOverlays();
   } else if(m_tool.id.isEmpty()) m_prompt->hide();
-  m_browser->setEnabled(!sketching);
+  m_browser->setEnabled(true);
+  m_browser->setEditedSketch(sketching?(m_design->sketch()->sketchId().empty()?"active-sketch":m_design->sketch()->sketchId()):"",sketching?m_design->sketch()->name():QString(),!sketching || m_design->sketch()->visible());
   updateUndoActions();
   if (sketching) {
     const int dof = m_design->sketch()->dof();
@@ -1384,6 +1386,11 @@ void MainWindow::writeSelectionFile() {
 void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids) {
   if(m_design->sketchActive()) {
     QMenu menu(this);
+    if(!ids.empty()) {
+      auto* sketch=m_design->sketch();
+      menu.addAction(sketch->visible()?tr("Hide sketch"):tr("Show sketch"),this,[sketch]{sketch->setVisible(!sketch->visible());});
+      menu.addAction(action("sketch.replane"));menu.addAction(action("view.alignPlane"));menu.exec(globalPos);return;
+    }
     for(const char* id:{"sketch.construction","sketch.dimension","sketch.c.horizontal","sketch.c.vertical","sketch.c.coincident","sketch.c.tangent","sketch.c.fix","sketch.node","sketch.openEnds"})menu.addAction(action(id));
     menu.addSeparator();menu.addAction(tr("Driving / reference"),m_design->sketch(),&SketchEditor::toggleReference);
     menu.addAction(tr("Delete"),m_design->sketch(),&SketchEditor::deleteSelection);
@@ -1395,7 +1402,10 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     menu.addSection(ids.size() == 1 ? m_doc->nodeName(ids.front()) : tr("%1 objects").arg(ids.size()));
     QAction* fit = menu.addAction(icons::themed("fit", 16), tr("Fit to"));
     connect(fit, &QAction::triggered, this, [this, ids] { m_viewport->fitNodes(ids); });
-    add("design.convertDrawing");
+    if(std::any_of(ids.begin(),ids.end(),[this](const auto& id){const auto* n=m_doc->node(id);return n && n->representation=="drawing2d";}))add("design.convertDrawing");
+    if(ids.size()==1 && m_doc->scene.sketch(ids.front())) {
+      menu.addAction(tr("Redefine sketch plane"),this,[this,id=ids.front()]{m_design->editOp(id);m_design->redefineSketchPlane();});
+    }
     auto* exportObject=menu.addAction(icons::themed("export",16),tr("Export selected objects"));
     connect(exportObject,&QAction::triggered,this,[this,ids] { guarded([&] { exportDialog(ids); }); });
     add("edit.selectparent");
@@ -1532,6 +1542,11 @@ void MainWindow::updateUndoActions() {
   QAction* u = action("edit.undo");
   QAction* r = action("edit.redo");
   if (!u || !r) return;
+  if(m_design && m_design->sketchActive()) {
+    const auto* sketch=m_design->sketch();
+    u->setEnabled(!sketch->busy() && sketch->canUndo());r->setEnabled(!sketch->busy() && sketch->canRedo());
+    u->setText(tr("&Undo"));r->setText(tr("&Redo"));return;
+  }
   u->setEnabled(m_doc->hasDocument && m_doc->canUndo());
   r->setEnabled(m_doc->hasDocument && m_doc->canRedo());
   u->setText(m_doc->canUndo() ? tr("&Undo %1").arg(m_doc->undoLabel()) : tr("&Undo"));

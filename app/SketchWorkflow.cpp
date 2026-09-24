@@ -254,13 +254,13 @@ void SketchEditor::benchWorkflow() {
     setTool("dimension");m_options["dimensionType"]="arc_length";m_options["reference"]="1";
     const int arc=m_sk.entities.back().id;dimensionClick({Hit::Entity,arc},107,7);placeDimension(116,16);
     require(m_sk.constraints.back().type==SkConstraint::Type::ArcLength && m_sk.constraints.back().reference,"arc length reference from side panel");
-    const auto camera=m_cameraBefore;
+    const auto camera=m_viewport->cameraJson();
     QCoreApplication::processEvents();
     m_viewport->grabImage().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_WORKFLOW")+".viewport.png");
     m_viewport->window()->grab().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_WORKFLOW")+".window.png");
     for(auto* panel:m_viewport->window()->findChildren<SketchPanel*>())panel->grab().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_WORKFLOW")+".panel.png");
     end();const auto restored=m_viewport->cameraJson();
-    require(restored.at("eye")==camera.at("eye") && restored.at("target")==camera.at("target"),"camera restoration");
+    require(restored.at("eye")==camera.at("eye") && restored.at("target")==camera.at("target"),"camera preserved on sketch exit");
     trace::log("bench: sketch guided workflow PASS");QCoreApplication::exit(0);
   }catch(const std::exception& e){trace::log(QString("bench: sketch guided workflow FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}
 }

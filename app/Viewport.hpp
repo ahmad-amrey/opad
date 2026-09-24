@@ -184,6 +184,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool hoveredEdge(TopoDS_Shape& edge) const;
   bool hoveredReference(opad::Ref& ref) const;
   bool referenceAt(const QPointF& point,opad::Ref& ref);
+  bool originReferenceAt(const QPointF& point,opad::Ref& ref);
+  void setPreviewCurves(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden);
   void showBackdrop(const Handle(AIS_InteractiveObject)& obj);
   opad::json sectionState() const;
   void restoreSection(const opad::json& state);

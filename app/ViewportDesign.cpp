@@ -296,6 +296,23 @@ bool Viewport::referenceAt(const QPointF& point,opad::Ref& ref) {
   const auto pos=devicePos(point);m_ctx->MoveTo(pos.x(),pos.y(),m_view,false);
   return hoveredReference(ref);
 }
+bool Viewport::originReferenceAt(const QPointF& point,opad::Ref& ref) {
+  if(!m_initialised)return false;
+  // Center candidates already share the vertex selector; enable their cheap
+  // sensitive objects while placing an origin, without a separate picking mode.
+  setCenterPicking(true,point);
+  return referenceAt(point,ref);
+}
+void Viewport::setPreviewCurves(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden) {
+  if(!m_initialised)return;
+  clearPreviewBodies();
+  for(const auto& id:hidden)if(auto it=m_items.find(id);it!=m_items.end()) {
+    m_ctx->Erase(it->second.ais,false);m_previewHidden.insert(id);
+  }
+  Handle(AIS_Shape) ais=new BodyShape(shape,std::move(prs));
+  ais->SetColor(occ(m_tokens.sel));ais->SetWidth(2);
+  m_ctx->Display(ais,AIS_WireFrame,-1,false);m_previewBodies.push_back(ais);redrawScene();
+}
 
 // ---------------------------------------------------------------- overlays
 void Viewport::showOverlay(const Handle(AIS_InteractiveObject)& obj) {
@@ -321,6 +338,9 @@ void Viewport::removeOverlay(const Handle(AIS_InteractiveObject)& obj) {
 void Viewport::beginSketchInput(SketchInput* input, const opad::Frame& frame, const std::string& hiddenSketch) {
   m_sketchInput = input;
   m_sketchFrame = frame;
+  const auto normal=frame.normal();
+  m_viewer->SetPrivilegedPlane(gp_Ax3(gp_Pnt(frame.origin[0],frame.origin[1],frame.origin[2]),gp_Dir(normal[0],normal[1],normal[2]),gp_Dir(frame.x[0],frame.x[1],frame.x[2])));
+  updateGridExtent();
   m_sketchDrag = false;
   m_hiddenSketch = hiddenSketch;
   clearSelection();
@@ -332,6 +352,8 @@ void Viewport::beginSketchInput(SketchInput* input, const opad::Frame& frame, co
 
 void Viewport::endSketchInput() {
   m_sketchInput = nullptr;
+  m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(),gp::DZ(),gp::DX()));
+  updateGridExtent();
   m_hiddenSketch.clear();
   setBodiesPickable(true);
   syncSketches();

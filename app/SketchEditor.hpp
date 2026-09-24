@@ -31,6 +31,8 @@ class SketchEditor : public QObject, public SketchInput {
   void begin(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry);
   void end();
   bool active() const { return m_active; }
+  bool visible() const { return m_visible; }
+  void setVisible(bool visible);
   const std::string& sketchId() const { return m_id; }
   QString name() const { return m_name; }
   opad::json plane() const { return m_plane; }
@@ -156,7 +158,7 @@ class SketchEditor : public QObject, public SketchInput {
   AppDocument* m_doc;
   Viewport* m_viewport;
   JobRunner* m_jobs;
-  bool m_active = false, m_modified = false;
+  bool m_active = false, m_modified = false, m_visible = true;
   std::string m_id;
   QString m_name;
   opad::json m_plane;

@@ -155,6 +155,17 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
 }
 
 SketchEditor::~SketchEditor() = default;
+void SketchEditor::setVisible(bool visible) {
+  if(!m_active || m_visible==visible)return;
+  m_visible=visible;
+  for(const auto& prs:{m_prs,m_transientPrs}) {
+    if(visible)m_viewport->showOverlay(prs);else m_viewport->removeOverlay(prs);
+  }
+  for(const auto& prs:m_imagePrs) {
+    if(visible)m_viewport->showBackdrop(prs);else m_viewport->removeOverlay(prs);
+  }
+  emit changed();
+}
 
 void SketchEditor::begin(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry) {
   ++m_geometryRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
@@ -178,6 +189,7 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
   m_placingDim = false;
   m_modified = false;
   m_active = true;
+  m_visible = true;
   m_tool = "select";
   m_prs = new SketchPrs();m_prs->SetInfiniteState(true); // axes must not inflate camera fitting
   m_transientPrs=new SketchPrs();m_transientPrs->SetInfiniteState(true);
@@ -209,7 +221,6 @@ void SketchEditor::end() {
   m_viewport->removeOverlay(m_transientPrs);m_transientPrs.Nullify();
   m_prs.Nullify();
   m_viewport->endSketchInput();
-  m_viewport->setCameraJson(m_cameraBefore);
   emit changed();
 }
 
@@ -971,7 +982,7 @@ void SketchEditor::rebuild() {
     }
   }
   m_prs->SetToUpdate();
-  m_viewport->updateOverlay(m_prs);
+  if(m_visible)m_viewport->updateOverlay(m_prs);
   updateTransient();
 }
 
@@ -1051,5 +1062,5 @@ void SketchEditor::updateTransient() {
     if(same)continue;const auto edge=entity_edge(*m_toolPreview,e,opad::Frame{});if(edge.IsNull())continue;const auto pts=curveSamples(edge,px*.25);
     for(size_t i=1;i<pts.size();++i)d.dashed.push_back({W(pts[i-1].X(),pts[i-1].Y()),W(pts[i].X(),pts[i].Y()),t.amber});
   }
-  m_transientPrs->SetToUpdate();m_viewport->updateOverlay(m_transientPrs);
+  m_transientPrs->SetToUpdate();if(m_visible)m_viewport->updateOverlay(m_transientPrs);
 }

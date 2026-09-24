@@ -296,7 +296,7 @@ void Viewport::initViewer() {
   m_ctx->Activate(m_cube, 0);
 
   SetRotationMode(AIS_RotationMode_BndBoxActive);
-  SetLockOrbitZUp(Standard_True);
+  SetLockOrbitZUp(Standard_False);  // permit leaving a principal top/bottom view
   SetAllowRotation(Standard_True);
   SetAllowPanning(Standard_True);
   SetAllowZooming(Standard_True);
@@ -1030,6 +1030,8 @@ void Viewport::standardView(const QString& name) {
   if (m_twoDimensional && name.startsWith("iso")) return;
   if (!m_initialised) return;
   m_needFit = false;
+  myViewAnimation->Stop();
+  ResetViewInput();myUI.Reset();myGL.Reset();
   V3d_TypeOfOrientation o = V3d_XposYnegZpos;
   if (name == "top") o = V3d_Zpos;
   else if (name == "bottom") o = V3d_Zneg;

@@ -98,7 +98,7 @@ void SketchEditor::refreshImages() {
   auto images=std::make_shared<opad::json>(m_sk.images);auto made=std::make_shared<std::vector<Handle(AIS_InteractiveObject)>>();const auto frame=m_frame;QPointer<SketchEditor> guard(this);
   m_imageJob=m_jobs->async(tr("Preparing image backdrop"),[images,made,frame](Progress progress){
     *made=prepareSketchBackdrops(*images,frame,progress);
-  },[this,guard,made,revision](bool ok,const QString& error){if(!guard||!m_active||m_imageRevision!=revision)return;m_imageJob=nullptr;if(!ok){emit status(error);return;}m_imagePrs=*made;for(const auto& prs:m_imagePrs)m_viewport->showBackdrop(prs);});
+  },[this,guard,made,revision](bool ok,const QString& error){if(!guard||!m_active||m_imageRevision!=revision)return;m_imageJob=nullptr;if(!ok){emit status(error);return;}m_imagePrs=*made;if(m_visible)for(const auto& prs:m_imagePrs)m_viewport->showBackdrop(prs);});
 }
 
 std::vector<Handle(AIS_InteractiveObject)> prepareSketchBackdrops(const opad::json& images,const opad::Frame& frame,Progress progress) {

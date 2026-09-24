@@ -1,4 +1,9 @@
 {
+  "Remove source drawing after conversion": "إزالة الرسم المصدر بعد التحويل",
+  "Select all layers of a source drawing to remove it.": "حدد جميع طبقات الرسم المصدر لإزالته.",
+  "Hide sketch": "إخفاء المخطط",
+  "Show sketch": "إظهار المخطط",
+  "%1 (editing)": "%1 (قيد التحرير)",
  "Plane selected": "تم اختيار المستوى",
  "Choose layers and create sketch": "اختر الطبقات وأنشئ الرسم",
  "Reading Git history...": "جارٍ قراءة سجل Git...",

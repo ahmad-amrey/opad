@@ -136,6 +136,7 @@ class BrowserPanel : public QWidget {
   void collapseAll();  // everything but the document row
   void scrollToSelected();
   void setViewerMode(bool on);  // no rename, drag-to-reparent or colour edits
+  void setEditedSketch(const std::string& id,const QString& name,bool visible);
 
  signals:
   void selectionChanged(const std::vector<std::string>& ids);
@@ -143,6 +144,7 @@ class BrowserPanel : public QWidget {
   void fitRequested(const std::vector<std::string>& ids);
   void autoHideChanged(bool on);
   void sketchActivated(const std::string& sketchId);  // double-click on a sketch row: edit it
+  void editedSketchVisibilityRequested();
 
  public slots:
   void rebuild();
@@ -162,6 +164,9 @@ class BrowserPanel : public QWidget {
   std::unordered_map<std::string, QTreeWidgetItem*> m_index;  // node id -> item, rebuilt with the tree
   bool m_updating = false;
   bool m_viewer = false;
+  std::string m_editedSketch;
+  QString m_editedName;
+  bool m_editedVisible=true;
 };
 
 // ---------------------------------------------------------------- properties

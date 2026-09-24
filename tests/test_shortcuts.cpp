@@ -94,6 +94,18 @@ TEST(shift_digit_and_arrow_activation) {
   window.show();window.activateWindow();window.setFocus();QTest::qWait(50);
   QTest::keyClick(&window,Qt::Key_2,Qt::ShiftModifier);QTest::keyClick(&window,Qt::Key_3,Qt::ShiftModifier);QTest::keyClick(&window,Qt::Key_Up,Qt::ShiftModifier);CHECK_EQ(count,3);
 }
+TEST(shift_digit_capture_and_lookup) {
+  QSettings().clear();QAction flat,ortho;init(flat,"view.2d","Shift+2");init(ortho,"view.ortho","Shift+3");
+  ShortcutEditor dialog({&flat,&ortho});dialog.show();
+  auto* lookup=dialog.findChild<QKeySequenceEdit*>("shortcutLookup");
+  QKeyEvent press(QEvent::KeyPress,Qt::Key_At,Qt::ShiftModifier,"@");QApplication::sendEvent(lookup,&press);
+  CHECK(lookup->keySequence()==QKeySequence("Shift+2"));
+  CHECK(!item(dialog,"view.2d")->isHidden());CHECK(item(dialog,"view.ortho")->isHidden());
+  lookup->clear();choose(dialog,"view.ortho","");
+  auto* binding=dialog.findChild<QKeySequenceEdit*>("shortcutBinding");
+  QKeyEvent hash(QEvent::KeyPress,Qt::Key_NumberSign,Qt::ShiftModifier,"#");QApplication::sendEvent(binding,&hash);
+  CHECK(binding->keySequence()==QKeySequence("Shift+3"));
+}
 int main(int argc,char** argv) {
   QApplication app(argc,argv);QTemporaryDir settings;
   QCoreApplication::setOrganizationName("OPAD-tests");QCoreApplication::setApplicationName("shortcuts");

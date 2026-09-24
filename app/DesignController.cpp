@@ -212,7 +212,8 @@ void DesignController::editOp(const std::string& opId) {
   if (m_sketch->active() || m_featureOn) return emit status(tr("Finish what is open first."));
   if (const opad::SketchItem* s = m_doc->scene.sketch(opId)) {
     const opad::SketchItem sketch = *s;
-    m_doc->setRollback(opId);  // the model as it was when the sketch was made: what its plane refers to
+    // Keep current visibility and the edited sketch in the browser. The editor
+    // owns a geometry copy; only Finish commits its changes and regenerates dependants.
     return enterSketch(opId, QString::fromStdString(sketch.name), sketch.plane, sketch.frame, sketch.geometry);
   }
   const opad::Feature* f = m_doc->scene.feature(opId);

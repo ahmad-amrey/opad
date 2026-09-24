@@ -31,6 +31,13 @@ bool MainWindow::benchShortcuts() {
         m_design->sketch()->begin({},"Shortcut benchmark",{{"base","xy"}},{},opad::design::Sketch().to_json());break;
       }
       case 1: {
+        auto* sketch=m_design->sketch();
+        sketch->setTool("rect");sketch->placePrecise("0","0",0);sketch->placePrecise("20","10",0);
+        require(action("edit.undo")->isEnabled(),"sketch undo disabled with empty document history");
+        key(Qt::Key_Z,Qt::ControlModifier);require(sketch->empty(),"Ctrl+Z did not undo sketch geometry");
+        const auto redo=action("edit.redo")->shortcut()[0];key(redo.key(),redo.keyboardModifiers());require(!sketch->empty(),"Redo shortcut did not restore sketch geometry");
+        require(action("view.alignPlane")->isEnabled(),"align view disabled in sketch");
+        sketch->setVisible(false);require(!sketch->visible(),"active sketch cannot be hidden");sketch->setVisible(true);
         require(!action("inspect.distance")->isEnabled(),"measurement binding still active in sketch");
         key(Qt::Key_D);require(m_design->sketch()->tool()=="dimension","sketch D shortcut");
         key(Qt::Key_T);require(m_design->sketch()->tool()=="trim","sketch T shortcut");
@@ -46,6 +53,9 @@ bool MainWindow::benchShortcuts() {
       }
       default: {
         timer->stop();ShortcutEditor dialog(m_actions,this);dialog.show();dialog.grab().save(prefix+".png");
+        auto* capture=dialog.findChild<QKeySequenceEdit*>("shortcutLookup");
+        QKeyEvent shifted(QEvent::KeyPress,Qt::Key_At,Qt::ShiftModifier,"@");QApplication::sendEvent(capture,&shifted);
+        require(capture->keySequence()==QKeySequence("Shift+2"),"shifted digit captured as punctuation");capture->clear();
         dialog.findChild<QLineEdit*>("shortcutSearch")->setText("view");dialog.grab().save(prefix+".view.png");
         dialog.findChild<QLineEdit*>("shortcutSearch")->clear();dialog.findChild<QKeySequenceEdit*>("shortcutLookup")->setKeySequence(QKeySequence("D"));dialog.grab().save(prefix+".lookup.png");
         trace::log("bench: view shortcuts, mode toggles, sketch bindings and shortcut editor PASS");QCoreApplication::exit(0);break;

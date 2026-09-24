@@ -480,6 +480,11 @@ bool Viewport::benchPicking() {
     cubeMouse(QEvent::MouseButtonRelease, cubePoint + QPoint(40,20), Qt::LeftButton, Qt::NoButton);
     paintEvent(nullptr);
     require(!before2d->Direction().IsEqual(m_view->Camera()->Direction(),1e-6), "3D orbit not restored");
+    standardView("top");
+    const auto topDirection=m_view->Camera()->Direction();
+    trackpadScroll(QPointF(width()/2,height()/2),QPointF(30,40),true);
+    FlushViewEvents(m_ctx,m_view,true);finishTrackpadScroll();
+    require(!topDirection.IsEqual(m_view->Camera()->Direction(),1e-6),"top view locks 3D orbit");
     // Cursor arithmetic is tested without moving the user's OS pointer.
     const QRect screen(-1920,0,1920,1080);
     const QPoint edge(-1,400), wrapped=wrappedCursor(edge,screen);

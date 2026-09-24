@@ -80,13 +80,13 @@ bool MainWindow::benchTodo5() {
         m_viewport->findChild<QWidget*>("planeTiles")->grab().save(prefix+".edge-on-tiles.png");picker->choose({{"base","xy"}});break;
       case 23:
         if(!picker->positioning()){--state->phase;break;}
-        m_design->planePanel()->findChild<QComboBox*>("originPicking")->setCurrentIndex(2);break;
+        require(!m_design->planePanel()->findChild<QComboBox*>("originPicking"),"origin snapping needs no mode selector");break;
       case 24:{
         bool found=false;
         for(int i=0;i<24&&!found;++i) {
           const double angle=i*2*3.141592653589793/24;
           const auto point=m_viewport->widgetPoint({25+8*std::cos(angle),15+8*std::sin(angle),10});opad::Ref ref;
-          if(!m_viewport->referenceAt(point,ref)||ref.kind!=opad::Ref::Kind::Edge)continue;
+          if(!m_viewport->originReferenceAt(point,ref))continue;
           QMouseEvent press(QEvent::MouseButtonPress,point,m_viewport->mapToGlobal(point),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
           QMouseEvent release(QEvent::MouseButtonRelease,point,m_viewport->mapToGlobal(point),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
           QApplication::sendEvent(m_viewport,&press);QApplication::sendEvent(m_viewport,&release);found=true;
@@ -100,15 +100,18 @@ bool MainWindow::benchTodo5() {
         m_design->redefineSketchPlane();picker->choose({{"base","xy"}});break;
       case 26:{
         if(!picker->positioning()){--state->phase;break;}
-        m_design->planePanel()->findChild<QComboBox*>("originPicking")->setCurrentIndex(0);
-        const auto start=m_viewport->widgetPoint({0,0,0}),end=m_viewport->widgetPoint({30,20,0});
+        m_viewport->configureGrid(10,100);m_viewport->setGridSnap(true);
+        const auto start=m_viewport->widgetPoint({0,0,0}),end=m_viewport->widgetPoint({42,32,0});
         QMouseEvent press(QEvent::MouseButtonPress,start,m_viewport->mapToGlobal(start),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
         QMouseEvent move(QEvent::MouseMove,end,m_viewport->mapToGlobal(end),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
         QMouseEvent release(QEvent::MouseButtonRelease,end,m_viewport->mapToGlobal(end),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
         QApplication::sendEvent(m_viewport,&press);QApplication::sendEvent(m_viewport,&move);QApplication::sendEvent(m_viewport,&release);picker->apply();break;
       }
       case 27:
-        require(sketch->active()&&std::abs(sketch->frame().origin[0]-30)<m_viewport->pixelSize()*2&&std::abs(sketch->frame().origin[1]-20)<m_viewport->pixelSize()*2,"free-point origin dragging");m_design->finishSketch();break;
+        require(sketch->active()&&std::abs(sketch->frame().origin[0]-40)<1e-7&&std::abs(sketch->frame().origin[1]-30)<1e-7,"origin dragging snaps to grid");state->before=m_viewport->cameraJson();m_design->finishSketch();break;
+      case 28:
+        if(sketch->active()||m_doc->designBusy){--state->phase;break;}
+        require(state->before==m_viewport->cameraJson(),"finishing sketch preserves camera");break;
       default:timer->stop();trace::log("bench: TODO 5 annotations, Home, face/construction planes, vertex/circle origins, dragging, undo/redo and 2D workflow PASS");QCoreApplication::exit(0);break;
     }
   }catch(const std::exception& e){timer->stop();trace::log(QString("bench: TODO 5 FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();return true;
