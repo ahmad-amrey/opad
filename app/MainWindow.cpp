@@ -605,12 +605,12 @@ void MainWindow::buildRibbon() {
   m_ribbon->addTab(design,tr("View"),{acts({"view.fit","view.home","view.2d","view.ortho"}),acts({"view.shaded","view.edges","view.wire","view.grid","view.gridSettings","select.through"})});
   m_ribbon->addTab(design, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
   m_ribbon->addTab(m_sketchWorkspace, tr("Create"), {acts({"sketch.finish", "sketch.cancel", "view.2d", "view.alignPlane"}),
-      acts({"sketch.line", "sketch.rect", "sketch.circle", "sketch.arc3", "sketch.spline", "sketch.ellipse", "sketch.slot", "sketch.polygon", "sketch.point"})});
-  m_ribbon->addTab(m_sketchWorkspace, tr("Modify"), {acts({"sketch.finish", "sketch.panel"}),
-      acts({"sketch.select", "sketch.trim", "sketch.fillet", "sketch.offset", "sketch.mirror", "sketch.construction", "sketch.node", "sketch.openEnds"})});
-  m_ribbon->addTab(m_sketchWorkspace, tr("Constrain"), {acts({"sketch.finish", "sketch.panel", "sketch.dimension"}),
-      acts({"sketch.c.horizontal", "sketch.c.vertical", "sketch.c.coincident", "sketch.c.parallel", "sketch.c.perpendicular", "sketch.c.tangent", "sketch.c.fix"})});
-  m_ribbon->addTab(m_sketchWorkspace, tr("Reference"), {acts({"sketch.finish", "sketch.panel"}),
+      acts({"sketch.line", "sketch.rect", "sketch.circle", "sketch.arc3", "sketch.spline", "sketch.ellipse", "sketch.slot", "sketch.polygon", "sketch.point", "sketch.moreCreate"})});
+  m_ribbon->addTab(m_sketchWorkspace, tr("Modify"), {acts({"sketch.finish", "view.2d"}),
+      acts({"sketch.select", "sketch.trim", "sketch.fillet", "sketch.offset", "sketch.mirror", "sketch.construction", "sketch.node", "sketch.openEnds", "sketch.moreModify"})});
+  m_ribbon->addTab(m_sketchWorkspace, tr("Constrain"), {acts({"sketch.finish", "sketch.constraints", "sketch.dimension"}),
+      acts({"sketch.c.horizontal", "sketch.c.vertical", "sketch.c.coincident", "sketch.c.parallel", "sketch.c.perpendicular", "sketch.c.tangent", "sketch.c.fix", "sketch.moreConstrain"})});
+  m_ribbon->addTab(m_sketchWorkspace, tr("Reference"), {acts({"sketch.finish", "sketch.moreReference", "sketch.moreFiles", "sketch.snaps", "sketch.selectionOptions"}),
       acts({"sketch.project", "sketch.replane", "design.parameters", "view.grid", "view.gridSettings"})});
   m_ribbon->setWorkspace(m_settings.value("ui/workspace", 0).toInt() == 1 ? design : review);
   action(m_ribbon->workspace() == design ? "workspace.design" : "workspace.review")->setChecked(true);
@@ -1021,6 +1021,22 @@ void MainWindow::buildDesignActions() {
     tools->addAction(a);
   }
   addAction("sketch.construction", tr("Construction"), "construction", QKeySequence("X"), [this] { m_design->sketch()->toggleConstruction(); });
+  const auto registry=SketchPanel::tools();
+  for(const auto& tool:registry) {
+    const auto id="sketch."+QString(tool.id).replace(':','.');
+    if(action(id))continue;
+    auto* a=addAction(id,tool.label,"sketch",{},[this,id=tool.id]{m_design->sketch()->setTool(id);},true);
+    a->setProperty("sketchTool",tool.id);tools->addAction(a);
+  }
+  for(const auto& group:QList<QPair<QString,QString>>{{"Create",tr("Create")},{"Modify",tr("Modify")},{"Constrain",tr("Constrain")},{"Reference",tr("Reference")},{"Files",tr("Images and files")}}) {
+    auto* a=addAction("sketch.more"+group.first,group.first=="Files"?group.second:tr("More tools"),"sketch",{},[]{});
+    auto* menu=new QMenu(this);for(const auto& tool:registry)if(tool.group==group.second)menu->addAction(action("sketch."+QString(tool.id).replace(':','.')));
+    a->setMenu(menu);
+  }
+  int page=1;
+  for(const auto& pair:QList<QPair<QString,QString>>{{"selectionOptions",tr("Selection")},{"constraints",tr("Constraints")},{"snaps",tr("Snaps")}}) {
+    addAction("sketch."+pair.first,pair.second,"sketch",{},[this,page]{m_design->showSketchPanel();findChild<SketchPanel*>()->showPage(page);});++page;
+  }
 }
 
 void MainWindow::buildDesign() {
@@ -1035,6 +1051,9 @@ void MainWindow::buildDesign() {
   auto* sketchContent=new SketchPanel(m_design->sketch(),this);
   auto* sketchPanel=new ToolPanel("sketch","sketch",&Tokens::sel,tr("Sketch tools"),sketchContent,620,this);
   m_panels<<sketchPanel;
+  sketchPanel->setContentSizeHint([sketchContent](int width){return sketchContent->toolSizeHint(width);});
+  connect(m_design->sketch(),&SketchEditor::toolChanged,sketchPanel,&ToolPanel::requestContentFit);
+  connect(m_design->sketch(),&SketchEditor::workflowChanged,sketchPanel,&ToolPanel::requestContentFit);
   m_design->setSketchPanel(sketchPanel);
   sketchPanel->setEscapeHandler([this]{m_design->sketch()->stepBack();});
   connect(sketchContent,&SketchPanel::finishRequested,this,[this]{m_design->finishSketch();});

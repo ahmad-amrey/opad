@@ -2,6 +2,7 @@
 #include "opad/design/sketch_edit.hpp"
 #include "SketchEditor.hpp"
 #include "SketchGeometryCache.hpp"
+#include "DimensionHandle.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
@@ -113,6 +114,10 @@ class SketchPrs : public AIS_InteractiveObject {
 
 // ---------------------------------------------------------------- life cycle
 SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs, QObject* parent) : QObject(parent), m_doc(doc), m_viewport(viewport), m_jobs(jobs) {
+  m_dimensionHandle=new DimensionHandle(viewport);
+  m_toolPreviewTimer.setSingleShot(true);m_toolPreviewTimer.setInterval(120);
+  connect(&m_toolPreviewTimer,&QTimer::timeout,this,[this]{if(!m_active)return;if(m_editJob){m_toolPreviewTimer.start();return;}previewTool();});
+  connect(m_dimensionHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){m_options["distance"]=text;scheduleToolPreview();emit workflowChanged();});
   connect(m_viewport,&Viewport::notesMoved,this,[this] {
     if(!m_active) return;
     const double pixels=m_viewport->pixelSize();
@@ -154,11 +159,12 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   });
 }
 
-SketchEditor::~SketchEditor() = default;
+SketchEditor::~SketchEditor() {delete m_dimensionHandle;}
 void SketchEditor::setVisible(bool visible) {
   if(!m_active || m_visible==visible)return;
   m_visible=visible;
-  for(const auto& prs:{m_prs,m_transientPrs}) {
+  updateDimensionHandle();
+  for(const auto& prs:{m_prs,m_transientPrs,m_toolPreviewOverlay}) {
     if(visible)m_viewport->showOverlay(prs);else m_viewport->removeOverlay(prs);
   }
   for(const auto& prs:m_imagePrs) {
@@ -207,6 +213,8 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
 
 void SketchEditor::end() {
   if (!m_active) return;
+  m_toolPreviewTimer.stop();m_dimensionHandle->hide();
+  m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
   ++m_geometryRevision;++m_fillRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   m_viewport->setEdgeHover(false);
   ++m_imageRevision;if(m_imageJob)m_imageJob->cancel();m_imageJob=nullptr;
@@ -237,6 +245,7 @@ void SketchEditor::scheduleFill() { ++m_fillRevision;if(m_fillJob)m_fillJob->can
 
 // ---------------------------------------------------------------- undo
 void SketchEditor::begin_change() {
+  ++m_modelRevision;
   invalidatePreview();
   m_dangling.clear();
   m_sk.id_watermark=m_sk.next_id()-1;
@@ -299,6 +308,7 @@ bool SketchEditor::end_change(const QString& what) {
 
 void SketchEditor::undo() {
   if (m_editJob || m_undo.empty()) return;
+  ++m_modelRevision;
   invalidatePreview();
   m_redo.push_back({m_sk,m_plane,m_frame});
   const bool planeChanged=m_plane!=m_undo.back().plane;
@@ -319,6 +329,7 @@ void SketchEditor::undo() {
 
 void SketchEditor::redo() {
   if (m_editJob || m_redo.empty()) return;
+  ++m_modelRevision;
   invalidatePreview();
   m_undo.push_back({m_sk,m_plane,m_frame});
   const bool planeChanged=m_plane!=m_redo.back().plane;
@@ -1053,14 +1064,6 @@ void SketchEditor::updateTransient() {
     }
     if (m_cursor.horizontal) d.texts.push_back({W(cu + 14 * px, cv + 12 * px), "H", t.green});
     if (m_cursor.vertical) d.texts.push_back({W(cu + 14 * px, cv + 12 * px), "V", t.green});
-  }
-  if(m_toolPreview)for(const auto& e:m_toolPreview->entities) {
-    bool same=false;
-    if(const auto* old=m_sk.entity(e.id);old && old->type==e.type && old->p==e.p && old->r==e.r && old->weights==e.weights) {
-      same=true;for(int id:e.p){const auto* p=m_geometry->point(m_sk,id);const auto* q=m_toolPreview->point(id);if(!p||p->x!=q->x||p->y!=q->y){same=false;break;}}
-    }
-    if(same)continue;const auto edge=entity_edge(*m_toolPreview,e,opad::Frame{});if(edge.IsNull())continue;const auto pts=curveSamples(edge,px*.25);
-    for(size_t i=1;i<pts.size();++i)d.dashed.push_back({W(pts[i-1].X(),pts[i-1].Y()),W(pts[i].X(),pts[i].Y()),t.amber});
   }
   m_transientPrs->SetToUpdate();if(m_visible)m_viewport->updateOverlay(m_transientPrs);
 }

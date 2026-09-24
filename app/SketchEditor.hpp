@@ -20,6 +20,7 @@
 class JobRunner;
 class Job;
 class SketchGeometryCache;
+class DimensionHandle;
 
 class SketchEditor : public QObject, public SketchInput {
   Q_OBJECT
@@ -51,6 +52,7 @@ class SketchEditor : public QObject, public SketchInput {
   void applyTool();
   void previewTool();
   void invalidatePreview();
+  void scheduleToolPreview();
   void placePrecise(const QString& u, const QString& v, int mode);
   void stepBack();
   void toggleReference();
@@ -76,6 +78,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchWorkflow();
   void benchPrimitives();
   void benchModify();
+  void benchHandles();
   void benchDrag();
   void benchLarge(const QString& output, opad::json metrics);
 
@@ -141,6 +144,7 @@ class SketchEditor : public QObject, public SketchInput {
   void trimAt(const Hit& h, double u, double v);
   void mirrorSelection(int axisLine);
   void offsetSelection();
+  void updateDimensionHandle();
   void projectHovered();
   void referenceHover();
   void pickReference();
@@ -168,11 +172,14 @@ class SketchEditor : public QObject, public SketchInput {
   std::vector<Handle(AIS_InteractiveObject)> m_imagePrs;
   QMap<QString,QString> m_options;
   bool m_panelFieldsDirty = false;
-  int m_session=0;
+  int m_session=0,m_modelRevision=0;
   Job* m_editJob=nullptr;
-  bool m_previewRequested=false;
+  bool m_previewRequested=false,m_previewComputing=false;
+  QTimer m_toolPreviewTimer;
+  QPointer<DimensionHandle> m_dimensionHandle;
   int m_previewRevision=0;
   std::shared_ptr<opad::design::Sketch> m_toolPreview;
+  Handle(AIS_InteractiveObject) m_toolPreviewOverlay;
   opad::design::SolveResult m_previewSolved;
   QString m_selectionFilter = "all",m_constraintFilter;
   std::set<int> m_conflicts;

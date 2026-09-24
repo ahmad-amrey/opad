@@ -9,12 +9,11 @@
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QTabWidget>
+#include <QTabBar>
 #include <QFontComboBox>
 #include <QFileDialog>
 
-namespace {
-struct Tool { QString group, id, label; };
-QList<Tool> tools() {
+QList<SketchPanel::Tool> SketchPanel::tools() {
   return {
     {QObject::tr("Create"),"line",QObject::tr("Line")}, {QObject::tr("Create"),"rect",QObject::tr("Rectangle")},
     {QObject::tr("Create"),"crect",QObject::tr("Centre rectangle")}, {QObject::tr("Create"),"circle",QObject::tr("Circle")},
@@ -62,12 +61,11 @@ QList<Tool> tools() {
     {QObject::tr("Images and files"),"vector_export",QObject::tr("Export SVG / DXF")}
   };
 }
-}
 
 SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent), m_editor(editor) {
   auto* layout=new QVBoxLayout(this); layout->setContentsMargins(8,8,8,8); layout->setSpacing(6);
   m_state=new QLabel(this); m_state->setWordWrap(true); layout->addWidget(m_state);
-  auto* tabs=new QTabWidget(this); layout->addWidget(tabs,1);
+  auto* tabs=new QTabWidget(this);m_pages=tabs;tabs->tabBar()->hide();layout->addWidget(tabs,1);
   auto page=[&](const QString& title) {
     auto* scroll=new QScrollArea(tabs); scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame);
     auto* body=new QWidget(scroll); scroll->setWidget(body); tabs->addTab(scroll,title);
@@ -76,13 +74,13 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   auto* tool=page(tr("Tool"));
   m_group=new QComboBox(this); m_tools=new QComboBox(this);
   for(const auto& t:tools()) if(m_group->findText(t.group)<0) m_group->addItem(t.group);
-  tool->addWidget(m_group); tool->addWidget(m_tools);
+  m_group->hide();m_tools->hide();
   m_steps=new ToolStepsPanel(this);m_steps->setSummary({},{},{});tool->addWidget(m_steps);
   m_fields=new QFormLayout; tool->addLayout(m_fields);
   auto* apply=new QPushButton(tr("Apply"),this); apply->setObjectName("primary"); layout->addWidget(apply);
   connect(tabs,&QTabWidget::currentChanged,apply,[apply](int index){apply->setVisible(index==0);});
   connect(apply,&QPushButton::clicked,editor,&SketchEditor::applyTool);
-  auto* precise=new QFormLayout; tool->addLayout(precise);
+  m_precise=new QWidget(this);auto* precise=new QFormLayout(m_precise);tool->addWidget(m_precise);
   m_coordinates=new QComboBox(this); m_coordinates->addItems({tr("Absolute coordinates"),tr("Relative coordinates"),tr("Polar: length and angle")});
   m_u=new QLineEdit("0",this); m_v=new QLineEdit("0",this);
   precise->addRow(tr("Input"),m_coordinates); precise->addRow(tr("X / length"),m_u); precise->addRow(tr("Y / angle"),m_v);
@@ -140,7 +138,7 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   connect(finish,&QPushButton::clicked,this,&SketchPanel::finishRequested);
   connect(editor,&SketchEditor::status,m_status,&QLabel::setText);
   connect(editor,&SketchEditor::changed,this,&SketchPanel::refresh);
-  connect(editor,&SketchEditor::toolChanged,this,&SketchPanel::refresh);
+  connect(editor,&SketchEditor::toolChanged,this,[this]{m_pages->setCurrentIndex(0);refresh();});
   connect(editor,&SketchEditor::workflowChanged,this,&SketchPanel::refresh);
   connect(m_group,&QComboBox::currentIndexChanged,this,&SketchPanel::chooseGroup);
   connect(m_tools,&QComboBox::currentIndexChanged,this,&SketchPanel::chooseTool);
@@ -157,8 +155,8 @@ QList<ToolStep> SketchPanel::steps() const {return m_editor->toolSteps();}
 void SketchPanel::buildFields() {
   while(m_fields->rowCount()) m_fields->removeRow(0);
   auto field=[&](const QString& key,const QString& label,const QString& value) {
-    auto* edit=new QLineEdit(m_editor->option(key,value),this);m_fields->addRow(label,edit);
-    connect(edit,&QLineEdit::textChanged,this,[this,key](const QString& text){m_editor->m_options[key]=text;m_editor->invalidatePreview();});
+    auto* edit=new QLineEdit(m_editor->option(key,value),this);edit->setObjectName("sketchOption-"+key);m_fields->addRow(label,edit);
+    connect(edit,&QLineEdit::textChanged,this,[this,key](const QString& text){m_editor->m_options[key]=text;m_editor->scheduleToolPreview();});
   };
   if(m_shown=="polygon" || m_shown=="polygon_outer")field("sides",tr("Number of sides:"),"6");
   if(m_shown=="fillet" || m_shown=="tangent_circle")field("radius",tr("Radius"),"2 mm");
@@ -175,7 +173,7 @@ void SketchPanel::buildFields() {
   auto choice=[&](const QString& key,const QString& label,const QList<QPair<QString,QString>>& choices) {
     auto* combo=new QComboBox(this);for(const auto& [id,text]:choices)combo->addItem(text,id);
     combo->setCurrentIndex(std::max(0,combo->findData(m_editor->option(key,choices.front().first))));m_fields->addRow(label,combo);
-    connect(combo,&QComboBox::currentIndexChanged,this,[this,key,combo]{m_editor->m_options[key]=combo->currentData().toString();m_editor->invalidatePreview();if(key=="projectionPick")m_editor->referenceHover();});
+    connect(combo,&QComboBox::currentIndexChanged,this,[this,key,combo]{m_editor->m_options[key]=combo->currentData().toString();m_editor->scheduleToolPreview();if(key=="projectionPick")m_editor->referenceHover();});
   };
   if(m_shown=="project"||m_shown=="intersect_body"||m_shown=="silhouette"||m_shown=="include3d") {
     choice("projectionPick",tr("Pick filter"),{{"edge",tr("Edges")},{"face",tr("Faces")},{"vertex",tr("Vertices")},{"body",tr("Bodies")}});
@@ -215,6 +213,10 @@ void SketchPanel::buildFields() {
     auto* preview=new QPushButton(tr("Preview"),this);m_fields->addRow(preview);connect(preview,&QPushButton::clicked,m_editor,&SketchEditor::previewTool);
   }
   if(m_shown=="offset") {field("distance",tr("Distance"),"5 mm");choice("corners",tr("Corners"),{{"round",tr("Round")},{"sharp",tr("Sharp")}});}
+  if(QStringList{"offset","move","copy","rotate","scale","mirror","rect_pattern","polar_pattern"}.contains(m_shown)) {
+    auto* chain=new QCheckBox(tr("Select connected chain on click"),this);chain->setChecked(m_editor->option("chain",m_shown=="offset"?"1":"0")=="1");m_fields->addRow(chain);
+    connect(chain,&QCheckBox::toggled,this,[this](bool on){m_editor->m_options["chain"]=on?"1":"0";});
+  }
   if(m_shown=="move"||m_shown=="copy"||m_shown=="rect_pattern") {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"0 mm");}
   if(m_shown=="rotate"||m_shown=="scale"||m_shown=="polar_pattern") {field("cx",tr("Centre X"),"0 mm");field("cy",tr("Centre Y"),"0 mm");}
   if(m_shown=="rotate"||m_shown=="polar_pattern")field("angle",tr("Angle"),m_shown=="rotate"?"45 deg":"360 deg");
@@ -244,11 +246,15 @@ void SketchPanel::refresh() {
   if(!m_editor->active())return;
   m_refreshing=true;
   const QString tool=m_editor->tool();
+  m_precise->setVisible(QStringList{"line","rect","crect","circle","circle2","circle3","arc3","arcc","polygon","polygon_outer","slot","cslot","arcslot","ellipse","spline","control_spline","point","text","conic","rect3"}.contains(tool));
   for(const auto& t:tools())if(t.id==tool) {
     {QSignalBlocker block(m_group);m_group->setCurrentText(t.group);}chooseGroup();
     QSignalBlocker block(m_tools);m_tools->setCurrentIndex(m_tools->findData(tool));break;
   }
   if(m_shown!=tool || m_editor->m_panelFieldsDirty) {m_shown=tool;m_editor->m_panelFieldsDirty=false;buildFields();}
+  for(auto* edit:findChildren<QLineEdit*>())if(edit->objectName().startsWith("sketchOption-") && !edit->hasFocus()) {
+    const auto key=edit->objectName().mid(13);if(m_editor->m_options.contains(key)){QSignalBlocker block(edit);edit->setText(m_editor->option(key));}
+  }
   m_steps->setSteps(steps(),{});
   // The measurement widget owns an inner scroll area: give its numbered rows room before Qt's deferred
   // show/layout pass (minimumSizeHint otherwise sees newly created rows as hidden and collapses them).
@@ -268,4 +274,10 @@ void SketchPanel::refresh() {
     if(c.id==selected)m_constraints->setCurrentItem(row);
   }
   m_refreshing=false;
+}
+void SketchPanel::showPage(int page){m_pages->setCurrentIndex(page);refresh();}
+QSize SketchPanel::toolSizeHint(int width) const {
+  if(m_pages->currentIndex()!=0)return {width,440};
+  const int content=m_steps->height()+m_fields->sizeHint().height()+(m_precise->isVisible()?m_precise->sizeHint().height():0)+160;
+  return {width,std::clamp(content,300,580)};
 }

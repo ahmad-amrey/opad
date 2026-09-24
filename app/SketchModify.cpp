@@ -1,4 +1,7 @@
 #include "SketchEditor.hpp"
+#include "DimensionHandle.hpp"
+#include <QApplication>
+#include <QMouseEvent>
 #include "Jobs.hpp"
 #include <QCoreApplication>
 #include "opad/design/sketch_modify.hpp"
@@ -8,6 +11,31 @@
 #include <set>
 
 using namespace opad::design;
+void SketchEditor::benchHandles() {
+  setTool("rect");placePrecise("0","0",0);placePrecise("40","30",0);
+  auto phase=std::make_shared<int>(0),ticks=std::make_shared<int>(0);auto* timer=new QTimer(this);timer->setInterval(150);
+  connect(timer,&QTimer::timeout,this,[this,phase,ticks,timer]{try {
+    auto require=[](bool ok,const char* text){if(!ok)throw opad::Error(text);};
+    if(++*ticks>120)throw opad::Error("handle preview timed out");
+    if(m_editJob || m_geometryJob || m_toolPreviewTimer.isActive())return;
+    switch((*phase)++) {
+      case 0:setTool("offset");sketchPress(20,0,Qt::NoModifier);require(m_sel.size()==4,"one click selects connected rectangle");require(m_dimensionHandle->isVisible(),"offset handle missing");break;
+      case 1:{
+        require(m_toolPreview && m_sk.entities.size()==4 && m_toolPreview->entities.size()>4,"automatic non-destructive offset preview");
+        const auto before=option("distance","5 mm");const QPointF local(20,20),start=m_dimensionHandle->mapToGlobal(local.toPoint());
+        QMouseEvent press(QEvent::MouseButtonPress,local,start,Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+        QApplication::sendEvent(m_dimensionHandle,&press);
+        QMouseEvent move(QEvent::MouseMove,local+QPointF(35,25),start+QPointF(35,25),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+        QApplication::sendEvent(m_dimensionHandle,&move);
+        QMouseEvent release(QEvent::MouseButtonRelease,local+QPointF(35,25),start+QPointF(35,25),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+        QApplication::sendEvent(m_dimensionHandle,&release);
+        require(option("distance")!=before,"drag did not update distance");break;
+      }
+      case 2:require(bool(m_toolPreview),"drag preview missing");m_viewport->grabImage().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_HANDLES")+".png");applyTool();require(m_sk.entities.size()>4,"offset commit");undo();require(m_sk.entities.size()==4,"one undo restores original chain");setTool("select");require(!m_dimensionHandle->isVisible(),"stale handle after exiting tool");break;
+      default:timer->stop();trace::log("bench: chain selection, automatic offset preview, drag handle, apply and undo PASS");QCoreApplication::exit(0);
+    }
+  }catch(const std::exception& e){timer->stop();trace::log(QString("bench: handles FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();
+}
 namespace {
 const QStringList tools={"move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","split","extend","break","chamfer","union","subtract","intersect","heal","explode"};
 }
@@ -31,9 +59,9 @@ bool SketchEditor::modifyClick(double u,double v) {
     m_clicks.push_back({u,v});if(m_clicks.size()>2)m_clicks.erase(m_clicks.begin());
   } else if(hit.kind!=Hit::None) {
     if(m_tool=="chamfer" && hit.kind==Hit::Point)m_sel={hit.id};
-    else if(hit.kind==Hit::Entity){auto at=std::find(m_sel.begin(),m_sel.end(),hit.id);if(at==m_sel.end())m_sel.push_back(hit.id);else m_sel.erase(at);}
+    else if(hit.kind==Hit::Entity){auto at=std::find(m_sel.begin(),m_sel.end(),hit.id);if(at==m_sel.end())m_sel.push_back(hit.id);else m_sel.erase(at);if(option("chain","0")=="1")selectConnected();}
   }
-  rebuild();toolPrompt();emit changed();return true;
+  rebuild();toolPrompt();emit changed();scheduleToolPreview();return true;
 }
 
 bool SketchEditor::applyModify() {

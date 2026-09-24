@@ -8,12 +8,17 @@
 #include "GuidedTool.hpp"
 
 class SketchEditor;
+class QTabWidget;
 class SketchPanel : public QWidget {
   Q_OBJECT
  public:
   explicit SketchPanel(SketchEditor* editor, QWidget* parent = nullptr);
   void refresh();
   QList<ToolStep> steps() const;
+  struct Tool {QString group,id,label;};
+  static QList<Tool> tools();
+  void showPage(int page);
+  QSize toolSizeHint(int width) const;
  signals:
   void finishRequested();
  private:
@@ -29,4 +34,6 @@ class SketchPanel : public QWidget {
   QTreeWidget* m_constraints;
   QString m_shown;
   bool m_refreshing = false;
+  QTabWidget* m_pages;
+  QWidget* m_precise;
 };

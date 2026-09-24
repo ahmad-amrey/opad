@@ -1,4 +1,5 @@
 #include "SketchEditor.hpp"
+#include "DimensionHandle.hpp"
 #include "SketchPanel.hpp"
 #include <QPointer>
 #include <QKeyEvent>
@@ -10,6 +11,9 @@
 #include <cmath>
 #include "I18n.hpp"
 #include "opad/design/sketch_geom.hpp"
+#include <BRep_Builder.hxx>
+#include <BRepBndLib.hxx>
+#include <TopoDS_Compound.hxx>
 
 using namespace opad::design;
 
@@ -74,9 +78,12 @@ QList<ToolStep> SketchEditor::toolSteps() const {
 void SketchEditor::applyTool() {
   if(!m_active)return;
   if(m_editJob)return;
+  if(!m_previewRequested)m_toolPreviewTimer.stop();
   if(!m_previewRequested && m_toolPreview) {
+    ++m_modelRevision;
+    m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
     m_undo.push_back({m_sk,m_plane,m_frame});m_redo.clear();m_sk=*m_toolPreview;m_solved=m_previewSolved;m_toolPreview.reset();m_modified=true;m_panelFieldsDirty=true;
-    m_clicks.clear();m_picked.clear();m_sel.clear();rebuild();scheduleFill();toolPrompt();emit changed();return;
+    m_clicks.clear();m_picked.clear();m_sel.clear();updateDimensionHandle();rebuild();scheduleFill();toolPrompt();emit changed();return;
   }
   if(applyReference()||applyImageTool())return;
   if(applyModify())return;
@@ -110,21 +117,39 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
   if(!m_active || m_editJob)return;
   const auto before=std::make_shared<Sketch>(m_sk),after=std::make_shared<Sketch>(m_sk);
   const bool preview=m_previewRequested;
+  m_previewComputing=preview;
   const int previewRevision=m_previewRevision;
+  const int modelRevision=m_modelRevision;
   const auto solved=std::make_shared<SolveResult>();const auto options=solveOptions();const int session=m_session;
+  auto shape=std::make_shared<TopoDS_Compound>();auto prs=std::make_shared<std::shared_ptr<BodyPrs>>();const auto frame=m_frame;
   QPointer<SketchEditor> guard(this);
-  m_editJob=m_jobs->async(label,[after,solved,options,work](Progress progress){
+  m_editJob=m_jobs->async(label,[after,before,solved,options,work,preview,shape,prs,frame](Progress progress){
     if(progress.cancelled())return;work(*after);if(progress.cancelled())return;
     after->validate();*solved=solve(*after,options);
     if(!solved->converged)throw opad::Error("the operation conflicts with existing constraints");
-  },[this,guard,before,after,solved,session,preview,previewRevision](bool ok,const QString& error){
+    if(preview) {
+      BRep_Builder builder;builder.MakeCompound(*shape);
+      std::map<int,const SkEntity*> oldEntities;for(const auto& e:before->entities)oldEntities[e.id]=&e;
+      std::map<int,const SkPoint*> oldPoints,newPoints;for(const auto& p:before->points)oldPoints[p.id]=&p;for(const auto& p:after->points)newPoints[p.id]=&p;
+      for(const auto& e:after->entities) {
+        if(progress.cancelled())return;
+        const auto* old=oldEntities.count(e.id)?oldEntities[e.id]:nullptr;
+        bool same=old && old->type==e.type && old->p==e.p && old->r==e.r && old->weights==e.weights;
+        if(same)for(int id:e.p){const auto* p=oldPoints.count(id)?oldPoints[id]:nullptr;const auto* q=newPoints[id];if(!p||!q||p->x!=q->x||p->y!=q->y){same=false;break;}}
+        if(same)continue;const auto edge=entity_edge(*after,e,frame);if(!edge.IsNull())builder.Add(*shape,edge);
+      }
+      Bnd_Box box;BRepBndLib::Add(*shape,box);*prs=BodyPrs::build(*shape,box);
+    }
+  },[this,guard,before,after,solved,session,preview,previewRevision,modelRevision,shape,prs](bool ok,const QString& error){
     if(!guard || !m_active || m_session!=session)return;
-    m_editJob=nullptr;
+    m_editJob=nullptr;m_previewComputing=false;
     if(preview && previewRevision!=m_previewRevision)return;
     if(!ok){emit status(error);return;}
-    if(m_sk.to_json()!=before->to_json())return;
-    if(preview){m_toolPreview=after;m_previewSolved=*solved;rebuild();emit status(tr("Preview ready. Apply to keep it, or change parameters and preview again."));return;}
-    m_undo.push_back({*before,m_plane,m_frame});m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;m_panelFieldsDirty=true;
+    if(m_modelRevision!=modelRevision)return;
+    if(preview){m_toolPreview=after;m_previewSolved=*solved;
+      auto overlay=new BodyShape(*shape,*prs);overlay->SetColor(Quantity_Color(.95,.65,.2,Quantity_TOC_sRGB));overlay->SetWidth(2);m_toolPreviewOverlay=overlay;if(m_visible)m_viewport->showOverlay(m_toolPreviewOverlay);
+      emit status(tr("Preview ready. Apply to keep it, or change parameters and preview again."));return;}
+    ++m_modelRevision;m_undo.push_back({*before,m_plane,m_frame});m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;m_panelFieldsDirty=true;
     m_clicks.clear();m_picked.clear();m_sel.clear();rebuild();scheduleFill();toolPrompt();emit changed();
     if(m_tool=="mirror")m_options["mirrorStage"]="seed";
   });
@@ -179,8 +204,11 @@ void SketchEditor::selectConnected() {
   invalidatePreview();
   std::set<int> ids(m_sel.begin(),m_sel.end()),points;
   for(int id:ids)if(m_sk.point(id))points.insert(id);
-  bool changed=true;
-  while(changed){changed=false;for(const auto& e:m_sk.entities){bool touch=ids.count(e.id);for(int p:e.p)touch|=points.count(p)>0;if(!touch)continue;if(ids.insert(e.id).second)changed=true;for(int p:e.p)if(points.insert(p).second)changed=true;}}
+  std::map<int,std::vector<const SkEntity*>> incident;
+  for(const auto& e:m_sk.entities)for(int p:e.p){incident[p].push_back(&e);if(ids.count(e.id))points.insert(p);}
+  std::vector<int> pending(points.begin(),points.end());
+  for(size_t i=0;i<pending.size();++i)for(const auto* e:incident[pending[i]])
+    if(ids.insert(e->id).second)for(int p:e->p)if(points.insert(p).second)pending.push_back(p);
   m_sel.assign(ids.begin(),ids.end());rebuild();emit this->changed();
 }
 void SketchEditor::selectType() {
@@ -301,5 +329,30 @@ void SketchEditor::previewTool() {
 }
 void SketchEditor::invalidatePreview() {
   ++m_previewRevision;
+  m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
   if(!m_toolPreview)return;m_toolPreview.reset();rebuild();
+}
+void SketchEditor::scheduleToolPreview() {
+  invalidatePreview();updateDimensionHandle();
+  const QStringList tools={"offset","move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","chamfer","union","subtract","intersect"};
+  if(m_active && tools.contains(m_tool) && (!m_sel.empty() || m_clicks.size()==2))m_toolPreviewTimer.start();
+  else m_toolPreviewTimer.stop();
+}
+void SketchEditor::updateDimensionHandle() {
+  if(!m_active || !m_visible || m_tool!="offset" || m_sel.empty()){m_dimensionHandle->hide();return;}
+  const SkEntity* entity=nullptr;for(int id:m_sel)if((entity=m_sk.entity(id)))break;if(!entity || entity->p.empty())return;
+  const auto* a=m_sk.point(entity->p.front());if(!a)return;
+  double x=a->x,y=a->y,dx=1,dy=0;
+  if(entity->type==SkEntity::Type::Circle || entity->type==SkEntity::Type::Arc){x+=entity->r;}
+  else if(entity->p.size()>1) {
+    const auto* b=m_sk.point(entity->p.back());if(!b)return;
+    x=(a->x+b->x)/2;y=(a->y+b->y)/2;dx=b->y-a->y;dy=a->x-b->x;
+    const double length=std::hypot(dx,dy);if(length<1e-9)return;dx/=length;dy/=length;
+  }
+  try {
+    std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});
+    const auto text=option("distance","5 mm");const double value=sketch_parameters(m_sk,ParamTable(defs,m_doc->scene.units)).length(text.toStdString());
+    opad::Vec3 direction;for(int i=0;i<3;++i)direction[i]=m_frame.x[i]*dx+m_frame.y[i]*dy;
+    m_dimensionHandle->configure(m_frame.to_world(x,y),direction,value,text);
+  }catch(const std::exception&){}
 }

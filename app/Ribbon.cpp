@@ -300,6 +300,7 @@ int RibbonBar::addTab(int workspace, const QString& title, const QList<QList<QAc
       auto* b = new QToolButton(page);
       b->setObjectName("ribbonTool");
       b->setDefaultAction(a);
+      if(a->menu()){b->setMenu(a->menu());b->setPopupMode(QToolButton::InstantPopup);}
       b->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
       b->setIconSize(QSize(24, 24));
       b->setFixedHeight(56);

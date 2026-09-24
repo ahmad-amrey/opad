@@ -50,6 +50,7 @@ double norm_angle(double a) {  // into [0, 2 pi)
 
 // ---------------------------------------------------------------- tool selection
 void SketchEditor::setTool(const QString& tool) {
+  if(m_editJob && m_previewComputing){invalidatePreview();m_editJob->cancel();m_editJob=nullptr;m_previewComputing=false;}
   if (!m_active || m_editJob) return;
   invalidatePreview();
   if (!m_chain.empty()) finishChain();
@@ -82,6 +83,7 @@ void SketchEditor::setTool(const QString& tool) {
   emit toolChanged(m_tool);
   toolPrompt();
   rebuild();
+  scheduleToolPreview();
 }
 
 void SketchEditor::toolPrompt() {
@@ -142,7 +144,9 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     if(h.kind!=Hit::None) {
       auto it=std::find(m_sel.begin(),m_sel.end(),h.id);
       if(it==m_sel.end())m_sel.push_back(h.id);else m_sel.erase(it);
+      if(m_tool=="offset" && option("chain","1")=="1")selectConnected();
       rebuild();emit changed();toolPrompt();
+      scheduleToolPreview();
     }
     return;
   }
@@ -929,6 +933,7 @@ bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
 // Drives the tools the way the mouse does (sketch coordinates instead of pixels), so a headless run covers the
 // same code as a user: a 40 x 25 rectangle from the origin with a hole, width and height dimensioned.
 void SketchEditor::bench(const QString&) {
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_HANDLES"))return benchHandles();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_REFERENCE"))return benchWorkflow();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_DRAG"))return benchDrag();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY"))return benchModify();

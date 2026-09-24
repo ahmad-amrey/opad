@@ -529,12 +529,15 @@ void DesignController::startSketch() {
 
 void DesignController::setSketchPanel(ToolPanel* panel) {
   m_sketchPanel=panel;
-  connect(m_sketch,&SketchEditor::toolChanged,this,[this]{showSketchPanel();});
+  connect(m_sketch,&SketchEditor::toolChanged,this,[this]{if(m_sketch->tool()=="select"){if(m_sketchPanel)m_sketchPanel->hide();}else showSketchPanel();});
   connect(m_sketch,&SketchEditor::workflowChanged,this,&DesignController::stateChanged);
   connect(m_sketch,&SketchEditor::changed,this,[this]{if(!m_sketch->active() && m_sketchPanel)m_sketchPanel->hide();});
 }
 void DesignController::showSketchPanel() {
-  if(m_sketch->active() && m_sketchPanel && m_openPanel)m_openPanel(m_sketchPanel);
+  if(m_sketch->active() && m_sketchPanel && m_openPanel){
+    for(const auto& tool:SketchPanel::tools())if(tool.id==m_sketch->tool()){m_sketchPanel->setHeader("sketch",tool.label);break;}
+    m_openPanel(m_sketchPanel);
+  }
 }
 void DesignController::redefineSketchPlane() {
   if(!m_sketch->active() || m_sketch->busy() || m_doc->designBusy)return;
@@ -612,6 +615,7 @@ void DesignController::bench() {
   enterSketch({}, "Sketch1", opad::json{{"base", "xy"}, {"frame", frame.to_json()}}, frame, opad::json::object());
   QTimer::singleShot(700, this, [this] {  // the look-at animation has ended: pick distances are in pixels
   m_sketch->bench({});
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_HANDLES"))return;
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_REFERENCE") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_DRAG") || qEnvironmentVariableIsSet("OPAD_BENCH_SPLINE") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY")) return;
   if (const QString shot = qEnvironmentVariable("OPAD_BENCH_SKETCHSHOT"); !shot.isEmpty()) m_viewport->grabImage().save(shot);  // the editor's overlay: curves, dimensions, glyphs
   finishSketch([this] {
