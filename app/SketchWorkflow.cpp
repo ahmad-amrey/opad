@@ -1,5 +1,6 @@
 #include "SketchEditor.hpp"
 #include "SketchPanel.hpp"
+#include <QPointer>
 #include <QKeyEvent>
 #include <QSettings>
 #include <QCoreApplication>
@@ -18,7 +19,15 @@ SolveOptions SketchEditor::solveOptions() const {
 
 QList<ToolStep> SketchEditor::toolSteps() const {
   QStringList labels;
-  if(m_tool=="select")labels={tr("Select geometry"),tr("Drag, constrain or modify")};
+  if(m_tool=="tangent_circle")labels={tr("Pick first line"),tr("Pick second line"),tr("Choose circle side")};
+  else if(m_tool=="tangent_arc")labels={tr("Pick line endpoint"),tr("Pick arc endpoint")};
+  else if(m_tool=="text")labels={tr("Set text, font and height"),tr("Pick insertion point")};
+  else if(m_tool=="conic")labels={tr("Pick start point"),tr("Pick tangent intersection"),tr("Pick end point")};
+  else if(m_tool=="rect3")labels={tr("Pick first corner"),tr("Pick base direction"),tr("Set rectangle height")};
+  else if(m_tool=="arcslot")labels={tr("Pick arc centre"),tr("Pick start point"),tr("Pick end point")};
+  else if(m_tool=="cslot")labels={tr("Pick slot centre"),tr("Pick cap centre"),tr("Set slot width")};
+  else if(m_tool=="control_spline")labels={tr("Pick control points"),tr("Apply to finish the chain")};
+  else if(m_tool=="select")labels={tr("Select geometry"),tr("Drag, constrain or modify")};
   else if(m_tool=="dimension")labels={tr("Pick geometry to measure"),tr("Place the label"),tr("Set expression and apply")};
   else if(m_tool.startsWith("c:"))labels={tr("Pick first geometry"),tr("Pick related geometry")};
   else if(m_tool=="offset")labels={tr("Select a connected chain"),tr("Set distance and apply")};
@@ -32,6 +41,9 @@ QList<ToolStep> SketchEditor::toolSteps() const {
   else if(m_tool=="circle3" || m_tool=="arc3" || m_tool=="arcc" || m_tool=="ellipse" || m_tool=="slot")labels={tr("Pick first point"),tr("Pick second point"),tr("Pick third point")};
   else labels={tr("Pick first point"),tr("Pick second point")};
   int count=int(m_clicks.size());
+  if(m_tool=="tangent_circle")count=int(m_picked.size());
+  if(m_tool=="text")count=1;
+  if(m_tool=="control_spline")count=m_clicks.size()>=2?1:0;
   if(m_tool=="line" || m_tool=="spline") count=m_chain.empty()?0:m_chain.size()==1?1:2;
   if(m_tool.startsWith("c:"))count=int(m_picked.size());
   if(m_tool=="dimension")count=m_dimEditing?2:m_placingDim?1:0;
@@ -45,6 +57,7 @@ QList<ToolStep> SketchEditor::toolSteps() const {
 void SketchEditor::applyTool() {
   if(!m_active)return;
   if(m_tool=="offset")return offsetSelection();
+  if(m_tool=="control_spline")return finishPrimitive();
   if(m_tool=="line" || m_tool=="spline")return finishChain();
   if(m_tool=="dimension" && m_dimEditing && m_dimEdit) {
     m_dimEdit->setText(option("expression",m_dimEdit->text()));
@@ -67,6 +80,25 @@ void SketchEditor::applyTool() {
     return;
   }
   toolPrompt();
+}
+
+void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&)> work) {
+  if(!m_active || m_editJob)return;
+  const auto before=std::make_shared<Sketch>(m_sk),after=std::make_shared<Sketch>(m_sk);
+  const auto solved=std::make_shared<SolveResult>();const auto options=solveOptions();const int session=m_session;
+  QPointer<SketchEditor> guard(this);
+  m_editJob=m_jobs->async(label,[after,solved,options,work](Progress progress){
+    if(progress.cancelled())return;work(*after);if(progress.cancelled())return;
+    after->validate();*solved=solve(*after,options);
+    if(!solved->converged)throw opad::Error("the operation conflicts with existing constraints");
+  },[this,guard,before,after,solved,session](bool ok,const QString& error){
+    if(!guard || !m_active || m_session!=session)return;
+    m_editJob=nullptr;
+    if(!ok){emit status(error);return;}
+    if(m_sk.to_json()!=before->to_json())return;
+    m_undo.push_back(*before);m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;
+    m_clicks.clear();m_picked.clear();m_sel.clear();rebuild();scheduleFill();toolPrompt();emit changed();
+  });
 }
 
 void SketchEditor::placePrecise(const QString& u,const QString& v,int mode) {

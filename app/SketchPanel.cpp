@@ -9,6 +9,7 @@
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QTabWidget>
+#include <QFontComboBox>
 
 namespace {
 struct Tool { QString group, id, label; };
@@ -20,6 +21,11 @@ QList<Tool> tools() {
     {QObject::tr("Create"),"arcc",QObject::tr("Centre arc")}, {QObject::tr("Create"),"ellipse",QObject::tr("Ellipse")},
     {QObject::tr("Create"),"slot",QObject::tr("Slot")}, {QObject::tr("Create"),"polygon",QObject::tr("Polygon")},
     {QObject::tr("Create"),"spline",QObject::tr("Spline")}, {QObject::tr("Create"),"point",QObject::tr("Point")},
+    {QObject::tr("Create"),"rect3",QObject::tr("3-point rectangle")}, {QObject::tr("Create"),"circle2",QObject::tr("2-point circle")},
+    {QObject::tr("Create"),"tangent_circle",QObject::tr("Tangent circle")}, {QObject::tr("Create"),"tangent_arc",QObject::tr("Tangent arc")},
+    {QObject::tr("Create"),"cslot",QObject::tr("Centre slot")}, {QObject::tr("Create"),"arcslot",QObject::tr("Arc slot")},
+    {QObject::tr("Create"),"polygon_outer",QObject::tr("Circumscribed polygon")}, {QObject::tr("Create"),"control_spline",QObject::tr("Control-point spline")},
+    {QObject::tr("Create"),"conic",QObject::tr("Conic")}, {QObject::tr("Create"),"text",QObject::tr("Text outlines")},
     {QObject::tr("Modify"),"select",QObject::tr("Select")}, {QObject::tr("Modify"),"trim",QObject::tr("Trim")},
     {QObject::tr("Modify"),"fillet",QObject::tr("Sketch fillet")}, {QObject::tr("Modify"),"mirror",QObject::tr("Mirror")},
     {QObject::tr("Modify"),"offset",QObject::tr("Offset")},
@@ -127,8 +133,18 @@ void SketchPanel::buildFields() {
     auto* edit=new QLineEdit(m_editor->option(key,value),this);m_fields->addRow(label,edit);
     connect(edit,&QLineEdit::textChanged,this,[this,key](const QString& text){m_editor->m_options[key]=text;});
   };
-  if(m_shown=="polygon")field("sides",tr("Number of sides:"),"6");
-  if(m_shown=="fillet")field("radius",tr("Radius"),"2 mm");
+  if(m_shown=="polygon" || m_shown=="polygon_outer")field("sides",tr("Number of sides:"),"6");
+  if(m_shown=="fillet" || m_shown=="tangent_circle")field("radius",tr("Radius"),"2 mm");
+  if(m_shown=="arcslot")field("width",tr("Slot width"),"2 mm");
+  if(m_shown=="conic")field("rho",tr("Conic rho (0 to 1)"),"0.5");
+  if(m_shown=="control_spline")field("degree",tr("Spline degree"),"3");
+  if(m_shown=="text") {
+    field("text",tr("Text"),"OPAD");field("height",tr("Text height"),"10 mm");
+    auto* style=new QComboBox(this);style->addItem(tr("Outline font"),"outline");style->addItem(tr("Single-stroke font"),"stroke");style->setCurrentIndex(style->findData(m_editor->option("textStyle","outline")));m_fields->addRow(tr("Style"),style);
+    connect(style,&QComboBox::currentIndexChanged,this,[this,style]{m_editor->m_options["textStyle"]=style->currentData().toString();});
+    auto* font=new QFontComboBox(this);font->setCurrentFont(QFont(m_editor->option("font","Arial")));m_fields->addRow(tr("Font"),font);
+    connect(font,&QFontComboBox::currentFontChanged,this,[this](const QFont& f){m_editor->m_options["font"]=f.family();});
+  }
   if(m_shown=="offset")field("distance",tr("Distance"),"5 mm");
   if(m_shown=="node") {
     field("weight",tr("Node weight"),"1");field("incoming",tr("Incoming handle weight"),"1");field("outgoing",tr("Outgoing handle weight"),"1");
@@ -152,7 +168,9 @@ void SketchPanel::refresh() {
   m_steps->setSteps(steps(),{});
   // The measurement widget owns an inner scroll area: give its numbered rows room before Qt's deferred
   // show/layout pass (minimumSizeHint otherwise sees newly created rows as hidden and collapses them).
-  m_steps->setFixedHeight(60 + steps().size() * (2 * fontMetrics().height() + 16));
+  int stepsHeight=52;
+  for(const auto& step:steps())stepsHeight+=fontMetrics().boundingRect(QRect(0,0,std::max(200,width()-90),1000),Qt::TextWordWrap,step.label).height()+14+(step.picked.isEmpty()?0:fontMetrics().height()+3);
+  m_steps->setFixedHeight(stepsHeight);
   m_state->setText((m_editor->modified()?tr("Modified sketch"):tr("Sketch"))+tr(" · %1 degrees of freedom").arg(m_editor->dof()));
   const int selected=m_constraints->currentItem()?m_constraints->currentItem()->data(0,Qt::UserRole).toInt():0;
   m_constraints->clear();

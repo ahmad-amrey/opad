@@ -63,6 +63,7 @@ class SketchEditor : public QObject, public SketchInput {
   int dof() const { return m_solved.dof; }
   void bench(const QString& script);  // OPAD_BENCH_DESIGN: draws a dimensioned rectangle with a hole through the tool code paths
   void benchWorkflow();
+  void benchPrimitives();
 
   // SketchInput
   void sketchPress(double u, double v, Qt::KeyboardModifiers mods) override;
@@ -84,6 +85,12 @@ class SketchEditor : public QObject, public SketchInput {
   friend class SketchPanel;
   opad::design::SolveOptions solveOptions() const;
   bool selectable(int id) const;
+  void runSketchEdit(const QString& label,std::function<void(opad::design::Sketch&)> work);
+  bool primitiveClick(double u,double v);
+  void finishPrimitive();
+  opad::design::Sketch primitivePreview() const;
+  opad::json primitiveOptions() const;
+  void createText(double u,double v);
   struct Snap {
     double u = 0, v = 0;
     int point = 0;     // an existing point to reuse
@@ -135,6 +142,8 @@ class SketchEditor : public QObject, public SketchInput {
   opad::json m_cameraBefore;
   QMap<QString,QString> m_options;
   bool m_panelFieldsDirty = false;
+  int m_session=0;
+  Job* m_editJob=nullptr;
   QString m_selectionFilter = "all";
   std::vector<std::tuple<int,double,double>> m_glyphHits;
   bool m_boxSelecting = false;

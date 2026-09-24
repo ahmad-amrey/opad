@@ -152,6 +152,7 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
 SketchEditor::~SketchEditor() = default;
 
 void SketchEditor::begin(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry) {
+  ++m_session;
   m_trackingPoint = 0; m_inferenceLocked = false;
   m_id = sketchId;
   m_name = name;
@@ -187,6 +188,7 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
 void SketchEditor::end() {
   if (!m_active) return;
   if (m_tool == "project") m_viewport->setEdgeHover(false);
+  ++m_session;if(m_editJob)m_editJob->cancel();m_editJob=nullptr;
   m_active = false;
   m_fillTimer.stop();
   if (m_fillJob) m_fillJob->cancel();
@@ -454,7 +456,7 @@ int SketchEditor::pointFor(const Snap& s) {
 
 // ---------------------------------------------------------------- input
 void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
-  if (!m_active) return;
+  if (!m_active || m_editJob) return;
   if ((m_tool=="select" || (m_tool=="spline" && m_chain.empty())) && mods.testFlag(Qt::AltModifier)) return insertSplineNode(u,v);
   if (m_dimEdit && m_dimEdit->isVisible()) commitDimensionEdit();
   if (m_tool == "select") {
@@ -621,6 +623,7 @@ bool SketchEditor::sketchKey(QKeyEvent* e) {
       return true;
     case Qt::Key_Return:
     case Qt::Key_Enter:
+      if(m_tool=="control_spline"){finishPrimitive();return true;}
       if (!m_chain.empty()) { finishChain(); return true; }
       return false;
     case Qt::Key_Delete:
@@ -902,6 +905,13 @@ void SketchEditor::rebuild() {
         seg(m_clicks.back().u, m_clicks.back().v, cu, cv);
         if (m_clicks.size() == 2) seg(a.u, a.v, m_clicks[1].u, m_clicks[1].v);
       }
+    }
+    const Sketch preview=primitivePreview();
+    for(const auto& e:preview.entities) {
+      const auto edge=entity_edge(preview,e,opad::Frame{});
+      if(edge.IsNull())continue;
+      const auto pts=curveSamples(edge,px*0.25);
+      for(size_t i=1;i<pts.size();++i)seg(pts[i-1].X(),pts[i-1].Y(),pts[i].X(),pts[i].Y());
     }
     d.bigPoints.push_back({W(cu, cv), m_cursor.point || m_cursor.entity ? t.green : rb});
     if (const auto* reference=m_sk.point(m_trackingPoint); QSettings().value("view/tracking",true).toBool() && reference) {

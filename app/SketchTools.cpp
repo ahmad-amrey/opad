@@ -119,6 +119,7 @@ void SketchEditor::finishChain() {
 }
 
 void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
+  if(primitiveClick(s.u,s.v))return;
   const Hit hit = hitTest(s.u, s.v);
   if (m_tool.startsWith("c:")) return constraintClick(hit);
   if (m_tool == "dimension") return dimensionClick(hit, s.u, s.v);
@@ -979,6 +980,7 @@ bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
 // Drives the tools the way the mouse does (sketch coordinates instead of pixels), so a headless run covers the
 // same code as a user: a 40 x 25 rectangle from the origin with a hole, width and height dimensioned.
 void SketchEditor::bench(const QString&) {
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES"))return benchPrimitives();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW"))return benchWorkflow();
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_SPLINE");!shot.isEmpty()) {
     m_viewport->setCameraJson({{"eye",{20,8,100}},{"target",{20,8,0}},{"up",{0,1,0}},{"scale",65},{"projection","orthographic"},{"absolute",true}});
