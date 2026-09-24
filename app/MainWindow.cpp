@@ -89,7 +89,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     if (!ok) return;
     const auto bodies = m_doc->scene.all_bodies();
     const bool drawing = !bodies.empty() && std::all_of(bodies.begin(), bodies.end(), [this](const auto& id) { return m_doc->scene.node(id)->representation == "drawing2d"; });
-    if (auto* flat = findChild<QAction*>("view.2d")) flat->setChecked(drawing);
+    // Drawing files get a useful initial view without changing the user's 2D-mode toggle.
     if (drawing) { m_viewport->standardView("top"); m_viewport->setSelectionFilter(Viewport::SelFilter::Edge); }
   });
   connect(m_doc, &AppDocument::newDocumentCreated, m_viewport, &Viewport::home);
@@ -2003,7 +2003,6 @@ void MainWindow::beginLoad(std::function<void()> after) {
       if((!m_benchSelect || qEnvironmentVariableIsSet("OPAD_BENCH_NAVIGATION")) && !m_viewPath.isEmpty() && m_settings.value("view/lastPath").toString()==m_viewPath) {
         try {
           const auto camera=opad::json::parse(m_settings.value("view/lastCamera").toString().toStdString());
-          action("view.2d")->setChecked(m_settings.value("view/last2d",false).toBool());
           action("view.ortho")->setChecked(camera.value("projection","")=="orthographic");
           m_viewport->setCameraJson(camera);
         } catch(const std::exception&) { /* Ignore stale settings from another version. */ }
@@ -2485,7 +2484,6 @@ void MainWindow::saveLastView() {
   const auto camera=m_viewport->cameraJson(); if(camera.empty()) return;
   m_settings.setValue("view/lastPath",m_viewPath);
   m_settings.setValue("view/lastCamera",QString::fromStdString(camera.dump()));
-  m_settings.setValue("view/last2d",action("view.2d")->isChecked());
 }
 
 void MainWindow::closeEvent(QCloseEvent* e) {
