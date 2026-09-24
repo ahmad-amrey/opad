@@ -198,6 +198,28 @@ Sketch Ctx::sketch(const std::string& id, Frame* frame) const {
 
 Frame Ctx::plane(const json& in) const {
   if (!in.is_object()) throw Error("no plane was chosen");
+  if (in.contains("support")) {
+    Frame f=plane(in.at("support"));
+    const auto& origin=in.at("origin");
+    double u=0,v=0;
+    if(origin.contains("uv")) {
+      u=origin.at("uv").at(0).get<double>();v=origin.at("uv").at(1).get<double>();
+    } else {
+      Vec3 world={0,0,0};
+      if(origin.contains("world"))world=origin.at("world").get<Vec3>();
+      else if(origin.contains("ref")) {
+        const auto r=resolve(origin.at("ref"));gp_Pnt p;
+        if(r.sub.ShapeType()==TopAbs_VERTEX)p=BRep_Tool::Pnt(TopoDS::Vertex(r.sub));
+        else if(r.sub.ShapeType()==TopAbs_EDGE){BRepAdaptor_Curve curve(TopoDS::Edge(r.sub));if(curve.GetType()!=GeomAbs_Circle)throw Error("choose a circular edge for the origin center");p=curve.Circle().Location();}
+        else throw Error("choose a vertex or circular edge for the origin");
+        world={p.X(),p.Y(),p.Z()};
+      } else throw Error("no sketch origin was chosen");
+      f.to_local(world,u,v);
+    }
+    if(!std::isfinite(u)||!std::isfinite(v))throw Error("invalid sketch origin coordinates");
+    f.origin=f.to_world(u,v);return f;
+  }
+  if(in.size()==1 && in.contains("frame"))return Frame::from_json(in.at("frame"));
   if (in.contains("base")) return base_frame(in["base"].get<std::string>());
   if (in.contains("feature")) {
     const Feature* f = scene.feature(in["feature"].get<std::string>());
@@ -427,7 +449,7 @@ struct Walk {
     }
     Frame frame = Frame::from_json(plane.value("frame", json()));
     bool frame_moved = false;
-    if (plane.contains("face") || plane.contains("feature")) {
+    if (plane.contains("face") || plane.contains("feature") || plane.contains("support")) {
       std::set<std::string> nodes, sketches, features;
       collect_refs(plane, nodes, sketches, features);
       for (const auto& n : nodes) s += node_state(ctx.scene, n);
@@ -440,7 +462,7 @@ struct Walk {
 
     json result = json::object();
     result["in"] = fp;
-    if (plane.contains("face") || plane.contains("feature")) {
+    if (plane.contains("face") || plane.contains("feature") || plane.contains("support")) {
       try {
         const Frame now = ctx.plane(plane);
         if (now.to_json() != frame.to_json()) { frame = now; frame_moved = true; }

@@ -116,6 +116,8 @@ json apply_sketch_delta(const json& before, const json& delta);
 double dimension_value(const Sketch& sk, const SkConstraint& c);
 ParamTable sketch_parameters(const Sketch& sk, const ParamTable& params = {});
 void evaluate_dimensions(Sketch& sk, const ParamTable& params = {});
+// Change local origin without moving any geometry in the sketch plane.
+void shift_sketch_origin(Sketch& sk,double u,double v);
 
 // ---------------------------------------------------------------- solver
 struct SolveOptions {

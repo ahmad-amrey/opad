@@ -6,6 +6,19 @@
 #include <set>
 
 namespace opad::design {
+void shift_sketch_origin(Sketch& sk,double u,double v) {
+  if(!std::isfinite(u)||!std::isfinite(v))throw Error("invalid sketch origin offset");
+  for(auto& p:sk.points){p.x-=u;p.y-=v;}
+  for(auto& c:sk.constraints){c.pos[0]-=u;c.pos[1]-=v;}
+  for(auto& image:sk.images){image["position"][0]=image["position"][0].get<double>()-u;image["position"][1]=image["position"][1].get<double>()-v;}
+  for(auto& pattern:sk.patterns)for(const auto& [key,offset]:std::vector<std::pair<std::string,double>>{{"cx",u},{"cy",v}}) {
+    auto& input=pattern["inputs"][key];
+    if(input.is_string())input="("+input.get<std::string>()+")-("+json(offset).dump()+" mm)";
+    else input=(input.is_number()?input.get<double>():0)-offset;
+    pattern["values"][key]=pattern["values"].value(key,0.0)-offset;
+  }
+  sk.validate();
+}
 
 namespace {
 

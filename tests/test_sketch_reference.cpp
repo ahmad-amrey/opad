@@ -5,6 +5,8 @@
 #include "opad/design/sketch_modify.hpp"
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepAdaptor_Curve.hxx>
+#include <BRep_Tool.hxx>
+#include <TopoDS.hxx>
 #include "opad/geometry.hpp"
 #include "opad/step_io.hpp"
 #include <cmath>
@@ -59,3 +61,13 @@ TEST(sketch_backdrop_round_trip_and_id_delta) {
   CHECK(Sketch::from_json(after).to_json()==after);sk.images[0]["width"]=-1;CHECK_THROWS(sk.validate());
 }
 CHECK_MAIN()
+TEST(sketch_origin_projects_vertices_and_circle_centers) {
+  Document doc=Document::create();
+  import_brep(doc,brep_from_shape(BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(7,9,3),gp_Dir(0,0,1)),10,20).Shape()),"Cylinder");
+  const auto scene=resolve(doc);const auto body=scene.all_bodies().front();
+  const auto center=resolve_plane(doc,scene,{{"support",{{"base","xy"}}},{"origin",{{"ref",{{"body",body},{"kind","edge"},{"index",0}}}}}});
+  CHECK_NEAR(center.origin[0],7,1e-8);CHECK_NEAR(center.origin[1],9,1e-8);CHECK_NEAR(center.origin[2],0,1e-8);
+  const auto shape=node_world_shape(doc,scene,body);const auto point=BRep_Tool::Pnt(TopoDS::Vertex(subshape(shape,Ref::Kind::Vertex,1)));
+  const auto vertex=resolve_plane(doc,scene,{{"support",{{"base","xz"}}},{"origin",{{"ref",{{"body",body},{"kind","vertex"},{"index",1}}}}}});
+  CHECK_NEAR(vertex.origin[0],point.X(),1e-8);CHECK_NEAR(vertex.origin[1],0,1e-8);CHECK_NEAR(vertex.origin[2],point.Z(),1e-8);
+}

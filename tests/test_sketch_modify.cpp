@@ -90,3 +90,13 @@ TEST(healing_includes_the_seam_of_a_closed_circle) {
   CHECK_EQ(heal_to_curves(sk,.05),1);CHECK_NEAR(sk.point(endpoint)->x,10,1e-8);CHECK(solve(sk).converged);
 }
 CHECK_MAIN()
+TEST(origin_shift_preserves_ids_constraints_images_and_polar_pattern) {
+  Sketch sk;const int circle=sk.add_circle(sk.add_point(10,20),3);
+  sk.add_constraint(SkConstraint::Type::Radius,{circle},3);
+  create_pattern(sk,{circle},{{"polar",true},{"count",3},{"cx",5},{"cy",6}});
+  sk.images.push_back({{"id",sk.next_id()},{"data","png"},{"position",{2,4}},{"width",10},{"height",10}});
+  const auto before=sk;shift_sketch_origin(sk,7,-4);refresh_patterns(sk);
+  CHECK_EQ(sk.next_id(),before.next_id());CHECK_EQ(sk.constraints.size(),before.constraints.size());
+  for(const auto& p:before.points){CHECK_NEAR(sk.point(p.id)->x+7,p.x,1e-8);CHECK_NEAR(sk.point(p.id)->y-4,p.y,1e-8);}
+  CHECK_NEAR(sk.images[0]["position"][0].get<double>(),-5,1e-8);CHECK(solve(sk).converged);
+}

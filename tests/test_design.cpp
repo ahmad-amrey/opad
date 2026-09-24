@@ -483,3 +483,18 @@ TEST(sketch_record_format_and_incremental_replay) {
   CHECK(resolve(doc).sketch(id)->geometry==before);
   CHECK_THROWS(Document::parse(text.substr(0,text.find("#bodies")-3)));
 }
+TEST(sketch_origin_support_regenerates_and_roundtrips) {
+  Document doc=Document::create();
+  const auto support=run_id(feature_cmd(doc,"plane",{{"mode","offset"},{"plane",{{"base","xy"}}},{"distance","30 mm"}}));
+  const json plane={{"support",{{"feature",support}}},{"origin",{{"world",{12,13,200}}}}};
+  const auto sketch=run_id(sketch_cmd(doc,rectangle(0,0,10,20),plane));
+  auto frame=resolve(doc).sketch(sketch)->frame;
+  CHECK_NEAR(frame.origin[0],12,1e-8);CHECK_NEAR(frame.origin[1],13,1e-8);CHECK_NEAR(frame.origin[2],30,1e-8);
+  feature_cmd(doc,"extrude",{{"profiles",json::array({{{"sketch",sketch},{"all",true}}})},{"distance","5 mm"}});
+  const double volume=total_volume(doc);
+  commands::run("feature_edit",{{"target",support},{"inputs",{{"distance","60 mm"}}}},&doc);
+  const auto restored=Document::parse(doc.serialize());const auto scene=resolve(restored);CHECK(scene.unresolved.empty());
+  CHECK_NEAR(scene.sketch(sketch)->frame.origin[2],60,1e-8);CHECK_NEAR(total_volume(restored),volume,1e-7);
+  const auto numeric=resolve_plane(doc,scene,{{"support",{{"base","xz"}}},{"origin",{{"uv",{4,8}}}}});
+  CHECK_NEAR(numeric.origin[0],4,1e-9);CHECK_NEAR(numeric.origin[1],0,1e-9);CHECK_NEAR(numeric.origin[2],8,1e-9);
+}
