@@ -9,6 +9,7 @@ std::vector<int> transform_entities(Sketch& sk,const std::vector<int>& ids,const
 std::vector<int> append_sketch_shape(Sketch& sk,const TopoDS_Shape& shape,const Frame& frame={},bool construction=false,bool fixed=false);
 void offset_entities(Sketch& sk,const std::vector<int>& ids,double distance,bool round);
 int heal_endpoints(Sketch& sk,double tolerance);
+int heal_to_curves(Sketch& sk,double tolerance);
 void split_entity(Sketch& sk,int entity,double x,double y);
 void break_intersections(Sketch& sk,const std::vector<int>& entities);
 void extend_entity(Sketch& sk,int entity,int boundary,double x,double y);

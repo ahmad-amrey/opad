@@ -44,7 +44,7 @@ void update(Sketch& sk,json& pattern) {
       const double x=p->x-t.cx,y=p->y-t.cy;auto* q=sk.point(target);
       q->x=t.cx+t.x+x*std::cos(t.angle)-y*std::sin(t.angle);q->y=t.cy+t.y+x*std::sin(t.angle)+y*std::cos(t.angle);q->fixed=true;
     }
-    for(int seed:seeds) {auto e=*sk.entity(seed);e.id=map.at(seed);for(int& p:e.p)p=map.at(p);e.fixed=true;*sk.entity(e.id)=e;}
+    for(int seed:seeds) {auto e=*sk.entity(seed);e.id=map.at(seed);for(int& p:e.p)p=map.at(p);e.fixed=true;e.source=nullptr;*sk.entity(e.id)=e;}
   }
 }
 }
@@ -74,7 +74,7 @@ void remove_pattern(Sketch& sk,int id,bool explode) {
   for(const auto& p:sk.patterns)if(p.at("id").get<int>()==id)for(const auto& instance:p.value("instances",json::array()))for(const auto& pair:instance.at("map"))ids.insert(pair[1].get<int>());
   sk.id_watermark=sk.next_id()-1;
   for(auto it=sk.patterns.begin();it!=sk.patterns.end();) {if(it->at("id").get<int>()==id)it=sk.patterns.erase(it);else ++it;}
-  if(explode){for(int id:ids){if(auto* p=sk.point(id))p->fixed=false;if(auto* e=sk.entity(id))e->fixed=false;}}
+  if(explode){for(int id:ids){if(auto* p=sk.point(id))p->fixed=false;if(auto* e=sk.entity(id)){e->fixed=false;e->source=nullptr;}}}
   else erase_ids(sk,ids);
 }
 }

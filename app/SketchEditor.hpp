@@ -44,6 +44,8 @@ class SketchEditor : public QObject, public SketchInput {
   QList<ToolStep> toolSteps() const;
   QString option(const QString& key, const QString& fallback = {}) const { return m_options.value(key, fallback); }
   void applyTool();
+  void previewTool();
+  void invalidatePreview();
   void placePrecise(const QString& u, const QString& v, int mode);
   void stepBack();
   void toggleReference();
@@ -57,6 +59,8 @@ class SketchEditor : public QObject, public SketchInput {
   void insertSplineNode(double u,double v);
   void toggleConstruction();
   void deleteSelection();
+  void fitSketch();
+  void analyseSketch();
   bool busy() const {return m_editJob!=nullptr;}
   bool canUndo() const { return !m_undo.empty(); }
   bool canRedo() const { return !m_redo.empty(); }
@@ -158,6 +162,10 @@ class SketchEditor : public QObject, public SketchInput {
   bool m_panelFieldsDirty = false;
   int m_session=0;
   Job* m_editJob=nullptr;
+  bool m_previewRequested=false;
+  int m_previewRevision=0;
+  std::shared_ptr<opad::design::Sketch> m_toolPreview;
+  opad::design::SolveResult m_previewSolved;
   QString m_selectionFilter = "all",m_constraintFilter;
   std::set<int> m_conflicts;
   std::vector<std::tuple<int,double,double>> m_glyphHits;

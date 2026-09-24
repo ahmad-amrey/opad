@@ -127,6 +127,7 @@ void check_constraint(const Sketch& sk, const SkConstraint& c) {
     }
     if(c.anchors.size()!=splines)throw Error(who+": missing spline endpoint anchors");
   }
+  else if(!c.anchors.empty())throw Error(who+": endpoint anchors only belong to spline continuity constraints");
   if (c.is_dimension() && !std::isfinite(c.value)) throw Error(who + ": value is not a number");
 }
 
@@ -243,7 +244,7 @@ int Sketch::add_constraint(SkConstraint::Type t, std::vector<int> refs, double v
 // line and its end points in any order.
 void Sketch::remove(int id) {
   id_watermark = next_id() - 1;
-  if(const int pattern=pattern_of(*this,id,true)) {
+  while(const int pattern=pattern_of(*this,id,true)) {
     const bool instance=pattern_of(*this,id,false)!=0;
     remove_pattern(*this,pattern);
     if(instance || pattern==id)return;
@@ -287,7 +288,11 @@ void Sketch::validate() const {
   for (const auto& e : entities) claim(e.id, "entity");
   for (const auto& c : constraints) claim(c.id, "constraint");
   if(!images.is_array())throw Error("sketch images must be an array");
-  for(const auto& image:images){claim(image.at("id").get<int>(),"image");if(!image.at("data").is_string()||image.at("position").size()!=2||image.at("width").get<double>()<=0||image.at("height").get<double>()<=0||image.value("opacity",.5)<0||image.value("opacity",.5)>1)throw Error("invalid sketch image");}
+  for(const auto& image:images) {
+    claim(image.at("id").get<int>(),"image");if(!image.at("data").is_string()||!image.at("position").is_array()||image.at("position").size()!=2)throw Error("invalid sketch image");
+    const double w=image.at("width").get<double>(),h=image.at("height").get<double>(),a=image.value("angle",0.0),opacity=image.value("opacity",.5),x=image.at("position")[0].get<double>(),y=image.at("position")[1].get<double>();
+    if(!std::isfinite(w)||!std::isfinite(h)||!std::isfinite(a)||!std::isfinite(opacity)||!std::isfinite(x)||!std::isfinite(y)||w<=0||h<=0||opacity<0||opacity>1)throw Error("invalid sketch image placement");
+  }
   if(!patterns.is_array())throw Error("sketch patterns must be an array");
   for(const auto& p:patterns) {
     claim(p.at("id").get<int>(),"pattern");

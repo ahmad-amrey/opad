@@ -1177,5 +1177,12 @@
  "Choose the backdrop image": "اختر صورة الخلفية",
  "Adjust tracing parameters": "اضبط معلمات التتبع",
  "Apply to create editable curves": "طبّق لإنشاء منحنيات قابلة للتحرير",
- "Choose source and parameters": "اختر المصدر والمعلمات"
+ "Choose source and parameters": "اختر المصدر والمعلمات",
+ "Resolving sketch plane": "تحديد مستوى الرسم",
+ "Create construction plane": "إنشاء مستوى إنشائي",
+ "Select an existing construction plane in the view, or create an offset, angled or three-point plane first.": "اختر مستوى إنشائياً موجوداً في المشهد، أو أنشئ أولاً مستوى بإزاحة أو زاوية أو ثلاث نقاط.",
+ "Choose sketch plane": "اختر مستوى الرسم",
+ "Preview": "معاينة",
+ "Preview ready. Apply to keep it, or change parameters and preview again.": "المعاينة جاهزة. اضغط تطبيق لاعتمادها، أو غيّر المعلمات وأعد المعاينة.",
+ "Analysing sketch constraints": "تحليل قيود الرسم"
 }

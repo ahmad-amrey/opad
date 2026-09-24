@@ -401,9 +401,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
     Handle(AIS_Shape) ais;
     std::shared_ptr<BodyPrs> prs;
     std::string stamp;  // geometry + frame it was built from
+    std::vector<Handle(AIS_InteractiveObject)> backdrops;
   };
   std::map<std::string, SketchWire> m_sketchWires;
-  struct PreparedSketch { std::string stamp; TopoDS_Shape shape; std::shared_ptr<BodyPrs> prs; bool ready=false; };
+  struct PreparedSketch { std::string stamp; TopoDS_Shape shape; std::shared_ptr<BodyPrs> prs; std::vector<Handle(AIS_InteractiveObject)> backdrops; bool ready=false; };
   std::map<std::string,std::shared_ptr<PreparedSketch>> m_preparedSketches;
   std::string m_hiddenSketch;  // being edited: the editor draws it
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_candidates;

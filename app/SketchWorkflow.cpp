@@ -9,6 +9,7 @@
 #include "Jobs.hpp"
 #include <cmath>
 #include "I18n.hpp"
+#include "opad/design/sketch_geom.hpp"
 
 using namespace opad::design;
 
@@ -73,6 +74,10 @@ QList<ToolStep> SketchEditor::toolSteps() const {
 void SketchEditor::applyTool() {
   if(!m_active)return;
   if(m_editJob)return;
+  if(!m_previewRequested && m_toolPreview) {
+    m_undo.push_back({m_sk,m_plane,m_frame});m_redo.clear();m_sk=*m_toolPreview;m_solved=m_previewSolved;m_toolPreview.reset();m_modified=true;m_panelFieldsDirty=true;
+    m_clicks.clear();m_picked.clear();m_sel.clear();rebuild();scheduleFill();toolPrompt();emit changed();return;
+  }
   if(applyReference()||applyImageTool())return;
   if(applyModify())return;
   if(m_tool=="offset")return offsetSelection();
@@ -104,17 +109,21 @@ void SketchEditor::applyTool() {
 void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&)> work) {
   if(!m_active || m_editJob)return;
   const auto before=std::make_shared<Sketch>(m_sk),after=std::make_shared<Sketch>(m_sk);
+  const bool preview=m_previewRequested;
+  const int previewRevision=m_previewRevision;
   const auto solved=std::make_shared<SolveResult>();const auto options=solveOptions();const int session=m_session;
   QPointer<SketchEditor> guard(this);
   m_editJob=m_jobs->async(label,[after,solved,options,work](Progress progress){
     if(progress.cancelled())return;work(*after);if(progress.cancelled())return;
     after->validate();*solved=solve(*after,options);
     if(!solved->converged)throw opad::Error("the operation conflicts with existing constraints");
-  },[this,guard,before,after,solved,session](bool ok,const QString& error){
+  },[this,guard,before,after,solved,session,preview,previewRevision](bool ok,const QString& error){
     if(!guard || !m_active || m_session!=session)return;
     m_editJob=nullptr;
+    if(preview && previewRevision!=m_previewRevision)return;
     if(!ok){emit status(error);return;}
     if(m_sk.to_json()!=before->to_json())return;
+    if(preview){m_toolPreview=after;m_previewSolved=*solved;rebuild();emit status(tr("Preview ready. Apply to keep it, or change parameters and preview again."));return;}
     m_undo.push_back({*before,m_plane,m_frame});m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;m_panelFieldsDirty=true;
     m_clicks.clear();m_picked.clear();m_sel.clear();rebuild();scheduleFill();toolPrompt();emit changed();
     if(m_tool=="mirror")m_options["mirrorStage"]="seed";
@@ -137,6 +146,7 @@ void SketchEditor::placePrecise(const QString& u,const QString& v,int mode) {
 }
 
 void SketchEditor::stepBack() {
+  invalidatePreview();
   if(!m_clicks.empty())m_clicks.pop_back();
   else if(!m_picked.empty()){m_picked.pop_back();m_placingDim=false;}
   else if(!m_chain.empty()){undo();}
@@ -166,6 +176,7 @@ bool SketchEditor::selectable(int id) const {
 }
 
 void SketchEditor::selectConnected() {
+  invalidatePreview();
   std::set<int> ids(m_sel.begin(),m_sel.end()),points;
   for(int id:ids)if(m_sk.point(id))points.insert(id);
   bool changed=true;
@@ -173,6 +184,7 @@ void SketchEditor::selectConnected() {
   m_sel.assign(ids.begin(),ids.end());rebuild();emit this->changed();
 }
 void SketchEditor::selectType() {
+  invalidatePreview();
   const auto* seed=m_sel.empty()?nullptr:m_sk.entity(m_sel.front());
   const auto type=seed?seed->type:SkEntity::Type::Point;
   m_sel.clear();for(const auto& e:m_sk.entities)if(seed?e.type==type:selectable(e.id))m_sel.push_back(e.id);
@@ -182,7 +194,7 @@ void SketchEditor::selectType() {
 void SketchEditor::redefinePlane(const opad::json& plane,const opad::Frame& frame) {
   begin_change();m_plane=plane;m_frame=frame;
   if(!end_change(tr("Redefine sketch plane")))return;
-  m_viewport->endSketchInput();m_viewport->beginSketchInput(this,frame,m_id);m_viewport->lookAt(frame,true,false);
+  m_viewport->endSketchInput();m_viewport->beginSketchInput(this,frame,m_id);fitSketch();
   m_fill.clear();rebuild();scheduleFill();emit changed();
 }
 
@@ -197,14 +209,18 @@ void SketchEditor::benchWorkflow() {
       switch((*phase)++) {
         case 0:setTool("image_insert");m_options["imageFile"]=prefix+".source.png";m_options["imageWidth"]="32 mm";placePrecise("0","0",0);applyTool();break;
         case 1:require(m_sk.images.size()==1 && m_imagePrs.size()==1,"embedded backdrop");setTool("image_calibrate");m_options["knownDistance"]="16 mm";placePrecise("0","0",0);placePrecise("32","0",0);applyTool();break;
-        case 2:require(std::fabs(m_sk.images[0]["width"].get<double>()-16)<1e-8,"image calibration");setTool("image_trace");m_options["smoothing"]="0";m_options["noise"]="2";m_options["cornerAngle"]="180";applyTool();break;
-        case 3:require(m_sk.entities.size()==8,"editable trace with hole");setTool("project");m_options["projectionSource"]="{\"base\":\"x\"}";applyTool();break;
+        case 2:require(std::fabs(m_sk.images[0]["width"].get<double>()-16)<1e-8,"image calibration");setTool("image_trace");m_options["smoothing"]="0";m_options["noise"]="2";m_options["cornerAngle"]="180";previewTool();break;
+        case 3:if(m_toolPreview){require(m_sk.entities.empty() && m_undo.size()==2,"preview does not modify the sketch");fitSketch();m_viewport->grabImage().save(prefix+".preview.png");applyTool();--*phase;break;}require(m_sk.entities.size()==8,"editable trace with hole");setTool("project");m_options["projectionSource"]="{\"base\":\"x\"}";applyTool();break;
         case 4:require(m_sk.entities.size()==9 && !m_sk.entities.back().source.is_null(),"linked work geometry");m_sel={m_sk.entities.back().id};setTool("break_link");applyTool();break;
         case 5:require(m_sk.entities.back().source.is_null()&&!m_sk.entities.back().fixed,"break reference link");setTool("vector_export");m_options["vectorFile"]=prefix+".svg";applyTool();break;
         case 6:require(QFileInfo(prefix+".svg").size()>0,"SVG export");setTool("vector_import");applyTool();break;
         case 7:require(m_sk.entities.size()==18,"SVG import as editable curves");setTool("image_edit");m_options["imageAngle"]="30 deg";m_options["imageOpacity"]="0.7";applyTool();break;
         case 8:{require(std::fabs(m_sk.images[0]["angle"].get<double>()-M_PI/6)<1e-8,"image rotation");auto camera=m_viewport->cameraJson();camera["scale"]=48;camera["target"]={8,8,0};camera["eye"]={8,8,100};m_viewport->setCameraJson(camera);m_viewport->grabImage().save(prefix+".viewport.png");for(auto* panel:m_viewport->window()->findChildren<SketchPanel*>())panel->grab().save(prefix+".panel.png");setTool("image_remove");applyTool();break;}
-        default:require(m_sk.images.empty()&&m_imagePrs.empty(),"remove backdrop");undo();require(m_sk.images.size()==1,"image undo");end();require(m_imagePrs.empty()&&!m_imageJob,"image cleanup on sketch exit");timer->stop();trace::log("bench: sketch projection, image and vector workflow PASS");QCoreApplication::exit(0);break;
+        case 9:require(m_sk.images.empty()&&m_imagePrs.empty(),"remove backdrop");undo();require(m_sk.images.size()==1,"image undo");break;
+        case 10:for(auto* panel:m_viewport->window()->findChildren<SketchPanel*>())QMetaObject::invokeMethod(panel,"finishRequested");break;
+        case 11:if(m_active||m_doc->designBusy){--*phase;break;}require(m_imagePrs.empty()&&!m_imageJob,"image cleanup on sketch exit");require(!m_doc->scene.sketches.empty()&&!m_doc->scene.sketches.back().geometry.at("images").empty(),"backdrop committed to document");break;
+        case 12:case 13:case 14:case 15:case 16:case 17:case 18:case 19:break;
+        default:{auto camera=m_viewport->cameraJson();camera["scale"]=48;camera["target"]={8,8,0};camera["eye"]={8,8,100};m_viewport->setCameraJson(camera);m_viewport->grabImage().save(prefix+".saved.png");timer->stop();trace::log("bench: sketch projection, image and vector workflow PASS");QCoreApplication::exit(0);break;}
       }
     }catch(const std::exception& e){timer->stop();trace::log(QString("bench: sketch reference workflow FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();return;
   }
@@ -256,4 +272,30 @@ void SketchEditor::benchDrag() {
     undo();ok &= std::hypot(m_sk.point(3)->x-10,m_sk.point(3)->y)<1e-9;
     trace::log(QString("bench: asynchronous sketch drag and single undo %1").arg(ok?"PASS":"FAIL"));QCoreApplication::exit(ok?0:2);
   });timer->start();
+}
+
+void SketchEditor::fitSketch() {
+  if(!m_active)return;m_viewport->lookAt(m_frame,false,false);double x0,y0,x1,y1;
+  bool any=sketch_bounds(m_sk,x0,y0,x1,y1);
+  for(const auto& image:m_sk.images) {
+    const double a=image.value("angle",0.0),x=image.at("position")[0].get<double>(),y=image.at("position")[1].get<double>(),w=image.at("width").get<double>(),h=image.at("height").get<double>();
+    for(auto [u,v]:std::vector<std::pair<double,double>>{{0,0},{w,0},{w,h},{0,h}}){double px=x+u*std::cos(a)-v*std::sin(a),py=y+u*std::sin(a)+v*std::cos(a);if(!any){x0=x1=px;y0=y1=py;any=true;}else{x0=std::min(x0,px);x1=std::max(x1,px);y0=std::min(y0,py);y1=std::max(y1,py);}}
+  }
+  if(!any || x1-x0+y1-y0<1e-8){x0=y0=-60;x1=y1=60;}
+  const double aspect=double(std::max(1,m_viewport->width()))/std::max(1,m_viewport->height());const double scale=std::max({20.0,(y1-y0)*1.3,(x1-x0)*1.3/aspect});
+  auto camera=m_viewport->cameraJson();auto center=m_frame.to_world((x0+x1)/2,(y0+y1)/2),eye=center;const auto normal=m_frame.normal();for(int i=0;i<3;++i)eye[i]+=normal[i]*std::max(100.0,scale*2);
+  camera["eye"]=eye;camera["target"]=center;camera["scale"]=scale;camera["projection"]="orthographic";m_viewport->setCameraJson(camera);
+}
+void SketchEditor::analyseSketch() {
+  if(m_sk.points.size()<=300){Sketch copy=m_sk;m_solved=solve(copy,solveOptions());return;}
+  const auto copy=std::make_shared<Sketch>(m_sk);const auto result=std::make_shared<SolveResult>();const auto options=solveOptions();const int session=m_session;
+  QPointer<SketchEditor> guard(this);m_editJob=m_jobs->async(tr("Analysing sketch constraints"),[copy,result,options](Progress p){if(!p.cancelled())*result=solve(*copy,options);},[this,guard,result,session](bool ok,const QString& error){if(!guard||!m_active||session!=m_session)return;m_editJob=nullptr;if(ok){m_solved=*result;rebuild();emit changed();}else emit status(error);});
+}
+
+void SketchEditor::previewTool() {
+  if(!m_active||m_editJob)return;invalidatePreview();m_previewRequested=true;applyTool();m_previewRequested=false;
+}
+void SketchEditor::invalidatePreview() {
+  ++m_previewRevision;
+  if(!m_toolPreview)return;m_toolPreview.reset();rebuild();
 }

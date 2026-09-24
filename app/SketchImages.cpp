@@ -1,4 +1,5 @@
 #include "SketchEditor.hpp"
+#include "SketchBackdrop.hpp"
 #include "Jobs.hpp"
 #include "opad/design/sketch_reference.hpp"
 #include "opad/design/feature.hpp"
@@ -96,7 +97,13 @@ void SketchEditor::refreshImages() {
   if(m_sk.images.empty()){m_imageJob=nullptr;return;}
   auto images=std::make_shared<opad::json>(m_sk.images);auto made=std::make_shared<std::vector<Handle(AIS_InteractiveObject)>>();const auto frame=m_frame;QPointer<SketchEditor> guard(this);
   m_imageJob=m_jobs->async(tr("Preparing image backdrop"),[images,made,frame](Progress progress){
-    for(const auto& data:*images){if(progress.cancelled())return;
+    *made=prepareSketchBackdrops(*images,frame,progress);
+  },[this,guard,made,revision](bool ok,const QString& error){if(!guard||!m_active||m_imageRevision!=revision)return;m_imageJob=nullptr;if(!ok){emit status(error);return;}m_imagePrs=*made;for(const auto& prs:m_imagePrs)m_viewport->showBackdrop(prs);});
+}
+
+std::vector<Handle(AIS_InteractiveObject)> prepareSketchBackdrops(const opad::json& images,const opad::Frame& frame,Progress progress) {
+  std::vector<Handle(AIS_InteractiveObject)> made;
+    for(const auto& data:images){if(progress.cancelled())return made;
       QImage image=QImage::fromData(QByteArray::fromBase64(QByteArray::fromStdString(data.at("data").get<std::string>()))).convertToFormat(QImage::Format_RGBA8888);if(image.isNull())continue;
       const double width=data.at("width").get<double>(),height=data.at("height").get<double>(),angle=data.value("angle",0.0);
       opad::Frame placed=frame;const auto origin=imagePoint(data,0,0);placed.origin=frame.to_world(origin.first,origin.second);
@@ -104,7 +111,7 @@ void SketchEditor::refreshImages() {
       auto shape=BRepBuilderAPI_MakeFace(frame_plane(placed),0,width,0,height).Face();BRepMesh_IncrementalMesh mesh(shape,.1);
       Handle(Image_PixMap) pixels=new Image_PixMap();pixels->InitTrash(Image_Format_RGBA,image.width(),image.height());pixels->SetTopDown(false);
       for(int row=0;row<image.height();++row){auto* target=pixels->ChangeRow(row);std::memcpy(target,image.constScanLine(image.height()-1-row),image.width()*4);for(int x=0;x<image.width();++x)target[x*4+3]=static_cast<unsigned char>(target[x*4+3]*data.value("opacity",.5));}
-      Handle(AIS_TexturedShape) prs=new AIS_TexturedShape(shape);prs->SetTexturePixMap(pixels);prs->SetTextureMapOn();prs->DisableTextureModulate();prs->SetTextureRepeat(false);prs->SetTransparency(float(1-data.value("opacity",.5)));prs->Attributes()->SetAutoTriangulation(false);made->push_back(prs);
+      Handle(AIS_TexturedShape) prs=new AIS_TexturedShape(shape);prs->SetTexturePixMap(pixels);prs->SetTextureMapOn();prs->DisableTextureModulate();prs->SetTextureRepeat(false);prs->SetTransparency(float(1-data.value("opacity",.5)));prs->Attributes()->SetAutoTriangulation(false);made.push_back(prs);
     }
-  },[this,guard,made,revision](bool ok,const QString& error){if(!guard||!m_active||m_imageRevision!=revision)return;m_imageJob=nullptr;if(!ok){emit status(error);return;}m_imagePrs=*made;for(const auto& prs:m_imagePrs)m_viewport->showBackdrop(prs);});
+  return made;
 }

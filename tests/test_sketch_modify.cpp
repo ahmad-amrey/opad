@@ -72,4 +72,21 @@ TEST(region_booleans_remain_exact_editable_curves) {
     for(const auto& e:sk.entities)CHECK(e.type==E::Circle||e.type==E::Arc);
   }
 }
+TEST(scale_updates_driving_dimensions_and_rotation_respects_orientation_constraints) {
+  Sketch sk;int line=sk.add_line(sk.add_point(0,0),sk.add_point(10,0));int h=sk.add_constraint(SkConstraint::Type::Horizontal,{line});int d=sk.add_constraint(SkConstraint::Type::Distance,{line},10,"width");
+  SketchTransform t;t.scale=2;transform_entities(sk,{line},t,false);evaluate_dimensions(sk,ParamTable({{"width","width","10 mm",""}}));CHECK(solve(sk).converged);CHECK_NEAR(sk.constraint(d)->value,20,1e-9);
+  t={};t.angle=M_PI/2;transform_entities(sk,{line},t,false);CHECK(sk.constraint(h)->type==SkConstraint::Type::Vertical);CHECK(solve(sk).converged);
+  t.angle=.3;CHECK_THROWS(transform_entities(sk,{line},t,false));
+}
+TEST(healing_connects_near_endpoint_to_curve_interior) {
+  Sketch sk;int line=sk.add_line(sk.add_point(0,0),sk.add_point(10,0));int near=sk.add_point(5,.02);sk.add_line(near,sk.add_point(5,5));CHECK_EQ(heal_to_curves(sk,.05),1);CHECK_NEAR(sk.point(near)->y,0,1e-8);CHECK(solve(sk).converged);(void)line;
+}
+TEST(deleting_shared_pattern_seed_removes_all_dependent_patterns) {
+  Sketch sk;int circle=sk.add_circle(sk.add_point(0,0),2);create_pattern(sk,{circle},{{"count",2},{"dx",10}});create_pattern(sk,{circle},{{"count",2},{"dy",10}});sk.remove(circle);CHECK(sk.patterns.empty());CHECK(sk.entities.empty());sk.validate();
+}
+TEST(healing_includes_the_seam_of_a_closed_circle) {
+  Sketch sk;sk.add_circle(sk.add_point(0,0),10);
+  const int endpoint=sk.add_point(10.02,0);sk.add_line(endpoint,sk.add_point(20,0));
+  CHECK_EQ(heal_to_curves(sk,.05),1);CHECK_NEAR(sk.point(endpoint)->x,10,1e-8);CHECK(solve(sk).converged);
+}
 CHECK_MAIN()

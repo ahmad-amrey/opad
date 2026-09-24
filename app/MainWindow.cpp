@@ -338,8 +338,8 @@ void MainWindow::buildActions() {
   addAction("file.quit", tr("&Quit"), "", QKeySequence::Quit, [this] { close(); })->setMenuRole(QAction::QuitRole);
 
   // View
-  addAction("view.fit", tr("Fit"), "fit", QKeySequence("F"), [this] { m_viewport->fitSelection(); });  // the selection, or everything when nothing is selected
-  addAction("view.fitall", tr("Fit all"), "fit", QKeySequence("Shift+F"), [this] { m_viewport->fitAll(); });
+  addAction("view.fit", tr("Fit"), "fit", QKeySequence("F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitSelection(); });  // the selection, or everything when nothing is selected
+  addAction("view.fitall", tr("Fit all"), "fit", QKeySequence("Shift+F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitAll(); });
   addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(); });
   addAction("view.alignPlane",tr("Align view to plane"),"plane",QKeySequence("Ctrl+Alt+0"),[this] {
     if(m_design->sketchActive()) return;
@@ -1040,6 +1040,20 @@ void MainWindow::buildDesign() {
   m_design->setSketchPanel(sketchPanel);
   sketchPanel->setEscapeHandler([this]{m_design->sketch()->stepBack();});
   connect(sketchContent,&SketchPanel::finishRequested,this,[this]{m_design->finishSketch();});
+  auto* planeContent=new QWidget(this);auto* planeLayout=new QVBoxLayout(planeContent);
+  auto* planeSteps=new ToolStepsPanel(planeContent);planeSteps->setSteps({{tr("Select an origin plane or a planar face"),{}}},{});planeSteps->setSummary({}, {}, {});planeSteps->setFixedHeight(85);planeLayout->addWidget(planeSteps);
+  auto* origins=new QHBoxLayout;planeLayout->addLayout(origins);
+  for(const auto* base:{"xy","xz","yz"}){auto* button=new QPushButton(QString::fromLatin1(base).toUpper(),planeContent);origins->addWidget(button);connect(button,&QPushButton::clicked,this,[this,base]{m_viewport->selectRefs({}, {opad::json{{"base",base}}.dump()});m_design->viewportSelectionChanged();});}
+  auto* construction=new QPushButton(tr("Create construction plane"),planeContent);planeLayout->addWidget(construction);
+  connect(construction,&QPushButton::clicked,this,[this]{m_design->escape();m_design->startFeature("plane");});
+  auto* planeHint=new QLabel(tr("Select an existing construction plane in the view, or create an offset, angled or three-point plane first."),planeContent);planeHint->setWordWrap(true);planeLayout->addWidget(planeHint);
+  auto* planeStatus=new QLabel(planeContent);planeStatus->setWordWrap(true);planeLayout->addWidget(planeStatus);planeLayout->addStretch();
+  auto* planeCancel=new QPushButton(tr("Cancel"),planeContent);planeLayout->addWidget(planeCancel);connect(planeCancel,&QPushButton::clicked,this,[this]{m_design->escape();});
+  auto* planePanel=new ToolPanel("sketch-plane","plane",&Tokens::sel,tr("Choose sketch plane"),planeContent,340,this);m_panels<<planePanel;
+  planePanel->setEscapeHandler([this]{m_design->escape();});
+  connect(m_design,&DesignController::status,planeStatus,&QLabel::setText);
+  connect(m_design,&DesignController::stateChanged,this,[this,planePanel]{if(m_design->pickingPlane()){if(!planePanel->isVisible())openPanel(planePanel);}else planePanel->hide();});
+
   connect(m_design, &DesignController::status, this, [this](const QString& text) { m_statusHover->setText(text); });
   connect(m_design, &DesignController::failed, this, [this](const QString& error) { QMessageBox::warning(this, tr("OPAD"), i18n::t(error)); });
   connect(m_design, &DesignController::stateChanged, this, &MainWindow::updateDesignState);

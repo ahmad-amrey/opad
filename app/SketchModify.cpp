@@ -50,7 +50,7 @@ bool SketchEditor::applyModify() {
       else {m_options["mirrorStage"]="axis";toolPrompt();}
     } else if(m_tool=="heal") {
       const double tolerance=length("healTolerance","0.05 mm");
-      runSketchEdit(tr("Heal endpoints"),[tolerance](Sketch& sk){heal_endpoints(sk,tolerance);});
+      runSketchEdit(tr("Heal endpoints"),[tolerance](Sketch& sk){heal_endpoints(sk,tolerance);heal_to_curves(sk,tolerance);});
     } else if(m_tool=="break") {
       if(ids.size()<2)throw opad::Error("select at least two curves to split at their intersections");
       runSketchEdit(tr("Break at intersections"),[ids](Sketch& sk){break_intersections(sk,ids);});

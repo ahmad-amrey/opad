@@ -51,6 +51,7 @@ double norm_angle(double a) {  // into [0, 2 pi)
 // ---------------------------------------------------------------- tool selection
 void SketchEditor::setTool(const QString& tool) {
   if (!m_active || m_editJob) return;
+  invalidatePreview();
   if (!m_chain.empty()) finishChain();
   cancel_change();
   m_clicks.clear();
@@ -127,6 +128,7 @@ void SketchEditor::finishChain() {
 }
 
 void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
+  invalidatePreview();
   if(imageClick(s.u,s.v))return;
   if(m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d")return pickReference();
   if(modifyClick(s.u,s.v))return;

@@ -34,14 +34,24 @@ std::vector<int> transform_entities(Sketch& sk,const std::vector<int>& ids,const
   std::map<int,int> mapped;std::vector<SkEntity> source;std::vector<int> result;std::set<int> points;
   for(int id:ids)if(const auto* e=sk.entity(id)){source.push_back(*e);for(int p:e->p)points.insert(p);}
   if(source.empty())throw Error("select curves to transform");
-  for(int id:points){auto p=*sk.point(id);if(p.fixed&&!copy)throw Error("fixed geometry cannot be transformed; break its link first");double x=p.x-t.cx,y=p.y-t.cy;if(t.mirror)y=-y;const double a=t.angle;
+  const std::set<int> selected(ids.begin(),ids.end());
+  if(!copy)for(const auto& e:source)if(e.fixed)throw Error("break projection or pattern links before transforming fixed curves");
+  if(!copy)for(const auto& c:sk.constraints)if(c.type==SkConstraint::Type::Fix)for(int ref:c.refs)if(selected.count(ref)||points.count(ref))throw Error("unlock fixed geometry before transforming it");
+  if(!copy && std::fabs(std::sin(t.angle*2))>1e-9)for(const auto& c:sk.constraints)
+    if((c.type==SkConstraint::Type::Horizontal||c.type==SkConstraint::Type::Vertical||c.type==SkConstraint::Type::HDistance||c.type==SkConstraint::Type::VDistance)&&std::all_of(c.refs.begin(),c.refs.end(),[&](int id){return selected.count(id)||points.count(id);}))throw Error("remove horizontal or vertical constraints before rotating to an oblique angle");
+  for(int id:points){auto p=*sk.point(id);const auto original=p;double x=p.x-t.cx,y=p.y-t.cy;if(t.mirror)y=-y;const double a=t.angle;
     p.x=t.cx+t.x+t.scale*(x*std::cos(a)-y*std::sin(a));p.y=t.cy+t.y+t.scale*(x*std::sin(a)+y*std::cos(a));
+    if(!copy && p.fixed && std::hypot(p.x-original.x,p.y-original.y)>1e-9)throw Error("fixed geometry cannot be transformed; break its link first");
     if(copy){mapped[id]=sk.add_point(p.x,p.y);}else{*sk.point(id)=p;mapped[id]=id;}}
   for(auto e:source){const int old=e.id;if(copy){e.id=sk.next_id();e.fixed=false;e.source=nullptr;for(int& p:e.p)p=mapped.at(p);}if(t.mirror&&e.type==SkEntity::Type::Arc)std::swap(e.p[1],e.p[2]);e.r*=t.scale;result.push_back(e.id);mapped[old]=e.id;if(copy)sk.entities.push_back(e);else *sk.entity(e.id)=e;}
   if(copy){const auto constraints=sk.constraints;for(auto c:constraints){if(!std::all_of(c.refs.begin(),c.refs.end(),[&](int id){return mapped.count(id);}))continue;
     if(c.type==SkConstraint::Type::Fix)continue;
     if(std::fabs(std::sin(t.angle))>1e-9 && (c.type==SkConstraint::Type::Horizontal||c.type==SkConstraint::Type::Vertical||c.type==SkConstraint::Type::HDistance||c.type==SkConstraint::Type::VDistance))continue;
     c.id=sk.next_id();for(int& r:c.refs)r=mapped.at(r);for(int& r:c.anchors)r=mapped.at(r);if(c.is_dimension()&&c.type!=SkConstraint::Type::Angle){c.value*=t.scale;if(!c.expr.empty()&&t.scale!=1)c.expr="("+c.expr+")*"+json(t.scale).dump();}c.pos[0]+=t.x;c.pos[1]+=t.y;sk.constraints.push_back(c);}}
+  if(!copy)for(auto& c:sk.constraints)if(std::all_of(c.refs.begin(),c.refs.end(),[&](int id){return mapped.count(id);})) {
+    if(c.is_dimension() && c.type!=SkConstraint::Type::Angle && !c.reference){c.value*=t.scale;if(!c.expr.empty() && t.scale!=1)c.expr="("+c.expr+")*"+json(t.scale).dump();}
+    if(std::fabs(std::sin(t.angle))>1-1e-9){using T=SkConstraint::Type;if(c.type==T::Horizontal)c.type=T::Vertical;else if(c.type==T::Vertical)c.type=T::Horizontal;else if(c.type==T::HDistance)c.type=T::VDistance;else if(c.type==T::VDistance)c.type=T::HDistance;}
+  }
   sk.validate();return result;
 }
 
@@ -81,6 +91,30 @@ int heal_endpoints(Sketch& sk,double tolerance) {
     std::erase_if(sk.constraints,[](const SkConstraint& c){return c.type==SkConstraint::Type::Coincident && c.refs.size()==2 && c.refs[0]==c.refs[1];});sk.remove(id);++merged;
   }
   sk.validate();return merged;
+}
+
+int heal_to_curves(Sketch& sk,double tolerance) {
+  if(!(tolerance>0)||!std::isfinite(tolerance))throw Error("healing tolerance must be positive");
+  std::map<int,int> degree;
+  for(const auto& e:sk.entities)if(!e.construction){if(e.type==SkEntity::Type::Line||e.type==SkEntity::Type::Spline){++degree[e.p.front()];++degree[e.p.back()];}else if(e.type==SkEntity::Type::Arc){++degree[e.p[1]];++degree[e.p[2]];}}
+  int healed=0;
+  for(const auto& [id,count]:degree)if(count==1) {
+    const auto* p=sk.point(id);if(!p||p->fixed)continue;const gp_Pnt point(p->x,p->y,0);int target=0;gp_Pnt closest;double best=tolerance;
+    for(const auto& e:sk.entities)if(!e.construction&&e.type!=SkEntity::Type::Point&&std::find(e.p.begin(),e.p.end(),id)==e.p.end()) {
+      const auto edge=entity_edge(sk,e,{});if(edge.IsNull())continue;Bnd_Box box;BRepBndLib::Add(edge,box);box.Enlarge(tolerance);if(box.IsOut(point))continue;
+      BRepAdaptor_Curve curve(edge);const auto source=Handle(Geom_Curve)::DownCast(curve.Curve().Curve()->Transformed(curve.Trsf()));GeomAPI_ProjectPointOnCurve nearest(point,source,curve.FirstParameter(),curve.LastParameter());
+      if(!nearest.NbPoints()||nearest.LowerDistance()>best)continue;const auto q=nearest.NearestPoint();
+      const auto start=curve.Value(curve.FirstParameter()),end=curve.Value(curve.LastParameter());
+      if(start.Distance(end)>1e-7 && (q.Distance(start)<1e-7 || q.Distance(end)<1e-7))continue;
+      best=nearest.LowerDistance();closest=q;target=e.id;
+    }
+    if(!target)continue;auto* endpoint=sk.point(id);endpoint->x=closest.X();endpoint->y=closest.Y();
+    const auto curve=*sk.entity(target);
+    if(curve.type==SkEntity::Type::Line||curve.type==SkEntity::Type::Circle||curve.type==SkEntity::Type::Arc)sk.add_constraint(SkConstraint::Type::Coincident,{id,target});
+    else if(!curve.fixed)split_entity(sk,target,closest.X(),closest.Y());
+    ++healed;
+  }
+  sk.validate();return healed;
 }
 
 void split_entity(Sketch& sk,int id,double x,double y) {

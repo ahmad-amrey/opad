@@ -153,8 +153,8 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
 SketchEditor::~SketchEditor() = default;
 
 void SketchEditor::begin(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry) {
-  ++m_session;
-  m_trackingPoint = 0; m_inferenceLocked = false;
+  ++m_session;m_toolPreview.reset();m_previewRequested=false;
+  m_trackingPoint = 0; m_inferenceLocked = false;m_dragging=false;m_dragMoved=false;m_dragPending=false;m_dragReleased=false;m_inChange=false;m_options.clear();m_conflicts.clear();
   m_id = sketchId;
   m_name = name;
   m_plane = plane;
@@ -162,7 +162,7 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
   m_sk = Sketch::from_json(geometry);
   m_initialGeometry = m_sk.to_json();
   if (m_sk.points.empty()) m_sk.add_point(0, 0, true);  // the origin: something to constrain the first curve to
-  Sketch analysis=m_sk; m_solved = solve(analysis,solveOptions()); // opening never drifts stored coordinates
+  m_solved={}; // analysed after setup; opening never changes stored coordinates
   m_undo.clear();
   m_redo.clear();
   m_sel.clear();
@@ -174,11 +174,11 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
   m_modified = false;
   m_active = true;
   m_tool = "select";
-  m_prs = new SketchPrs();
+  m_prs = new SketchPrs();m_prs->SetInfiniteState(true); // axes must not inflate camera fitting
   m_cameraBefore = m_viewport->cameraJson();m_sectionBefore=m_viewport->sectionState();m_imagesStamp.clear();
   m_viewport->beginSketchInput(this, frame, sketchId);
   m_viewport->showOverlay(m_prs);
-  m_viewport->lookAt(frame,true,false);
+  fitSketch();analyseSketch();
   rebuild();
   scheduleFill();
   emit toolChanged(m_tool);
@@ -193,7 +193,7 @@ void SketchEditor::end() {
   for(const auto& prs:m_imagePrs)m_viewport->removeOverlay(prs);m_imagePrs.clear();
   m_viewport->restoreSection(m_sectionBefore);
   ++m_session;if(m_editJob)m_editJob->cancel();m_editJob=nullptr;
-  m_active = false;
+  m_active = false;m_toolPreview.reset();
   m_fillTimer.stop();
   if (m_fillJob) m_fillJob->cancel();
   if (m_dimEdit) m_dimEdit->hide();
@@ -217,6 +217,7 @@ void SketchEditor::scheduleFill() { m_fillTimer.start(); }
 
 // ---------------------------------------------------------------- undo
 void SketchEditor::begin_change() {
+  invalidatePreview();
   m_dangling.clear();
   m_sk.id_watermark=m_sk.next_id()-1;
   m_before = m_sk;
@@ -232,6 +233,18 @@ void SketchEditor::cancel_change() {
 
 bool SketchEditor::end_change(const QString& what) {
   m_inChange = false;
+  if(m_sk.points.size()>300) {
+    const auto after=std::make_shared<Sketch>(m_sk),before=std::make_shared<Sketch>(m_before);const auto result=std::make_shared<SolveResult>();
+    const auto oldPlane=m_beforePlane;const auto oldFrame=m_beforeFrame;const auto options=solveOptions();const int session=m_session;
+    std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});QPointer<SketchEditor> guard(this);
+    m_editJob=m_jobs->async(what,[after,result,options,defs](Progress p){if(p.cancelled())return;evaluate_dimensions(*after,ParamTable(defs));*result=solve(*after,options);if(!result->converged)throw opad::Error("the edit conflicts with existing constraints");},[this,guard,after,before,result,session,oldPlane,oldFrame](bool ok,const QString& error){
+      if(!guard||!m_active||session!=m_session)return;m_editJob=nullptr;
+      if(ok){m_sk=*after;m_solved=*result;m_undo.push_back({*before,oldPlane,oldFrame});m_redo.clear();m_modified=true;}
+      else {const bool planeChanged=m_plane!=oldPlane;m_sk=*before;m_plane=oldPlane;m_frame=oldFrame;if(planeChanged){m_viewport->endSketchInput();m_viewport->beginSketchInput(this,m_frame,m_id);fitSketch();}m_chain.clear();m_clicks.clear();m_picked.clear();m_placingDim=false;m_dimEditing=0;m_conflicts={result->failed.begin(),result->failed.end()};emit status(error);}
+      m_panelFieldsDirty=true;rebuild();scheduleFill();emit changed();
+    });
+    rebuild();return true;
+  }
   SolveResult r;
   try {
     std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});
@@ -239,6 +252,7 @@ bool SketchEditor::end_change(const QString& what) {
     r = solve(m_sk,solveOptions());
   } catch (const std::exception& e) {
     m_sk = m_before;
+    m_plane=m_beforePlane;m_frame=m_beforeFrame;
     emit status(i18n::t(QString::fromUtf8(e.what())));
     rebuild();
     return false;
@@ -246,6 +260,7 @@ bool SketchEditor::end_change(const QString& what) {
   if (!r.converged) {
     m_conflicts={r.failed.begin(),r.failed.end()};
     m_sk = m_before;  // never leave the sketch over-constrained: the change is refused
+    m_plane=m_beforePlane;m_frame=m_beforeFrame;
     QStringList ids;for(int id:r.failed)ids<<QString::number(id);
     emit status(tr("%1 conflicts with constraints %2. Edit or remove them, or switch a dimension to reference.").arg(what,ids.join(", ")));
     rebuild();
@@ -264,17 +279,18 @@ bool SketchEditor::end_change(const QString& what) {
 
 void SketchEditor::undo() {
   if (m_editJob || m_undo.empty()) return;
+  invalidatePreview();
   m_redo.push_back({m_sk,m_plane,m_frame});
   const bool planeChanged=m_plane!=m_undo.back().plane;
   m_sk = m_undo.back().geometry;
   m_plane=m_undo.back().plane;m_frame=m_undo.back().frame;
-  if(planeChanged){m_viewport->endSketchInput();m_viewport->beginSketchInput(this,m_frame,m_id);m_viewport->lookAt(m_frame,true,false);}
+  if(planeChanged){m_viewport->endSketchInput();m_viewport->beginSketchInput(this,m_frame,m_id);fitSketch();}
   m_undo.pop_back();
   m_clicks.clear();
   m_chain.clear();
   m_picked.clear();
   m_sel.clear();
-  Sketch analysis=m_sk;m_solved = solve(analysis);m_conflicts.clear();
+  analyseSketch();m_conflicts.clear();m_panelFieldsDirty=true;
   m_modified = true;
   rebuild();
   scheduleFill();
@@ -283,14 +299,15 @@ void SketchEditor::undo() {
 
 void SketchEditor::redo() {
   if (m_editJob || m_redo.empty()) return;
+  invalidatePreview();
   m_undo.push_back({m_sk,m_plane,m_frame});
   const bool planeChanged=m_plane!=m_redo.back().plane;
   m_sk = m_redo.back().geometry;
   m_plane=m_redo.back().plane;m_frame=m_redo.back().frame;
-  if(planeChanged){m_viewport->endSketchInput();m_viewport->beginSketchInput(this,m_frame,m_id);m_viewport->lookAt(m_frame,true,false);}
+  if(planeChanged){m_viewport->endSketchInput();m_viewport->beginSketchInput(this,m_frame,m_id);fitSketch();}
   m_redo.pop_back();
   m_sel.clear();
-  Sketch analysis=m_sk;m_solved = solve(analysis);m_conflicts.clear();
+  analyseSketch();m_conflicts.clear();m_panelFieldsDirty=true;
   m_modified = true;
   rebuild();
   scheduleFill();
@@ -468,6 +485,7 @@ int SketchEditor::pointFor(const Snap& s) {
 
 // ---------------------------------------------------------------- input
 void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
+  invalidatePreview();
   if (!m_active || m_editJob) return;
   if ((m_tool=="select" || (m_tool=="spline" && m_chain.empty())) && mods.testFlag(Qt::AltModifier)) return insertSplineNode(u,v);
   if (m_dimEdit && m_dimEdit->isVisible()) commitDimensionEdit();
@@ -628,6 +646,7 @@ void SketchEditor::sketchDoubleClick(double u, double v) {
 }
 
 bool SketchEditor::sketchKey(QKeyEvent* e) {
+  if(m_editJob)return false;
   if (!m_active) return false;
   switch (e->key()) {
     case Qt::Key_Escape:
@@ -672,6 +691,7 @@ bool SketchEditor::sketchKey(QKeyEvent* e) {
 }
 
 void SketchEditor::deleteSelection() {
+  if(m_editJob)return;
   if (m_sel.empty()) return;
   begin_change();
   for (int id : m_sel) {
@@ -684,6 +704,7 @@ void SketchEditor::deleteSelection() {
 }
 
 void SketchEditor::toggleConstruction() {
+  if(m_editJob)return;
   bool any = false;
   begin_change();
   for (int id : m_sel)
@@ -956,6 +977,14 @@ void SketchEditor::rebuild() {
     }
     if (m_cursor.horizontal) d.texts.push_back({W(cu + 14 * px, cv + 12 * px), "H", t.green});
     if (m_cursor.vertical) d.texts.push_back({W(cu + 14 * px, cv + 12 * px), "V", t.green});
+  }
+  if(m_toolPreview)for(const auto& e:m_toolPreview->entities) {
+    bool same=false;
+    if(const auto* old=m_sk.entity(e.id);old && old->type==e.type && old->p==e.p && old->r==e.r && old->weights==e.weights) {
+      same=true;for(int id:e.p){const auto* p=m_sk.point(id);const auto* q=m_toolPreview->point(id);if(!p||p->x!=q->x||p->y!=q->y){same=false;break;}}
+    }
+    if(same)continue;const auto edge=entity_edge(*m_toolPreview,e,opad::Frame{});if(edge.IsNull())continue;const auto pts=curveSamples(edge,px*.25);
+    for(size_t i=1;i<pts.size();++i)d.dashed.push_back({W(pts[i-1].X(),pts[i-1].Y()),W(pts[i].X(),pts[i].Y()),t.amber});
   }
   m_prs->SetToUpdate();
   m_viewport->updateOverlay(m_prs);

@@ -77,9 +77,10 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   m_group=new QComboBox(this); m_tools=new QComboBox(this);
   for(const auto& t:tools()) if(m_group->findText(t.group)<0) m_group->addItem(t.group);
   tool->addWidget(m_group); tool->addWidget(m_tools);
-  m_steps=new ToolStepsPanel(this); tool->addWidget(m_steps);
+  m_steps=new ToolStepsPanel(this);m_steps->setSummary({},{},{});tool->addWidget(m_steps);
   m_fields=new QFormLayout; tool->addLayout(m_fields);
-  auto* apply=new QPushButton(tr("Apply"),this); apply->setObjectName("primary"); tool->addWidget(apply);
+  auto* apply=new QPushButton(tr("Apply"),this); apply->setObjectName("primary"); layout->addWidget(apply);
+  connect(tabs,&QTabWidget::currentChanged,apply,[apply](int index){apply->setVisible(index==0);});
   connect(apply,&QPushButton::clicked,editor,&SketchEditor::applyTool);
   auto* precise=new QFormLayout; tool->addLayout(precise);
   m_coordinates=new QComboBox(this); m_coordinates->addItems({tr("Absolute coordinates"),tr("Relative coordinates"),tr("Polar: length and angle")});
@@ -111,7 +112,7 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   connect(constraintFilter,&QLineEdit::textChanged,this,[this](const QString& text){m_editor->m_constraintFilter=text;m_editor->rebuild();for(int i=0;i<m_constraints->topLevelItemCount();++i) {auto* r=m_constraints->topLevelItem(i);r->setHidden(!r->text(1).contains(text,Qt::CaseInsensitive));}});
   connect(m_constraints,&QTreeWidget::itemSelectionChanged,this,[this] {
     if(m_refreshing || !m_constraints->currentItem()) return;
-    m_editor->m_sel={m_constraints->currentItem()->data(0,Qt::UserRole).toInt()};m_editor->rebuild();
+    m_editor->invalidatePreview();m_editor->m_sel={m_constraints->currentItem()->data(0,Qt::UserRole).toInt()};m_editor->rebuild();
   });
   button(constraints,tr("Driving / reference"),[this]{m_editor->toggleReference();});
   button(constraints,tr("Edit dimension"),[this]{if(m_editor->m_sel.size()==1) m_editor->editDimension(m_editor->m_sel.front(),false);});
@@ -157,7 +158,7 @@ void SketchPanel::buildFields() {
   while(m_fields->rowCount()) m_fields->removeRow(0);
   auto field=[&](const QString& key,const QString& label,const QString& value) {
     auto* edit=new QLineEdit(m_editor->option(key,value),this);m_fields->addRow(label,edit);
-    connect(edit,&QLineEdit::textChanged,this,[this,key](const QString& text){m_editor->m_options[key]=text;});
+    connect(edit,&QLineEdit::textChanged,this,[this,key](const QString& text){m_editor->m_options[key]=text;m_editor->invalidatePreview();});
   };
   if(m_shown=="polygon" || m_shown=="polygon_outer")field("sides",tr("Number of sides:"),"6");
   if(m_shown=="fillet" || m_shown=="tangent_circle")field("radius",tr("Radius"),"2 mm");
@@ -174,7 +175,7 @@ void SketchPanel::buildFields() {
   auto choice=[&](const QString& key,const QString& label,const QList<QPair<QString,QString>>& choices) {
     auto* combo=new QComboBox(this);for(const auto& [id,text]:choices)combo->addItem(text,id);
     combo->setCurrentIndex(std::max(0,combo->findData(m_editor->option(key,choices.front().first))));m_fields->addRow(label,combo);
-    connect(combo,&QComboBox::currentIndexChanged,this,[this,key,combo]{m_editor->m_options[key]=combo->currentData().toString();if(key=="projectionPick")m_editor->referenceHover();});
+    connect(combo,&QComboBox::currentIndexChanged,this,[this,key,combo]{m_editor->m_options[key]=combo->currentData().toString();m_editor->invalidatePreview();if(key=="projectionPick")m_editor->referenceHover();});
   };
   if(m_shown=="project"||m_shown=="intersect_body"||m_shown=="silhouette"||m_shown=="include3d") {
     choice("projectionPick",tr("Pick filter"),{{"edge",tr("Edges")},{"face",tr("Faces")},{"vertex",tr("Vertices")},{"body",tr("Bodies")}});
@@ -184,18 +185,18 @@ void SketchPanel::buildFields() {
     for(const auto& sk:m_editor->m_doc->scene.sketches)if(sk.id!=m_editor->m_id)add(QString::fromStdString(sk.name),{{"sketch",sk.id}});
     for(const auto& feature:m_editor->m_doc->scene.features)if(feature.result.contains("axis"))add(QString::fromStdString(feature.name),{{"feature",feature.id}});
     for(const auto* axis:{"x","y","z"})add(tr("Origin axis %1").arg(axis),{{"base",axis}});
-    m_fields->addRow(tr("Source"),sources);connect(sources,&QComboBox::currentIndexChanged,this,[this,sources]{m_editor->m_options["projectionSource"]=sources->currentData().toString();m_editor->toolPrompt();});
+    m_fields->addRow(tr("Source"),sources);connect(sources,&QComboBox::currentIndexChanged,this,[this,sources]{m_editor->m_options["projectionSource"]=sources->currentData().toString();m_editor->invalidatePreview();m_editor->toolPrompt();});
     choice("projectionLinked",tr("Link behavior"),{{"1",tr("Associative link")},{"0",tr("Editable copy")}});
   }
   auto fileField=[&](const QString& key,bool image,bool save) {
     auto* row=new QWidget(this);auto* box=new QHBoxLayout(row);box->setContentsMargins(0,0,0,0);auto* path=new QLineEdit(m_editor->option(key),row);path->setReadOnly(true);auto* browse=new QPushButton(tr("Browse"),row);box->addWidget(path,1);box->addWidget(browse);m_fields->addRow(tr("File"),row);
-    connect(browse,&QPushButton::clicked,this,[this,key,image,save,path]{const auto filter=image?tr("Images (*.png *.jpg *.jpeg *.bmp)"):tr("SVG (*.svg);;DXF (*.dxf)");const auto file=save?QFileDialog::getSaveFileName(this,tr("Export sketch"),path->text(),filter):QFileDialog::getOpenFileName(this,tr("Choose source file"),path->text(),filter);if(!file.isEmpty()){path->setText(file);m_editor->m_options[key]=file;}});
+    connect(browse,&QPushButton::clicked,this,[this,key,image,save,path]{const auto filter=image?tr("Images (*.png *.jpg *.jpeg *.bmp)"):tr("SVG (*.svg);;DXF (*.dxf)");const auto file=save?QFileDialog::getSaveFileName(this,tr("Export sketch"),path->text(),filter):QFileDialog::getOpenFileName(this,tr("Choose source file"),path->text(),filter);if(!file.isEmpty()){path->setText(file);m_editor->m_options[key]=file;m_editor->invalidatePreview();}});
   };
   if(m_shown=="image_insert"){fileField("imageFile",true,false);field("imageWidth",tr("Image width"),"100 mm");}
   if(m_shown.startsWith("image_")&&m_shown!="image_insert") {
     auto* images=new QComboBox(this);for(const auto& image:m_editor->m_sk.images)images->addItem(tr("Image %1").arg(image.at("id").get<int>()),image.at("id").get<int>());
     const int id=m_editor->option("imageId",m_editor->m_sk.images.empty()?"0":QString::number(m_editor->m_sk.images.back().at("id").get<int>())).toInt();images->setCurrentIndex(images->findData(id));m_fields->addRow(tr("Backdrop"),images);
-    connect(images,&QComboBox::currentIndexChanged,this,[this,images]{m_editor->m_options["imageId"]=images->currentData().toString();m_editor->m_panelFieldsDirty=true;refresh();});
+    connect(images,&QComboBox::currentIndexChanged,this,[this,images]{m_editor->m_options["imageId"]=images->currentData().toString();m_editor->invalidatePreview();m_editor->m_panelFieldsDirty=true;refresh();});
     if(m_shown=="image_edit") {
       for(const auto& image:m_editor->m_sk.images)if(image.at("id").get<int>()==id) {
         m_editor->m_options["imageX"]=QString::number(image.at("position")[0].get<double>())+" mm";m_editor->m_options["imageY"]=QString::number(image.at("position")[1].get<double>())+" mm";
@@ -210,6 +211,9 @@ void SketchPanel::buildFields() {
   }
   if(m_shown=="vector_import"||m_shown=="vector_export")fileField("vectorFile",false,m_shown=="vector_export");
   if(m_shown=="vector_import"||m_shown=="simplify")field("curveTolerance",tr("Curve tolerance"),"0.01 mm");
+  if(QStringList{"image_trace","project","intersect_body","silhouette","include3d","offset","move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","union","subtract","intersect","heal","chamfer","simplify"}.contains(m_shown)) {
+    auto* preview=new QPushButton(tr("Preview"),this);m_fields->addRow(preview);connect(preview,&QPushButton::clicked,m_editor,&SketchEditor::previewTool);
+  }
   if(m_shown=="offset") {field("distance",tr("Distance"),"5 mm");choice("corners",tr("Corners"),{{"round",tr("Round")},{"sharp",tr("Sharp")}});}
   if(m_shown=="move"||m_shown=="copy"||m_shown=="rect_pattern") {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"0 mm");}
   if(m_shown=="rotate"||m_shown=="scale"||m_shown=="polar_pattern") {field("cx",tr("Centre X"),"0 mm");field("cy",tr("Centre Y"),"0 mm");}
@@ -248,7 +252,7 @@ void SketchPanel::refresh() {
   m_steps->setSteps(steps(),{});
   // The measurement widget owns an inner scroll area: give its numbered rows room before Qt's deferred
   // show/layout pass (minimumSizeHint otherwise sees newly created rows as hidden and collapses them).
-  int stepsHeight=52;
+  int stepsHeight=20;
   for(const auto& step:steps())stepsHeight+=fontMetrics().boundingRect(QRect(0,0,std::max(200,width()-90),1000),Qt::TextWordWrap,step.label).height()+14+(step.picked.isEmpty()?0:fontMetrics().height()+3);
   m_steps->setFixedHeight(stepsHeight);
   m_state->setText((m_editor->modified()?tr("Modified sketch"):tr("Sketch"))+tr(" · %1 degrees of freedom").arg(m_editor->dof()));

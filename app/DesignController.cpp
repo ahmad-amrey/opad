@@ -391,20 +391,20 @@ void DesignController::viewportSelectionChanged() {
     if (!cands.empty()) plane = opad::json::parse(cands.back());
     else if (!refs.empty() && refs.back().kind == opad::Ref::Kind::Face) plane = opad::json{{"face", refs.back().to_json()}};
     else return;
-    try {
-      const opad::Frame frame = resolve_plane(m_doc->doc, m_doc->scene, plane);
-      if (plane.contains("face")) plane["face"] = make_ref(m_doc->doc, m_doc->scene, refs.back());
-      plane["frame"] = frame.to_json();
-      auto picked=std::move(m_planePicked);
-      escape();  // leaves the plane pick
-      if(picked) { picked(plane,frame); return; }
-      enterSketch({}, QString::fromStdString(next_name(m_doc->scene, "Sketch")), plane, frame, opad::json::object());
-    } catch (const std::exception& e) {
-      m_activating = true;
-      m_viewport->clearSelection();
-      m_activating = false;
-      emit status(i18n::t(QString::fromUtf8(e.what())));
-    }
+    const int serial=++m_planeSerial;if(m_planeJob)m_planeJob->cancel();
+    auto doc=std::make_shared<opad::Document>(m_doc->doc);auto scene=std::make_shared<opad::Scene>(m_doc->scene);
+    auto resolved=std::make_shared<opad::json>(plane);auto frame=std::make_shared<opad::Frame>();
+    m_planeJob=m_jobs->async(tr("Resolving sketch plane"),[doc,scene,resolved,frame](Progress progress){
+      if(progress.cancelled())return;*frame=resolve_plane(*doc,*scene,*resolved);
+      if(resolved->contains("face"))(*resolved)["face"]=make_ref(*doc,*scene,opad::Ref::from_json(resolved->at("face")));
+      (*resolved)["frame"]=frame->to_json();
+    },[this,serial,resolved,frame](bool ok,const QString& error){
+      if(!m_pickPlane||serial!=m_planeSerial)return;m_planeJob=nullptr;
+      if(!ok){emit status(error);return;}
+      auto picked=std::move(m_planePicked);escape();
+      if(picked)picked(*resolved,*frame);
+      else enterSketch({},QString::fromStdString(next_name(m_doc->scene,"Sketch")),*resolved,*frame,opad::json::object());
+    });
     return;
   }
   if (!m_featureOn) return;
@@ -547,7 +547,7 @@ void DesignController::showSketchPanel() {
   if(m_sketch->active() && m_sketchPanel && m_openPanel)m_openPanel(m_sketchPanel);
 }
 void DesignController::redefineSketchPlane() {
-  if(!m_sketch->active() || m_doc->designBusy)return;
+  if(!m_sketch->active() || m_sketch->busy() || m_doc->designBusy)return;
   m_viewport->endSketchInput();m_replaning=true;
   m_planePicked=[this](opad::json plane,opad::Frame frame){m_sketch->redefinePlane(plane,frame);};
   beginPlanePick();
@@ -580,6 +580,7 @@ void DesignController::beginPlanePick() {
 
 bool DesignController::escape() {
   if (m_pickPlane) {
+    ++m_planeSerial;if(m_planeJob)m_planeJob->cancel();m_planeJob=nullptr;
     m_pickPlane = false;
     m_planePicked={};
     m_viewport->clearCandidates();

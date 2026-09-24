@@ -356,6 +356,9 @@ void ToolStepsPanel::setSummary(const QString& title, const QString& subtitle, c
   m_title->setText(title);
   m_subtitle->setText(subtitle);
   m_state->setText(state);
+  const bool visible=!title.isEmpty()||!subtitle.isEmpty()||!state.isEmpty();
+  m_title->parentWidget()->setVisible(visible);
+  if(auto* rule=findChild<QFrame*>("toolRule"))rule->setVisible(visible);
   emit contentSizeChanged();
 }
 

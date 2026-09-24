@@ -87,6 +87,7 @@ class DesignController : public QObject {
   QTimer m_previewTimer;
   Job* m_planJob = nullptr;
   Job* m_candidateJob = nullptr;
+  Job* m_planeJob=nullptr;int m_planeSerial=0;
   int m_planSerial = 0;
   std::shared_ptr<opad::design::Plan> m_readyPlan;  // computed for m_readyInputs on m_readyOps ops
   std::string m_readyInputs;

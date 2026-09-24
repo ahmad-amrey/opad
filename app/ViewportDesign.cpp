@@ -1,6 +1,8 @@
 // Viewport, design side: sketches in the scene, pick candidates for feature inputs (sketch regions, points,
 // planes, axes), feature previews, and the mouse/keyboard hand-over to the sketch editor.
 #include "Viewport.hpp"
+#include "SketchBackdrop.hpp"
+#include <BRepBuilderAPI_MakePolygon.hxx>
 
 #include <AIS_AnimationCamera.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
@@ -43,9 +45,9 @@ void Viewport::syncSketches() {
     const std::string stamp = s.geometry.dump() + s.frame.to_json().dump();
     auto it = m_sketchWires.find(s.id);
     if (it != m_sketchWires.end() && it->second.stamp == stamp) continue;
-    if (it != m_sketchWires.end()) { m_nodeOf.erase(it->second.ais.get()); m_ctx->Remove(it->second.ais, Standard_False); }
+    if (it != m_sketchWires.end()) { for(const auto& image:it->second.backdrops)m_ctx->Remove(image,false);m_nodeOf.erase(it->second.ais.get()); m_ctx->Remove(it->second.ais, Standard_False); }
     std::shared_ptr<PreparedSketch> prepared;
-    if(s.geometry.value("entities",opad::json::array()).size()>256) {
+    if(s.geometry.value("entities",opad::json::array()).size()>256 || !s.geometry.value("images",opad::json::array()).empty()) {
       auto found=m_preparedSketches.find(s.id);
       if(found==m_preparedSketches.end() || found->second->stamp!=stamp) {
         prepared=std::make_shared<PreparedSketch>();prepared->stamp=stamp;m_preparedSketches[s.id]=prepared;
@@ -58,6 +60,11 @@ void Viewport::syncSketches() {
             if(const auto* p=sk.point(e.p.empty()?0:e.p[0])) {
               const auto w=frame.to_world(p->x,p->y);b.Add(shape,BRepBuilderAPI_MakeVertex(gp_Pnt(w[0],w[1],w[2])).Vertex());
             }
+          prepared->backdrops=prepareSketchBackdrops(sk.images,frame,progress);
+          for(const auto& image:sk.images) {
+            const double x=image.at("position")[0].get<double>(),y=image.at("position")[1].get<double>(),w=image.at("width").get<double>(),h=image.at("height").get<double>(),angle=image.value("angle",0.0);BRepBuilderAPI_MakePolygon polygon;
+            for(auto [u,v]:std::vector<std::pair<double,double>>{{0,0},{w,0},{w,h},{0,h}}){const auto point=frame.to_world(x+u*std::cos(angle)-v*std::sin(angle),y+u*std::sin(angle)+v*std::cos(angle));polygon.Add(gp_Pnt(point[0],point[1],point[2]));}polygon.Close();b.Add(shape,polygon.Wire());
+          }
           Bnd_Box box;BRepBndLib::Add(shape,box);prepared->shape=shape;prepared->prs=BodyPrs::build(shape,box);
         },[this,prepared,id,generation](bool ok,const QString&) {
           if(generation!=m_doc->generation || !m_preparedSketches.count(id) || m_preparedSketches[id]!=prepared) return;
@@ -97,11 +104,13 @@ void Viewport::syncSketches() {
     ais->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_POINT, occ(m_tokens.sel), 2.0));
     m_ctx->Display(ais, AIS_WireFrame, -1, Standard_False);
     activateSelection(ais); m_nodeOf[ais.get()]=s.id;
-    m_sketchWires[s.id] = SketchWire{ais, prs, stamp};
+    m_sketchWires[s.id] = SketchWire{ais, prs, stamp,{}};
+    if(prepared){m_sketchWires[s.id].backdrops=prepared->backdrops;for(const auto& image:prepared->backdrops)showBackdrop(image);}
   }
   std::erase_if(m_preparedSketches,[&](const auto& entry) {return !keep.count(entry.first);});
   for (auto it = m_sketchWires.begin(); it != m_sketchWires.end();) {
     if (keep.count(it->first)) { ++it; continue; }
+    for(const auto& image:it->second.backdrops)m_ctx->Remove(image,false);
     m_nodeOf.erase(it->second.ais.get()); m_ctx->Remove(it->second.ais, Standard_False);
     it = m_sketchWires.erase(it);
   }
