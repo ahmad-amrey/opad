@@ -344,11 +344,6 @@ void MainWindow::buildActions() {
   addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(); });
   addAction("view.alignPlane",tr("Align view to plane"),"plane",QKeySequence("Ctrl+Alt+0"),[this] {
     if(m_design->sketchActive()) return;
-    const auto refs=m_viewport->selection();
-    if(!refs.empty() && refs.back().kind==opad::Ref::Kind::Face) {
-      m_viewport->lookAt(opad::design::resolve_plane(m_doc->doc,m_doc->scene,{{"face",refs.back().to_json()}}),true,false);
-      return;
-    }
     cancelTool();
     m_design->pickSketchPlane([this](opad::json,opad::Frame frame) { m_viewport->lookAt(frame,true,false); });
   });
@@ -1041,19 +1036,7 @@ void MainWindow::buildDesign() {
   m_design->setSketchPanel(sketchPanel);
   sketchPanel->setEscapeHandler([this]{m_design->sketch()->stepBack();});
   connect(sketchContent,&SketchPanel::finishRequested,this,[this]{m_design->finishSketch();});
-  auto* planeContent=new QWidget(this);auto* planeLayout=new QVBoxLayout(planeContent);
-  auto* planeSteps=new ToolStepsPanel(planeContent);planeSteps->setSteps({{tr("Select an origin plane or a planar face"),{}}},{});planeSteps->setSummary({}, {}, {});planeSteps->setFixedHeight(85);planeLayout->addWidget(planeSteps);
-  auto* origins=new QHBoxLayout;planeLayout->addLayout(origins);
-  for(const auto* base:{"xy","xz","yz"}){auto* button=new QPushButton(QString::fromLatin1(base).toUpper(),planeContent);origins->addWidget(button);connect(button,&QPushButton::clicked,this,[this,base]{m_viewport->selectRefs({}, {opad::json{{"base",base}}.dump()});m_design->viewportSelectionChanged();});}
-  auto* construction=new QPushButton(tr("Create construction plane"),planeContent);planeLayout->addWidget(construction);
-  connect(construction,&QPushButton::clicked,this,[this]{m_design->escape();m_design->startFeature("plane");});
-  auto* planeHint=new QLabel(tr("Select an existing construction plane in the view, or create an offset, angled or three-point plane first."),planeContent);planeHint->setWordWrap(true);planeLayout->addWidget(planeHint);
-  auto* planeStatus=new QLabel(planeContent);planeStatus->setWordWrap(true);planeLayout->addWidget(planeStatus);planeLayout->addStretch();
-  auto* planeCancel=new QPushButton(tr("Cancel"),planeContent);planeLayout->addWidget(planeCancel);connect(planeCancel,&QPushButton::clicked,this,[this]{m_design->escape();});
-  auto* planePanel=new ToolPanel("sketch-plane","plane",&Tokens::sel,tr("Choose sketch plane"),planeContent,340,this);m_panels<<planePanel;
-  planePanel->setEscapeHandler([this]{m_design->escape();});
-  connect(m_design,&DesignController::status,planeStatus,&QLabel::setText);
-  connect(m_design,&DesignController::stateChanged,this,[this,planePanel]{if(m_design->pickingPlane()){if(!planePanel->isVisible())openPanel(planePanel);}else planePanel->hide();});
+  m_panels<<m_design->planePanel();
 
   connect(m_design, &DesignController::status, this, [this](const QString& text) { m_statusHover->setText(text); });
   connect(m_design, &DesignController::failed, this, [this](const QString& error) { QMessageBox::warning(this, tr("OPAD"), i18n::t(error)); });
@@ -1087,8 +1070,7 @@ void MainWindow::updateDesignState() {
   }
   action("view.alignPlane")->setEnabled(m_doc->hasDocument && !sketching && !m_doc->loading);
   if(m_design->pickingPlane()) {
-    m_prompt->set("plane",tr("Pick a plane"),{{tr("Select an origin plane or a planar face"),{}}},tr("Esc cancels"));
-    m_prompt->show(); positionOverlays();
+    m_prompt->hide(); // The side panel guides this flow; leave the corner selector unobstructed.
   } else if(sketching) {
     m_prompt->set("sketch",tr("Sketch"),m_design->sketch()->toolSteps(),tr("Esc steps back"));
     m_prompt->show();positionOverlays();
@@ -2079,6 +2061,7 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
+  if(benchTodo5())return;
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_NAVIGATION");!mode.isEmpty()) {
     if(mode=="write") {
       action("view.grid")->setChecked(true);action("view.ortho")->setChecked(false);action("view.wire")->trigger();
@@ -2095,7 +2078,7 @@ void MainWindow::runBench() {
     *once=connect(m_viewport,&Viewport::filterApplied,this,[this,once] {
       disconnect(*once);
       QTimer::singleShot(0,this,[this] {
-        m_viewport->selectRefs({}, {opad::json{{"base","yz"}}.dump()});m_design->viewportSelectionChanged();
+        m_design->planePicker()->choose({{"base","yz"}});
         QTimer::singleShot(700,this,[this] {
           const auto camera=m_viewport->cameraJson();
           const double dx=camera["eye"][0].get<double>()-camera["target"][0].get<double>();

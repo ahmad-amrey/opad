@@ -192,7 +192,11 @@ void SketchEditor::selectType() {
 }
 
 void SketchEditor::redefinePlane(const opad::json& plane,const opad::Frame& frame) {
-  begin_change();m_plane=plane;m_frame=frame;
+  begin_change();
+  const auto normal=m_frame.normal();double separation=0,orientation=0;
+  for(int i=0;i<3;++i){separation+=(frame.origin[i]-m_frame.origin[i])*normal[i];orientation+=std::abs(frame.x[i]-m_frame.x[i])+std::abs(frame.y[i]-m_frame.y[i]);}
+  if(std::abs(separation)<1e-7 && orientation<1e-7){double u,v;m_frame.to_local(frame.origin,u,v);shift_sketch_origin(m_sk,u,v);}
+  m_plane=plane;m_frame=frame;
   if(!end_change(tr("Redefine sketch plane")))return;
   m_viewport->endSketchInput();m_viewport->beginSketchInput(this,frame,m_id);fitSketch();
   m_fill.clear();rebuild();scheduleFill();emit changed();

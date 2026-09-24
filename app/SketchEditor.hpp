@@ -32,6 +32,7 @@ class SketchEditor : public QObject, public SketchInput {
   const std::string& sketchId() const { return m_id; }
   QString name() const { return m_name; }
   opad::json plane() const { return m_plane; }
+  const opad::Frame& frame() const { return m_frame; }
   opad::json geometry() const { return m_sk.to_json(); }
   opad::json geometryDelta() const { return opad::design::sketch_delta(m_initialGeometry, geometry()); }
   bool modified() const { return m_modified; }

@@ -13,6 +13,7 @@
 #include "SketchEditor.hpp"
 #include "SketchPanel.hpp"
 #include "Viewport.hpp"
+#include "PlanePicker.hpp"
 
 class DesignController : public QObject {
   Q_OBJECT
@@ -27,7 +28,9 @@ class DesignController : public QObject {
 
   void startFeature(const QString& kind);
   void editOp(const std::string& opId);  // a feature or a sketch, rolled back to when it was made
-  void pickSketchPlane(std::function<void(opad::json,opad::Frame)> done);
+  void pickSketchPlane(std::function<void(opad::json,opad::Frame)> done,bool positionOrigin=false);
+  ToolPanel* planePanel() const { return m_planePicker->panel(); }
+  PlanePicker* planePicker() const { return m_planePicker; }
   void startSketch();                    // asks for the plane first
   void finishSketch(std::function<void()> then = {});
   void cancelSketch();
@@ -71,7 +74,8 @@ class DesignController : public QObject {
   FeaturePanel* m_form;
   ToolPanel* m_panel = nullptr;
   ToolPanel* m_sketchPanel = nullptr;
-  bool m_replaning = false;
+  bool m_replaning = false,m_positionOrigin=false;
+  PlanePicker* m_planePicker;
   std::function<void(ToolPanel*)> m_openPanel;
   SketchEditor* m_sketch;
   ParametersDialog* m_params = nullptr;
@@ -87,7 +91,6 @@ class DesignController : public QObject {
   QTimer m_previewTimer;
   Job* m_planJob = nullptr;
   Job* m_candidateJob = nullptr;
-  Job* m_planeJob=nullptr;int m_planeSerial=0;
   int m_planSerial = 0;
   std::shared_ptr<opad::design::Plan> m_readyPlan;  // computed for m_readyInputs on m_readyOps ops
   std::string m_readyInputs;

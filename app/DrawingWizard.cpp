@@ -53,7 +53,7 @@ void MainWindow::drawingToSketch() {
   auto* preview=new QCheckBox(tr("Preview converted curves"),dialog); layout->addWidget(preview);
   auto* note=new QLabel(tr("Native curves stay exact. Tolerance controls reconstruction of segmented curves. Corners and construction layers are preserved."),dialog); note->setWordWrap(true); layout->addWidget(note);
   auto* buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,dialog); buttons->button(QDialogButtonBox::Ok)->setText(tr("Create sketch")); layout->addWidget(buttons);
-  struct State { opad::json plane; opad::Frame frame; int serial=0; QPointer<Job> job; bool applying=false,closed=false; };
+  struct State { opad::json plane; opad::Frame frame; int serial=0; QPointer<Job> job; bool applying=false,closed=false,choosing=false; };
   auto state=std::make_shared<State>(); QPointer<QWidget> guard(dialog);
   const auto generation=m_doc->generation;
   auto layers=[tree] { std::vector<opad::design::DrawingLayer> out; for(int i=0;i<tree->topLevelItemCount();++i) {auto* r=tree->topLevelItem(i); if(r->checkState(0)==Qt::Checked) out.push_back({r->data(0,Qt::UserRole).toString().toStdString(),r->checkState(1)==Qt::Checked});} return out; };
@@ -91,20 +91,32 @@ void MainWindow::drawingToSketch() {
   connect(debounce,&QTimer::timeout,dialog,[=] { if(preview->isChecked()) convert(false); });
   auto changed=[=,this] { ++state->serial; if(state->job) state->job->cancel(); m_viewport->clearPreviewBodies(); update(); if(preview->isChecked()) debounce->start(); };
   connect(tree,&QTreeWidget::itemChanged,dialog,changed); connect(tolerance,&QDoubleSpinBox::valueChanged,dialog,changed); connect(preview,&QCheckBox::toggled,dialog,changed); connect(name,&QLineEdit::textChanged,dialog,update);
-  auto choosePlane=[=,this] { m_viewport->clearPreviewBodies(); m_design->pickSketchPlane([=,this](opad::json plane,opad::Frame frame) { if(!guard || state->closed) return; state->plane=std::move(plane); state->frame=frame; pick->setText(tr("Plane selected - pick another")); changed(); }); };
+  auto choosePlane=[=,this] { state->choosing=true; m_viewport->clearPreviewBodies(); m_design->pickSketchPlane([=,this](opad::json plane,opad::Frame frame) { if(!guard || state->closed) return; state->plane=std::move(plane); state->frame=frame; pick->setText(tr("Plane selected - pick another")); changed(); },true); };
   connect(pick,&QPushButton::clicked,dialog,choosePlane);
   connect(buttons,&QDialogButtonBox::accepted,dialog,[=] { debounce->stop(); convert(true); });
   connect(buttons,&QDialogButtonBox::rejected,panel,&QWidget::hide);
   connect(panel,&ToolPanel::visibilityChanged,this,[=,this](bool on) {
-    if(on || state->closed) return;
+    if(on || state->closed || state->choosing) return;
     state->closed=true;++state->serial;debounce->stop();if(state->job) state->job->cancel();
     m_viewport->clearPreviewBodies();if(m_design->pickingPlane()) m_design->escape();
     m_prompt->hide();panel->deleteLater();
   });
-  connect(m_doc,&AppDocument::aboutToReplace,panel,&QWidget::hide);
+  connect(m_design,&DesignController::stateChanged,dialog,[=,this] { if(state->choosing && !m_design->pickingPlane() && !state->closed){state->choosing=false;panel->show();panel->raise();update();} });
+  connect(m_doc,&AppDocument::aboutToReplace,panel,[=]{state->choosing=false;panel->hide();});
   openPanel(panel); update(); choosePlane();
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_WIZARD");!shot.isEmpty()) QTimer::singleShot(350,dialog,[=,this] {
-    m_design->escape(); state->plane={{"base","xy"}}; state->frame=opad::design::base_frame("xy"); update(); panel->grab().save(shot);m_prompt->grab().save(shot+".prompt.png");
-    if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")) convert(true); else {panel->hide(); QCoreApplication::exit(0);}
+    m_design->planePicker()->cancel();
+    if(!panel->isVisible() || state->closed){trace::log("bench: drawing plane cancel FAIL");QCoreApplication::exit(2);return;}
+    choosePlane();m_design->planePicker()->choose({{"base","xy"}});
+    auto* wait=new QTimer(dialog);wait->setInterval(50);auto attempts=std::make_shared<int>(0);
+    connect(wait,&QTimer::timeout,dialog,[=,this]{
+      if(++*attempts>200){wait->stop();QCoreApplication::exit(2);return;}
+      if(!m_design->planePicker()->positioning())return;
+      wait->stop();m_design->planePicker()->apply();
+      if(state->plane.is_null() || !panel->isVisible()){trace::log("bench: drawing plane Apply FAIL");QCoreApplication::exit(2);return;}
+      trace::log("bench: drawing plane cancel, reselect and Apply PASS");
+      panel->grab().save(shot);m_prompt->grab().save(shot+".prompt.png");
+      if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE"))convert(true);else{panel->hide();QCoreApplication::exit(0);}
+    });wait->start();
   });
 }

@@ -291,6 +291,12 @@ bool Viewport::hoveredEdge(TopoDS_Shape& edge) const {
   return true;
 }
 
+bool Viewport::referenceAt(const QPointF& point,opad::Ref& ref) {
+  if(!m_initialised)return false;
+  const auto pos=devicePos(point);m_ctx->MoveTo(pos.x(),pos.y(),m_view,false);
+  return hoveredReference(ref);
+}
+
 // ---------------------------------------------------------------- overlays
 void Viewport::showOverlay(const Handle(AIS_InteractiveObject)& obj) {
   if (!m_initialised || obj.IsNull()) return;
@@ -330,6 +336,18 @@ void Viewport::endSketchInput() {
   setBodiesPickable(true);
   syncSketches();
   redrawScene();
+}
+
+opad::Frame Viewport::cameraPlane() const {
+  if (!m_initialised) return {};
+  // Orthographic cameras can have an extremely short eye-to-center distance.
+  // Use the camera's normalized direction instead of subtracting its points.
+  const auto camera = m_view->Camera();
+  const gp_Dir normal = camera->Direction().Reversed();
+  gp_Vec right = gp_Vec(camera->Up()).Crossed(gp_Vec(normal));
+  if (right.SquareMagnitude() < 1e-12)
+    right = (std::abs(normal.Z()) < .9 ? gp_Vec(0,0,1) : gp_Vec(0,1,0)).Crossed(gp_Vec(normal));
+  return opad::design::frame_from_ax3(gp_Ax3(gp_Pnt(0,0,0), normal, gp_Dir(right)));
 }
 
 void Viewport::lookAt(const opad::Frame& frame, bool fit, bool animate) {

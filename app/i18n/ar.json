@@ -1184,5 +1184,19 @@
  "Choose sketch plane": "اختر مستوى الرسم",
  "Preview": "معاينة",
  "Preview ready. Apply to keep it, or change parameters and preview again.": "المعاينة جاهزة. اضغط تطبيق لاعتمادها، أو غيّر المعلمات وأعد المعاينة.",
- "Analysing sketch constraints": "تحليل قيود الرسم"
+ "Analysing sketch constraints": "تحليل قيود الرسم",
+ "Choose a plane in the corner widget, or pick a planar model face.": "اختر مستوى من أداة الزاوية، أو اختر وجهاً مستوياً من النموذج.",
+ "Show construction planes": "إظهار المستويات الإنشائية",
+ "Point on plane": "نقطة على المستوى",
+ "Vertex": "رأس",
+ "Circle or arc center": "مركز دائرة أو قوس",
+ "Origin picking": "اختيار نقطة الأصل",
+ "Plane X (mm)": "محور X للمستوى (مم)",
+ "Plane Y (mm)": "محور Y للمستوى (مم)",
+ "Coordinates use the selected plane's original axes and origin. Off-plane references are projected onto it.": "تستخدم الإحداثيات محاور المستوى المختار ونقطة أصله الأصلية. تُسقط المراجع الواقعة خارجه عليه.",
+ "Reset origin": "إعادة ضبط نقطة الأصل",
+ "Choose plane": "اختر المستوى",
+ "Position sketch origin": "حدد موضع أصل الرسم",
+ "Preparing construction planes": "إعداد المستويات الإنشائية",
+ "Resolving sketch origin": "تحديد أصل الرسم"
 }

@@ -53,6 +53,19 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
     : QObject(window), m_doc(doc), m_viewport(viewport), m_jobs(jobs), m_window(window) {
   m_form = new FeaturePanel(doc, window);
   m_sketch = new SketchEditor(doc, viewport, jobs, this);
+  m_planePicker=new PlanePicker(doc,viewport,jobs,window);
+  m_planePicker->accepted=[this](const opad::json& plane,const opad::Frame& frame){
+    auto picked=std::move(m_planePicked);m_pickPlane=false;m_replaning=false;
+    if(picked)picked(plane,frame);
+    else enterSketch({},QString::fromStdString(next_name(m_doc->scene,"Sketch")),plane,frame,opad::json::object());
+    emit stateChanged();
+  };
+  connect(m_planePicker,&PlanePicker::cancelled,this,[this]{
+    m_pickPlane=false;m_planePicked={};
+    if(m_replaning){m_replaning=false;m_viewport->beginSketchInput(m_sketch,m_sketch->frame(),m_sketch->sketchId());showSketchPanel();}
+    if(m_featureOn && m_panel)m_openPanel(m_panel);
+    emit stateChanged();
+  });
   connect(doc, &AppDocument::aboutToReplace, this, [this] {
     endFeature();
     if (m_pickPlane) escape();
@@ -77,7 +90,7 @@ void DesignController::setPanel(ToolPanel* panel, std::function<void(ToolPanel*)
   m_panel = panel;
   m_openPanel = std::move(open);
   connect(panel, &ToolPanel::visibilityChanged, this, [this](bool on) {
-    if (!on && m_featureOn) endFeature();  // closing the panel cancels the feature
+    if (!on && m_featureOn && !m_pickPlane) endFeature();  // closing the panel cancels the feature
   });
 }
 
@@ -253,7 +266,7 @@ void DesignController::showCandidatesFor(const QString& typeName) {
   if (Job* j = std::exchange(m_candidateJob, nullptr)) j->cancel();
   const std::string type = typeName.toStdString();
   std::vector<Viewport::Candidate> quick;
-  // Size of the origin planes and axes: a little more than what is on screen.
+  // Size of axis candidates: a little more than what is on screen.
   double reach = 50;
   for (const auto& id : m_doc->scene.all_bodies()) {
     try {
@@ -261,17 +274,6 @@ void DesignController::showCandidatesFor(const QString& typeName) {
       if (!b.IsVoid()) reach = std::max(reach, std::sqrt(b.SquareExtent()) * 0.75);
     } catch (const std::exception&) {
     }
-  }
-  if (type == "plane") {
-    for (const char* base : {"xy", "xz", "yz"}) {
-      const opad::Frame f = base_frame(base);
-      quick.push_back({opad::json{{"base", base}}.dump(), BRepBuilderAPI_MakeFace(frame_plane(f), -reach, reach, -reach, reach).Face(), false});
-    }
-    for (const auto& f : m_doc->scene.features)
-      if (f.result.contains("plane")) {
-        const opad::Frame fr = opad::Frame::from_json(f.result["plane"]);
-        quick.push_back({opad::json{{"feature", f.id}}.dump(), BRepBuilderAPI_MakeFace(frame_plane(fr), -reach * 0.6, reach * 0.6, -reach * 0.6, reach * 0.6).Face(), true});
-      }
   }
   if (type == "axis") {
     for (const auto& [base, dir] : {std::pair{"x", gp_Dir(1, 0, 0)}, std::pair{"y", gp_Dir(0, 1, 0)}, std::pair{"z", gp_Dir(0, 0, 1)}})
@@ -365,6 +367,13 @@ void DesignController::activateInput(const QString& name) {
     m_viewport->clearCandidates();
     return;
   }
+  if(in->type=="plane") {
+    m_pickPlane=true;m_activating=false;
+    m_planePicked=[this,name](opad::json plane,opad::Frame){
+      if(!m_featureOn)return;m_form->setPicks(name,plane);schedulePreview();m_openPanel(m_panel);m_form->activateNextPick();
+    };
+    emit stateChanged();QTimer::singleShot(0,this,[this]{if(m_pickPlane&&m_featureOn)m_planePicker->start(false,m_openPanel);});return;
+  }
   const Viewport::SelFilter want = filterFor(in->type);
   showCandidatesFor(QString::fromStdString(in->type));
   if (m_viewport->selectionFilter() != want) {
@@ -384,29 +393,7 @@ void DesignController::activateInput(const QString& name) {
 
 void DesignController::viewportSelectionChanged() {
   if (m_activating) return;
-  if (m_pickPlane) {
-    opad::json plane;
-    const auto cands = m_viewport->selectedCandidates();
-    const auto refs = m_viewport->selection();
-    if (!cands.empty()) plane = opad::json::parse(cands.back());
-    else if (!refs.empty() && refs.back().kind == opad::Ref::Kind::Face) plane = opad::json{{"face", refs.back().to_json()}};
-    else return;
-    const int serial=++m_planeSerial;if(m_planeJob)m_planeJob->cancel();
-    auto doc=std::make_shared<opad::Document>(m_doc->doc);auto scene=std::make_shared<opad::Scene>(m_doc->scene);
-    auto resolved=std::make_shared<opad::json>(plane);auto frame=std::make_shared<opad::Frame>();
-    m_planeJob=m_jobs->async(tr("Resolving sketch plane"),[doc,scene,resolved,frame](Progress progress){
-      if(progress.cancelled())return;*frame=resolve_plane(*doc,*scene,*resolved);
-      if(resolved->contains("face"))(*resolved)["face"]=make_ref(*doc,*scene,opad::Ref::from_json(resolved->at("face")));
-      (*resolved)["frame"]=frame->to_json();
-    },[this,serial,resolved,frame](bool ok,const QString& error){
-      if(!m_pickPlane||serial!=m_planeSerial)return;m_planeJob=nullptr;
-      if(!ok){emit status(error);return;}
-      auto picked=std::move(m_planePicked);escape();
-      if(picked)picked(*resolved,*frame);
-      else enterSketch({},QString::fromStdString(next_name(m_doc->scene,"Sketch")),*resolved,*frame,opad::json::object());
-    });
-    return;
-  }
+  if (m_pickPlane) {m_planePicker->selectionChanged();return;}
   if (!m_featureOn) return;
   const QString name = m_form->activeInput();
   const InputSpec* in = m_form->input(name);
@@ -523,7 +510,8 @@ void DesignController::runPreview(bool commit) {
 }
 
 // ---------------------------------------------------------------- sketches
-void DesignController::pickSketchPlane(std::function<void(opad::json,opad::Frame)> done) {
+void DesignController::pickSketchPlane(std::function<void(opad::json,opad::Frame)> done,bool positionOrigin) {
+  m_positionOrigin=positionOrigin;
   if(!m_doc->hasDocument || m_sketch->active()) return;
   if(m_pickPlane) escape();
   m_planePicked=std::move(done);
@@ -531,6 +519,7 @@ void DesignController::pickSketchPlane(std::function<void(opad::json,opad::Frame
 }
 
 void DesignController::startSketch() {
+  m_positionOrigin=true;
   m_planePicked={};
   if (!m_doc->hasDocument || m_doc->browse) return;
   if (m_sketch->active()) return;
@@ -548,53 +537,22 @@ void DesignController::showSketchPanel() {
 }
 void DesignController::redefineSketchPlane() {
   if(!m_sketch->active() || m_sketch->busy() || m_doc->designBusy)return;
-  m_viewport->endSketchInput();m_replaning=true;
+  m_viewport->endSketchInput();m_replaning=true;m_positionOrigin=true;
   m_planePicked=[this](opad::json plane,opad::Frame frame){m_sketch->redefinePlane(plane,frame);};
   beginPlanePick();
 }
 
 void DesignController::beginPlanePick() {
-  if (m_featureOn) endFeature();
-  m_pickPlane = true;
-  m_filterBefore = m_viewport->selectionFilter();
-  m_activating = true;
-  auto once = std::make_shared<QMetaObject::Connection>();
-  auto ready = [this, once] {
-    disconnect(*once);
-    m_activating = false;
-  };
-  if (m_viewport->selectionFilter() != Viewport::SelFilter::Face) {
-    *once = connect(m_viewport, &Viewport::filterApplied, this, ready);
-    m_viewport->setSelectionFilter(Viewport::SelFilter::Face);
-  } else {
-    m_viewport->clearSelection();
-    m_activating = false;
-  }
-  m_featureOn = false;
-  // Candidates need the feature flag only for the async part; planes are immediate.
-  std::vector<Viewport::Candidate> none;
-  showCandidatesFor("plane");
-  emit status(tr("Select an origin plane or a planar face")+" - "+tr("Esc cancels"));
+  if(m_featureOn)endFeature();
+  m_pickPlane=true;m_activating=false;
   emit stateChanged();
+  m_planePicker->start(m_positionOrigin,m_openPanel);
 }
 
 bool DesignController::escape() {
-  if (m_pickPlane) {
-    ++m_planeSerial;if(m_planeJob)m_planeJob->cancel();m_planeJob=nullptr;
-    m_pickPlane = false;
-    m_planePicked={};
-    m_viewport->clearCandidates();
-    m_activating = true;
-    m_viewport->clearSelection();
-    if (m_viewport->selectionFilter() != m_filterBefore) m_viewport->setSelectionFilter(m_filterBefore);
-    m_activating = false;
-    if(m_replaning) {
-      m_replaning=false;
-      const auto plane=m_sketch->plane();
-      m_viewport->beginSketchInput(m_sketch,opad::Frame::from_json(plane.value("frame",opad::json())),m_sketch->sketchId());
-    }
-    emit status(QString());
-    emit stateChanged();
+  if(m_pickPlane){
+    if(m_planePicker->active())m_planePicker->cancel();
+    else {m_pickPlane=false;m_planePicked={};emit stateChanged();}
     return true;
   }
   if (m_featureOn) {
