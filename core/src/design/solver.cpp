@@ -275,6 +275,7 @@ struct System {
 
   void constraint(int ci) {
     const SkConstraint& c = sk.constraints[size_t(ci)];
+    if (c.reference) return;
     Aux& a = aux[size_t(ci)];
     nslots = 0;
     auto side = [&](const Dual& d) {  // remembers which side at the start
@@ -395,6 +396,14 @@ struct System {
       }
       case CType::Radius: emit(ci, radius(ent(c.refs[0])) - c.value); break;
       case CType::Diameter: emit(ci, radius(ent(c.refs[0])) * 2.0 - c.value); break;
+      case CType::ArcLength: {
+        const auto& e = ent(c.refs[0]);
+        const P2 a = pt(e.p[1]) - pt(e.p[0]), b = pt(e.p[2]) - pt(e.p[0]);
+        Dual angle = atan2d(cross(a, b), dot(a, b));
+        if (angle.v < 0) angle.v += 2 * kPi;
+        emit(ci, radius(e) * angle - c.value);
+        break;
+      }
     }
   }
 
@@ -725,7 +734,9 @@ void drag(System& sys, std::vector<double>& x, const std::vector<std::pair<size_
 
 }  // namespace
 
-SolveResult solve(Sketch& sk, const SolveOptions& opt, bool keep_best) {
+static SolveResult solve_system(Sketch& sk, const SolveOptions& opt, bool keep_best) {
+  if (!(opt.tolerance > 0) || !std::isfinite(opt.tolerance) || opt.max_iterations < 1 || opt.max_iterations > 10000)
+    throw Error("sketch solver: invalid tolerance or iteration limit");
   sk.validate();  // the residuals index by reference kind; a malformed sketch throws here, not deep inside
   System sys(sk);
   SolveResult out;
@@ -774,7 +785,53 @@ SolveResult solve(Sketch& sk, const SolveOptions& opt, bool keep_best) {
   }
   const bool keep = out.converged || (keep_best && finite);
   analyse(sys, keep ? x : x0, out);
-  if (keep) sys.store(sk, x);
+  if (keep) {
+    sys.store(sk, x);
+    for (auto& c : sk.constraints) if (c.reference && c.is_dimension()) c.value = dimension_value(sk, c);
+  }
+  return out;
+}
+
+SolveResult solve(Sketch& sk, const SolveOptions& opt, bool keep_best) {
+  sk.validate();
+  // Disconnected islands do not share variables: solve their small systems instead of one dense matrix.
+  // ID ordering makes the partition and the floating-point operation order deterministic.
+  std::map<int, int> parent;
+  for (const auto& p : sk.points) parent[p.id] = p.id;
+  for (const auto& e : sk.entities) parent[e.id] = e.id;
+  auto root = [&](int id) { while (parent.at(id) != id) { parent[id] = parent.at(parent[id]); id = parent[id]; } return id; };
+  auto join = [&](int a, int b) { a=root(a); b=root(b); if (a!=b) parent[std::max(a,b)]=std::min(a,b); };
+  for (const auto& e : sk.entities) for (int p : e.p) join(e.id,p);
+  for (const auto& c : sk.constraints) if (!c.reference)
+    for (size_t i=1; i<c.refs.size(); ++i) join(c.refs[0],c.refs[i]);
+  // Reference dimensions can span independent islands; measure them only after all islands are solved.
+  std::map<int, Sketch> islands;
+  for (const auto& p : sk.points) islands[root(p.id)].points.push_back(p);
+  for (const auto& e : sk.entities) islands[root(e.id)].entities.push_back(e);
+  for (const auto& c : sk.constraints) if (!c.reference) islands[root(c.refs[0])].constraints.push_back(c);
+  if (islands.size() < 2) return solve_system(sk,opt,keep_best);
+  SolveResult out; out.converged=true;
+  std::map<int, SkPoint> points;
+  std::map<int, double> radii;
+  for (auto& [id, part] : islands) {
+    SolveOptions local=opt;
+    std::erase_if(local.drags,[&](const auto& d) { return !parent.count(d.point) || root(d.point)!=id; });
+    const auto r=solve_system(part,local,keep_best);
+    out.converged &= r.converged; out.dof+=r.dof; out.residual=std::max(out.residual,r.residual);
+    out.failed.insert(out.failed.end(),r.failed.begin(),r.failed.end());
+    out.redundant.insert(out.redundant.end(),r.redundant.begin(),r.redundant.end());
+    out.free_points.insert(out.free_points.end(),r.free_points.begin(),r.free_points.end());
+    for (const auto& p : part.points) points[p.id]=p;
+    for (const auto& e : part.entities) radii[e.id]=e.r;
+  }
+  if (out.converged || keep_best) {
+    for (auto& p : sk.points) p=points.at(p.id);
+    for (auto& e : sk.entities) e.r=radii.at(e.id);
+    for (auto& c : sk.constraints) if (c.reference && c.is_dimension()) c.value=dimension_value(sk,c);
+  }
+  std::sort(out.free_points.begin(),out.free_points.end());
+  std::sort(out.failed.begin(),out.failed.end());
+  std::sort(out.redundant.begin(),out.redundant.end());
   return out;
 }
 

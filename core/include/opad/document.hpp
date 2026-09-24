@@ -11,7 +11,7 @@
 
 namespace opad {
 
-constexpr int kFormatVersion = 1;
+constexpr int kFormatVersion = 2; // multiline sketch records; version 1 remains readable
 
 struct Header {
   int format = kFormatVersion;

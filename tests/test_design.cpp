@@ -443,3 +443,21 @@ TEST(open_endpoint_detection_handles_t_junctions_and_construction) {
   sk.add_line(sk.add_point(30,0),sk.add_point(31,0),true);CHECK(dangling_vertices(sk).empty());
   Sketch circle;circle.add_circle(circle.add_point(0,0),10);CHECK(dangling_vertices(circle).empty());
 }
+
+TEST(sketch_record_format_and_incremental_replay) {
+  Document doc=Document::create();
+  Sketch sk; int a=sk.add_point(0,0),b=sk.add_point(10,0); sk.add_line(a,b);
+  const auto before=sk.to_json();
+  const std::string id=doc.append(make_sketch_op("Sketch {\"quoted\"}",{{"base","xy"}},before)).id;
+  sk.point(b)->x=14;
+  doc.append(make_edit_op(id,{{"geometry_delta",sketch_delta(before,sk.to_json())}}));
+  const std::string text=doc.serialize();
+  CHECK(text.find("#opad 2\n")==0);
+  CHECK(text.find("\"points\": [\n")!=std::string::npos);
+  auto loaded=Document::parse(text);
+  CHECK_EQ(loaded.serialize(),text);
+  CHECK(resolve(loaded).sketch(id)->geometry==sk.to_json());
+  doc.append({{"op","delete"},{"target",doc.ops.back().id}});
+  CHECK(resolve(doc).sketch(id)->geometry==before);
+  CHECK_THROWS(Document::parse(text.substr(0,text.find("#bodies")-3)));
+}

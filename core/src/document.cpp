@@ -285,6 +285,37 @@ std::vector<std::string> Document::gc() {
 //   #body <sha256> <line-count> <meta json>
 //   <line-count lines of ASCII BREP>
 //   ... repeated
+namespace {
+// Expand only containers leading to sketch records. Each point/curve/constraint stays on one line.
+bool sketch_records(const json& j) {
+  if (!j.is_object()) return false;
+  if (j.contains("points") || j.contains("entities") || j.contains("constraints")) return true;
+  for (const auto& v : j) if (sketch_records(v)) return true;
+  return false;
+}
+std::string record_text(const json& j, int depth = 0) {
+  if (!sketch_records(j)) return j.dump();
+  const std::string indent(size_t(depth + 1) * 2, ' ');
+  std::string out = "{";
+  bool first = true;
+  for (const auto& [k,v] : j.items()) {
+    if (!first) out += ',';
+    first = false;
+    out += '\n' + indent + json(k).dump() + ": ";
+    if ((k == "points" || k == "entities" || k == "constraints") && v.is_array()) {
+      out += '[';
+      for (size_t i = 0; i < v.size(); ++i) {
+        if (i) out += ',';
+        out += '\n' + indent + "  " + v[i].dump();
+      }
+      if (!v.empty()) out += '\n' + indent;
+      out += ']';
+    } else out += record_text(v, depth + 1);
+  }
+  return out + '\n' + std::string(size_t(depth) * 2, ' ') + '}';
+}
+}
+
 std::string Document::serialize() const {
   if (has_live_bodies()) throw Error("viewer-mode document: its bodies have no BREP text; export it to an .opad document first");
   std::string out;
@@ -293,13 +324,13 @@ std::string Document::serialize() const {
   for (const auto& o : ops) reserve += o.raw.size() + 1;
   out.reserve(reserve);
   out += "#opad ";
-  out += std::to_string(header.format);
+  out += std::to_string(kFormatVersion);
   out += '\n';
   out += header.to_json().dump();
   out += '\n';
   out += "#ops\n";
   for (const auto& o : ops) {
-    out += o.raw.empty() ? o.data.dump() : o.raw;
+    out += sketch_records(o.data) ? record_text(o.data) : o.raw.empty() ? o.data.dump() : o.raw;
     out += '\n';
   }
   out += "#bodies\n";
@@ -363,8 +394,29 @@ Document Document::parse(const std::string& text, const std::filesystem::path& o
       fail(i, "unresolved git conflict marker");
     if (l[0] == '#') continue;  // reserved for future section-level metadata; ignored
     Op o;
+    // Count structural brackets outside strings once, rather than repeatedly parsing a growing record.
+    std::string record(l);
+    int depth = 0;
+    bool quoted = false, escaped = false;
+    auto scan = [&](std::string_view part) {
+      for (char c : part) {
+        if (escaped) { escaped = false; continue; }
+        if (quoted && c == '\\') { escaped = true; continue; }
+        if (c == '"') { quoted = !quoted; continue; }
+        if (!quoted) {
+          if (c == '{' || c == '[') ++depth;
+          if (c == '}' || c == ']') --depth;
+        }
+      }
+    };
+    scan(l);
+    while (depth > 0) {
+      if (++i >= lines.size() || lines[i] == "#bodies") fail(i, "truncated op record");
+      scan(lines[i]);
+      record += '\n'; record += lines[i];
+    }
     try {
-      o.data = json::parse(l);
+      o.data = json::parse(record);
       validate_op(o.data);
     } catch (const json::exception& e) {
       fail(i, std::string("bad op: ") + e.what());
@@ -374,7 +426,7 @@ Document Document::parse(const std::string& text, const std::filesystem::path& o
     if (!o.data.contains("id")) fail(i, "op has no id");
     o.id = o.data["id"].get<std::string>();
     o.type = o.data["op"].get<std::string>();
-    o.raw = std::string(l);
+    o.raw = std::move(record);
     d.ops.push_back(std::move(o));
   }
   if (i < lines.size() && lines[i] == "#bodies") {

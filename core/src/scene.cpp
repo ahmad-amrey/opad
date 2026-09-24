@@ -6,6 +6,7 @@
 #include <set>
 
 #include "opad/design/expr.hpp"
+#include "opad/design/sketch.hpp"
 
 namespace opad {
 
@@ -512,7 +513,13 @@ std::vector<EffectiveOp> effective_ops(const std::vector<const Op*>& ops, std::v
       if (it == at.end()) continue;  // the target is tombstoned: nothing to edit
       json& data = out[it->second].edit();
       for (const auto& [k, v] : op.data["set"].items()) {
-        if (v.is_null()) data.erase(k);
+        if (k == "geometry_delta") {
+          // Start from the last solved geometry, including parameter-driven changes.
+          const json base = data.value("result", json::object()).value("geometry", data.value("geometry", json::object()));
+          data["geometry"] = design::apply_sketch_delta(base, v);
+          if (data.contains("result")) data["result"].erase("geometry");
+        }
+        else if (v.is_null()) data.erase(k);
         else data[k] = v;
       }
       continue;

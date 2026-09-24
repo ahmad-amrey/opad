@@ -603,7 +603,7 @@ void DesignController::finishSketch(std::function<void()> then) {
   if (!m_sketch->sketchId().empty() && !m_sketch->modified()) return leave();
   opad::json op;
   if (m_sketch->sketchId().empty()) op = make_sketch_op(m_sketch->name().toStdString(), m_sketch->plane(), m_sketch->geometry());
-  else op = make_edit_op(m_sketch->sketchId(), opad::json{{"geometry", m_sketch->geometry()}});
+  else op = make_edit_op(m_sketch->sketchId(), opad::json{{"geometry_delta", m_sketch->geometryDelta()}, {"plane", m_sketch->plane()}});
   applyOps({op}, m_sketch->sketchId().empty() ? tr("sketch") : tr("edit sketch"), [this, leave](bool ok, const QString& error) {
     if (!ok) return emit failed(error);  // stay in the sketch so nothing drawn is lost
     leave();

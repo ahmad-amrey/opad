@@ -409,16 +409,15 @@ struct Walk {
     std::string s = "sketch|" + geometry.dump() + "|" + plane.dump() + "|";
     bool moved = false;
     std::string error;
-    for (auto& c : sk.constraints) {
-      if (!c.is_dimension() || c.expr.empty()) continue;
-      try {
-        const double v = ctx.params.as(c.type == SkConstraint::Type::Angle ? Dim::Angle : Dim::Length, c.expr);
-        s += std::to_string(c.id) + "=" + json(v).dump() + ";";
-        if (std::fabs(v - c.value) > 1e-10) { c.value = v; moved = true; }
-      } catch (const std::exception& e) {
-        error = std::string("dimension \"") + c.expr + "\": " + e.what();
-        s += std::to_string(c.id) + "!" + e.what() + ";";
+    try {
+      evaluate_dimensions(sk, ctx.params);
+      for (const auto& c : sk.constraints) if (c.is_dimension() && !c.reference) {
+        s += std::to_string(c.id) + "=" + json(c.value).dump() + ";";
       }
+      moved = sk.to_json() != Sketch::from_json(geometry).to_json();
+    } catch (const std::exception& e) {
+      error = e.what();
+      s += "!" + error;
     }
     Frame frame = Frame::from_json(plane.value("frame", json()));
     bool frame_moved = false;

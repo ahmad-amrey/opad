@@ -707,4 +707,68 @@ TEST(solve_conflicting_constraints_are_named) {
   (void)d;
 }
 
+TEST(sketch_deleted_ids_are_not_recycled) {
+  Sketch sk;
+  const int a=sk.add_point(0,0), b=sk.add_point(2,0), line=sk.add_line(a,b);
+  sk.remove(line);
+  sk=Sketch::from_json(sk.to_json());
+  CHECK(sk.add_point(1,1)>line);
+}
+
+TEST(sketch_deltas_are_id_based_and_atomic) {
+  Sketch sk;
+  const int a=sk.add_point(0,0), b=sk.add_point(2,0), line=sk.add_line(a,b);
+  auto before=sk.to_json();
+  sk.point(b)->x=8;
+  const auto delta=sketch_delta(before,sk.to_json());
+  CHECK_EQ(delta.size(),size_t(1));
+  CHECK_EQ(delta["points"].size(),size_t(1));
+  CHECK_EQ(delta["points"][0]["id"].get<int>(),b);
+  CHECK(apply_sketch_delta(before,delta)==sk.to_json());
+  CHECK_THROWS(apply_sketch_delta(before,opad::json{{"points",opad::json::array({{{"id",a},{"deleted",true}}})}}));
+  sk.remove(line);
+  CHECK(apply_sketch_delta(before,sketch_delta(before,sk.to_json()))==sk.to_json());
+}
+
+TEST(sketch_reference_and_arc_length_dimensions) {
+  Sketch sk;
+  int o=sk.add_point(0,0,true), a=sk.add_point(5,0,true), b=sk.add_point(0,5);
+  int arc=sk.add_arc(o,a,b), length=sk.add_constraint(CT::ArcLength,{arc},5*kPi/3);
+  int radial=sk.add_constraint(CT::Radius,{arc},99);
+  sk.constraint(radial)->reference=true;
+  auto r=solve(sk);
+  CHECK(r.converged);
+  CHECK_NEAR(dimension_value(sk,*sk.constraint(length)),5*kPi/3,1e-7);
+  CHECK_NEAR(sk.constraint(radial)->value,5,1e-10);
+  CHECK(Sketch::from_json(sk.to_json()).constraint(radial)->reference);
+}
+
+TEST(sketch_dimension_expression_dependencies) {
+  Sketch sk;
+  int o=sk.add_point(0,0,true), a=sk.add_point(5,0), b=sk.add_point(0,10);
+  int d=sk.add_constraint(CT::Distance,{o,a},5,"wall");
+  int e=sk.add_constraint(CT::Distance,{o,b},10,"d"+std::to_string(d)+" * 2 + 1 cm");
+  ParamTable params({{"wall","wall","3 mm",""}});
+  evaluate_dimensions(sk,params);
+  CHECK_NEAR(sk.constraint(e)->value,16,1e-10);
+  sk.constraint(d)->expr="d"+std::to_string(e);
+  CHECK_THROWS(evaluate_dimensions(sk,params));
+}
+
+TEST(sketch_hundreds_of_independent_curves_drag_interactively) {
+  Sketch sk;
+  int point=0;
+  for(int i=0;i<400;++i) {
+    int a=sk.add_point(i*20,0), b=sk.add_point(i*20+10,0);
+    int l=sk.add_line(a,b); sk.add_constraint(CT::Distance,{l},10); point=b;
+  }
+  SolveOptions options; options.drags.push_back({point,8000,10});
+  const auto start=std::chrono::steady_clock::now();
+  auto r=solve(sk,options);
+  const double ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+  std::printf("       400-curve partitioned drag: %.1f ms\n",ms);
+  CHECK(r.converged); CHECK(ms<250);
+  CHECK_NEAR(sk.point(1)->x,0,0);
+}
+
 CHECK_MAIN()

@@ -158,6 +158,7 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
   m_plane = plane;
   m_frame = frame;
   m_sk = Sketch::from_json(geometry);
+  m_initialGeometry = m_sk.to_json();
   if (m_sk.points.empty()) m_sk.add_point(0, 0, true);  // the origin: something to constrain the first curve to
   m_solved = solve(m_sk);
   m_undo.clear();

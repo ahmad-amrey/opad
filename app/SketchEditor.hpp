@@ -32,6 +32,7 @@ class SketchEditor : public QObject, public SketchInput {
   QString name() const { return m_name; }
   opad::json plane() const { return m_plane; }
   opad::json geometry() const { return m_sk.to_json(); }
+  opad::json geometryDelta() const { return opad::design::sketch_delta(m_initialGeometry, geometry()); }
   bool modified() const { return m_modified; }
   bool empty() const;  // nothing but the origin
 
@@ -115,6 +116,7 @@ class SketchEditor : public QObject, public SketchInput {
   std::string m_id;
   QString m_name;
   opad::json m_plane;
+  opad::json m_initialGeometry;
   opad::Frame m_frame;
   opad::design::Sketch m_sk;
   opad::design::SolveResult m_solved;

@@ -14,7 +14,7 @@ using CType = SkConstraint::Type;
 const char* const kEntityNames[] = {"point", "line", "circle", "arc", "ellipse", "spline"};
 const char* const kConstraintNames[] = {"coincident", "horizontal", "vertical", "parallel", "perpendicular", "collinear",
                                         "tangent",    "equal",      "concentric", "midpoint", "symmetric",   "fix",
-                                        "distance",   "hdistance",  "vdistance",  "radius",   "diameter",    "angle"};
+                                        "distance",   "hdistance",  "vdistance",  "radius",   "diameter",    "angle", "arc_length"};
 
 bool has_radius(EType t) { return t == EType::Circle || t == EType::Ellipse; }
 
@@ -70,6 +70,7 @@ bool refs_fit(CType t, const std::vector<Kind>& k) {
     case CType::VDistance: return pp;
     case CType::Radius:
     case CType::Diameter: return n == 1 && is_round(k[0]);
+    case CType::ArcLength: return n == 1 && is(0, Kind::Arc);
   }
   return false;
 }
@@ -143,7 +144,7 @@ const SkEntity* Sketch::entity(int id) const { return find_id(entities, id); }
 SkConstraint* Sketch::constraint(int id) { return find_id(constraints, id); }
 
 int Sketch::next_id() const {
-  int top = 0;
+  int top = id_watermark;
   for (const auto& p : points) top = std::max(top, p.id);
   for (const auto& e : entities) top = std::max(top, e.id);
   for (const auto& c : constraints) top = std::max(top, c.id);
@@ -211,6 +212,7 @@ int Sketch::add_constraint(SkConstraint::Type t, std::vector<int> refs, double v
 // Unknown ids and points still used by an entity are left alone: a caller deleting a selection may name a
 // line and its end points in any order.
 void Sketch::remove(int id) {
+  id_watermark = next_id() - 1;
   auto drop_constraints_on = [&](int ref) {
     std::erase_if(constraints, [&](const SkConstraint& c) { return std::find(c.refs.begin(), c.refs.end(), ref) != c.refs.end(); });
   };
@@ -272,18 +274,24 @@ json Sketch::to_json() const {
     json o = {{"id", c.id}, {"type", SkConstraint::type_name(c.type)}, {"refs", c.refs}};
     if (c.is_dimension()) {
       o["value"] = c.value;
+      if (c.reference) o["reference"] = true;
       if (!c.expr.empty()) o["expr"] = c.expr;
       o["pos"] = json::array({c.pos[0], c.pos[1]});
     }
     jc.push_back(std::move(o));
   }
-  return json{{"points", std::move(jp)}, {"entities", std::move(je)}, {"constraints", std::move(jc)}};
+  auto ordered = [](json& a) { std::sort(a.begin(), a.end(), [](const json& x, const json& y) { return x.at("id").get<int>() < y.at("id").get<int>(); }); };
+  ordered(jp); ordered(je); ordered(jc);
+  json out{{"points", std::move(jp)}, {"entities", std::move(je)}, {"constraints", std::move(jc)}};
+  if (id_watermark) out["id_watermark"] = id_watermark;
+  return out;
 }
 
 Sketch Sketch::from_json(const json& j) {
   Sketch sk;
   try {
     if (!j.is_object()) throw Error("sketch: not a JSON object");
+    sk.id_watermark = j.value("id_watermark", 0);
     auto list = [&](const char* key) -> json {
       if (!j.contains(key)) return json::array();
       if (!j.at(key).is_array()) throw Error(std::string("sketch: '") + key + "' is not an array");
@@ -316,6 +324,7 @@ Sketch Sketch::from_json(const json& j) {
       c.refs = o.at("refs").get<std::vector<int>>();
       if (c.is_dimension()) {
         c.value = o.at("value").get<double>();
+        c.reference = o.value("reference", false);
         c.expr = o.value("expr", std::string());
         if (o.contains("pos")) {
           const auto pos = o.at("pos").get<std::vector<double>>();

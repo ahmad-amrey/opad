@@ -10,6 +10,7 @@
 
 #include "../json.hpp"
 #include "../util.hpp"
+#include "expr.hpp"
 
 namespace opad::design {
 
@@ -60,13 +61,15 @@ struct SkConstraint {
     VDistance,      // [point, point] along v
     Radius,         // [circle|arc]
     Diameter,       // [circle|arc]
-    Angle           // [line, line], between their directions p0->p1, 0..pi
+    Angle,          // [line, line], between their directions p0->p1, 0..pi
+    ArcLength       // [arc], counter-clockwise length
   };
   int id = 0;
   Type type = Type::Coincident;
   std::vector<int> refs;
   double value = 0;       // dimensions: the evaluated value the solver drives to
   std::string expr;       // dimensions: the expression as typed ("width / 2", "12 mm"); empty = plain value
+  bool reference = false; // measured after solving; never removes a degree of freedom
   double pos[2] = {0, 0}; // dimensions: where the label sits (display only)
   bool is_dimension() const { return type >= Type::Distance; }
   static const char* type_name(Type t);
@@ -77,13 +80,14 @@ struct Sketch {
   std::vector<SkPoint> points;
   std::vector<SkEntity> entities;
   std::vector<SkConstraint> constraints;
+  mutable int id_watermark = 0; // never recycle a deleted ID
 
   SkPoint* point(int id);
   const SkPoint* point(int id) const;
   SkEntity* entity(int id);
   const SkEntity* entity(int id) const;
   SkConstraint* constraint(int id);
-  int next_id() const;  // 1 + the largest id in use
+  int next_id() const;  // above both the live IDs and the deletion watermark
 
   // Convenience builders (ids are allocated here). They add no constraints.
   int add_point(double x, double y, bool fixed = false);
@@ -99,6 +103,13 @@ struct Sketch {
   static Sketch from_json(const json& j); // throws Error on dangling references or unknown types
   void validate() const;
 };
+
+// Entity-ID deltas are append-only document edits, independent of array ordering.
+json sketch_delta(const json& before, const json& after);
+json apply_sketch_delta(const json& before, const json& delta);
+double dimension_value(const Sketch& sk, const SkConstraint& c);
+ParamTable sketch_parameters(const Sketch& sk, const ParamTable& params = {});
+void evaluate_dimensions(Sketch& sk, const ParamTable& params = {});
 
 // ---------------------------------------------------------------- solver
 struct SolveOptions {
