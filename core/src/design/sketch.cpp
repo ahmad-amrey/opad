@@ -14,7 +14,7 @@ using CType = SkConstraint::Type;
 
 const char* const kEntityNames[] = {"point", "line", "circle", "arc", "ellipse", "spline"};
 const char* const kConstraintNames[] = {"coincident", "horizontal", "vertical", "parallel", "perpendicular", "collinear",
-                                        "tangent",    "equal",      "concentric", "midpoint", "symmetric",   "fix",
+                                        "tangent",    "equal",      "concentric", "midpoint", "symmetric",   "fix", "smooth", "curvature",
                                         "distance",   "hdistance",  "vdistance",  "radius",   "diameter",    "angle", "arc_length"};
 
 bool has_radius(EType t) { return t == EType::Circle || t == EType::Ellipse; }
@@ -57,7 +57,9 @@ bool refs_fit(CType t, const std::vector<Kind>& k) {
     case CType::Perpendicular:
     case CType::Collinear:
     case CType::Angle: return ll;
-    case CType::Tangent: return rr || (n == 2 && ((is(0, Kind::Line) && is_round(k[1])) || (is_round(k[0]) && is(1, Kind::Line))));
+    case CType::Tangent: return rr || (n == 2 && ((is(0, Kind::Line) && (is_round(k[1]) || is(1,Kind::Spline))) || ((is_round(k[0]) || is(0,Kind::Spline)) && is(1, Kind::Line)) || (is(0,Kind::Spline)&&is(1,Kind::Spline))));
+    case CType::Smooth:
+    case CType::Curvature: return n==2 && is(0,Kind::Spline) && is(1,Kind::Spline);
     case CType::Equal: return ll || rr;
     case CType::Concentric: {
       auto centred = [](Kind x) { return is_round(x) || x == Kind::Ellipse; };
@@ -114,6 +116,16 @@ void check_constraint(const Sketch& sk, const SkConstraint& c) {
     kinds.push_back(k);
   }
   if (!refs_fit(c.type, kinds)) throw Error(who + ": references do not fit the constraint type");
+  for(int id:c.anchors)if(!sk.point(id))throw Error(who+": missing endpoint anchor");
+  if(c.type==CType::Smooth || c.type==CType::Curvature || (c.type==CType::Tangent && std::find(kinds.begin(),kinds.end(),Kind::Spline)!=kinds.end())) {
+    size_t splines=0;
+    for(int ref:c.refs)if(const auto* e=sk.entity(ref);e && e->type==EType::Spline) {
+      if(e->degree<2 || e->periodic || e->multiplicities.front()!=e->degree+1 || e->multiplicities.back()!=e->degree+1)throw Error(who+": use an open control-point spline of degree two or higher");
+      if(splines>=c.anchors.size() || (c.anchors[splines]!=e->p.front() && c.anchors[splines]!=e->p.back()))throw Error(who+": anchor is not a spline endpoint");
+      ++splines;
+    }
+    if(c.anchors.size()!=splines)throw Error(who+": missing spline endpoint anchors");
+  }
   if (c.is_dimension() && !std::isfinite(c.value)) throw Error(who + ": value is not a number");
 }
 
@@ -202,6 +214,20 @@ int Sketch::add_constraint(SkConstraint::Type t, std::vector<int> refs, double v
   c.id = next_id();
   c.type = t;
   c.refs = std::move(refs);
+  if(t==CType::Smooth || t==CType::Curvature || t==CType::Tangent) {
+    std::vector<const SkEntity*> splines;
+    const SkEntity* line=nullptr;
+    for(int ref:c.refs)if(const auto* e=entity(ref)){if(e->type==EType::Spline)splines.push_back(e);if(e->type==EType::Line)line=e;}
+    if(splines.size()==2) {
+      double best=INFINITY;
+      for(int a:{splines[0]->p.front(),splines[0]->p.back()})for(int b:{splines[1]->p.front(),splines[1]->p.back()}) {
+        double d=std::hypot(point(a)->x-point(b)->x,point(a)->y-point(b)->y);if(d<best){best=d;c.anchors={a,b};}
+      }
+    } else if(splines.size()==1 && line) {
+      const auto a=*point(line->p[0]),b=*point(line->p[1]);double best=INFINITY;
+      for(int id:{splines[0]->p.front(),splines[0]->p.back()}){const auto p=*point(id);const double distance=std::fabs((b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x));if(distance<best){best=distance;c.anchors={id};}}
+    }
+  }
   if (c.is_dimension()) {
     c.value = value;
     c.expr = expr;
@@ -221,7 +247,7 @@ void Sketch::remove(int id) {
     if(instance || pattern==id)return;
   }
   auto drop_constraints_on = [&](int ref) {
-    std::erase_if(constraints, [&](const SkConstraint& c) { return std::find(c.refs.begin(), c.refs.end(), ref) != c.refs.end(); });
+    std::erase_if(constraints, [&](const SkConstraint& c) { return std::find(c.refs.begin(), c.refs.end(), ref) != c.refs.end() || std::find(c.anchors.begin(),c.anchors.end(),ref)!=c.anchors.end(); });
   };
   auto used = [&](int pid) {
     for (const auto& e : entities)
@@ -288,6 +314,7 @@ json Sketch::to_json() const {
   }
   for (const auto& c : constraints) {
     json o = {{"id", c.id}, {"type", SkConstraint::type_name(c.type)}, {"refs", c.refs}};
+    if(!c.anchors.empty())o["anchors"]=c.anchors;
     if (c.is_dimension()) {
       o["value"] = c.value;
       if (c.reference) o["reference"] = true;
@@ -340,6 +367,7 @@ Sketch Sketch::from_json(const json& j) {
       c.id = o.at("id").get<int>();
       c.type = SkConstraint::type_from_name(o.at("type").get<std::string>());
       c.refs = o.at("refs").get<std::vector<int>>();
+      c.anchors=o.value("anchors",std::vector<int>{});
       if (c.is_dimension()) {
         c.value = o.at("value").get<double>();
         c.reference = o.value("reference", false);

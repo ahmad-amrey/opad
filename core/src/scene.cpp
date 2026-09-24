@@ -156,7 +156,7 @@ struct SceneBuilder::Impl {
   Scene scene;
   std::set<std::string> shown_sketches, hidden_sketches;  // explicit appearance ops on sketches
 
-  explicit Impl(const Document& d) : doc(d) {}
+  explicit Impl(const Document& d) : doc(d) {scene.units=d.header.units;}
 
   void unresolved(const std::string& id, const std::string& type, const std::string& reason) { scene.unresolved.push_back({id, type, reason}); }
 
@@ -322,7 +322,8 @@ struct SceneBuilder::Impl {
   }
 
   void apply(const std::string& id, const std::string& type, const json& d) {
-    if (type == "import") {
+    if(type=="units") {scene.units=d.at("length").get<std::string>();
+    } else if (type == "import") {
       std::string parent;
       if (d.contains("parent") && d["parent"].is_string()) {
         parent = d["parent"].get<std::string>();

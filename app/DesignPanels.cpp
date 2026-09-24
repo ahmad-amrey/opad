@@ -16,7 +16,7 @@ namespace {
 opad::design::ParamTable paramTable(const opad::Scene& scene) {
   std::vector<opad::design::ParamDef> defs;
   for (const auto& p : scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
-  return opad::design::ParamTable(defs);
+  return opad::design::ParamTable(defs,scene.units);
 }
 
 // "three_points" -> "Three points": choice keys are identifiers in the op, words in the UI.
@@ -59,6 +59,11 @@ void ExprEdit::setText(const QString& text) {
   evaluate();
 }
 
+QString ExprEdit::text() const {
+  const auto text=m_edit->text().trimmed();
+  if(m_dim!=opad::design::Dim::Length)return text;
+  try{return QString::fromStdString(paramTable(m_doc->scene).explicit_length(text.toStdString()));}catch(...){return text;}
+}
 void ExprEdit::evaluate() {
   const Tokens& t = theme::current();
   try {
@@ -185,7 +190,9 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
     if (in.type == "length" || in.type == "angle" || in.type == "number" || in.type == "count") {
       const auto dim = in.type == "length" ? opad::design::Dim::Length : in.type == "angle" ? opad::design::Dim::Angle : opad::design::Dim::None;
       w.expr = new ExprEdit(m_doc, dim, w.row);
-      w.expr->setText(value.is_string() ? QString::fromStdString(value.get<std::string>()) : value.is_number() ? QString::number(value.get<double>()) : QString());
+      QString shown=value.is_string()?QString::fromStdString(value.get<std::string>()):value.is_number()?QString::number(value.get<double>()):QString();
+      if(dim==opad::design::Dim::Length)try {shown=QString::fromStdString(opad::design::ParamTable(paramTable(m_doc->scene).defs()).explicit_length(shown.toStdString()));}catch(...){}
+      w.expr->setText(shown);
       connect(w.expr, &ExprEdit::changed, this, &FeaturePanel::inputsChanged);
       connect(w.expr, &ExprEdit::returnPressed, this, &FeaturePanel::accepted);
       h->addWidget(label, 0, Qt::AlignTop);
@@ -369,6 +376,10 @@ ParametersDialog::ParametersDialog(AppDocument* doc, std::function<void(std::vec
   intro->setObjectName("secondary");
   intro->setWordWrap(true);
   v->addWidget(intro);
+  auto* units=new QComboBox(this);units->addItems({"mm","cm","m","um","in","ft"});units->setCurrentText(QString::fromStdString(doc->scene.units));
+  v->addWidget(new QLabel(tr("Document length unit"),this));v->addWidget(units);
+  connect(units,&QComboBox::textActivated,this,[this](const QString& unit){m_apply({opad::json{{"op","units"},{"length",unit.toStdString()}}},tr("Change document units"));});
+  connect(doc,&AppDocument::changed,this,[this,units]{units->setCurrentText(QString::fromStdString(m_doc->scene.units));});
   m_table = new QTreeWidget(this);
   m_table->setColumnCount(5);
   m_table->setHeaderLabels({tr("Name"), tr("Expression"), tr("Value"), tr("Comment"), tr("Used by")});
@@ -442,7 +453,7 @@ void ParametersDialog::addParameter() {
     name = QString("parameter%1").arg(i);
     if (!m_doc->scene.param(name.toStdString())) break;
   }
-  m_apply({opad::design::make_param_op(name.toStdString(), "10 mm")}, tr("new parameter"));
+  m_apply({opad::design::make_param_op(name.toStdString(), "10 "+m_doc->scene.units)}, tr("new parameter"));
 }
 
 void ParametersDialog::removeCurrent() {

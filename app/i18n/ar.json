@@ -1103,5 +1103,18 @@
  "Pick the boundary curve": "اختر منحنى الحد",
  "Pick inside the first loop": "اختر داخل الحلقة الأولى",
  "Pick inside the second loop": "اختر داخل الحلقة الثانية",
- "Apply to combine the loops": "طبّق لدمج الحلقتين"
+ "Apply to combine the loops": "طبّق لدمج الحلقتين",
+ "Document length unit": "وحدة الطول في المستند",
+ "Change document units": "تغيير وحدات المستند",
+ "Solving sketch": "حل قيود الرسم",
+ "Smooth spline join (G2)": "وصل منحنيات بانسيابية (G2)",
+ "Equal endpoint curvature": "تساوي الانحناء عند النهايات",
+ "Dimension type": "نوع البعد",
+ "Aligned distance": "مسافة محاذية",
+ "Horizontal distance": "مسافة أفقية",
+ "Vertical distance": "مسافة رأسية",
+ "Arc length": "طول القوس",
+ "smooth": "انسيابية",
+ "curvature": "انحناء",
+ "Wait for the sketch operation to finish.": "انتظر حتى تكتمل عملية الرسم."
 }

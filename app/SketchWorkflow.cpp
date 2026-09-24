@@ -106,7 +106,7 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
     m_editJob=nullptr;
     if(!ok){emit status(error);return;}
     if(m_sk.to_json()!=before->to_json())return;
-    m_undo.push_back(*before);m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;
+    m_undo.push_back({*before,m_plane,m_frame});m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;
     m_clicks.clear();m_picked.clear();m_sel.clear();rebuild();scheduleFill();toolPrompt();emit changed();
     if(m_tool=="mirror")m_options["mirrorStage"]="seed";
   });
@@ -115,7 +115,7 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
 void SketchEditor::placePrecise(const QString& u,const QString& v,int mode) {
   try {
     std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});
-    const auto table=sketch_parameters(m_sk,ParamTable(defs));
+    const auto table=sketch_parameters(m_sk,ParamTable(defs,m_doc->scene.units));
     double x=table.length(u.toStdString()),y=mode==2?table.angle(v.toStdString()):table.length(v.toStdString());
     if(mode==2){const double r=x;x=r*std::cos(y);y=r*std::sin(y);}
     if(mode) {
@@ -171,7 +171,8 @@ void SketchEditor::selectType() {
 }
 
 void SketchEditor::redefinePlane(const opad::json& plane,const opad::Frame& frame) {
-  m_plane=plane;m_frame=frame;m_modified=true;
+  begin_change();m_plane=plane;m_frame=frame;
+  if(!end_change(tr("Redefine sketch plane")))return;
   m_viewport->endSketchInput();m_viewport->beginSketchInput(this,frame,m_id);m_viewport->lookAt(frame,true,false);
   m_fill.clear();rebuild();scheduleFill();emit changed();
 }
@@ -197,6 +198,11 @@ void SketchEditor::benchWorkflow() {
     const auto geometry=m_sk.to_json();
     opad::Frame frame;frame.origin={0,0,12};redefinePlane({{"base","xy"},{"frame",frame.to_json()}},frame);
     require(m_sk.to_json()==geometry,"replane preserved constraints and geometry");
+    undo();require(std::fabs(m_frame.origin[2])<1e-9,"replane undo");redo();require(std::fabs(m_frame.origin[2]-12)<1e-9,"replane redo");
+    setTool("arcc");placePrecise("100","0",0);placePrecise("110","0",0);placePrecise("100","10",0);
+    setTool("dimension");m_options["dimensionType"]="arc_length";m_options["reference"]="1";
+    const int arc=m_sk.entities.back().id;dimensionClick({Hit::Entity,arc},107,7);placeDimension(116,16);
+    require(m_sk.constraints.back().type==SkConstraint::Type::ArcLength && m_sk.constraints.back().reference,"arc length reference from side panel");
     const auto camera=m_cameraBefore;
     QCoreApplication::processEvents();
     m_viewport->grabImage().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_WORKFLOW")+".viewport.png");
@@ -206,4 +212,17 @@ void SketchEditor::benchWorkflow() {
     require(restored.at("eye")==camera.at("eye") && restored.at("target")==camera.at("target"),"camera restoration");
     trace::log("bench: sketch guided workflow PASS");QCoreApplication::exit(0);
   }catch(const std::exception& e){trace::log(QString("bench: sketch guided workflow FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}
+}
+
+void SketchEditor::benchDrag() {
+  for(int i=0;i<200;++i){int a=m_sk.add_point(i*30,0),b=m_sk.add_point(i*30+10,0),line=m_sk.add_line(a,b);m_sk.add_constraint(SkConstraint::Type::Distance,{line},10);}
+  m_tool="select";m_dragging=true;m_dragMoved=false;m_dragHit={Hit::Point,3};m_dragU=10;m_dragV=0;m_dragStart={{3,{10,0}}};
+  sketchMove(12,2,Qt::NoModifier,true);sketchMove(15,10,Qt::NoModifier,true);sketchMove(20,15,Qt::NoModifier,true);sketchRelease(20,15,Qt::NoModifier);
+  auto ticks=std::make_shared<int>(0);auto* timer=new QTimer(this);timer->setInterval(20);
+  connect(timer,&QTimer::timeout,this,[this,timer,ticks]{
+    if(m_editJob && ++*ticks<1000)return;
+    timer->stop();trace::log(QString("bench: drag final x=%1 y=%2 undo=%3").arg(m_sk.point(3)->x,0,'g',12).arg(m_sk.point(3)->y,0,'g',12).arg(m_undo.size()));bool ok=!m_editJob && m_undo.size()==1 && std::hypot(m_sk.point(3)->x-20,m_sk.point(3)->y-15)<1e-3;
+    undo();ok &= std::hypot(m_sk.point(3)->x-10,m_sk.point(3)->y)<1e-9;
+    trace::log(QString("bench: asynchronous sketch drag and single undo %1").arg(ok?"PASS":"FAIL"));QCoreApplication::exit(ok?0:2);
+  });timer->start();
 }

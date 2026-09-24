@@ -29,7 +29,7 @@ namespace {
 ParamTable paramTable(const opad::Scene& scene) {
   std::vector<ParamDef> defs;
   for (const auto& p : scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
-  return ParamTable(defs);
+  return ParamTable(defs,scene.units);
 }
 
 QString trimmedNumber(double v, int decimals) {
@@ -50,7 +50,7 @@ double norm_angle(double a) {  // into [0, 2 pi)
 
 // ---------------------------------------------------------------- tool selection
 void SketchEditor::setTool(const QString& tool) {
-  if (!m_active) return;
+  if (!m_active || m_editJob) return;
   if (!m_chain.empty()) finishChain();
   cancel_change();
   m_clicks.clear();
@@ -180,9 +180,9 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
   m_clicks.push_back(s);
   const size_t n = m_clicks.size();
   auto done = [&](const QString& what) {
-    end_change(what);
+    const bool accepted=end_change(what);
     m_clicks.clear();
-    toolPrompt();
+    if(accepted)toolPrompt();
   };
   auto rectangle = [&](double x0, double y0, double x1, double y1, const Snap* first, const Snap* second) {
     const int a = first ? pointFor(*first) : m_sk.add_point(x0, y0);
@@ -326,13 +326,14 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
 
 // ---------------------------------------------------------------- constraints
 bool SketchEditor::applyConstraint(CT type, const std::vector<int>& ids, bool quiet) {
-  std::vector<int> points, lines, rounds, others;
+  std::vector<int> points, lines, rounds, splines, others;
   for (int id : ids) {
     if (m_sk.point(id)) points.push_back(id);
     else if (const SkEntity* e = m_sk.entity(id)) {
       if (e->type == ET::Line) lines.push_back(id);
       else if (e->type == ET::Circle || e->type == ET::Arc) rounds.push_back(id);
       else if (e->type == ET::Point && !e->p.empty()) points.push_back(e->p[0]);
+      else if(e->type==ET::Spline)splines.push_back(id);
       else others.push_back(id);
     }
   }
@@ -359,7 +360,13 @@ bool SketchEditor::applyConstraint(CT type, const std::vector<int>& ids, bool qu
       else if (rounds.size() >= 2 && lines.empty())
         for (size_t i = 1; i < rounds.size(); ++i) sets.push_back({rounds[0], rounds[i]});
       break;
+    case CT::Smooth:
+    case CT::Curvature:
+      if(splines.size()==2)sets.push_back(splines);
+      break;
     case CT::Tangent:
+      if(splines.size()==2)sets.push_back(splines);
+      else if(splines.size()==1 && lines.size()==1)sets.push_back({lines[0],splines[0]});
       if (lines.size() == 1 && rounds.size() == 1) sets.push_back({lines[0], rounds[0]});
       else if (lines.empty() && rounds.size() == 2) sets.push_back(rounds);
       break;
@@ -413,7 +420,7 @@ void SketchEditor::constraintClick(const Hit& h) {
 
 // ---------------------------------------------------------------- dimensions
 QString SketchEditor::dimensionText(const SkConstraint& c) const {
-  QString value = c.type == CT::Angle ? trimmedNumber(c.value * 180.0 / M_PI, 2) + QString::fromUtf8("°") : trimmedNumber(c.value, 3);
+  QString value = c.type == CT::Angle ? trimmedNumber(c.value * 180.0 / M_PI, 2) + QString::fromUtf8("°") : trimmedNumber(c.value / ParamTable({},m_doc->scene.units).length("1"), 3) + " " + QString::fromStdString(m_doc->scene.units);
   if (c.type == CT::Radius) value = "R" + value;
   if (c.type == CT::Diameter) value = QString::fromUtf8("Ø") + value;
   bool plain = false;
@@ -504,42 +511,28 @@ void SketchEditor::placeDimension(double u, double v) {
   m_picked.clear();
   auto P = [&](int id) { return m_sk.point(id); };
   // Two points: where the label goes says whether the distance is meant along u, along v, or straight.
-  if (c.type == CT::Distance && c.refs.size() == 2 && P(c.refs[0]) && P(c.refs[1])) {
+  if (option("dimensionType","auto")=="auto" && c.type == CT::Distance && c.refs.size() == 2 && P(c.refs[0]) && P(c.refs[1])) {
     const SkPoint *a = P(c.refs[0]), *b = P(c.refs[1]);
     const double x0 = std::min(a->x, b->x), x1 = std::max(a->x, b->x), y0 = std::min(a->y, b->y), y1 = std::max(a->y, b->y);
     const bool insideX = u > x0 && u < x1, insideY = v > y0 && v < y1;
     if (insideX && !insideY && x1 - x0 > 1e-9) c.type = CT::HDistance;
     else if (insideY && !insideX && y1 - y0 > 1e-9) c.type = CT::VDistance;
   }
-  // The value it has now; the editor that opens lets the user change it.
-  double value = 0;
-  auto len = [&](const SkEntity* l) { return std::hypot(P(l->p[1])->x - P(l->p[0])->x, P(l->p[1])->y - P(l->p[0])->y); };
-  auto toLine = [&](const SkPoint* p, const SkEntity* l) {
-    const SkPoint *a = P(l->p[0]), *b = P(l->p[1]);
-    const double dx = b->x - a->x, dy = b->y - a->y, d = std::max(1e-12, std::hypot(dx, dy));
-    return std::fabs((p->x - a->x) * dy - (p->y - a->y) * dx) / d;
-  };
-  switch (c.type) {
-    case CT::HDistance: value = std::fabs(P(c.refs[0])->x - P(c.refs[1])->x); break;
-    case CT::VDistance: value = std::fabs(P(c.refs[0])->y - P(c.refs[1])->y); break;
-    case CT::Diameter: value = 2 * m_sk.entity(c.refs[0])->r; break;
-    case CT::Radius: {
-      const SkEntity* e = m_sk.entity(c.refs[0]);
-      value = e->type == ET::Circle ? e->r : std::hypot(P(e->p[1])->x - P(e->p[0])->x, P(e->p[1])->y - P(e->p[0])->y);
-      break;
+  const QString requested=option("dimensionType","auto");
+  if(requested!="auto") {
+    const auto type=SkConstraint::type_from_name(requested.toStdString());
+    if((type==CT::HDistance||type==CT::VDistance) && c.refs.size()==1) {
+      const auto* line=m_sk.entity(c.refs[0]);
+      if(line && line->type==ET::Line)c.refs=line->p;
     }
-    case CT::Angle: {
-      const SkEntity *l1 = m_sk.entity(c.refs[0]), *l2 = m_sk.entity(c.refs[1]);
-      const double ax = P(l1->p[1])->x - P(l1->p[0])->x, ay = P(l1->p[1])->y - P(l1->p[0])->y, bx = P(l2->p[1])->x - P(l2->p[0])->x, by = P(l2->p[1])->y - P(l2->p[0])->y;
-      value = std::atan2(std::fabs(ax * by - ay * bx), ax * bx + ay * by);
-      break;
-    }
-    default:
-      if (c.refs.size() == 1) value = len(m_sk.entity(c.refs[0]));
-      else if (P(c.refs[0]) && P(c.refs[1])) value = std::hypot(P(c.refs[0])->x - P(c.refs[1])->x, P(c.refs[0])->y - P(c.refs[1])->y);
-      else if (P(c.refs[0])) value = toLine(P(c.refs[0]), m_sk.entity(c.refs[1]));
-      else value = toLine(P(m_sk.entity(c.refs[1])->p[0]), m_sk.entity(c.refs[0]));
+    c.type=type;
   }
+  double value=0;
+  try {
+    Sketch check=m_sk;
+    check.add_constraint(c.type,c.refs,1);
+    value=dimension_value(m_sk,c);
+  } catch(const std::exception& e) {emit status(i18n::t(QString::fromUtf8(e.what())));return rebuild();}
   if (value < 1e-9) {
     emit status(tr("Dimension: that measures zero; nothing to drive"));
     return rebuild();
@@ -553,6 +546,7 @@ void SketchEditor::placeDimension(double u, double v) {
     return emit status(i18n::t(QString::fromUtf8(e.what())));
   }
   if (SkConstraint* made = m_sk.constraint(id)) {
+    made->reference=option("reference","0")=="1";
     made->pos[0] = u;
     made->pos[1] = v;
   }
@@ -600,7 +594,7 @@ void SketchEditor::commitDimensionEdit() {
   }
   bool plain = false;
   text.toDouble(&plain);
-  const std::string expr = plain ? std::string() : text.toStdString();
+  const std::string expr = plain ? std::string() : c->type==CT::Angle?text.toStdString():sketch_parameters(m_sk,paramTable(m_doc->scene)).explicit_length(text.toStdString());
   if (std::fabs(value - c->value) < 1e-12 && expr == c->expr && c->reference == (option("reference", "0") == "1")) return rebuild();
   const int id = c->id;
   begin_change();
@@ -931,6 +925,7 @@ bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
 // Drives the tools the way the mouse does (sketch coordinates instead of pixels), so a headless run covers the
 // same code as a user: a 40 x 25 rectangle from the origin with a hole, width and height dimensioned.
 void SketchEditor::bench(const QString&) {
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_DRAG"))return benchDrag();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY"))return benchModify();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES"))return benchPrimitives();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW"))return benchWorkflow();

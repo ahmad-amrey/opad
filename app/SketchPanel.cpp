@@ -42,6 +42,8 @@ QList<Tool> tools() {
     {QObject::tr("Constrain"),"c:coincident",QObject::tr("Coincident")}, {QObject::tr("Constrain"),"c:collinear",QObject::tr("Collinear")},
     {QObject::tr("Constrain"),"c:parallel",QObject::tr("Parallel")}, {QObject::tr("Constrain"),"c:perpendicular",QObject::tr("Perpendicular")},
     {QObject::tr("Constrain"),"c:tangent",QObject::tr("Tangent")}, {QObject::tr("Constrain"),"c:equal",QObject::tr("Equal")},
+    {QObject::tr("Constrain"),"c:smooth",QObject::tr("Smooth spline join (G2)")},
+    {QObject::tr("Constrain"),"c:curvature",QObject::tr("Equal endpoint curvature")},
     {QObject::tr("Constrain"),"c:concentric",QObject::tr("Concentric")}, {QObject::tr("Constrain"),"c:midpoint",QObject::tr("Midpoint")},
     {QObject::tr("Constrain"),"c:symmetric",QObject::tr("Symmetric")}, {QObject::tr("Constrain"),"c:fix",QObject::tr("Fix")},
     {QObject::tr("Reference"),"project",QObject::tr("Project")}
@@ -93,7 +95,7 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   m_constraints=new QTreeWidget(this);m_constraints->setRootIsDecorated(false);m_constraints->setColumnCount(3);
   m_constraints->setHeaderLabels({tr("ID"),tr("Type"),tr("Value")}); m_constraints->setColumnWidth(0,45);m_constraints->setColumnWidth(1,105);
   constraints->addWidget(m_constraints,1);
-  connect(constraintFilter,&QLineEdit::textChanged,this,[this](const QString& text){for(int i=0;i<m_constraints->topLevelItemCount();++i) {auto* r=m_constraints->topLevelItem(i);r->setHidden(!r->text(1).contains(text,Qt::CaseInsensitive));}});
+  connect(constraintFilter,&QLineEdit::textChanged,this,[this](const QString& text){m_editor->m_constraintFilter=text;m_editor->rebuild();for(int i=0;i<m_constraints->topLevelItemCount();++i) {auto* r=m_constraints->topLevelItem(i);r->setHidden(!r->text(1).contains(text,Qt::CaseInsensitive));}});
   connect(m_constraints,&QTreeWidget::itemSelectionChanged,this,[this] {
     if(m_refreshing || !m_constraints->currentItem()) return;
     m_editor->m_sel={m_constraints->currentItem()->data(0,Qt::UserRole).toInt()};m_editor->rebuild();
@@ -176,9 +178,11 @@ void SketchPanel::buildFields() {
   if(m_shown=="node") {
     field("weight",tr("Node weight"),"1");field("incoming",tr("Incoming handle weight"),"1");field("outgoing",tr("Outgoing handle weight"),"1");
   }
-  if(m_shown=="dimension" && m_editor->m_dimEditing) {
-    field("expression",tr("Expression"),m_editor->m_dimEdit?m_editor->m_dimEdit->text():"10 mm");
+  if(m_shown=="dimension") {
+    if(!m_editor->m_dimEditing)choice("dimensionType",tr("Dimension type"),{{"auto",tr("Automatic")},{"distance",tr("Aligned distance")},{"hdistance",tr("Horizontal distance")},{"vdistance",tr("Vertical distance")},{"angle",tr("Angle")},{"radius",tr("Radius")},{"diameter",tr("Diameter")},{"arc_length",tr("Arc length")}});
+    else field("expression",tr("Expression"),m_editor->m_dimEdit?m_editor->m_dimEdit->text():"10 mm");
     auto* reference=new QCheckBox(tr("Reference dimension"),this);m_fields->addRow(reference);
+    reference->setChecked(m_editor->option("reference","0")=="1");
     if(auto* c=m_editor->m_sk.constraint(m_editor->m_dimEditing))reference->setChecked(c->reference);
     connect(reference,&QCheckBox::toggled,this,[this](bool on){m_editor->m_options["reference"]=on?"1":"0";});
   }
@@ -206,6 +210,8 @@ void SketchPanel::refresh() {
     row->setText(0,QString(c.is_dimension()?"d%1":"%1").arg(c.id));
     row->setText(1,i18n::t(QString::fromLatin1(opad::design::SkConstraint::type_name(c.type))));
     if(c.is_dimension())row->setText(2,m_editor->dimensionText(c));
+    row->setHidden(!row->text(1).contains(m_editor->m_constraintFilter,Qt::CaseInsensitive));
+    if(m_editor->m_conflicts.count(c.id))row->setForeground(1,Qt::red);
     if(c.id==selected)m_constraints->setCurrentItem(row);
   }
   m_refreshing=false;

@@ -45,7 +45,7 @@ Document Document::create(const std::string& units) {
 const std::vector<std::string>& Document::op_types() {
   static const std::vector<std::string> t = {"import",     "reparent",    "transform", "appearance", "rename", "annotation",
                                              "measurement", "section",    "view",      "delete",     "param",  "sketch",
-                                             "feature",    "edit",        "regen"};
+                                             "feature",    "edit",        "regen", "units"};
   return t;
 }
 
@@ -86,7 +86,10 @@ void Document::validate_op(const json& op) {
   const auto& types = op_types();
   if (std::find(types.begin(), types.end(), type) == types.end()) throw Error("unknown op type: " + type);
   if (op.contains("id")) require(op, "id", "uuid");
-  if (type == "import") {
+  if(type=="units") {
+    require(op,"length","string");const std::set<std::string> units={"mm","cm","m","um","in","ft"};
+    if(!units.count(op.at("length").get<std::string>()))throw Error("unsupported document length unit");
+  } else if (type == "import") {
     validate_nodes(op.value("nodes", json::array()));
     if (op.contains("parent") && !op["parent"].is_null()) require(op, "parent", "uuid");
   } else if (type == "reparent") {

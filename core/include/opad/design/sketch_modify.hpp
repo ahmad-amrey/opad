@@ -15,6 +15,7 @@ void extend_entity(Sketch& sk,int entity,int boundary,double x,double y);
 void chamfer_corner(Sketch& sk,int point,double first,double second);
 void delete_curve_node(Sketch& sk,int point);
 void boolean_regions(Sketch& sk,double ax,double ay,double bx,double by,const std::string& operation);
+void identify_regions(const Sketch& sk,std::vector<Region>& regions,const Frame& frame={});
 // Signed source entity IDs of a region's oriented boundary, stable when its geometry moves.
 std::vector<int> region_sources(const Sketch& sk,const Region& region,const Frame& frame={});
 }

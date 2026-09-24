@@ -109,6 +109,7 @@ struct Feature {
 };
 
 struct Scene {
+  std::string units="mm"; // document input/display unit; stored geometry remains millimetres
   std::vector<std::string> roots;
   std::unordered_map<std::string, Node> nodes;
   std::vector<Annotation> annotations;

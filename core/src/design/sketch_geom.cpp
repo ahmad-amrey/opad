@@ -1,3 +1,4 @@
+#include "opad/design/sketch_modify.hpp"
 #include "opad/design/sketch_geom.hpp"
 
 #include <BOPAlgo_Tools.hxx>
@@ -215,6 +216,7 @@ std::vector<Region> sketch_regions(const Sketch& sk, const Frame& frame) {
   } catch (const Standard_Failure&) {
     out.clear();
   }
+  identify_regions(sk,out,frame);
   // A stable order (the kernel's depends on hashing): by interior point.
   std::sort(out.begin(), out.end(), [](const Region& a, const Region& b) { return a.u != b.u ? a.u < b.u : a.v < b.v; });
   return out;

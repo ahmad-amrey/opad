@@ -28,6 +28,7 @@ std::vector<TopoDS_Edge> sketch_edges(const Sketch& sk, const Frame& frame, bool
 // two overlapping circles give three regions, and a circle inside a rectangle gives the ring and the disc.
 struct Region {
   TopoDS_Face face;
+  std::vector<int> boundary; // signed source IDs, independent of position
   double area = 0;
   double u = 0, v = 0;  // a point inside, in sketch coordinates
 };

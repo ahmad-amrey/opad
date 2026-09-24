@@ -22,7 +22,7 @@ class ExprEdit : public QWidget {
  public:
   ExprEdit(AppDocument* doc, opad::design::Dim dim, QWidget* parent = nullptr);
   void setText(const QString& text);
-  QString text() const { return m_edit->text().trimmed(); }
+  QString text() const;
   bool valid() const { return m_valid; }
   QLineEdit* lineEdit() const { return m_edit; }
  signals:

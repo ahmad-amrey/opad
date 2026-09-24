@@ -771,4 +771,44 @@ TEST(sketch_hundreds_of_independent_curves_drag_interactively) {
   CHECK_NEAR(sk.point(1)->x,0,0);
 }
 
+TEST(sketch_spline_continuity_is_stable_and_serialized) {
+  Sketch sk;
+  auto spline=[&](std::initializer_list<std::pair<double,double>> points) {
+    SkEntity e;e.type=SkEntity::Type::Spline;e.degree=3;e.knots={0,1};e.multiplicities={4,4};
+    for(auto [x,y]:points){e.p.push_back(sk.add_point(x,y));e.weights.push_back(1);}
+    e.id=sk.next_id();sk.entities.push_back(e);return e.id;
+  };
+  int a=spline({{0,0},{2,3},{5,0},{8,0}}),b=spline({{8.2,.1},{10,1},{13,2},{16,0}});
+  const int join=sk.add_constraint(CT::Smooth,{a,b});
+  CHECK_EQ(sk.constraint(join)->anchors.front(),sk.entity(a)->p.back());
+  CHECK(solve(sk).converged);
+  auto jet=[&](int id,bool reverse) {
+    auto e=*sk.entity(id);if(reverse)std::reverse(e.p.begin(),e.p.end());
+    const auto p=*sk.point(e.p[0]),q=*sk.point(e.p[1]),r=*sk.point(e.p[2]);
+    double dx=3*(q.x-p.x),dy=3*(q.y-p.y),ddx=6*(r.x-2*q.x+p.x),ddy=6*(r.y-2*q.y+p.y);
+    return std::array<double,5>{p.x,p.y,dx,dy,(dx*ddy-dy*ddx)/std::pow(std::hypot(dx,dy),3)};
+  };
+  auto j=jet(a,true),k=jet(b,false);
+  CHECK_NEAR(j[0],k[0],1e-7);CHECK_NEAR(j[1],k[1],1e-7);
+  CHECK_NEAR(j[2]*k[3]-j[3]*k[2],0,1e-6);CHECK(j[2]*k[2]+j[3]*k[3]<0);
+  CHECK_NEAR(j[4]+k[4],0,1e-7);
+  const auto saved=sk.to_json();CHECK(Sketch::from_json(saved).to_json()==saved);
+  sk.remove(a);CHECK(!sk.constraint(join));
+}
+
+TEST(sketch_line_spline_tangent_preserves_endpoint_on_line) {
+  Sketch sk;SkEntity e;e.type=SkEntity::Type::Spline;e.degree=2;e.knots={0,1};e.multiplicities={3,3};e.weights={1,.7,1};
+  e.p={sk.add_point(0,.1),sk.add_point(4,1),sk.add_point(8,4)};e.id=sk.next_id();sk.entities.push_back(e);
+  int a=sk.add_point(-5,0,true),b=sk.add_point(5,0,true),line=sk.add_line(a,b);
+  sk.add_constraint(CT::Tangent,{line,e.id});CHECK(solve(sk).converged);
+  CHECK_NEAR(sk.point(e.p[0])->y,0,1e-7);CHECK_NEAR(sk.point(e.p[1])->y,0,1e-7);
+}
+
+TEST(reference_dimensions_cannot_indirectly_drive_geometry) {
+  Sketch sk;int a=sk.add_point(0,0),b=sk.add_point(10,0),c=sk.add_point(0,20);
+  int r=sk.add_constraint(CT::Distance,{a,b},10),d=sk.add_constraint(CT::Distance,{a,c},20,"indirect");sk.constraint(r)->reference=true;
+  ParamTable params({{"parameter","indirect","d"+std::to_string(r)+" * 2",""}});
+  CHECK_THROWS(evaluate_dimensions(sk,params));(void)d;
+}
+
 CHECK_MAIN()

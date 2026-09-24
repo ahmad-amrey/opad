@@ -269,7 +269,13 @@ struct Parser {
   }
 };
 
-ParamTable::ParamTable(std::vector<ParamDef> defs) : m_defs(std::move(defs)) {}
+ParamTable::ParamTable(std::vector<ParamDef> defs,std::string unit) : m_unit(std::move(unit)),m_defs(std::move(defs)) {
+  const auto* u=unit_named(m_unit);if(!u||u->angle)throw Error("unsupported document length unit");
+}
+std::string ParamTable::explicit_length(const std::string& expression) const {
+  const auto q=eval(expression);
+  return !q.angle && q.len==0 ? "("+expression+") * 1 "+m_unit : expression;
+}
 
 const ParamDef* ParamTable::find(const std::string& name) const {
   // The last definition of a name wins, like every other "latest op" rule of the log.
@@ -314,7 +320,7 @@ double ParamTable::as(Dim dim, const std::string& expr) const {
   switch (dim) {
     case Dim::Length:
       if (q.angle || (q.len != 0 && q.len != 1)) throw Error("\"" + expr + "\" is not a length");
-      return q.value;
+      return q.len==0?q.value*unit_named(m_unit)->factor:q.value;
     case Dim::Angle:
       if (q.len != 0) throw Error("\"" + expr + "\" is not an angle");
       return q.angle ? q.value : q.value * kPi / 180.0;

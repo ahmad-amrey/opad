@@ -41,7 +41,7 @@ std::vector<int> transform_entities(Sketch& sk,const std::vector<int>& ids,const
   if(copy){const auto constraints=sk.constraints;for(auto c:constraints){if(!std::all_of(c.refs.begin(),c.refs.end(),[&](int id){return mapped.count(id);}))continue;
     if(c.type==SkConstraint::Type::Fix)continue;
     if(std::fabs(std::sin(t.angle))>1e-9 && (c.type==SkConstraint::Type::Horizontal||c.type==SkConstraint::Type::Vertical||c.type==SkConstraint::Type::HDistance||c.type==SkConstraint::Type::VDistance))continue;
-    c.id=sk.next_id();for(int& r:c.refs)r=mapped.at(r);if(c.is_dimension()&&c.type!=SkConstraint::Type::Angle){c.value*=t.scale;if(!c.expr.empty()&&t.scale!=1)c.expr="("+c.expr+")*"+json(t.scale).dump();}c.pos[0]+=t.x;c.pos[1]+=t.y;sk.constraints.push_back(c);}}
+    c.id=sk.next_id();for(int& r:c.refs)r=mapped.at(r);for(int& r:c.anchors)r=mapped.at(r);if(c.is_dimension()&&c.type!=SkConstraint::Type::Angle){c.value*=t.scale;if(!c.expr.empty()&&t.scale!=1)c.expr="("+c.expr+")*"+json(t.scale).dump();}c.pos[0]+=t.x;c.pos[1]+=t.y;sk.constraints.push_back(c);}}
   sk.validate();return result;
 }
 
@@ -77,7 +77,7 @@ int heal_endpoints(Sketch& sk,double tolerance) {
   for(int id:ends){const auto p=*sk.point(id);const long long x=std::llround(p.x/tolerance),y=std::llround(p.y/tolerance);int into=0;
     for(long long dx=-1;dx<=1&&!into;++dx)for(long long dy=-1;dy<=1&&!into;++dy)for(int candidate:buckets[{x+dx,y+dy}]){const auto* q=sk.point(candidate);if(std::hypot(q->x-p.x,q->y-p.y)<=tolerance){bool collapses=false;for(const auto& e:sk.entities)if(std::find(e.p.begin(),e.p.end(),id)!=e.p.end()&&std::find(e.p.begin(),e.p.end(),candidate)!=e.p.end())collapses=true;if(!collapses){into=candidate;break;}}}
     if(!into){buckets[{x,y}].push_back(id);continue;}if(p.fixed)continue;
-    for(auto& e:sk.entities)for(int& ref:e.p)if(ref==id)ref=into;for(auto& c:sk.constraints)for(int& ref:c.refs)if(ref==id)ref=into;
+    for(auto& e:sk.entities)for(int& ref:e.p)if(ref==id)ref=into;for(auto& c:sk.constraints){for(int& ref:c.refs)if(ref==id)ref=into;for(int& ref:c.anchors)if(ref==id)ref=into;}
     std::erase_if(sk.constraints,[](const SkConstraint& c){return c.type==SkConstraint::Type::Coincident && c.refs.size()==2 && c.refs[0]==c.refs[1];});sk.remove(id);++merged;
   }
   sk.validate();return merged;
@@ -144,13 +144,18 @@ void chamfer_corner(Sketch& sk,int point,double first,double second) {
   sk.add_line(cuts[0],cuts[1]);sk.remove(point);
 }
 
-std::vector<int> region_sources(const Sketch& sk,const Region& region,const Frame& frame) {
+void identify_regions(const Sketch& sk,std::vector<Region>& regions,const Frame& frame) {
   struct Source {int id;Bnd_Box box;Handle(Geom_Curve) curve;double first,last;};std::vector<Source> sources;
   for(const auto& e:sk.entities)if(!e.construction&&e.type!=SkEntity::Type::Point){auto edge=entity_edge(sk,e,frame);if(edge.IsNull())continue;BRepAdaptor_Curve c(edge);Bnd_Box box;BRepBndLib::Add(edge,box);box.Enlarge(1e-6);sources.push_back({e.id,box,Handle(Geom_Curve)::DownCast(c.Curve().Curve()->Transformed(c.Trsf())),c.FirstParameter(),c.LastParameter()});}
+  for(auto& region:regions) {
   std::set<int> ids;
   for(TopExp_Explorer ex(region.face,TopAbs_EDGE);ex.More();ex.Next()){const auto edge=TopoDS::Edge(ex.Current());BRepAdaptor_Curve c(edge);gp_Pnt p;gp_Vec tangent;c.D1(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*.37,p,tangent);if(edge.Orientation()==TopAbs_REVERSED)tangent.Reverse();
     for(const auto& source:sources){if(source.box.IsOut(p))continue;GeomAPI_ProjectPointOnCurve nearest(p,source.curve,source.first,source.last);if(!nearest.NbPoints()||nearest.LowerDistance()>1e-6)continue;gp_Pnt q;gp_Vec direction;source.curve->D1(nearest.LowerDistanceParameter(),q,direction);ids.insert(tangent.Dot(direction)<0?-source.id:source.id);break;}}
-  return {ids.begin(),ids.end()};
+  region.boundary={ids.begin(),ids.end()};
+  }
+}
+std::vector<int> region_sources(const Sketch& sk,const Region& region,const Frame& frame) {
+  std::vector<Region> regions{region};identify_regions(sk,regions,frame);return regions.front().boundary;
 }
 
 void delete_curve_node(Sketch& sk,int point) {

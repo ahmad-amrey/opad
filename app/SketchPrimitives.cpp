@@ -47,7 +47,7 @@ void SketchEditor::finishPrimitive() {
 
 opad::json SketchEditor::primitiveOptions() const {
   std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});
-  const auto table=sketch_parameters(m_sk,ParamTable(defs));
+  const auto table=sketch_parameters(m_sk,ParamTable(defs,m_doc->scene.units));
   opad::json options=opad::json::object();
   if(m_tool=="polygon_outer")options["sides"]=table.count(option("sides","6").toStdString());
   if(m_tool=="arcslot")options["width"]=table.length(option("width","2 mm").toStdString());
@@ -71,7 +71,7 @@ void SketchEditor::createText(double u,double v) {
   try {
     const QString text=option("text","OPAD");if(text.isEmpty() || text.size()>512)throw opad::Error("enter between 1 and 512 text characters");
     std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});
-    const double height=ParamTable(defs).length(option("height","10 mm").toStdString());if(height<=0)throw opad::Error("text height must be positive");
+    const double height=ParamTable(defs,m_doc->scene.units).length(option("height","10 mm").toStdString());if(height<=0)throw opad::Error("text height must be positive");
     QFont font(option("font","Arial"));font.setPixelSize(1000);
     const bool stroke=option("textStyle","outline")=="stroke";
     QPainterPath path;if(stroke)path=strokeText(text);else path.addText(0,0,font,text);

@@ -28,7 +28,9 @@ struct ParamDef {
 class ParamTable {
  public:
   ParamTable() = default;
-  explicit ParamTable(std::vector<ParamDef> defs);
+  explicit ParamTable(std::vector<ParamDef> defs, std::string unit="mm");
+  const std::string& unit() const {return m_unit;}
+  std::string explicit_length(const std::string& expression) const;
   const std::vector<ParamDef>& defs() const { return m_defs; }
   const ParamDef* find(const std::string& name) const;
 
@@ -45,6 +47,7 @@ class ParamTable {
   friend struct Parser;
   Quantity value_of(const std::string& name, std::vector<std::string>& stack) const;
   Quantity eval(const std::string& expr, std::vector<std::string>& stack) const;
+  std::string m_unit="mm";
   std::vector<ParamDef> m_defs;
   mutable std::map<std::string, Quantity> m_cache;
 };

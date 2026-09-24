@@ -298,7 +298,7 @@ void DesignController::showCandidatesFor(const QString& typeName) {
       if (p.cancelled()) return;
       const Sketch sk = Sketch::from_json(src.geometry);
       if (type == "profiles") {
-        for (const auto& r : sketch_regions(sk, src.frame)) found->push_back({opad::json{{"sketch", src.id}, {"at", {r.u, r.v}}}.dump(), r.face, false});
+        for (const auto& r : sketch_regions(sk, src.frame)) found->push_back({opad::json{{"sketch", src.id}, {"at", {r.u, r.v}}, {"boundary",r.boundary}}.dump(), r.face, false});
       } else if (type == "points") {
         for (const auto& pt : sk.points) {
           const opad::Vec3 w = src.frame.to_world(pt.x, pt.y);
@@ -614,6 +614,7 @@ void DesignController::enterSketch(const std::string& sketchId, const QString& n
 }
 
 void DesignController::finishSketch(std::function<void()> then) {
+  if(m_sketch->busy())return emit status(tr("Wait for the sketch operation to finish."));
   if (!m_sketch->active()) return;
   auto leave = [this, then] {
     m_sketch->end();

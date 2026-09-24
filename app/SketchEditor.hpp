@@ -57,6 +57,7 @@ class SketchEditor : public QObject, public SketchInput {
   void insertSplineNode(double u,double v);
   void toggleConstruction();
   void deleteSelection();
+  bool busy() const {return m_editJob!=nullptr;}
   bool canUndo() const { return !m_undo.empty(); }
   bool canRedo() const { return !m_redo.empty(); }
   void undo();
@@ -66,6 +67,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchWorkflow();
   void benchPrimitives();
   void benchModify();
+  void benchDrag();
 
   // SketchInput
   void sketchPress(double u, double v, Qt::KeyboardModifiers mods) override;
@@ -148,14 +150,17 @@ class SketchEditor : public QObject, public SketchInput {
   bool m_panelFieldsDirty = false;
   int m_session=0;
   Job* m_editJob=nullptr;
-  QString m_selectionFilter = "all";
+  QString m_selectionFilter = "all",m_constraintFilter;
+  std::set<int> m_conflicts;
   std::vector<std::tuple<int,double,double>> m_glyphHits;
   bool m_boxSelecting = false;
   double m_boxU=0,m_boxV=0;
   opad::Frame m_frame;
   opad::design::Sketch m_sk;
   opad::design::SolveResult m_solved;
-  std::vector<opad::design::Sketch> m_undo, m_redo;
+  struct History {opad::design::Sketch geometry;opad::json plane;opad::Frame frame;};
+  std::vector<History> m_undo,m_redo;
+  opad::json m_beforePlane;opad::Frame m_beforeFrame;
   opad::design::Sketch m_before;  // the state a change started from
   bool m_inChange = false;
 
@@ -177,6 +182,7 @@ class SketchEditor : public QObject, public SketchInput {
   double m_lockX = 0, m_lockY = 0, m_lockDx = 1, m_lockDy = 0;
   // dragging with the select tool
   bool m_dragging = false, m_dragMoved = false;
+  bool m_dragPending=false,m_dragReleased=false;double m_dragNextU=0,m_dragNextV=0;
   Hit m_dragHit;
   double m_dragU = 0, m_dragV = 0;
   std::vector<std::pair<int, std::pair<double, double>>> m_dragStart;  // point -> where it was

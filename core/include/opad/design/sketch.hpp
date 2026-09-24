@@ -55,6 +55,8 @@ struct SkConstraint {
     Midpoint,       // [point, line]
     Symmetric,      // [point, point, line]: mirror images about the line
     Fix,            // [point] or [entity]: stays where it is now
+    Smooth,         // [spline,spline]: coincident endpoints, opposite tangents and equal curvature (G2)
+    Curvature,      // [spline,spline]: equal signed endpoint curvature along the joined path
     // driving dimensions (value in mm or radians)
     Distance,       // [point, point], [point, line], [line] = its length, or [line, line] (parallel lines)
     HDistance,      // [point, point] along u
@@ -67,6 +69,7 @@ struct SkConstraint {
   int id = 0;
   Type type = Type::Coincident;
   std::vector<int> refs;
+  std::vector<int> anchors; // stable endpoint point IDs for spline continuity constraints
   double value = 0;       // dimensions: the evaluated value the solver drives to
   std::string expr;       // dimensions: the expression as typed ("width / 2", "12 mm"); empty = plain value
   bool reference = false; // measured after solving; never removes a degree of freedom

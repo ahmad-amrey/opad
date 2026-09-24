@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <functional>
 
 namespace opad::design {
 
@@ -96,7 +97,7 @@ ParamTable sketch_parameters(const Sketch& sk, const ParamTable& params) {
         : c.expr;
     defs.push_back({name, name, expr, {}});
   }
-  return ParamTable(std::move(defs));
+  return ParamTable(std::move(defs),params.unit());
 }
 
 void evaluate_dimensions(Sketch& sk, const ParamTable& params) {
@@ -104,10 +105,14 @@ void evaluate_dimensions(Sketch& sk, const ParamTable& params) {
   std::vector<double> values;
   for (const auto& c : sk.constraints) {
     if (!c.is_dimension() || c.reference || c.expr.empty()) { values.push_back(c.value); continue; }
-    // A driven value may be inspected, but cannot drive its own source geometry through a hidden cycle.
-    for (const auto& name : expr_identifiers(c.expr))
-      for (const auto& ref : sk.constraints)
-        if (ref.reference && name == "d" + std::to_string(ref.id)) throw Error("reference dimensions cannot drive geometry");
+    std::set<std::string> visited;
+    std::function<void(const std::string&)> check=[&](const std::string& expr) {
+      for(const auto& name:expr_identifiers(expr))if(visited.insert(name).second) {
+        for(const auto& ref:sk.constraints)if(ref.reference && name=="d"+std::to_string(ref.id))throw Error("reference dimensions cannot drive geometry");
+        if(const auto* def=table.find(name))check(def->expr);
+      }
+    };
+    check(c.expr);
     values.push_back(table.as(c.type == SkConstraint::Type::Angle ? Dim::Angle : Dim::Length, c.expr));
   }
   for (size_t i=0; i<values.size(); ++i) sk.constraints[i].value=values[i];

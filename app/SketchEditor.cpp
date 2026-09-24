@@ -20,6 +20,7 @@
 
 #include <QKeyEvent>
 #include <QSettings>
+#include <QPointer>
 #include <cmath>
 
 #include "I18n.hpp"
@@ -216,6 +217,7 @@ void SketchEditor::begin_change() {
   m_dangling.clear();
   m_sk.id_watermark=m_sk.next_id()-1;
   m_before = m_sk;
+  m_beforePlane=m_plane;m_beforeFrame=m_frame;m_conflicts.clear();
   m_inChange = true;
 }
 
@@ -239,6 +241,7 @@ bool SketchEditor::end_change(const QString& what) {
     return false;
   }
   if (!r.converged) {
+    m_conflicts={r.failed.begin(),r.failed.end()};
     m_sk = m_before;  // never leave the sketch over-constrained: the change is refused
     QStringList ids;for(int id:r.failed)ids<<QString::number(id);
     emit status(tr("%1 conflicts with constraints %2. Edit or remove them, or switch a dimension to reference.").arg(what,ids.join(", ")));
@@ -246,7 +249,7 @@ bool SketchEditor::end_change(const QString& what) {
     return false;
   }
   m_solved = r;
-  m_undo.push_back(m_before);
+  m_undo.push_back({m_before,m_beforePlane,m_beforeFrame});
   if (m_undo.size() > 200) m_undo.erase(m_undo.begin());
   m_redo.clear();
   m_modified = true;
@@ -257,15 +260,18 @@ bool SketchEditor::end_change(const QString& what) {
 }
 
 void SketchEditor::undo() {
-  if (m_undo.empty()) return;
-  m_redo.push_back(m_sk);
-  m_sk = m_undo.back();
+  if (m_editJob || m_undo.empty()) return;
+  m_redo.push_back({m_sk,m_plane,m_frame});
+  const bool planeChanged=m_plane!=m_undo.back().plane;
+  m_sk = m_undo.back().geometry;
+  m_plane=m_undo.back().plane;m_frame=m_undo.back().frame;
+  if(planeChanged){m_viewport->endSketchInput();m_viewport->beginSketchInput(this,m_frame,m_id);m_viewport->lookAt(m_frame,true,false);}
   m_undo.pop_back();
   m_clicks.clear();
   m_chain.clear();
   m_picked.clear();
   m_sel.clear();
-  m_solved = solve(m_sk);
+  Sketch analysis=m_sk;m_solved = solve(analysis);m_conflicts.clear();
   m_modified = true;
   rebuild();
   scheduleFill();
@@ -273,12 +279,15 @@ void SketchEditor::undo() {
 }
 
 void SketchEditor::redo() {
-  if (m_redo.empty()) return;
-  m_undo.push_back(m_sk);
-  m_sk = m_redo.back();
+  if (m_editJob || m_redo.empty()) return;
+  m_undo.push_back({m_sk,m_plane,m_frame});
+  const bool planeChanged=m_plane!=m_redo.back().plane;
+  m_sk = m_redo.back().geometry;
+  m_plane=m_redo.back().plane;m_frame=m_redo.back().frame;
+  if(planeChanged){m_viewport->endSketchInput();m_viewport->beginSketchInput(this,m_frame,m_id);m_viewport->lookAt(m_frame,true,false);}
   m_redo.pop_back();
   m_sel.clear();
-  m_solved = solve(m_sk);
+  Sketch analysis=m_sk;m_solved = solve(analysis);m_conflicts.clear();
   m_modified = true;
   rebuild();
   scheduleFill();
@@ -474,7 +483,7 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
     }
     // A press on geometry may become a drag.
     m_dragging = h.kind != Hit::None;
-    m_dragMoved = false;
+    m_dragMoved = false;m_dragPending=false;m_dragReleased=false;
     m_dragHit = h;
     m_dragU = u;
     m_dragV = v;
@@ -499,6 +508,7 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
   if (!m_active) return;
   if(m_boxSelecting && dragging) {m_boxU=u;m_boxV=v;rebuild();return;}
   if (m_tool == "select" && dragging && m_dragging) {
+    if(m_editJob){m_dragPending=true;m_dragNextU=u;m_dragNextV=v;return;}
     if (!m_dragMoved && std::hypot(u - m_dragU, v - m_dragV) < 0.5 * tol()) return;
     if (!m_dragMoved) {
       m_dragMoved = true;
@@ -523,6 +533,20 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
       if (const SkPoint* c = attempt.point(e->p[0])) attempt.entity(m_dragHit.id)->r = std::max(1e-3, std::hypot(u - c->x, v - c->y));
     } else {
       for (const auto& [pid, at] : m_dragStart) opt.drags.push_back({pid, at.first + du, at.second + dv});
+    }
+    if(attempt.points.size()>300) {
+      const auto result=std::make_shared<Sketch>(std::move(attempt));const auto solved=std::make_shared<SolveResult>();const int session=m_session;
+      QPointer<SketchEditor> guard(this);
+      m_editJob=m_jobs->async(tr("Solving sketch"),[result,solved,opt](Progress progress){if(!progress.cancelled())*solved=solve(*result,opt);},
+        [this,guard,result,solved,session](bool ok,const QString& error){
+          if(!guard||!m_active||session!=m_session)return;m_editJob=nullptr;
+          if(ok&&solved->converged){m_sk=*result;m_solved=*solved;rebuild();}
+          else if(!error.isEmpty())emit status(error);
+          const bool released=m_dragReleased;
+          if(m_dragPending){m_dragPending=false;sketchMove(m_dragNextU,m_dragNextV,Qt::NoModifier,true);}
+          if(released)sketchRelease(m_dragNextU,m_dragNextV,Qt::NoModifier);
+        });
+      return;
     }
     try {
       const SolveResult r = solve(attempt, opt);
@@ -577,12 +601,14 @@ void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
     rebuild();emit changed();return;
   }
   if (!m_active || !m_dragging) return;
+  if(m_editJob){m_dragReleased=true;return;}
+  m_dragReleased=false;
   m_dragging = false;
   if (!m_dragMoved) return;
   m_dragMoved = false;
   // The drag already solved every step; record it as one undo step.
   m_inChange = false;
-  m_undo.push_back(m_before);
+  m_undo.push_back({m_before,m_beforePlane,m_beforeFrame});
   m_redo.clear();
   m_modified = true;
   scheduleFill();
@@ -709,7 +735,7 @@ void SketchEditor::rebuild() {
       // A radius nothing holds is a freedom too; the solver reports only points, so look for what pins it.
       bool held = false;
       for (const auto& c : m_sk.constraints)
-        if (std::find(c.refs.begin(), c.refs.end(), e.id) != c.refs.end() &&
+        if (!c.reference && std::find(c.refs.begin(), c.refs.end(), e.id) != c.refs.end() &&
             (c.type == SkConstraint::Type::Radius || c.type == SkConstraint::Type::Diameter || c.type == SkConstraint::Type::Equal || c.type == SkConstraint::Type::Tangent || c.type == SkConstraint::Type::Coincident || c.type == SkConstraint::Type::Fix))
           held = true;
       free = free || !held;
@@ -740,6 +766,7 @@ void SketchEditor::rebuild() {
   std::map<int, int> stacked;  // several glyphs on one entity sit side by side
   for (const auto& c : m_sk.constraints) {
     if (c.is_dimension() || c.refs.empty()) continue;
+    if(!i18n::t(QString::fromLatin1(SkConstraint::type_name(c.type))).contains(m_constraintFilter,Qt::CaseInsensitive))continue;
     const char* glyph = nullptr;
     switch (c.type) {
       case SkConstraint::Type::Horizontal: glyph = "H"; break;
@@ -747,6 +774,8 @@ void SketchEditor::rebuild() {
       case SkConstraint::Type::Parallel: glyph = "//"; break;
       case SkConstraint::Type::Perpendicular: glyph = "_|_"; break;
       case SkConstraint::Type::Tangent: glyph = "T"; break;
+      case SkConstraint::Type::Smooth: glyph = "G2"; break;
+      case SkConstraint::Type::Curvature: glyph = "K"; break;
       case SkConstraint::Type::Equal: glyph = "="; break;
       case SkConstraint::Type::Concentric: glyph = "(o)"; break;
       case SkConstraint::Type::Midpoint: glyph = "M"; break;
@@ -771,7 +800,7 @@ void SketchEditor::rebuild() {
         continue;
       }
       const int k = stacked[ref]++;
-      d.texts.push_back({W(gu + (14 + 16 * k) * px, gv + 12 * px), QString::fromLatin1(glyph), selected.count(c.id) ? t.hov : t.green});
+      d.texts.push_back({W(gu + (14 + 16 * k) * px, gv + 12 * px), QString::fromLatin1(glyph), m_conflicts.count(c.id)?t.red:selected.count(c.id) ? t.hov : t.green});
       m_glyphHits.push_back({c.id,gu+(14+16*k)*px,gv+12*px});
       if (c.type == SkConstraint::Type::Midpoint || c.type == SkConstraint::Type::Symmetric || c.type == SkConstraint::Type::Fix) break;  // one glyph is enough
     }

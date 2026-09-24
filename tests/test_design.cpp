@@ -100,6 +100,28 @@ TEST(expressions) {
   CHECK_EQ(format_quantity(t.eval("tilt")), std::string("30 deg"));
 }
 
+TEST(document_units_are_undoable_and_do_not_resize_stored_features) {
+  ParamTable inches({},"in");CHECK_NEAR(inches.length("2"),50.8,1e-10);CHECK_NEAR(inches.length("2 mm"),2,1e-10);
+  CHECK_NEAR(ParamTable().length(inches.explicit_length("2+1")),76.2,1e-10);
+  Document doc=Document::create();auto sketch=rectangle(0,0,10,10);
+  const auto id=run_id(sketch_cmd(doc,sketch));const auto regions=sketch_regions(sketch,{});
+  feature_cmd(doc,"extrude",{{"profiles",json::array({{{"sketch",id},{"at",{5,5}},{"boundary",regions[0].boundary}}})},{"distance","10 mm"},{"operation","new"}});
+  const auto count=doc.ops.size();apply_ops(doc,{{{"op","units"},{"length","in"}}});CHECK_EQ(resolve(doc).units,std::string("in"));CHECK_NEAR(total_volume(doc),1000,1e-7);
+  auto removed=doc.truncate_ops(count);CHECK_EQ(resolve(doc).units,std::string("mm"));doc.restore_ops(std::move(removed));CHECK_EQ(resolve(doc).units,std::string("in"));
+  for(auto& p:sketch.points)p.x+=100;
+  apply_ops(doc,{make_edit_op(id,{{"geometry",sketch.to_json()}})});
+  CHECK_NEAR(total_volume(doc),1000,1e-6);CHECK(resolve(doc).unresolved.empty());
+}
+
+TEST(profile_boundaries_distinguish_overlapping_regions) {
+  Sketch sk;sk.add_circle(sk.add_point(0,0),10);sk.add_circle(sk.add_point(10,0),10);
+  const auto before=sketch_regions(sk,{});CHECK_EQ(before.size(),size_t(3));
+  CHECK(before[0].boundary!=before[1].boundary);CHECK(before[1].boundary!=before[2].boundary);CHECK(before[0].boundary!=before[2].boundary);
+  for(auto& p:sk.points){p.x+=100;p.y-=50;}
+  const auto after=sketch_regions(sk,{});CHECK_EQ(after.size(),before.size());
+  for(size_t i=0;i<after.size();++i)CHECK(before[i].boundary==after[i].boundary);
+}
+
 TEST(sketch_regions) {
   // A rectangle with a circle inside and a second circle crossing its right side.
   Sketch sk = rectangle(0, 0, 40, 20);

@@ -339,7 +339,14 @@ Profiles resolve_profiles(const Ctx& ctx, const json& refs) {
       if (r.value("all", false) || !r.contains("at")) {
         for (const auto& g : regions) out.faces.push_back(g.face);
       } else {
-        const int i = region_at(regions, frame, r["at"][0].get<double>(), r["at"][1].get<double>());
+        int i=-1;
+        if(r.contains("boundary")) {
+          const auto boundary=r.at("boundary").get<std::vector<int>>();
+          for(size_t k=0;k<regions.size();++k)if(regions[k].boundary==boundary) {
+            if(i>=0)throw Error("a picked profile has become ambiguous; pick it again");
+            i=int(k);
+          }
+        } else i=region_at(regions,frame,r["at"][0].get<double>(),r["at"][1].get<double>());
         if (i < 0) throw Error("a picked profile no longer exists in its sketch");
         out.faces.push_back(regions[static_cast<size_t>(i)].face);
       }

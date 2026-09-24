@@ -72,6 +72,7 @@ struct P2 {
   Dual x, y;
 };
 P2 operator-(const P2& a, const P2& b) { return {a.x - b.x, a.y - b.y}; }
+P2 operator*(const P2& a,double k){return {a.x*k,a.y*k};}
 Dual cross(const P2& a, const P2& b) { return a.x * b.y - a.y * b.x; }
 Dual dot(const P2& a, const P2& b) { return a.x * b.x + a.y * b.y; }
 
@@ -274,6 +275,40 @@ struct System {
     }
   }
 
+  struct Jet { P2 point,first,second; };
+  Jet spline_jet(const SkEntity& e,int anchor) {
+    const bool reverse=e.p.back()==anchor;
+    auto index=[&](size_t i){return reverse?e.p.size()-1-i:i;};
+    std::vector<double> knots;
+    for(size_t i=0;i<e.knots.size();++i)for(int k=0;k<e.multiplicities[i];++k)knots.push_back(e.knots[i]);
+    if(reverse){std::reverse(knots.begin(),knots.end());for(double& k:knots)k=-k;}
+    const double p=e.degree,w0=e.weights[index(0)],w1=e.weights[index(1)],w2=e.weights[index(2)];
+    const P2 p0=pt(e.p[index(0)]),p1=pt(e.p[index(1)]),p2=pt(e.p[index(2)]);
+    const double a=p/(knots[size_t(e.degree)+1]-knots[1]),b=p/(knots[size_t(e.degree)+2]-knots[2]);
+    const double d=(p-1)/(knots[size_t(e.degree)+1]-knots[2]);
+    const P2 h0=p0*w0,h1=p1*w1,h2=p2*w2;
+    const P2 firstH=(h1-h0)*a,secondH=((h2-h1)*b-firstH)*d;
+    const double firstW=(w1-w0)*a,secondW=((w2-w1)*b-firstW)*d;
+    const P2 first=(firstH-p0*firstW)*(1/w0);
+    return {p0,first,(secondH-p0*secondW-first*(2*firstW))*(1/w0)};
+  }
+  void spline_continuity(int ci,const SkConstraint& c) {
+    const auto& a=ent(c.refs[0]);const auto& b=ent(c.refs[1]);
+    if(a.type==EType::Line || b.type==EType::Line) {
+      const auto& line=a.type==EType::Line?a:b;const auto& spline=a.type==EType::Spline?a:b;
+      const Jet j=spline_jet(spline,c.anchors[0]);const P2 p=pt(line.p[0]),q=pt(line.p[1]),d=q-p;
+      const Dual length=norm(d)*norm(j.first);
+      emit(ci,sdist(j.point,p,q));emit(ci,length.v>kTiny?cross(d,j.first)/length:K(1));return;
+    }
+    const Jet j=spline_jet(a,c.anchors[0]),k=spline_jet(b,c.anchors[1]);
+    const Dual jl=norm(j.first),kl=norm(k.first);
+    if(c.type!=CType::Curvature) {
+      emit(ci,j.point.x-k.point.x);emit(ci,j.point.y-k.point.y);
+      Dual angle=atan2d(cross(j.first,k.first),dot(j.first,k.first));
+      angle.v-=angle.v>=0?kPi:-kPi;emit(ci,angle);
+    }
+    if(c.type!=CType::Tangent)emit(ci,jl.v>kTiny&&kl.v>kTiny?cross(j.first,j.second)/(jl*jl*jl)+cross(k.first,k.second)/(kl*kl*kl):K(1));
+  }
   void constraint(int ci) {
     const SkConstraint& c = sk.constraints[size_t(ci)];
     if (c.reference) return;
@@ -292,7 +327,10 @@ struct System {
         q = ref_pt(c.refs[1]);
       }
     };
+    if(!c.anchors.empty()) {spline_continuity(ci,c);return;}
     switch (c.type) {
+      case CType::Smooth:
+      case CType::Curvature: break; // validated spline constraints take the path above
       case CType::Coincident: {
         const P2 p = ref_pt(c.refs[0]);
         if (is_point(c.refs[1])) {
@@ -790,6 +828,7 @@ static SolveResult solve_system(Sketch& sk, const SolveOptions& opt, bool keep_b
     sys.store(sk, x);
     for (auto& c : sk.constraints) if (c.reference && c.is_dimension()) c.value = dimension_value(sk, c);
   }
+
   return out;
 }
 

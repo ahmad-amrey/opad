@@ -40,7 +40,7 @@ bool SketchEditor::applyModify() {
   if(!tools.contains(m_tool))return false;
   try {
     std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});
-    const ParamTable params(defs);const auto table=sketch_parameters(m_sk,params);
+    const ParamTable params(defs,m_doc->scene.units);const auto table=sketch_parameters(m_sk,params);
     auto length=[&](const char* key,const char* fallback){return table.length(option(key,fallback).toStdString());};
     std::vector<int> ids;for(int id:m_sel)if(m_sk.entity(id))ids.push_back(id);
     if(m_tool=="mirror") {
@@ -56,7 +56,7 @@ bool SketchEditor::applyModify() {
       runSketchEdit(tr("Break at intersections"),[ids](Sketch& sk){break_intersections(sk,ids);});
     } else if(m_tool=="rect_pattern" || m_tool=="polar_pattern") {
       opad::json inputs={{"polar",m_tool=="polar_pattern"}};
-      for(const auto& [key,fallback]:std::vector<std::pair<const char*,const char*>>{{"count","3"},{"rows","1"},{"dx","10 mm"},{"dy","10 mm"},{"angle","360 deg"},{"cx","0 mm"},{"cy","0 mm"}})inputs[key]=option(key,fallback).toStdString();
+      for(const auto& [key,fallback]:std::vector<std::pair<const char*,const char*>>{{"count","3"},{"rows","1"},{"dx","10 mm"},{"dy","10 mm"},{"angle","360 deg"},{"cx","0 mm"},{"cy","0 mm"}}){const auto expr=option(key,fallback).toStdString();inputs[key]=(std::string(key)=="dx"||std::string(key)=="dy"||std::string(key)=="cx"||std::string(key)=="cy")?table.explicit_length(expr):expr;}
       const int existing=m_sel.empty()?0:pattern_of(m_sk,m_sel.front(),true);
       runSketchEdit(tr("Pattern"),[ids,inputs,params,existing](Sketch& sk){if(existing)edit_pattern(sk,existing,inputs,params);else create_pattern(sk,ids,inputs,params);});
     } else if(m_tool=="explode") {
