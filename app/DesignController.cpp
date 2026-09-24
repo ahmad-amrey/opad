@@ -556,7 +556,7 @@ void DesignController::beginPlanePick() {
   // Candidates need the feature flag only for the async part; planes are immediate.
   std::vector<Viewport::Candidate> none;
   showCandidatesFor("plane");
-  emit status(tr("New sketch: pick a plane or a planar face · Esc cancels"));
+  emit status(tr("Select an origin plane or a planar face")+" - "+tr("Esc cancels"));
   emit stateChanged();
 }
 

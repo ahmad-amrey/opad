@@ -1,3 +1,4 @@
+#include "opad/design/feature.hpp"
 #include <QPlainTextEdit>
 #include <QPointer>
 #include "MainWindow.hpp"
@@ -91,7 +92,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     if (auto* flat = findChild<QAction*>("view.2d")) flat->setChecked(drawing);
     if (drawing) { m_viewport->standardView("top"); m_viewport->setSelectionFilter(Viewport::SelFilter::Edge); }
   });
-  connect(m_doc, &AppDocument::pathChanged, this, [this] { updateTitle(); refreshGit(); });
+  connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); refreshGit(); });
   connect(m_doc, &AppDocument::message, this, [this](const QString& t) { statusBar()->showMessage(t, 6000); });
   connect(m_viewport, &Viewport::selectionChanged, this, &MainWindow::onViewportSelection);
   connect(m_viewport, &Viewport::hoverChanged, m_statusHover, &QLabel::setText);
@@ -342,8 +343,13 @@ void MainWindow::buildActions() {
   addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(); });
   addAction("view.alignPlane",tr("Align view to plane"),"plane",QKeySequence("Ctrl+Alt+0"),[this] {
     if(m_design->sketchActive()) return;
+    const auto refs=m_viewport->selection();
+    if(!refs.empty() && refs.back().kind==opad::Ref::Kind::Face) {
+      m_viewport->lookAt(opad::design::resolve_plane(m_doc->doc,m_doc->scene,{{"face",refs.back().to_json()}}),true,false);
+      return;
+    }
     cancelTool();
-    m_design->pickSketchPlane([this](opad::json,opad::Frame frame) { m_viewport->lookAt(frame); });
+    m_design->pickSketchPlane([this](opad::json,opad::Frame frame) { m_viewport->lookAt(frame,true,false); });
   });
   addAction("view.rollleft", tr("Turn 90° left"), "rollLeft", QKeySequence(), [this] { m_viewport->rollView(90); });
   addAction("view.rollright", tr("Turn 90° right"), "rollRight", QKeySequence(), [this] { m_viewport->rollView(-90); });
@@ -1815,7 +1821,8 @@ void MainWindow::restyleAnnotation(const std::string& opId, const std::string& s
   guarded([&] { m_doc->run("append", opad::json{{"op", opad::json{{"op", "edit"}, {"target", opId}, {"set", {{"style", style}}}}}}); });
 }
 
-void MainWindow::deleteOp(const std::string& opId) {
+void MainWindow::deleteOp(const std::string& requestedId) {
+  const std::string opId=requestedId; // Rebuilding cards can destroy the signal sender during this operation.
   // With a design history a tombstone changes what later features produce: planned on a worker.
   if (!m_doc->scene.features.empty() || !m_doc->scene.sketches.empty()) {
     m_design->applyOps({opad::json{{"op", "delete"}, {"target", opId}}}, tr("delete"));
@@ -1825,7 +1832,8 @@ void MainWindow::deleteOp(const std::string& opId) {
   if (r.contains("id")) m_timeline->setCurrentOp(opId);
 }
 
-void MainWindow::restoreOp(const std::string& opId) {
+void MainWindow::restoreOp(const std::string& requestedId) {
+  const std::string opId=requestedId;
   // Restoring = tombstoning the delete op that targets it.
   for (const auto& op : m_doc->doc.ops)
     if (op.type == "delete" && op.data.value("target", "") == opId && !m_doc->doc.is_deleted(op.id)) {
@@ -1942,7 +1950,7 @@ void MainWindow::openPath(const QString& path) {
   m_settings.setValue("ui/lastDir", QFileInfo(path).absolutePath());
   QString ext = QFileInfo(path).suffix().toLower();
   if (ext == "step" || ext == "stp") m_settings.setValue("ui/lastBrowse", path);
-  beginLoad([this, path] { addRecent(path); m_viewport->fitWhenReady(); });
+  beginLoad([this, path] { m_viewPath=QFileInfo(path).absoluteFilePath(); addRecent(path); m_viewport->fitWhenReady(); });
   m_doc->startOpen(path);
 }
 
@@ -1969,8 +1977,8 @@ void MainWindow::beginLoad(std::function<void()> after) {
       else QMessageBox::warning(this, tr("OPAD"), err);
     }
     if(ok) {
-      m_viewPath=m_doc->browse?m_settings.value("ui/lastBrowse").toString():m_doc->path();
-      if(!m_benchSelect && !m_viewPath.isEmpty() && m_settings.value("view/lastPath").toString()==m_viewPath) {
+      if(!m_doc->path().isEmpty()) m_viewPath=QFileInfo(m_doc->path()).absoluteFilePath();
+      if((!m_benchSelect || qEnvironmentVariableIsSet("OPAD_BENCH_NAVIGATION")) && !m_viewPath.isEmpty() && m_settings.value("view/lastPath").toString()==m_viewPath) {
         try {
           const auto camera=opad::json::parse(m_settings.value("view/lastCamera").toString().toStdString());
           action("view.2d")->setChecked(m_settings.value("view/last2d",false).toBool());
@@ -2031,12 +2039,49 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
+  if(const auto mode=qEnvironmentVariable("OPAD_BENCH_NAVIGATION");!mode.isEmpty()) {
+    if(mode=="write") {
+      action("view.grid")->setChecked(true);action("view.ortho")->setChecked(false);action("view.wire")->trigger();
+      auto camera=m_viewport->cameraJson();camera["target"]={10,20,30};camera["eye"]={100,120,130};camera["up"]={0,0,1};camera["scale"]=175;camera["fov_deg"]=47;
+      m_viewport->setCameraJson(camera);saveLastView();m_settings.sync();
+      trace::log("bench: saved view preferences PASS");QCoreApplication::exit(0);return;
+    }
+    const auto camera=m_viewport->cameraJson();
+    if(!action("view.grid")->isChecked() || m_viewport->isOrthographic() || m_viewport->style()!=Viewport::Style::Wireframe || std::abs(camera["target"][0].get<double>()-10)>1e-6 || std::abs(camera["target"][1].get<double>()-20)>1e-6 || std::abs(camera["target"][2].get<double>()-30)>1e-6 || std::abs(camera["scale"].get<double>()-175)>1e-6 || std::abs(camera["fov_deg"].get<double>()-47)>1e-6) {
+      trace::log("bench: restored view preferences FAIL: "+QString::fromStdString(camera.dump()));QCoreApplication::exit(2);return;
+    }
+    trace::log("bench: restored view preferences across launches PASS");
+    auto once=std::make_shared<QMetaObject::Connection>();
+    *once=connect(m_viewport,&Viewport::filterApplied,this,[this,once] {
+      disconnect(*once);
+      QTimer::singleShot(0,this,[this] {
+        m_viewport->selectRefs({}, {opad::json{{"base","yz"}}.dump()});m_design->viewportSelectionChanged();
+        QTimer::singleShot(700,this,[this] {
+          const auto camera=m_viewport->cameraJson();
+          const double dx=camera["eye"][0].get<double>()-camera["target"][0].get<double>();
+          const double dy=camera["eye"][1].get<double>()-camera["target"][1].get<double>();
+          const double dz=camera["eye"][2].get<double>()-camera["target"][2].get<double>();
+          if(m_design->pickingPlane() || dx<=0 || std::abs(dy)>1e-6 || std::abs(dz)>1e-6) {trace::log("bench: plane alignment FAIL: "+QString::fromStdString(camera.dump()));QCoreApplication::exit(2);return;}
+          m_doc->newDocument();m_viewport->home();const auto empty=m_viewport->cameraJson();
+          const double extent=m_settings.value("view/gridExtent",100.0).toDouble();
+          bool covered=true;
+          for(double x:{-extent,extent}) for(double y:{-extent,extent}) covered=covered && m_viewport->rect().contains(m_viewport->widgetPoint({x,y,0}));
+          trace::log(covered?"bench: plane alignment and empty Home grid coverage PASS":"bench: empty Home grid coverage FAIL: "+QString::fromStdString(empty.dump()));QCoreApplication::exit(covered?0:2);
+        });
+      });
+    });
+    action("view.alignPlane")->trigger();return;
+  }
+
   if(qEnvironmentVariableIsSet("OPAD_BENCH_REVIEW")) {
     m_doc->newDocument();
     const auto id=m_doc->run("append",{{"op",{{"op","measurement"},{"kind","distance"},{"refs",{"point/0,0,0","point/3,0,0"}},{"result",{{"value",3},{"unit","mm"}}}}}})["appended"][0].get<std::string>();
     const auto cards=m_annotations->findChildren<NoteCard*>();
     if(cards.size()!=1 || !cards[0]->note().measurement || !cards[0]->note().value.contains("3")) {QCoreApplication::exit(2);return;}
-    deleteOp(id); if(!m_doc->scene.measurements.empty()) {QCoreApplication::exit(2);return;}
+    bool removed=false;
+    for(auto* button:cards[0]->findChildren<QPushButton*>()) if(button->text()==tr("Remove")) {removed=true;button->click();break;}
+    if(!removed) {QCoreApplication::exit(2);return;}
+    if(!m_doc->scene.measurements.empty()) {QCoreApplication::exit(2);return;}
     restoreOp(id); if(m_doc->scene.measurements.size()!=1) {QCoreApplication::exit(2);return;}
     showOpGitLog(id,{});
     auto* unsaved=findChild<QDialog*>("opGitLog");
@@ -2412,7 +2457,7 @@ bool MainWindow::maybeSave() {
 }
 
 void MainWindow::saveLastView() {
-  if(m_benchSelect || m_viewPath.isEmpty() || (m_design && m_design->sketchActive())) return;
+  if((m_benchSelect && !qEnvironmentVariableIsSet("OPAD_BENCH_NAVIGATION")) || m_viewPath.isEmpty() || (m_design && m_design->sketchActive())) return;
   const auto camera=m_viewport->cameraJson(); if(camera.empty()) return;
   m_settings.setValue("view/lastPath",m_viewPath);
   m_settings.setValue("view/lastCamera",QString::fromStdString(camera.dump()));

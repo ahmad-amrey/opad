@@ -1140,8 +1140,8 @@ void AnnotationsPanel::rebuild() {
       n.measurement=true;
       const auto result=op.data.value("result",opad::json::object());
       n.value=tr("%1 measurement").arg(i18n::t(QString::fromStdString(op.data.value("kind",""))));
-      if(result.contains("value") && result["value"].is_number()) n.value+=QString(" ? %1 %2").arg(result["value"].get<double>(),0,'g',9).arg(QString::fromStdString(result.value("unit","mm")));
-      else if(result.contains("size")) n.value+=QString(" ? %1 mm").arg(QString::fromStdString(result["size"].dump()));
+      if(result.contains("value") && result["value"].is_number()) n.value+=QString(" - %1 %2").arg(result["value"].get<double>(),0,'g',9).arg(QString::fromStdString(result.value("unit","mm")));
+      else if(result.contains("size")) n.value+=QString(" - %1 mm").arg(QString::fromStdString(result["size"].dump()));
       for(const auto& m:m_doc->scene.measurements) if(m.id==op.id) {n.text=m.text;n.style=m.style;n.comments=m.comments;}
     }
     n.state = state;

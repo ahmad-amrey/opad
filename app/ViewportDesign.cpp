@@ -323,7 +323,7 @@ void Viewport::endSketchInput() {
   redrawScene();
 }
 
-void Viewport::lookAt(const opad::Frame& frame, bool fit) {
+void Viewport::lookAt(const opad::Frame& frame, bool fit, bool animate) {
   if (!m_initialised) return;
   m_needFit = false;
   Handle(Graphic3d_Camera) cam = m_view->Camera();
@@ -342,6 +342,9 @@ void Viewport::lookAt(const opad::Frame& frame, bool fit) {
     } else {
       end->SetScale(120.0);  // an empty design: a sheet of paper's worth of plane, not whatever the view was left at
     }
+  }
+  if(!animate) {
+    myViewAnimation->Stop();m_view->SetCamera(end);m_view->Invalidate();requestRedraw();return;
   }
   myViewAnimation->SetView(m_view);
   myViewAnimation->SetCameraStart(start);

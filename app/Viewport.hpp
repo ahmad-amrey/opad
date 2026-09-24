@@ -165,7 +165,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void beginSketchInput(SketchInput* input, const opad::Frame& frame, const std::string& hiddenSketch);
   void endSketchInput();
   bool sketching() const { return m_sketchInput != nullptr; }
-  void lookAt(const opad::Frame& frame, bool fit = true);  // camera along the plane normal, plane x to the right
+  void lookAt(const opad::Frame& frame, bool fit = true, bool animate = true);  // camera along the plane normal, plane x to the right
   bool planePoint(const QPointF& widgetPos, const opad::Frame& frame, double& u, double& v) const;
   double pixelSize() const;                    // world units per widget pixel at the view's focus
   QPoint widgetPoint(const opad::Vec3& world) const;

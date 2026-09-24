@@ -1053,6 +1053,9 @@ void Viewport::home() {
     const double extent=std::max(1.0,QSettings().value("view/gridExtent",100.0).toDouble());
     bounds.Add(gp_Pnt(-extent,-extent,0)); bounds.Add(gp_Pnt(extent,extent,0));
   }
+  const gp_Pnt center((bounds.CornerMin().XYZ()+bounds.CornerMax().XYZ())*.5);
+  const auto camera=m_view->Camera();const gp_Vec shift(camera->Center(),center);
+  camera->SetEyeAndCenter(camera->Eye().Translated(shift),center);
   m_view->FitAll(bounds,0.02,Standard_False);
   m_view->Invalidate();requestRedraw();
 }
@@ -1097,6 +1100,7 @@ void Viewport::setCameraJson(const opad::json& j) {
   m_needFit = false;
   opad::Camera cam = opad::Camera::from_json(j);
   Handle(Graphic3d_Camera) c = m_view->Camera();
+  c->SetFOVy(cam.fov_deg);
   c->SetProjectionType(cam.perspective ? Graphic3d_Camera::Projection_Perspective : Graphic3d_Camera::Projection_Orthographic);
   if (cam.absolute) {
     c->SetEye(gp_Pnt(cam.eye[0], cam.eye[1], cam.eye[2]));

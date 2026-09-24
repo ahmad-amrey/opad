@@ -36,6 +36,7 @@ int main(int argc, char** argv) {
   dataDir = exeDir + "/opad-data";
 #endif
   if (QFile::exists(exeDir + "/opad.portable")) dataDir = exeDir + "/data";
+  if(!qEnvironmentVariableIsEmpty("OPAD_BENCH_SETTINGS")) dataDir=qEnvironmentVariable("OPAD_BENCH_SETTINGS");
   if (!dataDir.isEmpty()) {
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, dataDir);
