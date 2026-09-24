@@ -12,9 +12,29 @@
 #include "opad/design/sketch_geom.hpp"
 #include <TopoDS_Shape.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepAdaptor_Curve.hxx>
+#include <TopoDS.hxx>
+#include <TopExp_Explorer.hxx>
 #include <filesystem>
 
 using namespace opad;
+TEST(dxf_native_rational_spline_and_invalid_data) {
+  const auto file=std::filesystem::temp_directory_path()/(new_uuid()+".dxf");
+  const std::string header="0\nSECTION\n2\nENTITIES\n0\nSPLINE\n70\n12\n71\n2\n72\n6\n73\n3\n40\n0\n40\n0\n40\n0\n40\n1\n40\n1\n40\n1\n";
+  const std::string poles="10\n1\n20\n0\n30\n0\n10\n1\n20\n1\n30\n0\n10\n0\n20\n1\n30\n0\n";
+  const std::string footer="0\nENDSEC\n0\nEOF\n";
+  write_text_file(file,header+"41\n1\n41\n0.7071067811865476\n41\n1\n"+poles+footer);
+  auto doc=Document::create();import_file(doc,file);const auto scene=resolve(doc);
+  const auto shape=node_world_shape(doc,scene,scene.all_bodies().front());TopExp_Explorer edges(shape,TopAbs_EDGE);
+  CHECK(edges.More());BRepAdaptor_Curve curve(TopoDS::Edge(edges.Current()));CHECK(curve.GetType()==GeomAbs_BSplineCurve);
+  const auto middle=curve.Value((curve.FirstParameter()+curve.LastParameter())*.5);
+  CHECK_NEAR(middle.X(),std::sqrt(.5),1e-10);CHECK_NEAR(middle.Y(),std::sqrt(.5),1e-10);
+  auto invalid=[&](const std::string& data){write_text_file(file,data);auto bad=Document::create();CHECK_THROWS(import_file(bad,file));};
+  invalid(header+"41\n1\n"+poles+footer);
+  invalid(header+poles+"30\n4\n"+footer);
+  invalid(header+"40\n-1\n"+poles+footer);
+  std::filesystem::remove(file);
+}
 struct Files {
   std::filesystem::path dir=std::filesystem::temp_directory_path()/new_uuid();
   Files(){std::filesystem::create_directory(dir);}
@@ -32,6 +52,14 @@ TEST(dxf_layers_circles_and_roundtrip) {
   auto round=Document::create();import_file(round,f.dir/"out.dxf");CHECK_EQ(resolve(round).all_bodies().size(),2u);
   options.format="svg";export_drawing(loaded,resolve(loaded),f.dir/"out.svg",options);
   round=Document::create();import_file(round,f.dir/"out.svg");CHECK_EQ(resolve(round).all_bodies().size(),2u);
+}
+TEST(dxf_single_vertex_polyline_survives_sketch_conversion) {
+  Files f;const auto file=f.dir/"dots.dxf";
+  write_text_file(file,"0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n90\n1\n70\n1\n10\n12\n20\n34\n0\nENDSEC\n0\nEOF\n");
+  auto d=Document::create();import_file(d,file);const auto s=resolve(d);
+  auto sk=design::drawing_sketch(d,s,{{s.all_bodies().front(),false}},Frame{},.01);
+  CHECK_EQ(sk.entities.size(),1u);CHECK(sk.entities[0].type==design::SkEntity::Type::Point);
+  CHECK_NEAR(sk.point(sk.entities[0].p[0])->x,12,1e-9);CHECK_NEAR(sk.point(sk.entities[0].p[0])->y,34,1e-9);
 }
 TEST(svg_beziers_and_physical_units) {
   Files f;write_text_file(f.dir/"test.svg","<svg width=\"25.4mm\" viewBox=\"0 0 96 96\"><g id=\"Curve\"><path d=\"M0,0 L96,0 C96,20 50,40 0,0 Z\"/></g></svg>");

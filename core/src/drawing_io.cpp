@@ -15,6 +15,9 @@
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
 #include <Geom_BezierCurve.hxx>
+#include <Geom_BSplineCurve.hxx>
+#include <TColStd_Array1OfReal.hxx>
+#include <TColStd_Array1OfInteger.hxx>
 #include <gp_Elips.hxx>
 #include <TColgp_Array1OfPnt.hxx>
 #include <BRepAdaptor_Curve.hxx>
@@ -269,6 +272,39 @@ Drawing read_dxf(const std::filesystem::path& file) {
       else if(type=="CIRCLE") out.circle(layer,num(10),num(20),num(40));
       else if(type=="ARC") { double start=num(50)*M_PI/180, stop=num(51)*M_PI/180; if(stop<=start)stop+=2*M_PI; out.circle(layer,num(10),num(20),num(40),start,stop); }
       else if(type=="POINT") out.add(layer,BRepBuilderAPI_MakeVertex(gp_Pnt(num(10),num(20),0)).Vertex());
+      else if(type=="SPLINE") {
+        // DXF stores the expanded knot vector, WCS control points and optional weights.
+        std::vector<gp_Pnt> poles;
+        std::vector<double> knots, weights;
+        std::vector<int> multiplicities;
+        int knotCount=0;
+        for(size_t j=i+1;j<end;++j) {
+          const double v = (pairs[j].code==10 || pairs[j].code==20 || pairs[j].code==30 || pairs[j].code==40 || pairs[j].code==41) ? number(pairs[j].value) : 0;
+          switch(pairs[j].code) {
+            case 10: poles.emplace_back(v,0,0);break;
+            case 20: if(poles.empty())throw Error("DXF spline has incomplete control points");poles.back().SetY(v);break;
+            case 30: if(v!=0)throw Error("DXF: only planar XY entities are supported; project to XY before import");break;
+            case 40:
+              if(!knots.empty() && v<knots.back())throw Error("DXF spline knots must be nondecreasing");
+              if(!knots.empty() && v==knots.back())++multiplicities.back();
+              else {knots.push_back(v);multiplicities.push_back(1);}++knotCount;break;
+            case 41: if(v<=0)throw Error("DXF spline weights must be positive");weights.push_back(v);break;
+          }
+        }
+        const int degree=int(num(71)),flags=int(num(70));
+        if(degree<1 || degree>Geom_BSplineCurve::MaxDegree() || poles.size()<2 || knots.size()<2 ||
+           num(72)!=knotCount || num(73)!=double(poles.size()) || (!weights.empty() && weights.size()!=poles.size()))
+          throw Error("DXF spline has invalid degree, knots or control points");
+        TColgp_Array1OfPnt p(1,int(poles.size()));TColStd_Array1OfReal w(1,int(poles.size())),k(1,int(knots.size()));TColStd_Array1OfInteger m(1,int(knots.size()));
+        for(int n=1;n<=p.Length();++n){p(n)=poles[n-1];w(n)=weights.empty()?1:weights[n-1];}
+        for(int n=1;n<=k.Length();++n){k(n)=knots[n-1];m(n)=multiplicities[n-1];}
+        try {
+          // Periodic DXF writers may emit an already expanded, nonperiodic representation.
+          const bool periodic=(flags&2) && knotCount!=int(poles.size())+degree+1;
+          Handle(Geom_BSplineCurve) curve=new Geom_BSplineCurve(p,w,k,m,degree,periodic);
+          out.add(layer,BRepBuilderAPI_MakeEdge(curve).Edge());
+        } catch(const Standard_Failure& e) {throw Error(std::string("Invalid DXF spline: ")+e.GetMessageString());}
+      }
       else if(type=="LWPOLYLINE") {
         std::vector<std::array<double,3>> points;
         for(size_t j=i+1;j<end;++j) {
@@ -276,8 +312,10 @@ Drawing read_dxf(const std::filesystem::path& file) {
           if(pairs[j].code==20 && !points.empty()) points.back()[1]=number(pairs[j].value);
           if(pairs[j].code==42 && !points.empty()) points.back()[2]=number(pairs[j].value);
         }
-        if(points.size()<2) throw Error("DXF polyline needs two points");
-        size_t segments=points.size()-1+(int(num(70))&1);
+        if(points.empty()) throw Error("DXF polyline needs at least one point");
+        // Laser/vector exporters also emit closed one-vertex polylines for isolated dots.
+        if(points.size()==1)out.add(layer,BRepBuilderAPI_MakeVertex(gp_Pnt(points[0][0],points[0][1],0)).Vertex());
+        size_t segments=points.size()==1?0:points.size()-1+(int(num(70))&1);
         for(size_t k=0;k<segments;++k) {
           auto p=points[k], q=points[(k+1)%points.size()];
           if(std::abs(p[2])<1e-12) out.line(layer,p[0],p[1],q[0],q[1]);

@@ -1,6 +1,8 @@
 #include "opad/design/drawing_sketch.hpp"
 #include "opad/geometry.hpp"
 #include <BRepAdaptor_Curve.hxx>
+#include <BRep_Tool.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
@@ -127,7 +129,12 @@ Sketch drawing_sketch(const Document& doc,const Scene& scene,const std::vector<D
     const auto* node=scene.node(layer.id);
     if(!node || node->representation!="drawing2d") throw Error("Select drawing layers to convert");
     if(!node->raster.is_null()) throw Error("Raster images have no editable vector curves; exclude the image layer");
-    TopTools_IndexedMapOfShape edges; TopExp::MapShapes(node_world_shape(doc,scene,layer.id),TopAbs_EDGE,edges);
+    const auto shape=node_world_shape(doc,scene,layer.id);
+    for(TopExp_Explorer vertices(shape,TopAbs_VERTEX,TopAbs_EDGE);vertices.More();vertices.Next()) {
+      SkEntity e;e.type=SkEntity::Type::Point;e.p={point(BRep_Tool::Pnt(TopoDS::Vertex(vertices.Current())))};
+      e.id=result.next_id();e.construction=layer.construction;result.entities.push_back(std::move(e));
+    }
+    TopTools_IndexedMapOfShape edges; TopExp::MapShapes(shape,TopAbs_EDGE,edges);
     for(int i=1;i<=edges.Extent();++i) {
       BRepAdaptor_Curve c(TopoDS::Edge(edges(i))); const double first=c.FirstParameter(),last=c.LastParameter();
       if(c.GetType()==GeomAbs_Circle && std::abs(c.Circle().Axis().Direction().Dot(axis))>1-1e-8) {
