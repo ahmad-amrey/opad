@@ -57,6 +57,35 @@ TEST(mesh_selection_has_independent_facet_edge_and_vertex_owners) {
   }
 }
 
+TEST(mesh_circle_rim_vertex_pick_resolves_to_center) {
+  struct TestBody : BodyShape { using BodyShape::BodyShape; using BodyShape::ComputeSelection; };
+  constexpr int n=32;
+  Handle(Poly_Triangulation) mesh=new Poly_Triangulation(n+1,n,false);
+  mesh->SetNode(1,gp_Pnt(0,0,0));
+  for(int i=0;i<n;++i) {
+    const double angle=2*M_PI*i/n;
+    mesh->SetNode(i+2,gp_Pnt(10*std::cos(angle),10*std::sin(angle),0));
+    mesh->SetTriangle(i+1,Poly_Triangle(1,i+2,(i+1)%n+2));
+  }
+  TopoDS_Face face;BRep_Builder().MakeFace(face,mesh);
+  auto prs=BodyPrs::build(face,Bnd_Box());CHECK_EQ(prs->circles.size(),1u);
+  Handle(TestBody) body=new TestBody(face,prs);
+  Handle(SelectMgr_Selection) selection=new SelectMgr_Selection(AIS_Shape::SelectionMode(TopAbs_VERTEX));
+  body->ComputeSelection(selection,AIS_Shape::SelectionMode(TopAbs_VERTEX));
+  Handle(Graphic3d_Camera) camera=new Graphic3d_Camera();
+  camera->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+  camera->SetEyeAndCenter(gp_Pnt(0,0,100),gp_Pnt(0,0,0));camera->SetUp(gp::DY());camera->SetScale(40);
+  SelectMgr_SelectingVolumeManager volume;volume.InitPointSelectingVolume(gp_Pnt2d(750,500));
+  volume.SetCamera(camera);volume.SetWindowSize(1000,1000);volume.SetPixelTolerance(2);volume.BuildSelectingVolume();
+  int hits=0;
+  for(const auto& entity:selection->Entities()) {
+    SelectBasics_PickResult result;if(!entity->BaseSensitive()->Matches(volume,result)) continue;
+    auto owner=Handle(CircleOwner)::DownCast(entity->BaseSensitive()->OwnerId());
+    CHECK(!owner.IsNull());CHECK_NEAR(owner->center.Distance(gp::Origin()),0,1e-7);++hits;
+  }
+  CHECK(hits>0);
+}
+
 TEST(coincident_parts_have_distinct_depth_slots) {
   Bnd_Box a(gp_Pnt(0,0,0), gp_Pnt(10,10,10));
   Bnd_Box touching(gp_Pnt(10,0,0), gp_Pnt(20,10,10));

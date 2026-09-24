@@ -69,7 +69,7 @@ class SubShapeOwner : public StdSelect_BRepOwner {
   int m_index;
 };
 
-// Discovery owners are hover targets only; the separately displayed center is the pick target.
+// Circular rims discover and select a stable center reference in vertex mode.
 class CircleOwner : public SubShapeOwner {
   DEFINE_STANDARD_RTTI_INLINE(CircleOwner, SubShapeOwner)
  public:

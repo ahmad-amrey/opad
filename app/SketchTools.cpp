@@ -992,7 +992,7 @@ void SketchEditor::bench(const QString&) {
     m_sk.entity(id)->weights[1]=0.6;m_sk.entity(id)->weights[2]=1.8;rebuild();
     m_viewport->grabImage().save(shot+".nodes.png");findOpenVertices();
     trace::log(QString("bench: spline live preview / insert node / asymmetric weights %1").arg(inserted?"PASS":"FAIL"));
-    QTimer::singleShot(500,this,[this,inserted]{const bool ends=m_dangling.size()==2;trace::log(QString("bench: spline open ends %1").arg(ends?"PASS":"FAIL"));QCoreApplication::exit(inserted && ends?0:2);});
+    QTimer::singleShot(500,this,[this,inserted]{const bool ends=m_dangling.size()==2;trace::log(QString("bench: spline open ends %1").arg(ends?"PASS":"FAIL"));m_doc->newDocument();const bool reset=!m_active;trace::log(QString("bench: active sketch document reset %1").arg(reset?"PASS":"FAIL"));QCoreApplication::exit(inserted && ends && reset?0:2);});
     return;
   }
 

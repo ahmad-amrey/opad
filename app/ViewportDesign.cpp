@@ -54,6 +54,10 @@ void Viewport::syncSketches() {
           TopoDS_Compound shape;BRep_Builder b;b.MakeCompound(shape);
           auto sk=opad::design::Sketch::from_json(geometry);
           for(const auto& e:opad::design::sketch_edges(sk,frame,true)) {if(progress.cancelled()) return;b.Add(shape,e);}
+          for(const auto& e:sk.entities) if(e.type==opad::design::SkEntity::Type::Point)
+            if(const auto* p=sk.point(e.p.empty()?0:e.p[0])) {
+              const auto w=frame.to_world(p->x,p->y);b.Add(shape,BRepBuilderAPI_MakeVertex(gp_Pnt(w[0],w[1],w[2])).Vertex());
+            }
           Bnd_Box box;BRepBndLib::Add(shape,box);prepared->shape=shape;prepared->prs=BodyPrs::build(shape,box);
         },[this,prepared,id,generation](bool ok,const QString&) {
           if(generation!=m_doc->generation || !m_preparedSketches.count(id) || m_preparedSketches[id]!=prepared) return;

@@ -11,6 +11,7 @@
 #include <TopoDS_Compound.hxx>
 #include <cmath>
 #include <algorithm>
+#include <tuple>
 #include <BRepAdaptor_Curve.hxx>
 #include <Select3D_SensitiveCurve.hxx>
 #include <Select3D_SensitivePrimitiveArray.hxx>
@@ -256,6 +257,15 @@ void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, c
   if(mode!=0 && opad::is_mesh_shape(myshape)) {
     const auto type=AIS_Shape::SelectionType(mode);
     const auto kind=type==TopAbs_FACE?opad::Ref::Kind::Face:type==TopAbs_EDGE?opad::Ref::Kind::Edge:opad::Ref::Kind::Vertex;
+    std::map<std::tuple<double,double,double>,Handle(CircleOwner)> rimVertices;
+    std::map<int,Handle(CircleOwner)> circleOwners;
+    if(type==TopAbs_VERTEX && m_prs) for(const auto& [id,circle]:m_prs->circles) {
+      auto owner=Handle(CircleOwner)(new CircleOwner(circle,this,id));circleOwners[id]=owner;
+      for(TopExp_Explorer vertex(circle.edge,TopAbs_VERTEX);vertex.More();vertex.Next()) {
+        const auto p=BRep_Tool::Pnt(TopoDS::Vertex(vertex.Current()));
+        rimVertices.emplace(std::make_tuple(p.X(),p.Y(),p.Z()),owner);
+      }
+    }
     int index=0;
     for(TopExp_Explorer faces(myshape,TopAbs_FACE);faces.More();faces.Next()) {
       TopLoc_Location location;
@@ -264,7 +274,13 @@ void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, c
       auto point=[&](int i) { return mesh->Node(i).Transformed(location.Transformation()); };
       auto owner=[&] { return Handle(MeshOwner)(new MeshOwner(myshape,this,kind,index++)); };
       if(type==TopAbs_VERTEX) {
-        for(int i=1;i<=mesh->NbNodes();++i) selection->Add(new MeshSensitive<Select3D_SensitivePoint>(owner(),point(i)));
+        for(int i=1;i<=mesh->NbNodes();++i) {
+          const auto p=point(i);auto circle=rimVertices.find(std::make_tuple(p.X(),p.Y(),p.Z()));
+          // A circle's rim vertices represent its center in vertex mode as well.
+          // Depth ordering can otherwise prefer a mesh vertex over the curve owner.
+          if(circle!=rimVertices.end()) {selection->Add(new Select3D_SensitivePoint(circle->second,p));++index;}
+          else selection->Add(new MeshSensitive<Select3D_SensitivePoint>(owner(),p));
+        }
       } else for(int i=1;i<=mesh->NbTriangles();++i) {
         int a,b,c; mesh->Triangle(i).Get(a,b,c);
         if(type==TopAbs_FACE) selection->Add(new MeshSensitive<Select3D_SensitiveTriangle>(owner(),point(a),point(b),point(c)));
@@ -276,7 +292,7 @@ void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, c
       }
     }
     if(type==TopAbs_VERTEX && m_prs) for(const auto& [index,circle]:m_prs->circles)
-      selection->Add(new SharedSensitive(new CircleOwner(circle,this,index),circle.sensitive));
+      selection->Add(new SharedSensitive(circleOwners.at(index),circle.sensitive));
     return;
   }
   AIS_Shape::ComputeSelection(selection, mode);

@@ -31,6 +31,8 @@ void MainWindow::drawingToSketch() {
   hint->setWordWrap(true); layout->addWidget(hint);
   auto* pick=new QPushButton(tr("Pick sketch plane in scene"),dialog); layout->addWidget(pick);
   auto* tree=new QTreeWidget(dialog); tree->setHeaderLabels({tr("Include layer"),tr("Construction only")});
+  const auto& colors=theme::current();
+  tree->setStyleSheet(QString("QTreeView::indicator { width: 14px; height: 14px; border: 1px solid %1; background: %2; } QTreeView::indicator:checked { background: %3; image: url(%4); }").arg(colors.fg3.name(),colors.bg2.name(),colors.sel.name(),icons::file("check",colors.onsel,14)));
   tree->setRootIsDecorated(false); tree->header()->setSectionResizeMode(0,QHeaderView::Stretch); layout->addWidget(tree,1);
   std::set<std::string> selected;
   for(const auto& id:currentNodeIds()) for(const auto& body:m_doc->scene.bodies_under(id)) selected.insert(body);
@@ -70,7 +72,8 @@ void MainWindow::drawingToSketch() {
       if(snapshot->ops.size()!=m_doc->doc.ops.size()) { state->applying=false; note->setText(tr("Document changed. Please retry.")); update(); return; }
       auto op=opad::design::make_sketch_op(title,plane,geometry->to_json());
       m_design->applyOps({op},tr("Convert drawing to sketch"),[=,this](bool applied,const QString& failure) {
-        if(!guard) return; state->applying=false;
+        if(!guard) return;
+        state->applying=false;
         if(applied) { dialog->close(); if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")) QTimer::singleShot(500,this,[this] { QCoreApplication::exit(!m_design->sketchActive() && !m_doc->scene.sketches.empty()?0:2); }); }
         else {note->setText(failure); update();}
       });

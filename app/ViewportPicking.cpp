@@ -95,7 +95,7 @@ bool Viewport::inferenceKey(QKeyEvent* key) {
   }
   m_trackingDirty=true; m_hoverOwner=nullptr;
   refreshCenterStyles();
-  emit hoverChanged(m_centerLocked ? tr("Center locked - release Shift to unlock") : tr("Tap Shift to cycle enlarged targets; hold Shift to lock"));
+  emit hoverChanged(m_trackingLocked ? tr("Tracking locked - release Shift to unlock") : tr("Tap Shift to cycle tracking points; hold Shift to lock"));
   redrawScene(); return true;
 }
 

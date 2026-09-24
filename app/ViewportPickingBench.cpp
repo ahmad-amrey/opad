@@ -22,6 +22,7 @@
 #include <QPinchGesture>
 #include <QWheelEvent>
 #include <TopoDS.hxx>
+#include <TopExp_Explorer.hxx>
 #include <cmath>
 #include <gp_Pln.hxx>
 
@@ -496,10 +497,19 @@ bool Viewport::benchPicking() {
         const QPoint target = widgetPoint({center.X(), center.Y(), center.Z()});
         if (!rect().adjusted(12, 12, -12, -12).contains(target)) continue;
         opad::Ref ref; ref.body = id; ref.kind = opad::Ref::Kind::Center; ref.index = index;
-        BRepAdaptor_Curve curve(TopoDS::Edge(circle.edge));
+        std::vector<gp_Pnt> rimSamples;
+        if(circle.edge.ShapeType()==TopAbs_EDGE) {
+          BRepAdaptor_Curve curve(TopoDS::Edge(circle.edge));
+          for(int sample=1;sample<32;++sample) rimSamples.push_back(curve.Value(curve.FirstParameter()+(curve.LastParameter()-curve.FirstParameter())*sample/32.0));
+        } else for(TopExp_Explorer edge(circle.edge,TopAbs_EDGE);edge.More();edge.Next()) {
+          BRepAdaptor_Curve curve(TopoDS::Edge(edge.Current()));
+          // Mesh rim endpoints deliberately compete with selectable mesh vertices.
+          rimSamples.push_back(curve.Value(curve.FirstParameter()));
+        }
         bool discovered = false; QPoint rimTarget;
-        for (int sample = 1; sample < 32; ++sample) {
-          gp_Pnt rim = curve.Value(curve.FirstParameter() + (curve.LastParameter() - curve.FirstParameter()) * sample / 32.0);
+        int tested=0;
+        for (gp_Pnt rim : rimSamples) {
+          if(circle.segments && ++tested>16) break;
           rim.Transform(item.ais->Transformation());
           move(widgetPoint({rim.X(), rim.Y(), rim.Z()}));
           if (m_activeCenter == ref.str()) { rimTarget=widgetPoint({rim.X(),rim.Y(),rim.Z()}); discovered = true; break; }
