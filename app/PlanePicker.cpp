@@ -56,10 +56,10 @@ PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget
   auto* body=new QWidget;auto* layout=new QVBoxLayout(body);
   m_steps=new ToolStepsPanel(body);m_steps->setSummary({},{},{});m_steps->setFixedHeight(125);layout->addWidget(m_steps);
   auto* hint=new QLabel(tr("Choose a plane in the corner widget, or pick a planar model face."),body);hint->setObjectName("planeHint");hint->setWordWrap(true);layout->addWidget(hint);
-  m_construction=new QCheckBox(tr("Show construction planes"),body);layout->addWidget(m_construction);
+  m_construction=new QCheckBox(tr("Show construction planes"),body);m_construction->setObjectName("constructionPlanes");layout->addWidget(m_construction);
   connect(m_construction,&QCheckBox::toggled,this,[this]{constructionPlanes();});
   m_originControls=new QWidget(body);auto* form=new QFormLayout(m_originControls);form->setContentsMargins(0,0,0,0);
-  m_snap=new QComboBox(body);m_snap->addItems({tr("Point on plane"),tr("Vertex"),tr("Circle or arc center")});m_snap->setCurrentIndex(1);form->addRow(tr("Origin picking"),m_snap);
+  m_snap=new QComboBox(body);m_snap->setObjectName("originPicking");m_snap->addItems({tr("Point on plane"),tr("Vertex"),tr("Circle or arc center")});m_snap->setCurrentIndex(1);form->addRow(tr("Origin picking"),m_snap);
   m_u=new QLineEdit(body);m_v=new QLineEdit(body);form->addRow(tr("Plane X (mm)"),m_u);form->addRow(tr("Plane Y (mm)"),m_v);
   auto* explanation=new QLabel(tr("Coordinates use the selected plane's original axes and origin. Off-plane references are projected onto it."),body);explanation->setWordWrap(true);form->addRow(explanation);
   auto* reset=new QPushButton(tr("Reset origin"),body);form->addRow(reset);layout->addWidget(m_originControls);
@@ -97,7 +97,7 @@ void PlanePicker::choose(const opad::json& support) {
   m_job=m_jobs->async(tr("Resolving sketch plane"),[doc,scene,plane,frame](Progress p){if(p.cancelled())return;*frame=resolve_plane(*doc,*scene,*plane);if(plane->contains("face"))(*plane)["face"]=make_ref(*doc,*scene,opad::Ref::from_json(plane->at("face")));},[this,guard,serial,plane,frame](bool ok,const QString& error){
     if(!guard||!m_active||serial!=m_serial)return;m_job=nullptr;if(!ok){m_status->setText(error);return;}m_status->clear();m_support=*plane;m_supportFrame=*frame;m_frame=*frame;
     if(!m_positionOrigin){const auto value=*plane;const auto f=*frame;stop();emit accepted(value,f);return;}
-    m_view->lookAt(*frame,false,false);m_originStage=true;m_origin={{"world",{0,0,0}}};double u,v;frame->to_local({0,0,0},u,v);m_frame.origin=frame->to_world(u,v);
+    m_view->lookAt(*frame,true,false);m_originStage=true;m_origin={{"world",{0,0,0}}};double u,v;frame->to_local({0,0,0},u,v);m_frame.origin=frame->to_world(u,v);
     ++m_candidateSerial;m_view->clearCandidates();m_tiles->hide();m_view->clearSelection();m_view->setSelectionFilter(m_snap->currentIndex()==2?Viewport::SelFilter::Edge:Viewport::SelFilter::Vertex);refresh();
   });
 }

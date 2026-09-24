@@ -2,11 +2,14 @@
 #include "DesignController.hpp"
 #include "opad/step_io.hpp"
 #include "opad/geometry.hpp"
+#include "opad/design/sketch_geom.hpp"
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
 #include <QApplication>
 #include <QMouseEvent>
 #include <QTimer>
 #include <QCheckBox>
+#include <QComboBox>
 #include <cmath>
 
 bool MainWindow::benchTodo5() {
@@ -57,7 +60,7 @@ bool MainWindow::benchTodo5() {
         m_design->applyOps({opad::design::make_feature_op("plane","Raised plane",{{"mode","offset"},{"plane",{{"base","xy"}}},{"distance","30 mm"}})},"bench construction plane");break;
       case 17:
         if(m_doc->designBusy){--state->phase;break;}
-        require(!m_doc->scene.features.empty(),"construction plane created");m_design->startSketch();m_design->planePanel()->findChild<QCheckBox*>()->setChecked(true);break;
+        require(!m_doc->scene.features.empty(),"construction plane created");m_design->startSketch();m_design->planePanel()->findChild<QCheckBox*>("constructionPlanes")->setChecked(true);break;
       case 18:{
         const auto id=m_doc->scene.features.back().id;
         const auto key=opad::json{{"feature",id}}.dump();m_viewport->selectRefs({}, {key});
@@ -70,7 +73,43 @@ bool MainWindow::benchTodo5() {
       case 20:
         require(sketch->active()&&std::abs(sketch->frame().origin[2]-30)<1e-8,"construction plane picked with projected default origin");
         m_design->redefineSketchPlane();picker->cancel();require(sketch->active(),"construction replane cancellation");m_design->finishSketch();break;
-      default:timer->stop();trace::log("bench: TODO 5 annotations, Home, visual plane picking, origin preservation and 2D workflow PASS");QCoreApplication::exit(0);break;
+      case 21:
+        m_doc->newDocument();opad::import_brep(m_doc->doc,opad::brep_from_shape(BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(25,15,0),gp_Dir(0,0,1)),8,10).Shape()),"Circle reference");m_doc->refresh();m_viewport->fitAll();break;
+      case 22:
+        m_viewport->lookAt(opad::design::base_frame("yz"),false,false);m_design->startSketch();
+        m_viewport->findChild<QWidget*>("planeTiles")->grab().save(prefix+".edge-on-tiles.png");picker->choose({{"base","xy"}});break;
+      case 23:
+        if(!picker->positioning()){--state->phase;break;}
+        m_design->planePanel()->findChild<QComboBox*>("originPicking")->setCurrentIndex(2);break;
+      case 24:{
+        bool found=false;
+        for(int i=0;i<24&&!found;++i) {
+          const double angle=i*2*3.141592653589793/24;
+          const auto point=m_viewport->widgetPoint({25+8*std::cos(angle),15+8*std::sin(angle),10});opad::Ref ref;
+          if(!m_viewport->referenceAt(point,ref)||ref.kind!=opad::Ref::Kind::Edge)continue;
+          QMouseEvent press(QEvent::MouseButtonPress,point,m_viewport->mapToGlobal(point),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+          QMouseEvent release(QEvent::MouseButtonRelease,point,m_viewport->mapToGlobal(point),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+          QApplication::sendEvent(m_viewport,&press);QApplication::sendEvent(m_viewport,&release);found=true;
+        }
+        if(!found){m_viewport->grabImage().save(prefix+".circle-pick.png");m_design->planePanel()->grab().save(prefix+".circle-panel.png");}
+        require(found,"circle edge is pickable in center mode");break;
+      }
+      case 25:
+        if(!sketch->active()){picker->apply();--state->phase;break;}
+        require(sketch->plane()["origin"].contains("ref")&&std::abs(sketch->frame().origin[0]-25)<1e-7&&std::abs(sketch->frame().origin[1]-15)<1e-7&&std::abs(sketch->frame().origin[2])<1e-7,"circle center snapped and projected onto plane");
+        m_design->redefineSketchPlane();picker->choose({{"base","xy"}});break;
+      case 26:{
+        if(!picker->positioning()){--state->phase;break;}
+        m_design->planePanel()->findChild<QComboBox*>("originPicking")->setCurrentIndex(0);
+        const auto start=m_viewport->widgetPoint({0,0,0}),end=m_viewport->widgetPoint({30,20,0});
+        QMouseEvent press(QEvent::MouseButtonPress,start,m_viewport->mapToGlobal(start),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+        QMouseEvent move(QEvent::MouseMove,end,m_viewport->mapToGlobal(end),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease,end,m_viewport->mapToGlobal(end),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+        QApplication::sendEvent(m_viewport,&press);QApplication::sendEvent(m_viewport,&move);QApplication::sendEvent(m_viewport,&release);picker->apply();break;
+      }
+      case 27:
+        require(sketch->active()&&std::abs(sketch->frame().origin[0]-30)<m_viewport->pixelSize()*2&&std::abs(sketch->frame().origin[1]-20)<m_viewport->pixelSize()*2,"free-point origin dragging");m_design->finishSketch();break;
+      default:timer->stop();trace::log("bench: TODO 5 annotations, Home, face/construction planes, vertex/circle origins, dragging, undo/redo and 2D workflow PASS");QCoreApplication::exit(0);break;
     }
   }catch(const std::exception& e){timer->stop();trace::log(QString("bench: TODO 5 FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();return true;
 }
