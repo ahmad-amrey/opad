@@ -4,6 +4,8 @@
 #include <Graphic3d_GraphicDriver.hxx>
 #include <Graphic3d_TypeOfLimit.hxx>
 #include <AIS_AnimationCamera.hxx>
+#include <Prs3d_ShadingAspect.hxx>
+#include <PrsMgr_PresentationManager.hxx>
 #include <QSettings>
 #include <algorithm>
 
@@ -14,6 +16,33 @@ int Viewport::savedRenderQuality() {
     settings.setValue("view/qualityV2", old <= 1 ? 0 : old <= 3 ? 1 : 2);
   }
   return std::clamp(settings.value("view/qualityV2").toInt(), 0, 2);
+}
+void Viewport::setHoverFade(bool enabled,double seconds) {
+  m_hoverFadeEnabled=enabled;m_hoverFadeSeconds=std::clamp(seconds,.1,60.0);
+  QSettings().setValue("view/hoverFade",enabled);QSettings().setValue("view/hoverFadeSeconds",m_hoverFadeSeconds);
+  m_hoverFadeObject=nullptr;m_hoverFadeTimer.stop();m_hoverAge.invalidate();
+  if(m_initialised){ResetPreviousMoveTo();m_ctx->ClearDetected(false);redrawScene();}
+}
+void Viewport::trackHoverFade() {
+  if(!m_hoverFadeEnabled || !m_initialised || !m_ctx->HasDetected()){m_hoverFadeTimer.stop();return;}
+  const auto object=m_ctx->DetectedInteractive();
+  if(object.IsNull() || !m_nodeOf.count(object.get())){m_hoverFadeTimer.stop();return;}
+  if(object.get()!=m_hoverFadeObject){m_hoverFadeObject=object.get();m_hoverAge.restart();}
+  if(!m_hoverFadeTimer.isActive() && m_hoverAge.elapsed()<m_hoverFadeSeconds*1000+400)m_hoverFadeTimer.start();
+  if(m_hoverAge.elapsed()>m_hoverFadeSeconds*1000)updateHoverFade();
+}
+void Viewport::updateHoverFade() {
+  if(!m_initialised || !m_hoverFadeEnabled || !m_ctx->HasDetected() || m_ctx->DetectedInteractive().get()!=m_hoverFadeObject){m_hoverFadeTimer.stop();return;}
+  const double fade=std::clamp((m_hoverAge.elapsed()-m_hoverFadeSeconds*1000)/400.0,0.0,1.0);if(fade<=0)return;
+  const auto manager=m_ctx->MainPrsMgr();manager->ClearImmediateDraw();
+  if(fade<1) {
+    const auto base=m_ctx->HighlightStyle(m_filter==SelFilter::Body?Prs3d_TypeOfHighlight_Dynamic:Prs3d_TypeOfHighlight_LocalDynamic);
+    Handle(Prs3d_Drawer) style=new Prs3d_Drawer;style->SetLink(base);style->SetColor(base->Color());style->SetTransparency(float(fade));style->SetDisplayMode(base->DisplayMode());style->SetZLayer(base->ZLayer());
+    auto shading=new Prs3d_ShadingAspect;shading->SetAspect(new Graphic3d_AspectFillArea3d(*base->ShadingAspect()->Aspect()));shading->SetTransparency(fade);style->SetShadingAspect(shading);
+    manager->BeginImmediateDraw();m_ctx->DetectedOwner()->HilightWithColor(manager,style,style->DisplayMode());manager->EndImmediateDraw(m_viewer);
+  }
+  m_view->RedrawImmediate();
+  if(fade>=1)m_hoverFadeTimer.stop();
 }
 
 void Viewport::setRenderQuality(int level) {

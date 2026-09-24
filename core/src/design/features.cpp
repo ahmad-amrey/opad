@@ -115,7 +115,9 @@ std::vector<FeatureSpec> build_specs() {
       placed({in("diameter", "Base diameter", "length", "20 mm"), in("top_diameter", "Top diameter", "length", "0 mm"), in("height", "Height", "length", "20 mm")}), "new");
   add("torus", "Torus", "torus", "create", "A ring lying on a plane.", placed({in("diameter", "Ring diameter", "length", "40 mm"), in("section", "Section diameter", "length", "10 mm")}), "new");
   add("extrude", "Extrude", "extrude", "create", "Pull sketch profiles or planar faces along their normal.",
-      {pick("profiles", "Profiles", "profiles", 1, 0), choice("direction", "Direction", {"one", "symmetric", "two"}), choice("extent", "Extent", {"distance", "all"}),
+      {pick("profiles", "Profiles", "profiles", 1, 0),choice("start", "Start from", {"profile", "offset", "face"}),
+       in("start_offset", "Start offset", "length", "0 mm", "start=offset"),pick("start_face", "Start face", "faces", 1, 1, "start=face"),
+       choice("direction", "Direction", {"one", "symmetric", "two"}), choice("extent", "Extent", {"distance", "all"}),
        in("distance", "Distance", "length", "10 mm", "extent=distance"), in("distance2", "Distance, other side", "length", "10 mm", "direction=two"),
        in("taper", "Taper angle", "angle", "0 deg", "extent=distance"), in("flip", "Flip direction", "bool", false)},
       "new");
@@ -504,6 +506,16 @@ double scene_reach(const Ctx& ctx, const TopoDS_Shape& extra) {
 }
 
 // ---------------------------------------------------------------- features
+double extrusion_start(const Ctx& ctx,const json& in,const gp_Vec& normal,const gp_Pnt& center) {
+  const auto mode=in.value("start","profile");
+  if(mode=="profile")return 0;
+  if(mode=="offset")return ctx.length(in,"start_offset");
+  if(mode!="face")throw Error("unknown extrusion start mode");
+  const auto& refs=in.at("start_face");if(!refs.is_array()||refs.size()!=1)throw Error("pick one planar start face");
+  const auto frame=ctx.plane({{"face",refs.front()}});const gp_Vec other(vec(frame.normal()));
+  if(std::abs(std::abs(other.Dot(normal))-1)>1e-7)throw Error("the start face must be perpendicular to the extrusion axis");
+  return gp_Vec(center,pnt(frame.origin)).Dot(normal);
+}
 TopoDS_Shape make_extrusion(const Ctx& ctx, const json& in, const Profiles& prof) {
   const std::string direction = in.value("direction", "one");
   const bool all = in.value("extent", "distance") == "all";
@@ -523,9 +535,11 @@ TopoDS_Shape make_extrusion(const Ctx& ctx, const json& in, const Profiles& prof
   for (const auto& face : prof.faces) {
     ctx.check_cancel();
     TopoDS_Shape base = face;
-    if (std::fabs(d2) > 1e-12) {
+    GProp_GProps properties;BRepGProp::SurfaceProperties(face,properties);
+    const double start=extrusion_start(ctx,in,n,properties.CentreOfMass());
+    if (std::fabs(start-d2) > 1e-12) {
       gp_Trsf back;
-      back.SetTranslation(n * -d2);
+      back.SetTranslation(n * (start-d2));
       base = moved(face, back);
     }
     TopoDS_Shape prism = BRepPrimAPI_MakePrism(base, n * (d1 + d2), Standard_True).Shape();
@@ -685,7 +699,13 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
   }
 
   if (kind == "extrude") {
-    apply_operation(ctx, in, make_extrusion(ctx, in, resolve_profiles(ctx, in.value("profiles", json()))), out);
+    const auto profiles=resolve_profiles(ctx,in.value("profiles",json()));
+    apply_operation(ctx, in, make_extrusion(ctx, in, profiles), out);
+    GProp_GProps properties;BRepGProp::SurfaceProperties(profiles.faces.front(),properties);
+    gp_Vec axis(profiles.normal);if(in.value("flip",false))axis.Reverse();
+    const auto origin=properties.CentreOfMass().Translated(axis*extrusion_start(ctx,in,axis,properties.CentreOfMass()));
+    if(in.value("direction","one")=="symmetric")axis*=.5;
+    if(in.value("extent","distance")=="distance")out.extra["distance_handle"]={{"origin",{origin.X(),origin.Y(),origin.Z()}},{"axis",{axis.X(),axis.Y(),axis.Z()}},{"value",ctx.length(in,"distance")}};
     return out;
   }
   if (kind == "revolve") {

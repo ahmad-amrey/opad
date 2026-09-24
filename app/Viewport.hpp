@@ -76,6 +76,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setRenderQuality(int level);
   static int savedRenderQuality();
   void setSceneBackground(int style);
+  void setHoverFade(bool enabled,double seconds);
   void setTwoDimensional(bool on);
   bool twoDimensional() const { return m_twoDimensional; }
   void setTracking(bool on);
@@ -115,6 +116,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // isolate({}) or until none of them exists any more (all deleted). isolationChanged() reports both.
   void isolate(const std::vector<std::string>& ids);  // empty = exit the mode
   bool isIsolated() const { return !m_isolated.empty(); }
+  std::vector<std::string> isolatedNodes() const {return {m_isolated.begin(),m_isolated.end()};}
   int isolatedCount() const { return static_cast<int>(m_isolated.size()); }
 
   // Section: the clip plane, and its gizmo (ViewportSection.cpp): the plane's outline over the model, edges only,
@@ -426,6 +428,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QPointF m_trackpadCursor, m_trackpadAnchor;
   bool m_nativePinching = false;
   QString m_hover;
+  void trackHoverFade();
+  void updateHoverFade();
+  QTimer m_hoverFadeTimer;
+  QElapsedTimer m_hoverAge;
+  const AIS_InteractiveObject* m_hoverFadeObject=nullptr;
+  bool m_hoverFadeEnabled=true;
+  double m_hoverFadeSeconds=5;
   const Standard_Transient* m_hoverOwner = nullptr;  // owner m_hover was built for (identity only, never dereferenced)
   QPoint m_pressPos;
   bool m_rightPress = false;

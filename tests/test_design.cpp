@@ -1,5 +1,8 @@
 #include "opad/design/sketch_edit.hpp"
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 // Design engine: expressions, parameters, sketches -> profiles, features, regeneration, history edits.
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
@@ -482,6 +485,30 @@ TEST(sketch_record_format_and_incremental_replay) {
   doc.append({{"op","delete"},{"target",doc.ops.back().id}});
   CHECK(resolve(doc).sketch(id)->geometry==before);
   CHECK_THROWS(Document::parse(text.substr(0,text.find("#bodies")-3)));
+}
+TEST(extrude_start_offset_face_and_invalid_axis) {
+  Document doc=Document::create();
+  commands::run("param",{{"name","startHeight"},{"expr","7 mm"}},&doc);
+  const auto sketch=run_id(sketch_cmd(doc,rectangle(0,0,20,10)));
+  const auto profiles=json::array({{{"sketch",sketch},{"all",true}}});
+  const auto extrude=run_id(feature_cmd(doc,"extrude",{{"profiles",profiles},{"distance","5 mm"},{"start","offset"},{"start_offset","startHeight"}}));
+  auto scene=resolve(doc);auto bounds=node_world_bbox(doc,scene,scene.all_bodies().front());
+  CHECK_NEAR(bounds.CornerMin().Z(),7,1e-6);CHECK_NEAR(bounds.CornerMax().Z(),12,1e-6);CHECK_NEAR(total_volume(doc),1000,1e-6);
+  commands::run("param",{{"name","startHeight"},{"expr","11 mm"}},&doc);
+  scene=resolve(doc);bounds=node_world_bbox(doc,scene,scene.all_bodies().front());CHECK_NEAR(bounds.CornerMin().Z(),11,1e-6);
+  const auto body=scene.all_bodies().front();const auto shape=node_world_shape(doc,scene,body);
+  json top,side;int index=0;for(TopExp_Explorer it(shape,TopAbs_FACE);it.More();it.Next(),++index) {
+    BRepAdaptor_Surface surface(TopoDS::Face(it.Current()));if(surface.GetType()!=GeomAbs_Plane)continue;
+    auto ref=json{{"body",body},{"kind","face"},{"index",index}};
+    if(std::abs(surface.Plane().Axis().Direction().Z())>.99 && std::abs(surface.Plane().Location().Z()-16)<1e-6)top=ref;
+    if(std::abs(surface.Plane().Axis().Direction().Z())<.01)side=ref;
+  }
+  CHECK(!top.is_null());CHECK(!side.is_null());
+  const auto next=run_id(feature_cmd(doc,"extrude",{{"profiles",profiles},{"distance","3 mm"},{"start","face"},{"start_face",json::array({top})}}));
+  scene=resolve(doc);const auto* result=scene.feature(next);CHECK(result);
+  CHECK_NEAR(result->result.at("distance_handle").at("origin")[2].get<double>(),16,1e-6);
+  CHECK_NEAR(total_volume(doc),1600,1e-5);
+  const auto count=doc.ops.size();CHECK_THROWS(feature_cmd(doc,"extrude",{{"profiles",profiles},{"distance","3 mm"},{"start","face"},{"start_face",json::array({side})}}));CHECK_EQ(doc.ops.size(),count);
 }
 TEST(sketch_origin_support_regenerates_and_roundtrips) {
   Document doc=Document::create();

@@ -637,6 +637,13 @@ void MainWindow::buildRibbon() {
     connect(a, &QAction::triggered, this, [this, i] { m_viewport->setRenderQuality(i); });
   }
   quality->setToolTipsVisible(true);
+  settings->addAction(tr("Hover highlighting"),this,[this]{
+    QDialog dialog(this);dialog.setWindowTitle(tr("Hover highlighting"));auto* layout=new QVBoxLayout(&dialog);
+    auto* enabled=new QCheckBox(tr("Fade hover highlight"),&dialog);enabled->setChecked(m_settings.value("view/hoverFade",true).toBool());layout->addWidget(enabled);
+    auto* seconds=new QDoubleSpinBox(&dialog);seconds->setRange(.1,60);seconds->setSuffix(tr(" seconds"));seconds->setValue(m_settings.value("view/hoverFadeSeconds",5).toDouble());layout->addWidget(seconds);
+    auto* buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog);layout->addWidget(buttons);connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
+    if(dialog.exec()==QDialog::Accepted)m_viewport->setHoverFade(enabled->isChecked(),seconds->value());
+  });
   for (auto* a : quality->actions()) a->setToolTip(tr("Ray tracing requires a compatible OpenGL driver; Studio is used when unavailable."));
   auto* background = settings->addMenu(tr("Scene background"));
   auto* backgroundGroup = new QActionGroup(background);
@@ -1447,6 +1454,8 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     });
     const opad::Node* n = m_doc->node(ids.front());
     QAction* lock = menu.addAction(icons::themed("lock", 16), n && n->locked ? tr("Unlock") : tr("Lock"));
+    if(ids.size()==1 && n && !n->body_key.empty() && m_doc->scene.instance_count[n->body_key]>1)
+      menu.addAction(tr("Browse linked instances"),this,[this,id=ids.front()]{browseInstances(id);});
     lock->setVisible(!m_doc->browse);
     connect(lock, &QAction::triggered, this, [this, ids, locked = n && n->locked] {
       for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"locked", !locked}});
@@ -2109,6 +2118,15 @@ void MainWindow::runBench() {
     return;
   }
   if(benchShortcuts())return;
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_INSTANCES")) {
+    if(m_doc->scene.all_bodies().empty()){QCoreApplication::exit(2);return;}
+    const auto source=m_doc->scene.all_bodies().front(),copy=opad::new_uuid();
+    m_doc->doc.append({{"op","import"},{"nodes",opad::json::array({{{"type","body"},{"id",copy},{"key",m_doc->scene.node(source)->body_key},{"name","Linked copy"}}})}});m_doc->refresh();
+    const auto count=m_doc->doc.ops.size();browseInstances(source);
+    auto* panel=findChild<ToolPanel*>("instanceBrowser");bool valid=panel && m_viewport->isolatedNodes()==std::vector<std::string>{source};
+    if(panel){panel->findChild<QPushButton*>("nextInstance")->click();valid=valid&&m_viewport->isolatedNodes()!=std::vector<std::string>{source};panel->findChild<QPushButton*>("previousInstance")->click();valid=valid&&m_viewport->isolatedNodes()==std::vector<std::string>{source};panel->hide();valid=valid&&!m_viewport->isIsolated()&&m_doc->doc.ops.size()==count;}
+    trace::log(valid?"bench: instance next/previous, isolation restoration and no document edits PASS":"bench: instance browser FAIL");QCoreApplication::exit(valid?0:2);return;
+  }
   if(benchLargeSketch())return;
   if(benchTodo5())return;
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_NAVIGATION");!mode.isEmpty()) {

@@ -236,6 +236,9 @@ void Viewport::initViewer() {
   Handle(V3d_DirectionalLight) overhead=new V3d_DirectionalLight(gp_Dir(0,0,-1),Quantity_NOC_WHITE,false);
   overhead->SetIntensity(0.75f);m_viewer->AddLight(overhead);m_viewer->SetLightOn(overhead);
   m_ctx = new AIS_InteractiveContext(m_viewer);
+  m_hoverFadeEnabled=QSettings().value("view/hoverFade",true).toBool();
+  m_hoverFadeSeconds=std::clamp(QSettings().value("view/hoverFadeSeconds",5.0).toDouble(),.1,60.0);
+  m_hoverFadeTimer.setInterval(40);connect(&m_hoverFadeTimer,&QTimer::timeout,this,&Viewport::updateHoverFade);
   m_ctx->SetPixelTolerance(4);
   m_ctx->AddFilter(new OwnerFilter([this](const Handle(SelectMgr_EntityOwner)& owner) {
     if(!Handle(CircleOwner)::DownCast(owner).IsNull()) return m_ctrlCenterPick;
@@ -1717,6 +1720,7 @@ void Viewport::paintEvent(QPaintEvent*) {
   }
   if (trace::enabled() && frame.elapsed() > 100) trace::log(QStringLiteral("slow frame: %1 ms (%2 objects)").arg(frame.elapsed()).arg(m_items.size()));
   updateTracking();
+  trackHoverFade();
   // The label needs the sub-shape's ordinal, a walk over the whole body: only when the hovered owner changes.
   const Standard_Transient* hoverOwner = m_ctx->HasDetected() ? m_ctx->DetectedOwner().get() : nullptr;
   if (hoverOwner == m_hoverOwner) return;

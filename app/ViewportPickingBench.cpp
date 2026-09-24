@@ -408,8 +408,7 @@ bool Viewport::benchPicking() {
     m_view->SetCamera(new Graphic3d_Camera(*savedCamera));
     setNavPreset(oldPreset);
     trace::log(QStringLiteral("bench: picking perspective / clipping / Qt orbit pivot PASS"));
-
-    // Drafting locks the camera and produces exact world-space point references on extension guides.
+// Drafting locks the camera and produces exact world-space point references on extension guides.
     const Handle(Graphic3d_Camera) before2d = new Graphic3d_Camera(*m_view->Camera());
     setTwoDimensional(true);
     const auto planar = m_view->Camera()->Direction();
@@ -601,6 +600,21 @@ bool Viewport::benchPicking() {
     selectRefs(picked);
     require(selection().size() == 2 && selection()[0].str() == picked[0].str(), "center refs did not restore");
     trace::log(QStringLiteral("bench: picking center restoration PASS"));
+    {
+      QSignalBlocker blocked(this);
+      const auto filter=m_filter;setSelectionFilter(SelFilter::Body);setHoverFade(true,.1);
+      QEventLoop switchLoop;QTimer::singleShot(100,&switchLoop,&QEventLoop::quit);switchLoop.exec();m_view->Redraw();
+      const auto cursor=devicePos(orbitCursor);m_ctx->MoveTo(cursor.x(),cursor.y(),m_view,false);trackHoverFade();
+      if(m_ctx->HasDetected() && m_nodeOf.count(m_ctx->DetectedInteractive().get())) {
+        const auto owner=m_ctx->DetectedOwner();QEventLoop loop;QTimer::singleShot(550,&loop,&QEventLoop::quit);loop.exec();
+        updateHoverFade();require(m_ctx->HasDetected() && m_ctx->DetectedOwner()==owner,"hover fade disabled picking");
+        const auto age=m_hoverAge.elapsed();m_ctx->MoveTo(cursor.x(),cursor.y(),m_view,false);trackHoverFade();require(m_hoverAge.elapsed()>=age,"same object movement restarted highlight");
+        m_ctx->SelectDetected(AIS_SelectionScheme_Replace);require(m_ctx->NbSelected()>0,"faded object was not clickable");clearSelection();
+      } else throw opad::Error("hover regression has no detected body");
+      setHoverFade(true,5);setSelectionFilter(filter);trace::log("bench: hover fade keeps detection, selection and same-object timeout PASS");
+      QEventLoop restoreLoop;QTimer::singleShot(100,&restoreLoop,&QEventLoop::quit);restoreLoop.exec();selectRefs(picked);
+    }
+    OnSelectionChanged(m_ctx,m_view);
     trace::log(QStringLiteral("bench: picking synchronous regression batch end"));
     return true;
   } catch (const std::exception& e) {

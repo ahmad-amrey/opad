@@ -1,4 +1,5 @@
 #include "DesignController.hpp"
+#include "DimensionHandle.hpp"
 
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -10,6 +11,8 @@
 #include <gp_Pln.hxx>
 
 #include <QMessageBox>
+#include <QApplication>
+#include <QMouseEvent>
 #include <atomic>
 
 #include "I18n.hpp"
@@ -52,6 +55,8 @@ gp_Pnt pnt(const opad::Vec3& v) { return gp_Pnt(v[0], v[1], v[2]); }
 DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunner* jobs, QWidget* window)
     : QObject(window), m_doc(doc), m_viewport(viewport), m_jobs(jobs), m_window(window) {
   m_form = new FeaturePanel(doc, window);
+  m_distanceHandle=new DimensionHandle(viewport);
+  connect(m_distanceHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){if(m_featureOn)m_form->setValue("distance",text.toStdString());});
   m_sketch = new SketchEditor(doc, viewport, jobs, this);
   m_planePicker=new PlanePicker(doc,viewport,jobs,window);
   m_planePicker->accepted=[this](const opad::json& plane,const opad::Frame& frame){
@@ -238,6 +243,7 @@ void DesignController::editOp(const std::string& opId) {
 }
 
 void DesignController::endFeature() {
+  m_distanceHandle->hide();
   if (!m_featureOn) return;
   m_featureOn = false;
   ++m_planSerial;
@@ -437,6 +443,7 @@ void DesignController::runPreview(bool commit) {
   m_previewTimer.stop();
   QString missing;
   if (!m_form->complete(&missing)) {
+    m_distanceHandle->hide();
     m_form->setStatus(missing, commit);
     m_viewport->clearPreviewBodies();
     return;
@@ -489,6 +496,7 @@ void DesignController::runPreview(bool commit) {
     if (serial != m_planSerial || !m_featureOn) return;  // superseded
     m_planJob = nullptr;
     if (!ok) {
+      m_distanceHandle->hide();
       m_readyPlan.reset();
       m_viewport->clearPreviewBodies();
       if (error != "cancelled") m_form->setStatus(i18n::t(error), true);
@@ -499,6 +507,16 @@ void DesignController::runPreview(bool commit) {
     m_readyOps = m_doc->doc.ops.size();
     m_form->setStatus(QString(), false);
     if (commit) return commitReady();
+    m_distanceHandle->hide();
+    for(const auto& op:plan->ops) {
+      opad::json result;
+      if(op.value("id","")==target)result=op.value("result",opad::json());
+      if(op.value("op","")=="regen" && op.at("results").contains(target))result=op.at("results").at(target);
+      if(result.is_object() && result.contains("distance_handle")) {
+        const auto& handle=result.at("distance_handle");
+        m_distanceHandle->configure(handle.at("origin").get<opad::Vec3>(),handle.at("axis").get<opad::Vec3>(),handle.at("value").get<double>(),QString::fromStdString(m_form->inputs().at("distance").get<std::string>()));
+      }
+    }
     std::vector<std::pair<std::string, TopoDS_Shape>> shapes;
     std::vector<std::string> hidden;
     for (const auto& c : plan->changed) {
@@ -624,6 +642,23 @@ void DesignController::bench() {
     const std::string sk = m_doc->scene.sketches.back().id;
     startFeature("extrude");
     m_form->setPicks("profiles", opad::json::array({opad::json{{"sketch", sk}, {"at", {3.0, 3.0}}}}));
+    if(qEnvironmentVariableIsSet("OPAD_BENCH_EXTRUDE_HANDLE")) {
+      m_form->setValue("start","offset");m_form->setValue("start_offset","3 mm");runPreview(false);
+      auto phase=std::make_shared<int>(0),ticks=std::make_shared<int>(0);auto* timer=new QTimer(this);timer->setInterval(100);
+      connect(timer,&QTimer::timeout,this,[this,phase,ticks,timer]{try{
+        if(++*ticks>200)throw opad::Error("extrude handle timed out");
+        if(m_planJob || m_previewTimer.isActive() || m_doc->designBusy)return;
+        if(*phase==0) {
+          if(!m_readyPlan || !m_distanceHandle->isVisible())throw opad::Error("extrude preview has no handle");
+          const auto before=m_form->inputs().at("distance");const QPointF local(20,20),global=m_distanceHandle->mapToGlobal(local.toPoint());
+          QMouseEvent press(QEvent::MouseButtonPress,local,global,Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(m_distanceHandle,&press);
+          QMouseEvent move(QEvent::MouseMove,local+QPointF(25,-35),global+QPointF(25,-35),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(m_distanceHandle,&move);
+          QMouseEvent release(QEvent::MouseButtonRelease,local+QPointF(25,-35),global+QPointF(25,-35),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(m_distanceHandle,&release);
+          if(m_form->inputs().at("distance")==before)throw opad::Error("extrude drag did not change distance");++*phase;
+        }else if(*phase==1){if(!m_readyPlan)throw opad::Error("extrude drag preview missing");runPreview(true);++*phase;}
+        else {if(m_featureOn)return;if(m_doc->scene.features.empty() || m_distanceHandle->isVisible())throw opad::Error("extrude handle commit/cleanup");timer->stop();trace::log("bench: extrusion start offset, drag, preview and commit PASS");QCoreApplication::exit(0);}
+      }catch(const std::exception& e){timer->stop();trace::log(QString("bench: extrude handle FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();return;
+    }
     runPreview(true);
     // Edit the extrude with the timeline rolled back, then fillet four edges of the result.
     QTimer::singleShot(1500, this, [this] {

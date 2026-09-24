@@ -27,6 +27,7 @@ set(OPAD_APP_SOURCES
   SketchEditor.cpp SketchNodes.cpp SketchTools.cpp SketchEditor.hpp SketchGeometryCache.cpp SketchGeometryCache.hpp
   SketchPanel.cpp SketchPanel.hpp SketchWorkflow.cpp
   DimensionHandle.cpp DimensionHandle.hpp
+  InstanceBrowser.cpp
   SketchPrimitives.cpp
   SketchModify.cpp
   SketchReference.cpp

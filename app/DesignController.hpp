@@ -89,6 +89,7 @@ class DesignController : public QObject {
   bool m_activating = false;    // the selection is being re-applied for the newly active input: not a pick
   Viewport::SelFilter m_filterBefore = Viewport::SelFilter::Body;
   QTimer m_previewTimer;
+  QPointer<DimensionHandle> m_distanceHandle;
   Job* m_planJob = nullptr;
   Job* m_candidateJob = nullptr;
   int m_planSerial = 0;

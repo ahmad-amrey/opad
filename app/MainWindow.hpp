@@ -100,6 +100,7 @@ class MainWindow : public QMainWindow {
   void restyleAnnotation(const std::string& opId, const std::string& style);  // an edit op on the note
   void exportDialog(std::vector<std::string> ids = {});
   void drawingToSketch();
+  void browseInstances(const std::string& id);
   void screenshot();
   void saveNamedView();
   void restoreNamedView(const std::string& id);
