@@ -259,6 +259,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_trackingHasDirection = false;
   Handle(AIS_Shape) m_trackingGuide;
   std::string m_trackingMarker, m_snapClick;
+  bool m_ctrlCenterPick=false;
+  void setCenterPicking(bool on,const QPointF& position);
   struct Item {
     Handle(AIS_Shape) ais;
     std::string key;
@@ -378,6 +380,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QTimer m_syncTimer;
   Job* m_selJob = nullptr;                        // in-flight selectNodes
   Handle(SubHighlight) m_subHl;                   // every selected sub-shape, one object in the Topmost layer
+  std::map<const AIS_InteractiveObject*,Handle(SubHighlight)> m_bodyGlows;
+  Job* m_bodyGlowJob=nullptr;
   Job* m_subJob = nullptr;                        // in-flight refreshSubHighlight
   Job* m_filterJob = nullptr;                     // in-flight setSelectionFilter
   std::vector<Handle(AIS_Shape)> m_selApplied;    // objects selectNodes highlighted through the context

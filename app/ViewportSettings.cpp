@@ -46,7 +46,7 @@ void Viewport::setSceneBackground(int style) {
   auto occ = [](const QColor& v) { return Quantity_Color(v.redF(), v.greenF(), v.blueF(), Quantity_TOC_sRGB); };
   m_view->SetBackgroundColor(occ(c));
   if (m_sceneBackground == 1)
-    m_view->SetBgGradientColors(occ(m_tokens.dark?QColor("#466888"):QColor("#b2cce8")), occ(m_tokens.dark?QColor("#11172b"):QColor("#edf3ff")), Aspect_GradientFillMethod_Vertical, false);
+    m_view->SetBgGradientColors(occ(QColor("#c7c8c9")), occ(QColor("#66696b")), Aspect_GradientFillMethod_Vertical, false);
   else m_view->SetBgGradientStyle(Aspect_GradientFillMethod_None);
   redrawScene();
 }

@@ -1,4 +1,6 @@
 #include <QSettings>
+#include <SelectMgr_Filter.hxx>
+#include <TopExp_Explorer.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
 #include <V3d_DirectionalLight.hxx>
@@ -74,6 +76,13 @@ Handle(Aspect_Window) opad_make_cocoa_window(void* nsview);
 #include <Prs3d_TextAspect.hxx>
 
 namespace {
+class OwnerFilter : public SelectMgr_Filter {
+ public:
+  explicit OwnerFilter(std::function<bool(const Handle(SelectMgr_EntityOwner)&)> accepts):m_accepts(std::move(accepts)) {}
+  Standard_Boolean IsOk(const Handle(SelectMgr_EntityOwner)& owner) const override {return m_accepts(owner);}
+ private:
+  std::function<bool(const Handle(SelectMgr_EntityOwner)&)> m_accepts;
+};
 constexpr int kCubeOffsetX = 100, kCubeOffsetY = 104;  // view cube centre from the top-right corner, in Qt points
 }  // namespace
 
@@ -132,7 +141,7 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
 #endif
 }
 
-Viewport::~Viewport() { *m_alive = false; }
+Viewport::~Viewport() { if(m_bodyGlowJob) m_bodyGlowJob->cancel(); *m_alive = false; }
 
 void Viewport::setBlocked(bool on) {
   if (on) {
@@ -228,6 +237,11 @@ void Viewport::initViewer() {
   overhead->SetIntensity(0.75f);m_viewer->AddLight(overhead);m_viewer->SetLightOn(overhead);
   m_ctx = new AIS_InteractiveContext(m_viewer);
   m_ctx->SetPixelTolerance(4);
+  m_ctx->AddFilter(new OwnerFilter([this](const Handle(SelectMgr_EntityOwner)& owner) {
+    if(!Handle(CircleOwner)::DownCast(owner).IsNull()) return m_ctrlCenterPick;
+    const auto center=m_centerObjects.find(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get());
+    return center==m_centerObjects.end() || m_centers.at(center->second).ref.kind!=opad::Ref::Kind::Center || m_ctrlCenterPick;
+  }));
   m_ctx->SetAutoActivateSelection(Standard_False);  // displayBody activates the current filter itself
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetDisplayMode(AIS_Shaded);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetDisplayMode(AIS_Shaded);
@@ -321,16 +335,23 @@ void Viewport::applyTokens() {
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetDisplayMode(AIS_Shaded);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetFaceBoundaryDraw(false);
   m_ctx->SetToHilightSelected(true);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetColor(Quantity_Color(0.62,0.35,0.96,Quantity_TOC_sRGB));
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(Quantity_Color(0.62,0.35,0.96,Quantity_TOC_sRGB));
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetTransparency(0.5f);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetTransparency(0.35f);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetColor(selectionTint());
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(selectionTint());
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetTransparency(0.82f);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetTransparency(0.82f);
   // X-ray selection: the highlight is drawn in the Topmost layer, which has its own depth buffer,
   // so a selected object shows through whatever is in front of it.
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetZLayer(Graphic3d_ZLayerId_Topmost);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetZLayer(Graphic3d_ZLayerId_Topmost);
   for(auto kind:{Prs3d_TypeOfHighlight_Dynamic,Prs3d_TypeOfHighlight_LocalDynamic}) {
     auto drawer=m_ctx->HighlightStyle(kind);
+    drawer->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    drawer->SetShadingAspect(new Prs3d_ShadingAspect());
+    drawer->ShadingAspect()->SetColor(Quantity_NOC_WHITE);
+    drawer->ShadingAspect()->SetTransparency(0.55f);
+    drawer->ShadingAspect()->Aspect()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+    drawer->SetFaceBoundaryDraw(true);
+    drawer->SetFaceBoundaryAspect(new Prs3d_LineAspect(Quantity_NOC_WHITE,Aspect_TOL_SOLID,3));
     drawer->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL,Quantity_NOC_WHITE,5));
     drawer->PointAspect()->Aspect()->SetInteriorColor(Quantity_ColorRGBA(Quantity_NOC_WHITE,0.65f));
     drawer->PointAspect()->Aspect()->SetAlphaMode(Graphic3d_AlphaMode_Blend);
@@ -672,7 +693,7 @@ void Viewport::refreshSubHighlight() {
     if (!o.IsNull() && Handle(CircleOwner)::DownCast(o).IsNull()) st->owners.push_back(o);
   }
   if (st->owners.empty()) return;
-  st->hl = new SubHighlight(Quantity_Color(0.62,0.35,0.96,Quantity_TOC_sRGB));
+  st->hl = new SubHighlight(selectionTint());
   constexpr size_t kChunk = 200000;  // nodes per primitive array: turning a chunk into an array stays a small step
   auto flush = [st](bool all) {
     if (!st->tv.empty() && (all || st->tv.size() >= kChunk)) {
@@ -702,21 +723,8 @@ void Viewport::refreshSubHighlight() {
     const TopoDS_Shape& sub = o->Shape();
     gp_Trsf body;  // rigid placements live on the object, not in the shape (displayBody)
     if (Handle(AIS_InteractiveObject) obj = Handle(AIS_InteractiveObject)::DownCast(o->Selectable()); !obj.IsNull()) body = obj->LocalTransformation();
-    TopLoc_Location loc;
-    if (sub.ShapeType() == TopAbs_FACE) {
-      Handle(Poly_Triangulation) t = BRep_Tool::Triangulation(TopoDS::Face(sub), loc);
-      if (!t.IsNull()) {
-        const gp_Trsf w = body * loc.Transformation();
-        const int base = static_cast<int>(st->tv.size());
-        for (int n = 1; n <= t->NbNodes(); ++n) st->tv.push_back(t->Node(n).Transformed(w));
-        for (int k = 1; k <= t->NbTriangles(); ++k) {
-          int a, b, c;
-          t->Triangle(k).Get(a, b, c);
-          st->ti.insert(st->ti.end(), {base + a, base + b, base + c});
-        }
-      }
-    } else if (sub.ShapeType() == TopAbs_EDGE) {
-      const TopoDS_Edge& e = TopoDS::Edge(sub);
+    auto appendEdge=[&](const TopoDS_Edge& e) {
+      TopLoc_Location loc;
       std::vector<gp_Pnt> line;
       Handle(Poly_PolygonOnTriangulation) poly;
       Handle(Poly_Triangulation) t;
@@ -736,6 +744,23 @@ void Viewport::refreshSubHighlight() {
         st->sv.push_back(line[n - 1].Transformed(w));
         st->sv.push_back(line[n].Transformed(w));
       }
+    };
+    TopLoc_Location loc;
+    if (sub.ShapeType() == TopAbs_FACE) {
+      Handle(Poly_Triangulation) t = BRep_Tool::Triangulation(TopoDS::Face(sub), loc);
+      if (!t.IsNull()) {
+        const gp_Trsf w = body * loc.Transformation();
+        const int base = static_cast<int>(st->tv.size());
+        for (int n = 1; n <= t->NbNodes(); ++n) st->tv.push_back(t->Node(n).Transformed(w));
+        for (int k = 1; k <= t->NbTriangles(); ++k) {
+          int a, b, c;
+          t->Triangle(k).Get(a, b, c);
+          st->ti.insert(st->ti.end(), {base + a, base + b, base + c});
+        }
+      }
+      for(TopExp_Explorer edge(sub,TopAbs_EDGE);edge.More();edge.Next()) appendEdge(TopoDS::Edge(edge.Current()));
+    } else if (sub.ShapeType() == TopAbs_EDGE) {
+      appendEdge(TopoDS::Edge(sub));
     } else if (sub.ShapeType() == TopAbs_VERTEX) {
       st->pv.push_back(BRep_Tool::Pnt(TopoDS::Vertex(sub)).Transformed(body));
     }
@@ -760,15 +785,49 @@ void Viewport::refreshSubHighlight() {
   m_subJob = m_jobs->sliced(tr("Highlighting %1 selected").arg(st->owners.size()), [step](Job&) { return step(); }, done);
 }
 
-// X-ray selection. OCCT recolours a selected object's own structure in place (no separate highlight structure
-// for whole objects), so the object's layer decides whether the highlight shows through others: selected bodies
-// move to Topmost, which has its own depth buffer, and back to Default when deselected. Face/edge highlights
-// are separate structures and follow the highlight style's layer (also Topmost).
+// Retain original materials under a translucent tint, with white surface and
+// boundary glow. Share worker-built arrays and slice large selections.
 void Viewport::applySelectionLayers() {
-  for (auto& [id, it] : m_items) {
-    const Graphic3d_ZLayerId want = m_ctx->IsSelected(it.ais) ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Default;
-    if (it.ais->ZLayer() != want) m_ctx->SetZLayer(it.ais, want);
-  }
+  if(m_bodyGlowJob) m_bodyGlowJob->cancel();
+  struct State {
+    std::vector<std::pair<Handle(AIS_Shape),std::shared_ptr<BodyPrs>>> targets;
+    std::vector<const AIS_InteractiveObject*> stale;
+    std::set<const AIS_InteractiveObject*> keep;
+    size_t i=0,removed=0;
+  };
+  auto state=std::make_shared<State>();
+  for(auto& [id,it]:m_items) {auto prs=m_prs.find(it.key);state->targets.push_back({it.ais,prs==m_prs.end()?nullptr:prs->second});}
+  for(auto& [id,wire]:m_sketchWires) state->targets.push_back({wire.ais,wire.prs});
+  for(const auto& [ais,prs]:state->targets) if(m_ctx->IsSelected(ais) && prs) state->keep.insert(ais.get());
+  for(const auto& [ais,glow]:m_bodyGlows) if(!state->keep.count(ais)) state->stale.push_back(ais);
+  auto update=[this](const Handle(AIS_Shape)& ais,const std::shared_ptr<BodyPrs>& prs) {
+    const bool selected=m_ctx->IsSelected(ais);
+    const auto want=selected?Graphic3d_ZLayerId_Topmost:Graphic3d_ZLayerId_Default;
+    if(ais->ZLayer()!=want) m_ctx->SetZLayer(ais,want);
+    if(!selected || !prs) return;
+    auto& glow=m_bodyGlows[ais.get()];
+    if(glow.IsNull()) {
+      glow=new SubHighlight(selectionTint());
+      if(!prs->triangles.IsNull()) glow->m_triangles.push_back(prs->triangles);
+      if(!prs->boundaries.IsNull()) glow->m_segments.push_back(prs->boundaries);
+      if(!prs->loosePoints.IsNull()) glow->m_points.push_back(prs->loosePoints);
+      glow->SetZLayer(Graphic3d_ZLayerId_Topmost);
+      glow->SetClipPlanes(ais->ClipPlanes());
+      m_ctx->Display(glow,0,-1,false);
+    }
+    glow->SetLocalTransformation(ais->Transformation());
+  };
+  auto step=[this,state,update](Job*) {
+    if(state->removed<state->stale.size()) {
+      auto it=m_bodyGlows.find(state->stale[state->removed++]);
+      if(it!=m_bodyGlows.end()) {m_ctx->Remove(it->second,false);m_bodyGlows.erase(it);}
+      return true;
+    }
+    if(state->i>=state->targets.size()) return false;
+    const auto& [ais,prs]=state->targets[state->i++];update(ais,prs);return true;
+  };
+  if(state->targets.size()+state->stale.size()<=64) {while(step(nullptr)) {} return;}
+  m_bodyGlowJob=m_jobs->sliced(tr("Highlighting %1 selected").arg(state->keep.size()),[step](Job& job){return step(&job);},[this](bool){m_bodyGlowJob=nullptr;redrawScene();});
 }
 
 // One translucent box per selected node, covering its bodies; a stand-in for per-object highlighting.
@@ -790,11 +849,11 @@ void Viewport::showShade(const std::vector<std::string>& ids) {
     const double diag = std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0) + (z1 - z0) * (z1 - z0));
     const double pad = std::max(1e-3, diag * 0.002);
     Handle(AIS_Shape) s = new AIS_Shape(BRepPrimAPI_MakeBox(gp_Pnt(x0 - pad, y0 - pad, z0 - pad), gp_Pnt(x1 + pad, y1 + pad, z1 + pad)).Shape());
-    s->SetColor(occ(m_tokens.sel));
+    s->SetColor(selectionTint());
     s->SetTransparency(0.7f);
     s->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
     s->Attributes()->SetFaceBoundaryDraw(Standard_True);
-    s->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.5));
+    s->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(Quantity_NOC_WHITE, Aspect_TOL_SOLID, 2.5));
     s->SetZLayer(Graphic3d_ZLayerId_Topmost);  // same X-ray treatment as per-object highlights
     m_ctx->Display(s, AIS_Shaded, -1, Standard_False);  // selection mode -1: never pickable
     m_shade.push_back(s);
@@ -1401,9 +1460,11 @@ void Viewport::sync() {
     it = m_items.erase(it);
     removed = true;
   }
+  if(removed) applySelectionLayers();
   if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // Remove() dropped that body's selected sub-shapes
   if (!pending.empty()) startMeshing(pending);
   syncSketches();
+  applySelectionLayers();
   updateAnnotations();
   updateClipPlanes();
   if (m_displayJob) m_displayJob->cancel();
@@ -1496,7 +1557,7 @@ void Viewport::displayBody(const std::string& id) {
   applyStyle(ais);
   if(n->representation=="drawing2d" && n->raster.is_null()) {
     Handle(Prs3d_Drawer) selected=new Prs3d_Drawer();selected->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected));
-    selected->SetDisplayMode(AIS_WireFrame);selected->SetColor(Quantity_Color(0.62,0.35,0.96,Quantity_TOC_sRGB));
+    selected->SetDisplayMode(AIS_WireFrame);selected->SetColor(selectionTint());
     selected->SetLineAspect(new Prs3d_LineAspect(selected->Color(),Aspect_TOL_SOLID,3));
     selected->SetWireAspect(new Prs3d_LineAspect(selected->Color(),Aspect_TOL_SOLID,3));
     ais->SetHilightAttributes(selected);
@@ -1712,6 +1773,18 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
     const Graphic3d_Vec2i at = devicePos(e->position());
     m_ctx->MoveTo(at.x(), at.y(), m_view, Standard_False);
   }
+  if(m_initialised && e->button()==Qt::LeftButton && !m_sketchInput)
+    setCenterPicking(e->modifiers().testFlag(Qt::ControlModifier),e->position());
+  if(m_ctrlCenterPick && e->button()==Qt::LeftButton && !m_sketchInput && m_filter==SelFilter::Vertex && !m_measureSelectionLocked) {
+    const auto at=devicePos(e->position());m_ctx->MoveTo(at.x(),at.y(),m_view,false);discoverCenter();
+    if(m_ctx->HasDetected()) {
+      const auto circle=Handle(CircleOwner)::DownCast(m_ctx->DetectedOwner());
+      auto marker=m_centerObjects.find(m_ctx->DetectedInteractive().get());
+      if(!circle.IsNull() && !m_activeCenter.empty()) m_snapClick=m_activeCenter;
+      else if(marker!=m_centerObjects.end() && m_centers.at(marker->second).ref.kind==opad::Ref::Kind::Center) m_snapClick=marker->second;
+      if(!m_snapClick.empty()) {e->accept();return;}
+    }
+  }
   // Sketching: the left button belongs to the sketch editor, except on the view cube.
   if (m_sketchInput && m_initialised && e->button() == Qt::LeftButton && !(m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube)) {
     double u, v;
@@ -1799,6 +1872,7 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
   const bool awaitingWarp=m_warpGate.pending;
   if (e->buttons() != Qt::NoButton && !m_warpGate.accept(e->globalPosition().toPoint())) return;
   if(awaitingWarp && !m_warpGate.pending && e->buttons()!=Qt::NoButton) m_dragOffset=m_warpPosition-e->position();
+  if(m_initialised && e->buttons()==Qt::NoButton) setCenterPicking(e->modifiers().testFlag(Qt::ControlModifier),e->position());
   m_trackingCursor = e->position();
   m_trackingDirty = true;
   if (m_blocked) return;

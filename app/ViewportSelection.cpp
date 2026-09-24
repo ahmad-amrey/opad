@@ -35,7 +35,7 @@ void Viewport::handleSelectionPoly(const Handle(AIS_InteractiveContext)& ctx,con
   auto state=std::make_shared<State>();state->x=left;state->y=top;
   for(int i=1;i<=selector->NbPicked();++i) {
     auto owner=selector->Picked(i);
-    if(m_nodeOf.count(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get())) {state->candidates.push_back(owner);state->remaining.insert(owner.get());}
+    if(Handle(CircleOwner)::DownCast(owner).IsNull() && m_nodeOf.count(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get())) {state->candidates.push_back(owner);state->remaining.insert(owner.get());}
   }
   const auto scheme=myGL.Selection.Scheme;
   auto finish=[this,state,scheme](bool ok) {

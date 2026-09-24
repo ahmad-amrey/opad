@@ -23,6 +23,8 @@
 #include <QWheelEvent>
 #include <TopoDS.hxx>
 #include <TopExp_Explorer.hxx>
+#include <BRep_Tool.hxx>
+#include <SelectMgr_SensitiveEntity.hxx>
 #include <cmath>
 #include <gp_Pln.hxx>
 
@@ -34,6 +36,30 @@ bool Viewport::benchPicking() {
     require(gate.accept({1915,201}) && gate.accept({1910,202}), "warp destination should resume continuous drag");
     trace::log(QStringLiteral("bench: picking synchronous regression batch begin"));
     m_view->Redraw();
+    if(const QString shots=qEnvironmentVariable("OPAD_BENCH_HIGHLIGHTS");!shots.isEmpty()) {
+      QSignalBlocker blocked(this);const auto id=benchHeaviest();auto ais=m_items.at(id).ais;
+      fitNodes({id});m_view->SetProj(V3d_XposYnegZpos);m_view->Redraw();
+      for(auto& [node,item]:m_items) m_ctx->Deactivate(item.ais);
+      for(int mode=0;mode<4;++mode) {
+        m_ctx->ClearSelected(false);applySelectionLayers();refreshSubHighlight();m_filter=SelFilter(mode);activateSelection(ais);m_view->Redraw();
+        const auto type=mode==0?TopAbs_SHAPE:mode==1?TopAbs_FACE:mode==2?TopAbs_EDGE:TopAbs_VERTEX;
+        const auto selection=ais->Selection(AIS_Shape::SelectionMode(type));bool hit=false;Graphic3d_Vec2i pixel;
+        for(const auto& entity:selection->Entities()) {
+          auto point=entity->BaseSensitive()->CenterOfGeometry().Transformed(ais->Transformation());
+          pixel=devicePos(widgetPoint({point.X(),point.Y(),point.Z()}));m_ctx->MoveTo(pixel.x(),pixel.y(),m_view,false);
+          if(m_ctx->HasDetected() && m_ctx->DetectedInteractive()==ais) {hit=true;break;}
+        }
+        require(hit,"highlight screenshot could not find target");m_ctx->SelectDetected(AIS_SelectionScheme_Replace);OnSelectionChanged(m_ctx,m_view);m_ctx->ClearDetected(false);
+        if(mode==0) require(m_bodyGlows.count(ais.get()),"selected body has no glow overlay");
+        if(mode==1) require(!m_subHl.IsNull() && !m_subHl->m_triangles.empty() && !m_subHl->m_segments.empty(),"selected face is missing fill or glow border");
+        require(grabImage().save(shots+QString::number(mode)+".selected.png"),"selection image failed");
+        m_ctx->MoveTo(pixel.x(),pixel.y(),m_view,false);m_view->RedrawImmediate();
+        require(grabImage().save(shots+QString::number(mode)+".hover.png"),"hover image failed");
+      }
+      m_ctx->ClearSelected(false);applySelectionLayers();refreshSubHighlight();
+      require(m_bodyGlows.empty() && m_subHl.IsNull(),"selection glow survived clearing selection");
+      trace::log(QStringLiteral("bench: body / face / edge / vertex white glow PASS"));return true;
+    }
     // Two overlapping instances of one mesh: nearest triangle wins, with instance transforms.
     const TopoDS_Shape box = BRepPrimAPI_MakeBox(gp_Pnt(-10, -10, 0), 20, 20, 10).Shape();
     BRepMesh_IncrementalMesh mesh(box, 0.1);
@@ -466,8 +492,8 @@ bool Viewport::benchPicking() {
       m_view->SetCamera(beforeHome);
       trace::log(QStringLiteral("bench: desktop topology / origin Home PASS"));
     }
-    auto move = [this](const QPoint& p) {
-      QMouseEvent e(QEvent::MouseMove, QPointF(p), mapToGlobal(QPointF(p)), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    auto move = [this](const QPoint& p,Qt::KeyboardModifiers mods=Qt::NoModifier) {
+      QMouseEvent e(QEvent::MouseMove, QPointF(p), mapToGlobal(QPointF(p)), Qt::NoButton, Qt::NoButton, mods);
       QCoreApplication::sendEvent(this, &e);
       paintEvent(nullptr);
     };
@@ -475,9 +501,9 @@ bool Viewport::benchPicking() {
       QKeyEvent e(down ? QEvent::KeyPress : QEvent::KeyRelease, Qt::Key_Shift, down ? Qt::ShiftModifier : Qt::NoModifier);
       inferenceKey(&e);
     };
-    auto click = [this](const QPoint& p) {
-      QMouseEvent press(QEvent::MouseButtonPress, QPointF(p), mapToGlobal(QPointF(p)), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-      QMouseEvent release(QEvent::MouseButtonRelease, QPointF(p), mapToGlobal(QPointF(p)), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    auto click = [this](const QPoint& p,Qt::KeyboardModifiers mods=Qt::ControlModifier) {
+      QMouseEvent press(QEvent::MouseButtonPress, QPointF(p), mapToGlobal(QPointF(p)), Qt::LeftButton, Qt::LeftButton, mods);
+      QMouseEvent release(QEvent::MouseButtonRelease, QPointF(p), mapToGlobal(QPointF(p)), Qt::LeftButton, Qt::NoButton, mods);
       QCoreApplication::sendEvent(this, &press);
       QCoreApplication::sendEvent(this, &release);
       paintEvent(nullptr);
@@ -511,11 +537,22 @@ bool Viewport::benchPicking() {
         for (gp_Pnt rim : rimSamples) {
           if(circle.segments && ++tested>16) break;
           rim.Transform(item.ais->Transformation());
-          move(widgetPoint({rim.X(), rim.Y(), rim.Z()}));
+          move(widgetPoint({rim.X(), rim.Y(), rim.Z()}),Qt::ControlModifier);
           if (m_activeCenter == ref.str()) { rimTarget=widgetPoint({rim.X(),rim.Y(),rim.Z()}); discovered = true; break; }
         }
         if (!discovered) continue;
-        if(picked.empty()) { click(rimTarget); picked.push_back(ref); require(!selection().empty() && selection().back().str()==ref.str(),"rim click did not select its center"); continue; }
+        if(picked.empty()) {
+          TopExp_Explorer vertex(circle.edge,TopAbs_VERTEX);require(vertex.More(),"circle has no rim vertex");
+          auto at=BRep_Tool::Pnt(TopoDS::Vertex(vertex.Current())).Transformed(item.ais->Transformation());
+          const auto vertexTarget=widgetPoint({at.X(),at.Y(),at.Z()});
+          move(vertexTarget);click(vertexTarget,Qt::NoModifier);
+          require(!selection().empty() && selection().back().kind==opad::Ref::Kind::Vertex,"plain circle rim click must select a vertex");
+          m_ctx->ClearSelected(false);refreshSubHighlight();
+          move(vertexTarget,Qt::ControlModifier);click(vertexTarget);
+          require(!selection().empty() && selection().back().kind==opad::Ref::Kind::Center,"Ctrl-click on rim vertex must select a center");
+          m_ctx->ClearSelected(false);clearCenters();move(rimTarget,Qt::ControlModifier);
+          trace::log(QStringLiteral("bench: plain rim vertex / Ctrl circle center PASS"));
+          click(rimTarget); picked.push_back(ref); require(!selection().empty() && selection().back().str()==ref.str(),"rim click did not select its center"); continue; }
         shift(true);
         require(!m_centerLocked, "Shift must not lock circle centers");
         shift(false);

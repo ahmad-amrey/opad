@@ -21,7 +21,7 @@ Handle(AIS_Shape) Viewport::centerMarker(const opad::Ref& ref, const gp_Pnt& poi
   auto found = m_centers.find(key);
   if (found != m_centers.end()) return found->second.ais;
   Handle(AIS_Shape) marker = new AIS_Shape(BRepBuilderAPI_MakeVertex(point).Vertex());
-  const QColor color = m_tokens.sel;
+  const QColor color = QColor(Qt::white);
   marker->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O,
       Quantity_Color(color.redF(), color.greenF(), color.blueF(), Quantity_TOC_sRGB), 3.0));
   marker->SetZLayer(Graphic3d_ZLayerId_Topmost);
@@ -36,8 +36,23 @@ Handle(AIS_Shape) Viewport::centerMarker(const opad::Ref& ref, const gp_Pnt& poi
   return marker;
 }
 
+void Viewport::setCenterPicking(bool on,const QPointF& position) {
+  if(!m_initialised || m_ctrlCenterPick==on) return;
+  m_ctrlCenterPick=on;
+  if(!on) {
+    m_activeCenter.clear();
+    for(auto it=m_centers.begin();it!=m_centers.end();) {
+      if(it->second.ref.kind!=opad::Ref::Kind::Center || m_ctx->IsSelected(it->second.ais)) {++it;continue;}
+      m_centerObjects.erase(it->second.ais.get());m_ctx->Remove(it->second.ais,false);it=m_centers.erase(it);
+    }
+  }
+  ResetPreviousMoveTo();m_hoverOwner=nullptr;
+  const auto at=devicePos(position);m_ctx->MoveTo(at.x(),at.y(),m_view,false);
+  discoverCenter();redrawScene();
+}
+
 void Viewport::discoverCenter() {
-  if (m_filter != SelFilter::Vertex || !m_bodiesPickable || m_sketchInput || m_centerLocked || !m_ctx->HasDetected()) return;
+  if (!m_ctrlCenterPick || m_filter != SelFilter::Vertex || !m_bodiesPickable || m_sketchInput || m_centerLocked || !m_ctx->HasDetected()) return;
   Handle(CircleOwner) circle = Handle(CircleOwner)::DownCast(m_ctx->DetectedOwner());
   if (circle.IsNull()) return;
   auto body = m_nodeOf.find(m_ctx->DetectedInteractive().get());
@@ -100,12 +115,16 @@ bool Viewport::inferenceKey(QKeyEvent* key) {
 }
 
 bool Viewport::eventFilter(QObject* object, QEvent* e) {
+  if((e->type()==QEvent::KeyPress || e->type()==QEvent::KeyRelease) && static_cast<QKeyEvent*>(e)->key()==Qt::Key_Control
+      && (object==this || underMouse() || m_ctrlCenterPick))
+    setCenterPicking(e->type()==QEvent::KeyPress,m_trackingCursor);
   if ((e->type()==QEvent::KeyPress || e->type()==QEvent::KeyRelease)
       && (object==this || underMouse() || m_shiftHeld)
       && (window()->isActiveWindow() || m_shiftHeld
           || (QApplication::activeWindow() && window()->isAncestorOf(QApplication::activeWindow()))))
     if(inferenceKey(static_cast<QKeyEvent*>(e))) return true;
   if (e->type()==QEvent::ApplicationDeactivate) {
+    setCenterPicking(false,m_trackingCursor);
     m_shiftHeld=m_centerLocked=m_trackingLocked=false; refreshCenterStyles();
   }
   return QWidget::eventFilter(object,e);

@@ -491,9 +491,9 @@ void MainWindow::buildActions() {
     p.exec();
   });
   addAction("tools.shortcuts", tr("Keyboard shortcuts…"), "", QKeySequence("Ctrl+K"), [this] { ShortcutEditor(m_actions, this).exec(); });
-  addAction("tools.author", tr("Your name..."), "", QKeySequence(), [this] {
+  addAction("tools.author", tr("Annotation author..."), "", QKeySequence(), [this] {
     bool ok = false;
-    QString name = QInputDialog::getText(this, tr("Your name"), tr("Name recorded on annotations and changes:"),
+    QString name = QInputDialog::getText(this, tr("Annotation author"), tr("Name recorded on annotations and changes:"),
         QLineEdit::Normal, m_settings.value("user/name", QString::fromStdString(opad::default_author())).toString(), &ok);
     if (ok) m_settings.setValue("user/name", name.trimmed());
   });
@@ -1635,7 +1635,7 @@ void MainWindow::refreshToolUi() {
   const int picked = static_cast<int>(m_toolPicks.size());
   const bool done = !m_lastMeasure.is_null();
   m_prompt->set(m_tool.icon, m_tool.title, steps, m_viewport->selectionFilter() == Viewport::SelFilter::Vertex && !done
-      ? tr("Click arc to select center · Esc back") : done ? (m_doc->browse ? tr("Esc clear · 1–4 filter") : tr("P pin · Esc clear · 1–4 filter")) : picked ? tr("Esc back · 1–4 change filter") : tr("Esc cancel · 1–4 change filter"));
+      ? tr("Ctrl-click arc to select center · Esc back") : done ? (m_doc->browse ? tr("Esc clear · 1–4 filter") : tr("P pin · Esc clear · 1–4 filter")) : picked ? tr("Esc back · 1–4 change filter") : tr("Esc cancel · 1–4 change filter"));
   m_prompt->show();
   positionOverlays();
   if (!toolMeasures()) return;

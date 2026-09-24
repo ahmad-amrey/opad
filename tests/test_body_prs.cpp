@@ -57,7 +57,7 @@ TEST(mesh_selection_has_independent_facet_edge_and_vertex_owners) {
   }
 }
 
-TEST(mesh_circle_rim_vertex_pick_resolves_to_center) {
+TEST(mesh_circle_rim_retains_vertex_and_center_targets) {
   struct TestBody : BodyShape { using BodyShape::BodyShape; using BodyShape::ComputeSelection; };
   constexpr int n=32;
   Handle(Poly_Triangulation) mesh=new Poly_Triangulation(n+1,n,false);
@@ -77,13 +77,14 @@ TEST(mesh_circle_rim_vertex_pick_resolves_to_center) {
   camera->SetEyeAndCenter(gp_Pnt(0,0,100),gp_Pnt(0,0,0));camera->SetUp(gp::DY());camera->SetScale(40);
   SelectMgr_SelectingVolumeManager volume;volume.InitPointSelectingVolume(gp_Pnt2d(750,500));
   volume.SetCamera(camera);volume.SetWindowSize(1000,1000);volume.SetPixelTolerance(2);volume.BuildSelectingVolume();
-  int hits=0;
+  int centers=0,vertices=0;
   for(const auto& entity:selection->Entities()) {
     SelectBasics_PickResult result;if(!entity->BaseSensitive()->Matches(volume,result)) continue;
     auto owner=Handle(CircleOwner)::DownCast(entity->BaseSensitive()->OwnerId());
-    CHECK(!owner.IsNull());CHECK_NEAR(owner->center.Distance(gp::Origin()),0,1e-7);++hits;
+    if(!owner.IsNull()) {CHECK_NEAR(owner->center.Distance(gp::Origin()),0,1e-7);++centers;}
+    else {auto vertex=Handle(SubShapeOwner)::DownCast(entity->BaseSensitive()->OwnerId());CHECK(!vertex.IsNull());CHECK_EQ(vertex->Shape().ShapeType(),TopAbs_VERTEX);++vertices;}
   }
-  CHECK(hits>0);
+  CHECK(centers>0);CHECK(vertices>0);
 }
 
 TEST(coincident_parts_have_distinct_depth_slots) {

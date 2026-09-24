@@ -14,10 +14,13 @@
 #include <map>
 #include <vector>
 
+inline Quantity_Color selectionTint() { return Quantity_Color(0.70,0.86,0.74,Quantity_TOC_sRGB); }
+
 // Per body-store key; shared by every instance of that body. Built off the UI thread.
 struct BodyPrs {
   Handle(Graphic3d_ArrayOfTriangles) triangles;
   Handle(Graphic3d_ArrayOfSegments) boundaries;  // face boundaries, for the shaded-with-edges style
+  Handle(Graphic3d_ArrayOfPoints) loosePoints;
   struct Circle {
     TopoDS_Shape edge;
     gp_Pnt center;
@@ -74,7 +77,7 @@ class CircleOwner : public SubShapeOwner {
   DEFINE_STANDARD_RTTI_INLINE(CircleOwner, SubShapeOwner)
  public:
   CircleOwner(const BodyPrs::Circle& circle, const Handle(SelectMgr_SelectableObject)& body, int index)
-      : SubShapeOwner(circle.edge, body, circle.segments ? 12 : 3, index), center(circle.center) {}
+      : SubShapeOwner(circle.edge, body, 12, index), center(circle.center) {}
   gp_Pnt center;
 };
 

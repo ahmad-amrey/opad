@@ -49,12 +49,16 @@ void SubHighlight::Compute(const Handle(PrsMgr_PresentationManager)&, const Hand
   if (!m_triangles.empty()) {
     Handle(Graphic3d_AspectFillArea3d) fill = new Graphic3d_AspectFillArea3d();
     fill->SetInteriorStyle(Aspect_IS_SOLID);
-    fill->SetInteriorColor(Quantity_ColorRGBA(m_color, 0.65f));
+    fill->SetInteriorColor(Quantity_ColorRGBA(m_color, 0.18f));
     fill->SetAlphaMode(Graphic3d_AlphaMode_Blend);
     fill->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);  // a flat tint: the arrays carry no normals
     Handle(Graphic3d_Group) g = prs->NewGroup();
     g->SetGroupPrimitivesAspect(fill);
     for (const auto& a : m_triangles) g->AddPrimitiveArray(a);
+    Handle(Graphic3d_AspectFillArea3d) glow = new Graphic3d_AspectFillArea3d(*fill);
+    glow->SetInteriorColor(Quantity_ColorRGBA(Quantity_NOC_WHITE,0.12f));
+    auto white=prs->NewGroup();white->SetGroupPrimitivesAspect(glow);
+    for(const auto& a:m_triangles) white->AddPrimitiveArray(a);
   }
   if (!m_segments.empty()) {
     auto halo=prs->NewGroup();Handle(Graphic3d_AspectLine3d) glow=new Graphic3d_AspectLine3d(Quantity_NOC_WHITE,Aspect_TOL_SOLID,6);
@@ -63,10 +67,15 @@ void SubHighlight::Compute(const Handle(PrsMgr_PresentationManager)&, const Hand
     Handle(Graphic3d_Group) g = prs->NewGroup();
     g->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(m_color, Aspect_TOL_SOLID, 3.0));
     for (const auto& a : m_segments) g->AddPrimitiveArray(a);
+    auto white=prs->NewGroup();white->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(Quantity_NOC_WHITE,Aspect_TOL_SOLID,1.5));
+    for(const auto& a:m_segments) white->AddPrimitiveArray(a);
   }
   if (!m_points.empty()) {
+    auto halo=prs->NewGroup();Handle(Graphic3d_AspectMarker3d) glow=new Graphic3d_AspectMarker3d(Aspect_TOM_BALL,Quantity_NOC_WHITE,6.0);
+    glow->SetInteriorColor(Quantity_ColorRGBA(Quantity_NOC_WHITE,0.55f));glow->SetAlphaMode(Graphic3d_AlphaMode_Blend);halo->SetGroupPrimitivesAspect(glow);
+    for(const auto& a:m_points) halo->AddPrimitiveArray(a);
     Handle(Graphic3d_Group) g = prs->NewGroup();
-    g->SetGroupPrimitivesAspect(new Graphic3d_AspectMarker3d(Aspect_TOM_BALL, m_color, 4.0));
+    g->SetGroupPrimitivesAspect(new Graphic3d_AspectMarker3d(Aspect_TOM_BALL, m_color, 2.5));
     for (const auto& a : m_points) g->AddPrimitiveArray(a);
   }
 }
@@ -187,6 +196,17 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     if (!BRep_Tool::IsClosed(e.Current())) { p->closed = false; break; }
   }
   if (meshedProto.ShapeType() > TopAbs_SHELL) p->closed = false;  // a bare face or lower
+  if(p->triangles.IsNull() && !p->drawingSegments.empty()) {
+    p->boundaries=new Graphic3d_ArrayOfSegments(int(p->drawingSegments.size()));
+    for(const auto& point:p->drawingSegments) p->boundaries->AddVertex(point);
+  }
+  std::vector<gp_Pnt> loose;
+  for(TopExp_Explorer vertex(meshedProto,TopAbs_VERTEX,TopAbs_EDGE);vertex.More();vertex.Next())
+    loose.push_back(BRep_Tool::Pnt(TopoDS::Vertex(vertex.Current())));
+  if(!loose.empty()) {
+    p->loosePoints=new Graphic3d_ArrayOfPoints(int(loose.size()));
+    for(const auto& point:loose) p->loosePoints->AddVertex(point);
+  }
   return p;
 }
 
@@ -224,6 +244,16 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
 }
 
 namespace {
+// Whole-body selection uses a lightweight overlay of the prepared arrays, so
+// the original material remains visible beneath its tint and white glow.
+class BodySelectionOwner : public StdSelect_BRepOwner {
+ public:
+  BodySelectionOwner(const TopoDS_Shape& shape,const Handle(SelectMgr_SelectableObject)& body,int priority)
+      : StdSelect_BRepOwner(shape,body,priority,false) {}
+  void HilightWithColor(const Handle(PrsMgr_PresentationManager)& pm,const Handle(Prs3d_Drawer)& style,Standard_Integer mode) override {
+    if(pm->IsImmediateModeOn()) StdSelect_BRepOwner::HilightWithColor(pm,style,mode);
+  }
+};
 // Facets remain compact triangulations in the document. Construct an analytic
 // triangle/segment/vertex only when that primitive is actually picked.
 class MeshOwner : public SubShapeOwner {
@@ -276,10 +306,9 @@ void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, c
       if(type==TopAbs_VERTEX) {
         for(int i=1;i<=mesh->NbNodes();++i) {
           const auto p=point(i);auto circle=rimVertices.find(std::make_tuple(p.X(),p.Y(),p.Z()));
-          // A circle's rim vertices represent its center in vertex mode as well.
-          // Depth ordering can otherwise prefer a mesh vertex over the curve owner.
-          if(circle!=rimVertices.end()) {selection->Add(new Select3D_SensitivePoint(circle->second,p));++index;}
-          else selection->Add(new MeshSensitive<Select3D_SensitivePoint>(owner(),p));
+          // Keep both targets: the viewport admits circle owners only with Ctrl.
+          if(circle!=rimVertices.end()) selection->Add(new Select3D_SensitivePoint(circle->second,p));
+          selection->Add(new MeshSensitive<Select3D_SensitivePoint>(owner(),p));
         }
       } else for(int i=1;i<=mesh->NbTriangles();++i) {
         int a,b,c; mesh->Triangle(i).Get(a,b,c);
@@ -296,7 +325,11 @@ void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, c
     return;
   }
   AIS_Shape::ComputeSelection(selection, mode);
-  if (mode == 0) return;  // whole body: highlighted in place, see Viewport::applySelectionLayers
+  if (mode == 0) {
+    Handle(SelectMgr_EntityOwner) owner=new BodySelectionOwner(myshape,this,5);
+    for(const auto& entity:selection->Entities()) entity->BaseSensitive()->Set(owner);
+    return;
+  }
   // The ordinal of each sub-shape is worked out here, once per body and mode: looking it up per selected
   // sub-shape (opad::subshape_index walks the whole body) made a big rubber band quadratic.
   TopTools_IndexedMapOfShape ordinals;
@@ -316,8 +349,12 @@ void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, c
     sens->Set(mine);
   }
   if (mode == AIS_Shape::SelectionMode(TopAbs_VERTEX) && m_prs)
-    for (const auto& [index, circle] : m_prs->circles)
-      selection->Add(new SharedSensitive(new CircleOwner(circle, this, circle.canonical < 0 ? index : circle.canonical), circle.sensitive));
+    for (const auto& [index, circle] : m_prs->circles) {
+      Handle(CircleOwner) owner=new CircleOwner(circle,this,circle.canonical<0?index:circle.canonical);
+      selection->Add(new SharedSensitive(owner,circle.sensitive));
+      for(TopExp_Explorer vertex(circle.edge,TopAbs_VERTEX);vertex.More();vertex.Next())
+        selection->Add(new Select3D_SensitivePoint(owner,BRep_Tool::Pnt(TopoDS::Vertex(vertex.Current()))));
+    }
 }
 
 void NavigationShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, Standard_Integer) {
