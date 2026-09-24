@@ -60,6 +60,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   setMinimumSize(1280, 800);
   setAcceptDrops(true);
   applyTheme(m_settings.value("ui/dark", true).toBool());
+  shortcuts::migrate(m_settings);
   buildActions();
   buildMenus();
   buildCentral();
@@ -250,8 +251,7 @@ QAction* MainWindow::addAction(const QString& id, const QString& text, const QSt
   a->setObjectName(id);
   a->setData(icon);
   if (!icon.isEmpty()) a->setIcon(icons::themed(icon));
-  QString saved = m_settings.value("shortcuts/" + id).toString();
-  a->setShortcut(saved.isEmpty() ? shortcut : QKeySequence(saved));
+  shortcuts::initialize(a,shortcut,m_settings);
   a->setCheckable(checkable);
   a->setShortcutContext(Qt::WindowShortcut);
   QString tip = text;
@@ -342,16 +342,16 @@ void MainWindow::buildActions() {
   addAction("view.fit", tr("Fit"), "fit", QKeySequence("F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitSelection(); });  // the selection, or everything when nothing is selected
   addAction("view.fitall", tr("Fit all"), "fit", QKeySequence("Shift+F"), [this] { if(m_design&&m_design->sketchActive())m_design->sketch()->fitSketch();else m_viewport->fitAll(); });
   addAction("view.home", tr("Home"), "home", QKeySequence("H"), [this] { m_viewport->home(); });
-  addAction("view.alignPlane",tr("Align view to plane"),"plane",QKeySequence("Ctrl+Alt+0"),[this] {
+  addAction("view.alignPlane",tr("Align view to plane"),"plane",QKeySequence("Shift+A"),[this] {
     if(m_design->sketchActive()) return;
     cancelTool();
     m_design->pickSketchPlane([this](opad::json,opad::Frame frame) { m_viewport->lookAt(frame,true,false); });
   });
-  addAction("view.rollleft", tr("Turn 90° left"), "rollLeft", QKeySequence(), [this] { m_viewport->rollView(90); });
-  addAction("view.rollright", tr("Turn 90° right"), "rollRight", QKeySequence(), [this] { m_viewport->rollView(-90); });
-  for (const auto& [name, key] : std::vector<std::pair<QString, QString>>{{"top", "Ctrl+Alt+1"}, {"front", "Ctrl+Alt+2"}, {"right", "Ctrl+Alt+3"}, {"iso", "Ctrl+Alt+4"}, {"bottom", "Ctrl+Alt+5"}, {"back", "Ctrl+Alt+6"}, {"left", "Ctrl+Alt+7"}})
+  addAction("view.rollleft", tr("Turn 90° left"), "rollLeft", QKeySequence("Alt+Left"), [this] { m_viewport->rollView(90); });
+  addAction("view.rollright", tr("Turn 90° right"), "rollRight", QKeySequence("Alt+Right"), [this] { m_viewport->rollView(-90); });
+  for (const auto& [name, key] : std::vector<std::pair<QString, QString>>{{"top", "Shift+Up"}, {"front", "Shift+PgUp"}, {"right", "Shift+Right"}, {"iso", "Shift+H"}, {"bottom", "Shift+Down"}, {"back", "Shift+PgDown"}, {"left", "Shift+Left"}})
     addAction("view." + name, tr("View: %1").arg(name), "home", QKeySequence(key), [this, n = name] { m_viewport->standardView(n); });
-  auto* flat = addAction("view.2d",tr("2D mode"),"drawing",QKeySequence("Ctrl+Alt+D"),[this]{},true);
+  auto* flat = addAction("view.2d",tr("2D mode"),"drawing",QKeySequence("Shift+2"),[this]{},true);
   flat->setObjectName("view.2d");
   flat->setCheckable(true);
   connect(flat, &QAction::toggled, this, [this](bool on) {
@@ -359,7 +359,7 @@ void MainWindow::buildActions() {
     if (m_browserOverlay && action("panel.browser")->isChecked()) { m_browserOverlay->setVisible(m_doc->hasDocument); m_browserOverlay->raise(); }
     m_homeBtn->setVisible(!on); m_rollLeft->setVisible(!on); m_rollRight->setVisible(!on); m_alignPlane->setVisible(!on);
   });
-  QAction* ortho = addAction("view.ortho", tr("Orthographic"), "ortho", QKeySequence("O"), [this] {}, true);
+  QAction* ortho = addAction("view.ortho", tr("Orthographic"), "ortho", QKeySequence("Shift+3"), [this] {}, true);
   ortho->setChecked(true);
   connect(ortho, &QAction::toggled, this, [this](bool on) { m_viewport->setOrthographic(on); m_settings.setValue("view/orthographic",on); updateChips(); });
   QAction* shaded = addAction("view.shaded", tr("Shaded"), "shaded", QKeySequence("5"), [this] {}, true);
@@ -375,7 +375,7 @@ void MainWindow::buildActions() {
   });
   QAction* grid = addAction("view.grid", tr("Grid"), "grid", QKeySequence("G"), [this] {}, true);
   connect(grid, &QAction::toggled, this, [this](bool on) { m_viewport->setGrid(on); m_settings.setValue("view/grid",on); });
-  addAction("view.gridSettings",tr("Grid settings"),"grid",QKeySequence("S"),[this] {
+  addAction("view.gridSettings",tr("Grid settings"),"grid",QKeySequence("Shift+G"),[this] {
     auto* dialog=new QDialog(this,Qt::Tool);dialog->setAttribute(Qt::WA_DeleteOnClose);dialog->setWindowTitle(tr("Grid settings"));
     auto* form=new QFormLayout(dialog);auto* spacing=new QDoubleSpinBox(dialog);spacing->setRange(0,100000);spacing->setDecimals(3);spacing->setSpecialValueText(tr("Automatic"));spacing->setValue(m_settings.value("view/gridSpacing",0).toDouble());
     auto* extent=new QDoubleSpinBox(dialog);extent->setRange(1,1000000);extent->setValue(m_settings.value("view/gridExtent",100).toDouble());
@@ -716,12 +716,13 @@ void MainWindow::buildCentral() {
   home->setFixedSize(30, 30);
   home->setIconSize(QSize(16, 16));
   home->setCursor(Qt::PointingHandCursor);
-  home->setToolTip(tr("Home view (H)"));
-  connect(home, &QToolButton::clicked, this, [this] { m_viewport->home(); });
+  home->setDefaultAction(action("view.home"));
   auto* hint = new QLabel(QStringLiteral("H"), m_homeBtn);
   hint->setObjectName("tertiary");
   hint->setFont(theme::mono(11));
   hint->setAlignment(Qt::AlignHCenter);
+  auto updateHomeHint=[this,hint]{hint->setText(action("view.home")->shortcut().toString(QKeySequence::NativeText));};
+  connect(action("view.home"),&QAction::changed,hint,updateHomeHint);updateHomeHint();
   hl->addWidget(home, 0, Qt::AlignHCenter);
   hl->addWidget(hint);
   // Turn-90° buttons on either side of the cube (the arc arrows of the design).
@@ -900,7 +901,6 @@ void MainWindow::buildStatusBar() {
       Toggle{"view.gridSnap","Grid snapping","grid","F9","view/gridSnap",false}}) {
     auto* a=addAction(spec.id,tr(spec.label),spec.icon,QKeySequence(spec.key),[] {},true);
     a->setChecked(m_settings.value(spec.setting,spec.defaultOn).toBool());
-    a->setToolTip(tr(spec.label)+QString(" (%1)").arg(spec.key));
     auto apply=[this,spec](bool on) {
       m_settings.setValue(spec.setting,on);
       if(QString(spec.id)=="view.extensions") m_viewport->setExtensionTracking(on);
@@ -936,7 +936,8 @@ void MainWindow::buildDesignActions() {
     const auto key = kKeys.find(spec.kind);
     QAction* a = addAction("design." + kind, i18n::t(QString::fromStdString(spec.label)), QString::fromStdString(spec.icon), key == kKeys.end() ? QKeySequence() : QKeySequence(key->second),
                            [this, kind] { m_design->startFeature(kind); });
-    a->setToolTip(a->toolTip() + "\n" + i18n::t(QString::fromStdString(spec.hint)));
+    a->setProperty("shortcutHint",i18n::t(QString::fromStdString(spec.hint)));
+    shortcuts::updateTooltip(a);
   }
   addAction("design.parameters", tr("Parameters"), "fx", QKeySequence("Ctrl+Shift+U"), [this] { m_design->showParameters(); });
   addAction("design.regenerate", tr("Regenerate"), "regen", QKeySequence(), [this] { m_design->regenerate(true); });
@@ -1014,11 +1015,12 @@ void MainWindow::buildDesignActions() {
            {"c:coincident", tr("Coincident"), "cCoincident"}, {"c:parallel", tr("Parallel"), "cParallel"}, {"c:perpendicular", tr("Perpendicular"), "cPerpendicular"},
            {"c:tangent", tr("Tangent"), "cTangent"}, {"c:equal", tr("Equal"), "cEqual"}, {"c:concentric", tr("Concentric"), "cConcentric"}, {"c:midpoint", tr("Midpoint"), "cMidpoint"},
            {"c:symmetric", tr("Symmetric"), "cSymmetric"}, {"c:collinear", tr("Collinear"), "cCollinear"}, {"c:fix", tr("Fix"), "cFix"}}) {
-    QAction* a = addAction("sketch." + QString(tool).replace(':', '.'), text, icon, QKeySequence(), [this, t = tool] { m_design->sketch()->setTool(t); }, true);
+    const QMap<QString,QString> keys{{"line","L"},{"rect","R"},{"circle","C"},{"arc3","A"},{"dimension","D"},{"trim","T"}};
+    QAction* a = addAction("sketch." + QString(tool).replace(':', '.'), text, icon, QKeySequence(keys.value(tool)), [this, t = tool] { m_design->sketch()->setTool(t); }, true);
     a->setProperty("sketchTool", tool);
     tools->addAction(a);
   }
-  addAction("sketch.construction", tr("Construction"), "construction", QKeySequence(), [this] { m_design->sketch()->toggleConstruction(); });
+  addAction("sketch.construction", tr("Construction"), "construction", QKeySequence("X"), [this] { m_design->sketch()->toggleConstruction(); });
 }
 
 void MainWindow::buildDesign() {
@@ -1064,7 +1066,7 @@ void MainWindow::updateDesignState() {
       if (a->isCheckable()) a->setChecked(sketching && a->property("sketchTool").toString() == tool);
     } else if (id.startsWith("design.")) {
       a->setEnabled(has && !m_doc->loading);
-    } else if (id.startsWith("select.") || id.startsWith("inspect.") || id.startsWith("annotate.")) {
+    } else if (id.startsWith("select.") || id.startsWith("inspect.") || id.startsWith("annotate.") || id=="edit.selecttouched") {
       if (m_doc->hasDocument) a->setEnabled(!sketching || id == "inspect.clear");  // the left button draws while sketching
     }
   }
@@ -2060,6 +2062,7 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
+  if(benchShortcuts())return;
   if(benchLargeSketch())return;
   if(benchTodo5())return;
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_NAVIGATION");!mode.isEmpty()) {

@@ -428,8 +428,8 @@ bool Viewport::event(QEvent* e) {
       return true;
     }
   }
-  // A window shortcut (D = Distance, L, C, Esc, Del ...) would swallow the key; while sketching the editor gets
-  // first refusal on unmodified keys, and what it does not handle falls through to the shortcut as usual.
+  // Sketch editing keeps Esc/Enter/Delete. Tool shortcuts are configurable QActions;
+  // their outside-sketch counterparts are disabled while the editor is active.
   if (e->type() == QEvent::ShortcutOverride && m_sketchInput) {
     auto* k = static_cast<QKeyEvent*>(e);
     if (!(k->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) && m_sketchInput->sketchKey(k)) {

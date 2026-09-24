@@ -675,6 +675,7 @@ void SketchEditor::sketchDoubleClick(double u, double v) {
 bool SketchEditor::sketchKey(QKeyEvent* e) {
   if(m_editJob)return false;
   if (!m_active) return false;
+  if(e->modifiers()!=Qt::NoModifier)return false;
   switch (e->key()) {
     case Qt::Key_Escape:
       if(m_boxSelecting){m_boxSelecting=false;rebuild();return true;}
@@ -705,13 +706,6 @@ bool SketchEditor::sketchKey(QKeyEvent* e) {
     case Qt::Key_Backspace:
       deleteSelection();
       return true;
-    case Qt::Key_L: setTool("line"); return true;
-    case Qt::Key_R: setTool("rect"); return true;
-    case Qt::Key_C: setTool("circle"); return true;
-    case Qt::Key_A: setTool("arc3"); return true;
-    case Qt::Key_D: setTool("dimension"); return true;
-    case Qt::Key_T: setTool("trim"); return true;
-    case Qt::Key_X: toggleConstruction(); return true;
     default:
       return false;
   }

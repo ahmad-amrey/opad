@@ -1775,48 +1775,6 @@ void CommandPalette::runCurrent() {
   if (a && a->isEnabled()) a->trigger();
 }
 
-// ---------------------------------------------------------------- ShortcutEditor
-ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions, QWidget* parent) : QDialog(parent), m_actions(actions) {
-  setWindowTitle(tr("Keyboard shortcuts"));
-  resize(560, 520);
-  auto* layout = new QVBoxLayout(this);
-  m_tree = new QTreeWidget(this);
-  m_tree->setColumnCount(2);
-  m_tree->setHeaderLabels({tr("Command"), tr("Shortcut")});
-  m_tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-  layout->addWidget(m_tree, 1);
-  for (QAction* a : actions) {
-    if (a->text().isEmpty() || a->isSeparator()) continue;
-    auto* it = new QTreeWidgetItem(m_tree);
-    it->setText(0, opGroup(a) + " › " + a->text().remove('&'));
-    auto* edit = new QKeySequenceEdit(a->shortcut(), m_tree);
-    m_tree->setItemWidget(it, 1, edit);
-  }
-  auto* row = new QHBoxLayout();
-  auto* ok = new QPushButton(tr("Apply"), this);
-  ok->setObjectName("primary");
-  auto* cancel = new QPushButton(tr("Cancel"), this);
-  row->addStretch();
-  row->addWidget(cancel);
-  row->addWidget(ok);
-  layout->addLayout(row);
-  connect(ok, &QPushButton::clicked, this, &ShortcutEditor::accept);
-  connect(cancel, &QPushButton::clicked, this, &ShortcutEditor::reject);
-}
-
-void ShortcutEditor::accept() {
-  QSettings settings;
-  int row = 0;
-  for (QAction* a : m_actions) {
-    if (a->text().isEmpty() || a->isSeparator()) continue;
-    auto* edit = qobject_cast<QKeySequenceEdit*>(m_tree->itemWidget(m_tree->topLevelItem(row++), 1));
-    if (!edit) continue;
-    a->setShortcut(edit->keySequence());
-    settings.setValue("shortcuts/" + a->objectName(), edit->keySequence().toString());
-  }
-  QDialog::accept();
-}
-
 // ---------------------------------------------------------------- LoadShade
 LoadShade::LoadShade(QWidget* owner) : QWidget(owner, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus) {
   setAttribute(Qt::WA_TranslucentBackground);

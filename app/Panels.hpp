@@ -22,6 +22,7 @@
 
 #include "AppDocument.hpp"
 #include "Theme.hpp"
+#include "ShortcutEditor.hpp"
 
 // ---------------------------------------------------------------- dock header (28 px: title 500 fg2, float/close 16 px)
 class QDockWidget;
@@ -317,16 +318,6 @@ class CommandPalette : public QDialog {
   QList<QAction*> m_actions;
   QLineEdit* m_edit;
   QListWidget* m_list;
-};
-
-class ShortcutEditor : public QDialog {
-  Q_OBJECT
- public:
-  ShortcutEditor(const QList<QAction*>& actions, QWidget* parent = nullptr);
-  void accept() override;
- private:
-  QList<QAction*> m_actions;
-  QTreeWidget* m_tree;
 };
 
 // ---------------------------------------------------------------- loading shade

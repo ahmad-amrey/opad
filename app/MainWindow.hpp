@@ -69,6 +69,7 @@ class MainWindow : public QMainWindow {
   void runBench();
   bool benchTodo5();
   bool benchLargeSketch();
+  bool benchShortcuts();
 
   void onViewportSelection();
   void onBrowserSelection(const std::vector<std::string>& ids);
