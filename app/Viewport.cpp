@@ -724,6 +724,10 @@ void Viewport::refreshSubHighlight() {
     const TopoDS_Shape& sub = o->Shape();
     gp_Trsf body;  // rigid placements live on the object, not in the shape (displayBody)
     if (Handle(AIS_InteractiveObject) obj = Handle(AIS_InteractiveObject)::DownCast(o->Selectable()); !obj.IsNull()) body = obj->LocalTransformation();
+    if(o->curve) {
+      for(size_t i=1;i<o->curve->size();++i) {st->sv.push_back((*o->curve)[i-1].Transformed(body));st->sv.push_back((*o->curve)[i].Transformed(body));}
+      flush(false);return true;
+    }
     auto appendEdge=[&](const TopoDS_Edge& e) {
       TopLoc_Location loc;
       std::vector<gp_Pnt> line;

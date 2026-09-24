@@ -30,6 +30,7 @@ struct BodyPrs {
     int segments=0;
     std::vector<int> meshEdges;
   };
+  std::map<int,std::shared_ptr<const std::vector<gp_Pnt>>> curves;
   std::map<int, Circle> circles;  // edge ordinals, including trimmed circular arcs
   Handle(Select3D_SensitiveEntity) navigation;  // triangles + BVH, shared by instances
   bool closed = false;                           // closed solid: back faces can be culled
@@ -63,6 +64,7 @@ class SubShapeOwner : public StdSelect_BRepOwner {
  public:
   SubShapeOwner(const TopoDS_Shape& sub, const Handle(SelectMgr_SelectableObject)& body, int priority, int index)
       : StdSelect_BRepOwner(sub, body, priority, Standard_True), m_index(index) {}
+  std::shared_ptr<const std::vector<gp_Pnt>> curve;
   int index() const { return m_index; }  // as opad::subshape_index: 0-based, -1 when unknown
 
   void HilightWithColor(const Handle(PrsMgr_PresentationManager)& pm, const Handle(Prs3d_Drawer)& style, const Standard_Integer mode) override;

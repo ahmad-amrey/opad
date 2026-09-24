@@ -147,6 +147,7 @@ class SketchEditor : public QObject, public SketchInput {
   QLineEdit* m_dimEdit = nullptr;
   int m_dimEditing = 0;
   bool m_dimFresh = false;
+  double m_samplePixelSize=0;
   QTimer m_fillTimer;
   Job* m_fillJob = nullptr;
   std::vector<opad::Vec3> m_fill;  // triangles of the closed regions, world coordinates

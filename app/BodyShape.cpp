@@ -1,3 +1,5 @@
+#include "CurveSamples.hpp"
+#include <Prs3d_PointAspect.hxx>
 #include "BodyShape.hpp"
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include "opad/geometry.hpp"
@@ -37,8 +39,26 @@
 // Hover is OCCT's (one immediate structure). The selected state is drawn by the viewport instead: the stock
 // owner builds one presentation per selected sub-shape, which takes seconds to minutes for a rubber band over
 // thousands of them, and it draws in the parent's layer, so it never showed through what is in front.
+namespace {
+class CurvePresentation : public StdSelect_Shape {
+ public:
+  CurvePresentation(const TopoDS_Shape& shape,std::shared_ptr<const std::vector<gp_Pnt>> points)
+    : StdSelect_Shape(shape),m_points(std::move(points)) {}
+  void Compute(const Handle(PrsMgr_PresentationManager)&,const Handle(Prs3d_Presentation)& prs,Standard_Integer) override {
+    auto line=new Graphic3d_ArrayOfSegments(int(m_points->size()-1)*2);
+    for(size_t i=1;i<m_points->size();++i) {line->AddVertex((*m_points)[i-1]);line->AddVertex((*m_points)[i]);}
+    auto group=prs->NewGroup();group->SetGroupPrimitivesAspect(myDrawer->WireAspect()->Aspect());group->AddPrimitiveArray(line);
+  }
+ private:
+  std::shared_ptr<const std::vector<gp_Pnt>> m_points;
+};
+}
+
 void SubShapeOwner::HilightWithColor(const Handle(PrsMgr_PresentationManager)& pm, const Handle(Prs3d_Drawer)& style, const Standard_Integer mode) {
-  if (pm->IsImmediateModeOn()) StdSelect_BRepOwner::HilightWithColor(pm, style, mode);
+  if(pm->IsImmediateModeOn()) {
+    if(curve && curve->size()>1 && myPrsSh.IsNull()) myPrsSh=new CurvePresentation(myShape,curve);
+    StdSelect_BRepOwner::HilightWithColor(pm,style,mode);
+  }
 }
 
 void SubShapeOwner::Unhilight(const Handle(PrsMgr_PresentationManager)& pm, const Standard_Integer mode) {
@@ -132,8 +152,10 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     if (BRep_Tool::Degenerated(TopoDS::Edge(edges(i)))) continue;
     BRepAdaptor_Curve curve(TopoDS::Edge(edges(i)));
     if (p->triangles.IsNull()) {
-      const int n=curve.GetType()==GeomAbs_Line?1:128;
-      for(int j=0;j<n;++j) { p->drawingSegments.push_back(curve.Value(curve.FirstParameter()+(curve.LastParameter()-curve.FirstParameter())*j/n)); p->drawingSegments.push_back(curve.Value(curve.FirstParameter()+(curve.LastParameter()-curve.FirstParameter())*(j+1)/n)); }
+      const double span=box.IsVoid()?1.0:std::sqrt(box.SquareExtent());
+      auto samples=std::make_shared<const std::vector<gp_Pnt>>(curveSamples(TopoDS::Edge(edges(i)),std::max(1e-6,span*1e-5)));
+      p->curves[i-1]=samples;
+      for(size_t j=1;j<samples->size();++j) {p->drawingSegments.push_back((*samples)[j-1]);p->drawingSegments.push_back((*samples)[j]);}
     }
     if (curve.GetType() != GeomAbs_Circle) continue;
     TColgp_Array1OfPnt points(1, 257);
@@ -211,6 +233,11 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
 }
 
 void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) {
+  if(m_prs && m_prs->triangles.IsNull() && (!m_prs->boundaries.IsNull() || !m_prs->loosePoints.IsNull())) {
+    if(!m_prs->boundaries.IsNull()) {auto g=prs->NewGroup();g->SetGroupPrimitivesAspect(myDrawer->WireAspect()->Aspect());g->AddPrimitiveArray(m_prs->boundaries);}
+    if(!m_prs->loosePoints.IsNull()) {auto g=prs->NewGroup();g->SetGroupPrimitivesAspect(myDrawer->PointAspect()->Aspect());g->AddPrimitiveArray(m_prs->loosePoints);}
+    return;
+  }
   if (mode != AIS_Shaded || !m_prs || m_prs->triangles.IsNull()) {
     AIS_Shape::Compute(mgr, prs, mode);  // wireframe/HLR, or nothing precomputed: the stock path
     return;
@@ -322,6 +349,16 @@ void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, c
     }
     if(type==TopAbs_VERTEX && m_prs) for(const auto& [index,circle]:m_prs->circles)
       selection->Add(new SharedSensitive(circleOwners.at(index),circle.sensitive));
+    return;
+  }
+  if(m_prs && !m_prs->curves.empty() && mode==AIS_Shape::SelectionMode(TopAbs_EDGE)) {
+    TopTools_IndexedMapOfShape edges;TopExp::MapShapes(myshape,TopAbs_EDGE,edges);
+    for(const auto& [index,points]:m_prs->curves) {
+      if(points->size()<2) continue;
+      Handle(SubShapeOwner) owner=new SubShapeOwner(edges(index+1),this,7,index);owner->curve=points;
+      TColgp_Array1OfPnt array(1,int(points->size()));for(int i=1;i<=array.Length();++i) array(i)=(*points)[i-1];
+      selection->Add(new Select3D_SensitiveCurve(owner,array));
+    }
     return;
   }
   AIS_Shape::ComputeSelection(selection, mode);

@@ -1,3 +1,4 @@
+#include "CurveSamples.hpp"
 #include "opad/design/sketch_edit.hpp"
 #include "SketchEditor.hpp"
 
@@ -110,6 +111,11 @@ class SketchPrs : public AIS_InteractiveObject {
 
 // ---------------------------------------------------------------- life cycle
 SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs, QObject* parent) : QObject(parent), m_doc(doc), m_viewport(viewport), m_jobs(jobs) {
+  connect(m_viewport,&Viewport::notesMoved,this,[this] {
+    if(!m_active) return;
+    const double pixels=m_viewport->pixelSize();
+    if(pixels<m_samplePixelSize*.75 || pixels>m_samplePixelSize*1.5) rebuild();
+  });
   m_fillTimer.setSingleShot(true);
   m_fillTimer.setInterval(150);
   connect(&m_fillTimer, &QTimer::timeout, this, [this] {
@@ -273,41 +279,9 @@ void SketchEditor::redo() {
 // ---------------------------------------------------------------- geometry queries
 std::vector<std::pair<double, double>> SketchEditor::sampled(const SkEntity& e) const {
   std::vector<std::pair<double, double>> out;
-  auto P = [&](size_t i) { return m_sk.point(i < e.p.size() ? e.p[i] : 0); };
-  switch (e.type) {
-    case SkEntity::Type::Point:
-      break;
-    case SkEntity::Type::Line:
-      if (P(0) && P(1)) out = {{P(0)->x, P(0)->y}, {P(1)->x, P(1)->y}};
-      break;
-    case SkEntity::Type::Circle:
-      if (P(0))
-        for (int i = 0; i <= 72; ++i) out.push_back({P(0)->x + e.r * std::cos(i * M_PI / 36), P(0)->y + e.r * std::sin(i * M_PI / 36)});
-      break;
-    case SkEntity::Type::Arc:
-      if (P(0) && P(1) && P(2)) {
-        const double r = std::hypot(P(1)->x - P(0)->x, P(1)->y - P(0)->y);
-        const double a0 = std::atan2(P(1)->y - P(0)->y, P(1)->x - P(0)->x);
-        double a1 = std::atan2(P(2)->y - P(0)->y, P(2)->x - P(0)->x);
-        while (a1 <= a0 + 1e-12) a1 += 2 * M_PI;
-        const int n = std::max(4, static_cast<int>((a1 - a0) / (M_PI / 36)));
-        for (int i = 0; i <= n; ++i) out.push_back({P(0)->x + r * std::cos(a0 + (a1 - a0) * i / n), P(0)->y + r * std::sin(a0 + (a1 - a0) * i / n)});
-      }
-      break;
-    case SkEntity::Type::Ellipse:
-    case SkEntity::Type::Spline: {
-      // The kernel's curve, so what is drawn is what a feature will get. Identity frame = sketch coordinates.
-      const TopoDS_Edge edge = entity_edge(m_sk, e, opad::Frame());
-      if (edge.IsNull()) break;
-      BRepAdaptor_Curve c(edge);
-      const int n = 64;
-      for (int i = 0; i <= n; ++i) {
-        const gp_Pnt p = c.Value(c.FirstParameter() + (c.LastParameter() - c.FirstParameter()) * i / n);
-        out.push_back({p.X(), p.Y()});
-      }
-      break;
-    }
-  }
+  if(e.type==SkEntity::Type::Point) return out;
+  const auto edge=entity_edge(m_sk,e,opad::Frame());
+  if(!edge.IsNull()) for(const auto& point:curveSamples(edge,std::max(1e-7,m_viewport->pixelSize()*0.25))) out.push_back({point.X(),point.Y()});
   return out;
 }
 
@@ -632,6 +606,7 @@ void SketchEditor::rebuild() {
   d.textBack = t.bg2;
   auto W = [&](double u, double v) { return m_frame.to_world(u, v); };
   const double px = m_viewport->pixelSize();
+  m_samplePixelSize=px;
   const std::set<int> freePts(m_solved.free_points.begin(), m_solved.free_points.end());
   const std::set<int> selected(m_sel.begin(), m_sel.end());
   const std::set<int> picked(m_picked.begin(), m_picked.end());

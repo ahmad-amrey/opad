@@ -150,4 +150,26 @@ TEST(overlapping_arcs_do_not_make_a_circle) {
   auto p=BodyPrs::build(c,Bnd_Box());
   for(const auto& [id,arc]:p->circles) CHECK_EQ(arc.canonical,-1);
 }
+TEST(wire_display_and_selection_share_smooth_samples) {
+  const auto edge=BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(gp::Origin(),gp::DZ()),100)).Edge();
+  Bnd_Box bounds;bounds.Add(gp_Pnt(-100,-100,0));bounds.Add(gp_Pnt(100,100,0));
+  const auto prs=BodyPrs::build(edge,bounds);
+  CHECK_EQ(prs->curves.size(),1u);
+  struct TestBody:BodyShape {using BodyShape::BodyShape;using BodyShape::ComputeSelection;};
+  Handle(TestBody) body=new TestBody(edge,prs);
+  Handle(SelectMgr_Selection) selection=new SelectMgr_Selection(AIS_Shape::SelectionMode(TopAbs_EDGE));
+  body->ComputeSelection(selection,AIS_Shape::SelectionMode(TopAbs_EDGE));
+  CHECK_EQ(selection->Entities().Size(),1);
+  const auto owner=Handle(SubShapeOwner)::DownCast(selection->Entities().First()->BaseSensitive()->OwnerId());
+  CHECK(!owner.IsNull());CHECK(owner->curve==prs->curves.at(0));
+  const auto& points=*prs->curves.at(0);
+  CHECK(points.size()>128);
+  CHECK_EQ(prs->boundaries->VertexNumber(),int(points.size()-1)*2);
+  for(size_t i=1;i<points.size();++i) {
+    const gp_Pnt midpoint((points[i-1].XYZ()+points[i].XYZ())*.5);
+    CHECK(100-midpoint.Distance(gp::Origin())<.003);
+    CHECK(prs->boundaries->Vertice(int(i)*2).Distance(points[i])<1e-4);
+  }
+}
+
 CHECK_MAIN()
