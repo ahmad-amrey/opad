@@ -7,7 +7,7 @@ namespace opad::design {
 
 json sketch_delta(const json& before, const json& after) {
   json delta = json::object();
-  for (const char* key : {"points", "entities", "constraints"}) {
+  for (const char* key : {"points", "entities", "constraints", "patterns"}) {
     std::map<int, json> old, now;
     for (const auto& v : before.value(key, json::array())) old[v.at("id").get<int>()] = v;
     for (const auto& v : after.value(key, json::array())) now[v.at("id").get<int>()] = v;
@@ -18,9 +18,9 @@ json sketch_delta(const json& before, const json& after) {
     if (!changes.empty()) delta[key] = changes;
   }
   for (const auto& [key, value] : after.items())
-    if (key != "points" && key != "entities" && key != "constraints" && (!before.contains(key) || before.at(key) != value)) delta[key] = value;
+    if (key != "points" && key != "entities" && key != "constraints" && key != "patterns" && (!before.contains(key) || before.at(key) != value)) delta[key] = value;
   for (const auto& [key, value] : before.items())
-    if (key != "points" && key != "entities" && key != "constraints" && !after.contains(key)) delta[key] = nullptr;
+    if (key != "points" && key != "entities" && key != "constraints" && key != "patterns" && !after.contains(key)) delta[key] = nullptr;
   return delta;
 }
 
@@ -28,7 +28,7 @@ json apply_sketch_delta(const json& before, const json& delta) {
   if (!delta.is_object()) throw Error("sketch edit: delta must be an object");
   json out = before;
   for (const auto& [key, changes] : delta.items()) {
-    if (key != "points" && key != "entities" && key != "constraints") {
+    if (key != "points" && key != "entities" && key != "constraints" && key != "patterns") {
       if (changes.is_null()) out.erase(key); else out[key] = changes;
       continue;
     }

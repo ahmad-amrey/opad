@@ -27,6 +27,7 @@ set(OPAD_APP_SOURCES
   SketchEditor.cpp SketchNodes.cpp SketchTools.cpp SketchEditor.hpp
   SketchPanel.cpp SketchPanel.hpp SketchWorkflow.cpp
   SketchPrimitives.cpp
+  SketchModify.cpp
   Panels.cpp Panels.hpp
   Jobs.cpp Jobs.hpp
   GuidedTool.cpp GuidedTool.hpp

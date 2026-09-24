@@ -19,7 +19,14 @@ SolveOptions SketchEditor::solveOptions() const {
 
 QList<ToolStep> SketchEditor::toolSteps() const {
   QStringList labels;
-  if(m_tool=="tangent_circle")labels={tr("Pick first line"),tr("Pick second line"),tr("Choose circle side")};
+  const bool transform=QStringList{"move","rotate","scale","copy","rect_pattern","polar_pattern","break","explode"}.contains(m_tool);
+  if(transform)labels={tr("Select seed curves"),tr("Set parameters and apply")};
+  else if(m_tool=="heal")labels={tr("Set gap tolerance"),tr("Apply to merge nearby endpoints")};
+  else if(m_tool=="chamfer")labels={tr("Pick a corner"),tr("Set distances and apply")};
+  else if(m_tool=="split")labels={tr("Pick inside the curve to split")};
+  else if(m_tool=="extend")labels={tr("Pick the curve near its end"),tr("Pick the boundary curve")};
+  else if(m_tool=="union"||m_tool=="subtract"||m_tool=="intersect")labels={tr("Pick inside the first loop"),tr("Pick inside the second loop"),tr("Apply to combine the loops")};
+  else if(m_tool=="tangent_circle")labels={tr("Pick first line"),tr("Pick second line"),tr("Choose circle side")};
   else if(m_tool=="tangent_arc")labels={tr("Pick line endpoint"),tr("Pick arc endpoint")};
   else if(m_tool=="text")labels={tr("Set text, font and height"),tr("Pick insertion point")};
   else if(m_tool=="conic")labels={tr("Pick start point"),tr("Pick tangent intersection"),tr("Pick end point")};
@@ -41,6 +48,8 @@ QList<ToolStep> SketchEditor::toolSteps() const {
   else if(m_tool=="circle3" || m_tool=="arc3" || m_tool=="arcc" || m_tool=="ellipse" || m_tool=="slot")labels={tr("Pick first point"),tr("Pick second point"),tr("Pick third point")};
   else labels={tr("Pick first point"),tr("Pick second point")};
   int count=int(m_clicks.size());
+  if(transform || m_tool=="chamfer")count=m_sel.empty()?0:1;
+  if(m_tool=="extend")count=int(m_picked.size());
   if(m_tool=="tangent_circle")count=int(m_picked.size());
   if(m_tool=="text")count=1;
   if(m_tool=="control_spline")count=m_clicks.size()>=2?1:0;
@@ -56,6 +65,7 @@ QList<ToolStep> SketchEditor::toolSteps() const {
 
 void SketchEditor::applyTool() {
   if(!m_active)return;
+  if(applyModify())return;
   if(m_tool=="offset")return offsetSelection();
   if(m_tool=="control_spline")return finishPrimitive();
   if(m_tool=="line" || m_tool=="spline")return finishChain();
@@ -98,6 +108,7 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
     if(m_sk.to_json()!=before->to_json())return;
     m_undo.push_back(*before);m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;
     m_clicks.clear();m_picked.clear();m_sel.clear();rebuild();scheduleFill();toolPrompt();emit changed();
+    if(m_tool=="mirror")m_options["mirrorStage"]="seed";
   });
 }
 

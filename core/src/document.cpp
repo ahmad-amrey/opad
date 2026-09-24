@@ -289,7 +289,7 @@ namespace {
 // Expand only containers leading to sketch records. Each point/curve/constraint stays on one line.
 bool sketch_records(const json& j) {
   if (!j.is_object()) return false;
-  if (j.contains("points") || j.contains("entities") || j.contains("constraints")) return true;
+  if (j.contains("points") || j.contains("entities") || j.contains("constraints") || j.contains("patterns")) return true;
   for (const auto& v : j) if (sketch_records(v)) return true;
   return false;
 }
@@ -302,7 +302,7 @@ std::string record_text(const json& j, int depth = 0) {
     if (!first) out += ',';
     first = false;
     out += '\n' + indent + json(k).dump() + ": ";
-    if ((k == "points" || k == "entities" || k == "constraints") && v.is_array()) {
+    if ((k == "points" || k == "entities" || k == "constraints" || k == "patterns") && v.is_array()) {
       out += '[';
       for (size_t i = 0; i < v.size(); ++i) {
         if (i) out += ',';

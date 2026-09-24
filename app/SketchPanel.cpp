@@ -29,6 +29,14 @@ QList<Tool> tools() {
     {QObject::tr("Modify"),"select",QObject::tr("Select")}, {QObject::tr("Modify"),"trim",QObject::tr("Trim")},
     {QObject::tr("Modify"),"fillet",QObject::tr("Sketch fillet")}, {QObject::tr("Modify"),"mirror",QObject::tr("Mirror")},
     {QObject::tr("Modify"),"offset",QObject::tr("Offset")},
+    {QObject::tr("Modify"),"move",QObject::tr("Move")}, {QObject::tr("Modify"),"rotate",QObject::tr("Rotate")},
+    {QObject::tr("Modify"),"scale",QObject::tr("Scale")}, {QObject::tr("Modify"),"copy",QObject::tr("Copy with offset")},
+    {QObject::tr("Modify"),"rect_pattern",QObject::tr("Rectangular pattern")}, {QObject::tr("Modify"),"polar_pattern",QObject::tr("Polar pattern")},
+    {QObject::tr("Modify"),"split",QObject::tr("Split curve")}, {QObject::tr("Modify"),"extend",QObject::tr("Extend curve")},
+    {QObject::tr("Modify"),"break",QObject::tr("Break at intersections")}, {QObject::tr("Modify"),"chamfer",QObject::tr("Chamfer")},
+    {QObject::tr("Modify"),"union",QObject::tr("Region union")}, {QObject::tr("Modify"),"subtract",QObject::tr("Region subtract")},
+    {QObject::tr("Modify"),"intersect",QObject::tr("Region intersection")}, {QObject::tr("Modify"),"heal",QObject::tr("Heal endpoints")},
+    {QObject::tr("Modify"),"explode",QObject::tr("Explode pattern")},
     {QObject::tr("Constrain"),"dimension",QObject::tr("Dimension")},
     {QObject::tr("Constrain"),"c:horizontal",QObject::tr("Horizontal")}, {QObject::tr("Constrain"),"c:vertical",QObject::tr("Vertical")},
     {QObject::tr("Constrain"),"c:coincident",QObject::tr("Coincident")}, {QObject::tr("Constrain"),"c:collinear",QObject::tr("Collinear")},
@@ -77,6 +85,7 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   button(selection,tr("Construction"),[this]{m_editor->toggleConstruction();});
   button(selection,tr("Find open ends"),[this]{m_editor->findOpenVertices();});
   button(selection,tr("Spline node weights"),[this]{m_editor->editSplineNode();});
+  button(selection,tr("Delete curve node"),[this]{m_editor->deleteNode();});
   button(selection,tr("Delete"),[this]{m_editor->deleteSelection();});
   selection->addStretch();
   auto* constraints=page(tr("Constraints"));
@@ -145,7 +154,25 @@ void SketchPanel::buildFields() {
     auto* font=new QFontComboBox(this);font->setCurrentFont(QFont(m_editor->option("font","Arial")));m_fields->addRow(tr("Font"),font);
     connect(font,&QFontComboBox::currentFontChanged,this,[this](const QFont& f){m_editor->m_options["font"]=f.family();});
   }
-  if(m_shown=="offset")field("distance",tr("Distance"),"5 mm");
+  auto choice=[&](const QString& key,const QString& label,const QList<QPair<QString,QString>>& choices) {
+    auto* combo=new QComboBox(this);for(const auto& [id,text]:choices)combo->addItem(text,id);
+    combo->setCurrentIndex(std::max(0,combo->findData(m_editor->option(key,choices.front().first))));m_fields->addRow(label,combo);
+    connect(combo,&QComboBox::currentIndexChanged,this,[this,key,combo]{m_editor->m_options[key]=combo->currentData().toString();});
+  };
+  if(m_shown=="offset") {field("distance",tr("Distance"),"5 mm");choice("corners",tr("Corners"),{{"round",tr("Round")},{"sharp",tr("Sharp")}});}
+  if(m_shown=="move"||m_shown=="copy"||m_shown=="rect_pattern") {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"0 mm");}
+  if(m_shown=="rotate"||m_shown=="scale"||m_shown=="polar_pattern") {field("cx",tr("Centre X"),"0 mm");field("cy",tr("Centre Y"),"0 mm");}
+  if(m_shown=="rotate"||m_shown=="polar_pattern")field("angle",tr("Angle"),m_shown=="rotate"?"45 deg":"360 deg");
+  if(m_shown=="scale")field("scale",tr("Scale factor"),"2");
+  if(m_shown=="rect_pattern"||m_shown=="polar_pattern")field("count",tr("Count"),"3");
+  if(m_shown=="rect_pattern")field("rows",tr("Rows"),"1");
+  if(m_shown=="chamfer") {field("first",tr("First distance"),"2 mm");field("second",tr("Second distance"),"2 mm");}
+  if(m_shown=="heal")field("healTolerance",tr("Gap tolerance"),"0.05 mm");
+  if(m_shown=="mirror") {
+    choice("mirrorAxis",tr("Mirror axis"),{{"picked",tr("Picked line")},{"x",tr("X axis")},{"y",tr("Y axis")}});
+    auto* pick=new QPushButton(tr("Pick mirror line"),this);m_fields->addRow(pick);
+    connect(pick,&QPushButton::clicked,this,[this]{m_editor->m_options["mirrorStage"]="axis";m_editor->m_options["mirrorAxis"]="picked";m_editor->toolPrompt();});
+  }
   if(m_shown=="node") {
     field("weight",tr("Node weight"),"1");field("incoming",tr("Incoming handle weight"),"1");field("outgoing",tr("Outgoing handle weight"),"1");
   }

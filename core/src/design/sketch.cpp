@@ -1,4 +1,5 @@
 #include "opad/design/sketch.hpp"
+#include "opad/design/sketch_pattern.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -148,6 +149,7 @@ int Sketch::next_id() const {
   for (const auto& p : points) top = std::max(top, p.id);
   for (const auto& e : entities) top = std::max(top, e.id);
   for (const auto& c : constraints) top = std::max(top, c.id);
+  for (const auto& p : patterns) top = std::max(top,p.at("id").get<int>());
   return top + 1;
 }
 
@@ -213,6 +215,11 @@ int Sketch::add_constraint(SkConstraint::Type t, std::vector<int> refs, double v
 // line and its end points in any order.
 void Sketch::remove(int id) {
   id_watermark = next_id() - 1;
+  if(const int pattern=pattern_of(*this,id,true)) {
+    const bool instance=pattern_of(*this,id,false)!=0;
+    remove_pattern(*this,pattern);
+    if(instance || pattern==id)return;
+  }
   auto drop_constraints_on = [&](int ref) {
     std::erase_if(constraints, [&](const SkConstraint& c) { return std::find(c.refs.begin(), c.refs.end(), ref) != c.refs.end(); });
   };
@@ -251,6 +258,15 @@ void Sketch::validate() const {
   }
   for (const auto& e : entities) claim(e.id, "entity");
   for (const auto& c : constraints) claim(c.id, "constraint");
+  if(!patterns.is_array())throw Error("sketch patterns must be an array");
+  for(const auto& p:patterns) {
+    claim(p.at("id").get<int>(),"pattern");
+    for(int id:p.at("seeds").get<std::vector<int>>())if(!entity(id))throw Error("pattern seed no longer exists");
+    for(const auto& instance:p.value("instances",json::array()))for(const auto& pair:instance.at("map")) {
+      if(!pair.is_array()||pair.size()!=2)throw Error("invalid pattern ID map");
+      for(int id:pair.get<std::vector<int>>())if(!point(id)&&!entity(id))throw Error("pattern refers to missing geometry");
+    }
+  }
   for (const auto& e : entities) check_entity(*this, e);
   for (const auto& c : constraints) check_constraint(*this, c);
 }
@@ -284,6 +300,7 @@ json Sketch::to_json() const {
   ordered(jp); ordered(je); ordered(jc);
   json out{{"points", std::move(jp)}, {"entities", std::move(je)}, {"constraints", std::move(jc)}};
   if (id_watermark) out["id_watermark"] = id_watermark;
+  if(!patterns.empty())out["patterns"]=patterns;
   return out;
 }
 
@@ -292,6 +309,7 @@ Sketch Sketch::from_json(const json& j) {
   try {
     if (!j.is_object()) throw Error("sketch: not a JSON object");
     sk.id_watermark = j.value("id_watermark", 0);
+    sk.patterns = j.value("patterns",json::array());
     auto list = [&](const char* key) -> json {
       if (!j.contains(key)) return json::array();
       if (!j.at(key).is_array()) throw Error(std::string("sketch: '") + key + "' is not an array");

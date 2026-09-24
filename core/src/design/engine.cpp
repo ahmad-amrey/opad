@@ -17,6 +17,7 @@
 #include <set>
 
 #include "opad/geometry.hpp"
+#include "opad/design/sketch_pattern.hpp"
 
 namespace opad::design {
 
@@ -410,6 +411,8 @@ struct Walk {
     bool moved = false;
     std::string error;
     try {
+      evaluate_patterns(sk,ctx.params);
+      s += sk.patterns.dump();
       evaluate_dimensions(sk, ctx.params);
       for (const auto& c : sk.constraints) if (c.is_dimension() && !c.reference) {
         s += std::to_string(c.id) + "=" + json(c.value).dump() + ";";
@@ -666,7 +669,8 @@ json map_expressions(const std::string& type, const json& data, const std::funct
         }
     if (changed) set["inputs"] = inputs;
   } else if (type == "sketch") {
-    json geometry = data.value("geometry", json::object());
+    const json original = data.value("result",json::object()).value("geometry",data.value("geometry",json::object()));
+    json geometry = original;
     bool changed = false;
     if (geometry.contains("constraints"))
       for (auto& c : geometry["constraints"])
@@ -674,7 +678,9 @@ json map_expressions(const std::string& type, const json& data, const std::funct
           const std::string e = c["expr"].get<std::string>();
           if (fn(e) != e) { c["expr"] = fn(e); changed = true; }
         }
-    if (changed) set["geometry"] = geometry;
+    if(geometry.contains("patterns"))for(auto& pattern:geometry["patterns"])for(auto& value:pattern["inputs"])
+      if(value.is_string()){const std::string e=value.get<std::string>();if(fn(e)!=e){value=fn(e);changed=true;}}
+    if (changed) set["geometry_delta"] = sketch_delta(original,geometry);
   }
   return set;
 }

@@ -49,6 +49,7 @@ class SketchEditor : public QObject, public SketchInput {
   void toggleReference();
   void selectConnected();
   void selectType();
+  void deleteNode();
   void redefinePlane(const opad::json& plane, const opad::Frame& frame);
   QString tool() const { return m_tool; }
   void editSplineNode();
@@ -64,6 +65,7 @@ class SketchEditor : public QObject, public SketchInput {
   void bench(const QString& script);  // OPAD_BENCH_DESIGN: draws a dimensioned rectangle with a hole through the tool code paths
   void benchWorkflow();
   void benchPrimitives();
+  void benchModify();
 
   // SketchInput
   void sketchPress(double u, double v, Qt::KeyboardModifiers mods) override;
@@ -91,6 +93,8 @@ class SketchEditor : public QObject, public SketchInput {
   opad::design::Sketch primitivePreview() const;
   opad::json primitiveOptions() const;
   void createText(double u,double v);
+  bool modifyClick(double u,double v);
+  bool applyModify();
   struct Snap {
     double u = 0, v = 0;
     int point = 0;     // an existing point to reuse

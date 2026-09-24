@@ -1,4 +1,6 @@
 #include "opad/design/sketch_edit.hpp"
+#include "opad/design/sketch_pattern.hpp"
+#include "opad/design/sketch_modify.hpp"
 // SketchEditor, the tools: what a click means for each of them, constraints, dimensions, fillet, trim, mirror.
 #include "SketchEditor.hpp"
 
@@ -69,7 +71,13 @@ void SketchEditor::setTool(const QString& tool) {
   m_dimEditing = 0;
   m_panelFieldsDirty = true;
   m_tool = tool;
-  if (tool != "mirror" && tool != "offset" && tool != "node") m_sel.clear();
+  if(tool=="mirror")m_options["mirrorStage"]=m_sel.empty()?"seed":"axis";
+  const QStringList preserve={"mirror","offset","node","move","rotate","scale","copy","rect_pattern","polar_pattern","explode","chamfer","break"};
+  if(!preserve.contains(tool))m_sel.clear();
+  if((tool=="rect_pattern"||tool=="polar_pattern")&&!m_sel.empty()) {
+    const int id=pattern_of(m_sk,m_sel.front(),true);
+    for(const auto& p:m_sk.patterns)if(p.at("id").get<int>()==id)for(const auto& [key,value]:p.at("inputs").items())if(key!="polar")m_options[QString::fromStdString(key)]=QString::fromStdString(value.is_string()?value.get<std::string>():value.dump());
+  }
   emit toolChanged(m_tool);
   toolPrompt();
   rebuild();
@@ -119,6 +127,7 @@ void SketchEditor::finishChain() {
 }
 
 void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
+  if(modifyClick(s.u,s.v))return;
   if(primitiveClick(s.u,s.v))return;
   const Hit hit = hitTest(s.u, s.v);
   if (m_tool.startsWith("c:")) return constraintClick(hit);
@@ -836,39 +845,20 @@ void SketchEditor::trimAt(const Hit& h, double u, double v) {
 
 // ---------------------------------------------------------------- mirror
 void SketchEditor::mirrorSelection(int axisLine) {
-  const SkEntity* axis = m_sk.entity(axisLine);
-  const SkPoint *a = m_sk.point(axis->p[0]), *b = m_sk.point(axis->p[1]);
-  const double dx = b->x - a->x, dy = b->y - a->y, len2 = dx * dx + dy * dy;
-  if (len2 < 1e-18) return;
-  const double ax = a->x, ay = a->y;
-  std::vector<int> sources;
-  for (int id : m_sel)
-    if (id != axisLine && m_sk.entity(id)) sources.push_back(id);
-  if (sources.empty()) return emit status(tr("Mirror: select the curves to mirror first"));
-  begin_change();
-  std::map<int, int> twin;  // point -> mirrored point
-  auto mirrored = [&](int pid) {
-    if (auto it = twin.find(pid); it != twin.end()) return it->second;
-    const SkPoint p = *m_sk.point(pid);
-    const double k = ((p.x - ax) * dx + (p.y - ay) * dy) / len2;
-    const double fx = ax + k * dx, fy = ay + k * dy;
-    // A point on the mirror line is its own image.
-    const int q = std::hypot(p.x - fx, p.y - fy) < 1e-9 ? pid : m_sk.add_point(2 * fx - p.x, 2 * fy - p.y);
-    if (q != pid) m_sk.add_constraint(CT::Symmetric, {pid, q, axisLine});
-    return twin[pid] = q;
-  };
-  for (int id : sources) {
-    const SkEntity src = *m_sk.entity(id);
-    SkEntity e = src;
-    e.fixed = false;
-    for (int& pid : e.p) pid = mirrored(pid);
-    if (e.type == ET::Arc) std::swap(e.p[1], e.p[2]);  // a mirror image runs the other way round
-    e.id = m_sk.next_id();
-    m_sk.entities.push_back(e);
-    if (src.type == ET::Circle) m_sk.add_constraint(CT::Equal, {src.id, e.id});
-  }
-  m_sel.clear();
-  if (end_change(tr("Mirror"))) setTool("select");
+  std::vector<int> sources;for(int id:m_sel)if(id!=axisLine && m_sk.entity(id))sources.push_back(id);
+  const QString base=option("mirrorAxis","picked");
+  runSketchEdit(tr("Mirror"),[sources,axisLine,base](Sketch& sk) {
+    int axis=axisLine;
+    if(!axis) {const int a=sk.add_point(0,0,true),b=sk.add_point(base=="y"?0:1,base=="y"?1:0,true);axis=sk.add_line(a,b,true);sk.entity(axis)->fixed=true;}
+    const auto* line=sk.entity(axis);if(!line || line->type!=ET::Line)throw opad::Error("pick a mirror line");
+    const auto a=*sk.point(line->p[0]),b=*sk.point(line->p[1]);SketchTransform t;t.mirror=true;t.angle=2*std::atan2(b.y-a.y,b.x-a.x);t.cx=a.x;t.cy=a.y;
+    const auto copies=transform_entities(sk,sources,t,true);std::set<std::pair<int,int>> points;
+    for(size_t i=0;i<sources.size();++i) {const auto source=*sk.entity(sources[i]),copy=*sk.entity(copies[i]);
+      for(size_t k=0;k<source.p.size();++k)points.insert({source.p[k],copy.p[source.type==ET::Arc&&k>0?3-k:k]});
+      if(source.type==ET::Circle)sk.add_constraint(CT::Equal,{source.id,copy.id});
+    }
+    for(auto [a,b]:points)sk.add_constraint(CT::Symmetric,{a,b,axis});
+  });
 }
 
 // ---------------------------------------------------------------- offset, project
@@ -876,52 +866,13 @@ void SketchEditor::mirrorSelection(int axisLine) {
 // geometry: dimension it, or constrain it to the original, as needed.
 void SketchEditor::offsetSelection() {
   std::vector<int> ids;
-  for (int id : m_sel)
-    if (const SkEntity* e = m_sk.entity(id); e && (e->type == ET::Line || e->type == ET::Arc || e->type == ET::Circle)) ids.push_back(id);
-  if (ids.empty()) return emit status(tr("Offset: select a connected chain of lines, arcs or a circle first"));
-  const QString text = option("distance", "5 mm");
+  for(int id:m_sel)if(const auto* e=m_sk.entity(id);e && e->type!=ET::Point)ids.push_back(id);
   try {
-    const double d = paramTable(m_doc->scene).length(text.toStdString());
-    const TopoDS_Wire wire = sketch_wire(m_sk, opad::Frame(), ids);
-    BRepOffsetAPI_MakeOffset off(wire, GeomAbs_Arc);
-    off.Perform(d);
-    if (!off.IsDone() || off.Shape().IsNull()) throw opad::Error("that offset distance leaves nothing");
-    begin_change();
-    std::map<std::pair<long long, long long>, int> points;  // the copy's curves share their end points
-    auto point = [&](const gp_Pnt& p) {
-      const std::pair<long long, long long> key{std::llround(p.X() * 1e6), std::llround(p.Y() * 1e6)};
-      auto it = points.find(key);
-      return it != points.end() ? it->second : points[key] = m_sk.add_point(p.X(), p.Y());
-    };
-    int made = 0;
-    for (TopExp_Explorer ex(off.Shape(), TopAbs_EDGE); ex.More(); ex.Next()) {
-      BRepAdaptor_Curve c(TopoDS::Edge(ex.Current()));
-      const gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
-      if (c.GetType() == GeomAbs_Line) {
-        if (a.Distance(b) > 1e-7) { m_sk.add_line(point(a), point(b)); ++made; }
-      } else if (c.GetType() == GeomAbs_Circle) {
-        const gp_Circ k = c.Circle();
-        if (a.Distance(b) < 1e-7 && std::fabs(c.LastParameter() - c.FirstParameter()) > 6) {
-          m_sk.add_circle(point(k.Location()), k.Radius());
-        } else {
-          const bool ccw = k.Axis().Direction().Z() > 0;  // parameters run counter-clockwise about the circle's own axis
-          m_sk.add_arc(point(k.Location()), point(ccw ? a : b), point(ccw ? b : a));
-        }
-        ++made;
-      }
-    }
-    if (made == 0) {
-      cancel_change();
-      throw opad::Error("that offset distance leaves nothing");
-    }
-    end_change(tr("Offset"));
-  } catch (const Standard_Failure&) {
-    cancel_change();
-    emit status(tr("Offset: the selection must be one connected chain, and the distance must fit"));
-  } catch (const std::exception& e) {
-    cancel_change();
-    emit status(i18n::t(QString::fromUtf8(e.what())));
-  }
+    if(ids.empty())throw opad::Error("select a connected curve chain first");
+    const double distance=sketch_parameters(m_sk,paramTable(m_doc->scene)).length(option("distance","5 mm").toStdString());
+    const bool round=option("corners","round")=="round";
+    runSketchEdit(tr("Offset"),[ids,distance,round](Sketch& sk){offset_entities(sk,ids,distance,round);});
+  }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
 }
 
 // Body edges as fixed reference curves in the sketch (not associative: project again after the body changes).
@@ -980,6 +931,7 @@ bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
 // Drives the tools the way the mouse does (sketch coordinates instead of pixels), so a headless run covers the
 // same code as a user: a 40 x 25 rectangle from the origin with a hole, width and height dimensioned.
 void SketchEditor::bench(const QString&) {
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY"))return benchModify();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES"))return benchPrimitives();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW"))return benchWorkflow();
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_SPLINE");!shot.isEmpty()) {

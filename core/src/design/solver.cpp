@@ -8,6 +8,7 @@
 #include <unordered_map>
 
 #include "opad/design/sketch.hpp"
+#include "opad/design/sketch_pattern.hpp"
 
 namespace opad::design {
 
@@ -793,6 +794,7 @@ static SolveResult solve_system(Sketch& sk, const SolveOptions& opt, bool keep_b
 }
 
 SolveResult solve(Sketch& sk, const SolveOptions& opt, bool keep_best) {
+  refresh_patterns(sk);
   sk.validate();
   // Disconnected islands do not share variables: solve their small systems instead of one dense matrix.
   // ID ordering makes the partition and the floating-point operation order deterministic.
@@ -809,7 +811,7 @@ SolveResult solve(Sketch& sk, const SolveOptions& opt, bool keep_best) {
   for (const auto& p : sk.points) islands[root(p.id)].points.push_back(p);
   for (const auto& e : sk.entities) islands[root(e.id)].entities.push_back(e);
   for (const auto& c : sk.constraints) if (!c.reference) islands[root(c.refs[0])].constraints.push_back(c);
-  if (islands.size() < 2) return solve_system(sk,opt,keep_best);
+  if (islands.size() < 2) {auto out=solve_system(sk,opt,keep_best);if(out.converged||keep_best)refresh_patterns(sk);return out;}
   SolveResult out; out.converged=true;
   std::map<int, SkPoint> points;
   std::map<int, double> radii;
@@ -827,6 +829,7 @@ SolveResult solve(Sketch& sk, const SolveOptions& opt, bool keep_best) {
   if (out.converged || keep_best) {
     for (auto& p : sk.points) p=points.at(p.id);
     for (auto& e : sk.entities) e.r=radii.at(e.id);
+    refresh_patterns(sk);
     for (auto& c : sk.constraints) if (c.reference && c.is_dimension()) c.value=dimension_value(sk,c);
   }
   std::sort(out.free_points.begin(),out.free_points.end());

@@ -80,6 +80,7 @@ struct Sketch {
   std::vector<SkPoint> points;
   std::vector<SkEntity> entities;
   std::vector<SkConstraint> constraints;
+  json patterns = json::array(); // associative patterns, maps refer to stable point/entity IDs
   mutable int id_watermark = 0; // never recycle a deleted ID
 
   SkPoint* point(int id);
