@@ -27,6 +27,11 @@ struct SkEntity {
   // p[2] (the solver keeps both ends at one radius). Ellipse: p[0] centre, p[1] end of the major axis + r =
   // minor radius. Spline: p = fit points, interpolated in order.
   std::vector<int> p;
+  // Nonzero degree stores an exact rational B-spline: p are control poles.
+  int degree = 0;
+  std::vector<double> knots, weights;
+  std::vector<int> multiplicities;
+  bool periodic = false;
   double r = 0;
   bool construction = false;  // guide geometry: never part of a profile
   bool fixed = false;         // projected/reference: r is not a solver variable either

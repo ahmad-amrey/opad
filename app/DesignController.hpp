@@ -23,6 +23,7 @@ class DesignController : public QObject {
 
   void startFeature(const QString& kind);
   void editOp(const std::string& opId);  // a feature or a sketch, rolled back to when it was made
+  void pickSketchPlane(std::function<void(opad::json,opad::Frame)> done);
   void startSketch();                    // asks for the plane first
   void finishSketch(std::function<void()> then = {});
   void cancelSketch();
@@ -69,6 +70,7 @@ class DesignController : public QObject {
   bool m_featureOn = false;
   std::string m_editing;        // feature op being edited (empty: a new one)
   std::string m_newId;          // id the new feature's op will get (so previews can be matched to it)
+  std::function<void(opad::json,opad::Frame)> m_planePicked;
   bool m_pickPlane = false;
   bool m_activating = false;    // the selection is being re-applied for the newly active input: not a pick
   Viewport::SelFilter m_filterBefore = Viewport::SelFilter::Body;

@@ -393,7 +393,9 @@ void DesignController::viewportSelectionChanged() {
       const opad::Frame frame = resolve_plane(m_doc->doc, m_doc->scene, plane);
       if (plane.contains("face")) plane["face"] = make_ref(m_doc->doc, m_doc->scene, refs.back());
       plane["frame"] = frame.to_json();
+      auto picked=std::move(m_planePicked);
       escape();  // leaves the plane pick
+      if(picked) { picked(plane,frame); return; }
       enterSketch({}, QString::fromStdString(next_name(m_doc->scene, "Sketch")), plane, frame, opad::json::object());
     } catch (const std::exception& e) {
       m_activating = true;
@@ -519,7 +521,12 @@ void DesignController::runPreview(bool commit) {
 }
 
 // ---------------------------------------------------------------- sketches
+void DesignController::pickSketchPlane(std::function<void(opad::json,opad::Frame)> done) {
+  startSketch(); m_planePicked=std::move(done);
+}
+
 void DesignController::startSketch() {
+  m_planePicked={};
   if (!m_doc->hasDocument || m_doc->browse) return;
   if (m_sketch->active()) return;
   if (m_featureOn) endFeature();
@@ -549,6 +556,7 @@ void DesignController::startSketch() {
 bool DesignController::escape() {
   if (m_pickPlane) {
     m_pickPlane = false;
+    m_planePicked={};
     m_viewport->clearCandidates();
     m_activating = true;
     m_viewport->clearSelection();

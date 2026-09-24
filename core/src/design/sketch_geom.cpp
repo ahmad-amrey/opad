@@ -15,6 +15,8 @@
 #include <GProp_GProps.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <Geom_BSplineCurve.hxx>
+#include <TColStd_Array1OfReal.hxx>
+#include <TColStd_Array1OfInteger.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
 #include <Standard_Failure.hxx>
 #include <TColgp_HArray1OfPnt.hxx>
@@ -100,6 +102,14 @@ TopoDS_Edge entity_edge(const Sketch& sk, const SkEntity& e, const Frame& frame)
       }
       case SkEntity::Type::Spline: {
         if (e.p.size() < 2) return TopoDS_Edge();
+        if (e.degree) {
+          TColgp_Array1OfPnt poles(1,int(e.p.size())); TColStd_Array1OfReal weights(1,int(e.p.size())),knots(1,int(e.knots.size()));
+          TColStd_Array1OfInteger mults(1,int(e.knots.size()));
+          for(size_t i=0;i<e.p.size();++i) { poles.SetValue(int(i)+1,world(frame,P(i))); weights.SetValue(int(i)+1,e.weights[i]); }
+          for(size_t i=0;i<e.knots.size();++i) { knots.SetValue(int(i)+1,e.knots[i]); mults.SetValue(int(i)+1,e.multiplicities[i]); }
+          Handle(Geom_BSplineCurve) curve=new Geom_BSplineCurve(poles,weights,knots,mults,e.degree,e.periodic);
+          return BRepBuilderAPI_MakeEdge(curve).Edge();
+        }
         const bool closed = e.p.size() > 2 && e.p.front() == e.p.back();
         const int n = static_cast<int>(e.p.size()) - (closed ? 1 : 0);
         Handle(TColgp_HArray1OfPnt) pts = new TColgp_HArray1OfPnt(1, n);
@@ -135,23 +145,12 @@ bool interior_point(const TopoDS_Face& face, const Frame& frame, double& u, doub
   GProp_GProps props;
   BRepGProp::SurfaceProperties(face, props);
   BRepClass_FaceClassifier cls;
-  TopoDS_Compound wires;
-  BRep_Builder bb;
-  bb.MakeCompound(wires);
-  for (TopExp_Explorer ex(face, TopAbs_WIRE); ex.More(); ex.Next()) bb.Add(wires, ex.Current());
-  auto depth = [&](const gp_Pnt& p) {
-    BRepExtrema_DistShapeShape d(BRepBuilderAPI_MakeVertex(p).Vertex(), wires);
-    return d.IsDone() && d.NbSolution() > 0 ? d.Value() : 0.0;
+  auto accept = [&](const gp_Pnt& p) {
+    cls.Perform(face,p,1e-7);
+    if(cls.State()!=TopAbs_IN) return false;
+    frame.to_local({p.X(),p.Y(),p.Z()},u,v); return true;
   };
-  double best = -1;
-  gp_Pnt bestP;
-  auto consider = [&](const gp_Pnt& p) {
-    cls.Perform(face, p, 1e-7);
-    if (cls.State() != TopAbs_IN) return;
-    const double d = depth(p);
-    if (d > best) { best = d; bestP = p; }
-  };
-  consider(props.CentreOfMass());
+  if(accept(props.CentreOfMass())) return true;
   double x0, y0, z0, x1, y1, z1;
   box.Get(x0, y0, z0, x1, y1, z1);
   double u0 = 1e300, v0 = 1e300, u1 = -1e300, v1 = -1e300;
@@ -161,15 +160,11 @@ bool interior_point(const TopoDS_Face& face, const Frame& frame, double& u, doub
     u0 = std::min(u0, pu); u1 = std::max(u1, pu);
     v0 = std::min(v0, pv); v1 = std::max(v1, pv);
   }
-  const double size = std::max(u1 - u0, v1 - v0);
-  for (int n : {7, 15, 41}) {
-    if (best > 0.02 * size) break;  // deep enough: a click there is unambiguous
-    for (int i = 1; i < n; ++i)
-      for (int k = 1; k < n; ++k) consider(pnt(frame.to_world(u0 + (u1 - u0) * i / n, v0 + (v1 - v0) * k / n)));
-  }
-  if (best < 0) return false;
-  frame.to_local({bestP.X(), bestP.Y(), bestP.Z()}, u, v);
-  return true;
+  // Classification is sufficient: no all-edge distance query for every grid point.
+  for (int n : {7, 15, 41, 101})
+    for(int i=1;i<n;++i) for(int k=1;k<n;++k)
+      if(accept(pnt(frame.to_world(u0+(u1-u0)*i/n,v0+(v1-v0)*k/n)))) return true;
+  return false;
 }
 }  // namespace
 

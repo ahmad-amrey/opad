@@ -86,6 +86,16 @@ void check_entity(const Sketch& sk, const SkEntity& e) {
     case EType::Arc: ok = n == 3; break;
     case EType::Spline: ok = n >= 2; break;
   }
+  if (e.degree) {
+    if (e.type!=EType::Spline || e.degree<1 || e.degree>25 || e.knots.size()<2 || e.knots.size()!=e.multiplicities.size() || e.weights.size()!=n) throw Error(who+": invalid spline basis");
+    int total=0;
+    for(size_t i=0;i<e.knots.size();++i) {
+      if(!std::isfinite(e.knots[i]) || (i && e.knots[i]<=e.knots[i-1]) || e.multiplicities[i]<1 || e.multiplicities[i]>e.degree+1) throw Error(who+": invalid spline knots");
+      total+=e.multiplicities[i];
+    }
+    if(!e.periodic && total!=int(n)+e.degree+1) throw Error(who+": inconsistent spline basis");
+    for(double w:e.weights) if(!(w>0) || !std::isfinite(w)) throw Error(who+": invalid spline weight");
+  }
   if (!ok) throw Error(who + ": wrong number of points (" + std::to_string(n) + ")");
   for (int pid : e.p)
     if (!sk.point(pid)) throw Error(who + ": point " + std::to_string(pid) + " does not exist");
@@ -253,6 +263,7 @@ json Sketch::to_json() const {
   for (const auto& e : entities) {
     json o = {{"id", e.id}, {"type", SkEntity::type_name(e.type)}, {"p", e.p}};
     if (has_radius(e.type)) o["r"] = e.r;
+    if (e.degree) { o["degree"]=e.degree; o["knots"]=e.knots; o["multiplicities"]=e.multiplicities; o["weights"]=e.weights; o["periodic"]=e.periodic; }
     if (e.construction) o["construction"] = true;
     if (e.fixed) o["fixed"] = true;
     je.push_back(std::move(o));
@@ -292,6 +303,8 @@ Sketch Sketch::from_json(const json& j) {
       e.type = SkEntity::type_from_name(o.at("type").get<std::string>());
       e.p = o.at("p").get<std::vector<int>>();
       if (has_radius(e.type)) e.r = o.at("r").get<double>();
+      e.degree=o.value("degree",0); e.knots=o.value("knots",std::vector<double>{});
+      e.weights=o.value("weights",std::vector<double>{}); e.multiplicities=o.value("multiplicities",std::vector<int>{}); e.periodic=o.value("periodic",false);
       e.construction = o.value("construction", false);
       e.fixed = o.value("fixed", false);
       sk.entities.push_back(std::move(e));

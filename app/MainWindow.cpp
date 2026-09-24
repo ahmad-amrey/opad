@@ -1971,7 +1971,7 @@ void MainWindow::runBench() {
   }
 
   if(qEnvironmentVariableIsSet("OPAD_BENCH_EXPORT_DIALOG")) { exportDialog(); QCoreApplication::exit(0); return; }
-  if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD")) { drawingToSketch(); if(!qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")) QCoreApplication::exit(0); return; }
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD")) { drawingToSketch(); return; }
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_STATUS");!shot.isEmpty()) {
     QTimer::singleShot(700,this,[this,shot] {
       const bool dark=theme::current().dark;

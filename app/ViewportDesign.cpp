@@ -15,6 +15,7 @@
 #include <SelectMgr_SensitiveEntity.hxx>
 #include <Select3D_SensitiveEntity.hxx>
 #include <TopoDS_Compound.hxx>
+#include <TopoDS.hxx>
 
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -43,11 +44,31 @@ void Viewport::syncSketches() {
     auto it = m_sketchWires.find(s.id);
     if (it != m_sketchWires.end() && it->second.stamp == stamp) continue;
     if (it != m_sketchWires.end()) { m_nodeOf.erase(it->second.ais.get()); m_ctx->Remove(it->second.ais, Standard_False); }
+    std::shared_ptr<PreparedSketch> prepared;
+    if(s.geometry.value("entities",opad::json::array()).size()>256) {
+      auto found=m_preparedSketches.find(s.id);
+      if(found==m_preparedSketches.end() || found->second->stamp!=stamp) {
+        prepared=std::make_shared<PreparedSketch>();prepared->stamp=stamp;m_preparedSketches[s.id]=prepared;
+        const auto geometry=s.geometry;const auto frame=s.frame;const auto id=s.id;const auto generation=m_doc->generation;
+        m_jobs->async(tr("Preparing sketch curves"),[prepared,geometry,frame](Progress progress) {
+          TopoDS_Compound shape;BRep_Builder b;b.MakeCompound(shape);
+          auto sk=opad::design::Sketch::from_json(geometry);
+          for(const auto& e:opad::design::sketch_edges(sk,frame,true)) {if(progress.cancelled()) return;b.Add(shape,e);}
+          Bnd_Box box;BRepBndLib::Add(shape,box);prepared->shape=shape;prepared->prs=BodyPrs::build(shape,box);
+        },[this,prepared,id,generation](bool ok,const QString&) {
+          if(generation!=m_doc->generation || !m_preparedSketches.count(id) || m_preparedSketches[id]!=prepared) return;
+          prepared->ready=ok; if(ok) requestSync();
+        });
+        continue;
+      }
+      prepared=found->second;if(!prepared->ready) continue;
+    }
     TopoDS_Compound comp;
     BRep_Builder bb;
     bb.MakeCompound(comp);
     bool any = false;
-    try {
+    if(prepared) {comp=TopoDS::Compound(prepared->shape);any=true;}
+    else try {
       const opad::design::Sketch sk = opad::design::Sketch::from_json(s.geometry);
       for (const auto& e : opad::design::sketch_edges(sk, s.frame, true)) { bb.Add(comp, e); any = true; }
       for (const auto& e : sk.entities)
@@ -64,7 +85,7 @@ void Viewport::syncSketches() {
       keep.erase(s.id);
       continue;
     }
-    Bnd_Box bounds; BRepBndLib::Add(comp,bounds); auto prs=BodyPrs::build(comp,bounds);
+    Bnd_Box bounds; BRepBndLib::Add(comp,bounds); auto prs=prepared?prepared->prs:BodyPrs::build(comp,bounds);
     Handle(AIS_Shape) ais = new BodyShape(comp,prs);
     ais->Attributes()->SetWireAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.5));
     ais->Attributes()->SetLineAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.5));
@@ -74,6 +95,7 @@ void Viewport::syncSketches() {
     activateSelection(ais); m_nodeOf[ais.get()]=s.id;
     m_sketchWires[s.id] = SketchWire{ais, prs, stamp};
   }
+  std::erase_if(m_preparedSketches,[&](const auto& entry) {return !keep.count(entry.first);});
   for (auto it = m_sketchWires.begin(); it != m_sketchWires.end();) {
     if (keep.count(it->first)) { ++it; continue; }
     m_nodeOf.erase(it->second.ais.get()); m_ctx->Remove(it->second.ais, Standard_False);

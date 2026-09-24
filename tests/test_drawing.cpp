@@ -1,3 +1,7 @@
+#include <BRepAdaptor_Curve.hxx>
+#include "opad/design/drawing_sketch.hpp"
+#include <chrono>
+#include <cstdlib>
 #include "check.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
@@ -178,4 +182,41 @@ TEST(individual_solids_and_meshes_export_without_their_neighbors) {
     auto box=node_world_bbox(round,rs,rs.all_bodies()[0]);CHECK(box.CornerMax().X()<11);
     if(std::string(format)!="step") { ExportOptions mesh;mesh.format=format;mesh.select={rs.all_bodies()[0]};mesh.per_body=false;CHECK_EQ(export_selection(round,rs,f.dir/(std::string("mesh.")+format),mesh).bodies,1); }
   }
+}
+
+TEST(optional_drawing_conversion_benchmark) {
+  const char* file=std::getenv("OPAD_DRAWING_BENCH"); if (!file) return;
+  auto d=Document::create(); import_file(d,file); const auto scene=resolve(d);
+  std::vector<design::DrawingLayer> layers;
+  for (const auto& id:scene.all_bodies()) if(scene.node(id)->raster.is_null()) layers.push_back({id,false});
+  auto start=std::chrono::steady_clock::now();
+  auto sk=design::drawing_sketch(d,scene,layers,Frame{},0.01);
+  auto ms=[&] {return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-start).count();};
+  std::cerr<<"conversion "<<ms()<<" ms; "<<sk.entities.size()<<" entities, "<<sk.points.size()<<" points"<<std::endl;
+  start=std::chrono::steady_clock::now(); auto regions=design::sketch_regions(sk,Frame{});
+  std::cerr<<"profiles "<<ms()<<" ms; "<<regions.size()<<" regions"<<std::endl;
+  CHECK(!regions.empty());
+}
+
+TEST(native_bezier_conversion_is_exact_after_transform_and_roundtrip) {
+  Files f;write_text_file(f.dir/"bezier.svg",R"SVG(<svg width="100mm" viewBox="0 0 100 100"><path transform="translate(7,9)" d="M0 0 C0 20 30 20 30 0 L0 0 Z"/></svg>)SVG");
+  auto d=Document::create();import_file(d,f.dir/"bezier.svg");const auto scene=resolve(d);
+  auto sk=design::drawing_sketch(d,scene,{{scene.all_bodies()[0],false}},Frame{},0.01);
+  CHECK_EQ(sk.entities.size(),2u);sk=design::Sketch::from_json(sk.to_json());
+  int curves=0;for(const auto& e:sk.entities)if(e.type==design::SkEntity::Type::Spline) {
+    ++curves;CHECK_EQ(e.degree,3);CHECK_EQ(e.p.size(),4u);
+    auto edge=design::entity_edge(sk,e,Frame{});CHECK(!edge.IsNull());
+    BRepAdaptor_Curve c(edge);const auto mid=c.Value((c.FirstParameter()+c.LastParameter())/2);
+    CHECK_NEAR(mid.X(),22,1e-6);CHECK_NEAR(mid.Y(),-24,1e-6);
+  }
+  CHECK_EQ(curves,1);CHECK_EQ(design::sketch_regions(sk,Frame{}).size(),1u);
+}
+TEST(segmented_circle_reconstruction_preserves_sharp_rectangle) {
+  Files f;std::ostringstream svg;svg<<"<svg width='50mm' viewBox='0 0 50 50'><path d='M ";
+  for(int i=0;i<=128;++i) {if(i)svg<<" L ";svg<<20+10*cos(i*2*M_PI/128)<<" "<<20+10*sin(i*2*M_PI/128);}
+  svg<<" Z M35 35 L45 35 L45 45 L35 45 Z'/></svg>";write_text_file(f.dir/"segments.svg",svg.str());
+  auto d=Document::create();import_file(d,f.dir/"segments.svg");const auto scene=resolve(d);
+  auto sk=design::drawing_sketch(d,scene,{{scene.all_bodies()[0],false}},Frame{},0.01);
+  int circles=0,lines=0;for(const auto& e:sk.entities) {circles+=e.type==design::SkEntity::Type::Circle;lines+=e.type==design::SkEntity::Type::Line;}
+  CHECK_EQ(circles,1);CHECK_EQ(lines,4);CHECK_EQ(design::sketch_regions(sk,Frame{}).size(),2u);
 }
