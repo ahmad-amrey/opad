@@ -182,6 +182,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // under the mouse (world coordinates).
   void setEdgeHover(bool on);
   bool hoveredEdge(TopoDS_Shape& edge) const;
+  bool hoveredReference(opad::Ref& ref) const;
+  void showBackdrop(const Handle(AIS_InteractiveObject)& obj);
+  opad::json sectionState() const;
+  void restoreSection(const opad::json& state);
   void benchDesignShot(const QString& path);  // OPAD_BENCH_DESIGN: fit, redraw, dump the 3D frame
 
   opad::json cameraJson() const;

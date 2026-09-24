@@ -4,6 +4,8 @@
 #include <QKeyEvent>
 #include <QSettings>
 #include <QCoreApplication>
+#include <QImage>
+#include <QFileInfo>
 #include "Jobs.hpp"
 #include <cmath>
 #include "I18n.hpp"
@@ -42,7 +44,11 @@ QList<ToolStep> SketchEditor::toolSteps() const {
   else if(m_tool=="fillet")labels={tr("Set radius"),tr("Pick a corner")};
   else if(m_tool=="node")labels={tr("Select a spline node"),tr("Set weights and apply")};
   else if(m_tool=="trim")labels={tr("Pick the segment to remove")};
-  else if(m_tool=="project")labels={tr("Pick source geometry")};
+  else if(m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d")labels={tr("Pick source geometry"),tr("Choose link behavior and apply")};
+  else if(m_tool=="image_insert")labels={tr("Choose an image file"),tr("Pick insertion point"),tr("Set image size and apply")};
+  else if(m_tool=="image_calibrate")labels={tr("Pick first calibration point"),tr("Pick second calibration point"),tr("Enter known distance and apply")};
+  else if(m_tool=="image_trace")labels={tr("Choose the backdrop image"),tr("Adjust tracing parameters"),tr("Apply to create editable curves")};
+  else if(m_tool.startsWith("image_")||m_tool=="vector_import"||m_tool=="vector_export"||m_tool=="simplify")labels={tr("Choose source and parameters"),tr("Apply")};
   else if(m_tool=="line" || m_tool=="spline")labels={tr("Pick start point"),tr("Add points"),tr("Apply to finish the chain")};
   else if(m_tool=="point")labels={tr("Place point")};
   else if(m_tool=="circle3" || m_tool=="arc3" || m_tool=="arcc" || m_tool=="ellipse" || m_tool=="slot")labels={tr("Pick first point"),tr("Pick second point"),tr("Pick third point")};
@@ -52,6 +58,7 @@ QList<ToolStep> SketchEditor::toolSteps() const {
   if(m_tool=="extend")count=int(m_picked.size());
   if(m_tool=="tangent_circle")count=int(m_picked.size());
   if(m_tool=="text")count=1;
+  if(m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d")count=option("projectionSource").isEmpty()?0:1;
   if(m_tool=="control_spline")count=m_clicks.size()>=2?1:0;
   if(m_tool=="line" || m_tool=="spline") count=m_chain.empty()?0:m_chain.size()==1?1:2;
   if(m_tool.startsWith("c:"))count=int(m_picked.size());
@@ -65,6 +72,8 @@ QList<ToolStep> SketchEditor::toolSteps() const {
 
 void SketchEditor::applyTool() {
   if(!m_active)return;
+  if(m_editJob)return;
+  if(applyReference()||applyImageTool())return;
   if(applyModify())return;
   if(m_tool=="offset")return offsetSelection();
   if(m_tool=="control_spline")return finishPrimitive();
@@ -106,7 +115,7 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
     m_editJob=nullptr;
     if(!ok){emit status(error);return;}
     if(m_sk.to_json()!=before->to_json())return;
-    m_undo.push_back({*before,m_plane,m_frame});m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;
+    m_undo.push_back({*before,m_plane,m_frame});m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;m_panelFieldsDirty=true;
     m_clicks.clear();m_picked.clear();m_sel.clear();rebuild();scheduleFill();toolPrompt();emit changed();
     if(m_tool=="mirror")m_options["mirrorStage"]="seed";
   });
@@ -178,6 +187,28 @@ void SketchEditor::redefinePlane(const opad::json& plane,const opad::Frame& fram
 }
 
 void SketchEditor::benchWorkflow() {
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_REFERENCE")) {
+    const QString prefix=qEnvironmentVariable("OPAD_BENCH_SKETCH_REFERENCE");QImage image(32,32,QImage::Format_RGB32);image.fill(Qt::white);
+    for(int y=4;y<28;++y)for(int x=4;x<28;++x)if(x<10||x>=22||y<10||y>=22)image.setPixelColor(x,y,Qt::black);image.save(prefix+".source.png");
+    auto phase=std::make_shared<int>(0),ticks=std::make_shared<int>(0);auto* timer=new QTimer(this);timer->setInterval(50);
+    connect(timer,&QTimer::timeout,this,[this,prefix,timer,phase,ticks]{try {
+      if(++*ticks>1200)throw opad::Error("reference workflow timed out");if(m_editJob||m_imageJob)return;
+      auto require=[](bool ok,const char* why){if(!ok)throw opad::Error(why);};
+      switch((*phase)++) {
+        case 0:setTool("image_insert");m_options["imageFile"]=prefix+".source.png";m_options["imageWidth"]="32 mm";placePrecise("0","0",0);applyTool();break;
+        case 1:require(m_sk.images.size()==1 && m_imagePrs.size()==1,"embedded backdrop");setTool("image_calibrate");m_options["knownDistance"]="16 mm";placePrecise("0","0",0);placePrecise("32","0",0);applyTool();break;
+        case 2:require(std::fabs(m_sk.images[0]["width"].get<double>()-16)<1e-8,"image calibration");setTool("image_trace");m_options["smoothing"]="0";m_options["noise"]="2";m_options["cornerAngle"]="180";applyTool();break;
+        case 3:require(m_sk.entities.size()==8,"editable trace with hole");setTool("project");m_options["projectionSource"]="{\"base\":\"x\"}";applyTool();break;
+        case 4:require(m_sk.entities.size()==9 && !m_sk.entities.back().source.is_null(),"linked work geometry");m_sel={m_sk.entities.back().id};setTool("break_link");applyTool();break;
+        case 5:require(m_sk.entities.back().source.is_null()&&!m_sk.entities.back().fixed,"break reference link");setTool("vector_export");m_options["vectorFile"]=prefix+".svg";applyTool();break;
+        case 6:require(QFileInfo(prefix+".svg").size()>0,"SVG export");setTool("vector_import");applyTool();break;
+        case 7:require(m_sk.entities.size()==18,"SVG import as editable curves");setTool("image_edit");m_options["imageAngle"]="30 deg";m_options["imageOpacity"]="0.7";applyTool();break;
+        case 8:{require(std::fabs(m_sk.images[0]["angle"].get<double>()-M_PI/6)<1e-8,"image rotation");auto camera=m_viewport->cameraJson();camera["scale"]=48;camera["target"]={8,8,0};camera["eye"]={8,8,100};m_viewport->setCameraJson(camera);m_viewport->grabImage().save(prefix+".viewport.png");for(auto* panel:m_viewport->window()->findChildren<SketchPanel*>())panel->grab().save(prefix+".panel.png");setTool("image_remove");applyTool();break;}
+        default:require(m_sk.images.empty()&&m_imagePrs.empty(),"remove backdrop");undo();require(m_sk.images.size()==1,"image undo");end();require(m_imagePrs.empty()&&!m_imageJob,"image cleanup on sketch exit");timer->stop();trace::log("bench: sketch projection, image and vector workflow PASS");QCoreApplication::exit(0);break;
+      }
+    }catch(const std::exception& e){timer->stop();trace::log(QString("bench: sketch reference workflow FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();return;
+  }
+
   try {
     auto require=[](bool ok,const char* why){if(!ok)throw opad::Error(why);};
     m_viewport->setGridSnap(false);

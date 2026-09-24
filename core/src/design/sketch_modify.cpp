@@ -37,7 +37,7 @@ std::vector<int> transform_entities(Sketch& sk,const std::vector<int>& ids,const
   for(int id:points){auto p=*sk.point(id);if(p.fixed&&!copy)throw Error("fixed geometry cannot be transformed; break its link first");double x=p.x-t.cx,y=p.y-t.cy;if(t.mirror)y=-y;const double a=t.angle;
     p.x=t.cx+t.x+t.scale*(x*std::cos(a)-y*std::sin(a));p.y=t.cy+t.y+t.scale*(x*std::sin(a)+y*std::cos(a));
     if(copy){mapped[id]=sk.add_point(p.x,p.y);}else{*sk.point(id)=p;mapped[id]=id;}}
-  for(auto e:source){const int old=e.id;if(copy){e.id=sk.next_id();e.fixed=false;for(int& p:e.p)p=mapped.at(p);}if(t.mirror&&e.type==SkEntity::Type::Arc)std::swap(e.p[1],e.p[2]);e.r*=t.scale;result.push_back(e.id);mapped[old]=e.id;if(copy)sk.entities.push_back(e);else *sk.entity(e.id)=e;}
+  for(auto e:source){const int old=e.id;if(copy){e.id=sk.next_id();e.fixed=false;e.source=nullptr;for(int& p:e.p)p=mapped.at(p);}if(t.mirror&&e.type==SkEntity::Type::Arc)std::swap(e.p[1],e.p[2]);e.r*=t.scale;result.push_back(e.id);mapped[old]=e.id;if(copy)sk.entities.push_back(e);else *sk.entity(e.id)=e;}
   if(copy){const auto constraints=sk.constraints;for(auto c:constraints){if(!std::all_of(c.refs.begin(),c.refs.end(),[&](int id){return mapped.count(id);}))continue;
     if(c.type==SkConstraint::Type::Fix)continue;
     if(std::fabs(std::sin(t.angle))>1e-9 && (c.type==SkConstraint::Type::Horizontal||c.type==SkConstraint::Type::Vertical||c.type==SkConstraint::Type::HDistance||c.type==SkConstraint::Type::VDistance))continue;

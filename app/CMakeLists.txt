@@ -28,6 +28,8 @@ set(OPAD_APP_SOURCES
   SketchPanel.cpp SketchPanel.hpp SketchWorkflow.cpp
   SketchPrimitives.cpp
   SketchModify.cpp
+  SketchReference.cpp
+  SketchImages.cpp
   Panels.cpp Panels.hpp
   Jobs.cpp Jobs.hpp
   GuidedTool.cpp GuidedTool.hpp

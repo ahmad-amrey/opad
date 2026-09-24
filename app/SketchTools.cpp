@@ -67,12 +67,12 @@ void SketchEditor::setTool(const QString& tool) {
       return;
     }
   }
-  if ((m_tool == "project") != (tool == "project")) m_viewport->setEdgeHover(tool == "project");
+
   m_dimEditing = 0;
   m_panelFieldsDirty = true;
-  m_tool = tool;
+  m_tool = tool;referenceHover();
   if(tool=="mirror")m_options["mirrorStage"]=m_sel.empty()?"seed":"axis";
-  const QStringList preserve={"mirror","offset","node","move","rotate","scale","copy","rect_pattern","polar_pattern","explode","chamfer","break"};
+  const QStringList preserve={"mirror","offset","node","move","rotate","scale","copy","rect_pattern","polar_pattern","explode","chamfer","break","break_link"};
   if(!preserve.contains(tool))m_sel.clear();
   if((tool=="rect_pattern"||tool=="polar_pattern")&&!m_sel.empty()) {
     const int id=pattern_of(m_sk,m_sel.front(),true);
@@ -127,6 +127,8 @@ void SketchEditor::finishChain() {
 }
 
 void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
+  if(imageClick(s.u,s.v))return;
+  if(m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d")return pickReference();
   if(modifyClick(s.u,s.v))return;
   if(primitiveClick(s.u,s.v))return;
   const Hit hit = hitTest(s.u, s.v);
@@ -925,6 +927,7 @@ bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
 // Drives the tools the way the mouse does (sketch coordinates instead of pixels), so a headless run covers the
 // same code as a user: a 40 x 25 rectangle from the origin with a hole, width and height dimensioned.
 void SketchEditor::bench(const QString&) {
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_REFERENCE"))return benchWorkflow();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_DRAG"))return benchDrag();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY"))return benchModify();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES"))return benchPrimitives();

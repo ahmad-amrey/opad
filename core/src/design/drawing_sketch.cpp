@@ -106,6 +106,12 @@ void reconstruct(Sketch& sk,double tolerance) {
   std::erase_if(sk.points,[&](const SkPoint& p){return !retained.count(p.id);});
 }
 }
+void simplify_sketch(Sketch& sketch,double tolerance) {
+  if(!sketch.constraints.empty() || !sketch.patterns.empty())throw Error("simplify unconstrainted imported or traced curves before adding dimensions");
+  for(const auto& e:sketch.entities)if(!e.source.is_null())throw Error("break projection links before simplifying");
+  if(!(tolerance>0)||!std::isfinite(tolerance))throw Error("curve tolerance must be positive");
+  sketch.id_watermark=sketch.next_id()-1;reconstruct(sketch,tolerance);sketch.validate();
+}
 Sketch drawing_sketch(const Document& doc,const Scene& scene,const std::vector<DrawingLayer>& layers,const Frame& frame,double tolerance) {
   if(!(tolerance>0) || !std::isfinite(tolerance)) throw Error("Curve tolerance must be positive");
   Sketch result; std::set<std::string> used;

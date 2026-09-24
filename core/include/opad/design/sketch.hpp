@@ -33,6 +33,7 @@ struct SkEntity {
   std::vector<double> knots, weights;
   std::vector<int> multiplicities;
   bool periodic = false;
+  json source; // optional associative projection descriptor
   double r = 0;
   bool construction = false;  // guide geometry: never part of a profile
   bool fixed = false;         // projected/reference: r is not a solver variable either
@@ -83,6 +84,7 @@ struct Sketch {
   std::vector<SkPoint> points;
   std::vector<SkEntity> entities;
   std::vector<SkConstraint> constraints;
+  json images = json::array(); // embedded raster backdrops, each with a stable ID
   json patterns = json::array(); // associative patterns, maps refer to stable point/entity IDs
   mutable int id_watermark = 0; // never recycle a deleted ID
 

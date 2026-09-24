@@ -10,6 +10,7 @@
 #include <QSignalBlocker>
 #include <QTabWidget>
 #include <QFontComboBox>
+#include <QFileDialog>
 
 namespace {
 struct Tool { QString group, id, label; };
@@ -46,7 +47,19 @@ QList<Tool> tools() {
     {QObject::tr("Constrain"),"c:curvature",QObject::tr("Equal endpoint curvature")},
     {QObject::tr("Constrain"),"c:concentric",QObject::tr("Concentric")}, {QObject::tr("Constrain"),"c:midpoint",QObject::tr("Midpoint")},
     {QObject::tr("Constrain"),"c:symmetric",QObject::tr("Symmetric")}, {QObject::tr("Constrain"),"c:fix",QObject::tr("Fix")},
-    {QObject::tr("Reference"),"project",QObject::tr("Project")}
+    {QObject::tr("Reference"),"project",QObject::tr("Project")},
+    {QObject::tr("Reference"),"intersect_body",QObject::tr("Body-plane intersection")},
+    {QObject::tr("Reference"),"silhouette",QObject::tr("Silhouette")},
+    {QObject::tr("Reference"),"include3d",QObject::tr("Include reference curves")},
+    {QObject::tr("Reference"),"break_link",QObject::tr("Break projection link")},
+    {QObject::tr("Images and files"),"image_insert",QObject::tr("Insert image")},
+    {QObject::tr("Images and files"),"image_edit",QObject::tr("Transform image")},
+    {QObject::tr("Images and files"),"image_calibrate",QObject::tr("Calibrate image")},
+    {QObject::tr("Images and files"),"image_trace",QObject::tr("Trace image")},
+    {QObject::tr("Images and files"),"image_remove",QObject::tr("Remove image")},
+    {QObject::tr("Images and files"),"simplify",QObject::tr("Simplify curves")},
+    {QObject::tr("Images and files"),"vector_import",QObject::tr("Import SVG / DXF")},
+    {QObject::tr("Images and files"),"vector_export",QObject::tr("Export SVG / DXF")}
   };
 }
 }
@@ -104,6 +117,8 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   button(constraints,tr("Edit dimension"),[this]{if(m_editor->m_sel.size()==1) m_editor->editDimension(m_editor->m_sel.front(),false);});
   button(constraints,tr("Delete"),[this]{m_editor->deleteSelection();});
   auto* settings=page(tr("Snaps"));
+  auto* section=new QCheckBox(tr("Section at sketch plane"),this);settings->addWidget(section);
+  connect(section,&QCheckBox::toggled,this,[this](bool on){auto normal=m_editor->m_frame.normal();for(auto& v:normal)v=-v;if(on)m_editor->m_viewport->setSection(true,m_editor->m_frame.origin,normal,false);else m_editor->m_viewport->restoreSection(m_editor->m_sectionBefore);});
   for(const auto& [key,title]:QList<QPair<QString,QString>>{{"endpoint",tr("Endpoints")},{"midpoint",tr("Midpoints")},{"center",tr("Centres")},{"quadrant",tr("Quadrants")},{"intersection",tr("Intersections")},{"nearest",tr("Nearest on curve")},{"grid",tr("Grid snapping")},{"angle",tr("Angle increments")},{"inference",tr("Automatic constraints")}}) {
     auto* check=new QCheckBox(title,this);check->setChecked(QSettings().value("sketch/snap/"+key,true).toBool());settings->addWidget(check);
     connect(check,&QCheckBox::toggled,this,[key](bool on){QSettings().setValue("sketch/snap/"+key,on);});
@@ -159,8 +174,42 @@ void SketchPanel::buildFields() {
   auto choice=[&](const QString& key,const QString& label,const QList<QPair<QString,QString>>& choices) {
     auto* combo=new QComboBox(this);for(const auto& [id,text]:choices)combo->addItem(text,id);
     combo->setCurrentIndex(std::max(0,combo->findData(m_editor->option(key,choices.front().first))));m_fields->addRow(label,combo);
-    connect(combo,&QComboBox::currentIndexChanged,this,[this,key,combo]{m_editor->m_options[key]=combo->currentData().toString();});
+    connect(combo,&QComboBox::currentIndexChanged,this,[this,key,combo]{m_editor->m_options[key]=combo->currentData().toString();if(key=="projectionPick")m_editor->referenceHover();});
   };
+  if(m_shown=="project"||m_shown=="intersect_body"||m_shown=="silhouette"||m_shown=="include3d") {
+    choice("projectionPick",tr("Pick filter"),{{"edge",tr("Edges")},{"face",tr("Faces")},{"vertex",tr("Vertices")},{"body",tr("Bodies")}});
+    auto* sources=new QComboBox(this);sources->addItem(tr("Pick in the view"),m_editor->option("projectionSource"));
+    auto add=[&](const QString& label,const opad::json& source){sources->addItem(label,QString::fromStdString(source.dump()));};
+    for(const auto& id:m_editor->m_doc->scene.all_bodies())add(m_editor->m_doc->nodeName(id),{{"body",id},{"kind","body"}});
+    for(const auto& sk:m_editor->m_doc->scene.sketches)if(sk.id!=m_editor->m_id)add(QString::fromStdString(sk.name),{{"sketch",sk.id}});
+    for(const auto& feature:m_editor->m_doc->scene.features)if(feature.result.contains("axis"))add(QString::fromStdString(feature.name),{{"feature",feature.id}});
+    for(const auto* axis:{"x","y","z"})add(tr("Origin axis %1").arg(axis),{{"base",axis}});
+    m_fields->addRow(tr("Source"),sources);connect(sources,&QComboBox::currentIndexChanged,this,[this,sources]{m_editor->m_options["projectionSource"]=sources->currentData().toString();m_editor->toolPrompt();});
+    choice("projectionLinked",tr("Link behavior"),{{"1",tr("Associative link")},{"0",tr("Editable copy")}});
+  }
+  auto fileField=[&](const QString& key,bool image,bool save) {
+    auto* row=new QWidget(this);auto* box=new QHBoxLayout(row);box->setContentsMargins(0,0,0,0);auto* path=new QLineEdit(m_editor->option(key),row);path->setReadOnly(true);auto* browse=new QPushButton(tr("Browse"),row);box->addWidget(path,1);box->addWidget(browse);m_fields->addRow(tr("File"),row);
+    connect(browse,&QPushButton::clicked,this,[this,key,image,save,path]{const auto filter=image?tr("Images (*.png *.jpg *.jpeg *.bmp)"):tr("SVG (*.svg);;DXF (*.dxf)");const auto file=save?QFileDialog::getSaveFileName(this,tr("Export sketch"),path->text(),filter):QFileDialog::getOpenFileName(this,tr("Choose source file"),path->text(),filter);if(!file.isEmpty()){path->setText(file);m_editor->m_options[key]=file;}});
+  };
+  if(m_shown=="image_insert"){fileField("imageFile",true,false);field("imageWidth",tr("Image width"),"100 mm");}
+  if(m_shown.startsWith("image_")&&m_shown!="image_insert") {
+    auto* images=new QComboBox(this);for(const auto& image:m_editor->m_sk.images)images->addItem(tr("Image %1").arg(image.at("id").get<int>()),image.at("id").get<int>());
+    const int id=m_editor->option("imageId",m_editor->m_sk.images.empty()?"0":QString::number(m_editor->m_sk.images.back().at("id").get<int>())).toInt();images->setCurrentIndex(images->findData(id));m_fields->addRow(tr("Backdrop"),images);
+    connect(images,&QComboBox::currentIndexChanged,this,[this,images]{m_editor->m_options["imageId"]=images->currentData().toString();m_editor->m_panelFieldsDirty=true;refresh();});
+    if(m_shown=="image_edit") {
+      for(const auto& image:m_editor->m_sk.images)if(image.at("id").get<int>()==id) {
+        m_editor->m_options["imageX"]=QString::number(image.at("position")[0].get<double>())+" mm";m_editor->m_options["imageY"]=QString::number(image.at("position")[1].get<double>())+" mm";
+        m_editor->m_options["imageWidth"]=QString::number(image.at("width").get<double>())+" mm";m_editor->m_options["imageAngle"]=QString::number(image.value("angle",0.0))+" rad";m_editor->m_options["imageOpacity"]=QString::number(image.value("opacity",.5));
+      }
+      field("imageX",tr("X position"),"0 mm");field("imageY",tr("Y position"),"0 mm");field("imageWidth",tr("Image width"),"100 mm");field("imageAngle",tr("Rotation"),"0 deg");field("imageOpacity",tr("Opacity (0 to 1)"),"0.5");
+    }
+  }
+  if(m_shown=="image_calibrate")field("knownDistance",tr("Known distance"),"10 mm");
+  if(m_shown=="image_trace") {
+    field("threshold",tr("Threshold (0 to 255)"),"128");field("smoothing",tr("Smoothing (0 to 10 pixels)"),"1");field("noise",tr("Minimum area in pixels"),"8");field("traceTolerance",tr("Trace tolerance in pixels"),"0.75");field("cornerAngle",tr("Preserve corners above (degrees)"),"60");choice("invert",tr("Foreground"),{{"0",tr("Dark")},{"1",tr("Light")}});
+  }
+  if(m_shown=="vector_import"||m_shown=="vector_export")fileField("vectorFile",false,m_shown=="vector_export");
+  if(m_shown=="vector_import"||m_shown=="simplify")field("curveTolerance",tr("Curve tolerance"),"0.01 mm");
   if(m_shown=="offset") {field("distance",tr("Distance"),"5 mm");choice("corners",tr("Corners"),{{"round",tr("Round")},{"sharp",tr("Sharp")}});}
   if(m_shown=="move"||m_shown=="copy"||m_shown=="rect_pattern") {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"0 mm");}
   if(m_shown=="rotate"||m_shown=="scale"||m_shown=="polar_pattern") {field("cx",tr("Centre X"),"0 mm");field("cy",tr("Centre Y"),"0 mm");}

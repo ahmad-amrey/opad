@@ -175,7 +175,7 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
   m_active = true;
   m_tool = "select";
   m_prs = new SketchPrs();
-  m_cameraBefore = m_viewport->cameraJson();
+  m_cameraBefore = m_viewport->cameraJson();m_sectionBefore=m_viewport->sectionState();m_imagesStamp.clear();
   m_viewport->beginSketchInput(this, frame, sketchId);
   m_viewport->showOverlay(m_prs);
   m_viewport->lookAt(frame,true,false);
@@ -188,7 +188,10 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
 
 void SketchEditor::end() {
   if (!m_active) return;
-  if (m_tool == "project") m_viewport->setEdgeHover(false);
+  m_viewport->setEdgeHover(false);
+  ++m_imageRevision;if(m_imageJob)m_imageJob->cancel();m_imageJob=nullptr;
+  for(const auto& prs:m_imagePrs)m_viewport->removeOverlay(prs);m_imagePrs.clear();
+  m_viewport->restoreSection(m_sectionBefore);
   ++m_session;if(m_editJob)m_editJob->cancel();m_editJob=nullptr;
   m_active = false;
   m_fillTimer.stop();
@@ -201,7 +204,7 @@ void SketchEditor::end() {
   emit changed();
 }
 
-bool SketchEditor::empty() const { return m_sk.entities.empty(); }
+bool SketchEditor::empty() const { return m_sk.entities.empty() && m_sk.images.empty(); }
 
 bool SketchEditor::isFixedPoint(int id) const {
   const SkPoint* p = m_sk.point(id);
@@ -698,6 +701,7 @@ void SketchEditor::toggleConstruction() {
 
 // ---------------------------------------------------------------- drawing
 void SketchEditor::rebuild() {
+  refreshImages();
   if (m_prs.IsNull()) return;
   const Tokens& t = m_viewport->tokens();
   SketchPrs& d = *static_cast<SketchPrs*>(m_prs.get());
@@ -728,6 +732,7 @@ void SketchEditor::rebuild() {
   auto entityColor = [&](const SkEntity& e) {
     if (selected.count(e.id) || picked.count(e.id)) return t.hov;
     if (m_hover.kind == Hit::Entity && m_hover.id == e.id) return t.hov.lighter(115);
+    if (!e.source.is_null())return t.amber;
     if (e.fixed) return t.green;
     bool free = false;
     for (int pid : e.p) free = free || freePts.count(pid) > 0;

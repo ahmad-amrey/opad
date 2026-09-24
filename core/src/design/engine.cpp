@@ -1,3 +1,4 @@
+#include "opad/design/sketch_reference.hpp"
 #include "engine.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
@@ -411,6 +412,8 @@ struct Walk {
     bool moved = false;
     std::string error;
     try {
+      refresh_references(sk,[&](const json& ref,const std::string& mode){return derive_sketch(ctx.doc,ctx.scene,ctx.plane(plane),ref,mode,ctx.fresh);});
+      s+=sk.to_json().dump();
       evaluate_patterns(sk,ctx.params);
       s += sk.patterns.dump();
       evaluate_dimensions(sk, ctx.params);

@@ -130,6 +130,12 @@ class SketchEditor : public QObject, public SketchInput {
   void mirrorSelection(int axisLine);
   void offsetSelection();
   void projectHovered();
+  void referenceHover();
+  void pickReference();
+  bool applyReference();
+  bool applyImageTool();
+  bool imageClick(double u,double v);
+  void refreshImages();
   std::vector<std::pair<double, double>> sampled(const opad::design::SkEntity& e) const;  // polyline of a curve, sketch coordinates
   double distanceTo(const opad::design::SkEntity& e, double u, double v) const;
   void labelPosition(const opad::design::SkConstraint& c, double& u, double& v) const;
@@ -145,7 +151,9 @@ class SketchEditor : public QObject, public SketchInput {
   QString m_name;
   opad::json m_plane;
   opad::json m_initialGeometry;
-  opad::json m_cameraBefore;
+  opad::json m_cameraBefore,m_sectionBefore;
+  std::string m_imagesStamp;int m_imageRevision=0;Job* m_imageJob=nullptr;
+  std::vector<Handle(AIS_InteractiveObject)> m_imagePrs;
   QMap<QString,QString> m_options;
   bool m_panelFieldsDirty = false;
   int m_session=0;

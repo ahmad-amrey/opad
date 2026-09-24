@@ -103,6 +103,7 @@ void check_entity(const Sketch& sk, const SkEntity& e) {
   if (!ok) throw Error(who + ": wrong number of points (" + std::to_string(n) + ")");
   for (int pid : e.p)
     if (!sk.point(pid)) throw Error(who + ": point " + std::to_string(pid) + " does not exist");
+  if(!e.source.is_null() && (!e.source.is_object() || !e.source.contains("ref") || !e.source.at("ref").is_object() || e.source.value("slot",-1)<0 || e.source.value("count",0)<=e.source.value("slot",-1)))throw Error(who+": invalid projection source");
   if (has_radius(e.type) && !(e.r > 0 && std::isfinite(e.r))) throw Error(who + ": radius must be positive");
 }
 
@@ -161,6 +162,7 @@ int Sketch::next_id() const {
   for (const auto& p : points) top = std::max(top, p.id);
   for (const auto& e : entities) top = std::max(top, e.id);
   for (const auto& c : constraints) top = std::max(top, c.id);
+  for (const auto& image:images)top=std::max(top,image.at("id").get<int>());
   for (const auto& p : patterns) top = std::max(top,p.at("id").get<int>());
   return top + 1;
 }
@@ -284,6 +286,8 @@ void Sketch::validate() const {
   }
   for (const auto& e : entities) claim(e.id, "entity");
   for (const auto& c : constraints) claim(c.id, "constraint");
+  if(!images.is_array())throw Error("sketch images must be an array");
+  for(const auto& image:images){claim(image.at("id").get<int>(),"image");if(!image.at("data").is_string()||image.at("position").size()!=2||image.at("width").get<double>()<=0||image.at("height").get<double>()<=0||image.value("opacity",.5)<0||image.value("opacity",.5)>1)throw Error("invalid sketch image");}
   if(!patterns.is_array())throw Error("sketch patterns must be an array");
   for(const auto& p:patterns) {
     claim(p.at("id").get<int>(),"pattern");
@@ -310,6 +314,7 @@ json Sketch::to_json() const {
     if (e.degree) { o["degree"]=e.degree; o["knots"]=e.knots; o["multiplicities"]=e.multiplicities; o["weights"]=e.weights; o["periodic"]=e.periodic; }
     if (e.construction) o["construction"] = true;
     if (e.fixed) o["fixed"] = true;
+    if(!e.source.is_null())o["source"]=e.source;
     je.push_back(std::move(o));
   }
   for (const auto& c : constraints) {
@@ -328,6 +333,7 @@ json Sketch::to_json() const {
   json out{{"points", std::move(jp)}, {"entities", std::move(je)}, {"constraints", std::move(jc)}};
   if (id_watermark) out["id_watermark"] = id_watermark;
   if(!patterns.empty())out["patterns"]=patterns;
+  if(!images.empty()){out["images"]=images;ordered(out["images"]);}
   return out;
 }
 
@@ -337,6 +343,7 @@ Sketch Sketch::from_json(const json& j) {
     if (!j.is_object()) throw Error("sketch: not a JSON object");
     sk.id_watermark = j.value("id_watermark", 0);
     sk.patterns = j.value("patterns",json::array());
+    sk.images=j.value("images",json::array());
     auto list = [&](const char* key) -> json {
       if (!j.contains(key)) return json::array();
       if (!j.at(key).is_array()) throw Error(std::string("sketch: '") + key + "' is not an array");
@@ -359,7 +366,7 @@ Sketch Sketch::from_json(const json& j) {
       e.degree=o.value("degree",0); e.knots=o.value("knots",std::vector<double>{});
       e.weights=o.value("weights",std::vector<double>{}); e.multiplicities=o.value("multiplicities",std::vector<int>{}); e.periodic=o.value("periodic",false);
       e.construction = o.value("construction", false);
-      e.fixed = o.value("fixed", false);
+      e.fixed = o.value("fixed", false);e.source=o.value("source",json());
       sk.entities.push_back(std::move(e));
     }
     for (const auto& o : list("constraints")) {

@@ -425,3 +425,16 @@ void Viewport::benchDesignShot(const QString& path) {
   m_view->Redraw();
   grabImage().save(path);
 }
+
+bool Viewport::hoveredReference(opad::Ref& ref) const {
+  if(!m_initialised||!m_ctx->HasDetected())return false;
+  const auto object=m_ctx->DetectedInteractive();const auto found=m_nodeOf.find(object.get());if(found==m_nodeOf.end())return false;
+  ref.body=found->second;ref.kind=opad::Ref::Kind::Body;
+  const auto owner=Handle(SubShapeOwner)::DownCast(m_ctx->DetectedOwner());
+  if(m_filter!=SelFilter::Body){if(owner.IsNull())return false;ref.kind=owner->kind();ref.index=owner->index();}return true;
+}
+void Viewport::showBackdrop(const Handle(AIS_InteractiveObject)& obj) {
+  if(!m_initialised||obj.IsNull())return;obj->SetZLayer(Graphic3d_ZLayerId_Default);m_ctx->Display(obj,3,-1,false);redrawScene();
+}
+opad::json Viewport::sectionState() const {return {{"enabled",m_sectionEnabled},{"origin",m_sectionOrigin},{"normal",m_sectionNormal},{"caps",m_sectionCaps}};}
+void Viewport::restoreSection(const opad::json& state) {setSection(state.at("enabled").get<bool>(),state.at("origin").get<opad::Vec3>(),state.at("normal").get<opad::Vec3>(),state.at("caps").get<bool>());}
