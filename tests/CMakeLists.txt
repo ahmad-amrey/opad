@@ -37,6 +37,10 @@ add_executable(opad-test-core test_core.cpp)
 target_link_libraries(opad-test-core PRIVATE opad::core)
 add_test(NAME core COMMAND opad-test-core)
 
+add_executable(opad-test-mesh-recovery test_mesh_recovery.cpp)
+target_link_libraries(opad-test-mesh-recovery PRIVATE opad::core)
+add_test(NAME mesh-recovery COMMAND opad-test-mesh-recovery)
+
 add_executable(opad-test-drawing test_drawing.cpp)
 target_link_libraries(opad-test-drawing PRIVATE opad::core)
 add_test(NAME drawing COMMAND opad-test-drawing)

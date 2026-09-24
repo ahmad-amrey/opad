@@ -3,6 +3,7 @@
 #include <TopExp_Explorer.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
+#include "opad/mesh.hpp"
 #include <V3d_DirectionalLight.hxx>
 #include "DepthBias.hpp"
 #include "CursorWrap.hpp"
@@ -28,7 +29,6 @@
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
-#include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRep_Tool.hxx>
 #include <Poly_Polygon3D.hxx>
@@ -1310,7 +1310,9 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
       std::shared_ptr<BodyPrs> prs;
       try {
         const Bnd_Box box = opad::body_bbox(*cache, j.key, j.shape);
-        BRepMesh_IncrementalMesh(j.shape, deflectionForBox(box), Standard_False, 20.0 * M_PI / 180.0, Standard_True);
+        const auto mesh = opad::mesh_shape(j.shape, deflectionForBox(box));
+        if (mesh.status || mesh.recovered_faces || mesh.incomplete_cones)
+          trace::log(QString("mesh %1: status=%2 recovered=%3 incomplete cones=%4").arg(QString::fromStdString(j.key)).arg(mesh.status).arg(mesh.recovered_faces).arg(mesh.incomplete_cones));
         // The box from before the mesh is only good for the deflection: it follows the surfaces' poles, and one
         // small body with a 10 m box zoomed Fit All out of the whole Engine. The presentation gets the mesh's box.
         prs = BodyPrs::build(j.shape, opad::refine_body_bbox(*cache, j.key, j.shape));  // so Display() on the UI thread is cheap

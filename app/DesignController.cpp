@@ -4,7 +4,6 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
-#include <BRepMesh_IncrementalMesh.hxx>
 #include <BRep_Builder.hxx>
 #include <Bnd_Box.hxx>
 #include <TopoDS_Compound.hxx>
@@ -16,6 +15,7 @@
 #include "I18n.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/geometry.hpp"
+#include "opad/mesh.hpp"
 
 using namespace opad::design;
 
@@ -482,7 +482,7 @@ void DesignController::runPreview(bool commit) {
         Bnd_Box box;
         BRepBndLib::Add(*c.shape, box, Standard_False);
         const double defl = box.IsVoid() ? 0.1 : std::clamp(std::sqrt(box.SquareExtent()) * 0.002, 0.02, 2.0);
-        BRepMesh_IncrementalMesh(*c.shape, defl, Standard_False, 0.35, Standard_True);
+        opad::mesh_shape(*c.shape, defl);
       }
   }, [this, serial, plan, stamp, target, commit, commitReady](bool ok, const QString& error) {
     if (serial != m_planSerial || !m_featureOn) return;  // superseded

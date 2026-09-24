@@ -21,6 +21,14 @@ struct Mesh {
   static Mesh deserialize(const std::string& blob);
 };
 
+struct MeshingReport {
+  int status = 0;
+  int recovered_faces = 0;
+  int incomplete_cones = 0;
+};
+// Worker-only: prepare triangulations, recovering incomplete conical faces without
+// changing the B-rep, subshape identities or analytic geometry.
+MeshingReport mesh_shape(const TopoDS_Shape& s, double linear_tol, double angular_deg = 20.0);
 Mesh tessellate(const TopoDS_Shape& s, double linear_tol, double angular_deg = 20.0);
 // Tessellates a body-store entry through the user cache (F10).
 Mesh tessellate_body(const Document& doc, const std::string& key, double linear_tol);

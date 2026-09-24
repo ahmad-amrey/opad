@@ -1,6 +1,5 @@
 #include "opad/mesh.hpp"
 
-#include <BRepMesh_IncrementalMesh.hxx>
 #include <BRep_Tool.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Standard_Version.hxx>
@@ -76,8 +75,7 @@ void compute_normals(const TopoDS_Face& face, const Handle(Poly_Triangulation)& 
 Mesh tessellate(const TopoDS_Shape& s, double linear_tol, double angular_deg) {
   Mesh mesh;
   if (s.IsNull()) return mesh;
-  BRepMesh_IncrementalMesh mesher(s, linear_tol, Standard_False, angular_deg * M_PI / 180.0, Standard_True);
-  (void)mesher;
+  mesh_shape(s, linear_tol, angular_deg);
 
   TopTools_IndexedMapOfShape faces;
   TopExp::MapShapes(s, TopAbs_FACE, faces);
@@ -166,7 +164,7 @@ Mesh Mesh::deserialize(const std::string& blob) {
 Mesh tessellate_body(const Document& doc, const std::string& key, double linear_tol) {
   char tol[32];
   std::snprintf(tol, sizeof tol, "%.6g", linear_tol);
-  std::string cache_key = key + "-" + tol;
+  std::string cache_key = key + "-recovery1-" + tol;
   if (auto blob = cache_get("mesh", cache_key)) {
     try {
       return Mesh::deserialize(*blob);

@@ -8,6 +8,7 @@ add_library(opad_core STATIC
   src/mesh_circles.cpp
   src/cache.cpp
   src/mesh.cpp
+  src/mesh_recovery.cpp
   src/step_io.cpp
   src/drawing_io.cpp
   src/inspect.cpp

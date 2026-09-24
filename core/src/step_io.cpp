@@ -1,7 +1,6 @@
 #include "opad/step_io.hpp"
 
 #include <BRepCheck_Analyzer.hxx>
-#include <BRepMesh_IncrementalMesh.hxx>
 #include <BRep_Builder.hxx>
 #include <IFSelect_ReturnStatus.hxx>
 #include <Interface_Static.hxx>
@@ -554,7 +553,7 @@ Handle(TDocStd_Document) build_xcaf(const Document& doc, const Scene& scene, con
     if (n->kind == Node::Kind::Body) {
       if (n->body_missing) return TopoDS_Shape();
       proto = body_shape(doc, n->body_key);
-      if (with_mesh) BRepMesh_IncrementalMesh(proto, tol, Standard_False, 20.0 * M_PI / 180.0, Standard_True);
+      if (with_mesh) mesh_shape(proto, tol);
     } else {
       TopoDS_Compound comp;
       bb.MakeCompound(comp);

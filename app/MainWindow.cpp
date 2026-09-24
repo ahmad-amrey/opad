@@ -2062,6 +2062,18 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
+  // Read-only render regression: retain imported geometry and dump it before
+  // the general selection benchmark hides/edits its leaf.
+  if(const QString shot=qEnvironmentVariable("OPAD_BENCH_MESH_SHOT");!shot.isEmpty()) {
+    m_viewport->standardView(qEnvironmentVariable("OPAD_BENCH_VIEW","iso"));
+    m_viewport->fitAll();
+    QTimer::singleShot(500,this,[this,shot] {
+      const bool saved=m_viewport->grabImage().save(shot);
+      trace::log(QString("bench: mesh render %1").arg(saved?"PASS":"FAIL"));
+      QCoreApplication::exit(saved?0:2);
+    });
+    return;
+  }
   if(benchShortcuts())return;
   if(benchLargeSketch())return;
   if(benchTodo5())return;
