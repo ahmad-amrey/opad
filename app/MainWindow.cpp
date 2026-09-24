@@ -360,6 +360,18 @@ void MainWindow::buildActions() {
   });
   QAction* grid = addAction("view.grid", tr("Grid"), "grid", QKeySequence("G"), [this] {}, true);
   connect(grid, &QAction::toggled, this, [this](bool on) { m_viewport->setGrid(on); });
+  addAction("view.gridSettings",tr("Grid settings"),"grid",QKeySequence("S"),[this] {
+    auto* dialog=new QDialog(this,Qt::Tool);dialog->setAttribute(Qt::WA_DeleteOnClose);dialog->setWindowTitle(tr("Grid settings"));
+    auto* form=new QFormLayout(dialog);auto* spacing=new QDoubleSpinBox(dialog);spacing->setRange(0,100000);spacing->setDecimals(3);spacing->setSpecialValueText(tr("Automatic"));spacing->setValue(m_settings.value("view/gridSpacing",0).toDouble());
+    auto* extent=new QDoubleSpinBox(dialog);extent->setRange(1,1000000);extent->setValue(m_settings.value("view/gridExtent",100).toDouble());
+    form->addRow(tr("Spacing (mm)"),spacing);form->addRow(tr("Minimum extent (mm)"),extent);
+    auto changed=[this,spacing,extent]{m_viewport->configureGrid(spacing->value(),extent->value());};
+    connect(spacing,&QDoubleSpinBox::valueChanged,dialog,changed);connect(extent,&QDoubleSpinBox::valueChanged,dialog,changed);
+    action("view.grid")->setChecked(true);dialog->show();
+  });
+  auto* through=addAction("select.through",tr("Select occluded objects"),"wireframe",QKeySequence("Alt+X"),[this]{},true);
+  through->setChecked(m_settings.value("view/selectThrough",false).toBool());
+  connect(through,&QAction::toggled,this,[this](bool on){m_settings.setValue("view/selectThrough",on);m_viewport->setSelectThrough(on);});
   addAction("view.isolate", tr("Isolate"), "isolate", QKeySequence("I"), [this] { m_viewport->isolate(currentNodeIds()); });
   // macOS treats any action starting with "Exit" as Quit unless its menu role is explicit.
   addAction("view.unisolate", tr("Exit isolate"), "showAll", QKeySequence("Shift+I"), [this] { m_viewport->isolate({}); })->setMenuRole(QAction::NoRole);
@@ -526,7 +538,7 @@ void MainWindow::buildMenus() {
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
   add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = menuBar()->addMenu(tr("&View"));
-  add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "-", "view.isolate", "view.unisolate", "-", "view.saveview"});
+  add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
   view->addSeparator();
   QMenu* nav = view->addMenu(tr("Navigation preset"));
@@ -563,7 +575,7 @@ void MainWindow::buildRibbon() {
   Workspace sketchWs{tr("Sketch"), "sketch", "", tr("Drawing a sketch. Finish sketch returns to Design."), tr("ops: sketch · edit")};
   sketchWs.contextual = true;
   m_sketchWorkspace = m_ribbon->addWorkspace(sketchWs);
-  m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho", "view.2d"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid"}), acts({"view.isolate", "view.unisolate"})});
+  m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho", "view.2d"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"}), acts({"view.isolate", "view.unisolate"})});
   m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"}), acts({"inspect.section", "inspect.flip"})});
   m_ribbon->addTab(review, tr("Annotate"), {acts({"annotate.add", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
   m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
@@ -575,7 +587,7 @@ void MainWindow::buildRibbon() {
   m_ribbon->addTab(design, tr("Construct"), {acts({"design.plane", "design.axis"}), acts({"design.parameters", "design.edit", "design.regenerate"})});
   m_ribbon->addTab(design, tr("Assemble"), {acts({"file.import", "design.newcomponent", "design.reparent"}), acts({"edit.rename", "edit.delete", "edit.restore"}),
                                             acts({"design.colour", "design.opacity", "design.lock", "edit.hide", "view.isolate"})});
-  m_ribbon->addTab(design,tr("View"),{acts({"view.fit","view.home","view.2d","view.ortho"}),acts({"view.shaded","view.edges","view.wire","view.grid"})});
+  m_ribbon->addTab(design,tr("View"),{acts({"view.fit","view.home","view.2d","view.ortho"}),acts({"view.shaded","view.edges","view.wire","view.grid","view.gridSettings","select.through"})});
   m_ribbon->addTab(design, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
   m_ribbon->addTab(m_sketchWorkspace, tr("Sketch"), {acts({"sketch.finish", "sketch.cancel"}), acts({"sketch.select", "sketch.line", "sketch.rect", "sketch.crect", "sketch.circle", "sketch.circle3", "sketch.arc3", "sketch.arcc"}),
                                                      acts({"sketch.polygon", "sketch.slot", "sketch.ellipse", "sketch.spline", "sketch.point"}), acts({"sketch.dimension", "sketch.construction"})});
@@ -661,6 +673,7 @@ void MainWindow::buildCentral() {
   m_stack->setObjectName("central");
   m_empty = new EmptyState(m_stack);
   m_viewport = new Viewport(m_doc, m_stack);
+  m_viewport->setSelectThrough(action("select.through")->isChecked());
   m_stack->addWidget(m_empty);
   m_stack->addWidget(m_viewport);
   setCentralWidget(m_stack);
@@ -2022,6 +2035,10 @@ void MainWindow::runBench() {
               m_toolPanel->grab().save(shot + ".radius-panel.png");
             }
             if (!radiusOk) return QCoreApplication::exit(2);
+            const auto saved=m_doc->scene.measurements.size();m_pinAction->trigger();
+            const bool pinned=m_doc->scene.measurements.size()==saved+1;
+            trace::log(QString("bench: pin measurement %1").arg(pinned?"PASS":"FAIL"));
+            if(!pinned) return QCoreApplication::exit(2);
             // Route Escape from a child of the floating measurement window.
             QKeyEvent escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier);
             QCoreApplication::sendEvent(m_toolSteps,&escape);
@@ -2032,7 +2049,10 @@ void MainWindow::runBench() {
             QTimer::singleShot(250, this, [this] {
               const bool cleared = m_viewport->selection().empty();
               trace::log(QStringLiteral("bench: picking Esc clears centers %1").arg(cleared ? "PASS" : "FAIL"));
-              QCoreApplication::exit(cleared ? 0 : 2);
+              m_doc->newDocument();
+              const bool clean=m_doc->scene.measurements.empty() && m_lastMeasure.is_null() && !m_design->sketchActive();
+              trace::log(QString("bench: transient measurement reset %1").arg(clean?"PASS":"FAIL"));
+              QCoreApplication::exit(cleared && clean ? 0 : 2);
             });
           });
         });

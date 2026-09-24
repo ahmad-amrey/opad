@@ -56,13 +56,16 @@ void SubHighlight::Compute(const Handle(PrsMgr_PresentationManager)&, const Hand
     for (const auto& a : m_triangles) g->AddPrimitiveArray(a);
   }
   if (!m_segments.empty()) {
+    auto halo=prs->NewGroup();Handle(Graphic3d_AspectLine3d) glow=new Graphic3d_AspectLine3d(Quantity_NOC_WHITE,Aspect_TOL_SOLID,6);
+    glow->SetInteriorColor(Quantity_ColorRGBA(Quantity_NOC_WHITE,0.35f));glow->SetAlphaMode(Graphic3d_AlphaMode_Blend);halo->SetGroupPrimitivesAspect(glow);
+    for(const auto& a:m_segments) halo->AddPrimitiveArray(a);
     Handle(Graphic3d_Group) g = prs->NewGroup();
     g->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(m_color, Aspect_TOL_SOLID, 3.0));
     for (const auto& a : m_segments) g->AddPrimitiveArray(a);
   }
   if (!m_points.empty()) {
     Handle(Graphic3d_Group) g = prs->NewGroup();
-    g->SetGroupPrimitivesAspect(new Graphic3d_AspectMarker3d(Aspect_TOM_O_POINT, m_color, 2.0));
+    g->SetGroupPrimitivesAspect(new Graphic3d_AspectMarker3d(Aspect_TOM_BALL, m_color, 4.0));
     for (const auto& a : m_points) g->AddPrimitiveArray(a);
   }
 }

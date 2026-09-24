@@ -65,6 +65,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setStyle(Style s);
   Style style() const { return m_style; }
   void setGrid(bool on);
+  void configureGrid(double spacing,double extent);
+  void setSelectThrough(bool on) {m_selectThrough=on;}
+  void UpdateRubberBand(const Graphic3d_Vec2i& from,const Graphic3d_Vec2i& to) override;
   void setGridSnap(bool on) { m_gridSnap=on; }
   bool gridSnap() const { return m_gridSnap; }
   double gridStep() const { return m_gridStep; }
@@ -220,6 +223,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void OnSelectionChanged(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
   // Timed when OPAD_TRACE is set: a slow frame is either picking under the mouse or the redraw itself.
   gp_Pnt GravityPoint(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
+  void handleSelectionPoly(const Handle(AIS_InteractiveContext)& ctx,const Handle(V3d_View)& view) override;
   void handleMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
   void handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
 
@@ -228,7 +232,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void updateDepthBias();
   bool m_twoDimensional = false;
   Handle(Graphic3d_Camera) m_threeDimensionalCamera;
-  QPointF m_dragOffset;
+  QPointF m_dragOffset, m_warpPosition;
+  bool m_selectThrough=false, m_boxCrossing=false;
+  Graphic3d_Vec2i m_boxStart,m_boxEnd;
+  Job* m_boxJob=nullptr;
   CursorWarpGate m_warpGate;
   void updateGridExtent();
   gp_Pnt drawingOrbitPoint();

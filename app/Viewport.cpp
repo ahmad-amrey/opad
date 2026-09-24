@@ -1,6 +1,7 @@
 #include <QSettings>
 #include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
+#include <V3d_DirectionalLight.hxx>
 #include "DepthBias.hpp"
 #include "CursorWrap.hpp"
 #include <QScreen>
@@ -223,6 +224,8 @@ void Viewport::initViewer() {
   m_viewer = new V3d_Viewer(driver);
   m_viewer->SetDefaultLights();
   m_viewer->SetLightOn();
+  Handle(V3d_DirectionalLight) overhead=new V3d_DirectionalLight(gp_Dir(0,0,-1),Quantity_NOC_WHITE,false);
+  overhead->SetIntensity(0.75f);m_viewer->AddLight(overhead);m_viewer->SetLightOn(overhead);
   m_ctx = new AIS_InteractiveContext(m_viewer);
   m_ctx->SetPixelTolerance(4);
   m_ctx->SetAutoActivateSelection(Standard_False);  // displayBody activates the current filter itself
@@ -311,20 +314,29 @@ void Viewport::applyTokens() {
   m_view->SetBackgroundColor(occ(t.vp));
   m_view->SetBgGradientStyle(Aspect_GradientFillMethod_None);
   setSceneBackground(m_sceneBackground);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetColor(occ(t.hov));
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetColor(occ(t.hov));
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetColor(Quantity_NOC_WHITE);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetColor(Quantity_NOC_WHITE);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetTransparency(0.35f);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetTransparency(0.35f);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetDisplayMode(AIS_Shaded);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetFaceBoundaryDraw(false);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetColor(occ(t.sel));
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(occ(t.sel));
+  m_ctx->SetToHilightSelected(true);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetColor(Quantity_Color(0.62,0.35,0.96,Quantity_TOC_sRGB));
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(Quantity_Color(0.62,0.35,0.96,Quantity_TOC_sRGB));
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetTransparency(0.5f);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetTransparency(0.35f);
   // X-ray selection: the highlight is drawn in the Topmost layer, which has its own depth buffer,
   // so a selected object shows through whatever is in front of it.
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetZLayer(Graphic3d_ZLayerId_Topmost);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetZLayer(Graphic3d_ZLayerId_Topmost);
+  for(auto kind:{Prs3d_TypeOfHighlight_Dynamic,Prs3d_TypeOfHighlight_LocalDynamic}) {
+    auto drawer=m_ctx->HighlightStyle(kind);
+    drawer->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL,Quantity_NOC_WHITE,5));
+    drawer->PointAspect()->Aspect()->SetInteriorColor(Quantity_ColorRGBA(Quantity_NOC_WHITE,0.65f));
+    drawer->PointAspect()->Aspect()->SetAlphaMode(Graphic3d_AlphaMode_Blend);
+    drawer->SetLineAspect(new Prs3d_LineAspect(Quantity_NOC_WHITE,Aspect_TOL_SOLID,3));
+    drawer->SetWireAspect(new Prs3d_LineAspect(Quantity_NOC_WHITE,Aspect_TOL_SOLID,3));
+  }
   if (!m_subHl.IsNull()) refreshSubHighlight();  // drawn by us in the selection colour
   // View cube per the design: flat three-tone box with dark labels, thin X/Y/Z axes in red/green/blue along
   // the lower edges, and the hovered face/edge/corner filled with the hover accent to show where a click goes.
@@ -450,7 +462,9 @@ void Viewport::updateGridExtent() {
     const auto lo=bounds.CornerMin(), hi=bounds.CornerMax();
     extent=std::max({extent,std::abs(lo.X()),std::abs(lo.Y()),std::abs(lo.Z()),std::abs(hi.X()),std::abs(hi.Y()),std::abs(hi.Z())})*1.1;
   }
-  const double step=std::pow(10.0,std::floor(std::log10(extent/10.0)));
+  extent=std::max(extent,QSettings().value("view/gridExtent",100.0).toDouble());
+  const double custom=QSettings().value("view/gridSpacing",0.0).toDouble();
+  const double step=custom>0?custom:std::pow(10.0,std::floor(std::log10(extent/10.0)));
   m_gridStep=step;
   m_viewer->SetRectangularGridValues(0,0,step,step,0);
   m_viewer->SetRectangularGridGraphicValues(extent,extent,0);
@@ -658,7 +672,7 @@ void Viewport::refreshSubHighlight() {
     if (!o.IsNull() && Handle(CircleOwner)::DownCast(o).IsNull()) st->owners.push_back(o);
   }
   if (st->owners.empty()) return;
-  st->hl = new SubHighlight(occ(m_tokens.sel));
+  st->hl = new SubHighlight(Quantity_Color(0.62,0.35,0.96,Quantity_TOC_sRGB));
   constexpr size_t kChunk = 200000;  // nodes per primitive array: turning a chunk into an array stays a small step
   auto flush = [st](bool all) {
     if (!st->tv.empty() && (all || st->tv.size() >= kChunk)) {
@@ -960,7 +974,18 @@ void Viewport::standardView(const QString& name) {
   fitAll();
 }
 
-void Viewport::home() { standardView("iso"); }
+void Viewport::home() {
+  if(!m_initialised) return;
+  myViewAnimation->Stop();m_needFit=false;
+  if(!m_twoDimensional) m_view->SetProj(V3d_XposYnegZpos);
+  const auto camera=m_view->Camera();const gp_Vec offset(camera->Center(),gp::Origin());
+  camera->SetEyeAndCenter(camera->Eye().Translated(offset),gp::Origin());
+  m_view->Invalidate();requestRedraw();
+}
+void Viewport::configureGrid(double spacing,double extent) {
+  QSettings().setValue("view/gridSpacing",std::max(0.0,spacing));QSettings().setValue("view/gridExtent",std::max(1.0,extent));
+  updateGridExtent();redrawScene();
+}
 
 void Viewport::rollView(double degrees) {
   if (!m_initialised || m_twoDimensional) return;
@@ -994,6 +1019,7 @@ opad::json Viewport::cameraJson() const {
 
 void Viewport::setCameraJson(const opad::json& j) {
   if (!m_initialised) return;
+  myViewAnimation->Stop();
   m_needFit = false;
   opad::Camera cam = opad::Camera::from_json(j);
   Handle(Graphic3d_Camera) c = m_view->Camera();
@@ -1670,6 +1696,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   finishTrackpadScroll();
   m_nativePinching = false;
   setFocus();
+  if(m_boxJob) m_boxJob->cancel();
   if(e->buttons()==e->button()) { m_dragOffset = {}; m_warpGate.pending = false; }
   m_pressPos = (e->position()+m_dragOffset).toPoint();
   m_rightPress = e->button() == Qt::RightButton;
@@ -1707,7 +1734,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   }
   if (!m_cubeGesture && e->button()==Qt::LeftButton && m_initialised && m_pickAccumulate && !m_measureSelectionLocked) {
     auto tracked=m_centers.find(m_trackingMarker);
-    if(tracked!=m_centers.end() && (QPointF(widgetPoint(tracked->second.ref.point))-e->position()).manhattanLength()<16) {
+    if(tracked!=m_centers.end() && (!m_ctx->HasDetected() || m_ctx->DetectedInteractive()==tracked->second.ais) && (QPointF(widgetPoint(tracked->second.ref.point))-e->position()).manhattanLength()<16) {
       m_snapClick=m_trackingMarker; e->accept(); return;
     }
   }
@@ -1754,7 +1781,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
     return;
   }
   QPointF releasePosition=e->position();
-  if(m_warpGate.pending && !m_warpGate.accept(e->globalPosition().toPoint())) releasePosition=mapFromGlobal(m_warpGate.to);
+  if(m_warpGate.pending) {releasePosition=m_warpPosition-m_dragOffset;m_warpGate.pending=false;}
   if (m_initialised && UpdateMouseButtons(devicePos(releasePosition + m_dragOffset), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
   if (m_cubeGesture && e->button() == Qt::LeftButton) {
     m_cubeGesture = false;
@@ -1769,7 +1796,9 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
 }
 
 void Viewport::mouseMoveEvent(QMouseEvent* e) {
+  const bool awaitingWarp=m_warpGate.pending;
   if (e->buttons() != Qt::NoButton && !m_warpGate.accept(e->globalPosition().toPoint())) return;
+  if(awaitingWarp && !m_warpGate.pending && e->buttons()!=Qt::NoButton) m_dragOffset=m_warpPosition-e->position();
   m_trackingCursor = e->position();
   m_trackingDirty = true;
   if (m_blocked) return;
@@ -1799,11 +1828,13 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
   if (navigation && e->buttons() != Qt::NoButton && e->spontaneous()
       && QGuiApplication::platformName() != "wayland") {
     const QPoint global = e->globalPosition().toPoint();
-    if (auto* screen = QGuiApplication::screenAt(global)) {
-      const QPoint target = wrappedCursor(global, screen->geometry());
+    if (QGuiApplication::screenAt(global)) {
+      std::vector<QRect> screens;for(auto* display:QGuiApplication::screens()) screens.push_back(display->geometry());
+      const QPoint target = wrappedDesktopCursor(global,screens);
       if (target != global) {
         // Keep controller coordinates continuous across the warp, including its
         // generated move event; the scene never sees a display-width jump.
+        m_warpPosition=e->position()+m_dragOffset;
         m_dragOffset += global - target;
         m_warpGate.begin(global, target);
         QCursor::setPos(target);

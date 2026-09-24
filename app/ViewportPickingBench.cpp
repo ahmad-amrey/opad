@@ -1,6 +1,10 @@
+#include <QSignalBlocker>
+#include <QSettings>
+#include <QEventLoop>
 // In-app regression, enabled explicitly with OPAD_BENCH_PICKING and --bench-select.
 // Qt events stay within this widget; this never moves the OS cursor or drives the user's desktop.
 #include "Viewport.hpp"
+#include <AIS_RubberBand.hxx>
 #include "Jobs.hpp"
 #include "NavCube.hpp"
 #include "CursorWrap.hpp"
@@ -84,6 +88,29 @@ bool Viewport::benchPicking() {
       m_view->Camera()->SetEyeAndCenter(gp_Pnt(0, 0, 100), gp_Pnt(0, 0, 0));
       m_view->Camera()->SetUp(gp::DY()); m_view->Camera()->SetScale(100);
       m_view->Redraw();
+      {
+        QSignalBlocker blockedSignals(this);
+        m_nodeOf[nearAis.get()]="near";m_nodeOf[farAis.get()]="far";
+        m_ctx->Load(nearAis,-1);m_ctx->Load(farAis,-1);m_ctx->Activate(nearAis,0);m_ctx->Activate(farAis,0);
+        const bool oldThrough=m_selectThrough;
+        auto rectangle=[&](double x0,double x1,bool through) {
+          m_selectThrough=through;
+          UpdateRubberBand(devicePos(widgetPoint({x0,11,0})),devicePos(widgetPoint({x1,-11,0})));
+          myGL.Selection=myUI.Selection;myGL.Selection.Scheme=AIS_SelectionScheme_Replace;myGL.Selection.ToApplyTool=true;
+          handleSelectionPoly(m_ctx,m_view);
+          QElapsedTimer wait;wait.start();while(m_boxJob && wait.elapsed()<15000) QCoreApplication::processEvents(QEventLoop::AllEvents,10);
+          require(!m_boxJob,"visible box selection timed out");
+        };
+        rectangle(30,41,true);require(!m_ctx->IsSelected(nearAis),"enclosing box selected a partially covered body");
+        rectangle(41,30,true);require(m_ctx->IsSelected(nearAis) && m_ctx->IsSelected(farAis),"crossing box missed overlapping bodies");
+        rectangle(19,41,false);require(m_ctx->IsSelected(nearAis) && !m_ctx->IsSelected(farAis),"visible-only box selected an occluded body");
+        m_selectThrough=oldThrough;
+        m_ctx->ClearSelected(false);m_ctx->Deactivate(nearAis);m_ctx->Deactivate(farAis);
+        m_nodeOf.erase(nearAis.get());m_nodeOf.erase(farAis.get());
+        myUI.Reset();myGL.Reset();myUI.Selection.Points.Clear();myGL.Selection.Points.Clear();
+        m_ctx->Remove(myRubberBand,false);myRubberBand->ClearPoints();
+        trace::log(QStringLiteral("bench: directional / occluded box selection PASS"));
+      }
       const auto center = devicePos(QPointF(width()/2.0, height()/2.0));
       gp_Pnt picked;
       require(!navigationPoint(center, picked), "off-center test unexpectedly hits geometry at center");
@@ -428,6 +455,16 @@ bool Viewport::benchPicking() {
     setRenderQuality(previousQuality);
     trace::log(QStringLiteral("bench: three rendering presets PASS"));
 
+    {
+      const std::vector<QRect> screens={QRect(-1920,0,1920,1080),QRect(0,0,2560,1440)};
+      require(wrappedDesktopCursor(QPoint(-1,500),screens)==QPoint(-1,500),"cursor warped at an internal monitor seam");
+      require(wrappedDesktopCursor(QPoint(2559,500),screens)==QPoint(-1918,500),"cursor did not wrap across full desktop");
+      require(wrappedDesktopCursor(QPoint(2559,1300),screens)==QPoint(2,1300),"offset monitor wrap landed outside display");
+      auto beforeHome=new Graphic3d_Camera(*m_view->Camera());
+      home();require(m_view->Camera()->Center().Distance(gp::Origin())<1e-9,"Home did not center the origin");
+      m_view->SetCamera(beforeHome);
+      trace::log(QStringLiteral("bench: desktop topology / origin Home PASS"));
+    }
     auto move = [this](const QPoint& p) {
       QMouseEvent e(QEvent::MouseMove, QPointF(p), mapToGlobal(QPointF(p)), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
       QCoreApplication::sendEvent(this, &e);
@@ -444,6 +481,8 @@ bool Viewport::benchPicking() {
       QCoreApplication::sendEvent(this, &release);
       paintEvent(nullptr);
     };
+    if(m_selJob) m_selJob->cancel();
+    m_ctx->ClearSelected(false);clearCenters();
     setPickAccumulate(true, true);
     std::vector<opad::Ref> picked;
     for (const auto& [id, item] : m_items) {
