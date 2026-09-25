@@ -80,7 +80,8 @@ struct Basis {
 
 }  // namespace
 
-Image render_items(const std::vector<RenderItem>& items, const RenderOptions& opt) {
+Image render_items(const std::vector<RenderItem>& items, const RenderOptions& opt, json* receipt) {
+  if(receipt)(*receipt)["camera"]=nullptr;
   const int ss = std::max(1, std::min(opt.supersample, 4));
   const int W = opt.width * ss, H = opt.height * ss;
   Image out;
@@ -142,6 +143,11 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
       b.half_w = half_h * aspect;
       b.eye = sub(target, mul(forward, radius * 4));
       b.focal = 0;
+    }
+    if(receipt){
+      Camera actual=cam;actual.absolute=true;actual.eye={b.eye.x,b.eye.y,b.eye.z};
+      actual.target={target.x,target.y,target.z};actual.up={up.x,up.y,up.z};
+      actual.scale=cam.perspective?0:b.half_h*2;(*receipt)["camera"]=actual.to_json();
     }
     V3 light = norm(add(add(mul(forward, -1), mul(right, 0.35)), mul(up, 0.6)));
 
@@ -267,13 +273,15 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
   return out;
 }
 
-Image render_scene(const Document& doc, const Scene& scene, const RenderOptions& opt) {
+Image render_scene(const Document& doc, const Scene& scene, const RenderOptions& opt, json* receipt) {
+  if(receipt)(*receipt)["visible_ids"]=json::array();
   std::vector<std::string> bodies = opt.select.empty() ? scene.all_bodies() : std::vector<std::string>{};
   if (!opt.select.empty())
     for (const auto& id : opt.select) {
       if (!scene.node(id)) throw Error("render: unknown node " + id);
       for (const auto& b : scene.bodies_under(id)) bodies.push_back(b);
     }
+  std::sort(bodies.begin(),bodies.end());bodies.erase(std::unique(bodies.begin(),bodies.end()),bodies.end());
   std::vector<Mesh> meshes;
   meshes.reserve(bodies.size());
   std::vector<RenderItem> items;
@@ -282,6 +290,8 @@ Image render_scene(const Document& doc, const Scene& scene, const RenderOptions&
     const Node* n = scene.node(bid);
     if (!n || n->body_missing) continue;
     if (!opt.ignore_visibility && !scene.effectively_visible(bid)) continue;
+    if(n->opacity<=0)continue;
+    if(receipt)(*receipt)["visible_ids"].push_back(bid);
     meshes.push_back(tessellate_body(doc, n->body_key, opt.tolerance));
     RenderItem it;
     it.mesh = &meshes.back();
@@ -291,7 +301,7 @@ Image render_scene(const Document& doc, const Scene& scene, const RenderOptions&
     it.id = id++;
     items.push_back(it);
   }
-  return render_items(items, opt);
+  return render_items(items, opt, receipt);
 }
 
 // ---------------------------------------------------------------- PNG (zlib deflate with fixed Huffman codes)

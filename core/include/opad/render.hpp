@@ -51,8 +51,8 @@ struct RenderOptions {
   bool ignore_visibility = false;
 };
 
-Image render_items(const std::vector<RenderItem>& items, const RenderOptions& opt);
-Image render_scene(const Document& doc, const Scene& scene, const RenderOptions& opt);
+Image render_items(const std::vector<RenderItem>& items, const RenderOptions& opt, json* receipt = nullptr);
+Image render_scene(const Document& doc, const Scene& scene, const RenderOptions& opt, json* receipt = nullptr);
 void write_png(const std::filesystem::path& path, const Image& img);
 std::string encode_png(const Image& img);
 

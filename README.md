@@ -10,6 +10,15 @@ interaction. Supply an absolute `.opad` `path` for Save As, or omit it to save t
 Like other live writes, saving requires editing permission, `expected_revision`, and a unique
 `request_id`; replacing a different existing file also requires `overwrite: true`.
 
+`wait_for_idle` reports whether the bound connection can proceed without cancelling a
+human editor. Busy failures include a failure-time editing snapshot, owner/client IDs,
+revision and retry guidance. Background document snapshots are coordinated with writes.
+
+Live `viewport_image` accepts `select` (body/component IDs), `hide`, `ignore_visibility`
+and a custom `camera` or preset `view`. It renders from a temporary scene and returns the
+actual camera, revision, render time and visible body IDs without moving the user's view.
+`fit: true` frames only the rendered selection; `hide` also works when including hidden bodies.
+
 OPAD combines CAD modelling, review and a 2D drafting foundation: import, inspect, measure,
 section, annotate, sketch, build features and export. [Drawing and mesh support](docs/drawings.md)
 describes supported DXF/SVG entities, mesh reference objects and the optional DWG converter.

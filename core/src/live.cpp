@@ -77,6 +77,13 @@ const json& live_tools() {
   }
   add("viewport_image","Render the live or prepared geometry on a worker; returns PNG plus revision. Optional fit uses an isometric fitted camera without moving the user's view.",object({{"width",{{"type","integer"},{"minimum",64},{"maximum",2048},{"default",960}}},{"height",{{"type","integer"},{"minimum",64},{"maximum",2048},{"default",640}}},{"fit",{{"type","boolean"},{"default",false}}},{"transaction",str()},{"preview_id",str()}}));
   out.back()["inputSchema"]["properties"]["view"]={{"type","string"},{"enum",{"iso","top","bottom","front","back","left","right"}},{"description","Optional fitted rendering direction; leaves the user's camera unchanged."}};
+  auto& render=out.back()["inputSchema"]["properties"];
+  const json vector={{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3}};
+  render["select"]={{"type","array"},{"items",str()},{"minItems",1},{"maxItems",100},{"description","Isolate these body/component IDs. fit=true fits only the rendered selection."}};
+  render["ignore_visibility"]={{"type","boolean"},{"default",false},{"description","Include hidden selected bodies without changing document visibility."}};
+  render["hide"]={{"type","array"},{"items",str()},{"maxItems",100},{"description","Temporarily exclude these bodies/components, even with ignore_visibility."}};
+  render["camera"]=object({{"eye",vector},{"target",vector},{"up",vector},{"absolute",{{"type","boolean"}}},{"projection",{{"type","string"},{"enum",{"orthographic","perspective"}}}},{"scale",{{"type","number"},{"minimum",0}}},{"fov_deg",{{"type","number"},{"exclusiveMinimum",0},{"maximum",179.9}}}},{"eye","target","up"});
+  render["camera"]["description"]="Custom camera; absolute defaults true. Cannot combine with view. fit defaults false for a custom camera.";
   for(const auto& c:commands::list())if(!excluded.count(c.name)) {
     auto schema=command_schema(c,true);
     schema["properties"]["transaction"]=str();

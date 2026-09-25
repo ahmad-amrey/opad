@@ -132,9 +132,31 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
       }
       else if(name=="viewport_image"){
         opad::RenderOptions options;options.width=args.value("width",960);options.height=args.value("height",640);options.supersample=1;
-        options.fit=args.value("fit",false)||args.contains("view");options.camera=options.fit?opad::Camera::preset(args.value("view","iso")):opad::Camera::from_json(state.at("camera"));
-        const auto png=opad::encode_png(opad::render_scene(*source->doc,source->scene,options));
-        result->output={{"image",QByteArray::fromStdString(png).toBase64().toStdString()},{"camera",options.camera.to_json()},{"selection",state["selection"]},{"preview_id",args.value("preview_id","")},{"rendering","software geometry view; UI overlays are not included"}};
+        if(args.contains("camera") && args.contains("view"))throw opad::Error("Choose camera or view, not both");
+        options.fit=args.value("fit",false)||args.contains("view");
+        options.camera=options.fit?opad::Camera::preset(args.value("view","iso")):opad::Camera::from_json(state.at("camera"));
+        if(args.contains("camera")){
+          auto camera=args["camera"];if(!camera.contains("absolute"))camera["absolute"]=true;
+          options.camera=opad::Camera::from_json(camera);
+          double direction=0,up=0;for(int i=0;i<3;++i){const auto d=options.camera.eye[i]-(options.camera.absolute?options.camera.target[i]:0);direction+=d*d;up+=options.camera.up[i]*options.camera.up[i];}
+          if(direction<1e-18 || up<1e-18)throw opad::Error("Camera direction and up must be nonzero");
+          if(options.fit && options.camera.absolute){
+            for(int i=0;i<3;++i)options.camera.eye[i]-=options.camera.target[i];
+            options.camera.absolute=false;
+          }
+        }
+        options.select=args.value("select",std::vector<std::string>{});options.ignore_visibility=args.value("ignore_visibility",false);
+        // Use only a temporary scene copy; no camera, visibility or placement edits.
+        auto renderingScene=source->scene;
+        for(const auto& id:args.value("hide",std::vector<std::string>{})){
+          if(!renderingScene.node(id))throw opad::Error("Unknown hidden node: "+id);
+          for(const auto& body:renderingScene.bodies_under(id))renderingScene.nodes.at(body).opacity=0;
+        }
+        json metadata;QElapsedTimer renderTimer;renderTimer.start();
+        const auto png=opad::encode_png(opad::render_scene(*source->doc,renderingScene,options,&metadata));
+        result->output={{"image",QByteArray::fromStdString(png).toBase64().toStdString()},{"camera",metadata["camera"]},{"visible_ids",metadata["visible_ids"]},
+          {"selection",state["selection"]},{"preview_id",args.value("preview_id","")},{"transaction",transaction},{"render_ms",renderTimer.elapsed()},
+          {"rendering","software geometry view; visible_ids lists submitted visible bodies (including occluded bodies); UI overlays are not included"}};
       }else result->output=opad::commands::run(name,args,working->doc.get());
       if(p.cancelled())throw opad::Error("cancelled");
       if(write && name!="export"){
