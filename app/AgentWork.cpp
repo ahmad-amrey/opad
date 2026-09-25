@@ -116,6 +116,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         }
       }else if(name=="context")result->output=context(*source->doc,source->scene,args);
       else if(name=="sketch_details")result->output=sketch_details(*source->doc,source->scene,args);
+      else if(name=="query_entities")result->output=query_entities(*source->doc,source->scene,args,[p]{return p.cancelled();});
       else if(name=="entity_details")result->output=entity_details(*source->doc,source->scene,args);
       else if(name=="resolve_reference")result->output=resolve_reference(*source->doc,source->scene,args.at("reference"),args.value("remap",false));
       else if(name=="validate")result->output=validate_design(*source->doc,source->scene,args,[p]{return p.cancelled();});

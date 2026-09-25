@@ -60,6 +60,10 @@ Use Settings > 2D projection mode to lock the camera for drawings or model proje
 endpoint to acquire an extension/alignment guide; Shift locks its direction. Layers live in the
 browser, and imported mesh and drawing objects are labelled. See [tracking details](docs/drawings.md).
 
+Inspect > Select by geometry finds top/bottom perimeters, parallel or circular edges, and
+upward planar faces on a selected body. The same filters are available through the paged
+`query_entities` command, with geometric evidence and fresh checked reference tokens.
+
 The timeline keeps operation markers at a readable size for long histories. Scroll with the
 mouse wheel, trackpad or horizontal scrollbar; Left/Right steps through operations and
 Home/End jumps to the first/last marker. Selecting an operation scrolls it into view.

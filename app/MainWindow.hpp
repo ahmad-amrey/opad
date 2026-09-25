@@ -42,6 +42,7 @@ class MainWindow : public QMainWindow {
   QAction* action(const QString& id) const;
   void buildActions();
   void buildMenus();
+  void selectGeometry();
   void buildRibbon();
   void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")
   void buildDesign();         // the controller, its floating panel and the wiring

@@ -112,6 +112,57 @@ json entity_details(const Document& doc,const Scene& scene,const json& args) {
   for(const char* key:{"edges","vertices","adjacent_faces","modified_by","path"})if(out.contains(key)&&out[key].is_array())out[key]=slice(out[key],args);
   out["reference"]=reference_token(doc,scene,ref);return out;
 }
+json query_entities(const Document& doc,const Scene& scene,const json& args,const std::function<bool()>& cancelled) {
+  const auto body=args.at("body").get<std::string>();
+  const auto* node=scene.node(body);
+  if(!node || node->kind!=Node::Kind::Body || node->body_missing)throw Error("query_entities requires an available body");
+  const auto kind=args.value("kind","edge");
+  const auto refKind=kind=="face"?Ref::Kind::Face:kind=="vertex"?Ref::Kind::Vertex:Ref::Kind::Edge;
+  const auto shape=node_world_shape(doc,scene,body);const int entities=subshape_count(shape,refKind);
+  if(entities>10000)throw Error("Body exceeds query budget of 10000 entities");
+  const auto filters=args.value("filters",json::object());
+  const double tolerance=args.value("tolerance_mm",1e-5);
+  if(filters.contains("radius_min") && filters.contains("radius_max") && filters["radius_min"].get<double>()>filters["radius_max"].get<double>())throw Error("radius_min exceeds radius_max");
+  auto axis=[](const std::string& a){return a=="x"?0:a=="y"?1:2;};
+  if(filters.contains("bounds"))for(int i=0;i<3;++i)if(filters["bounds"]["min"][i].get<double>()>filters["bounds"]["max"][i].get<double>())throw Error("Invalid bounding region");
+  size_t count=0;json items=json::array();
+  for(int i=0;i<entities;++i){
+    if(cancelled && cancelled())throw Error("cancelled");
+    Ref ref;ref.body=body;ref.kind=refKind;ref.index=i;
+    auto detail=inspect_ref(doc,scene,ref);
+    if(filters.contains("curve") && detail.value("curve","")!=filters["curve"].get<std::string>())continue;
+    if(filters.contains("surface") && detail.value("surface","")!=filters["surface"].get<std::string>())continue;
+    if(filters.contains("radius_min") && (!detail.contains("radius") || detail["radius"].get<double>()<filters["radius_min"].get<double>()-tolerance))continue;
+    if(filters.contains("radius_max") && (!detail.contains("radius") || detail["radius"].get<double>()>filters["radius_max"].get<double>()+tolerance))continue;
+    if(filters.contains("parallel_to")){
+      const auto k=axis(filters["parallel_to"].get<std::string>());
+      if(!detail.contains("direction") || std::abs(detail["direction"][k].get<double>())<1-1e-8)continue;
+    }
+    if(filters.contains("normal")){
+      const auto value=filters["normal"].get<std::string>();const int k=axis(value.substr(1));
+      if(!detail.contains("normal") || detail["normal"][k].get<double>()*(value[0]=='-'?-1:1)<1-1e-8)continue;
+    }
+    if(filters.contains("at_plane") || filters.contains("bounds")){
+      if(!detail.contains("bbox") || detail["bbox"].is_null())continue;
+      const auto& box=detail["bbox"];bool match=true;
+      if(filters.contains("at_plane")){
+        const auto& plane=filters["at_plane"];const int k=axis(plane["axis"].get<std::string>());const double at=plane["value"].get<double>();
+        match=std::abs(box["min"][k].get<double>()-at)<=tolerance && std::abs(box["max"][k].get<double>()-at)<=tolerance;
+      }
+      if(filters.contains("bounds"))for(int k=0;k<3;++k)
+        match=match && box["min"][k].get<double>()>=filters["bounds"]["min"][k].get<double>()-tolerance && box["max"][k].get<double>()<=filters["bounds"]["max"][k].get<double>()+tolerance;
+      if(!match)continue;
+    }
+    if(count>=offset(args) && items.size()<limit(args)){
+      detail["reference"]=reference_token(doc,scene,ref);items.push_back(std::move(detail));
+    }
+    ++count;
+  }
+  auto out=page(std::move(items),count,args);out["body"]=body;out["coordinates"]="world mm";out["scanned"]=entities;
+  out["status"]=count==0?"no_match":args.value("ambiguity","all")=="unique" && count!=1?"ambiguous":"matched";
+  out["selection_allowed"]=count>0 && (args.value("ambiguity","all")=="all" || count==1);
+  return out;
+}
 json validate_design(const Document& doc,const Scene& scene,const json& args,const std::function<bool()>& cancelled) {
   auto bodies=args.contains("select")?args["select"].get<std::vector<std::string>>():scene.all_bodies();
   json items=json::array();bool valid=scene.unresolved.empty();
@@ -133,6 +184,20 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
   auto run=[](auto fn){return [fn](Document* doc,const json& args){if(!doc)throw Error("Pass a document or bind a live session");return fn(*doc,resolve(*doc),args);};};
   add({"context","Bounded document summary and pages of nodes, sketches, parameters, history and errors",bounded({{"section",{{"type","string"},{"enum",{"summary","nodes","sketches","features","parameters","errors"}},{"default","summary"}}},{"filter",{{"type","string"}}}}),false},run(agent::context));
   add({"sketch_details","Sketch geometry, constraints, degrees of freedom, profiles and connected chains in bounded pages",bounded({{"sketch",{{"type","string"}}},{"section",{{"type","string"},{"enum",{"summary","points","entities","constraints","profiles","chain"}},{"default","summary"}}},{"entity",{{"type","integer"}}}}),false},run(agent::sketch_details));
+  const json number={{"type","number"}},axis={{"type","string"},{"enum",{"x","y","z"}}};
+  const json vector={{"type","array"},{"items",number},{"minItems",3},{"maxItems",3}};
+  const json filters={{"type","object"},{"additionalProperties",false},{"properties",{
+    {"curve",{{"type","string"},{"enum",{"line","circle","ellipse","hyperbola","parabola","bezier","bspline","offset","other"}}}},
+    {"surface",{{"type","string"},{"enum",{"plane","cylinder","cone","sphere","torus","bezier","bspline","revolution","extrusion","offset","other"}}}},
+    {"parallel_to",axis},{"normal",{{"type","string"},{"enum",{"+x","-x","+y","-y","+z","-z"}}}},
+    {"radius_min",{{"type","number"},{"minimum",0}}},{"radius_max",{{"type","number"},{"minimum",0}}},
+    {"at_plane",{{"type","object"},{"additionalProperties",false},{"properties",{{"axis",axis},{"value",number}}},{"required",{"axis","value"}}}},
+    {"bounds",{{"type","object"},{"additionalProperties",false},{"properties",{{"min",vector},{"max",vector}}},{"required",{"min","max"}}}}
+  }}};
+  add({"query_entities","Paged geometric selection with evidence and current reference tokens. Filters are ANDed in world mm. at_plane selects entities whose entire bounding box lies on an axis-aligned plane; parallel_to matches straight edges; bounds requires full containment. unique ambiguity mode never silently chooses among matches. Rerun after regeneration.",bounded({
+    {"body",{{"type","string"}}},{"kind",{{"type","string"},{"enum",{"edge","face","vertex"}},{"default","edge"}}},{"filters",filters},
+    {"ambiguity",{{"type","string"},{"enum",{"all","unique"}},{"default","all"}}},{"tolerance_mm",{{"type","number"},{"minimum",1e-7},{"maximum",1},{"default",1e-5}}}
+  }),false},run([](const Document& d,const Scene& s,const json& a){return agent::query_entities(d,s,a);}));
   add({"entity_details","Exact geometry and paged adjacency with a checked reference token",bounded({{"ref",{{"type",{"string","object"}}}},{"feature",{{"type","string"}}}}),false},run(agent::entity_details));
   add({"resolve_reference","Check a reference token, optionally remap only a unique proven geometric match",{{"doc",{{"type","string"}}},{"reference",{{"type","object"},{"required",{"document","ref"}}}},{"remap",{{"type","boolean"},{"default",false}}}},false},run([](const Document& d,const Scene& s,const json& a){return agent::resolve_reference(d,s,a.at("reference"),a.value("remap",false));}));
   add({"validate","Exact solid counts, volumes, areas and kernel validity in bounded pages",bounded({{"select",{{"type","array"},{"items",{{"type","string"}}}}}}),false},run([](const Document& d,const Scene& s,const json& a){return agent::validate_design(d,s,a);}));

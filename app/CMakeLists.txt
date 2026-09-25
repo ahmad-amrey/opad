@@ -34,6 +34,7 @@ set(OPAD_APP_SOURCES
   SketchModify.cpp
   SketchReference.cpp
   SketchImages.cpp
+  GeometrySelection.cpp
   Panels.cpp Panels.hpp
   ShortcutEditor.cpp ShortcutEditor.hpp ShortcutBench.cpp
   Jobs.cpp Jobs.hpp

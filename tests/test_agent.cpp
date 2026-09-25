@@ -41,6 +41,16 @@ int main(){try {
   CHECK_EQ(agent::resolve_reference(doc,scene,bottomToken,true)["status"],"resolved");
   CHECK_EQ(agent::resolve_reference(doc,scene,topToken,true)["status"],"stale");
   auto wrong=bottomToken;wrong["document"]="another-document";CHECK_EQ(agent::resolve_reference(doc,scene,wrong)["status"],"wrong_document");
+  auto query=agent::query_entities(doc,scene,{{"body",body},{"filters",{{"at_plane",{{"axis","z"},{"value",15}}}}}});
+  CHECK_EQ(query["total"],4);CHECK_EQ(query["status"],"matched");
+  for(const auto& item:query["items"])CHECK_EQ(agent::resolve_reference(doc,scene,item["reference"])["status"],"resolved");
+  auto firstPage=agent::query_entities(doc,scene,{{"body",body},{"limit",2},{"ambiguity","unique"},{"filters",{{"parallel_to","x"}}}});
+  CHECK_EQ(firstPage["total"],4);CHECK_EQ(firstPage["items"].size(),2u);CHECK_EQ(firstPage["next_offset"],2);
+  CHECK_EQ(firstPage["status"],"ambiguous");CHECK(!firstPage["selection_allowed"].get<bool>());
+  auto topFace=agent::query_entities(doc,scene,{{"body",body},{"kind","face"},{"ambiguity","unique"},{"filters",{{"normal","+z"}}}});
+  CHECK_EQ(topFace["total"],1);CHECK(topFace["selection_allowed"].get<bool>());
+  CHECK_EQ(agent::query_entities(doc,scene,{{"body",body},{"filters",{{"at_plane",{{"axis","z"},{"value",10}}}}}})["total"],0);
+  CHECK_THROWS(agent::query_entities(doc,scene,{{"body",body}},[]{return true;}));
   auto validation=agent::validate_design(doc,scene,json::object());CHECK(validation["valid_page"].get<bool>());CHECK_EQ(validation["items"][0]["solids"],1);
   CHECK(std::abs(validation["items"][0]["volume_mm3"].get<double>()-36000)<1e-5);
   design::Sketch sketch;const auto a=sketch.add_point(0,0),b=sketch.add_point(20,0),c=sketch.add_point(20,20),d=sketch.add_point(0,20);
