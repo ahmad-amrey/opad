@@ -203,6 +203,26 @@ bool Viewport::benchPicking() {
       trace::log(QStringLiteral("bench: central orbit gap / hidden / clipping / cube animation PASS"));
     }
 
+    // Drawing interiors use the pointer's plane intersection, not the outline or scene center.
+    {
+      const Handle(Graphic3d_Camera) camera=new Graphic3d_Camera(*m_view->Camera());
+      const std::string id="bench-drawing-orbit";
+      const auto edge=BRepBuilderAPI_MakeEdge(gp_Pnt(2000,2000,0),gp_Pnt(2040,2030,0)).Shape();
+      Bnd_Box bounds;BRepBndLib::Add(edge,bounds);auto drawing=BodyPrs::build(edge,bounds);
+      Handle(AIS_Shape) ais=new BodyShape(edge,drawing);m_ctx->Display(ais,0,-1,false);
+      m_items[id].ais=ais;m_items[id].key=id;m_prs[id]=drawing;
+      opad::Node node;node.id=id;node.representation="drawing2d";m_doc->scene.nodes[id]=node;
+      m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+      m_view->Camera()->SetEyeAndCenter(gp_Pnt(2020,2015,100),gp_Pnt(2020,2015,0));m_view->Camera()->SetUp(gp::DY());m_view->Camera()->SetScale(100);
+      for(const gp_Pnt at:{gp_Pnt(2008,2022,0),gp_Pnt(2030,2006,0)}) {
+        const QPointF pointer=widgetPoint({at.X(),at.Y(),at.Z()});bool found=false;
+        const auto pivot=drawingOrbitPoint(&pointer,&found);
+        require(found && pivot.Distance(at)<pixelSize()*2,"drawing orbit did not follow the pointer inside its bounds");
+      }
+      m_ctx->Remove(ais,false);m_items.erase(id);m_prs.erase(id);m_doc->scene.nodes.erase(id);m_view->SetCamera(camera);
+      trace::log("bench: pointer-priority drawing orbit PASS");
+    }
+
     // Pixel regression for coincident surfaces: all interior samples must use
     // one stable material, at both a normal and a grazing viewing angle.
     {

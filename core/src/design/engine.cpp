@@ -6,6 +6,7 @@
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepGProp.hxx>
 #include <BRep_Tool.hxx>
+#include <TopExp_Explorer.hxx>
 #include <GProp_GProps.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp.hxx>
@@ -240,7 +241,7 @@ Frame Ctx::plane(const json& in) const {
     gp_Dir n = ax.Direction();
     if (!ax.Direct()) n.Reverse();
     if (r.sub.Orientation() == TopAbs_REVERSED) n.Reverse();  // outward from the body
-    // Origin at the face's centre, so a sketch on it starts where the user is looking.
+    // Use the face centre to establish its axes before choosing the lower-left corner.
     GProp_GProps g;
     BRepGProp::SurfaceProperties(r.sub, g);
     gp_Dir xd = ax.XDirection();
@@ -248,6 +249,16 @@ Frame Ctx::plane(const json& in) const {
     for (const gp_Dir& cand : {gp_Dir(1, 0, 0), gp_Dir(0, 1, 0), gp_Dir(0, 0, 1)})
       if (std::fabs(cand.Dot(n)) < 1e-6) { xd = cand; break; }
     Frame f = frame_from_ax3(gp_Ax3(g.CentreOfMass(), n, xd));
+    // New face sketches start at the lower-left real vertex in the plane axes.
+    // Existing sketches retain their persisted frame below during regeneration.
+    if(!in.contains("frame")) {
+      bool have=false;double bestU=0,bestV=0;Vec3 corner=f.origin;
+      for(TopExp_Explorer vertices(r.sub,TopAbs_VERTEX);vertices.More();vertices.Next()) {
+        const auto p=BRep_Tool::Pnt(TopoDS::Vertex(vertices.Current()));double u,v;f.to_local({p.X(),p.Y(),p.Z()},u,v);
+        if(!have || v<bestV-1e-7 || (std::abs(v-bestV)<=1e-7 && u<bestU)){have=true;bestU=u;bestV=v;corner={p.X(),p.Y(),p.Z()};}
+      }
+      if(have)f.origin=corner;
+    }
     if (in.contains("frame")) {  // keep the sketch where it was on the face: project the old origin and x
       const Frame old = Frame::from_json(in["frame"]);
       const gp_Pln pl(g.CentreOfMass(), n);

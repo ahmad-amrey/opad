@@ -22,6 +22,7 @@ void MainWindow::browseInstances(const std::string& id) {
     if(generation!=m_doc->generation){panel->hide();return;}
     std::erase_if(*instances,[this](const auto& candidate){return !m_doc->scene.node(candidate);});
     if(instances->empty()){panel->hide();return;}*index%=instances->size();const auto& current=instances->at(*index);
+    panel->setProperty("instanceCurrent",QString::fromStdString(current));
     label->setText(tr("Instance %1 of %2\n%3").arg(*index+1).arg(instances->size()).arg(m_doc->nodeName(current)));
     m_viewport->isolate(isolate->isChecked()?std::vector<std::string>{current}:previousIsolation);
     m_browser->setSelectedIds({current});m_browser->scrollToSelected();m_viewport->selectNodes({current});m_viewport->fitNodes({current});
@@ -29,7 +30,8 @@ void MainWindow::browseInstances(const std::string& id) {
   connect(previous,&QPushButton::clicked,body,[=]{if(instances->empty())return;*index=(*index+instances->size()-1)%instances->size();update();});
   connect(next,&QPushButton::clicked,body,[=]{if(instances->empty())return;*index=(*index+1)%instances->size();update();});
   connect(isolate,&QCheckBox::toggled,body,update);
-  connect(m_doc,&AppDocument::changed,body,update);connect(m_doc,&AppDocument::aboutToReplace,panel,&ToolPanel::hide);
-  connect(panel,&ToolPanel::visibilityChanged,this,[=,this](bool shown){if(!shown){if(generation==m_doc->generation)m_viewport->isolate(previousIsolation);panel->deleteLater();}});
+  connect(m_doc,&AppDocument::changed,panel,&ToolPanel::hide);
+  for(auto* action:m_actions)connect(action,&QAction::triggered,panel,&ToolPanel::hide);connect(m_doc,&AppDocument::aboutToReplace,panel,&ToolPanel::hide);
+  connect(panel,&ToolPanel::visibilityChanged,this,[=,this](bool shown){if(!shown){if(generation==m_doc->generation && m_viewport->isolatedNodes()==std::vector<std::string>{panel->property("instanceCurrent").toString().toStdString()})m_viewport->isolate(previousIsolation);panel->deleteLater();}});
   connect(panel,&QObject::destroyed,this,[this,panel]{m_panels.removeAll(panel);});openPanel(panel);update();
 }

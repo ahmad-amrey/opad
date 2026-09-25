@@ -525,3 +525,21 @@ TEST(sketch_origin_support_regenerates_and_roundtrips) {
   const auto numeric=resolve_plane(doc,scene,{{"support",{{"base","xz"}}},{"origin",{{"uv",{4,8}}}}});
   CHECK_NEAR(numeric.origin[0],4,1e-9);CHECK_NEAR(numeric.origin[1],0,1e-9);CHECK_NEAR(numeric.origin[2],8,1e-9);
 }
+
+TEST(face_sketch_origin_uses_lower_left_corner_and_preserves_existing_placement) {
+  Document doc=Document::create();
+  feature_cmd(doc,"box",{{"length","40 mm"},{"width","30 mm"},{"height","20 mm"},{"centered",false}});
+  const auto scene=resolve(doc);const auto body=scene.all_bodies().front();
+  const auto shape=node_world_shape(doc,scene,body);json top;int index=0;
+  for(TopExp_Explorer faces(shape,TopAbs_FACE);faces.More();faces.Next(),++index){
+    BRepAdaptor_Surface surface(TopoDS::Face(faces.Current()));
+    if(surface.GetType()==GeomAbs_Plane && std::abs(surface.Plane().Location().Z()-20)<1e-8 && std::abs(surface.Plane().Axis().Direction().Z())>.99)
+      top={{"body",body},{"kind","face"},{"index",index}};
+  }
+  CHECK(!top.is_null());
+  auto frame=resolve_plane(doc,scene,{{"face",top}});
+  CHECK_NEAR(frame.origin[0],0,1e-8);CHECK_NEAR(frame.origin[1],0,1e-8);CHECK_NEAR(frame.origin[2],20,1e-8);
+  frame.origin={8,7,20};
+  const auto kept=resolve_plane(doc,scene,{{"face",top},{"frame",frame.to_json()}});
+  CHECK_NEAR(kept.origin[0],8,1e-8);CHECK_NEAR(kept.origin[1],7,1e-8);
+}

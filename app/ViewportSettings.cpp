@@ -100,7 +100,8 @@ void Viewport::setTwoDimensional(bool on) {
       const auto d = m_view->Camera()->Direction();
       // Snap to the closest principal plane without an animation that can leak
       // an oblique orientation into drafting input.
-      if (std::abs(d.Z()) >= std::max(std::abs(d.X()), std::abs(d.Y())))
+      if(m_sketchInput)lookAt(m_sketchFrame,false,false);
+      else if (std::abs(d.Z()) >= std::max(std::abs(d.X()), std::abs(d.Y())))
         m_view->SetProj(d.Z() < 0 ? V3d_Zpos : V3d_Zneg);
       else if (std::abs(d.X()) >= std::abs(d.Y())) m_view->SetProj(d.X() < 0 ? V3d_Xpos : V3d_Xneg);
       else m_view->SetProj(d.Y() < 0 ? V3d_Ypos : V3d_Yneg);

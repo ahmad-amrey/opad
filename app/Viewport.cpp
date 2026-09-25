@@ -299,7 +299,7 @@ void Viewport::initViewer() {
   m_ctx->Activate(m_cube, 0);
 
   SetRotationMode(AIS_RotationMode_BndBoxActive);
-  SetLockOrbitZUp(Standard_False);  // permit leaving a principal top/bottom view
+  SetLockOrbitZUp(Standard_True);  // keep the world horizon fixed during orbit
   SetAllowRotation(Standard_True);
   SetAllowPanning(Standard_True);
   SetAllowZooming(Standard_True);
@@ -959,7 +959,7 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
 void Viewport::isolate(const std::vector<std::string>& ids) {
   m_isolated.clear();
   for (const auto& id : ids)
-    for (const auto& b : m_doc->scene.bodies_under(id)) m_isolated.insert(b);
+    {if(m_doc->scene.sketch(id))m_isolated.insert(id);for (const auto& b : m_doc->scene.bodies_under(id)) m_isolated.insert(b);}
   m_needFit = !m_isolated.empty();
   sync();
   if (!m_isolated.empty()) fitAll();
@@ -970,6 +970,10 @@ void Viewport::isolate(const std::vector<std::string>& ids) {
 void Viewport::fitAll() {
   if (!m_initialised) return;
   m_view->FitAll(0.02, Standard_False);
+  // A flat wire can make OCCT put an orthographic eye exactly on its target.
+  // Keep a usable picking ray without changing the fitted on-screen scale.
+  const auto camera=m_view->Camera();
+  if(camera->IsOrthographic() && camera->Distance()<1.0){camera->SetDistance(std::max(1.0,camera->Scale()));m_view->ZFitAll();}
   m_view->Invalidate();
   requestRedraw();
 }
@@ -1438,7 +1442,7 @@ void Viewport::sync() {
     bool any = false;
     for (const auto& id : m_isolated) {
       const opad::Node* n = scene.node(id);
-      if (n && !n->body_missing) { any = true; break; }
+      if ((n && !n->body_missing) || scene.sketch(id)) { any = true; break; }
     }
     if (!any) {
       m_isolated.clear();
@@ -1854,6 +1858,13 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
     e->accept();
     return;
   }
+  if(m_initialised && !m_twoDimensional) {
+    const auto gesture=qt_buttons(e->buttons())|qt_flags(e->modifiers());
+    if(ChangeMouseGestureMap().IsBound(gesture) && ChangeMouseGestureMap().Find(gesture)==AIS_MouseGesture_RotateOrbit) {
+      const auto camera=m_view->Camera();const auto direction=camera->Direction();
+      if(std::abs(direction.Z())>1-1e-8){const auto up=camera->Up();camera->SetDirection(gp_Dir(direction.X()+up.X()*1e-4,direction.Y()+up.Y()*1e-4,direction.Z()));}
+    }
+  }
   if (m_initialised && UpdateMouseButtons(devicePos(e->position()+m_dragOffset), qt_buttons(e->buttons()), qt_flags(e->modifiers()), false)) requestRedraw();
 }
 
@@ -1990,6 +2001,7 @@ void Viewport::trackpadScroll(const QPointF& position, const QPointF& delta, boo
     m_trackpadCursor = position;
     m_trackpadMode = mode;
     const Aspect_VKeyFlags flags = Aspect_VKeyFlags_META | (orbit ? Aspect_VKeyFlags_SHIFT : 0);
+    if(orbit){const auto camera=m_view->Camera();const auto direction=camera->Direction();if(std::abs(direction.Z())>1-1e-8){const auto up=camera->Up();camera->SetDirection(gp_Dir(direction.X()+up.X()*1e-4,direction.Y()+up.Y()*1e-4,direction.Z()));}}
     UpdateMouseButtons(devicePos(m_trackpadCursor), Aspect_VKeyMouse_MiddleButton, flags, false);
   }
   m_trackpadAnchor = position;

@@ -159,6 +159,8 @@ bool Viewport::navigationPoint(const Graphic3d_Vec2i& cursor, gp_Pnt& point) {
 gp_Pnt Viewport::orbitPoint(const Graphic3d_Vec2i& cursor) {
   gp_Pnt point;
   if (navigationPoint(cursor, point)) return point;
+  const QPointF at(cursor.x()/devicePixelRatioF(),cursor.y()/devicePixelRatioF());bool found=false;
+  point=drawingOrbitPoint(&at,&found);if(found)return point;
   return centralOrbitPoint();
 }
 
@@ -235,15 +237,33 @@ void Viewport::focusCube() {
 }
 
 
-gp_Pnt Viewport::drawingOrbitPoint() {
+gp_Pnt Viewport::drawingOrbitPoint(const QPointF* cursor,bool* found) {
+  if(found)*found=false;
   gp_Pnt best=m_view->Camera()->Center(); double distance=1e100;
-  const QPointF middle(width()/2.0,height()/2.0);
+  if(cursor){
+    // Curves enclose usable drawing space. Intersect that plane directly instead of
+    // pulling the orbit pivot to the outline of a large drawing.
+    if(m_sketchInput){double u,v;if(planePoint(*cursor,m_sketchFrame,u,v)){const auto p=m_sketchFrame.to_world(u,v);if(found)*found=true;return gp_Pnt(p[0],p[1],p[2]);}}
+    for(const auto& [id,item]:m_items){
+      const auto* node=m_doc->scene.node(id);if(!node || node->representation!="drawing2d" || !m_ctx->IsDisplayed(item.ais))continue;
+      const auto cached=m_prs.find(item.key);if(cached==m_prs.end() || cached->second->box.IsVoid())continue;
+      const auto box=cached->second->box;const auto lo=box.CornerMin(),hi=box.CornerMax();const auto transform=item.ais->Transformation();
+      const auto origin=gp_Pnt(0,0,(lo.Z()+hi.Z())*.5).Transformed(transform);const auto x=gp_Dir(1,0,0).Transformed(transform),y=gp_Dir(0,1,0).Transformed(transform);
+      opad::Frame frame;frame.origin={origin.X(),origin.Y(),origin.Z()};frame.x={x.X(),x.Y(),x.Z()};frame.y={y.X(),y.Y(),y.Z()};double u,v;
+      if(!planePoint(*cursor,frame,u,v))continue;const auto point=frame.to_world(u,v);const gp_Pnt world(point[0],point[1],point[2]);const auto local=world.Transformed(transform.Inverted());
+      if(local.X()<lo.X() || local.X()>hi.X() || local.Y()<lo.Y() || local.Y()>hi.Y())continue;
+      const double depth=gp_Vec(m_view->Camera()->Eye(),world).Dot(gp_Vec(m_view->Camera()->Direction()));if(depth<0 || depth>=distance)continue;
+      distance=depth;best=world;
+    }
+    if(distance<1e100){if(found)*found=true;return best;}
+  }
+  const QPointF middle=cursor?*cursor:QPointF(width()/2.0,height()/2.0);
   auto segment=[&](gp_Pnt a,gp_Pnt b) {
     const QPointF pa=widgetPoint({a.X(),a.Y(),a.Z()}), pb=widgetPoint({b.X(),b.Y(),b.Z()}), d=pb-pa;
     const double len=QPointF::dotProduct(d,d);
     const double t=len>0?std::clamp(QPointF::dotProduct(middle-pa,d)/len,0.0,1.0):0;
     const auto delta=pa+d*t-middle; const double sq=QPointF::dotProduct(delta,delta);
-    if (sq<distance) { distance=sq; best=a.Translated(gp_Vec(a,b)*t); }
+    if (sq<distance) { if(found)*found=true;distance=sq; best=a.Translated(gp_Vec(a,b)*t); }
   };
   for (const auto& [id,item]:m_items) {
     if(!m_ctx->IsDisplayed(item.ais)) continue;

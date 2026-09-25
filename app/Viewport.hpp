@@ -152,10 +152,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   struct Candidate {
     std::string id;
     TopoDS_Shape shape;
-    bool strong = false;  // drawn more solid (construction planes among faint origin planes)
+    bool strong = false;
+    std::shared_ptr<BodyPrs> presentation;  // drawn more solid (construction planes among faint origin planes)
   };
   void showCandidates(const std::vector<Candidate>& candidates);
   void clearCandidates();
+  std::string hoveredCandidate() const;
   std::vector<std::string> selectedCandidates() const;  // in pick order
   // Makes the context selection exactly these (bodies, faces/edges/vertices by ordinal, candidates).
   void selectRefs(const std::vector<opad::Ref>& refs, const std::vector<std::string>& candidates = {});
@@ -250,7 +252,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Job* m_boxJob=nullptr;
   CursorWarpGate m_warpGate;
   void updateGridExtent();
-  gp_Pnt drawingOrbitPoint();
+  gp_Pnt drawingOrbitPoint(const QPointF* cursor=nullptr,bool* found=nullptr);
   void updateTracking();
   void clearTracking();
   bool m_trackingEnabled = true, m_haveTrackingAnchor = false, m_trackingLocked = false;

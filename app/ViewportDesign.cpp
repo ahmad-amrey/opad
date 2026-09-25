@@ -40,7 +40,7 @@ void Viewport::syncSketches() {
   if (!m_initialised) return;
   std::set<std::string> keep;
   for (const auto& s : m_doc->scene.sketches) {
-    if (!s.visible || s.id == m_hiddenSketch) continue;
+    if (s.id == m_hiddenSketch || (!m_isolated.empty()?!m_isolated.count(s.id):!s.visible)) continue;
     keep.insert(s.id);
     const std::string stamp = s.geometry.dump() + s.frame.to_json().dump();
     auto it = m_sketchWires.find(s.id);
@@ -125,9 +125,9 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
     if (c.shape.IsNull()) continue;
     // Small planar regions and a few curves: meshing them here is cheaper than a job round trip. (The
     // context's drawers never triangulate by themselves, see initViewer.)
-    if (c.shape.ShapeType() <= TopAbs_FACE) BRepMesh_IncrementalMesh(c.shape, 0.05, Standard_False, 0.3, Standard_False);
-    Handle(AIS_Shape) ais = new AIS_Shape(c.shape);
-    const bool surface = c.shape.ShapeType() <= TopAbs_FACE;
+    if (!c.presentation && c.shape.ShapeType() <= TopAbs_FACE) BRepMesh_IncrementalMesh(c.shape, 0.05, Standard_False, 0.3, Standard_False);
+    Handle(AIS_Shape) ais = c.presentation?new BodyShape(c.shape,c.presentation):new AIS_Shape(c.shape);
+    const bool surface = c.presentation?!c.presentation->triangles.IsNull():c.shape.ShapeType() <= TopAbs_FACE;
     ais->SetColor(occ(m_tokens.sel));
     if (surface) {
       ais->SetTransparency(c.strong ? 0.6 : 0.82);
@@ -153,6 +153,10 @@ void Viewport::clearCandidates() {
   redrawScene();
 }
 
+std::string Viewport::hoveredCandidate() const {
+  if(m_initialised && m_ctx->HasDetected())for(const auto& candidate:m_candidates)if(candidate.second==m_ctx->DetectedInteractive())return candidate.first;
+  return {};
+}
 std::vector<std::string> Viewport::selectedCandidates() const {
   std::vector<std::string> out;
   if (!m_initialised) return out;

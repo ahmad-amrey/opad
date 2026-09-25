@@ -5,6 +5,7 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRep_Builder.hxx>
+#include <BRepBndLib.hxx>
 #include <TopoDS_Compound.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include <QPainter>
@@ -55,7 +56,7 @@ class PlaneTiles : public QWidget {
 PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget* window):QObject(window),m_doc(doc),m_view(view),m_jobs(jobs) {
   auto* body=new QWidget;auto* layout=new QVBoxLayout(body);
   m_steps=new ToolStepsPanel(body);m_steps->setSummary({},{},{});m_steps->setFixedHeight(125);layout->addWidget(m_steps);
-  auto* hint=new QLabel(tr("Choose a plane in the corner widget, or pick a planar model face."),body);hint->setObjectName("planeHint");hint->setWordWrap(true);layout->addWidget(hint);
+  auto* hint=new QLabel(tr("Choose a plane in the corner widget, a planar model face, or an existing sketch."),body);hint->setObjectName("planeHint");hint->setWordWrap(true);layout->addWidget(hint);
   m_construction=new QCheckBox(tr("Show construction planes"),body);m_construction->setObjectName("constructionPlanes");layout->addWidget(m_construction);
   connect(m_construction,&QCheckBox::toggled,this,[this]{constructionPlanes();});
   m_originControls=new QWidget(body);auto* form=new QFormLayout(m_originControls);form->setContentsMargins(0,0,0,0);
@@ -66,7 +67,7 @@ PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget
   auto numeric=[this]{if(m_refreshing)return;try{std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});ParamTable params(defs);setOrigin(params.length(m_u->text().toStdString()),params.length(m_v->text().toStdString()));}catch(const std::exception& e){m_status->setText(QString::fromUtf8(e.what()));m_apply->setEnabled(false);}};
   connect(m_u,&QLineEdit::editingFinished,this,numeric);connect(m_v,&QLineEdit::editingFinished,this,numeric);
   m_status=new QLabel(body);m_status->setWordWrap(true);layout->addWidget(m_status);layout->addStretch();auto* footer=new QHBoxLayout;layout->addLayout(footer);
-  m_back=new QPushButton(tr("Back"),body);m_apply=new QPushButton(tr("Apply"),body);auto* cancelButton=new QPushButton(tr("Cancel"),body);footer->addWidget(m_back);footer->addWidget(m_apply);footer->addWidget(cancelButton);
+  m_back=new QPushButton(tr("Back"),body);m_apply=new QPushButton(tr("OK"),body);m_apply->setObjectName("primary");auto* cancelButton=new QPushButton(tr("Cancel"),body);m_back->setToolTip(tr("Return to plane selection"));m_apply->setToolTip(tr("Use this plane and close"));cancelButton->setToolTip(tr("Cancel without applying changes"));footer->addWidget(m_back);footer->addWidget(m_apply);footer->addWidget(cancelButton);
   connect(m_back,&QPushButton::clicked,this,&PlanePicker::back);connect(m_apply,&QPushButton::clicked,this,&PlanePicker::apply);connect(cancelButton,&QPushButton::clicked,this,&PlanePicker::cancel);
   m_panel=new ToolPanel("sketch-plane","plane",&Tokens::sel,tr("Choose sketch plane"),body,470,window);
   m_panel->setEscapeHandler([this]{cancel();});connect(m_panel,&ToolPanel::visibilityChanged,this,[this](bool on){if(!on&&m_active)cancel();});
@@ -78,7 +79,7 @@ PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget
 void PlanePicker::start(bool positionOrigin,std::function<void(ToolPanel*)> open) {
   const auto selected=m_view->selection();
   stop();m_cameraBefore=m_view->cameraJson();m_active=true;m_positionOrigin=positionOrigin;m_originStage=false;m_oldFilter=m_view->selectionFilter();m_tiles->selected=-1;m_status->clear();m_construction->setChecked(false);
-  m_view->clearSelection();m_view->clearCandidates();m_view->setSelectionFilter(Viewport::SelFilter::Face);m_tiles->move(std::max(8,m_view->width()-450),42);m_tiles->show();refresh();open(m_panel);
+  m_view->clearSelection();m_view->clearCandidates();m_view->setSelectionFilter(Viewport::SelFilter::Face);m_tiles->move(std::max(8,m_view->width()-450),42);m_tiles->show();constructionPlanes();refresh();open(m_panel);
   if(selected.size()==1 && selected.front().kind==opad::Ref::Kind::Face) {
     m_positionOrigin=false;choose({{"face",selected.front().to_json()}});
   } else if(m_view->twoDimensional()) {
@@ -118,10 +119,18 @@ void PlanePicker::refresh(){
   if(m_originStage){double u,v;m_supportFrame.to_local(m_frame.origin,u,v);m_u->setText(QString::number(u,'g',14));m_v->setText(QString::number(v,'g',14));preview(&m_frame);}m_refreshing=false;
 }
 void PlanePicker::constructionPlanes(){
-  const int serial=++m_candidateSerial;if(!m_active||m_originStage)return;m_view->clearCandidates();if(!m_construction->isChecked())return;
-  auto frames=std::make_shared<std::vector<std::pair<std::string,opad::Frame>>>();for(const auto& f:m_doc->scene.features)if(f.result.contains("plane"))frames->push_back({f.id,opad::Frame::from_json(f.result.at("plane"))});
+  const int serial=++m_candidateSerial;if(!m_active||m_originStage)return;m_view->clearCandidates();
+  auto frames=std::make_shared<std::vector<std::pair<std::string,opad::Frame>>>();if(m_construction->isChecked())for(const auto& f:m_doc->scene.features)if(f.result.contains("plane"))frames->push_back({f.id,opad::Frame::from_json(f.result.at("plane"))});
+  auto sketches=std::make_shared<std::vector<opad::SketchItem>>(m_doc->scene.sketches);
   auto candidates=std::make_shared<std::vector<Viewport::Candidate>>();const double size=std::max(10.0,m_view->pixelSize()*70);QPointer<PlanePicker> guard(this);
-  m_jobs->async(tr("Preparing construction planes"),[frames,candidates,size](Progress p){for(const auto& [id,frame]:*frames){if(p.cancelled())return;candidates->push_back({opad::json{{"feature",id}}.dump(),BRepBuilderAPI_MakeFace(frame_plane(frame),-size,size,-size,size).Face(),false});}},[this,guard,candidates,serial](bool ok,const QString&){if(guard&&ok&&m_active&&!m_originStage&&serial==m_candidateSerial)m_view->showCandidates(*candidates);});
+  m_jobs->async(tr("Preparing construction planes"),[frames,sketches,candidates,size](Progress p){for(const auto& [id,frame]:*frames){if(p.cancelled())return;candidates->push_back({(id.starts_with("sketch:")?opad::json{{"sketch",id.substr(7)}}:opad::json{{"feature",id}}).dump(),BRepBuilderAPI_MakeFace(frame_plane(frame),-size,size,-size,size).Face(),false});}
+    for(const auto& sketch:*sketches)if(sketch.visible){
+      if(p.cancelled())return;BRep_Builder builder;TopoDS_Compound shape;builder.MakeCompound(shape);
+      const auto geometry=Sketch::from_json(sketch.geometry);
+      for(const auto& entity:geometry.entities){if(p.cancelled())return;const auto edge=entity_edge(geometry,entity,sketch.frame);if(!edge.IsNull())builder.Add(shape,edge);}
+      Bnd_Box box;BRepBndLib::Add(shape,box);candidates->push_back({opad::json{{"sketch",sketch.id}}.dump(),shape,false,BodyPrs::build(shape,box)});
+    }
+  },[this,guard,candidates,serial](bool ok,const QString&){if(guard&&ok&&m_active&&!m_originStage&&serial==m_candidateSerial)m_view->showCandidates(*candidates);});
 }
 void PlanePicker::preview(const opad::Frame* frame){
   if(!m_preview.IsNull()){m_view->removeOverlay(m_preview);m_preview.Nullify();}for(auto* label:{&m_xLabel,&m_yLabel})if(!label->IsNull()){m_view->removeOverlay(*label);label->Nullify();}if(!frame)return;
@@ -139,7 +148,14 @@ void PlanePicker::pickOrigin(const opad::Ref& ref){
 bool PlanePicker::eventFilter(QObject* object,QEvent* event){
   if(object!=m_view||!m_active)return false;
   if(event->type()==QEvent::KeyPress){auto* key=static_cast<QKeyEvent*>(event);if(key->key()==Qt::Key_Escape){cancel();return true;}}
-  if(!m_originStage)return false;
+  if(!m_originStage){
+    if(event->type()==QEvent::MouseMove)QTimer::singleShot(0,this,[this]{
+      if(!m_active || m_originStage)return;const auto id=m_view->hoveredCandidate();const auto previous=property("hoveredSketchPlane").toString();
+      if(previous==QString::fromStdString(id))return;setProperty("hoveredSketchPlane",QString::fromStdString(id));
+      if(!id.empty()){const auto ref=opad::json::parse(id);if(ref.contains("sketch"))if(const auto* sketch=m_doc->scene.sketch(ref.at("sketch").get<std::string>())){preview(&sketch->frame);m_status->setText(tr("Sketch plane: %1 - click to use").arg(QString::fromStdString(sketch->name)));return;}}
+      if(!previous.isEmpty()){preview(nullptr);m_status->clear();}
+    });return false;
+  }
   if(event->type()==QEvent::MouseButtonPress){auto* e=static_cast<QMouseEvent*>(event);if(e->button()!=Qt::LeftButton||QRect(m_view->width()-205,0,205,185).contains(e->position().toPoint()))return false;
     m_mouseDown=true;setProperty("originHoverRef",QString());const auto marker=m_view->widgetPoint(m_frame.origin);m_drag=(marker-e->position().toPoint()).manhattanLength()<18;
     placeOrigin(e->position());m_drag=true;return true;

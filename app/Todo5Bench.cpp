@@ -112,7 +112,33 @@ bool MainWindow::benchTodo5() {
       case 28:
         if(sketch->active()||m_doc->designBusy){--state->phase;break;}
         require(state->before==m_viewport->cameraJson(),"finishing sketch preserves camera");break;
-      default:timer->stop();trace::log("bench: TODO 5 annotations, Home, face/construction planes, vertex/circle origins, dragging, undo/redo and 2D workflow PASS");QCoreApplication::exit(0);break;
+      case 29:{
+        m_doc->newDocument();opad::design::Sketch geometry;const auto a=geometry.add_point(0,0),b=geometry.add_point(20,0);geometry.add_line(a,b);
+        auto frame=opad::design::base_frame("xz");frame.origin={0,0,30};
+        auto plan=opad::design::plan_ops(m_doc->doc,{opad::design::make_sketch_op("Plane source",{{"frame",frame.to_json()}},geometry.to_json())});m_doc->commitPlan(std::move(plan),tr("sketch"));
+        state->plane={{"sketch",m_doc->scene.sketches.front().id}};m_viewport->lookAt(frame,true,false);m_viewport->setSelectionFilter(Viewport::SelFilter::Edge);break;
+      }
+      case 30:m_viewport->isolate({m_doc->scene.sketches.front().id});break;
+      case 31:{
+        m_viewport->grabImage().save(prefix+".isolated-sketch.png");
+        opad::Ref ref;require(m_viewport->referenceAt(m_viewport->widgetPoint({10,0,30}),ref) && ref.body==m_doc->scene.sketches.front().id,"isolated sketch is displayed and pickable");
+        m_viewport->isolate({});m_design->pickSketchPlane([state](opad::json plane,opad::Frame frame){state->before=plane;state->plane["resolved"]=frame.to_json();},false);break;
+      }
+      case 32:{
+        const auto id=m_doc->scene.sketches.front().id;const auto point=m_viewport->widgetPoint({10,0,30});
+        QMouseEvent hover(QEvent::MouseMove,point,m_viewport->mapToGlobal(point),Qt::NoButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(m_viewport,&hover);
+        m_viewport->grabImage().save(prefix+".sketch-plane-hover.png");
+        m_viewport->selectRefs({}, {opad::json{{"sketch",id}}.dump()});require(!m_viewport->selectedCandidates().empty(),"existing sketch has a plane candidate");picker->selectionChanged();break;
+      }
+      case 33:{
+        if(m_design->pickingPlane()){--state->phase;break;}
+        require(state->before.contains("sketch") && std::abs(state->plane.at("resolved").at("origin")[2].get<double>()-30)<1e-8,"sketch plane pick preserves origin");
+        m_design->editOp(m_doc->scene.sketches.front().id);m_viewport->standardView("top");m_viewport->setTwoDimensional(true);
+        const auto camera=m_viewport->cameraJson();const auto eye=camera.at("eye").get<opad::Vec3>(),target=camera.at("target").get<opad::Vec3>();
+        require(std::abs(eye[0]-target[0])<1e-6 && std::abs(eye[2]-target[2])<1e-6 && std::abs(eye[1]-target[1])>1,"2D aligns to the edited sketch plane");
+        m_viewport->setTwoDimensional(false);m_design->finishSketch();break;
+      }
+      default:timer->stop();trace::log("bench: plane workflows, origins, undo/redo, sketch isolation/picking and sketch-aligned 2D PASS");QCoreApplication::exit(0);break;
     }
   }catch(const std::exception& e){timer->stop();trace::log(QString("bench: TODO 5 FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();return true;
 }

@@ -41,21 +41,22 @@ void MainWindow::drawingToSketch() {
   tree->setRootIsDecorated(false); tree->header()->setSectionResizeMode(0,QHeaderView::Stretch); layout->addWidget(tree,1);
   std::set<std::string> selected;
   for(const auto& id:currentNodeIds()) for(const auto& body:m_doc->scene.bodies_under(id)) selected.insert(body);
+  std::set<std::string> selectedSources;for(const auto& id:selected)if(const auto* n=m_doc->scene.node(id);n && n->representation=="drawing2d")selectedSources.insert(n->source_op);
   for(const auto& id:m_doc->scene.all_bodies()) {
     const auto* n=m_doc->scene.node(id); if(n->representation!="drawing2d") continue;
     auto* row=new QTreeWidgetItem(tree); row->setText(0,QString::fromStdString(n->name)); row->setData(0,Qt::UserRole,QString::fromStdString(id));
-    row->setIcon(0,icons::themed("drawing",16)); row->setCheckState(0,selected.empty() || selected.count(id)?Qt::Checked:Qt::Unchecked); row->setCheckState(1,Qt::Unchecked);
+    row->setIcon(0,icons::themed("drawing",16)); row->setCheckState(0,selectedSources.empty() || selectedSources.count(n->source_op)?Qt::Checked:Qt::Unchecked); row->setCheckState(1,Qt::Unchecked);
     if(!n->raster.is_null()) { row->setCheckState(0,Qt::Unchecked); row->setDisabled(true); row->setText(0,row->text(0)+tr(" (image: no vector curves)")); }
   }
   if(!tree->topLevelItemCount()) { panel->deleteLater(); throw opad::Error("Import a 2D drawing before converting to a sketch."); }
   auto* form=new QFormLayout; auto* name=new QLineEdit(tr("Converted drawing"),dialog);
-  for(int i=0;i<tree->topLevelItemCount();++i)if(tree->topLevelItem(i)->checkState(0)==Qt::Checked){name->setText(tree->topLevelItem(i)->text(0));break;}
+  for(int i=0;i<tree->topLevelItemCount();++i)if(tree->topLevelItem(i)->checkState(0)==Qt::Checked){const auto* n=m_doc->scene.node(tree->topLevelItem(i)->data(0,Qt::UserRole).toString().toStdString());while(n && !n->parent.empty()){const auto* parent=m_doc->scene.node(n->parent);if(!parent || parent->source_op!=n->source_op)break;n=parent;}name->setText(n?QString::fromStdString(n->name):tree->topLevelItem(i)->text(0));break;}
   auto* tolerance=new QDoubleSpinBox(dialog); tolerance->setDecimals(4); tolerance->setRange(0.0001,10); tolerance->setValue(0.01); tolerance->setSuffix(" mm");
   form->addRow(tr("Sketch name"),name); form->addRow(tr("Curve tolerance"),tolerance); layout->addLayout(form);
   auto* preview=new QCheckBox(tr("Preview converted curves"),dialog); layout->addWidget(preview);
   auto* removeSource=new QCheckBox(tr("Remove source drawing after conversion"),dialog);layout->addWidget(removeSource);
   auto* note=new QLabel(tr("Native curves stay exact. Tolerance controls reconstruction of segmented curves. Corners and construction layers are preserved."),dialog); note->setWordWrap(true); layout->addWidget(note);
-  auto* buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,dialog); buttons->button(QDialogButtonBox::Ok)->setText(tr("Create sketch")); layout->addWidget(buttons);
+  auto* buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,dialog); buttons->button(QDialogButtonBox::Ok)->setText(tr("Create sketch"));buttons->button(QDialogButtonBox::Ok)->setObjectName("primary"); layout->addWidget(buttons);
   struct State { opad::json plane; opad::Frame frame; int serial=0; QPointer<Job> job; bool applying=false,closed=false,choosing=false; };
   auto state=std::make_shared<State>(); QPointer<QWidget> guard(dialog);
   const auto generation=m_doc->generation;
@@ -67,7 +68,7 @@ void MainWindow::drawingToSketch() {
       if(m_doc->scene.node(body)->source_op==m_doc->scene.node(id)->source_op && !chosen.count(body))complete=false;
     removeSource->setEnabled(complete);if(!complete)removeSource->setChecked(false);
     removeSource->setToolTip(tr("Select all layers of a source drawing to remove it."));
-    if(!state->closed && !m_design->pickingPlane()) {
+    if(!state->closed && !state->applying && !m_design->pickingPlane()) {
       m_prompt->set("drawing",tr("Drawing to sketch"),{{tr("Pick a plane"),state->plane.is_null()?QString():tr("Plane selected")},{tr("Choose layers and create sketch"),{}}},tr("Esc cancels"));
       m_prompt->show();positionOverlays();
     }
@@ -89,7 +90,16 @@ void MainWindow::drawingToSketch() {
       if(!ok) { state->applying=false; note->setText(error); update(); return; }
       if(!commit) { if(preview->isChecked()) { std::vector<std::string> hidden; for(const auto& l:chosen) hidden.push_back(l.id); m_viewport->setPreviewCurves(*shape,*presentation,hidden); } return; }
       if(snapshot->ops.size()!=m_doc->doc.ops.size()) { state->applying=false; note->setText(tr("Document changed. Please retry.")); update(); return; }
-      auto op=opad::design::make_sketch_op(title,plane,geometry->to_json());
+      // Conversion copies geometry. Its placement must not retain a snap reference to
+      // the drawing that can be removed now or later. Keep independent model supports.
+      auto placement=plane;
+      std::set<std::string> sources;for(const auto& layer:chosen)sources.insert(m_doc->scene.node(layer.id)->source_op);
+      std::function<bool(const opad::json&)> fromSource=[&](const opad::json& value){
+        if(value.is_object() && value.contains("body") && value["body"].is_string()){const auto* n=m_doc->scene.node(value["body"].get<std::string>());if(n && sources.count(n->source_op))return true;}
+        if(value.is_structured())for(const auto& child:value)if(fromSource(child))return true;return false;
+      };
+      if(fromSource(placement))placement={{"frame",frame.to_json()}};
+      auto op=opad::design::make_sketch_op(title,placement,geometry->to_json());
       std::vector<opad::json> ops{op};
       if(removeSource->isChecked()) {
         std::set<std::string> sources;for(const auto& layer:chosen)sources.insert(m_doc->scene.node(layer.id)->source_op);
@@ -100,7 +110,9 @@ void MainWindow::drawingToSketch() {
         state->applying=false;
         if(applied) { panel->hide(); if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")) QTimer::singleShot(500,this,[this,title] {
           bool valid=!m_design->sketchActive() && !m_doc->scene.sketches.empty() && m_doc->scene.sketches.back().name==title;
-          valid=valid&&m_doc->scene.all_bodies().empty();m_doc->undo();valid=valid&&!m_doc->scene.all_bodies().empty()&&m_doc->scene.sketches.empty();m_doc->redo();valid=valid&&!m_doc->scene.sketches.empty()&&m_doc->scene.all_bodies().empty();
+          valid=valid&&m_doc->scene.all_bodies().empty()&&m_doc->scene.unresolved.empty();
+          try{const auto restored=opad::Document::parse(m_doc->doc.serialize());valid=valid&&opad::resolve(restored).unresolved.empty();}catch(...){valid=false;}
+          m_doc->undo();valid=valid&&!m_doc->scene.all_bodies().empty()&&m_doc->scene.sketches.empty();m_doc->redo();valid=valid&&!m_doc->scene.sketches.empty()&&m_doc->scene.all_bodies().empty();
           trace::log(valid?"bench: conversion source removal, name, atomic undo/redo PASS":"bench: conversion source removal FAIL");QCoreApplication::exit(valid?0:2);
         }); }
         else {note->setText(failure); update();}
@@ -132,6 +144,10 @@ void MainWindow::drawingToSketch() {
       if(++*attempts>200){wait->stop();QCoreApplication::exit(2);return;}
       if(!m_design->planePicker()->positioning())return;
       wait->stop();m_design->planePicker()->apply();
+      if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")){
+        const auto body=layers().front().id;
+        state->plane={{"support",{{"base","xy"}}},{"origin",{{"ref",{{"body",body},{"kind","vertex"},{"index",0}}}}},{"frame",state->frame.to_json()}};
+      }
       if(state->plane.is_null() || !panel->isVisible()){trace::log("bench: drawing plane Apply FAIL");QCoreApplication::exit(2);return;}
       trace::log("bench: drawing plane cancel, reselect and Apply PASS");
       panel->grab().save(shot);m_prompt->grab().save(shot+".prompt.png");

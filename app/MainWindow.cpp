@@ -373,6 +373,7 @@ void MainWindow::buildActions() {
   flat->setCheckable(true);
   connect(flat, &QAction::toggled, this, [this](bool on) {
     m_viewport->setTwoDimensional(on);
+
     if (m_browserOverlay && action("panel.browser")->isChecked()) { m_browserOverlay->setVisible(m_doc->hasDocument); m_browserOverlay->raise(); }
     m_homeBtn->setVisible(!on); m_rollLeft->setVisible(!on); m_rollRight->setVisible(!on); m_alignPlane->setVisible(!on);
   });
@@ -396,8 +397,10 @@ void MainWindow::buildActions() {
     auto* dialog=new QDialog(this,Qt::Tool);dialog->setAttribute(Qt::WA_DeleteOnClose);dialog->setWindowTitle(tr("Grid settings"));
     auto* form=new QFormLayout(dialog);auto* spacing=new QDoubleSpinBox(dialog);spacing->setRange(0,100000);spacing->setDecimals(3);spacing->setSpecialValueText(tr("Automatic"));spacing->setValue(m_settings.value("view/gridSpacing",0).toDouble());
     auto* extent=new QDoubleSpinBox(dialog);extent->setRange(1,1000000);extent->setValue(m_settings.value("view/gridExtent",100).toDouble());
-    form->addRow(tr("Spacing (mm)"),spacing);form->addRow(tr("Minimum extent (mm)"),extent);
-    auto changed=[this,spacing,extent]{m_viewport->configureGrid(spacing->value(),extent->value());};
+    auto* automatic=new QCheckBox(tr("Automatic spacing"),dialog);automatic->setChecked(spacing->value()==0);spacing->setEnabled(!automatic->isChecked());
+    form->addRow(automatic);form->addRow(tr("Spacing (mm)"),spacing);form->addRow(tr("Minimum extent (mm)"),extent);
+    auto changed=[this,spacing,extent,automatic]{m_viewport->configureGrid(automatic->isChecked()?0:spacing->value(),extent->value());};
+    connect(automatic,&QCheckBox::toggled,dialog,[=](bool on){spacing->setEnabled(!on);if(!on && spacing->value()==0)spacing->setValue(1);changed();});
     connect(spacing,&QDoubleSpinBox::valueChanged,dialog,changed);connect(extent,&QDoubleSpinBox::valueChanged,dialog,changed);
     action("view.grid")->setChecked(true);dialog->show();
   });
@@ -1325,6 +1328,10 @@ void MainWindow::onBrowserSelection(const std::vector<std::string>& ids) {
 // selection closes it. Pinned, it stays and follows the selection. Nothing is inspected while it is closed.
 void MainWindow::selectionMoved(const std::vector<opad::Ref>& refs) {
   m_selRefs = refs;
+  if(auto* panel=findChild<ToolPanel*>("instanceBrowser"); panel && panel->isVisible()) {
+    const auto current=panel->property("instanceCurrent").toString().toStdString();
+    if(refs.size()!=1 || refs.front().body!=current)panel->hide();
+  }
   if (!m_propsPanel->isVisible()) return;
   if (m_propsPanel->pinned()) showProperties(refs);  // O(1): only the first ref is inspected and geometry walks are deferred to a job
   else m_propsPanel->hide();
@@ -1431,6 +1438,7 @@ void MainWindow::writeSelectionFile() {
 }
 
 void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids) {
+  if(auto* instances=findChild<ToolPanel*>("instanceBrowser"))instances->hide();
   if(m_design->sketchActive()) {
     QMenu menu(this);
     if(!ids.empty()) {
@@ -1449,7 +1457,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     menu.addSection(ids.size() == 1 ? m_doc->nodeName(ids.front()) : tr("%1 objects").arg(ids.size()));
     QAction* fit = menu.addAction(icons::themed("fit", 16), tr("Fit to"));
     connect(fit, &QAction::triggered, this, [this, ids] { m_viewport->fitNodes(ids); });
-    if(std::any_of(ids.begin(),ids.end(),[this](const auto& id){const auto* n=m_doc->node(id);return n && n->representation=="drawing2d";}))add("design.convertDrawing");
+    if(std::any_of(ids.begin(),ids.end(),[this](const auto& id){for(const auto& body:m_doc->scene.bodies_under(id))if(m_doc->scene.node(body)->representation=="drawing2d")return true;return false;}))add("design.convertDrawing");
     if(ids.size()==1 && m_doc->scene.sketch(ids.front())) {
       menu.addAction(tr("Redefine sketch plane"),this,[this,id=ids.front()]{m_design->editOp(id);m_design->redefineSketchPlane();});
     }
