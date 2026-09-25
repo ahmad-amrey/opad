@@ -77,6 +77,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   static int savedRenderQuality();
   void setSceneBackground(int style);
   void setHoverFade(bool enabled,double seconds);
+  void resetHoverFade();
   void setTwoDimensional(bool on);
   bool twoDimensional() const { return m_twoDimensional; }
   void setTracking(bool on);
@@ -437,7 +438,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void updateHoverFade();
   QTimer m_hoverFadeTimer;
   QElapsedTimer m_hoverAge;
-  const AIS_InteractiveObject* m_hoverFadeObject=nullptr;
+  Handle(AIS_InteractiveObject) m_hoverFadeObject;
+  bool m_hoverFadeRestorePending=false;
   bool m_hoverFadeEnabled=true;
   double m_hoverFadeSeconds=5;
   const Standard_Transient* m_hoverOwner = nullptr;  // owner m_hover was built for (identity only, never dereferenced)

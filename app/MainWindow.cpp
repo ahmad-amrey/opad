@@ -277,6 +277,7 @@ QAction* MainWindow::addAction(const QString& id, const QString& text, const QSt
   a->setToolTip(tip);
   connect(a, &QAction::triggered, this, [this, fn, id] {
     if (m_loadJob && !id.startsWith("file.") && !id.startsWith("panel.") && id != "view.dark") return;  // loading: workspace is locked
+    m_viewport->resetHoverFade();
     guarded(fn);
   });
   m_actions << a;
@@ -2259,7 +2260,7 @@ void MainWindow::runBench() {
       QTimer::singleShot(500, this, [this] {
         startTool("distance");
         if (!m_viewport->benchPicking()) return QCoreApplication::exit(2);
-        if (qEnvironmentVariableIsSet("OPAD_BENCH_ORBIT_PERF")) return QCoreApplication::exit(0);
+        if (qEnvironmentVariableIsSet("OPAD_BENCH_ORBIT_PERF") || qEnvironmentVariableIsSet("OPAD_BENCH_HOVER_FADE")) return QCoreApplication::exit(0);
         QTimer::singleShot(1500, this, [this] {
           const bool ok = m_toolPicks.size() == 2 && m_lastMeasure.value("kind", "") == "distance";
           trace::log(QStringLiteral("bench: picking guided distance %1: %2").arg(ok ? "PASS" : "FAIL", QString::fromStdString(m_lastMeasure.dump())));

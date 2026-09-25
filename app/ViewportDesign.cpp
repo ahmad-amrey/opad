@@ -169,6 +169,7 @@ std::vector<std::string> Viewport::selectedCandidates() const {
 }
 
 void Viewport::selectRefs(const std::vector<opad::Ref>& refs, const std::vector<std::string>& candidates) {
+  resetHoverFade();
   if (!m_initialised) return;
   if (m_selJob) m_selJob->cancel();
   clearShade();
@@ -347,6 +348,7 @@ void Viewport::removeOverlay(const Handle(AIS_InteractiveObject)& obj) {
 
 // ---------------------------------------------------------------- sketch input
 void Viewport::beginSketchInput(SketchInput* input, const opad::Frame& frame, const std::string& hiddenSketch) {
+  resetHoverFade();
   m_sketchInput = input;
   m_sketchFrame = frame;
   const auto normal=frame.normal();
@@ -362,6 +364,7 @@ void Viewport::beginSketchInput(SketchInput* input, const opad::Frame& frame, co
 }
 
 void Viewport::endSketchInput() {
+  resetHoverFade();
   m_sketchInput = nullptr;
   m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(),gp::DZ(),gp::DX()));
   updateGridExtent();

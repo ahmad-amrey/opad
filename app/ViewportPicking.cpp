@@ -115,6 +115,10 @@ bool Viewport::inferenceKey(QKeyEvent* key) {
 }
 
 bool Viewport::eventFilter(QObject* object, QEvent* e) {
+  if(e->type()==QEvent::MouseButtonPress || e->type()==QEvent::MouseButtonDblClick) {
+    const auto widget=qobject_cast<QWidget*>(object);
+    if(widget && (widget==window() || window()->isAncestorOf(widget)))resetHoverFade();
+  }
   if((e->type()==QEvent::KeyPress || e->type()==QEvent::KeyRelease) && static_cast<QKeyEvent*>(e)->key()==Qt::Key_Control
       && (object==this || underMouse() || m_ctrlCenterPick))
     setCenterPicking(e->type()==QEvent::KeyPress,m_trackingCursor);

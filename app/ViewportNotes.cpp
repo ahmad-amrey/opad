@@ -124,5 +124,6 @@ void Viewport::noteCameraMoved() {
   if (m_noteCamera == state && m_noteSize == pixels) return;
   m_noteCamera = state;
   m_noteSize = pixels;
+  resetHoverFade();
   QMetaObject::invokeMethod(this, [this] { emit notesMoved(); }, Qt::QueuedConnection);
 }

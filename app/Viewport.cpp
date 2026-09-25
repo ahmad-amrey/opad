@@ -122,6 +122,7 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   setFocusPolicy(Qt::StrongFocus);
   QCoreApplication::instance()->installEventFilter(this);
   setMinimumSize(200, 150);
+  connect(doc, &AppDocument::changed, this, &Viewport::resetHoverFade);
   connect(doc, &AppDocument::changed, this, &Viewport::sync);
   m_syncTimer.setSingleShot(true);
   m_syncTimer.setInterval(50);
@@ -238,7 +239,7 @@ void Viewport::initViewer() {
   m_ctx = new AIS_InteractiveContext(m_viewer);
   m_hoverFadeEnabled=QSettings().value("view/hoverFade",true).toBool();
   m_hoverFadeSeconds=std::clamp(QSettings().value("view/hoverFadeSeconds",5.0).toDouble(),.1,60.0);
-  m_hoverFadeTimer.setInterval(40);connect(&m_hoverFadeTimer,&QTimer::timeout,this,&Viewport::updateHoverFade);
+  m_hoverFadeTimer.setSingleShot(true);connect(&m_hoverFadeTimer,&QTimer::timeout,this,&Viewport::requestRedraw);
   m_ctx->SetPixelTolerance(4);
   m_ctx->AddFilter(new OwnerFilter([this](const Handle(SelectMgr_EntityOwner)& owner) {
     if(!Handle(CircleOwner)::DownCast(owner).IsNull()) return m_ctrlCenterPick;
@@ -531,6 +532,7 @@ void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
 }
 
 void Viewport::setSelectionFilter(SelFilter f) {
+  resetHoverFade();
   m_filter = f;
   m_hoverOwner = nullptr;  // owners are rebuilt per mode; an address may be reused
   if (!m_initialised) return;
@@ -606,6 +608,7 @@ constexpr int kMeasureMs = 10;      // how much highlighting to do before projec
 void Viewport::setJobs(JobRunner* jobs) { m_jobs = jobs; }
 
 void Viewport::selectNodes(const std::vector<std::string>& ids) {
+  resetHoverFade();
   if (!m_initialised) {
     emit selectionApplied();
     return;
@@ -897,11 +900,13 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   clock.start();
   refreshMeasurement();
   noteCameraMoved();
+  trackHoverFade();
   AIS_ViewController::handleViewRedraw(ctx, view);
   if (trace::enabled() && clock.elapsed() > 50) trace::log(QStringLiteral("slow frame part: redraw %1 ms").arg(clock.elapsed()));
 }
 
 void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const Handle(V3d_View)&) {
+  resetHoverFade();
   // The controller reports every click, also one on the view cube: that turns the camera and selects nothing,
   // and telling the listeners would run a guided tool's measure again on the same picks.
   if (m_cubeClick) {
@@ -1187,6 +1192,7 @@ void Viewport::updateClipPlanes() {
 // ---------------------------------------------------------------- dimension (F23)
 // ---------------------------------------------------------------- guided-tool picking
 void Viewport::setPickAccumulate(bool on, bool retainPicks) {
+  if(m_pickAccumulate!=on || m_retainToolPicks!=(on && retainPicks))resetHoverFade();
   m_pickAccumulate = on;
   m_retainToolPicks = on && retainPicks;
   ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, on ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
@@ -1732,7 +1738,6 @@ void Viewport::paintEvent(QPaintEvent*) {
   }
   if (trace::enabled() && frame.elapsed() > 100) trace::log(QStringLiteral("slow frame: %1 ms (%2 objects)").arg(frame.elapsed()).arg(m_items.size()));
   updateTracking();
-  trackHoverFade();
   // The label needs the sub-shape's ordinal, a walk over the whole body: only when the hovered owner changes.
   const Standard_Transient* hoverOwner = m_ctx->HasDetected() ? m_ctx->DetectedOwner().get() : nullptr;
   if (hoverOwner == m_hoverOwner) return;

@@ -20,28 +20,54 @@ int Viewport::savedRenderQuality() {
 void Viewport::setHoverFade(bool enabled,double seconds) {
   m_hoverFadeEnabled=enabled;m_hoverFadeSeconds=std::clamp(seconds,.1,60.0);
   QSettings().setValue("view/hoverFade",enabled);QSettings().setValue("view/hoverFadeSeconds",m_hoverFadeSeconds);
-  m_hoverFadeObject=nullptr;m_hoverFadeTimer.stop();m_hoverAge.invalidate();
-  if(m_initialised){ResetPreviousMoveTo();m_ctx->ClearDetected(false);redrawScene();}
+  resetHoverFade();
+}
+void Viewport::resetHoverFade() {
+  m_hoverFadeObject.Nullify();m_hoverFadeTimer.stop();m_hoverAge.invalidate();
+  // Keep the detected owner: clicks must still select an object whose hover faded.
+  // Restore its presentation in the next frame, even if the pointer stays still.
+  m_hoverFadeRestorePending=true;
+  if(m_initialised){ResetPreviousMoveTo();requestRedraw();}
 }
 void Viewport::trackHoverFade() {
-  if(!m_hoverFadeEnabled || !m_initialised || !m_ctx->HasDetected()){m_hoverFadeTimer.stop();return;}
+  if(!m_initialised || !m_ctx->HasDetected()){m_hoverFadeTimer.stop();return;}
   const auto object=m_ctx->DetectedInteractive();
-  if(object.IsNull() || !m_nodeOf.count(object.get())){m_hoverFadeTimer.stop();return;}
-  if(object.get()!=m_hoverFadeObject){m_hoverFadeObject=object.get();m_hoverAge.restart();}
-  if(!m_hoverFadeTimer.isActive() && m_hoverAge.elapsed()<m_hoverFadeSeconds*1000+400)m_hoverFadeTimer.start();
-  if(m_hoverAge.elapsed()>m_hoverFadeSeconds*1000)updateHoverFade();
+  // Visiting another object (including helpers) releases the old suppression.
+  // Empty space alone does not: leaving and returning to the same object keeps it faded.
+  if(object!=m_hoverFadeObject){m_hoverFadeObject=object;m_hoverAge.restart();m_hoverFadeTimer.stop();}
+  if(object.IsNull() || !m_nodeOf.count(object.get())){
+    m_hoverFadeRestorePending=false;m_hoverFadeTimer.stop();return;
+  }
+  if(m_hoverFadeEnabled && !m_hoverFadeTimer.isActive()) {
+    const double remaining=m_hoverFadeSeconds*1000-m_hoverAge.elapsed();
+    // Sleep until the fade starts; only its 400 ms animation needs extra frames.
+    if(remaining>0)m_hoverFadeTimer.start(std::max(1,int(remaining)));
+    else if(remaining>-400)m_hoverFadeTimer.start(40);
+  }
+  updateHoverFade();
 }
 void Viewport::updateHoverFade() {
-  if(!m_initialised || !m_hoverFadeEnabled || !m_ctx->HasDetected() || m_ctx->DetectedInteractive().get()!=m_hoverFadeObject){m_hoverFadeTimer.stop();return;}
-  const double fade=std::clamp((m_hoverAge.elapsed()-m_hoverFadeSeconds*1000)/400.0,0.0,1.0);if(fade<=0)return;
+  if(!m_initialised || !m_ctx->HasDetected() || m_ctx->DetectedInteractive()!=m_hoverFadeObject){m_hoverFadeTimer.stop();return;}
+  const double fade=m_hoverFadeEnabled?std::clamp((m_hoverAge.elapsed()-m_hoverFadeSeconds*1000)/400.0,0.0,1.0):0.0;
+  if(fade<=0 && !m_hoverFadeRestorePending)return;
+  m_hoverFadeRestorePending=false;
   const auto manager=m_ctx->MainPrsMgr();manager->ClearImmediateDraw();
   if(fade<1) {
     const auto base=m_ctx->HighlightStyle(m_filter==SelFilter::Body?Prs3d_TypeOfHighlight_Dynamic:Prs3d_TypeOfHighlight_LocalDynamic);
-    Handle(Prs3d_Drawer) style=new Prs3d_Drawer;style->SetLink(base);style->SetColor(base->Color());style->SetTransparency(float(fade));style->SetDisplayMode(base->DisplayMode());style->SetZLayer(base->ZLayer());
-    auto shading=new Prs3d_ShadingAspect;shading->SetAspect(new Graphic3d_AspectFillArea3d(*base->ShadingAspect()->Aspect()));shading->SetTransparency(fade);style->SetShadingAspect(shading);
+    Handle(Prs3d_Drawer) style=base;
+    if(fade>0) {
+      style=new Prs3d_Drawer;style->SetLink(base);style->SetColor(base->Color());
+      style->SetTransparency(float(base->Transparency()+(1-base->Transparency())*fade));
+      style->SetDisplayMode(base->DisplayMode());style->SetZLayer(base->ZLayer());
+      auto shading=new Prs3d_ShadingAspect;shading->SetAspect(new Graphic3d_AspectFillArea3d(*base->ShadingAspect()->Aspect()));
+      const double transparency=base->ShadingAspect()->Transparency();
+      shading->SetTransparency(transparency+(1-transparency)*fade);style->SetShadingAspect(shading);
+    }
     manager->BeginImmediateDraw();m_ctx->DetectedOwner()->HilightWithColor(manager,style,style->DisplayMode());manager->EndImmediateDraw(m_viewer);
   }
-  m_view->RedrawImmediate();
+  // Only alter presentations here. The controller renders after this check, so
+  // a new OCCT MoveTo highlight can never leak into a visible frame first.
+  m_view->InvalidateImmediate();
   if(fade>=1)m_hoverFadeTimer.stop();
 }
 

@@ -27,10 +27,96 @@
 #include <SelectMgr_SensitiveEntity.hxx>
 #include <cmath>
 #include <gp_Pln.hxx>
+#include <Graphic3d_StructureManager.hxx>
+#include <QAction>
 
 bool Viewport::benchPicking() {
   auto require = [](bool ok, const char* message) { if (!ok) throw opad::Error(message); };
   try {
+    if(qEnvironmentVariableIsSet("OPAD_BENCH_HOVER_FADE")) {
+      QSignalBlocker blocked(this);
+      myViewAnimation->Stop();ResetViewInput();myUI.Reset();myGL.Reset();
+      m_ctx->ClearSelected(false);m_ctx->ClearDetected(false);m_ctx->EraseAll(false);m_ctx->Deactivate();
+      setGrid(false);
+      const auto box=BRepPrimAPI_MakeBox(gp_Pnt(-10,-10,0),20,20,10).Shape();
+      BRepMesh_IncrementalMesh mesh(box,.1);Bnd_Box bounds;BRepBndLib::Add(box,bounds);
+      const auto prs=BodyPrs::build(box,bounds);
+      Handle(BodyShape) first=new BodyShape(box,prs),second=new BodyShape(box,prs);
+      gp_Trsf placement;placement.SetTranslation(gp_Vec(-25,0,0));first->SetLocalTransformation(placement);
+      placement.SetTranslation(gp_Vec(25,0,0));second->SetLocalTransformation(placement);
+      m_nodeOf[first.get()]="hover-a";m_nodeOf[second.get()]="hover-b";
+      for(const auto& body:{first,second}){body->SetColor(Quantity_NOC_GRAY50);m_ctx->Display(body,1,0,false);m_ctx->Load(body,-1);}
+      m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+      m_view->SetProj(V3d_XposYnegZpos);m_view->FitAll(.2,false);m_view->ZFitAll();
+      m_view->Redraw();
+      auto frame=[&]{handleViewRedraw(m_ctx,m_view);};
+      auto structures=[&]{Graphic3d_MapOfStructure displayed;m_viewer->StructureManager()->DisplayedStructures(displayed);return displayed.Extent();};
+      const Graphic3d_Vec2i empty(-200,-200);
+      auto move=[&](const Graphic3d_Vec2i& point){m_ctx->MoveTo(point.x(),point.y(),m_view,false);frame();};
+      auto target=[&](const Handle(BodyShape)& body,int mode){
+        for(const auto& entity:body->Selection(mode)->Entities()) {
+          const auto p=entity->BaseSensitive()->CenterOfGeometry().Transformed(body->Transformation());
+          const auto pixel=devicePos(widgetPoint({p.X(),p.Y(),p.Z()}));
+          m_ctx->MoveTo(pixel.x(),pixel.y(),m_view,false);
+          if(m_ctx->HasDetected() && m_ctx->DetectedInteractive()==body)return pixel;
+        }
+        throw opad::Error("hover fade fixture has no pickable target");
+      };
+      auto expire=[&]{
+        QEventLoop loop;QTimer::singleShot(600,&loop,&QEventLoop::quit);loop.exec();frame();
+        require(m_hoverAge.isValid() && m_hoverAge.elapsed()>=500,"hover timeout restarted without context change");
+      };
+      for(int mode=0;mode<4;++mode) {
+        m_filter=SelFilter(mode);m_ctx->Deactivate();
+        const int selectionMode=AIS_Shape::SelectionMode(mode==0?TopAbs_SHAPE:mode==1?TopAbs_FACE:mode==2?TopAbs_EDGE:TopAbs_VERTEX);
+        for(const auto& body:{first,second})m_ctx->Activate(body,selectionMode);
+        const auto a=target(first,selectionMode),b=target(second,selectionMode);
+        setHoverFade(true,.1);move(empty);const auto plain=structures();
+        move(a);require(structures()>plain,"fresh object has no hover presentation");
+        const auto owner=m_ctx->DetectedOwner();expire();
+        require(structures()==plain,"expired hover presentation remains displayed");
+        require(m_ctx->HasDetected() && m_ctx->DetectedOwner()==owner,"fading removed the pickable owner");
+        // Force OCCT to regenerate the same owner's highlight and exercise the
+        // actual pre-render hook, without a timer turn available to hide a flash.
+        for(int repeat=0;repeat<3;++repeat) {
+          move(empty);move(a);
+          require(structures()==plain,"returning to a faded object flashes a highlight in the rendered frame");
+        }
+        move(b);require(structures()>plain,"different object did not reset hover");
+        move(a);require(structures()>plain && m_hoverAge.elapsed()<100,"return after another object did not reset hover");
+        expire();
+        // Clicking a panel also changes context; no mouse movement is needed.
+        QWidget panel(window());
+        QMouseEvent click(QEvent::MouseButtonPress,QPointF(1,1),QPointF(1,1),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
+        QCoreApplication::sendEvent(&panel,&click);frame();
+        require(structures()>plain && m_hoverAge.elapsed()<100,"click did not restore stationary hover");
+        expire();
+        const auto scale=m_view->Camera()->Scale();m_view->Camera()->SetScale(scale*.98);frame();
+        require(structures()>plain && m_hoverAge.elapsed()<100,"camera change did not restore hover");
+        m_view->Camera()->SetScale(scale);frame();
+        expire();
+        if(mode==0) {
+          auto* action=window()->findChild<QAction*>("view.grid");require(action,"grid action missing");
+          action->trigger();action->trigger();frame();
+          require(structures()>plain && m_hoverAge.elapsed()<100,"window action did not restore hover");
+          expire();
+        }
+        setPickAccumulate(!m_pickAccumulate,true);frame();
+        require(structures()>plain && m_hoverAge.elapsed()<100,"tool picking change did not restore hover");
+        expire();
+        setHoverFade(false,.1);frame();
+        require(structures()>plain,"disabling fading did not restore hover");
+        setHoverFade(true,.1);frame();expire();
+        m_ctx->SelectDetected(AIS_SelectionScheme_Replace);
+        require(m_ctx->NbSelected()==1,"faded object is not selectable");
+        frame();const auto selected=structures();
+        move(empty);move(a);
+        require(m_ctx->NbSelected()==1 && structures()==selected,"hover suppression altered selection highlighting");
+        m_ctx->ClearSelected(false);m_ctx->ClearDetected(false);frame();
+        trace::log(QStringLiteral("bench: hover fade mode %1: no flash / other object / click / camera / tool / disabled / selectable PASS").arg(mode));
+      }
+      return true;
+    }
     CursorWarpGate gate; gate.begin({0,200},{1917,200});
     require(!gate.accept({0,201}) && !gate.accept({1,202}), "queued edge events should not reapply cursor warp");
     require(gate.accept({1915,201}) && gate.accept({1910,202}), "warp destination should resume continuous drag");
