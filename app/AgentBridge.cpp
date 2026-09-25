@@ -35,7 +35,7 @@ AgentBridge::AgentBridge(AppDocument* doc,DesignController* design,Viewport* vie
   connect(doc,&AppDocument::aboutToReplace,this,[this]{stop();if(m_cache)dispose(std::move(m_cache));m_changes=json::array();for(auto& s:m_sessions)s->bound=false;});
   connect(doc,&AppDocument::changed,this,[this]{if(!m_committing)clearPrepared();if(m_cache)dispose(std::move(m_cache));publish();});
   connect(doc,&AppDocument::pathChanged,this,&AgentBridge::publish);
-  connect(design,&DesignController::stateChanged,this,[this]{if(editorBusy())clearPrepared();emit statusChanged();});
+  connect(design,&DesignController::stateChanged,this,[this]{if(editorBusy() && !m_doc->snapshotBusy())clearPrepared();emit statusChanged();});
   setAccess(settings.value("agent/enabled",false).toBool(),settings.value("agent/edit",false).toBool());
   // Test instances use separate INI settings and an explicit opt-in environment variable.
   if(!qEnvironmentVariable("OPAD_BENCH_SETTINGS").isEmpty() && qEnvironmentVariableIsSet("OPAD_BENCH_AGENT"))setAccess(true,true);
@@ -66,13 +66,37 @@ void AgentBridge::setAccess(bool enabled,bool edit){
   publish();
 }
 bool AgentBridge::editorBusy()const{return m_doc->loading || m_doc->designBusy || m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane();}
+json AgentBridge::editingState()const {
+  const std::string edit=m_design->sketchActive()?"sketch":m_design->featureActive()?"feature":m_design->pickingPlane()?"plane":"none";
+  json owner=nullptr;
+  const auto socket=m_busy?m_owner:(m_prepared?m_prepared->owner:QPointer<QLocalSocket>());
+  for(const auto& s:m_sessions)if(s->socket && s->socket==socket)owner={{"kind","agent"},{"client_id",s->clientId},{"name",s->agent.toStdString()}};
+  if(edit!="none")owner={{"kind","human"}};
+  return {{"revision",m_doc->revision},{"edit_session",edit},{"human_edit",edit!="none"},
+    {"loading",m_doc->loading},{"snapshot_busy",m_doc->snapshotBusy()},{"design_busy",m_doc->designBusy},
+    {"agent_busy",m_busy},{"owner",owner},{"active_operation_id",m_busy?json(m_activeOperation):json(nullptr)},
+    {"prepared_id",m_prepared?json(m_prepared->id):json(nullptr)}};
+}
+void AgentBridge::waitForIdle(const std::shared_ptr<Session>& s,int timeout,unsigned long long epoch,std::shared_ptr<QElapsedTimer> timer){
+  if(!s->socket || !s->bound)return;
+  if(!m_enabled || s->target!=target()){fail(s,"target_changed",tr("The document changed. Use live_instances and explicitly bind again."));return;}
+  // Prepared work owned by this connection is available for its next staged command.
+  const bool idle=!m_busy && !editorBusy() && (!m_prepared || m_prepared->owner==s->socket);
+  const bool human=m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane();
+  if(idle || human || timer->elapsed()>=timeout){
+    reply(s,live_result({{"state","read"},{"revision",m_doc->revision},{"result",{{"idle",idle},{"timed_out",!idle && !human && timer->elapsed()>=timeout},{"editing",editingState()}}},{"elapsed_ms",timer->elapsed()}}));return;
+  }
+  QTimer::singleShot(20,this,[this,s,timeout,epoch,timer]{waitForIdle(s,timeout,epoch,timer);});
+}
 QString AgentBridge::stateText()const {
   if(!m_enabled)return tr("Disabled");if(m_busy)return tr("Busy");
+  if(m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane())return tr("Waiting for active editor");
+  if(m_doc->snapshotBusy())return tr("Capturing document");
   for(const auto& s:m_sessions)if(s->bound && s->socket && s->socket->state()==QLocalSocket::ConnectedState)return tr("Connected: %1").arg(s->agent);
   return m_seenClient?tr("Disconnected"):tr("Waiting for client");
 }
 json AgentBridge::liveState()const{
-  auto out=descriptor();out["revision"]=m_doc->revision;out["dirty"]=m_doc->isDirty();out["busy"]=m_busy;
+  auto out=descriptor();out["editing"]=editingState();out["revision"]=m_doc->revision;out["dirty"]=m_doc->isDirty();out["busy"]=m_busy;
   out["edit_session"]=m_design->sketchActive()?"sketch":m_design->featureActive()?"feature":m_design->pickingPlane()?"plane":"none";
   out["camera"]=m_viewport->cameraJson();out["selection"]=json::array();
   auto refs=m_viewport->selection();for(size_t i=0;i<std::min(size_t(100),refs.size());++i)out["selection"].push_back(refs[i].to_json());
@@ -84,7 +108,7 @@ json AgentBridge::liveState()const{
   return out;
 }
 void AgentBridge::accept(){while(m_server.hasPendingConnections()){
-  auto session=std::make_shared<Session>();session->socket=m_server.nextPendingConnection();m_sessions.push_back(session);
+  auto session=std::make_shared<Session>();session->socket=m_server.nextPendingConnection();session->clientId=uuid();m_sessions.push_back(session);
   connect(session->socket,&QLocalSocket::readyRead,this,[this,session]{read(session);});
   connect(session->socket,&QLocalSocket::disconnected,this,[this,session]{
     session->bound=false;
@@ -97,7 +121,7 @@ void AgentBridge::read(const std::shared_ptr<Session>& session){
   if(!session->socket)return;session->input+=session->socket->readAll();
   if(session->input.size()>8*1024*1024){session->socket->abort();return;}
   if(session->receiving || !session->input.contains('\n'))return;
-  const auto end=session->input.indexOf('\n');auto line=session->input.left(end);session->input.remove(0,end+1);session->receiving=true;
+  const auto end=session->input.indexOf('\n');auto line=session->input.left(end);session->input.remove(0,end+1);session->receiving=true;session->requestTimer.start();
   struct Parsed{json request;std::string hash;};auto parsed=std::make_shared<Parsed>();
   m_jobs->async(tr("Reading agent request"),[line,parsed](Progress){
     parsed->request=json::parse(line.toStdString());const auto name=parsed->request.at("name").get<std::string>();
@@ -124,6 +148,13 @@ void AgentBridge::fail(const std::shared_ptr<Session>& s,const std::string& code
   auto error=live_error(code,message.toStdString());
   error["structuredContent"]["state"]=code=="cancelled"?"cancelled":"failed";
   error["structuredContent"]["error"]["next"]="Read live_state and the relevant context or feature_schema, correct the failed inputs, then use a new request_id. Query request_status before retrying an interrupted request.";
+  // Capture this on the UI thread at rejection, before serialization or another event.
+  auto& detail=error["structuredContent"]["error"];
+  detail["editing"]=editingState();detail["client_id"]=s->clientId;
+  const bool transient=(code=="busy" || code=="edit_session_busy") &&
+    !m_design->sketchActive() && !m_design->featureActive() && !m_design->pickingPlane();
+  detail["retryable"]=transient;detail["retry_after_ms"]=transient?json(50):json(nullptr);
+  if(transient)detail["next"]="Call wait_for_idle, check revision and transaction state, then retry with a new request_id.";
   activity(tr("Agent error: %1").arg(message));reply(s,std::move(error),receipt);
 }
 void AgentBridge::replyReceipt(const std::shared_ptr<Session>& session,const Receipt& receipt){
@@ -149,7 +180,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     if(args.at("instance")!=m_instance.toStdString() || args.at("target")!=target().toStdString() || target().isEmpty()){fail(s,"wrong_target",tr("Choose the current document explicitly using live_instances."));return;}
     if(request.value("version","")!=opad::version_string()){fail(s,"version_mismatch",tr("Use the CLI installed with this OPAD version."));return;}
     s->bound=true;s->target=target();s->agent=QString::fromStdString(request.value("client",json::object()).value("name","MCP client")).left(100);m_seenClient=true;
-    activity(tr("Connected: %1").arg(s->agent));reply(s,live_result(liveState()));return;
+    activity(tr("Connected: %1").arg(s->agent));auto state=liveState();state["client_id"]=s->clientId;reply(s,live_result(state));return;
   }
   if(name=="live_diagnostics") {
     if(!s->bound || s->target!=target()) {
@@ -172,6 +203,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     if(args.value("include_example",false))out["guide"]=live_guide();reply(s,live_result(out));return;
   }
   if(!s->bound || s->target!=target()){fail(s,"target_changed",tr("The document changed. Use live_instances and explicitly bind again."));return;}
+  if(name=="wait_for_idle"){auto timer=std::make_shared<QElapsedTimer>();timer->start();waitForIdle(s,args.value("timeout_ms",2000),m_epoch,timer);return;}
   if(name=="stop"){stop();reply(s,live_result({{"stopped",true}}));return;}
   if(name=="live_state"){
     if(m_busy)reply(s,live_result({{"state","read"},{"revision",m_doc->revision},{"result",liveState()}}));
@@ -191,7 +223,8 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
       replyReceipt(s,found->second);return;
     }
     if(!m_edit){fail(s,"read_only",tr("Agent access is view-only. Enable editing in Settings to change or export the document."));return;}
-    if(name=="save" && m_doc->snapshotBusy() && !m_busy){
+    if(m_doc->snapshotBusy() && !m_busy && !m_design->sketchActive() && !m_design->featureActive() && !m_design->pickingPlane()){
+      if(s->requestTimer.elapsed()>=2000){fail(s,"edit_session_busy",tr("Document is busy. Retry after the current operation."));return;}
       // A recovery checkpoint can briefly own the write guard between MCP calls.
       // Wait for its worker instead of making unattended saves race autosave.
       const auto epoch=m_epoch;
@@ -203,7 +236,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     }
     if(editorBusy()){fail(s,"edit_session_busy",tr("Finish the active sketch or feature operation before agent edits."));return;}
     if(args.at("expected_revision").get<unsigned long long>()!=m_doc->revision){fail(s,"stale_revision",tr("The document changed. Read its current context and replan the edit."));return;}
-    if(m_receipts.size()>=1000){fail(s,"session_limit",tr("This application session has reached its request limit. Save and restart OPAD."));return;}
+    if(m_receipts.size()>=10000){fail(s,"session_limit",tr("This application session has reached its request limit. Save and restart OPAD."));return;}
   }
   if(name=="transaction_cancel" || name=="preview_cancel"){
     if(!m_prepared || m_prepared->id!=args.at("id").get<std::string>() || m_prepared->owner!=s->socket){fail(s,"unknown_prepared",tr("No matching prepared operation belongs to this connection."));return;}
@@ -211,6 +244,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
   }
   if(m_busy){fail(s,"busy",tr("An agent operation is still running. Wait or use Stop."));return;}
   if(write)m_receipts.emplace(key,Receipt{hash});
+  m_activeOperation=args.value("request_id",name);
   if(name=="save"){save(s,args,key);return;}
   if(name=="transaction_commit" || name=="preview_commit"){commit(s,args.at("id").get<std::string>(),key,args.at("expected_revision").get<unsigned long long>());return;}
   execute(s,name,std::move(args),write?key:std::string());

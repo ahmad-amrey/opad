@@ -37,7 +37,8 @@ class AgentBridge : public QObject {
   using json=opad::json;
   struct Snapshot {std::shared_ptr<opad::Document> doc;opad::Scene scene;unsigned long long revision=0;};
   struct Session {
-    QPointer<QLocalSocket> socket;QByteArray input;QString target,agent;bool bound=false,receiving=false;
+    QPointer<QLocalSocket> socket;QByteArray input;QString target,agent;std::string clientId;
+    QElapsedTimer requestTimer;bool bound=false,receiving=false;
   };
   struct Receipt {std::string hash,state="pending";QByteArray response;unsigned long long revision=0;};
   struct Prepared {std::shared_ptr<Snapshot> snapshot;std::string id;QString label;QPointer<QLocalSocket> owner;bool transaction=false;json result,changes;std::vector<std::string> receipts;};
@@ -58,6 +59,8 @@ class AgentBridge : public QObject {
   QString stateText() const;
   json liveState() const;
   bool editorBusy() const;
+  json editingState() const;
+  void waitForIdle(const std::shared_ptr<Session>&,int,unsigned long long,std::shared_ptr<QElapsedTimer>);
   AppDocument* m_doc;DesignController* m_design;Viewport* m_viewport;JobRunner* m_jobs;QWidget* m_window;
   QLocalServer m_server;QString m_instance,m_endpoint,m_directory,m_file;
   std::unique_ptr<QLockFile> m_lock;
@@ -71,6 +74,7 @@ class AgentBridge : public QObject {
   std::shared_ptr<Snapshot> m_cache;
   std::shared_ptr<Prepared> m_prepared;
   QPointer<QLocalSocket> m_owner;
+  std::string m_activeOperation;
   std::map<std::string,Receipt> m_receipts;
   json m_changes=json::array();
   QPointer<ToolPanel> m_panel;
