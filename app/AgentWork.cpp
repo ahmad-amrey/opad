@@ -14,6 +14,7 @@
 #include <BRepBndLib.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
+#include <cctype>
 using opad::json;
 using namespace opad::agent;
 namespace {
@@ -33,6 +34,65 @@ void checkReferences(const opad::Document& doc,const opad::Scene& scene,const js
     if(value.is_object()){for(const auto& [key,child]:value.items())if(key!="references")walk(child);}
     else if(value.is_array())for(const auto& child:value)walk(child);
   };walk(args);
+}
+// A small declarative language over existing typed commands, never executable code.
+void modelBatch(opad::Document& doc,const json& args,Progress progress,json& output){
+  static const std::set<std::string> allowed={"component","param","sketch","sketch_edit","feature","feature_edit","rename","reparent","appearance","transform"};
+  std::map<std::string,json> schemas,results;std::set<std::string> earlier;
+  for(const auto& command:opad::commands::list())if(allowed.count(command.name))schemas[command.name]=command_schema(command,true);
+  auto symbol=[](const std::string& text)->std::pair<std::string,std::string>{
+    if(!text.starts_with("@{") || !text.ends_with("}"))return {};
+    const auto hash=text.find('#',2);
+    if(hash==std::string::npos || hash+1>=text.size()-1 || text[hash+1]!='/')throw opad::Error("Expected symbolic reference @{earlier_step#/result/path}");
+    return {text.substr(2,hash-2),text.substr(hash+1,text.size()-hash-2)};
+  };
+  std::function<void(const json&)> preflightRefs=[&](const json& value){
+    if(value.is_string()){
+      const auto [id,path]=symbol(value.get<std::string>());
+      if(!id.empty() && !earlier.count(id))throw opad::Error("Batch reference must name an earlier step: "+id);
+      if(!id.empty())json::json_pointer pointer(path); // validate JSON-pointer syntax now
+    }else if(value.is_array() || value.is_object())for(const auto& child:value)preflightRefs(child);
+  };
+  // Validate every command and dependency before computing any geometry.
+  for(const auto& step:args.at("steps")){
+    const auto id=step.at("id").get<std::string>(),command=step.at("command").get<std::string>();
+    if(id.empty() || id.size()>64 || !std::all_of(id.begin(),id.end(),[](unsigned char c){return std::isalnum(c) || c=='_';}) || earlier.count(id))throw opad::Error("Batch step IDs must be unique letters, digits or underscores");
+    if(!allowed.count(command))throw opad::Error("Unsupported batch command: "+command);
+    const auto& input=step.at("arguments");validate_input(schemas.at(command),input);
+    if(command=="feature")validate_input(feature_schema(input.at("kind").get<std::string>()),input.value("inputs",json::object()));
+    preflightRefs(input);preflightRefs(step.value("references",json::array()));earlier.insert(id);
+  }
+  output={{"steps",json::array()},{"atomic",true},{"persistence","not_saved"}};
+  std::function<void(json&)> expand=[&](json& value){
+    if(value.is_string()){
+      const auto [id,path]=symbol(value.get<std::string>());
+      if(!id.empty()){
+        value=results.at(id).at(json::json_pointer(path));
+        if(!value.is_string())throw opad::Error("Batch symbols must resolve to an identifier string");
+      }
+    }else if(value.is_array() || value.is_object())for(auto& child:value)expand(child);
+  };
+  for(const auto& step:args.at("steps")){
+    const auto id=step.at("id").get<std::string>(),command=step.at("command").get<std::string>();
+    output["failed_step"]=id;
+    if(progress.cancelled())throw opad::Error("cancelled");
+    auto input=step.at("arguments");expand(input);validate_input(schemas.at(command),input);
+    auto checked=input;checked["references"]=step.value("references",json::array());expand(checked["references"]);
+    checkReferences(doc,opad::resolve(doc),checked);
+    input["by"]="Agent";QElapsedTimer timer;timer.start();const auto begin=doc.ops.size();
+    auto value=opad::commands::run(command,input,&doc);const auto scene=opad::resolve(doc);
+    if(command=="feature" || command=="sketch")for(size_t i=begin;i<doc.ops.size();++i){
+      const auto& op=doc.ops[i];
+      if(command=="sketch" && op.type=="sketch")value["sketch_id"]=op.id;
+      if(command=="feature" && op.type=="feature"){
+        value["feature_id"]=op.id;value["body_ids"]=json::array();
+        if(const auto* feature=scene.feature(op.id))for(const auto& body:feature->result.value("bodies",json::array()))value["body_ids"].push_back(body.at("id"));
+      }
+    }
+    if(command=="component")value["component_id"]=value.at("id");
+    results[id]=value;output["steps"].push_back({{"id",id},{"command",command},{"state","computed"},{"result",value},{"elapsed_ms",timer.elapsed()}});
+  }
+  output.erase("failed_step");
 }
 json changes(const opad::Scene& before,const opad::Scene& after){
   json out={{"created",json::array()},{"modified",json::array()},{"deleted",json::array()},{"geometry",json::array()},{"total",0}};
@@ -104,7 +164,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
     const auto baseline=!transaction.empty() && m_cache?m_cache:source;
     auto job=m_jobs->async(tr("Agent: %1").arg(QString::fromStdString(name)),[source,baseline,result,args,name,write,preview,transaction,state,delay=m_benchDelay](Progress p)mutable{
       p.setPhase(tr("Inspecting inputs"));
-      if(write)checkReferences(*source->doc,source->scene,args);
+      if(write && name!="model_batch")checkReferences(*source->doc,source->scene,args);
       for(const char* key:{"expected_revision","request_id","transaction","preview","references"})args.erase(key);
       if(write){result->snapshot=std::make_shared<Snapshot>();result->snapshot->doc=std::make_shared<opad::Document>(*source->doc);result->snapshot->revision=source->revision;args["by"]="Agent";}
       auto working=write?result->snapshot:source;
@@ -157,11 +217,14 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         result->output={{"image",QByteArray::fromStdString(png).toBase64().toStdString()},{"camera",metadata["camera"]},{"visible_ids",metadata["visible_ids"]},
           {"selection",state["selection"]},{"preview_id",args.value("preview_id","")},{"transaction",transaction},{"render_ms",renderTimer.elapsed()},
           {"rendering","software geometry view; visible_ids lists submitted visible bodies (including occluded bodies); UI overlays are not included"}};
-      }else result->output=opad::commands::run(name,args,working->doc.get());
+      }else if(name=="model_batch")modelBatch(*working->doc,args,p,result->output);
+      else result->output=opad::commands::run(name,args,working->doc.get());
       if(p.cancelled())throw opad::Error("cancelled");
       if(write && name!="export"){
         p.setPhase(tr("Validating design"));working->scene=opad::resolve(*working->doc);
         if(result->output.is_object()) {
+          result->output["operation_ids"]=json::array();
+          for(size_t i=source->doc->ops.size();i<working->doc->ops.size();++i)result->output["operation_ids"].push_back(working->doc->ops[i].id);
           auto ids=result->output.value("ids",json::array());
           if(args.contains("target"))ids.push_back(args["target"]);
           for(const auto& id:ids)if(id.is_string()) {
@@ -202,7 +265,16 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
     },[this,session,result,name,receipt,write,preview,transaction,epoch,revision,started](bool ok,const QString& error){
       if(epoch!=m_epoch || !session->socket || !session->bound){fail(session,"cancelled",tr("Agent operation cancelled."),receipt);release(result);return;}
       m_busy=false;m_job.clear();
-      if(!ok){fail(session,error=="cancelled"?"cancelled":"invalid_operation",error,receipt);release(result);return;}
+      if(!ok){
+        if(name=="model_batch" && error!="cancelled" && result->output.is_object()){
+          for(auto& step:result->output["steps"])step["state"]="discarded";
+          m_receipts[receipt].state=error=="cancelled"?"cancelled":"failed";
+          auto failure=live_error("batch_failed",error.toStdString());failure["structuredContent"]["state"]=m_receipts[receipt].state;
+          failure["structuredContent"]["revision"]=revision;failure["structuredContent"]["result"]=result->output;
+          reply(session,std::move(failure),receipt);
+        }else fail(session,error=="cancelled"?"cancelled":"invalid_operation",error,receipt);
+        release(result);return;
+      }
       if(session->target!=target() || m_doc->revision!=revision || (write && (!m_edit || editorBusy()))){fail(session,"stale_revision",tr("The document or access changed. The computed edit was discarded."),receipt);release(result);return;}
       if(write && name!="export"){
         auto prepared=std::make_shared<Prepared>();prepared->snapshot=result->snapshot;prepared->id=newId();prepared->label=QString::fromStdString(name);prepared->owner=session->socket;prepared->transaction=!transaction.empty();prepared->result=std::move(result->output);prepared->changes=std::move(result->delta);

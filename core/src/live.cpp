@@ -11,7 +11,7 @@ json str(){return {{"type","string"},{"minLength",1},{"maxLength",200}};}
 json revision(){return {{"type","integer"},{"minimum",0}};}
 }
 bool live_mutation(const std::string& name) {
-  if(name=="save" || name=="transaction_begin" || name=="transaction_commit" || name=="preview_commit")return true;
+  if(name=="model_batch" || name=="save" || name=="transaction_begin" || name=="transaction_commit" || name=="preview_commit")return true;
   for(const auto& c:commands::list())if(c.name==name)return c.mutates || name=="export";
   return false;
 }
@@ -42,9 +42,10 @@ json live_output_schema(const std::string& name) {
     {"changes",{{"type","object"},{"properties",{{"scope",{{"enum",{"command","transaction"}}}},{"created",ids},{"modified",ids},{"deleted",ids},{"geometry",ids},{"total",revision()},{"validation",{{"type","object"}}}}}}},
     {"elapsed_ms",{{"type","integer"}}}};
   if(name=="feature" || name=="sketch") {
-    json result={{"type","object"},{"properties",{{"ids",ids},{"feature_id",str()},{"body_ids",ids},{"sketch_id",str()}}}};
+    json result={{"type","object"},{"properties",{{"ids",ids},{"operation_ids",ids},{"feature_id",str()},{"body_ids",ids},{"sketch_id",str()}}}};
     result["required"]=name=="feature"?json{"feature_id","body_ids"}:json{"sketch_id"};props["result"]=result;
-  } else if(name=="save")props["result"]={{"type","object"},{"properties",{{"path",{{"type","string"},{"minLength",1}}},{"saved_revision",revision()},{"dirty",{{"type","boolean"}}}}},{"required",{"path","saved_revision","dirty"}}};
+  } else if(name=="component")props["result"]={{"type","object"},{"properties",{{"component_id",str()},{"operation_ids",ids}}},{"required",{"component_id","operation_ids"}}};
+  else if(name=="save")props["result"]={{"type","object"},{"properties",{{"path",{{"type","string"},{"minLength",1}}},{"saved_revision",revision()},{"dirty",{{"type","boolean"}}}}},{"required",{"path","saved_revision","dirty"}}};
   else props["result"]={{"description","Command-specific payload; transaction_commit returns the last staged command's result. See context or feature_schema for modeling details."}};
   if(name=="live_instances")props["instances"]={{"type","array"},{"items",{{"type","object"}}}};
   if(name=="live_diagnostics"){
@@ -84,6 +85,15 @@ const json& live_tools() {
   render["hide"]={{"type","array"},{"items",str()},{"maxItems",100},{"description","Temporarily exclude these bodies/components, even with ignore_visibility."}};
   render["camera"]=object({{"eye",vector},{"target",vector},{"up",vector},{"absolute",{{"type","boolean"}}},{"projection",{{"type","string"},{"enum",{"orthographic","perspective"}}}},{"scale",{{"type","number"},{"minimum",0}}},{"fov_deg",{{"type","number"},{"exclusiveMinimum",0},{"maximum",179.9}}}},{"eye","target","up"});
   render["camera"]["description"]="Custom camera; absolute defaults true. Cannot combine with view. fit defaults false for a custom camera.";
+  json batchSteps=json::array();
+  const std::set<std::string> batchCommands={"component","param","sketch","sketch_edit","feature","feature_edit","rename","reparent","appearance","transform"};
+  for(const auto& command:commands::list())if(batchCommands.count(command.name)){
+    batchSteps.push_back(object({{"id",str()},{"command",{{"enum",{command.name}}}},{"arguments",command_schema(command,true)},{"references",{{"type","array"},{"items",{{"type","object"}}},{"maxItems",100}}}},{"id","command","arguments"}));
+  }
+  add("model_batch","Execute 1-50 typed modeling steps atomically with per-step receipts. Identifier strings may reference earlier results as @{step#/body_ids/0}, @{step#/sketch_id} or @{step#/component_id}. Validates all inputs/dependencies first. Failure discards this whole batch, retaining previous staged work. Uses normal transaction/preview, revision, Stop and Undo semantics. Commit and save remain explicit separate checkpoints; computed receipts do not imply persistence. No file operations or nested batches.",object({
+    {"steps",{{"type","array"},{"items",{{"anyOf",batchSteps}}},{"minItems",1},{"maxItems",50}}},
+    {"transaction",str()},{"preview",{{"type","boolean"},{"default",false}}},{"expected_revision",revision()},{"request_id",str()}
+  },{"steps","expected_revision","request_id"}));
   for(const auto& c:commands::list())if(!excluded.count(c.name)) {
     auto schema=command_schema(c,true);
     schema["properties"]["transaction"]=str();

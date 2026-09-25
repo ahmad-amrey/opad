@@ -130,6 +130,7 @@ void AgentBridge::read(const std::shared_ptr<Session>& session){
   },[this,session,parsed](bool ok,const QString& error){if(!session->socket)return;if(!ok){fail(session,"invalid_arguments",error);return;}dispatch(session,std::move(parsed->request),std::move(parsed->hash));});
 }
 void AgentBridge::reply(const std::shared_ptr<Session>& session,json result,const std::string& receipt){
+  if(!result["structuredContent"].contains("elapsed_ms") && session->requestTimer.isValid())result["structuredContent"]["elapsed_ms"]=session->requestTimer.elapsed();
   auto bytes=std::make_shared<QByteArray>();
   m_jobs->async(tr("Sending agent result"),[bytes,result=std::move(result)](Progress)mutable{
     result["content"].insert(result["content"].begin(),json{{"type","text"},{"text",result.at("structuredContent").dump()}});

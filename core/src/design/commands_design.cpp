@@ -209,6 +209,8 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
     json j;
     j["op"] = doc.append(op, a.value("by", "")).id;
     j["id"] = id;
+    j["component_id"] = id;
+    j["operation_ids"] = json::array({j["op"]});
     return j;
   });
 }

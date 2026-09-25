@@ -19,6 +19,38 @@ and a custom `camera` or preset `view`. It renders from a temporary scene and re
 actual camera, revision, render time and visible body IDs without moving the user's view.
 `fit: true` frames only the rendered selection; `hide` also works when including hidden bodies.
 
+Live `model_batch` groups up to 50 typed modeling steps into one atomic operation. It
+supports components, parameters, sketches, features, naming, parenting, appearance and
+transforms. Identifier strings such as `@{solid#/body_ids/0}` refer to earlier step results:
+
+```json
+{
+  "expected_revision": 12,
+  "request_id": "battery-part-1",
+  "steps": [
+    {"id": "solid", "command": "feature", "arguments": {
+      "kind": "box", "inputs": {"length": 70, "width": 50, "height": 4.4}
+    }},
+    {"id": "name", "command": "rename", "arguments": {
+      "target": "@{solid#/body_ids/0}", "name": "Battery"
+    }}
+  ]
+}
+```
+
+Without `transaction` or `preview`, a successful batch commits as one Undo step. Pass a
+transaction ID to stage it with earlier work, then validate, commit and save separately.
+Every step's receipt reports computation, not persistence. Failed batches discard their
+own work and preserve the preceding staged transaction. Inputs and backward dependencies
+are checked before execution; dynamic reference paths and geometry are checked as steps run.
+There is no remote code execution, nesting or file I/O inside a batch. Existing subshape
+references go in each step's `references` array and must still match when that step executes.
+
+Creation results include `component_id`, `feature_id`/`body_ids` or `sketch_id`; live
+modeling results also expose `operation_ids`. Live replies, including commit and save,
+report `elapsed_ms` (server processing through response preparation, excluding transport
+and serialization; staged modeling calls retain their computation timer).
+
 OPAD combines CAD modelling, review and a 2D drafting foundation: import, inspect, measure,
 section, annotate, sketch, build features and export. [Drawing and mesh support](docs/drawings.md)
 describes supported DXF/SVG entities, mesh reference objects and the optional DWG converter.

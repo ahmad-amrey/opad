@@ -87,5 +87,13 @@ int main(){try {
   CHECK_THROWS(agent::validate_input(agent::live_schema("save"),{{"path","C:/output/part.opad"}}));
   CHECK_THROWS(agent::validate_input(agent::live_schema("save"),{{"expected_revision",3},{"request_id","save-1"},{"transaction","pending"}}));
   agent::validate_input(agent::live_output_schema("save"),{{"result",{{"path","C:/output/part.opad"},{"saved_revision",3},{"dirty",false}}}});
+  Document typed=Document::create();const auto component=commands::run("component",{{"name","Typed component"}},&typed);
+  CHECK_EQ(component["component_id"],component["id"]);CHECK_EQ(component["operation_ids"].size(),1u);
+  agent::validate_input(agent::live_output_schema("component"),{{"result",component}});
+  CHECK(agent::live_mutation("model_batch"));
+  const json batchStep={{"id","box"},{"command","feature"},{"arguments",{{"kind","box"}}}};
+  agent::validate_input(agent::live_schema("model_batch"),{{"steps",json::array({batchStep})},{"expected_revision",0},{"request_id","batch"}});
+  CHECK_THROWS(agent::validate_input(agent::live_schema("model_batch"),{{"steps",json::array()},{"expected_revision",0},{"request_id","batch"}}));
+  CHECK_THROWS(agent::validate_input(agent::live_schema("model_batch"),{{"steps",json::array({{{"id","unsafe"},{"command","export"},{"arguments",json::object()}}})},{"expected_revision",0},{"request_id","batch"}}));
   std::cout<<"agent schemas, bounded context, exact validation and stale references: PASS\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
