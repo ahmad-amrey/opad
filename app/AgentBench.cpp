@@ -2,11 +2,14 @@
 #include "DesignController.hpp"
 #include "Viewport.hpp"
 #include "RecoveryManager.hpp"
+#include "AgentRegistration.hpp"
 #include <QFile>
 #include <QSaveFile>
 #include <QDir>
 #include <QApplication>
 #include <QDialog>
+#include <QLineEdit>
+#include <QTabWidget>
 // Explicit, isolated acceptance harness. No control files are consumed in ordinary runs.
 void AgentBridge::bench(){
   const auto directory=qEnvironmentVariable("OPAD_BENCH_AGENT");
@@ -24,9 +27,22 @@ void AgentBridge::bench(){
       else if(action=="redo")m_doc->redo();
       else if(action=="access")setAccess(data.value("enabled",true),data.value("edit",true));
       else if(action=="stop")stop();
+      else if(action=="disconnect")disconnectClients();
+      else if(action=="registration") {
+        AgentRegistration* registration=nullptr;
+        for(auto* widget:m_window->findChildren<QWidget*>())if(auto* found=dynamic_cast<AgentRegistration*>(widget)){registration=found;break;}
+        if(!registration){settings();for(auto* widget:m_window->findChildren<QWidget*>())if(auto* found=dynamic_cast<AgentRegistration*>(widget)){registration=found;break;}}
+        if(!registration)throw opad::Error("Registration widget unavailable");
+        if(data.contains("executable"))registration->findChild<QLineEdit*>("codexExecutable")->setText(QString::fromStdString(data["executable"].get<std::string>()));
+        const auto operation=data.value("operation","status");
+        if(operation=="connect")registration->registerClient();else if(operation=="remove")registration->unregisterClient();else if(operation=="check")registration->refresh();
+        result={{"status",registration->report().toStdString()}};
+      }
       else if(action=="delay")m_benchDelay=std::clamp(data.value("ms",0),0,5000);
       else if(action=="settings"){
-        settings();QTimer::singleShot(300,this,[this,directory]{for(auto* dialog:m_window->findChildren<QDialog*>())if(dialog->windowTitle()==tr("AI integration")){dialog->grab().save(directory+"/settings.png");dialog->close();}});
+        settings();const auto tab=data.value("tab",0);
+        for(auto* dialog:m_window->findChildren<QDialog*>())if(dialog->windowTitle()==tr("AI integration"))dialog->findChild<QTabWidget*>()->setCurrentIndex(tab);
+        QTimer::singleShot(300,this,[this,directory,tab]{for(auto* dialog:m_window->findChildren<QDialog*>())if(dialog->windowTitle()==tr("AI integration")){dialog->grab().save(directory+(tab==1?"/settings-client.png":"/settings.png"));dialog->close();}});
       }
       else if(action=="new")m_doc->newDocument();
       else if(action=="save")m_doc->saveAs(QString::fromStdString(data.at("path").get<std::string>()));

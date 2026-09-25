@@ -9,6 +9,7 @@
 #endif
 #include <iostream>
 using opad::json;
+namespace {struct TransportFailure {json result;};}
 int opad_live_mcp(int argc,char** argv) {
 #ifndef OPAD_LIVE_MCP
   std::cerr<<"This build has no local bridge support. Install the desktop distribution; no headless fallback was used.\n";return 1;
@@ -17,18 +18,25 @@ int opad_live_mcp(int argc,char** argv) {
   for(int i=3;i<argc;++i)if(std::string(argv[i])=="--discovery" && i+1<argc)discovery=QString::fromLocal8Bit(argv[++i]);
     else {std::cerr<<"usage: opad-cli mcp --live --discovery <directory>\n";return 1;}
   if(discovery.isEmpty()){std::cerr<<"Copy the live configuration from OPAD Settings > AI integration. --discovery is required.\n";return 1;}
-  QLocalSocket socket;json client=json::object();bool initialized=false;std::string line;QByteArray input;
+  QLocalSocket socket;json client=json::object(),lastError=nullptr;bool initialized=false;std::string line;QByteArray input;
   auto instances=[&]{json list=json::array();for(const auto& file:QDir(discovery).entryInfoList({"*.json"},QDir::Files)){
       QLockFile lock(file.absoluteFilePath()+".lock");if(lock.tryLock(0)){lock.unlock();continue;}
       QFile f(file.absoluteFilePath());if(!f.open(QIODevice::ReadOnly) || f.size()>65536)continue;
       auto item=json::parse(f.readAll().toStdString(),nullptr,false);if(item.is_object())list.push_back(item);
     }return list;};
   auto exchange=[&](const json& request){
-    if(socket.state()!=QLocalSocket::ConnectedState)throw opad::Error("disconnected: call live_instances and live_bind; no headless fallback");
+    auto fail=[&](const char* code,const char* message){
+      auto result=opad::agent::live_error(code,message);
+      result["structuredContent"]["error"]["transport"]={{"kind","local_socket"},{"qt_error",int(socket.error())},{"message",socket.errorString().toStdString()}};
+      result["structuredContent"]["error"]["next"]="Call live_instances, bind the same target and query request_status before retrying an uncertain write. Disconnected transactions cannot resume.";
+      // Do not let a late reply from a timed-out request become the next call's reply.
+      socket.abort();input.clear();throw TransportFailure{std::move(result)};
+    };
+    if(socket.state()!=QLocalSocket::ConnectedState)fail("disconnected","The local connection is closed; no headless fallback was used.");
     socket.write(QByteArray::fromStdString(request.dump())+'\n');socket.flush();QElapsedTimer timer;timer.start();
     while(!input.contains('\n')){
-      if(timer.elapsed()>300000)throw opad::Error("timeout: operation status is unknown; reconnect and request_status before retrying");
-      if(!socket.waitForReadyRead(1000) && socket.state()!=QLocalSocket::ConnectedState)throw opad::Error("disconnected: check request_status after reconnect before retrying");
+      if(timer.elapsed()>300000)fail("operation_timeout","No operation response within 300000 ms; commit status is unknown. The connection was closed.");
+      if(!socket.waitForReadyRead(1000) && socket.state()!=QLocalSocket::ConnectedState)fail("disconnected","The local connection closed before the operation response; commit status may be unknown.");
       input+=socket.readAll();if(input.size()>16*1024*1024)throw opad::Error("response exceeds 16 MB");
     }
     const auto end=input.indexOf('\n');const auto answer=json::parse(input.left(end).toStdString());input.remove(0,end+1);return answer;
@@ -42,7 +50,7 @@ int opad_live_mcp(int argc,char** argv) {
       if(method=="initialize"){
         initialized=true;client=request.value("params",json::object()).value("clientInfo",json::object());
         result={{"protocolVersion","2025-11-25"},{"capabilities",{{"tools",json::object()}}},{"serverInfo",{{"name","opad-live"},{"version",opad::version_string()}}},
-          {"instructions","LIVE OPAD: call live_instances, explicitly choose the intended window/document, then live_bind. live_state supplies revision, camera and selection. Use context and feature_schema before edits. Every write needs expected_revision and a unique request_id; query request_status after reconnect before retrying. Face/edge/vertex inputs need entity_details reference tokens in references. Transactions stage dependent edits for one Undo step; preview=true stages one edit. Stop discards unfinished work. Never silently switch targets. Read-only access cannot edit or export. Geometry calculations run in OPAD and each committed edit appears live; file saves remain with the user."}};
+          {"instructions","LIVE OPAD: start with live_diagnostics (include_example=true for a short workflow), then explicitly choose a window/document using live_instances and live_bind. Every write needs expected_revision and a unique request_id. Transactions are connection-scoped: keep the MCP process alive; disconnect discards uncommitted work. Keep expected_revision=base_revision while staging and committing. After reconnect query request_status before retrying an uncertain commit; cancelled groups must be replanned. result.feature_id is a history ID, result.body_ids are body IDs, result.sketch_id is a sketch ID; legacy ids are operation IDs. changes.scope identifies command versus cumulative transaction changes. Use context and feature_schema before edits. Face/edge/vertex inputs need current entity_details reference tokens in references. preview=true stages one edit. Stop discards unfinished work. Never silently switch targets. Read-only access cannot edit or export; file saves remain with the user."}};
       } else if(method=="ping")result=json::object();
       else if(!initialized)throw opad::Error("initialize first");
       else if(method=="tools/list")result={{"tools",opad::agent::live_tools()}};
@@ -51,14 +59,32 @@ int opad_live_mcp(int argc,char** argv) {
           auto params=request.at("params");auto name=params.at("name").get<std::string>();auto args=params.value("arguments",json::object());
           opad::agent::validate_input(opad::agent::live_schema(name),args);
           if(name=="live_instances")result=opad::agent::live_result({{"instances",instances()}});
+          else if(name=="live_diagnostics" && socket.state()!=QLocalSocket::ConnectedState){
+            json info={{"connection","unbound"},{"target",nullptr},{"permissions",{{"confirmed",false}}},{"units",nullptr},
+              {"transaction_state",{{"state","none"},{"scope","connection"}}},{"next_calls",{"live_instances","live_bind"}},
+              {"discovery_directory",discovery.toStdString()},{"discovery_exists",QDir(discovery).exists()},{"instances",instances()}};
+            if(!lastError.is_null())info["last_error"]=lastError;
+            if(args.value("include_example",false))info["guide"]=opad::agent::live_guide();result=opad::agent::live_result(info);
+          }
           else if(name=="live_bind"){
             json chosen;for(const auto& item:instances())if(item.value("instance","")==args.at("instance").get<std::string>() && item.value("target","")==args.at("target").get<std::string>())chosen=item;
-            if(chosen.is_null())throw opad::Error("target_unavailable: refresh live_instances and choose explicitly");
-            socket.abort();input.clear();socket.connectToServer(QString::fromStdString(chosen.at("endpoint").get<std::string>()));
-            if(!socket.waitForConnected(3000))throw opad::Error("connection_failed: enable AI integration in the intended OPAD window");
-            result=exchange({{"name","live_bind"},{"arguments",args},{"client",client},{"version",opad::version_string()}});
+            if(chosen.is_null())result=opad::agent::live_error("target_changed","The requested instance/document is no longer advertised. Refresh live_instances and explicitly choose the current target. The previous binding was not changed.");
+            else if(!chosen.value("enabled",false))result=opad::agent::live_error("access_disabled","This window advertises agent access as disabled. Enable it in OPAD Settings > AI integration.");
+            else {
+              socket.abort();input.clear();socket.connectToServer(QString::fromStdString(chosen.at("endpoint").get<std::string>()));
+              if(!socket.waitForConnected(3000)) {
+                const auto error=socket.error();std::string code="connection_failed",next="Check the endpoint and client execution environment. Sandbox restrictions may prevent access; this is not a confirmed OS diagnosis.";
+                if(error==QLocalSocket::SocketAccessError){code="access_denied";next="The local transport reports access denied. Check user identity and sandbox permissions; toggling integration will not resolve an access restriction.";}
+                else if(error==QLocalSocket::ServerNotFoundError || error==QLocalSocket::ConnectionRefusedError){code="endpoint_unavailable";next="Refresh live_instances; the window may have closed or its listener may be unavailable. If the endpoint works outside a sandbox, investigate its access restrictions.";}
+                else if(error==QLocalSocket::SocketTimeoutError){code="connection_timeout";next="The endpoint did not accept a connection within 3000 ms. Check OPAD responsiveness and retry discovery.";}
+                result=opad::agent::live_error(code,"Could not connect to the advertised OPAD endpoint.");auto& detail=result["structuredContent"]["error"];
+                detail["next"]=next;detail["transport"]={{"kind","local_socket"},{"qt_error",int(error)},{"message",socket.errorString().toStdString()},{"endpoint",chosen["endpoint"]},{"advertised_enabled",chosen["enabled"]},{"timeout_ms",3000}};
+              } else result=exchange({{"name","live_bind"},{"arguments",args},{"client",client},{"version",opad::version_string()}});
+            }
+            if(result.value("isError",false))lastError=result["structuredContent"]["error"];else lastError=nullptr;
           }else result=exchange({{"name",name},{"arguments",args}});
-        }catch(const std::exception& e){result=opad::agent::live_error("live_request_failed",e.what());}
+        }catch(const TransportFailure& e){result=e.result;lastError=result["structuredContent"]["error"];}
+        catch(const std::exception& e){result=opad::agent::live_error("live_request_failed",e.what());}
       }else {std::cout<<json{{"jsonrpc","2.0"},{"id",id},{"error",{{"code",-32601},{"message","method not found"}}}}.dump()<<'\n'<<std::flush;continue;}
       if(result.contains("structuredContent") && result["content"].empty())result["content"].push_back({{"type","text"},{"text",result["structuredContent"].dump()}});
       std::cout<<json{{"jsonrpc","2.0"},{"id",id},{"result",result}}.dump()<<'\n'<<std::flush;

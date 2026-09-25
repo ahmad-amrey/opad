@@ -15,7 +15,7 @@ set(OPAD_APP_SOURCES
   main.cpp
   AppDocument.cpp AppDocument.hpp
   AppSnapshot.cpp SketchRecovery.cpp RecoveryManager.cpp RecoveryManager.hpp
-  AgentBridge.cpp AgentBridge.hpp AgentSettings.cpp AgentWork.cpp AgentBench.cpp
+  AgentBridge.cpp AgentBridge.hpp AgentSettings.cpp AgentWork.cpp AgentBench.cpp AgentRegistration.cpp AgentRegistration.hpp
   Theme.cpp Theme.hpp
   Icons.cpp Icons.hpp
   Ribbon.cpp Ribbon.hpp

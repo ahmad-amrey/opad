@@ -151,6 +151,26 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     s->bound=true;s->target=target();s->agent=QString::fromStdString(request.value("client",json::object()).value("name","MCP client")).left(100);m_seenClient=true;
     activity(tr("Connected: %1").arg(s->agent));reply(s,live_result(liveState()));return;
   }
+  if(name=="live_diagnostics") {
+    if(!s->bound || s->target!=target()) {
+      json out={{"connection","target_changed"},{"target",s->target.toStdString()},{"permissions",{{"confirmed",false}}},{"units",nullptr},
+        {"transaction_state",{{"state","none"},{"scope","connection"}}},{"next_calls",{"live_instances","live_bind"}}};
+      if(args.value("include_example",false))out["guide"]=live_guide();reply(s,live_result(out));return;
+    }
+    json transaction={{"state","none"},{"scope","connection"}};
+    if(m_prepared) {
+      const bool owned=m_prepared->owner==s->socket;
+      transaction["state"]=owned?(m_prepared->transaction?"staged":"preview"):"owned_by_another_connection";
+      if(owned){transaction["id"]=m_prepared->id;transaction["base_revision"]=m_prepared->snapshot->revision;}
+    }
+    json next=m_busy?json{"live_diagnostics","stop"}:editorBusy()?json{"live_state"}:
+      m_prepared?(m_prepared->owner!=s->socket?json{"live_state"}:m_prepared->transaction?json{"validate","transaction_commit","transaction_cancel"}:json{"viewport_image","preview_commit","preview_cancel"}):
+      m_edit?json{"context","feature_schema","transaction_begin"}:json{"context","entity_details","viewport_image"};
+    json out={{"connection","bound"},{"instance",m_instance.toStdString()},{"target",target().toStdString()},
+      {"permissions",{{"enabled",m_enabled},{"edit",m_edit}}},{"revision",m_doc->revision},{"units",m_doc->scene.units},
+      {"geometry_units","mm"},{"busy",m_busy},{"editor_busy",editorBusy()},{"transaction_state",transaction},{"next_calls",next}};
+    if(args.value("include_example",false))out["guide"]=live_guide();reply(s,live_result(out));return;
+  }
   if(!s->bound || s->target!=target()){fail(s,"target_changed",tr("The document changed. Use live_instances and explicitly bind again."));return;}
   if(name=="stop"){stop();reply(s,live_result({{"stopped",true}}));return;}
   if(name=="live_state"){
@@ -189,6 +209,11 @@ void AgentBridge::clearPrepared(bool cancelReceipts){if(m_prepared){
   m_viewport->clearPreviewBodies();dispose(std::move(m_prepared));
 }}
 void AgentBridge::stop(){++m_epoch;clearPrepared();if(m_job)m_job->cancel();m_busy=false;m_owner.clear();emit statusChanged();}
+void AgentBridge::disconnectClients(){
+  stop();const auto sessions=m_sessions;
+  for(const auto& session:sessions){session->bound=false;if(session->socket)session->socket->abort();}
+  emit statusChanged();
+}
 void AgentBridge::activity(const QString& text){
   if(!m_panel)showActivity();m_stateLabel->setText(stateText());m_activity->addItem(text);
   while(m_activity->count()>100)delete m_activity->takeItem(0);m_activity->scrollToBottom();emit statusChanged();

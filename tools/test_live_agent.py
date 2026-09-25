@@ -65,7 +65,7 @@ class Client:
 
 
 class Desktop:
-    def __init__(self, app, cli, root, document=None, settings=None):
+    def __init__(self, app, cli, root, document=None, settings=None, environment=None):
         self.root = root
         root.mkdir(parents=True, exist_ok=True)
         self.settings = settings or root / "settings"
@@ -76,6 +76,7 @@ class Desktop:
             subprocess.run([str(cli), "new", str(document)], check=True, capture_output=True)
         env = dict(os.environ, OPAD_LANG="en", OPAD_BENCH_SETTINGS=str(self.settings),
                    OPAD_BENCH_AGENT=str(self.control), OPAD_TRACE=str(root / "trace.log"))
+        env.update(environment or {})
         startup = None
         if os.name == "nt":
             startup = subprocess.STARTUPINFO()

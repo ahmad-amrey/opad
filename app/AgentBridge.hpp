@@ -23,6 +23,7 @@ class AgentBridge : public QObject {
   void settings();
   void showActivity();
   void stop();
+  void disconnectClients();
   void setAccess(bool enabled,bool edit);
   QString discoveryPath() const {return m_directory;}
   QString statusSummary() const {return stateText();}

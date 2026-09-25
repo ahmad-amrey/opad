@@ -67,7 +67,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
     fail(session,"unknown_preview",tr("No matching prepared operation belongs to this connection."));return;
   }
   if(!transaction.empty() && (!m_prepared || !m_prepared->transaction || m_prepared->id!=transaction || m_prepared->owner!=session->socket)){
-    fail(session,"unknown_transaction",tr("No matching transaction belongs to this connection."),receipt);return;
+    fail(session,"unknown_transaction",tr("No matching transaction belongs to this connection. Disconnect discards staged work. Read current context, begin a new transaction and replan with new request IDs."),receipt);return;
   }
   if(write && transaction.empty() && m_prepared && m_prepared->transaction){fail(session,"transaction_active",tr("Commit or cancel the current transaction first."),receipt);return;}
   if(name=="export" && (preview || !transaction.empty())){fail(session,"invalid_export",tr("Commit the design before exporting it."),receipt);return;}
@@ -80,7 +80,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
     if(name=="transaction_begin"){
       m_prepared=std::make_shared<Prepared>();m_prepared->snapshot=source;m_prepared->id=newId();m_prepared->label=QString::fromStdString(args.at("label").get<std::string>());m_prepared->owner=session->socket;m_prepared->transaction=true;
       m_prepared->receipts.push_back(receipt);
-      m_busy=false;m_receipts[receipt].state="staged";reply(session,live_result({{"state","staged"},{"transaction",m_prepared->id},{"revision",revision}}),receipt);return;
+      m_busy=false;m_receipts[receipt].state="staged";reply(session,live_result({{"state","staged"},{"transaction",m_prepared->id},{"base_revision",revision},{"revision",revision},{"lifetime",transaction_policy()}}),receipt);return;
     }
     struct Result {std::shared_ptr<Snapshot> snapshot;json output,delta;TopoDS_Shape preview;std::shared_ptr<const BodyPrs> prs;std::vector<std::string> hidden;};auto result=std::make_shared<Result>();
     const auto baseline=!transaction.empty() && m_cache?m_cache:source;
@@ -120,11 +120,23 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
       if(p.cancelled())throw opad::Error("cancelled");
       if(write && name!="export"){
         p.setPhase(tr("Validating design"));working->scene=opad::resolve(*working->doc);
+        if(result->output.is_object()) {
+          auto ids=result->output.value("ids",json::array());
+          if(args.contains("target"))ids.push_back(args["target"]);
+          for(const auto& id:ids)if(id.is_string()) {
+            if(const auto* f=working->scene.feature(id.get<std::string>());f && (name=="feature" || name=="feature_edit")) {
+              result->output["feature_id"]=f->id;result->output["body_ids"]=json::array();
+              for(const auto& body:f->result.value("bodies",json::array()))result->output["body_ids"].push_back(body.at("id"));
+            }
+            if(const auto* sk=working->scene.sketch(id.get<std::string>());sk)result->output["sketch_id"]=sk->id;
+          }
+        }
         if(working->scene.unresolved.size()>source->scene.unresolved.size())throw opad::Error("The edit introduced unresolved operations; document unchanged.");
         for(const auto& feature:working->scene.features)if(!feature.error.empty()){
           auto* before=source->scene.feature(feature.id);if(!before || before->error!=feature.error)throw opad::Error(feature.error);
         }
         result->delta=changes(baseline->scene,working->scene);
+        result->delta["scope"]=transaction.empty()?"command":"transaction";
         TopoDS_Compound compound;BRep_Builder builder;builder.MakeCompound(compound);bool any=false;int checkedSolids=0;
         result->delta["references"]=json::array();
         for(const auto& [id,node]:working->scene.nodes){

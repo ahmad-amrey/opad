@@ -63,7 +63,13 @@ int main(){try {
     check_schema(discovery.at("inputSchema"));
     agent::validate_input(discovery.at("inputSchema"),discovery.at("example").at("arguments").at("inputs"),spec.kind);
   }
-  for(const auto& tool:agent::live_tools())check_schema(tool["inputSchema"]);
+  for(const auto& tool:agent::live_tools()){check_schema(tool["inputSchema"]);check_schema(tool.at("outputSchema"));}
+  agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});
+  CHECK_THROWS(agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"ids",{"history"}}}}}));
+  agent::validate_input(agent::live_output_schema("sketch"),{{"result",{{"sketch_id","sketch"}}}});
+  CHECK_THROWS(agent::validate_input(agent::live_output_schema("sketch"),{{"result",{{"sketch_id",12}}}}));
+  CHECK_EQ(agent::transaction_policy()["scope"],"connection");
+  CHECK(agent::live_guide().at("example").size()>4);
   CHECK_THROWS(agent::validate_input(agent::live_schema("request_status"),{{"request_id",""}}));
   std::cout<<"agent schemas, bounded context, exact validation and stale references: PASS\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
