@@ -32,7 +32,7 @@ AgentBridge::AgentBridge(AppDocument* doc,DesignController* design,Viewport* vie
   m_follow=settings.value("agent/follow",false).toBool();
   m_server.setSocketOptions(QLocalServer::UserAccessOption);
   connect(&m_server,&QLocalServer::newConnection,this,&AgentBridge::accept);
-  connect(doc,&AppDocument::aboutToReplace,this,[this]{stop();m_cache.reset();for(auto& s:m_sessions)s->bound=false;});
+  connect(doc,&AppDocument::aboutToReplace,this,[this]{stop();if(m_cache)dispose(std::move(m_cache));m_changes=json::array();for(auto& s:m_sessions)s->bound=false;});
   connect(doc,&AppDocument::changed,this,[this]{if(!m_committing)clearPrepared();if(m_cache)dispose(std::move(m_cache));publish();});
   connect(doc,&AppDocument::pathChanged,this,&AgentBridge::publish);
   connect(design,&DesignController::stateChanged,this,[this]{if(editorBusy())clearPrepared();emit statusChanged();});
@@ -126,6 +126,22 @@ void AgentBridge::fail(const std::shared_ptr<Session>& s,const std::string& code
   error["structuredContent"]["error"]["next"]="Read live_state and the relevant context or feature_schema, correct the failed inputs, then use a new request_id. Query request_status before retrying an interrupted request.";
   activity(tr("Agent error: %1").arg(message));reply(s,std::move(error),receipt);
 }
+void AgentBridge::replyReceipt(const std::shared_ptr<Session>& session,const Receipt& receipt){
+  if(receipt.state=="cancelled"){
+    auto result=live_error("cancelled","This prepared or unfinished operation was cancelled; it did not commit.");result["structuredContent"]["state"]="cancelled";reply(session,std::move(result));return;
+  }
+  if(receipt.response.isEmpty()){reply(session,live_result({{"state",receipt.state}}));return;}
+  auto bytes=std::make_shared<QByteArray>();
+  m_jobs->async(tr("Sending agent result"),[bytes,receipt](Progress){
+    auto result=json::parse(receipt.response.toStdString());result["structuredContent"]["state"]=receipt.state;
+    if(receipt.revision)result["structuredContent"]["revision"]=receipt.revision;
+    if(!result["content"].empty() && result["content"][0].value("type","")=="text")result["content"][0]["text"]=result["structuredContent"].dump();
+    *bytes=QByteArray::fromStdString(result.dump())+'\n';
+  },[this,session,bytes](bool ok,const QString& error){
+    if(!ok){fail(session,"response_cancelled",error);return;}
+    if(session->socket)session->socket->write(*bytes);session->receiving=false;if(session->socket)read(session);
+  });
+}
 void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::string hash){
   const auto name=request.at("name").get<std::string>();auto args=request.value("arguments",json::object());
   if(!m_enabled){fail(s,"access_disabled",tr("Agent access is disabled."));return;}
@@ -137,20 +153,22 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
   }
   if(!s->bound || s->target!=target()){fail(s,"target_changed",tr("The document changed. Use live_instances and explicitly bind again."));return;}
   if(name=="stop"){stop();reply(s,live_result({{"stopped",true}}));return;}
-  if(name=="live_state"){execute(s,name,args,{});return;}
+  if(name=="live_state"){
+    if(m_busy)reply(s,live_result({{"state","read"},{"revision",m_doc->revision},{"result",liveState()}}));
+    else execute(s,name,args,{});
+    return;
+  }
   if(name=="live_select" && (editorBusy() || args.at("expected_revision").get<unsigned long long>()!=m_doc->revision)){fail(s,"selection_busy_or_stale",tr("Finish the active sketch or feature operation before agent edits."));return;}
   const auto key=(s->target+"/").toStdString()+args.value("request_id","");
   if(name=="request_status"){
     auto it=m_receipts.find(key);if(it==m_receipts.end())reply(s,live_result({{"state","unknown"},{"request_id",args["request_id"]}}));
-    else if(!it->second.response.isEmpty()){s->socket->write(it->second.response);s->receiving=false;read(s);}
-    else reply(s,live_result({{"state",it->second.state},{"request_id",args["request_id"]}}));return;
+    else replyReceipt(s,it->second);return;
   }
   const bool write=live_mutation(name);
   if(write){
     auto found=m_receipts.find(key);if(found!=m_receipts.end()){
       if(found->second.hash!=hash){fail(s,"request_id_reused",tr("This request ID already belongs to different arguments."));return;}
-      if(found->second.response.isEmpty())reply(s,live_result({{"state",found->second.state}}));
-      else{s->socket->write(found->second.response);s->receiving=false;read(s);}return;
+      replyReceipt(s,found->second);return;
     }
     if(!m_edit){fail(s,"read_only",tr("Agent access is view-only. Enable editing in Settings to change or export the document."));return;}
     if(editorBusy()){fail(s,"edit_session_busy",tr("Finish the active sketch or feature operation before agent edits."));return;}
@@ -166,7 +184,10 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
   if(name=="transaction_commit" || name=="preview_commit"){commit(s,args.at("id").get<std::string>(),key,args.at("expected_revision").get<unsigned long long>());return;}
   execute(s,name,std::move(args),write?key:std::string());
 }
-void AgentBridge::clearPrepared(){if(m_prepared){m_viewport->clearPreviewBodies();dispose(std::move(m_prepared));}}
+void AgentBridge::clearPrepared(bool cancelReceipts){if(m_prepared){
+  if(cancelReceipts)for(const auto& key:m_prepared->receipts)if(m_receipts[key].state=="staged")m_receipts[key].state="cancelled";
+  m_viewport->clearPreviewBodies();dispose(std::move(m_prepared));
+}}
 void AgentBridge::stop(){++m_epoch;clearPrepared();if(m_job)m_job->cancel();m_busy=false;m_owner.clear();emit statusChanged();}
 void AgentBridge::activity(const QString& text){
   if(!m_panel)showActivity();m_stateLabel->setText(stateText());m_activity->addItem(text);

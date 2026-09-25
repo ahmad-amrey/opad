@@ -62,18 +62,24 @@ void AgentBridge::snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)
 void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string name,json args,const std::string& receipt){
   if(m_busy){fail(session,"busy",tr("An agent operation is still running. Wait or use Stop."),receipt);return;}
   const bool write=live_mutation(name),preview=args.value("preview",false);const auto transaction=args.value("transaction","");
+  const auto previewId=args.value("preview_id","");
+  if(!previewId.empty() && (!m_prepared || m_prepared->id!=previewId || m_prepared->owner!=session->socket)){
+    fail(session,"unknown_preview",tr("No matching prepared operation belongs to this connection."));return;
+  }
   if(!transaction.empty() && (!m_prepared || !m_prepared->transaction || m_prepared->id!=transaction || m_prepared->owner!=session->socket)){
     fail(session,"unknown_transaction",tr("No matching transaction belongs to this connection."),receipt);return;
   }
   if(write && transaction.empty() && m_prepared && m_prepared->transaction){fail(session,"transaction_active",tr("Commit or cancel the current transaction first."),receipt);return;}
   if(name=="export" && (preview || !transaction.empty())){fail(session,"invalid_export",tr("Commit the design before exporting it."),receipt);return;}
+  const auto state=liveState();
   m_busy=true;m_owner=session->socket;const auto epoch=++m_epoch,revision=m_doc->revision;
-  const auto state=liveState();const auto started=std::make_shared<QElapsedTimer>();started->start();activity(tr("Agent: %1").arg(QString::fromStdString(name)));
+  const auto started=std::make_shared<QElapsedTimer>();started->start();activity(tr("Agent: %1").arg(QString::fromStdString(name)));
   auto ready=[this,session,name,args=std::move(args),receipt,write,preview,transaction,epoch,revision,state,started](std::shared_ptr<Snapshot> source,const QString& error){
     if(epoch!=m_epoch || !session->socket || !session->bound){fail(session,"cancelled",tr("Agent operation cancelled."),receipt);return;}
     if(!source){m_busy=false;fail(session,"snapshot_failed",error,receipt);return;}
     if(name=="transaction_begin"){
       m_prepared=std::make_shared<Prepared>();m_prepared->snapshot=source;m_prepared->id=newId();m_prepared->label=QString::fromStdString(args.at("label").get<std::string>());m_prepared->owner=session->socket;m_prepared->transaction=true;
+      m_prepared->receipts.push_back(receipt);
       m_busy=false;m_receipts[receipt].state="staged";reply(session,live_result({{"state","staged"},{"transaction",m_prepared->id},{"revision",revision}}),receipt);return;
     }
     struct Result {std::shared_ptr<Snapshot> snapshot;json output,delta;TopoDS_Shape preview;std::shared_ptr<const BodyPrs> prs;std::vector<std::string> hidden;};auto result=std::make_shared<Result>();
@@ -99,6 +105,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         std::string kind;
         for(const auto& value:args.at("refs")){
           const auto ref=opad::Ref::from_json(value);const auto current=ref.to_json().value("kind","body");
+          if(ref.kind==opad::Ref::Kind::Point)throw opad::Error("Select a body or a face, edge, vertex or circle-center reference, not a free-space point.");
           if(!kind.empty() && current!=kind)throw opad::Error("Select references of the same kind in one request.");kind=current;
           reference_token(*source->doc,source->scene,ref);
         }
@@ -106,9 +113,9 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
       }
       else if(name=="viewport_image"){
         opad::RenderOptions options;options.width=args.value("width",960);options.height=args.value("height",640);options.supersample=1;
-        options.fit=args.value("fit",false);options.camera=options.fit?opad::Camera::preset("iso"):opad::Camera::from_json(state.at("camera"));
+        options.fit=args.value("fit",false)||args.contains("view");options.camera=options.fit?opad::Camera::preset(args.value("view","iso")):opad::Camera::from_json(state.at("camera"));
         const auto png=opad::encode_png(opad::render_scene(*source->doc,source->scene,options));
-        result->output={{"image",QByteArray::fromStdString(png).toBase64().toStdString()},{"camera",options.camera.to_json()},{"selection",state["selection"]},{"rendering","software geometry view; UI overlays are not included"}};
+        result->output={{"image",QByteArray::fromStdString(png).toBase64().toStdString()},{"camera",options.camera.to_json()},{"selection",state["selection"]},{"preview_id",args.value("preview_id","")},{"rendering","software geometry view; UI overlays are not included"}};
       }else result->output=opad::commands::run(name,args,working->doc.get());
       if(p.cancelled())throw opad::Error("cancelled");
       if(write && name!="export"){
@@ -146,8 +153,9 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
       if(session->target!=target() || m_doc->revision!=revision || (write && (!m_edit || editorBusy()))){fail(session,"stale_revision",tr("The document or access changed. The computed edit was discarded."),receipt);release(result);return;}
       if(write && name!="export"){
         auto prepared=std::make_shared<Prepared>();prepared->snapshot=result->snapshot;prepared->id=newId();prepared->label=QString::fromStdString(name);prepared->owner=session->socket;prepared->transaction=!transaction.empty();prepared->result=std::move(result->output);prepared->changes=std::move(result->delta);
-        if(prepared->transaction){prepared->id=m_prepared->id;prepared->label=m_prepared->label;}
-        clearPrepared();m_prepared=prepared;
+        if(prepared->transaction){prepared->id=m_prepared->id;prepared->label=m_prepared->label;prepared->receipts=m_prepared->receipts;}
+        prepared->receipts.push_back(receipt);
+        clearPrepared(!prepared->transaction);m_prepared=prepared;
         if(preview || prepared->transaction){
           if(!result->preview.IsNull())m_viewport->setPreparedPreview(result->preview,result->prs,result->hidden);
           m_receipts[receipt].state="staged";auto out=live_result({{"state","staged"},{"revision",revision},{prepared->transaction?"transaction":"preview_id",prepared->id},{"result",prepared->result},{"changes",prepared->changes},{"elapsed_ms",started->elapsed()}});
@@ -177,7 +185,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
     });
     m_job=job;connect(job,&Job::phaseChanged,this,[this](const QString& phase,int percent){if(m_panel)m_panel->setContext(percent<0?phase:phase+QString(" (%1%)").arg(percent));});
   };
-  if(!transaction.empty())ready(m_prepared->snapshot,{});else snapshot(std::move(ready));
+  if(!transaction.empty() || !previewId.empty())ready(m_prepared->snapshot,{});else snapshot(std::move(ready));
 }
 void AgentBridge::commit(const std::shared_ptr<Session>& session,const std::string& id,const std::string& receipt,unsigned long long revision){
   if(!m_prepared || m_prepared->id!=id || m_prepared->owner!=session->socket){fail(session,"unknown_prepared",tr("No matching prepared operation belongs to this connection."),receipt);return;}
@@ -187,6 +195,8 @@ void AgentBridge::commit(const std::shared_ptr<Session>& session,const std::stri
     if(!m_follow)m_viewport->setCameraJson(m_viewport->cameraJson()); // cancel an earlier pending load-fit
     m_committing=true;m_doc->commitSnapshot(*prepared->snapshot->doc,prepared->snapshot->scene,revision,tr("Agent: %1").arg(prepared->label));m_committing=false;
     m_receipts[receipt].state="committed";
+    m_receipts[receipt].revision=m_doc->revision;
+    for(const auto& key:prepared->receipts){m_receipts[key].state="committed";m_receipts[key].revision=m_doc->revision;}
     auto change=prepared->changes;change["revision"]=m_doc->revision;change["agent"]=session->agent.toStdString();m_changes.push_back(change);if(m_changes.size()>20)m_changes.erase(m_changes.begin());
     reply(session,live_result({{"state","committed"},{"revision",m_doc->revision},{"result",prepared->result},{"changes",change}}),receipt);
     if(m_follow && prepared->changes.contains("geometry") && !prepared->changes["geometry"].empty())m_viewport->fitNodesWhenReady(prepared->changes["geometry"].get<std::vector<std::string>>());

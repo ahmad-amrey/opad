@@ -1,4 +1,5 @@
 #include "opad/agent.hpp"
+#include "opad/live.hpp"
 #include "opad/core.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch.hpp"
@@ -6,6 +7,15 @@
 #include <iostream>
 
 using namespace opad;
+void check_schema(const json& schema){
+  if(!schema.is_object())return;
+  if(schema.contains("required"))CHECK(schema["required"].is_array());
+  if(schema.contains("properties")){
+    CHECK(schema["properties"].is_object());for(const auto& property:schema["properties"].items())check_schema(property.value());
+  }
+  for(const char* key:{"anyOf","allOf","oneOf"})if(schema.contains(key)){CHECK(schema[key].is_array());for(const auto& child:schema[key])check_schema(child);}
+  for(const char* key:{"items","if","then","else"})if(schema.contains(key))check_schema(schema[key]);
+}
 int main(){try {
   Document doc=Document::create();
   commands::run("param",{{"name","height"},{"expr","10 mm"}},&doc);
@@ -44,12 +54,16 @@ int main(){try {
   commands::run("sketch_edit",{{"target",sk},{"plane",{{"base","yz"}}}},&doc);scene=resolve(doc);CHECK(std::abs(scene.sketch(sk)->frame.normal()[0])>.99);
   for(const auto& command:commands::list()) {
     const auto schema=agent::command_schema(command);CHECK_EQ(schema["type"],"object");
+    check_schema(schema);
     if(command.name=="feature"){CHECK(schema["properties"]["kind"].contains("enum"));CHECK_THROWS(agent::validate_input(schema,{{"doc","x"},{"kind","box"},{"inputz",json::object()}}));}
     if(command.name=="context"){CHECK_THROWS(agent::validate_input(schema,{{"doc","x"},{"limit",1000}}));CHECK(!agent::command_schema(command,true)["properties"].contains("doc"));}
   }
   for(const auto& spec:design::feature_specs()){
     const auto discovery=commands::run("feature_schema",{{"kind",spec.kind}});
+    check_schema(discovery.at("inputSchema"));
     agent::validate_input(discovery.at("inputSchema"),discovery.at("example").at("arguments").at("inputs"),spec.kind);
   }
+  for(const auto& tool:agent::live_tools())check_schema(tool["inputSchema"]);
+  CHECK_THROWS(agent::validate_input(agent::live_schema("request_status"),{{"request_id",""}}));
   std::cout<<"agent schemas, bounded context, exact validation and stale references: PASS\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

@@ -1,6 +1,7 @@
 #include "AgentBridge.hpp"
 #include "DesignController.hpp"
 #include "Viewport.hpp"
+#include "RecoveryManager.hpp"
 #include <QFile>
 #include <QSaveFile>
 #include <QDir>
@@ -29,6 +30,7 @@ void AgentBridge::bench(){
       }
       else if(action=="new")m_doc->newDocument();
       else if(action=="save")m_doc->saveAs(QString::fromStdString(data.at("path").get<std::string>()));
+      else if(action=="autosave")m_window->findChild<RecoveryManager*>()->saveNow();
       else if(action=="manual")result=m_doc->run(data.at("command").get<std::string>(),data.at("arguments"));
       else if(action=="select"){
         const auto ref=opad::Ref::from_json(data.at("ref"));

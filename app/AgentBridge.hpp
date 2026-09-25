@@ -37,17 +37,18 @@ class AgentBridge : public QObject {
   struct Session {
     QPointer<QLocalSocket> socket;QByteArray input;QString target,agent;bool bound=false,receiving=false;
   };
-  struct Receipt {std::string hash,state="pending";QByteArray response;};
-  struct Prepared {std::shared_ptr<Snapshot> snapshot;std::string id;QString label;QPointer<QLocalSocket> owner;bool transaction=false;json result,changes;};
+  struct Receipt {std::string hash,state="pending";QByteArray response;unsigned long long revision=0;};
+  struct Prepared {std::shared_ptr<Snapshot> snapshot;std::string id;QString label;QPointer<QLocalSocket> owner;bool transaction=false;json result,changes;std::vector<std::string> receipts;};
   void accept();
   void read(const std::shared_ptr<Session>&);
   void dispatch(const std::shared_ptr<Session>&,json,std::string hash);
   void reply(const std::shared_ptr<Session>&,json,const std::string& receipt={});
+  void replyReceipt(const std::shared_ptr<Session>&,const Receipt&);
   void fail(const std::shared_ptr<Session>&,const std::string&,const QString&,const std::string& receipt={});
   void snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)>);
   void execute(const std::shared_ptr<Session>&,std::string,json,const std::string& receipt);
   void commit(const std::shared_ptr<Session>&,const std::string&,const std::string&,unsigned long long);
-  void clearPrepared();
+  void clearPrepared(bool cancelReceipts=true);
   void publish();
   void activity(const QString&);
   QString target() const;

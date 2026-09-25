@@ -9,7 +9,11 @@ namespace opad::agent {
 namespace {
 json type(const char* name){return {{"type",name}};}
 json array(json items,int minimum=0,int maximum=0){json out={{"type","array"},{"items",std::move(items)}};if(minimum)out["minItems"]=minimum;if(maximum)out["maxItems"]=maximum;return out;}
-json object(json properties,json required=json::array(),bool extra=false){return {{"type","object"},{"properties",std::move(properties)},{"required",std::move(required)},{"additionalProperties",extra}};}
+json object(json properties,json required=json::array(),bool extra=false){
+  if(required.is_null())required=json::array();
+  if(properties.is_null())properties=json::object();
+  return {{"type","object"},{"properties",std::move(properties)},{"required",std::move(required)},{"additionalProperties",extra}};
+}
 json choice(json choices){return {{"type","string"},{"enum",std::move(choices)}};}
 json vector(int n){return array(type("number"),n,n);}
 json expression(const std::string& units={}) {

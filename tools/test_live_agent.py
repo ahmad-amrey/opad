@@ -13,7 +13,7 @@ import uuid
 
 
 class Client:
-    def __init__(self, cli, discovery):
+    def __init__(self, cli, discovery, name="OPAD live acceptance"):
         self.process = subprocess.Popen([str(cli), "mcp", "--live", "--discovery", str(discovery)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
         self.serial = 0
@@ -23,7 +23,7 @@ class Client:
                 self.responses.put(json.loads(line))
         threading.Thread(target=read, daemon=True).start()
         self.request("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
-            "clientInfo": {"name": "OPAD live acceptance", "version": "1"}})
+            "clientInfo": {"name": name, "version": "1"}})
 
     def send(self, method, params=None):
         self.serial += 1
@@ -119,8 +119,8 @@ class Desktop:
             time.sleep(.02)
         raise AssertionError("Desktop action timed out: " + action)
 
-    def bind(self, cli):
-        client = Client(cli, self.discovery)
+    def bind(self, cli, name="OPAD live acceptance"):
+        client = Client(cli, self.discovery, name=name)
         instances = client.call("live_instances")["instances"]
         chosen = next(i for i in instances if i["instance"] == self.descriptor["instance"])
         client.call("live_bind", instance=chosen["instance"], target=chosen["target"])
@@ -155,6 +155,7 @@ def main():
         assert {"request_id", "expected_revision"} <= set(tools["feature"]["inputSchema"]["required"])
         assert "append" not in tools
         initial = client.state()
+        assert not initial["busy"]
         print("discovery and bind", time.monotonic()-start, flush=True)
         client.write("param", name="thickness", expr="10 mm")
         client.write("feature", kind="box", name="Plate", inputs={"length": "60 mm", "width": "40 mm", "height": "thickness"})
@@ -181,15 +182,19 @@ def main():
         assert client.raw("param", name="thickness", expr="20 mm", expected_revision=client.state()["revision"], request_id="readonly")["isError"]
         assert client.call("context")["result"]["bodies"] == 1
         desktop.action("access", edit=True)
-        preview = client.write("param", name="thickness", expr="12 mm", preview=True)
+        preview = client.write("param", name="thickness", expr="12 mm", preview=True, request_id="cancelled-preview")
         assert preview["state"] == "staged"
+        preview_image = client.raw("viewport_image", preview_id=preview["preview_id"], view="top")
+        assert not preview_image.get("isError") and any(c["type"]=="image" for c in preview_image["content"]), preview_image
         verify(15)
         client.call("preview_cancel", id=preview["preview_id"])
+        assert client.raw("request_status", request_id="cancelled-preview")["isError"]
         tx = client.write("transaction_begin", label="Thickness group")["transaction"]
-        client.write("param", name="thickness", expr="12 mm", transaction=tx)
+        client.write("param", name="thickness", expr="12 mm", transaction=tx, request_id="grouped-thickness")
         assert abs(client.call("validate", transaction=tx)["result"]["items"][0]["volume_mm3"] - (2400-math.pi*25)*12) < 1e-5
         verify(15)
         client.write("transaction_commit", id=tx)
+        assert client.call("request_status", request_id="grouped-thickness")["state"]=="committed"
         verify(12)
         desktop.action("undo")
         verify(15)
@@ -204,6 +209,9 @@ def main():
         time.sleep(.5)
         selected = client.state()["selection"]
         assert selected and "reference" in selected[0], selected
+        client.call("live_select", refs=[f"{body}/face/1"], expected_revision=client.state()["revision"])
+        time.sleep(.3)
+        assert client.state()["selection"][0]["index"] == 1
         # Failed geometry preserves the live document and the connection.
         bad = client.raw("feature", kind="box", inputs={"length": -1}, expected_revision=client.state()["revision"], request_id="bad-box")
         assert bad["isError"]
@@ -245,6 +253,19 @@ def main():
         assert not image.get("isError"), image
         png = next(item["data"] for item in image["content"] if item["type"] == "image")
         (root / "plate.png").write_bytes(base64.b64decode(png))
+        desktop.action("autosave")
+        deadline = time.monotonic()+10
+        while time.monotonic()<deadline:
+            records = list(desktop.settings.rglob("*.opad-recovery"))
+            if records:
+                break
+            time.sleep(.05)
+        assert records, "Agent edits were not captured by autosave"
+        record = json.loads(records[0].read_text(encoding="utf-8"))
+        recovered = root / "agent-recovery-check.opad"
+        recovered.write_text(record["document"], encoding="utf-8")
+        saved_validation = json.loads(subprocess.run([str(cli), "validate", str(recovered)], capture_output=True, text=True, check=True).stdout)
+        assert saved_validation["valid_page"] and abs(saved_validation["items"][0]["volume_mm3"]-(2400-math.pi*25)*15)<1e-5
         desktop.action("save", path=str(root / "plate.opad"))
         client.close()
         client = desktop.bind(cli)
@@ -295,6 +316,9 @@ def main():
         print("Checked face references, active-editor refusal/context, Follow on and unrelated edits: PASS", flush=True)
         desktop.action("new")
         assert client.raw("context")["isError"], "Connection silently retargeted a new document"
+        client.close()
+        client = desktop.bind(cli)
+        assert client.state()["changes"] == [], "New document leaked old document's change context"
         print("live reads/writes, revision checks, undo/redo, read-only, preview, grouped transaction, manual edits, selection, failure, export/image, save, reconnect/retry, target identity: PASS", flush=True)
     finally:
         if client:

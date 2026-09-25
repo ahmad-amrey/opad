@@ -31,7 +31,8 @@ const json& live_tools() {
     if(live_mutation(name)){schema["properties"]["expected_revision"]=revision();schema["properties"]["request_id"]=str();schema["required"].push_back("expected_revision");schema["required"].push_back("request_id");}
     add(name,std::string(name).find("commit")!=std::string::npos?"Commit the prepared result if the live revision still matches.":"Discard the prepared result without changing the document.",schema);
   }
-  add("viewport_image","Render the current live camera on a worker; returns PNG plus revision. Optional fit uses an isometric fitted camera without moving the user's view.",object({{"width",{{"type","integer"},{"minimum",64},{"maximum",2048},{"default",960}}},{"height",{{"type","integer"},{"minimum",64},{"maximum",2048},{"default",640}}},{"fit",{{"type","boolean"},{"default",false}}},{"transaction",str()}}));
+  add("viewport_image","Render the live or prepared geometry on a worker; returns PNG plus revision. Optional fit uses an isometric fitted camera without moving the user's view.",object({{"width",{{"type","integer"},{"minimum",64},{"maximum",2048},{"default",960}}},{"height",{{"type","integer"},{"minimum",64},{"maximum",2048},{"default",640}}},{"fit",{{"type","boolean"},{"default",false}}},{"transaction",str()},{"preview_id",str()}}));
+  out.back()["inputSchema"]["properties"]["view"]={{"type","string"},{"enum",{"iso","top","bottom","front","back","left","right"}},{"description","Optional fitted rendering direction; leaves the user's camera unchanged."}};
   for(const auto& c:commands::list())if(!excluded.count(c.name)) {
     auto schema=command_schema(c,true);
     schema["properties"]["transaction"]=str();
