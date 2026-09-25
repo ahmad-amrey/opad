@@ -291,6 +291,13 @@ bool Viewport::hoveredEdge(TopoDS_Shape& edge) const {
   return true;
 }
 
+void Viewport::setPreparedPreview(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden) {
+  if(!m_initialised)return;clearPreviewBodies();
+  for(const auto& id:hidden)if(auto it=m_items.find(id);it!=m_items.end()){m_ctx->Erase(it->second.ais,false);m_previewHidden.insert(id);}
+  Handle(AIS_Shape) ais=new BodyShape(shape,std::move(prs));ais->SetColor(occ(m_tokens.sel));ais->SetTransparency(0.25);
+  ais->Attributes()->SetFaceBoundaryDraw(true);m_ctx->Display(ais,AIS_Shaded,-1,false);m_previewBodies.push_back(ais);redrawScene();
+}
+
 bool Viewport::referenceAt(const QPointF& point,opad::Ref& ref) {
   if(!m_initialised)return false;
   const auto pos=devicePos(point);m_ctx->MoveTo(pos.x(),pos.y(),m_view,false);

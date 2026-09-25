@@ -1,0 +1,74 @@
+#pragma once
+#include <QObject>
+#include <QPointer>
+#include <QLocalServer>
+#include <QLockFile>
+#include <QLabel>
+#include <QListWidget>
+#include <QCheckBox>
+#include <deque>
+#include <map>
+#include <mutex>
+#include "AppDocument.hpp"
+#include "Jobs.hpp"
+class QLocalSocket;
+class DesignController;
+class Viewport;
+class ToolPanel;
+class AgentBridge : public QObject {
+  Q_OBJECT
+ public:
+  AgentBridge(AppDocument*,DesignController*,Viewport*,JobRunner*,QWidget*);
+  ~AgentBridge() override;
+  void settings();
+  void showActivity();
+  void stop();
+  void setAccess(bool enabled,bool edit);
+  QString discoveryPath() const {return m_directory;}
+  QString statusSummary() const {return stateText();}
+  opad::json descriptor() const;
+  // Used only by the isolated application acceptance harness.
+  void bench();
+ signals:
+  void statusChanged();
+ private:
+  using json=opad::json;
+  struct Snapshot {std::shared_ptr<opad::Document> doc;opad::Scene scene;unsigned long long revision=0;};
+  struct Session {
+    QPointer<QLocalSocket> socket;QByteArray input;QString target,agent;bool bound=false,receiving=false;
+  };
+  struct Receipt {std::string hash,state="pending";QByteArray response;};
+  struct Prepared {std::shared_ptr<Snapshot> snapshot;std::string id;QString label;QPointer<QLocalSocket> owner;bool transaction=false;json result,changes;};
+  void accept();
+  void read(const std::shared_ptr<Session>&);
+  void dispatch(const std::shared_ptr<Session>&,json,std::string hash);
+  void reply(const std::shared_ptr<Session>&,json,const std::string& receipt={});
+  void fail(const std::shared_ptr<Session>&,const std::string&,const QString&,const std::string& receipt={});
+  void snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)>);
+  void execute(const std::shared_ptr<Session>&,std::string,json,const std::string& receipt);
+  void commit(const std::shared_ptr<Session>&,const std::string&,const std::string&,unsigned long long);
+  void clearPrepared();
+  void publish();
+  void activity(const QString&);
+  QString target() const;
+  QString stateText() const;
+  json liveState() const;
+  bool editorBusy() const;
+  AppDocument* m_doc;DesignController* m_design;Viewport* m_viewport;JobRunner* m_jobs;QWidget* m_window;
+  QLocalServer m_server;QString m_instance,m_endpoint,m_directory,m_file;
+  std::unique_ptr<QLockFile> m_lock;
+  struct Publication {std::mutex mutex;std::atomic<unsigned long long> sequence{0};std::atomic<bool> closed{false};};
+  std::shared_ptr<Publication> m_publication=std::make_shared<Publication>();
+  std::vector<std::shared_ptr<Session>> m_sessions;
+  bool m_enabled=false,m_edit=false,m_follow=false,m_busy=false,m_committing=false,m_seenClient=false;
+  int m_benchDelay=0;
+  unsigned long long m_epoch=0;
+  QPointer<Job> m_job;
+  std::shared_ptr<Snapshot> m_cache;
+  std::shared_ptr<Prepared> m_prepared;
+  QPointer<QLocalSocket> m_owner;
+  std::map<std::string,Receipt> m_receipts;
+  json m_changes=json::array();
+  QPointer<ToolPanel> m_panel;
+  QLabel* m_stateLabel=nullptr;QListWidget* m_activity=nullptr;
+};

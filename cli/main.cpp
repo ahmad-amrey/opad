@@ -11,6 +11,7 @@
 
 using opad::json;
 int opad_mcp();
+int opad_live_mcp(int argc,char** argv);
 
 namespace {
 
@@ -63,7 +64,11 @@ std::string read_all(std::istream& in) {
 
 int main(int argc, char** argv) {
   opad::configure_kernel_logging();
-  if (argc == 2 && std::string(argv[1]) == "mcp") return opad_mcp();
+  if (argc >= 2 && std::string(argv[1]) == "mcp") {
+    if(argc==2 || (argc==3 && std::string(argv[2])=="--headless"))return opad_mcp();
+    if(std::string(argv[2])=="--live")return opad_live_mcp(argc,argv);
+    std::cerr<<"usage: opad-cli mcp [--headless | --live --discovery <directory>]\n";return 1;
+  }
   std::vector<std::string> plugins;
   bool compact = false;
   std::string command;

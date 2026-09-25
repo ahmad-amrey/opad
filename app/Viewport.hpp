@@ -88,6 +88,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
 
   void fitAll();
   void fitWhenReady();   // fit now if bodies are displayed, otherwise once the first meshes arrive
+  void fitNodesWhenReady(std::vector<std::string> ids);
   void cancelMeshing();  // stop tessellating the remaining bodies (they stay hidden until resetMeshing)
   void resetMeshing();
   int skippedCount() const { return static_cast<int>(m_meshSkipped.size()); }
@@ -163,6 +164,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // nodes they change; `hidden` nodes are not drawn at all (consumed tools, removed bodies).
   void setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_Shape>>& shapes, const std::vector<std::string>& hidden);
   void clearPreviewBodies();
+  void setPreparedPreview(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden);
   // Sketch editing.
   void beginSketchInput(SketchInput* input, const opad::Frame& frame, const std::string& hiddenSketch);
   void endSketchInput();
@@ -373,6 +375,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_gridSnap=false;
   double m_gridStep=10;
   bool m_grid = false, m_sectionEnabled = false, m_sectionCaps = true, m_initialised = false, m_needFit = false;
+  std::vector<std::string> m_fitNodesOnSync;
   bool m_flushingViewEvents = false, m_repaintAfterFlush = false;
   opad::Vec3 m_sectionOrigin{0, 0, 0}, m_sectionNormal{0, 0, 1};
   std::set<std::string> m_isolated;

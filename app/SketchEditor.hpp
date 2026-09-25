@@ -46,6 +46,7 @@ class SketchEditor : public QObject, public SketchInput {
   // invalidates the capture rather than mixing geometry from different edits.
   void captureRecovery(std::function<void(opad::json, const QString&)> done);
   void restoreRecovery(const opad::json& state);
+  opad::json agentContext() const;
 
   // Tools: select, line, rect, crect, circle, circle3, arc3, arcc, polygon, slot, point, spline, ellipse, fillet,
   // trim, mirror, dimension, and "c:<constraint>" (horizontal, vertical, coincident, parallel, perpendicular,

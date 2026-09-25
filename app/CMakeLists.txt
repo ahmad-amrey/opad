@@ -1,4 +1,4 @@
-find_package(Qt6 COMPONENTS Widgets Gui QUIET)
+find_package(Qt6 COMPONENTS Widgets Gui Network QUIET)
 if(NOT Qt6_FOUND)
   message(WARNING "OPAD: Qt 6 not found; skipping the desktop app (set OPAD_BUILD_APP=OFF to silence)")
   return()
@@ -15,6 +15,7 @@ set(OPAD_APP_SOURCES
   main.cpp
   AppDocument.cpp AppDocument.hpp
   AppSnapshot.cpp SketchRecovery.cpp RecoveryManager.cpp RecoveryManager.hpp
+  AgentBridge.cpp AgentBridge.hpp AgentSettings.cpp AgentWork.cpp AgentBench.cpp
   Theme.cpp Theme.hpp
   Icons.cpp Icons.hpp
   Ribbon.cpp Ribbon.hpp
@@ -77,7 +78,7 @@ if(WIN32)
 endif()
 
 add_executable(opad WIN32 MACOSX_BUNDLE ${OPAD_APP_SOURCES})
-target_link_libraries(opad PRIVATE opad::core ${OPAD_OCCT_VIS_LIBS} Qt6::Widgets Qt6::Gui)
+target_link_libraries(opad PRIVATE opad::core ${OPAD_OCCT_VIS_LIBS} Qt6::Widgets Qt6::Gui Qt6::Network)
 if(WIN32)
   target_link_libraries(opad PRIVATE dbghelp)
 endif()

@@ -161,6 +161,11 @@ void validate_input(const json& schema,const json& value,const std::string& path
     if(schema.contains("maxItems")&&value.size()>schema["maxItems"].get<size_t>())fail("too many items");
     if(schema.contains("items"))for(size_t i=0;i<value.size();++i)validate_input(schema["items"],value[i],path+"["+std::to_string(i)+"]");
   }
+  if(value.is_string()){
+    const auto length=value.get_ref<const std::string&>().size();
+    if(schema.contains("minLength")&&length<schema["minLength"].get<size_t>())fail("string is too short");
+    if(schema.contains("maxLength")&&length>schema["maxLength"].get<size_t>())fail("string is too long");
+  }
   if(value.is_object()){
     for(const auto& key:schema.value("required",json::array()))if(!value.contains(key.get<std::string>()))fail("missing required field "+key.get<std::string>());
     const auto properties=schema.value("properties",json::object());

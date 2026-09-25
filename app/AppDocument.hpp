@@ -55,6 +55,9 @@ class AppDocument : public QObject {
   bool captureSnapshot(JobRunner* jobs, SnapshotCallback done);
   bool snapshotBusy() const { return m_capturing; }
   void recover(opad::Document&& document, opad::Scene&& resolved);
+  // Prepared on a worker. Swaps the old values back into the caller for worker disposal.
+  void commitSnapshot(opad::Document& document, opad::Scene& resolved,
+                      unsigned long long expectedRevision, const QString& label);
 
   QString title() const;
   QString path() const;

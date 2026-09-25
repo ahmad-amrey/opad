@@ -18,6 +18,7 @@
 #include "Viewport.hpp"
 #include "BrowserOverlay.hpp"
 class RecoveryManager;
+class AgentBridge;
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
@@ -121,6 +122,7 @@ class MainWindow : public QMainWindow {
 
   AppDocument* m_doc = nullptr;
   RecoveryManager* m_recovery = nullptr;
+  AgentBridge* m_agent = nullptr;
   bool m_closePending = false, m_recoveryClosed = false;
   DesignController* m_design = nullptr;
   ToolPanel* m_featurePanel = nullptr;

@@ -975,8 +975,13 @@ void Viewport::fitAll() {
 }
 
 void Viewport::fitWhenReady() {
+  m_fitNodesOnSync.clear();
   m_needFit = true;
   if (!m_items.empty()) fitAll();
+}
+
+void Viewport::fitNodesWhenReady(std::vector<std::string> ids) {
+  m_fitNodesOnSync=std::move(ids);m_needFit=true;requestSync();
 }
 
 void Viewport::cancelMeshing() {
@@ -1632,7 +1637,10 @@ void Viewport::finishSync(int pendingCount, bool added) {
   emit meshingProgress(pendingCount);
   // Keep fitting while a load is still streaming bodies in, but only until the user moves the camera:
   // every fit, orbit or zoom of theirs clears m_needFit so a later batch never snaps the view back.
-  if (added && (m_needFit || m_items.size() <= 1)) m_view->FitAll(0.02, Standard_False);
+  if(m_needFit && !m_fitNodesOnSync.empty()) {
+    if(pendingCount==0){auto ids=std::move(m_fitNodesOnSync);m_fitNodesOnSync.clear();fitNodes(ids);}
+  }else if (added && m_needFit) m_view->FitAll(0.02, Standard_False);
+  if(!m_needFit)m_fitNodesOnSync.clear();
   if (pendingCount == 0) m_needFit = false;
   if (m_sectionEnabled) updateSectionGizmo();  // the model's extent may have changed
   m_view->Invalidate();

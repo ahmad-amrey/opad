@@ -1,4 +1,13 @@
 #include "SketchEditor.hpp"
+
+opad::json SketchEditor::agentContext() const {
+  opad::json selected=opad::json::array();
+  for(size_t i=0;i<std::min(size_t(100),m_sel.size());++i)selected.push_back(m_sel[i]);
+  return {{"id",m_id},{"name",m_name.toStdString()},{"frame",m_frame.to_json()},{"plane",m_plane},
+    {"edit_revision",m_modelRevision},{"degrees_of_freedom",m_solved.dof},{"selected_entities",selected},
+    {"selected_total",m_sel.size()},{"entities",m_sk.entities.size()},{"points",m_sk.points.size()},
+    {"modified",m_modified},{"visible",m_visible},{"write_policy","Finish or cancel the active editor before agent edits."}};
+}
 #include "Jobs.hpp"
 
 void SketchEditor::captureRecovery(std::function<void(opad::json,const QString&)> done) {

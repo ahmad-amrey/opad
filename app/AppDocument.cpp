@@ -313,6 +313,16 @@ void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved) {
 }
 
 // ---------------------------------------------------------------- undo / redo
+void AppDocument::commitSnapshot(opad::Document& document,opad::Scene& resolved,
+                                 unsigned long long expectedRevision,const QString& label) {
+  if(loading || designBusy || revision!=expectedRevision || document.header.uuid!=doc.header.uuid)
+    throw opad::Error("stale_revision: the document changed while the agent was working");
+  const auto before=doc.ops.size();
+  document.path=doc.path; // Save As may have changed the path without changing geometry.
+  std::swap(doc,document);std::swap(scene,resolved);m_rollback.clear();
+  recordStep(label,before);updateDirty();++revision;emit changed();emit undoChanged();
+}
+
 void AppDocument::recordStep(const QString& label, size_t opsBefore) {
   if (doc.ops.size() <= opsBefore) return;  // the command appended nothing
   m_undo.push_back(Step{label, doc.ops.size() - opsBefore, {}});

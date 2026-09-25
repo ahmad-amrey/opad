@@ -3,6 +3,7 @@
 #include <QPointer>
 #include "MainWindow.hpp"
 #include "RecoveryManager.hpp"
+#include "AgentBridge.hpp"
 
 #include <QToolButton>
 #include <QResizeEvent>
@@ -70,6 +71,13 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   buildStatusBar();
   buildDesign();
   m_recovery=new RecoveryManager(m_doc,m_design,m_jobs,this);
+  m_agent=new AgentBridge(m_doc,m_design,m_viewport,m_jobs,this);
+  m_agent->bench();
+  auto* agentStatus=new QToolButton(this);
+  statusBar()->addPermanentWidget(agentStatus);
+  auto updateAgentStatus=[this,agentStatus]{agentStatus->setText(tr("AI: %1").arg(m_agent->statusSummary()));agentStatus->setToolTip(m_doc->title());};
+  connect(m_agent,&AgentBridge::statusChanged,agentStatus,updateAgentStatus);updateAgentStatus();
+  connect(agentStatus,&QToolButton::clicked,m_agent,&AgentBridge::settings);
   connect(m_recovery,&RecoveryManager::status,this,[this](const QString& text){statusBar()->showMessage(text,8000);});
 
   connect(m_doc, &AppDocument::aboutToReplace, this, [this] {
@@ -250,6 +258,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
 
 // ---------------------------------------------------------------- actions
 MainWindow::~MainWindow() {
+  delete m_agent;m_agent=nullptr; // stop bridge jobs while the document and viewport still exist
   // QProcess can emit finished while QObject deletes children, after our status
   // widgets and C++ members are gone. Disconnect callbacks before base teardown.
   for(auto* child:findChildren<QObject*>())QObject::disconnect(child,nullptr,this,nullptr);
@@ -637,6 +646,8 @@ void MainWindow::buildRibbon() {
   settings->addAction(action("view.dark"));
   settings->addAction(tr("Autosave and recovery"),this,[this]{m_recovery->settings();});
   settings->addAction(tr("Recover documents"),this,[this]{m_recovery->offerRecovery();});
+  settings->addAction(tr("AI integration"),this,[this]{m_agent->settings();});
+  settings->addAction(tr("Agent activity"),this,[this]{m_agent->showActivity();});
   auto* quality = settings->addMenu(tr("Rendering quality"));
   auto* qualityGroup = new QActionGroup(quality);
   const QStringList qualities = {tr("Draft"), tr("Studio"), tr("Realistic shadows")};
