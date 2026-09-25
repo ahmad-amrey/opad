@@ -202,6 +202,7 @@ class AnnotationsPanel : public QWidget {
  signals:
   void selectNode(const std::string& id);
   void addRequested();
+  void typeFilterChanged(const std::string& type);
   void resolveRequested(const std::string& opId);
   void restoreRequested(const std::string& opId);
   void styleRequested(const std::string& opId, const std::string& style);  // re-tag: an edit op
@@ -210,6 +211,7 @@ class AnnotationsPanel : public QWidget {
  private:
   AppDocument* m_doc;
   QComboBox* m_author;
+  QComboBox* m_type;
   QComboBox* m_status;
   QLabel* m_count;
   QWidget* m_cards;

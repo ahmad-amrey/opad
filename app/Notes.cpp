@@ -3,6 +3,8 @@
 #include "Notes.hpp"
 
 #include <QDialogButtonBox>
+#include <QComboBox>
+#include <QKeyEvent>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMenu>
@@ -21,18 +23,43 @@
 #include "Viewport.hpp"
 
 namespace notes {
+namespace {
+class DragHandle : public QObject {
+ public:
+  DragHandle(QWidget* card, QWidget* handle, std::function<void()> moved)
+      : QObject(card), card(card), moved(std::move(moved)) {handle->installEventFilter(this);handle->setCursor(Qt::SizeAllCursor);handle->setToolTip(tr("Drag to move this note"));}
+ protected:
+  bool eventFilter(QObject*, QEvent* event) override {
+    if(event->type()==QEvent::MouseButtonPress) {
+      auto* e=static_cast<QMouseEvent*>(event);
+      if(e->button()==Qt::LeftButton){dragging=true;offset=e->globalPosition().toPoint()-card->mapToGlobal(QPoint());return true;}
+    } else if(event->type()==QEvent::MouseMove && dragging) {
+      auto* e=static_cast<QMouseEvent*>(event);auto* parent=card->parentWidget();
+      QPoint at=parent->mapFromGlobal(e->globalPosition().toPoint()-offset);
+      at.setX(std::clamp(at.x(),0,std::max(0,parent->width()-card->width())));
+      at.setY(std::clamp(at.y(),0,std::max(0,parent->height()-card->height())));
+      card->move(at);card->raise();if(moved)moved();return true;
+    } else if(event->type()==QEvent::MouseButtonRelease && dragging) {dragging=false;return true;}
+    return false;
+  }
+ private:
+  QWidget* card;std::function<void()> moved;bool dragging=false;QPoint offset;
+};
+}
+void makeDraggable(QWidget* card,QWidget* handle,std::function<void()> moved) {new DragHandle(card,handle,std::move(moved));}
 const std::vector<Style>& styles() {
   static const std::vector<Style> all = {{"ok", QT_TRANSLATE_NOOP("notes", "OK"), "check", &Tokens::green, Qt::SolidLine, 1.5},
                                          {"warning", QT_TRANSLATE_NOOP("notes", "Warning"), "warning", &Tokens::amber, Qt::DashLine, 1.5},
                                          {"issue", QT_TRANSLATE_NOOP("notes", "Issue"), "issue", &Tokens::red, Qt::SolidLine, 2.5},
-                                         {"note", QT_TRANSLATE_NOOP("notes", "Note"), "annotate", &Tokens::sel, Qt::DotLine, 1.5}};
+                                         {"note", QT_TRANSLATE_NOOP("notes", "Note"), "annotate", &Tokens::sel, Qt::DotLine, 1.5},
+                                         {"ai_agent", QT_TRANSLATE_NOOP("notes", "AI agent notes"), "annotate", &Tokens::amber, Qt::SolidLine, 2.5}};
   return all;
 }
 
 const Style& style(const std::string& id) {
   for (const auto& s : styles())
     if (id == s.id) return s;
-  return styles().back();
+  return styles()[3];
 }
 }  // namespace notes
 
@@ -49,6 +76,7 @@ NoteCard::NoteCard(const NoteInfo& note, QWidget* parent, AppDocument* doc) : QF
   auto* v = new QVBoxLayout(this);
   v->setContentsMargins(8, 8, 8, 8);
   v->setSpacing(6);
+  auto* title=new QLabel(i18n::t(look.label),this);title->setObjectName("noteDragHandle");v->addWidget(title);m_dragHandle=title;
 
   auto* head = new QHBoxLayout();
   head->setSpacing(6);
@@ -155,6 +183,12 @@ NoteCard::NoteCard(const NoteInfo& note, QWidget* parent, AppDocument* doc) : QF
   btn->setObjectName("outline");
   if (!resolved) btn->setIcon(QIcon(icons::pixmap("check", t.fg, 14, devicePixelRatioF())));
   foot->addWidget(btn);
+  if(doc && !note.measurement) {
+    auto* remove=new QPushButton(tr("Delete"),this);remove->setObjectName("deleteNote");foot->addWidget(remove);
+    connect(remove,&QPushButton::clicked,this,[doc,id=note.id] {
+      QTimer::singleShot(0,doc,[doc,id] {try {doc->run("delete_annotation",{{"target",id}});} catch(const std::exception& e){QMessageBox::warning(nullptr,tr("Delete note"),QString::fromUtf8(e.what()));}});
+    });
+  }
   v->addLayout(foot);
   connect(btn, &QPushButton::clicked, this, [this, resolved] {
     if (resolved) emit restoreRequested(m_note.id);
@@ -166,6 +200,7 @@ void NoteCard::mousePressEvent(QMouseEvent* e) {
   QFrame::mousePressEvent(e);
   emit pressed();
 }
+void NoteCard::enableDragging() {notes::makeDraggable(this,m_dragHandle,[this]{emit moved();});}
 
 // ---------------------------------------------------------------- NoteCards
 NoteCards::NoteCards(AppDocument* doc, Viewport* viewport, QObject* parent) : QObject(parent), m_doc(doc), m_viewport(viewport) {
@@ -173,7 +208,9 @@ NoteCards::NoteCards(AppDocument* doc, Viewport* viewport, QObject* parent) : QO
   connect(doc, &AppDocument::changed, this, &NoteCards::rebuild);
   connect(theme::notifier(), &theme::Notifier::changed, this, &NoteCards::rebuild);
   connect(viewport, &Viewport::notesMoved, this, &NoteCards::layout);
+  connect(doc,&AppDocument::pathChanged,this,[this]{m_positions.clear();});
 }
+void NoteCards::setTypeFilter(const std::string& type) {m_type=type;rebuild();}
 
 void NoteCards::setShown(bool on) {
   if (m_shown == on) return;
@@ -188,6 +225,7 @@ void NoteCards::rebuild() {
   if (m_shown && m_doc->hasDocument) {
     for (const auto& a : m_doc->scene.annotations) {
       if (a.unresolved) continue;  // no anchor to stand beside; the panel lists it
+      if(!m_type.empty() && a.style!=m_type) continue;
       NoteInfo n;
       n.id = a.id; n.by = a.by; n.ts = a.ts; n.text = a.text; n.style = a.style; n.body = a.anchor.body; n.comments = a.comments;
       n.target = a.anchor.kind == opad::Ref::Kind::Point ? tr("point") : m_doc->nodeName(a.anchor.body);
@@ -195,6 +233,8 @@ void NoteCards::rebuild() {
       auto* card = new NoteCard(n, m_viewport, m_doc);
       card->setAttribute(Qt::WA_NativeWindow);  // over the native 3D window, like the chips
       card->setFixedWidth(280);
+      card->enableDragging();
+      connect(card,&NoteCard::moved,this,[this,card]{m_positions[card->note().id]=card->pos();layout();});
       card->adjustSize();
       card->hide();
       connect(card, &NoteCard::pressed, this, [this, card] { emit pressed(card->note().id, card->note().body); });
@@ -217,6 +257,11 @@ void NoteCards::layout() {
     if (!m_viewport->noteAnchor(card->note().id, at) || !m_viewport->rect().contains(at)) { card->hide(); continue; }
     const QSize size = card->size();
     QRect best;
+    if(auto it=m_positions.find(card->note().id);it!=m_positions.end()) {
+      best=QRect(it->second,size);
+      best.moveLeft(std::clamp(best.left(),view.left(),std::max(view.left(),view.right()-size.width())));
+      best.moveTop(std::clamp(best.top(),view.top(),std::max(view.top(),view.bottom()-size.height())));
+    }
     for (int ring = 0; ring < 6 && best.isNull(); ++ring) {
       const int dx = 36 + ring * 40, dy = 48 + ring * (size.height() + 12) / 2;
       for (const QPoint& corner : {QPoint(dx, -dy - size.height()), QPoint(-dx - size.width(), -dy - size.height()), QPoint(dx, dy), QPoint(-dx - size.width(), dy)}) {
@@ -238,6 +283,7 @@ void NoteCards::layout() {
     // The pointer ends on the card's edge, at the point nearest the anchor.
     if (!best.contains(at)) ends[card->note().id] = QPoint(std::clamp(at.x(), best.left(), best.right()), std::clamp(at.y(), best.top(), best.bottom()));
   }
+  m_viewport->setNoteTypeFilter(m_type);
   m_viewport->setNoteLeaders(ends, m_shown);
 }
 
@@ -283,4 +329,80 @@ void NoteDialog::pick(const std::string& style) {
   m_style = notes::style(style).id;
   for (size_t i = 0; i < m_tags.size(); ++i) m_tags[i]->setChecked(m_style == notes::styles()[i].id);
   QSettings().setValue("notes/style", QString::fromStdString(m_style));
+}
+
+HandDrawing::HandDrawing(AppDocument* doc,Viewport* viewport,QObject* parent)
+    :QObject(parent),m_doc(doc),m_viewport(viewport),m_panel(new QFrame(viewport)) {
+  m_doc->annotationEditing=true;
+  m_previousFilter=int(viewport->selectionFilter());
+  if(viewport->selectionFilter()==Viewport::SelFilter::Body) {
+    const auto bodies=doc->scene.all_bodies();
+    const bool onlyDrawings=!bodies.empty() && std::all_of(bodies.begin(),bodies.end(),[doc](const auto& id){return doc->scene.node(id)->representation=="drawing2d";});
+    viewport->setSelectionFilter(onlyDrawings?Viewport::SelFilter::Edge:Viewport::SelFilter::Face);
+  }
+  m_panel->setObjectName("handDrawingPanel");m_panel->setAttribute(Qt::WA_NativeWindow);m_panel->setFixedWidth(320);
+  auto* layout=new QVBoxLayout(m_panel);
+  auto* title=new QLabel(tr("Hand drawing"),m_panel);layout->addWidget(title);notes::makeDraggable(m_panel,title);
+  m_hint=new QLabel(tr("Drag on the model to start. The first point fixes a plane facing the camera. Esc cancels."),m_panel);m_hint->setWordWrap(true);layout->addWidget(m_hint);
+  m_type=new QComboBox(m_panel);for(const auto& s:notes::styles())m_type->addItem(i18n::t(s.label),QString::fromLatin1(s.id));m_type->setCurrentIndex(3);layout->addWidget(m_type);
+  auto* row=new QHBoxLayout();m_color=new QComboBox(m_panel);m_color->addItem(tr("Red"),"red");m_color->addItem(tr("Blue"),"blue");row->addWidget(m_color);
+  m_width=new QComboBox(m_panel);for(int w:{2,4,6})m_width->addItem(tr("%1 px").arg(w),w);row->addWidget(m_width);layout->addLayout(row);
+  m_text=new QPlainTextEdit(m_panel);m_text->setPlaceholderText(tr("Describe the change or request..."));m_text->setMaximumHeight(90);layout->addWidget(m_text);
+  auto* undo=new QPushButton(tr("Undo stroke"),m_panel);layout->addWidget(undo);
+  connect(undo,&QPushButton::clicked,this,[this]{
+    if(m_drawing.is_null() || m_drawing["strokes"].empty())return;
+    m_points-=m_drawing["strokes"].back()["points"].size();m_drawing["strokes"].erase(m_drawing["strokes"].size()-1);m_dragging=false;
+    m_viewport->previewAnnotationDrawing(m_drawing);
+  });
+  auto* buttons=new QDialogButtonBox(QDialogButtonBox::Save|QDialogButtonBox::Cancel,m_panel);layout->addWidget(buttons);
+  connect(buttons,&QDialogButtonBox::accepted,this,&HandDrawing::finish);connect(buttons,&QDialogButtonBox::rejected,this,&HandDrawing::cancel);
+  connect(doc,&AppDocument::changed,this,&HandDrawing::cancel);connect(doc,&AppDocument::pathChanged,this,&HandDrawing::cancel);
+  connect(doc,&AppDocument::aboutToReplace,this,&HandDrawing::cancel);
+  viewport->installEventFilter(this);viewport->setCursor(Qt::CrossCursor);
+  m_panel->adjustSize();m_panel->move(std::max(8,viewport->width()-m_panel->width()-20),190);m_panel->show();m_panel->raise();viewport->setFocus();
+}
+HandDrawing::~HandDrawing(){detach();delete m_panel;}
+void HandDrawing::detach(){if(!m_active)return;m_active=false;if(m_doc)m_doc->annotationEditing=false;if(m_viewport){m_viewport->removeEventFilter(this);m_viewport->previewAnnotationDrawing(nullptr);m_viewport->unsetCursor();m_viewport->setSelectionFilter(Viewport::SelFilter(m_previousFilter));}if(m_panel)m_panel->hide();}
+void HandDrawing::cancel(){if(!m_active)return;detach();deleteLater();}
+void HandDrawing::addPoint(const QPointF& point) {
+  if(m_points>=8192){m_hint->setText(tr("Point limit reached. Save this drawing and start another."));return;}
+  double u,v;if(!m_viewport->planePoint(point,m_frame,u,v))return;
+  auto& points=m_drawing["strokes"].back()["points"];
+  if(!points.empty() && (point-m_lastPoint).manhattanLength()<2)return;
+  points.push_back({u,v});++m_points;m_lastPoint=point;m_viewport->previewAnnotationDrawing(m_drawing);
+}
+bool HandDrawing::eventFilter(QObject* object,QEvent* event) {
+  if(!m_active || object!=m_viewport)return false;
+  if(event->type()==QEvent::ShortcutOverride && static_cast<QKeyEvent*>(event)->key()==Qt::Key_Escape){event->accept();return true;}
+  if(event->type()==QEvent::KeyPress && static_cast<QKeyEvent*>(event)->key()==Qt::Key_Escape){cancel();return true;}
+  if(event->type()==QEvent::MouseButtonPress) {
+    auto* e=static_cast<QMouseEvent*>(event);if(e->button()!=Qt::LeftButton)return m_dragging;
+    if(!m_drawing.is_null() && m_drawing["strokes"].size()>=128){m_hint->setText(tr("Stroke limit reached. Save this drawing and start another."));return true;}
+    if(m_drawing.is_null()) {
+      if(!m_viewport->annotationPlane(e->position(),m_anchor,m_frame))return true;
+      m_drawing={{"plane",m_frame.to_json()},{"strokes",opad::json::array()}};
+      m_hint->setText(tr("Plane fixed. Add strokes, choose a type, then Save. Middle/right mouse navigates between strokes."));
+    }
+    m_drawing["strokes"].push_back({{"color",m_color->currentData().toString().toStdString()},{"width",m_width->currentData().toInt()},{"points",opad::json::array()}});
+    m_dragging=true;m_viewport->setFocus();addPoint(e->position());return true;
+  }
+  if(event->type()==QEvent::MouseMove && m_dragging){addPoint(static_cast<QMouseEvent*>(event)->position());return true;}
+  if(event->type()==QEvent::Wheel && m_dragging)return true;
+  if(event->type()==QEvent::MouseButtonRelease && m_dragging) {
+    auto* e=static_cast<QMouseEvent*>(event);if(e->button()!=Qt::LeftButton)return true;
+    addPoint(e->position());m_dragging=false;
+    if(m_drawing["strokes"].back()["points"].size()<2){m_points-=m_drawing["strokes"].back()["points"].size();m_drawing["strokes"].erase(m_drawing["strokes"].size()-1);m_viewport->previewAnnotationDrawing(m_drawing);}
+    return true;
+  }
+  return false;
+}
+void HandDrawing::finish() {
+  if(m_drawing.is_null() || m_drawing["strokes"].empty()){m_hint->setText(tr("Draw at least one stroke before saving."));return;}
+  const auto text=m_text->toPlainText().trimmed();
+  const auto type=m_type->currentData().toString().toStdString();
+  if(type=="ai_agent" && text.isEmpty()){m_hint->setText(tr("Describe the request for the AI agent before saving."));return;}
+  try {
+    m_doc->run("annotate",{{"anchor",m_anchor.to_json()},{"text",text.isEmpty()?tr("Hand drawing").toStdString():text.toStdString()},{"style",type},{"drawing",m_drawing}});
+    cancel();
+  } catch(const std::exception& e){m_hint->setText(QString::fromUtf8(e.what()));}
 }

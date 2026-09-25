@@ -65,9 +65,9 @@ void AgentBridge::setAccess(bool enabled,bool edit){
   if(!m_enabled){m_server.close();const auto sessions=m_sessions;for(auto& session:sessions)if(session->socket)session->socket->disconnectFromServer();}
   publish();
 }
-bool AgentBridge::editorBusy()const{return m_doc->loading || m_doc->designBusy || m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane();}
+bool AgentBridge::editorBusy()const{return m_doc->loading || m_doc->designBusy || m_doc->annotationEditing || m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane();}
 json AgentBridge::editingState()const {
-  const std::string edit=m_design->sketchActive()?"sketch":m_design->featureActive()?"feature":m_design->pickingPlane()?"plane":"none";
+  const std::string edit=m_doc->annotationEditing?"annotation":m_design->sketchActive()?"sketch":m_design->featureActive()?"feature":m_design->pickingPlane()?"plane":"none";
   json owner=nullptr;
   const auto socket=m_busy?m_owner:(m_prepared?m_prepared->owner:QPointer<QLocalSocket>());
   for(const auto& s:m_sessions)if(s->socket && s->socket==socket)owner={{"kind","agent"},{"client_id",s->clientId},{"name",s->agent.toStdString()}};
@@ -90,14 +90,14 @@ void AgentBridge::waitForIdle(const std::shared_ptr<Session>& s,int timeout,unsi
 }
 QString AgentBridge::stateText()const {
   if(!m_enabled)return tr("Disabled");if(m_busy)return tr("Busy");
-  if(m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane())return tr("Waiting for active editor");
+  if(m_doc->annotationEditing || m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane())return tr("Waiting for active editor");
   if(m_doc->snapshotBusy())return tr("Capturing document");
   for(const auto& s:m_sessions)if(s->bound && s->socket && s->socket->state()==QLocalSocket::ConnectedState)return tr("Connected: %1").arg(s->agent);
   return m_seenClient?tr("Disconnected"):tr("Waiting for client");
 }
 json AgentBridge::liveState()const{
   auto out=descriptor();out["editing"]=editingState();out["revision"]=m_doc->revision;out["dirty"]=m_doc->isDirty();out["busy"]=m_busy;
-  out["edit_session"]=m_design->sketchActive()?"sketch":m_design->featureActive()?"feature":m_design->pickingPlane()?"plane":"none";
+  out["edit_session"]=out["editing"]["edit_session"];
   out["camera"]=m_viewport->cameraJson();out["selection"]=json::array();
   auto refs=m_viewport->selection();for(size_t i=0;i<std::min(size_t(100),refs.size());++i)out["selection"].push_back(refs[i].to_json());
   out["selection_total"]=refs.size();out["changes"]=m_changes;out["follow_changes"]=m_follow;

@@ -369,11 +369,13 @@ struct SceneBuilder::Impl {
     } else if (type == "rename") {
       if (Node* n = target_of(id, type, d)) n->name = d["name"].get<std::string>();
     } else if (type == "annotation") {
+      Document::validate_op(d);  // edits loaded from disk must meet the same drawing bounds
       Annotation a;
       a.reply_to = d.value("reply_to", "");
       a.id = id;
       a.anchor = Ref::from_json(d["anchor"]);
       a.text = d["text"].get<std::string>();
+      a.drawing = d.value("drawing", json());
       a.by = d.value("by", "");
       a.ts = d.value("ts", "");
       if (d.contains("style") && d["style"].is_string()) {
@@ -481,7 +483,7 @@ Scene& SceneBuilder::scene() { return m->scene; }
 Scene SceneBuilder::take() { return std::move(m->scene); }
 
 const std::vector<std::string>& annotation_styles() {
-  static const std::vector<std::string> styles = {"ok", "warning", "issue", "note"};
+  static const std::vector<std::string> styles = {"ok", "warning", "issue", "note", "ai_agent"};
   return styles;
 }
 

@@ -103,7 +103,7 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(command.mutates)properties["save"]={{"type","boolean"},{"default",true}};
   const std::map<std::string,std::vector<std::string>> needed={
     {"properties",{"node"}},{"measure",{"kind","refs"}},{"import",{"file"}},{"export",{"format","out"}},{"render",{"out"}},{"diff",{"a","b"}},
-    {"annotate",{"anchor","text"}},{"delete",{"target"}},{"rename",{"target","name"}},{"appearance",{"target"}},{"transform",{"target","matrix"}},
+    {"annotate",{"anchor","text"}},{"delete_annotation",{"target"}},{"delete",{"target"}},{"rename",{"target","name"}},{"appearance",{"target"}},{"transform",{"target","matrix"}},
     {"reparent",{"target"}},{"section",{"origin","normal"}},{"view",{"camera"}},{"param",{"name"}},{"param_delete",{"name"}},
     {"sketch_edit",{"target"}},{"feature",{"kind"}},{"feature_edit",{"target"}},{"drawing_to_sketch",{"layers"}},
     {"query_entities",{"body"}},{"feature_schema",{"kind"}},{"sketch_details",{"sketch"}},{"resolve_reference",{"reference"}},{"sketch_tool",{"target","tool"}}
@@ -112,6 +112,15 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(properties.contains("ref"))properties["ref"]=ref();
   if(properties.contains("refs"))properties["refs"]=array(ref(),1,100);
   if(properties.contains("anchor"))properties["anchor"]=ref();
+  if(name=="annotate") {
+    auto stroke=object({{"color",choice({"red","blue"})},{"width",{{"type","integer"},{"enum",{2,4,6}}}},{"points",array(vector(2),2,8192)}},{"color","width","points"});
+    properties["drawing"]=object({{"plane",object({{"origin",vector(3)},{"x",vector(3)},{"y",vector(3)}},{"origin","x","y"})},{"strokes",array(stroke,1,128)}},{"plane","strokes"});
+    properties["drawing"]["description"]="Camera-facing world frame: origin in mm, orthonormal x/y axes; stroke points [u,v] in plane mm. Width is in screen pixels. Maximum 8192 points total. This is review markup, not CAD sketch geometry.";
+  }
+  if(name=="annotations") {
+    properties["offset"]={{"type","integer"},{"minimum",0},{"default",0}};
+    properties["limit"]={{"type","integer"},{"minimum",1},{"maximum",100},{"default",25}};
+  }
   if(properties.contains("select"))properties["select"]={{"anyOf",{type("string"),array(type("string"))}}};
   if(name=="sketch" || name=="sketch_edit"){
     properties["geometry"]=sketch_geometry();properties["plane"]=plane();

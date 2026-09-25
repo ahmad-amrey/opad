@@ -23,8 +23,30 @@ class NoteGraphic : public AIS_InteractiveObject {
   struct Dot { gp_Pnt at; QColor color; };
   std::vector<Leader> leaders;
   std::vector<Dot> dots;
+  struct Stroke {std::vector<gp_Pnt> points;QColor color;double width;};
+  std::vector<Stroke> strokes;
+  void addDrawing(const opad::json& drawing) {
+    if(drawing.is_null()) return;
+    const auto frame=opad::Frame::from_json(drawing.at("plane"));
+    for(const auto& stroke:drawing.at("strokes")) {
+      const QColor color=stroke.at("color")=="red"?QColor("#ef4444"):QColor("#3b82f6");
+      const auto& points=stroke.at("points");
+      Stroke line{{},color,stroke.at("width").get<double>()};line.points.reserve(points.size());
+      for(const auto& point:points){const auto p=frame.to_world(point[0],point[1]);line.points.emplace_back(p[0],p[1],p[2]);}
+      strokes.push_back(std::move(line));
+    }
+  }
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs, Standard_Integer) override {
+    for(const auto& stroke:strokes) {
+      if(stroke.points.size()<2)continue;
+      auto group=prs->NewGroup();
+      Handle(Prs3d_LineAspect) style=new Prs3d_LineAspect(occ(stroke.color),Aspect_TOL_SOLID,stroke.width);
+      group->SetGroupPrimitivesAspect(style->Aspect());
+      Handle(Graphic3d_ArrayOfSegments) vertices=new Graphic3d_ArrayOfSegments(int(2*(stroke.points.size()-1)));
+      for(size_t i=1;i<stroke.points.size();++i){vertices->AddVertex(stroke.points[i-1]);vertices->AddVertex(stroke.points[i]);}
+      group->AddPrimitiveArray(vertices);
+    }
     for (const auto& l : leaders) {
       auto group = prs->NewGroup();
       Handle(Prs3d_LineAspect) style = new Prs3d_LineAspect(occ(l.color), l.type, l.width);
@@ -60,7 +82,7 @@ void Viewport::updateAnnotations() {
   for (const auto& a : m_doc->scene.annotations) {
     if (a.unresolved) continue;
     gp_Pnt at(a.anchor.point[0], a.anchor.point[1], a.anchor.point[2]);
-    if (a.anchor.kind != opad::Ref::Kind::Point) {
+    if (a.drawing.is_null() && a.anchor.kind != opad::Ref::Kind::Point) {
       try {
         opad::json info = opad::inspect_ref(m_doc->doc, m_doc->scene, a.anchor);
         opad::json c = info.contains("center") ? info["center"] : info.contains("point") ? info["point"] : info.contains("start") ? info["start"] : info["bbox"]["center"];
@@ -69,7 +91,8 @@ void Viewport::updateAnnotations() {
         continue;
       }
     }
-    m_notes[a.id] = {at, a.style};
+    if(!a.drawing.is_null()) {const auto& p=a.drawing.at("plane").at("origin");at=gp_Pnt(p[0],p[1],p[2]);}
+    m_notes[a.id] = {at, a.style, a.drawing};
   }
   m_noteCamera.Reset();  // so the next frame lays the cards out again
   QMetaObject::invokeMethod(this, [this] { emit notesMoved(); }, Qt::QueuedConnection);
@@ -94,6 +117,8 @@ void Viewport::setNoteLeaders(const std::map<std::string, QPoint>& ends, bool sh
   const gp_Vec right = gp_Vec(camera->Direction()).Crossed(up);
   Handle(NoteGraphic) g = new NoteGraphic();
   for (const auto& [id, note] : m_notes) {
+    if(!m_noteTypeFilter.empty() && note.style!=m_noteTypeFilter) continue;
+    g->addDrawing(note.drawing);
     const notes::Style& look = notes::style(note.style);
     const QColor color = m_tokens.*look.color;
     g->dots.push_back({note.at, color});
@@ -114,6 +139,51 @@ void Viewport::setNoteLeaders(const std::map<std::string, QPoint>& ends, bool sh
   m_ctx->Display(g, 0, -1, Standard_False);
   m_labels.push_back(g);
   if (trace::enabled()) trace::log(QStringLiteral("notes: %1 anchors, %2 leaders").arg(m_notes.size()).arg(g->leaders.size()));
+  redrawScene();
+}
+
+bool Viewport::annotationPlane(const QPointF& point,opad::Ref& anchor,opad::Frame& frame) {
+  if(!m_initialised || m_blocked) return false;
+  const auto camera=m_view->Camera();
+  const gp_Vec up(camera->OrthogonalizedUp()),right=gp_Vec(camera->Direction()).Crossed(up);
+  gp_Pnt at=camera->Center();
+  const auto pixel=devicePos(point);
+  const bool hit=navigationPoint(pixel,at);
+  frame.origin={at.X(),at.Y(),at.Z()};frame.x={right.X(),right.Y(),right.Z()};frame.y={up.X(),up.Y(),up.Z()};
+  anchor=opad::Ref();anchor.kind=opad::Ref::Kind::Point;
+  if(hit) {
+    // The independent navigation selector sees faces even with Body/Edge/Vertex filtering.
+    for(int i=1;i<=m_navSelector->NbPicked();++i) {
+      const auto owner=m_navSelector->Picked(i);auto node=m_navNodes.find(owner->Selectable().get());
+      if(node==m_navNodes.end() || !m_items.count(node->second) || !m_ctx->IsDisplayed(m_items.at(node->second).ais))continue;
+      anchor.body=node->second;anchor.kind=opad::Ref::Kind::Body;
+      opad::Ref picked;
+      if(referenceAt(point,picked) && picked.body==anchor.body) {
+        anchor=picked;
+        if(anchor.kind!=opad::Ref::Kind::Body && m_ctx->MainSelector()->NbPicked()>0) {
+          const auto p=m_ctx->MainSelector()->PickedPoint(1);frame.origin={p.X(),p.Y(),p.Z()};
+        }
+      }
+      break;
+    }
+  } else {
+    opad::Ref picked;
+    if(referenceAt(point,picked) && m_ctx->MainSelector()->NbPicked()>0) {
+      anchor=picked;const auto p=m_ctx->MainSelector()->PickedPoint(1);frame.origin={p.X(),p.Y(),p.Z()};
+    } else {
+      double u,v;if(!planePoint(point,frame,u,v))return false;frame.origin=frame.to_world(u,v);
+    }
+  }
+  anchor.point=frame.origin;return true;
+}
+
+void Viewport::previewAnnotationDrawing(const opad::json& drawing) {
+  if(!m_initialised)return;
+  if(!m_drawingPreview.IsNull()){m_ctx->Remove(m_drawingPreview,false);m_drawingPreview.Nullify();}
+  if(!drawing.is_null()) {
+    Handle(NoteGraphic) graphic=new NoteGraphic();graphic->addDrawing(drawing);graphic->SetInfiniteState(true);
+    graphic->SetZLayer(Graphic3d_ZLayerId_TopOSD);m_ctx->Display(graphic,0,-1,false);m_drawingPreview=graphic;
+  }
   redrawScene();
 }
 

@@ -63,6 +63,19 @@ with tempfile.TemporaryDirectory(prefix="opad-mcp-") as folder:
         props = call("properties", doc=doc, node=ids[0])
         assert abs(props["volume"] - (24000 - math.pi * 250)) < 1e-5, props
         assert call("context", doc=doc)["bodies"] == 1
+        assert "ai_agent" in tools["annotate"]["inputSchema"]["properties"]["style"]["enum"]
+        drawing = {"plane": {"origin": [0, 0, 15], "x": [1, 0, 0], "y": [0, 1, 0]},
+                   "strokes": [{"color": "blue", "width": 4, "points": [[0, 0], [5, 2], [10, 0]]}]}
+        note = call("annotate", doc=doc, anchor=ids[0] + "/face/0", text="Review this marked area", style="ai_agent", drawing=drawing)["id"]
+        call("annotate", doc=doc, anchor=ids[0], text="Check before changing", reply_to=note)
+        assert call("context", doc=doc)["ai_agent_notes"] == 1
+        assert call("context", doc=doc, section="ai_agent_notes", limit=1)["items"][0]["id"] == note
+        assert call("annotations", doc=doc, id=note, style="ai_agent")["annotations"][0]["drawing"] == drawing
+        bad_drawing = dict(drawing, strokes=[{"color": "green", "width": 4, "points": [[0, 0], [1, 1]]}])
+        failed = request("tools/call", {"name": "annotate", "arguments": {"doc": doc, "anchor": ids[0], "text": "bad", "drawing": bad_drawing}})
+        assert failed["isError"]
+        call("delete_annotation", doc=doc, target=note)
+        assert call("context", doc=doc)["ai_agent_notes"] == 0
         validation = call("validate", doc=doc)
         assert validation["valid_page"] and validation["items"][0]["solids"] == 1
         assert len(call("context", doc=doc, section="features", limit=1)["items"]) == 1

@@ -175,7 +175,7 @@ QString stylesheet(const Tokens& t) {
                "QLabel#badge { background: %7; border-radius: 8px; padding: 1px 5px; font-size: 11px; font-family: '%8'; }\n").arg(fg2, fg3, bg2, line, fg, sel, bg4, monoF);
   s += QString("QToolButton#vpButton { background: %1; border: 1px solid %2; border-radius: 4px; padding: 0; }\n"
                "QToolButton#vpButton:hover { background: %3; }\n").arg(bg2, line, bg3);
-  s += QString("QFrame#card { background: %1; border: 1px solid %2; border-radius: 3px; }\n"
+  s += QString("QFrame#card, QFrame#handDrawingPanel { background: %1; border: 1px solid %2; border-radius: 3px; }\n"
                "QFrame#card[state=\"open\"] { border-color: %3; }\n"
                "QFrame#card[state=\"unresolved\"] { border: 1px dashed %4; }\n"
                "QFrame#card[state=\"resolved\"] { background: transparent; border-color: %2; }\n"

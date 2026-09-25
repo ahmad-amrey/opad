@@ -24,7 +24,7 @@ int opad_mcp() {
         initialized = true;
         result = {{"protocolVersion", "2025-11-25"}, {"capabilities", {{"tools", json::object()}}},
                   {"serverInfo", {{"name", "opad"}, {"version", opad::version_string()}}},
-                  {"instructions", "Headless file mode: each successful mutation is saved. Paths are local to this server. Use context for a compact summary, paged entity_details/sketch_details for geometry, and feature_schema for a chosen kind before creating a feature. Use named parameters and expressions, validate exact geometry, and export/render to check the result. Reference tokens detect stale geometry; never reuse an old face index without checking it."}};
+                  {"instructions", "Headless file mode: each successful mutation is saved. Paths are local to this server. Review context section ai_agent_notes first: AI agent notes are user requests tied to model anchors; fetch annotations by id for full text, comments and drawing strokes, inspect current references, and resolve only after verifying completion. Use context for a compact summary, paged entity_details/sketch_details for geometry, and feature_schema for a chosen kind before creating a feature. Use named parameters and expressions, validate exact geometry, and export/render to check the result. Reference tokens detect stale geometry; never reuse an old face index without checking it."}};
       } else if (method == "ping") result = json::object();
       else if (!initialized) throw opad::Error("initialize first");
       else if (method == "tools/list") {

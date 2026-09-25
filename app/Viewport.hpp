@@ -180,6 +180,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // coordinates); notesMoved() follows every camera move or scene change so it can place them again.
   bool noteAnchor(const std::string& opId, QPoint& out) const;  // false: unknown, or behind the eye
   void setNoteLeaders(const std::map<std::string, QPoint>& ends, bool shown);  // shown=false: notes hidden, nothing drawn
+  void setNoteTypeFilter(const std::string& type) { m_noteTypeFilter=type; }
+  bool annotationPlane(const QPointF& point, opad::Ref& anchor, opad::Frame& frame);
+  void previewAnnotationDrawing(const opad::json& drawing);
   // Objects owned by an editor (the sketch being drawn, its dimensions): never pickable, drawn on top.
   void showOverlay(const Handle(AIS_InteractiveObject)& obj);
   void updateOverlay(const Handle(AIS_InteractiveObject)& obj);
@@ -352,7 +355,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   opad::json m_measurement;
   Graphic3d_WorldViewProjState m_measureCamera;
   QSize m_measureSize;
-  struct NoteMark { gp_Pnt at; std::string style; };
+  struct NoteMark { gp_Pnt at; std::string style; opad::json drawing; };
+  std::string m_noteTypeFilter;
+  Handle(AIS_InteractiveObject) m_drawingPreview;
   std::map<std::string, NoteMark> m_notes;  // open notes by op id
   Graphic3d_WorldViewProjState m_noteCamera;
   QSize m_noteSize;

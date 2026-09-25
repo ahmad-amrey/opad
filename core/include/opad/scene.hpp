@@ -38,9 +38,10 @@ struct Annotation {
   std::string style = "note";  // one of annotation_styles(); how the note is drawn, not whether it is open
   std::string reply_to;
   json comments = json::array();
+  json drawing;  // camera-facing world frame and colored 2D polylines, never solid geometry
   bool unresolved = false;
 };
-// The tags a note can carry: ok, warning, issue, note (the default, also for a tag this version does not know).
+// The tags a note can carry: ok, warning, issue, note (default), ai_agent.
 const std::vector<std::string>& annotation_styles();
 
 struct Measurement {

@@ -1,12 +1,17 @@
 #include "opad/document.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <set>
 #include <sstream>
 
 #include "opad/scene.hpp"
 
 namespace opad {
+namespace {
+bool sketch_records(const json& j);
+std::string record_text(const json& j, int depth = 0);
+}
 
 // ---------------------------------------------------------------- Header
 json Header::to_json() const {
@@ -115,7 +120,40 @@ void Document::validate_op(const json& op) {
     if (op.contains("style")) {
       const auto& styles = annotation_styles();
       if (!op["style"].is_string() || std::find(styles.begin(), styles.end(), op["style"].get<std::string>()) == styles.end())
-        throw Error("annotation: style must be one of ok, warning, issue, note");
+        throw Error("annotation: style must be one of ok, warning, issue, note, ai_agent");
+    }
+    if (op.contains("drawing")) {
+      const auto& drawing = op.at("drawing");
+      if (!drawing.is_object() || !drawing.contains("plane") || !drawing.at("plane").is_object())
+        throw Error("annotation drawing: plane requires origin, x and y vectors in world mm");
+      const auto& plane = drawing.at("plane");
+      for (const char* key : {"origin", "x", "y"}) {
+        if (!plane.contains(key) || !plane.at(key).is_array() || plane.at(key).size() != 3)
+          throw Error("annotation drawing: plane vectors must have three finite numbers");
+        for (const auto& v : plane.at(key)) if (!v.is_number() || !std::isfinite(v.get<double>()))
+          throw Error("annotation drawing: non-finite plane coordinate");
+      }
+      double xx=0, yy=0, xy=0;
+      for (int i=0;i<3;++i) {double x=plane.at("x")[i], y=plane.at("y")[i];xx+=x*x;yy+=y*y;xy+=x*y;}
+      if (std::abs(xx-1)>1e-6 || std::abs(yy-1)>1e-6 || std::abs(xy)>1e-6)
+        throw Error("annotation drawing: plane axes must be orthonormal");
+      if (!drawing.contains("strokes") || !drawing.at("strokes").is_array() || drawing.at("strokes").empty() || drawing.at("strokes").size()>128)
+        throw Error("annotation drawing: requires 1..128 strokes");
+      size_t count=0;
+      for (const auto& stroke : drawing.at("strokes")) {
+        if (!stroke.is_object() || !stroke.contains("color") || !stroke.at("color").is_string()
+            || (stroke.at("color")!="red" && stroke.at("color")!="blue")) throw Error("annotation drawing: color must be red or blue");
+        if (!stroke.contains("width") || !stroke.at("width").is_number()
+            || (stroke.at("width")!=2 && stroke.at("width")!=4 && stroke.at("width")!=6)) throw Error("annotation drawing: width must be 2, 4 or 6 pixels");
+        if (!stroke.contains("points") || !stroke.at("points").is_array() || stroke.at("points").size()<2)
+          throw Error("annotation drawing: a stroke needs at least two points");
+        count+=stroke.at("points").size();
+        if (count>8192) throw Error("annotation drawing: maximum 8192 points per annotation");
+        for (const auto& point : stroke.at("points")) {
+          if (!point.is_array() || point.size()!=2) throw Error("annotation drawing: points must be [u,v] in plane mm");
+          for (const auto& v : point) if (!v.is_number() || !std::isfinite(v.get<double>())) throw Error("annotation drawing: non-finite point");
+        }
+      }
     }
   } else if (type == "measurement") {
     require(op, "kind", "string");
@@ -166,10 +204,19 @@ const Op& Document::append(json op, const std::string& author) {
   if (find_op(id)) throw Error("duplicate op id: " + id);
   if ((out["op"] == "delete" || out["op"] == "edit") && !find_op(out["target"].get<std::string>()))
     throw Error(out["op"].get<std::string>() + ": target op not found: " + out["target"].get<std::string>());
+  if (out["op"] == "edit") {
+    const auto* target = find_op(out["target"].get<std::string>());
+    if (target && target->type == "annotation") {
+      json effective = target->data;
+      for (const auto& e : effective_ops(*this)) if (e.op->id == target->id) effective = e.data();
+      for (const auto& [key,value] : out["set"].items()) {if(value.is_null()) effective.erase(key); else effective[key]=value;}
+      validate_op(effective);
+    }
+  }
   Op o;
   o.id = id;
   o.type = out["op"].get<std::string>();
-  o.raw = out.dump();
+  o.raw = sketch_records(out) ? record_text(out) : out.dump();
   o.data = std::move(out);
   ops.push_back(std::move(o));
   dirty = true;
@@ -289,14 +336,14 @@ std::vector<std::string> Document::gc() {
 //   <line-count lines of ASCII BREP>
 //   ... repeated
 namespace {
-// Expand only containers leading to sketch records. Each point/curve/constraint stays on one line.
+// Expand containers leading to sketch/drawing records. Each point/curve/constraint/stroke stays on one line.
 bool sketch_records(const json& j) {
   if (!j.is_object()) return false;
-  if (j.contains("points") || j.contains("entities") || j.contains("constraints") || j.contains("patterns") || j.contains("images")) return true;
+  if (j.contains("points") || j.contains("entities") || j.contains("constraints") || j.contains("patterns") || j.contains("images") || j.contains("strokes")) return true;
   for (const auto& v : j) if (sketch_records(v)) return true;
   return false;
 }
-std::string record_text(const json& j, int depth = 0) {
+std::string record_text(const json& j, int depth) {
   if (!sketch_records(j)) return j.dump();
   const std::string indent(size_t(depth + 1) * 2, ' ');
   std::string out = "{";
@@ -305,7 +352,7 @@ std::string record_text(const json& j, int depth = 0) {
     if (!first) out += ',';
     first = false;
     out += '\n' + indent + json(k).dump() + ": ";
-    if ((k == "points" || k == "entities" || k == "constraints" || k == "patterns" || k == "images") && v.is_array()) {
+    if ((k == "points" || k == "entities" || k == "constraints" || k == "patterns" || k == "images" || k == "strokes") && v.is_array()) {
       out += '[';
       for (size_t i = 0; i < v.size(); ++i) {
         if (i) out += ',';
@@ -333,7 +380,7 @@ std::string Document::serialize() const {
   out += '\n';
   out += "#ops\n";
   for (const auto& o : ops) {
-    out += sketch_records(o.data) ? record_text(o.data) : o.raw.empty() ? o.data.dump() : o.raw;
+    out += o.raw.empty() ? record_text(o.data) : o.raw;
     out += '\n';
   }
   out += "#bodies\n";

@@ -1083,11 +1083,15 @@ AnnotationsPanel::AnnotationsPanel(AppDocument* doc, QWidget* parent) : QWidget(
   auto* bar = new QHBoxLayout();
   bar->setSpacing(8);
   m_author = new QComboBox(this);
+  m_type = new QComboBox(this);m_type->setObjectName("annotationTypeFilter");
+  m_type->addItem(tr("All types"),QString());
+  for(const auto& s:notes::styles()) m_type->addItem(i18n::t(s.label),QString::fromLatin1(s.id));
   m_status = new QComboBox(this);
   m_status->addItems({tr("All"), tr("Open"), tr("Unresolved"), tr("Resolved")});
   m_count = new QLabel(this);
   m_count->setObjectName("secondary");
   bar->addWidget(m_author, 1);
+  bar->addWidget(m_type);
   bar->addWidget(m_status);
   bar->addWidget(m_count);
   layout->addLayout(bar);
@@ -1105,6 +1109,7 @@ AnnotationsPanel::AnnotationsPanel(AppDocument* doc, QWidget* parent) : QWidget(
   add->setObjectName("primary");
   layout->addWidget(add);
   connect(add, &QPushButton::clicked, this, &AnnotationsPanel::addRequested);
+  connect(m_type,&QComboBox::currentIndexChanged,this,[this]{rebuild();emit typeFilterChanged(m_type->currentData().toString().toStdString());});
   connect(m_author, &QComboBox::currentIndexChanged, this, [this](int) { rebuild(); });
   connect(m_status, &QComboBox::currentIndexChanged, this, [this](int) { rebuild(); });
   connect(doc, &AppDocument::changed, this, &AnnotationsPanel::rebuild);
@@ -1115,6 +1120,8 @@ void AnnotationsPanel::rebuild() {
   QString currentAuthor = m_author->currentText();
   std::set<std::string> authors;
   std::set<std::string> deleted(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end());
+  std::set<std::string> removed;
+  for(const auto& op:m_doc->doc.ops) if(op.type=="delete" && !deleted.count(op.id) && op.data.value("reason","")=="annotation_deleted") removed.insert(op.data.value("target",""));
   std::set<std::string> unresolved;
   for (const auto& a : m_doc->scene.annotations) if (a.unresolved) unresolved.insert(a.id);
   for (const auto& m : m_doc->scene.measurements) if(m.unresolved) unresolved.insert(m.id);
@@ -1138,13 +1145,13 @@ void AnnotationsPanel::rebuild() {
   int total = 0, shown = 0;
   for (const auto& op : m_doc->doc.ops) {
     if ((op.type != "annotation" && op.type != "measurement") || op.data.contains("reply_to")) continue;
+    if(removed.count(op.id)) continue;
     ++total;
     std::string by = op.data.value("by", "");
     bool resolved = deleted.count(op.id) > 0, unres = unresolved.count(op.id) > 0;
     QString state = resolved ? "resolved" : unres ? "unresolved" : "open";
     if (!filterAuthor.empty() && by != filterAuthor) continue;
     if ((status == 1 && state != "open") || (status == 2 && state != "unresolved") || (status == 3 && state != "resolved")) continue;
-    ++shown;
     opad::Ref anchor;
     try { anchor = opad::Ref::from_json(op.type=="measurement"?op.data.at("refs").at(0):op.data.at("anchor")); } catch (...) {}
     NoteInfo n;
@@ -1160,6 +1167,8 @@ void AnnotationsPanel::rebuild() {
       for(const auto& m:m_doc->scene.measurements) if(m.id==op.id) {n.text=m.text;n.style=m.style;n.comments=m.comments;}
     }
     n.state = state;
+    if(!m_type->currentData().toString().isEmpty() && n.style!=m_type->currentData().toString().toStdString()) continue;
+    ++shown;
     n.target = anchor.kind == opad::Ref::Kind::Point ? tr("point") : m_doc->nodeName(anchor.body);
     if (anchor.kind != opad::Ref::Kind::Body && anchor.kind != opad::Ref::Kind::Point) n.target += QString(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(anchor.kind))).arg(anchor.index);
     auto* card = new NoteCard(n, m_cards, m_doc);

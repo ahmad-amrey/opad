@@ -84,6 +84,11 @@ void AgentBridge::bench(){
       }
       else if(action=="follow"){m_follow=data.at("enabled").get<bool>();}
       else if(action=="edit_sketch")m_design->editOp(data.at("id").get<std::string>());
+      else if(action=="annotation_editor") {
+        auto* tool=m_window->findChild<QAction*>("annotate.draw");
+        if(!tool)throw opad::Error("Hand drawing action unavailable");
+        tool->trigger();
+      }
       else if(action=="cancel_edit"){if(m_design->sketchActive())m_design->cancelSketch();else m_design->escape();}
       else if(action=="quit"){stop();QTimer::singleShot(0,this,[]{QCoreApplication::exit(0);});}
       else throw opad::Error("Unknown bench action");

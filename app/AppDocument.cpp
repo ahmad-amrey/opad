@@ -394,7 +394,8 @@ QString AppDocument::labelFor(const std::string& command, const opad::json& args
   if (command == "rename") return tr("rename");
   if (command == "reparent") return tr("move");
   if (command == "delete") return tr("delete");
-  if (command == "annotate") return tr("note");
+    if (command == "annotate") return args.contains("drawing") ? tr("hand drawing") : tr("note");
+    if (command == "delete_annotation") return tr("delete annotation");
   if (command == "append") return tr("pin measurement");
   if (command == "section") return tr("named section");
   if (command == "view") return tr("named view");

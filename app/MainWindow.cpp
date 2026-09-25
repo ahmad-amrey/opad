@@ -151,6 +151,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_annotations, &AnnotationsPanel::styleRequested, this, &MainWindow::restyleAnnotation);
   connect(m_annotations, &AnnotationsPanel::selectNode, this, [this](const std::string& id) { onBrowserSelection({id}); m_browser->setSelectedIds({id}); });
   m_noteCards = new NoteCards(m_doc, m_viewport, this);
+  connect(m_annotations,&AnnotationsPanel::typeFilterChanged,m_noteCards,&NoteCards::setTypeFilter);
   connect(m_noteCards, &NoteCards::resolveRequested, this, &MainWindow::deleteOp);
   connect(m_noteCards, &NoteCards::styleRequested, this, &MainWindow::restyleAnnotation);
   connect(m_noteCards, &NoteCards::pressed, this, [this](const std::string& opId, const std::string& body) {
@@ -458,6 +459,7 @@ void MainWindow::buildActions() {
   m_pinAction->setShortcutContext(Qt::ApplicationShortcut);
   m_pinAction->setEnabled(false);
   addAction("inspect.clear", tr("Clear measurement"), "", QKeySequence("Esc"), [this] {
+    if(m_handDrawing){m_handDrawing->cancel();return;}
     if (m_design->sketchActive()) {  // the viewport did not have the focus: same as Esc in the sketch
       QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
       m_design->sketch()->sketchKey(&esc);
@@ -483,6 +485,13 @@ void MainWindow::buildActions() {
 
   // Annotate / edit
   addAction("annotate.add", tr("Note"), "annotate", QKeySequence("N"), [this] { toggleTool("note"); }, true);
+  addAction("annotate.draw",tr("Hand drawing"),"annotate",QKeySequence(),[this] {
+    if(m_handDrawing){m_handDrawing->cancel();return;}
+    if(m_design->ownsSelection() || m_design->busy())return;
+    cancelTool();m_noteCards->setShown(true);
+    m_handDrawing=new HandDrawing(m_doc,m_viewport,this);
+    connect(m_design,&DesignController::stateChanged,m_handDrawing,&HandDrawing::cancel);
+  });
   addAction("annotate.resolve", tr("Resolve note"), "check", QKeySequence("Ctrl+Return"), [this] { resolveCurrentAnnotation(); });
   QAction* notes = addAction("annotate.show", tr("Show notes"), "annotate", QKeySequence("Shift+N"), [this] {}, true);
   notes->setChecked(m_settings.value("ui/notes", true).toBool());  // m_noteCards reads the same key once the viewport exists
@@ -614,7 +623,7 @@ void MainWindow::buildRibbon() {
   m_sketchWorkspace = m_ribbon->addWorkspace(sketchWs);
   m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho", "view.2d"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"}), acts({"view.isolate", "view.unisolate"})});
   m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"}), acts({"inspect.section", "inspect.flip"})});
-  m_ribbon->addTab(review, tr("Annotate"), {acts({"panel.annotations", "annotate.add", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
+  m_ribbon->addTab(review, tr("Annotate"), {acts({"panel.annotations", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
   m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
   m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
                                          acts({"design.box", "design.cylinder", "design.sphere", "design.cone", "design.torus"}), acts({"design.parameters"})});
@@ -1639,6 +1648,7 @@ QList<ToolStep> MainWindow::toolSteps() const {
 }
 
 void MainWindow::toggleTool(const QString& id) {
+  if(m_handDrawing)m_handDrawing->cancel();
   if (m_tool.id == id) cancelTool();
   else startTool(id);
 }
@@ -1888,6 +1898,7 @@ void MainWindow::addAnnotation() {
   card->setObjectName("card"); card->setFixedWidth(320);
   auto* layout = new QVBoxLayout(card);
   auto* title = new QLabel(tr("Note on %1").arg(where), card); title->setWordWrap(true); title->setTextFormat(Qt::PlainText); layout->addWidget(title);
+  notes::makeDraggable(card,title);
   auto* type = new QComboBox(card);
   for (const auto& style : notes::styles()) type->addItem(i18n::t(style.label), QString::fromLatin1(style.id));
   type->setCurrentIndex(3); layout->addWidget(type);
@@ -2151,6 +2162,7 @@ void MainWindow::runBench() {
     return;
   }
   if(benchShortcuts())return;
+  if(benchTodo9())return;
   if(qEnvironmentVariableIsSet("OPAD_BENCH_INSTANCES")) {
     if(m_doc->scene.all_bodies().empty()){QCoreApplication::exit(2);return;}
     const auto source=m_doc->scene.all_bodies().front(),copy=opad::new_uuid();

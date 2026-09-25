@@ -44,7 +44,7 @@ json context(const Document& doc,const Scene& scene,const json& args) {
     return {{"document",doc.header.uuid},{"units",doc.header.units},{"geometry_units","mm"},{"coordinates","right handed; +X right, +Y forward, +Z up; sketch coordinates use its local frame"},
       {"operations",doc.ops.size()},{"bodies",bodies},{"components",components},{"unique_geometry",scene.instance_count.size()},{"sketches",scene.sketches.size()},
       {"features",scene.features.size()},{"parameters",scene.params.size()},{"unresolved",scene.unresolved.size()},
-      {"sections",{"nodes","sketches","features","parameters","errors"}},{"query","Use section, offset and limit for details; entity_details and sketch_details for selected entities."}};
+      {"ai_agent_notes",std::count_if(scene.annotations.begin(),scene.annotations.end(),[](const Annotation& a){return a.style=="ai_agent";})},{"agent_note_guidance","Review context section ai_agent_notes first. These are user requests attached to model areas; inspect current anchors and comments before editing. Fetch annotations by id for full text and strokes. Resolve only after verifying completion; unresolved anchors need a fresh selection."},{"sections",{"nodes","sketches","features","parameters","errors","ai_agent_notes"}},{"query","Use section, offset and limit for details; entity_details and sketch_details for selected entities."}};
   }
   size_t count=0;const auto filter=args.value("filter",std::string());
   auto add=[&](const std::string& name,auto build){if(!filter.empty()&&name.find(filter)==std::string::npos)return;if(count>=offset(args)&&items.size()<limit(args))items.push_back(build());++count;};
@@ -57,6 +57,7 @@ json context(const Document& doc,const Scene& scene,const json& args) {
   else if(section=="features")for(const auto& f:scene.features)add(f.name,[&]{json result={{"id",f.id},{"kind",f.kind},{"name",short_text(f.name)},{"suppressed",f.suppressed},{"error",short_text(f.error)}};
     std::set<std::string> dependencies;std::function<void(const json&)> walk=[&](const json& j){if(j.is_array())for(const auto& v:j)walk(v);else if(j.is_object())for(const auto& [key,v]:j.items()){if((key=="sketch"||key=="body"||key=="feature")&&v.is_string())dependencies.insert(v.get<std::string>());else walk(v);}else if(j.is_string())for(const auto& name:design::expr_identifiers(j.get<std::string>()))if(const auto* p=scene.param(name))dependencies.insert(p->id);};walk(f.inputs);
     result["dependencies"]=dependencies;result["input_names"]=json::array();for(const auto& [key,v]:f.inputs.items())result["input_names"].push_back(key);return result;});
+  else if(section=="ai_agent_notes") {for(const auto& a:scene.annotations)if(a.style=="ai_agent")add(a.text,[&]{return json{{"id",a.id},{"text",short_text(a.text)},{"anchor",a.anchor.to_json()},{"unresolved",a.unresolved},{"has_drawing",!a.drawing.is_null()},{"comments",a.comments.size()},{"by",short_text(a.by)}};});}
   else if(section=="errors")for(const auto& e:scene.unresolved)add(e.reason,[&]{return json{{"op",e.op_id},{"type",e.op_type},{"reason",short_text(e.reason)}};});
   else throw Error("Unknown context section: "+section);
   auto out=page(std::move(items),count,args);out["document"]=doc.header.uuid;out["section"]=section;return out;
@@ -182,7 +183,7 @@ namespace opad::commands {
 void register_agent_commands(const std::function<void(const CommandInfo&, Handler)>& add) {
   auto bounded=[](json properties){properties["doc"]={{"type","string"}};properties["offset"]={{"type","integer"},{"minimum",0},{"default",0}};properties["limit"]={{"type","integer"},{"minimum",1},{"maximum",100},{"default",25}};return properties;};
   auto run=[](auto fn){return [fn](Document* doc,const json& args){if(!doc)throw Error("Pass a document or bind a live session");return fn(*doc,resolve(*doc),args);};};
-  add({"context","Bounded document summary and pages of nodes, sketches, parameters, history and errors",bounded({{"section",{{"type","string"},{"enum",{"summary","nodes","sketches","features","parameters","errors"}},{"default","summary"}}},{"filter",{{"type","string"}}}}),false},run(agent::context));
+  add({"context","Bounded document summary and pages of nodes, sketches, parameters, history and errors",bounded({{"section",{{"type","string"},{"enum",{"summary","nodes","sketches","features","parameters","errors","ai_agent_notes"}},{"default","summary"}}},{"filter",{{"type","string"}}}}),false},run(agent::context));
   add({"sketch_details","Sketch geometry, constraints, degrees of freedom, profiles and connected chains in bounded pages",bounded({{"sketch",{{"type","string"}}},{"section",{{"type","string"},{"enum",{"summary","points","entities","constraints","profiles","chain"}},{"default","summary"}}},{"entity",{{"type","integer"}}}}),false},run(agent::sketch_details));
   const json number={{"type","number"}},axis={{"type","string"},{"enum",{"x","y","z"}}};
   const json vector={{"type","array"},{"items",number},{"minItems",3},{"maxItems",3}};

@@ -5,6 +5,7 @@
 #include <QSettings>
 #include <QStackedWidget>
 #include <QTimer>
+#include <QPointer>
 #include <functional>
 
 #include "AppDocument.hpp"
@@ -72,6 +73,7 @@ class MainWindow : public QMainWindow {
   void showComponentBbox(const std::string& id, const QString& title, const QString& subtitle, const QString& nid, opad::json props);
   void runBench();
   bool benchTodo5();
+  bool benchTodo9();
   bool benchLargeSketch();
   bool benchShortcuts();
 
@@ -154,6 +156,7 @@ class MainWindow : public QMainWindow {
   BrowserPanel* m_browser = nullptr;
   PropertiesPanel* m_props = nullptr;
   AnnotationsPanel* m_annotations = nullptr;
+  QPointer<HandDrawing> m_handDrawing;
   NoteCards* m_noteCards = nullptr;  // one card beside every open note, over the viewport
   SectionPanel* m_section = nullptr;
   ToolPanel* m_propsPanel = nullptr;  // floating tool panels over the viewport (no fixed right dock)

@@ -196,14 +196,21 @@ void register_builtins() {
   reg("properties", "Properties panel data for a node", {{"doc", "path"}, {"node", "uuid"}}, false,
       [](Document* d, const json& a) { return node_properties(need(d), resolve(need(d)), a.at("node").get<std::string>()); });
 
-  reg("annotations", "List annotations, measurements, sections and views", {{"doc", "path"}, {"by", "string - filter annotations by author"}}, false,
+  reg("annotations", "List open annotations. Review ai_agent notes first as user design requests; inspect their anchors before acting. Drawing coordinates are in plane mm.", {{"doc", "path"}, {"by", "string - filter annotations by author"}, {"style", "ok|warning|issue|note|ai_agent"}, {"id", "string - fetch one annotation including drawing and comments"}, {"offset", "int"}, {"limit", "int"}}, false,
       [](Document* d, const json& a) {
         Scene s = resolve(need(d));
         std::string by = a.value("by", "");
         json ann = json::array(), meas = json::array(), sec = json::array(), views = json::array();
+        size_t total=0;
+        const size_t offset=std::max(0,a.value("offset",0)), limit=std::clamp(a.value("limit",25),1,100);
         for (const auto& x : s.annotations) {
           if (!by.empty() && x.by != by) continue;
+          if (a.contains("style") && x.style!=a.at("style").get<std::string>()) continue;
+          if (a.contains("id") && x.id!=a.at("id").get<std::string>()) continue;
+          if (total++<offset || ann.size()>=limit) continue;
           ann.push_back({{"id", x.id}, {"anchor", x.anchor.str()}, {"text", x.text}, {"style", x.style}, {"by", x.by}, {"ts", x.ts}, {"unresolved", x.unresolved}, {"comments", x.comments}});
+          if (!x.drawing.is_null()) ann.back()["drawing"]=x.drawing;
+          if (const auto* node=s.node(x.anchor.body)) ann.back()["target"]={{"id",node->id},{"name",node->name},{"body_key",node->body_key}};
         }
         for (const auto& m : s.measurements) {
           json refs = json::array();
@@ -215,6 +222,8 @@ void register_builtins() {
         for (const auto& v : s.views) views.push_back({{"id", v.id}, {"name", v.name}, {"camera", v.camera}});
         json j;
         j["annotations"] = ann;
+        j["total"]=total;
+        j["next_offset"]=offset+ann.size()<total ? json(offset+ann.size()) : json(nullptr);
         j["measurements"] = meas;
         j["sections"] = sec;
         j["views"] = views;
@@ -379,13 +388,14 @@ void register_builtins() {
         return out;
       });
 
-  reg("annotate", "Add a text annotation anchored to a body/face/edge/point",
-      {{"doc", "path"}, {"anchor", "string - reference"}, {"text", "string"}, {"style", "ok|warning|issue|note - default note"}, {"by", "string"}}, true, [](Document* d, const json& a) {
+  reg("annotate", "Add an anchored note or hand drawing. ai_agent notes are requests for the agent to review first.",
+      {{"doc", "path"}, {"anchor", "string - reference"}, {"text", "string"}, {"style", "ok|warning|issue|note|ai_agent - default note"}, {"drawing", "object - plane and strokes"}, {"reply_to", "uuid"}, {"by", "string"}}, true, [](Document* d, const json& a) {
         json op;
         op["op"] = "annotation";
         op["anchor"] = Ref::from_json(a.at("anchor")).to_json();
         op["text"] = a.at("text");
         if (a.contains("style")) op["style"] = a["style"];
+        if (a.contains("drawing")) op["drawing"] = a["drawing"];
         if (a.contains("reply_to")) {
           const auto* parent = need(d).find_op(a.at("reply_to").get<std::string>());
           if (!parent || parent->type != "annotation" || parent->data.contains("reply_to")) throw Error("comment parent must be a top-level annotation");
@@ -394,6 +404,14 @@ void register_builtins() {
         json j;
         j["id"] = need(d).append(op, a.value("by", "")).id;
         return j;
+      });
+
+  reg("delete_annotation", "Delete a note or hand drawing from the review UI and agent queue. Undo can restore it; append-only history remains.",
+      {{"doc","path"},{"target","uuid - annotation op id"},{"by","string"}}, true, [](Document* d,const json& a) {
+        auto& doc=need(d);const auto id=a.at("target").get<std::string>();const auto* target=doc.find_op(id);
+        if(!target || target->type!="annotation") throw Error("delete_annotation: target must be an annotation");
+        const auto& op=doc.append({{"op","delete"},{"target",id},{"reason","annotation_deleted"}},a.value("by",""));
+        return json{{"id",op.id}};
       });
 
   reg("delete", "Tombstone an earlier op (annotation resolved, rename undone, import removed...)",

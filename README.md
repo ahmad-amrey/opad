@@ -112,6 +112,17 @@ Home/End jumps to the first/last marker. Selecting an operation scrolls it into 
 Workspace shortcuts are Ctrl+1/2 (Command+1/2 on macOS); standard views use Ctrl+Alt+1 through 7.
 Annotations are created and edited inline, with type selection and comment threads. Set your display
 name in Settings to identify new annotations, comments and design operations.
+Drag a note's title to move its card without changing the document. The Annotations panel filters by
+type across both the panel and viewport; Delete removes a note and remains undoable.
+Review > Annotate > Hand drawing creates camera-facing marks anchored at the first click, with red/blue
+strokes and three widths. Save creates one annotation; Cancel leaves no document change. Choose
+**AI agent notes** and describe the request to expose it in the MCP agent's prioritized review queue.
+The first click fixes the drawing's world-space plane; later model edits do not regenerate the strokes.
+MCP clients should review `context(section="ai_agent_notes")`, fetch `annotations(id=...)` for
+the full text, comments and drawing coordinates, and inspect current anchor references before editing.
+`annotate` accepts typed `drawing` data and `reply_to` comments; `delete_annotation` removes a note
+from review lists while retaining Undo/history. `delete` resolves a completed request.
+
 
 ## Building
 
@@ -175,16 +186,27 @@ without rebuilding.
 
 ## Using it in a git repository
 
-Add this to the repository's `.gitattributes` (the OPAD repo itself ships the same file):
+OPAD documents remain readable UTF-8 text with LF endings, append-only operations and immutable
+geometry. Existing operation text is preserved on save. New sketches and hand drawings use readable
+multiline records, so use the record-aware merge driver rather than Git's union driver:
 
 ```
-*.opad text eol=lf merge=union
+*.opad text eol=lf merge=opad
 ```
 
-`eol=lf` keeps body-store hashes stable across operating systems. `merge=union` tells git that two branches
-which each appended operations should simply keep both sets of lines, so independent annotations, measurements
-and imports merge with zero conflicts. Documents above 25 MB should go through git LFS
-(`git lfs track "*.opad"`); the app and `opad-cli info` warn when a file crosses that size.
+Configure the driver in each clone (use the absolute path for your machine):
+
+```sh
+git config merge.opad.name "OPAD append-only records"
+git config merge.opad.driver 'python "C:/path/to/opad/tools/opad_merge.py" %O %A %B'
+```
+
+The driver runs on Windows, Linux and macOS with Python 3. It merges independent records and reports
+overlapping edits, rewritten history or pruned body stores for review. A conflict leaves the ours file
+intact; inspect both branches before resolving it. Without configuration Git falls back to normal text
+merging. After merging design changes, check unresolved references and regenerate/validate dependencies.
+Large meshes and embedded images can still produce large diffs; Git LFS is optional and gives up normal
+text diffs/merges. The detailed [format guide](docs/format.md#git) explains the record layout.
 
 ## Python
 
