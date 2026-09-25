@@ -12,6 +12,7 @@
 #include "opad/step_io.hpp"
 
 class JobRunner;
+class Job;
 class AppDocument : public QObject {
   Q_OBJECT
   // Snapshots retain the source even if the window closes while its worker is copying.
@@ -34,6 +35,9 @@ class AppDocument : public QObject {
   void importStep(const QString& path, const QString& parent = {});
   void save();
   void saveAs(const QString& path);
+  // Atomic background save; holds the document write guard until the worker really exits.
+  Job* saveAsync(JobRunner*, const QString& path, bool overwrite,
+                 std::function<void(bool,const QString&)> done, int testDelayMs=0);
   opad::json run(const std::string& command, opad::json args);
 
   // Design changes are planned on a worker (design::plan_ops reads the document, see DesignController) and

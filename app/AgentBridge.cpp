@@ -191,6 +191,16 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
       replyReceipt(s,found->second);return;
     }
     if(!m_edit){fail(s,"read_only",tr("Agent access is view-only. Enable editing in Settings to change or export the document."));return;}
+    if(name=="save" && m_doc->snapshotBusy() && !m_busy){
+      // A recovery checkpoint can briefly own the write guard between MCP calls.
+      // Wait for its worker instead of making unattended saves race autosave.
+      const auto epoch=m_epoch;
+      QTimer::singleShot(10,this,[this,s,request=std::move(request),hash=std::move(hash),epoch]()mutable{
+        if(!s->socket || !s->bound)return;
+        if(epoch!=m_epoch){fail(s,"cancelled",tr("Agent operation cancelled."));return;}
+        dispatch(s,std::move(request),std::move(hash));
+      });return;
+    }
     if(editorBusy()){fail(s,"edit_session_busy",tr("Finish the active sketch or feature operation before agent edits."));return;}
     if(args.at("expected_revision").get<unsigned long long>()!=m_doc->revision){fail(s,"stale_revision",tr("The document changed. Read its current context and replan the edit."));return;}
     if(m_receipts.size()>=1000){fail(s,"session_limit",tr("This application session has reached its request limit. Save and restart OPAD."));return;}
@@ -201,6 +211,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
   }
   if(m_busy){fail(s,"busy",tr("An agent operation is still running. Wait or use Stop."));return;}
   if(write)m_receipts.emplace(key,Receipt{hash});
+  if(name=="save"){save(s,args,key);return;}
   if(name=="transaction_commit" || name=="preview_commit"){commit(s,args.at("id").get<std::string>(),key,args.at("expected_revision").get<unsigned long long>());return;}
   execute(s,name,std::move(args),write?key:std::string());
 }

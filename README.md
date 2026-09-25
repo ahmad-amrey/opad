@@ -5,6 +5,11 @@ plain-text `.opad` file that diffs and merges cleanly in git, and exposes everyt
 AI agents through a headless CLI, a Python module and a [stdio MCP server](docs/mcp.md). The desktop app follows Autodesk Fusion's navigation
 and screen layout so Fusion users feel at home.
 
+Live MCP clients can call `save` after committing edits to persist the open document without UI
+interaction. Supply an absolute `.opad` `path` for Save As, or omit it to save the current file.
+Like other live writes, saving requires editing permission, `expected_revision`, and a unique
+`request_id`; replacing a different existing file also requires `overwrite: true`.
+
 OPAD combines CAD modelling, review and a 2D drafting foundation: import, inspect, measure,
 section, annotate, sketch, build features and export. [Drawing and mesh support](docs/drawings.md)
 describes supported DXF/SVG entities, mesh reference objects and the optional DWG converter.

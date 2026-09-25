@@ -59,6 +59,24 @@ void AgentBridge::snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)
       });
   }))done({},tr("Document is busy. Retry after the current operation."));
 }
+void AgentBridge::save(const std::shared_ptr<Session>& session,const json& args,const std::string& receipt){
+  if(m_prepared){fail(session,"prepared_active",tr("Commit or cancel the current transaction first."),receipt);return;}
+  const auto revision=m_doc->revision,epoch=++m_epoch;
+  m_busy=true;m_owner=session->socket;activity(tr("Agent: %1").arg("save"));
+  try {
+    m_job=m_doc->saveAsync(m_jobs,QString::fromStdString(args.value("path","")),args.value("overwrite",false),
+      [this,session,receipt,revision,epoch](bool written,const QString& error){
+        if(epoch==m_epoch){m_busy=false;m_job.clear();m_owner.clear();}
+        if(!written){fail(session,error=="cancelled"?"cancelled":"save_failed",error,receipt);emit statusChanged();return;}
+        // A save that reached disk stays successful even if the client disconnected
+        // immediately afterwards. request_status can retrieve this durable outcome.
+        m_receipts[receipt].state="committed";m_receipts[receipt].revision=revision;
+        reply(session,live_result({{"state","committed"},{"revision",revision},
+          {"result",{{"path",m_doc->path().toStdString()},{"saved_revision",revision},{"dirty",m_doc->isDirty()}}}}),receipt);
+        activity(tr("Saved %1").arg(m_doc->path()));emit statusChanged();
+      },m_benchDelay);
+  }catch(const std::exception& e){m_busy=false;m_owner.clear();fail(session,"save_failed",QString::fromUtf8(e.what()),receipt);emit statusChanged();}
+}
 void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string name,json args,const std::string& receipt){
   if(m_busy){fail(session,"busy",tr("An agent operation is still running. Wait or use Stop."),receipt);return;}
   const bool write=live_mutation(name),preview=args.value("preview",false);const auto transaction=args.value("transaction","");

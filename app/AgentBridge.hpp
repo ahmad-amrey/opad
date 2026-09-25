@@ -49,6 +49,7 @@ class AgentBridge : public QObject {
   void fail(const std::shared_ptr<Session>&,const std::string&,const QString&,const std::string& receipt={});
   void snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)>);
   void execute(const std::shared_ptr<Session>&,std::string,json,const std::string& receipt);
+  void save(const std::shared_ptr<Session>&,const json&,const std::string& receipt);
   void commit(const std::shared_ptr<Session>&,const std::string&,const std::string&,unsigned long long);
   void clearPrepared(bool cancelReceipts=true);
   void publish();

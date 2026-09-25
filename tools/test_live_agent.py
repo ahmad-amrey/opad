@@ -257,7 +257,10 @@ def main():
         (root / "plate.png").write_bytes(base64.b64decode(png))
         def capture_recovery(action, **arguments):
             previous = set(desktop.settings.rglob("*.opad-recovery"))
-            desktop.action(action, **arguments)
+            if action == "save":
+                client.write("save", **arguments)
+            else:
+                desktop.action(action, **arguments)
             deadline = time.monotonic()+10
             while time.monotonic()<deadline:
                 created = set(desktop.settings.rglob("*.opad-recovery"))-previous

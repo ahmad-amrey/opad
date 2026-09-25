@@ -1,6 +1,75 @@
 #include "AppDocument.hpp"
 #include "Jobs.hpp"
 #include <QPointer>
+#include <QDir>
+#include <QFileInfo>
+#include <QSaveFile>
+#include <QTemporaryFile>
+#include <QThread>
+
+Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwrite,
+                           std::function<void(bool,const QString&)> done,int testDelayMs) {
+  if(!hasDocument || loading || designBusy || m_capturing)throw opad::Error("Document is busy or not open; retry after the current operation.");
+  if(browse)throw opad::Error("Viewer-mode geometry cannot be saved directly; import it into an OPAD document first.");
+  const QString destination=requested.isEmpty()?path():requested;
+  if(destination.isEmpty())throw opad::Error("This document has no file path. Supply an absolute .opad path for the first save.");
+  if(!QDir::isAbsolutePath(destination) || QFileInfo(destination).suffix().compare("opad",Qt::CaseInsensitive)!=0)
+    throw opad::Error("Save requires an absolute path ending in .opad.");
+  struct Save {
+    std::atomic<bool> finished{false};bool written=false;QString error;
+    std::vector<std::string> ids;size_t bodies=0;
+  };
+  auto result=std::make_shared<Save>();const auto source=m_storage;const auto current=path();
+  const auto identity=generation;const auto savedRevision=revision;
+  m_capturing=true;designBusy=true;emit undoChanged();
+  auto* job=jobs->async(tr("Saving document"),[source,result,destination,current,overwrite,testDelayMs](Progress progress){
+    try {
+      const QFileInfo target(destination),original(current);
+      const bool same=!current.isEmpty() && (QDir::cleanPath(destination)==QDir::cleanPath(current) ||
+          (!original.canonicalFilePath().isEmpty() && original.canonicalFilePath()==target.canonicalFilePath()));
+      const bool replace=overwrite || same;
+      if(target.exists() && !replace)throw opad::Error("Destination already exists. Choose a new path or explicitly set overwrite=true.");
+      if(progress.cancelled())throw opad::Error("cancelled");
+      const auto text=source->serialize();
+      result->ids.reserve(source->ops.size());for(const auto& op:source->ops)result->ids.push_back(op.id);result->bodies=source->body_count();
+      QSaveFile atomic(destination);atomic.setDirectWriteFallback(false);
+      QTemporaryFile fresh(destination+".XXXXXX");QFileDevice* file=replace?static_cast<QFileDevice*>(&atomic):static_cast<QFileDevice*>(&fresh);
+      if(!(replace?atomic.open(QIODevice::WriteOnly):fresh.open()))throw opad::Error(file->errorString().toStdString());
+      constexpr size_t chunk=4*1024*1024;
+      for(size_t offset=0;offset<text.size();){
+        if(progress.cancelled())throw opad::Error("cancelled");
+        const auto size=std::min(chunk,text.size()-offset);
+        if(file->write(text.data()+offset,qint64(size))!=qint64(size))throw opad::Error(file->errorString().toStdString());
+        offset+=size;progress.setOverall(int(offset*100/std::max(size_t(1),text.size())));
+      }
+      // Isolated acceptance harness: emulate slow I/O before the atomic publish.
+      if(testDelayMs>0)QThread::msleep(static_cast<unsigned long>(testDelayMs));
+      if(progress.cancelled())throw opad::Error("cancelled");
+      if(replace){if(!atomic.commit())throw opad::Error(atomic.errorString().toStdString());}
+      else {
+        if(!fresh.flush())throw opad::Error(fresh.errorString().toStdString());fresh.close();
+        // QFile::rename refuses to replace a file created since the initial check.
+        if(!fresh.rename(destination))throw opad::Error(fresh.errorString().toStdString());fresh.setAutoRemove(false);
+      }
+      result->written=true;
+    }catch(const std::exception& e){result->error=QString::fromUtf8(e.what());}
+    catch(...){result->error=QStringLiteral("Unexpected error while saving the document.");}
+    result->finished.store(true,std::memory_order_release);
+  });
+  // Cancel finishes a Job before its worker exits. Keep the write guard and report
+  // the actual disk outcome, even if cancellation arrives just after atomic publish.
+  auto* timer=new QTimer(this);timer->setInterval(10);
+  connect(timer,&QTimer::timeout,this,[this,timer,result,done,destination,identity,savedRevision]{
+    if(!result->finished.load(std::memory_order_acquire))return;
+    timer->stop();timer->deleteLater();m_capturing=false;designBusy=false;
+    if(result->written && generation==identity && revision==savedRevision){
+      doc.path=std::filesystem::path(destination.toStdU16String());doc.header.format=opad::kFormatVersion;
+      m_savedIds=std::move(result->ids);m_savedBodies=result->bodies;doc.dirty=false;
+      emit pathChanged();emit saved();emit message(tr("Saved %1").arg(destination));
+    }
+    emit undoChanged();done(result->written,result->error);
+  });timer->start();return job;
+}
 
 bool AppDocument::captureSnapshot(JobRunner* jobs, SnapshotCallback done) {
   if (!hasDocument || loading || designBusy || m_capturing) return false;
@@ -28,4 +97,3 @@ bool AppDocument::captureSnapshot(JobRunner* jobs, SnapshotCallback done) {
     else done(std::move(copy->document),copy->error);
   });timer->start();return true;
 }
-

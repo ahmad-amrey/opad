@@ -406,13 +406,13 @@ QString AppDocument::labelFor(const std::string& command, const opad::json& args
 
 QString AppDocument::title() const {
   if (!hasDocument) return tr("OPAD");
-  QString name = doc.path.empty() ? tr("Untitled") : QString::fromStdString(doc.path.filename().string());
+  QString name = doc.path.empty() ? tr("Untitled") : QString::fromStdU16String(doc.path.filename().u16string());
   if (browse) name = tr("[viewer] ") + name;
   if (isDirty()) name += "*";
   return name + " - OPAD";
 }
 
-QString AppDocument::path() const { return QString::fromStdString(doc.path.string()); }
+QString AppDocument::path() const { return QString::fromStdU16String(doc.path.u16string()); }
 
 QString AppDocument::nodeName(const std::string& id) const {
   const opad::Node* n = scene.node(id);

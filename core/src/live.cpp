@@ -11,7 +11,7 @@ json str(){return {{"type","string"},{"minLength",1},{"maxLength",200}};}
 json revision(){return {{"type","integer"},{"minimum",0}};}
 }
 bool live_mutation(const std::string& name) {
-  if(name=="transaction_begin" || name=="transaction_commit" || name=="preview_commit")return true;
+  if(name=="save" || name=="transaction_begin" || name=="transaction_commit" || name=="preview_commit")return true;
   for(const auto& c:commands::list())if(c.name==name)return c.mutates || name=="export";
   return false;
 }
@@ -30,7 +30,8 @@ json live_guide() {
       {{"tool","feature"},{"arguments",{{"kind","box"},{"inputs",{{"length",40},{"width",40},{"height",40}}},{"transaction","$tx"},{"expected_revision","$base"},{"request_id","unique-box"}}},{"save","feature=result.feature_id; body=result.body_ids[0]"}},
       {{"tool","validate"},{"arguments",{{"transaction","$tx"}}},{"use","Check validity and volume before commit."}},
       {{"tool","transaction_commit"},{"arguments",{{"id","$tx"},{"expected_revision","$base"},{"request_id","unique-commit"}}}},
-      {{"tool","entity_details"},{"arguments",{{"ref","$body"}}},{"use","Use checked reference tokens for subsequent face/edge operations."}}
+      {{"tool","entity_details"},{"arguments",{{"ref","$body"}}},{"use","Use checked reference tokens for subsequent face/edge operations."}},
+      {{"tool","save"},{"arguments",{{"path","$absolute_output.opad"},{"expected_revision","$commit.revision"},{"request_id","unique-save"}}},{"use","Persist committed work. Omit path on subsequent saves; an existing different destination requires overwrite=true."}}
     })},{"example_notation","$ variables refer to structuredContent fields from earlier calls, not literal argument values. Keep one persistent MCP connection for the entire transaction."}};
 }
 json live_output_schema(const std::string& name) {
@@ -43,7 +44,8 @@ json live_output_schema(const std::string& name) {
   if(name=="feature" || name=="sketch") {
     json result={{"type","object"},{"properties",{{"ids",ids},{"feature_id",str()},{"body_ids",ids},{"sketch_id",str()}}}};
     result["required"]=name=="feature"?json{"feature_id","body_ids"}:json{"sketch_id"};props["result"]=result;
-  } else props["result"]={{"description","Command-specific payload; transaction_commit returns the last staged command's result. See context or feature_schema for modeling details."}};
+  } else if(name=="save")props["result"]={{"type","object"},{"properties",{{"path",{{"type","string"},{"minLength",1}}},{"saved_revision",revision()},{"dirty",{{"type","boolean"}}}}},{"required",{"path","saved_revision","dirty"}}};
+  else props["result"]={{"description","Command-specific payload; transaction_commit returns the last staged command's result. See context or feature_schema for modeling details."}};
   if(name=="live_instances")props["instances"]={{"type","array"},{"items",{{"type","object"}}}};
   if(name=="live_diagnostics"){
     props["connection"]={{"type","string"}};props["target"]={{"type",{"string","null"}}};props["permissions"]={{"type","object"}};
@@ -62,6 +64,7 @@ const json& live_tools() {
   add("live_instances","List running OPAD windows. Choose the intended instance and document explicitly.",object());
   add("live_bind","Bind this connection to exactly one instance and document target; never follows a newly opened document.",object({{"instance",str()},{"target",str()}},{"instance","target"}));
   add("live_state","Current revision, camera, selection, edit session and bounded recent changes.",object());
+  add("save","Save the committed live document to disk without a dialog. Omit path to save to its current file; an unsaved document needs an absolute .opad path. Saving to another existing file requires overwrite=true. Finish active editors and commit/cancel previews or transactions first. Requires edit access. Does not add an Undo step or change revision. Reuse request_id only to retrieve the same save receipt.",object({{"path",{{"type","string"},{"minLength",1},{"maxLength",32767}}},{"overwrite",{{"type","boolean"},{"default",false}}},{"expected_revision",revision()},{"request_id",str()}},{"expected_revision","request_id"}));
   add("live_select","Select up to 25 bodies or subshapes of the same kind in the viewport. Selection is applied asynchronously; inspect live_state afterwards. Does not edit geometry.",object({{"refs",{{"type","array"},{"items",{{"type",{"string","object"}}}},{"minItems",1},{"maxItems",25}}},{"expected_revision",revision()}},{"refs","expected_revision"}));
   add("request_status","Find an earlier request's committed, failed, cancelled or pending receipt after reconnecting.",object({{"request_id",str()}},{"request_id"}));
   add("stop","Cancel unfinished agent work and remove temporary previews. Completed edits remain undoable.",object());

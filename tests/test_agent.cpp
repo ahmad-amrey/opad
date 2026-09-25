@@ -71,5 +71,11 @@ int main(){try {
   CHECK_EQ(agent::transaction_policy()["scope"],"connection");
   CHECK(agent::live_guide().at("example").size()>4);
   CHECK_THROWS(agent::validate_input(agent::live_schema("request_status"),{{"request_id",""}}));
+  CHECK(agent::live_mutation("save"));
+  agent::validate_input(agent::live_schema("save"),{{"expected_revision",3},{"request_id","save-1"}});
+  agent::validate_input(agent::live_schema("save"),{{"path","C:/output/part.opad"},{"overwrite",true},{"expected_revision",3},{"request_id","save-2"}});
+  CHECK_THROWS(agent::validate_input(agent::live_schema("save"),{{"path","C:/output/part.opad"}}));
+  CHECK_THROWS(agent::validate_input(agent::live_schema("save"),{{"expected_revision",3},{"request_id","save-1"},{"transaction","pending"}}));
+  agent::validate_input(agent::live_output_schema("save"),{{"result",{{"path","C:/output/part.opad"},{"saved_revision",3},{"dirty",false}}}});
   std::cout<<"agent schemas, bounded context, exact validation and stale references: PASS\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
