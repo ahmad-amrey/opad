@@ -50,6 +50,8 @@ class DesignController : public QObject {
   void viewportSelectionChanged();
   bool escape();  // Esc: leaves the plane pick or the feature; false when there was nothing to leave
   void bench();   // OPAD_BENCH_DESIGN
+  opad::json recoveryState() const;
+  void restoreRecovery(const opad::json& state);
 
  signals:
   void stateChanged();                  // what is active changed: actions, ribbon

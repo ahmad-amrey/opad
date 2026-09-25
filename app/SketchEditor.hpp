@@ -42,6 +42,10 @@ class SketchEditor : public QObject, public SketchInput {
   opad::json geometryDelta() const { return opad::design::sketch_delta(m_initialGeometry, geometry()); }
   bool modified() const { return m_modified; }
   bool empty() const;  // nothing but the origin
+  // Copies one entity per UI slice, then serializes on a worker. A changed sketch
+  // invalidates the capture rather than mixing geometry from different edits.
+  void captureRecovery(std::function<void(opad::json, const QString&)> done);
+  void restoreRecovery(const opad::json& state);
 
   // Tools: select, line, rect, crect, circle, circle3, arc3, arcc, polygon, slot, point, spline, ellipse, fillet,
   // trim, mirror, dimension, and "c:<constraint>" (horizontal, vertical, coincident, parallel, perpendicular,

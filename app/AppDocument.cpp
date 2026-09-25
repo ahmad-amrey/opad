@@ -10,6 +10,7 @@
 #include <Standard_Failure.hxx>
 #include <algorithm>
 #include <QMetaObject>
+#include <QPointer>
 #include <thread>
 
 namespace {
@@ -29,7 +30,7 @@ QString phaseLabel(const std::string& what, const QString& file) {
 }
 }  // namespace
 
-AppDocument::AppDocument(QObject* parent) : QObject(parent), m_alive(std::make_shared<std::atomic<bool>>(true)) {}
+AppDocument::AppDocument(QObject* parent) : QObject(parent), m_storage(std::make_shared<opad::Document>()), doc(*m_storage), m_alive(std::make_shared<std::atomic<bool>>(true)) {}
 
 AppDocument::~AppDocument() { *m_alive = false; }
 
@@ -62,7 +63,7 @@ void AppDocument::cancelLoad() {
 }
 
 void AppDocument::startOpen(const QString& path) {
-  if (loading) return;
+  if (loading || designBusy) return;
   loading = true;
   auto cancel = std::make_shared<std::atomic<bool>>(false);
   m_cancel = cancel;
@@ -116,7 +117,7 @@ void AppDocument::startOpen(const QString& path) {
 }
 
 void AppDocument::startImport(const QString& path, const QString& parent) {
-  if (loading) return;
+  if (loading || designBusy) return;
   if (!hasDocument || browse) {
     doc = opad::Document::create();
     browse = false;
@@ -177,7 +178,7 @@ void AppDocument::startImport(const QString& path, const QString& parent) {
 }
 
 void AppDocument::newDocument() {
-  if (loading) return;
+  if (loading || designBusy) return;
   emit aboutToReplace();
   ++generation;
   m_rollback.clear();
@@ -192,7 +193,7 @@ void AppDocument::newDocument() {
 }
 
 void AppDocument::closeDocument() {
-  if (loading) return;
+  if (loading || designBusy) return;
   emit aboutToReplace();
   ++generation;
   m_rollback.clear();
@@ -206,6 +207,7 @@ void AppDocument::closeDocument() {
 }
 
 void AppDocument::open(const QString& path) {
+  if (loading || designBusy) throw opad::Error("Document is busy; try again when the operation finishes.");
   QString ext = QFileInfo(path).suffix().toLower();
   opad::Document next;
   if (ext != "opad") {
@@ -232,6 +234,7 @@ void AppDocument::open(const QString& path) {
 }
 
 void AppDocument::importStep(const QString& path, const QString& parent) {
+  if (loading || designBusy) throw opad::Error("Document is busy; try again when the operation finishes.");
   if (!hasDocument || browse) {
     doc = opad::Document::create();
     browse = false;
@@ -251,6 +254,7 @@ void AppDocument::importStep(const QString& path, const QString& parent) {
 }
 
 void AppDocument::save() {
+  if (loading || m_capturing) throw opad::Error("Document snapshot is in progress; try saving again shortly.");
   if (browse) throw opad::Error("viewer mode: export to an OPAD document first");
   doc.save();
   markSaved();
@@ -259,6 +263,7 @@ void AppDocument::save() {
 }
 
 void AppDocument::saveAs(const QString& path) {
+  if (loading || m_capturing) throw opad::Error("Document snapshot is in progress; try saving again shortly.");
   if (browse) throw opad::Error("viewer mode: export to an OPAD document first");
   doc.save_as(path.toStdString());
   markSaved();
@@ -277,6 +282,7 @@ opad::json AppDocument::run(const std::string& command, opad::json args) {
 }
 
 opad::json AppDocument::commitPlan(opad::design::Plan&& plan, const QString& label) {
+  if (m_capturing) throw opad::Error("Document snapshot is in progress; try again shortly.");
   const size_t before = doc.ops.size();
   opad::json report = opad::design::commit(doc, std::move(plan), QSettings().value("user/name").toString().trimmed().toStdString());
   recordStep(label, before);
@@ -294,7 +300,16 @@ void AppDocument::refresh() {
   if (!m_rollback.empty() && !doc.find_op(m_rollback)) m_rollback.clear();  // undone or closed
   scene = hasDocument ? opad::resolve(doc, m_rollback) : opad::Scene{};
   updateDirty();
+  ++revision;
   emit changed();
+}
+
+void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved) {
+  if(loading || designBusy)throw opad::Error("Document is busy; try recovery again shortly.");
+  emit aboutToReplace();++generation;++revision;m_rollback.clear();
+  doc=std::move(document);doc.path.clear();doc.dirty=true;scene=std::move(resolved);
+  browse=false;hasDocument=true;clearHistory();m_savedIds.clear();m_savedBodies=0;
+  emit changed();emit pathChanged();
 }
 
 // ---------------------------------------------------------------- undo / redo

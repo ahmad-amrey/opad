@@ -17,11 +17,13 @@
 #include "Ribbon.hpp"
 #include "Viewport.hpp"
 #include "BrowserOverlay.hpp"
+class RecoveryManager;
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
  public:
   MainWindow();
+  ~MainWindow() override;
   void openPath(const QString& path);
   void warmUpViewport() { m_viewport->warmUp(); }
   void setBenchSelect(bool on) { m_benchSelect = on; }  // --bench-select: select every root after loading, log, quit
@@ -118,6 +120,8 @@ class MainWindow : public QMainWindow {
   std::vector<std::string> currentNodeIds() const;
 
   AppDocument* m_doc = nullptr;
+  RecoveryManager* m_recovery = nullptr;
+  bool m_closePending = false, m_recoveryClosed = false;
   DesignController* m_design = nullptr;
   ToolPanel* m_featurePanel = nullptr;
   int m_sketchWorkspace = -1, m_workspaceBeforeSketch = 0;

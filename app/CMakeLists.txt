@@ -14,6 +14,7 @@ set(CMAKE_AUTORCC ON)
 set(OPAD_APP_SOURCES
   main.cpp
   AppDocument.cpp AppDocument.hpp
+  AppSnapshot.cpp SketchRecovery.cpp RecoveryManager.cpp RecoveryManager.hpp
   Theme.cpp Theme.hpp
   Icons.cpp Icons.hpp
   Ribbon.cpp Ribbon.hpp

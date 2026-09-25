@@ -529,6 +529,23 @@ void DesignController::runPreview(bool commit) {
 }
 
 // ---------------------------------------------------------------- sketches
+opad::json DesignController::recoveryState() const {
+  if(!featureActive())return {};
+  return {{"type","feature"},{"id",m_editing},{"kind",m_form->spec()->kind},{"inputs",m_form->inputs()}};
+}
+void DesignController::restoreRecovery(const opad::json& state) {
+  if(state.is_null() || state.empty())return;
+  if(state.value("type","")=="sketch")m_sketch->restoreRecovery(state);
+  else if(state.value("type","")=="feature") {
+    const auto id=state.value("id",std::string());
+    if(id.empty())startFeature(QString::fromStdString(state.at("kind").get<std::string>()));else editOp(id);
+    if(featureActive())for(const auto& [key,value]:state.at("inputs").items()){
+      if(value.is_array() || value.is_object())m_form->setPicks(QString::fromStdString(key),value);
+      else m_form->setValue(QString::fromStdString(key),value);
+    }
+  }
+  emit stateChanged();
+}
 void DesignController::pickSketchPlane(std::function<void(opad::json,opad::Frame)> done,bool positionOrigin) {
   m_positionOrigin=positionOrigin;
   if(!m_doc->hasDocument || m_sketch->active()) return;

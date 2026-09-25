@@ -2,6 +2,7 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include "MainWindow.hpp"
+#include "RecoveryManager.hpp"
 
 #include <QToolButton>
 #include <QResizeEvent>
@@ -68,6 +69,8 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   buildDocks();
   buildStatusBar();
   buildDesign();
+  m_recovery=new RecoveryManager(m_doc,m_design,m_jobs,this);
+  connect(m_recovery,&RecoveryManager::status,this,[this](const QString& text){statusBar()->showMessage(text,8000);});
 
   connect(m_doc, &AppDocument::aboutToReplace, this, [this] {
     saveLastView();
@@ -246,6 +249,11 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
 }
 
 // ---------------------------------------------------------------- actions
+MainWindow::~MainWindow() {
+  // QProcess can emit finished while QObject deletes children, after our status
+  // widgets and C++ members are gone. Disconnect callbacks before base teardown.
+  for(auto* child:findChildren<QObject*>())QObject::disconnect(child,nullptr,this,nullptr);
+}
 QAction* MainWindow::addAction(const QString& id, const QString& text, const QString& icon, const QKeySequence& shortcut, std::function<void()> fn, bool checkable) {
   auto* a = new QAction(text, this);
   a->setObjectName(id);
@@ -627,6 +635,8 @@ void MainWindow::buildRibbon() {
   QAction* settingsAction = addAction("tools.settings", tr("Settings"), "settings", QKeySequence(), [] {});
   auto* settings = new QMenu(this);
   settings->addAction(action("view.dark"));
+  settings->addAction(tr("Autosave and recovery"),this,[this]{m_recovery->settings();});
+  settings->addAction(tr("Recover documents"),this,[this]{m_recovery->offerRecovery();});
   auto* quality = settings->addMenu(tr("Rendering quality"));
   auto* qualityGroup = new QActionGroup(quality);
   const QStringList qualities = {tr("Draft"), tr("Studio"), tr("Realistic shadows")};
@@ -2105,6 +2115,7 @@ void MainWindow::showComponentBbox(const std::string& id, const QString& title, 
 
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
+  if(const auto mode=qEnvironmentVariable("OPAD_BENCH_RECOVERY");!mode.isEmpty()){m_recovery->bench(mode);return;}
   // Read-only render regression: retain imported geometry and dump it before
   // the general selection benchmark hides/edits its leaf.
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_MESH_SHOT");!shot.isEmpty()) {
@@ -2529,6 +2540,13 @@ void MainWindow::dropEvent(QDropEvent* e) {
 }
 
 bool MainWindow::maybeSave() {
+  if(m_doc->snapshotBusy()){statusBar()->showMessage(tr("A snapshot is being captured. Try again shortly."),4000);return false;}
+  if(m_design->sketchActive() && m_design->sketch()->modified()) {
+    const auto result=QMessageBox::question(this,tr("Unfinished sketch"),tr("Finish the sketch before continuing?"),QMessageBox::Save|QMessageBox::Discard|QMessageBox::Cancel);
+    if(result==QMessageBox::Cancel)return false;
+    if(result==QMessageBox::Save){m_design->finishSketch();statusBar()->showMessage(tr("Finish the sketch, then repeat this action."),6000);return false;}
+    m_design->sketch()->end();m_doc->setRollback({});
+  }
   if (!m_doc->isDirty()) return true;
   auto r = QMessageBox::question(this, tr("Unsaved changes"), tr("Save changes to %1?").arg(m_doc->path().isEmpty() ? tr("the document") : m_doc->path()),
                                  QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
@@ -2554,8 +2572,15 @@ void MainWindow::saveLastView() {
 }
 
 void MainWindow::closeEvent(QCloseEvent* e) {
-  if (!maybeSave()) {
+  if(m_closePending){e->ignore();return;}
+  if (!m_recoveryClosed && !maybeSave()) {
     e->ignore();
+    return;
+  }
+  if(!m_recoveryClosed){
+    e->ignore();m_closePending=true;setEnabled(false);
+    QPointer<MainWindow> self(this);
+    m_recovery->finishSession([self]{if(self){self->m_closePending=false;self->m_recoveryClosed=true;self->close();}});
     return;
   }
   saveLastView();

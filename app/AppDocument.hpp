@@ -5,22 +5,27 @@
 #include <QString>
 #include <atomic>
 #include <memory>
+#include <functional>
 
 #include "opad/core.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/step_io.hpp"
 
+class JobRunner;
 class AppDocument : public QObject {
   Q_OBJECT
+  // Snapshots retain the source even if the window closes while its worker is copying.
+  std::shared_ptr<opad::Document> m_storage;
  public:
   explicit AppDocument(QObject* parent = nullptr);
   ~AppDocument() override;
 
-  opad::Document doc;
+  opad::Document& doc;
   opad::Scene scene;
   bool browse = false;       // F1: transient view of a STEP file, nothing is persisted
   bool hasDocument = false;
   unsigned long long generation = 0;
+  unsigned long long revision = 0;
   bool loading = false;      // a worker thread owns the document content until loadFinished
 
   void newDocument();
@@ -46,6 +51,10 @@ class AppDocument : public QObject {
   void startImport(const QString& path, const QString& parent = {});
   void cancelLoad();
   void refresh();
+  using SnapshotCallback = std::function<void(std::shared_ptr<opad::Document>, const QString&)>;
+  bool captureSnapshot(JobRunner* jobs, SnapshotCallback done);
+  bool snapshotBusy() const { return m_capturing; }
+  void recover(opad::Document&& document, opad::Scene&& resolved);
 
   QString title() const;
   QString path() const;
@@ -55,8 +64,8 @@ class AppDocument : public QObject {
   // persisted text is kept, so redo then save writes them back byte-identically) and redo pushes them back.
   // The document counts as clean whenever the log and body store match the snapshot taken at load/save,
   // so undoing back to the saved state clears the asterisk. Depth is a setting (edit/undoDepth).
-  bool canUndo() const { return !m_undo.empty() && !loading; }
-  bool canRedo() const { return !m_redo.empty() && !loading; }
+  bool canUndo() const { return !m_undo.empty() && !loading && !designBusy; }
+  bool canRedo() const { return !m_redo.empty() && !loading && !designBusy; }
   QString undoLabel() const { return m_undo.empty() ? QString() : m_undo.back().label; }
   QString redoLabel() const { return m_redo.empty() ? QString() : m_redo.back().label; }
   void undo();
@@ -95,4 +104,5 @@ class AppDocument : public QObject {
   size_t m_savedBodies = 0;
   std::shared_ptr<std::atomic<bool>> m_cancel;
   std::shared_ptr<std::atomic<bool>> m_alive;
+  bool m_capturing = false;
 };
