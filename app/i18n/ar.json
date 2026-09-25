@@ -1387,5 +1387,7 @@
  "Return to plane selection": "العودة إلى اختيار المستوى",
  "Use this plane and close": "استخدام هذا المستوى والإغلاق",
  "Cancel without applying changes": "إلغاء دون تطبيق التغييرات",
- "Sketch plane: %1 - click to use": "مستوى الرسم التخطيطي: %1 - انقر لاستخدامه"
+ "Sketch plane: %1 - click to use": "مستوى الرسم التخطيطي: %1 - انقر لاستخدامه",
+ "Recovery keeps a full base at each save and stores changed operations and new geometry between saves. Unchanged documents are skipped. Recovery preserves sketch drafts and opens with no active tool; unfinished features are cancelled. Your file is never overwritten.": "يحتفظ الاسترداد بنسخة أساسية كاملة عند كل حفظ، ويسجّل العمليات المتغيرة والأشكال الجديدة بين مرات الحفظ. يتجاوز المستندات التي لم تتغير. يحافظ على مسودات الرسوم التخطيطية ويفتح دون أداة نشطة؛ وتُلغى عمليات النمذجة غير المكتملة. لا يستبدل ملفك الأصلي.",
+ "Recovered sketch": "رسم تخطيطي مسترد"
 }

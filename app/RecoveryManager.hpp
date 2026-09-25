@@ -32,6 +32,7 @@ class RecoveryManager : public QObject {
   void restore(const Entry&,std::function<void(bool,QString)> done);
   void configureTimer();
   void discardCurrent();
+  void requestCheckpoint();
   AppDocument* m_doc;
   DesignController* m_design;
   JobRunner* m_jobs;
@@ -39,6 +40,7 @@ class RecoveryManager : public QObject {
   QTimer m_timer;
   std::shared_ptr<Session> m_session;
   bool m_running=false,m_closing=false;
+  quint64 m_checkpoint=1,m_savedCheckpoint=0;
   QStringList m_recoveredFiles;
   std::shared_ptr<std::atomic<bool>> m_epoch=std::make_shared<std::atomic<bool>>(true);
 };

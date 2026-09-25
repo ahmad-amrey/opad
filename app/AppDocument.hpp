@@ -67,8 +67,8 @@ class AppDocument : public QObject {
   // persisted text is kept, so redo then save writes them back byte-identically) and redo pushes them back.
   // The document counts as clean whenever the log and body store match the snapshot taken at load/save,
   // so undoing back to the saved state clears the asterisk. Depth is a setting (edit/undoDepth).
-  bool canUndo() const { return !m_undo.empty() && !loading && !designBusy; }
-  bool canRedo() const { return !m_redo.empty() && !loading && !designBusy; }
+  bool canUndo() const { return !m_undo.empty() && !loading && (!designBusy || m_capturing); }
+  bool canRedo() const { return !m_redo.empty() && !loading && (!designBusy || m_capturing); }
   QString undoLabel() const { return m_undo.empty() ? QString() : m_undo.back().label; }
   QString redoLabel() const { return m_redo.empty() ? QString() : m_redo.back().label; }
   void undo();
@@ -83,6 +83,7 @@ class AppDocument : public QObject {
   void aboutToReplace();  // end transient tools before changing document identity
   void changed();
   void pathChanged();
+  void saved();  // successful explicit Save / Save As, not an open or title change
   void message(const QString& text);
   void loadProgress(const QString& phase, int percent);  // percent < 0: unknown
   void loadFinished(bool ok, const QString& error);

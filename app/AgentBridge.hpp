@@ -26,6 +26,7 @@ class AgentBridge : public QObject {
   void disconnectClients();
   void setAccess(bool enabled,bool edit);
   QString discoveryPath() const {return m_directory;}
+  bool busy() const {return m_busy;}
   QString statusSummary() const {return stateText();}
   opad::json descriptor() const;
   // Used only by the isolated application acceptance harness.

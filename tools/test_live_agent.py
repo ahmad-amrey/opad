@@ -1,4 +1,5 @@
 """Real stdio MCP -> local pipe -> isolated desktop acceptance test. Requires OpenGL."""
+from recovery_record import document_text
 import argparse
 import base64
 import json
@@ -254,20 +255,34 @@ def main():
         assert not image.get("isError"), image
         png = next(item["data"] for item in image["content"] if item["type"] == "image")
         (root / "plate.png").write_bytes(base64.b64decode(png))
-        desktop.action("autosave")
-        deadline = time.monotonic()+10
-        while time.monotonic()<deadline:
-            records = list(desktop.settings.rglob("*.opad-recovery"))
-            if records:
-                break
-            time.sleep(.05)
-        assert records, "Agent edits were not captured by autosave"
-        record = json.loads(records[0].read_text(encoding="utf-8"))
+        def capture_recovery(action, **arguments):
+            previous = set(desktop.settings.rglob("*.opad-recovery"))
+            desktop.action(action, **arguments)
+            deadline = time.monotonic()+10
+            while time.monotonic()<deadline:
+                created = set(desktop.settings.rglob("*.opad-recovery"))-previous
+                if created:
+                    path = max(created, key=lambda p: p.stat().st_mtime_ns)
+                    # The atomic record arrives just before its small metadata file.
+                    if path.with_suffix(path.suffix+".meta").exists():
+                        return path, json.loads(path.read_text(encoding="utf-8"))
+                time.sleep(.05)
+            raise AssertionError("Agent edits were not captured by recovery")
+        record_path, record = capture_recovery("autosave")
+        base = record["delta"]["base"]
+        client.write("rename", target=body, name="Incremental recovery check")
+        record_path, record = capture_recovery("autosave")
+        assert record["delta"]["base"] == base, "Ordinary edits rewrote the recovery base"
+        assert record["delta"]["ops"] and not record["delta"]["bodies"]
+        assert record_path.stat().st_size < (record_path.parent/base).stat().st_size
         recovered = root / "agent-recovery-check.opad"
-        recovered.write_text(record["document"], encoding="utf-8")
+        recovered.write_text(document_text(record_path), encoding="utf-8")
         saved_validation = json.loads(subprocess.run([str(cli), "validate", str(recovered)], capture_output=True, text=True, check=True).stdout)
         assert saved_validation["valid_page"] and abs(saved_validation["items"][0]["volume_mm3"]-(2400-math.pi*25)*15)<1e-5
-        desktop.action("save", path=str(root / "plate.opad"))
+        _, checkpoint = capture_recovery("save", path=str(root / "plate.opad"))
+        assert checkpoint["delta"]["base"] != base, "Explicit Save did not refresh the recovery base"
+        assert not checkpoint["delta"]["ops"] and not checkpoint["delta"]["bodies"]
+        print("Incremental recovery reuses its base and explicit Save refreshes it: PASS", flush=True)
         client.close()
         client = desktop.bind(cli)
         assert client.call("request_status", request_id="thickness-15")["state"] == "committed"

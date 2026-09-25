@@ -259,6 +259,7 @@ void AppDocument::save() {
   doc.save();
   markSaved();
   emit pathChanged();
+  emit saved();
   emit message(tr("Saved %1").arg(path()));
 }
 
@@ -268,6 +269,7 @@ void AppDocument::saveAs(const QString& path) {
   doc.save_as(path.toStdString());
   markSaved();
   emit pathChanged();
+  emit saved();
   emit message(tr("Saved %1").arg(path));
 }
 
@@ -332,6 +334,7 @@ void AppDocument::recordStep(const QString& label, size_t opsBefore) {
 }
 
 void AppDocument::undo() {
+  if(m_capturing){const auto identity=generation;QTimer::singleShot(10,this,[this,identity]{if(generation==identity)undo();});return;}
   if (!canUndo()) return;
   Step s = std::move(m_undo.back());
   m_undo.pop_back();
@@ -342,6 +345,7 @@ void AppDocument::undo() {
 }
 
 void AppDocument::redo() {
+  if(m_capturing){const auto identity=generation;QTimer::singleShot(10,this,[this,identity]{if(generation==identity)redo();});return;}
   if (!canRedo()) return;
   Step s = std::move(m_redo.back());
   m_redo.pop_back();
