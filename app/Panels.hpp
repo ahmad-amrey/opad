@@ -1,4 +1,5 @@
 #pragma once
+class QScrollBar;
 // Secondary UI, styled per design_handoff_opad_desktop_ui: browser (F27), properties (F24), annotations (F32),
 // section tab (F20), timeline (F28), command search (F30), shortcut editor (F31).
 #include <QComboBox>
@@ -296,8 +297,14 @@ class TimelineWidget : public QWidget {
   void mousePressEvent(QMouseEvent*) override;
   void mouseDoubleClickEvent(QMouseEvent*) override;
   void leaveEvent(QEvent*) override;
+  void resizeEvent(QResizeEvent*) override;
+  void wheelEvent(QWheelEvent*) override;
+  void keyPressEvent(QKeyEvent*) override;
 
  private:
+  void updateScrollRange();
+  void ensureCurrentVisible();
+  QScrollBar* m_scroll;
   QString iconFor(const opad::Op& op) const;
   int indexAt(const QPoint& p) const;
   QRect markerRect(int i) const;

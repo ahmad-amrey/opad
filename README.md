@@ -60,6 +60,10 @@ Use Settings > 2D projection mode to lock the camera for drawings or model proje
 endpoint to acquire an extension/alignment guide; Shift locks its direction. Layers live in the
 browser, and imported mesh and drawing objects are labelled. See [tracking details](docs/drawings.md).
 
+The timeline keeps operation markers at a readable size for long histories. Scroll with the
+mouse wheel, trackpad or horizontal scrollbar; Left/Right steps through operations and
+Home/End jumps to the first/last marker. Selecting an operation scrolls it into view.
+
 Workspace shortcuts are Ctrl+1/2 (Command+1/2 on macOS); standard views use Ctrl+Alt+1 through 7.
 Annotations are created and edited inline, with type selection and comment threads. Set your display
 name in Settings to identify new annotations, comments and design operations.

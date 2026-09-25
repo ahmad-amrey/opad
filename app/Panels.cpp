@@ -20,6 +20,8 @@
 #include <QPainterPath>
 #include <QProgressBar>
 #include <QScreen>
+#include <QScrollBar>
+#include <QWheelEvent>
 #include <QSizePolicy>
 #include <QPushButton>
 #include <QSettings>
@@ -1434,12 +1436,19 @@ TimelineWidget::TimelineWidget(AppDocument* doc, QWidget* parent) : QWidget(pare
   connect(theme::notifier(), &theme::Notifier::changed, this, qOverload<>(&QWidget::update));
   setMouseTracking(true);
   setFixedHeight(48);
+  setFocusPolicy(Qt::StrongFocus);
+  m_scroll = new QScrollBar(Qt::Horizontal, this);
+  m_scroll->setLayoutDirection(Qt::LeftToRight);
+  m_scroll->setAccessibleName(tr("Timeline"));
+  m_scroll->setSingleStep(26);
+  connect(m_scroll, &QScrollBar::valueChanged, this, [this] { m_hover = -1; QToolTip::hideText(); update(); });
   setAttribute(Qt::WA_Hover);
   connect(doc, &AppDocument::changed, this, &TimelineWidget::rebuild);
   rebuild();
 }
 
 void TimelineWidget::rebuild() {
+  const bool atEnd = m_scroll->value() == m_scroll->maximum();
   m_deleted = std::set<std::string>(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end());
   m_unresolved.clear();
   for (const auto& u : m_doc->scene.unresolved) m_unresolved.insert(u.op_id);
@@ -1447,27 +1456,57 @@ void TimelineWidget::rebuild() {
   m_shown.clear();
   for (size_t i = 0; i < m_doc->doc.ops.size(); ++i)
     if (timelineShows(m_doc->doc, m_doc->doc.ops[i])) m_shown.push_back(i);
+  m_hover = -1;
+  updateScrollRange();
+  if (atEnd) m_scroll->setValue(m_scroll->maximum());
   update();
 }
 
 bool TimelineWidget::isUnresolved(const std::string& opId) const { return m_unresolved.count(opId) > 0; }
 
-QRect TimelineWidget::markerRect(int i) const {
-  const int n = static_cast<int>(m_shown.size());
-  const int trackStart = 112 + 16, trackEnd = width() - 72;
-  double step = 26;
-  if (n > 1 && trackStart + (n - 1) * step + 18 > trackEnd) step = std::max(6.0, static_cast<double>(trackEnd - 18 - trackStart) / (n - 1));
-  return QRect(static_cast<int>(trackStart + i * step), 15, 18, 18);
+void TimelineWidget::updateScrollRange() {
+  const int available = std::max(0, width() - 200);
+  m_scroll->setGeometry(128, 36, available, 12);
+  m_scroll->setPageStep(available);
+  m_scroll->setRange(0, std::max(0, int(m_shown.size()) * 26 + 4 - available));
+  m_scroll->setVisible(m_scroll->maximum() > 0);
 }
 
+void TimelineWidget::ensureCurrentVisible() {
+  for (size_t i = 0; i < m_shown.size(); ++i) if (m_doc->doc.ops[m_shown[i]].id == m_current) {
+    const int x = int(i) * 26;
+    if (x < m_scroll->value()) m_scroll->setValue(x);
+    else if (x + 26 > m_scroll->value() + m_scroll->pageStep()) m_scroll->setValue(x + 26 - m_scroll->pageStep());
+    break;
+  }
+}
+
+void TimelineWidget::resizeEvent(QResizeEvent*) { updateScrollRange(); ensureCurrentVisible(); }
+void TimelineWidget::wheelEvent(QWheelEvent* e) {
+  const auto pixel = e->pixelDelta(), angle = e->angleDelta();
+  const int delta = !pixel.isNull() ? (pixel.x() ? pixel.x() : pixel.y()) : (angle.x() ? angle.x() : angle.y()) * 78 / 120;
+  m_scroll->setValue(m_scroll->value() - delta); e->accept();
+}
+void TimelineWidget::keyPressEvent(QKeyEvent* e) {
+  if (e->key() == Qt::Key_Left) step(-1);
+  else if (e->key() == Qt::Key_Right) step(1);
+  else if (e->key() == Qt::Key_Home || e->key() == Qt::Key_End) {
+    if (!m_shown.empty()) { setCurrentOp(m_doc->doc.ops[e->key() == Qt::Key_Home ? m_shown.front() : m_shown.back()].id); emit opClicked(m_current); }
+  } else { QWidget::keyPressEvent(e); return; }
+  e->accept();
+}
+
+QRect TimelineWidget::markerRect(int i) const { return QRect(128 + i * 26 - m_scroll->value(), 13, 18, 18); }
+
 int TimelineWidget::indexAt(const QPoint& p) const {
-  for (int i = static_cast<int>(m_shown.size()) - 1; i >= 0; --i)
-    if (markerRect(i).adjusted(-3, -3, 3, 3).contains(p)) return i;
-  return -1;
+  if (p.x() < 128 || p.x() >= width() - 72 || p.y() < 10 || p.y() >= 34) return -1;
+  const int i = (p.x() - 128 + m_scroll->value() + 3) / 26;
+  return i >= 0 && i < int(m_shown.size()) && markerRect(i).adjusted(-3,-3,3,3).contains(p) ? i : -1;
 }
 
 void TimelineWidget::setCurrentOp(const std::string& id) {
   m_current = id;
+  ensureCurrentVisible();
   update();
 }
 
@@ -1478,8 +1517,7 @@ void TimelineWidget::step(int delta) {
   for (size_t k = 0; k < m_shown.size(); ++k) if (ops[m_shown[k]].id == m_current) i = static_cast<int>(k);
   const int n = static_cast<int>(m_shown.size());
   i = i < 0 ? (delta > 0 ? 0 : n - 1) : std::clamp(i + delta, 0, n - 1);
-  m_current = ops[m_shown[static_cast<size_t>(i)]].id;
-  update();
+  setCurrentOp(ops[m_shown[static_cast<size_t>(i)]].id);
   emit opClicked(m_current);
 }
 
@@ -1538,11 +1576,13 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     p.drawText(QRect(128, 0, width() - 200, height()), Qt::AlignVCenter | Qt::AlignLeft, tr("One marker per operation. Import a file to start the log."));
   }
   const qreal dpr = devicePixelRatioF();
-  QRect last;
-  for (size_t k = 0; k < m_shown.size(); ++k) {
+  p.save();
+  p.setClipRect(QRect(125, 4, std::max(0, width() - 197), 31));
+  const size_t first = size_t(m_scroll->value() / 26);
+  const size_t end = std::min(m_shown.size(), first + size_t(std::max(0, width() - 200) / 26 + 2));
+  for (size_t k = first; k < end; ++k) {
     const size_t i = m_shown[k];
     QRect r = markerRect(static_cast<int>(k));
-    last = r;
     const bool deleted = m_deleted.count(ops[i].id) > 0, unresolved = isUnresolved(ops[i].id);
     const bool current = ops[i].id == m_current, hovered = static_cast<int>(k) == m_hover;
     QColor fill = t.bg4, iconColor = t.fg;
@@ -1578,7 +1618,7 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     p.drawPixmap(r.left() + 3, r.top() + 3, icons::pixmap(iconFor(ops[i]), iconColor, 12, dpr));
   }
   if (!m_shown.empty()) {
-    int x = last.right() + 9;
+    int x = markerRect(int(m_shown.size()) - 1).right() + 9;
     p.setPen(Qt::NoPen);
     p.setBrush(t.sel);
     p.drawRect(x - 1, 8, 2, 32);
@@ -1589,6 +1629,7 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     tri.closeSubpath();
     p.drawPath(tri);
   }
+  p.restore();
   m_prevBtn = QRect(width() - 60, 12, 24, 24);
   m_nextBtn = QRect(width() - 32, 12, 24, 24);
   for (const QRect& b : {m_prevBtn, m_nextBtn}) {
@@ -1642,6 +1683,7 @@ void TimelineWidget::mousePressEvent(QMouseEvent* e) {
   if (i < 0) return;
   const std::string id = m_doc->doc.ops[m_shown[static_cast<size_t>(i)]].id;
   m_current = id;
+  ensureCurrentVisible();
   update();
   if (e->button() == Qt::RightButton) emit contextRequested(id, e->globalPosition().toPoint());
   else emit opClicked(id);

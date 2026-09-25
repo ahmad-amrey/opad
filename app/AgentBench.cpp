@@ -10,6 +10,9 @@
 #include <QDialog>
 #include <QLineEdit>
 #include <QTabWidget>
+#include <QScrollBar>
+#include <QKeyEvent>
+#include "Panels.hpp"
 // Explicit, isolated acceptance harness. No control files are consumed in ordinary runs.
 void AgentBridge::bench(){
   const auto directory=qEnvironmentVariable("OPAD_BENCH_AGENT");
@@ -22,7 +25,20 @@ void AgentBridge::bench(){
     opad::json result;
     try{
       const auto action=data.at("action").get<std::string>();
-      if(action=="state")result=liveState();
+      if(action=="timeline"){
+        auto* timeline=m_window->findChild<TimelineWidget*>();
+        if(!timeline)throw opad::Error("Timeline unavailable");
+        auto* scroll=timeline->findChild<QScrollBar*>();
+        if(data.contains("key")){
+          const auto key=data["key"].get<std::string>();
+          QKeyEvent event(QEvent::KeyPress,key=="home"?Qt::Key_Home:key=="end"?Qt::Key_End:key=="left"?Qt::Key_Left:Qt::Key_Right,Qt::NoModifier);
+          QApplication::sendEvent(timeline,&event);
+        }
+        if(data.contains("scroll"))scroll->setValue(data["scroll"].get<int>());
+        if(data.contains("image"))timeline->grab().save(QString::fromStdString(data["image"].get<std::string>()));
+        result={{"current",timeline->currentOp()},{"scroll",scroll->value()},{"maximum",scroll->maximum()},{"page",scroll->pageStep()}};
+      }
+      else if(action=="state")result=liveState();
       else if(action=="undo")m_doc->undo();
       else if(action=="redo")m_doc->redo();
       else if(action=="access")setAccess(data.value("enabled",true),data.value("edit",true));
