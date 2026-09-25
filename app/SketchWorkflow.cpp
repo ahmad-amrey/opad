@@ -11,6 +11,7 @@
 #include <cmath>
 #include "I18n.hpp"
 #include "opad/design/sketch_geom.hpp"
+#include "opad/design/sketch_modify.hpp"
 #include <BRep_Builder.hxx>
 #include <BRepBndLib.hxx>
 #include <TopoDS_Compound.hxx>
@@ -202,14 +203,7 @@ bool SketchEditor::selectable(int id) const {
 
 void SketchEditor::selectConnected() {
   invalidatePreview();
-  std::set<int> ids(m_sel.begin(),m_sel.end()),points;
-  for(int id:ids)if(m_sk.point(id))points.insert(id);
-  std::map<int,std::vector<const SkEntity*>> incident;
-  for(const auto& e:m_sk.entities)for(int p:e.p){incident[p].push_back(&e);if(ids.count(e.id))points.insert(p);}
-  std::vector<int> pending(points.begin(),points.end());
-  for(size_t i=0;i<pending.size();++i)for(const auto* e:incident[pending[i]])
-    if(ids.insert(e->id).second)for(int p:e->p)if(points.insert(p).second)pending.push_back(p);
-  m_sel.assign(ids.begin(),ids.end());rebuild();emit this->changed();
+  m_sel=connected_entities(m_sk,m_sel);rebuild();emit this->changed();
 }
 void SketchEditor::selectType() {
   invalidatePreview();

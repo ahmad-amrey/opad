@@ -33,14 +33,23 @@ with tempfile.TemporaryDirectory(prefix="opad-mcp-") as folder:
                                       "clientInfo": {"name": "cad-test", "version": "1"}})["protocolVersion"] == "2025-11-25"
         process.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
         process.stdin.flush()
-        names = {t["name"] for t in request("tools/list")["tools"]}
+        tools = {t["name"]: t for t in request("tools/list")["tools"]}
+        names = set(tools)
         assert {"new", "feature", "feature_kinds", "inspect", "export"} <= names
+        assert {"context", "entity_details", "sketch_details", "resolve_reference", "validate", "feature_schema"} <= names
+        assert tools["feature"]["inputSchema"]["properties"]["kind"]["enum"]
+        assert "doc" in tools["feature"]["inputSchema"]["required"]
+        assert not tools["feature"]["inputSchema"]["additionalProperties"]
+        assert call("feature_schema", kind="extrude")["inputSchema"]["properties"]["profiles"]["items"]
+        bad = request("tools/call", {"name": "feature", "arguments": {"doc": "missing.opad", "kind": "box", "typo": 1}})
+        assert bad["isError"] and "unknown field typo" in bad["structuredContent"]["error"]["message"]
         doc = str(pathlib.Path(folder) / "drilled-plate.opad")
         call("new", doc=doc)
+        call("param", doc=doc, name="thickness", expr="10 mm")
         call("feature", doc=doc, kind="box", name="Plate", by="MCP test",
-             inputs={"length": "60 mm", "width": "40 mm", "height": "10 mm"})
+             inputs={"length": "60 mm", "width": "40 mm", "height": "thickness"})
         call("feature", doc=doc, kind="cylinder", name="Through hole", by="MCP test",
-             inputs={"diameter": "10 mm", "height": "10 mm", "operation": "cut"})
+             inputs={"diameter": "10 mm", "height": "thickness", "operation": "cut"})
         tree = call("tree", doc=doc)
 
         def bodies(nodes):
@@ -53,6 +62,13 @@ with tempfile.TemporaryDirectory(prefix="opad-mcp-") as folder:
         assert len(ids) == 1, tree
         props = call("properties", doc=doc, node=ids[0])
         assert abs(props["volume"] - (24000 - math.pi * 250)) < 1e-5, props
+        assert call("context", doc=doc)["bodies"] == 1
+        validation = call("validate", doc=doc)
+        assert validation["valid_page"] and validation["items"][0]["solids"] == 1
+        assert len(call("context", doc=doc, section="features", limit=1)["items"]) == 1
+        call("param", doc=doc, name="thickness", expr="15 mm")
+        props = call("properties", doc=doc, node=ids[0])
+        assert abs(props["volume"] - (36000 - math.pi * 375)) < 1e-5, props
         output = str(pathlib.Path(folder) / "plate.step")
         call("export", doc=doc, format="step", out=output)
         assert pathlib.Path(output).stat().st_size > 100

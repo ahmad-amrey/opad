@@ -12,7 +12,7 @@ namespace opad::commands {
 struct CommandInfo {
   std::string name;
   std::string description;
-  json args;  // {"arg": "type - description", ...}
+  json args;  // {"arg": "type - description" | JSON Schema property, ...}
   bool mutates = false;
 };
 

@@ -2,6 +2,7 @@
 // Python and plugins get them for free; the app uses the two-phase design::plan_*/commit API directly so the
 // kernel work stays off its UI thread.
 #include "opad/commands.hpp"
+#include "opad/agent.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch.hpp"
 #include "opad/design/drawing_sketch.hpp"
@@ -149,11 +150,12 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
   });
 
   reg("sketch_edit", "Replace a sketch's geometry (and optionally its name); features built on it are regenerated",
-      {{"doc", "path"}, {"target", "uuid - sketch op id"}, {"geometry", "object"}, {"name", "string"}, {"by", "string"}}, true, [](Document* d, const json& a) {
+      {{"doc", "path"}, {"target", "uuid - sketch op id"}, {"geometry", "object"}, {"plane", "object"}, {"name", "string"}, {"by", "string"}}, true, [](Document* d, const json& a) {
         Document& doc = need(d);
         json set = json::object();
         if (a.contains("geometry")) set["geometry"] = design::Sketch::from_json(parse_if_text(a["geometry"])).to_json();
         if (a.contains("name")) set["name"] = a["name"];
+        if (a.contains("plane")) {auto plane=parse_if_text(a["plane"]);plane["frame"]=design::resolve_plane(doc,resolve(doc),plane).to_json();set["plane"]=std::move(plane);}
         if (set.empty()) throw Error("sketch_edit: nothing to change");
         return design::apply_ops(doc, {design::make_edit_op(a.at("target").get<std::string>(), set)}, a.value("by", ""));
       });
@@ -165,6 +167,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         const std::string kind = a.at("kind").get<std::string>();
         const design::FeatureSpec& spec = spec_of(kind);
         const json inputs = with_defaults(spec, parse_if_text(a.value("inputs", json::object())));
+        agent::validate_input(agent::feature_schema(kind),inputs,"inputs");
         const std::string name = a.contains("name") ? a["name"].get<std::string>() : design::next_name(resolve(doc), title_case(spec.label.substr(0, spec.label.find(' '))));
         return design::apply_ops(doc, {design::make_feature_op(kind, name, inputs)}, a.value("by", ""));
       });
@@ -182,6 +185,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
           json inputs = f->inputs;
           const json changes = parse_if_text(a["inputs"]);
           for (const auto& [k, v] : changes.items()) inputs[k] = v;
+          agent::validate_input(agent::feature_schema(f->kind),inputs,"inputs");
           set["inputs"] = inputs;
         }
         if (a.contains("name")) set["name"] = a["name"];

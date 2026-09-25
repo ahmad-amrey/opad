@@ -23,7 +23,7 @@ void print_usage() {
   for (const auto& c : opad::commands::list()) {
     std::printf("  %-12s %s\n", c.name.c_str(), c.description.c_str());
     for (auto it = c.args.begin(); it != c.args.end(); ++it)
-      std::printf("      --%-10s %s\n", it.key().c_str(), it.value().get<std::string>().c_str());
+      std::printf("      --%-10s %s\n", it.key().c_str(), (it.value().is_string()?it.value().get<std::string>():it.value().dump()).c_str());
   }
   std::printf("\nshorthands:\n");
   std::printf("  new <doc>                     import <doc> <file.step>        append <doc> <op.json|->\n");

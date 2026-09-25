@@ -29,6 +29,16 @@
 #include <set>
 
 namespace opad::design {
+std::vector<int> connected_entities(const Sketch& sk,const std::vector<int>& seeds) {
+  std::set<int> ids(seeds.begin(),seeds.end()),points;
+  for(int id:ids)if(sk.point(id))points.insert(id);
+  std::map<int,std::vector<const SkEntity*>> incident;
+  for(const auto& e:sk.entities)for(int p:e.p){incident[p].push_back(&e);if(ids.count(e.id))points.insert(p);}
+  std::vector<int> pending(points.begin(),points.end());
+  for(size_t i=0;i<pending.size();++i)for(const auto* e:incident[pending[i]])
+    if(ids.insert(e->id).second)for(int p:e->p)if(points.insert(p).second)pending.push_back(p);
+  return {ids.begin(),ids.end()};
+}
 std::vector<int> transform_entities(Sketch& sk,const std::vector<int>& ids,const SketchTransform& t,bool copy) {
   if(!std::isfinite(t.scale)||t.scale<=0||!std::isfinite(t.angle)||!std::isfinite(t.x)||!std::isfinite(t.y))throw Error("invalid sketch transform");
   std::map<int,int> mapped;std::vector<SkEntity> source;std::vector<int> result;std::set<int> points;

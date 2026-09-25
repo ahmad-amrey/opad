@@ -1,6 +1,7 @@
 #pragma once
 #include "sketch_geom.hpp"
 namespace opad::design {
+std::vector<int> connected_entities(const Sketch& sketch,const std::vector<int>& seeds);
 struct SketchTransform {
   double x=0,y=0,angle=0,scale=1,cx=0,cy=0;
   bool mirror=false; // reflect about the local x axis through (cx,cy), then rotate/scale/translate
