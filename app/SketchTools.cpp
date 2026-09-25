@@ -12,6 +12,7 @@
 
 #include <QInputDialog>
 #include <QKeyEvent>
+#include <QApplication>
 #include <cmath>
 
 #include "I18n.hpp"
@@ -919,6 +920,12 @@ void SketchEditor::projectHovered() {
 }
 
 bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
+  if(m_active && (e->type()==QEvent::ShortcutOverride || e->type()==QEvent::KeyPress)){
+    auto* widget=qobject_cast<QWidget*>(o);auto* key=static_cast<QKeyEvent*>(e);
+    if(widget && (widget==m_viewport || m_viewport->window()->isAncestorOf(widget)) && key->key()==Qt::Key_Z && key->modifiers().testFlag(Qt::ControlModifier)){
+      key->accept();if(e->type()==QEvent::KeyPress){const bool forward=key->modifiers().testFlag(Qt::ShiftModifier);QTimer::singleShot(0,this,[this,forward]{if(m_active){if(forward)redo();else undo();}});}return true;
+    }
+  }
   if (o == m_dimEdit && e->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape) {
     m_dimEdit->hide();
     m_dimEditing = 0;

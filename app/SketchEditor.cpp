@@ -21,6 +21,7 @@
 #include <TopoDS.hxx>
 
 #include <QKeyEvent>
+#include <QApplication>
 #include <QSettings>
 #include <QPointer>
 #include <cmath>
@@ -114,7 +115,7 @@ class SketchPrs : public AIS_InteractiveObject {
 
 // ---------------------------------------------------------------- life cycle
 SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs, QObject* parent) : QObject(parent), m_doc(doc), m_viewport(viewport), m_jobs(jobs) {
-  m_dimensionHandle=new DimensionHandle(viewport);
+  m_dimensionHandle=new DimensionHandle(viewport,jobs);qApp->installEventFilter(this);
   m_toolPreviewTimer.setSingleShot(true);m_toolPreviewTimer.setInterval(120);
   connect(&m_toolPreviewTimer,&QTimer::timeout,this,[this]{if(!m_active)return;if(m_editJob){m_toolPreviewTimer.start();return;}previewTool();});
   connect(m_dimensionHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){m_options["distance"]=text;scheduleToolPreview();emit workflowChanged();});
@@ -307,7 +308,14 @@ bool SketchEditor::end_change(const QString& what) {
 }
 
 void SketchEditor::undo() {
-  if (m_editJob || m_undo.empty()) return;
+  if(m_previewComputing && m_editJob){invalidatePreview();m_editJob->cancel();m_editJob=nullptr;m_previewComputing=false;}
+  if(m_editJob){
+    if(!m_undoPending){m_undoPending=true;connect(m_editJob,&Job::finished,this,[this]{m_undoPending=false;if(m_active)undo();},Qt::QueuedConnection);}
+    return;
+  }
+  m_toolPreviewTimer.stop();m_clicks.clear();m_chain.clear();m_picked.clear();cancel_change();
+  m_tool="select";m_placingDim=false;m_dragging=false;m_boxSelecting=false;m_dimensionHandle->hide();emit toolChanged(m_tool);
+  if(m_undo.empty()){rebuild();emit changed();return;}
   ++m_modelRevision;
   invalidatePreview();
   m_redo.push_back({m_sk,m_plane,m_frame});
@@ -532,7 +540,13 @@ int SketchEditor::pointFor(const Snap& s) {
 // ---------------------------------------------------------------- input
 void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
   invalidatePreview();
+  if(m_previewComputing && m_editJob){m_editJob->cancel();m_editJob=nullptr;m_previewComputing=false;}
   if (!m_active || m_editJob || m_geometryJob) return;
+  const bool edgeSelection=QStringList{"offset","move","rotate","scale","copy","rect_pattern","polar_pattern","break","explode","mirror"}.contains(m_tool);
+  if(edgeSelection && hitTest(u,v).kind==Hit::None){
+    if(!(mods & (Qt::ShiftModifier|Qt::ControlModifier)))m_sel.clear();
+    m_boxSelecting=true;m_dragU=m_boxU=u;m_dragV=m_boxV=v;rebuild();emit changed();return;
+  }
   if ((m_tool=="select" || (m_tool=="spline" && m_chain.empty())) && mods.testFlag(Qt::AltModifier)) return insertSplineNode(u,v);
   if (m_dimEdit && m_dimEdit->isVisible()) commitDimensionEdit();
   if (m_tool == "select") {
@@ -643,13 +657,14 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
   m_hover = h;
   m_cursor = s;
   m_haveCursor = true;
+  if(m_tool=="offset" && !dragging && !m_geometryJob)updateDimensionHandle();
   if (redraw) {if(m_placingDim||dimensionHover)rebuild();else updateTransient();}
 }
 
 void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
   if(m_active && m_boxSelecting) {
     m_boxSelecting=false;
-    if(std::hypot(u-m_dragU,v-m_dragV)>tol()) {
+    if(m_geometry && !m_geometryJob && std::hypot(u-m_dragU,v-m_dragV)>tol()) {
       const double x0=std::min(u,m_dragU),x1=std::max(u,m_dragU),y0=std::min(v,m_dragV),y1=std::max(v,m_dragV);
       const bool crossing=u<m_dragU;
       auto inside=[&](double x,double y){return x>=x0 && x<=x1 && y>=y0 && y<=y1;};
@@ -660,15 +675,16 @@ void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
       };
       const auto candidates=m_geometry->query(x0-tol()*.1,y0-tol()*.1,x1+tol()*.1,y1+tol()*.1);
       std::set<int> selected(m_sel.begin(),m_sel.end());
-      for(size_t index:candidates.entities){const auto& e=m_sk.entities[index];if(!selectable(e.id))continue;
+      for(size_t index:candidates.entities){if(index>=m_sk.entities.size())continue;const auto& e=m_sk.entities[index];if(!selectable(e.id))continue;
         const auto pts=sampled(e);bool all=!pts.empty(),any=false;
         for(size_t i=0;i<pts.size();++i) {bool in=inside(pts[i].first,pts[i].second);all&=in;any|=in;if(i)any|=crosses(pts[i-1].first,pts[i-1].second,pts[i].first,pts[i].second);}
         if(crossing?any:all)if(selected.insert(e.id).second)m_sel.push_back(e.id);
       }
-      for(size_t index:candidates.points){const auto& p=m_sk.points[index];if(selectable(p.id)&&inside(p.x,p.y)&&selected.insert(p.id).second)m_sel.push_back(p.id);}
-      for(const auto& c:m_sk.constraints)if(selectable(c.id)) {double x,y;labelPosition(c,x,y);if(inside(x,y))m_sel.push_back(c.id);}
+      if(m_tool=="select")for(size_t index:candidates.points){if(index>=m_sk.points.size())continue;const auto& p=m_sk.points[index];if(selectable(p.id)&&inside(p.x,p.y)&&selected.insert(p.id).second)m_sel.push_back(p.id);}
+      if(m_tool=="select")for(const auto& c:m_sk.constraints)if(selectable(c.id)) {double x,y;labelPosition(c,x,y);if(inside(x,y))m_sel.push_back(c.id);}
     }
-    rebuild();emit changed();return;
+    if(m_tool=="offset" && option("chain","1")=="1")selectConnected();
+    rebuild();emit changed();if(m_tool!="select")scheduleToolPreview();return;
   }
   if (!m_active || !m_dragging) return;
   if(m_editJob){m_dragReleased=true;return;}

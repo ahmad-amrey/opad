@@ -128,6 +128,7 @@ FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   m_hint->setWordWrap(true);
   v->addWidget(m_name);
   v->addWidget(m_hint);
+  m_hiddenWarning=new QLabel(tr("The object being edited is hidden. Show it in the browser to see the result."),this);m_hiddenWarning->setWordWrap(true);m_hiddenWarning->setStyleSheet("color: #b07820");m_hiddenWarning->hide();v->addWidget(m_hiddenWarning);
   auto* body = new QWidget(this);
   m_rows = new QVBoxLayout(body);
   m_rows->setContentsMargins(0, 4, 0, 0);
@@ -151,6 +152,8 @@ FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   connect(m_ok, &QPushButton::clicked, this, &FeaturePanel::accepted);
 }
 
+void FeaturePanel::setEditHidden(bool hidden){m_hiddenWarning->setVisible(hidden);}
+
 bool FeaturePanel::isPick(const std::string& type) {
   return type == "bodies" || type == "faces" || type == "edges" || type == "profiles" || type == "points" || type == "plane" || type == "axis" || type == "path";
 }
@@ -173,7 +176,7 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
   }
   m_name->setText(name);
   m_hint->setText(i18n::t(QString::fromStdString(spec.hint)));
-  m_ok->setText(editing ? tr("Update   Enter") : tr("OK   Enter"));
+  m_ok->setText(tr("OK   Enter"));setEditHidden(false);
   setStatus(QString(), false);
   for (const auto& in : spec.inputs) {
     const QString key = QString::fromStdString(in.name);

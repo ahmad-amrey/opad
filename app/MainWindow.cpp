@@ -1046,7 +1046,7 @@ void MainWindow::buildDesignActions() {
            {"c:coincident", tr("Coincident"), "cCoincident"}, {"c:parallel", tr("Parallel"), "cParallel"}, {"c:perpendicular", tr("Perpendicular"), "cPerpendicular"},
            {"c:tangent", tr("Tangent"), "cTangent"}, {"c:equal", tr("Equal"), "cEqual"}, {"c:concentric", tr("Concentric"), "cConcentric"}, {"c:midpoint", tr("Midpoint"), "cMidpoint"},
            {"c:symmetric", tr("Symmetric"), "cSymmetric"}, {"c:collinear", tr("Collinear"), "cCollinear"}, {"c:fix", tr("Fix"), "cFix"}}) {
-    const QMap<QString,QString> keys{{"line","L"},{"rect","R"},{"circle","C"},{"arc3","A"},{"dimension","D"},{"trim","T"}};
+    const QMap<QString,QString> keys{{"line","L"},{"rect","R"},{"circle","C"},{"arc3","A"},{"dimension","D"},{"trim","T"},{"offset","O"},{"spline","B"},{"project","P"},{"mirror","Shift+M"}};
     QAction* a = addAction("sketch." + QString(tool).replace(':', '.'), text, icon, QKeySequence(keys.value(tool)), [this, t = tool] { m_design->sketch()->setTool(t); }, true);
     a->setProperty("sketchTool", tool);
     tools->addAction(a);
@@ -1056,7 +1056,8 @@ void MainWindow::buildDesignActions() {
   for(const auto& tool:registry) {
     const auto id="sketch."+QString(tool.id).replace(':','.');
     if(action(id))continue;
-    auto* a=addAction(id,tool.label,"sketch",{},[this,id=tool.id]{m_design->sketch()->setTool(id);},true);
+    const QMap<QString,QString> keys{{"move","M"},{"rotate","Shift+R"},{"scale","Shift+S"},{"copy","Shift+C"}};
+    auto* a=addAction(id,tool.label,"sketch",QKeySequence(keys.value(tool.id)),[this,id=tool.id]{m_design->sketch()->setTool(id);},true);
     a->setProperty("sketchTool",tool.id);tools->addAction(a);
   }
   for(const auto& group:QList<QPair<QString,QString>>{{"Create",tr("Create")},{"Modify",tr("Modify")},{"Constrain",tr("Constrain")},{"Reference",tr("Reference")},{"Files",tr("Images and files")}}) {
@@ -1116,7 +1117,7 @@ void MainWindow::updateDesignState() {
       a->setEnabled(sketching);
       if (a->isCheckable()) a->setChecked(sketching && a->property("sketchTool").toString() == tool);
     } else if (id.startsWith("design.")) {
-      a->setEnabled(has && !m_doc->loading);
+      a->setEnabled(has && !m_doc->loading && !(sketching && shortcuts::scope(id)==shortcuts::OutsideSketch));
     } else if (id.startsWith("select.") || id.startsWith("inspect.") || id.startsWith("annotate.") || id=="edit.selecttouched") {
       if (m_doc->hasDocument) a->setEnabled(!sketching || id == "inspect.clear");  // the left button draws while sketching
     }
@@ -1125,7 +1126,7 @@ void MainWindow::updateDesignState() {
   if(m_design->pickingPlane()) {
     m_prompt->hide(); // The side panel guides this flow; leave the corner selector unobstructed.
   } else if(sketching) {
-    m_prompt->set("sketch",tr("Sketch"),m_design->sketch()->toolSteps(),tr("Esc steps back"));
+    m_prompt->set("sketch",tr("Sketch"),m_design->sketch()->toolSteps(),m_design->sketch()->visible()?tr("Esc steps back"):tr("This sketch is hidden. Show it in the browser to see your edits."));
     m_prompt->show();positionOverlays();
   } else if(m_tool.id.isEmpty()) m_prompt->hide();
   m_browser->setEnabled(true);
@@ -1601,7 +1602,7 @@ void MainWindow::updateUndoActions() {
   if (!u || !r) return;
   if(m_design && m_design->sketchActive()) {
     const auto* sketch=m_design->sketch();
-    u->setEnabled(!sketch->busy() && sketch->canUndo());r->setEnabled(!sketch->busy() && sketch->canRedo());
+    u->setEnabled(sketch->canUndo());r->setEnabled(sketch->canRedo());
     u->setText(tr("&Undo"));r->setText(tr("&Redo"));return;
   }
   u->setEnabled(m_doc->hasDocument && m_doc->canUndo());

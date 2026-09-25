@@ -74,7 +74,7 @@ class SketchEditor : public QObject, public SketchInput {
   void fitSketch();
   void analyseSketch();
   bool busy() const {return m_editJob!=nullptr || !m_geometryJob.isNull();}
-  bool canUndo() const { return !m_undo.empty(); }
+  bool canUndo() const { return !m_undo.empty() || m_tool!="select"; }
   bool canRedo() const { return !m_redo.empty(); }
   void undo();
   void redo();
@@ -190,6 +190,7 @@ class SketchEditor : public QObject, public SketchInput {
   std::set<int> m_conflicts;
   std::vector<std::tuple<int,double,double>> m_glyphHits;
   bool m_boxSelecting = false;
+  bool m_undoPending=false;
   double m_boxU=0,m_boxV=0;
   opad::Frame m_frame;
   opad::design::Sketch m_sk;

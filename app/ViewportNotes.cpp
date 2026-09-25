@@ -119,7 +119,6 @@ void Viewport::setNoteLeaders(const std::map<std::string, QPoint>& ends, bool sh
 
 // Called from handleViewRedraw: after a camera move the cards need a new place (queued, the frame is being drawn).
 void Viewport::noteCameraMoved() {
-  if (m_notes.empty()) return;
   const auto state = m_view->Camera()->WorldViewProjState();
   const QSize pixels(qRound(width() * devicePixelRatioF()), qRound(height() * devicePixelRatioF()));
   if (m_noteCamera == state && m_noteSize == pixels) return;

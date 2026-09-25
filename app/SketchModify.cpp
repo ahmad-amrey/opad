@@ -2,6 +2,7 @@
 #include "DimensionHandle.hpp"
 #include <QApplication>
 #include <QMouseEvent>
+#include <QKeyEvent>
 #include "Jobs.hpp"
 #include <QCoreApplication>
 #include "opad/design/sketch_modify.hpp"
@@ -31,7 +32,19 @@ void SketchEditor::benchHandles() {
         QApplication::sendEvent(m_dimensionHandle,&release);
         require(option("distance")!=before,"drag did not update distance");break;
       }
-      case 2:require(bool(m_toolPreview),"drag preview missing");m_viewport->grabImage().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_HANDLES")+".png");applyTool();require(m_sk.entities.size()>4,"offset commit");undo();require(m_sk.entities.size()==4,"one undo restores original chain");setTool("select");require(!m_dimensionHandle->isVisible(),"stale handle after exiting tool");break;
+      case 2:require(bool(m_toolPreview),"drag preview missing");m_viewport->grabImage().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_HANDLES")+".png");m_dimensionHandle->grab().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_HANDLES")+".field.png");applyTool();require(m_sk.entities.size()>4,"offset commit");sketchPress(40,15,Qt::NoModifier);require(!m_sel.empty(),"select another edge after offset");break;
+      case 3:{require(bool(m_toolPreview),"second edge preview missing");
+        for(int i=0;i<12;++i){sketchPress(20,0,Qt::NoModifier);sketchPress(40,15,Qt::NoModifier);previewTool();}
+        undo();require(m_tool=="select" && m_sk.entities.size()==4,"active offset undo closes tool and restores original");
+        setTool("offset");sketchPress(-15,-15,Qt::NoModifier);sketchMove(55,45,Qt::NoModifier,true);sketchRelease(55,45,Qt::NoModifier);require(m_sel.size()==4,"offset window selection");break;
+      }
+      case 4:{require(bool(m_toolPreview),"box selection preview");
+        QKeyEvent override(QEvent::ShortcutOverride,Qt::Key_7,Qt::NoModifier,"7");QApplication::sendEvent(m_viewport,&override);require(override.isAccepted(),"floating input shortcut override");
+        QKeyEvent key(QEvent::KeyPress,Qt::Key_7,Qt::NoModifier,"7");QApplication::sendEvent(m_viewport,&key);require(option("distance")=="7","floating number capture");break;
+      }
+      case 5:{require(bool(m_toolPreview),"numeric preview");applyTool();setTool("offset");sketchPress(20,0,Qt::NoModifier);
+        auto* field=m_dimensionHandle->findChild<QLineEdit*>();field->setFocus();QKeyEvent undoKey(QEvent::KeyPress,Qt::Key_Z,Qt::ControlModifier);QApplication::sendEvent(field,&undoKey);break;}
+      case 6:require(m_tool=="select" && m_sk.entities.size()==4,"Ctrl+Z in numeric field must undo geometry and close tool");require(!m_dimensionHandle->isVisible(),"stale handle after undo");break;
       default:timer->stop();trace::log("bench: chain selection, automatic offset preview, drag handle, apply and undo PASS");QCoreApplication::exit(0);
     }
   }catch(const std::exception& e){timer->stop();trace::log(QString("bench: handles FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();

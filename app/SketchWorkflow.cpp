@@ -334,14 +334,25 @@ void SketchEditor::scheduleToolPreview() {
 }
 void SketchEditor::updateDimensionHandle() {
   if(!m_active || !m_visible || m_tool!="offset" || m_sel.empty()){m_dimensionHandle->hide();return;}
-  const SkEntity* entity=nullptr;for(int id:m_sel)if((entity=m_sk.entity(id)))break;if(!entity || entity->p.empty())return;
+  if(m_dimensionHandle->interacting())return;
+  const SkEntity* entity=std::find(m_sel.begin(),m_sel.end(),m_hover.id)!=m_sel.end()?m_sk.entity(m_hover.id):nullptr;
+  if(!entity)for(int id:m_sel)if((entity=m_sk.entity(id)))break;if(!entity || entity->p.empty())return;
   const auto* a=m_sk.point(entity->p.front());if(!a)return;
   double x=a->x,y=a->y,dx=1,dy=0;
-  if(entity->type==SkEntity::Type::Circle || entity->type==SkEntity::Type::Arc){x+=entity->r;}
+  if(entity->type==SkEntity::Type::Circle || entity->type==SkEntity::Type::Arc){
+    const double angle=m_haveCursor?std::atan2(m_cursor.v-y,m_cursor.u-x):0.;dx=std::cos(angle);dy=std::sin(angle);
+    const auto* start=entity->p.size()>1?m_sk.point(entity->p[1]):nullptr;const double radius=start?std::hypot(start->x-x,start->y-y):entity->r;x+=radius*dx;y+=radius*dy;
+  }
   else if(entity->p.size()>1) {
     const auto* b=m_sk.point(entity->p.back());if(!b)return;
     x=(a->x+b->x)/2;y=(a->y+b->y)/2;dx=b->y-a->y;dy=a->x-b->x;
     const double length=std::hypot(dx,dy);if(length<1e-9)return;dx/=length;dy/=length;
+    if(m_haveCursor){const auto points=sampled(*entity);double best=1e300;
+      for(size_t i=1;i<points.size();++i){const auto [ax,ay]=points[i-1];const auto [bx,by]=points[i];const double ex=bx-ax,ey=by-ay,l2=ex*ex+ey*ey;if(l2<1e-20)continue;
+        const double t=std::clamp(((m_cursor.u-ax)*ex+(m_cursor.v-ay)*ey)/l2,0.,1.),px=ax+t*ex,py=ay+t*ey,d=std::hypot(px-m_cursor.u,py-m_cursor.v);
+        if(d<best){best=d;x=px;y=py;dx=ey/std::sqrt(l2);dy=-ex/std::sqrt(l2);}
+      }
+    }
   }
   try {
     std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});

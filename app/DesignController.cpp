@@ -1,5 +1,8 @@
 #include "DesignController.hpp"
 #include "DimensionHandle.hpp"
+#include "CurveSamples.hpp"
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -55,7 +58,7 @@ gp_Pnt pnt(const opad::Vec3& v) { return gp_Pnt(v[0], v[1], v[2]); }
 DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunner* jobs, QWidget* window)
     : QObject(window), m_doc(doc), m_viewport(viewport), m_jobs(jobs), m_window(window) {
   m_form = new FeaturePanel(doc, window);
-  m_distanceHandle=new DimensionHandle(viewport);
+  m_distanceHandle=new DimensionHandle(viewport,jobs);
   connect(m_distanceHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){if(m_featureOn)m_form->setValue("distance",text.toStdString());});
   m_sketch = new SketchEditor(doc, viewport, jobs, this);
   m_planePicker=new PlanePicker(doc,viewport,jobs,window);
@@ -226,12 +229,13 @@ void DesignController::editOp(const std::string& opId) {
   const FeatureSpec* spec = feature_spec(f->kind);
   if (!spec) return;
   const opad::Feature feature = *f;
+  bool hidden=false;for(const auto& body:feature.result.value("bodies",opad::json::array())){const auto id=body.value("id",std::string());if(m_doc->scene.node(id) && !m_doc->scene.effectively_visible(id))hidden=true;}
   m_doc->setRollback(opId);
   m_editing = opId;
   m_featureOn = true;
   m_filterBefore = m_viewport->selectionFilter();
   m_viewport->setPickAccumulate(true);
-  m_form->begin(*spec, feature.inputs, QString::fromStdString(feature.name), true);
+  m_form->begin(*spec, feature.inputs, QString::fromStdString(feature.name), true);m_form->setEditHidden(hidden);
   if (m_panel) {
     m_panel->setHeader(QString::fromStdString(spec->icon), i18n::t(QString::fromStdString(spec->label)));
     m_panel->setContext(tr("editing"));
@@ -443,7 +447,7 @@ void DesignController::runPreview(bool commit) {
   m_previewTimer.stop();
   QString missing;
   if (!m_form->complete(&missing)) {
-    m_distanceHandle->hide();
+    if(!m_distanceHandle->interacting())m_distanceHandle->hide();
     m_form->setStatus(missing, commit);
     m_viewport->clearPreviewBodies();
     return;
@@ -476,10 +480,11 @@ void DesignController::runPreview(bool commit) {
   const bool editing = !m_editing.empty();
   const auto generation = m_doc->generation;
   auto plan = std::make_shared<Plan>();
+  auto anchors=std::make_shared<std::vector<DimensionHandle::Segment>>();
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);  // the rolled-back state the picks were made in
   auto doc = std::make_shared<opad::Document>(m_doc->doc);
   m_form->setStatus(tr("Computing…"), false);
-  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan](Progress p) {
+  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan,anchors](Progress p) {
     Reading reading;
     const opad::json hinted = hint_refs(*doc, *scene, inputs);
     opad::json op = editing ? make_edit_op(target, opad::json{{"inputs", hinted}, {"name", name}}) : make_feature_op(kind, name, hinted);
@@ -492,11 +497,24 @@ void DesignController::runPreview(bool commit) {
         const double defl = box.IsVoid() ? 0.1 : std::clamp(std::sqrt(box.SquareExtent()) * 0.002, 0.02, 2.0);
         opad::mesh_shape(*c.shape, defl);
       }
-  }, [this, serial, plan, stamp, target, commit, commitReady](bool ok, const QString& error) {
+    if(kind=="extrude")for(const auto& op:plan->ops){
+      opad::json result;if(op.value("id","")==target)result=op.value("result",opad::json());
+      if(op.value("op","")=="regen" && op.at("results").contains(target))result=op.at("results").at(target);
+      if(!result.is_object() || !result.contains("distance_handle"))continue;const auto& h=result.at("distance_handle");
+      const auto origin=h.at("origin").get<opad::Vec3>(),axis=h.at("axis").get<opad::Vec3>();const double value=h.at("value");
+      const gp_Vec direction(axis[0],axis[1],axis[2]);const auto tip=gp_Pnt(origin[0],origin[1],origin[2]).Translated(direction*value);
+      for(const auto& c:plan->changed)if(c.op==target && c.shape)for(TopExp_Explorer edges(*c.shape,TopAbs_EDGE);edges.More();edges.Next()){
+        if(p.cancelled())return;const auto points=curveSamples(TopoDS::Edge(edges.Current()),.05);
+        for(size_t i=1;i<points.size();++i)if(std::abs(gp_Vec(tip,points[i-1]).Dot(direction))<1e-6 && std::abs(gp_Vec(tip,points[i]).Dot(direction))<1e-6){
+          const auto a=points[i-1].Translated(-direction*value),b=points[i].Translated(-direction*value);anchors->push_back({opad::Vec3{a.X(),a.Y(),a.Z()},opad::Vec3{b.X(),b.Y(),b.Z()}});
+        }
+      }
+    }
+  }, [this, serial, plan, stamp, target, commit, commitReady,anchors](bool ok, const QString& error) {
     if (serial != m_planSerial || !m_featureOn) return;  // superseded
     m_planJob = nullptr;
     if (!ok) {
-      m_distanceHandle->hide();
+      if(!m_distanceHandle->interacting())m_distanceHandle->hide();
       m_readyPlan.reset();
       m_viewport->clearPreviewBodies();
       if (error != "cancelled") m_form->setStatus(i18n::t(error), true);
@@ -507,16 +525,18 @@ void DesignController::runPreview(bool commit) {
     m_readyOps = m_doc->doc.ops.size();
     m_form->setStatus(QString(), false);
     if (commit) return commitReady();
-    m_distanceHandle->hide();
+    bool hasHandle=false;
     for(const auto& op:plan->ops) {
       opad::json result;
       if(op.value("id","")==target)result=op.value("result",opad::json());
       if(op.value("op","")=="regen" && op.at("results").contains(target))result=op.at("results").at(target);
       if(result.is_object() && result.contains("distance_handle")) {
-        const auto& handle=result.at("distance_handle");
+        hasHandle=true;const auto& handle=result.at("distance_handle");
+        m_distanceHandle->setAnchorSegments(std::move(*anchors));
         m_distanceHandle->configure(handle.at("origin").get<opad::Vec3>(),handle.at("axis").get<opad::Vec3>(),handle.at("value").get<double>(),QString::fromStdString(m_form->inputs().at("distance").get<std::string>()));
       }
     }
+    if(!hasHandle)m_distanceHandle->hide();
     std::vector<std::pair<std::string, TopoDS_Shape>> shapes;
     std::vector<std::string> hidden;
     for (const auto& c : plan->changed) {

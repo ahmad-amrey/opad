@@ -34,7 +34,7 @@ bool MainWindow::benchShortcuts() {
         auto* sketch=m_design->sketch();
         sketch->setTool("rect");sketch->placePrecise("0","0",0);sketch->placePrecise("20","10",0);
         require(action("edit.undo")->isEnabled(),"sketch undo disabled with empty document history");
-        key(Qt::Key_Z,Qt::ControlModifier);require(sketch->empty(),"Ctrl+Z did not undo sketch geometry");
+        key(Qt::Key_Z,Qt::ControlModifier);QCoreApplication::processEvents();require(sketch->empty(),"Ctrl+Z did not undo sketch geometry");
         const auto redo=action("edit.redo")->shortcut()[0];key(redo.key(),redo.keyboardModifiers());require(!sketch->empty(),"Redo shortcut did not restore sketch geometry");
         require(action("view.alignPlane")->isEnabled(),"align view disabled in sketch");
         sketch->setVisible(false);require(!sketch->visible(),"active sketch cannot be hidden");sketch->setVisible(true);
@@ -44,6 +44,9 @@ bool MainWindow::benchShortcuts() {
         key(Qt::Key_R);require(m_design->sketch()->tool()=="rect","sketch R shortcut");
         key(Qt::Key_A);require(m_design->sketch()->tool()=="arc3","sketch A shortcut");
         key(Qt::Key_L);require(m_design->sketch()->tool()=="line","sketch L shortcut");
+        key(Qt::Key_O);require(sketch->tool()=="offset","sketch O shortcut");
+        key(Qt::Key_M);require(sketch->tool()=="move","sketch M shortcut conflicts with body move");
+        key(Qt::Key_B);require(sketch->tool()=="spline","sketch B shortcut");
         action("sketch.line")->setShortcut(QKeySequence("Alt+L"));key(Qt::Key_C);key(Qt::Key_L);require(m_design->sketch()->tool()=="circle","old sketch binding was still hard-coded");
         key(Qt::Key_L,Qt::AltModifier);require(m_design->sketch()->tool()=="line","custom sketch binding failed");action("sketch.line")->setShortcut(QKeySequence("L"));
         bool iso=false;auto connection=connect(action("view.iso"),&QAction::triggered,this,[&]{iso=true;});key(Qt::Key_H,Qt::ShiftModifier);disconnect(connection);require(iso,"modified view shortcut swallowed by sketch");

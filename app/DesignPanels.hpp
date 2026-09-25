@@ -69,6 +69,7 @@ class FeaturePanel : public QWidget {
   void setPicks(const QString& input, const opad::json& picks);
   opad::json picks(const QString& input) const;
   void setStatus(const QString& text, bool error);
+  void setEditHidden(bool hidden);
   void setValue(const QString& input, const opad::json& value);  // expression, choice or flag, as the user would type it
   void activate(const QString& input);  // empty: none
   void activateNextPick();              // the first shown pick input that still needs picks
@@ -87,6 +88,7 @@ class FeaturePanel : public QWidget {
   QLineEdit* m_name;
   QLabel* m_hint;
   QLabel* m_status;
+  QLabel* m_hiddenWarning;
   QVBoxLayout* m_rows;
   QPushButton* m_ok;
   struct Row {
