@@ -1376,9 +1376,11 @@
   "Codex registration": "??????? ?? Codex",
   "No matching transaction belongs to this connection. Disconnect discards staged work. Read current context, begin a new transaction and replan with new request IDs.": "?? ???? ?????? ?????? ??? ??? ???????. ???? ??? ??????? ??? ????? ????? ????????. ???? ?????? ?????? ????? ?????? ????? ???? ??????? ???????? ????? ?????.",
   "Access and activity": "?????? ???????",
-  "Client setup": "????? ??????",
-  "Other MCP clients": "????? MCP ???????",
+  "Client setup": "إعداد العميل",
+  "Other MCP clients": "عملاء MCP الآخرون",
   "Codex command timed out. Check registration before retrying.": "????? ???? ??? Codex. ???? ?? ??????? ??? ????? ????????.",
+ "Local command and arguments": "الأمر المحلي ومعاملاته",
+ "Connect an AI client": "ربط عميل ذكاء اصطناعي",
  "The object being edited is hidden. Show it in the browser to see the result.": "العنصر الذي تعدّله مخفي. أظهره في المتصفح لرؤية النتيجة.",
  "Preparing drag handle": "تجهيز مقبض السحب",
  "Automatic spacing": "تباعد تلقائي",
@@ -1389,5 +1391,6 @@
  "Cancel without applying changes": "إلغاء دون تطبيق التغييرات",
  "Sketch plane: %1 - click to use": "مستوى الرسم التخطيطي: %1 - انقر لاستخدامه",
  "Recovery keeps a full base at each save and stores changed operations and new geometry between saves. Unchanged documents are skipped. Recovery preserves sketch drafts and opens with no active tool; unfinished features are cancelled. Your file is never overwritten.": "يحتفظ الاسترداد بنسخة أساسية كاملة عند كل حفظ، ويسجّل العمليات المتغيرة والأشكال الجديدة بين مرات الحفظ. يتجاوز المستندات التي لم تتغير. يحافظ على مسودات الرسوم التخطيطية ويفتح دون أداة نشطة؛ وتُلغى عمليات النمذجة غير المكتملة. لا يستبدل ملفك الأصلي.",
- "Recovered sketch": "رسم تخطيطي مسترد"
+ "Recovered sketch": "رسم تخطيطي مسترد",
+ "1. Open a document in OPAD and enable local agent access on the Access and activity tab.\n\n2. In your AI client, add a local MCP server using STDIO. Copy the configuration, or enter the command and arguments shown here. Keep the matching CLI executable beside OPAD.\n\n3. Restart that server in the client. Use Test local connection here to check OPAD, then ask the agent to list OPAD windows and bind to this document.\n\n4. Ask the agent to inspect the scene before editing. Enable design edits when ready; changes appear live and completed edits support Undo.\n\n5. Watch Agent activity to follow progress or stop work. Disable local agent access to disconnect. If the client supports only remote MCP, use a client with local STDIO support for this setup.": "1. افتح مستنداً في OPAD وفعّل وصول الوكيل المحلي من تبويب الوصول والنشاط.\n\n2. أضف خادم MCP محلياً عبر STDIO في عميل الذكاء الاصطناعي. انسخ الإعدادات أو أدخل الأمر ومعاملاته المعروضة هنا. احتفظ ببرنامج CLI المطابق بجوار OPAD.\n\n3. أعد تشغيل الخادم في العميل. اختبر الاتصال المحلي هنا، ثم اطلب من الوكيل عرض نوافذ OPAD والاتصال بهذا المستند.\n\n4. اطلب من الوكيل فحص المشهد قبل التعديل. فعّل تعديلات التصميم عندما تكون جاهزاً؛ تظهر التغييرات مباشرة وتدعم التراجع بعد اكتمالها.\n\n5. تابع نشاط الوكيل أو أوقف العمل من نافذة النشاط. عطّل الوصول المحلي لقطع الاتصال. إذا كان العميل يدعم MCP البعيد فقط، استخدم عميلاً يدعم STDIO المحلي."
 }

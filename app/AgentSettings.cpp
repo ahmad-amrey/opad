@@ -13,8 +13,6 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QLocalSocket>
-#include <QDesktopServices>
-#include <QUrl>
 #include <QComboBox>
 #include <QScrollArea>
 #include <QTabWidget>
@@ -41,7 +39,7 @@ void AgentBridge::settings(){
   opad::json configuration;
   configuration["mcpServers"]["opad"]={{"command",executable.toStdString()},{"args",{"mcp","--live","--discovery",m_directory.toStdString()}}};
   config->setPlainText(QString::fromStdString(configuration.dump(2)));form->addWidget(config);
-  auto* adapter=new QComboBox;adapter->addItems({tr("Generic MCP JSON"),tr("VS Code MCP configuration"),tr("ChatGPT desktop command and arguments")});form->insertWidget(form->indexOf(config),adapter);
+  auto* adapter=new QComboBox;adapter->addItems({tr("Generic MCP JSON"),tr("VS Code MCP configuration"),tr("Local command and arguments")});form->insertWidget(form->indexOf(config),adapter);
   connect(adapter,&QComboBox::currentIndexChanged,dialog,[=,this](int index){
     auto data=configuration;
     if(index==1){data={{"servers",configuration["mcpServers"]}};data["servers"]["opad"]["type"]="stdio";}
@@ -51,7 +49,11 @@ void AgentBridge::settings(){
   auto* guidance=new QLabel(tr("In a desktop MCP client that supports local STDIO servers, add this command and its arguments, then restart the server. Enabling OPAD does not register it in the client. Ask the agent to list OPAD windows and choose this document explicitly."));guidance->setWordWrap(true);form->addWidget(guidance);
   if(!QFileInfo::exists(executable)){auto* missing=new QLabel(tr("CLI executable not found beside OPAD. Install the matching CLI before configuring the client."));missing->setWordWrap(true);form->addWidget(missing);}
   auto* buttons=new QHBoxLayout;form->addLayout(buttons);auto* copy=new QPushButton(tr("Copy configuration"));buttons->addWidget(copy);connect(copy,&QPushButton::clicked,dialog,[config]{QApplication::clipboard()->setText(config->toPlainText());});
-  auto* docs=new QPushButton(tr("Client setup guide"));buttons->addWidget(docs);connect(docs,&QPushButton::clicked,dialog,[]{QDesktopServices::openUrl(QUrl("https://learn.chatgpt.com/docs/extend/mcp"));});
+  auto* docs=new QPushButton(tr("Client setup guide"));buttons->addWidget(docs);connect(docs,&QPushButton::clicked,dialog,[dialog]{
+    QDialog guide(dialog);guide.setWindowTitle(tr("Connect an AI client"));guide.resize(560,380);
+    auto* layout=new QVBoxLayout(&guide);auto* steps=new QLabel(tr("1. Open a document in OPAD and enable local agent access on the Access and activity tab.\n\n2. In your AI client, add a local MCP server using STDIO. Copy the configuration, or enter the command and arguments shown here. Keep the matching CLI executable beside OPAD.\n\n3. Restart that server in the client. Use Test local connection here to check OPAD, then ask the agent to list OPAD windows and bind to this document.\n\n4. Ask the agent to inspect the scene before editing. Enable design edits when ready; changes appear live and completed edits support Undo.\n\n5. Watch Agent activity to follow progress or stop work. Disable local agent access to disconnect. If the client supports only remote MCP, use a client with local STDIO support for this setup."));
+    steps->setWordWrap(true);layout->addWidget(steps);auto* close=new QDialogButtonBox(QDialogButtonBox::Close);layout->addWidget(close);connect(close,&QDialogButtonBox::rejected,&guide,&QDialog::reject);guide.exec();
+  });
   auto* test=new QPushButton(tr("Test local connection"));buttons->addWidget(test);
   auto* diagnostics=new QLabel;diagnostics->setWordWrap(true);form->addWidget(diagnostics);
   connect(test,&QPushButton::clicked,dialog,[this,dialog,diagnostics]{
