@@ -114,12 +114,19 @@ Annotations are created and edited inline, with type selection and comment threa
 name in Settings to identify new annotations, comments and design operations.
 Drag a note's title to move its card without changing the document. The Annotations panel filters by
 type across both the panel and viewport; Delete removes a note and remains undoable.
-Review > Annotate > Hand drawing creates camera-facing marks anchored at the first click, with red/blue
-strokes and three widths. Save creates one annotation; Cancel leaves no document change. Choose
-**AI agent notes** and describe the request to expose it in the MCP agent's prioritized review queue.
-The first click fixes the drawing's world-space plane; later model edits do not regenerate the strokes.
-MCP clients should review `context(section="ai_agent_notes")`, fetch `annotations(id=...)` for
-the full text, comments and drawing coordinates, and inspect current anchor references before editing.
+Review > Annotate > **Note** (N) and **Hand drawing** (Shift+N) work like the guided measuring tools: the
+prompt bar asks for a body, face, edge or vertex (1-4 changes the selection filter; a single selected
+object is taken as it is), the target is tinted in the selection blue inside a dashed outline under a
+badge, and a floating panel holds the type, the pen and the text. Hand drawing: each stroke lies on the
+plane through the picked point that faces the camera when the stroke starts, so orbiting (or clicking the
+view cube) between strokes draws on another plane and builds up a 2.5D sketch; drawn strokes keep their
+place. Pens are red, green, blue or white at 1, 2, 4 or 8 px, picked from swatches and line samples
+(B pen, E eraser, 1-4 colour, [ ] width); strokes can be erased, removed from the list, cleared, and
+undone or redone before Save. A note's target can be picked again by clicking another object.
+Ctrl+Enter saves one annotation (one Undo step), Esc cancels without changing the document. Notes need
+text; **AI agent notes** also need the request in words. MCP clients should review
+`context(section="ai_agent_notes")`, fetch `annotations(id=...)` for the full text, comments and each
+stroke's plane, and inspect current anchor references before editing.
 `annotate` accepts typed `drawing` data and `reply_to` comments; `delete_annotation` removes a note
 from review lists while retaining Undo/history. `delete` resolves a completed request.
 

@@ -23,7 +23,7 @@ set(OPAD_APP_SOURCES
   Viewport.cpp ViewportPicking.cpp ViewportPickingBench.cpp ViewportDesign.cpp ViewportInspect.cpp ViewportNotes.cpp ViewportSection.cpp Viewport.hpp
   ViewportSelection.cpp ViewportSettings.cpp
   ViewportTracking.cpp
-  Notes.cpp Notes.hpp
+  Notes.cpp Notes.hpp AnnotationEditor.cpp AnnotationEditor.hpp
   DesignController.cpp DesignController.hpp PlanePicker.cpp PlanePicker.hpp
   DesignPanels.cpp DesignPanels.hpp
   SketchEditor.cpp SketchNodes.cpp SketchTools.cpp SketchEditor.hpp SketchGeometryCache.cpp SketchGeometryCache.hpp

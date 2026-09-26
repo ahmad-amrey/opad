@@ -145,7 +145,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_browser, &BrowserPanel::selectionChanged, this, &MainWindow::onBrowserSelection);
   connect(m_browser, &BrowserPanel::contextMenuRequested, this, [this](const QPoint& p, const std::vector<std::string>& ids) { showContextMenu(p, ids); });
   connect(m_browser, &BrowserPanel::fitRequested, m_viewport, &Viewport::fitNodes);
-  connect(m_annotations, &AnnotationsPanel::addRequested, this, [this] { toggleTool("note"); });
+  connect(m_annotations, &AnnotationsPanel::addRequested, this, [this] { startAnnotation(false); });
   connect(m_annotations, &AnnotationsPanel::resolveRequested, this, &MainWindow::deleteOp);
   connect(m_annotations, &AnnotationsPanel::restoreRequested, this, &MainWindow::restoreOp);
   connect(m_annotations, &AnnotationsPanel::styleRequested, this, &MainWindow::restyleAnnotation);
@@ -459,7 +459,7 @@ void MainWindow::buildActions() {
   m_pinAction->setShortcutContext(Qt::ApplicationShortcut);
   m_pinAction->setEnabled(false);
   addAction("inspect.clear", tr("Clear measurement"), "", QKeySequence("Esc"), [this] {
-    if(m_handDrawing){m_handDrawing->cancel();return;}
+    if (m_annotationEditor) return m_annotationEditor->cancel();
     if (m_design->sketchActive()) {  // the viewport did not have the focus: same as Esc in the sketch
       QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
       m_design->sketch()->sketchKey(&esc);
@@ -484,24 +484,20 @@ void MainWindow::buildActions() {
   addAction("inspect.flip", tr("Flip section"), "flip", QKeySequence("Shift+X"), [this] { m_section->flip(); });
 
   // Annotate / edit
-  addAction("annotate.add", tr("Note"), "annotate", QKeySequence("N"), [this] { toggleTool("note"); }, true);
-  addAction("annotate.draw",tr("Hand drawing"),"annotate",QKeySequence(),[this] {
-    if(m_handDrawing){m_handDrawing->cancel();return;}
-    if(m_design->ownsSelection() || m_design->busy())return;
-    cancelTool();m_noteCards->setShown(true);
-    m_handDrawing=new HandDrawing(m_doc,m_viewport,this);
-    connect(m_design,&DesignController::stateChanged,m_handDrawing,&HandDrawing::cancel);
-  });
+  addAction("annotate.add", tr("Note"), "annotate", QKeySequence("N"), [this] { startAnnotation(false); }, true);
+  addAction("annotate.draw", tr("Hand drawing"), "pen", QKeySequence("Shift+N"), [this] { startAnnotation(true); }, true);
   addAction("annotate.resolve", tr("Resolve note"), "check", QKeySequence("Ctrl+Return"), [this] { resolveCurrentAnnotation(); });
-  QAction* notes = addAction("annotate.show", tr("Show notes"), "annotate", QKeySequence("Shift+N"), [this] {}, true);
+  QAction* notes = addAction("annotate.show", tr("Show notes"), "annotate", QKeySequence(), [this] {}, true);
   notes->setChecked(m_settings.value("ui/notes", true).toBool());  // m_noteCards reads the same key once the viewport exists
   connect(notes, &QAction::toggled, this, [this](bool on) { if (m_noteCards) m_noteCards->setShown(on); });
   addAction("edit.undo", tr("&Undo"), "rollLeft", QKeySequence::Undo, [this] {
+    if (m_annotationEditor) return m_annotationEditor->undo();  // its strokes; the document waits for Save
     if (m_design->sketchActive()) return m_design->sketch()->undo();  // a sketch has its own history until it is finished
     if (m_design->ownsSelection() || m_design->busy()) return;
     m_doc->undo();
   });
   addAction("edit.redo", tr("&Redo"), "rollRight", QKeySequence::Redo, [this] {
+    if (m_annotationEditor) return m_annotationEditor->redo();
     if (m_design->sketchActive()) return m_design->sketch()->redo();
     if (m_design->ownsSelection() || m_design->busy()) return;
     m_doc->redo();
@@ -582,7 +578,7 @@ void MainWindow::buildMenus() {
   m_recentMenu = file->addMenu(tr("Recent"));
   add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
-  add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
+  add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = menuBar()->addMenu(tr("&View"));
   add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
@@ -826,6 +822,19 @@ void MainWindow::buildDocks() {
   m_toolPanel->setContentSizeHint([this](int width) { return m_toolSteps->preferredSize(width); });
   connect(m_toolSteps, &ToolStepsPanel::contentSizeChanged, m_toolPanel, &ToolPanel::requestContentFit);
   m_panels = {m_propsPanel, m_annotationsPanel, m_sectionPanel, m_toolPanel};
+  // The note / hand drawing editor's panel: filled by each AnnotationEditor, open exactly as long as it runs. Not one
+  // of m_panels, so opening another panel never ends an annotation in progress.
+  auto* annotationHost = new QWidget(this);
+  new QVBoxLayout(annotationHost);
+  annotationHost->layout()->setContentsMargins(0, 0, 0, 0);
+  m_annotationPanel = new ToolPanel("annotation", "annotate", &Tokens::amber, tr("Note"), annotationHost, 420, this);
+  m_annotationPanel->setPinnable(false);
+  m_annotationPanel->setEscapeHandler([this] { if (m_annotationEditor) m_annotationEditor->cancel(); else m_annotationPanel->hide(); });
+  connect(m_annotationPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
+    // Its close button. Minimising the window hides it too, spontaneously: isVisible() stays true then.
+    if (!on && m_annotationEditor && !m_annotationPanel->isVisible()) m_annotationEditor->cancel();
+    syncAnnotationActions();
+  });
   connect(m_propsPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
     if (!on && m_propsJob) m_propsJob->cancel();  // nobody is looking at the component bbox any more
   });
@@ -1235,6 +1244,7 @@ void MainWindow::positionOverlays() {
   const QRect vp(m_viewport->mapToGlobal(QPoint(0, 0)), m_viewport->size());
   for (ToolPanel* p : m_panels)
     if (p->isVisible()) p->anchorTo(vp);  // the panels follow the viewport's top-right corner
+  if (m_annotationPanel && m_annotationPanel->isVisible()) m_annotationPanel->anchorTo(vp);
 }
 
 void MainWindow::resizeEvent(QResizeEvent* e) {
@@ -1503,6 +1513,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     });
     menu.addSeparator();
     add("annotate.add");
+    add("annotate.draw");
     add("inspect.distance");
     add("inspect.radius");
     add("inspect.properties");
@@ -1648,18 +1659,18 @@ QList<ToolStep> MainWindow::toolSteps() const {
 }
 
 void MainWindow::toggleTool(const QString& id) {
-  if(m_handDrawing)m_handDrawing->cancel();
   if (m_tool.id == id) cancelTool();
   else startTool(id);
 }
 
 void MainWindow::startTool(const QString& id) {
   if (!m_doc->hasDocument || m_design->sketchActive()) return;
+  if (m_annotationEditor) m_annotationEditor->cancel();  // one guide at a time
   m_design->escape();  // a feature panel or a plane pick gives way
   if (!m_tool.id.isEmpty()) cancelTool();
   static const std::map<QString, std::tuple<const char*, const char*, int>> kTools = {
       {"distance", {QT_TR_NOOP("Distance"), "distance", 2}}, {"angle", {QT_TR_NOOP("Angle"), "angle", 2}},       {"radius", {QT_TR_NOOP("Radius"), "radius", 1}},
-      {"bbox", {QT_TR_NOOP("Bounding box"), "bbox", 1}},     {"note", {QT_TR_NOOP("Note"), "annotate", 1}},      {"sectionface", {QT_TR_NOOP("Section"), "section", 1}}};
+      {"bbox", {QT_TR_NOOP("Bounding box"), "bbox", 1}},     {"sectionface", {QT_TR_NOOP("Section"), "section", 1}}};
   const auto it = kTools.find(id);
   if (it == kTools.end()) return;
   m_tool = Tool{id, tr(std::get<0>(it->second)), std::get<1>(it->second), std::get<2>(it->second)};
@@ -1671,8 +1682,8 @@ void MainWindow::startTool(const QString& id) {
   const Viewport::SelFilter f = m_viewport->selectionFilter();
   const bool wantFaces = id == "sectionface" ? f != Viewport::SelFilter::Face : ((id == "angle" || id == "radius") && f == Viewport::SelFilter::Body) || (id == "angle" && f == Viewport::SelFilter::Vertex);
   m_viewport->setPickAccumulate(true, id == "distance");
-  for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "annotate.add"})
-    action(a)->setChecked(id == QString(a).section('.', 1) || (id == "note" && QString(a) == "annotate.add"));
+  for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"})
+    action(a)->setChecked(id == QString(a).section('.', 1));
   if (toolMeasures()) {
     m_toolPanel->setHeader(m_tool.icon, m_tool.title);
     openPanel(m_toolPanel);
@@ -1694,7 +1705,7 @@ void MainWindow::cancelTool() {
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();
   m_toolPicks.clear();
   m_toolPoints.clear();
-  for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "annotate.add"}) action(a)->setChecked(false);
+  for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}) action(a)->setChecked(false);
   m_viewport->setPickAccumulate(false);
   m_prompt->hide();
   m_toolPanel->hide();
@@ -1739,13 +1750,7 @@ void MainWindow::toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromC
   std::vector<opad::Vec3> marks;
   for (const auto& p : m_toolPoints) if (p.first) marks.push_back(p.second);
   m_viewport->showPickMarkers(marks);
-  if (static_cast<int>(picks.size()) == m_tool.steps) {
-    if (m_tool.id == "note") {
-      guarded([this] { addAnnotation(); });
-      return cancelTool();
-    }
-    runToolMeasure();
-  }
+  if (static_cast<int>(picks.size()) == m_tool.steps) runToolMeasure();
   refreshToolUi();
 }
 
@@ -1885,36 +1890,30 @@ void MainWindow::clearMeasurement() {
   m_viewport->clearSelection();
 }
 
-void MainWindow::addAnnotation() {
-  auto refs = m_viewport->selection();
-  opad::Ref anchor;
-  if (!refs.empty()) anchor = refs.front();
-  else if (!m_browser->selectedIds().empty()) anchor.body = m_browser->selectedIds().front();
-  else throw opad::Error("Select a body, face, edge or vertex to anchor the note.");
-  QString where = m_doc->nodeName(anchor.body);
-  if (anchor.kind != opad::Ref::Kind::Body) where += QString::fromUtf8(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(anchor.kind))).arg(anchor.index);
-  auto* card = new QFrame(m_viewport);
-  card->setAttribute(Qt::WA_NativeWindow);
-  card->setObjectName("card"); card->setFixedWidth(320);
-  auto* layout = new QVBoxLayout(card);
-  auto* title = new QLabel(tr("Note on %1").arg(where), card); title->setWordWrap(true); title->setTextFormat(Qt::PlainText); layout->addWidget(title);
-  notes::makeDraggable(card,title);
-  auto* type = new QComboBox(card);
-  for (const auto& style : notes::styles()) type->addItem(i18n::t(style.label), QString::fromLatin1(style.id));
-  type->setCurrentIndex(3); layout->addWidget(type);
-  auto* text = new QPlainTextEdit(card); text->setPlaceholderText(tr("Write a note...")); text->setMaximumHeight(110); layout->addWidget(text);
-  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, card); layout->addWidget(buttons);
-  connect(buttons, &QDialogButtonBox::rejected, card, &QObject::deleteLater);
-  connect(buttons, &QDialogButtonBox::accepted, card, [this, card, anchor, text, type] {
-    if (text->toPlainText().trimmed().isEmpty()) return;
-    guarded([&] {
-      m_doc->run("annotate", {{"anchor", anchor.str()}, {"text", text->toPlainText().trimmed().toStdString()}, {"style", type->currentData().toString().toStdString()}});
-      m_noteCards->setShown(true); card->deleteLater();
-    });
-  });
-  connect(m_doc, &AppDocument::pathChanged, card, &QObject::deleteLater);
-  card->adjustSize(); card->move(std::max(8, (m_viewport->width() - card->width()) / 2), 70); card->show(); card->raise(); text->setFocus();
+// Note and Hand drawing: an editor that asks for its target like a guided tool (AnnotationEditor.hpp). A single
+// selected body, face, edge or vertex is taken as the target straight away (right-click > Note works on it).
+void MainWindow::startAnnotation(bool drawing) {
+  if (m_annotationEditor) {
+    const bool same = m_annotationEditor->drawingMode() == drawing;
+    m_annotationEditor->cancel();
+    if (same) return syncAnnotationActions();  // the same command again closes it
+  }
+  if (!m_doc->hasDocument || m_doc->browse || m_design->ownsSelection() || m_design->busy() || m_design->sketchActive())
+    return syncAnnotationActions();
+  const auto selected = m_viewport->selection();
+  cancelTool();
+  action("annotate.show")->setChecked(true);  // the note being written shows among the others
+  m_annotationEditor = new AnnotationEditor(m_doc, m_viewport, m_annotationPanel, this, drawing);
+  connect(m_design, &DesignController::stateChanged, m_annotationEditor, &AnnotationEditor::cancel);
+  connect(m_annotationEditor, &QObject::destroyed, this, &MainWindow::syncAnnotationActions);
+  m_annotationEditor->adoptSelection(selected);
+  syncAnnotationActions();
+}
 
+void MainWindow::syncAnnotationActions() {
+  const bool open = m_annotationEditor && m_annotationPanel->isVisible();
+  action("annotate.add")->setChecked(open && !m_annotationEditor->drawingMode());
+  action("annotate.draw")->setChecked(open && m_annotationEditor->drawingMode());
 }
 
 void MainWindow::resolveCurrentAnnotation() {
@@ -2163,6 +2162,7 @@ void MainWindow::runBench() {
   }
   if(benchShortcuts())return;
   if(benchTodo9())return;
+  if(benchAnnotateLarge())return;
   if(qEnvironmentVariableIsSet("OPAD_BENCH_INSTANCES")) {
     if(m_doc->scene.all_bodies().empty()){QCoreApplication::exit(2);return;}
     const auto source=m_doc->scene.all_bodies().front(),copy=opad::new_uuid();

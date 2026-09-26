@@ -39,7 +39,7 @@ TEST(drawing_validation_and_paging) {
   json op={{"op","annotation"},{"anchor","point/0,0,0"},{"text","Test"},{"drawing",drawing()}};
   auto bad=op;bad["drawing"]["plane"]["y"]={1,0,0};CHECK_THROWS(doc.append(bad));
   bad=op;bad["drawing"]["strokes"][0]["width"]=5;CHECK_THROWS(doc.append(bad));
-  bad=op;bad["drawing"]["strokes"][0]["color"]="green";CHECK_THROWS(doc.append(bad));
+  bad=op;bad["drawing"]["strokes"][0]["color"]="purple";CHECK_THROWS(doc.append(bad));
   bad=op;bad["drawing"]["strokes"][0]["points"][0]={std::numeric_limits<double>::infinity(),0};CHECK_THROWS(doc.append(bad));
   bad=op;bad["drawing"]["strokes"][0]["points"]=json::array();for(int i=0;i<8193;++i)bad["drawing"]["strokes"][0]["points"].push_back({i,0});CHECK_THROWS(doc.append(bad));
   CHECK(doc.ops.empty());
@@ -52,6 +52,20 @@ TEST(drawing_validation_and_paging) {
   const auto schema=agent::live_schema("annotate");
   CHECK(schema["properties"]["drawing"]["properties"].contains("strokes"));
   CHECK(agent::live_mutation("delete_annotation"));
+}
+TEST(multiple_stroke_planes_and_new_picker_values) {
+  auto doc=Document::create();auto data=drawing();
+  data["strokes"][0]["color"]="green";data["strokes"][0]["width"]=1;
+  data["strokes"][1]["color"]="white";data["strokes"][1]["width"]=8;
+  data["strokes"][1]["plane"]={{"origin",{1.,2.,3.}},{"x",{1.,0.,0.}},{"y",{0.,0.,1.}}};
+  commands::run("annotate",{{"anchor","point/1,2,3"},{"text","Two planes"},{"drawing",data}},&doc);
+  CHECK_EQ(resolve(Document::parse(doc.serialize())).annotations.front().drawing,data);
+  auto invalid=data;invalid["strokes"][1]["plane"]["y"]={1,0,0};
+  CHECK_THROWS(commands::run("annotate",{{"anchor","point/1,2,3"},{"text","Invalid"},{"drawing",invalid}},&doc));
+  invalid=data;invalid["strokes"][1]["plane"]["origin"][0]=std::numeric_limits<double>::infinity();
+  CHECK_THROWS(commands::run("annotate",{{"anchor","point/1,2,3"},{"text","Invalid"},{"drawing",invalid}},&doc));
+  const auto schema=agent::live_schema("annotate")["properties"]["drawing"]["properties"]["strokes"]["items"];
+  CHECK(schema["properties"].contains("plane"));
 }
 TEST(existing_operation_text_is_preserved) {
   auto doc=Document::create();

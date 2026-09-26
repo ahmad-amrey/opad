@@ -8,6 +8,7 @@
 #include <QPointer>
 #include <functional>
 
+#include "AnnotationEditor.hpp"
 #include "AppDocument.hpp"
 #include "DesignController.hpp"
 #include "EmptyState.hpp"
@@ -74,6 +75,7 @@ class MainWindow : public QMainWindow {
   void runBench();
   bool benchTodo5();
   bool benchTodo9();
+  bool benchAnnotateLarge();  // OPAD_BENCH_ANNOTATE: the note / drawing editors on the loaded file's heaviest body
   bool benchLargeSketch();
   bool benchShortcuts();
 
@@ -101,7 +103,8 @@ class MainWindow : public QMainWindow {
   void sectionFromFace(const opad::Ref& face);  // "Pick face": a planar face sets the section plane
   void pinMeasurement();
   void clearMeasurement();
-  void addAnnotation();
+  void startAnnotation(bool drawing);  // Note (false) or Hand drawing (true); the same command again closes it
+  void syncAnnotationActions();
   void resolveCurrentAnnotation();
   void restyleAnnotation(const std::string& opId, const std::string& style);  // an edit op on the note
   void exportDialog(std::vector<std::string> ids = {});
@@ -156,7 +159,8 @@ class MainWindow : public QMainWindow {
   BrowserPanel* m_browser = nullptr;
   PropertiesPanel* m_props = nullptr;
   AnnotationsPanel* m_annotations = nullptr;
-  QPointer<HandDrawing> m_handDrawing;
+  QPointer<AnnotationEditor> m_annotationEditor;
+  ToolPanel* m_annotationPanel = nullptr;  // the editor's: type, pen, text
   NoteCards* m_noteCards = nullptr;  // one card beside every open note, over the viewport
   SectionPanel* m_section = nullptr;
   ToolPanel* m_propsPanel = nullptr;  // floating tool panels over the viewport (no fixed right dock)

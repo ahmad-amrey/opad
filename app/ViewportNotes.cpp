@@ -1,17 +1,32 @@
 // Notes in the viewport: the anchor dot of every open note and the pointer from it to the note's card (a widget
 // over the view, placed by NoteCards). Hidden notes (Show notes off) leave nothing in the view. The pointer is drawn in the view, in the camera plane at the anchor's depth,
-// so it follows the model through the depth buffer like the measurement graphics do.
+// so it follows the model through the depth buffer like the measurement graphics do. Also the annotation editor's
+// view parts: the target it pins a note or drawing to, and the drawing's strokes while they are drawn.
 #include "Viewport.hpp"
 
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepBndLib.hxx>
+#include <BRep_Tool.hxx>
 #include <Graphic3d_ArrayOfPoints.hxx>
 #include <Graphic3d_ArrayOfSegments.hxx>
+#include <Graphic3d_ArrayOfTriangles.hxx>
+#include <Graphic3d_AspectFillArea3d.hxx>
+#include <Graphic3d_AspectLine3d.hxx>
+#include <Graphic3d_AspectMarker3d.hxx>
 #include <Graphic3d_Group.hxx>
 #include <Graphic3d_SequenceOfHClipPlane.hxx>
+#include <Poly_Polygon3D.hxx>
+#include <Poly_PolygonOnTriangulation.hxx>
+#include <Poly_Triangulation.hxx>
 #include <Prs3d_LineAspect.hxx>
 #include <Prs3d_PointAspect.hxx>
+#include <Standard_Failure.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 
 #include "Jobs.hpp"
 #include "Notes.hpp"
+#include "opad/geometry.hpp"
 
 namespace {
 Quantity_Color occ(const QColor& c) { return Quantity_Color(c.redF(), c.greenF(), c.blueF(), Quantity_TOC_sRGB); }
@@ -25,13 +40,15 @@ class NoteGraphic : public AIS_InteractiveObject {
   std::vector<Dot> dots;
   struct Stroke {std::vector<gp_Pnt> points;QColor color;double width;};
   std::vector<Stroke> strokes;
-  void addDrawing(const opad::json& drawing) {
+  // scale: backing pixels per widget point, so a stroke is as wide on screen as its sample in the editor
+  void addDrawing(const opad::json& drawing, double scale) {
     if(drawing.is_null()) return;
-    const auto frame=opad::Frame::from_json(drawing.at("plane"));
     for(const auto& stroke:drawing.at("strokes")) {
-      const QColor color=stroke.at("color")=="red"?QColor("#ef4444"):QColor("#3b82f6");
+      const auto frame=opad::Frame::from_json(stroke.value("plane",drawing.at("plane")));
+      const auto name=stroke.at("color").get<std::string>();
+      const QColor color=notes::penColor(name);
       const auto& points=stroke.at("points");
-      Stroke line{{},color,stroke.at("width").get<double>()};line.points.reserve(points.size());
+      Stroke line{{},color,stroke.at("width").get<double>()*scale};line.points.reserve(points.size());
       for(const auto& point:points){const auto p=frame.to_world(point[0],point[1]);line.points.emplace_back(p[0],p[1],p[2]);}
       strokes.push_back(std::move(line));
     }
@@ -118,7 +135,7 @@ void Viewport::setNoteLeaders(const std::map<std::string, QPoint>& ends, bool sh
   Handle(NoteGraphic) g = new NoteGraphic();
   for (const auto& [id, note] : m_notes) {
     if(!m_noteTypeFilter.empty() && note.style!=m_noteTypeFilter) continue;
-    g->addDrawing(note.drawing);
+    g->addDrawing(note.drawing, m_cubeScale);
     const notes::Style& look = notes::style(note.style);
     const QColor color = m_tokens.*look.color;
     g->dots.push_back({note.at, color});
@@ -142,46 +159,237 @@ void Viewport::setNoteLeaders(const std::map<std::string, QPoint>& ends, bool sh
   redrawScene();
 }
 
-bool Viewport::annotationPlane(const QPointF& point,opad::Ref& anchor,opad::Frame& frame) {
-  if(!m_initialised || m_blocked) return false;
-  const auto camera=m_view->Camera();
-  const gp_Vec up(camera->OrthogonalizedUp()),right=gp_Vec(camera->Direction()).Crossed(up);
-  gp_Pnt at=camera->Center();
-  const auto pixel=devicePos(point);
-  const bool hit=navigationPoint(pixel,at);
-  frame.origin={at.X(),at.Y(),at.Z()};frame.x={right.X(),right.Y(),right.Z()};frame.y={up.X(),up.Y(),up.Z()};
-  anchor=opad::Ref();anchor.kind=opad::Ref::Kind::Point;
-  if(hit) {
-    // The independent navigation selector sees faces even with Body/Edge/Vertex filtering.
-    for(int i=1;i<=m_navSelector->NbPicked();++i) {
-      const auto owner=m_navSelector->Picked(i);auto node=m_navNodes.find(owner->Selectable().get());
-      if(node==m_navNodes.end() || !m_items.count(node->second) || !m_ctx->IsDisplayed(m_items.at(node->second).ais))continue;
-      anchor.body=node->second;anchor.kind=opad::Ref::Kind::Body;
-      opad::Ref picked;
-      if(referenceAt(point,picked) && picked.body==anchor.body) {
-        anchor=picked;
-        if(anchor.kind!=opad::Ref::Kind::Body && m_ctx->MainSelector()->NbPicked()>0) {
-          const auto p=m_ctx->MainSelector()->PickedPoint(1);frame.origin={p.X(),p.Y(),p.Z()};
-        }
-      }
-      break;
+// ---------------------------------------------------------------- annotation editor
+namespace {
+// The target of the note or drawing being edited, in the selection blue: a face or body tinted and ringed by a
+// dashed outline (over a faint band, so the gaps stay blue), an edge drawn thick, a vertex ringed. Built in the body's
+// own frame from the meshes it is displayed with, and in the Topmost layer so it shows through like a selection.
+class TargetHighlight : public AIS_InteractiveObject {
+  DEFINE_STANDARD_RTTI_INLINE(TargetHighlight, AIS_InteractiveObject)
+ public:
+  explicit TargetHighlight(const QColor& color) : m_color(occ(color)) {}
+  std::vector<Handle(Graphic3d_ArrayOfTriangles)> fills;
+  std::vector<gp_Pnt> outline, lines;  // segment end pairs
+  std::vector<gp_Pnt> rings;
+
+ protected:
+  void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs, Standard_Integer) override {
+    if (!fills.empty()) {
+      Handle(Graphic3d_AspectFillArea3d) fill = new Graphic3d_AspectFillArea3d();
+      fill->SetInteriorStyle(Aspect_IS_SOLID);
+      fill->SetInteriorColor(Quantity_ColorRGBA(m_color, 0.32f));
+      fill->SetAlphaMode(Graphic3d_AlphaMode_Blend);
+      fill->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);  // a flat tint: the arrays carry no normals
+      auto group = prs->NewGroup();
+      group->SetGroupPrimitivesAspect(fill);
+      for (const auto& a : fills) group->AddPrimitiveArray(a);
     }
-  } else {
-    opad::Ref picked;
-    if(referenceAt(point,picked) && m_ctx->MainSelector()->NbPicked()>0) {
-      anchor=picked;const auto p=m_ctx->MainSelector()->PickedPoint(1);frame.origin={p.X(),p.Y(),p.Z()};
-    } else {
-      double u,v;if(!planePoint(point,frame,u,v))return false;frame.origin=frame.to_world(u,v);
+    auto segments = [&](const std::vector<gp_Pnt>& ends, Aspect_TypeOfLine type, double width, const Quantity_Color& color) {
+      if (ends.size() < 2) return;
+      Handle(Graphic3d_AspectLine3d) aspect = new Graphic3d_AspectLine3d(color, type, width);
+      Handle(Graphic3d_ArrayOfSegments) array = new Graphic3d_ArrayOfSegments(int(ends.size()));
+      for (const auto& p : ends) array->AddVertex(p);
+      auto group = prs->NewGroup();
+      group->SetGroupPrimitivesAspect(aspect);
+      group->AddPrimitiveArray(array);
+    };
+    // Line colours are drawn opaque here: a white band under the dashes makes their gaps light (translucent blue
+    // underneath would fill them in the same blue and read as one solid line).
+    segments(outline, Aspect_TOL_SOLID, 3.5, Quantity_NOC_WHITE);
+    segments(outline, Aspect_TOL_DASH, 2.0, m_color);
+    segments(lines, Aspect_TOL_SOLID, 4.0, m_color);
+    if (!rings.empty()) {
+      Handle(Graphic3d_ArrayOfPoints) points = new Graphic3d_ArrayOfPoints(int(rings.size()));
+      for (const auto& p : rings) points->AddVertex(p);
+      auto ring = prs->NewGroup();
+      ring->SetGroupPrimitivesAspect(new Graphic3d_AspectMarker3d(Aspect_TOM_O, m_color, 7.0));
+      ring->AddPrimitiveArray(points);
+      auto centre = prs->NewGroup();
+      centre->SetGroupPrimitivesAspect(new Graphic3d_AspectMarker3d(Aspect_TOM_BALL, m_color, 3.0));
+      centre->AddPrimitiveArray(points);
     }
   }
-  anchor.point=frame.origin;return true;
+  void ComputeSelection(const Handle(SelectMgr_Selection)&, Standard_Integer) override {}
+
+ private:
+  Quantity_Color m_color;
+};
+
+// An edge as segment end pairs: the polyline it is drawn with, else a sampling of its curve.
+void edgeSegments(const TopoDS_Edge& edge, std::vector<gp_Pnt>& ends) {
+  std::vector<gp_Pnt> line;
+  TopLoc_Location loc;
+  Handle(Poly_PolygonOnTriangulation) polygon;
+  Handle(Poly_Triangulation) mesh;
+  BRep_Tool::PolygonOnTriangulation(edge, polygon, mesh, loc);
+  if (!polygon.IsNull() && !mesh.IsNull()) {
+    for (int n = 1; n <= polygon->NbNodes(); ++n) line.push_back(mesh->Node(polygon->Node(n)).Transformed(loc.Transformation()));
+  } else if (Handle(Poly_Polygon3D) p3 = BRep_Tool::Polygon3D(edge, loc); !p3.IsNull()) {
+    for (int n = 1; n <= p3->NbNodes(); ++n) line.push_back(p3->Nodes().Value(n).Transformed(loc.Transformation()));
+  } else if (!BRep_Tool::Degenerated(edge)) {
+    BRepAdaptor_Curve curve(edge);
+    constexpr int kSamples = 32;
+    for (int n = 0; n <= kSamples; ++n) line.push_back(curve.Value(curve.FirstParameter() + (curve.LastParameter() - curve.FirstParameter()) * n / kSamples));
+  }
+  for (size_t n = 1; n < line.size(); ++n) {
+    ends.push_back(line[n - 1]);
+    ends.push_back(line[n]);
+  }
+}
+
+void boxSegments(const Bnd_Box& box, std::vector<gp_Pnt>& ends) {
+  if (box.IsVoid()) return;
+  const gp_Pnt lo = box.CornerMin(), hi = box.CornerMax();
+  auto corner = [&](int i) { return gp_Pnt(i & 1 ? hi.X() : lo.X(), i & 2 ? hi.Y() : lo.Y(), i & 4 ? hi.Z() : lo.Z()); };
+  for (int i = 0; i < 8; ++i)
+    for (int axis : {1, 2, 4})
+      if (!(i & axis)) {
+        ends.push_back(corner(i));
+        ends.push_back(corner(i | axis));
+      }
+}
+}  // namespace
+
+bool Viewport::annotationPick(const QPointF& point, opad::Ref& target, bool& hit) {
+  hit = false;
+  if (!m_initialised || m_blocked || !referenceAt(point, target) || !m_items.count(target.body)) return false;
+  const auto& selector = m_ctx->MainSelector();
+  const Handle(SelectMgr_EntityOwner) owner = m_ctx->DetectedOwner();
+  for (int i = 1; i <= selector->NbPicked(); ++i)
+    if (selector->Picked(i) == owner) {  // where the mouse met the target: every stroke's plane passes through it
+      const gp_Pnt p = selector->PickedPoint(i);
+      target.point = {p.X(), p.Y(), p.Z()};
+      hit = true;
+      break;
+    }
+  return true;
+}
+
+// Cheap on purpose (it runs in a click): one sub-shape's mesh, or the arrays the body is already drawn with.
+bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre) {
+  clearAnnotationTarget();
+  if (!m_initialised) return false;
+  const auto item = m_items.find(target.body);
+  if (item == m_items.end() || !m_ctx->IsDisplayed(item->second.ais)) return false;
+  const Handle(AIS_Shape)& ais = item->second.ais;
+  const bool rigid = item->second.world.is_identity() || opad::mat_is_rigid(item->second.world);  // see displayBody
+  Handle(TargetHighlight) mark = new TargetHighlight(m_tokens.sel);
+  Bnd_Box box;  // in the body's own frame, like the arrays
+  try {
+    if (target.kind == opad::Ref::Kind::Body) {
+      std::shared_ptr<BodyPrs> prs;
+      {
+        std::lock_guard<std::mutex> lock(m_meshMu);
+        if (auto p = m_prs.find(item->second.key); p != m_prs.end()) prs = p->second;
+      }
+      if (rigid && prs && !prs->triangles.IsNull()) {
+        mark->fills.push_back(prs->triangles);
+      } else if (rigid) {  // drawn without the worker's arrays: build them there too, the tint follows
+        auto shape = std::make_shared<TopoDS_Shape>(ais->Shape());
+        auto built = std::make_shared<std::shared_ptr<BodyPrs>>();
+        m_targetJob = m_jobs->async(tr("Highlighting %1").arg(m_doc->nodeName(target.body)), [shape, built](Progress) {
+          Bnd_Box bounds;
+          BRepBndLib::Add(*shape, bounds, Standard_True);
+          *built = BodyPrs::build(*shape, bounds);
+        }, [this, mark, built](bool ok, const QString&) {
+          if (m_annotationTarget == mark) m_targetJob = nullptr;
+          if (!ok || m_annotationTarget != mark || !*built || (*built)->triangles.IsNull()) return;
+          mark->fills.push_back((*built)->triangles);
+          m_ctx->Redisplay(mark, Standard_False);
+          redrawScene();
+        });
+      }
+      box = rigid ? opad::body_bbox(m_doc->doc, item->second.key) : opad::node_world_bbox(m_doc->doc, m_doc->scene, target.body);
+      boxSegments(box, mark->outline);
+    } else {
+      const TopoDS_Shape sub = opad::subshape(ais->Shape(), target.kind, target.index);
+      if (sub.IsNull()) return false;
+      BRepBndLib::Add(sub, box, Standard_True);
+      if (sub.ShapeType() == TopAbs_FACE) {
+        TopLoc_Location loc;
+        const Handle(Poly_Triangulation) mesh = BRep_Tool::Triangulation(TopoDS::Face(sub), loc);
+        if (!mesh.IsNull() && mesh->NbTriangles() > 0) {
+          Handle(Graphic3d_ArrayOfTriangles) fill = new Graphic3d_ArrayOfTriangles(mesh->NbNodes(), 3 * mesh->NbTriangles());
+          for (int n = 1; n <= mesh->NbNodes(); ++n) fill->AddVertex(mesh->Node(n).Transformed(loc.Transformation()));
+          for (int k = 1; k <= mesh->NbTriangles(); ++k) {
+            int a, b, c;
+            mesh->Triangle(k).Get(a, b, c);
+            fill->AddEdges(a, b, c);
+          }
+          mark->fills.push_back(fill);
+        }
+        for (TopExp_Explorer e(sub, TopAbs_EDGE); e.More(); e.Next()) edgeSegments(TopoDS::Edge(e.Current()), mark->outline);
+      } else if (sub.ShapeType() == TopAbs_EDGE) {
+        edgeSegments(TopoDS::Edge(sub), mark->lines);
+      } else if (sub.ShapeType() == TopAbs_VERTEX) {
+        mark->rings.push_back(BRep_Tool::Pnt(TopoDS::Vertex(sub)));
+      } else {
+        boxSegments(box, mark->outline);
+      }
+    }
+  } catch (const Standard_Failure&) {
+    return false;
+  } catch (const std::exception&) {  // the ordinal is gone (the body changed)
+    return false;
+  }
+  const gp_Trsf trsf = ais->Transformation();  // identity for a non-rigid body: its shape is already placed
+  mark->SetLocalTransformation(trsf);
+  mark->SetZLayer(Graphic3d_ZLayerId_Topmost);
+  mark->SetInfiniteState(Standard_True);  // never part of Fit All
+  mark->SetClipPlanes(ais->ClipPlanes());  // a section cuts it like the body
+  m_ctx->Display(mark, 0, -1, Standard_False);
+  if (trace::enabled()) trace::log(QStringLiteral("annotation target %1: %2 fills, %3 outline, %4 lines, rigid %5").arg(QString::fromStdString(target.str())).arg(mark->fills.size()).arg(mark->outline.size()).arg(mark->lines.size()).arg(rigid));
+  m_ctx->ClearDetected(Standard_False);  // the pick's hover highlight
+  m_annotationTarget = mark;
+  if (!box.IsVoid()) {
+    const gp_Pnt lo = box.CornerMin(), hi = box.CornerMax();
+    for (int i = 0; i < 8; ++i) {
+      const gp_Pnt p = gp_Pnt(i & 1 ? hi.X() : lo.X(), i & 2 ? hi.Y() : lo.Y(), i & 4 ? hi.Z() : lo.Z()).Transformed(trsf);
+      m_annotationCorners.push_back({p.X(), p.Y(), p.Z()});
+    }
+    if (centre) {
+      const gp_Pnt c = gp_Pnt((lo.XYZ() + hi.XYZ()) / 2).Transformed(trsf);
+      *centre = {c.X(), c.Y(), c.Z()};
+    }
+  }
+  redrawScene();
+  return true;
+}
+
+void Viewport::clearAnnotationTarget() {
+  m_annotationCorners.clear();
+  if (Job* job = std::exchange(m_targetJob, nullptr)) job->cancel();
+  if (!m_initialised || m_annotationTarget.IsNull()) return;
+  m_ctx->Remove(m_annotationTarget, Standard_False);
+  m_annotationTarget.Nullify();
+  redrawScene();
+}
+
+QRect Viewport::annotationTargetRect() const {
+  QRect rect;
+  for (const auto& corner : m_annotationCorners) {
+    const QRect at(widgetPoint(corner), QSize(1, 1));
+    rect = rect.isNull() ? at : rect.united(at);
+  }
+  return rect;
+}
+
+opad::Frame Viewport::annotationCameraPlane(const opad::Vec3& origin) const {
+  opad::Frame frame;
+  frame.origin = origin;
+  if (!m_initialised) return frame;
+  const gp_Vec up(m_view->Camera()->OrthogonalizedUp());
+  const gp_Vec right = gp_Vec(m_view->Camera()->Direction()).Crossed(up);
+  frame.x = {right.X(), right.Y(), right.Z()};
+  frame.y = {up.X(), up.Y(), up.Z()};
+  return frame;
 }
 
 void Viewport::previewAnnotationDrawing(const opad::json& drawing) {
   if(!m_initialised)return;
   if(!m_drawingPreview.IsNull()){m_ctx->Remove(m_drawingPreview,false);m_drawingPreview.Nullify();}
   if(!drawing.is_null()) {
-    Handle(NoteGraphic) graphic=new NoteGraphic();graphic->addDrawing(drawing);graphic->SetInfiniteState(true);
+    Handle(NoteGraphic) graphic=new NoteGraphic();graphic->addDrawing(drawing,m_cubeScale);graphic->SetInfiniteState(true);
     graphic->SetZLayer(Graphic3d_ZLayerId_TopOSD);m_ctx->Display(graphic,0,-1,false);m_drawingPreview=graphic;
   }
   redrawScene();

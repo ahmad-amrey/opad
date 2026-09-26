@@ -1796,6 +1796,16 @@ void Viewport::resizeEvent(QResizeEvent*) {
   requestRedraw();
 }
 
+// Same test as a press below: the hover is refreshed near the cube only, so a click on the model costs no extra pick.
+bool Viewport::cubeAt(const QPointF& point) {
+  if (!m_initialised || m_blocked || m_twoDimensional) return false;
+  const QPointF cubeCenter(width() - kCubeOffsetX, kCubeOffsetY);
+  if (qAbs(point.x() - cubeCenter.x()) > 96 || qAbs(point.y() - cubeCenter.y()) > 96) return false;
+  const Graphic3d_Vec2i at = devicePos(point);
+  m_ctx->MoveTo(at.x(), at.y(), m_view, Standard_False);
+  return m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube;
+}
+
 void Viewport::mousePressEvent(QMouseEvent* e) {
   if (m_blocked) return;
   finishTrackpadScroll();

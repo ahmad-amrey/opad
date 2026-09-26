@@ -212,7 +212,7 @@ class ToolPanelGrip : public QWidget {
 };
 
 ToolPanel::ToolPanel(const QString& id, const QString& icon, QColor Tokens::* tint, const QString& title, QWidget* content, int preferredHeight, QWidget* owner)
-    : QWidget(owner, Qt::Tool | Qt::FramelessWindowHint), m_id(id), m_iconName(icon), m_tint(tint) {
+    : QWidget(owner, Qt::Tool | Qt::FramelessWindowHint), m_id(id), m_iconName(icon), m_tint(tint), m_content(content) {
   setAttribute(Qt::WA_TranslucentBackground);
   setAttribute(Qt::WA_ShowWithoutActivating);
   setWindowTitle(title);
@@ -296,6 +296,18 @@ void ToolPanel::setHeader(const QString& icon, const QString& title) {
 void ToolPanel::setContext(const QString& text) {
   m_context->setText(text);
   m_context->setToolTip(text);
+}
+
+void ToolPanel::setPinnable(bool on) {
+  m_pin->setVisible(on);
+  if (!on) m_pin->setChecked(false);
+}
+
+void ToolPanel::setDefaultHeight(int contentHeight) {
+  const int height = contentHeight + 35 + 2 * kMargin;  // header 32, its line 1, border 2
+  if (m_defaultSize.height() == height) return;
+  m_defaultSize.setHeight(height);
+  if (isVisible() && !m_userPlaced && !m_anchor.isEmpty()) anchorTo(m_anchor);
 }
 
 void ToolPanel::anchorTo(const QRect& viewportGlobal) {

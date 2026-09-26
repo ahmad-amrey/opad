@@ -181,8 +181,15 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool noteAnchor(const std::string& opId, QPoint& out) const;  // false: unknown, or behind the eye
   void setNoteLeaders(const std::map<std::string, QPoint>& ends, bool shown);  // shown=false: notes hidden, nothing drawn
   void setNoteTypeFilter(const std::string& type) { m_noteTypeFilter=type; }
-  bool annotationPlane(const QPointF& point, opad::Ref& anchor, opad::Frame& frame);
+  // The note / hand drawing editor (AnnotationEditor.cpp). Its target is drawn in the selection blue, tinted with a
+  // dashed outline, on top of everything; the target's widget rectangle places the editor's badge.
+  bool annotationPick(const QPointF& point, opad::Ref& target, bool& hit);  // body/face/edge/vertex; hit: point = where
+  bool showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre = nullptr);  // false: not in the view
+  void clearAnnotationTarget();
+  QRect annotationTargetRect() const;  // null while nothing is shown
+  opad::Frame annotationCameraPlane(const opad::Vec3& origin) const;  // through origin, facing the camera
   void previewAnnotationDrawing(const opad::json& drawing);
+  bool cubeAt(const QPointF& point);  // the view cube is under the mouse: a left press there belongs to the cube
   // Objects owned by an editor (the sketch being drawn, its dimensions): never pickable, drawn on top.
   void showOverlay(const Handle(AIS_InteractiveObject)& obj);
   void updateOverlay(const Handle(AIS_InteractiveObject)& obj);
@@ -358,6 +365,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   struct NoteMark { gp_Pnt at; std::string style; opad::json drawing; };
   std::string m_noteTypeFilter;
   Handle(AIS_InteractiveObject) m_drawingPreview;
+  Handle(AIS_InteractiveObject) m_annotationTarget;
+  std::vector<opad::Vec3> m_annotationCorners;  // the target's box, world
+  Job* m_targetJob = nullptr;                   // a body target's tint, built on a worker when the body has no arrays
   std::map<std::string, NoteMark> m_notes;  // open notes by op id
   Graphic3d_WorldViewProjState m_noteCamera;
   QSize m_noteSize;

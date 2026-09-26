@@ -51,6 +51,11 @@ class ToolPanel : public QWidget {
   void setContext(const QString& text);
   void setEscapeHandler(std::function<void()> handler) { m_escapeHandler=std::move(handler); }
   void setHeader(const QString& icon, const QString& title);  // one panel serves every guided tool
+  QWidget* content() const { return m_content; }
+  void setPinnable(bool on);  // an editor's panel has no pin: it lives exactly as long as the editor
+  // The default height for this content (header excluded). A panel the user has not sized follows it, never taller
+  // than the viewport below its top, so it stays under the view cube.
+  void setDefaultHeight(int contentHeight);
   bool pinned() const { return m_pin->isChecked(); }
   bool userPlaced() const { return m_userPlaced; }
   void setDefaultTop(int top) { if (!m_userPlaced) m_offset.setY(top); }
@@ -80,6 +85,7 @@ class ToolPanel : public QWidget {
   QString m_id, m_iconName;
   QColor Tokens::* m_tint;  // header icon colour: sel for inspect tools, amber for annotations, fg2 for selection
   QLabel *m_icon, *m_name, *m_context;
+  QWidget* m_content;
   QToolButton *m_pin, *m_close;
   QWidget* m_grip;
   QRect m_anchor;                    // the viewport, global

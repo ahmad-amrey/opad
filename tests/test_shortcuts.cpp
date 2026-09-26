@@ -53,6 +53,14 @@ TEST(migration_and_explicit_empty_bindings) {
   s.setValue("shortcuts/view.ortho","O");shortcuts::migrate(s);CHECK(s.value("shortcuts/view.ortho").toString()=="O");
   s.clear();
 }
+TEST(annotation_shortcut_migration) {
+  QSettings s;s.clear();s.setValue("shortcuts/viewDefaultsVersion",1);
+  s.setValue("shortcuts/annotate.show","Shift+N");s.setValue("shortcuts/annotate.draw","");
+  shortcuts::migrate(s);QAction draw,show;init(draw,"annotate.draw","Shift+N");init(show,"annotate.show","");
+  CHECK(draw.shortcut()==QKeySequence("Shift+N"));CHECK(show.shortcut().isEmpty());
+  s.clear();s.setValue("shortcuts/annotate.show","Alt+N");s.setValue("shortcuts/annotate.draw","Ctrl+Alt+N");
+  shortcuts::migrate(s);CHECK(s.value("shortcuts/annotate.show").toString()=="Alt+N");CHECK(s.value("shortcuts/annotate.draw").toString()=="Ctrl+Alt+N");s.clear();
+}
 TEST(editor_search_swap_reassign_cancel_and_persistence) {
   QSettings settings;settings.clear();QAction home,grid,sketch,measure;
   init(home,"view.home","H");init(grid,"view.grid","G");init(sketch,"sketch.dimension","D");init(measure,"inspect.distance","D");

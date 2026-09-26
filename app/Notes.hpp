@@ -34,6 +34,12 @@ struct Style {
 const std::vector<Style>& styles();
 const Style& style(const std::string& id);  // an unknown id is "note"
 void makeDraggable(QWidget* card, QWidget* handle, std::function<void()> moved = {});
+// Hand drawing pens: a stroke's "color" and "width" values, in the editor's picker order (keys 1-4, [ ]). The colours
+// do not follow the theme: a drawing sits on the model, which looks the same in both.
+struct Pen { const char* id; const char* label; QColor color; };  // label goes through i18n::t
+const std::vector<Pen>& pens();
+QColor penColor(const std::string& id);  // unknown: blue
+const std::vector<int>& penWidths();     // screen pixels
 }  // namespace notes
 
 struct NoteInfo {
@@ -100,34 +106,4 @@ class NoteDialog : public QDialog {
   QPlainTextEdit* m_text;
   std::vector<QToolButton*> m_tags;
   std::string m_style;
-};
-
-// Session-only editor. A completed drawing is one annotation/Undo step.
-class HandDrawing : public QObject {
-  Q_OBJECT
- public:
-  HandDrawing(AppDocument* doc, Viewport* viewport, QObject* parent);
-  ~HandDrawing() override;
-  void cancel();
- protected:
-  bool eventFilter(QObject* object,QEvent* event) override;
- private:
-  void addPoint(const QPointF& point);
-  void finish();
-  void detach();
-  QPointer<AppDocument> m_doc;
-  QPointer<Viewport> m_viewport;
-  QPointer<QFrame> m_panel;
-  QPlainTextEdit* m_text;
-  class QComboBox* m_type;
-  class QComboBox* m_color;
-  class QComboBox* m_width;
-  class QLabel* m_hint;
-  opad::Frame m_frame;
-  opad::Ref m_anchor;
-  opad::json m_drawing;
-  bool m_active=true,m_dragging=false;
-  int m_previousFilter=0;
-  QPointF m_lastPoint;
-  size_t m_points=0;
 };

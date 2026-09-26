@@ -71,7 +71,7 @@ with tempfile.TemporaryDirectory(prefix="opad-mcp-") as folder:
         assert call("context", doc=doc)["ai_agent_notes"] == 1
         assert call("context", doc=doc, section="ai_agent_notes", limit=1)["items"][0]["id"] == note
         assert call("annotations", doc=doc, id=note, style="ai_agent")["annotations"][0]["drawing"] == drawing
-        bad_drawing = dict(drawing, strokes=[{"color": "green", "width": 4, "points": [[0, 0], [1, 1]]}])
+        bad_drawing = dict(drawing, strokes=[{"color": "purple", "width": 4, "points": [[0, 0], [1, 1]]}])
         failed = request("tools/call", {"name": "annotate", "arguments": {"doc": doc, "anchor": ids[0], "text": "bad", "drawing": bad_drawing}})
         assert failed["isError"]
         call("delete_annotation", doc=doc, target=note)

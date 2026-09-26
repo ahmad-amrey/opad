@@ -13,6 +13,7 @@ def main():
     parser.add_argument("app", type=Path)
     parser.add_argument("cli", type=Path)
     parser.add_argument("--output", type=Path, default=Path("build/todo9"))
+    parser.add_argument("--ui-only", action="store_true", help="Run the isolated desktop checks without connecting an MCP client")
     args = parser.parse_args()
     app, cli, output = args.app.resolve(), args.cli.resolve(), args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -36,6 +37,9 @@ def main():
         assert result.returncode == 0 and "TODO9" in log and "PASS" in log, (result.returncode, log[-6000:])
         print("Mouse drawing, card dragging, filters, delete, undo/redo, cancel, save/reopen: PASS", flush=True)
 
+        if args.ui_only:
+            return
+
         desktop = Desktop(app, cli, root / "live", document=output / "notes.opad")
         client = None
         try:
@@ -46,7 +50,7 @@ def main():
             assert summary["ai_agent_notes"] == 1, summary
             note = client.call("context", section="ai_agent_notes")["result"]["items"][0]
             detail = client.call("annotations", id=note["id"])["result"]["annotations"][0]
-            assert detail["style"] == "ai_agent" and len(detail["drawing"]["strokes"]) == 2
+            assert detail["style"] == "ai_agent" and len(detail["drawing"]["strokes"]) == 4
             assert "/face/" in detail["anchor"]
             desktop.action("annotation_editor")
             assert client.state()["editing"]["edit_session"] == "annotation"

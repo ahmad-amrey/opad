@@ -175,7 +175,29 @@ QString stylesheet(const Tokens& t) {
                "QLabel#badge { background: %7; border-radius: 8px; padding: 1px 5px; font-size: 11px; font-family: '%8'; }\n").arg(fg2, fg3, bg2, line, fg, sel, bg4, monoF);
   s += QString("QToolButton#vpButton { background: %1; border: 1px solid %2; border-radius: 4px; padding: 0; }\n"
                "QToolButton#vpButton:hover { background: %3; }\n").arg(bg2, line, bg3);
-  s += QString("QFrame#card, QFrame#handDrawingPanel { background: %1; border: 1px solid %2; border-radius: 3px; }\n"
+  // The note / hand drawing editor (AnnotationEditor.cpp): pickers as chips, mono section heads, keys in the buttons.
+  s += QString("QToolButton[annotationChoice=\"true\"] { background: %1; border: 1px solid %2; border-radius: 3px; padding: 0 6px; color: %3; }\n"
+               "QToolButton[annotationChoice=\"true\"]:hover { background: %4; }\n"
+               "QToolButton[annotationChoice=\"true\"]:checked { background: %5; border-color: %6; }\n"
+               "QLabel[annotationRole=\"section\"] { color: %7; font-family: '%8'; font-size: 10px; letter-spacing: 0.06em; }\n"
+               "QLabel[annotationRole=\"value\"], QLabel[annotationRole=\"key\"] { color: %7; font-family: '%8'; font-size: 10px; }\n"
+               "QLabel[annotationRole=\"index\"] { color: %7; font-family: '%8'; font-size: 11px; }\n"
+               "QFrame[annotationRole=\"rule\"] { background: %2; border: none; }\n"
+               "QToolButton[annotationRole=\"flat\"] { border: none; background: transparent; padding: 0; border-radius: 3px; }\n"
+               "QToolButton[annotationRole=\"flat\"]:hover { background: %4; }\n").arg(bg2, line, fg, bg3, selbg, sel, fg3, monoF);
+  s += QString("QPlainTextEdit[annotationRole=\"text\"] { background: %1; border: 1px solid %2; border-radius: 3px; padding: 2px 4px; color: %3; }\n"
+               "QPlainTextEdit[annotationRole=\"text\"]:focus { border-color: %4; }\n"
+               "QPushButton[annotationRole=\"primary\"] { background: %4; border-color: %4; }\n"
+               "QPushButton[annotationRole=\"primary\"]:hover { background: %6; }\n"
+               "QPushButton[annotationRole=\"primary\"]:disabled { background: %7; border-color: %7; }\n"
+               "QPushButton[annotationRole=\"primary\"] QLabel { color: %5; font-weight: 500; }\n"
+               "QPushButton[annotationRole=\"primary\"] QLabel[annotationRole=\"key\"], QPushButton[annotationRole=\"primary\"] QLabel:disabled { color: %8; font-weight: 400; }\n"
+               "QPushButton QLabel:disabled { color: %9; }\n")
+           .arg(bg, line, fg, sel, onsel, css(t.sel.lighter(115)), css(QColor(t.sel.red(), t.sel.green(), t.sel.blue(), 110)),
+                css(QColor(255, 255, 255, 170)), fg3);
+  s += QString("QFrame[annotationRole=\"badge\"] { background: %1; border: none; }\n"
+               "QFrame[annotationRole=\"badge\"] QLabel { color: %2; background: transparent; font-size: 12px; }\n").arg(sel, onsel);
+  s += QString("QFrame#card { background: %1; border: 1px solid %2; border-radius: 3px; }\n"
                "QFrame#card[state=\"open\"] { border-color: %3; }\n"
                "QFrame#card[state=\"unresolved\"] { border: 1px dashed %4; }\n"
                "QFrame#card[state=\"resolved\"] { background: transparent; border-color: %2; }\n"

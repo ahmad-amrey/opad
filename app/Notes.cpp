@@ -52,7 +52,7 @@ const std::vector<Style>& styles() {
                                          {"warning", QT_TRANSLATE_NOOP("notes", "Warning"), "warning", &Tokens::amber, Qt::DashLine, 1.5},
                                          {"issue", QT_TRANSLATE_NOOP("notes", "Issue"), "issue", &Tokens::red, Qt::SolidLine, 2.5},
                                          {"note", QT_TRANSLATE_NOOP("notes", "Note"), "annotate", &Tokens::sel, Qt::DotLine, 1.5},
-                                         {"ai_agent", QT_TRANSLATE_NOOP("notes", "AI agent notes"), "annotate", &Tokens::amber, Qt::SolidLine, 2.5}};
+                                         {"ai_agent", QT_TRANSLATE_NOOP("notes", "AI agent notes"), "annotate", &Tokens::hov, Qt::SolidLine, 2.5}};
   return all;
 }
 
@@ -60,6 +60,25 @@ const Style& style(const std::string& id) {
   for (const auto& s : styles())
     if (id == s.id) return s;
   return styles()[3];
+}
+
+const std::vector<Pen>& pens() {
+  static const std::vector<Pen> all = {{"red", QT_TRANSLATE_NOOP("notes", "Red"), QColor("#ef5350")},
+                                       {"green", QT_TRANSLATE_NOOP("notes", "Green"), QColor("#4cc978")},
+                                       {"blue", QT_TRANSLATE_NOOP("notes", "Blue"), QColor("#4d91ef")},
+                                       {"white", QT_TRANSLATE_NOOP("notes", "White"), QColor("#f4f5f7")}};
+  return all;
+}
+
+QColor penColor(const std::string& id) {
+  for (const auto& p : pens())
+    if (id == p.id) return p.color;
+  return pens()[2].color;
+}
+
+const std::vector<int>& penWidths() {
+  static const std::vector<int> all = {1, 2, 4, 8};
+  return all;
 }
 }  // namespace notes
 
@@ -329,80 +348,4 @@ void NoteDialog::pick(const std::string& style) {
   m_style = notes::style(style).id;
   for (size_t i = 0; i < m_tags.size(); ++i) m_tags[i]->setChecked(m_style == notes::styles()[i].id);
   QSettings().setValue("notes/style", QString::fromStdString(m_style));
-}
-
-HandDrawing::HandDrawing(AppDocument* doc,Viewport* viewport,QObject* parent)
-    :QObject(parent),m_doc(doc),m_viewport(viewport),m_panel(new QFrame(viewport)) {
-  m_doc->annotationEditing=true;
-  m_previousFilter=int(viewport->selectionFilter());
-  if(viewport->selectionFilter()==Viewport::SelFilter::Body) {
-    const auto bodies=doc->scene.all_bodies();
-    const bool onlyDrawings=!bodies.empty() && std::all_of(bodies.begin(),bodies.end(),[doc](const auto& id){return doc->scene.node(id)->representation=="drawing2d";});
-    viewport->setSelectionFilter(onlyDrawings?Viewport::SelFilter::Edge:Viewport::SelFilter::Face);
-  }
-  m_panel->setObjectName("handDrawingPanel");m_panel->setAttribute(Qt::WA_NativeWindow);m_panel->setFixedWidth(320);
-  auto* layout=new QVBoxLayout(m_panel);
-  auto* title=new QLabel(tr("Hand drawing"),m_panel);layout->addWidget(title);notes::makeDraggable(m_panel,title);
-  m_hint=new QLabel(tr("Drag on the model to start. The first point fixes a plane facing the camera. Esc cancels."),m_panel);m_hint->setWordWrap(true);layout->addWidget(m_hint);
-  m_type=new QComboBox(m_panel);for(const auto& s:notes::styles())m_type->addItem(i18n::t(s.label),QString::fromLatin1(s.id));m_type->setCurrentIndex(3);layout->addWidget(m_type);
-  auto* row=new QHBoxLayout();m_color=new QComboBox(m_panel);m_color->addItem(tr("Red"),"red");m_color->addItem(tr("Blue"),"blue");row->addWidget(m_color);
-  m_width=new QComboBox(m_panel);for(int w:{2,4,6})m_width->addItem(tr("%1 px").arg(w),w);row->addWidget(m_width);layout->addLayout(row);
-  m_text=new QPlainTextEdit(m_panel);m_text->setPlaceholderText(tr("Describe the change or request..."));m_text->setMaximumHeight(90);layout->addWidget(m_text);
-  auto* undo=new QPushButton(tr("Undo stroke"),m_panel);layout->addWidget(undo);
-  connect(undo,&QPushButton::clicked,this,[this]{
-    if(m_drawing.is_null() || m_drawing["strokes"].empty())return;
-    m_points-=m_drawing["strokes"].back()["points"].size();m_drawing["strokes"].erase(m_drawing["strokes"].size()-1);m_dragging=false;
-    m_viewport->previewAnnotationDrawing(m_drawing);
-  });
-  auto* buttons=new QDialogButtonBox(QDialogButtonBox::Save|QDialogButtonBox::Cancel,m_panel);layout->addWidget(buttons);
-  connect(buttons,&QDialogButtonBox::accepted,this,&HandDrawing::finish);connect(buttons,&QDialogButtonBox::rejected,this,&HandDrawing::cancel);
-  connect(doc,&AppDocument::changed,this,&HandDrawing::cancel);connect(doc,&AppDocument::pathChanged,this,&HandDrawing::cancel);
-  connect(doc,&AppDocument::aboutToReplace,this,&HandDrawing::cancel);
-  viewport->installEventFilter(this);viewport->setCursor(Qt::CrossCursor);
-  m_panel->adjustSize();m_panel->move(std::max(8,viewport->width()-m_panel->width()-20),190);m_panel->show();m_panel->raise();viewport->setFocus();
-}
-HandDrawing::~HandDrawing(){detach();delete m_panel;}
-void HandDrawing::detach(){if(!m_active)return;m_active=false;if(m_doc)m_doc->annotationEditing=false;if(m_viewport){m_viewport->removeEventFilter(this);m_viewport->previewAnnotationDrawing(nullptr);m_viewport->unsetCursor();m_viewport->setSelectionFilter(Viewport::SelFilter(m_previousFilter));}if(m_panel)m_panel->hide();}
-void HandDrawing::cancel(){if(!m_active)return;detach();deleteLater();}
-void HandDrawing::addPoint(const QPointF& point) {
-  if(m_points>=8192){m_hint->setText(tr("Point limit reached. Save this drawing and start another."));return;}
-  double u,v;if(!m_viewport->planePoint(point,m_frame,u,v))return;
-  auto& points=m_drawing["strokes"].back()["points"];
-  if(!points.empty() && (point-m_lastPoint).manhattanLength()<2)return;
-  points.push_back({u,v});++m_points;m_lastPoint=point;m_viewport->previewAnnotationDrawing(m_drawing);
-}
-bool HandDrawing::eventFilter(QObject* object,QEvent* event) {
-  if(!m_active || object!=m_viewport)return false;
-  if(event->type()==QEvent::ShortcutOverride && static_cast<QKeyEvent*>(event)->key()==Qt::Key_Escape){event->accept();return true;}
-  if(event->type()==QEvent::KeyPress && static_cast<QKeyEvent*>(event)->key()==Qt::Key_Escape){cancel();return true;}
-  if(event->type()==QEvent::MouseButtonPress) {
-    auto* e=static_cast<QMouseEvent*>(event);if(e->button()!=Qt::LeftButton)return m_dragging;
-    if(!m_drawing.is_null() && m_drawing["strokes"].size()>=128){m_hint->setText(tr("Stroke limit reached. Save this drawing and start another."));return true;}
-    if(m_drawing.is_null()) {
-      if(!m_viewport->annotationPlane(e->position(),m_anchor,m_frame))return true;
-      m_drawing={{"plane",m_frame.to_json()},{"strokes",opad::json::array()}};
-      m_hint->setText(tr("Plane fixed. Add strokes, choose a type, then Save. Middle/right mouse navigates between strokes."));
-    }
-    m_drawing["strokes"].push_back({{"color",m_color->currentData().toString().toStdString()},{"width",m_width->currentData().toInt()},{"points",opad::json::array()}});
-    m_dragging=true;m_viewport->setFocus();addPoint(e->position());return true;
-  }
-  if(event->type()==QEvent::MouseMove && m_dragging){addPoint(static_cast<QMouseEvent*>(event)->position());return true;}
-  if(event->type()==QEvent::Wheel && m_dragging)return true;
-  if(event->type()==QEvent::MouseButtonRelease && m_dragging) {
-    auto* e=static_cast<QMouseEvent*>(event);if(e->button()!=Qt::LeftButton)return true;
-    addPoint(e->position());m_dragging=false;
-    if(m_drawing["strokes"].back()["points"].size()<2){m_points-=m_drawing["strokes"].back()["points"].size();m_drawing["strokes"].erase(m_drawing["strokes"].size()-1);m_viewport->previewAnnotationDrawing(m_drawing);}
-    return true;
-  }
-  return false;
-}
-void HandDrawing::finish() {
-  if(m_drawing.is_null() || m_drawing["strokes"].empty()){m_hint->setText(tr("Draw at least one stroke before saving."));return;}
-  const auto text=m_text->toPlainText().trimmed();
-  const auto type=m_type->currentData().toString().toStdString();
-  if(type=="ai_agent" && text.isEmpty()){m_hint->setText(tr("Describe the request for the AI agent before saving."));return;}
-  try {
-    m_doc->run("annotate",{{"anchor",m_anchor.to_json()},{"text",text.isEmpty()?tr("Hand drawing").toStdString():text.toStdString()},{"style",type},{"drawing",m_drawing}});
-    cancel();
-  } catch(const std::exception& e){m_hint->setText(QString::fromUtf8(e.what()));}
 }

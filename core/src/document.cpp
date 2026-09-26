@@ -126,27 +126,31 @@ void Document::validate_op(const json& op) {
       const auto& drawing = op.at("drawing");
       if (!drawing.is_object() || !drawing.contains("plane") || !drawing.at("plane").is_object())
         throw Error("annotation drawing: plane requires origin, x and y vectors in world mm");
-      const auto& plane = drawing.at("plane");
-      for (const char* key : {"origin", "x", "y"}) {
-        if (!plane.contains(key) || !plane.at(key).is_array() || plane.at(key).size() != 3)
-          throw Error("annotation drawing: plane vectors must have three finite numbers");
-        for (const auto& v : plane.at(key)) if (!v.is_number() || !std::isfinite(v.get<double>()))
-          throw Error("annotation drawing: non-finite plane coordinate");
-      }
-      double xx=0, yy=0, xy=0;
-      for (int i=0;i<3;++i) {double x=plane.at("x")[i], y=plane.at("y")[i];xx+=x*x;yy+=y*y;xy+=x*y;}
-      if (std::abs(xx-1)>1e-6 || std::abs(yy-1)>1e-6 || std::abs(xy)>1e-6)
-        throw Error("annotation drawing: plane axes must be orthonormal");
+      auto validatePlane = [](const json& plane) {
+        if(!plane.is_object()) throw Error("annotation drawing: plane must be an object");
+        for (const char* key : {"origin", "x", "y"}) {
+          if (!plane.contains(key) || !plane.at(key).is_array() || plane.at(key).size() != 3)
+            throw Error("annotation drawing: plane vectors must have three finite numbers");
+          for (const auto& v : plane.at(key)) if (!v.is_number() || !std::isfinite(v.get<double>()))
+            throw Error("annotation drawing: non-finite plane coordinate");
+        }
+        double xx=0, yy=0, xy=0;
+        for (int i=0;i<3;++i) {double x=plane.at("x")[i], y=plane.at("y")[i];xx+=x*x;yy+=y*y;xy+=x*y;}
+        if (std::abs(xx-1)>1e-6 || std::abs(yy-1)>1e-6 || std::abs(xy)>1e-6)
+          throw Error("annotation drawing: plane axes must be orthonormal");
+      };
+      validatePlane(drawing.at("plane"));
       if (!drawing.contains("strokes") || !drawing.at("strokes").is_array() || drawing.at("strokes").empty() || drawing.at("strokes").size()>128)
         throw Error("annotation drawing: requires 1..128 strokes");
       size_t count=0;
       for (const auto& stroke : drawing.at("strokes")) {
         if (!stroke.is_object() || !stroke.contains("color") || !stroke.at("color").is_string()
-            || (stroke.at("color")!="red" && stroke.at("color")!="blue")) throw Error("annotation drawing: color must be red or blue");
+            || (stroke.at("color")!="red" && stroke.at("color")!="green" && stroke.at("color")!="blue" && stroke.at("color")!="white")) throw Error("annotation drawing: color must be red, green, blue or white");
         if (!stroke.contains("width") || !stroke.at("width").is_number()
-            || (stroke.at("width")!=2 && stroke.at("width")!=4 && stroke.at("width")!=6)) throw Error("annotation drawing: width must be 2, 4 or 6 pixels");
+            || (stroke.at("width")!=1 && stroke.at("width")!=2 && stroke.at("width")!=4 && stroke.at("width")!=6 && stroke.at("width")!=8)) throw Error("annotation drawing: width must be 1, 2, 4 or 8 pixels (legacy 6 also accepted)");
         if (!stroke.contains("points") || !stroke.at("points").is_array() || stroke.at("points").size()<2)
           throw Error("annotation drawing: a stroke needs at least two points");
+        if(stroke.contains("plane")) validatePlane(stroke.at("plane"));
         count+=stroke.at("points").size();
         if (count>8192) throw Error("annotation drawing: maximum 8192 points per annotation");
         for (const auto& point : stroke.at("points")) {

@@ -113,9 +113,10 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(properties.contains("refs"))properties["refs"]=array(ref(),1,100);
   if(properties.contains("anchor"))properties["anchor"]=ref();
   if(name=="annotate") {
-    auto stroke=object({{"color",choice({"red","blue"})},{"width",{{"type","integer"},{"enum",{2,4,6}}}},{"points",array(vector(2),2,8192)}},{"color","width","points"});
+    auto stroke=object({{"color",choice({"red","green","blue","white"})},{"width",{{"type","integer"},{"enum",{1,2,4,6,8}}}},{"points",array(vector(2),2,8192)}},{"color","width","points"});
+    stroke["properties"]["plane"]=object({{"origin",vector(3)},{"x",vector(3)},{"y",vector(3)}},{"origin","x","y"});
     properties["drawing"]=object({{"plane",object({{"origin",vector(3)},{"x",vector(3)},{"y",vector(3)}},{"origin","x","y"})},{"strokes",array(stroke,1,128)}},{"plane","strokes"});
-    properties["drawing"]["description"]="Camera-facing world frame: origin in mm, orthonormal x/y axes; stroke points [u,v] in plane mm. Width is in screen pixels. Maximum 8192 points total. This is review markup, not CAD sketch geometry.";
+    properties["drawing"]["description"]="World frames: origin in mm, orthonormal x/y axes; each stroke may override plane for multi-plane 2.5D drawing. Otherwise it inherits drawing.plane. Stroke points [u,v] in plane mm. Width is in screen pixels (legacy 6 accepted). Maximum 8192 points total. This is review markup, not CAD sketch geometry.";
   }
   if(name=="annotations") {
     properties["offset"]={{"type","integer"},{"minimum",0},{"default",0}};

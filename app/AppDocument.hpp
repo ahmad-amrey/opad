@@ -44,7 +44,7 @@ class AppDocument : public QObject {
   // committed here. While a plan is being computed the document must not change under it: designBusy makes
   // run() and commitPlan() refuse.
   bool designBusy = false;
-  bool annotationEditing = false;  // temporary hand drawing; agent writes wait for Save/Cancel
+  bool annotationEditing = false;  // temporary annotation editor; agent writes wait for Save/Cancel
   opad::json commitPlan(opad::design::Plan&& plan, const QString& label);
   // Roll-back: the scene is replayed up to (not including) this op. Editing a feature or a sketch shows the
   // model as it was when that op was computed, which is what its references mean. Empty = the whole log.

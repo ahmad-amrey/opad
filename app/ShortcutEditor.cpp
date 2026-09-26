@@ -28,6 +28,11 @@ bool conflicts(const QKeySequence& a,const QKeySequence& b) {
   return !a.isEmpty()&&!b.isEmpty()&&(a.matches(b)!=QKeySequence::NoMatch||b.matches(a)!=QKeySequence::NoMatch);
 }
 void migrate(QSettings& settings) {
+  if(settings.value("shortcuts/annotationDefaultsVersion",0).toInt()<1) {
+    if(QKeySequence(settings.value("shortcuts/annotate.show").toString())==QKeySequence("Shift+N"))settings.remove("shortcuts/annotate.show");
+    if(settings.contains("shortcuts/annotate.draw")&&settings.value("shortcuts/annotate.draw").toString().isEmpty())settings.remove("shortcuts/annotate.draw");
+    settings.setValue("shortcuts/annotationDefaultsVersion",1);
+  }
   if(settings.value("shortcuts/viewDefaultsVersion",0).toInt()>=1)return;
   // The old editor saved every row, including untouched defaults. Keep actual custom bindings.
   const QList<QPair<QString,QString>> old{{"view.top","Ctrl+Alt+1"},{"view.front","Ctrl+Alt+2"},
