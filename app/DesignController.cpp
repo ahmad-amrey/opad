@@ -60,6 +60,7 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   m_form = new FeaturePanel(doc, window);
   m_distanceHandle=new DimensionHandle(viewport,jobs);
   connect(m_distanceHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){if(m_featureOn)m_form->setValue("distance",text.toStdString());});
+  connect(m_distanceHandle,&DimensionHandle::accepted,this,[this]{if(m_featureOn)runPreview(true);});  // Enter in the box: OK
   m_sketch = new SketchEditor(doc, viewport, jobs, this);
   m_planePicker=new PlanePicker(doc,viewport,jobs,window);
   m_planePicker->accepted=[this](const opad::json& plane,const opad::Frame& frame){
@@ -439,6 +440,14 @@ void DesignController::viewportSelectionChanged() {
 void DesignController::schedulePreview() {
   if (!m_featureOn) return;
   m_readyPlan.reset();
+  // While the handle is pulled, preview as fast as plans come back (the latest value wins) instead of waiting for
+  // the pointer to rest: the body follows the drag as if its face were dragged. Otherwise inputs settle first.
+  if (m_distanceHandle && m_distanceHandle->dragging()) {
+    m_previewTimer.stop();
+    if (m_planJob) m_previewPending = true;
+    else runPreview(false);
+    return;
+  }
   m_previewTimer.start();
 }
 
@@ -514,6 +523,8 @@ void DesignController::runPreview(bool commit) {
   }, [this, serial, plan, stamp, target, commit, commitReady,anchors](bool ok, const QString& error) {
     if (serial != m_planSerial || !m_featureOn) return;  // superseded
     m_planJob = nullptr;
+    // A drag moved on while this plan ran: show this one, then plan the latest value.
+    if (std::exchange(m_previewPending, false) && !commit) QTimer::singleShot(0, this, [this] { if (m_featureOn && !m_planJob) runPreview(false); });
     if (!ok) {
       if(!m_distanceHandle->interacting())m_distanceHandle->hide();
       m_readyPlan.reset();
@@ -696,6 +707,14 @@ void DesignController::bench() {
           const auto before=m_form->inputs().at("distance");const QPointF local(20,20),global=m_distanceHandle->mapToGlobal(local.toPoint());
           QMouseEvent press(QEvent::MouseButtonPress,local,global,Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(m_distanceHandle,&press);
           QMouseEvent move(QEvent::MouseMove,local+QPointF(25,-35),global+QPointF(25,-35),Qt::NoButton,Qt::LeftButton,Qt::NoModifier);QApplication::sendEvent(m_distanceHandle,&move);
+          // TODO 10 A10: the body follows the drag, before the button is released.
+          if(!m_planJob && !m_previewPending)throw opad::Error("a handle drag did not start a live preview");
+          if(const QString shot=qEnvironmentVariable("OPAD_BENCH_HANDLESHOT");!shot.isEmpty()){
+            m_viewport->grabImage().save(shot+".view.png");m_distanceHandle->grab().save(shot+".box.png");
+            auto camera=m_viewport->cameraJson();const auto target=camera.at("target").get<opad::Vec3>();  // an oblique look at the flat arrow
+            camera["eye"]={target[0]+60,target[1]-80,target[2]+50};camera["up"]={0,0,1};m_viewport->setCameraJson(camera);m_distanceHandle->reposition();
+            m_viewport->grabImage().save(shot+".oblique.png");
+          }
           QMouseEvent release(QEvent::MouseButtonRelease,local+QPointF(25,-35),global+QPointF(25,-35),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(m_distanceHandle,&release);
           if(m_form->inputs().at("distance")==before)throw opad::Error("extrude drag did not change distance");++*phase;
         }else if(*phase==1){if(!m_readyPlan)throw opad::Error("extrude drag preview missing");runPreview(true);++*phase;}

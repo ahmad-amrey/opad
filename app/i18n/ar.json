@@ -1473,5 +1473,7 @@
   "Refining the view": "تحسين دقة العرض",
   "being edited · the change applies from here in the history": "قيد التحرير · يُطبَّق التغيير من هذه النقطة في السجل",
   "2D mode is on: the view is locked to a plane and does not orbit. Click, or press Shift+2, to turn it off.": "وضع ثنائي الأبعاد مُفعَّل: العرض مثبَّت على مستوى ولا يدور. انقر، أو اضغط Shift+2، لإيقافه.",
-  "2D mode is on: turn it off (Shift+2) to orbit": "وضع ثنائي الأبعاد مُفعَّل: أوقفه (Shift+2) لتتمكن من التدوير"
+  "2D mode is on: turn it off (Shift+2) to orbit": "وضع ثنائي الأبعاد مُفعَّل: أوقفه (Shift+2) لتتمكن من التدوير",
+  "Type a value or an expression · Enter applies · Esc restores · ↑/↓ or the wheel step it (Shift ×10, Ctrl ×0.1)": "اكتب قيمة أو تعبيرًا · Enter للتطبيق · Esc للاستعادة · ↑/↓ أو العجلة لتغييرها بخطوة (Shift ×10، Ctrl ×0.1)",
+  "Displaying bodies": "عرض الأجسام"
 }

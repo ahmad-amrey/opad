@@ -3,6 +3,7 @@
 #include "opad/design/sketch_modify.hpp"
 // SketchEditor, the tools: what a click means for each of them, constraints, dimensions, fillet, trim, mirror.
 #include "SketchEditor.hpp"
+#include "DimensionHandle.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepOffsetAPI_MakeOffset.hxx>
@@ -51,6 +52,8 @@ double norm_angle(double a) {  // into [0, 2 pi)
 
 // ---------------------------------------------------------------- tool selection
 void SketchEditor::setTool(const QString& tool) {
+  // The offset's arrow and value box go with the tool at once, also when a running job makes this call return early.
+  if(tool!="offset")m_dimensionHandle->hide();
   if(m_editJob && m_previewComputing){invalidatePreview();m_editJob->cancel();m_editJob=nullptr;m_previewComputing=false;}
   if (!m_active || m_editJob) return;
   invalidatePreview();

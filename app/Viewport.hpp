@@ -179,6 +179,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void lookAt(const opad::Frame& frame, bool fit = true, bool animate = true);  // camera along the plane normal, plane x to the right
   bool planePoint(const QPointF& widgetPos, const opad::Frame& frame, double& u, double& v) const;
   double pixelSize() const;                    // world units per widget pixel at the view's focus
+  opad::Vec3 viewDirection() const;            // unit direction the camera looks along (into the scene)
   QPoint widgetPoint(const opad::Vec3& world) const;
   // Notes: NoteCards places one card per open note and tells the view where each pointer ends (widget
   // coordinates); notesMoved() follows every camera move or scene change so it can place them again.

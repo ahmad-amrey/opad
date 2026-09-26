@@ -435,6 +435,12 @@ double Viewport::pixelSize() const {
   return m_view->Convert(1) * viewScale().x();  // Convert() takes view pixels; callers think in widget points
 }
 
+opad::Vec3 Viewport::viewDirection() const {
+  if (!m_initialised) return {0, 0, -1};
+  const gp_Dir d = m_view->Camera()->Direction();
+  return {d.X(), d.Y(), d.Z()};
+}
+
 QPoint Viewport::widgetPoint(const opad::Vec3& world) const {
   if (!m_initialised) return {};
   Standard_Integer px = 0, py = 0;
