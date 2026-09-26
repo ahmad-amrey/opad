@@ -155,6 +155,16 @@ class MainWindow : public QMainWindow {
   PromptBar* m_prompt = nullptr;
   ToolStepsPanel* m_toolSteps = nullptr;
   ToolPanel* m_toolPanel = nullptr;
+  // Design checks in the same panel (TODO 10 B13 print check, B17 interference).
+  class QStackedWidget* m_toolStack = nullptr;
+  class CheckPanel* m_checks = nullptr;
+  Job* m_checkJob = nullptr;
+  Job* m_overlapJob = nullptr;
+  std::vector<std::string> m_checkSelect;  // what the check looks at: the selection when it started, else everything
+  void startCheck(bool print);
+  void runCheck();
+  void showFinding(const opad::json& finding);
+  void endCheck();
   LoadShade* m_loadShade = nullptr;
   bool m_timelineHiddenByViewer = false;
   RibbonBar* m_ribbon = nullptr;

@@ -37,6 +37,7 @@ add_library(opad_core STATIC
   src/commands.cpp
   src/command_schema.cpp
   src/agent_context.cpp
+  src/checks.cpp
   src/live.cpp
   src/plugin_host.cpp
   src/design/expr.cpp

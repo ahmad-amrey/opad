@@ -189,6 +189,11 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   reference tokens; `viewport_image` (live) and `render` return pictures.
 - Sizes (`bbox` in results, properties, validate, measurements) are tight boxes of the exact geometry (a turned body
   in a union of many: the turned corners of its own tight box).
+- `validate` with `checks: ["interference"]` lists pairs of bodies that overlap (volume, box) and, with
+  `clearance_mm`, pairs closer than that (`ignore` lists pairs meant to overlap); `checks: ["print"]` reports, per
+  body, faces overhanging more than `overhang_deg` (default 45, from vertical) against `build_direction` ("+z"),
+  the build-plate contact area, walls thinner than `min_wall_mm` (0.8) and thin features. Add "solid" for the usual
+  validity page.
 - Write tools take `verbosity: "compact"`: `changes` then lists only that command's created, modified and deleted
   ids with counts (not the transaction's cumulative lists), references come without signatures, and model_batch
   drops its batch-wide `operation_ids` (each step receipt has its own). The default stays "full".

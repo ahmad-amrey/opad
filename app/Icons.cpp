@@ -39,6 +39,8 @@ const QHash<QString, QString>& table() {
       {"angle", R"(<path d="M4 20L18 6M4 20h16"/><path d="M13 20a9 9 0 0 0-2.6-6.4"/>)"},
       {"radius", R"(<circle cx="12" cy="12" r="9"/><path d="M12 12l6.4-6.4"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/>)"},
       {"bbox", R"(<rect x="4" y="8" width="12" height="12" stroke-dasharray="3 2"/><path d="M4 8l4-4h12v12l-4 4M16 8l4-4"/>)"},
+      {"interference", R"(<rect x="3" y="3" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/><path d="M9 11l4 4M11 9l4 4" stroke-width="1.2"/>)"},
+      {"printcheck", R"(<path d="M9 3h6v4l-3 3-3-3z"/><path d="M4 21h16M6 18h12M8 15h8"/>)"},
       {"pen", R"(<path d="M4 20l1-5L17 3l4 4L9 19zM14 6l4 4M5 15l4 4"/>)"},
       {"eraser", R"(<path d="M3 14l10-10 8 8-9 9H9zM7 10l8 8M12 21h9"/>)"},
       {"annotate", R"(<path d="M4 4h16v11H10l-4 4v-4H4z"/><path d="M8 9h8M8 12h5"/>)"},

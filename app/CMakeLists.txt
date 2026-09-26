@@ -26,6 +26,7 @@ set(OPAD_APP_SOURCES
   Notes.cpp Notes.hpp AnnotationEditor.cpp AnnotationEditor.hpp
   DesignController.cpp DesignController.hpp PlanePicker.cpp PlanePicker.hpp
   DesignPanels.cpp DesignPanels.hpp
+  CheckPanel.cpp CheckPanel.hpp
   SketchEditor.cpp SketchNodes.cpp SketchTools.cpp SketchEditor.hpp SketchGeometryCache.cpp SketchGeometryCache.hpp
   SketchPanel.cpp SketchPanel.hpp SketchWorkflow.cpp
   DimensionHandle.cpp DimensionHandle.hpp

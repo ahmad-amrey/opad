@@ -118,6 +118,9 @@ def main():
         assert len(views) == 4 and views[1]["view"] == "front" and views[3]["cell"] == [320, 240, 320, 240], views
         wrong = client.raw("viewport_image", views=["sideways"])
         assert wrong["isError"], wrong
+        # TODO 10 B13, B17: design checks through validate.
+        checked = client.call("validate", checks=["interference", "print"], clearance_mm=0.5)["result"]
+        assert checked["interference"]["check"] == "interference" and checked["print"]["check"] == "print", checked.keys()
         # TODO 10 B11: compact write replies: this command's own ids and counts, no batch-wide operation_ids.
         revision = client.state()["revision"]
         tx2 = client.call("transaction_begin", label="Compact", expected_revision=revision, request_id="compact-begin")["transaction"]

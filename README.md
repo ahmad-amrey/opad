@@ -66,6 +66,11 @@ Rename, Colour, Hide and Reparent on a multiple selection are one step each.
 Wherever a plane is taken, `{"origin": [x,y,z], "normal": [x,y,z]}` (with an optional `x`) defines it directly,
 and the construction plane has a point-and-normal mode.
 
+`validate` also checks interference (overlapping pairs with their volume and box, or pairs closer than a clearance;
+bounding boxes first, exact Booleans only on candidates) and 3D printing (overhangs against a build direction,
+thin walls, thin features, build-plate contact). The desktop's Review workspace has both as Interference and Print
+check, listing findings in the tool panel; clicking one highlights the bodies and their overlap, or the faces.
+
 Live write tools take `verbosity: "compact"` for replies that list only what that command changed.
 
 Reported sizes (`info`, `properties`, `validate`, `changes.bodies`, the bounding-box measurement and the desktop's

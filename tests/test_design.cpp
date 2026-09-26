@@ -22,6 +22,7 @@
 #include <map>
 
 #include "check.hpp"
+#include "opad/checks.hpp"
 #include "opad/core.hpp"
 #include "opad/design/expr.hpp"
 #include "opad/design/feature.hpp"
@@ -1205,4 +1206,99 @@ TEST(reported_boxes_are_tight) {
   CHECK(same(size(measure_bbox(doc, s, {})), {85, 31, 40}));
   const json validated = commands::run("validate", {{"select", json::array({pin})}}, &doc);
   CHECK(same(size(validated["items"][0]["bbox"]), {10, 10, 40}));
+}
+
+// TODO 10 B17: overlapping, touching and nearly touching boxes; instances of one shape through their placements.
+TEST(interference_and_clearance_checks) {
+  Document doc = Document::create();
+  auto box_at = [&](double x, double y, double z) {
+    return feature_cmd(doc, "box", {{"plane", {{"origin", {x, y, z}}, {"normal", {0, 0, 1}}}}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}})["body_ids"][0].get<std::string>();
+  };
+  const std::string a1 = box_at(0, 0, 0), b1 = box_at(8, 0, 0);        // overlap 2 x 10 x 10
+  const std::string a2 = box_at(100, 0, 0), c2 = box_at(110, 0, 0);    // touching at x = 105
+  const std::string a3 = box_at(200, 0, 0), d3 = box_at(210.3, 0, 0);  // 0.3 mm apart
+  Scene s = resolve(doc);
+  json plain = check_interference(doc, s, json::object());
+  CHECK_EQ(plain["interferences"], 1);
+  CHECK_EQ(plain["too_close"], 0);
+  CHECK_EQ(plain["status"], "interference");
+  const json& hit = plain["items"][0];
+  CHECK(hit["kind"] == "interference" && ((hit["a"] == a1 && hit["b"] == b1) || (hit["a"] == b1 && hit["b"] == a1)));
+  CHECK_NEAR(hit["volume_mm3"].get<double>(), 200, 1e-6);
+  CHECK_NEAR(hit["bbox"]["size"][0].get<double>(), 2, 1e-9);
+  // With a clearance, the touching pair (0 mm) and the near pair (0.3 mm) are too close; the overlap comes first.
+  const json close = check_interference(doc, s, {{"clearance_mm", 0.5}});
+  CHECK_EQ(close["interferences"], 1);
+  CHECK_EQ(close["too_close"], 2);
+  CHECK_EQ(close["items"][0]["kind"], "interference");
+  CHECK_NEAR(close["items"][1]["distance_mm"].get<double>(), 0, 1e-6);
+  CHECK_NEAR(close["items"][2]["distance_mm"].get<double>(), 0.3, 1e-6);
+  // A pair meant to overlap is left out; so is everything outside the selection.
+  const json ignored = check_interference(doc, s, {{"ignore", json::array({json::array({b1, a1})})}});
+  CHECK_EQ(ignored["interferences"], 0);
+  CHECK_EQ(ignored["ignored_pairs"], 1);
+  CHECK_EQ(ignored["status"], "clear");
+  CHECK_EQ(check_interference(doc, s, {{"select", json::array({a2, c2, a3, d3})}})["interferences"], 0);
+  // Two instances of one shape: the same body entry placed twice, 4 mm apart, overlap by 6 x 10 x 10.
+  const std::string key = s.node(a3)->body_key;
+  const std::string twin = new_uuid();
+  doc.append({{"op", "import"}, {"source", ""}, {"units", "mm"},
+              {"nodes", json::array({{{"type", "body"}, {"id", twin}, {"name", "Twin"}, {"key", key}, {"transform", Mat4::translation(4, 0, 0).to_json()}}})}});
+  s = resolve(doc);
+  const json twins = check_interference(doc, s, {{"select", json::array({a3, twin})}});
+  CHECK_EQ(twins["interferences"], 1);
+  CHECK_NEAR(twins["items"][0]["volume_mm3"].get<double>(), 600, 1e-6);
+  // Through validate, as agents call it.
+  const json v = commands::run("validate", {{"checks", json::array({"interference"})}, {"clearance_mm", 0.5}}, &doc);
+  CHECK(v.contains("interference") && !v.contains("items"));
+  CHECK(v["interference"]["interferences"].get<int>() >= 2);
+}
+
+// TODO 10 B13: 3D-print checks: plate contact, overhangs against the build direction, thin walls and thin features.
+TEST(print_checks) {
+  Document doc = Document::create();
+  // A plain block on the plate: 20 x 20 contact, nothing to report.
+  const std::string block = feature_cmd(doc, "box", {{"length", "20 mm"}, {"width", "20 mm"}, {"height", "10 mm"}})["body_ids"][0];
+  Scene s = resolve(doc);
+  json r = check_print(doc, s, {{"select", json::array({block})}});
+  CHECK_EQ(r["status"], "clear");
+  CHECK_NEAR(r["items"][0]["contact_area_mm2"].get<double>(), 400, 1e-6);
+  // A T: a stem with a wide plate on top. The plate's underside past the stem faces straight down.
+  const std::string stem = feature_cmd(doc, "box", {{"x", "100 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}})["body_ids"][0];
+  feature_cmd(doc, "box", {{"plane", {{"origin", {100, 0, 10}}, {"normal", {0, 0, 1}}}}, {"length", "30 mm"}, {"width", "10 mm"}, {"height", "2 mm"},
+                           {"operation", "join"}, {"targets", json::array({stem})}});
+  s = resolve(doc);
+  r = check_print(doc, s, {{"select", json::array({stem})}});
+  const json& t = r["items"][0];
+  CHECK_NEAR(t["contact_area_mm2"].get<double>(), 100, 1e-6);  // only the stem's foot
+  CHECK(!t["overhangs"].empty());
+  double down = 0;
+  for (const auto& o : t["overhangs"]) down = std::max(down, o["overhang_deg"].get<double>());
+  CHECK_NEAR(down, 90, 1e-6);
+  // Printed on its side (+x up) the same part has no downward face over the plate but the stem's end.
+  CHECK(check_print(doc, s, {{"select", json::array({stem})}, {"build_direction", "-z"}})["items"][0]["contact_area_mm2"].get<double>() > 250);
+  // A shell 0.5 mm thick: thin walls; a rib 0.4 mm wide: a thin feature.
+  const std::string cup = feature_cmd(doc, "box", {{"x", "200 mm"}, {"length", "20 mm"}, {"width", "20 mm"}, {"height", "10 mm"}})["body_ids"][0];
+  s = resolve(doc);
+  int top = -1;
+  {
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(node_world_shape(doc, s, cup), TopAbs_FACE, faces);
+    for (int i = 1; i <= faces.Extent(); ++i)
+      if (const json d = describe_entity(faces(i)); d.contains("normal") && d["normal"][2].get<double>() > 0.99) top = i - 1;
+  }
+  feature_cmd(doc, "shell", {{"faces", json::array({cup + "/face/" + std::to_string(top)})}, {"thickness", "0.5 mm"}});
+  const std::string rib = feature_cmd(doc, "box", {{"x", "300 mm"}, {"length", "0.4 mm"}, {"width", "20 mm"}, {"height", "8 mm"}})["body_ids"][0];
+  s = resolve(doc);
+  r = check_print(doc, s, {{"select", json::array({cup, rib})}, {"min_wall_mm", 0.8}});
+  CHECK_EQ(r["bodies"], 2);
+  const json& shell = r["items"][0]["id"] == cup ? r["items"][0] : r["items"][1];
+  const json& fin = r["items"][0]["id"] == rib ? r["items"][0] : r["items"][1];
+  CHECK(!shell["thin_walls"].empty());
+  CHECK_NEAR(shell["thin_walls"][0]["thickness_mm"].get<double>(), 0.5, 1e-3);
+  CHECK(!fin["thin_features"].empty() || !fin["thin_walls"].empty());
+  CHECK(r["findings"].get<int>() >= 2);
+  // Through validate.
+  const json v = commands::run("validate", {{"checks", json::array({"print"})}, {"select", json::array({block})}}, &doc);
+  CHECK_EQ(v["print"]["status"], "clear");
 }

@@ -30,6 +30,10 @@
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QInputDialog>
+#include <QStackedWidget>
+#include <BRepAlgoAPI_Common.hxx>
+#include "CheckPanel.hpp"
+#include "opad/checks.hpp"
 #include <QRegularExpression>
 #include <QMenu>
 #include <QMenuBar>
@@ -236,6 +240,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   m_toolPanel->setEscapeHandler([this] { toolEscape(); });
   connect(m_toolPanel, &ToolPanel::visibilityChanged, this, [this](bool on) {
     if (!on && toolMeasures()) cancelTool();  // closing the tool's panel leaves the tool
+    if (!on && m_toolStack->currentWidget() == m_checks) endCheck();
   });
   connect(m_viewport, &Viewport::hoverChanged, this, [this](const QString& text) {
     if (m_tool.id.isEmpty() || text == m_toolHover) return;
@@ -477,6 +482,8 @@ void MainWindow::buildActions() {
   addAction("inspect.angle", tr("Angle"), "angle", QKeySequence("A"), [this] { toggleTool("angle"); }, true);
   addAction("inspect.radius", tr("Radius"), "radius", QKeySequence("R"), [this] { toggleTool("radius"); }, true);
   addAction("inspect.bbox", tr("Bounding box"), "bbox", QKeySequence("B"), [this] { toggleTool("bbox"); }, true);
+  addAction("inspect.interference", tr("Interference"), "interference", QKeySequence(), [this] { startCheck(false); });
+  addAction("inspect.printcheck", tr("Print check"), "printcheck", QKeySequence(), [this] { startCheck(true); });
   m_pinAction = addAction("inspect.pin", tr("Pin"), "pin", QKeySequence("P"), [this] { pinMeasurement(); });
   m_pinAction->setShortcutContext(Qt::ApplicationShortcut);
   m_pinAction->setEnabled(false);
@@ -621,7 +628,7 @@ void MainWindow::buildMenus() {
   add(nav, {"nav.fusion", "nav.solidworks", "nav.onshape", "nav.blender"});
   add(view, {"view.dark", "-", "workspace.review", "workspace.design", "-", "panel.browser", "panel.annotations", "panel.section", "panel.timeline", "panel.reset"});
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
-  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.geometry", "-", "inspect.section", "inspect.flip"});
+  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.geometry", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip"});
   QMenu* designMenu = menuBar()->addMenu(tr("&Design"));
   add(designMenu, {"design.sketch", "design.convertDrawing", "design.parameters", "-"});
   for (const char* group : {"create", "modify", "combine", "pattern", "body", "construct"}) {
@@ -652,7 +659,7 @@ void MainWindow::buildRibbon() {
   sketchWs.contextual = true;
   m_sketchWorkspace = m_ribbon->addWorkspace(sketchWs);
   m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho", "view.2d"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"}), acts({"view.isolate", "view.unisolate"})});
-  m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"}), acts({"inspect.section", "inspect.flip"})});
+  m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"}), acts({"inspect.interference", "inspect.printcheck"}), acts({"inspect.section", "inspect.flip"})});
   m_ribbon->addTab(review, tr("Annotate"), {acts({"panel.annotations", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
   m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
   m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
@@ -853,8 +860,14 @@ void MainWindow::buildDocks() {
   m_annotationsPanel = new ToolPanel("annotations", "annotate", &Tokens::amber, tr("Annotations"), m_annotations, 520, this);
   m_sectionPanel = new ToolPanel("section", "section", &Tokens::sel, tr("Section"), m_section, 420, this);
   m_toolSteps = new ToolStepsPanel(this);
-  m_toolPanel = new ToolPanel("tool", "distance", &Tokens::sel, tr("Distance"), m_toolSteps, 360, this);
-  m_toolPanel->setContentSizeHint([this](int width) { return m_toolSteps->preferredSize(width); });
+  m_checks = new CheckPanel(this);
+  m_toolStack = new QStackedWidget(this);
+  m_toolStack->addWidget(m_toolSteps);
+  m_toolStack->addWidget(m_checks);
+  m_toolPanel = new ToolPanel("tool", "distance", &Tokens::sel, tr("Distance"), m_toolStack, 360, this);
+  m_toolPanel->setContentSizeHint([this](int width) { return m_toolStack->currentWidget() == m_checks ? m_checks->preferredSize(width) : m_toolSteps->preferredSize(width); });
+  connect(m_checks, &CheckPanel::runRequested, this, &MainWindow::runCheck);
+  connect(m_checks, &CheckPanel::findingActivated, this, &MainWindow::showFinding);
   connect(m_toolSteps, &ToolStepsPanel::contentSizeChanged, m_toolPanel, &ToolPanel::requestContentFit);
   m_panels = {m_propsPanel, m_annotationsPanel, m_sectionPanel, m_toolPanel};
   // The note / hand drawing editor's panel: filled by each AnnotationEditor, open exactly as long as it runs. Not one
@@ -1717,6 +1730,8 @@ void MainWindow::startTool(const QString& id) {
   if (m_annotationEditor) m_annotationEditor->cancel();  // one guide at a time
   m_design->escape();  // a feature panel or a plane pick gives way
   if (!m_tool.id.isEmpty()) cancelTool();
+  if (m_toolStack->currentWidget() == m_checks) endCheck();
+  m_toolStack->setCurrentWidget(m_toolSteps);
   static const std::map<QString, std::tuple<const char*, const char*, int>> kTools = {
       {"distance", {QT_TR_NOOP("Distance"), "distance", 2}}, {"angle", {QT_TR_NOOP("Angle"), "angle", 2}},       {"radius", {QT_TR_NOOP("Radius"), "radius", 1}},
       {"bbox", {QT_TR_NOOP("Bounding box"), "bbox", 1}},     {"sectionface", {QT_TR_NOOP("Section"), "section", 1}}};
@@ -2182,6 +2197,87 @@ int MainWindow::overallPercent(const QString& phase, int pct) const {
 }
 
 // The bbox of a component walks every body under it; it is added to the panel by a sliced job.
+// ---------------------------------------------------------------- design checks (TODO 10 B13, B17)
+void MainWindow::startCheck(bool print) {
+  if (!m_doc->hasDocument) return;
+  if (m_annotationEditor) m_annotationEditor->cancel();
+  m_design->escape();
+  if (!m_tool.id.isEmpty()) cancelTool();
+  m_checkSelect = currentNodeIds();  // the selection when the check starts; clicking findings changes it later
+  m_checks->begin(print ? CheckPanel::Mode::Print : CheckPanel::Mode::Interference);
+  m_toolStack->setCurrentWidget(m_checks);
+  m_toolPanel->setHeader(print ? "printcheck" : "interference", print ? tr("Print check") : tr("Interference"));
+  openPanel(m_toolPanel);
+  runCheck();
+}
+
+void MainWindow::runCheck() {
+  if (Job* old = std::exchange(m_checkJob, nullptr)) old->cancel();
+  opad::json args = m_checks->options();
+  if (!m_checkSelect.empty()) args["select"] = m_checkSelect;
+  args["limit"] = 200;
+  const bool print = m_checks->mode() == CheckPanel::Mode::Print;
+  auto document = std::make_shared<opad::Document>(m_doc->doc);
+  auto scene = std::make_shared<opad::Scene>(m_doc->scene);
+  auto result = std::make_shared<opad::json>();
+  m_checks->setRunning(tr("Checking…"));
+  m_checkJob = m_jobs->async(print ? tr("Print check") : tr("Interference"), [document, scene, args, print, result](Progress p) {
+    const auto cancelled = [p] { return p.cancelled(); };
+    *result = print ? opad::check_print(*document, *scene, args, cancelled) : opad::check_interference(*document, *scene, args, cancelled);
+  }, [this, result](bool ok, const QString& error) {
+    m_checkJob = nullptr;
+    if (!ok) return m_checks->setFailed(error == "cancelled" ? tr("Cancelled.") : i18n::t(error));
+    m_checks->setResult(*result);
+  });
+}
+
+void MainWindow::showFinding(const opad::json& f) {
+  m_viewport->clearPreviewBodies();
+  if (f.contains("a")) {  // a pair of bodies
+    const std::string a = f.value("a", ""), b = f.value("b", "");
+    m_viewport->selectNodes({a, b});
+    if (f.value("kind", "") == "clearance" && f.contains("point_a")) {
+      m_viewport->showMeasurement({{"kind", "distance"}, {"value", f.value("distance_mm", 0.0)}, {"unit", "mm"}, {"point_a", f["point_a"]}, {"point_b", f["point_b"]}});
+      return;
+    }
+    // The overlap itself, shown as a preview body: computed again on a worker (the check keeps its volume and box).
+    if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();
+    auto document = std::make_shared<opad::Document>(m_doc->doc);
+    auto scene = std::make_shared<opad::Scene>(m_doc->scene);
+    auto shape = std::make_shared<TopoDS_Shape>();
+    m_overlapJob = m_jobs->async(tr("Showing the overlap"), [document, scene, a, b, shape](Progress) {
+      BRepAlgoAPI_Common common(opad::node_world_shape(*document, *scene, a), opad::node_world_shape(*document, *scene, b));
+      if (!common.IsDone()) return;
+      *shape = common.Shape();
+      BodyPrs::meshForDisplay(*shape, 0.05);
+    }, [this, shape](bool ok, const QString&) {
+      m_overlapJob = nullptr;
+      if (ok && !shape->IsNull() && m_toolStack->currentWidget() == m_checks) m_viewport->setPreviewBodies({{std::string(), *shape}}, {});
+    });
+    return;
+  }
+  // A print finding: the body's faces, highlighted as a face selection.
+  const std::string body = f.value("body", "");
+  std::vector<opad::Ref> refs;
+  for (const auto& i : f.value("faces", opad::json::array())) {
+    opad::Ref r;
+    r.body = body;
+    r.kind = opad::Ref::Kind::Face;
+    r.index = i.get<int>();
+    refs.push_back(r);
+  }
+  if (refs.empty()) return m_viewport->selectNodes({body});
+  if (m_viewport->selectionFilter() == Viewport::SelFilter::Face) return m_viewport->selectRefs(refs);
+  connect(m_viewport, &Viewport::filterApplied, this, [this, refs] { m_viewport->selectRefs(refs); }, Qt::SingleShotConnection);
+  m_viewport->setSelectionFilter(Viewport::SelFilter::Face);
+}
+
+void MainWindow::endCheck() {
+  if (Job* old = std::exchange(m_checkJob, nullptr)) old->cancel();
+  if (Job* old = std::exchange(m_overlapJob, nullptr)) old->cancel();
+  m_viewport->clearPreviewBodies();
+}
+
 void MainWindow::showNodeGeometry(const std::string& id, const QString& title, const QString& subtitle, const QString& nid) {
   if (m_propsJob) m_propsJob->cancel();
   auto document = std::make_shared<opad::Document>(m_doc->doc);
@@ -2450,6 +2546,29 @@ void MainWindow::runBench() {
         QCoreApplication::quit();
       });
     });
+    return;
+  }
+  // OPAD_BENCH_CHECK=interference|print (TODO 10 B13, B17): run the check through its panel, click the first finding,
+  // grab the panel (OPAD_BENCH_UISHOT: <shot>.check.png), log PASS when there are findings and the click showed them.
+  if (const QString kind = qEnvironmentVariable("OPAD_BENCH_CHECK"); !kind.isEmpty()) {
+    startCheck(kind == "print");
+    auto ticks = std::make_shared<int>(0);
+    auto* timer = new QTimer(this);
+    timer->setInterval(100);
+    connect(timer, &QTimer::timeout, this, [this, kind, ticks, timer] {
+      if (++*ticks > 300) { timer->stop(); trace::log("bench: check timed out FAIL"); QCoreApplication::exit(2); return; }
+      if (m_checkJob) return;
+      timer->stop();
+      const int findings = m_checks->findingCount();
+      if (findings > 0) m_checks->activate(0);
+      QTimer::singleShot(2500, this, [this, kind, findings] {
+        if (const QString shot = qEnvironmentVariable("OPAD_BENCH_UISHOT"); !shot.isEmpty()) m_toolPanel->grab().save(shot + ".check.png");
+        const bool shown = !m_viewport->selection().empty();
+        trace::log(QStringLiteral("bench: %1 check, %2 findings, finding shown %3 %4").arg(kind).arg(findings).arg(shown).arg(findings > 0 && shown ? "PASS" : "FAIL"));
+        QCoreApplication::exit(findings > 0 && shown ? 0 : 2);
+      });
+    });
+    timer->start();
     return;
   }
   // OPAD_BENCH_DESIGN=<png>: sketch + extrude through the design controller, dump the frame, quit.

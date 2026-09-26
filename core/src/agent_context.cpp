@@ -1,4 +1,5 @@
 #include "opad/agent.hpp"
+#include "opad/checks.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 #include "opad/design/feature.hpp"
@@ -145,6 +146,14 @@ json query_entities(const Document& doc,const Scene& scene,const json& args,cons
   return out;
 }
 json validate_design(const Document& doc,const Scene& scene,const json& args,const std::function<bool()>& cancelled) {
+  // checks (TODO 10 B13, B17): "solid" (each body's validity, the default), "interference", "print".
+  const json checks=args.value("checks",json::array({"solid"}));
+  auto wants=[&](const char* c){for(const auto& v:checks)if(v==c)return true;return false;};
+  for(const auto& v:checks)if(v!="solid" && v!="interference" && v!="print")throw Error("checks are solid, interference and print, not "+v.dump());
+  json extra=json::object();
+  if(wants("interference"))extra["interference"]=check_interference(doc,scene,args,cancelled);
+  if(wants("print"))extra["print"]=check_print(doc,scene,args,cancelled);
+  if(!wants("solid")){extra["checks"]=checks;return extra;}
   auto bodies=args.contains("select")?args["select"].get<std::vector<std::string>>():scene.all_bodies();
   json items=json::array();bool valid=scene.unresolved.empty();
   for(size_t i=offset(args);i<bodies.size()&&items.size()<limit(args);++i){
@@ -155,7 +164,9 @@ json validate_design(const Document& doc,const Scene& scene,const json& args,con
     GProp_GProps volume,area;BRepGProp::VolumeProperties(shape,volume);BRepGProp::SurfaceProperties(shape,area);
     items.push_back({{"id",bodies[i]},{"valid",ok},{"solids",solids},{"volume_mm3",volume.Mass()},{"area_mm2",area.Mass()},{"bbox",bbox_to_json(node_tight_bbox(doc,scene,bodies[i]))},{"representation",node->representation}});
   }
-  auto out=page(std::move(items),bodies.size(),args);out["valid_page"]=valid;out["unresolved"]=scene.unresolved.size();out["scope"]="Geometry validity and exact measurements; not a manufacturing assessment.";return out;
+  auto out=page(std::move(items),bodies.size(),args);out["valid_page"]=valid;out["unresolved"]=scene.unresolved.size();out["scope"]="Geometry validity and exact measurements; not a manufacturing assessment.";
+  for(auto& [k,v]:extra.items())out[k]=v;
+  return out;
 }
 
 json resources() {
@@ -192,7 +203,11 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
   }),false},run([](const Document& d,const Scene& s,const json& a){return agent::query_entities(d,s,a);}));
   add({"entity_details","Exact geometry and paged adjacency with a checked reference token",bounded({{"ref",{{"type",{"string","object"}}}},{"feature",{{"type","string"}}}}),false},run(agent::entity_details));
   add({"resolve_reference","Check a reference token, optionally remap only a unique proven geometric match",{{"doc",{{"type","string"}}},{"reference",{{"type","object"},{"required",{"document","ref"}}}},{"remap",{{"type","boolean"},{"default",false}}}},false},run([](const Document& d,const Scene& s,const json& a){return agent::resolve_reference(d,s,a.at("reference"),a.value("remap",false));}));
-  add({"validate","Exact solid counts, volumes, areas and kernel validity in bounded pages",bounded({{"select",{{"type","array"},{"items",{{"type","string"}}}}}}),false},run([](const Document& d,const Scene& s,const json& a){return agent::validate_design(d,s,a);}));
+  add({"validate","Exact solid counts, volumes, areas and kernel validity in bounded pages. checks adds interference (overlapping pairs with their overlap volume and box; with clearance_mm, pairs closer than that; ignore lists pairs meant to overlap) and print (overhangs past overhang_deg against build_direction, walls thinner than min_wall_mm, build-plate contact, thin features)",
+    bounded({{"select",{{"type","array"},{"items",{{"type","string"}}}}},{"checks",{{"type","array"},{"items",{{"type","string"},{"enum",{"solid","interference","print"}}}},{"default",{"solid"}}}},
+      {"clearance_mm",{{"type","number"},{"minimum",0}}},{"ignore",{{"type","array"},{"items",{{"type","array"},{"items",{{"type","string"}}},{"minItems",2},{"maxItems",2}}}}},
+      {"max_pairs",{{"type","integer"},{"minimum",1}}},{"build_direction",{{"anyOf",{{{"type","string"},{"enum",{"+x","-x","+y","-y","+z","-z"}}},{{"type","array"},{"items",{{"type","number"}}},{"minItems",3},{"maxItems",3}}}}}},
+      {"overhang_deg",{{"type","number"},{"minimum",0},{"maximum",89}}},{"min_wall_mm",{{"type","number"},{"minimum",0}}}}),false},run([](const Document& d,const Scene& s,const json& a){return agent::validate_design(d,s,a);}));
   add({"feature_schema","Input schema, defaults and an example for one supported feature kind",{{"kind",{{"type","string"}}}},false},[](Document*,const json& a){
     const auto kind=a.at("kind").get<std::string>();const auto schema=agent::feature_schema(kind);json example=json::object();
     for(const auto& input:design::feature_spec(kind)->inputs){

@@ -44,6 +44,10 @@ def main():
         drawing = root / "layers.svg"
         drawing.write_text('<svg width="40mm" viewBox="0 0 40 40"><g id="Outline"><rect width="20" height="10"/></g>'
                            '<g id="Guide"><circle cx="5" cy="5" r="2"/></g></svg>', encoding="utf-8")
+        overlapping = document("overlap", ("feature", "--kind", "box", "--inputs", '{"length":"20 mm","width":"20 mm","height":"10 mm"}'),
+                               ("feature", "--kind", "cylinder", "--inputs", '{"x":"8 mm","diameter":"10 mm","height":"20 mm"}'))
+        overhang = document("overhang", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'),
+                            ("feature", "--kind", "box", "--inputs", '{"plane":{"origin":[0,0,10],"normal":[0,0,1]},"length":"30 mm","width":"10 mm","height":"2 mm","operation":"join"}'))
         screw = ROOT / "tests" / "corpus" / "occt-screw.step"
         cases = [
             ("design", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_UISHOT": "{prefix}.ui.png", "OPAD_BENCH_RULE": "1"}),
@@ -57,6 +61,8 @@ def main():
             ("drawing-to-sketch", drawing, {"OPAD_BENCH_WIZARD": "{prefix}.png", "OPAD_BENCH_WIZARD_CREATE": "1"}),
             ("notes", empty, {"OPAD_BENCH_NOTES": "{prefix}"}),
             ("zoom-refinement", round_part, {"OPAD_BENCH_SCENE": "{prefix}.png", "OPAD_BENCH_VIEW": "iso", "OPAD_BENCH_ZOOM": "40"}),
+            ("interference", overlapping, {"OPAD_BENCH_CHECK": "interference", "OPAD_BENCH_UISHOT": "{prefix}"}),
+            ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))
