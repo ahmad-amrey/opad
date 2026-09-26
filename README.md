@@ -66,6 +66,9 @@ Rename, Colour, Hide and Reparent on a multiple selection are one step each.
 Wherever a plane is taken, `{"origin": [x,y,z], "normal": [x,y,z]}` (with an optional `x`) defines it directly,
 and the construction plane has a point-and-normal mode.
 
+Live face, edge and vertex inputs need no token repeated back when the connection was given that reference and its
+body has not changed since; a token itself needs only `ref`, `geometry` and `placement`.
+
 Sketches take high-level `shapes` next to raw points and curves: rectangles, rounded rectangles, arcs by three
 points or a radius, paths with fillets and tangent arcs, slots, offsets and text in a built-in font (the same on
 every machine; the desktop's text tool uses it too). They become ordinary points, curves and constraints before the

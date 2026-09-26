@@ -311,7 +311,9 @@ def main():
         print("Enable/disable and two explicitly bound application targets: PASS", flush=True)
         face = client.call("entity_details", ref=f"{body}/face/0")["result"]["reference"]
         sketch_args = dict(name="Face sketch", plane={"face": face["ref"]}, geometry={})
-        assert client.raw("sketch", **sketch_args, expected_revision=client.state()["revision"], request_id="unchecked-face")["isError"]
+        # A face this connection was never given needs its token; one it was given does not (TODO 10 B6).
+        unchecked = client.raw("sketch", **dict(sketch_args, plane={"face": f"{body}/face/2"}), expected_revision=client.state()["revision"], request_id="unchecked-face")
+        assert unchecked["isError"] and "unchecked_reference" in unchecked["structuredContent"]["error"]["message"], unchecked
         client.write("sketch", **sketch_args, references=[face])
         sketch = client.call("context", section="sketches")["result"]["items"][0]["id"]
         desktop.action("edit_sketch", id=sketch)

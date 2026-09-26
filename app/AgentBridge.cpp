@@ -131,13 +131,30 @@ void AgentBridge::read(const std::shared_ptr<Session>& session){
 }
 void AgentBridge::reply(const std::shared_ptr<Session>& session,json result,const std::string& receipt){
   if(!result["structuredContent"].contains("elapsed_ms") && session->requestTimer.isValid())result["structuredContent"]["elapsed_ms"]=session->requestTimer.elapsed();
-  auto bytes=std::make_shared<QByteArray>();
-  m_jobs->async(tr("Sending agent result"),[bytes,result=std::move(result)](Progress)mutable{
+  auto bytes=std::make_shared<QByteArray>();auto given=std::make_shared<std::vector<std::pair<std::string,Known>>>();
+  m_jobs->async(tr("Sending agent result"),[bytes,given,result=std::move(result)](Progress)mutable{
+    // Remember the sub-shape references this reply hands out (TODO 10 B6).
+    std::function<void(const json&)> tokens=[&](const json& v){
+      if(v.is_object()){
+        if(v.contains("ref") && v.contains("geometry") && v.contains("placement") && v["geometry"].is_string())try{
+          const auto ref=opad::Ref::from_json(v["ref"]);
+          if(ref.kind!=opad::Ref::Kind::Body && ref.kind!=opad::Ref::Kind::Point)given->push_back({ref.to_json().dump(),{v["geometry"].get<std::string>(),v["placement"].dump()}});
+        }catch(const std::exception&){}
+        for(const auto& [key,child]:v.items())tokens(child);
+      }else if(v.is_array())for(const auto& child:v)tokens(child);
+    };
+    tokens(result["structuredContent"]);
     result["content"].insert(result["content"].begin(),json{{"type","text"},{"text",result.at("structuredContent").dump()}});
     *bytes=QByteArray::fromStdString(result.dump());
     if(bytes->size()>12*1024*1024)*bytes=QByteArray::fromStdString(live_error("context_too_large","Request a smaller page or inspect a single entity.").dump());
     *bytes+='\n';
-  },[this,session,bytes,receipt](bool ok,const QString&){
+  },[this,session,bytes,receipt,given](bool ok,const QString&){
+    if(ok && !given->empty()){
+      auto next=std::make_shared<KnownRefs>(session->known?*session->known:KnownRefs{});
+      if(next->size()+given->size()>100000)next->clear();  // bounded; an agent asks again for anything dropped
+      for(auto& [key,value]:*given)(*next)[key]=std::move(value);
+      session->known=std::move(next);
+    }
     const auto output=ok?*bytes:QByteArray::fromStdString(live_result({{"state",receipt.empty()?"response_cancelled":m_receipts[receipt].state},{"message","Response serialization cancelled; query current context."}}).dump())+'\n';
     if(!receipt.empty())m_receipts[receipt].response=output;
     if(session->socket && session->socket->state()==QLocalSocket::ConnectedState)session->socket->write(output);

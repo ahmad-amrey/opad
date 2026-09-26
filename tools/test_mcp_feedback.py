@@ -96,6 +96,20 @@ def main():
         assert client.call("context")["result"]["bodies"] == 0
         desktop.action("redo")
         assert client.call("context")["result"]["bodies"] == 1
+        # TODO 10 B6: a token needs neither document nor signature; a bare reference this connection was given is
+        # accepted while its body keeps the key and placement it had then; one it was never given is not.
+        revision = client.state()["revision"]
+        token = client.call("entity_details", ref=f"{body}/edge/0")["result"]["reference"]
+        short = {key: token[key] for key in ("ref", "geometry", "placement")}
+        revision = client.call("feature", kind="chamfer", inputs={"edges": [f"{body}/edge/0"], "distance": 0.5}, references=[short],
+                               expected_revision=revision, request_id="short-token")["revision"]
+        client.call("entity_details", ref=f"{body}/edge/3")
+        revision = client.call("feature", kind="chamfer", inputs={"edges": [f"{body}/edge/3"], "distance": 0.5},
+                               expected_revision=revision, request_id="given-ref")["revision"]
+        never = client.raw("feature", kind="chamfer", inputs={"edges": [f"{body}/edge/7"], "distance": 0.5}, expected_revision=revision, request_id="never-given")
+        assert never["isError"] and "unchecked_reference" in never["structuredContent"]["error"]["message"], never
+        stale = client.raw("feature", kind="chamfer", inputs={"edges": [f"{body}/edge/3"], "distance": 0.5}, expected_revision=revision, request_id="stale-given")
+        assert stale["isError"] and "stale_reference" in stale["structuredContent"]["error"]["message"], stale
         # The wrong forms that were rejected in the Benchy build now say how to fix them.
         revision = client.state()["revision"]
         cabin = {"id": "cabin", "command": "feature", "arguments": {"kind": "box", "inputs": {"length": 20, "width": 12, "height": 10}}}

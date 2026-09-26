@@ -113,8 +113,11 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   `{"kind": "point", "point": [x, y, z]}`.
 - Ordinals change when a body's topology changes. Features store a `hint` with each reference (centre, size, entity
   counts): with the same counts the ordinal is trusted, otherwise the nearest matching entity is taken.
-- Live server: every face/edge/vertex input needs its current reference token (from `entity_details`,
-  `query_entities` or the selection) in the step's `references`, and the edit is refused when the body changed since.
+- Live server: a face/edge/vertex input is accepted when the connection was given that reference (by
+  `entity_details`, `query_entities`, the selection or a change list) and its body still has the same key and
+  placement; otherwise put its token in the call's `references`. A token needs only `ref`, `geometry` and
+  `placement` (`document` is the bound one, `signature` is only used by `resolve_reference` with `remap`). A body
+  that changed since makes the reference stale: ask for it again.
 - Axes: `{"base": "x"}`, `{"edge": ref}` (a straight edge's line or a circular edge's centre axis), `{"face": ref}`
   (a cylinder's, cone's or torus's axis, or a planar face's normal), `{"sketch": id, "entity": line id}` or
   `{"feature": construction axis id}`.

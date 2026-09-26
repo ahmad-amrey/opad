@@ -23,7 +23,9 @@ using namespace opad::agent;
 namespace {
 std::string newId(){return QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();}
 void release(std::shared_ptr<void> value){auto* thread=QThread::create([value=std::move(value)]{});QObject::connect(thread,&QThread::finished,thread,&QObject::deleteLater);thread->start();}
-void checkReferences(const opad::Document& doc,const opad::Scene& scene,const json& args){
+// Every face/edge/vertex input needs a current token in `references`, or (TODO 10 B6) to be a reference this connection
+// was given earlier whose body still has the key and placement it had then.
+void checkReferences(const opad::Document& doc,const opad::Scene& scene,const json& args,const AgentBridge::KnownRefs* known=nullptr){
   std::set<std::string> checked;
   for(const auto& token:args.value("references",json::array())){
     if(resolve_reference(doc,scene,token).value("status","")!="resolved")throw opad::Error("stale_reference: request a fresh selection or resolve_reference before editing");
@@ -33,13 +35,21 @@ void checkReferences(const opad::Document& doc,const opad::Scene& scene,const js
     bool isRef=false;
     if(value.is_string()){const auto& text=value.get_ref<const std::string&>();isRef=text.find("/face/")!=text.npos || text.find("/edge/")!=text.npos || text.find("/vertex/")!=text.npos || text.find("/center/")!=text.npos;}
     if(value.is_object() && value.contains("body")){const auto kind=value.value("kind","body");isRef=kind!="body" && kind!="point";}
-    if(isRef){auto ref=opad::Ref::from_json(value);if(!checked.count(ref.to_json().dump()))throw opad::Error("unchecked_reference: supply entity_details.reference in references for every subshape input");return;}
+    if(isRef){
+      auto ref=opad::Ref::from_json(value);const auto key=ref.to_json().dump();if(checked.count(key))return;
+      if(known)if(auto it=known->find(key);it!=known->end()){
+        const auto* node=scene.node(ref.body);
+        if(node && node->body_key==it->second.geometry && scene.world(ref.body).to_json().dump()==it->second.placement)return;
+        throw opad::Error("stale_reference: "+key+" was given for an earlier state of its body; request it again (entity_details or query_entities)");
+      }
+      throw opad::Error("unchecked_reference: supply entity_details.reference in references for every subshape input, or use a reference this connection was given by entity_details, query_entities or the selection");
+    }
     if(value.is_object()){for(const auto& [key,child]:value.items())if(key!="references")walk(child);}
     else if(value.is_array())for(const auto& child:value)walk(child);
   };walk(args);
 }
 // A small declarative language over existing typed commands, never executable code.
-void modelBatch(opad::Document& doc,const json& args,Progress progress,json& output){
+void modelBatch(opad::Document& doc,const json& args,Progress progress,json& output,const AgentBridge::KnownRefs* known){
   static const std::set<std::string> allowed={"component","param","sketch","sketch_edit","feature","feature_edit","rename","reparent","appearance","transform"};
   std::map<std::string,json> schemas,results;std::set<std::string> earlier;
   for(const auto& command:opad::commands::list())if(allowed.count(command.name))schemas[command.name]=command_schema(command,true);
@@ -143,7 +153,7 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
     if(command=="feature" && !input.contains("parent") && !batchParent.is_null())input["parent"]=batchParent;
     expand(input);validate_input(schemas.at(command),input);
     auto checked=input;checked["references"]=step.value("references",json::array());expand(checked["references"]);
-    checkReferences(doc,opad::resolve(doc),checked);
+    checkReferences(doc,opad::resolve(doc),checked,known);
     input["by"]="Agent";QElapsedTimer timer;timer.start();const auto begin=doc.ops.size();
     auto value=opad::commands::run(command,input,&doc);const auto scene=opad::resolve(doc);
     if(command=="feature" || command=="sketch")for(size_t i=begin;i<doc.ops.size();++i){
@@ -217,7 +227,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
   const auto state=liveState();
   m_busy=true;m_owner=session->socket;const auto epoch=++m_epoch,revision=m_doc->revision;
   const auto started=std::make_shared<QElapsedTimer>();started->start();activity(tr("Agent: %1").arg(QString::fromStdString(name)));
-  auto ready=[this,session,name,args=std::move(args),receipt,write,preview,transaction,epoch,revision,state,started](std::shared_ptr<Snapshot> source,const QString& error){
+  auto ready=[this,session,name,args=std::move(args),receipt,write,preview,transaction,epoch,revision,state,started,known=session->known](std::shared_ptr<Snapshot> source,const QString& error){
     if(epoch!=m_epoch || !session->socket || !session->bound){fail(session,"cancelled",tr("Agent operation cancelled."),receipt);return;}
     if(!source){m_busy=false;fail(session,"snapshot_failed",error,receipt);return;}
     if(name=="transaction_begin"){
@@ -227,9 +237,9 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
     }
     struct Result {std::shared_ptr<Snapshot> snapshot;json output,delta;TopoDS_Shape preview;std::shared_ptr<const BodyPrs> prs;std::vector<std::string> hidden;};auto result=std::make_shared<Result>();
     const auto baseline=!transaction.empty() && m_cache?m_cache:source;
-    auto job=m_jobs->async(tr("Agent: %1").arg(QString::fromStdString(name)),[source,baseline,result,args,name,write,preview,transaction,state,delay=m_benchDelay](Progress p)mutable{
+    auto job=m_jobs->async(tr("Agent: %1").arg(QString::fromStdString(name)),[source,baseline,result,args,name,write,preview,transaction,state,known,delay=m_benchDelay](Progress p)mutable{
       p.setPhase(tr("Inspecting inputs"));
-      if(write && name!="model_batch")checkReferences(*source->doc,source->scene,args);
+      if(write && name!="model_batch")checkReferences(*source->doc,source->scene,args,known.get());
       for(const char* key:{"expected_revision","request_id","transaction","preview","references"})args.erase(key);
       if(write){result->snapshot=std::make_shared<Snapshot>();result->snapshot->doc=std::make_shared<opad::Document>(*source->doc);result->snapshot->revision=source->revision;args["by"]="Agent";}
       auto working=write?result->snapshot:source;
@@ -282,7 +292,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         result->output={{"image",QByteArray::fromStdString(png).toBase64().toStdString()},{"camera",metadata["camera"]},{"visible_ids",metadata["visible_ids"]},
           {"selection",state["selection"]},{"preview_id",args.value("preview_id","")},{"transaction",transaction},{"render_ms",renderTimer.elapsed()},
           {"rendering","software geometry view; visible_ids lists submitted visible bodies (including occluded bodies); UI overlays are not included"}};
-      }else if(name=="model_batch")modelBatch(*working->doc,args,p,result->output);
+      }else if(name=="model_batch")modelBatch(*working->doc,args,p,result->output,known.get());
       else result->output=opad::commands::run(name,args,working->doc.get());
       if(p.cancelled())throw opad::Error("cancelled");
       if(write && name!="export"){

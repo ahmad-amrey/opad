@@ -33,12 +33,18 @@ class AgentBridge : public QObject {
   void bench();
  signals:
   void statusChanged();
+ public:
+  // The sub-shape references a connection was given (entity_details, query_entities, selection, change lists), by
+  // normalised ref, with the body key and placement they were given for (TODO 10 B6). Transport only.
+  struct Known {std::string geometry,placement;};
+  using KnownRefs=std::map<std::string,Known>;
  private:
   using json=opad::json;
   struct Snapshot {std::shared_ptr<opad::Document> doc;opad::Scene scene;unsigned long long revision=0;};
   struct Session {
     QPointer<QLocalSocket> socket;QByteArray input;QString target,agent;std::string clientId;
     QElapsedTimer requestTimer;bool bound=false,receiving=false;
+    std::shared_ptr<const KnownRefs> known;  // replaced, never changed in place: running jobs keep their copy
   };
   struct Receipt {std::string hash,state="pending";QByteArray response;unsigned long long revision=0;};
   struct Prepared {std::shared_ptr<Snapshot> snapshot;std::string id;QString label;QPointer<QLocalSocket> owner;bool transaction=false;json result,changes;std::vector<std::string> receipts;};

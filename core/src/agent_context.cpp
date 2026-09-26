@@ -88,7 +88,8 @@ json reference_token(const Document& doc,const Scene& scene,const Ref& ref) {
   return token;
 }
 json resolve_reference(const Document& doc,const Scene& scene,const json& token,bool remap) {
-  if(token.value("document","")!=doc.header.uuid)return {{"status","wrong_document"},{"action","Request a reference from the bound document."}};
+  // document is optional (it is always the bound one) and so is signature (used only to remap) (TODO 10 B6).
+  if(token.contains("document") && token.value("document","")!=doc.header.uuid)return {{"status","wrong_document"},{"action","Request a reference from the bound document."}};
   const auto ref=Ref::from_json(token.at("ref"));
   if(ref.kind==Ref::Kind::Point)return {{"status","resolved"},{"reference",token}};
   const auto* node=scene.node(ref.body);if(!node)return {{"status","missing"},{"action","Request a new selection; the body was deleted."}};
