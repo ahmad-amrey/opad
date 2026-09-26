@@ -22,6 +22,7 @@
 #include <map>
 
 #include "check.hpp"
+#include "opad/agent.hpp"
 #include "opad/checks.hpp"
 #include "opad/core.hpp"
 #include "opad/design/expr.hpp"
@@ -1330,5 +1331,37 @@ TEST(parameter_edits_reach_bodies_through_moves_patterns_and_combines) {
     commands::run("regenerate", {{"force", true}}, &forced);
     const Scene f = resolve(forced);
     for (const auto& id : s.all_bodies()) CHECK_EQ(s.node(id)->body_key, f.node(id)->body_key);
+  }
+}
+
+// Gap log #8: a profile named by its boundary, as sketch_details lists it, is that region; a boundary alone used to
+// take every region (the whole disc instead of the ring between two circles).
+TEST(a_profile_named_by_its_boundary_is_that_region) {
+  Document doc = Document::create();
+  const json circles = json::array({{{"kind", "circle"}, {"picks", {{0, 0}}}, {"options", {{"radius", 20.0}}}},
+                                    {{"kind", "circle"}, {"picks", {{0, 0}}}, {"options", {{"radius", 8.0}}}}});
+  const std::string sk = commands::run("sketch", {{"geometry", {{"shapes", circles}}}}, &doc)["sketch_id"];
+  Scene s = resolve(doc);
+  const json profiles = agent::sketch_details(doc, s, {{"sketch", sk}, {"section", "profiles"}});
+  CHECK_EQ(profiles["total"], 2);
+  json ring;
+  for (const auto& item : profiles["items"])
+    if (item["boundary"].size() == 2) ring = item["boundary"];
+  CHECK(ring.is_array());
+  auto extrude = [&](const json& boundary) {
+    return feature_cmd(doc, "extrude", {{"profiles", json::array({{{"sketch", sk}, {"boundary", boundary}}})}, {"distance", "5 mm"}, {"operation", "new"}})["body_ids"][0].get<std::string>();
+  };
+  const std::string exact = extrude(ring);
+  // In another order and without signs it still names one region.
+  const std::string loose = extrude(json::array({std::abs(ring[1].get<int>()), std::abs(ring[0].get<int>())}));
+  s = resolve(doc);
+  CHECK_NEAR(volume_of_node(doc, s, exact), M_PI * (400 - 64) * 5, 1e-6);
+  CHECK_NEAR(volume_of_node(doc, s, loose), M_PI * (400 - 64) * 5, 1e-6);
+  // One no region has is refused, naming the ones there are.
+  try {
+    extrude(json::array({999}));
+    CHECK(false);
+  } catch (const Error& e) {
+    CHECK(std::string(e.what()).find(ring.dump()) != std::string::npos);
   }
 }

@@ -364,15 +364,25 @@ Profiles resolve_profiles(const Ctx& ctx, const json& refs) {
       const Frame& frame = it->second.first;
       const std::vector<Region>& regions = it->second.second;
       n = gp_Dir(vec(frame.normal()));
-      if (r.value("all", false) || !r.contains("at")) {
+      if (r.value("all", false) || (!r.contains("at") && !r.contains("boundary"))) {
         for (const auto& g : regions) out.faces.push_back(g.face);
       } else {
         int i=-1;
         if(r.contains("boundary")) {
-          const auto boundary=r.at("boundary").get<std::vector<int>>();
-          for(size_t k=0;k<regions.size();++k)if(regions[k].boundary==boundary) {
-            if(i>=0)throw Error("a picked profile has become ambiguous; pick it again");
-            i=int(k);
+          // The region whose loops are these signed entity ids, as sketch_details lists them; in any order, and
+          // without signs if that still names one region. A boundary alone used to take every region (gap log #8).
+          auto boundary=r.at("boundary").get<std::vector<int>>();std::sort(boundary.begin(),boundary.end());
+          auto unsigned_ids=[](std::vector<int> ids){for(int& id:ids)id=std::abs(id);std::sort(ids.begin(),ids.end());return ids;};
+          for(const bool exact:{true,false}) {
+            for(size_t k=0;k<regions.size();++k)if(exact?regions[k].boundary==boundary:unsigned_ids(regions[k].boundary)==unsigned_ids(boundary)) {
+              if(i>=0)throw Error("a picked profile has become ambiguous; pick it again");
+              i=int(k);
+            }
+            if(i>=0)break;
+          }
+          if(i<0 && !r.contains("at")) {  // a pick from the panel (with at) keeps the message below
+            std::string listed;for(const auto& g:regions)listed+=(listed.empty()?"":", ")+json(g.boundary).dump();
+            throw Error("no region of the sketch has the boundary "+json(boundary).dump()+"; its regions have "+listed);
           }
         } else i=region_at(regions,frame,r["at"][0].get<double>(),r["at"][1].get<double>());
         if (i < 0) throw Error("a picked profile no longer exists in its sketch");

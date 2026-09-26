@@ -94,7 +94,9 @@ meshes gets a private coarse one), rejecting an exact answer its meshes rule out
 lines (`edges` / `edge_lines`), `highlight` (faces and edges tinted) and `shading: "smooth"`; left out, images are
 byte-identical to before.
 
-Extrude also goes up to a face (a tilted plane is followed) or up to a body, besides a distance or through all.
+Extrude also goes up to a face (a tilted plane is followed) or up to a body, besides a distance or through all. A profile
+named by its boundary (the signed entity ids `sketch_details` lists) is that region, so a ring between two
+circles is extruded without a hard-coded point; a boundary no region has is an error listing the ones there are.
 
 Face, edge and vertex inputs can be rules instead of numbers: `{"body": id, "kind": "edge", "select":
 {"parallel_to": "z"}, "expect": 4}` picks the matching entities again whenever the feature regenerates and fails,

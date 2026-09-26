@@ -101,8 +101,11 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 ## Profiles
 
 - A profile input takes sketch regions or planar faces: `{"sketch": id, "at": [u, v]}` is the region containing that
-  point; `{"sketch": id}` or `{"sketch": id, "all": true}` is every closed region of the sketch. `sketch_details`
-  with `section: "profiles"` lists the regions with a point inside each.
+  point; `{"sketch": id, "boundary": [21, -22]}` is the region bounded by those entities (signed ids, as
+  `sketch_details` lists them; in any order, and without signs while that names one region), which keeps naming it
+  when parameters move it; `{"sketch": id}` or `{"sketch": id, "all": true}` is every closed region of the sketch.
+  `sketch_details` with `section: "profiles"` lists the regions with a point inside each and their boundaries. A
+  boundary no region has is an error listing the ones there are.
 - A planar body face (`"<body>/face/3"`) is a profile too.
 
 ## References
