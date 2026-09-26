@@ -169,7 +169,7 @@ void AgentBridge::fail(const std::shared_ptr<Session>& s,const std::string& code
   // Capture this on the UI thread at rejection, before serialization or another event.
   auto& detail=error["structuredContent"]["error"];
   detail["editing"]=editingState();detail["client_id"]=s->clientId;
-  const bool transient=(code=="busy" || code=="edit_session_busy") &&
+  const bool transient=(code=="busy" || code=="edit_session_busy" || (code=="snapshot_failed" && m_doc->snapshotBusy())) &&
     !m_design->sketchActive() && !m_design->featureActive() && !m_design->pickingPlane();
   detail["retryable"]=transient;detail["retry_after_ms"]=transient?json(50):json(nullptr);
   if(transient)detail["next"]="Call wait_for_idle, check revision and transaction state, then retry with a new request_id.";

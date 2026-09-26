@@ -50,7 +50,11 @@ void checkReferences(const opad::Document& doc,const opad::Scene& scene,const js
 // A small declarative language over existing typed commands, never executable code.
 void modelBatch(opad::Document& doc,const json& args,Progress progress,json& output,const AgentBridge::KnownRefs* known,const AgentBridge::BatchSteps* before){
   static const std::set<std::string> allowed={"component","param","sketch","sketch_edit","feature","feature_edit","rename","reparent","appearance","transform"};
-  std::map<std::string,json> schemas,results;std::set<std::string> earlier;
+  std::map<std::string,json> schemas,results;std::set<std::string> earlier,defined;
+  for(const auto& step:args.at("steps"))if(step.contains("id") && step["id"].is_string())defined.insert(step["id"].get<std::string>());
+  // An id this batch defines is this batch's step (a later one is a forward reference); only others may name a step
+  // of an earlier batch on this connection.
+  auto older=[&](const std::string& id){return !defined.count(id) && before && before->count(id);};
   for(const auto& command:opad::commands::list())if(allowed.count(command.name))schemas[command.name]=command_schema(command,true);
   static const std::string syntax="Write @{<step id>#/<path in that step's result>}, for example @{cabin#/body_ids/0} (the first body made by the step with id \"cabin\"); @{cabin/body_ids/0} is the same. Paths start at the step's result, without /result/: feature steps have feature_id and body_ids, sketch steps sketch_id, component steps component_id.";
   // Step ids are [A-Za-z0-9_], so the first '#' or '/' ends the id; '#' may be followed by the pointer's '/' or not.
@@ -105,7 +109,7 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
   std::function<void(const json&)> preflightRefs=[&](const json& value){
     if(value.is_string()){
       const auto text=value.get<std::string>();const auto [id,path]=symbol(text);
-      if(!id.empty() && !earlier.count(id) && !(before && before->count(id))){
+      if(!id.empty() && !earlier.count(id) && !older(id)){
         std::string steps;for(const auto& step:earlier)steps+=(steps.empty()?"":", ")+step;
         std::string older;if(before)for(const auto& [step,result]:*before)older+=(older.empty()?"":", ")+step;
         throw opad::Error("Batch reference "+text+" must name an earlier step of this batch or of an earlier batch on this connection; earlier steps are "+(steps.empty()?std::string("none"):steps)+(older.empty()?std::string():"; earlier batches' are "+older)+". "+syntax);
@@ -124,7 +128,7 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
     preflightRefs(input);preflightRefs(step.value("references",json::array()));
     if(command=="feature" && !input.contains("parent") && batchParent.is_string()){
       const auto [ref,path]=symbol(batchParent.get<std::string>());
-      if(!ref.empty() && !earlier.count(ref) && !(before && before->count(ref)))throw opad::Error("The batch parent "+batchParent.get<std::string>()+" names step '"+ref+"', which does not come before feature step '"+id+"'; put that component step first.");
+      if(!ref.empty() && !earlier.count(ref) && !older(ref))throw opad::Error("The batch parent "+batchParent.get<std::string>()+" names step '"+ref+"', which does not come before feature step '"+id+"'; put that component step first.");
     }
     earlier.insert(id);
   }
@@ -181,8 +185,15 @@ json changes(const opad::Scene& before,const opad::Scene& after){
   out["parameters"]=after.params.size();out["features"]=after.features.size();return out;
 }
 }
-void AgentBridge::snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)> done){
+void AgentBridge::snapshot(std::function<void(std::shared_ptr<Snapshot>,QString)> done,int waited){
   if(m_cache && m_cache->revision==m_doc->revision){done(m_cache,{});return;}
+  // Another capture or a save holds the document (a recovery checkpoint right after a commit): wait for it rather
+  // than fail the call (gap log #3: "snapshot_failed: Document is busy" after every commit).
+  if(m_doc->snapshotBusy() && waited<30000){
+    QPointer<AgentBridge> self=this;
+    QTimer::singleShot(20,this,[self,done=std::move(done),waited]()mutable{if(self)self->snapshot(std::move(done),waited+20);});
+    return;
+  }
   const auto revision=m_doc->revision,generation=m_doc->generation;QPointer<AgentBridge> self=this;
   if(!m_doc->captureSnapshot(m_jobs,[self,revision,generation,done](std::shared_ptr<opad::Document> copy,const QString& error){
     if(!self)return;if(!copy){done({},error);return;}
