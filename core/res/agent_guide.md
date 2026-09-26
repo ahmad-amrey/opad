@@ -9,9 +9,16 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   plain number for a count.
 - A string is an expression: `"20 mm"`, `"width / 2"`, `"2 * pi * r"`, `"30 deg"`, `"count - 1"`. Units: `mm cm m
   um in ft deg rad`. Functions: `sin cos tan asin acos atan atan2 sqrt abs min max floor ceil round pow exp ln log
-  hypot sign`. Constants: `pi PI E`.
+  hypot sign clamp mod if select assert`. Constants: `pi PI E`.
+- Conditions: `< <= > >= == !=` (1 or 0; units must match), `&&`, `||`, `!`, `c ? a : b`, `if(c, a, b)`,
+  `select(i, v0, v1, ...)` (counting from 0). The branch not taken may fail, so `if(x > 0 mm, sqrt(x * 1 mm), 0 mm)`
+  is a guard. `clamp(x, lo, hi)`; `mod(a, b)` and `a % b` take the divisor's sign (`mod(-30 deg, 360 deg)` is 330 deg).
+- Checks: `assert(condition, "message")` is 1 while the condition holds. A change that makes any parameter fail (an
+  assert, a sqrt of a negative) is refused with that parameter's name and message, and the document is unchanged.
 - Values carry their dimension: `10 mm * 2 mm` is an area and is refused where a length is asked for. Write units
-  explicitly; inside `sin()` a plain number is radians, so write `sin(30 deg)`.
+  explicitly; inside `sin()` a plain number is radians, so write `sin(30 deg)`. A typed plain number added to an angle
+  is degrees (`30 deg + 15` is 45 deg), but a plain number a function computed (`tan(x)`, a comparison) is refused
+  there: multiply it by `1 rad` or `1 deg`. A power must give a whole power of length: `(x / 1 mm)^1.5`, not `x^1.5`.
 - Parameters (`param`) are named expressions; `param` with `rename` renames one and rewrites every expression that
   uses it. A change regenerates what depends on it, and only that.
 

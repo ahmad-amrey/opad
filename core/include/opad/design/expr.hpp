@@ -14,8 +14,9 @@ enum class Dim { None, Length, Angle };
 
 struct Quantity {
   double value = 0;
-  int len = 0;         // power of length: 1 = mm, 2 = mm^2, ...
-  bool angle = false;  // radians
+  int len = 0;          // power of length: 1 = mm, 2 = mm^2, ...
+  bool angle = false;   // radians
+  bool derived = false; // a plain number a function computed (sin(x), a comparison): never taken as degrees
 };
 
 struct ParamDef {

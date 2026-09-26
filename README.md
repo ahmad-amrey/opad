@@ -106,6 +106,12 @@ control-point spline needs only its `degree` (uniform knots, clamped or periodic
 vertical dimensions take `signed: true` (they then drive q - p, a negative value putting q before p), and on a
 single point they are its signed coordinates, so a point can be fixed at (expression, expression).
 
+Expressions compare (`< <= > >= == !=`, `&&`, `||`, `!`), choose (`c ? a : b`, `if`, `select`), `clamp` and take
+`mod`/`%`; a branch not taken may fail, so guards work. `assert(condition, "message")` makes a parameter a check: a
+change that makes any parameter fail is refused naming it with its expression's reason or the assert's message, and
+live edits that leave operations unresolved say which and why. A plain number a function computed is no longer
+taken as degrees when added to an angle; a fractional power of a length says how to normalise it.
+
 Face, edge and vertex inputs can be rules instead of numbers: `{"body": id, "kind": "edge", "select":
 {"parallel_to": "z"}, "expect": 4}` picks the matching entities again whenever the feature regenerates and fails,
 rather than guessing, when the count changes. The desktop offers the same through "By rule…" on pick inputs, and

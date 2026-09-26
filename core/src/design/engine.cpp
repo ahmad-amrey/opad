@@ -760,6 +760,40 @@ struct Walk {
     if (strict) check_params(params, ops);
 
     json errors = json::array();
+    // Parameters this change stops from evaluating (a check such as sqrt(margin / 1 mm) on a negative margin),
+    // each with its expression and reason (gap log #12: a live edit was refused as "unresolved operations" only).
+    // Refused when strict, like a failing feature.
+    if (touches_params()) {
+      std::vector<const Op*> stored;
+      for (const auto& o : doc.ops) stored.push_back(&o);
+      std::vector<ParamDef> before_defs;
+      for (const auto& e : effective_ops(stored))
+        if (e.op->type == "param") before_defs.push_back({e.op->id, e.data().value("name", ""), e.data().value("expr", ""), ""});
+      const ParamTable before(before_defs);
+      std::string broken;
+      for (const auto& d : defs) {
+        std::string now;
+        try {
+          params.value_of(d.name);
+        } catch (const std::exception& ex) {
+          now = ex.what();
+          if (now.rfind(d.name + ":", 0) != 0) now = d.name + ": " + now;
+        }
+        if (now.empty()) continue;
+        bool was_fine = false;
+        try {
+          if (before.find(d.name)) {
+            before.value_of(d.name);
+            was_fine = true;
+          }
+        } catch (const std::exception&) {
+        }
+        if (!was_fine && before.find(d.name)) continue;  // already failing: not this change
+        errors.push_back({{"op", d.id}, {"name", d.name}, {"expr", d.expr}, {"error", now}});
+        broken += (broken.empty() ? "" : "; ") + now;
+      }
+      if (strict && !broken.empty()) throw Error("the change makes a parameter fail: " + broken);
+    }
     SceneBuilder builder(doc);
     for (const auto& e : ops) {
       if (cancel && cancel()) throw Error("cancelled");
@@ -860,6 +894,17 @@ struct Walk {
   // A reused result may point at bodies an earlier step of this plan has not put in the document yet; nothing
   // to do for stored ones (they are in the store), this only keeps the bookkeeping in one place.
   void note_fresh(const json&) {}
+
+  // Whether the new ops add, edit or delete a parameter.
+  bool touches_params() const {
+    for (const auto& op : new_ops) {
+      const std::string type = op.value("op", "");
+      if (type == "param") return true;
+      if (type == "edit" || type == "delete")
+        if (const Op* target = doc.find_op(op.value("target", "")); target && target->type == "param") return true;
+    }
+    return false;
+  }
 
   void check_params(const ParamTable& params, const std::vector<EffectiveOp>& ops) const {
     std::set<std::string> touched;

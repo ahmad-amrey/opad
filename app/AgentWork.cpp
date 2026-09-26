@@ -313,7 +313,14 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
             if(const auto* sk=working->scene.sketch(id.get<std::string>());sk)result->output["sketch_id"]=sk->id;
           }
         }
-        if(working->scene.unresolved.size()>source->scene.unresolved.size())throw opad::Error("The edit introduced unresolved operations; document unchanged.");
+        if(working->scene.unresolved.size()>source->scene.unresolved.size()){  // name them (gap log #12)
+          std::string reasons;int fresh=0;
+          for(const auto& u:working->scene.unresolved){
+            bool before=false;for(const auto& v:source->scene.unresolved)if(v.op_id==u.op_id && v.reason==u.reason){before=true;break;}
+            if(before)continue;if(fresh++<5)reasons+=(reasons.empty()?"":"; ")+(u.reason.empty()?u.op_type+" "+u.op_id:u.reason);
+          }
+          throw opad::Error("The edit introduced unresolved operations; document unchanged: "+reasons+(fresh>5?" (and "+std::to_string(fresh-5)+" more)":""));
+        }
         for(const auto& feature:working->scene.features)if(!feature.error.empty()){
           auto* before=source->scene.feature(feature.id);if(!before || before->error!=feature.error)throw opad::Error(feature.error);
         }

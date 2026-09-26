@@ -1455,3 +1455,71 @@ TEST(coordinates_follow_parameters_to_either_side) {
   CHECK_NEAR(at(1).first, -12, 1e-9);
   CHECK_NEAR(at(2).first, -28, 1e-9);  // -12 + (-12 - 4)
 }
+
+// Gap log #7: comparisons, conditions and choices, clamp and mod, assert with a message, guarded branches, and no
+// silent degrees for a function's plain number.
+TEST(expression_conditions_choices_and_checks) {
+  ParamTable t({{"1", "R", "30 mm", ""}, {"2", "N", "26", ""}, {"3", "ecc", "0.8 mm", ""}, {"4", "pose", "2", ""}, {"5", "margin", "-1 mm", ""}});
+  CHECK_EQ(t.number("ecc < R / N"), 1.0);
+  CHECK_EQ(t.number("ecc >= R / N"), 0.0);
+  CHECK_EQ(t.number("2 mm == 2.0 mm && !(1 > 2) || 0"), 1.0);
+  CHECK_NEAR(t.length("if(ecc < R / N, 5 mm, 7 mm)"), 5, 1e-12);
+  CHECK_NEAR(t.length("ecc > 1 mm ? 1 mm : 2"), 2, 1e-12);  // a typed 2 takes mm, as in a sum
+  CHECK_NEAR(t.angle("select(pose, 0 deg, 45 deg, 90 deg)"), M_PI / 2, 1e-12);
+  CHECK_THROWS(t.angle("select(pose + 1, 0 deg, 45 deg, 90 deg)"));
+  CHECK_NEAR(t.length("clamp(margin, 0 mm, 5 mm)"), 0, 1e-12);
+  CHECK_NEAR(t.angle("mod(-30 deg, 360 deg)"), 330 * M_PI / 180, 1e-12);
+  CHECK_NEAR(t.length("7 mm % 3 mm"), 1, 1e-12);
+  // A guard: the branch not taken may fail.
+  CHECK_NEAR(t.number("if(margin > 0 mm, sqrt(margin / 1 mm), 0)"), 0, 1e-12);
+  CHECK_NEAR(t.number("margin > 0 mm && sqrt(margin / 1 mm) > 1"), 0, 1e-12);
+  CHECK_THROWS(t.number("sqrt(margin / 1 mm)"));
+  CHECK_THROWS(t.number("if(margin > 0 mm, nosuchname, 0)"));  // unknown names still count
+  // assert: 1 when true, its message when not.
+  CHECK_EQ(t.number("assert(ecc < R / N, \"eccentricity above R/N\")"), 1.0);
+  try {
+    t.number("assert(margin > 0 mm, 'margin must be positive')");
+    CHECK(false);
+  } catch (const Error& e) {
+    CHECK(std::string(e.what()).find("margin must be positive") != std::string::npos);
+  }
+  // A plain number from a function is not degrees (this read 181 deg).
+  CHECK_THROWS(t.angle("tan(45 deg) + asin(1) + acos(0) + exp(0) + log(1) + sign(-2)"));
+  CHECK_NEAR(t.angle("tan(45 deg) * 1 rad + asin(1)"), 1 + M_PI / 2, 1e-12);
+  CHECK_NEAR(t.angle("30 deg + 15"), 45 * M_PI / 180, 1e-12);  // a typed number still takes degrees
+  // Fractional powers: a unit that exists is fine; one that does not says how to get there.
+  CHECK_NEAR(t.length("(4 mm * 1 mm)^0.5"), 2, 1e-12);
+  try {
+    t.number("(2 mm)^1.5");
+    CHECK(false);
+  } catch (const Error& e) {
+    CHECK(std::string(e.what()).find("divide by 1 mm") != std::string::npos);
+  }
+  CHECK_NEAR(t.number("(2 mm / 1 mm)^1.5"), std::pow(2, 1.5), 1e-12);
+  // An older parameter named like a new function still works where it is not called.
+  ParamTable older({{"1", "mod", "3", ""}, {"2", "twice", "mod * 2", ""}});
+  CHECK_NEAR(older.number("twice"), 6, 1e-12);
+  CHECK(!valid_param_name("clamp"));
+  CHECK_EQ(expr_identifiers("assert(width > 2 mm, \"width too small\")").size(), size_t(1));
+}
+
+// Gap log #12: a change that makes a check fail is refused naming the check and its message (a live edit said only
+// "unresolved operations").
+TEST(a_change_that_breaks_a_check_is_refused_naming_it) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "margin"}, {"expr", "1 mm"}}, &doc);
+  commands::run("param", {{"name", "chk_margin"}, {"expr", "assert(margin > 0 mm, \"the margin must stay positive\")"}}, &doc);
+  commands::run("param", {{"name", "chk_root"}, {"expr", "sqrt(margin / 1 mm)"}}, &doc);
+  try {
+    commands::run("param", {{"name", "margin"}, {"expr", "-1 mm"}}, &doc);
+    CHECK(false);
+  } catch (const Error& e) {
+    const std::string m = e.what();
+    CHECK(m.find("chk_margin: the margin must stay positive") != std::string::npos);
+    CHECK(m.find("chk_root: sqrt of a negative value") != std::string::npos);
+  }
+  const Scene s = resolve(doc);
+  CHECK(s.unresolved.empty());
+  for (const auto& p : s.params)
+    if (p.name == "margin") CHECK_NEAR(p.value, 1, 1e-12);
+}
