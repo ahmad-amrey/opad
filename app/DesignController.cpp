@@ -195,6 +195,7 @@ void DesignController::startFeature(const QString& kind) {
   m_filterBefore = m_viewport->selectionFilter();
   m_viewport->setPickAccumulate(true);
   m_form->begin(*spec, inputs, QString::fromStdString(next_name(m_doc->scene, titleCase(spec->label).toStdString())), false);
+  if (m_currentComponent) m_form->setBodyDefaults(m_currentComponent());
   if (m_panel) {
     m_panel->setHeader(QString::fromStdString(spec->icon), i18n::t(QString::fromStdString(spec->label)));
     m_panel->setContext(tr("new"));
@@ -467,10 +468,14 @@ void DesignController::runPreview(bool commit) {
   auto commitReady = [this] {
     auto plan = m_readyPlan;
     const QString label = m_form->spec() ? i18n::t(QString::fromStdString(m_form->spec()->label)).toLower() : tr("feature");
-    whenNobodyReads(this, [this, plan, label] {
+    // The new bodies' name, colour and component: the rename / appearance / reparent ops of the same step (B14).
+    const opad::json style = m_editing.empty() ? m_form->bodyStyle() : opad::json::object();
+    const std::string op = m_newId;
+    whenNobodyReads(this, [this, plan, label, style, op] {
       try {
         m_viewport->clearPreviewBodies();
         m_doc->setRollback({});
+        if (!style.empty()) style_new_bodies(*plan, op, style);
         const opad::json rep = m_doc->commitPlan(std::move(*plan), label);
         const size_t errors = rep.value("errors", opad::json::array()).size();
         endFeature();
@@ -720,11 +725,22 @@ void DesignController::bench() {
         else {if(m_featureOn)return;if(m_doc->scene.features.empty() || m_distanceHandle->isVisible())throw opad::Error("extrude handle commit/cleanup");timer->stop();trace::log("bench: extrusion start offset, drag, preview and commit PASS");QCoreApplication::exit(0);}
       }catch(const std::exception& e){timer->stop();trace::log(QString("bench: extrude handle FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();return;
     }
+    // TODO 10 B14: the panel's New body section names and colours the body in the same step.
+    m_form->setBodyName("Bench block");
+    m_form->setBodyColour(QColor(30, 110, 200));
+    if (const QString shot = qEnvironmentVariable("OPAD_BENCH_FEATURESHOT"); !shot.isEmpty() && m_panel) {
+      m_panel->resize(m_panel->width(), 640);
+      m_panel->grab().save(shot);
+    }
     runPreview(true);
     // Edit the extrude with the timeline rolled back, then fillet four edges of the result.
     QTimer::singleShot(1500, this, [this] {
       if (m_doc->scene.features.empty()) return trace::log(QStringLiteral("bench: design: the extrude did not commit"));
       const std::string extrude = m_doc->scene.features.front().id;
+      const auto made = m_doc->scene.features.front().result.value("bodies", opad::json::array());
+      const opad::Node* block = made.empty() ? nullptr : m_doc->node(made[0].value("id", ""));
+      const bool styled = block && block->name == "Bench block" && block->has_color && std::abs(block->color[2] - 200 / 255.0) < 1e-3;
+      trace::log(QStringLiteral("bench: design: new body named and coloured by the panel %1").arg(styled ? "PASS" : "FAIL"));
       editOp(extrude);
       trace::log(QStringLiteral("bench: design: editing, rolled back to %1 bodies").arg(m_doc->scene.all_bodies().size()));
       m_form->setValue("distance", "6 mm * 2");

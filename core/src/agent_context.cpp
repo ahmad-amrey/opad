@@ -51,7 +51,8 @@ json context(const Document& doc,const Scene& scene,const json& args) {
   if(section=="nodes") {
     std::vector<std::string> ids;ids.reserve(scene.nodes.size());for(const auto& [id,n]:scene.nodes)ids.push_back(id);std::sort(ids.begin(),ids.end());
     for(const auto& id:ids){const auto& n=*scene.node(id);add(n.name,[&]{auto instances=scene.instance_count.find(n.body_key);return json{{"id",id},{"name",short_text(n.name)},{"type",n.kind==Node::Kind::Body?"body":"component"},{"representation",n.representation},
-      {"parent",n.parent},{"source",n.source_op},{"visible",scene.effectively_visible(id)},{"locked",n.locked},{"instances",instances==scene.instance_count.end()?0:instances->second},{"missing",n.body_missing}};});}
+      {"parent",n.parent},{"source",n.source_op},{"visible",scene.effectively_visible(id)},{"locked",n.locked},{"instances",instances==scene.instance_count.end()?0:instances->second},{"missing",n.body_missing},
+      {"color",n.has_color?json(n.color):json(nullptr)}};});}
   } else if(section=="sketches")for(const auto& sk:scene.sketches)add(sk.name,[&]{return sketch_summary(sk);});
   else if(section=="parameters")for(const auto& p:scene.params)add(p.name,[&]{return json{{"id",p.id},{"name",short_text(p.name)},{"expr",short_text(p.expr)},{"value",p.value},{"shown",p.shown},{"error",short_text(p.error)}};});
   else if(section=="features")for(const auto& f:scene.features)add(f.name,[&]{json result={{"id",f.id},{"kind",f.kind},{"name",short_text(f.name)},{"suppressed",f.suppressed},{"error",short_text(f.error)}};

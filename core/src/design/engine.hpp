@@ -50,7 +50,7 @@ struct Out {
   struct Body {
     std::string node;  // existing node it replaces, or empty for a new body
     TopoDS_Shape shape;
-    std::string name;  // new bodies: suggested name prefix (default "Body")
+    std::string source;  // new bodies: the body it is a copy or a piece of (named, placed and coloured after it)
   };
   std::vector<Body> bodies;
   std::vector<std::string> removed;

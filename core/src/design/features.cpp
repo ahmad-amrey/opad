@@ -433,12 +433,12 @@ TopoDS_Wire resolve_path(const Ctx& ctx, const json& path) {
 }
 
 // The shared ending of every feature that makes material: new body, or join / cut / intersect with others.
-void apply_operation(const Ctx& ctx, const json& inputs, const TopoDS_Shape& tool_in, Out& out, const std::string& name = "Body") {
+void apply_operation(const Ctx& ctx, const json& inputs, const TopoDS_Shape& tool_in, Out& out) {
   const TopoDS_Shape tool = healed(tool_in);
   if (solids_of(tool).empty()) throw Error("the operation produced no solid");
   const std::string op = inputs.value("operation", "new");
   if (op == "new") {
-    for (const auto& s : solids_of(tool)) out.bodies.push_back({"", outward(s), name});
+    for (const auto& s : solids_of(tool)) out.bodies.push_back({"", outward(s)});
     return;
   }
   std::vector<std::string> targets = body_ids(ctx, inputs.value("targets", json::array()));
@@ -468,10 +468,10 @@ void apply_operation(const Ctx& ctx, const json& inputs, const TopoDS_Shape& too
     }
     const auto pieces = solids_of(acc);
     if (owner.empty()) {
-      for (const auto& s : pieces) out.bodies.push_back({"", outward(s), name});
+      for (const auto& s : pieces) out.bodies.push_back({"", outward(s)});
       return;
     }
-    out.bodies.push_back({owner, bundle(pieces), name});
+    out.bodies.push_back({owner, bundle(pieces)});
     return;
   }
   bool any = false;
@@ -489,7 +489,7 @@ void apply_operation(const Ctx& ctx, const json& inputs, const TopoDS_Shape& too
       out.removed.push_back(id);
       continue;
     }
-    out.bodies.push_back({id, bundle(pieces), name});  // parted by the cut: the pieces stay one body
+    out.bodies.push_back({id, bundle(pieces)});  // parted by the cut: the pieces stay one body
   }
   if (!any) throw Error(op == "cut" ? "the cut does not touch any body" : "nothing intersects");
 }
@@ -768,7 +768,7 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       if (wall <= 0 || wall >= d / 2) throw Error("the wall must be thinner than the pipe radius");
       s = boolean(BoolOp::Cut, s, swept(d / 2 - wall));
     }
-    apply_operation(ctx, in, s, out, "Pipe");
+    apply_operation(ctx, in, s, out);
     return out;
   }
   if (kind == "coil") {
@@ -805,7 +805,7 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
     mk.Add(section);
     mk.Build();
     if (!mk.IsDone() || !mk.MakeSolid()) throw Error("the coil could not be built (section too large for the pitch?)");
-    apply_operation(ctx, in, moved(outward(mk.Shape()), place), out, "Coil");
+    apply_operation(ctx, in, moved(outward(mk.Shape()), place), out);
     return out;
   }
   if (kind == "thicken") {
@@ -876,7 +876,7 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       }
       const auto pieces = solids_of(result);
       if (pieces.empty()) throw Error("the result is not a solid");
-      out.bodies.push_back({node, healed(pieces.size() == 1 ? pieces.front() : result), ""});
+      out.bodies.push_back({node, healed(pieces.size() == 1 ? pieces.front() : result)});
     }
     return out;
   }
@@ -911,7 +911,7 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       }
       const auto pieces = solids_of(result);
       if (pieces.empty()) throw Error("the shell is not a solid");
-      out.bodies.push_back({node, healed(pieces.front()), ""});
+      out.bodies.push_back({node, healed(pieces.front())});
     };
     bool any = false;
     if (in.contains("faces") && !in["faces"].empty())
@@ -933,7 +933,7 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       }
       draft.Build();
       if (!draft.IsDone()) throw Error("that draft angle cannot be applied");
-      out.bodies.push_back({node, healed(draft.Shape()), ""});
+      out.bodies.push_back({node, healed(draft.Shape())});
     }
     return out;
   }
@@ -953,7 +953,7 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       }
       const auto pieces = solids_of(body);
       if (pieces.empty()) throw Error("nothing is left of the body");
-      out.bodies.push_back({node, healed(pieces.size() == 1 ? pieces.front() : body), ""});
+      out.bodies.push_back({node, healed(pieces.size() == 1 ? pieces.front() : body)});
     }
     return out;
   }
@@ -971,7 +971,7 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       }
       gp_Trsf t;
       t.SetScale(about, k);
-      out.bodies.push_back({ids[i], moved(bodies[i], t), ""});
+      out.bodies.push_back({ids[i], moved(bodies[i], t)});
     }
     return out;
   }
@@ -997,7 +997,7 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       // Joined tools that do not touch the target, or a cut that parts it: the pieces stay one body.
       std::vector<TopoDS_Shape> healedPieces;
       for (const auto& piece : pieces) healedPieces.push_back(healed(piece));
-      out.bodies.push_back({target.front(), bundle(healedPieces), ""});
+      out.bodies.push_back({target.front(), bundle(healedPieces)});
     }
     if (!in.value("keep_tools", false))
       for (const auto& t : tools) out.removed.push_back(t);
@@ -1025,8 +1025,8 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       const auto pieces = solids_of(split.Shape());
       if (pieces.size() < 2) continue;
       any = true;
-      out.bodies.push_back({ids[i], pieces.front(), ""});
-      for (size_t k = 1; k < pieces.size(); ++k) out.bodies.push_back({"", pieces[k], ctx.scene.node(ids[i])->name});
+      out.bodies.push_back({ids[i], pieces.front()});
+      for (size_t k = 1; k < pieces.size(); ++k) out.bodies.push_back({"", pieces[k], ids[i]});
     }
     if (!any) throw Error("the plane does not cut through the picked bodies");
     return out;
@@ -1034,7 +1034,8 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
 
   // ---- copies
   if (kind == "mirror" || kind == "pattern_rect" || kind == "pattern_circ") {
-    const auto bodies = world_bodies(ctx, in.value("bodies", json()));
+    std::vector<std::string> ids;
+    const auto bodies = world_bodies(ctx, in.value("bodies", json()), &ids);
     std::vector<gp_Trsf> places;
     if (kind == "mirror") {
       const Frame frame = ctx.plane(in.value("plane", json()));
@@ -1072,11 +1073,26 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
         places.push_back(t);
       }
     }
+    // Mirrored solids come out inside out: turn each one outward, keeping a body of several solids as one.
+    auto copy = [](const TopoDS_Shape& body, const gp_Trsf& t) {
+      std::vector<TopoDS_Shape> solids;
+      for (const auto& s : solids_of(moved(body, t))) solids.push_back(outward(s));
+      return bundle(solids);
+    };
+    if (in.value("operation", "new") == "new") {
+      // One new body per copy of each picked body, named, placed and coloured after it (TODO 10 C2).
+      for (const auto& t : places)
+        for (size_t i = 0; i < bodies.size(); ++i) {
+          ctx.check_cancel();
+          out.bodies.push_back({"", copy(bodies[i], t), ids[i]});
+        }
+      return out;
+    }
     std::vector<TopoDS_Shape> copies;
     for (const auto& t : places)
       for (const auto& b : bodies) {
         ctx.check_cancel();
-        copies.push_back(outward(moved(b, t)));
+        copies.push_back(copy(b, t));
       }
     apply_operation(ctx, in, compound_of(copies), out);
     return out;
@@ -1092,7 +1108,8 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       t = t * r;
     }
     if (t.Form() == gp_Identity) throw Error("the move does nothing");
-    for (size_t i = 0; i < ids.size(); ++i) out.bodies.push_back({in.value("copy", false) ? std::string() : ids[i], moved(bodies[i], t), ctx.scene.node(ids[i])->name});
+    const bool copying = in.value("copy", false);
+    for (size_t i = 0; i < ids.size(); ++i) out.bodies.push_back({copying ? std::string() : ids[i], moved(bodies[i], t), copying ? ids[i] : std::string()});
     return out;
   }
   if (kind == "remove") {

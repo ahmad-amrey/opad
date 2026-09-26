@@ -73,6 +73,23 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
     }
     return *at;
   };
+  // @{pat#/body_ids/*} is the whole list: spliced in as an element of an array, or the array itself as a value.
+  auto wholeList=[](const json& value){if(!value.is_string())return false;const auto& text=value.get_ref<const std::string&>();return text.starts_with("@{") && text.ends_with("/*}");};
+  auto lookupList=[&](const std::string& text)->json{
+    const auto one=text.substr(0,text.size()-3)+"}";const auto [id,path]=symbol(one);const json& list=lookup(text,id,path);
+    if(!list.is_array())throw opad::Error("Batch reference "+text+": step '"+id+"' "+path.substr(1)+" is "+std::string(list.type_name())+" "+list.dump()+", not a list; /* takes every item of a list such as body_ids.");
+    for(const auto& item:list)if(!item.is_string())throw opad::Error("Batch reference "+text+" holds "+item.dump()+", not identifier strings.");
+    return list;
+  };
+  // Before anything runs, a whole-list reference standing for an array is checked as a list of one.
+  std::function<void(json&)> listShaped=[&](json& value){
+    if(value.is_object()){for(auto& [key,child]:value.items()){
+      if(wholeList(child)){
+        if(key=="target")throw opad::Error("Batch reference "+child.get<std::string>()+" is a whole list; use targets (an array) instead of target, or pick one item such as /0.");
+        child=json::array({child});
+      }else listShaped(child);
+    }}else if(value.is_array())for(auto& child:value)if(!wholeList(child))listShaped(child);
+  };
   std::function<void(const json&)> preflightRefs=[&](const json& value){
     if(value.is_string()){
       const auto text=value.get<std::string>();const auto [id,path]=symbol(text);
@@ -82,30 +99,47 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
       }
     }else if(value.is_array() || value.is_object())for(const auto& child:value)preflightRefs(child);
   };
+  // A batch-level parent is where every body its feature steps make goes, unless a step names its own (TODO 10 B14).
+  const json batchParent=args.contains("parent")?args["parent"]:json();
   // Validate every command and dependency before computing any geometry.
   for(const auto& step:args.at("steps")){
     const auto id=step.at("id").get<std::string>(),command=step.at("command").get<std::string>();
     if(id.empty() || id.size()>64 || !std::all_of(id.begin(),id.end(),[](unsigned char c){return std::isalnum(c) || c=='_';}) || earlier.count(id))throw opad::Error("Batch step IDs must be unique letters, digits or underscores");
     if(!allowed.count(command))throw opad::Error("Unsupported batch command: "+command);
-    const auto& input=step.at("arguments");validate_input(schemas.at(command),input);
+    auto input=step.at("arguments");listShaped(input);validate_input(schemas.at(command),input);
     if(command=="feature")validate_input(feature_schema(input.at("kind").get<std::string>()),input.value("inputs",json::object()));
-    preflightRefs(input);preflightRefs(step.value("references",json::array()));earlier.insert(id);
+    preflightRefs(input);preflightRefs(step.value("references",json::array()));
+    if(command=="feature" && !input.contains("parent") && batchParent.is_string()){
+      const auto [ref,path]=symbol(batchParent.get<std::string>());
+      if(!ref.empty() && !earlier.count(ref))throw opad::Error("The batch parent "+batchParent.get<std::string>()+" names step '"+ref+"', which does not come before feature step '"+id+"'; put that component step first.");
+    }
+    earlier.insert(id);
   }
   output={{"steps",json::array()},{"atomic",true},{"persistence","not_saved"}};
   std::function<void(json&)> expand=[&](json& value){
+    if(wholeList(value)){value=lookupList(value.get<std::string>());return;}
     if(value.is_string()){
       const auto text=value.get<std::string>();const auto [id,path]=symbol(text);
       if(!id.empty()){
         value=lookup(text,id,path);
-        if(!value.is_string())throw opad::Error("Batch reference "+text+" is "+std::string(value.type_name())+" "+value.dump()+", not an identifier string."+(value.is_array()?" Add an index, for example "+text.substr(0,text.size()-1)+"/0}.":""));
+        if(!value.is_string())throw opad::Error("Batch reference "+text+" is "+std::string(value.type_name())+" "+value.dump()+", not an identifier string."+(value.is_array()?" Add an index, for example "+text.substr(0,text.size()-1)+"/0}, or /* for the whole list where a list is accepted.":""));
       }
-    }else if(value.is_array() || value.is_object())for(auto& child:value)expand(child);
+    }else if(value.is_array()){
+      json spliced=json::array();
+      for(auto& child:value){
+        if(wholeList(child)){for(const auto& item:lookupList(child.get<std::string>()))spliced.push_back(item);continue;}
+        expand(child);spliced.push_back(std::move(child));
+      }
+      value=std::move(spliced);
+    }else if(value.is_object())for(auto& child:value)expand(child);
   };
   for(const auto& step:args.at("steps")){
     const auto id=step.at("id").get<std::string>(),command=step.at("command").get<std::string>();
     output["failed_step"]=id;
     if(progress.cancelled())throw opad::Error("cancelled");
-    auto input=step.at("arguments");expand(input);validate_input(schemas.at(command),input);
+    auto input=step.at("arguments");
+    if(command=="feature" && !input.contains("parent") && !batchParent.is_null())input["parent"]=batchParent;
+    expand(input);validate_input(schemas.at(command),input);
     auto checked=input;checked["references"]=step.value("references",json::array());expand(checked["references"]);
     checkReferences(doc,opad::resolve(doc),checked);
     input["by"]="Agent";QElapsedTimer timer;timer.start();const auto begin=doc.ops.size();

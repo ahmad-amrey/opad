@@ -1494,5 +1494,17 @@
   "Snap: click closer to a vertex of the drawing": "ربط: انقر أقرب إلى رأس في الرسم",
   "Snap: click a vertex of a body, a drawing or a sketch": "ربط: انقر رأسًا لجسم أو رسم أو مخطط",
   "The sketch takes the drawing's plane and origin. Choose the layers and preview the converted curves.": "يأخذ المخطط مستوى الرسم وأصله. اختر الطبقات واستعرض المنحنيات المحوَّلة.",
-  "These layers come from drawings on different planes; convert them separately": "هذه الطبقات من رسومات على مستويات مختلفة؛ حوّل كل رسم على حدة"
+  "These layers come from drawings on different planes; convert them separately": "هذه الطبقات من رسومات على مستويات مختلفة؛ حوّل كل رسم على حدة",
+  "Name, colour and component of the bodies this feature makes": "اسم الأجسام التي تنشئها هذه الميزة ولونها ومكوّنها",
+  "Several bodies are numbered; {n} marks where the number goes": "تُرقَّم الأجسام المتعددة؛ ويحدد {n} موضع الرقم",
+  "Back to the automatic colour": "العودة إلى اللون التلقائي",
+  "Colour of the new bodies": "لون الأجسام الجديدة",
+  "With the picked bodies": "مع الأجسام المختارة",
+  "Document root": "جذر المستند",
+  "New body, in %1": "جسم جديد، في %1",
+  "New body": "جسم جديد",
+  "Named after the picked bodies": "مسمّاة باسم الأجسام المختارة",
+  "As the picked bodies": "مثل الأجسام المختارة",
+  "Rename %1 objects": "إعادة تسمية %1 من الكائنات",
+  "Name ({n} is replaced by 1, 2, 3, ...):": "الاسم (يُستبدل {n} بـ 1، 2، 3، ...):"
 }

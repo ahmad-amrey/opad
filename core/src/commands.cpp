@@ -104,6 +104,38 @@ json op_with_target(const std::string& type, const json& a) {
   return op;
 }
 
+// `target`, or a `targets` array (TODO 10 B15). Several targets are several ops of the same kind, so the op format,
+// replay and merges stay as they are.
+std::vector<json> targets_of(const std::string& command, const json& a) {
+  if (!a.contains("targets")) return {a.at("target")};
+  if (a.contains("target")) throw Error(command + ": give target or targets, not both");
+  const json& t = a["targets"];
+  if (!t.is_array() || t.empty()) throw Error(command + ": targets must be a non-empty array of node ids");
+  std::vector<json> out;
+  for (const auto& id : t) {
+    if (!id.is_string()) throw Error(command + ": targets must be node id strings, got " + id.dump());
+    if (std::find(out.begin(), out.end(), id) == out.end()) out.push_back(id);
+  }
+  return out;
+}
+
+// Appends one op per target: `make(target, index, count)` builds it. The result keeps "id" (the first op) and lists
+// every op in "ids" when there are several.
+json append_per_target(Document& doc, const std::string& command, const json& a, const std::function<json(const json&, size_t, size_t)>& make) {
+  const std::vector<json> targets = targets_of(command, a);
+  json j;
+  json ids = json::array();
+  for (size_t i = 0; i < targets.size(); ++i) {
+    json op = {{"op", command}, {"target", targets[i]}};  // the field order of the single-target form
+    const json fields = make(targets[i], i, targets.size());
+    for (const auto& [k, v] : fields.items()) op[k] = v;
+    ids.push_back(doc.append(op, a.value("by", "")).id);
+  }
+  j["id"] = ids.front();
+  if (a.contains("targets")) j["ids"] = ids;
+  return j;
+}
+
 void register_builtins() {
   auto& r = raw_registry();
   auto reg = [&](const char* name, const char* desc, json args, bool mutates, Handler h) {
@@ -436,22 +468,22 @@ void register_builtins() {
         return j;
       });
 
-  reg("rename", "Rename a node", {{"doc", "path"}, {"target", "uuid"}, {"name", "string"}}, true, [](Document* d, const json& a) {
-    json op = op_with_target("rename", a);
-    op["name"] = a.at("name");
-    json j;
-    j["id"] = need(d).append(op, a.value("by", "")).id;
-    return j;
+  reg("rename", "Rename a node, or several: with targets the name is numbered (\"Board screw {n}\" puts the number where {n} is; without {n} it is appended)",
+      {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids - instead of target"}, {"name", "string"}}, true, [](Document* d, const json& a) {
+    const std::string name = a.at("name").get<std::string>();
+    return append_per_target(need(d), "rename", a, [&](const json&, size_t i, size_t n) {
+      return json{{"name", a.contains("targets") ? design::numbered_name(name, i + 1, n) : name}};
+    });
   });
 
-  reg("appearance", "Set colour/opacity/visibility/lock of a node",
-      {{"doc", "path"}, {"target", "uuid"}, {"color", "[r,g,b]"}, {"opacity", "number"}, {"visible", "bool"}, {"locked", "bool"}}, true,
+  reg("appearance", "Set colour/opacity/visibility/lock of a node, or of several (targets)",
+      {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids - instead of target"}, {"color", "[r,g,b]"}, {"opacity", "number"}, {"visible", "bool"}, {"locked", "bool"}}, true,
       [](Document* d, const json& a) {
-        json op = op_with_target("appearance", a);
-        for (const char* k : {"color", "opacity", "visible", "locked"}) if (a.contains(k)) op[k] = a[k];
-        json j;
-        j["id"] = need(d).append(op, a.value("by", "")).id;
-        return j;
+        return append_per_target(need(d), "appearance", a, [&](const json&, size_t, size_t) {
+          json op = json::object();
+          for (const char* k : {"color", "opacity", "visible", "locked"}) if (a.contains(k)) op[k] = a[k];
+          return op;
+        });
       });
 
   reg("transform", "Set the local placement of a node", {{"doc", "path"}, {"target", "uuid"}, {"matrix", "[16] row-major"}}, true,
@@ -463,14 +495,14 @@ void register_builtins() {
         return j;
       });
 
-  reg("reparent", "Move a node under another component (null = root)", {{"doc", "path"}, {"target", "uuid"}, {"parent", "uuid|null"}, {"index", "int"}}, true,
+  reg("reparent", "Move a node, or several (targets, kept in that order), under another component (null = root)",
+      {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids - instead of target"}, {"parent", "uuid|null"}, {"index", "int"}}, true,
       [](Document* d, const json& a) {
-        json op = op_with_target("reparent", a);
-        op["parent"] = a.contains("parent") ? a["parent"] : json(nullptr);
-        if (a.contains("index")) op["index"] = a["index"];
-        json j;
-        j["id"] = need(d).append(op, a.value("by", "")).id;
-        return j;
+        return append_per_target(need(d), "reparent", a, [&](const json&, size_t i, size_t) {
+          json op = {{"parent", a.contains("parent") ? a["parent"] : json(nullptr)}};
+          if (a.contains("index")) op["index"] = a["index"].get<int>() < 0 ? a["index"].get<int>() : a["index"].get<int>() + static_cast<int>(i);
+          return op;
+        });
       });
 
   reg("section", "Add a named section plane", {{"doc", "path"}, {"name", "string"}, {"origin", "[x,y,z]"}, {"normal", "[x,y,z]"}}, true,

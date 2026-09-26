@@ -11,9 +11,10 @@ def main():
     parser.add_argument("cli", type=Path)
     args = parser.parse_args()
     desktop = Desktop(args.app.resolve(), args.cli.resolve(), (Path("build/batch-regression") / str(uuid.uuid4())).resolve())
-    client = desktop.bind(args.cli.resolve())
-    observer = desktop.bind(args.cli.resolve(), "Batch observer")
+    client = observer = None
     try:
+        client = desktop.bind(args.cli.resolve())
+        observer = desktop.bind(args.cli.resolve(), "Batch observer")
         base = client.state()["revision"]
         tx = client.call("transaction_begin", label="Batch part", expected_revision=base, request_id="begin")["transaction"]
         steps = [
@@ -67,9 +68,69 @@ def main():
         time.sleep(3.2)
         assert observer.call("context")["result"]["bodies"] == 1
         print("Typed batch references, preflight, rollback, checkpoint save, Undo and cancellation: PASS", flush=True)
+        # TODO 10 B14/B15: a pattern and a multi-profile extrude are named, coloured and moved to components in the
+        # same batch that makes them, and body_name/color/parent on 10 bodies equal the long form.
+        revision = client.state()["revision"]
+        circles = {"points": [{"id": i + 1, "x": 40 + 6 * i, "y": 0} for i in range(3)],
+                   "entities": [{"id": 10 + i, "type": "circle", "p": [i + 1], "r": 2} for i in range(3)], "constraints": []}
+        styled = [
+            {"id": "tray", "command": "component", "arguments": {"name": "Tray"}},
+            {"id": "pin", "command": "feature", "arguments": {"kind": "cylinder", "name": "Pin", "inputs": {"x": 20, "diameter": 2, "height": 6}, "color": [.8, .1, .1]}},
+            {"id": "pins", "command": "feature", "arguments": {"kind": "pattern_rect", "inputs": {"bodies": ["@{pin#/body_ids/0}"], "count": 4, "spacing": 5}}},
+            {"id": "dots", "command": "sketch", "arguments": {"plane": {"base": "xy"}, "geometry": circles}},
+            {"id": "studs", "command": "feature", "arguments": {"kind": "extrude", "name": "Stud", "body_name": "Stud {n}", "color": [.1, .4, .8],
+                                                                "inputs": {"profiles": [{"sketch": "@{dots#/sketch_id}", "at": [40 + 6 * i, 0]} for i in range(3)], "distance": 3}}},
+            {"id": "green", "command": "appearance", "arguments": {"targets": ["@{pins#/body_ids/*}", "@{studs#/body_ids/*}"], "color": [.2, .7, .2]}},
+            {"id": "shelf", "command": "component", "arguments": {"name": "Shelf"}},
+            {"id": "move", "command": "reparent", "arguments": {"targets": "@{pins#/all_body_ids/*}", "parent": "@{shelf#/component_id}"}},
+            {"id": "names", "command": "rename", "arguments": {"targets": ["@{pins#/body_ids/*}"], "name": "Pin copy {n}"}},
+        ]
+        done = client.call("model_batch", steps=styled, parent="@{tray#/component_id}", expected_revision=revision, request_id="styled")
+        results = {step["id"]: step["result"] for step in done["result"]["steps"]}
+        assert len(results["pins"]["body_ids"]) == 3 and len(results["pins"]["all_body_ids"]) == 4, results["pins"]
+        assert len(results["studs"]["body_ids"]) == 3 and len(results["green"]["ids"]) == 6, results
+        nodes = {n["id"]: n for n in client.call("context", section="nodes", limit=100)["result"]["items"]}
+        tray, shelf = results["tray"]["component_id"], results["shelf"]["component_id"]
+        pin = results["pin"]["body_ids"][0]
+        assert nodes[pin]["name"] == "Pin" and nodes[pin]["parent"] == shelf and nodes[pin]["color"] == [.8, .1, .1], nodes[pin]
+        for index, body in enumerate(results["pins"]["body_ids"]):
+            assert nodes[body]["name"] == f"Pin copy {index + 1}" and nodes[body]["parent"] == shelf and nodes[body]["color"] == [.2, .7, .2], nodes[body]
+        for index, body in enumerate(results["studs"]["body_ids"]):
+            assert nodes[body]["name"] == f"Stud {index + 1}" and nodes[body]["parent"] == tray and nodes[body]["color"] == [.2, .7, .2], nodes[body]
+        # A whole list where one id is expected is refused before anything runs, naming targets.
+        wrong = client.raw("model_batch", steps=styled[:3] + [{"id": "one", "command": "rename", "arguments": {"target": "@{pins#/body_ids/*}", "name": "X"}}],
+                           expected_revision=done["revision"], request_id="whole-list-target")
+        assert wrong["isError"] and "targets" in wrong["structuredContent"]["error"]["message"], wrong
+        # Ten bodies named, coloured and placed by the feature step equal the long form, record for record.
+        ten = {"points": [{"id": i + 1, "x": 10 * i, "y": 40} for i in range(10)],
+               "entities": [{"id": 20 + i, "type": "circle", "p": [i + 1], "r": 2} for i in range(10)], "constraints": []}
+
+        def rows(long_form, request):
+            steps = [{"id": "box", "command": "component", "arguments": {"name": "Pins"}},
+                     {"id": "sk", "command": "sketch", "arguments": {"plane": {"base": "xy"}, "geometry": ten}}]
+            extrude = {"kind": "extrude", "name": "Pin row", "inputs": {"profiles": [{"sketch": "@{sk#/sketch_id}", "at": [10 * i, 40]} for i in range(10)], "distance": 6}}
+            if not long_form:
+                extrude.update(body_name="Row pin {n}", color=[.3, .3, .9], parent="@{box#/component_id}")
+            steps.append({"id": "row", "command": "feature", "arguments": extrude})
+            if long_form:
+                for i in range(10):
+                    body = f"@{{row#/body_ids/{i}}}"
+                    steps += [{"id": f"n{i}", "command": "rename", "arguments": {"target": body, "name": f"Row pin {i + 1}"}},
+                              {"id": f"c{i}", "command": "appearance", "arguments": {"target": body, "color": [.3, .3, .9]}},
+                              {"id": f"p{i}", "command": "reparent", "arguments": {"target": body, "parent": "@{box#/component_id}"}}]
+            before = client.state()["revision"]
+            made = client.call("model_batch", steps=steps, expected_revision=before, request_id=request)
+            ids = {step["id"]: step["result"] for step in made["result"]["steps"]}
+            items = {n["id"]: n for n in client.call("context", section="nodes", limit=100)["result"]["items"]}
+            return [(items[b]["name"], items[items[b]["parent"]]["name"], items[b]["color"]) for b in ids["row"]["body_ids"]]
+
+        short = rows(False, "ten-short")
+        assert short == rows(True, "ten-long") and len(short) == 10 and short[3] == ("Row pin 4", "Pins", [.3, .3, .9]), short
+        print("Batch body names, colours, components, targets and whole-list references: PASS", flush=True)
     finally:
-        client.close()
-        observer.close()
+        for connection in (client, observer):
+            if connection:
+                connection.close()
         desktop.close()
 
 

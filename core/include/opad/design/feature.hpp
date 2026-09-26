@@ -92,6 +92,16 @@ json make_feature_op(const std::string& kind, const std::string& name, const jso
 json make_edit_op(const std::string& target, const json& set);
 // "Extrude3": the first free name for that kind/prefix in the scene.
 std::string next_name(const Scene& scene, const std::string& prefix);
+// Item n (from 1) of count named after one name: "{n}" marks where the number goes ("Board screw {n}" ->
+// "Board screw 2"); without it several items are numbered "Board screw 1", "Board screw 2", ... and a single one
+// keeps the name as it is.
+std::string numbered_name(const std::string& name, size_t n, size_t count);
+// The rename / appearance / reparent ops that give the new bodies a feature op made (its result's entries marked
+// "new") a name, a colour and a component: `style` holds any of body_name (numbered as numbered_name does),
+// color [r,g,b] in 0..1 and parent (component id; null or "" = the document root). They are the ops the long form
+// writes, appended to plan.ops so they commit in the same step; the op format and replay are unchanged
+// (TODO 10 B14). Returns how many new bodies there were.
+size_t style_new_bodies(Plan& plan, const std::string& feature_op, const json& style);
 // Ops renaming a parameter everywhere it is used (the param itself and every expression).
 std::vector<json> rename_param_ops(const Document& doc, const std::string& from, const std::string& to);
 // Names of features/sketches/params whose expressions use this parameter.

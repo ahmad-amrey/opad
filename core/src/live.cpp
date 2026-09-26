@@ -23,17 +23,21 @@ json transaction_policy() {
 json live_guide() {
   return {{"transactions",transaction_policy()},{"identifiers","result.feature_id identifies a history operation; result.body_ids identifies its output bodies; result.sketch_id identifies a sketch. Legacy result.ids contains operation IDs, not body IDs."},
     {"changes","changes.scope=transaction means cumulative changes since transaction_begin; command means this command only. result identifies the last modeling command, including at transaction_commit."},
-    {"batch_references","In model_batch, @{<step id>#/<path>} (or @{<step id>/<path>}) is replaced by a value from that earlier step's result; the path starts at the result itself, without /result/. @{cabin#/body_ids/0} is the first body made by the step with id cabin."},
+    {"batch_references","In model_batch, @{<step id>#/<path>} (or @{<step id>/<path>}) is replaced by a value from that earlier step's result; the path starts at the result itself, without /result/. @{cabin#/body_ids/0} is the first body made by the step with id cabin; @{cabin#/body_ids/*} is all of them, wherever a list is accepted (targets, or an element of one)."},
+    {"new_bodies","A feature's new bodies are named after the feature (numbered \"<name> 1\", \"<name> 2\" when it makes several); copies and pieces (pattern, mirror, move with copy, split) are named after their source and go into its component with its colour. body_name, color [r,g,b] and parent on a feature step name, colour and place its new bodies in the same step; model_batch's parent is the default for every feature step. rename, appearance and reparent take targets (a list) instead of target; rename then numbers the names, \"{n}\" marking where."},
+    {"body_ids","body_ids lists the bodies a feature made or changed: one per new body (an extrude of several separate profiles makes several), the target body for join/cut/intersect and for modifying features (fillet, shell, ...). Mirror and patterns list only the new copies; all_body_ids adds the picked bodies. Removed bodies are not listed."},
     {"example",json::array({
       {{"tool","live_instances"},{"arguments",json::object()},{"use","Explicitly choose instance and target from instances."}},
       {{"tool","live_bind"},{"arguments",{{"instance","$chosen.instance"},{"target","$chosen.target"}}}},
       {{"tool","transaction_begin"},{"arguments",{{"label","Cube"},{"expected_revision","$bind.revision"},{"request_id","unique-begin"}}},{"save","tx=transaction; base=base_revision"}},
       {{"tool","feature"},{"arguments",{{"kind","box"},{"inputs",{{"length",40},{"width",40},{"height",40}}},{"transaction","$tx"},{"expected_revision","$base"},{"request_id","unique-box"}}},{"save","feature=result.feature_id; body=result.body_ids[0]"}},
       {{"tool","model_batch"},{"arguments",{{"steps",json::array({
-          {{"id","cabin"},{"command","feature"},{"arguments",{{"kind","box"},{"inputs",{{"length",20},{"width",12},{"height",10}}}}}},
-          {{"id","label"},{"command","rename"},{"arguments",{{"target","@{cabin#/body_ids/0}"},{"name","Cabin"}}}}})},
-        {"transaction","$tx"},{"expected_revision","$base"},{"request_id","unique-batch"}}},
-        {"use","Several steps in one call. @{cabin#/body_ids/0} is the first body made by the step with id cabin (@{cabin/body_ids/0} is the same)."}},
+          {{"id","group"},{"command","component"},{"arguments",{{"name","Housing"}}}},
+          {{"id","cabin"},{"command","feature"},{"arguments",{{"kind","box"},{"name","Cabin"},{"inputs",{{"length",20},{"width",12},{"height",10}}},{"color",{0.2,0.4,0.8}}}}},
+          {{"id","row"},{"command","feature"},{"arguments",{{"kind","pattern_rect"},{"inputs",{{"bodies",{"@{cabin#/body_ids/0}"}},{"count",3},{"spacing",25}}}}}},
+          {{"id","label"},{"command","rename"},{"arguments",{{"targets",{"@{cabin#/body_ids/0}","@{row#/body_ids/*}"}},{"name","Cabin {n}"}}}}})},
+        {"parent","@{group#/component_id}"},{"transaction","$tx"},{"expected_revision","$base"},{"request_id","unique-batch"}}},
+        {"use","Several steps in one call. @{cabin#/body_ids/0} is the first body made by the step with id cabin (@{cabin/body_ids/0} is the same); @{row#/body_ids/*} is every body of step row. The batch parent puts the bodies of every feature step into the new component."}},
       {{"tool","validate"},{"arguments",{{"transaction","$tx"}}},{"use","Check validity and volume before commit."}},
       {{"tool","transaction_commit"},{"arguments",{{"id","$tx"},{"expected_revision","$base"},{"request_id","unique-commit"}}}},
       {{"tool","entity_details"},{"arguments",{{"ref","$body"}}},{"use","Use checked reference tokens for subsequent face/edge operations."}},
@@ -94,11 +98,18 @@ const json& live_tools() {
   json batchSteps=json::array();
   const std::set<std::string> batchCommands={"component","param","sketch","sketch_edit","feature","feature_edit","rename","reparent","appearance","transform"};
   for(const auto& command:commands::list())if(batchCommands.count(command.name)){
-    batchSteps.push_back(object({{"id",str()},{"command",{{"enum",{command.name}}}},{"arguments",command_schema(command,true)},{"references",{{"type","array"},{"items",{{"type","object"}}},{"maxItems",100}}}},{"id","command","arguments"}));
+    auto arguments=command_schema(command,true);
+    // A list argument may also be one whole-list reference, @{step#/body_ids/*}; the batch checks it once expanded.
+    for(auto& [key,property]:arguments["properties"].items())if(property.contains("type") && property["type"]=="array"){
+      json list=property;list.erase("description");
+      property={{"anyOf",{list,{{"type","string"},{"description","@{<step id>#/<list path>/*}, e.g. @{row#/body_ids/*}"}}}},{"description",property.value("description","")}};
+    }
+    batchSteps.push_back(object({{"id",str()},{"command",{{"enum",{command.name}}}},{"arguments",arguments},{"references",{{"type","array"},{"items",{{"type","object"}}},{"maxItems",100}}}},{"id","command","arguments"}));
   }
-  add("model_batch","Execute 1-50 typed modeling steps atomically with per-step receipts. An identifier string may refer to an earlier step's result as @{<step id>#/<path in that step's result>}: with a step {\"id\":\"cabin\",\"command\":\"feature\",...}, @{cabin#/body_ids/0} is its first body and @{cabin/body_ids/0} is the same. Paths start at the step's result, without /result/: feature steps have feature_id and body_ids, sketch steps sketch_id, component steps component_id. Validates all inputs/dependencies first. Failure discards this whole batch, retaining previous staged work. Uses normal transaction/preview, revision, Stop and Undo semantics. Commit and save remain explicit separate checkpoints; computed receipts do not imply persistence. No file operations or nested batches.",object({
+  add("model_batch","Execute 1-50 typed modeling steps atomically with per-step receipts. An identifier string may refer to an earlier step's result as @{<step id>#/<path in that step's result>}: with a step {\"id\":\"cabin\",\"command\":\"feature\",...}, @{cabin#/body_ids/0} is its first body and @{cabin/body_ids/0} is the same. Paths start at the step's result, without /result/: feature steps have feature_id and body_ids (mirror and patterns also all_body_ids), sketch steps sketch_id, component steps component_id. @{pat#/body_ids/*} is the whole list wherever a list is accepted, e.g. targets:[\"@{pat#/body_ids/*}\"]. Feature steps take body_name, color and parent for the bodies they make; parent here is the default component for all of them. Validates all inputs/dependencies first. Failure discards this whole batch, retaining previous staged work. Uses normal transaction/preview, revision, Stop and Undo semantics. Commit and save remain explicit separate checkpoints; computed receipts do not imply persistence. No file operations or nested batches.",object({
     {"steps",{{"type","array"},{"items",{{"anyOf",batchSteps}}},{"minItems",1},{"maxItems",50}}},
-    {"transaction",str()},{"preview",{{"type","boolean"},{"default",false}}},{"expected_revision",revision()},{"request_id",str()}
+    {"transaction",str()},{"preview",{{"type","boolean"},{"default",false}}},{"expected_revision",revision()},{"request_id",str()},
+    {"parent",{{"type",{"string","null"}},{"description","Default component for every body the feature steps make (a step's own parent wins); a component id or @{step#/component_id} of an earlier component step."}}}
   },{"steps","expected_revision","request_id"}));
   for(const auto& c:commands::list())if(!excluded.count(c.name)) {
     auto schema=command_schema(c,true);

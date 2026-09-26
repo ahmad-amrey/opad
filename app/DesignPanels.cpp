@@ -1,10 +1,12 @@
 #include "DesignPanels.hpp"
 
+#include <QColorDialog>
 #include <QCompleter>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QPainter>
+#include <QSettings>
 #include <QStringListModel>
 
 #include "I18n.hpp"
@@ -134,7 +136,53 @@ FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   m_rows->setContentsMargins(0, 4, 0, 0);
   m_rows->setSpacing(6);
   v->addWidget(body);
+  // New body (TODO 10 B14): one line until it is opened; what is set there overrides the defaults.
+  m_newBody = new QWidget(this);
+  auto* nb = new QVBoxLayout(m_newBody);
+  nb->setContentsMargins(0, 8, 0, 0);
+  nb->setSpacing(6);
+  m_newBodyToggle = new QCheckBox(m_newBody);
+  m_newBodyToggle->setToolTip(tr("Name, colour and component of the bodies this feature makes"));
+  nb->addWidget(m_newBodyToggle);
+  m_newBodyRows = new QWidget(m_newBody);
+  auto* rows = new QVBoxLayout(m_newBodyRows);
+  rows->setContentsMargins(0, 0, 0, 0);
+  rows->setSpacing(6);
+  auto row = [&](const QString& text, QWidget* field, QWidget* extra = nullptr) {
+    auto* h = new QHBoxLayout();
+    h->setSpacing(8);
+    auto* label = new QLabel(text, m_newBodyRows);
+    label->setObjectName("secondary");
+    label->setFixedWidth(118);
+    h->addWidget(label);
+    h->addWidget(field, 1);
+    if (extra) h->addWidget(extra);
+    rows->addLayout(h);
+  };
+  m_bodyName = new QLineEdit(m_newBodyRows);
+  m_bodyName->setToolTip(tr("Several bodies are numbered; {n} marks where the number goes"));
+  row(tr("Name"), m_bodyName);
+  m_bodyColour = new QPushButton(m_newBodyRows);
+  m_bodyColourReset = new QPushButton(tr("Automatic"), m_newBodyRows);
+  m_bodyColourReset->setToolTip(tr("Back to the automatic colour"));
+  row(tr("Colour"), m_bodyColour, m_bodyColourReset);
+  m_bodyParent = new QComboBox(m_newBodyRows);
+  row(tr("Component"), m_bodyParent);
+  nb->addWidget(m_newBodyRows);
+  v->addWidget(m_newBody);
   v->addStretch(1);
+  m_newBodyToggle->setChecked(QSettings().value("design/newBodyOpen", false).toBool());
+  connect(m_newBodyToggle, &QCheckBox::toggled, this, [this](bool on) {
+    QSettings().setValue("design/newBodyOpen", on);
+    refreshNewBody();
+  });
+  connect(m_name, &QLineEdit::textChanged, this, [this] { refreshNewBody(); });
+  connect(m_bodyParent, &QComboBox::currentIndexChanged, this, [this] { refreshNewBody(); });
+  connect(m_bodyColour, &QPushButton::clicked, this, [this] {
+    const QColor chosen = QColorDialog::getColor(m_colour.isValid() ? m_colour : QColor(190, 190, 195), this, tr("Colour of the new bodies"));
+    if (chosen.isValid()) setBodyColour(chosen);
+  });
+  connect(m_bodyColourReset, &QPushButton::clicked, this, [this] { setBodyColour(QColor()); });
   m_status = new QLabel(this);
   m_status->setObjectName("tertiary");
   m_status->setWordWrap(true);
@@ -175,6 +223,25 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
     delete it;
   }
   m_name->setText(name);
+  m_editingFeature = editing;
+  m_bodyName->clear();
+  m_colour = QColor();
+  {
+    const QSignalBlocker quiet(m_bodyParent);
+    m_bodyParent->clear();
+    if (makesCopies()) m_bodyParent->addItem(tr("With the picked bodies"), QString("*"));
+    m_bodyParent->addItem(tr("Document root"), QString());
+    std::vector<std::pair<QString, QString>> components;
+    for (const auto& [id, n] : m_doc->scene.nodes)
+      if (n.kind == opad::Node::Kind::Component) {
+        QStringList path;
+        for (const auto& p : m_doc->scene.path_to(id)) path << m_doc->nodeName(p);
+        components.push_back({path.join(QString::fromUtf8(" › ")), QString::fromStdString(id)});
+      }
+    std::sort(components.begin(), components.end());
+    for (const auto& [label, id] : components) m_bodyParent->addItem(label, id);
+    m_bodyParent->setCurrentIndex(0);
+  }
   m_hint->setText(i18n::t(QString::fromStdString(spec.hint)));
   m_ok->setText(tr("OK   Enter"));setEditHidden(false);
   setStatus(QString(), false);
@@ -268,6 +335,66 @@ void FeaturePanel::refreshVisibility() {
       it->second.pick->set(n, what, m_active == it->first, in.optional || n >= std::max(1, in.min_count) || in.min_count == 0);
     }
   }
+  refreshNewBody();
+}
+
+bool FeaturePanel::makesCopies() const {
+  return m_spec && (m_spec->kind == "mirror" || m_spec->kind == "pattern_rect" || m_spec->kind == "pattern_circ");
+}
+
+void FeaturePanel::setBodyDefaults(const std::string& component) {
+  if (makesCopies() || component.empty()) return;  // copies go with the bodies they copy
+  const int at = m_bodyParent->findData(QString::fromStdString(component));
+  if (at >= 0) m_bodyParent->setCurrentIndex(at);
+  refreshNewBody();
+}
+
+void FeaturePanel::setBodyName(const QString& name) {
+  m_bodyName->setText(name);
+  if (!name.isEmpty()) m_newBodyToggle->setChecked(true);
+}
+
+void FeaturePanel::setBodyColour(const QColor& colour) {
+  m_colour = colour;
+  if (colour.isValid()) m_newBodyToggle->setChecked(true);
+  refreshNewBody();
+}
+
+void FeaturePanel::refreshNewBody() {
+  bool shown = false;
+  if (m_spec && !m_editingFeature)
+    for (const auto& in : m_spec->inputs)
+      if (in.name == "operation") shown = inputs().value("operation", "") == "new";
+  m_newBody->setVisible(shown);
+  const bool open = m_newBodyToggle->isChecked();
+  m_newBodyRows->setVisible(open);
+  // Closed, the line says where the bodies go when that is not the obvious place.
+  const QString parent = m_bodyParent->currentData().toString();
+  m_newBodyToggle->setText(!open && !parent.isEmpty() && parent != "*" ? tr("New body, in %1").arg(m_bodyParent->currentText()) : tr("New body"));
+  const QString placeholder = makesCopies() ? tr("Named after the picked bodies") : m_name->text().trimmed();
+  m_bodyName->setPlaceholderText(placeholder);
+  if (m_colour.isValid()) {
+    QPixmap swatch(14, 14);
+    swatch.fill(m_colour);
+    m_bodyColour->setIcon(QIcon(swatch));
+    m_bodyColour->setText(m_colour.name());
+  } else {
+    m_bodyColour->setIcon(QIcon());
+    m_bodyColour->setText(makesCopies() ? tr("As the picked bodies") : tr("Automatic"));
+  }
+  m_bodyColourReset->setVisible(m_colour.isValid());
+}
+
+opad::json FeaturePanel::bodyStyle() const {
+  opad::json style = opad::json::object();
+  if (!m_newBody->isVisibleTo(this)) return style;
+  const QString parent = m_bodyParent->currentData().toString();
+  // The component applies open or closed (it may be the browser's default); new bodies land at the root anyway.
+  if (parent != "*" && !(parent.isEmpty() && !makesCopies())) style["parent"] = parent.isEmpty() ? opad::json(nullptr) : opad::json(parent.toStdString());
+  if (!m_newBodyToggle->isChecked()) return style;
+  if (!m_bodyName->text().trimmed().isEmpty()) style["body_name"] = m_bodyName->text().trimmed().toStdString();
+  if (m_colour.isValid()) style["color"] = {m_colour.redF(), m_colour.greenF(), m_colour.blueF()};
+  return style;
 }
 
 opad::json FeaturePanel::inputs() const {

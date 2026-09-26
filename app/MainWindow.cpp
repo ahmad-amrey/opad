@@ -30,6 +30,7 @@
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QInputDialog>
+#include <QRegularExpression>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -526,14 +527,26 @@ void MainWindow::buildActions() {
   connect(m_doc, &AppDocument::undoChanged, this, &MainWindow::updateUndoActions);
   addAction("edit.rename", tr("Rename"), "rename", QKeySequence("F2"), [this] {
     auto ids = currentNodeIds();
-    if (!ids.empty()) m_browser->startRename(ids.front());
+    if (ids.size() == 1) return m_browser->startRename(ids.front());
+    if (ids.empty()) return;
+    // Several at once: one name, numbered in selection order (TODO 10 B15).
+    QString base = m_doc->nodeName(ids.front());
+    static const QRegularExpression number(" \d+$");
+    base.remove(number);
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("Rename %1 objects").arg(ids.size()), tr("Name ({n} is replaced by 1, 2, 3, ...):"), QLineEdit::Normal, base + " {n}", &ok).trimmed();
+    if (!ok || name.isEmpty()) return;
+    m_doc->run("rename", opad::json{{"targets", ids}, {"name", name.toStdString()}});
   });
   addAction("edit.hide", tr("Hide"), "hide", QKeySequence("V"), [this] {
-    for (const auto& id : currentNodeIds()) m_doc->run("appearance", opad::json{{"target", id}, {"visible", false}});
+    const auto ids = currentNodeIds();
+    if (!ids.empty()) m_doc->run("appearance", opad::json{{"targets", ids}, {"visible", false}});
   });
   addAction("edit.showall", tr("Unhide all"), "eye", QKeySequence("Shift+V"), [this] {
+    std::vector<std::string> hidden;
     for (const auto& [id, n] : m_doc->scene.nodes)
-      if (!n.visible) m_doc->run("appearance", opad::json{{"target", id}, {"visible", true}});
+      if (!n.visible) hidden.push_back(id);
+    if (!hidden.empty()) m_doc->run("appearance", opad::json{{"targets", hidden}, {"visible", true}});
   });
   addAction("edit.filter", tr("Filter objects"), "search", QKeySequence("Ctrl+F"), [this] { m_browserOverlay->reveal(); m_browser->focusFilter(); });
   addAction("edit.selectparent", tr("Select parent"), "chevronUp", QKeySequence("Ctrl+Up"), [this] { m_browser->selectParent(); });
@@ -1045,14 +1058,14 @@ void MainWindow::buildDesignActions() {
     const QString chosen = QInputDialog::getItem(this, tr("Reparent"), tr("Move under:"), names, 0, false, &ok);
     if (!ok) return;
     const std::string& parent = targets[static_cast<size_t>(names.indexOf(chosen))];
-    for (const auto& id : ids) m_doc->run("reparent", opad::json{{"target", id}, {"parent", parent.empty() ? opad::json(nullptr) : opad::json(parent)}});
+    m_doc->run("reparent", opad::json{{"targets", ids}, {"parent", parent.empty() ? opad::json(nullptr) : opad::json(parent)}});
   });
   addAction("design.colour", tr("Colour"), "shaded", QKeySequence(), [this] {
     const auto ids = currentNodeIds();
     if (ids.empty()) throw opad::Error("Select the objects to colour first.");
     const QColor c = QColorDialog::getColor(Qt::gray, this, tr("Colour"));
     if (!c.isValid()) return;
-    for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
+    m_doc->run("appearance", opad::json{{"targets", ids}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
   });
   addAction("design.opacity", tr("Opacity"), "wireframe", QKeySequence(), [this] {
     const auto ids = currentNodeIds();
@@ -1118,6 +1131,11 @@ void MainWindow::buildDesign() {
   m_featurePanel = new ToolPanel("feature", "extrude", &Tokens::sel, tr("Feature"), m_design->featurePanel(), 560, this);
   m_panels << m_featurePanel;
   m_design->setPanel(m_featurePanel, [this](ToolPanel* p) { openPanel(p); });
+  m_design->setCurrentComponent([this] {
+    const auto ids = m_browser->selectedIds();
+    const opad::Node* n = ids.size() == 1 ? m_doc->node(ids.front()) : nullptr;
+    return n && n->kind == opad::Node::Kind::Component ? n->id : std::string();
+  });
   auto* parameters=m_design->parametersWidget();
   auto* parametersPanel=new ToolPanel("parameters","fx",&Tokens::sel,tr("Parameters"),parameters,480,this);
   m_panels<<parametersPanel;m_design->setParametersPanel(parametersPanel);

@@ -25,6 +25,8 @@ class DesignController : public QObject {
   std::string editingOp() const;
   void setPanel(ToolPanel* panel, std::function<void(ToolPanel*)> open);  // the floating panel the form lives in
   void setSketchPanel(ToolPanel* panel);
+  // The component selected in the browser (empty: none): where a new feature's bodies go unless its panel says else.
+  void setCurrentComponent(std::function<std::string()> current) { m_currentComponent = std::move(current); }
   void showSketchPanel();
   void redefineSketchPlane();
 
@@ -81,6 +83,7 @@ class DesignController : public QObject {
   bool m_replaning = false,m_positionOrigin=false;
   PlanePicker* m_planePicker;
   std::function<void(ToolPanel*)> m_openPanel;
+  std::function<std::string()> m_currentComponent;
   SketchEditor* m_sketch;
   ParametersDialog* m_params = nullptr;
   ToolPanel* m_parametersPanel = nullptr;

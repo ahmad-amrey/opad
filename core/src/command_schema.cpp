@@ -105,8 +105,7 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(command.mutates)properties["save"]={{"type","boolean"},{"default",true}};
   const std::map<std::string,std::vector<std::string>> needed={
     {"properties",{"node"}},{"measure",{"kind","refs"}},{"import",{"file"}},{"export",{"format","out"}},{"render",{"out"}},{"diff",{"a","b"}},
-    {"annotate",{"anchor","text"}},{"delete_annotation",{"target"}},{"delete",{"target"}},{"rename",{"target","name"}},{"appearance",{"target"}},{"transform",{"target","matrix"}},
-    {"reparent",{"target"}},{"section",{"origin","normal"}},{"view",{"camera"}},{"param",{"name"}},{"param_delete",{"name"}},
+    {"annotate",{"anchor","text"}},{"delete_annotation",{"target"}},{"delete",{"target"}},{"rename",{"name"}},{"transform",{"target","matrix"}},{"section",{"origin","normal"}},{"view",{"camera"}},{"param",{"name"}},{"param_delete",{"name"}},
     {"sketch_edit",{"target"}},{"feature",{"kind"}},{"feature_edit",{"target"}},{"drawing_to_sketch",{"layers"}},
     {"query_entities",{"body"}},{"feature_schema",{"kind"}},{"sketch_details",{"sketch"}},{"resolve_reference",{"reference"}},{"sketch_tool",{"target","tool"}}
   };
@@ -145,6 +144,10 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(live)properties.erase("save");
   auto out=object(properties,required);
   if(name=="entity_details")out["anyOf"]={{{"required",{"ref"}}},{{"required",{"feature"}}}};
+  if(name=="rename" || name=="appearance" || name=="reparent"){
+    auto targets=array(type("string"),1,1000);targets["description"]=command.args.at("targets");
+    out["properties"]["targets"]=targets;out["anyOf"]={{{"required",{"target"}}},{{"required",{"targets"}}}};
+  }
   if(name=="inspect" || name=="append" || name=="import_brep"){
     const auto keys=name=="inspect"?std::vector<std::string>{"ref","refs"}:name=="append"?std::vector<std::string>{"op","ops"}:std::vector<std::string>{"brep","file"};
     out["anyOf"]=json::array();for(const auto& key:keys)out["anyOf"].push_back({{"required",{key}}});

@@ -73,6 +73,13 @@ class FeaturePanel : public QWidget {
   void setValue(const QString& input, const opad::json& value);  // expression, choice or flag, as the user would type it
   void activate(const QString& input);  // empty: none
   void activateNextPick();              // the first shown pick input that still needs picks
+  // TODO 10 B14: the name, colour and component of the bodies a new feature makes, shown while its operation is
+  // "new". Left alone they keep the defaults (the feature's name, no colour, `component` = the one selected in the
+  // browser; copies follow the picked bodies). bodyStyle() is the argument of design::style_new_bodies.
+  void setBodyDefaults(const std::string& component);
+  opad::json bodyStyle() const;
+  void setBodyName(const QString& name);  // benches
+  void setBodyColour(const QColor& colour);
  signals:
   void inputsChanged();                 // anything that changes the result
   void activeInputChanged(const QString& input);
@@ -82,9 +89,20 @@ class FeaturePanel : public QWidget {
   void keyPressEvent(QKeyEvent* e) override;
  private:
   void refreshVisibility();
+  void refreshNewBody();
+  bool makesCopies() const;
   static bool isPick(const std::string& type);
   AppDocument* m_doc;
   const opad::design::FeatureSpec* m_spec = nullptr;
+  bool m_editingFeature = false;
+  QWidget* m_newBody = nullptr;
+  QCheckBox* m_newBodyToggle = nullptr;
+  QWidget* m_newBodyRows = nullptr;
+  QLineEdit* m_bodyName = nullptr;
+  QPushButton* m_bodyColour = nullptr;
+  QPushButton* m_bodyColourReset = nullptr;
+  QComboBox* m_bodyParent = nullptr;
+  QColor m_colour;  // invalid: automatic
   QLineEdit* m_name;
   QLabel* m_hint;
   QLabel* m_status;

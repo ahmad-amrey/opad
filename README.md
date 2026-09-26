@@ -23,22 +23,40 @@ Live `model_batch` groups up to 50 typed modeling steps into one atomic operatio
 supports components, parameters, sketches, features, naming, parenting, appearance and
 transforms. Identifier strings such as `@{solid#/body_ids/0}` (or `@{solid/body_ids/0}`) refer to earlier
 step results. The path starts at that step's result (`feature_id`, `body_ids`, `sketch_id`, `component_id`);
-a path that does not exist is reported with the step's name and the keys it has:
+a path that does not exist is reported with the step's name and the keys it has. `@{row#/body_ids/*}` is the
+whole list, wherever a list is accepted:
 
 ```json
 {
   "expected_revision": 12,
   "request_id": "battery-part-1",
+  "parent": "@{group#/component_id}",
   "steps": [
+    {"id": "group", "command": "component", "arguments": {"name": "Battery pack"}},
     {"id": "solid", "command": "feature", "arguments": {
-      "kind": "box", "inputs": {"length": 70, "width": 50, "height": 4.4}
+      "kind": "box", "name": "Battery", "color": [0.1, 0.1, 0.1],
+      "inputs": {"length": 70, "width": 50, "height": 4.4}
     }},
-    {"id": "name", "command": "rename", "arguments": {
-      "target": "@{solid#/body_ids/0}", "name": "Battery"
+    {"id": "row", "command": "feature", "arguments": {
+      "kind": "pattern_rect", "inputs": {"bodies": ["@{solid#/body_ids/0}"], "count": 3, "spacing": 60}
+    }},
+    {"id": "names", "command": "rename", "arguments": {
+      "targets": ["@{solid#/body_ids/0}", "@{row#/body_ids/*}"], "name": "Cell {n}"
     }}
   ]
 }
 ```
+
+A feature's new bodies are named after it ("Battery"; several are numbered "Battery 1", "Battery 2", ...);
+copies and pieces (patterns, mirror, move with copy, split) are named after their source ("Battery 2") and go
+into its component with its colour. `body_name`, `color` and `parent` on a `feature` name, colour and place
+its new bodies in the same step, and a batch's `parent` is the default for all of its feature steps: they are
+written as the ordinary `rename`, `appearance` and `reparent` operations, so older builds and merges see
+nothing new. `rename`, `appearance` and `reparent` take `targets` (a list) instead of `target`; `rename`
+then numbers the names, `{n}` marking where. Feature results list `body_ids` (the bodies made or changed)
+and, for mirror and patterns, `all_body_ids` (the picked bodies too). The desktop's feature panels have the
+same New body section (name, colour, component; the component selected in the browser by default), and
+Rename, Colour, Hide and Reparent on a multiple selection are one step each.
 
 A body may hold several separate solids: a join into named targets, or `combine`, accepts material that
 does not touch them (three screws or a word's letters as one body, no tie bars needed), and a cut that

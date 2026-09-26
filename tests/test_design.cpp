@@ -10,11 +10,14 @@
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 // Design engine: expressions, parameters, sketches -> profiles, features, regeneration, history edits.
+#include <BRepBndLib.hxx>
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
 
 #include <cmath>
 #include <filesystem>
+#include <functional>
+#include <map>
 
 #include "check.hpp"
 #include "opad/core.hpp"
@@ -437,7 +440,7 @@ TEST(coil_and_thicken) {
   Scene s = resolve(doc);
   std::string box;
   for (const auto& b : s.all_bodies())
-    if (s.node(b)->name.rfind("Body", 0) == 0) box = b;
+    if (s.node(b)->name.rfind("Box", 0) == 0) box = b;  // bodies are named after their feature
   Ref top;
   top.body = box;
   top.kind = Ref::Kind::Face;
@@ -701,4 +704,182 @@ TEST(bodies_hold_several_separate_solids) {
   s = resolve(doc);
   CHECK(s.features.back().error.empty());
   CHECK_EQ(s.all_bodies().size(), bodies + 1);
+}
+
+// TODO 10 B14 / C2: a new body is named after its feature (numbered when it makes several); a copy or a piece is named
+// after its source and goes into its component with its colour, placed where it was made.
+TEST(new_bodies_are_named_placed_and_coloured_when_made) {
+  auto bounds = [](const Document& doc, const Scene& s, const std::string& id) {
+    Bnd_Box b;
+    BRepBndLib::Add(node_world_shape(doc, s, id), b);
+    return b;
+  };
+  Document doc = Document::create();
+  const std::string group = commands::run("component", {{"name", "Fasteners"}}, &doc)["component_id"];
+  commands::run("transform", {{"target", group}, {"matrix", Mat4::translation(0, 0, 50).to_json()}}, &doc);
+  const json made = commands::run("feature", {{"kind", "cylinder"}, {"name", "Screw"}, {"inputs", {{"diameter", "3 mm"}, {"height", "8 mm"}}},
+                                              {"color", json::array({0.8, 0.1, 0.1})}, {"parent", group}}, &doc);
+  CHECK_EQ(made["style_ids"].size(), 2u);  // an appearance and a reparent op, no rename: the name is the feature's
+  const std::string screw = made["body_ids"][0];
+  Scene s = resolve(doc);
+  CHECK_EQ(s.node(screw)->name, "Screw");
+  CHECK_EQ(s.node(screw)->parent, group);
+  CHECK(s.node(screw)->has_color && std::fabs(s.node(screw)->color[0] - 0.8) < 1e-12);
+  // Pattern copies: "Screw 2", "Screw 3", in the fasteners with the screw's colour, one spacing apart.
+  const json row = feature_cmd(doc, "pattern_rect", {{"bodies", json::array({screw})}, {"count", "3"}, {"spacing", "10 mm"}, {"axis", {{"base", "x"}}}});
+  CHECK_EQ(row["body_ids"].size(), 2u);
+  CHECK_EQ(row["all_body_ids"].size(), 3u);
+  CHECK_EQ(row["all_body_ids"][0], screw);
+  s = resolve(doc);
+  const Bnd_Box original = bounds(doc, s, screw);
+  CHECK_NEAR(original.CornerMin().Z(), 50, 1e-3);
+  for (size_t i = 0; i < 2; ++i) {
+    const Node* copy = s.node(row["body_ids"][i]);
+    CHECK_EQ(copy->name, "Screw " + std::to_string(i + 2));
+    CHECK_EQ(copy->parent, group);
+    CHECK(copy->has_color && copy->color == s.node(screw)->color);
+    const Bnd_Box b = bounds(doc, s, copy->id);
+    CHECK_NEAR(b.CornerMin().X() - original.CornerMin().X(), 10.0 * (i + 1), 1e-6);
+    CHECK_NEAR(b.CornerMin().Z() - original.CornerMin().Z(), 0, 1e-6);
+  }
+  // A moved copy and a split piece are named, placed and coloured the same way.
+  const json copied = feature_cmd(doc, "move", {{"bodies", json::array({screw})}, {"dy", "20 mm"}, {"copy", true}});
+  s = resolve(doc);
+  const Node* moved = s.node(copied["body_ids"][0]);
+  CHECK_EQ(moved->name, "Screw 4");
+  CHECK_EQ(moved->parent, group);
+  CHECK(moved->has_color);
+  CHECK_NEAR(bounds(doc, s, moved->id).CornerMin().Y() - original.CornerMin().Y(), 20, 1e-6);
+  const json split = feature_cmd(doc, "split", {{"bodies", json::array({row["body_ids"][0]})}, {"plane", {{"base", "xz"}}}});
+  s = resolve(doc);
+  CHECK(s.features.back().error.empty());
+  CHECK_EQ(split["body_ids"].size(), 2u);
+  const Node* piece = s.node(split["body_ids"][1]);
+  CHECK_EQ(piece->name, "Screw 5");
+  CHECK_EQ(piece->parent, group);
+  CHECK(piece->has_color);
+  CHECK_NEAR(volume_of_node(doc, s, piece->id) + volume_of_node(doc, s, row["body_ids"][0]), M_PI * 1.5 * 1.5 * 8, 1e-6);
+  // A regeneration keeps what the copies were given; a copy the new count adds is made the same way.
+  const std::string pattern = row["feature_id"];
+  commands::run("feature_edit", {{"target", pattern}, {"inputs", {{"count", "4"}}}}, &doc);
+  s = resolve(doc);
+  const json& now = s.feature(pattern)->result["bodies"];
+  CHECK_EQ(now.size(), 3u);
+  CHECK_EQ(now[0]["id"], row["body_ids"][0]);
+  CHECK_EQ(s.node(now[1]["id"])->name, "Screw 3");
+  CHECK_EQ(s.node(now[2]["id"])->name, "Screw 6");
+  CHECK_EQ(s.node(now[2]["id"])->parent, group);
+  // Several bodies from scratch are numbered after the feature.
+  Sketch dots;
+  json profiles = json::array();
+  for (int i = 0; i < 3; ++i) {
+    dots.add_circle(dots.add_point(100.0 + 10 * i, 0), 2);
+    profiles.push_back({{"at", {100.0 + 10 * i, 0}}});
+  }
+  const std::string sketch = run_id(sketch_cmd(doc, dots));
+  for (auto& p : profiles) p["sketch"] = sketch;
+  const json pins = commands::run("feature", {{"kind", "extrude"}, {"name", "Board screw"}, {"inputs", {{"profiles", profiles}, {"distance", "4 mm"}}}}, &doc);
+  s = resolve(doc);
+  CHECK_EQ(pins["body_ids"].size(), 3u);
+  for (size_t i = 0; i < 3; ++i) CHECK_EQ(s.node(pins["body_ids"][i])->name, "Board screw " + std::to_string(i + 1));
+  CHECK(s.unresolved.empty());
+}
+
+// TODO 10 B14 / B15: body_name, color and parent on a feature, and targets on rename / appearance / reparent, write
+// exactly the ops of the long form: the same scene, record for record.
+TEST(body_style_and_targets_equal_the_long_form) {
+  auto build = [](Document& doc, bool short_form) {
+    const std::string group = commands::run("component", {{"name", "Pins"}}, &doc)["component_id"];
+    Sketch sk;
+    json profiles = json::array();
+    for (int i = 0; i < 10; ++i) {
+      sk.add_circle(sk.add_point(10.0 * i, 0), 2);
+      profiles.push_back({{"at", {10.0 * i, 0}}});
+    }
+    const std::string sketch = run_id(sketch_cmd(doc, sk));
+    for (auto& p : profiles) p["sketch"] = sketch;
+    json args = {{"kind", "extrude"}, {"name", "Pin row"}, {"inputs", {{"profiles", profiles}, {"distance", "6 mm"}}}};
+    if (short_form) {
+      args["body_name"] = "Pin {n}";
+      args["color"] = json::array({0.1, 0.4, 0.8});
+      args["parent"] = group;
+    }
+    const json made = commands::run("feature", args, &doc);
+    CHECK_EQ(made["body_ids"].size(), 10u);
+    if (!short_form)
+      for (size_t i = 0; i < 10; ++i) {
+        const json id = made["body_ids"][i];
+        commands::run("rename", {{"target", id}, {"name", "Pin " + std::to_string(i + 1)}}, &doc);
+        commands::run("appearance", {{"target", id}, {"color", json::array({0.1, 0.4, 0.8})}}, &doc);
+        commands::run("reparent", {{"target", id}, {"parent", group}}, &doc);
+      }
+    // Bulk edits: every pin renamed with a template, recoloured and moved to a second component.
+    const std::string spare = commands::run("component", {{"name", "Spares"}}, &doc)["component_id"];
+    if (short_form) {
+      const json renamed = commands::run("rename", {{"targets", made["body_ids"]}, {"name", "Spare {n}"}}, &doc);
+      CHECK_EQ(renamed["ids"].size(), 10u);
+      commands::run("appearance", {{"targets", made["body_ids"]}, {"color", json::array({0.9, 0.9, 0.2})}}, &doc);
+      commands::run("reparent", {{"targets", made["body_ids"]}, {"parent", spare}}, &doc);
+    } else {
+      for (size_t i = 0; i < 10; ++i) commands::run("rename", {{"target", made["body_ids"][i]}, {"name", "Spare " + std::to_string(i + 1)}}, &doc);
+      for (size_t i = 0; i < 10; ++i) commands::run("appearance", {{"target", made["body_ids"][i]}, {"color", json::array({0.9, 0.9, 0.2})}}, &doc);
+      for (size_t i = 0; i < 10; ++i) commands::run("reparent", {{"target", made["body_ids"][i]}, {"parent", spare}}, &doc);
+    }
+  };
+  Document a = Document::create(), b = Document::create();
+  build(a, true);
+  build(b, false);
+  // Ids, times and fingerprints differ; everything else, op by op, is the same.
+  auto records = [](const Document& doc) {
+    std::map<std::string, std::string> ids;
+    auto canon = [&](const std::string& id) {
+      if (!ids.count(id)) ids[id] = "#" + std::to_string(ids.size());
+      return ids[id];
+    };
+    std::vector<std::string> out;
+    std::function<void(json&)> scrub = [&](json& v) {
+      if (v.is_string() && v.get<std::string>().size() == 36 && v.get<std::string>()[8] == '-') v = canon(v.get<std::string>());
+      else if (v.is_array() || v.is_object())
+        for (auto& c : v) scrub(c);
+    };
+    for (const auto& op : doc.ops) {
+      json d = op.data;
+      d.erase("ts");
+      d.erase("by");
+      d.erase("id");
+      if (d.contains("result")) d["result"].erase("in");
+      scrub(d);
+      out.push_back(d.dump());
+    }
+    return out;
+  };
+  const auto ra = records(a), rb = records(b);
+  CHECK_EQ(ra.size(), rb.size());
+  for (size_t i = 0; i < std::min(ra.size(), rb.size()); ++i) CHECK_EQ(ra[i], rb[i]);
+  const Scene sa = resolve(a), sb = resolve(b);
+  CHECK(sa.unresolved.empty());
+  auto shape_of = [](const Scene& s) {
+    std::vector<std::string> out;
+    for (const auto& id : s.all_bodies()) {
+      const Node* n = s.node(id);
+      out.push_back(n->name + "|" + s.node(n->parent)->name + "|" + json(n->color).dump() + "|" + n->body_key + "|" + s.world(id).to_json().dump());
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+  };
+  CHECK(shape_of(sa) == shape_of(sb));
+  size_t spares = 0;
+  for (const auto& id : sa.all_bodies()) spares += sa.node(id)->name.rfind("Spare ", 0) == 0 && sa.node(sa.node(id)->parent)->name == "Spares";
+  CHECK_EQ(spares, 10u);
+  // One target and targets are not given together; an empty list is refused.
+  bool refused = false;
+  try { commands::run("rename", {{"target", sa.all_bodies()[0]}, {"targets", json::array({sa.all_bodies()[1]})}, {"name", "X"}}, &a); } catch (const Error&) { refused = true; }
+  CHECK(refused);
+  refused = false;
+  try { commands::run("appearance", {{"targets", json::array()}, {"visible", false}}, &a); } catch (const Error&) { refused = true; }
+  CHECK(refused);
+  // A parent that is not a component is refused before anything is computed.
+  refused = false;
+  try { commands::run("feature", {{"kind", "box"}, {"inputs", json::object()}, {"parent", sa.all_bodies()[0]}}, &a); } catch (const Error& e) { refused = std::string(e.what()).find("not a component") != std::string::npos; }
+  CHECK(refused);
 }

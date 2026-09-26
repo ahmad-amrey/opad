@@ -16,8 +16,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <optional>
 #include <set>
 
 #include "opad/geometry.hpp"
@@ -390,6 +392,8 @@ struct Walk {
   std::map<std::string, size_t> new_index;  // op id -> index in new_ops
   json regen = json::object();
   std::vector<std::string> regenerated;
+  const std::vector<EffectiveOp>* timeline = nullptr;  // the whole history being walked
+  std::optional<std::set<std::string>> history_names;
 
   bool is_new(const std::string& id) const { return new_index.count(id) > 0; }
 
@@ -460,13 +464,51 @@ struct Walk {
     }
   }
 
-  json materialize(const Ctx& ctx, const Out& out, const json& previous, const std::string& op_id) {
+  // A copy or a piece is named after its source with the next number no body has: "Screw" -> "Screw 2",
+  // "Screw 7" -> "Screw 8".
+  std::string copy_name(const Scene& scene, const json& pending, const std::string& source) {
+    const Node* s = scene.node(source);
+    std::string base = s ? s->name : "Body";
+    int from = 1;
+    const size_t space = base.find_last_of(' ');
+    if (space != std::string::npos && space + 1 < base.size() && base.size() - space <= 7 &&
+        std::all_of(base.begin() + space + 1, base.end(), [](unsigned char c) { return std::isdigit(c); })) {
+      from = std::stoi(base.substr(space + 1));
+      base.erase(space);
+    }
+    // Names given anywhere in the history count too: a copy a regenerated pattern adds must not take the name of a
+    // copy made later in the timeline.
+    if (!history_names && timeline) {
+      history_names.emplace();
+      for (const auto& e : *timeline) {
+        const json& d = e.data();
+        if (e.op->type == "rename" && d.contains("name") && d["name"].is_string()) history_names->insert(d["name"].get<std::string>());
+        if (e.op->type == "feature" && d.contains("result") && d["result"].contains("bodies"))
+          for (const auto& b : d["result"]["bodies"])
+            if (b.contains("name") && b["name"].is_string()) history_names->insert(b["name"].get<std::string>());
+      }
+    }
+    std::set<std::string> used = history_names ? *history_names : std::set<std::string>();
+    for (const auto& [id, n] : scene.nodes) used.insert(n.name);
+    for (const auto& b : pending) used.insert(b.value("name", ""));
+    for (int i = from + 1;; ++i) {
+      std::string name = base + " " + std::to_string(i);
+      if (!used.count(name)) return name;
+    }
+  }
+
+  // New bodies are named, placed and coloured when they are first made, and the entry keeps it: a regeneration never
+  // renames or moves them, and replay only reads what is stored (TODO 10 B14, C2). A body made from scratch takes
+  // the feature's name (numbered when the feature makes several); a copy or a piece takes its source's name, the
+  // component its source is in and its source's colour.
+  json materialize(const Ctx& ctx, const Out& out, const json& previous, const std::string& op_id, const std::string& feature_name) {
     json result = json::object();
     json bodies = json::array();
     std::vector<json> prev_new;
     for (const auto& b : previous.value("bodies", json::array()))
       if (b.value("new", false)) prev_new.push_back(b);
-    size_t next_new = 0;
+    size_t next_new = 0, made = 0, made_count = 0;
+    for (const auto& b : out.bodies) made_count += b.node.empty() && b.source.empty();
     for (const auto& b : out.bodies) {
       if (b.shape.IsNull()) throw Error("the operation produced no geometry");
       json entry;
@@ -478,7 +520,22 @@ struct Walk {
         const json* prev = next_new < prev_new.size() ? &prev_new[next_new] : nullptr;
         ++next_new;
         entry["id"] = prev ? (*prev)["id"] : json(new_uuid());
-        entry["name"] = prev && prev->contains("name") ? (*prev)["name"] : json(next_body_name(ctx.scene, bodies, b.name.empty() ? "Body" : b.name));
+        if (prev && prev->contains("name")) entry["name"] = (*prev)["name"];
+        else if (!b.source.empty()) entry["name"] = copy_name(ctx.scene, bodies, b.source);
+        else if (!feature_name.empty()) entry["name"] = numbered_name(feature_name, made + 1, made_count);
+        else entry["name"] = next_body_name(ctx.scene, bodies, "Body");
+        made += b.source.empty();
+        if (prev) {
+          for (const char* k : {"parent", "color"})
+            if (prev->contains(k)) entry[k] = (*prev)[k];
+        } else if (const Node* s = b.source.empty() ? nullptr : ctx.scene.node(b.source)) {
+          if (!s->parent.empty()) entry["parent"] = s->parent;
+          if (s->has_color) entry["color"] = s->color;
+        }
+        // The body is kept in its component's frame, as replay places it there.
+        const std::string parent = entry.value("parent", "");
+        if (!parent.empty() && ctx.scene.node(parent)) to_local = ctx.node_trsf(parent).Inverted();
+        else entry.erase("parent");
         entry["new"] = true;
       }
       TopoDS_Shape local = b.shape;
@@ -599,6 +656,7 @@ struct Walk {
     for (const auto& o : doc.ops) all.push_back(&o);
     for (const auto& o : temp) all.push_back(&o);
     const std::vector<EffectiveOp> ops = effective_ops(all);
+    timeline = &ops;
 
     std::vector<ParamDef> defs;
     for (const auto& e : ops)
@@ -654,7 +712,7 @@ struct Walk {
                 fp = feature_fingerprint(builder.scene(), params, kind, inputs);
               }
             }
-            result = materialize(ctx, out, stored, id);
+            result = materialize(ctx, out, stored, id, data.value("name", ""));
           } catch (const Standard_Failure& ex) {
             result = {{"error", std::string("the modelling kernel failed: ") + ex.GetMessageString()}};
           } catch (const std::exception& ex) {
@@ -765,6 +823,35 @@ json make_feature_op(const std::string& kind, const std::string& name, const jso
 }
 
 json make_edit_op(const std::string& target, const json& set) { return {{"op", "edit"}, {"target", target}, {"set", set}}; }
+
+std::string numbered_name(const std::string& name, size_t n, size_t count) {
+  const std::string number = std::to_string(n);
+  if (name.find("{n}") == std::string::npos) return count > 1 ? name + " " + number : name;
+  std::string out = name;
+  for (size_t at = 0; (at = out.find("{n}", at)) != std::string::npos; at += number.size()) out.replace(at, 3, number);
+  return out;
+}
+
+size_t style_new_bodies(Plan& plan, const std::string& feature_op, const json& style) {
+  std::vector<std::string> ids;
+  for (const auto& op : plan.ops)
+    if (op.value("id", "") == feature_op)
+      for (const auto& b : op.value("result", json::object()).value("bodies", json::array()))
+        if (b.value("new", false)) ids.push_back(b.value("id", ""));
+  const std::string name = style.contains("body_name") && style["body_name"].is_string() ? style["body_name"].get<std::string>() : "";
+  const bool colour = style.contains("color") && !style["color"].is_null();
+  const bool parent = style.contains("parent");
+  if (colour && !(style["color"].is_array() && style["color"].size() == 3)) throw Error("color must be [r,g,b] in 0..1");
+  for (size_t i = 0; i < ids.size(); ++i) {
+    if (!name.empty()) plan.ops.push_back({{"op", "rename"}, {"target", ids[i]}, {"name", numbered_name(name, i + 1, ids.size())}});
+    if (colour) plan.ops.push_back({{"op", "appearance"}, {"target", ids[i]}, {"color", style["color"]}});
+    if (parent) {
+      const json& p = style["parent"];
+      plan.ops.push_back({{"op", "reparent"}, {"target", ids[i]}, {"parent", p.is_string() && !p.get<std::string>().empty() ? p : json(nullptr)}});
+    }
+  }
+  return ids.size();
+}
 
 std::string next_name(const Scene& scene, const std::string& prefix) {
   std::set<std::string> used;

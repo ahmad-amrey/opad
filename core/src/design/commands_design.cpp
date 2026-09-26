@@ -9,6 +9,9 @@
 #include "opad/design/sketch_geom.hpp"
 #include "opad/scene.hpp"
 
+#include <algorithm>
+#include <optional>
+
 namespace opad::commands {
 
 namespace {
@@ -42,6 +45,47 @@ json with_defaults(const design::FeatureSpec& spec, json inputs) {
 std::string title_case(std::string s) {
   if (!s.empty()) s[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(s[0])));
   return s;
+}
+
+// A feature's body_name / color / parent arguments (TODO 10 B14), checked against the scene before anything is
+// computed. The CLI hands every value over as text.
+json body_style(const Scene& scene, const json& a) {
+  json style = json::object();
+  if (a.contains("body_name") && !a["body_name"].is_null()) {
+    if (!a["body_name"].is_string() || a["body_name"].get<std::string>().empty()) throw Error("body_name must be a non-empty string");
+    style["body_name"] = a["body_name"];
+  }
+  if (a.contains("color") && !a["color"].is_null()) {
+    const json c = parse_if_text(a["color"]);
+    if (!c.is_array() || c.size() != 3 || !std::all_of(c.begin(), c.end(), [](const json& v) { return v.is_number() && v.get<double>() >= 0 && v.get<double>() <= 1; }))
+      throw Error("color must be [r,g,b] with each value in 0..1, for example [0.9, 0.1, 0.1]");
+    style["color"] = c;
+  }
+  if (a.contains("parent")) {
+    const json& p = a["parent"];
+    const std::string id = p.is_string() && p.get<std::string>() != "null" ? p.get<std::string>() : "";
+    if (!p.is_null() && !p.is_string()) throw Error("parent must be a component id, or null for the document root");
+    if (!id.empty()) {
+      const Node* n = scene.node(id);
+      if (!n) throw Error("parent " + id + " does not exist; create it with the component command first");
+      if (n->kind != Node::Kind::Component) throw Error("parent " + id + " is a body, not a component");
+    }
+    style["parent"] = id.empty() ? json(nullptr) : json(id);
+  }
+  return style;
+}
+
+// Body references -> distinct body ids (a component stands for the bodies under it), as the features read them.
+json picked_bodies(const Scene& scene, const json& refs) {
+  json out = json::array();
+  for (const auto& r : refs.is_array() ? refs : json::array()) {
+    const std::string id = Ref::from_json(r).body;
+    const Node* n = scene.node(id);
+    if (!n) continue;
+    for (const auto& b : n->kind == Node::Kind::Body ? std::vector<std::string>{id} : scene.bodies_under(id))
+      if (std::find(out.begin(), out.end(), json(b)) == out.end()) out.push_back(b);
+  }
+  return out;
 }
 
 }  // namespace
@@ -162,16 +206,47 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         return design::apply_ops(doc, {design::make_edit_op(a.at("target").get<std::string>(), set)}, a.value("by", ""));
       });
 
-  reg("feature", "Add a feature (extrude, fillet, shell, ...) to the design history; see feature_kinds for the inputs",
-      {{"doc", "path"}, {"kind", "string"}, {"inputs", "object - values are numbers, expressions (\"width/2\"), choices or references"}, {"name", "string"}, {"by", "string"}}, true,
+  reg("feature", "Add a feature (extrude, fillet, shell, ...) to the design history; see feature_kinds for the inputs. "
+      "The bodies it makes are named after it (numbered when there are several); body_name, color and parent name, colour and place them "
+      "in the same step. Result: feature_id, body_ids (the bodies it made or changed), all_body_ids for mirror and patterns (the picked bodies too)",
+      {{"doc", "path"}, {"kind", "string"}, {"inputs", "object - values are numbers, expressions (\"width/2\"), choices or references"}, {"name", "string"},
+       {"body_name", "string - name for the new bodies (default: the feature's name); several are numbered \"<name> 1\", \"<name> 2\", or \"{n}\" marks where the number goes"},
+       {"color", "[r,g,b] - colour of the new bodies, each 0..1"}, {"parent", "uuid|null - component the new bodies go into (null: the document root)"}, {"by", "string"}}, true,
       [](Document* d, const json& a) {
         Document& doc = need(d);
         const std::string kind = a.at("kind").get<std::string>();
         const design::FeatureSpec& spec = spec_of(kind);
         const json inputs = with_defaults(spec, parse_if_text(a.value("inputs", json::object())));
         agent::validate_input(agent::feature_schema(kind),inputs,"inputs");
-        const std::string name = a.contains("name") ? a["name"].get<std::string>() : design::next_name(resolve(doc), title_case(spec.label.substr(0, spec.label.find(' '))));
-        return design::apply_ops(doc, {design::make_feature_op(kind, name, inputs)}, a.value("by", ""));
+        const bool styled = a.contains("body_name") || a.contains("color") || a.contains("parent");
+        const bool copies = kind == "mirror" || kind == "pattern_rect" || kind == "pattern_circ";
+        std::optional<Scene> scene;
+        if (!a.contains("name") || styled || copies) scene = resolve(doc);
+        const json style = styled ? body_style(*scene, a) : json::object();
+        const std::string name = a.contains("name") ? a["name"].get<std::string>() : design::next_name(*scene, title_case(spec.label.substr(0, spec.label.find(' '))));
+        design::Plan plan = design::plan_ops(doc, {design::make_feature_op(kind, name, inputs)});
+        const std::string op = plan.ops.front()["id"].get<std::string>();
+        json bodies = json::array();
+        for (const auto& b : plan.ops.front()["result"].value("bodies", json::array())) bodies.push_back(b["id"]);
+        const size_t before = plan.ops.size();
+        const size_t made = design::style_new_bodies(plan, op, style);
+        json styling = json::array();
+        for (size_t i = before; i < plan.ops.size(); ++i) {
+          plan.ops[i]["id"] = new_uuid();
+          styling.push_back(plan.ops[i]["id"]);
+        }
+        json out = design::commit(doc, std::move(plan), a.value("by", ""));
+        out["feature_id"] = op;
+        out["body_ids"] = bodies;
+        if (copies) {
+          json all = picked_bodies(*scene, inputs.value("bodies", json::array()));
+          for (const auto& b : bodies)
+            if (std::find(all.begin(), all.end(), b) == all.end()) all.push_back(b);
+          out["all_body_ids"] = all;
+        }
+        if (!styling.empty()) out["style_ids"] = styling;
+        if (styled && made == 0) out["warnings"] = json::array({"body_name, color and parent apply to the bodies a feature makes; this one made none (it changed existing bodies), so they were not used"});
+        return out;
       });
 
   reg("feature_edit", "Change a feature's inputs, name or suppression; later features are regenerated",
