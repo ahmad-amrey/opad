@@ -43,6 +43,14 @@ json with_defaults(const design::FeatureSpec& spec, json inputs) {
   return inputs;
 }
 
+// An expression as text: a plain number (the CLI parses "15" as JSON) is the same expression written out.
+std::string expression_text(const json& v) {
+  if (v.is_string()) return v.get<std::string>();
+  if (v.is_number_integer()) return std::to_string(v.get<long long>());
+  if (v.is_number()) return json(v.get<double>()).dump();
+  throw Error("expr must be an expression such as \"20 mm\" or a number");
+}
+
 std::string title_case(std::string s) {
   if (!s.empty()) s[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(s[0])));
   return s;
@@ -126,10 +134,10 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         const Param* existing = s.param(name);
         std::vector<json> ops;
         if (!existing) {
-          ops.push_back(design::make_param_op(name, a.at("expr").get<std::string>(), a.value("comment", "")));
+          ops.push_back(design::make_param_op(name, expression_text(a.at("expr")), a.value("comment", "")));
         } else {
           json set = json::object();
-          if (a.contains("expr")) set["expr"] = a["expr"];
+          if (a.contains("expr")) set["expr"] = expression_text(a["expr"]);
           if (a.contains("comment")) set["comment"] = a["comment"];
           if (!set.empty()) ops.push_back(design::make_edit_op(existing->id, set));
           if (a.contains("rename") && a["rename"].get<std::string>() != name) {

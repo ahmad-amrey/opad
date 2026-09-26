@@ -1302,3 +1302,33 @@ TEST(print_checks) {
   const json v = commands::run("validate", {{"checks", json::array({"print"})}, {"select", json::array({block})}}, &doc);
   CHECK_EQ(v["print"]["status"], "clear");
 }
+
+// Gap log #1: a parameter edit must reach every body downstream, also through features that consume a changed body
+// without naming the parameter (a move, a pattern, a combine), however the body is referenced.
+TEST(parameter_edits_reach_bodies_through_moves_patterns_and_combines) {
+  for (int form = 0; form < 3; ++form) {  // plain id, {"body"} object, the component holding it
+    Document doc = Document::create();
+    commands::run("param", {{"name", "zz_len"}, {"expr", "10 mm"}}, &doc);
+    const std::string group = commands::run("component", {{"name", "Part"}}, &doc)["component_id"];
+    const std::string body = commands::run("feature", {{"kind", "box"}, {"inputs", {{"length", "zz_len"}, {"width", "10 mm"}, {"height", "10 mm"}}}, {"parent", group}}, &doc)["body_ids"][0];
+    const json ref = form == 0 ? json(body) : form == 1 ? json{{"body", body}, {"kind", "body"}} : json(group);
+    feature_cmd(doc, "move", {{"bodies", json::array({ref})}, {"dz", "20 mm"}});
+    const json row = feature_cmd(doc, "pattern_rect", {{"bodies", json::array({ref})}, {"count", "2"}, {"spacing", "50 mm"}});
+    const std::string lid = feature_cmd(doc, "box", {{"x", "200 mm"}, {"length", "5 mm"}, {"width", "5 mm"}, {"height", "5 mm"}})["body_ids"][0];
+    feature_cmd(doc, "combine", {{"target", json::array({row["body_ids"][0]})}, {"tools", json::array({lid})}, {"operation", "join"}});
+    commands::run("param", {{"name", "zz_len"}, {"expr", "30 mm"}}, &doc);
+    const Scene s = resolve(doc);
+    double x0, y0, z0, x1, y1, z1;
+    node_tight_bbox(doc, s, body).Get(x0, y0, z0, x1, y1, z1);
+    CHECK_NEAR(x1 - x0, 30, 1e-9);  // 10 before the fix: the move kept its first result
+    CHECK_NEAR(z0, 20, 1e-9);
+    const std::string copy = row["body_ids"][0];
+    CHECK_NEAR(volume_of_node(doc, s, copy), 30 * 10 * 10 + 5 * 5 * 5, 1e-6);  // the copy follows, and so does the combine
+    CHECK(s.unresolved.empty());
+    // An incremental regeneration and a forced one agree.
+    Document forced = doc;
+    commands::run("regenerate", {{"force", true}}, &forced);
+    const Scene f = resolve(forced);
+    for (const auto& id : s.all_bodies()) CHECK_EQ(s.node(id)->body_key, f.node(id)->body_key);
+  }
+}
