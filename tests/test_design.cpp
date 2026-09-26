@@ -1658,3 +1658,27 @@ TEST(an_interference_check_is_kept_and_run_again) {
   for (const auto& e : edit["errors"]) reported |= e["op"] == strict;
   CHECK(reported);
 }
+
+// Gap log #9: a feature suppressed by an expression over the parameters (a third joint only when joints >= 3).
+TEST(features_suppressed_by_an_expression) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "joints"}, {"expr", "2"}}, &doc);
+  feature_cmd(doc, "box", {{"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}});
+  const json made = commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", "40 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}}},
+                                              {"suppress_if", "joints < 3"}}, &doc);
+  const std::string third = made["feature_id"];
+  auto state = [&] {
+    const Scene s = resolve(doc);
+    return std::make_pair(s.feature(third)->suppressed, s.all_bodies().size());
+  };
+  CHECK(state() == std::make_pair(true, size_t(1)));
+  commands::run("param", {{"name", "joints"}, {"expr", "3"}}, &doc);
+  CHECK(state() == std::make_pair(false, size_t(2)));
+  const json back = commands::run("param", {{"name", "joints"}, {"expr", "2"}}, &doc);
+  CHECK(state() == std::make_pair(true, size_t(1)));
+  CHECK(std::find(back["regenerated"].begin(), back["regenerated"].end(), third) != back["regenerated"].end());
+  CHECK_EQ(resolve(doc).feature(third)->suppress_if, std::string("joints < 3"));
+  commands::run("feature_edit", {{"target", third}, {"suppress_if", ""}}, &doc);
+  CHECK(state() == std::make_pair(false, size_t(2)));
+  CHECK_THROWS(commands::run("feature_edit", {{"target", third}, {"suppress_if", "joints <"}}, &doc));
+}

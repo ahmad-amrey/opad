@@ -106,6 +106,7 @@ struct Feature {
   std::string id, kind, name;
   json inputs, result;
   bool suppressed = false;
+  std::string suppress_if;  // an expression that suppresses it while true (gap log #9)
   std::string error;
 };
 

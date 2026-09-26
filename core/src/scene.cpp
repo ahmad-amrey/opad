@@ -282,7 +282,10 @@ struct SceneBuilder::Impl {
     f.name = d.value("name", f.kind);
     f.inputs = d.value("inputs", json::object());
     f.result = d.value("result", json::object());
-    f.suppressed = d.value("suppressed", false);
+    // suppress_if (gap log #9): the walk evaluated it and kept the answer in the result; replay only reads that.
+    const bool conditional = d.contains("suppress_if") && d["suppress_if"].is_string();
+    if (conditional) f.suppress_if = d["suppress_if"].get<std::string>();
+    f.suppressed = d.value("suppressed", false) || (conditional && f.result.value("suppressed", false));
     f.error = f.result.value("error", "");
     if (!f.suppressed) {
       if (!f.error.empty()) unresolved(id, "feature", f.name + ": " + f.error);

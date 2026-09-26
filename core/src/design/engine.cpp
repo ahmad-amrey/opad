@@ -824,9 +824,26 @@ struct Walk {
         builder.apply(id, type, data);
         continue;
       }
+      // suppress_if (gap log #9): an expression over the parameters, true (nonzero) = suppressed. Its value is kept
+      // in the result, so replay reads it without evaluating anything and a change of it is a regeneration.
+      bool conditional = false, off = false;
+      std::string condition_error;
+      if (type == "feature" && data.contains("suppress_if") && data["suppress_if"].is_string()) {
+        conditional = true;
+        try {
+          off = params.as(Dim::None, data["suppress_if"].get<std::string>()) != 0;
+        } catch (const std::exception& ex) {
+          condition_error = std::string("suppress_if: ") + ex.what();
+        }
+      }
       json notes = json::object();
       const Ctx ctx{doc, params, builder.scene(), fresh, cancel, &notes};
-      if (type == "sketch") {
+      if (conditional && (off || !condition_error.empty())) {
+        result = stored;  // what it last made stays stored for when it comes back
+        result["suppressed"] = off;
+        if (!condition_error.empty()) result["error"] = condition_error;
+        else result.erase("error");
+      } else if (type == "sketch") {
         std::string fp;
         try {
           result = compute_sketch(ctx, data, fp);
@@ -863,6 +880,7 @@ struct Walk {
           }
           result["in"] = fp;
         }
+        if (conditional) result["suppressed"] = false;
       }
       if (result.contains("error")) errors.push_back({{"op", id}, {"name", data.value("name", "")}, {"error", result["error"]}});
       if (is_new(id)) {

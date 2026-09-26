@@ -129,6 +129,10 @@ volumes, distances) is stored with the design and computed again whenever its bo
 clash is the feature's error, so the edit that causes it says so. It sits in Design > Construct, next to the planes
 and axes.
 
+A feature can be suppressed by an expression over the parameters (`suppress_if: "joints < 3"`): the design walk
+evaluates it, keeps the answer in the feature's result for replay, and regenerates when a parameter flips it; the
+timeline's tooltip shows the condition. Older builds ignore the condition.
+
 Face, edge and vertex inputs can be rules instead of numbers: `{"body": id, "kind": "edge", "select":
 {"parallel_to": "z"}, "expect": 4}` picks the matching entities again whenever the feature regenerates and fails,
 rather than guessing, when the count changes. The desktop offers the same through "By rule…" on pick inputs, and

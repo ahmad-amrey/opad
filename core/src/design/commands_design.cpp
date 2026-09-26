@@ -241,7 +241,8 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
       "in the same step. Result: feature_id, body_ids (the bodies it made or changed), all_body_ids for mirror and patterns (the picked bodies too)",
       {{"doc", "path"}, {"kind", "string"}, {"inputs", "object - values are numbers, expressions (\"width/2\"), choices or references"}, {"name", "string"},
        {"body_name", "string - name for the new bodies (default: the feature's name); several are numbered \"<name> 1\", \"<name> 2\", or \"{n}\" marks where the number goes"},
-       {"color", "[r,g,b] - colour of the new bodies, each 0..1"}, {"parent", "uuid|null - component the new bodies go into (null: the document root)"}, {"by", "string"}}, true,
+       {"color", "[r,g,b] - colour of the new bodies, each 0..1"}, {"parent", "uuid|null - component the new bodies go into (null: the document root)"},
+       {"suppress_if", "string - expression over the parameters; while it is true (nonzero) the feature is suppressed"}, {"by", "string"}}, true,
       [](Document* d, const json& a) {
         Document& doc = need(d);
         const std::string kind = a.at("kind").get<std::string>();
@@ -255,7 +256,9 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         const json frame = plane_frame(doc, *scene, spec, inputs);
         const json style = styled ? body_style(*scene, a) : json::object();
         const std::string name = a.contains("name") ? a["name"].get<std::string>() : design::next_name(*scene, title_case(spec.label.substr(0, spec.label.find(' '))));
-        design::Plan plan = design::plan_ops(doc, {design::make_feature_op(kind, name, inputs)});
+        json feature_op = design::make_feature_op(kind, name, inputs);
+        if (a.contains("suppress_if") && a["suppress_if"].is_string() && !a["suppress_if"].get<std::string>().empty()) feature_op["suppress_if"] = a["suppress_if"];  // gap log #9
+        design::Plan plan = design::plan_ops(doc, {feature_op});
         const std::string op = plan.ops.front()["id"].get<std::string>();
         json bodies = json::array();
         for (const auto& b : plan.ops.front()["result"].value("bodies", json::array())) bodies.push_back(b["id"]);
@@ -282,7 +285,8 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
       });
 
   reg("feature_edit", "Change a feature's inputs, name or suppression; later features are regenerated",
-      {{"doc", "path"}, {"target", "uuid - feature op id"}, {"inputs", "object - only the inputs that change"}, {"name", "string"}, {"suppressed", "bool"}, {"by", "string"}}, true,
+      {{"doc", "path"}, {"target", "uuid - feature op id"}, {"inputs", "object - only the inputs that change"}, {"name", "string"}, {"suppressed", "bool"},
+       {"suppress_if", "string - expression over the parameters, suppressed while true (nonzero); \"\" removes it"}, {"by", "string"}}, true,
       [](Document* d, const json& a) {
         Document& doc = need(d);
         const std::string target = a.at("target").get<std::string>();
@@ -299,6 +303,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         }
         if (a.contains("name")) set["name"] = a["name"];
         if (a.contains("suppressed")) set["suppressed"] = a["suppressed"];
+        if (a.contains("suppress_if")) set["suppress_if"] = a["suppress_if"].get<std::string>().empty() ? json() : a["suppress_if"];
         if (set.empty()) throw Error("feature_edit: nothing to change");
         json out = design::apply_ops(doc, {design::make_edit_op(target, set)}, a.value("by", ""));
         out["feature_id"] = target;

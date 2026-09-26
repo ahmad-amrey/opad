@@ -1583,7 +1583,10 @@ QString TimelineWidget::describe(const opad::Op& op) const {
   if (op.type == "sketch" || op.type == "feature") {
     // The name an edit may have changed; the scene has it unless the timeline is rolled back past this op.
     if (const opad::SketchItem* s = m_doc->scene.sketch(op.id)) return QString::fromStdString(s->name);
-    if (const opad::Feature* f = m_doc->scene.feature(op.id)) return QString::fromStdString(f->name) + (f->suppressed ? tr(" (suppressed)") : QString()) + (f->error.empty() ? QString() : QString::fromUtf8(" — ") + i18n::t(QString::fromStdString(f->error)));
+    if (const opad::Feature* f = m_doc->scene.feature(op.id))
+      return QString::fromStdString(f->name) + (f->suppressed ? tr(" (suppressed)") : QString()) +
+             (f->suppress_if.empty() ? QString() : tr(" — suppressed while %1").arg(QString::fromStdString(f->suppress_if))) +  // gap log #9
+             (f->error.empty() ? QString() : QString::fromUtf8(" — ") + i18n::t(QString::fromStdString(f->error)));
     return QString::fromStdString(d.value("name", op.type));
   }
   if (op.type == "appearance") return tr("Appearance %1").arg(target);

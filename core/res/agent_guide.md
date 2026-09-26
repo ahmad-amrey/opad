@@ -189,6 +189,9 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   parameter for the count). The copies are made when the sketch is computed; its `id` shares the sketch's id space.
 - `move`: with `rotate: true` the bodies first turn by `angle` about `axis`, then move by `dx dy dz` in world axes;
   `copy: true` keeps the original.
+- `feature` and `feature_edit` take `suppress_if`, an expression over the parameters: while it is true (nonzero) the
+  feature is suppressed, and a parameter change that flips it regenerates (`"joint_type == 1"`, `"joints < 3"`);
+  `feature_edit` with `suppress_if: ""` removes it. What it last made is kept for when it comes back.
 
 ## New bodies: names, colours, components
 

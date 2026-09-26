@@ -1566,5 +1566,6 @@
   "interference": "التداخل",
   "clearance": "الخلوص",
   "%1 interference(s), %2 pair(s) too close": "%1 تداخل، %2 زوج أقرب من اللازم",
-  "No interference": "لا يوجد تداخل"
+  "No interference": "لا يوجد تداخل",
+  " — suppressed while %1": " — مُعطّل ما دام %1"
 }
