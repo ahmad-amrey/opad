@@ -162,6 +162,27 @@ def main():
         assert "list of 1 item" in index["structuredContent"]["error"]["message"], index
         slash = client.call("model_batch", steps=label("@{cabin/body_ids/0}"), expected_revision=revision, request_id="slash-form")
         assert slash["state"] == "committed" and [s["state"] for s in slash["result"]["steps"]] == ["computed", "computed"], slash
+        # Gap log #14: a later batch names an earlier batch's step; undo and redo are live tools; export writes a
+        # transaction's staged state; a batch takes up to 100 steps.
+        assert tools["model_batch"]["inputSchema"]["properties"]["steps"]["maxItems"] == 100
+        revision = client.state()["revision"]
+        later = client.call("model_batch", steps=[{"id": "again", "command": "rename", "arguments": {"target": "@{cabin#/body_ids/0}", "name": "Cabin again"}}],
+                            expected_revision=revision, request_id="cross-batch")
+        assert later["state"] == "committed" and later["revision"] > revision, later
+        undone = client.call("undo", expected_revision=later["revision"], request_id="undo-rename")
+        assert undone["result"]["undone"] and undone["revision"] > later["revision"], undone
+        redone = client.call("redo", expected_revision=undone["revision"], request_id="redo-rename")
+        assert redone["result"]["redone"] == undone["result"]["undone"], redone
+        nothing = client.raw("redo", expected_revision=redone["revision"], request_id="redo-nothing")
+        assert nothing["isError"] and nothing["structuredContent"]["error"]["code"] == "nothing_to_redo", nothing
+        client.call("undo", expected_revision=redone["revision"], request_id="undo-rename-again")
+        revision = client.state()["revision"]
+        staging = client.call("transaction_begin", label="Export staged", expected_revision=revision, request_id="begin-export")["transaction"]
+        client.call("feature", kind="box", inputs={"length": 3, "width": 3, "height": 3, "x": 300}, transaction=staging, expected_revision=revision, request_id="export-box")
+        staged = root / "staged.step"
+        client.call("export", format="step", out=str(staged), transaction=staging, expected_revision=revision, request_id="export-staged")
+        assert staged.exists() and staged.stat().st_size > 1000, staged
+        client.call("transaction_cancel", id=staging)
         duplicate = client.raw("sketch", name="Duplicate ids", geometry={"points": [{"id": 1, "x": 0, "y": 0}, {"id": 2, "x": 5, "y": 0}],
             "entities": [{"id": 1, "type": "line", "p": [1, 2]}]}, expected_revision=client.state()["revision"], request_id="duplicate-ids")
         message = duplicate["structuredContent"]["error"]["message"]

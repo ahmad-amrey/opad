@@ -1551,5 +1551,11 @@
   "Checking…": "جارٍ الفحص…",
   "Cancelled.": "أُلغي.",
   "Showing the overlap": "عرض منطقة التداخل",
-  "A pinned measurement changes the document: pass expected_revision and request_id.": "القياس المثبّت يغيّر المستند: مرّر expected_revision و request_id."
+  "A pinned measurement changes the document: pass expected_revision and request_id.": "القياس المثبّت يغيّر المستند: مرّر expected_revision و request_id.",
+  "Export a transaction's staged state, or the document; a preview cannot be exported.": "صدِّر الحالة المرحلية للمعاملة أو المستند؛ لا يمكن تصدير المعاينة.",
+  "There is nothing to undo.": "لا يوجد ما يمكن التراجع عنه.",
+  "There is nothing to redo.": "لا يوجد ما يمكن إعادته.",
+  "Agent: undo %1": "الوكيل: تراجع عن %1",
+  "Agent: redo %1": "الوكيل: إعادة %1",
+  "Target bodies": "الأجسام الهدف"
 }

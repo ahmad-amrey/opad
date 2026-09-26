@@ -335,6 +335,11 @@ void Sketch::validate() const {
   }
   if(!patterns.is_array())throw Error("sketch patterns must be an array");
   for(const auto& p:patterns) {
+    // What a pattern needs, said plainly (gap log #14: the keys could only be guessed from error messages).
+    static const std::string form="a sketch pattern is {\"id\", \"seeds\": [entity ids], \"inputs\": {\"count\", \"rows\", \"dx\", \"dy\"} in rows and columns, or {\"polar\": true, \"count\", \"angle\", \"cx\", \"cy\"} about a centre; values may be expressions}";
+    if(!p.is_object() || !p.contains("id") || !p["id"].is_number_integer())throw Error("sketch pattern without an id: "+form);
+    if(!p.contains("seeds") || !p["seeds"].is_array() || p["seeds"].empty())throw Error("sketch pattern "+std::to_string(p["id"].get<int>())+" has no seeds: "+form);
+    if(!p.contains("inputs") || !p["inputs"].is_object())throw Error("sketch pattern "+std::to_string(p["id"].get<int>())+" has no inputs: "+form);
     claim(p.at("id").get<int>(),"pattern");
     for(int id:p.at("seeds").get<std::vector<int>>())if(!entity(id))throw Error("pattern seed no longer exists");
     for(const auto& instance:p.value("instances",json::array()))for(const auto& pair:instance.at("map")) {

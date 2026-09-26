@@ -48,7 +48,7 @@ void checkReferences(const opad::Document& doc,const opad::Scene& scene,const js
   };walk(args);
 }
 // A small declarative language over existing typed commands, never executable code.
-void modelBatch(opad::Document& doc,const json& args,Progress progress,json& output,const AgentBridge::KnownRefs* known){
+void modelBatch(opad::Document& doc,const json& args,Progress progress,json& output,const AgentBridge::KnownRefs* known,const AgentBridge::BatchSteps* before){
   static const std::set<std::string> allowed={"component","param","sketch","sketch_edit","feature","feature_edit","rename","reparent","appearance","transform"};
   std::map<std::string,json> schemas,results;std::set<std::string> earlier;
   for(const auto& command:opad::commands::list())if(allowed.count(command.name))schemas[command.name]=command_schema(command,true);
@@ -65,7 +65,8 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
   auto keysOf=[](const json& value){std::string keys;for(const auto& [key,item]:value.items())keys+=(keys.empty()?"":", ")+key;return keys.empty()?std::string("none"):keys;};
   // Walks the pointer itself so a wrong path names the step and what it does have, not a raw JSON exception.
   auto lookup=[&](const std::string& text,const std::string& id,const std::string& path)->const json&{
-    const json* at=&results.at(id);std::string where="step '"+id+"' result";
+    // This batch's steps first, then this connection's earlier batches (gap log #14).
+    const json* at=results.count(id)?&results.at(id):&before->at(id);std::string where="step '"+id+"' result";
     for(size_t start=1;start<=path.size();){
       const auto end=std::min(path.find('/',start),path.size());std::string token=path.substr(start,end-start);start=end+1;
       for(size_t i=0;(i=token.find('~',i))!=std::string::npos;++i)token.replace(i,2,token.compare(i,2,"~1")==0?"/":"~");
@@ -104,9 +105,10 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
   std::function<void(const json&)> preflightRefs=[&](const json& value){
     if(value.is_string()){
       const auto text=value.get<std::string>();const auto [id,path]=symbol(text);
-      if(!id.empty() && !earlier.count(id)){
+      if(!id.empty() && !earlier.count(id) && !(before && before->count(id))){
         std::string steps;for(const auto& step:earlier)steps+=(steps.empty()?"":", ")+step;
-        throw opad::Error("Batch reference "+text+" must name an earlier step; earlier steps are "+(steps.empty()?std::string("none"):steps)+". "+syntax);
+        std::string older;if(before)for(const auto& [step,result]:*before)older+=(older.empty()?"":", ")+step;
+        throw opad::Error("Batch reference "+text+" must name an earlier step of this batch or of an earlier batch on this connection; earlier steps are "+(steps.empty()?std::string("none"):steps)+(older.empty()?std::string():"; earlier batches' are "+older)+". "+syntax);
       }
     }else if(value.is_array() || value.is_object())for(const auto& child:value)preflightRefs(child);
   };
@@ -122,7 +124,7 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
     preflightRefs(input);preflightRefs(step.value("references",json::array()));
     if(command=="feature" && !input.contains("parent") && batchParent.is_string()){
       const auto [ref,path]=symbol(batchParent.get<std::string>());
-      if(!ref.empty() && !earlier.count(ref))throw opad::Error("The batch parent "+batchParent.get<std::string>()+" names step '"+ref+"', which does not come before feature step '"+id+"'; put that component step first.");
+      if(!ref.empty() && !earlier.count(ref) && !(before && before->count(ref)))throw opad::Error("The batch parent "+batchParent.get<std::string>()+" names step '"+ref+"', which does not come before feature step '"+id+"'; put that component step first.");
     }
     earlier.insert(id);
   }
@@ -222,11 +224,11 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
     fail(session,"unknown_transaction",tr("No matching transaction belongs to this connection. Disconnect discards staged work. Read current context, begin a new transaction and replan with new request IDs."),receipt);return;
   }
   if(write && transaction.empty() && m_prepared && m_prepared->transaction){fail(session,"transaction_active",tr("Commit or cancel the current transaction first."),receipt);return;}
-  if(name=="export" && (preview || !transaction.empty())){fail(session,"invalid_export",tr("Commit the design before exporting it."),receipt);return;}
+  if(name=="export" && preview){fail(session,"invalid_export",tr("Export a transaction's staged state, or the document; a preview cannot be exported."),receipt);return;}
   const auto state=liveState();
   m_busy=true;m_owner=session->socket;const auto epoch=++m_epoch,revision=m_doc->revision;
   const auto started=std::make_shared<QElapsedTimer>();started->start();activity(tr("Agent: %1").arg(QString::fromStdString(name)));
-  auto ready=[this,session,name,args=std::move(args),receipt,write,preview,transaction,epoch,revision,state,started,known=session->known](std::shared_ptr<Snapshot> source,const QString& error){
+  auto ready=[this,session,name,args=std::move(args),receipt,write,preview,transaction,epoch,revision,state,started,known=session->known,steps=session->steps](std::shared_ptr<Snapshot> source,const QString& error){
     if(epoch!=m_epoch || !session->socket || !session->bound){fail(session,"cancelled",tr("Agent operation cancelled."),receipt);return;}
     if(!source){m_busy=false;fail(session,"snapshot_failed",error,receipt);return;}
     if(name=="transaction_begin"){
@@ -236,7 +238,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
     }
     struct Result {std::shared_ptr<Snapshot> snapshot;json output,delta;TopoDS_Shape preview;std::shared_ptr<const BodyPrs> prs;std::vector<std::string> hidden;};auto result=std::make_shared<Result>();
     const auto baseline=!transaction.empty() && m_cache?m_cache:source;
-    auto job=m_jobs->async(tr("Agent: %1").arg(QString::fromStdString(name)),[source,baseline,result,args,name,write,preview,transaction,state,known,delay=m_benchDelay](Progress p)mutable{
+    auto job=m_jobs->async(tr("Agent: %1").arg(QString::fromStdString(name)),[source,baseline,result,args,name,write,preview,transaction,state,known,steps,delay=m_benchDelay](Progress p)mutable{
       p.setPhase(tr("Inspecting inputs"));
       if(write && name!="model_batch")checkReferences(*source->doc,source->scene,args,known.get());
       const bool compact=args.value("verbosity","full")=="compact";  // TODO 10 B11
@@ -295,7 +297,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
           {"selection",state["selection"]},{"preview_id",args.value("preview_id","")},{"transaction",transaction},{"render_ms",renderTimer.elapsed()},
           {"rendering","software geometry view; visible_ids lists submitted visible bodies (including occluded bodies); UI overlays are not included"}};
         if(metadata.contains("views"))result->output["views"]=metadata["views"];
-      }else if(name=="model_batch")modelBatch(*working->doc,args,p,result->output,known.get());
+      }else if(name=="model_batch")modelBatch(*working->doc,args,p,result->output,known.get(),steps.get());
       else result->output=opad::commands::run(name,args,working->doc.get());
       if(p.cancelled())throw opad::Error("cancelled");
       if(write && name!="export"){
@@ -399,6 +401,11 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
       if(session->target!=target() || m_doc->revision!=revision || (write && (!m_edit || editorBusy()))){fail(session,"stale_revision",tr("The document or access changed. The computed edit was discarded."),receipt);release(result);return;}
       if(write && name!="export"){
         auto prepared=std::make_shared<Prepared>();prepared->snapshot=result->snapshot;prepared->id=newId();prepared->label=QString::fromStdString(name);prepared->owner=session->socket;prepared->transaction=!transaction.empty();prepared->result=std::move(result->output);prepared->changes=std::move(result->delta);
+        if(name=="model_batch"){  // later batches on this connection may refer to these steps
+          auto next=std::make_shared<BatchSteps>(session->steps?*session->steps:BatchSteps{});
+          for(const auto& step:prepared->result.value("steps",json::array()))(*next)[step.at("id").get<std::string>()]=step.value("result",json::object());
+          session->steps=next;
+        }
         if(prepared->transaction){prepared->id=m_prepared->id;prepared->label=m_prepared->label;prepared->receipts=m_prepared->receipts;}
         prepared->receipts.push_back(receipt);
         clearPrepared(!prepared->transaction);m_prepared=prepared;

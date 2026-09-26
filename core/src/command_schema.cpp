@@ -63,7 +63,9 @@ json input_schema(const design::InputSpec& in) {
     out["description"]="A base axis; a straight or circular edge (its line or centre axis); a face (a cylinder's, cone's or torus's axis, or a planar face's normal); a sketch line {sketch, entity}; or a construction axis feature.";}
   else if(in.type=="path")out={{"anyOf",{object({{"sketch",type("string")},{"entities",array(type("integer"))}},{"sketch"}),object({{"edges",array(ref(),1)}},{"edges"}),array(ref(),1)}}};
   else if(in.type=="profiles")out=array({{"anyOf",{ref(),object({{"sketch",type("string")},{"at",vector(2)},{"boundary",array(type("integer"))},{"all",type("boolean")}},{"sketch"})}}},in.min_count,in.max_count);
-  else if(in.type=="points")out=array({{"anyOf",{ref(),object({{"sketch",type("string")},{"point",type("integer")}},{"sketch","point"})}}},in.min_count,in.max_count);
+  else if(in.type=="points"){  // a vertex, a sketch point, or a point in space written out (gap log #14)
+    out=array({{"anyOf",{ref(),object({{"sketch",type("string")},{"point",type("integer")}},{"sketch","point"}),object({{"point",vector(3)}},{"point"}),vector(3)}}},in.min_count,in.max_count);
+    out["description"]="Vertices (\"<body>/vertex/N\"), sketch points {sketch, point}, or points in space: \"point/x,y,z\", {\"point\": [x, y, z]} or [x, y, z] (mm).";}
   else out=array(ref(),in.min_count,in.max_count);
   out["title"]=in.label;
   if(!in.def.is_null())out["default"]=in.def;

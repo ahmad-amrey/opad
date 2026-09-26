@@ -49,7 +49,8 @@ void update(Sketch& sk,json& pattern) {
 }
 }
 
-void refresh_patterns(Sketch& sk){for(auto& p:sk.patterns)update(sk,p);}
+// A pattern given only its inputs gets its values (and copies) when the sketch is computed (evaluate_patterns).
+void refresh_patterns(Sketch& sk){for(auto& p:sk.patterns)if(p.contains("values") && p["values"].is_object())update(sk,p);}
 void evaluate_patterns(Sketch& sk,const ParamTable& parameters){for(auto& p:sk.patterns)p["values"]=values(p.at("inputs"),parameters);refresh_patterns(sk);}
 int create_pattern(Sketch& sk,const std::vector<int>& seeds,const json& inputs,const ParamTable& parameters) {
   if(seeds.empty())throw Error("select seed curves for the pattern");

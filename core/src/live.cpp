@@ -13,7 +13,7 @@ json brief_geometry(){return {{"type","object"},{"description","Sketch geometry 
 json verbosity(){return {{"type","string"},{"enum",{"full","compact"}},{"default","full"},{"description","compact: this command's own created/modified/deleted ids and counts (not the transaction's cumulative lists), references without signatures, no batch-wide operation_ids."}};}
 }
 bool live_mutation(const std::string& name) {
-  if(name=="model_batch" || name=="save" || name=="transaction_begin" || name=="transaction_commit" || name=="preview_commit")return true;
+  if(name=="model_batch" || name=="save" || name=="transaction_begin" || name=="transaction_commit" || name=="preview_commit" || name=="undo" || name=="redo")return true;
   for(const auto& c:commands::list())if(c.name==name)return c.mutates || name=="export";
   return false;
 }
@@ -82,6 +82,10 @@ const json& live_tools() {
   add("live_select","Select up to 25 bodies or subshapes of the same kind in the viewport. Selection is applied asynchronously; inspect live_state afterwards. Does not edit geometry.",object({{"refs",{{"type","array"},{"items",{{"type",{"string","object"}}}},{"minItems",1},{"maxItems",25}}},{"expected_revision",revision()}},{"refs","expected_revision"}));
   add("request_status","Find an earlier request's committed, failed, cancelled or pending receipt after reconnecting.",object({{"request_id",str()}},{"request_id"}));
   add("stop","Cancel unfinished agent work and remove temporary previews. Completed edits remain undoable.",object());
+  // Gap log #14: the document's own undo and redo, one step each (an agent's commit, a batch or a person's edit).
+  for(const auto name:{"undo","redo"})
+    add(name,std::string(name)=="undo"?"Undo the document's last step (whoever made it), as Edit > Undo does; not during a transaction. The reply names the step.":"Redo the step undo took back, as Edit > Redo does.",
+        object({{"expected_revision",revision()},{"request_id",str()}},{"expected_revision","request_id"}));
   add("transaction_begin","Start a connection-scoped group for one Undo step. Disconnect discards it. Keep expected_revision=base_revision while staging and committing; pass transaction to dependent commands.",object({{"label",str()},{"expected_revision",revision()},{"request_id",str()}},{"label","expected_revision","request_id"}));
   for(const auto name:{"transaction_commit","transaction_cancel","preview_commit","preview_cancel"}) {
     auto schema=object({{"id",str()}},{"id"});
@@ -117,8 +121,8 @@ const json& live_tools() {
     }
     batchSteps.push_back(object({{"id",str()},{"command",{{"enum",{command.name}}}},{"arguments",arguments},{"references",{{"type","array"},{"items",{{"type","object"}}},{"maxItems",100}}}},{"id","command","arguments"}));
   }
-  add("model_batch","Execute 1-50 typed modeling steps atomically with per-step receipts. An identifier string may refer to an earlier step's result as @{<step id>#/<path in that step's result>}: with a step {\"id\":\"cabin\",\"command\":\"feature\",...}, @{cabin#/body_ids/0} is its first body and @{cabin/body_ids/0} is the same. Paths start at the step's result, without /result/: feature steps have feature_id and body_ids (mirror and patterns also all_body_ids), sketch steps sketch_id, component steps component_id. @{pat#/body_ids/*} is the whole list wherever a list is accepted, e.g. targets:[\"@{pat#/body_ids/*}\"]. Feature steps take body_name, color and parent for the bodies they make; parent here is the default component for all of them. Validates all inputs/dependencies first. Failure discards this whole batch, retaining previous staged work. Uses normal transaction/preview, revision, Stop and Undo semantics. Commit and save remain explicit separate checkpoints; computed receipts do not imply persistence. No file operations or nested batches.",object({
-    {"steps",{{"type","array"},{"items",{{"anyOf",batchSteps}}},{"minItems",1},{"maxItems",50}}},
+  add("model_batch","Execute 1-100 typed modeling steps atomically with per-step receipts. An identifier string may refer to an earlier step's result as @{<step id>#/<path in that step's result>}: with a step {\"id\":\"cabin\",\"command\":\"feature\",...}, @{cabin#/body_ids/0} is its first body and @{cabin/body_ids/0} is the same. Paths start at the step's result, without /result/: feature steps have feature_id and body_ids (mirror and patterns also all_body_ids), sketch steps sketch_id, component steps component_id. @{pat#/body_ids/*} is the whole list wherever a list is accepted, e.g. targets:[\"@{pat#/body_ids/*}\"]. A reference may also name a step of an earlier batch on the same connection. Feature steps take body_name, color and parent for the bodies they make; parent here is the default component for all of them. Validates all inputs/dependencies first. Failure discards this whole batch, retaining previous staged work. Uses normal transaction/preview, revision, Stop and Undo semantics. Commit and save remain explicit separate checkpoints; computed receipts do not imply persistence. No file operations or nested batches.",object({
+    {"steps",{{"type","array"},{"items",{{"anyOf",batchSteps}}},{"minItems",1},{"maxItems",100}}},
     {"transaction",str()},{"preview",{{"type","boolean"},{"default",false}}},{"expected_revision",revision()},{"request_id",str()},{"verbosity",verbosity()},
     {"parent",{{"type",{"string","null"}},{"description","Default component for every body the feature steps make (a step's own parent wins); a component id or @{step#/component_id} of an earlier component step."}}}
   },{"steps","expected_revision","request_id"}));

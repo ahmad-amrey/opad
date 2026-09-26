@@ -1577,3 +1577,53 @@ TEST(an_equation_curve_follows_its_parameters_within_its_tolerance) {
   const json mixed = {{"entities", {{{"id", 30}, {"type", "spline"}, {"equation", {{"x", "10 mm * cos(t + 1 deg)"}, {"y", "10 mm * sin(t)"}, {"t0", 0}, {"t1", "2 * pi"}}}}}}};
   CHECK_THROWS(commands::run("sketch", {{"geometry", mixed}}, &doc));
 }
+
+// Gap log #14: an axis through two free points; combine with several targets; a sketch pattern given only its seeds
+// and inputs.
+TEST(axis_through_free_points_combine_with_several_targets_and_sketch_patterns) {
+  Document doc = Document::create();
+  for (const json& points : {json::array({"point/0,0,0", "point/0,0,10"}), json::array({{{"point", {0, 0, 0}}}, {{"point", {0, 0, 10}}}}),
+                             json::array({json::array({0, 0, 0}), json::array({0, 0, 10})})}) {
+    const json made = feature_cmd(doc, "axis", {{"mode", "two_points"}, {"points", points}});
+    const Scene axes = resolve(doc);
+    const Feature* f = axes.feature(run_id(made));
+    CHECK(f && f->result.contains("axis"));
+    CHECK_NEAR(f->result["axis"]["dir"][2].get<double>(), 1, 1e-12);
+  }
+  auto box = [&](double x) {
+    return feature_cmd(doc, "box", {{"x", std::to_string(x) + " mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}})["body_ids"][0].get<std::string>();
+  };
+  const std::string a = box(0), b = box(20), bar = feature_cmd(doc, "box", {{"x", "10 mm"}, {"length", "40 mm"}, {"width", "2 mm"}, {"height", "20 mm"}})["body_ids"][0];
+  // A cut goes through each target; both stay.
+  const json cut = feature_cmd(doc, "combine", {{"target", {a, b}}, {"tools", {bar}}, {"operation", "cut"}, {"keep_tools", true}});
+  CHECK_EQ(cut["body_ids"].size(), size_t(2));
+  Scene s = resolve(doc);
+  CHECK_NEAR(volume_of_node(doc, s, a), 1000 - 200, 1e-6);
+  CHECK_NEAR(volume_of_node(doc, s, b), 1000 - 200, 1e-6);
+  // A join makes the first target one body with the others and the tools.
+  feature_cmd(doc, "combine", {{"target", {a, b}}, {"tools", {bar}}, {"operation", "join"}});
+  s = resolve(doc);
+  CHECK(s.node(b) == nullptr && s.node(bar) == nullptr);
+  CHECK_NEAR(volume_of_node(doc, s, a), 2 * 800 + 40 * 2 * 20, 1e-6);  // the bar fills the two slots it cut
+  // A pattern needs only its seeds and inputs; its count can be a parameter.
+  commands::run("param", {{"name", "holes"}, {"expr", "6"}}, &doc);
+  const json geometry = {{"points", {{{"id", 1}, {"x", 20}, {"y", 0}}}},
+                         {"entities", {{{"id", 10}, {"type", "circle"}, {"p", {1}}, {"r", 2}}}},
+                         {"patterns", {{{"id", 50}, {"seeds", {10}}, {"inputs", {{"polar", true}, {"count", "holes"}, {"angle", "360 deg"}}}}}}};
+  const std::string sk = commands::run("sketch", {{"geometry", geometry}}, &doc)["sketch_id"];
+  auto circles = [&] {
+    const Scene now = resolve(doc);
+    size_t n = 0;
+    for (const auto& e : now.sketch(sk)->geometry["entities"]) n += e["type"] == "circle";
+    return n;
+  };
+  CHECK_EQ(circles(), size_t(6));
+  commands::run("param", {{"name", "holes"}, {"expr", "8"}}, &doc);
+  CHECK_EQ(circles(), size_t(8));
+  try {
+    commands::run("sketch", {{"geometry", {{"entities", {{{"id", 10}, {"type", "line"}, {"p", json::array()}}}}, {"patterns", {{{"id", 50}, {"inputs", json::object()}}}}}}}, &doc);
+    CHECK(false);
+  } catch (const Error& e) {
+    CHECK(std::string(e.what()).find("seeds") != std::string::npos);
+  }
+}

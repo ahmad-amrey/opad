@@ -8,7 +8,13 @@
 #include <Message_ProgressScope.hxx>
 #include <Quantity_Color.hxx>
 #include <STEPCAFControl_Reader.hxx>
+#include <APIHeaderSection_MakeHeader.hxx>
+#include <Interface_InterfaceModel.hxx>
+#include <StepData_StepModel.hxx>
+#include <StepRepr_NextAssemblyUsageOccurrence.hxx>
 #include <STEPCAFControl_Writer.hxx>
+#include <STEPControl_Writer.hxx>
+#include <TCollection_HAsciiString.hxx>
 #include <STEPControl_StepModelType.hxx>
 #include <ShapeFix_Shape.hxx>
 #include <Standard_Failure.hxx>
@@ -626,6 +632,23 @@ ExportResult export_selection(const Document& doc, const Scene& scene, const std
     writer.SetNameMode(Standard_True);
     try {
       if (!writer.Transfer(xdoc, STEPControl_AsIs)) throw Error("STEP transfer failed");
+      // The same document exports the same file (gap log #14): the header's time is the document's last change,
+      // not the clock, and its name the file's, not the folder it was written to.
+      APIHeaderSection_MakeHeader header(writer.ChangeWriter().Model());
+      std::string stamp = "2000-01-01T00:00:00";
+      for (auto it = doc.ops.rbegin(); it != doc.ops.rend(); ++it)
+        if (it->data.contains("ts") && it->data["ts"].is_string()) {
+          stamp = it->data["ts"].get<std::string>();
+          break;
+        }
+      header.SetTimeStamp(new TCollection_HAsciiString(stamp.c_str()));
+      header.SetName(new TCollection_HAsciiString(out.filename().string().c_str()));
+      // OCCT numbers assembly occurrences from a counter that lives as long as the process: number them in order.
+      const Handle(Interface_InterfaceModel) model = writer.ChangeWriter().Model();
+      int occurrence = 0;
+      for (int i = 1; i <= model->NbEntities(); ++i)
+        if (const auto nauo = Handle(StepRepr_NextAssemblyUsageOccurrence)::DownCast(model->Value(i)); !nauo.IsNull())
+          nauo->SetId(new TCollection_HAsciiString(++occurrence));
       if (writer.Write(out.string().c_str()) != IFSelect_RetDone) throw Error("STEP write failed: " + out.string());
     } catch (const Standard_Failure& e) {
       throw Error(std::string("STEP export failed: ") + e.GetMessageString());

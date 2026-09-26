@@ -38,6 +38,7 @@ class AgentBridge : public QObject {
   // normalised ref, with the body key and placement they were given for (TODO 10 B6). Transport only.
   struct Known {std::string geometry,placement;};
   using KnownRefs=std::map<std::string,Known>;
+  using BatchSteps=std::map<std::string,opad::json>;  // step id -> its result, from this connection's earlier batches
  private:
   using json=opad::json;
   struct Snapshot {std::shared_ptr<opad::Document> doc;opad::Scene scene;unsigned long long revision=0;};
@@ -45,6 +46,7 @@ class AgentBridge : public QObject {
     QPointer<QLocalSocket> socket;QByteArray input;QString target,agent;std::string clientId;
     QElapsedTimer requestTimer;bool bound=false,receiving=false;
     std::shared_ptr<const KnownRefs> known;  // replaced, never changed in place: running jobs keep their copy
+    std::shared_ptr<const BatchSteps> steps;  // earlier batches' step results, for @{step#/...} (gap log #14); likewise
   };
   struct Receipt {std::string hash,state="pending";QByteArray response;unsigned long long revision=0;};
   struct Prepared {std::shared_ptr<Snapshot> snapshot;std::string id;QString label;QPointer<QLocalSocket> owner;bool transaction=false;json result,changes;std::vector<std::string> receipts;};

@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <chrono>
+#include <thread>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -336,6 +338,21 @@ TEST(measure_between_bodies_in_assembly) {
   Scene s2 = resolve(d);
   CHECK_EQ(s2.measurements.size(), 1u);
   CHECK(!s2.measurements[0].unresolved);
+}
+
+// Gap log #14: the same document exports the same STEP file, whenever and wherever it is written.
+TEST(step_exports_are_reproducible) {
+  Document d = Document::load(tmp("assembly.opad"));
+  Scene s = resolve(d);
+  ExportOptions o;
+  o.format = "step";
+  fs::create_directories(tmp("again"));
+  export_selection(d, s, tmp("same.step"), o);
+  std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+  export_selection(d, s, tmp("again") / "same.step", o);
+  const std::string first = read_file(tmp("same.step")), second = read_file(tmp("again") / "same.step");
+  CHECK(first == second);
+  CHECK(first.find("FILE_NAME('same.step'") != std::string::npos);
 }
 
 TEST(export_step_roundtrip_preserves_geometry_and_names) {

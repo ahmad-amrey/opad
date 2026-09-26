@@ -53,6 +53,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <optional>
 
 #include "engine.hpp"
 #include "opad/geometry.hpp"
@@ -154,7 +155,7 @@ std::vector<FeatureSpec> build_specs() {
   add("offset_face", "Press pull", "presspull", "modify", "Push planar faces in or pull them out.", {pick("faces", "Faces", "faces", 1, 0), in("distance", "Distance", "length", "5 mm")});
   add("scale", "Scale", "scale", "modify", "Resize bodies uniformly.", {pick("bodies", "Bodies", "bodies", 1, 0), in("factor", "Factor", "number", "2"), choice("about", "About", {"origin", "centre"})});
   add("combine", "Combine", "combine", "combine", "Join, cut or intersect bodies.",
-      {pick("target", "Target body", "bodies", 1, 1), pick("tools", "Tool bodies", "bodies", 1, 0), choice("operation", "Operation", {"join", "cut", "intersect"}), in("keep_tools", "Keep tools", "bool", false)});
+      {pick("target", "Target bodies", "bodies", 1, 0), pick("tools", "Tool bodies", "bodies", 1, 0), choice("operation", "Operation", {"join", "cut", "intersect"}), in("keep_tools", "Keep tools", "bool", false)});
   add("split", "Split body", "split", "combine", "Cut bodies in two along a plane.", {pick("bodies", "Bodies", "bodies", 1, 0), in("plane", "Splitting plane", "plane")});
   add("mirror", "Mirror", "mirror", "pattern", "Mirrored copies of bodies.", {pick("bodies", "Bodies", "bodies", 1, 0), in("plane", "Mirror plane", "plane")}, "new");
   add("pattern_rect", "Rectangular pattern", "patternRect", "pattern", "Copies of bodies in rows and columns.",
@@ -410,6 +411,18 @@ struct Points {
   bool from_sketch = false;
 };
 
+// A point in space written out, in any of the forms references take elsewhere: "point/x,y,z", {"point": [x, y, z]}
+// (without a sketch) or [x, y, z].
+std::optional<gp_Pnt> free_point(const json& r) {
+  auto triple = [](const json& v) -> std::optional<gp_Pnt> {
+    if (!v.is_array() || v.size() != 3 || !v[0].is_number() || !v[1].is_number() || !v[2].is_number()) return std::nullopt;
+    return gp_Pnt(v[0].get<double>(), v[1].get<double>(), v[2].get<double>());
+  };
+  if (r.is_string() && r.get<std::string>().rfind("point/", 0) == 0) return pnt(Ref::parse(r.get<std::string>()).point);
+  if (r.is_object() && !r.contains("sketch") && !r.contains("body") && r.contains("point")) return triple(r["point"]);
+  return triple(r);
+}
+
 Points resolve_points(const Ctx& ctx, const json& refs) {
   Points out;
   if (!refs.is_array()) return out;
@@ -422,9 +435,11 @@ Points resolve_points(const Ctx& ctx, const json& refs) {
       out.at.push_back(pnt(frame.to_world(p->x, p->y)));
       out.normal = gp_Dir(vec(frame.normal()));
       out.from_sketch = true;
-    } else if (r.contains("kind") && r["kind"] == "point") {
+    } else if (r.is_object() && r.contains("kind") && r["kind"] == "point") {
       const Ref p = Ref::from_json(r);
       out.at.push_back(pnt(p.point));
+    } else if (auto free = free_point(r)) {  // "point/x,y,z", {"point": [x, y, z]} or [x, y, z] (gap log #14)
+      out.at.push_back(*free);
     } else {
       const ResolvedRef v = ctx.resolve(r);
       if (v.sub.ShapeType() != TopAbs_VERTEX) throw Error("pick sketch points or vertices");
@@ -1064,27 +1079,36 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
 
   // ---- combine
   if (kind == "combine") {
-    const std::vector<std::string> target = body_ids(ctx, in.value("target", json()));
+    const std::vector<std::string> targets = body_ids(ctx, in.value("target", json()));
     std::vector<std::string> tools = body_ids(ctx, in.value("tools", json()));
-    if (target.size() != 1) throw Error("pick one target body");
-    tools.erase(std::remove(tools.begin(), tools.end(), target.front()), tools.end());
+    if (targets.empty()) throw Error("pick a target body");
+    for (const auto& target : targets) tools.erase(std::remove(tools.begin(), tools.end(), target), tools.end());
     if (tools.empty()) throw Error("pick at least one tool body");
     const std::string op = in.value("operation", "join");
-    TopoDS_Shape acc = ctx.node_shape(target.front());
-    for (const auto& t : tools) {
-      ctx.check_cancel();
-      acc = boolean(op == "join" ? BoolOp::Fuse : op == "cut" ? BoolOp::Cut : BoolOp::Common, acc, ctx.node_shape(t));
+    // Several targets (gap log #14): a cut or an intersection works on each; a join makes the first of them one body
+    // with the others and the tools.
+    const bool join = op == "join";
+    std::vector<std::string> taking = tools;
+    if (join) taking.insert(taking.begin(), targets.begin() + 1, targets.end());
+    for (const auto& target : join ? std::vector<std::string>{targets.front()} : targets) {
+      TopoDS_Shape acc = ctx.node_shape(target);
+      for (const auto& t : taking) {
+        ctx.check_cancel();
+        acc = boolean(join ? BoolOp::Fuse : op == "cut" ? BoolOp::Cut : BoolOp::Common, acc, ctx.node_shape(t));
+      }
+      const auto pieces = solids_of(acc);
+      if (pieces.empty()) {
+        if (op == "intersect") throw Error("the bodies do not intersect");
+        out.removed.push_back(target);
+      } else {
+        // Joined tools that do not touch the target, or a cut that parts it: the pieces stay one body.
+        std::vector<TopoDS_Shape> healedPieces;
+        for (const auto& piece : pieces) healedPieces.push_back(healed(piece));
+        out.bodies.push_back({target, bundle(healedPieces)});
+      }
     }
-    const auto pieces = solids_of(acc);
-    if (pieces.empty()) {
-      if (op == "intersect") throw Error("the bodies do not intersect");
-      out.removed.push_back(target.front());
-    } else {
-      // Joined tools that do not touch the target, or a cut that parts it: the pieces stay one body.
-      std::vector<TopoDS_Shape> healedPieces;
-      for (const auto& piece : pieces) healedPieces.push_back(healed(piece));
-      out.bodies.push_back({target.front(), bundle(healedPieces)});
-    }
+    if (join)
+      for (size_t i = 1; i < targets.size(); ++i) out.removed.push_back(targets[i]);
     if (!in.value("keep_tools", false))
       for (const auto& t : tools) out.removed.push_back(t);
     return out;

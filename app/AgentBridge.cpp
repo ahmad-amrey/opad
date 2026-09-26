@@ -270,6 +270,16 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
   if(write)m_receipts.emplace(key,Receipt{hash});
   m_activeOperation=args.value("request_id",name);
   if(name=="save"){save(s,args,key);return;}
+  if(name=="undo" || name=="redo"){  // the document's own history (gap log #14)
+    const bool back=name=="undo";
+    if(m_prepared){m_receipts.erase(key);fail(s,"prepared_active",tr("Commit or cancel the current transaction first."));return;}
+    if(back?!m_doc->canUndo():!m_doc->canRedo()){m_receipts.erase(key);fail(s,back?"nothing_to_undo":"nothing_to_redo",back?tr("There is nothing to undo."):tr("There is nothing to redo."));return;}
+    const QString label=back?m_doc->undoLabel():m_doc->redoLabel();
+    if(back)m_doc->undo();else m_doc->redo();
+    m_receipts[key].state="committed";m_receipts[key].revision=m_doc->revision;
+    reply(s,live_result({{"state","committed"},{"revision",m_doc->revision},{"result",{{back?"undone":"redone",label.toStdString()}}}}),key);
+    activity(back?tr("Agent: undo %1").arg(label):tr("Agent: redo %1").arg(label));emit statusChanged();return;
+  }
   if(name=="transaction_commit" || name=="preview_commit"){commit(s,args.at("id").get<std::string>(),key,args.at("expected_revision").get<unsigned long long>());return;}
   execute(s,name,std::move(args),write?key:std::string());
 }

@@ -118,6 +118,12 @@ point count follows from the tolerance and parameter edits reshape it; the sampl
 an older build reads them as the fit spline they are. The arm's cycloidal disc, 640 points driven by 1,282 dimension
 expressions, is one entity: 1441 points at 0.001 mm in 0.6 s.
 
+Smaller agent frictions: `model_batch` takes up to 100 steps and may refer to steps of earlier batches on the same
+connection; `undo` and `redo` are live tools; `export` inside a transaction writes its staged state; `combine` takes
+several targets; construction axes and points take points in space (`"point/x,y,z"`, `{"point": [...]}`,
+`[x, y, z]`); sketch patterns need only their seeds and inputs; and a STEP export of the same document is the same
+file (the header carries the document's last change and the file's name, assembly occurrences are numbered in order).
+
 Face, edge and vertex inputs can be rules instead of numbers: `{"body": id, "kind": "edge", "select":
 {"parallel_to": "z"}, "expect": 4}` picks the matching entities again whenever the feature regenerates and fails,
 rather than guessing, when the count changes. The desktop offers the same through "By rule…" on pick inputs, and

@@ -178,7 +178,15 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   letters). A cut that parts a body keeps the pieces in it; `split` makes separate bodies.
 - Patterns: `count` includes the original, which stays where it is; `pattern_rect` steps `spacing` along `axis` (and
   optionally a second direction), `pattern_circ` spreads the copies evenly over `angle` about `axis`. With
-  `operation: join` the copies join the targets instead of becoming bodies.
+  `operation: join` the copies join the targets instead of becoming bodies; `targets: [<the original>]` makes the
+  original and its copies one body (without targets only bodies the copies touch take them).
+- `combine`: `target` may list several bodies: `cut` and `intersect` work on each of them, `join` makes the first one
+  body with the others and the tools.
+- Construction `axis` in `mode: "two_points"` (and `point` in `mode: "normal"`) take vertices, sketch points
+  `{sketch, point}` or points in space: `"point/x,y,z"`, `{"point": [x, y, z]}` or `[x, y, z]`.
+- Sketch `patterns`: `{"id", "seeds": [entity ids], "inputs": {"count", "rows", "dx", "dy"}}` repeats the seed curves in
+  rows and columns, `{"polar": true, "count", "angle", "cx", "cy"}` about a centre; inputs may be expressions (a
+  parameter for the count). The copies are made when the sketch is computed; its `id` shares the sketch's id space.
 - `move`: with `rotate: true` the bodies first turn by `angle` about `axis`, then move by `dx dy dz` in world axes;
   `copy: true` keeps the original.
 
@@ -194,13 +202,21 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 
 ## Batches
 
-- `model_batch` runs up to 50 typed steps atomically. `@{<step id>#/<path>}` (or `@{<step id>/<path>}`) is a value
+- `model_batch` runs up to 100 typed steps atomically. `@{<step id>#/<path>}` (or `@{<step id>/<path>}`) is a value
   from an earlier step's result; the path starts at that result: `@{cabin#/body_ids/0}`, `@{group#/component_id}`.
 - `@{<step id>#/body_ids/*}` is the whole list wherever a list is accepted: as the list itself (`"targets":
   "@{row#/body_ids/*}"`) or spliced into one (`"targets": ["@{cabin#/body_ids/0}", "@{row#/body_ids/*}"]`).
+- A reference may name a step of an earlier batch on the same connection (this batch's steps come first).
 - The batch's `parent` is the default component for every body its feature steps make.
 - A failing step discards the whole batch and names the step; inputs and backward references are checked before
   anything runs.
+
+## History and files
+
+- `undo` and `redo` (live) step the document's history as Edit > Undo does, one step at a time, whoever made it; they
+  need `expected_revision` and `request_id`, and not during a transaction.
+- `export` inside a transaction writes its staged state; outside, the document. STEP files are reproducible: the
+  header carries the document's last change time and the file's name, so the same document exports the same bytes.
 
 ## Checking the result
 
