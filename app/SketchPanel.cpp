@@ -131,11 +131,11 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   connect(iterations,&QSpinBox::valueChanged,this,[](int v){QSettings().setValue("sketch/iterations",v);});settings->addStretch();
   m_status=new QLabel(this);m_status->setWordWrap(true);layout->addWidget(m_status);
   auto* footer=new QHBoxLayout;layout->addLayout(footer);
-  auto* back=new QPushButton(tr("Back"),this);auto* cancel=new QPushButton(tr("Cancel tool"),this);auto* finish=new QPushButton(tr("Finish sketch"),this);
-  footer->addWidget(back);footer->addWidget(cancel);footer->addWidget(finish);
+  // Finish sketch lives in the ribbon, next to Cancel sketch; the tool panel only steps back or leaves the tool.
+  auto* back=new QPushButton(tr("Back"),this);auto* cancel=new QPushButton(tr("Cancel tool"),this);
+  footer->addWidget(back);footer->addWidget(cancel);
   connect(back,&QPushButton::clicked,editor,&SketchEditor::stepBack);
   connect(cancel,&QPushButton::clicked,this,[this]{m_editor->setTool("select");});
-  connect(finish,&QPushButton::clicked,this,&SketchPanel::finishRequested);
   connect(editor,&SketchEditor::status,m_status,&QLabel::setText);
   connect(editor,&SketchEditor::changed,this,&SketchPanel::refresh);
   connect(editor,&SketchEditor::toolChanged,this,[this]{m_pages->setCurrentIndex(0);refresh();});

@@ -1531,6 +1531,13 @@ void TimelineWidget::setCurrentOp(const std::string& id) {
   update();
 }
 
+void TimelineWidget::setEditingOp(const std::string& id) {
+  if (id == m_editing) return;
+  m_editing = id;
+  if (!id.empty()) setCurrentOp(id);  // selected and scrolled into view
+  else update();
+}
+
 void TimelineWidget::step(int delta) {
   const auto& ops = m_doc->doc.ops;
   if (m_shown.empty()) return;
@@ -1628,12 +1635,19 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
       p.setPen(QPen(current ? t.sel : t.hov, 1.5));
       p.drawRoundedRect(r.adjusted(-2, -2, 2, 2), 3, 3);
     }
-    // Rolled back (a feature or sketch is being edited): what comes after is not part of the shown state.
-    const bool beyond = !m_doc->rollback().empty() && [&] {
+    // Rolled back or being edited (a feature or sketch): what comes after is not part of the shown state, or will be
+    // regenerated from the edit.
+    const std::string& from = !m_editing.empty() ? m_editing : m_doc->rollback();
+    const bool beyond = !from.empty() && [&] {
       for (size_t q = 0; q < ops.size(); ++q)
-        if (ops[q].id == m_doc->rollback()) return i >= q;
+        if (ops[q].id == from) return i > q || (i == q && from != m_editing);
       return false;
     }();
+    if (ops[i].id == m_editing) {  // the edited op: a thick ring, "changes apply from here"
+      p.setBrush(Qt::NoBrush);
+      p.setPen(QPen(t.sel, 2.5));
+      p.drawRoundedRect(r.adjusted(-3, -3, 3, 3), 4, 4);
+    }
     const opad::Feature* feat = ops[i].type == "feature" ? m_doc->scene.feature(ops[i].id) : nullptr;
     if (beyond || (feat && feat->suppressed)) iconColor = t.fg3;
     p.drawPixmap(r.left() + 3, r.top() + 3, icons::pixmap(iconFor(ops[i]), iconColor, 12, dpr));
@@ -1676,7 +1690,8 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                        .arg(sw.name(), describe(op).toHtmlEscaped(), t.fg3.name(), theme::mono().family(), shortId(op.id), t.fg2.name(),
                             QString::fromStdString(op.data.value("by", "")).toHtmlEscaped(), QString::fromStdString(op.data.value("ts", "")).left(16).replace('T', ' '),
                             target.isEmpty() ? QString() : QString("<div>target %1</div>").arg(target.toHtmlEscaped()),
-                            m_deleted.count(op.id) ? (op.type == "delete" ? tr("undone · right-click to delete it again") : tr("tombstoned · right-click to restore"))
+                            op.id == m_editing ? tr("being edited · the change applies from here in the history")
+                            : m_deleted.count(op.id) ? (op.type == "delete" ? tr("undone · right-click to delete it again") : tr("tombstoned · right-click to restore"))
                             : isUnresolved(op.id) ? tr("unresolved · kept, never hidden")
                             : op.type == "delete" ? tr("right-click to restore what it deleted") : tr("Right-click for actions"));
     QToolTip::showText(e->globalPosition().toPoint() + QPoint(0, 8), html, this);

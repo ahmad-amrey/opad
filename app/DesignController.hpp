@@ -21,6 +21,8 @@ class DesignController : public QObject {
   DesignController(AppDocument* doc, Viewport* viewport, JobRunner* jobs, QWidget* window);
   FeaturePanel* featurePanel() const { return m_form; }
   SketchEditor* sketch() const { return m_sketch; }
+  // The existing sketch or feature op an open editor changes (empty while nothing is edited, or for a new one).
+  std::string editingOp() const;
   void setPanel(ToolPanel* panel, std::function<void(ToolPanel*)> open);  // the floating panel the form lives in
   void setSketchPanel(ToolPanel* panel);
   void showSketchPanel();

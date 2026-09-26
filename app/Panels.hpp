@@ -288,6 +288,9 @@ class TimelineWidget : public QWidget {
   QSize minimumSizeHint() const override { return QSize(100, 48); }
   void setCurrentOp(const std::string& id);
   std::string currentOp() const { return m_current; }
+  // The op an open sketch or feature editor changes: marked, and what follows it dimmed, since the edit applies from
+  // that point in the history.
+  void setEditingOp(const std::string& id);
   void step(int delta);
   QString describe(const opad::Op& op) const;
 
@@ -321,7 +324,7 @@ class TimelineWidget : public QWidget {
   std::set<std::string> m_deleted, m_unresolved;
   std::vector<size_t> m_shown;  // indices into doc.ops drawn as markers (see timelineShows)
   int m_hover = -1;             // marker index (into m_shown)
-  std::string m_current;
+  std::string m_current, m_editing;
   QRect m_prevBtn, m_nextBtn;
 };
 

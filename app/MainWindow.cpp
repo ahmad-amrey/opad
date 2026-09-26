@@ -1124,6 +1124,7 @@ void MainWindow::buildDesign() {
 void MainWindow::updateDesignState() {
   const bool sketching = m_design->sketchActive();
   const bool has = m_doc->hasDocument && !m_doc->browse;
+  m_timeline->setEditingOp(m_design->editingOp());
   if (sketching && m_ribbon->workspace() != m_sketchWorkspace) {
     m_workspaceBeforeSketch = m_ribbon->workspace();
     m_ribbon->setWorkspace(m_sketchWorkspace);

@@ -622,6 +622,11 @@ bool DesignController::escape() {
   return false;
 }
 
+std::string DesignController::editingOp() const {
+  if (m_sketch->active()) return m_sketch->sketchId();
+  return m_featureOn ? m_editing : std::string();
+}
+
 void DesignController::enterSketch(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry) {
   try {
     m_sketch->begin(sketchId, name, plane, frame, geometry);
@@ -716,6 +721,17 @@ void DesignController::bench() {
       m_form->setPicks("edges", edges);
       m_form->setValue("radius", "1.5 mm");
       runPreview(true);
+    });
+    // TODO 10 A4: an edited sketch is marked on the timeline (OPAD_BENCH_UISHOT: <shot>.sketch-edit.png).
+    QTimer::singleShot(5000, this, [this] {
+      const QString shot = qEnvironmentVariable("OPAD_BENCH_UISHOT");
+      if (shot.isEmpty() || m_doc->scene.sketches.empty() || m_featureOn || m_sketch->active()) return;
+      editOp(m_doc->scene.sketches.front().id);
+      QTimer::singleShot(1200, this, [this, shot] {
+        m_viewport->window()->grab().save(shot + ".sketch-edit.png");
+        trace::log(QStringLiteral("bench: design: the edited sketch is %1 on the timeline").arg(editingOp() == m_doc->scene.sketches.front().id ? "marked" : "NOT marked"));
+        cancelSketch();
+      });
     });
   });
   });

@@ -1470,5 +1470,6 @@
   "Delete it again\tShift+Del": "حذفه مجددًا\tShift+Del",
   "undone · right-click to delete it again": "مُلغى · انقر بالزر الأيمن لحذفه مجددًا",
   "right-click to restore what it deleted": "انقر بالزر الأيمن لاستعادة ما حذفه",
-  "Refining the view": "تحسين دقة العرض"
+  "Refining the view": "تحسين دقة العرض",
+  "being edited · the change applies from here in the history": "قيد التحرير · يُطبَّق التغيير من هذه النقطة في السجل"
 }
