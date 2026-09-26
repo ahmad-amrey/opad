@@ -38,7 +38,10 @@ Bnd_Box node_world_bbox(const Document& doc, const Scene& scene, const std::stri
 // key and shifted for a translated node; a turned node is measured in place. Walks the geometry the first time:
 // workers only.
 Bnd_Box tight_bbox(const TopoDS_Shape& shape);
-Bnd_Box node_tight_bbox(const Document& doc, const Scene& scene, const std::string& node_id);
+// Measures the tight boxes of these body keys that are not cached yet, in parallel (unions over many bodies).
+void warm_tight_bboxes(const Document& doc, const std::vector<std::string>& keys, const std::function<bool()>& cancelled = {});
+// exact=false: a turned node gets the turned corners of its shape's cached tight box (unions over many bodies).
+Bnd_Box node_tight_bbox(const Document& doc, const Scene& scene, const std::string& node_id, bool exact = true);
 // Triangulation-only bodies use facet, facet-side and mesh-node ordinals.
 bool is_mesh_shape(const TopoDS_Shape& shape);
 struct MeshCircle { gp_Circ circle; int index=0, segments=0; std::vector<int> edges; std::vector<gp_Pnt> rim; };

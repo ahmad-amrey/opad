@@ -59,11 +59,8 @@ json bbox_json(const Bnd_Box& box) {
   return j;
 }
 
-Bnd_Box shape_bbox(const TopoDS_Shape& s) {
-  Bnd_Box box;
-  if (!s.IsNull()) BRepBndLib::Add(s, box, Standard_False);
-  return box;
-}
+// Boxes this file reports are tight (TODO 10 B10): the exact geometry, without tolerance or meshing padding.
+Bnd_Box shape_bbox(const TopoDS_Shape& s) { return tight_bbox(s); }
 
 const char* surface_type(GeomAbs_SurfaceType t) {
   switch (t) {
@@ -171,6 +168,30 @@ bool scene_bbox(const Document& doc, const Scene& scene, const std::vector<std::
   return true;
 }
 
+bool scene_tight_bbox(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies, Vec3& lo, Vec3& hi,
+                      const std::function<bool()>& cancelled) {
+  Bnd_Box box;
+  std::vector<std::string> ids = bodies;
+  if (ids.empty())
+    for (const auto& b : scene.all_bodies())
+      if (scene.effectively_visible(b)) ids.push_back(b);
+  if (ids.size() > 1) {
+    std::vector<std::string> keys;
+    for (const auto& id : ids)
+      if (const Node* n = scene.node(id); n && n->kind == Node::Kind::Body && !n->body_missing) keys.push_back(n->body_key);
+    warm_tight_bboxes(doc, keys, cancelled);
+  }
+  for (const auto& id : ids) {
+    if (cancelled && cancelled()) throw Error("cancelled");
+    const Node* n = scene.node(id);
+    if (!n || n->kind != Node::Kind::Body || n->body_missing) continue;
+    box.Add(node_tight_bbox(doc, scene, id, ids.size() == 1));
+  }
+  if (box.IsVoid()) return false;
+  box.Get(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+  return true;
+}
+
 json document_info(const Document& doc, const Scene& scene) {
   json j;
   j["uuid"] = doc.header.uuid;
@@ -194,7 +215,7 @@ json document_info(const Document& doc, const Scene& scene) {
   j["views"] = scene.views.size();
   j["unresolved"] = scene.unresolved.size();
   Vec3 lo, hi;
-  if (scene_bbox(doc, scene, {}, lo, hi)) {
+  if (scene_tight_bbox(doc, scene, {}, lo, hi)) {
     Bnd_Box b;
     b.Update(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
     j["bbox"] = bbox_json(b);
@@ -303,10 +324,10 @@ bool entity_matches(const json& detail, const json& filters, double tolerance) {
   return true;
 }
 
-json node_properties(const Document& doc, const Scene& scene, const std::string& node_id, bool geometry) {
+json node_properties(const Document& doc, const Scene& scene, const std::string& node_id, bool geometry, const std::function<bool()>& cancelled) {
   if(const auto* sk=scene.sketch(node_id)) {
     json out={{"id",sk->id},{"name",sk->name},{"type","sketch"},{"visible",sk->visible},{"entities",sk->geometry.value("entities",json::array()).size()},{"frame",sk->frame.to_json()}};
-    if(geometry) out["bbox"]=bbox_json(node_world_bbox(doc,scene,node_id));
+    if(geometry) out["bbox"]=bbox_json(tight_bbox(node_world_shape(doc,scene,node_id)));
     return out;
   }
   const Node* n = scene.node(node_id);
@@ -356,13 +377,13 @@ json node_properties(const Document& doc, const Scene& scene, const std::string&
     BRepGProp::SurfaceProperties(world, sprops);
     j["area"] = sprops.Mass();
     if (!has_solid) j["center_of_mass"] = pnt(sprops.CentreOfMass());
-    j["bbox"] = bbox_json(shape_bbox(world));
+    j["bbox"] = bbox_json(node_tight_bbox(doc, scene, node_id));
   } else {
     j["children"] = n->children.size();
     auto bodies = scene.bodies_under(node_id);
     j["bodies"] = bodies.size();
     Vec3 lo, hi;
-    if (geometry && scene_bbox(doc, scene, bodies, lo, hi)) {
+    if (geometry && scene_tight_bbox(doc, scene, bodies, lo, hi, cancelled)) {
       Bnd_Box b;
       b.Update(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
       j["bbox"] = bbox_json(b);
@@ -985,21 +1006,25 @@ json measure_radius(const Document& doc, const Scene& scene, const Ref& a) {
 }
 
 json measure_bbox(const Document& doc, const Scene& scene, const std::vector<Ref>& refs) {
-  Bnd_Box box;
+  Bnd_Box box;  // tight (TODO 10 B10)
   if (refs.empty()) {
     Vec3 lo, hi;
-    if (scene_bbox(doc, scene, {}, lo, hi)) box.Update(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+    if (scene_tight_bbox(doc, scene, {}, lo, hi)) box.Update(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
   } else {
     for (const auto& r : refs) {
       if (r.kind == Ref::Kind::Body) {
         const Node* n = scene.node(r.body);
         if (n && n->kind == Node::Kind::Component) {
           Vec3 lo, hi;
-          if (scene_bbox(doc, scene, scene.bodies_under(r.body), lo, hi)) box.Update(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+          if (scene_tight_bbox(doc, scene, scene.bodies_under(r.body), lo, hi)) box.Update(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+          continue;
+        }
+        if (n && n->kind == Node::Kind::Body && !n->body_missing) {
+          box.Add(node_tight_bbox(doc, scene, r.body));
           continue;
         }
       }
-      BRepBndLib::Add(ref_shape(doc, scene, r), box, Standard_False);
+      box.Add(tight_bbox(ref_shape(doc, scene, r)));
     }
   }
   if (box.IsVoid()) throw Error("bounding box is empty");

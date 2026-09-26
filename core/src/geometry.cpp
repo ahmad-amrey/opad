@@ -4,6 +4,7 @@
 #include <TopoDS_Compound.hxx>
 
 #include <BRepBndLib.hxx>
+#include <OSD_Parallel.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -229,14 +230,41 @@ Bnd_Box tight_bbox(const TopoDS_Shape& shape) {
   return box;
 }
 
-Bnd_Box node_tight_bbox(const Document& doc, const Scene& scene, const std::string& node_id) {
+void warm_tight_bboxes(const Document& doc, const std::vector<std::string>& keys, const std::function<bool()>& cancelled) {
+  auto& cache = *doc.shape_cache;
+  std::vector<std::string> missing;
+  {
+    std::lock_guard<std::mutex> lock(cache.mu);
+    for (const auto& k : keys)
+      if (!cache.tight.count(k) && std::find(missing.begin(), missing.end(), k) == missing.end()) missing.push_back(k);
+  }
+  if (missing.empty()) return;
+  // Independent read-only shapes: measured side by side (the Engine's 252 shapes took minutes one after another).
+  std::vector<Bnd_Box> boxes(missing.size());
+  std::vector<char> done(missing.size(), 0);
+  OSD_Parallel::For(0, static_cast<int>(missing.size()), [&](int i) {
+    if (cancelled && cancelled()) return;
+    try {
+      boxes[static_cast<size_t>(i)] = tight_bbox(body_shape(doc, missing[static_cast<size_t>(i)]));
+      done[static_cast<size_t>(i)] = 1;
+    } catch (const std::exception&) {
+    }
+  });
+  if (cancelled && cancelled()) throw Error("cancelled");
+  std::lock_guard<std::mutex> lock(cache.mu);
+  for (size_t i = 0; i < missing.size(); ++i)
+    if (done[i]) cache.tight[missing[i]] = boxes[i];
+}
+
+Bnd_Box node_tight_bbox(const Document& doc, const Scene& scene, const std::string& node_id, bool exact) {
   const Node* n = scene.node(node_id);
   if (!n || n->kind != Node::Kind::Body) throw Error("not a body node: " + node_id);
   const Mat4 w = scene.world(node_id);
-  // A turned body is measured where it is: its own box turned would not be tight.
+  // A turned body is measured where it is (its own box turned would not be tight), unless a union of many only needs
+  // the corners of its own tight box turned: never smaller than the body, and one measurement per shape.
   const bool shift_only = w.m[0] == 1 && w.m[5] == 1 && w.m[10] == 1 && w.m[1] == 0 && w.m[2] == 0 && w.m[4] == 0 && w.m[6] == 0 &&
                           w.m[8] == 0 && w.m[9] == 0 && w.m[12] == 0 && w.m[13] == 0 && w.m[14] == 0 && w.m[15] == 1;
-  if (!shift_only) return tight_bbox(node_world_shape(doc, scene, node_id));
+  if (!shift_only && exact) return tight_bbox(node_world_shape(doc, scene, node_id));
   auto& cache = *doc.shape_cache;
   Bnd_Box local;
   bool cached = false;
@@ -256,7 +284,14 @@ Bnd_Box node_tight_bbox(const Document& doc, const Scene& scene, const std::stri
   double x0, y0, z0, x1, y1, z1;
   local.Get(x0, y0, z0, x1, y1, z1);
   Bnd_Box out;
-  out.Update(x0 + w.m[3], y0 + w.m[7], z0 + w.m[11], x1 + w.m[3], y1 + w.m[7], z1 + w.m[11]);
+  if (shift_only) {
+    out.Update(x0 + w.m[3], y0 + w.m[7], z0 + w.m[11], x1 + w.m[3], y1 + w.m[7], z1 + w.m[11]);
+    return out;
+  }
+  for (int i = 0; i < 8; ++i) {
+    const Vec3 p = w.apply({(i & 1) ? x1 : x0, (i & 2) ? y1 : y0, (i & 4) ? z1 : z0});
+    out.Update(p[0], p[1], p[2]);
+  }
   return out;
 }
 

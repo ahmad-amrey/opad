@@ -187,6 +187,8 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - `validate` checks solids and reports volumes; `context` summarises the document (sections `nodes`, `features`,
   `sketches`, `parameters`, `errors`); `entity_details` and `query_entities` describe faces and edges with their
   reference tokens; `viewport_image` (live) and `render` return pictures.
+- Sizes (`bbox` in results, properties, validate, measurements) are tight boxes of the exact geometry (a turned body
+  in a union of many: the turned corners of its own tight box).
 - Pictures: `views: ["iso", "front", "top", "right"]` gives one labelled grid (each view fitted; `views` in the result
   lists every cell's camera); `edges: true` (viewport_image) or `edge_lines: true` (render; there `edges` is the
   silhouette outline, on by default) draws the model's edges; `highlight: [refs]` tints faces and edges orange;

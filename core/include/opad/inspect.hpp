@@ -10,7 +10,8 @@ namespace opad {
 json document_info(const Document& doc, const Scene& scene);
 // geometry=false skips the measurements that walk the geometry (bbox, counts, volume, area) so the call
 // is O(1); the app fills those in separately off the click path.
-json node_properties(const Document& doc, const Scene& scene, const std::string& node_id, bool geometry = true);
+json node_properties(const Document& doc, const Scene& scene, const std::string& node_id, bool geometry = true,
+                     const std::function<bool()>& cancelled = {});
 json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref);
 // cancelled: polled while the distance is computed (a body-to-body distance can take a while); a true
 // answer ends it with Error("cancelled").
@@ -35,5 +36,9 @@ json describe_entity(const TopoDS_Shape& sub);
 bool entity_matches(const json& detail, const json& filters, double tolerance = 1e-5);
 // Axis-aligned world bounding box of body nodes (empty list = all visible bodies). False when empty.
 bool scene_bbox(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies, Vec3& lo, Vec3& hi);
+// The same as sizes are reported (TODO 10 B10): the union of the bodies' tight boxes (node_tight_bbox), not the
+// padded view boxes scene_bbox adds up. Walks the geometry the first time per body: workers only.
+bool scene_tight_bbox(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies, Vec3& lo, Vec3& hi,
+                      const std::function<bool()>& cancelled = {});
 
 }  // namespace opad

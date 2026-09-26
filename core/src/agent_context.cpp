@@ -153,7 +153,7 @@ json validate_design(const Document& doc,const Scene& scene,const json& args,con
     auto shape=node_world_shape(doc,scene,bodies[i]);const bool ok=!shape.IsNull()&&BRepCheck_Analyzer(shape).IsValid();valid=valid&&ok;
     int solids=0;for(TopExp_Explorer ex(shape,TopAbs_SOLID);ex.More();ex.Next())++solids;
     GProp_GProps volume,area;BRepGProp::VolumeProperties(shape,volume);BRepGProp::SurfaceProperties(shape,area);
-    items.push_back({{"id",bodies[i]},{"valid",ok},{"solids",solids},{"volume_mm3",volume.Mass()},{"area_mm2",area.Mass()},{"representation",node->representation}});
+    items.push_back({{"id",bodies[i]},{"valid",ok},{"solids",solids},{"volume_mm3",volume.Mass()},{"area_mm2",area.Mass()},{"bbox",bbox_to_json(node_tight_bbox(doc,scene,bodies[i]))},{"representation",node->representation}});
   }
   auto out=page(std::move(items),bodies.size(),args);out["valid_page"]=valid;out["unresolved"]=scene.unresolved.size();out["scope"]="Geometry validity and exact measurements; not a manufacturing assessment.";return out;
 }

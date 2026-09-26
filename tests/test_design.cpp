@@ -1185,3 +1185,24 @@ TEST(render_views_grid) {
   try { commands::run("render", {{"out", "unused.png"}, {"views", "iso,sideways"}}, &doc); } catch (const Error& e) { refused = std::string(e.what()).find("sideways") != std::string::npos; }
   CHECK(refused);
 }
+
+// TODO 10 B10: reported sizes are the tight box: properties, components, measurements and validate.
+TEST(reported_boxes_are_tight) {
+  Document doc = Document::create();
+  const std::string group = commands::run("component", {{"name", "Parts"}}, &doc)["component_id"];
+  const std::string block = commands::run("feature", {{"kind", "box"}, {"inputs", {{"length", "60 mm"}, {"width", "31 mm"}, {"height", "21 mm"}}}, {"parent", group}}, &doc)["body_ids"][0];
+  const std::string pin = commands::run("feature", {{"kind", "cylinder"}, {"inputs", {{"x", "50 mm"}, {"diameter", "10 mm"}, {"height", "40 mm"}}}, {"parent", group}}, &doc)["body_ids"][0];
+  const Scene s = resolve(doc);
+  auto size = [](const json& box) { return std::array<double, 3>{box["size"][0].get<double>(), box["size"][1].get<double>(), box["size"][2].get<double>()}; };
+  auto same = [](std::array<double, 3> a, std::array<double, 3> b) { return std::fabs(a[0] - b[0]) < 1e-6 && std::fabs(a[1] - b[1]) < 1e-6 && std::fabs(a[2] - b[2]) < 1e-6; };
+  CHECK(same(size(node_properties(doc, s, block)["bbox"]), {60, 31, 21}));
+  CHECK(same(size(node_properties(doc, s, pin)["bbox"]), {10, 10, 40}));  // the padded box of a cylinder is larger
+  // The component: both bodies, x from -30 to 55, y from -15.5 to 15.5, z from 0 to 40.
+  CHECK(same(size(node_properties(doc, s, group)["bbox"]), {85, 31, 40}));
+  Ref pin_ref;
+  pin_ref.body = pin;
+  CHECK(same(size(measure_bbox(doc, s, {pin_ref})), {10, 10, 40}));
+  CHECK(same(size(measure_bbox(doc, s, {})), {85, 31, 40}));
+  const json validated = commands::run("validate", {{"select", json::array({pin})}}, &doc);
+  CHECK(same(size(validated["items"][0]["bbox"]), {10, 10, 40}));
+}

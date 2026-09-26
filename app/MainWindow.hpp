@@ -71,7 +71,8 @@ class MainWindow : public QMainWindow {
   QString meshPhase() const;
   int overallPercent(const QString& phase, int pct) const;
   void scheduleSelectionSync();
-  void showComponentBbox(const std::string& id, const QString& title, const QString& subtitle, const QString& nid, opad::json props);
+  // Volume, area and the tight box (TODO 10 B10) of a body or component, measured on a worker, then shown.
+  void showNodeGeometry(const std::string& id, const QString& title, const QString& subtitle, const QString& nid);
   void runBench();
   bool benchTodo5();
   bool benchTodo9();
@@ -191,7 +192,7 @@ class MainWindow : public QMainWindow {
   int m_displayTotal = 0;
   Job* m_selFileJob = nullptr;      // selection.json writer
   Job* m_measureJob = nullptr;      // the guided tool's measurement; cancelled as soon as the picks move on
-  Job* m_propsJob = nullptr;        // component bbox for the properties panel
+  Job* m_propsJob = nullptr;        // geometry for the properties panel
   bool m_loadDocDone = false;
   int m_meshTotal = 0, m_meshRemaining = 0;
   std::function<void()> m_afterLoad;

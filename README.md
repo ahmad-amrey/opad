@@ -66,6 +66,10 @@ Rename, Colour, Hide and Reparent on a multiple selection are one step each.
 Wherever a plane is taken, `{"origin": [x,y,z], "normal": [x,y,z]}` (with an optional `x`) defines it directly,
 and the construction plane has a point-and-normal mode.
 
+Reported sizes (`info`, `properties`, `validate`, `changes.bodies`, the bounding-box measurement and the desktop's
+Properties panel) are the tight box of the exact geometry, not the padded box used to fit views: a 60 x 31 x 21 mm
+block reports exactly that. They are measured on workers and cached per body shape.
+
 `viewport_image` and `render` take `views` (a labelled grid of fitted views in one image), the model's edges as
 lines (`edges` / `edge_lines`), `highlight` (faces and edges tinted) and `shading: "smooth"`; left out, images are
 byte-identical to before.

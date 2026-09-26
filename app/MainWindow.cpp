@@ -1404,6 +1404,7 @@ void MainWindow::selectionMoved(const std::vector<opad::Ref>& refs) {
 }
 
 void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
+  if (m_propsJob) m_propsJob->cancel();  // what is measured for the previous entity must not overwrite this one
   if (refs.empty()) {
     m_propsPanel->setContext(QString());
     m_props->clear();
@@ -1413,8 +1414,9 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
     const opad::Ref& r = refs.front();
     const opad::Node* node = r.kind == opad::Ref::Kind::Body ? m_doc->node(r.body) : nullptr;
     const bool component = node && node->kind == opad::Node::Kind::Component;
-    // A component's bbox walks every body under it, so it is filled in afterwards by a sliced job.
-    opad::json j = r.kind == opad::Ref::Kind::Body ? opad::node_properties(m_doc->doc, m_doc->scene, r.body, !component) : opad::inspect_ref(m_doc->doc, m_doc->scene, r);
+    // What walks the geometry (volume, area, the tight box; for a component every body under it) is measured on a
+    // worker and filled in afterwards.
+    opad::json j = r.kind == opad::Ref::Kind::Body ? opad::node_properties(m_doc->doc, m_doc->scene, r.body, false) : opad::inspect_ref(m_doc->doc, m_doc->scene, r);
     QString title, subtitle, id;
     if (r.kind == opad::Ref::Kind::Point) {
       title = tr("Point");
@@ -1440,7 +1442,7 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
     if (refs.size() > 1) subtitle += tr("  (+%1 more)").arg(refs.size() - 1);
     m_propsPanel->setContext(r.kind == opad::Ref::Kind::Body || r.kind == opad::Ref::Kind::Point ? title : subtitle);
     m_props->showEntity(title, subtitle, id, j);
-    if (component) showComponentBbox(r.body, title, subtitle, id, j);
+    if (r.kind == opad::Ref::Kind::Body && node && !node->body_missing) showNodeGeometry(r.body, title, subtitle, id);
   } catch (const std::exception& e) {
     m_props->showEntity(tr("Error"), QString::fromUtf8(e.what()), QString(), opad::json::object());
   }
@@ -2180,25 +2182,18 @@ int MainWindow::overallPercent(const QString& phase, int pct) const {
 }
 
 // The bbox of a component walks every body under it; it is added to the panel by a sliced job.
-void MainWindow::showComponentBbox(const std::string& id, const QString& title, const QString& subtitle, const QString& nid, opad::json props) {
+void MainWindow::showNodeGeometry(const std::string& id, const QString& title, const QString& subtitle, const QString& nid) {
   if (m_propsJob) m_propsJob->cancel();
-  auto bodies = std::make_shared<std::vector<std::string>>(m_doc->scene.bodies_under(id));
-  auto i = std::make_shared<size_t>(0);
-  auto box = std::make_shared<Bnd_Box>();
-  m_propsJob = m_jobs->sliced(tr("Measuring %1").arg(title), [this, bodies, i, box](Job&) {
-    if (*i >= bodies->size()) return false;
-    try {
-      box->Add(opad::node_world_bbox(m_doc->doc, m_doc->scene, (*bodies)[*i]));
-    } catch (const std::exception&) {
-    }
-    return ++*i < bodies->size();
-  }, [this, box, title, subtitle, nid, props](bool completed) mutable {
+  auto document = std::make_shared<opad::Document>(m_doc->doc);
+  auto scene = std::make_shared<opad::Scene>(m_doc->scene);
+  auto result = std::make_shared<opad::json>();
+  const auto generation = m_doc->generation;
+  m_propsJob = m_jobs->async(tr("Measuring %1").arg(title), [document, scene, id, result](Progress p) {
+    *result = opad::node_properties(*document, *scene, id, true, [p] { return p.cancelled(); });
+  }, [this, result, title, subtitle, nid, generation](bool ok, const QString&) {
     m_propsJob = nullptr;
-    if (!completed || box->IsVoid()) return;
-    double x0, y0, z0, x1, y1, z1;
-    box->Get(x0, y0, z0, x1, y1, z1);
-    props["bbox"] = {{"min", {x0, y0, z0}}, {"max", {x1, y1, z1}}, {"size", {x1 - x0, y1 - y0, z1 - z0}}, {"center", {(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2}}};
-    m_props->showEntity(title, subtitle, nid, props);
+    if (!ok || generation != m_doc->generation) return;
+    m_props->showEntity(title, subtitle, nid, *result);
   });
 }
 
