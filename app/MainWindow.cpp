@@ -1542,11 +1542,14 @@ void MainWindow::timelineMenu(const std::string& requestedId, const QPoint& glob
   bool deleted = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) != m_doc->scene.deleted_ops.end();
   QMenu menu(this);
   menu.setFixedWidth(232);
-  QAction* del = menu.addAction(icons::themed("delete", 16), tr("Delete (tombstone)\tDel"));
-  del->setEnabled(!deleted);
-  QAction* restore = menu.addAction(icons::themed("restore", 16), tr("Restore\tShift+Del"));
-  restore->setEnabled(deleted);
   const opad::Op* menuOp = m_doc->doc.find_op(opId);
+  // Tombstoning a delete op brings back what it deleted (docs/format.md), so on a delete marker that entry is offered
+  // as what it does; once undone, the delete can be applied again.
+  const bool deleteMarker = menuOp && menuOp->type == "delete";
+  QAction* del = menu.addAction(icons::themed(deleteMarker ? "restore" : "delete", 16), deleteMarker ? tr("Restore what it deleted\tDel") : tr("Delete (tombstone)\tDel"));
+  del->setEnabled(!deleted);
+  QAction* restore = menu.addAction(icons::themed(deleteMarker ? "delete" : "restore", 16), deleteMarker ? tr("Delete it again\tShift+Del") : tr("Restore\tShift+Del"));
+  restore->setEnabled(deleted);
   const bool designOp = menuOp && (menuOp->type == "feature" || menuOp->type == "sketch") && !deleted;
   const opad::Feature* feat = m_doc->scene.feature(opId);
   const bool suppressed=feat && feat->suppressed;

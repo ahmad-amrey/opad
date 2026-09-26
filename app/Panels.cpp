@@ -1676,7 +1676,9 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                        .arg(sw.name(), describe(op).toHtmlEscaped(), t.fg3.name(), theme::mono().family(), shortId(op.id), t.fg2.name(),
                             QString::fromStdString(op.data.value("by", "")).toHtmlEscaped(), QString::fromStdString(op.data.value("ts", "")).left(16).replace('T', ' '),
                             target.isEmpty() ? QString() : QString("<div>target %1</div>").arg(target.toHtmlEscaped()),
-                            m_deleted.count(op.id) ? tr("tombstoned · right-click to restore") : isUnresolved(op.id) ? tr("unresolved · kept, never hidden") : tr("Right-click for actions"));
+                            m_deleted.count(op.id) ? (op.type == "delete" ? tr("undone · right-click to delete it again") : tr("tombstoned · right-click to restore"))
+                            : isUnresolved(op.id) ? tr("unresolved · kept, never hidden")
+                            : op.type == "delete" ? tr("right-click to restore what it deleted") : tr("Right-click for actions"));
     QToolTip::showText(e->globalPosition().toPoint() + QPoint(0, 8), html, this);
   } else {
     QToolTip::hideText();

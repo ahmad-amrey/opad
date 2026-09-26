@@ -1464,5 +1464,11 @@
   "Delete stroke %1": "حذف الخط %1",
   "Drawing limit reached: save it and start another": "بلغ الرسم حده الأقصى: احفظه وابدأ رسماً آخر",
   "Nothing here: pick a body, face, edge or vertex": "لا شيء هنا: اختر جسماً أو وجهاً أو حافة أو رأساً",
-  "Highlighting %1": "إبراز %1"
+  "Highlighting %1": "إبراز %1",
+  "This connection is not bound to a document yet. Call live_instances, choose the window and document, then live_bind.": "هذا الاتصال غير مرتبط بمستند بعد. استدعِ live_instances واختر النافذة والمستند، ثم live_bind.",
+  "Restore what it deleted\tDel": "استعادة ما حذفه\tDel",
+  "Delete it again\tShift+Del": "حذفه مجددًا\tShift+Del",
+  "undone · right-click to delete it again": "مُلغى · انقر بالزر الأيمن لحذفه مجددًا",
+  "right-click to restore what it deleted": "انقر بالزر الأيمن لاستعادة ما حذفه",
+  "Refining the view": "تحسين دقة العرض"
 }
