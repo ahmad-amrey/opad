@@ -5,6 +5,8 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
+#include <BRepClass3d_SolidClassifier.hxx>
+#include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -117,7 +119,8 @@ std::vector<FeatureSpec> build_specs() {
   add("extrude", "Extrude", "extrude", "create", "Pull sketch profiles or planar faces along their normal. Symmetric splits the distance in half on each side; a start offset moves the start along the sketch normal.",
       {pick("profiles", "Profiles", "profiles", 1, 0),choice("start", "Start from", {"profile", "offset", "face"}),
        in("start_offset", "Start offset", "length", "0 mm", "start=offset"),pick("start_face", "Start face", "faces", 1, 1, "start=face"),
-       choice("direction", "Direction", {"one", "symmetric", "two"}), choice("extent", "Extent", {"distance", "all"}),
+       choice("direction", "Direction", {"one", "symmetric", "two"}), choice("extent", "Extent", {"distance", "all", "to_face", "to_body"}),
+       pick("extent_face", "Up to face", "faces", 1, 1, "extent=to_face"), pick("extent_body", "Up to body", "bodies", 1, 1, "extent=to_body"),
        in("distance", "Distance", "length", "10 mm", "extent=distance"), in("distance2", "Distance, other side", "length", "10 mm", "direction=two"),
        in("taper", "Taper angle", "angle", "0 deg", "extent=distance"), in("flip", "Flip direction", "bool", false)},
       "new");
@@ -539,9 +542,65 @@ double extrusion_start(const Ctx& ctx,const json& in,const gp_Vec& normal,const 
   if(std::abs(std::abs(other.Dot(normal))-1)>1e-7)throw Error("the start face must be perpendicular to the extrusion axis");
   return gp_Vec(center,pnt(frame.origin)).Dot(normal);
 }
+// An extrusion pulled far along `n` from `base`, cut back to end at a face or a body (TODO 10 B8): the piece that
+// starts at the profile. A face stops it at its whole surface (a plane: the unbounded plane); a body where the
+// extrusion first meets it. Part of the profile missing the target is refused rather than running on.
+TopoDS_Shape trim_up_to(const Ctx& ctx, const json& in, const TopoDS_Shape& far_prism, const TopoDS_Shape& base, const gp_Vec& n, double reach) {
+  GProp_GProps g;
+  BRepGProp::SurfaceProperties(base, g);
+  const gp_Pnt start = g.CentreOfMass().Translated(n.Normalized() * 1e-3);
+  TopoDS_Shape trimmed;
+  if (in.value("extent", "") == "to_face") {
+    const auto faces = ctx.resolve_all(in.value("extent_face", json()));
+    if (faces.size() != 1 || faces[0].sub.ShapeType() != TopAbs_FACE) throw Error("pick the face the extrusion goes up to");
+    const TopoDS_Face face = TopoDS::Face(faces[0].sub);
+    BRepAdaptor_Surface surf(face);
+    if (surf.GetType() == GeomAbs_Plane) {
+      const gp_Pln plane = surf.Plane();
+      if (plane.Distance(g.CentreOfMass()) < 1e-7) throw Error("the profile lies on that face's plane");
+      const TopoDS_Face infinite = BRepBuilderAPI_MakeFace(plane).Face();
+      const TopoDS_Solid side = BRepPrimAPI_MakeHalfSpace(infinite, g.CentreOfMass()).Solid();
+      trimmed = boolean(BoolOp::Common, far_prism, side);
+    } else {
+      BRepAlgoAPI_Splitter split;
+      TopTools_ListOfShape arguments, tools;
+      arguments.Append(far_prism);
+      tools.Append(face);
+      split.SetArguments(arguments);
+      split.SetTools(tools);
+      split.Build();
+      if (!split.IsDone()) throw Error("the extrusion cannot be cut at that face");
+      trimmed = split.Shape();
+    }
+  } else {
+    const auto bodies = ctx.resolve_all(in.value("extent_body", json()));
+    if (bodies.size() != 1) throw Error("pick the body the extrusion goes up to");
+    const TopoDS_Shape body = ctx.node_shape(bodies[0].node);
+    if (BRepClass3d_SolidClassifier(body, start, 1e-7).State() == TopAbs_IN) throw Error("the profile starts inside that body");
+    trimmed = boolean(BoolOp::Cut, far_prism, body);
+  }
+  // The piece at the profile, which must stop short of the far end everywhere.
+  TopoDS_Shape kept;
+  for (const auto& piece : solids_of(trimmed))
+    if (BRepClass3d_SolidClassifier(piece, start, 1e-7).State() == TopAbs_IN) kept = piece;
+  if (kept.IsNull()) throw Error("the extrusion does not reach that target from this profile");
+  Bnd_Box box;
+  BRepBndLib::Add(kept, box, Standard_False);
+  double x0, y0, z0, x1, y1, z1;
+  box.Get(x0, y0, z0, x1, y1, z1);
+  const gp_Dir d(n);
+  double reached = -1e300;
+  for (int i = 0; i < 8; ++i) reached = std::max(reached, gp_Vec(g.CentreOfMass(), gp_Pnt(i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0)).Dot(gp_Vec(d)));
+  if (reached > reach * 0.999) throw Error("part of the profile misses the target, so the extrusion would not stop; extrude to a distance instead");
+  return kept;
+}
+
 TopoDS_Shape make_extrusion(const Ctx& ctx, const json& in, const Profiles& prof) {
   const std::string direction = in.value("direction", "one");
-  const bool all = in.value("extent", "distance") == "all";
+  const std::string extent = in.value("extent", "distance");
+  const bool upto = extent == "to_face" || extent == "to_body";
+  if (upto && direction != "one") throw Error("up to a face or a body goes one way: set the direction to one");
+  const bool all = extent == "all" || upto;
   gp_Vec n(prof.normal);
   if (in.value("flip", false)) n.Reverse();
   double d1 = all ? 0 : ctx.length(in, "distance");
@@ -566,6 +625,7 @@ TopoDS_Shape make_extrusion(const Ctx& ctx, const json& in, const Profiles& prof
       base = moved(face, back);
     }
     TopoDS_Shape prism = BRepPrimAPI_MakePrism(base, n * (d1 + d2), Standard_True).Shape();
+    if (upto) prism = trim_up_to(ctx, in, prism, base, n, d1 + d2);
     if (std::fabs(taper) > 1e-9) {
       // Tilt every side face about the base plane; positive opens up away from the profile.
       const gp_Dir pull(n * ((d1 + d2) < 0 ? -1.0 : 1.0));

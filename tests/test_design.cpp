@@ -7,7 +7,9 @@
 #include <cstdio>
 #include <set>
 #include <BRepAdaptor_Surface.hxx>
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 // Design engine: expressions, parameters, sketches -> profiles, features, regeneration, history edits.
 #include <BRepBndLib.hxx>
@@ -1095,4 +1097,59 @@ TEST(rule_selectors_pick_the_same_edges_after_an_earlier_edit) {
   s = resolve(doc);
   CHECK(s.features.back().error.empty());
   CHECK(s.unresolved.empty());
+}
+
+// TODO 10 B8: extrude up to a face (a plane: its whole plane, also tilted) or up to a body.
+TEST(extrude_up_to_a_face_or_a_body) {
+  Document doc = Document::create();
+  // A slab above the sketch: its underside at z = 20.
+  const std::string slab = feature_cmd(doc, "box", {{"plane", {{"origin", {0, 0, 20}}, {"normal", {0, 0, 1}}}}, {"length", "80 mm"}, {"width", "80 mm"}, {"height", "5 mm"}})["body_ids"][0];
+  const std::string sketch = run_id(sketch_cmd(doc, rectangle(-5, -5, 10, 10)));
+  const json profile = json::array({json{{"sketch", sketch}, {"at", {0, 0}}}});
+  Scene s = resolve(doc);
+  int under = -1;  // the slab's face at z = 20, facing down
+  {
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(node_world_shape(doc, s, slab), TopAbs_FACE, faces);
+    for (int i = 1; i <= faces.Extent(); ++i) {
+      const json d = describe_entity(faces(i));
+      if (d.contains("normal") && d["normal"][2].get<double>() < -0.99) under = i - 1;
+    }
+  }
+  CHECK(under >= 0);
+  const double before = total_volume(doc);
+  const json to_face = feature_cmd(doc, "extrude", {{"profiles", profile}, {"extent", "to_face"}, {"extent_face", json::array({slab + "/face/" + std::to_string(under)})}});
+  CHECK_NEAR(total_volume(doc) - before, 10 * 10 * 20, 1e-6);
+  CHECK(!resolve(doc).feature(to_face["feature_id"])->result.contains("distance_handle"));  // no drag arrow for it
+  commands::run("feature_edit", {{"target", to_face["feature_id"]}, {"suppressed", true}}, &doc);
+  feature_cmd(doc, "extrude", {{"profiles", profile}, {"extent", "to_body"}, {"extent_body", json::array({slab})}, {"operation", "join"}, {"targets", json::array({slab})}});
+  s = resolve(doc);
+  CHECK(s.features.back().error.empty());
+  CHECK_EQ(s.all_bodies().size(), 1u);  // joined into the slab it reached
+  CHECK_NEAR(total_volume(doc) - before, 10 * 10 * 20, 1e-6);
+  // A tilted plane: the extrusion ends on it, not at a distance.
+  Document tilted = Document::create();
+  const std::string wedge = feature_cmd(tilted, "box", {{"plane", {{"origin", {0, 0, 30}}, {"normal", {0.5, 0, 1}}}}, {"length", "100 mm"}, {"width", "100 mm"}, {"height", "5 mm"}})["body_ids"][0];
+  const std::string sk = run_id(sketch_cmd(tilted, rectangle(-5, -5, 10, 10)));
+  Scene ts = resolve(tilted);
+  int low = -1;
+  {
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(node_world_shape(tilted, ts, wedge), TopAbs_FACE, faces);
+    for (int i = 1; i <= faces.Extent(); ++i) {
+      const json d = describe_entity(faces(i));
+      if (d.contains("normal") && d["normal"][2].get<double>() < -0.8) low = i - 1;
+    }
+  }
+  const double w0 = total_volume(tilted);
+  feature_cmd(tilted, "extrude", {{"profiles", json::array({json{{"sketch", sk}, {"at", {0, 0}}}})}, {"extent", "to_face"}, {"extent_face", json::array({wedge + "/face/" + std::to_string(low)})}});
+  CHECK_NEAR(total_volume(tilted) - w0, 10 * 10 * 30, 1e-6);  // the plane through (0,0,30): the mean height is 30
+  // Refused rather than guessed: two directions, a profile that misses the target.
+  bool refused = false;
+  try { feature_cmd(doc, "extrude", {{"profiles", profile}, {"extent", "to_body"}, {"extent_body", json::array({slab})}, {"direction", "symmetric"}}); } catch (const Error& e) { refused = std::string(e.what()).find("goes one way") != std::string::npos; }
+  CHECK(refused);
+  const std::string wide = run_id(sketch_cmd(doc, rectangle(30, 30, 30, 30)));
+  refused = false;
+  try { feature_cmd(doc, "extrude", {{"profiles", json::array({json{{"sketch", wide}, {"at", {45, 45}}}})}, {"extent", "to_body"}, {"extent_body", json::array({slab})}}); } catch (const Error& e) { refused = std::string(e.what()).find("misses the target") != std::string::npos; }
+  CHECK(refused);
 }

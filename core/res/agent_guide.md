@@ -140,7 +140,10 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   - `cylinder` and `cone`: the axis is the plane normal, the base on the plane; a negative cylinder height grows the
     other way.
 - `extrude`: `direction: "one"` pulls `distance` along the profile normal (`flip` reverses it); `"symmetric"` splits
-  `distance` in half on each side; `"two"` uses `distance` and `distance2`. `extent: "all"` goes through everything.
+  `distance` in half on each side; `"two"` uses `distance` and `distance2`. `extent: "all"` goes through everything; `"to_face"` (with
+  `extent_face`) ends on that face, a planar one on its whole plane even when tilted; `"to_body"` (with
+  `extent_body`) ends where the extrusion meets that body. Up-to extents go one way, and a profile that partly misses
+  the target is refused.
   `start: "offset"` moves the start by `start_offset` along the sketch normal, so one sketch can feed features at
   several heights; `start: "face"` starts at a parallel planar face. `taper` tilts the sides.
 - `revolve`: `axis` and `angle` (default 360 deg); `symmetric` splits the angle.
