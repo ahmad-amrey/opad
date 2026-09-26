@@ -66,6 +66,12 @@ Rename, Colour, Hide and Reparent on a multiple selection are one step each.
 Wherever a plane is taken, `{"origin": [x,y,z], "normal": [x,y,z]}` (with an optional `x`) defines it directly,
 and the construction plane has a point-and-normal mode.
 
+Two acceptance builds drive the live bridge the way an agent does (`ctest --preset windows-gui`, label `gui`):
+`tools/test_agent_benchy.py` builds a Benchy-style boat in four write calls (one valid solid, 60 x 31 x 48 mm, volume
+against a committed baseline) and `tools/test_agent_assembly.py` a 38-body phone-style assembly in 10 components with
+names, colours and components set where bodies are made (bookkeeping steps under 10%) and no interference but the
+intended one.
+
 `validate` also checks interference (overlapping pairs with their volume and box, or pairs closer than a clearance;
 bounding boxes first, exact Booleans only on candidates) and 3D printing (overhangs against a build direction,
 thin walls, thin features, build-plate contact). The desktop's Review workspace has both as Interference and Print

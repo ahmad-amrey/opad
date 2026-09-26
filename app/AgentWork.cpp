@@ -34,7 +34,7 @@ void checkReferences(const opad::Document& doc,const opad::Scene& scene,const js
   std::function<void(const json&)> walk=[&](const json& value){
     bool isRef=false;
     if(value.is_string()){const auto& text=value.get_ref<const std::string&>();isRef=text.find("/face/")!=text.npos || text.find("/edge/")!=text.npos || text.find("/vertex/")!=text.npos || text.find("/center/")!=text.npos;}
-    if(value.is_object() && value.contains("body")){const auto kind=value.value("kind","body");isRef=kind!="body" && kind!="point";}
+    if(value.is_object() && value.contains("body")){const auto kind=value.value("kind","body");isRef=kind!="body" && kind!="point" && !value.contains("select");}  // a rule (B7) names no entity: it is resolved when computed
     if(isRef){
       auto ref=opad::Ref::from_json(value);const auto key=ref.to_json().dump();if(checked.count(key))return;
       if(known)if(auto it=known->find(key);it!=known->end()){
