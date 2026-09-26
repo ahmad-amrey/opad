@@ -253,7 +253,9 @@ void NoteCards::rebuild() {
       card->setAttribute(Qt::WA_NativeWindow);  // over the native 3D window, like the chips
       card->setFixedWidth(280);
       card->enableDragging();
-      connect(card,&NoteCard::moved,this,[this,card]{m_positions[card->note().id]=card->pos();layout();});
+      // A dragged card keeps its offset from the anchor, so it follows its object as the view orbits and pans
+      // (an absolute position left it stuck on the screen).
+      connect(card,&NoteCard::moved,this,[this,card]{QPoint at;if(m_viewport->noteAnchor(card->note().id,at))m_positions[card->note().id]=card->pos()-at;layout();});
       card->adjustSize();
       card->hide();
       connect(card, &NoteCard::pressed, this, [this, card] { emit pressed(card->note().id, card->note().body); });
@@ -277,7 +279,7 @@ void NoteCards::layout() {
     const QSize size = card->size();
     QRect best;
     if(auto it=m_positions.find(card->note().id);it!=m_positions.end()) {
-      best=QRect(it->second,size);
+      best=QRect(at+it->second,size);
       best.moveLeft(std::clamp(best.left(),view.left(),std::max(view.left(),view.right()-size.width())));
       best.moveTop(std::clamp(best.top(),view.top(),std::max(view.top(),view.bottom()-size.height())));
     }

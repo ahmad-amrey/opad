@@ -91,7 +91,7 @@ class NoteCards : public QObject {
   Viewport* m_viewport;
   bool m_shown = true;
   std::vector<NoteCard*> m_cards;
-  std::map<std::string, QPoint> m_positions;
+  std::map<std::string, QPoint> m_positions;  // dragged cards: offset from the anchor's screen point
   std::string m_type;
 };
 

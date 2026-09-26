@@ -121,6 +121,17 @@ bool MainWindow::benchTodo9() {
       }
       case 6:{
         auto* card=m_viewport->findChild<NoteCard*>();require(card && card->pos()==state->position,"position survives scene refresh");
+        // TODO 10 A11: a dragged card is attached to its object: a pan moves it with the anchor, same offset.
+        QPoint before,after;require(m_viewport->noteAnchor(card->note().id,before),"note anchor on screen");
+        const QPoint offset=card->pos()-before;const auto camera=m_viewport->cameraJson();auto panned=camera;
+        {const auto eye=camera.at("eye").get<opad::Vec3>(),target=camera.at("target").get<opad::Vec3>(),up=camera.at("up").get<opad::Vec3>();
+         const opad::Vec3 d{target[0]-eye[0],target[1]-eye[1],target[2]-eye[2]};opad::Vec3 right{d[1]*up[2]-d[2]*up[1],d[2]*up[0]-d[0]*up[2],d[0]*up[1]-d[1]*up[0]};
+         const double length=std::sqrt(right[0]*right[0]+right[1]*right[1]+right[2]*right[2]),shift=camera.value("scale",100.0)*0.08/std::max(1e-9,length);
+         opad::Vec3 e=eye,t=target;for(int i=0;i<3;++i){e[i]+=right[i]*shift;t[i]+=right[i]*shift;}panned["eye"]=e;panned["target"]=t;}
+        m_viewport->setCameraJson(panned);m_noteCards->layout();
+        require(m_viewport->noteAnchor(card->note().id,after) && (after-before).manhattanLength()>10,"the pan moved the anchor on screen");
+        require(card->pos()-after==offset,"a dragged card keeps its offset from its anchor as the view pans");
+        m_viewport->setCameraJson(camera);m_noteCards->layout();require(card->pos()==state->position,"the card returns with the view");
         auto* filter=m_annotations->findChild<QComboBox*>("annotationTypeFilter");filter->setCurrentIndex(filter->findData("issue"));break;
       }
       case 7:{

@@ -121,7 +121,8 @@ Home/End jumps to the first/last marker. Selecting an operation scrolls it into 
 Workspace shortcuts are Ctrl+1/2 (Command+1/2 on macOS); standard views use Ctrl+Alt+1 through 7.
 Annotations are created and edited inline, with type selection and comment threads. Set your display
 name in Settings to identify new annotations, comments and design operations.
-Drag a note's title to move its card without changing the document. The Annotations panel filters by
+Drag a note's title to move its card without changing the document; the card stays attached to its
+object at that offset while you orbit and pan. The Annotations panel filters by
 type across both the panel and viewport; Delete removes a note and remains undoable.
 Review > Annotate > **Note** (N) and **Hand drawing** (Shift+N) work like the guided measuring tools: the
 prompt bar asks for a body, face, edge or vertex (1-4 changes the selection filter; a single selected
