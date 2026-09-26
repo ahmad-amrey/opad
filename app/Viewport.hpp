@@ -269,6 +269,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   CursorWarpGate m_warpGate;
   void updateGridExtent();
   gp_Pnt drawingOrbitPoint(const QPointF* cursor=nullptr,bool* found=nullptr);
+  gp_Pnt drawingPlanePoint(const QPointF& cursor,bool& found);
+  gp_Pnt nearestCurvePoint(const QPointF& cursor,bool& found,double& distance);
   void updateTracking();
   void clearTracking();
   bool m_trackingEnabled = true, m_haveTrackingAnchor = false, m_trackingLocked = false;
@@ -310,6 +312,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void clearCenters();
   bool navigationPoint(const Graphic3d_Vec2i& cursor, gp_Pnt& point);
   gp_Pnt centralOrbitPoint();
+  bool nearestSurface(int x, int y, gp_Pnt& point);
   gp_Pnt orbitPoint(const Graphic3d_Vec2i& cursor);
   void focusCube();
   void syncWindowSize();

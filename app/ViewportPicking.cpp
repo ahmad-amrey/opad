@@ -160,19 +160,39 @@ bool Viewport::navigationPoint(const Graphic3d_Vec2i& cursor, gp_Pnt& point) {
   return false;
 }
 
+// Orbit pivot for a press at `cursor`: the surface under it, a drawing's plane when it is inside the drawing, else the
+// geometry nearest the pointer on screen, surface or curve (TODO 10 A7: 08d0841 had turned empty space to the geometry
+// nearest the view's centre, which the view cube still uses). Only an empty view keeps the camera's focus.
 gp_Pnt Viewport::orbitPoint(const Graphic3d_Vec2i& cursor) {
   gp_Pnt point;
   if (navigationPoint(cursor, point)) return point;
-  const QPointF at(cursor.x()/devicePixelRatioF(),cursor.y()/devicePixelRatioF());bool found=false;
-  point=drawingOrbitPoint(&at,&found);if(found)return point;
-  return centralOrbitPoint();
+  const QPointF at(cursor.x()/devicePixelRatioF(),cursor.y()/devicePixelRatioF());bool inside=false;
+  point=drawingPlanePoint(at,inside);if(inside)return point;
+  gp_Pnt surface;double surfaceDistance=1e300;
+  if(nearestSurface(cursor.x(),cursor.y(),surface)) {
+    Standard_Integer px=0,py=0;m_view->Convert(surface.X(),surface.Y(),surface.Z(),px,py);
+    surfaceDistance=std::hypot(double(px-cursor.x()),double(py-cursor.y()));
+  }
+  bool curve=false;double curveDistance=1e300;
+  const gp_Pnt onCurve=nearestCurvePoint(at,curve,curveDistance);
+  if(curve && std::sqrt(curveDistance)*devicePixelRatioF()<surfaceDistance)return onCurve;
+  if(surfaceDistance<1e300)return surface;
+  return m_view->Camera()->Center();
 }
 
 gp_Pnt Viewport::centralOrbitPoint() {
   Standard_Integer w = 0, h = 0;
   m_view->Window()->Size(w, h);
-  const int cx = w / 2, cy = h / 2;
   gp_Pnt point;
+  if (nearestSurface(w / 2, h / 2, point)) return point;
+  // No visible geometry (empty document or model entirely outside the view).
+  return drawingOrbitPoint();
+}
+
+// The frontmost visible, unclipped surface at the screen position nearest (cx, cy) in backing pixels.
+bool Viewport::nearestSurface(int cx, int cy, gp_Pnt& point) {
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
   // Expanded triangle picks can return a vertex far from the requested ray near
   // a silhouette. Reject those candidates instead of orbiting about a distant corner.
   auto pick = [&](int x, int y) {
@@ -181,10 +201,10 @@ gp_Pnt Viewport::centralOrbitPoint() {
     m_view->Convert(point.X(), point.Y(), point.Z(), px, py);
     return std::abs(px - x) <= 2 && std::abs(py - y) <= 2;
   };
-  if (m_navSelector.IsNull()) return drawingOrbitPoint();
-  if (pick(cx, cy)) return point;
+  if (m_navSelector.IsNull() || w <= 0 || h <= 0) return false;
+  if (cx >= 0 && cy >= 0 && cx < w && cy < h && pick(cx, cy)) return true;
 
-  // Search screen regions nearest the center first. Rectangle picks use the existing
+  // Search screen regions nearest the point first. Rectangle picks use the existing
   // mesh BVHs to discard empty regions, so holes and small/off-center parts are found
   // without walking every triangle or relying on a sparse grid of sample rays.
   struct Region {
@@ -197,7 +217,6 @@ gp_Pnt Viewport::centralOrbitPoint() {
     const double dx = cx - std::clamp(cx, x0, x1), dy = cy - std::clamp(cy, y0, y1);
     regions.push({x0, y0, x1, y1, dx * dx + dy * dy});
   };
-  if (w <= 0 || h <= 0 || m_navSelector.IsNull()) return drawingOrbitPoint();
   add(0, 0, w - 1, h - 1);
   m_navSelector->AllowOverlapDetection(true);
   while (!regions.empty()) {
@@ -205,7 +224,7 @@ gp_Pnt Viewport::centralOrbitPoint() {
     if (r.x1 - r.x0 <= 1 && r.y1 - r.y0 <= 1) {
       // Point picking resolves the frontmost non-clipped surface, regardless of
       // selection filter. Accuracy is within the existing one-pixel pick tolerance.
-      if (pick((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)) return point;
+      if (pick((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)) return true;
       continue;
     }
     m_navSelector->Pick(r.x0, r.y0, r.x1, r.y1, m_view);
@@ -225,8 +244,7 @@ gp_Pnt Viewport::centralOrbitPoint() {
       add(r.x0, r.y0, r.x1, mid); add(r.x0, mid, r.x1, r.y1);
     }
   }
-  // No visible geometry (empty document or model entirely outside the view).
-  return drawingOrbitPoint();
+  return false;
 }
 
 gp_Pnt Viewport::GravityPoint(const Handle(AIS_InteractiveContext)&, const Handle(V3d_View)&) {
@@ -241,33 +259,36 @@ void Viewport::focusCube() {
 }
 
 
-gp_Pnt Viewport::drawingOrbitPoint(const QPointF* cursor,bool* found) {
-  if(found)*found=false;
+// Inside a drawing's bounds under the pointer: the point of its plane there (curves enclose usable drawing space; the
+// orbit must not jump to the outline of a large drawing).
+gp_Pnt Viewport::drawingPlanePoint(const QPointF& cursor,bool& found) {
+  found=false;
   gp_Pnt best=m_view->Camera()->Center(); double distance=1e100;
-  if(cursor){
-    // Curves enclose usable drawing space. Intersect that plane directly instead of
-    // pulling the orbit pivot to the outline of a large drawing.
-    if(m_sketchInput){double u,v;if(planePoint(*cursor,m_sketchFrame,u,v)){const auto p=m_sketchFrame.to_world(u,v);if(found)*found=true;return gp_Pnt(p[0],p[1],p[2]);}}
-    for(const auto& [id,item]:m_items){
-      const auto* node=m_doc->scene.node(id);if(!node || node->representation!="drawing2d" || !m_ctx->IsDisplayed(item.ais))continue;
-      const auto cached=m_prs.find(item.key);if(cached==m_prs.end() || cached->second->box.IsVoid())continue;
-      const auto box=cached->second->box;const auto lo=box.CornerMin(),hi=box.CornerMax();const auto transform=item.ais->Transformation();
-      const auto origin=gp_Pnt(0,0,(lo.Z()+hi.Z())*.5).Transformed(transform);const auto x=gp_Dir(1,0,0).Transformed(transform),y=gp_Dir(0,1,0).Transformed(transform);
-      opad::Frame frame;frame.origin={origin.X(),origin.Y(),origin.Z()};frame.x={x.X(),x.Y(),x.Z()};frame.y={y.X(),y.Y(),y.Z()};double u,v;
-      if(!planePoint(*cursor,frame,u,v))continue;const auto point=frame.to_world(u,v);const gp_Pnt world(point[0],point[1],point[2]);const auto local=world.Transformed(transform.Inverted());
-      if(local.X()<lo.X() || local.X()>hi.X() || local.Y()<lo.Y() || local.Y()>hi.Y())continue;
-      const double depth=gp_Vec(m_view->Camera()->Eye(),world).Dot(gp_Vec(m_view->Camera()->Direction()));if(depth<0 || depth>=distance)continue;
-      distance=depth;best=world;
-    }
-    if(distance<1e100){if(found)*found=true;return best;}
+  if(m_sketchInput){double u,v;if(planePoint(cursor,m_sketchFrame,u,v)){const auto p=m_sketchFrame.to_world(u,v);found=true;return gp_Pnt(p[0],p[1],p[2]);}}
+  for(const auto& [id,item]:m_items){
+    const auto* node=m_doc->scene.node(id);if(!node || node->representation!="drawing2d" || !m_ctx->IsDisplayed(item.ais))continue;
+    const auto cached=m_prs.find(item.key);if(cached==m_prs.end() || cached->second->box.IsVoid())continue;
+    const auto box=cached->second->box;const auto lo=box.CornerMin(),hi=box.CornerMax();const auto transform=item.ais->Transformation();
+    const auto origin=gp_Pnt(0,0,(lo.Z()+hi.Z())*.5).Transformed(transform);const auto x=gp_Dir(1,0,0).Transformed(transform),y=gp_Dir(0,1,0).Transformed(transform);
+    opad::Frame frame;frame.origin={origin.X(),origin.Y(),origin.Z()};frame.x={x.X(),x.Y(),x.Z()};frame.y={y.X(),y.Y(),y.Z()};double u,v;
+    if(!planePoint(cursor,frame,u,v))continue;const auto point=frame.to_world(u,v);const gp_Pnt world(point[0],point[1],point[2]);const auto local=world.Transformed(transform.Inverted());
+    if(local.X()<lo.X() || local.X()>hi.X() || local.Y()<lo.Y() || local.Y()>hi.Y())continue;
+    const double depth=gp_Vec(m_view->Camera()->Eye(),world).Dot(gp_Vec(m_view->Camera()->Direction()));if(depth<0 || depth>=distance)continue;
+    distance=depth;best=world;found=true;
   }
-  const QPointF middle=cursor?*cursor:QPointF(width()/2.0,height()/2.0);
+  return best;
+}
+
+// The point of a drawing's or sketch's curves nearest `cursor` on screen (squared distance in widget pixels).
+gp_Pnt Viewport::nearestCurvePoint(const QPointF& cursor,bool& found,double& distance) {
+  found=false;distance=1e100;
+  gp_Pnt best=m_view->Camera()->Center();
   auto segment=[&](gp_Pnt a,gp_Pnt b) {
     const QPointF pa=widgetPoint({a.X(),a.Y(),a.Z()}), pb=widgetPoint({b.X(),b.Y(),b.Z()}), d=pb-pa;
     const double len=QPointF::dotProduct(d,d);
-    const double t=len>0?std::clamp(QPointF::dotProduct(middle-pa,d)/len,0.0,1.0):0;
-    const auto delta=pa+d*t-middle; const double sq=QPointF::dotProduct(delta,delta);
-    if (sq<distance) { if(found)*found=true;distance=sq; best=a.Translated(gp_Vec(a,b)*t); }
+    const double t=len>0?std::clamp(QPointF::dotProduct(cursor-pa,d)/len,0.0,1.0):0;
+    const auto delta=pa+d*t-cursor; const double sq=QPointF::dotProduct(delta,delta);
+    if (sq<distance) { found=true;distance=sq; best=a.Translated(gp_Vec(a,b)*t); }
   };
   for (const auto& [id,item]:m_items) {
     if(!m_ctx->IsDisplayed(item.ais)) continue;
@@ -281,6 +302,14 @@ gp_Pnt Viewport::drawingOrbitPoint(const QPointF* cursor,bool* found) {
     for(size_t i=0;i+1<points.size();i+=2) segment(points[i],points[i+1]);
   }
   return best;
+}
+
+gp_Pnt Viewport::drawingOrbitPoint(const QPointF* cursor,bool* found) {
+  bool inside=false,onCurve=false;double distance=0;
+  if(cursor){const gp_Pnt p=drawingPlanePoint(*cursor,inside);if(inside){if(found)*found=true;return p;}}
+  const gp_Pnt p=nearestCurvePoint(cursor?*cursor:QPointF(width()/2.0,height()/2.0),onCurve,distance);
+  if(found)*found=onCurve;
+  return p;
 }
 
 

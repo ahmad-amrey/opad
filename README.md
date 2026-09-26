@@ -90,10 +90,10 @@ In the 3D viewport, drag with two fingers to pan, hold Shift while dragging with
 to zoom around the pointer. These gestures work independently of the selected mouse navigation preset. A mouse
 wheel continues to zoom.
 
-Orbiting over geometry uses the surface under the pointer. Over empty space, OPAD uses the
-frontmost visible surface nearest the viewport center, searching outward if the center lies in a
-gap. Navigation-cube dragging and orientation clicks use the same central surface. Hidden and
-clipped geometry is excluded; an empty view retains its current camera focus.
+Orbiting over geometry uses the surface under the pointer. Over empty space, OPAD pivots on the
+visible geometry nearest the pointer (a surface, or a drawing's or sketch's curve), never on empty
+air. Navigation-cube dragging and orientation clicks use the visible surface nearest the viewport
+center. Hidden and clipped geometry is excluded; an empty view retains its current camera focus.
 
 ## Desktop viewing and review
 

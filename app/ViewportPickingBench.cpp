@@ -175,8 +175,8 @@ bool Viewport::benchPicking() {
     require(selector->NbPicked() == 1 && std::abs(selector->PickedPoint(1).Z() - 10) < 1e-6, "navigation ignored deactivation");
     trace::log(QStringLiteral("bench: picking nearest surface / transformed instances PASS"));
 
-    // A gap at the viewport center: choose the nearest projected part and its front
-    // surface, independent of selection, hidden bodies and the mouse's empty location.
+    // A gap at the viewport center: choose the nearest projected part and its front surface, independent of selection
+    // and hidden bodies. Over empty space the orbit follows the pointer (TODO 10 A7); the view cube keeps the centre.
     {
       const Handle(Graphic3d_Camera) camera = new Graphic3d_Camera(*m_view->Camera());
       auto items = std::move(m_items);
@@ -245,10 +245,14 @@ bool Viewport::benchPicking() {
       gp_Pnt picked;
       require(!navigationPoint(center, picked), "off-center test unexpectedly hits geometry at center");
       QElapsedTimer searchTimer; searchTimer.start();
-      picked = orbitPoint(devicePos(QPointF(-200, -200)));
+      picked = orbitPoint(center);  // the pointer over the empty centre: the part nearest to it
       require(std::abs(picked.X()-20) < pixelSize()*3 && std::abs(picked.Y()) < pixelSize()*3
-              && std::abs(picked.Z()-30) < 1e-6, "central fallback missed closest foreground geometry");
+              && std::abs(picked.Z()-30) < 1e-6, "empty-space pivot missed the foreground part nearest the pointer");
       trace::log(QStringLiteral("bench: off-center orbit search %1 ms").arg(searchTimer.elapsed()));
+      picked = orbitPoint(devicePos(widgetPoint({15, 25, 30})));  // above and left of the part: its nearest corner
+      require(std::abs(picked.X()-20) < pixelSize()*3 && std::abs(picked.Y()-10) < pixelSize()*3
+              && std::abs(picked.Z()-30) < 1e-6, "empty-space pivot did not follow the pointer");
+      require(std::abs(centralOrbitPoint().Y()) < pixelSize()*3, "the view cube's pivot left the centre");
       m_ctx->Erase(nearAis, false);
       require(std::abs(centralOrbitPoint().Z()-10) < 1e-6, "central fallback picked a hidden part");
       m_ctx->Display(nearAis, false);
@@ -437,19 +441,27 @@ bool Viewport::benchPicking() {
     int hits = 0;
     gp_Pnt orbitTarget;
     QPoint orbitCursor;
+    const Graphic3d_Vec2i empty = devicePos(QPointF(-200, -200));
+    double nearestHit = 1e300;  // screen distance from the empty-space pointer to the nearest sampled surface
     for (int y = 1; y < 10; ++y) for (int x = 1; x < 10; ++x) {
       gp_Pnt p;
-      if (navigationPoint(devicePos(QPointF(width() * x / 10.0, height() * y / 10.0)), p)) {
+      const Graphic3d_Vec2i ray = devicePos(QPointF(width() * x / 10.0, height() * y / 10.0));
+      if (navigationPoint(ray, p)) {
         ++hits;
         orbitTarget = p;
         orbitCursor = QPoint(width() * x / 10, height() * y / 10);
+        nearestHit = std::min(nearestHit, std::hypot(double(ray.x() - empty.x()), double(ray.y() - empty.y())));
       }
     }
+    auto nearPointer = [&](const gp_Pnt& pivot) {  // TODO 10 A7: empty space pivots on the geometry nearest the pointer
+      Standard_Integer px = 0, py = 0;
+      m_view->Convert(pivot.X(), pivot.Y(), pivot.Z(), px, py);
+      return std::hypot(double(px - empty.x()), double(py - empty.y())) <= nearestHit + 3;
+    };
     require(hits > 0, "navigation found no surfaces with the vertex filter active");
     trace::log(QStringLiteral("bench: picking navigation 81 rays: %1 ms, %2 hits, %3 bodies").arg(timer.elapsed()).arg(hits).arg(m_items.size()));
-    const Graphic3d_Vec2i empty = devicePos(QPointF(-200, -200));
     const gp_Pnt fallback = orbitPoint(empty);
-    require(fallback.Distance(centralOrbitPoint()) < 1e-7, "empty-space pivot did not use central geometry");
+    require(nearPointer(fallback), "empty-space pivot is not the geometry nearest the pointer");
     gp_Pnt directTarget;
     require(navigationPoint(devicePos(orbitCursor), directTarget)
             && orbitPoint(devicePos(orbitCursor)).Distance(directTarget) < 1e-7, "surface under cursor lost orbit priority");
@@ -487,8 +499,7 @@ bool Viewport::benchPicking() {
     Handle(Graphic3d_Camera) savedCamera = new Graphic3d_Camera(*m_view->Camera());
     m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Perspective);
     const gp_Pnt perspectiveFallback = orbitPoint(empty);
-    require(perspectiveFallback.Distance(centralOrbitPoint()) < 1e-7,
-        "perspective empty-space pivot did not use central geometry");
+    require(nearPointer(perspectiveFallback), "perspective empty-space pivot is not the geometry nearest the pointer");
     const gp_Pnt eyeBefore = m_view->Camera()->Eye();
     const gp_Dir dirBefore = m_view->Camera()->Direction();
     const double fovBefore = m_view->Camera()->FOVy();
