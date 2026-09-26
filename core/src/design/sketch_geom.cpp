@@ -21,6 +21,8 @@
 #include <TColStd_Array1OfInteger.hxx>
 #include <ShapeAnalysis_FreeBounds.hxx>
 #include <Standard_Failure.hxx>
+#include <TColStd_HArray1OfBoolean.hxx>
+#include <TColgp_Array1OfVec.hxx>
 #include <TColgp_HArray1OfPnt.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopTools_HSequenceOfShape.hxx>
@@ -38,6 +40,77 @@ namespace {
 gp_Pnt pnt(const Vec3& v) { return gp_Pnt(v[0], v[1], v[2]); }
 gp_Dir dir(const Vec3& v) { return gp_Dir(v[0], v[1], v[2]); }
 gp_Pnt world(const Frame& f, const SkPoint& p) { return pnt(f.to_world(p.x, p.y)); }
+
+// The closed C2 cubic spline through the points, knots at chord lengths (gap log #5). GeomAPI_Interpolate's periodic
+// mode fixes an estimated tangent at the first point, so its curve is only C1 there and moves with the seam (up to
+// 0.05 mm on a 24-point outline); this one is the same curve whichever point comes first or which way they run.
+// Control points d from Farin's C2 interpolation conditions, cyclic: a_i d[i-1] + b_i d[i] + c_i d[i+1] = (h[i-1] +
+// h[i]) P[i], solved as a cyclic tridiagonal system (Sherman-Morrison).
+Handle(Geom_BSplineCurve) closed_spline(const std::vector<gp_Pnt>& p) {
+  const int n = static_cast<int>(p.size());
+  const size_t count = p.size();
+  auto at = [n](int i) { return size_t(((i % n) + n) % n); };
+  std::vector<double> h(count);
+  for (int i = 0; i < n; ++i) h[size_t(i)] = p[size_t(i)].Distance(p[at(i + 1)]);
+  for (double d : h)
+    if (d < 1e-12) return nullptr;
+  std::vector<double> a(count), b(count), c(count);
+  std::vector<gp_XYZ> r(count);
+  for (int i = 0; i < n; ++i) {
+    const double h2 = h[at(i - 2)], h1 = h[at(i - 1)], h0 = h[at(i)], hn = h[at(i + 1)];
+    const double s1 = h2 + h1 + h0, s2 = h1 + h0 + hn;
+    a[size_t(i)] = h0 * h0 / s1;
+    c[size_t(i)] = h1 * h1 / s2;
+    b[size_t(i)] = h0 * (h2 + h1) / s1 + h1 * (h0 + hn) / s2;
+    r[size_t(i)] = p[size_t(i)].XYZ() * (h1 + h0);
+  }
+  // Thomas on the tridiagonal part (a[0] and c[n-1] left out), for one right-hand side.
+  auto tridiagonal = [&](const std::vector<double>& diag, const std::vector<gp_XYZ>& rhs) {
+    std::vector<double> cp(count);
+    std::vector<gp_XYZ> x(count);
+    cp[0] = c[0] / diag[0];
+    x[0] = rhs[0] / diag[0];
+    for (int i = 1; i < n; ++i) {
+      const double m = diag[size_t(i)] - a[size_t(i)] * cp[size_t(i) - 1];
+      cp[size_t(i)] = c[size_t(i)] / m;
+      x[size_t(i)] = (rhs[size_t(i)] - x[size_t(i) - 1] * a[size_t(i)]) / m;
+    }
+    for (int i = n - 2; i >= 0; --i) x[size_t(i)] -= x[size_t(i) + 1] * cp[size_t(i)];
+    return x;
+  };
+  const double gamma = -b[0], alpha = c[size_t(n) - 1], beta = a[0];
+  std::vector<double> diag = b;
+  diag[0] -= gamma;
+  diag[size_t(n) - 1] -= alpha * beta / gamma;
+  const std::vector<gp_XYZ> x = tridiagonal(diag, r);
+  std::vector<gp_XYZ> u(count, gp_XYZ(0, 0, 0));
+  u[0] = gp_XYZ(gamma, gamma, gamma);
+  u[size_t(n) - 1] = gp_XYZ(alpha, alpha, alpha);
+  const std::vector<gp_XYZ> z = tridiagonal(diag, u);
+  std::vector<gp_Pnt> d(count);
+  for (int k = 1; k <= 3; ++k) {  // per coordinate: x - z (x0 + beta x[n-1] / gamma) / (1 + z0 + beta z[n-1] / gamma)
+    const double fact = (x[0].Coord(k) + beta * x[size_t(n) - 1].Coord(k) / gamma) / (1 + z[0].Coord(k) + beta * z[size_t(n) - 1].Coord(k) / gamma);
+    for (int i = 0; i < n; ++i) d[size_t(i)].SetCoord(k, x[size_t(i)].Coord(k) - fact * z[size_t(i)].Coord(k));
+  }
+  TColStd_Array1OfReal knots(1, n + 1);
+  TColStd_Array1OfInteger mults(1, n + 1);
+  double t = 0;
+  for (int i = 0; i <= n; ++i) {
+    knots.SetValue(i + 1, t);
+    mults.SetValue(i + 1, 1);
+    if (i < n) t += h[size_t(i)];
+  }
+  // Farin's d_i and OCCT's first periodic pole differ by a fixed shift: take the one that meets the points.
+  for (int shift = 0; shift < n; ++shift) {
+    TColgp_Array1OfPnt poles(1, n);
+    for (int i = 0; i < n; ++i) poles.SetValue(i + 1, d[at(i + shift)]);
+    Handle(Geom_BSplineCurve) curve = new Geom_BSplineCurve(poles, knots, mults, 3, Standard_True);
+    double worst = 0;
+    for (int i = 0; i < n && worst < 1e-7; ++i) worst = std::max(worst, curve->Value(knots(i + 1)).Distance(p[size_t(i)]));
+    if (worst < 1e-7) return curve;
+  }
+  return nullptr;
+}
 }  // namespace
 
 gp_Ax3 frame_ax3(const Frame& f) { return gp_Ax3(pnt(f.origin), dir(f.normal()), dir(f.x)); }
@@ -112,11 +185,34 @@ TopoDS_Edge entity_edge(const Sketch& sk, const SkEntity& e, const Frame& frame)
           Handle(Geom_BSplineCurve) curve=new Geom_BSplineCurve(poles,weights,knots,mults,e.degree,e.periodic);
           return BRepBuilderAPI_MakeEdge(curve).Edge();
         }
-        const bool closed = e.p.size() > 2 && e.p.front() == e.p.back();
-        const int n = static_cast<int>(e.p.size()) - (closed ? 1 : 0);
+        // Closed, C2 through the seam (gap log #5): the first point id repeated at the end, `periodic`, or a last point
+        // lying on the first (the same point given twice).
+        const bool repeated = e.p.size() > 2 && e.p.front() == e.p.back();
+        int n = static_cast<int>(e.p.size()) - (repeated ? 1 : 0);
+        const bool coincident = !repeated && n > 3 && std::hypot(P(0).x - P(size_t(n) - 1).x, P(0).y - P(size_t(n) - 1).y) < 1e-9;
+        if (coincident) --n;
+        const bool closed = repeated || coincident || e.periodic;
+        if (closed && n >= 4) {
+          std::vector<gp_Pnt> points;
+          for (int i = 0; i < n; ++i) points.push_back(world(frame, P(static_cast<size_t>(i))));
+          if (Handle(Geom_BSplineCurve) curve = closed_spline(points); !curve.IsNull()) return BRepBuilderAPI_MakeEdge(curve).Edge();
+        }
         Handle(TColgp_HArray1OfPnt) pts = new TColgp_HArray1OfPnt(1, n);
         for (int i = 0; i < n; ++i) pts->SetValue(i + 1, world(frame, P(static_cast<size_t>(i))));
         GeomAPI_Interpolate fit(pts, closed, 1e-7);
+        if (!closed && (!e.start_tangent.empty() || !e.end_tangent.empty())) {
+          // End directions, in the sketch's plane; the magnitude follows the point spacing.
+          TColgp_Array1OfVec tangents(1, n);
+          Handle(TColStd_HArray1OfBoolean) given = new TColStd_HArray1OfBoolean(1, n, Standard_False);
+          const Vec3 o = frame.to_world(0, 0);
+          auto direction = [&](const std::vector<double>& t) {
+            const Vec3 w = frame.to_world(t[0], t[1]);
+            return gp_Vec(w[0] - o[0], w[1] - o[1], w[2] - o[2]);
+          };
+          if (!e.start_tangent.empty()) { tangents.SetValue(1, direction(e.start_tangent)); given->SetValue(1, Standard_True); }
+          if (!e.end_tangent.empty()) { tangents.SetValue(n, direction(e.end_tangent)); given->SetValue(n, Standard_True); }
+          fit.Load(tangents, given, Standard_True);
+        }
         fit.Perform();
         if (!fit.IsDone()) return TopoDS_Edge();
         return BRepBuilderAPI_MakeEdge(fit.Curve()).Edge();

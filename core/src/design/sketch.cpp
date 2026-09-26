@@ -105,16 +105,24 @@ void check_entity(const Sketch& sk, const SkEntity& e) {
     case EType::Spline: ok = n >= 2; break;
   }
   if (e.degree) {
-    if (e.type!=EType::Spline || e.degree<1 || e.degree>25 || e.knots.size()<2 || e.knots.size()!=e.multiplicities.size() || e.weights.size()!=n) throw Error(who+": invalid spline basis");
+    if (e.type!=EType::Spline || e.degree<1 || e.degree>25) throw Error(who+": invalid spline basis: degree 1 to 25");
+    if (e.weights.size()!=n) throw Error(who+": invalid spline basis: one weight per control point (or none, all 1)");
+    if (e.knots.size()<2 || e.knots.size()!=e.multiplicities.size())
+      throw Error(who+": invalid spline basis: knots and multiplicities of the same length, at least two (or neither: uniform, clamped or periodic)");
     int total=0;
     for(size_t i=0;i<e.knots.size();++i) {
       if(!std::isfinite(e.knots[i]) || (i && e.knots[i]<=e.knots[i-1]) || e.multiplicities[i]<1 || e.multiplicities[i]>e.degree+1) throw Error(who+": invalid spline knots");
       total+=e.multiplicities[i];
     }
-    if(!e.periodic && total!=int(n)+e.degree+1) throw Error(who+": inconsistent spline basis");
+    if(!e.periodic && total!=int(n)+e.degree+1) throw Error(who+": inconsistent spline basis: the multiplicities of an open spline add up to control points + degree + 1 ("+std::to_string(n+size_t(e.degree)+1)+"), clamped ends taking degree + 1 each");
     for(double w:e.weights) if(!(w>0) || !std::isfinite(w)) throw Error(who+": invalid spline weight");
   }
   if (!ok) throw Error(who + ": wrong number of points (" + std::to_string(n) + ")");
+  for (const auto* t : {&e.start_tangent, &e.end_tangent})
+    if (!t->empty() && (e.type != EType::Spline || e.degree || e.periodic || t->size() != 2 || !(std::hypot((*t)[0], (*t)[1]) > 1e-12)))
+      throw Error(who + ": end tangents are [dx, dy], not zero, on an open fit spline");
+  if (e.type == EType::Spline && !e.degree && e.periodic && std::set<int>(e.p.begin(), e.p.end()).size() < 3)
+    throw Error(who + ": a closed fit spline needs three points or more");
   for (int pid : e.p)
     if (!sk.point(pid)) throw Error(who + ": point " + std::to_string(pid) + " does not exist");
   if(!e.source.is_null() && (!e.source.is_object() || !e.source.contains("ref") || !e.source.at("ref").is_object() || e.source.value("slot",-1)<0 || e.source.value("count",0)<=e.source.value("slot",-1)))throw Error(who+": invalid projection source");
@@ -335,6 +343,9 @@ json Sketch::to_json() const {
     json o = {{"id", e.id}, {"type", SkEntity::type_name(e.type)}, {"p", e.p}};
     if (has_radius(e.type)) o["r"] = e.r;
     if (e.degree) { o["degree"]=e.degree; o["knots"]=e.knots; o["multiplicities"]=e.multiplicities; o["weights"]=e.weights; o["periodic"]=e.periodic; }
+    else if (e.periodic) o["periodic"]=true;
+    if (!e.start_tangent.empty()) o["start_tangent"]=e.start_tangent;
+    if (!e.end_tangent.empty()) o["end_tangent"]=e.end_tangent;
     if (e.construction) o["construction"] = true;
     if (e.fixed) o["fixed"] = true;
     if(!e.source.is_null())o["source"]=e.source;
@@ -388,6 +399,17 @@ Sketch Sketch::from_json(const json& j) {
       if (has_radius(e.type)) e.r = o.at("r").get<double>();
       e.degree=o.value("degree",0); e.knots=o.value("knots",std::vector<double>{});
       e.weights=o.value("weights",std::vector<double>{}); e.multiplicities=o.value("multiplicities",std::vector<int>{}); e.periodic=o.value("periodic",false);
+      e.start_tangent=o.value("start_tangent",std::vector<double>{}); e.end_tangent=o.value("end_tangent",std::vector<double>{});
+      // A control-point spline given only its degree: uniform knots, clamped at both ends or periodic, and unit
+      // weights (gap log #5: every form without weights was refused as "invalid spline basis").
+      if (e.degree>0 && e.type==SkEntity::Type::Spline) {
+        const int n=int(e.p.size());
+        if (e.weights.empty()) e.weights.assign(size_t(n),1.0);
+        if (e.knots.empty() && e.multiplicities.empty() && n>e.degree) {
+          if (e.periodic) for (int i=0;i<=n;++i) { e.knots.push_back(i); e.multiplicities.push_back(1); }
+          else for (int i=0;i<=n-e.degree;++i) { e.knots.push_back(i); e.multiplicities.push_back(i==0 || i==n-e.degree ? e.degree+1 : 1); }
+        }
+      }
       e.construction = o.value("construction", false);
       e.fixed = o.value("fixed", false);e.source=o.value("source",json());
       sk.entities.push_back(std::move(e));

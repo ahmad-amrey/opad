@@ -62,7 +62,7 @@ std::vector<int> dangling_vertices(const Sketch& sk,double tolerance) {
     BRepAdaptor_Curve c(edge);Curve item{e.id,c.Curve().Curve(),c.FirstParameter(),c.LastParameter(),{}};BRepBndLib::Add(edge,item.box);item.box.Enlarge(tolerance);curves.push_back(item);
     if(e.type==SkEntity::Type::Line) {ends.push_back({e.p[0],e.id});ends.push_back({e.p[1],e.id});}
     else if(e.type==SkEntity::Type::Arc) {ends.push_back({e.p[1],e.id});ends.push_back({e.p[2],e.id});}
-    else if(e.type==SkEntity::Type::Spline && !e.periodic && e.p.front()!=e.p.back()) {ends.push_back({e.p.front(),e.id});ends.push_back({e.p.back(),e.id});}
+    else if(e.type==SkEntity::Type::Spline && !c.IsClosed() && !c.IsPeriodic()) {ends.push_back({e.p.front(),e.id});ends.push_back({e.p.back(),e.id});}  // a closed spline has no ends
   }
   std::set<int> result;
   for(const auto& [id,owner]:ends) {

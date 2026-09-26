@@ -39,8 +39,8 @@ json sketch_geometry() {
   auto point=object({{"id",id},{"x",type("number")},{"y",type("number")},{"fixed",type("boolean")}},{"x","y"});
   auto entity=object({{"id",id},{"type",choice({"point","line","circle","arc","ellipse","spline"})},{"p",array(id,1)},{"r",{{"type","number"},{"exclusiveMinimum",0}}},
     {"construction",type("boolean")},{"fixed",type("boolean")},{"degree",type("integer")},{"knots",array(type("number"))},{"multiplicities",array(type("integer"))},
-    {"weights",array(type("number"))},{"periodic",type("boolean")},{"source",type("object")}},{"type","p"});
-  entity["description"]="p contains stable point IDs: line [start,end], circle [center] plus r, arc [center,start,end] counterclockwise, spline fit points (control poles when degree is given). Coordinates are local to the sketch frame, in mm.";
+    {"weights",array(type("number"))},{"periodic",type("boolean")},{"start_tangent",vector(2)},{"end_tangent",vector(2)},{"source",type("object")}},{"type","p"});
+  entity["description"]="p contains stable point IDs: line [start,end], circle [center] plus r, arc [center,start,end] counterclockwise, spline fit points (control poles when degree is given; knots, multiplicities and weights are then optional: uniform, clamped or periodic, weights 1). A fit spline is closed and smooth through its seam with periodic, a repeated first id, or a last point on the first; start_tangent/end_tangent [dx,dy] set an open one's end directions. Coordinates are local to the sketch frame, in mm.";
   auto constraint=object({{"id",id},{"type",choice({"coincident","horizontal","vertical","parallel","perpendicular","collinear","tangent","equal","concentric","midpoint","symmetric","fix","smooth","curvature","distance","hdistance","vdistance","radius","diameter","angle","arc_length"})},
     {"refs",array(id,1)},{"anchors",array(id)},{"value",type("number")},{"expr",type("string")},{"reference",type("boolean")},{"pos",vector(2)}},{"type","refs"});
   constraint["description"]="refs are point/entity IDs in this sketch. Dimensions require value (numeric initial value) and optionally expr (e.g. width or thickness/2).";

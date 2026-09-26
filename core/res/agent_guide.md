@@ -53,8 +53,14 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   - arc `[centre, start, end]`, counter-clockwise from start to end, both ends at the same radius (the solver keeps
     them there); for a clockwise arc swap start and end;
   - ellipse `[centre, end of the major axis]` plus `r` = the minor radius;
-  - spline: `p` are fit points, interpolated in order; with `degree` (plus `knots`, `multiplicities`, `weights`) `p`
-    are the control poles of an exact B-spline;
+  - spline: `p` are fit points, interpolated in order (knots at chord lengths). It is closed and smooth (C2) through
+    the seam with `periodic: true`, with the first point's id repeated last, or with a last point lying on the first;
+    a closed one is the same curve whichever point comes first and whichever way they run. `start_tangent` and
+    `end_tangent` ([dx, dy]) set an open one's end directions;
+  - with `degree`, `p` are the control poles of an exact B-spline. `knots` with `multiplicities` (same length) and
+    `weights` (one per pole) are optional: without them the knots are uniform, clamped at both ends (the curve starts
+    and ends on the end poles) or periodic with `periodic: true`, and the weights 1. Given, an open spline's
+    multiplicities add up to poles + degree + 1, a clamped end taking degree + 1;
   - `construction: true` for guide geometry that is never part of a profile.
 - Curves share points by id: two lines meeting at point 3 are joined; no coincident constraint is needed.
 - Constraints, `refs` lists ids: `coincident horizontal vertical parallel perpendicular collinear tangent equal

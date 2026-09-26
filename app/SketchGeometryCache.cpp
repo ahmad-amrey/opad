@@ -7,7 +7,7 @@
 using namespace opad::design;
 namespace {
 bool sameCurve(const SkEntity& a,const SkEntity& b) {
-  return a.id==b.id&&a.type==b.type&&a.p==b.p&&a.r==b.r&&a.degree==b.degree&&a.periodic==b.periodic&&a.knots==b.knots&&a.weights==b.weights&&a.multiplicities==b.multiplicities;
+  return a.id==b.id&&a.type==b.type&&a.p==b.p&&a.r==b.r&&a.degree==b.degree&&a.periodic==b.periodic&&a.knots==b.knots&&a.weights==b.weights&&a.multiplicities==b.multiplicities&&a.start_tangent==b.start_tangent&&a.end_tangent==b.end_tangent;
 }
 }
 void SketchGeometryCache::Box::add(double x,double y){x0=std::min(x0,x);y0=std::min(y0,y);x1=std::max(x1,x);y1=std::max(y1,y);}
@@ -23,6 +23,7 @@ std::vector<double> SketchGeometryCache::signature(const Sketch& sk,const SkEnti
   for(int id:e.p){const auto* p=point(sk,id);if(!p)throw opad::Error("missing sketch control point");out.insert(out.end(),{double(id),p->x,p->y});}
   out.insert(out.end(),e.knots.begin(),e.knots.end());out.insert(out.end(),e.weights.begin(),e.weights.end());
   for(int v:e.multiplicities)out.push_back(v);
+  out.insert(out.end(),e.start_tangent.begin(),e.start_tangent.end());out.push_back(-1);out.insert(out.end(),e.end_tangent.begin(),e.end_tangent.end());
   return out;
 }
 bool SketchGeometryCache::matches(const Sketch& sk,double deflection)const {

@@ -1,5 +1,6 @@
 #include "opad/design/sketch_edit.hpp"
 #include <BRepAdaptor_Curve.hxx>
+#include <Geom_BSplineCurve.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRep_Builder.hxx>
@@ -30,6 +31,7 @@
 #include "opad/design/sketch.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/geometry.hpp"
+#include "opad/mass.hpp"
 
 using namespace opad;
 using namespace opad::design;
@@ -1364,4 +1366,66 @@ TEST(a_profile_named_by_its_boundary_is_that_region) {
   } catch (const Error& e) {
     CHECK(std::string(e.what()).find(ring.dump()) != std::string::npos);
   }
+}
+
+// Gap log #5: a closed fit spline is periodic (smooth through its seam) and the same curve wherever the seam falls
+// and whichever way the points run; an open one takes end directions; a control-point spline needs only its degree.
+TEST(closed_fit_splines_are_periodic_and_control_splines_need_only_a_degree) {
+  const int n = 24;
+  auto outline = [&](int shift, bool reversed, bool repeat_first) {
+    Sketch sk;
+    std::vector<int> ids;
+    for (int i = 0; i < n; ++i) {
+      const int k = ((reversed ? n - i : i) + shift) % n;
+      const double t = 2 * M_PI * k / n, r = 10 + 2 * std::cos(3 * t);
+      ids.push_back(sk.add_point(r * std::cos(t), r * std::sin(t)));
+    }
+    if (repeat_first) ids.push_back(sk.add_point(sk.point(ids.front())->x, sk.point(ids.front())->y));  // as its own point
+    SkEntity e;
+    e.type = SkEntity::Type::Spline;
+    e.p = ids;
+    e.periodic = true;
+    e.id = sk.next_id();
+    sk.entities.push_back(e);
+    return sk;
+  };
+  auto area = [](const Sketch& sk) {
+    const auto regions = sketch_regions(sk, {});
+    CHECK_EQ(regions.size(), size_t(1));
+    return area_properties(regions[0].face).mass;
+  };
+  const Sketch base = outline(0, false, false);
+  const double a0 = area(base);
+  CHECK_NEAR(area(outline(7, false, false)), a0, 1e-9 * a0);
+  CHECK_NEAR(area(outline(0, true, false)), a0, 1e-9 * a0);
+  CHECK_NEAR(area(outline(0, false, true)), a0, 1e-9 * a0);
+  const Handle(Geom_BSplineCurve) closed = Handle(Geom_BSplineCurve)::DownCast(BRepAdaptor_Curve(entity_edge(base, base.entities[0], {})).Curve().Curve());
+  CHECK(!closed.IsNull() && closed->IsPeriodic());
+  CHECK(Sketch::from_json(base.to_json()).entities[0].periodic);
+  // Open, leaving along +y and arriving along -x.
+  json open = {{"points", {{{"id", 1}, {"x", 0}, {"y", 0}}, {{"id", 2}, {"x", 10}, {"y", 5}}, {{"id", 3}, {"x", 20}, {"y", 0}}}},
+               {"entities", {{{"id", 10}, {"type", "spline"}, {"p", {1, 2, 3}}, {"start_tangent", {0, 1}}, {"end_tangent", {-1, 0}}}}}};
+  const Sketch tangent = Sketch::from_json(open);
+  BRepAdaptor_Curve c(entity_edge(tangent, tangent.entities[0], {}));
+  gp_Pnt p;
+  gp_Vec d;
+  c.D1(c.FirstParameter(), p, d);
+  CHECK(std::abs(d.X()) < 1e-9 && d.Y() > 0);
+  c.D1(c.LastParameter(), p, d);
+  CHECK(std::abs(d.Y()) < 1e-9 && d.X() < 0);
+  CHECK(Sketch::from_json(tangent.to_json()).entities[0].end_tangent == std::vector<double>({-1, 0}));
+  open["entities"][0]["periodic"] = true;  // tangents belong to open splines
+  CHECK_THROWS(Sketch::from_json(open).validate());
+  // Control points with only a degree: uniform knots, clamped (through the end poles) or periodic, unit weights.
+  json poles = {{"points", json::array()}, {"entities", {{{"id", 20}, {"type", "spline"}, {"p", {1, 2, 3, 4, 5, 6}}, {"degree", 3}}}}};
+  for (int i = 0; i < 6; ++i) poles["points"].push_back({{"id", i + 1}, {"x", 10 * std::cos(i)}, {"y", 10 * std::sin(i)}});
+  const Sketch clamped = Sketch::from_json(poles);
+  clamped.validate();
+  BRepAdaptor_Curve cc(entity_edge(clamped, clamped.entities[0], {}));
+  CHECK(cc.Value(cc.FirstParameter()).Distance(gp_Pnt(10, 0, 0)) < 1e-9);
+  poles["entities"][0]["periodic"] = true;
+  const Sketch ring = Sketch::from_json(poles);
+  ring.validate();
+  CHECK(BRepAdaptor_Curve(entity_edge(ring, ring.entities[0], {})).IsPeriodic());
+  CHECK_EQ(sketch_regions(ring, {}).size(), size_t(1));
 }

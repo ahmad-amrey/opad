@@ -98,6 +98,12 @@ Extrude also goes up to a face (a tilted plane is followed) or up to a body, bes
 named by its boundary (the signed entity ids `sketch_details` lists) is that region, so a ring between two
 circles is extruded without a hard-coded point; a boundary no region has is an error listing the ones there are.
 
+A closed fit spline (`periodic`, the first point's id repeated, or a last point lying on the first) is the C2 cubic
+through its points with knots at chord lengths, solved as a cyclic system: the same curve whichever point starts it
+or whichever way the points run (OCCT's periodic interpolation fixes an estimated tangent at the first point and
+moved a 24-point outline by up to 0.05 mm with the seam). Open fit splines take `start_tangent`/`end_tangent`, and a
+control-point spline needs only its `degree` (uniform knots, clamped or periodic, unit weights).
+
 Face, edge and vertex inputs can be rules instead of numbers: `{"body": id, "kind": "edge", "select":
 {"parallel_to": "z"}, "expect": 4}` picks the matching entities again whenever the feature regenerates and fails,
 rather than guessing, when the count changes. The desktop offers the same through "By rule…" on pick inputs, and

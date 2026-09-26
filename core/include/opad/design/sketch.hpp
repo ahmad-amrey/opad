@@ -26,13 +26,16 @@ struct SkEntity {
   Type type = Type::Line;
   // Point: p[0]. Line: p[0] -> p[1]. Circle: p[0] centre + r. Arc: p[0] centre, counter-clockwise from p[1] to
   // p[2] (the solver keeps both ends at one radius). Ellipse: p[0] centre, p[1] end of the major axis + r =
-  // minor radius. Spline: p = fit points, interpolated in order.
+  // minor radius. Spline: p = fit points, interpolated in order; closed and periodic (smooth through the seam) when
+  // `periodic` is set or the first point id is repeated at the end.
   std::vector<int> p;
   // Nonzero degree stores an exact rational B-spline: p are control poles.
   int degree = 0;
   std::vector<double> knots, weights;
   std::vector<int> multiplicities;
   bool periodic = false;
+  // An open fit spline's end directions, [dx, dy] in the sketch (gap log #5); empty = free.
+  std::vector<double> start_tangent, end_tangent;
   json source; // optional associative projection descriptor
   double r = 0;
   bool construction = false;  // guide geometry: never part of a profile
