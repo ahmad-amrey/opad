@@ -813,6 +813,20 @@ void exactDistance(const TopoDS_Shape& s1, const TopoDS_Shape& s2, bool parallel
 
 json measure_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b, const std::function<bool()>& cancelled) {
   const TopoDS_Shape s1 = ref_shape(doc, scene, a), s2 = ref_shape(doc, scene, b);
+  json j = shape_distance(s1, s2, cancelled);
+  j["kind"] = "distance";
+  j["refs"] = {a.str(), b.str()};
+  // Touching, or read off a shape the kernel does not hold as valid (a self-intersecting profile): say which.
+  if (j["value"].get<double>() < 1e-6) {
+    json warnings = json::array();
+    for (const auto& [ref, shape] : {std::make_pair(&a, &s1), std::make_pair(&b, &s2)})
+      if (!BRepCheck_Analyzer(*shape).IsValid()) warnings.push_back(ref->str() + " is not a valid shape (the kernel's check fails): a distance to it may be wrong");
+    if (!warnings.empty()) j["warnings"] = warnings;
+  }
+  return j;
+}
+
+json shape_distance(const TopoDS_Shape& s1, const TopoDS_Shape& s2, const std::function<bool()>& cancelled) {
   Closest best;
   bool approximate = false;
   BRepExtrema_ShapeList f1, f2;
@@ -871,8 +885,6 @@ json measure_distance(const Document& doc, const Scene& scene, const Ref& a, con
   }
   if (best.value == std::numeric_limits<double>::max()) throw Error("distance computation failed");
   json j;
-  j["kind"] = "distance";
-  j["refs"] = {a.str(), b.str()};
   j["value"] = best.value;
   j["unit"] = "mm";
   j["point_a"] = pnt(best.a);
@@ -881,13 +893,6 @@ json measure_distance(const Document& doc, const Scene& scene, const Ref& a, con
   if (approximate) {
     j["approximate"] = true;
     j["tolerance_mm"] = 2 * deflection;
-  }
-  // Touching, or read off a shape the kernel does not hold as valid (a self-intersecting profile): say which.
-  if (best.value < 1e-6) {
-    json warnings = json::array();
-    for (const auto& [ref, shape] : {std::make_pair(&a, &s1), std::make_pair(&b, &s2)})
-      if (!BRepCheck_Analyzer(*shape).IsValid()) warnings.push_back(ref->str() + " is not a valid shape (the kernel's check fails): a distance to it may be wrong");
-    if (!warnings.empty()) j["warnings"] = warnings;
   }
   return j;
 }

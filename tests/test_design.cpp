@@ -1627,3 +1627,31 @@ TEST(axis_through_free_points_combine_with_several_targets_and_sketch_patterns) 
     CHECK(std::string(e.what()).find("seeds") != std::string::npos);
   }
 }
+
+// Gap log #10: an interference check kept in the timeline and run again when its bodies change; with fail_on, a
+// finding is the feature's error, which the edit that caused it reports.
+TEST(an_interference_check_is_kept_and_run_again) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "gap"}, {"expr", "5 mm"}}, &doc);
+  const std::string a = feature_cmd(doc, "box", {{"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}})["body_ids"][0];
+  const std::string b = feature_cmd(doc, "box", {{"x", "10 mm + gap"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}})["body_ids"][0];
+  const std::string check = run_id(feature_cmd(doc, "interference", {{"bodies", {a, b}}, {"clearance", "2 mm"}}));
+  const std::string strict = run_id(feature_cmd(doc, "interference", {{"bodies", {a, b}}, {"fail_on", "interference"}}));
+  auto status = [&](const std::string& id) {
+    const Scene s = resolve(doc);
+    return s.feature(id)->result["check"]["status"].get<std::string>();
+  };
+  CHECK_EQ(status(check), std::string("clear"));
+  commands::run("param", {{"name", "gap"}, {"expr", "1 mm"}}, &doc);
+  CHECK_EQ(status(check), std::string("too_close"));
+  CHECK_EQ(status(strict), std::string("clear"));
+  const json edit = commands::run("param", {{"name", "gap"}, {"expr", "-2 mm"}}, &doc);
+  CHECK_EQ(status(check), std::string("interference"));
+  const Scene s = resolve(doc);
+  CHECK_NEAR(s.feature(check)->result["check"]["items"][0]["volume_mm3"].get<double>(), 2 * 10 * 10, 1e-6);
+  CHECK(s.feature(check)->error.empty());
+  CHECK(!s.feature(strict)->error.empty());
+  bool reported = false;
+  for (const auto& e : edit["errors"]) reported |= e["op"] == strict;
+  CHECK(reported);
+}

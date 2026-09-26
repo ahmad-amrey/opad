@@ -243,6 +243,10 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   body, faces overhanging more than `overhang_deg` (default 45, from vertical) against `build_direction` ("+z"),
   the build-plate contact area, walls thinner than `min_wall_mm` (0.8) and thin features. Add "solid" for the usual
   validity page.
+- The `interference` feature keeps such a check in the timeline: `bodies` (all solids so far if none), `clearance`,
+  `fail_on` (`nothing`, `interference` or `clearance`). Its result's `check` holds the report (status, pairs, overlap
+  volumes, distances) and is computed again whenever those bodies change; with `fail_on`, a finding is the
+  feature's error, so the edit that causes it reports it (and a live edit is refused).
 - Write tools take `verbosity: "compact"`: `changes` then lists only that command's created, modified and deleted
   ids with counts (not the transaction's cumulative lists), references come without signatures, and model_batch
   drops its batch-wide `operation_ids` (each step receipt has its own). The default stays "full".

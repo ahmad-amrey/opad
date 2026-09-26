@@ -1557,5 +1557,14 @@
   "There is nothing to redo.": "لا يوجد ما يمكن إعادته.",
   "Agent: undo %1": "الوكيل: تراجع عن %1",
   "Agent: redo %1": "الوكيل: إعادة %1",
-  "Target bodies": "الأجسام الهدف"
+  "Target bodies": "الأجسام الهدف",
+  "Interference check": "فحص التداخل",
+  "Bodies that overlap, or come closer than the clearance, stored with the design and checked again whenever they change. With Fail on, a finding is an error.": "الأجسام المتداخلة أو الأقرب من الخلوص، تُحفظ مع التصميم ويُعاد فحصها كلما تغيّرت. مع «الفشل عند» تصبح النتيجة خطأ.",
+  "Bodies (all solids if none)": "الأجسام (كل المجسمات إن لم يُختر شيء)",
+  "Fail on": "الفشل عند",
+  "nothing": "لا شيء",
+  "interference": "التداخل",
+  "clearance": "الخلوص",
+  "%1 interference(s), %2 pair(s) too close": "%1 تداخل، %2 زوج أقرب من اللازم",
+  "No interference": "لا يوجد تداخل"
 }

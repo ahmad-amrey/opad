@@ -16,6 +16,9 @@ json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref);
 // cancelled: polled while the distance is computed (a body-to-body distance can take a while); a true
 // answer ends it with Error("cancelled").
 json measure_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b, const std::function<bool()>& cancelled = {});
+// The distance between two shapes, surface to surface: value, point_a, point_b, delta, and approximate with
+// tolerance_mm when only the meshes could say (gap log #4). measure_distance adds the refs and warnings.
+json shape_distance(const TopoDS_Shape& s1, const TopoDS_Shape& s2, const std::function<bool()>& cancelled = {});
 // Edge-to-edge distance with selectable points of interest. The picked positions are projected onto their
 // edges, then snap to nearby endpoints, midpoints or curve extrema within snap_tolerance. The returned
 // `anchors` array also contains the closest, farthest and endpoint-based alternatives.

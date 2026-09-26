@@ -56,6 +56,7 @@
 #include <optional>
 
 #include "engine.hpp"
+#include "opad/checks.hpp"
 #include "opad/geometry.hpp"
 
 namespace opad::design {
@@ -177,6 +178,10 @@ std::vector<FeatureSpec> build_specs() {
   add("axis", "Construction axis", "axis", "construct", "An axis to revolve or pattern about.",
       {choice("mode", "Type", {"edge", "two_points", "normal"}), in("edge", "Edge or round face", "axis", nullptr, "mode=edge"), pick("points", "Two points", "points", 2, 2, "mode=two_points"),
        in("plane", "Plane", "plane", xy, "mode=normal"), pick("point", "Through point", "points", 1, 1, "mode=normal")});
+  // Gap log #10: a check kept in the timeline, run again whenever its bodies change.
+  add("interference", "Interference check", "interference", "construct",
+      "Bodies that overlap, or come closer than the clearance, stored with the design and checked again whenever they change. With Fail on, a finding is an error.",
+      {pick("bodies", "Bodies (all solids if none)", "bodies", 0, 0), in("clearance", "Clearance", "length", "0 mm"), choice("fail_on", "Fail on", {"nothing", "interference", "clearance"})});
   return v;
 }
 
@@ -1262,6 +1267,33 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       }
     }
     out.extra["plane"] = f.to_json();
+    return out;
+  }
+  if (kind == "interference") {
+    // The picked bodies (components stand for theirs), or every solid body so far on the timeline.
+    std::vector<std::string> bodies;
+    if (in.contains("bodies") && in["bodies"].is_array() && !in["bodies"].empty()) {
+      bodies = body_ids(ctx, in["bodies"]);
+    } else {
+      for (const auto& id : ctx.scene.all_bodies())
+        if (const Node* n = ctx.scene.node(id); n && n->representation == "solid" && (!n->body_missing || ctx.fresh.count(n->body_key))) bodies.push_back(id);
+    }
+    const double clearance = in.contains("clearance") ? ctx.length(in, "clearance") : 0.0;
+    json report = interference_of(ctx.scene, bodies, {{"clearance_mm", clearance}, {"limit", 200}}, [&](const std::string& id) { return ctx.node_shape(id); },
+                                  [&](const std::string& id) { return box_of(ctx.node_shape(id)); }, [&] { return ctx.cancel && ctx.cancel(); });
+    report.erase("offset");
+    out.extra["check"] = report;
+    const std::string fail = in.value("fail_on", "nothing");
+    const size_t overlaps = report.value("interferences", 0), close = report.value("too_close", 0);
+    if ((fail == "interference" && overlaps) || (fail == "clearance" && (overlaps || close))) {
+      std::string pairs;
+      for (const auto& item : report["items"]) {
+        if (pairs.size() > 300) break;
+        pairs += (pairs.empty() ? "" : "; ") + item.value("a_name", std::string()) + " / " + item.value("b_name", std::string()) +
+                 (item["kind"] == "interference" ? " overlap " + json(item.value("volume_mm3", 0.0)).dump() + " mm3" : " " + json(item.value("distance_mm", 0.0)).dump() + " mm apart");
+      }
+      out.extra["error"] = std::to_string(overlaps) + " interference(s), " + std::to_string(close) + " pair(s) closer than " + json(clearance).dump() + " mm: " + pairs;
+    }
     return out;
   }
   if (kind == "axis") {

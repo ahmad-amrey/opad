@@ -124,6 +124,11 @@ several targets; construction axes and points take points in space (`"point/x,y,
 `[x, y, z]`); sketch patterns need only their seeds and inputs; and a STEP export of the same document is the same
 file (the header carries the document's last change and the file's name, assembly occurrences are numbered in order).
 
+An `interference` feature keeps an interference and clearance check in the timeline: its report (pairs, overlap
+volumes, distances) is stored with the design and computed again whenever its bodies change, and with `fail_on` a
+clash is the feature's error, so the edit that causes it says so. It sits in Design > Construct, next to the planes
+and axes.
+
 Face, edge and vertex inputs can be rules instead of numbers: `{"body": id, "kind": "edge", "select":
 {"parallel_to": "z"}, "expect": 4}` picks the matching entities again whenever the feature regenerates and fails,
 rather than guessing, when the count changes. The desktop offers the same through "By rule…" on pick inputs, and

@@ -667,7 +667,7 @@ void MainWindow::buildRibbon() {
   m_ribbon->addTab(design, tr("Modify"), {acts({"design.offset_face", "design.thicken", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.scale"}),
                                           acts({"design.combine", "design.split", "design.move", "design.remove"}),
                                           acts({"design.mirror", "design.pattern_rect", "design.pattern_circ"})});
-  m_ribbon->addTab(design, tr("Construct"), {acts({"design.plane", "design.axis"}), acts({"design.parameters", "design.edit", "design.regenerate"})});
+  m_ribbon->addTab(design, tr("Construct"), {acts({"design.plane", "design.axis", "design.interference"}), acts({"design.parameters", "design.edit", "design.regenerate"})});
   m_ribbon->addTab(design, tr("Assemble"), {acts({"file.import", "design.newcomponent", "design.reparent"}), acts({"edit.rename", "edit.delete", "edit.restore"}),
                                             acts({"design.colour", "design.opacity", "design.lock", "edit.hide", "view.isolate"})});
   m_ribbon->addTab(design,tr("View"),{acts({"view.fit","view.home","view.2d","view.ortho"}),acts({"view.shaded","view.edges","view.wire","view.grid","view.gridSettings","select.through"})});

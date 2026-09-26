@@ -59,7 +59,12 @@ size_t arg_size(const json& args, const char* key, size_t fallback, size_t most)
 }  // namespace
 
 json check_interference(const Document& doc, const Scene& scene, const json& args, const std::function<bool()>& cancelled) {
-  const std::vector<std::string> bodies = solid_bodies(scene, args);
+  return interference_of(scene, solid_bodies(scene, args), args, [&](const std::string& id) { return node_world_shape(doc, scene, id); },
+                         [&](const std::string& id) { return node_world_bbox(doc, scene, id); }, cancelled);
+}
+
+json interference_of(const Scene& scene, const std::vector<std::string>& bodies, const json& args, const std::function<TopoDS_Shape(const std::string&)>& shape_of,
+                     const std::function<Bnd_Box(const std::string&)>& box_of, const std::function<bool()>& cancelled) {
   const double clearance = args.value("clearance_mm", 0.0);
   if (!(clearance >= 0) || !std::isfinite(clearance)) throw Error("clearance_mm must be zero or more");
   const size_t max_pairs = arg_size(args, "max_pairs", 20000, 200000);
@@ -74,7 +79,7 @@ json check_interference(const Document& doc, const Scene& scene, const json& arg
   struct Box { std::string id; double lo[3], hi[3]; };
   std::vector<Box> boxes;
   for (const auto& id : bodies) {
-    const Bnd_Box b = node_world_bbox(doc, scene, id);
+    const Bnd_Box b = box_of(id);
     if (b.IsVoid()) continue;
     Box box{id, {}, {}};
     b.Get(box.lo[0], box.lo[1], box.lo[2], box.hi[0], box.hi[1], box.hi[2]);
@@ -104,7 +109,7 @@ json check_interference(const Document& doc, const Scene& scene, const json& arg
   size_t overlaps = 0, close = 0;
   for (const auto& [a, b] : candidates) {
     if (cancelled && cancelled()) throw Error("cancelled");
-    const TopoDS_Shape sa = node_world_shape(doc, scene, a), sb = node_world_shape(doc, scene, b);
+    const TopoDS_Shape sa = shape_of(a), sb = shape_of(b);
     json entry = {{"a", a}, {"b", b}, {"a_name", scene.node(a)->name}, {"b_name", scene.node(b)->name}};
     BRepAlgoAPI_Common common(sa, sb);
     double overlap = 0;
@@ -126,10 +131,7 @@ json check_interference(const Document& doc, const Scene& scene, const json& arg
       continue;
     }
     if (clearance > 0) {
-      Ref ra, rb;
-      ra.body = a;
-      rb.body = b;
-      const json d = measure_distance(doc, scene, ra, rb, cancelled);
+      const json d = shape_distance(sa, sb, cancelled);
       const double distance = d.value("value", 1e300);
       if (distance < clearance) {
         entry["kind"] = "clearance";

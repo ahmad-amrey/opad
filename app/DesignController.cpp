@@ -641,6 +641,10 @@ void DesignController::runPreview(bool commit) {
       opad::json result;
       if(op.value("id","")==target)result=op.value("result",opad::json());
       if(op.value("op","")=="regen" && op.at("results").contains(target))result=op.at("results").at(target);
+      if(result.is_object() && result.contains("check")) {  // an interference check: what it found (gap log #10)
+        const auto& found=result.at("check");const int overlaps=found.value("interferences",0),close=found.value("too_close",0);
+        m_form->setStatus(overlaps||close?tr("%1 interference(s), %2 pair(s) too close").arg(overlaps).arg(close):tr("No interference"),result.contains("error"));
+      }
       if(result.is_object() && result.contains("distance_handle")) {
         hasHandle=true;const auto& handle=result.at("distance_handle");
         m_distanceHandle->setAnchorSegments(std::move(*anchors));
