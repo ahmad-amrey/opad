@@ -92,6 +92,14 @@ if(Python3_Interpreter_FOUND AND OPAD_BUILD_CLI)
   set_tests_properties(cli PROPERTIES FIXTURES_REQUIRED step_fixtures ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache")
 endif()
 
+# The desktop safety net (tools/gui_benches.py): hidden windows driven by in-app benches. Needs a desktop session with
+# OpenGL, so the default test presets leave the "gui" label out; `ctest --preset windows-gui` runs it.
+if(TARGET opad AND Python3_Interpreter_FOUND AND OPAD_BUILD_CLI)
+  add_test(NAME gui COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/gui_benches.py $<TARGET_FILE:opad> $<TARGET_FILE:opad-cli>
+           --output ${CMAKE_BINARY_DIR}/gui-benches)
+  set_tests_properties(gui PROPERTIES LABELS gui TIMEOUT 900)
+endif()
+
 if(OPAD_BUILD_PLUGINS)
   add_test(NAME plugin COMMAND opad-cli --plugin $<TARGET_FILE:opad_sample_exporter> export ${OPAD_FIXTURE_DIR}/box.step --format ply --out ${CMAKE_BINARY_DIR}/plugin-out.ply)
   set_tests_properties(plugin PROPERTIES FIXTURES_REQUIRED step_fixtures)

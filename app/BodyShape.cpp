@@ -134,6 +134,12 @@ class NavigationTriangles : public Select3D_SensitivePrimitiveArray {
 };
 }
 
+opad::MeshingReport BodyPrs::meshForDisplay(const TopoDS_Shape& shape, double deflection) {
+  const auto report = opad::mesh_shape(shape, deflection);
+  opad::straighten_ruled_faces(shape);  // extruded walls stay upright seen along the extrusion (TODO 10 A1)
+  return report;
+}
+
 size_t BodyPrs::triangleCount() const {
   if (triangles.IsNull()) return 0;
   return size_t(triangles->EdgeNumber() > 0 ? triangles->EdgeNumber() : triangles->VertexNumber()) / 3;

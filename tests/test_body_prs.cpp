@@ -14,6 +14,15 @@
 #include <SelectMgr_Selection.hxx>
 #include <SelectMgr_SensitiveEntity.hxx>
 #include <BRep_Tool.hxx>
+#include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <GeomAPI_Interpolate.hxx>
+#include <TColgp_HArray1OfPnt.hxx>
+#include <array>
+#include <cmath>
+#include <set>
 
 namespace {
 class CountingVolume : public SelectMgr_SelectingVolumeManager {
@@ -176,3 +185,62 @@ TEST(wire_display_and_selection_share_smooth_samples) {
 }
 
 CHECK_MAIN()
+
+// TODO 10 A1/A13, the display arrays themselves: an extruded spline profile, meshed the way every view path meshes it.
+// Its walls are exactly upright (seen along the extrusion they cover nothing past the profile) and every edge line
+// drawn over the fill is an edge of the fill's triangles (the outline and the fill meet, no slivers between them).
+TEST(extruded_profile_display_arrays_follow_the_profile) {
+  Handle(TColgp_HArray1OfPnt) points = new TColgp_HArray1OfPnt(1, 5);
+  const gp_Pnt at[] = {{0, 0, 0}, {-3, 2, 0}, {-3.5, 5, 0}, {-2, 8, 0}, {0, 10, 0}};
+  for (int i = 0; i < 5; ++i) points->SetValue(i + 1, at[i]);
+  GeomAPI_Interpolate fit(points, Standard_False, 1e-9);
+  fit.Perform();
+  BRepBuilderAPI_MakeWire wire;
+  wire.Add(BRepBuilderAPI_MakeEdge(fit.Curve()).Edge());
+  wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(0, 10, 0), gp_Pnt(20, 10, 0)).Edge());
+  wire.Add(BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(gp_Pnt(20, 5, 0), gp::DZ()), 5), gp_Pnt(20, 10, 0), gp_Pnt(20, 0, 0)).Edge());
+  wire.Add(BRepBuilderAPI_MakeEdge(gp_Pnt(20, 0, 0), gp_Pnt(0, 0, 0)).Edge());
+  const TopoDS_Shape body = BRepPrimAPI_MakePrism(BRepBuilderAPI_MakeFace(wire.Wire(), Standard_True).Face(), gp_Vec(0, 0, 10)).Shape();
+  BodyPrs::meshForDisplay(body, 0.05);
+  Bnd_Box box;
+  BRepBndLib::Add(body, box);
+  const auto prs = BodyPrs::build(body, box);
+  CHECK(!prs->triangles.IsNull() && !prs->boundaries.IsNull());
+  const auto& t = prs->triangles;
+  auto vertex = [&](int i) { return t->Vertice(t->EdgeNumber() > 0 ? t->Edge(i) : i); };
+  const int count = t->EdgeNumber() > 0 ? t->EdgeNumber() : t->VertexNumber();
+  auto key = [](const gp_Pnt& p) { return std::array<long long, 3>{std::llround(p.X() * 1e6), std::llround(p.Y() * 1e6), std::llround(p.Z() * 1e6)}; };
+  std::set<std::array<long long, 6>> edges;
+  auto edgeKey = [&](const gp_Pnt& a, const gp_Pnt& b) {
+    auto ka = key(a), kb = key(b);
+    if (kb < ka) std::swap(ka, kb);
+    return std::array<long long, 6>{ka[0], ka[1], ka[2], kb[0], kb[1], kb[2]};
+  };
+  int walls = 0;
+  for (int i = 1; i + 2 <= count; i += 3) {
+    const gp_Pnt a = vertex(i), b = vertex(i + 1), c = vertex(i + 2);
+    edges.insert(edgeKey(a, b));
+    edges.insert(edgeKey(b, c));
+    edges.insert(edgeKey(c, a));
+    const gp_Vec n = gp_Vec(a, b).Crossed(gp_Vec(a, c));
+    if (n.Magnitude() < 1e-12 || std::abs(n.Z()) > 0.999 * n.Magnitude()) continue;  // the top and bottom
+    ++walls;
+    CHECK(std::abs(n.Z()) / 2 < 1e-9);  // area seen from +Z
+  }
+  CHECK(walls > 20);
+  const auto& lines = prs->boundaries;
+  int missing = 0;
+  auto line = [&](int i) { return lines->Vertice(lines->EdgeNumber() > 0 ? lines->Edge(i) : i); };  // indexed polylines
+  const int ends = lines->EdgeNumber() > 0 ? lines->EdgeNumber() : lines->VertexNumber();
+  for (int i = 1; i + 1 <= ends; i += 2)
+    if (!edges.count(edgeKey(line(i), line(i + 1)))) {
+      if (++missing <= 3) {
+        const gp_Pnt a = line(i), b = line(i + 1);
+        double best = 1e300;
+        for (int k = 1; k <= count; ++k) best = std::min(best, vertex(k).Distance(a));
+        std::printf("segment (%.9f %.9f %.9f)-(%.9f %.9f %.9f) not a triangle edge; nearest triangle vertex %.3g away\n", a.X(), a.Y(), a.Z(), b.X(), b.Y(), b.Z(), best);
+      }
+    }
+  std::printf("%d of %d edge segments are not triangle edges\n", missing, lines->VertexNumber() / 2);
+  CHECK_EQ(missing, 0);
+}

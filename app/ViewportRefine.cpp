@@ -100,8 +100,7 @@ void Viewport::refineVisible() {
       const auto& want = (*pass)[i];
       // A copy: the cached shape keeps the base triangulation that picking and highlights are built on.
       TopoDS_Shape copy = BRepBuilderAPI_Copy(want.shape, Standard_True, Standard_False).Shape();
-      opad::mesh_shape(copy, want.deflection);
-      opad::straighten_ruled_faces(copy);
+      BodyPrs::meshForDisplay(copy, want.deflection);
       auto prs = BodyPrs::build(copy, want.box, true);
       prs->deflection = want.deflection;
       (*results)[i] = std::move(prs);

@@ -61,10 +61,11 @@
       "configurePreset": "macos", "targets": ["opad-single"] }
   ],
   "testPresets": [
-    { "name": "windows", "configurePreset": "windows", "output": { "outputOnFailure": true } },
-    { "name": "windows-static", "configurePreset": "windows-static", "output": { "outputOnFailure": true } },
-    { "name": "linux", "configurePreset": "linux", "output": { "outputOnFailure": true } },
-    { "name": "macos", "configurePreset": "macos", "output": { "outputOnFailure": true } }
+    { "name": "windows", "configurePreset": "windows", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui" } } },
+    { "name": "windows-gui", "configurePreset": "windows", "output": { "outputOnFailure": true }, "filter": { "include": { "label": "gui" } } },
+    { "name": "windows-static", "configurePreset": "windows-static", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui" } } },
+    { "name": "linux", "configurePreset": "linux", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui" } } },
+    { "name": "macos", "configurePreset": "macos", "output": { "outputOnFailure": true }, "filter": { "exclude": { "label": "gui" } } }
   ],
   "workflowPresets": [
     { "name": "windows", "steps": [

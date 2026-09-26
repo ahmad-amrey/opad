@@ -2231,7 +2231,7 @@ void MainWindow::runBench() {
       QMouseEvent click(QEvent::MouseButtonRelease,QPointF(3,3),card->mapToGlobal(QPointF(3,3)),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
       QCoreApplication::sendEvent(card,&click);
       const bool left=!action("view.2d")->isChecked() && !card->isVisibleTo(m_chips);
-      trace::log(QString("bench: 2D mode card %1, orbit hint %2, card leaves 2D mode %3").arg(shown?"shown":"MISSING",hinted?"shown":"MISSING",left?"yes":"NO"));
+      trace::log(QString("bench: 2D mode card %1, orbit hint %2, card leaves 2D mode %3 %4").arg(shown?"shown":"MISSING",hinted?"shown":"MISSING",left?"yes":"NO",shown&&hinted&&left?"PASS":"FAIL"));
       QCoreApplication::exit(shown&&hinted&&left?0:2);
     });
     return;

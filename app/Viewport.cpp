@@ -1359,8 +1359,7 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
       std::shared_ptr<BodyPrs> prs;
       try {
         const Bnd_Box box = opad::body_bbox(*cache, j.key, j.shape);
-        const auto mesh = opad::mesh_shape(j.shape, deflectionForBox(box));
-        opad::straighten_ruled_faces(j.shape);  // extruded walls stay upright seen along the extrusion (A1)
+        const auto mesh = BodyPrs::meshForDisplay(j.shape, deflectionForBox(box));
         if (mesh.status || mesh.recovered_faces || mesh.incomplete_cones)
           trace::log(QString("mesh %1: status=%2 recovered=%3 incomplete cones=%4").arg(QString::fromStdString(j.key)).arg(mesh.status).arg(mesh.recovered_faces).arg(mesh.incomplete_cones));
         // The box from before the mesh is only good for the deflection: it follows the surfaces' poles, and one
@@ -1993,7 +1992,7 @@ bool Viewport::benchLeave() {
   QCoreApplication::sendEvent(this, &leave);
   FlushViewEvents(m_ctx, m_view, Standard_True);  // what the next frame does
   const bool left = !m_ctx->HasDetected();
-  trace::log(QStringLiteral("bench: leave: hovered %1, highlight after leaving %2").arg(hovered).arg(left ? "cleared" : "KEPT"));
+  trace::log(QStringLiteral("bench: leave: hovered %1, highlight after leaving %2 %3").arg(hovered).arg(left ? "cleared" : "KEPT").arg(hovered && left ? "PASS" : "FAIL"));
   return hovered && left;
 }
 

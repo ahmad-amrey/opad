@@ -155,7 +155,9 @@ configures, builds and tests.
 | macOS | `xcode-select --install`, then `brew install cmake ninja opencascade qt nlohmann-json pybind11 python` | `cmake --workflow --preset macos` |
 
 The three steps can also be run one by one: `cmake --preset <os>`, `cmake --build --preset <os>`,
-`ctest --preset <os>`. Outputs land in `build/<os>/bin`: `opad` (app), `opad-cli`, `opad.pyd`/`opad.so`, the sample
+`ctest --preset <os>`. `ctest --preset windows-gui` adds the desktop safety net: in-app benches that drive
+the real app in hidden windows (drag handles, note cards, 2D mode, drawing placement, picking, zoom
+refinement...). It needs a desktop session with OpenGL, so the default presets leave it out. Outputs land in `build/<os>/bin`: `opad` (app), `opad-cli`, `opad.pyd`/`opad.so`, the sample
 plugin and the test binaries. `tests/fixtures.cpp` generates the STEP fixtures used by the tests.
 
 Requirements: CMake 3.25+, a C++20 compiler, Open CASCADE Technology 7.6+ (7.8+ recommended), nlohmann-json,

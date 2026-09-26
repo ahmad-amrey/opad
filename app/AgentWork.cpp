@@ -281,7 +281,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
           }
           if(result->delta["references"].size()<100)result->delta["references"].push_back(reference_token(*working->doc,working->scene,opad::Ref::from_json(json{{"body",id},{"kind","body"}})));
           if(preview || !transaction.empty()){
-            shape=BRepBuilderAPI_Copy(shape,true,false).Shape();BRepMesh_IncrementalMesh(shape,0.1,false,0.4,false);opad::straighten_ruled_faces(shape);builder.Add(compound,shape);any=true;
+            shape=BRepBuilderAPI_Copy(shape,true,false).Shape();BodyPrs::meshForDisplay(shape,0.1);builder.Add(compound,shape);any=true;
             if(prior)result->hidden.push_back(id);
           }
         }

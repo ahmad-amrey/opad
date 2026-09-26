@@ -4,6 +4,7 @@
 // of milliseconds for a heavy body; here Display() only hands the ready arrays to the graphic driver.
 #include <AIS_Shape.hxx>
 #include "opad/util.hpp"
+#include "opad/mesh.hpp"
 #include <Bnd_Box.hxx>
 #include <Graphic3d_ArrayOfSegments.hxx>
 #include <Graphic3d_ArrayOfTriangles.hxx>
@@ -41,6 +42,9 @@ struct BodyPrs {
   // Worker thread; needs triangulation. `drawingOnly` skips what only picking uses (circles, navigation BVH, curves):
   // the zoom refinement's finer arrays are drawn, never picked.
   static std::shared_ptr<BodyPrs> build(const TopoDS_Shape& meshedProto, const Bnd_Box& box, bool drawingOnly = false);
+  // Worker thread: how every view path meshes a body before build() (whole-model display, zoom refinement, previews):
+  // BRepMesh at `deflection`, then cylinders and extrusions of any curve as upright strips (test_body_prs pins it).
+  static opad::MeshingReport meshForDisplay(const TopoDS_Shape& shape, double deflection);
   size_t triangleCount() const;
 };
 
