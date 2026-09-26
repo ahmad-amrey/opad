@@ -84,7 +84,7 @@ bool refs_fit(CType t, const std::vector<Kind>& k) {
     case CType::Fix: return n == 1;  // any point or entity
     case CType::Distance: return pp || ll || (n == 1 && is(0, Kind::Line)) || (n == 2 && is(0, Kind::Point) && is(1, Kind::Line));
     case CType::HDistance:
-    case CType::VDistance: return pp;
+    case CType::VDistance: return pp || (n == 1 && is(0, Kind::Point));  // one point: its coordinate (gap log #11)
     case CType::Radius:
     case CType::Diameter: return n == 1 && is_round(k[0]);
     case CType::ArcLength: return n == 1 && is(0, Kind::Arc);
@@ -357,6 +357,7 @@ json Sketch::to_json() const {
     if (c.is_dimension()) {
       o["value"] = c.value;
       if (c.reference) o["reference"] = true;
+      if (c.is_signed) o["signed"] = true;
       if (!c.expr.empty()) o["expr"] = c.expr;
       o["pos"] = json::array({c.pos[0], c.pos[1]});
     }
@@ -423,6 +424,7 @@ Sketch Sketch::from_json(const json& j) {
       if (c.is_dimension()) {
         c.value = o.at("value").get<double>();
         c.reference = o.value("reference", false);
+        c.is_signed = o.value("signed", false);
         c.expr = o.value("expr", std::string());
         if (o.contains("pos")) {
           const auto pos = o.at("pos").get<std::vector<double>>();

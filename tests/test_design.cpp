@@ -1429,3 +1429,29 @@ TEST(closed_fit_splines_are_periodic_and_control_splines_need_only_a_degree) {
   CHECK(BRepAdaptor_Curve(entity_edge(ring, ring.entities[0], {})).IsPeriodic());
   CHECK_EQ(sketch_regions(ring, {}).size(), size_t(1));
 }
+
+// Gap log #11: a coordinate dimension driven by a parameter follows it to the negative side (the unsigned
+// hdistance flipped it back to the positive one).
+TEST(coordinates_follow_parameters_to_either_side) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "x0"}, {"expr", "12 mm"}}, &doc);
+  const json geometry = {
+      {"points", {{{"id", 1}, {"x", 1}, {"y", 1}}, {{"id", 2}, {"x", 20}, {"y", 1}}}},
+      {"entities", {{{"id", 10}, {"type", "line"}, {"p", {1, 2}}}}},
+      {"constraints", {{{"id", 20}, {"type", "hdistance"}, {"refs", {1}}, {"value", 12}, {"expr", "x0"}},
+                       {{"id", 21}, {"type", "vdistance"}, {"refs", {1}}, {"value", -3}, {"expr", "-3 mm"}},
+                       {{"id", 22}, {"type", "hdistance"}, {"refs", {1, 2}}, {"value", 8}, {"expr", "x0 - 4 mm"}, {"signed", true}}}}};
+  const std::string sk = commands::run("sketch", {{"geometry", geometry}}, &doc)["sketch_id"];
+  auto at = [&](int id) {
+    const Scene s = resolve(doc);
+    for (const auto& p : s.sketch(sk)->geometry["points"])
+      if (p["id"] == id) return std::make_pair(p["x"].get<double>(), p["y"].get<double>());
+    throw Error("no point");
+  };
+  CHECK_NEAR(at(1).first, 12, 1e-9);
+  CHECK_NEAR(at(1).second, -3, 1e-9);
+  CHECK_NEAR(at(2).first, 20, 1e-9);
+  commands::run("param", {{"name", "x0"}, {"expr", "-12 mm"}}, &doc);
+  CHECK_NEAR(at(1).first, -12, 1e-9);
+  CHECK_NEAR(at(2).first, -28, 1e-9);  // -12 + (-12 - 4)
+}

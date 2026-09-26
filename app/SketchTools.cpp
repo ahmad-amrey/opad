@@ -600,7 +600,9 @@ void SketchEditor::commitDimensionEdit() {
     emit status(i18n::t(QString::fromUtf8(e.what())));
     return rebuild();
   }
-  if (value <= 0 && c->type != CT::Angle) {
+  // Signed distances and coordinates (gap log #11) may be negative; sizes may not.
+  const bool mayBeNegative = c->type == CT::Angle || ((c->type == CT::HDistance || c->type == CT::VDistance) && (c->is_signed || c->refs.size() == 1));
+  if (value <= 0 && !mayBeNegative) {
     emit status(tr("A dimension must be positive"));
     return rebuild();
   }

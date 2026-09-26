@@ -820,4 +820,32 @@ TEST(reference_dimensions_cannot_indirectly_drive_geometry) {
   CHECK_THROWS(evaluate_dimensions(sk,params));(void)d;
 }
 
+// Gap log #11: hdistance/vdistance were sizes only (a negative expression flipped the point back). signed: true
+// drives q - p with its sign; one point is its coordinate from the sketch origin, signed: a "fix at (x, y)".
+TEST(signed_and_coordinate_dimensions) {
+  Sketch sk;
+  const int p = sk.add_point(0, 0), q = sk.add_point(3, 1), r = sk.add_point(5, 5);
+  sk.add_constraint(CT::Fix, {p});
+  const int h = sk.add_constraint(CT::HDistance, {p, q}, -5);
+  sk.constraint(h)->is_signed = true;
+  const int x = sk.add_constraint(CT::HDistance, {r}, -7), y = sk.add_constraint(CT::VDistance, {r}, 3);
+  CHECK(solve(sk).converged);
+  CHECK_NEAR(sk.point(q)->x, -5, 1e-9);
+  CHECK_NEAR(sk.point(r)->x, -7, 1e-9);
+  CHECK_NEAR(sk.point(r)->y, 3, 1e-9);
+  CHECK_NEAR(dimension_value(sk, *sk.constraint(h)), -5, 1e-9);
+  CHECK_NEAR(dimension_value(sk, *sk.constraint(x)), -7, 1e-9);
+  CHECK_NEAR(dimension_value(sk, *sk.constraint(y)), 3, 1e-9);
+  const opad::json saved = sk.to_json();
+  CHECK(Sketch::from_json(saved).constraint(h)->is_signed);
+  CHECK(Sketch::from_json(saved).to_json() == saved);
+  // Unsigned as before: the size, the side kept.
+  Sketch old;
+  const int a = old.add_point(0, 0), b = old.add_point(-2, 0);
+  old.add_constraint(CT::Fix, {a});
+  old.add_constraint(CT::HDistance, {a, b}, 4);
+  CHECK(solve(old).converged);
+  CHECK_NEAR(old.point(b)->x, -4, 1e-9);
+}
+
 CHECK_MAIN()

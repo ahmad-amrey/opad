@@ -47,6 +47,13 @@ std::vector<int> transform_entities(Sketch& sk,const std::vector<int>& ids,const
   const std::set<int> selected(ids.begin(),ids.end());
   if(!copy)for(const auto& e:source)if(e.fixed)throw Error("break projection or pattern links before transforming fixed curves");
   if(!copy)for(const auto& c:sk.constraints)if(c.type==SkConstraint::Type::Fix)for(int ref:c.refs)if(selected.count(ref)||points.count(ref))throw Error("unlock fixed geometry before transforming it");
+  auto coordinate=[](const SkConstraint& c){return (c.type==SkConstraint::Type::HDistance||c.type==SkConstraint::Type::VDistance)&&c.refs.size()==1;};
+  if(!copy)for(const auto& c:sk.constraints)if(coordinate(c)&&points.count(c.refs[0]))throw Error("remove the coordinate dimensions of points before transforming them");
+  // A signed distance keeps its meaning after a quarter turn, a half turn or a mirror: its sign follows the points.
+  auto follow=[&](SkConstraint& c){
+    if(!c.is_signed||c.refs.size()!=2)return;const double now=dimension_value(sk,c);
+    if(std::fabs(now+c.value)<1e-6*std::max(1.0,std::fabs(c.value))&&std::fabs(c.value)>1e-12){c.value=-c.value;if(!c.expr.empty())c.expr="-("+c.expr+")";}
+  };
   if(!copy && std::fabs(std::sin(t.angle*2))>1e-9)for(const auto& c:sk.constraints)
     if((c.type==SkConstraint::Type::Horizontal||c.type==SkConstraint::Type::Vertical||c.type==SkConstraint::Type::HDistance||c.type==SkConstraint::Type::VDistance)&&std::all_of(c.refs.begin(),c.refs.end(),[&](int id){return selected.count(id)||points.count(id);}))throw Error("remove horizontal or vertical constraints before rotating to an oblique angle");
   for(int id:points){auto p=*sk.point(id);const auto original=p;double x=p.x-t.cx,y=p.y-t.cy;if(t.mirror)y=-y;const double a=t.angle;
@@ -55,12 +62,13 @@ std::vector<int> transform_entities(Sketch& sk,const std::vector<int>& ids,const
     if(copy){mapped[id]=sk.add_point(p.x,p.y);}else{*sk.point(id)=p;mapped[id]=id;}}
   for(auto e:source){const int old=e.id;if(copy){e.id=sk.next_id();e.fixed=false;e.source=nullptr;for(int& p:e.p)p=mapped.at(p);}if(t.mirror&&e.type==SkEntity::Type::Arc)std::swap(e.p[1],e.p[2]);e.r*=t.scale;result.push_back(e.id);mapped[old]=e.id;if(copy)sk.entities.push_back(e);else *sk.entity(e.id)=e;}
   if(copy){const auto constraints=sk.constraints;for(auto c:constraints){if(!std::all_of(c.refs.begin(),c.refs.end(),[&](int id){return mapped.count(id);}))continue;
-    if(c.type==SkConstraint::Type::Fix)continue;
+    if(c.type==SkConstraint::Type::Fix||coordinate(c))continue;
     if(std::fabs(std::sin(t.angle))>1e-9 && (c.type==SkConstraint::Type::Horizontal||c.type==SkConstraint::Type::Vertical||c.type==SkConstraint::Type::HDistance||c.type==SkConstraint::Type::VDistance))continue;
-    c.id=sk.next_id();for(int& r:c.refs)r=mapped.at(r);for(int& r:c.anchors)r=mapped.at(r);if(c.is_dimension()&&c.type!=SkConstraint::Type::Angle){c.value*=t.scale;if(!c.expr.empty()&&t.scale!=1)c.expr="("+c.expr+")*"+json(t.scale).dump();}c.pos[0]+=t.x;c.pos[1]+=t.y;sk.constraints.push_back(c);}}
+    c.id=sk.next_id();for(int& r:c.refs)r=mapped.at(r);for(int& r:c.anchors)r=mapped.at(r);if(c.is_dimension()&&c.type!=SkConstraint::Type::Angle){c.value*=t.scale;if(!c.expr.empty()&&t.scale!=1)c.expr="("+c.expr+")*"+json(t.scale).dump();}follow(c);c.pos[0]+=t.x;c.pos[1]+=t.y;sk.constraints.push_back(c);}}
   if(!copy)for(auto& c:sk.constraints)if(std::all_of(c.refs.begin(),c.refs.end(),[&](int id){return mapped.count(id);})) {
     if(c.is_dimension() && c.type!=SkConstraint::Type::Angle && !c.reference){c.value*=t.scale;if(!c.expr.empty() && t.scale!=1)c.expr="("+c.expr+")*"+json(t.scale).dump();}
     if(std::fabs(std::sin(t.angle))>1-1e-9){using T=SkConstraint::Type;if(c.type==T::Horizontal)c.type=T::Vertical;else if(c.type==T::Vertical)c.type=T::Horizontal;else if(c.type==T::HDistance)c.type=T::VDistance;else if(c.type==T::VDistance)c.type=T::HDistance;}
+    follow(c);
   }
   sk.validate();return result;
 }

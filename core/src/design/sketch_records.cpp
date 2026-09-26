@@ -62,6 +62,10 @@ double dimension_value(const Sketch& sk, const SkConstraint& c) {
     const auto& a = point(e.p[0]); const auto& b = point(e.p[1]);
     return std::fabs((b.x-a.x)*(p.y-a.y)-(b.y-a.y)*(p.x-a.x))/std::max(1e-12, dist(a,b));
   };
+  if ((c.type == T::HDistance || c.type == T::VDistance) && c.refs.size() == 1 && sk.point(c.refs[0])) {  // a coordinate
+    const auto& a = point(c.refs[0]);
+    return c.type == T::HDistance ? a.x : a.y;
+  }
   const auto* e = sk.entity(c.refs.at(0));
   if (c.type == T::Radius || c.type == T::Diameter || c.type == T::ArcLength) {
     const double r = e->type == SkEntity::Type::Arc ? dist(point(e->p[0]),point(e->p[1])) : e->r;
@@ -82,8 +86,8 @@ double dimension_value(const Sketch& sk, const SkConstraint& c) {
   const auto* f = sk.entity(c.refs.at(1));
   if (f && f->type == SkEntity::Type::Line) return line_dist(e && e->type == SkEntity::Type::Line ? point(e->p[0]) : point(c.refs[0]), *f);
   const auto& a = point(c.refs[0]); const auto& b = point(c.refs[1]);
-  if (c.type == T::HDistance) return std::fabs(a.x-b.x);
-  if (c.type == T::VDistance) return std::fabs(a.y-b.y);
+  if (c.type == T::HDistance) return c.is_signed ? b.x-a.x : std::fabs(a.x-b.x);
+  if (c.type == T::VDistance) return c.is_signed ? b.y-a.y : std::fabs(a.y-b.y);
   return dist(a,b);
 }
 

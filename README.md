@@ -102,7 +102,9 @@ A closed fit spline (`periodic`, the first point's id repeated, or a last point 
 through its points with knots at chord lengths, solved as a cyclic system: the same curve whichever point starts it
 or whichever way the points run (OCCT's periodic interpolation fixes an estimated tangent at the first point and
 moved a 24-point outline by up to 0.05 mm with the seam). Open fit splines take `start_tangent`/`end_tangent`, and a
-control-point spline needs only its `degree` (uniform knots, clamped or periodic, unit weights).
+control-point spline needs only its `degree` (uniform knots, clamped or periodic, unit weights). Horizontal and
+vertical dimensions take `signed: true` (they then drive q - p, a negative value putting q before p), and on a
+single point they are its signed coordinates, so a point can be fixed at (expression, expression).
 
 Face, edge and vertex inputs can be rules instead of numbers: `{"body": id, "kind": "edge", "select":
 {"parallel_to": "z"}, "expect": 4}` picks the matching entities again whenever the feature regenerates and fails,

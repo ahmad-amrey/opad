@@ -931,6 +931,10 @@ void SketchEditor::rebuild() {
       return false;
     };
     auto ends = [&](double& ax, double& ay, double& bx, double& by) {
+      if (c.refs.size() == 1 && P(c.refs[0], bx, by)) {  // a coordinate: from the sketch origin
+        ax = ay = 0;
+        return true;
+      }
       if (c.refs.size() == 1) {
         const SkEntity* e = m_sk.entity(c.refs[0]);
         return e && e->p.size() >= 2 && P(e->p[0], ax, ay) && P(e->p[1], bx, by);

@@ -428,9 +428,15 @@ struct System {
       }
       case CType::HDistance:
       case CType::VDistance: {
+        // One point: its coordinate, signed. Two: signed with is_signed, else the size with the side kept.
+        if (c.refs.size() == 1) {
+          const P2 p = ref_pt(c.refs[0]);
+          emit(ci, (c.type == CType::HDistance ? p.x : p.y) - c.value);
+          break;
+        }
         const P2 p = ref_pt(c.refs[0]), q = ref_pt(c.refs[1]);
         const Dual d = c.type == CType::HDistance ? q.x - p.x : q.y - p.y;
-        emit(ci, d - c.value * side(d));
+        emit(ci, c.is_signed ? d - c.value : d - c.value * side(d));
         break;
       }
       case CType::Radius: emit(ci, radius(ent(c.refs[0])) - c.value); break;

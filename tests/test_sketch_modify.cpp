@@ -100,3 +100,25 @@ TEST(origin_shift_preserves_ids_constraints_images_and_polar_pattern) {
   for(const auto& p:before.points){CHECK_NEAR(sk.point(p.id)->x+7,p.x,1e-8);CHECK_NEAR(sk.point(p.id)->y-4,p.y,1e-8);}
   CHECK_NEAR(sk.images[0]["position"][0].get<double>(),-5,1e-8);CHECK(solve(sk).converged);
 }
+
+// Gap log #11: a signed distance keeps its meaning through a half turn and a mirror; a coordinate dimension pins its
+// point to the sketch origin, so moving that point is refused until it is removed.
+TEST(signed_distances_follow_transforms_and_coordinates_pin_points) {
+  Sketch sk;
+  const int a = sk.add_point(0, 0), b = sk.add_point(-5, 2), line = sk.add_line(a, b);
+  const int d = sk.add_constraint(SkConstraint::Type::HDistance, {a, b}, -5);
+  sk.constraint(d)->is_signed = true;
+  sk.constraint(d)->expr = "shift";
+  CHECK(solve(sk).converged);
+  SketchTransform t;
+  t.angle = M_PI;
+  transform_entities(sk, {line}, t, false);
+  CHECK_NEAR(sk.constraint(d)->value, 5, 1e-9);
+  CHECK_EQ(sk.constraint(d)->expr, std::string("-(shift)"));
+  CHECK(solve(sk).converged);
+  CHECK_NEAR(sk.point(b)->x - sk.point(a)->x, 5, 1e-9);
+  const auto copies = transform_entities(sk, {line}, SketchTransform{}, true);
+  CHECK_EQ(copies.size(), size_t(1));
+  sk.add_constraint(SkConstraint::Type::HDistance, {a}, 1);
+  CHECK_THROWS(transform_entities(sk, {line}, t, false));
+}

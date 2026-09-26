@@ -63,8 +63,8 @@ struct SkConstraint {
     Curvature,      // [spline,spline]: equal signed endpoint curvature along the joined path
     // driving dimensions (value in mm or radians)
     Distance,       // [point, point], [point, line], [line] = its length, or [line, line] (parallel lines)
-    HDistance,      // [point, point] along u
-    VDistance,      // [point, point] along v
+    HDistance,      // [point, point] along u (with `is_signed`, q.u - p.u); [point]: its u from the sketch origin
+    VDistance,      // [point, point] along v (with `is_signed`, q.v - p.v); [point]: its v from the sketch origin
     Radius,         // [circle|arc]
     Diameter,       // [circle|arc]
     Angle,          // [line, line], between their directions p0->p1, 0..pi
@@ -77,6 +77,7 @@ struct SkConstraint {
   double value = 0;       // dimensions: the evaluated value the solver drives to
   std::string expr;       // dimensions: the expression as typed ("width / 2", "12 mm"); empty = plain value
   bool reference = false; // measured after solving; never removes a degree of freedom
+  bool is_signed = false; // hdistance/vdistance between points: the signed q - p, not its size (gap log #11)
   double pos[2] = {0, 0}; // dimensions: where the label sits (display only)
   bool is_dimension() const { return type >= Type::Distance; }
   static const char* type_name(Type t);
