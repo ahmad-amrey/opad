@@ -4,11 +4,23 @@
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
 #include <BRep_Tool.hxx>
+#include <GeomAPI_Interpolate.hxx>
+#include <Geom_BSplineCurve.hxx>
+#include <TColgp_HArray1OfPnt.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
+#include <TopoDS_Face.hxx>
 #include <gp_Circ.hxx>
+#include <gp_Pln.hxx>
 
 #include "check.hpp"
 #include "opad/core.hpp"
@@ -241,6 +253,69 @@ TEST(inspect_faces_edges_and_measure) {
   json bb = measure_bbox(d, s, {Ref::parse(block)});
   CHECK_NEAR(bb["size"][0].get<double>(), 40.0, 1e-6);
   CHECK_THROWS(inspect_ref(d, s, Ref::parse(block + "/face/999")));
+}
+
+// Gap log #4: a cycloidal disc on a 640-point spline inside its pin ring, measured without display meshes (the CLI
+// and the live bridge): the solid-against-solid search put a vertex of the ring inside the disc and read 0.
+TEST(distance_from_a_spline_disc_to_its_pin_ring) {
+  const double R = 30, rr = 2.65, e = 0.8, pin = 2.5;
+  const int pins = 26, points = 640;
+  Handle(TColgp_HArray1OfPnt) pts = new TColgp_HArray1OfPnt(1, points);
+  for (int i = 0; i < points; ++i) {
+    const double t = 2 * M_PI * i / points;
+    const double psi = std::atan2(std::sin((1 - pins) * t), R / (e * pins) - std::cos((1 - pins) * t));
+    pts->SetValue(i + 1, gp_Pnt(e + R * std::cos(t) - rr * std::cos(t + psi) - e * std::cos(pins * t),
+                                -R * std::sin(t) + rr * std::sin(t + psi) + e * std::sin(pins * t), 0));
+  }
+  GeomAPI_Interpolate fit(pts, Standard_True, 1e-9);
+  fit.Perform();
+  const Handle(Geom_BSplineCurve) outline = fit.Curve();
+  const TopoDS_Face face = BRepBuilderAPI_MakeFace(gp_Pln(), BRepBuilderAPI_MakeWire(BRepBuilderAPI_MakeEdge(outline)).Wire());
+  const TopoDS_Shape disc = BRepPrimAPI_MakePrism(face, gp_Vec(0, 0, 6)).Shape();
+  const gp_Ax2 base(gp_Pnt(0, 0, -1), gp_Dir(0, 0, 1));
+  TopTools_ListOfShape tube, rods;
+  tube.Append(BRepAlgoAPI_Cut(BRepPrimAPI_MakeCylinder(base, 34.1, 8).Shape(), BRepPrimAPI_MakeCylinder(base, R, 8).Shape()).Shape());
+  for (int k = 0; k < pins; ++k)
+    rods.Append(BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(R * std::cos(2 * M_PI * k / pins), R * std::sin(2 * M_PI * k / pins), -1), gp_Dir(0, 0, 1)), pin, 8).Shape());
+  BRepAlgoAPI_Fuse fuse;
+  fuse.SetArguments(tube);
+  fuse.SetTools(rods);
+  fuse.Build();
+  CHECK(fuse.IsDone());
+  // The clearance from the outline itself: dense samples of the spline against every pin.
+  double expected = 1e9;
+  const int samples = 100000;
+  for (int i = 0; i < samples; ++i) {
+    const gp_Pnt p = outline->Value(outline->FirstParameter() + (outline->LastParameter() - outline->FirstParameter()) * i / samples);
+    for (int k = 0; k < pins; ++k)
+      expected = std::min(expected, std::hypot(p.X() - R * std::cos(2 * M_PI * k / pins), p.Y() - R * std::sin(2 * M_PI * k / pins)) - pin);
+  }
+  CHECK(expected > 0.1);
+  Document d = Document::create();
+  cache_shape(d, "disc", disc);
+  cache_shape(d, "ring", fuse.Shape());
+  Scene scene;
+  Node discNode;
+  discNode.id = new_uuid();
+  discNode.kind = Node::Kind::Body;
+  discNode.body_key = "disc";
+  Node ringNode = discNode;
+  ringNode.id = new_uuid();
+  ringNode.body_key = "ring";
+  scene.nodes[discNode.id] = discNode;
+  scene.nodes[ringNode.id] = ringNode;
+  const json dist = measure_distance(d, scene, Ref::parse(discNode.id), Ref::parse(ringNode.id));
+  CHECK(!dist.contains("approximate"));
+  CHECK_NEAR(dist["value"].get<double>(), expected, 1e-4);
+  // The disc's volume, span by span: its outline's area times the thickness.
+  double area = 0;
+  gp_Pnt last = outline->Value(outline->FirstParameter());
+  for (int i = 1; i <= samples; ++i) {
+    const gp_Pnt p = outline->Value(outline->FirstParameter() + (outline->LastParameter() - outline->FirstParameter()) * i / samples);
+    area += 0.5 * (last.X() * p.Y() - p.X() * last.Y());
+    last = p;
+  }
+  CHECK_NEAR(node_properties(d, scene, discNode.id)["volume"].get<double>(), 6 * std::abs(area), 1e-5 * 6 * std::abs(area));
 }
 
 TEST(measure_between_bodies_in_assembly) {

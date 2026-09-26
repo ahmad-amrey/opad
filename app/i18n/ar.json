@@ -1550,5 +1550,6 @@
   "Print check": "فحص الطباعة",
   "Checking…": "جارٍ الفحص…",
   "Cancelled.": "أُلغي.",
-  "Showing the overlap": "عرض منطقة التداخل"
+  "Showing the overlap": "عرض منطقة التداخل",
+  "A pinned measurement changes the document: pass expected_revision and request_id.": "القياس المثبّت يغيّر المستند: مرّر expected_revision و request_id."
 }

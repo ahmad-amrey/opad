@@ -92,6 +92,10 @@ int main(){try {
   CHECK(agent::live_guide().at("example").size()>4);
   CHECK_THROWS(agent::validate_input(agent::live_schema("request_status"),{{"request_id",""}}));
   CHECK(agent::live_mutation("save"));
+  // Gap log #4: measure is a read unless pinned; then it needs the revision and a request id like any write.
+  CHECK(!agent::live_mutation("measure",{{"kind","bbox"}}) && agent::live_mutation("measure",{{"pin",true}}));
+  agent::validate_input(agent::live_schema("measure"),{{"kind","bbox"},{"refs",{"a"}}});
+  agent::validate_input(agent::live_schema("measure"),{{"queries",{{{"kind","distance"},{"refs",{"a","b"}}}}}});
   agent::validate_input(agent::live_schema("save"),{{"expected_revision",3},{"request_id","save-1"}});
   agent::validate_input(agent::live_schema("save"),{{"path","C:/output/part.opad"},{"overwrite",true},{"expected_revision",3},{"request_id","save-2"}});
   CHECK_THROWS(agent::validate_input(agent::live_schema("save"),{{"path","C:/output/part.opad"}}));

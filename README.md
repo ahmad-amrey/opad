@@ -83,6 +83,13 @@ Reported sizes (`info`, `properties`, `validate`, `changes.bodies`, the bounding
 Properties panel) are the tight box of the exact geometry, not the padded box used to fit views: a 60 x 31 x 21 mm
 block reports exactly that. They are measured on workers and cached per body shape.
 
+Volumes, areas and centres of mass are integrated with a Gauss rule per span of every spline (curves and
+surfaces) instead of OCCT's fixed count per edge, which read a disc bounded by a 640-point spline 4% high and one
+Engine casting at a third of its volume; over the Engine's 1295 bodies they agree with fine meshes and take a third
+of the time. `measure` is a read unless pinned (no revision is spent), takes `queries` for several measurements in
+one call, and measures distances between surfaces, face pair by face pair from the meshes (a document without
+meshes gets a private coarse one), rejecting an exact answer its meshes rule out.
+
 `viewport_image` and `render` take `views` (a labelled grid of fitted views in one image), the model's edges as
 lines (`edges` / `edge_lines`), `highlight` (faces and edges tinted) and `shading: "smooth"`; left out, images are
 byte-identical to before.

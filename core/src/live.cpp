@@ -17,6 +17,11 @@ bool live_mutation(const std::string& name) {
   for(const auto& c:commands::list())if(c.name==name)return c.mutates || name=="export";
   return false;
 }
+bool live_mutation(const std::string& name,const json& args) {
+  // A measurement only writes when pinned; otherwise it is a read and leaves the revision alone (gap log #4).
+  if(name=="measure")return args.value("pin",false);
+  return live_mutation(name);
+}
 json transaction_policy() {
   return {{"scope","connection"},{"disconnect","Uncommitted transactions and previews are discarded when this MCP connection closes."},
     {"expected_revision","Use base_revision for every staged command and commit; staging does not advance the live revision."},
@@ -126,7 +131,9 @@ const json& live_tools() {
       schema["properties"]["preview"]={{"type","boolean"},{"default",false}};
       schema["properties"]["references"]={{"type","array"},{"items",{{"type","object"}}},{"maxItems",100}};
       schema["properties"]["verbosity"]=verbosity();
-      schema["required"].push_back("expected_revision");schema["required"].push_back("request_id");
+      // measure writes only with pin: then (and only then) it needs the revision and a request id.
+      if(c.name=="measure")schema["properties"]["pin"]={{"type","boolean"},{"default",false},{"description","Append a measurement op; then expected_revision and request_id are required. Without pin, measure is a read."}};
+      else{schema["required"].push_back("expected_revision");schema["required"].push_back("request_id");}
     }
     add(c.name,c.description,schema);
   }

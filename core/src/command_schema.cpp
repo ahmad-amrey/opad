@@ -112,7 +112,7 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(properties.contains("doc")){if(live)properties.erase("doc");else required.push_back("doc");}
   if(command.mutates)properties["save"]={{"type","boolean"},{"default",true}};
   const std::map<std::string,std::vector<std::string>> needed={
-    {"properties",{"node"}},{"measure",{"kind","refs"}},{"import",{"file"}},{"export",{"format","out"}},{"render",{"out"}},{"diff",{"a","b"}},
+    {"properties",{"node"}},{"import",{"file"}},{"export",{"format","out"}},{"render",{"out"}},{"diff",{"a","b"}},
     {"annotate",{"anchor","text"}},{"delete_annotation",{"target"}},{"delete",{"target"}},{"rename",{"name"}},{"transform",{"target","matrix"}},{"section",{"origin","normal"}},{"view",{"camera"}},{"param",{"name"}},{"param_delete",{"name"}},
     {"sketch_edit",{"target"}},{"feature",{"kind"}},{"feature_edit",{"target"}},{"drawing_to_sketch",{"layers"}},
     {"query_entities",{"body"}},{"feature_schema",{"kind"}},{"sketch_details",{"sketch"}},{"resolve_reference",{"reference"}},{"sketch_tool",{"target","tool"}}
@@ -120,6 +120,11 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(auto it=needed.find(name);it!=needed.end())for(const auto& key:it->second)required.push_back(key);
   if(properties.contains("ref"))properties["ref"]=ref();
   if(properties.contains("refs"))properties["refs"]=array(ref(),1,100);
+  if(name=="measure"){  // several measurements in one call (gap log #4)
+    properties["kind"]=choice({"distance","angle","radius","diameter","bbox"});
+    properties["queries"]=array(object({{"kind",choice({"distance","angle","radius","diameter","bbox"})},{"refs",array(ref(),1,100)}},{"refs"}),1,200);
+    properties["queries"]["description"]="Several measurements, answered in order as results; a failed one carries error. Instead of kind and refs.";
+  }
   if(properties.contains("anchor"))properties["anchor"]=ref();
   if(name=="annotate") {
     auto stroke=object({{"color",choice({"red","green","blue","white"})},{"width",{{"type","integer"},{"enum",{1,2,4,6,8}}}},{"points",array(vector(2),2,8192)}},{"color","width","points"});

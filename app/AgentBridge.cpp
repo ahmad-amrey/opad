@@ -239,7 +239,8 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     auto it=m_receipts.find(key);if(it==m_receipts.end())reply(s,live_result({{"state","unknown"},{"request_id",args["request_id"]}}));
     else replyReceipt(s,it->second);return;
   }
-  const bool write=live_mutation(name);
+  const bool write=live_mutation(name,args);
+  if(write && (!args.contains("expected_revision") || !args.contains("request_id"))){fail(s,"invalid_arguments",tr("A pinned measurement changes the document: pass expected_revision and request_id."));return;}
   if(write){
     auto found=m_receipts.find(key);if(found!=m_receipts.end()){
       if(found->second.hash!=hash){fail(s,"request_id_reused",tr("This request ID already belongs to different arguments."));return;}

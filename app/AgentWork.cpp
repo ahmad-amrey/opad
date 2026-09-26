@@ -6,6 +6,7 @@
 #include "opad/mesh.hpp"
 #include "opad/render.hpp"
 #include "opad/inspect.hpp"
+#include "opad/mass.hpp"
 #include <QLocalSocket>
 #include <QUuid>
 #include <QThread>
@@ -13,8 +14,6 @@
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepBndLib.hxx>
-#include <BRepGProp.hxx>
-#include <GProp_GProps.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <cctype>
@@ -214,7 +213,7 @@ void AgentBridge::save(const std::shared_ptr<Session>& session,const json& args,
 }
 void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string name,json args,const std::string& receipt){
   if(m_busy){fail(session,"busy",tr("An agent operation is still running. Wait or use Stop."),receipt);return;}
-  const bool write=live_mutation(name),preview=args.value("preview",false);const auto transaction=args.value("transaction","");
+  const bool write=live_mutation(name,args),preview=args.value("preview",false);const auto transaction=args.value("transaction","");
   const auto previewId=args.value("preview_id","");
   if(!previewId.empty() && (!m_prepared || m_prepared->id!=previewId || m_prepared->owner!=session->socket)){
     fail(session,"unknown_preview",tr("No matching prepared operation belongs to this connection."));return;
@@ -366,7 +365,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
           const auto shape=opad::node_world_shape(*working->doc,working->scene,id);
           entry["bbox"]=opad::bbox_to_json(opad::node_tight_bbox(*working->doc,working->scene,id));
           if(node.representation=="solid"){
-            GProp_GProps volume;BRepGProp::VolumeProperties(shape,volume);entry["volume_mm3"]=volume.Mass();
+            entry["volume_mm3"]=opad::volume_properties(shape).mass;
             entry["valid"]=checked.count(id)?true:BRepCheck_Analyzer(shape).IsValid();
           }else entry["representation"]=node.representation;
           bodies.push_back(entry);

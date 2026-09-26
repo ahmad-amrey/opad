@@ -189,6 +189,14 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   reference tokens; `viewport_image` (live) and `render` return pictures.
 - Sizes (`bbox` in results, properties, validate, measurements) are tight boxes of the exact geometry (a turned body
   in a union of many: the turned corners of its own tight box).
+- Volumes, areas and centres of mass (properties, validate, `changes.bodies`, `entity_details`) are integrated span
+  by span of every spline, so a profile made of a long spline reads its true area.
+- `measure` is a read: no `expected_revision`, `request_id` or revision spent, unless `pin: true` (then it appends
+  a measurement op like any write). `queries: [{kind, refs}, ...]` measures several at once and answers `results`
+  in order (a failed one carries `error`). A distance is between the surfaces of what it names: a body inside
+  another reports the gap between their surfaces (overlaps are `validate` with `checks: ["interference"]`).
+  `approximate: true` with `tolerance_mm` means the exact search failed and the meshes' distance is given;
+  `warnings` names a shape the kernel does not hold as valid when a distance comes out as 0.
 - `validate` with `checks: ["interference"]` lists pairs of bodies that overlap (volume, box) and, with
   `clearance_mm`, pairs closer than that (`ignore` lists pairs meant to overlap); `checks: ["print"]` reports, per
   body, faces overhanging more than `overhang_deg` (default 45, from vertical) against `build_direction` ("+z"),

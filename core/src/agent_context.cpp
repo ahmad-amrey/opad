@@ -2,12 +2,11 @@
 #include "opad/checks.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
+#include "opad/mass.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_modify.hpp"
 #include <BRepCheck_Analyzer.hxx>
-#include <BRepGProp.hxx>
-#include <GProp_GProps.hxx>
 #include <TopExp_Explorer.hxx>
 #include <algorithm>
 #include <cmath>
@@ -70,7 +69,7 @@ json sketch_details(const Document&,const Scene& scene,const json& args) {
   if(section=="points" || section=="entities" || section=="constraints")return sk->geometry.contains(section)?slice(sk->geometry.at(section),args):slice(json::array(),args);
   if(section=="profiles") {
     const auto geometry=design::Sketch::from_json(sk->geometry);auto regions=design::sketch_regions(geometry,sk->frame);design::identify_regions(geometry,regions,sk->frame);
-    json items=json::array();for(size_t i=offset(args);i<regions.size()&&items.size()<limit(args);++i){const auto& r=regions[i];items.push_back({{"sketch",sk->id},{"at",{r.u,r.v}},{"boundary",r.boundary},{"area",r.area},{"position",sk->frame.to_world(r.u,r.v)}});}return page(std::move(items),regions.size(),args);
+    json items=json::array();for(size_t i=offset(args);i<regions.size()&&items.size()<limit(args);++i){const auto& r=regions[i];items.push_back({{"sketch",sk->id},{"at",{r.u,r.v}},{"boundary",r.boundary},{"area",area_properties(r.face).mass},{"position",sk->frame.to_world(r.u,r.v)}});}return page(std::move(items),regions.size(),args);
   }
   if(section=="chain") {
     const int seed=args.at("entity").get<int>();const auto geometry=design::Sketch::from_json(sk->geometry);
@@ -161,8 +160,10 @@ json validate_design(const Document& doc,const Scene& scene,const json& args,con
     const auto* node=scene.node(bodies[i]);if(!node)throw Error("Unknown validation body: "+bodies[i]);
     auto shape=node_world_shape(doc,scene,bodies[i]);const bool ok=!shape.IsNull()&&BRepCheck_Analyzer(shape).IsValid();valid=valid&&ok;
     int solids=0;for(TopExp_Explorer ex(shape,TopAbs_SOLID);ex.More();ex.Next())++solids;
-    GProp_GProps volume,area;BRepGProp::VolumeProperties(shape,volume);BRepGProp::SurfaceProperties(shape,area);
-    items.push_back({{"id",bodies[i]},{"valid",ok},{"solids",solids},{"volume_mm3",volume.Mass()},{"area_mm2",area.Mass()},{"bbox",bbox_to_json(node_tight_bbox(doc,scene,bodies[i]))},{"representation",node->representation}});
+    json volume,area,error;  // span by span (gap log #4); a body the kernel cannot walk is reported, not fatal
+    try{volume=volume_properties(shape).mass;area=area_properties(shape).mass;}catch(const Error& e){error=e.what();}
+    items.push_back({{"id",bodies[i]},{"valid",ok&&error.is_null()},{"solids",solids},{"volume_mm3",volume},{"area_mm2",area},{"bbox",bbox_to_json(node_tight_bbox(doc,scene,bodies[i]))},{"representation",node->representation}});
+    if(!error.is_null()){items.back()["error"]=error;valid=false;}
   }
   auto out=page(std::move(items),bodies.size(),args);out["valid_page"]=valid;out["unresolved"]=scene.unresolved.size();out["scope"]="Geometry validity and exact measurements; not a manufacturing assessment.";
   for(auto& [k,v]:extra.items())out[k]=v;

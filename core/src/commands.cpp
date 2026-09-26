@@ -1,5 +1,7 @@
 #include "opad/commands.hpp"
 
+#include <Standard_Failure.hxx>
+
 #include <algorithm>
 #include <map>
 #include <mutex>
@@ -287,40 +289,59 @@ void register_builtins() {
         return j;
       });
 
-  reg("measure", "Distance, angle, radius or bbox between references; optionally pinned as a measurement op",
-      {{"doc", "path"}, {"kind", "distance|angle|radius|bbox"}, {"refs", "array - references"}, {"pin", "bool - append a measurement op"}, {"by", "string"}},
+  reg("measure", "Distance, angle, radius or bbox between references; optionally pinned as a measurement op. A read unless pinned; queries measures several at once",
+      {{"doc", "path"}, {"kind", "distance|angle|radius|bbox"}, {"refs", "array - references"},
+       {"queries", "array - several measurements [{kind, refs}], answered in order as results (a failed one carries error)"},
+       {"pin", "bool - append a measurement op (each, with queries)"}, {"by", "string"}},
       true, [](Document* d, const json& a) {
         Document& doc = need(d);
-        Scene s = resolve(doc);
-        std::string kind = a.value("kind", "distance");
-        std::vector<Ref> refs;
-        for (const auto& r : str_list(a.value("refs", json()))) refs.push_back(Ref::parse(r));
-        json res;
-        if (kind == "distance") {
-          if (refs.size() != 2) throw Error("distance needs exactly two refs");
-          res = measure_distance(doc, s, refs[0], refs[1]);
-        } else if (kind == "angle") {
-          if (refs.size() != 2) throw Error("angle needs exactly two refs");
-          res = measure_angle(doc, s, refs[0], refs[1]);
-        } else if (kind == "radius" || kind == "diameter") {
-          if (refs.size() != 1) throw Error("radius needs exactly one ref");
-          res = measure_radius(doc, s, refs[0]);
-        } else if (kind == "bbox") {
-          res = measure_bbox(doc, s, refs);
-        } else {
-          throw Error("unknown measurement kind: " + kind);
+        Scene s = resolve(doc);  // once for every query (gap log #4)
+        auto one = [&](const std::string& kind, const json& refArgs) {
+          std::vector<Ref> refs;
+          for (const auto& r : str_list(refArgs)) refs.push_back(Ref::parse(r));
+          json res;
+          if (kind == "distance") {
+            if (refs.size() != 2) throw Error("distance needs exactly two refs");
+            res = measure_distance(doc, s, refs[0], refs[1]);
+          } else if (kind == "angle") {
+            if (refs.size() != 2) throw Error("angle needs exactly two refs");
+            res = measure_angle(doc, s, refs[0], refs[1]);
+          } else if (kind == "radius" || kind == "diameter") {
+            if (refs.size() != 1) throw Error("radius needs exactly one ref");
+            res = measure_radius(doc, s, refs[0]);
+          } else if (kind == "bbox") {
+            res = measure_bbox(doc, s, refs);
+          } else {
+            throw Error("unknown measurement kind: " + kind);
+          }
+          if (a.value("pin", false)) {
+            json op;
+            op["op"] = "measurement";
+            op["kind"] = kind;
+            json rj = json::array();
+            for (const auto& r : refs) rj.push_back(r.to_json());
+            op["refs"] = rj;
+            op["result"] = res;
+            res["pinned_op"] = doc.append(op, a.value("by", "")).id;
+          }
+          return res;
+        };
+        if (!a.contains("queries")) {
+          if (!a.contains("refs")) throw Error("measure: pass refs (with kind) or queries");
+          return one(a.value("kind", "distance"), a["refs"]);
         }
-        if (a.value("pin", false)) {
-          json op;
-          op["op"] = "measurement";
-          op["kind"] = kind;
-          json rj = json::array();
-          for (const auto& r : refs) rj.push_back(r.to_json());
-          op["refs"] = rj;
-          op["result"] = res;
-          res["pinned_op"] = doc.append(op, a.value("by", "")).id;
+        json results = json::array();
+        for (const auto& q : a["queries"]) {
+          const std::string kind = q.value("kind", "distance");
+          try {
+            results.push_back(one(kind, q.value("refs", json())));
+          } catch (const Standard_Failure& e) {
+            results.push_back({{"kind", kind}, {"refs", q.value("refs", json())}, {"error", std::string("the modelling kernel failed: ") + e.GetMessageString()}});
+          } catch (const std::exception& e) {
+            results.push_back({{"kind", kind}, {"refs", q.value("refs", json())}, {"error", e.what()}});
+          }
         }
-        return res;
+        return json{{"results", results}};
       });
 
   reg("append", "Validate and append one op or a list of ops", {{"doc", "path"}, {"op", "object - the op"}, {"ops", "array - several ops"}, {"by", "string - author"}},
@@ -635,7 +656,13 @@ json run(const std::string& name, const json& args, Document* live) {
     }
     doc = &loaded;
   }
-  json out = h(doc, args);
+  json out;
+  try {
+    out = h(doc, args);
+  } catch (const Standard_Failure& e) {
+    // A kernel exception is not a std::exception: the CLI died on one ("terminate called", gap log #4).
+    throw Error(std::string("the modelling kernel failed: ") + e.GetMessageString());
+  }
   if (save_after && doc->dirty) doc->save();
   if (transient && info.mutates && out.is_object()) out["transient"] = true;
   return out;

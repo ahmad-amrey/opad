@@ -3,6 +3,11 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
+#include <BRepCheck_Analyzer.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRepExtrema_ExtCC.hxx>
@@ -36,6 +41,7 @@
 #include <set>
 
 #include "opad/geometry.hpp"
+#include "opad/mass.hpp"
 
 namespace opad {
 
@@ -367,16 +373,20 @@ json node_properties(const Document& doc, const Scene& scene, const std::string&
     bool has_solid = false;
     for (TopExp_Explorer e(proto, TopAbs_SOLID); e.More(); e.Next()) has_solid = true;
     j["solid"] = has_solid;
-    GProp_GProps props;
-    if (has_solid) {
-      BRepGProp::VolumeProperties(world, props);
-      j["volume"] = props.Mass();
-      j["center_of_mass"] = pnt(props.CentreOfMass());
+    // Span by span (gap log #4): BRepGProp read a disc on a long spline several per cent off. A body whose faces
+    // the kernel cannot walk still gets its other properties.
+    try {
+      if (has_solid) {
+        const MassProperties volume = volume_properties(world);
+        j["volume"] = volume.mass;
+        j["center_of_mass"] = pnt(volume.centre);
+      }
+      const MassProperties area = area_properties(world);
+      j["area"] = area.mass;
+      if (!has_solid) j["center_of_mass"] = pnt(area.centre);
+    } catch (const Error& e) {
+      j["mass_error"] = e.what();
     }
-    GProp_GProps sprops;
-    BRepGProp::SurfaceProperties(world, sprops);
-    j["area"] = sprops.Mass();
-    if (!has_solid) j["center_of_mass"] = pnt(sprops.CentreOfMass());
     j["bbox"] = bbox_json(node_tight_bbox(doc, scene, node_id));
   } else {
     j["children"] = n->children.size();
@@ -447,10 +457,9 @@ json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref) {
     BRepAdaptor_Surface surf(face);
     j["type"] = "face";
     j["surface"] = surface_type(surf.GetType());
-    GProp_GProps props;
-    BRepGProp::SurfaceProperties(face, props);
-    j["area"] = props.Mass();
-    j["center"] = pnt(props.CentreOfMass());
+    const MassProperties area = area_properties(face);
+    j["area"] = area.mass;
+    j["center"] = pnt(area.centre);
     bool reversed = face.Orientation() == TopAbs_REVERSED;
     switch (surf.GetType()) {
       case GeomAbs_Plane: {
@@ -562,15 +571,20 @@ json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref) {
 // out: 10 s to minutes between two Engine bodies. The display meshes already sit on the shapes, so: find the
 // closest triangles with a BVH (milliseconds), keep the face pairs that come within the meshes' deflection of that
 // minimum, and run the exact extrema on those few pairs only. Without triangulation (CLI on an unmeshed document,
-// non-rigid instances) it falls back to the exact search over everything.
+// non-rigid instances) a copy is meshed for the search (gap log #4).
 namespace {
 using Vec3d = BVH_Vec3d;
 
-double segSegSq(const Vec3d& p1, const Vec3d& q1, const Vec3d& p2, const Vec3d& q2) {
+// Squared distance of two segments, with the closest points.
+double segSeg(const Vec3d& p1, const Vec3d& q1, const Vec3d& p2, const Vec3d& q2, Vec3d& c1, Vec3d& c2) {
   const Vec3d d1 = q1 - p1, d2 = q2 - p2, r = p1 - p2;
   const double a = d1.Dot(d1), e = d2.Dot(d2), f = d2.Dot(r);
   double s = 0, t = 0;
-  if (a <= 1e-30 && e <= 1e-30) return r.Dot(r);
+  if (a <= 1e-30 && e <= 1e-30) {
+    c1 = p1;
+    c2 = p2;
+    return r.Dot(r);
+  }
   if (a <= 1e-30) {
     t = std::clamp(f / e, 0.0, 1.0);
   } else {
@@ -585,38 +599,77 @@ double segSegSq(const Vec3d& p1, const Vec3d& q1, const Vec3d& p2, const Vec3d& 
       else if (t > 1) { t = 1; s = std::clamp((b - c) / a, 0.0, 1.0); }
     }
   }
-  const Vec3d d = (p1 + d1 * s) - (p2 + d2 * t);
+  c1 = p1 + d1 * s;
+  c2 = p2 + d2 * t;
+  const Vec3d d = c1 - c2;
   return d.Dot(d);
 }
 
-// Two triangles that do not cross are closest at a vertex of one against the other, or edge against edge.
-// (Crossing ones come out slightly above zero; their faces still reach the exact stage, which says 0.)
-double triTriSq(const Vec3d a[3], const Vec3d b[3]) {
-  double best = std::numeric_limits<double>::max();
+// Where segment p-q passes through triangle t0 t1 t2, if it does (Moller-Trumbore).
+bool segmentCrosses(const Vec3d& p, const Vec3d& q, const Vec3d& t0, const Vec3d& t1, const Vec3d& t2, Vec3d& at) {
+  const Vec3d d = q - p, e1 = t1 - t0, e2 = t2 - t0, h = Vec3d::Cross(d, e2);
+  const double det = e1.Dot(h);
+  if (std::abs(det) < 1e-30) return false;
+  const Vec3d s = p - t0, g = Vec3d::Cross(s, e1);
+  const double u = s.Dot(h) / det, v = d.Dot(g) / det, t = e2.Dot(g) / det;
+  if (u < 0 || v < 0 || u + v > 1 || t < 0 || t > 1) return false;
+  at = p + d * t;
+  return true;
+}
+
+// Two triangles: 0 where they cross (so that the meshes' distance is a lower bound, gap log #4), else closest at a
+// vertex of one against the other or edge against edge; with the closest points.
+double triTri(const Vec3d a[3], const Vec3d b[3], Vec3d& pa, Vec3d& pb) {
   for (int i = 0; i < 3; ++i) {
-    best = std::min(best, BVH_Tools<double, 3>::PointTriangleSquareDistance(a[i], b[0], b[1], b[2]));
-    best = std::min(best, BVH_Tools<double, 3>::PointTriangleSquareDistance(b[i], a[0], a[1], a[2]));
-    for (int k = 0; k < 3; ++k) best = std::min(best, segSegSq(a[i], a[(i + 1) % 3], b[k], b[(k + 1) % 3]));
+    Vec3d at;
+    if (segmentCrosses(a[i], a[(i + 1) % 3], b[0], b[1], b[2], at) || segmentCrosses(b[i], b[(i + 1) % 3], a[0], a[1], a[2], at)) {
+      pa = pb = at;
+      return 0;
+    }
+  }
+  double best = std::numeric_limits<double>::max();
+  auto keep = [&](double d, const Vec3d& x, const Vec3d& y) {
+    if (d < best) {
+      best = d;
+      pa = x;
+      pb = y;
+    }
+  };
+  for (int i = 0; i < 3; ++i) {
+    const Vec3d onB = BVH_Tools<double, 3>::PointTriangleProjection(a[i], b[0], b[1], b[2]);
+    keep((a[i] - onB).Dot(a[i] - onB), a[i], onB);
+    const Vec3d onA = BVH_Tools<double, 3>::PointTriangleProjection(b[i], a[0], a[1], a[2]);
+    keep((b[i] - onA).Dot(b[i] - onA), onA, b[i]);
+    for (int k = 0; k < 3; ++k) {
+      Vec3d c1, c2;
+      const double d = segSeg(a[i], a[(i + 1) % 3], b[k], b[(k + 1) % 3], c1, c2);
+      keep(d, c1, c2);
+    }
   }
   return best;
 }
 
 class TrianglePairs : public BVH_PairDistance<double, 3, BRepExtrema_TriangleSet> {
  public:
-  // Pass 1 (collect == nullptr): the minimum. Pass 2: every face pair within `within` (squared), closest first.
-  std::map<std::pair<int, int>, double>* collect = nullptr;
+  // Pass 1 (collect == nullptr): the minimum. Pass 2: every face pair within `within` (squared), with its closest
+  // points on the meshes.
+  struct Near {
+    double sq;
+    Vec3d a, b;
+  };
+  std::map<std::pair<int, int>, Near>* collect = nullptr;
   void setWithin(double sq) { myDistance = sq; }
   Standard_Boolean Accept(const Standard_Integer i1, const Standard_Integer i2) override {
-    Vec3d a[3], b[3];
+    Vec3d a[3], b[3], pa, pb;
     myBVHSet1->GetVertices(i1, a[0], a[1], a[2]);
     myBVHSet2->GetVertices(i2, b[0], b[1], b[2]);
-    const double d = triTriSq(a, b);
+    const double d = triTri(a, b, pa, pb);
     if (collect) {
       if (d > myDistance) return Standard_False;
       const auto key = std::make_pair(myBVHSet1->GetFaceID(i1), myBVHSet2->GetFaceID(i2));
       auto it = collect->find(key);
-      if (it == collect->end()) collect->emplace(key, d);
-      else it->second = std::min(it->second, d);
+      if (it == collect->end()) collect->emplace(key, Near{d, pa, pb});
+      else if (d < it->second.sq) it->second = Near{d, pa, pb};
       return Standard_True;
     }
     if (d >= myDistance) return Standard_False;
@@ -636,6 +689,42 @@ bool meshedFaces(const TopoDS_Shape& shape, BRepExtrema_ShapeList& faces, double
     faces.Append(ex.Current());
   }
   return faces.Size() > 0;
+}
+
+// The faces of a shape for the pair search, meshed: its own meshes (the viewer's) when every face has one, else a
+// copy meshed here, coarse for its size. Without meshes the search used to fall back to solid against solid, whose
+// inside test put a vertex of one body inside the other and read 0 (gap log #4).
+bool pairFaces(const TopoDS_Shape& shape, BRepExtrema_ShapeList& faces, double& deflection) {
+  double own = 0;
+  if (meshedFaces(shape, faces, own)) {
+    deflection = std::max(deflection, own);
+    return true;
+  }
+  faces.Clear();
+  if (!TopExp_Explorer(shape, TopAbs_FACE).More()) return false;
+  Bnd_Box box;
+  BRepBndLib::Add(shape, box);
+  const double size = box.IsVoid() ? 1.0 : std::sqrt(box.SquareExtent());
+  const TopoDS_Shape copy = BRepBuilderAPI_Copy(shape, Standard_False, Standard_False).Shape();
+  BRepMesh_IncrementalMesh(copy, std::clamp(size * 1e-3, 1e-3, 0.5), Standard_False, 0.5, Standard_True);
+  own = 0;
+  if (!meshedFaces(copy, faces, own)) {
+    faces.Clear();
+    return false;
+  }
+  deflection = std::max(deflection, own);
+  return true;
+}
+
+// A body's faces in place of its solids: the distance is between surfaces, and BRepExtrema's inside test for a
+// solid misclassifies points near long spline faces (gap log #4).
+TopoDS_Shape surfaceOf(const TopoDS_Shape& shape) {
+  if (!TopExp_Explorer(shape, TopAbs_SOLID).More()) return shape;
+  TopoDS_Compound faces;
+  BRep_Builder builder;
+  builder.MakeCompound(faces);
+  for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) builder.Add(faces, e.Current());
+  return faces;
 }
 
 class CancelIndicator : public Message_ProgressIndicator {
@@ -725,54 +814,61 @@ void exactDistance(const TopoDS_Shape& s1, const TopoDS_Shape& s2, bool parallel
 json measure_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b, const std::function<bool()>& cancelled) {
   const TopoDS_Shape s1 = ref_shape(doc, scene, a), s2 = ref_shape(doc, scene, b);
   Closest best;
-  int exactPairs = 0;
+  bool approximate = false;
   BRepExtrema_ShapeList f1, f2;
   double deflection = 0;
-  // Worth it from a handful of face pairs on; a single face against a single face is what the exact search does anyway.
-  if (meshedFaces(s1, f1, deflection) && meshedFaces(s2, f2, deflection) && f1.Size() * f2.Size() > 8) {
+  if (pairFaces(s1, f1, deflection) && pairFaces(s2, f2, deflection)) {
     Handle(BRepExtrema_TriangleSet) t1 = new BRepExtrema_TriangleSet(f1), t2 = new BRepExtrema_TriangleSet(f2);
     TrianglePairs nearest;
     nearest.SetBVHSets(t1.get(), t2.get());
     const double meshMin = std::sqrt(nearest.ComputeDistance());
-    if (nearest.IsDone()) {
-      // The surfaces lie within one deflection of their meshes, so the true closest pair is at most this far out.
-      const double within = meshMin + 2.0 * deflection + 1e-6;
-      std::map<std::pair<int, int>, double> pairs;
-      TrianglePairs gather;
-      gather.collect = &pairs;
-      gather.setWithin(within * within);
-      gather.SetBVHSets(t1.get(), t2.get());
-      gather.Select();
-      std::vector<std::pair<double, std::pair<int, int>>> order;
-      for (const auto& p : pairs) order.push_back({p.second, p.first});
-      std::sort(order.begin(), order.end());
-      // The exact face-to-face extrema is the slow part (~0.3 s a pair between Engine castings) and the pairs are
-      // independent: run them side by side, each allowed to split further, and keep the smallest.
-      std::mutex mu;
-      std::atomic<size_t> next{0};
-      std::atomic<bool> failed{false};
-      auto worker = [&] {
-        for (size_t i = next++; i < order.size(); i = next++) {
-          if (failed || (cancelled && cancelled())) return;
-          try {
-            Closest mine;
-            exactDistance(f1(order[i].second.first), f2(order[i].second.second), true, cancelled, mine);
-            std::lock_guard<std::mutex> lock(mu);
-            if (mine.value < best.value) best = mine;
-          } catch (...) {
-            failed = true;
-          }
+    if (!nearest.IsDone()) throw Error("distance computation failed");
+    // The surfaces lie within one deflection of their meshes, so the true closest pair is at most this far out.
+    const double within = meshMin + 2.0 * deflection + 1e-6;
+    std::map<std::pair<int, int>, TrianglePairs::Near> pairs;
+    TrianglePairs gather;
+    gather.collect = &pairs;
+    gather.setWithin(within * within);
+    gather.SetBVHSets(t1.get(), t2.get());
+    gather.Select();
+    std::vector<std::pair<double, std::pair<int, int>>> order;
+    for (const auto& p : pairs) order.push_back({p.second.sq, p.first});
+    std::sort(order.begin(), order.end());
+    // The exact face-to-face extrema is the slow part (~0.3 s a pair between Engine castings) and the pairs are
+    // independent: run them side by side, each allowed to split further, and keep the smallest.
+    std::mutex mu;
+    std::atomic<size_t> next{0};
+    auto worker = [&] {
+      for (size_t i = next++; i < order.size(); i = next++) {
+        if (cancelled && cancelled()) return;
+        const auto& meshed = pairs.at(order[i].second);
+        Closest mine;
+        bool trusted = false;
+        try {
+          exactDistance(f1(order[i].second.first), f2(order[i].second.second), true, cancelled, mine);
+          // The pair's meshes bound it from below. An exact answer well under that came from a point on a surface
+          // wrongly taken to be inside its face (gap log #4: a disc's plane "reaching" the ring at 0 mm).
+          trusted = mine.value != std::numeric_limits<double>::max() && mine.value >= std::sqrt(meshed.sq) - 3.0 * deflection - 1e-6;
+        } catch (...) {
         }
-      };
-      std::vector<std::thread> pool;
-      for (size_t i = 1; i < std::min<size_t>(order.size(), std::max(2u, std::thread::hardware_concurrency())); ++i) pool.emplace_back(worker);
-      worker();
-      for (auto& t : pool) t.join();
-      if (cancelled && cancelled()) throw Error("cancelled");
-      if (!failed) exactPairs = static_cast<int>(order.size());
-    }
+        // Then the meshes' own closest points, within their deflection of the truth, and said so.
+        if (!trusted) mine = Closest{std::sqrt(meshed.sq), gp_Pnt(meshed.a.x(), meshed.a.y(), meshed.a.z()), gp_Pnt(meshed.b.x(), meshed.b.y(), meshed.b.z())};
+        std::lock_guard<std::mutex> lock(mu);
+        if (mine.value < best.value) {
+          best = mine;
+          approximate = !trusted;
+        }
+      }
+    };
+    std::vector<std::thread> pool;
+    for (size_t i = 1; i < std::min<size_t>(order.size(), std::max(2u, std::thread::hardware_concurrency())); ++i) pool.emplace_back(worker);
+    worker();
+    for (auto& t : pool) t.join();
+    if (cancelled && cancelled()) throw Error("cancelled");
+  } else {
+    // A point, a vertex or an edge against anything: the exact search, between surfaces.
+    exactDistance(surfaceOf(s1), surfaceOf(s2), true, cancelled, best);
   }
-  if (exactPairs == 0) exactDistance(s1, s2, true, cancelled, best);
   if (best.value == std::numeric_limits<double>::max()) throw Error("distance computation failed");
   json j;
   j["kind"] = "distance";
@@ -782,6 +878,17 @@ json measure_distance(const Document& doc, const Scene& scene, const Ref& a, con
   j["point_a"] = pnt(best.a);
   j["point_b"] = pnt(best.b);
   j["delta"] = {best.b.X() - best.a.X(), best.b.Y() - best.a.Y(), best.b.Z() - best.a.Z()};
+  if (approximate) {
+    j["approximate"] = true;
+    j["tolerance_mm"] = 2 * deflection;
+  }
+  // Touching, or read off a shape the kernel does not hold as valid (a self-intersecting profile): say which.
+  if (best.value < 1e-6) {
+    json warnings = json::array();
+    for (const auto& [ref, shape] : {std::make_pair(&a, &s1), std::make_pair(&b, &s2)})
+      if (!BRepCheck_Analyzer(*shape).IsValid()) warnings.push_back(ref->str() + " is not a valid shape (the kernel's check fails): a distance to it may be wrong");
+    if (!warnings.empty()) j["warnings"] = warnings;
+  }
   return j;
 }
 

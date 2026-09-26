@@ -96,6 +96,19 @@ def main():
         assert client.call("context")["result"]["bodies"] == 0
         desktop.action("redo")
         assert client.call("context")["result"]["bodies"] == 1
+        # Gap log #4: measure is a read unless pinned (no revision to thread through, none spent); queries measures
+        # several at once; a pinned one is a write like any other.
+        revision = client.state()["revision"]
+        read = client.call("measure", kind="bbox", refs=[body])
+        assert read["state"] == "read" and read["revision"] == revision and abs(read["result"]["size"][0] - 40) < 1e-6, read
+        batch = client.call("measure", queries=[{"kind": "bbox", "refs": [body]}, {"kind": "radius", "refs": [f"{body}/face/0"]}])
+        results = batch["result"]["results"]
+        assert batch["revision"] == revision and len(results) == 2 and "size" in results[0] and "error" in results[1], batch
+        refused = client.raw("measure", kind="bbox", refs=[body], pin=True)
+        assert refused["isError"] and refused["structuredContent"]["error"]["code"] == "invalid_arguments", refused
+        pinned = client.call("measure", kind="bbox", refs=[body], pin=True, expected_revision=revision, request_id="pin-bbox")
+        assert pinned["revision"] > revision and "pinned_op" in pinned["result"], pinned
+        desktop.action("undo")
         # TODO 10 B6: a token needs neither document nor signature; a bare reference this connection was given is
         # accepted while its body keeps the key and placement it had then; one it was never given is not.
         revision = client.state()["revision"]

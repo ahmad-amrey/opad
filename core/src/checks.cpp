@@ -22,6 +22,7 @@
 
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
+#include "opad/mass.hpp"
 
 namespace opad {
 namespace {
@@ -47,11 +48,7 @@ std::vector<std::string> solid_bodies(const Scene& scene, const json& args) {
   return out;
 }
 
-double volume_of(const TopoDS_Shape& s) {
-  GProp_GProps g;
-  BRepGProp::VolumeProperties(s, g);
-  return g.Mass();
-}
+double volume_of(const TopoDS_Shape& s) { return volume_properties(s).mass; }
 
 size_t arg_size(const json& args, const char* key, size_t fallback, size_t most) {
   if (!args.contains(key)) return fallback;
@@ -202,9 +199,7 @@ json check_print(const Document& doc, const Scene& scene, const json& args, cons
     for (int fi = 1; fi <= faces.Extent(); ++fi) {
       if (cancelled && cancelled()) throw Error("cancelled");
       const TopoDS_Face& face = TopoDS::Face(faces(fi));
-      GProp_GProps g;
-      BRepGProp::SurfaceProperties(face, g);
-      const double area = g.Mass();
+      const double area = area_properties(face).mass;
       if (area < 1e-12) continue;
       // Samples: a grid over the face's parameters, kept where they fall inside the face.
       double u0, u1, v0, v1;
