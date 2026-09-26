@@ -5,6 +5,7 @@
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <cstdio>
+#include <set>
 #include <BRepAdaptor_Surface.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -592,4 +593,60 @@ TEST(extrude_follows_its_sketch_curves_exactly) {
   std::printf("%d points on the sketch curves, farthest from the body's edges %.3g mm\n", samples, worst);
   CHECK(samples > 100);
   CHECK(worst < 1e-6);
+}
+
+// TODO 10 C3: editing one feature regenerated unrelated ones (a combine's target and tools were not in its fingerprint,
+// so it counted as depending on every body) and saved their unchanged bodies under new keys. As the agent writes them:
+// references as plain strings, a pattern whose copies a combine joins, a fillet on "uuid/edge/N" tokens.
+TEST(regeneration_touches_only_dependents_and_keeps_keys) {
+  Document doc = Document::create();
+  auto created = [&](const std::string& kind, const json& inputs) {
+    feature_cmd(doc, kind, inputs);
+    const Scene s = resolve(doc);
+    const Feature& f = s.features.back();
+    CHECK(f.error.empty());
+    std::vector<std::string> bodies;
+    for (const auto& b : f.result.value("bodies", json::array())) bodies.push_back(b["id"].get<std::string>());
+    return std::make_pair(f.id, bodies);
+  };
+  // Earlier in the history than the combine, as the phone's battery label was.
+  const auto [label, labels] = created("box", {{"x", "-40 mm"}, {"length", "8 mm"}, {"width", "8 mm"}, {"height", "1 mm"}});
+  const auto [pad, pads] = created("box", {{"length", "2 mm"}, {"width", "1 mm"}, {"height", "0.5 mm"}});
+  const auto [array, copies] = created("pattern_rect", {{"bodies", json::array({pads[0]})}, {"count", "4"}, {"spacing", "1.5 mm"}, {"axis", {{"base", "x"}}}});
+  CHECK_EQ(copies.size(), 3u);
+  // The copies overlap the pad: joined into it they make one strip.
+  json tools = json::array();
+  for (const auto& c : copies) tools.push_back(c);
+  const auto [joined, joinedBodies] = created("combine", {{"target", json::array({pads[0]})}, {"tools", tools}, {"operation", "join"}});
+  const auto [block, blocks] = created("box", {{"x", "40 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "5 mm"}});
+  const auto [round, rounds] = created("fillet", {{"edges", json::array({blocks[0] + "/edge/0", blocks[0] + "/edge/2"})}, {"radius", "1 mm"}});
+  auto edit = [&](const std::string& target, const json& inputs) {
+    const size_t bodies = doc.bodies().size();
+    commands::run("feature_edit", {{"target", target}, {"inputs", inputs}}, &doc);
+    std::set<std::string> regenerated;
+    for (const auto& op : doc.ops)
+      if (op.type == "regen" && op.id == doc.ops.back().id)
+        for (const auto& [id, result] : op.data.at("results").items()) regenerated.insert(id);
+    return std::make_pair(regenerated, doc.bodies().size() - bodies);
+  };
+  // An unrelated edit regenerates the edited feature alone and adds its one new body.
+  const auto [unrelated, unrelatedBodies] = edit(label, {{"height", "2 mm"}});
+  CHECK(unrelated == std::set<std::string>{label});
+  CHECK_EQ(unrelatedBodies, 1u);
+  // Editing the patterned pad regenerates the pattern and the combine (both name it as plain strings).
+  const auto [dependent, dependentBodies] = edit(pad, {{"length", "2.5 mm"}});
+  CHECK(dependent.count(pad) && dependent.count(array) && dependent.count(joined));
+  CHECK(!dependent.count(block) && !dependent.count(round) && !dependent.count(label));
+  CHECK(dependentBodies >= 2u);
+  // A body under a fillet on edge tokens: the fillet follows.
+  const auto [filleted, filletBodies] = edit(block, {{"height", "6 mm"}});
+  CHECK(filleted == (std::set<std::string>{block, round}));
+  CHECK_EQ(filletBodies, 2u);
+  // Recomputing everything from the stored bodies reproduces every stored body: no new entries, no changed keys.
+  const Scene before = resolve(doc);
+  Plan all = plan_regenerate(doc, true);
+  CHECK(all.bodies.empty());
+  commit(doc, std::move(all), "test");
+  const Scene after = resolve(doc);
+  for (const auto& id : before.all_bodies()) CHECK_EQ(after.node(id)->body_key, before.node(id)->body_key);
 }

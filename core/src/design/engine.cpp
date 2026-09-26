@@ -15,7 +15,9 @@
 #include <gp_Pln.hxx>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdlib>
 #include <set>
 
 #include "opad/geometry.hpp"
@@ -51,6 +53,64 @@ void collect_refs(const json& j, std::set<std::string>& nodes, std::set<std::str
   } else if (j.is_array()) {
     for (const auto& v : j) collect_refs(v, nodes, sketches, features);
   }
+}
+
+// Bodies an input names as plain strings ("uuid", "uuid/edge/3"), which collect_refs (objects only) misses: the items
+// of a pick input, and the values of face/edge/body keys inside plane, axis and path inputs. Choices and bases such
+// as {"base":"xy"} are not references.
+void string_refs(const json& v, bool reference, std::set<std::string>& out) {
+  if (v.is_string()) {
+    if (reference) {
+      const auto& s = v.get_ref<const std::string&>();
+      out.insert(s.substr(0, s.find('/')));
+    }
+  } else if (v.is_array()) {
+    for (const auto& c : v) string_refs(c, reference, out);
+  } else if (v.is_object()) {
+    for (const auto& [k, c] : v.items())
+      if (k != "hint") string_refs(c, k == "body" || k == "face" || k == "edge" || k == "edges", out);
+  }
+}
+
+bool reference_input(const std::string& type) {
+  return type == "bodies" || type == "faces" || type == "edges" || type == "points" || type == "profiles" || type == "plane" || type == "axis" || type == "path";
+}
+
+// Two results of one feature from equal inputs: the same topology, vertices (to about 1e-6 mm), volume, area and centre.
+// A regeneration that produced such a body keeps the stored entry: the kernel's output can differ in bits that are not
+// geometry (a Boolean on bodies read back from the store versus the same bodies fresh from the kernel), and a new key
+// for an unchanged body is noise in the file and in git.
+bool same_geometry(const TopoDS_Shape& a, const TopoDS_Shape& b) {
+  for (TopAbs_ShapeEnum type : {TopAbs_SOLID, TopAbs_SHELL, TopAbs_FACE, TopAbs_EDGE, TopAbs_VERTEX}) {
+    TopTools_IndexedMapOfShape ma, mb;
+    TopExp::MapShapes(a, type, ma);
+    TopExp::MapShapes(b, type, mb);
+    if (ma.Extent() != mb.Extent()) return false;
+  }
+  auto vertices = [](const TopoDS_Shape& s) {
+    TopTools_IndexedMapOfShape map;
+    TopExp::MapShapes(s, TopAbs_VERTEX, map);
+    std::vector<std::array<long long, 3>> out;
+    for (int i = 1; i <= map.Extent(); ++i) {
+      const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(map(i)));
+      out.push_back({std::llround(p.X() * 1e6), std::llround(p.Y() * 1e6), std::llround(p.Z() * 1e6)});
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+  };
+  const auto va = vertices(a), vb = vertices(b);
+  for (size_t i = 0; i < va.size(); ++i)
+    for (int k = 0; k < 3; ++k)
+      if (std::llabs(va[i][k] - vb[i][k]) > 2) return false;
+  auto close = [](double x, double y) { return std::abs(x - y) <= 1e-7 * std::max({1.0, std::abs(x), std::abs(y)}); };
+  GProp_GProps volume_a, volume_b, area_a, area_b;
+  BRepGProp::VolumeProperties(a, volume_a);
+  BRepGProp::VolumeProperties(b, volume_b);
+  BRepGProp::SurfaceProperties(a, area_a);
+  BRepGProp::SurfaceProperties(b, area_b);
+  if (!close(volume_a.Mass(), volume_b.Mass()) || !close(area_a.Mass(), area_b.Mass())) return false;
+  const gp_Pnt ca = area_a.CentreOfMass(), cb = area_b.CentreOfMass();
+  return close(ca.X(), cb.X()) && close(ca.Y(), cb.Y()) && close(ca.Z(), cb.Z());
 }
 
 bool input_shown(const InputSpec& in, const json& inputs) {
@@ -361,8 +421,23 @@ struct Walk {
       }
     std::set<std::string> nodes, sketches, features;
     collect_refs(inputs, nodes, sketches, features);
+    // Plain-string references count too (agents and the CLI write "uuid" and "uuid/edge/3"): without them a fillet
+    // or a pattern did not regenerate when its body changed. A component stands for the bodies under it, as
+    // body_ids resolves it. Features that name no such strings keep exactly the fingerprint they always had.
+    bool automatic_targets = false;
+    if (const FeatureSpec* spec = feature_spec(kind))
+      for (const auto& in : spec->inputs) {
+        automatic_targets |= in.name == "targets";
+        if (inputs.contains(in.name) && reference_input(in.type))
+          string_refs(inputs[in.name], in.type != "plane" && in.type != "axis" && in.type != "path", nodes);
+      }
+    for (const auto& id : std::set<std::string>(nodes))
+      if (const Node* n = scene.node(id); n && n->kind == Node::Kind::Component)
+        for (const auto& b : scene.bodies_under(id)) nodes.insert(b);
+    // Automatic targets (join/cut/intersect with none named) depend on every body. Only features with a targets input
+    // have them: combine's own operation names its target and tools, so it depends on those alone.
     const std::string op = inputs.value("operation", "new");
-    const bool automatic = inputs.contains("operation") && op != "new" && (!inputs.contains("targets") || inputs["targets"].empty());
+    const bool automatic = automatic_targets && inputs.contains("operation") && op != "new" && (!inputs.contains("targets") || inputs["targets"].empty());
     if (automatic)
       for (const auto& b : scene.all_bodies()) nodes.insert(b);
     for (const auto& n : nodes) s += node_state(scene, n);
@@ -414,17 +489,33 @@ struct Walk {
         local = BRepBuilderAPI_Transform(local.Located(TopLoc_Location()), where, Standard_True).Shape();
       }
       std::string brep;
-      const std::string key = body_key_for(local, &brep);
+      std::string key = body_key_for(local, &brep);
+      // What later features of this walk (and the shape cache) get is the body as read back from its entry, the same
+      // shape every later regeneration and a reopened file start from; the kernel's in-memory result made the first
+      // computation of a feature differ from its recomputations (new keys for unchanged bodies).
+      TopoDS_Shape stored;
+      std::string was;
+      for (const auto& p : previous.value("bodies", json::array()))
+        if (p.value("id", "") == entry["id"].get<std::string>()) was = p.value("key", "");
+      if (!was.empty() && was != key && doc.has_body(was)) {
+        const TopoDS_Shape old = body_shape(doc, was);
+        if (same_geometry(local, old)) {
+          key = was;
+          stored = old;
+        }
+      }
       entry["key"] = key;
-      if (!doc.has_body(key) && !fresh.count(key)) {
+      if (stored.IsNull() && !doc.has_body(key) && !fresh.count(key)) {
+        stored = shape_from_brep(brep);
         NewBody nb;
         nb.key = key;
         nb.brep = std::move(brep);
         nb.meta = {{"name", entry.value("name", std::string("Body"))}, {"units", "mm"}, {"source", "design"}};
-        nb.shape = std::make_shared<TopoDS_Shape>(local);
+        nb.shape = std::make_shared<TopoDS_Shape>(stored);
         plan.bodies.push_back(std::move(nb));
       }
-      fresh[key] = local;
+      if (stored.IsNull()) stored = fresh.count(key) ? fresh[key] : body_shape(doc, key);
+      fresh[key] = stored;
       bodies.push_back(entry);
       plan.changed.push_back({op_id, entry["id"].get<std::string>(), std::make_shared<TopoDS_Shape>(b.shape), false});
     }
