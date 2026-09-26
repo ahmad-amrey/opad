@@ -6,6 +6,16 @@
 #include <fstream>
 #include <limits>
 
+#include <BRepAdaptor_Curve.hxx>
+#include <BRep_Tool.hxx>
+#include <GCPnts_TangentialDeflection.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS.hxx>
+#include <cctype>
+
+#include "opad/design/sketch_text.hpp"
+#include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 
 namespace opad {
@@ -166,7 +176,7 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
       return true;
     };
 
-    struct Tri { double x[3], y[3], z[3]; float shade; int id; float r, g, bl, a; };
+    struct Tri { double x[3], y[3], z[3]; float shade; int id; float r, g, bl, a; bool smooth = false; float s3[3] = {0, 0, 0}; };
     // Perspective divides by depth, so depth is not linear in screen space but its reciprocal is: interpolating depth
     // itself put large triangles millimetres off and let surfaces behind them show through (B16). Orthographic depth is
     // linear and keeps its exact arithmetic, so orthographic images stay byte-identical.
@@ -192,14 +202,15 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
           size_t idx = static_cast<size_t>(y) * W + x;
           if (z >= zb[idx]) continue;
           float* px3 = &fb[idx * 3];
+          const float shade = t.smooth ? static_cast<float>(w0 * t.s3[0] + w1 * t.s3[1] + w2 * t.s3[2]) : t.shade;
           if (t.a >= 1.0f) {
             zb[idx] = static_cast<float>(z);
             ib[idx] = t.id;
-            px3[0] = t.r * t.shade; px3[1] = t.g * t.shade; px3[2] = t.bl * t.shade;
+            px3[0] = t.r * shade; px3[1] = t.g * shade; px3[2] = t.bl * shade;
           } else {
-            px3[0] = px3[0] * (1 - t.a) + t.r * t.shade * t.a;
-            px3[1] = px3[1] * (1 - t.a) + t.g * t.shade * t.a;
-            px3[2] = px3[2] * (1 - t.a) + t.bl * t.shade * t.a;
+            px3[0] = px3[0] * (1 - t.a) + t.r * shade * t.a;
+            px3[1] = px3[1] * (1 - t.a) + t.g * shade * t.a;
+            px3[2] = px3[2] * (1 - t.a) + t.bl * shade * t.a;
           }
         }
       }
@@ -212,6 +223,13 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
         if ((pass == 0) == transparent) continue;
         const auto& P = it.mesh->positions;
         const auto& I = it.mesh->indices;
+        const auto& N = it.mesh->normals;
+        // Index ranges of the highlighted faces (B9).
+        std::vector<std::pair<uint32_t, uint32_t>> tinted;
+        for (const auto& f : it.mesh->faces)
+          if (std::find(it.highlight_faces.begin(), it.highlight_faces.end(), f.face) != it.highlight_faces.end()) tinted.push_back({f.first, f.first + f.count});
+        const bool smooth = opt.smooth && N.size() == P.size();
+        const Mat4& m = it.world;
         for (size_t k = 0; k + 2 < I.size(); k += 3) {
           Tri t;
           Vec3 w[3];
@@ -226,8 +244,21 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
                             sub(V3{w[2][0], w[2][1], w[2][2]}, V3{w[0][0], w[0][1], w[0][2]})));
           double lam = std::fabs(dot(n, light));
           t.shade = static_cast<float>(0.32 + 0.68 * lam);
+          if (smooth) {
+            t.smooth = true;
+            for (int c = 0; c < 3; ++c) {
+              const size_t vi = static_cast<size_t>(I[k + c]) * 3;
+              const V3 vn = norm(V3{m.m[0] * N[vi] + m.m[1] * N[vi + 1] + m.m[2] * N[vi + 2], m.m[4] * N[vi] + m.m[5] * N[vi + 1] + m.m[6] * N[vi + 2],
+                                    m.m[8] * N[vi] + m.m[9] * N[vi + 1] + m.m[10] * N[vi + 2]});
+              t.s3[c] = static_cast<float>(0.32 + 0.68 * std::fabs(dot(vn, light)));
+            }
+          }
           t.id = it.id;
           t.r = it.color[0]; t.g = it.color[1]; t.bl = it.color[2]; t.a = it.opacity;
+          for (const auto& [a, e] : tinted)
+            if (k >= a && k < e) {
+              t.r = it.color[0] * 0.35f + 0.65f * 1.0f; t.g = it.color[1] * 0.35f + 0.65f * 0.55f; t.bl = it.color[2] * 0.35f + 0.65f * 0.1f;
+            }
           raster(t);
         }
       }
@@ -258,6 +289,35 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
       for (size_t i = 0; i < edge.size(); ++i)
         if (edge[i]) { fb[i * 3] *= 0.25f; fb[i * 3 + 1] *= 0.25f; fb[i * 3 + 2] *= 0.25f; }
     }
+
+    // Lines over the shading (B9): the model's edges, then highlighted edges. A line pixel shows unless a surface is in
+    // front of it by more than the tessellation can put between an edge and its own faces.
+    const double bias = 1.5 * opt.tolerance + 1e-6 * radius;
+    auto line = [&](const Vec3& a, const Vec3& e, const float colour[3], int thick) {
+      double ax, ay, az, ex2, ey2, ez;
+      if (!project(a, ax, ay, az) || !project(e, ex2, ey2, ez)) return;
+      const int steps = std::max(1, static_cast<int>(std::ceil(std::max(std::fabs(ex2 - ax), std::fabs(ey2 - ay)))));
+      for (int s = 0; s <= steps; ++s) {
+        const double f = static_cast<double>(s) / steps;
+        const double x = ax + (ex2 - ax) * f, y = ay + (ey2 - ay) * f;
+        const double z = b.perspective ? 1.0 / ((1 - f) / az + f / ez) : az + (ez - az) * f;
+        for (int dy = 0; dy < thick; ++dy)
+          for (int dx = 0; dx < thick; ++dx) {
+            const int px = static_cast<int>(std::floor(x)) + dx - thick / 2, py = static_cast<int>(std::floor(y)) + dy - thick / 2;
+            if (px < 0 || py < 0 || px >= W || py >= H) continue;
+            const size_t idx = static_cast<size_t>(py) * W + px;
+            if (z > zb[idx] + bias) continue;
+            fb[idx * 3] = colour[0]; fb[idx * 3 + 1] = colour[1]; fb[idx * 3 + 2] = colour[2];
+          }
+      }
+    };
+    const float dark[3] = {0.12f, 0.12f, 0.14f}, orange[3] = {1.0f, 0.5f, 0.05f};
+    for (int pass = 0; pass < 2; ++pass)
+      for (const auto& it : items)
+        for (const auto& poly : pass == 0 ? it.lines : it.highlight_lines)
+          for (size_t k = 1; k < poly.size(); ++k)
+            line(it.world.apply({poly[k - 1][0], poly[k - 1][1], poly[k - 1][2]}), it.world.apply({poly[k][0], poly[k][1], poly[k][2]}),
+                 pass == 0 ? dark : orange, pass == 0 ? ss : 2 * ss);
   }
 
   // Downsample.
@@ -277,7 +337,97 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
   return out;
 }
 
+namespace {
+
+// The body's edges as polylines in its own frame, by edge ordinal (degenerate edges stay empty).
+std::vector<std::vector<std::array<float, 3>>> edge_polylines(const TopoDS_Shape& shape, double tolerance) {
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(shape, TopAbs_EDGE, edges);
+  std::vector<std::vector<std::array<float, 3>>> out(static_cast<size_t>(edges.Extent()));
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    const TopoDS_Edge& e = TopoDS::Edge(edges(i));
+    if (BRep_Tool::Degenerated(e)) continue;
+    BRepAdaptor_Curve c(e);
+    GCPnts_TangentialDeflection sample(c, 0.2, std::max(tolerance, 1e-3));
+    for (int k = 1; k <= sample.NbPoints(); ++k) {
+      const gp_Pnt p = sample.Value(k);
+      out[static_cast<size_t>(i - 1)].push_back({static_cast<float>(p.X()), static_cast<float>(p.Y()), static_cast<float>(p.Z())});
+    }
+  }
+  return out;
+}
+
+// A label in the built-in stroke font, 1 px lines, cap height `h` px, top-left at (x, y).
+void draw_label(Image& img, const std::string& text, int x, int y, int h) {
+  std::vector<std::vector<std::pair<double, double>>> lines;
+  try {
+    lines = design::stroke_text(text);
+  } catch (const std::exception&) {
+    return;
+  }
+  auto dot = [&](int px, int py) {
+    if (px < 0 || py < 0 || px >= img.width || py >= img.height) return;
+    uint8_t* p = img.px(px, py);
+    p[0] = p[1] = p[2] = 40;
+  };
+  for (const auto& l : lines)
+    for (size_t k = 1; k < l.size(); ++k) {
+      const double ax = x + l[k - 1].first * h, ay = y + (1 - l[k - 1].second) * h, ex = x + l[k].first * h, ey = y + (1 - l[k].second) * h;
+      const int steps = std::max(1, static_cast<int>(std::ceil(std::max(std::fabs(ex - ax), std::fabs(ey - ay)))));
+      for (int s = 0; s <= steps; ++s) dot(static_cast<int>(std::lround(ax + (ex - ax) * s / steps)), static_cast<int>(std::lround(ay + (ey - ay) * s / steps)));
+    }
+}
+
+// Several fitted preset views in one image, each labelled with its name (B9).
+Image render_grid(const Document& doc, const Scene& scene, const RenderOptions& opt, json* receipt) {
+  const int n = static_cast<int>(opt.views.size());
+  const int cols = n <= 1 ? 1 : n <= 4 ? 2 : 3, rows = (n + cols - 1) / cols;
+  const int cw = opt.width / cols, ch = opt.height / rows;
+  if (cw < 16 || ch < 16) throw Error("render: the image is too small for that many views");
+  Image out;
+  out.width = opt.width;
+  out.height = opt.height;
+  out.rgb.assign(static_cast<size_t>(opt.width) * opt.height * 3, 0);
+  for (size_t i = 0; i < out.rgb.size(); i += 3)
+    for (int c = 0; c < 3; ++c) out.rgb[i + c] = static_cast<uint8_t>(std::clamp(opt.background[c] * 255.0f + 0.5f, 0.0f, 255.0f));
+  json views = json::array();
+  for (int v = 0; v < n; ++v) {
+    RenderOptions o = opt;
+    o.views.clear();
+    o.camera = Camera::preset(opt.views[static_cast<size_t>(v)]);
+    o.fit = true;
+    o.width = cw;
+    o.height = ch;
+    json r;
+    const Image cell = render_scene(doc, scene, o, &r);
+    const int x0 = (v % cols) * cw, y0 = (v / cols) * ch;
+    for (int y = 0; y < ch; ++y) std::copy_n(cell.px(0, y), static_cast<size_t>(cw) * 3, out.px(x0, y0 + y));
+    for (int y = y0; y < y0 + ch; ++y) if (x0 > 0) { uint8_t* p = out.px(x0, y); p[0] = p[1] = p[2] = 190; }
+    for (int x = x0; x < x0 + cw; ++x) if (y0 > 0) { uint8_t* p = out.px(x, y0); p[0] = p[1] = p[2] = 190; }
+    std::string label = opt.views[static_cast<size_t>(v)];
+    std::transform(label.begin(), label.end(), label.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    // A plate behind the label so the model cannot hide it.
+    const int plate_w = 16 + static_cast<int>(std::ceil(11 * (0.9 * static_cast<double>(label.size()) - 0.25)));
+    for (int y = y0 + 3; y < std::min(y0 + 26, y0 + ch); ++y)
+      for (int x = x0 + 3; x < std::min(x0 + plate_w, x0 + cw); ++x) {
+        uint8_t* p = out.px(x, y);
+        for (int c = 0; c < 3; ++c) p[c] = static_cast<uint8_t>(std::clamp(opt.background[c] * 255.0f + 0.5f, 0.0f, 255.0f));
+      }
+    draw_label(out, label, x0 + 8, y0 + 8, 11);
+    views.push_back({{"view", opt.views[static_cast<size_t>(v)]}, {"camera", r.value("camera", json())}, {"cell", {x0, y0, cw, ch}}});
+    if (receipt && v == 0) (*receipt)["visible_ids"] = r.value("visible_ids", json::array());
+  }
+  if (receipt) {
+    (*receipt)["views"] = views;
+    (*receipt)["camera"] = views[0]["camera"];
+  }
+  return out;
+}
+
+}  // namespace
+
 Image render_scene(const Document& doc, const Scene& scene, const RenderOptions& opt, json* receipt) {
+  if (!opt.views.empty()) return render_grid(doc, scene, opt, receipt);
   if(receipt)(*receipt)["visible_ids"]=json::array();
   std::vector<std::string> bodies = opt.select.empty() ? scene.all_bodies() : std::vector<std::string>{};
   if (!opt.select.empty())
@@ -303,6 +453,19 @@ Image render_scene(const Document& doc, const Scene& scene, const RenderOptions&
     it.color = {static_cast<float>(n->color[0]), static_cast<float>(n->color[1]), static_cast<float>(n->color[2])};
     it.opacity = static_cast<float>(n->opacity);
     it.id = id++;
+    // B9: edges and highlights.
+    bool mine = false;
+    for (const auto& h : opt.highlight) mine |= h.body == bid;
+    if (opt.edge_lines || mine) {
+      const auto polylines = edge_polylines(body_shape(doc, n->body_key), opt.tolerance);
+      if (opt.edge_lines) it.lines = polylines;
+      for (const auto& h : opt.highlight) {
+        if (h.body != bid) continue;
+        if (h.kind == Ref::Kind::Face) it.highlight_faces.push_back(h.index);
+        else if ((h.kind == Ref::Kind::Edge || h.kind == Ref::Kind::Center) && h.index >= 0 && static_cast<size_t>(h.index) < polylines.size())
+          it.highlight_lines.push_back(polylines[static_cast<size_t>(h.index)]);
+      }
+    }
     items.push_back(it);
   }
   return render_items(items, opt, receipt);

@@ -281,6 +281,8 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
           }
         }
         options.select=args.value("select",std::vector<std::string>{});options.ignore_visibility=args.value("ignore_visibility",false);
+        // TODO 10 B9: views grid, the model's edges (edges or edge_lines), highlights, smooth shading; all off by default.
+        auto picture=args;if(args.value("edges",false))picture["edge_lines"]=true;opad::commands::apply_picture_options(options,picture);
         // Use only a temporary scene copy; no camera, visibility or placement edits.
         auto renderingScene=source->scene;
         for(const auto& id:args.value("hide",std::vector<std::string>{})){
@@ -292,6 +294,7 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         result->output={{"image",QByteArray::fromStdString(png).toBase64().toStdString()},{"camera",metadata["camera"]},{"visible_ids",metadata["visible_ids"]},
           {"selection",state["selection"]},{"preview_id",args.value("preview_id","")},{"transaction",transaction},{"render_ms",renderTimer.elapsed()},
           {"rendering","software geometry view; visible_ids lists submitted visible bodies (including occluded bodies); UI overlays are not included"}};
+        if(metadata.contains("views"))result->output["views"]=metadata["views"];
       }else if(name=="model_batch")modelBatch(*working->doc,args,p,result->output,known.get());
       else result->output=opad::commands::run(name,args,working->doc.get());
       if(p.cancelled())throw opad::Error("cancelled");

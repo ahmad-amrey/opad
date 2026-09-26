@@ -66,6 +66,10 @@ Rename, Colour, Hide and Reparent on a multiple selection are one step each.
 Wherever a plane is taken, `{"origin": [x,y,z], "normal": [x,y,z]}` (with an optional `x`) defines it directly,
 and the construction plane has a point-and-normal mode.
 
+`viewport_image` and `render` take `views` (a labelled grid of fitted views in one image), the model's edges as
+lines (`edges` / `edge_lines`), `highlight` (faces and edges tinted) and `shading: "smooth"`; left out, images are
+byte-identical to before.
+
 Extrude also goes up to a face (a tilted plane is followed) or up to a body, besides a distance or through all.
 
 Face, edge and vertex inputs can be rules instead of numbers: `{"body": id, "kind": "edge", "select":

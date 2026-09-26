@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <map>
 #include <mutex>
+#include <set>
 
 #include "opad/cache.hpp"
 #include "opad/diff.hpp"
@@ -74,6 +75,29 @@ bool is_step_path(const std::filesystem::path& p) {
   return e == ".step" || e == ".stp";
 }
 
+}  // namespace
+
+// The screenshot options render and viewport_image share (TODO 10 B9), all off unless asked for.
+void apply_picture_options(RenderOptions& o, const json& a) {
+  o.edge_lines = a.value("edge_lines", false);
+  const std::string shading = a.value("shading", "flat");
+  if (shading != "flat" && shading != "smooth") throw Error("shading is flat or smooth");
+  o.smooth = shading == "smooth";
+  for (const auto& r : a.value("highlight", json::array())) {
+    const Ref ref = Ref::from_json(r);
+    if (ref.kind != Ref::Kind::Face && ref.kind != Ref::Kind::Edge && ref.kind != Ref::Kind::Center) throw Error("highlight takes faces and edges");
+    o.highlight.push_back(ref);
+  }
+  static const std::set<std::string> presets = {"iso", "top", "bottom", "front", "back", "left", "right", "iso-back"};
+  for (const auto& v : str_list(a.value("views", json()))) {
+    if (!presets.count(v)) throw Error("views are iso, top, bottom, front, back, left, right or iso-back, not " + v);
+    o.views.push_back(v);
+  }
+  if (o.views.size() > 9) throw Error("at most 9 views in one image");
+}
+
+namespace {
+
 RenderOptions render_options(const json& a) {
   RenderOptions o;
   o.width = a.value("width", 1280);
@@ -94,6 +118,7 @@ RenderOptions render_options(const json& a) {
   if (a.contains("background") && a["background"].is_array() && a["background"].size() == 3)
     o.background = {a["background"][0].get<float>(), a["background"][1].get<float>(), a["background"][2].get<float>()};
   o.supersample = a.value("supersample", 2);
+  apply_picture_options(o, a);
   return o;
 }
 
@@ -364,9 +389,11 @@ void register_builtins() {
         return export_selection(doc, resolve(doc), out, o).to_json();
       });
 
-  reg("render", "Headless screenshot (PNG)",
+  reg("render", "Headless screenshot (PNG). views puts several fitted views in one labelled grid; edge_lines draws the model's edges; highlight tints faces and edges; shading smooth uses vertex normals",
       {{"doc", "path"}, {"out", "path - .png"}, {"view", "iso|top|bottom|front|back|left|right"}, {"camera", "object - {eye,target,up,projection,scale}"},
-       {"width", "int"}, {"height", "int"}, {"select", "array|csv - node uuids"}, {"edges", "bool"}, {"background", "[r,g,b] 0..1"}, {"tolerance", "number"}},
+       {"width", "int"}, {"height", "int"}, {"select", "array|csv - node uuids"}, {"edges", "bool - silhouette outlines (default true)"}, {"background", "[r,g,b] 0..1"}, {"tolerance", "number"},
+       {"views", "array|csv - e.g. iso,front,top,right: one labelled grid"}, {"edge_lines", "bool - the model's edges as lines"}, {"highlight", "array - face/edge references to tint"},
+       {"shading", "flat|smooth"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
         RenderOptions o = render_options(a);

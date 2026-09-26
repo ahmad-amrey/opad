@@ -24,6 +24,10 @@ struct RenderItem {
   std::array<float, 3> color{0.75f, 0.75f, 0.78f};
   float opacity = 1.0f;
   int id = 0;
+  // TODO 10 B9: polylines (local coordinates) drawn over the shading: the model's edges, and highlighted edges in the
+  // highlight colour; face ordinals tinted with it.
+  std::vector<std::vector<std::array<float, 3>>> lines, highlight_lines;
+  std::vector<int> highlight_faces;
 };
 
 struct Camera {
@@ -49,6 +53,11 @@ struct RenderOptions {
   int supersample = 2;
   std::vector<std::string> select;  // node ids to draw; empty = all visible
   bool ignore_visibility = false;
+  // TODO 10 B9, all off by default so every image made before stays byte-identical:
+  bool edge_lines = false;          // the model's edges as dark lines, hidden where a surface is in front
+  bool smooth = false;              // shading from per-vertex normals instead of flat facets
+  std::vector<Ref> highlight;       // faces and edges tinted in orange
+  std::vector<std::string> views;   // several fitted preset views ("iso", "front", ...) in one labelled grid
 };
 
 Image render_items(const std::vector<RenderItem>& items, const RenderOptions& opt, json* receipt = nullptr);

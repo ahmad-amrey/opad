@@ -2,6 +2,8 @@
 // The command layer (F36): everything the CLI, Python, plugins and the UI do is a named command
 // with JSON in and JSON out. Commands taking a `doc` path load it; the GUI passes its live Document instead.
 #include <functional>
+
+#include "render.hpp"
 #include <string>
 #include <vector>
 
@@ -25,6 +27,9 @@ bool exists(const std::string& name);
 // Runs a command. When `live` is null, args["doc"] names the document: an .opad file is loaded (and saved
 // afterwards for mutating commands unless args["save"] == false); a .step file is opened in browse mode.
 json run(const std::string& name, const json& args, Document* live = nullptr);
+
+// The screenshot options render and the live viewport_image share (TODO 10 B9): views, edge_lines, highlight, shading.
+void apply_picture_options(RenderOptions& options, const json& args);
 
 // Exporter registry (built-in formats plus plugins).
 using ExportFn = std::function<json(const Document&, const json& args)>;

@@ -1153,3 +1153,35 @@ TEST(extrude_up_to_a_face_or_a_body) {
   try { feature_cmd(doc, "extrude", {{"profiles", json::array({json{{"sketch", wide}, {"at", {45, 45}}}})}, {"extent", "to_body"}, {"extent_body", json::array({slab})}}); } catch (const Error& e) { refused = std::string(e.what()).find("misses the target") != std::string::npos; }
   CHECK(refused);
 }
+
+// TODO 10 B9: several fitted views in one labelled image, each with its camera in the receipt.
+TEST(render_views_grid) {
+  Document doc = Document::create();
+  feature_cmd(doc, "box", {{"length", "40 mm"}, {"width", "30 mm"}, {"height", "20 mm"}});
+  const Scene s = resolve(doc);
+  RenderOptions o;
+  o.width = 400;
+  o.height = 300;
+  o.views = {"iso", "front", "top", "right"};
+  o.edge_lines = true;
+  json receipt;
+  const Image grid = render_scene(doc, s, o, &receipt);
+  CHECK_EQ(grid.width, 400);
+  CHECK_EQ(grid.height, 300);
+  CHECK_EQ(receipt["views"].size(), 4u);
+  CHECK_EQ(receipt["views"][2]["view"], "top");
+  CHECK_EQ(receipt["views"][3]["cell"], json::array({200, 150, 200, 150}));
+  // Each cell's label sits on a plate of background in its top-left corner.
+  for (const auto& cell : receipt["views"]) {
+    const int x = cell["cell"][0], y = cell["cell"][1];
+    CHECK_EQ(grid.px(x + 4, y + 4)[0], 255);
+    int ink = 0;
+    for (int yy = y + 8; yy < y + 20; ++yy)
+      for (int xx = x + 8; xx < x + 40; ++xx) ink += grid.px(xx, yy)[0] < 100;
+    CHECK(ink > 10);
+  }
+  CHECK(encode_png(grid) == encode_png(render_scene(doc, s, o)));
+  bool refused = false;
+  try { commands::run("render", {{"out", "unused.png"}, {"views", "iso,sideways"}}, &doc); } catch (const Error& e) { refused = std::string(e.what()).find("sideways") != std::string::npos; }
+  CHECK(refused);
+}

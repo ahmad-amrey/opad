@@ -110,6 +110,14 @@ def main():
         assert never["isError"] and "unchecked_reference" in never["structuredContent"]["error"]["message"], never
         stale = client.raw("feature", kind="chamfer", inputs={"edges": [f"{body}/edge/3"], "distance": 0.5}, expected_revision=revision, request_id="stale-given")
         assert stale["isError"] and "stale_reference" in stale["structuredContent"]["error"]["message"], stale
+        # TODO 10 B9: one call gives a labelled grid of views with the model's edges, a highlight and smooth shading.
+        grid = client.raw("viewport_image", views=["iso", "front", "top", "right"], edges=True, shading="smooth",
+                          highlight=[f"{body}/face/0"], width=640, height=480)
+        assert not grid.get("isError") and any(item["type"] == "image" for item in grid["content"]), grid
+        views = grid["structuredContent"]["result"]["views"]
+        assert len(views) == 4 and views[1]["view"] == "front" and views[3]["cell"] == [320, 240, 320, 240], views
+        wrong = client.raw("viewport_image", views=["sideways"])
+        assert wrong["isError"], wrong
         # The wrong forms that were rejected in the Benchy build now say how to fix them.
         revision = client.state()["revision"]
         cabin = {"id": "cabin", "command": "feature", "arguments": {"kind": "box", "inputs": {"length": 20, "width": 12, "height": 10}}}

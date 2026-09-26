@@ -95,6 +95,13 @@ const json& live_tools() {
   render["hide"]={{"type","array"},{"items",str()},{"maxItems",100},{"description","Temporarily exclude these bodies/components, even with ignore_visibility."}};
   render["camera"]=object({{"eye",vector},{"target",vector},{"up",vector},{"absolute",{{"type","boolean"}}},{"projection",{{"type","string"},{"enum",{"orthographic","perspective"}}}},{"scale",{{"type","number"},{"minimum",0}}},{"fov_deg",{{"type","number"},{"exclusiveMinimum",0},{"maximum",179.9}}}},{"eye","target","up"});
   render["camera"]["description"]="Custom camera; absolute defaults true. Cannot combine with view. fit defaults false for a custom camera.";
+  // TODO 10 B9: better pictures; every option is off by default, so earlier images are unchanged.
+  render["views"]={{"type","array"},{"items",{{"type","string"},{"enum",{"iso","top","bottom","front","back","left","right","iso-back"}}}},{"minItems",1},{"maxItems",9},
+    {"description","Several fitted views in one labelled grid image, e.g. [\"iso\",\"front\",\"top\",\"right\"]; result.views gives each view's camera and cell."}};
+  render["edges"]={{"type","boolean"},{"default",false},{"description","Draw the model's edges as dark lines (same as edge_lines)."}};
+  render["edge_lines"]={{"type","boolean"},{"default",false},{"description","Draw the model's edges as dark lines, hidden behind nearer surfaces."}};
+  render["highlight"]={{"type","array"},{"items",{{"type","string"}}},{"maxItems",200},{"description","Face and edge references to tint in orange, e.g. [\"<body>/face/3\", \"<body>/edge/7\"]."}};
+  render["shading"]={{"type","string"},{"enum",{"flat","smooth"}},{"default","flat"},{"description","smooth shades with vertex normals, so curved surfaces look curved."}};
   json batchSteps=json::array();
   const std::set<std::string> batchCommands={"component","param","sketch","sketch_edit","feature","feature_edit","rename","reparent","appearance","transform"};
   for(const auto& command:commands::list())if(batchCommands.count(command.name)){
