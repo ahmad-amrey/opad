@@ -213,6 +213,8 @@ json document_info(const Document& doc, const Scene& scene) {
   return j;
 }
 
+json bbox_to_json(const Bnd_Box& box) { return bbox_json(box); }
+
 json node_properties(const Document& doc, const Scene& scene, const std::string& node_id, bool geometry) {
   if(const auto* sk=scene.sketch(node_id)) {
     json out={{"id",sk->id},{"name",sk->name},{"type","sketch"},{"visible",sk->visible},{"entities",sk->geometry.value("entities",json::array()).size()},{"frame",sk->frame.to_json()}};

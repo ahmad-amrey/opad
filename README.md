@@ -76,7 +76,9 @@ There is no remote code execution, nesting or file I/O inside a batch. Existing 
 references go in each step's `references` array and must still match when that step executes.
 
 Creation results include `component_id`, `feature_id`/`body_ids` or `sketch_id`; live
-modeling results also expose `operation_ids`. Live replies, including commit and save,
+modeling results also expose `operation_ids`. Sketches and features that take a plane return the `frame`
+(origin, x, y, normal) it resolved to, and live write results list `changes.bodies`: each body the command made,
+changed or moved with its tight bounding box, volume and validity. Live replies, including commit and save,
 report `elapsed_ms` (server processing through response preparation, excluding transport
 and serialization; staged modeling calls retain their computation timer).
 

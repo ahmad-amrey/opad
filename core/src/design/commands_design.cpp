@@ -75,6 +75,14 @@ json body_style(const Scene& scene, const json& a) {
   return style;
 }
 
+// The frame a feature's "plane" input resolves to in `scene` (TODO 10 B3), or null when it takes none or does not use it.
+json plane_frame(const Document& doc, const Scene& scene, const design::FeatureSpec& spec, const json& inputs) {
+  for (const auto& in : spec.inputs)
+    if (in.name == "plane" && in.type == "plane" && design::input_active(in, inputs))
+      return design::frame_result(design::resolve_plane(doc, scene, inputs.contains("plane") ? inputs["plane"] : in.def));
+  return nullptr;
+}
+
 // Body references -> distinct body ids (a component stands for the bodies under it), as the features read them.
 json picked_bodies(const Scene& scene, const json& refs) {
   json out = json::array();
@@ -179,10 +187,14 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         Document& doc = need(d);
         const Scene s = resolve(doc);
         json plane = a.contains("plane") ? parse_if_text(a["plane"]) : json{{"base", "xy"}};
-        plane["frame"] = design::resolve_plane(doc, s, plane).to_json();
+        const Frame frame = design::resolve_plane(doc, s, plane);
+        plane["frame"] = frame.to_json();
         const json geometry = design::Sketch::from_json(parse_if_text(a.value("geometry", json::object()))).to_json();
         const std::string name = a.contains("name") ? a["name"].get<std::string>() : design::next_name(s, "Sketch");
-        return design::apply_ops(doc, {design::make_sketch_op(name, plane, geometry)}, a.value("by", ""));
+        json out = design::apply_ops(doc, {design::make_sketch_op(name, plane, geometry)}, a.value("by", ""));
+        out["sketch_id"] = out["ids"][0];
+        out["frame"] = design::frame_result(frame);
+        return out;
       });
 
   reg("drawing_to_sketch", "Project chosen drawing layers into one editable sketch, in the drawing's own plane and origin (where its import placed it) unless plane names another", {{"layers","array of {id, construction}"},{"plane","xy|xz|yz - optional; default: the drawing's own frame"},{"name","string"},{"tolerance","number, mm"}},true,[](Document* d,const json& a) {
@@ -192,7 +204,8 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
     const auto frame=own?design::drawing_frame(scene,layers):design::base_frame(base);
     const auto sketch=design::drawing_sketch(doc,scene,layers,frame,a.value("tolerance",0.01));
     const json plane=own?json{{"frame",frame.to_json()}}:json{{"base",base},{"frame",frame.to_json()}};
-    return design::apply_ops(doc,{design::make_sketch_op(a.value("name","Converted drawing"),plane,sketch.to_json())},a.value("by",""));
+    json out=design::apply_ops(doc,{design::make_sketch_op(a.value("name","Converted drawing"),plane,sketch.to_json())},a.value("by",""));
+    out["sketch_id"]=out["ids"][0];out["frame"]=design::frame_result(frame);return out;
   });
 
   reg("sketch_edit", "Replace a sketch's geometry (and optionally its name); features built on it are regenerated",
@@ -201,9 +214,13 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         json set = json::object();
         if (a.contains("geometry")) set["geometry"] = design::Sketch::from_json(parse_if_text(a["geometry"])).to_json();
         if (a.contains("name")) set["name"] = a["name"];
-        if (a.contains("plane")) {auto plane=parse_if_text(a["plane"]);plane["frame"]=design::resolve_plane(doc,resolve(doc),plane).to_json();set["plane"]=std::move(plane);}
+        json frame;
+        if (a.contains("plane")) {auto plane=parse_if_text(a["plane"]);const auto resolved=design::resolve_plane(doc,resolve(doc),plane);plane["frame"]=resolved.to_json();frame=design::frame_result(resolved);set["plane"]=std::move(plane);}
         if (set.empty()) throw Error("sketch_edit: nothing to change");
-        return design::apply_ops(doc, {design::make_edit_op(a.at("target").get<std::string>(), set)}, a.value("by", ""));
+        json out = design::apply_ops(doc, {design::make_edit_op(a.at("target").get<std::string>(), set)}, a.value("by", ""));
+        out["sketch_id"] = a.at("target");
+        if (!frame.is_null()) out["frame"] = frame;
+        return out;
       });
 
   reg("feature", "Add a feature (extrude, fillet, shell, ...) to the design history; see feature_kinds for the inputs. "
@@ -220,8 +237,9 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         agent::validate_input(agent::feature_schema(kind),inputs,"inputs");
         const bool styled = a.contains("body_name") || a.contains("color") || a.contains("parent");
         const bool copies = kind == "mirror" || kind == "pattern_rect" || kind == "pattern_circ";
-        std::optional<Scene> scene;
-        if (!a.contains("name") || styled || copies) scene = resolve(doc);
+        const Scene scene_before = resolve(doc);
+        const Scene* scene = &scene_before;
+        const json frame = plane_frame(doc, *scene, spec, inputs);
         const json style = styled ? body_style(*scene, a) : json::object();
         const std::string name = a.contains("name") ? a["name"].get<std::string>() : design::next_name(*scene, title_case(spec.label.substr(0, spec.label.find(' '))));
         design::Plan plan = design::plan_ops(doc, {design::make_feature_op(kind, name, inputs)});
@@ -245,6 +263,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
           out["all_body_ids"] = all;
         }
         if (!styling.empty()) out["style_ids"] = styling;
+        if (!frame.is_null()) out["frame"] = frame;
         if (styled && made == 0) out["warnings"] = json::array({"body_name, color and parent apply to the bodies a feature makes; this one made none (it changed existing bodies), so they were not used"});
         return out;
       });
@@ -268,7 +287,18 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         if (a.contains("name")) set["name"] = a["name"];
         if (a.contains("suppressed")) set["suppressed"] = a["suppressed"];
         if (set.empty()) throw Error("feature_edit: nothing to change");
-        return design::apply_ops(doc, {design::make_edit_op(target, set)}, a.value("by", ""));
+        json out = design::apply_ops(doc, {design::make_edit_op(target, set)}, a.value("by", ""));
+        out["feature_id"] = target;
+        // The frame its plane resolves to where the feature is in the history (TODO 10 B3).
+        if (const design::FeatureSpec* spec = design::feature_spec(f->kind)) {
+          const json inputs = set.contains("inputs") ? set["inputs"] : f->inputs;
+          for (const auto& in : spec->inputs)
+            if (in.name == "plane" && in.type == "plane" && design::input_active(in, inputs)) {
+              out["frame"] = plane_frame(doc, resolve(doc, target), *spec, inputs);
+              break;
+            }
+        }
+        return out;
       });
 
   reg("regenerate", "Recompute whatever in the design history is out of date (after a merge or a hand edit)", {{"doc", "path"}, {"force", "bool - recompute everything"}, {"by", "string"}}, true,

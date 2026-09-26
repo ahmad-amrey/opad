@@ -13,6 +13,8 @@
 #include <BRepBuilderAPI_Copy.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <cctype>
@@ -304,14 +306,14 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         }
         result->delta=changes(baseline->scene,working->scene);
         result->delta["scope"]=transaction.empty()?"command":"transaction";
-        TopoDS_Compound compound;BRep_Builder builder;builder.MakeCompound(compound);bool any=false;int checkedSolids=0;
+        TopoDS_Compound compound;BRep_Builder builder;builder.MakeCompound(compound);bool any=false;int checkedSolids=0;std::set<std::string> checked;
         result->delta["references"]=json::array();
         for(const auto& [id,node]:working->scene.nodes){
           if(p.cancelled())throw opad::Error("cancelled");if(node.kind!=opad::Node::Kind::Body)continue;
           const auto* prior=baseline->scene.node(id);if(prior && prior->body_key==node.body_key && baseline->scene.world(id).to_json()==working->scene.world(id).to_json())continue;
           auto shape=opad::node_world_shape(*working->doc,working->scene,id);
           if(node.representation=="solid"){
-            if(!BRepCheck_Analyzer(shape).IsValid())throw opad::Error("Generated body failed solid validation; document unchanged.");++checkedSolids;
+            if(!BRepCheck_Analyzer(shape).IsValid())throw opad::Error("Generated body failed solid validation; document unchanged.");++checkedSolids;checked.insert(id);
           }
           if(result->delta["references"].size()<100)result->delta["references"].push_back(reference_token(*working->doc,working->scene,opad::Ref::from_json(json{{"body",id},{"kind","body"}})));
           if(preview || !transaction.empty()){
@@ -321,6 +323,27 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
         }
         if(any){Bnd_Box box;BRepBndLib::Add(compound,box);result->preview=compound;result->prs=BodyPrs::build(compound,box);}
         result->delta["validation"]={{"changed_solid_bodies_checked",checkedSolids},{"valid",true},{"unresolved",working->scene.unresolved.size()}};
+        // What this command (not the whole transaction) did to each body it made, changed or moved (TODO 10 B3): a tight
+        // box, the volume and validity, so an agent needs no info + validate round trip after every step.
+        json bodies=json::array();size_t changedBodies=0;
+        for(const auto& [id,node]:working->scene.nodes){
+          if(node.kind!=opad::Node::Kind::Body)continue;
+          const auto* before=source->scene.node(id);
+          if(before && before->body_key==node.body_key && source->scene.world(id).to_json()==working->scene.world(id).to_json())continue;
+          if(++changedBodies>100)continue;
+          if(p.cancelled())throw opad::Error("cancelled");
+          json entry={{"id",id},{"name",node.name}};
+          if(node.body_missing){entry["valid"]=false;bodies.push_back(entry);continue;}
+          const auto shape=opad::node_world_shape(*working->doc,working->scene,id);
+          entry["bbox"]=opad::bbox_to_json(opad::node_tight_bbox(*working->doc,working->scene,id));
+          if(node.representation=="solid"){
+            GProp_GProps volume;BRepGProp::VolumeProperties(shape,volume);entry["volume_mm3"]=volume.Mass();
+            entry["valid"]=checked.count(id)?true:BRepCheck_Analyzer(shape).IsValid();
+          }else entry["representation"]=node.representation;
+          bodies.push_back(entry);
+        }
+        result->delta["bodies"]=bodies;
+        if(changedBodies>bodies.size())result->delta["bodies_total"]=changedBodies;
       }
       // The isolated acceptance harness can emulate an uninterruptible kernel tail.
       // Its result must never commit after Stop, disconnect, access revocation or a manual edit.

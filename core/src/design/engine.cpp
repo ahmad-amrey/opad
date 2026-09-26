@@ -136,6 +136,14 @@ Dim dim_of(const std::string& type) { return type == "length" ? Dim::Length : ty
 
 }  // namespace
 
+bool input_active(const InputSpec& in, const json& inputs) { return input_shown(in, inputs); }
+
+json frame_result(const Frame& frame) {
+  json out = frame.to_json();
+  out["normal"] = frame.normal();
+  return out;
+}
+
 // ---------------------------------------------------------------- Ctx
 void Ctx::check_cancel() const {
   if (cancel && cancel()) throw Error("cancelled");

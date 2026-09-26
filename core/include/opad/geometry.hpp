@@ -33,6 +33,12 @@ Bnd_Box body_bbox(ShapeCache& cache, const std::string& key, const TopoDS_Shape&
 Bnd_Box refine_body_bbox(ShapeCache& cache, const std::string& key, const TopoDS_Shape& meshed);
 // World-space box of a body node: the cached prototype box with its corners transformed (O(1) per node).
 Bnd_Box node_world_bbox(const Document& doc, const Scene& scene, const std::string& node_id);
+// Tight boxes (TODO 10 B3/B10): BRepBndLib::AddOptimal on the exact geometry, without the tolerance and meshing
+// padding of the boxes above (those fit views and cull; these are sizes to report). A body's box is cached by its
+// key and shifted for a translated node; a turned node is measured in place. Walks the geometry the first time:
+// workers only.
+Bnd_Box tight_bbox(const TopoDS_Shape& shape);
+Bnd_Box node_tight_bbox(const Document& doc, const Scene& scene, const std::string& node_id);
 // Triangulation-only bodies use facet, facet-side and mesh-node ordinals.
 bool is_mesh_shape(const TopoDS_Shape& shape);
 struct MeshCircle { gp_Circ circle; int index=0, segments=0; std::vector<int> edges; std::vector<gp_Pnt> rim; };

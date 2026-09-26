@@ -108,6 +108,10 @@ std::vector<json> rename_param_ops(const Document& doc, const std::string& from,
 std::vector<std::string> param_users(const Document& doc, const std::string& name);
 // Frame of a plane input ({"base":..} | {"face":ref} | {"feature":id}) in the given state.
 Frame resolve_plane(const Document& doc, const Scene& scene, const json& plane);
+// Whether an input is in use for these inputs (its show_if holds).
+bool input_active(const InputSpec& in, const json& inputs);
+// A frame as results report it (TODO 10 B3): origin, x, y and the normal (x cross y).
+json frame_result(const Frame& frame);
 // A reference with its geometric fingerprint, which lets it survive a change of the body's topology.
 json make_ref(const Document& doc, const Scene& scene, const Ref& ref);
 // Feature inputs with a hint added to every face/edge/vertex reference that has none (the app picks plain

@@ -883,3 +883,46 @@ TEST(body_style_and_targets_equal_the_long_form) {
   try { commands::run("feature", {{"kind", "box"}, {"inputs", json::object()}, {"parent", sa.all_bodies()[0]}}, &a); } catch (const Error& e) { refused = std::string(e.what()).find("not a component") != std::string::npos; }
   CHECK(refused);
 }
+
+// TODO 10 B3 / B10: results name the frame a plane resolved to, and sizes are the tight box, not the padded one.
+TEST(results_report_frames_and_tight_boxes) {
+  Document doc = Document::create();
+  const json box = commands::run("feature", {{"kind", "box"}, {"inputs", {{"plane", {{"base", "xz"}}}, {"length", "60 mm"}, {"width", "31 mm"}, {"height", "21 mm"}}}}, &doc);
+  CHECK_EQ(box["frame"]["normal"], json::array({0.0, -1.0, 0.0}));
+  CHECK_EQ(box["frame"]["x"], json::array({1.0, 0.0, 0.0}));
+  CHECK_EQ(box["frame"]["y"], json::array({0.0, 0.0, 1.0}));
+  Scene s = resolve(doc);
+  const std::string body = box["body_ids"][0];
+  // The box stands on XZ: length along X, width along Z, height along -Y; centred in X and Z only.
+  const Bnd_Box tight = node_tight_bbox(doc, s, body), padded = node_world_bbox(doc, s, body);
+  double x0, y0, z0, x1, y1, z1;
+  tight.Get(x0, y0, z0, x1, y1, z1);
+  CHECK_NEAR(x1 - x0, 60, 1e-9);
+  CHECK_NEAR(z1 - z0, 31, 1e-9);
+  CHECK_NEAR(y1 - y0, 21, 1e-9);
+  CHECK_NEAR(y1, 0, 1e-9);
+  CHECK_NEAR(x0, -30, 1e-9);
+  CHECK(padded.SquareExtent() > tight.SquareExtent());
+  // Moved, the cached box follows the translation; turned, it is measured in place and still tight.
+  commands::run("transform", {{"target", body}, {"matrix", Mat4::translation(5, 0, 0).to_json()}}, &doc);
+  s = resolve(doc);
+  node_tight_bbox(doc, s, body).Get(x0, y0, z0, x1, y1, z1);
+  CHECK_NEAR(x0, -25, 1e-9);
+  CHECK_NEAR(x1 - x0, 60, 1e-9);
+  Mat4 quarter;  // a quarter turn about Z
+  quarter.m = {0, -1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  commands::run("transform", {{"target", body}, {"matrix", quarter.to_json()}}, &doc);
+  s = resolve(doc);
+  node_tight_bbox(doc, s, body).Get(x0, y0, z0, x1, y1, z1);
+  CHECK_NEAR(y1 - y0, 60, 1e-9);
+  CHECK_NEAR(x1 - x0, 21, 1e-9);
+  // A sketch reports the frame it was made in; so does an edit of a feature's plane.
+  const json sketch = sketch_cmd(doc, rectangle(0, 0, 10, 10), {{"base", "yz"}});
+  CHECK_EQ(sketch["frame"]["normal"], json::array({1.0, 0.0, 0.0}));
+  CHECK_EQ(sketch["sketch_id"], sketch["ids"][0]);
+  const json edited = commands::run("feature_edit", {{"target", box["feature_id"]}, {"inputs", {{"plane", {{"base", "yz"}}}}}}, &doc);
+  CHECK_EQ(edited["frame"]["normal"], json::array({1.0, 0.0, 0.0}));
+  CHECK_EQ(edited["feature_id"], box["feature_id"]);
+  // Features without a plane input report none.
+  CHECK(!feature_cmd(doc, "move", {{"bodies", json::array({body})}, {"dz", "5 mm"}}).contains("frame"));
+}

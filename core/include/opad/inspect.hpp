@@ -1,4 +1,5 @@
 #pragma once
+#include <Bnd_Box.hxx>
 #include <functional>
 #include "document.hpp"
 #include "scene.hpp"
@@ -22,6 +23,8 @@ json measure_edge_distance(const Document& doc, const Scene& scene, const Ref& a
 json measure_angle(const Document& doc, const Scene& scene, const Ref& a, const Ref& b);
 json measure_radius(const Document& doc, const Scene& scene, const Ref& a);
 json measure_bbox(const Document& doc, const Scene& scene, const std::vector<Ref>& refs);
+// {min, max, size, center, diagonal} of a box ({} for an empty one), as every result reports boxes.
+json bbox_to_json(const Bnd_Box& box);
 // Axis-aligned world bounding box of body nodes (empty list = all visible bodies). False when empty.
 bool scene_bbox(const Document& doc, const Scene& scene, const std::vector<std::string>& bodies, Vec3& lo, Vec3& hi);
 

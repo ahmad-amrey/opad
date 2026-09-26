@@ -68,6 +68,11 @@ def main():
         staged = dict(transaction=tx, expected_revision=base)
         box = client.call("feature", kind="box", inputs={"length": 40, "width": 40, "height": 40}, request_id="cube", **staged)
         feature, body = box["result"]["feature_id"], box["result"]["body_ids"][0]
+        # TODO 10 B3: the frame the plane resolved to, and what this command did to each body it changed.
+        assert box["result"]["frame"]["normal"] == [0, 0, 1] and box["result"]["frame"]["x"] == [1, 0, 0], box["result"]
+        changed = box["changes"]["bodies"]
+        assert len(changed) == 1 and changed[0]["id"] == body and changed[0]["valid"], changed
+        assert all(abs(size - 40) < 1e-9 for size in changed[0]["bbox"]["size"]) and abs(changed[0]["volume_mm3"] - 64000) < 1e-6, changed
         assert feature != body and body in box["changes"]["created"]
         assert box["changes"]["scope"] == "transaction" and box["revision"] == base
         sketch = client.call("sketch", name="Hole centers", geometry={}, request_id="sketch", **staged)

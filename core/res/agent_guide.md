@@ -126,6 +126,11 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 
 ## Checking the result
 
+- `sketch` results, and results of features that take a `plane`, include `frame`: the origin, x, y and normal the
+  plane resolved to.
+- Live write results include `changes.bodies`: for each body that command made, changed or moved, its tight
+  `bbox` (min, max, size), `volume_mm3` and `valid`, so no `validate` round trip is needed after each step.
+
 - `validate` checks solids and reports volumes; `context` summarises the document (sections `nodes`, `features`,
   `sketches`, `parameters`, `errors`); `entity_details` and `query_entities` describe faces and edges with their
   reference tokens; `viewport_image` (live) and `render` return pictures.

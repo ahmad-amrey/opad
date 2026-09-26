@@ -106,15 +106,15 @@ std::vector<FeatureSpec> build_specs() {
     a.insert(a.end(), rest.begin(), rest.end());
     return a;
   };
-  add("box", "Box", "box", "create", "A box standing on a plane.",
+  add("box", "Box", "box", "create", "A box on a plane at the position: length along the plane's X, width along its Y, height along its normal (a negative height grows the other way). Centred in X and Y only.",
       placed({in("length", "Length", "length", "20 mm"), in("width", "Width", "length", "20 mm"), in("height", "Height", "length", "20 mm"), in("centered", "Centred on the position", "bool", true)}), "new");
-  add("cylinder", "Cylinder", "cylinder", "create", "A cylinder standing on a plane.",
+  add("cylinder", "Cylinder", "cylinder", "create", "A cylinder standing on a plane at the position; its axis is the plane's normal (a negative height grows the other way).",
       placed({in("diameter", "Diameter", "length", "20 mm"), in("height", "Height", "length", "20 mm")}), "new");
   add("sphere", "Sphere", "sphere", "create", "A sphere centred on a plane.", placed({in("diameter", "Diameter", "length", "20 mm")}), "new");
-  add("cone", "Cone", "cone", "create", "A cone or a truncated cone standing on a plane.",
+  add("cone", "Cone", "cone", "create", "A cone or a truncated cone standing on a plane at the position; its axis is the plane's normal.",
       placed({in("diameter", "Base diameter", "length", "20 mm"), in("top_diameter", "Top diameter", "length", "0 mm"), in("height", "Height", "length", "20 mm")}), "new");
   add("torus", "Torus", "torus", "create", "A ring lying on a plane.", placed({in("diameter", "Ring diameter", "length", "40 mm"), in("section", "Section diameter", "length", "10 mm")}), "new");
-  add("extrude", "Extrude", "extrude", "create", "Pull sketch profiles or planar faces along their normal.",
+  add("extrude", "Extrude", "extrude", "create", "Pull sketch profiles or planar faces along their normal. Symmetric splits the distance in half on each side; a start offset moves the start along the sketch normal.",
       {pick("profiles", "Profiles", "profiles", 1, 0),choice("start", "Start from", {"profile", "offset", "face"}),
        in("start_offset", "Start offset", "length", "0 mm", "start=offset"),pick("start_face", "Start face", "faces", 1, 1, "start=face"),
        choice("direction", "Direction", {"one", "symmetric", "two"}), choice("extent", "Extent", {"distance", "all"}),
@@ -128,7 +128,7 @@ std::vector<FeatureSpec> build_specs() {
       {pick("profiles", "Profiles", "profiles", 2, 0), in("ruled", "Straight sides (ruled)", "bool", false)}, "new");
   add("pipe", "Pipe", "pipe", "create", "A round section along a path.",
       {in("path", "Path", "path"), in("diameter", "Diameter", "length", "10 mm"), in("hollow", "Hollow", "bool", false), in("thickness", "Wall thickness", "length", "1 mm", "hollow=true")}, "new");
-  add("coil", "Coil", "coil", "create", "A round or square section wound about an axis: springs, threads.",
+  add("coil", "Coil", "coil", "create", "A round or square section wound about the plane's normal at the position: springs, threads.",
       placed({in("diameter", "Coil diameter", "length", "20 mm"), in("pitch", "Pitch", "length", "5 mm"), in("turns", "Turns", "number", "5"),
               choice("section", "Section", {"circle", "square"}), in("size", "Section size", "length", "2 mm"), in("left", "Left-handed", "bool", false)}),
       "new");

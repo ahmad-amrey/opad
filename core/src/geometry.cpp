@@ -41,6 +41,7 @@ struct ShapeCache {
   std::mutex mu;
   std::unordered_map<std::string, TopoDS_Shape> shapes;
   std::unordered_map<std::string, Bnd_Box> boxes;
+  std::unordered_map<std::string, Bnd_Box> tight;  // exact boxes, by key (TODO 10 B3/B10)
 };
 
 std::shared_ptr<ShapeCache> make_shape_cache() { return std::make_shared<ShapeCache>(); }
@@ -220,6 +221,43 @@ void warm_shape_cache(const Document& doc, const std::function<bool(size_t, size
     } catch (const Error&) {
     }
   }
+}
+
+Bnd_Box tight_bbox(const TopoDS_Shape& shape) {
+  Bnd_Box box;
+  if (!shape.IsNull()) BRepBndLib::AddOptimal(shape, box, Standard_False, Standard_False);
+  return box;
+}
+
+Bnd_Box node_tight_bbox(const Document& doc, const Scene& scene, const std::string& node_id) {
+  const Node* n = scene.node(node_id);
+  if (!n || n->kind != Node::Kind::Body) throw Error("not a body node: " + node_id);
+  const Mat4 w = scene.world(node_id);
+  // A turned body is measured where it is: its own box turned would not be tight.
+  const bool shift_only = w.m[0] == 1 && w.m[5] == 1 && w.m[10] == 1 && w.m[1] == 0 && w.m[2] == 0 && w.m[4] == 0 && w.m[6] == 0 &&
+                          w.m[8] == 0 && w.m[9] == 0 && w.m[12] == 0 && w.m[13] == 0 && w.m[14] == 0 && w.m[15] == 1;
+  if (!shift_only) return tight_bbox(node_world_shape(doc, scene, node_id));
+  auto& cache = *doc.shape_cache;
+  Bnd_Box local;
+  bool cached = false;
+  {
+    std::lock_guard<std::mutex> lock(cache.mu);
+    if (auto it = cache.tight.find(n->body_key); it != cache.tight.end()) {
+      local = it->second;
+      cached = true;
+    }
+  }
+  if (!cached) {
+    local = tight_bbox(body_shape(doc, n->body_key));
+    std::lock_guard<std::mutex> lock(cache.mu);
+    cache.tight[n->body_key] = local;
+  }
+  if (local.IsVoid()) return local;
+  double x0, y0, z0, x1, y1, z1;
+  local.Get(x0, y0, z0, x1, y1, z1);
+  Bnd_Box out;
+  out.Update(x0 + w.m[3], y0 + w.m[7], z0 + w.m[11], x1 + w.m[3], y1 + w.m[7], z1 + w.m[11]);
+  return out;
 }
 
 Bnd_Box node_world_bbox(const Document& doc, const Scene& scene, const std::string& node_id) {
