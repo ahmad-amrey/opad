@@ -686,7 +686,6 @@ struct Walk {
     const json& plane = data.at("plane");
     Sketch sk = Sketch::from_json(geometry);
     std::string s = "sketch|" + geometry.dump() + "|" + plane.dump() + "|";
-    bool moved = false;
     std::string error;
     try {
       refresh_references(sk,[&](const json& ref,const std::string& mode){return derive_sketch(ctx.doc,ctx.scene,ctx.plane(plane),ref,mode,ctx.fresh);});
@@ -698,7 +697,6 @@ struct Walk {
         s += std::to_string(c.id) + "=" + json(c.value).dump() + ";";
       }
       if (has_equation_curves(sk)) s += "|curves|" + equation_inputs(sk, ctx.params);  // sampled below, when needed
-      moved = sk.to_json() != Sketch::from_json(geometry).to_json();
     } catch (const std::exception& e) {
       error = e.what();
       s += "!" + error;
@@ -736,7 +734,9 @@ struct Walk {
     SolveResult solved = solve(sk);
     if (!solved.converged && error.empty()) error = "the sketch constraints cannot all be satisfied";
     result["dof"] = solved.dof;
-    if (solved.converged && (moved || sk.to_json() != Sketch::from_json(geometry).to_json())) result["geometry"] = sk.to_json();
+    // Whether the solved sketch differs from what was given is asked only here, when it is recomputed (gap log #3: a
+    // parse and two serialisations per sketch per walk, 1 MB each for the arm's discs).
+    if (solved.converged && sk.to_json() != Sketch::from_json(geometry).to_json()) result["geometry"] = sk.to_json();
     if (frame_moved) result["frame"] = frame.to_json();
     if (!error.empty()) result["error"] = error;
     return result;

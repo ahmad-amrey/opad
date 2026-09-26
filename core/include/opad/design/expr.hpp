@@ -3,6 +3,7 @@
 // "2 * PI * r", "count - 1", "45 deg". Values carry a dimension so "10 mm * 2 in" is an area and cannot be
 // used where a length is asked for. Internally lengths are mm and angles radians. No kernel, no Qt.
 #include <map>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -54,6 +55,7 @@ class ParamTable {
   double convert(Dim dim, const Quantity& q, const std::string& expr) const;
   std::string m_unit="mm";
   std::vector<ParamDef> m_defs;
+  std::unordered_map<std::string, size_t> m_index;  // name -> its last definition (gap log #3: a linear search was the walk's cost)
   mutable std::map<std::string, Quantity> m_cache;
 };
 

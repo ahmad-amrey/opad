@@ -107,8 +107,12 @@ ParamTable sketch_parameters(const Sketch& sk, const ParamTable& params) {
 void evaluate_dimensions(Sketch& sk, const ParamTable& params) {
   const auto table = sketch_parameters(sk,params);
   std::vector<double> values;
+  // Only a sketch with reference dimensions needs the walk through every expression they could reach (gap log #3:
+  // it re-read hundreds of parameter expressions per dimension on the arm's 1,282-dimension discs).
+  const bool references = std::any_of(sk.constraints.begin(), sk.constraints.end(), [](const SkConstraint& c) { return c.reference; });
   for (const auto& c : sk.constraints) {
     if (!c.is_dimension() || c.reference || c.expr.empty()) { values.push_back(c.value); continue; }
+    if (!references) { values.push_back(table.as(c.type == SkConstraint::Type::Angle ? Dim::Angle : Dim::Length, c.expr)); continue; }
     std::set<std::string> visited;
     std::function<void(const std::string&)> check=[&](const std::string& expr) {
       for(const auto& name:expr_identifiers(expr))if(visited.insert(name).second) {

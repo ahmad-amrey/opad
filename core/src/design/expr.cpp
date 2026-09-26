@@ -447,6 +447,7 @@ struct Parser {
 
 ParamTable::ParamTable(std::vector<ParamDef> defs,std::string unit) : m_unit(std::move(unit)),m_defs(std::move(defs)) {
   const auto* u=unit_named(m_unit);if(!u||u->angle)throw Error("unsupported document length unit");
+  for(size_t i=0;i<m_defs.size();++i)m_index[m_defs[i].name]=i;  // the last definition of a name wins
 }
 std::string ParamTable::explicit_length(const std::string& expression) const {
   const auto q=eval(expression);
@@ -455,9 +456,8 @@ std::string ParamTable::explicit_length(const std::string& expression) const {
 
 const ParamDef* ParamTable::find(const std::string& name) const {
   // The last definition of a name wins, like every other "latest op" rule of the log.
-  for (auto it = m_defs.rbegin(); it != m_defs.rend(); ++it)
-    if (it->name == name) return &*it;
-  return nullptr;
+  const auto it = m_index.find(name);
+  return it == m_index.end() ? nullptr : &m_defs[it->second];
 }
 
 Quantity ParamTable::eval(const std::string& expr, std::vector<std::string>& stack, const std::string* name, const Quantity* value) const {
