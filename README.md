@@ -66,6 +66,11 @@ Rename, Colour, Hide and Reparent on a multiple selection are one step each.
 Wherever a plane is taken, `{"origin": [x,y,z], "normal": [x,y,z]}` (with an optional `x`) defines it directly,
 and the construction plane has a point-and-normal mode.
 
+Face, edge and vertex inputs can be rules instead of numbers: `{"body": id, "kind": "edge", "select":
+{"parallel_to": "z"}, "expect": 4}` picks the matching entities again whenever the feature regenerates and fails,
+rather than guessing, when the count changes. The desktop offers the same through "By rule…" on pick inputs, and
+marks timeline items whose reference had to be re-picked by nearest match.
+
 Live face, edge and vertex inputs need no token repeated back when the connection was given that reference and its
 body has not changed since; a token itself needs only `ref`, `geometry` and `placement`.
 

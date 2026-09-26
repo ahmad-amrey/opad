@@ -84,6 +84,9 @@ class DesignController : public QObject {
   PlanePicker* m_planePicker;
   std::function<void(ToolPanel*)> m_openPanel;
   std::function<std::string()> m_currentComponent;
+  // What a rule chosen with "By rule…" matched, by input, to show it as the selection (TODO 10 B7).
+  std::map<QString, std::vector<opad::Ref>> m_ruleMatches;
+  void offerRules(const QString& input, QWidget* anchor);
   SketchEditor* m_sketch;
   ParametersDialog* m_params = nullptr;
   ToolPanel* m_parametersPanel = nullptr;

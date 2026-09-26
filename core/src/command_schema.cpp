@@ -22,9 +22,10 @@ json expression(const std::string& units={}) {
   if(!units.empty())out["x-units"]=units;return out;
 }
 json ref() {
-  auto value=object({{"body",type("string")},{"kind",choice({"body","face","edge","vertex","center","point"})},{"index",{{"type","integer"},{"minimum",0}}},{"point",vector(3)},{"hint",type("object")}}, {},false);
+  auto value=object({{"body",type("string")},{"kind",choice({"body","face","edge","vertex","center","point"})},{"index",{{"type","integer"},{"minimum",0}}},{"point",vector(3)},{"hint",type("object")},
+    {"select",type("object")},{"expect",{{"type","integer"},{"minimum",1}}},{"ambiguity",choice({"all","unique"})},{"tolerance_mm",type("number")}}, {},false);
   value["anyOf"]={{{"required",{"body"}}},{{"required",{"point"}}}};
-  return {{"anyOf",{type("string"),value}},{"description","Body UUID or body/face/N, body/edge/N, body/vertex/N (zero-based); structured {body,kind,index,hint}. Use references from the current document revision."}};
+  return {{"anyOf",{type("string"),value}},{"description","Body UUID or body/face/N, body/edge/N, body/vertex/N (zero-based); structured {body,kind,index,hint}; or a rule {body,kind,select,expect?,ambiguity?} that picks every face/edge/vertex of the body matching the query_entities filters in select (curve, surface, radius_min, radius_max, parallel_to, normal, at_plane, bounds) when the feature is computed, and fails when the count is not expect. Use references from the current document revision."}};
 }
 json plane() {
   auto frame=object({{"origin",vector(3)},{"x",vector(3)},{"y",vector(3)}},{"origin","x","y"});

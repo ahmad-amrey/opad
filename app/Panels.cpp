@@ -1667,6 +1667,12 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     const opad::Feature* feat = ops[i].type == "feature" ? m_doc->scene.feature(ops[i].id) : nullptr;
     if (beyond || (feat && feat->suppressed)) iconColor = t.fg3;
     p.drawPixmap(r.left() + 3, r.top() + 3, icons::pixmap(iconFor(ops[i]), iconColor, 12, dpr));
+    // A reference was taken by its nearest match after the body changed (TODO 10 B7): worth a look.
+    if (feat && !deleted && !feat->result.value("rehinted", opad::json::array()).empty()) {
+      p.setPen(QPen(t.bg2, 1));
+      p.setBrush(t.amber);
+      p.drawEllipse(QPointF(r.right() - 1, r.top() + 1), 3.5, 3.5);
+    }
   }
   if (!m_shown.empty()) {
     int x = markerRect(int(m_shown.size()) - 1).right() + 9;
@@ -1706,10 +1712,13 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                        .arg(sw.name(), describe(op).toHtmlEscaped(), t.fg3.name(), theme::mono().family(), shortId(op.id), t.fg2.name(),
                             QString::fromStdString(op.data.value("by", "")).toHtmlEscaped(), QString::fromStdString(op.data.value("ts", "")).left(16).replace('T', ' '),
                             target.isEmpty() ? QString() : QString("<div>target %1</div>").arg(target.toHtmlEscaped()),
-                            op.id == m_editing ? tr("being edited · the change applies from here in the history")
+                            [&] {
+                              const opad::Feature* f = op.type == "feature" ? m_doc->scene.feature(op.id) : nullptr;
+                              return f && !f->result.value("rehinted", opad::json::array()).empty() ? QString("<div style='color:%1'>%2</div>").arg(t.amber.name(), tr("a reference was re-picked by its nearest match after its body changed; check it")) : QString();
+                            }() + (op.id == m_editing ? tr("being edited · the change applies from here in the history")
                             : m_deleted.count(op.id) ? (op.type == "delete" ? tr("undone · right-click to delete it again") : tr("tombstoned · right-click to restore"))
                             : isUnresolved(op.id) ? tr("unresolved · kept, never hidden")
-                            : op.type == "delete" ? tr("right-click to restore what it deleted") : tr("Right-click for actions"));
+                            : op.type == "delete" ? tr("right-click to restore what it deleted") : tr("Right-click for actions")));
     QToolTip::showText(e->globalPosition().toPoint() + QPoint(0, 8), html, this);
   } else {
     QToolTip::hideText();

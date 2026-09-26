@@ -215,6 +215,94 @@ json document_info(const Document& doc, const Scene& scene) {
 
 json bbox_to_json(const Bnd_Box& box) { return bbox_json(box); }
 
+json describe_entity(const TopoDS_Shape& sub) {
+  json j;
+  j["bbox"] = bbox_json(shape_bbox(sub));
+  if (sub.ShapeType() == TopAbs_FACE) {
+    const TopoDS_Face& face = TopoDS::Face(sub);
+    BRepAdaptor_Surface surf(face);
+    j["type"] = "face";
+    j["surface"] = surface_type(surf.GetType());
+    switch (surf.GetType()) {
+      case GeomAbs_Plane: {
+        gp_Dir n = surf.Plane().Axis().Direction();
+        if (face.Orientation() == TopAbs_REVERSED) n.Reverse();
+        j["normal"] = dir(n);
+        break;
+      }
+      case GeomAbs_Cylinder: j["axis"] = dir(surf.Cylinder().Axis().Direction()); j["radius"] = surf.Cylinder().Radius(); break;
+      case GeomAbs_Sphere: j["radius"] = surf.Sphere().Radius(); break;
+      case GeomAbs_Cone: j["axis"] = dir(surf.Cone().Axis().Direction()); break;
+      case GeomAbs_Torus: j["axis"] = dir(surf.Torus().Axis().Direction()); break;
+      default: break;
+    }
+  } else if (sub.ShapeType() == TopAbs_EDGE) {
+    BRepAdaptor_Curve c(TopoDS::Edge(sub));
+    j["type"] = "edge";
+    j["curve"] = curve_type(c.GetType());
+    if (c.GetType() == GeomAbs_Line) j["direction"] = dir(c.Line().Direction());
+    if (c.GetType() == GeomAbs_Circle) {
+      j["radius"] = c.Circle().Radius();
+      j["axis"] = dir(c.Circle().Axis().Direction());
+    }
+  } else if (sub.ShapeType() == TopAbs_VERTEX) {
+    j["type"] = "vertex";
+    j["point"] = pnt(BRep_Tool::Pnt(TopoDS::Vertex(sub)));
+  }
+  return j;
+}
+
+bool entity_matches(const json& detail, const json& filters, double tolerance) {
+  static const std::set<std::string> known = {"curve", "surface", "radius_min", "radius_max", "parallel_to", "normal", "at_plane", "bounds"};
+  for (const auto& [key, value] : filters.items())
+    if (!known.count(key)) throw Error("unknown filter \"" + key + "\" (curve, surface, radius_min, radius_max, parallel_to, normal, at_plane, bounds)");
+  auto axis = [](const std::string& a) { return a == "x" ? 0 : a == "y" ? 1 : 2; };
+  // A direction filter as a unit vector: "x" / "+x" / "-z" or [x, y, z].
+  auto direction = [&](const json& v, bool signed_axis) {
+    gp_Vec d;
+    if (v.is_string()) {
+      const std::string s = v.get<std::string>();
+      const bool minus = !s.empty() && s[0] == '-';
+      const std::string name = !s.empty() && (s[0] == '-' || s[0] == '+') ? s.substr(1) : s;
+      if (name != "x" && name != "y" && name != "z") throw Error("a direction filter is x, y or z" + std::string(signed_axis ? " with + or -" : "") + ", or [x, y, z]");
+      d.SetCoord(axis(name) + 1, minus ? -1.0 : 1.0);
+    } else if (v.is_array() && v.size() == 3) {
+      d = gp_Vec(v[0].get<double>(), v[1].get<double>(), v[2].get<double>());
+    }
+    if (d.Magnitude() < 1e-12) throw Error("a direction filter must not be zero");
+    return d.Normalized();
+  };
+  auto vec_of = [](const json& v) { return gp_Vec(v[0].get<double>(), v[1].get<double>(), v[2].get<double>()); };
+  if (filters.contains("curve") && detail.value("curve", "") != filters["curve"].get<std::string>()) return false;
+  if (filters.contains("surface") && detail.value("surface", "") != filters["surface"].get<std::string>()) return false;
+  if (filters.contains("radius_min") && (!detail.contains("radius") || detail["radius"].get<double>() < filters["radius_min"].get<double>() - tolerance)) return false;
+  if (filters.contains("radius_max") && (!detail.contains("radius") || detail["radius"].get<double>() > filters["radius_max"].get<double>() + tolerance)) return false;
+  if (filters.contains("parallel_to")) {
+    if (!detail.contains("direction")) return false;
+    if (std::fabs(vec_of(detail["direction"]).Dot(direction(filters["parallel_to"], false))) < 1 - 1e-8) return false;
+  }
+  if (filters.contains("normal")) {
+    if (!detail.contains("normal")) return false;
+    if (vec_of(detail["normal"]).Dot(direction(filters["normal"], true)) < 1 - 1e-8) return false;
+  }
+  if (filters.contains("at_plane") || filters.contains("bounds")) {
+    if (!detail.contains("bbox") || detail["bbox"].is_null() || detail["bbox"].empty()) return false;
+    const auto& box = detail["bbox"];
+    if (filters.contains("at_plane")) {
+      const auto& plane = filters["at_plane"];
+      const int k = axis(plane["axis"].get<std::string>());
+      const double at = plane["value"].get<double>();
+      if (std::fabs(box["min"][k].get<double>() - at) > tolerance || std::fabs(box["max"][k].get<double>() - at) > tolerance) return false;
+    }
+    if (filters.contains("bounds"))
+      for (int k = 0; k < 3; ++k)
+        if (box["min"][k].get<double>() < filters["bounds"]["min"][k].get<double>() - tolerance ||
+            box["max"][k].get<double>() > filters["bounds"]["max"][k].get<double>() + tolerance)
+          return false;
+  }
+  return true;
+}
+
 json node_properties(const Document& doc, const Scene& scene, const std::string& node_id, bool geometry) {
   if(const auto* sk=scene.sketch(node_id)) {
     json out={{"id",sk->id},{"name",sk->name},{"type","sketch"},{"visible",sk->visible},{"entities",sk->geometry.value("entities",json::array()).size()},{"frame",sk->frame.to_json()}};

@@ -1,7 +1,12 @@
 #include "DesignController.hpp"
+#include "opad/inspect.hpp"
 #include "DimensionHandle.hpp"
 #include "CurveSamples.hpp"
+#include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <QMenu>
+#include <QRegularExpression>
 #include <TopoDS.hxx>
 
 #include <BRepBndLib.hxx>
@@ -88,6 +93,7 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   connect(&m_previewTimer, &QTimer::timeout, this, [this] { runPreview(false); });
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::schedulePreview);
   connect(m_form, &FeaturePanel::activeInputChanged, this, &DesignController::activateInput);
+  connect(m_form, &FeaturePanel::ruleRequested, this, &DesignController::offerRules);
   connect(m_form, &FeaturePanel::accepted, this, [this] { runPreview(true); });
   connect(m_form, &FeaturePanel::cancelled, this, &DesignController::endFeature);
   connect(m_sketch, &SketchEditor::status, this, &DesignController::status);
@@ -187,6 +193,7 @@ void DesignController::startFeature(const QString& kind) {
   if (!spec) return;
   const std::vector<opad::Ref> before = m_viewport->selection();
   m_editing.clear();
+  m_ruleMatches.clear();
   m_newId = opad::new_uuid();
   opad::json inputs = opad::json::object();
   for (const auto& in : spec->inputs)
@@ -238,6 +245,19 @@ void DesignController::editOp(const std::string& opId) {
   m_filterBefore = m_viewport->selectionFilter();
   m_viewport->setPickAccumulate(true);
   m_form->begin(*spec, feature.inputs, QString::fromStdString(feature.name), true);m_form->setEditHidden(hidden);
+  // Rules show what they matched when the feature was last computed (its result records it, TODO 10 B7).
+  m_ruleMatches.clear();
+  for (const auto& sel : feature.result.value("selected", opad::json::array()))
+    for (const auto& in : spec->inputs)
+      for (const auto& pick : feature.inputs.value(in.name, opad::json::array()))
+        if (pick.is_object() && pick.contains("select") && pick["select"] == sel.value("select", opad::json()) && pick.value("body", "") == sel.value("body", ""))
+          for (const auto& ordinal : sel.value("ordinals", opad::json::array())) {
+            opad::Ref r;
+            r.body = sel.value("body", "");
+            r.kind = sel.value("kind", "") == "face" ? opad::Ref::Kind::Face : sel.value("kind", "") == "vertex" ? opad::Ref::Kind::Vertex : opad::Ref::Kind::Edge;
+            r.index = ordinal.get<int>();
+            m_ruleMatches[QString::fromStdString(in.name)].push_back(r);
+          }
   if (m_panel) {
     m_panel->setHeader(QString::fromStdString(spec->icon), i18n::t(QString::fromStdString(spec->label)));
     m_panel->setContext(tr("editing"));
@@ -354,6 +374,10 @@ void DesignController::syncSelectionToInput() {
   std::vector<std::string> candidates;
   if (picks.is_array())
     for (const auto& p : picks) {
+      if (p.is_object() && p.contains("select")) {  // a rule shows what it matched
+        if (auto it = m_ruleMatches.find(name); it != m_ruleMatches.end()) refs.insert(refs.end(), it->second.begin(), it->second.end());
+        continue;
+      }
       const opad::json* ref = &p;
       if (p.contains("face")) ref = &p["face"];
       if (p.contains("edge")) ref = &p["edge"];
@@ -371,6 +395,77 @@ void DesignController::syncSelectionToInput() {
   m_activating = true;
   m_viewport->selectRefs(refs, candidates);
   m_activating = false;
+}
+
+// "By rule…" (TODO 10 B7): rules that the picked face or edge suggests, each with how many it matches on the body, counted
+// on a worker; choosing one makes the input that rule (with that count expected).
+void DesignController::offerRules(const QString& input, QWidget* anchor) {
+  opad::json picks = m_form->picks(input);
+  if (!picks.is_array() || picks.size() != 1) return;
+  opad::Ref picked;
+  try {
+    picked = opad::Ref::from_json(picks[0]);
+  } catch (const std::exception&) {
+    return;
+  }
+  if (picked.kind != opad::Ref::Kind::Face && picked.kind != opad::Ref::Kind::Edge) return;
+  struct Rule { QString label; opad::json select; std::vector<int> ordinals; };
+  auto rules = std::make_shared<std::vector<Rule>>();
+  auto doc = std::make_shared<opad::Document>(m_doc->doc);
+  auto scene = std::make_shared<opad::Scene>(m_doc->scene);
+  const QPointer<QWidget> where(anchor);
+  m_jobs->async(tr("Finding matching entities"), [doc, scene, picked, rules](Progress p) {
+    Reading reading;
+    const TopoDS_Shape body = opad::node_world_shape(*doc, *scene, picked.body);
+    TopTools_IndexedMapOfShape map;
+    TopExp::MapShapes(body, picked.kind == opad::Ref::Kind::Face ? TopAbs_FACE : TopAbs_EDGE, map);
+    if (picked.index < 0 || picked.index >= map.Extent()) return;
+    const opad::json d = opad::describe_entity(map(picked.index + 1));
+    auto fixed = [](double v) { return QString::number(v, 'f', 3).remove(QRegularExpression("\\.?0+$")); };
+    if (picked.kind == opad::Ref::Kind::Edge) {
+      if (d.contains("direction")) rules->push_back({tr("Straight edges parallel to this one"), {{"curve", "line"}, {"parallel_to", d["direction"]}}, {}});
+      if (d.contains("radius") && d.value("curve", "") == "circle") {
+        const double r = d["radius"];
+        rules->push_back({tr("Circular edges of radius %1 mm").arg(fixed(r)), {{"curve", "circle"}, {"radius_min", r}, {"radius_max", r}}, {}});
+      }
+      rules->push_back({tr("All %1 edges").arg(QString::fromStdString(d.value("curve", ""))), {{"curve", d.value("curve", "")}}, {}});
+    } else {
+      if (d.contains("normal")) rules->push_back({tr("Faces with this normal"), {{"normal", d["normal"]}}, {}});
+      if (d.contains("radius") && d.value("surface", "") == "cylinder") {
+        const double r = d["radius"];
+        rules->push_back({tr("Cylindrical faces of radius %1 mm").arg(fixed(r)), {{"surface", "cylinder"}, {"radius_min", r}, {"radius_max", r}}, {}});
+      }
+      rules->push_back({tr("All %1 faces").arg(QString::fromStdString(d.value("surface", ""))), {{"surface", d.value("surface", "")}}, {}});
+    }
+    for (int i = 1; i <= map.Extent(); ++i) {
+      if (p.cancelled()) throw opad::Error("cancelled");
+      const opad::json e = opad::describe_entity(map(i));
+      for (auto& rule : *rules)
+        if (opad::entity_matches(e, rule.select)) rule.ordinals.push_back(i - 1);
+    }
+  }, [this, input, picked, rules, where](bool ok, const QString&) {
+    if (!ok || rules->empty() || !m_featureOn || !where) return;
+    QMenu menu;
+    for (const auto& rule : *rules) {
+      QAction* a = menu.addAction(tr("%1 (%2)").arg(rule.label).arg(rule.ordinals.size()));
+      connect(a, &QAction::triggered, this, [this, input, picked, rule] {
+        if (!m_featureOn) return;
+        std::vector<opad::Ref> matched;
+        for (int i : rule.ordinals) {
+          opad::Ref r = picked;
+          r.index = i;
+          matched.push_back(r);
+        }
+        m_ruleMatches[input] = matched;
+        const std::string kind = picked.kind == opad::Ref::Kind::Face ? "face" : "edge";
+        m_form->setPicks(input, opad::json::array({{{"body", picked.body}, {"kind", kind}, {"select", rule.select}, {"expect", rule.ordinals.size()}}}));
+        if (m_form->activeInput() == input) syncSelectionToInput();
+        schedulePreview();
+      });
+    }
+    if (qEnvironmentVariableIsSet("OPAD_BENCH_RULE")) return menu.actions().front()->trigger();  // the bench takes the first
+    menu.exec(where->mapToGlobal(QPoint(0, where->height())));
+  });
 }
 
 void DesignController::activateInput(const QString& name) {
@@ -755,6 +850,34 @@ void DesignController::bench() {
       m_form->setPicks("edges", edges);
       m_form->setValue("radius", "1.5 mm");
       runPreview(true);
+    });
+    // TODO 10 B7: one picked face becomes a rule through "By rule…"; the press pull keeps the rule and what it matched.
+    if (qEnvironmentVariableIsSet("OPAD_BENCH_RULE")) QTimer::singleShot(7000, this, [this] {
+      if (m_featureOn || m_sketch->active() || m_doc->scene.all_bodies().empty()) return trace::log(QStringLiteral("bench: design: press pull by rule FAIL (busy)"));
+      const std::string body = m_doc->scene.all_bodies().front();
+      int bottom = -1;  // the bench's small body: the face facing down, away from the fillets on top
+      TopTools_IndexedMapOfShape faces;
+      TopExp::MapShapes(opad::node_world_shape(m_doc->doc, m_doc->scene, body), TopAbs_FACE, faces);
+      for (int i = 1; i <= faces.Extent() && bottom < 0; ++i) {
+        const opad::json d = opad::describe_entity(faces(i));
+        if (d.contains("normal") && d["normal"][2].get<double>() < -0.99) bottom = i - 1;
+      }
+      const size_t before = m_doc->scene.features.size();
+      startFeature("offset_face");
+      m_form->setPicks("faces", opad::json::array({{{"body", body}, {"kind", "face"}, {"index", bottom}}}));
+      m_form->setValue("distance", "0.5 mm");
+      offerRules("faces", m_form);
+      QTimer::singleShot(1500, this, [this, before] {
+        const opad::json picks = m_form->picks("faces");
+        const bool rule = picks.is_array() && !picks.empty() && picks[0].contains("select");
+        runPreview(true);
+        QTimer::singleShot(2500, this, [this, before, rule] {
+          const auto& features = m_doc->scene.features;
+          const bool ok = rule && features.size() == before + 1 && features.back().kind == "offset_face" && features.back().error.empty() &&
+                          features.back().result.value("selected", opad::json::array()).size() == 1;
+          trace::log(QStringLiteral("bench: design: press pull by rule %1 (rule %2, %3 features, open: %4)").arg(ok ? "PASS" : "FAIL").arg(rule).arg(features.size()).arg(m_featureOn ? m_form->statusText() : QString("no")));
+        });
+      });
     });
     // TODO 10 A4: an edited sketch is marked on the timeline (OPAD_BENCH_UISHOT: <shot>.sketch-edit.png).
     QTimer::singleShot(5000, this, [this] {

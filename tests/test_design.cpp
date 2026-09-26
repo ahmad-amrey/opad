@@ -1055,3 +1055,44 @@ TEST(planes_by_origin_and_normal) {
   CHECK_NEAR(std::fabs(f.normal()[1]), 1, 1e-9);
   CHECK_NEAR(f.origin[1], 20, 1e-9);
 }
+
+// TODO 10 B7: a rule selector re-picks the intended edges when an earlier edit renumbers the body's edges.
+TEST(rule_selectors_pick_the_same_edges_after_an_earlier_edit) {
+  Document doc = Document::create();
+  const std::string body = feature_cmd(doc, "box", {{"length", "40 mm"}, {"width", "30 mm"}, {"height", "20 mm"}})["body_ids"][0];
+  // A hole through the side, left out for now.
+  const json hole = feature_cmd(doc, "cylinder", {{"plane", {{"origin", {0, -15, 10}}, {"normal", {0, 1, 0}}}}, {"diameter", "4 mm"}, {"height", "30 mm"},
+                                                  {"operation", "cut"}, {"targets", json::array({body})}});
+  commands::run("feature_edit", {{"target", hole["feature_id"]}, {"suppressed", true}}, &doc);
+  const double plain = total_volume(doc);
+  // The four top edges: straight, lying in the top face's plane.
+  const json top = {{"body", body}, {"kind", "edge"}, {"select", {{"curve", "line"}, {"at_plane", {{"axis", "z"}, {"value", 20}}}}}, {"expect", 4}};
+  const std::string fillet = feature_cmd(doc, "fillet", {{"edges", json::array({top})}, {"radius", "2 mm"}})["feature_id"];
+  const double removed = plain - total_volume(doc);
+  CHECK(removed > 50 && removed < 200);
+  Scene s = resolve(doc);
+  CHECK_EQ(s.feature(fillet)->result["selected"][0]["ordinals"].size(), 4u);
+  CHECK_EQ(s.feature(fillet)->result["selected"][0]["hints"].size(), 4u);
+  // The hole comes back: more edges, numbered differently; the rule still picks the four top edges.
+  commands::run("feature_edit", {{"target", hole["feature_id"]}, {"suppressed", false}}, &doc);
+  s = resolve(doc);
+  CHECK(s.feature(fillet)->error.empty());
+  CHECK_EQ(s.feature(fillet)->result["selected"][0]["ordinals"].size(), 4u);
+  CHECK_NEAR(total_volume(doc), plain - M_PI * 4 * 30 - removed, 1e-6);
+  // A rule whose count no longer holds fails where it is, instead of guessing.
+  bool refused = false;
+  try {
+    json five = top;
+    five["expect"] = 5;
+    feature_cmd(doc, "chamfer", {{"edges", json::array({five})}, {"distance", "0.5 mm"}});
+  } catch (const Error& e) {
+    refused = std::string(e.what()).find("matches 4 edges, expected 5") != std::string::npos;
+  }
+  CHECK(refused);
+  // The same filters query_entities takes, with a direction as a vector.
+  const json along_x = {{"body", body}, {"kind", "edge"}, {"select", {{"parallel_to", {1, 0, 0}}, {"at_plane", {{"axis", "z"}, {"value", 0}}}}}, {"expect", 2}};
+  feature_cmd(doc, "chamfer", {{"edges", json::array({along_x})}, {"distance", "0.5 mm"}});
+  s = resolve(doc);
+  CHECK(s.features.back().error.empty());
+  CHECK(s.unresolved.empty());
+}

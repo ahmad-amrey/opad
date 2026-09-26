@@ -69,6 +69,7 @@ class FeaturePanel : public QWidget {
   void setPicks(const QString& input, const opad::json& picks);
   opad::json picks(const QString& input) const;
   void setStatus(const QString& text, bool error);
+  QString statusText() const;
   void setEditHidden(bool hidden);
   void setValue(const QString& input, const opad::json& value);  // expression, choice or flag, as the user would type it
   void activate(const QString& input);  // empty: none
@@ -83,6 +84,8 @@ class FeaturePanel : public QWidget {
  signals:
   void inputsChanged();                 // anything that changes the result
   void activeInputChanged(const QString& input);
+  // "By rule…" on a face or edge input holding one picked entity (TODO 10 B7): the controller offers rules.
+  void ruleRequested(const QString& input, QWidget* anchor);
   void accepted();
   void cancelled();
  protected:
@@ -115,6 +118,7 @@ class FeaturePanel : public QWidget {
     QComboBox* combo = nullptr;
     QCheckBox* check = nullptr;
     PickBox* pick = nullptr;
+    QPushButton* rule = nullptr;  // "By rule…" (faces and edges)
   };
   std::map<QString, Row> m_widgets;
   opad::json m_values = opad::json::object();  // picks and the values of hidden inputs

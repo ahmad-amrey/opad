@@ -28,13 +28,16 @@ struct Ctx {
   const Scene& scene;  // the state just before this feature
   const std::map<std::string, TopoDS_Shape>& fresh;  // bodies made earlier in the same plan, by key
   Cancel cancel;
+  // What the references resolved to that the result should record (TODO 10 B7): "selected" (rule selectors and
+  // what they matched) and "rehinted" (references taken by the nearest-hint fallback). Null: not recorded.
+  json* notes = nullptr;
 
   void check_cancel() const;
   TopoDS_Shape key_shape(const std::string& key) const;
   TopoDS_Shape node_shape(const std::string& node) const;  // body node, world coordinates
   gp_Trsf node_trsf(const std::string& node) const;        // node -> world (identity for "")
   ResolvedRef resolve(const json& ref) const;               // body / face / edge / vertex reference, hint-aware
-  std::vector<ResolvedRef> resolve_all(const json& refs) const;
+  std::vector<ResolvedRef> resolve_all(const json& refs) const;  // a rule selector ({.., "select"}) gives every match
 
   double length(const json& inputs, const char* name) const;
   double angle(const json& inputs, const char* name) const;

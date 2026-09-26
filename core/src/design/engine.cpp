@@ -23,6 +23,7 @@
 #include <set>
 
 #include "opad/geometry.hpp"
+#include "opad/inspect.hpp"
 #include "opad/design/sketch_pattern.hpp"
 
 namespace opad::design {
@@ -182,7 +183,57 @@ json ref_hint(const TopoDS_Shape& body_world, const TopoDS_Shape& sub) {
   return {{"c", {c.X(), c.Y(), c.Z()}}, {"s", size}, {"n", counts}};
 }
 
+namespace {
+Ref::Kind entity_kind(const json& j) {
+  const std::string kind = j.value("kind", "");
+  if (kind == "face") return Ref::Kind::Face;
+  if (kind == "edge") return Ref::Kind::Edge;
+  if (kind == "vertex") return Ref::Kind::Vertex;
+  throw Error("a rule selector picks faces, edges or vertices: give kind \"face\", \"edge\" or \"vertex\"");
+}
+}  // namespace
+
+// A rule selector: every face, edge or vertex of the body (as it is just before the feature) that passes the
+// query_entities filters in "select". "expect" and "ambiguity": "unique" make a different count fail visibly.
+std::vector<ResolvedRef> select_entities(const Ctx& ctx, const json& j) {
+  const std::string body = j.at("body").get<std::string>();
+  const Ref::Kind kind = entity_kind(j);
+  const TopoDS_Shape shape = ctx.node_shape(body);
+  TopTools_IndexedMapOfShape map;
+  TopExp::MapShapes(shape, abs_of(kind), map);
+  if (map.Extent() > 20000) throw Error("a rule selector scans at most 20000 entities; this body has " + std::to_string(map.Extent()));
+  const json& filters = j.at("select");
+  const double tolerance = j.value("tolerance_mm", 1e-5);
+  std::vector<ResolvedRef> out;
+  for (int i = 1; i <= map.Extent(); ++i) {
+    ctx.check_cancel();
+    if (entity_matches(describe_entity(map(i)), filters, tolerance)) out.push_back({body, map(i), i - 1});
+  }
+  const std::string what = std::string(Ref::kind_name(kind)) + (out.size() == 1 ? "" : "s");
+  if (out.empty()) throw Error("the rule " + filters.dump() + " matches no " + Ref::kind_name(kind) + " of the body");
+  if (j.contains("expect") && static_cast<long long>(out.size()) != j["expect"].get<long long>())
+    throw Error("the rule " + filters.dump() + " matches " + std::to_string(out.size()) + " " + what + ", expected " + std::to_string(j["expect"].get<long long>()));
+  if (j.value("ambiguity", "all") == "unique" && out.size() != 1)
+    throw Error("the rule " + filters.dump() + " matches " + std::to_string(out.size()) + " " + what + ", expected exactly one");
+  if (ctx.notes) {
+    json ordinals = json::array(), hints = json::array();
+    for (const auto& r : out) {
+      ordinals.push_back(r.index);
+      if (out.size() <= 50) hints.push_back(ref_hint(shape, r.sub));
+    }
+    json entry = {{"body", body}, {"kind", Ref::kind_name(kind)}, {"select", filters}, {"ordinals", ordinals}};
+    if (!hints.empty()) entry["hints"] = hints;
+    (*ctx.notes)["selected"].push_back(entry);
+  }
+  return out;
+}
+
 ResolvedRef Ctx::resolve(const json& j) const {
+  if (j.is_object() && j.contains("select")) {  // a rule selector where one entity is wanted
+    auto all = select_entities(*this, j);
+    if (all.size() != 1) throw Error("the rule matches " + std::to_string(all.size()) + " entities where one is wanted");
+    return all.front();
+  }
   const Ref r = Ref::from_json(j);
   if (r.kind == Ref::Kind::Point) throw Error("a point is not a valid reference here");
   ResolvedRef out;
@@ -230,15 +281,23 @@ ResolvedRef Ctx::resolve(const json& j) const {
     }
   }
   if (out.sub.IsNull()) throw Error(std::string("a referenced ") + Ref::kind_name(r.kind) + " no longer exists");
+  // Worth a look: the timeline marks features that took a reference this way (TODO 10 B7).
+  if (notes) (*notes)["rehinted"].push_back({{"body", r.body}, {"kind", Ref::kind_name(r.kind)}, {"was", r.index}, {"now", out.index}});
   return out;
 }
 
 std::vector<ResolvedRef> Ctx::resolve_all(const json& refs) const {
   std::vector<ResolvedRef> out;
+  auto add = [&](const json& r) {
+    if (r.is_object() && r.contains("select"))
+      for (auto& hit : select_entities(*this, r)) out.push_back(std::move(hit));
+    else
+      out.push_back(resolve(r));
+  };
   if (refs.is_array())
-    for (const auto& r : refs) out.push_back(resolve(r));
+    for (const auto& r : refs) add(r);
   else if (!refs.is_null())
-    out.push_back(resolve(refs));
+    add(refs);
   return out;
 }
 
@@ -720,7 +779,8 @@ struct Walk {
         builder.apply(id, type, data);
         continue;
       }
-      const Ctx ctx{doc, params, builder.scene(), fresh, cancel};
+      json notes = json::object();
+      const Ctx ctx{doc, params, builder.scene(), fresh, cancel, &notes};
       if (type == "sketch") {
         std::string fp;
         try {
@@ -738,6 +798,7 @@ struct Walk {
         } else {
           try {
             Out out = compute_feature(ctx, kind, inputs);
+            for (auto& [k, v] : notes.items()) out.extra[k] = v;
             if (!out.used_targets.empty()) {
               if (json* patch = patchable_inputs(id)) {
                 json targets = json::array();
@@ -980,7 +1041,7 @@ json hint_refs(const Document& doc, const Scene& scene, json inputs) {
     if (j.is_array()) {
       for (auto& v : j) walk(v);
     } else if (j.is_object()) {
-      if (j.contains("body") && j.contains("kind") && j["kind"].is_string() && !j.contains("hint")) {
+      if (j.contains("body") && j.contains("kind") && j["kind"].is_string() && !j.contains("hint") && !j.contains("select")) {
         try {
           const Ref r = Ref::from_json(j);
           if (r.kind == Ref::Kind::Face || r.kind == Ref::Kind::Edge || r.kind == Ref::Kind::Vertex) j = make_ref(doc, scene, r);

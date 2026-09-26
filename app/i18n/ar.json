@@ -1509,5 +1509,17 @@
   "Name ({n} is replaced by 1, 2, 3, ...):": "الاسم (يُستبدل {n} بـ 1، 2، 3، ...):",
   "Built-in block letters": "أحرف كتلية مدمجة",
   "Point normal": "نقطة وعمودي",
-  "Normal along": "العمودي على امتداد"
+  "Normal along": "العمودي على امتداد",
+  "Finding matching entities": "البحث عن العناصر المطابقة",
+  "Straight edges parallel to this one": "الحواف المستقيمة الموازية لهذه الحافة",
+  "Circular edges of radius %1 mm": "الحواف الدائرية بنصف قطر %1 مم",
+  "All %1 edges": "كل حواف %1",
+  "Faces with this normal": "الأوجه ذات هذا العمودي",
+  "Cylindrical faces of radius %1 mm": "الأوجه الأسطوانية بنصف قطر %1 مم",
+  "All %1 faces": "كل أوجه %1",
+  "%1 (%2)": "%1 (%2)",
+  "By rule…": "بقاعدة…",
+  "Pick every face or edge like the picked one by a rule the feature keeps: it picks them again when the body changes": "اختر كل وجه أو حافة مثل المختار بقاعدة تحتفظ بها الميزة: فتختارها من جديد عندما يتغير الجسم",
+  "%1 by rule": "%1 بقاعدة",
+  "a reference was re-picked by its nearest match after its body changed; check it": "أعيد اختيار مرجع بأقرب تطابق بعد تغيّر جسمه؛ تحقق منه"
 }

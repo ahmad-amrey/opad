@@ -112,7 +112,15 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   `{"body": id, "kind": "face", "index": n}`. `"<body>/center/<n>"` is the centre of circular edge n. A free point is
   `{"kind": "point", "point": [x, y, z]}`.
 - Ordinals change when a body's topology changes. Features store a `hint` with each reference (centre, size, entity
-  counts): with the same counts the ordinal is trusted, otherwise the nearest matching entity is taken.
+  counts): with the same counts the ordinal is trusted, otherwise the nearest matching entity is taken (the result's
+  `rehinted` lists those, and the timeline marks the feature).
+- Rules pick by what an entity is, not its number: `{"body": id, "kind": "edge", "select": {...}, "expect": 4}` is
+  every edge of the body matching the `query_entities` filters in `select` (`curve`, `surface`, `radius_min`,
+  `radius_max`, `parallel_to` "x"|"y"|"z" or [x,y,z], `normal` "+z".. or [x,y,z], `at_plane` {axis, value}, `bounds`
+  {min, max}) when the feature is computed or regenerated. A different count than `expect` (or than one with
+  `ambiguity: "unique"`) fails the feature instead of guessing. The result's `selected` records what each rule
+  matched. Example: the four top edges of a box of height 20: `{"curve": "line", "at_plane": {"axis": "z", "value":
+  20}}` with `"expect": 4`.
 - Live server: a face/edge/vertex input is accepted when the connection was given that reference (by
   `entity_details`, `query_entities`, the selection or a change list) and its body still has the same key and
   placement; otherwise put its token in the call's `references`. A token needs only `ref`, `geometry` and

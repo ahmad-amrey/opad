@@ -293,6 +293,12 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
       });
       h->addWidget(label);
       h->addWidget(w.pick, 1);
+      if (in.type == "faces" || in.type == "edges") {
+        w.rule = new QPushButton(tr("By rule…"), w.row);
+        w.rule->setToolTip(tr("Pick every face or edge like the picked one by a rule the feature keeps: it picks them again when the body changes"));
+        connect(w.rule, &QPushButton::clicked, this, [this, key, button = w.rule] { emit ruleRequested(key, button); });
+        h->addWidget(w.rule);
+      }
     } else {
       delete w.row;
       continue;
@@ -323,9 +329,21 @@ void FeaturePanel::refreshVisibility() {
     if (!shown && m_active == it->first) activate(QString());
     if (it->second.pick) {
       const opad::json p = picks(it->first);
-      const int n = p.is_array() ? static_cast<int>(p.size()) : p.is_null() ? 0 : 1;
+      int n = p.is_array() ? static_cast<int>(p.size()) : p.is_null() ? 0 : 1;
       QString what;
-      if (n == 1 && singlePick(in.type)) {
+      // A rule stands for what it matched; one plain pick can become a rule.
+      bool rule = false, plain_one = n == 1 && p.is_array() && p[0].is_object() && p[0].value("kind", "") != "body" && p[0].contains("index");
+      if (p.is_array())
+        for (const auto& one : p)
+          if (one.is_object() && one.contains("select")) rule = true;
+      if (rule) {
+        int count = 0;
+        for (const auto& one : p) count += one.is_object() && one.contains("select") ? one.value("expect", 1) : 1;
+        n = count;
+        what = tr("%1 by rule").arg(count);
+      }
+      if (it->second.rule) it->second.rule->setEnabled(plain_one && !rule);
+      if (!rule && n == 1 && singlePick(in.type)) {
         const opad::json& one = p;
         if (one.contains("base")) what = (in.type == "plane" ? tr("%1 plane") : tr("%1 axis")).arg(QString::fromStdString(one["base"].get<std::string>()).toUpper());
         else if (one.contains("sketch")) what = tr("Sketch");
@@ -457,6 +475,8 @@ void FeaturePanel::setValue(const QString& name, const opad::json& value) {
   refreshVisibility();
   emit inputsChanged();
 }
+
+QString FeaturePanel::statusText() const { return m_status->text(); }
 
 void FeaturePanel::setStatus(const QString& text, bool error) {
   const Tokens& t = theme::current();

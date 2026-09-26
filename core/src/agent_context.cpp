@@ -133,29 +133,7 @@ json query_entities(const Document& doc,const Scene& scene,const json& args,cons
     if(cancelled && cancelled())throw Error("cancelled");
     Ref ref;ref.body=body;ref.kind=refKind;ref.index=i;
     auto detail=inspect_ref(doc,scene,ref);
-    if(filters.contains("curve") && detail.value("curve","")!=filters["curve"].get<std::string>())continue;
-    if(filters.contains("surface") && detail.value("surface","")!=filters["surface"].get<std::string>())continue;
-    if(filters.contains("radius_min") && (!detail.contains("radius") || detail["radius"].get<double>()<filters["radius_min"].get<double>()-tolerance))continue;
-    if(filters.contains("radius_max") && (!detail.contains("radius") || detail["radius"].get<double>()>filters["radius_max"].get<double>()+tolerance))continue;
-    if(filters.contains("parallel_to")){
-      const auto k=axis(filters["parallel_to"].get<std::string>());
-      if(!detail.contains("direction") || std::abs(detail["direction"][k].get<double>())<1-1e-8)continue;
-    }
-    if(filters.contains("normal")){
-      const auto value=filters["normal"].get<std::string>();const int k=axis(value.substr(1));
-      if(!detail.contains("normal") || detail["normal"][k].get<double>()*(value[0]=='-'?-1:1)<1-1e-8)continue;
-    }
-    if(filters.contains("at_plane") || filters.contains("bounds")){
-      if(!detail.contains("bbox") || detail["bbox"].is_null())continue;
-      const auto& box=detail["bbox"];bool match=true;
-      if(filters.contains("at_plane")){
-        const auto& plane=filters["at_plane"];const int k=axis(plane["axis"].get<std::string>());const double at=plane["value"].get<double>();
-        match=std::abs(box["min"][k].get<double>()-at)<=tolerance && std::abs(box["max"][k].get<double>()-at)<=tolerance;
-      }
-      if(filters.contains("bounds"))for(int k=0;k<3;++k)
-        match=match && box["min"][k].get<double>()>=filters["bounds"]["min"][k].get<double>()-tolerance && box["max"][k].get<double>()<=filters["bounds"]["max"][k].get<double>()+tolerance;
-      if(!match)continue;
-    }
+    if(!entity_matches(detail,filters,tolerance))continue;  // the same filters rule selectors use (TODO 10 B7)
     if(count>=offset(args) && items.size()<limit(args)){
       detail["reference"]=reference_token(doc,scene,ref);items.push_back(std::move(detail));
     }
