@@ -496,6 +496,7 @@ void DesignController::runPreview(bool commit) {
         BRepBndLib::Add(*c.shape, box, Standard_False);
         const double defl = box.IsVoid() ? 0.1 : std::clamp(std::sqrt(box.SquareExtent()) * 0.002, 0.02, 2.0);
         opad::mesh_shape(*c.shape, defl);
+        opad::straighten_ruled_faces(*c.shape);
       }
     if(kind=="extrude")for(const auto& op:plan->ops){
       opad::json result;if(op.value("id","")==target)result=op.value("result",opad::json());

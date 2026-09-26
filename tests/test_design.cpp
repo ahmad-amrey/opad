@@ -1,5 +1,10 @@
 #include "opad/design/sketch_edit.hpp"
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
+#include <BRep_Builder.hxx>
+#include <TopoDS_Compound.hxx>
+#include <cstdio>
 #include <BRepAdaptor_Surface.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -542,4 +547,49 @@ TEST(face_sketch_origin_uses_lower_left_corner_and_preserves_existing_placement)
   frame.origin={8,7,20};
   const auto kept=resolve_plane(doc,scene,{{"face",top},{"frame",frame.to_json()}});
   CHECK_NEAR(kept.origin[0],8,1e-8);CHECK_NEAR(kept.origin[1],7,1e-8);
+}
+
+// TODO 10 A1: an extruded profile with spline and arc edges is an exact extrusion of its sketch curves, at the bottom
+// and at the top. (What did not follow them on screen was the display mesh: see test_mesh_recovery.)
+TEST(extrude_follows_its_sketch_curves_exactly) {
+  Document doc = Document::create();
+  Sketch sk;
+  const int a = sk.add_point(0, 0), b = sk.add_point(-3, 5), c = sk.add_point(0, 10), d = sk.add_point(20, 10), e = sk.add_point(20, 0),
+            m = sk.add_point(20, 5);
+  SkEntity spline;
+  spline.type = SkEntity::Type::Spline;
+  spline.id = sk.next_id();
+  spline.p = {a, b, c};
+  sk.entities.push_back(spline);
+  sk.add_line(c, d);
+  sk.add_arc(m, e, d);  // the right half circle
+  sk.add_line(e, a);
+  const std::string sketch = run_id(sketch_cmd(doc, sk));
+  feature_cmd(doc, "extrude", {{"profiles", json::array({json{{"sketch", sketch}, {"at", {10, 5}}}})}, {"distance", "10 mm"}});
+  const Scene s = resolve(doc);
+  CHECK_EQ(s.all_bodies().size(), 1u);
+  const TopoDS_Shape body = node_world_shape(doc, s, s.all_bodies().front());
+  TopoDS_Compound edges;
+  BRep_Builder builder;
+  builder.MakeCompound(edges);
+  for (TopExp_Explorer ex(body, TopAbs_EDGE); ex.More(); ex.Next()) builder.Add(edges, ex.Current());
+  const SketchItem* item = s.sketch(sketch);
+  CHECK(item);
+  double worst = 0;
+  int samples = 0;
+  for (const auto& edge : sketch_edges(Sketch::from_json(item->geometry), item->frame)) {
+    BRepAdaptor_Curve curve(edge);
+    for (int i = 0; i <= 40; ++i) {
+      const gp_Pnt p = curve.Value(curve.FirstParameter() + (curve.LastParameter() - curve.FirstParameter()) * i / 40);
+      for (const double z : {0.0, 10.0}) {
+        BRepExtrema_DistShapeShape distance(BRepBuilderAPI_MakeVertex(p.Translated(gp_Vec(0, 0, z))).Vertex(), edges);
+        CHECK(distance.IsDone());
+        worst = std::max(worst, distance.Value());
+        ++samples;
+      }
+    }
+  }
+  std::printf("%d points on the sketch curves, farthest from the body's edges %.3g mm\n", samples, worst);
+  CHECK(samples > 100);
+  CHECK(worst < 1e-6);
 }

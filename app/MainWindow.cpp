@@ -2262,8 +2262,18 @@ void MainWindow::runBench() {
     }); return;
   }
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_SCENE");!shot.isEmpty()) {
-    m_viewport->standardView("top");
-    QTimer::singleShot(700,this,[this,shot] { m_viewport->fitAll(); QCoreApplication::exit(m_viewport->grabImage().save(shot)?0:2); });
+    // OPAD_BENCH_CAMERA=<camera json> frames a chosen spot (zoomed-in tessellation checks) instead of top + fit.
+    // OPAD_BENCH_ZOOM=<factor> zooms the fitted OPAD_BENCH_VIEW (default top) into its centre instead.
+    const auto camera=opad::json::parse(qEnvironmentVariable("OPAD_BENCH_CAMERA").toStdString(),nullptr,false);
+    const double zoom=qEnvironmentVariable("OPAD_BENCH_ZOOM","0").toDouble();
+    if(!camera.is_object())m_viewport->standardView(qEnvironmentVariable("OPAD_BENCH_VIEW","top"));
+    QTimer::singleShot(700,this,[this,shot,camera,zoom] {
+      const bool refine=camera.is_object() || zoom>0;
+      if(camera.is_object())m_viewport->setCameraJson(camera);else m_viewport->fitAll();
+      if(zoom>0){auto fitted=m_viewport->cameraJson();fitted["scale"]=fitted.value("scale",1.0)/zoom;m_viewport->setCameraJson(fitted);}
+      if(refine && !qEnvironmentVariableIsSet("OPAD_BENCH_NO_REFINE"))m_viewport->requestRefinement();
+      QTimer::singleShot(refine?qEnvironmentVariable("OPAD_BENCH_WAIT","3000").toInt():0,this,[this,shot]{QCoreApplication::exit(m_viewport->grabImage().save(shot)?0:2);});
+    });
     return;
   }
   if (qEnvironmentVariableIsSet("OPAD_BENCH_PICKING")) {

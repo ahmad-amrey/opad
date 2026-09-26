@@ -97,7 +97,10 @@ Open imports external geometry into a fresh, saveable document; Import adds to t
 Settings offers six rendering presets (Classic, Technical flat, Studio, Studio fine, ray traced
 shadows and ray traced reflections), four backgrounds and a configurable auto-hide scene browser.
 Unsupported ray tracing falls back to raster rendering. Coplanar faces receive a small display depth
-bias to reduce flickering without changing model geometry.
+bias to reduce flickering without changing model geometry. Bodies are meshed for the whole-model view;
+when you zoom in close, the bodies in view get a finer mesh from a worker (within a triangle budget), so
+curved outlines keep following the exact geometry, and the walls of extrusions and cylinders are meshed
+as upright strips, so looking along an extrusion shows exactly its profile.
 
 Use Settings > 2D projection mode to lock the camera for drawings or model projections. Hover an
 endpoint to acquire an extension/alignment guide; Shift locks its direction. Layers live in the

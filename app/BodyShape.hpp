@@ -37,7 +37,11 @@ struct BodyPrs {
   bool closed = false;                           // closed solid: back faces can be culled
   std::vector<gp_Pnt> drawingSegments; // sampled pairs for drawing-only orbit fallback
   Bnd_Box box;                                   // of the prototype; spares Display() a pass over every vertex
-  static std::shared_ptr<BodyPrs> build(const TopoDS_Shape& meshedProto, const Bnd_Box& box);  // worker thread; needs triangulation
+  double deflection = 0;                         // chordal deflection the triangles were meshed with (mm)
+  // Worker thread; needs triangulation. `drawingOnly` skips what only picking uses (circles, navigation BVH, curves):
+  // the zoom refinement's finer arrays are drawn, never picked.
+  static std::shared_ptr<BodyPrs> build(const TopoDS_Shape& meshedProto, const Bnd_Box& box, bool drawingOnly = false);
+  size_t triangleCount() const;
 };
 
 class BodyShape : public AIS_Shape {
@@ -47,13 +51,17 @@ class BodyShape : public AIS_Shape {
 
  public:
   bool setRayBias(double offset) { if (offset==m_rayBias) return false; m_rayBias=offset; m_rayTriangles.Nullify(); SetToUpdate(); return true; }
+  // A finer mesh of the same body for the current zoom (Viewport::refineVisible), or nullptr for the base one. Only
+  // the drawn arrays change: picking, sub-shape ordinals and highlights keep using the prototype's own mesh.
+  bool setDisplayPrs(std::shared_ptr<const BodyPrs> prs) { if (prs==m_display) return false; m_display=std::move(prs); m_rayTriangles.Nullify(); SetToUpdate(); return true; }
+  const std::shared_ptr<const BodyPrs>& displayPrs() const { return m_display; }
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
   // Sub-shape modes: the stock owners are swapped for SubShapeOwner.
   void ComputeSelection(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode) override;
 
  private:
-  std::shared_ptr<const BodyPrs> m_prs;
+  std::shared_ptr<const BodyPrs> m_prs, m_display;
   double m_rayBias=0;
   Handle(Graphic3d_ArrayOfTriangles) m_rayTriangles;
 };

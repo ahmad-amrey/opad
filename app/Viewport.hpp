@@ -88,6 +88,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   SelFilter selectionFilter() const { return m_filter; }
 
   void fitAll();
+  void requestRefinement() { m_refineTimer.start(); }  // zoom refinement without waiting for a frame (benches)
   void fitWhenReady();   // fit now if bodies are displayed, otherwise once the first meshes arrive
   void fitNodesWhenReady(std::vector<std::string> ids);
   void cancelMeshing();  // stop tessellating the remaining bodies (they stay hidden until resetMeshing)
@@ -402,6 +403,15 @@ class Viewport : public QWidget, protected AIS_ViewController {
   const void* m_activeCache = nullptr;  // the document's shape cache the mesh bookkeeping refers to
   std::set<std::string> m_meshed;                                // meshed and presentation built (m_prs)
   std::map<std::string, std::shared_ptr<BodyPrs>> m_prs;         // per key, built on the worker, consumed by displayBody
+  // Zoom refinement (ViewportRefine.cpp): finer drawing arrays per key for bodies seen close up, bounded in total.
+  struct Refined { double deflection = 0; std::shared_ptr<const BodyPrs> prs; qint64 used = 0; };
+  std::map<std::string, Refined> m_refined;
+  QTimer m_refineTimer;
+  Graphic3d_WorldViewProjState m_refineCamera;
+  Job* m_refineJob = nullptr;
+  qint64 m_refineClock = 0;
+  void scheduleRefinement();
+  void refineVisible();
   std::set<std::string> m_meshing;
   std::set<std::string> m_meshSkipped;
   std::pair<int, int> m_lastSyncedSize{-1, -1};  // Qt size and display-scale stamp for syncWindowSize

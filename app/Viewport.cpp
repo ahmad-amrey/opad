@@ -127,6 +127,9 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   m_syncTimer.setSingleShot(true);
   m_syncTimer.setInterval(50);
   connect(&m_syncTimer, &QTimer::timeout, this, &Viewport::sync);
+  m_refineTimer.setSingleShot(true);
+  m_refineTimer.setInterval(350);
+  connect(&m_refineTimer, &QTimer::timeout, this, &Viewport::refineVisible);
   m_timer.setInterval(16);
   connect(&m_timer, &QTimer::timeout, this, [this] {
     if (!m_initialised) return;
@@ -900,6 +903,7 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   clock.start();
   refreshMeasurement();
   noteCameraMoved();
+  scheduleRefinement();
   trackHoverFade();
   AIS_ViewController::handleViewRedraw(ctx, view);
   if (trace::enabled() && clock.elapsed() > 50) trace::log(QStringLiteral("slow frame part: redraw %1 ms").arg(clock.elapsed()));
@@ -1331,11 +1335,13 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
       try {
         const Bnd_Box box = opad::body_bbox(*cache, j.key, j.shape);
         const auto mesh = opad::mesh_shape(j.shape, deflectionForBox(box));
+        opad::straighten_ruled_faces(j.shape);  // extruded walls stay upright seen along the extrusion (A1)
         if (mesh.status || mesh.recovered_faces || mesh.incomplete_cones)
           trace::log(QString("mesh %1: status=%2 recovered=%3 incomplete cones=%4").arg(QString::fromStdString(j.key)).arg(mesh.status).arg(mesh.recovered_faces).arg(mesh.incomplete_cones));
         // The box from before the mesh is only good for the deflection: it follows the surfaces' poles, and one
         // small body with a 10 m box zoomed Fit All out of the whole Engine. The presentation gets the mesh's box.
         prs = BodyPrs::build(j.shape, opad::refine_body_bbox(*cache, j.key, j.shape));  // so Display() on the UI thread is cheap
+        prs->deflection = deflectionForBox(box);
       } catch (...) {
       }
       if (!*alive) return;
@@ -1442,6 +1448,7 @@ void Viewport::sync() {
       m_meshed.clear();
       m_meshSkipped.clear();
       m_prs.clear();
+      m_refined.clear();
     }
   }
   if (!m_isolated.empty()) {  // the mode ends by itself once every isolated object is gone (deleted)
@@ -1557,6 +1564,8 @@ void Viewport::displayBody(const std::string& id) {
     prs.reset();
   }
   Handle(AIS_Shape) ais = new BodyShape(located, prs);
+  if (auto refined = m_refined.find(n->body_key); rigid && refined != m_refined.end())
+    Handle(BodyShape)::DownCast(ais)->setDisplayPrs(refined->second.prs);  // zoomed in before: draw it fine at once
   if(!n->raster.is_null()) {
     const std::string href=n->raster.value("href","");
     const auto comma=href.find(',');
@@ -1643,6 +1652,7 @@ void Viewport::updateDepthBias() {
 
 void Viewport::finishSync(int pendingCount, bool added) {
   if (added) updateDepthBias();
+  if (added) m_refineTimer.start();  // bodies that arrived in a zoomed-in view
   updateGridExtent();
   emit meshingProgress(pendingCount);
   // Keep fitting while a load is still streaming bodies in, but only until the user moves the camera:

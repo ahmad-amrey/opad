@@ -7,16 +7,22 @@
 #include <BRepTools_Modifier.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
 #include <Poly_PolygonOnTriangulation.hxx>
+#include <Poly_Triangle.hxx>
 #include <Poly_Triangulation.hxx>
 #include <ShapeCustom_ConvertToRevolution.hxx>
 #include <Standard_Failure.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
+#include <TColStd_Array1OfInteger.hxx>
+#include <TColStd_Array1OfReal.hxx>
 #include <TopoDS.hxx>
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <vector>
 
 namespace opad {
 namespace {
@@ -85,7 +91,155 @@ bool recover_cone(TopoDS_Face face, double expected, double tolerance, double an
   face.Checked(checked);
   return true;
 }
+
+// One face of straighten_ruled_faces: two rims sampled at matching points (same count, the same positions once the
+// sweep direction is projected out), joined only by straight lines along that direction (the sides or the seam).
+bool straighten(TopoDS_Face face) {
+  if (BRep_Tool::Surface(face).IsNull()) return false;
+  BRepAdaptor_Surface adaptor(face, Standard_False);
+  gp_Dir axis;
+  if (adaptor.GetType() == GeomAbs_Cylinder) axis = adaptor.Cylinder().Axis().Direction();
+  else if (adaptor.GetType() == GeomAbs_SurfaceOfExtrusion) axis = adaptor.Direction();
+  else return false;
+  TopLoc_Location location;
+  const auto mesh = BRep_Tool::Triangulation(face, location);
+  if (mesh.IsNull() || !mesh->HasUVNodes() || mesh->NbTriangles() == 0) return false;
+  const gp_Trsf toWorld = location.Transformation();
+  auto flat = [&](int node) {  // world position with the sweep direction projected out
+    const gp_XYZ p = mesh->Node(node).Transformed(toWorld).XYZ();
+    return p - axis.XYZ() * p.Dot(axis.XYZ());
+  };
+  struct Boundary {
+    TopoDS_Edge edge;
+    Handle(Poly_PolygonOnTriangulation) first, second;
+    bool rim;
+  };
+  std::vector<Boundary> boundaries;
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(face, TopAbs_EDGE, edges);
+  Bnd_Box box;
+  for (int i = 1; i <= mesh->NbNodes(); ++i) box.Add(mesh->Node(i).Transformed(toWorld));
+  const double tolerance = std::max(1e-7, std::sqrt(box.SquareExtent()) * 1e-9);
+  std::vector<int> rimNodes[2];
+  for (int i = 1; i <= edges.Extent(); ++i) {
+    const auto edge = TopoDS::Edge(edges(i).Oriented(TopAbs_FORWARD));
+    if (BRep_Tool::Degenerated(edge)) return false;
+    Boundary b{edge, BRep_Tool::PolygonOnTriangulation(edge, mesh, location), {}, false};
+    if (b.first.IsNull() || b.first->NbNodes() < 2) return false;
+    if (BRep_Tool::IsClosed(edge, mesh, location)) b.second = BRep_Tool::PolygonOnTriangulation(TopoDS::Edge(edge.Reversed()), mesh, location);
+    // A side (or the seam) is a straight line along the sweep: all its nodes project onto one point.
+    const gp_XYZ start = flat(b.first->Node(1));
+    for (int k = 2; k <= b.first->NbNodes() && !b.rim; ++k) b.rim = (flat(b.first->Node(k)) - start).Modulus() > tolerance;
+    if (b.rim) {
+      if (!b.second.IsNull()) return false;  // a rim is never the seam
+      const int which = rimNodes[0].empty() ? 0 : rimNodes[1].empty() ? 1 : -1;
+      if (which < 0) return false;
+      for (int k = 1; k <= b.first->NbNodes(); ++k) rimNodes[which].push_back(b.first->Node(k));
+    }
+    boundaries.push_back(b);
+  }
+  auto& a = rimNodes[0];
+  auto& b = rimNodes[1];
+  const size_t n = a.size();
+  if (n < 2 || b.size() != n) return false;
+  if ((flat(a.front()) - flat(b.front())).Modulus() > tolerance) std::reverse(b.begin(), b.end());
+  for (size_t k = 0; k < n; ++k)
+    if ((flat(a[k]) - flat(b[k])).Modulus() > tolerance) return false;
+  // New numbering: rim a is 1..n, rim b (matched to a) is n+1..2n. Every other boundary node must be a rim node.
+  std::map<int, int> renumber;
+  for (size_t k = 0; k < n; ++k) {
+    renumber.emplace(a[k], int(k) + 1);
+    renumber.emplace(b[k], int(n + k) + 1);
+  }
+  if (renumber.size() != 2 * n) return false;
+  auto remap = [&](const Handle(Poly_PolygonOnTriangulation)& polygon) -> Handle(Poly_PolygonOnTriangulation) {
+    if (polygon.IsNull()) return polygon;
+    TColStd_Array1OfInteger nodes(1, polygon->NbNodes());
+    for (int k = 1; k <= polygon->NbNodes(); ++k) {
+      const auto found = renumber.find(polygon->Node(k));
+      if (found == renumber.end()) return {};
+      nodes(k) = found->second;
+    }
+    Handle(Poly_PolygonOnTriangulation) out;
+    if (polygon->HasParameters()) {
+      TColStd_Array1OfReal parameters(1, polygon->NbNodes());
+      for (int k = 1; k <= polygon->NbNodes(); ++k) parameters(k) = polygon->Parameter(k);
+      out = new Poly_PolygonOnTriangulation(nodes, parameters);
+    } else out = new Poly_PolygonOnTriangulation(nodes);
+    out->Deflection(polygon->Deflection());
+    return out;
+  };
+  std::vector<std::pair<Handle(Poly_PolygonOnTriangulation), Handle(Poly_PolygonOnTriangulation)>> remapped;
+  for (const auto& boundary : boundaries) {
+    remapped.emplace_back(remap(boundary.first), remap(boundary.second));
+    if (remapped.back().first.IsNull() || (!boundary.second.IsNull() && remapped.back().second.IsNull())) return false;
+  }
+  Handle(Poly_Triangulation) strips = new Poly_Triangulation(int(2 * n), int(2 * (n - 1)), Standard_True);
+  for (size_t k = 0; k < n; ++k) {
+    strips->SetNode(int(k) + 1, mesh->Node(a[k]));
+    strips->SetUVNode(int(k) + 1, mesh->UVNode(a[k]));
+    strips->SetNode(int(n + k) + 1, mesh->Node(b[k]));
+    strips->SetUVNode(int(n + k) + 1, mesh->UVNode(b[k]));
+  }
+  // Keep the winding BRepMesh chose relative to the surface normal (lighting and back faces depend on it). Both
+  // are taken in world coordinates: the adaptor evaluates the located surface, the nodes are moved by `location`.
+  auto sense = [&](const Handle(Poly_Triangulation)& t, int i) {
+    int p, q, r;
+    t->Triangle(i).Get(p, q, r);
+    const gp_XY uv = (t->UVNode(p).XY() + t->UVNode(q).XY() + t->UVNode(r).XY()) / 3;
+    gp_Pnt point;
+    gp_Vec du, dv;
+    adaptor.D1(uv.X(), uv.Y(), point, du, dv);
+    const gp_Pnt P = t->Node(p).Transformed(toWorld), Q = t->Node(q).Transformed(toWorld), R = t->Node(r).Transformed(toWorld);
+    return gp_Vec(P, Q).Crossed(gp_Vec(P, R)).Dot(du.Crossed(dv));
+  };
+  for (int k = 0; k + 1 < int(n); ++k) {
+    strips->SetTriangle(2 * k + 1, Poly_Triangle(k + 1, k + 2, int(n) + k + 2));
+    strips->SetTriangle(2 * k + 2, Poly_Triangle(k + 1, int(n) + k + 2, int(n) + k + 1));
+  }
+  double reference = 0;
+  for (int i = 1; i <= mesh->NbTriangles() && std::abs(reference) < 1e-12; ++i) reference = sense(mesh, i);
+  double mine = 0;
+  for (int i = 1; i <= strips->NbTriangles() && std::abs(mine) < 1e-12; ++i) mine = sense(strips, i);
+  if (std::abs(reference) < 1e-12 || std::abs(mine) < 1e-12) return false;
+  if ((reference > 0) != (mine > 0))
+    for (int i = 1; i <= strips->NbTriangles(); ++i) {
+      int p, q, r;
+      strips->Triangle(i).Get(p, q, r);
+      strips->SetTriangle(i, Poly_Triangle(p, r, q));
+    }
+  strips->Deflection(mesh->Deflection());
+  BRep_Builder builder;
+  for (size_t i = 0; i < boundaries.size(); ++i) {
+    auto edge = boundaries[i].edge;
+    const bool modified = edge.Modified(), checked = edge.Checked();
+    builder.UpdateEdge(edge, Handle(Poly_PolygonOnTriangulation)(), mesh, location);
+    if (!remapped[i].second.IsNull()) builder.UpdateEdge(edge, remapped[i].first, remapped[i].second, strips, location);
+    else builder.UpdateEdge(edge, remapped[i].first, strips, location);
+    edge.Modified(modified);
+    edge.Checked(checked);
+  }
+  const bool modified = face.Modified(), checked = face.Checked();
+  builder.UpdateFace(face, strips);
+  face.Modified(modified);
+  face.Checked(checked);
+  return true;
+}
 }  // namespace
+
+int straighten_ruled_faces(const TopoDS_Shape& shape) {
+  if (shape.IsNull()) return 0;
+  int changed = 0;
+  TopTools_IndexedMapOfShape faces;
+  TopExp::MapShapes(shape, TopAbs_FACE, faces);
+  for (int i = 1; i <= faces.Extent(); ++i) {
+    try {
+      changed += straighten(TopoDS::Face(faces(i)));
+    } catch (const Standard_Failure&) {  // keep BRepMesh's triangles for this face
+    }
+  }
+  return changed;
+}
 
 MeshingReport mesh_shape(const TopoDS_Shape& shape, double tolerance, double angular_deg) {
   MeshingReport report;

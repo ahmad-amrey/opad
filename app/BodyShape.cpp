@@ -134,11 +134,25 @@ class NavigationTriangles : public Select3D_SensitivePrimitiveArray {
 };
 }
 
-std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const Bnd_Box& box) {
+size_t BodyPrs::triangleCount() const {
+  if (triangles.IsNull()) return 0;
+  return size_t(triangles->EdgeNumber() > 0 ? triangles->EdgeNumber() : triangles->VertexNumber()) / 3;
+}
+
+std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const Bnd_Box& box, bool drawingOnly) {
   auto p = std::make_shared<BodyPrs>();
   p->box = box;
   p->triangles = StdPrs_ShadedShape::FillTriangles(meshedProto);
   p->boundaries = StdPrs_ShadedShape::FillFaceBoundaries(meshedProto);
+  if (drawingOnly) {
+    p->closed = false;
+    for (TopExp_Explorer e(meshedProto, TopAbs_SHELL); e.More(); e.Next()) {
+      p->closed = true;
+      if (!BRep_Tool::IsClosed(e.Current())) { p->closed = false; break; }
+    }
+    if (meshedProto.ShapeType() > TopAbs_SHELL) p->closed = false;
+    return p;
+  }
   if (!p->triangles.IsNull()) {
     Handle(Select3D_SensitivePrimitiveArray) triangles = new NavigationTriangles();
     if (triangles->InitTriangulation(p->triangles->Attributes(), p->triangles->Indices(), TopLoc_Location())) {
@@ -233,26 +247,28 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
 }
 
 void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) {
+  // The zoom refinement's arrays when there are some; everything else below only reads `shown`.
+  const auto& shown = m_display && !m_display->triangles.IsNull() ? m_display : m_prs;
   if(m_prs && m_prs->triangles.IsNull() && (!m_prs->boundaries.IsNull() || !m_prs->loosePoints.IsNull())) {
     if(!m_prs->boundaries.IsNull()) {auto g=prs->NewGroup();g->SetGroupPrimitivesAspect(myDrawer->WireAspect()->Aspect());g->AddPrimitiveArray(m_prs->boundaries);}
     if(!m_prs->loosePoints.IsNull()) {auto g=prs->NewGroup();g->SetGroupPrimitivesAspect(myDrawer->PointAspect()->Aspect());g->AddPrimitiveArray(m_prs->loosePoints);}
     return;
   }
-  if (mode != AIS_Shaded || !m_prs || m_prs->triangles.IsNull()) {
+  if (mode != AIS_Shaded || !shown || shown->triangles.IsNull()) {
     AIS_Shape::Compute(mgr, prs, mode);  // wireframe/HLR, or nothing precomputed: the stock path
     return;
   }
   // Min/max are supplied from the worker's box; evaluating them here walks every vertex on the UI thread.
-  const bool haveBox = !m_prs->box.IsVoid();
+  const bool haveBox = !shown->box.IsVoid();
   double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
-  if (haveBox) m_prs->box.Get(x0, y0, z0, x1, y1, z1);
+  if (haveBox) shown->box.Get(x0, y0, z0, x1, y1, z1);
   Handle(Graphic3d_Group) g = prs->NewGroup();
-  g->SetClosed(m_prs->closed);
+  g->SetClosed(shown->closed);
   g->SetGroupPrimitivesAspect(myDrawer->ShadingAspect()->Aspect());
   // Ray intersections do not use raster depth offsets. Separate only the render
   // skin along its normals; the analytic shape, selection and exports stay exact.
   if (m_rayBias!=0 && m_rayTriangles.IsNull()) {
-    const auto& src=m_prs->triangles;
+    const auto& src=shown->triangles;
     m_rayTriangles=new Graphic3d_ArrayOfTriangles(src->VertexNumber(),src->EdgeNumber(),true);
     for(int i=1;i<=src->VertexNumber();++i) {
       const gp_Dir n=src->VertexNormal(i);
@@ -260,12 +276,12 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
     }
     for(int i=1;i<=src->EdgeNumber();++i) m_rayTriangles->AddEdge(src->Edge(i));
   }
-  g->AddPrimitiveArray(m_rayTriangles.IsNull()?m_prs->triangles:m_rayTriangles, !haveBox);
+  g->AddPrimitiveArray(m_rayTriangles.IsNull()?shown->triangles:m_rayTriangles, !haveBox);
   if (haveBox) g->SetMinMaxValues(x0, y0, z0, x1, y1, z1);
-  if (myDrawer->FaceBoundaryDraw() && !m_prs->boundaries.IsNull()) {
+  if (myDrawer->FaceBoundaryDraw() && !shown->boundaries.IsNull()) {
     Handle(Graphic3d_Group) e = prs->NewGroup();
     e->SetGroupPrimitivesAspect(myDrawer->FaceBoundaryAspect()->Aspect());
-    e->AddPrimitiveArray(m_prs->boundaries, !haveBox);
+    e->AddPrimitiveArray(shown->boundaries, !haveBox);
     if (haveBox) e->SetMinMaxValues(x0, y0, z0, x1, y1, z1);
   }
 }
