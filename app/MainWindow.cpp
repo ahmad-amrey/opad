@@ -122,6 +122,22 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
       if (remaining == 0) m_loadJob->finish();
       else setLoadPhase(meshPhase(), m_meshTotal > 0 ? (m_meshTotal - remaining) * 100 / m_meshTotal : -1);
     }
+    if (m_loadJob) return;
+    // Bodies shown after the load (showing a hidden assembly, leaving isolation) stream in the same way: the same
+    // status-bar progress, so it is clear when they are all there. (The strip appears after 0.5 s only.)
+    if (remaining > 0) {
+      if (!m_displayJob) {
+        m_displayJob = m_jobs->begin(tr("Displaying bodies"));
+        m_displayTotal = 0;
+        connect(m_displayJob, &Job::cancelRequested, m_viewport, &Viewport::cancelMeshing);
+        connect(m_displayJob, &Job::finished, this, [this](bool, const QString&) { m_displayJob = nullptr; });
+      }
+      m_displayTotal = std::max(m_displayTotal, remaining);
+      m_displayJob->setPhase(tr("Tessellating and displaying bodies (%1 of %2)").arg(m_displayTotal - remaining).arg(m_displayTotal),
+                             (m_displayTotal - remaining) * 100 / m_displayTotal);
+    } else if (m_displayJob) {
+      m_displayJob->finish();
+    }
   });
   // selection.json is written on a short debounce and off the hot selection path (it inspects geometry).
   m_selFileTimer.setSingleShot(true);
@@ -2081,6 +2097,16 @@ void MainWindow::beginLoad(std::function<void()> after) {
   m_viewport->resetMeshing();
   m_loadJob = m_jobs->begin(tr("Loading…"), true);
   setLoading(true);
+  // OPAD_BENCH_LOADSHOT=<prefix>: the status bar every 2 s while the load runs (<prefix>-<n>.png).
+  if (const QString shot = qEnvironmentVariable("OPAD_BENCH_LOADSHOT"); !shot.isEmpty()) {
+    auto* timer = new QTimer(this);
+    auto count = std::make_shared<int>(0);
+    connect(timer, &QTimer::timeout, this, [this, shot, timer, count] {
+      statusBar()->grab().save(QString("%1-%2.png").arg(shot).arg(++*count));
+      if (!m_loadJob || *count >= 30) { timer->stop(); timer->deleteLater(); }
+    });
+    timer->start(2000);
+  }
   connect(m_loadJob, &Job::cancelRequested, this, [this] {
     m_doc->cancelLoad();
     m_viewport->cancelMeshing();
@@ -2167,6 +2193,22 @@ void MainWindow::runBench() {
       QCoreApplication::exit(saved?0:2);
     });
     return;
+  }
+  // OPAD_BENCH_SHOWROOT=<prefix>: show hidden roots after the load; the status bar (every second, <prefix>-<n>.png)
+  // must report the bodies streaming in until they are all displayed.
+  if(const QString shot=qEnvironmentVariable("OPAD_BENCH_SHOWROOT");!shot.isEmpty()){
+    std::vector<std::string> hidden;for(const auto& root:m_doc->scene.roots)if(const auto* n=m_doc->scene.node(root);n && !n->visible)hidden.push_back(root);
+    for(const auto& id:hidden)m_doc->run("appearance",opad::json{{"target",id},{"visible",true}});
+    auto count=std::make_shared<int>(0),reported=std::make_shared<int>(0);auto* timer=new QTimer(this);auto clock=std::make_shared<QElapsedTimer>();clock->start();
+    connect(timer,&QTimer::timeout,this,[this,shot,timer,count,reported,clock]{
+      if(m_displayJob)++*reported;
+      statusBar()->grab().save(QString("%1-%2.png").arg(shot).arg(++*count));
+      if((!m_displayJob && m_meshRemaining==0 && *count>2) || *count>=60){
+        timer->stop();trace::log(QString("bench: show root: %1 hidden roots shown, displayed after %2 ms, progress reported in %3 of %4 grabs").arg(m_doc->scene.roots.size()).arg(clock->elapsed()).arg(*reported).arg(*count));
+        QCoreApplication::exit(*reported>0?0:2);
+      }
+    });
+    timer->start(1000);return;
   }
   // OPAD_BENCH_TWOD=<png>: 2D mode shows its card; an orbit press in 2D mode gives the hint; the card turns it off.
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_TWOD");!shot.isEmpty()){

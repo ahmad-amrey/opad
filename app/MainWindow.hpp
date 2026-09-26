@@ -183,6 +183,8 @@ class MainWindow : public QMainWindow {
   ProgressStrip* m_progress = nullptr;
   JobRunner* m_jobs = nullptr;      // every long operation runs through this (see Jobs.hpp)
   Job* m_loadJob = nullptr;         // open/import: document worker + tessellation, one job
+  Job* m_displayJob = nullptr;      // bodies shown after a load (unhide, un-isolate): same status-bar progress
+  int m_displayTotal = 0;
   Job* m_selFileJob = nullptr;      // selection.json writer
   Job* m_measureJob = nullptr;      // the guided tool's measurement; cancelled as soon as the picks move on
   Job* m_propsJob = nullptr;        // component bbox for the properties panel
