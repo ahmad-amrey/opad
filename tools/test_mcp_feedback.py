@@ -30,12 +30,20 @@ def main():
     desktop = Desktop(args.app.resolve(), cli, root / "desktop", environment={"CODEX_HOME": str(home)})
     client = Client(cli, desktop.discovery)
     try:
+        # A call before live_bind says what to call instead of reporting a dropped connection.
+        unbound = client.raw("context")["structuredContent"]["error"]
+        assert unbound["code"] == "not_bound" and unbound["next"] == ["live_instances", "live_bind"], unbound
         diagnostic = client.call("live_diagnostics", include_example=True)
         assert diagnostic["connection"] == "unbound" and diagnostic["target"] is None
         assert diagnostic["guide"]["transactions"]["scope"] == "connection"
+        guide = json.dumps(diagnostic["guide"])
+        assert "@{cabin#/body_ids/0}" in guide and "without /result/" in guide
         tools = {t["name"]: t for t in client.request("tools/list")["tools"]}
         assert all(t["outputSchema"]["type"] == "object" for t in tools.values())
         assert "feature_id" in tools["feature"]["outputSchema"]["properties"]["result"]["required"]
+        assert "@{cabin#/body_ids/0}" in tools["model_batch"]["description"] and "/result/" not in tools["model_batch"]["description"].replace("without /result/", "")
+        for name in ("sketch", "sketch_edit"):
+            assert "one id space" in tools[name]["inputSchema"]["properties"]["geometry"]["description"]
         chosen = client.call("live_instances")["instances"][0]
         client.call("live_bind", instance=chosen["instance"], target=chosen["target"])
         diagnostic = client.call("live_diagnostics")
@@ -71,6 +79,28 @@ def main():
         assert client.call("context")["result"]["bodies"] == 0
         desktop.action("redo")
         assert client.call("context")["result"]["bodies"] == 1
+        # The wrong forms that were rejected in the Benchy build now say how to fix them.
+        revision = client.state()["revision"]
+        cabin = {"id": "cabin", "command": "feature", "arguments": {"kind": "box", "inputs": {"length": 20, "width": 12, "height": 10}}}
+        def label(target):
+            return [cabin, {"id": "label", "command": "rename", "arguments": {"target": target, "name": "Cabin"}}]
+        wrong = client.raw("model_batch", steps=label("@{cabin#/result/body_ids/0}"), expected_revision=revision, request_id="wrong-path")
+        message = wrong["structuredContent"]["error"]["message"]
+        assert wrong["isError"] and "step 'cabin' result has no 'result'" in message, wrong
+        assert "body_ids" in message and "feature_id" in message and "@{cabin#/body_ids/0}" in message, message
+        unknown = client.raw("model_batch", steps=label("@{cabn#/body_ids/0}"), expected_revision=revision, request_id="wrong-step")
+        assert "earlier steps are cabin" in unknown["structuredContent"]["error"]["message"], unknown
+        index = client.raw("model_batch", steps=label("@{cabin#/body_ids/3}"), expected_revision=revision, request_id="wrong-index")
+        assert "list of 1 item" in index["structuredContent"]["error"]["message"], index
+        slash = client.call("model_batch", steps=label("@{cabin/body_ids/0}"), expected_revision=revision, request_id="slash-form")
+        assert slash["state"] == "committed" and [s["state"] for s in slash["result"]["steps"]] == ["computed", "computed"], slash
+        duplicate = client.raw("sketch", name="Duplicate ids", geometry={"points": [{"id": 1, "x": 0, "y": 0}, {"id": 2, "x": 5, "y": 0}],
+            "entities": [{"id": 1, "type": "line", "p": [1, 2]}]}, expected_revision=client.state()["revision"], request_id="duplicate-ids")
+        message = duplicate["structuredContent"]["error"]["message"]
+        assert duplicate["isError"] and "point 1 and entity 1" in message and "share one id space" in message, duplicate
+        desktop.action("undo")
+        print("Batch reference forms, path errors naming the step's keys, sketch id collisions and not_bound: PASS", flush=True)
+
         abandoned = client.write("transaction_begin", label="Disconnect test", request_id="abandon")
         client.write("param", name="abandoned", expr="1 mm", transaction=abandoned["transaction"])
         client.close()
@@ -159,7 +189,8 @@ def main():
         registration("check", "different installation")
         registration("remove", "was not removed")
         desktop.action("disconnect")
-        assert client.raw("context")["isError"]
+        dropped = client.raw("context")
+        assert dropped["isError"] and dropped["structuredContent"]["error"]["code"] == "disconnected", dropped
         desktop.action("settings", tab=1)
         time.sleep(.5)
         assert (desktop.control / "settings-client.png").exists()

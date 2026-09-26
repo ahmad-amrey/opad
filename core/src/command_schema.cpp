@@ -40,7 +40,9 @@ json sketch_geometry() {
   auto constraint=object({{"id",id},{"type",choice({"coincident","horizontal","vertical","parallel","perpendicular","collinear","tangent","equal","concentric","midpoint","symmetric","fix","smooth","curvature","distance","hdistance","vdistance","radius","diameter","angle","arc_length"})},
     {"refs",array(id,1)},{"anchors",array(id)},{"value",type("number")},{"expr",type("string")},{"reference",type("boolean")},{"pos",vector(2)}},{"id","type","refs"});
   constraint["description"]="refs are point/entity IDs in this sketch. Dimensions require value (numeric initial value) and optionally expr (e.g. width or thickness/2).";
-  return object({{"points",array(point)},{"entities",array(entity)},{"constraints",array(constraint)},{"images",array(type("object"))},{"patterns",array(type("object"))},{"id_watermark",type("integer")}});
+  auto out=object({{"points",array(point)},{"entities",array(entity)},{"constraints",array(constraint)},{"images",array(type("object"))},{"patterns",array(type("object"))},{"id_watermark",type("integer")}});
+  out["description"]="Every id is unique across the whole sketch: points, entities, constraints, images and patterns share one id space, so point 1 and entity 1 collide (number them e.g. points 1-99, entities 100-199, constraints 200+).";
+  return out;
 }
 json input_schema(const design::InputSpec& in) {
   json out;

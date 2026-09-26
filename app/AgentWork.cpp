@@ -40,17 +40,45 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
   static const std::set<std::string> allowed={"component","param","sketch","sketch_edit","feature","feature_edit","rename","reparent","appearance","transform"};
   std::map<std::string,json> schemas,results;std::set<std::string> earlier;
   for(const auto& command:opad::commands::list())if(allowed.count(command.name))schemas[command.name]=command_schema(command,true);
+  static const std::string syntax="Write @{<step id>#/<path in that step's result>}, for example @{cabin#/body_ids/0} (the first body made by the step with id \"cabin\"); @{cabin/body_ids/0} is the same. Paths start at the step's result, without /result/: feature steps have feature_id and body_ids, sketch steps sketch_id, component steps component_id.";
+  // Step ids are [A-Za-z0-9_], so the first '#' or '/' ends the id; '#' may be followed by the pointer's '/' or not.
   auto symbol=[](const std::string& text)->std::pair<std::string,std::string>{
     if(!text.starts_with("@{") || !text.ends_with("}"))return {};
-    const auto hash=text.find('#',2);
-    if(hash==std::string::npos || hash+1>=text.size()-1 || text[hash+1]!='/')throw opad::Error("Expected symbolic reference @{earlier_step#/result/path}");
-    return {text.substr(2,hash-2),text.substr(hash+1,text.size()-hash-2)};
+    const auto body=text.substr(2,text.size()-3);const auto end=body.find_first_of("#/");
+    std::string id=body.substr(0,end),path=end==std::string::npos?std::string():body.substr(end+(body[end]=='#'?1:0));
+    if(!path.empty() && path[0]!='/')path="/"+path;
+    if(id.empty() || path.size()<2)throw opad::Error("Batch reference "+text+" needs a step id and a path. "+syntax);
+    return {id,path};
+  };
+  auto keysOf=[](const json& value){std::string keys;for(const auto& [key,item]:value.items())keys+=(keys.empty()?"":", ")+key;return keys.empty()?std::string("none"):keys;};
+  // Walks the pointer itself so a wrong path names the step and what it does have, not a raw JSON exception.
+  auto lookup=[&](const std::string& text,const std::string& id,const std::string& path)->const json&{
+    const json* at=&results.at(id);std::string where="step '"+id+"' result";
+    for(size_t start=1;start<=path.size();){
+      const auto end=std::min(path.find('/',start),path.size());std::string token=path.substr(start,end-start);start=end+1;
+      for(size_t i=0;(i=token.find('~',i))!=std::string::npos;++i)token.replace(i,2,token.compare(i,2,"~1")==0?"/":"~");
+      if(at->is_object()){
+        if(!at->contains(token)){
+          std::string example=at->contains("body_ids")?"@{"+id+"#/body_ids/0}":at->contains("sketch_id")?"@{"+id+"#/sketch_id}":at->contains("component_id")?"@{"+id+"#/component_id}":"";
+          throw opad::Error("Batch reference "+text+": "+where+" has no '"+token+"'; its keys are "+keysOf(*at)+"."+(example.empty()?"":" For example "+example+".")+(token=="result"?" Paths start at the step's result, without /result/.":""));
+        }
+        at=&(*at)[token];
+      }else if(at->is_array()){
+        const bool digits=!token.empty() && token.size()<10 && std::all_of(token.begin(),token.end(),[](unsigned char c){return std::isdigit(c);});
+        if(!digits || std::stoull(token)>=at->size())throw opad::Error("Batch reference "+text+": "+where+" is a list of "+std::to_string(at->size())+" item(s); '"+token+"' is not an index from 0 to "+std::to_string(at->size()?at->size()-1:0)+".");
+        at=&(*at)[std::stoull(token)];
+      }else throw opad::Error("Batch reference "+text+": "+where+" is "+at->dump()+", which has no '"+token+"'.");
+      where+="/"+token;
+    }
+    return *at;
   };
   std::function<void(const json&)> preflightRefs=[&](const json& value){
     if(value.is_string()){
-      const auto [id,path]=symbol(value.get<std::string>());
-      if(!id.empty() && !earlier.count(id))throw opad::Error("Batch reference must name an earlier step: "+id);
-      if(!id.empty())json::json_pointer pointer(path); // validate JSON-pointer syntax now
+      const auto text=value.get<std::string>();const auto [id,path]=symbol(text);
+      if(!id.empty() && !earlier.count(id)){
+        std::string steps;for(const auto& step:earlier)steps+=(steps.empty()?"":", ")+step;
+        throw opad::Error("Batch reference "+text+" must name an earlier step; earlier steps are "+(steps.empty()?std::string("none"):steps)+". "+syntax);
+      }
     }else if(value.is_array() || value.is_object())for(const auto& child:value)preflightRefs(child);
   };
   // Validate every command and dependency before computing any geometry.
@@ -65,10 +93,10 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
   output={{"steps",json::array()},{"atomic",true},{"persistence","not_saved"}};
   std::function<void(json&)> expand=[&](json& value){
     if(value.is_string()){
-      const auto [id,path]=symbol(value.get<std::string>());
+      const auto text=value.get<std::string>();const auto [id,path]=symbol(text);
       if(!id.empty()){
-        value=results.at(id).at(json::json_pointer(path));
-        if(!value.is_string())throw opad::Error("Batch symbols must resolve to an identifier string");
+        value=lookup(text,id,path);
+        if(!value.is_string())throw opad::Error("Batch reference "+text+" is "+std::string(value.type_name())+" "+value.dump()+", not an identifier string."+(value.is_array()?" Add an index, for example "+text.substr(0,text.size()-1)+"/0}.":""));
       }
     }else if(value.is_array() || value.is_object())for(auto& child:value)expand(child);
   };

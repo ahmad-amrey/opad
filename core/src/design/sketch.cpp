@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <set>
 
 namespace opad::design {
@@ -289,10 +290,14 @@ void Sketch::remove(int id) {
 }
 
 void Sketch::validate() const {
-  std::set<int> ids;
+  // Points, entities, constraints, images and patterns share one id space (a constraint's refs can name either).
+  std::map<int, const char*> ids;
   auto claim = [&](int id, const char* what) {
     if (id <= 0) throw Error(std::string("sketch: ") + what + " id " + std::to_string(id) + " is not positive");
-    if (!ids.insert(id).second) throw Error("sketch: id " + std::to_string(id) + " is used twice");
+    if (const auto [at, added] = ids.emplace(id, what); !added)
+      throw Error("sketch: " + std::string(at->second) + " " + std::to_string(id) + " and " + what + " " + std::to_string(id) +
+                  " have the same id; points, entities, constraints, images and patterns share one id space, so every id must be "
+                  "unique across the whole sketch");
   };
   for (const auto& p : points) {
     claim(p.id, "point");

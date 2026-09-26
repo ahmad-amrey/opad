@@ -18,7 +18,7 @@ int opad_live_mcp(int argc,char** argv) {
   for(int i=3;i<argc;++i)if(std::string(argv[i])=="--discovery" && i+1<argc)discovery=QString::fromLocal8Bit(argv[++i]);
     else {std::cerr<<"usage: opad-cli mcp --live --discovery <directory>\n";return 1;}
   if(discovery.isEmpty()){std::cerr<<"Copy the live configuration from OPAD Settings > AI integration. --discovery is required.\n";return 1;}
-  QLocalSocket socket;json client=json::object(),lastError=nullptr;bool initialized=false;std::string line;QByteArray input;
+  QLocalSocket socket;json client=json::object(),lastError=nullptr;bool initialized=false,bound=false;std::string line;QByteArray input;
   auto instances=[&]{json list=json::array();for(const auto& file:QDir(discovery).entryInfoList({"*.json"},QDir::Files)){
       QLockFile lock(file.absoluteFilePath()+".lock");if(lock.tryLock(0)){lock.unlock();continue;}
       QFile f(file.absoluteFilePath());if(!f.open(QIODevice::ReadOnly) || f.size()>65536)continue;
@@ -32,6 +32,11 @@ int opad_live_mcp(int argc,char** argv) {
       // Do not let a late reply from a timed-out request become the next call's reply.
       socket.abort();input.clear();throw TransportFailure{std::move(result)};
     };
+    if(socket.state()!=QLocalSocket::ConnectedState && !bound){
+      // Nothing was bound yet (or the last bind failed): say what to call, not that a connection dropped.
+      auto result=opad::agent::live_error("not_bound","This connection is not bound to an OPAD window yet. Call live_instances, choose the window and document, then live_bind.");
+      result["structuredContent"]["error"]["next"]=json{"live_instances","live_bind"};throw TransportFailure{std::move(result)};
+    }
     if(socket.state()!=QLocalSocket::ConnectedState)fail("disconnected","The local connection is closed; no headless fallback was used.");
     socket.write(QByteArray::fromStdString(request.dump())+'\n');socket.flush();QElapsedTimer timer;timer.start();
     while(!input.contains('\n')){
@@ -71,7 +76,7 @@ int opad_live_mcp(int argc,char** argv) {
             if(chosen.is_null())result=opad::agent::live_error("target_changed","The requested instance/document is no longer advertised. Refresh live_instances and explicitly choose the current target. The previous binding was not changed.");
             else if(!chosen.value("enabled",false))result=opad::agent::live_error("access_disabled","This window advertises agent access as disabled. Enable it in OPAD Settings > AI integration.");
             else {
-              socket.abort();input.clear();socket.connectToServer(QString::fromStdString(chosen.at("endpoint").get<std::string>()));
+              socket.abort();input.clear();bound=false;socket.connectToServer(QString::fromStdString(chosen.at("endpoint").get<std::string>()));
               if(!socket.waitForConnected(3000)) {
                 const auto error=socket.error();std::string code="connection_failed",next="Check the endpoint and client execution environment. Sandbox restrictions may prevent access; this is not a confirmed OS diagnosis.";
                 if(error==QLocalSocket::SocketAccessError){code="access_denied";next="The local transport reports access denied. Check user identity and sandbox permissions; toggling integration will not resolve an access restriction.";}
@@ -79,7 +84,7 @@ int opad_live_mcp(int argc,char** argv) {
                 else if(error==QLocalSocket::SocketTimeoutError){code="connection_timeout";next="The endpoint did not accept a connection within 3000 ms. Check OPAD responsiveness and retry discovery.";}
                 result=opad::agent::live_error(code,"Could not connect to the advertised OPAD endpoint.");auto& detail=result["structuredContent"]["error"];
                 detail["next"]=next;detail["transport"]={{"kind","local_socket"},{"qt_error",int(error)},{"message",socket.errorString().toStdString()},{"endpoint",chosen["endpoint"]},{"advertised_enabled",chosen["enabled"]},{"timeout_ms",3000}};
-              } else result=exchange({{"name","live_bind"},{"arguments",args},{"client",client},{"version",opad::version_string()}});
+              } else {result=exchange({{"name","live_bind"},{"arguments",args},{"client",client},{"version",opad::version_string()}});bound=!result.value("isError",false);}
             }
             if(result.value("isError",false))lastError=result["structuredContent"]["error"];else lastError=nullptr;
           }else result=exchange({{"name",name},{"arguments",args}});

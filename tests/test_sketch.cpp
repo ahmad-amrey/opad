@@ -104,6 +104,15 @@ TEST(sketch_json_validation) {
   auto bad = [](const char* text) { return Sketch::from_json(opad::json::parse(text)); };
   // duplicate id across points and entities
   CHECK_THROWS(bad(R"({"points":[{"id":1,"x":0,"y":0},{"id":2,"x":1,"y":0}],"entities":[{"id":2,"type":"line","p":[1,2]}]})"));
+  // ... and the message names both items and the shared id space (agents read it)
+  try {
+    bad(R"({"points":[{"id":1,"x":0,"y":0},{"id":2,"x":1,"y":0}],"entities":[{"id":1,"type":"line","p":[1,2]}]})");
+    CHECK(false);
+  } catch (const opad::Error& e) {
+    const std::string why = e.what();
+    CHECK(why.find("point 1 and entity 1") != std::string::npos);
+    CHECK(why.find("share one id space") != std::string::npos);
+  }
   // dangling point
   CHECK_THROWS(bad(R"({"points":[{"id":1,"x":0,"y":0}],"entities":[{"id":3,"type":"line","p":[1,2]}]})"));
   // arc needs three points

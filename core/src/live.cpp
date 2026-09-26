@@ -23,11 +23,17 @@ json transaction_policy() {
 json live_guide() {
   return {{"transactions",transaction_policy()},{"identifiers","result.feature_id identifies a history operation; result.body_ids identifies its output bodies; result.sketch_id identifies a sketch. Legacy result.ids contains operation IDs, not body IDs."},
     {"changes","changes.scope=transaction means cumulative changes since transaction_begin; command means this command only. result identifies the last modeling command, including at transaction_commit."},
+    {"batch_references","In model_batch, @{<step id>#/<path>} (or @{<step id>/<path>}) is replaced by a value from that earlier step's result; the path starts at the result itself, without /result/. @{cabin#/body_ids/0} is the first body made by the step with id cabin."},
     {"example",json::array({
       {{"tool","live_instances"},{"arguments",json::object()},{"use","Explicitly choose instance and target from instances."}},
       {{"tool","live_bind"},{"arguments",{{"instance","$chosen.instance"},{"target","$chosen.target"}}}},
       {{"tool","transaction_begin"},{"arguments",{{"label","Cube"},{"expected_revision","$bind.revision"},{"request_id","unique-begin"}}},{"save","tx=transaction; base=base_revision"}},
       {{"tool","feature"},{"arguments",{{"kind","box"},{"inputs",{{"length",40},{"width",40},{"height",40}}},{"transaction","$tx"},{"expected_revision","$base"},{"request_id","unique-box"}}},{"save","feature=result.feature_id; body=result.body_ids[0]"}},
+      {{"tool","model_batch"},{"arguments",{{"steps",json::array({
+          {{"id","cabin"},{"command","feature"},{"arguments",{{"kind","box"},{"inputs",{{"length",20},{"width",12},{"height",10}}}}}},
+          {{"id","label"},{"command","rename"},{"arguments",{{"target","@{cabin#/body_ids/0}"},{"name","Cabin"}}}}})},
+        {"transaction","$tx"},{"expected_revision","$base"},{"request_id","unique-batch"}}},
+        {"use","Several steps in one call. @{cabin#/body_ids/0} is the first body made by the step with id cabin (@{cabin/body_ids/0} is the same)."}},
       {{"tool","validate"},{"arguments",{{"transaction","$tx"}}},{"use","Check validity and volume before commit."}},
       {{"tool","transaction_commit"},{"arguments",{{"id","$tx"},{"expected_revision","$base"},{"request_id","unique-commit"}}}},
       {{"tool","entity_details"},{"arguments",{{"ref","$body"}}},{"use","Use checked reference tokens for subsequent face/edge operations."}},
@@ -38,7 +44,7 @@ json live_output_schema(const std::string& name) {
   const json ids={{"type","array"},{"items",{{"type","string"}}}};
   json props={{"state",{{"type","string"}}},{"revision",revision()},{"base_revision",revision()},
     {"transaction",str()},{"preview_id",str()},{"lifetime",{{"type","object"}}},
-    {"error",{{"type","object"},{"properties",{{"code",str()},{"message",{{"type","string"}}},{"next",{{"type","string"}}},{"transport",{{"type","object"}}}}},{"required",{"code","message"}}}},
+    {"error",{{"type","object"},{"properties",{{"code",str()},{"message",{{"type","string"}}},{"next",{{"type",{"string","array"}},{"items",{{"type","string"}}},{"description","What to do next: advice, or the tools to call in order (not_bound: live_instances, live_bind)."}}},{"transport",{{"type","object"}}}}},{"required",{"code","message"}}}},
     {"changes",{{"type","object"},{"properties",{{"scope",{{"enum",{"command","transaction"}}}},{"created",ids},{"modified",ids},{"deleted",ids},{"geometry",ids},{"total",revision()},{"validation",{{"type","object"}}}}}}},
     {"elapsed_ms",{{"type","integer"}}}};
   if(name=="feature" || name=="sketch") {
@@ -90,7 +96,7 @@ const json& live_tools() {
   for(const auto& command:commands::list())if(batchCommands.count(command.name)){
     batchSteps.push_back(object({{"id",str()},{"command",{{"enum",{command.name}}}},{"arguments",command_schema(command,true)},{"references",{{"type","array"},{"items",{{"type","object"}}},{"maxItems",100}}}},{"id","command","arguments"}));
   }
-  add("model_batch","Execute 1-50 typed modeling steps atomically with per-step receipts. Identifier strings may reference earlier results as @{step#/body_ids/0}, @{step#/sketch_id} or @{step#/component_id}. Validates all inputs/dependencies first. Failure discards this whole batch, retaining previous staged work. Uses normal transaction/preview, revision, Stop and Undo semantics. Commit and save remain explicit separate checkpoints; computed receipts do not imply persistence. No file operations or nested batches.",object({
+  add("model_batch","Execute 1-50 typed modeling steps atomically with per-step receipts. An identifier string may refer to an earlier step's result as @{<step id>#/<path in that step's result>}: with a step {\"id\":\"cabin\",\"command\":\"feature\",...}, @{cabin#/body_ids/0} is its first body and @{cabin/body_ids/0} is the same. Paths start at the step's result, without /result/: feature steps have feature_id and body_ids, sketch steps sketch_id, component steps component_id. Validates all inputs/dependencies first. Failure discards this whole batch, retaining previous staged work. Uses normal transaction/preview, revision, Stop and Undo semantics. Commit and save remain explicit separate checkpoints; computed receipts do not imply persistence. No file operations or nested batches.",object({
     {"steps",{{"type","array"},{"items",{{"anyOf",batchSteps}}},{"minItems",1},{"maxItems",50}}},
     {"transaction",str()},{"preview",{{"type","boolean"},{"default",false}}},{"expected_revision",revision()},{"request_id",str()}
   },{"steps","expected_revision","request_id"}));

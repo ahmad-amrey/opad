@@ -21,7 +21,9 @@ actual camera, revision, render time and visible body IDs without moving the use
 
 Live `model_batch` groups up to 50 typed modeling steps into one atomic operation. It
 supports components, parameters, sketches, features, naming, parenting, appearance and
-transforms. Identifier strings such as `@{solid#/body_ids/0}` refer to earlier step results:
+transforms. Identifier strings such as `@{solid#/body_ids/0}` (or `@{solid/body_ids/0}`) refer to earlier
+step results. The path starts at that step's result (`feature_id`, `body_ids`, `sketch_id`, `component_id`);
+a path that does not exist is reported with the step's name and the keys it has:
 
 ```json
 {

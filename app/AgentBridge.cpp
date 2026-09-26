@@ -156,6 +156,7 @@ void AgentBridge::fail(const std::shared_ptr<Session>& s,const std::string& code
     !m_design->sketchActive() && !m_design->featureActive() && !m_design->pickingPlane();
   detail["retryable"]=transient;detail["retry_after_ms"]=transient?json(50):json(nullptr);
   if(transient)detail["next"]="Call wait_for_idle, check revision and transaction state, then retry with a new request_id.";
+  if(code=="not_bound" || code=="target_changed")detail["next"]=json{"live_instances","live_bind"};
   activity(tr("Agent error: %1").arg(message));reply(s,std::move(error),receipt);
 }
 void AgentBridge::replyReceipt(const std::shared_ptr<Session>& session,const Receipt& receipt){
@@ -203,7 +204,11 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
       {"geometry_units","mm"},{"busy",m_busy},{"editor_busy",editorBusy()},{"transaction_state",transaction},{"next_calls",next}};
     if(args.value("include_example",false))out["guide"]=live_guide();reply(s,live_result(out));return;
   }
-  if(!s->bound || s->target!=target()){fail(s,"target_changed",tr("The document changed. Use live_instances and explicitly bind again."));return;}
+  if(!s->bound || s->target!=target()){
+    if(s->target.isEmpty())fail(s,"not_bound",tr("This connection is not bound to a document yet. Call live_instances, choose the window and document, then live_bind."));
+    else fail(s,"target_changed",tr("The document changed. Use live_instances and explicitly bind again."));
+    return;
+  }
   if(name=="wait_for_idle"){auto timer=std::make_shared<QElapsedTimer>();timer->start();waitForIdle(s,args.value("timeout_ms",2000),m_epoch,timer);return;}
   if(name=="stop"){stop();reply(s,live_result({{"stopped",true}}));return;}
   if(name=="live_state"){
