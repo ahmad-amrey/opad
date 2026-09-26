@@ -314,10 +314,10 @@ void Viewport::initViewer() {
   // a rubber band that selects nothing. Allow a little hand jitter, scaled for high-DPI screens.
   myMouseClickThreshold = 5.0 * viewScale().x();
   m_initialised = true;
-  m_sceneBackground = QSettings().value("view/background", 1).toInt();
+  m_sceneBackground = savedSceneBackground();
   applyTokens();
   setRenderQuality(savedRenderQuality());
-  setSceneBackground(QSettings().value("view/background", 1).toInt());
+  setSceneBackground(m_sceneBackground);
   setGrid(m_grid);
   setTwoDimensional(m_twoDimensional);
   sync();

@@ -9,13 +9,32 @@
 #include <QSettings>
 #include <algorithm>
 
+namespace {
+// Theme background and Studio quality are the defaults since TODO 10. Earlier builds wrote their own defaults (Studio
+// gradient, Draft) back at every start, so a stored value cannot tell a choice from a default: those move once, and
+// whatever is chosen afterwards stays.
+void migrateViewDefaults(QSettings& settings) {
+  if (settings.value("view/defaultsVersion", 0).toInt() >= 2) return;
+  if (settings.value("view/background", 0).toInt() == 1) settings.setValue("view/background", 0);
+  if (settings.contains("view/qualityV2") && settings.value("view/qualityV2").toInt() == 0) settings.setValue("view/qualityV2", 1);
+  settings.setValue("view/defaultsVersion", 2);
+}
+}  // namespace
+
 int Viewport::savedRenderQuality() {
   QSettings settings;
-  if (!settings.contains("view/qualityV2")) {
-    const int old = settings.value("view/quality", 1).toInt();
+  if (!settings.contains("view/qualityV2") && settings.contains("view/quality")) {
+    const int old = settings.value("view/quality").toInt();
     settings.setValue("view/qualityV2", old <= 1 ? 0 : old <= 3 ? 1 : 2);
   }
-  return std::clamp(settings.value("view/qualityV2").toInt(), 0, 2);
+  migrateViewDefaults(settings);
+  return std::clamp(settings.value("view/qualityV2", 1).toInt(), 0, 2);
+}
+
+int Viewport::savedSceneBackground() {
+  QSettings settings;
+  migrateViewDefaults(settings);
+  return std::clamp(settings.value("view/background", 0).toInt(), 0, 3);
 }
 void Viewport::setHoverFade(bool enabled,double seconds) {
   m_hoverFadeEnabled=enabled;m_hoverFadeSeconds=std::clamp(seconds,.1,60.0);

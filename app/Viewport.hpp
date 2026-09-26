@@ -75,6 +75,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setShadows(bool on);
   void setRenderQuality(int level);
   static int savedRenderQuality();
+  static int savedSceneBackground();
   void setSceneBackground(int style);
   void setHoverFade(bool enabled,double seconds);
   void resetHoverFade();
@@ -254,7 +255,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
 
  private:
-  int m_renderQuality = 0, m_sceneBackground = 1;
+  int m_renderQuality = 1, m_sceneBackground = 0;
   void updateDepthBias();
   bool m_twoDimensional = false;
   Handle(Graphic3d_Camera) m_threeDimensionalCamera;

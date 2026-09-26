@@ -682,7 +682,7 @@ void MainWindow::buildRibbon() {
   for (int i = 0; i < backgrounds.size(); ++i) {
     auto* a = background->addAction(backgrounds[i]);
     a->setCheckable(true); backgroundGroup->addAction(a);
-    a->setChecked(m_settings.value("view/background", 1).toInt() == i);
+    a->setChecked(Viewport::savedSceneBackground() == i);
     connect(a, &QAction::triggered, this, [this, i] { m_viewport->setSceneBackground(i); });
   }
   QMenu* navMenu = settings->addMenu(tr("Navigation preset"));
