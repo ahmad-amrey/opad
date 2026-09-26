@@ -41,6 +41,8 @@ gp_Pnt pnt(const Vec3& v) { return gp_Pnt(v[0], v[1], v[2]); }
 gp_Dir dir(const Vec3& v) { return gp_Dir(v[0], v[1], v[2]); }
 gp_Pnt world(const Frame& f, const SkPoint& p) { return pnt(f.to_world(p.x, p.y)); }
 
+}  // namespace
+
 // The closed C2 cubic spline through the points, knots at chord lengths (gap log #5). GeomAPI_Interpolate's periodic
 // mode fixes an estimated tangent at the first point, so its curve is only C1 there and moves with the seam (up to
 // 0.05 mm on a 24-point outline); this one is the same curve whichever point comes first or which way they run.
@@ -111,8 +113,6 @@ Handle(Geom_BSplineCurve) closed_spline(const std::vector<gp_Pnt>& p) {
   }
   return nullptr;
 }
-}  // namespace
-
 gp_Ax3 frame_ax3(const Frame& f) { return gp_Ax3(pnt(f.origin), dir(f.normal()), dir(f.x)); }
 gp_Pln frame_plane(const Frame& f) { return gp_Pln(frame_ax3(f)); }
 

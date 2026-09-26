@@ -49,6 +49,7 @@ add_library(opad_core STATIC
   src/design/sketch_text.cpp
   src/design/sketch_modify.cpp
   src/design/sketch_pattern.cpp
+  src/design/sketch_curve.cpp
   src/design/sketch_reference.cpp
   src/design/sketch_trace.cpp
   src/design/drawing_sketch.cpp

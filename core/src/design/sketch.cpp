@@ -102,7 +102,7 @@ void check_entity(const Sketch& sk, const SkEntity& e) {
     case EType::Line:
     case EType::Ellipse: ok = n == 2; break;
     case EType::Arc: ok = n == 3; break;
-    case EType::Spline: ok = n >= 2; break;
+    case EType::Spline: ok = n >= 2 || (n == 0 && !e.equation.is_null()); break;  // an equation's points come when computed
   }
   if (e.degree) {
     if (e.type!=EType::Spline || e.degree<1 || e.degree>25) throw Error(who+": invalid spline basis: degree 1 to 25");
@@ -121,6 +121,20 @@ void check_entity(const Sketch& sk, const SkEntity& e) {
   for (const auto* t : {&e.start_tangent, &e.end_tangent})
     if (!t->empty() && (e.type != EType::Spline || e.degree || e.periodic || t->size() != 2 || !(std::hypot((*t)[0], (*t)[1]) > 1e-12)))
       throw Error(who + ": end tangents are [dx, dy], not zero, on an open fit spline");
+  if (!e.equation.is_null()) {
+    const json& q = e.equation;
+    auto expression = [&](const char* key, bool needed) {
+      if (!q.contains(key)) { if (needed) throw Error(who + ": an equation needs " + key); return; }
+      if (!q[key].is_string() && !(q[key].is_number() && std::string(key).rfind("t", 0) == 0)) throw Error(who + ": an equation's " + key + " is an expression");
+    };
+    if (!q.is_object() || e.type != EType::Spline || e.degree) throw Error(who + ": an equation belongs on a fit spline: {x, y, t0, t1, tolerance}");
+    expression("x", true);
+    expression("y", true);
+    expression("t0", false);
+    expression("t1", false);
+    if (q.contains("tolerance") && !(q["tolerance"].is_number() && q["tolerance"].get<double>() > 0)) throw Error(who + ": an equation's tolerance is a positive number of mm");
+    if (q.contains("min_points") && !q["min_points"].is_number_integer()) throw Error(who + ": min_points is a whole number");
+  }
   if (e.type == EType::Spline && !e.degree && e.periodic && std::set<int>(e.p.begin(), e.p.end()).size() < 3)
     throw Error(who + ": a closed fit spline needs three points or more");
   for (int pid : e.p)
@@ -344,6 +358,7 @@ json Sketch::to_json() const {
     if (has_radius(e.type)) o["r"] = e.r;
     if (e.degree) { o["degree"]=e.degree; o["knots"]=e.knots; o["multiplicities"]=e.multiplicities; o["weights"]=e.weights; o["periodic"]=e.periodic; }
     else if (e.periodic) o["periodic"]=true;
+    if (!e.equation.is_null()) o["equation"]=e.equation;
     if (!e.start_tangent.empty()) o["start_tangent"]=e.start_tangent;
     if (!e.end_tangent.empty()) o["end_tangent"]=e.end_tangent;
     if (e.construction) o["construction"] = true;
@@ -396,11 +411,12 @@ Sketch Sketch::from_json(const json& j) {
       SkEntity e;
       e.id = o.at("id").get<int>();
       e.type = SkEntity::type_from_name(o.at("type").get<std::string>());
-      e.p = o.at("p").get<std::vector<int>>();
+      e.p = o.value("p", std::vector<int>{});  // an equation curve's come when it is computed; the rest are checked
       if (has_radius(e.type)) e.r = o.at("r").get<double>();
       e.degree=o.value("degree",0); e.knots=o.value("knots",std::vector<double>{});
       e.weights=o.value("weights",std::vector<double>{}); e.multiplicities=o.value("multiplicities",std::vector<int>{}); e.periodic=o.value("periodic",false);
       e.start_tangent=o.value("start_tangent",std::vector<double>{}); e.end_tangent=o.value("end_tangent",std::vector<double>{});
+      e.equation=o.value("equation",json());
       // A control-point spline given only its degree: uniform knots, clamped at both ends or periodic, and unit
       // weights (gap log #5: every form without weights was refused as "invalid spline basis").
       if (e.degree>0 && e.type==SkEntity::Type::Spline) {

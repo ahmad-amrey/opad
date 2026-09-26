@@ -112,6 +112,12 @@ change that makes any parameter fail is refused naming it with its expression's 
 live edits that leave operations unresolved say which and why. A plain number a function computed is no longer
 taken as degrees when added to an angle; a fractional power of a length says how to normalise it.
 
+A sketch spline can be an equation: `equation: {x, y, t0, t1, tolerance}` with x(t) and y(t) written over the
+parameters. Computing the sketch samples it until the spline through the samples is within the tolerance, so the
+point count follows from the tolerance and parameter edits reshape it; the samples are stored with the sketch, and
+an older build reads them as the fit spline they are. The arm's cycloidal disc, 640 points driven by 1,282 dimension
+expressions, is one entity: 1441 points at 0.001 mm in 0.6 s.
+
 Face, edge and vertex inputs can be rules instead of numbers: `{"body": id, "kind": "edge", "select":
 {"parallel_to": "z"}, "expect": 4}` picks the matching entities again whenever the feature regenerates and fails,
 rather than guessing, when the count changes. The desktop offers the same through "By rule…" on pick inputs, and

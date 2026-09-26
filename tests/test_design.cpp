@@ -1523,3 +1523,57 @@ TEST(a_change_that_breaks_a_check_is_refused_naming_it) {
   for (const auto& p : s.params)
     if (p.name == "margin") CHECK_NEAR(p.value, 1, 1e-12);
 }
+
+// Gap log #2: the arm's cycloidal disc from its equations (it took 640 points with 1,282 dimension expressions): the
+// point count follows from the tolerance, parameters reshape it, and an open equation curve joins other geometry at
+// the end points it keeps.
+TEST(an_equation_curve_follows_its_parameters_within_its_tolerance) {
+  Document doc = Document::create();
+  for (const auto& [name, expr] : std::vector<std::pair<std::string, std::string>>{{"R", "30 mm"}, {"rr", "2.65 mm"}, {"e", "0.8 mm"}, {"N", "26"}})
+    commands::run("param", {{"name", name}, {"expr", expr}}, &doc);
+  const std::string psi = "atan2(sin((1 - N) * t), R / (e * N) - cos((1 - N) * t))";
+  const json curve = {{"id", 10}, {"type", "spline"},
+                      {"equation", {{"x", "e + R * cos(t) - rr * cos(t + " + psi + ") - e * cos(N * t)"},
+                                    {"y", "-R * sin(t) + rr * sin(t + " + psi + ") + e * sin(N * t)"},
+                                    {"t0", "0 deg"}, {"t1", "360 deg"}, {"tolerance", 0.001}}}};
+  const std::string sk = commands::run("sketch", {{"geometry", {{"entities", json::array({curve})}}}}, &doc)["sketch_id"];
+  const std::string disc = feature_cmd(doc, "extrude", {{"profiles", json::array({{{"sketch", sk}}})}, {"distance", "6 mm"}})["body_ids"][0];
+  // The true outline's area, from dense samples of the equations themselves.
+  auto area = [](double R, double rr, double e, int N) {
+    const int n = 200000;
+    double a = 0, px = 0, py = 0;
+    for (int i = 0; i <= n; ++i) {
+      const double t = 2 * M_PI * i / n, psi = std::atan2(std::sin((1 - N) * t), R / (e * N) - std::cos((1 - N) * t));
+      const double x = e + R * std::cos(t) - rr * std::cos(t + psi) - e * std::cos(N * t), y = -R * std::sin(t) + rr * std::sin(t + psi) + e * std::sin(N * t);
+      if (i) a += px * y - x * py;
+      px = x;
+      py = y;
+    }
+    return std::abs(a / 2);
+  };
+  Scene s = resolve(doc);
+  CHECK_NEAR(volume_properties(node_world_shape(doc, s, disc)).mass / 6, area(30, 2.65, 0.8, 26), 1e-4 * area(30, 2.65, 0.8, 26));
+  auto points = [&] { return resolve(doc).sketch(sk)->geometry["entities"][0]["p"].size(); };
+  const size_t fine = points();
+  CHECK(fine > 64 && fine < 5000);
+  // A coarser tolerance needs fewer points; a parameter reshapes the curve (and the disc) on regeneration.
+  json coarse = curve;
+  coarse["equation"]["tolerance"] = 0.05;
+  commands::run("sketch_edit", {{"target", sk}, {"geometry", {{"entities", json::array({coarse})}}}}, &doc);
+  CHECK(points() < fine);
+  commands::run("param", {{"name", "N"}, {"expr", "21"}}, &doc);
+  s = resolve(doc);
+  CHECK(s.unresolved.empty());
+  CHECK_NEAR(volume_properties(node_world_shape(doc, s, disc)).mass / 6, area(30, 2.65, 0.8, 21), 5e-3 * area(30, 2.65, 0.8, 21));
+  // An open half circle keeps its given end points, so a line joins them into a region.
+  const json half = {{"points", {{{"id", 1}, {"x", 0}, {"y", 0}}, {{"id", 2}, {"x", 1}, {"y", 0}}}},
+                     {"entities", {{{"id", 20}, {"type", "spline"}, {"p", {1, 2}},
+                                    {"equation", {{"x", "20 mm * cos(t)"}, {"y", "20 mm * sin(t)"}, {"t0", "0 deg"}, {"t1", "180 deg"}, {"tolerance", 0.0005}}}},
+                                   {{"id", 21}, {"type", "line"}, {"p", {2, 1}}}}}};
+  const std::string lid = commands::run("sketch", {{"geometry", half}}, &doc)["sketch_id"];
+  const std::string dome = feature_cmd(doc, "extrude", {{"profiles", json::array({{{"sketch", lid}}})}, {"distance", "1 mm"}})["body_ids"][0];
+  CHECK_NEAR(volume_properties(node_world_shape(doc, resolve(doc), dome)).mass, M_PI * 400 / 2, 2e-4 * M_PI * 400 / 2);
+  // A plain t added to an angle is refused rather than read as degrees.
+  const json mixed = {{"entities", {{{"id", 30}, {"type", "spline"}, {"equation", {{"x", "10 mm * cos(t + 1 deg)"}, {"y", "10 mm * sin(t)"}, {"t0", 0}, {"t1", "2 * pi"}}}}}}};
+  CHECK_THROWS(commands::run("sketch", {{"geometry", mixed}}, &doc));
+}

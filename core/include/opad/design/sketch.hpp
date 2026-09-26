@@ -36,6 +36,9 @@ struct SkEntity {
   bool periodic = false;
   // An open fit spline's end directions, [dx, dy] in the sketch (gap log #5); empty = free.
   std::vector<double> start_tangent, end_tangent;
+  // A fit spline through samples of x(t), y(t) (gap log #2): {"x", "y", "t0", "t1", "tolerance", "min_points"}; the
+  // sketch computation rewrites its (fixed) points. Older builds read it as the fit spline it stores.
+  json equation;
   json source; // optional associative projection descriptor
   double r = 0;
   bool construction = false;  // guide geometry: never part of a profile

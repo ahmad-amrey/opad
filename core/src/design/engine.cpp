@@ -25,6 +25,7 @@
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 #include "opad/design/sketch_pattern.hpp"
+#include "opad/design/sketch_curve.hpp"
 
 namespace opad::design {
 
@@ -696,6 +697,7 @@ struct Walk {
       for (const auto& c : sk.constraints) if (c.is_dimension() && !c.reference) {
         s += std::to_string(c.id) + "=" + json(c.value).dump() + ";";
       }
+      if (has_equation_curves(sk)) s += "|curves|" + equation_inputs(sk, ctx.params);  // sampled below, when needed
       moved = sk.to_json() != Sketch::from_json(geometry).to_json();
     } catch (const std::exception& e) {
       error = e.what();
@@ -720,6 +722,13 @@ struct Walk {
       try {
         const Frame now = ctx.plane(plane);
         if (now.to_json() != frame.to_json()) { frame = now; frame_moved = true; }
+      } catch (const std::exception& e) {
+        error = e.what();
+      }
+    }
+    if (error.empty() && has_equation_curves(sk)) {
+      try {
+        evaluate_curves(sk, ctx.params);
       } catch (const std::exception& e) {
         error = e.what();
       }

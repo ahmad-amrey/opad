@@ -118,6 +118,8 @@ struct Parser {
   std::vector<Token> tok;
   size_t at = 0;
   int quiet = 0;
+  const std::string* bound = nullptr;  // an equation curve's variable, and its value
+  const Quantity* bound_value = nullptr;
 
   const Token& peek() const { return tok[at]; }
   bool sym(const char* s) {
@@ -305,6 +307,7 @@ struct Parser {
     }
     if (t.kind == Token::Ident) {
       ++at;
+      if (bound && t.text == *bound) return *bound_value;
       if (t.text == "PI" || t.text == "pi") return plain(kPi);
       if (t.text == "E") return plain(2.718281828459045);
       // A function name only when called: an older parameter may share a new function's name.
@@ -457,8 +460,10 @@ const ParamDef* ParamTable::find(const std::string& name) const {
   return nullptr;
 }
 
-Quantity ParamTable::eval(const std::string& expr, std::vector<std::string>& stack) const {
+Quantity ParamTable::eval(const std::string& expr, std::vector<std::string>& stack, const std::string* name, const Quantity* value) const {
   Parser p{*this, expr, stack, tokenize(expr)};
+  p.bound = name;
+  p.bound_value = value;
   if (p.peek().kind == Token::End) throw Error("empty expression");
   Quantity v = p.expr();
   if (p.peek().kind != Token::End) p.fail("unexpected \"" + (p.peek().text.empty() ? std::string("number") : p.peek().text) + "\"");
@@ -488,8 +493,18 @@ Quantity ParamTable::value_of(const std::string& name) const {
   return value_of(name, stack);
 }
 
-double ParamTable::as(Dim dim, const std::string& expr) const {
-  Quantity q = eval(expr);
+Quantity ParamTable::eval_with(const std::string& expr, const std::string& name, const Quantity& value) const {
+  std::vector<std::string> stack;
+  return eval(expr, stack, &name, &value);
+}
+
+double ParamTable::as_with(Dim dim, const std::string& expr, const std::string& name, const Quantity& value) const {
+  return convert(dim, eval_with(expr, name, value), expr);
+}
+
+double ParamTable::as(Dim dim, const std::string& expr) const { return convert(dim, eval(expr), expr); }
+
+double ParamTable::convert(Dim dim, const Quantity& q, const std::string& expr) const {
   switch (dim) {
     case Dim::Length:
       if (q.angle || (q.len != 0 && q.len != 1)) throw Error("\"" + expr + "\" is not a length");

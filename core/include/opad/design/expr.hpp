@@ -41,13 +41,17 @@ class ParamTable {
   double number(const std::string& expr) const;    // must be dimensionless
   int count(const std::string& expr) const;        // dimensionless whole number
   double as(Dim dim, const std::string& expr) const;
+  // With `name` standing for `value` (the variable of an equation curve, gap log #2); parameters stay cached.
+  Quantity eval_with(const std::string& expr, const std::string& name, const Quantity& value) const;
+  double as_with(Dim dim, const std::string& expr, const std::string& name, const Quantity& value) const;
   // Value of a parameter itself (its own dimension). Throws for unknown names, cycles, bad expressions.
   Quantity value_of(const std::string& name) const;
 
  private:
   friend struct Parser;
   Quantity value_of(const std::string& name, std::vector<std::string>& stack) const;
-  Quantity eval(const std::string& expr, std::vector<std::string>& stack) const;
+  Quantity eval(const std::string& expr, std::vector<std::string>& stack, const std::string* name = nullptr, const Quantity* value = nullptr) const;
+  double convert(Dim dim, const Quantity& q, const std::string& expr) const;
   std::string m_unit="mm";
   std::vector<ParamDef> m_defs;
   mutable std::map<std::string, Quantity> m_cache;

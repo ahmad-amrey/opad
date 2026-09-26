@@ -1,11 +1,13 @@
 #pragma once
 // Kernel side of sketches: curves in space, closed regions (profiles) and paths.
+#include <Geom_BSplineCurve.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Wire.hxx>
 #include <gp_Ax3.hxx>
 #include <gp_Pln.hxx>
+#include <gp_Pnt.hxx>
 
 #include <vector>
 
@@ -18,6 +20,10 @@ gp_Ax3 frame_ax3(const Frame& f);
 gp_Pln frame_plane(const Frame& f);
 Frame frame_from_ax3(const gp_Ax3& a);
 Frame base_frame(const std::string& base);  // "xy" | "xz" | "yz"
+
+// The closed C2 cubic spline through the points, knots at chord lengths: the same curve whichever point comes first
+// or which way they run (null for coincident neighbours). Closed fit splines and equation curves use it.
+Handle(Geom_BSplineCurve) closed_spline(const std::vector<gp_Pnt>& points);
 
 // One entity as an edge in world coordinates (null for Point entities and degenerate curves).
 TopoDS_Edge entity_edge(const Sketch& sk, const SkEntity& e, const Frame& frame);

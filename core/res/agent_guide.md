@@ -64,6 +64,12 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
     the seam with `periodic: true`, with the first point's id repeated last, or with a last point lying on the first;
     a closed one is the same curve whichever point comes first and whichever way they run. `start_tangent` and
     `end_tangent` ([dx, dy]) set an open one's end directions;
+  - a spline with `equation: {"x": ..., "y": ..., "t0": "0 deg", "t1": "360 deg", "tolerance": 0.001}` is the
+    curve x(t), y(t) (expressions over `t` and the parameters, lengths in mm): computing the sketch samples it until
+    the spline through the samples is within `tolerance` mm (default 0.01) everywhere, so the point count follows
+    from the tolerance, and parameters reshape it. `p` may be left out; given as [start, end], those two point ids
+    become the curve's ends, so lines can join it. Its points are fixed. Give t0 and t1 in deg when the equations
+    add t to angles (a plain t is not taken as degrees). Ends that meet make it closed;
   - with `degree`, `p` are the control poles of an exact B-spline. `knots` with `multiplicities` (same length) and
     `weights` (one per pole) are optional: without them the knots are uniform, clamped at both ends (the curve starts
     and ends on the end poles) or periodic with `periodic: true`, and the weights 1. Given, an open spline's
