@@ -28,8 +28,10 @@ json ref() {
 }
 json plane() {
   auto frame=object({{"origin",vector(3)},{"x",vector(3)},{"y",vector(3)}},{"origin","x","y"});
-  auto p=object({{"base",choice({"xy","xz","yz"})},{"face",ref()},{"feature",type("string")},{"frame",frame}},{},false);
-  p["anyOf"]={{{"required",{"base"}}},{{"required",{"face"}}},{{"required",{"feature"}}},{{"required",{"frame"}}}};return p;
+  auto p=object({{"base",choice({"xy","xz","yz"})},{"face",ref()},{"feature",type("string")},{"frame",frame},{"origin",vector(3)},{"normal",vector(3)},{"x",vector(3)}},{},false);
+  p["anyOf"]={{{"required",{"base"}}},{{"required",{"face"}}},{{"required",{"feature"}}},{{"required",{"frame"}}},{{"required",{"origin","normal"}}}};
+  p["description"]="A base plane, a planar face, a construction plane feature, or origin + normal [x,y,z] (x optional: world X laid onto the plane, or world Y when X is the normal). The resolved frame is returned and stored.";
+  return p;
 }
 json sketch_geometry() {
   auto id=json{{"type","integer"},{"minimum",1}};
@@ -55,7 +57,8 @@ json input_schema(const design::InputSpec& in) {
   else if(in.type=="choice")out=choice(in.choices);
   else if(in.type=="text")out=type("string");
   else if(in.type=="plane")out=plane();
-  else if(in.type=="axis")out=object({{"base",choice({"x","y","z"})},{"edge",ref()},{"sketch",type("string")},{"entity",type("integer")},{"feature",type("string")}},{},false);
+  else if(in.type=="axis"){out=object({{"base",choice({"x","y","z"})},{"edge",ref()},{"face",ref()},{"sketch",type("string")},{"entity",type("integer")},{"feature",type("string")}},{},false);
+    out["description"]="A base axis; a straight or circular edge (its line or centre axis); a face (a cylinder's, cone's or torus's axis, or a planar face's normal); a sketch line {sketch, entity}; or a construction axis feature.";}
   else if(in.type=="path")out={{"anyOf",{object({{"sketch",type("string")},{"entities",array(type("integer"))}},{"sketch"}),object({{"edges",array(ref(),1)}},{"edges"}),array(ref(),1)}}};
   else if(in.type=="profiles")out=array({{"anyOf",{ref(),object({{"sketch",type("string")},{"at",vector(2)},{"boundary",array(type("integer"))},{"all",type("boolean")}},{"sketch"})}}},in.min_count,in.max_count);
   else if(in.type=="points")out=array({{"anyOf",{ref(),object({{"sketch",type("string")},{"point",type("integer")}},{"sketch","point"})}}},in.min_count,in.max_count);

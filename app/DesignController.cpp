@@ -415,7 +415,7 @@ void DesignController::viewportSelectionChanged() {
   opad::json picks = opad::json::array();
   for (const auto& r : m_viewport->selection()) {
     if (in->type == "plane") picks.push_back(opad::json{{"face", pickToJson(r)}});
-    else if (in->type == "axis") picks.push_back(opad::json{{"edge", pickToJson(r)}});
+    else if (in->type == "axis") picks.push_back(opad::json{{r.kind == opad::Ref::Kind::Face ? "face" : "edge", pickToJson(r)}});  // faces: after 2 (Faces)
     else picks.push_back(pickToJson(r));
   }
   for (const auto& c : m_viewport->selectedCandidates()) picks.push_back(opad::json::parse(c));

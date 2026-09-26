@@ -166,9 +166,10 @@ std::vector<FeatureSpec> build_specs() {
        in("axis", "Axis", "axis", json{{"base", "z"}}, "rotate=true"), in("angle", "Angle", "angle", "90 deg", "rotate=true"), in("copy", "Make a copy", "bool", false)});
   add("remove", "Remove", "delete", "body", "Take bodies out of the design from here on (history is kept).", {pick("bodies", "Bodies", "bodies", 1, 0)});
   add("plane", "Construction plane", "plane", "construct", "A plane to sketch on or to mirror, split and draft about.",
-      {choice("mode", "Type", {"offset", "angle", "midplane", "three_points"}), in("plane", "From plane", "plane", xy, "mode=offset|angle|midplane"),
+      {choice("mode", "Type", {"offset", "angle", "midplane", "three_points", "point_normal"}), in("plane", "From plane", "plane", xy, "mode=offset|angle|midplane"),
        in("distance", "Distance", "length", "10 mm", "mode=offset"), in("axis", "About axis", "axis", json{{"base", "x"}}, "mode=angle"), in("angle", "Angle", "angle", "45 deg", "mode=angle"),
-       in("plane2", "Second plane", "plane", nullptr, "mode=midplane"), pick("points", "Three points", "points", 3, 3, "mode=three_points")});
+       in("plane2", "Second plane", "plane", nullptr, "mode=midplane"), pick("points", "Three points", "points", 3, 3, "mode=three_points"),
+       pick("point", "Through point", "points", 1, 1, "mode=point_normal"), in("normal", "Normal along", "axis", nullptr, "mode=point_normal")});
   add("axis", "Construction axis", "axis", "construct", "An axis to revolve or pattern about.",
       {choice("mode", "Type", {"edge", "two_points", "normal"}), in("edge", "Edge or round face", "axis", nullptr, "mode=edge"), pick("points", "Two points", "points", 2, 2, "mode=two_points"),
        in("plane", "Plane", "plane", xy, "mode=normal"), pick("point", "Through point", "points", 1, 1, "mode=normal")});
@@ -1143,6 +1144,10 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       const gp_Vec a(p.at[0], p.at[1]), b(p.at[0], p.at[2]);
       if (a.Crossed(b).Magnitude() < 1e-9) throw Error("the three points are on one line");
       f = frame_from_ax3(gp_Ax3(p.at[0], gp_Dir(a.Crossed(b)), gp_Dir(a)));
+    } else if (mode == "point_normal") {  // through a point, square to an edge, an axis or a face (TODO 10 B5)
+      const Points p = resolve_points(ctx, in.value("point", json()));
+      if (p.at.size() != 1) throw Error("pick the point the plane goes through");
+      f = plane_through(p.at[0], gp_Vec(ctx.axis(in.value("normal", json())).Direction()));
     } else {
       f = ctx.plane(in.value("plane", json()));
       if (mode == "offset") {

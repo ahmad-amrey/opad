@@ -1011,3 +1011,47 @@ TEST(a_label_is_engraved_with_text_from_shapes) {
   const double engraved = plate - total_volume(doc);
   CHECK(engraved > 40 && engraved < 200);  // four block letters 10 mm high, 1.4 mm strokes, 1 mm deep
 }
+
+// TODO 10 B5: a plane by origin and normal wherever a plane is taken, with a deterministic x; and the construction
+// plane through a point, square to an edge, axis or face.
+TEST(planes_by_origin_and_normal) {
+  Document doc = Document::create();
+  // A cylinder along Y: just the normal, no frame worked out by hand.
+  const json cyl = feature_cmd(doc, "cylinder", {{"plane", {{"origin", {0, 5, 0}}, {"normal", {0, 1, 0}}}}, {"diameter", "10 mm"}, {"height", "30 mm"}});
+  CHECK_EQ(cyl["frame"]["normal"], json::array({0.0, 1.0, 0.0}));
+  CHECK_EQ(cyl["frame"]["x"], json::array({1.0, 0.0, 0.0}));  // world X laid onto the plane
+  Scene s = resolve(doc);
+  double x0, y0, z0, x1, y1, z1;
+  node_tight_bbox(doc, s, cyl["body_ids"][0]).Get(x0, y0, z0, x1, y1, z1);
+  CHECK_NEAR(y0, 5, 1e-9);
+  CHECK_NEAR(y1, 35, 1e-9);
+  CHECK_NEAR(x1 - x0, 10, 1e-9);
+  // X is the normal: world Y becomes x. A given x is laid onto the plane.
+  CHECK_EQ(feature_cmd(doc, "box", {{"plane", {{"origin", {50, 0, 0}}, {"normal", {1, 0, 0}}}}})["frame"]["x"], json::array({0.0, 1.0, 0.0}));
+  const json turned = feature_cmd(doc, "box", {{"plane", {{"origin", {0, 60, 0}}, {"normal", {0, 0, 2}}, {"x", {1, 1, 5}}}}});
+  CHECK_NEAR(turned["frame"]["x"][0].get<double>(), std::sqrt(0.5), 1e-12);
+  CHECK_NEAR(turned["frame"]["x"][1].get<double>(), std::sqrt(0.5), 1e-12);
+  CHECK_NEAR(turned["frame"]["x"][2].get<double>(), 0, 1e-12);
+  // A sketch stores the frame it resolved to.
+  const json sketch = commands::run("sketch", {{"plane", {{"origin", {0, 0, 7}}, {"normal", {0, 0, -1}}}}, {"geometry", rectangle(0, 0, 5, 5).to_json()}}, &doc);
+  s = resolve(doc);
+  CHECK_NEAR(s.sketch(sketch["sketch_id"])->frame.origin[2], 7, 1e-12);
+  CHECK_NEAR(s.sketch(sketch["sketch_id"])->frame.normal()[2], -1, 1e-12);
+  // Mistakes are named.
+  bool named = false;
+  try { feature_cmd(doc, "box", {{"plane", {{"origin", {0, 0, 0}}, {"normal", {0, 0, 0}}}}}); } catch (const Error& e) { named = std::string(e.what()).find("normal must not be zero") != std::string::npos; }
+  CHECK(named);
+  named = false;
+  try { feature_cmd(doc, "box", {{"plane", {{"origin", {0, 0, 0}}, {"normal", {0, 0, 1}}, {"x", {0, 0, 3}}}}}); } catch (const Error& e) { named = std::string(e.what()).find("parallel to its normal") != std::string::npos; }
+  CHECK(named);
+  // The construction plane through a point, square to the cylinder's axis (its round face).
+  const std::string body = cyl["body_ids"][0];
+  const json plane = feature_cmd(doc, "plane", {{"mode", "point_normal"}, {"point", json::array({{{"kind", "point"}, {"point", {3, 20, 1}}}})},
+                                               {"normal", {{"face", body + "/face/0"}}}});
+  s = resolve(doc);
+  const Feature* made = s.feature(plane["feature_id"]);
+  CHECK(made && made->error.empty());
+  const Frame f = Frame::from_json(made->result["plane"]);
+  CHECK_NEAR(std::fabs(f.normal()[1]), 1, 1e-9);
+  CHECK_NEAR(f.origin[1], 20, 1e-9);
+}

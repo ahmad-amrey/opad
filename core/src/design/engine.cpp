@@ -267,8 +267,36 @@ Sketch Ctx::sketch(const std::string& id, Frame* frame) const {
   return Sketch::from_json(s->geometry);
 }
 
+Frame plane_through(const gp_Pnt& origin, const gp_Vec& normal, const gp_Vec* x) {
+  if (normal.Magnitude() < 1e-12) throw Error("the plane's normal must not be zero");
+  const gp_Dir n(normal);
+  auto across = [&](const gp_Vec& v) { return v - gp_Vec(n) * v.Dot(gp_Vec(n)); };  // v with its part along n removed
+  gp_Vec xv;
+  if (x) {
+    xv = across(*x);
+    if (xv.Magnitude() < 1e-9) throw Error("the plane's x must not be parallel to its normal");
+  } else {
+    // World X laid onto the plane, or world Y when X is the normal: the same frame every time.
+    xv = across(gp_Vec(1, 0, 0));
+    if (xv.Magnitude() < 1e-9) xv = across(gp_Vec(0, 1, 0));
+  }
+  return frame_from_ax3(gp_Ax3(origin, n, gp_Dir(xv)));
+}
+
 Frame Ctx::plane(const json& in) const {
   if (!in.is_object()) throw Error("no plane was chosen");
+  if (in.contains("normal")) {  // {"origin", "normal", "x"?} (TODO 10 B5)
+    auto vec3 = [&](const char* key, gp_Vec fallback) {
+      if (!in.contains(key)) return fallback;
+      const json& v = in[key];
+      if (!v.is_array() || v.size() != 3 || !v[0].is_number() || !v[1].is_number() || !v[2].is_number())
+        throw Error(std::string("the plane's ") + key + " must be [x, y, z]");
+      return gp_Vec(v[0].get<double>(), v[1].get<double>(), v[2].get<double>());
+    };
+    const gp_Vec o = vec3("origin", gp_Vec(0, 0, 0));
+    const gp_Vec x = vec3("x", gp_Vec());
+    return plane_through(gp_Pnt(o.XYZ()), vec3("normal", gp_Vec()), in.contains("x") ? &x : nullptr);
+  }
   if (in.contains("support")) {
     Frame f=plane(in.at("support"));
     const auto& origin=in.at("origin");

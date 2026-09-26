@@ -1507,5 +1507,7 @@
   "As the picked bodies": "مثل الأجسام المختارة",
   "Rename %1 objects": "إعادة تسمية %1 من الكائنات",
   "Name ({n} is replaced by 1, 2, 3, ...):": "الاسم (يُستبدل {n} بـ 1، 2، 3، ...):",
-  "Built-in block letters": "أحرف كتلية مدمجة"
+  "Built-in block letters": "أحرف كتلية مدمجة",
+  "Point normal": "نقطة وعمودي",
+  "Normal along": "العمودي على امتداد"
 }

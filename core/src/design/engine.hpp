@@ -2,7 +2,9 @@
 // Internal to the design engine: the state a feature is computed in, and what it hands back.
 #include <TopoDS_Shape.hxx>
 #include <gp_Ax1.hxx>
+#include <gp_Pnt.hxx>
 #include <gp_Trsf.hxx>
+#include <gp_Vec.hxx>
 
 #include <map>
 #include <string>
@@ -59,6 +61,10 @@ struct Out {
 };
 
 Out compute_feature(const Ctx& ctx, const std::string& kind, const json& inputs);
+
+// A plane through `origin` with that normal (TODO 10 B5). Its x is `x` laid onto the plane, or when none is given
+// world X laid onto it (world Y when X is the normal), so the same inputs always give the same frame.
+Frame plane_through(const gp_Pnt& origin, const gp_Vec& normal, const gp_Vec* x = nullptr);
 
 // Geometric fingerprint of a sub-shape in world coordinates (centre + size + the body's entity counts).
 json ref_hint(const TopoDS_Shape& body_world, const TopoDS_Shape& sub);

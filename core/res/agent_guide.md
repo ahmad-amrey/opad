@@ -35,8 +35,10 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   - `xy`: x = +X, y = +Y, normal = +Z (top);
   - `xz`: x = +X, y = +Z, normal = -Y (front);
   - `yz`: x = +Y, y = +Z, normal = +X (right).
-- A plane input is `{"base": "xy"}`, `{"face": <planar face ref>}`, `{"feature": <construction plane feature id>}`
-  or `{"frame": {"origin": [..], "x": [..], "y": [..]}}`. The resolved frame (origin, x, y) is stored in the op.
+- A plane input is `{"base": "xy"}`, `{"face": <planar face ref>}`, `{"feature": <construction plane feature id>}`,
+  `{"frame": {"origin": [..], "x": [..], "y": [..]}}` or `{"origin": [x, y, z], "normal": [x, y, z]}` with an optional
+  `"x"`. Without `x`, world X laid onto the plane is its x (world Y when X is the normal), so a cylinder along Y is
+  just `"plane": {"origin": [0, 0, 0], "normal": [0, 1, 0]}`. The resolved frame is returned and stored.
 - Sketch coordinates (u, v) are in the sketch's frame: world point = origin + u * x + v * y.
 
 ## Sketch geometry
@@ -113,8 +115,10 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   counts): with the same counts the ordinal is trusted, otherwise the nearest matching entity is taken.
 - Live server: every face/edge/vertex input needs its current reference token (from `entity_details`,
   `query_entities` or the selection) in the step's `references`, and the edit is refused when the body changed since.
-- Axes: `{"base": "x"}`, `{"edge": ref}` (a straight edge or the axis of a round edge or face), `{"sketch": id,
-  "entity": line id}` or `{"feature": construction axis id}`.
+- Axes: `{"base": "x"}`, `{"edge": ref}` (a straight edge's line or a circular edge's centre axis), `{"face": ref}`
+  (a cylinder's, cone's or torus's axis, or a planar face's normal), `{"sketch": id, "entity": line id}` or
+  `{"feature": construction axis id}`.
+- The construction `plane` feature's `mode: "point_normal"` goes through `point` square to `normal` (any axis form).
 
 ## Feature conventions
 
