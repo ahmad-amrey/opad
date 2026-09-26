@@ -5,6 +5,11 @@ plain-text `.opad` file that diffs and merges cleanly in git, and exposes everyt
 AI agents through a headless CLI, a Python module and a [stdio MCP server](docs/mcp.md). The desktop app follows Autodesk Fusion's navigation
 and screen layout so Fusion users feel at home.
 
+Both MCP servers ship an agent guide (source: `core/res/agent_guide.md`, compiled into the binaries) as the
+resource `opad://guide/agent`; live `live_diagnostics` returns it with `include_guide: true`. It covers units and
+expressions, base-plane frames, sketch geometry, profiles, references, feature conventions, what `body_ids`
+holds per feature kind and batch references.
+
 Live MCP clients can call `save` after committing edits to persist the open document without UI
 interaction. Supply an absolute `.opad` `path` for Save As, or omit it to save the current file.
 Like other live writes, saving requires editing permission, `expected_revision`, and a unique

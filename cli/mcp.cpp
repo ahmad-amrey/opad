@@ -22,12 +22,21 @@ int opad_mcp() {
       json params = request.value("params", json::object()), result;
       if (method == "initialize") {
         initialized = true;
-        result = {{"protocolVersion", "2025-11-25"}, {"capabilities", {{"tools", json::object()}}},
+        result = {{"protocolVersion", "2025-11-25"}, {"capabilities", {{"tools", json::object()}, {"resources", json::object()}}},
                   {"serverInfo", {{"name", "opad"}, {"version", opad::version_string()}}},
-                  {"instructions", "Headless file mode: each successful mutation is saved. Paths are local to this server. Review context section ai_agent_notes first: AI agent notes are user requests tied to model anchors; fetch annotations by id for full text, comments and drawing strokes, inspect current references, and resolve only after verifying completion. Use context for a compact summary, paged entity_details/sketch_details for geometry, and feature_schema for a chosen kind before creating a feature. Use named parameters and expressions, validate exact geometry, and export/render to check the result. Reference tokens detect stale geometry; never reuse an old face index without checking it."}};
+                  {"instructions", "Headless file mode: each successful mutation is saved. Paths are local to this server. Review context section ai_agent_notes first: AI agent notes are user requests tied to model anchors; fetch annotations by id for full text, comments and drawing strokes, inspect current references, and resolve only after verifying completion. Read the agent guide first (resources/read opad://guide/agent): units, frames, sketch geometry, references and feature conventions. Use context for a compact summary, paged entity_details/sketch_details for geometry, and feature_schema for a chosen kind before creating a feature. Use named parameters and expressions, validate exact geometry, and export/render to check the result. Reference tokens detect stale geometry; never reuse an old face index without checking it."}};
       } else if (method == "ping") result = json::object();
       else if (!initialized) throw opad::Error("initialize first");
-      else if (method == "tools/list") {
+      else if (method == "resources/list") result = opad::agent::resources();
+      else if (method == "resources/templates/list") result = {{"resourceTemplates", json::array()}};
+      else if (method == "resources/read") {
+        try {
+          result = opad::agent::read_resource(params.value("uri", ""));
+        } catch (const std::exception& e) {
+          std::cout << json{{"jsonrpc", "2.0"}, {"id", id}, {"error", {{"code", -32002}, {"message", e.what()}}}}.dump() << '\n' << std::flush;
+          continue;
+        }
+      } else if (method == "tools/list") {
         json list = json::array();
         for (const auto& c : opad::commands::list()) {
           list.push_back({{"name", c.name}, {"description", c.description},

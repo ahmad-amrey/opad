@@ -178,6 +178,17 @@ json validate_design(const Document& doc,const Scene& scene,const json& args,con
   }
   auto out=page(std::move(items),bodies.size(),args);out["valid_page"]=valid;out["unresolved"]=scene.unresolved.size();out["scope"]="Geometry validity and exact measurements; not a manufacturing assessment.";return out;
 }
+
+json resources() {
+  return {{"resources", json::array({{{"uri", "opad://guide/agent"}, {"name", "agent-guide"}, {"title", "OPAD agent guide"},
+    {"description", "Units and expressions, identifiers and body_ids per feature kind, base-plane frames, sketch geometry, profiles, references, feature conventions, new body names and batch references."},
+    {"mimeType", "text/markdown"}, {"size", guide().size()}}})}};
+}
+
+json read_resource(const std::string& uri) {
+  if (uri != "opad://guide/agent") throw Error("Unknown resource " + uri + "; resources/list names opad://guide/agent.");
+  return {{"contents", json::array({{{"uri", uri}, {"mimeType", "text/markdown"}, {"text", guide()}}})}};
+}
 }
 
 namespace opad::commands {

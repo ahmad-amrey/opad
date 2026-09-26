@@ -173,7 +173,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
     return out;
   });
 
-  reg("sketch", "Create a sketch on a plane from its geometry (points, entities, constraints; see docs/design.md)",
+  reg("sketch", "Create a sketch on a plane from its geometry (points, entities, constraints; the agent guide, MCP resource opad://guide/agent, describes the format)",
       {{"doc", "path"}, {"name", "string"}, {"plane", "object - {\"base\":\"xy|xz|yz\"} | {\"face\":ref} | {\"feature\":plane id}"}, {"geometry", "object"}, {"by", "string"}}, true,
       [](Document* d, const json& a) {
         Document& doc = need(d);

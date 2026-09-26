@@ -15,4 +15,9 @@ json reference_token(const Document&, const Scene&, const Ref&);
 json resolve_reference(const Document&, const Scene&, const json& token, bool remap = false);
 json query_entities(const Document&, const Scene&, const json& args, const std::function<bool()>& cancelled = {});
 json validate_design(const Document&, const Scene&, const json& args, const std::function<bool()>& cancelled = {});
+// The agent guide (core/res/agent_guide.md, compiled in, TODO 10 B2): the conventions schemas cannot carry. Both MCP
+// servers list it as a resource; live_diagnostics returns it with include_guide.
+const std::string& guide();
+json resources();                                // resources/list result
+json read_resource(const std::string& uri);      // resources/read result; throws for an unknown uri
 }

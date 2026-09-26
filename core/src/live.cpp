@@ -71,7 +71,7 @@ const json& live_tools() {
   static const json tools=[] {
   json out=json::array();
   auto add=[&](const std::string& name,const std::string& description,json schema){out.push_back({{"name",name},{"description",description},{"inputSchema",schema},{"outputSchema",live_output_schema(name)},{"annotations",{{"readOnlyHint",!live_mutation(name)},{"openWorldHint",false}}}});};
-  add("live_diagnostics","Start here: compact read-only connection, target, permissions, units, revision, transaction state and next calls. Set include_example for a typed-ID workflow.",object({{"include_example",{{"type","boolean"},{"default",false}}}}));
+  add("live_diagnostics","Start here: compact read-only connection, target, permissions, units, revision, transaction state and next calls. Set include_example for a typed-ID workflow and include_guide for the agent guide (units, frames, sketch geometry, references, feature conventions; also the MCP resource opad://guide/agent).",object({{"include_example",{{"type","boolean"},{"default",false}}},{"include_guide",{{"type","boolean"},{"default",false}}}}));
   add("live_instances","List running OPAD windows. Choose the intended instance and document explicitly.",object());
   add("live_bind","Bind this connection to exactly one instance and document target; never follows a newly opened document.",object({{"instance",str()},{"target",str()}},{"instance","target"}));
   add("live_state","Current revision, camera, selection, edit session and bounded recent changes.",object());

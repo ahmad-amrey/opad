@@ -54,10 +54,16 @@ int opad_live_mcp(int argc,char** argv) {
       if(!hasId)continue;const auto method=request.at("method").get<std::string>();json result;
       if(method=="initialize"){
         initialized=true;client=request.value("params",json::object()).value("clientInfo",json::object());
-        result={{"protocolVersion","2025-11-25"},{"capabilities",{{"tools",json::object()}}},{"serverInfo",{{"name","opad-live"},{"version",opad::version_string()}}},
-          {"instructions","LIVE OPAD: start with live_diagnostics (include_example=true for a short workflow), then explicitly choose a window/document using live_instances and live_bind. Every write needs expected_revision and a unique request_id. Transactions are connection-scoped: keep the MCP process alive; disconnect discards uncommitted work. Keep expected_revision=base_revision while staging and committing. After reconnect query request_status before retrying an uncertain commit; cancelled groups must be replanned. result.feature_id is a history ID, result.body_ids are body IDs, result.sketch_id is a sketch ID; legacy ids are operation IDs. changes.scope identifies command versus cumulative transaction changes. Review context section ai_agent_notes first: AI agent notes are user requests tied to model anchors; fetch annotations by id for full text, comments and drawing strokes, inspect current references, and resolve only after verifying completion. Use context and feature_schema before edits. Face/edge/vertex inputs need current entity_details reference tokens in references. preview=true stages one edit. Stop discards unfinished work. Never silently switch targets. Use save after committing work to persist the live document: supply an absolute .opad path for the first save, then omit path for later saves. Read-only access cannot edit, export or save."}};
+        result={{"protocolVersion","2025-11-25"},{"capabilities",{{"tools",json::object()},{"resources",json::object()}}},{"serverInfo",{{"name","opad-live"},{"version",opad::version_string()}}},
+          {"instructions","LIVE OPAD: start with live_diagnostics (include_example=true for a short workflow; include_guide=true, or resources/read opad://guide/agent, for the agent guide: units, frames, sketch geometry, references, feature conventions), then explicitly choose a window/document using live_instances and live_bind. Every write needs expected_revision and a unique request_id. Transactions are connection-scoped: keep the MCP process alive; disconnect discards uncommitted work. Keep expected_revision=base_revision while staging and committing. After reconnect query request_status before retrying an uncertain commit; cancelled groups must be replanned. result.feature_id is a history ID, result.body_ids are body IDs, result.sketch_id is a sketch ID; legacy ids are operation IDs. changes.scope identifies command versus cumulative transaction changes. Review context section ai_agent_notes first: AI agent notes are user requests tied to model anchors; fetch annotations by id for full text, comments and drawing strokes, inspect current references, and resolve only after verifying completion. Use context and feature_schema before edits. Face/edge/vertex inputs need current entity_details reference tokens in references. preview=true stages one edit. Stop discards unfinished work. Never silently switch targets. Use save after committing work to persist the live document: supply an absolute .opad path for the first save, then omit path for later saves. Read-only access cannot edit, export or save."}};
       } else if(method=="ping")result=json::object();
       else if(!initialized)throw opad::Error("initialize first");
+      else if(method=="resources/list")result=opad::agent::resources();
+      else if(method=="resources/templates/list")result={{"resourceTemplates",json::array()}};
+      else if(method=="resources/read"){
+        try{result=opad::agent::read_resource(request.value("params",json::object()).value("uri",""));}
+        catch(const std::exception& e){std::cout<<json{{"jsonrpc","2.0"},{"id",id},{"error",{{"code",-32002},{"message",e.what()}}}}.dump()<<'\n'<<std::flush;continue;}
+      }
       else if(method=="tools/list")result={{"tools",opad::agent::live_tools()}};
       else if(method=="tools/call"){
         try{
@@ -69,7 +75,9 @@ int opad_live_mcp(int argc,char** argv) {
               {"transaction_state",{{"state","none"},{"scope","connection"}}},{"next_calls",{"live_instances","live_bind"}},
               {"discovery_directory",discovery.toStdString()},{"discovery_exists",QDir(discovery).exists()},{"instances",instances()}};
             if(!lastError.is_null())info["last_error"]=lastError;
-            if(args.value("include_example",false))info["guide"]=opad::agent::live_guide();result=opad::agent::live_result(info);
+            if(args.value("include_example",false))info["guide"]=opad::agent::live_guide();
+            if(args.value("include_guide",false))info["agent_guide"]=opad::agent::guide();
+            result=opad::agent::live_result(info);
           }
           else if(name=="live_bind"){
             json chosen;for(const auto& item:instances())if(item.value("instance","")==args.at("instance").get<std::string>() && item.value("target","")==args.at("target").get<std::string>())chosen=item;

@@ -29,12 +29,20 @@ with tempfile.TemporaryDirectory(prefix="opad-mcp-") as folder:
 
     try:
         start = time.monotonic()
-        assert request("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
-                                      "clientInfo": {"name": "cad-test", "version": "1"}})["protocolVersion"] == "2025-11-25"
+        init = request("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
+                                      "clientInfo": {"name": "cad-test", "version": "1"}})
+        assert init["protocolVersion"] == "2025-11-25" and "resources" in init["capabilities"]
         process.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
         process.stdin.flush()
         tools = {t["name"]: t for t in request("tools/list")["tools"]}
         names = set(tools)
+        # The agent guide ships inside the binary (TODO 10 B2) and the descriptions point at it, not at docs/.
+        resources = request("resources/list")["resources"]
+        assert [r["uri"] for r in resources] == ["opad://guide/agent"] and resources[0]["mimeType"] == "text/markdown", resources
+        guide = request("resources/read", {"uri": "opad://guide/agent"})["contents"][0]["text"]
+        for fact in ("counter-clockwise", "normal = -Y", "one id space", "all_body_ids", "@{cabin#/body_ids/0}"):
+            assert fact in guide, fact
+        assert "docs/design.md" not in json.dumps(tools) and "opad://guide/agent" in tools["sketch"]["description"]
         assert {"new", "feature", "feature_kinds", "inspect", "export"} <= names
         assert {"context", "entity_details", "sketch_details", "resolve_reference", "validate", "feature_schema"} <= names
         assert tools["feature"]["inputSchema"]["properties"]["kind"]["enum"]

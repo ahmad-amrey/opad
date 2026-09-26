@@ -1,5 +1,25 @@
 configure_file(include/opad/version.hpp.in ${CMAKE_CURRENT_BINARY_DIR}/include/opad/version.hpp @ONLY)
 
+# The agent guide is compiled in (TODO 10 B2): a raw string generated from core/res/agent_guide.md, rewritten only when
+# the text changed, so editing the guide re-runs the configure step and rebuilds one file.
+set(OPAD_AGENT_GUIDE ${CMAKE_CURRENT_SOURCE_DIR}/res/agent_guide.md)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${OPAD_AGENT_GUIDE})
+file(READ ${OPAD_AGENT_GUIDE} opad_guide_text)
+string(REPLACE "\r" "" opad_guide_text "${opad_guide_text}")
+string(FIND "${opad_guide_text}" ")opad_guide" opad_guide_clash)
+if(NOT opad_guide_clash EQUAL -1)
+  message(FATAL_ERROR "agent_guide.md must not contain the raw-string delimiter )opad_guide")
+endif()
+set(opad_guide_cpp "// Generated from core/res/agent_guide.md; edit that file.\n#include \"opad/agent.hpp\"\n\nnamespace opad::agent {\nconst std::string& guide() {\n  static const std::string text = R\"opad_guide(${opad_guide_text})opad_guide\";\n  return text;\n}\n}  // namespace opad::agent\n")
+set(opad_guide_out ${CMAKE_CURRENT_BINARY_DIR}/agent_guide.cpp)
+set(opad_guide_old "")
+if(EXISTS ${opad_guide_out})
+  file(READ ${opad_guide_out} opad_guide_old)
+endif()
+if(NOT "${opad_guide_old}" STREQUAL "${opad_guide_cpp}")
+  file(WRITE ${opad_guide_out} "${opad_guide_cpp}")
+endif()
+
 add_library(opad_core STATIC
   src/util.cpp
   src/document.cpp
@@ -33,7 +53,8 @@ add_library(opad_core STATIC
   src/design/sketch_geom.cpp
   src/design/engine.cpp
   src/design/features.cpp
-  src/design/commands_design.cpp)
+  src/design/commands_design.cpp
+  ${CMAKE_CURRENT_BINARY_DIR}/agent_guide.cpp)
 add_library(opad::core ALIAS opad_core)
 
 target_include_directories(opad_core

@@ -44,8 +44,20 @@ def main():
         assert "@{cabin#/body_ids/0}" in tools["model_batch"]["description"] and "/result/" not in tools["model_batch"]["description"].replace("without /result/", "")
         for name in ("sketch", "sketch_edit"):
             assert "one id space" in tools[name]["inputSchema"]["properties"]["geometry"]["description"]
+        # TODO 10 B2: the agent guide, before binding, as a resource and through live_diagnostics.
+        listed = client.request("resources/list")["resources"]
+        assert [r["uri"] for r in listed] == ["opad://guide/agent"], listed
+        text = client.request("resources/read", {"uri": "opad://guide/agent"})["contents"][0]["text"]
+        for fact in ("counter-clockwise", "normal = -Y", "one id space", "all_body_ids", "@{cabin#/body_ids/0}"):
+            assert fact in text, fact
+        client.send("resources/read", {"uri": "opad://nothing"})
+        missing = client.responses.get(timeout=90)
+        assert missing["error"]["code"] == -32002 and "opad://guide/agent" in missing["error"]["message"], missing
+        assert client.call("live_diagnostics", include_guide=True)["agent_guide"] == text
+        assert "docs/design.md" not in json.dumps(tools) and "opad://guide/agent" in tools["live_diagnostics"]["description"]
         chosen = client.call("live_instances")["instances"][0]
         client.call("live_bind", instance=chosen["instance"], target=chosen["target"])
+        assert client.call("live_diagnostics", include_guide=True)["agent_guide"] == text
         diagnostic = client.call("live_diagnostics")
         assert diagnostic["connection"] == "bound" and diagnostic["units"] == "mm"
         assert diagnostic["permissions"]["edit"] and "guide" not in diagnostic

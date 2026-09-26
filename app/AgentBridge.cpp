@@ -188,7 +188,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     if(!s->bound || s->target!=target()) {
       json out={{"connection","target_changed"},{"target",s->target.toStdString()},{"permissions",{{"confirmed",false}}},{"units",nullptr},
         {"transaction_state",{{"state","none"},{"scope","connection"}}},{"next_calls",{"live_instances","live_bind"}}};
-      if(args.value("include_example",false))out["guide"]=live_guide();reply(s,live_result(out));return;
+      if(args.value("include_example",false))out["guide"]=live_guide();if(args.value("include_guide",false))out["agent_guide"]=guide();reply(s,live_result(out));return;
     }
     json transaction={{"state","none"},{"scope","connection"}};
     if(m_prepared) {
@@ -202,7 +202,7 @@ void AgentBridge::dispatch(const std::shared_ptr<Session>& s,json request,std::s
     json out={{"connection","bound"},{"instance",m_instance.toStdString()},{"target",target().toStdString()},
       {"permissions",{{"enabled",m_enabled},{"edit",m_edit}}},{"revision",m_doc->revision},{"units",m_doc->scene.units},
       {"geometry_units","mm"},{"busy",m_busy},{"editor_busy",editorBusy()},{"transaction_state",transaction},{"next_calls",next}};
-    if(args.value("include_example",false))out["guide"]=live_guide();reply(s,live_result(out));return;
+    if(args.value("include_example",false))out["guide"]=live_guide();if(args.value("include_guide",false))out["agent_guide"]=guide();reply(s,live_result(out));return;
   }
   if(!s->bound || s->target!=target()){
     if(s->target.isEmpty())fail(s,"not_bound",tr("This connection is not bound to a document yet. Call live_instances, choose the window and document, then live_bind."));
