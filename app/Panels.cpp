@@ -1431,20 +1431,37 @@ ViewportChips::ViewportChips(QWidget* parent) : QWidget(parent) {
   m_mode->setObjectName("chip");
   m_proj = new QLabel(this);
   m_proj->setObjectName("chip");
+  // 2D mode is a mode the view stays in (no orbit, locked projection): shown as its own card while on.
+  m_twoD = new QLabel(tr("2D mode"), this);
+  m_twoD->setObjectName("chipSel");
+  m_twoD->setToolTip(tr("2D mode is on: the view is locked to a plane and does not orbit. Click, or press Shift+2, to turn it off."));
+  m_twoD->setCursor(Qt::PointingHandCursor);
+  m_twoD->installEventFilter(this);
+  m_twoD->hide();
   m_section = new QLabel(this);
   m_section->setObjectName("chipSel");
   m_isolate = new QLabel(this);
   m_isolate->setObjectName("chipSel");
   l->addWidget(m_mode);
   l->addWidget(m_proj);
+  l->addWidget(m_twoD);
   l->addWidget(m_section);
   l->addWidget(m_isolate);
   l->addStretch();
 }
 
-void ViewportChips::set(const QString& mode, const QString& projection, const QString& section, const QString& isolate) {
+bool ViewportChips::eventFilter(QObject* object, QEvent* event) {
+  if (object == m_twoD && event->type() == QEvent::MouseButtonRelease) {
+    emit leaveTwoDimensional();
+    return true;
+  }
+  return QWidget::eventFilter(object, event);
+}
+
+void ViewportChips::set(const QString& mode, const QString& projection, const QString& section, const QString& isolate, bool twoDimensional) {
   m_mode->setText(mode);
   m_proj->setText(projection);
+  m_twoD->setVisible(twoDimensional);
   m_section->setText(section);
   m_section->setVisible(!section.isEmpty());
   m_isolate->setText(isolate);

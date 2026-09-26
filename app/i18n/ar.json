@@ -1471,5 +1471,7 @@
   "undone · right-click to delete it again": "مُلغى · انقر بالزر الأيمن لحذفه مجددًا",
   "right-click to restore what it deleted": "انقر بالزر الأيمن لاستعادة ما حذفه",
   "Refining the view": "تحسين دقة العرض",
-  "being edited · the change applies from here in the history": "قيد التحرير · يُطبَّق التغيير من هذه النقطة في السجل"
+  "being edited · the change applies from here in the history": "قيد التحرير · يُطبَّق التغيير من هذه النقطة في السجل",
+  "2D mode is on: the view is locked to a plane and does not orbit. Click, or press Shift+2, to turn it off.": "وضع ثنائي الأبعاد مُفعَّل: العرض مثبَّت على مستوى ولا يدور. انقر، أو اضغط Shift+2، لإيقافه.",
+  "2D mode is on: turn it off (Shift+2) to orbit": "وضع ثنائي الأبعاد مُفعَّل: أوقفه (Shift+2) لتتمكن من التدوير"
 }

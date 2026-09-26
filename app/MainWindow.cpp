@@ -6,6 +6,7 @@
 #include "AgentBridge.hpp"
 
 #include <QToolButton>
+#include <QToolTip>
 #include <QResizeEvent>
 #include <QMoveEvent>
 #include <QFileDialog>
@@ -378,6 +379,7 @@ void MainWindow::buildActions() {
 
     if (m_browserOverlay && action("panel.browser")->isChecked()) { m_browserOverlay->setVisible(m_doc->hasDocument); m_browserOverlay->raise(); }
     m_homeBtn->setVisible(!on); m_rollLeft->setVisible(!on); m_rollRight->setVisible(!on); m_alignPlane->setVisible(!on);
+    updateChips();
   });
   QAction* ortho = addAction("view.ortho", tr("Orthographic"), "ortho", QKeySequence("Shift+3"), [this] {}, true);
   ortho->setChecked(true);
@@ -737,6 +739,7 @@ void MainWindow::buildCentral() {
   // Native child widgets float above the OpenGL surface: top-left chips, bottom-right measurement card.
   m_chips = new ViewportChips(m_viewport);
   m_chips->setAttribute(Qt::WA_NativeWindow);
+  connect(m_chips, &ViewportChips::leaveTwoDimensional, this, [this] { action("view.2d")->setChecked(false); });
   m_prompt = new PromptBar(m_viewport);
   m_prompt->setAttribute(Qt::WA_NativeWindow);
   m_prompt->hide();
@@ -1213,7 +1216,8 @@ void MainWindow::updateChips() {
     const char axes[] = {'X', 'Y', 'Z'};
     section = QString("Section %1 = %2 mm").arg(axes[axis]).arg(o[axis], 0, 'f', 0);
   }
-  m_chips->set(mode, proj, section, m_viewport->isIsolated() ? tr("Isolated · %1 bodies").arg(m_viewport->isolatedCount()) : QString());
+  m_chips->set(mode, proj, section, m_viewport->isIsolated() ? tr("Isolated · %1 bodies").arg(m_viewport->isolatedCount()) : QString(),
+               action("view.2d")->isChecked());
   positionOverlays();
 }
 
@@ -2161,6 +2165,27 @@ void MainWindow::runBench() {
       const bool saved=m_viewport->grabImage().save(shot);
       trace::log(QString("bench: mesh render %1").arg(saved?"PASS":"FAIL"));
       QCoreApplication::exit(saved?0:2);
+    });
+    return;
+  }
+  // OPAD_BENCH_TWOD=<png>: 2D mode shows its card; an orbit press in 2D mode gives the hint; the card turns it off.
+  if(const QString shot=qEnvironmentVariable("OPAD_BENCH_TWOD");!shot.isEmpty()){
+    action("view.2d")->setChecked(true);
+    QTimer::singleShot(300,this,[this,shot]{
+      auto* card=m_chips->findChild<QLabel*>(QString(),Qt::FindDirectChildrenOnly);bool shown=false;
+      for(auto* label:m_chips->findChildren<QLabel*>())if(label->text()==tr("2D mode"))card=label,shown=label->isVisibleTo(m_chips);
+      m_chips->grab().save(shot);
+      const QPointF at(m_viewport->width()/2.0,m_viewport->height()/2.0);
+      QMouseEvent press(QEvent::MouseButtonPress,at,m_viewport->mapToGlobal(at),Qt::MiddleButton,Qt::MiddleButton,Qt::ShiftModifier);
+      QCoreApplication::sendEvent(m_viewport,&press);
+      const bool hinted=QToolTip::text().contains("2D mode");
+      QMouseEvent release(QEvent::MouseButtonRelease,at,m_viewport->mapToGlobal(at),Qt::MiddleButton,Qt::NoButton,Qt::ShiftModifier);
+      QCoreApplication::sendEvent(m_viewport,&release);
+      QMouseEvent click(QEvent::MouseButtonRelease,QPointF(3,3),card->mapToGlobal(QPointF(3,3)),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
+      QCoreApplication::sendEvent(card,&click);
+      const bool left=!action("view.2d")->isChecked() && !card->isVisibleTo(m_chips);
+      trace::log(QString("bench: 2D mode card %1, orbit hint %2, card leaves 2D mode %3").arg(shown?"shown":"MISSING",hinted?"shown":"MISSING",left?"yes":"NO"));
+      QCoreApplication::exit(shown&&hinted&&left?0:2);
     });
     return;
   }

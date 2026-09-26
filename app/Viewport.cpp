@@ -59,6 +59,8 @@ Handle(Aspect_Window) opad_make_cocoa_window(void* nsview);
 #endif
 
 #include <QCoreApplication>
+#include <QDateTime>
+#include <QToolTip>
 #include <QInputDevice>
 #include <QMouseEvent>
 #include <QNativeGestureEvent>
@@ -452,6 +454,29 @@ void Viewport::setNavPreset(NavPreset p) {
     for (AIS_MouseGestureMap::Iterator it(map); it.More(); it.Next())
       if (it.Value() == AIS_MouseGesture_RotateOrbit || it.Value() == AIS_MouseGesture_RotateView)
         it.ChangeValue() = AIS_MouseGesture_Pan;
+}
+
+bool Viewport::orbitGesture(unsigned gesture) const {
+  const unsigned L = Aspect_VKeyMouse_LeftButton, M = Aspect_VKeyMouse_MiddleButton, R = Aspect_VKeyMouse_RightButton;
+  const unsigned SHIFT = Aspect_VKeyFlags_SHIFT;
+  (void)L;
+  if (gesture == (M | Aspect_VKeyFlags_META | SHIFT)) return true;  // Shift + two-finger drag
+  switch (m_preset) {
+    case NavPreset::Fusion: return gesture == (M | SHIFT);
+    case NavPreset::SolidWorks: return gesture == M;
+    case NavPreset::Onshape: return gesture == R;
+    case NavPreset::Blender: return gesture == M;
+  }
+  return false;
+}
+
+void Viewport::twoDimensionalHint(const QPoint& global) {
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  if (now - m_twoDHintShown < 1500) return;  // once per attempt, not per trackpad event
+  m_twoDHintShown = now;
+  const QString text = tr("2D mode is on: turn it off (Shift+2) to orbit");
+  QToolTip::showText(global + QPoint(14, 18), text, this, QRect(), 2500);
+  emit hoverChanged(text);
 }
 
 // ---------------------------------------------------------------- display styles (F19)
@@ -1883,6 +1908,8 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
     e->accept();
     return;
   }
+  if (m_initialised && m_twoDimensional && orbitGesture(qt_buttons(e->buttons()) | qt_flags(e->modifiers())))
+    twoDimensionalHint(e->globalPosition().toPoint());
   if(m_initialised && !m_twoDimensional) {
     const auto gesture=qt_buttons(e->buttons())|qt_flags(e->modifiers());
     if(ChangeMouseGestureMap().IsBound(gesture) && ChangeMouseGestureMap().Find(gesture)==AIS_MouseGesture_RotateOrbit) {
@@ -2049,6 +2076,7 @@ void Viewport::wheelEvent(QWheelEvent* e) {
 }
 
 void Viewport::trackpadScroll(const QPointF& position, const QPointF& delta, bool orbit) {
+  if (orbit && m_twoDimensional) twoDimensionalHint(mapToGlobal(position).toPoint());
   orbit = orbit && !m_twoDimensional;
   if (delta.isNull()) return;
   const TrackpadMode mode = orbit ? TrackpadMode::Orbit : TrackpadMode::Pan;

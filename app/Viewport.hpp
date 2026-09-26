@@ -245,6 +245,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void mouseReleaseEvent(QMouseEvent*) override;
   void mouseMoveEvent(QMouseEvent*) override;
   void leaveEvent(QEvent*) override;
+  // An orbit gesture of the navigation preset pressed in 2D mode: a short hint instead of a silent pan.
+  bool orbitGesture(unsigned buttonsAndFlags) const;
+  void twoDimensionalHint(const QPoint& global);
+  qint64 m_twoDHintShown = 0;
   void mouseDoubleClickEvent(QMouseEvent*) override;
   bool eventFilter(QObject* object, QEvent* e) override;
   bool event(QEvent* e) override;  // sketching: plain keys reach the editor before the window's shortcuts
