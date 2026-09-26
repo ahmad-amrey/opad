@@ -322,6 +322,17 @@ std::vector<std::pair<std::string, std::vector<TopoDS_Shape>>> by_body(const Ctx
 TopoDS_Shape same_in(const TopoDS_Shape& body, const TopoDS_Shape& sub) {
   for (TopExp_Explorer ex(body, sub.ShapeType()); ex.More(); ex.Next())
     if (ex.Current().IsSame(sub)) return ex.Current();
+  // A placed body (a node with a transform) is located anew by every lookup: the same entity then carries an equal
+  // location that is another object, which IsSame does not accept. Match the TShape and the placement's value.
+  const gp_Trsf want = sub.Location().Transformation();
+  auto same_place = [&](const gp_Trsf& t) {
+    for (int r = 1; r <= 3; ++r)
+      for (int c = 1; c <= 4; ++c)
+        if (std::fabs(t.Value(r, c) - want.Value(r, c)) > 1e-12) return false;
+    return true;
+  };
+  for (TopExp_Explorer ex(body, sub.ShapeType()); ex.More(); ex.Next())
+    if (ex.Current().IsPartner(sub) && same_place(ex.Current().Location().Transformation())) return ex.Current();
   throw Error("a referenced entity is not part of its body any more");
 }
 
@@ -911,6 +922,10 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       }
       const auto pieces = solids_of(result);
       if (pieces.empty()) throw Error("the shell is not a solid");
+      // The kernel returns the body unchanged, and says it is done, when a removed face blends smoothly into a kept
+      // one (the flat faces either side of a fillet, or the fillet itself): say so rather than record a shell that is not.
+      if (std::fabs(volume_of(pieces.front()) - volume_of(body)) <= 1e-9 * std::max(1.0, volume_of(body)))
+        throw Error("the modelling kernel could not shell the body with these faces open (a face that blends smoothly into a fillet cannot be removed); open other faces, or shell before filleting");
       out.bodies.push_back({node, healed(pieces.front())});
     };
     bool any = false;

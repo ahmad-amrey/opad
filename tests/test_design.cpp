@@ -926,3 +926,63 @@ TEST(results_report_frames_and_tight_boxes) {
   // Features without a plane input report none.
   CHECK(!feature_cmd(doc, "move", {{"bodies", json::array({body})}, {"dz", "5 mm"}}).contains("frame"));
 }
+
+// Edge and face features on a body placed by a transform (an assembly instance, a moved part): every lookup of the
+// body locates it anew, and the picked edges and faces must still be found in it.
+TEST(edge_and_face_features_work_on_placed_bodies) {
+  Document doc = Document::create();
+  Mat4 placed;  // a quarter turn about Z and a shift
+  placed.m = {0, -1, 0, 10, 1, 0, 0, 5, 0, 0, 1, 0, 0, 0, 0, 1};
+  auto placed_box = [&] {
+    const std::string body = feature_cmd(doc, "box", {{"length", "60 mm"}, {"width", "31 mm"}, {"height", "21 mm"}})["body_ids"][0];
+    commands::run("transform", {{"target", body}, {"matrix", placed.to_json()}}, &doc);
+    return body;
+  };
+  const std::string body = placed_box();
+  const Scene s0 = resolve(doc);
+  const double before = volume_of_node(doc, s0, body);
+  for (const auto& [kind, inputs] : std::vector<std::pair<std::string, json>>{
+           {"fillet", {{"edges", json::array({body + "/edge/0"})}, {"radius", "2 mm"}}},
+           {"chamfer", {{"edges", json::array({body + "/edge/5"})}, {"distance", "1 mm"}}},
+           {"offset_face", {{"faces", json::array({body + "/face/1"})}, {"distance", "-2 mm"}}}}) {
+    feature_cmd(doc, kind, inputs);
+    const Scene s = resolve(doc);
+    CHECK(s.features.back().error.empty());
+    CHECK(s.unresolved.empty());
+  }
+  Scene s = resolve(doc);
+  CHECK(volume_of_node(doc, s, body) < before);
+  // Still where the transform put it: the turned box spans 31 mm in X around x = 10 and 60 mm in Y around y = 5.
+  double x0, y0, z0, x1, y1, z1;
+  node_tight_bbox(doc, s, body).Get(x0, y0, z0, x1, y1, z1);
+  CHECK_NEAR((x0 + x1) / 2, 10, 2.5);
+  CHECK_NEAR((y0 + y1) / 2, 5, 2.5);
+  // A shell of a placed body.
+  const std::string other = placed_box();
+  feature_cmd(doc, "shell", {{"faces", json::array({other + "/face/5"})}, {"thickness", "1 mm"}});
+  s = resolve(doc);
+  CHECK(s.features.back().error.empty());
+  CHECK_NEAR(volume_of_node(doc, s, other), 60 * 31 * 21 - 58 * 29 * 20, 1e-6);
+}
+
+// The kernel cannot open a face that blends smoothly into a fillet, and used to hand the body back unchanged while
+// saying it was done: the shell was recorded but did nothing. It is refused now, naming the reason.
+TEST(a_shell_the_kernel_cannot_make_is_refused) {
+  Document doc = Document::create();
+  const std::string body = feature_cmd(doc, "box", {{"length", "60 mm"}, {"width", "31 mm"}, {"height", "21 mm"}})["body_ids"][0];
+  feature_cmd(doc, "fillet", {{"edges", json::array({body + "/edge/0"})}, {"radius", "2 mm"}});
+  const size_t features = resolve(doc).features.size();
+  std::string error;
+  try {
+    feature_cmd(doc, "shell", {{"faces", json::array({body + "/face/2"})}, {"thickness", "1 mm"}});
+  } catch (const Error& e) {
+    error = e.what();
+  }
+  CHECK(error.find("blends smoothly into a fillet") != std::string::npos);
+  CHECK_EQ(resolve(doc).features.size(), features);
+  // A face away from the fillet still opens.
+  feature_cmd(doc, "shell", {{"faces", json::array({body + "/face/1"})}, {"thickness", "1 mm"}});
+  const Scene s = resolve(doc);
+  CHECK(s.features.back().error.empty());
+  CHECK(volume_of_node(doc, s, body) < 10000);
+}
