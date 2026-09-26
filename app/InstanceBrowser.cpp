@@ -25,13 +25,22 @@ void MainWindow::browseInstances(const std::string& id) {
     panel->setProperty("instanceCurrent",QString::fromStdString(current));
     label->setText(tr("Instance %1 of %2\n%3").arg(*index+1).arg(instances->size()).arg(m_doc->nodeName(current)));
     m_viewport->isolate(isolate->isChecked()?std::vector<std::string>{current}:previousIsolation);
-    m_browser->setSelectedIds({current});m_browser->scrollToSelected();m_viewport->selectNodes({current});m_viewport->fitNodes({current});
+    // Fit once the instance is on screen: isolating it re-displays it through a sliced job, so fitting now would
+    // find nothing displayed and fall back to everything.
+    m_browser->setSelectedIds({current});m_browser->scrollToSelected();m_viewport->selectNodes({current});m_viewport->fitNodesWhenReady({current});
   };
   connect(previous,&QPushButton::clicked,body,[=]{if(instances->empty())return;*index=(*index+instances->size()-1)%instances->size();update();});
   connect(next,&QPushButton::clicked,body,[=]{if(instances->empty())return;*index=(*index+1)%instances->size();update();});
   connect(isolate,&QCheckBox::toggled,body,update);
   connect(m_doc,&AppDocument::changed,panel,&ToolPanel::hide);
-  for(auto* action:m_actions)connect(action,&QAction::triggered,panel,&ToolPanel::hide);connect(m_doc,&AppDocument::aboutToReplace,panel,&ToolPanel::hide);
+  // Like isolation: looking around (fit, home, projection, style, grid, panels) keeps browsing; commands that act on
+  // something else, or isolate/unisolate, end it.
+  for(auto* action:m_actions){
+    const QString id=action->objectName();
+    const bool looking=(id.startsWith("view.") && id!="view.isolate" && id!="view.unisolate") || id.startsWith("nav.") || id.startsWith("panel.") || id.startsWith("help.");
+    if(!looking)connect(action,&QAction::triggered,panel,&ToolPanel::hide);
+  }
+  connect(m_doc,&AppDocument::aboutToReplace,panel,&ToolPanel::hide);
   connect(panel,&ToolPanel::visibilityChanged,this,[=,this](bool shown){if(!shown){if(generation==m_doc->generation && m_viewport->isolatedNodes()==std::vector<std::string>{panel->property("instanceCurrent").toString().toStdString()})m_viewport->isolate(previousIsolation);panel->deleteLater();}});
   connect(panel,&QObject::destroyed,this,[this,panel]{m_panels.removeAll(panel);});openPanel(panel);update();
 }

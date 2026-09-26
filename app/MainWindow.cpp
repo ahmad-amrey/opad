@@ -2173,7 +2173,11 @@ void MainWindow::runBench() {
     m_doc->doc.append({{"op","import"},{"nodes",opad::json::array({{{"type","body"},{"id",copy},{"key",m_doc->scene.node(source)->body_key},{"name","Linked copy"}}})}});m_doc->refresh();
     const auto count=m_doc->doc.ops.size();browseInstances(source);
     auto* panel=findChild<ToolPanel*>("instanceBrowser");bool valid=panel && m_viewport->isolatedNodes()==std::vector<std::string>{source};
-    if(panel){panel->findChild<QPushButton*>("nextInstance")->click();valid=valid&&m_viewport->isolatedNodes()!=std::vector<std::string>{source};panel->findChild<QPushButton*>("previousInstance")->click();valid=valid&&m_viewport->isolatedNodes()==std::vector<std::string>{source};panel->hide();valid=valid&&!m_viewport->isIsolated()&&m_doc->doc.ops.size()==count;}
+    if(panel){panel->findChild<QPushButton*>("nextInstance")->click();valid=valid&&m_viewport->isolatedNodes()!=std::vector<std::string>{source};panel->findChild<QPushButton*>("previousInstance")->click();valid=valid&&m_viewport->isolatedNodes()==std::vector<std::string>{source};
+      // Looking around keeps browsing (TODO 10 A5): Fit and Home leave the panel and the isolation alone.
+      action("view.fit")->trigger();action("view.home")->trigger();valid=valid&&panel->isVisible()&&m_viewport->isolatedNodes()==std::vector<std::string>{source};
+      if(!valid)trace::log("bench: Fit or Home ended instance browsing");
+      panel->hide();valid=valid&&!m_viewport->isIsolated()&&m_doc->doc.ops.size()==count;}
     trace::log(valid?"bench: instance next/previous, isolation restoration and no document edits PASS":"bench: instance browser FAIL");QCoreApplication::exit(valid?0:2);return;
   }
   if(benchLargeSketch())return;
