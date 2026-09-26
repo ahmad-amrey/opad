@@ -7,6 +7,7 @@
 #include "opad/design/sketch.hpp"
 #include "opad/design/drawing_sketch.hpp"
 #include "opad/design/sketch_geom.hpp"
+#include "opad/design/sketch_shapes.hpp"
 #include "opad/scene.hpp"
 
 #include <algorithm>
@@ -181,7 +182,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
     return out;
   });
 
-  reg("sketch", "Create a sketch on a plane from its geometry (points, entities, constraints; the agent guide, MCP resource opad://guide/agent, describes the format)",
+  reg("sketch", "Create a sketch on a plane from its geometry: points, entities, constraints and high-level shapes (rectangles, rounded rectangles, arcs by three points or a radius, paths with fillets and tangent arcs, slots, offsets, text), which become ordinary curves; the result's id_map lists what each shape made. The agent guide (MCP resource opad://guide/agent) describes the format",
       {{"doc", "path"}, {"name", "string"}, {"plane", "object - {\"base\":\"xy|xz|yz\"} | {\"face\":ref} | {\"feature\":plane id}"}, {"geometry", "object"}, {"by", "string"}}, true,
       [](Document* d, const json& a) {
         Document& doc = need(d);
@@ -189,11 +190,13 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         json plane = a.contains("plane") ? parse_if_text(a["plane"]) : json{{"base", "xy"}};
         const Frame frame = design::resolve_plane(doc, s, plane);
         plane["frame"] = frame.to_json();
-        const json geometry = design::Sketch::from_json(parse_if_text(a.value("geometry", json::object()))).to_json();
+        json id_map;
+        const json geometry = design::expand_sketch_shapes(parse_if_text(a.value("geometry", json::object())), &id_map);
         const std::string name = a.contains("name") ? a["name"].get<std::string>() : design::next_name(s, "Sketch");
         json out = design::apply_ops(doc, {design::make_sketch_op(name, plane, geometry)}, a.value("by", ""));
         out["sketch_id"] = out["ids"][0];
         out["frame"] = design::frame_result(frame);
+        if (!id_map.empty()) out["id_map"] = id_map;
         return out;
       });
 
@@ -212,7 +215,8 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
       {{"doc", "path"}, {"target", "uuid - sketch op id"}, {"geometry", "object"}, {"plane", "object"}, {"name", "string"}, {"by", "string"}}, true, [](Document* d, const json& a) {
         Document& doc = need(d);
         json set = json::object();
-        if (a.contains("geometry")) set["geometry"] = design::Sketch::from_json(parse_if_text(a["geometry"])).to_json();
+        json id_map;
+        if (a.contains("geometry")) set["geometry"] = design::expand_sketch_shapes(parse_if_text(a["geometry"]), &id_map);
         if (a.contains("name")) set["name"] = a["name"];
         json frame;
         if (a.contains("plane")) {auto plane=parse_if_text(a["plane"]);const auto resolved=design::resolve_plane(doc,resolve(doc),plane);plane["frame"]=resolved.to_json();frame=design::frame_result(resolved);set["plane"]=std::move(plane);}
@@ -220,6 +224,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         json out = design::apply_ops(doc, {design::make_edit_op(a.at("target").get<std::string>(), set)}, a.value("by", ""));
         out["sketch_id"] = a.at("target");
         if (!frame.is_null()) out["frame"] = frame;
+        if (!id_map.empty()) out["id_map"] = id_map;
         return out;
       });
 

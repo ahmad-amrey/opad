@@ -1,5 +1,6 @@
 #include "SketchEditor.hpp"
-#include "StrokeFont.hpp"
+#include "opad/design/sketch_geom.hpp"
+#include "opad/design/sketch_text.hpp"
 #include "Jobs.hpp"
 #include <QCoreApplication>
 #include "SketchPanel.hpp"
@@ -72,10 +73,17 @@ void SketchEditor::createText(double u,double v) {
     const QString text=option("text","OPAD");if(text.isEmpty() || text.size()>512)throw opad::Error("enter between 1 and 512 text characters");
     std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});
     const double height=ParamTable(defs,m_doc->scene.units).length(option("height","10 mm").toStdString());if(height<=0)throw opad::Error("text height must be positive");
+    const QString style=option("textStyle","outline");
+    if(style=="stroke" || style=="block") {
+      // The built-in font lives in core (TODO 10 B4): the same letters on every machine and from the CLI and MCP.
+      TextOptions t;t.height=height;t.style=style=="stroke"?"stroke":"outline";
+      const std::string utf8=text.toStdString();
+      runSketchEdit(tr("Creating text outlines"),[utf8,u,v,t](Sketch& sk){add_text(sk,utf8,u,v,t);});
+      return;
+    }
     QFont font(option("font","Arial"));font.setPixelSize(1000);
-    const bool stroke=option("textStyle","outline")=="stroke";
-    QPainterPath path;if(stroke)path=strokeText(text);else path.addText(0,0,font,text);
-    const double scale=stroke?height:height/std::max(1.0,QFontMetricsF(font).capHeight());
+    QPainterPath path;path.addText(0,0,font,text);
+    const double scale=height/std::max(1.0,QFontMetricsF(font).capHeight());
     runSketchEdit(tr("Creating text outlines"),[path,u,v,scale](Sketch& sk){
       std::map<std::pair<double,double>,int> points;
       auto point=[&](double x,double y){const auto at=std::make_pair(u+x*scale,v-y*scale);auto found=points.find(at);if(found!=points.end())return found->second;return points[at]=sk.add_point(at.first,at.second);};
@@ -110,14 +118,24 @@ void SketchEditor::benchPrimitives() {
     setTool("text");m_options["text"]="OPAD";m_options["height"]="12 mm";m_panelFieldsDirty=true;emit workflowChanged();
     createText(0,45);
     auto* timer=new QTimer(this);timer->setInterval(50);auto attempts=std::make_shared<int>(0);
-    connect(timer,&QTimer::timeout,this,[this,timer,attempts,count]{
+    auto block=std::make_shared<size_t>(0);  // entities before the built-in block letters, once they are asked for
+    connect(timer,&QTimer::timeout,this,[this,timer,attempts,count,block]{
       if(++*attempts>400){timer->stop();trace::log("bench: primitives text timed out");QCoreApplication::exit(2);return;}
       if(m_editJob)return;
+      if(!*block) {
+        bool native=false;for(size_t i=count;i<m_sk.entities.size();++i)native|=m_sk.entities[i].degree>0;
+        const bool ok=m_sk.entities.size()>count && native;
+        for(auto* panel:m_viewport->window()->findChildren<SketchPanel*>())panel->grab().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_PRIMITIVES")+".panel.png");
+        trace::log(QString("bench: advanced primitives and native text outlines %1").arg(ok?"PASS":"FAIL"));
+        if(!ok){timer->stop();QCoreApplication::exit(2);return;}
+        // TODO 10 B4: the built-in font from core, as closed block letters.
+        *block=m_sk.entities.size();m_options["textStyle"]="block";createText(0,70);return;
+      }
       timer->stop();
-      bool native=false;for(size_t i=count;i<m_sk.entities.size();++i)native|=m_sk.entities[i].degree>0;
-      const bool ok=m_sk.entities.size()>count && native;
-      for(auto* panel:m_viewport->window()->findChildren<SketchPanel*>())panel->grab().save(qEnvironmentVariable("OPAD_BENCH_SKETCH_PRIMITIVES")+".panel.png");
-      trace::log(QString("bench: advanced primitives and native text outlines %1").arg(ok?"PASS":"FAIL"));QCoreApplication::exit(ok?0:2);
+      Sketch letters;for(size_t i=*block;i<m_sk.entities.size();++i){const auto& e=m_sk.entities[i];for(int p:e.p)if(!letters.point(p))letters.points.push_back(*m_sk.point(p));letters.entities.push_back(e);}
+      const size_t regions=sketch_regions(letters,opad::Frame{}).size();
+      const bool ok=m_sk.entities.size()>*block && regions==8;  // O, P, A, D and their four holes
+      trace::log(QString("bench: built-in block letters, %1 regions %2").arg(regions).arg(ok?"PASS":"FAIL"));QCoreApplication::exit(ok?0:2);
     });timer->start();
   }catch(const std::exception& e){trace::log(QString("bench: advanced primitives FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}
 }

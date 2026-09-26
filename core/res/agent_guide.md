@@ -61,6 +61,41 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - A change the solver cannot satisfy is refused; nothing is over-constrained. `sketch_details` reports the degrees of
   freedom and the closed profiles.
 
+## Shapes
+
+- `geometry.shapes: [{"kind", "picks": [[u, v], ...], "options", "first_id"}]` draws common outlines without working
+  out points, centres or tangents by hand. Shapes are added after the listed points, entities and constraints and
+  become ordinary ones before the sketch is stored. The result's `id_map` has one entry per shape with the
+  `points`, `entities` and `constraints` it made (and for outline text the `profiles`: a point inside each letter).
+- Any point, entity or constraint without an `id` gets the next free one; `first_id` makes a shape's ids run
+  consecutively from that number, so constraints in the same call can refer to them.
+- Kinds (picks, then options):
+  - `point` [p]; `line` [a, b]; `circle` [centre] with `radius` or `diameter` (or [centre, point on it]);
+  - `rect2` [corner, corner] and `rect_center` [centre, corner], axis-aligned; `rect3` [a, b, height point], turned;
+  - `rounded_rect` [corner, corner] with `radius` (`center: true`: [centre, corner]);
+  - `arc3` [start, middle, end]; `arc_radius` [start, end] with `radius`, `direction` ccw (default) or cw, `large`;
+  - `slot` [centre, centre] with `width`; `cslot` [middle, end, width point]; `arcslot` [centre, start, end] with
+    `width`;
+  - `path` [points...]: `closed` (default true), `fillet` (radius at every corner between straight segments),
+    `fillets` (one per point, 0 for none), `segments` (one per segment: "line", "tangent" = an arc tangent to the
+    segment before, "tangent_next" = tangent to the one after, or a radius, + counter-clockwise, - clockwise);
+  - `offset` with `shape` (index of an earlier shape in the list), `entity` or `entities`, `distance` (+ outward,
+    - inward) and `round`;
+  - `text` [baseline start] with `text`, `height` (mm), `style` "outline" (closed block letters to extrude) or
+    "stroke" (single lines), `weight` (stroke width / height, default 0.14), `align` left, center or right. The
+    built-in font has Latin capitals (lower case is drawn in capitals), digits and `- _ + / . , : ( ) ! ?`; it is
+    the same on every machine;
+  - also `polygon_outer` [centre, edge midpoint] with `sides`, `circle2` [a, b], `conic`, `control_spline`,
+    `tangent_arc` [line end, end] with `line`, `tangent_circle` [near point] with `lines` and `radius`.
+- A boat hull section with straight sides, rounded stern corners and a pointed bow of two arcs tangent to the sides:
+  `{"kind": "path", "picks": [[0,-12], [40,-12], [60,0], [40,12], [0,12]], "options": {"segments": ["line",
+  "tangent", "tangent_next", "line", "line"], "fillets": [4, 0, 0, 0, 4]}}`.
+- A frame outline and its inner offset: `[{"kind": "rounded_rect", "picks": [[0,0], [70,150]], "options":
+  {"radius": 8}}, {"kind": "offset", "options": {"shape": 0, "distance": -2}}]`.
+- Engraving: add a `text` shape to the part's sketch, extrude every region (`{"sketch": id}`) for the part, then the
+  letters (`{"sketch": id, "at": p}` for each of the shape's `profiles`) with `operation: "cut"` and a
+  `start_offset`.
+
 ## Profiles
 
 - A profile input takes sketch regions or planar faces: `{"sketch": id, "at": [u, v]}` is the region containing that

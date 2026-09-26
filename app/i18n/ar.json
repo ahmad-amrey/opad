@@ -1506,5 +1506,6 @@
   "Named after the picked bodies": "مسمّاة باسم الأجسام المختارة",
   "As the picked bodies": "مثل الأجسام المختارة",
   "Rename %1 objects": "إعادة تسمية %1 من الكائنات",
-  "Name ({n} is replaced by 1, 2, 3, ...):": "الاسم (يُستبدل {n} بـ 1، 2، 3، ...):"
+  "Name ({n} is replaced by 1, 2, 3, ...):": "الاسم (يُستبدل {n} بـ 1، 2، 3، ...):",
+  "Built-in block letters": "أحرف كتلية مدمجة"
 }

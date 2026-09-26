@@ -986,3 +986,28 @@ TEST(a_shell_the_kernel_cannot_make_is_refused) {
   CHECK(s.features.back().error.empty());
   CHECK(volume_of_node(doc, s, body) < 10000);
 }
+
+// TODO 10 B4: a label from shapes, engraved with text, all through the sketch and feature commands: no hand-placed
+// points, no arc centres, and the letters come back as profiles to cut.
+TEST(a_label_is_engraved_with_text_from_shapes) {
+  Document doc = Document::create();
+  const json made = commands::run("sketch", {{"plane", {{"base", "xy"}}},
+      {"geometry", {{"shapes", json::array({{{"kind", "rounded_rect"}, {"picks", {{0, 0}, {60, 20}}}, {"options", {{"radius", 3.0}}}},
+                                            {{"kind", "text"}, {"picks", {{30, 5}}}, {"options", {{"text", "OPAD"}, {"height", 10.0}, {"align", "center"}}}}})}}}}, &doc);
+  const std::string sketch = made["sketch_id"];
+  CHECK_EQ(made["id_map"].size(), 2u);
+  const json letters = made["id_map"][1]["profiles"];
+  CHECK_EQ(letters.size(), 4u);  // one point inside each letter
+  // The whole plate (every region), then the letters cut 1 mm deep from its top.
+  feature_cmd(doc, "extrude", {{"profiles", json::array({{{"sketch", sketch}}})}, {"distance", "3 mm"}});
+  const double plate = total_volume(doc);
+  CHECK_NEAR(plate, (60 * 20 - (4 - M_PI) * 9) * 3, 1e-4);
+  json profiles = json::array();
+  for (const auto& p : letters) profiles.push_back({{"sketch", sketch}, {"at", p["at"]}});
+  feature_cmd(doc, "extrude", {{"profiles", profiles}, {"start", "offset"}, {"start_offset", "2 mm"}, {"distance", "1 mm"}, {"operation", "cut"}});
+  const Scene s = resolve(doc);
+  CHECK(s.features.back().error.empty());
+  CHECK_EQ(s.all_bodies().size(), 1u);
+  const double engraved = plate - total_volume(doc);
+  CHECK(engraved > 40 && engraved < 200);  // four block letters 10 mm high, 1.4 mm strokes, 1 mm deep
+}

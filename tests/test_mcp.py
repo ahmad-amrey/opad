@@ -93,6 +93,17 @@ with tempfile.TemporaryDirectory(prefix="opad-mcp-") as folder:
         output = str(pathlib.Path(folder) / "plate.step")
         call("export", doc=doc, format="step", out=output)
         assert pathlib.Path(output).stat().st_size > 100
+        # TODO 10 B4: a phone frame outline (a rounded rectangle and its inner offset) and a text label, as shapes.
+        framed = call("sketch", doc=doc, name="Frame", plane={"base": "xy"}, geometry={"shapes": [
+            {"kind": "rounded_rect", "picks": [[100, 0], [170, 150]], "options": {"radius": 8}},
+            {"kind": "offset", "options": {"shape": 0, "distance": -2}},
+            {"kind": "text", "picks": [[135, 60]], "options": {"text": "Sub", "height": 8, "align": "center"}}]})
+        shapes = framed["id_map"]
+        assert [s["kind"] for s in shapes] == ["rounded_rect", "offset", "text"] and len(shapes[2]["profiles"]) == 3, shapes
+        profiles = call("sketch_details", doc=doc, sketch=framed["sketch_id"], section="profiles", limit=100)
+        assert profiles["total"] == 2 + 3 + 2, profiles  # the frame, the inside, three letters (capitals: SUB) and B's two holes
+        wrong = request("tools/call", {"name": "sketch", "arguments": {"doc": doc, "geometry": {"shapes": [{"kind": "rounded_rect", "picks": [[0, 0], [10, 10]], "options": {"radius": 6}}]}}})
+        assert wrong["isError"] and "shapes[0] (rounded_rect)" in wrong["structuredContent"]["error"]["message"], wrong
         error = request("tools/call", {"name": "feature", "arguments": {"doc": doc, "kind": "invalid"}})
         assert error["isError"]
         assert request("ping") == {}

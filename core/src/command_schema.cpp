@@ -1,5 +1,6 @@
 #include "opad/agent.hpp"
 #include "opad/design/feature.hpp"
+#include "opad/design/sketch_shapes.hpp"
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -32,16 +33,19 @@ json plane() {
 }
 json sketch_geometry() {
   auto id=json{{"type","integer"},{"minimum",1}};
-  auto point=object({{"id",id},{"x",type("number")},{"y",type("number")},{"fixed",type("boolean")}},{"id","x","y"});
+  auto point=object({{"id",id},{"x",type("number")},{"y",type("number")},{"fixed",type("boolean")}},{"x","y"});
   auto entity=object({{"id",id},{"type",choice({"point","line","circle","arc","ellipse","spline"})},{"p",array(id,1)},{"r",{{"type","number"},{"exclusiveMinimum",0}}},
     {"construction",type("boolean")},{"fixed",type("boolean")},{"degree",type("integer")},{"knots",array(type("number"))},{"multiplicities",array(type("integer"))},
-    {"weights",array(type("number"))},{"periodic",type("boolean")},{"source",type("object")}},{"id","type","p"});
-  entity["description"]="p contains stable point IDs: line [start,end], circle [center] plus r, arc [center,start,end] counterclockwise, spline control points. Coordinates are local to the sketch frame, in mm.";
+    {"weights",array(type("number"))},{"periodic",type("boolean")},{"source",type("object")}},{"type","p"});
+  entity["description"]="p contains stable point IDs: line [start,end], circle [center] plus r, arc [center,start,end] counterclockwise, spline fit points (control poles when degree is given). Coordinates are local to the sketch frame, in mm.";
   auto constraint=object({{"id",id},{"type",choice({"coincident","horizontal","vertical","parallel","perpendicular","collinear","tangent","equal","concentric","midpoint","symmetric","fix","smooth","curvature","distance","hdistance","vdistance","radius","diameter","angle","arc_length"})},
-    {"refs",array(id,1)},{"anchors",array(id)},{"value",type("number")},{"expr",type("string")},{"reference",type("boolean")},{"pos",vector(2)}},{"id","type","refs"});
+    {"refs",array(id,1)},{"anchors",array(id)},{"value",type("number")},{"expr",type("string")},{"reference",type("boolean")},{"pos",vector(2)}},{"type","refs"});
   constraint["description"]="refs are point/entity IDs in this sketch. Dimensions require value (numeric initial value) and optionally expr (e.g. width or thickness/2).";
-  auto out=object({{"points",array(point)},{"entities",array(entity)},{"constraints",array(constraint)},{"images",array(type("object"))},{"patterns",array(type("object"))},{"id_watermark",type("integer")}});
-  out["description"]="Every id is unique across the whole sketch: points, entities, constraints, images and patterns share one id space, so point 1 and entity 1 collide (number them e.g. points 1-99, entities 100-199, constraints 200+).";
+  json kinds=json::array();for(const auto& k:design::sketch_shape_kinds())kinds.push_back(k);
+  auto shape=object({{"kind",choice(kinds)},{"picks",array(vector(2))},{"options",type("object")},{"first_id",id}},{"kind"});
+  shape["description"]="Expanded into ordinary points, entities and constraints (the result's id_map lists them per shape). picks are [u,v] in sketch mm. point [p]; line [a,b]; circle [centre] + options.radius|diameter; rect2 [corner,corner]; rect_center [centre,corner]; rect3 [a,b,height point]; rounded_rect [corner,corner] + options.radius (options.center: [centre,corner]); arc3 [start,middle,end]; arc_radius [start,end] + options.radius, direction ccw|cw, large; slot [centre,centre] + options.width; path [points...] + options.closed (default true), fillet (radius at every straight corner), fillets [per point], segments [per segment: line|tangent|tangent_next|signed radius]; offset + options.shape (index of an earlier shape) or entity|entities, distance (+ outward, - inward), round; text [baseline start] + options.text, height, style outline|stroke, weight, align left|center|right. first_id: this shape's ids run consecutively from it.";
+  auto out=object({{"points",array(point)},{"entities",array(entity)},{"constraints",array(constraint)},{"shapes",array(shape)},{"images",array(type("object"))},{"patterns",array(type("object"))},{"id_watermark",type("integer")}});
+  out["description"]="Every id is unique across the whole sketch: points, entities, constraints, images and patterns share one id space, so point 1 and entity 1 collide (number them e.g. points 1-99, entities 100-199, constraints 200+). An item without an id gets the next free one. shapes are added after the listed items.";
   return out;
 }
 json input_schema(const design::InputSpec& in) {

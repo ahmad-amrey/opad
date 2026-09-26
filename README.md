@@ -63,6 +63,12 @@ and, for mirror and patterns, `all_body_ids` (the picked bodies too). The deskto
 same New body section (name, colour, component; the component selected in the browser by default), and
 Rename, Colour, Hide and Reparent on a multiple selection are one step each.
 
+Sketches take high-level `shapes` next to raw points and curves: rectangles, rounded rectangles, arcs by three
+points or a radius, paths with fillets and tangent arcs, slots, offsets and text in a built-in font (the same on
+every machine; the desktop's text tool uses it too). They become ordinary points, curves and constraints before the
+sketch is stored, and `id_map` reports what each shape made, including a point inside each letter to extrude or
+engrave it.
+
 A body may hold several separate solids: a join into named targets, or `combine`, accepts material that
 does not touch them (three screws or a word's letters as one body, no tie bars needed), and a cut that
 parts a body keeps the pieces in that body; Split body makes separate bodies.
