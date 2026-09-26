@@ -118,6 +118,19 @@ def main():
         assert len(views) == 4 and views[1]["view"] == "front" and views[3]["cell"] == [320, 240, 320, 240], views
         wrong = client.raw("viewport_image", views=["sideways"])
         assert wrong["isError"], wrong
+        # TODO 10 B11: compact write replies: this command's own ids and counts, no batch-wide operation_ids.
+        revision = client.state()["revision"]
+        tx2 = client.call("transaction_begin", label="Compact", expected_revision=revision, request_id="compact-begin")["transaction"]
+        first = client.call("feature", kind="box", inputs={"length": 5, "width": 5, "height": 5, "x": 100}, transaction=tx2,
+                            expected_revision=revision, request_id="compact-1", verbosity="compact")
+        steps = [{"id": f"b{i}", "command": "feature", "arguments": {"kind": "box", "inputs": {"length": 5, "width": 5, "height": 5, "x": 120 + 10 * i}}} for i in range(2)]
+        full = client.call("model_batch", steps=steps, transaction=tx2, expected_revision=revision, request_id="compact-full")
+        compact = client.call("model_batch", steps=steps, transaction=tx2, expected_revision=revision, request_id="compact-2", verbosity="compact")
+        assert "operation_ids" in full["result"] and "operation_ids" not in compact["result"], compact["result"].keys()
+        assert compact["changes"]["scope"] == "command" and compact["changes"]["counts"]["created"] == 2, compact["changes"]  # its two bodies
+        assert first["result"]["body_ids"][0] not in compact["changes"]["created"]  # not the transaction's earlier work
+        assert len(json.dumps(compact)) < len(json.dumps(full)), (len(json.dumps(compact)), len(json.dumps(full)))
+        client.call("transaction_cancel", id=tx2)
         # The wrong forms that were rejected in the Benchy build now say how to fix them.
         revision = client.state()["revision"]
         cabin = {"id": "cabin", "command": "feature", "arguments": {"kind": "box", "inputs": {"length": 20, "width": 12, "height": 10}}}

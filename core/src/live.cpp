@@ -9,6 +9,7 @@ json object(json properties={},json required=json::array()) {
 }
 json str(){return {{"type","string"},{"minLength",1},{"maxLength",200}};}
 json revision(){return {{"type","integer"},{"minimum",0}};}
+json verbosity(){return {{"type","string"},{"enum",{"full","compact"}},{"default","full"},{"description","compact: this command's own created/modified/deleted ids and counts (not the transaction's cumulative lists), references without signatures, no batch-wide operation_ids."}};}
 }
 bool live_mutation(const std::string& name) {
   if(name=="model_batch" || name=="save" || name=="transaction_begin" || name=="transaction_commit" || name=="preview_commit")return true;
@@ -115,7 +116,7 @@ const json& live_tools() {
   }
   add("model_batch","Execute 1-50 typed modeling steps atomically with per-step receipts. An identifier string may refer to an earlier step's result as @{<step id>#/<path in that step's result>}: with a step {\"id\":\"cabin\",\"command\":\"feature\",...}, @{cabin#/body_ids/0} is its first body and @{cabin/body_ids/0} is the same. Paths start at the step's result, without /result/: feature steps have feature_id and body_ids (mirror and patterns also all_body_ids), sketch steps sketch_id, component steps component_id. @{pat#/body_ids/*} is the whole list wherever a list is accepted, e.g. targets:[\"@{pat#/body_ids/*}\"]. Feature steps take body_name, color and parent for the bodies they make; parent here is the default component for all of them. Validates all inputs/dependencies first. Failure discards this whole batch, retaining previous staged work. Uses normal transaction/preview, revision, Stop and Undo semantics. Commit and save remain explicit separate checkpoints; computed receipts do not imply persistence. No file operations or nested batches.",object({
     {"steps",{{"type","array"},{"items",{{"anyOf",batchSteps}}},{"minItems",1},{"maxItems",50}}},
-    {"transaction",str()},{"preview",{{"type","boolean"},{"default",false}}},{"expected_revision",revision()},{"request_id",str()},
+    {"transaction",str()},{"preview",{{"type","boolean"},{"default",false}}},{"expected_revision",revision()},{"request_id",str()},{"verbosity",verbosity()},
     {"parent",{{"type",{"string","null"}},{"description","Default component for every body the feature steps make (a step's own parent wins); a component id or @{step#/component_id} of an earlier component step."}}}
   },{"steps","expected_revision","request_id"}));
   for(const auto& c:commands::list())if(!excluded.count(c.name)) {
@@ -125,6 +126,7 @@ const json& live_tools() {
       schema["properties"]["expected_revision"]=revision();schema["properties"]["request_id"]=str();
       schema["properties"]["preview"]={{"type","boolean"},{"default",false}};
       schema["properties"]["references"]={{"type","array"},{"items",{{"type","object"}}},{"maxItems",100}};
+      schema["properties"]["verbosity"]=verbosity();
       schema["required"].push_back("expected_revision");schema["required"].push_back("request_id");
     }
     add(c.name,c.description,schema);

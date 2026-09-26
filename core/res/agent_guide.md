@@ -189,6 +189,9 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   reference tokens; `viewport_image` (live) and `render` return pictures.
 - Sizes (`bbox` in results, properties, validate, measurements) are tight boxes of the exact geometry (a turned body
   in a union of many: the turned corners of its own tight box).
+- Write tools take `verbosity: "compact"`: `changes` then lists only that command's created, modified and deleted
+  ids with counts (not the transaction's cumulative lists), references come without signatures, and model_batch
+  drops its batch-wide `operation_ids` (each step receipt has its own). The default stays "full".
 - Pictures: `views: ["iso", "front", "top", "right"]` gives one labelled grid (each view fitted; `views` in the result
   lists every cell's camera); `edges: true` (viewport_image) or `edge_lines: true` (render; there `edges` is the
   silhouette outline, on by default) draws the model's edges; `highlight: [refs]` tints faces and edges orange;

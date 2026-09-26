@@ -240,7 +240,8 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
     auto job=m_jobs->async(tr("Agent: %1").arg(QString::fromStdString(name)),[source,baseline,result,args,name,write,preview,transaction,state,known,delay=m_benchDelay](Progress p)mutable{
       p.setPhase(tr("Inspecting inputs"));
       if(write && name!="model_batch")checkReferences(*source->doc,source->scene,args,known.get());
-      for(const char* key:{"expected_revision","request_id","transaction","preview","references"})args.erase(key);
+      const bool compact=args.value("verbosity","full")=="compact";  // TODO 10 B11
+      for(const char* key:{"expected_revision","request_id","transaction","preview","references","verbosity"})args.erase(key);
       if(write){result->snapshot=std::make_shared<Snapshot>();result->snapshot->doc=std::make_shared<opad::Document>(*source->doc);result->snapshot->revision=source->revision;args["by"]="Agent";}
       auto working=write?result->snapshot:source;
       if(p.cancelled())throw opad::Error("cancelled");
@@ -335,6 +336,21 @@ void AgentBridge::execute(const std::shared_ptr<Session>& session,std::string na
           }
         }
         if(any){Bnd_Box box;BRepBndLib::Add(compound,box);result->preview=compound;result->prs=BodyPrs::build(compound,box);}
+        if(compact) {
+          // TODO 10 B11: this command's own ids and counts (not the transaction's cumulative lists), references without
+          // signatures, and no batch-wide operation_ids (every step receipt has its own).
+          auto own=changes(source->scene,working->scene);
+          json slim={{"scope","command"},{"created",own["created"]},{"modified",own["modified"]},{"deleted",own["deleted"]},{"total",own["total"]},
+                     {"counts",{{"created",own["created"].size()},{"modified",own["modified"].size()},{"deleted",own["deleted"].size()}}}};
+          for(const char* key:{"bodies","bodies_total","validation"})if(result->delta.contains(key))slim[key]=result->delta[key];
+          result->delta=std::move(slim);
+          if(name=="model_batch" && result->output.is_object())result->output.erase("operation_ids");
+          std::function<void(json&)> unsign=[&](json& v){
+            if(v.is_object()){if(v.contains("ref") && v.contains("geometry"))v.erase("signature");for(auto& [k,c]:v.items())unsign(c);}
+            else if(v.is_array())for(auto& c:v)unsign(c);
+          };
+          unsign(result->output);
+        }
         result->delta["validation"]={{"changed_solid_bodies_checked",checkedSolids},{"valid",true},{"unresolved",working->scene.unresolved.size()}};
         // What this command (not the whole transaction) did to each body it made, changed or moved (TODO 10 B3): a tight
         // box, the volume and validity, so an agent needs no info + validate round trip after every step.

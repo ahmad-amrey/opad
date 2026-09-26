@@ -66,6 +66,8 @@ Rename, Colour, Hide and Reparent on a multiple selection are one step each.
 Wherever a plane is taken, `{"origin": [x,y,z], "normal": [x,y,z]}` (with an optional `x`) defines it directly,
 and the construction plane has a point-and-normal mode.
 
+Live write tools take `verbosity: "compact"` for replies that list only what that command changed.
+
 Reported sizes (`info`, `properties`, `validate`, `changes.bodies`, the bounding-box measurement and the desktop's
 Properties panel) are the tight box of the exact geometry, not the padded box used to fit views: a 60 x 31 x 21 mm
 block reports exactly that. They are measured on workers and cached per body shape.
