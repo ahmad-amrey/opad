@@ -209,7 +209,8 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   from an earlier step's result; the path starts at that result: `@{cabin#/body_ids/0}`, `@{group#/component_id}`.
 - `@{<step id>#/body_ids/*}` is the whole list wherever a list is accepted: as the list itself (`"targets":
   "@{row#/body_ids/*}"`) or spliced into one (`"targets": ["@{cabin#/body_ids/0}", "@{row#/body_ids/*}"]`).
-- A reference may name a step of an earlier batch on the same connection (this batch's steps come first).
+- A reference may name a step of an earlier batch on the same connection, when this batch has no step with that id
+  (an id this batch defines is always its own step, so a reference to a later one is an error).
 - The batch's `parent` is the default component for every body its feature steps make.
 - A failing step discards the whole batch and names the step; inputs and backward references are checked before
   anything runs.
