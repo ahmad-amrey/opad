@@ -9,6 +9,7 @@ json object(json properties={},json required=json::array()) {
 }
 json str(){return {{"type","string"},{"minLength",1},{"maxLength",200}};}
 json revision(){return {{"type","integer"},{"minimum",0}};}
+json brief_geometry(){return {{"type","object"},{"description","Sketch geometry as the sketch tool's schema gives it: points, entities, constraints and shapes, all ids in one id space across the sketch; checked in full by the server."}};}
 json verbosity(){return {{"type","string"},{"enum",{"full","compact"}},{"default","full"},{"description","compact: this command's own created/modified/deleted ids and counts (not the transaction's cumulative lists), references without signatures, no batch-wide operation_ids."}};}
 }
 bool live_mutation(const std::string& name) {
@@ -47,23 +48,18 @@ json live_guide() {
 }
 json live_output_schema(const std::string& name) {
   const json ids={{"type","array"},{"items",{{"type","string"}}}};
-  json props={{"state",{{"type","string"}}},{"revision",revision()},{"base_revision",revision()},
-    {"transaction",str()},{"preview_id",str()},{"lifetime",{{"type","object"}}},
-    {"error",{{"type","object"},{"properties",{{"code",str()},{"message",{{"type","string"}}},{"next",{{"type",{"string","array"}},{"items",{{"type","string"}}},{"description","What to do next: advice, or the tools to call in order (not_bound: live_instances, live_bind)."}}},{"transport",{{"type","object"}}}}},{"required",{"code","message"}}}},
-    {"changes",{{"type","object"},{"properties",{{"scope",{{"enum",{"command","transaction"}}}},{"created",ids},{"modified",ids},{"deleted",ids},{"geometry",ids},{"total",revision()},{"validation",{{"type","object"}}}}}}},
-    {"elapsed_ms",{{"type","integer"}}}};
+  // The reply envelope, briefly (TODO 10 B12): the full one repeated on every tool was nearly half of tools/list.
+  // error: {code, message, next}; changes: {scope, created, modified, deleted, bodies, validation}.
+  json props={{"state",{{"type","string"}}},{"revision",{{"type","integer"}}},{"base_revision",{{"type","integer"}}},{"transaction",{{"type","string"}}},
+    {"preview_id",{{"type","string"}}},{"error",{{"type","object"},{"required",{"code","message"}}}},{"changes",{{"type","object"}}},{"elapsed_ms",{{"type","integer"}}}};
   if(name=="feature" || name=="sketch") {
     json result={{"type","object"},{"properties",{{"ids",ids},{"operation_ids",ids},{"feature_id",str()},{"body_ids",ids},{"sketch_id",str()}}}};
     result["required"]=name=="feature"?json{"feature_id","body_ids"}:json{"sketch_id"};props["result"]=result;
   } else if(name=="component")props["result"]={{"type","object"},{"properties",{{"component_id",str()},{"operation_ids",ids}}},{"required",{"component_id","operation_ids"}}};
   else if(name=="save")props["result"]={{"type","object"},{"properties",{{"path",{{"type","string"},{"minLength",1}}},{"saved_revision",revision()},{"dirty",{{"type","boolean"}}}}},{"required",{"path","saved_revision","dirty"}}};
-  else props["result"]={{"description","Command-specific payload; transaction_commit returns the last staged command's result. See context or feature_schema for modeling details."}};
-  if(name=="live_instances")props["instances"]={{"type","array"},{"items",{{"type","object"}}}};
-  if(name=="live_diagnostics"){
-    props["connection"]={{"type","string"}};props["target"]={{"type",{"string","null"}}};props["permissions"]={{"type","object"}};
-    props["units"]={{"type",{"string","null"}}};props["transaction_state"]={{"type","object"}};
-    props["next_calls"]={{"type","array"},{"items",{{"type","string"}}}};props["guide"]={{"type","object"}};
-  }
+  else props["result"]=json::object();
+  if(name=="live_instances")props["instances"]={{"type","array"}};
+  if(name=="live_diagnostics"){props["connection"]={{"type","string"}};props["next_calls"]={{"type","array"}};}
   // Optional envelope fields accommodate errors and request-status receipts. Payload IDs
   // are required whenever a successful feature/sketch result is present.
   return {{"type","object"},{"properties",props},{"additionalProperties",true}};
@@ -107,6 +103,8 @@ const json& live_tools() {
   const std::set<std::string> batchCommands={"component","param","sketch","sketch_edit","feature","feature_edit","rename","reparent","appearance","transform"};
   for(const auto& command:commands::list())if(batchCommands.count(command.name)){
     auto arguments=command_schema(command,true);
+    // The sketch geometry schema is on the sketch tool; here it is named, and the batch validates it in full (B12).
+    if(arguments["properties"].contains("geometry"))arguments["properties"]["geometry"]=brief_geometry();
     // A list argument may also be one whole-list reference, @{step#/body_ids/*}; the batch checks it once expanded.
     for(auto& [key,property]:arguments["properties"].items())if(property.contains("type") && property["type"]=="array"){
       json list=property;list.erase("description");
@@ -121,6 +119,7 @@ const json& live_tools() {
   },{"steps","expected_revision","request_id"}));
   for(const auto& c:commands::list())if(!excluded.count(c.name)) {
     auto schema=command_schema(c,true);
+    if(c.name=="sketch_edit")schema["properties"]["geometry"]=brief_geometry();  // the sketch tool has the full schema (B12)
     schema["properties"]["transaction"]=str();
     if(live_mutation(c.name)) {
       schema["properties"]["expected_revision"]=revision();schema["properties"]["request_id"]=str();
@@ -134,7 +133,15 @@ const json& live_tools() {
   return out;
   }();return tools;
 }
-json live_schema(const std::string& name){for(const auto& t:live_tools())if(t["name"]==name)return t["inputSchema"];throw Error("Unsupported live tool: "+name);}
+json live_schema(const std::string& name){
+  for(const auto& t:live_tools())if(t["name"]==name){
+    json schema=t["inputSchema"];
+    // What tools/list names briefly is still checked in full (B12); batch steps are checked per command by the batch.
+    if(name=="sketch_edit")schema["properties"]["geometry"]=live_schema("sketch")["properties"]["geometry"];
+    return schema;
+  }
+  throw Error("Unsupported live tool: "+name);
+}
 json live_result(const json& output,bool error) {return {{"content",json::array()},{"structuredContent",output.is_object()?output:json{{"result",output}}},{"isError",error}};}
 json live_error(const std::string& code,const std::string& message){return live_result({{"error",{{"code",code},{"message",message}}}},true);}
 }

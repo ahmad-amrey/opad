@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "opad/agent.hpp"
 #include "opad/live.hpp"
 #include "opad/core.hpp"
@@ -74,6 +75,15 @@ int main(){try {
     agent::validate_input(discovery.at("inputSchema"),discovery.at("example").at("arguments").at("inputs"),spec.kind);
   }
   for(const auto& tool:agent::live_tools()){check_schema(tool["inputSchema"]);check_schema(tool.at("outputSchema"));}
+  // TODO 10 B12: agents load tools/list on every discovery; it must not creep back up (162 KB before, 98 KB after).
+  // Raise a budget only for tools worth their size, and say so in the commit.
+  const size_t live=agent::live_tools().dump().size();
+  size_t headless=0;for(const auto& c:commands::list())headless+=agent::command_schema(c).dump().size()+c.description.size();
+  std::printf("tools/list: live %zu bytes, headless schemas %zu bytes\n",live,headless);
+  CHECK(live<105000);
+  CHECK(headless<50000);
+  // Trimmed for the list, still checked in full: sketch_edit's geometry.
+  CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});
   CHECK_THROWS(agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"ids",{"history"}}}}}));
   agent::validate_input(agent::live_output_schema("sketch"),{{"result",{{"sketch_id","sketch"}}}});
