@@ -221,6 +221,17 @@ std::vector<TopoDS_Shape> solids_of(const TopoDS_Shape& s) {
   return out;
 }
 
+// A body's shape: its one solid, or a compound of several separate ones (three screws, the letters of a word). A body
+// may hold several solids: joining material that does not touch it, or a cut that parts it, keeps them in one body.
+TopoDS_Shape bundle(const std::vector<TopoDS_Shape>& solids) {
+  if (solids.size() == 1) return solids.front();
+  TopoDS_Compound c;
+  BRep_Builder b;
+  b.MakeCompound(c);
+  for (const auto& s : solids) b.Add(c, s);
+  return c;
+}
+
 double volume_of(const TopoDS_Shape& s) {
   GProp_GProps g;
   BRepGProp::VolumeProperties(s, g);
@@ -447,19 +458,20 @@ void apply_operation(const Ctx& ctx, const json& inputs, const TopoDS_Shape& too
       ctx.check_cancel();
       const TopoDS_Shape body = ctx.node_shape(id);
       const TopoDS_Shape fused = boolean(BoolOp::Fuse, body, acc);
-      if (solids_of(fused).size() >= solids_of(body).size() + solids_of(acc).size()) continue;  // they do not touch
+      // Bodies picked by the automatic search join only where the material touches them; named targets take it
+      // anyway and hold the separate pieces as one body of several solids.
+      if (automatic && solids_of(fused).size() >= solids_of(body).size() + solids_of(acc).size()) continue;
       acc = fused;
       out.used_targets.push_back(id);
       if (owner.empty()) owner = id;
-      else out.removed.push_back(id);  // two bodies bridged by the tool become one
+      else out.removed.push_back(id);  // joined bodies become one
     }
     const auto pieces = solids_of(acc);
     if (owner.empty()) {
-      if (!automatic) throw Error("the new material does not touch the bodies to join");
       for (const auto& s : pieces) out.bodies.push_back({"", outward(s), name});
       return;
     }
-    out.bodies.push_back({owner, pieces.size() == 1 ? pieces.front() : acc, name});
+    out.bodies.push_back({owner, bundle(pieces), name});
     return;
   }
   bool any = false;
@@ -477,8 +489,7 @@ void apply_operation(const Ctx& ctx, const json& inputs, const TopoDS_Shape& too
       out.removed.push_back(id);
       continue;
     }
-    out.bodies.push_back({id, pieces.front(), name});
-    for (size_t i = 1; i < pieces.size(); ++i) out.bodies.push_back({"", pieces[i], ctx.scene.node(id)->name});  // cut in two: the rest are new bodies
+    out.bodies.push_back({id, bundle(pieces), name});  // parted by the cut: the pieces stay one body
   }
   if (!any) throw Error(op == "cut" ? "the cut does not touch any body" : "nothing intersects");
 }
@@ -982,11 +993,11 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
     if (pieces.empty()) {
       if (op == "intersect") throw Error("the bodies do not intersect");
       out.removed.push_back(target.front());
-    } else if (op == "join") {
-      out.bodies.push_back({target.front(), healed(pieces.size() == 1 ? pieces.front() : acc), ""});
     } else {
-      out.bodies.push_back({target.front(), healed(pieces.front()), ""});
-      for (size_t i = 1; i < pieces.size(); ++i) out.bodies.push_back({"", healed(pieces[i]), ctx.scene.node(target.front())->name});
+      // Joined tools that do not touch the target, or a cut that parts it: the pieces stay one body.
+      std::vector<TopoDS_Shape> healedPieces;
+      for (const auto& piece : pieces) healedPieces.push_back(healed(piece));
+      out.bodies.push_back({target.front(), bundle(healedPieces), ""});
     }
     if (!in.value("keep_tools", false))
       for (const auto& t : tools) out.removed.push_back(t);

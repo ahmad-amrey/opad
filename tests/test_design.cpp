@@ -650,3 +650,55 @@ TEST(regeneration_touches_only_dependents_and_keeps_keys) {
   const Scene after = resolve(doc);
   for (const auto& id : before.all_bodies()) CHECK_EQ(after.node(id)->body_key, before.node(id)->body_key);
 }
+
+// TODO 10 C1: a body may hold several separate solids. Joining material that does not touch a named target (three
+// screws, the letters of a word) used to fail, so agents added hidden tie bars; a cut that parted a body scattered the
+// pieces as new top-level bodies.
+TEST(bodies_hold_several_separate_solids) {
+  auto solids = [](const TopoDS_Shape& s) {
+    int n = 0;
+    for (TopExp_Explorer ex(s, TopAbs_SOLID); ex.More(); ex.Next()) ++n;
+    return n;
+  };
+  Document doc = Document::create();
+  feature_cmd(doc, "box", {{"length", "10 mm"}, {"width", "10 mm"}, {"height", "2 mm"}});
+  std::string plate = resolve(doc).all_bodies().front();
+  // Material apart from the named target joins it: one body, two solids.
+  feature_cmd(doc, "cylinder", {{"x", "30 mm"}, {"diameter", "4 mm"}, {"height", "3 mm"}, {"operation", "join"}, {"targets", json::array({plate})}});
+  Scene s = resolve(doc);
+  CHECK(s.features.back().error.empty());
+  CHECK_EQ(s.all_bodies().size(), 1u);
+  CHECK_EQ(solids(node_world_shape(doc, s, plate)), 2);
+  CHECK_NEAR(volume_of_node(doc, s, plate), 10 * 10 * 2 + M_PI * 4 * 3, 1e-6);
+  // Three screws as one body: a pattern of separate copies combined.
+  feature_cmd(doc, "cylinder", {{"x", "0 mm"}, {"y", "40 mm"}, {"diameter", "3 mm"}, {"height", "8 mm"}});
+  s = resolve(doc);
+  const std::string screw = s.features.back().result["bodies"][0]["id"];
+  feature_cmd(doc, "pattern_rect", {{"bodies", json::array({screw})}, {"count", "3"}, {"spacing", "10 mm"}, {"axis", {{"base", "x"}}}});
+  s = resolve(doc);
+  json tools = json::array();
+  for (const auto& b : s.features.back().result["bodies"]) tools.push_back(b["id"]);
+  CHECK_EQ(tools.size(), 2u);
+  feature_cmd(doc, "combine", {{"target", json::array({screw})}, {"tools", tools}, {"operation", "join"}});
+  s = resolve(doc);
+  CHECK(s.features.back().error.empty());
+  CHECK_EQ(solids(node_world_shape(doc, s, screw)), 3);
+  CHECK(!s.node(tools[0].get<std::string>()) || s.node(tools[0].get<std::string>())->body_missing);
+  // A cut through the plate parts it: the pieces stay the plate, no new top-level bodies.
+  const size_t bodies = s.all_bodies().size();
+  feature_cmd(doc, "box", {{"x", "0 mm"}, {"length", "2 mm"}, {"width", "20 mm"}, {"height", "10 mm"}, {"operation", "cut"}, {"targets", json::array({plate})}});
+  s = resolve(doc);
+  CHECK(s.features.back().error.empty());
+  CHECK_EQ(s.all_bodies().size(), bodies);
+  CHECK_EQ(solids(node_world_shape(doc, s, plate)), 3);  // two halves of the plate and the joined cylinder
+  // A multi-solid body is still an ordinary target: cut every piece at once.
+  feature_cmd(doc, "box", {{"length", "100 mm"}, {"width", "100 mm"}, {"height", "1 mm"}, {"operation", "cut"}, {"targets", json::array({plate})}});
+  s = resolve(doc);
+  CHECK(s.features.back().error.empty());
+  CHECK_NEAR(volume_of_node(doc, s, plate), 10 * 10 * 1 - 2 * 10 * 1 + M_PI * 4 * 2, 1e-6);
+  // Automatic joins still take only the bodies the material touches: far away it makes a new body.
+  feature_cmd(doc, "box", {{"x", "300 mm"}, {"length", "5 mm"}, {"width", "5 mm"}, {"height", "5 mm"}, {"operation", "join"}});
+  s = resolve(doc);
+  CHECK(s.features.back().error.empty());
+  CHECK_EQ(s.all_bodies().size(), bodies + 1);
+}

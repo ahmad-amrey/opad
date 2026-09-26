@@ -40,6 +40,10 @@ a path that does not exist is reported with the step's name and the keys it has:
 }
 ```
 
+A body may hold several separate solids: a join into named targets, or `combine`, accepts material that
+does not touch them (three screws or a word's letters as one body, no tie bars needed), and a cut that
+parts a body keeps the pieces in that body; Split body makes separate bodies.
+
 Without `transaction` or `preview`, a successful batch commits as one Undo step. Pass a
 transaction ID to stage it with earlier work, then validate, commit and save separately.
 Every step's receipt reports computation, not persistence. Failed batches discard their
