@@ -168,8 +168,9 @@ json check_print(const Document& doc, const Scene& scene, const json& args, cons
     if (d.is_string()) {
       const std::string s = d.get<std::string>();
       if (s.size() != 2 || (s[0] != '+' && s[0] != '-') || s[1] < 'x' || s[1] > 'z') throw Error("build_direction is +x, -x, +y, -y, +z, -z or [x, y, z]");
-      up = gp_Vec(0, 0, 0);
-      up.SetCoord(s[1] - 'x' + 1, s[0] == '-' ? -1.0 : 1.0);
+      // Not SetCoord(index, value): OCCT writes (&x)[index - 1], which clang may assume only reaches x.
+      const double s1 = s[0] == '-' ? -1.0 : 1.0;
+      up = gp_Vec(s[1] == 'x' ? s1 : 0.0, s[1] == 'y' ? s1 : 0.0, s[1] == 'z' ? s1 : 0.0);
     } else {
       up = gp_Vec(d.at(0).get<double>(), d.at(1).get<double>(), d.at(2).get<double>());
     }

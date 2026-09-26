@@ -91,7 +91,7 @@ TEST(editor_prefix_conflict_and_reserved_keys) {
   QSettings settings;settings.clear();QAction a,b;init(a,"view.home","H");init(b,"tools.commands","Ctrl+K, C");
   ShortcutEditor dialog({&a,&b});choose(dialog,"view.home","Ctrl+K");assign(dialog,"shortcutReassign");
   CHECK(item(dialog,"tools.commands")->text(1)=="Unassigned");
-  choose(dialog,"view.home","Return");assign(dialog,"cancel");CHECK(item(dialog,"view.home")->text(1)=="Ctrl+K");
+  choose(dialog,"view.home","Return");assign(dialog,"cancel");CHECK(item(dialog,"view.home")->text(1)==QKeySequence("Ctrl+K").toString(QKeySequence::NativeText));
   dialog.reject();CHECK(b.shortcut()==QKeySequence("Ctrl+K, C"));
 }
 TEST(shift_digit_and_arrow_activation) {

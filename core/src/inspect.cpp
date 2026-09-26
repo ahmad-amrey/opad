@@ -292,7 +292,10 @@ bool entity_matches(const json& detail, const json& filters, double tolerance) {
       const bool minus = !s.empty() && s[0] == '-';
       const std::string name = !s.empty() && (s[0] == '-' || s[0] == '+') ? s.substr(1) : s;
       if (name != "x" && name != "y" && name != "z") throw Error("a direction filter is x, y or z" + std::string(signed_axis ? " with + or -" : "") + ", or [x, y, z]");
-      d.SetCoord(axis(name) + 1, minus ? -1.0 : 1.0);
+      // Not SetCoord(index, value): OCCT writes (&x)[index - 1], which clang may assume only reaches x.
+      const double s1 = minus ? -1.0 : 1.0;
+      const int i = axis(name);
+      d = gp_Vec(i == 0 ? s1 : 0.0, i == 1 ? s1 : 0.0, i == 2 ? s1 : 0.0);
     } else if (v.is_array() && v.size() == 3) {
       d = gp_Vec(v[0].get<double>(), v[1].get<double>(), v[2].get<double>());
     }
