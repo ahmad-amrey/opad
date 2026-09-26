@@ -248,3 +248,53 @@ TEST(segmented_circle_reconstruction_preserves_sharp_rectangle) {
   int circles=0,lines=0;for(const auto& e:sk.entities) {circles+=e.type==design::SkEntity::Type::Circle;lines+=e.type==design::SkEntity::Type::Line;}
   CHECK_EQ(circles,1);CHECK_EQ(lines,4);CHECK_EQ(design::sketch_regions(sk,Frame{}).size(),2u);
 }
+
+// TODO 10 A12: a drawing keeps its own plane and origin. Where the import puts it is one placement in the import op
+// (centred when opened on its own, on a plane or face when imported), and a sketch converted from it uses exactly
+// that frame: its coordinates are the drawing's.
+TEST(drawing_placement_is_kept_by_its_sketch) {
+  Files f;
+  const auto file = f.dir / "plate.dxf";
+  write_text_file(file, "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nOutline\n10\n100\n20\n50\n11\n140\n21\n50\n0\nLINE\n8\nOutline\n10\n140\n20\n50\n11\n140\n21\n80\n0\nLINE\n8\nOutline\n10\n140\n20\n80\n11\n100\n21\n80\n0\nLINE\n8\nOutline\n10\n100\n20\n80\n11\n100\n21\n50\n0\nENDSEC\n0\nEOF\n");
+  auto root_transform = [](const Document& d) {
+    for (auto it = d.ops.rbegin(); it != d.ops.rend(); ++it)
+      if (it->type == "import") return Mat4::from_json(it->data["nodes"][0].value("transform", Mat4().to_json()));
+    return Mat4();
+  };
+  // Opened on its own: centred on the grid (its box centre at the world origin).
+  auto opened = Document::create();
+  commands::run("import", {{"file", file.string()}, {"center", true}}, &opened);
+  const Mat4 centred = root_transform(opened);
+  CHECK_NEAR(centred.apply({120, 65, 0})[0], 0, 1e-12);
+  CHECK_NEAR(centred.apply({120, 65, 0})[1], 0, 1e-12);
+  // Imported onto the XZ plane with an offset: drawing XY -> world XZ.
+  auto placed = Document::create();
+  Mat4 offset = Mat4::translation(7, 3, 0);
+  commands::run("import", {{"file", file.string()}, {"plane", {{"base", "xz"}}}, {"placement", offset.to_json()}}, &placed);
+  const Scene scene = resolve(placed);
+  std::vector<design::DrawingLayer> layers;
+  for (const auto& id : scene.all_bodies()) layers.push_back({id, false});
+  const Frame frame = design::drawing_frame(scene, layers);
+  const Frame xz = design::base_frame("xz");
+  for (int i = 0; i < 3; ++i) {
+    CHECK_NEAR(frame.x[i], xz.x[i], 1e-12);
+    CHECK_NEAR(frame.y[i], xz.y[i], 1e-12);
+  }
+  const Vec3 origin = xz.to_world(7, 3);
+  for (int i = 0; i < 3; ++i) CHECK_NEAR(frame.origin[i], origin[i], 1e-12);
+  // Converted without naming a plane: the sketch sits in that frame, with the drawing's own coordinates.
+  json layer_args = json::array();
+  for (const auto& l : layers) layer_args.push_back({{"id", l.id}});
+  commands::run("drawing_to_sketch", {{"layers", layer_args}}, &placed);
+  const Scene after = resolve(placed);
+  const auto& sketch = after.sketches.back();
+  CHECK(sketch.frame.to_json() == frame.to_json());
+  bool corner = false;
+  for (const auto& p : sketch.geometry.at("points")) corner |= std::abs(p.at("x").get<double>() - 140) < 1e-9 && std::abs(p.at("y").get<double>() - 80) < 1e-9;
+  CHECK(corner);
+  // Layers of two drawings placed apart do not share a sketch.
+  commands::run("import", {{"file", file.string()}, {"center", true}}, &placed);
+  std::vector<design::DrawingLayer> both;
+  for (const auto& id : resolve(placed).all_bodies()) both.push_back({id, false});
+  CHECK_THROWS(design::drawing_frame(resolve(placed), both));
+}

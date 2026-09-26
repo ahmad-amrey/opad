@@ -114,6 +114,21 @@ void simplify_sketch(Sketch& sketch,double tolerance) {
   if(!(tolerance>0)||!std::isfinite(tolerance))throw Error("curve tolerance must be positive");
   sketch.id_watermark=sketch.next_id()-1;reconstruct(sketch,tolerance);sketch.validate();
 }
+Frame drawing_frame(const Scene& scene,const std::vector<DrawingLayer>& layers) {
+  auto unit=[](Vec3 v){const double l=std::sqrt(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);for(auto& c:v)c/=l>0?l:1;return v;};
+  Frame out;bool first=true;
+  for(const auto& layer:layers) {
+    const auto* node=scene.node(layer.id);
+    if(!node || node->representation!="drawing2d") throw Error("Select drawing layers to convert");
+    const Mat4 w=scene.world(layer.id);Frame f;f.origin=w.apply({0,0,0});f.x=unit(w.apply_dir({1,0,0}));f.y=unit(w.apply_dir({0,1,0}));
+    if(first){out=f;first=false;continue;}
+    for(int i=0;i<3;++i)
+      if(std::abs(out.origin[i]-f.origin[i])>1e-9 || std::abs(out.x[i]-f.x[i])>1e-12 || std::abs(out.y[i]-f.y[i])>1e-12)
+        throw Error("These layers come from drawings on different planes; convert them separately");
+  }
+  if(first) throw Error("Select drawing layers to convert");
+  return out;
+}
 Sketch drawing_sketch(const Document& doc,const Scene& scene,const std::vector<DrawingLayer>& layers,const Frame& frame,double tolerance) {
   if(!(tolerance>0) || !std::isfinite(tolerance)) throw Error("Curve tolerance must be positive");
   Sketch result; std::set<std::string> used;

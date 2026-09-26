@@ -11,4 +11,8 @@ struct DrawingLayer { std::string id; bool construction=false; };
 // are reconstructed within the requested geometric tolerance.
 Sketch drawing_sketch(const Document& doc,const Scene& scene,const std::vector<DrawingLayer>& layers,
                       const Frame& frame,double tolerance=0.01);
+// The plane and origin the layers' drawing lies in: its own XY frame where its import placed it. A sketch converted
+// from a drawing uses exactly this frame, so its coordinates are the drawing's. Throws when the layers come from
+// drawings placed on different planes (they convert separately).
+Frame drawing_frame(const Scene& scene,const std::vector<DrawingLayer>& layers);
 }

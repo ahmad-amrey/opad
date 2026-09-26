@@ -2,6 +2,7 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include "MainWindow.hpp"
+#include "DrawingPlacer.hpp"
 #include "RecoveryManager.hpp"
 #include "AgentBridge.hpp"
 
@@ -334,6 +335,8 @@ void MainWindow::buildActions() {
     if (ids.size() == 1 && m_doc->node(ids[0]) && m_doc->node(ids[0])->kind == opad::Node::Kind::Component &&
         QMessageBox::question(this, tr("Import"), tr("Import under the selected component “%1”?").arg(m_doc->nodeName(ids[0]))) == QMessageBox::Yes)
       parent = QString::fromStdString(ids[0]);
+    const QString suffix = QFileInfo(p).suffix().toLower();
+    if (suffix == "dxf" || suffix == "svg" || suffix == "dwg") return importDrawing(p, parent);
     beginLoad([this, p] { addRecent(p); m_viewport->fitWhenReady(); });
     m_doc->startImport(p, parent);
   });
@@ -1129,6 +1132,8 @@ void MainWindow::buildDesign() {
   sketchPanel->setEscapeHandler([this]{m_design->sketch()->stepBack();});
   connect(sketchContent,&SketchPanel::finishRequested,this,[this]{m_design->finishSketch();});
   m_panels<<m_design->planePanel();
+  m_drawingPlacer = new DrawingPlacer(m_doc, m_viewport, m_jobs, this);
+  m_panels << m_drawingPlacer->panel();
 
   connect(m_design, &DesignController::status, this, [this](const QString& text) { m_statusHover->setText(text); });
   connect(m_design, &DesignController::failed, this, [this](const QString& error) { QMessageBox::warning(this, tr("OPAD"), i18n::t(error)); });
@@ -2233,6 +2238,7 @@ void MainWindow::runBench() {
   }
   if(qEnvironmentVariableIsSet("OPAD_BENCH_LEAVE")){const bool ok=m_viewport->benchLeave();QCoreApplication::exit(ok?0:2);return;}
   if(benchShortcuts())return;
+  if(benchDrawingImport())return;
   if(benchTodo9())return;
   if(benchAnnotateLarge())return;
   if(qEnvironmentVariableIsSet("OPAD_BENCH_INSTANCES")) {

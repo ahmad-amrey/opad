@@ -53,7 +53,8 @@ class AppDocument : public QObject {
 
   // Long loads run off the UI thread; progress and the result come back through the signals below.
   void startOpen(const QString& path);
-  void startImport(const QString& path, const QString& parent = {});
+  // A drawing goes where `placement` puts its XY plane and origin, after `plane` (resolved on the worker) if given.
+  void startImport(const QString& path, const QString& parent = {}, const opad::Mat4& placement = {}, const opad::json& plane = {});
   void cancelLoad();
   void refresh();
   using SnapshotCallback = std::function<void(std::shared_ptr<opad::Document>, const QString&)>;

@@ -70,6 +70,8 @@ void AppDocument::startOpen(const QString& path) {
   const bool external = isExternalPath(path);
   const QString file = QFileInfo(path).fileName() + QStringLiteral(" (%1 MB)").arg(QFileInfo(path).size() / (1024.0 * 1024.0), 0, 'f', 0);
   opad::ImportOptions o = loadOptions(cancel, file);
+  const QString suffix = QFileInfo(path).suffix().toLower();
+  o.center_drawing = suffix == "dxf" || suffix == "svg" || suffix == "dwg";  // opened on its own: centred on the grid
   auto alive = m_alive;
   emit loadProgress(external ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1);
   std::thread([this, alive, cancel, path, external, o]() {
@@ -116,7 +118,7 @@ void AppDocument::startOpen(const QString& path) {
   }).detach();
 }
 
-void AppDocument::startImport(const QString& path, const QString& parent) {
+void AppDocument::startImport(const QString& path, const QString& parent, const opad::Mat4& placement, const opad::json& plane) {
   if (loading || designBusy) return;
   if (!hasDocument || browse) {
     doc = opad::Document::create();
@@ -132,16 +134,24 @@ void AppDocument::startImport(const QString& path, const QString& parent) {
   const QString file = QFileInfo(path).fileName();
   opad::ImportOptions o = loadOptions(cancel, file);
   o.parent = parent.toStdString();
+  o.placement = placement;
   // Import into a snapshot: selection/render callbacks retain a valid live document.
   auto work = std::make_shared<opad::Document>(doc);
   const size_t opsBefore = work->ops.size();
   const bool dirtyBefore = work->dirty;
   auto alive = m_alive;
   emit loadProgress(tr("Reading %1").arg(file), -1);
-  std::thread([this, alive, cancel, path, o, work, opsBefore, dirtyBefore]() {
+  std::thread([this, alive, cancel, path, o, work, opsBefore, dirtyBefore, plane]() mutable {
     QString error;
     opad::json r;
     try {
+      if (plane.is_object()) {  // on a face: its frame, resolved here and stored only as the drawing's placement
+        const opad::Frame f = opad::design::resolve_plane(*work, opad::resolve(*work), plane);
+        const opad::Vec3 n = f.normal();
+        opad::Mat4 m;
+        for (int r = 0; r < 3; ++r) { m.at(r, 0) = f.x[r]; m.at(r, 1) = f.y[r]; m.at(r, 2) = n[r]; m.at(r, 3) = f.origin[r]; }
+        o.placement = m * o.placement;
+      }
       r = opad::import_file(*work, path.toStdString(), o).to_json();
       if (!*cancel) opad::warm_shape_cache(*work, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
       if (*cancel) error = QStringLiteral("cancelled");

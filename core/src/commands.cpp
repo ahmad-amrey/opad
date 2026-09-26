@@ -279,12 +279,23 @@ void register_builtins() {
       });
 
   reg("import", "Import STEP, DXF, SVG, DWG (converter), STL or OBJ into the document",
-      {{"doc", "path"}, {"file", "path - .step/.stp/.dxf/.svg/.dwg/.stl/.obj"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"}},
+      {{"doc", "path"}, {"file", "path - .step/.stp/.dxf/.svg/.dwg/.stl/.obj"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
+       {"placement", "[16] - drawings: where the drawing's XY plane and origin go (row-major 4x4, mm)"}, {"plane", "object - drawings: place on this plane instead, {\"base\":\"xz\"} or {\"face\":ref}, its origin at the plane's"},
+       {"center", "bool - drawings: centre the drawing on its origin (default false)"}},
       true, [](Document* d, const json& a) {
         ImportOptions o;
         o.author = a.value("by", "");
         o.parent = a.value("parent", "");
         o.heal = a.value("heal", true);
+        if (a.contains("placement")) o.placement = Mat4::from_json(a["placement"]);
+        if (a.contains("plane")) {  // resolved now, stored as the placement: replay never needs the plane again
+          const Frame f = design::resolve_plane(need(d), resolve(need(d)), a["plane"]);
+          const Vec3 n = f.normal();
+          Mat4 m;
+          for (int r = 0; r < 3; ++r) { m.at(r, 0) = f.x[r]; m.at(r, 1) = f.y[r]; m.at(r, 2) = n[r]; m.at(r, 3) = f.origin[r]; }
+          o.placement = m * o.placement;
+        }
+        o.center_drawing = a.value("center", false);
         return import_file(need(d), a.at("file").get<std::string>(), o).to_json();
       });
 

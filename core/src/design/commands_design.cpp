@@ -141,12 +141,14 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         return design::apply_ops(doc, {design::make_sketch_op(name, plane, geometry)}, a.value("by", ""));
       });
 
-  reg("drawing_to_sketch", "Project chosen drawing layers into one editable sketch", {{"layers","array of {id, construction}"},{"plane","xy|xz|yz"},{"name","string"},{"tolerance","number, mm"}},true,[](Document* d,const json& a) {
+  reg("drawing_to_sketch", "Project chosen drawing layers into one editable sketch, in the drawing's own plane and origin (where its import placed it) unless plane names another", {{"layers","array of {id, construction}"},{"plane","xy|xz|yz - optional; default: the drawing's own frame"},{"name","string"},{"tolerance","number, mm"}},true,[](Document* d,const json& a) {
     auto& doc=need(d); const auto scene=resolve(doc); std::vector<design::DrawingLayer> layers;
     for(const auto& layer:a.at("layers")) layers.push_back({layer.at("id").get<std::string>(),layer.value("construction",false)});
-    const std::string base=a.value("plane","xy"); const auto frame=design::base_frame(base);
+    const bool own=!a.contains("plane"); const std::string base=a.value("plane","xy");
+    const auto frame=own?design::drawing_frame(scene,layers):design::base_frame(base);
     const auto sketch=design::drawing_sketch(doc,scene,layers,frame,a.value("tolerance",0.01));
-    return design::apply_ops(doc,{design::make_sketch_op(a.value("name","Converted drawing"),json{{"base",base},{"frame",frame.to_json()}},sketch.to_json())},a.value("by",""));
+    const json plane=own?json{{"frame",frame.to_json()}}:json{{"base",base},{"frame",frame.to_json()}};
+    return design::apply_ops(doc,{design::make_sketch_op(a.value("name","Converted drawing"),plane,sketch.to_json())},a.value("by",""));
   });
 
   reg("sketch_edit", "Replace a sketch's geometry (and optionally its name); features built on it are regenerated",

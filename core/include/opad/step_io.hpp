@@ -15,6 +15,11 @@ struct ImportOptions {
   std::string author;    // recorded on the op ("by")
   std::string parent;    // uuid of the component to import under; empty = root
   std::function<bool(double, const std::string&)> progress;  // return false to cancel
+  // Drawings (DXF, SVG, DWG): where the drawing's own XY plane and origin go, stored as the imported root component's
+  // placement, so a sketch converted from it keeps exactly that plane and origin. `center_drawing` first moves the
+  // drawing's bounding-box centre to its origin (a drawing opened on its own is centred on the grid).
+  Mat4 placement;
+  bool center_drawing = false;
 };
 
 struct ImportResult {

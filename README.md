@@ -58,7 +58,9 @@ report `elapsed_ms` (server processing through response preparation, excluding t
 and serialization; staged modeling calls retain their computation timer).
 
 OPAD combines CAD modelling, review and a 2D drafting foundation: import, inspect, measure,
-section, annotate, sketch, build features and export. [Drawing and mesh support](docs/drawings.md)
+section, annotate, sketch, build features and export. A drawing opened on its own is centred on the
+grid; imported, it goes onto the selected planar face, or onto a plane you pick and then drag, offset
+or snap it on; converted to a sketch, it keeps exactly that plane and origin. [Drawing and mesh support](docs/drawings.md)
 describes supported DXF/SVG entities, mesh reference objects and the optional DWG converter.
 
 ```

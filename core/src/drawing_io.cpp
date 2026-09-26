@@ -13,6 +13,8 @@
 #endif
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
 #include <BRepBuilderAPI_GTransform.hxx>
 #include <Geom_BezierCurve.hxx>
 #include <Geom_BSplineCurve.hxx>
@@ -573,6 +575,14 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
       ++result.bodies;
     }
     json root={{"type","component"},{"id",new_uuid()},{"name",file.stem().string()},{"children",children}};
+    if(!mesh) {
+      Mat4 placement=options.placement;
+      if(options.center_drawing) {
+        Bnd_Box box;for(const auto& [name,shape]:drawing.layers)BRepBndLib::Add(shape,box);
+        if(!box.IsVoid()){double x0,y0,z0,x1,y1,z1;box.Get(x0,y0,z0,x1,y1,z1);placement=placement*Mat4::translation(-(x0+x1)/2,-(y0+y1)/2,0);}
+      }
+      if(!placement.is_identity())root["transform"]=placement.to_json();
+    }
     json op={{"op","import"},{"source",file.filename().string()},{"nodes",json::array({root})}};
     if(ext==".svg" && !drawing.warnings.empty()) { op["svg_source"]=read_text_file(file); op["warnings"]=drawing.warnings; }
     if(!options.parent.empty()) op["parent"]=options.parent;

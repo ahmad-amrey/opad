@@ -75,6 +75,7 @@ class MainWindow : public QMainWindow {
   void runBench();
   bool benchTodo5();
   bool benchTodo9();
+  bool benchDrawingImport();
   bool benchAnnotateLarge();  // OPAD_BENCH_ANNOTATE: the note / drawing editors on the loaded file's heaviest body
   bool benchLargeSketch();
   bool benchShortcuts();
@@ -184,6 +185,9 @@ class MainWindow : public QMainWindow {
   JobRunner* m_jobs = nullptr;      // every long operation runs through this (see Jobs.hpp)
   Job* m_loadJob = nullptr;         // open/import: document worker + tessellation, one job
   Job* m_displayJob = nullptr;      // bodies shown after a load (unhide, un-isolate): same status-bar progress
+  class DrawingPlacer* m_drawingPlacer = nullptr;
+  // A drawing imported onto the selected planar face, or onto a picked plane and moved there first (TODO 10 A12).
+  void importDrawing(const QString& path, const QString& parent);
   int m_displayTotal = 0;
   Job* m_selFileJob = nullptr;      // selection.json writer
   Job* m_measureJob = nullptr;      // the guided tool's measurement; cancelled as soon as the picks move on
