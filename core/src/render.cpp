@@ -167,6 +167,9 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
     };
 
     struct Tri { double x[3], y[3], z[3]; float shade; int id; float r, g, bl, a; };
+    // Perspective divides by depth, so depth is not linear in screen space but its reciprocal is: interpolating depth
+    // itself put large triangles millimetres off and let surfaces behind them show through (B16). Orthographic depth is
+    // linear and keeps its exact arithmetic, so orthographic images stay byte-identical.
     auto raster = [&](const Tri& t) {
       int minx = std::max(0, static_cast<int>(std::floor(std::min({t.x[0], t.x[1], t.x[2]}))));
       int maxx = std::min(W - 1, static_cast<int>(std::ceil(std::max({t.x[0], t.x[1], t.x[2]}))));
@@ -176,6 +179,7 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
       double area = (t.x[1] - t.x[0]) * (t.y[2] - t.y[0]) - (t.x[2] - t.x[0]) * (t.y[1] - t.y[0]);
       if (std::fabs(area) < 1e-12) return;
       double inv = 1.0 / area;
+      const double iz[3] = {1.0 / t.z[0], 1.0 / t.z[1], 1.0 / t.z[2]};
       for (int y = miny; y <= maxy; ++y) {
         double py = y + 0.5;
         for (int x = minx; x <= maxx; ++x) {
@@ -184,7 +188,7 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
           double w1 = ((t.x[2] - px) * (t.y[0] - py) - (t.x[0] - px) * (t.y[2] - py)) * inv;
           double w2 = 1 - w0 - w1;
           if (w0 < 0 || w1 < 0 || w2 < 0) continue;
-          double z = w0 * t.z[0] + w1 * t.z[1] + w2 * t.z[2];
+          double z = b.perspective ? 1.0 / (w0 * iz[0] + w1 * iz[1] + w2 * iz[2]) : w0 * t.z[0] + w1 * t.z[1] + w2 * t.z[2];
           size_t idx = static_cast<size_t>(y) * W + x;
           if (z >= zb[idx]) continue;
           float* px3 = &fb[idx * 3];
