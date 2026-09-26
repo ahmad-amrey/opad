@@ -538,7 +538,9 @@ struct Walk {
     // have them: combine's own operation names its target and tools, so it depends on those alone.
     const std::string op = inputs.value("operation", "new");
     const bool automatic = automatic_targets && inputs.contains("operation") && op != "new" && (!inputs.contains("targets") || inputs["targets"].empty());
-    if (automatic)
+    // An interference check over "every solid" depends on every body too (gap log #10).
+    const bool every = kind == "interference" && (!inputs.contains("bodies") || inputs["bodies"].empty());
+    if (automatic || every)
       for (const auto& b : scene.all_bodies()) nodes.insert(b);
     for (const auto& n : nodes) s += node_state(scene, n);
     for (const auto& id : sketches)

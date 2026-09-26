@@ -1637,6 +1637,7 @@ TEST(an_interference_check_is_kept_and_run_again) {
   const std::string b = feature_cmd(doc, "box", {{"x", "10 mm + gap"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}})["body_ids"][0];
   const std::string check = run_id(feature_cmd(doc, "interference", {{"bodies", {a, b}}, {"clearance", "2 mm"}}));
   const std::string strict = run_id(feature_cmd(doc, "interference", {{"bodies", {a, b}}, {"fail_on", "interference"}}));
+  const std::string every = run_id(feature_cmd(doc, "interference", json::object()));  // every solid so far
   auto status = [&](const std::string& id) {
     const Scene s = resolve(doc);
     return s.feature(id)->result["check"]["status"].get<std::string>();
@@ -1645,8 +1646,10 @@ TEST(an_interference_check_is_kept_and_run_again) {
   commands::run("param", {{"name", "gap"}, {"expr", "1 mm"}}, &doc);
   CHECK_EQ(status(check), std::string("too_close"));
   CHECK_EQ(status(strict), std::string("clear"));
+  CHECK_EQ(status(every), std::string("clear"));
   const json edit = commands::run("param", {{"name", "gap"}, {"expr", "-2 mm"}}, &doc);
   CHECK_EQ(status(check), std::string("interference"));
+  CHECK_EQ(status(every), std::string("interference"));  // it names no body, yet follows them all
   const Scene s = resolve(doc);
   CHECK_NEAR(s.feature(check)->result["check"]["items"][0]["volume_mm3"].get<double>(), 2 * 10 * 10, 1e-6);
   CHECK(s.feature(check)->error.empty());
