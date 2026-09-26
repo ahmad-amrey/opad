@@ -661,6 +661,15 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
   if (redraw) {if(m_placingDim||dimensionHover)rebuild();else updateTransient();}
 }
 
+// Off the view: no point or curve is under the pointer any more (a tool's rubber band keeps its last place).
+void SketchEditor::sketchLeave() {
+  if (!m_active || m_hover.kind == Hit::None) return;
+  const bool dimension = m_hover.kind == Hit::Dimension;
+  m_hover = Hit{};
+  if (dimension) rebuild();
+  else updateTransient();
+}
+
 void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
   if(m_active && m_boxSelecting) {
     m_boxSelecting=false;

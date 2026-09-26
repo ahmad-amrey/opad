@@ -1939,6 +1939,37 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   if (e->buttons() == Qt::NoButton) { m_dragOffset = {}; m_warpGate.pending=false; }
 }
 
+// Off the view (onto the ribbon, or out of the window): nothing is under the pointer any more. The controller would keep
+// detecting at the last position on every redraw (after an orbit too), and the object there stayed highlighted.
+void Viewport::leaveEvent(QEvent* e) {
+  QWidget::leaveEvent(e);
+  if (!m_initialised) return;
+  if (m_sketchInput) m_sketchInput->sketchLeave();
+  ResetPreviousMoveTo();
+  m_hoverFadeTimer.stop();
+  if (m_ctx->HasDetected()) {
+    m_ctx->ClearDetected(Standard_False);
+    m_view->InvalidateImmediate();
+  }
+  requestRedraw();
+}
+
+bool Viewport::benchLeave() {
+  if (!m_initialised || m_items.empty()) return false;
+  fitAll();
+  m_view->Redraw();  // the picker needs a frame after a camera change
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
+  m_ctx->MoveTo(w / 2, h / 2, m_view, Standard_False);
+  const bool hovered = m_ctx->HasDetected();
+  QEvent leave(QEvent::Leave);
+  QCoreApplication::sendEvent(this, &leave);
+  FlushViewEvents(m_ctx, m_view, Standard_True);  // what the next frame does
+  const bool left = !m_ctx->HasDetected();
+  trace::log(QStringLiteral("bench: leave: hovered %1, highlight after leaving %2").arg(hovered).arg(left ? "cleared" : "KEPT"));
+  return hovered && left;
+}
+
 void Viewport::mouseMoveEvent(QMouseEvent* e) {
   const bool awaitingWarp=m_warpGate.pending;
   if (e->buttons() != Qt::NoButton && !m_warpGate.accept(e->globalPosition().toPoint())) return;

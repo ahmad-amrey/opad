@@ -90,6 +90,7 @@ class SketchEditor : public QObject, public SketchInput {
   // SketchInput
   void sketchPress(double u, double v, Qt::KeyboardModifiers mods) override;
   void sketchMove(double u, double v, Qt::KeyboardModifiers mods, bool dragging) override;
+  void sketchLeave() override;
   void sketchRelease(double u, double v, Qt::KeyboardModifiers mods) override;
   void sketchDoubleClick(double u, double v) override;
   bool sketchKey(QKeyEvent* e) override;

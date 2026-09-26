@@ -47,6 +47,7 @@ class SketchInput {
   virtual void sketchRelease(double u, double v, Qt::KeyboardModifiers mods) = 0;
   virtual void sketchDoubleClick(double u, double v) = 0;
   virtual bool sketchKey(QKeyEvent* e) = 0;  // true = handled
+  virtual void sketchLeave() {}               // the pointer left the view: nothing is hovered any more
 };
 
 class Viewport : public QWidget, protected AIS_ViewController {
@@ -90,6 +91,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
 
   void fitAll();
   void requestRefinement() { m_refineTimer.start(); }  // zoom refinement without waiting for a frame (benches)
+  bool benchLeave();  // OPAD_BENCH_LEAVE: hover a body, leave the view, nothing may stay highlighted
   void fitWhenReady();   // fit now if bodies are displayed, otherwise once the first meshes arrive
   void fitNodesWhenReady(std::vector<std::string> ids);
   void cancelMeshing();  // stop tessellating the remaining bodies (they stay hidden until resetMeshing)
@@ -242,6 +244,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void mousePressEvent(QMouseEvent*) override;
   void mouseReleaseEvent(QMouseEvent*) override;
   void mouseMoveEvent(QMouseEvent*) override;
+  void leaveEvent(QEvent*) override;
   void mouseDoubleClickEvent(QMouseEvent*) override;
   bool eventFilter(QObject* object, QEvent* e) override;
   bool event(QEvent* e) override;  // sketching: plain keys reach the editor before the window's shortcuts
