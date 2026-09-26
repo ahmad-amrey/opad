@@ -17,6 +17,12 @@ struct Error : std::runtime_error {
 };
 
 std::string new_uuid();
+// Scripted builds (gap log #15): with OPAD_DETERMINISTIC=<seed> in the environment, new_uuid() derives UUIDs from the
+// seed, the current id context and a counter, and now_iso8601() is a fixed time, so a script run again writes the same
+// file. The command layer sets the context per command (its name, arguments and the document's state), which keeps
+// ids of different commands, and of the same command on diverging branches, apart.
+bool deterministic_ids();
+void set_id_context(const std::string& context);
 bool is_uuid(std::string_view s);
 std::string now_iso8601();
 std::string sha256_hex(std::string_view data);

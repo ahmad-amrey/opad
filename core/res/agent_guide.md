@@ -216,6 +216,9 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 
 ## History and files
 
+- Headless scripts can set `OPAD_DETERMINISTIC=<seed>` for `opad-cli` / `opad-cli mcp`: ids then follow from the seed,
+  the command and the document's state, and timestamps are fixed, so the same script writes the same file (one seed
+  per document).
 - `undo` and `redo` (live) step the document's history as Edit > Undo does, one step at a time, whoever made it; they
   need `expected_revision` and `request_id`, and not during a transaction.
 - `export` inside a transaction writes its staged state; outside, the document. STEP files are reproducible: the

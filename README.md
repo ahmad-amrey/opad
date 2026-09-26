@@ -133,6 +133,11 @@ A feature can be suppressed by an expression over the parameters (`suppress_if: 
 evaluates it, keeps the answer in the feature's result for replay, and regenerates when a parameter flips it; the
 timeline's tooltip shows the condition. Older builds ignore the condition.
 
+Scripted builds can be reproducible: with `OPAD_DETERMINISTIC=<seed>` in the environment of `opad-cli` (and the
+headless MCP server), identifiers are derived from the seed, the command and the document's state, and timestamps are
+a fixed time, so running the same script again writes the same bytes. Use a seed per document; the desktop ignores
+the variable.
+
 Face, edge and vertex inputs can be rules instead of numbers: `{"body": id, "kind": "edge", "select":
 {"parallel_to": "z"}, "expect": 4}` picks the matching entities again whenever the feature regenerates and fails,
 rather than guessing, when the count changes. The desktop offers the same through "By rule…" on pick inputs, and

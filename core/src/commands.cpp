@@ -644,6 +644,14 @@ json run(const std::string& name, const json& args, Document* live) {
   }
   Document loaded;
   Document* doc = live;
+  const auto identify = [&](const Document* d) {  // scripted builds: ids from this command (gap log #15)
+    if (!deterministic_ids()) return;
+    json key = args;
+    key.erase("doc");
+    // Not the path: the same script writes the same document wherever it writes it (a new document's id comes from
+    // the seed alone; use a seed per document).
+    set_id_context(name + "|" + key.dump() + "|" + (d ? d->header.uuid + ":" + std::to_string(d->ops.size()) : std::string()));
+  };
   bool save_after = false, transient = false;
   if (!doc && name != "new" && args.contains("doc") && args["doc"].is_string()) {
     std::filesystem::path p = args["doc"].get<std::string>();
@@ -656,6 +664,7 @@ json run(const std::string& name, const json& args, Document* live) {
     }
     doc = &loaded;
   }
+  identify(doc);
   json out;
   try {
     out = h(doc, args);

@@ -14,6 +14,9 @@
 
 int main(int argc, char** argv) {
   installCrashHandler();
+  // Derived ids are for scripted builds (gap log #15): a desktop session restarted on the same document would derive
+  // the same ones again.
+  qunsetenv("OPAD_DETERMINISTIC");
   opad::configure_kernel_logging();
 #if !defined(_WIN32) && !defined(__APPLE__)
   // The viewport hands winId() to OCCT as an X11 window (Xw_Window). Under the Wayland platform plugin that is a

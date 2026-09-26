@@ -17,7 +17,48 @@
 namespace opad {
 
 // ---------------------------------------------------------------- uuid / time
+namespace {
+struct IdContext {
+  std::mutex mu;
+  std::string seed, context;
+  unsigned long long counter = 0;
+  bool on = false;
+  IdContext() {
+    if (const char* e = std::getenv("OPAD_DETERMINISTIC"); e && *e) {
+      on = true;
+      seed = e;
+    }
+  }
+};
+IdContext& id_context() {
+  static IdContext c;
+  return c;
+}
+}  // namespace
+
+bool deterministic_ids() { return id_context().on; }
+
+void set_id_context(const std::string& context) {
+  IdContext& c = id_context();
+  std::lock_guard<std::mutex> lock(c.mu);
+  c.context = context;
+  c.counter = 0;
+}
+
 std::string new_uuid() {
+  if (IdContext& c = id_context(); c.on) {  // a UUID (version 5 layout) from the seed, the context and a counter
+    std::string h;
+    {
+      std::lock_guard<std::mutex> lock(c.mu);
+      // Only inside a command, which names the context: anything else (a person's edit) keeps random ids.
+      if (!c.context.empty()) h = sha256_hex(c.seed + "|" + c.context + "|" + std::to_string(c.counter++));
+    }
+    if (!h.empty()) {
+      h[12] = '5';
+      h[16] = "89ab"[std::stoi(h.substr(16, 1), nullptr, 16) & 3];
+      return h.substr(0, 8) + "-" + h.substr(8, 4) + "-" + h.substr(12, 4) + "-" + h.substr(16, 4) + "-" + h.substr(20, 12);
+    }
+  }
   static std::mutex mu;
   static std::mt19937_64 rng([] {
     std::random_device rd;
@@ -50,6 +91,7 @@ bool is_uuid(std::string_view s) {
 }
 
 std::string now_iso8601() {
+  if (deterministic_ids()) return "2000-01-01T00:00:00Z";
   auto now = std::chrono::system_clock::now();
   std::time_t t = std::chrono::system_clock::to_time_t(now);
   std::tm tm{};

@@ -182,7 +182,38 @@ def git_merge_story():
     assert os.path.getsize(png) > 100
 
 
+
+def deterministic_builds():
+    """Gap log #15: with OPAD_DETERMINISTIC the same script writes the same file, wherever it writes it."""
+    def build(path, seed):
+        env = dict(os.environ, OPAD_AUTHOR="script")
+        if seed:
+            env["OPAD_DETERMINISTIC"] = seed
+
+        def cli(*args):
+            p = subprocess.run([CLI, *args], capture_output=True, text=True, env=env)
+            assert p.returncode == 0, p.stderr
+            return json.loads(p.stdout) if p.stdout.strip() else None
+
+        cli("new", path)
+        cli("param", path, "--name", "width", "--expr", "30 mm")
+        sk = cli("sketch", path, "--geometry", json.dumps({"shapes": [{"kind": "rect_center", "picks": [[0, 0], [15, 10]]}]}))["sketch_id"]
+        body = cli("feature", path, "--kind", "extrude", "--inputs", json.dumps({"profiles": [{"sketch": sk}], "distance": "width / 3"}))["body_ids"][0]
+        cli("rename", path, "--target", body, "--name", "Plate")
+        cli("param", path, "--name", "width", "--expr", "36 mm")
+        with open(path, "rb") as f:
+            return f.read()
+
+    first = build(os.path.join(tmp, "plate-a.opad"), "plate")
+    again = build(os.path.join(tmp, "plate-b.opad"), "plate")
+    assert first == again, "a deterministic build changed between runs"
+    assert b"2000-01-01T00:00:00Z" in first
+    other = build(os.path.join(tmp, "plate-c.opad"), "")
+    assert other != first  # random ids and the clock without it
+
+
 test(basic_workflow)
 test(git_merge_story)
+test(deterministic_builds)
 shutil.rmtree(tmp, ignore_errors=True)
 sys.exit(1 if FAILED else 0)
