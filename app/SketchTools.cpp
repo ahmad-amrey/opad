@@ -14,6 +14,8 @@
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QApplication>
+#include <QRegularExpression>
+#include <algorithm>
 #include <cmath>
 
 #include "I18n.hpp"
@@ -27,6 +29,13 @@ using CT = SkConstraint::Type;
 using ET = SkEntity::Type;
 
 namespace {
+
+// A value with nothing to evaluate: "12", "12.5 mm", "30 deg". Only anything else is kept as an expression (shown with
+// "fx:"); "50 mm", the form the fields suggest, used to be.
+bool plainValue(const QString& text) {
+  static const QRegularExpression number(QStringLiteral(R"(^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*(mm|cm|m|in|ft|deg|rad|°)?\s*$)"));
+  return number.match(text).hasMatch();
+}
 
 ParamTable paramTable(const opad::Scene& scene) {
   std::vector<ParamDef> defs;
@@ -108,7 +117,13 @@ void SketchEditor::toolPrompt() {
   else if (m_tool == "spline") t = tr("Spline: click nodes; Enter finishes. Alt-click a finished spline to insert a node; double-click a node to edit weights.");
   else if (m_tool == "fillet") t = tr("Sketch fillet: click the corner where two lines meet");
   else if (m_tool == "trim") t = tr("Trim: click the part of a curve to remove");
-  else if (m_tool == "mirror") t = tr("Mirror: click the mirror line");
+  else if (m_tool == "mirror") {
+    // Two stages: clicks pick the curves until Enter (or Pick mirror line) moves on to the line; said as such, since the
+    // prompt used to ask for the line while clicks still added curves.
+    if (option("mirrorAxis", "picked") != "picked") t = tr("Mirror: click the curves to mirror, then Apply");
+    else if (option("mirrorStage", "seed") != "axis") t = tr("Mirror: click the curves to mirror, then press Enter to pick the mirror line");
+    else t = m_picked.empty() ? tr("Mirror: click the mirror line") : tr("Mirror: Apply, or click another mirror line");
+  }
   else if (m_tool == "project") t = tr("Project: click straight or circular edges of bodies; they become fixed reference curves");
   else if (m_tool == "dimension") t = m_placingDim ? tr("Dimension: click where the value should sit (or pick a second entity)") : tr("Dimension: pick a line, a circle, an arc, or two points");
   else if (m_tool.startsWith("c:")) t = tr("%1: pick the geometry it applies to").arg(i18n::t(m_tool.mid(2).left(1).toUpper() + m_tool.mid(3)));
@@ -439,8 +454,7 @@ QString SketchEditor::dimensionText(const SkConstraint& c) const {
   QString value = c.type == CT::Angle ? trimmedNumber(c.value * 180.0 / M_PI, 2) + QString::fromUtf8("°") : trimmedNumber(c.value / ParamTable({},m_doc->scene.units).length("1"), 3) + " " + QString::fromStdString(m_doc->scene.units);
   if (c.type == CT::Radius) value = "R" + value;
   if (c.type == CT::Diameter) value = QString::fromUtf8("Ø") + value;
-  bool plain = false;
-  QString::fromStdString(c.expr).toDouble(&plain);
+  const bool plain = plainValue(QString::fromStdString(c.expr));
   if (!c.expr.empty() && !plain) value = QStringLiteral("fx: ") + value;
   if (c.reference) value = "(" + value + ")";
   return value;
@@ -610,8 +624,7 @@ void SketchEditor::commitDimensionEdit() {
     emit status(tr("A dimension must be positive"));
     return rebuild();
   }
-  bool plain = false;
-  text.toDouble(&plain);
+  const bool plain = plainValue(text);
   const std::string expr = plain ? std::string() : c->type==CT::Angle?text.toStdString():sketch_parameters(m_sk,paramTable(m_doc->scene)).explicit_length(text.toStdString());
   if (std::fabs(value - c->value) < 1e-12 && expr == c->expr && c->reference == (option("reference", "0") == "1")) return rebuild();
   const int id = c->id;
@@ -671,11 +684,29 @@ void SketchEditor::filletAt(const Hit& h, double, double) {
   const int arc = m_sk.add_arc(centre, ccw ? t1 : t2, ccw ? t2 : t1);
   m_sk.add_constraint(CT::Tangent, {line1, arc});
   m_sk.add_constraint(CT::Tangent, {line2, arc});
-  bool plain = false;
-  text.toDouble(&plain);
+  const bool plain = plainValue(text);
   m_sk.add_constraint(CT::Radius, {arc}, r, plain ? std::string() : text.toStdString());
-  m_sk.remove(h.id);  // the old corner, unless something else still uses it
-  end_change(tr("Sketch fillet"));
+  // The two sides are shorter now: an "equal" tying either to another side (a polygon's) cannot hold any more, and
+  // solving it pulled the whole shape out of place. Those go.
+  const size_t before = m_sk.constraints.size();
+  std::erase_if(m_sk.constraints, [&](const SkConstraint& c) {
+    return c.type == CT::Equal && std::any_of(c.refs.begin(), c.refs.end(), [&](int ref) { return ref == line1 || ref == line2; });
+  });
+  const bool droppedEqual = m_sk.constraints.size() != before;
+  // The old corner stays as a virtual sharp on both lines when something still refers to it (a dimension, a point on a
+  // guide circle), so that keeps holding; otherwise it goes.
+  bool referenced = false;
+  for (const auto& c : m_sk.constraints)
+    if (std::find(c.refs.begin(), c.refs.end(), h.id) != c.refs.end()) referenced = true;
+  for (const auto& e : m_sk.entities)
+    if (std::find(e.p.begin(), e.p.end(), h.id) != e.p.end()) referenced = true;
+  if (referenced) {
+    m_sk.add_constraint(CT::Coincident, {h.id, line1});
+    m_sk.add_constraint(CT::Coincident, {h.id, line2});
+  } else {
+    m_sk.remove(h.id);
+  }
+  if (end_change(tr("Sketch fillet")) && droppedEqual) emit status(tr("Sketch fillet: the equal-length constraints on the rounded sides were removed."));
 }
 
 // ---------------------------------------------------------------- trim

@@ -299,8 +299,22 @@ int RibbonBar::addTab(int workspace, const QString& title, const QList<QList<QAc
     for (QAction* a : group) {
       auto* b = new QToolButton(page);
       b->setObjectName("ribbonTool");
-      b->setDefaultAction(a);
-      if(a->menu()){b->setMenu(a->menu());b->setPopupMode(QToolButton::InstantPopup);}
+      if (QMenu* menu = a->menu()) {
+        // A menu button drops the action's menu down itself. As the button's default action it showed Qt's fallback:
+        // a menu with one entry, the action, whose submenu then held the tools.
+        auto sync = [a, b] {
+          b->setText(a->text() + QString::fromUtf8(" ▾"));  // it drops a menu down
+          b->setIcon(a->icon());
+          b->setToolTip(a->toolTip());
+          b->setEnabled(a->isEnabled());
+          b->setVisible(a->isVisible());
+        };
+        sync();
+        connect(a, &QAction::changed, b, sync);
+        connect(b, &QToolButton::clicked, b, [b, menu] { menu->popup(b->mapToGlobal(QPoint(0, b->height()))); });
+      } else {
+        b->setDefaultAction(a);
+      }
       b->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
       b->setIconSize(QSize(24, 24));
       b->setFixedHeight(56);

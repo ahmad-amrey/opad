@@ -735,6 +735,7 @@ bool SketchEditor::sketchKey(QKeyEvent* e) {
   switch (e->key()) {
     case Qt::Key_Escape:
       if(m_boxSelecting){m_boxSelecting=false;rebuild();return true;}
+      if(m_tool=="mirror" && option("mirrorStage","seed")=="axis" && m_picked.empty()){m_options["mirrorStage"]="seed";toolPrompt();rebuild();emit changed();return true;}  // back to choosing curves
       if (m_placingDim || !m_clicks.empty() || !m_chain.empty() || !m_picked.empty()) {
         if (!m_chain.empty()) finishChain();  // one point alone is taken back too (it used to stay behind)
         else {
@@ -756,6 +757,9 @@ bool SketchEditor::sketchKey(QKeyEvent* e) {
     case Qt::Key_Return:
     case Qt::Key_Enter:
       if(m_tool=="control_spline"){finishPrimitive();return true;}
+      if(m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && option("mirrorStage","seed")!="axis" && !m_sel.empty()){
+        m_options["mirrorStage"]="axis";toolPrompt();rebuild();emit changed();return true;  // the curves are chosen: now the line
+      }
       if (!m_chain.empty()) { finishChain(); return true; }
       return false;
     case Qt::Key_Delete:
@@ -888,6 +892,9 @@ void SketchEditor::rebuild() {
 
   // Constraint glyphs next to what they hold.
   std::map<int, int> stacked;  // several glyphs on one entity sit side by side
+  // One glyph of a kind per curve: a hexagon's first side holds five "equal"s and a slot's caps two tangents each,
+  // which drew rows of identical glyphs. The others stay reachable through the glyph on the other curve.
+  std::set<std::pair<int, std::string>> shownGlyphs;
   for (const auto& c : m_sk.constraints) {
     if (c.is_dimension() || c.refs.empty()) continue;
     if(!i18n::t(QString::fromLatin1(SkConstraint::type_name(c.type))).contains(m_constraintFilter,Qt::CaseInsensitive))continue;
@@ -923,6 +930,7 @@ void SketchEditor::rebuild() {
       } else {
         continue;
       }
+      if (!shownGlyphs.insert({ref, glyph}).second && !selected.count(c.id) && !m_conflicts.count(c.id)) continue;
       const int k = stacked[ref]++;
       d.texts.push_back({W(gu + (14 + 16 * k) * px, gv + 12 * px), QString::fromLatin1(glyph), m_conflicts.count(c.id)?t.red:selected.count(c.id) ? t.hov : t.green});
       m_glyphHits.push_back({c.id,gu+(14+16*k)*px,gv+12*px});
@@ -1081,12 +1089,68 @@ void SketchEditor::updateTransient() {
       else if (m_tool == "crect") {
         const double w = std::fabs(cu - a.u), h = std::fabs(cv - a.v);
         seg(a.u - w, a.v - h, a.u + w, a.v - h); seg(a.u + w, a.v - h, a.u + w, a.v + h); seg(a.u + w, a.v + h, a.u - w, a.v + h); seg(a.u - w, a.v + h, a.u - w, a.v - h);
-      } else if (m_tool == "circle" || m_tool == "polygon") circle(a.u, a.v, std::hypot(cu - a.u, cv - a.v));
-      else if (m_tool == "ellipse" && m_clicks.size() == 1) seg(a.u, a.v, cu, cv);
-      else if (m_tool == "slot" || m_tool == "arc3" || m_tool == "arcc" || m_tool == "circle3" || m_tool == "ellipse") {
-        seg(m_clicks.back().u, m_clicks.back().v, cu, cv);
-        if (m_clicks.size() == 2) seg(a.u, a.v, m_clicks[1].u, m_clicks[1].v);
+      } else if (m_tool == "circle") circle(a.u, a.v, std::hypot(cu - a.u, cv - a.v));
+      else if (m_tool == "polygon") {
+        // The polygon itself, its first corner at the pointer, as the click will make it.
+        const int sides = std::clamp(option("sides", "6").toInt(), 3, 256);
+        const double r = std::hypot(cu - a.u, cv - a.v), a0 = std::atan2(cv - a.v, cu - a.u);
+        for (int i = 0; i < sides; ++i) {
+          const double t0 = a0 + 2 * M_PI * i / sides, t1 = a0 + 2 * M_PI * (i + 1) / sides;
+          seg(a.u + r * std::cos(t0), a.v + r * std::sin(t0), a.u + r * std::cos(t1), a.v + r * std::sin(t1));
+        }
       }
+      // The final shape through the pointer for the three-click tools, instead of straight rubber bands.
+      else if (m_clicks.size() == 2 && (m_tool == "arc3" || m_tool == "circle3" || m_tool == "arcc" || m_tool == "slot" || m_tool == "ellipse")) {
+        const Snap& b = m_clicks[1];
+        auto positive = [](double t) { t = std::fmod(t, 2 * M_PI); return t < 0 ? t + 2 * M_PI : t; };
+        auto arc = [&](double x, double y, double r, double from, double sweep) {
+          const int n = std::max(8, int(std::ceil(std::fabs(sweep) / (2 * M_PI) * 96)));
+          for (int i = 0; i < n; ++i) seg(x + r * std::cos(from + sweep * i / n), y + r * std::sin(from + sweep * i / n), x + r * std::cos(from + sweep * (i + 1) / n), y + r * std::sin(from + sweep * (i + 1) / n));
+        };
+        if (m_tool == "arc3" || m_tool == "circle3") {
+          const double ax = a.u, ay = a.v, bx = b.u, by = b.v, cx = cu, cy = cv, dd = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+          if (std::fabs(dd) < 1e-12) { seg(ax, ay, bx, by); seg(bx, by, cx, cy); }
+          else {
+            const double ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / dd;
+            const double uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / dd;
+            const double r = std::hypot(ax - ux, ay - uy);
+            if (m_tool == "circle3") circle(ux, uy, r);
+            else {  // from the first click to the second, round the side the pointer is on (as the click decides it)
+              const double a0 = std::atan2(ay - uy, ax - ux), a1 = std::atan2(by - uy, bx - ux), am = std::atan2(cy - uy, cx - ux);
+              const bool ccw = positive(am - a0) < positive(a1 - a0);
+              arc(ux, uy, r, a0, ccw ? positive(a1 - a0) : -positive(a0 - a1));
+            }
+          }
+        } else if (m_tool == "arcc") {
+          const double r = std::hypot(b.u - a.u, b.v - a.v), from = std::atan2(b.v - a.v, b.u - a.u);
+          double sweep = std::atan2(cv - a.v, cu - a.u) - from;
+          while (sweep > M_PI) sweep -= 2 * M_PI;
+          while (sweep <= -M_PI) sweep += 2 * M_PI;
+          arc(a.u, a.v, r, from, sweep);
+          d.dashed.push_back({W(a.u, a.v), W(b.u, b.v), rb});
+        } else if (m_tool == "slot") {
+          const double dx = b.u - a.u, dy = b.v - a.v, len = std::hypot(dx, dy);
+          if (len > 1e-9) {
+            const double nx = -dy / len, ny = dx / len, r = std::fabs((cu - a.u) * nx + (cv - a.v) * ny), along = std::atan2(dy, dx);
+            seg(a.u + nx * r, a.v + ny * r, b.u + nx * r, b.v + ny * r);
+            seg(a.u - nx * r, a.v - ny * r, b.u - nx * r, b.v - ny * r);
+            arc(b.u, b.v, r, along - M_PI / 2, M_PI);
+            arc(a.u, a.v, r, along + M_PI / 2, M_PI);
+            d.dashed.push_back({W(a.u, a.v), W(b.u, b.v), rb});
+          }
+        } else {  // ellipse: centre, end of the major axis, then the minor half-axis from the pointer
+          const double dx = b.u - a.u, dy = b.v - a.v, major = std::hypot(dx, dy);
+          if (major > 1e-9) {
+            const double minor = std::fabs((cu - a.u) * (-dy / major) + (cv - a.v) * (dx / major)), ux = dx / major, uy = dy / major;
+            for (int i = 0; i < 96; ++i) {
+              auto at = [&](int k) { const double t = 2 * M_PI * k / 96; return std::pair<double, double>{a.u + major * std::cos(t) * ux - minor * std::sin(t) * uy, a.v + major * std::cos(t) * uy + minor * std::sin(t) * ux}; };
+              const auto p = at(i), q = at(i + 1);
+              seg(p.first, p.second, q.first, q.second);
+            }
+          }
+        }
+      } else if (m_tool == "slot" || m_tool == "arc3" || m_tool == "arcc" || m_tool == "circle3" || m_tool == "ellipse") seg(a.u, a.v, cu, cv);
+      for (const auto& k : m_clicks) d.points.push_back({W(k.u, k.v), rb});  // where the clicks so far went (a centre, the first end)
     }
     const Sketch preview=primitivePreview();
     for(const auto& e:preview.entities) {

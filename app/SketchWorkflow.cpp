@@ -71,7 +71,8 @@ QList<ToolStep> SketchEditor::toolSteps() const {
   if(m_tool=="line" || m_tool=="spline") count=m_chain.empty()?0:m_chain.size()==1?1:2;
   if(m_tool.startsWith("c:"))count=int(m_picked.size());
   if(m_tool=="dimension")count=m_dimEditing?2:m_placingDim?1:0;
-  if(m_tool=="select" || m_tool=="offset" || m_tool=="mirror" || m_tool=="node")count=m_sel.empty()?0:1;
+  if(m_tool=="select" || m_tool=="offset" || m_tool=="node")count=m_sel.empty()?0:1;
+  if(m_tool=="mirror")count=option("mirrorAxis","picked")!="picked"?(m_sel.empty()?0:2):option("mirrorStage","seed")!="axis"?0:m_picked.empty()?1:2;
   if(m_tool=="fillet")count=1;
   QList<ToolStep> result;
   for(int i=0;i<labels.size();++i)result.push_back({labels[i],i<count?tr("Ready"):QString()});
