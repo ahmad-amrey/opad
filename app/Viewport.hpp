@@ -146,6 +146,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void deselectLast();      // one step back
   void keepLastSelected();  // a pick after the last step starts over from that pick
   bool lastPickPoint(opad::Vec3& p) const;  // where the last click hit the geometry
+  bool lastClickHit() const { return m_hasLastPick; }  // false: the last click was on empty space
   void showPickMarkers(const std::vector<opad::Vec3>& points);  // numbered end markers, 1-based
   void showPreview(const opad::Vec3& a, const opad::Vec3& b, const QString& label);  // dashed hov line to the hovered candidate
   void clearPreview();

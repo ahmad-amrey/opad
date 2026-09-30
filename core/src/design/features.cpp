@@ -1087,8 +1087,9 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
     const std::vector<std::string> targets = body_ids(ctx, in.value("target", json()));
     std::vector<std::string> tools = body_ids(ctx, in.value("tools", json()));
     if (targets.empty()) throw Error("pick a target body");
+    const bool pickedTools = !tools.empty();
     for (const auto& target : targets) tools.erase(std::remove(tools.begin(), tools.end(), target), tools.end());
-    if (tools.empty()) throw Error("pick at least one tool body");
+    if (tools.empty()) throw Error(pickedTools ? "the tool bodies are the target bodies: pick other bodies as tools" : "pick at least one tool body");
     const std::string op = in.value("operation", "join");
     // Several targets (gap log #14): a cut or an intersection works on each; a join makes the first of them one body
     // with the others and the tools.

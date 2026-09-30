@@ -847,6 +847,8 @@ void Viewport::applySelectionLayers() {
     const auto want=selected?Graphic3d_ZLayerId_Topmost:Graphic3d_ZLayerId_Default;
     if(ais->ZLayer()!=want) m_ctx->SetZLayer(ais,want);
     if(!selected || !prs) return;
+    // A body a feature preview stands in for (moved, joined, cut) shows no glow where it was: it read as a copy left behind.
+    if(const auto node=m_nodeOf.find(ais.get());node!=m_nodeOf.end() && m_previewHidden.count(node->second)) return;
     auto& glow=m_bodyGlows[ais.get()];
     if(glow.IsNull()) {
       glow=new SubHighlight(selectionTint());

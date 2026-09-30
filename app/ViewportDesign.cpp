@@ -256,6 +256,11 @@ void Viewport::setPreviewBodies(const std::vector<PreviewPart>& parts, const std
     auto it = m_items.find(node);
     if (it == m_items.end() || m_previewHidden.count(node)) return;
     m_ctx->Erase(it->second.ais, Standard_False);
+    // Its selection glow goes too: left behind, a moved body looked copied. clearPreviewBodies brings it back.
+    if (auto glow = m_bodyGlows.find(it->second.ais.get()); glow != m_bodyGlows.end()) {
+      m_ctx->Remove(glow->second, Standard_False);
+      m_bodyGlows.erase(glow);
+    }
     m_previewHidden.insert(node);
   };
   for (const auto& id : hidden) hide(id);
@@ -306,7 +311,9 @@ void Viewport::clearPreviewBodies() {
     m_ctx->Display(it->second.ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, -1, Standard_False);
     activateSelection(it->second.ais);
   }
+  const bool hadHidden = !m_previewHidden.empty();
   m_previewHidden.clear();
+  if (hadHidden) applySelectionLayers();  // glows of the ones still selected
   redrawScene();
 }
 

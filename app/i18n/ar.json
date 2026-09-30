@@ -761,6 +761,7 @@
  "pick at least one profile": "اختر مقطعًا واحدًا على الأقل",
  "pick at least one sketch point": "اختر نقطة رسم تخطيطي واحدة على الأقل",
  "pick at least one tool body": "اختر جسم أداة واحدًا على الأقل",
+ "the tool bodies are the target bodies: pick other bodies as tools": "أجسام الأداة هي نفسها الأجسام المستهدفة: اختر أجسامًا أخرى كأدوات",
  "pick faces to remove, or a body to hollow": "اختر أوجهًا لإزالتها، أو جسمًا لتفريغه",
  "pick one target body": "اختر جسمًا هدفًا واحدًا",
  "pick sketch points or vertices": "اختر نقاط رسم تخطيطي أو رؤوسًا",

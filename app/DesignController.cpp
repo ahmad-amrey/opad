@@ -582,6 +582,13 @@ void DesignController::viewportSelectionChanged() {
   // A plane comes from the plane picker only. Its clearing the selection on the way out used to arrive here late and
   // wipe the plane it had just set (a box on XY then waited for "Pick: Plane" with no preview).
   if (in->type == "plane") return;
+  // A click on empty space picks nothing: the input keeps what it has. (OCCT drops the whole selection on such a
+  // click, which wiped a combine's tool bodies when the view was clicked before pressing Enter.) Clicking a picked
+  // item still un-picks it: that click hits something.
+  if (m_viewport->selection().empty() && m_viewport->selectedCandidates().empty() && !m_viewport->lastClickHit()) {
+    syncSelectionToInput();
+    return;
+  }
   // The viewport selection is the pick list: bodies and sub-shapes by reference, everything else by candidate.
   opad::json picks = opad::json::array();
   for (const auto& r : m_viewport->selection()) {
