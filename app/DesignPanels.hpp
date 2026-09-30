@@ -145,6 +145,7 @@ class ParametersDialog : public QWidget {
   void addParameter();
   void removeCurrent();
   void itemEdited(QTreeWidgetItem* item, int column);
+  bool eventFilter(QObject* watched, QEvent* event) override;  // in a narrow panel, name, expression and value share the width
   AppDocument* m_doc;
   std::function<void(std::vector<opad::json>, QString)> m_apply;
   QTreeWidget* m_table;

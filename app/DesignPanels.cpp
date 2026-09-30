@@ -5,6 +5,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
+#include <QResizeEvent>
 #include <QPainter>
 #include <QSettings>
 #include <QStringListModel>
@@ -548,6 +549,7 @@ ParametersDialog::ParametersDialog(AppDocument* doc, std::function<void(std::vec
   m_table->setColumnWidth(1, 170);
   m_table->setColumnWidth(2, 100);
   m_table->setColumnWidth(3, 170);
+  m_table->viewport()->installEventFilter(this);
   v->addWidget(m_table, 1);
   m_status = new QLabel(this);
   m_status->setObjectName("tertiary");
@@ -592,9 +594,25 @@ void ParametersDialog::rebuild() {
     for (const auto& u : opad::design::param_users(m_doc->doc, p.name)) users << QString::fromStdString(u);
     it->setText(4, users.join(", "));
     it->setForeground(4, t.fg3);
+    QString tip = QString::fromStdString(p.comment);
+    if (!users.isEmpty()) tip += (tip.isEmpty() ? QString() : QString("\n")) + tr("Used by") + ": " + users.join(", ");
+    for (int c = 0; c < 3; ++c) it->setToolTip(c, tip);
     if (it->data(0, Qt::UserRole).toString() == current) m_table->setCurrentItem(it);
   }
   m_filling = false;
+}
+
+bool ParametersDialog::eventFilter(QObject* watched, QEvent* event) {
+  if (watched == m_table->viewport() && event->type() == QEvent::Resize) {
+    const int w = static_cast<QResizeEvent*>(event)->size().width();
+    if (w > 0 && w < 670) {  // else the dialog's widths fit
+      const int name = w * 34 / 100, expr = w * 36 / 100;
+      m_table->setColumnWidth(0, name);
+      m_table->setColumnWidth(1, expr);
+      m_table->setColumnWidth(2, w - name - expr);
+    }
+  }
+  return QWidget::eventFilter(watched, event);
 }
 
 void ParametersDialog::failed(const QString& error) {
