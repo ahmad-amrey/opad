@@ -59,6 +59,9 @@ class DesignController : public QObject {
   opad::json recoveryState() const;
   void restoreRecovery(const opad::json& state);
 
+ protected:
+  bool eventFilter(QObject* watched, QEvent* event) override;  // Enter in the view accepts the open feature
+
  signals:
   void stateChanged();                  // what is active changed: actions, ribbon
   void status(const QString& text);

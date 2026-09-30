@@ -22,6 +22,7 @@
 
 #include <QMessageBox>
 #include <QApplication>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <atomic>
 
@@ -125,7 +126,7 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   connect(m_planePicker,&PlanePicker::cancelled,this,[this]{
     m_pickPlane=false;m_planePicked={};
     if(m_replaning){m_replaning=false;m_viewport->beginSketchInput(m_sketch,m_sketch->frame(),m_sketch->sketchId());showSketchPanel();}
-    if(m_featureOn && m_panel)m_openPanel(m_panel);
+    if(m_featureOn && m_panel){m_openPanel(m_panel);m_form->activate(QString());}
     emit stateChanged();
   });
   connect(doc, &AppDocument::aboutToReplace, this, [this] {
@@ -147,6 +148,19 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   connect(m_sketch, &SketchEditor::status, this, &DesignController::status);
   connect(m_sketch, &SketchEditor::changed, this, &DesignController::stateChanged);
   connect(m_sketch, &SketchEditor::toolChanged, this, &DesignController::stateChanged);
+  m_viewport->installEventFilter(this);
+}
+
+bool DesignController::eventFilter(QObject* watched, QEvent* event) {
+  // The panel says "OK Enter", but after a pick in the view the view has the keyboard: Enter there accepts too.
+  if (watched == m_viewport && event->type() == QEvent::KeyPress && m_featureOn && !m_pickPlane && !m_sketch->active()) {
+    auto* key = static_cast<QKeyEvent*>(event);
+    if ((key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) && key->modifiers() == Qt::NoModifier) {
+      runPreview(true);
+      return true;
+    }
+  }
+  return QObject::eventFilter(watched, event);
 }
 
 void DesignController::setPanel(ToolPanel* panel, std::function<void(ToolPanel*)> open) {
@@ -536,9 +550,10 @@ void DesignController::activateInput(const QString& name) {
   if(in->type=="plane") {
     m_pickPlane=true;m_activating=false;
     m_planePicked=[this,name](opad::json plane,opad::Frame){
-      if(!m_featureOn)return;m_form->setPicks(name,plane);schedulePreview();m_openPanel(m_panel);m_form->activateNextPick();
+      // The plane input lets go once it has its plane, so a click on it opens the picker again (not deactivates it).
+      if(!m_featureOn)return;m_form->setPicks(name,plane);schedulePreview();m_openPanel(m_panel);m_form->activate(QString());m_form->activateNextPick();
     };
-    emit stateChanged();QTimer::singleShot(0,this,[this]{if(m_pickPlane&&m_featureOn)m_planePicker->start(false,m_openPanel);});return;
+    emit stateChanged();QTimer::singleShot(0,this,[this]{if(m_pickPlane&&m_featureOn){m_planePicker->panel()->setHeader("plane",tr("Choose plane"));m_planePicker->start(false,m_openPanel);}});return;
   }
   const Viewport::SelFilter want = filterFor(in->type);
   showCandidatesFor(QString::fromStdString(in->type));
@@ -564,6 +579,9 @@ void DesignController::viewportSelectionChanged() {
   const QString name = m_form->activeInput();
   const InputSpec* in = m_form->input(name);
   if (!in) return;
+  // A plane comes from the plane picker only. Its clearing the selection on the way out used to arrive here late and
+  // wipe the plane it had just set (a box on XY then waited for "Pick: Plane" with no preview).
+  if (in->type == "plane") return;
   // The viewport selection is the pick list: bodies and sub-shapes by reference, everything else by candidate.
   opad::json picks = opad::json::array();
   for (const auto& r : m_viewport->selection()) {
@@ -824,6 +842,7 @@ void DesignController::beginPlanePick() {
   if(m_featureOn)endFeature();
   m_pickPlane=true;m_activating=false;
   emit stateChanged();
+  m_planePicker->panel()->setHeader("plane",tr("Choose sketch plane"));
   m_planePicker->start(m_positionOrigin,m_openPanel);
 }
 

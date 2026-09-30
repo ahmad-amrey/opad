@@ -1144,6 +1144,11 @@ void MainWindow::buildDesign() {
   m_design = new DesignController(m_doc, m_viewport, m_jobs, this);
   m_featurePanel = new ToolPanel("feature", "extrude", &Tokens::sel, tr("Feature"), m_design->featurePanel(), 560, this);
   m_panels << m_featurePanel;
+  {
+    FeaturePanel* form = m_design->featurePanel();
+    m_featurePanel->setContentSizeHint([form](int width) { return form->preferredSize(width); });
+    connect(form, &FeaturePanel::contentResized, m_featurePanel, &ToolPanel::requestContentFit);
+  }
   m_design->setPanel(m_featurePanel, [this](ToolPanel* p) { openPanel(p); });
   m_design->setCurrentComponent([this] {
     const auto ids = m_browser->selectedIds();

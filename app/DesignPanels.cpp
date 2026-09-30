@@ -401,6 +401,7 @@ void FeaturePanel::refreshNewBody() {
     m_bodyColour->setText(makesCopies() ? tr("As the picked bodies") : tr("Automatic"));
   }
   m_bodyColourReset->setVisible(m_colour.isValid());
+  emit contentResized();  // after every change of which rows show (refreshVisibility ends here too)
 }
 
 opad::json FeaturePanel::bodyStyle() const {
@@ -500,12 +501,18 @@ void FeaturePanel::activateNextPick() {
     const int n = p.is_array() ? static_cast<int>(p.size()) : p.is_null() ? 0 : 1;
     if (n < std::max(1, in.min_count) && !in.optional) return activate(it->first);
   }
-  // Nothing is missing: stay on (or go to) the first pick input so clicks still mean something.
+  // Nothing is missing: stay on (or go to) the first pick input so clicks still mean something. Not a plane that has
+  // one already: that opens the plane picker, which a box on its default XY plane does not need at the start.
   if (!m_active.isEmpty()) return;
   for (const auto& in : m_spec->inputs) {
     auto it = m_widgets.find(QString::fromStdString(in.name));
-    if (it != m_widgets.end() && it->second.pick && !it->second.row->isHidden()) return activate(it->first);
+    if (it != m_widgets.end() && it->second.pick && !it->second.row->isHidden() && in.type != "plane") return activate(it->first);
   }
+}
+
+QSize FeaturePanel::preferredSize(int width) const {
+  const int w = width > 0 ? width : 372;
+  return QSize(372, layout()->hasHeightForWidth() ? layout()->heightForWidth(w) : layout()->sizeHint().height());
 }
 
 void FeaturePanel::keyPressEvent(QKeyEvent* e) {

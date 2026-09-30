@@ -129,6 +129,10 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
     if(!m_active) return;
     const double pixels=m_viewport->pixelSize();
     if(pixels<m_samplePixelSize*.75 || pixels>m_samplePixelSize*1.5) rebuild();
+    if(m_dimEdit && m_dimEdit->isVisible())if(const auto* c=m_sk.constraint(m_dimEditing)) {  // the value box stays on its label
+      double lu,lv;labelPosition(*c,lu,lv);const QPoint at=m_viewport->widgetPoint(m_frame.to_world(lu,lv));
+      m_dimEdit->move(at.x()-m_dimEdit->width()/2,at.y()-m_dimEdit->height()/2);
+    }
   });
   m_fillTimer.setSingleShot(true);
   m_fillTimer.setInterval(150);
@@ -1023,14 +1027,15 @@ void SketchEditor::rebuild() {
           d.thin.push_back({W(ox + r * std::cos(a0 + sweep * i / n), oy + r * std::sin(a0 + sweep * i / n)), W(ox + r * std::cos(a0 + sweep * (i + 1) / n), oy + r * std::sin(a0 + sweep * (i + 1) / n)), col});
       }
     }
-    d.texts.push_back({W(lu, lv), dimensionText(c), col});
+    if (!(m_dimEdit && m_dimEdit->isVisible() && m_dimEditing == c.id)) d.texts.push_back({W(lu, lv), dimensionText(c), col});  // the value box covers it while typing
   };
   for (const auto& c : m_sk.constraints)
-    if (c.is_dimension() && !(m_dimEdit && m_dimEdit->isVisible() && m_dimEditing == c.id)) dimension(c, false);
+    if (c.is_dimension()) dimension(c, false);
   if (m_placingDim && m_haveCursor) {
     SkConstraint c = m_pendingDim;
     c.pos[0] = m_cursor.u;
     c.pos[1] = m_cursor.v;
+    try { c.value = dimension_value(m_sk, c); } catch (const std::exception&) {}  // what it measures now (it read "0 mm")
     dimension(c, true);
   }
 

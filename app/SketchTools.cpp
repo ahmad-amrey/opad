@@ -588,7 +588,18 @@ void SketchEditor::placeDimension(double u, double v) {
 void SketchEditor::editDimension(int id, bool fresh) {
   const SkConstraint* c = m_sk.constraint(id);
   if (!c || !c->is_dimension()) return;
-  if (!m_dimEdit) m_dimEdit = new QLineEdit(m_viewport);
+  if (!m_dimEdit) {
+    // Typed where the value is, right after placing a dimension (or double-clicking one): Enter applies, Esc keeps the
+    // measured value. The box existed but was never shown, so values could only be typed in the panel.
+    m_dimEdit = new QLineEdit(m_viewport);
+    m_dimEdit->setObjectName("sketchDimensionValue");
+    m_dimEdit->setAttribute(Qt::WA_NativeWindow);  // over the OCCT window, like the drag handles' value box
+    m_dimEdit->setAutoFillBackground(true);
+    m_dimEdit->setAlignment(Qt::AlignCenter);
+    m_dimEdit->setToolTip(tr("Type a value or an expression · Enter applies · Esc keeps the measured value"));
+    connect(m_dimEdit, &QLineEdit::textEdited, this, [this](const QString& text) { m_options["expression"] = text; });
+    connect(m_dimEdit, &QLineEdit::returnPressed, this, [this] { m_options["expression"] = m_dimEdit->text(); commitDimensionEdit(); });
+  }
   if (m_tool != "dimension") setTool("dimension");
 
   m_dimEditing = id;
@@ -601,6 +612,21 @@ void SketchEditor::editDimension(int id, bool fresh) {
   emit toolChanged(m_tool);
   emit workflowChanged();
 
+  const Tokens& t = theme::current();
+  m_dimEdit->setStyleSheet(QString("#sketchDimensionValue { background: %1; color: %2; border: 1px solid %3; border-radius: 4px; padding: 1px 6px; selection-background-color: %4; }")
+                               .arg(theme::css(t.bg2), theme::css(t.fg), theme::css(t.sel), theme::css(t.selbg)));
+  m_dimEdit->setFont(theme::ui(13));
+  m_dimEdit->setFixedWidth(std::clamp(m_dimEdit->fontMetrics().horizontalAdvance(shown + "    ") + 16, 90, 260));
+  m_dimEdit->adjustSize();
+  double lu, lv;
+  labelPosition(*c, lu, lv);
+  const QPoint at = m_viewport->widgetPoint(m_frame.to_world(lu, lv));
+  m_dimEdit->move(std::clamp(at.x() - m_dimEdit->width() / 2, 0, std::max(0, m_viewport->width() - m_dimEdit->width())),
+                  std::clamp(at.y() - m_dimEdit->height() / 2, 0, std::max(0, m_viewport->height() - m_dimEdit->height())));
+  m_dimEdit->show();
+  m_dimEdit->raise();
+  m_dimEdit->setFocus();
+  m_dimEdit->selectAll();
   rebuild();
 }
 
@@ -686,16 +712,24 @@ void SketchEditor::filletAt(const Hit& h, double, double) {
   m_sk.add_constraint(CT::Tangent, {line2, arc});
   const bool plain = plainValue(text);
   m_sk.add_constraint(CT::Radius, {arc}, r, plain ? std::string() : text.toStdString());
-  // The two sides are shorter now: an "equal" tying either to another side (a polygon's) cannot hold any more, and
-  // solving it pulled the whole shape out of place. Those go.
-  const size_t before = m_sk.constraints.size();
-  std::erase_if(m_sk.constraints, [&](const SkConstraint& c) {
-    return c.type == CT::Equal && std::any_of(c.refs.begin(), c.refs.end(), [&](int ref) { return ref == line1 || ref == line2; });
-  });
-  const bool droppedEqual = m_sk.constraints.size() != before;
-  // The old corner stays as a virtual sharp on both lines when something still refers to it (a dimension, a point on a
-  // guide circle), so that keeps holding; otherwise it goes.
+  // The two sides are shorter now. What measured a whole side (a polygon's "equal"s, a length, a midpoint) moves to a
+  // construction line along the old side, from its far end to the old corner: held on the trimmed side it pulled the
+  // whole shape out of place.
   bool referenced = false;
+  for (const int line : {line1, line2}) {
+    auto measures = [line](const SkConstraint& c) {
+      return std::find(c.refs.begin(), c.refs.end(), line) != c.refs.end() && (c.type == CT::Equal || c.type == CT::Midpoint || (c.type == CT::Distance && c.refs.size() == 1));
+    };
+    if (std::none_of(m_sk.constraints.begin(), m_sk.constraints.end(), measures)) continue;
+    const SkEntity* side = m_sk.entity(line);
+    const int outer = side->p[0] == t1 || side->p[0] == t2 ? side->p[1] : side->p[0];
+    const int whole = m_sk.add_line(outer, h.id, true);
+    for (auto& c : m_sk.constraints)
+      if (measures(c)) std::replace(c.refs.begin(), c.refs.end(), line, whole);
+    referenced = true;
+  }
+  // The old corner stays as a virtual sharp on both lines when something still refers to it (those lines, a dimension,
+  // a point on a polygon's guide circle), so that keeps holding; otherwise it goes.
   for (const auto& c : m_sk.constraints)
     if (std::find(c.refs.begin(), c.refs.end(), h.id) != c.refs.end()) referenced = true;
   for (const auto& e : m_sk.entities)
@@ -706,7 +740,7 @@ void SketchEditor::filletAt(const Hit& h, double, double) {
   } else {
     m_sk.remove(h.id);
   }
-  if (end_change(tr("Sketch fillet")) && droppedEqual) emit status(tr("Sketch fillet: the equal-length constraints on the rounded sides were removed."));
+  end_change(tr("Sketch fillet"));
 }
 
 // ---------------------------------------------------------------- trim
