@@ -374,6 +374,58 @@ TEST(revolve_hole_pattern_combine_split) {
   CHECK_NEAR(total_volume(plate), 60 * 40 * 8 - 3 * M_PI * 9 * 8, 1e-5);
   feature_cmd(plate, "hole", {{"points", json::array({picks[1]})}, {"type", "counterbore"}, {"diameter", "6 mm"}, {"cb_diameter", "12 mm"}, {"cb_depth", "3 mm"}, {"extent", "all"}});
   CHECK_NEAR(total_volume(plate), 60 * 40 * 8 - 3 * M_PI * 9 * 8 - M_PI * (36 - 9) * 3, 1e-5);
+  {  // blind counterbored holes (to a depth, not through): the GUI said "the cut does not touch any body"
+    Document cube = Document::create();
+    feature_cmd(cube, "box", {{"length", "20 mm"}, {"width", "20 mm"}, {"height", "-20 mm"}});
+    Sketch four;
+    for (double x : {-5.0, 5.0})
+      for (double y : {-5.0, 5.0}) {
+        SkEntity e;
+        e.type = SkEntity::Type::Point;
+        e.p = {four.add_point(x, y)};
+        e.id = four.next_id();
+        four.entities.push_back(e);
+      }
+    const std::string fs = run_id(sketch_cmd(cube, four));
+    json at = json::array();
+    for (const auto& p : four.points) at.push_back({{"sketch", fs}, {"point", p.id}});
+    for (const char* type : {"simple", "counterbore", "countersink"}) {
+      Document d = cube;
+      feature_cmd(d, "hole", {{"points", at}, {"type", type}, {"diameter", "5 mm"}, {"depth", "10 mm"}, {"cb_diameter", "9 mm"}, {"cb_depth", "3 mm"}});
+      CHECK(total_volume(d) < 8000 - 4 * M_PI * 6.25 * 10 + 1e-3);
+    }
+    // The same on a sketch drawn on the top face of a box standing on XY, origin moved to the face centre.
+    Document up = Document::create();
+    feature_cmd(up, "box", {{"length", "20 mm"}, {"width", "20 mm"}, {"height", "20 mm"}});
+    const Scene us = resolve(up);
+    const std::string ub = us.all_bodies().front();
+    json top;
+    int index = 0;
+    for (TopExp_Explorer faces(node_world_shape(up, us, ub), TopAbs_FACE); faces.More(); faces.Next(), ++index) {
+      BRepAdaptor_Surface surface(TopoDS::Face(faces.Current()));
+      if (surface.GetType() == GeomAbs_Plane && std::abs(surface.Plane().Location().Z() - 20) < 1e-8) top = {{"body", ub}, {"kind", "face"}, {"index", index}};
+    }
+    Frame frame = resolve_plane(up, us, {{"face", top}});
+    frame.origin = {0, 0, 20};
+    // 8.9 mm apart: the 9 mm counterbores overlap.
+    Sketch close;
+    for (double x : {-4.45, 4.45})
+      for (double y : {-4.45, 4.45}) {
+        SkEntity e;
+        e.type = SkEntity::Type::Point;
+        e.p = {close.add_point(x, y)};
+        e.id = close.next_id();
+        close.entities.push_back(e);
+      }
+    const std::string ts = run_id(sketch_cmd(up, close, {{"face", top}, {"frame", frame.to_json()}}));
+    json onTop = json::array();
+    for (const auto& p : close.points) onTop.push_back({{"sketch", ts}, {"point", p.id}});
+    for (const char* type : {"simple", "counterbore", "countersink"}) {
+      Document d = up;
+      feature_cmd(d, "hole", {{"points", onTop}, {"type", type}, {"diameter", "5 mm"}, {"depth", "10 mm"}, {"cb_diameter", "9 mm"}, {"cb_depth", "3 mm"}});
+      CHECK(total_volume(d) < 8000 - 4 * M_PI * 6.25 * 10 + 1e-3);
+    }
+  }
 
   // Pattern a peg and join the copies to the plate; then split the plate and combine the halves again.
   Scene s = resolve(plate);

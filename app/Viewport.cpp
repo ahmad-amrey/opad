@@ -831,6 +831,7 @@ void Viewport::refreshSubHighlight() {
 // boundary glow. Share worker-built arrays and slice large selections.
 void Viewport::applySelectionLayers() {
   if(m_bodyGlowJob) m_bodyGlowJob->cancel();
+  markPickedPoints();
   struct State {
     std::vector<std::pair<Handle(AIS_Shape),std::shared_ptr<BodyPrs>>> targets;
     std::vector<const AIS_InteractiveObject*> stale;

@@ -381,6 +381,7 @@ opad::json DesignController::pickToJson(const opad::Ref& ref) const { return ref
 
 void DesignController::showCandidatesFor(const QString& typeName) {
   if (Job* j = std::exchange(m_candidateJob, nullptr)) j->cancel();
+  m_nothingToPick.clear();
   const std::string type = typeName.toStdString();
   std::vector<Viewport::Candidate> quick;
   // Size of axis candidates: a little more than what is on screen.
@@ -445,11 +446,16 @@ void DesignController::showCandidatesFor(const QString& typeName) {
         if (any) found->push_back({opad::json{{"sketch", src.id}}.dump(), comp, false});
       }
     }
-  }, [this, found](bool ok, const QString&) {
+  }, [this, found, type](bool ok, const QString&) {
     m_candidateJob = nullptr;
     if (!ok || !m_featureOn) return;
     m_viewport->showCandidates(*found);
     syncSelectionToInput();
+    if (found->empty() && (type == "points" || type == "profiles")) {  // else the input waits for a pick that cannot come
+      m_nothingToPick = type == "points" ? tr("No sketch points yet: sketch points first (or pick vertices).")
+                                         : tr("No sketch profiles yet: draw a closed shape in a sketch first (or pick a planar face).");
+      if (!m_form->complete()) m_form->setStatus(m_nothingToPick, false);
+    }
   });
   m_viewport->showCandidates(quick);
 }
@@ -630,6 +636,7 @@ void DesignController::viewportSelectionChanged() {
     return;
   }
   m_form->setPicks(name, picks);
+  if (!picks.empty()) m_nothingToPick.clear();  // a vertex or a face did it
   schedulePreview();
   if (single && !picks.empty()) m_form->activateNextPick();
   else if (in->max_count > 0 && static_cast<int>(picks.size()) == in->max_count) m_form->activateNextPick();
@@ -668,7 +675,7 @@ void DesignController::runPreview(bool commit) {
   QString missing;
   if (!m_form->complete(&missing)) {
     if(!m_distanceHandle->interacting())m_distanceHandle->hide();
-    m_form->setStatus(missing, commit);
+    m_form->setStatus(m_nothingToPick.isEmpty() ? missing : m_nothingToPick, commit);
     m_viewport->clearPreviewBodies();
     return;
   }

@@ -1577,5 +1577,7 @@
   "Mirror: click the curves to mirror, then Apply": "انعكاس: انقر المنحنيات المراد عكسها، ثم تطبيق",
   "Mirror: click the curves to mirror, then press Enter to pick the mirror line": "انعكاس: انقر المنحنيات المراد عكسها، ثم اضغط Enter لاختيار خط الانعكاس",
   "Mirror: Apply, or click another mirror line": "انعكاس: تطبيق، أو انقر خط انعكاس آخر",
-  "Type a value or an expression · Enter applies · Esc keeps the measured value": "اكتب قيمة أو تعبيرًا · Enter يطبّق · Esc يُبقي القيمة المقاسة"
+  "Type a value or an expression · Enter applies · Esc keeps the measured value": "اكتب قيمة أو تعبيرًا · Enter يطبّق · Esc يُبقي القيمة المقاسة",
+  "No sketch points yet: sketch points first (or pick vertices).": "لا توجد نقاط رسم بعد: ارسم نقاطًا في رسم أولًا (أو اختر رؤوسًا).",
+  "No sketch profiles yet: draw a closed shape in a sketch first (or pick a planar face).": "لا توجد مقاطع رسم بعد: ارسم شكلًا مغلقًا في رسم أولًا (أو اختر وجهًا مستويًا)."
 }

@@ -109,6 +109,7 @@ class DesignController : public QObject {
   QPointer<DimensionHandle> m_distanceHandle;
   Job* m_planJob = nullptr;
   Job* m_candidateJob = nullptr;
+  QString m_nothingToPick;      // the active input has no candidates at all: says so instead of "Pick: …"
   int m_planSerial = 0;
   std::shared_ptr<opad::design::Plan> m_readyPlan;  // computed for m_readyInputs on m_readyOps ops
   std::string m_readyInputs;

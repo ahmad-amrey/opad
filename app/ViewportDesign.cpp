@@ -121,6 +121,7 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
   if (!m_initialised) return;
   for (const auto& c : m_candidates) m_ctx->Remove(c.second, Standard_False);
   m_candidates.clear();
+  markPickedPoints();
   for (const auto& c : candidates) {
     if (c.shape.IsNull()) continue;
     // Small planar regions and a few curves: meshing them here is cheaper than a job round trip. (The
@@ -139,9 +140,13 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
       ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.0));
     } else {
       ais->SetWidth(3.0);
-      ais->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_POINT, occ(m_tokens.sel), 3.0));
+      ais->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_POINT, occ(m_tokens.sel), 4.0 * displayScale()));
     }
-    ais->SetZLayer(Graphic3d_ZLayerId_Top);  // over coplanar body faces
+    // Over coplanar body faces. A sketch point lies *on* its face, which hid half of its marker in Top (that layer
+    // shares the depth buffer), leaving a speck to aim at: points go to Topmost.
+    const bool point = !surface && c.shape.ShapeType() == TopAbs_VERTEX;
+    const Graphic3d_ZLayerId layer = point ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top;
+    ais->SetZLayer(layer);
     // A quiet tint for hovering and picking these, not the bodies' white hover and grey X-ray selection: on a large
     // sketch region those flooded the view, and the X-ray layer showed the picked profile through the preview.
     auto style = [&](Prs3d_TypeOfHighlight kind, const QColor& colour, float transparency) {
@@ -150,7 +155,7 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
       d->SetDisplayMode(surface ? AIS_Shaded : AIS_WireFrame);
       d->SetColor(occ(colour));
       d->SetTransparency(surface ? transparency : 0.0f);
-      d->SetZLayer(Graphic3d_ZLayerId_Top);
+      d->SetZLayer(layer);
       return d;
     };
     ais->SetDynamicHilightAttributes(style(Prs3d_TypeOfHighlight_Dynamic, m_tokens.hov, 0.72f));
@@ -167,7 +172,24 @@ void Viewport::clearCandidates() {
   if (!m_initialised || m_candidates.empty()) return;
   for (const auto& c : m_candidates) m_ctx->Remove(c.second, Standard_False);
   m_candidates.clear();
+  markPickedPoints();
   redrawScene();
+}
+
+// Highlighting only recolours a marker, so in the candidates' own blue a picked point's ring looked like the others:
+// a filled dot (not pickable) sits in each picked one.
+void Viewport::markPickedPoints() {
+  if (!m_initialised) return;
+  for (const auto& mark : m_pointMarks) m_ctx->Remove(mark, Standard_False);
+  m_pointMarks.clear();
+  for (const auto& [id, ais] : m_candidates) {
+    if (ais->Shape().IsNull() || ais->Shape().ShapeType() != TopAbs_VERTEX || !m_ctx->IsSelected(ais)) continue;
+    Handle(AIS_Shape) mark = new AIS_Shape(ais->Shape());
+    mark->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL, occ(m_tokens.sel), 3.0 * displayScale()));
+    mark->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    m_ctx->Display(mark, AIS_WireFrame, -1, Standard_False);  // -1: never picked
+    m_pointMarks.push_back(mark);
+  }
 }
 
 std::string Viewport::hoveredCandidate() const {

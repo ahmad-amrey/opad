@@ -17,6 +17,7 @@
 #include <BRep_Builder.hxx>
 #include <BRepBndLib.hxx>
 #include <TopoDS_Compound.hxx>
+#include "opad/geometry.hpp"
 
 using namespace opad::design;
 
@@ -315,7 +316,18 @@ void SketchEditor::fitSketch() {
     const double a=image.value("angle",0.0),x=image.at("position")[0].get<double>(),y=image.at("position")[1].get<double>(),w=image.at("width").get<double>(),h=image.at("height").get<double>();
     for(auto [u,v]:std::vector<std::pair<double,double>>{{0,0},{w,0},{w,h},{0,h}}){double px=x+u*std::cos(a)-v*std::sin(a),py=y+u*std::sin(a)+v*std::cos(a);if(!any){x0=x1=px;y0=y1=py;any=true;}else{x0=std::min(x0,px);x1=std::max(x1,px);y0=std::min(y0,py);y1=std::max(y1,py);}}
   }
-  if(!any || x1-x0+y1-y0<1e-8){x0=y0=-60;x1=y1=60;}
+  if(!any || x1-x0+y1-y0<1e-8) {
+    // An empty sketch frames the visible model as seen on its plane (a fixed 120 mm window shrank a 20 mm face the
+    // plane pick had just filled the view with). The view boxes are cached per body: no geometry walked here.
+    any=false;
+    for(const auto& id:m_doc->scene.all_bodies()) {
+      if(!m_doc->scene.effectively_visible(id))continue;
+      Bnd_Box box;try{box=opad::node_world_bbox(m_doc->doc,m_doc->scene,id);}catch(const std::exception&){continue;}
+      if(box.IsVoid())continue;double bx0,by0,bz0,bx1,by1,bz1;box.Get(bx0,by0,bz0,bx1,by1,bz1);
+      for(int c=0;c<8;++c){double u,v;m_frame.to_local({c&1?bx1:bx0,c&2?by1:by0,c&4?bz1:bz0},u,v);if(!any){x0=x1=u;y0=y1=v;any=true;}else{x0=std::min(x0,u);x1=std::max(x1,u);y0=std::min(y0,v);y1=std::max(y1,v);}}
+    }
+    if(!any || x1-x0+y1-y0<1e-8){x0=y0=-60;x1=y1=60;}
+  }
   const double aspect=double(std::max(1,m_viewport->width()))/std::max(1,m_viewport->height());const double scale=std::max({20.0,(y1-y0)*1.3,(x1-x0)*1.3/aspect});
   auto camera=m_viewport->cameraJson();auto center=m_frame.to_world((x0+x1)/2,(y0+y1)/2),eye=center;const auto normal=m_frame.normal();for(int i=0;i<3;++i)eye[i]+=normal[i]*std::max(100.0,scale*2);
   camera["eye"]=eye;camera["target"]=center;camera["scale"]=scale;camera["projection"]="orthographic";m_viewport->setCameraJson(camera);

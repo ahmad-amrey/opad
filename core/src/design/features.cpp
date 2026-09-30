@@ -47,6 +47,7 @@
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <gp_Circ.hxx>
 #include <gp_Pln.hxx>
 
@@ -276,7 +277,11 @@ enum class BoolOp { Fuse, Cut, Common };
 TopoDS_Shape boolean(BoolOp op, const TopoDS_Shape& a, const TopoDS_Shape& b) {
   TopTools_ListOfShape args, tools;
   args.Append(a);
-  tools.Append(b);
+  // A compound's parts go in as separate tools: OCCT merges overlapping tools, but parts that overlap inside one
+  // compound argument made the cut a no-op (four counterbores 8.9 mm apart: "the cut does not touch any body").
+  if (b.ShapeType() == TopAbs_COMPOUND)
+    for (TopoDS_Iterator it(b); it.More(); it.Next()) tools.Append(it.Value());
+  if (tools.IsEmpty()) tools.Append(b);
   auto run = [&](BRepAlgoAPI_BooleanOperation& algo) {
     algo.SetArguments(args);
     algo.SetTools(tools);

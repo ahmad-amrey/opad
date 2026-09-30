@@ -337,6 +337,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showShade(const std::vector<std::string>& ids);
   void refreshSubHighlight();   // rebuilds m_subHl from the context's selected faces/edges/vertices (sliced)
   void applySelectionLayers();  // selected bodies live in the Topmost layer (own depth buffer): X-ray through occluders
+  void markPickedPoints();      // a filled dot on each picked point candidate
   void clearShade();
   double deflectionFor(const std::string& key);
   QPointF viewScale() const;  // OCCT view coordinates per Qt widget point
@@ -465,6 +466,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::map<std::string,std::shared_ptr<PreparedSketch>> m_preparedSketches;
   std::string m_hiddenSketch;  // being edited: the editor draws it
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_candidates;
+  std::vector<Handle(AIS_Shape)> m_pointMarks;  // markPickedPoints
   std::vector<Handle(AIS_Shape)> m_previewBodies;
   std::set<std::string> m_previewHidden;  // nodes whose own object is erased while the preview shows
   bool m_bodiesPickable = true;
