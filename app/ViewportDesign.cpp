@@ -128,9 +128,13 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
     if (!c.presentation && c.shape.ShapeType() <= TopAbs_FACE) BRepMesh_IncrementalMesh(c.shape, 0.05, Standard_False, 0.3, Standard_False);
     Handle(AIS_Shape) ais = c.presentation?new BodyShape(c.shape,c.presentation):new AIS_Shape(c.shape);
     const bool surface = c.presentation?!c.presentation->triangles.IsNull():c.shape.ShapeType() <= TopAbs_FACE;
+    // A plain material: the default physical one ignores colours, so profiles were drawn as opaque grey sheets and
+    // the hover and pick tints below never showed on them.
+    ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
     ais->SetColor(occ(m_tokens.sel));
     if (surface) {
       ais->SetTransparency(c.strong ? 0.6 : 0.82);
+      ais->Attributes()->ShadingAspect()->Aspect()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);  // a flat tint
       ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
       ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.0));
     } else {
@@ -138,6 +142,19 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
       ais->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_POINT, occ(m_tokens.sel), 3.0));
     }
     ais->SetZLayer(Graphic3d_ZLayerId_Top);  // over coplanar body faces
+    // A quiet tint for hovering and picking these, not the bodies' white hover and grey X-ray selection: on a large
+    // sketch region those flooded the view, and the X-ray layer showed the picked profile through the preview.
+    auto style = [&](Prs3d_TypeOfHighlight kind, const QColor& colour, float transparency) {
+      Handle(Prs3d_Drawer) d = new Prs3d_Drawer();
+      d->SetLink(m_ctx->HighlightStyle(kind));
+      d->SetDisplayMode(surface ? AIS_Shaded : AIS_WireFrame);
+      d->SetColor(occ(colour));
+      d->SetTransparency(surface ? transparency : 0.0f);
+      d->SetZLayer(Graphic3d_ZLayerId_Top);
+      return d;
+    };
+    ais->SetDynamicHilightAttributes(style(Prs3d_TypeOfHighlight_Dynamic, m_tokens.hov, 0.72f));
+    ais->SetHilightAttributes(style(Prs3d_TypeOfHighlight_Selected, m_tokens.sel, 0.55f));
     m_ctx->Display(ais, surface ? AIS_Shaded : AIS_WireFrame, -1, Standard_False);
     m_ctx->Load(ais, -1);
     m_ctx->Activate(ais, 0);
@@ -227,6 +244,12 @@ void Viewport::setBodiesPickable(bool on) {
 
 // ---------------------------------------------------------------- feature preview
 void Viewport::setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_Shape>>& shapes, const std::vector<std::string>& hidden) {
+  std::vector<PreviewPart> parts;
+  for (const auto& [node, shape] : shapes) parts.push_back({node, shape, nullptr});
+  setPreviewBodies(parts, hidden);
+}
+
+void Viewport::setPreviewBodies(const std::vector<PreviewPart>& parts, const std::vector<std::string>& hidden) {
   if (!m_initialised) return;
   clearPreviewBodies();
   auto hide = [this](const std::string& node) {
@@ -236,10 +259,10 @@ void Viewport::setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_
     m_previewHidden.insert(node);
   };
   for (const auto& id : hidden) hide(id);
-  for (const auto& [node, shape] : shapes) {
+  for (const auto& [node, shape, prs] : parts) {
     if (shape.IsNull()) continue;
     if (!node.empty()) hide(node);
-    Handle(AIS_Shape) ais = new AIS_Shape(shape);
+    Handle(AIS_Shape) ais = prs ? Handle(AIS_Shape)(new BodyShape(shape, prs)) : new AIS_Shape(shape);
     ais->Attributes()->SetAutoTriangulation(Standard_False);  // the worker meshed it
     ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
     QColor tint = m_tokens.sel;
@@ -258,6 +281,18 @@ void Viewport::setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_
     m_previewBodies.push_back(ais);
   }
   redrawScene();
+}
+
+void Viewport::setPreviewDisplay(const std::vector<std::shared_ptr<const BodyPrs>>& arrays) {
+  if (!m_initialised) return;
+  bool any = false;
+  for (size_t i = 0; i < m_previewBodies.size() && i < arrays.size(); ++i) {
+    Handle(BodyShape) body = Handle(BodyShape)::DownCast(m_previewBodies[i]);
+    if (body.IsNull() || !body->setDisplayPrs(arrays[i])) continue;
+    m_ctx->Redisplay(body, Standard_False);
+    any = true;
+  }
+  if (any) redrawScene();
 }
 
 void Viewport::clearPreviewBodies() {

@@ -10,7 +10,9 @@
 #include <TopoDS.hxx>
 
 #include <BRepBndLib.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <gp.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Builder.hxx>
@@ -57,6 +59,52 @@ Viewport::SelFilter filterFor(const std::string& type) {
 QString titleCase(const std::string& label) { return QString::fromStdString(label).section(' ', 0, 0); }
 
 gp_Pnt pnt(const opad::Vec3& v) { return gp_Pnt(v[0], v[1], v[2]); }
+
+// A preview pulled along the extrusion to k times its distance without planning again: vertices between the profile
+// plane and the moving end, inside the profile's footprint, scale along the axis; everything else (the other side of
+// a two-sided extrusion, the faces of a joined or cut body away from the profile) stays. Exact for a straight
+// extrusion; the next exact preview replaces it anyway.
+std::shared_ptr<const BodyPrs> stretchedPrs(const BodyPrs& base, const DesignController::Stretch& s, double k) {
+  const gp_Pnt origin(s.origin[0], s.origin[1], s.origin[2]);
+  const gp_Vec axis(s.axis[0], s.axis[1], s.axis[2]), u(s.u[0], s.u[1], s.u[2]), v(s.v[0], s.v[1], s.v[2]);
+  const double lo = s.symmetric ? -std::fabs(s.from) / 2 : std::min(0.0, s.from), hi = s.symmetric ? std::fabs(s.from) / 2 : std::max(0.0, s.from);
+  const double eps = 1e-6 * std::max(1.0, std::fabs(s.from));
+  auto moved = [&](const gp_Pnt& p) {
+    const gp_Vec rel(origin, p);
+    const double h = rel.Dot(axis);
+    if (h < lo - eps || h > hi + eps) return p;
+    if (s.footprint) {
+      const double a = rel.Dot(u), b = rel.Dot(v);
+      if (a < s.u0 || a > s.u1 || b < s.v0 || b > s.v1) return p;
+    }
+    return p.Translated(axis * (h * (k - 1)));
+  };
+  auto out = std::make_shared<BodyPrs>();
+  out->closed = base.closed;
+  Bnd_Box box;
+  if (!base.triangles.IsNull()) {
+    const auto& src = base.triangles;
+    const bool normals = src->HasVertexNormals();
+    Handle(Graphic3d_ArrayOfTriangles) dst = new Graphic3d_ArrayOfTriangles(src->VertexNumber(), src->EdgeNumber(), normals ? Graphic3d_ArrayFlags_VertexNormal : Graphic3d_ArrayFlags_None);
+    for (int i = 1; i <= src->VertexNumber(); ++i) {
+      const gp_Pnt p = moved(src->Vertice(i));
+      box.Add(p);
+      if (normals) dst->AddVertex(p, src->VertexNormal(i));
+      else dst->AddVertex(p);
+    }
+    for (int i = 1; i <= src->EdgeNumber(); ++i) dst->AddEdge(src->Edge(i));
+    out->triangles = dst;
+  }
+  if (!base.boundaries.IsNull()) {
+    const auto& src = base.boundaries;
+    Handle(Graphic3d_ArrayOfSegments) dst = new Graphic3d_ArrayOfSegments(src->VertexNumber(), src->EdgeNumber());
+    for (int i = 1; i <= src->VertexNumber(); ++i) dst->AddVertex(moved(src->Vertice(i)));
+    for (int i = 1; i <= src->EdgeNumber(); ++i) dst->AddEdge(src->Edge(i));
+    out->boundaries = dst;
+  }
+  out->box = box;
+  return out;
+}
 
 }  // namespace
 
@@ -277,6 +325,9 @@ void DesignController::endFeature() {
   if (Job* j = std::exchange(m_planJob, nullptr)) j->cancel();
   if (Job* j = std::exchange(m_candidateJob, nullptr)) j->cancel();
   m_readyPlan.reset();
+  m_stretch = {};
+  m_planDoc.reset();
+  m_planScene.reset();
   m_viewport->clearPreviewBodies();
   m_viewport->clearCandidates();
   m_viewport->setPickAccumulate(false);
@@ -333,7 +384,14 @@ void DesignController::showCandidatesFor(const QString& typeName) {
       if (p.cancelled()) return;
       const Sketch sk = Sketch::from_json(src.geometry);
       if (type == "profiles") {
-        for (const auto& r : sketch_regions(sk, src.frame)) found->push_back({opad::json{{"sketch", src.id}, {"at", {r.u, r.v}}, {"boundary",r.boundary}}.dump(), r.face, false});
+        // Meshed and turned into arrays here: meshing a document's worth of regions on the UI thread stalled it for 1.2 s.
+        for (const auto& r : sketch_regions(sk, src.frame)) {
+          if (p.cancelled()) return;
+          BRepMesh_IncrementalMesh(r.face, 0.05, Standard_False, 0.3, Standard_False);
+          Bnd_Box box;
+          BRepBndLib::Add(r.face, box);
+          found->push_back({opad::json{{"sketch", src.id}, {"at", {r.u, r.v}}, {"boundary",r.boundary}}.dump(), r.face, false, BodyPrs::build(r.face, box, true)});
+        }
       } else if (type == "points") {
         for (const auto& pt : sk.points) {
           const opad::Vec3 w = src.frame.to_world(pt.x, pt.y);
@@ -539,12 +597,25 @@ void DesignController::schedulePreview() {
   // While the handle is pulled, preview as fast as plans come back (the latest value wins) instead of waiting for
   // the pointer to rest: the body follows the drag as if its face were dragged. Otherwise inputs settle first.
   if (m_distanceHandle && m_distanceHandle->dragging()) {
+    stretchPreview(m_distanceHandle->value());  // at once: plans take 15 ms here, 150 ms on a large model
     m_previewTimer.stop();
     if (m_planJob) m_previewPending = true;
     else runPreview(false);
     return;
   }
   m_previewTimer.start();
+}
+
+void DesignController::stretchPreview(double value) {
+  if (!m_stretch.valid || std::fabs(m_stretch.from) < 1e-9) return;
+  const double k = value / m_stretch.from;
+  size_t vertices = 0;
+  for (const auto& base : m_stretch.base)
+    if (base && !base->triangles.IsNull()) vertices += size_t(base->triangles->VertexNumber());
+  if (vertices > 600000) return;  // copying that many per mouse move would itself lag: the plans alone update it
+  std::vector<std::shared_ptr<const BodyPrs>> shown;
+  for (const auto& base : m_stretch.base) shown.push_back(base && std::fabs(k - 1) > 1e-12 ? stretchedPrs(*base, m_stretch, k) : nullptr);
+  m_viewport->setPreviewDisplay(shown);
 }
 
 void DesignController::runPreview(bool commit) {
@@ -587,30 +658,43 @@ void DesignController::runPreview(bool commit) {
   const std::string target = m_editing.empty() ? m_newId : m_editing;
   const std::string kind = m_form->spec()->kind;
   const bool editing = !m_editing.empty();
-  const auto generation = m_doc->generation;
   auto plan = std::make_shared<Plan>();
   auto anchors=std::make_shared<std::vector<DimensionHandle::Segment>>();
-  auto scene = std::make_shared<opad::Scene>(m_doc->scene);  // the rolled-back state the picks were made in
-  auto doc = std::make_shared<opad::Document>(m_doc->doc);
+  auto meshes = std::make_shared<std::vector<std::shared_ptr<const BodyPrs>>>();  // per plan->changed entry
+  // The rolled-back state the picks were made in. Copied once per document state, not once per plan.
+  const auto stamp_now = std::make_tuple(m_doc->generation, m_doc->revision, m_doc->doc.ops.size());
+  if (!m_planDoc || !m_planScene || m_planStamp != stamp_now) {
+    m_planDoc = std::make_shared<const opad::Document>(m_doc->doc);
+    m_planScene = std::make_shared<const opad::Scene>(m_doc->scene);
+    m_planStamp = stamp_now;
+  }
+  auto scene = m_planScene;
+  auto doc = m_planDoc;
+  const bool symmetric = inputs.value("direction", "") == "symmetric";
   m_form->setStatus(tr("Computing…"), false);
-  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan,anchors](Progress p) {
+  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric](Progress p) {
     Reading reading;
     const opad::json hinted = hint_refs(*doc, *scene, inputs);
     opad::json op = editing ? make_edit_op(target, opad::json{{"inputs", hinted}, {"name", name}}) : make_feature_op(kind, name, hinted);
     if (!editing) op["id"] = target;
     *plan = plan_ops(*doc, {op}, true, [p] { return p.cancelled(); });
-    for (auto& c : plan->changed)  // the preview is displayed without meshing on the UI thread
+    meshes->resize(plan->changed.size());
+    for (size_t i = 0; i < plan->changed.size(); ++i) {  // the preview is displayed without meshing or walking meshes on the UI thread
+      auto& c = plan->changed[i];
       if (c.op == target && c.shape && !c.shape->IsNull()) {
+        if (p.cancelled()) return;
         Bnd_Box box;
         BRepBndLib::Add(*c.shape, box, Standard_False);
         const double defl = box.IsVoid() ? 0.1 : std::clamp(std::sqrt(box.SquareExtent()) * 0.002, 0.02, 2.0);
         BodyPrs::meshForDisplay(*c.shape, defl);
+        (*meshes)[i] = BodyPrs::build(*c.shape, box, true);
       }
+    }
     if(kind=="extrude")for(const auto& op:plan->ops){
       opad::json result;if(op.value("id","")==target)result=op.value("result",opad::json());
       if(op.value("op","")=="regen" && op.at("results").contains(target))result=op.at("results").at(target);
       if(!result.is_object() || !result.contains("distance_handle"))continue;const auto& h=result.at("distance_handle");
-      const auto origin=h.at("origin").get<opad::Vec3>(),axis=h.at("axis").get<opad::Vec3>();const double value=h.at("value");
+      const auto origin=h.at("origin").get<opad::Vec3>(),axis=h.at("axis").get<opad::Vec3>();const double value=h.at("value").get<double>()*(symmetric?0.5:1.0);
       const gp_Vec direction(axis[0],axis[1],axis[2]);const auto tip=gp_Pnt(origin[0],origin[1],origin[2]).Translated(direction*value);
       for(const auto& c:plan->changed)if(c.op==target && c.shape)for(TopExp_Explorer edges(*c.shape,TopAbs_EDGE);edges.More();edges.Next()){
         if(p.cancelled())return;const auto points=curveSamples(TopoDS::Edge(edges.Current()),.05);
@@ -619,7 +703,7 @@ void DesignController::runPreview(bool commit) {
         }
       }
     }
-  }, [this, serial, plan, stamp, target, commit, commitReady,anchors](bool ok, const QString& error) {
+  }, [this, serial, plan, stamp, target, commit, commitReady, anchors, meshes, symmetric](bool ok, const QString& error) {
     if (serial != m_planSerial || !m_featureOn) return;  // superseded
     m_planJob = nullptr;
     // A drag moved on while this plan ran: show this one, then plan the latest value.
@@ -637,6 +721,7 @@ void DesignController::runPreview(bool commit) {
     m_form->setStatus(QString(), false);
     if (commit) return commitReady();
     bool hasHandle=false;
+    m_stretch = {};
     for(const auto& op:plan->ops) {
       opad::json result;
       if(op.value("id","")==target)result=op.value("result",opad::json());
@@ -647,19 +732,38 @@ void DesignController::runPreview(bool commit) {
       }
       if(result.is_object() && result.contains("distance_handle")) {
         hasHandle=true;const auto& handle=result.at("distance_handle");
+        const auto origin=handle.at("origin").get<opad::Vec3>(),axis=handle.at("axis").get<opad::Vec3>();const double value=handle.at("value").get<double>();
+        // What the live stretch needs: the profile plane, the axis, this plan's distance and the profile's footprint.
+        const gp_Vec a(axis[0],axis[1],axis[2]);
+        if(a.Magnitude()>1e-12) {
+          const gp_Dir n(a);const gp_Dir u=std::abs(n.Z())<0.9?n.Crossed(gp::DZ()):n.Crossed(gp::DX());const gp_Dir v=n.Crossed(u);
+          m_stretch.valid=true;m_stretch.symmetric=symmetric;m_stretch.from=value;m_stretch.origin=origin;
+          m_stretch.axis={n.X(),n.Y(),n.Z()};m_stretch.u={u.X(),u.Y(),u.Z()};m_stretch.v={v.X(),v.Y(),v.Z()};
+          const gp_Pnt o(origin[0],origin[1],origin[2]);double u0=1e300,u1=-1e300,v0=1e300,v1=-1e300;
+          for(const auto& segment:*anchors)for(const auto& end:segment){const gp_Vec rel(o,gp_Pnt(end[0],end[1],end[2]));
+            u0=std::min(u0,rel.Dot(gp_Vec(u)));u1=std::max(u1,rel.Dot(gp_Vec(u)));v0=std::min(v0,rel.Dot(gp_Vec(v)));v1=std::max(v1,rel.Dot(gp_Vec(v)));}
+          if(u0<=u1 && v0<=v1) {
+            const double margin=std::max(1e-6,0.02*std::hypot(u1-u0,v1-v0));
+            m_stretch.footprint=true;m_stretch.u0=u0-margin;m_stretch.u1=u1+margin;m_stretch.v0=v0-margin;m_stretch.v1=v1+margin;
+          }
+        }
+        m_distanceHandle->setScale(symmetric?0.5:1.0);  // a symmetric extrusion's end moves half the distance: so does the arrow
         m_distanceHandle->setAnchorSegments(std::move(*anchors));
-        m_distanceHandle->configure(handle.at("origin").get<opad::Vec3>(),handle.at("axis").get<opad::Vec3>(),handle.at("value").get<double>(),QString::fromStdString(m_form->inputs().at("distance").get<std::string>()));
+        m_distanceHandle->configure(origin,axis,value,QString::fromStdString(m_form->inputs().at("distance").get<std::string>()));
       }
     }
     if(!hasHandle)m_distanceHandle->hide();
-    std::vector<std::pair<std::string, TopoDS_Shape>> shapes;
+    std::vector<Viewport::PreviewPart> parts;
     std::vector<std::string> hidden;
-    for (const auto& c : plan->changed) {
+    for (size_t i = 0; i < plan->changed.size(); ++i) {
+      const auto& c = plan->changed[i];
       if (c.op != target) continue;
       if (c.removed) hidden.push_back(c.node);
-      else if (c.shape) shapes.push_back({m_doc->scene.node(c.node) ? c.node : std::string(), *c.shape});
+      else if (c.shape && !c.shape->IsNull()) parts.push_back({m_doc->scene.node(c.node) ? c.node : std::string(), *c.shape, i < meshes->size() ? (*meshes)[i] : nullptr});
     }
-    m_viewport->setPreviewBodies(shapes, hidden);
+    m_viewport->setPreviewBodies(parts, hidden);
+    if (m_stretch.valid) for (const auto& part : parts) m_stretch.base.push_back(part.prs);
+    if (m_distanceHandle->dragging()) stretchPreview(m_distanceHandle->value());  // this plan is for an older value
   });
 }
 

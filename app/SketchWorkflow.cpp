@@ -8,7 +8,9 @@
 #include <QImage>
 #include <QFileInfo>
 #include "Jobs.hpp"
+#include <algorithm>
 #include <cmath>
+#include <map>
 #include "I18n.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_modify.hpp"
@@ -144,12 +146,17 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
   },[this,guard,before,after,solved,session,preview,previewRevision,modelRevision,shape,prs](bool ok,const QString& error){
     if(!guard || !m_active || m_session!=session)return;
     m_editJob=nullptr;m_previewComputing=false;
-    if(preview && previewRevision!=m_previewRevision)return;
-    if(!ok){emit status(error);return;}
+    // A preview for an older value: shown while the handle is still dragged (the newest one is computed next), but
+    // never kept for Apply. Otherwise the newer run replaces it.
+    const bool stale=preview && previewRevision!=m_previewRevision;
+    if(stale && !m_dimensionHandle->dragging())return;
+    if(!ok){if(!stale){if(preview){m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();}emit status(error);}return;}
     if(m_modelRevision!=modelRevision)return;
-    if(preview){m_toolPreview=after;m_previewSolved=*solved;
-      auto overlay=new BodyShape(*shape,*prs);overlay->SetColor(Quantity_Color(.95,.65,.2,Quantity_TOC_sRGB));overlay->SetWidth(2);m_toolPreviewOverlay=overlay;if(m_visible)m_viewport->showOverlay(m_toolPreviewOverlay);
-      emit status(tr("Preview ready. Apply to keep it, or change parameters and preview again."));return;}
+    if(preview){
+      if(!stale){m_toolPreview=after;m_previewSolved=*solved;}
+      m_viewport->removeOverlay(m_toolPreviewOverlay);
+      auto overlay=new BodyShape(*shape,*prs);overlay->SetColor(Quantity_Color(.95,.65,.2,Quantity_TOC_sRGB));overlay->SetWidth(2*m_viewport->displayScale());m_toolPreviewOverlay=overlay;if(m_visible)m_viewport->showOverlay(m_toolPreviewOverlay);
+      if(!stale)emit status(tr("Preview ready. Apply to keep it, or change parameters and preview again."));return;}
     ++m_modelRevision;m_undo.push_back({*before,m_plane,m_frame});m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;m_panelFieldsDirty=true;
     m_clicks.clear();m_picked.clear();m_sel.clear();rebuild();scheduleFill();toolPrompt();emit changed();
     if(m_tool=="mirror")m_options["mirrorStage"]="seed";
@@ -319,24 +326,38 @@ void SketchEditor::analyseSketch() {
 }
 
 void SketchEditor::previewTool() {
-  if(!m_active||m_editJob)return;invalidatePreview();m_previewRequested=true;applyTool();m_previewRequested=false;
+  // The shown preview stays until this one replaces it (or fails): no blank frame between two previews.
+  if(!m_active||m_editJob)return;invalidatePreview(true);m_previewRequested=true;applyTool();m_previewRequested=false;
 }
-void SketchEditor::invalidatePreview() {
+void SketchEditor::invalidatePreview(bool keepOverlay) {
   ++m_previewRevision;
-  m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
+  if(!keepOverlay){m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();}
   if(!m_toolPreview)return;m_toolPreview.reset();rebuild();
 }
 void SketchEditor::scheduleToolPreview() {
-  invalidatePreview();updateDimensionHandle();
+  // While the offset arrow is dragged the preview follows as fast as it is computed (throttled, the shown one stays
+  // until the next replaces it); otherwise it waits for the value to rest. Restarting the timer on every move meant
+  // no preview until the button was let go.
+  const bool live=m_dimensionHandle->dragging();
+  invalidatePreview(live);updateDimensionHandle();
   const QStringList tools={"offset","move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","chamfer","union","subtract","intersect"};
-  if(m_active && tools.contains(m_tool) && (!m_sel.empty() || m_clicks.size()==2))m_toolPreviewTimer.start();
+  if(m_active && tools.contains(m_tool) && (!m_sel.empty() || m_clicks.size()==2)) {
+    if(!live)m_toolPreviewTimer.start(120);
+    else if(!m_toolPreviewTimer.isActive())m_toolPreviewTimer.start(16);
+  }
   else m_toolPreviewTimer.stop();
 }
 void SketchEditor::updateDimensionHandle() {
   if(!m_active || !m_visible || m_tool!="offset" || m_sel.empty()){m_dimensionHandle->hide();return;}
   if(m_dimensionHandle->interacting())return;
-  const SkEntity* entity=std::find(m_sel.begin(),m_sel.end(),m_hover.id)!=m_sel.end()?m_sk.entity(m_hover.id):nullptr;
-  if(!entity)for(int id:m_sel)if((entity=m_sk.entity(id)))break;if(!entity || entity->p.empty())return;
+  // The arrow goes to the selected curve under the pointer and stays on it after the pointer leaves it (on its way to
+  // the arrow): falling back to the first selected curve made the arrow jump back there, so only that edge could be
+  // pulled.
+  auto selected=[&](int id){return std::find(m_sel.begin(),m_sel.end(),id)!=m_sel.end() && m_sk.entity(id);};
+  if(m_hover.kind==Hit::Entity && selected(m_hover.id))m_offsetAnchor=m_hover.id;
+  if(!selected(m_offsetAnchor)){m_offsetAnchor=0;for(int id:m_sel)if(m_sk.entity(id)){m_offsetAnchor=id;break;}}
+  const SkEntity* entity=m_offsetAnchor?m_sk.entity(m_offsetAnchor):nullptr;
+  if(!entity || entity->p.empty())return;
   const auto* a=m_sk.point(entity->p.front());if(!a)return;
   double x=a->x,y=a->y,dx=1,dy=0;
   if(entity->type==SkEntity::Type::Circle || entity->type==SkEntity::Type::Arc){
@@ -352,6 +373,19 @@ void SketchEditor::updateDimensionHandle() {
         const double t=std::clamp(((m_cursor.u-ax)*ex+(m_cursor.v-ay)*ey)/l2,0.,1.),px=ax+t*ex,py=ay+t*ey,d=std::hypot(px-m_cursor.u,py-m_cursor.v);
         if(d<best){best=d;x=px;y=py;dx=ey/std::sqrt(l2);dy=-ex/std::sqrt(l2);}
       }
+    }
+    // A closed chain grows outward for a positive distance whichever way its curves run: point the arrow outward.
+    std::vector<std::pair<std::pair<double,double>,std::pair<double,double>>> loop;std::map<int,int> ends;
+    for(int id:m_sel)if(const auto* e=m_sk.entity(id)) {
+      if(e->type==SkEntity::Type::Line || e->type==SkEntity::Type::Arc || e->type==SkEntity::Type::Spline){
+        const int first=e->type==SkEntity::Type::Arc?e->p[1]:e->p.front(),last=e->type==SkEntity::Type::Arc?e->p[2]:e->p.back();++ends[first];++ends[last];}
+      const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i)loop.push_back({pts[i-1],pts[i]});
+    }
+    const bool closed=!ends.empty() && std::all_of(ends.begin(),ends.end(),[](const auto& end){return end.second%2==0;});
+    if(closed) {
+      const double probe=std::max(1e-9,0.25*tol());const double qx=x+dx*probe,qy=y+dy*probe;bool inside=false;
+      for(const auto& [a,b]:loop)if((a.second>qy)!=(b.second>qy) && qx<a.first+(qy-a.second)*(b.first-a.first)/(b.second-a.second))inside=!inside;
+      if(inside){dx=-dx;dy=-dy;}
     }
   }
   try {

@@ -122,9 +122,13 @@ void SketchEditor::finishChain() {
     begin_change();
     add_cubic_spline(m_sk,m_chain);
     end_change(tr("Spline"));
-  } else if (m_chain.size() == 1) {
-    // A start point that never got its segment.
-    m_sk.remove(m_chain.front());
+  } else if (m_chain.size() == 1 && m_undo.size() > m_chainUndoStart) {
+    // A start point that never got its segment: back to before that click. (Removing the point by id deleted an
+    // existing point the chain had started on, a rectangle corner with its sides.)
+    m_sk = m_undo[m_chainUndoStart].geometry;
+    m_undo.erase(m_undo.begin() + static_cast<std::ptrdiff_t>(m_chainUndoStart), m_undo.end());
+    analyseSketch();
+    scheduleFill();
   }
   if(!m_chain.empty() && m_undo.size()>m_chainUndoStart+1)m_undo.erase(m_undo.begin()+m_chainUndoStart+1,m_undo.end());
   m_chain.clear();

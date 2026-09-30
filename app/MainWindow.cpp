@@ -56,6 +56,7 @@
 #include "opad/inspect.hpp"
 
 #include <Bnd_Box.hxx>
+#include <BRepBndLib.hxx>
 #include <QElapsedTimer>
 
 #include <algorithm>
@@ -328,7 +329,7 @@ void MainWindow::buildActions() {
   // File
   addAction("file.new", tr("&New document"), "doc", QKeySequence::New, [this] { if (maybeSave()) m_doc->newDocument(); });
   addAction("file.open", tr("&Open…"), "open", QKeySequence("Ctrl+O"), [this] {
-    if (!maybeSave()) return;
+    // openPath asks about unsaved changes once a file is chosen (asking here too asked twice after Discard).
     QString p = QFileDialog::getOpenFileName(this, tr("Open"), m_settings.value("ui/lastDir").toString(), tr("Design files (*.opad *.step *.stp *.dxf *.svg *.dwg *.stl *.obj);;OPAD document (*.opad);;STEP (*.step *.stp);;2D drawings (*.dxf *.svg *.dwg);;Meshes (*.stl *.obj)"));
     if (!p.isEmpty()) openPath(p);
   });
@@ -2245,14 +2246,18 @@ void MainWindow::showFinding(const opad::json& f) {
     auto document = std::make_shared<opad::Document>(m_doc->doc);
     auto scene = std::make_shared<opad::Scene>(m_doc->scene);
     auto shape = std::make_shared<TopoDS_Shape>();
-    m_overlapJob = m_jobs->async(tr("Showing the overlap"), [document, scene, a, b, shape](Progress) {
+    auto prs = std::make_shared<std::shared_ptr<const BodyPrs>>();
+    m_overlapJob = m_jobs->async(tr("Showing the overlap"), [document, scene, a, b, shape, prs](Progress) {
       BRepAlgoAPI_Common common(opad::node_world_shape(*document, *scene, a), opad::node_world_shape(*document, *scene, b));
       if (!common.IsDone()) return;
       *shape = common.Shape();
       BodyPrs::meshForDisplay(*shape, 0.05);
-    }, [this, shape](bool ok, const QString&) {
+      Bnd_Box box;
+      BRepBndLib::Add(*shape, box, Standard_False);
+      *prs = BodyPrs::build(*shape, box, true);
+    }, [this, shape, prs](bool ok, const QString&) {
       m_overlapJob = nullptr;
-      if (ok && !shape->IsNull() && m_toolStack->currentWidget() == m_checks) m_viewport->setPreviewBodies({{std::string(), *shape}}, {});
+      if (ok && !shape->IsNull() && m_toolStack->currentWidget() == m_checks) m_viewport->setPreviewBodies(std::vector<Viewport::PreviewPart>{{std::string(), *shape, *prs}}, {});
     });
     return;
   }
