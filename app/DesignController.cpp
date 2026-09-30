@@ -11,6 +11,8 @@
 
 #include <BRepBndLib.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <gp.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -60,6 +62,20 @@ Viewport::SelFilter filterFor(const std::string& type) {
 QString titleCase(const std::string& label) { return QString::fromStdString(label).section(' ', 0, 0); }
 
 gp_Pnt pnt(const opad::Vec3& v) { return gp_Pnt(v[0], v[1], v[2]); }
+
+// What a plan says the op `target` makes (its own result, or a regeneration's). An edit that changed nothing is not
+// recomputed: then the stored `fallback`, so its handle shows as well.
+std::vector<opad::json> resultsFor(const Plan& plan, const std::string& target, const opad::json& fallback) {
+  std::vector<opad::json> out;
+  for (const auto& op : plan.ops) {
+    opad::json result;
+    if (op.value("id", "") == target) result = op.value("result", opad::json());
+    if (op.value("op", "") == "regen" && op.at("results").contains(target)) result = op.at("results").at(target);
+    if (result.is_object()) out.push_back(result);
+  }
+  if (out.empty() && fallback.is_object()) out.push_back(fallback);
+  return out;
+}
 
 // A preview pulled along the extrusion to k times its distance without planning again: vertices between the profile
 // plane and the moving end, inside the profile's footprint, scale along the axis; everything else (the other side of
@@ -301,6 +317,7 @@ void DesignController::editOp(const std::string& opId) {
   if (!spec) return;
   const opad::Feature feature = *f;
   bool hidden=false;for(const auto& body:feature.result.value("bodies",opad::json::array())){const auto id=body.value("id",std::string());if(m_doc->scene.node(id) && !m_doc->scene.effectively_visible(id))hidden=true;}
+  m_editResult = feature.result;
   m_doc->setRollback(opId);
   m_editing = opId;
   m_featureOn = true;
@@ -352,6 +369,7 @@ void DesignController::endFeature() {
   m_activating = false;
   m_form->activate(QString());
   m_editing.clear();
+  m_editResult = opad::json();
   if (m_panel && m_panel->isVisible()) m_panel->hide();
   m_doc->setRollback({});
   emit status(QString());
@@ -696,13 +714,34 @@ void DesignController::runPreview(bool commit) {
   auto scene = m_planScene;
   auto doc = m_planDoc;
   const bool symmetric = inputs.value("direction", "") == "symmetric";
+  const opad::json editResult = editing ? m_editResult : opad::json();
   m_form->setStatus(tr("Computing…"), false);
-  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric](Progress p) {
+  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult](Progress p) {
     Reading reading;
     const opad::json hinted = hint_refs(*doc, *scene, inputs);
     opad::json op = editing ? make_edit_op(target, opad::json{{"inputs", hinted}, {"name", name}}) : make_feature_op(kind, name, hinted);
     if (!editing) op["id"] = target;
     *plan = plan_ops(*doc, {op}, true, [p] { return p.cancelled(); });
+    // An edit that changes nothing is not recomputed (its fingerprint matches), so the plan has nothing to show and the
+    // rolled-back view was empty while the feature was open: show what it makes now. Copies are meshed, not the cached
+    // prototypes the view draws.
+    if (editing && std::none_of(plan->changed.begin(), plan->changed.end(), [&](const Plan::Changed& c) { return c.op == target; })) {
+      for (const auto& entry : editResult.value("bodies", opad::json::array())) {
+        if (p.cancelled()) return;
+        const std::string id = entry.value("id", ""), key = entry.value("key", "");
+        if (key.empty() || !doc->has_body(key)) continue;
+        TopoDS_Shape shape = BRepBuilderAPI_Copy(opad::body_shape(*doc, key)).Shape();
+        const opad::Node* node = scene->node(id);
+        const std::string parent = node ? node->parent : entry.value("parent", "");
+        if (!parent.empty() && scene->node(parent)) try {
+          shape = BRepBuilderAPI_Transform(shape, opad::trsf_from_mat(scene->world(parent)), Standard_True).Shape();
+        } catch (const std::exception&) {
+        }
+        plan->changed.push_back({target, id, std::make_shared<TopoDS_Shape>(shape), false});
+      }
+      for (const auto& removed : editResult.value("removed", opad::json::array()))
+        if (removed.is_string()) plan->changed.push_back({target, removed.get<std::string>(), nullptr, true});
+    }
     meshes->resize(plan->changed.size());
     for (size_t i = 0; i < plan->changed.size(); ++i) {  // the preview is displayed without meshing or walking meshes on the UI thread
       auto& c = plan->changed[i];
@@ -715,10 +754,8 @@ void DesignController::runPreview(bool commit) {
         (*meshes)[i] = BodyPrs::build(*c.shape, box, true);
       }
     }
-    if(kind=="extrude")for(const auto& op:plan->ops){
-      opad::json result;if(op.value("id","")==target)result=op.value("result",opad::json());
-      if(op.value("op","")=="regen" && op.at("results").contains(target))result=op.at("results").at(target);
-      if(!result.is_object() || !result.contains("distance_handle"))continue;const auto& h=result.at("distance_handle");
+    if(kind=="extrude")for(const auto& result:resultsFor(*plan,target,editResult)){
+      if(!result.contains("distance_handle"))continue;const auto& h=result.at("distance_handle");
       const auto origin=h.at("origin").get<opad::Vec3>(),axis=h.at("axis").get<opad::Vec3>();const double value=h.at("value").get<double>()*(symmetric?0.5:1.0);
       const gp_Vec direction(axis[0],axis[1],axis[2]);const auto tip=gp_Pnt(origin[0],origin[1],origin[2]).Translated(direction*value);
       for(const auto& c:plan->changed)if(c.op==target && c.shape)for(TopExp_Explorer edges(*c.shape,TopAbs_EDGE);edges.More();edges.Next()){
@@ -728,7 +765,7 @@ void DesignController::runPreview(bool commit) {
         }
       }
     }
-  }, [this, serial, plan, stamp, target, commit, commitReady, anchors, meshes, symmetric](bool ok, const QString& error) {
+  }, [this, serial, plan, stamp, target, commit, commitReady, anchors, meshes, symmetric, editResult](bool ok, const QString& error) {
     if (serial != m_planSerial || !m_featureOn) return;  // superseded
     m_planJob = nullptr;
     // A drag moved on while this plan ran: show this one, then plan the latest value.
@@ -747,10 +784,7 @@ void DesignController::runPreview(bool commit) {
     if (commit) return commitReady();
     bool hasHandle=false;
     m_stretch = {};
-    for(const auto& op:plan->ops) {
-      opad::json result;
-      if(op.value("id","")==target)result=op.value("result",opad::json());
-      if(op.value("op","")=="regen" && op.at("results").contains(target))result=op.at("results").at(target);
+    for(const auto& result:resultsFor(*plan,target,editResult)) {
       if(result.is_object() && result.contains("check")) {  // an interference check: what it found (gap log #10)
         const auto& found=result.at("check");const int overlaps=found.value("interferences",0),close=found.value("too_close",0);
         m_form->setStatus(overlaps||close?tr("%1 interference(s), %2 pair(s) too close").arg(overlaps).arg(close):tr("No interference"),result.contains("error"));

@@ -98,6 +98,7 @@ class DesignController : public QObject {
 
   bool m_featureOn = false;
   std::string m_editing;        // feature op being edited (empty: a new one)
+  opad::json m_editResult;      // what that feature made when editing began: the preview until an input changes it
   bool m_previewPending = false;  // a handle drag changed the value while a preview plan was running
   std::string m_newId;          // id the new feature's op will get (so previews can be matched to it)
   std::function<void(opad::json,opad::Frame)> m_planePicked;
