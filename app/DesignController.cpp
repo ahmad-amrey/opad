@@ -149,7 +149,8 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
     endFeature();
     if (m_pickPlane) escape();
     m_sketch->end();
-    if (m_params) m_params->hide();
+    // The panel closes, not the table inside it: hiding that left the Parameters panel empty after any New or Open.
+    if (m_parametersPanel) m_parametersPanel->hide();
     m_doc->designBusy = false;
     emit stateChanged();
   });

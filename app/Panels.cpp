@@ -979,7 +979,15 @@ PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
 void PropertiesPanel::addRow(const QString& key, const opad::json& v) {
   const Tokens& t = theme::current();
   auto* row = new QTreeWidgetItem(m_table);
-  row->setText(0, i18n::t(key));  // property names come from the core as data
+  // Property names come from the core as data. Untranslated (English), the key is shown as words: "center_of_mass"
+  // and "bbox min" read "Center of mass" and "Box min".
+  QString label = i18n::t(key);
+  if (label == key) {
+    label.replace('_', ' ');
+    if (label.startsWith("bbox")) label.replace(0, 4, "box");
+    if (!label.isEmpty()) label[0] = label[0].toUpper();
+  }
+  row->setText(0, label);
   row->setData(0, kPropKeyRole, key);
   row->setForeground(0, t.fg2);
   row->setToolTip(1, fmtValue(v));
@@ -1202,6 +1210,7 @@ SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   layout->setSpacing(8);
   m_state = new QLabel(this);
   m_state->setObjectName("secondary");
+  m_state->setWordWrap(true);  // the hint is longer than the panel is wide: it was cut off mid-word
   layout->addWidget(m_state);
   auto* axisLabel = new QLabel(tr("AXIS"), this);
   axisLabel->setObjectName("sectionHeader");
