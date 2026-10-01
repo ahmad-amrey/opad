@@ -301,7 +301,9 @@ void Viewport::setPreviewBodies(const std::vector<PreviewPart>& parts, const std
       }
     }
     ais->SetColor(occ(tint));
-    ais->SetTransparency(0.25);
+    // A lone face is a construction plane's sheet: see-through, it must not hide the model it cuts through.
+    ais->SetTransparency(shape.ShapeType() == TopAbs_FACE ? 0.78 : 0.25);
+    if (shape.ShapeType() == TopAbs_EDGE) ais->SetWidth(2.5);  // a construction axis
     ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
     ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.0));
     m_ctx->Display(ais, AIS_Shaded, -1, Standard_False);

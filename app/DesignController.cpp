@@ -379,12 +379,8 @@ void DesignController::endFeature() {
 
 opad::json DesignController::pickToJson(const opad::Ref& ref) const { return ref.to_json(); }
 
-void DesignController::showCandidatesFor(const QString& typeName) {
-  if (Job* j = std::exchange(m_candidateJob, nullptr)) j->cancel();
-  m_nothingToPick.clear();
-  const std::string type = typeName.toStdString();
-  std::vector<Viewport::Candidate> quick;
-  // Size of axis candidates: a little more than what is on screen.
+// A little more than the model: how long axes and how wide planes are drawn.
+double DesignController::modelReach() const {
   double reach = 50;
   for (const auto& id : m_doc->scene.all_bodies()) {
     try {
@@ -393,6 +389,15 @@ void DesignController::showCandidatesFor(const QString& typeName) {
     } catch (const std::exception&) {
     }
   }
+  return reach;
+}
+
+void DesignController::showCandidatesFor(const QString& typeName) {
+  if (Job* j = std::exchange(m_candidateJob, nullptr)) j->cancel();
+  m_nothingToPick.clear();
+  const std::string type = typeName.toStdString();
+  std::vector<Viewport::Candidate> quick;
+  const double reach = modelReach();  // size of axis candidates
   if (type == "axis") {
     for (const auto& [base, dir] : {std::pair{"x", gp_Dir(1, 0, 0)}, std::pair{"y", gp_Dir(0, 1, 0)}, std::pair{"z", gp_Dir(0, 0, 1)}})
       quick.push_back({opad::json{{"base", base}}.dump(), BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0).Translated(gp_Vec(dir) * -reach), gp_Pnt(0, 0, 0).Translated(gp_Vec(dir) * reach)).Edge(), false});
@@ -723,8 +728,12 @@ void DesignController::runPreview(bool commit) {
   auto doc = m_planDoc;
   const bool symmetric = inputs.value("direction", "") == "symmetric";
   const opad::json editResult = editing ? m_editResult : opad::json();
+  // A construction plane or axis makes no body: its preview is the plane (a square about the model's size) or the axis
+  // line, else nothing showed where it would go.
+  const double reach = kind == "plane" || kind == "axis" ? modelReach() : 0.0;
+  auto construction = std::make_shared<std::vector<Viewport::PreviewPart>>();
   m_form->setStatus(tr("Computing…"), false);
-  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult](Progress p) {
+  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult, reach, construction](Progress p) {
     Reading reading;
     const opad::json hinted = hint_refs(*doc, *scene, inputs);
     opad::json op = editing ? make_edit_op(target, opad::json{{"inputs", hinted}, {"name", name}}) : make_feature_op(kind, name, hinted);
@@ -762,6 +771,26 @@ void DesignController::runPreview(bool commit) {
         (*meshes)[i] = BodyPrs::build(*c.shape, box, true);
       }
     }
+    if (reach > 0) for (const auto& result : resultsFor(*plan, target, editResult)) {
+      if (p.cancelled() || !result.is_object()) continue;
+      TopoDS_Shape shape;
+      if (result.contains("plane")) {
+        const opad::Frame f = opad::Frame::from_json(result.at("plane"));
+        const opad::Vec3 n = f.normal();
+        const double h = reach * 0.6;
+        shape = BRepBuilderAPI_MakeFace(gp_Pln(gp_Ax3(gp_Pnt(f.origin[0], f.origin[1], f.origin[2]), gp_Dir(n[0], n[1], n[2]), gp_Dir(f.x[0], f.x[1], f.x[2]))), -h, h, -h, h).Face();
+      } else if (result.contains("axis")) {
+        const auto& a = result.at("axis");
+        const gp_Pnt o(a["origin"][0], a["origin"][1], a["origin"][2]);
+        const gp_Vec d = gp_Vec(a["dir"][0], a["dir"][1], a["dir"][2]).Normalized() * reach;
+        shape = BRepBuilderAPI_MakeEdge(o.Translated(-d), o.Translated(d)).Edge();
+      }
+      if (shape.IsNull()) continue;
+      Bnd_Box box;
+      BRepBndLib::Add(shape, box, Standard_False);
+      BodyPrs::meshForDisplay(shape, std::max(0.01, reach * 0.001));
+      construction->push_back({std::string(), shape, BodyPrs::build(shape, box, true)});
+    }
     if(kind=="extrude")for(const auto& result:resultsFor(*plan,target,editResult)){
       if(!result.contains("distance_handle"))continue;const auto& h=result.at("distance_handle");
       const auto origin=h.at("origin").get<opad::Vec3>(),axis=h.at("axis").get<opad::Vec3>();const double value=h.at("value").get<double>()*(symmetric?0.5:1.0);
@@ -773,7 +802,7 @@ void DesignController::runPreview(bool commit) {
         }
       }
     }
-  }, [this, serial, plan, stamp, target, commit, commitReady, anchors, meshes, symmetric, editResult](bool ok, const QString& error) {
+  }, [this, serial, plan, stamp, target, commit, commitReady, anchors, meshes, symmetric, editResult, construction](bool ok, const QString& error) {
     if (serial != m_planSerial || !m_featureOn) return;  // superseded
     m_planJob = nullptr;
     // A drag moved on while this plan ran: show this one, then plan the latest value.
@@ -828,6 +857,7 @@ void DesignController::runPreview(bool commit) {
       if (c.removed) hidden.push_back(c.node);
       else if (c.shape && !c.shape->IsNull()) parts.push_back({m_doc->scene.node(c.node) ? c.node : std::string(), *c.shape, i < meshes->size() ? (*meshes)[i] : nullptr});
     }
+    parts.insert(parts.end(), construction->begin(), construction->end());
     m_viewport->setPreviewBodies(parts, hidden);
     if (m_stretch.valid) for (const auto& part : parts) m_stretch.base.push_back(part.prs);
     if (m_distanceHandle->dragging()) stretchPreview(m_distanceHandle->value());  // this plan is for an older value

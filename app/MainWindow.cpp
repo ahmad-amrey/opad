@@ -477,6 +477,13 @@ void MainWindow::buildActions() {
     }, true);
     if (f == Viewport::SelFilter::Body) a->setChecked(true);
   }
+  // A feature input, a guided tool or a sketch sets the filter it picks with: the chips show what the view picks,
+  // whoever chose it (they stayed on Bodies while a pipe's path picked edges).
+  connect(m_viewport, &Viewport::filterApplied, this, [this] {
+    const Viewport::SelFilter f = m_viewport->selectionFilter();
+    for (const auto& [name, filter] : std::vector<std::pair<QString, Viewport::SelFilter>>{{"bodies", Viewport::SelFilter::Body}, {"faces", Viewport::SelFilter::Face}, {"edges", Viewport::SelFilter::Edge}, {"vertices", Viewport::SelFilter::Vertex}})
+      if (QAction* a = action("select." + name)) a->setChecked(filter == f);
+  });
 
   // Inspect
   addAction("inspect.distance", tr("Distance"), "distance", QKeySequence("D"), [this] { toggleTool("distance"); }, true);

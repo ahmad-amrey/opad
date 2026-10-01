@@ -72,6 +72,7 @@ class DesignController : public QObject {
   void endFeature();
   void activateInput(const QString& name);
   void showCandidatesFor(const QString& type);
+  double modelReach() const;
   void syncSelectionToInput();
   void schedulePreview();
   void runPreview(bool commit);
