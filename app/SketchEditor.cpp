@@ -24,12 +24,15 @@
 #include <QApplication>
 #include <QSettings>
 #include <QPointer>
+#include <QFontMetricsF>
+#include <QPainterPath>
 #include <cmath>
 
 #include "I18n.hpp"
 #include "Jobs.hpp"
 #include "opad/design/expr.hpp"
 #include "opad/design/sketch_geom.hpp"
+#include "opad/design/sketch_text.hpp"
 
 using namespace opad::design;
 
@@ -1050,6 +1053,41 @@ void SketchEditor::rebuild() {
   updateTransient();
 }
 
+const std::vector<std::vector<std::pair<double, double>>>& SketchEditor::textPreview() {
+  const QString text = option("text", "OPAD"), style = option("textStyle", "outline");
+  const QString key = text + '\n' + option("height", "10 mm") + '\n' + style + '\n' + option("font", "Arial");
+  if (key == m_textPreviewKey) return m_textPreview;
+  m_textPreviewKey = key;
+  m_textPreview.clear();
+  try {
+    if (text.isEmpty() || text.size() > 512) return m_textPreview;
+    std::vector<ParamDef> defs;
+    for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+    const double height = ParamTable(defs, m_doc->scene.units).length(option("height", "10 mm").toStdString());
+    if (!(height > 0)) return m_textPreview;
+    if (style == "stroke" || style == "block") {  // the built-in font's strokes (cap height 1), as createText lays them out
+      for (auto stroke : stroke_text(text.toStdString())) {
+        for (auto& p : stroke) p = {p.first * height, p.second * height};
+        m_textPreview.push_back(std::move(stroke));
+      }
+    } else {  // the system font's outlines, scaled as createText scales them
+      QFont font(option("font", "Arial"));
+      font.setPixelSize(1000);
+      QPainterPath path;
+      path.addText(0, 0, font, text);
+      const double scale = height / std::max(1.0, QFontMetricsF(font).capHeight());
+      for (const QPolygonF& polygon : path.toSubpathPolygons()) {
+        std::vector<std::pair<double, double>> line;
+        for (const QPointF& p : polygon) line.push_back({p.x() * scale, -p.y() * scale});
+        m_textPreview.push_back(std::move(line));
+      }
+    }
+  } catch (const std::exception&) {  // an expression that does not evaluate (yet): no preview
+    m_textPreview.clear();
+  }
+  return m_textPreview;
+}
+
 void SketchEditor::updateTransient() {
   if(m_transientPrs.IsNull() || !m_geometry || m_geometryJob)return;
   auto& d=*static_cast<SketchPrs*>(m_transientPrs.get());
@@ -1157,6 +1195,9 @@ void SketchEditor::updateTransient() {
       } else if (m_tool == "slot" || m_tool == "arc3" || m_tool == "arcc" || m_tool == "circle3" || m_tool == "ellipse") seg(a.u, a.v, cu, cv);
       for (const auto& k : m_clicks) d.points.push_back({W(k.u, k.v), rb});  // where the clicks so far went (a centre, the first end)
     }
+    if (m_tool == "text")  // the letters on their baseline from the pointer, as the click places them (there was only a dot)
+      for (const auto& line : textPreview())
+        for (size_t i = 1; i < line.size(); ++i) seg(cu + line[i - 1].first, cv + line[i - 1].second, cu + line[i].first, cv + line[i].second);
     const Sketch preview=primitivePreview();
     for(const auto& e:preview.entities) {
       const auto edge=entity_edge(preview,e,opad::Frame{});

@@ -139,6 +139,10 @@ class SketchEditor : public QObject, public SketchInput {
   void cancel_change();
   void rebuild();                        // redraw the overlay
   void updateTransient();
+  // The text tool's letters as they will land, relative to the insertion point (cached per text, font and height).
+  const std::vector<std::vector<std::pair<double, double>>>& textPreview();
+  QString m_textPreviewKey;
+  std::vector<std::vector<std::pair<double, double>>> m_textPreview;
   bool prepareGeometry();
   void scheduleFill();
   void click(const Snap& s, Qt::KeyboardModifiers mods);
