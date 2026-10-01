@@ -497,10 +497,13 @@ void Viewport::applyStyle(const Handle(AIS_Shape)& ais) {
 void Viewport::setStyle(Style s) {
   m_style = s;
   if (!m_initialised) return;
+  bool selected = false;
   for (auto& [id, it] : m_items) {
     applyStyle(it.ais);
-    m_ctx->Redisplay(it.ais, Standard_False);
+    m_ctx->RecomputePrsOnly(it.ais, Standard_False, Standard_True);  // not Redisplay: that dropped the body from the selection
+    selected = selected || m_ctx->IsSelected(it.ais);
   }
+  if (selected) m_ctx->HilightSelected(Standard_False);
   redrawScene();
 }
 
@@ -1682,15 +1685,20 @@ void Viewport::updateDepthBias() {
   }
   const auto ranks = depthSlots(boxes);
   size_t i = 0;
+  bool reselect = false;
   for (const auto& [id, item] : m_items) {
     // Whole depth units, with slope separation for oblique coplanar faces.
     // Fractional hash offsets used to quantize to the same depth and flicker.
     const int slot = ranks[i++];
     const auto body=Handle(BodyShape)::DownCast(item.ais);
     const double extent=boxes[i-1].IsVoid()?1:boxes[i-1].CornerMin().Distance(boxes[i-1].CornerMax());
-    if (!body.IsNull() && body->setRayBias(m_renderQuality==2 ? -slot*std::max(1e-5,extent*2e-6) : 0)) m_ctx->Redisplay(body,false);
+    if (!body.IsNull() && body->setRayBias(m_renderQuality==2 ? -slot*std::max(1e-5,extent*2e-6) : 0)) {
+      m_ctx->RecomputePrsOnly(body,false);  // keeps it selected (Redisplay did not)
+      reselect = reselect || m_ctx->IsSelected(body);
+    }
     item.ais->SetPolygonOffsets(Aspect_POM_Fill, 1.0f + 0.25f * slot, 1.0f + 4.0f * slot);
   }
+  if (reselect) m_ctx->HilightSelected(Standard_False);
 }
 
 void Viewport::finishSync(int pendingCount, bool added) {
