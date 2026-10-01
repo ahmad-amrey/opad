@@ -1084,7 +1084,7 @@ void MainWindow::buildDesignActions() {
   addAction("design.colour", tr("Colour"), "shaded", QKeySequence(), [this] {
     const auto ids = currentNodeIds();
     if (ids.empty()) throw opad::Error("Select the objects to colour first.");
-    const QColor c = QColorDialog::getColor(Qt::gray, this, tr("Colour"));
+    const QColor c = QColorDialog::getColor(nodeColour(ids.front()), this, tr("Colour"));
     if (!c.isValid()) return;
     m_doc->run("appearance", opad::json{{"targets", ids}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
   });
@@ -1395,6 +1395,11 @@ std::vector<std::string> MainWindow::currentNodeIds() const {
   return ids;
 }
 
+QColor MainWindow::nodeColour(const std::string& id) const {
+  const opad::Node* n = m_doc->node(id);
+  return n && n->has_color ? QColor::fromRgbF(n->color[0], n->color[1], n->color[2]) : QColor(190, 190, 195);
+}
+
 void MainWindow::onViewportSelection() {
   if (m_design->ownsSelection()) return m_design->viewportSelectionChanged();  // picks for a feature input or a sketch plane
   if (m_syncing) return;
@@ -1583,9 +1588,10 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     QAction* color = menu.addAction(icons::themed("dot", 16), tr("Colour…"));
     color->setVisible(!m_doc->browse);
     connect(color, &QAction::triggered, this, [this, ids] {
-      QColor c = QColorDialog::getColor(Qt::gray, this, tr("Colour"));
+      // From the object's own colour, and one step to undo for all of them (it was one per object).
+      QColor c = QColorDialog::getColor(nodeColour(ids.front()), this, tr("Colour"));
       if (!c.isValid()) return;
-      for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
+      m_doc->run("appearance", opad::json{{"targets", ids}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
     });
     const opad::Node* n = m_doc->node(ids.front());
     QAction* lock = menu.addAction(icons::themed("lock", 16), n && n->locked ? tr("Unlock") : tr("Lock"));

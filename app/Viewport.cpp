@@ -1502,6 +1502,7 @@ void Viewport::sync() {
   }
   std::set<std::string> keep, replace;
   std::vector<std::string> pending, toAdd;
+  bool recoloredSelected = false;
   for (const auto& id : scene.all_bodies()) {
     const opad::Node* n = scene.node(id);
     if (!n || n->body_missing) continue;
@@ -1516,7 +1517,10 @@ void Viewport::sync() {
         item.opacity = n->opacity;
         item.ais->SetColor(qcolor(n->color));
         item.ais->SetTransparency(1.0 - n->opacity);
-        m_ctx->Redisplay(item.ais, Standard_False);
+        // The presentation only: Redisplay also rebuilt the selection owners, which dropped the body from the selection
+        // (a colour picked for the selection left it unselected, though the status bar still counted it).
+        m_ctx->RecomputePrsOnly(item.ais, Standard_False);
+        recoloredSelected = recoloredSelected || m_ctx->IsSelected(item.ais);
       }
       continue;
     }
@@ -1546,6 +1550,7 @@ void Viewport::sync() {
     it = m_items.erase(it);
     removed = true;
   }
+  if (recoloredSelected) m_ctx->HilightSelected(Standard_False);  // its highlight was on the old presentation
   if(removed) applySelectionLayers();
   if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // Remove() dropped that body's selected sub-shapes
   if (!pending.empty()) startMeshing(pending);

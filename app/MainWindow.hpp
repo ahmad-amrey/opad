@@ -127,6 +127,7 @@ class MainWindow : public QMainWindow {
   QStringList recent() const;
   void rebuildRecentMenu();
   std::vector<std::string> currentNodeIds() const;
+  QColor nodeColour(const std::string& id) const;  // its own colour, or the default body grey
 
   AppDocument* m_doc = nullptr;
   RecoveryManager* m_recovery = nullptr;
