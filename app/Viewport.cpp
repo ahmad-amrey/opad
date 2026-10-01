@@ -242,6 +242,13 @@ void Viewport::initViewer() {
   Handle(V3d_DirectionalLight) overhead=new V3d_DirectionalLight(gp_Dir(0,0,-1),Quantity_NOC_WHITE,false);
   overhead->SetIntensity(0.75f);m_viewer->AddLight(overhead);m_viewer->SetLightOn(overhead);
   m_ctx = new AIS_InteractiveContext(m_viewer);
+  {  // TopOSD (notes, the drawing being made, measurement labels) has no depth test, but it kept the depth, so what is
+     // translucent in Topmost (a note target's tint) was drawn after it, over it: red strokes came out pink. Clearing
+     // the depth draws what is pending first.
+    Graphic3d_ZLayerSettings osd = m_viewer->ZLayerSettings(Graphic3d_ZLayerId_TopOSD);
+    osd.SetClearDepth(Standard_True);
+    m_viewer->SetZLayerSettings(Graphic3d_ZLayerId_TopOSD, osd);
+  }
   m_hoverFadeEnabled=QSettings().value("view/hoverFade",true).toBool();
   m_hoverFadeSeconds=std::clamp(QSettings().value("view/hoverFadeSeconds",5.0).toDouble(),.1,60.0);
   m_hoverFadeTimer.setSingleShot(true);connect(&m_hoverFadeTimer,&QTimer::timeout,this,&Viewport::requestRedraw);
