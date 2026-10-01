@@ -29,7 +29,7 @@ class DesignController : public QObject {
   void setSketchPanel(ToolPanel* panel);
   // The component selected in the browser (empty: none): where a new feature's bodies go unless its panel says else.
   void setCurrentComponent(std::function<std::string()> current) { m_currentComponent = std::move(current); }
-  void showSketchPanel();
+  void showSketchPanel(const QString& page = {});  // page: the title of the page shown instead of the tool
   void redefineSketchPlane();
 
   void startFeature(const QString& kind);

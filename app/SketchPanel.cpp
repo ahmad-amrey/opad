@@ -270,7 +270,11 @@ void SketchPanel::refresh() {
   for(const auto& c:m_editor->m_sk.constraints) {
     auto* row=new QTreeWidgetItem(m_constraints);row->setData(0,Qt::UserRole,c.id);
     row->setText(0,QString(c.is_dimension()?"d%1":"%1").arg(c.id));
-    row->setText(1,i18n::t(QString::fromLatin1(opad::design::SkConstraint::type_name(c.type))));
+    {  // The type's id is data; untranslated it is shown as a word ("point_on_curve" -> "Point on curve")
+      const QString id=QString::fromLatin1(opad::design::SkConstraint::type_name(c.type));QString type=i18n::t(id);
+      if(type==id){type.replace('_',' ');if(!type.isEmpty())type[0]=type[0].toUpper();}
+      row->setText(1,type);
+    }
     if(c.is_dimension())row->setText(2,m_editor->dimensionText(c));
     row->setHidden(!row->text(1).contains(m_editor->m_constraintFilter,Qt::CaseInsensitive));
     if(m_editor->m_conflicts.count(c.id))row->setForeground(1,Qt::red);

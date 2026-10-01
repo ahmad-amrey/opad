@@ -1150,7 +1150,7 @@ void MainWindow::buildDesignActions() {
   int page=1;
   const QMap<QString,QString> pageIcons{{"selectionOptions","cursor"},{"constraints","list"},{"snaps","magnet"}};
   for(const auto& pair:QList<QPair<QString,QString>>{{"selectionOptions",tr("Selection")},{"constraints",tr("Constraints")},{"snaps",tr("Snaps")}}) {
-    addAction("sketch."+pair.first,pair.second,pageIcons.value(pair.first),{},[this,page]{m_design->showSketchPanel();findChild<SketchPanel*>()->showPage(page);});++page;
+    addAction("sketch."+pair.first,pair.second,pageIcons.value(pair.first),{},[this,page,title=pair.second]{m_design->showSketchPanel(title);findChild<SketchPanel*>()->showPage(page);});++page;
   }
 }
 

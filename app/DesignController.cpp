@@ -913,9 +913,11 @@ void DesignController::setSketchPanel(ToolPanel* panel) {
   connect(m_sketch,&SketchEditor::workflowChanged,this,&DesignController::stateChanged);
   connect(m_sketch,&SketchEditor::changed,this,[this]{if(!m_sketch->active() && m_sketchPanel)m_sketchPanel->hide();});
 }
-void DesignController::showSketchPanel() {
+void DesignController::showSketchPanel(const QString& page) {
   if(m_sketch->active() && m_sketchPanel && m_openPanel){
-    for(const auto& tool:SketchPanel::tools())if(tool.id==m_sketch->tool()){m_sketchPanel->setHeader("sketch",tool.label);break;}
+    // A page (Constraints, Snaps, Selection) is named in the header: it read "Select", the tool, above the constraint list.
+    if(!page.isEmpty())m_sketchPanel->setHeader("sketch",page);
+    else for(const auto& tool:SketchPanel::tools())if(tool.id==m_sketch->tool()){m_sketchPanel->setHeader("sketch",tool.label);break;}
     m_openPanel(m_sketchPanel);
   }
 }
