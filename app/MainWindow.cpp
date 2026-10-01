@@ -2080,7 +2080,7 @@ void MainWindow::selectOpTargets(const std::string& opId) {
   onBrowserSelection(ids);
   if (!m_propsPanel->isVisible()) return;  // pinned open: show the operation itself
   m_propsPanel->setContext(QString::fromStdString(opId.substr(0, 8)));
-  m_props->showEntity(m_timeline->describe(*op), QString::fromUtf8("%1 · %2").arg(QString::fromStdString(d.value("by", "")), QString::fromStdString(d.value("ts", "")).left(16).replace('T', ' ')),
+  m_props->showEntity(m_timeline->describe(*op), QString::fromUtf8("%1 · %2").arg(QString::fromStdString(d.value("by", "")), i18n::localTime(d.value("ts", ""))),
                       QString::fromStdString(opId.substr(0, 8)), d);
 }
 

@@ -7,6 +7,7 @@
 // file does not cover. Adding a language = one JSON file plus its line in i18n.qrc.
 #include <QList>
 #include <QString>
+#include <string>
 
 class QApplication;
 
@@ -24,4 +25,6 @@ void setLanguage(const QString& code);  // saved; applies at the next start
 // Run-time lookup for text that is data rather than a tr() literal: property names, core error messages.
 QString t(const QString& source);
 QString t(const char* source);
+// An op's ISO 8601 UTC time stamp ("2026-10-01T01:32:05Z") as local "yyyy-MM-dd HH:mm" (shown raw, it was UTC).
+QString localTime(const std::string& iso);
 }  // namespace i18n

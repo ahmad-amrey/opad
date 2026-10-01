@@ -1,6 +1,7 @@
 #include "I18n.hpp"
 
 #include <QApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QHash>
@@ -70,5 +71,12 @@ void setLanguage(const QString& code) { QSettings().setValue("ui/language", code
 
 QString t(const char* source) { return QCoreApplication::translate("i18n", source); }
 QString t(const QString& source) { return t(source.toUtf8().constData()); }
+
+QString localTime(const std::string& iso) {
+  const QString text = QString::fromStdString(iso);
+  const QDateTime at = QDateTime::fromString(text, Qt::ISODate);
+  if (!at.isValid()) return text.left(16).replace('T', ' ');  // not a time stamp after all: as written
+  return at.toLocalTime().toString("yyyy-MM-dd HH:mm");
+}
 
 }  // namespace i18n
