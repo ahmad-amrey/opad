@@ -6,6 +6,7 @@
 #include <QSpinBox>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QTimer>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QTabWidget>
@@ -274,10 +275,20 @@ void SketchPanel::refresh() {
     if(c.id==selected)m_constraints->setCurrentItem(row);
   }
   m_refreshing=false;
+  // Rebuilt fields after an edit: the panel was fitted to the old ones and cut the new off. A turn later: Qt shows new
+  // children of a visible widget by a queued call, and until then the layout counts them as hidden.
+  QTimer::singleShot(0,this,[this]{emit contentChanged();});
 }
 void SketchPanel::showPage(int page){m_pages->setCurrentIndex(page);refresh();}
 QSize SketchPanel::toolSizeHint(int width) const {
   if(m_pages->currentIndex()!=0)return {width,440};
-  const int content=m_steps->height()+m_fields->sizeHint().height()+(m_precise->isVisible()?m_precise->sizeHint().height():0)+160;
-  return {width,std::clamp(content,300,580)};
+  // The panel as laid out at this width, with the scrolled tool page at its full height. A fixed allowance for the
+  // rest cut off a tool's last fields (Project's Preview) once its prompt wrapped to two lines.
+  const int w=std::max(120,width>0?width:340);
+  QLayout* box=layout();
+  const int outer=box->hasHeightForWidth()?box->heightForWidth(w):box->sizeHint().height();
+  const auto* page=qobject_cast<QScrollArea*>(m_pages->widget(0));
+  const QWidget* body=page?page->widget():nullptr;
+  const int inner=!body?0:body->hasHeightForWidth()?body->heightForWidth(w-8):body->sizeHint().height();
+  return {width,std::clamp(outer-m_pages->sizeHint().height()+inner+8,300,640)};
 }

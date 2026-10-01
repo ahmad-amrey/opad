@@ -21,6 +21,7 @@ class SketchPanel : public QWidget {
   QSize toolSizeHint(int width) const;
  signals:
   void finishRequested();
+  void contentChanged();  // refreshed: the tool page may need another height
  private:
   void chooseGroup();
   void chooseTool();

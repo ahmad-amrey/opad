@@ -567,8 +567,16 @@ bool Viewport::hoveredReference(opad::Ref& ref) const {
   if(!m_initialised||!m_ctx->HasDetected())return false;
   const auto object=m_ctx->DetectedInteractive();const auto found=m_nodeOf.find(object.get());if(found==m_nodeOf.end())return false;
   ref.body=found->second;ref.kind=opad::Ref::Kind::Body;
-  const auto owner=Handle(SubShapeOwner)::DownCast(m_ctx->DetectedOwner());
-  if(m_filter!=SelFilter::Body){if(owner.IsNull())return false;ref.kind=owner->kind();ref.index=owner->index();}return true;
+  if(m_filter==SelFilter::Body)return true;
+  if(const auto owner=Handle(SubShapeOwner)::DownCast(m_ctx->DetectedOwner());!owner.IsNull()){ref.kind=owner->kind();ref.index=owner->index();return true;}
+  // A body drawn through the stock AIS_Shape (a reopened document) has owners without an ordinal: work it out the way
+  // selection() does, or a projection could not take its edges.
+  const auto stock=Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());const auto ais=Handle(AIS_Shape)::DownCast(object);
+  if(stock.IsNull()||!stock->HasShape()||ais.IsNull())return false;
+  const TopoDS_Shape& sub=stock->Shape();
+  ref.kind=sub.ShapeType()==TopAbs_FACE?opad::Ref::Kind::Face:sub.ShapeType()==TopAbs_EDGE?opad::Ref::Kind::Edge:sub.ShapeType()==TopAbs_VERTEX?opad::Ref::Kind::Vertex:opad::Ref::Kind::Body;
+  if(ref.kind==opad::Ref::Kind::Body)return false;
+  ref.index=opad::subshape_index(ais->Shape(),sub);return true;
 }
 void Viewport::showBackdrop(const Handle(AIS_InteractiveObject)& obj) {
   if(!m_initialised||obj.IsNull())return;obj->SetZLayer(Graphic3d_ZLayerId_Default);m_ctx->Display(obj,3,-1,false);redrawScene();

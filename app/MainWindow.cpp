@@ -1172,6 +1172,9 @@ void MainWindow::buildDesign() {
   sketchPanel->setContentSizeHint([sketchContent](int width){return sketchContent->toolSizeHint(width);});
   connect(m_design->sketch(),&SketchEditor::toolChanged,sketchPanel,&ToolPanel::requestContentFit);
   connect(m_design->sketch(),&SketchEditor::workflowChanged,sketchPanel,&ToolPanel::requestContentFit);
+  // A message that wraps to more lines takes room from the tool's fields: fit again (Project's Preview was cut off).
+  connect(m_design->sketch(),&SketchEditor::status,sketchPanel,&ToolPanel::requestContentFit);
+  connect(sketchContent,&SketchPanel::contentChanged,sketchPanel,&ToolPanel::requestContentFit);
   m_design->setSketchPanel(sketchPanel);
   sketchPanel->setEscapeHandler([this]{m_design->sketch()->stepBack();});
   connect(sketchContent,&SketchPanel::finishRequested,this,[this]{m_design->finishSketch();});

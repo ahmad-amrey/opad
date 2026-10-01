@@ -88,7 +88,9 @@ void SketchEditor::applyTool() {
     ++m_modelRevision;
     m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
     m_undo.push_back({m_sk,m_plane,m_frame});m_redo.clear();m_sk=*m_toolPreview;m_solved=m_previewSolved;m_toolPreview.reset();m_modified=true;m_panelFieldsDirty=true;
-    m_clicks.clear();m_picked.clear();m_sel.clear();updateDimensionHandle();rebuild();scheduleFill();toolPrompt();emit changed();return;
+    m_clicks.clear();m_picked.clear();m_sel.clear();updateDimensionHandle();rebuild();scheduleFill();toolPrompt();
+    if(m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d"){m_options.remove("projectionSource");emit workflowChanged();}  // next source
+    emit changed();return;
   }
   if(applyReference()||applyImageTool())return;
   if(applyModify())return;
