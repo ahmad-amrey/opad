@@ -78,16 +78,15 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   auto* fileGroup=new QButtonGroup(&dlg);
   auto* singleFile=new QRadioButton(tr("Single STL file"),&dlg);singleFile->setChecked(true);
   auto* perBody = new QRadioButton(tr("One STL file per body"), &dlg);
-  fileGroup->addButton(singleFile);fileGroup->addButton(perBody);v->addWidget(singleFile);
+  // Each choice's two answers together (they were interleaved: single, binary, per body, ASCII).
+  fileGroup->addButton(singleFile);fileGroup->addButton(perBody);v->addWidget(singleFile);v->addWidget(perBody);
   perBody->setChecked(false);
   auto* encodingGroup=new QButtonGroup(&dlg);
   auto* binary=new QRadioButton(tr("Binary STL"),&dlg);binary->setChecked(true);
   auto* ascii = new QRadioButton(tr("ASCII STL"), &dlg);
-  encodingGroup->addButton(binary);encodingGroup->addButton(ascii);v->addWidget(binary);
+  encodingGroup->addButton(binary);encodingGroup->addButton(ascii);v->addSpacing(6);v->addWidget(binary);v->addWidget(ascii);
   auto* mtl = new QCheckBox(tr("Write material library (OBJ)"), &dlg);
   mtl->setChecked(true);
-  v->addWidget(perBody);
-  v->addWidget(ascii);
   v->addWidget(mtl);
   QString stem = m_doc->doc.path.empty() ? "export" : QString::fromStdString(m_doc->doc.path.stem().string());
   if(ids.size()==1) { const auto* sk=m_doc->scene.sketch(ids[0]); stem=sk?QString::fromStdString(sk->name):m_doc->nodeName(ids[0]); for(const QChar c:QString("<>:\"/\\|?*")) stem.replace(c,'_'); }
