@@ -280,7 +280,8 @@ QString attr_str(const QString& attrs, const char* name) {
 }
 
 void render(QPainter& p, const QString& markup, const QColor& color) {
-  static const QRegularExpression el("<(path|rect|circle)([^>]*?)/?>");
+  // Ellipses too: without them the cylinder, sphere and cone icons lost their rims and the torus icon was blank.
+  static const QRegularExpression el("<(path|rect|circle|ellipse)([^>]*?)/?>");
   auto it = el.globalMatch(markup);
   while (it.hasNext()) {
     auto m = it.next();
@@ -292,6 +293,8 @@ void render(QPainter& p, const QString& markup, const QColor& color) {
       path = pp.path;
     } else if (tag == "rect") {
       path.addRect(attr_num(attrs, "x", 0), attr_num(attrs, "y", 0), attr_num(attrs, "width", 0), attr_num(attrs, "height", 0));
+    } else if (tag == "ellipse") {
+      path.addEllipse(QPointF(attr_num(attrs, "cx", 0), attr_num(attrs, "cy", 0)), attr_num(attrs, "rx", 0), attr_num(attrs, "ry", 0));
     } else {
       double r = attr_num(attrs, "r", 0);
       path.addEllipse(QPointF(attr_num(attrs, "cx", 0), attr_num(attrs, "cy", 0)), r, r);
