@@ -877,6 +877,7 @@ void MainWindow::buildDocks() {
   connect(m_checks, &CheckPanel::runRequested, this, &MainWindow::runCheck);
   connect(m_checks, &CheckPanel::findingActivated, this, &MainWindow::showFinding);
   connect(m_toolSteps, &ToolStepsPanel::contentSizeChanged, m_toolPanel, &ToolPanel::requestContentFit);
+  connect(m_checks, &CheckPanel::contentResized, m_toolPanel, &ToolPanel::requestContentFit);
   m_panels = {m_propsPanel, m_annotationsPanel, m_sectionPanel, m_toolPanel};
   // The note / hand drawing editor's panel: filled by each AnnotationEditor, open exactly as long as it runs. Not one
   // of m_panels, so opening another panel never ends an annotation in progress.

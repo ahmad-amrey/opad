@@ -28,7 +28,9 @@ class CheckPanel : public QWidget {
  signals:
   void runRequested();
   void findingActivated(const opad::json& finding);  // interference: a pair; print: {body, faces, kind}
+  void contentResized();  // the findings list came or went: the panel fits again
  private:
+  void showFindings();   // the list only when it has rows
   Mode m_mode = Mode::Interference;
   QWidget* m_interference = nullptr;
   QDoubleSpinBox* m_clearance = nullptr;
