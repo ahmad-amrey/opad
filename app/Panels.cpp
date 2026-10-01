@@ -1013,7 +1013,14 @@ void PropertiesPanel::addRow(const QString& key, const opad::json& v) {
     row->setFont(1, theme::mono(12));
     return;
   }
-  row->setText(1, QChar(0x202A) + fmtValue(v) + QChar(0x202C));  // LRE..PDF: numbers and vectors keep their order in a right-to-left UI
+  // Measures say what they measure in (the geometry is stored in mm): "9593.088" alone read as a bare count.
+  QString unit;
+  if (v.is_number()) {
+    if (key == "area") unit = QString::fromUtf8(" mm²");
+    else if (key == "volume") unit = QString::fromUtf8(" mm³");
+    else if (key == "length" || key == "radius" || key == "diameter" || key == "distance" || key == "thickness") unit = " mm";
+  }
+  row->setText(1, QChar(0x202A) + fmtValue(v) + unit + QChar(0x202C));  // LRE..PDF: numbers and vectors keep their order in a right-to-left UI
   if (v.is_number() || v.is_array() || (v.is_string() && key == "key")) row->setFont(1, theme::mono(12));
   if (key == "key" || key == "source_op") row->setForeground(1, t.fg3);
 }
@@ -1230,6 +1237,7 @@ SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     b->setFont(i < 3 ? theme::mono(12) : theme::ui(12));
     b->setFixedHeight(26);
     b->setAutoRaise(true);
+    b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);  // fill the segment: the checked one was a box round its letter
     sl->addWidget(b, 1);
     m_axisButtons << b;
     connect(b, &QToolButton::clicked, this, [this, i] {

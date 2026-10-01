@@ -1460,9 +1460,11 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
     } else if (r.kind == opad::Ref::Kind::Body) {
       const opad::Node* n = m_doc->node(r.body);
       title = m_doc->nodeName(r.body);
+      // Where it sits: the components above it, or its kind at the top (the path ended in its own name, so a top-level
+      // body read "Loft1 / Loft1").
       QStringList path;
-      for (const auto& p : m_doc->scene.path_to(r.body)) path << m_doc->nodeName(p);
-      subtitle = path.join(QString::fromUtf8(" › "));
+      for (const auto& p : m_doc->scene.path_to(r.body)) if (p != r.body) path << m_doc->nodeName(p);
+      subtitle = !path.isEmpty() ? path.join(QString::fromUtf8(" › ")) : n && n->kind == opad::Node::Kind::Component ? tr("Component") : tr("Body");
       if (n && n->kind == opad::Node::Kind::Body) {
         auto it = m_doc->scene.instance_count.find(n->body_key);
         if (it != m_doc->scene.instance_count.end() && it->second > 1) subtitle += tr(" · %1 instances").arg(it->second);
