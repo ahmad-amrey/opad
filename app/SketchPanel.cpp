@@ -167,8 +167,10 @@ void SketchPanel::buildFields() {
   if(m_shown=="text") {
     field("text",tr("Text"),"OPAD");field("height",tr("Text height"),"10 mm");
     auto* style=new QComboBox(this);style->addItem(tr("Outline font"),"outline");style->addItem(tr("Single-stroke font"),"stroke");style->addItem(tr("Built-in block letters"),"block");style->setCurrentIndex(style->findData(m_editor->option("textStyle","outline")));m_fields->addRow(tr("Style"),style);
-    connect(style,&QComboBox::currentIndexChanged,this,[this,style]{m_editor->m_options["textStyle"]=style->currentData().toString();});
     auto* font=new QFontComboBox(this);font->setCurrentFont(QFont(m_editor->option("font","Arial")));m_fields->addRow(tr("Font"),font);
+    // The built-in letters have no font to choose: the list is off for them (it looked like it applied).
+    font->setEnabled(style->currentData().toString()=="outline");
+    connect(style,&QComboBox::currentIndexChanged,this,[this,style,font]{m_editor->m_options["textStyle"]=style->currentData().toString();font->setEnabled(style->currentData().toString()=="outline");});
     connect(font,&QFontComboBox::currentFontChanged,this,[this](const QFont& f){m_editor->m_options["font"]=f.family();});
   }
   auto choice=[&](const QString& key,const QString& label,const QList<QPair<QString,QString>>& choices) {

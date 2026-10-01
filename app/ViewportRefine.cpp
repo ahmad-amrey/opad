@@ -111,6 +111,15 @@ void Viewport::refineVisible() {
     QElapsedTimer applying;
     applying.start();
     size_t triangles = 0;
+    // A selected body's glow is made from the arrays it is drawn with: when those change it is made again.
+    bool glowsStale = false;
+    auto dropGlow = [this, &glowsStale](const Handle(AIS_InteractiveObject)& ais) {
+      if (auto glow = m_bodyGlows.find(ais.get()); glow != m_bodyGlows.end()) {
+        m_ctx->Remove(glow->second, Standard_False);
+        m_bodyGlows.erase(glow);
+        glowsStale = true;
+      }
+    };
     for (size_t i = 0; i < pass->size(); ++i) {
       const auto& prs = (*results)[i];
       if (!prs || prs->triangles.IsNull()) continue;
@@ -119,7 +128,7 @@ void Viewport::refineVisible() {
       m_refined[key] = Refined{prs->deflection, prs, m_refineClock};
       for (auto& [id, item] : m_items)
         if (item.key == key)
-          if (auto body = Handle(BodyShape)::DownCast(item.ais); !body.IsNull() && body->setDisplayPrs(prs)) m_ctx->RecomputePrsOnly(body, Standard_False);
+          if (auto body = Handle(BodyShape)::DownCast(item.ais); !body.IsNull() && body->setDisplayPrs(prs)) { m_ctx->RecomputePrsOnly(body, Standard_False); dropGlow(body); }
     }
     // Keep a bounded amount: the bodies seen least recently go back to their base mesh.
     double kept = 0;
@@ -129,9 +138,10 @@ void Viewport::refineVisible() {
       kept -= double(oldest->second.prs->triangleCount());
       for (auto& [id, item] : m_items)
         if (item.key == oldest->first)
-          if (auto body = Handle(BodyShape)::DownCast(item.ais); !body.IsNull() && body->setDisplayPrs(nullptr)) m_ctx->RecomputePrsOnly(body, Standard_False);
+          if (auto body = Handle(BodyShape)::DownCast(item.ais); !body.IsNull() && body->setDisplayPrs(nullptr)) { m_ctx->RecomputePrsOnly(body, Standard_False); dropGlow(body); }
       m_refined.erase(oldest);
     }
+    if (glowsStale) applySelectionLayers();
     redrawScene();
     if (trace::enabled())
       trace::log(QStringLiteral("refine: done in %1 ms (%2 triangles, applied in %3 ms, %4 bodies kept)").arg(started.elapsed()).arg(triangles).arg(applying.elapsed()).arg(m_refined.size()));

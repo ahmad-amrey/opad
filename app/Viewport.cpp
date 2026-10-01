@@ -852,10 +852,14 @@ void Viewport::applySelectionLayers() {
     if(const auto node=m_nodeOf.find(ais.get());node!=m_nodeOf.end() && m_previewHidden.count(node->second)) return;
     auto& glow=m_bodyGlows[ais.get()];
     if(glow.IsNull()) {
+      // The arrays the body is drawn with: a zoom-refined body with a glow on its coarser base mesh z-fought with it
+      // on curved faces (dark blotches all over a selected loft).
+      std::shared_ptr<const BodyPrs> shown=prs;
+      if(const auto body=Handle(BodyShape)::DownCast(ais);!body.IsNull() && body->displayPrs() && !body->displayPrs()->triangles.IsNull()) shown=body->displayPrs();
       glow=new SubHighlight(selectionTint());
-      if(!prs->triangles.IsNull()) glow->m_triangles.push_back(prs->triangles);
-      if(!prs->boundaries.IsNull()) glow->m_segments.push_back(prs->boundaries);
-      if(!prs->loosePoints.IsNull()) glow->m_points.push_back(prs->loosePoints);
+      if(!shown->triangles.IsNull()) glow->m_triangles.push_back(shown->triangles);
+      if(!shown->boundaries.IsNull()) glow->m_segments.push_back(shown->boundaries);
+      if(!shown->loosePoints.IsNull()) glow->m_points.push_back(shown->loosePoints);
       glow->SetZLayer(Graphic3d_ZLayerId_Topmost);
       glow->SetClipPlanes(ais->ClipPlanes());
       m_ctx->Display(glow,0,-1,false);

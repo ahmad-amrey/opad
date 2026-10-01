@@ -1623,7 +1623,7 @@ void MainWindow::timelineMenu(const std::string& requestedId, const QPoint& glob
   const auto generation=m_doc->generation;
   bool deleted = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) != m_doc->scene.deleted_ops.end();
   QMenu menu(this);
-  menu.setFixedWidth(232);
+  menu.setMinimumWidth(232);  // not fixed: that cut the shortcuts off ("Shift+" for Shift+Del)
   const opad::Op* menuOp = m_doc->doc.find_op(opId);
   // Tombstoning a delete op brings back what it deleted (docs/format.md), so on a delete marker that entry is offered
   // as what it does; once undone, the delete can be applied again.
