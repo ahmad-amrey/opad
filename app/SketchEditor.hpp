@@ -155,6 +155,7 @@ class SketchEditor : public QObject, public SketchInput {
   void commitDimensionEdit();
   void filletAt(const Hit& h, double u, double v);
   void trimAt(const Hit& h, double u, double v);
+  std::vector<std::pair<double, double>> trimPreview(int id, double u, double v) const;  // the piece trimAt would remove
   void mirrorSelection(int axisLine);
   void offsetSelection();
   void updateDimensionHandle();

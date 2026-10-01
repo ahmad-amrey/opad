@@ -759,15 +759,23 @@ std::vector<double> line_circle(double ax, double ay, double bx, double by, doub
   const double s = std::sqrt(disc);
   return {(-B - s) / (2 * A), (-B + s) / (2 * A)};
 }
-}  // namespace
 
-void SketchEditor::trimAt(const Hit& h, double u, double v) {
-  SkEntity* target = h.kind == Hit::Entity ? m_sk.entity(h.id) : nullptr;
-  if (!target || (target->type != ET::Line && target->type != ET::Circle && target->type != ET::Arc)) return emit status(tr("Trim: click a line, a circle or an arc"));
-  auto P = [&](int id) { return m_sk.point(id); };
-  struct Round { double cx, cy, r, a0, sweep; };  // sweep 2 pi = full circle
+struct Arc2 { double cx, cy, r, a0, sweep; };  // sweep 2 pi = full circle
+
+bool on_round(const Arc2& k, double x, double y) { return k.sweep >= 2 * M_PI - 1e-12 || norm_angle(std::atan2(y - k.cy, x - k.cx) - k.a0) <= k.sweep + 1e-9; }
+
+// Where the other curves cross `target`, sorted along it. A trim at a point removes the span between the cuts on
+// either side of it (or the whole curve when nothing crosses it); the hover shows that span before the click.
+struct Crossings {
+  bool line = true;
+  double ax = 0, ay = 0, bx = 0, by = 0;  // a line's ends
+  Arc2 self{};                           // a circle's or an arc's
+  std::vector<Cut> cuts;
+};
+Crossings crossings(const Sketch& sk, const SkEntity& target) {
+  auto P = [&](int id) { return sk.point(id); };
   auto round_of = [&](const SkEntity& e) {
-    Round k{P(e.p[0])->x, P(e.p[0])->y, e.r, 0, 2 * M_PI};
+    Arc2 k{P(e.p[0])->x, P(e.p[0])->y, e.r, 0, 2 * M_PI};
     if (e.type == ET::Arc) {
       k.r = std::hypot(P(e.p[1])->x - k.cx, P(e.p[1])->y - k.cy);
       k.a0 = std::atan2(P(e.p[1])->y - k.cy, P(e.p[1])->x - k.cx);
@@ -776,15 +784,20 @@ void SketchEditor::trimAt(const Hit& h, double u, double v) {
     }
     return k;
   };
-  auto on_round = [&](const Round& k, double x, double y) { return k.sweep >= 2 * M_PI - 1e-12 || norm_angle(std::atan2(y - k.cy, x - k.cx) - k.a0) <= k.sweep + 1e-9; };
   const double eps = 1e-7;
-
-  std::vector<Cut> cuts;
-  const bool isLine = target->type == ET::Line;
-  const Round self = isLine ? Round{} : round_of(*target);
-  const double ax = isLine ? P(target->p[0])->x : 0, ay = isLine ? P(target->p[0])->y : 0, bx = isLine ? P(target->p[1])->x : 0, by = isLine ? P(target->p[1])->y : 0;
-  for (const auto& o : m_sk.entities) {
-    if (o.id == target->id) continue;
+  Crossings out;
+  out.line = target.type == ET::Line;
+  if (out.line) {
+    out.ax = P(target.p[0])->x, out.ay = P(target.p[0])->y, out.bx = P(target.p[1])->x, out.by = P(target.p[1])->y;
+  } else {
+    out.self = round_of(target);
+  }
+  const bool isLine = out.line;
+  const Arc2& self = out.self;
+  const double ax = out.ax, ay = out.ay, bx = out.bx, by = out.by;
+  std::vector<Cut>& cuts = out.cuts;
+  for (const auto& o : sk.entities) {
+    if (o.id == target.id) continue;
     std::vector<std::pair<double, double>> hits;  // intersection points
     if (o.type == ET::Line) {
       const double cx = P(o.p[0])->x, cy = P(o.p[0])->y, dx = P(o.p[1])->x, dy = P(o.p[1])->y;
@@ -798,7 +811,7 @@ void SketchEditor::trimAt(const Hit& h, double u, double v) {
           if (s >= -eps && s <= 1 + eps) hits.push_back({cx + s * (dx - cx), cy + s * (dy - cy)});
       }
     } else if (o.type == ET::Circle || o.type == ET::Arc) {
-      const Round k = round_of(o);
+      const Arc2 k = round_of(o);
       if (isLine) {
         for (double t : line_circle(ax, ay, bx, by, k.cx, k.cy, k.r)) {
           const double x = ax + t * (bx - ax), y = ay + t * (by - ay);
@@ -829,6 +842,61 @@ void SketchEditor::trimAt(const Hit& h, double u, double v) {
     }
   }
   std::sort(cuts.begin(), cuts.end(), [](const Cut& a, const Cut& b) { return a.t < b.t; });
+  return out;
+}
+}  // namespace
+
+// What a trim click at (u, v) on curve `id` removes, as a polyline (empty: nothing it could trim).
+std::vector<std::pair<double, double>> SketchEditor::trimPreview(int id, double u, double v) const {
+  std::vector<std::pair<double, double>> piece;
+  const SkEntity* target = m_sk.entity(id);
+  if (!target || (target->type != ET::Line && target->type != ET::Circle && target->type != ET::Arc)) return piece;
+  const Crossings c = crossings(m_sk, *target);
+  if (c.line) {
+    const double len2 = (c.bx - c.ax) * (c.bx - c.ax) + (c.by - c.ay) * (c.by - c.ay);
+    if (len2 < 1e-18) return piece;
+    const double tc = ((u - c.ax) * (c.bx - c.ax) + (v - c.ay) * (c.by - c.ay)) / len2;
+    double lo = 0, hi = 1;
+    for (const auto& k : c.cuts) {
+      if (k.t < tc) lo = k.t;
+      else { hi = k.t; break; }
+    }
+    piece = {{c.ax + lo * (c.bx - c.ax), c.ay + lo * (c.by - c.ay)}, {c.ax + hi * (c.bx - c.ax), c.ay + hi * (c.by - c.ay)}};
+    return piece;
+  }
+  const Arc2& k = c.self;
+  const bool full = target->type == ET::Circle;
+  if (full && c.cuts.size() < 2) return piece;  // trimAt refuses: crossed once at most
+  const double tc = norm_angle(std::atan2(v - k.cy, u - k.cx) - k.a0);
+  double from = 0, to = k.sweep;
+  if (full) {
+    size_t hi = 0;
+    while (hi < c.cuts.size() && c.cuts[hi].t < tc) ++hi;
+    from = c.cuts[(hi + c.cuts.size() - 1) % c.cuts.size()].t;
+    to = c.cuts[hi % c.cuts.size()].t;
+    if (to <= from) to += 2 * M_PI;
+  } else {
+    for (const auto& cut : c.cuts) {
+      if (cut.t < tc) from = cut.t;
+      else { to = cut.t; break; }
+    }
+  }
+  const int n = std::max(8, int(std::ceil((to - from) / (2 * M_PI) * 96)));
+  for (int i = 0; i <= n; ++i) {
+    const double a = k.a0 + from + (to - from) * i / n;
+    piece.push_back({k.cx + k.r * std::cos(a), k.cy + k.r * std::sin(a)});
+  }
+  return piece;
+}
+
+void SketchEditor::trimAt(const Hit& h, double u, double v) {
+  SkEntity* target = h.kind == Hit::Entity ? m_sk.entity(h.id) : nullptr;
+  if (!target || (target->type != ET::Line && target->type != ET::Circle && target->type != ET::Arc)) return emit status(tr("Trim: click a line, a circle or an arc"));
+  const Crossings found = crossings(m_sk, *target);
+  const bool isLine = found.line;
+  const Arc2 self = found.self;
+  const double ax = found.ax, ay = found.ay, bx = found.bx, by = found.by;
+  const std::vector<Cut>& cuts = found.cuts;
 
   begin_change();
   const int id = target->id;
