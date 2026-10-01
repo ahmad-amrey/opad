@@ -1129,21 +1129,28 @@ void MainWindow::buildDesignActions() {
   }
   addAction("sketch.construction", tr("Construction"), "construction", QKeySequence("X"), [this] { m_design->sketch()->toggleConstruction(); });
   const auto registry=SketchPanel::tools();
+  // Each tool its own icon (they all showed the generic sketch one): its own name where the table has it.
+  const QMap<QString,QString> toolIcons{{"tangent_circle","tangentCircle"},{"tangent_arc","tangentArc"},{"polygon_outer","polygonOuter"},{"control_spline","controlSpline"},
+    {"select","cursor"},{"rect_pattern","patternRect"},{"polar_pattern","patternCirc"},{"break","breakCurve"},{"union","combine"},{"intersect_body","project"},
+    {"silhouette","project"},{"include3d","project"},{"break_link","breakLink"},{"image_insert","image"},{"image_edit","image"},{"image_calibrate","image"},
+    {"image_trace","image"},{"image_remove","image"},{"vector_import","import"},{"vector_export","export"}};
   for(const auto& tool:registry) {
     const auto id="sketch."+QString(tool.id).replace(':','.');
     if(action(id))continue;
     const QMap<QString,QString> keys{{"move","M"},{"rotate","Shift+R"},{"scale","Shift+S"},{"copy","Shift+C"}};
-    auto* a=addAction(id,tool.label,"sketch",QKeySequence(keys.value(tool.id)),[this,id=tool.id]{m_design->sketch()->setTool(id);},true);
+    const QString icon=toolIcons.value(tool.id,icons::has(tool.id)?QString(tool.id):QString("sketch"));
+    auto* a=addAction(id,tool.label,icon,QKeySequence(keys.value(tool.id)),[this,id=tool.id]{m_design->sketch()->setTool(id);},true);
     a->setProperty("sketchTool",tool.id);tools->addAction(a);
   }
   for(const auto& group:QList<QPair<QString,QString>>{{"Create",tr("Create")},{"Modify",tr("Modify")},{"Constrain",tr("Constrain")},{"Reference",tr("Reference")},{"Files",tr("Images and files")}}) {
-    auto* a=addAction("sketch.more"+group.first,group.first=="Files"?group.second:tr("More tools"),"sketch",{},[]{});
+    auto* a=addAction("sketch.more"+group.first,group.first=="Files"?group.second:tr("More tools"),group.first=="Files"?"image":"more",{},[]{});
     auto* menu=new QMenu(this);for(const auto& tool:registry)if(tool.group==group.second)menu->addAction(action("sketch."+QString(tool.id).replace(':','.')));
     a->setMenu(menu);
   }
   int page=1;
+  const QMap<QString,QString> pageIcons{{"selectionOptions","cursor"},{"constraints","list"},{"snaps","magnet"}};
   for(const auto& pair:QList<QPair<QString,QString>>{{"selectionOptions",tr("Selection")},{"constraints",tr("Constraints")},{"snaps",tr("Snaps")}}) {
-    addAction("sketch."+pair.first,pair.second,"sketch",{},[this,page]{m_design->showSketchPanel();findChild<SketchPanel*>()->showPage(page);});++page;
+    addAction("sketch."+pair.first,pair.second,pageIcons.value(pair.first),{},[this,page]{m_design->showSketchPanel();findChild<SketchPanel*>()->showPage(page);});++page;
   }
 }
 
