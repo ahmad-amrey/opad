@@ -163,6 +163,8 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
     m_ctx->Display(ais, surface ? AIS_Shaded : AIS_WireFrame, -1, Standard_False);
     m_ctx->Load(ais, -1);
     m_ctx->Activate(ais, 0);
+    // A sketch line or point is a hair to aim at: the context's 4 px missed a path clicked a few pixels off.
+    if (!surface) m_ctx->SetSelectionSensitivity(ais, 0, static_cast<int>(std::lround(7 * displayScale())));
     m_candidates.push_back({c.id, ais});
   }
   redrawScene();

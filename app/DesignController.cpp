@@ -811,7 +811,16 @@ void DesignController::runPreview(bool commit) {
       if(!m_distanceHandle->interacting())m_distanceHandle->hide();
       m_readyPlan.reset();
       m_viewport->clearPreviewBodies();
-      if (error != "cancelled") m_form->setStatus(i18n::t(error), true);
+      // Before anything is picked a refusal is the guidance (a shell: "pick faces to remove, or a body to hollow"),
+      // not an error: it was red as the panel opened.
+      bool picked = false, picks = false;
+      for (const auto& in : m_form->spec()->inputs)
+        if (in.type == "bodies" || in.type == "faces" || in.type == "edges" || in.type == "points" || in.type == "profiles") {
+          picks = true;
+          const opad::json p = m_form->picks(QString::fromStdString(in.name));
+          picked = picked || (p.is_array() && !p.empty());
+        }
+      if (error != "cancelled") m_form->setStatus(i18n::t(error), picked || !picks);
       return;
     }
     m_readyPlan = plan;

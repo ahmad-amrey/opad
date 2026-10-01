@@ -111,7 +111,8 @@ void PickBox::paintEvent(QPaintEvent*) {
   p.setFont(theme::ui(12));
   p.setPen(m_count > 0 ? t.fg : m_satisfied ? t.fg3 : (m_active ? t.sel : t.fg2));
   const QString text = m_count > 0 ? (m_what.isEmpty() ? tr("%1 selected").arg(m_count) : m_what) : m_active ? tr("Pick in the view…") : m_satisfied ? tr("Optional") : tr("Select");
-  p.drawText(QRect(30, 0, width() - 56, height()), Qt::AlignVCenter | Qt::AlignLeft, p.fontMetrics().elidedText(text, Qt::ElideRight, width() - 56));
+  const int room = width() - 30 - (m_count > 0 ? 26 : 8);  // the clear button's place only when there is something to clear
+  p.drawText(QRect(30, 0, room, height()), Qt::AlignVCenter | Qt::AlignLeft, p.fontMetrics().elidedText(text, Qt::ElideRight, room));
   if (m_count > 0) p.drawPixmap(width() - 22, 6, icons::pixmap("close", t.fg2, 16, devicePixelRatioF()));
 }
 
@@ -289,7 +290,10 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
       connect(w.pick, &QPushButton::clicked, this, [this, key] { activate(m_active == key ? QString() : key); });
       connect(w.pick, &PickBox::cleared, this, [this, key] {
         setPicks(key, opad::json());
-        activate(key);
+        // Already active: say so again, so the view drops the picks too (they stayed selected, and the next click
+        // added to them: a cleared shell face came back as "2 selected").
+        if (m_active == key) emit activeInputChanged(key);
+        else activate(key);
         emit inputsChanged();
       });
       h->addWidget(label);
