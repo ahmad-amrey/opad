@@ -190,6 +190,21 @@ TEST(solve_rectangle_and_resize) {
   CHECK_NEAR(r.sk.point(r.p[4])->y, 8, 1e-7);
 }
 
+// A constraint that a circle can meet by moving or by growing moves it: a tangent to a line 15 mm away from a 2 mm
+// circle used to split the gap evenly between the centre, the radius and the line (the radius tripled).
+TEST(solve_tangent_moves_circle_rather_than_resizing_it) {
+  Sketch sk;
+  const int a = sk.add_point(0, 0, true), b = sk.add_point(0, 10, true);
+  const int l = sk.add_line(a, b);
+  const int c = sk.add_circle(sk.add_point(17, 5), 2);
+  sk.add_constraint(CT::Tangent, {l, c});
+  const SolveResult res = solve(sk);
+  CHECK(res.converged);
+  const SkEntity* circle = sk.entity(c);
+  CHECK(circle->r < 4);  // was 7 (2 + 15 / 3)
+  CHECK_NEAR(std::fabs(sk.point(circle->p[0])->x), circle->r, 1e-7);
+}
+
 TEST(solve_under_constrained_line) {
   Sketch sk;
   const int a = sk.add_point(1, 2), b = sk.add_point(7, 10);  // length 10
