@@ -21,6 +21,7 @@
 #include "check.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
+#include "opad/inspect.hpp"
 #include "opad/step_io.hpp"
 
 using namespace opad;
@@ -265,9 +266,15 @@ TEST(obj_polygons_groups_and_material_colours) {
   const Scene s = resolve(d);
   CHECK(s.all_bodies().size() >= 2u);
   CHECK_EQ(triangles(d), 3);
-  bool green = false;
-  for (const auto& id : s.all_bodies()) green = green || (s.node(id)->has_color && s.node(id)->color[1] > 0.9 && s.node(id)->color[0] < 0.1);
+  bool green = false, named = false;
+  for (const auto& id : s.all_bodies()) {
+    green = green || (s.node(id)->has_color && s.node(id)->color[1] > 0.9 && s.node(id)->color[0] < 0.1);
+    const json props = node_properties(d, s, id, false);
+    named = named || props.value("material", "") == "green";
+    CHECK_EQ(props.value("representation", ""), "mesh");
+  }
   CHECK(green);
+  CHECK(named);  // the material's own name, shown in Properties
   // Y-up: the plate drawn in the file's XZ plane stands in OPAD's XY plane.
   const Bnd_Box box = scene_box(d);
   CHECK_NEAR(box.CornerMax().Z() - box.CornerMin().Z(), 5.0, 0.05);

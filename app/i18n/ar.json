@@ -1637,5 +1637,8 @@
   "Select all": "تحديد الكل",
   "Default apps…": "التطبيقات الافتراضية…",
   "Open with OPAD": "الفتح باستخدام OPAD",
-  "File types…": "أنواع الملفات…"
+  "File types…": "أنواع الملفات…",
+  "representation": "التمثيل",
+  "material": "المادة",
+  "source": "المصدر"
 }
