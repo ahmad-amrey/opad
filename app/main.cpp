@@ -9,10 +9,12 @@
 #include "CrashLog.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "Jobs.hpp"
 #include "MainWindow.hpp"
 #include "opad/core.hpp"
 
 int main(int argc, char** argv) {
+  trace::log("startup: main");
   installCrashHandler();
   // Derived ids are for scripted builds (gap log #15): a desktop session restarted on the same document would derive
   // the same ones again.
@@ -47,6 +49,7 @@ int main(int argc, char** argv) {
       qputenv("OPAD_CACHE_DIR", QDir::toNativeSeparators(dataDir + "/cache").toLocal8Bit());
   }
   i18n::install(app);  // before any widget exists: translator and layout direction (needs the names above for QSettings)
+  trace::log("startup: application");
 
   QCommandLineParser parser;
   parser.setApplicationDescription("OPAD: git-native STEP viewer");
@@ -59,8 +62,10 @@ int main(int argc, char** argv) {
   parser.process(app);
 
   MainWindow win;
+  trace::log("startup: window built");
   win.setBenchSelect(parser.isSet(bench));
   win.show();
+  trace::log("startup: window shown");
   QTimer::singleShot(0, &win, [&win] { win.warmUpViewport(); });  // GL init off the first-open path
   const QStringList args = parser.positionalArguments();
   if (!args.isEmpty()) win.openPath(args.first());

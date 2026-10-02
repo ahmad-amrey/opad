@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QHash>
+#include <QIconEngine>
 #include <QImage>
 #include <QPainter>
 #include <QPainterPath>
@@ -292,15 +293,25 @@ struct PathParser {
   }
 };
 
-double attr_num(const QString& attrs, const char* name, double def) {
-  QRegularExpression re(QString("\\b%1=\"([^\"]*)\"").arg(name));
-  auto m = re.match(attrs);
-  return m.hasMatch() ? m.captured(1).toDouble() : def;
-}
+// The value of name="..." where the name starts a word (as \b would: "opacity" also matches in "fill-opacity", which the
+// icons were drawn with). Compiling a regular expression per lookup made building the menus take half a second.
 QString attr_str(const QString& attrs, const char* name) {
-  QRegularExpression re(QString("\\b%1=\"([^\"]*)\"").arg(name));
-  auto m = re.match(attrs);
-  return m.hasMatch() ? m.captured(1) : QString();
+  const QString key = QLatin1String(name) + QLatin1String("=\"");
+  for (qsizetype at = attrs.indexOf(key); at >= 0; at = attrs.indexOf(key, at + 1)) {
+    const QChar before = at > 0 ? attrs[at - 1] : QChar(' ');
+    if (before.isLetterOrNumber() || before == '_') continue;
+    const qsizetype start = at + key.size(), end = attrs.indexOf('"', start);
+    if (end < 0) return {};
+    return attrs.mid(start, end - start);
+  }
+  return {};
+}
+double attr_num(const QString& attrs, const char* name, double def) {
+  const QString value = attr_str(attrs, name);
+  if (value.isNull()) return def;
+  bool ok = false;
+  const double v = value.toDouble(&ok);
+  return ok ? v : 0.0;  // as QString::toDouble gave before
 }
 
 void render(QPainter& p, const QString& markup, const QColor& color) {
@@ -345,6 +356,43 @@ void render(QPainter& p, const QString& markup, const QColor& color) {
 
 QHash<QString, QPixmap> g_cache;
 
+// Renders the icon when it is first painted, at that display scale and state only: drawing every icon at four scales
+// and three states up front cost most of a second at startup.
+class LazyIcon : public QIconEngine {
+ public:
+  LazyIcon(QString name, QColor normal, QColor disabled, QColor selected, int size)
+      : m_name(std::move(name)), m_normal(normal), m_disabled(disabled.isValid() ? disabled : normal),
+        m_selected(selected.isValid() ? selected : normal), m_size(size) {}
+  QSize actualSize(const QSize& size, QIcon::Mode, QIcon::State) override {
+    const int side = std::min({size.width(), size.height(), m_size});  // never larger than drawn, as with pixmaps
+    return {side, side};
+  }
+  QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override { return scaledPixmap(size, mode, state, 1.0); }
+  QPixmap scaledPixmap(const QSize& size, QIcon::Mode mode, QIcon::State, qreal scale) override {
+    const QColor& c = mode == QIcon::Disabled ? m_disabled : mode == QIcon::Selected ? m_selected : m_normal;
+    QPixmap pm = icons::pixmap(m_name, c, m_size, scale);
+    const int side = std::min({size.width(), size.height(), m_size});
+    if (side >= m_size || side <= 0) return pm;
+    QPixmap smaller = pm.scaled(QSize(side, side) * scale, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    smaller.setDevicePixelRatio(scale);
+    return smaller;
+  }
+  void paint(QPainter* painter, const QRect& rect, QIcon::Mode mode, QIcon::State state) override {
+    const qreal scale = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
+    const QPixmap pm = scaledPixmap(rect.size(), mode, state, scale);
+    const QSize logical = (QSizeF(pm.size()) / pm.devicePixelRatio()).toSize();
+    painter->drawPixmap(QRect(rect.center() - QPoint(logical.width() / 2, logical.height() / 2), logical), pm);
+  }
+  QList<QSize> availableSizes(QIcon::Mode, QIcon::State) override { return {QSize(m_size, m_size)}; }
+  QIconEngine* clone() const override { return new LazyIcon(*this); }
+  QString key() const override { return QStringLiteral("opad-lazy"); }
+
+ private:
+  QString m_name;
+  QColor m_normal, m_disabled, m_selected;
+  int m_size;
+};
+
 }  // namespace
 
 namespace icons {
@@ -369,14 +417,7 @@ QPixmap pixmap(const QString& name, const QColor& color, int size, qreal dpr) {
 }
 
 QIcon icon(const QString& name, const QColor& normal, const QColor& disabled, const QColor& selected, int size) {
-  QIcon ic;
-  for (qreal dpr : {1.0, 1.25, 1.5, 2.0}) {
-    ic.addPixmap(pixmap(name, normal, size, dpr), QIcon::Normal);
-    ic.addPixmap(pixmap(name, disabled.isValid() ? disabled : normal, size, dpr), QIcon::Disabled);
-    ic.addPixmap(pixmap(name, selected.isValid() ? selected : normal, size, dpr), QIcon::Selected);
-    ic.addPixmap(pixmap(name, normal, size, dpr), QIcon::Active);
-  }
-  return ic;
+  return QIcon(new LazyIcon(name, normal, disabled, selected, size));
 }
 
 QIcon themed(const QString& name, int size) {
