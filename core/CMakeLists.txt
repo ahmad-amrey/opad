@@ -32,6 +32,7 @@ add_library(opad_core STATIC
   src/mesh_recovery.cpp
   src/step_io.cpp
   src/drawing_io.cpp
+  src/dxf_reader.cpp
   src/formats.cpp
   src/viewer_cache.cpp
   src/inspect.cpp

@@ -1,0 +1,4 @@
+[submodule "third_party/libredwg"]
+	path = third_party/libredwg
+	url = https://github.com/LibreDWG/libredwg.git
+	shallow = true

@@ -21,6 +21,12 @@ if(TARGET opad-cli)
   list(APPEND _opad_portable_deps opad-cli)
 endif()
 string(REPLACE ";" "|" _opad_portable_exes "${_opad_portable_exes}")  # a list cannot cross -D as is
+# LibreDWG's converters (cmake/libredwg.cmake), shipped as separate programs with their licence.
+set(_opad_portable_dwg "")
+if(TARGET opad-dwg)
+  string(REPLACE ";" "|" _opad_portable_dwg "${OPAD_DWG_PROGRAMS}")
+  list(APPEND _opad_portable_deps opad-dwg)
+endif()
 
 add_custom_target(opad-portable
   COMMAND ${CMAKE_COMMAND}
@@ -30,6 +36,7 @@ add_custom_target(opad-portable
     "-DOPAD_DLL_DIRS=${_opad_cxx_bin}|${_opad_qt_bin}|${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
     "-DOPAD_OBJDUMP=${CMAKE_OBJDUMP}"
     "-DOPAD_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
+    "-DOPAD_DWG_PROGRAMS=${_opad_portable_dwg}"
     -P "${PROJECT_SOURCE_DIR}/cmake/portable_stage.cmake"
   DEPENDS ${_opad_portable_deps}
   COMMENT "Staging the portable package"

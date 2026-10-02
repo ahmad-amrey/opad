@@ -33,6 +33,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 if(MINGW AND NOT OPAD_STATIC)
   include(cmake/mingw.cmake)  # runtime DLLs staged in bin/
 endif()
+include(cmake/libredwg.cmake)  # DWG converters (third_party/libredwg) built and staged in bin/
 
 if(OPAD_STATIC)
   include(cmake/static.cmake)       # link flags of the single-file build

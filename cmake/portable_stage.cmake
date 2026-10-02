@@ -69,6 +69,23 @@ file(WRITE "${OPAD_STAGE}/opad.portable"
   "Delete this file to use the registry and %LOCALAPPDATA% instead.\n")
 file(COPY "${OPAD_SOURCE_DIR}/LICENSE" DESTINATION "${OPAD_STAGE}")
 
+# DWG: LibreDWG's dwg2dxf / dxf2dwg (GPLv3) are separate programs OPAD runs; they travel with their licence and where
+# their source is.
+if(OPAD_DWG_PROGRAMS)
+  string(REPLACE "|" ";" OPAD_DWG_PROGRAMS "${OPAD_DWG_PROGRAMS}")
+  file(COPY ${OPAD_DWG_PROGRAMS} DESTINATION "${OPAD_STAGE}")
+  set(_ldwg "${OPAD_SOURCE_DIR}/third_party/libredwg")
+  file(MAKE_DIRECTORY "${OPAD_STAGE}/licenses")
+  configure_file("${_ldwg}/COPYING" "${OPAD_STAGE}/licenses/LibreDWG-COPYING.txt" COPYONLY)
+  execute_process(COMMAND git -C "${_ldwg}" describe --tags --always OUTPUT_VARIABLE _ldwg_version
+                  OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  file(WRITE "${OPAD_STAGE}/licenses/LibreDWG-NOTICE.txt"
+    "dwg2dxf.exe and dxf2dwg.exe are LibreDWG ${_ldwg_version}, unmodified, built by OPAD's build from\n"
+    "https://github.com/LibreDWG/libredwg (tag ${_ldwg_version}; third_party/libredwg in OPAD's source tree).\n"
+    "LibreDWG is free software under the GNU General Public License version 3 (LibreDWG-COPYING.txt).\n"
+    "OPAD runs them as separate programs to read and write DWG drawings; it does not link to LibreDWG.\n")
+endif()
+
 get_filename_component(_parent "${OPAD_STAGE}" DIRECTORY)
 get_filename_component(_folder "${OPAD_STAGE}" NAME)
 file(REMOVE "${OPAD_STAGE}.zip")

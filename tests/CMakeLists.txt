@@ -71,6 +71,14 @@ add_executable(opad-test-formats test_formats.cpp)
 target_link_libraries(opad-test-formats PRIVATE opad::core ZLIB::ZLIB)
 add_test(NAME formats COMMAND opad-test-formats)
 
+add_executable(opad-test-dxf test_dxf.cpp)
+target_link_libraries(opad-test-dxf PRIVATE opad::core)
+target_compile_definitions(opad-test-dxf PRIVATE OPAD_LIBREDWG_DATA="${PROJECT_SOURCE_DIR}/third_party/libredwg/test/test-data")
+if(TARGET opad-dwg)
+  add_dependencies(opad-test-dxf opad-dwg)  # its DWG case runs the dwg2dxf staged beside it
+endif()
+add_test(NAME dxf COMMAND opad-test-dxf)
+
 add_executable(opad-test-step test_step.cpp)
 target_link_libraries(opad-test-step PRIVATE opad::core)
 
