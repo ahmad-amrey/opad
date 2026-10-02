@@ -12,6 +12,8 @@
 #include <TopoDS.hxx>
 #include <zlib.h>
 
+#include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -24,6 +26,16 @@
 using namespace opad;
 
 namespace {
+// The viewer cache lives under cache_dir(), which reads OPAD_CACHE_DIR once: aim it at a scratch folder before any test.
+const std::filesystem::path kCacheDir = [] {
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-formats-cache-" + new_uuid());
+#ifdef _WIN32
+  _putenv_s("OPAD_CACHE_DIR", dir.string().c_str());
+#else
+  setenv("OPAD_CACHE_DIR", dir.string().c_str(), 1);
+#endif
+  return dir;
+}();
 struct Files {
   std::filesystem::path dir = std::filesystem::temp_directory_path() / ("opad-formats-" + new_uuid());
   Files() { std::filesystem::create_directory(dir); }
@@ -302,6 +314,35 @@ TEST(iges_brep_and_vrml) {
   b = scene_box(open(f.dir / "square.wrl", true));
   CHECK_NEAR(b.CornerMax().X() - b.CornerMin().X(), 1000.0, 0.5);  // metres, Y up
   CHECK_NEAR(b.CornerMax().Z() - b.CornerMin().Z(), 1000.0, 0.5);
+}
+
+TEST(viewer_cache_round_trip_and_invalidation) {
+  Files f;
+  Document source = Document::create();
+  import_brep(source, brep_from_shape(BRepPrimAPI_MakeBox(25, 15, 5).Shape()), "Plate");
+  ExportOptions eo;
+  export_selection(source, resolve(source), f.dir / "plate.step", eo);
+  ImportOptions viewer;
+  viewer.viewer = true;
+  Document miss = Document::create();
+  CHECK(!viewer_cache_load(miss, f.dir / "plate.step", viewer));
+  Document first = open(f.dir / "plate.step", true);
+  viewer_cache_store(first, f.dir / "plate.step", viewer);
+  Document again = Document::create();
+  CHECK(viewer_cache_load(again, f.dir / "plate.step", viewer));
+  CHECK(again.has_live_bodies());
+  const Scene s = resolve(again);
+  CHECK_EQ(s.all_bodies().size(), resolve(first).all_bodies().size());
+  CHECK_EQ(s.node(s.all_bodies().front())->name, resolve(first).node(resolve(first).all_bodies().front())->name);
+  const Bnd_Box box = scene_box(again);
+  CHECK_NEAR(box.CornerMax().X() - box.CornerMin().X(), 25.0, 0.05);
+  CHECK_EQ(make_editable(again).body_keys(), open(f.dir / "plate.step", false).body_keys());  // saves like a fresh read
+  // A changed file is read again, not taken from the cache.
+  std::filesystem::last_write_time(f.dir / "plate.step", std::filesystem::last_write_time(f.dir / "plate.step") + std::chrono::seconds(5));
+  Document stale = Document::create();
+  CHECK(!viewer_cache_load(stale, f.dir / "plate.step", viewer));
+  std::error_code e;
+  std::filesystem::remove_all(kCacheDir, e);
 }
 
 TEST(unsupported_and_missing_files_fail_cleanly) {
