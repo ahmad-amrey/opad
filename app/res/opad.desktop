@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=OPAD
-Comment=Git-native STEP viewer and parametric modeller
+Comment=CAD viewer (STEP, IGES, STL, 3MF, OBJ, DXF, DWG, SVG) and git-native parametric modeller
 Exec=opad %f
 Icon=opad
 Terminal=false
 Categories=Graphics;Engineering;
-MimeType=model/step;application/x-opad;
+MimeType=application/x-opad;model/step;model/iges;model/stl;model/x.stl-binary;model/x.stl-ascii;application/sla;model/3mf;model/obj;model/gltf+json;model/gltf-binary;model/vrml;application/x-ply;image/vnd.dxf;image/vnd.dwg;image/svg+xml;

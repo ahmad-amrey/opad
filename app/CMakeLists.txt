@@ -20,6 +20,7 @@ set(OPAD_APP_SOURCES
   Icons.cpp Icons.hpp
   Ribbon.cpp Ribbon.hpp
   EmptyState.cpp EmptyState.hpp
+  FileAssociations.cpp FileAssociations.hpp
   Viewport.cpp ViewportPicking.cpp ViewportPickingBench.cpp ViewportDesign.cpp ViewportInspect.cpp ViewportNotes.cpp ViewportRefine.cpp ViewportSection.cpp Viewport.hpp
   ViewportSelection.cpp ViewportSettings.cpp
   ViewportTracking.cpp
@@ -90,7 +91,8 @@ if(APPLE)
     MACOSX_BUNDLE_BUNDLE_NAME OPAD
     MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-    MACOSX_BUNDLE_ICON_FILE opad-full.icns)
+    MACOSX_BUNDLE_ICON_FILE opad-full.icns
+    MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/res/Info.plist.in)  # declares the formats Finder opens with OPAD
   target_link_libraries(opad PRIVATE "-framework Cocoa")
 endif()
 if(OPAD_STATIC)

@@ -2,6 +2,7 @@
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFile>
+#include <QFileOpenEvent>
 #include <QSettings>
 #include <QTimer>
 #include <QSurfaceFormat>
@@ -12,6 +13,24 @@
 #include "Jobs.hpp"
 #include "MainWindow.hpp"
 #include "opad/core.hpp"
+
+namespace {
+// macOS hands the files a user opens from Finder (or drops on the Dock icon) to a running app as events, not arguments.
+class FileOpenEvents : public QObject {
+ public:
+  explicit FileOpenEvents(MainWindow* window) : QObject(window), m_window(window) {}
+  bool eventFilter(QObject* watched, QEvent* event) override {
+    if (event->type() == QEvent::FileOpen) {
+      const QString file = static_cast<QFileOpenEvent*>(event)->file();
+      if (!file.isEmpty()) m_window->openPath(file);
+      return true;
+    }
+    return QObject::eventFilter(watched, event);
+  }
+ private:
+  MainWindow* m_window;
+};
+}  // namespace
 
 int main(int argc, char** argv) {
   trace::log("startup: main");
@@ -52,16 +71,17 @@ int main(int argc, char** argv) {
   trace::log("startup: application");
 
   QCommandLineParser parser;
-  parser.setApplicationDescription("OPAD: git-native STEP viewer");
+  parser.setApplicationDescription("OPAD: CAD viewer and git-native parametric modeller");
   parser.addHelpOption();
   parser.addVersionOption();
-  parser.addPositionalArgument("file", "An .opad document or a .step file to browse");
+  parser.addPositionalArgument("file", "An .opad document, or a STEP, IGES, STL, 3MF, OBJ, glTF, PLY, DXF, DWG or SVG file to view");
   QCommandLineOption bench("bench-select", "Select every root once the file has loaded, log the timing (OPAD_TRACE) and quit");
   bench.setFlags(QCommandLineOption::HiddenFromHelp);
   parser.addOption(bench);
   parser.process(app);
 
   MainWindow win;
+  app.installEventFilter(new FileOpenEvents(&win));
   trace::log("startup: window built");
   win.setBenchSelect(parser.isSet(bench));
   win.show();

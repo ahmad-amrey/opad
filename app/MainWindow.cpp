@@ -59,6 +59,7 @@
 #include <BRepBndLib.hxx>
 #include <QElapsedTimer>
 #include <QCollator>
+#include "FileAssociations.hpp"
 #include <QSignalBlocker>
 #include "opad/drawing_io.hpp"
 
@@ -749,6 +750,7 @@ void MainWindow::buildRibbon() {
   viewerMode->setChecked(m_doc->viewerOpens);
   viewerMode->setToolTip(tr("STEP, IGES, STL, 3MF, OBJ, DXF, SVG and the other formats open read-only and fast; Save makes them editable OPAD documents."));
   connect(viewerMode, &QAction::toggled, this, [this](bool on) { m_doc->viewerOpens = on; m_settings.setValue("files/viewerMode", on); });
+  if (associations::supported()) settings->addAction(tr("File types…"), this, [this] { FileTypesDialog(this).exec(); });
   settings->addAction(action("panel.browser"));
   auto* autoBrowser = settings->addAction(tr("Auto-hide scene browser"));
   autoBrowser->setCheckable(true);
@@ -2483,6 +2485,11 @@ void MainWindow::showNodeGeometry(const std::string& id, const QString& title, c
 void MainWindow::runBench() {
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_RECOVERY");!mode.isEmpty()){m_recovery->bench(mode);return;}
   if(benchViewer())return;
+  if(const QString shot=qEnvironmentVariable("OPAD_BENCH_FILETYPES");!shot.isEmpty()){  // the dialog as drawn, nothing registered
+    auto* dialog=new FileTypesDialog(this);dialog->show();
+    QTimer::singleShot(300,this,[dialog,shot]{const bool saved=dialog->grab().save(shot);dialog->deleteLater();trace::log(QString("bench: file types dialog %1").arg(saved?"PASS":"FAIL"));QCoreApplication::exit(saved?0:2);});
+    return;
+  }
   // Read-only render regression: retain imported geometry and dump it before
   // the general selection benchmark hides/edits its leaf.
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_MESH_SHOT");!shot.isEmpty()) {
