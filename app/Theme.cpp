@@ -175,11 +175,9 @@ QString stylesheet(const Tokens& t) {
                "QLabel#badge { background: %7; border-radius: 8px; padding: 1px 5px; font-size: 11px; font-family: '%8'; }\n").arg(fg2, fg3, bg2, line, fg, sel, bg4, monoF);
   s += QString("QToolButton#vpButton { background: %1; border: 1px solid %2; border-radius: 4px; padding: 0; }\n"
                "QToolButton#vpButton:hover { background: %3; }\n").arg(bg2, line, bg3);
-  // Buttons in the viewport's chip row (viewer mode: previous / next file, Save to edit).
-  s += QString("QToolButton#chipButton { background: %1; border: 1px solid %2; border-radius: 3px; padding: 0 6px; font-size: 12px; color: %3; }\n"
-               "QToolButton#chipButton:hover { background: %4; }\n"
-               "QToolButton#chipAction { background: %5; border: 1px solid %5; border-radius: 3px; padding: 1px 8px; font-size: 11px; font-weight: 500; color: %6; }\n"
-               "QToolButton#chipAction:hover { background: %7; border-color: %7; }\n").arg(bg2, line, fg, bg3, sel, onsel, css(t.sel.lighter(115)));
+  // The button in the viewport's chip row (viewer mode: Save to edit).
+  s += QString("QToolButton#chipAction { background: %1; border: 1px solid %1; border-radius: 3px; padding: 1px 8px; font-size: 11px; font-weight: 500; color: %2; }\n"
+               "QToolButton#chipAction:hover { background: %3; border-color: %3; }\n").arg(sel, onsel, css(t.sel.lighter(115)));
   // The note / hand drawing editor (AnnotationEditor.cpp): pickers as chips, mono section heads, keys in the buttons.
   s += QString("QToolButton[annotationChoice=\"true\"] { background: %1; border: 1px solid %2; border-radius: 3px; padding: 0 6px; color: %3; }\n"
                "QToolButton[annotationChoice=\"true\"]:hover { background: %4; }\n"

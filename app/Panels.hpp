@@ -272,13 +272,11 @@ class ViewportChips : public QWidget {
  public:
   explicit ViewportChips(QWidget* parent = nullptr);
   void set(const QString& mode, const QString& projection, const QString& section, const QString& isolate, bool twoDimensional = false);
-  // Viewer mode: "Viewer · read-only" first in the row, with the file's place in its folder (Previous / Next) and
-  // Save to edit. An empty file hides them.
-  void setViewer(const QString& file, int index, int count);
+  // Viewer mode: "Viewer · read-only" first in the row, then Save to edit. An empty file hides them.
+  void setViewer(const QString& file);
  signals:
   void leaveTwoDimensional();  // the 2D mode card was clicked
   void saveToEditRequested();
-  void fileStepRequested(int step);  // -1: the previous file in the folder, +1: the next one
  protected:
   bool eventFilter(QObject* object, QEvent* event) override;
  private:
@@ -288,9 +286,6 @@ class ViewportChips : public QWidget {
   QLabel* m_section;
   QLabel* m_isolate;
   QLabel* m_viewer;
-  QToolButton* m_previousFile;
-  QLabel* m_filePosition;
-  QToolButton* m_nextFile;
   QToolButton* m_saveToEdit;
 };
 

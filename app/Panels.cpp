@@ -1457,31 +1457,17 @@ ViewportChips::ViewportChips(QWidget* parent) : QWidget(parent) {
   m_section->setObjectName("chipSel");
   m_isolate = new QLabel(this);
   m_isolate->setObjectName("chipSel");
-  // Viewer mode: what is shown and how to move on from it (the next file, or saving to edit).
+  // Viewer mode: what is shown, and saving it to edit.
   m_viewer = new QLabel(tr("Viewer · read-only"), this);
   m_viewer->setObjectName("chipSel");
-  m_previousFile = new QToolButton(this);
-  m_previousFile->setObjectName("chipButton");
-  m_previousFile->setText(QStringLiteral("‹"));
-  m_previousFile->setToolTip(tr("Previous file in this folder (PgUp)"));
-  m_filePosition = new QLabel(this);
-  m_filePosition->setObjectName("chip");
-  m_nextFile = new QToolButton(this);
-  m_nextFile->setObjectName("chipButton");
-  m_nextFile->setText(QStringLiteral("›"));
-  m_nextFile->setToolTip(tr("Next file in this folder (PgDown)"));
   m_saveToEdit = new QToolButton(this);
   m_saveToEdit->setObjectName("chipAction");
   m_saveToEdit->setText(tr("Save to edit"));
   m_saveToEdit->setToolTip(tr("Save as an OPAD document, which can be edited (Ctrl+S). The file you opened is not changed."));
-  for (QToolButton* b : {m_previousFile, m_nextFile, m_saveToEdit}) {
-    b->setCursor(Qt::PointingHandCursor);
-    b->setFocusPolicy(Qt::NoFocus);
-  }
-  connect(m_previousFile, &QToolButton::clicked, this, [this] { emit fileStepRequested(-1); });
-  connect(m_nextFile, &QToolButton::clicked, this, [this] { emit fileStepRequested(1); });
+  m_saveToEdit->setCursor(Qt::PointingHandCursor);
+  m_saveToEdit->setFocusPolicy(Qt::NoFocus);
   connect(m_saveToEdit, &QToolButton::clicked, this, &ViewportChips::saveToEditRequested);
-  for (QWidget* w : std::initializer_list<QWidget*>{m_viewer, m_previousFile, m_filePosition, m_nextFile, m_saveToEdit}) {
+  for (QWidget* w : std::initializer_list<QWidget*>{m_viewer, m_saveToEdit}) {
     l->addWidget(w);
     w->hide();
   }
@@ -1501,15 +1487,10 @@ bool ViewportChips::eventFilter(QObject* object, QEvent* event) {
   return QWidget::eventFilter(object, event);
 }
 
-void ViewportChips::setViewer(const QString& file, int index, int count) {
+void ViewportChips::setViewer(const QString& file) {
   const bool on = !file.isEmpty();
   m_viewer->setVisible(on);
   m_viewer->setToolTip(on ? tr("%1 is shown read-only: measure, section, hide and colour freely. Editing needs it saved as an OPAD document.").arg(file) : QString());
-  const bool browse = on && count > 1;
-  m_previousFile->setVisible(browse);
-  m_nextFile->setVisible(browse);
-  m_filePosition->setVisible(browse);
-  m_filePosition->setText(tr("%1 of %2").arg(index + 1).arg(count));
   m_saveToEdit->setVisible(on);
   adjustSize();
 }

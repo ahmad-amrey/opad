@@ -58,7 +58,6 @@
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
 #include <QElapsedTimer>
-#include <QCollator>
 #include "FileAssociations.hpp"
 #include <QSignalBlocker>
 #include "opad/drawing_io.hpp"
@@ -121,7 +120,6 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   // Viewer mode -> editable: the same shapes under content keys, so what is on screen stays (no second tessellation).
   connect(m_doc, &AppDocument::bodyKeysRenamed, m_viewport, &Viewport::renameBodyKeys);
   connect(m_chips, &ViewportChips::saveToEditRequested, this, [this] { guarded([this] { saveViewerAs(); }); });
-  connect(m_chips, &ViewportChips::fileStepRequested, this, &MainWindow::openSibling);
   connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); refreshGit(); });
   connect(m_doc, &AppDocument::message, this, [this](const QString& t) { statusBar()->showMessage(t, 6000); });
   connect(m_viewport, &Viewport::selectionChanged, this, &MainWindow::onViewportSelection);
@@ -380,8 +378,6 @@ void MainWindow::buildActions() {
     addRecent(p);
   });
   addAction("file.export", tr("&Export…"), "export", QKeySequence("Ctrl+E"), [this] { exportDialog(); });
-  addAction("file.next", tr("Next file in folder"), "chevronDown", QKeySequence("PgDown"), [this] { openSibling(1); });
-  addAction("file.previous", tr("Previous file in folder"), "chevronUp", QKeySequence("PgUp"), [this] { openSibling(-1); });
   addAction("file.screenshot", tr("Save screens&hot…"), "export", QKeySequence("Ctrl+Shift+P"), [this] { screenshot(); });
   addAction("file.close", tr("&Close document"), "close", QKeySequence("Ctrl+W"), [this] {
     if (!m_doc->hasDocument || m_doc->loading || !maybeSave()) return;
@@ -1269,7 +1265,6 @@ void MainWindow::showDocument(bool has) {
     if (id.startsWith("inspect.") || id.startsWith("annotate.") || id.startsWith("select.") || id == "file.export" || id == "file.screenshot" || id == "file.save" || id == "file.saveas" || id == "file.close")
       a->setEnabled(has);
     if (id == "file.importdoc") a->setEnabled(m_doc->browse);
-    if (id == "file.next" || id == "file.previous") a->setEnabled(has);
     // Viewer mode keeps the editing commands: they say that the file has to be saved first (isEditAction).
   }
   if (m_pinAction) m_pinAction->setEnabled(has && !m_lastMeasure.is_null());
@@ -1458,37 +1453,9 @@ void MainWindow::makeEditable(const QString& savePath, std::function<void()> the
   });
 }
 
-// The files in the shown file's folder that OPAD opens, in the order a file manager lists them.
-QStringList MainWindow::siblings() const {
-  const QString current = m_doc->browse ? m_doc->viewing : m_doc->path();
-  if (current.isEmpty()) return {};
-  QStringList patterns{"*.opad"};
-  for (const auto& ext : opad::importable_extensions()) patterns << "*" + QString::fromStdString(ext);
-  QDir dir = QFileInfo(current).absoluteDir();
-  QStringList names = dir.entryList(patterns, QDir::Files | QDir::Readable);
-  QCollator order;
-  order.setNumericMode(true);
-  order.setCaseSensitivity(Qt::CaseInsensitive);
-  std::sort(names.begin(), names.end(), [&](const QString& a, const QString& b) { return order.compare(a, b) < 0; });
-  QStringList out;
-  for (const QString& n : names) out << dir.absoluteFilePath(n);
-  return out;
-}
-
-void MainWindow::openSibling(int step) {
-  const QString current = QFileInfo(m_doc->browse ? m_doc->viewing : m_doc->path()).absoluteFilePath();
-  const QStringList files = siblings();
-  if (files.size() < 2) { statusBar()->showMessage(tr("No other files to open in this folder"), 3000); return; }
-  int at = files.indexOf(current);
-  at = at < 0 ? 0 : (at + step + files.size()) % files.size();
-  openPath(files[at]);
-}
-
 void MainWindow::updateViewerCard() {
   if (!m_chips) return;
-  if (!m_doc->browse) { m_chips->setViewer({}, 0, 0); positionOverlays(); return; }
-  const QStringList files = siblings();
-  m_chips->setViewer(QFileInfo(m_doc->viewing).fileName(), static_cast<int>(files.indexOf(QFileInfo(m_doc->viewing).absoluteFilePath())), static_cast<int>(files.size()));
+  m_chips->setViewer(m_doc->browse ? QFileInfo(m_doc->viewing).fileName() : QString());
   positionOverlays();
 }
 
@@ -3014,11 +2981,16 @@ bool MainWindow::benchViewer() {
         trace::log(QString("bench: viewer editable %1, saved and reloaded %2, kept %3 of %4 bodies on screen, re-meshed %5 times")
                        .arg(editable).arg(reloads).arg(m_viewport->displayedCount()).arg(shown).arg(*remeshed));
         if (!editable || !reloads || m_viewport->displayedCount() != shown || *remeshed > 0) return fail("conversion");
+        // Another file of the bench folder opens over this one (viewer mode again).
         const QString before = m_doc->path();
-        openSibling(1);
+        QString other;
+        for (const QFileInfo& file : QFileInfo(before).absoluteDir().entryInfoList({"*.step", "*.svg"}, QDir::Files))
+          if (file.completeBaseName() != QFileInfo(before).completeBaseName()) other = file.absoluteFilePath();
+        if (other.isEmpty()) return fail("no other file in the bench folder");
+        openPath(other);
         QTimer::singleShot(3000, this, [this, before, fail] {
-          if (m_doc->loading || QFileInfo(m_doc->browse ? m_doc->viewing : m_doc->path()) == QFileInfo(before)) return fail("next file in folder did not open");
-          trace::log("bench: viewer card, view changes not unsaved, edits refused, editable in place, saved, next file PASS");
+          if (m_doc->loading || QFileInfo(m_doc->browse ? m_doc->viewing : m_doc->path()) == QFileInfo(before)) return fail("another file did not open");
+          trace::log("bench: viewer card, view changes not unsaved, edits refused, editable in place, saved, another file PASS");
           QCoreApplication::exit(0);
         });
       });

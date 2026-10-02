@@ -135,8 +135,6 @@ class MainWindow : public QMainWindow {
   bool requireEditable(std::function<void()> resume = {});  // true when the document can be edited
   void saveViewerAs(std::function<void()> then = {});       // Save as OPAD: made editable in place, then written
   void makeEditable(const QString& savePath, std::function<void()> then = {});
-  QStringList siblings() const;                             // the files in the shown file's folder that OPAD opens
-  void openSibling(int step);                               // the previous (-1) or next (+1) of them
   void updateViewerCard();
 
   AppDocument* m_doc = nullptr;
