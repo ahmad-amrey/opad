@@ -1346,6 +1346,34 @@ void MainWindow::setLoading(bool on) {
   if (on) positionOverlays();
 }
 
+namespace {
+// Benches run in a hidden main window while the user works on the same desktop: their other top-level windows (tool
+// panels, menus, message boxes) are kept off the screen, and a message box is logged and dismissed instead of waiting
+// for a click that never comes.
+class BenchQuiet : public QObject {
+ public:
+  BenchQuiet(QWidget* main, QObject* parent) : QObject(parent), m_main(main) {}
+  bool eventFilter(QObject* o, QEvent* e) override {
+    auto* w = qobject_cast<QWidget*>(o);
+    if (!w || w == m_main || !w->isWindow()) return false;
+    if (e->type() == QEvent::Polish) w->setAttribute(Qt::WA_DontShowOnScreen);
+    if (e->type() == QEvent::Show)
+      if (auto* box = qobject_cast<QMessageBox*>(w)) {
+        trace::log(QStringLiteral("bench: message box dismissed: %1: %2").arg(box->windowTitle(), box->text()));
+        QTimer::singleShot(0, box, [box] { box->done(QMessageBox::Cancel); });
+      }
+    return false;
+  }
+ private:
+  QWidget* m_main;
+};
+}  // namespace
+
+void MainWindow::setBenchSelect(bool on) {
+  m_benchSelect = on;
+  if (on) qApp->installEventFilter(new BenchQuiet(this, this));
+}
+
 bool MainWindow::eventFilter(QObject* o, QEvent* e) {
   if (o == m_viewport && (e->type() == QEvent::Resize || e->type() == QEvent::Show)) positionOverlays();
   return QMainWindow::eventFilter(o, e);
@@ -2834,6 +2862,7 @@ void MainWindow::dropEvent(QDropEvent* e) {
 }
 
 bool MainWindow::maybeSave() {
+  if (m_benchSelect) return true;  // benches run in hidden windows: a question here would pop up on the user's desktop
   if(m_doc->snapshotBusy()){statusBar()->showMessage(tr("A snapshot is being captured. Try again shortly."),4000);return false;}
   if(m_design->sketchActive() && m_design->sketch()->modified()) {
     const auto result=QMessageBox::question(this,tr("Unfinished sketch"),tr("Finish the sketch before continuing?"),QMessageBox::Save|QMessageBox::Discard|QMessageBox::Cancel);

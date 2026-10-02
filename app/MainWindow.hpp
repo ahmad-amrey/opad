@@ -29,7 +29,7 @@ class MainWindow : public QMainWindow {
   ~MainWindow() override;
   void openPath(const QString& path);
   void warmUpViewport() { m_viewport->warmUp(); }
-  void setBenchSelect(bool on) { m_benchSelect = on; }  // --bench-select: select every root after loading, log, quit
+  void setBenchSelect(bool on);  // --bench-select: select every root after loading, log, quit; nothing else shows on screen
 
  protected:
   void closeEvent(QCloseEvent* e) override;
