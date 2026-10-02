@@ -33,6 +33,7 @@ add_library(opad_core STATIC
   src/step_io.cpp
   src/drawing_io.cpp
   src/formats.cpp
+  src/viewer_cache.cpp
   src/inspect.cpp
   src/render.cpp
   src/diff.cpp

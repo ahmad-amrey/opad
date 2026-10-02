@@ -92,11 +92,17 @@ void AppDocument::startOpen(const QString& path) {
     auto result = std::make_shared<opad::Document>();
     QString error;
     QStringList warnings;
+    bool slowRead = false;  // worth remembering (viewer cache): the next open skips the translation
     try {
       if (external) {
         *result = opad::Document::create();
-        const auto imported=opad::import_file(*result, fsPath(path), o);
-        for(const auto& warning:imported.warnings) warnings.append(QString::fromStdString(warning));
+        QElapsedTimer clock;
+        clock.start();
+        if (!viewer || !opad::viewer_cache_load(*result, fsPath(path), o)) {
+          const auto imported=opad::import_file(*result, fsPath(path), o);
+          for(const auto& warning:imported.warnings) warnings.append(QString::fromStdString(warning));
+          slowRead = viewer && clock.elapsed() > 1500;
+        }
       } else *result = opad::Document::load(fsPath(path));
       // Parse the bodies here rather than on the UI thread when they are first displayed.
       if (!*cancel) opad::warm_shape_cache(*result, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
@@ -107,7 +113,7 @@ void AppDocument::startOpen(const QString& path) {
       error = QString::fromUtf8(e.what());
     }
     if (!*alive || current->load() != token) return;  // dropped: freed here, off the UI thread
-    QMetaObject::invokeMethod(this, [this, result, error, path, external, viewer, warnings, token, current] {
+    QMetaObject::invokeMethod(this, [this, result, error, path, external, viewer, warnings, token, current, slowRead, o] {
       if (current->load() != token) return;
       loading = false;
       if (!error.isEmpty()) {
@@ -120,6 +126,8 @@ void AppDocument::startOpen(const QString& path) {
       doc = std::move(*result);
       browse = viewer;
       viewing = viewer ? QFileInfo(path).absoluteFilePath() : QString();
+      m_cacheSource = slowRead ? viewing : QString();
+      m_cacheCenter = o.center_drawing;
       hasDocument = true;
       clearHistory();
       markSaved();  // a viewed file is never "unsaved": closing it asks nothing

@@ -141,3 +141,15 @@ void AppDocument::startEditable(JobRunner* jobs, std::function<void(bool, const 
     if (done) done(true, {});
   });
 }
+
+void AppDocument::storeViewerCache(JobRunner* jobs) {
+  if (!browse || m_cacheSource.isEmpty()) return;
+  const QString source = std::exchange(m_cacheSource, QString());
+  auto copy = std::make_shared<opad::Document>(doc);  // the import op and body entries; the shapes stay shared
+  opad::ImportOptions options;
+  options.center_drawing = m_cacheCenter;
+  const std::filesystem::path file(source.toStdU16String());
+  jobs->async(tr("Remembering %1 for faster opening").arg(QFileInfo(source).fileName()), [copy, file, options](Progress p) {
+    opad::viewer_cache_store(*copy, file, options, [p] { return p.cancelled(); });
+  });
+}

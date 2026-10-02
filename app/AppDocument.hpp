@@ -62,6 +62,8 @@ class AppDocument : public QObject {
   // Viewer mode -> an editable, unsaved document with the same content and view changes, prepared on a worker
   // (opad::make_editable). `done(ok, error)` runs on the UI thread.
   void startEditable(JobRunner* jobs, std::function<void(bool, const QString&)> done);
+  // After a slow viewer read is on screen (meshed): keeps its shapes and meshes for the next open (opad::viewer_cache_store).
+  void storeViewerCache(JobRunner* jobs);
   bool converting() const { return m_converting; }
   // A drawing goes where `placement` puts its XY plane and origin, after `plane` (resolved on the worker) if given.
   void startImport(const QString& path, const QString& parent = {}, const opad::Mat4& placement = {}, const opad::json& plane = {});
@@ -130,4 +132,6 @@ class AppDocument : public QObject {
   std::shared_ptr<std::atomic<unsigned>> m_loadToken = std::make_shared<std::atomic<unsigned>>(0);  // the load whose result counts
   bool m_capturing = false;
   bool m_converting = false;
+  QString m_cacheSource;  // the viewed file, when its read was slow enough to remember
+  bool m_cacheCenter = false;
 };

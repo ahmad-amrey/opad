@@ -49,6 +49,12 @@ struct EditableKeys {
 };
 Document make_editable(const Document& viewer, EditableKeys* changed = nullptr, const std::function<bool(double)>& progress = {});
 
+// Viewer mode remembers slow reads (viewer_cache.cpp): the shapes of a viewer document's import, with any display meshes
+// made since, kept under the user cache and keyed by the file's path, size and time and the options that shape the read.
+// load: false when nothing usable is kept (then read the file); store: best effort, never throws for cache trouble.
+bool viewer_cache_load(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
+void viewer_cache_store(const Document& doc, const std::filesystem::path& file, const ImportOptions& opt, const std::function<bool()>& cancelled = {});
+
 // Imports a shape given as OCCT ASCII BREP text (the bridge for build123d/CadQuery/OCP users): solids in a
 // compound become separate bodies under a component named `name`.
 ImportResult import_brep(Document& doc, const std::string& brep, const std::string& name, const ImportOptions& opt = {});

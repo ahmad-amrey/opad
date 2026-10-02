@@ -68,22 +68,24 @@ struct Conversion {
   Conversion() { std::filesystem::create_directory(directory); }
   ~Conversion() { std::error_code error; std::filesystem::remove_all(directory, error); }
 };
-void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& out, bool toDwg) {
-  const char* override = std::getenv(toDwg ? "OPAD_DXF2DWG" : "OPAD_DWG2DXF");
-  const std::string program = override && *override ? override : toDwg ? "dxf2dwg" : "dwg2dxf";
-  std::vector<std::string> args = {program, "-y", "-o", out.string(), in.string()};
+// Runs a converter and waits for it (two minutes at most); its exit status, or -1 when it did not start. Arguments go as
+// wide strings on Windows, so a drawing named in Arabic reaches the converter intact.
+int run_program(const std::filesystem::path& program, const std::vector<std::filesystem::path>& args) {
   int status = -1;
 #ifdef _WIN32
   std::wstring command;
-  for (const auto& a : args) {
+  auto quote = [&](const std::wstring& a) {
     command += L"\""; unsigned slashes=0;
-    for(wchar_t c:std::filesystem::path(a).wstring()) {
+    for(wchar_t c:a) {
       if(c==L'\\') { ++slashes; continue; }
       command.append(c==L'\"'?slashes*2+1:slashes,L'\\'); slashes=0; command+=c;
     }
     command.append(slashes*2,L'\\'); command+=L"\" ";
-  }
-  STARTUPINFOW startup{}; startup.cb=sizeof(startup); startup.dwFlags=STARTF_USESTDHANDLES;
+  };
+  quote(program.wstring());
+  for (const auto& a : args) quote(a.wstring());
+  STARTUPINFOW startup{}; startup.cb=sizeof(startup); startup.dwFlags=STARTF_USESTDHANDLES|STARTF_USESHOWWINDOW;
+  startup.wShowWindow=0;  // SW_HIDE (the OCCT headers leave winuser.h out): converters with a window (ODA) stay out of sight
   startup.hStdInput=GetStdHandle(STD_INPUT_HANDLE);
   startup.hStdOutput=startup.hStdError=GetStdHandle(STD_ERROR_HANDLE);
   PROCESS_INFORMATION process{};
@@ -93,16 +95,91 @@ void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& o
     CloseHandle(process.hThread); CloseHandle(process.hProcess);
   }
 #else
-  std::vector<char*> ptrs; for (auto& a : args) ptrs.push_back(a.data()); ptrs.push_back(nullptr);
+  std::vector<std::string> text = {program.string()};
+  for (const auto& a : args) text.push_back(a.string());
+  std::vector<char*> ptrs; for (auto& a : text) ptrs.push_back(a.data()); ptrs.push_back(nullptr);
   pid_t pid;
   posix_spawn_file_actions_t actions; posix_spawn_file_actions_init(&actions);
   posix_spawn_file_actions_adddup2(&actions, STDERR_FILENO, STDOUT_FILENO);
-  const int error = posix_spawnp(&pid, program.c_str(), &actions, nullptr, ptrs.data(), environ);
+  const int error = posix_spawnp(&pid, text[0].c_str(), &actions, nullptr, ptrs.data(), environ);
   posix_spawn_file_actions_destroy(&actions);
   if (!error) { int code=0; while(waitpid(pid,&code,0)<0 && errno==EINTR) {} if(WIFEXITED(code)) status=WEXITSTATUS(code); }
 #endif
-  if (status != 0 || !std::filesystem::exists(out))
-    throw Error("DWG conversion failed or converter unavailable. Install LibreDWG and set " + std::string(toDwg ? "OPAD_DXF2DWG" : "OPAD_DWG2DXF") + " to its executable path. Alternatively convert the file to DXF manually.");
+  return status;
+}
+
+std::filesystem::path executable_dir() {
+#ifdef _WIN32
+  std::wstring buffer(32768, L'\0');
+  const DWORD n = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+  if (n == 0 || n >= buffer.size()) return {};
+  buffer.resize(n);
+  return std::filesystem::path(buffer).parent_path();
+#else
+  std::error_code error;
+  const auto self = std::filesystem::read_symlink("/proc/self/exe", error);
+  return error ? std::filesystem::path() : self.parent_path();
+#endif
+}
+
+// The free ODA File Converter, where its installers put it (the newest version when several are installed).
+std::filesystem::path oda_converter() {
+  std::vector<std::filesystem::path> found;
+  std::error_code error;
+#ifdef _WIN32
+  for (const char* variable : {"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"}) {
+    const char* root = std::getenv(variable);
+    if (!root || !*root) continue;
+    const auto oda = std::filesystem::path(root) / "ODA";
+    if (!std::filesystem::is_directory(oda, error)) continue;
+    for (const auto& entry : std::filesystem::directory_iterator(oda, error))
+      if (std::filesystem::exists(entry.path() / "ODAFileConverter.exe", error)) found.push_back(entry.path() / "ODAFileConverter.exe");
+  }
+#else
+  for (const char* candidate : {"/usr/bin/ODAFileConverter", "/usr/local/bin/ODAFileConverter", "/opt/ODAFileConverter/ODAFileConverter",
+                                "/Applications/ODAFileConverter.app/Contents/MacOS/ODAFileConverter"})
+    if (std::filesystem::exists(candidate, error)) found.push_back(candidate);
+#endif
+  std::sort(found.begin(), found.end());
+  return found.empty() ? std::filesystem::path() : found.back();
+}
+
+// DWG <-> DXF through an external converter (DWG is a closed format): LibreDWG's dwg2dxf / dxf2dwg (OPAD_DWG2DXF or
+// OPAD_DXF2DWG, else beside the program, else on PATH), or the ODA File Converter.
+void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& out, bool toDwg) {
+  const std::string name = toDwg ? "dxf2dwg" : "dwg2dxf";
+  std::vector<std::filesystem::path> libre;
+  if (const char* override = std::getenv(toDwg ? "OPAD_DXF2DWG" : "OPAD_DWG2DXF"); override && *override) libre.push_back(path_from_utf8(override));
+  else {
+    std::error_code error;
+#ifdef _WIN32
+    const auto beside = executable_dir() / (name + ".exe");
+#else
+    const auto beside = executable_dir() / name;
+#endif
+    if (!executable_dir().empty() && std::filesystem::exists(beside, error)) libre.push_back(beside);
+    libre.push_back(name);  // on PATH
+  }
+  for (const auto& program : libre)
+    if (run_program(program, {"-y", "-o", out, in}) == 0 && std::filesystem::exists(out)) return;
+  if (const auto oda = oda_converter(); !oda.empty()) {
+    // ODA converts folders: the drawing alone in one, the result in another.
+    Conversion work;
+    const auto from = work.directory / "in", to = work.directory / "out";
+    std::filesystem::create_directories(from);
+    std::filesystem::create_directories(to);
+    std::filesystem::copy_file(in, from / in.filename());
+    run_program(oda, {from, to, "ACAD2018", toDwg ? "DWG" : "DXF", "0", "1", in.filename()});
+    const auto produced = to / (in.stem().wstring() + (toDwg ? L".dwg" : L".dxf"));
+    std::error_code error;
+    if (std::filesystem::exists(produced, error)) {
+      std::filesystem::copy_file(produced, out, std::filesystem::copy_options::overwrite_existing);
+      return;
+    }
+  }
+  throw Error(std::string(toDwg ? "Writing DWG" : "Reading DWG") + " needs a converter: put LibreDWG's " + name +
+              " beside OPAD or on PATH (or set " + (toDwg ? "OPAD_DXF2DWG" : "OPAD_DWG2DXF") +
+              " to it), or install the free ODA File Converter. Saving the drawing as DXF works without one.");
 }
 std::string extension(const std::filesystem::path& file) {
   std::string e = file.extension().string();

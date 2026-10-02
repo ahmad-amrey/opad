@@ -49,20 +49,21 @@ void print_usage() {
   std::printf("  new <doc>                     import <doc> <file.step>        append <doc> <op.json|->\n");
   std::printf("  inspect <doc> <ref>...        diff <a.opad> <b.opad>          export <doc> --format stl --out f.stl\n");
   std::printf("  render <doc> --out shot.png --view iso --size 1280x720\n");
-  std::printf("  probe <file> [--viewer] [--mesh]   reads any supported file as OPAD opens it; reports contents and timings\n");
+  std::printf("  probe <file> [--viewer] [--mesh] [--cache]   reads any supported file as OPAD opens it; reports contents and timings\n");
   std::printf("\nreferences: <uuid> | <uuid>/face/N | <uuid>/edge/N | <uuid>/vertex/N | point/x,y,z\n");
   std::printf("environment: OPAD_AUTHOR (default author), OPAD_CACHE_DIR, OPAD_PLUGINS (path list)\n");
 }
 
 // probe: what opening a file costs, phase by phase, without a window (viewer: the desktop's read-only fast path).
-json probe(const std::string& file, bool viewer, bool mesh) {
+json probe(const std::string& file, bool viewer, bool mesh, bool cache) {
   using clock = std::chrono::steady_clock;
   const auto ms = [](clock::time_point a, clock::time_point b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
   const auto t0 = clock::now();
   opad::Document doc = opad::Document::create();
   opad::ImportOptions o;
   o.viewer = viewer;
-  const opad::ImportResult r = opad::import_file(doc, opad::path_from_utf8(file), o);
+  const bool cached = viewer && cache && opad::viewer_cache_load(doc, opad::path_from_utf8(file), o);
+  const opad::ImportResult r = cached ? opad::ImportResult{} : opad::import_file(doc, opad::path_from_utf8(file), o);
   const auto t1 = clock::now();
   opad::warm_shape_cache(doc);
   const auto t2 = clock::now();
@@ -95,6 +96,12 @@ json probe(const std::string& file, bool viewer, bool mesh) {
     for (auto& t : pool) t.join();
     out["mesh_ms"] = ms(t3, clock::now());
     out["triangles"] = triangles.load();
+  }
+  out["cache"] = cached ? "hit" : "miss";
+  if (viewer && cache && !cached) {
+    const auto t4 = clock::now();
+    opad::viewer_cache_store(doc, opad::path_from_utf8(file), o);
+    out["cache_store_ms"] = ms(t4, clock::now());
   }
   return out;
 }
@@ -213,7 +220,7 @@ int main(int argc, char** argv) {
 
     if (command == "probe") {
       if (positional.empty()) throw opad::Error("usage: opad-cli probe <file> [--viewer] [--mesh]");
-      const json out = probe(positional[0], args.value("viewer", false), args.value("mesh", false));
+      const json out = probe(positional[0], args.value("viewer", false), args.value("mesh", false), args.value("cache", false));
       const std::string text = compact ? out.dump() : out.dump(2);
       std::fwrite(text.data(), 1, text.size(), stdout);
       std::fputc('\n', stdout);
