@@ -96,6 +96,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void fitNodesWhenReady(std::vector<std::string> ids);
   void cancelMeshing();  // stop tessellating the remaining bodies (they stay hidden until resetMeshing)
   void resetMeshing();
+  // A viewer document became editable: the same shapes under content keys. What is meshed and drawn carries over.
+  void renameBodyKeys(const std::map<std::string, std::string>& keys);
   int skippedCount() const { return static_cast<int>(m_meshSkipped.size()); }
   void fitSelection();
   void fitNodes(const std::vector<std::string>& ids);
@@ -124,6 +126,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool isIsolated() const { return !m_isolated.empty(); }
   std::vector<std::string> isolatedNodes() const {return {m_isolated.begin(),m_isolated.end()};}
   int isolatedCount() const { return static_cast<int>(m_isolated.size()); }
+  int displayedCount() const { return static_cast<int>(m_items.size()); }
 
   // Section: the clip plane, and its gizmo (ViewportSection.cpp): the plane's outline over the model, edges only,
   // sized to the model's extent in the plane. A strip inside each side is a drag handle: hovering it shows a

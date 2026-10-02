@@ -14,6 +14,7 @@
 
 #include <QElapsedTimer>
 #include <QScopedValueRollback>
+#include <QThread>
 #include <QTimer>
 #include <QWindow>
 
@@ -1361,17 +1362,23 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
   auto alive = m_alive;
   auto cancel = m_meshCancel;
   auto cache = m_doc->doc.shape_cache;  // the worker fills the bbox cache too, so later UI queries are O(1)
-  std::thread([this, alive, cancel, cache, jobs = std::move(jobs)]() {
-    for (size_t i = 0; i < jobs.size(); ++i) {
-      const auto& j = jobs[i];
+  // Bodies side by side on several workers (each also meshes its own faces in parallel): one after another, an
+  // assembly of many small parts took seconds to appear while most cores idled. Bodies share no sub-shapes, so
+  // meshing them at once writes to separate topology.
+  auto queue = std::make_shared<const std::vector<MeshJob>>(std::move(jobs));
+  auto next = std::make_shared<std::atomic<size_t>>(0);
+  const int workers = std::min(static_cast<int>(queue->size()), std::clamp(QThread::idealThreadCount() - 1, 1, 8));
+  for (int w = 0; w < workers; ++w) {
+   QThread* worker = QThread::create([this, alive, cancel, cache, queue, next]() {
+    for (size_t i; (i = (*next)++) < queue->size();) {
+      const auto& j = (*queue)[i];
       if (*cancel) {
+        if (!*alive) return;
         std::lock_guard<std::mutex> lock(m_meshMu);
-        for (size_t k = i; k < jobs.size(); ++k) {
-          m_meshing.erase(jobs[k].key);
-          if (m_activeCache == cache.get()) m_meshSkipped.insert(jobs[k].key);
-        }
+        m_meshing.erase(j.key);
+        if (m_activeCache == cache.get()) m_meshSkipped.insert(j.key);
         QMetaObject::invokeMethod(this, "requestSync", Qt::QueuedConnection);
-        return;
+        continue;
       }
       std::shared_ptr<BodyPrs> prs;
       try {
@@ -1396,7 +1403,10 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
       }
       QMetaObject::invokeMethod(this, "requestSync", Qt::QueuedConnection);
     }
-  }).detach();
+   });
+   connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+   worker->start(QThread::LowPriority);  // the UI thread stays first in line
+  }
 }
 
 void Viewport::benchClick(double fx, double fy) {
@@ -1467,6 +1477,26 @@ void Viewport::warmUp() {
     m_view->Redraw();  // first frame compiles the shaders (~0.3 s); better here than when the document appears
   } catch (const Standard_Failure&) {  // no context yet: paintEvent will try again once visible
   }
+}
+
+void Viewport::renameBodyKeys(const std::map<std::string, std::string>& keys) {
+  {
+    std::lock_guard<std::mutex> lock(m_meshMu);
+    for (const auto& [from, to] : keys) {
+      if (m_meshed.erase(from)) m_meshed.insert(to);
+      if (m_meshSkipped.erase(from)) m_meshSkipped.insert(to);
+      if (auto it = m_prs.find(from); it != m_prs.end()) {
+        m_prs[to] = it->second;
+        m_prs.erase(it);
+      }
+      if (auto it = m_refined.find(from); it != m_refined.end()) {
+        m_refined[to] = it->second;
+        m_refined.erase(it);
+      }
+    }
+  }
+  for (auto& [id, item] : m_items)
+    if (auto it = keys.find(item.key); it != keys.end()) item.key = it->second;
 }
 
 void Viewport::requestSync() {

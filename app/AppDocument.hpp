@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <atomic>
+#include <map>
 #include <memory>
 #include <functional>
 
@@ -23,7 +24,11 @@ class AppDocument : public QObject {
 
   opad::Document& doc;
   opad::Scene scene;
-  bool browse = false;       // F1: transient view of a STEP file, nothing is persisted
+  // Viewer mode: a file other than .opad (STEP, STL, DXF, ...) shown read-only. It was read with ImportOptions::viewer,
+  // so nothing is prepared for saving; the view can still change (hide, colour), edits need startEditable() first.
+  bool browse = false;
+  QString viewing;           // viewer mode: the file shown
+  bool viewerOpens = true;   // setting files/viewerMode: false opens other formats as editable, unsaved documents
   bool hasDocument = false;
   unsigned long long generation = 0;
   unsigned long long revision = 0;
@@ -51,8 +56,13 @@ class AppDocument : public QObject {
   void setRollback(const std::string& opId);
   const std::string& rollback() const { return m_rollback; }
 
-  // Long loads run off the UI thread; progress and the result come back through the signals below.
+  // Long loads run off the UI thread; progress and the result come back through the signals below. A file other than
+  // .opad opens in viewer mode. Opening while a load runs drops that load (it finishes in the background, unseen).
   void startOpen(const QString& path);
+  // Viewer mode -> an editable, unsaved document with the same content and view changes, prepared on a worker
+  // (opad::make_editable). `done(ok, error)` runs on the UI thread.
+  void startEditable(JobRunner* jobs, std::function<void(bool, const QString&)> done);
+  bool converting() const { return m_converting; }
   // A drawing goes where `placement` puts its XY plane and origin, after `plane` (resolved on the worker) if given.
   void startImport(const QString& path, const QString& parent = {}, const opad::Mat4& placement = {}, const opad::json& plane = {});
   void cancelLoad();
@@ -85,6 +95,9 @@ class AppDocument : public QObject {
   QString nodeName(const std::string& id) const;
 
  signals:
+  // A viewer document became editable: the same shapes, now under content keys (live key -> content key). Emitted just
+  // before the scene changes to them, so a view can keep what it has drawn.
+  void bodyKeysRenamed(const std::map<std::string, std::string>& keys);
   void newDocumentCreated();
   void aboutToReplace();  // end transient tools before changing document identity
   void changed();
@@ -114,5 +127,7 @@ class AppDocument : public QObject {
   size_t m_savedBodies = 0;
   std::shared_ptr<std::atomic<bool>> m_cancel;
   std::shared_ptr<std::atomic<bool>> m_alive;
+  std::shared_ptr<std::atomic<unsigned>> m_loadToken = std::make_shared<std::atomic<unsigned>>(0);  // the load whose result counts
   bool m_capturing = false;
+  bool m_converting = false;
 };

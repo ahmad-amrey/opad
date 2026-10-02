@@ -80,6 +80,7 @@ class MainWindow : public QMainWindow {
   bool benchAnnotateLarge();  // OPAD_BENCH_ANNOTATE: the note / drawing editors on the loaded file's heaviest body
   bool benchLargeSketch();
   bool benchShortcuts();
+  bool benchViewer();  // OPAD_BENCH_VIEWER
 
   void onViewportSelection();
   void onBrowserSelection(const std::vector<std::string>& ids);
@@ -128,6 +129,15 @@ class MainWindow : public QMainWindow {
   void rebuildRecentMenu();
   std::vector<std::string> currentNodeIds() const;
   QColor nodeColour(const std::string& id) const;  // its own colour, or the default body grey
+  // Viewer mode (a file other than .opad shown read-only): edits ask to save it as an OPAD document first.
+  static bool isEditAction(const QString& id);
+  static QString fileFilter(bool withOpad);                 // "*.step *.stl ..." for the file dialogs
+  bool requireEditable(std::function<void()> resume = {});  // true when the document can be edited
+  void saveViewerAs(std::function<void()> then = {});       // Save as OPAD: made editable in place, then written
+  void makeEditable(const QString& savePath, std::function<void()> then = {});
+  QStringList siblings() const;                             // the files in the shown file's folder that OPAD opens
+  void openSibling(int step);                               // the previous (-1) or next (+1) of them
+  void updateViewerCard();
 
   AppDocument* m_doc = nullptr;
   RecoveryManager* m_recovery = nullptr;

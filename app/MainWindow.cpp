@@ -58,12 +58,16 @@
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
 #include <QElapsedTimer>
+#include <QCollator>
+#include <QSignalBlocker>
+#include "opad/drawing_io.hpp"
 
 #include <algorithm>
 #include <utility>
 #include <set>
 
 MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
+  m_doc->viewerOpens = m_settings.value("files/viewerMode", true).toBool();
   setWindowTitle("OPAD");
   setWindowIcon(icons::appIcon());
   resize(1600, 1000);
@@ -113,6 +117,10 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     if (drawing) { m_viewport->standardView("top"); m_viewport->setSelectionFilter(Viewport::SelFilter::Edge); }
   });
   connect(m_doc, &AppDocument::newDocumentCreated, m_viewport, &Viewport::home);
+  // Viewer mode -> editable: the same shapes under content keys, so what is on screen stays (no second tessellation).
+  connect(m_doc, &AppDocument::bodyKeysRenamed, m_viewport, &Viewport::renameBodyKeys);
+  connect(m_chips, &ViewportChips::saveToEditRequested, this, [this] { guarded([this] { saveViewerAs(); }); });
+  connect(m_chips, &ViewportChips::fileStepRequested, this, &MainWindow::openSibling);
   connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); refreshGit(); });
   connect(m_doc, &AppDocument::message, this, [this](const QString& t) { statusBar()->showMessage(t, 6000); });
   connect(m_viewport, &Viewport::selectionChanged, this, &MainWindow::onViewportSelection);
@@ -200,6 +208,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     if (action("inspect.section")->isChecked() != on) action("inspect.section")->setChecked(on);
   });
   connect(m_section, &SectionPanel::saveRequested, this, [this](const QString& name, const opad::Vec3& o, const opad::Vec3& n) {
+    if (!requireEditable()) return;
     bool ok = false;
     QString finalName = QInputDialog::getText(this, tr("Named section"), tr("Name:"), QLineEdit::Normal, name, &ok);
     if (!ok || finalName.isEmpty()) return;
@@ -301,9 +310,14 @@ QAction* MainWindow::addAction(const QString& id, const QString& text, const QSt
   tip.remove('&');
   if (!a->shortcut().isEmpty()) tip += "  (" + a->shortcut().toString(QKeySequence::NativeText) + ")";
   a->setToolTip(tip);
-  connect(a, &QAction::triggered, this, [this, fn, id] {
+  connect(a, &QAction::triggered, this, [this, fn, id, a] {
     if (m_loadJob && !id.startsWith("file.") && !id.startsWith("panel.") && id != "view.dark") return;  // loading: workspace is locked
     m_viewport->resetHoverFade();
+    if (m_doc->browse && isEditAction(id)) {  // viewer mode: offered, and asks to save first
+      if (a->isCheckable()) { QSignalBlocker block(a); a->setChecked(!a->isChecked()); }
+      requireEditable([a] { a->trigger(); });
+      return;
+    }
     guarded(fn);
   });
   m_actions << a;
@@ -330,11 +344,13 @@ void MainWindow::buildActions() {
   addAction("file.new", tr("&New document"), "doc", QKeySequence::New, [this] { if (maybeSave()) m_doc->newDocument(); });
   addAction("file.open", tr("&Open…"), "open", QKeySequence("Ctrl+O"), [this] {
     // openPath asks about unsaved changes once a file is chosen (asking here too asked twice after Discard).
-    QString p = QFileDialog::getOpenFileName(this, tr("Open"), m_settings.value("ui/lastDir").toString(), tr("Design files (*.opad *.step *.stp *.dxf *.svg *.dwg *.stl *.obj);;OPAD document (*.opad);;STEP (*.step *.stp);;2D drawings (*.dxf *.svg *.dwg);;Meshes (*.stl *.obj)"));
+    QString p = QFileDialog::getOpenFileName(this, tr("Open"), m_settings.value("ui/lastDir").toString(),
+                                             tr("Design files (%1);;OPAD document (*.opad);;CAD models (*.step *.stp *.iges *.igs *.brep *.brp);;"
+                                                "Meshes (*.stl *.3mf *.obj *.ply *.gltf *.glb *.wrl *.vrml);;2D drawings (*.dxf *.dwg *.svg)").arg(fileFilter(true)));
     if (!p.isEmpty()) openPath(p);
   });
   addAction("file.import", tr("&Import…"), "import", QKeySequence("Ctrl+I"), [this] {
-    QString p = QFileDialog::getOpenFileName(this, tr("Import design"), m_settings.value("ui/lastDir").toString(), tr("Design files (*.step *.stp *.dxf *.svg *.dwg *.stl *.obj)"));
+    QString p = QFileDialog::getOpenFileName(this, tr("Import design"), m_settings.value("ui/lastDir").toString(), tr("Design files (%1)").arg(fileFilter(false)));
     if (p.isEmpty()) return;
     m_settings.setValue("ui/lastDir", QFileInfo(p).absolutePath());
     auto ids = currentNodeIds();
@@ -347,26 +363,14 @@ void MainWindow::buildActions() {
     beginLoad([this, p] { addRecent(p); m_viewport->fitWhenReady(); });
     m_doc->startImport(p, parent);
   });
-  addAction("file.importdoc", tr("Export to OPAD document…"), "save", QKeySequence("Ctrl+Shift+E"), [this] {
-    if (!m_doc->browse) return;
-    QString src = m_settings.value("ui/lastBrowse").toString();
-    if (src.isEmpty()) throw opad::Error("No STEP file is being viewed.");
-    QString dest = QFileDialog::getSaveFileName(this, tr("Export to OPAD document"), QFileInfo(src).completeBaseName() + ".opad", tr("OPAD document (*.opad)"));
-    if (dest.isEmpty()) return;
-    // Leaves viewer mode: a full import (healing, BREP text, content keys) into a fresh document, saved on arrival.
-    beginLoad([this, dest] {
-      guarded([this, dest] { m_doc->saveAs(dest); addRecent(dest); });
-      m_viewport->fitWhenReady();
-    });
-    m_doc->startImport(src);
-  });
+  addAction("file.importdoc", tr("Save as OPAD document…"), "save", QKeySequence("Ctrl+Shift+E"), [this] { if (m_doc->browse) saveViewerAs(); });
   addAction("file.save", tr("&Save"), "save", QKeySequence("Ctrl+S"), [this] {
-    if (m_doc->browse) { action("file.importdoc")->trigger(); return; }  // viewer mode: saving means exporting
+    if (m_doc->browse) { saveViewerAs(); return; }  // viewer mode: saving makes it an OPAD document, which can be edited
     if (m_doc->doc.path.empty()) action("file.saveas")->trigger();
     else m_doc->save();
   });
   addAction("file.saveas", tr("Save &As…"), "save", QKeySequence("Ctrl+Shift+S"), [this] {
-    if (m_doc->browse) throw opad::Error("Browse mode shows a STEP file without a document. Use Import to create one.");
+    if (m_doc->browse) { saveViewerAs(); return; }
     QString p = QFileDialog::getSaveFileName(this, tr("Save document"), m_settings.value("ui/lastDir").toString(), tr("OPAD document (*.opad)"));
     if (p.isEmpty()) return;
     if (!p.endsWith(".opad", Qt::CaseInsensitive)) p += ".opad";
@@ -375,6 +379,8 @@ void MainWindow::buildActions() {
     addRecent(p);
   });
   addAction("file.export", tr("&Export…"), "export", QKeySequence("Ctrl+E"), [this] { exportDialog(); });
+  addAction("file.next", tr("Next file in folder"), "chevronDown", QKeySequence("PgDown"), [this] { openSibling(1); });
+  addAction("file.previous", tr("Previous file in folder"), "chevronUp", QKeySequence("PgUp"), [this] { openSibling(-1); });
   addAction("file.screenshot", tr("Save screens&hot…"), "export", QKeySequence("Ctrl+Shift+P"), [this] { screenshot(); });
   addAction("file.close", tr("&Close document"), "close", QKeySequence("Ctrl+W"), [this] {
     if (!m_doc->hasDocument || m_doc->loading || !maybeSave()) return;
@@ -737,6 +743,12 @@ void MainWindow::buildRibbon() {
   QMenu* navMenu = settings->addMenu(tr("Navigation preset"));
   for (QAction* a : m_actions) if (a->objectName().startsWith("nav.")) navMenu->addAction(a);
   settings->addSeparator();
+  // Viewer mode for STEP, STL, DXF and the rest; off, they open as editable, unsaved documents (slower: prepared for saving).
+  auto* viewerMode = settings->addAction(tr("Open other formats read-only (viewer mode)"));
+  viewerMode->setCheckable(true);
+  viewerMode->setChecked(m_doc->viewerOpens);
+  viewerMode->setToolTip(tr("STEP, IGES, STL, 3MF, OBJ, DXF, SVG and the other formats open read-only and fast; Save makes them editable OPAD documents."));
+  connect(viewerMode, &QAction::toggled, this, [this](bool on) { m_doc->viewerOpens = on; m_settings.setValue("files/viewerMode", on); });
   settings->addAction(action("panel.browser"));
   auto* autoBrowser = settings->addAction(tr("Auto-hide scene browser"));
   autoBrowser->setCheckable(true);
@@ -1202,7 +1214,7 @@ void MainWindow::buildDesign() {
 // Sketch mode swaps the ribbon to its own tab set and back; tool buttons follow the editor's tool.
 void MainWindow::updateDesignState() {
   const bool sketching = m_design->sketchActive();
-  const bool has = m_doc->hasDocument && !m_doc->browse;
+  const bool has = m_doc->hasDocument;  // viewer mode too: the tools say that the file has to be saved first
   m_timeline->setEditingOp(m_design->editingOp());
   if (sketching && m_ribbon->workspace() != m_sketchWorkspace) {
     m_workspaceBeforeSketch = m_ribbon->workspace();
@@ -1255,10 +1267,10 @@ void MainWindow::showDocument(bool has) {
     if (id.startsWith("inspect.") || id.startsWith("annotate.") || id.startsWith("select.") || id == "file.export" || id == "file.screenshot" || id == "file.save" || id == "file.saveas" || id == "file.close")
       a->setEnabled(has);
     if (id == "file.importdoc") a->setEnabled(m_doc->browse);
-    // Viewer mode: nothing that edits the document. View state (hide, isolate, section, measure) stays.
-    if (m_doc->browse && (id == "edit.rename" || id == "edit.delete" || id == "edit.restore" || id.startsWith("annotate.") || id == "view.saveview" || id == "inspect.pin")) a->setEnabled(false);
+    if (id == "file.next" || id == "file.previous") a->setEnabled(has);
+    // Viewer mode keeps the editing commands: they say that the file has to be saved first (isEditAction).
   }
-  if (m_pinAction) m_pinAction->setEnabled(has && !m_lastMeasure.is_null() && !m_doc->browse);
+  if (m_pinAction) m_pinAction->setEnabled(has && !m_lastMeasure.is_null());
   if (m_design) updateDesignState();
   m_browser->setViewerMode(m_doc->browse);
   updateUndoActions();
@@ -1274,11 +1286,11 @@ void MainWindow::showDocument(bool has) {
 
 void MainWindow::updateTitle() {
   setWindowTitle(m_doc->title());
-  QString path = m_doc->hasDocument ? (m_doc->browse ? tr("viewing: ") + m_settings.value("ui/lastBrowse").toString() : (m_doc->path().isEmpty() ? tr("unsaved document") : m_doc->path())) : tr("No document");
+  QString path = m_doc->hasDocument ? (m_doc->browse ? tr("Viewer (read-only): %1").arg(QDir::toNativeSeparators(m_doc->viewing)) : (m_doc->path().isEmpty() ? tr("unsaved document") : m_doc->path())) : tr("No document");
   if (!m_doc->scene.unresolved.empty()) path += tr("   ·   %1 unresolved").arg(m_doc->scene.unresolved.size());
   m_statusPath->setText(path);
-  if (!m_doc->hasDocument) m_statusHover->setText(tr("File › Open a .step or .opad file, or drop one here"));
-  else if (m_statusHover->text() == tr("File › Open a .step or .opad file, or drop one here")) m_statusHover->clear();
+  if (!m_doc->hasDocument) m_statusHover->setText(tr("File › Open a design file (OPAD, STEP, STL, 3MF, DXF, …), or drop one here"));
+  else if (m_statusHover->text() == tr("File › Open a design file (OPAD, STEP, STL, 3MF, DXF, …), or drop one here")) m_statusHover->clear();
 }
 
 void MainWindow::updateChips() {
@@ -1368,6 +1380,115 @@ class BenchQuiet : public QObject {
   QWidget* m_main;
 };
 }  // namespace
+
+bool MainWindow::isEditAction(const QString& id) {
+  if (id.startsWith("sketch.")) return true;
+  // Design tools change the model; how it looks (colour, opacity, lock) is a view setting while viewing.
+  if (id.startsWith("design.")) return id != "design.colour" && id != "design.opacity" && id != "design.lock";
+  static const QStringList edits = {"edit.rename", "edit.delete", "edit.restore", "annotate.add", "annotate.draw", "annotate.resolve",
+                                    "inspect.pin", "view.saveview", "file.import"};
+  return edits.contains(id);
+}
+
+QString MainWindow::fileFilter(bool withOpad) {
+  QStringList patterns;
+  if (withOpad) patterns << "*.opad";
+  for (const auto& ext : opad::importable_extensions()) patterns << "*" + QString::fromStdString(ext);
+  return patterns.join(' ');
+}
+
+// Viewer mode: everything that edits says so and offers to save the file as an OPAD document, which can be edited;
+// `resume` (the command that asked) runs again once that is done.
+bool MainWindow::requireEditable(std::function<void()> resume) {
+  if (!m_doc->browse) return true;
+  QMessageBox box(this);
+  box.setIcon(QMessageBox::Information);
+  box.setWindowTitle(tr("Viewer mode"));
+  box.setText(tr("Save first to edit"));
+  box.setInformativeText(tr("“%1” is open in viewer mode, read-only. Save it as an OPAD document to edit it; the file you opened stays as it is.")
+                             .arg(QFileInfo(m_doc->viewing).fileName()));
+  QPushButton* save = box.addButton(tr("Save as OPAD…"), QMessageBox::AcceptRole);
+  QPushButton* copy = box.addButton(tr("Edit unsaved copy"), QMessageBox::ActionRole);
+  box.addButton(QMessageBox::Cancel);
+  box.setDefaultButton(save);
+  box.exec();
+  if (box.clickedButton() == save) saveViewerAs(std::move(resume));
+  else if (box.clickedButton() == copy) makeEditable({}, std::move(resume));
+  return false;
+}
+
+void MainWindow::saveViewerAs(std::function<void()> then) {
+  if (!m_doc->browse) return;
+  const QFileInfo source(m_doc->viewing);
+  QString path = QFileDialog::getSaveFileName(this, tr("Save as OPAD document"), source.absolutePath() + "/" + source.completeBaseName() + ".opad",
+                                              tr("OPAD document (*.opad)"));
+  if (path.isEmpty()) return;
+  if (!path.endsWith(".opad", Qt::CaseInsensitive)) path += ".opad";
+  m_settings.setValue("ui/lastDir", QFileInfo(path).absolutePath());
+  makeEditable(path, std::move(then));
+}
+
+// Viewer -> editable in place (the shapes on screen are kept, see AppDocument::startEditable), then written to `savePath`
+// on a worker if one was chosen; `then` runs when the document can be edited.
+void MainWindow::makeEditable(const QString& savePath, std::function<void()> then) {
+  statusBar()->showMessage(tr("Preparing %1 for editing…").arg(QFileInfo(m_doc->viewing).fileName()));
+  m_doc->startEditable(m_jobs, [this, savePath, then](bool ok, const QString& error) {
+    if (!ok) {
+      statusBar()->clearMessage();
+      QMessageBox::warning(this, tr("OPAD"), i18n::t(error));
+      return;
+    }
+    updateViewerCard();
+    if (savePath.isEmpty()) {
+      statusBar()->showMessage(tr("Editable copy: save it to keep your changes"), 8000);
+      if (then) then();
+      return;
+    }
+    guarded([&] {
+      m_doc->saveAsync(m_jobs, savePath, true, [this, savePath, then](bool saved, const QString& why) {
+        if (!saved) { QMessageBox::warning(this, tr("OPAD"), i18n::t(why)); return; }
+        addRecent(savePath);
+        m_viewPath = QFileInfo(savePath).absoluteFilePath();
+        statusBar()->showMessage(tr("Saved %1; it can be edited now").arg(QDir::toNativeSeparators(savePath)), 8000);
+        if (then) then();
+      });
+    });
+  });
+}
+
+// The files in the shown file's folder that OPAD opens, in the order a file manager lists them.
+QStringList MainWindow::siblings() const {
+  const QString current = m_doc->browse ? m_doc->viewing : m_doc->path();
+  if (current.isEmpty()) return {};
+  QStringList patterns{"*.opad"};
+  for (const auto& ext : opad::importable_extensions()) patterns << "*" + QString::fromStdString(ext);
+  QDir dir = QFileInfo(current).absoluteDir();
+  QStringList names = dir.entryList(patterns, QDir::Files | QDir::Readable);
+  QCollator order;
+  order.setNumericMode(true);
+  order.setCaseSensitivity(Qt::CaseInsensitive);
+  std::sort(names.begin(), names.end(), [&](const QString& a, const QString& b) { return order.compare(a, b) < 0; });
+  QStringList out;
+  for (const QString& n : names) out << dir.absoluteFilePath(n);
+  return out;
+}
+
+void MainWindow::openSibling(int step) {
+  const QString current = QFileInfo(m_doc->browse ? m_doc->viewing : m_doc->path()).absoluteFilePath();
+  const QStringList files = siblings();
+  if (files.size() < 2) { statusBar()->showMessage(tr("No other files to open in this folder"), 3000); return; }
+  int at = files.indexOf(current);
+  at = at < 0 ? 0 : (at + step + files.size()) % files.size();
+  openPath(files[at]);
+}
+
+void MainWindow::updateViewerCard() {
+  if (!m_chips) return;
+  if (!m_doc->browse) { m_chips->setViewer({}, 0, 0); positionOverlays(); return; }
+  const QStringList files = siblings();
+  m_chips->setViewer(QFileInfo(m_doc->viewing).fileName(), static_cast<int>(files.indexOf(QFileInfo(m_doc->viewing).absoluteFilePath())), static_cast<int>(files.size()));
+  positionOverlays();
+}
 
 void MainWindow::setBenchSelect(bool on) {
   m_benchSelect = on;
@@ -1592,7 +1713,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     menu.exec(globalPos);return;
   }
   QMenu menu(this);
-  auto add = [&](const char* id) { if (QAction* a = action(id); a && (!m_doc->browse || a->isEnabled())) menu.addAction(a); };  // viewer mode: editing entries are not offered
+  auto add = [&](const char* id) { if (QAction* a = action(id)) menu.addAction(a); };  // viewer mode: editing entries ask to save first
   if (!ids.empty()) {
     menu.addSection(ids.size() == 1 ? m_doc->nodeName(ids.front()) : tr("%1 objects").arg(ids.size()));
     QAction* fit = menu.addAction(icons::themed("fit", 16), tr("Fit to"));
@@ -1614,8 +1735,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     });
     add("edit.hide");
     add("edit.rename");
-    QAction* color = menu.addAction(icons::themed("dot", 16), tr("Colour…"));
-    color->setVisible(!m_doc->browse);
+    QAction* color = menu.addAction(icons::themed("dot", 16), tr("Colour…"));  // a view setting in viewer mode too
     connect(color, &QAction::triggered, this, [this, ids] {
       // From the object's own colour, and one step to undo for all of them (it was one per object).
       QColor c = QColorDialog::getColor(nodeColour(ids.front()), this, tr("Colour"));
@@ -1626,7 +1746,6 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     QAction* lock = menu.addAction(icons::themed("lock", 16), n && n->locked ? tr("Unlock") : tr("Lock"));
     if(ids.size()==1 && n && !n->body_key.empty() && m_doc->scene.instance_count[n->body_key]>1)
       menu.addAction(tr("Browse linked instances"),this,[this,id=ids.front()]{browseInstances(id);});
-    lock->setVisible(!m_doc->browse);
     connect(lock, &QAction::triggered, this, [this, ids, locked = n && n->locked] {
       for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"locked", !locked}});
     });
@@ -1638,8 +1757,8 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     add("inspect.properties");
     menu.addSeparator();
     QAction* del = menu.addAction(icons::themed("delete", 16), tr("Delete (tombstone import)"));
-    del->setVisible(!m_doc->browse);
     connect(del, &QAction::triggered, this, [this, ids] {
+      if (!requireEditable()) return;
       std::set<std::string> ops;
       for (const auto& id : ids) if (const opad::Node* nn = m_doc->node(id)) ops.insert(nn->source_op);
       for (const auto& op : ops) deleteOp(op);
@@ -1994,6 +2113,7 @@ void MainWindow::refreshToolUi() {
 
 void MainWindow::pinMeasurement() {
   if (m_lastMeasure.is_null()) return;
+  if (!requireEditable([this] { pinMeasurement(); })) return;  // a pinned measurement is part of the document
   opad::json op;
   op["op"] = "measurement";
   op["kind"] = m_lastMeasure.value("kind", "distance");
@@ -2178,12 +2298,13 @@ void MainWindow::rebuildRecentMenu() {
 
 // ---------------------------------------------------------------- lifecycle
 void MainWindow::openPath(const QString& path) {
-  if (m_doc->loading) return;
-  if (!maybeSave()) return;
+  // A load already running is dropped (the next file wins, as when stepping through a folder); the document on screen
+  // has not changed since it was asked about.
+  if (!m_doc->loading && !maybeSave()) return;
+  if (m_doc->loading && m_loadJob) m_loadJob->cancel();
+  if (m_doc->loading) m_doc->cancelLoad();
   m_settings.setValue("ui/lastDir", QFileInfo(path).absolutePath());
-  QString ext = QFileInfo(path).suffix().toLower();
-  if (ext == "step" || ext == "stp") m_settings.setValue("ui/lastBrowse", path);
-  beginLoad([this, path] { m_viewPath=QFileInfo(path).absoluteFilePath(); addRecent(path); m_viewport->fitWhenReady(); });
+  beginLoad([this, path] { m_viewPath=QFileInfo(path).absoluteFilePath(); addRecent(path); m_viewport->fitWhenReady(); updateViewerCard(); });
   m_doc->startOpen(path);
 }
 
@@ -2360,6 +2481,7 @@ void MainWindow::showNodeGeometry(const std::string& id, const QString& title, c
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_RECOVERY");!mode.isEmpty()){m_recovery->bench(mode);return;}
+  if(benchViewer())return;
   // Read-only render regression: retain imported geometry and dump it before
   // the general selection benchmark hides/edits its leaf.
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_MESH_SHOT");!shot.isEmpty()) {
@@ -2847,6 +2969,53 @@ void MainWindow::runBench() {
   onBrowserSelection(roots);
 }
 
+// OPAD_BENCH_VIEWER=<out.opad>, opened on a file other than .opad: viewer mode shows itself, keeps view changes out of
+// "unsaved", refuses edits (the question is dismissed here), becomes editable without drawing anything again, saves, and
+// steps on to the next file in the folder.
+bool MainWindow::benchViewer() {
+  static bool ran = false;  // the next file it opens would start it again
+  const QString out = qEnvironmentVariable("OPAD_BENCH_VIEWER");
+  if (out.isEmpty()) return false;
+  if (std::exchange(ran, true)) return true;
+  auto fail = [](const QString& why) { trace::log("bench: viewer FAIL: " + why); QCoreApplication::exit(2); };
+  if (!m_doc->browse || m_doc->scene.all_bodies().empty()) { fail("not in viewer mode"); return true; }
+  bool card = false;
+  for (auto* label : m_chips->findChildren<QLabel*>()) card = card || (label->text() == tr("Viewer · read-only") && label->isVisibleTo(m_chips));
+  if (!card || !windowTitle().contains("Viewer")) { fail("no viewer card or title: " + windowTitle()); return true; }
+  const std::string body = m_doc->scene.all_bodies().front();
+  m_doc->run("appearance", opad::json{{"target", body}, {"visible", false}});
+  if (m_doc->isDirty()) { fail("hiding a body made the viewed file unsaved"); return true; }
+  const size_t ops = m_doc->doc.ops.size();
+  action("edit.rename")->trigger();  // asks to save first; the bench dismisses the question
+  bool refused = false;
+  try { m_doc->run("rename", opad::json{{"target", body}, {"name", "x"}}); } catch (const std::exception&) { refused = true; }
+  if (!refused || !m_doc->browse || m_doc->doc.ops.size() != ops) { fail("an edit went through in viewer mode"); return true; }
+  QTimer::singleShot(500, this, [this, out, fail, body] {
+    const int shown = m_viewport->displayedCount();
+    auto remeshed = std::make_shared<int>(0);
+    auto watch = connect(m_viewport, &Viewport::meshingProgress, this, [remeshed](int remaining) { if (remaining > 0) ++*remeshed; });
+    makeEditable(out, [this, out, fail, body, shown, remeshed, watch] {
+      disconnect(watch);
+      const bool editable = !m_doc->browse && !m_doc->doc.has_live_bodies() && !m_doc->node(body)->visible;
+      QTimer::singleShot(800, this, [this, out, fail, editable, shown, remeshed] {
+        bool reloads = false;
+        try { reloads = opad::resolve(opad::Document::load(std::filesystem::path(out.toStdU16String()))).all_bodies().size() == m_doc->scene.all_bodies().size(); } catch (...) {}
+        trace::log(QString("bench: viewer editable %1, saved and reloaded %2, kept %3 of %4 bodies on screen, re-meshed %5 times")
+                       .arg(editable).arg(reloads).arg(m_viewport->displayedCount()).arg(shown).arg(*remeshed));
+        if (!editable || !reloads || m_viewport->displayedCount() != shown || *remeshed > 0) return fail("conversion");
+        const QString before = m_doc->path();
+        openSibling(1);
+        QTimer::singleShot(3000, this, [this, before, fail] {
+          if (m_doc->loading || QFileInfo(m_doc->browse ? m_doc->viewing : m_doc->path()) == QFileInfo(before)) return fail("next file in folder did not open");
+          trace::log("bench: viewer card, view changes not unsaved, edits refused, editable in place, saved, next file PASS");
+          QCoreApplication::exit(0);
+        });
+      });
+    });
+  });
+  return true;
+}
+
 void MainWindow::scheduleSelectionSync() { m_selFileTimer.start(); }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* e) {
@@ -2857,7 +3026,7 @@ void MainWindow::dropEvent(QDropEvent* e) {
   for (const QUrl& u : e->mimeData()->urls()) {
     QString p = u.toLocalFile();
     QString ext = QFileInfo(p).suffix().toLower();
-    if (QStringList{"step", "stp", "opad", "dxf", "svg", "dwg", "stl", "obj"}.contains(ext)) { openPath(p); return; }
+    if (ext == "opad" || fileFilter(false).split(' ').contains("*." + ext)) { openPath(p); return; }
   }
 }
 

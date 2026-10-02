@@ -38,6 +38,15 @@ int main(int argc, char** argv) {
     bool success = false;
     QObject::connect(&doc, &AppDocument::loadFinished, &loop, [&](bool ok, const QString&) { success = ok; loop.quit(); });
     QTimer::singleShot(30000, &loop, &QEventLoop::quit);
+    doc.startOpen(step);  // viewer mode: read-only, nothing to save, view changes allowed
+    loop.exec();
+    CHECK(success && doc.browse && !doc.isDirty() && doc.doc.has_live_bodies());
+    const std::string first = doc.scene.all_bodies().front();
+    CHECK_THROWS(doc.run("rename", opad::json{{"target", first}, {"name", "x"}}));
+    doc.run("appearance", opad::json{{"target", first}, {"visible", false}});
+    CHECK(!doc.isDirty() && !doc.scene.node(first)->visible);
+    CHECK_THROWS(doc.saveAs(tmp.path() + "/viewer.opad"));
+    doc.viewerOpens = false;  // the setting off: other formats open as editable, unsaved documents
     doc.startOpen(step);
     loop.exec();
     CHECK(success && doc.isDirty() && !doc.browse);
