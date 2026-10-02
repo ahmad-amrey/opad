@@ -1,6 +1,7 @@
 # OPAD - git-native CAD and review
 
-OPAD opens STEP files (AP203/AP214/AP242, assemblies included), saves what you do with them in a single
+OPAD views CAD models, meshes and drawings: STEP (AP203/AP214/AP242, assemblies included), IGES, BREP, STL, 3MF,
+OBJ, PLY, glTF/GLB, VRML, DXF, DWG (through a converter) and SVG. It saves what you do with them in a single
 plain-text `.opad` file that diffs and merges cleanly in git, and exposes everything it can do to scripts and
 AI agents through a headless CLI, a Python module and a [stdio MCP server](docs/mcp.md). The desktop app follows Autodesk Fusion's navigation
 and screen layout so Fusion users feel at home.
@@ -171,7 +172,7 @@ changed or moved with its tight bounding box, volume and validity. Live replies,
 report `elapsed_ms` (server processing through response preparation, excluding transport
 and serialization; staged modeling calls retain their computation timer).
 
-OPAD combines CAD modelling, review and a 2D drafting foundation: import, inspect, measure,
+OPAD combines CAD viewing, modelling, review and a 2D drafting foundation: view, import, inspect, measure,
 section, annotate, sketch, build features and export. A drawing opened on its own is centred on the
 grid; imported, it goes onto the selected planar face, or onto a plane you pick and then drag, offset
 or snap it on; converted to a sketch, it keeps exactly that plane and origin. [Drawing and mesh support](docs/drawings.md)
@@ -213,7 +214,19 @@ center. Hidden and clipped geometry is excluded; an empty view retains its curre
 
 ## Desktop viewing and review
 
-Open imports external geometry into a fresh, saveable document; Import adds to the current one.
+Open shows any other format in viewer mode: read-only and fast, since nothing is prepared for saving (no
+healing, BREP text or hashing). Measure, section, hide, isolate, colour and inspect freely; the title, status bar
+and a viewer card at the top of the view say so. Anything that edits asks to save first: Save (or the card's Save
+to edit) makes the file an OPAD document in place, keeping hidden layers and colours and the meshes on screen;
+"Edit unsaved copy" does the same without choosing a file yet. The file you opened is never written. PgUp and
+PgDown (or the card's arrows) step through the files OPAD reads in the same folder, and opening a file while
+another loads drops that load. A slow read (a big STEP or IGES) is remembered in the user cache with its display
+meshes, so opening the unchanged file again skips the translation (Hydrostatic: 23 s, then 1.8 s). Settings > Open
+other formats read-only turns viewer mode off (they then open as editable, unsaved documents), and Settings > File
+types registers OPAD for these formats with Windows (current user only, removable). Import adds a file to the
+current document. Properties show a body's material as the file named it, its source file and whether it is a
+solid, a mesh or a 2D drawing. DWG needs LibreDWG's `dwg2dxf` (beside OPAD, on PATH or in `OPAD_DWG2DXF`) or the
+free ODA File Converter. `opad-cli probe <file> --viewer --mesh` reports what opening a file costs, phase by phase.
 Settings offers six rendering presets (Classic, Technical flat, Studio, Studio fine, ray traced
 shadows and ray traced reflections), four backgrounds and a configurable auto-hide scene browser.
 Unsupported ray tracing falls back to raster rendering. Coplanar faces receive a small display depth

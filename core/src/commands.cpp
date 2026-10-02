@@ -358,8 +358,8 @@ void register_builtins() {
         return j;
       });
 
-  reg("import", "Import STEP, DXF, SVG, DWG (converter), STL or OBJ into the document",
-      {{"doc", "path"}, {"file", "path - .step/.stp/.dxf/.svg/.dwg/.stl/.obj"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
+  reg("import", "Import STEP, IGES, BREP, STL, 3MF, OBJ, PLY, glTF, VRML, DXF, DWG (converter) or SVG into the document",
+      {{"doc", "path"}, {"file", "path - .step/.iges/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
        {"placement", "[16] - drawings: where the drawing's XY plane and origin go (row-major 4x4, mm)"}, {"plane", "object - drawings: place on this plane instead, {\"base\":\"xz\"} or {\"face\":ref}, its origin at the plane's"},
        {"center", "bool - drawings: centre the drawing on its origin (default false)"}},
       true, [](Document* d, const json& a) {

@@ -705,8 +705,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     if (n) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !n->visible}});
     else if (const opad::SketchItem* s = m_doc->scene.sketch(id)) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !s->visible}});
   });
-  connect(m_tree, &BrowserTree::swatchClicked, this, [this](const std::string& id) {
-    if (m_viewer) return;
+  connect(m_tree, &BrowserTree::swatchClicked, this, [this](const std::string& id) {  // a view setting in viewer mode too
     const opad::Node* n = m_doc->node(id);
     QColor start = n && n->has_color ? QColor::fromRgbF(n->color[0], n->color[1], n->color[2]) : QColor(190, 190, 195);
     QColor c = QColorDialog::getColor(start, this, tr("Colour of %1").arg(QString::fromStdString(n ? n->name : id)));

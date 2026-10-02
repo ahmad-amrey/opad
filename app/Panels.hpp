@@ -142,7 +142,7 @@ class BrowserPanel : public QWidget {
   void expandAll();
   void collapseAll();  // everything but the document row
   void scrollToSelected();
-  void setViewerMode(bool on);  // no rename, drag-to-reparent or colour edits
+  void setViewerMode(bool on);  // no rename or drag-to-reparent (colours stay: a view setting)
   void setEditedSketch(const std::string& id,const QString& name,bool visible);
 
  signals:

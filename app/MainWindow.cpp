@@ -2354,7 +2354,10 @@ void MainWindow::beginLoad(std::function<void()> after) {
       }
     }
     if (int skipped = m_viewport->skippedCount()) statusBar()->showMessage(tr("%1 bodies were not tessellated (cancelled); reopen the file to show them").arg(skipped), 8000);
-    if (m_benchSelect) QTimer::singleShot(300, this, &MainWindow::runBench);
+    if (m_benchSelect && !ok && !m_doc->hasDocument) {  // nothing to run the benches on: say so instead of walking an empty scene
+      trace::log("bench: load failed: " + err);
+      QTimer::singleShot(0, qApp, [] { QCoreApplication::exit(3); });
+    } else if (m_benchSelect) QTimer::singleShot(300, this, &MainWindow::runBench);
   });
 }
 
