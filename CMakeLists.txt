@@ -42,6 +42,7 @@ find_package(OpenCASCADE CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 include(cmake/occt.cmake)
+find_package(ZLIB REQUIRED)  # 3MF parts are deflated zip entries (core) and its tests write some
 
 add_subdirectory(core)
 if(OPAD_BUILD_CLI)

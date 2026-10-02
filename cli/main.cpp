@@ -7,7 +7,18 @@
 #include <string>
 #include <vector>
 
+#include <Bnd_Box.hxx>
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <set>
+#include <thread>
+
 #include "opad/core.hpp"
+#include "opad/drawing_io.hpp"
+#include "opad/geometry.hpp"
 
 using opad::json;
 int opad_mcp();
@@ -18,7 +29,7 @@ namespace {
 void print_usage() {
   std::printf("opad-cli %s - git-native STEP viewer, headless interface\n\n", opad::version_string().c_str());
   std::printf("usage: opad-cli [--plugin <lib>]... [--compact] <command> [<doc>] [args...]\n\n");
-  std::printf("  <doc> is a .opad document, or a .step file opened in browse mode (read-only, nothing persisted).\n");
+  std::printf("  <doc> is a .opad document, or any file OPAD reads (STEP, IGES, STL, 3MF, OBJ, DXF, SVG, ...) opened read-only.\n");
   std::printf("  Arguments are --key value pairs (JSON values are parsed: numbers, true/false, [..], {..}).\n\n");
   std::printf("commands:\n");
   for (const auto& c : opad::commands::list()) {
@@ -30,8 +41,54 @@ void print_usage() {
   std::printf("  new <doc>                     import <doc> <file.step>        append <doc> <op.json|->\n");
   std::printf("  inspect <doc> <ref>...        diff <a.opad> <b.opad>          export <doc> --format stl --out f.stl\n");
   std::printf("  render <doc> --out shot.png --view iso --size 1280x720\n");
+  std::printf("  probe <file> [--viewer] [--mesh]   reads any supported file as OPAD opens it; reports contents and timings\n");
   std::printf("\nreferences: <uuid> | <uuid>/face/N | <uuid>/edge/N | <uuid>/vertex/N | point/x,y,z\n");
   std::printf("environment: OPAD_AUTHOR (default author), OPAD_CACHE_DIR, OPAD_PLUGINS (path list)\n");
+}
+
+// probe: what opening a file costs, phase by phase, without a window (viewer: the desktop's read-only fast path).
+json probe(const std::string& file, bool viewer, bool mesh) {
+  using clock = std::chrono::steady_clock;
+  const auto ms = [](clock::time_point a, clock::time_point b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+  const auto t0 = clock::now();
+  opad::Document doc = opad::Document::create();
+  opad::ImportOptions o;
+  o.viewer = viewer;
+  const opad::ImportResult r = opad::import_file(doc, file, o);
+  const auto t1 = clock::now();
+  opad::warm_shape_cache(doc);
+  const auto t2 = clock::now();
+  const opad::Scene scene = opad::resolve(doc);
+  const auto t3 = clock::now();
+  json out = r.to_json();
+  out["file"] = file;
+  out["viewer"] = viewer;
+  out["read_ms"] = ms(t0, t1);
+  out["prepare_ms"] = ms(t1, t2);
+  out["resolve_ms"] = ms(t2, t3);
+  out["body_entries"] = doc.body_count();
+  std::set<std::string> representations;
+  for (const auto& id : scene.all_bodies()) representations.insert(scene.node(id)->representation);
+  out["representations"] = representations;
+  if (mesh) {  // the display's tessellation, on every core as the desktop does it
+    const auto keys = doc.body_keys();
+    std::atomic<size_t> next{0}, triangles{0};
+    std::vector<std::thread> pool;
+    for (unsigned i = 0; i < std::max(1u, std::thread::hardware_concurrency()); ++i)
+      pool.emplace_back([&] {
+        for (size_t k; (k = next++) < keys.size();) {
+          const double tol = [&] {
+            const Bnd_Box box = opad::body_bbox(doc, keys[k]);
+            return std::clamp((box.IsVoid() ? 1.0 : std::sqrt(box.SquareExtent())) * 0.001, 0.001, 5.0);
+          }();
+          triangles += opad::tessellate_body(doc, keys[k], tol).triangle_count();
+        }
+      });
+    for (auto& t : pool) t.join();
+    out["mesh_ms"] = ms(t3, clock::now());
+    out["triangles"] = triangles.load();
+  }
+  return out;
 }
 
 json parse_value(const std::string& s) {
@@ -127,6 +184,14 @@ int main(int argc, char** argv) {
     }
     for (const auto& p : plugins) opad::load_plugin(p);
 
+    if (command == "probe") {
+      if (positional.empty()) throw opad::Error("usage: opad-cli probe <file> [--viewer] [--mesh]");
+      const json out = probe(positional[0], args.value("viewer", false), args.value("mesh", false));
+      const std::string text = compact ? out.dump() : out.dump(2);
+      std::fwrite(text.data(), 1, text.size(), stdout);
+      std::fputc('\n', stdout);
+      return 0;
+    }
     // Positional conventions.
     const bool docless = command == "diff" || command == "version" || command == "commands" || command == "cache" ||
                          command == "selection";

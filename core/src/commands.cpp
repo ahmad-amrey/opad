@@ -71,10 +71,12 @@ Document& need(Document* d) {
   return *d;
 }
 
-bool is_step_path(const std::filesystem::path& p) {
+// A file OPAD reads but does not write as a document (STEP, STL, DXF, ...): commands see it read-only.
+bool is_foreign_path(const std::filesystem::path& p) {
   std::string e = p.extension().string();
   std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) { return std::tolower(c); });
-  return e == ".step" || e == ".stp";
+  const auto& known = importable_extensions();
+  return std::find(known.begin(), known.end(), e) != known.end();
 }
 
 }  // namespace
@@ -655,8 +657,10 @@ json run(const std::string& name, const json& args, Document* live) {
   bool save_after = false, transient = false;
   if (!doc && name != "new" && args.contains("doc") && args["doc"].is_string()) {
     std::filesystem::path p = args["doc"].get<std::string>();
-    if (is_step_path(p)) {
-      loaded = browse_step(p);
+    if (is_foreign_path(p)) {
+      loaded = Document::create();
+      import_file(loaded, p);
+      loaded.dirty = false;
       transient = true;
     } else {
       loaded = Document::load(p);

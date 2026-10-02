@@ -4,6 +4,7 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopExp.hxx>
 #include "opad/geometry.hpp"
+#include "import_common.hpp"
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <gp_Pln.hxx>
@@ -501,92 +502,60 @@ Drawing read_svg(const std::filesystem::path& file) {
   return out;
 }
 
-TopoDS_Shape read_mesh(const std::filesystem::path& file) {
-  std::vector<gp_Pnt> vertices; std::vector<std::array<int,3>> triangles;
-  const std::string text=read_text_file(file);
-  auto add=[&](double x,double y,double z) { if(!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(z)||std::max({std::abs(x),std::abs(y),std::abs(z)})>1e12) throw Error("invalid mesh vertex"); vertices.emplace_back(x,y,z); };
-  if(extension(file)==".stl") {
-    uint32_t count=0; if(text.size()>=84) { for(int i=0;i<4;++i) count |= uint32_t(static_cast<unsigned char>(text[80+i]))<<(8*i); }
-    if(count>0 && count <= (text.size()-std::min<size_t>(84,text.size()))/50 && text.size()==84+size_t(count)*50) {
-      for(uint32_t i=0;i<count;++i) {
-        for(int j=0;j<3;++j) {
-          float v[3]; for(int k=0;k<3;++k) { uint32_t bits=0; size_t at=84+size_t(i)*50+12+j*12+k*4; for(int q=0;q<4;++q) bits|=uint32_t(static_cast<unsigned char>(text[at+q]))<<(8*q); std::memcpy(&v[k],&bits,4); }
-          add(v[0],v[1],v[2]);
-        }
-        const int n=int(vertices.size()); triangles.push_back({n-2,n-1,n});
-      }
-    } else {
-      std::istringstream in(text); std::string word,x,y,z;
-      while(in>>word) if(word=="vertex") { if(!(in>>x>>y>>z)) throw Error("truncated STL vertex"); add(number(x),number(y),number(z)); }
-      if(vertices.empty() || vertices.size()%3 || text.find("endsolid")==std::string::npos) throw Error("invalid or truncated STL");
-      for(int i=1;i<=int(vertices.size());i+=3) triangles.push_back({i,i+1,i+2});
-    }
-  } else {
-    std::istringstream in(text); std::string line;
-    while(std::getline(in,line)) {
-      std::istringstream ss(line); std::string tag,x,y,z; ss>>tag;
-      if(tag=="v") { if(!(ss>>x>>y>>z)) throw Error("invalid OBJ vertex"); add(number(x),number(y),number(z)); }
-      else if(tag=="f") {
-        std::vector<int> f;
-        while(ss>>x) { auto slash=x.find('/'); double raw=number(x.substr(0,slash)); if(raw!=std::floor(raw)||raw==0||std::abs(raw)>vertices.size()) throw Error("OBJ vertex index out of range"); int i=int(raw); f.push_back(i<0?int(vertices.size())+i+1:i); }
-        if(f.size()!=3) throw Error("OBJ faces must be triangulated before import");
-        triangles.push_back({f[0],f[1],f[2]});
-      }
-    }
-  }
-  if(vertices.empty() || triangles.empty() || vertices.size()>10000000 || triangles.size()>10000000) throw Error("empty or oversized mesh");
-  Handle(Poly_Triangulation) mesh=new Poly_Triangulation(int(vertices.size()),int(triangles.size()),false);
-  for(size_t i=0;i<vertices.size();++i) mesh->SetNode(int(i+1),vertices[i]);
-  for(size_t i=0;i<triangles.size();++i) { auto t=triangles[i]; mesh->SetTriangle(int(i+1),Poly_Triangle(t[0],t[1],t[2])); }
-  TopoDS_Face face; BRep_Builder().MakeFace(face,mesh); return face;
-}
 std::string xml(const std::string& in) { std::string out; for(char c:in) { if(c=='&')out+="&amp;"; else if(c=='<')out+="&lt;"; else if(c=='\"')out+="&quot;"; else out+=c; } return out; }
+}
+
+const std::vector<std::string>& importable_extensions() {
+  static const std::vector<std::string> list = {".step", ".stp", ".iges", ".igs", ".brep", ".brp", ".stl", ".obj", ".3mf", ".ply",
+                                                ".gltf", ".glb", ".wrl", ".vrml", ".dxf", ".dwg", ".svg"};
+  return list;
 }
 
 ImportResult import_file(Document& doc, const std::filesystem::path& file, const ImportOptions& options) {
   const auto ext=extension(file);
-  if(ext==".step" || ext==".stp") return import_step(doc,file,options);
+  if(!std::filesystem::exists(file)) throw Error("file not found: "+file.filename().string());
+  try {
+    if(ext==".step" || ext==".stp") return import_step(doc,file,options);
+    if(ext==".iges" || ext==".igs") return detail::import_iges(doc,file,options);
+    if(ext==".brep" || ext==".brp") return detail::import_brep_file(doc,file,options);
+    if(ext==".stl") return detail::import_stl(doc,file,options);
+    if(ext==".ply") return detail::import_ply(doc,file,options);
+    if(ext==".3mf") return detail::import_3mf(doc,file,options);
+    if(ext==".obj" || ext==".gltf" || ext==".glb" || ext==".wrl" || ext==".vrml") return detail::import_mesh_scene(doc,file,options);
+  } catch(const Standard_Failure& e) { throw Error("cannot read "+file.filename().string()+": "+e.GetMessageString()); }
   if(ext==".dwg") {
-    Conversion work; auto converted=work.directory/"drawing.dxf";
+    Conversion work; auto converted=work.directory/(file.stem().string()+".dxf");  // keeps the drawing's own name
     convert_dwg(file,converted,false);
     return import_file(doc,converted,options);
   }
   try {
-    Drawing drawing; bool mesh=ext==".stl" || ext==".obj";
-    if(mesh) drawing.add("Mesh",read_mesh(file));
-    else if(ext==".dxf") drawing=read_dxf(file);
+    Drawing drawing;
+    if(ext==".dxf") drawing=read_dxf(file);
     else if(ext==".svg") drawing=read_svg(file);
-    else throw Error("unsupported import format: " + ext);
+    else throw Error("unsupported file format: " + ext);
     ImportResult result; result.warnings=drawing.warnings; json children=json::array();
     // Parse fully before touching the document. Stage stores and op so cancellation is atomic.
     Document staged=doc;
     for(const auto& [name, shape]:drawing.layers) {
       if(options.progress && !options.progress(double(children.size())/drawing.layers.size(),"building")) throw Error("cancelled");
-      std::string brep;
-      if(mesh) { std::ostringstream ss; ss.precision(17); BRepTools::Write(shape,ss,true,false,TopTools_FormatVersion_VERSION_1); brep=ss.str(); }
-      else brep=brep_from_shape(shape);
-      if(brep.empty() || brep.back()!='\n') brep+='\n';
-      const auto key=staged.add_body(brep,{{"representation",mesh?"mesh":"drawing2d"},{"layer",name},{"source",file.filename().string()}});
-      cache_shape(staged,key,shape);
-      json body={{"type","body"},{"id",new_uuid()},{"name",name},{"key",key},{"representation",mesh?"mesh":"drawing2d"}};
+      const auto key=detail::store_body(staged,shape,{{"representation","drawing2d"},{"layer",name},{"source",file.filename().string()}},options,false);
+      json body={{"type","body"},{"id",new_uuid()},{"name",name},{"key",key},{"representation","drawing2d"}};
       if(drawing.images.count(name)) body["raster"]=drawing.images.at(name);
-      if(!mesh) children.push_back({{"type","component"},{"id",new_uuid()},{"name",name},{"visible",!drawing.visible.count(name)||drawing.visible.at(name)},{"children",json::array({body})}});
-      else children.push_back(body);
+      children.push_back({{"type","component"},{"id",new_uuid()},{"name",name},{"visible",!drawing.visible.count(name)||drawing.visible.at(name)},{"children",json::array({body})}});
       ++result.bodies;
     }
     json root={{"type","component"},{"id",new_uuid()},{"name",file.stem().string()},{"children",children}};
-    if(!mesh) {
-      Mat4 placement=options.placement;
-      if(options.center_drawing) {
-        Bnd_Box box;for(const auto& [name,shape]:drawing.layers)BRepBndLib::Add(shape,box);
-        if(!box.IsVoid()){double x0,y0,z0,x1,y1,z1;box.Get(x0,y0,z0,x1,y1,z1);placement=placement*Mat4::translation(-(x0+x1)/2,-(y0+y1)/2,0);}
-      }
-      if(!placement.is_identity())root["transform"]=placement.to_json();
+    Mat4 placement=options.placement;
+    if(options.center_drawing) {
+      Bnd_Box box;for(const auto& [name,shape]:drawing.layers)BRepBndLib::Add(shape,box);
+      if(!box.IsVoid()){double x0,y0,z0,x1,y1,z1;box.Get(x0,y0,z0,x1,y1,z1);placement=placement*Mat4::translation(-(x0+x1)/2,-(y0+y1)/2,0);}
     }
+    if(!placement.is_identity())root["transform"]=placement.to_json();
     json op={{"op","import"},{"source",file.filename().string()},{"nodes",json::array({root})}};
-    if(ext==".svg" && !drawing.warnings.empty()) { op["svg_source"]=read_text_file(file); op["warnings"]=drawing.warnings; }
+    // The source keeps what the drawing could not show; a viewer never writes it back, so it skips the copy.
+    if(ext==".svg" && !drawing.warnings.empty() && !options.viewer) { op["svg_source"]=read_text_file(file); op["warnings"]=drawing.warnings; }
     if(!options.parent.empty()) op["parent"]=options.parent;
-    result.op_id=staged.append(op,options.author).id; result.components=mesh?1:int(children.size())+1;
+    result.op_id=staged.append(op,options.author).id; result.components=int(children.size())+1;
     result.new_entries=int(staged.body_count()-doc.body_count()); doc=std::move(staged); return result;
   } catch(const Standard_Failure& e) { throw Error(std::string("cannot import geometry: ")+e.GetMessageString()); }
 }

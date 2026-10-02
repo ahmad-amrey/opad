@@ -59,6 +59,10 @@ add_executable(opad-test-drawing test_drawing.cpp)
 target_link_libraries(opad-test-drawing PRIVATE opad::core)
 add_test(NAME drawing COMMAND opad-test-drawing)
 
+add_executable(opad-test-formats test_formats.cpp)
+target_link_libraries(opad-test-formats PRIVATE opad::core ZLIB::ZLIB)
+add_test(NAME formats COMMAND opad-test-formats)
+
 add_executable(opad-test-step test_step.cpp)
 target_link_libraries(opad-test-step PRIVATE opad::core)
 
