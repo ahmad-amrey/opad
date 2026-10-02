@@ -1,5 +1,12 @@
 // opad-cli: the headless command-line surface over the OPAD command layer.
 // Every command prints JSON on stdout; errors go to stderr as {"error": "..."} with exit code 1.
+#ifdef _WIN32  // first: OCCT's headers leave out parts of it (the code-page API) when they include it themselves
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#endif
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -19,6 +26,7 @@
 #include "opad/core.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
+
 
 using opad::json;
 int opad_mcp();
@@ -54,7 +62,7 @@ json probe(const std::string& file, bool viewer, bool mesh) {
   opad::Document doc = opad::Document::create();
   opad::ImportOptions o;
   o.viewer = viewer;
-  const opad::ImportResult r = opad::import_file(doc, file, o);
+  const opad::ImportResult r = opad::import_file(doc, opad::path_from_utf8(file), o);
   const auto t1 = clock::now();
   opad::warm_shape_cache(doc);
   const auto t2 = clock::now();
@@ -120,6 +128,25 @@ std::string read_all(std::istream& in) {
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+  // Arguments as UTF-8, as the command layer reads them: the narrow argv is in the ANSI code page, and a file named in
+  // Arabic or Chinese arrived as question marks.
+  std::vector<std::string> utf8;
+  std::vector<char*> utf8_argv;
+  if (int n = 0; LPWSTR* wide = CommandLineToArgvW(GetCommandLineW(), &n)) {
+    for (int i = 0; i < n; ++i) {
+      const int size = WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, nullptr, 0, nullptr, nullptr);
+      std::string arg(size > 0 ? static_cast<size_t>(size - 1) : 0, '\0');
+      if (size > 1) WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, arg.data(), size, nullptr, nullptr);
+      utf8.push_back(std::move(arg));
+    }
+    LocalFree(wide);
+    for (auto& arg : utf8) utf8_argv.push_back(arg.data());
+    utf8_argv.push_back(nullptr);
+    argc = n;
+    argv = utf8_argv.data();
+  }
+#endif
   opad::configure_kernel_logging();
   if (argc >= 2 && std::string(argv[1]) == "mcp") {
     if(argc==2 || (argc==3 && std::string(argv[2])=="--headless"))return opad_mcp();
