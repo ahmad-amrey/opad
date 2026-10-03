@@ -8,6 +8,8 @@
 
 #include "opad/scene.hpp"
 
+class TopoDS_Shape;
+
 namespace drawing2d {
 using Rgb = std::array<double, 3>;  // 0..1, sRGB
 
@@ -62,4 +64,12 @@ double linePoints(double lineweight);
 // else by name), nothing for a layer already so.
 opad::json captureState(const opad::Scene& scene);
 std::vector<opad::json> restoreState(const opad::Scene& scene, const opad::json& display);
+
+// ---- the 2D vocabulary (UI-118). In a drawing-only scene and in 2D mode, a drawing's bodies, edges and vertices are
+// objects and points on layers, never "body 3 > edge 12"; faces are its fills (hatches, solids, text).
+// What a picked sub-shape of a drawing is: {"type": line|arc|circle|ellipse|spline|curve|fill|point, "length" (mm, curves),
+// "radius" (arcs and circles), "area" (fills)}; one curve or face, no walk over its body.
+opad::json entityInfo(const TopoDS_Shape& sub);
+const char* kindWord(opad::Ref::Kind kind);  // "object", "point", "fill", "center" (source text for i18n::t)
+bool drawingOnly(const opad::Scene& scene);  // bodies, all of them drawings
 }  // namespace drawing2d

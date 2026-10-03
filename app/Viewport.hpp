@@ -88,6 +88,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QColor sceneBackgroundColor() const;  // its colour (the gradient's middle)
   // What a 2D drawing without a colour (DXF colour 7) is drawn in: light on a dark background, dark on a light one (UI-10).
   std::array<double, 3> drawingInk() const;
+  // The 2D vocabulary (UI-118, ViewportDrawing.cpp): in a drawing-only scene or 2D mode, a hovered drawing entity reads as
+  // "Line on Walls · 120 mm" (an object on its layer, never "body › edge 12") and is reported by hoverInfo.
+  void setDrawingWords(bool on);
+  bool drawingWords() const { return m_drawingWords; }
+  static QString drawingWord(const std::string& type);  // "line" -> "Line", translated
+  bool benchHover(const QPointF& widgetPos);  // the detection a mouse move here makes, and the hover after it (hidden windows never paint)
   void setHoverFade(bool enabled,double seconds);
   void resetHoverFade();
   void setTwoDimensional(bool on);
@@ -272,6 +278,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void filterApplied();     // a setSelectionFilter() call has reached every displayed body
   void hoverChanged(const QString& text);
   void hoverPoint(bool valid, const opad::Vec3& point);  // with hoverChanged: where the mouse met the hovered entity
+  // The drawing entity under the mouse in the 2D vocabulary: drawing2d::entityInfo plus body and index; null when none.
+  void hoverInfo(const opad::json& info);
   void contextMenuRequested(const QPoint& globalPos);
   void meshingProgress(int remaining);
   void isolationChanged();  // entered, left, or left because every isolated object was deleted
@@ -373,6 +381,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool applyLook(const std::string& id, Item& item, const BodyLook& look);
   void scheduleLooks();  // every displayed body checked again by the sliced job
   Handle(Prs3d_Drawer) m_drawingSelected, m_drawingHover;  // a drawing's highlights, shared (ViewportSettings.cpp)
+  bool m_drawingWords = false;
+  opad::json m_hoverInfo;
+  void updateHover();  // after a frame's detection (paintEvent)
   void updateDrawingHighlights();
   void initViewer();
   void trackpadScroll(const QPointF& position, const QPointF& delta, bool orbit);

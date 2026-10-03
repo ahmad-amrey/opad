@@ -1,5 +1,13 @@
 #include "Drawing2D.hpp"
 
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepGProp.hxx>
+#include <GCPnts_AbscissaPoint.hxx>
+#include <GProp_GProps.hxx>
+#include <Standard_Failure.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Shape.hxx>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -168,6 +176,49 @@ json captureState(const opad::Scene& scene) {
     all[l.id] = std::move(s);
   }
   return {{"layers", all}};
+}
+
+json entityInfo(const TopoDS_Shape& sub) try {
+  if (sub.IsNull()) return json();
+  if (sub.ShapeType() == TopAbs_VERTEX) return {{"type", "point"}};
+  if (sub.ShapeType() == TopAbs_FACE) {
+    GProp_GProps props;
+    BRepGProp::SurfaceProperties(sub, props);
+    return {{"type", "fill"}, {"area", props.Mass()}};
+  }
+  if (sub.ShapeType() != TopAbs_EDGE) return json();
+  const BRepAdaptor_Curve curve(TopoDS::Edge(sub));
+  json info = {{"length", GCPnts_AbscissaPoint::Length(curve)}};
+  const bool closed = std::abs(curve.LastParameter() - curve.FirstParameter()) >= 2 * M_PI - 1e-8;
+  switch (curve.GetType()) {
+    case GeomAbs_Line: info["type"] = "line"; break;
+    case GeomAbs_Circle:
+      info["type"] = closed ? "circle" : "arc";
+      info["radius"] = curve.Circle().Radius();
+      break;
+    case GeomAbs_Ellipse: info["type"] = "ellipse"; break;
+    case GeomAbs_BSplineCurve:
+    case GeomAbs_BezierCurve: info["type"] = "spline"; break;
+    default: info["type"] = "curve";
+  }
+  return info;
+} catch (const Standard_Failure&) {  // a curve that cannot be measured is still a curve
+  return {{"type", sub.ShapeType() == TopAbs_FACE ? "fill" : "curve"}};
+}
+
+const char* kindWord(opad::Ref::Kind kind) {
+  switch (kind) {
+    case opad::Ref::Kind::Vertex:
+    case opad::Ref::Kind::Point: return "point";
+    case opad::Ref::Kind::Face: return "fill";
+    case opad::Ref::Kind::Center: return "center";
+    default: return "object";
+  }
+}
+
+bool drawingOnly(const opad::Scene& scene) {
+  const auto bodies = scene.all_bodies();
+  return !bodies.empty() && std::all_of(bodies.begin(), bodies.end(), [&](const std::string& id) { return scene.node(id)->representation == "drawing2d"; });
 }
 
 std::vector<json> restoreState(const opad::Scene& scene, const json& display) {

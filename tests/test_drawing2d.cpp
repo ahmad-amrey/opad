@@ -1,5 +1,16 @@
 // 2D drawings in the view (app/Drawing2D.cpp): the ink of a drawing without a colour on every background (UI-10), the
-// layer model of the Layers manager, its changes as appearance ops and layer states in view ops (UI-89).
+// layer model of the Layers manager, its changes as appearance ops and layer states in view ops (UI-89), the 2D
+// vocabulary's words for what is picked (UI-118).
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <TopoDS_Wire.hxx>
+#include <gp_Circ.hxx>
+
 #include <filesystem>
 #include <map>
 #include <sstream>
@@ -174,6 +185,29 @@ TEST(layer_states_come_back_in_one_go) {
   const auto byNames = restoreState(opad::resolve(again), saved);
   CHECK_EQ(byNames.size(), 1u);
   CHECK(byNames.at(0)["target"] == all["Notes"].id && byNames.at(0)["visible"] == false);
+}
+
+TEST(what_a_drawing_entity_is_called) {
+  const auto line = entityInfo(BRepBuilderAPI_MakeEdge(gp_Pnt(0, 0, 0), gp_Pnt(30, 40, 0)).Edge());
+  CHECK(line["type"] == "line" && std::abs(line["length"].get<double>() - 50) < 1e-9 && !line.contains("radius"));
+  const gp_Circ circle(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), 5);
+  const auto full = entityInfo(BRepBuilderAPI_MakeEdge(circle).Edge());
+  CHECK(full["type"] == "circle" && std::abs(full["radius"].get<double>() - 5) < 1e-9 && std::abs(full["length"].get<double>() - 10 * M_PI) < 1e-6);
+  const auto arc = entityInfo(BRepBuilderAPI_MakeEdge(circle, 0, M_PI / 2).Edge());
+  CHECK(arc["type"] == "arc" && std::abs(arc["length"].get<double>() - 2.5 * M_PI) < 1e-6);
+  const auto square = entityInfo(BRepBuilderAPI_MakeFace(BRepBuilderAPI_MakePolygon(gp_Pnt(0, 0, 0), gp_Pnt(2, 0, 0), gp_Pnt(2, 3, 0), gp_Pnt(0, 3, 0), true).Wire()).Face());
+  CHECK(square["type"] == "fill" && std::abs(square["area"].get<double>() - 6) < 1e-9);
+  CHECK(entityInfo(BRepBuilderAPI_MakeVertex(gp_Pnt(1, 2, 0)).Vertex())["type"] == "point");
+  CHECK(entityInfo(TopoDS_Shape()).is_null());
+  CHECK(std::string(kindWord(opad::Ref::Kind::Body)) == "object" && std::string(kindWord(opad::Ref::Kind::Edge)) == "object" &&
+        std::string(kindWord(opad::Ref::Kind::Vertex)) == "point" && std::string(kindWord(opad::Ref::Kind::Face)) == "fill");
+  // A drawing-only scene: bodies, all drawings.
+  opad::Document doc = opad::Document::create();
+  CHECK(!drawingOnly(opad::resolve(doc)));
+  opad::import_file(doc, layersDxf());
+  CHECK(drawingOnly(opad::resolve(doc)));
+  opad::commands::run("feature", {{"kind", "box"}, {"inputs", {{"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}}}}, &doc);
+  CHECK(!drawingOnly(opad::resolve(doc)));
 }
 
 CHECK_MAIN()

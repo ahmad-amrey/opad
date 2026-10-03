@@ -67,5 +67,12 @@
  "turn layers on": "تشغيل الطبقات",
  "Select the layers to isolate first.": "حدد الطبقات المراد عزلها أولًا.",
  "Layer walk · %1 (%2 of %3)": "تصفح الطبقات · %1 (%2 من %3)",
- "The layers are as “%1” saved them": "الطبقات كما حفظتها «%1»"
+ "The layers are as “%1” saved them": "الطبقات كما حفظتها «%1»",
+ "Object on %1": "عنصر على %1",
+ "%1 on %2": "%1 على %2",
+ "Object": "عنصر",
+ "Fill": "تعبئة",
+ "Curve": "منحنى",
+ "Area": "المساحة",
+ "fill": "تعبئة"
 }

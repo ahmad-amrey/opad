@@ -3,6 +3,7 @@
 #include <TopExp_Explorer.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
+#include "Drawing2D.hpp"
 #include "Units.hpp"
 #include "opad/mesh.hpp"
 #include <V3d_DirectionalLight.hxx>
@@ -1972,16 +1973,34 @@ void Viewport::paintEvent(QPaintEvent*) {
   }
   if (trace::enabled() && frame.elapsed() > 100) trace::log(QStringLiteral("slow frame: %1 ms (%2 objects)").arg(frame.elapsed()).arg(m_items.size()));
   updateTracking();
+  updateHover();
+}
+
+// The status text, the hovered drawing entity and the point under the mouse, after a frame's detection.
+void Viewport::updateHover() {
   // The label needs the sub-shape's ordinal, a walk over the whole body: only when the hovered owner changes.
   const Standard_Transient* hoverOwner = m_ctx->HasDetected() ? m_ctx->DetectedOwner().get() : nullptr;
   if (hoverOwner == m_hoverOwner) return;
   m_hoverOwner = hoverOwner;
   discoverCenter();
   QString hover;
+  opad::json drawingInfo;
   if (m_ctx->HasDetected()) {
     Handle(AIS_InteractiveObject) obj = m_ctx->DetectedInteractive();
     auto it = m_nodeOf.find(obj.get());
-    if (it != m_nodeOf.end()) {
+    const opad::Node* node = it != m_nodeOf.end() ? m_doc->scene.node(it->second) : nullptr;
+    if (node && m_drawingWords && node->representation == "drawing2d" && node->raster.is_null()) {  // 2D words (UI-118)
+      Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
+      Handle(SubShapeOwner) mine = Handle(SubShapeOwner)::DownCast(owner);
+      const QString layer = m_doc->nodeName(node->parent.empty() ? node->id : node->parent);
+      drawingInfo = owner.IsNull() || !owner->HasShape() || m_filter == SelFilter::Body ? opad::json{{"type", "object"}} : drawing2d::entityInfo(owner->Shape());
+      drawingInfo["body"] = node->id;
+      if (!mine.IsNull()) drawingInfo["index"] = mine->index();
+      hover = drawingInfo["type"] == "object" ? tr("Object on %1").arg(layer) : tr("%1 on %2").arg(drawingWord(drawingInfo.value("type", "")), layer);
+      if (drawingInfo.contains("radius")) hover += QStringLiteral(" · R ") + units::format(units::Kind::Length, drawingInfo["radius"].get<double>());
+      else if (drawingInfo.contains("length")) hover += QStringLiteral(" · ") + units::format(units::Kind::Length, drawingInfo["length"].get<double>());
+      else if (drawingInfo.contains("area")) hover += QStringLiteral(" · ") + units::format(units::Kind::Area, drawingInfo["area"].get<double>());
+    } else if (it != m_nodeOf.end()) {
       hover = hoverName(it->second);
       Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
       if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
@@ -2009,6 +2028,10 @@ void Viewport::paintEvent(QPaintEvent*) {
   if (hover != m_hover) {
     m_hover = hover;
     emit hoverChanged(hover);
+  }
+  if (drawingInfo != m_hoverInfo) {
+    m_hoverInfo = drawingInfo;
+    emit hoverInfo(drawingInfo);
   }
   const bool onGeometry = m_ctx->HasDetected() && m_ctx->MainSelector()->NbPicked() > 0
       && (m_nodeOf.count(m_ctx->DetectedInteractive().get()) || m_centerObjects.count(m_ctx->DetectedInteractive().get()));

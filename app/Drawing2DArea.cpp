@@ -1,20 +1,30 @@
 // The 2D drawing area (drawing2d): the Layers manager (UI-89) and its commands, ribbon slots, context menu entries and
-// the layer walk's chip. The view side of drawings (ink, line weights and types) is in ViewportLooks.cpp; the model is
-// Drawing2D.hpp.
+// the layer walk's chip; the 2D vocabulary (UI-118): in a drawing-only scene or 2D mode the Faces filter and the 3D
+// display chips go, drawings are worded as objects on layers and a rollover card tells what is under the mouse. The view
+// side of drawings (ink, line weights and types, hover words) is in ViewportLooks.cpp and ViewportDrawing.cpp; the model
+// is Drawing2D.hpp.
 #include <QAction>
+#include <QCursor>
+#include <QGuiApplication>
 #include <QLabel>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QScreen>
+#include <QTimer>
+#include <QToolButton>
 
 #include "AreaController.hpp"
 #include "Commands.hpp"
 #include "Drawing2D.hpp"
+#include "I18n.hpp"
 #include "Icons.hpp"
 #include "LayersPanel.hpp"
 #include "PanelFooter.hpp"
 #include "Ribbon.hpp"
+#include "Theme.hpp"
 #include "ToolPanel.hpp"
+#include "Units.hpp"
 #include "Viewport.hpp"
 #include "ViewportChips.hpp"
 
@@ -29,12 +39,28 @@ OPAD_ICON_TABLE(drawing2d,
                 {"noPlot", R"(<path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8"/><path d="M7 14h10v7H7z"/><path d="M2 2l20 20"/>)"});
 
 namespace {
+// What is under the mouse in a drawing, after a moment's rest (a rollover tooltip): its type, layer, colour, linetype,
+// lineweight and size. A tooltip window of the main window; it never takes the focus or the mouse.
+class RolloverCard : public QLabel {
+ public:
+  explicit RolloverCard(QWidget* owner) : QLabel(owner, Qt::ToolTip | Qt::FramelessWindowHint) {
+    setObjectName("rolloverCard");
+    setAttribute(Qt::WA_ShowWithoutActivating);
+    setAttribute(Qt::WA_TransparentForMouseEvents);
+    setTextFormat(Qt::RichText);
+    setMargin(8);
+    restyle();
+    connect(theme::notifier(), &theme::Notifier::changed, this, [this] { restyle(); });
+  }
+  void restyle() {
+    const Tokens& t = theme::current();
+    setStyleSheet(QString("QLabel#rolloverCard { background: %1; color: %2; border: 1px solid %3; border-radius: 4px; }").arg(theme::css(t.bg2), theme::css(t.fg), theme::css(t.line)));
+  }
+};
+
 class Drawing2DArea : public AreaController {
  public:
   using AreaController::AreaController;
-  LayersPanel* layersPanel() const { return m_layers; }
-  ToolPanel* layersTool() const { return m_tool; }
-  QLabel* walkChip() const { return m_walkChip; }
 
   void buildActions() override {
     auto has = [this](const CommandContext& c) { return c.document && m_hasLayers; };
@@ -99,6 +125,18 @@ class Drawing2DArea : public AreaController {
     connect(services().viewport(), &Viewport::isolationChanged, this, [this] {
       if (m_layers->walking() && !services().viewport()->isIsolated()) m_layers->stopWalk();
     });
+    // The 2D vocabulary follows the scene and 2D mode; the rollover card the hovered drawing entity.
+    if (QAction* twoD = services().action("view.2d")) connect(twoD, &QAction::toggled, this, [this] { applyVocabulary(); });
+    m_card = new RolloverCard(services().window());
+    m_cardTimer.setSingleShot(true);
+    m_cardTimer.setInterval(450);
+    connect(&m_cardTimer, &QTimer::timeout, this, [this] { showCard(); });
+    connect(services().viewport(), &Viewport::hoverInfo, this, [this](const opad::json& info) {
+      m_hovered = info;
+      m_card->hide();
+      if (info.is_null()) m_cardTimer.stop();
+      else m_cardTimer.start();
+    });
     documentChanged(true);
   }
 
@@ -130,6 +168,7 @@ class Drawing2DArea : public AreaController {
   void documentChanged(bool replaced) override {
     if (replaced && m_layers) m_layers->stopWalk();
     m_hasLayers = !drawing2d::layers(services().document()->scene).empty();
+    applyVocabulary();
     if (m_tool && m_tool->isVisible()) {
       if (!m_hasLayers) m_tool->hide();
       else m_layers->rebuild();
@@ -137,6 +176,59 @@ class Drawing2DArea : public AreaController {
   }
 
  private:
+  // In a drawing-only scene or 2D mode: no Faces filter (a drawing's faces are its fills, picked as objects), no display
+  // style or projection chips, and the drawing words in the hover and the status bar.
+  void applyVocabulary() {
+    if (!m_card) return;  // before ready()
+    QAction* twoD = services().action("view.2d");
+    const bool on = services().document()->hasDocument && (drawing2d::drawingOnly(services().document()->scene) || (twoD && twoD->isChecked()));
+    if (!on) m_card->hide();
+    if (on == m_words) return;
+    m_words = on;
+    services().viewport()->setDrawingWords(on);
+    services().chips()->setDisplayChips(!on);
+    if (QAction* faces = services().action("select.faces")) {
+      faces->setVisible(!on);  // its menu entry, ribbon slot and key go with it
+      for (auto* button : services().window()->findChildren<SegmentButton*>())
+        if (button->defaultAction() == faces) button->setVisible(!on);  // the Select control's segment (ribbon groups follow the action)
+      if (on && services().viewport()->selectionFilter() == Viewport::SelFilter::Face)
+        if (QAction* edges = services().action("select.edges")) edges->trigger();
+    }
+  }
+
+  void showCard() {
+    if (!m_words || m_hovered.is_null() || !m_hovered.contains("body")) return;
+    const opad::Scene& scene = services().document()->scene;
+    const opad::Node* body = scene.node(m_hovered["body"].get<std::string>());
+    if (!body) return;
+    const auto all = drawing2d::layers(scene);
+    const drawing2d::Layer* layer = drawing2d::find(all, drawing2d::layerOf(scene, body->id));
+    auto row = [](const QString& name, const QString& value) {
+      return QString("<tr><td style=\"padding-right:12px\">%1</td><td>%2</td></tr>").arg(name.toHtmlEscaped(), value);
+    };
+    QString rows;
+    rows += row(tr("Layer"), (layer ? QString::fromStdString(layer->name) : services().document()->nodeName(body->parent)).toHtmlEscaped());
+    const QColor colour = body->has_color ? QColor::fromRgbF(body->color[0], body->color[1], body->color[2]) : QColor();
+    rows += row(tr("Colour"), colour.isValid() ? QString("<span style=\"color:%1\">&#9632;</span> %1").arg(colour.name()) : tr("Drawing colour").toHtmlEscaped());
+    if (layer) {
+      rows += row(tr("Linetype"), (layer->linetype.empty() ? tr("Continuous") : QString::fromStdString(layer->linetype)).toHtmlEscaped());
+      rows += row(tr("Lineweight"), layer->lineweight < 0 ? tr("Default") : units::format(units::Kind::Length, layer->lineweight));
+    }
+    if (m_hovered.contains("radius")) rows += row(tr("Radius"), units::format(units::Kind::Length, m_hovered["radius"].get<double>()));
+    if (m_hovered.contains("length")) rows += row(tr("Length"), units::format(units::Kind::Length, m_hovered["length"].get<double>()));
+    if (m_hovered.contains("area")) rows += row(tr("Area"), units::format(units::Kind::Area, m_hovered["area"].get<double>()));
+    m_card->setText(QString("<b>%1</b><table style=\"margin-top:4px\">%2</table>").arg(Viewport::drawingWord(m_hovered.value("type", "")).toHtmlEscaped(), rows));
+    m_card->adjustSize();
+    QPoint at = QCursor::pos() + QPoint(16, 20);
+    if (const QScreen* screen = QGuiApplication::screenAt(QCursor::pos())) {  // kept on the screen
+      const QRect room = screen->availableGeometry();
+      at.setX(std::min(at.x(), room.right() - m_card->width()));
+      if (at.y() + m_card->height() > room.bottom()) at.setY(QCursor::pos().y() - m_card->height() - 8);
+    }
+    m_card->move(at);
+    m_card->show();
+  }
+
   void showLayers(bool on) {
     if (!on) return m_tool->hide();
     services().openPanel(m_tool);
@@ -158,7 +250,10 @@ class Drawing2DArea : public AreaController {
   ToolPanel* m_tool = nullptr;
   QLabel* m_walkChip = nullptr;
   QAction *m_layersAction = nullptr, *m_walkAction = nullptr, *m_isolateAction = nullptr;
-  bool m_hasLayers = false;
+  bool m_hasLayers = false, m_words = false;
+  RolloverCard* m_card = nullptr;
+  QTimer m_cardTimer;
+  opad::json m_hovered;
 };
 }  // namespace
 

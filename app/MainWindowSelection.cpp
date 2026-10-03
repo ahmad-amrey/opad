@@ -11,6 +11,7 @@
 
 #include <Bnd_Box.hxx>
 
+#include "Drawing2D.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "opad/geometry.hpp"
@@ -47,7 +48,7 @@ void MainWindow::onViewportSelection() {
   selectionMoved(refs);
   if (!m_tool.id.isEmpty()) toolPicksChanged(refs, true);
   if (refs.empty()) m_statusSel->clear();
-  else m_statusSel->setText(tr("%1 selected · %2").arg(refs.size()).arg(i18n::t(opad::Ref::kind_name(refs.front().kind))));
+  else m_statusSel->setText(tr("%1 selected · %2").arg(refs.size()).arg(i18n::t(m_viewport->drawingWords() ? drawing2d::kindWord(refs.front().kind) : opad::Ref::kind_name(refs.front().kind))));  // UI-118: objects and points in 2D
   scheduleSelectionSync();
   m_syncing = false;
 }
@@ -65,7 +66,8 @@ void MainWindow::onBrowserSelection(const std::vector<std::string>& ids) {
   }
   selectionMoved(refs);
   if (!m_tool.id.isEmpty()) toolPicksChanged(refs, false);
-  m_statusSel->setText(!refs.empty() ? tr("%1 selected · body").arg(refs.size()) : ids.empty() ? QString() : tr("%1 selected").arg(ids.size()));
+  m_statusSel->setText(!refs.empty() ? (m_viewport->drawingWords() ? tr("%1 selected · %2").arg(refs.size()).arg(i18n::t("object")) : tr("%1 selected · body").arg(refs.size()))
+                                     : ids.empty() ? QString() : tr("%1 selected").arg(ids.size()));
   m_syncing = false;
   m_viewport->selectNodes(nodes);  // sliced; selectionApplied() writes selection.json when it settles
 }

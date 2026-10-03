@@ -47,4 +47,9 @@ CASES = [
     # restored, the file read back) and on the DXF itself in viewer mode (the same, a layer state asks to save first).
     ("layers", layers_document, {"OPAD_BENCH_LAYERS": "{prefix}"}),
     ("layers-viewer", layers_file, {"OPAD_BENCH_LAYERS": "{prefix}"}),
+    # UI-118: the 2D vocabulary on a drawing (no Faces filter or display chips, "Line on Lines · 100 mm", the rollover
+    # card, a pick counted as an object) and on a solid (3D until 2D mode, back after it). <prefix>.card.png, .status.png
+    ("vocabulary", contrast_file, {"OPAD_BENCH_VOCABULARY": "{prefix}"}),
+    ("vocabulary-rtl", contrast_file, {"OPAD_BENCH_VOCABULARY": "{prefix}", "OPAD_LANG": "ar"}),
+    ("vocabulary-3d", "box", {"OPAD_BENCH_VOCABULARY": "{prefix}"}),
 ]

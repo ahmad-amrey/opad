@@ -1,5 +1,5 @@
 // Benches of the 2D drawing area (drawing2d): contrast of drawings without a colour on every background (UI-10), the Layers
-// manager (UI-89). Cases in tools/bench_cases/drawing2d.py; the colour rules and the layer model alone are tests/test_drawing2d.
+// manager (UI-89), the 2D vocabulary (UI-118). Cases in tools/bench_cases/drawing2d.py; the colour rules and the layer model alone are tests/test_drawing2d.
 #include <QAction>
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QStatusBar>
 #include <QTimer>
 #include <QTreeWidget>
 
@@ -20,10 +21,13 @@
 
 #include "BenchRegistry.hpp"
 #include "Drawing2D.hpp"
+#include "I18n.hpp"
 #include "LayersPanel.hpp"
 #include "MainWindow.hpp"
 #include "PanelFooter.hpp"
+#include "Ribbon.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 #include "ViewportChips.hpp"
 #include "opad/geometry.hpp"
 
@@ -309,6 +313,113 @@ OPAD_BENCH(OPAD_BENCH_LAYERS, layers) {
       });
     }
     script->add("close", [panel] { panel->footer()->primary()->click(); }, [panel] { return !panel->isVisible(); });
+    Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
+  });
+  return true;
+}
+
+// OPAD_BENCH_VOCABULARY=<prefix>. On a drawing (drawing-only, viewer mode): the Faces filter is gone (its segment, its
+// action) and so are the display style and projection chips; a hovered line reads "Line on <layer> · 100 mm" and, after a
+// rest, a rollover card names its type, layer, colour, linetype, lineweight and length; a picked one counts as an object
+// in the status bar; with the Bodies filter a drawing body is an object on its layer. On a solid (the box fixture): all of
+// that stays as it is until 2D mode, which takes the Faces filter and the chips away, and brings them back when it ends.
+// <prefix>.card.png, <prefix>.status.png.
+OPAD_BENCH(OPAD_BENCH_VOCABULARY, vocabulary) {
+  auto all = std::make_shared<bool>(true);
+  Check require = [all](bool ok, const QString& what) {
+    trace::log(QString("bench: vocabulary: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    *all = *all && ok;
+  };
+  Viewport* v = w.m_viewport;
+  AppDocument* doc = w.m_doc;
+  auto settled = [&w, v, doc] {
+    int expected = 0;
+    for (const auto& id : doc->scene.all_bodies()) expected += doc->scene.effectively_visible(id);
+    return !w.m_displayJob && w.m_meshRemaining == 0 && v->displayedCount() >= expected && expected > 0 && !v->looksPending();
+  };
+  pollUntil(&w, settled, 60000, [&w, v, doc, require, all, value](bool shown) {
+    require(shown, "the document is shown");
+    if (!shown) return QCoreApplication::exit(2);
+    QAction* faces = w.action("select.faces");
+    auto chipShown = [&w](const QString& text) {
+      for (auto* label : w.m_chips->findChildren<QLabel*>())
+        if (label->text() == text && label->isVisibleTo(w.m_chips)) return true;
+      return false;
+    };
+    auto segmentShown = [&w, faces] {
+      for (auto* button : w.findChildren<SegmentButton*>())
+        if (button->defaultAction() == faces) return !button->isHidden();
+      return false;
+    };
+    auto threeD = [&w, faces, chipShown, segmentShown] {
+      return faces->isVisible() && segmentShown() && chipShown(MainWindow::tr("Shaded + edges")) && chipShown(MainWindow::tr("Orthographic"));
+    };
+    auto twoD = [&w, v, faces, chipShown, segmentShown] {
+      return v->drawingWords() && !faces->isVisible() && !segmentShown() && !chipShown(MainWindow::tr("Shaded + edges")) && !chipShown(MainWindow::tr("Orthographic")) &&
+             v->selectionFilter() != Viewport::SelFilter::Face;
+    };
+    auto script = std::make_shared<Script>();
+    if (!drawing2d::drawingOnly(doc->scene)) {  // a solid: 3D words until 2D mode
+      QAction* flat = w.action("view.2d");
+      script->add("a solid in 3D", [v, faces, require, threeD] {
+        faces->trigger();
+        require(!v->drawingWords() && threeD(), "a solid keeps the Faces filter, the display chips and the 3D words");
+      });
+      script->add("2D mode", [flat] { flat->setChecked(true); }, [twoD] { return twoD(); });
+      script->add("2D mode off", [flat, require] {
+        require(true, "2D mode takes the Faces filter (a Faces pick moves to Edges) and the display chips away");
+        flat->setChecked(false);
+      }, [v, threeD] { return !v->drawingWords() && threeD(); });
+      script->add("back", [require] { require(true, "leaving 2D mode brings them back"); });
+    } else {
+      auto at = std::make_shared<QPointF>();
+      script->add("a drawing", [&w, v, doc, require, twoD, at] {
+        require(twoD(), "a drawing has no Faces filter or display chips, and the 2D words");
+        const std::string lines = layerNamed(doc->scene, "Lines");
+        Bnd_Box box;
+        for (const auto& body : doc->scene.bodies_under(lines)) box.Add(opad::node_world_bbox(doc->doc, doc->scene, body));
+        double x0, y0, z0, x1, y1, z1;
+        box.Get(x0, y0, z0, x1, y1, z1);
+        v->fitAll();
+        *at = QPointF(v->widgetPoint({x0 + (x1 - x0) * 0.3, (y0 + y1) / 2, (z0 + z1) / 2}));
+        w.action("select.edges")->trigger();
+      }, [v] { return v->selectionFilter() == Viewport::SelFilter::Edge; });
+      auto card = std::make_shared<QLabel*>(nullptr);
+      script->add("hover a line", [&w, v, require, at, card] {
+        const bool hovered = v->benchHover(*at);
+        const QString text = w.m_statusHover->text(), expected = Viewport::tr("%1 on %2").arg(Viewport::tr("Line"), "Lines");
+        require(hovered && text.startsWith(expected + " · ") && text.contains(units::format(units::Kind::Length, 100)),
+                "a hovered line reads as a line on its layer with its length: " + text);
+        *card = w.findChild<QLabel*>("rolloverCard");
+      }, [card] { return *card && (*card)->isVisible(); });
+      script->add("the rollover card", [&w, require, value, card] {
+        const QString text = (*card)->text();
+        require(text.contains(Viewport::tr("Line")) && text.contains("Lines") && text.contains(QObject::tr("Length")) && text.contains(QObject::tr("Lineweight")) &&
+                    text.contains(QObject::tr("Drawing colour")),
+                "after a rest the rollover card names the type, layer, colour, linetype, lineweight and length");
+        (*card)->grab().save(value + ".card.png");
+      });
+      script->add("pick it", [&w, v, doc] {  // as a click on it selects it (a hidden window's posted clicks wait for a frame)
+        opad::Ref line;
+        line.body = doc->scene.bodies_under(layerNamed(doc->scene, "Lines")).at(0);
+        line.kind = opad::Ref::Kind::Edge;
+        line.index = 0;
+        v->selectRefs({line});
+        w.onViewportSelection();
+      }, [v] { return !v->selection().empty(); });
+      script->add("picked", [&w, require, value] {
+        const QString text = w.m_statusSel->text();
+        require(text == MainWindow::tr("%1 selected · %2").arg(1).arg(i18n::t("object")), "a picked line counts as an object: " + text);
+        w.statusBar()->grab().save(value + ".status.png");
+        w.action("select.bodies")->trigger();
+      }, [v] { return v->selectionFilter() == Viewport::SelFilter::Body; });
+      script->add("hover a body", [&w, v, require, at] {
+        v->benchHover(QPointF(at->x() + 1, at->y()));
+        v->benchHover(*at);
+        const QString text = w.m_statusHover->text();
+        require(text == Viewport::tr("Object on %1").arg("Lines"), "with the Bodies filter a drawing body is an object on its layer: " + text);
+      });
+    }
     Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   });
   return true;
