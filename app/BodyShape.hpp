@@ -64,10 +64,12 @@ class BodyShape : public AIS_Shape {
   const std::shared_ptr<const BodyPrs>& displayPrs() const { return m_display; }
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
-  // Sub-shape modes: the stock owners are swapped for SubShapeOwner.
+  // Sub-shape modes: the stock owners are swapped for SubShapeOwner. The Edge and Vertex modes also hold the body's
+  // faces under an OccluderOwner (UI-31).
   void ComputeSelection(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode) override;
 
  private:
+  void computeSubShapes(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode);
   std::shared_ptr<const BodyPrs> m_prs, m_display;
   double m_rayBias=0;
   Handle(Graphic3d_ArrayOfTriangles) m_rayTriangles;
@@ -101,6 +103,18 @@ class CircleOwner : public SubShapeOwner {
   CircleOwner(const BodyPrs::Circle& circle, const Handle(SelectMgr_SelectableObject)& body, int index)
       : SubShapeOwner(circle.edge, body, 12, index), center(circle.center) {}
   gp_Pnt center;
+};
+
+// The faces of a body in the Edge and Vertex modes (UI-31): its navigation triangles under one owner that is never
+// highlighted or kept selected. A face in front of an edge or vertex is picked before it, and the viewport takes that
+// pick for nothing (Viewport::dropOccluded), so what is drawn behind a face cannot be hovered, clicked or tracked.
+class OccluderOwner : public SelectMgr_EntityOwner {
+  DEFINE_STANDARD_RTTI_INLINE(OccluderOwner, SelectMgr_EntityOwner)
+ public:
+  explicit OccluderOwner(const Handle(SelectMgr_SelectableObject)& body) : SelectMgr_EntityOwner(body, 0) {}
+  void HilightWithColor(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Drawer)&, const Standard_Integer) override {}
+  void Unhilight(const Handle(PrsMgr_PresentationManager)&, const Standard_Integer) override {}
+  Standard_Boolean IsHilighted(const Handle(PrsMgr_PresentationManager)&, const Standard_Integer) const override { return Standard_False; }
 };
 
 // A cheap instance of a worker-built sensitive. Matches runs only on the UI thread; the shared

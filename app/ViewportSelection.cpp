@@ -39,7 +39,7 @@ void Viewport::handleSelectionPoly(const Handle(AIS_InteractiveContext)& ctx,con
   auto state=std::make_shared<State>();state->x=left;state->y=top;state->feedback.start();
   for(int i=1;i<=selector->NbPicked();++i) {
     auto owner=selector->Picked(i);
-    if(Handle(CircleOwner)::DownCast(owner).IsNull() && m_nodeOf.count(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get())) {state->candidates.push_back(owner);state->remaining.insert(owner.get());
+    if(Handle(CircleOwner)::DownCast(owner).IsNull() && Handle(OccluderOwner)::DownCast(owner).IsNull() && m_nodeOf.count(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get())) {state->candidates.push_back(owner);state->remaining.insert(owner.get());
       const auto center=selector->PickedEntity(i)->CenterOfGeometry().Transformed(owner->Selectable()->Transformation());
       int x,y;view->Convert(center.X(),center.Y(),center.Z(),x,y);
       state->seeds.emplace_back(std::clamp(x,left,right),std::clamp(y,top,bottom));
@@ -83,6 +83,7 @@ void Viewport::handleSelectionPoly(const Handle(AIS_InteractiveContext)& ctx,con
         const gp_Pnt front=haveFront?m_navSelector->PickedPoint(1):selector->PickedPoint(1);
         for(int rank=1;rank<=selector->NbPicked();++rank) {
           const auto owner=selector->Picked(rank);
+          if(!Handle(OccluderOwner)::DownCast(owner).IsNull()) continue;  // the front test below is the occlusion here
           if(gp_Vec(front,selector->PickedPoint(rank)).Dot(gp_Vec(view->Camera()->Direction()))>pixelSize()*3) continue;
           if(state->remaining.erase(owner.get())) state->visible.push_back(owner);
           break;

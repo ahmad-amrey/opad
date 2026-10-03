@@ -1,10 +1,12 @@
 #include "Viewport.hpp"
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Tool.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <Prs3d_LineAspect.hxx>
+#include <Prs3d_PointAspect.hxx>
 #include <TopoDS.hxx>
 #include <QApplication>
 #include <QLineF>
@@ -26,56 +28,100 @@ void Viewport::clearTracking() {
     m_centerObjects.erase(old->second.ais.get());
     m_ctx->Remove(old->second.ais, false); m_centers.erase(old);
   }
-  m_haveTrackingAnchor = false; m_trackingLocked = false; m_trackingMarker.clear();
+  m_trackingLocked = false; m_trackingMarker.clear();
   m_trackingAnchors.clear(); m_trackingCandidates.clear(); m_inferenceChoice = 0;
-  if (!m_trackingGuide.IsNull() && m_initialised) m_ctx->Remove(m_trackingGuide, false);
-  m_trackingGuide.Nullify();
+  m_dwelling = false; m_dwellTimer.stop();
+  bool removed = false;
+  for (auto* object : {&m_trackingGuide, &m_anchorMarks}) {
+    if (!object->IsNull() && m_initialised) { m_ctx->Remove(*object, false); removed = true; }
+    object->Nullify();
+  }
+  if (m_trackingShown) { m_trackingShown = false; emit hoverChanged(m_hover); }
+  if (removed) redrawScene();
+}
+
+void Viewport::showTrackingAnchors() {
+  if (!m_initialised) return;
+  if (!m_anchorMarks.IsNull()) { m_ctx->Remove(m_anchorMarks, false); m_anchorMarks.Nullify(); }
+  if (!m_trackingAnchors.empty()) {
+    BRep_Builder builder; TopoDS_Compound points; builder.MakeCompound(points);
+    for (const auto& anchor : m_trackingAnchors) builder.Add(points, BRepBuilderAPI_MakeVertex(anchor.point).Vertex());
+    m_anchorMarks = new AIS_Shape(points);
+    const QColor c = m_tokens.sel;
+    m_anchorMarks->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_PLUS, Quantity_Color(c.redF(), c.greenF(), c.blueF(), Quantity_TOC_sRGB), 2.0));
+    m_anchorMarks->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    m_ctx->Display(m_anchorMarks, 0, -1, false);  // never pickable
+  }
+  redrawScene();
+}
+
+void Viewport::dwellAnchor() {
+  TrackingAnchor hovered{};
+  bool have = false;
+  gp_Pnt at;
+  if (m_ctx->HasDetected() && m_nodeOf.count(m_ctx->DetectedInteractive().get()) && detectedPoint(at) && pointVisible(at)) {
+    auto owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
+    if (!owner.IsNull()) {
+      if (auto mine = Handle(SubShapeOwner)::DownCast(owner); !mine.IsNull()) mine->prepare();  // a mesh owner's shape on demand
+      if (owner->HasShape()) {
+        const auto& shape = owner->Shape(); const gp_Trsf tr = m_ctx->DetectedInteractive()->Transformation();
+        if (shape.ShapeType() == TopAbs_VERTEX) {
+          hovered = {BRep_Tool::Pnt(TopoDS::Vertex(shape)).Transformed(tr), {}, false}; have = true;
+        } else if (shape.ShapeType() == TopAbs_EDGE) {
+          BRepAdaptor_Curve curve(TopoDS::Edge(shape));
+          if (curve.GetType() == GeomAbs_Line) {
+            const gp_Pnt a = curve.Value(curve.FirstParameter()).Transformed(tr), b = curve.Value(curve.LastParameter()).Transformed(tr);
+            const double da = QLineF(widgetPoint({a.X(),a.Y(),a.Z()}),m_trackingCursor).length();
+            const double db = QLineF(widgetPoint({b.X(),b.Y(),b.Z()}),m_trackingCursor).length();
+            if (std::min(da,db) < 14) {
+              hovered = {da < db ? a : b, gp_Vec(a,b), false}; hovered.hasDirection = hovered.direction.SquareMagnitude() > 1e-18; have = true;
+            }
+          }
+        }
+        have = have && pointVisible(hovered.point);  // the end of a line seen in its middle can be behind a face
+      }
+    }
+  }
+  if (!have) { m_dwelling = false; m_dwellTimer.stop(); return; }
+  if (!m_dwelling || m_dwellAnchor.point.Distance(hovered.point) > 1e-7) {
+    m_dwellAnchor = hovered; m_dwelling = true; m_dwellDone = false;
+    m_dwellClock.start(); m_dwellTimer.start(kTrackingDwellMs);
+    return;
+  }
+  if (hovered.hasDirection) m_dwellAnchor = hovered;
+  if (m_dwellDone || m_dwellClock.elapsed() < kTrackingDwellMs) return;
+  m_dwellDone = true;
+  auto found = std::find_if(m_trackingAnchors.begin(), m_trackingAnchors.end(), [&](const auto& a) { return a.point.Distance(m_dwellAnchor.point) < 1e-7; });
+  if (found == m_trackingAnchors.end()) {
+    if (m_trackingAnchors.size() == 6) m_trackingAnchors.erase(m_trackingAnchors.begin());
+    m_trackingAnchors.push_back(m_dwellAnchor);
+  } else if (m_dwellAnchor.hasDirection && !found->hasDirection) *found = m_dwellAnchor;  // a point anchor gains its line
+  else m_trackingAnchors.erase(found);
+  m_trackingCandidates.clear();
+  showTrackingAnchors();
+}
+
+void Viewport::pruneTracking() {
+  const auto state = m_view->Camera()->WorldViewProjState();
+  if (state == m_trackingCamera) return;
+  m_trackingCamera = state;
+  const size_t before = m_trackingAnchors.size();
+  m_trackingAnchors.erase(std::remove_if(m_trackingAnchors.begin(), m_trackingAnchors.end(), [&](const auto& a) { return !pointVisible(a.point); }), m_trackingAnchors.end());
+  if (m_trackingAnchors.size() == before) return;
+  m_trackingCandidates.clear(); m_trackingDirty = true;
+  showTrackingAnchors();
 }
 
 void Viewport::updateTracking() {
   if (!m_trackingDirty || !m_snapClick.empty()) return;
   m_trackingDirty = false;
   if (!m_initialised) return;
-  if ((!m_trackingEnabled && !m_extensionEnabled) || m_sketchInput || m_blocked || (!m_twoDimensional && !m_pickAccumulate)) {
+  // Only a tool that takes points uses a guide point (a click on it picks it): browsing, also in 2D, tracks nothing.
+  if ((!m_trackingEnabled && !m_extensionEnabled) || m_sketchInput || m_blocked || !m_pickAccumulate) {
     clearTracking(); return;
   }
   if (QApplication::mouseButtons() != Qt::NoButton) return;
-  if (!m_shiftHeld && m_ctx->HasDetected() && m_nodeOf.count(m_ctx->DetectedInteractive().get())) {
-    auto owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
-    if (!owner.IsNull() && owner->HasShape()) {
-      const auto& shape = owner->Shape(); const gp_Trsf tr = m_ctx->DetectedInteractive()->Transformation();
-      bool acquired = false;
-      if (shape.ShapeType() == TopAbs_VERTEX) {
-        m_trackingAnchor = BRep_Tool::Pnt(TopoDS::Vertex(shape)).Transformed(tr);
-        m_trackingHasDirection = false; acquired = true;
-      } else if (shape.ShapeType() == TopAbs_EDGE) {
-        BRepAdaptor_Curve curve(TopoDS::Edge(shape));
-        if (curve.GetType() == GeomAbs_Line) {
-          const gp_Pnt a = curve.Value(curve.FirstParameter()).Transformed(tr), b = curve.Value(curve.LastParameter()).Transformed(tr);
-          const double da = QLineF(widgetPoint({a.X(),a.Y(),a.Z()}),m_trackingCursor).length();
-          const double db = QLineF(widgetPoint({b.X(),b.Y(),b.Z()}),m_trackingCursor).length();
-          if (std::min(da,db) < 14) {
-            m_trackingAnchor = da < db ? a : b; m_trackingDirection = gp_Vec(a,b);
-            m_trackingHasDirection = m_trackingDirection.SquareMagnitude() > 1e-18; acquired = true;
-          }
-        }
-      }
-      if (acquired) {
-        m_haveTrackingAnchor = true;
-        auto found = std::find_if(m_trackingAnchors.begin(), m_trackingAnchors.end(), [&](const auto& a) {
-          return a.point.Distance(m_trackingAnchor) < 1e-7;
-        });
-        const TrackingAnchor anchor{m_trackingAnchor,m_trackingDirection,m_trackingHasDirection};
-        if (found == m_trackingAnchors.end()) {
-          if (m_trackingAnchors.size() == 6) m_trackingAnchors.erase(m_trackingAnchors.begin());
-          m_trackingAnchors.push_back(anchor);
-        } else if (anchor.hasDirection) *found = anchor;
-      }
-    }
-  }
-  // Also accepts an explicitly supplied anchor (the deterministic regression).
-  if (m_trackingAnchors.empty() && m_haveTrackingAnchor)
-    m_trackingAnchors.push_back({m_trackingAnchor,m_trackingDirection,m_trackingHasDirection});
+  if (!m_shiftHeld) dwellAnchor();
   const auto at = devicePos(m_trackingCursor);
   double x,y,z,dx,dy,dz; m_view->ConvertWithProj(at.x(),at.y(),x,y,z,dx,dy,dz);
   const gp_Pnt origin(x,y,z); const gp_Vec ray(dx,dy,dz);
@@ -115,9 +161,9 @@ void Viewport::updateTracking() {
       if(p.Distance(q)>1e-7 || distance(p)>10) continue;
       bool duplicate=false;
       for(const auto& c:m_trackingCandidates) if(c.point.Distance(p)<1e-7) duplicate=true;
-      if(!duplicate) m_trackingCandidates.push_back({a.anchor,p,a.direction,true,b.anchor});
+      if(!duplicate && pointVisible(p)) m_trackingCandidates.push_back({a.anchor,p,a.direction,true,b.anchor});
     }
-    for (auto line : lines) if(project(line) && distance(line.point)<10 && line.point.Distance(line.anchor)>pixelSize()*3)
+    for (auto line : lines) if(project(line) && distance(line.point)<10 && line.point.Distance(line.anchor)>pixelSize()*3 && pointVisible(line.point))
       m_trackingCandidates.push_back(line);
   }
   const int count = int(m_trackingCandidates.size());
@@ -131,13 +177,19 @@ void Viewport::updateTracking() {
     // Keep a nearby guide visible even while the circle is the Shift candidate.
     candidate=m_trackingCandidates[std::max(0,chosen)]; found=true;
   }
-  if (!m_trackingGuide.IsNull()) { m_ctx->Remove(m_trackingGuide,false); m_trackingGuide.Nullify(); }
+  const bool hadGuide = !m_trackingGuide.IsNull();
+  if (hadGuide) { m_ctx->Remove(m_trackingGuide,false); m_trackingGuide.Nullify(); }
   auto old=m_centers.find(m_trackingMarker);
   if(old!=m_centers.end() && !m_ctx->IsSelected(old->second.ais)) {
     m_centerObjects.erase(old->second.ais.get()); m_ctx->Remove(old->second.ais,false); m_centers.erase(old);
   }
   m_trackingMarker.clear();
-  if (!found) { refreshCenterStyles(); return; }
+  if (!found) {
+    refreshCenterStyles();
+    if (hadGuide) redrawScene();
+    if (m_trackingShown) { m_trackingShown = false; emit hoverChanged(m_hover); }  // the status speaks of guides only while one shows
+    return;
+  }
   BRep_Builder builder; TopoDS_Compound guides; builder.MakeCompound(guides);
   auto guide=[&](const gp_Pnt& from) {
     if(from.Distance(candidate.point)>1e-9) builder.Add(guides,BRepBuilderAPI_MakeEdge(from,candidate.point).Edge());
@@ -150,6 +202,7 @@ void Viewport::updateTracking() {
   opad::Ref ref; ref.kind=opad::Ref::Kind::Point; ref.point={candidate.point.X(),candidate.point.Y(),candidate.point.Z()};
   centerMarker(ref,candidate.point); m_trackingMarker=ref.str();
   refreshCenterStyles();
+  m_trackingShown = true;
   emit hoverChanged(m_trackingLocked ? tr("Tracking locked - release Shift to unlock")
                     : candidate.intersection ? tr("Extension intersection - tap Shift to cycle, hold to lock")
                     : tr("Extension / alignment - tap Shift to cycle, hold to lock"));

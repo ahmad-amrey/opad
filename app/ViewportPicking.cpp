@@ -3,6 +3,7 @@
 #include "NavCube.hpp"
 
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <StdSelect_BRepOwner.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -47,8 +48,74 @@ void Viewport::setCenterPicking(bool on,const QPointF& position) {
     }
   }
   ResetPreviousMoveTo();m_hoverOwner=nullptr;
-  const auto at=devicePos(position);m_ctx->MoveTo(at.x(),at.y(),m_view,false);
+  moveTo(devicePos(position));
   discoverCenter();redrawScene();
+}
+
+// UI-31. First one ray from the point towards the eye (nothing behind the point or behind the eye counts), then what is
+// drawn over its pixel, as box selection tests it: a part thinner than a pixel, or a gap between facets that the exact
+// ray slips through, still covers the point on screen. The pixel's margin is wider: its pick tolerance reaches the point's
+// own faces beside it, nearer when seen at a grazing angle.
+bool Viewport::pointVisible(const gp_Pnt& p, double slackPx) const {
+  if (!m_initialised || m_selectThrough || m_navSelector.IsNull()) return true;
+  const auto camera = m_view->Camera();
+  const bool ortho = camera->IsOrthographic();
+  gp_Vec back = ortho ? gp_Vec(camera->Direction()).Reversed() : gp_Vec(p, camera->Eye());
+  const double reach = ortho ? RealLast() : back.Magnitude();
+  if (back.SquareMagnitude() < 1e-24) return true;
+  back.Normalize();
+  const gp_Vec ahead(camera->Direction());
+  const double scale = ortho ? 1.0 : std::max(1e-6, gp_Vec(camera->Eye(), p).Dot(ahead) / camera->Distance());
+  const double pixel = pixelSize() * scale, slack = slackPx * pixel;  // at the point's depth
+  auto occludes = [&](int i) {
+    const auto node = m_navNodes.find(m_navSelector->Picked(i)->Selectable().get());
+    if (node == m_navNodes.end()) return false;
+    const auto item = m_items.find(node->second);
+    return item != m_items.end() && !item->second.look.ghost && m_ctx->IsDisplayed(item->second.ais);  // a ghost is seen through
+  };
+  const gp_Pnt from = p.Translated(back * slack);
+  m_navSelector->Pick(gp_Ax1(from, gp_Dir(back)), m_view);
+  for (int i = 1; i <= m_navSelector->NbPicked(); ++i)
+    if (occludes(i) && m_navSelector->PickedPoint(i).Distance(from) < reach - slack) return false;
+  Standard_Integer x = 0, y = 0;
+  m_view->Convert(p.X(), p.Y(), p.Z(), x, y);
+  m_navSelector->Pick(x, y, m_view);
+  for (int i = 1; i <= m_navSelector->NbPicked(); ++i)
+    if (occludes(i) && gp_Vec(m_navSelector->PickedPoint(i), p).Dot(ahead) > std::max(slack, 8 * pixel)) return false;
+  return true;
+}
+
+bool Viewport::detectedPoint(gp_Pnt& p) const {
+  if (!m_initialised || !m_ctx->HasDetected()) return false;
+  const auto& selector = m_ctx->MainSelector();
+  const auto owner = m_ctx->DetectedOwner();
+  for (int i = 1; i <= selector->NbPicked(); ++i)
+    if (selector->Picked(i) == owner) { p = selector->PickedPoint(i); return true; }
+  return false;
+}
+
+bool Viewport::dropOccluded() {
+  if (!m_initialised || !m_ctx->HasDetected()) return false;
+  const auto owner = m_ctx->DetectedOwner();
+  bool hidden = !Handle(OccluderOwner)::DownCast(owner).IsNull();
+  gp_Pnt at;
+  if (!hidden && (m_filter == SelFilter::Edge || m_filter == SelFilter::Vertex) && !Handle(StdSelect_BRepOwner)::DownCast(owner).IsNull()
+      && m_nodeOf.count(m_ctx->DetectedInteractive().get()) && detectedPoint(at))
+    hidden = !pointVisible(at);  // a vertex's pick tolerance reaches through a thin wall
+  if (!hidden) return false;
+  m_ctx->ClearDetected(Standard_False);
+  m_view->InvalidateImmediate();
+  return true;
+}
+
+void Viewport::moveTo(const Graphic3d_Vec2i& at) {
+  m_ctx->MoveTo(at.x(), at.y(), m_view, Standard_False);
+  dropOccluded();
+}
+
+void Viewport::contextLazyMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view, const Graphic3d_Vec2i& point) {
+  AIS_ViewController::contextLazyMoveTo(ctx, view, point);
+  dropOccluded();
 }
 
 void Viewport::discoverCenter() {

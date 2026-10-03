@@ -149,6 +149,8 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   m_trackpadEndTimer.setSingleShot(true);
   m_trackpadEndTimer.setInterval(180);  // platforms without ScrollEnd still need to release the virtual drag
   connect(&m_trackpadEndTimer, &QTimer::timeout, this, &Viewport::finishTrackpadScroll);
+  m_dwellTimer.setSingleShot(true);  // the pointer rests: no event would run the tracker again
+  connect(&m_dwellTimer, &QTimer::timeout, this, [this] { m_trackingDirty = true; requestRedraw(); });
 #if !defined(__APPLE__)
   grabGesture(Qt::PinchGesture);  // fallback for touch devices without native pinch events
 #endif
@@ -262,6 +264,12 @@ void Viewport::initViewer() {
   m_ctx->SetPixelTolerance(4);
   m_ctx->AddFilter(new OwnerFilter([this](const Handle(SelectMgr_EntityOwner)& owner) {
     if(!Handle(CircleOwner)::DownCast(owner).IsNull()) return m_ctrlCenterPick;
+    if(!Handle(OccluderOwner)::DownCast(owner).IsNull()) {  // selecting through objects, or a ghost's faces: what is behind is reached
+      if(m_selectThrough) return false;
+      const auto node=m_nodeOf.find(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get());
+      const auto item=node==m_nodeOf.end()?m_items.end():m_items.find(node->second);
+      return item==m_items.end() || !item->second.look.ghost;
+    }
     const auto center=m_centerObjects.find(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get());
     return center==m_centerObjects.end() || m_centers.at(center->second).ref.kind!=opad::Ref::Kind::Center || m_ctrlCenterPick;
   }));
@@ -699,7 +707,7 @@ std::vector<opad::Ref> Viewport::selection() const {
     Handle(AIS_InteractiveObject) obj = m_ctx->SelectedInteractive();
     auto center = m_centerObjects.find(obj.get());
     if (center != m_centerObjects.end()) { out.push_back(m_centers.at(center->second).ref); continue; }
-    if (!Handle(CircleOwner)::DownCast(m_ctx->SelectedOwner()).IsNull()) continue;
+    if (!Handle(CircleOwner)::DownCast(m_ctx->SelectedOwner()).IsNull() || !Handle(OccluderOwner)::DownCast(m_ctx->SelectedOwner()).IsNull()) continue;
     auto it = m_nodeOf.find(obj.get());
     if (it == m_nodeOf.end()) continue;
     opad::Ref r;
@@ -1040,6 +1048,7 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   clock.start();
   refreshMeasurement();
   noteCameraMoved();
+  pruneTracking();
   scheduleRefinement();
   trackHoverFade();
   if (m_twoDimensional) updateInfiniteGrid(false);
@@ -1056,10 +1065,13 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
     if (trace::enabled()) trace::log(QStringLiteral("3D click: on the view cube, %1 stay selected").arg(m_ctx->NbSelected()));
     return;
   }
-  // Arc discovery targets must never become edge picks through a rubber band.
-  std::vector<Handle(SelectMgr_EntityOwner)> discovery;
+  // Arc discovery targets must never become edge picks through a rubber band, and a face standing in front (UI-31) is
+  // never a pick at all.
+  std::vector<Handle(SelectMgr_EntityOwner)> discovery, occluders;
   for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected())
     if (!Handle(CircleOwner)::DownCast(m_ctx->SelectedOwner()).IsNull()) discovery.push_back(m_ctx->SelectedOwner());
+    else if (!Handle(OccluderOwner)::DownCast(m_ctx->SelectedOwner()).IsNull()) occluders.push_back(m_ctx->SelectedOwner());
+  for (const auto& owner : occluders) m_ctx->AddOrRemoveSelected(owner, false);
   for (const auto& owner : discovery) {
     const auto circle=Handle(CircleOwner)::DownCast(owner);
     auto node=m_nodeOf.find(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get());
@@ -1071,9 +1083,9 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
     }
   }
   if (m_selJob) m_selJob->cancel();
-  m_hasLastPick = m_ctx->HasDetected() && m_ctx->MainSelector()->NbPicked() > 0;  // guided tools mark where the click landed
+  gp_Pnt p;
+  m_hasLastPick = detectedPoint(p);  // guided tools mark where the click landed
   if (m_hasLastPick) {
-    gp_Pnt p = m_ctx->MainSelector()->PickedPoint(1);
     const auto circle=Handle(CircleOwner)::DownCast(m_ctx->DetectedOwner());
     if(!circle.IsNull()) p=circle->center.Transformed(m_ctx->DetectedInteractive()->Transformation());
     m_lastPick = {p.X(), p.Y(), p.Z()};
@@ -1991,9 +2003,9 @@ void Viewport::paintEvent(QPaintEvent*) {
     m_hover = hover;
     emit hoverChanged(hover);
   }
-  const bool onGeometry = m_ctx->HasDetected() && m_ctx->MainSelector()->NbPicked() > 0
+  gp_Pnt hp;
+  const bool onGeometry = detectedPoint(hp)
       && (m_nodeOf.count(m_ctx->DetectedInteractive().get()) || m_centerObjects.count(m_ctx->DetectedInteractive().get()));
-  gp_Pnt hp = onGeometry ? m_ctx->MainSelector()->PickedPoint(1) : gp_Pnt();
   if (onGeometry) {
     auto center = m_centerObjects.find(m_ctx->DetectedInteractive().get());
     Handle(CircleOwner) circle = Handle(CircleOwner)::DownCast(m_ctx->DetectedOwner());
@@ -2038,14 +2050,12 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   const bool nearCube = qAbs(e->position().x() - cubeCenter.x()) <= 96
       && qAbs(e->position().y() - cubeCenter.y()) <= 96;
   if (m_initialised && e->button() == Qt::LeftButton
-      && (nearCube || (m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube))) {
-    const Graphic3d_Vec2i at = devicePos(e->position());
-    m_ctx->MoveTo(at.x(), at.y(), m_view, Standard_False);
-  }
+      && (nearCube || (m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube)))
+    moveTo(devicePos(e->position()));
   if(m_initialised && e->button()==Qt::LeftButton && !m_sketchInput)
     setCenterPicking(e->modifiers().testFlag(Qt::ControlModifier),e->position());
   if(m_ctrlCenterPick && e->button()==Qt::LeftButton && !m_sketchInput && m_filter==SelFilter::Vertex && !m_measureSelectionLocked) {
-    const auto at=devicePos(e->position());m_ctx->MoveTo(at.x(),at.y(),m_view,false);discoverCenter();
+    moveTo(devicePos(e->position()));discoverCenter();
     if(m_ctx->HasDetected()) {
       const auto circle=Handle(CircleOwner)::DownCast(m_ctx->DetectedOwner());
       auto marker=m_centerObjects.find(m_ctx->DetectedInteractive().get());
