@@ -67,6 +67,11 @@ add_executable(opad-test-drawing test_drawing.cpp)
 target_link_libraries(opad-test-drawing PRIVATE opad::core)
 add_test(NAME drawing COMMAND opad-test-drawing)
 
+add_executable(opad-test-projection test_projection.cpp)
+target_link_libraries(opad-test-projection PRIVATE opad::core)
+add_test(NAME projection COMMAND opad-test-projection)
+set_tests_properties(projection PROPERTIES TIMEOUT 120)
+
 add_executable(opad-test-formats test_formats.cpp)
 target_link_libraries(opad-test-formats PRIVATE opad::core ZLIB::ZLIB)
 add_test(NAME formats COMMAND opad-test-formats)
