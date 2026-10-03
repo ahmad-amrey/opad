@@ -37,7 +37,7 @@ class MainWindow : public QMainWindow {
  public:
   MainWindow();
   ~MainWindow() override;
-  void openPath(const QString& path);
+  void openPath(const QString& path, bool readOnly = false);  // readOnly: a .opad opens read-only (opad --read-only)
   void warmUpViewport() { m_viewport->warmUp(); }
   void setBenchSelect(bool on);  // --bench-select: select every root after loading, log, quit; nothing else shows on screen
 
@@ -173,6 +173,8 @@ class MainWindow : public QMainWindow {
   bool requireEditable(std::function<void()> resume = {});  // true when the document can be edited
   void saveViewerAs(std::function<void()> then = {});       // Save as OPAD: made editable in place, then written
   void makeEditable(const QString& savePath, std::function<void()> then = {});
+  void saveReadOnlyCopy(std::function<void()> then = {});  // read-only .opad: Save a copy… (the file dialog), then saveCopy
+  void saveCopy(const QString& path, std::function<void()> then = {});  // written on a worker; the copy is edited from then on
   void updateViewerCard();
 
   AppDocument* m_doc = nullptr;

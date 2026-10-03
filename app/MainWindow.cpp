@@ -90,8 +90,8 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_doc, &AppDocument::newDocumentCreated, m_viewport, &Viewport::home);
   // Viewer mode -> editable: the same shapes under content keys, so what is on screen stays (no second tessellation).
   connect(m_doc, &AppDocument::bodyKeysRenamed, m_viewport, &Viewport::renameBodyKeys);
-  connect(m_chips, &ViewportChips::saveToEditRequested, this, [this] { guarded([this] { saveViewerAs(); }); });
-  connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); });
+  connect(m_chips, &ViewportChips::saveToEditRequested, this, [this] { guarded([this] { m_doc->readOnly ? saveReadOnlyCopy() : saveViewerAs(); }); });
+  connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); updateViewerCard(); });
   connect(m_doc, &AppDocument::message, this, [this](const QString& t) { statusBar()->showMessage(t, 6000); });
   connect(m_viewport, &Viewport::selectionChanged, this, &MainWindow::onViewportSelection);
   connect(m_viewport, &Viewport::hoverChanged, m_statusHover, &QLabel::setText);
@@ -237,7 +237,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   });
   connect(m_empty, &EmptyState::openRequested, action("file.open"), &QAction::trigger);
   connect(m_empty, &EmptyState::importRequested, action("file.new"), &QAction::trigger);
-  connect(m_empty, &EmptyState::recentChosen, this, &MainWindow::openPath);
+  connect(m_empty, &EmptyState::recentChosen, this, [this](const QString& path) { openPath(path); });
   connect(m_empty, &EmptyState::filesDropped, this, [this](const QStringList& paths) { openPath(paths.first()); });
 
   restoreGeometry(m_settings.value("ui/geometry").toByteArray());
@@ -299,7 +299,7 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
   connect(a, &QAction::triggered, this, [this, fn, id, a] {
     if (m_loadJob && !id.startsWith("file.") && !id.startsWith("panel.") && id != "view.dark") return;  // loading: workspace is locked
     m_viewport->resetHoverFade();
-    if (m_doc->browse && m_commands.editsDocument(id)) {  // viewer mode: offered, and asks to save first
+    if (m_doc->viewOnly() && m_commands.editsDocument(id)) {  // viewer mode, read-only: offered, and asks to save first
       if (a->isCheckable()) { QSignalBlocker block(a); a->setChecked(!a->isChecked()); }
       requireEditable([a] { a->trigger(); });
       return;
@@ -359,7 +359,7 @@ void MainWindow::showDocument(bool has) {
   }
   if (m_pinAction) m_pinAction->setEnabled(has && !m_lastMeasure.is_null());
   if (m_design) updateDesignState();
-  m_browser->setViewerMode(m_doc->browse);
+  m_browser->setViewerMode(m_doc->viewOnly());
   updateUndoActions();
   action("panel.annotations")->setEnabled(has && !m_doc->browse);
   action("panel.section")->setEnabled(has);

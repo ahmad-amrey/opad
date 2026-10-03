@@ -184,7 +184,7 @@ QString VersionControl::documentPath() const { return m_git->repo().state == git
 
 bool VersionControl::ready() const {
   const AppDocument* doc = m_services.document();
-  return doc->hasDocument && !doc->browse && !doc->doc.path.empty() && !documentPath().isEmpty() &&
+  return doc->hasDocument && !doc->viewOnly() && !doc->doc.path.empty() && !documentPath().isEmpty() &&
          QFileInfo(m_git->repo().file) == QFileInfo(doc->path());
 }
 
@@ -1146,7 +1146,7 @@ void VersionControl::openReadOnly(const git::Commit& c) {
     }
     m_lastOpened = file;
     if (qEnvironmentVariableIsSet("OPAD_BENCH_VERSION")) trace::log("version: opens " + file);  // a bench starts no other window
-    else if (!QProcess::startDetached(QCoreApplication::applicationFilePath(), {file}))
+    else if (!QProcess::startDetached(QCoreApplication::applicationFilePath(), readOnlyArguments(file)))
       return failed(tr("Could not open %1").arg(shortHash), tr("OPAD could not be started again."));
     say(tr("%1 as it was in %2 opens in another window, read-only.").arg(QFileInfo(rel).fileName(), shortHash));
     done("open", true);
@@ -1224,7 +1224,7 @@ void VersionControl::restore(const git::Commit& c) {
 // ---------------------------------------------------------------- the chip's menu
 void VersionControl::extendMenu(QMenu* m) {
   const AppDocument* doc = m_services.document();
-  if (!doc->hasDocument || doc->browse) return;
+  if (!doc->hasDocument || doc->viewOnly()) return;
   for (const char* id : {"vcs.panel", "vcs.commit", "vcs.pull", "vcs.push"}) {
     QAction* a = m_services.action(QString::fromLatin1(id));
     if (a && (ready() || QString::fromLatin1(id) == "vcs.panel")) m->addAction(a);

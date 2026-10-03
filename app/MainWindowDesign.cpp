@@ -178,8 +178,12 @@ void MainWindow::buildDesign() {
   connect(m_design, &DesignController::status, this, [this](const QString& text) { m_statusHover->setText(text); });
   connect(m_design, &DesignController::failed, this, [this](const QString& error) { QMessageBox::warning(this, tr("OPAD"), i18n::t(error)); });
   connect(m_design, &DesignController::stateChanged, this, &MainWindow::updateDesignState);
-  connect(m_timeline, &TimelineWidget::opActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });
-  connect(m_browser, &BrowserPanel::sketchActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });
+  auto editOp = [this](const std::string& id) {  // a read-only document asks for a copy first
+    auto edit = [this, id] { guarded([&] { m_design->editOp(id); }); };
+    if (requireEditable(edit)) edit();
+  };
+  connect(m_timeline, &TimelineWidget::opActivated, this, editOp);
+  connect(m_browser, &BrowserPanel::sketchActivated, this, editOp);
   connect(m_browser,&BrowserPanel::editedSketchVisibilityRequested,this,[this]{auto* sketch=m_design->sketch();sketch->setVisible(!sketch->visible());});
   updateDesignState();
 }

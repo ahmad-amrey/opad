@@ -139,6 +139,8 @@ int main(int argc, char** argv) {
   parser.addOption(bench);
   QCommandLineOption compare("compare", "Compare a version (an .opad file, or git:REV of the file) with the file opened: opad --compare a b", "version");
   parser.addOption(compare);
+  QCommandLineOption readOnly("read-only", "Open the .opad document read-only: it is not changed, edits need a copy (Save a copy)");
+  parser.addOption(readOnly);
   parser.process(app);
   if (parser.isSet(compare)) CompareMode::setStartup(parser.value(compare));  // once the file is open (CompareMode.hpp)
 
@@ -150,6 +152,6 @@ int main(int argc, char** argv) {
   trace::log("startup: window shown");
   QTimer::singleShot(0, &win, [&win] { win.warmUpViewport(); });  // GL init off the first-open path
   const QStringList args = parser.positionalArguments();
-  if (!args.isEmpty()) win.openPath(args.first());
+  if (!args.isEmpty()) win.openPath(args.first(), parser.isSet(readOnly));
   return app.exec();
 }

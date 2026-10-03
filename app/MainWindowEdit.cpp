@@ -92,6 +92,7 @@ void MainWindow::timelineMenu(const std::string& requestedId, const QPoint& glob
   QAction* log = menu.addAction(icons::themed("git", 16), tr("Show in git log"));
   QAction* chosen = menu.exec(globalPos);
   if (!chosen || generation!=m_doc->generation) return;
+  if ((chosen == editOp || chosen == suppress || chosen == del || chosen == restore) && !requireEditable()) return;  // read-only: a copy first
   if (chosen == exportSketch) exportDialog({opId});
   else if (chosen == editOp) m_design->editOp(opId);
   else if (chosen == suppress) m_design->setSuppressed(opId, !suppressed);

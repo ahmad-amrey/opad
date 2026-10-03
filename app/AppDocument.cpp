@@ -80,7 +80,7 @@ void AppDocument::cancelLoad() {
   emit loadFinished(false, QStringLiteral("cancelled"));
 }
 
-void AppDocument::startOpen(const QString& path) {
+void AppDocument::startOpen(const QString& path, bool asked) {
   if (designBusy || m_converting) return;
   if (loading) cancelLoad();
   loading = true;
@@ -97,12 +97,13 @@ void AppDocument::startOpen(const QString& path) {
   o.center_drawing = suffix == "dxf" || suffix == "svg" || suffix == "dwg";  // opened on its own: centred on the grid
   auto alive = m_alive;
   emit loadProgress(external ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1);
-  std::thread([this, alive, cancel, path, external, viewer, o, token, current]() {
+  std::thread([this, alive, cancel, path, external, viewer, o, token, current, asked]() {
     auto result = std::make_shared<opad::Document>();
     QString error;
     QStringList warnings;
     bool slowRead = false;  // worth remembering (viewer cache): the next open skips the translation
     const DiskStat stat = external ? DiskStat{} : statFile(path);  // before reading: a change meanwhile is noticed later
+    const bool locked = !external && (asked || !QFileInfo(path).isWritable());  // read-only: asked for, or write-protected
     std::shared_ptr<const opad::Manifest> manifest;
     try {
       if (external) {
@@ -127,7 +128,7 @@ void AppDocument::startOpen(const QString& path) {
       error = QString::fromUtf8(e.what());
     }
     if (!*alive || current->load() != token) return;  // dropped: freed here, off the UI thread
-    QMetaObject::invokeMethod(this, [this, result, error, path, external, viewer, warnings, token, current, slowRead, o, stat, manifest] {
+    QMetaObject::invokeMethod(this, [this, result, error, path, external, viewer, warnings, token, current, slowRead, o, stat, manifest, locked] {
       if (current->load() != token) return;
       loading = false;
       if (!error.isEmpty()) {
@@ -139,6 +140,7 @@ void AppDocument::startOpen(const QString& path) {
       m_rollback.clear();
       doc = std::move(*result);
       browse = viewer;
+      readOnly = locked;
       viewing = viewer ? QFileInfo(path).absoluteFilePath() : QString();
       m_cacheSource = slowRead ? viewing : QString();
       m_cacheCenter = o.center_drawing;
@@ -152,6 +154,7 @@ void AppDocument::startOpen(const QString& path) {
       emit pathChanged();
       if (viewer) emit message(tr("Viewing %1 (read-only)").arg(QFileInfo(path).fileName()));
       else if (external) emit message(tr("Imported %1 into a new document").arg(QFileInfo(path).fileName()));
+      else if (locked) emit message(tr("Opened %1 read-only").arg(path));
       else emit message(tr("Opened %1").arg(path));
       if(!warnings.isEmpty()) emit message(warnings.join("; "));
       emit loadFinished(true, {});
@@ -163,7 +166,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
   if (loading || designBusy) return;
   if (!hasDocument || browse) {
     doc = opad::Document::create();
-    browse = false;
+    browse = readOnly = false;
     hasDocument = true;
     clearHistory();
     markSaved();  // an empty, unsaved document: anything imported makes it dirty
@@ -238,7 +241,7 @@ void AppDocument::newDocument() {
   ++generation;
   m_rollback.clear();
   doc = opad::Document::create();
-  browse = false;
+  browse = readOnly = false;
   hasDocument = true;
   clearHistory();
   markSaved();
@@ -254,7 +257,7 @@ void AppDocument::closeDocument() {
   ++generation;
   m_rollback.clear();
   doc = opad::Document();
-  browse = false;
+  browse = readOnly = false;
   hasDocument = false;
   clearHistory();
   markSaved();
@@ -282,7 +285,7 @@ void AppDocument::open(const QString& path) {
   ++generation;
   m_rollback.clear();
   doc = std::move(next);
-  browse = false;
+  browse = readOnly = false;
   hasDocument = true;
   clearHistory();
   markSaved();
@@ -297,7 +300,7 @@ void AppDocument::importStep(const QString& path, const QString& parent) {
   if (loading || designBusy) throw opad::Error("Document is busy; try again when the operation finishes.");
   if (!hasDocument || browse) {
     doc = opad::Document::create();
-    browse = false;
+    browse = readOnly = false;
     hasDocument = true;
     clearHistory();
     markSaved();
@@ -317,6 +320,7 @@ void AppDocument::importStep(const QString& path, const QString& parent) {
 bool AppDocument::save(bool overwriteDisk) {
   if (loading || m_capturing) throw opad::Error("Document snapshot is in progress; try saving again shortly.");
   if (browse) throw opad::Error("viewer mode: export to an OPAD document first");
+  if (readOnly) throw opad::Error("This document is open read-only: save a copy to edit it.");
   if (!overwriteDisk && !doc.path.empty() && QFileInfo(path()) == QFileInfo(m_diskFile) && diskChanged()) {
     emit message(tr("Not saved: %1 changed on disk").arg(QFileInfo(m_diskFile).fileName()));
     emit saveBlocked();
@@ -334,12 +338,14 @@ bool AppDocument::save(bool overwriteDisk) {
 bool AppDocument::saveAs(const QString& path) {
   if (loading || m_capturing) throw opad::Error("Document snapshot is in progress; try saving again shortly.");
   if (browse) throw opad::Error("viewer mode: export to an OPAD document first");
+  if (readOnly && QFileInfo(path) == QFileInfo(this->path())) throw opad::Error("This document is open read-only: save a copy to edit it.");
   if (QFileInfo(path) == QFileInfo(m_diskFile) && diskChanged()) {  // the open file chosen again: the same as Save
     emit message(tr("Not saved: %1 changed on disk").arg(QFileInfo(m_diskFile).fileName()));
     emit saveBlocked();
     return false;
   }
   doc.save_as(fsPath(path));
+  readOnly = false;  // the copy is this session's file now
   markSaved();
   wroteDisk();
   emit pathChanged();
@@ -353,6 +359,7 @@ opad::json AppDocument::run(const std::string& command, opad::json args) {
   if (designBusy) throw opad::Error("The design is being recomputed; try again in a moment.");
   // Viewer mode changes how things look (shown, colour, opacity), never the model.
   if (browse && command != "appearance") throw opad::Error("Viewer mode: save the file as an OPAD document to edit it.");
+  if (readOnly && command != "appearance") throw opad::Error("This document is open read-only: save a copy to edit it.");
   const size_t before = doc.ops.size();
   if (!args.contains("by")) args["by"] = QSettings().value("user/name").toString().trimmed().toStdString();
   opad::json out = opad::commands::run(command, args, &doc);
@@ -364,6 +371,7 @@ opad::json AppDocument::run(const std::string& command, opad::json args) {
 opad::json AppDocument::commitPlan(opad::design::Plan&& plan, const QString& label) {
   if (m_capturing) throw opad::Error("Document snapshot is in progress; try again shortly.");
   if (browse) throw opad::Error("Viewer mode: save the file as an OPAD document to edit it.");
+  if (readOnly) throw opad::Error("This document is open read-only: save a copy to edit it.");
   const size_t before = doc.ops.size();
   opad::json report = opad::design::commit(doc, std::move(plan), QSettings().value("user/name").toString().trimmed().toStdString());
   recordStep(label, before);
@@ -395,7 +403,7 @@ void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved,const
   emit aboutToReplace();++generation;++revision;m_rollback.clear();
   dispose(std::make_shared<opad::Document>(std::move(doc)));
   doc=std::move(document);scene=std::move(resolved);
-  browse=false;hasDocument=true;clearHistory();m_savedIds.clear();m_savedBodies=0;
+  browse=readOnly=false;hasDocument=true;clearHistory();m_savedIds.clear();m_savedBodies=0;
   if(into.file.isEmpty()){doc.path.clear();doc.dirty=true;setDisk({},{},{});}
   else {
     const QString file=QFileInfo(into.file).absoluteFilePath();
@@ -410,12 +418,27 @@ void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved,const
 void AppDocument::commitSnapshot(opad::Document& document,opad::Scene& resolved,
                                  unsigned long long expectedRevision,const QString& label) {
   if(browse) throw opad::Error("viewer_mode: the open file is shown read-only; the user has to save it as an OPAD document before it can be edited");
+  if(readOnly) throw opad::Error("read_only: the document is open read-only; the user has to save a copy before it can be edited");
   if(loading || designBusy || revision!=expectedRevision || document.header.uuid!=doc.header.uuid)
     throw opad::Error("stale_revision: the document changed while the agent was working");
   const auto before=doc.ops.size();
   document.path=doc.path; // Save As may have changed the path without changing geometry.
   std::swap(doc,document);std::swap(scene,resolved);m_rollback.clear();
   recordStep(label,before);updateDirty();++revision;emit changed();emit undoChanged();
+}
+
+void AppDocument::detach() {
+  if (!readOnly || loading || designBusy || m_capturing) return;
+  readOnly = false;
+  doc.path.clear();
+  m_savedIds.clear();  // saved nowhere: closing asks
+  m_savedBodies = 0;
+  setDisk({}, {}, {});
+  updateDirty();
+  ++revision;
+  emit changed();
+  emit pathChanged();
+  emit undoChanged();
 }
 
 void AppDocument::recordStep(const QString& label, size_t opsBefore) {
@@ -518,6 +541,7 @@ QString AppDocument::title() const {
   if (!hasDocument) return tr("OPAD");
   QString name = doc.path.empty() ? tr("Untitled") : QString::fromStdU16String(doc.path.filename().u16string());
   if (browse) return tr("%1 · Viewer - OPAD").arg(QFileInfo(viewing).fileName());
+  if (readOnly) return tr("%1 (read-only) - OPAD").arg(name);
   if (isDirty()) name += "*";
   return name + " - OPAD";
 }

@@ -9,6 +9,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QStatusBar>
 #include <QTimer>
 
@@ -16,6 +17,7 @@
 
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "Units.hpp"
 #include "opad/drawing_io.hpp"
 
 void MainWindow::buildFileActions() {
@@ -44,11 +46,13 @@ void MainWindow::buildFileActions() {
   addAction("file.importdoc", tr("Save as OPAD document…"), "save", QKeySequence("Ctrl+Shift+E"), [this] { if (m_doc->browse) saveViewerAs(); });
   addAction("file.save", tr("&Save"), "save", QKeySequence("Ctrl+S"), [this] {
     if (m_doc->browse) { saveViewerAs(); return; }  // viewer mode: saving makes it an OPAD document, which can be edited
+    if (m_doc->readOnly) { saveReadOnlyCopy(); return; }  // the file stays as it is
     if (m_doc->doc.path.empty()) action("file.saveas")->trigger();
     else m_doc->save();
   });
   addAction("file.saveas", tr("Save &As…"), "save", QKeySequence("Ctrl+Shift+S"), [this] {
     if (m_doc->browse) { saveViewerAs(); return; }
+    if (m_doc->readOnly) { saveReadOnlyCopy(); return; }
     QString p = QFileDialog::getSaveFileName(this, tr("Save document"), m_settings.value("ui/lastDir").toString(), tr("OPAD document (*.opad)"));
     if (p.isEmpty()) return;
     if (!p.endsWith(".opad", Qt::CaseInsensitive)) p += ".opad";
@@ -84,11 +88,28 @@ QString MainWindow::fileFilter(bool withOpad) {
 }
 
 // Viewer mode: everything that edits says so and offers to save the file as an OPAD document, which can be edited;
-// `resume` (the command that asked) runs again once that is done.
+// `resume` (the command that asked) runs again once that is done. A read-only .opad offers a copy the same way.
 bool MainWindow::requireEditable(std::function<void()> resume) {
-  if (!m_doc->browse) return true;
+  if (!m_doc->viewOnly()) return true;
   QMessageBox box(this);
   box.setIcon(QMessageBox::Information);
+  if (m_doc->readOnly) {
+    box.setWindowTitle(tr("Read-only"));
+    box.setText(tr("Save a copy to edit"));
+    box.setInformativeText(tr("“%1” is open read-only. Save a copy to edit it; this file stays as it is.").arg(QFileInfo(m_doc->path()).fileName()));
+    QPushButton* save = box.addButton(tr("Save a copy…"), QMessageBox::AcceptRole);
+    QPushButton* copy = box.addButton(tr("Edit unsaved copy"), QMessageBox::ActionRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(save);
+    box.exec();
+    if (box.clickedButton() == save) saveReadOnlyCopy(std::move(resume));
+    else if (box.clickedButton() == copy) {
+      m_doc->detach();
+      statusBar()->showMessage(tr("Editable copy: save it to keep your changes"), 8000);
+      if (resume && !m_doc->readOnly) resume();
+    }
+    return false;
+  }
   box.setWindowTitle(tr("Viewer mode"));
   box.setText(tr("Save first to edit"));
   box.setInformativeText(tr("“%1” is open in viewer mode, read-only. Save it as an OPAD document to edit it; the file you opened stays as it is.")
@@ -142,9 +163,39 @@ void MainWindow::makeEditable(const QString& savePath, std::function<void()> the
   });
 }
 
+// Read-only .opad: a copy goes where the user says (among their documents for a version kept in the temporary folder),
+// written on a worker; this session edits the copy from then on and the file it opened stays as it was.
+void MainWindow::saveReadOnlyCopy(std::function<void()> then) {
+  if (!m_doc->readOnly) return;
+  const QFileInfo source(m_doc->path());
+  const bool scratch = source.absoluteFilePath().startsWith(QDir::temp().absolutePath(), Qt::CaseInsensitive);
+  const QString folder = scratch ? QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) : source.absolutePath();
+  const QString name = scratch ? source.completeBaseName() : tr("%1 copy").arg(source.completeBaseName());
+  QString path = QFileDialog::getSaveFileName(this, tr("Save a copy"), folder + "/" + name + ".opad", tr("OPAD document (*.opad)"));
+  if (path.isEmpty()) return;
+  if (!path.endsWith(".opad", Qt::CaseInsensitive)) path += ".opad";
+  m_settings.setValue("ui/lastDir", QFileInfo(path).absolutePath());
+  saveCopy(path, std::move(then));
+}
+
+void MainWindow::saveCopy(const QString& path, std::function<void()> then) {
+  guarded([&] {
+    m_doc->saveAsync(m_jobs, path, true, [this, path, then](bool saved, const QString& why) {
+      if (!saved) { QMessageBox::warning(this, tr("OPAD"), i18n::t(why)); return; }
+      addRecent(path);
+      m_viewPath = QFileInfo(path).absoluteFilePath();
+      if (!m_doc->readOnly) units::setSessionUnit({});  // the copy shows its own unit, as an editable document does
+      updateViewerCard();
+      statusBar()->showMessage(tr("Saved a copy as %1; it can be edited").arg(QDir::toNativeSeparators(path)), 8000);
+      if (then && !m_doc->readOnly) then();
+    });
+  });
+}
+
 void MainWindow::updateViewerCard() {
   if (!m_chips) return;
-  m_chips->setViewer(m_doc->browse ? QFileInfo(m_doc->viewing).fileName() : QString());
+  const QString shown = m_doc->browse ? m_doc->viewing : m_doc->readOnly ? m_doc->path() : QString();
+  m_chips->setViewer(QFileInfo(shown).fileName(), m_doc->readOnly);
   positionOverlays();
 }
 
@@ -183,7 +234,7 @@ void MainWindow::rebuildRecentMenu() {
 }
 
 // ---------------------------------------------------------------- lifecycle
-void MainWindow::openPath(const QString& path) {
+void MainWindow::openPath(const QString& path, bool readOnly) {
   // A load already running is dropped (the next file wins, as when stepping through a folder); the document on screen
   // has not changed since it was asked about.
   if (!m_doc->loading && !maybeSave()) return;
@@ -194,7 +245,7 @@ void MainWindow::openPath(const QString& path) {
   // A drawing is picked by its edges (see loadFinished): set before its bodies are displayed, so each is activated once.
   if (const QString suffix = QFileInfo(path).suffix().toLower(); suffix == "dxf" || suffix == "dwg" || suffix == "svg")
     m_viewport->setSelectionFilter(Viewport::SelFilter::Edge);
-  m_doc->startOpen(path);
+  m_doc->startOpen(path, readOnly);
 }
 
 // ---------------------------------------------------------------- load progress

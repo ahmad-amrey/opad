@@ -31,6 +31,10 @@ class AppDocument : public QObject {
   bool browse = false;
   QString viewing;           // viewer mode: the file shown
   bool viewerOpens = true;   // setting files/viewerMode: false opens other formats as editable, unsaved documents
+  // A .opad shown read-only (opad --read-only, a write-protected file, a version from the history): measured, sectioned
+  // and changed in looks (hide, colour; never unsaved) as in viewer mode. Edits and Save need a copy: saveAs, detach().
+  bool readOnly = false;
+  bool viewOnly() const { return browse || readOnly; }
   bool hasDocument = false;
   unsigned long long generation = 0;
   unsigned long long revision = 0;
@@ -62,7 +66,8 @@ class AppDocument : public QObject {
 
   // Long loads run off the UI thread; progress and the result come back through the signals below. A file other than
   // .opad opens in viewer mode. Opening while a load runs drops that load (it finishes in the background, unseen).
-  void startOpen(const QString& path);
+  void startOpen(const QString& path, bool readOnly = false);  // readOnly: a writable .opad opens read-only too
+  void detach();  // read-only -> an unsaved copy of the same content (no file behind it), which can be edited
   // Viewer mode -> an editable, unsaved document with the same content and view changes, prepared on a worker
   // (opad::make_editable). `done(ok, error)` runs on the UI thread.
   void startEditable(JobRunner* jobs, std::function<void(bool, const QString&)> done);
@@ -83,7 +88,7 @@ class AppDocument : public QObject {
 
   QString title() const;
   QString path() const;
-  bool isDirty() const { return hasDocument && !browse && doc.dirty; }
+  bool isDirty() const { return hasDocument && !viewOnly() && doc.dirty; }
 
   // Undo/redo over the op log. Each command's appended ops form one step; undo pops them off the log (their
   // persisted text is kept, so redo then save writes them back byte-identically) and redo pushes them back.

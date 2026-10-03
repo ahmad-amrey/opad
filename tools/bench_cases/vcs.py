@@ -1,7 +1,9 @@
 """gui_benches cases of version control (T3); the benches are in app/VcsBench.cpp (DiskSync::bench, GitWatch::bench,
 CompareMode::bench), app/VersionBench.cpp (VersionControl::bench) and app/RecoveryBench.cpp."""
 import json
+import os
 import shutil
+import stat
 import subprocess
 
 
@@ -63,6 +65,16 @@ def versioned_with_remote(root, document, name="version"):
     return doc
 
 
+def read_only(root, document, name="read-only"):
+    """A version opened read-only (UI-62): <name>/model.opad (one box) write-protected, as the history writes a version's
+    copy, and <name>/writable.opad, the same left writable, which the bench opens with --read-only."""
+    (root / name).mkdir(exist_ok=True)
+    doc = document(f"{name}/model", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+    shutil.copy(doc, root / name / "writable.opad")
+    os.chmod(doc, stat.S_IREAD)
+    return doc
+
+
 CASES = [
     ("external-change", external, {"OPAD_BENCH_EXTERNAL_CHANGE": "{prefix}", "OPAD_BENCH_CLI": "{cli}"}),
     # git without this machine's settings: a global config of the run's own (the bench sets the author there), no system one.
@@ -83,6 +95,9 @@ CASES = [
     ("version-ar", lambda root, document: versioned_with_remote(root, document, "version-ar"),
      {"OPAD_BENCH_VERSION": "{prefix}", "OPAD_BENCH_CLI": "{cli}", "GIT_CONFIG_GLOBAL": "{root}/version-ar-global", "GIT_CONFIG_NOSYSTEM": "1",
       "OPAD_LANG": "ar"}),
+    # A read-only document: view changes kept out of "unsaved", edits ask for a copy, Save a copy, --read-only in another OPAD.
+    ("read-only", read_only, {"OPAD_BENCH_READONLY": "{prefix}"}),
+    ("read-only-ar", lambda root, document: read_only(root, document, "read-only-ar"), {"OPAD_BENCH_READONLY": "{prefix}", "OPAD_LANG": "ar"}),
     ("recovery-diff", recovered, {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}"}),
     ("recovery-diff-ar", lambda root, document: recovered(root, document, "recovery-ar"), {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}", "OPAD_LANG": "ar"}),
 ]

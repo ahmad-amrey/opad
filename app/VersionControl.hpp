@@ -11,8 +11,9 @@
 //             conflicts, design changed on both sides) with Preview in Compare and Merge.
 //   Branches  switch (unsaved and uncommitted changes asked about first), create (here or from a commit), delete, merge
 //             into the current one with the same incoming preview; Abort merge while one stopped on conflicts.
-//   History   the commits of the document: compare with this session or with the commit before, open read-only (a copy
-//             in another window), restore as new changes (append-only tombstones, one undo step), branch from here.
+//   History   the commits of the document: compare with this session or with the commit before, open read-only (a
+//             write-protected copy in another window, opened with --read-only: AppDocument::readOnly), restore as new
+//             changes (append-only tombstones, one undo step), branch from here.
 // The file on disk changes under the session (switch, merge, pull): DiskSync::adopt takes it in. git runs on workers
 // (GitWatch::job / command), versions are read, merged and diffed on workers; dialogs are window-modal and never block.
 #include <QHash>
@@ -61,6 +62,7 @@ class VersionControl : public QObject {
   void compareWith(const git::Commit& commit);      // the commit (A) with this session (B)
   void comparePrevious(const git::Commit& commit);  // the commit before (A) with it (B)
   void openReadOnly(const git::Commit& commit);     // a read-only copy in another OPAD window
+  static QStringList readOnlyArguments(const QString& file) { return {QStringLiteral("--read-only"), file}; }  // that window's
   void restore(const git::Commit& commit);          // the document as it was there, as new changes
   void moreHistory();
   void extendMenu(QMenu* menu);  // the git chip's menu: the panel, Commit…, Pull, Push

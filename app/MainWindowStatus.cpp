@@ -89,7 +89,7 @@ void MainWindow::buildUnitsButton() {
     qDeleteAll(menu->findChildren<QMenu*>(Qt::FindDirectChildrenOnly));  // clear() keeps submenus: they own their action
     menu->clear();
     const auto& d = units::current();
-    menu->addSection(m_doc->browse ? tr("Show lengths in") : tr("Document unit"));
+    menu->addSection(m_doc->viewOnly() ? tr("Show lengths in") : tr("Document unit"));
     for (const QString& unit : units::lengthUnits()) {
       const std::string u = unit.toStdString();
       QAction* a = menu->addAction(QString("%1 (%2)").arg(units::unitName(u), units::symbol(units::Kind::Length, units::Display{u})));
@@ -120,7 +120,7 @@ void MainWindow::buildUnitsButton() {
   connect(m_doc, &AppDocument::aboutToReplace, this, [] { units::setSessionUnit({}); });
   connect(m_doc, &AppDocument::changed, this, [this] {
     units::setDocumentUnit(m_doc->hasDocument ? m_doc->scene.units : m_doc->doc.header.units);
-    if (!m_doc->browse) units::setSessionUnit({});  // viewer mode left (Edit unsaved copy, an import): the file's unit
+    if (!m_doc->viewOnly()) units::setSessionUnit({});  // viewer mode or read-only left (Edit unsaved copy, an import): the file's unit
   });
   connect(units::notifier(), &units::Notifier::changed, this, [this, shown] {
     shown();
@@ -135,9 +135,11 @@ void MainWindow::buildUnitsButton() {
 // through the design so that values typed without a unit are read in the new one (and regenerate).
 void MainWindow::setDocumentUnit(const std::string& unit) {
   if (!m_doc->hasDocument) return;
-  if (m_doc->browse) {
+  if (m_doc->viewOnly()) {
     units::setSessionUnit(unit == units::documentUnit() ? std::string() : unit);
-    statusBar()->showMessage(tr("Lengths are shown in %1; the file is not changed (viewer mode).").arg(units::unitName(unit).toLower()), 6000);
+    statusBar()->showMessage((m_doc->readOnly ? tr("Lengths are shown in %1; the file is not changed (read-only).")
+                                              : tr("Lengths are shown in %1; the file is not changed (viewer mode)."))
+                                 .arg(units::unitName(unit).toLower()), 6000);
     return;
   }
   if (unit == m_doc->scene.units) return;
@@ -146,7 +148,9 @@ void MainWindow::setDocumentUnit(const std::string& unit) {
 
 void MainWindow::updateTitle() {
   setWindowTitle(m_doc->title());
-  QString path = m_doc->hasDocument ? (m_doc->browse ? tr("Viewer (read-only): %1").arg(QDir::toNativeSeparators(m_doc->viewing)) : (m_doc->path().isEmpty() ? tr("unsaved document") : m_doc->path())) : tr("No document");
+  QString path = m_doc->hasDocument ? (m_doc->browse ? tr("Viewer (read-only): %1").arg(QDir::toNativeSeparators(m_doc->viewing))
+                                       : m_doc->readOnly ? tr("Read-only: %1").arg(QDir::toNativeSeparators(m_doc->path()))
+                                       : (m_doc->path().isEmpty() ? tr("unsaved document") : m_doc->path())) : tr("No document");
   if (!m_doc->scene.unresolved.empty()) path += tr("   ·   %1 unresolved").arg(m_doc->scene.unresolved.size());
   m_statusPath->setText(path);
   // What is unresolved and why: a newer build's records in one sentence, the others by op type and reason.

@@ -390,6 +390,7 @@ void VersionPanel::showState() {
   QStringList show;  // the empty page's buttons
   QString why;
   if (!saved) why = tr("Save the document as an OPAD file to keep its versions with git.");
+  else if (doc->readOnly) why = tr("%1 is open read-only. Save a copy to commit, branch or restore versions of it.").arg(QFileInfo(doc->path()).fileName());
   else
     switch (r.state) {
       case S::None: why = tr("Reading the repository…"); break;

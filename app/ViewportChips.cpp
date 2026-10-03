@@ -68,10 +68,16 @@ bool ViewportChips::eventFilter(QObject* object, QEvent* event) {
   return QWidget::eventFilter(object, event);
 }
 
-void ViewportChips::setViewer(const QString& file) {
+void ViewportChips::setViewer(const QString& file, bool document) {
   const bool on = !file.isEmpty();
   m_viewer->setVisible(on);
-  m_viewer->setToolTip(on ? tr("%1 is shown read-only: measure, section, hide and colour freely. Editing needs it saved as an OPAD document.").arg(file) : QString());
+  m_viewer->setText(document ? tr("Read-only") : tr("Viewer · read-only"));
+  m_viewer->setToolTip(!on ? QString()
+                       : document ? tr("%1 is open read-only: measure, section, hide and colour freely; the file is not changed. Editing needs a copy.").arg(file)
+                                  : tr("%1 is shown read-only: measure, section, hide and colour freely. Editing needs it saved as an OPAD document.").arg(file));
+  m_saveToEdit->setText(document ? tr("Save a copy to edit") : tr("Save to edit"));
+  m_saveToEdit->setToolTip(document ? tr("Save a copy of the document, which can be edited (Ctrl+S). The file you opened is not changed.")
+                                    : tr("Save as an OPAD document, which can be edited (Ctrl+S). The file you opened is not changed."));
   m_saveToEdit->setVisible(on);
   adjustSize();
 }

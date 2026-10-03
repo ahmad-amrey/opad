@@ -16,6 +16,7 @@ Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwr
   if(destination.isEmpty())throw opad::Error("This document has no file path. Supply an absolute .opad path for the first save.");
   if(!QDir::isAbsolutePath(destination) || QFileInfo(destination).suffix().compare("opad",Qt::CaseInsensitive)!=0)
     throw opad::Error("Save requires an absolute path ending in .opad.");
+  if(readOnly && QFileInfo(destination)==QFileInfo(path()))throw opad::Error("This document is open read-only: save a copy to edit it.");
   struct Save {
     std::atomic<bool> finished{false};bool written=false,blocked=false;QString error;
     std::vector<std::string> ids;size_t bodies=0;
@@ -75,7 +76,7 @@ Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwr
       setDisk(QFileInfo(destination).absoluteFilePath(),result->stat,result->manifest);
     if(result->blocked)emit saveBlocked();
     if(result->written && generation==identity && revision==savedRevision){
-      doc.path=std::filesystem::path(destination.toStdU16String());doc.header.format=opad::kFormatVersion;
+      doc.path=std::filesystem::path(destination.toStdU16String());doc.header.format=opad::kFormatVersion;readOnly=false;
       m_savedIds=std::move(result->ids);m_savedBodies=result->bodies;doc.dirty=false;
       emit pathChanged();emit saved();emit message(tr("Saved %1").arg(destination));
     }

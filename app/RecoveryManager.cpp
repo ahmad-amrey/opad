@@ -235,7 +235,7 @@ void RecoveryManager::saveNow(std::function<void(bool,const QString&)> done) {
   const auto* agent=m_window->findChild<AgentBridge*>();
   if((agent && agent->busy()) || m_closing || m_running || !m_doc->hasDocument || m_doc->browse || m_doc->loading || m_doc->designBusy)return fail(tr("Document is busy; recovery will retry."));
   const bool editing=m_design->sketchActive() || m_design->featureActive();
-  if(!m_doc->isDirty() && !editing && m_checkpoint==m_savedCheckpoint){if(done)done(true,{});return;}
+  if(m_doc->readOnly || (!m_doc->isDirty() && !editing && m_checkpoint==m_savedCheckpoint)){if(done)done(true,{});return;}  // read-only: view changes only
   m_running=true;
   const auto generation=m_doc->generation,revision=m_doc->revision;
   const auto source=m_doc->path(),title=m_doc->title();
