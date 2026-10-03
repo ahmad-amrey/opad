@@ -264,6 +264,14 @@ struct SceneBuilder::Impl {
 
   bool ref_ok(const Ref& r) { return r.kind == Ref::Kind::Point || scene.nodes.count(r.body) > 0; }
 
+  // A sketch's or feature's optional "component" (TODO 11 UI-33), while that component exists; else the root, as a
+  // feature's new body whose parent is gone.
+  std::string component_of(const json& d) {
+    if (!d.contains("component") || !d["component"].is_string()) return {};
+    const Node* n = scene.node(d["component"].get<std::string>());
+    return n && n->kind == Node::Kind::Component ? n->id : std::string();
+  }
+
   // Marks every sketch a feature's inputs mention ({"sketch": id} anywhere in them) as consumed.
   void mark_consumed(const json& j) {
     if (j.is_object()) {
@@ -280,6 +288,7 @@ struct SceneBuilder::Impl {
     f.id = id;
     f.kind = d.value("kind", "");
     f.name = d.value("name", f.kind);
+    f.component = component_of(d);
     f.inputs = d.value("inputs", json::object());
     f.result = d.value("result", json::object());
     // suppress_if (gap log #9): the walk evaluated it and kept the answer in the result; replay only reads that.
@@ -431,6 +440,8 @@ struct SceneBuilder::Impl {
       SketchItem s;
       s.id = id;
       s.name = d.value("name", "Sketch");
+      s.component = component_of(d);
+      if (!s.component.empty()) s.placed = scene.world(s.component);
       s.plane = d.value("plane", json::object());
       s.geometry = d.value("geometry", json::object());
       s.frame = Frame::from_json(s.plane.value("frame", json()));

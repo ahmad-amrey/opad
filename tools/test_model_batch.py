@@ -127,6 +127,25 @@ def main():
         short = rows(False, "ten-short")
         assert short == rows(True, "ten-long") and len(short) == 10 and short[3] == ("Row pin 4", "Pins", [.3, .3, .9]), short
         print("Batch body names, colours, components, targets and whole-list references: PASS", flush=True)
+        # TODO 11 UI-33: the batch's component is where its feature and sketch steps are made; a step's own wins.
+        revision = client.state()["revision"]
+        lidded = [
+            {"id": "lid", "command": "component", "arguments": {"name": "Lid"}},
+            {"id": "outline", "command": "sketch", "arguments": {"geometry": {"shapes": [{"kind": "rect2", "picks": [[0, 80], [10, 90]]}]}}},
+            {"id": "pad", "command": "feature", "arguments": {"kind": "extrude", "inputs": {"profiles": [{"sketch": "@{outline#/sketch_id}", "at": [5, 85]}], "distance": 2}}},
+            {"id": "free", "command": "feature", "arguments": {"kind": "box", "component": None, "inputs": {"x": 80, "length": 2, "width": 2, "height": 2}}},
+        ]
+        late = client.raw("model_batch", steps=lidded[1:] + lidded[:1], component="@{lid#/component_id}", expected_revision=revision, request_id="lid-late")
+        assert late["isError"] and "batch component" in late["structuredContent"]["error"]["message"], late
+        made = client.call("model_batch", steps=lidded, component="@{lid#/component_id}", expected_revision=revision, request_id="lid")
+        ids = {step["id"]: step["result"] for step in made["result"]["steps"]}
+        lid = ids["lid"]["component_id"]
+        items = {n["id"]: n for n in client.call("context", section="nodes", limit=100)["result"]["items"]}
+        assert items[ids["pad"]["body_ids"][0]]["parent"] == lid, items[ids["pad"]["body_ids"][0]]
+        assert items[ids["free"]["body_ids"][0]].get("parent") in (None, ""), items[ids["free"]["body_ids"][0]]
+        made_in = {f["id"]: f.get("component") for f in client.call("features")["result"]}
+        assert made_in[ids["outline"]["sketch_id"]] == lid and made_in[ids["pad"]["feature_id"]] == lid and not made_in[ids["free"]["feature_id"]], made_in
+        print("Batch component for feature and sketch steps: PASS", flush=True)
     finally:
         for connection in (client, observer):
             if connection:

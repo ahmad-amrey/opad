@@ -104,4 +104,21 @@ with tempfile.TemporaryDirectory(prefix="opad-merge-") as folder:
     before = ours.read_bytes()
     result = subprocess.run([sys.executable, str(driver), str(base), str(ours), str(theirs)], capture_output=True)
     assert result.returncode == 1 and ours.read_bytes() == before and b"explode" in result.stderr
-print("Git merge: multiline drawings/sketches/comments and exploded views retained; overlapping edits rejected")
+    # TODO 11 UI-33: features and sketches made in a component on two branches merge; their bodies stay in it.
+    lid = opad("component", doc, name="Lid")["component_id"]
+    run("git", "commit", "-qam", "lid", cwd=root)
+    made = {}
+    for branch, x in (("lid-a", 0), ("lid-b", 40)):
+        run("git", "checkout", "-qb", branch, "main", cwd=root)
+        sketch = opad("sketch", doc, component=lid, geometry={"shapes": [{"kind": "rect2", "picks": [[x, 50], [x + 10, 60]]}]})["sketch_id"]
+        made[branch] = opad("feature", doc, kind="extrude", component=lid, inputs={"profiles": [{"sketch": sketch, "at": [x + 5, 55]}], "distance": 3})["body_ids"][0]
+        run("git", "commit", "-qam", "pad in the lid", cwd=root)
+    run("git", "checkout", "-q", "main", cwd=root)
+    run("git", "merge", "-q", "--no-edit", "lid-a", cwd=root)
+    run("git", "merge", "-q", "--no-edit", "lid-b", cwd=root)
+    tree = opad("tree", doc)
+    assert not tree["unresolved"], tree["unresolved"]
+    lid_node = next(n for n in tree["roots"] if n["id"] == lid)
+    assert {c["id"] for c in lid_node["children"]} == set(made.values()), lid_node
+    assert sum(f.get("component") == lid for f in opad("features", doc)) == 4
+print("Git merge: multiline drawings/sketches/comments, exploded views and component work retained; overlapping edits rejected")

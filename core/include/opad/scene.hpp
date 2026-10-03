@@ -94,6 +94,8 @@ struct Frame {
 
 struct SketchItem {
   std::string id, name;
+  std::string component;  // the component it was made in (the op's optional "component"); empty = the document root
+  Mat4 placed;            // that component's world placement when the sketch was made
   json plane;     // how the plane was chosen: {"base":"xy"} | {"face":ref} | {"feature":id}
   Frame frame;
   json geometry;  // solved: {"points":[..],"entities":[..],"constraints":[..]} (design/sketch.hpp)
@@ -105,6 +107,7 @@ struct SketchItem {
 
 struct Feature {
   std::string id, kind, name;
+  std::string component;  // where its new bodies (or its plane / axis) went; empty = the document root
   json inputs, result;
   bool suppressed = false;
   std::string suppress_if;  // an expression that suppresses it while true (gap log #9)

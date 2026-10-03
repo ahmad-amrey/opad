@@ -80,7 +80,7 @@ int main(){try {
   const size_t live=agent::live_tools().dump().size();
   size_t headless=0;for(const auto& c:commands::list())headless+=agent::command_schema(c).dump().size()+c.description.size();
   std::printf("tools/list: live %zu bytes, headless schemas %zu bytes\n",live,headless);
-  CHECK(live<107500);  // +2.5 KB: explode (TODO 11 UI-35)
+  CHECK(live<108000);  // +2.5 KB: explode (TODO 11 UI-35); +0.5 KB: component on feature, sketch and batches (UI-33)
   CHECK(headless<52000);
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);

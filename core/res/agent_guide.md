@@ -201,6 +201,8 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - `feature` takes `body_name` (several bodies are numbered; `{n}` marks where the number goes), `color` `[r, g, b]` in
   0..1 and `parent` (a component id) for the bodies it makes, applied in the same step. A feature that makes no new
   body says so in `warnings`.
+- `feature` and `sketch` take `component`: the component they are made in. New bodies (and a construction plane or
+  axis) go into it and stay there when the feature regenerates; `parent` still moves the bodies afterwards.
 - `rename`, `appearance` and `reparent` take `targets` (a list) instead of `target`; `rename` then numbers the names.
 
 ## Batches
@@ -211,7 +213,8 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   "@{row#/body_ids/*}"`) or spliced into one (`"targets": ["@{cabin#/body_ids/0}", "@{row#/body_ids/*}"]`).
 - A reference may name a step of an earlier batch on the same connection, when this batch has no step with that id
   (an id this batch defines is always its own step, so a reference to a later one is an error).
-- The batch's `parent` is the default component for every body its feature steps make.
+- The batch's `parent` is the default component for every body its feature steps make; its `component` the default
+  component its feature and sketch steps are made in.
 - A failing step discards the whole batch and names the step; inputs and backward references are checked before
   anything runs.
 

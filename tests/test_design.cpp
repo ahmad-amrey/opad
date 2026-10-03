@@ -1734,3 +1734,68 @@ TEST(features_suppressed_by_an_expression) {
   CHECK(state() == std::make_pair(false, size_t(2)));
   CHECK_THROWS(commands::run("feature_edit", {{"target", third}, {"suppress_if", "joints <"}}, &doc));
 }
+
+// TODO 11 UI-33: a sketch or feature made in a component says so ("component" on its op). The feature's new bodies go
+// into that component, kept in its frame, and stay there when it regenerates; copies still follow their source. An
+// older build ignores the key: the bodies are in the component all the same (the result's parent), the sketch is not.
+TEST(features_and_sketches_made_in_a_component) {
+  Document doc = Document::create();
+  const std::string lid = commands::run("component", {{"name", "Lid"}}, &doc)["component_id"];
+  commands::run("transform", {{"target", lid}, {"matrix", Mat4::translation(0, 0, 40).to_json()}}, &doc);
+  const std::string sketch = commands::run("sketch", {{"plane", {{"base", "xy"}}}, {"geometry", rectangle(0, 0, 20, 10).to_json()}, {"component", lid}}, &doc)["sketch_id"];
+  Scene s = resolve(doc);
+  CHECK_EQ(s.sketch(sketch)->component, lid);
+  CHECK(s.sketch(sketch)->placed.to_json() == Mat4::translation(0, 0, 40).to_json());
+  auto z_range = [&](const std::string& id) {
+    Bnd_Box b;
+    BRepBndLib::Add(node_world_shape(doc, s, id), b);
+    return std::make_pair(b.CornerMin().Z(), b.CornerMax().Z());
+  };
+  const json pad = commands::run("feature", {{"kind", "extrude"}, {"inputs", {{"profiles", json::array({{{"sketch", sketch}, {"at", {5, 5}}}})}, {"distance", "5 mm"}}}, {"component", lid}}, &doc);
+  const std::string plate = pad["body_ids"][0];
+  s = resolve(doc);
+  CHECK_EQ(s.node(plate)->parent, lid);
+  CHECK_EQ(s.feature(pad["feature_id"])->component, lid);
+  CHECK_EQ(s.feature(pad["feature_id"])->result["bodies"][0]["parent"], lid);
+  CHECK_NEAR(z_range(plate).first, 0, 1e-6);  // where the sketch is; stored in the lid's frame
+  CHECK_NEAR(z_range(plate).second, 5, 1e-6);
+  CHECK(s.unresolved.empty());
+  // A regeneration keeps the body where it was made: the same node, in the lid.
+  commands::run("feature_edit", {{"target", pad["feature_id"]}, {"inputs", {{"distance", "8 mm"}}}}, &doc);
+  s = resolve(doc);
+  CHECK_EQ(s.node(plate)->parent, lid);
+  CHECK_NEAR(z_range(plate).second, 8, 1e-6);
+  // A copy follows its source (into the lid), a body from scratch without a component goes to the root, and so does
+  // one whose component is null.
+  const json row = commands::run("feature", {{"kind", "pattern_rect"}, {"inputs", {{"bodies", json::array({plate})}, {"count", "2"}, {"spacing", "30 mm"}, {"axis", {{"base", "x"}}}}}}, &doc);
+  const std::string loose = feature_cmd(doc, "box", {{"x", "100 mm"}, {"length", "5 mm"}, {"width", "5 mm"}, {"height", "5 mm"}})["body_ids"][0];
+  const std::string rooted = commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", "120 mm"}, {"length", "5 mm"}, {"width", "5 mm"}, {"height", "5 mm"}}}, {"component", nullptr}}, &doc)["body_ids"][0];
+  s = resolve(doc);
+  CHECK_EQ(s.node(row["body_ids"][0])->parent, lid);
+  CHECK(s.node(loose)->parent.empty() && s.node(rooted)->parent.empty());
+  // A construction plane made in the lid records it; features lists where each item was made.
+  const json plane = commands::run("feature", {{"kind", "plane"}, {"inputs", {{"mode", "offset"}, {"plane", {{"base", "xy"}}}, {"distance", "30 mm"}}}, {"component", lid}}, &doc);
+  CHECK_EQ(resolve(doc).feature(plane["feature_id"])->component, lid);
+  size_t listed = 0;
+  for (const auto& item : commands::run("features", json::object(), &doc)) listed += item.value("component", "") == lid;
+  CHECK_EQ(listed, 3u);
+  // A body or an unknown id is not a component: refused before anything is computed.
+  const size_t ops = doc.ops.size();
+  CHECK_THROWS(commands::run("feature", {{"kind", "box"}, {"inputs", json::object()}, {"component", plate}}, &doc));
+  CHECK_THROWS(commands::run("sketch", {{"geometry", rectangle(0, 0, 1, 1).to_json()}, {"component", new_uuid()}}, &doc));
+  CHECK_EQ(doc.ops.size(), ops);
+  CHECK_THROWS(Document::validate_op({{"op", "sketch"}, {"name", "S"}, {"plane", json::object()}, {"geometry", json::object()}, {"component", "lid"}}));
+  // The file round-trips; an older build (which ignores the key) still finds the bodies in the lid.
+  const Document back = Document::parse(doc.serialize());
+  CHECK_EQ(resolve(back).sketch(sketch)->component, lid);
+  Document older = back;
+  for (auto& op : older.ops) op.data.erase("component");
+  const Scene o = resolve(older);
+  CHECK_EQ(o.node(plate)->parent, lid);
+  CHECK(o.sketch(sketch)->component.empty());
+  CHECK(o.unresolved.empty());
+  // Without the lid (tombstoned), the sketch and the plane belong to the root, as the lid's bodies do.
+  commands::run("delete", {{"target", resolve(doc).node(lid)->source_op}}, &doc);
+  s = resolve(doc);
+  CHECK(s.sketch(sketch)->component.empty() && s.feature(plane["feature_id"])->component.empty());
+}

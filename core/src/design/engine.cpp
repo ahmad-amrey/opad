@@ -597,9 +597,10 @@ struct Walk {
 
   // New bodies are named, placed and coloured when they are first made, and the entry keeps it: a regeneration never
   // renames or moves them, and replay only reads what is stored (TODO 10 B14, C2). A body made from scratch takes
-  // the feature's name (numbered when the feature makes several); a copy or a piece takes its source's name, the
-  // component its source is in and its source's colour.
-  json materialize(const Ctx& ctx, const Out& out, const json& previous, const std::string& op_id, const std::string& feature_name) {
+  // the feature's name (numbered when the feature makes several) and goes into the feature's component (UI-33); a copy
+  // or a piece takes its source's name, the component its source is in and its source's colour.
+  json materialize(const Ctx& ctx, const Out& out, const json& previous, const std::string& op_id, const std::string& feature_name,
+                   const std::string& component) {
     json result = json::object();
     json bodies = json::array();
     std::vector<json> prev_new;
@@ -629,6 +630,8 @@ struct Walk {
         } else if (const Node* s = b.source.empty() ? nullptr : ctx.scene.node(b.source)) {
           if (!s->parent.empty()) entry["parent"] = s->parent;
           if (s->has_color) entry["color"] = s->color;
+        } else if (b.source.empty() && !component.empty()) {
+          entry["parent"] = component;
         }
         // The body is kept in its component's frame, as replay places it there.
         const std::string parent = entry.value("parent", "");
@@ -871,7 +874,9 @@ struct Walk {
                 fp = feature_fingerprint(builder.scene(), params, kind, inputs);
               }
             }
-            result = materialize(ctx, out, stored, id, data.value("name", ""));
+            std::string component = data.contains("component") && data["component"].is_string() ? data["component"].get<std::string>() : "";
+            if (const Node* c = builder.scene().node(component); !c || c->kind != Node::Kind::Component) component.clear();
+            result = materialize(ctx, out, stored, id, data.value("name", ""), component);
           } catch (const Standard_Failure& ex) {
             result = {{"error", std::string("the modelling kernel failed: ") + ex.GetMessageString()}};
           } catch (const std::exception& ex) {

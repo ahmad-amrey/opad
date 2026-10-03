@@ -117,7 +117,7 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
     }else if(value.is_array() || value.is_object())for(const auto& child:value)preflightRefs(child);
   };
   // A batch-level parent is where every body its feature steps make goes, unless a step names its own (TODO 10 B14).
-  const json batchParent=args.contains("parent")?args["parent"]:json();
+  const json batchParent=args.contains("parent")?args["parent"]:json(),batchComponent=args.contains("component")?args["component"]:json();
   // Validate every command and dependency before computing any geometry.
   for(const auto& step:args.at("steps")){
     const auto id=step.at("id").get<std::string>(),command=step.at("command").get<std::string>();
@@ -129,6 +129,10 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
     if(command=="feature" && !input.contains("parent") && batchParent.is_string()){
       const auto [ref,path]=symbol(batchParent.get<std::string>());
       if(!ref.empty() && !earlier.count(ref) && !older(ref))throw opad::Error("The batch parent "+batchParent.get<std::string>()+" names step '"+ref+"', which does not come before feature step '"+id+"'; put that component step first.");
+    }
+    if((command=="feature" || command=="sketch") && !input.contains("component") && batchComponent.is_string()){
+      const auto [ref,path]=symbol(batchComponent.get<std::string>());
+      if(!ref.empty() && !earlier.count(ref) && !older(ref))throw opad::Error("The batch component "+batchComponent.get<std::string>()+" names step '"+ref+"', which does not come before "+command+" step '"+id+"'; put that component step first.");
     }
     earlier.insert(id);
   }
@@ -156,6 +160,7 @@ void modelBatch(opad::Document& doc,const json& args,Progress progress,json& out
     if(progress.cancelled())throw opad::Error("cancelled");
     auto input=step.at("arguments");
     if(command=="feature" && !input.contains("parent") && !batchParent.is_null())input["parent"]=batchParent;
+    if((command=="feature" || command=="sketch") && !input.contains("component") && !batchComponent.is_null())input["component"]=batchComponent;
     expand(input);validate_input(schemas.at(command),input);
     auto checked=input;checked["references"]=step.value("references",json::array());expand(checked["references"]);
     checkReferences(doc,opad::resolve(doc),checked,known);
