@@ -7,6 +7,7 @@
 #include <tuple>
 
 #include "opad/design/feature.hpp"
+#include "opad/design/provenance.hpp"
 
 namespace smart {
 
@@ -119,6 +120,29 @@ std::vector<std::pair<std::string, std::string>> dependents(const opad::json& re
     if ((f && !f->error.empty()) || (s && !s->error.empty())) continue;  // failing already
     if (std::none_of(out.begin(), out.end(), [&](const auto& p) { return p.first == op; }))
       out.push_back({op, e.value("name", f ? f->name : s ? s->name : op)});
+  }
+  return out;
+}
+
+Users usersOf(const opad::Document& doc, const std::string& op, const std::function<bool()>& cancel) {
+  Users out;
+  const opad::design::Plan plan = opad::design::plan_ops(doc, {{{"op", "delete"}, {"target", op}}}, false, cancel);
+  opad::design::Provenance provenance(doc, cancel);
+  const opad::Scene& scene = provenance.scene();
+  out.ops = dependents(plan.report, scene, {op});
+  std::set<std::string> ops;
+  std::vector<std::string> bodies;
+  for (const auto& [id, name] : out.ops) {
+    ops.insert(id);
+    const opad::Feature* f = scene.feature(id);
+    if (!f || !f->result.is_object()) continue;
+    for (const auto& b : f->result.value("bodies", opad::json::array()))
+      if (const std::string node = b.is_object() ? b.value("id", "") : ""; scene.node(node) && std::find(bodies.begin(), bodies.end(), node) == bodies.end()) bodies.push_back(node);
+  }
+  for (const auto& b : bodies) {
+    const auto owners = provenance.face_owners(b);
+    for (size_t i = 0; i < owners.size(); ++i)
+      if (ops.count(owners[i].op)) out.faces.push_back(opad::Ref::parse(b + "/face/" + std::to_string(i)));
   }
   return out;
 }

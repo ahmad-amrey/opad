@@ -120,6 +120,15 @@ TEST(deleting_a_feature_names_what_it_breaks) {
   CHECK_EQ(deps.size(), size_t(1));
   CHECK_EQ(deps[0].first, p.round);
   CHECK_EQ(deps[0].second, "Round");
+  // Select dependents: Round, by its four faces; nothing depends on Round, the base has the boss and Round.
+  smart::Users users = smart::usersOf(p.doc, p.boss);
+  CHECK(users.ops.size() == 1 && users.ops[0].first == p.round);
+  CHECK(smart::sameRefs(users.faces, owned(p, p.round)));
+  users = smart::usersOf(p.doc, p.round);
+  CHECK(users.ops.empty() && users.faces.empty());
+  users = smart::usersOf(p.doc, p.base);
+  CHECK_EQ(users.ops.size(), size_t(2));
+  CHECK_EQ(users.faces.size(), owned(p, p.boss).size() + owned(p, p.round).size());
   // With the round deleted too nothing is left failing; deleting the round alone breaks nothing.
   plan = design::plan_ops(p.doc, {{{"op", "delete"}, {"target", p.boss}}, {{"op", "delete"}, {"target", p.round}}}, false);
   CHECK(smart::dependents(plan.report, scene, {p.boss, p.round}).empty());

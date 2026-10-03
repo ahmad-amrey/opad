@@ -23,7 +23,8 @@
 // base with a 10 mm boss joined on top; the bench rounds the boss's top edges (Round) first. Two boss faces picked: the
 // chip names the boss with its five faces and Ctrl+Up as the way there, beside the picks and clear of the view cube;
 // hovering it draws the five in amber and pulses the boss's timeline marker. Ctrl+Up selects them (the chip turns into
-// the boss's actions), again the body; Ctrl+Down twice climbs back to the two faces. Shift+Space lists the candidates. A
+// the boss's actions), again the body; Ctrl+Down twice climbs back to the two faces. Shift+Space lists the candidates; its
+// Select what depends on the boss selects Round's faces. A
 // double-click on the boss's top (real mouse events) selects the boss, another one opens it for editing. An edge between
 // two faces seen from the view, double-clicked: the loop of the face on the pointer's side of it (the top's, then the
 // front's); Alt on a straight edge says nothing continues it. The chip's
@@ -38,7 +39,7 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
     std::vector<opad::Ref> bossFaces, roundFaces, two;
     opad::Ref top;    // the boss's top face
     opad::Ref front;  // the base's front top edge
-    bool frontSide = false, tangentAsked = false, tangent = false, quietAsked = false;
+    bool usersSeen = false, frontSide = false, tangentAsked = false, tangent = false, quietAsked = false;
     size_t ops = 0;
     int faces = 0;
   };
@@ -219,8 +220,13 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
             if (a->property("smartCandidate").isValid()) entries << a->text();
           require(!entries.isEmpty() && entries.front() == "&1  " + faces("Boss", 5), "the menu lists the boss first: " + entries.join(" | ").toStdString());
           bool del = false;
-          for (QAction* a : menu->actions()) del = del || a->objectName() == "smartDelete";
+          QAction* users = nullptr;
+          for (QAction* a : menu->actions()) {
+            del = del || a->objectName() == "smartDelete";
+            if (a->objectName() == "smartDependents") users = a;
+          }
           require(del, "the menu offers deleting the boss");
+          require(users && users->text() == SmartSelect::tr("Select what depends on %1").arg("Boss"), "the menu offers selecting what depends on the boss");
           menu->grab().save(prefix + ".menu.png");
           pass("Shift+Space lists " + entries.join(" | "));
           // Hovering the body's entry tints the whole body through the look compositor's candidate layer.
@@ -232,10 +238,20 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
           menu->close();
           require(w.m_viewport->bodyLook(state->body).color != look, "closing the menu takes the tint away");
           pass("hovering the body's entry in the menu tints the body in the candidate amber (look layer), closing it clears it");
-          w.m_viewport->clearSelection();
+          users->trigger();  // Select what depends on the boss
           break;
         }
         case 9:
+          if (!state->usersSeen) {
+            if (!waitFor(selected(state->roundFaces), "Select what depends on the boss selects Round's four faces")) return;
+            const QString said = SmartSelect::tr("%1 depends on %2").arg("Round", "Boss");
+            require(w.statusBar()->currentMessage() == said && w.m_timeline->pulsing() == state->round, "the status bar says \"" + said.toStdString() + "\", Round's marker pulses");
+            require(area->ladder() >= 1, "Ctrl+Down goes back to the picks");
+            pass("Select what depends on the boss selected Round's four faces: \"" + said + "\", its marker pulsing");
+            state->usersSeen = true;
+            w.m_viewport->clearSelection();
+            return;
+          }
           if (!waitFor(w.m_viewport->selection().empty(), "the selection cleared")) return;
           doubleClick(state->top);
           break;

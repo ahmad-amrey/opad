@@ -113,5 +113,13 @@
   "Width %1": "العرض %1",
   "Thickness %1": "السماكة %1",
   "Height %1": "الارتفاع %1",
-  "%1: %2": "%1: %2"
+  "%1: %2": "%1: %2",
+  "Select what depends on %1": "تحديد ما يعتمد على %1",
+  "The faces of the later features that use it and would fail without it": "أوجه الميزات اللاحقة التي تستخدمه وتفشل بدونه",
+  "Finding what depends on %1": "البحث عمّا يعتمد على %1",
+  "The document changed meanwhile; ask again.": "تغيّر المستند في الأثناء؛ اطلب مرة أخرى.",
+  "Nothing depends on %1: no later feature uses it.": "لا شيء يعتمد على %1: لا تستخدمه أي ميزة لاحقة.",
+  "%1 depends on %2": "%1 يعتمد على %2",
+  "%1 depend on %2": "%1 تعتمد على %2",
+  "%1, with no faces of its own to select": "%1، دون أوجه خاصة به لتحديدها"
 }

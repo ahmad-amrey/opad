@@ -96,6 +96,9 @@ class SmartSelect : public AreaController {
   void showMenu(const QPoint& global = {});  // Shift+Space: at the chip, else at the pointer
   void deleteCandidate(int index);           // Delete on a feature: its dependents asked for first
   void deleteFeature(const smart::Candidate& c);
+  // Select what depends on a feature (the menu's Select dependents): the faces of the later features that would fail
+  // without it, their markers pulsed; named in the status bar (sketches and features without faces of their own too).
+  void selectUsers(const smart::Candidate& c);
 
  protected:
   bool eventFilter(QObject* watched, QEvent* event) override;
@@ -140,7 +143,7 @@ class SmartSelect : public AreaController {
   smart::Candidate m_chosen;   // what the chip, the menu or Ctrl+Up selected last (double-click on it edits it)
   Pending m_pending = Pending::None;
   QTimer m_wait, m_settle, m_dropSnapshot;
-  unsigned m_token = 0, m_switchToken = 0, m_deleteToken = 0, m_chainToken = 0;
+  unsigned m_token = 0, m_switchToken = 0, m_deleteToken = 0, m_chainToken = 0, m_usersToken = 0;
   Job* m_job = nullptr;
   Job* m_chainJob = nullptr;
   bool m_capturing = false;

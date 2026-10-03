@@ -52,7 +52,8 @@
 
 OPAD_ICON_TABLE(smartselect,
   {"smartLoop", R"(<rect x="4" y="6" width="16" height="12" rx="3"/><circle cx="4" cy="12" r="1.8" fill="currentColor"/>)"},
-  {"smartChain", R"(<path d="M3 18c4.5 0 4.5-12 9-12s4.5 12 9 12"/><circle cx="12" cy="6" r="1.8" fill="currentColor"/>)"});
+  {"smartChain", R"(<path d="M3 18c4.5 0 4.5-12 9-12s4.5 12 9 12"/><circle cx="12" cy="6" r="1.8" fill="currentColor"/>)"},
+  {"smartUsers", R"(<circle cx="6" cy="5" r="2.2" fill="currentColor"/><circle cx="18" cy="12" r="2.2"/><circle cx="18" cy="19" r="2.2"/><path d="M6 7.2V16a3 3 0 0 0 3 3h6.8M6 12h9.8"/>)"});
 
 namespace {
 constexpr size_t kMaxPicks = 2000;  // a rubber band over more is no question of what they belong to
@@ -670,6 +671,12 @@ void SmartSelect::showMenu(const QPoint& global) {
   if (const int f = focus(); f >= 0) {
     menu->addSeparator();
     menu->addActions(actionsFor(f, menu));
+    if (const smart::Candidate c = m_found.candidates[size_t(f)]; c.feature()) {
+      QAction* users = menu->addAction(icons::themed("smartUsers", 16), tr("Select what depends on %1").arg(QString::fromStdString(c.name)));
+      users->setObjectName("smartDependents");
+      users->setToolTip(tr("The faces of the later features that use it and would fail without it"));
+      connect(users, &QAction::triggered, this, [this, c] { services().guarded([&] { selectUsers(c); }); });
+    }
   }
   menu->addSeparator();
   menu->addAction(services().action("select.similar"));
@@ -953,6 +960,39 @@ void SmartSelect::deleteFeature(const smart::Candidate& c) {
       if (trace::enabled()) trace::log(QString("smart select: deleting %1 breaks %2 feature(s)").arg(QString::fromStdString(c.name)).arg(deps.size()));
       if (deps.empty()) return commitDelete(c, {c.op});
       askDependents(c, deps, *parts, *hidden);
+    });
+  });
+}
+
+void SmartSelect::selectUsers(const smart::Candidate& c) {
+  if (!c.feature()) return;
+  const AppDocument* doc = services().document();
+  const auto revision = doc->revision, generation = doc->generation;
+  const unsigned token = ++m_usersToken;
+  const QString name = QString::fromStdString(c.name);
+  withSnapshot([this, c, name, token, revision, generation](std::shared_ptr<const opad::Document> document) {
+    if (token != m_usersToken) return;
+    auto users = std::make_shared<smart::Users>();
+    services().jobs()->async(tr("Finding what depends on %1").arg(name), [document, op = c.op, users](Progress p) {
+      *users = smart::usersOf(*document, op, [p] { return p.cancelled(); });
+    }, [this, name, token, users, revision, generation](bool ok, const QString& error) {
+      if (token != m_usersToken) return;
+      if (!ok) {
+        if (error != "cancelled") services().showMessage(i18n::t(error), 8000);
+        return;
+      }
+      const AppDocument* d = services().document();
+      if (d->revision != revision || d->generation != generation) return services().showMessage(tr("The document changed meanwhile; ask again."), 5000);
+      trace::log(QString("smart select: %1 feature(s) depend on %2, %3 face(s)").arg(users->ops.size()).arg(name).arg(users->faces.size()));
+      if (users->ops.empty()) return services().showMessage(tr("Nothing depends on %1: no later feature uses it.").arg(name), 6000);
+      QStringList names;
+      for (const auto& [op, n] : users->ops) names << QString::fromStdString(n);
+      if (TimelineWidget* t = services().timeline()) t->pulse(users->ops.front().first);
+      const QString said = names.size() == 1 ? tr("%1 depends on %2").arg(names.front(), name) : tr("%1 depend on %2").arg(names.join(", "), name);
+      if (users->faces.empty()) return services().showMessage(tr("%1, with no faces of its own to select").arg(said), 8000);
+      services().showMessage(said, 8000);
+      m_stack.push_back(m_current);
+      select(users->faces);
     });
   });
 }

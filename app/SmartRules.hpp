@@ -2,6 +2,7 @@
 // The decisions behind smart selection and Del (TODO 11 UI-95, UI-04), free of widgets so tests/test_smart_select can
 // check them: the related command's candidates as the chip reads them, which one the chip offers, what Del does to a
 // selection of objects and which later features deleting a feature would break.
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -50,5 +51,14 @@ std::vector<opad::json> deletionOps(const Deletion& d, const opad::Scene& scene)
 
 // The later features a plan of deleting `deleted` leaves failing that work now: {op, name}, in history order.
 std::vector<std::pair<std::string, std::string>> dependents(const opad::json& report, const opad::Scene& scene, const std::vector<std::string>& deleted);
+
+// What depends on a feature (Select dependents): the later features deleting it would leave failing, and the faces they
+// made on the bodies they changed (provenance; a sketch, or a feature that made no face of its own, has none). Plans and
+// walks geometry: workers only.
+struct Users {
+  std::vector<std::pair<std::string, std::string>> ops;  // {op, name}, in history order
+  std::vector<opad::Ref> faces;
+};
+Users usersOf(const opad::Document& doc, const std::string& op, const std::function<bool()>& cancel = {});
 
 }  // namespace smart
