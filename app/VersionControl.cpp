@@ -170,6 +170,10 @@ VersionControl::VersionControl(AreaServices& services, GitWatch* git, CompareMod
     if (m_panel && m_tool->isVisible()) m_panel->showState();
   });
   git->setMenuExtension([this](QMenu* m) { extendMenu(m); });
+  if (const int minutes = QSettings().value("git/fetchMinutes", 10).toInt(); minutes > 0) {
+    connect(&m_fetch, &QTimer::timeout, this, &VersionControl::backgroundFetch);
+    m_fetch.start(minutes * 60000);
+  }
   if (compare)  // Compare opened from the panel took its place: the panel comes back when it ends
     connect(compare, &CompareMode::activeChanged, this, [this](bool on) {
       if (!on && std::exchange(m_reopen, false)) openPanel();
@@ -736,6 +740,41 @@ void VersionControl::fetch() {
       done("fetch", true);
     });
   }, git::RunOptions::network());
+}
+
+void VersionControl::backgroundFetch() {
+  const git::Repo& r = m_git->repo();
+  if (!ready() || r.status.upstream.isEmpty() || r.merging || m_running || m_fetching) return;
+  QString remote = r.status.upstream.section('/', 0, 0);
+  for (const QString& name : m_remotes)
+    if (r.status.upstream.startsWith(name + '/')) remote = name;
+  git::Context c = m_git->context();
+  c.askpass.clear();  // nobody is asked to sign in for a fetch they did not start
+  const int before = r.status.behind;
+  const QString upstream = r.status.upstream;
+  m_fetching = true;
+  m_services.jobs()->quiet(tr("Fetching in the background"), [c, remote](Progress p) {
+    git::RunOptions o = git::RunOptions::network();
+    o.idleMs = 60000;
+    o.cancelled = [p] { return p.cancelled(); };
+    git::check(c, {"-c", "credential.interactive=never", "fetch", "--quiet", remote}, o);
+  }, [this, self = QPointer<VersionControl>(this), before, upstream](bool ok, const QString& error) {
+    if (!self) return;
+    m_fetching = false;
+    if (!ok) {
+      if (trace::enabled()) trace::log("version: background fetch: " + error);
+      return done("background fetch", false, error);
+    }
+    auto* link = new QMetaObject::Connection;  // the chip's next read has the count
+    *link = connect(m_git, &GitWatch::changed, this, [this, link, before, upstream] {
+      disconnect(*link);
+      delete link;
+      const git::Status& s = m_git->repo().status;
+      if (s.upstream == upstream && s.behind > before) say(tr("%1 has new commits: %n to pull.", nullptr, s.behind).arg(upstream), tr("Pull"), [this] { pull(); }, 8000);
+      done("background fetch", true);
+    });
+    m_git->refresh();
+  });
 }
 
 void VersionControl::pull() {

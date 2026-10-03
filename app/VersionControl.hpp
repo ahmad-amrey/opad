@@ -6,6 +6,7 @@
 //             suggested from the semantic diff of the last commit and this session, the author checked first, amend while
 //             not pushed, push after; then a look at the loose objects (Pack offered).
 //   Push      -u <remote> <branch> the first time (a remote added first when there is none), warnings about big files.
+//   Fetch     also in the background every 10 minutes (setting git/fetchMinutes), quietly, never asking for a sign-in.
 //   Pull      fetch, then the incoming commits and what they change in the document (the driver's merge done on a worker:
 //             conflicts, design changed on both sides) with Preview in Compare and Merge.
 //   Branches  switch (unsaved and uncommitted changes asked about first), create (here or from a commit), delete, merge
@@ -48,6 +49,9 @@ class VersionControl : public QObject {
   void push();
   void pull();
   void fetch();
+  // Every git/fetchMinutes (10; 0: never) while the branch follows a remote: a quiet fetch that never asks anyone to sign
+  // in, so the chip's ↓ count is current; new commits there are said once, with Pull.
+  void backgroundFetch();
   void newBranch(const QString& start = {}, const QString& startLabel = {});
   void switchTo(const git::Branch& branch);
   void mergeBranch(const QString& name);
@@ -123,7 +127,8 @@ class VersionControl : public QObject {
   int m_running = 0;  // commands of ours
   unsigned m_generation = 0;
   QString m_listed;  // the repository and document the lists are of
-  QTimer m_reload;
+  QTimer m_reload, m_fetch;
+  bool m_fetching = false;
   QString m_lastFailure, m_lastDone, m_lastOpened;  // benches
   int m_page = History;
   bool m_reopen = false;  // Compare took the panel's place: back when it ends

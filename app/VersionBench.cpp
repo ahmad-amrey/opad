@@ -388,6 +388,15 @@ bool VersionControl::bench(const QString& prefix) {
       },
       [=, this] {
         if (!outside() || !idle()) return false;
+        backgroundFetch();
+        return true;
+      },
+      [=, this] {  // the background fetch: the chip's count, said once with Pull
+        if (!idle() || m_lastDone.isEmpty()) return false;
+        require(finished("background fetch") && m_git->repo().status.behind == 1, "fetched in the background: one behind");
+        require(toast(tr("%1 has new commits: %n to pull.", nullptr, 1).arg("origin/main")), "new commits said");
+        require(m_git->chip()->property("text").toString().contains(tr("↓%1").arg(1)), "the chip's ↓1");
+        pass("fetched in the background: the chip shows ↓1, Pull offered");
         m_services.action("vcs.pull")->trigger();
         return true;
       },
