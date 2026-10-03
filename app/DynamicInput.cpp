@@ -9,6 +9,7 @@
 #include <QCursor>
 #include <QEnterEvent>
 #include <QFocusEvent>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QKeySequenceEdit>
@@ -34,12 +35,12 @@ QString hint(const QString& tip) {
 
 DynamicInput::DynamicInput(QWidget* view,QWidget* host) : QWidget(host?host:view),m_view(view),m_embedded(host!=nullptr) {
   setObjectName("dynamicInput");setLayoutDirection(Qt::LeftToRight);
-  auto* row=new QHBoxLayout(this);row->setSpacing(4);
-  if(m_embedded)row->setContentsMargins(0,0,0,0);
+  if(m_embedded){auto* row=new QHBoxLayout(this);row->setSpacing(4);row->setContentsMargins(0,0,0,0);}
   else {
-    // A native child over OpenGL paints every pixel (holes come out black on Windows); the corners go by a mask.
-    setAttribute(Qt::WA_NativeWindow);setAttribute(Qt::WA_StyledBackground);setAutoFillBackground(true);setFixedHeight(28);
-    row->setContentsMargins(8,2,4,2);
+    // A native child over OpenGL paints every pixel (holes come out black on Windows): it covers the view, masked to the
+    // rounded boxes, so the rest of the view is the view's.
+    setAttribute(Qt::WA_NativeWindow);setAttribute(Qt::WA_StyledBackground);setAutoFillBackground(true);
+    setGeometry(view->rect());view->installEventFilter(this);
   }
   connect(theme::notifier(),&theme::Notifier::changed,this,[this]{m_look=-1;restyle();});
   restyle();
@@ -66,15 +67,19 @@ void DynamicInput::setFields(const QList<Field>& fields) {
     giveBack();
     // Later: this can run inside a box's own key event (Enter placed the point, the next step has other boxes).
     for(auto& box:m_boxes) {
-      box.edit->removeEventFilter(this);box.edit->disconnect(this);box.label->hide();box.edit->hide();box.label->deleteLater();box.edit->deleteLater();
-      if(box.chip){box.chip->disconnect(this);box.chip->hide();box.chip->deleteLater();}
+      box.edit->removeEventFilter(this);box.edit->disconnect(this);if(box.chip)box.chip->disconnect(this);
+      for(QWidget* w:std::initializer_list<QWidget*>{box.label,box.edit,box.chip,box.pill})if(w){w->hide();w->deleteLater();}
     }
     m_boxes.clear();m_current=-1;
-    auto* row=static_cast<QHBoxLayout*>(layout());
     for(const auto& field:fields) {
       Box box;box.field=field;
-      box.label=new QLabel(field.label,this);
-      box.edit=new QLineEdit(this);box.edit->setObjectName("dynamicInput-"+field.key);box.edit->setFrame(false);
+      QWidget* holder=this;auto* row=static_cast<QHBoxLayout*>(layout());
+      if(!m_embedded) {
+        box.pill=new QFrame(this);box.pill->setObjectName("dynamicInputPill");box.pill->setFixedHeight(28);holder=box.pill;
+        row=new QHBoxLayout(box.pill);row->setSpacing(4);row->setContentsMargins(8,2,4,2);
+      }
+      box.label=new QLabel(field.label,holder);
+      box.edit=new QLineEdit(holder);box.edit->setObjectName("dynamicInput-"+field.key);box.edit->setFrame(false);
       box.edit->setToolTip(hint(field.tip));
       box.edit->installEventFilter(this);
       box.lock=box.edit->addAction(icons::icon("lock",theme::current().sel),QLineEdit::TrailingPosition);box.lock->setVisible(false);
@@ -83,11 +88,12 @@ void DynamicInput::setFields(const QList<Field>& fields) {
       row->addWidget(box.label);row->addWidget(box.edit);box.label->show();box.edit->show();
       const int index=int(m_boxes.size());
       if(!field.chip.isEmpty()) {
-        box.chip=new QToolButton(this);box.chip->setObjectName("dynamicInputChip");box.chip->setFocusPolicy(Qt::NoFocus);box.chip->setCursor(Qt::PointingHandCursor);
+        box.chip=new QToolButton(holder);box.chip->setObjectName("dynamicInputChip");box.chip->setFocusPolicy(Qt::NoFocus);box.chip->setCursor(Qt::PointingHandCursor);
         row->addWidget(box.chip);box.chip->show();
         connect(box.chip,&QToolButton::clicked,this,[this,index]{if(index<count())emit chipClicked(m_boxes[index].field.key);});
       }
       connect(box.edit,&QLineEdit::textEdited,this,[this,index]{edited(index);});
+      if(box.pill)box.pill->show();
       m_boxes.push_back(box);
     }
     if(typedBefore)emit typedChanged();
@@ -205,25 +211,73 @@ void DynamicInput::giveBack() {
   if(editing() && m_view)m_view->setFocus(Qt::OtherFocusReason);
 }
 
-void DynamicInput::placeNear(const QPoint& cursor) {
-  m_cursor=cursor;
-  if(m_embedded)return;
-  auto* view=parentWidget();if(!view)return;
-  constexpr int gap=20;
-  int x=cursor.x()+gap,y=cursor.y()+gap;
-  if(x+width()>view->width())x=cursor.x()-gap-width();
-  if(y+height()>view->height())y=cursor.y()-gap-height();
-  const QPoint at(std::clamp(x,0,std::max(0,view->width()-width())),std::clamp(y,0,std::max(0,view->height()-height())));
-  if(at!=pos())move(at);
+void DynamicInput::placeNear(const QPoint& cursor,const QList<Anchor>& anchors) {
+  m_cursor=cursor;m_anchors=anchors;
+  arrange();
 }
 
-// The pointer ran into the boxes (they follow it a little behind): out of its way, unless they are being typed into.
+// The anchored boxes off their points (6 pixels past what they measure, the way out), the others in a row 20 pixels beside
+// the pointer (turned back at the view's edges); a box that would cover another moves on its way until it does not.
+void DynamicInput::arrange() {
+  if(m_embedded)return;
+  for(int i=0;i<count();++i)if(m_boxes[i].label->isHidden()!=anchored(i)) {
+    m_boxes[i].label->setHidden(anchored(i));m_boxes[i].pill->layout()->invalidate();m_boxes[i].pill->resize(m_boxes[i].pill->sizeHint());
+  }
+  constexpr int gap=20,spacing=4;
+  int rowWidth=-spacing,rowHeight=0;
+  for(int i=0;i<count();++i)if(!anchored(i)){rowWidth+=m_boxes[i].pill->width()+spacing;rowHeight=std::max(rowHeight,m_boxes[i].pill->height());}
+  int x=m_cursor.x()+gap,y=m_cursor.y()+gap;
+  if(x+rowWidth>width())x=m_cursor.x()-gap-rowWidth;
+  if(y+rowHeight>height())y=m_cursor.y()-gap-rowHeight;
+  x=std::clamp(x,0,std::max(0,width()-rowWidth));y=std::clamp(y,0,std::max(0,height()-rowHeight));
+  std::vector<QRect> placed;QRegion region;
+  for(int i=0;i<count();++i) {
+    QWidget* pill=m_boxes[i].pill;QRect r(QPoint(),pill->size());QPointF way(0,1);
+    if(anchored(i)) {
+      const double length=std::hypot(m_anchors[i].out.x(),m_anchors[i].out.y());
+      if(length>1e-9)way=m_anchors[i].out/length;
+      const double reach=6+std::abs(way.x())*r.width()/2+std::abs(way.y())*r.height()/2;
+      r.moveCenter((m_anchors[i].at+way*reach).toPoint());
+    } else {r.moveTopLeft(QPoint(x,y));x+=r.width()+spacing;}
+    auto covers=[&]{return std::any_of(placed.begin(),placed.end(),[&](const QRect& p){return p.adjusted(-2,-2,2,2).intersects(r);});};
+    auto inside=[&]{r.moveTo(std::clamp(r.left(),0,std::max(0,width()-r.width())),std::clamp(r.top(),0,std::max(0,height()-r.height())));};
+    inside();
+    for(int n=0;n<60 && covers();++n){r.moveCenter((QPointF(r.center())+way*4).toPoint());inside();}
+    for(int n=0;n<60 && covers();++n){r.translate(0,r.center().y()>height()/2?-4:4);inside();}  // held at an edge: up or down
+    if(pill->geometry()!=r)pill->setGeometry(r);
+    placed.push_back(r);
+    QPainterPath path;path.addRoundedRect(QRectF(r),5,5);region+=QRegion(path.toFillPolygon().toPolygon());
+  }
+  if(region.isEmpty())region=QRegion(0,0,1,1);  // an empty mask is none: the whole view
+  if(region!=mask())setMask(region);
+}
+
+QRect DynamicInput::boxesRect() const {
+  if(m_embedded)return geometry();
+  QRect out;
+  for(const auto& box:m_boxes)out|=box.pill->geometry();
+  return out;
+}
+
+QPixmap DynamicInput::shot() {
+  if(m_embedded)return grab();
+  const QRect r=boxesRect();  // only what shows: the boxes, not the masked view between them
+  QPixmap pixmap(r.size()*devicePixelRatioF());pixmap.setDevicePixelRatio(devicePixelRatioF());pixmap.fill(Qt::transparent);
+  render(&pixmap,QPoint(),mask()&QRegion(r));
+  return pixmap;
+}
+
+// The pointer ran into the boxes beside it (they follow it a little behind): out of its way, unless they are typed into.
 void DynamicInput::enterEvent(QEnterEvent* e) {
   QWidget::enterEvent(e);
-  if(!m_embedded && !typed() && !editing() && parentWidget())placeNear(parentWidget()->mapFromGlobal(QCursor::pos()));
+  if(!m_embedded && !typed() && !editing())placeNear(mapFromGlobal(QCursor::pos()),m_anchors);
 }
 
 bool DynamicInput::eventFilter(QObject* target,QEvent* event) {
+  if(target==m_view) {  // it covers the view
+    if(event->type()==QEvent::Resize && !m_embedded)setGeometry(m_view->rect());
+    return QWidget::eventFilter(target,event);
+  }
   int index=-1;
   for(int i=0;i<count();++i)if(m_boxes[i].edit==target)index=i;
   if(index<0)return QWidget::eventFilter(target,event);
@@ -299,7 +353,8 @@ void DynamicInput::restyle() {
     m_look=look;
     auto palette=this->palette();palette.setColor(QPalette::Window,t.bg2);setPalette(palette);
     const QString frame=m_embedded?QString("#dynamicInput { background: transparent; border: none; }")  // the host draws it
-                                  :QString("#dynamicInput { background: %1; border: 1px solid %2; border-radius: 5px; }").arg(theme::css(t.bg2),theme::css(active?t.sel:t.line));
+                                  :QString("#dynamicInput { background: %1; border: none; } #dynamicInputPill { background: %1; border: 1px solid %2; border-radius: 5px; }"
+                                           "#dynamicInputPill[active=\"true\"] { border-color: %3; }").arg(theme::css(t.bg2),theme::css(t.line),theme::css(t.sel));
     setStyleSheet(frame+QString("#dynamicInput QLabel { color: %1; font-size: 11px; }"
                                 "#dynamicInput QLineEdit { background: transparent; color: %2; border: 1px solid transparent; border-radius: 3px; padding: 0 2px; font-family: '%3'; font-size: 12px; selection-background-color: %4; }"
                                 "#dynamicInput QLineEdit[current=\"true\"] { background: %4; }"
@@ -321,6 +376,9 @@ void DynamicInput::restyle() {
       edit->style()->unpolish(edit);edit->style()->polish(edit);
     }
     if(m_boxes[i].lock->isVisible()!=locked){m_boxes[i].lock->setVisible(locked);fit();}
+    if(QWidget* pill=m_boxes[i].pill;pill && pill->property("active").toBool()!=(current || typedBox)) {  // typed into, or typed: accent
+      pill->setProperty("active",current || typedBox);pill->style()->unpolish(pill);pill->style()->polish(pill);
+    }
   }
 }
 
@@ -333,10 +391,12 @@ void DynamicInput::fit() {
     const int width=std::clamp(box.edit->fontMetrics().horizontalAdvance(shown+"  ")+8,box.edit->fontMetrics().horizontalAdvance("-0000.00")+8,220)+(box.lock->isVisible()?18:0);
     if(box.edit->width()!=width || box.edit->minimumWidth()!=width){box.edit->setFixedWidth(width);resized=true;}
   }
-  if(resized){adjustSize();placeNear(m_cursor);if(m_embedded && parentWidget())parentWidget()->adjustSize();}
+  if(m_embedded){if(resized){adjustSize();if(parentWidget())parentWidget()->adjustSize();}return;}
+  for(auto& box:m_boxes)if(box.pill->size()!=box.pill->sizeHint())box.pill->resize(box.pill->sizeHint());  // a label or a switch changed too
+  arrange();
 }
 
 void DynamicInput::resizeEvent(QResizeEvent* e) {
   QWidget::resizeEvent(e);
-  QPainterPath path;path.addRoundedRect(QRectF(rect()),5,5);setMask(QRegion(path.toFillPolygon().toPolygon()));
+  arrange();
 }

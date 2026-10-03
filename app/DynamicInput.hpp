@@ -4,12 +4,15 @@
 // over the view or a tool panel (a digit starts the first box); the boxes then have the keyboard: Tab / Shift+Tab (or a
 // comma) go round them, Enter is the tool's (it uses the typed values), Esc undoes the edit, then drops the typed values,
 // then is the tool's; Backspace in an empty box takes the tool's last point back; Up/Down or the wheel step a value.
-// Rules without widgets: InputKeys.hpp. A native child of the view (it sits over OpenGL), rounded by a mask; numbers stay
-// left to right. A typed value the box is not being typed into is locked (accent border, padlock); one that does not
-// evaluate is red, its tooltip says why. Embedded in another widget (the DimensionHandle by an arrow), one box that holds
+// Rules without widgets: InputKeys.hpp. A native child that covers the view (it sits over OpenGL), masked to its boxes:
+// each box is a rounded box of its own, in a row beside the pointer or, anchored, on what it measures (a length beside the
+// rubber band's middle, an angle past its arc; UI-17), never over another; numbers stay left to right. A typed value the
+// box is not being typed into is locked (accent border, padlock); one that does not evaluate is red, its tooltip says why. Embedded in another widget (the DimensionHandle by an arrow), one box that holds
 // its value (`valued`) gets the same keys: the first key typed replaces the value, Esc undoes, then gives the keyboard back.
 #include <QList>
+#include <QPixmap>
 #include <QPoint>
+#include <QPointF>
 #include <QString>
 #include <QWidget>
 #include <functional>
@@ -54,7 +57,16 @@ class DynamicInput : public QWidget {
   QString problem(const QString& key) const;
   // A key about to be typed into box `index`: true when the tool took it (a prefix that switches its boxes).
   void setKeyHook(std::function<bool(int index, QChar c)> hook) { m_keyHook = std::move(hook); }
-  void placeNear(const QPoint& cursor);      // beside the pointer (view coordinates), never under it
+  // Where a box sits: off `at` (view coordinates) the way `out` points, its label left out (the place says what it is).
+  struct Anchor {
+    bool on = false;
+    QPointF at, out;
+  };
+  // The boxes anchored where they measure (by index), the others in a row beside the pointer (view coordinates), never
+  // under it.
+  void placeNear(const QPoint& cursor, const QList<Anchor>& anchors = {});
+  QRect boxesRect() const;  // where the boxes are, in the view
+  QPixmap shot();           // the boxes as shown (benches)
   // Where a typed key may be the tool's: the view's window or one of its tool panels, and not a text field there.
   static bool takesKeysFrom(QWidget* view, QObject* target);
  signals:
@@ -74,6 +86,7 @@ class DynamicInput : public QWidget {
  private:
   struct Box {
     Field field;
+    QWidget* pill = nullptr;  // the box's own rounded frame (not embedded)
     QLabel* label = nullptr;
     QLineEdit* edit = nullptr;
     QAction* lock = nullptr;
@@ -90,7 +103,10 @@ class DynamicInput : public QWidget {
   void giveBack();  // a box had the keyboard: back to the view
   void restyle();
   void fit();
+  void arrange();  // the boxes placed, the mask on them
+  bool anchored(int index) const { return index < m_anchors.size() && m_anchors[index].on; }
   QList<Box> m_boxes;
+  QList<Anchor> m_anchors;
   int m_current = -1;
   bool m_wasTyped = false;
   int m_look = -1;

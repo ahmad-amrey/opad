@@ -316,7 +316,20 @@ void SketchEditor::updateInput() {
     if (m_input->isVisible()) m_input->hide();
     return;
   }
-  m_input->placeNear(m_haveCursor ? m_viewport->widgetPoint(m_frame.to_world(m_pointer.u, m_pointer.v)) : QPoint(m_viewport->width() / 2, m_viewport->height() / 2));
+  // A box whose value the rubber band reads out sits there, on what it measures (UI-17); the others beside the pointer.
+  QList<DynamicInput::Anchor> anchors;
+  const auto marks = readouts();
+  const double px = m_viewport->pixelSize();
+  for (int i = 0; i < m_input->count() && !marks.empty(); ++i) {
+    DynamicInput::Anchor anchor;
+    for (const auto& r : marks)
+      if (r.key == m_input->key(i) && boxed(r.key)) {
+        const QPoint at = m_viewport->widgetPoint(m_frame.to_world(r.bu, r.bv)), to = m_viewport->widgetPoint(m_frame.to_world(r.bu + r.bx * 50 * px, r.bv + r.by * 50 * px));
+        if (m_viewport->rect().adjusted(20, 20, -20, -20).contains(at)) anchor = {true, QPointF(at), QPointF(to - at)};  // off the view: beside the pointer
+      }
+    anchors << anchor;
+  }
+  m_input->placeNear(m_haveCursor ? m_viewport->widgetPoint(m_frame.to_world(m_pointer.u, m_pointer.v)) : QPoint(m_viewport->width() / 2, m_viewport->height() / 2), anchors);
   if (!m_input->isVisible()) {
     m_input->show();
     m_input->raise();
@@ -517,6 +530,12 @@ bool SketchEditor::useTyped(const Snap* at) {
   return true;
 }
 
+bool SketchEditor::boxed(const QString& key) const {
+  if (!m_input || (m_dimensionHandle && m_dimensionHandle->isVisible())) return false;
+  const auto fields = inputStage();
+  return std::any_of(fields.begin(), fields.end(), [&](const DynamicInput::Field& f) { return f.key == key && !f.option; });
+}
+
 // What the rubber band reads out as it goes (UI-17): the step's sizes where they are measured (a segment's length beside
 // its middle, its angle on an arc from what it is measured from, a rectangle's width under it and height beside it), a
 // typed one held (drawn locked).
@@ -535,6 +554,9 @@ std::vector<SketchEditor::Readout> SketchEditor::readouts() const {
   const QFontMetricsF metrics(theme::ui());
   auto place = [&](Readout& r, double x, double y, double ox, double oy, double gap) {
     r.ox = ox, r.oy = oy;
+    r.bu = x + ox * (gap - 6) * px;  // a box sits 6 pixels past what it measures
+    r.bv = y + oy * (gap - 6) * px;
+    r.bx = ox, r.by = oy;
     r.ext = (std::fabs(ox) * metrics.horizontalAdvance(r.text) / 2 + std::fabs(oy) * metrics.height() / 2) * px;
     r.u = x + ox * (gap * px + r.ext);
     r.v = y + oy * (gap * px + r.ext);
@@ -547,6 +569,7 @@ std::vector<SketchEditor::Readout> SketchEditor::readouts() const {
     double nx = -dy / l, ny = dx / l;
     if (side < 0 || (!side && (ny < -1e-12 || (std::fabs(ny) <= 1e-12 && nx < 0)))) nx = -nx, ny = -ny;
     Readout r;
+    r.key = key;
     r.locked = typed(key);
     r.text = length(l * scale, r.locked, prefix);
     r.leader = leader;
@@ -558,11 +581,16 @@ std::vector<SketchEditor::Readout> SketchEditor::readouts() const {
   auto angle = [&](const char* key, double x, double y, double from, double sweep) {
     Readout r;
     r.cu = x, r.cv = y, r.r = 40 * px, r.from = from, r.sweep = sweep;
+    r.key = key;
     r.locked = typed(key);
     QString text = QString::number(sweep * 180 / M_PI, r.locked ? 'g' : 'f', r.locked ? 10 : 1);
     if (text == "-0" || text == "-0.0") text.remove(0, 1);
     r.text = text + QStringLiteral("°");
     place(r, x, y, std::cos(from + sweep / 2), std::sin(from + sweep / 2), 46);
+    if (std::fabs(sweep) < M_PI / 3) {  // too narrow for a box: beside the arc's start, outside the angle (over no line)
+      const double way = from - (sweep < 0 ? -1 : 1) * M_PI / 7;
+      r.bx = std::cos(way), r.by = std::sin(way), r.bu = x + r.bx * 40 * px, r.bv = y + r.by * 40 * px;
+    }
     out.push_back(r);
   };
   // A length and its angle from `from` at (x, y): the length on the other side of the line from the angle's arc.
@@ -585,8 +613,8 @@ std::vector<SketchEditor::Readout> SketchEditor::readouts() const {
       const double x0 = m_tool == "crect" ? a.u - w : std::min(a.u, cu), x1 = m_tool == "crect" ? a.u + w : std::max(a.u, cu);
       const double y0 = m_tool == "crect" ? a.v - h : std::min(a.v, cv), y1 = m_tool == "crect" ? a.v + h : std::max(a.v, cv);
       Readout width, height;
-      width.locked = typed("width"), width.text = length(x1 - x0, width.locked, {});
-      height.locked = typed("height"), height.text = length(y1 - y0, height.locked, {});
+      width.key = "width", width.locked = typed("width"), width.text = length(x1 - x0, width.locked, {});
+      height.key = "height", height.locked = typed("height"), height.text = length(y1 - y0, height.locked, {});
       place(width, (x0 + x1) / 2, y0, 0, -1, 6);
       place(height, x1, (y0 + y1) / 2, 1, 0, 6);
       out.push_back(width);

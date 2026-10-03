@@ -191,7 +191,8 @@ class SketchEditor : public QObject, public SketchInput {
   // A size or an angle the rubber band reads out, at (u, v); an angle's arc about (cu, cv) of radius r > 0 from the direction
   // `from` through `sweep`, a size's leader from (fu, fv) to (tu, tv) where the rubber band does not draw it already.
   struct Readout {
-    double u = 0, v = 0;
+    QString key;  // the box that takes it: that box sits there instead of the text (off (bu, bv) the way (bx, by))
+    double u = 0, v = 0, bu = 0, bv = 0, bx = 0, by = 1;
     QString text;
     bool locked = false;  // typed: it holds
     double ox = 0, oy = 1, ext = 0;  // the way it sits off what it measures, how far it reaches that way (its padlock beyond)
@@ -200,6 +201,7 @@ class SketchEditor : public QObject, public SketchInput {
     double fu = 0, fv = 0, tu = 0, tv = 0;
   };
   std::vector<Readout> readouts() const;
+  bool boxed(const QString& key) const;               // a box of the step takes that readout's value (and sits on it)
   QStringList transientTexts() const;                 // what the rubber band reads out (benches)
   Hit hitTest(double u, double v) const;
   double tol() const;  // pick distance in sketch units

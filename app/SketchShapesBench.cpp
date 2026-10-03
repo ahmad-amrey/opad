@@ -5,7 +5,10 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QElapsedTimer>
+#include <QFileInfo>
 #include <QKeyEvent>
+#include <QLineEdit>
+#include <QPainter>
 #include <QSettings>
 #include <QToolButton>
 #include <cmath>
@@ -82,7 +85,44 @@ void SketchEditor::benchShapes() {
   };
   auto held = [this, same](double u, double v) { return m_cursor.kind == Snap::Kind::Typed && same(m_cursor.u, u) && same(m_cursor.v, v); };
   auto where = [this] { return QString("(%1, %2)").arg(m_cursor.u, 0, 'g', 12).arg(m_cursor.v, 0, 'g', 12); };
-  auto reads = [this](const QString& text) { return transientTexts().contains(text); };
+  // Read out on the rubber band: drawn there, or shown by the box that sits there.
+  auto reads = [this](const QString& text) {
+    const auto marks = readouts();
+    return transientTexts().contains(text) || std::any_of(marks.begin(), marks.end(), [&](const Readout& r) { return r.text == text && boxed(r.key); });
+  };
+  // Box `index` sits off what it measures: its nearest edge within `reach` pixels of (u, v) in the sketch.
+  auto sits = [this](int index, double u, double v, int reach) {
+    QLineEdit* edit = m_input->box(index);
+    if (!edit || !m_input->isVisible()) return false;
+    const QRect r(edit->parentWidget()->geometry());
+    const QPoint p = m_viewport->widgetPoint(m_frame.to_world(u, v));
+    const int dx = std::max({r.left() - p.x(), 0, p.x() - r.right()}), dy = std::max({r.top() - p.y(), 0, p.y() - r.bottom()});
+    return std::hypot(dx, dy) <= reach;
+  };
+  // Box `index` covers no part of the segment (u0, v0) - (u1, v1).
+  auto clear = [this](int index, double u0, double v0, double u1, double v1) {
+    QLineEdit* edit = m_input->box(index);
+    if (!edit) return false;
+    const QRect r(edit->parentWidget()->geometry());
+    for (int i = 0; i <= 64; ++i)
+      if (r.contains(m_viewport->widgetPoint(m_frame.to_world(u0 + (u1 - u0) * i / 64, v0 + (v1 - v0) * i / 64)))) return false;
+    return true;
+  };
+  // The view with the boxes over it (the view's own grab leaves the native boxes out).
+  auto shot = [this, check](const QString& path) {
+    bool apart = true;
+    for (int i = 0; i < m_input->count(); ++i)
+      for (int j = i + 1; j < m_input->count(); ++j) apart = apart && !m_input->box(i)->parentWidget()->geometry().intersects(m_input->box(j)->parentWidget()->geometry());
+    check(apart, "no box covers another: " + QFileInfo(path).fileName());
+    QImage image = m_viewport->grabImage();
+    const double scale = double(image.width()) / std::max(1, m_viewport->width());
+    if (m_input->isVisible()) {
+      QPainter painter(&image);
+      const QRect r = m_input->boxesRect();
+      painter.drawPixmap(QRectF(r.x() * scale, r.y() * scale, r.width() * scale, r.height() * scale), m_input->shot(), QRectF());
+    }
+    image.save(path);
+  };
   const double degree = M_PI / 180;
   // One part per turn of the event loop (the view repaints between them), each checking as it goes.
   auto steps = std::make_shared<std::vector<std::function<void()>>>();
@@ -112,8 +152,12 @@ void SketchEditor::benchShapes() {
     type("30");
     const double x1 = 50 * std::cos(30 * degree), y1 = 50 * std::sin(30 * degree);
     check(held(x1, y1) && reads("50 mm") && reads(QString::fromUtf8("30°")), "Tab 30 turns it to 30 degrees, read out by its length and angle " + where());
-    m_viewport->grabImage().save(prefix + ".line.png");
-    m_input->grab().save(prefix + ".line-input.png");
+    const double arc = 40 * m_viewport->pixelSize();
+    check(sits(0, x1 / 2, y1 / 2, 30) && !sits(0, 0, 0, 30) && sits(1, arc * std::cos(-M_PI / 7), arc * std::sin(-M_PI / 7), 30) && clear(0, 0, 0, x1, y1) && clear(1, 0, 0, x1, y1) &&
+              !transientTexts().contains("50 mm"),
+          "the length box sits by the line's middle, the angle box by its arc's start, outside the narrow angle, neither over the line (their values not drawn twice)");
+    shot(prefix + ".line.png");
+    m_input->shot().save(prefix + ".line-input.png");
     enter();
     const int first = lineBetween(0, 0, x1, y1);
     check(first && m_chain.size() == 2, "Line 50 Tab 30 Enter: a line from the origin to exactly 50 at 30 degrees");
@@ -138,7 +182,7 @@ void SketchEditor::benchShapes() {
     type("45");
     const double x3 = x2 + 20 * std::cos(165 * degree), y3 = y2 + 20 * std::sin(165 * degree);
     check(held(x3, y3) && reads(QString::fromUtf8("45°")), "20 Tab 45 from the last line (at 120) goes off at 165 " + where());
-    m_viewport->grabImage().save(prefix + ".relative.png");
+    shot(prefix + ".relative.png");
     enter();
     const int third = lineBetween(x2, y2, x3, y3);
     check(third && has(CT::Distance, {third}, 20) && has(CT::Angle, {second, third}, 45 * degree), "and is held at 45 degrees to it");
@@ -170,8 +214,9 @@ void SketchEditor::benchShapes() {
     tab();
     type("25");
     check(held(50, 35) && reads("40 mm") && reads("25 mm"), "40 Tab 25 holds the opposite corner at (50, 35), read out under and beside it " + where());
-    m_viewport->grabImage().save(prefix + ".rect.png");
-    m_input->grab().save(prefix + ".rect-input.png");
+    check(sits(0, 30, 10, 30) && sits(1, 50, 22.5, 30), "the width box sits under the rectangle's bottom, the height box beside its right side");
+    shot(prefix + ".rect.png");
+    m_input->shot().save(prefix + ".rect-input.png");
     enter();
     const int bottom = lineBetween(10, 10, 50, 10), right = lineBetween(50, 10, 50, 35);
     check(bottom && right && lineBetween(50, 35, 10, 35) && lineBetween(10, 35, 10, 10) && m_clicks.empty(), "a 40 x 25 rectangle from (10, 10), exactly");
@@ -205,7 +250,7 @@ void SketchEditor::benchShapes() {
     check(m_clicks.size() == 2 && m_input->count() == 1 && m_input->key(0) == "width", "then the slot's box is its width");
     type("8");
     check(held(30, -36) && reads("8 mm"), "8 holds it 4 off the centre line (on its left: no pointer) " + where());
-    m_viewport->grabImage().save(prefix + ".slot.png");
+    shot(prefix + ".slot.png");
     enter();
     const int top = lineBetween(0, -36, 30, -36), under = lineBetween(30, -44, 0, -44), centres = lineBetween(0, -40, 30, -40);
     bool caps = true;
@@ -431,7 +476,7 @@ void SketchEditor::benchShapes() {
     type("30");
     check(option("chamferMode") == "angle" && m_input->key(1) == "chamferAngle" && option("first") == "4" && option("chamferAngle") == "30",
           "4<30: the distance 4, then ('<') the angle 30 to the first line");
-    m_input->grab().save(prefix + ".chamfer-input.png");
+    m_input->shot().save(prefix + ".chamfer-input.png");
     enter();
   });
   step([=] {
@@ -460,7 +505,7 @@ void SketchEditor::benchShapes() {
     type("3");
     check(option("moveMode") == "polar" && m_input->key(0) == "moveDistance" && option("moveDistance") == "15" && option("moveAngle") == "90" && option("copies") == "3",
           "15<90 Tab 3: a distance of 15 at 90 degrees, three copies");
-    m_input->grab().save(prefix + ".copy-input.png");
+    m_input->shot().save(prefix + ".copy-input.png");
     enter();
   });
   step([=] {
@@ -496,7 +541,7 @@ void SketchEditor::benchShapes() {
     tab();
     type("-80");
     check(option("height") == "12" && held(200, -80), "Tab 12 Tab 200 Tab -80: 12 high, held at (200, -80) " + where());
-    m_input->grab().save(prefix + ".text-input.png");
+    m_input->shot().save(prefix + ".text-input.png");
     enter();
   });
   step([=] {

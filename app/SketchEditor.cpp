@@ -1281,6 +1281,7 @@ void SketchEditor::updateTransient() {
                             W(r.cu + r.r * std::cos(r.from + r.sweep * (i + 1) / n), r.cv + r.r * std::sin(r.from + r.sweep * (i + 1) / n)), color});
         d.dashed.push_back({W(r.cu, r.cv), W(r.cu + (r.r + 12 * px) * std::cos(r.from), r.cv + (r.r + 12 * px) * std::sin(r.from)), color});
       }
+      if (boxed(r.key)) continue;  // its box sits there and shows it
       d.texts.push_back({W(r.u, r.v), r.text, color});
       if (r.locked) {  // a padlock past the value: its body and its shackle
         const double x = r.u + r.ox * (r.ext + 10 * px), y = r.v + r.oy * (r.ext + 10 * px) - 1.5 * px, w = 4 * px, h = 3 * px;

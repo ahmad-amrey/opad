@@ -2759,7 +2759,8 @@ void MainWindow::runBench() {
   if (const QString shot = qEnvironmentVariable("OPAD_BENCH_DESIGN"); !shot.isEmpty()) {
     setWorkspace(1);
     m_design->bench();
-    QTimer::singleShot(qEnvironmentVariableIsSet("OPAD_BENCH_RULE") ? 13000 : 9000, this, [this, shot] {
+    // The keyboard shapes bench ends itself; this is its fallback (a loaded machine took it past 9 s).
+    QTimer::singleShot(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SHAPES") ? 60000 : qEnvironmentVariableIsSet("OPAD_BENCH_RULE") ? 13000 : 9000, this, [this, shot] {
       trace::log(QStringLiteral("bench: design: %1 bodies, %2 features, %3 unresolved").arg(m_doc->scene.all_bodies().size()).arg(m_doc->scene.features.size()).arg(m_doc->scene.unresolved.size()));
       m_viewport->benchDesignShot(shot);
       if (const QByteArray ui = qgetenv("OPAD_BENCH_UISHOT"); !ui.isEmpty()) grab().save(QString::fromLocal8Bit(ui));

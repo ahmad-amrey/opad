@@ -87,14 +87,14 @@ void SketchEditor::benchKeys() {
   check(m_input->isVisible() && m_input->count() == 1 && m_input->key(0) == "distance" && m_input->box(0)->placeholderText() == "5 mm" && !m_dimensionHandle->isVisible(),
         "the offset shows its distance box beside the pointer before anything is picked");
   const QPoint pointer = m_viewport->widgetPoint(m_frame.to_world(20, 45));
-  check(!m_input->geometry().contains(pointer) && m_input->geometry().adjusted(-40, -40, 40, 40).contains(pointer), "the box sits beside the pointer, never under it");
+  check(!m_input->boxesRect().contains(pointer) && m_input->boxesRect().adjusted(-40, -40, 40, 40).contains(pointer), "the box sits beside the pointer, never under it");
   type("1", true);
   check(QApplication::focusWidget() == m_input->box(0), "a digit typed over the view starts the box, which takes the keyboard");
   type("2");
   check(option("distance") == "12" && box(0) == "12" && m_input->typed() && m_tool == "offset" && sameStyle(),
         "a keypad digit and a top-row digit type 12 (no display style, no filter change)");
   check(keyHints().contains("Enter use typed values") && keyHints().contains("Esc drop typed values"), "the prompt says what Enter and Esc do with the typed value");
-  m_input->grab().save(prefix + ".offset-input.png");
+  m_input->shot().save(prefix + ".offset-input.png");
   send(Qt::Key_Return);
   check(option("distance") == "12" && !m_input->typed() && m_input->box(0)->placeholderText() == "12" && m_tool == "offset" && m_sel.empty(),
         "Enter with nothing picked keeps 12 waiting");
@@ -184,7 +184,7 @@ void SketchEditor::benchKeys() {
         send(Qt::Key_Tab);
         check(m_input->current() == 1 && QApplication::focusWidget() == m_input->box(1) && box(0) == "10", "Tab goes from X to Y and keeps 10");
         type("50");
-        m_input->grab().save(prefix + ".point-input.png");
+        m_input->shot().save(prefix + ".point-input.png");
         send(Qt::Key_Backtab, Qt::ShiftModifier);
         check(m_input->current() == 0 && QApplication::focusWidget() == m_input->box(0), "Shift+Tab goes back to X");
         send(Qt::Key_Tab);
@@ -233,7 +233,7 @@ void SketchEditor::benchKeys() {
         send(Qt::Key_Plus, Qt::NoModifier, "+");
         check(!m_input->problem("x").isEmpty() && m_input->box(0)->property("invalid").toBool() && std::abs(m_cursor.u - 125) < 1e-6,
               "130+ does not evaluate: the box is red, its tooltip says why (" + m_input->problem("x") + "), the pointer gives X meanwhile");
-        m_input->grab().save(prefix + ".invalid-input.png");
+        m_input->shot().save(prefix + ".invalid-input.png");
         send(Qt::Key_Backspace);
         check(m_input->problem("x").isEmpty() && held(130, 45), "Backspace puts it right");
         send(Qt::Key_Tab);
@@ -242,7 +242,7 @@ void SketchEditor::benchKeys() {
               "Tab locks X (padlock), 60 typed into Y: the point is (130, 60)");
         sketchMove(10, 10, Qt::NoModifier, false);
         check(held(130, 60), "wherever the pointer goes " + where());
-        m_input->grab().save(prefix + ".locked-input.png");
+        m_input->shot().save(prefix + ".locked-input.png");
         send(Qt::Key_Return);
         check(m_chain.size() == 1 && at(m_chain[0], 130, 60) && !m_input->typed(), "Enter starts the line there");
         // Length and angle: a length alone keeps the pointer's direction, an angle alone goes as far as the pointer along it.
@@ -276,7 +276,7 @@ void SketchEditor::benchKeys() {
         send(Qt::Key_Tab);
         type("-90");
         check(held(140, 90), "10 at -90 from the last line (which goes up) goes right " + where());
-        m_input->grab().save(prefix + ".polar-input.png");
+        m_input->shot().save(prefix + ".polar-input.png");
         send(Qt::Key_Return);
         check(m_chain.size() == 3 && at(m_chain[2], 140, 90), "and Enter puts it there");
         if (chip = chipNow(); chip) chip->click();
