@@ -33,11 +33,13 @@
 #include <QSettings>
 #include <QStatusBar>
 #include <QTextDocumentFragment>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
 
+#include "Banner.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "Theme.hpp"
@@ -69,7 +71,7 @@ QString stateName(git::Repo::State s) {
 }
 }  // namespace
 
-GitWatch::GitWatch(JobRunner* jobs, QWidget* window) : QObject(window), m_jobs(jobs), m_window(window) {
+GitWatch::GitWatch(JobRunner* jobs, QWidget* window, QWidget* viewport) : QObject(window), m_jobs(jobs), m_window(window), m_viewport(viewport) {
   auto* chip = new Chip(window);
   chip->clicked = [this] {
     QMenu* m = menu(m_chip);
@@ -237,6 +239,7 @@ void GitWatch::watch() {
 
 void GitWatch::render() {
   m_chip->setVisible(!m_file.isEmpty());
+  updateBanner();
   if (m_file.isEmpty()) return;
   using S = git::Repo::State;
   using D = git::Repo::Doc;
@@ -471,6 +474,7 @@ void GitWatch::setUpDriver() {
   const QString top = m_repo.top;
   const git::Install install = git::Install::here();
   ++m_busy;
+  m_driverJob = true;
   m_jobs->async(tr("Setting up the OPAD merge driver"), [c, lfs, top, install](Progress) {
     git::configureDriver(c, install);
     QFile attributes(top + "/.gitattributes");
@@ -478,10 +482,37 @@ void GitWatch::setUpDriver() {
   }, [self = QPointer<GitWatch>(this)](bool ok, const QString& error) {
     if (!self) return;
     --self->m_busy;
+    self->m_driverJob = false;
     if (ok) self->status(tr("This clone merges and diffs .opad files with this OPAD."));
     else self->failed(tr("Could not set up the OPAD merge driver"), error);
     self->refresh(true);
   });
+}
+
+// The driver config never travels with a clone: without it git merges .opad files as text and writes conflict markers
+// into them, which OPAD refuses to open. Said once per repository and session (Later), and on the chip all along.
+void GitWatch::updateBanner() {
+  if (!m_viewport) return;
+  const bool want = !m_file.isEmpty() && m_repo.needsDriver() && !m_later.contains(m_repo.top) && !m_driverJob;
+  if (!want) {
+    if (m_banner && m_banner->state() == "driver") m_banner->dismiss();
+    return;
+  }
+  if (m_banner && m_banner->state() == "driver") return;
+  if (!m_banner) {
+    m_banner = new Banner(m_viewport);
+    connect(m_banner, &Banner::closed, this, [this] {
+      if (m_repo.state == git::Repo::State::Ready) m_later.insert(m_repo.top);
+    });
+  }
+  m_banner->present("driver", Banner::Tone::Warning, tr("Set up OPAD merging for this clone"),
+                    tr("Its .gitattributes merge .opad files with OPAD, but this clone's settings name no OPAD merge driver (they never travel "
+                       "with a clone): a merge would write conflict markers into the documents."),
+                    tr("Repository: %1").arg(QDir::toNativeSeparators(m_repo.top)));
+  m_banner->addButton("gitDriver", tr("Set up merging"), [this] {
+    m_banner->dismiss();
+    setUpDriver();
+  }, true);
 }
 
 void GitWatch::locateGit() {
@@ -685,6 +716,8 @@ int GitWatch::askpassDialog(int argc, char** argv) {
 bool GitWatch::bench() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_GIT");
   if (prefix.isEmpty()) return false;
+  static bool started = false;  // the clone's document it opens loads and asks again: one bench
+  if (std::exchange(started, true)) return true;
   QString cli = qEnvironmentVariable("OPAD_BENCH_CLI");
   if (cli.isEmpty()) cli = git::Install::here().cli;
   struct State {
@@ -943,8 +976,48 @@ bool GitWatch::bench() {
                   gitArgs({"config", "--unset", "opad.managed"})});
         return true;
       },
-      [=, this] {
+      [=, this] {  // as in a fresh clone: the attributes want the driver, the config has none; the banner offers it
         if (!finished() || !settled() || !m_repo.needsDriver()) return false;
+        require(text() == "feature/x · " + tr("set up merging"), "the chip: set up merging");
+        require(m_banner && m_banner->state() == "driver" && !m_banner->isHidden(), "the Set up merging banner");
+        QPushButton* b = m_banner->button("gitDriver");
+        require(b, "the banner's Set up merging button");
+        shot(m_banner, ".banner-driver.png");
+        // Below the file-on-disk banner when both show (made first, it stays on top), back up when that one goes.
+        Banner* disk = nullptr;
+        for (Banner* other : m_viewport->findChildren<Banner*>(QString(), Qt::FindDirectChildrenOnly))
+          if (other != m_banner) disk = other;
+        require(disk && disk->state().isEmpty(), "the file-on-disk banner, idle");
+        const int top = m_banner->y();
+        disk->present("bench", Banner::Tone::Info, QStringLiteral("Disk"), QString());
+        require(disk->y() == top && m_banner->y() > disk->geometry().bottom(), "two banners stacked");
+        disk->dismiss();
+        require(m_banner->y() == top, "back up when the other goes");
+        b->click();
+        require(m_banner->state().isEmpty(), "the banner goes at once");
+        return true;
+      },
+      [=, this] {
+        if (!settled() || m_repo.needsDriver() || !m_repo.managed) return false;
+        require(m_repo.driver == here.mergeDriver() && text() == "feature/x" && m_banner->state().isEmpty(), "merging set up from the banner");
+        pass("a clone without the driver: the banner sets it up");
+        external({gitArgs({"config", "--unset", "merge.opad.driver"}), gitArgs({"config", "--unset", "diff.opad.textconv"}),
+                  gitArgs({"config", "--unset", "opad.managed"})});
+        return true;
+      },
+      [=, this] {
+        if (!finished() || !settled() || !m_repo.needsDriver() || m_banner->state() != "driver") return false;
+        auto* later = m_banner->findChild<QToolButton*>("bannerClose");
+        require(later, "the banner's Later");
+        later->click();
+        require(m_banner->state().isEmpty() && m_later.contains(m_repo.top), "Later closes it for this repository");
+        st->runs = m_runs;
+        refresh(true);
+        return true;
+      },
+      [=, this] {
+        if (!settled() || m_runs == st->runs) return false;
+        require(m_repo.needsDriver() && m_banner->state().isEmpty(), "after Later: no banner, the chip still says it");
         require(text() == "feature/x · " + tr("set up merging"), "the chip: set up merging");
         std::unique_ptr<QMenu> m(menu(m_window));
         QAction* driver = m->findChild<QAction*>("git.driver");
@@ -956,7 +1029,7 @@ bool GitWatch::bench() {
       [=, this] {
         if (!settled() || m_repo.needsDriver() || !m_repo.managed) return false;
         require(m_repo.driver == here.mergeDriver() && m_repo.textconv == here.textconv() && text() == "feature/x", "the driver set up again");
-        pass("a clone without the driver, set up from the chip");
+        pass("Later keeps the banner away; set up from the chip");
         auto write = [st](const char* text) {
           QFile notes(st->dir + "/notes.txt");
           return notes.open(QIODevice::WriteOnly) && notes.write(text) > 0;

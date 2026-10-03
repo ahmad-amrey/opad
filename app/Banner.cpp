@@ -94,6 +94,7 @@ void Banner::dismiss() {
   m_state.clear();
   setProperty("state", QString());
   hide();
+  place();  // the ones below move up
 }
 
 void Banner::flash() {
@@ -108,15 +109,20 @@ bool Banner::eventFilter(QObject* watched, QEvent* event) {
 }
 
 void Banner::place() {
-  if (isHidden()) return;
   int top = 48;  // below the chips row
   for (auto* prompt : m_viewport->findChildren<PromptBar*>(QString(), Qt::FindDirectChildrenOnly))
     if (prompt->isVisible()) top = std::max(top, prompt->geometry().bottom() + 8);
   const int w = std::max(240, std::min(760, m_viewport->width() - 24));
-  setFixedWidth(w);
-  setFixedHeight(std::max(layout()->hasHeightForWidth() ? layout()->heightForWidth(w) : 0, layout()->minimumSize().height()));
-  move((m_viewport->width() - w) / 2, top);
-  raise();
+  // Every banner of the viewport, stacked in the order they were made (the file on disk above git's).
+  for (Banner* b : m_viewport->findChildren<Banner*>(QString(), Qt::FindDirectChildrenOnly)) {
+    if (b->isHidden()) continue;
+    QLayout* l = b->layout();
+    b->setFixedWidth(w);
+    b->setFixedHeight(std::max(l->hasHeightForWidth() ? l->heightForWidth(w) : 0, l->minimumSize().height()));
+    b->move((m_viewport->width() - w) / 2, top);
+    b->raise();
+    top += b->height() + 6;
+  }
 }
 
 void Banner::restyle() {

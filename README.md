@@ -379,8 +379,9 @@ conflict, ahead and behind its upstream, "not in git", "git not found") has **Se
 installed, with `.opad` files kept out of LFS), a `.gitignore` for temporary saves, portable data, caches and recovery
 snapshots, runs `git lfs install --local`, and points this clone's `merge.opad.driver` and `diff.opad.textconv` at the
 running installation (`opad.managed=true`; OPAD rewrites them when that installation has moved). A clone whose
-`.gitattributes` asks for `merge=opad` but has no driver configured shows "set up merging" on the chip. The chip
-follows git by file events (HEAD, index, config, refs, the document's folder), not by polling.
+`.gitattributes` asks for `merge=opad` but has no driver configured shows "set up merging" on the chip and a banner
+over the view with **Set up merging**. The chip follows git by file events (HEAD, index, config, refs, the
+document's folder), not by polling.
 
 OPAD runs the git command line (Git for Windows, or the `git` on PATH; a portable `git/` or `PortableGit/` folder
 beside OPAD is found too, and **Locate git…** on the chip points it at any other). git never waits on a terminal:

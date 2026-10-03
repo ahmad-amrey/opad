@@ -6,7 +6,8 @@
 // the status (one process; a probe of the repository, its config and the tools when that changed), JobRunner::async
 // with the strip and Cancel for anything that may take long. The chip's menu sets up a repository (init -b main,
 // .gitattributes, .gitignore, Git LFS, the managed merge and diff driver) or only this clone's driver config, and a
-// managed driver config whose OPAD moved is repaired by itself.
+// managed driver config whose OPAD moved is repaired by itself; a clone whose attributes want OPAD's driver but whose
+// config lacks it gets a banner over the viewport (Set up merging, or Later for this session).
 //
 // UI-136: "git not found" offers Locate git… (checked on a worker, kept in the setting git/path); a folder git refuses
 // as owned by someone else offers Trust this folder; the author (user.name, user.email) is asked for after a set up
@@ -22,6 +23,7 @@
 
 #include "Git.hpp"
 
+class Banner;
 class Job;
 class JobRunner;
 class QLabel;
@@ -31,7 +33,7 @@ class QWidget;
 class GitWatch : public QObject {
   Q_OBJECT
  public:
-  GitWatch(JobRunner* jobs, QWidget* window);
+  GitWatch(JobRunner* jobs, QWidget* window, QWidget* viewport = nullptr);  // viewport: where banners go
   QWidget* chip() const { return m_chip; }
   void setFile(const QString& file);  // the open document ("": none); the same file again: its state may have moved
   void refresh(bool probe = false);   // the status now (probe: the repository, its config and the tools again)
@@ -62,10 +64,13 @@ class GitWatch : public QObject {
   void watch();
   void render();
   void runSetUp(const QString& folder, const git::SetupOptions& o);
+  void updateBanner();
   void status(const QString& text);
   void failed(const QString& title, const QString& text);
   JobRunner* m_jobs;
   QWidget* m_window;
+  QWidget* m_viewport;
+  Banner* m_banner = nullptr;  // made when first needed, so the file-on-disk banner (made first) stays above it
   QWidget* m_chip;
   QLabel* m_icon;
   QLabel* m_text;
@@ -74,11 +79,13 @@ class GitWatch : public QObject {
   QString m_file, m_program;
   git::Repo m_repo;
   bool m_running = false, m_again = false, m_probe = false, m_retried = false;
+  bool m_driverJob = false;  // Set up merging runs: the banner waits for its result
   int m_busy = 0;  // jobs of ours changing the repository: reads wait for them
   unsigned m_generation = 0;
   int m_runs = 0;  // reads started: benches check nothing polls
   QDateTime m_configStamp, m_attributesStamp;
   QElapsedTimer m_activated;  // the last probe because OPAD came to the front
   QSet<QString> m_repaired;  // tops whose stale driver config was rewritten this session
+  QSet<QString> m_later;     // tops whose Set up merging banner was closed this session
   QString m_lastFailure;     // the last error shown (benches)
 };

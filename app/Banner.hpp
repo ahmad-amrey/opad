@@ -1,7 +1,8 @@
 #pragma once
 // A decision the document is waiting on, across the top of the viewport: a title, a line of why, and the choices as
-// buttons (the file changed on disk, UI-56). A native child, so it floats over the OpenGL surface; it keeps to the
-// viewport's top centre, below the chips row and a guided tool's prompt bar.
+// buttons (the file changed on disk, UI-56; a clone without OPAD's merge driver, UI-61). A native child, so it floats
+// over the OpenGL surface; it keeps to the viewport's top centre, below the chips row and a guided tool's prompt bar,
+// and several stack in the order they were made.
 #include <QFrame>
 #include <functional>
 
