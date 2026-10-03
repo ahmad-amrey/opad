@@ -376,7 +376,7 @@ void SmartSelect::finished() {
   switch (std::exchange(m_pending, Pending::None)) {
     case Pending::Grow: return grow();
     case Pending::Menu: return showMenu();
-    case Pending::Delete:
+    case Pending::Delete: return deletePicks();
     case Pending::None: return;
   }
 }
@@ -537,7 +537,29 @@ bool SmartSelect::command(const QString& id, const SelectionContext& selection) 
     }
     return false;
   }
+  if (id == "edit.delete" && subPicks(selection.refs)) {
+    deletePicks();
+    return true;
+  }
   return false;
+}
+
+// Del on picked faces or edges (UI-04): never the body's source. A feature's whole face set deletes the feature (its
+// dependents asked for first), a recognised detail's faces start Remove faces; anything else opens the menu of what the
+// picks belong to, where deleting that is one entry.
+void SmartSelect::deletePicks() {
+  if (!m_found.ready || !smart::sameRefs(m_found.picks, m_current)) {
+    m_pending = Pending::Delete;
+    if (m_wait.isActive() || (!m_job && !m_capturing)) request(true);
+    return;
+  }
+  const int active = m_found.active;
+  const smart::Candidate* c = active >= 0 ? &m_found.candidates[size_t(active)] : nullptr;
+  if (c && c->feature()) return deleteFeature(*c);
+  if (c && c->group() && !c->refs.empty() && c->refs.front().kind == opad::Ref::Kind::Face)
+    if (QAction* remove = services().action("design.remove_faces")) return remove->trigger();
+  showMenu();
+  services().showMessage(tr("Faces and edges go with what made them: delete it from this menu, or remove the faces."), 8000);
 }
 
 void SmartSelect::showMenu(const QPoint& global) {
@@ -593,7 +615,7 @@ QList<QAction*> SmartSelect::actionsFor(int index, QObject* parent) {
   const smart::Candidate c = m_found.candidates[size_t(index)];
   const QString name = c.feature() || c.kind == "import" ? QString::fromStdString(c.name) : label(c);
   auto add = [&](const QString& icon, const QString& text, const char* object, std::function<void()> fn, const QString& key = QString()) {
-    auto* a = new QAction(icons::themed(icon, 16), key.isEmpty() ? text : text + "	" + key, parent);
+    auto* a = new QAction(icons::themed(icon, 16), key.isEmpty() ? text : text + "\t" + key, parent);
     a->setObjectName(object);
     a->setToolTip(key.isEmpty() ? text : QString("%1 (%2)").arg(text, key));
     connect(a, &QAction::triggered, this, [this, fn] { services().guarded(fn); });

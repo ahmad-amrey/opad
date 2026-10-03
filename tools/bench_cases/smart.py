@@ -1,5 +1,5 @@
 """gui_benches cases of the smart selection area (TODO 11 UI-95, UI-97); the benches are app/SmartBench.cpp (OPAD_BENCH_SMART) and
-app/SmartSelectBench.cpp (OPAD_BENCH_SMARTSELECT)."""
+app/SmartSelectBench.cpp (OPAD_BENCH_SMARTSELECT) and app/DeleteBench.cpp (OPAD_BENCH_DELETE)."""
 import json
 
 
@@ -28,6 +28,16 @@ def boss(root, document):
                      '{"plane":{"origin":[15,15,10],"normal":[0,0,1]},"length":"10 mm","width":"10 mm","height":"10 mm","centered":false,"operation":"join"}'))
 
 
+def pair(root, document):
+    """Two boxes exported to STEP and imported into a document: one import op with two bodies, no history."""
+    step = root / "delete-pair.step"
+    if not step.exists():
+        document("delete-pair-source", ("feature", "--kind", "box", "--inputs", '{"length":"20 mm","width":"20 mm","height":"10 mm","centered":false}'),
+                 ("feature", "--kind", "box", "--inputs", '{"plane":{"origin":[40,0,0],"normal":[0,0,1]},"length":"20 mm","width":"20 mm","height":"10 mm","centered":false}'),
+                 ("export", "--format", "step", "--out", str(step)))
+    return document("delete-import", ("import", str(step)))
+
+
 CASES = [
     # Select similar from a hole wall (the four through holes, again every R3 face), the area's places in the ribbon and the
     # menus, Remove faces previewed and committed as one op, undone; then the plate picked whole: its edges and faces by rule.
@@ -39,4 +49,9 @@ CASES = [
     # deleting the boss from its faces (Round named, previewed, both deleted, the base remains, Undo on the toast).
     ("smartselect", boss, {"OPAD_BENCH_SMARTSELECT": "{prefix}"}),
     ("smartselect-rtl", boss, {"OPAD_BENCH_SMARTSELECT": "{prefix}", "OPAD_LANG": "ar"}),
+    # Del routing (UI-04): Del takes out what the selection covers and nothing more, as one step with an Undo toast. A
+    # designed box: a face opens smart selection's menu, its six faces delete the box feature, the body goes to a Remove
+    # feature. An import of two bodies: one goes to a Remove feature, both tombstone the import.
+    ("delete-design", "box", {"OPAD_BENCH_DELETE": "{prefix}"}),
+    ("delete-import", pair, {"OPAD_BENCH_DELETE": "{prefix}"}),
 ]

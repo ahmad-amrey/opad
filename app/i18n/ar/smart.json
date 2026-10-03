@@ -88,5 +88,10 @@
   "%1 · 1 edge": "%1 · حافة واحدة",
   "%1 · 1 face": "%1 · وجه واحد",
   "%1 · %2 edges": "%1 · %2 حواف",
-  "%1 · %2 faces": "%1 · %2 أوجه"
+  "%1 · %2 faces": "%1 · %2 أوجه",
+  "Removed %1: a Remove step on the timeline keeps its history": "أُزيل %1: خطوة إزالة على الخط الزمني تحفظ تاريخه",
+  "Faces and edges go with what made them: delete it from this menu, or remove the faces.": "تُحذف الأوجه والحواف مع ما أنشأها: احذفه من هذه القائمة، أو أزِل الأوجه.",
+  "Faces and edges are deleted through the feature that made them: select it with Ctrl+Up, or use Remove faces.": "تُحذف الأوجه والحواف عبر الميزة التي أنشأتها: حدِّدها بـ Ctrl+Up، أو استخدم إزالة الأوجه.",
+  "Nothing selected can be deleted.": "لا يمكن حذف أي شيء من المحدَّد.",
+  "Select objects, or a marker on the timeline, to delete.": "حدِّد كائنات، أو علامة على الخط الزمني، للحذف."
 }

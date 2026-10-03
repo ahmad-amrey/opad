@@ -265,12 +265,18 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     add("inspect.radius");
     add("inspect.properties");
     menu.addSeparator();
-    QAction* del = menu.addAction(icons::themed("delete", 16), tr("Delete (tombstone import)"));
-    connect(del, &QAction::triggered, this, [this, ids] {
+    // As Del (UI-04): picked faces and edges through smart selection, objects by what the selection covers.
+    QAction* del = menu.addAction(icons::themed("delete", 16), tr("Delete") + "\t" + action("edit.delete")->shortcut().toString(QKeySequence::NativeText));
+    const bool picks = std::any_of(context.refs.begin(), context.refs.end(), [](const opad::Ref& r) { return r.kind != opad::Ref::Kind::Body; });
+    connect(del, &QAction::triggered, this, [this, ids, picks] {
       if (!requireEditable()) return;
-      std::set<std::string> ops;
-      for (const auto& id : ids) if (const opad::Node* nn = m_doc->node(id)) ops.insert(nn->source_op);
-      for (const auto& op : ops) deleteOp(op);
+      guarded([&] {
+        if (picks) {
+          if (!areaCommand("edit.delete")) throw opad::Error("Faces and edges are deleted through the feature that made them: select it with Ctrl+Up, or use Remove faces.");
+          return;
+        }
+        deleteNodes(ids);
+      });
     });
   } else {
     add("view.fit");

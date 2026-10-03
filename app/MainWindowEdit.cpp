@@ -15,6 +15,7 @@
 
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "SmartRules.hpp"
 
 void MainWindow::buildEditActions() {
   addAction("edit.undo", tr("&Undo"), "rollLeft", QKeySequence::Undo, [this] {
@@ -57,7 +58,7 @@ void MainWindow::buildEditActions() {
   addAction("edit.selectparent", tr("Select parent"), "chevronUp", QKeySequence("Ctrl+Up"), [this] {
     if (!areaCommand("edit.selectparent")) m_browser->selectParent();  // picked faces grow to their feature (SmartSelect)
   });
-  addAction("edit.delete", tr("Delete (tombstone)"), "delete", QKeySequence::Delete, [this] { deleteCurrent(); });
+  addAction("edit.delete", tr("Delete"), "delete", QKeySequence::Delete, [this] { deleteCurrent(); });
   addAction("edit.restore", tr("Restore"), "restore", QKeySequence("Shift+Del"), [this] {
     std::string id = m_timeline->currentOp();
     if (id.empty()) throw opad::Error("Select a tombstoned marker on the timeline first.");
@@ -171,15 +172,29 @@ void MainWindow::restoreOp(const std::string& requestedId) {
 void MainWindow::deleteCurrent() {
   std::string id = m_timeline->currentOp();
   if (!id.empty() && m_timeline->hasFocus()) return deleteOp(id);
-  std::set<std::string> ops;
+  // Picked faces and edges go with what made them: smart selection deletes a feature's whole face set and offers the
+  // rest (UI-04). Never the body's source op.
+  if (areaCommand("edit.delete")) return;
+  if (std::any_of(m_selRefs.begin(), m_selRefs.end(), [](const opad::Ref& r) { return r.kind != opad::Ref::Kind::Body; }))
+    throw opad::Error("Faces and edges are deleted through the feature that made them: select it with Ctrl+Up, or use Remove faces.");
   const auto selected = currentNodeIds();
-  for (const auto& nid : selected) if (const opad::Node* n = m_doc->node(nid)) ops.insert(n->source_op);
-  if (ops.empty()) {  // the timeline's marker only when nothing is selected (an area's row or a sketch is not that marker)
-    if (id.empty() || !selected.empty() || !m_selRows.empty()) throw opad::Error("Select objects, or a marker on the timeline, to tombstone.");
+  if (selected.empty()) {  // the timeline's marker only when nothing is selected (an area's row is not that marker)
+    if (id.empty() || !m_selRows.empty()) throw opad::Error("Select objects, or a marker on the timeline, to delete.");
     return deleteOp(id);
   }
-  if (QMessageBox::question(this, tr("Delete"), tr("Tombstone %1 import operation(s)? History is kept; Shift+Del on the timeline restores.").arg(ops.size())) != QMessageBox::Yes) return;
-  for (const auto& op : ops) deleteOp(op);
+  deleteNodes(selected);
+}
+
+void MainWindow::deleteNodes(const std::vector<std::string>& ids) {
+  const smart::Deletion d = smart::routeDelete(m_doc->scene, ids);
+  if (d.empty()) throw opad::Error("Nothing selected can be deleted.");
+  QString what = ids.size() == 1 ? m_doc->nodeName(ids.front()) : tr("%1 objects").arg(ids.size());
+  if (const opad::SketchItem* s = ids.size() == 1 ? m_doc->scene.sketch(ids.front()) : nullptr) what = QString::fromStdString(s->name);
+  const QString text = d.remove.empty() ? tr("Deleted %1").arg(what) : tr("Removed %1: a Remove step on the timeline keeps its history").arg(what);
+  m_design->applyOps(smart::deletionOps(d, m_doc->scene), tr("delete"), [this, text](bool ok, const QString& error) {
+    if (!ok) return guarded([&] { throw opad::Error(error.toStdString()); });
+    undoToast(text);
+  });
 }
 
 void MainWindow::undoToast(const QString& text) {

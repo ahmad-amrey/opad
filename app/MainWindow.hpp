@@ -156,6 +156,9 @@ class MainWindow : public QMainWindow {
   void deleteOp(const std::string& opId);
   void restoreOp(const std::string& opId);
   void deleteCurrent();
+  // Del on objects (UI-04): what the selection covers and nothing more (smart::routeDelete), one undo step, a toast with
+  // Undo instead of a question. Faces and edges never come here: they go to smart selection (SmartSelect).
+  void deleteNodes(const std::vector<std::string>& ids);
   void undoToast(const QString& text);  // a result toast whose Undo takes back that step (not one made after it)
   void writeSelectionFile();
   void positionOverlays();

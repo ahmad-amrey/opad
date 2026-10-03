@@ -118,6 +118,7 @@ class SmartSelect : public AreaController {
   void askDependents(const smart::Candidate& c, const std::vector<std::pair<std::string, std::string>>& deps, const std::vector<Viewport::PreviewPart>& parts,
                      const std::vector<std::string>& hidden);
   void commitDelete(const smart::Candidate& c, std::vector<std::string> ops);
+  void deletePicks();
   QString label(const smart::Candidate& c) const;
   QString iconOf(const smart::Candidate& c) const;
 
