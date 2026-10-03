@@ -51,9 +51,14 @@ OPAD_ICON_TABLE(smartselect,
 
 namespace {
 constexpr size_t kMaxPicks = 2000;  // a rubber band over more is no question of what they belong to
+// Bodies with more faces skip bosses, pockets and walls: finding those walks the whole body (2.8 s on the Engine's
+// 4140-face casting, for a region that was most of it), where holes, fillets, chamfers, chains and loops stay local.
+constexpr int kRegionFaces = 1500;
 // What the chip and the menu ask the related command for: history and rules, never "similar" (asked for explicitly).
-const opad::json& kinds() {
-  static const opad::json k = {"feature", "import", "body", "hole", "fillet", "chamfer", "boss", "pocket", "wall", "tangent", "loop"};
+opad::json kinds(bool regions) {
+  opad::json k = {"feature", "import", "body", "hole", "fillet", "chamfer", "tangent", "loop"};
+  if (regions)
+    for (const char* r : {"boss", "pocket", "wall"}) k.push_back(r);
   return k;
 }
 bool has(const std::vector<opad::Ref>& refs, const opad::Ref& r) {
@@ -295,13 +300,11 @@ void SmartSelect::run() {
     if (m_job) m_job->cancel();
     m_job = services().jobs()->async(tr("Finding related geometry"), [document, out](Progress progress) {
       const opad::design::Cancel cancel = [progress] { return progress.cancelled(); };
-      opad::json refs = opad::json::array();
-      for (const auto& r : out->picks) refs.push_back(r.str());
-      out->candidates = smart::candidates(opad::design::related(*document, {{"refs", refs}, {"kinds", kinds()}, {"limit", 5000}}, cancel));
-      // Where the chip goes: the picks' box in the world.
+      // The picked bodies' faces and edges: how big they are and the picks' box in the world (where the chip goes).
       const opad::Scene scene = opad::resolve(*document);
       std::map<std::string, std::pair<TopTools_IndexedMapOfShape, TopTools_IndexedMapOfShape>> maps;
       Bnd_Box box;
+      int largest = 0;
       for (const auto& r : out->picks) {
         if (cancel()) return;
         auto [it, added] = maps.try_emplace(r.body);
@@ -309,10 +312,15 @@ void SmartSelect::run() {
           const TopoDS_Shape shape = opad::node_world_shape(*document, scene, r.body);
           TopExp::MapShapes(shape, TopAbs_FACE, it->second.first);
           TopExp::MapShapes(shape, TopAbs_EDGE, it->second.second);
+          out->faces += size_t(it->second.first.Extent());
+          largest = std::max(largest, it->second.first.Extent());
         }
         const TopTools_IndexedMapOfShape& map = r.kind == opad::Ref::Kind::Face ? it->second.first : it->second.second;
         if (r.index >= 0 && r.index < map.Extent()) BRepBndLib::Add(map(r.index + 1), box, Standard_True);
       }
+      opad::json refs = opad::json::array();
+      for (const auto& r : out->picks) refs.push_back(r.str());
+      out->candidates = smart::candidates(opad::design::related(*document, {{"refs", refs}, {"kinds", kinds(largest <= kRegionFaces)}, {"limit", 5000}}, cancel));
       if (box.IsVoid()) return;
       double x0, y0, z0, x1, y1, z1;
       box.Get(x0, y0, z0, x1, y1, z1);
@@ -328,7 +336,7 @@ void SmartSelect::run() {
       const AppDocument* doc = services().document();
       if (doc->revision != out->revision || doc->generation != out->generation) return request(true);
       if (!smart::sameRefs(out->picks, m_current)) return;
-      out->best = smart::headline(out->candidates, out->picks);
+      out->best = smart::headline(out->candidates, out->picks, out->faces);
       out->active = smart::matching(out->candidates, out->picks);
       out->ready = true;
       m_found = std::move(*out);

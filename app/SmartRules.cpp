@@ -57,10 +57,11 @@ int matching(const std::vector<Candidate>& c, const std::vector<opad::Ref>& pick
   return -1;
 }
 
-int headline(const std::vector<Candidate>& c, const std::vector<opad::Ref>& picks) {
+int headline(const std::vector<Candidate>& c, const std::vector<opad::Ref>& picks, size_t bodyFaces) {
   for (size_t i = 0; i < c.size(); ++i) {
     const Candidate& x = c[i];
-    if (!x.containsSelection || x.kind == "body" || x.kind == "similar" || x.refs.empty()) continue;
+    if (!x.containsSelection || x.kind == "body" || x.kind == "similar" || x.kind == "import" || x.refs.empty()) continue;
+    if (!x.feature() && bodyFaces > 0 && x.count * 2 > bodyFaces) continue;  // most of the body: no detail of it
     if (x.count <= picks.size() || (!x.truncated && sameRefs(x.refs, picks))) continue;  // nothing to add
     return static_cast<int>(i);
   }

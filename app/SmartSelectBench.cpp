@@ -8,6 +8,7 @@
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QStatusBar>
@@ -392,6 +393,92 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
     } catch (const std::exception& e) {
       timer->stop();
       trace::log(QString("bench: smartselect FAIL: %1").arg(e.what()));
+      QCoreApplication::exit(2);
+    }
+  });
+  timer->start();
+  return true;
+}
+
+// OPAD_BENCH_SMARTPERF=1 (UI-95 on a big model; case smartselect-engine, the Engine beside the repository): two faces of
+// the heaviest body picked, the chip's answer timed (the document snapshot, provenance and recognition on workers), Ctrl+Up
+// timed, then two faces of another body (the snapshot reused). The event loop never waits more than 250 ms meanwhile.
+OPAD_BENCH(OPAD_BENCH_SMARTPERF, smartperf) {
+  struct State {
+    int phase = 0, ticks = 0;
+    std::string heavy, other;
+    QElapsedTimer clock, tick;
+    qint64 gap = 0;
+  };
+  auto state = std::make_shared<State>();
+  SmartSelect* area = nullptr;
+  for (AreaController* a : w.m_areas)
+    if (auto* smart = dynamic_cast<SmartSelect*>(a)) area = smart;
+  auto* timer = new QTimer(&w);
+  timer->setInterval(20);
+  QObject::connect(timer, &QTimer::timeout, &w, [&w, area, state, timer] {
+    try {
+      if (state->tick.isValid() && state->phase >= 3) state->gap = std::max(state->gap, state->tick.restart());
+      if (++state->ticks > 30000) throw opad::Error("timed out in phase " + std::to_string(state->phase));
+      if (!area) throw opad::Error("the smart selection area is off");
+      if (w.m_doc->loading || (w.m_jobs->busy() && state->phase < 3)) return;
+      auto pick = [&](const std::string& body) {
+        std::vector<opad::Ref> refs;
+        for (int i : {0, 1}) refs.push_back(opad::Ref::parse(body + "/face/" + std::to_string(i)));
+        w.m_viewport->selectRefs(refs);
+        w.onViewportSelection();
+        state->clock.start();
+      };
+      switch (state->phase) {
+        case 0: {
+          // The Engine keeps its root hidden: everything shown first (in memory), then its bodies are displayed.
+          std::vector<std::string> hidden;
+          for (const auto& [id, n] : w.m_doc->scene.nodes)
+            if (!n.visible) hidden.push_back(id);
+          if (!hidden.empty()) w.m_doc->run("appearance", opad::json{{"targets", hidden}, {"visible", true}});
+          break;
+        }
+        case 1:
+          if (w.m_viewport->displayedCount() < int(w.m_doc->scene.all_bodies().size()) / 2) return;
+          state->heavy = w.m_viewport->benchHeaviest();
+          for (const auto& b : w.m_doc->scene.all_bodies())
+            if (b != state->heavy && w.m_doc->node(b)->representation == "solid" && opad::subshape_count(opad::node_world_shape(w.m_doc->doc, w.m_doc->scene, b), opad::Ref::Kind::Face) > 2) {
+              state->other = b;
+              break;
+            }
+          if (state->heavy.empty() || state->other.empty()) throw opad::Error("two solid bodies");
+          w.action("select.faces")->trigger();
+          break;
+        case 2:
+          if (w.m_viewport->selectionFilter() != Viewport::SelFilter::Face || w.m_jobs->busy()) return;
+          state->tick.start();
+          pick(state->heavy);
+          break;
+        case 3:
+        case 5:
+          if (area->busy() || !area->found().ready) return;
+          trace::log(QString("bench: smartperf: %1 faces of %2: the chip's answer in %3 ms (%4 candidates, offered %5), longest event-loop gap %6 ms PASS")
+                         .arg(area->found().picks.size()).arg(w.m_doc->nodeName(state->phase == 3 ? state->heavy : state->other)).arg(state->clock.elapsed())
+                         .arg(area->found().candidates.size()).arg(area->chip()->isVisible() ? area->chip()->text() : QString("nothing")).arg(state->gap));
+          if (state->phase == 5) {
+            if (state->gap > 250) throw opad::Error("the event loop waited " + std::to_string(state->gap) + " ms");
+            timer->stop();
+            QCoreApplication::exit(0);
+            return;
+          }
+          state->clock.start();
+          w.action("edit.selectparent")->trigger();
+          break;
+        case 4:
+          if (area->busy()) return;
+          trace::log(QString("bench: smartperf: Ctrl+Up selected %1 in %2 ms PASS").arg(w.m_viewport->selection().size()).arg(state->clock.elapsed()));
+          pick(state->other);
+          break;
+      }
+      ++state->phase;
+    } catch (const std::exception& e) {
+      timer->stop();
+      trace::log(QString("bench: smartperf FAIL: %1").arg(e.what()));
       QCoreApplication::exit(2);
     }
   });

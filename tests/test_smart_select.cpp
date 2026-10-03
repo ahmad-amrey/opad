@@ -101,6 +101,15 @@ TEST(the_chip_offers_the_feature_that_made_the_picks) {
   similar.refs = boss;
   similar.count = boss.size();
   CHECK_EQ(smart::headline({similar}, two), -1);
+  // Nor the import that made an imported body (that is the body's faces), nor a group holding most of the body.
+  smart::Candidate import = similar, group = similar;
+  import.kind = "import";
+  group.kind = "pocket";
+  group.count = 9;
+  CHECK_EQ(smart::headline({import}, two), -1);
+  CHECK_EQ(smart::headline({group}, two, 18), 0);
+  CHECK_EQ(smart::headline({group}, two, 17), -1);
+  CHECK_EQ(smart::headline({group}, two), 0);  // the bodies' face count unknown
 }
 
 TEST(deleting_a_feature_names_what_it_breaks) {

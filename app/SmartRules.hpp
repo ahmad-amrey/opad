@@ -31,9 +31,10 @@ bool sameRefs(std::vector<opad::Ref> a, std::vector<opad::Ref> b);
 int matching(const std::vector<Candidate>& c, const std::vector<opad::Ref>& picks);
 // What the chip offers for picked faces or edges (design notes F §A6): the first candidate holding every pick that adds
 // to them (related ranks the feature that made part of the body first, then the smallest recognised group, the feature
-// or import that made the body, chains and loops). Never a similar set (that rule is asked for: Select similar) nor the
-// body (the next rung of Ctrl+Up). -1: nothing to offer.
-int headline(const std::vector<Candidate>& c, const std::vector<opad::Ref>& picks);
+// that made the body, chains and loops). Never a similar set (that rule is asked for: Select similar), the body (the next
+// rung of Ctrl+Up) or the import that made it (no history: that is the body's faces), nor a group or chain holding more
+// than half of `bodyFaces` (the faces of the picked bodies; 0: unknown), which is no detail of the body. -1: nothing.
+int headline(const std::vector<Candidate>& c, const std::vector<opad::Ref>& picks, size_t bodyFaces = 0);
 
 // Del on objects (UI-04): what to tombstone and what to take out with a Remove feature, never more than was selected.
 // Sketches are tombstoned. Bodies (a component counts as its bodies) of a document with a design history go to one

@@ -69,6 +69,7 @@ class SmartSelect : public AreaController {
     int best = -1;    // what the chip offers (smart::headline)
     int active = -1;  // the candidate the picks are exactly (smart::matching): the chip shows its actions
     std::vector<opad::Vec3> corners;  // the picks' world box, where the chip goes
+    size_t faces = 0;                 // of the picked bodies
     unsigned long long revision = 0, generation = 0;
     bool ready = false;
   };

@@ -49,6 +49,9 @@ CASES = [
     # deleting the boss from its faces (Round named, previewed, both deleted, the base remains, Undo on the toast).
     ("smartselect", boss, {"OPAD_BENCH_SMARTSELECT": "{prefix}"}),
     ("smartselect-rtl", boss, {"OPAD_BENCH_SMARTSELECT": "{prefix}", "OPAD_LANG": "ar"}),
+    # The chip on the Engine (beside the repository; skipped where it is not): its answer for two faces of the heaviest
+    # body and of another, Ctrl+Up, with no event-loop gap over 250 ms.
+    ("smartselect-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_SMARTPERF": "1"}),
     # Del routing (UI-04): Del takes out what the selection covers and nothing more, as one step with an Undo toast. A
     # designed box: a face opens smart selection's menu, its six faces delete the box feature, the body goes to a Remove
     # feature. An import of two bodies: one goes to a Remove feature, both tombstone the import.
