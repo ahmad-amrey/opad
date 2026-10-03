@@ -346,6 +346,7 @@ void SmartSelect::selectionChanged(const SelectionContext& selection) {
     m_pending = Pending::None;
     m_wait.stop();
     ++m_token;
+    if (m_job) m_job->cancel();
     m_found = {};
     return hideChip();
   }
@@ -375,7 +376,7 @@ void SmartSelect::run() {
   const unsigned token = ++m_token;
   const AppDocument* doc = services().document();
   const auto revision = doc->revision, generation = doc->generation;
-  withSnapshot([this, token, picks, revision, generation](std::shared_ptr<const opad::Document> document) {
+  withSnapshot(Use::Related, [this, token, picks, revision, generation](std::shared_ptr<const opad::Document> document) {
     if (token != m_token) return;
     auto out = std::make_shared<Found>();
     out->picks = picks;
@@ -408,8 +409,8 @@ void SmartSelect::run() {
       box.Get(x0, y0, z0, x1, y1, z1);
       for (int i = 0; i < 8; ++i) out->corners.push_back({i & 1 ? x1 : x0, i & 2 ? y1 : y0, i & 4 ? z1 : z0});
     }, [this, token, out](bool ok, const QString& error) {
+      m_job = nullptr;  // the one running: each starts after the last one is cancelled
       if (token != m_token) return;  // a newer selection
-      m_job = nullptr;
       if (!ok) {
         if (error != "cancelled") trace::log("smart select: " + error);
         m_pending = Pending::None;
@@ -417,7 +418,10 @@ void SmartSelect::run() {
       }
       const AppDocument* doc = services().document();
       if (doc->revision != out->revision || doc->generation != out->generation) return request(true);
-      if (!smart::sameRefs(out->picks, m_current)) return;
+      if (!smart::sameRefs(out->picks, m_current)) {  // picked on meanwhile without asking (suggestions off): a key waits
+        if (m_pending != Pending::None) request(true);
+        return;
+      }
       out->best = smart::headline(out->candidates, out->picks, out->faces);
       out->active = smart::matching(out->candidates, out->picks);
       out->ready = true;
@@ -427,15 +431,13 @@ void SmartSelect::run() {
   });
 }
 
-void SmartSelect::withSnapshot(std::function<void(std::shared_ptr<const opad::Document>)> fn) {
+void SmartSelect::withSnapshot(Use use, std::function<void(std::shared_ptr<const opad::Document>)> fn) {
   AppDocument* doc = services().document();
   if (m_snap.doc && m_snap.revision == doc->revision && m_snap.generation == doc->generation) {
     m_dropSnapshot.start();
     return fn(m_snap.doc);
   }
-  // Everything that asks while the copy is made gets it (each drops a stale answer itself); a handful at most.
-  if (m_afterCapture.size() >= 8) m_afterCapture.erase(m_afterCapture.begin());
-  m_afterCapture.push_back(std::move(fn));
+  m_afterCapture[use] = std::move(fn);  // everything that asks while the copy is made gets it, the newest of each
   capture();
 }
 
@@ -445,16 +447,20 @@ void SmartSelect::capture() {
   const auto revision = doc->revision, generation = doc->generation;
   m_capturing = doc->captureSnapshot(services().jobs(), [this, revision, generation](std::shared_ptr<opad::Document> copy, const QString&) {
     m_capturing = false;
-    if (!copy) {
-      m_madeRunning = false;  // what waited for the copy is dropped
+    if (!copy) {  // cancelled or failed: what waited for the copy is dropped, a delete asked for says so
+      const bool deleting = m_afterCapture.count(Use::Delete) > 0;
+      m_afterCapture.clear();
+      m_madeRunning = false;
       m_afterMade.clear();
-      return m_afterCapture.clear();
+      m_pending = Pending::None;
+      if (deleting) services().showMessage(tr("The document could not be read to check the delete; delete again."), 6000);
+      return;
     }
     const AppDocument* d = services().document();
     if (d->revision != revision || d->generation != generation) return capture();  // changed meanwhile: what it is now
     m_snap = {std::move(copy), revision, generation};
     m_dropSnapshot.start();
-    for (auto& fn : std::exchange(m_afterCapture, {})) fn(m_snap.doc);
+    for (auto& [use, fn] : std::exchange(m_afterCapture, {})) fn(m_snap.doc);
   });
   if (!m_capturing) {  // busy (a design change, a save, another copy): once more shortly
     m_retrying = true;
@@ -861,6 +867,7 @@ void SmartSelect::findOwner() {
 
 void SmartSelect::documentChanged(bool replaced) {
   ++m_token;
+  if (m_job) m_job->cancel();
   m_pending = Pending::None;
   m_found = {};
   m_stack.clear();
@@ -922,7 +929,7 @@ void SmartSelect::chain(const opad::Ref& edge, bool tangent, const QPoint& at) {
   const auto project = at.x() >= 0 ? v->projector() : Projector();
   const QPointF pointer(at);
   const unsigned token = ++m_chainToken;
-  withSnapshot([this, edge, tangent, view, project, pointer, token](std::shared_ptr<const opad::Document> document) {
+  withSnapshot(Use::Chain, [this, edge, tangent, view, project, pointer, token](std::shared_ptr<const opad::Document> document) {
     if (token != m_chainToken) return;
     auto result = std::make_shared<std::vector<int>>();
     if (m_chainJob) m_chainJob->cancel();
@@ -972,8 +979,8 @@ void SmartSelect::chain(const opad::Ref& edge, bool tangent, const QPoint& at) {
         }
       }
     }, [this, token, edge, tangent, result](bool ok, const QString& error) {
-      if (token != m_chainToken) return;
       m_chainJob = nullptr;
+      if (token != m_chainToken) return;
       if (!ok) return services().showMessage(i18n::t(error), 6000);
       const auto picks = services().viewport()->selection();
       if (picks.size() != 1 || picks.front().body != edge.body || picks.front().index != edge.index || picks.front().kind != edge.kind) return;  // picked on
@@ -1057,7 +1064,7 @@ void SmartSelect::deleteFeature(const smart::Candidate& c) {
   if (doc->designBusy && !m_capturing) return services().showMessage(tr("The design is still being recomputed; try again in a moment."), 5000);
   const auto revision = doc->revision, generation = doc->generation;
   const unsigned token = ++m_deleteToken;
-  withSnapshot([this, c, token, revision, generation](std::shared_ptr<const opad::Document> document) {
+  withSnapshot(Use::Delete, [this, c, token, revision, generation](std::shared_ptr<const opad::Document> document) {
     if (token != m_deleteToken) return;
     auto plan = std::make_shared<opad::design::Plan>();
     auto parts = std::make_shared<std::vector<Viewport::PreviewPart>>();
@@ -1118,7 +1125,7 @@ void SmartSelect::selectUsers(const smart::Candidate& c) {
   const auto revision = doc->revision, generation = doc->generation;
   const unsigned token = ++m_usersToken;
   const QString name = QString::fromStdString(c.name);
-  withSnapshot([this, c, name, token, revision, generation](std::shared_ptr<const opad::Document> document) {
+  withSnapshot(Use::Users, [this, c, name, token, revision, generation](std::shared_ptr<const opad::Document> document) {
     if (token != m_usersToken) return;
     auto users = std::make_shared<smart::Users>();
     services().jobs()->async(tr("Finding what depends on %1").arg(name), [document, op = c.op, users](Progress p) {
