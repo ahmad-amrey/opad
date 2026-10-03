@@ -13,6 +13,7 @@
 #include "AppDocument.hpp"
 #include "Jobs.hpp"
 #include "opad/assets.hpp"
+#include "opad/kicad_pcb.hpp"
 
 namespace {
 namespace fs = std::filesystem;
@@ -79,6 +80,13 @@ AssetMonitor::AssetMonitor(AppDocument* doc, JobRunner* jobs, QObject* parent) :
           j["modified"] = info.lastModified().toUTC().toString(Qt::ISODate).toStdString();
           j["lfs"] = lfsStored(s.file);
           j["models"] = s.models;
+          if (s.kind == "kicad_pcb") try {  // a board also changes with its 3D models: watched too
+            opad::json files = opad::json::array();
+            for (const auto& m : opad::kicad_models(s.file, options.kicad).value("models", opad::json::array()))
+              if (std::error_code ec; m.contains("file") && std::filesystem::is_regular_file(opad::path_from_utf8(m["file"].get<std::string>()), ec)) files.push_back(m["file"]);
+            j["model_files"] = files;
+          } catch (const std::exception&) {
+          }
         }
         out->push_back(std::move(j));
       }
@@ -289,16 +297,22 @@ void AssetMonitor::watch() {
   for (const auto& [import, a] : m_assets) {
     if (a.asset.value("storage", "linked") == "embedded") continue;
     const opad::json* s = state(import);
-    if (const QString found = s && s->contains("file") ? qpath((*s)["file"].get<std::string>()) : QString(); !found.isEmpty() && QFileInfo::exists(found)) {
+    if (s && s->value("state", "") == "untrusted") continue;  // not even watched (a share would get the user's credentials)
+    if (const QString found = s && s->contains("file") ? qpath((*s)["file"].get<std::string>()) : QString(); !found.isEmpty()) {  // found by the last look
       add(found);
       add(QFileInfo(found).absolutePath());
+      for (const auto& model : s->value("model_files", opad::json::array()))  // a board's 3D models and their folders
+        if (const QString m = qpath(model.get<std::string>()); !m.isEmpty()) {
+          add(m);
+          add(QFileInfo(m).absolutePath());
+        }
       continue;
     }
     QStringList places;  // where it may come back
     if (const std::string rel = a.asset.value("path", ""); !rel.empty() && !docDir.isEmpty()) places << QDir::cleanPath(docDir + "/" + QString::fromStdString(rel));
     if (const std::string abs = a.asset.value("abs", ""); !abs.empty()) places << qpath(abs);
     for (const QString& p : places)
-      if (const QString dir = QFileInfo(p).absolutePath(); QFileInfo(dir).isDir()) add(dir);
+      if (const QString dir = QFileInfo(p).absolutePath(); !networkPath(dir) && QFileInfo(dir).isDir()) add(dir);  // a share is not looked at
   }
   QStringList drop;
   for (const QString& p : watched())
@@ -308,6 +322,7 @@ void AssetMonitor::watch() {
   for (const QString& p : want)
     if (!watched().contains(p)) fresh << p;
   if (!fresh.isEmpty()) m_watcher.addPaths(fresh);
+  if (trace::enabled() && (!drop.isEmpty() || !fresh.isEmpty())) trace::log("assets: watching " + watched().join(", "));
   const bool remote = std::any_of(want.begin(), want.end(), networkPath);  // may not notify: looked at every 30 s
   if (remote && !m_poll.isActive()) m_poll.start();
   if (!remote) m_poll.stop();

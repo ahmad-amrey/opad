@@ -7,6 +7,7 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QStandardItemModel>
 #include <QFileInfo>
@@ -17,6 +18,8 @@
 #include <functional>
 #include <set>
 
+#include "AssetMonitor.hpp"
+#include "AssetsArea.hpp"
 #include "Jobs.hpp"
 #include "KicadBoards.hpp"
 #include "Viewport.hpp"
@@ -292,8 +295,9 @@ OPAD_BENCH(OPAD_BENCH_KICAD, kicad) {
 // OPAD_BENCH_KICAD_CLI=<prefix> (UI-73), on a document beside a board (tools/gui_benches.py writes both, with a stand-in
 // kicad-cli as OPAD_KICAD_CLI and the settings kicad/reader=kicad-cli, kicad/tracks=true): the import dialog offers KiCad's
 // export with its extras (<prefix>.dialog.png); the board imported through it is linked, read from the STEP kicad-cli made
-// (asked for the tracks, at the reader's origin), every footprint a component named after it (<prefix>.png); saved and
-// reopened with that STEP gone, the read remembered shows it as synced; with the memory gone too, kicad-cli makes it again.
+// (asked for the tracks, at the reader's origin), every footprint a component named after it (<prefix>.png), the board and the
+// 3D model it names watched (UI-68); saved and reopened with that STEP gone, the read remembered shows it as synced; with the
+// memory gone too, kicad-cli makes it again.
 OPAD_BENCH(OPAD_BENCH_KICAD_CLI, kicad_cli) {
   const QString prefix = value;
   static int phase = 0;
@@ -367,7 +371,17 @@ OPAD_BENCH(OPAD_BENCH_KICAD_CLI, kicad_cli) {
         w.m_viewport->fitAll();
         QTimer::singleShot(600, &w, [&w, prefix, derived, fail] {
           if (!w.m_viewport->grabImage().save(prefix + ".png")) return (void)fail("frame");
-          trace::log("bench: kicad-cli board read through KiCad's export, linked, parts named after their footprints PASS");
+          {  // the monitor watches the board and the 3D model it names (UI-68)
+            QStringList watched;
+            for (AreaController* a : w.m_areas)
+              if (auto* area = qobject_cast<AssetsArea*>(a)) watched = area->monitor()->watched();
+            const QString dir = QFileInfo(w.m_doc->path()).absolutePath();
+            auto has = [&watched](const QString& path) {
+              return std::any_of(watched.begin(), watched.end(), [&](const QString& p) { return QDir::cleanPath(p).compare(QDir::cleanPath(path), Qt::CaseInsensitive) == 0; });
+            };
+            if (!has(dir + "/board.kicad_pcb") || !has(dir + "/part.step")) return (void)fail("the board and its model are not watched: " + watched.join(", "));
+          }
+          trace::log("bench: kicad-cli board read through KiCad's export, linked, parts named after their footprints, the board and its model watched PASS");
           try {
             w.m_doc->save();
           } catch (const std::exception& e) {
