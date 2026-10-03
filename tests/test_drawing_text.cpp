@@ -76,6 +76,34 @@ TEST(bidi_puts_right_to_left_runs_and_their_numbers_in_visual_order) {
   CHECK(bidi_levels(u("ab \xD8\xA7\xD9\x8E"), base) == std::vector<uint8_t>({0, 0, 0, 1, 1}) && base == 0);  // a mark keeps its letter's level
 }
 
+// TODO 11 UI-92: explicit embeddings, overrides and isolates (as Qt's bidi has them): an override reverses Latin or keeps
+// Arabic in its typed order, an isolate's neutrals take its direction and its content does not decide the paragraph's,
+// an embedding nests a level, unmatched ends change nothing.
+TEST(bidi_takes_explicit_embeddings_overrides_and_isolates) {
+  auto shown = [](const std::string& s) {  // the visual order without the format characters
+    std::u32string out;
+    for (char32_t c : bidi_visual(utf32(s)))
+      if (!(c >= 0x202A && c <= 0x202E) && !(c >= 0x2066 && c <= 0x2069)) out += c;
+    return out;
+  };
+  const std::string rlo = "\xE2\x80\xAE", lro = "\xE2\x80\xAD", pdf = "\xE2\x80\xAC", rle = "\xE2\x80\xAB", rli = "\xE2\x81\xA7", lri = "\xE2\x81\xA6",
+                    fsi = "\xE2\x81\xA8", pdi = "\xE2\x81\xA9", arabic = "\xD8\xA7\xD8\xA8\xD8\xAA";
+  CHECK(shown("x" + rlo + "abc" + pdf + "y") == u("xcbay"));
+  CHECK(shown(lro + arabic + pdf) == u(arabic));
+  CHECK(shown("a " + rli + "!?" + pdi + " b") == u("a ?! b"));  // without the isolate: "a !? b"
+  CHECK(shown("a !? b") == u("a !? b"));
+  int base = -1;
+  bidi_levels(u(rli + arabic + pdi + " abc"), base);
+  CHECK(base == 0);  // the isolated Arabic does not make the paragraph right to left
+  bidi_levels(u(fsi + arabic + pdi + " " + arabic), base);
+  CHECK(base == 1);
+  CHECK(shown("ab " + fsi + arabic + pdi + " cd") == u("ab \xD8\xAA\xD8\xA8\xD8\xA7 cd"));
+  const auto nested = bidi_levels(u("a" + rle + "b" + pdf + "c"), base);
+  CHECK(base == 0 && nested[0] == 0 && nested[2] == 2 && nested[4] == 0);  // b: left to right inside a right-to-left embedding
+  CHECK(shown(pdf + pdi + "abc" + lri) == u("abc"));
+  CHECK(shown(arabic + " " + lri + "abc 12" + pdi) == u("abc 12 \xD8\xAA\xD8\xA8\xD8\xA7"));  // Latin isolated in an Arabic paragraph
+}
+
 TEST(arabic_is_shaped_joined_and_in_visual_order) {
   TextOutliner t;
   if (!arabic(t)) { std::puts("no font with Arabic: shaping cases skipped"); return; }

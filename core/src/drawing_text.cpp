@@ -47,7 +47,7 @@
 namespace opad::detail {
 namespace {
 
-enum Bidi : uint8_t { L, R, AL, EN, ES, ET, AN, CS, NSM, BN, B, S, WS, ON };
+enum Bidi : uint8_t { L, R, AL, EN, ES, ET, AN, CS, NSM, BN, B, S, WS, ON, LRE, RLE, LRO, RLO, PDF, LRI, RLI, FSI, PDI };  // explicit ones last
 
 bool in(uint32_t c, uint32_t a, uint32_t b) { return c >= a && c <= b; }
 
@@ -84,7 +84,9 @@ Bidi bidi_class(uint32_t c) {
   if (c == 0x200E) return L;
   if (c == 0x200F) return R;
   if (c == 0x61C) return AL;
-  if (c < 0x20 || in(c, 0x7F, 0x9F) || c == 0xAD || in(c, 0x200B, 0x200D) || in(c, 0x202A, 0x202E) || in(c, 0x2060, 0x2069) || c == 0xFEFF) return BN;
+  if (in(c, 0x202A, 0x202E)) { static const Bidi x[] = {LRE, RLE, PDF, LRO, RLO}; return x[c - 0x202A]; }
+  if (in(c, 0x2066, 0x2069)) { static const Bidi x[] = {LRI, RLI, FSI, PDI}; return x[c - 0x2066]; }
+  if (c < 0x20 || in(c, 0x7F, 0x9F) || c == 0xAD || in(c, 0x200B, 0x200D) || in(c, 0x2060, 0x2065) || c == 0xFEFF) return BN;
   if (mark(c)) return NSM;
   if (in(c, 0x590, 0x5FF) || in(c, 0x7C0, 0x85F) || in(c, 0xFB1D, 0xFB4F) || in(c, 0x10800, 0x10FFF) || in(c, 0x1E800, 0x1EDFF) ||
       in(c, 0x1EF00, 0x1EFFF))
@@ -109,6 +111,8 @@ Bidi bidi_class(uint32_t c) {
 
 bool space(uint32_t c) { return c == ' ' || c == '\t' || c == 0x3000 || in(c, 0x2000, 0x200A); }
 bool blank(uint32_t c) { return space(c) || c == 0xA0; }  // drawn as an advance alone (a no-break space too)
+// Directional marks, embeddings and isolates, joiners: not drawn, no advance.
+bool invisible(uint32_t c) { return in(c, 0x200B, 0x200F) || in(c, 0x202A, 0x202E) || in(c, 0x2060, 0x2069) || c == 0x61C || c == 0xFEFF; }
 bool ideograph(uint32_t c) { return in(c, 0x2E80, 0x9FFF) || in(c, 0xAC00, 0xD7AF) || in(c, 0xF900, 0xFAFF) || in(c, 0x20000, 0x3FFFF); }
 
 }  // namespace
@@ -137,63 +141,166 @@ std::vector<uint8_t> bidi_levels(const std::u32string& text, int& base) {
   std::vector<Bidi> t(n);
   for (size_t i = 0; i < n; ++i) t[i] = bidi_class(text[i]);
   const std::vector<Bidi> original = t;
-  base = 0;
-  for (Bidi c : t)
-    if (c == L || c == R || c == AL) { base = c == L ? 0 : 1; break; }
-  const Bidi sos = base ? R : L;
-  // W1: marks (and format characters) take the class before them. W2: numbers after Arabic letters are Arabic numbers.
-  // W3: Arabic letters are right to left.
-  Bidi strong = sos;
+  auto initiator = [](Bidi c) { return c == LRI || c == RLI || c == FSI; };
+  // BD9: each isolate initiator's matching PDI (n: none).
+  std::vector<size_t> match(n, n);
   for (size_t i = 0; i < n; ++i) {
-    if (t[i] == NSM || t[i] == BN) t[i] = i ? t[i - 1] : sos;
-    if (t[i] == L || t[i] == R || t[i] == AL) strong = t[i];
-    else if (t[i] == EN && strong == AL) t[i] = AN;
+    if (!initiator(t[i])) continue;
+    for (size_t j = i + 1, inner = 0; j < n && t[j] != B; ++j) {
+      if (initiator(t[j])) ++inner;
+      else if (t[j] == PDI && inner-- == 0) { match[i] = j; break; }
+    }
   }
-  for (auto& c : t)
-    if (c == AL) c = R;
-  // W4: one separator between two numbers of a kind joins them. W5: terminators beside European numbers are numbers.
-  // W6: the separators and terminators left are neutral.
-  for (size_t i = 1; i + 1 < n; ++i) {
-    if (t[i] == ES && t[i - 1] == EN && t[i + 1] == EN) t[i] = EN;
-    else if (t[i] == CS && (t[i - 1] == EN || t[i - 1] == AN) && t[i + 1] == t[i - 1]) t[i] = t[i - 1];
+  // P2, P3: the first strong character's direction in [from, to), isolated text left out; -1 none.
+  auto firstStrong = [&](size_t from, size_t to) {
+    for (size_t i = from; i < to && t[i] != B; ++i) {
+      if (t[i] == L) return 0;
+      if (t[i] == R || t[i] == AL) return 1;
+      if (initiator(t[i])) {
+        if (match[i] >= to) return -1;
+        i = match[i];
+      }
+    }
+    return -1;
+  };
+  base = std::max(0, firstStrong(0, n));
+  // X1-X8: embedding levels of the explicit embeddings, overrides and isolates; X9: the embeddings, overrides and their
+  // ends are left out (as BN, on the level around them).
+  struct Entry {
+    int level;
+    Bidi override;
+    bool isolate;
+  };
+  std::vector<Entry> stack{{base, ON, false}};
+  int overflowIsolates = 0, overflowEmbeddings = 0, validIsolates = 0;
+  std::vector<int> embedding(n, base);
+  for (size_t i = 0; i < n; ++i) {
+    const Bidi c = t[i];
+    auto next = [&stack](bool rtl) { const int l = stack.back().level; return rtl ? (l + 1) | 1 : (l + 2) & ~1; };
+    auto overridden = [&stack](Bidi c) { return stack.back().override != ON ? stack.back().override : c; };
+    embedding[i] = stack.back().level;
+    if (c == RLE || c == LRE || c == RLO || c == LRO) {
+      const int level = next(c == RLE || c == RLO);
+      if (level <= 125 && overflowIsolates == 0 && overflowEmbeddings == 0) stack.push_back({level, c == RLO ? R : c == LRO ? L : ON, false});
+      else if (overflowIsolates == 0) ++overflowEmbeddings;
+      t[i] = BN;
+    } else if (initiator(c)) {
+      t[i] = overridden(ON);
+      const int level = next(c == RLI || (c == FSI && firstStrong(i + 1, match[i]) == 1));
+      if (level <= 125 && overflowIsolates == 0 && overflowEmbeddings == 0) ++validIsolates, stack.push_back({level, ON, true});
+      else ++overflowIsolates;
+    } else if (c == PDI) {
+      if (overflowIsolates > 0) {
+        --overflowIsolates;
+      } else if (validIsolates > 0) {
+        overflowEmbeddings = 0;
+        while (!stack.back().isolate) stack.pop_back();
+        stack.pop_back();
+        --validIsolates;
+      }
+      embedding[i] = stack.back().level;
+      t[i] = overridden(ON);
+    } else if (c == PDF) {
+      if (overflowIsolates == 0) {
+        if (overflowEmbeddings > 0) --overflowEmbeddings;
+        else if (!stack.back().isolate && stack.size() >= 2) stack.pop_back();
+      }
+      t[i] = BN;
+    } else if (c == B) {
+      embedding[i] = base;
+    } else if (c != BN) {
+      t[i] = overridden(c);
+    }
   }
-  for (size_t i = 0; i < n;) {
-    if (t[i] != ET) { ++i; continue; }
-    size_t j = i;
-    while (j < n && t[j] == ET) ++j;
-    if ((i > 0 && t[i - 1] == EN) || (j < n && t[j] == EN))
-      for (size_t k = i; k < j; ++k) t[k] = EN;
-    i = j;
+  // X10: level runs, chained from an isolate initiator to its PDI into isolating run sequences, each resolved on its own
+  // between its start and end directions (sos, eos).
+  std::vector<std::vector<size_t>> sequences;
+  {
+    std::vector<size_t> runOf(n), runStart;
+    for (size_t i = 0; i < n; ++i) {
+      if (i == 0 || embedding[i] != embedding[i - 1]) runStart.push_back(i);
+      runOf[i] = runStart.size() - 1;
+    }
+    std::vector<bool> taken(runStart.size(), false);
+    for (size_t r = 0; r < runStart.size(); ++r) {
+      if (taken[r]) continue;  // a matched PDI's run went on with its initiator's
+      std::vector<size_t> sequence;
+      for (size_t k = r; k < runStart.size();) {
+        taken[k] = true;
+        const size_t end = k + 1 < runStart.size() ? runStart[k + 1] : n;
+        for (size_t i = runStart[k]; i < end; ++i) sequence.push_back(i);
+        const size_t last = end - 1;
+        if (!initiator(original[last]) || match[last] >= n) break;
+        k = runOf[match[last]];
+      }
+      sequences.push_back(std::move(sequence));
+    }
   }
-  for (auto& c : t)
-    if (c == ES || c == ET || c == CS) c = ON;
-  // W7: European numbers after left-to-right text are left to right.
-  strong = sos;
-  for (auto& c : t) {
-    if (c == L || c == R) strong = c;
-    else if (c == EN && strong == L) c = L;
+  for (const auto& seq : sequences) {
+    const size_t first = seq.front(), last = seq.back(), m = seq.size();
+    const int level = embedding[first];
+    const int before = first > 0 ? embedding[first - 1] : base;
+    const int after = (initiator(original[last]) && match[last] >= n) || last + 1 >= n ? base : embedding[last + 1];
+    const Bidi sos = std::max(level, before) & 1 ? R : L, eos = std::max(level, after) & 1 ? R : L;
+    auto at = [&](size_t k) -> Bidi& { return t[seq[k]]; };
+    // W1: marks (and format characters) take the class before them (after an isolate, neutral). W2: numbers after Arabic
+    // letters are Arabic numbers. W3: Arabic letters are right to left.
+    Bidi strong = sos;
+    for (size_t k = 0; k < m; ++k) {
+      if (at(k) == NSM || at(k) == BN) {
+        const Bidi prior = k ? original[seq[k - 1]] : ON;
+        at(k) = !k ? sos : (initiator(prior) || prior == PDI) ? ON : at(k - 1);
+      }
+      if (at(k) == L || at(k) == R || at(k) == AL) strong = at(k);
+      else if (at(k) == EN && strong == AL) at(k) = AN;
+    }
+    for (size_t k = 0; k < m; ++k)
+      if (at(k) == AL) at(k) = R;
+    // W4: one separator between two numbers of a kind joins them. W5: terminators beside European numbers are numbers.
+    // W6: the separators and terminators left are neutral.
+    for (size_t k = 1; k + 1 < m; ++k) {
+      if (at(k) == ES && at(k - 1) == EN && at(k + 1) == EN) at(k) = EN;
+      else if (at(k) == CS && (at(k - 1) == EN || at(k - 1) == AN) && at(k + 1) == at(k - 1)) at(k) = at(k - 1);
+    }
+    for (size_t k = 0; k < m;) {
+      if (at(k) != ET) { ++k; continue; }
+      size_t j = k;
+      while (j < m && at(j) == ET) ++j;
+      if ((k > 0 && at(k - 1) == EN) || (j < m && at(j) == EN))
+        for (size_t q = k; q < j; ++q) at(q) = EN;
+      k = j;
+    }
+    for (size_t k = 0; k < m; ++k)
+      if (at(k) == ES || at(k) == ET || at(k) == CS) at(k) = ON;
+    // W7: European numbers after left-to-right text are left to right.
+    strong = sos;
+    for (size_t k = 0; k < m; ++k) {
+      if (at(k) == L || at(k) == R) strong = at(k);
+      else if (at(k) == EN && strong == L) at(k) = L;
+    }
+    // N1, N2: neutrals between two of one direction take it (numbers count as right to left), others the embedding's.
+    auto direction = [](Bidi c) { return c == L ? 0 : (c == R || c == EN || c == AN) ? 1 : -1; };
+    for (size_t k = 0; k < m;) {
+      if (direction(at(k)) >= 0) { ++k; continue; }
+      size_t j = k;
+      while (j < m && direction(at(j)) < 0) ++j;
+      const int from = k ? direction(at(k - 1)) : sos == R, to = j < m ? direction(at(j)) : eos == R;
+      for (size_t q = k; q < j; ++q) at(q) = (from == to ? from : level & 1) ? R : L;
+      k = j;
+    }
   }
-  // N1, N2: neutrals between two of one direction take it (numbers count as right to left), others the paragraph's.
-  auto direction = [](Bidi c) { return c == L ? 0 : (c == R || c == EN || c == AN) ? 1 : -1; };
-  for (size_t i = 0; i < n;) {
-    if (direction(t[i]) >= 0) { ++i; continue; }
-    size_t j = i;
-    while (j < n && direction(t[j]) < 0) ++j;
-    const int before = i ? direction(t[i - 1]) : base, after = j < n ? direction(t[j]) : base;
-    for (size_t k = i; k < j; ++k) t[k] = (before == after ? before : base) ? R : L;
-    i = j;
-  }
-  // I1, I2; L1: tabs, and white space before them or at the end, at the paragraph's level.
+  // I1, I2: each character's level from its embedding's; L1: tabs and paragraph ends, and white space, isolates and left
+  // out characters before them or at the end, at the paragraph's level.
   std::vector<uint8_t> levels(n, uint8_t(base));
   for (size_t i = 0; i < n; ++i) {
-    if (base == 0) levels[i] = t[i] == R ? 1 : (t[i] == AN || t[i] == EN) ? 2 : 0;
-    else levels[i] = (t[i] == L || t[i] == EN || t[i] == AN) ? 2 : 1;
+    const int e = embedding[i];
+    levels[i] = uint8_t(e & 1 ? e + (t[i] == L || t[i] == EN || t[i] == AN) : e + (t[i] == R ? 1 : (t[i] == AN || t[i] == EN) ? 2 : 0));
   }
   bool trailing = true;
   for (size_t i = n; i-- > 0;) {
     const Bidi c = original[i];
     if (c == S || c == B) { levels[i] = uint8_t(base); trailing = true; }
-    else if (trailing && (c == WS || c == BN)) levels[i] = uint8_t(base);
+    else if (trailing && (c == WS || c == BN || c >= LRE)) levels[i] = uint8_t(base);
     else trailing = false;
   }
   return levels;
@@ -735,7 +842,7 @@ struct TextOutliner::Impl {
     s.shear = std::tan(std::clamp(f.oblique, -1.4, 1.4));
     const double width = f.width > 0 ? f.width : 1;
     if (const auto font = shx.font(f.font); font && font->above > 0 &&
-        std::all_of(chars.begin(), chars.end(), [&font](char32_t c) { return c == U'\n' || blank(c) || font->glyph(c); })) {
+        std::all_of(chars.begin(), chars.end(), [&font](char32_t c) { return c == U'\n' || blank(c) || invisible(c) || font->glyph(c); })) {
       const double k = cap ? f.size / font->above : f.size / (font->above + font->below);
       if (k > 0 && std::isfinite(k)) {
         s.shx = font;
@@ -816,7 +923,7 @@ struct TextOutliner::Impl {
     out.text = text.substr(a, b - a);
     out.direction = base;
     out.style = a < b ? owner[a] : empty;
-    for (size_t i = b; i > a && (space(text[i - 1]) || bidi_class(text[i - 1]) == BN); --i) levels[i - 1] = uint8_t(base);  // L1
+    for (size_t i = b; i > a && (space(text[i - 1]) || bidi_class(text[i - 1]) == BN || bidi_class(text[i - 1]) >= LRE); --i) levels[i - 1] = uint8_t(base);  // L1
     struct Run {
       size_t a, b;
       uint8_t level;

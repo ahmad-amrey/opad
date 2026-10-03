@@ -107,7 +107,7 @@ def text_file(root, document=None):
     """Text as AutoCAD 2013 writes it (UTF-8): three behs (Joined), 'III' (Latin), an Arabic word right-aligned on a guide
     line at x = 100 (Right, Guide), Latin and Arabic in one line (Mixed), an Arabic paragraph wrapped at 60 (Para), 'III'
     in a shape font beside the drawing (Shape: mini.shx, whose 'I' is a stroke 10 up, then 6 on), MTEXT formatted part by
-    part (Rich, Ruled)."""
+    part (Rich, Ruled), "I." in a right-to-left override (Override)."""
     def text(layer, x, y, s, extra=()):
         return [(0, "TEXT"), (8, layer), (10, x), (20, y), (40, 10), (1, s)] + list(extra)
     pairs = [(0, "SECTION"), (2, "HEADER"), (9, "$ACADVER"), (1, "AC1027"), (9, "$INSUNITS"), (70, "4"), (0, "ENDSEC"),
@@ -121,6 +121,7 @@ def text_file(root, document=None):
     pairs += [(0, "MTEXT"), (8, "Para"), (10, 120), (20, 0), (40, 5), (41, 60), (71, 1),
               (1, "هذا نص طويل يلتف على عدة أسطر (مع أقواس) 3.5")]
     pairs += text("Shape", 0, -80, "III", [(7, "MINI")])
+    pairs += text("Override", 40, -80, "\u202eI.\u202c")  # a right-to-left override: drawn ".I"
     # MTEXT in parts (5 high, bottom left on the point): a red part and a stacked fraction; an underlined word.
     pairs += [(0, "MTEXT"), (8, "Rich"), (10, 120), (20, -60), (40, 5), (71, 7), (1, r"Plain {\C1;Red} 1\S1/2;")]
     pairs += [(0, "MTEXT"), (8, "Ruled"), (10, 120), (20, -75), (40, 5), (71, 7), (1, r"\LUnder\l")]

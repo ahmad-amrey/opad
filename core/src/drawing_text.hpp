@@ -3,8 +3,8 @@
 // own formats where a text has them (MTEXT's inline fonts, sizes, colours, slants, rules and stacks). With HarfBuzz
 // (OPAD_HAVE_SHAPING) it is shaped as a text renderer shapes it: Arabic letters join and carry their marks, lam-alef and
 // other ligatures, Indic clusters, kerning; right-to-left runs and the numbers in them in visual order (the Unicode bidi
-// algorithm without explicit embeddings, mirrored brackets); each character from the style's font, else from the first
-// fallback font that has it (as Qt merges fonts). Without it, OCCT's text (no shaping). A style's AutoCAD shape font
+// algorithm with its explicit embeddings, overrides and isolates; mirrored brackets); each character from the style's
+// font, else from the first fallback font that has it (as Qt merges fonts). Without it, OCCT's text (no shaping). A style's AutoCAD shape font
 // (.shx) that is found (beside the drawing, in DWG TrueView's or AutoCAD's Fonts folder) draws text in its strokes, edges
 // rather than faces, as long as it has every character (shx_font.hpp). Not a public header.
 #include <TopoDS_Compound.hxx>
@@ -97,8 +97,9 @@ class TextOutliner {
 };
 
 bool text_shaping();  // built with HarfBuzz
-// The Unicode bidi algorithm's embedding levels of one paragraph (no explicit embeddings): `base` is its direction (the
-// first strong character's), each character's level; and the paragraph's characters in visual order, left to right.
+// The Unicode bidi algorithm's embedding levels of one paragraph (explicit embeddings, overrides and isolates too):
+// `base` is its direction (the first strong character's, isolates left out), each character's level; and the
+// paragraph's characters in visual order, left to right.
 std::vector<uint8_t> bidi_levels(const std::u32string& text, int& base);
 std::u32string bidi_visual(const std::u32string& text);
 std::u32string utf32(const std::string& utf8);
