@@ -140,15 +140,16 @@ TEST(projection_top_view_circle_stays_an_arc) {
   }
 }
 
-// An isometric view: the rims become ellipses (minor axis = r cos 54.7 deg) and the tiers agree on what is visible.
+// An isometric view: the rims become ellipses (minor axis = r cos 54.7 deg) and the tiers agree on what is visible, to
+// 0.01 mm of line.
 TEST(projection_iso_tiers_agree) {
   const Document doc = doc_of({block_with_hole()});
   const Scene scene = resolve(doc);
   const auto exact = project(doc, scene, spec_of("iso", Quality::Exact), {}, false);
   const auto hybrid = project(doc, scene, spec_of("iso", Quality::Hybrid), {}, false);
   CHECK(total(*exact, false) > 200);
-  CHECK_NEAR(total(*hybrid, false), total(*exact, false), 0.002 * total(*exact, false));
-  CHECK_NEAR(total(*hybrid, true), total(*exact, true), 0.002 * total(*exact, true));
+  CHECK_NEAR(total(*hybrid, false), total(*exact, false), 0.01);  // the design's 0.01 mm
+  CHECK_NEAR(total(*hybrid, true), total(*exact, true), 0.01);
   for (const auto* g : {exact.get(), hybrid.get()}) {
     CHECK(count(*g, Curve::Type::Ellipse, false) >= 1);
     for (const auto& c : g->curves)
@@ -430,7 +431,7 @@ TEST(projection_freeform_silhouettes) {
   CHECK_NEAR(sphere, 2 * M_PI * 8, 0.01);
   CHECK(torus > 2 * M_PI * (R + r));
   const auto exact = project(doc, scene, spec_of("iso", Quality::Exact), {}, false);
-  CHECK_NEAR(total(*g, false), total(*exact, false), 0.002 * total(*exact, false));
+  CHECK_NEAR(total(*g, false), total(*exact, false), 0.01);
 }
 
 // The draft tier: polylines from the polygonal algorithm, roughly where the exact lines are. The box's edges are sharp
