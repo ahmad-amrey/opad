@@ -160,6 +160,15 @@ OPAD_BENCH(OPAD_BENCH_RICHTIP, richtip) {
     QApplication::sendEvent(plain, &other);
     check(held && QToolTip::text().contains("Not a command"), "Qt's tooltip held back on attached buttons only");
     delete plain;
+    QSettings().setValue("ui/tips", 1);  // Plain tooltips: Qt's, with the command's summary
+    QApplication::sendEvent(fit, &help);
+    check(QToolTip::text().contains(help::find("view.fit")->summary.toHtmlEscaped()) && QToolTip::text().contains(help::find("view.fit")->title.toHtmlEscaped()),
+          "Plain tooltips: the command's name and summary in Qt's tooltip");
+    QToolTip::showText(fit->mapToGlobal(QPoint(4, 4)), "before");
+    QSettings().setValue("ui/tips", 0);
+    QApplication::sendEvent(fit, &help);
+    check(QToolTip::text() == "before", "Off: no hover help at all");
+    QSettings().setValue("ui/tips", 2);
     QToolTip::hideText();
     RichTip::setClipFactory([](const QString& clip, QWidget* parent) { auto* w = new QLabel(clip, parent); w->setAlignment(Qt::AlignCenter); return w; });
     tip->showFor(fit, State::Expanded);

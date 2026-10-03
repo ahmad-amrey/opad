@@ -16,6 +16,7 @@
 #include <QSettings>
 #include <QStyle>
 #include <QToolButton>
+#include <QToolTip>
 #include <QVariantAnimation>
 #include <algorithm>
 
@@ -377,8 +378,18 @@ void RichTip::paintEvent(QPaintEvent*) {
 bool RichTip::eventFilter(QObject* o, QEvent* e) {
   if (m_attached.isEmpty() && !g_menus) return false;
   switch (e->type()) {
-    case QEvent::ToolTip:
-      return attachedAt(o) && mode() == 2;  // the card instead of Qt's plain tooltip
+    case QEvent::ToolTip: {  // rich: the card instead of Qt's tooltip; off: nothing; plain: Qt's with the summary
+      QWidget* at = attachedAt(o);
+      if (!at || mode() != 1) return at;
+      const QString id = m_attached.value(at);
+      auto* button = qobject_cast<QToolButton*>(at);
+      QAction* a = button && button->defaultAction() ? button->defaultAction() : g_lookup ? g_lookup(id) : nullptr;
+      const CommandHelp* h = help::find(id);
+      const QString text = a ? help::tooltip(a) : h ? "<qt><b>" + h->title.toHtmlEscaped() + "</b><br>" + h->summary.toHtmlEscaped() + "</qt>" : QString();
+      if (text.isEmpty()) return false;
+      QToolTip::showText(static_cast<QHelpEvent*>(e)->globalPos(), text, at);
+      return true;
+    }
     case QEvent::MouseMove: {
       auto* me = static_cast<QMouseEvent*>(e);
       // The same move again, propagated to a parent (a disabled button passes it on): only the first receiver counts.

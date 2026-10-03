@@ -7,7 +7,8 @@
 // The pointer may rest on the card to read it. One top-level ToolTip window, never focused; painted from the theme
 // tokens on every paint and mirrored for right-to-left languages. Qt's own tooltip is held back on attached widgets.
 // Menus (setMenuCards): the entries of any menu that are commands with help show their card beside the entry, the same
-// way. Setting ui/tips: 0 off (Qt tooltip), 1 basic (Qt tooltip), 2 rich (default).
+// way. Setting ui/tips on attached widgets: 0 off (no hover help), 1 plain (Qt's tooltip with the command's name, key
+// and summary: help::tooltip), 2 rich (default).
 #include <QElapsedTimer>
 #include <QHash>
 #include <QPointer>
