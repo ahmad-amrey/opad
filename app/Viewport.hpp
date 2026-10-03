@@ -332,8 +332,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showTrackingAnchors();  // a small cross on each anchor
   void pruneTracking();        // from handleViewRedraw: the camera moved
   // False when a displayed, non-ghost body's face lies in front of `p` by more than slackPx pixels (the navigation
-  // selector, one ray from p towards the eye; section clipping honoured); always true while selecting through objects.
-  bool pointVisible(const gp_Pnt& p, double slackPx = 3) const;
+  // selector, one ray from p towards the eye; section clipping honoured) or, for bodies other than `own` (the point's,
+  // whose faces seen edge-on reach its pixel), covers its pixel 8 px in front; always true while selecting through.
+  bool pointVisible(const gp_Pnt& p, const std::string& own = {}, double slackPx = 3) const;
   bool detectedPoint(gp_Pnt& p) const;  // where the pointer met the detected owner
   // A detected occluder, or a detected edge or vertex whose point is behind a face (Edge and Vertex modes): cleared.
   bool dropOccluded();
@@ -343,8 +344,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_extensionEnabled = true, m_shiftHeld = false;
   QElapsedTimer m_shiftClock;
   int m_inferenceChoice = 0;
-  struct TrackingAnchor { gp_Pnt point; gp_Vec direction; bool hasDirection; };
-  struct TrackingCandidate { gp_Pnt anchor, point; gp_Vec direction; bool intersection = false; gp_Pnt secondAnchor; };
+  struct TrackingAnchor { gp_Pnt point; gp_Vec direction; bool hasDirection; std::string body; };  // body: whose vertex or edge
+  struct TrackingCandidate { gp_Pnt anchor, point; gp_Vec direction; bool intersection = false; gp_Pnt secondAnchor; std::string body; };
   std::vector<TrackingAnchor> m_trackingAnchors;  // at most 6, oldest first
   std::vector<TrackingCandidate> m_trackingCandidates;
   TrackingCandidate m_lockedTracking;

@@ -419,7 +419,7 @@ void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, c
   computeSubShapes(selection, mode);
   if (!m_prs || m_prs->navigation.IsNull() || (mode != AIS_Shape::SelectionMode(TopAbs_EDGE) && mode != AIS_Shape::SelectionMode(TopAbs_VERTEX))) return;
   // One pixel: the faces block only what lies behind them; an edge on a face keeps its own depth tolerance, so it wins.
-  Handle(SharedSensitive) faces = new SharedSensitive(new OccluderOwner(this), m_prs->navigation);
+  Handle(OccluderSensitive) faces = new OccluderSensitive(new OccluderOwner(this), m_prs->navigation);
   faces->SetSensitivityFactor(1);
   selection->Add(faces);
 }

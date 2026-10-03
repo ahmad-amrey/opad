@@ -133,6 +133,17 @@ class SharedSensitive : public Select3D_SensitiveEntity {
   Handle(Select3D_SensitiveEntity) m_prototype;
 };
 
+// An OccluderOwner's faces: they stand in front only of a point pick (hover, click). A box takes no faces in the Edge and
+// Vertex modes, and testing a window box for whole triangles of every body in it took seconds on a big assembly.
+class OccluderSensitive : public SharedSensitive {
+  DEFINE_STANDARD_RTTI_INLINE(OccluderSensitive, SharedSensitive)
+ public:
+  using SharedSensitive::SharedSensitive;
+  Standard_Boolean Matches(SelectBasics_SelectingVolumeManager& mgr, SelectBasics_PickResult& result) override {
+    return mgr.GetActiveSelectionType() == SelectMgr_SelectionType_Point && SharedSensitive::Matches(mgr, result);
+  }
+};
+
 // Only registered with the navigation selector, never displayed or activated in the UI selection.
 class NavigationShape : public AIS_InteractiveObject {
   DEFINE_STANDARD_RTTI_INLINE(NavigationShape, AIS_InteractiveObject)

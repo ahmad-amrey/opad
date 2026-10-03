@@ -61,11 +61,17 @@ TEST(mesh_selection_has_independent_facet_edge_and_vertex_owners) {
     int occluders=0;
     for(const auto& entity:selection->Entities()) {
       SelectBasics_PickResult result;
-      CHECK(entity->BaseSensitive()->Matches(volume,result));
+      const bool matched=entity->BaseSensitive()->Matches(volume,result);
       if(auto face=Handle(OccluderOwner)::DownCast(entity->BaseSensitive()->OwnerId());!face.IsNull()) {
+        CHECK(!matched);  // a box never takes the faces standing in front
         CHECK_EQ(face->Priority(),0);CHECK_EQ(entity->BaseSensitive()->SensitivityFactor(),1);CHECK(face->Selectable()==body);
+        SelectMgr_SelectingVolumeManager point;
+        point.InitPointSelectingVolume(gp_Pnt2d(500,500));
+        point.SetCamera(camera); point.SetWindowSize(1000,1000); point.BuildSelectingVolume();
+        CHECK(entity->BaseSensitive()->Matches(point,result));  // the pointer over the face: in front of what is behind it
         ++occluders;continue;
       }
+      CHECK(matched);
       auto owner=Handle(SubShapeOwner)::DownCast(entity->BaseSensitive()->OwnerId());
       CHECK(!owner.IsNull());
       CHECK(!owner->HasShape()); // A box candidate must not construct analytic geometry.

@@ -59,14 +59,15 @@ void Viewport::dwellAnchor() {
   TrackingAnchor hovered{};
   bool have = false;
   gp_Pnt at;
-  if (m_ctx->HasDetected() && m_nodeOf.count(m_ctx->DetectedInteractive().get()) && detectedPoint(at) && pointVisible(at)) {
+  const auto body = m_ctx->HasDetected() ? m_nodeOf.find(m_ctx->DetectedInteractive().get()) : m_nodeOf.end();
+  if (body != m_nodeOf.end() && detectedPoint(at) && pointVisible(at, body->second)) {
     auto owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
     if (!owner.IsNull()) {
       if (auto mine = Handle(SubShapeOwner)::DownCast(owner); !mine.IsNull()) mine->prepare();  // a mesh owner's shape on demand
       if (owner->HasShape()) {
         const auto& shape = owner->Shape(); const gp_Trsf tr = m_ctx->DetectedInteractive()->Transformation();
         if (shape.ShapeType() == TopAbs_VERTEX) {
-          hovered = {BRep_Tool::Pnt(TopoDS::Vertex(shape)).Transformed(tr), {}, false}; have = true;
+          hovered = {BRep_Tool::Pnt(TopoDS::Vertex(shape)).Transformed(tr), {}, false, body->second}; have = true;
         } else if (shape.ShapeType() == TopAbs_EDGE) {
           BRepAdaptor_Curve curve(TopoDS::Edge(shape));
           if (curve.GetType() == GeomAbs_Line) {
@@ -74,11 +75,11 @@ void Viewport::dwellAnchor() {
             const double da = QLineF(widgetPoint({a.X(),a.Y(),a.Z()}),m_trackingCursor).length();
             const double db = QLineF(widgetPoint({b.X(),b.Y(),b.Z()}),m_trackingCursor).length();
             if (std::min(da,db) < 14) {
-              hovered = {da < db ? a : b, gp_Vec(a,b), false}; hovered.hasDirection = hovered.direction.SquareMagnitude() > 1e-18; have = true;
+              hovered = {da < db ? a : b, gp_Vec(a,b), false, body->second}; hovered.hasDirection = hovered.direction.SquareMagnitude() > 1e-18; have = true;
             }
           }
         }
-        have = have && pointVisible(hovered.point);  // the end of a line seen in its middle can be behind a face
+        have = have && pointVisible(hovered.point, hovered.body);  // the end of a line seen in its middle can be behind a face
       }
     }
   }
@@ -106,7 +107,7 @@ void Viewport::pruneTracking() {
   if (state == m_trackingCamera) return;
   m_trackingCamera = state;
   const size_t before = m_trackingAnchors.size();
-  m_trackingAnchors.erase(std::remove_if(m_trackingAnchors.begin(), m_trackingAnchors.end(), [&](const auto& a) { return !pointVisible(a.point); }), m_trackingAnchors.end());
+  m_trackingAnchors.erase(std::remove_if(m_trackingAnchors.begin(), m_trackingAnchors.end(), [&](const auto& a) { return !pointVisible(a.point, a.body); }), m_trackingAnchors.end());
   if (m_trackingAnchors.size() == before) return;
   m_trackingCandidates.clear(); m_trackingDirty = true;
   showTrackingAnchors();
@@ -135,7 +136,7 @@ void Viewport::updateTracking() {
       bool duplicate = false;
       for (const auto& line : lines)
         if (line.anchor.Distance(anchor.point)<1e-7 && line.direction.Crossed(d).SquareMagnitude()<1e-12) duplicate = true;
-      if (!duplicate) lines.push_back({anchor.point,{},d,false,{}});
+      if (!duplicate) lines.push_back({anchor.point,{},d,false,{},anchor.body});
     }
   }
   auto project = [&](TrackingCandidate& candidate) {
@@ -161,9 +162,9 @@ void Viewport::updateTracking() {
       if(p.Distance(q)>1e-7 || distance(p)>10) continue;
       bool duplicate=false;
       for(const auto& c:m_trackingCandidates) if(c.point.Distance(p)<1e-7) duplicate=true;
-      if(!duplicate && pointVisible(p)) m_trackingCandidates.push_back({a.anchor,p,a.direction,true,b.anchor});
+      if(!duplicate && pointVisible(p,a.body)) m_trackingCandidates.push_back({a.anchor,p,a.direction,true,b.anchor,a.body});
     }
-    for (auto line : lines) if(project(line) && distance(line.point)<10 && line.point.Distance(line.anchor)>pixelSize()*3 && pointVisible(line.point))
+    for (auto line : lines) if(project(line) && distance(line.point)<10 && line.point.Distance(line.anchor)>pixelSize()*3 && pointVisible(line.point,line.body))
       m_trackingCandidates.push_back(line);
   }
   const int count = int(m_trackingCandidates.size());
@@ -200,9 +201,9 @@ void Viewport::updateTracking() {
     if(from.Distance(candidate.point)<=1e-9) return;
     const int pieces=std::clamp(int(QLineF(widgetPoint({from.X(),from.Y(),from.Z()}),widgetPoint({candidate.point.X(),candidate.point.Y(),candidate.point.Z()})).length()/8),1,32);
     const gp_Vec step=gp_Vec(from,candidate.point)/pieces;
-    int start=0; bool hidden=!pointVisible(from.Translated(step*0.5));
+    int start=0; bool hidden=!pointVisible(from.Translated(step*0.5),candidate.body);
     for(int i=1;i<=pieces;++i) {
-      const bool next=i<pieces && !pointVisible(from.Translated(step*(i+0.5)));
+      const bool next=i<pieces && !pointVisible(from.Translated(step*(i+0.5)),candidate.body);
       if(i<pieces && next==hidden) continue;
       builder.Add(hidden?behind:seen,BRepBuilderAPI_MakeEdge(from.Translated(step*start),from.Translated(step*i)).Edge());
       anyBehind=anyBehind||hidden; start=i; hidden=next;

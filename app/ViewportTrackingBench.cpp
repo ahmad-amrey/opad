@@ -11,6 +11,7 @@
 #include <AIS_RubberBand.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRep_Tool.hxx>
+#include <Bnd_Box.hxx>
 #include <Geom_Curve.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -137,6 +138,18 @@ bool Viewport::benchTracking(const QString& prefix) {
     kind = owner.IsNull() ? opad::Ref::Kind::Body : owner->kind();
     return true;
   };
+  auto ownerOf = [&](const gp_Pnt& p) {  // the body with a vertex there, as an acquired anchor knows it
+    for (const auto& [id, item] : m_items) {
+      Bnd_Box box;
+      item.ais->BoundingBox(box);
+      if (box.IsVoid() || box.IsOut(p)) continue;
+      TopTools_IndexedMapOfShape map;
+      TopExp::MapShapes(item.ais->Shape(), TopAbs_VERTEX, map);
+      for (int i = 1; i <= map.Extent(); ++i)
+        if (BRep_Tool::Pnt(TopoDS::Vertex(map(i))).Transformed(item.ais->Transformation()).Distance(p) < 1e-9) return id;
+    }
+    return std::string();
+  };
   auto anchorAt = [&](const gp_Pnt& p) {
     return std::any_of(m_trackingAnchors.begin(), m_trackingAnchors.end(), [&](const auto& a) { return a.point.Distance(p) < pixelSize(); });
   };
@@ -237,7 +250,7 @@ bool Viewport::benchTracking(const QString& prefix) {
   // (2) guide points: anchors set on vertices in sight, the pointer along their axes
   int offered = 0, guideSeen = 0, guideBehind = 0, leaked = 0, cued = 0, plain = 0, miscued = 0;
   for (const auto& a : spread(visible, 24)) {
-    m_trackingAnchors = {{a, {}, false}};
+    m_trackingAnchors = {{a, {}, false, ownerOf(a)}};
     for (const gp_Vec d : {gp_Vec(1, 0, 0), gp_Vec(0, 1, 0), gp_Vec(0, 0, 1)})
       for (int k = -60; k <= 60; ++k) {
         if (std::abs(k) < 3) continue;
@@ -290,7 +303,7 @@ bool Viewport::benchTracking(const QString& prefix) {
   require(cued > 0 && plain > 0 && miscued == 0,
           QString("guides passing behind a face drawn faint there: %1, wholly in sight drawn plain: %2, wrong: %3").arg(cued).arg(plain).arg(miscued));
   for (int k = 10; k <= 60 && !visible.empty(); ++k) {  // a guide on screen for the picture
-    m_trackingAnchors = {{visible.front(), {}, false}};
+    m_trackingAnchors = {{visible.front(), {}, false, ownerOf(visible.front())}};
     hover(widget(visible.front().Translated(gp_Vec(1, 0, 0) * (k * 6 * pixelSize()))));
     if (!m_trackingGuide.IsNull()) break;
   }
@@ -298,7 +311,7 @@ bool Viewport::benchTracking(const QString& prefix) {
 
   // (3) the other side: anchors it hides are dropped
   clearTracking();
-  for (const auto& p : spread(visible, 6)) m_trackingAnchors.push_back({p, {}, false});
+  for (const auto& p : spread(visible, 6)) m_trackingAnchors.push_back({p, {}, false, ownerOf(p)});
   showTrackingAnchors();
   const auto before = m_trackingAnchors;
   view(V3d_XnegYposZneg);
@@ -348,10 +361,19 @@ bool Viewport::benchTracking(const QString& prefix) {
       myGL.Selection = myUI.Selection;
       myGL.Selection.Scheme = AIS_SelectionScheme_Replace;
       myGL.Selection.ToApplyTool = true;
-      handleSelectionPoly(m_ctx, m_view);
       QElapsedTimer t;
       t.start();
+      handleSelectionPoly(m_ctx, m_view);  // OCCT's rectangle pick, synchronous; then the visibility job in slices
+      const qint64 rectangle = t.restart();
+      QElapsedTimer gap;
+      gap.start();
+      qint64 worst = 0;
+      QTimer ticker;
+      ticker.setTimerType(Qt::PreciseTimer);
+      QObject::connect(&ticker, &QTimer::timeout, [&] { worst = std::max(worst, gap.restart()); });
+      ticker.start(1);
       while (m_boxJob && t.elapsed() < 20000) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+      ticker.stop();
       const bool finished = !m_boxJob;  // a big model's visibility scan may take longer: what it published so far counts
       if (m_boxJob) m_boxJob->cancel();
       int faces = 0, edges = 0, other = 0;
@@ -359,6 +381,8 @@ bool Viewport::benchTracking(const QString& prefix) {
       for (const auto& ref : selection()) (ref.kind == opad::Ref::Kind::Edge ? edges : other) += 1;
       require(faces == 0 && other == 0 && edges > 0, QString("edge mode %1 box (%2 in %3 ms): %4 edges, %5 other picks, %6 occluding faces selected")
                                                          .arg(crossing ? "crossing" : "window", finished ? "finished" : "stopped").arg(t.elapsed()).arg(edges).arg(other).arg(faces));
+      require(rectangle < 1000 && worst < 250, QString("edge mode %1 box: the rectangle pick %2 ms, then the event loop never held over %3 ms")
+                                                   .arg(crossing ? "crossing" : "window").arg(rectangle).arg(worst));
     }
     myUI.Reset();
     myGL.Reset();

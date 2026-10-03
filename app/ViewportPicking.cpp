@@ -54,9 +54,9 @@ void Viewport::setCenterPicking(bool on,const QPointF& position) {
 
 // UI-31. First one ray from the point towards the eye (nothing behind the point or behind the eye counts), then what is
 // drawn over its pixel, as box selection tests it: a part thinner than a pixel, or a gap between facets that the exact
-// ray slips through, still covers the point on screen. The pixel's margin is wider: its pick tolerance reaches the point's
-// own faces beside it, nearer when seen at a grazing angle.
-bool Viewport::pointVisible(const gp_Pnt& p, double slackPx) const {
+// ray slips through, still covers the point on screen. The pixel's pick tolerance reaches faces beside the point, far
+// nearer when seen edge-on (a cylinder's silhouette): its margin is wider and the point's own body is left to the ray.
+bool Viewport::pointVisible(const gp_Pnt& p, const std::string& own, double slackPx) const {
   if (!m_initialised || m_selectThrough || m_navSelector.IsNull()) return true;
   const auto camera = m_view->Camera();
   const bool ortho = camera->IsOrthographic();
@@ -67,21 +67,21 @@ bool Viewport::pointVisible(const gp_Pnt& p, double slackPx) const {
   const gp_Vec ahead(camera->Direction());
   const double scale = ortho ? 1.0 : std::max(1e-6, gp_Vec(camera->Eye(), p).Dot(ahead) / camera->Distance());
   const double pixel = pixelSize() * scale, slack = slackPx * pixel;  // at the point's depth
-  auto occludes = [&](int i) {
+  auto occludes = [&](int i, bool others) {
     const auto node = m_navNodes.find(m_navSelector->Picked(i)->Selectable().get());
-    if (node == m_navNodes.end()) return false;
+    if (node == m_navNodes.end() || (others && node->second == own)) return false;
     const auto item = m_items.find(node->second);
     return item != m_items.end() && !item->second.look.ghost && m_ctx->IsDisplayed(item->second.ais);  // a ghost is seen through
   };
   const gp_Pnt from = p.Translated(back * slack);
   m_navSelector->Pick(gp_Ax1(from, gp_Dir(back)), m_view);
   for (int i = 1; i <= m_navSelector->NbPicked(); ++i)
-    if (occludes(i) && m_navSelector->PickedPoint(i).Distance(from) < reach - slack) return false;
+    if (occludes(i, false) && m_navSelector->PickedPoint(i).Distance(from) < reach - slack) return false;
   Standard_Integer x = 0, y = 0;
   m_view->Convert(p.X(), p.Y(), p.Z(), x, y);
   m_navSelector->Pick(x, y, m_view);
   for (int i = 1; i <= m_navSelector->NbPicked(); ++i)
-    if (occludes(i) && gp_Vec(m_navSelector->PickedPoint(i), p).Dot(ahead) > std::max(slack, 8 * pixel)) return false;
+    if (occludes(i, true) && gp_Vec(m_navSelector->PickedPoint(i), p).Dot(ahead) > std::max(slack, 8 * pixel)) return false;
   return true;
 }
 
@@ -94,18 +94,32 @@ bool Viewport::detectedPoint(gp_Pnt& p) const {
   return false;
 }
 
+// The pick tolerance reaches past what is drawn both ways: a vertex's through a thin wall, and a face's to the face of a
+// silhouette edge seen edge-on, nearer than that edge or vertex though both are in sight. So the pointer takes the first
+// owner in pick order that is not an occluder and whose point is in sight, else nothing.
 bool Viewport::dropOccluded() {
   if (!m_initialised || !m_ctx->HasDetected()) return false;
-  const auto owner = m_ctx->DetectedOwner();
-  bool hidden = !Handle(OccluderOwner)::DownCast(owner).IsNull();
-  gp_Pnt at;
-  if (!hidden && (m_filter == SelFilter::Edge || m_filter == SelFilter::Vertex) && !Handle(StdSelect_BRepOwner)::DownCast(owner).IsNull()
-      && m_nodeOf.count(m_ctx->DetectedInteractive().get()) && detectedPoint(at))
-    hidden = !pointVisible(at);  // a vertex's pick tolerance reaches through a thin wall
-  if (!hidden) return false;
-  m_ctx->ClearDetected(Standard_False);
+  const bool subShapes = m_filter == SelFilter::Edge || m_filter == SelFilter::Vertex;
+  const auto& selector = m_ctx->MainSelector();
+  auto hidden = [&](const Handle(SelectMgr_EntityOwner)& owner) {
+    if (!Handle(OccluderOwner)::DownCast(owner).IsNull()) return true;
+    const auto body = subShapes && !Handle(StdSelect_BRepOwner)::DownCast(owner).IsNull()
+        ? m_nodeOf.find(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get()) : m_nodeOf.end();
+    if (body == m_nodeOf.end()) return false;
+    for (int i = 1; i <= selector->NbPicked(); ++i)
+      if (selector->Picked(i) == owner) return !pointVisible(selector->PickedPoint(i), body->second);
+    return false;
+  };
+  const auto first = m_ctx->DetectedOwner();
+  if (!hidden(first)) return false;
+  Handle(SelectMgr_EntityOwner) take;
+  int rank = 0;
+  for (m_ctx->InitDetected(); m_ctx->MoreDetected() && rank < 16 && take.IsNull(); m_ctx->NextDetected(), ++rank)
+    if (const auto owner = m_ctx->DetectedCurrentOwner(); owner != first && !hidden(owner)) take = owner;
+  for (int i = 0; !take.IsNull() && i < 64 && m_ctx->DetectedOwner() != take; ++i) m_ctx->HilightNextDetected(m_view, Standard_False);
+  if (take.IsNull() || m_ctx->DetectedOwner() != take) m_ctx->ClearDetected(Standard_False);
   m_view->InvalidateImmediate();
-  return true;
+  return !m_ctx->HasDetected();
 }
 
 void Viewport::moveTo(const Graphic3d_Vec2i& at) {
