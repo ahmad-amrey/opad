@@ -645,3 +645,43 @@ OPAD_BENCH(OPAD_BENCH_ASSET_KICAD, asset_kicad) {
   });
   return true;
 }
+
+// OPAD_BENCH_ASSET_PERF=sync|embed on a document linking a big file (the Engine STEP; not a gui_benches case): once the file
+// is looked at and every body is displayed, the first linked file is synced (read again, forced: from its own path) or
+// embedded through the area as the user's click does; the trace shows the job's time and any stall of the UI thread
+// ("bench: asset-perf: <action> N ms").
+OPAD_BENCH(OPAD_BENCH_ASSET_PERF, asset_perf) {
+  static bool started = false;
+  if (std::exchange(started, true)) return true;
+  auto require = std::make_shared<Checks>();
+  require->name = "asset-perf";
+  const QString action = value;
+  AssetsArea* area = nullptr;
+  for (AreaController* a : w.m_areas)
+    if (auto* found = qobject_cast<AssetsArea*>(a)) area = found;
+  AssetMonitor* monitor = area ? area->monitor() : nullptr;
+  AppDocument* doc = w.m_doc;
+  const std::string import = monitor && !monitor->assets().empty() ? monitor->assets().begin()->first : std::string();
+  (*require)(!import.empty() && (action == "sync" || action == "embed"), "a linked file, sync or embed");
+  if (import.empty()) {
+    QCoreApplication::exit(2);
+    return true;
+  }
+  auto ready = [=, &w] {
+    const opad::json* s = monitor->state(import);
+    return s && s->value("state", "") == "ok" && !monitor->checking() && !w.m_displayJob && w.m_meshRemaining == 0 && !doc->loading;
+  };
+  waitFor(&w, ready, 600000, [=, &w](bool shown) {
+    (*require)(shown, QString("looked at and displayed: %1 bodies").arg(w.m_viewport->displayedCount()));
+    auto clock = std::make_shared<QElapsedTimer>();
+    clock->start();
+    QObject::connect(area, &AssetsArea::done, &w, [=, &w](const QString& what, const std::string&, bool ok, const QString& error, const opad::json& report) {
+      trace::log(QString("bench: asset-perf: %1 %2 ms (%3)").arg(what).arg(clock->elapsed()).arg(QString::fromStdString(report.dump()).left(300)));
+      (*require)(ok, what + " committed " + error);
+      QTimer::singleShot(3000, &w, [require] { QCoreApplication::exit(require->all ? 0 : 2); });  // the display settles
+    });
+    if (action == "embed") area->embed(import);
+    else area->sync({import}, monitor->file(import));
+  });
+  return true;
+}

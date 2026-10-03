@@ -1,10 +1,13 @@
 #pragma once
 // Linked files in the window (UI-68): files imported by reference (opad/assets.hpp) are marked in the browser (a link icon,
-// the name in italics, a badge for the file's state: in sync, changed with a Sync button, missing, not read, stored in git
-// LFS; their parts read-only), described in Properties (Linked file section) and handled from the context menu and the
-// commands: Link as asset, Sync, Sync all, Locate, Replace, Reveal, Copy path, Embed as editable, Pack into project.
-// AssetMonitor watches the files; a change shows a toast that offers to sync. A sync, an embed and a pack are planned on
-// a worker against a copy of the document (nothing changes it meanwhile: designBusy) and committed as one undo step.
+// the name in italics, a badge for the file's state: in sync, changed with a Sync button, missing, not read, syncing (it
+// turns), stored in git LFS; their parts read-only), in the view (LookSource::Asset: parts shown from a file that is not the
+// version synced tinted the stale colour, a file being synced faded), described in Properties (Linked file section, a KiCad
+// board's 3D models) and handled from the context menu and the commands: Link as asset (drawings placed first), Sync, Sync
+// all, Sync changed files automatically, Locate, Replace, Reveal, Copy path, Embed as editable, Pack into project (Use
+// project copy when the file is read from it), Download KiCad models. AssetMonitor watches the files; a change shows a toast
+// that offers to sync. A sync, an embed and a pack are planned on a worker against a copy of the document (nothing changes
+// it meanwhile: designBusy) and committed as one undo step.
 #include <QPointer>
 #include <QString>
 #include <filesystem>
