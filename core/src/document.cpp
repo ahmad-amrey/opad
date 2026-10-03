@@ -259,6 +259,20 @@ std::string Document::add_body(const std::string& brep, json meta) {
   return key;
 }
 
+std::string Document::add_body(const std::string& key, std::string&& brep, json meta) {
+  if (brep.empty() || brep.back() != '\n') throw Error("body BREP text must end with a newline");
+  if (key.size() != 64) throw Error("body key must be the SHA-256 of its BREP text");
+  if (bodies_index_.count(key)) return key;
+  BodyEntry e;
+  e.key = key;
+  e.meta = std::move(meta);
+  e.brep = std::move(brep);
+  bodies_index_[key] = bodies_.size();
+  bodies_.push_back(std::move(e));
+  dirty = true;
+  return key;
+}
+
 std::string Document::add_live_body(const std::string& key, json meta) {
   if (bodies_index_.count(key)) return key;
   BodyEntry e;

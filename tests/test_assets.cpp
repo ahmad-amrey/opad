@@ -658,8 +658,10 @@ TEST(embed_and_pack) {
   Scene s = resolve(reopened);
   for (const auto& id : s.all_bodies()) {
     CHECK(!s.node(id)->linked && !s.node(id)->body_missing);
-    CHECK(!reopened.body(s.node(id)->body_key)->brep.empty());
+    const BodyEntry* entry = reopened.body(s.node(id)->body_key);
+    CHECK(!entry->brep.empty() && sha256_hex(entry->brep) == entry->key);  // committed under the planner's key, not hashed again
   }
+  CHECK_THROWS(reopened.add_body("not a hash", std::string("x\n"), json::object()));
   reopened.save();
   remove_tree(f.dir / "project" / "assets");
   Document alone = Document::parse(read_text_file(f.dir / "project" / "design.opad"));

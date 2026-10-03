@@ -988,7 +988,7 @@ Plan plan_regenerate(const Document& doc, bool force, const Cancel& cancel) {
 json commit(Document& doc, Plan&& plan, const std::string& author) {
   for (auto& b : plan.bodies) {
     if (b.brep.empty()) doc.add_external_body(b.key, b.meta);  // a linked asset's body (asset sync)
-    else doc.add_body(b.brep, b.meta);
+    else doc.add_body(b.key, std::move(b.brep), std::move(b.meta));  // its key is its text's hash, made by the planner
     if (b.shape) cache_shape(doc, b.key, *b.shape);
   }
   for (auto& op : plan.ops) doc.append(op, author);

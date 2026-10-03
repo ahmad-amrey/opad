@@ -52,7 +52,7 @@ json feature_specs_json();
 
 // ---------------------------------------------------------------- plans
 struct NewBody {
-  std::string key, brep;  // no brep: a linked asset's body, registered as external (assets.hpp)
+  std::string key, brep;  // key = sha256_hex(brep) (commit trusts it); no brep: a linked asset's body, registered as external (assets.hpp)
   json meta;
   std::shared_ptr<TopoDS_Shape> shape;  // cached on commit so nothing is parsed back from text
 };
