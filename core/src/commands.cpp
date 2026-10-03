@@ -375,9 +375,8 @@ void register_builtins() {
       {{"doc", "path"}, {"file", "path - .step/.iges/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg/.kicad_pcb"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
        {"placement", "[16] - drawings and boards: where the file's XY plane and origin go (row-major 4x4, mm)"}, {"plane", "object - drawings: place on this plane instead, {\"base\":\"xz\"} or {\"face\":ref}, its origin at the plane's"},
        {"center", "bool - drawings: centre the drawing on its origin (default false)"},
-       {"model_dirs", "string|array - KiCad boards: more folders to look for 3D models in, after KiCad's own"}, {"components", "bool - KiCad boards: the footprints' 3D models (default true)"},
-       {"dnp", "bool - KiCad boards: also footprints marked do-not-populate (default true)"}, {"vias", "bool - KiCad boards: drill the vias too (default false)"},
-       {"placeholder_height", "number - KiCad boards: mm, the box shown for a model that is not found (default 1)"}, {"origin", "auto|center|page - KiCad boards: where the board's origin goes: the drill/place origin when set, else the board centre (auto); the centre; KiCad's page origin"}},
+       {"model_dirs", "string|array - KiCad: model folders"}, {"components", "bool - KiCad: models (default true)"}, {"dnp", "bool - KiCad: do-not-populate parts"},
+       {"vias", "bool - KiCad (default false)"}, {"placeholder_height", "number - KiCad: missing-model box, mm"}, {"origin", "auto|center|page - KiCad"}},
       true, [](Document* d, const json& a) {
         ImportOptions o;
         o.author = a.value("by", "");
@@ -396,9 +395,8 @@ void register_builtins() {
         return import_file(need(d), path_from_utf8(a.at("file").get<std::string>()), o).to_json();
       });
 
-  reg("kicad_models", "The 3D models a KiCad board's footprints show, where each was found, and which missing ones KiCad's library publishes. download fetches those into the user cache (CC-BY-SA 4.0 models from gitlab.com/kicad/libraries/kicad-packages3D: free for your own designs, never shipped with OPAD); the next read of the board shows them",
-      {{"file", "path - .kicad_pcb"}, {"model_dirs", "string|array - more folders to look for 3D models in, after KiCad's own"}, {"dnp", "bool - also footprints marked do-not-populate (default true)"},
-       {"download", "bool - fetch the missing library models (default false)"}},
+  reg("kicad_models", "A KiCad board's 3D models, where each was found; download fetches missing KiCad library ones (CC-BY-SA) to the cache",
+      {{"file", "path - .kicad_pcb"}, {"model_dirs", "string|array"}, {"dnp", "bool"}, {"download", "bool"}},
       false, [](Document*, const json& a) {
         const auto board = path_from_utf8(a.at("file").get<std::string>());
         const KicadOptions o = kicad_options(a);
@@ -410,8 +408,8 @@ void register_builtins() {
         return j;
       });
 
-  reg("kicad_sync_preview", "What reading a KiCad board again would change in its import: per reference designator moved (dx, dy, drot), flipped, models or footprint changed, added, removed; the board's thickness, drills and outline before/after",
-      {{"doc", "path"}, {"import", "uuid - the KiCad import op (default: the only one)"}, {"file", "path - the board now (default: the import's source beside the document)"}},
+  reg("kicad_sync_preview", "What re-reading a KiCad board changes in its import, per reference designator",
+      {{"doc", "path"}, {"import", "uuid - default: the only one"}, {"file", "path - default: source beside doc"}},
       false, [](Document* d, const json& a) {
         return kicad_sync_preview(need(d), a.value("import", ""), a.contains("file") ? path_from_utf8(a["file"].get<std::string>()) : std::filesystem::path());
       });
