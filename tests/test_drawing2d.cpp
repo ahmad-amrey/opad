@@ -515,4 +515,68 @@ TEST(drawing_coordinates_of_a_far_drawing) {
   std::filesystem::remove_all(dir);
 }
 
+// Layer fields of another type (a file edited by hand, a newer build's value) read as their defaults, a saved state's too,
+// and never throw; the appearance and view commands (CLI, MCP, the app) refuse them.
+TEST(layer_fields_of_another_type_read_as_their_defaults) {
+  using opad::json;
+  opad::Document doc = opad::Document::create();
+  opad::import_file(doc, layersDxf());
+  const std::string walls = byName(opad::resolve(doc))["Walls"].id;
+  const json camera = {{"eye", {0, 0, 1}}, {"target", {0, 0, 0}}, {"up", {0, 1, 0}}};
+  CHECK_THROWS(opad::commands::run("appearance", {{"target", walls}, {"layer", {{"plot", "no"}}}}, &doc));
+  CHECK_THROWS(opad::commands::run("appearance", {{"target", walls}, {"layer", {{"lineweight", "0.5"}}}}, &doc));
+  CHECK_THROWS(opad::commands::run("appearance", {{"target", walls}, {"layer", {{"pattern", {1, "x"}}}}}, &doc));
+  CHECK_THROWS(opad::commands::run("view", {{"name", "S"}, {"camera", camera}, {"display", {{"layers", {{walls, {{"on", 1}}}}}}}}, &doc));
+  CHECK_THROWS(opad::commands::run("view", {{"name", "S"}, {"camera", camera}, {"display", {{"layers", 3}}}}, &doc));
+  opad::commands::run("appearance", {{"target", walls}, {"layer", {{"plot", nullptr}, {"future", "kept"}}}}, &doc);  // null removes; a newer key passes
+  doc.append({{"op", "appearance"}, {"target", walls}, {"visible", false},
+              {"layer", {{"plot", "no"}, {"off", 1}, {"frozen", "yes"}, {"linetype", 5}, {"pattern", "x"}, {"lineweight", "1"}}}});
+  const opad::Scene scene = opad::resolve(doc);
+  const Layer l = byName(scene)["Walls"];
+  CHECK(l.plot && !l.on && !l.frozen && l.linetype.empty() && l.pattern.empty() && l.lineweight < 0);
+  const json state = {{"layers", {{walls, {{"name", 3}, {"on", "x"}, {"plot", 0}, {"color", {"r", 0, 0}}, {"linetype", 7}, {"pattern", {1, "x"}}, {"lineweight", "2"}}},
+                                  {"elsewhere", {{"name", "Plain"}, {"frozen", "no"}, {"color", {1, 0}}}}}}};
+  const auto restored = restoreState(scene, state);  // read as on, thawed, plotted, continuous: Walls comes back on
+  CHECK(std::any_of(restored.begin(), restored.end(), [&](const json& op) { return op.value("target", "") == walls && op.value("visible", false); }));
+  CHECK(!captureState(scene)["layers"].empty());
+}
+
+// A drawing whose file lost a body entry (gc, a merge) still opens: the frames, the plot's plane and the plot leave the
+// unresolved body out instead of throwing out of the document's signal.
+TEST(a_missing_body_entry_is_left_out) {
+  opad::Document full = opad::Document::create();
+  opad::import_file(full, layersDxf());
+  std::istringstream in(full.serialize());
+  std::string text, line;
+  bool dropped = false;
+  while (std::getline(in, line)) {
+    if (!dropped && line.rfind("#body ", 0) == 0) {  // "#body <key> <lines> <meta>": it and its lines go
+      std::istringstream header(line.substr(6));
+      std::string key;
+      size_t count = 0;
+      header >> key >> count;
+      for (size_t i = 0; i < count && std::getline(in, line); ++i) {}
+      dropped = true;
+      continue;
+    }
+    text += line + "\n";
+  }
+  CHECK(dropped);
+  const opad::Document doc = opad::Document::parse(text);
+  const opad::Scene scene = opad::resolve(doc);
+  CHECK(!scene.unresolved.empty());  // the four layers' first lines share one entry (the same line): all four are missing
+  const auto frames = drawingFrames(doc, scene);
+  CHECK_EQ(frames.size(), 1u);
+  CHECK(frames[0].x0 <= frames[0].x1);  // the bodies that are there still give its extents
+  const opad::Frame plane = plot::plane(doc, scene, opad::Frame{});
+  int plotted = 0;  // the visible bodies on plotted layers that are still there
+  for (const auto& id : scene.all_bodies()) {
+    const auto l = layerAt(scene, id);
+    plotted += !scene.node(id)->body_missing && scene.effectively_visible(id) && (!l || l->plot);
+  }
+  CHECK(plotted >= 1);
+  CHECK_EQ(plot::collect(doc, scene, plane).bodies, plotted);
+  CHECK(!layers(scene).empty());
+}
+
 CHECK_MAIN()

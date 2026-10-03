@@ -43,6 +43,8 @@ struct Layer {
   double lineweight = -1;  // mm; < 0 = the default
 };
 bool isLayer(const opad::Scene& scene, const std::string& id);
+// A layer's (or a saved state's) true/false field, `fallback` when it is missing or not a boolean (a file edited by hand).
+bool flag(const opad::json& fields, const char* key, bool fallback);
 std::vector<Layer> layers(const opad::Scene& scene);  // in tree order
 const Layer* find(const std::vector<Layer>& all, const std::string& id);
 std::string layerOf(const opad::Scene& scene, const std::string& node);  // the layer a node (a drawing body) lies on, "" none

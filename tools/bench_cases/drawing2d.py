@@ -158,6 +158,37 @@ def room_document(root, document):
     return document("room", ("import", "--file", str(room_file(root)), "--center", "true"))
 
 
+def damaged_document(root, document):
+    """The far drawing, then the room, in one document edited by hand: the room's body entries are lost (gc, a merge) and
+    the far drawing's layer and a layer state have fields of other types. It opens (both used to terminate the app), the
+    room unresolved, the layer as by default, and the readout still follows the far drawing."""
+    import json, uuid
+    path = document("damaged", ("import", "--file", str(far_file(root)), "--center", "true"), ("import", "--file", str(room_file(root))))
+    lines, out, i = path.read_bytes().split(b"\n"), [], 0
+    site = None
+    while i < len(lines):
+        if lines[i].startswith(b"{") and b'"far.dxf"' in lines[i]:
+            stack = list(json.loads(lines[i])["nodes"])
+            while stack:
+                node = stack.pop()
+                if node.get("type") == "component" and node.get("name") == "Site":
+                    site = node["id"]
+                stack += node.get("children", [])
+        if lines[i] == b"#bodies":
+            bad = {"plot": "no", "off": 1, "frozen": "yes", "lineweight": "x", "linetype": 5, "pattern": "x"}
+            out.append(json.dumps({"op": "appearance", "id": str(uuid.uuid4()), "target": site, "visible": True, "layer": bad}).encode())
+            out.append(json.dumps({"op": "view", "id": str(uuid.uuid4()), "name": "Hand made", "camera": {"eye": [0, 0, 1], "target": [0, 0, 0], "up": [0, 1, 0]},
+                                   "display": {"layers": {site: {"name": 3, "on": "x", "color": ["r", 0, 0]}}}}).encode())
+        if lines[i].startswith(b"#body ") and b"room.dxf" in lines[i]:
+            i += 1 + int(lines[i].split(b" ")[2])
+            continue
+        out.append(lines[i])
+        i += 1
+    assert site and len(out) < len(lines) + 2, "the far drawing's layer or the room's body entries were not found"
+    path.write_bytes(b"\n".join(out))
+    return path
+
+
 CASES = [
     # UI-10: a drawing in colour 7 on every background in both themes stands out by 4.5:1 or more. <prefix>.<theme>.<bg>.png
     ("contrast", contrast_file, {"OPAD_BENCH_CONTRAST": "{prefix}"}),
@@ -185,6 +216,9 @@ CASES = [
     # UI-90: the cursor readout in the status bar: a far drawing's own coordinates (and a snapped point's), a model's X, Y, Z.
     ("readout", far_file, {"OPAD_BENCH_READOUT": "{prefix}"}),
     ("readout-3d", "box", {"OPAD_BENCH_READOUT": "{prefix}"}),
+    # A document edited by hand opens and reads out its drawing: a drawing that lost a body entry (it used to terminate in
+    # the readout's frames), a layer and a layer state with fields of other types (the layer model and the browser threw).
+    ("readout-damaged", damaged_document, {"OPAD_BENCH_READOUT": "{prefix}"}),
     # UI-88: Plot: extents fit, monochrome, lineweights, the plot stamp, 1:N and a scale that does not fit, display and window areas, a printer
     # (to a PDF file) and a PDF. <prefix>.dialog.png, .preview.png, .pdf, .printer.pdf
     ("plot", plot_file, {"OPAD_BENCH_PLOT": "{prefix}"}),

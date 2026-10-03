@@ -148,6 +148,25 @@ std::vector<json> targets_of(const std::string& command, const json& a) {
   return out;
 }
 
+// A drawing layer's fields (appearance `layer`, an entry of a view's display.layers) as the readers take them: each of its
+// own type or null (removes it); keys of a newer build pass. Checked where they come in, not on load, so a file stays open.
+void check_layer_fields(const json& f, const std::string& what) {
+  if (!f.is_object()) throw Error(what + " must be an object");
+  auto numbers = [](const json& v, size_t n) {
+    return v.is_array() && (!n || v.size() == n) && std::all_of(v.begin(), v.end(), [](const json& x) { return x.is_number(); });
+  };
+  for (const auto& [key, v] : f.items()) {
+    if (v.is_null()) continue;
+    const bool ok = key == "on" || key == "off" || key == "frozen" || key == "locked" || key == "plot" ? v.is_boolean()
+                    : key == "lineweight" || key == "scale" ? v.is_number()
+                    : key == "linetype" || key == "name"    ? v.is_string()
+                    : key == "pattern"                      ? numbers(v, 0)
+                    : key == "color"                        ? numbers(v, 3)
+                                                            : true;
+    if (!ok) throw Error(what + ": " + key + " has the wrong type (" + v.dump() + ")");
+  }
+}
+
 // Appends one op per target: `make(target, index, count)` builds it. The result keeps "id" (the first op) and lists
 // every op in "ids" when there are several.
 json append_per_target(Document& doc, const std::string& command, const json& a, const std::function<json(const json&, size_t, size_t)>& make) {
@@ -539,6 +558,7 @@ void register_builtins() {
       [](Document* d, const json& a) {
         // Earlier builds read an appearance op only with one of their four fields: a change of the others alone carries
         // visible as it is.
+        if (a.contains("layer")) check_layer_fields(a["layer"], "appearance: layer");
         const bool alone = (a.contains("layer") || a.contains("default_color")) && !a.contains("color") && !a.contains("opacity") && !a.contains("visible") && !a.contains("locked");
         const Scene shown = alone ? resolve(need(d)) : Scene{};
         return append_per_target(need(d), "appearance", a, [&](const json& target, size_t, size_t) {
@@ -589,7 +609,14 @@ void register_builtins() {
     op["op"] = "view";
     op["name"] = a.at("name");
     op["camera"] = a.contains("camera") ? a["camera"] : Camera::preset(a.value("preset", "iso")).to_json();
-    if (a.contains("display")) op["display"] = a["display"];
+    if (a.contains("display")) {
+      const json& display = a["display"];
+      if (display.is_object() && display.contains("layers")) {
+        if (!display["layers"].is_object()) throw Error("view: display.layers must be an object of layer states");
+        for (const auto& [id, state] : display["layers"].items()) check_layer_fields(state, "view: display.layers." + id);
+      }
+      op["display"] = display;
+    }
     json j;
     j["id"] = need(d).append(op, a.value("by", "")).id;
     return j;

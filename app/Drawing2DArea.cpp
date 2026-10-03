@@ -18,6 +18,8 @@
 #include <QTimer>
 #include <QToolButton>
 
+#include <Standard_Failure.hxx>
+
 #include <set>
 #include <tuple>
 
@@ -28,6 +30,7 @@
 #include "Drawing2D.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "Jobs.hpp"
 #include "LayersPanel.hpp"
 #include "PanelFooter.hpp"
 #include "PlotDialog.hpp"
@@ -223,7 +226,7 @@ class Drawing2DArea : public AreaController {
       const opad::json& fields = row.node->layer;
       if (!fields.is_object()) return;
       const std::string id = row.id;
-      if (!row.node->visible && fields.value("frozen", false)) {
+      if (!row.node->visible && drawing2d::flag(fields, "frozen", false)) {
         browser::Badge frozen;
         frozen.icon = "freeze";
         frozen.color = &Tokens::sel;
@@ -235,7 +238,7 @@ class Drawing2DArea : public AreaController {
         };
         d.badges << frozen;
       }
-      if (!fields.value("plot", true)) {
+      if (!drawing2d::flag(fields, "plot", true)) {
         browser::Badge unplotted;
         unplotted.icon = "noPlot";
         unplotted.fill = nullptr;
@@ -322,7 +325,14 @@ class Drawing2DArea : public AreaController {
   }
 
   void documentChanged(bool replaced) override {
-    m_frames = services().document()->hasDocument ? drawing2d::drawingFrames(services().document()->doc, services().document()->scene) : std::vector<drawing2d::DrawingFrame>();
+    try {  // never out of the document's signal: a drawing that cannot be measured has no readout
+      m_frames = services().document()->hasDocument ? drawing2d::drawingFrames(services().document()->doc, services().document()->scene) : std::vector<drawing2d::DrawingFrame>();
+    } catch (const std::exception& e) {
+      m_frames.clear();
+      trace::log(QString("drawing2d: no drawing frames: %1").arg(QString::fromUtf8(e.what())));
+    } catch (const Standard_Failure&) {
+      m_frames.clear();
+    }
     if (replaced) m_over = false;
     updateReadout();
     if (replaced && m_layers) m_layers->stopWalk();
