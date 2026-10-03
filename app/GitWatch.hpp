@@ -7,7 +7,8 @@
 // with the strip and Cancel for anything that may take long. The chip's menu sets up a repository (init -b main,
 // .gitattributes, .gitignore, Git LFS, the managed merge and diff driver) or only this clone's driver config, and a
 // managed driver config whose OPAD moved is repaired by itself; a clone whose attributes want OPAD's driver but whose
-// config lacks it gets a banner over the viewport (Set up merging, or Later for this session).
+// config lacks it gets a banner over the viewport (Set up merging, or Later for this session). Clone repository… copies
+// one (progress and Cancel in the strip), sets the clone up the same way and asks the window to open its document.
 //
 // UI-136: "git not found" offers Locate git… (checked on a worker, kept in the setting git/path); a folder git refuses
 // as owned by someone else offers Trust this folder; the author (user.name, user.email) is asked for after a set up
@@ -42,10 +43,11 @@ class GitWatch : public QObject {
   // A git command as a job (the strip after 0.5 s, Cancel), then `done` on the UI thread and a refresh. The default
   // options stop git after 60 s: network commands pass git::RunOptions::network().
   Job* command(const QString& title, const QStringList& args, std::function<void(const git::Result&)> done = {}, git::RunOptions o = {});
-  // The chip's actions by object name: git.setup, git.driver, git.identity, git.trust, git.locate, git.refresh.
+  // The chip's actions by object name: git.setup, git.driver, git.identity, git.trust, git.clone, git.locate, git.refresh.
   QMenu* menu(QWidget* parent);
   void setUp();        // the Set up repository dialog
   void setUpDriver();  // this clone's merge and diff driver (and LFS hooks when the attributes use LFS)
+  void cloneRepository();  // the Clone repository dialog: an address and a folder, then clone, set up, openRequested
   void locateGit();    // a file dialog, then useProgram
   void useProgram(const QString& path);  // kept as git/path when it runs as git, else said why not
   void trustFolder();  // asks, then safe.directory
@@ -59,11 +61,14 @@ class GitWatch : public QObject {
   static int askpassDialog(int argc, char** argv);
  signals:
   void changed();
+  void openRequested(const QString& file);  // a document of a new clone
  private:
   void schedule(bool probe, int ms = 250);
   void watch();
   void render();
   void runSetUp(const QString& folder, const git::SetupOptions& o);
+  void runClone(const QString& url, const QString& folder);
+  void chooseDocument(const QString& folder, const QStringList& documents);
   void updateBanner();
   void status(const QString& text);
   void failed(const QString& title, const QString& text);

@@ -356,6 +356,7 @@ void MainWindow::buildActions() {
                                                 "Meshes (*.stl *.3mf *.obj *.ply *.gltf *.glb *.wrl *.vrml);;2D drawings (*.dxf *.dwg *.svg)").arg(fileFilter(true)));
     if (!p.isEmpty()) openPath(p);
   });
+  addAction("file.clone", tr("Clone repository…"), "git", QKeySequence(), [this] { m_git->cloneRepository(); });
   addAction("file.import", tr("&Import…"), "import", QKeySequence("Ctrl+I"), [this] {
     QString p = QFileDialog::getOpenFileName(this, tr("Import design"), m_settings.value("ui/lastDir").toString(), tr("Design files (%1)").arg(fileFilter(false)));
     if (p.isEmpty()) return;
@@ -634,7 +635,7 @@ void MainWindow::buildMenus() {
     }
   };
   QMenu* file = menuBar()->addMenu(tr("&File"));
-  add(file, {"file.new", "file.open", "file.import", "file.importdoc"});
+  add(file, {"file.new", "file.open", "file.clone", "file.import", "file.importdoc"});
   m_recentMenu = file->addMenu(tr("Recent"));
   add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
@@ -1010,6 +1011,7 @@ void MainWindow::buildStatusBar() {
   m_jobs = new JobRunner(m_progress, this);
   m_viewport->setJobs(m_jobs);
   m_git = new GitWatch(m_jobs, this, m_viewport);
+  connect(m_git, &GitWatch::openRequested, this, &MainWindow::openPath);
   statusBar()->addWidget(m_statusPath);
   statusBar()->addWidget(m_git->chip());
   // Permanent: QStatusBar hides normal widgets while a temporary message shows and re-shows them after,

@@ -22,6 +22,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMessageBox>
@@ -31,6 +32,8 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QSignalBlocker>
+#include <QStandardPaths>
 #include <QStatusBar>
 #include <QTextDocumentFragment>
 #include <QToolButton>
@@ -332,6 +335,7 @@ QMenu* GitWatch::menu(QWidget* parent) {
     add("git.identity", m_repo.userName.trimmed().isEmpty() ? tr("Your name for commits…") : tr("Author: %1…").arg(m_repo.userName), [this] { editIdentity(); });
   if (m_repo.state == S::Untrusted) add("git.trust", tr("Trust this folder…"), [this] { trustFolder(); });
   if (!m->isEmpty()) m->addSeparator();
+  add("git.clone", tr("Clone repository…"), [this] { cloneRepository(); });
   add("git.locate", tr("Locate git…"), [this] { locateGit(); });
   add("git.refresh", tr("Refresh"), [this] {
     git::forgetTools();
@@ -513,6 +517,189 @@ void GitWatch::updateBanner() {
     m_banner->dismiss();
     setUpDriver();
   }, true);
+}
+
+void GitWatch::cloneRepository() {
+  auto* d = new QDialog(m_window);
+  d->setObjectName("gitClone");
+  d->setAttribute(Qt::WA_DeleteOnClose);
+  d->setWindowTitle(tr("Clone repository"));
+  d->setMinimumWidth(560);
+  auto* col = new QVBoxLayout(d);
+  auto* why = new QLabel(tr("Copies a git repository to this computer and sets the copy up for OPAD: its .opad files merge and diff through "
+                            "this OPAD, and files kept in Git LFS come down with it."),
+                         d);
+  why->setWordWrap(true);
+  col->addWidget(why);
+  auto* form = new QFormLayout;
+  auto* url = new QLineEdit(d);
+  url->setObjectName("url");
+  url->setPlaceholderText(QStringLiteral("https://github.com/team/project.git"));
+  QString start = QSettings().value("git/cloneFolder").toString();
+  if (start.isEmpty()) start = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+  auto* parent = new QLineEdit(QDir::toNativeSeparators(start), d);
+  parent->setObjectName("parent");
+  auto* change = new QPushButton(tr("Change…"), d);
+  change->setObjectName("gitCloneFolder");
+  auto* row = new QHBoxLayout;
+  row->addWidget(parent, 1);
+  row->addWidget(change);
+  auto* name = new QLineEdit(d);
+  name->setObjectName("name");
+  form->addRow(tr("Address"), url);
+  form->addRow(tr("Into"), row);
+  form->addRow(tr("Folder name"), name);
+  col->addLayout(form);
+  auto* where = new QLabel(d);
+  where->setObjectName("where");
+  where->setWordWrap(true);
+  where->setTextFormat(Qt::PlainText);
+  col->addWidget(where);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, d);
+  auto* run = new QPushButton(tr("Clone"), d);
+  run->setObjectName("primary");
+  run->setProperty("action", "gitCloneRun");
+  run->setDefault(true);
+  buttons->addButton(run, QDialogButtonBox::AcceptRole);
+  col->addWidget(buttons);
+  auto target = [parent, name] { return QDir::cleanPath(QDir::fromNativeSeparators(parent->text().trimmed()) + '/' + name->text().trimmed()); };
+  auto validate = [url, parent, name, where, run, target] {
+    const QString into = QDir::fromNativeSeparators(parent->text().trimmed()), t = target();
+    QString text;
+    bool problem = true;
+    if (url->text().trimmed().isEmpty()) text = tr("The repository's address: https://…, git@host:… or a folder.");
+    else if (into.isEmpty() || !QDir::isAbsolutePath(into)) text = tr("Choose the folder to clone into.");
+    else if (name->text().trimmed().isEmpty()) text = tr("Give the copy a folder name.");
+    else if (QFileInfo(t).isFile() || (QFileInfo(t).isDir() && !QDir(t).isEmpty())) text = tr("%1 already exists and is not empty.").arg(QDir::toNativeSeparators(t));
+    else {
+      text = tr("The copy goes to %1.").arg(QDir::toNativeSeparators(t));
+      problem = false;
+    }
+    const Tokens& tk = theme::current();
+    where->setText(text);
+    where->setStyleSheet(QStringLiteral("color: %1").arg(theme::css(problem && !url->text().trimmed().isEmpty() ? tk.red : tk.fg3)));
+    where->setProperty("problem", problem);
+    run->setEnabled(!problem);
+  };
+  auto named = std::make_shared<bool>(false);  // a name typed by hand: the address no longer picks it
+  connect(url, &QLineEdit::textChanged, d, [url, name, named, validate] {
+    if (!*named) {
+      const QSignalBlocker quiet(name);
+      name->setText(git::cloneName(url->text()));
+    }
+    validate();
+  });
+  connect(name, &QLineEdit::textEdited, d, [name, named] { *named = !name->text().trimmed().isEmpty(); });
+  connect(name, &QLineEdit::textChanged, d, validate);
+  connect(parent, &QLineEdit::textChanged, d, validate);
+  connect(change, &QPushButton::clicked, d, [d, parent] {
+    const QString f = QFileDialog::getExistingDirectory(d, tr("Clone into"), QDir::fromNativeSeparators(parent->text().trimmed()));
+    if (!f.isEmpty()) parent->setText(QDir::toNativeSeparators(f));
+  });
+  connect(buttons, &QDialogButtonBox::rejected, d, &QDialog::reject);
+  connect(run, &QPushButton::clicked, d, [this, d, url, parent, target] {
+    const QString address = url->text().trimmed(), folder = target();
+    QSettings().setValue("git/cloneFolder", QDir::fromNativeSeparators(parent->text().trimmed()));
+    d->accept();
+    runClone(address, folder);
+  });
+  validate();
+  d->open();
+  url->setFocus();
+}
+
+void GitWatch::runClone(const QString& url, const QString& folder) {
+  const QString program = git::findProgram();  // file checks only
+  if (program.isEmpty()) {
+    failed(tr("Clone repository"), tr("git was not found. Install Git (git-scm.com), or show OPAD a git program with Locate git…"));
+    return;
+  }
+  struct Out {
+    QStringList done, documents;
+    QString setUpError;
+  };
+  auto out = std::make_shared<Out>();
+  const QString app = QCoreApplication::applicationFilePath();
+  const git::Install install = git::Install::here();  // on the UI thread: it caches the program's path
+#ifdef _WIN32
+  AllowSetForegroundWindow(ASFW_ANY);  // a sign-in dialog, another process, comes to the front
+#endif
+  m_jobs->async(tr("Cloning %1").arg(QFileInfo(folder).fileName()), [out, url, folder, program, app, install](Progress p) {
+    git::RunOptions o = git::RunOptions::network();
+    o.cancelled = [p] { return p.cancelled(); };
+    o.progress = [p](const QString& phase, int percent) { p.setPhase(phase, percent); };
+    p.setPhase(tr("Connecting to %1").arg(url));
+    const bool existed = QFileInfo::exists(folder);
+    if (existed && !QDir(folder).isEmpty()) throw std::runtime_error(tr("%1 already exists and is not empty.").arg(QDir::toNativeSeparators(folder)).toStdString());
+    const git::Context c = git::contextFor(program, QFileInfo(folder).absolutePath(), app);
+    const git::Result r = git::clone(c, url, folder, o);
+    if (!r.ok()) {
+      if (r.cancelled || r.timedOut) {  // git cleans up after itself when it fails, not when it is stopped
+        QDir(folder).removeRecursively();
+        if (existed) QDir().mkpath(folder);
+      }
+      throw std::runtime_error(r.error().toStdString());
+    }
+    try {  // the copy is there either way: a set-up that fails is said, and the banner offers it again
+      out->done = git::afterClone(c, folder, install, o);
+    } catch (const std::exception& e) {
+      out->setUpError = QString::fromUtf8(e.what());
+    }
+    out->documents = git::documentsIn(folder);
+  }, [self = QPointer<GitWatch>(this), out, folder](bool ok, const QString& error) {
+    if (!self) return;
+    if (!ok) {
+      if (error != "cancelled") self->failed(tr("Could not clone the repository"), error);
+      return;
+    }
+    if (trace::enabled()) trace::log("git: clone: " + out->done.join(" | "));
+    if (!out->setUpError.isEmpty()) self->failed(tr("Could not set up the clone for OPAD"), out->setUpError);
+    const QString where = QDir::toNativeSeparators(folder);
+    if (out->documents.size() == 1) {
+      self->status(tr("Cloned into %1").arg(where));
+      emit self->openRequested(out->documents.front());
+    } else if (out->documents.isEmpty()) {
+      self->status(tr("Cloned into %1; it holds no OPAD document yet.").arg(where));
+    } else {
+      self->status(tr("Cloned into %1").arg(where));
+      self->chooseDocument(folder, out->documents);
+    }
+  });
+}
+
+void GitWatch::chooseDocument(const QString& folder, const QStringList& documents) {
+  auto* d = new QDialog(m_window);
+  d->setObjectName("gitCloneOpen");
+  d->setAttribute(Qt::WA_DeleteOnClose);
+  d->setWindowTitle(tr("Open a document of the clone"));
+  d->setMinimumWidth(440);
+  auto* col = new QVBoxLayout(d);
+  auto* text = new QLabel(tr("%1 holds %2 OPAD documents.").arg(QDir::toNativeSeparators(folder)).arg(documents.size()), d);
+  text->setWordWrap(true);
+  col->addWidget(text);
+  auto* list = new QListWidget(d);
+  list->setObjectName("documents");
+  for (const QString& f : documents) (new QListWidgetItem(QDir::toNativeSeparators(QDir(folder).relativeFilePath(f)), list))->setData(Qt::UserRole, f);
+  list->setCurrentRow(0);
+  col->addWidget(list);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, d);
+  auto* run = new QPushButton(tr("Open"), d);
+  run->setObjectName("primary");
+  run->setProperty("action", "gitCloneOpenRun");
+  run->setDefault(true);
+  buttons->addButton(run, QDialogButtonBox::AcceptRole);
+  col->addWidget(buttons);
+  auto open = [this, d, list] {
+    if (QListWidgetItem* item = list->currentItem()) {
+      const QString file = item->data(Qt::UserRole).toString();
+      d->accept();
+      emit openRequested(file);
+    }
+  };
+  connect(list, &QListWidget::itemActivated, d, open);
+  connect(run, &QPushButton::clicked, d, open);
+  connect(buttons, &QDialogButtonBox::rejected, d, &QDialog::reject);
+  d->open();
 }
 
 void GitWatch::locateGit() {
@@ -724,7 +911,7 @@ bool GitWatch::bench() {
     size_t step = 0;
     int wait = 0, ticks = 0, runs = 0, exit = 0;
     bool running = false;
-    QString file, dir, error, git;
+    QString file, dir, error, git, clone;
     QByteArray out;
     std::vector<QStringList> pending;
     std::shared_ptr<git::Result> result;
@@ -1060,6 +1247,58 @@ bool GitWatch::bench() {
         if (!finished() || !settled() || m_repo.merging) return false;
         require(text().startsWith("main") && !m_repo.status.count('u'), "merge aborted: no conflicts");
         pass("merge aborted");
+        return true;
+      },
+      [=, this] {  // UI-61 Clone: the remote into a folder of its own, set up for OPAD, its document opened
+        if (!settled()) return false;
+        std::unique_ptr<QMenu> m(menu(m_window));
+        QAction* clone = m->findChild<QAction*>("git.clone");
+        require(clone, "the chip offers Clone repository…");
+        clone->trigger();
+        auto* d = m_window->findChild<QDialog*>("gitClone");
+        require(d && d->isVisible(), "the clone dialog");
+        auto* url = d->findChild<QLineEdit*>("url");
+        auto* parent = d->findChild<QLineEdit*>("parent");
+        auto* name = d->findChild<QLineEdit*>("name");
+        auto* where = d->findChild<QLabel*>("where");
+        QPushButton* run = nullptr;
+        for (QPushButton* b : d->findChildren<QPushButton*>())
+          if (b->property("action") == "gitCloneRun") run = b;
+        require(url && parent && name && where && run && !run->isEnabled(), "no address yet: nothing to clone");
+        const QString remote = QDir::cleanPath(st->dir + "/../git-bench-remote.git"), root = QDir::cleanPath(st->dir + "/..");
+        url->setText(QDir::toNativeSeparators(remote));
+        require(name->text() == "git-bench-remote", "the folder name from the address");
+        parent->setText(QDir::toNativeSeparators(root));
+        name->setText(QFileInfo(st->dir).fileName());  // the document's own folder
+        require(!run->isEnabled() && where->property("problem").toBool(), "a folder that is not empty refused");
+        name->setText("git-bench-clone");
+        require(run->isEnabled() && !where->property("problem").toBool(), "a new folder: Clone");
+        shot(d, ".clone.png");
+        st->clone = root + "/git-bench-clone";
+        run->click();
+        return true;
+      },
+      [=, this] {
+        const QString folder = QFileInfo(st->clone).canonicalFilePath();
+        if (!settled() || folder.isEmpty() || QFileInfo(m_file).canonicalPath() != folder || m_repo.state != S::Ready) return false;
+        require(QSettings().value("git/cloneFolder").toString() == QFileInfo(st->clone).absolutePath(), "the folder kept for the next clone");
+        require(m_repo.managed && m_repo.driver == here.mergeDriver() && m_repo.textconv == here.textconv() && !m_repo.needsDriver(), "the clone's driver config");
+        require(m_repo.lfsVersion.isEmpty() || m_repo.lfsHooks, "Git LFS hooks in the clone");
+        require(m_repo.status.branch == "main" && m_repo.status.upstream == "origin/main" && m_repo.sync() == Y::Synced && m_repo.doc() == D::Clean,
+                "the clone: main, in step with origin/main, clean");
+        require(m_banner->state().isEmpty() && text() == "main", "no Set up merging banner for it");
+        pass("cloned, set up for OPAD and its document opened");
+        chooseDocument(st->dir, {st->file, st->clone + "/model.opad"});  // a clone with several documents asks which
+        return true;
+      },
+      [=, this] {
+        auto* d = m_window->findChild<QDialog*>("gitCloneOpen");
+        require(d && d->isVisible(), "the document chooser");
+        auto* list = d->findChild<QListWidget*>("documents");
+        require(list && list->count() == 2 && list->currentRow() == 0 && list->item(0)->text() == "model.opad", "the clone's documents, the first chosen");
+        shot(d, ".clone-open.png");
+        d->reject();
+        pass("a clone with several documents: a chooser");
         return true;
       },
   };

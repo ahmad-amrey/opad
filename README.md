@@ -380,8 +380,10 @@ installed, with `.opad` files kept out of LFS), a `.gitignore` for temporary sav
 snapshots, runs `git lfs install --local`, and points this clone's `merge.opad.driver` and `diff.opad.textconv` at the
 running installation (`opad.managed=true`; OPAD rewrites them when that installation has moved). A clone whose
 `.gitattributes` asks for `merge=opad` but has no driver configured shows "set up merging" on the chip and a banner
-over the view with **Set up merging**. The chip follows git by file events (HEAD, index, config, refs, the
-document's folder), not by polling.
+over the view with **Set up merging**. **File > Clone repository…** (also on the chip) clones an address or a folder,
+sets the copy up the same way (driver config, `git lfs install --local` and `git lfs pull` when it uses LFS) and opens
+its document, or asks which one when it holds several. The chip follows git by file events (HEAD, index, config,
+refs, the document's folder), not by polling.
 
 OPAD runs the git command line (Git for Windows, or the `git` on PATH; a portable `git/` or `PortableGit/` folder
 beside OPAD is found too, and **Locate git…** on the chip points it at any other). git never waits on a terminal:

@@ -131,6 +131,15 @@ void configureDriver(const Context& c, const Install& in);  // merge.opad.*, dif
 
 // git clone --progress (idle timeout 2 min, no overall limit).
 Result clone(const Context& c, const QString& url, const QString& folder, const RunOptions& o = {});
+// The folder name a clone address suggests, as git picks it ("git@host:team/robot.git" -> "robot"); empty: none.
+QString cloneName(const QString& url);
+// What never travels with a clone, for a new one in `folder`: the managed driver config when its attributes say
+// merge=opad for an .opad file, the Git LFS hooks and files when they use LFS. Sentences of what it did; throws.
+QStringList afterClone(const Context& c, const QString& folder, const Install& in, const RunOptions& ro = {});
+// The OPAD documents under `folder` (absolute), shallowest first, then by name; hidden folders (.git) skipped, 8 deep.
+QStringList documentsIn(const QString& folder, int limit = 200);
+// git for `dir` outside the open document's repository (a clone): its config decides the askpass and BatchMode ssh.
+Context contextFor(const QString& program, const QString& dir, const QString& askpass);
 
 QString phaseText(const QString& gitPhase);  // "Receiving objects" -> its translation
 

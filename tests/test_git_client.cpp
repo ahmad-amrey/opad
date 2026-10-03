@@ -1,9 +1,10 @@
 // GitClient (app/Git.cpp, UI-61): porcelain v2, the repository as the chip sees it in a fresh, committed, pushed and
 // cloned repository, setting one up (init -b main, .gitattributes, .gitignore, LFS hooks, the managed driver) and that
 // driver merging and diffing for real through opad-cli and through opad.exe alone, timeouts and Cancel ending git with
-// everything it started, clone progress. UI-136: errors as sentences, safe.directory, the environment (BatchMode ssh,
-// no inherited GIT_DIR), opad.exe answering git's sign-in prompts as GIT_ASKPASS, the author, Locate git, warnings
-// before a push. Temporary repositories only; git's global and system config are left out.
+// everything it started, clone progress, a new clone set up for OPAD and its documents found. UI-136: errors as
+// sentences, safe.directory, the environment (BatchMode ssh, no inherited GIT_DIR), opad.exe answering git's sign-in
+// prompts as GIT_ASKPASS, the author, Locate git, warnings before a push. Temporary repositories only; git's global
+// and system config are left out.
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
@@ -254,6 +255,85 @@ TEST(upstream_ahead_and_clone) {
   // A managed config whose program is gone (OPAD moved) reads as stale.
   git_(copy, {"config", "merge.opad.driver", "\"C:/nowhere/opad-cli.exe\" merge-driver %O %A %B %P"});
   CHECK(git::probe(in(copy), copy + "/model.opad").driverStale());
+}
+
+// Clone repository… (UI-61): the folder name an address suggests, a new clone set up for OPAD (the driver config when the
+// attributes want it, the Git LFS hooks when they use LFS) and its documents found, shallowest first.
+TEST(clone_set_up_for_opad) {
+  for (const auto& [url, name] : std::vector<std::pair<QString, QString>>{{"https://github.com/team/robot.git", "robot"},
+                                                                         {"git@github.com:team/robot.git", "robot"},
+                                                                         {"ssh://git@host:2222/team/robot/", "robot"},
+                                                                         {"https://host/team/robot/.git", "robot"},
+                                                                         {"C:\\work\\remote.git\\", "remote"},
+                                                                         {"file:///C:/work/arm", "arm"},
+                                                                         {"  ", ""}})
+    CHECK_EQ(git::cloneName(url), name);
+  QTemporaryDir tmp;
+  const QString dir = tmp.path() + "/work", remote = tmp.path() + "/remote.git";
+  QDir().mkpath(dir + "/parts/deep");
+  const git::Install install = fromBuild(true);
+  setUpRepository(dir, install);
+  {  // assets/ in Git LFS (no LFS objects: nothing for the hooks to push)
+    QFile attributes(dir + "/.gitattributes");
+    const QString text = git::attributesText(read(attributes.fileName()), true);
+    CHECK(attributes.open(QIODevice::WriteOnly | QIODevice::Truncate) && attributes.write(text.toUtf8()) > 0);
+  }
+  cli({"new", dir + "/parts/deep/b.opad"});
+  cli({"new", dir + "/parts/a.opad"});
+  QDir().mkpath(dir + "/.hidden");
+  cli({"new", dir + "/.hidden/x.opad"});
+  git_(dir, {"add", "-A"});
+  git_(dir, {"commit", "-q", "-m", "base"});
+  git_(tmp.path(), {"init", "-q", "--bare", "-b", "main", remote});
+  git_(dir, {"remote", "add", "origin", remote});
+  git_(dir, {"push", "-q", "-u", "origin", "main"});
+  CHECK_EQ(git::documentsIn(dir), (QStringList{dir + "/model.opad", dir + "/parts/a.opad", dir + "/parts/deep/b.opad"}));
+  CHECK_EQ(git::documentsIn(dir, 2).size(), qsizetype(2));
+
+  // Outside any repository, with no credential helper: OPAD answers git's prompts, ssh in BatchMode.
+  const git::Context c = git::contextFor(git::findProgram(), tmp.path(), bin("opad"));
+  CHECK(c.askpass == bin("opad") && c.sshBatch);
+  git_(tmp.path(), {"config", "--global", "credential.helper", "store"});
+  git_(tmp.path(), {"config", "--global", "core.sshCommand", "ssh -i key"});
+  const git::Context helped = git::contextFor(git::findProgram(), tmp.path(), bin("opad"));
+  CHECK(helped.askpass.isEmpty() && !helped.sshBatch);
+  git_(tmp.path(), {"config", "--global", "--unset", "credential.helper"});
+  git_(tmp.path(), {"config", "--global", "--unset", "core.sshCommand"});
+
+  const QString copy = tmp.path() + "/copy";
+  CHECK(git::clone(c, QDir::toNativeSeparators(remote), copy).ok());
+  CHECK(git::probe(in(copy), copy + "/parts/a.opad").needsDriver());
+  QStringList phases;
+  git::RunOptions o;
+  o.progress = [&phases](const QString& phase, int) { phases << phase; };
+  const QStringList done = git::afterClone(c, copy, install, o);
+  CHECK(phases.contains("Setting up the OPAD merge driver"));
+  const git::Repo r = git::probe(in(copy), copy + "/parts/deep/b.opad");
+  CHECK(r.managed && !r.needsDriver() && r.driver == install.mergeDriver() && r.textconv == install.textconv());
+  CHECK(r.doc() == git::Repo::Doc::Clean && r.sync() == git::Repo::Sync::Synced);
+  CHECK_EQ(git::afterClone(c, copy, install), done);  // again: the same, nothing breaks
+  // The attributes send assets/ to Git LFS: the clone gets the hooks, or is told LFS is missing.
+  if (!r.lfsVersion.isEmpty()) CHECK(r.lfsHooks && done.contains("Git LFS is set up for this clone."));
+  else CHECK(done.join('\n').contains("not installed"));
+
+  // A repository whose attributes say nothing of OPAD: its config is left alone. Its bare remote's HEAD names a branch
+  // it does not have, so git checks nothing out: its main branch is.
+  const QString plain = tmp.path() + "/plain", plainRemote = tmp.path() + "/plain.git";
+  QDir().mkpath(plain);
+  git_(plain, {"init", "-q", "-b", "main"});
+  cli({"new", plain + "/model.opad"});
+  git_(plain, {"add", "-A"});
+  git_(plain, {"commit", "-q", "-m", "plain"});
+  git_(tmp.path(), {"init", "-q", "--bare", "-b", "nothing", plainRemote});
+  git_(plain, {"push", "-q", plainRemote, "main"});
+  const QString plainCopy = tmp.path() + "/plain-copy";
+  CHECK(git::clone(c, plainRemote, plainCopy).ok());
+  CHECK(git::documentsIn(plainCopy).isEmpty());
+  CHECK_EQ(git::afterClone(c, plainCopy, install), QStringList{"The remote's HEAD names no branch it has: checked out main."});
+  CHECK_EQ(git::documentsIn(plainCopy), QStringList{plainCopy + "/model.opad"});
+  const git::Repo p = git::probe(in(plainCopy), plainCopy + "/model.opad");
+  CHECK(!p.wantsDriver && !p.managed && p.driver.isEmpty());
+  CHECK(p.status.branch == "main" && p.status.upstream == "origin/main" && p.sync() == git::Repo::Sync::Synced && p.doc() == git::Repo::Doc::Clean);
 }
 
 TEST(timeout_and_cancel_end_the_whole_tree) {

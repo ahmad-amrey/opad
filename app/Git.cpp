@@ -402,6 +402,44 @@ void readStatus(const Context& c, Repo& r) {
   r.rebasing = QFileInfo::exists(r.gitDir + "/rebase-merge") || QFileInfo::exists(r.gitDir + "/rebase-apply");
 }
 
+namespace {
+RunOptions quickRead() {
+  RunOptions o;
+  o.timeoutMs = 20000;
+  o.optionalLocks = false;
+  return o;
+}
+
+// Outside a repository it is the global config (the identity, a credential helper, an ssh command).
+void readConfig(const Context& c, Repo& r) {
+  const Result config = run(c, {"config", "-l", "-z"}, quickRead());
+  if (!config.ok()) return;
+  for (const QByteArray& record : config.out.split('\0')) {
+    const qsizetype nl = record.indexOf('\n');
+    const QString key = QString::fromUtf8(record.left(nl < 0 ? record.size() : nl));
+    const QString value = nl < 0 ? QStringLiteral("true") : QString::fromUtf8(record.mid(nl + 1));
+    if (key == "credential.helper") r.helper = value;  // later ones win; an empty one clears the list
+    else if (key == "user.name") r.userName = value;
+    else if (key == "user.email") r.userEmail = value;
+    else if (key == "core.sshcommand") r.sshCommand = value;
+    else if (key == "merge.opad.driver") r.driver = value;
+    else if (key == "diff.opad.textconv") r.textconv = value;
+    else if (key == "opad.managed") r.managed = value == "true";
+  }
+}
+}  // namespace
+
+Context contextFor(const QString& program, const QString& dir, const QString& askpass) {
+  Context c;
+  c.program = program;
+  c.dir = dir;
+  Repo r;
+  readConfig(c, r);
+  if (r.helper.isEmpty()) c.askpass = askpass;
+  c.sshBatch = r.sshCommand.isEmpty();
+  return c;
+}
+
 Repo probe(const Context& base, const QString& file) {
   Repo r;
   r.file = file;
@@ -420,24 +458,8 @@ Repo probe(const Context& base, const QString& file) {
   }
   r.version = t.version;
   r.lfsVersion = t.lfs;
-  RunOptions quick;
-  quick.timeoutMs = 20000;
-  quick.optionalLocks = false;
-  // The config first: outside a repository it is the global one (the identity, a credential helper, an ssh command).
-  if (const Result config = run(c, {"config", "-l", "-z"}, quick); config.ok()) {
-    for (const QByteArray& record : config.out.split('\0')) {
-      const qsizetype nl = record.indexOf('\n');
-      const QString key = QString::fromUtf8(record.left(nl < 0 ? record.size() : nl));
-      const QString value = nl < 0 ? QStringLiteral("true") : QString::fromUtf8(record.mid(nl + 1));
-      if (key == "credential.helper") r.helper = value;  // later ones win; an empty one clears the list
-      else if (key == "user.name") r.userName = value;
-      else if (key == "user.email") r.userEmail = value;
-      else if (key == "core.sshcommand") r.sshCommand = value;
-      else if (key == "merge.opad.driver") r.driver = value;
-      else if (key == "diff.opad.textconv") r.textconv = value;
-      else if (key == "opad.managed") r.managed = value == "true";
-    }
-  }
+  const RunOptions quick = quickRead();
+  readConfig(c, r);
   const Result where = run(c, {"rev-parse", "--show-toplevel", "--absolute-git-dir", "--git-common-dir"}, quick);
   if (!where.ok()) {
     const QString err = QString::fromUtf8(where.err);
@@ -595,6 +617,95 @@ Result clone(const Context& base, const QString& url, const QString& folder, con
   c.dir = QFileInfo(folder).absolutePath();
   QDir().mkpath(c.dir);
   return run(c, {"clone", "--progress", "--", url, folder}, o);
+}
+
+QString cloneName(const QString& url) {
+  QString s = QDir::fromNativeSeparators(url.trimmed());
+  auto trim = [&s] {
+    while (s.endsWith('/')) s.chop(1);
+  };
+  trim();
+  if (s.endsWith(".git", Qt::CaseInsensitive)) s.chop(4);  // "x.git", "x/.git"
+  trim();
+  static const QRegularExpression cut(QStringLiteral("[/:]")), bad(QStringLiteral("[<>\"|?*\\x00-\\x1f]"));
+  s = s.section(cut, -1).remove(bad).trimmed();
+  return s == "." || s == ".." ? QString() : s;
+}
+
+QStringList afterClone(const Context& base, const QString& folder, const Install& in, const RunOptions& ro) {
+  Context c = base;
+  c.dir = folder;
+  QStringList done;
+  auto phase = [&ro](const QString& text) {
+    if (ro.cancelled && ro.cancelled()) fail(tr("Cancelled."));
+    if (ro.progress) ro.progress(text, -1);
+  };
+  // A remote whose HEAD names a branch it does not have (a bare repository made with another default branch) leaves
+  // the clone empty: its main branch then, or its only one.
+  if (!run(c, {"rev-parse", "-q", "--verify", "HEAD"}, quickRead()).ok()) {
+    QStringList branches =
+        QString::fromUtf8(run(c, {"for-each-ref", "--format=%(refname:lstrip=3)", "refs/remotes/origin"}, quickRead()).out).split('\n', Qt::SkipEmptyParts);
+    branches.removeAll(QStringLiteral("HEAD"));
+    QString pick = branches.size() == 1 ? branches.front() : QString();
+    for (const char* b : {"main", "master", "trunk"})
+      if (branches.contains(QLatin1String(b))) {
+        pick = QString::fromLatin1(b);
+        break;
+      }
+    if (!pick.isEmpty()) {
+      phase(tr("Checking out %1").arg(pick));
+      RunOptions o;
+      o.timeoutMs = 0;
+      o.cancelled = ro.cancelled;
+      check(c, {"checkout", "-q", "-b", pick, "--track", "origin/" + pick}, o);
+      done << tr("The remote's HEAD names no branch it has: checked out %1.").arg(pick);
+    }
+  }
+  QStringList paths;  // the documents (attributes may differ per folder), else any .opad at the top
+  for (const QString& d : documentsIn(folder)) paths << QDir(folder).relativeFilePath(d);
+  if (paths.isEmpty()) paths << QStringLiteral("model.opad");
+  bool wants = false;
+  if (const Result attr = run(c, QStringList{"check-attr", "-z", "merge", "--"} + paths, quickRead()); attr.ok()) {
+    const QList<QByteArray> f = attr.out.split('\0');
+    for (qsizetype i = 2; i < f.size(); i += 3) wants = wants || f[i] == "opad";
+  }
+  if (wants) {
+    phase(tr("Setting up the OPAD merge driver"));
+    configureDriver(c, in);
+    done << tr("This clone merges and diffs .opad files with %1.").arg(QDir::toNativeSeparators(in.cli.isEmpty() ? in.app : in.cli));
+  }
+  // Attribute files anywhere in the tree that send something to Git LFS.
+  if (run(c, {"grep", "-q", "-e", "filter=lfs", "--", ":(glob)**/.gitattributes"}, quickRead()).code != 0) return done;
+  if (!run(c, {"lfs", "version"}, quickRead()).ok()) {
+    done << tr("This repository keeps big files in Git LFS, which is not installed: they stay small pointer files until it is.");
+    return done;
+  }
+  phase(tr("Installing the Git LFS hooks"));
+  check(c, {"lfs", "install", "--local"});
+  phase(tr("Downloading LFS objects"));
+  RunOptions o = ro;  // the files themselves come now: what the checkout left as pointers when LFS was not set up
+  o.timeoutMs = 0;
+  if (o.idleMs <= 0) o.idleMs = RunOptions::network().idleMs;
+  const Result pull = run(c, {"lfs", "pull"}, o);
+  done << (pull.ok() ? tr("Git LFS is set up for this clone.") : tr("Git LFS files could not be downloaded: %1").arg(pull.error()));
+  return done;
+}
+
+QStringList documentsIn(const QString& folder, int limit) {
+  QStringList out, level{folder};
+  for (int depth = 0; depth < 8 && !level.isEmpty() && out.size() < limit; ++depth) {
+    QStringList next, here;
+    for (const QString& dir : level) {
+      const QDir d(dir);
+      for (const QFileInfo& f : d.entryInfoList({"*.opad"}, QDir::Files | QDir::Readable, QDir::Name | QDir::IgnoreCase)) here << f.absoluteFilePath();
+      for (const QFileInfo& f : d.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks, QDir::Name | QDir::IgnoreCase))
+        if (!f.fileName().startsWith('.')) next << f.absoluteFilePath();
+    }
+    std::sort(here.begin(), here.end(), [](const QString& a, const QString& b) { return a.compare(b, Qt::CaseInsensitive) < 0; });
+    out += here.mid(0, limit - out.size());
+    level = next;
+  }
+  return out;
 }
 
 QString phaseText(const QString& p) {
