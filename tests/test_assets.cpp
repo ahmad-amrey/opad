@@ -11,9 +11,12 @@
 #include <STEPControl_Writer.hxx>
 #include <TopoDS_Compound.hxx>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 
 #include "check.hpp"
 #include "opad/assets.hpp"
@@ -29,10 +32,24 @@ namespace fs = std::filesystem;
 
 namespace {
 
+// Removes a folder entry by entry, retrying a file another process holds for a moment, and gives up after that: libstdc++'s
+// remove_all (GCC 15, Windows) spun for ever inside embed_and_pack about once in twenty runs.
+void remove_tree(const fs::path& dir) {
+  std::error_code e;
+  std::vector<fs::path> files, dirs;
+  for (auto it = fs::recursive_directory_iterator(dir, e); !e && it != fs::recursive_directory_iterator(); it.increment(e))
+    (it->is_directory(e) ? dirs : files).push_back(it->path());
+  std::sort(dirs.begin(), dirs.end(), [](const fs::path& a, const fs::path& b) { return a.native().size() > b.native().size(); });
+  dirs.push_back(dir);
+  for (const auto* list : {&files, &dirs})
+    for (const auto& p : *list)
+      for (int attempt = 0; attempt < 50 && !fs::remove(p, e) && fs::exists(p, e); ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+}
+
 struct Files {
   fs::path dir = fs::temp_directory_path() / ("opad-assets-" + new_uuid());
   Files() { fs::create_directories(dir); }
-  ~Files() { std::error_code e; fs::remove_all(dir, e); }
+  ~Files() { remove_tree(dir); }
 };
 
 // Two boxes in one STEP: A (10 mm, its corner at (x, 5, z)) and B (5 mm, far off), two roots named by the writer's counter
@@ -189,7 +206,7 @@ TEST(missing_untrusted_and_network_files) {
   fs::create_directories(f.dir / ".git");
   Document in_repo = Document::load(f.dir / "project" / "design.opad");
   CHECK_EQ(load_assets(in_repo)[0].state, "ok");
-  fs::remove_all(f.dir / ".git");
+  remove_tree(f.dir / ".git");
   // Gone: missing, the document still opens.
   fs::remove(elsewhere);
   Document gone = Document::load(f.dir / "project" / "design.opad");
@@ -488,7 +505,7 @@ TEST(derived_file_read_in_the_sources_place) {
   CHECK_EQ(resolve(reopened).node(linked(resolve(reopened), 1))->body_key, key_b);
   reopened.save();
   // The derived file gone (a clone): missing without the converter, made again with it.
-  fs::remove_all(f.dir / "made");
+  remove_tree(f.dir / "made");
   Document clone = Document::load(f.dir / "design.opad");
   st = load_assets(clone, uncached)[0];
   CHECK_EQ(st.state, "missing");
@@ -586,7 +603,7 @@ TEST(embed_and_pack) {
   CHECK(fs::exists(f.dir / "project" / "assets" / "model.step"));
   CHECK_EQ(asset_of(d, import_id)["storage"], "project");
   d.save();
-  fs::remove_all(f.dir / "outside");
+  remove_tree(f.dir / "outside");
   Document reopened = Document::load(f.dir / "project" / "design.opad");
   CHECK_EQ(load_assets(reopened)[0].state, "ok");  // the project's copy, trusted (inside the project)
   // Embed: ordinary bodies, stored, editable; the file is no longer needed.
@@ -598,7 +615,7 @@ TEST(embed_and_pack) {
     CHECK(!reopened.body(s.node(id)->body_key)->brep.empty());
   }
   reopened.save();
-  fs::remove_all(f.dir / "project" / "assets");
+  remove_tree(f.dir / "project" / "assets");
   Document alone = Document::parse(read_text_file(f.dir / "project" / "design.opad"));
   s = resolve(alone);
   CHECK(s.unresolved.empty());
