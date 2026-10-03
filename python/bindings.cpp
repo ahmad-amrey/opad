@@ -60,6 +60,17 @@ json kwargs_json(const py::kwargs& kw) {
   return a;
 }
 
+// An .opad file with its linked files read where they are (opad/assets.hpp): those in its project, or any with trust_assets.
+opad::Document open_document(const std::string& path, bool trust_assets) {
+  opad::Document d = opad::Document::load(path);
+  if (opad::has_assets(d)) {
+    opad::AssetOptions o;
+    o.trust_all = trust_assets;
+    opad::load_assets(d, o);
+  }
+  return d;
+}
+
 py::object run_on(opad::Document* d, const std::string& name, const py::kwargs& kw) {
   return to_py(opad::commands::run(name, kwargs_json(kw), d));
 }
@@ -76,8 +87,8 @@ PYBIND11_MODULE(opad, m) {
 
   py::class_<opad::Document>(m, "Document", "An .opad document: header, append-only op log, content-addressed body store.")
       .def_static("create", [](const std::string& units) { return opad::Document::create(units); }, "units"_a = "mm")
-      .def_static("open", [](const std::string& path) { return opad::Document::load(path); }, "path"_a,
-                  "Open an .opad file.")
+      .def_static("open", &open_document, "path"_a, "trust_assets"_a = false,
+                  "Open an .opad file; its linked files are read from its project (any path with trust_assets).")
       .def_static("browse", [](const std::string& step) { return opad::browse_step(step); }, "step"_a,
                   "Browse mode: a transient document with the STEP imported (F1).")
       .def_property_readonly("path", [](const opad::Document& d) { return d.path.string(); })
@@ -144,7 +155,7 @@ PYBIND11_MODULE(opad, m) {
         return "<opad.Document " + (d.path.empty() ? std::string("(unsaved)") : d.path.string()) + " ops=" + std::to_string(d.ops.size()) + " bodies=" + std::to_string(d.body_count()) + ">";
       });
 
-  m.def("open", [](const std::string& p) { return opad::Document::load(p); }, "path"_a);
+  m.def("open", &open_document, "path"_a, "trust_assets"_a = false);
   m.def("browse", [](const std::string& p) { return opad::browse_step(p); }, "step"_a);
   m.def("run", [](const std::string& name, const py::kwargs& kw) { return to_py(opad::commands::run(name, kwargs_json(kw))); }, "name"_a,
         "Run a command by name with keyword arguments (doc=path loads/saves the document).");
