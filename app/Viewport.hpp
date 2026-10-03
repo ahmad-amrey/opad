@@ -222,7 +222,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QPoint widgetPoint(const opad::Vec3& world) const;
   // Notes: NoteCards places one card per open note and tells the view where each pointer ends (widget
   // coordinates); notesMoved() follows every camera move or scene change so it can place them again.
-  bool noteAnchor(const std::string& opId, QPoint& out) const;  // false: unknown, or behind the eye
+  bool noteAnchor(const std::string& opId, QPoint& out) const;  // false: unknown, not measured yet, or behind the eye
+  bool notesPending() const { return m_anchorJobs > 0; }  // anchors being measured on a worker
+  int anchorsMeasured() const { return m_anchorsMeasured; }
+  bool noteAnchorPoint(const std::string& opId, opad::Vec3& out) const;  // world, without a look's offset
   void setNoteLeaders(const std::map<std::string, QPoint>& ends, bool shown);  // shown=false: notes hidden, nothing drawn
   void setNoteTypeFilter(const std::string& type) { m_noteTypeFilter=type; }
   // The note / hand drawing editor (AnnotationEditor.cpp). Its target is drawn in the selection blue, tinted with a
@@ -471,6 +474,14 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<opad::Vec3> m_annotationCorners;  // the target's box, world
   Job* m_targetJob = nullptr;                   // a body target's tint, built on a worker when the body has no arrays
   std::map<std::string, NoteMark> m_notes;  // open notes by op id
+  // Where each note is pinned (UI-03), by op id: measured once on a worker (opad::annotation_anchor) and again only when
+  // its signature (the reference, the pinned node's body keys and placements) changes. ready && !found: nothing to pin to.
+  struct NoteAnchor { size_t signature = 0; bool ready = false, found = false, queued = false; gp_Pnt at; };
+  std::map<std::string, NoteAnchor> m_noteAnchors;
+  size_t anchorSignature(const opad::Ref& ref) const;
+  int m_anchorJobs = 0;                        // anchor jobs running
+  int m_anchorsMeasured = 0;                   // anchors measured so far (benches: a sync must not measure again)
+  unsigned long long m_notesRevision = ~0ull;  // the document revision the notes were laid out for (sync skips the same)
   Graphic3d_WorldViewProjState m_noteCamera;
   QSize m_noteSize;
   bool m_measureComponents = true;

@@ -91,28 +91,118 @@ class NoteGraphic : public AIS_InteractiveObject {
 };
 }  // namespace
 
-// Where each open note is anchored, from the scene; the cards follow through notesMoved.
+// What a note's place depends on: its reference, and the body keys and placements of what it is pinned to (every body of
+// a component; a sketch's plane and size). The same signature, the same place: nothing is measured again.
+size_t Viewport::anchorSignature(const opad::Ref& ref) const {
+  const opad::Scene& scene = m_doc->scene;
+  size_t h = std::hash<std::string>{}(ref.str());
+  auto mix = [&h](size_t v) { h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2); };
+  auto body = [&](const std::string& id) {
+    const opad::Node* n = scene.node(id);
+    if (!n || n->kind != opad::Node::Kind::Body) return;
+    mix(std::hash<std::string>{}(id));
+    mix(std::hash<std::string>{}(n->body_missing ? std::string() : n->body_key));
+    for (double v : scene.world(id).m) mix(std::hash<double>{}(v));
+  };
+  if (const opad::SketchItem* s = scene.sketch(ref.body)) {
+    mix(std::hash<std::string>{}(s->frame.to_json().dump()));
+    for (const char* k : {"points", "entities"}) {
+      const auto it = s->geometry.find(k);
+      mix(it == s->geometry.end() ? 0 : it->size());
+    }
+  } else if (const opad::Node* n = scene.node(ref.body); n && n->kind == opad::Node::Kind::Component) {
+    for (const auto& b : scene.bodies_under(ref.body)) body(b);
+  } else {
+    body(ref.body);
+  }
+  return h;
+}
+
+// Where each open note is anchored, from the scene; the cards follow through notesMoved. A note pinned to a body,
+// component, sketch or sub-shape shows once its anchor has been measured on a worker (UI-03: exact mass properties here
+// held a sync of the Engine for 15 s per note); the cache keeps it until what it depends on changes.
 void Viewport::updateAnnotations() {
   if (!m_initialised) return;
+  trace::Scope scope("Viewport::updateAnnotations");
+  m_notesRevision = m_doc->revision;
   refreshMeasurement(true);
   m_notes.clear();
+  struct Measure { std::string id; opad::Ref ref; size_t signature; };
+  std::vector<Measure> measure;
+  std::set<std::string> pinned;
   for (const auto& a : m_doc->scene.annotations) {
     if (a.unresolved) continue;
     gp_Pnt at(a.anchor.point[0], a.anchor.point[1], a.anchor.point[2]);
-    if (a.drawing.is_null() && a.anchor.kind != opad::Ref::Kind::Point) {
-      try {
-        opad::json info = opad::inspect_ref(m_doc->doc, m_doc->scene, a.anchor);
-        opad::json c = info.contains("center") ? info["center"] : info.contains("point") ? info["point"] : info.contains("start") ? info["start"] : info["bbox"]["center"];
-        at = gp_Pnt(c[0].get<double>(), c[1].get<double>(), c[2].get<double>());
-      } catch (const std::exception&) {
+    if (!a.drawing.is_null()) {
+      const auto& p = a.drawing.at("plane").at("origin");
+      at = gp_Pnt(p[0], p[1], p[2]);
+    } else if (a.anchor.kind != opad::Ref::Kind::Point) {
+      pinned.insert(a.id);
+      const size_t signature = anchorSignature(a.anchor);
+      auto [it, added] = m_noteAnchors.try_emplace(a.id);
+      NoteAnchor& anchor = it->second;
+      if (added || anchor.signature != signature) anchor = NoteAnchor{signature};
+      if (!anchor.ready) {
+        if (!anchor.queued) measure.push_back({a.id, a.anchor, signature});
+        anchor.queued = true;
         continue;
       }
+      if (!anchor.found) continue;
+      at = anchor.at;
     }
-    if(!a.drawing.is_null()) {const auto& p=a.drawing.at("plane").at("origin");at=gp_Pnt(p[0],p[1],p[2]);}
     m_notes[a.id] = {at, a.style, a.drawing, a.anchor.body};
+  }
+  for (auto it = m_noteAnchors.begin(); it != m_noteAnchors.end();) it = pinned.count(it->first) ? std::next(it) : m_noteAnchors.erase(it);
+  if (!measure.empty()) {
+    // The worker reads a copy of the scene and a document that only shares the shape cache (a copy of the document would
+    // copy every BREP text): the shapes are cached here first, a hit for every body loaded or displayed.
+    auto document = std::make_shared<opad::Document>();
+    document->shape_cache = m_doc->doc.shape_cache;
+    const opad::Scene& scene = m_doc->scene;
+    for (const auto& m : measure)
+      for (const auto& id : scene.node(m.ref.body) ? scene.bodies_under(m.ref.body) : std::vector<std::string>{})
+        if (const opad::Node* n = scene.node(id); n && !n->body_missing) try { opad::body_shape(m_doc->doc, n->body_key); } catch (const std::exception&) {}
+    auto copy = std::make_shared<opad::Scene>(scene);
+    auto found = std::make_shared<std::vector<std::pair<bool, opad::Vec3>>>(measure.size());
+    const auto generation = m_doc->generation;
+    ++m_anchorJobs;
+    m_jobs->async(tr("Placing notes"), [document, copy, measure, found](Progress p) {
+      for (size_t i = 0; i < measure.size() && !p.cancelled(); ++i) {
+        try {
+          (*found)[i] = {true, opad::annotation_anchor(*document, *copy, measure[i].ref)};
+        } catch (const std::exception&) {
+        } catch (const Standard_Failure&) {
+        }
+      }
+    }, [this, measure, found, generation](bool ok, const QString&) {
+      --m_anchorJobs;
+      if (generation != m_doc->generation) return;
+      bool placed = false;
+      for (size_t i = 0; i < measure.size(); ++i) {
+        auto it = m_noteAnchors.find(measure[i].id);
+        if (it == m_noteAnchors.end() || it->second.signature != measure[i].signature) continue;  // moved on meanwhile
+        NoteAnchor& anchor = it->second;
+        anchor.queued = false;
+        if (!ok) continue;  // cancelled: measured again after the next change
+        const auto& [hit, at] = (*found)[i];
+        anchor.ready = true;
+        anchor.found = hit;
+        anchor.at = gp_Pnt(at[0], at[1], at[2]);
+        placed = placed || hit;
+        ++m_anchorsMeasured;
+      }
+      if (placed) updateAnnotations();
+    });
   }
   m_noteCamera.Reset();  // so the next frame lays the cards out again
   QMetaObject::invokeMethod(this, [this] { emit notesMoved(); }, Qt::QueuedConnection);
+}
+
+bool Viewport::noteAnchorPoint(const std::string& id, opad::Vec3& out) const {
+  auto it = m_notes.find(id);
+  if (it == m_notes.end()) return false;
+  out = {it->second.at.X(), it->second.at.Y(), it->second.at.Z()};
+  return true;
 }
 
 bool Viewport::noteAnchor(const std::string& id, QPoint& out) const {

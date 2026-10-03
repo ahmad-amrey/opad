@@ -574,6 +574,32 @@ json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref) {
   return j;
 }
 
+Vec3 annotation_anchor(const Document& doc, const Scene& scene, const Ref& ref) {
+  if (ref.kind == Ref::Kind::Point) return ref.point;
+  auto centre = [](const Bnd_Box& box) {
+    if (box.IsVoid()) throw Error("nothing to pin a note to");
+    double x0, y0, z0, x1, y1, z1;
+    box.Get(x0, y0, z0, x1, y1, z1);
+    return Vec3{(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2};
+  };
+  if (ref.kind == Ref::Kind::Body) {
+    if (scene.sketch(ref.body)) return centre(tight_bbox(node_world_shape(doc, scene, ref.body)));
+    const Node* n = scene.node(ref.body);
+    if (!n) throw Error("unknown node: " + ref.body);
+    if (n->kind == Node::Kind::Body) {
+      if (n->body_missing) throw Error("not an available body: " + ref.body);
+      return centre(node_tight_bbox(doc, scene, ref.body));
+    }
+    const auto bodies = scene.bodies_under(ref.body);  // an empty list would mean every visible body
+    Vec3 lo, hi;
+    if (bodies.empty() || !scene_tight_bbox(doc, scene, bodies, lo, hi)) throw Error("an empty component: " + ref.body);
+    return {(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2};
+  }
+  json info = inspect_ref(doc, scene, ref);
+  const json& c = info.contains("center") ? info["center"] : info.contains("point") ? info["point"] : info.contains("start") ? info["start"] : info.at("bbox").at("center");
+  return {c[0].get<double>(), c[1].get<double>(), c[2].get<double>()};
+}
+
 // ---------------------------------------------------------------- distance
 // BRepExtrema_DistShapeShape over two whole bodies tries every vertex/edge/face pair whose boxes do not rule it
 // out: 10 s to minutes between two Engine bodies. The display meshes already sit on the shapes, so: find the

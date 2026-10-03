@@ -1705,7 +1705,7 @@ void Viewport::sync() {
   if (layered()) scheduleLooks();  // the hierarchy under a layer's components may have changed
   syncSketches();
   applySelectionLayers();
-  updateAnnotations();
+  if (m_notesRevision != m_doc->revision) updateAnnotations();  // a document change, not a batch of meshes
   updateClipPlanes();
   if (m_displayJob) m_displayJob->cancel();
   const int pendingCount = static_cast<int>(pending.size());

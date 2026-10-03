@@ -13,6 +13,11 @@ json document_info(const Document& doc, const Scene& scene);
 json node_properties(const Document& doc, const Scene& scene, const std::string& node_id, bool geometry = true,
                      const std::function<bool()>& cancelled = {});
 json inspect_ref(const Document& doc, const Scene& scene, const Ref& ref);
+// Where a note pinned to `ref` is drawn (world): a point itself; the centre of a body's tight box, of a component's (its
+// bodies') or of a sketch's; a sub-shape's centre as inspect_ref gives it (a face's centroid, a circle's centre, a vertex,
+// an edge's start), else its box centre. No mass properties. Throws when the reference does not resolve. Measures the
+// geometry the first time per body: workers only, but for a point.
+Vec3 annotation_anchor(const Document& doc, const Scene& scene, const Ref& ref);
 // cancelled: polled while the distance is computed (a body-to-body distance can take a while); a true
 // answer ends it with Error("cancelled").
 json measure_distance(const Document& doc, const Scene& scene, const Ref& a, const Ref& b, const std::function<bool()>& cancelled = {});

@@ -24,6 +24,13 @@ def two_blocks(root, document):
                     ("feature", "--kind", "box", "--inputs", '{"x":"40 mm","y":"30 mm","length":"10 mm","width":"10 mm","height":"20 mm"}'))
 
 
+def three_parts(root, document):
+    """A box, a cylinder and a sphere apart: two notes pinned to bodies and one to a face, the last part hidden and shown."""
+    return document("three-parts", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'),
+                    ("feature", "--kind", "cylinder", "--inputs", '{"x":"60 mm","diameter":"12 mm","height":"20 mm"}'),
+                    ("feature", "--kind", "sphere", "--inputs", '{"x":"120 mm","diameter":"10 mm"}'))
+
+
 def strokes(root, document):
     """A drawing of three short strokes far apart (opened, it shows in 2D): their ends line up in empty space only."""
     path = root / "strokes.svg"
@@ -48,4 +55,9 @@ CASES = [
     # Shift taps. On two blocks in 3D and on a drawing in 2D mode. <prefix>.cross.png, <prefix>.held.png.
     ("crosslock", two_blocks, {"OPAD_BENCH_CROSSLOCK": "{prefix}"}),
     ("crosslock-drawing", strokes, {"OPAD_BENCH_CROSSLOCK": "{prefix}", "OPAD_BENCH_CROSSLOCK_2D": "1"}),
+    # Note anchors (UI-03): two notes pinned to bodies and one to a face are measured once on a worker; adding them, a
+    # hide, undo, redo and a sync stay cheap and measure nothing again; a moved body takes its notes along. The Engine
+    # case is the evaluation's (every sync took 15-18 s with two body notes). <prefix>.png.
+    ("note-anchors", three_parts, {"OPAD_BENCH_NOTEANCHORS": "{prefix}"}),
+    ("note-anchors-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_NOTEANCHORS": "{prefix}"}),
 ]
