@@ -20,6 +20,7 @@
 #include <QTimer>
 #include <QWindow>
 
+#include <Aspect_Grid.hxx>
 #include <AIS_AnimationCamera.hxx>
 #include <AIS_TexturedShape.hxx>
 #include <QPainter>
@@ -163,6 +164,7 @@ void Viewport::setBlocked(bool on) {
     m_nativePinching = false;
   }
   m_blocked = on;
+  applyOwnCursor();
 }
 
 void Viewport::benchShot(const QString& path) {
@@ -245,6 +247,9 @@ void Viewport::initViewer() {
   driver->ChangeOptions().buffersNoSwap = Standard_False;
   driver->ChangeOptions().ffpEnable = Standard_False;
   m_viewer = new V3d_Viewer(driver);
+  // No grid echo: AIS_ViewController drew OCCT's grey star on the grid node nearest the pointer after every move, a node
+  // the sketch's snapping had not chosen (an object snap or the pointer itself was used), so the click went elsewhere.
+  m_viewer->SetGridEcho(Standard_False);
   m_viewer->SetDefaultLights();
   m_viewer->SetLightOn();
   Handle(V3d_DirectionalLight) overhead=new V3d_DirectionalLight(gp_Dir(0,0,-1),Quantity_NOC_WHITE,false);
@@ -385,6 +390,7 @@ void Viewport::applyTokens() {
     drawer->SetWireAspect(new Prs3d_LineAspect(Quantity_NOC_WHITE,Aspect_TOL_SOLID,3));
   }
   if (!m_subHl.IsNull()) refreshSubHighlight();  // drawn by us in the selection colour
+  applyGridColors();
   // View cube per the design: flat three-tone box with dark labels, thin X/Y/Z axes in red/green/blue along
   // the lower edges, and the hovered face/edge/corner filled with the hover accent to show where a click goes.
   m_cube->SetBoxColor(occ(t.mtop));
@@ -533,10 +539,26 @@ void Viewport::setGrid(bool on) {
 void Viewport::showGrid() {
   if (!m_initialised) return;
   updateGridExtent();
+  applyGridColors();
   if (gridShown()) m_viewer->ActivateGrid(Aspect_GT_Rectangular, Aspect_GDM_Lines);
   else m_viewer->DeactivateGrid();
   redrawScene();
   emit gridShownChanged(gridShown());
+}
+
+// In a sketch and in 2D mode every snap step is a line (24 to 60 px apart), so they are faint and every tenth one a
+// little less: the theme's viewport colour with a share of its text colour. In 3D, OCCT's greys on the coarse patch.
+void Viewport::applyGridColors() {
+  if (!m_initialised) return;
+  const Handle(Aspect_Grid) grid = m_viewer->Grid(Aspect_GT_Rectangular);
+  if (grid.IsNull()) return;
+  if (!(m_twoDimensional || m_sketchInput)) return grid->SetColors(Quantity_NOC_GRAY50, Quantity_NOC_GRAY70);
+  auto mix = [&](double share) {
+    const QColor& a = m_tokens.vp;
+    const QColor& b = m_tokens.fg;
+    return Quantity_Color(a.redF() + (b.redF() - a.redF()) * share, a.greenF() + (b.greenF() - a.greenF()) * share, a.blueF() + (b.blueF() - a.blueF()) * share, Quantity_TOC_sRGB);
+  };
+  grid->SetColors(mix(m_tokens.dark ? 0.09 : 0.11), mix(m_tokens.dark ? 0.22 : 0.26));
 }
 
 void Viewport::setGridSnap(bool on) {
@@ -548,9 +570,27 @@ void Viewport::setGridSnap(bool on) {
 // What updateInfiniteGrid lays out for the current zoom, without waiting for the redraw that lays it out.
 double Viewport::gridStep() const {
   if (!m_initialised || !(m_twoDimensional || m_sketchInput)) return m_gridStep;
-  const gp_XYZ size = m_view->Camera()->ViewDimensions();
-  const double span = std::max(size.X(), size.Y());
-  return span > 1e-9 && std::isfinite(span) ? sketchsnap::gridStep(span, m_gridSpacing) : m_gridStep;
+  const double pixel = pixelSize();
+  return pixel > 0 && std::isfinite(pixel) ? sketchsnap::gridStep(pixel, m_gridSpacing) : m_gridStep;
+}
+
+// ---------------------------------------------------------------- the sketch's own cursor
+void Viewport::setOwnCursor(bool on) {
+  m_ownCursorWanted = on;
+  applyOwnCursor();
+}
+
+void Viewport::applyOwnCursor() {
+  const bool hide = m_ownCursorWanted && m_sketchInput && m_initialised && !m_blocked && !m_ownCursorAside && !QApplication::activePopupWidget();
+  if (hide == m_ownCursorShown) return;
+  m_ownCursorShown = hide;
+  if (hide) {
+    // The overlays on the view (value boxes, prompt, chips) would inherit the blank cursor: they keep the arrow.
+    for (QWidget* child : findChildren<QWidget*>(Qt::FindDirectChildrenOnly))
+      if (!child->testAttribute(Qt::WA_SetCursor)) child->setCursor(Qt::ArrowCursor);
+    setCursor(Qt::BlankCursor);
+  } else unsetCursor();
+  emit ownCursorChanged(hide);
 }
 
 void Viewport::updateGridExtent() {
@@ -598,6 +638,8 @@ void Viewport::placeGrid(double u, double v, double step, double extent) {
   m_viewer->SetRectangularGridGraphicValues(extent,extent,0);
 }
 
+bool Viewport::benchGridEcho() const { return m_initialised && m_viewer->GridEcho(); }
+
 Bnd_Box Viewport::benchGridBox() const {
   Bnd_Box box;
   if (!m_initialised) return box;
@@ -609,19 +651,19 @@ Bnd_Box Viewport::benchGridBox() const {
 }
 
 // OCCT's grid is a finite patch. In 2D mode and while sketching (in the sketch's plane) it is laid out again around
-// what the view shows whenever the view gets near its edge or the zoom asks for another spacing (lines a tenth of
-// the view apart, or the set spacing while that gives at most 400 lines); its lines stay on multiples of the spacing,
-// which is what grid snapping rounds to. Called from every redraw, so the test whether anything changed comes first.
+// what the view shows whenever the view gets near its edge or the zoom asks for another spacing (sketchsnap::gridStep:
+// 1, 2 or 5 times a power of ten, 24 to 60 px apart, never finer than a set spacing); every line is a snap step, so
+// grid snapping lands on what is drawn. Called from every redraw, so the test whether anything changed comes first.
 void Viewport::updateInfiniteGrid(bool force) {
   if (!m_initialised || !gridShown()) return;
   const auto camera = m_view->Camera();
   const gp_XYZ size = camera->ViewDimensions();
-  const double span = std::max(size.X(), size.Y());
-  if (!(span > 1e-9) || !std::isfinite(span)) return;
+  const double span = std::max(size.X(), size.Y()), pixel = pixelSize();
+  if (!(span > 1e-9) || !std::isfinite(span) || !(pixel > 0) || !std::isfinite(pixel)) return;
   const gp_Ax3 plane = m_viewer->PrivilegedPlane();
   const gp_Vec rel(plane.Location(), camera->Center());
   const double cx = rel.Dot(gp_Vec(plane.XDirection())), cy = rel.Dot(gp_Vec(plane.YDirection()));
-  const double step = sketchsnap::gridStep(span, m_gridSpacing);
+  const double step = sketchsnap::gridStep(pixel, m_gridSpacing);
   const double off = std::hypot(cx - m_gridShownX, cy - m_gridShownY);
   if (!force && step == m_gridShownStep && off + span / 2 <= m_gridShownExtent * 0.9 && m_gridShownExtent <= span * 3) return;
   const double ox = std::round(cx / step) * step, oy = std::round(cy / step) * step, extent = std::ceil(span * 1.5 / step) * step;
@@ -2052,6 +2094,10 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
   m_pressPos = (e->position()+m_dragOffset).toPoint();
   m_rightPress = e->button() == Qt::RightButton;
   m_cubeClick = false;
+  if (m_sketchInput && e->button() != Qt::LeftButton && !m_ownCursorAside) {  // a camera gesture or the context menu: the pointer
+    m_ownCursorAside = true;
+    applyOwnCursor();
+  }
   if (sectionMousePress(e)) return;  // a press on the section plane's handle strip starts a drag, never a selection
   // A press can arrive without a preceding hover. Refresh only near the cube (or when the old hover was
   // the cube) so the gesture below uses this press's owner without an extra scene pick on every model click.
@@ -2217,6 +2263,15 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
     } else {
       unsetCursor();
       setToolTip(QString());
+    }
+  }
+  // The sketch's own cursor gives way to the pointer over the view cube and during a camera gesture (it comes back with
+  // the first move after it).
+  if (m_sketchInput) {
+    const bool aside = (e->buttons() != Qt::NoButton && !m_sketchDrag) || (m_ownCursorWanted && e->buttons() == Qt::NoButton && cubeAt(e->position()));
+    if (aside != m_ownCursorAside) {
+      m_ownCursorAside = aside;
+      applyOwnCursor();
     }
   }
   // Camera gestures do not need sketch hover, snapping, or geometry updates.

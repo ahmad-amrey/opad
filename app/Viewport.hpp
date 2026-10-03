@@ -83,7 +83,14 @@ class Viewport : public QWidget, protected AIS_ViewController {
   double gridStep() const;
   bool gridShown() const { return m_sketchInput ? m_sketchGrid : m_grid; }
   double gridShownStep() const { return m_gridShownStep; }  // as the sketch / 2D grid was last laid out
+  // The sketch's own cursor (grid snapping: the drawing cursor jumps between nodes, SketchEditor draws it at the snapped
+  // point). Asked for, the system pointer is blank over the view, but not over the view cube, during a camera gesture,
+  // while a popup menu is open or the view is blocked; it is the system's own again off the view (the widget's cursor),
+  // over a tool panel or an overlay on the view (they keep the arrow). ownCursor(): blank now, the editor draws its own.
+  void setOwnCursor(bool on);
+  bool ownCursor() const { return m_ownCursorShown; }
   Bnd_Box benchGridBox() const;  // where the grid is drawn (OCCT's structure, world box), for benches
+  bool benchGridEcho() const;    // OCCT's grid echo (a star on the node nearest the pointer) is on: it must not be
   Bnd_Box benchFitBox() const { return fitBounds(false); }  // what Fit frames, for benches
   opad::json circleInfo(const opad::Ref& ref) const;
   void setShadows(bool on);
@@ -280,6 +287,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void sectionDragged(const opad::Vec3& origin);  // the section plane's handle was dragged here
   void gridSnapChanged(bool on);
   void gridShownChanged(bool on);
+  void ownCursorChanged(bool shown);  // the system pointer went blank (the editor draws its cursor) or came back
   void looksApplied();  // a setLookLayer (or a scene change under one) has reached every displayed body
 
  public slots:
@@ -322,6 +330,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   CursorWarpGate m_warpGate;
   void updateGridExtent();
   void showGrid();  // gridShown() on screen
+  void applyGridColors();  // faint lines from the theme in a sketch and 2D mode, OCCT's greys in 3D
+  void applyOwnCursor();   // the system pointer blank or back, as setOwnCursor asked and what is under it allows
   void placeGrid(double u, double v, double step, double extent);  // centred on (u, v) of the privileged plane
   // The box Fit All, Home and the load-time fit frame: displayed bodies, sketches, their images and a feature preview
   // (never the grid, gizmos, overlays or annotations); the default grid square when there is nothing (void if !fallback).
@@ -481,6 +491,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   double m_gridSpacing=0;  // view/gridSpacing (0 = automatic), read when the grid settings change
   double m_gridShownStep=0, m_gridShownExtent=0, m_gridShownX=0, m_gridShownY=0;  // the infinite grid as last laid out
   bool m_sketchGrid = true;  // the grid in sketches (sketch/grid)
+  bool m_ownCursorWanted = false, m_ownCursorShown = false, m_ownCursorAside = false;  // aside: over the cube, a camera gesture
   bool m_grid = false, m_sectionEnabled = false, m_sectionCaps = true, m_initialised = false, m_needFit = false;
   std::vector<std::string> m_fitNodesOnSync;
   bool m_flushingViewEvents = false, m_repaintAfterFlush = false;

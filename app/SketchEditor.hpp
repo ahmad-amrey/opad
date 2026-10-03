@@ -109,6 +109,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchCrossLock();
   void benchSnaps();
   void benchSteps();
+  void benchGridCursor();
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
   // Show constraints (UI-24, setting sketch/showConstraints): their badges and coincidence dots; off, only those in conflict
   // or selected show.
@@ -177,7 +178,7 @@ class SketchEditor : public QObject, public SketchInput {
     enum Kind { None, Point, Entity, Dimension } kind = None;
     int id = 0;
   };
-  Snap snap(double u, double v, bool infer = true) const;
+  Snap snap(double u, double v, bool infer = true, bool grid = true) const;  // grid: grid snapping as switched (false: as if off)
   // Typed values (UI-16, SketchDynamicInput.cpp): the boxes of the step that waits (an option of the tool, or where the
   // next point goes), which keys type into them, and using what was typed (Enter, or a click: the typed values win, the
   // pointer gives the rest). A point's typed values hold the rubber band at once (typedPoint); '#', '@', ',' and '<' switch
@@ -233,10 +234,14 @@ class SketchEditor : public QObject, public SketchInput {
   bool boxed(const QString& key) const;               // a box of the step takes that readout's value (and sits on it)
   QStringList transientTexts() const;                 // what the rubber band reads out (benches)
   size_t transientLocked() const;                     // segments drawn thick dashed: a Shift lock's line (benches)
+  size_t transientCursor() const;                     // segments of the drawing cursor drawn (benches)
   QStringList overlayTexts() const;                   // the texts the sketch's overlay draws (benches)
   size_t badgeTriangles() const;                      // the constraint badges' backs, two triangles each (benches)
   size_t coincidenceDots() const;                     // the dots drawn for coincidences, explicit and where curves meet (benches)
   size_t transientSolid(const QColor& c) const;       // rubber band and highlight segments in that colour (benches)
+  bool drawsCursor() const;  // grid snapping: the editor draws the drawing cursor at the snapped point, the pointer is hidden
+  std::optional<std::pair<double, double>> m_drawnCursor;  // where it was last drawn (none: not drawn), sketch coordinates
+  bool m_inTransient = false;  // updateTransient is telling the viewport whether it draws the cursor
   std::optional<snapmarkers::Marker> m_marker;        // the marker drawn where the pointer snapped (none: a dot)
   double m_markerTurn = 0;                            // its turn on the screen (radians): an extension's follows its line
   Hit hitTest(double u, double v) const;

@@ -93,6 +93,7 @@ void SketchEditor::setTool(const QString& tool) {
   emit toolChanged(m_tool);
   toolPrompt();
   rebuild();
+  if (placing()) resnap();  // where the pointer is, snapped for this tool: the drawing cursor jumps there at once
   scheduleToolPreview();
 }
 

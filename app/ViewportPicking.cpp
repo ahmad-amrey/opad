@@ -127,6 +127,10 @@ bool Viewport::eventFilter(QObject* object, QEvent* e) {
       && (window()->isActiveWindow() || m_shiftHeld
           || (QApplication::activeWindow() && window()->isAncestorOf(QApplication::activeWindow()))))
     if(inferenceKey(static_cast<QKeyEvent*>(e))) return true;
+  // A popup menu takes the mouse: the system pointer is back over the view while it is open (looked at once it is in).
+  if ((e->type()==QEvent::Show || e->type()==QEvent::Hide) && m_ownCursorWanted)
+    if (const auto* popup=qobject_cast<QWidget*>(object); popup && popup->windowType()==Qt::Popup)
+      QTimer::singleShot(0,this,[this]{applyOwnCursor();});
   if (e->type()==QEvent::ApplicationDeactivate) {
     setCenterPicking(false,m_trackingCursor);
     m_shiftHeld=m_centerLocked=m_trackingLocked=false; refreshCenterStyles();

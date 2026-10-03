@@ -1,8 +1,10 @@
 #pragma once
 // The order the sketch takes its inferences in once no object snap (point, midpoint, quadrant, intersection) holds
-// the pointer: a crossing (two guides, a guide and the angle ray, or either of them and a curve) > a grid node > one
-// guide > the angle ray > a curve > the grid. With grid snapping on, a guide is quantised along itself: an axis guide
-// to the grid lines it crosses, any other (an extension, the angle ray) by whole steps from its anchor.
+// the pointer. Grid snapping off: a crossing (two guides, a guide and the angle ray, or either of them and a curve) > one
+// guide > the angle ray > a curve > the pointer. Grid snapping on (AutoCAD's SNAP): the point is a grid node wherever the
+// pointer is, unless tracking guides cross (each other, or a curve) within reach; a guide, the angle ray or a curve the
+// node lies on only names it (and constrains it), and never takes the point off the grid.
+// A Shift lock and Ortho keep their line with a grid too: along it the pointer stops on grid lines (crossGrid).
 // Cross-locking (UI-19): points acquired by resting the pointer on them (track) each add their guides, so two of them
 // cross at (A.x, B.y); Shift locks the pointer onto one guide, and along it (along) it stops where another guide, the
 // angle ray or a curve crosses it (stops: every such place in reach, which Shift taps go through on a lock that stays),
@@ -21,19 +23,29 @@ struct Guide { double x = 0, y = 0, dx = 1, dy = 0; int anchor = 0; };  // throu
 // the angle `start` through `sweep` (a circle: 2 pi).
 struct Curve { double x = 0, y = 0, ex = 0, ey = 0, r = 0, start = 0, sweep = 0; };
 struct Pick {
-  enum class By { Pointer, Cross, Node, Guide, Ray, Curve, Grid } by = By::Pointer;
+  enum class By { Pointer, Cross, Node, Guide, Ray, Curve } by = By::Pointer;
   double u = 0, v = 0;
   // Cross: the guides crossing (-1: the ray or a curve is the other line); Node: a guide through it (-1: none); Guide:
   // the guide. ray: the angle ray is one of the crossing lines (Cross) or runs through the node (Node). curve: the
-  // curve crossed (Cross) or landed on (Curve), an index into the curves.
+  // curve crossed (Cross), landed on (Curve) or running through the node (Node), an index into the curves.
   int guide = -1, other = -1, curve = -1;
   bool ray = false;
 };
 
-// The grid spacing for a view `span` wide: a tenth of it rounded down to a power of ten, or the set spacing while
-// that draws at most 400 lines.
-inline double gridStep(double span, double spacing) {
-  return spacing > 0 && span / spacing <= 400 ? spacing : std::pow(10.0, std::floor(std::log10(span / 10.0)));
+// The grid spacing at `pixel` world units per screen pixel (zoom-adaptive, the 1-2-5 sequence): the smallest of 1, 2 and
+// 5 times a power of ten that is at least `least` pixels on the screen, so a step is 24 to 60 px. A set spacing (> 0) is
+// the finest step: zoomed out, its smallest multiple by 1, 2, 5, 10, 20, ... that is that wide.
+inline double gridStep(double pixel, double spacing, double least = 24) {
+  const double base = spacing > 0 ? spacing : 1, ratio = least * pixel / base;
+  if (!(ratio > 0) || !std::isfinite(ratio)) return base;
+  if (spacing > 0 && ratio <= 1) return spacing;
+  const int k = int(std::floor(std::log10(ratio)));
+  for (const double m : {1.0, 2.0, 5.0, 10.0}) {
+    // m * 10^k as the decimal it stands for (2 / 100, never 2 * 0.01)
+    const double step = k < 0 ? m / std::pow(10.0, -k) : m * std::pow(10.0, k);
+    if (step >= ratio * (1 - 1e-12)) return base * step;
+  }
+  return base * std::pow(10.0, k + 1);
 }
 inline double onGrid(double x, double step) { return std::round(x / step) * step; }
 inline bool axis(const Guide& g) { return std::abs(g.dx) < 1e-12 || std::abs(g.dy) < 1e-12; }
@@ -174,7 +186,7 @@ inline bool angleRay(double x, double y, double u, double v, double increment, d
 
 // u, v: the pointer; t: the capture distance; step: the grid spacing, 0 = grid snapping off; guides: the alignments
 // that apply; ray: the angle ray if it holds the pointer (its anchor that of the guides from the same point); curves:
-// the curves within t of the pointer that it may land on.
+// the curves within t of the pointer that it may land on (with a grid, also those through the pointer's node).
 inline Pick resolve(double u, double v, double t, double step, const std::vector<Guide>& guides, const Guide* ray, const std::vector<Curve>& curves) {
   Pick p;
   p.u = u;
@@ -183,7 +195,8 @@ inline Pick resolve(double u, double v, double t, double step, const std::vector
   for (int i = 0; i < int(guides.size()); ++i)
     if (distance(guides[i], u, v) < t) lines.push_back(i);
   const size_t reach = lines.size();
-  if (ray) lines.push_back(-1);
+  // With a grid the angle ray never takes the point off it (it only names a node it runs through), so it crosses nothing.
+  if (ray && !(step > 0)) lines.push_back(-1);
   auto line = [&](int i) -> const Guide& { return i < 0 ? *ray : guides[size_t(i)]; };
   double best = 2 * t;
   auto cross = [&](double x, double y, int a, int b, int curve) {
@@ -207,27 +220,29 @@ inline Pick resolve(double u, double v, double t, double step, const std::vector
     }
   }
   if (p.by == Pick::By::Cross) return p;
-  if (step > 0) {
-    const double gu = onGrid(u, step), gv = onGrid(v, step);
-    if (std::hypot(gu - u, gv - v) < t) {
-      p = {Pick::By::Node, gu, gv};
-      for (size_t i = 0; i < reach; ++i)
-        if (distance(guides[size_t(lines[i])], gu, gv) < step * 1e-6) { p.guide = lines[i]; break; }  // the inferences that agree with it stay
-      p.ray = ray && distance(*ray, gu, gv) < step * 1e-6;
-      return p;
+  if (step > 0) {  // the node nearest the pointer, however far; what runs through it stays (its constraint, its name)
+    const double gu = onGrid(u, step), gv = onGrid(v, step), on = step * 1e-6;
+    p = {Pick::By::Node, gu, gv};
+    for (int i = 0; i < int(guides.size()) && p.guide < 0; ++i)
+      if (distance(guides[size_t(i)], gu, gv) < on) p.guide = i;
+    p.ray = ray && distance(*ray, gu, gv) < on && (gu - ray->x) * ray->dx + (gv - ray->y) * ray->dy > on;  // ahead of its point
+    for (int c = 0; c < int(curves.size()) && p.curve < 0; ++c) {
+      double fu, fv;
+      if (foot(curves[size_t(c)], gu, gv, fu, fv) < on) p.curve = c;
     }
+    return p;
   }
   if (reach) {
     p.by = Pick::By::Guide;
     p.guide = lines.front();
     for (size_t i = 0; i < reach; ++i)
       if (distance(guides[size_t(lines[i])], u, v) < distance(guides[size_t(p.guide)], u, v)) p.guide = lines[i];
-    project(guides[size_t(p.guide)], u, v, step, p.u, p.v);
+    project(guides[size_t(p.guide)], u, v, 0, p.u, p.v);
     return p;
   }
   if (ray) {
     p.by = Pick::By::Ray;
-    project(*ray, u, v, step, p.u, p.v);
+    project(*ray, u, v, 0, p.u, p.v);
     return p;
   }
   double closest = t;
@@ -237,12 +252,6 @@ inline Pick resolve(double u, double v, double t, double step, const std::vector
       closest = d;
       p = {Pick::By::Curve, fu, fv, -1, -1, c};
     }
-  }
-  if (p.by == Pick::By::Curve) return p;
-  if (step > 0) {
-    p.by = Pick::By::Grid;
-    p.u = onGrid(u, step);
-    p.v = onGrid(v, step);
   }
   return p;
 }

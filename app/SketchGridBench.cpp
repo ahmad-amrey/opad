@@ -11,10 +11,11 @@ using namespace opad::design;
 
 // OPAD_BENCH_SKETCH_GRID=<prefix> (TODO 11 UI-18): grid snapping through the tool code, as the mouse drives it. One
 // switch (F9's action, the panel's checkbox and the viewport agree), the sketch shows its own grid (G hides it there
-// only, apart from snapping), the step follows the zoom, a pointer near a node lands on it although the angle or a
-// guide would take it, a guide away from the nodes is quantised along itself, a node on the angle ray keeps the angle's
-// name, a guide crossing a curve beats the nodes and lands on both, a dragged point lands on a node (Alt drags
-// freely), and off is off.
+// only, apart from snapping), the step follows the zoom (1, 2 or 5 times a power of ten, 24 to 60 px, as drawn), a
+// pointer near a node lands on it although the angle or a guide would take it, a guide or the angle ray away from the
+// nodes never takes the point off them (the nearest node; a guide through it stays), a node on the angle ray keeps the
+// angle's name, a guide crossing a curve beats the nodes and lands on both, a dragged point lands on a node (Alt drags
+// freely), and off is off. sketch-gridcursor (SketchGridCursorBench.cpp): the drawing cursor that jumps between nodes.
 void SketchEditor::benchGrid() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_GRID");
   bool ok = true;
@@ -57,18 +58,22 @@ void SketchEditor::benchGrid() {
   box->click();
   check(m_viewport->gridSnap() && f9->isChecked(), "the panel's checkbox is the same switch (on)");
 
-  // A view 105 mm across: a 10 mm grid. Ten times closer: 1 mm.
+  // 0.11 mm a pixel: 24 px want 2.64 mm, a 5 mm grid (45 px); ten times closer 0.5 mm, ten times further 50 mm.
   auto camera = [&](double scale) {
     m_viewport->setCameraJson({{"eye", {0, 0, 100}}, {"target", {0, 0, 0}}, {"up", {0, 1, 0}}, {"scale", scale}, {"projection", "orthographic"}, {"absolute", true}});
   };
   camera(100);
-  const double scale = 100 * 105 / (std::max(m_viewport->width(), m_viewport->height()) * m_viewport->pixelSize());
-  camera(scale / 10);
-  check(same(m_viewport->gridStep(), 1), QString("zoomed in, the step is 1 mm (%1)").arg(m_viewport->gridStep()));
+  const double scale = 100 * 0.11 / m_viewport->pixelSize();
+  for (const double zoom : {10.0, 0.1}) {
+    camera(scale / zoom);
+    const double step = m_viewport->gridStep(), cell = step / m_viewport->pixelSize();
+    check(same(step, 5 / zoom) && cell >= 24 && cell < 60, QString("zoomed %1, the step is %2 mm (%3, %4 px)").arg(zoom > 1 ? "in" : "out").arg(5 / zoom).arg(step).arg(cell));
+  }
   camera(scale);
   const double s = m_viewport->gridStep(), px = m_viewport->pixelSize();
   m_viewport->grabImage();
-  check(same(s, 10) && same(m_viewport->gridShownStep(), s), QString("the step follows the zoom: 10 mm, as drawn (%1, drawn %2)").arg(s).arg(m_viewport->gridShownStep()));
+  check(same(s, 5) && same(m_viewport->gridShownStep(), s) && s / px >= 24 && s / px < 60,
+        QString("the step follows the zoom: 5 mm, every line drawn a step (%1, drawn %2, %3 px)").arg(s).arg(m_viewport->gridShownStep()).arg(s / px));
   if (s / px < 4 * tol() / px) {
     check(false, QString("grid cells of %1 px are too small for this bench").arg(s / px));
     return QCoreApplication::exit(2);
@@ -101,14 +106,15 @@ void SketchEditor::benchGrid() {
   check(at(m_chain.back(), 5 * s, 2 * s), "the click lands exactly on the node");
   place(5 * s + 3 * px, 4 * s - 2 * px);  // straight above, a little to the side (it gave a slanted line)
   check(at(m_chain.back(), 5 * s, 4 * s) && constrained(SkConstraint::Type::Vertical), "straight above: on the node, vertical and constrained so");
-  place(7.4 * s, 4 * s + 3 * px);  // horizontal, away from any node: whole steps along the guide
-  check(at(m_chain.back(), 7 * s, 4 * s) && constrained(SkConstraint::Type::Horizontal), "a horizontal guide away from the nodes snaps along itself");
-  // 1.4 steps along the 30 degree ray, 2 px beside it and 0.37 steps from the nearest node: one whole step along the ray.
+  place(7.4 * s, 4 * s + 3 * px);  // horizontal, away from any node: the node on the guide
+  check(at(m_chain.back(), 7 * s, 4 * s) && constrained(SkConstraint::Type::Horizontal), "a horizontal guide away from the nodes: the node on it, horizontal");
+  // 1.4 steps along the 30 degree ray, 2 px beside it and 0.37 steps from the nearest node: the node, not a step along the
+  // ray (it used to be polar snap, off the grid); the node is on the 45 degree ray, which names it.
   const double c30 = std::cos(M_PI / 6), s30 = std::sin(M_PI / 6), ru = 7 * s + 1.4 * s * c30 - 2 * px * s30, rv = 4 * s + 1.4 * s * s30 + 2 * px * c30;
   sketchMove(ru, rv, Qt::NoModifier, false);
-  check(m_cursor.kind == Snap::Kind::Angle && m_cursor.grid && same(m_cursor.u, 7 * s + s * c30) && same(m_cursor.v, 4 * s + s * s30), "the angle ray takes whole grid steps (polar snap)");
+  check(m_cursor.kind == Snap::Kind::Angle && m_cursor.grid && same(m_cursor.u, 8 * s) && same(m_cursor.v, 5 * s), "the 30 degree ray no longer takes the point off the grid: the nearest node, named by its own 45 degrees");
   place(ru, rv);
-  check(at(m_chain.back(), 7 * s + s * c30, 4 * s + s * s30), "the click lands one step along the ray");
+  check(at(m_chain.back(), 8 * s, 5 * s), "the click lands on that node");
   finishChain();
 
   setTool("point");

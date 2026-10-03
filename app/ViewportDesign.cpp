@@ -454,6 +454,8 @@ void Viewport::beginSketchInput(SketchInput* input, const opad::Frame& frame, co
 void Viewport::endSketchInput() {
   resetHoverFade();
   m_sketchInput = nullptr;
+  m_ownCursorWanted = m_ownCursorAside = false;
+  applyOwnCursor();
   m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(),gp::DZ(),gp::DX()));
   showGrid();
   m_hiddenSketch.clear();

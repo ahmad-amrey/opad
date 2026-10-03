@@ -19,6 +19,7 @@
   }
 
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_GRID, sketchGrid, benchGrid)                      // UI-18
+OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_GRIDCURSOR, sketchGridCursor, benchGridCursor)    // grid snapping's drawing cursor
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_LADDER, sketchLadder, benchLadder)                // UI-20
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_KEYS, sketchKeys, benchKeys)                      // UI-16
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_SHAPES, sketchShapes, benchShapes)                // UI-17

@@ -5,11 +5,23 @@ using namespace sketchsnap;
 static const double kPi = std::acos(-1.0);
 
 TEST(grid_step_follows_the_zoom_or_the_set_spacing) {
-  CHECK_NEAR(gridStep(105, 0), 10, 1e-12);
-  CHECK_NEAR(gridStep(99, 0), 1, 1e-12);
-  CHECK_NEAR(gridStep(1050, 0), 100, 1e-12);
-  CHECK_NEAR(gridStep(100, 5), 5, 1e-12);
-  CHECK_NEAR(gridStep(100, 0.1), 10, 1e-12);  // 1000 lines: automatic again
+  // 1, 2 or 5 times a power of ten, at least 24 px: 24 to 60 px on the screen.
+  CHECK_NEAR(gridStep(0.1, 0), 5, 1e-12);     // 2.4 mm wanted: 5 mm (50 px)
+  CHECK_NEAR(gridStep(0.05, 0), 2, 1e-12);    // 1.2 mm: 2 mm (40 px)
+  CHECK_NEAR(gridStep(1.0 / 24, 0), 1, 1e-12);  // exactly 24 px: 1 mm
+  CHECK_NEAR(gridStep(0.042, 0), 2, 1e-12);   // a hair over: 2 mm
+  CHECK_NEAR(gridStep(0.4, 0), 10, 1e-12);    // 9.6 mm: 10 mm (25 px)
+  CHECK_NEAR(gridStep(4.5, 0), 200, 1e-12);   // 108 mm: 200 mm (44 px)
+  CHECK(gridStep(0.0004, 0) == 0.01);         // 0.0096 mm: 0.01 mm, the decimal itself
+  CHECK(gridStep(0.0007, 0) == 0.02);
+  for (double pixel = 1e-4; pixel < 1e3; pixel *= 1.37) {  // every zoom: 24 to 60 px
+    const double px = gridStep(pixel, 0) / pixel;
+    CHECK(px >= 24 * (1 - 1e-9) && px < 60);
+  }
+  CHECK_NEAR(gridStep(0.1, 5), 5, 1e-12);     // a set 5 mm: 50 px, itself
+  CHECK_NEAR(gridStep(0.01, 5), 5, 1e-12);    // zoomed in: never finer than it
+  CHECK_NEAR(gridStep(0.5, 5), 25, 1e-12);    // zoomed out: 5 x 5 mm (50 px)
+  CHECK_NEAR(gridStep(0.3, 2.5), 12.5, 1e-12);  // 7.2 mm wanted: 2.5 x 5 (2.5 x 2 is too fine)
   CHECK_NEAR(onGrid(-16.3, 10), -20, 1e-12);
   CHECK_NEAR(onGrid(24.9, 10), 20, 1e-12);
 }
@@ -29,38 +41,51 @@ TEST(a_node_near_the_pointer_beats_guides_and_the_angle_ray) {
   CHECK(resolve(50.3, 19.8, 0.8, 10, {{0, 7, 1, 0, 1}}, nullptr, {}).guide == -1);
 }
 
-TEST(away_from_the_nodes_a_guide_is_quantised_along_itself) {
-  // Horizontal from (3, 0): the pointer at u = 24.4 lands on the grid line u = 20, on the guide.
+TEST(with_a_grid_a_guide_never_takes_the_point_off_the_nodes) {
+  // Horizontal from (3, 0): the pointer at u = 24.4 lands on node (20, 0), which the guide runs through (kept).
   const Pick h = resolve(24.4, 0.5, 1, 10, {{3, 0, 1, 0, 1}}, nullptr, {});
-  CHECK(h.by == Pick::By::Guide && h.guide == 0);
+  CHECK(h.by == Pick::By::Node && h.guide == 0);
   CHECK_NEAR(h.u, 20, 1e-12);
   CHECK_NEAR(h.v, 0, 1e-12);
-  // A slanted guide (an extension) takes whole steps from its anchor.
+  // On a slanted guide (an extension) away from the nodes: the nearest node, the guide not through it.
   const double c = std::cos(kPi / 6), s = std::sin(kPi / 6);
   const Pick e = resolve(14 * c - 0.3 * s, 14 * s + 0.3 * c, 1, 10, {{0, 0, c, s, 1}}, nullptr, {});
-  CHECK(e.by == Pick::By::Guide);
-  CHECK_NEAR(e.u, 10 * c, 1e-12);
-  CHECK_NEAR(e.v, 10 * s, 1e-12);
+  CHECK(e.by == Pick::By::Node && e.guide == -1);
+  CHECK_NEAR(e.u, 10, 1e-12);
+  CHECK_NEAR(e.v, 10, 1e-12);
+  // A guide 4 units from the pointer still names the node it runs through (the point is level with its anchor).
+  const Pick level = resolve(31, 4, 1, 10, {{3, 0, 1, 0, 1}}, nullptr, {});
+  CHECK(level.by == Pick::By::Node && level.guide == 0);
+  CHECK_NEAR(level.u, 30, 1e-12);
+  CHECK_NEAR(level.v, 0, 1e-12);
   // Without a grid: the foot of the perpendicular.
   const Pick f = resolve(24.4, 0.5, 1, 0, {{3, 0, 1, 0, 1}}, nullptr, {});
+  CHECK(f.by == Pick::By::Guide);
   CHECK_NEAR(f.u, 24.4, 1e-12);
   CHECK_NEAR(f.v, 0, 1e-12);
 }
 
-TEST(the_angle_ray_takes_whole_steps_polar_snap) {
+TEST(with_a_grid_the_angle_ray_only_names_a_node_on_it) {
+  // 75 degrees from (0, 0), the pointer on the ray between nodes: the nearest node, off the ray (a readout only).
   Guide ray;
-  const double c = std::cos(kPi / 6), s = std::sin(kPi / 6);
-  CHECK(angleRay(0, 0, 14 * c, 14 * s + 0.2, 15 * kPi / 180, 1, ray));
-  const Pick p = resolve(14 * c, 14 * s + 0.2, 1, 10, {}, &ray, {});
-  CHECK(p.by == Pick::By::Ray);
-  CHECK_NEAR(p.u, 10 * c, 1e-9);
-  CHECK_NEAR(p.v, 10 * s, 1e-9);
-  // A vertical ray is an axis: its end lands on a grid line however far the anchor is from one.
+  const double c = std::cos(5 * kPi / 12), s = std::sin(5 * kPi / 12);
+  CHECK(angleRay(0, 0, 33 * c, 33 * s, 15 * kPi / 180, 1, ray));
+  const Pick p = resolve(33 * c, 33 * s, 1, 10, {}, &ray, {});
+  CHECK(p.by == Pick::By::Node && !p.ray);
+  CHECK_NEAR(p.u, 10, 1e-12);
+  CHECK_NEAR(p.v, 30, 1e-12);
+  // A vertical ray from off the grid: the nearest node, not the ray's own line.
   CHECK(angleRay(3.3, 0, 3.4, 27, 15 * kPi / 180, 1, ray));
   CHECK(ray.dx == 0 && axis(ray));
   const Pick v = resolve(3.4, 27, 1, 10, {}, &ray, {});
-  CHECK_NEAR(v.u, 3.3, 1e-12);
+  CHECK(v.by == Pick::By::Node && !v.ray);
+  CHECK_NEAR(v.u, 0, 1e-12);
   CHECK_NEAR(v.v, 30, 1e-12);
+  // Grid snapping off: the foot on the ray.
+  CHECK(angleRay(0, 0, 33 * c, 33 * s + 0.2, 15 * kPi / 180, 1, ray));
+  const Pick o = resolve(33 * c, 33 * s + 0.2, 1, 0, {}, &ray, {});
+  CHECK(o.by == Pick::By::Ray);
+  CHECK_NEAR(o.u * s - o.v * c, 0, 1e-9);
 }
 
 TEST(angle_rays_no_longer_hold_every_direction_of_a_short_segment) {
@@ -88,19 +113,25 @@ TEST(guides_crossing_beat_the_grid_and_one_points_own_guides_do_not_cross) {
   CHECK(q.by == Pick::By::Guide);
 }
 
-TEST(a_curve_comes_after_the_inferences_and_the_grid_last) {
+TEST(a_curve_never_beats_the_grid_and_holds_a_node_on_it) {
   const std::vector<Curve> line = {{4, 6.2, 24, 6.2}};
-  const Pick c = resolve(14, 6, 1, 10, {}, nullptr, line);  // node (10, 10) is out of reach: the foot on the line
-  CHECK(c.by == Pick::By::Curve && c.curve == 0);
-  CHECK_NEAR(c.u, 14, 1e-12);
-  CHECK_NEAR(c.v, 6.2, 1e-12);
-  const Pick n = resolve(10.3, 9.8, 1, 10, {}, nullptr, line);  // a node in reach wins (the line is out of reach here)
-  CHECK(n.by == Pick::By::Node);
-  const Pick g = resolve(14, 6, 1, 10, {}, nullptr, {});  // nothing else: the nearest node anyway
-  CHECK(g.by == Pick::By::Grid);
+  const Pick c = resolve(14, 6, 1, 10, {}, nullptr, line);  // on the line, 4 units from node (10, 10): the node
+  CHECK(c.by == Pick::By::Node && c.curve == -1);
+  CHECK_NEAR(c.u, 10, 1e-12);
+  CHECK_NEAR(c.v, 10, 1e-12);
+  const Pick g = resolve(14, 6, 1, 10, {}, nullptr, {});  // nothing else: the nearest node
+  CHECK(g.by == Pick::By::Node);
   CHECK_NEAR(g.u, 10, 1e-12);
   CHECK_NEAR(g.v, 10, 1e-12);
-  const Pick off = resolve(14, 6, 1, 0, {}, nullptr, {});  // grid snapping off: where the pointer is
+  const Pick on = resolve(13, 9.6, 1, 10, {}, nullptr, {{4, 10, 24, 10}});  // a line through the node: the point lies on it
+  CHECK(on.by == Pick::By::Node && on.curve == 0);
+  const Pick circle = resolve(9.4, 0.8, 1, 10, {}, nullptr, {{0, 0, 0, 0, 10, 0, 2 * kPi}});  // a circle through node (10, 0)
+  CHECK(circle.by == Pick::By::Node && circle.curve == 0);
+  const Pick free = resolve(14, 6, 1, 0, {}, nullptr, line);  // grid snapping off: the foot on the line
+  CHECK(free.by == Pick::By::Curve && free.curve == 0);
+  CHECK_NEAR(free.u, 14, 1e-12);
+  CHECK_NEAR(free.v, 6.2, 1e-12);
+  const Pick off = resolve(14, 6, 1, 0, {}, nullptr, {});  // grid snapping off, nothing near: where the pointer is
   CHECK(off.by == Pick::By::Pointer);
   CHECK_NEAR(off.u, 14, 1e-12);
 }
@@ -143,25 +174,29 @@ TEST(a_guide_crossing_a_curve_beats_the_grid) {
   CHECK(c.by == Pick::By::Cross && c.curve == 0);
   CHECK_NEAR(c.u, 3, 1e-12);
   CHECK_NEAR(c.v, 4, 1e-12);
-  // The quarter arc does not reach (3, -4): the guide alone, quantised.
+  // The quarter arc does not reach (3, -4): the node there, the guide through it.
   const Pick q = resolve(3.1, -3.6, 0.3, 1, {{3, -9, 0, 1, 2}}, nullptr, {{0, 0, 0, 0, 5, 0, kPi / 2}});
-  CHECK(q.by == Pick::By::Guide);
+  CHECK(q.by == Pick::By::Node && q.guide == 0);
   CHECK_NEAR(q.u, 3, 1e-12);
   CHECK_NEAR(q.v, -4, 1e-12);
 }
 
 TEST(the_angle_ray_crosses_guides_and_curves_and_names_the_nodes_on_it) {
-  // 45 degrees from (0, 0) meets the vertical through a tracked point (20.5, 7).
+  // 45 degrees from (0, 0) meets the vertical through a tracked point (20.5, 7) (grid snapping off).
   Guide ray{0, 0, 1, 0, 1};
   CHECK(angleRay(0, 0, 20.6, 20.4, 15 * kPi / 180, 1, ray) && ray.anchor == 1);
-  const Pick p = resolve(20.6, 20.4, 1, 10, {{20.5, 7, 0, 1, 2}}, &ray, {});
+  const Pick p = resolve(20.6, 20.4, 1, 0, {{20.5, 7, 0, 1, 2}}, &ray, {});
   CHECK(p.by == Pick::By::Cross && p.guide == 0 && p.other == -1 && p.ray && p.curve == -1);
   CHECK_NEAR(p.u, 20.5, 1e-9);
   CHECK_NEAR(p.v, 20.5, 1e-9);
   // ... and a line across it at u = 20.5: the ray alone with a curve.
-  const Pick c = resolve(20.6, 20.4, 1, 10, {}, &ray, {{20.5, 0, 20.5, 40}});
+  const Pick c = resolve(20.6, 20.4, 1, 0, {}, &ray, {{20.5, 0, 20.5, 40}});
   CHECK(c.by == Pick::By::Cross && c.guide == -1 && c.ray && c.curve == 0);
   CHECK_NEAR(c.v, 20.5, 1e-9);
+  // With a grid the ray crosses nothing: node (20, 20), which it runs through.
+  const Pick g = resolve(20.6, 20.4, 1, 10, {{20.5, 7, 0, 1, 2}}, &ray, {{20.5, 0, 20.5, 40}});
+  CHECK(g.by == Pick::By::Node && g.ray && g.guide == -1);
+  CHECK_NEAR(g.u, 20, 1e-12);
   // The point's own horizontal never crosses its ray (they meet at the point).
   const Pick own = resolve(20.6, 20.4, 1, 0, {{0, 0, 1, 0, 1}, {0, 0, 0, 1, 1}}, &ray, {});
   CHECK(own.by == Pick::By::Ray);

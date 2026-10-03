@@ -16,6 +16,8 @@ EDITING = "[files]\nviewerMode=false\n"  # the drawing is opened to be converted
 CASES = [
     # Each opens Sketch1 on XY in an empty document and drives the tool code as the mouse and keyboard do.
     ("sketch-grid", "empty", {"OPAD_BENCH_SKETCH_GRID": "{prefix}"}),  # grid snapping, the sketch's own grid (UI-18)
+    # With grid snapping the drawing cursor jumps between the nodes: drawn there, the pointer hidden, the clicks on them.
+    ("sketch-gridcursor", "empty", {"OPAD_BENCH_SKETCH_GRIDCURSOR": "{prefix}"}),
     ("sketch-ladder", "empty", {"OPAD_BENCH_SKETCH_LADDER": "{prefix}"}),  # Backspace / Enter / Esc (UI-20)
     ("sketch-keys", "empty", {"OPAD_BENCH_SKETCH_KEYS": "{prefix}"}),  # typed values beside the pointer (UI-16)
     ("sketch-shapes", "empty", {"OPAD_BENCH_SKETCH_SHAPES": "{prefix}"}),  # a shape's own sizes typed (UI-17)
