@@ -78,6 +78,7 @@ class MainWindow : public QMainWindow {
   // "review", "design" or an area's (RibbonLayout ids): swaps the ribbon tab set (same document, same timeline); an id
   // that is not there changes nothing. The sketch's contextual workspace is entered and left by updateDesignState.
   void setWorkspace(const QString& id);
+  bool setContextualTab(const QString& id, bool shown);  // a contextual tab (RibbonLayout::addContextualTab) shown or hidden
   QString workspaceId() const { return m_workspaceId; }  // the one shown, "sketch" included
   void buildCentral();
   void buildDocks();

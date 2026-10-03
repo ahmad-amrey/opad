@@ -12,5 +12,16 @@
  "Clear": "مسح",
  "Pin to document": "تثبيت في المستند",
  "Undo": "تراجع",
- "Dismiss": "إغلاق التنبيه"
+ "Dismiss": "إغلاق التنبيه",
+ "Navigate": "التنقل",
+ "Measure": "القياس",
+ "Results": "النتائج",
+ "Markup": "التعليقات",
+ "Objects": "العناصر",
+ "Primitives": "الأشكال الأساسية",
+ "History": "السجل",
+ "Components": "المكونات",
+ "Draw": "الرسم",
+ "Every tool of %1": "كل أدوات %1",
+ "More": "المزيد"
 }

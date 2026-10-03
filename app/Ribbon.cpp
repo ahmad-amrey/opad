@@ -6,15 +6,23 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QStyle>
 #include <QStyleOptionButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <functional>
 
 #include "Icons.hpp"
 #include "Theme.hpp"
 
 // ---------------------------------------------------------------- RibbonLayout
+QList<QAction*> RibbonLayout::Group::actions() const {
+  QList<QAction*> out;
+  for (const Item& item : items) out << item.action;
+  return out;
+}
+
 RibbonLayout::Space& RibbonLayout::addWorkspace(const QString& id, const Workspace& w) {
   if (Space* s = workspace(id)) return *s;
   spaces.append(Space{id, w, {}});
@@ -24,14 +32,46 @@ RibbonLayout::Space& RibbonLayout::addWorkspace(const QString& id, const Workspa
 RibbonLayout::Tab* RibbonLayout::addTab(const QString& ws, const QString& id, const QString& title, const QList<QList<QAction*>>& groups) {
   Space* s = workspace(ws);
   if (!s) return nullptr;
-  s->tabs.append(Tab{id, title, groups});
-  return &s->tabs.last();
+  s->tabs.append(Tab{id, title, {}});
+  Tab& t = s->tabs.last();
+  for (const QList<QAction*>& actions : groups) {
+    Group g;
+    for (QAction* a : actions) g.items << Item{a};
+    t.groups << g;
+  }
+  return &t;
+}
+
+RibbonLayout::Tab* RibbonLayout::addContextualTab(const QString& ws, const QString& id, const QString& title, QColor Tokens::* accent) {
+  Tab* t = addTab(ws, id, title);
+  if (t) {
+    t->contextual = true;
+    t->accent = accent;
+  }
+  return t;
 }
 
 bool RibbonLayout::addGroup(const QString& id, const QList<QAction*>& actions) {
   Tab* t = tab(id);
-  if (t) t->groups.append(actions);
-  return t;
+  if (!t) return false;
+  Group g;
+  for (QAction* a : actions) g.items << Item{a};
+  t->groups << g;
+  return true;
+}
+
+RibbonLayout::Group* RibbonLayout::addGroup(const QString& tabId, const QString& id, const QString& title) {
+  if (Group* g = group(id)) return g;
+  Tab* t = tab(tabId);
+  if (!t) return nullptr;
+  t->groups << Group{id, title, {}};
+  return &t->groups.last();
+}
+
+bool RibbonLayout::addAction(const QString& id, QAction* action, Size size, const QList<QAction*>& variants) {
+  Group* g = group(id);
+  if (g) g->items << Item{action, size, variants};
+  return g;
 }
 
 RibbonLayout::Space* RibbonLayout::workspace(const QString& id) {
@@ -44,6 +84,15 @@ RibbonLayout::Tab* RibbonLayout::tab(const QString& id) {
   for (Space& s : spaces)
     for (Tab& t : s.tabs)
       if (t.id == id) return &t;
+  return nullptr;
+}
+
+RibbonLayout::Group* RibbonLayout::group(const QString& id) {
+  if (id.isEmpty()) return nullptr;
+  for (Space& s : spaces)
+    for (Tab& t : s.tabs)
+      for (Group& g : t.groups)
+        if (g.id == id) return &g;
   return nullptr;
 }
 
@@ -255,6 +304,263 @@ void RibbonBar::showWorkspaceMenu() {
   menu->show();
 }
 
+// ---------------------------------------------------------------- RibbonGroup
+namespace {
+const QString kDrop = QString::fromUtf8(" ▾");
+constexpr int kInner = 2, kGap = 4;
+}  // namespace
+
+RibbonGroup::RibbonGroup(const RibbonLayout::Group& group, QWidget* parent) : QWidget(parent), m_title(group.title) {
+  m_menu = new QMenu(this);
+  auto tool = [this] {
+    auto* b = new QToolButton(this);
+    b->setObjectName("ribbonTool");
+    b->setAutoRaise(true);
+    b->setFocusPolicy(Qt::NoFocus);
+    b->setFont(theme::ui(11));
+    return b;
+  };
+  for (const RibbonLayout::Item& item : group.items) {
+    QAction* a = item.action;
+    if (!a) continue;
+    QToolButton* b = tool();
+    if (QMenu* menu = a->menu()) {
+      // A menu button drops the action's menu down itself. As the button's default action it showed Qt's fallback:
+      // a menu with one entry, the action, whose submenu then held the tools.
+      auto sync = [a, b] {
+        b->setText(a->text() + kDrop);
+        b->setIcon(a->icon());
+        b->setToolTip(a->toolTip());
+        b->setEnabled(a->isEnabled());
+      };
+      sync();
+      connect(a, &QAction::changed, b, sync);
+      connect(b, &QToolButton::clicked, b, [b, menu] { menu->popup(b->mapToGlobal(QPoint(0, b->height()))); });
+    } else {
+      b->setDefaultAction(a);
+      QList<QAction*> variants = item.variants;
+      variants.removeAll(nullptr);
+      if (!variants.isEmpty()) {  // a split button: the arrow drops the variants
+        auto* drop = new QMenu(b);
+        drop->addActions(variants);
+        b->setMenu(drop);
+        b->setPopupMode(QToolButton::MenuButtonPopup);
+      }
+    }
+    m_menu->addAction(a);
+    for (QAction* v : item.variants)
+      if (v) m_menu->addAction(v);
+    connect(a, &QAction::changed, this, &RibbonGroup::actionChanged);
+    m_slots << Slot{a, item.size, b};
+  }
+  m_titleButton = new QToolButton(this);
+  m_titleButton->setObjectName("ribbonGroupTitle");
+  m_titleButton->setText(m_title.toUpper() + kDrop);
+  m_titleButton->setToolTip(tr("Every tool of %1").arg(m_title));
+  m_titleButton->setFocusPolicy(Qt::NoFocus);
+  m_titleButton->setCursor(Qt::PointingHandCursor);
+  m_titleButton->setVisible(!m_title.isEmpty());
+  m_collapsed = tool();
+  m_collapsed->setText((m_title.isEmpty() ? tr("More") : m_title) + kDrop);
+  m_collapsed->hide();
+  for (QToolButton* b : {m_titleButton, m_collapsed})
+    connect(b, &QToolButton::clicked, this, [this, b] { m_menu->popup(b->mapToGlobal(QPoint(0, b->height()))); });
+  m_probe = tool();
+  m_probe->hide();
+  style(m_collapsed, Large);
+}
+
+QList<QToolButton*> RibbonGroup::buttons() const {
+  QList<QToolButton*> out;
+  for (const Slot& s : m_slots) out << s.button;
+  return out;
+}
+
+void RibbonGroup::style(QToolButton* b, int mode) const {
+  const QString size = mode == Large ? QString() : QStringLiteral("small");
+  if (b->property("ribbonSize").toString() != size) {
+    b->setProperty("ribbonSize", size);
+    b->style()->unpolish(b);
+    b->style()->polish(b);
+  }
+  b->setToolButtonStyle(mode == Large ? Qt::ToolButtonTextUnderIcon : mode == Small ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonIconOnly);
+  b->setIconSize(mode == Large ? QSize(24, 24) : QSize(16, 16));
+}
+
+// The size a tool asks for at a level, measured on the hidden probe styled the same way (the tools stay as they are).
+QSize RibbonGroup::measure(const Slot& s, int mode) {
+  style(m_probe, mode);
+  m_probe->setMenu(s.button->menu());  // a split button's arrow is part of its size
+  m_probe->setPopupMode(s.button->popupMode());
+  m_probe->setIcon(s.button->icon());
+  m_probe->setText(QString());  // a changed text drops the cached size hint
+  m_probe->setText(s.button->text());
+  return m_probe->sizeHint();
+}
+
+int RibbonGroup::nextLevel(int level) {
+  for (int next = level + 1; next <= Collapsed; ++next)
+    if (widthAt(next) < widthAt(level)) return next;
+  return -1;
+}
+
+int RibbonGroup::widthAt(int level) {
+  QString signature;
+  for (const Slot& s : m_slots) signature += (s.action->isVisible() ? "+" : "-") + s.button->text() + '\n';
+  if (signature != m_signature) {
+    m_signature = signature;
+    m_widths.fill(-1);
+  }
+  if (m_widths[level] >= 0) return m_widths[level];
+  int width = 0;
+  if (level == Collapsed) {
+    width = m_collapsed->sizeHint().width();
+  } else {
+    int stacked = 0, column = 0;
+    for (const Slot& s : m_slots) {
+      if (!s.action->isVisible()) continue;
+      const int mode = level == Icons ? Icons : level == Large && s.size == RibbonLayout::Size::Large ? Large : Small;
+      const int w = measure(s, mode).width();
+      if (mode == Large) {
+        if (stacked) width += column + kGap;
+        stacked = column = 0;
+        width += w + kGap;
+      } else {
+        column = std::max(column, w);
+        if (++stacked == 3) {
+          width += column + kGap;
+          stacked = column = 0;
+        }
+      }
+    }
+    if (stacked) width += column + kGap;
+    width = std::max(0, width - kGap);
+    if (!m_title.isEmpty()) width = std::max(width, m_titleButton->sizeHint().width());
+  }
+  m_probe->setMenu(nullptr);
+  return m_widths[level] = width + 2 * kInner;
+}
+
+void RibbonGroup::setLevel(int level) {
+  m_level = level;
+  const int width = widthAt(level);
+  resize(width, kHeight);
+  const bool rtl = layoutDirection() == Qt::RightToLeft;
+  auto place = [&](QWidget* w, const QRect& r) { w->setGeometry(rtl ? QRect(width - r.right() - 1, r.y(), r.width(), r.height()) : r); };
+  const bool collapsed = level == Collapsed;
+  m_collapsed->setVisible(collapsed);
+  m_titleButton->setVisible(!collapsed && !m_title.isEmpty());
+  if (collapsed) {
+    for (const Slot& s : m_slots) s.button->hide();
+    for (const Slot& s : m_slots)
+      if (s.action->isVisible()) {
+        m_collapsed->setIcon(s.action->icon());
+        break;
+      }
+    place(m_collapsed, QRect(kInner, kTop, width - 2 * kInner, kTools + kTitle));
+    return;
+  }
+  // Large tools one per column, small ones three to a column (as wide as the widest of them), centred in the group.
+  QList<QPair<QWidget*, QRect>> boxes;
+  QList<QToolButton*> stack;
+  int x = 0, column = 0;
+  auto flush = [&] {
+    for (int r = 0; r < stack.size(); ++r) boxes << qMakePair(static_cast<QWidget*>(stack[r]), QRect(x, kTop + 1 + r * kRow, column, kRow));
+    if (!stack.isEmpty()) x += column + kGap;
+    stack.clear();
+    column = 0;
+  };
+  for (const Slot& s : m_slots) {
+    s.button->setVisible(s.action->isVisible());
+    if (!s.action->isVisible()) continue;
+    const int mode = level == Icons ? Icons : level == Large && s.size == RibbonLayout::Size::Large ? Large : Small;
+    style(s.button, mode);
+    const int w = s.button->sizeHint().width();
+    if (mode == Large) {
+      flush();
+      boxes << qMakePair(static_cast<QWidget*>(s.button), QRect(x, kTop, w, kTools));
+      x += w + kGap;
+    } else {
+      stack << s.button;
+      column = std::max(column, w);
+      if (stack.size() == 3) flush();
+    }
+  }
+  flush();
+  const int offset = kInner + std::max(0, (width - 2 * kInner - std::max(0, x - kGap)) / 2);
+  for (const auto& [w, r] : boxes) place(w, r.translated(offset, 0));
+  if (!m_title.isEmpty()) place(m_titleButton, QRect(kInner, kTop + kTools, width - 2 * kInner, kTitle));
+}
+
+void RibbonGroup::actionChanged() {
+  QString signature;
+  for (const Slot& s : m_slots) signature += (s.action->isVisible() ? "+" : "-") + s.button->text() + '\n';
+  if (signature != m_signature) emit widthsChanged();  // widthAt measures again
+}
+
+// ---------------------------------------------------------------- RibbonPage
+RibbonPage::RibbonPage(const RibbonLayout::Tab& tab, QWidget* parent) : QWidget(parent), m_id(tab.id) {
+  for (const RibbonLayout::Group& g : tab.groups) {
+    if (std::none_of(g.items.begin(), g.items.end(), [](const RibbonLayout::Item& i) { return i.action; })) continue;
+    auto* group = new RibbonGroup(g, this);
+    connect(group, &RibbonGroup::widthsChanged, this, &RibbonPage::fit);
+    m_groups << group;
+  }
+  setFixedHeight(RibbonGroup::kHeight);
+}
+
+QList<int> RibbonPage::levels() const {
+  QList<int> out;
+  for (RibbonGroup* g : m_groups) out << g->level();
+  return out;
+}
+
+int RibbonPage::widthAt(const QList<int>& levels) {
+  int width = 2 * kPad + kSeparator * std::max<int>(0, m_groups.size() - 1);
+  for (int i = 0; i < m_groups.size(); ++i) width += m_groups[i]->widthAt(levels[i]);
+  return width;
+}
+
+QSize RibbonPage::minimumSizeHint() const {
+  return QSize(const_cast<RibbonPage*>(this)->widthAt(QList<int>(m_groups.size(), RibbonGroup::Collapsed)), RibbonGroup::kHeight);
+}
+
+void RibbonPage::fit() {
+  QList<int> levels(m_groups.size(), RibbonGroup::Large);
+  while (widthAt(levels) > width()) {
+    int step = -1;  // the rightmost of the groups that are least stepped down and can still save room
+    for (int i = static_cast<int>(m_groups.size()) - 1; i >= 0; --i)
+      if (m_groups[i]->nextLevel(levels[i]) >= 0 && (step < 0 || levels[i] < levels[step])) step = i;
+    if (step < 0) break;
+    levels[step] = m_groups[step]->nextLevel(levels[step]);
+  }
+  const bool rtl = layoutDirection() == Qt::RightToLeft;
+  int x = kPad;
+  for (int i = 0; i < m_groups.size(); ++i) {
+    RibbonGroup* g = m_groups[i];
+    g->setLevel(levels[i]);
+    g->move(rtl ? width() - x - g->width() : x, 0);
+    x += g->width() + kSeparator;
+  }
+  update();
+}
+
+void RibbonPage::resizeEvent(QResizeEvent* e) {
+  QWidget::resizeEvent(e);
+  fit();
+}
+
+void RibbonPage::paintEvent(QPaintEvent*) {
+  QPainter p(this);
+  p.setPen(QPen(theme::current().line, 1));
+  const bool rtl = layoutDirection() == Qt::RightToLeft;
+  for (int i = 0; i + 1 < m_groups.size(); ++i) {
+    const QRect g = m_groups[i]->geometry();
+    const int x = rtl ? g.left() - kSeparator / 2 - 1 : g.right() + 1 + kSeparator / 2;
+    p.drawLine(x, RibbonGroup::kTop + 8, x, RibbonGroup::kTop + RibbonGroup::kTools + RibbonGroup::kTitle - 6);
+  }
+}
+
 // ---------------------------------------------------------------- RibbonBar
 RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
   auto* layout = new QVBoxLayout(this);
@@ -264,8 +570,10 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
   m_tabs->setObjectName("ribbonTabs");
   m_tabs->setDrawBase(false);
   m_tabs->setExpanding(false);
+  m_tabs->setElideMode(Qt::ElideNone);
   m_tabs->setFixedHeight(28);
   m_tabs->setFocusPolicy(Qt::NoFocus);
+  m_tabs->setIconSize(QSize(8, 8));
   auto* tabRow = new QWidget(this);
   auto* tabLayout = new QHBoxLayout(tabRow);
   tabLayout->setContentsMargins(8, 0, 8, 0);
@@ -281,9 +589,9 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
 
   m_strip = new QWidget(this);
   m_strip->setObjectName("ribbonStrip");
-  m_strip->setFixedHeight(64);
+  m_strip->setFixedHeight(RibbonGroup::kHeight);
   m_stripLayout = new QHBoxLayout(m_strip);
-  m_stripLayout->setContentsMargins(8, 0, 8, 0);
+  m_stripLayout->setContentsMargins(4, 0, 8, 0);
   m_stripLayout->setSpacing(4);
   m_stack = new QStackedWidget(m_strip);
   m_stripLayout->addWidget(m_stack, 1);
@@ -293,11 +601,13 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
   m_stripLayout->addLayout(m_right);
   layout->addWidget(m_strip);
   connect(m_tabs, &QTabBar::currentChanged, this, [this](int i) {
-    if (m_workspace < 0 || i < 0) return;
+    if (m_filling || m_workspace < 0 || i < 0) return;
     Tabs& set = m_tabSets[m_workspace];
-    set.current = i;
-    m_stack->setCurrentIndex(set.pages[i]);
+    const Entry& e = set.entries[set.row[i]];
+    set.current = e.id;
+    m_stack->setCurrentWidget(e.page);
   });
+  connect(theme::notifier(), &theme::Notifier::changed, this, &RibbonBar::refillTabs);  // the contextual tabs' accent
 }
 
 int RibbonBar::addWorkspace(const Workspace& w) {
@@ -308,67 +618,106 @@ int RibbonBar::addWorkspace(const Workspace& w) {
 
 void RibbonBar::setWorkspace(int index) {
   if (index < 0 || index >= m_workspaces.size() || index == m_workspace) return;
-  m_workspace = -1;  // the tab bar's signals while it is refilled are not the user's
-  while (m_tabs->count() > 0) m_tabs->removeTab(0);
-  const Tabs& set = m_tabSets[index];
-  for (const QString& title : set.titles) m_tabs->addTab(title);
   m_workspace = index;
-  m_tabs->setCurrentIndex(set.current);
-  if (!set.pages.isEmpty()) m_stack->setCurrentIndex(set.pages[set.current]);
+  refillTabs();
   m_chip->setWorkspace(m_workspaces[index]);
   m_chip->setToolTip(m_workspaces[index].description);
   m_chip->show();
   emit workspaceChanged(index);
 }
 
-int RibbonBar::addTab(int workspace, const QString& title, const QList<QList<QAction*>>& groups) {
-  auto* page = new QWidget(m_stack);
-  auto* row = new QHBoxLayout(page);
-  row->setContentsMargins(0, 4, 0, 4);
-  row->setSpacing(4);
-  bool first = true;
-  for (const auto& group : groups) {
-    if (!first) {
-      auto* sep = new QFrame(page);
-      sep->setObjectName("ribbonSep");
-      sep->setFrameShape(QFrame::NoFrame);
-      row->addWidget(sep);
-    }
-    first = false;
-    for (QAction* a : group) {
-      auto* b = new QToolButton(page);
-      b->setObjectName("ribbonTool");
-      if (QMenu* menu = a->menu()) {
-        // A menu button drops the action's menu down itself. As the button's default action it showed Qt's fallback:
-        // a menu with one entry, the action, whose submenu then held the tools.
-        auto sync = [a, b] {
-          b->setText(a->text() + QString::fromUtf8(" ▾"));  // it drops a menu down
-          b->setIcon(a->icon());
-          b->setToolTip(a->toolTip());
-          b->setEnabled(a->isEnabled());
-          b->setVisible(a->isVisible());
-        };
-        sync();
-        connect(a, &QAction::changed, b, sync);
-        connect(b, &QToolButton::clicked, b, [b, menu] { menu->popup(b->mapToGlobal(QPoint(0, b->height()))); });
-      } else {
-        b->setDefaultAction(a);
+int RibbonBar::addTab(int workspace, const RibbonLayout::Tab& tab) {
+  auto* page = new RibbonPage(tab, m_stack);
+  m_stack->addWidget(page);
+  Tabs& set = m_tabSets[workspace];
+  set.entries << Entry{tab.id, tab.title, page, tab.contextual, !tab.contextual, tab.accent};
+  if (set.current.isEmpty() && !tab.contextual) set.current = tab.id;
+  if (workspace == m_workspace) refillTabs();
+  return static_cast<int>(set.entries.size()) - 1;
+}
+
+void RibbonBar::refillTabs() {
+  if (m_workspace < 0) return;
+  Tabs& set = m_tabSets[m_workspace];
+  m_filling = true;  // the tab bar's signals while it is refilled are not the user's
+  while (m_tabs->count() > 0) m_tabs->removeTab(0);
+  set.row.clear();
+  for (const bool contextual : {true, false})
+    for (int i = 0; i < set.entries.size(); ++i) {
+      const Entry& e = set.entries[i];
+      if (e.contextual != contextual || !e.shown) continue;
+      const int at = m_tabs->addTab(e.title);
+      if (e.contextual) {  // a dot in its accent before the title, and the title in it where the style lets it
+        const QColor accent = theme::current().*(e.accent ? e.accent : &Tokens::amber);
+        QPixmap dot(QSize(8, 8) * devicePixelRatioF());
+        dot.setDevicePixelRatio(devicePixelRatioF());
+        dot.fill(Qt::transparent);
+        QPainter p(&dot);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setPen(Qt::NoPen);
+        p.setBrush(accent);
+        p.drawEllipse(QRectF(0.5, 0.5, 7, 7));
+        p.end();
+        m_tabs->setTabIcon(at, QIcon(dot));
+        m_tabs->setTabTextColor(at, accent);
       }
-      b->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-      b->setIconSize(QSize(24, 24));
-      b->setFixedHeight(56);
-      b->setAutoRaise(true);
-      b->setFocusPolicy(Qt::NoFocus);
-      b->setFont(theme::ui(11));
-      row->addWidget(b);
+      set.row << i;
+    }
+  int current = 0;
+  for (int k = 0; k < set.row.size(); ++k)
+    if (set.entries[set.row[k]].id == set.current) current = k;
+  if (!set.row.isEmpty()) {
+    m_tabs->setCurrentIndex(current);
+    set.current = set.entries[set.row[current]].id;
+    m_stack->setCurrentWidget(set.entries[set.row[current]].page);
+  }
+  m_filling = false;
+}
+
+bool RibbonBar::setContextualTab(const QString& id, bool shown) {
+  for (int w = 0; w < m_tabSets.size(); ++w) {
+    Tabs& set = m_tabSets[w];
+    for (Entry& e : set.entries) {
+      if (e.id != id || !e.contextual) continue;
+      if (e.shown != shown) {
+        e.shown = shown;
+        const bool currentIsContextual = std::any_of(set.entries.begin(), set.entries.end(), [&set](const Entry& o) { return o.id == set.current && o.contextual; });
+        if (shown) {
+          if (!currentIsContextual) set.beforeContextual = set.current;
+          set.current = id;
+        } else if (set.current == id) {
+          set.current = set.beforeContextual;
+        }
+      }
+      if (w == m_workspace) refillTabs();
+      return true;
     }
   }
-  row->addStretch();
-  Tabs& set = m_tabSets[workspace];
-  set.titles << title;
-  set.pages << m_stack->addWidget(page);
-  return static_cast<int>(set.titles.size()) - 1;
+  return false;
 }
+
+bool RibbonBar::contextualTabShown(const QString& id) const {
+  for (const Tabs& set : m_tabSets)
+    for (const Entry& e : set.entries)
+      if (e.id == id && e.contextual) return e.shown;
+  return false;
+}
+
+QStringList RibbonBar::tabIds() const {
+  QStringList out;
+  if (m_workspace >= 0)
+    for (const int i : m_tabSets[m_workspace].row) out << m_tabSets[m_workspace].entries[i].id;
+  return out;
+}
+
+RibbonPage* RibbonBar::page(const QString& tabId) const {
+  for (const Tabs& set : m_tabSets)
+    for (const Entry& e : set.entries)
+      if (e.id == tabId) return e.page;
+  return nullptr;
+}
+
+RibbonPage* RibbonBar::currentPage() const { return qobject_cast<RibbonPage*>(m_stack->currentWidget()); }
 
 void RibbonBar::setSelectFilters(const QList<QAction*>& filters, const QStringList& hints) {
   auto* label = new QLabel(tr("Select"), m_strip);

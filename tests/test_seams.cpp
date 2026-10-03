@@ -127,7 +127,8 @@ TEST(ribbon_layout) {
   layout.addWorkspace("drawings", {"Drawings", "drawing", "Ctrl+3", "", ""});
   layout.addTab("drawings", "drawings.sheet", "Sheet", {{&c}});
   CHECK(layout.index("review") == 0 && layout.index("design") == 1 && layout.index("drawings") == 2 && layout.index("none") == -1);
-  CHECK(layout.tab("review.view")->groups == QList<QList<QAction*>>({{&a}, {&b, &c}}));
+  const QList<RibbonLayout::Group>& groups = layout.tab("review.view")->groups;  // untitled groups (UI-120 b: titled ones too)
+  CHECK(groups.size() == 2 && groups[0].actions() == QList<QAction*>{&a} && groups[1].actions() == QList<QAction*>({&b, &c}) && groups[1].title.isEmpty());
   CHECK(layout.workspace("design")->tabs.size() == 1 && layout.tab("drawings.sheet")->title == "Sheet" && !layout.tab("sheet"));
 }
 

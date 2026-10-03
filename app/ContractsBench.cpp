@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QToolButton>
 #include <QMenu>
+#include <QPainter>
 #include <QTimer>
 
 #include <memory>
@@ -232,5 +233,125 @@ OPAD_BENCH(OPAD_BENCH_TOAST, toast) {
     stack->clear();
     QCoreApplication::exit(require->all ? 0 : 2);
   });
+  return true;
+}
+
+// OPAD_BENCH_RIBBON=<widths> (default 1280,1600) [OPAD_BENCH_UISHOT=<prefix>] [OPAD_LANG=ar]: at each window width every
+// tab of every workspace (Sketch's too) fits without shortening a label: each tool is as wide as it asks, every group lies
+// inside the row, groups stepped down are the rightmost and at most one level apart, tabs never elide, and a right-to-left
+// UI starts at the right. <prefix>.<width>.<workspace>.png stacks the tabs of a workspace. Then a contextual tab with a
+// split button: hidden until shown, then first and current; hidden again, the tab before comes back.
+OPAD_BENCH(OPAD_BENCH_RIBBON, ribbon) {
+  Checks require{"ribbon"};
+  const QString shot = qEnvironmentVariable("OPAD_BENCH_UISHOT");
+  const bool rtl = QGuiApplication::layoutDirection() == Qt::RightToLeft;
+  QList<int> widths;
+  for (const QString& part : QString(value == "1" ? "1280,1600" : value).split(',', Qt::SkipEmptyParts)) widths << part.toInt();
+  const QSize size = w.size();
+  const QString start = w.workspaceId();
+  RibbonBar* ribbon = w.m_ribbon;
+  require(ribbon->tabBar()->elideMode() == Qt::ElideNone, "tab titles never elide");
+  for (const int width : widths) {
+    w.resize(width, 1000);
+    QCoreApplication::processEvents();
+    int tabs = 0, collapsed = 0;
+    QStringList narrow, outside, unordered, rows;
+    for (int ws = 0; ws < w.m_workspaceIds.size(); ++ws) {
+      ribbon->setWorkspace(ws);
+      QList<QImage> strips;
+      for (int t = 0; t < ribbon->tabBar()->count(); ++t) {
+        ribbon->setCurrentTab(t);
+        QCoreApplication::processEvents();
+        RibbonPage* page = ribbon->currentPage();
+        ++tabs;
+        const QList<int> levels = page->levels();
+        QString levelText;
+        // Stepped down from the end of the row, one level at a time: a group left of another is never further down unless
+        // that one has nothing narrower left; every step saved room.
+        const QList<RibbonGroup*> groups = page->groups();
+        auto steps = [](RibbonGroup* g, int level) {  // narrower levels taken to get there
+          int n = 0;
+          for (int l = 0; l >= 0 && l < level; l = g->nextLevel(l)) ++n;
+          return n;
+        };
+        int lowest = RibbonGroup::Collapsed;
+        for (int i = 0; i < levels.size(); ++i) {
+          levelText += QString::number(levels[i]);
+          collapsed += levels[i] > 0;
+          for (int j = i + 1; j < levels.size(); ++j)
+            if (steps(groups[i], levels[i]) > steps(groups[j], levels[j]) && groups[j]->nextLevel(levels[j]) >= 0) unordered << page->id();
+          if (levels[i] > 0 && groups[i]->widthAt(levels[i]) >= groups[i]->widthAt(0)) unordered << page->id();
+          if (groups[i]->nextLevel(levels[i]) >= 0) lowest = std::min(lowest, steps(groups[i], levels[i]));
+        }
+        for (int i = 0; i < levels.size(); ++i)
+          if (steps(groups[i], levels[i]) > lowest + 1) unordered << page->id();
+        rows << page->id() + " " + levelText;
+        if (qEnvironmentVariableIsSet("OPAD_BENCH_RIBBON_DEBUG")) {
+          QStringList ws0;
+          for (RibbonGroup* g : page->groups()) ws0 << QString("%1:%2/%3/%4/%5").arg(g->title()).arg(g->widthAt(0)).arg(g->widthAt(1)).arg(g->widthAt(2)).arg(g->widthAt(3));
+          trace::log(QString("ribbon debug %1 page %2 row0 %3 groups %4").arg(page->id()).arg(page->width()).arg(page->widthAt(QList<int>(page->groups().size(), 0))).arg(ws0.join(' ')));
+        }
+        for (RibbonGroup* g : page->groups()) {
+          if (g->x() < 0 || g->geometry().right() >= page->width()) outside << page->id() + ":" + g->title();
+          for (QToolButton* b : g->findChildren<QToolButton*>())
+            if (b->isVisibleTo(page) && b->width() < b->sizeHint().width()) narrow << page->id() + ":" + b->text();
+        }
+        if (page->groups().size() > 1 && rtl != (page->groups().first()->x() > page->groups().last()->x())) outside << page->id() + " (direction)";
+        strips << ribbon->grab().toImage();
+      }
+      if (!shot.isEmpty() && !strips.isEmpty()) {
+        QImage sheet(strips.first().width(), strips.first().height() * static_cast<int>(strips.size()), QImage::Format_ARGB32);
+        sheet.fill(Qt::transparent);
+        QPainter p(&sheet);
+        for (int i = 0; i < strips.size(); ++i) {
+          QImage strip = strips[i];
+          strip.setDevicePixelRatio(1);  // pixel for pixel: the sheet has no scale of its own
+          p.drawImage(0, i * strips.first().height(), strip);
+        }
+        p.end();
+        sheet.save(QString("%1.%2.%3.png").arg(shot).arg(width).arg(w.m_workspaceIds[ws]));
+      }
+    }
+    trace::log(QString("bench: ribbon: %1 px levels %2").arg(width).arg(rows.join(", ")));
+    require(w.width() == width && narrow.isEmpty(), QString("%1 px: every tool as wide as its label asks over %2 tabs (%3 groups stepped down)%4")
+                                                      .arg(width).arg(tabs).arg(collapsed).arg(narrow.isEmpty() ? QString() : ": " + narrow.join(", ")));
+    require(outside.isEmpty(), QString("%1 px: every group inside its row, the row from the %2%3").arg(width).arg(rtl ? "right" : "left").arg(outside.isEmpty() ? QString() : ": " + outside.join(", ")));
+    unordered.removeDuplicates();
+    require(unordered.isEmpty(), QString("%1 px: the end of the row steps down first, one level at a time%2").arg(width).arg(unordered.isEmpty() ? QString() : ": " + unordered.join(", ")));
+  }
+  w.resize(size);
+  w.setWorkspace("design");
+  QCoreApplication::processEvents();
+  // A contextual tab with a split button, as an area adds one (RibbonLayout::addContextualTab).
+  RibbonLayout layout;
+  layout.addWorkspace("design", Workspace());
+  layout.addContextualTab("design", "design.benchContext", "Bench context");
+  layout.addGroup("design.benchContext", "design.benchContext.view", "View");
+  layout.addAction("design.benchContext.view", w.action("view.fit"), RibbonLayout::Size::Large, {w.action("view.home"), w.action("view.iso")});
+  layout.addAction("design.benchContext.view", w.action("view.ortho"), RibbonLayout::Size::Small);
+  ribbon->addTab(static_cast<int>(w.m_workspaceIds.indexOf("design")), *layout.tab("design.benchContext"));
+  const QStringList before = ribbon->tabIds();
+  const QString current = before.value(ribbon->currentTab());
+  require(!before.contains("design.benchContext") && !ribbon->contextualTabShown("design.benchContext"), "a contextual tab is hidden until shown");
+  require(w.setContextualTab("design.benchContext", true) && ribbon->tabIds().first() == "design.benchContext" && ribbon->tabIds().mid(1) == before &&
+              ribbon->currentPage()->id() == "design.benchContext" && !ribbon->tabBar()->tabIcon(0).isNull(),
+          "shown: first in the row, current, with its accent dot");
+  QCoreApplication::processEvents();
+  RibbonGroup* group = ribbon->currentPage()->groups().value(0);
+  QToolButton* split = group ? group->buttons().value(0) : nullptr;
+  require(split && split->popupMode() == QToolButton::MenuButtonPopup && split->menu() &&
+              split->menu()->actions() == QList<QAction*>({w.action("view.home"), w.action("view.iso")}) && split->width() >= split->sizeHint().width() &&
+              group->menu()->actions().size() == 4 && group->titleButton()->isVisible(),
+          "split button: the action, its arrow drops the variants; the group's title lists all four");
+  if (!shot.isEmpty()) ribbon->grab().save(shot + ".contextual.png");
+  w.setWorkspace("review");
+  require(!ribbon->tabIds().contains("design.benchContext") && ribbon->contextualTabShown("design.benchContext"), "another workspace does not show it");
+  w.setWorkspace("design");
+  require(ribbon->tabIds().first() == "design.benchContext", "back in its workspace it is there again");
+  require(w.setContextualTab("design.benchContext", false) && ribbon->tabIds() == before && ribbon->tabIds().value(ribbon->currentTab()) == current &&
+              !w.setContextualTab("design.none", true),
+          "hidden: the row and the current tab as before");
+  w.setWorkspace(start);
+  QCoreApplication::exit(require.all ? 0 : 2);
   return true;
 }

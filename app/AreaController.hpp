@@ -89,6 +89,9 @@ class AreaServices {
   // entered and left this way too (it is not remembered at exit).
   QString workspace() const;
   void setWorkspace(const QString& id);
+  // Shows a contextual tab the area added (RibbonLayout::addContextualTab) first in its workspace's row, current, in its
+  // accent; hidden again, the tab that was current comes back. False: no such contextual tab.
+  bool setContextualTab(const QString& id, bool shown);
  private:
   MainWindow* m_window;
 };

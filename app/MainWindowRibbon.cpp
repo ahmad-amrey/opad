@@ -104,6 +104,8 @@ void MainWindow::buildMenus() {
     if (QMenu* menu = top->menu()) record(menu, menus.key(menu, QString(menu->title()).remove('&').toLower()));
 }
 
+bool MainWindow::setContextualTab(const QString& id, bool shown) { return m_ribbon->setContextualTab(id, shown); }
+
 void MainWindow::setWorkspace(const QString& id) {
   if (const int i = m_workspaceIds.indexOf(id); i != m_sketchWorkspace) m_ribbon->setWorkspace(i);  // the sketch's: updateDesignState
 }
@@ -121,41 +123,70 @@ void MainWindow::buildRibbon() {
   Workspace sketchWs{tr("Sketch"), "sketch", "", tr("Drawing a sketch. Finish sketch returns to Design."), tr("ops: sketch · edit")};
   sketchWs.contextual = true;
   layout.addWorkspace("sketch", sketchWs);
-  layout.addTab("review", "review.view", tr("View"), {acts({"view.fit", "view.home", "view.ortho", "view.2d"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"}), acts({"view.isolate", "view.unisolate"})});
-  layout.addTab("review", "review.inspect", tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"}), acts({"inspect.interference", "inspect.printcheck"}), acts({"inspect.section", "inspect.flip"})});
-  layout.addTab("review", "review.annotate", tr("Annotate"), {acts({"panel.annotations", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
-  layout.addTab("review", "review.export", tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
-  layout.addTab("design", "design.solid", tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
-                                         acts({"design.box", "design.cylinder", "design.sphere", "design.cone", "design.torus"}), acts({"design.parameters"})});
-  layout.addTab("design", "design.modify", tr("Modify"), {acts({"design.offset_face", "design.thicken", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.scale"}),
-                                          acts({"design.combine", "design.split", "design.move", "design.remove"}),
-                                          acts({"design.mirror", "design.pattern_rect", "design.pattern_circ"})});
-  layout.addTab("design", "design.construct", tr("Construct"), {acts({"design.plane", "design.axis", "design.interference"}), acts({"design.parameters", "design.edit", "design.regenerate"})});
-  layout.addTab("design", "design.assemble", tr("Assemble"), {acts({"file.import", "design.newcomponent", "design.reparent"}), acts({"edit.rename", "edit.delete", "edit.restore"}),
-                                            acts({"design.colour", "design.opacity", "design.lock", "edit.hide", "view.isolate"})});
-  layout.addTab("design","design.view",tr("View"),{acts({"view.fit","view.home","view.2d","view.ortho"}),acts({"view.shaded","view.edges","view.wire","view.grid","view.gridSettings","select.through"})});
-  layout.addTab("design", "design.export", tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
-  layout.addTab("sketch", "sketch.create", tr("Create"), {acts({"sketch.finish", "sketch.cancel", "view.2d", "view.alignPlane"}),
-      acts({"sketch.line", "sketch.rect", "sketch.circle", "sketch.arc3", "sketch.spline", "sketch.ellipse", "sketch.slot", "sketch.polygon", "sketch.point", "sketch.moreCreate"})});
-  layout.addTab("sketch", "sketch.modify", tr("Modify"), {acts({"sketch.finish", "view.2d"}),
-      acts({"sketch.select", "sketch.trim", "sketch.fillet", "sketch.offset", "sketch.mirror", "sketch.construction", "sketch.node", "sketch.openEnds", "sketch.moreModify"})});
-  layout.addTab("sketch", "sketch.constrain", tr("Constrain"), {acts({"sketch.finish", "sketch.constraints", "sketch.dimension"}),
-      acts({"sketch.c.horizontal", "sketch.c.vertical", "sketch.c.coincident", "sketch.c.parallel", "sketch.c.perpendicular", "sketch.c.tangent", "sketch.c.fix", "sketch.moreConstrain"})});
-  layout.addTab("sketch", "sketch.reference", tr("Reference"), {acts({"sketch.finish", "sketch.moreReference", "sketch.moreFiles", "sketch.snaps", "sketch.selectionOptions"}),
-      acts({"sketch.project", "sketch.replane", "design.parameters", "view.grid", "view.gridSettings"})});
+  // The built-in tabs: titled groups of large tools (UI-120 b), the same tools in the same order as before.
+  auto group = [&](const QString& tab, const QString& name, const QString& title, std::initializer_list<const char*> ids) {
+    layout.addGroup(tab, tab + "." + name, title);
+    for (const char* id : ids) layout.addAction(tab + "." + name, action(id));
+  };
+  layout.addTab("review", "review.view", tr("View"));
+  group("review.view", "navigate", tr("Navigate"), {"view.fit", "view.home", "view.ortho", "view.2d"});
+  group("review.view", "display", tr("Display"), {"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"});
+  group("review.view", "isolate", tr("Isolate"), {"view.isolate", "view.unisolate"});
+  layout.addTab("review", "review.inspect", tr("Inspect"));
+  group("review.inspect", "measure", tr("Measure"), {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"});
+  group("review.inspect", "results", tr("Results"), {"inspect.pin", "inspect.properties"});
+  group("review.inspect", "check", tr("Check"), {"inspect.interference", "inspect.printcheck"});
+  group("review.inspect", "section", tr("Section"), {"inspect.section", "inspect.flip"});
+  layout.addTab("review", "review.annotate", tr("Annotate"));
+  group("review.annotate", "markup", tr("Markup"), {"panel.annotations", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show"});
+  group("review.annotate", "objects", tr("Objects"), {"edit.rename", "edit.hide", "edit.showall", "view.saveview"});
+  layout.addTab("review", "review.export", tr("Export"));
+  group("review.export", "export", tr("Export"), {"file.export", "file.screenshot"});
+  group("review.export", "file", tr("File"), {"file.import", "file.save"});
+  layout.addTab("design", "design.solid", tr("Solid"));
+  group("design.solid", "create", tr("Create"), {"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"});
+  group("design.solid", "primitives", tr("Primitives"), {"design.box", "design.cylinder", "design.sphere", "design.cone", "design.torus"});
+  group("design.solid", "parameters", tr("Parameters"), {"design.parameters"});
+  layout.addTab("design", "design.modify", tr("Modify"));
+  group("design.modify", "modify", tr("Modify"), {"design.offset_face", "design.thicken", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.scale"});
+  group("design.modify", "combine", tr("Combine"), {"design.combine", "design.split", "design.move", "design.remove"});
+  group("design.modify", "pattern", tr("Pattern"), {"design.mirror", "design.pattern_rect", "design.pattern_circ"});
+  layout.addTab("design", "design.construct", tr("Construct"));
+  group("design.construct", "construct", tr("Construct"), {"design.plane", "design.axis", "design.interference"});
+  group("design.construct", "history", tr("History"), {"design.parameters", "design.edit", "design.regenerate"});
+  layout.addTab("design", "design.assemble", tr("Assemble"));
+  group("design.assemble", "components", tr("Components"), {"file.import", "design.newcomponent", "design.reparent"});
+  group("design.assemble", "edit", tr("Edit"), {"edit.rename", "edit.delete", "edit.restore"});
+  group("design.assemble", "appearance", tr("Appearance"), {"design.colour", "design.opacity", "design.lock", "edit.hide", "view.isolate"});
+  layout.addTab("design", "design.view", tr("View"));
+  group("design.view", "navigate", tr("Navigate"), {"view.fit", "view.home", "view.2d", "view.ortho"});
+  group("design.view", "display", tr("Display"), {"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"});
+  layout.addTab("design", "design.export", tr("Export"));
+  group("design.export", "export", tr("Export"), {"file.export", "file.screenshot"});
+  group("design.export", "file", tr("File"), {"file.import", "file.save"});
+  layout.addTab("sketch", "sketch.create", tr("Create"));
+  group("sketch.create", "sketch", tr("Sketch"), {"sketch.finish", "sketch.cancel", "view.2d", "view.alignPlane"});
+  group("sketch.create", "draw", tr("Draw"), {"sketch.line", "sketch.rect", "sketch.circle", "sketch.arc3", "sketch.spline", "sketch.ellipse", "sketch.slot", "sketch.polygon", "sketch.point", "sketch.moreCreate"});
+  layout.addTab("sketch", "sketch.modify", tr("Modify"));
+  group("sketch.modify", "sketch", tr("Sketch"), {"sketch.finish", "view.2d"});
+  group("sketch.modify", "modify", tr("Modify"), {"sketch.select", "sketch.trim", "sketch.fillet", "sketch.offset", "sketch.mirror", "sketch.construction", "sketch.node", "sketch.openEnds", "sketch.moreModify"});
+  layout.addTab("sketch", "sketch.constrain", tr("Constrain"));
+  group("sketch.constrain", "sketch", tr("Sketch"), {"sketch.finish", "sketch.constraints", "sketch.dimension"});
+  group("sketch.constrain", "constraints", tr("Constraints"), {"sketch.c.horizontal", "sketch.c.vertical", "sketch.c.coincident", "sketch.c.parallel", "sketch.c.perpendicular", "sketch.c.tangent", "sketch.c.fix", "sketch.moreConstrain"});
+  layout.addTab("sketch", "sketch.reference", tr("Reference"));
+  group("sketch.reference", "sketch", tr("Sketch"), {"sketch.finish", "sketch.moreReference", "sketch.moreFiles", "sketch.snaps", "sketch.selectionOptions"});
+  group("sketch.reference", "reference", tr("Reference"), {"sketch.project", "sketch.replane", "design.parameters", "view.grid", "view.gridSettings"});
   for (AreaController* area : m_areas) area->ribbon(layout);  // their workspaces, tabs and groups
   QString modifiers;  // of the first key: "Ctrl+1 / 2 / Ctrl+Alt+D"
   for (const RibbonLayout::Space& space : layout.spaces) {
     const int index = m_ribbon->addWorkspace(space.workspace);
     m_workspaceIds << space.id;
     for (const RibbonLayout::Tab& tab : space.tabs) {
-      QList<QList<QAction*>> groups;
-      for (QList<QAction*> group : tab.groups) {
-        group.removeAll(nullptr);
-        if (!group.isEmpty()) groups << group;
-        for (QAction* a : group) m_commands.addWorkspace(a->objectName(), space.id);
-      }
-      m_ribbon->addTab(index, tab.title, groups);
+      for (const RibbonLayout::Group& group : tab.groups)
+        for (const RibbonLayout::Item& item : group.items)
+          for (QAction* a : QList<QAction*>{item.action} + item.variants)
+            if (a) m_commands.addWorkspace(a->objectName(), space.id);
+      m_ribbon->addTab(index, tab);
     }
     if (space.workspace.contextual) continue;
     const QString key = space.workspace.key;

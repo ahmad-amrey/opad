@@ -12,6 +12,7 @@
 
 #include "Commands.hpp"
 #include "PanelFooter.hpp"
+#include "Ribbon.hpp"
 #include "Theme.hpp"
 #include "Toast.hpp"
 #include "check.hpp"
@@ -209,6 +210,123 @@ TEST(toasts) {
     QApplication::processEvents();
     CHECK(stack.toasts().isEmpty());
   }
+}
+
+TEST(ribbon_layout_groups) {
+  QAction extrude("Extrude"), revolve("Revolve"), hole("Hole"), thread("Thread"), plain("Plain");
+  RibbonLayout layout;
+  layout.addWorkspace("design", {"Design", "component", "Ctrl+2", "", ""});
+  layout.addTab("design", "design.solid", "Solid");
+  CHECK(layout.addGroup("design.solid", "design.solid.create", "Create") && !layout.addGroup("design.none", "design.none.x", "X"));
+  CHECK(layout.addAction("design.solid.create", &extrude) && layout.addAction("design.solid.create", &revolve) &&
+        layout.addAction("design.solid.create", &hole, RibbonLayout::Size::Small, {&thread}) && !layout.addAction("design.none.x", &extrude));
+  CHECK(layout.addGroup("design.solid", "design.solid.create", "Again") == layout.group("design.solid.create") && layout.group("design.solid.create")->title == "Create");
+  CHECK(layout.addGroup("design.solid", {&plain}) && layout.tab("design.solid")->groups.size() == 2 && layout.tab("design.solid")->groups[1].title.isEmpty());
+  const RibbonLayout::Group* create = layout.group("design.solid.create");
+  CHECK(create->actions() == QList<QAction*>({&extrude, &revolve, &hole}) && create->items[2].variants == QList<QAction*>{&thread} &&
+        create->items[2].size == RibbonLayout::Size::Small && create->items[0].size == RibbonLayout::Size::Large && !layout.group(""));
+  RibbonLayout::Tab* explode = layout.addContextualTab("design", "design.explode", "Explode");
+  CHECK(explode && explode->contextual && explode->accent == &Tokens::amber && !layout.tab("design.solid")->contextual && !layout.addContextualTab("none", "none.x", "X"));
+}
+
+TEST(ribbon_collapse) {
+  QList<QAction*> tools;
+  auto add = [&tools](RibbonLayout& layout, const QString& group, const QString& text, RibbonLayout::Size size = RibbonLayout::Size::Large) {
+    tools << new QAction(text);
+    layout.addAction(group, tools.last(), size);
+    return tools.last();
+  };
+  RibbonLayout layout;
+  layout.addWorkspace("design", {"Design", "component", "Ctrl+2", "", ""});
+  layout.addTab("design", "design.solid", "Solid");
+  layout.addGroup("design.solid", "design.solid.create", "Create");
+  QAction* extrude = add(layout, "design.solid.create", "Extrude");
+  add(layout, "design.solid.create", "Revolve");
+  add(layout, "design.solid.create", "Sweep along a path");
+  QAction* thread = new QAction("Thread");
+  QAction* holeTool = new QAction("Hole");
+  tools << thread << holeTool;
+  layout.addAction("design.solid.create", holeTool, RibbonLayout::Size::Small, {thread});  // a small split button
+  layout.addGroup("design.solid", "design.solid.modify", "Modify");
+  for (const char* t : {"Fillet", "Chamfer", "Shell", "Draft angle", "Scale"}) add(layout, "design.solid.modify", t);
+  layout.addAction("design.solid.modify", nullptr);  // left out
+  layout.addGroup("design.solid", "design.solid.pattern", "Pattern");
+  for (const char* t : {"Mirror", "Rectangular pattern", "Circular pattern"}) add(layout, "design.solid.pattern", t);
+  for (const Qt::LayoutDirection direction : {Qt::LeftToRight, Qt::RightToLeft}) {
+    RibbonPage page(*layout.tab("design.solid"), nullptr);
+    page.setLayoutDirection(direction);
+    const QList<RibbonGroup*> groups = page.groups();
+    CHECK(groups.size() == 3 && groups[0]->title() == "Create" && groups[0]->buttons().size() == 4 && groups[1]->buttons().size() == 5);
+    QToolButton* hole = groups[0]->buttons()[3];
+    CHECK(hole->popupMode() == QToolButton::MenuButtonPopup && hole->menu()->actions() == QList<QAction*>{thread});
+    CHECK(groups[0]->menu()->actions().size() == 5 && groups[0]->menu()->actions().contains(thread));  // the title lists the variants too
+    const int full = page.widthAt({0, 0, 0});
+    CHECK(page.minimumSizeHint().width() == page.widthAt({3, 3, 3}) && page.minimumSizeHint().width() < full);
+    page.show();
+    auto fitsAt = [&](int width) {
+      page.resize(width, RibbonGroup::kHeight);
+      QApplication::processEvents();
+      const QList<int> levels = page.levels();
+      bool whole = page.widthAt(levels) <= width || levels == QList<int>(3, RibbonGroup::Collapsed);
+      for (RibbonGroup* g : groups) {
+        whole = whole && g->x() >= 0 && g->geometry().right() < std::max(width, page.widthAt(levels));
+        for (QToolButton* b : g->findChildren<QToolButton*>())
+          if (b->isVisibleTo(&page)) whole = whole && b->width() >= b->sizeHint().width() && b->geometry().right() < g->width();
+      }
+      return whole ? levels : QList<int>();
+    };
+    CHECK(fitsAt(full + 40) == QList<int>({0, 0, 0}));
+    const QList<int> one = fitsAt(full - 1);  // the end of the row steps down first
+    CHECK(!one.isEmpty() && one.first() == 0 && one.last() > 0);
+    const QList<int> two = fitsAt(page.widthAt({1, 1, 1}));
+    CHECK(two == QList<int>({1, 1, 1}) || (!two.isEmpty() && two[0] <= two[1] && two[1] <= two[2]));
+    const QList<int> last = fitsAt(page.minimumSizeHint().width());
+    CHECK(!last.isEmpty() && std::all_of(last.begin(), last.end(), [](int l) { return l >= RibbonGroup::Icons; }));
+    // Collapsed: one button, the tools hidden, and its menu has them all.
+    fitsAt(page.minimumSizeHint().width() - 20);
+    CHECK(page.levels() == QList<int>(3, RibbonGroup::Collapsed) && groups[1]->collapsedButton()->isVisibleTo(&page) &&
+          !groups[1]->buttons()[0]->isVisibleTo(&page) && !groups[1]->titleButton()->isVisibleTo(&page) && groups[1]->menu()->actions().size() == 5);
+    // Mirrored: the row starts at the right in a right-to-left UI.
+    fitsAt(full + 40);
+    CHECK(direction == Qt::LeftToRight ? groups[0]->x() < groups[2]->x() : groups[0]->x() > groups[2]->x());
+    // A hidden tool leaves the row narrower; shown again it is back.
+    extrude->setVisible(false);
+    QApplication::processEvents();
+    CHECK(!groups[0]->buttons()[0]->isVisibleTo(&page) && page.widthAt({0, 0, 0}) < full);
+    extrude->setVisible(true);
+    QApplication::processEvents();
+    CHECK(groups[0]->buttons()[0]->isVisibleTo(&page) && page.widthAt({0, 0, 0}) == full);
+  }
+  qDeleteAll(tools);
+}
+
+TEST(ribbon_contextual_tab) {
+  QAction fit("Fit"), explode("Explode"), steps("Steps");
+  RibbonLayout layout;
+  layout.addWorkspace("review", {"Review", "eye", "Ctrl+1", "", ""});
+  layout.addWorkspace("design", {"Design", "component", "Ctrl+2", "", ""});
+  layout.addTab("review", "review.view", "View", {{&fit}});
+  layout.addTab("design", "design.solid", "Solid", {{&fit}});
+  layout.addTab("design", "design.view", "View", {{&fit}});
+  layout.addContextualTab("design", "design.explode", "Explode");
+  layout.addGroup("design.explode", "design.explode.steps", "Steps");
+  layout.addAction("design.explode.steps", &explode, RibbonLayout::Size::Large, {&steps});
+  RibbonBar bar;
+  for (const RibbonLayout::Space& space : layout.spaces) {
+    const int index = bar.addWorkspace(space.workspace);
+    for (const RibbonLayout::Tab& tab : space.tabs) bar.addTab(index, tab);
+  }
+  bar.setWorkspace(1);
+  bar.setCurrentTab(1);
+  CHECK(bar.tabIds() == QStringList({"design.solid", "design.view"}) && bar.currentPage()->id() == "design.view" && !bar.contextualTabShown("design.explode"));
+  CHECK(bar.setContextualTab("design.explode", true) && bar.tabIds() == QStringList({"design.explode", "design.solid", "design.view"}) &&
+        bar.currentPage()->id() == "design.explode" && bar.tabBar()->currentIndex() == 0 && !bar.tabBar()->tabIcon(0).isNull());
+  bar.setWorkspace(0);
+  CHECK(bar.tabIds() == QStringList{"review.view"} && bar.contextualTabShown("design.explode"));
+  bar.setWorkspace(1);
+  CHECK(bar.tabIds().first() == "design.explode" && bar.currentPage()->id() == "design.explode");
+  CHECK(bar.setContextualTab("design.explode", false) && bar.tabIds() == QStringList({"design.solid", "design.view"}) && bar.currentPage()->id() == "design.view");
+  CHECK(!bar.setContextualTab("design.solid", true) && !bar.setContextualTab("design.none", true) && bar.tabBar()->elideMode() == Qt::ElideNone);
 }
 
 int main(int argc, char** argv) {
