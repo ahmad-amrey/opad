@@ -24,7 +24,9 @@ using namespace bench2d;
 // text layers are shown; in the view, three behs written in a row are one joined word (some row of pixels across it is one
 // run of ink: the letters take their joining forms and touch) while "III" stays three strokes in every row; the Arabic
 // word right-aligned on the guide line ends at it; Latin and Arabic in one line lie side by side, not on top of each
-// other; "III" in a shape font (.shx) beside the drawing is three strokes, lines without fills. <prefix>.png.
+// other; "III" in a shape font (.shx) beside the drawing is three strokes, lines without fills; MTEXT formatted part by
+// part shows its red part in red, its fraction's parts above the capitals and below the baseline over each other, and
+// its underline as one run of ink under the word. <prefix>.png.
 OPAD_BENCH(OPAD_BENCH_TEXT2D, text2d) {
   auto all = std::make_shared<bool>(true);
   Check require = [all](bool ok, const QString& what) {
@@ -105,6 +107,53 @@ OPAD_BENCH(OPAD_BENCH_TEXT2D, text2d) {
       }
       const int shapeRuns = fewestRuns(pixels(shape));
       require(faces == 0 && edges == 3 && shapeRuns == 3, QString("'III' in a shape font beside the drawing is its strokes (%1 lines, %2 fills, %3 runs of ink)").arg(edges).arg(faces).arg(shapeRuns));
+      // MTEXT in parts: Rich "Plain {\C1;Red} 1\S1/2;" (capitals 5 high), Ruled "\LUnder\l"; the drawing
+      // is centred, so the red part's box says where the baseline lies (it is "Red": on the baseline, as high as capitals).
+      const opad::Scene& scene = w.m_doc->scene;
+      const std::string rich = layerNamed(scene, "Rich"), ruled = layerNamed(scene, "Ruled");
+      std::string redPart;
+      for (const auto& id : rich.empty() ? std::vector<std::string>{} : scene.bodies_under(rich))
+        if (const auto* n = scene.node(id); n->has_color && n->color[0] > 0.99 && n->color[1] < 0.01 && n->color[2] < 0.01) redPart = id;
+      require(!rich.empty() && !ruled.empty() && !redPart.empty(), "MTEXT's red part is a body of its own on its layer");
+      if (rich.empty() || ruled.empty() || redPart.empty()) return QCoreApplication::exit(2);
+      auto area = [v](double x0, double y0, double x1, double y1) {  // world rectangle -> image pixels
+        const QPoint p = v->widgetPoint({x0, y0, 0}), q = v->widgetPoint({x1, y1, 0});
+        const double s = v->displayScale();
+        return QRect(QPoint(qRound(std::min(p.x(), q.x()) * s), qRound(std::min(p.y(), q.y()) * s)),
+                     QPoint(qRound(std::max(p.x(), q.x()) * s), qRound(std::max(p.y(), q.y()) * s)));
+      };
+      auto inked = [&image, ink](const QRect& r, int& left, int& right) {  // ink pixels in r, and how far they reach
+        int n = 0;
+        left = 1 << 30, right = -1;
+        for (int y = std::max(0, r.top()); y <= std::min(image.height() - 1, r.bottom()); ++y)
+          for (int x = std::max(0, r.left()); x <= std::min(image.width() - 1, r.right()); ++x)
+            if (ink(x, y)) ++n, left = std::min(left, x), right = std::max(right, x);
+        return n;
+      };
+      double x0, y0, z0, x1, y1, z1;
+      opad::node_world_bbox(w.m_doc->doc, scene, redPart).Get(x0, y0, z0, x1, y1, z1);
+      const QRect redBox = area(x0, y0, x1, y1);
+      int reds = 0;
+      for (int y = std::max(0, redBox.top()); y <= std::min(image.height() - 1, redBox.bottom()); ++y)
+        for (int x = std::max(0, redBox.left()); x <= std::min(image.width() - 1, redBox.right()); ++x) {
+          const QColor c = image.pixelColor(x, y);
+          reds += c.red() > 150 && c.green() < 90 && c.blue() < 90;
+        }
+      require(reds > 10, QString("the red part is drawn red (%1 red pixels)").arg(reds));
+      const double baseline = y0;
+      box(rich).Get(x0, y0, z0, x1, y1, z1);
+      int upLeft, upRight, downLeft, downRight;
+      const int up = inked(area(x0, baseline + 5.4, x1, baseline + 6.4), upLeft, upRight), down = inked(area(x0, baseline - 1.6, x1, baseline - 0.4), downLeft, downRight);
+      require(up > 0 && down > 0 && upLeft <= downRight && downLeft <= upRight,
+              QString("the fraction stacks: ink above the capitals (%1 px at %2..%3) over ink below the baseline (%4 px at %5..%6)")
+                  .arg(up).arg(upLeft).arg(upRight).arg(down).arg(downLeft).arg(downRight));
+      box(ruled).Get(x0, y0, z0, x1, y1, z1);  // the underline is its lowest edge
+      const QRect under = area(x0, y0 - 0.5, x1, y0 + 0.5);
+      int longest = 0;
+      for (int y = std::max(0, under.top()); y <= std::min(image.height() - 1, under.bottom()); ++y)
+        for (int x = std::max(0, under.left() - 2), run = 0; x <= std::min(image.width() - 1, under.right() + 2); ++x)
+          longest = std::max(longest, run = ink(x, y) ? run + 1 : 0);
+      require(longest >= 0.8 * under.width(), QString("the underline is one run of ink under its word (%1 of %2 px)").arg(longest).arg(under.width()));
       QCoreApplication::exit(*all ? 0 : 2);
     });
   });

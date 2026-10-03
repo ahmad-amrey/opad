@@ -47,7 +47,7 @@ struct Body {
   bool has_color = false;
   std::array<double, 3> color{};
   Bnd_Box box;
-  int faces = 0, edges = 0;
+  int faces = 0, edges = 0, lines = 0;  // lines: edges of no face
   double area = 0;
 };
 std::vector<Body> bodies(const Document& d) {
@@ -63,6 +63,7 @@ std::vector<Body> bodies(const Document& d) {
     BRepBndLib::Add(shape, b.box);
     for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) ++b.faces;
     for (TopExp_Explorer e(shape, TopAbs_EDGE); e.More(); e.Next()) ++b.edges;
+    for (TopExp_Explorer e(shape, TopAbs_EDGE, TopAbs_FACE); e.More(); e.Next()) ++b.lines;
     GProp_GProps props;
     BRepGProp::SurfaceProperties(shape, props);
     b.area = props.Mass();
@@ -300,6 +301,55 @@ TEST(mtext_leading_formatting_holds_for_all_of_it) {
   const auto styled = bodies(import(f.dir / "styles.dxf"));
   const auto styledBold = extent(find(styled, "Bold")->box), styledPlain = extent(find(styled, "Plain")->box);
   CHECK(styledBold[2] - styledBold[0] > (styledPlain[2] - styledPlain[0]) * 1.02);
+}
+
+// TODO 11 UI-92: MTEXT formatted part by part: a part in a larger height, parts in a colour index and a true colour (bodies
+// of their colours), a line under a part, a stacked fraction over its bar and a tolerance without one, a paragraph centred
+// on its own; TEXT's %%u underline and obliquing (its own, and its style's).
+TEST(mtext_parts_keep_their_own_formats) {
+  Files f;
+  auto mtext = [](const char* layer, double y, const char* s) {
+    return Groups{{0, "MTEXT"}, {8, layer}, {10, "0"}, {20, std::to_string(y)}, {40, "5"}, {71, "7"}, {1, s}};
+  };
+  auto text = [](const char* layer, double y, const char* s, Groups extra = {}) {
+    Groups g{{0, "TEXT"}, {8, layer}, {10, "0"}, {20, std::to_string(y)}, {40, "10"}, {1, s}};
+    g.insert(g.end(), extra.begin(), extra.end());
+    return g;
+  };
+  Groups entities;
+  for (const auto& g : {mtext("Plain", 0, "HELL"), mtext("Big", 50, "HE{\\H2x;LL}"), mtext("Red", 100, "HE{\\C1;LL}O"), mtext("Blue", 150, "H\\c16711680;E"),
+                        mtext("Under", 200, "H\\LELL\\lO"), mtext("Fraction", 250, "1\\S1/2;"), mtext("Tolerance", 300, "12\\S+0.1^-0.2;"),
+                        mtext("Centre", 350, "HHHHHHHH\\P\\pxqc;{\\C1;HH}"), text("TextPlain", 400, "IIII"), text("TextUnder", 450, "%%uIIII%%u"),
+                        text("Leaning", 500, "IIII", {{51, "15"}}), text("Styled", 550, "IIII", {{7, "SLANT"}})})
+    entities.insert(entities.end(), g.begin(), g.end());
+  write_text_file(f.dir / "parts.dxf", section("TABLES", {{0, "TABLE"}, {2, "STYLE"}, {0, "STYLE"}, {2, "SLANT"}, {70, "0"}, {40, "0"}, {41, "1"},
+                                                          {50, "15"}, {3, "arial.ttf"}, {0, "ENDTAB"}}) +
+                                           section("ENTITIES", entities) + kEof);
+  const auto all = bodies(import(f.dir / "parts.dxf"));
+  const auto* plain = find(all, "Plain");
+  if (!plain) return;  // no font on this machine
+  const auto p = extent(plain->box), big = extent(find(all, "Big")->box);
+  CHECK(std::abs(p[3] - p[1] - 5) < 0.05 && std::abs(big[3] - 60) < 0.05 && std::abs(big[1] - 50) < 0.05);  // LL 10 high on the baseline
+  const auto* red = find(all, "Red", 1, 0, 0);
+  const Body* rest = nullptr;
+  for (const auto& b : all)
+    if (b.layer == "Red" && !b.has_color) rest = &b;
+  CHECK(red && rest && red->faces == 2 && rest->faces == 3);  // LL red, HE and O as the layer draws them
+  CHECK(find(all, "Blue", 0, 0, 1) && find(all, "Blue", 0, 0, 1)->faces == 1);  // \c is 0xBBGGRR
+  CHECK(find(all, "Under")->lines == 1 && find(all, "Plain")->lines == 0);
+  const auto* fraction = find(all, "Fraction");
+  CHECK(fraction->lines == 1 && fraction->faces == 3 && extent(fraction->box)[1] < 249);  // the bar; 2 below the baseline
+  CHECK(find(all, "Tolerance")->lines == 0 && find(all, "Tolerance")->faces == 10);
+  // The centred paragraph's middle is the block's, the block being as wide as its first line.
+  const auto centred = extent(find(all, "Centre", 1, 0, 0)->box);
+  const Body* first = nullptr;
+  for (const auto& b : all)
+    if (b.layer == "Centre" && !b.has_color) first = &b;
+  const auto block = extent(first->box);
+  CHECK(std::abs((centred[0] + centred[2]) / 2 - (block[0] + block[2]) / 2) < 0.3 && centred[0] > block[0] + 5);
+  CHECK(find(all, "TextUnder")->lines == 1 && find(all, "TextPlain")->lines == 0);
+  const double upright = extent(find(all, "TextPlain")->box)[2];
+  CHECK(extent(find(all, "Leaning")->box)[2] - upright > 2.4 && extent(find(all, "Styled")->box)[2] - upright > 2.4);  // 10 tan 15 = 2.7
 }
 
 // Bodies share no sub-shapes (the view meshes them on several threads at once): the same text, or a block with a fill,

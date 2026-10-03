@@ -108,6 +108,7 @@ Bidi bidi_class(uint32_t c) {
 }
 
 bool space(uint32_t c) { return c == ' ' || c == '\t' || c == 0x3000 || in(c, 0x2000, 0x200A); }
+bool blank(uint32_t c) { return space(c) || c == 0xA0; }  // drawn as an advance alone (a no-break space too)
 bool ideograph(uint32_t c) { return in(c, 0x2E80, 0x9FFF) || in(c, 0xAC00, 0xD7AF) || in(c, 0xF900, 0xFAFF) || in(c, 0x20000, 0x3FFFF); }
 
 }  // namespace
@@ -236,7 +237,7 @@ namespace {
 struct ShxText {
   std::vector<std::filesystem::path> folders;
   std::map<std::string, std::shared_ptr<const ShxFont>> fonts;  // by the name a style gives
-  std::map<std::tuple<const ShxFont*, uint32_t, double, double>, TopoDS_Shape> glyphs;  // strokes per character and size
+  std::map<std::tuple<const ShxFont*, uint32_t, double, double, double>, TopoDS_Shape> glyphs;  // strokes per character, size and slant
 
   std::shared_ptr<const ShxFont> font(const std::string& name) {
     if (const auto it = fonts.find(name); it != fonts.end()) return it->second;
@@ -259,27 +260,31 @@ struct ShxText {
     return fonts[name] = found;
   }
 
-  const TopoDS_Shape& glyph(const ShxFont& font, uint32_t c, const ShxFont::Glyph& g, double kx, double ky) {
-    auto& shape = glyphs[{&font, c, kx, ky}];
+  const TopoDS_Shape& glyph(const ShxFont& font, uint32_t c, const ShxFont::Glyph& g, double kx, double ky, double shear = 0) {
+    auto& shape = glyphs[{&font, c, kx, ky, shear}];
     if (!shape.IsNull()) return shape;
     BRep_Builder builder;
     TopoDS_Compound strokes;
     builder.MakeCompound(strokes);
     for (const auto& stroke : g.strokes) {
       BRepBuilderAPI_MakePolygon polygon;
-      for (const auto& p : stroke) polygon.Add(gp_Pnt(p.X() * kx, p.Y() * ky, 0));
+      for (const auto& p : stroke) polygon.Add(gp_Pnt(p.X() * kx + p.Y() * ky * shear, p.Y() * ky, 0));
       if (polygon.IsDone()) builder.Add(strokes, polygon.Wire());
     }
     return shape = strokes;
   }
+  static double space_advance(const ShxFont& f) {
+    const ShxFont::Glyph* g = f.glyph(' ');
+    return g ? g->advance.X() : f.above * 2 / 3;
+  }
 
+#if !defined(OPAD_HAVE_FONT) || !defined(OPAD_HAVE_SHAPING)
   // Null when the text is not in a shape font found here or uses a character it lacks.
   std::optional<TopoDS_Shape> outline(const TextRequest& r, const gp_Ax3& at) {
     const auto f = font(r.font);
     if (!f || !(f->above > 0)) return std::nullopt;
     const std::u32string text = utf32(r.text);
-    const ShxFont::Glyph* spaceGlyph = f->glyph(' ');
-    const double spaceAdvance = spaceGlyph ? spaceGlyph->advance.X() : f->above * 2 / 3;
+    const double spaceAdvance = space_advance(*f);
     for (char32_t c : text)
       if (c != U'\n' && !space(c) && !f->glyph(c)) return std::nullopt;
     const double k = r.cap ? r.size / f->above : r.size / (f->above + f->below), width = r.width > 0 ? r.width : 1;
@@ -337,7 +342,7 @@ struct ShxText {
       gp_XY pen(r.h == TextRequest::Center ? -w / 2 : r.h == TextRequest::Right ? -w : 0, dy - double(i) * spacing);
       for (char32_t c : lines[i].first) {
         if (const ShxFont::Glyph* g = f->glyph(c)) {
-          const TopoDS_Shape& shape = glyph(*f, uint32_t(c), *g, qx, qy);
+          const TopoDS_Shape& shape = glyph(*f, uint32_t(c), *g, qx, qy, std::tan(std::clamp(r.oblique, -1.4, 1.4)));
           if (shape.NbChildren() > 0) {
             gp_Trsf move;
             move.SetTranslation(gp_Vec(pen.X(), pen.Y(), 0));
@@ -351,6 +356,7 @@ struct ShxText {
     }
     return TopoDS_Shape(out);
   }
+#endif
 };
 }  // namespace
 
@@ -544,9 +550,10 @@ double signed_area(const std::vector<gp_XY>& poly) {
   return a / 2;
 }
 
-// A glyph's faces in the XY plane, font units scaled by kx and ky (mm per unit): its outer contours (those turning as the
-// largest one does) with the holes inside them, so either winding a font uses comes out filled the same.
-TopoDS_Shape glyph_faces(const FontFile& font, unsigned glyph, double kx, double ky) {
+// A glyph's faces in the XY plane, font units scaled by kx and ky (mm per unit) and leaning by `shear` (x per y): its
+// outer contours (those turning as the largest one does) with the holes inside them, so either winding a font uses comes
+// out filled the same.
+TopoDS_Shape glyph_faces(const FontFile& font, unsigned glyph, double kx, double ky, double shear) {
   Pen pen;
   hb_font_draw_glyph(font.font, glyph, draw_funcs(), &pen);
   struct Loop {
@@ -559,7 +566,7 @@ TopoDS_Shape glyph_faces(const FontFile& font, unsigned glyph, double kx, double
   for (auto& contour : pen.contours) {
     std::vector<Segment> segments;
     for (auto s : contour) {
-      for (int k = 0; k <= s.degree; ++k) s.p[k] = gp_XY(s.p[k].X() * kx, s.p[k].Y() * ky);
+      for (int k = 0; k <= s.degree; ++k) s.p[k] = gp_XY(s.p[k].X() * kx + s.p[k].Y() * ky * shear, s.p[k].Y() * ky);
       if ((s.p[s.degree] - s.p[0]).Modulus() > tiny) segments.push_back(s);
     }
     if (segments.size() < 2) continue;
@@ -619,6 +626,48 @@ TopoDS_Shape glyph_faces(const FontFile& font, unsigned glyph, double kx, double
   }
   return out;
 }
+// A part of a text as it is drawn: its TrueType font (also for what its shape font lacks), or its shape font when that has
+// every character; mm per em (TrueType) or per vector unit (shape font), the width factor in kx; its text size, capitals,
+// descent and natural line spacing in mm; how far its letters lean (x per y); a stacked pair laid out.
+struct Stacked;
+struct Style {
+  const TextFormat* format = nullptr;
+  const FontFile* font = nullptr;
+  std::shared_ptr<const ShxFont> shx;
+  double kx = 0, ky = 0, size = 0, cap = 0, descent = 0, spacing = 0, shear = 0;
+  char stack = 0;
+  std::shared_ptr<const Stacked> stacked;
+};
+// One glyph of a laid out line: a shaped one (font and glyph), a shape font's character (glyph, no font) or a stacked
+// pair; mm from the line's left end and above its baseline.
+struct Piece {
+  size_t style = 0;
+  const FontFile* font = nullptr;
+  unsigned glyph = 0;
+  uint32_t cluster = 0;  // the first character it shows (index into the line's)
+  double x = 0, y = 0, advance = 0;
+};
+struct Line {
+  std::u32string text;        // its characters in logical order
+  std::vector<Piece> pieces;  // left to right
+  double width = 0;
+  int direction = 0, justify = -1;  // the paragraph's: 0 left to right, 1 right to left; its own H, -1 the text's
+  size_t style = 0;  // its largest part's
+};
+// A stacked pair: its upper and lower line in its own style (70 % of its part's), and how wide it is in its line.
+struct Stacked {
+  TextSpan part;
+  std::vector<Style> styles;
+  Line top, bottom;
+  double width = 0;
+};
+
+TextSpan plain(const TextRequest& r) {
+  TextSpan s;
+  static_cast<TextFormat&>(s) = r;
+  s.text = r.text;
+  return s;
+}
 }  // namespace
 
 struct TextOutliner::Impl {
@@ -626,11 +675,11 @@ struct TextOutliner::Impl {
   ShxText shx;
   std::map<std::string, const FontFile*> primaries;  // by request font + family
   std::map<std::pair<const FontFile*, uint32_t>, const FontFile*> fallbacks;  // a character the font lacks -> the font that has it
-  std::map<std::tuple<const FontFile*, unsigned, double, double>, TopoDS_Shape> glyphs;  // faces per glyph and size
+  std::map<std::tuple<const FontFile*, unsigned, double, double, double>, TopoDS_Shape> glyphs;  // faces per glyph, size and slant
   hb_buffer_t* buffer = hb_buffer_create();
   ~Impl() { hb_buffer_destroy(buffer); }
 
-  const FontFile* primary(const TextRequest& r) {
+  const FontFile* primary(const TextFormat& r) {
     const std::string key = r.font + '\x1f' + r.family + (r.bold ? "\x1f" "b" : "") + (r.italic ? "\x1f" "i" : "");
     const Font_FontAspect aspect = r.bold && r.italic ? Font_FontAspect_BoldItalic : r.bold ? Font_FontAspect_Bold
                                    : r.italic ? Font_FontAspect_Italic : Font_FontAspect_Regular;
@@ -678,8 +727,33 @@ struct TextOutliner::Impl {
     return fallbacks[key] = found ? found : font;  // none has it: the font's own missing-glyph box
   }
 
-  // One paragraph's lines, each shaped in visual order; wrapEm > 0 breaks lines longer than that (ems).
-  std::vector<ShapedLine> paragraph(const std::u32string& text, const FontFile* primary, double wrapEm) {
+  // A format's style for these characters; no font and no shape font when none loads.
+  Style style(const TextFormat& f, const std::u32string& chars, bool cap) {
+    Style s;
+    s.format = &f;
+    s.size = f.size;
+    s.shear = std::tan(std::clamp(f.oblique, -1.4, 1.4));
+    const double width = f.width > 0 ? f.width : 1;
+    if (const auto font = shx.font(f.font); font && font->above > 0 &&
+        std::all_of(chars.begin(), chars.end(), [&font](char32_t c) { return c == U'\n' || blank(c) || font->glyph(c); })) {
+      const double k = cap ? f.size / font->above : f.size / (font->above + font->below);
+      if (k > 0 && std::isfinite(k)) {
+        s.shx = font;
+        s.kx = k * width, s.ky = k, s.cap = font->above * k, s.descent = font->below * k, s.spacing = 5.0 / 3.0 * font->above * k;
+        return s;
+      }
+    }
+    if (!(s.font = primary(f))) return s;
+    const double em = cap ? f.size / s.font->cap : f.size;
+    if (!(em > 0) || !std::isfinite(em)) return s;
+    s.kx = em * width, s.ky = em, s.cap = s.font->cap * em, s.descent = s.font->descent * em;
+    s.spacing = (s.font->ascent + s.font->descent + s.font->gap) * em;
+    return s;
+  }
+
+  // One paragraph's lines, each laid out in visual order, every character in the style `owner` gives it; wrap > 0 breaks
+  // lines longer than that (mm). An empty paragraph is one line in style `empty`.
+  std::vector<Line> paragraph(const std::u32string& text, const std::vector<size_t>& owner, const std::vector<Style>& styles, double wrap, size_t empty) {
     const size_t n = text.size();
     int base = 0;
     const std::vector<uint8_t> levels = bidi_levels(text, base);
@@ -694,24 +768,26 @@ struct TextOutliner::Impl {
     }
     for (size_t i = n; i-- > 0;)
       if (scripts[i] == HB_SCRIPT_COMMON && i + 1 < n) scripts[i] = scripts[i + 1];
-    std::vector<const FontFile*> fonts(n, primary);
+    std::vector<const FontFile*> fonts(n, nullptr);  // shaped characters' (none in a shape font or a stack)
     for (size_t i = 0; i < n; ++i) {
+      const Style& s = styles[owner[i]];
+      if (s.shx || s.stack || !s.font) continue;
       const uint32_t c = text[i];
       const auto gc = hb_unicode_general_category(unicode, c);
       const bool attached = gc == HB_UNICODE_GENERAL_CATEGORY_NON_SPACING_MARK || gc == HB_UNICODE_GENERAL_CATEGORY_ENCLOSING_MARK ||
                             gc == HB_UNICODE_GENERAL_CATEGORY_SPACING_MARK || gc == HB_UNICODE_GENERAL_CATEGORY_FORMAT;
-      if (i > 0 && (attached || (space(c) && fonts[i - 1]->has(c)))) fonts[i] = fonts[i - 1];
-      else fonts[i] = font_for(primary, c, scripts[i]);
+      if (i > 0 && owner[i - 1] == owner[i] && fonts[i - 1] && (attached || (space(c) && fonts[i - 1]->has(c)))) fonts[i] = fonts[i - 1];
+      else fonts[i] = font_for(s.font, c, scripts[i]);
     }
     std::vector<std::pair<size_t, size_t>> ranges;
-    if (wrapEm > 0 && n > 0) {
+    if (wrap > 0 && n > 0) {
       std::vector<double> advance(n, 0.0), sum(n + 1, 0.0);
-      line(text, 0, n, levels, base, scripts, fonts, &advance);
+      line(text, 0, n, levels, base, scripts, fonts, owner, styles, empty, &advance);
       for (size_t i = 0; i < n; ++i) sum[i + 1] = sum[i] + advance[i];
       size_t start = 0, opening = 0;  // the line's first character; the last place a line may start after it (0: none)
       for (size_t i = 0; i < n; ++i) {
         if (i > start && ((space(text[i - 1]) && !space(text[i])) || ideograph(text[i - 1]) || ideograph(text[i]))) opening = i;
-        if (!space(text[i]) && sum[i + 1] - sum[start] > wrapEm && opening > start) {
+        if (!space(text[i]) && sum[i + 1] - sum[start] > wrap && opening > start) {
           ranges.push_back({start, opening});
           start = opening;
         }
@@ -720,23 +796,26 @@ struct TextOutliner::Impl {
     } else {
       ranges.push_back({0, n});
     }
-    std::vector<ShapedLine> out;
+    std::vector<Line> out;
     for (size_t k = 0; k < ranges.size(); ++k) {
       auto [a, b] = ranges[k];
       if (k + 1 < ranges.size())
         while (b > a && space(text[b - 1])) --b;  // the spaces a line was broken at
-      out.push_back(line(text, a, b, levels, base, scripts, fonts, nullptr));
+      out.push_back(line(text, a, b, levels, base, scripts, fonts, owner, styles, empty, nullptr));
     }
     return out;
   }
 
-  // Characters [a, b) of a paragraph as one line: runs of one level, script and font, in visual order, each shaped with
-  // the paragraph around it as context (so letters join across runs). `advance`: each character's share, for wrapping.
-  ShapedLine line(const std::u32string& text, size_t a, size_t b, std::vector<uint8_t> levels, int base, const std::vector<hb_script_t>& scripts,
-                  const std::vector<const FontFile*>& fonts, std::vector<double>* advance) {
-    ShapedLine out;
+  // Characters [a, b) of a paragraph as one line: runs of one level, script, font and style, in visual order, each shaped
+  // with the paragraph around it as context (so letters join across runs and formats). `advance`: each character's share
+  // (mm), for wrapping.
+  Line line(const std::u32string& text, size_t a, size_t b, std::vector<uint8_t> levels, int base, const std::vector<hb_script_t>& scripts,
+            const std::vector<const FontFile*>& fonts, const std::vector<size_t>& owner, const std::vector<Style>& styles, size_t empty,
+            std::vector<double>* advance) {
+    Line out;
     out.text = text.substr(a, b - a);
     out.direction = base;
+    out.style = a < b ? owner[a] : empty;
     for (size_t i = b; i > a && (space(text[i - 1]) || bidi_class(text[i - 1]) == BN); --i) levels[i - 1] = uint8_t(base);  // L1
     struct Run {
       size_t a, b;
@@ -744,7 +823,9 @@ struct TextOutliner::Impl {
     };
     std::vector<Run> runs;
     for (size_t i = a; i < b; ++i) {
-      if (runs.empty() || levels[i] != runs.back().level || fonts[i] != fonts[runs.back().a] || scripts[i] != scripts[runs.back().a]) runs.push_back({i, i + 1, levels[i]});
+      if (runs.empty() || levels[i] != runs.back().level || fonts[i] != fonts[runs.back().a] || scripts[i] != scripts[runs.back().a] ||
+          owner[i] != owner[runs.back().a])
+        runs.push_back({i, i + 1, levels[i]});
       else runs.back().b = i + 1;
     }
     std::vector<uint8_t> runLevels;
@@ -752,6 +833,23 @@ struct TextOutliner::Impl {
     double x = 0;
     for (size_t index : visual_order(runLevels)) {
       const Run& run = runs[index];
+      const size_t k = owner[run.a];
+      const Style& s = styles[k];
+      if (!(s.kx > 0)) continue;
+      const double track = run.level & 1 || !(s.format->tracking > 0) ? 1 : s.format->tracking;
+      if (s.shx || s.stack) {  // character by character, as the shape font's pen moves (no shaping), or the stack
+        double y = 0;
+        for (size_t j = 0; j < run.b - run.a; ++j) {
+          const size_t i = run.level & 1 ? run.b - 1 - j : run.a + j;
+          const ShxFont::Glyph* g = s.shx ? s.shx->glyph(text[i]) : nullptr;
+          const double dx = s.stack ? s.stacked->width : (g ? g->advance.X() : blank(text[i]) ? ShxText::space_advance(*s.shx) : 0) * s.kx * track;
+          out.pieces.push_back({k, nullptr, g ? unsigned(text[i]) : 0u, uint32_t(i - a), x, y, dx});
+          if (g) y += g->advance.Y() * s.ky;
+          if (advance) (*advance)[i] += dx;
+          x += dx;
+        }
+        continue;
+      }
       const FontFile* font = fonts[run.a];
       hb_buffer_clear_contents(buffer);
       hb_buffer_add_utf32(buffer, reinterpret_cast<const uint32_t*>(text.data()), int(text.size()), unsigned(run.a), int(run.b - run.a));
@@ -763,34 +861,90 @@ struct TextOutliner::Impl {
       const hb_glyph_info_t* info = hb_buffer_get_glyph_infos(buffer, &count);
       const hb_glyph_position_t* pos = hb_buffer_get_glyph_positions(buffer, &count);
       for (unsigned g = 0; g < count; ++g) {
-        const double dx = double(pos[g].x_advance) / kUnits;
-        out.glyphs.push_back({font->path, font, info[g].codepoint, uint32_t(info[g].cluster - a), x + double(pos[g].x_offset) / kUnits,
-                              double(pos[g].y_offset) / kUnits, dx});
+        const double dx = double(pos[g].x_advance) / kUnits * s.kx * track;
+        out.pieces.push_back({k, font, info[g].codepoint, uint32_t(info[g].cluster - a), x + double(pos[g].x_offset) / kUnits * s.kx,
+                              double(pos[g].y_offset) / kUnits * s.ky, dx});
         if (advance && info[g].cluster < advance->size()) (*advance)[info[g].cluster] += dx;
         x += dx;
       }
     }
     out.width = x;
+    for (const auto& p : out.pieces)
+      if (styles[p.style].size > styles[out.style].size) out.style = p.style;
     return out;
   }
 
-  std::vector<ShapedLine> lines(const TextRequest& r, const FontFile* primary, double wrapEm) {
-    std::vector<ShapedLine> out;
-    const std::u32string text = utf32(r.text);
-    size_t at = 0;
-    while (at <= text.size()) {
-      const size_t end = std::min(text.find(U'\n', at), text.size());
-      auto shaped = paragraph(text.substr(at, end - at), primary, wrapEm);
-      out.insert(out.end(), shaped.begin(), shaped.end());
-      at = end + 1;
+  struct Layout {
+    std::vector<Style> styles;  // the spans'
+    std::vector<Line> lines;
+  };
+  // The text's lines; null when a part finds no font at all.
+  std::optional<Layout> layout(const TextRequest& r, const std::vector<TextSpan>& spans) {
+    Layout out;
+    for (const auto& span : spans) {
+      const std::u32string chars = utf32(span.text + span.bottom);
+      Style s = style(span, chars, r.cap);
+      if (!s.font && !s.shx) return std::nullopt;
+      if (span.stack) {
+        auto k = std::make_shared<Stacked>();
+        k->part = span;
+        k->part.stack = 0;
+        k->part.size = span.size * 0.7;
+        k->part.underline = k->part.overline = k->part.strike = false;
+        k->part.align = TextFormat::Base;
+        k->styles.push_back(style(k->part, chars, r.cap));
+        auto one = [&](const std::string& t) {
+          const std::u32string u = utf32(t);
+          auto lines = paragraph(u, std::vector<size_t>(u.size(), 0), k->styles, 0, 0);
+          return lines.empty() ? Line{} : lines[0];
+        };
+        k->top = one(span.text);
+        k->bottom = one(span.bottom);
+        const double gap = 0.1 * s.cap;
+        k->width = span.stack == '#' ? k->top.width + k->bottom.width + 0.4 * s.cap + 2 * gap
+                                     : std::max(k->top.width, k->bottom.width) + (span.stack == '/' ? 2 * gap : 0);
+        s.stack = span.stack;
+        s.stacked = k;
+      }
+      out.styles.push_back(std::move(s));
     }
+    std::u32string text;
+    std::vector<size_t> owner;
+    size_t paragraphs = 0, current = 0;
+    auto flush = [&] {
+      for (auto& l : paragraph(text, owner, out.styles, r.wrap, current)) {
+        l.justify = paragraphs < r.justify.size() ? r.justify[paragraphs] : -1;
+        out.lines.push_back(std::move(l));
+      }
+      text.clear();
+      owner.clear();
+      ++paragraphs;
+    };
+    for (size_t k = 0; k < spans.size(); ++k) {
+      if (text.empty()) current = k;
+      if (spans[k].stack) {
+        text += U'￼';
+        owner.push_back(k);
+        continue;
+      }
+      for (char32_t c : utf32(spans[k].text)) {
+        if (c != U'\n') {
+          text += c;
+          owner.push_back(k);
+          continue;
+        }
+        flush();
+        current = k;
+      }
+    }
+    flush();
     return out;
   }
 
-  const TopoDS_Shape& glyph(const FontFile* font, unsigned id, double kx, double ky) {
-    auto& shape = glyphs[{font, id, kx, ky}];
+  const TopoDS_Shape& glyph(const FontFile* font, unsigned id, double kx, double ky, double shear) {
+    auto& shape = glyphs[{font, id, kx, ky, shear}];
     if (shape.IsNull()) try {
-        shape = glyph_faces(*font, id, kx / kUnits, ky / kUnits);
+        shape = glyph_faces(*font, id, kx / kUnits, ky / kUnits, shear);
       } catch (const Standard_Failure&) {  // a broken outline loses its glyph, not the text
         BRep_Builder builder;
         TopoDS_Compound none;
@@ -798,6 +952,73 @@ struct TextOutliner::Impl {
         shape = none;
       }
     return shape;
+  }
+
+  // A line's glyphs, stacks and rules (under, over and through its parts), its left end at (x0, y0) in the text's plane,
+  // stretched by sx and sy, placed by `place`.
+  void emit(const Line& line, const std::vector<Style>& styles, double x0, double y0, double sx, double sy, const gp_Trsf& place,
+            BRep_Builder& builder, TopoDS_Compound& out, std::map<uint32_t, TopoDS_Compound>* colored) {
+    struct Rule {
+      double y, a, b;
+      TopoDS_Compound* into;
+    };
+    std::vector<Rule> rules;
+    int open[3] = {-1, -1, -1};
+    auto stroke = [&builder, &place](TopoDS_Compound& into, double xa, double ya, double xb, double yb) {
+      if (std::abs(xb - xa) + std::abs(yb - ya) > 1e-9)
+        builder.Add(into, BRepBuilderAPI_MakeEdge(gp_Pnt(xa, ya, 0).Transformed(place), gp_Pnt(xb, yb, 0).Transformed(place)).Edge());
+    };
+    const double lineCap = styles[line.style].cap * sy;
+    for (const Piece& p : line.pieces) {
+      const Style& s = styles[p.style];
+      const TextFormat& f = *s.format;
+      TopoDS_Compound* into = &out;
+      if (colored && f.color != TextFormat::kInherit) {
+        into = &(*colored)[f.color];
+        if (into->IsNull()) builder.MakeCompound(*into);
+      }
+      const double cap = s.cap * sy, hcap = s.cap * sx;
+      const double lift = f.align == TextFormat::Center ? (lineCap - cap) / 2 : f.align == TextFormat::Top ? lineCap - cap : 0;
+      const double x = x0 + p.x * sx, y = y0 + p.y * sy + lift;
+      const bool marked[3] = {f.underline, f.overline, f.strike};
+      for (int k = 0; k < 3; ++k) {
+        if (!marked[k]) { open[k] = -1; continue; }
+        const double at = y0 + lift + (k == 0 ? -0.2 : k == 1 ? 1.2 : 0.5) * cap;
+        Rule* r = open[k] >= 0 ? &rules[size_t(open[k])] : nullptr;
+        if (r && r->into == into && std::abs(r->y - at) < 1e-9 && std::abs(r->b - x) < 1e-6) r->b = x + p.advance * sx;
+        else open[k] = int(rules.size()), rules.push_back({at, x, x + p.advance * sx, into});
+      }
+      if (s.stacked) {
+        const Stacked& k = *s.stacked;
+        const double gap = 0.1 * hcap;
+        if (s.stack == '#') {  // the upper part raised to the capitals' top, a slash, the lower part on the baseline
+          emit(k.top, k.styles, x, y + 0.3 * cap, sx, sy, place, builder, out, colored);
+          const double slash = x + k.top.width * sx + gap;
+          stroke(*into, slash, y - 0.1 * cap, slash + 0.4 * hcap, y + 1.1 * cap);
+          emit(k.bottom, k.styles, slash + 0.4 * hcap + gap, y, sx, sy, place, builder, out, colored);
+        } else {  // above and below the middle of the capitals: centred over a bar, or left aligned
+          const bool bar = s.stack == '/';
+          const double w = k.width * sx;
+          emit(k.top, k.styles, x + (bar ? (w - k.top.width * sx) / 2 : 0), y + 0.65 * cap, sx, sy, place, builder, out, colored);
+          emit(k.bottom, k.styles, x + (bar ? (w - k.bottom.width * sx) / 2 : 0), y - 0.35 * cap, sx, sy, place, builder, out, colored);
+          if (bar) stroke(*into, x + gap, y + cap / 2, x + w - gap, y + cap / 2);
+        }
+        continue;
+      }
+      // Glyph shapes are kept per size and font units: a size that differs by rounding only shares them.
+      const double qx = std::round(s.kx * sx * 1e9) / 1e9, qy = std::round(s.ky * sy * 1e9) / 1e9;
+      const TopoDS_Shape* shape = nullptr;
+      if (s.shx) {
+        if (const ShxFont::Glyph* g = p.glyph ? s.shx->glyph(p.glyph) : nullptr) shape = &shx.glyph(*s.shx, p.glyph, *g, qx, qy, s.shear);
+      } else if (p.font) {
+        shape = &glyph(p.font, p.glyph, qx, qy, s.shear);
+      }
+      if (!shape || shape->IsNull() || shape->NbChildren() == 0) continue;
+      gp_Trsf move;
+      move.SetTranslation(gp_Vec(x, y, 0));
+      builder.Add(*into, shape->Moved(TopLoc_Location(place * move)));
+    }
+    for (const auto& r : rules) stroke(*r.into, r.a, r.y, r.b, r.y);
   }
 };
 
@@ -808,45 +1029,56 @@ TextOutliner::TextOutliner(std::vector<std::filesystem::path> folders) : m(std::
 TextOutliner::~TextOutliner() = default;
 
 std::vector<ShapedLine> TextOutliner::shape(const TextRequest& request) {
-  const FontFile* primary = m->primary(request);
-  if (!primary) return {};
-  const double em = request.cap ? request.size / primary->cap : request.size;
-  return m->lines(request, primary, request.wrap > 0 && em > 0 ? request.wrap / (em * request.width) : 0);
+  std::vector<TextSpan> one;
+  if (request.spans.empty()) one.push_back(plain(request));
+  const auto laid = m->layout(request, request.spans.empty() ? one : request.spans);
+  if (!laid || laid->styles.empty() || !(laid->styles[0].kx > 0)) return {};
+  const double em = laid->styles[0].kx;  // mm per em along the line
+  std::vector<ShapedLine> out;
+  for (const auto& l : laid->lines) {
+    ShapedLine s{l.text, {}, l.width / em, l.direction};
+    for (const auto& p : l.pieces)
+      s.glyphs.push_back({p.font ? p.font->path : std::string(), p.font, p.glyph, p.cluster, p.x / em, p.y / laid->styles[p.style].ky, p.advance / em});
+    out.push_back(std::move(s));
+  }
+  return out;
 }
 
-TopoDS_Shape TextOutliner::outline(const TextRequest& r, const gp_Ax3& at) {
-  if (auto strokes = m->shx.outline(r, at)) return *strokes;
-  const FontFile* primary = m->primary(r);
-  if (!primary) return {};
-  const double em = r.cap ? r.size / primary->cap : r.size, width = r.width > 0 ? r.width : 1;
+TopoDS_Shape TextOutliner::outline(const TextRequest& r, const gp_Ax3& at, std::map<uint32_t, TopoDS_Compound>* colored) {
+  std::vector<TextSpan> one;
+  if (r.spans.empty()) one.push_back(plain(r));
+  const auto laid = m->layout(r, r.spans.empty() ? one : r.spans);
+  if (!laid) return {};
   BRep_Builder builder;
   TopoDS_Compound out;
   builder.MakeCompound(out);
-  if (!(em > 0) || !std::isfinite(em)) return out;
-  const auto lines = m->lines(r, primary, r.wrap > 0 ? r.wrap / (em * width) : 0);
-  double kx = em * width, ky = em;  // mm per em
+  const auto& lines = laid->lines;
+  const auto& styles = laid->styles;
+  if (lines.empty() || styles.empty()) return out;
+  double sx = 1, sy = 1;  // fit: as long as asked, wider only or (aligned) larger
   if (r.fit > 0 && lines.size() == 1 && lines[0].width > 0) {
-    kx = r.fit / lines[0].width;
-    if (r.aligned) ky = kx / width;
+    sx = r.fit / lines[0].width;
+    if (r.aligned) sy = sx;
   }
-  const double spacing = r.spacing > 0 ? r.spacing * ky / em : (primary->ascent + primary->descent + primary->gap) * ky;
-  const double cap = primary->cap * ky, last = double(lines.size() - 1) * spacing;
+  // Baselines `spacing` apart, further for a line with larger text than the request's size.
+  const double spacing = (r.spacing > 0 ? r.spacing : styles[0].spacing) * sy, size = r.size > 0 ? r.size : styles[0].size;
+  std::vector<double> baseline(lines.size(), 0.0);
+  for (size_t i = 1; i < lines.size(); ++i) baseline[i] = baseline[i - 1] - spacing * std::max(1.0, styles[lines[i].style].size / size);
+  const double cap = styles[lines[0].style].cap * sy, last = -baseline.back();
   const double dy = r.v == TextRequest::Top ? -cap : r.v == TextRequest::Middle ? (last + cap) / 2 - cap : r.v == TextRequest::Bottom ? last
-                    : r.v == TextRequest::Descent ? last + primary->descent * ky : 0;
+                    : r.v == TextRequest::Descent ? last + styles[lines.back().style].descent * sy : 0;
   gp_Trsf place;
   place.SetDisplacement(gp_Ax3(gp::XOY()), at);
-  // Glyph faces are kept per size and font units: a size that differs by rounding only shares them.
-  const double qx = std::round(kx * 1e9) / 1e9, qy = std::round(ky * 1e9) / 1e9;
+  // The block (as wide as it wraps at, else its widest line) lies by the request's H; each line in it by its paragraph's.
+  double box = r.wrap > 0 ? r.wrap : 0;
+  if (box == 0)
+    for (const auto& l : lines) box = std::max(box, l.width * sx);
+  const double left = r.h == TextRequest::Center ? -box / 2 : r.h == TextRequest::Right ? -box : 0;
   for (size_t i = 0; i < lines.size(); ++i) {
-    const double x0 = r.h == TextRequest::Center ? -lines[i].width * kx / 2 : r.h == TextRequest::Right ? -lines[i].width * kx : 0;
-    const double y = dy - double(i) * spacing;
-    for (const auto& g : lines[i].glyphs) {
-      const TopoDS_Shape& shape = m->glyph(static_cast<const FontFile*>(g.face), g.glyph, qx, qy);
-      if (shape.IsNull() || shape.NbChildren() == 0) continue;
-      gp_Trsf move;
-      move.SetTranslation(gp_Vec(x0 + g.x * kx, y + g.y * ky, 0));
-      builder.Add(out, shape.Moved(TopLoc_Location(place * move)));
-    }
+    const int h = lines[i].justify >= 0 ? lines[i].justify : int(r.h);
+    const double w = lines[i].width * sx;
+    m->emit(lines[i], styles, left + (h == TextRequest::Center ? (box - w) / 2 : h == TextRequest::Right ? box - w : 0), dy + baseline[i], sx, sy,
+            place, builder, out, colored);
   }
   return out;
 }
@@ -875,7 +1107,21 @@ TextOutliner::TextOutliner(std::vector<std::filesystem::path> folders) : m(std::
 TextOutliner::~TextOutliner() = default;
 std::vector<ShapedLine> TextOutliner::shape(const TextRequest&) { return {}; }
 
-TopoDS_Shape TextOutliner::outline(const TextRequest& r, const gp_Ax3& at) {
+namespace {
+// A text in parts is drawn as one in its first part's format.
+TextRequest flat(const TextRequest& request) {
+  if (request.spans.empty()) return request;
+  TextRequest r = request;
+  static_cast<TextFormat&>(r) = request.spans[0];
+  r.text.clear();
+  for (const auto& s : request.spans) r.text += s.stack ? s.text + "/" + s.bottom : s.text;
+  r.spans.clear();
+  return r;
+}
+}  // namespace
+
+TopoDS_Shape TextOutliner::outline(const TextRequest& request, const gp_Ax3& at, std::map<uint32_t, TopoDS_Compound>*) {
+  const TextRequest r = flat(request);
   if (auto strokes = m->shx.outline(r, at)) return *strokes;
 #ifdef OPAD_HAVE_FONT
   std::string file;

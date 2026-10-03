@@ -198,6 +198,99 @@ TEST(glyph_faces_mesh_to_their_area) {
 }
 
 namespace {
+TextSpan span(const std::string& text, double size = 10) {
+  TextSpan s;
+  s.text = text;
+  s.size = size;
+  return s;
+}
+TextRequest spans(std::vector<TextSpan> parts) {
+  TextRequest r = request("");
+  r.spans = std::move(parts);
+  return r;
+}
+// The edges that are not glyph outlines (rules, bars), as segments {x0, y0, x1, y1}.
+std::vector<std::array<double, 4>> lines(const TopoDS_Shape& shape) {
+  std::vector<std::array<double, 4>> out;
+  for (TopExp_Explorer e(shape, TopAbs_EDGE, TopAbs_FACE); e.More(); e.Next()) {
+    const auto b = extent(e.Current());
+    out.push_back(b);
+  }
+  return out;
+}
+}  // namespace
+
+// TODO 11 UI-92: a text in parts of their own formats (MTEXT inline formatting): sizes, colours, slants, tracking, lines
+// under, over and through, stacked fractions and tolerances, paragraphs aligned on their own; letters join across parts.
+TEST(parts_of_a_text_keep_their_own_formats) {
+  if (!text_shaping()) return;
+  TextOutliner t;
+  const gp_Ax3 at;
+  // A part twice the size: the line as high as its capitals, the other part's as high as its own.
+  auto big = span("HH", 20);
+  auto both = extent(t.outline(spans({span("HH"), big}), at));
+  CHECK(std::abs(both[3] - 20) < 0.05 && std::abs(both[1]) < 0.05);
+  // A coloured part goes into its colour's compound, the rest stays.
+  auto red = span("EE");
+  red.color = 0xFF0000;
+  std::map<uint32_t, TopoDS_Compound> colored;
+  const auto rest = t.outline(spans({span("HH"), red}), at, &colored);
+  CHECK(colored.size() == 1 && colored.count(0xFF0000) && count(colored[0xFF0000], TopAbs_FACE) == 2 && count(rest, TopAbs_FACE) == 2);
+  CHECK(extent(colored[0xFF0000])[0] > extent(rest)[2]);  // after the plain part
+  // Underline below the baseline as long as its part, one rule; overline above the capitals; strike-through in their middle.
+  auto under = span("HHH");
+  under.underline = true;
+  auto ruled = lines(t.outline(spans({span("A"), under, span("A")}), at));
+  CHECK(ruled.size() == 1 && ruled[0][1] < 0 && ruled[0][1] > -3 && ruled[0][2] - ruled[0][0] > 15);
+  under.underline = false, under.overline = true, under.strike = true;
+  ruled = lines(t.outline(spans({under}), at));
+  CHECK(ruled.size() == 2 && std::max(ruled[0][1], ruled[1][1]) > 10 && std::abs(std::min(ruled[0][1], ruled[1][1]) - 5) < 0.05);
+  // A fraction: 1 over 2 at 70 %, a bar between them; a tolerance has none; a diagonal one has its slash.
+  auto fraction = span("1");
+  fraction.stack = '/';
+  fraction.bottom = "2";
+  const auto f = t.outline(spans({span("H"), fraction}), at);
+  const auto bars = lines(f);
+  const auto fb = extent(f);
+  CHECK(bars.size() == 1 && std::abs(bars[0][1] - 5) < 0.05 && std::abs(bars[0][3] - 5) < 0.05);
+  CHECK(fb[3] > 12 && fb[1] < -2 && count(f, TopAbs_FACE) == 3);  // above the capitals and below the baseline
+  fraction.stack = '^';
+  CHECK(lines(t.outline(spans({fraction}), at)).empty());
+  fraction.stack = '#';
+  const auto slash = lines(t.outline(spans({fraction}), at));
+  CHECK(slash.size() == 1 && slash[0][3] - slash[0][1] > 9);
+  // Oblique: an upright stroke leans right at its top; tracking spreads the letters.
+  auto leaning = span("I");
+  leaning.oblique = 15 * 3.14159265358979 / 180;
+  const auto upright = extent(t.outline(spans({span("I")}), at)), leant = extent(t.outline(spans({leaning}), at));
+  CHECK(leant[2] - upright[2] > 2.4 && leant[2] - upright[2] < 2.9);  // 10 * tan 15 = 2.68 further at the top
+  auto spread = span("HHHH");
+  spread.tracking = 2;
+  CHECK(extent(t.outline(spans({spread}), at))[2] > 1.6 * extent(t.outline(spans({span("HHHH")}), at))[2]);
+  // Paragraphs: the second one centred on its own, under a line twice as far down for its larger text.
+  auto second = span("\nHH", 20);
+  auto r = spans({span("HHHHHH"), second});
+  r.spacing = 50.0 / 3;
+  r.justify = {-1, TextRequest::Center};
+  const auto two = t.shape(r);
+  CHECK(two.size() == 2);
+  const auto p = extent(t.outline(r, at));
+  CHECK(std::abs(p[1] + 2 * 50.0 / 3) < 0.05);  // the second baseline 2 x 50/3 down
+  r.spans[1].text = "\n";  // an empty second paragraph keeps its place
+  r.spans.push_back(span("\nH"));
+  CHECK(t.shape(r).size() == 3);
+  // Arabic letters join across parts: beh beh in one part and beh in another (another colour) are the word's forms.
+  if (arabic(t)) {
+    const std::string beh = "\xD8\xA8";
+    auto tail = span(beh);
+    tail.color = 0x00FF00;
+    const auto word = t.shape(request(beh + beh + beh))[0], parted = t.shape(spans({span(beh + beh), tail}))[0];
+    CHECK(word.glyphs.size() == 3 && parted.glyphs.size() == 3);
+    for (size_t i = 0; i < 3 && parted.glyphs.size() == 3; ++i) CHECK(word.glyphs[i].glyph == parted.glyphs[i].glyph);
+  }
+}
+
+namespace {
 // A shape font made here (UI-92): 'A' a stroke 10 up, then 6 on; 'B' a full octant circle of radius 5 beside it; 'C' two
 // A's as subshapes; 'D' a half circle by bulge, below its chord; 'E' a fractional arc of radius 3 from 55 to 96 degrees.
 // Above 10, below 2. As a shapes 1.0 file, or a unifont (numbered by code point, subshapes in two bytes).

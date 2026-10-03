@@ -188,82 +188,6 @@ std::string text_codes(std::string_view s) {
   return out;
 }
 
-// MTEXT without its formatting: \P new paragraph, \~ hard space, \S stacked fractions as a/b, {} groups and the
-// \f font / \H height / \C colour ... codes dropped.
-std::string mtext_plain(std::string_view s) {
-  std::string out;
-  for (size_t i = 0; i < s.size(); ++i) {
-    const char c = s[i];
-    if (c == '{' || c == '}') continue;
-    if (c != '\\' || i + 1 >= s.size()) { out += c; continue; }
-    const char k = s[++i];
-    if (k == 'P' || k == 'X') out += '\n';
-    else if (k == '~') out += ' ';
-    else if (k == '\\' || k == '{' || k == '}') out += k;
-    else if (k == 'S') {
-      const size_t end = s.find(';', i + 1);
-      for (char ch : s.substr(i + 1, end == std::string_view::npos ? std::string_view::npos : end - i - 1))
-        out += (ch == '^' || ch == '#') ? '/' : ch;
-      i = end == std::string_view::npos ? s.size() : end;
-    } else if (std::string_view("ACcFfHQTWp").find(k) != std::string_view::npos) {
-      const size_t end = s.find(';', i);
-      i = end == std::string_view::npos ? s.size() : end;
-    } else if (std::string_view("LlOoKkNn").find(k) == std::string_view::npos) {
-      out += k;
-    }
-  }
-  while (!out.empty() && (out.back() == '\n' || out.back() == ' ')) out.pop_back();
-  return text_codes(out);
-}
-
-bool blank(const std::string& s) { return s.find_first_not_of(" \t\n") == std::string::npos; }
-
-// What MTEXT's leading formatting (before its first character) sets for all of it: \f a TrueType family with |b1 bold
-// and |i1 italic, \F a shape font, \H a height (2.5, or 1.5x the entity's), \W a width factor, \C a colour. Formatting
-// further on (runs in other fonts, sizes or colours) is dropped with the codes (mtext_plain).
-struct MtextFormat {
-  std::string font;
-  bool bold = false, italic = false;
-  double height = 0, relative = 1, width = 0;
-  int aci = 0;
-};
-MtextFormat mtext_format(std::string_view s) {
-  MtextFormat out;
-  for (size_t i = 0; i < s.size();) {
-    if (s[i] == '{') { ++i; continue; }
-    if (s[i] != '\\' || i + 1 >= s.size() || std::string_view("fFHWCQTA").find(s[i + 1]) == std::string_view::npos) break;
-    const size_t end = s.find(';', i + 2);
-    if (end == std::string_view::npos) break;
-    std::string_view value = s.substr(i + 2, end - i - 2);
-    const char k = s[i + 1];
-    try {
-      if (k == 'f' || k == 'F') {
-        size_t at = value.find('|');
-        out.font = std::string(trimmed(value.substr(0, at)));
-        while (at != std::string_view::npos) {
-          const size_t next = value.find('|', at + 1);
-          const auto part = value.substr(at + 1, next == std::string_view::npos ? std::string_view::npos : next - at - 1);
-          out.bold = out.bold || part == "b1";
-          out.italic = out.italic || part == "i1";
-          at = next;
-        }
-      } else if (k == 'H' || k == 'W') {
-        const bool times = !value.empty() && (value.back() == 'x' || value.back() == 'X');
-        if (times) value.remove_suffix(1);
-        const double v = parse_number(value);
-        if (k == 'W') out.width = v;
-        else if (times) out.relative = v;
-        else out.height = v;
-      } else if (k == 'C') {
-        out.aci = int(parse_number(value));
-      }
-    } catch (const Error&) {
-    }
-    i = end + 1;
-  }
-  return out;
-}
-
 // AutoCAD Color Index -> RGB: 1-9 fixed, 10-249 24 hues x 5 shades x full/half saturation, 250-255 greys.
 uint32_t aci_rgb(int i) {
   static const uint32_t fixed[10] = {0x000000, 0xFF0000, 0xFFFF00, 0x00FF00, 0x00FFFF, 0x0000FF, 0xFF00FF, 0xFFFFFF, 0x414141, 0x808080};
@@ -290,6 +214,146 @@ uint32_t aci_rgb(int i) {
 
 // White and black are the drawing's foreground (ACI 7 swaps with the background): the viewer's own colour.
 uint32_t visible_color(uint32_t rgb) { return rgb == 0xFFFFFF || rgb == 0 ? kNoColor : rgb; }
+
+bool blank(const std::string& s) { return s.find_first_not_of(" \t\n") == std::string::npos; }
+
+// TEXT's %%u, %%o and %%k turn a line under, over and through it on and off: its parts in `base` with them; none
+// without them.
+std::vector<TextSpan> text_spans(std::string_view s, const TextFormat& base) {
+  std::vector<TextSpan> out;
+  TextSpan span;
+  static_cast<TextFormat&>(span) = base;
+  std::string run;
+  bool toggled = false;
+  auto flush = [&] {
+    if (!run.empty()) span.text = text_codes(run), out.push_back(span);
+    run.clear();
+  };
+  for (size_t i = 0; i < s.size(); ++i) {
+    if (s[i] == '%' && i + 2 < s.size() && s[i + 1] == '%') {
+      const char c = char(std::tolower(static_cast<unsigned char>(s[i + 2])));
+      if (c == 'u' || c == 'o' || c == 'k') {
+        flush();
+        bool& on = c == 'u' ? span.underline : c == 'o' ? span.overline : span.strike;
+        on = !on;
+        toggled = true;
+      } else {
+        run += s.substr(i, 3);  // another code, for text_codes
+      }
+      i += 2;
+      continue;
+    }
+    run += s[i];
+  }
+  flush();
+  return toggled ? out : std::vector<TextSpan>{};
+}
+
+// MTEXT in parts of their own formats, from `base` (the entity's): \P starts a paragraph (\X and \N too), \~ is a hard
+// space, a {group}'s formatting ends with it; \f a TrueType family (|b1 bold, |i1 italic) and \F a shape font, \H a height
+// (drawing units, or times the current one with x), \W a width factor, \Q an obliquing angle, \T tracking, \A an
+// alignment (0 baseline, 1 middle, 2 top), \C a colour index and \c a true colour (0 and 256: the entity's), \L \O \K
+// a line under, over and through on (lower case: off), \S a stacked pair (a/b, a#b, a^b), \p a paragraph's alignment (xqc,
+// xqr, xql, xqj: kept by the paragraphs after it, in `justify`). Each part's text takes the TEXT codes (%%d ...).
+std::vector<TextSpan> mtext_spans(std::string_view s, const TextFormat& base, double unit, std::vector<int>& justify) {
+  std::vector<TextSpan> out;
+  std::vector<TextFormat> groups;
+  TextFormat f = base;
+  std::string text;
+  int paragraph = -1;
+  justify.assign(1, -1);
+  auto flush = [&] {
+    if (text.empty()) return;
+    TextSpan span;
+    static_cast<TextFormat&>(span) = f;
+    span.text = text_codes(text);
+    out.push_back(std::move(span));
+    text.clear();
+  };
+  for (size_t i = 0; i < s.size(); ++i) {
+    const char c = s[i];
+    if (c == '{' || c == '}') {
+      flush();
+      if (c == '{') groups.push_back(f);
+      else if (!groups.empty()) f = groups.back(), groups.pop_back();
+      continue;
+    }
+    if (c != '\\' || i + 1 >= s.size()) { text += c; continue; }
+    const char k = s[++i];
+    if (k == 'P' || k == 'X' || k == 'N') { text += '\n'; justify.push_back(paragraph); continue; }
+    if (k == '~') { text += "\xC2\xA0"; continue; }
+    if (std::string_view("LlOoKk").find(k) != std::string_view::npos) {
+      flush();
+      (k == 'L' || k == 'l' ? f.underline : k == 'O' || k == 'o' ? f.overline : f.strike) = std::isupper(static_cast<unsigned char>(k)) != 0;
+      continue;
+    }
+    if (std::string_view("ACcFfHQTWpS").find(k) == std::string_view::npos) { text += k; continue; }  // \\ \{ \} and the rest as written
+    size_t end = i + 1;  // the value, up to its ';' (in a stack, one not escaped)
+    while (end < s.size() && s[end] != ';') end += k == 'S' && s[end] == '\\' ? 2 : 1;
+    end = std::min(end, s.size());
+    std::string_view value = s.substr(i + 1, end - i - 1);
+    i = end;
+    flush();
+    try {
+      if (k == 'f' || k == 'F') {
+        size_t at = value.find('|');
+        f.font = std::string(trimmed(value.substr(0, at)));
+        f.family.clear();
+        f.bold = f.italic = false;
+        while (at != std::string_view::npos) {
+          const size_t next = value.find('|', at + 1);
+          const auto part = value.substr(at + 1, next == std::string_view::npos ? std::string_view::npos : next - at - 1);
+          f.bold = f.bold || part == "b1";
+          f.italic = f.italic || part == "i1";
+          at = next;
+        }
+      } else if (k == 'S') {
+        std::string parts[2];
+        char kind = 0;
+        for (size_t j = 0; j < value.size(); ++j) {
+          if (value[j] == '\\' && j + 1 < value.size()) parts[kind != 0] += value[++j];
+          else if (!kind && (value[j] == '^' || value[j] == '/' || value[j] == '#')) kind = value[j];
+          else parts[kind != 0] += value[j];
+        }
+        if (!kind) { text += parts[0]; continue; }
+        TextSpan span;
+        static_cast<TextFormat&>(span) = f;
+        span.stack = kind;
+        span.text = text_codes(parts[0]);
+        span.bottom = text_codes(parts[1]);
+        if (!blank(span.text + span.bottom)) out.push_back(std::move(span));
+      } else if (k == 'p') {
+        const auto q = value.find('q');
+        const char a = q != std::string_view::npos && q + 1 < value.size() ? value[q + 1] : 0;
+        if (a == 'c' || a == 'r' || a == 'l' || a == 'j' || a == 'd')
+          justify.back() = paragraph = a == 'c' ? TextRequest::Center : a == 'r' ? TextRequest::Right : TextRequest::Left;
+      } else {
+        const bool times = !value.empty() && (value.back() == 'x' || value.back() == 'X');
+        if (times) value.remove_suffix(1);
+        const double v = parse_number(value);
+        if (k == 'H' && v > 0) f.size = times ? f.size * v : v * unit;
+        else if (k == 'W' && v > 0) f.width = times ? f.width * v : v;
+        else if (k == 'T' && v > 0) f.tracking = times ? f.tracking * v : v;
+        else if (k == 'Q') f.oblique = v * kPi / 180;
+        else if (k == 'A') f.align = v == 1 ? TextFormat::Center : v == 2 ? TextFormat::Top : TextFormat::Base;
+        else if (k == 'C') f.color = v >= 1 && v <= 255 ? visible_color(aci_rgb(int(v))) : TextFormat::kInherit;
+        else if (k == 'c') {  // 0xBBGGRR
+          const auto bgr = uint32_t(int64_t(v)) & 0xFFFFFFu;
+          f.color = visible_color((bgr & 0xFF) << 16 | (bgr & 0xFF00) | bgr >> 16);
+        }
+      }
+    } catch (const Error&) {
+    }
+  }
+  flush();
+  while (!out.empty() && !out.back().stack) {  // what ends it: new paragraphs and spaces
+    auto& t = out.back().text;
+    while (!t.empty() && (t.back() == '\n' || t.back() == ' ')) t.pop_back();
+    if (!t.empty()) break;
+    out.pop_back();
+  }
+  return out;
+}
 
 // The fields of one entity (or table record): the group codes after its "0 TYPE" pair.
 struct Fields {
@@ -424,7 +488,7 @@ class Reader {
   };
   struct Style {
     std::string font, family;  // its font file (a shape font, .shx, or a TrueType one) and its TrueType family (XDATA)
-    double height = 0, width = 1;
+    double height = 0, width = 1, oblique = 0;  // oblique: degrees
     bool bold = false, italic = false;  // the family's faces (XDATA flags)
   };
   struct Block {
@@ -634,6 +698,7 @@ void Reader::tables(const std::vector<Entity>& section) {
       style.height = f.num(40);
       style.width = f.num(41, 1);
       if (!(style.width > 0)) style.width = 1;
+      style.oblique = f.num(50);
       m_styles[upper(trimmed(f.str(2)))] = style;
     } else if (e.type == "LTYPE") {  // the dashes (49, repeated); the shapes and text of complex linetypes are left out
       std::vector<double> dashes;
@@ -1310,26 +1375,38 @@ TextRequest Reader::text_request(std::string_view styleName, std::string text, d
     r.bold = style->second.bold;
     r.italic = style->second.italic;
     r.width = style->second.width;
+    r.oblique = style->second.oblique * kPi / 180;
   }
   if (!(height > 0)) height = style != m_styles.end() && style->second.height > 0 ? style->second.height : 2.5;
   r.size = height * m_unit;
   return r;
 }
 
+// Parts in colours of their own (MTEXT \C) go into the bodies of those colours.
 void Reader::text_shape(const Out& o, const TextRequest& request, const gp_Ax3& at) {
-  const TopoDS_Shape shape = m_text.outline(request, at);
-  if (shape.IsNull()) ++m_noFont;
-  else if (shape.NbChildren() > 0) add(o, shape);
+  std::map<uint32_t, TopoDS_Compound> colored;
+  const TopoDS_Shape shape = m_text.outline(request, at, &colored);
+  if (shape.IsNull()) { ++m_noFont; return; }
+  if (shape.NbChildren() > 0) add(o, shape);
+  for (const auto& [color, part] : colored)
+    if (part.NbChildren() > 0) {
+      Out own = o;
+      own.color = color;
+      add(own, part);
+    }
 }
 
 void Reader::text(const Fields& f, Out& o, const Place& at, bool attrib) {
   if (attrib && (f.integer(70) & 1)) return;  // invisible attribute
-  std::string s = text_codes(decode(f.str(1)));
+  const std::string raw = decode(f.str(1));
+  std::string s = text_codes(raw);
   if (blank(s)) return;
   const Ocs ocs(f.xyz(210, gp_XYZ(0, 0, 1)));
   TextRequest r = text_request(f.str(7, "STANDARD"), std::move(s), f.num(40));
   r.width = f.num(41, r.width);
   if (!(r.width > 0)) r.width = 1;
+  if (f.has(51)) r.oblique = f.num(51) * kPi / 180;
+  r.spans = text_spans(raw, r);
   int ha = f.integer(72), va = f.integer(attrib ? 74 : 73);
   const gp_XYZ p1 = f.xyz(10), p2 = f.has(11) ? f.xyz(11) : p1;
   double rotation = f.num(50) * kPi / 180;
@@ -1370,8 +1447,11 @@ void Reader::mtext(const Fields& f, Out& o, const Place& at) {
   for (size_t j = f.begin; j < f.end; ++j)
     if ((*f.pairs)[j].code == 3) raw += decode((*f.pairs)[j].value);
   raw += decode(f.str(1));
-  std::string s = mtext_plain(raw);
-  if (blank(s)) return;
+  TextRequest r = text_request(f.str(7, "STANDARD"), "", f.num(40));
+  r.spans = mtext_spans(raw, r, m_unit, r.justify);
+  std::string all;
+  for (const auto& span : r.spans) all += span.text + span.bottom;
+  if (blank(all)) return;
   const Ocs ocs(f.xyz(210, gp_XYZ(0, 0, 1)));
   const int attachment = std::clamp(f.integer(71, 1), 1, 9);
   gp_XYZ x;
@@ -1383,18 +1463,10 @@ void Reader::mtext(const Fields& f, Out& o, const Place& at) {
   x.SetZ(0);
   if (x.Modulus() < 1e-9) x = gp_XYZ(1, 0, 0);
   x.Normalize();
-  TextRequest r = text_request(f.str(7, "STANDARD"), std::move(s), f.num(40));
-  const MtextFormat format = mtext_format(raw);
-  if (!format.font.empty()) r.font = format.font, r.family.clear();
-  r.bold = format.bold;
-  r.italic = format.italic;
-  if (format.height > 0) r.size = format.height * m_unit;
-  if (format.relative > 0) r.size *= format.relative;
-  if (format.width > 0) r.width = format.width;
-  if (format.aci >= 1 && format.aci <= 255) o.color = visible_color(aci_rgb(format.aci));
   r.wrap = f.num(41) * m_unit;
   const double factor = f.num(44, 1);
-  r.spacing = 5.0 / 3.0 * r.size * (factor > 0 ? factor : 1);  // at 1.0, 5/3 of the text height from baseline to baseline
+  // At 1.0, 5/3 of the text height from baseline to baseline (of a larger height in a line with larger text).
+  r.spacing = 5.0 / 3.0 * r.size * (factor > 0 ? factor : 1);
   const int column = (attachment - 1) % 3, row = (attachment - 1) / 3;
   r.h = column == 1 ? TextRequest::Center : column == 2 ? TextRequest::Right : TextRequest::Left;
   // Top: the first line's capitals touch the insertion point; middle and bottom: the block's middle and last baseline.
