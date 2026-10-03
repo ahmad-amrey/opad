@@ -767,6 +767,30 @@ TEST(op_history_index) {
   bool stopped = false;
   QDir(cache).removeRecursively();
   CHECK(ophistory::build(in(dir), dir, "model.opad", cache, [&stopped] { return stopped = true; }).ops.empty() && stopped);  // cancelled
+
+  // Moved with an edit, then renamed alone: the commits under the older names still count (git log --follow loses them
+  // with --reverse), each version read once, the renames kept per commit.
+  CHECK(ophistory::build(in(dir), dir, "model.opad", cache).blobsRead == 4);
+  QDir().mkpath(dir + "/parts");
+  git_(dir, {"mv", "model.opad", "parts/bracket.opad"});
+  const std::string moved = d.append({{"op", "rename"}, {"target", body}, {"name", "Moved bracket"}}).id;
+  d.save_as((dir + "/parts/bracket.opad").toStdU16String());
+  git_(dir, {"add", "-A"});
+  git_(dir, {"commit", "-q", "--author", "Dave <dave@x.org>", "-m", "moved"});
+  const QString last = QString::fromUtf8("parts/bracket v2,\xc3\xbc.opad");
+  git_(dir, {"mv", "parts/bracket.opad", last});
+  git_(dir, {"commit", "-q", "--author", "Erin <erin@x.org>", "-m", "renamed the file"});
+  const ophistory::Index ren = ophistory::build(in(dir), dir, last, cache);
+  CHECK_EQ(ren.commits.size(), size_t(6));
+  CHECK(ren.paths == std::vector<QString>({"model.opad", "model.opad", "model.opad", "model.opad", "parts/bracket.opad", last}));
+  CHECK(ren.commits[0].author == "Alice" && ren.commits[4].author == "Dave" && ren.commits[5].author == "Erin");
+  CHECK(ren.find(import)->added == 0 && ren.find(rename)->added == 1 && ren.find(note)->lastEdit == 3 && ren.find(moved)->added == 4);
+  CHECK(ren.blobs == 5 && ren.blobsRead == 1);  // Erin's version is Dave's; the four before from the cache
+  CHECK(ren.touching({body}) == (std::vector<int>{0, 1, 2, 4}));
+  CHECK(QFileInfo::exists(cache + "/renames-" + ren.commits[5].hash) && QFileInfo::exists(cache + "/renames-" + ren.commits[4].hash));
+  CHECK(!QFileInfo::exists(cache + "/renames-" + ren.commits[0].hash));  // a root commit: nothing asked
+  const ophistory::Index cached = ophistory::build(in(dir), dir, last, cache);
+  CHECK(cached.commits.size() == 6 && cached.blobsRead == 0 && cached.paths == ren.paths);
 }
 
 // UI-62 Push and UI-61 Clone with Git LFS: files under assets/ go up through git-lfs's pre-push hook into the remote's LFS

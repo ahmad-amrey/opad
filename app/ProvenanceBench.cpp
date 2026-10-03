@@ -3,7 +3,9 @@
 // which commit (read once, on a worker), an op of this session is not committed yet; Show in version history on the
 // feature's marker and on the body's row narrows the History page to the commits that touched them, Show all widens it
 // again; once a new commit moves HEAD, only that version is read (the others come from the cache) and the session's op is
-// said to be added by its author. Pictures at <prefix>.<step>.png.
+// said to be added by its author. With OPAD_BENCH_PROVENANCE_MOVED=<old name> (case provenance-moved) Alice committed the
+// document under that name and Bob's commit renamed it: the box is still Alice's (said with its old name), and the History
+// page, which lists the document under its name, takes Bob's commit for hers. Pictures at <prefix>.<step>.png.
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QTimer>
@@ -40,7 +42,7 @@ OPAD_BENCH(OPAD_BENCH_PROVENANCE, provenance) {
   };
   auto st = std::make_shared<State>();
   st->clock.start();
-  const QString prefix = value;
+  const QString prefix = value, moved = qEnvironmentVariable("OPAD_BENCH_PROVENANCE_MOVED");
   OpProvenance* prov = vc->provenance();
   auto require = [](bool ok, const QString& why) {
     if (!ok) throw std::runtime_error(why.toStdString());
@@ -91,11 +93,14 @@ OPAD_BENCH(OPAD_BENCH_PROVENANCE, provenance) {
           require(ix.commits.size() == 3 && ix.blobs == 3 && ix.blobsRead == 3, QStringLiteral("index: %1 commits, %2 versions, %3 read").arg(ix.commits.size()).arg(ix.blobs).arg(ix.blobsRead));
           for (const auto& c : ix.commits) st->hashes << c.shortHash;
           st->head = ix.head;
+          require(ix.paths == std::vector<QString>({moved.isEmpty() ? ix.rel : moved, ix.rel, ix.rel}), "the document's names: " + QStringList(ix.paths.begin(), ix.paths.end()).join(' '));
           const QString box = w.m_timeline->tooltip(st->feature), renamed = w.m_timeline->tooltip(st->rename);
           require(box.contains("Alice") && box.contains(st->hashes[0]) && box.contains("Carol") && box.contains(st->hashes[2]), "the feature's tooltip: " + box);
-          require(renamed.contains("Bob") && renamed.contains(st->hashes[1]) && !renamed.contains("Carol"), "the rename's tooltip: " + renamed);
-          pass(QStringLiteral("tooltips: the box added by Alice in %1 and edited by Carol in %3, the rename by Bob in %2 (read in %4 ms)")
-                   .arg(st->hashes[0], st->hashes[1], st->hashes[2]).arg(st->clock.elapsed()));
+          require(moved.isEmpty() || box.contains(tr("Added by %1 in %2 · %3, as %4").section("%3", 1).arg(moved).toHtmlEscaped()),
+                  "the feature's tooltip names the document's older name: " + box);
+          require(renamed.contains("Bob") && renamed.contains(st->hashes[1]) && !renamed.contains("Carol") && (moved.isEmpty() || !renamed.contains(moved)), "the rename's tooltip: " + renamed);
+          pass(QStringLiteral("tooltips: the box added by Alice in %1%5 and edited by Carol in %3, the rename by Bob in %2 (read in %4 ms)")
+                   .arg(st->hashes[0], st->hashes[1], st->hashes[2]).arg(st->clock.elapsed()).arg(moved.isEmpty() ? QString() : " as " + moved));
           st->session = doc->run("rename", opad::json{{"target", st->node}, {"name", "Session name"}}).value("id", "");
           require(!st->session.empty(), "the session's rename");
           const QString fresh = w.m_timeline->tooltip(st->session);
@@ -113,7 +118,8 @@ OPAD_BENCH(OPAD_BENCH_PROVENANCE, provenance) {
         }
         case 2: {
           if (!vc->historyFilterRead() || !vc->toolPanel() || !vc->toolPanel()->isVisible()) return;
-          require(vc->panel()->filterBar()->isVisible() && listed() == QStringList({st->hashes[2], st->hashes[0]}), "the feature's history: " + listed().join(' '));
+          // Moved: the History page lists model.opad only, so Bob's commit, which brought the box under that name, stands for Alice's.
+          require(vc->panel()->filterBar()->isVisible() && listed() == QStringList({st->hashes[2], st->hashes[moved.isEmpty() ? 0 : 1]}), "the feature's history: " + listed().join(' '));
           if (!prefix.isEmpty()) vc->toolPanel()->grab().save(prefix + ".feature.png");
           pass("the feature's marker: its history is the commits that added and edited it (" + listed().join(' ') + ")");
           // The body's row in the browser: the commit that made it and the one that renamed it.
@@ -127,7 +133,7 @@ OPAD_BENCH(OPAD_BENCH_PROVENANCE, provenance) {
         }
         case 3: {
           if (!vc->historyFilterRead()) return;
-          require(listed() == QStringList({st->hashes[1], st->hashes[0]}), "the body's history: " + listed().join(' '));
+          require(listed() == (moved.isEmpty() ? QStringList({st->hashes[1], st->hashes[0]}) : QStringList({st->hashes[1]})), "the body's history: " + listed().join(' '));
           pass("the body: the commits that made and renamed it (" + listed().join(' ') + ")");
           vc->panel()->filterBar()->findChild<QToolButton*>("historyFilterClear")->click();
           st->step = 4;
@@ -135,8 +141,9 @@ OPAD_BENCH(OPAD_BENCH_PROVENANCE, provenance) {
         }
         case 4: {
           if (!vc->settled() || vc->panel()->filterBar()->isVisible()) return;
-          if (listed().size() < 3) return;  // the whole history read again
-          require(listed() == QStringList({st->hashes[2], st->hashes[1], st->hashes[0]}), "Show all: " + listed().join(' '));
+          if (listed().size() < (moved.isEmpty() ? 3 : 2)) return;  // the whole history read again
+          require(listed() == (moved.isEmpty() ? QStringList({st->hashes[2], st->hashes[1], st->hashes[0]}) : QStringList({st->hashes[2], st->hashes[1]})),
+                  "Show all: " + listed().join(' '));
           pass("Show all: every commit again");
           w.action("file.save")->trigger();
           st->step = 5;

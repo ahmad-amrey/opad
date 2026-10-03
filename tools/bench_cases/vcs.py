@@ -109,9 +109,10 @@ def located(root, document, name="paths"):
     return document(f"{name}/doc/model", ("import", "--file", str(stl)))
 
 
-def provenance(root, document, name="provenance"):
+def provenance(root, document, name="provenance", moved=None):
     """Who added which op (UI-64): <name>/model.opad with a box committed by Alice, a rename of its body by Bob and an edit of
-    the box's name by Carol (records appended as a later OPAD writes them)."""
+    the box's name by Carol (records appended as a later OPAD writes them). With `moved` Alice committed the document under
+    that name and Bob's commit also renamed the file to model.opad (git mv)."""
     (root / name).mkdir(exist_ok=True)
     doc = document(f"{name}/model", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
     git = shutil.which("git")
@@ -121,18 +122,24 @@ def provenance(root, document, name="provenance"):
     quiet = dict(cwd=folder, check=True, capture_output=True)
     subprocess.run([git, "init", "-q", "-b", "main"], **quiet)
 
-    def commit(author, message, record=None):
+    def commit(author, message, record=None, path="model.opad"):
         if record:
             text = doc.read_text(encoding="utf-8")
             at = text.index("#bodies\n")
             doc.write_text(text[:at] + json.dumps(record, separators=(",", ":")) + "\n" + text[at:], encoding="utf-8", newline="\n")
-        subprocess.run([git, "add", "model.opad"], **quiet)
+        subprocess.run([git, "add", path], **quiet)
         subprocess.run([git, "-c", "user.name=bench", "-c", "user.email=bench@example.com", "commit", "-q", "--author", author, "-m", message], **quiet)
 
     ops = [json.loads(line) for line in doc.read_text(encoding="utf-8").split("#ops\n")[1].split("#bodies")[0].splitlines() if line.startswith('{"op"')]
     feature = next(op for op in ops if op["op"] == "feature")
     body = feature["result"]["bodies"][0]["id"]
-    commit("Alice <alice@example.com>", "a box")
+    if moved:
+        (folder / moved).parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(doc, folder / moved)
+        commit("Alice <alice@example.com>", "a box", path=moved)
+        subprocess.run([git, "mv", moved, "model.opad"], **quiet)
+    else:
+        commit("Alice <alice@example.com>", "a box")
     stamp = dict(ts="2026-10-03T12:00:00Z")
     commit("Bob <bob@example.com>", "renamed", dict(op="rename", id=str(uuid.uuid4()), **stamp, by="bob", target=body, name="Block"))
     commit("Carol <carol@example.com>", "the box renamed", dict(op="edit", id=str(uuid.uuid4()), **stamp, by="carol", target=feature["id"], set={"name": "Big box"}))
@@ -215,6 +222,10 @@ CASES = [
     ("provenance", provenance, {"OPAD_BENCH_PROVENANCE": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),
     ("provenance-ar", lambda root, document: provenance(root, document, "provenance-ar"),
      {"OPAD_BENCH_PROVENANCE": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
+    # The same history with the document committed first as draft/box.opad and renamed by Bob: Alice still added the box.
+    ("provenance-moved", lambda root, document: provenance(root, document, "provenance-moved", "draft/box.opad"),
+     {"OPAD_BENCH_PROVENANCE": "{prefix}", "OPAD_BENCH_PROVENANCE_MOVED": "draft/box.opad", "GIT_CONFIG_GLOBAL": "{root}/git-global",
+      "GIT_CONFIG_NOSYSTEM": "1"}),
     # Open file location and Copy path from File, the status path, the browser's document row, an import's marker and the
     # recent files' menus (the file manager never starts: the bench records what would run); also right to left.
     ("paths", located, {"OPAD_BENCH_PATHS": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),

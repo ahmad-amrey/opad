@@ -1,6 +1,7 @@
 #include "OpProvenance.hpp"
 
 #include <QElapsedTimer>
+#include <algorithm>
 
 #include "GitWatch.hpp"
 #include "Jobs.hpp"
@@ -63,9 +64,14 @@ void OpProvenance::whenReady(std::function<void()> then) {
 }
 
 std::vector<git::Commit> OpProvenance::commitsTouching(const std::vector<std::string>& ids) const {
+  // The History page lists the document under its name: a commit under an older one counts as the commit that renamed it.
+  const int renamed = int(std::find(m_index.paths.begin(), m_index.paths.end(), m_index.rel) - m_index.paths.begin());
+  std::vector<int> at = m_index.touching(ids);
+  for (int& k : at) k = std::max(k, renamed);
+  at.erase(std::unique(at.begin(), at.end()), at.end());
   std::vector<git::Commit> out;
-  const std::vector<int> at = m_index.touching(ids);
-  for (auto it = at.rbegin(); it != at.rend(); ++it) out.push_back(m_index.commits[size_t(*it)]);
+  for (auto it = at.rbegin(); it != at.rend(); ++it)
+    if (*it < int(m_index.commits.size())) out.push_back(m_index.commits[size_t(*it)]);
   return out;
 }
 
@@ -85,7 +91,9 @@ QString OpProvenance::tip(const opad::Op& op) {
   const ophistory::Provenance* p = m_index.find(op.id);
   if (!p || p->added < 0) return line(t.fg3, tr("Not committed yet"));
   const git::Commit& added = m_index.commits[size_t(p->added)];
-  QString html = line(t.fg2, tr("Added by %1 in %2 · %3").arg(added.author, added.shortHash, VersionPanel::ago(added.date)));
+  const QString as = m_index.paths[size_t(p->added)];  // a document renamed since: the name it had then
+  QString html = line(t.fg2, as == m_index.rel ? tr("Added by %1 in %2 · %3").arg(added.author, added.shortHash, VersionPanel::ago(added.date))
+                                               : tr("Added by %1 in %2 · %3, as %4").arg(added.author, added.shortHash, VersionPanel::ago(added.date), as));
   if (p->edits > 0) {
     const git::Commit& last = m_index.commits[size_t(p->lastEdit)];
     html += line(t.fg3, tr("Edited in %n commit(s), last by %1 in %2 · %3", nullptr, p->edits).arg(last.author, last.shortHash, VersionPanel::ago(last.date)));

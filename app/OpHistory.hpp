@@ -3,7 +3,8 @@
 // and the History page narrowed to the commits that touched an op or a node. "Show in git log" ran git log -S once per op,
 // which read every version of the file (about 0.9 s a version) and timed out after about ten commits.
 //
-// ophistory::build reads git on a worker: the commits that changed the file (git log --topo-order), the file's blob in each
+// ophistory::build reads git on a worker: the commits that changed the file (git log --topo-order; before the oldest of
+// them renamed it, those under its older name, and so on, the renames kept per commit in the cache), the file's blob in each
 // (git cat-file --batch-check), then the op records of every blob it has not read before, up to #bodies only (the bodies
 // are most of a big file): small blobs through one git cat-file --batch, big ones one git cat-file blob each, ended once
 // #bodies comes. What a blob holds never changes, so its records are kept by its id in the user cache (git-ops/<oid>): a
@@ -47,7 +48,8 @@ struct Provenance {
 
 struct Index {
   QString top, rel, head;  // the work tree, the document in it ('/'), the commit it was read at
-  std::vector<git::Commit> commits;  // that changed the document, oldest first (topological)
+  std::vector<git::Commit> commits;  // that changed the document, oldest first (topological), also under older names
+  std::vector<QString> paths;        // the document in each of them: rel, or the name it had before a rename
   std::unordered_map<std::string, Provenance> ops;
   std::unordered_map<std::string, std::vector<int>> touched;  // an op or node id -> the commits that brought ops naming it
   int blobs = 0, blobsRead = 0;  // versions, and those read from git (the others came from the cache)

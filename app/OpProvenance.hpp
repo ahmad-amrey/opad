@@ -22,13 +22,15 @@ class OpProvenance : public QObject {
   Q_OBJECT
  public:
   OpProvenance(GitWatch* git, JobRunner* jobs, QObject* parent);
-  // Lines for an op's tooltip (HTML): who added it in which commit and when, its later edits, "not committed yet", or that
-  // the history is being read (which starts the read). Empty outside a repository.
+  // Lines for an op's tooltip (HTML): who added it in which commit and when (and under which name, the document renamed
+  // since), its later edits, "not committed yet", or that the history is being read (which starts the read). Empty outside
+  // a repository.
   QString tip(const opad::Op& op);
   void ensure();  // reads the index unless it is there for HEAD (or being read)
   bool ready() const;  // the index is the one of HEAD
   const ophistory::Index& index() const { return m_index; }
-  // The commits that touched any of these ops or nodes, newest first; ready() first.
+  // The commits that touched any of these ops or nodes, newest first; ready() first. One under an older name of the document
+  // counts as the commit that renamed it (the History page lists the document under its name).
   std::vector<git::Commit> commitsTouching(const std::vector<std::string>& ids) const;
   void whenReady(std::function<void()> then);  // now when ready, else once the read ends (dropped when it fails); retries a failed read
   QString error() const { return m_error; }    // why the last read failed

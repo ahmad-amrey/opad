@@ -104,6 +104,31 @@ void saveCached(const QString& file, const std::vector<Record>& records) {
   QSaveFile f(file);  // a cache: a failed write only costs a read next time
   if (f.open(QIODevice::WriteOnly) && f.write(text) == text.size()) f.commit();
 }
+
+// The name `path` had before `commit` renamed it so (git's rename detection against the first parent; none in a root or
+// merge commit), else empty. What a commit renamed never changes: kept as renames-<commit> ("old\0new\0" pairs).
+QString renamedFrom(const git::Context& c, const QString& commit, const QString& path, const QString& cacheDir, const git::RunOptions& o) {
+  const QString file = QDir(cacheDir).filePath("renames-" + commit);
+  QByteArray pairs;
+  if (QFile f(file); f.open(QIODevice::ReadOnly)) {
+    pairs = f.readAll();
+  } else {
+    const git::Result r = git::run(c, {"diff-tree", "-r", "-M", "--no-commit-id", "--name-status", "-z", "--diff-filter=R", commit}, o);
+    if (!r.ok()) {
+      if (o.cancelled && o.cancelled()) return {};  // the caller sees it too and gives up
+      throw std::runtime_error(utf8(r.error()));
+    }
+    const QList<QByteArray> out = r.out.split('\0');  // R<score>, old, new
+    for (qsizetype i = 0; i + 2 < out.size(); i += 3)
+      if (out[i].startsWith('R')) pairs.append(out[i + 1]).append('\0').append(out[i + 2]).append('\0');
+    QSaveFile save(file);
+    if (save.open(QIODevice::WriteOnly) && save.write(pairs) == pairs.size()) save.commit();
+  }
+  const QList<QByteArray> names = pairs.split('\0');
+  for (qsizetype i = 0; i + 1 < names.size(); i += 2)
+    if (QString::fromUtf8(names[i + 1]) == path) return QString::fromUtf8(names[i]);
+  return {};
+}
 }  // namespace
 
 void Reader::line(std::string_view l) {
@@ -184,26 +209,42 @@ Index build(const git::Context& base, const QString& top, const QString& rel, co
   if (stop()) return Index{};
   if (!head.ok()) return ix;  // no commit yet
   ix.head = QString::fromLatin1(head.out).trimmed();
-  // The commits that changed the document, oldest first.
-  const git::Result log = git::run(c, {"log", "--topo-order", "--reverse", "-z", "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s", ix.head, "--", rel}, o);
-  if (stop()) return Index{};
-  if (!log.ok()) throw std::runtime_error(utf8(log.error()));
-  for (const QByteArray& record : log.out.split('\0')) {
-    const QList<QByteArray> f = record.trimmed().split('\x1f');
-    if (f.size() < 6 || f[0].isEmpty()) continue;
-    git::Commit k;
-    k.hash = QString::fromLatin1(f[0]);
-    k.shortHash = QString::fromLatin1(f[1]);
-    k.author = QString::fromUtf8(f[2]);
-    k.email = QString::fromUtf8(f[3]);
-    k.date = QString::fromLatin1(f[4]);
-    k.subject = QString::fromUtf8(f.mid(5).join('\x1f'));
-    ix.commits.push_back(std::move(k));
+  QDir().mkpath(cacheDir);
+  // The commits that changed the document, oldest first, and back through renames: when the oldest one renamed it, the
+  // commits before it under its older name (git log --follow stops at the rename once --reverse is given).
+  QString path = rel, range = ix.head;
+  for (int renames = 0; renames < 64; ++renames) {
+    const git::Result log = git::run(c, {"log", "--topo-order", "--reverse", "-z", "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%s", range, "--", path}, o);
+    if (stop()) return Index{};
+    if (!log.ok()) throw std::runtime_error(utf8(log.error()));
+    std::vector<git::Commit> older;
+    for (const QByteArray& record : log.out.split('\0')) {
+      const QList<QByteArray> f = record.trimmed().split('\x1f');
+      if (f.size() < 7 || f[0].isEmpty()) continue;
+      git::Commit k;
+      k.hash = QString::fromLatin1(f[0]);
+      k.shortHash = QString::fromLatin1(f[1]);
+      k.author = QString::fromUtf8(f[2]);
+      k.email = QString::fromUtf8(f[3]);
+      k.date = QString::fromLatin1(f[4]);
+      k.parents = QString::fromLatin1(f[5]).split(' ', Qt::SkipEmptyParts);
+      k.subject = QString::fromUtf8(f.mid(6).join('\x1f'));
+      older.push_back(std::move(k));
+    }
+    if (older.empty()) break;
+    ix.commits.insert(ix.commits.begin(), older.begin(), older.end());
+    ix.paths.insert(ix.paths.begin(), older.size(), path);
+    if (older.front().parents.size() != 1) break;  // a root commit made it; a merge's renames are not followed
+    const QString from = renamedFrom(c, older.front().hash, path, cacheDir, o);
+    if (stop()) return Index{};
+    if (from.isEmpty() || from == path) break;
+    range = older.front().hash + '^';
+    path = from;
   }
   if (ix.commits.empty() || stop()) return ix;
   // The document's blob in each.
   QByteArray ask;
-  for (const git::Commit& k : ix.commits) ask += k.hash.toLatin1() + ':' + rel.toUtf8() + '\n';
+  for (size_t k = 0; k < ix.commits.size(); ++k) ask += ix.commits[k].hash.toLatin1() + ':' + ix.paths[k].toUtf8() + '\n';
   git::RunOptions check = o;
   check.input = ask;
   const git::Result blobs = git::run(c, {"cat-file", "--batch-check"}, check);
@@ -223,7 +264,6 @@ Index build(const git::Context& base, const QString& top, const QString& rel, co
   // Each blob's records: from the cache, else read from git (small ones in one batch, big ones on their own).
   std::unordered_map<std::string, std::vector<Record>> records;
   std::vector<QByteArray> small, big;
-  QDir().mkpath(cacheDir);
   for (const auto& [oid, size] : sizes) {
     std::vector<Record> cached;
     if (loadCached(QDir(cacheDir).filePath(QString::fromStdString(oid)), cached)) records[oid] = std::move(cached);

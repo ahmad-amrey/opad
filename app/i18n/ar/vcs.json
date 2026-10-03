@@ -600,6 +600,7 @@
  "Reading who added it in git…": "قراءة من أضافه في git…",
  "The git history could not be read: %1": "تعذّرت قراءة سجل git: %1",
  "Added by %1 in %2 · %3": "أضافه %1 في %2 · %3",
+ "Added by %1 in %2 · %3, as %4": "أضافه %1 في %2 · %3، باسم %4",
  "Edited in %n commit(s), last by %1 in %2 · %3": "عُدّل في %n إيداع، آخرها بواسطة %1 في %2 · %3",
  "Deleted by %1 in %2": "حذفه %1 في %2",
  "Show in version history": "إظهار في سجل النسخ",
