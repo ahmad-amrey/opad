@@ -27,3 +27,4 @@ OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_SNAPS, sketchSnaps, benchSnaps)             
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_STEPS, sketchSteps, benchSteps)                   // UI-25
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_CONSTRAINTS, sketchConstraints, benchConstraints)  // UI-24
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_COMMANDLINE, sketchCommandLine, benchCommandLine)  // UI-133
+OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_CLIPBOARD, sketchClipboard, benchClipboard)        // UI-129

@@ -84,7 +84,8 @@ void SketchEditor::setTool(const QString& tool) {
   m_panelFieldsDirty = true;
   m_tool = tool;referenceHover();
   if(tool=="mirror")m_options["mirrorStage"]=m_sel.empty()?"seed":"axis";
-  const QStringList preserve={"mirror","offset","node","move","rotate","scale","copy","rect_pattern","polar_pattern","explode","chamfer","break","break_link"};
+  const QStringList preserve={"mirror","offset","node","move","rotate","scale","copy","rect_pattern","polar_pattern","explode","chamfer","break","break_link","copybase"};
+  if(tool!="paste")m_clip.reset();
   if(!preserve.contains(tool))m_sel.clear();
   if((tool=="rect_pattern"||tool=="polar_pattern")&&!m_sel.empty()) {
     const int id=pattern_of(m_sk,m_sel.front(),true);
@@ -152,6 +153,7 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
   invalidatePreview();
   unlock();  // a lock lasts until the point it placed
   m_snapChoice = 0;  // the next point starts from the nearest snap
+  if(clipClick(s))return;
   if(imageClick(s.u,s.v))return;
   if(m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d")return pickReference();
   if(modifyClick(s.u,s.v))return;

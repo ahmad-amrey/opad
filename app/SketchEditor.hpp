@@ -82,6 +82,16 @@ class SketchEditor : public QObject, public SketchInput {
   // over the view, then Enter; the reason when that did not work (nothing typed stays behind then), else empty.
   QString enter(const QString& text);
   bool closeChain();  // the polyline back to its first point
+  // The clipboard (UI-129, SketchClipboard.cpp): the selected curves with their points and the constraints among them, about
+  // a base point (the lower left of their extent; the copybase tool asks for one), as kClipMime, so another OPAD window
+  // pastes them too; Cut deletes them after (one undo step). Paste reads the clipboard on a worker, then the paste tool
+  // carries the curves by their base point (snaps apply; typed: X,Y, or @dx,dy from where they were copied) until a click
+  // places them, one undo step, selected after.
+  static constexpr const char* kClipMime = "application/x-opad+json";
+  bool copySelection(bool cut);  // false: nothing to copy (the status says why)
+  void copyWithBase();           // the copybase tool: the selection is copied about the point clicked next
+  void paste();
+  bool pasting() const { return m_tool == "paste" && m_clip != nullptr; }
   void toggleReference();
   void selectConnected();
   void selectType();
@@ -115,6 +125,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchSnaps();
   void benchSteps();
   void benchCommandLine();
+  void benchClipboard();
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
   // Show constraints (UI-24, setting sketch/showConstraints): their badges and coincidence dots; off, only those in conflict
   // or selected show.
@@ -155,6 +166,16 @@ class SketchEditor : public QObject, public SketchInput {
   void createText(double u,double v);
   bool modifyClick(double u,double v);
   bool applyModify();
+  struct Clip {  // what the paste tool places: the clip, its base point, its curves as polylines about the base (a box when many)
+    opad::json data;
+    double bu = 0, bv = 0;
+    size_t curves = 0;
+    std::vector<std::vector<std::pair<double, double>>> outline;
+  };
+  std::shared_ptr<const Clip> m_clip;
+  int m_clipRevision = 0;
+  bool copyFrom(const std::vector<int>& ids, double bu, double bv, bool cut);
+  bool clipClick(const Snap& s);  // the paste and copybase tools' click
   struct Snap {
     // A constraint the click's new point gets with `ref` (UI-21): Midpoint of a line, Coincident on a second curve (an
     // intersection), Horizontal / Vertical with a tracked point or a circle's centre (a quadrant).

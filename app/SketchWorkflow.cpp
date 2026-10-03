@@ -68,7 +68,7 @@ QList<ToolStep> SketchEditor::toolSteps() const {
   };
   auto done = [&](int i, const QString& value) { if (i >= 0 && i < out.size() && !value.isEmpty()) out[i].picked = value; };
   auto file = [&](const char* key) { return QFileInfo(option(key)).fileName(); };
-  static const QStringList selecting = {"select", "move", "rotate", "scale", "copy", "rect_pattern", "polar_pattern", "break", "explode", "break_link", "offset"};
+  static const QStringList selecting = {"select", "move", "rotate", "scale", "copy", "rect_pattern", "polar_pattern", "break", "explode", "break_link", "offset", "copybase"};
   if (selecting.contains(t)) {
     if (!m_sel.empty()) done(0, selection());
   } else if (t == "chamfer" || t == "node") {

@@ -212,7 +212,8 @@ class SketchCommandLine : public AreaController {
   using AreaController::AreaController;
 
   void buildActions() override {
-    CommandInfo info{"sketch.commandLine", tr("Command line"), "commandLine", QKeySequence(Qt::Key_Space)};
+    CommandInfo info;
+    info.id = "sketch.commandLine", info.label = tr("Command line"), info.icon = "commandLine", info.key = QKeySequence(Qt::Key_Space);
     info.keywords = {tr("type a command"), tr("coordinates"), tr("keyboard")};
     info.editsDocument = true;  // a sketch command, as the built-in ones (MainWindow::isEditAction)
     services().addCommand(info, [this] { open(); });

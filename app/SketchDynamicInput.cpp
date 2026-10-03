@@ -57,7 +57,7 @@ std::string angleExpression(QString text) {
 }
 // Tools that place points: the next one can be typed (X and Y; a polyline goes on by length and angle).
 const QStringList kPointTools = {"point", "line", "spline", "rect", "crect", "circle", "circle2", "circle3", "arc3", "arcc", "polygon", "polygon_outer",
-                                 "slot", "cslot", "arcslot", "ellipse", "conic", "rect3", "control_spline", "tangent_arc", "text"};
+                                 "slot", "cslot", "arcslot", "ellipse", "conic", "rect3", "control_spline", "tangent_arc", "text", "paste", "copybase"};
 // Option tools Enter applies, once there is something picked to apply them to.
 const QStringList kApplied = {"offset", "chamfer", "move", "copy", "rotate", "scale", "rect_pattern", "polar_pattern"};
 // Steps that take the shape's own sizes (UI-17): after the first click, after the second.
@@ -150,6 +150,10 @@ QList<DynamicInput::Field> SketchEditor::shapeFields() const {
 
 bool SketchEditor::inputBase(double& u, double& v) const {
   if (!kPointTools.contains(m_tool)) return false;
+  if (m_tool == "paste") {  // @dx,dy: from where the curves were copied
+    if (m_clip) u = m_clip->bu, v = m_clip->bv;
+    return m_clip != nullptr;
+  }
   if (m_tool == "line" || m_tool == "spline") {
     const SkPoint* p = m_chain.empty() ? nullptr : pointOf(m_chain.back());
     if (p) u = p->x, v = p->y;

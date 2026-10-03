@@ -981,7 +981,7 @@ void SketchEditor::sketchLeave() {
 bool SketchEditor::placing() const {
   // Snapping only means something to tools that place points; trim, offset, constraints and the like pick curves.
   static const QStringList tools = {"line", "rect", "crect", "circle", "circle2", "circle3", "arc3", "arcc", "polygon", "polygon_outer", "slot", "cslot", "arcslot",
-                                    "ellipse", "spline", "control_spline", "point", "text", "conic", "rect3", "image_insert", "image_calibrate"};
+                                    "ellipse", "spline", "control_spline", "point", "text", "conic", "rect3", "image_insert", "image_calibrate", "paste", "copybase"};
   return tools.contains(m_tool);
 }
 
@@ -1699,6 +1699,9 @@ void SketchEditor::updateTransient() {
       } else if (m_tool == "slot" || m_tool == "arc3" || m_tool == "arcc" || m_tool == "circle3" || m_tool == "ellipse") seg(a.u, a.v, cu, cv);
       for (const auto& k : m_clicks) d.points.push_back({W(k.u, k.v), rb});  // where the clicks so far went (a centre, the first end)
     }
+    if (m_tool == "paste" && m_clip)  // the copied curves by their base point at the pointer, as the click places them
+      for (const auto& line : m_clip->outline)
+        for (size_t i = 1; i < line.size(); ++i) seg(cu + line[i - 1].first, cv + line[i - 1].second, cu + line[i].first, cv + line[i].second);
     if (m_tool == "text")  // the letters on their baseline from the pointer, as the click places them (there was only a dot)
       for (const auto& line : textPreview())
         for (size_t i = 1; i < line.size(); ++i) seg(cu + line[i - 1].first, cv + line[i - 1].second, cu + line[i].first, cv + line[i].second);
