@@ -44,7 +44,7 @@ class AppDocument : public QObject {
   // Atomic background save; holds the document write guard until the worker really exits.
   Job* saveAsync(JobRunner*, const QString& path, bool overwrite,
                  std::function<void(bool,const QString&)> done, int testDelayMs=0);
-  opad::json run(const std::string& command, opad::json args);
+  opad::json run(const std::string& command, opad::json args, const QString& label = {});  // label: the undo step's, else by command
 
   // Design changes are planned on a worker (design::plan_ops reads the document, see DesignController) and
   // committed here. While a plan is being computed the document must not change under it: designBusy makes

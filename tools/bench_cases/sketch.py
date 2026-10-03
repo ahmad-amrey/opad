@@ -25,6 +25,7 @@ CASES = [
     ("sketch-constraints", "empty", {"OPAD_BENCH_SKETCH_CONSTRAINTS": "{prefix}"}),  # constraint badges (UI-24)
     ("sketch-commandline", "empty", {"OPAD_BENCH_SKETCH_COMMANDLINE": "{prefix}"}),  # drafting by the keyboard (UI-133)
     ("sketch-clipboard", "empty", {"OPAD_BENCH_SKETCH_CLIPBOARD": "{prefix}"}),  # copy, cut, paste; the timeline's op id (UI-129)
+    ("clipboard-bodies", "box", {"OPAD_BENCH_CLIPBOARD_BODIES": "{prefix}"}),  # bodies: new ones, linked instances, from another document (UI-129)
     ("sketch-edits", "empty", {"OPAD_BENCH_SKETCH_EDITS": "{prefix}"}),  # line-arc fillet, fence trim, one-click extend, drag merge (UI-28)
     # Tool panels hand the keyboard back to the view after a click on a button or the slider; Esc in a panel is its (UI-05).
     ("panel-focus", "box", {"OPAD_BENCH_PANEL_FOCUS": "1"}),

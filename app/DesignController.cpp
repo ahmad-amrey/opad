@@ -324,6 +324,15 @@ void DesignController::startFeature(const QString& kind) {
   emit stateChanged();
 }
 
+void DesignController::startFeature(const QString& kind, const std::vector<std::pair<QString, opad::json>>& given) {
+  startFeature(kind);
+  if (!m_featureOn || !m_form->spec() || m_form->spec()->kind != kind.toStdString()) return;
+  for (const auto& [name, value] : given)
+    if (m_form->input(name)) value.is_array() ? m_form->setPicks(name, value) : m_form->setValue(name, value);
+  activateInput(m_form->activeInput());  // the view shows the given picks
+  schedulePreview();
+}
+
 void DesignController::editOp(const std::string& opId) {
   if (!m_doc->hasDocument || m_doc->browse || m_doc->designBusy) return;
   if (m_sketch->active() || m_featureOn) return emit status(tr("Finish what is open first."));
