@@ -19,6 +19,7 @@
 #include <functional>
 #include <memory>
 
+#include "AgentBridge.hpp"
 #include "BenchRegistry.hpp"
 #include "DesignController.hpp"
 #include "MainWindow.hpp"
@@ -299,6 +300,9 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                     require(na && nb && dimmed.count(doc->scene.node(s->housing)->source_op) && dimmed.count(na->source_op) && !dimmed.count(doc->scene.node(s->lid)->source_op) && !dimmed.count(nb->source_op),
                             QString("timeline: the Housing's ops dimmed, the Lid's not (%1 of %2 dimmed)").arg(dimmed.size()).arg(doc->doc.ops.size()));
                     require(w.action("assembly.activateRoot")->isEnabled() && !w.action("assembly.activate")->isEnabled(), "Activate root enabled, Activate not (nothing selected)");
+                    const opad::json live = w.m_agent->liveState();
+                    require(live.contains("active_component") && live["active_component"].value("id", "") == s->lid && live["active_component"].value("name", "") == "Lid",
+                            "MCP live_state reports the active component: " + QString::fromStdString(live.value("active_component", opad::json()).dump()));
                     v->grabImage().save(prefix + ".ghost.png");
                     w.m_browser->grab().save(prefix + ".browser.png");
                     w.m_chips->grab().save(prefix + ".chips.png");
@@ -512,8 +516,8 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                     v->fitAll();
                     int x = 0, y = 0;
                     require(restored && a.value("transparency", 1.0) == 0.0 && a.value("activated", 0) > 0 && v->benchBodyPoint(s->boxA, x, y) && !v->shownLook(s->sketch).ghost &&
-                                w.m_timeline->dimmedOps().empty() && !w.action("assembly.activateRoot")->isEnabled(),
-                            "the root active: no ghosts, the Housing's box picked again, the timeline undimmed");
+                                w.m_timeline->dimmedOps().empty() && !w.action("assembly.activateRoot")->isEnabled() && !w.m_agent->liveState().contains("active_component"),
+                            "the root active: no ghosts, the Housing's box picked again, the timeline undimmed, live_state without an active component");
                     // Remembered per document: the Lid activated again, saved, opened again.
                     w.m_browser->selectIds({s->lid});
                     if (QAction* activate = w.action("assembly.activate"); activate->isEnabled()) activate->trigger();
