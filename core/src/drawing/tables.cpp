@@ -2,14 +2,16 @@
 // materials with stable item numbers, auto-balloon, the drawing's issues and what an issue keeps.
 #include "opad/drawing/tables.hpp"
 
+#include <BRepAdaptor_Curve.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
-#include <BRepBuilderAPI_Transform.hxx>
 #include <BRep_Builder.hxx>
+#include <BRep_Tool.hxx>
 #include <Geom_BSplineCurve.hxx>
 #include <Standard_Failure.hxx>
 #include <TColStd_Array1OfInteger.hxx>
 #include <TColStd_Array1OfReal.hxx>
 #include <TColgp_Array1OfPnt.hxx>
+#include <TopExp_Explorer.hxx>
 #include <TopoDS_Iterator.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
@@ -30,6 +32,7 @@
 #include "opad/drawing/bom.hpp"
 #include "opad/drawing/symbols.hpp"
 #include "opad/geometry.hpp"
+#include "projection_internal.hpp"
 
 namespace opad::drawing {
 namespace {
@@ -657,21 +660,56 @@ const SheetItem* find_issue(const Scene& scene, const Sheet& sheet, const std::s
   return nullptr;
 }
 
-Display issued_display(const Document& doc, const Scene& live, const Sheet& sheet, const SheetItem& issue, const ProjectionProgress& progress) {
-  // The scene as of the issue: later issues left out (title block, revision table), dimensions writing the issued values.
-  Scene scene = live;
-  bool later = false;
-  std::set<std::string> after;
-  for (const auto& t : live.sheet_items) {
-    if (later && t.kind == "issue") after.insert(t.id);
-    later = later || t.id == issue.id;
+Scene issued_scene(const Document& doc, const SheetItem& issue) {
+  std::vector<const Op*> upto;
+  for (const auto& op : doc.ops) {
+    upto.push_back(&op);
+    if (op.id == issue.id) break;
   }
-  std::erase_if(scene.sheet_items, [&](const SheetItem& t) { return after.count(t.id) > 0; });
-  for (auto& s : scene.sheets) std::erase_if(s.items, [&](const std::string& id) { return after.count(id) > 0; });
+  if (upto.empty() || upto.back()->id != issue.id) throw Error("revision " + issue.def.value("rev", "") + " is not in the document's log");
+  SceneBuilder b(doc);
+  std::vector<std::string> deleted;
+  const auto log = effective_ops(upto, &deleted);
+  b.scene().deleted_ops = deleted;
+  for (const auto& e : log) {
+    try {
+      b.apply(e.op->id, e.op->type, e.data());
+    } catch (const std::exception& ex) {
+      b.scene().unresolved.push_back({e.op->id, e.op->type, std::string("failed to apply: ") + ex.what()});
+    }
+  }
+  b.finish();
+  return b.take();
+}
+
+ViewGeometry frozen_geometry(const TopoDS_Shape& lines) {
+  ViewGeometry g;
+  const detail::View top{gp::DX(), gp::DY(), gp::DZ()};
+  int k = 0;
+  for (TopoDS_Iterator it(lines); it.More() && k < 3; it.Next(), ++k) {
+    Curve like;
+    like.kind = k == 1 ? Curve::Kind::Tangent : Curve::Kind::Sharp;
+    like.hidden = k == 2;
+    for (TopExp_Explorer e(it.Value(), TopAbs_EDGE); e.More(); e.Next()) {
+      const TopoDS_Edge& edge = TopoDS::Edge(e.Current());
+      if (BRep_Tool::Degenerated(edge)) continue;
+      const BRepAdaptor_Curve c(edge);
+      detail::emit(c, c.FirstParameter(), c.LastParameter(), top, like, 1e-3, g.curves);
+    }
+  }
+  for (auto& c : g.curves) c.z = 0;
+  return g;
+}
+
+Display issued_display(const Document& doc, const Scene& then, const Sheet& sheet, const SheetItem& issue, const ProjectionProgress& progress, json* report) {
+  // Dimensions write the values they were issued with (the same as measured in `then`, unless measuring changed since).
+  Scene scene = then;
   const json values = issue.def.value("values", json::object());
   for (auto& t : scene.sheet_items)
     if (t.kind == "dimension" && values.contains(t.id) && values[t.id].is_string()) t.def["text"] = values[t.id];
-  const Sheet& s = *scene.sheet(sheet.id);
+  const Sheet* found = scene.sheet(sheet.id);
+  if (!found) throw Error("sheet " + sheet.name + " was not part of revision " + issue.def.value("rev", ""));
+  const Sheet& s = *found;
   Display d;
   d.title = s.name;
   d.paper = {0, 0, s.width, s.height};
@@ -679,7 +717,7 @@ Display issued_display(const Document& doc, const Scene& live, const Sheet& shee
                                           {"Hidden", kInk, LineType::Hidden, 0.25}, {"Dimensions", kInk, LineType::Continuous, 0.25}, {"Text", kInk, LineType::Continuous, 0.25}})
     d.layer(l);
   draw_paper(d, doc, scene, s);
-  // The views where they stood, drawn from what was frozen.
+  // The views where they stood, drawn from what was frozen (a view that froze none: projected in the scene as issued).
   auto frames = layout(doc, scene, s);
   const json placed = issue.def.value("frames", json::object()), frozen = issue.def.value("frozen", json::object());
   for (auto& f : frames) {
@@ -691,34 +729,40 @@ Display issued_display(const Document& doc, const Scene& live, const Sheet& shee
     f.error.clear();
   }
   json skipped = json::array();
+  int views = 0, items = 0;
   for (size_t i = 0; i < frames.size(); ++i) {
     const ViewFrame& f = frames[i];
     const SheetView* v = scene.sheet_view(f.id);
     if (!v) continue;
     const size_t from = d.prims.size();
     const std::string key = frozen.value(f.id, "");
-    if (!key.empty() && doc.has_body(key)) {
-      gp_Trsf scale, move;
-      scale.SetScale(gp::Origin(), f.scale);
-      move.SetTranslation(gp_Vec(f.at[0] - f.scale * f.centre[0], f.at[1] - f.scale * f.centre[1], 0));
-      const TopoDS_Shape lines = BRepBuilderAPI_Transform(body_shape(doc, key), move * scale, true).Shape();
-      const json style = v->def.value("style", json::object());
-      const bool thin = !style.is_object() || !style.contains("tangent") || style["tangent"] != "show";
-      const int layers[3] = {d.layer({"Visible"}), d.layer({thin ? "Tangent" : "Visible"}), d.layer({"Hidden"})};
-      int k = 0;
-      for (TopoDS_Iterator it(lines); it.More() && k < 3; it.Next(), ++k) add_shape(d, layers[k], it.Value(), 0.01);
-    } else if (f.error.empty() && v->error.empty()) {
-      const auto g = project(doc, scene, view_spec(scene, *v), [&](double t, const std::string& phase) {
-        return !progress || progress(t < 0 ? -1 : (static_cast<double>(i) + t) / static_cast<double>(frames.size()), phase);
-      });
-      draw_view(d, f, *v, *g, &doc, &scene);
+    try {
+      if (!key.empty() && doc.has_body(key)) {
+        const ViewGeometry g = frozen_geometry(body_shape(doc, key));
+        try {
+          draw_view(d, f, *v, g, &doc, &scene);  // centre lines on the cylinders of the model as issued
+        } catch (const std::exception&) {     // that model is gone (gc): the centre marks of its circles only
+          d.prims.resize(from);
+          draw_view(d, f, *v, g, nullptr, nullptr);
+        }
+      } else {
+        if (!f.error.empty() || !v->error.empty()) throw Error(f.error.empty() ? v->error : f.error);
+        const auto g = project(doc, scene, view_spec(scene, *v), [&](double t, const std::string& phase) {
+          return !progress || progress(t < 0 ? -1 : (static_cast<double>(i) + t) / static_cast<double>(frames.size()), phase);
+        });
+        draw_view(d, f, *v, *g, &doc, &scene);
+      }
+      ++views;
+    } catch (const std::exception& e) {
+      d.prims.resize(from);
+      skipped.push_back({{"id", f.id}, {"error", e.what()}});
     }
-    for (size_t k = from; k < d.prims.size(); ++k) d.prims[k].source = f.id;
   }
   std::vector<std::string> owners;
   for (const auto& id : s.items)
     if (const SheetItem* t = scene.sheet_item(id); t && std::find(owners.begin(), owners.end(), t->view) == owners.end()) owners.push_back(t->view);
-  for (const auto& owner : owners) draw_items(d, doc, scene, s, frames, owner, skipped);
+  for (const auto& owner : owners) items += draw_items(d, doc, scene, s, frames, owner, skipped);
+  if (report) *report = {{"views", views}, {"items", items}, {"bodies", 0}, {"skipped", skipped}};
   return d;
 }
 

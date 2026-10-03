@@ -164,6 +164,15 @@ def basic_workflow():
     assert issue["pdf_sha256"] == hashlib.sha256(open(issued_pdf, "rb").read()).hexdigest()
     info = run("sheet_info", sheet_doc, "--sheet", s["id"])
     assert info["issues"][0]["rev"] == "A" and not info["issues"][0]["changed"]["views"], info["issues"]
+    # exported as issued after a note was added and a balloon deleted: the sheet as it stood then, pixel for pixel
+    at_issue, as_issued = os.path.join(tmp, "at-issue.png"), os.path.join(tmp, "as-issued.png")
+    run("export", sheet_doc, "--sheet", s["id"], "--format", "png", "--dpi", "60", "--out", at_issue)
+    run("sheet_item", sheet_doc, "--sheet", s["id"], "--kind", "note", "--text", "LATER", "--at", "[40,40]")
+    run("delete", sheet_doc, "--target", balloons["ids"][0])
+    v = run("export", sheet_doc, "--sheet", s["id"], "--format", "png", "--dpi", "60", "--issue", "A", "--out", as_issued)
+    assert v["issue"] == "A" and open(as_issued, "rb").read() == open(at_issue, "rb").read(), v
+    run("export", sheet_doc, "--sheet", s["id"], "--format", "png", "--dpi", "60", "--out", as_issued)
+    assert open(as_issued, "rb").read() != open(at_issue, "rb").read()
     # delete (tombstone) the annotation: it disappears from the resolved list but stays in the log
     run("delete", DOC, "--target", a["id"])
     assert len(run("annotations", DOC)["annotations"]) == 0

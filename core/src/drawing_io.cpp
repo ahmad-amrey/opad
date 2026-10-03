@@ -636,6 +636,20 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
       if(!sheet) throw Error("sheet "+options.sheet+" does not exist (sheet_info lists the sheets)");
       sheets.push_back(sheet);
     }
+    Scene then;
+    const SheetItem* issue=nullptr;
+    if(!options.issue.empty()) {  // as issued: the sheets as they stood then (the drawing's that it issued), their frozen linework
+      issue=drawing::find_issue(scene,*sheets[0],options.issue);
+      if(!issue) throw Error("revision "+options.issue+" was never issued (sheet_info lists the issues)");
+      then=drawing::issued_scene(doc,*issue);
+      issue=then.sheet_item(issue->id);
+      std::vector<const Sheet*> issued;
+      for(const auto& id:issue->def.value("sheets",json::array()))
+        if(const Sheet* s=then.sheet(id.get<std::string>()); s && (options.sheet.rfind("drawing:",0)==0 || s->id==sheets[0]->id)) issued.push_back(s);
+      if(issued.empty()) throw Error("sheet "+sheets[0]->name+" was not part of revision "+options.issue);
+      sheets=issued;
+      details["issue"]=issue->def.value("rev","");
+    }
     if(sheets.size()>1 && options.format!="pdf") throw Error("several sheets go into one PDF (a page each), or one sheet at a time into "+options.format);
     pages.resize(sheets.size());
     json drawn=json::array(), skipped=json::array();
@@ -643,13 +657,8 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
       json report;
       const double n=double(sheets.size());
       const auto progress=[&](double f,const std::string& phase){ return !options.progress || options.progress(f<0?-1:(double(i)+f)/n,phase); };
-      if(!options.issue.empty()) {  // as issued: its frozen linework
-        const SheetItem* issue=drawing::find_issue(scene,*sheets[i],options.issue);
-        if(!issue) throw Error("revision "+options.issue+" was never issued (sheet_info lists the issues)");
-        pages[i]=drawing::issued_display(doc,scene,*sheets[i],*issue,progress);
-        report={{"views",sheets[i]->views.size()},{"items",sheets[i]->items.size()},{"bodies",0},{"skipped",json::array()}};
-        details["issue"]=issue->def.value("rev","");
-      } else pages[i]=drawing::sheet_display(doc,scene,*sheets[i],progress,&report);
+      if(issue) pages[i]=drawing::issued_display(doc,then,*sheets[i],*issue,progress,&report);
+      else pages[i]=drawing::sheet_display(doc,scene,*sheets[i],progress,&report);
       drawn.push_back({{"id",sheets[i]->id},{"name",sheets[i]->name},{"views",report["views"]},{"items",report["items"]}});
       for(const auto& s:report["skipped"]) skipped.push_back(s);
       bodies+=report["bodies"].get<int>();

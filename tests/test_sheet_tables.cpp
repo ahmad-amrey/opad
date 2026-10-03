@@ -285,39 +285,70 @@ TEST(issued_revisions) {
   CHECK_EQ(title_values(a.doc, s, *s.sheet(a.sheet))["revision"], "9");
 }
 
-// A sheet drawn as it was issued: the views from their frozen linework where they stood then (not as the model is now), the
-// revision table without later issues, a dimension writing its issued value; the export command takes the revision.
+// A sheet drawn as it was issued, in the scene as it stood then: the views from their frozen linework where they stood with
+// their centre lines (not as the model is now), the annotations as they were (a dimension's extension lines on the model as
+// issued, a note deleted later there, one made later not), the revision table without later issues, a dimension writing its
+// issued value; gc keeps the model it showed (a washer deleted since); the export command takes the revision.
 TEST(issued_revision_drawn_as_issued) {
   Assembly a;
   run(a.doc, "sheet_item", {{"sheet", a.sheet}, {"kind", "revision_table"}});
+  run(a.doc, "sheet_edit", {{"target", a.front}, {"set", {{"style", {{"centermarks", true}}}}}});
   const std::string plate = id_of(a.scene(), "Plate"), bracket = id_of(a.scene(), "Bracket");
   const std::string dim = run(a.doc, "sheet_item", {{"sheet", a.sheet}, {"view", a.front}, {"kind", "dimension"}, {"type", "horizontal"}, {"refs", {plate + "/vertex/0", bracket + "/vertex/0"}}})["id"];
+  const std::string deburr = run(a.doc, "sheet_item", {{"sheet", a.sheet}, {"kind", "note"}, {"text", "DEBURR"}, {"at", {60, 60}}})["id"];
+  const std::string washer = a.doc.add_body(brep_from_shape(BRepPrimAPI_MakeCylinder(5, 1).Shape()), {{"name", "Washer"}, {"units", "mm"}});
+  const std::string placed = a.doc.append({{"op", "import"}, {"source", "design"}, {"parent", a.assembly}, {"nodes", {body("Washer", washer, 30, 20, 5)}}}).id;
   const Scene before = a.scene();
   const Display then = sheet_display(a.doc, before, *before.sheet(a.sheet));
   run(a.doc, "sheet_issue", {{"sheet", a.sheet}, {"description", "First"}});
   a.doc.append({{"op", "transform"}, {"target", bracket}, {"matrix", Mat4{{1, 0, 0, -45, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}}.to_json()}});
+  a.doc.append({{"op", "delete"}, {"target", deburr}});
+  a.doc.append({{"op", "delete"}, {"target", placed}});
+  run(a.doc, "sheet_item", {{"sheet", a.sheet}, {"kind", "note"}, {"text", "LATER"}, {"at", {60, 80}}});
   run(a.doc, "sheet_issue", {{"sheet", a.sheet}, {"description", "Second"}});
   const Scene s = a.scene();
   const SheetItem* issue = find_issue(s, *s.sheet(a.sheet), "A");
   CHECK(issue && find_issue(s, *s.sheet(a.sheet), issue->id) == issue && !find_issue(s, *s.sheet(a.sheet), "Z"));
   const Display now = sheet_display(a.doc, s, *s.sheet(a.sheet));
-  const Display issued = issued_display(a.doc, s, *s.sheet(a.sheet), *issue);
-  const auto lines = [&](const Display& d) {  // the front view's visible lines
+  const Scene was = issued_scene(a.doc, *issue);
+  CHECK(was.sheet_item(deburr) && was.node(id_of(before, "Washer")) && !s.sheet_item(deburr));
+  json report;
+  const Display issued = issued_display(a.doc, was, *s.sheet(a.sheet), *issue, {}, &report);
+  CHECK_EQ(report["views"], 1);
+  CHECK_EQ(report["items"], 4);  // the revision table, the dimension, the note and A (not drawn); not B
+  CHECK(report["skipped"].empty());
+  const auto bounds = [&](const Display& d, const std::string& source, const char* layer) {
     Display v;
-    const int visible = static_cast<int>(std::find_if(d.layers.begin(), d.layers.end(), [](const Layer& l) { return l.name == "Visible"; }) - d.layers.begin());
+    const int at = static_cast<int>(std::find_if(d.layers.begin(), d.layers.end(), [&](const Layer& l) { return l.name == layer; }) - d.layers.begin());
     for (const auto& p : d.prims)
-      if (p.source == a.front && p.layer == visible && p.kind == Prim::Kind::Curve) v.prims.push_back(p);
-    return v.bounds();
+      if (p.source == source && p.layer == at && p.kind == Prim::Kind::Curve) v.prims.push_back(p);
+    return std::make_pair(v.prims.size(), v.bounds());
   };
-  const auto b0 = lines(then), b1 = lines(issued), b2 = lines(now);
-  for (int i = 0; i < 4; ++i) CHECK_NEAR(b1[i], b0[i], 1e-6);
-  CHECK(std::fabs(b2[0] - b0[0]) > 1);  // the bracket is further left now
+  const auto b0 = bounds(then, a.front, "Visible"), b1 = bounds(issued, a.front, "Visible"), b2 = bounds(now, a.front, "Visible");
+  for (int i = 0; i < 4; ++i) CHECK_NEAR(b1.second[i], b0.second[i], 1e-6);
+  CHECK(std::fabs(b2.second[0] - b0.second[0]) > 1);  // the bracket is further left now
+  const auto c0 = bounds(then, a.front, "Center"), c1 = bounds(issued, a.front, "Center");  // the pins' and the washer's centre lines
+  CHECK(c0.first >= 5 && c1.first == c0.first);
+  for (int i = 0; i < 4; ++i) CHECK_NEAR(c1.second[i], c0.second[i], 1e-6);
+  const auto d0 = bounds(then, dim, "Dimensions"), d1 = bounds(issued, dim, "Dimensions"), d2 = bounds(now, dim, "Dimensions");
+  CHECK(d0.first > 2 && d1.first == d0.first);  // the extension lines reach the bracket where it stood
+  for (int i = 0; i < 4; ++i) CHECK_NEAR(d1.second[i], d0.second[i], 1e-6);
+  CHECK(std::fabs(d2.second[0] - d0.second[0]) > 1);
   CHECK(has_text(issued, "First") && !has_text(issued, "Second") && has_text(now, "Second"));
-  const std::string was = issue->def["values"][dim];
-  CHECK(has_text(issued, was) && !has_text(now, was));
+  CHECK(has_text(issued, "DEBURR") && !has_text(now, "DEBURR") && !has_text(issued, "LATER") && has_text(now, "LATER"));
+  const std::string value = issue->def["values"][dim];
+  CHECK(has_text(issued, value) && !has_text(now, value));
+  // gc keeps the washer for revision A; without A it goes.
+  Document copy = Document::parse(a.doc.serialize());
+  a.doc.gc();
+  CHECK(a.doc.has_body(washer));
+  copy.append({{"op", "delete"}, {"target", issue->id}});
+  copy.gc();
+  CHECK(!copy.has_body(washer));
   const auto out = std::filesystem::temp_directory_path() / "opad-issued.svg";
   const json e = run(a.doc, "export", {{"format", "svg"}, {"out", out.string()}, {"sheet", a.sheet}, {"issue", "A"}});
   CHECK_EQ(e["issue"], "A");
+  CHECK_EQ(e["sheet"]["items"], 4);
   CHECK_THROWS(run(a.doc, "export", {{"format", "svg"}, {"out", out.string()}, {"sheet", a.sheet}, {"issue", "Q"}}));
   std::filesystem::remove(out);
 }

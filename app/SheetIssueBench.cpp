@@ -28,8 +28,9 @@
 // revision (A), the PDF beside the document, git found; issued with a description and an approver: one sheet_issue step on a
 // worker's plan with every view's linework frozen in the body store, the PDF written as the drawing shows the revision and its
 // SHA-256 in the record, the document saved, committed (with the PDF) and tagged. The revision table lists A, the title block
-// says A, the sheet bar names it; the pin moved, the bar warns that the sheet changed since A, and its menu exports A as it was
-// issued (frozen linework); revision B issued without a PDF or git, the bar names B again. <prefix>.dialog.png,
+// says A, the sheet bar names it; the pin moved, the bar warns that the sheet changed since A; a note added, the bar's menu exports
+// A as it was issued (the sheet as it stood then: frozen linework, no note); revision B issued without a PDF or git, the bar names
+// B again. <prefix>.dialog.png,
 // <prefix>.issue.png.
 OPAD_BENCH(OPAD_BENCH_SHEET_ISSUE, sheetIssue) {
   using opad::drawing::Vec2;
@@ -176,15 +177,20 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ISSUE, sheetIssue) {
     check(waitFor([&] { return moved; }, 10000) && waitFor(settled, 30000) &&
               waitFor([&] { return page->issueButton()->text() == "Changed since rev A"; }, 10000) && page->issueButton()->toolTip().contains("2 views"),
           "the pin moved: the bar says the sheet changed since A (" + page->issueButton()->toolTip().replace('\n', " / ") + ")");
-    // Revision A exported as it was issued: from its frozen linework.
+    // A note made after A; revision A exported as it was issued: the sheet as it stood then, from its frozen linework.
+    bool noted = false;
+    docs->run("sheet_item", {{"sheet", sheet}, {"kind", "note"}, {"text", "LATER"}, {"at", {60, 60}}}, [&](const opad::json& out) { noted = !out.is_null(); });
+    check(waitFor([&] { return noted; }, 10000) && waitFor(settled, 30000) && doc->scene.sheet(sheet)->items.size() == 3, "a note added after A");
     const QString asIssued = QDir(repo.path()).filePath("rev-A-as-issued.pdf");
     qputenv("OPAD_BENCH_EXPORT_OUT", asIssued.toUtf8());
     docs->lastExport = nullptr;
     QAction* exportA = page->issueButton()->menu()->findChild<QAction*>("sheet.exportIssue.A");
     check(exportA != nullptr, "the bar's menu offers revision A as issued");
     if (exportA) exportA->trigger();
-    check(waitFor([&] { return docs->lastExport.is_object(); }, 60000) && docs->lastExport.value("issue", "") == "A" && QFileInfo(asIssued).size() > 1000,
-          "exported as issued: " + QString::fromStdString(docs->lastExport.dump()).left(200));
+    waitFor([&] { return docs->lastExport.is_object(); }, 60000);
+    check(docs->lastExport.is_object() && docs->lastExport.value("issue", "") == "A" && QFileInfo(asIssued).size() > 1000 &&
+              docs->lastExport.value("sheet", opad::json::object()).value("views", 0) == 2 && docs->lastExport.value("sheet", opad::json::object()).value("items", 0) == 2,
+          "exported as issued, both views and without the later note: " + QString::fromStdString(docs->lastExport.dump()).left(300));
     qunsetenv("OPAD_BENCH_EXPORT_OUT");
     canvas->fitSheet();
     waitFor(settled, 10000);

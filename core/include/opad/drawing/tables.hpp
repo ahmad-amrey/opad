@@ -65,15 +65,22 @@ json plan_issue(const Document& doc, const Scene& scene, const json& args, std::
 Scene with_issue(const Scene& scene, const json& op);
 // A view's linework as a 2D BREP compound in view coordinates (model mm): visible, tangent and hidden edges, each a compound.
 std::string linework_brep(const ViewGeometry& g);
+// That linework back as the view's curves (sharp, tangent, hidden; a polyline comes back as its segments).
+ViewGeometry frozen_geometry(const TopoDS_Shape& lines);
 // What changed since an issue: {"views": ids whose projection differs, "values": items that show another value now,
 // "gone": items or views that are gone}. Workers (fingerprints count faces, items are measured).
 json issue_changes(const Document& doc, const Scene& scene, const SheetItem& issue);
 // The issue of a sheet's drawing named by its revision or id; null when there is none.
 const SheetItem* find_issue(const Scene& scene, const Sheet& sheet, const std::string& rev);
-// A sheet as it was issued: its paper with that revision as the drawing's latest (title block, revision table), each view's
-// frozen linework where the view stood then (a view that froze none is projected now), the annotations measured now in the
-// views as they stood then, a dimension writing the value it was issued with. Workers (projects what was not frozen).
-Display issued_display(const Document& doc, const Scene& scene, const Sheet& sheet, const SheetItem& issue, const ProjectionProgress& progress = {});
+// The scene as it stood when the issue was made: the log up to its op, so later edits, deletes, records and issues are left
+// out and the model is the one it showed (Document::gc keeps its bodies). Throws when the issue is not in the log.
+Scene issued_scene(const Document& doc, const SheetItem& issue);
+// A sheet as it was issued (then: issued_scene(issue); sheet and issue: any scene's, found in it by id): its paper with that
+// revision as the drawing's latest, each view's frozen linework where the view stood then with its centre marks (a view that
+// froze none is projected in `then`), every item of then measured in it, a dimension writing the value it was issued with;
+// report as sheet_display's. Throws when the sheet was not part of it. Workers (projects what was not frozen).
+Display issued_display(const Document& doc, const Scene& then, const Sheet& sheet, const SheetItem& issue, const ProjectionProgress& progress = {},
+                       json* report = nullptr);
 
 // Drawing them (draw_item's): a parts list or revision table from its rows; a balloon on paper.
 void draw_table_item(Display& d, const json& def, const json& measured, const DimStyle& s = {});
