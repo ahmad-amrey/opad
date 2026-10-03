@@ -22,6 +22,7 @@ struct Drawing {
   std::map<std::string, std::map<uint32_t, TopoDS_Compound>> layers;  // layer -> 0xRRGGBB or kNoColor -> geometry
   std::map<std::string, bool> visible;
   std::map<std::string, json> layer_info;  // DXF: the layer table's entry (Node::layer); "locked" also locks the layer's node
+  std::map<std::string, uint32_t> by_layer;  // DXF: the colour group of a layer's BYLAYER entities (Node::by_layer)
   std::map<std::string, json> images;
   std::vector<std::string> warnings;
   // Where the geometry's own origin lies in the file's coordinates (mm). A drawing far from its origin (survey or

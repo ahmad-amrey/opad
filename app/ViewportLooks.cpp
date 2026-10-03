@@ -17,14 +17,30 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <string>
 #include <vector>
 
+#include "Drawing2D.hpp"
 #include "Jobs.hpp"
 #include "opad/geometry.hpp"
 
 namespace {
 Quantity_Color rgb(const std::array<double, 3>& c) {
   return Quantity_Color(std::clamp(c[0], 0.0, 1.0), std::clamp(c[1], 0.0, 1.0), std::clamp(c[2], 0.0, 1.0), Quantity_TOC_sRGB);
+}
+// A layer's linetype as the view draws it, worked out once per linetype, pattern and scale (the UI thread's).
+drawing2d::LinePattern linePatternOf(const opad::json& fields, double pixelsPerMm) {
+  static std::map<std::string, drawing2d::LinePattern> known;
+  const std::string linetype = fields.contains("linetype") && fields["linetype"].is_string() ? fields["linetype"].get<std::string>() : "";
+  const opad::json pattern = fields.contains("pattern") ? fields["pattern"] : opad::json();
+  const std::string key = linetype + "|" + pattern.dump() + "|" + std::to_string(pixelsPerMm);
+  if (const auto it = known.find(key); it != known.end()) return it->second;
+  std::vector<double> own;
+  if (pattern.is_array())
+    for (const auto& d : pattern)
+      if (d.is_number()) own.push_back(d.get<double>());
+  return known[key] = drawing2d::linePattern(drawing2d::dashes(linetype, own), pixelsPerMm);
 }
 looks::GhostStyle ghostOf(const Tokens& t) { return {{t.ghost.redF(), t.ghost.greenF(), t.ghost.blueF()}, t.ghost.alphaF()}; }  // the theme's role
 }  // namespace
@@ -37,6 +53,16 @@ BodyLook Viewport::composeLook(const opad::Node& body) const {
   BodyLook base;
   base.color = body.color;
   base.opacity = body.opacity;
+  if (body.representation == "drawing2d" && body.raster.is_null()) {  // a drawing's lines (UI-10), in its layer's weight and type (UI-89)
+    if (!body.has_color) base.color = drawingInk();  // DXF colour 7 and no colour: light on dark, dark on light
+    const opad::Node* layer = body.parent.empty() ? nullptr : m_doc->scene.node(body.parent);
+    const opad::json& fields = layer && layer->layer.is_object() ? layer->layer : opad::json::object();
+    const double weight = fields.contains("lineweight") && fields["lineweight"].is_number() ? fields["lineweight"].get<double>() : -1;
+    base.lineWidth = lineWidth(drawing2d::linePoints(weight));  // hairlines at least one screen pixel wide on any display and render scale
+    const drawing2d::LinePattern dashes = linePatternOf(fields, drawing2d::kPatternPixelsPerMm * displayScale() * renderScale());
+    base.linePattern = dashes.bits;
+    base.lineFactor = dashes.factor;
+  }
   std::array<const LookDelta*, kLookSources> found{};
   if (layered()) {
     const opad::Scene& scene = m_doc->scene;
@@ -189,7 +215,8 @@ bool Viewport::applyLook(const std::string& id, Item& item, const BodyLook& look
   const BodyLook was = item.look;
   item.look = look;
   const Handle(AIS_Shape)& ais = item.ais;
-  if (look.color != was.color || look.opacity != was.opacity || look.ghost != was.ghost) {
+  if (look.color != was.color || look.opacity != was.opacity || look.ghost != was.ghost || look.lineWidth != was.lineWidth || look.linePattern != was.linePattern ||
+      look.lineFactor != was.lineFactor) {
     ais->SetColor(rgb(look.color));
     ais->SetTransparency(1.0 - look.opacity);
     applyStyle(ais, &look);  // a ghost's edges fade with it
@@ -274,8 +301,11 @@ opad::json Viewport::benchLookState(const std::string& body) const {
   double r = 0, g = 0, b = 0;
   c.Values(r, g, b, Quantity_TOC_sRGB);
   const gp_XYZ t = ais->LocalTransformation().TranslationPart();
+  const Handle(Graphic3d_AspectLine3d)& line = ais->Attributes()->WireAspect()->Aspect();
   return {{"displayed", m_ctx->IsDisplayed(ais)}, {"activated", modes.Extent()}, {"transparency", ais->Transparency()}, {"color", {r, g, b}},
-          {"layer", ais->ZLayer()}, {"translation", {t.X(), t.Y(), t.Z()}}, {"selected", m_ctx->IsSelected(ais)}};
+          {"layer", ais->ZLayer()}, {"translation", {t.X(), t.Y(), t.Z()}}, {"selected", m_ctx->IsSelected(ais)},
+          {"lineWidth", line->Width()}, {"lineType", int(line->LineType())}, {"linePattern", line->LinePattern()}, {"lineFactor", line->LineStippleFactor()},
+          {"lineColor", {line->Color().Red(), line->Color().Green(), line->Color().Blue()}}};
 }
 
 std::string Viewport::benchPickAt(int x, int y, opad::Vec3* at) {

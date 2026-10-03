@@ -76,6 +76,12 @@ void ViewportChips::setViewer(const QString& file) {
   adjustSize();
 }
 
+void ViewportChips::setDisplayChips(bool shown) {
+  m_mode->setVisible(shown);
+  m_proj->setVisible(shown);
+  adjustSize();
+}
+
 void ViewportChips::set(const QString& mode, const QString& projection, const QString& section, const QString& isolate, bool twoDimensional) {
   m_mode->setText(mode);
   m_proj->setText(projection);

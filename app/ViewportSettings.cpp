@@ -6,8 +6,12 @@
 #include <AIS_AnimationCamera.hxx>
 #include <Prs3d_ShadingAspect.hxx>
 #include <PrsMgr_PresentationManager.hxx>
+#include <Prs3d_LineAspect.hxx>
 #include <QSettings>
 #include <algorithm>
+#include <cmath>
+
+#include "Drawing2D.hpp"
 
 namespace {
 // Theme background and Studio quality are the defaults since TODO 10. Earlier builds wrote their own defaults (Studio
@@ -99,7 +103,7 @@ void Viewport::setRenderQuality(int level) {
   p.Method = rayTracing ? Graphic3d_RM_RAYTRACING : Graphic3d_RM_RASTERIZATION;
   p.NbMsaaSamples = rayTracing ? 0 : std::min(4, m_viewer->Driver()->InquireLimit(Graphic3d_TypeOfLimit_MaxMsaa));
   if (m_renderQuality == 2 && !rayTracing) emit hoverChanged(tr("Ray tracing unavailable on this driver; using Studio rendering"));
-  p.RenderResolutionScale = m_renderQuality == 1 ? 1.25f : 1.0f;
+  p.RenderResolutionScale = m_renderQuality == 1 ? 1.25f : 1.0f;  // a drawing's lines are drawn that much wider (lineWidth)
   p.ShadingModel = m_renderQuality == 0 ? Graphic3d_TypeOfShadingModel_Unlit : Graphic3d_TypeOfShadingModel_Phong;
   p.IsShadowEnabled = m_renderQuality >= 1;
   p.IsReflectionEnabled = false;
@@ -108,21 +112,56 @@ void Viewport::setRenderQuality(int level) {
   p.RaytracingDepth = 2;
   setShadows(m_renderQuality >= 1);
   updateDepthBias();
+  scheduleLooks();  // drawings' hairlines follow the render scale
   m_view->Invalidate();
   redrawScene();
 }
+
+double Viewport::renderScale() const { return m_initialised ? m_view->RenderingParams().RenderResolutionScale : 1.0; }
+
+double Viewport::lineWidth(double points) const {
+  return std::max(1.0, std::ceil(points * displayScale() * renderScale() - 0.01));  // whole pixels: 1.25 drew as 1, under a screen pixel
+}
+
+namespace {
+const QColor kGradientTop("#c7c8c9"), kGradientBottom("#66696b");
+Quantity_Color occ(const QColor& v) { return Quantity_Color(v.redF(), v.greenF(), v.blueF(), Quantity_TOC_sRGB); }
+}  // namespace
 
 void Viewport::setSceneBackground(int style) {
   m_sceneBackground = std::clamp(style, 0, 3);
   QSettings().setValue("view/background", m_sceneBackground);
   if (!m_initialised) return;
-  QColor c = m_sceneBackground == 2 ? QColor("#ffffff") : m_sceneBackground == 3 ? QColor("#171c24") : m_tokens.vp;
-  auto occ = [](const QColor& v) { return Quantity_Color(v.redF(), v.greenF(), v.blueF(), Quantity_TOC_sRGB); };
-  m_view->SetBackgroundColor(occ(c));
-  if (m_sceneBackground == 1)
-    m_view->SetBgGradientColors(occ(QColor("#c7c8c9")), occ(QColor("#66696b")), Aspect_GradientFillMethod_Vertical, false);
+  m_view->SetBackgroundColor(occ(sceneBackgroundColor()));
+  if (m_sceneBackground == 1) m_view->SetBgGradientColors(occ(kGradientTop), occ(kGradientBottom), Aspect_GradientFillMethod_Vertical, false);
   else m_view->SetBgGradientStyle(Aspect_GradientFillMethod_None);
+  updateDrawingHighlights();
+  scheduleLooks();  // drawings without a colour take the ink of the new background (UI-10)
   redrawScene();
+}
+
+QColor Viewport::sceneBackgroundColor() const {
+  if (m_sceneBackground == 1)  // the gradient's middle
+    return QColor((kGradientTop.red() + kGradientBottom.red()) / 2, (kGradientTop.green() + kGradientBottom.green()) / 2, (kGradientTop.blue() + kGradientBottom.blue()) / 2);
+  return m_sceneBackground == 2 ? QColor("#ffffff") : m_sceneBackground == 3 ? QColor("#171c24") : m_tokens.vp;
+}
+
+std::array<double, 3> Viewport::drawingInk() const {
+  const QColor c = sceneBackgroundColor();
+  return drawing2d::ink({c.redF(), c.greenF(), c.blueF()});
+}
+
+// Selected drawing lines in the selection hue, hovered ones in the white glow, both of the theme that suits the background:
+// on white (or in the light theme) the darker hue, and the glow turns teal instead of white on white.
+void Viewport::updateDrawingHighlights() {
+  if (m_drawingSelected.IsNull()) return;
+  const bool light = drawingInk() == drawing2d::kInkOnLight;
+  const Tokens on = theme::tokens(!light);
+  const Quantity_Color selected = occ(on.selected3d), hover = light ? occ(on.hov) : Quantity_Color(Quantity_NOC_WHITE);
+  m_drawingSelected->SetColor(selected);
+  m_drawingSelected->SetLineAspect(new Prs3d_LineAspect(selected, Aspect_TOL_SOLID, 3));
+  m_drawingSelected->SetWireAspect(new Prs3d_LineAspect(selected, Aspect_TOL_SOLID, 3));
+  m_drawingHover->SetColor(hover);
 }
 
 void Viewport::setTwoDimensional(bool on) {

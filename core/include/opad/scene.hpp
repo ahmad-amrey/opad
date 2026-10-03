@@ -30,6 +30,7 @@ struct Node {
   bool visible = true;
   bool locked = false;  // not picked and not changed, moved or removed (Scene::effectively_locked: or under a locked component)
   json layer;  // a drawing layer as its file had it: {name, off, frozen, locked, plot, linetype, lineweight}; null otherwise
+  bool by_layer = false;  // a drawing body in its layer's colour (DXF BYLAYER): a colour given to the layer applies to it
   std::string source_op;  // the import op that created it
   std::vector<std::string> modified_by;  // ops that touched this node after import
   json properties = json::object();  // part properties (properties ops): part_number, description, material, bom, ...
@@ -69,6 +70,7 @@ struct ViewBookmark {
   std::string id, name;
   json camera;
   json explode;  // optional exploded view (explode.hpp ExplodeSpec); null for a plain camera bookmark
+  json display;  // optional: what is shown, {"layers": {layer id: state}} (a drawing's layer state, UI-89); null otherwise
 };
 
 struct Unresolved {

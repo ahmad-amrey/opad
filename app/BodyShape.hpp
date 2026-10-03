@@ -22,6 +22,7 @@ inline Quantity_Color selectionTint() { return Quantity_Color(0.70,0.70,0.70,Qua
 struct BodyPrs {
   Handle(Graphic3d_ArrayOfTriangles) triangles;
   Handle(Graphic3d_ArrayOfSegments) boundaries;  // face boundaries, for the shaded-with-edges style
+  Handle(Graphic3d_ArrayOfSegments) freeEdges;   // edges of no face beside faces (a drawing layer's lines next to its fills)
   Handle(Graphic3d_ArrayOfPoints) loosePoints;
   struct Circle {
     TopoDS_Shape edge;

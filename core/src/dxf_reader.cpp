@@ -386,6 +386,7 @@ class Reader {
  private:
   struct Layer {
     std::string name, linetype;
+    std::vector<double> pattern;  // its linetype's dashes from the LTYPE table, sized as acad.lin's (mm; < 0 gap, 0 dot)
     uint32_t color = kNoColor;
     bool visible = true, off = false, frozen = false, locked = false, plot = true;
     int lineweight = -3;  // 1/100 mm; negative: by layer, by block or the default
@@ -479,6 +480,7 @@ class Reader {
   std::map<std::string, Layer> m_layers;  // by upper-case name
   std::map<std::string, std::string> m_layerNames;  // raw name -> display name
   std::map<std::string, Style> m_styles;  // by upper-case name
+  std::map<std::string, std::vector<double>> m_linetypes;  // LTYPE: dashes by upper-case raw name (< 0 gap, 0 dot)
   std::map<std::string, Block> m_blocks;  // by upper-case raw name
   int m_depth = 0;
   BRep_Builder m_builder;
@@ -569,6 +571,7 @@ json Reader::Layer::info() const {
   if (locked) j["locked"] = true;
   if (!plot) j["plot"] = false;
   if (!linetype.empty() && upper(linetype) != "CONTINUOUS") j["linetype"] = linetype;
+  if (!pattern.empty() && j.contains("linetype")) j["pattern"] = pattern;
   if (lineweight >= 0) j["lineweight"] = lineweight / 100.0;  // mm
   return j;
 }
@@ -610,6 +613,14 @@ void Reader::tables(const std::vector<Entity>& section) {
       style.width = f.num(41, 1);
       if (!(style.width > 0)) style.width = 1;
       m_styles[upper(trimmed(f.str(2)))] = style;
+    } else if (e.type == "LTYPE") {  // the dashes (49, repeated); the shapes and text of complex linetypes are left out
+      std::vector<double> dashes;
+      for (size_t i = f.begin; i < f.end; ++i)
+        if ((*f.pairs)[i].code == 49) try {
+            dashes.push_back(parse_number((*f.pairs)[i].value));
+          } catch (const Error&) {
+          }
+      if (!dashes.empty()) m_linetypes[upper(trimmed(f.str(2)))] = dashes;
     }
   }
 }
@@ -1529,8 +1540,34 @@ Drawing Reader::read() {
     }
   }
   if (sections.count("TABLES")) tables(sections["TABLES"]);
+  // Linetypes are drawn at a screen size (app Drawing2D), whatever the drawing's units and LTSCALE: their dashes as
+  // acad.lin and acadiso.lin size them. The standard names the file defines say how much larger its own are (their first
+  // dash against acad.lin's, in mm); without one, its typical dash is taken as 12.7 mm.
+  std::vector<double> sizes, dashes;
+  for (const auto& [name, d] : m_linetypes) {
+    for (double v : d)
+      if (v > 0) dashes.push_back(v);
+    if (d.empty() || !(d[0] > 0)) continue;
+    std::string base = name;
+    double factor = 1;
+    if (base.size() > 2 && base.compare(base.size() - 2, 2, "X2") == 0) factor = 2, base.resize(base.size() - 2);
+    else if (base.size() > 1 && base.back() == '2') factor = 0.5, base.pop_back();
+    static const std::map<std::string, double> first = {{"DASHED", 12.7}, {"HIDDEN", 6.35}, {"CENTER", 31.75}, {"PHANTOM", 31.75},
+                                                        {"DASHDOT", 12.7}, {"BORDER", 12.7}, {"DIVIDE", 12.7}};
+    if (const auto it = first.find(base); it != first.end()) sizes.push_back(it->second * factor / d[0]);
+  }
+  auto median = [](std::vector<double> v) {
+    std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
+    return v[v.size() / 2];
+  };
+  if (!dashes.empty()) {
+    const double size = sizes.empty() ? 12.7 / median(dashes) : median(sizes);
+    for (auto& [name, d] : m_linetypes)
+      for (double& v : d) v = std::round(v * size * 1000) / 1000;
+  }
   std::map<std::string, Layer> decoded;  // keyed by the decoded name, which is what entities are looked up by
   for (auto& [key, layer] : m_layers) {
+    if (const auto it = m_linetypes.find(upper(layer.linetype)); it != m_linetypes.end()) layer.pattern = it->second;
     layer.name = decode(layer.name);
     layer.linetype = decode(layer.linetype);
     decoded[upper(layer.name)] = layer;
@@ -1571,6 +1608,7 @@ Drawing Reader::read() {
     const auto& [layer, color] = key;
     const uint32_t rgb = color == kByLayer ? layer_color(layer) : color == kByBlock ? kNoColor : color;
     out.add(layer, shape, rgb);
+    if (color == kByLayer) out.by_layer[layer] = rgb;
     const auto it = m_layers.find(upper(layer));
     out.visible[layer] = it == m_layers.end() || it->second.visible;
     if (it != m_layers.end()) out.layer_info[layer] = it->second.info();

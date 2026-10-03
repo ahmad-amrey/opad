@@ -11,6 +11,7 @@
 
 #include <Bnd_Box.hxx>
 
+#include "Drawing2D.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "opad/geometry.hpp"
@@ -47,7 +48,7 @@ void MainWindow::onViewportSelection() {
   selectionMoved(refs);
   if (!m_tool.id.isEmpty()) toolPicksChanged(refs, true);
   if (refs.empty()) m_statusSel->clear();
-  else m_statusSel->setText(tr("%1 selected · %2").arg(refs.size()).arg(i18n::t(opad::Ref::kind_name(refs.front().kind))));
+  else m_statusSel->setText(tr("%1 selected · %2").arg(refs.size()).arg(i18n::t(m_viewport->drawingWords() ? drawing2d::kindWord(refs.front().kind) : opad::Ref::kind_name(refs.front().kind))));  // UI-118: objects and points in 2D
   scheduleSelectionSync();
   m_syncing = false;
 }
@@ -65,7 +66,8 @@ void MainWindow::onBrowserSelection(const std::vector<std::string>& ids) {
   }
   selectionMoved(refs);
   if (!m_tool.id.isEmpty()) toolPicksChanged(refs, false);
-  m_statusSel->setText(!refs.empty() ? tr("%1 selected · body").arg(refs.size()) : ids.empty() ? QString() : tr("%1 selected").arg(ids.size()));
+  m_statusSel->setText(!refs.empty() ? (m_viewport->drawingWords() ? tr("%1 selected · %2").arg(refs.size()).arg(i18n::t(drawing2d::nodeWord(m_doc->scene, refs.front().body))) : tr("%1 selected · body").arg(refs.size()))
+                                     : ids.empty() ? QString() : tr("%1 selected").arg(ids.size()));
   m_syncing = false;
   m_viewport->selectNodes(nodes);  // sliced; selectionApplied() writes selection.json when it settles
 }
@@ -112,8 +114,15 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
     // What walks the geometry (volume, area, the tight box; for a component every body under it) is measured on a
     // worker and filled in afterwards.
     opad::json j = r.kind == opad::Ref::Kind::Body ? opad::node_properties(m_doc->doc, m_doc->scene, r.body, false) : opad::inspect_ref(m_doc->doc, m_doc->scene, r);
+    const opad::Node* subject = m_doc->node(r.body);
+    const bool drawing = m_viewport->drawingWords() && subject && subject->representation == "drawing2d";  // 2D words (UI-118)
+    if (drawing) j = drawing2d::properties(std::move(j));
     QString title, subtitle, id;
-    if (r.kind == opad::Ref::Kind::Point) {
+    if (drawing && r.kind != opad::Ref::Kind::Body && !drawing2d::entityType(j).empty()) {  // "Line", "Walls › object 3"
+      title = Viewport::drawingWord(drawing2d::entityType(j));
+      subtitle = QString::fromUtf8("%1 › %2 %3").arg(m_doc->nodeName(subject->parent.empty() ? r.body : subject->parent), i18n::t(drawing2d::kindWord(r.kind))).arg(r.index);
+      id = QString::fromStdString(r.body.substr(0, 8));
+    } else if (r.kind == opad::Ref::Kind::Point) {
       title = tr("Point");
       subtitle = QString::fromStdString(r.str());
     } else if (r.kind == opad::Ref::Kind::Body) {
@@ -291,8 +300,11 @@ void MainWindow::showNodeGeometry(const std::string& id, const QString& title, c
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);
   auto result = std::make_shared<opad::json>();
   const auto generation = m_doc->generation;
-  m_propsJob = m_jobs->async(tr("Measuring %1").arg(title), [document, scene, id, result](Progress p) {
+  const opad::Node* node = m_doc->node(id);
+  const bool drawing = m_viewport->drawingWords() && node && node->representation == "drawing2d";  // 2D words (UI-118)
+  m_propsJob = m_jobs->async(tr("Measuring %1").arg(title), [document, scene, id, result, drawing](Progress p) {
     *result = opad::node_properties(*document, *scene, id, true, [p] { return p.cancelled(); });
+    if (drawing) *result = drawing2d::properties(std::move(*result));
   }, [this, result, title, subtitle, nid, generation](bool ok, const QString&) {
     m_propsJob = nullptr;
     if (!ok || generation != m_doc->generation) return;

@@ -6,6 +6,7 @@
 #include <QString>
 #include <QToolButton>
 #include <QWidget>
+#include <algorithm>
 #include <functional>
 
 #include "Theme.hpp"
@@ -29,6 +30,7 @@ class ToolPanel : public QWidget {
   // The default height for this content (header excluded). A panel the user has not sized follows it, never taller
   // than the viewport below its top, so it stays under the view cube.
   void setDefaultHeight(int contentHeight);
+  void setDefaultWidth(int width) { m_defaultSize.setWidth(std::clamp(width, 280, 480) + 2 * kMargin); }  // a table's columns: 336 by default
   bool pinned() const { return m_pin->isChecked(); }
   bool userPlaced() const { return m_userPlaced; }
   void setDefaultTop(int top) { if (!m_userPlaced) m_offset.setY(top); }

@@ -126,6 +126,8 @@ void Document::validate_op(const json& op) {
       throw Error("appearance: needs at least one of color, opacity, visible, locked");
     if (op.contains("color") && !(op["color"].is_array() && op["color"].size() == 3))
       throw Error("appearance: color must be [r,g,b] in 0..1");
+    if (op.contains("layer") && !op["layer"].is_object()) throw Error("appearance: layer must be an object");
+    if (op.contains("default_color") && !op["default_color"].is_boolean()) throw Error("appearance: default_color must be true or false");
   } else if (type == "rename") {
     require(op, "target", "uuid");
     require(op, "name", "string");
@@ -187,6 +189,7 @@ void Document::validate_op(const json& op) {
   } else if (type == "view") {
     require(op, "name", "string");
     require(op, "camera", "object");
+    if (op.contains("display") && !op["display"].is_object()) throw Error("view: display must be an object");
   } else if (type == "delete") {
     require(op, "target", "uuid");
   } else if (type == "param") {

@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#include "Drawing2D.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
@@ -328,7 +329,13 @@ void MainWindow::saveNamedView() {
 
 void MainWindow::restoreNamedView(const std::string& id) {
   for (const auto& v : m_doc->scene.views)
-    if (v.id == id) m_viewport->setCameraJson(v.camera);
+    if (v.id == id) {
+      m_viewport->setCameraJson(v.camera);
+      std::vector<std::pair<std::string, opad::json>> layers;  // a layer state saved with it (UI-89): one step
+      for (auto& args : drawing2d::restoreState(m_doc->scene, v.display)) layers.push_back({"appearance", std::move(args)});
+      if (!layers.empty()) guarded([&] { m_doc->runAll(layers, tr("restore layer state")); });
+      return;
+    }
 }
 
 void MainWindow::rebuildViewsMenu() {

@@ -359,6 +359,67 @@ TEST(layer_table_state_reaches_the_layer_nodes) {
   }
 }
 
+// TODO 11 UI-89: a layer's linetype brings its dashes from the LTYPE table (the shapes and text of a complex one left
+// out), sized as acad.lin's: the file's DASHED and HIDDEN, in inches here, say how much larger its dashes are.
+TEST(linetype_patterns_reach_the_layers) {
+  Files f;
+  Groups lines;
+  for (const char* layer : {"Walls", "Hidden", "Fence", "Plain"}) lines.insert(lines.end(), {{0, "LINE"}, {8, layer}, {10, "0"}, {20, "0"}, {11, "10"}, {21, "0"}});
+  write_text_file(f.dir / "linetypes.dxf",
+                  section("TABLES", {{0, "TABLE"}, {2, "LTYPE"},
+                                     {0, "LTYPE"}, {2, "CONTINUOUS"}, {73, "0"}, {40, "0"},
+                                     {0, "LTYPE"}, {2, "DASHED"}, {73, "2"}, {40, "0.75"}, {49, "0.5"}, {74, "0"}, {49, "-0.25"}, {74, "0"},
+                                     {0, "LTYPE"}, {2, "HIDDEN"}, {73, "2"}, {40, "0.375"}, {49, "0.25"}, {74, "0"}, {49, "-0.125"}, {74, "0"},
+                                     {0, "LTYPE"}, {2, "FENCE"}, {73, "4"}, {40, "0.5"}, {49, "0.3"}, {74, "0"}, {49, "-0.1"}, {74, "2"}, {75, "0"},
+                                     {46, "0.1"}, {50, "0"}, {44, "0"}, {45, "0"}, {9, "GAS"}, {49, "0"}, {74, "0"}, {49, "-0.1"}, {74, "0"},
+                                     {0, "ENDTAB"}, {0, "TABLE"}, {2, "LAYER"},
+                                     {0, "LAYER"}, {2, "Walls"}, {62, "1"}, {70, "0"}, {6, "DASHED"},
+                                     {0, "LAYER"}, {2, "Hidden"}, {62, "2"}, {70, "0"}, {6, "HIDDEN"},
+                                     {0, "LAYER"}, {2, "Fence"}, {62, "3"}, {70, "0"}, {6, "FENCE"},
+                                     {0, "LAYER"}, {2, "Plain"}, {62, "5"}, {70, "0"}, {6, "CONTINUOUS"},
+                                     {0, "ENDTAB"}}) +
+                      section("ENTITIES", lines) + kEof);
+  const Scene s = resolve(import(f.dir / "linetypes.dxf"));
+  std::map<std::string, json> layers;
+  for (const auto& [id, n] : s.nodes)
+    if (n.layer.is_object()) layers[n.name] = n.layer;
+  CHECK(layers["Walls"] == json({{"name", "Walls"}, {"linetype", "DASHED"}, {"pattern", {12.7, -6.35}}}));
+  CHECK(layers["Hidden"] == json({{"name", "Hidden"}, {"linetype", "HIDDEN"}, {"pattern", {6.35, -3.175}}}));
+  CHECK(layers["Fence"] == json({{"name", "Fence"}, {"linetype", "FENCE"}, {"pattern", {7.62, -2.54, 0.0, -2.54}}}));
+  CHECK(layers["Plain"] == json({{"name", "Plain"}}));
+}
+
+// TODO 11 UI-89: the body of a layer's BYLAYER entities says so (by_layer), so a colour given to the layer reaches it and
+// not the entities drawn in colours of their own; a block's layer-0 BYLAYER entities follow the insert's layer.
+TEST(by_layer_bodies_are_marked) {
+  Files f;
+  write_text_file(f.dir / "bylayer.dxf",
+                  section("TABLES", {{0, "TABLE"}, {2, "LAYER"}, {0, "LAYER"}, {2, "A"}, {62, "1"}, {70, "0"}, {0, "LAYER"}, {2, "B"}, {62, "7"}, {70, "0"},
+                                     {0, "LAYER"}, {2, "C"}, {62, "3"}, {70, "0"}, {0, "ENDTAB"}}) +
+                      section("BLOCKS", {{0, "BLOCK"}, {2, "K"}, {70, "0"}, {10, "0"}, {20, "0"}, {0, "LINE"}, {8, "0"}, {10, "0"}, {20, "0"}, {11, "1"}, {21, "0"},
+                                         {0, "ENDBLK"}}) +
+                      section("ENTITIES", {{0, "LINE"}, {8, "A"}, {10, "0"}, {20, "0"}, {11, "10"}, {21, "0"},              // by layer: red
+                                           {0, "LINE"}, {8, "A"}, {62, "5"}, {10, "0"}, {20, "5"}, {11, "10"}, {21, "5"},   // blue of its own
+                                           {0, "LINE"}, {8, "B"}, {10, "0"}, {20, "10"}, {11, "10"}, {21, "10"},            // by layer: the ink
+                                           {0, "LINE"}, {8, "B"}, {62, "1"}, {10, "0"}, {20, "15"}, {11, "10"}, {21, "15"}, // red of its own
+                                           {0, "LINE"}, {8, "C"}, {62, "5"}, {10, "0"}, {20, "20"}, {11, "10"}, {21, "20"}, // only its own colour
+                                           {0, "INSERT"}, {8, "B"}, {2, "K"}, {10, "0"}, {20, "30"}}) +
+                      kEof);
+  for (bool viewer : {true, false}) {
+    const Scene s = resolve(import(f.dir / "bylayer.dxf", viewer));
+    std::map<std::string, int> marked, own;
+    for (const auto& id : s.all_bodies()) {
+      const Node* n = s.node(id);
+      (n->by_layer ? marked : own)[n->name]++;
+      if (n->by_layer && n->name == "A") CHECK(n->has_color && n->color == (std::array<double, 3>{1, 0, 0}));
+      if (n->by_layer && n->name == "B") CHECK(!n->has_color);  // the ink, the block's line with it
+    }
+    CHECK(marked == (std::map<std::string, int>{{"A", 1}, {"B", 1}}));
+    CHECK(own == (std::map<std::string, int>{{"A", 1}, {"B", 1}, {"C", 1}}));
+    CHECK(s.tree_json(-1).dump().find("\"by_layer\":true") != std::string::npos);
+  }
+}
+
 #ifdef _WIN32
 TEST(old_code_pages_become_utf8) {
   Files f;

@@ -332,6 +332,7 @@ void register_builtins() {
         for (const auto& v : s.views) {
           views.push_back({{"id", v.id}, {"name", v.name}, {"camera", v.camera}});
           if (!v.explode.is_null()) views.back()["explode"] = v.explode;
+          if (!v.display.is_null()) views.back()["display"] = v.display;
         }
         json j;
         j["annotations"] = ann;
@@ -677,11 +678,21 @@ void register_builtins() {
   });
 
   reg("appearance", "Set colour/opacity/visibility/lock of a node, or of several (targets)",
-      {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids - instead of target"}, {"color", "[r,g,b]"}, {"opacity", "number"}, {"visible", "bool"}, {"locked", "bool"}}, true,
+      {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids - instead of target"}, {"color", "[r,g,b]"}, {"opacity", "number"}, {"visible", "bool"}, {"locked", "bool"},
+       {"layer", "object - drawing layer fields: off, frozen, plot, linetype, lineweight (mm); null removes one"},
+       {"default_color", "bool - back to the imported colour (a drawing: none)"}}, true,
       [](Document* d, const json& a) {
-        return append_per_target(need(d), "appearance", a, [&](const json&, size_t, size_t) {
+        // Earlier builds read an appearance op only with one of their four fields: a change of the others alone carries
+        // visible as it is.
+        const bool alone = (a.contains("layer") || a.contains("default_color")) && !a.contains("color") && !a.contains("opacity") && !a.contains("visible") && !a.contains("locked");
+        const Scene shown = alone ? resolve(need(d)) : Scene{};
+        return append_per_target(need(d), "appearance", a, [&](const json& target, size_t, size_t) {
           json op = json::object();
-          for (const char* k : {"color", "opacity", "visible", "locked"}) if (a.contains(k)) op[k] = a[k];
+          for (const char* k : {"default_color", "color", "opacity", "visible", "locked", "layer"}) if (a.contains(k)) op[k] = a[k];
+          if (alone) {
+            const Node* n = shown.node(target.is_string() ? target.get<std::string>() : "");
+            op["visible"] = n ? n->visible : true;
+          }
           return op;
         });
       });
@@ -719,13 +730,14 @@ void register_builtins() {
         return j;
       });
 
-  reg("view", "Add a named camera bookmark", {{"doc", "path"}, {"name", "string"}, {"camera", "object"}, {"explode", "object - an exploded view (see the explode command)"}}, true,
+  reg("view", "Add a named camera bookmark", {{"doc", "path"}, {"name", "string"}, {"camera", "object"}, {"explode", "object - an exploded view (see the explode command)"}, {"display", "object - layers: {layer id: state} restored with it"}}, true,
       [](Document* d, const json& a) {
     json op;
     op["op"] = "view";
     op["name"] = a.at("name");
     op["camera"] = a.contains("camera") ? a["camera"] : Camera::preset(a.value("preset", "iso")).to_json();
     if (a.contains("explode")) op["explode"] = ExplodeSpec::from_json(a["explode"]).to_json();
+    if (a.contains("display")) op["display"] = a["display"];
     json j;
     j["id"] = need(d).append(op, a.value("by", "")).id;
     return j;

@@ -3,6 +3,7 @@
 #include <TopExp_Explorer.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
+#include "Drawing2D.hpp"
 #include "Units.hpp"
 #include "opad/mesh.hpp"
 #include <V3d_DirectionalLight.hxx>
@@ -287,6 +288,13 @@ void Viewport::initViewer() {
   Handle(V3d_DirectionalLight) overhead=new V3d_DirectionalLight(gp_Dir(0,0,-1),Quantity_NOC_WHITE,false);
   overhead->SetIntensity(0.75f);m_viewer->AddLight(overhead);m_viewer->SetLightOn(overhead);
   m_ctx = new AIS_InteractiveContext(m_viewer);
+  // Drawings are highlighted as lines, not tinted: shared drawers whose colours follow the background (updateDrawingHighlights).
+  m_drawingSelected = new Prs3d_Drawer();
+  m_drawingSelected->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected));
+  m_drawingSelected->SetDisplayMode(AIS_WireFrame);
+  m_drawingHover = new Prs3d_Drawer();
+  m_drawingHover->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic));
+  m_drawingHover->SetDisplayMode(AIS_WireFrame);
   {  // TopOSD (notes, the drawing being made, measurement labels) has no depth test, but it kept the depth, so what is
      // translucent in Topmost (a note target's tint) was drawn after it, over it: red strokes came out pink. Clearing
      // the depth draws what is pending first.
@@ -552,8 +560,19 @@ void Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
     edge = QColor::fromRgbF(edge.redF() + (m_tokens.vp.redF() - edge.redF()) * t, edge.greenF() + (m_tokens.vp.greenF() - edge.greenF()) * t,
                             edge.blueF() + (m_tokens.vp.blueF() - edge.blueF()) * t);
   }
+  if (look && look->lineWidth > 0) edge = QColor::fromRgbF(look->color[0], look->color[1], look->color[2]);  // a drawing's glyph and hatch outlines
   if (d->HasOwnFaceBoundaryAspect()) d->FaceBoundaryAspect()->SetColor(occ(edge));
   else d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(edge), Aspect_TOL_SOLID, 1.0));
+  if (look && look->lineWidth > 0) {  // a drawing's lines: hairlines times the display scale (UI-10), its layer's weight and type
+    for (const auto& [own, line] : {std::pair{d->HasOwnWireAspect(), d->WireAspect()}, {d->HasOwnLineAspect(), d->LineAspect()},
+                                    {d->HasOwnFreeBoundaryAspect(), d->FreeBoundaryAspect()}})
+      if (own) {
+        line->SetWidth(look->lineWidth);
+        line->Aspect()->SetLinePattern(look->linePattern);
+        line->Aspect()->SetLineStippleFactor(look->lineFactor);
+      }
+    d->FaceBoundaryAspect()->SetWidth(lineWidth());  // outlines of fills and text stay hairlines
+  }
   m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, Standard_False);
 }
 
@@ -1161,13 +1180,13 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
   emit selectionChanged();
 }
 
-void Viewport::isolate(const std::vector<std::string>& ids) {
+void Viewport::isolate(const std::vector<std::string>& ids, bool fit) {
   m_isolated.clear();
   for (const auto& id : ids)
     {if(m_doc->scene.sketch(id))m_isolated.insert(id);for (const auto& b : m_doc->scene.bodies_under(id)) m_isolated.insert(b);}
-  m_needFit = !m_isolated.empty();
+  m_needFit = fit && !m_isolated.empty();
   sync();
-  if (!m_isolated.empty()) fitAll();
+  if (fit && !m_isolated.empty()) fitAll();
   emit isolationChanged();
 }
 
@@ -1855,6 +1874,11 @@ void Viewport::sync() {
         // (a colour picked for the selection left it unselected, though the status bar still counted it).
         m_ctx->RecomputePrsOnly(item.ais, Standard_False);
         recoloredSelected = recoloredSelected || m_ctx->IsSelected(item.ais);
+      } else if (n->representation == "drawing2d") {  // its layer's line weight or type may have changed (UI-89)
+        if (const BodyLook look = composeLook(*n); !(look == item.look)) {
+          applyLook(id, item, look);
+          recoloredSelected = recoloredSelected || m_ctx->IsSelected(item.ais);
+        }
       }
       continue;
     }
@@ -1980,16 +2004,12 @@ void Viewport::displayBody(const std::string& id) {
   ais->SetColor(qcolor(look.color));
   if (look.opacity < 1.0) ais->SetTransparency(1.0 - look.opacity);
   if (look.layer != Graphic3d_ZLayerId_Default) ais->SetZLayer(look.layer);
-  applyStyle(ais, &look);
   if(n->representation=="drawing2d" && n->raster.is_null()) {
-    Handle(Prs3d_Drawer) selected=new Prs3d_Drawer();selected->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected));
-    selected->SetDisplayMode(AIS_WireFrame);selected->SetColor(selectionTint());
-    selected->SetLineAspect(new Prs3d_LineAspect(selected->Color(),Aspect_TOL_SOLID,3));
-    selected->SetWireAspect(new Prs3d_LineAspect(selected->Color(),Aspect_TOL_SOLID,3));
-    ais->SetHilightAttributes(selected);
-    Handle(Prs3d_Drawer) hover=new Prs3d_Drawer();hover->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic));
-    hover->SetDisplayMode(AIS_WireFrame);hover->SetColor(Quantity_NOC_WHITE);ais->SetDynamicHilightAttributes(hover);
+    ais->Attributes()->ShadingAspect()->Aspect()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);  // fills and text in their colour, unlit
+    ais->SetHilightAttributes(m_drawingSelected);  // shared: their colours follow the background (updateDrawingHighlights)
+    ais->SetDynamicHilightAttributes(m_drawingHover);
   }
+  applyStyle(ais, &look);
   m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, -1, Standard_False);  // selection activated below, once
   if (!look.visible) m_ctx->Erase(ais, Standard_False);
   if (m_side) maskSide(id, ais);  // side by side: one of B's changes stays out of A's view
@@ -2098,6 +2118,7 @@ void Viewport::syncWindowSize() {
     m_cube->SetAxesConeRadius(1.2 * m_cubeScale);
     m_cube->SetAxesSphereRadius(1.0 * m_cubeScale);
     m_ctx->Redisplay(m_cube, Standard_False);
+    scheduleLooks();  // drawings' hairlines follow the display scale
   }
   if (trace::enabled()) {
     Standard_Integer viewW = 0, viewH = 0;
@@ -2131,16 +2152,35 @@ void Viewport::paintEvent(QPaintEvent*) {
   }
   if (trace::enabled() && frame.elapsed() > 100) trace::log(QStringLiteral("slow frame: %1 ms (%2 objects)").arg(frame.elapsed()).arg(m_items.size()));
   updateTracking();
+  updateHover();
+  updateObjectSnap();
+}
+
+// The status text, the hovered drawing entity and the point under the mouse, after a frame's detection.
+void Viewport::updateHover() {
   // The label needs the sub-shape's ordinal, a walk over the whole body: only when the hovered owner changes.
   const Standard_Transient* hoverOwner = m_ctx->HasDetected() ? m_ctx->DetectedOwner().get() : nullptr;
   if (hoverOwner == m_hoverOwner) return;
   m_hoverOwner = hoverOwner;
   discoverCenter();
   QString hover;
+  opad::json drawingInfo;
   if (m_ctx->HasDetected()) {
     Handle(AIS_InteractiveObject) obj = m_ctx->DetectedInteractive();
     auto it = m_nodeOf.find(obj.get());
-    if (it != m_nodeOf.end()) {
+    const opad::Node* node = it != m_nodeOf.end() ? m_doc->scene.node(it->second) : nullptr;
+    if (node && m_drawingWords && node->representation == "drawing2d" && node->raster.is_null()) {  // 2D words (UI-118)
+      Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
+      Handle(SubShapeOwner) mine = Handle(SubShapeOwner)::DownCast(owner);
+      const QString layer = m_doc->nodeName(node->parent.empty() ? node->id : node->parent);
+      drawingInfo = owner.IsNull() || !owner->HasShape() || m_filter == SelFilter::Body ? opad::json{{"type", "group"}} : drawing2d::entityInfo(owner->Shape());
+      drawingInfo["body"] = node->id;
+      if (!mine.IsNull()) drawingInfo["index"] = mine->index();
+      hover = drawingInfo["type"] == "group" ? tr("Group on %1").arg(layer) : tr("%1 on %2").arg(drawingWord(drawingInfo.value("type", "")), layer);
+      if (drawingInfo.contains("radius")) hover += QStringLiteral(" · R ") + units::format(units::Kind::Length, drawingInfo["radius"].get<double>());
+      else if (drawingInfo.contains("length")) hover += QStringLiteral(" · ") + units::format(units::Kind::Length, drawingInfo["length"].get<double>());
+      else if (drawingInfo.contains("area")) hover += QStringLiteral(" · ") + units::format(units::Kind::Area, drawingInfo["area"].get<double>());
+    } else if (it != m_nodeOf.end()) {
       hover = hoverName(it->second);
       Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
       if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
@@ -2168,6 +2208,10 @@ void Viewport::paintEvent(QPaintEvent*) {
   if (hover != m_hover) {
     m_hover = hover;
     emit hoverChanged(hover);
+  }
+  if (drawingInfo != m_hoverInfo) {
+    m_hoverInfo = drawingInfo;
+    emit hoverInfo(drawingInfo);
   }
   gp_Pnt hp;
   const bool onGeometry = detectedPoint(hp)
@@ -2250,6 +2294,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
     // Only the Replace scheme hands a click to the cube (HandleMouseClick); a guided tool's XOR would toggle it as a pick.
     ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, AIS_SelectionScheme_Replace);
   }
+  if (m_initialised && !m_cubeGesture && objectSnapPress(e)) return;
   if (!m_cubeGesture && e->button()==Qt::LeftButton && m_initialised && m_pickAccumulate && !m_measureSelectionLocked) {
     // A locked guide's point is taken wherever the click lands (a cross lock's crossing can be far from the pointer).
     auto tracked=m_centers.find(m_trackingMarker);

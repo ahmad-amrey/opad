@@ -41,6 +41,7 @@
 class JobRunner;
 class Job;
 class QKeyEvent;
+struct ObjectSnapState;
 class QNativeGestureEvent;
 
 // Sketch editing (SketchEditor) takes the left mouse button and the keyboard while it is active; positions
@@ -93,6 +94,16 @@ class Viewport : public QWidget, protected AIS_ViewController {
   static int savedRenderQuality();
   static int savedSceneBackground();
   void setSceneBackground(int style);
+  int sceneBackground() const { return m_sceneBackground; }
+  QColor sceneBackgroundColor() const;  // its colour (the gradient's middle)
+  // What a 2D drawing without a colour (DXF colour 7) is drawn in: light on a dark background, dark on a light one (UI-10).
+  std::array<double, 3> drawingInk() const;
+  // The 2D vocabulary (UI-118, ViewportDrawing.cpp): in a drawing-only scene or 2D mode, a hovered drawing entity reads as
+  // "Line on Walls · 120 mm" (an object on its layer, never "body › edge 12") and is reported by hoverInfo.
+  void setDrawingWords(bool on);
+  bool drawingWords() const { return m_drawingWords; }
+  static QString drawingWord(const std::string& type);  // "line" -> "Line", translated
+  bool benchHover(const QPointF& widgetPos);  // the detection a mouse move here makes, and the hover after it (hidden windows never paint)
   void setHoverFade(bool enabled,double seconds);
   void resetHoverFade();
   void setCubeEdgesCorners(bool on);  // setting view/cubeEdgesCorners: off = only the cube's faces are views
@@ -146,7 +157,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void clearSelection();  // emits selectionChanged() once the un-highlight has settled
   // Isolate mode: exactly these nodes' bodies are shown, whatever their visibility flags say, until
   // isolate({}) or until none of them exists any more (all deleted). isolationChanged() reports both.
-  void isolate(const std::vector<std::string>& ids);  // empty = exit the mode
+  void isolate(const std::vector<std::string>& ids, bool fit = true);  // empty = exit the mode; fit: frame them (a layer walk keeps the camera)
   bool isIsolated() const { return !m_isolated.empty(); }
   std::vector<std::string> isolatedNodes() const {return {m_isolated.begin(),m_isolated.end()};}
   int isolatedCount() const { return static_cast<int>(m_isolated.size()); }
@@ -250,6 +261,18 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showPickMarkers(const std::vector<opad::Vec3>& points);  // numbered end markers, 1-based
   void showPreview(const opad::Vec3& a, const opad::Vec3& b, const QString& label);  // dashed hov line to the hovered candidate
   void clearPreview();
+  // Object snap (UI-90, ViewportSnap.cpp): while a tool picks points (Vertex filter, a drawing's Points), the drawings' ends,
+  // midpoints, centres, quadrants, intersections and nearest points under the mouse, as the sketch offers them (its snap
+  // set, settings sketch/snap/<kind>): a marker of the kind's shape, its name in the status bar, and a click picks the
+  // point (a Point ref). F3 switches it (view/objectSnap). Each body's index is built on a worker when first needed.
+  void setObjectSnap(bool on);
+  bool objectSnap() const { return m_objectSnap; }
+  bool snapAt(const QPointF& widgetPos, opad::Vec3& world, QString* kind = nullptr);  // any point consumer: false until indexed
+  bool shownSnap(opad::Vec3& world, QString* kind = nullptr) const;                // the one the cursor shows now
+  bool snapIndexesReady();  // asks for the missing indexes; true once every displayed drawing has one
+  static QString snapWord(const QString& kind);  // "endpoint" -> "Endpoint", translated
+  bool benchSnap(const QPointF& widgetPos);  // the snap a mouse move here shows (hidden windows never paint)
+  bool pointUnder(const QPointF& widgetPos, opad::Vec3& world);  // the frontmost displayed surface there (one BVH ray), false: none
 
   // ---- design (ViewportDesign.cpp)
   // Things a feature input can pick that are not part of a body: sketch regions, sketch points and lines,
@@ -287,6 +310,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool planePoint(const QPointF& widgetPos, const opad::Frame& frame, double& u, double& v) const;
   double pixelSize() const;                    // world units per widget pixel at the view's focus
   double displayScale() const { return viewScale().x(); }  // device pixels per widget point: overlay text, markers, lines
+  // The width a line must be given to come out at least this many widget points wide: times the display scale and the
+  // render scale (Studio quality renders 1.25 times as large and scales down, which made 1 px hairlines 0.8 px, dim and
+  // blurred across two rows), rounded up to whole pixels since the driver rounds line widths.
+  double lineWidth(double points = 1) const;
+  double renderScale() const;  // the render's size over the view's (Studio quality: 1.25)
   opad::Vec3 viewDirection() const;            // unit direction the camera looks along (into the scene)
   QPoint widgetPoint(const opad::Vec3& world) const;
   // Notes: NoteCards places one card per open note and tells the view where each pointer ends (widget
@@ -341,6 +369,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void filterApplied();     // a setSelectionFilter() call has reached every displayed body
   void hoverChanged(const QString& text);
   void hoverPoint(bool valid, const opad::Vec3& point);  // with hoverChanged: where the mouse met the hovered entity
+  // The drawing entity under the mouse in the 2D vocabulary: drawing2d::entityInfo plus body and index; null when none.
+  void hoverInfo(const opad::json& info);
   void contextMenuRequested(const QPoint& globalPos);
   void meshingProgress(int remaining);
   void isolationChanged();  // entered, left, or left because every isolated object was deleted
@@ -471,6 +501,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // display, (de)activate, Z layer, location (SetLocation: picking follows). True when it moved the body.
   bool applyLook(const std::string& id, Item& item, const BodyLook& look);
   void scheduleLooks();  // every displayed body checked again by the sliced job
+  Handle(Prs3d_Drawer) m_drawingSelected, m_drawingHover;  // a drawing's highlights, shared (ViewportSettings.cpp)
+  bool m_drawingWords = false;
+  opad::json m_hoverInfo;
+  void updateHover();  // after a frame's detection (paintEvent)
+  void updateDrawingHighlights();
   void initViewer();
   void trackpadScroll(const QPointF& position, const QPointF& delta, bool orbit);
   void finishTrackpadScroll();
@@ -684,4 +719,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_cubeClick = false;       // the current left press is on the view cube: its click is not a selection change
   bool m_pickAccumulate = false;  // guided tools: left click toggles (XOR)
   bool m_cubeGesture = false;  // this left press started on the view cube: dragging orbits instead of rubber-banding
+  // object snap (ViewportSnap.cpp)
+  bool m_objectSnap = true;
+  std::shared_ptr<ObjectSnapState> m_osnap;
+  ObjectSnapState& snapState();
+  bool objectSnapActive() const;
+  void updateObjectSnap();                 // after the hover, every frame
+  bool objectSnapPress(QMouseEvent* e);  // true: the press picks the shown snap
 };

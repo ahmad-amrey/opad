@@ -351,6 +351,19 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     if (!BRep_Tool::IsClosed(e.Current())) { p->closed = false; break; }
   }
   if (meshedProto.ShapeType() > TopAbs_SHELL) p->closed = false;  // a bare face or lower
+  if (!p->triangles.IsNull()) {  // lines beside faces (a drawing layer's lines next to its text and fills) are drawn too
+    const double span = box.IsVoid() ? 1.0 : std::sqrt(box.SquareExtent());
+    std::vector<gp_Pnt> free;
+    for (TopExp_Explorer e(meshedProto, TopAbs_EDGE, TopAbs_FACE); e.More(); e.Next()) {
+      if (BRep_Tool::Degenerated(TopoDS::Edge(e.Current()))) continue;
+      const auto samples = curveSamples(TopoDS::Edge(e.Current()), std::max(1e-6, span * 1e-5));
+      for (size_t j = 1; j < samples.size(); ++j) free.insert(free.end(), {samples[j - 1], samples[j]});
+    }
+    if (!free.empty()) {
+      p->freeEdges = new Graphic3d_ArrayOfSegments(int(free.size()));
+      for (const auto& point : free) p->freeEdges->AddVertex(point);
+    }
+  }
   if(p->triangles.IsNull() && !p->drawingSegments.empty()) {
     p->boundaries=new Graphic3d_ArrayOfSegments(int(p->drawingSegments.size()));
     for(const auto& point:p->drawingSegments) p->boundaries->AddVertex(point);
@@ -443,6 +456,12 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
     e->SetGroupPrimitivesAspect(myDrawer->FaceBoundaryAspect()->Aspect());
     e->AddPrimitiveArray(shown->boundaries, !haveBox);
     if (haveBox) e->SetMinMaxValues(x0, y0, z0, x1, y1, z1);
+  }
+  if (m_prs && !m_prs->freeEdges.IsNull()) {  // the base arrays' (a zoom refinement only meshes faces finer)
+    Handle(Graphic3d_Group) l = prs->NewGroup();
+    l->SetGroupPrimitivesAspect(myDrawer->WireAspect()->Aspect());
+    l->AddPrimitiveArray(m_prs->freeEdges, !haveBox);
+    if (haveBox) l->SetMinMaxValues(x0, y0, z0, x1, y1, z1);
   }
 }
 

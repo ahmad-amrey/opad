@@ -1,4 +1,5 @@
 find_package(Qt6 COMPONENTS Widgets Gui Network QUIET)
+find_package(Qt6 QUIET COMPONENTS PrintSupport)  # Plot to a printer (UI-88); without it the Plot dialog writes PDFs only
 if(NOT Qt6_FOUND)
   message(WARNING "OPAD: Qt 6 not found; skipping the desktop app (set OPAD_BUILD_APP=OFF to silence)")
   return()
@@ -64,6 +65,10 @@ endif()
 
 add_executable(opad WIN32 MACOSX_BUNDLE ${OPAD_APP_SOURCES})
 target_link_libraries(opad PRIVATE opad::core opad_paint ${OPAD_OCCT_VIS_LIBS} Qt6::Widgets Qt6::Gui Qt6::Network)
+if(TARGET Qt6::PrintSupport)
+  target_link_libraries(opad PRIVATE Qt6::PrintSupport)
+  target_compile_definitions(opad PRIVATE OPAD_HAVE_PRINT=1)
+endif()
 if(WIN32)
   target_link_libraries(opad PRIVATE dbghelp)
 endif()

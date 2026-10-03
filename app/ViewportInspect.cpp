@@ -35,9 +35,21 @@ class InspectGraphic : public AIS_InteractiveObject {
   std::vector<Line> lines;
   std::vector<gp_Pnt> endpoints;
   std::vector<gp_Pnt> snapPoints;
-  QColor endpointColor, snapPointColor;
+  std::vector<std::vector<gp_Pnt>> outlines;  // closed loops (an area's boundary), one array
+  QColor endpointColor, snapPointColor, outlineColor;
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs, Standard_Integer) override {
+    if (!outlines.empty()) {
+      int count = 0;
+      for (const auto& loop : outlines) count += 2 * int(loop.size());
+      auto group = prs->NewGroup();
+      Handle(Prs3d_LineAspect) style = new Prs3d_LineAspect(color(outlineColor), Aspect_TOL_SOLID, 2.5);
+      group->SetGroupPrimitivesAspect(style->Aspect());
+      Handle(Graphic3d_ArrayOfSegments) segments = new Graphic3d_ArrayOfSegments(count);
+      for (const auto& loop : outlines)
+        for (size_t i = 0; loop.size() > 1 && i < loop.size(); ++i) segments->AddVertex(loop[i]), segments->AddVertex(loop[(i + 1) % loop.size()]);
+      group->AddPrimitiveArray(segments);
+    }
     for (const auto& l : lines) {
       auto group = prs->NewGroup();
       Handle(Prs3d_LineAspect) style = new Prs3d_LineAspect(color(l.color), l.dashed ? Aspect_TOL_DASH : Aspect_TOL_SOLID, l.dashed ? 1.0 : 2.0);
@@ -311,6 +323,18 @@ void Viewport::refreshMeasurement(bool force) {
       beside(gp_Pnt((lo.X()+end.X())/2, (lo.Y()+end.Y())/2, (lo.Z()+end.Z())/2),
             QString("%1 %2").arg(QChar("XYZ"[i])).arg(units::format(units::Kind::Length, hi.Coord(i+1)-lo.Coord(i+1))), axes[i], -normal, 12);
     }
+  } else if (kind == "area") {  // UI-90: the boundary measured (a grown loop's whole outline), its value inside it; loose ends while open
+    for (const auto& loop : r.value("boundary", opad::json::array())) {
+      std::vector<gp_Pnt> pts;
+      for (const auto& p : loop) pts.push_back(point(p));
+      if (pts.size() > 1 && r.value("closed", false)) graphic->outlines.push_back(std::move(pts));
+    }
+    graphic->outlineColor = r == m_measurement ? m_tokens.sel : m_tokens.fg2;
+    for (const auto& p : r.value("ends", opad::json::array())) graphic->endpoints.push_back(point(p));
+    graphic->endpointColor = m_tokens.red;
+    if (r.value("closed", false) && r.contains("center"))
+      label(point(r["center"]), tr("Area %1 · perimeter %2").arg(units::format(units::Kind::Area, r.value("value", 0.0)), units::format(units::Kind::Length, r.value("perimeter", 0.0))),
+            m_tokens.fg, 0, 0);
   } else if (kind == "angle" && r.contains("origin")) {
     // With a construction from the core the diagram sits on the objects: rays from the vertex where they meet,
     // along each of them, and the arc through the nearer one. Otherwise (parallel, or a line against a normal;
