@@ -32,7 +32,7 @@
 // Delete on the boss: the question names Round, which uses it, with the result previewed; deleting both leaves the base
 // alone, the toast's Undo brings them back. Deleting Round, which nothing uses, asks nothing. The chip's Find in timeline,
 // Isolate and Suppress (undone from its toast) on the boss. Suggestions off: no chip by itself, Ctrl+Up still asks; on
-// again with Edit > Suggestion delay at 1 s, the chip comes after a second. Shots: <prefix>.chip.png,
+// again with Edit > Suggestion delay at 1 s, the chip comes after a second. Enter on the boss's faces edits it. Shots: <prefix>.chip.png,
 // .actions.png, .menu.png, .question.png, .hover.png. Texts are compared in the language shown (case smartselect-rtl).
 OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
   struct State {
@@ -468,10 +468,30 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
           pass(QString("with a delay of 1 s the chip came after %1 ms").arg(state->clock.elapsed()));
           for (QAction* a : w.findChild<QMenu*>("smartSuggestDelay")->actions())
             if (a->data().toInt() == 250) a->trigger();
+          w.action("edit.selectparent")->trigger();
+          break;
+        }
+        case 30: {
+          if (!waitFor(selected(state->bossFaces) && area->found().active >= 0, "the boss selected again")) return;
+          bool hinted = false;
+          for (QToolButton* b : area->chip()->actionButtons())
+            hinted = hinted || (b->defaultAction()->objectName() == "smartEdit" && b->toolTip().endsWith("(Enter)"));
+          require(hinted, "the chip's Edit names Enter");
+          QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+          QApplication::sendEvent(w.m_viewport, &enter);
+          break;
+        }
+        case 31: {
+          if (!waitFor(w.m_design->featureActive() && w.m_design->editingOp() == state->boss, "Enter on the boss's faces edits the boss")) return;
+          pass("Enter on the boss's selected faces opened the boss for editing");
+          w.m_design->escape();
+          break;
+        }
+        case 32:
+          if (!waitFor(!w.m_design->featureActive(), "Esc leaves the edit")) return;
           timer->stop();
           QCoreApplication::exit(0);
           return;
-        }
       }
       ++state->phase;
     } catch (const std::exception& e) {

@@ -734,7 +734,7 @@ QList<QAction*> SmartSelect::actionsFor(int index, QObject* parent) {
         index == m_found.active && del ? del->shortcut().toString(QKeySequence::NativeText) : QString());
     add("rename", tr("Edit %1").arg(name), "smartEdit", [this, c] {
       if (services().requireEditable()) services().design()->editOp(c.op);
-    });
+    }, index == m_found.active ? QStringLiteral("Enter") : QString());
     const opad::Feature* f = services().document()->scene.feature(c.op);
     if (f && !f->suppressed) add("hide", tr("Suppress %1").arg(name), "smartSuppress", [this, c, name] {
       if (!services().requireEditable()) return;
@@ -924,6 +924,14 @@ bool SmartSelect::eventFilter(QObject* watched, QEvent* event) {
       m_doubleArmed = false;
       m_double = true;  // acted on once this click has reached the selection (selectionChanged)
       m_doubleTimer.start();
+    } else if (event->type() == QEvent::KeyPress) {  // Enter on a feature's faces: edit it (the chip's Edit)
+      const auto* k = static_cast<QKeyEvent*>(event);
+      const int a = m_found.active;
+      if ((k->key() == Qt::Key_Return || k->key() == Qt::Key_Enter) && k->modifiers() == Qt::NoModifier && idle() && m_found.ready && a >= 0 && smart::sameRefs(m_found.picks, m_current) && m_found.candidates[size_t(a)].feature()) {
+        const std::string op = m_found.candidates[size_t(a)].op;  // a copy: editing starts with a roll-back (documentChanged)
+        if (services().requireEditable()) services().design()->editOp(op);
+        return true;
+      }
     }
   }
   return false;
