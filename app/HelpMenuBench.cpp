@@ -18,8 +18,8 @@
 #include <QSettings>
 
 // OPAD_BENCH_HELPMENU=<prefix> (a document with a box, saved as box.opad): the Help menu (UI-108). Its own entries come
-// first: Help for this tool (F1), Tool guide, Shortcuts cheat sheet (Ctrl+/), Getting started, then Report a problem.
-// The cheat sheet lists the keys by group with the preset's mouse and the keys of every tool, finds a key, follows the
+// first: Help for this tool (F1), Tool guide, Shortcuts cheat sheet (Ctrl+/), Getting started, then Report a problem;
+// the window's (Third-party licences and About Qt where the build has them, About OPAD last) follow. The cheat sheet lists the keys by group with the preset's mouse and the keys of every tool, finds a key, follows the
 // navigation preset and closes on Esc; Getting started plays each lesson's clip, its Try it runs the command it teaches
 // (Measure starts Distance, Sketch switches to Design and asks for a plane) and says what an unavailable one needs;
 // Report a problem lists the versions and the document's kind and size, never its name. The report is not copied: the
@@ -45,8 +45,10 @@ OPAD_BENCH(OPAD_BENCH_HELPMENU, helpmenu) {
       if (top->menu() && top->menu()->actions().contains(w.action("help.current"))) menu = top->menu();
     QStringList ids;
     for (QAction* a : menu ? menu->actions() : QList<QAction*>()) ids << (a->isSeparator() ? QString("-") : a->objectName());
-    check(ids.mid(0, 7) == QStringList({"help.current", "help.reference", "help.shortcuts", "help.start", "-", "help.report", "-"}) && ids.contains("help.about"),
-          "the Help menu: its own entries first, the window's after (" + ids.join(' ') + ")");
+    bool helped = true;  // the window's entries after them (licences, About Qt, About OPAD) have their help too
+    for (const QString& id : ids.mid(7)) helped = helped && (id == "-" || help::find(id));
+    check(ids.mid(0, 7) == QStringList({"help.current", "help.reference", "help.shortcuts", "help.start", "-", "help.report", "-"}) && ids.size() > 7 && ids.last() == "help.about" && helped,
+          "the Help menu: its own entries first, the window's after, About last, all with help (" + ids.join(' ') + ")");
     check(w.action("help.current")->shortcut() == QKeySequence("F1") && w.action("help.shortcuts")->shortcut() == QKeySequence("Ctrl+/"), "F1 and Ctrl+/");
     // The cheat sheet.
     w.action("help.shortcuts")->trigger();

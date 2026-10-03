@@ -138,7 +138,7 @@ bool matches(const CommandHelp& h, const QString& query) {
 
 QString group(const QString& id) {
   const QString area = id.section('.', 0, 0);
-  if (area == "file") return QCoreApplication::translate("help", "File");
+  if (area == "file" || area == "files") return QCoreApplication::translate("help", "File");
   if (area == "edit") return QCoreApplication::translate("help", "Edit");
   if (area == "select") return QCoreApplication::translate("help", "Select");
   if (area == "view" || area == "nav" || area == "panel" || area == "workspace") return QCoreApplication::translate("help", "View");

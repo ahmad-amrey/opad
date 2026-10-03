@@ -79,6 +79,13 @@
    "keywords": ["exit", "close app"]
   },
   {
+   "id": "files.useOda",
+   "title": "Use the ODA File Converter for DWG",
+   "summary": "Reads and writes DWG through an installed ODA File Converter instead of LibreDWG.",
+   "details": "The ODA File Converter is third-party software whose licence lets non-members use it for non-commercial purposes only, so turning this on first shows its terms. Off, OPAD converts DWG with LibreDWG's dwg2dxf and dxf2dwg, beside OPAD or on PATH. The choice is kept for the next start.",
+   "keywords": ["DWG", "ODA", "converter", "LibreDWG"]
+  },
+  {
    "id": "view.fit",
    "title": "Fit",
    "summary": "Zooms to the selection, or to everything when nothing is selected.",
@@ -297,6 +304,13 @@
    "summary": "Makes placed points jump to grid intersections.",
    "details": "Applies to points you click in sketches and 2D mode. Set a fixed spacing in Grid settings for predictable steps.",
    "keywords": ["snap to grid", "step", "increment"]
+  },
+  {
+   "id": "view.cubeEdgesCorners",
+   "title": "View cube edges and corners turn the view",
+   "summary": "Lets a click on the view cube's edges and corners turn the view, besides its faces.",
+   "details": "On, an edge shows the view between its two faces and a corner the isometric view from its side. Off, only the six faces react, which are easier to hit on a small cube. The choice is kept for the next start.",
+   "keywords": ["view cube", "navigation cube", "corner", "edge", "faces only"]
   },
   {
    "id": "panel.browser",
@@ -693,11 +707,25 @@
    "keywords": ["bug", "issue", "feedback", "crash", "support", "error"]
   },
   {
+   "id": "help.licenses",
+   "title": "Third-party licences",
+   "summary": "Lists the libraries OPAD is built on, with their versions, sources and licence texts.",
+   "details": "OPAD itself is under the MIT licence; every library keeps its own. About Qt in the same window shows Qt's terms, and opad-cli licenses prints the same text.",
+   "keywords": ["licenses", "notices", "open source", "copyright", "GPL", "LGPL", "MIT"]
+  },
+  {
+   "id": "help.aboutqt",
+   "title": "About Qt",
+   "summary": "Shows the version of Qt that OPAD runs on and Qt's licence.",
+   "details": "OPAD's windows, menus and panels are made with Qt, used under the LGPL version 3. The other libraries are listed under Third-party licences.",
+   "keywords": ["Qt", "licence", "license", "version"]
+  },
+  {
    "id": "help.about",
    "title": "About OPAD",
-   "summary": "Shows the OPAD version and the libraries it is built on.",
-   "details": "OPAD has headless twins: opad-cli on the command line and the opad Python module. Both read and write the same documents.",
-   "keywords": ["version", "licence", "info"]
+   "summary": "Shows the OPAD version, its licence and the libraries it is built on.",
+   "details": "OPAD is free software under the MIT licence, built on Open CASCADE Technology, Qt and other libraries, each under its own licence. It has headless twins: opad-cli on the command line and the opad Python module. Both read and write the same documents.",
+   "keywords": ["version", "licence", "license", "copyright", "trademarks", "info"]
   },
   {
    "id": "design.sketch",

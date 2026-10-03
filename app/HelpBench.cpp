@@ -514,7 +514,8 @@ OPAD_BENCH(OPAD_BENCH_GUIDE, guide) {
 }
 
 // OPAD_BENCH_REFERENCE=<prefix> (a document with a box): Help > Tool guide and the command palette's preview
-// (UI-107/108). It lists every command by area; F1 with the Distance tool running opens it at Distance,
+// (UI-107/108). It lists every command of this build by area (a record whose command the build has not is left out,
+// and the app has no command without one: the richtip bench); F1 with the Distance tool running opens it at Distance,
 // whose clip plays and whose steps loop one by one; the search finds commands by their keywords; a command not
 // available now says what it needs. The palette shows the current command's card and clip beside its list and finds
 // commands by keyword; its group column names the area. Saved as <prefix>.reference/.reference-search/.palette.png.
@@ -530,12 +531,19 @@ OPAD_BENCH(OPAD_BENCH_REFERENCE, reference) {
   auto steps = std::make_shared<std::vector<Step>>();
   auto add = [steps](int delay, std::function<void()> fn) { steps->push_back({delay, std::move(fn)}); };
   int listed = 0;
-  for (const CommandHelp& h : help::all()) listed += !h.id.section('.', -1).startsWith("more");
+  QStringList absent;  // help ahead of a command this build has not
+  for (const CommandHelp& h : help::all())
+    if (h.id.section('.', -1).startsWith("more")) continue;
+    else if (w.action(h.id)) ++listed;
+    else absent << h.id;
   add(1000, [=, &w] {
     w.action("help.reference")->trigger();
     auto* reference = w.findChild<CommandReference*>();
-    check(reference && reference->isVisible() && reference->shown().size() == listed && !reference->current().isEmpty(),
-          QString("the Tool guide opens with every command (%1 of %2)").arg(reference ? reference->shown().size() : 0).arg(listed));
+    bool none = true;
+    for (const QString& id : absent) none = none && reference && !reference->shown().contains(id);
+    check(reference && reference->isVisible() && reference->shown().size() == listed && none && !reference->current().isEmpty(),
+          QString("the Tool guide opens with every command (%1 of %2; help for no command here, not listed: %3)")
+              .arg(reference ? reference->shown().size() : 0).arg(listed).arg(absent.join(' ')));
     if (reference) reference->hide();
     w.startTool("distance");
     check(w.action("help.current")->shortcut() == QKeySequence("F1"), "Help for this tool is F1");

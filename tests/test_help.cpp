@@ -37,15 +37,18 @@ QString source(const QString& path) {
   return QString::fromUtf8(f.readAll());
 }
 
-// Command ids registered by MainWindow (MainWindow*.cpp): literal addAction ids, the generated families, the sketch tool
-// tables and the feature kinds of the core spec table. The bench OPAD_BENCH_RICHTIP checks the live list of the running app.
+// Command ids registered by MainWindow (MainWindow*.cpp): literal addAction ids, CommandInfo ids, the generated families,
+// the sketch tool tables and the feature kinds of the core spec table. The bench OPAD_BENCH_RICHTIP checks the live list of
+// the running app.
 std::set<QString> registeredIds() {
   std::set<QString> ids;
   QString main;
   for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"MainWindow*.cpp"}, QDir::Files, QDir::Name)) main += source("app/" + file);
   for (const auto& m : QRegularExpression(R"(addAction\("([a-z]+\.[A-Za-z0-9_.]+)\")").globalMatch(main)) ids.insert(m.captured(1));
+  const QRegularExpression info(R"(\.id\s*=\s*"([a-z]+\.[A-Za-z0-9_.]+)\")");
+  for (const auto& m : info.globalMatch(main)) ids.insert(m.captured(1));
   for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"*Area.cpp"}, QDir::Files, QDir::Name))
-    for (const auto& m : QRegularExpression(R"(\.id = "([a-z]+\.[A-Za-z0-9_.]+)\")").globalMatch(source("app/" + file))) ids.insert(m.captured(1));
+    for (const auto& m : info.globalMatch(source("app/" + file))) ids.insert(m.captured(1));
   for (const auto& m : QRegularExpression(R"re(\{"([a-z0-9_:]+)", tr\(")re").globalMatch(main)) ids.insert("sketch." + m.captured(1).replace(':', '.'));
   for (const auto& m : QRegularExpression(R"re(QObject::tr\("[^"]+"\),"([a-z0-9_:]+)")re").globalMatch(source("app/SketchPanel.cpp")))
     ids.insert("sketch." + m.captured(1).replace(':', '.'));
@@ -81,6 +84,17 @@ TEST(every_registered_command_has_help) {
   QStringList missing;
   for (const QString& id : ids) if (!help::find(id)) missing << id;
   if (!missing.isEmpty()) throw check::Failure("no help for " + missing.join(", ").toStdString());
+}
+
+// The other way round: a record is for a command the app has. The licence, ODA and view cube commands come with the IP
+// branch (UI-13/14, t8-ip); their help is here ahead of it, and the Tool guide lists only what the build has.
+TEST(every_record_has_a_command) {
+  help::load("en");
+  const auto ids = registeredIds();
+  const QStringList ahead{"help.licenses", "help.aboutqt", "files.useOda", "view.cubeEdgesCorners"};
+  QStringList stale;
+  for (const CommandHelp& h : help::all()) if (!ids.count(h.id) && !ahead.contains(h.id)) stale << h.id;
+  if (!stale.isEmpty()) throw check::Failure("help for no command: " + stale.join(", ").toStdString());
 }
 
 TEST(records_are_complete) {
@@ -561,6 +575,7 @@ TEST(command_areas) {
   CHECK_EQ(help::group("sketch.line"), QString("Sketch"));
   CHECK(help::group("sketch.c.horizontal") == "Sketch constraints" && help::group("sketch.dimension") == "Sketch constraints");
   CHECK(help::group("view.fit") == "View" && help::group("nav.fusion") == "View" && help::group("help.about") == "Tools and help");
+  CHECK(help::group("files.useOda") == "File" && help::group("help.licenses") == "Tools and help");
   QStringList areas = help::areas();
   CHECK(areas.size() == 11 && areas.removeDuplicates() == 0);
   for (const CommandHelp& h : help::all()) CHECK(help::areas().contains(help::group(h.id)) && help::group(h.id) != "Other");
@@ -572,13 +587,15 @@ TEST(command_areas) {
 TEST(command_reference_lists_searches_and_opens) {
   help::load("en");
   clips::load();
-  QAction extrude("Extrude");
+  QAction extrude("Extrude"), other("Other");
   extrude.setObjectName("design.extrude");
   extrude.setShortcut(QKeySequence("E"));
   extrude.setEnabled(false);
-  CommandReference reference([&](const QString& id) { return id == "design.extrude" ? &extrude : nullptr; });
-  int listed = 0;
+  // help.licenses has a record but no command here (as in a build without it): not listed.
+  CommandReference reference([&](const QString& id) { return id == "design.extrude" ? &extrude : id == "help.licenses" ? nullptr : &other; });
+  int listed = -1;
   for (const CommandHelp& h : help::all()) listed += !h.id.section('.', -1).startsWith("more");
+  CHECK(help::find("help.licenses") && !reference.shown().contains("help.licenses") && reference.shown().contains("help.about"));
   CHECK(reference.shown().size() == listed && !reference.shown().contains("sketch.moreCreate") && reference.current() == reference.shown().first());
   reference.setFilter("push pull");
   CHECK(reference.shown().contains("design.offset_face") && !reference.shown().contains("design.fillet"));

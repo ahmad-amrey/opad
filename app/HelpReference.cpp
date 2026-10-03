@@ -229,8 +229,8 @@ void CommandReference::refill() {
   }
   QTreeWidgetItem* select = nullptr;
   for (const CommandHelp& h : help::all()) {
-    if (!listed(h) || (!query.isEmpty() && !help::matches(h, query))) continue;
     QAction* a = m_lookup ? m_lookup(h.id) : nullptr;
+    if (!listed(h) || (m_lookup && !a) || (!query.isEmpty() && !help::matches(h, query))) continue;  // not in this build: not listed
     auto* item = new QTreeWidgetItem(groups.value(help::group(h.id)), {h.title, a ? a->shortcut().toString(QKeySequence::NativeText) : QString()});
     item->setData(0, Qt::UserRole, h.id);
     item->setToolTip(0, h.summary);

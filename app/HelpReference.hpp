@@ -43,7 +43,8 @@ class CommandPreview : public QWidget {
 class CommandReference : public QWidget {
   Q_OBJECT
  public:
-  // `lookup`: the QAction of a command id (MainWindow::action), or null.
+  // `lookup`: the QAction of a command id (MainWindow::action), or null; a record whose command this build does not
+  // have (one of another build or of a branch not merged yet) is not listed. Without a lookup every record is.
   explicit CommandReference(std::function<QAction*(const QString&)> lookup, QWidget* parent = nullptr);
   // Shows the window at that command (the filter is cleared when it hides it); empty keeps the one shown.
   void open(const QString& id = QString());
