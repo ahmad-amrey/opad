@@ -478,7 +478,30 @@ OPAD_BENCH(OPAD_BENCH_VOCABULARY, vocabulary) {
         require(w.m_statusSel->text() == MainWindow::tr("%1 selected · %2").arg(1).arg(i18n::t("group")) && title() == "Lines" && keys.contains("fills") &&
                     keys.contains("points") && !keys.contains("faces") && !keys.contains("edges") && !keys.contains("solid") && !keys.contains("volume"),
                 QString("a picked group counts as one, its Properties count objects, fills and points: %1 / %2").arg(w.m_statusSel->text(), keys.join(",")));
-      });
+        w.action("inspect.radius")->trigger();
+      }, [&w, v] { return w.m_tool.id == "radius" && v->selectionFilter() != Viewport::SelFilter::Body; });
+      // Radius from the Groups filter goes to Objects (Faces is gone in 2D), its steps and picks in the drawing's words.
+      script->add("radius", [&w, v, faces, require] {
+        require(v->selectionFilter() == Viewport::SelFilter::Edge && w.action("select.edges")->isChecked() && !faces->isChecked() &&
+                    w.toolSteps().value(0).label == MainWindow::tr("Select an object"),
+                "Radius from Groups picks objects, not the hidden Faces filter: " + w.toolSteps().value(0).label);
+        w.action("inspect.radius")->trigger();
+        w.action("inspect.distance")->trigger();
+      }, [&w, v] { return w.m_tool.id == "distance" && v->selectionFilter() == Viewport::SelFilter::Edge; });
+      auto line = std::make_shared<opad::Ref>();
+      script->add("a picked object", [&w, v, doc, line] {
+        line->body = doc->scene.bodies_under(layerNamed(doc->scene, "Lines")).at(0);
+        line->kind = opad::Ref::Kind::Edge;
+        line->index = 0;
+        v->selectRefs({*line});
+        w.onViewportSelection();
+      }, [&w] { return w.m_toolPicks.size() == 1; });
+      script->add("its step", [&w, require, line] {
+        const QString picked = w.toolSteps().value(0).picked, expected = QString::fromUtf8("%1 › %2 %3").arg(w.m_doc->nodeName(line->body), i18n::t("object")).arg(line->index);
+        require(picked == expected && w.toolSteps().value(1).label == MainWindow::tr("Select second %1").arg(i18n::t("object")),
+                "the tool names its picks as a drawing's: " + picked + " / " + w.toolSteps().value(1).label);
+        w.action("inspect.distance")->trigger();
+      }, [&w] { return w.m_tool.id.isEmpty(); });
     }
     Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   });

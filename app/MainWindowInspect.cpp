@@ -88,7 +88,9 @@ void MainWindow::sectionFromFace(const opad::Ref& face) {
 QString MainWindow::refLabel(const opad::Ref& r) const {
   if (r.kind == opad::Ref::Kind::Point) return tr("Point %1").arg(units::vector(units::Kind::Length, r.point));  // a snapped or tracked point
   QString t = m_doc->nodeName(r.body);
-  if (r.kind != opad::Ref::Kind::Body) t += QString::fromUtf8(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(r.kind))).arg(r.index);
+  const opad::Node* n = m_doc->node(r.body);
+  const bool drawing = m_viewport->drawingWords() && n && n->representation == "drawing2d";  // "Lines › object 3" (UI-118)
+  if (r.kind != opad::Ref::Kind::Body) t += QString::fromUtf8(" › %1 %2").arg(i18n::t(drawing ? drawing2d::kindWord(r.kind) : opad::Ref::kind_name(r.kind))).arg(r.index);
   return t;
 }
 
@@ -102,13 +104,15 @@ QList<ToolStep> MainWindow::toolSteps() const {
     else if (!m_toolPicks.empty()) s.picked = tr("%1 picked").arg(m_toolPicks.size());
     return {s};
   }
+  const bool words2d = m_viewport->drawingWords() && drawing2d::hasDrawings(m_doc->scene);  // as the filters are named then (UI-118)
   const QString kind = f == Viewport::SelFilter::Vertex && m_tool.id != "sectionface"
-      ? (m_tool.id == "radius" ? tr("circle center") : tr("vertex or center"))
-      : i18n::t(m_tool.id == "sectionface" || f == Viewport::SelFilter::Face ? "face" : f == Viewport::SelFilter::Edge ? "edge" : "body");
+      ? (m_tool.id == "radius" ? tr("circle center") : words2d ? tr("point or center") : tr("vertex or center"))
+      : i18n::t(m_tool.id == "sectionface" ? "face" : f == Viewport::SelFilter::Face ? (words2d ? "fill" : "face") : f == Viewport::SelFilter::Edge ? (words2d ? "object" : "edge") : (words2d ? "group" : "body"));
+  const QString one = words2d && f == Viewport::SelFilter::Edge ? tr("Select an object") : tr("Select a %1").arg(kind);
   QList<ToolStep> steps;
   for (int i = 0; i < m_tool.steps; ++i) {
     ToolStep s;
-    s.label = m_tool.id == "sectionface" ? tr("Select a planar face") : m_tool.steps == 1 ? tr("Select a %1").arg(kind) : i == 0 ? tr("Select first %1").arg(kind) : tr("Select second %1").arg(kind);
+    s.label = m_tool.id == "sectionface" ? tr("Select a planar face") : m_tool.steps == 1 ? one : i == 0 ? tr("Select first %1").arg(kind) : tr("Select second %1").arg(kind);
     if (i < static_cast<int>(m_toolPicks.size())) s.picked = refLabel(m_toolPicks[i]);
     steps << s;
   }
@@ -140,8 +144,11 @@ void MainWindow::startTool(const QString& id) {
   // Angles need faces/edges; radii also accept discovered centers. The section plane needs a face.
   const Viewport::SelFilter f = m_viewport->selectionFilter();
   const bool wantFaces = id == "sectionface" ? f != Viewport::SelFilter::Face : ((id == "angle" || id == "radius") && f == Viewport::SelFilter::Body) || (id == "angle" && f == Viewport::SelFilter::Vertex);
-  // Area takes fills or faces, objects or points, never bodies: a drawing's objects, a solid's faces.
-  const bool wantEdges = id == "area" && f == Viewport::SelFilter::Body && drawing2d::drawingOnly(m_doc->scene);
+  // Area takes fills or faces, objects or points, never bodies: a drawing's objects, a solid's faces. In 2D words the Faces
+  // filter is gone (the drawing2d area hides it): a drawing's objects instead (a hidden action still triggers).
+  const bool noFaces = !action("select.faces")->isVisible() && id != "sectionface";
+  const bool wantEdges = (id == "area" && f == Viewport::SelFilter::Body && drawing2d::drawingOnly(m_doc->scene)) ||
+                         (noFaces && (wantFaces || (id == "area" && f == Viewport::SelFilter::Body)));
   m_viewport->setPickAccumulate(true, id == "distance");
   // Object snap where a free point is a pick; Radius takes a circle's centre (its marker), the section a face.
   m_viewport->setSnapPicks(id == "distance" || id == "bbox" || id == "area" ? Viewport::SnapPicks::Points : Viewport::SnapPicks::None);
