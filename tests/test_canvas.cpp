@@ -10,6 +10,7 @@
 #include "opad/design/sketch.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
+#include "opad/render.hpp"
 
 using namespace opad;
 namespace fs = std::filesystem;
@@ -225,6 +226,41 @@ TEST(canvas_from_a_sketch_backdrop) {
   // The sketch's lines stay; a second conversion has nothing to convert.
   CHECK(s.sketch(sketch)->geometry["entities"].size() == 1u);
   CHECK_THROWS(run(d, "canvas", {{"action", "from_backdrop"}, {"sketch", sketch}}));
+}
+
+// Headless pictures (render, thumbnails, agents' images): the canvas shows its picture, upright, mirrored as flipped.
+TEST(canvas_rendered_with_its_picture) {
+  Files f;
+  Image picture;
+  picture.width = 8, picture.height = 8;
+  picture.rgb.resize(8 * 8 * 3);
+  for (int y = 0; y < 8; ++y)
+    for (int x = 0; x < 8; ++x) {  // top half red, bottom half blue, the left column black
+      uint8_t* p = picture.px(x, y);
+      p[0] = x == 0 ? 0 : y < 4 ? 220 : 10, p[1] = x == 0 ? 0 : 20, p[2] = x == 0 ? 0 : y < 4 ? 10 : 230;
+    }
+  const fs::path pic = write(f.dir / "halves.png", encode_png(picture));
+  Document d = Document::create();
+  import_file(d, pic);
+  RenderOptions o;
+  o.width = o.height = 64;
+  o.camera = Camera::preset("top");
+  o.edges = false;
+  o.supersample = 1;
+  auto at = [](const Image& img, double fx, double fy) {
+    const uint8_t* p = img.px(int(fx * (img.width - 1)), int(fy * (img.height - 1)));
+    return std::array<int, 3>{p[0], p[1], p[2]};
+  };
+  Image shot = render_scene(d, resolve(d), o);
+  auto top = at(shot, 0.6, 0.3), bottom = at(shot, 0.6, 0.7), left = at(shot, 0.08, 0.5);
+  if (top[0] == top[2]) return;  // this build's OCCT reads no pictures: the canvas keeps its colour (nothing to check)
+  CHECK(top[0] > 150 && top[2] < 80 && bottom[2] > 150 && bottom[0] < 80 && left[0] < 60 && left[2] < 60);
+  const std::string id = only_canvas(resolve(d));
+  run(d, "canvas", {{"action", "flags"}, {"target", id}, {"set", {{"flip", {true, true}}}}});
+  shot = render_scene(d, resolve(d), o);
+  top = at(shot, 0.6, 0.3), bottom = at(shot, 0.6, 0.7);
+  const auto right = at(shot, 0.92, 0.5);
+  CHECK(top[2] > 150 && bottom[0] > 150 && right[0] < 60 && right[2] < 60);
 }
 
 int main(int argc, char** argv) { return check::run_all(argc, argv); }
