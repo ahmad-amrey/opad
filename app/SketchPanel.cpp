@@ -202,8 +202,8 @@ void SketchPanel::buildFields() {
     connect(images,&QComboBox::currentIndexChanged,this,[this,images]{m_editor->m_options["imageId"]=images->currentData().toString();m_editor->invalidatePreview();m_editor->m_panelFieldsDirty=true;refresh();});
     if(m_shown=="image_edit") {
       for(const auto& image:m_editor->m_sk.images)if(image.at("id").get<int>()==id) {
-        m_editor->m_options["imageX"]=QString::number(image.at("position")[0].get<double>())+" mm";m_editor->m_options["imageY"]=QString::number(image.at("position")[1].get<double>())+" mm";
-        m_editor->m_options["imageWidth"]=QString::number(image.at("width").get<double>())+" mm";m_editor->m_options["imageAngle"]=QString::number(image.value("angle",0.0))+" rad";m_editor->m_options["imageOpacity"]=QString::number(image.value("opacity",.5));
+        m_editor->m_options["imageX"]=units::editable(units::Kind::Length,image.at("position")[0].get<double>());m_editor->m_options["imageY"]=units::editable(units::Kind::Length,image.at("position")[1].get<double>());
+        m_editor->m_options["imageWidth"]=units::editable(units::Kind::Length,image.at("width").get<double>());m_editor->m_options["imageAngle"]=units::editable(units::Kind::Angle,image.value("angle",0.0)*180/M_PI);m_editor->m_options["imageOpacity"]=QString::number(image.value("opacity",.5));
       }
       field("imageX",tr("X position"),"0 mm");field("imageY",tr("Y position"),"0 mm");field("imageWidth",tr("Image width"),"100 mm");field("imageAngle",tr("Rotation"),"0 deg");field("imageOpacity",tr("Opacity (0 to 1)"),"0.5");
     }

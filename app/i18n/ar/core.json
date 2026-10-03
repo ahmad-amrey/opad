@@ -26,7 +26,6 @@
  "More": "المزيد",
  "%1: overlap %2": "%1: تداخل %2",
  "%1: %2 apart": "%1: بينهما %2",
- "%1: overhang up to %2° over %3": "%1: بروز حتى %2° على مساحة %3",
  "%1: wall %2 thin over %3 triangles": "%1: جدار بسماكة %2 على %3 مثلثات",
  "%1: wall %2 at face %3": "%1: جدار سماكته %2 عند الوجه %3",
  "%1: face %2 is %3 wide": "%1: عرض الوجه %2 هو %3",
@@ -61,6 +60,14 @@
  "Plane X": "محور X للمستوى",
  "Plane Y": "محور Y للمستوى",
  "Minimum extent": "أقل امتداد",
+ "half_angle": "نصف الزاوية",
+ "apex": "الرأس",
+ "axis_origin": "أصل المحور",
+ "ref_radius": "نصف القطر المرجعي",
+ "major_radius": "نصف القطر الأكبر",
+ "minor_radius": "نصف القطر الأصغر",
  "This file has %1 records from a newer OPAD (%2); they are kept and saved back unchanged.": "يحتوي هذا الملف على %1 من السجلات من إصدار أحدث من OPAD ‏(%2)؛ تُبقى وتُحفظ كما هي دون تغيير.",
- "… and %1 more": "… و%1 غيرها"
+ "… and %1 more": "… و%1 غيرها",
+ "%1: overhang up to %2 over %3": "%1: بروز حتى %2 على مساحة %3",
+ "%1: face %2 overhangs %3": "%1: الوجه %2 بارز بزاوية %3"
 }

@@ -150,9 +150,10 @@ void CheckPanel::setResult(const opad::json& r) {
     // A mesh (STL...) has no faces to name: its findings are regions of triangles.
     const bool mesh = body.value("mesh", false);
     auto faces = [](const opad::json& f) { return f.contains("faces") ? f["faces"] : opad::json::array({f.value("face", 0)}); };
+    auto angle = [](const opad::json& o) { return units::format(units::Kind::Angle, o.value("overhang_deg", 0.0), units::current().radians ? 2 : 0); };
     for (const auto& o : body.value("overhangs", opad::json::array()))
-      add(mesh ? tr("%1: overhang up to %2° over %3").arg(who).arg(o.value("overhang_deg", 0.0), 0, 'f', 0).arg(units::format(units::Kind::Area, o.value("area_mm2", 0.0), 1))
-               : tr("%1: face %2 overhangs %3°").arg(who).arg(o.value("face", 0)).arg(o.value("overhang_deg", 0.0), 0, 'f', 0),
+      add(mesh ? tr("%1: overhang up to %2 over %3").arg(who, angle(o), units::format(units::Kind::Area, o.value("area_mm2", 0.0), 1))
+               : tr("%1: face %2 overhangs %3").arg(who).arg(o.value("face", 0)).arg(angle(o)),
           faces(o), "overhang");
     for (const auto& w : body.value("thin_walls", opad::json::array()))
       add(mesh ? tr("%1: wall %2 thin over %3 triangles").arg(who, units::format(units::Kind::Length, w.value("thickness_mm", 0.0))).arg(w.value("triangles", 0))

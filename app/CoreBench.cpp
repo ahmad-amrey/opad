@@ -4,6 +4,7 @@
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QListWidget>
 #include <QMenu>
 #include <QStatusBar>
 #include <QTimer>
@@ -195,10 +196,15 @@ OPAD_BENCH(OPAD_BENCH_UNITS, units) {
       QCoreApplication::processEvents();  // the panel fits its result rows
       w.statusBar()->grab().save(qEnvironmentVariable("OPAD_BENCH_UNITS") + ".status.png");
       w.m_toolPanel->grab().save(qEnvironmentVariable("OPAD_BENCH_UNITS") + ".panel.png");
-      w.m_props->showEntity("Probe", {}, {}, opad::json{{"volume", 6000.0}, {"center", {25.4, 50.8, 0.0}}, {"normal", {1.0, 0.0, 0.0}}});
-      QStringList shown;
-      for (const auto* item : w.m_props->findChildren<QTreeWidget*>().value(0)->findItems("*", Qt::MatchWildcard)) shown << item->text(1).remove(QChar(0x202A)).remove(QChar(0x202C));
-      require(shown.contains(QString::fromUtf8("0.366 in³")) && shown.contains("(1, 2, 0) in") && shown.contains("(1, 0, 0)"), "Properties in inches: " + shown.join(" | "));
+      w.m_props->showEntity("Probe", {}, {}, opad::json{{"volume", 6000.0}, {"center", {25.4, 50.8, 0.0}}, {"normal", {1.0, 0.0, 0.0}}, {"major_radius", 25.4}, {"half_angle_deg", 45.0}});
+      QStringList shown, labels;
+      for (const auto* item : w.m_props->findChildren<QTreeWidget*>().value(0)->findItems("*", Qt::MatchWildcard)) {
+        shown << item->text(1).remove(QChar(0x202A)).remove(QChar(0x202C));
+        labels << item->text(0);
+      }
+      require(shown.contains(QString::fromUtf8("0.366 in³")) && shown.contains("(1, 2, 0) in") && shown.contains("(1, 0, 0)") && shown.contains("1.000 in") &&
+                  shown.contains(QString::fromUtf8("45.000°")) && labels.contains("Half angle"),
+              "Properties in inches (a torus radius, a cone's half angle): " + shown.join(" | "));
       const auto typed = units::parse(units::Kind::Length, "1/2");
       require(typed && std::abs(*typed - 12.7) < 1e-9, "a typed 1/2 reads as half an inch");
       units::setPrecision(1, false, 0);
@@ -209,6 +215,11 @@ OPAD_BENCH(OPAD_BENCH_UNITS, units) {
       w.m_checks->begin(CheckPanel::Mode::Print);
       units::setPrecision(3, true, 0);
       const opad::json checks = w.m_checks->options();
+      // A finding says its overhang in radians too.
+      w.m_checks->setResult(opad::json{{"bodies", 1}, {"items", {{{"id", "x"}, {"name", "Probe"}, {"contact_area_mm2", 1.0}, {"overhangs", {{{"face", 3}, {"overhang_deg", 45.0}}}}}}}});
+      const QListWidget* findings = w.m_checks->findChild<QListWidget*>();
+      const QString finding = findings && findings->count() ? findings->item(0)->text() : QString();
+      require(finding == "Probe: face 3 overhangs 0.79 rad", "a print-check finding in radians: " + finding);
       w.m_checks->begin(mode);
       const QDoubleSpinBox* overhang = nullptr;
       for (const auto* box : w.m_checks->findChildren<QDoubleSpinBox*>())

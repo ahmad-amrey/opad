@@ -43,10 +43,13 @@ QString fmtComponent(double v) {
 }
 
 // What a property measures, from its name: shown in the document's unit (UI-123); directions and counts stay as they are.
+// "<name>_deg" is an angle in degrees (labelled <name>).
 std::optional<units::Kind> measureOf(const QString& key) {
   static const QSet<QString> lengths = {"length", "radius", "diameter", "distance", "thickness", "diagonal", "center", "center_of_mass",
-                                        "start", "end", "origin", "point", "bbox min", "bbox max", "bbox size"};
+                                        "start", "end", "origin", "point", "bbox min", "bbox max", "bbox size", "axis_origin", "apex",
+                                        "ref_radius", "major_radius", "minor_radius"};
   if (lengths.contains(key)) return units::Kind::Length;
+  if (key.endsWith("_deg")) return units::Kind::Angle;
   if (key == "area") return units::Kind::Area;
   if (key == "volume") return units::Kind::Volume;
   if (key == "mass") return units::Kind::Mass;
@@ -119,8 +122,9 @@ void PropertiesPanel::addRow(const QString& key, const opad::json& v) {
   auto* row = new QTreeWidgetItem(m_table);
   // Property names come from the core as data. Untranslated (English), the key is shown as words: "center_of_mass"
   // and "bbox min" read "Center of mass" and "Box min".
-  QString label = i18n::t(key);
-  if (label == key) {
+  const QString name = key.endsWith("_deg") ? key.chopped(4) : key;  // the unit is the shown one: "half_angle_deg" reads "Half angle"
+  QString label = i18n::t(name);
+  if (label == name) {
     label.replace('_', ' ');
     if (label.startsWith("bbox")) label.replace(0, 4, "box");
     if (!label.isEmpty()) label[0] = label[0].toUpper();
