@@ -132,7 +132,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void clearSelection();  // emits selectionChanged() once the un-highlight has settled
   // Isolate mode: exactly these nodes' bodies are shown, whatever their visibility flags say, until
   // isolate({}) or until none of them exists any more (all deleted). isolationChanged() reports both.
-  void isolate(const std::vector<std::string>& ids);  // empty = exit the mode
+  void isolate(const std::vector<std::string>& ids, bool fit = true);  // empty = exit the mode; fit: frame them (a layer walk keeps the camera)
   bool isIsolated() const { return !m_isolated.empty(); }
   std::vector<std::string> isolatedNodes() const {return {m_isolated.begin(),m_isolated.end()};}
   int isolatedCount() const { return static_cast<int>(m_isolated.size()); }

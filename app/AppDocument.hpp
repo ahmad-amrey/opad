@@ -45,6 +45,8 @@ class AppDocument : public QObject {
   Job* saveAsync(JobRunner*, const QString& path, bool overwrite,
                  std::function<void(bool,const QString&)> done, int testDelayMs=0);
   opad::json run(const std::string& command, opad::json args);
+  // Several commands as one step to undo, under one label and one refresh (a drawing's layer state restored); all or none.
+  opad::json runAll(const std::vector<std::pair<std::string, opad::json>>& commands, const QString& label);
 
   // Design changes are planned on a worker (design::plan_ops reads the document, see DesignController) and
   // committed here. While a plan is being computed the document must not change under it: designBusy makes

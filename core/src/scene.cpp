@@ -162,6 +162,7 @@ struct SceneBuilder::Impl {
   const Document& doc;
   Scene scene;
   std::set<std::string> shown_sketches, hidden_sketches;  // explicit appearance ops on sketches
+  std::unordered_map<std::string, std::array<double, 3>> imported_colors;  // what appearance default_color goes back to
 
   explicit Impl(const Document& d) : doc(d) {scene.units=d.header.units;}
 
@@ -237,6 +238,7 @@ struct SceneBuilder::Impl {
           const auto& c = b->meta["color"];
           placed.color = {c[0].get<double>(), c[1].get<double>(), c[2].get<double>()};
         }
+        if (placed.has_color) imported_colors[nid] = placed.color;
       }
       attach(nid, parent, -1);
       if (!body && jn.contains("children")) build_nodes(jn["children"], nid, op_id, op_type);
@@ -371,6 +373,11 @@ struct SceneBuilder::Impl {
       }
       Node* n = target_of(id, type, d);
       if (!n) return;
+      if (d.value("default_color", false)) {  // back to the colour it was imported with, or none (a drawing's ink)
+        const auto imported = imported_colors.find(n->id);
+        n->has_color = imported != imported_colors.end();
+        n->color = n->has_color ? imported->second : Node().color;
+      }
       if (d.contains("color") && d["color"].is_array()) {
         n->has_color = true;
         n->color = {d["color"][0].get<double>(), d["color"][1].get<double>(), d["color"][2].get<double>()};
@@ -378,6 +385,12 @@ struct SceneBuilder::Impl {
       if (d.contains("opacity")) n->opacity = d["opacity"].get<double>();
       if (d.contains("visible")) n->visible = d["visible"].get<bool>();
       if (d.contains("locked")) n->locked = d["locked"].get<bool>();
+      if (d.contains("layer") && d["layer"].is_object()) {  // a drawing layer's fields, key by key (null removes one)
+        if (!n->layer.is_object()) n->layer = json::object();
+        for (const auto& [key, value] : d["layer"].items())
+          if (value.is_null()) n->layer.erase(key);
+          else n->layer[key] = value;
+      }
     } else if (type == "rename") {
       if (Node* n = target_of(id, type, d)) n->name = d["name"].get<std::string>();
     } else if (type == "annotation") {
@@ -427,6 +440,7 @@ struct SceneBuilder::Impl {
       v.id = id;
       v.name = d["name"].get<std::string>();
       v.camera = d["camera"];
+      if (d.contains("display") && d["display"].is_object()) v.display = d["display"];
       scene.views.push_back(v);
     } else if (type == "param") {
       Param p;

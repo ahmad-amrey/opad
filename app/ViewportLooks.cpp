@@ -16,6 +16,7 @@
 #include <cmath>
 #include <vector>
 
+#include "Drawing2D.hpp"
 #include "Jobs.hpp"
 #include "opad/geometry.hpp"
 
@@ -34,9 +35,13 @@ BodyLook Viewport::composeLook(const opad::Node& body) const {
   BodyLook base;
   base.color = body.color;
   base.opacity = body.opacity;
-  if (body.representation == "drawing2d" && body.raster.is_null()) {  // a drawing's lines (UI-10)
+  if (body.representation == "drawing2d" && body.raster.is_null()) {  // a drawing's lines (UI-10), in its layer's weight and type (UI-89)
     if (!body.has_color) base.color = drawingInk();  // DXF colour 7 and no colour: light on dark, dark on light
-    base.lineWidth = lineWidth();  // hairlines at least one screen pixel wide on any display and render scale
+    const opad::Node* layer = body.parent.empty() ? nullptr : m_doc->scene.node(body.parent);
+    const opad::json& fields = layer && layer->layer.is_object() ? layer->layer : opad::json::object();
+    const double weight = fields.contains("lineweight") && fields["lineweight"].is_number() ? fields["lineweight"].get<double>() : -1;
+    base.lineWidth = lineWidth(drawing2d::linePoints(weight));  // hairlines at least one screen pixel wide on any display and render scale
+    base.lineType = drawing2d::lineType(fields.contains("linetype") && fields["linetype"].is_string() ? fields["linetype"].get<std::string>() : "");
   }
   std::array<const LookDelta*, kLookSources> found{};
   if (layered()) {

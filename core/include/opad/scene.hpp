@@ -65,6 +65,7 @@ struct SectionPlane {
 struct ViewBookmark {
   std::string id, name;
   json camera;
+  json display;  // optional: what is shown, {"layers": {layer id: state}} (a drawing's layer state, UI-89); null otherwise
 };
 
 struct Unresolved {

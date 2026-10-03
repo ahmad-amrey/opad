@@ -1,19 +1,30 @@
-// Benches of the 2D drawing area (drawing2d): contrast of drawings without a colour on every background (UI-10). Cases in
-// tools/bench_cases/drawing2d.py; the colour rules alone are tests/test_drawing2d.
+// Benches of the 2D drawing area (drawing2d): contrast of drawings without a colour on every background (UI-10), the Layers
+// manager (UI-89). Cases in tools/bench_cases/drawing2d.py; the colour rules and the layer model alone are tests/test_drawing2d.
+#include <QAction>
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QHeaderView>
 #include <QImage>
+#include <QKeyEvent>
+#include <QLabel>
+#include <QMouseEvent>
+#include <QPushButton>
 #include <QTimer>
+#include <QTreeWidget>
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <functional>
 #include <memory>
 
 #include "BenchRegistry.hpp"
 #include "Drawing2D.hpp"
+#include "LayersPanel.hpp"
 #include "MainWindow.hpp"
+#include "PanelFooter.hpp"
 #include "Theme.hpp"
+#include "ViewportChips.hpp"
 #include "opad/geometry.hpp"
 
 namespace {
@@ -41,12 +52,45 @@ std::string layerNamed(const opad::Scene& scene, const std::string& name) {
     if (n.kind == opad::Node::Kind::Component && n.name == name) return id;
   return {};
 }
+
+// Steps run one after another: each acts, then waits (at most 10 s) until its condition holds before the next one.
+struct Script {
+  struct Step {
+    QString name;
+    std::function<void()> act;
+    std::function<bool()> settled;
+  };
+  std::vector<Step> steps;
+  void add(const QString& name, std::function<void()> act, std::function<bool()> settled = [] { return true; }) {
+    steps.push_back({name, std::move(act), std::move(settled)});
+  }
+  static void run(QObject* context, std::shared_ptr<Script> script, size_t i, Check require, std::function<void()> finish) {
+    if (i == script->steps.size()) return finish();
+    script->steps[i].act();
+    pollUntil(context, script->steps[i].settled, 10000, [context, script, i, require, finish](bool ok) {
+      if (!ok) require(false, script->steps[i].name + ": timed out");
+      run(context, script, i + 1, require, finish);
+    });
+  }
+};
+
+// A left click in a tree's cell, as the mouse delivers it.
+void clickCell(QTreeWidget* tree, QTreeWidgetItem* item, int column) {
+  if (!item) return;
+  const QRect row = tree->visualItemRect(item);
+  const QPoint at(tree->header()->sectionViewportPosition(column) + tree->header()->sectionSize(column) / 2, row.center().y());
+  for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+    QMouseEvent e(type, QPointF(at), QPointF(tree->viewport()->mapToGlobal(at)), Qt::LeftButton, type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton,
+                  Qt::NoModifier);
+    QCoreApplication::sendEvent(tree->viewport(), &e);
+  }
+}
 }  // namespace
 
 // OPAD_BENCH_CONTRAST=<prefix>: a DXF drawn in colour 7 (lines, a fill, a fill with a line in one body) and in red, viewed
 // in both themes on each scene background (theme, gradient, white, dark). Every frame: the fill is drawn in the ink of the
 // background (light on dark, dark on light) and stands out from it by at least 4.5:1, so do the lines (the brightest or
-// darkest pixel across them, antialiased), the red line keeps its colour, lines are as wide as the display scale.
+// darkest pixel across them, antialiased), the red line keeps its colour, lines are at least one screen pixel wide.
 // <prefix>.<dark|light>.<background>.png.
 OPAD_BENCH(OPAD_BENCH_CONTRAST, contrast) {
   auto all = std::make_shared<bool>(true);
@@ -119,6 +163,153 @@ OPAD_BENCH(OPAD_BENCH_CONTRAST, contrast) {
     };
     v->fitAll();
     (*step)(0);
+  });
+  return true;
+}
+
+// OPAD_BENCH_LAYERS=<prefix> on a DXF with a locked dashed 0.5 mm layer (Walls), one turned off and not plotted (Notes),
+// a frozen one (Old) and a plain one (Plain): the Layers panel lists them as the file has them and the view draws them so
+// (hidden, dashed, as wide as 0.5 mm); clicks on the On, Freeze, Lock and Plot cells change them, one step to undo each;
+// colour, linetype and lineweight; isolate keeps the camera; the layer walk shows one layer at a time (an off one too) with
+// its chip; layer states are saved as a view op and restored in one step, from the panel and from the Named views menu,
+// and read back from the saved file (an .opad), or asked for first in viewer mode. <prefix>.panel.png, <prefix>.walk.png.
+OPAD_BENCH(OPAD_BENCH_LAYERS, layers) {
+  auto all = std::make_shared<bool>(true);
+  Check require = [all](bool ok, const QString& what) {
+    trace::log(QString("bench: layers: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    *all = *all && ok;
+  };
+  Viewport* v = w.m_viewport;
+  AppDocument* doc = w.m_doc;
+  auto settled = [&w, v, doc] {
+    int expected = 0;
+    for (const auto& id : doc->scene.all_bodies()) expected += doc->scene.effectively_visible(id);
+    return !w.m_displayJob && w.m_meshRemaining == 0 && v->displayedCount() >= expected && expected > 0 && !v->looksPending();
+  };
+  pollUntil(&w, settled, 60000, [&w, v, doc, require, all, value, settled](bool shown) {
+    auto* panel = w.findChild<LayersPanel*>();
+    QAction* open = w.action("drawing2d.layers");
+    require(shown && panel && open && open->isEnabled(), "the drawing is shown and the Layers command is there");
+    if (!shown || !panel || !open) return QCoreApplication::exit(2);
+    auto layer = [panel](const std::string& name) {
+      for (const auto& l : panel->layers())
+        if (l.name == name) return l;
+      return drawing2d::Layer{};
+    };
+    auto drawn = [v](const drawing2d::Layer& l) {
+      const opad::json state = l.bodies.empty() ? opad::json() : v->benchLookState(l.bodies.front());  // null: not in the view
+      return state.is_object() && state.value("displayed", false);
+    };
+    auto script = std::make_shared<Script>();
+    auto camera = std::make_shared<opad::json>();
+    auto steps = std::make_shared<int>(0);
+    script->add("open", [open] { open->trigger(); }, [panel] { return panel->isVisible() && panel->layers().size() == 4; });
+    script->add("as the file has them", [v, panel, layer, drawn, require, value] {
+      const auto walls = layer("Walls"), notes = layer("Notes"), old = layer("Old"), plain = layer("Plain");
+      require(walls.locked && walls.on && walls.linetype == "DASHED" && std::abs(walls.lineweight - 0.5) < 1e-9 && !notes.on && !notes.plot && old.frozen && old.on &&
+                  plain.on && !plain.frozen && !plain.locked && panel->tree()->topLevelItemCount() == 4,
+              "the panel lists the layers as the file has them (Walls locked, dashed, 0.5 mm; Notes off, not plotted; Old frozen)");
+      const opad::json state = v->benchLookState(walls.bodies.at(0));
+      require(drawn(walls) && drawn(plain) && !drawn(notes) && !drawn(old) && state.is_object() && state.value("lineType", 0) == 1 && state.value("lineWidth", 0.0) == v->lineWidth(2),
+              QString("the view draws them so: off and frozen hidden, Walls dashed %1 px wide").arg(state.value("lineWidth", 0.0)));
+      panel->window()->grab().save(value + ".panel.png");
+    });
+    script->add("turn Notes on by its cell", [panel, layer] { clickCell(panel->tree(), panel->item(layer("Notes").id), LayersPanel::On); },
+                [layer, drawn, settled] { return layer("Notes").on && settled() && drawn(layer("Notes")); });
+    script->add("undo", [doc, require] {
+      require(doc->undoLabel() == LayersPanel::tr("turn layer on"), "a click is one step to undo: " + doc->undoLabel());
+      doc->undo();
+    }, [layer, drawn] { return !layer("Notes").on && !drawn(layer("Notes")); });
+    script->add("freeze Plain by its cell", [panel, layer] { clickCell(panel->tree(), panel->item(layer("Plain").id), LayersPanel::Freeze); },
+                [layer, drawn] { return layer("Plain").frozen && !drawn(layer("Plain")); });
+    script->add("thaw Plain", [panel, layer] { clickCell(panel->tree(), panel->item(layer("Plain").id), LayersPanel::Freeze); },
+                [layer, drawn, settled] { return !layer("Plain").frozen && layer("Plain").on && settled() && drawn(layer("Plain")); });
+    script->add("thaw Old", [panel, layer] { clickCell(panel->tree(), panel->item(layer("Old").id), LayersPanel::Freeze); },
+                [layer, drawn, settled] { return !layer("Old").frozen && settled() && drawn(layer("Old")); });
+    script->add("unlock Walls, plot Notes", [panel, layer] {
+      clickCell(panel->tree(), panel->item(layer("Walls").id), LayersPanel::Lock);
+      clickCell(panel->tree(), panel->item(layer("Notes").id), LayersPanel::Plot);
+    }, [layer, doc] { return !layer("Walls").locked && !doc->scene.node(layer("Walls").id)->locked && layer("Notes").plot; });
+    script->add("Plain as Center, 1 mm", [panel, layer] {
+      panel->setLinetype(layer("Plain").id, "Center");
+      panel->setLineweight(layer("Plain").id, 1.0);
+    }, [v, layer] {
+      const opad::json state = v->benchLookState(layer("Plain").bodies.at(0));
+      return state.is_object() && layer("Plain").linetype == "Center" && state.value("lineType", 0) == 3 && state.value("lineWidth", 0.0) == v->lineWidth(4);
+    });
+    script->add("Walls green", [panel, layer] { panel->setColor(layer("Walls").id, {0, 0.8, 0}); },
+                [v, layer] { return v->shownLook(layer("Walls").bodies.at(0)).color == drawing2d::Rgb{0, 0.8, 0}; });
+    script->add("Walls in its drawing colour again", [panel, layer] { panel->setDrawingColor(layer("Walls").id); },
+                [v, layer] { return v->shownLook(layer("Walls").bodies.at(0)).color == drawing2d::Rgb{1, 0, 0}; });
+    script->add("isolate Walls", [v, panel, layer, camera] {
+      *camera = v->cameraJson();
+      panel->isolate({layer("Walls").id});
+    }, [v, layer, drawn] { return v->isIsolated() && drawn(layer("Walls")) && !drawn(layer("Plain")); });
+    script->add("isolated, the camera kept", [v, camera, require] {
+      require(v->cameraJson() == *camera, "isolating a layer keeps the camera");
+      v->isolate({});
+    }, [v, layer, drawn, settled] { return !v->isIsolated() && settled() && drawn(layer("Plain")); });
+    script->add("walk", [panel] {
+      panel->tree()->setCurrentItem(panel->tree()->topLevelItem(0));
+      panel->startWalk();
+    }, [panel, v, drawn] { return panel->walking() && v->isIsolated() && drawn(panel->layers().front()) && !drawn(panel->layers().at(1)); });
+    script->add("walk on with Down", [&w, panel, v, require, value, camera] {
+      QLabel* chip = nullptr;
+      for (auto* label : w.m_chips->findChildren<QLabel*>())
+        if (label->text() == panel->walkText()) chip = label;
+      require(chip && chip->isVisibleTo(w.m_chips) && v->cameraJson() == *camera, "the walk's chip names the layer, the camera is kept: " + panel->walkText());
+      v->grabImage().save(value + ".walk.png");
+      QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+      QCoreApplication::sendEvent(panel->tree(), &down);
+    }, [panel, drawn] { return panel->walked() == panel->layers().at(1).id && drawn(panel->layers().at(1)) && !drawn(panel->layers().at(0)); });
+    script->add("the walk shows an off layer too", [panel, layer] {
+      while (panel->walked() != layer("Notes").id && panel->walking()) panel->walk(1);
+    }, [panel, drawn, layer] { return panel->walked() == layer("Notes").id && drawn(layer("Notes")); });
+    script->add("stop the walk", [panel] { panel->stopWalk(); }, [&w, panel, v, drawn, layer, settled] {
+      bool chip = false;
+      for (auto* label : w.m_chips->findChildren<QLabel*>()) chip = chip || (label->isVisibleTo(w.m_chips) && label->text().contains("·") && label->text() == panel->walkText());
+      return !panel->walking() && !v->isIsolated() && settled() && !drawn(layer("Notes")) && drawn(layer("Walls")) && !chip;
+    });
+    if (doc->browse) {
+      script->add("a layer state asks to save first in viewer mode", [panel, doc, require, steps] {
+        *steps = int(doc->scene.views.size());
+        panel->saveState("Before");
+        require(int(doc->scene.views.size()) == *steps && doc->browse, "viewer mode: a layer state is an edit, asked for first (cancelled here)");
+      });
+    } else {
+      auto state = std::make_shared<std::string>();
+      script->add("save a layer state", [panel, doc, state] {
+        panel->saveState("Before");
+        if (!doc->scene.views.empty()) *state = doc->scene.views.back().id;
+      }, [panel, doc, state] { return !state->empty() && panel->states().size() == 1 && doc->scene.views.back().display.contains("layers"); });
+      script->add("change, restore in one step", [panel, layer, state, steps, doc] {
+        panel->toggle(layer("Notes").id, LayersPanel::On);
+        panel->toggle(layer("Walls").id, LayersPanel::Lock);
+        panel->setLinetype(layer("Walls").id, "Continuous");
+        *steps = int(doc->undoLabels().size());
+        panel->restoreState(*state);
+      }, [layer] { return layer("Notes").on == false && layer("Walls").locked == false && layer("Walls").linetype == "DASHED"; });
+      script->add("one step", [doc, steps, require, layer, drawn] {
+        require(int(doc->undoLabels().size()) == *steps + 1 && doc->undoLabel() == LayersPanel::tr("restore layer state") && !drawn(layer("Notes")),
+                "the layer state came back in one step: " + doc->undoLabel());
+      });
+      script->add("restore from the Named views menu", [&w, panel, layer, state] {
+        panel->toggle(layer("Old").id, LayersPanel::Freeze);
+        w.restoreNamedView(*state);
+      }, [layer] { return !layer("Old").frozen; });
+      script->add("saved, read back", [doc, value, require] {
+        doc->saveAs(value + ".opad");
+        const opad::Document back = opad::Document::load(std::filesystem::path((value + ".opad").toStdU16String()));
+        bool fields = false, display = false;
+        for (const auto& op : back.ops) {
+          fields = fields || (op.type == "appearance" && op.data.contains("layer") && op.data.contains("visible"));
+          display = display || (op.type == "view" && op.data.contains("display"));
+        }
+        require(fields && display, "the file keeps the layer fields (with visible, for earlier builds) and the state's view");
+      });
+    }
+    script->add("close", [panel] { panel->footer()->primary()->click(); }, [panel] { return !panel->isVisible(); });
+    Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   });
   return true;
 }

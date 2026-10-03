@@ -29,7 +29,22 @@ def contrast_file(root, document):
                 line("Red", 0, 60, 100, 60)])
 
 
+def layers_file(root, document=None):
+    """Walls locked, dashed and 0.5 mm; Notes off and not plotted; Old frozen; Plain as it comes. A line on each."""
+    return dxf(root / "layers.dxf", [("Walls", 1, 4, [(6, "DASHED"), (370, "50")]), ("Notes", -3, 0, [(290, "0")]), ("Old", 2, 1, ()), ("Plain", 5, 0, ())],
+               [line(name, 0, 10 * i, 100, 10 * i + 5) for i, name in enumerate(["Walls", "Notes", "Old", "Plain"])])
+
+
+def layers_document(root, document):
+    """The same drawing imported into an .opad (layer states are view ops: an editable document)."""
+    return document("layers", ("import", "--file", str(layers_file(root)), "--center", "true"))
+
+
 CASES = [
     # UI-10: a drawing in colour 7 on every background in both themes stands out by 4.5:1 or more. <prefix>.<theme>.<bg>.png
     ("contrast", contrast_file, {"OPAD_BENCH_CONTRAST": "{prefix}"}),
+    # UI-89: the Layers manager on an .opad (cells, undo, colour, linetype, lineweight, isolate, walk, layer states saved and
+    # restored, the file read back) and on the DXF itself in viewer mode (the same, a layer state asks to save first).
+    ("layers", layers_document, {"OPAD_BENCH_LAYERS": "{prefix}"}),
+    ("layers-viewer", layers_file, {"OPAD_BENCH_LAYERS": "{prefix}"}),
 ]

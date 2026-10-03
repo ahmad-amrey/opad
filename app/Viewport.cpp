@@ -1120,13 +1120,13 @@ void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const H
   emit selectionChanged();
 }
 
-void Viewport::isolate(const std::vector<std::string>& ids) {
+void Viewport::isolate(const std::vector<std::string>& ids, bool fit) {
   m_isolated.clear();
   for (const auto& id : ids)
     {if(m_doc->scene.sketch(id))m_isolated.insert(id);for (const auto& b : m_doc->scene.bodies_under(id)) m_isolated.insert(b);}
-  m_needFit = !m_isolated.empty();
+  m_needFit = fit && !m_isolated.empty();
   sync();
-  if (!m_isolated.empty()) fitAll();
+  if (fit && !m_isolated.empty()) fitAll();
   emit isolationChanged();
 }
 
@@ -1688,6 +1688,11 @@ void Viewport::sync() {
         // (a colour picked for the selection left it unselected, though the status bar still counted it).
         m_ctx->RecomputePrsOnly(item.ais, Standard_False);
         recoloredSelected = recoloredSelected || m_ctx->IsSelected(item.ais);
+      } else if (n->representation == "drawing2d") {  // its layer's line weight or type may have changed (UI-89)
+        if (const BodyLook look = composeLook(*n); !(look == item.look)) {
+          applyLook(id, item, look);
+          recoloredSelected = recoloredSelected || m_ctx->IsSelected(item.ais);
+        }
       }
       continue;
     }
