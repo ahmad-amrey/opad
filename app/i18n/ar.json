@@ -1635,5 +1635,8 @@
   "File types…": "أنواع الملفات…",
   "representation": "التمثيل",
   "material": "المادة",
-  "source": "المصدر"
+  "source": "المصدر",
+  "%1: overhang up to %2° over %3 mm²": "%1: بروز حتى %2° على مساحة %3 مم²",
+  "%1: wall %2 mm thin over %3 triangles": "%1: جدار بسماكة %2 مم على %3 مثلثات",
+  "%1: %2 smaller findings not listed": "%1: %2 ملاحظات أصغر غير مدرجة"
 }

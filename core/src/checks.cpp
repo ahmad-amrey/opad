@@ -2,6 +2,9 @@
 #include "opad/checks.hpp"
 
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
+#include <Poly_Triangulation.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepClass_FaceClassifier.hxx>
 #include <BRepGProp.hxx>
@@ -18,6 +21,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <array>
+#include <functional>
+#include <map>
 #include <set>
 
 #include "opad/geometry.hpp"
@@ -28,11 +34,13 @@ namespace opad {
 namespace {
 
 // The solid bodies a check looks at: the selected nodes (components stand for their bodies), or every visible one.
-std::vector<std::string> solid_bodies(const Scene& scene, const json& args) {
+// The print check also takes meshes (STL, 3MF...), which it checks per triangle.
+std::vector<std::string> solid_bodies(const Scene& scene, const json& args, bool meshes = false) {
   std::vector<std::string> out;
   auto add = [&](const std::string& id) {
     const Node* n = scene.node(id);
-    if (n && n->kind == Node::Kind::Body && !n->body_missing && n->representation == "solid" && std::find(out.begin(), out.end(), id) == out.end())
+    if (n && n->kind == Node::Kind::Body && !n->body_missing && (n->representation == "solid" || (meshes && n->representation == "mesh")) &&
+        std::find(out.begin(), out.end(), id) == out.end())
       out.push_back(id);
   };
   if (args.contains("select") && args["select"].is_array() && !args["select"].empty()) {
@@ -54,6 +62,214 @@ size_t arg_size(const json& args, const char* key, size_t fallback, size_t most)
   if (!args.contains(key)) return fallback;
   const long long v = args[key].get<long long>();
   return static_cast<size_t>(std::clamp<long long>(v, 0, static_cast<long long>(most)));
+}
+
+// The print check of a mesh body: the questions of the B-rep check asked per triangle. A mesh has no faces to name,
+// so neighbouring triangles with the same finding make one region, reported once with its triangles (their ordinals
+// are the body's face references) so the panel can highlight it. Wall thickness: from each triangle's centre along
+// the inward normal, looking only min_wall ahead (a grid of the triangles keeps that local), counting only a
+// triangle that faces back (the wall's other side), not the next wall of a concave corner.
+json print_mesh(const TopoDS_Shape& shape, const gp_Vec& up, double steep, double min_wall, const std::function<bool()>& cancelled, size_t& findings) {
+  struct Tri {
+    gp_Pnt p[3];
+    gp_Vec n;
+    double area = 0;
+    int v[3] = {0, 0, 0};
+  };
+  std::vector<Tri> tris;
+  Bnd_Box box;
+  BRepBndLib::Add(shape, box, Standard_True);
+  if (box.IsVoid()) return {{"contact_area_mm2", 0}, {"overhangs", json::array()}, {"thin_walls", json::array()}, {"thin_features", json::array()}};
+  const double weld = std::max(1e-7, box.CornerMin().Distance(box.CornerMax()) * 1e-7);
+  std::map<std::array<long long, 3>, int> welded;
+  auto vertex = [&](const gp_Pnt& p) {
+    const std::array<long long, 3> key{std::llround(p.X() / weld), std::llround(p.Y() / weld), std::llround(p.Z() / weld)};
+    return welded.emplace(key, int(welded.size())).first->second;
+  };
+  for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next()) {
+    TopLoc_Location loc;
+    const auto mesh = BRep_Tool::Triangulation(TopoDS::Face(f.Current()), loc);
+    if (mesh.IsNull()) continue;
+    const bool reversed = f.Current().Orientation() == TopAbs_REVERSED;
+    for (int i = 1; i <= mesh->NbTriangles(); ++i) {
+      int a, b, c;
+      mesh->Triangle(i).Get(a, b, c);
+      if (reversed) std::swap(b, c);
+      Tri t;
+      const int nodes[3] = {a, b, c};
+      for (int k = 0; k < 3; ++k) {
+        t.p[k] = mesh->Node(nodes[k]).Transformed(loc.Transformation());
+        t.v[k] = vertex(t.p[k]);
+      }
+      t.n = gp_Vec(t.p[0], t.p[1]).Crossed(gp_Vec(t.p[0], t.p[2]));
+      t.area = t.n.Magnitude() / 2;
+      if (t.area > 1e-18) t.n /= 2 * t.area;
+      tris.push_back(t);  // degenerate ones too: ordinals are positions
+    }
+  }
+  double plate = 1e300;
+  for (const auto& t : tris)
+    for (const auto& p : t.p) plate = std::min(plate, gp_Vec(p.XYZ()).Dot(up));
+  const double tol = 1e-4 * std::max(1.0, std::fabs(plate));
+  // Triangles sharing an edge are neighbours.
+  std::map<std::pair<int, int>, std::vector<int>> edges;
+  for (int i = 0; i < int(tris.size()); ++i)
+    for (int k = 0; k < 3; ++k) edges[std::minmax(tris[size_t(i)].v[k], tris[size_t(i)].v[(k + 1) % 3])].push_back(i);
+  auto regions = [&](const std::vector<char>& marked) {
+    std::vector<int> parent(tris.size());
+    for (size_t i = 0; i < parent.size(); ++i) parent[i] = int(i);
+    std::function<int(int)> root = [&](int i) { return parent[size_t(i)] == i ? i : parent[size_t(i)] = root(parent[size_t(i)]); };
+    for (const auto& [edge, list] : edges)
+      for (size_t k = 1; k < list.size(); ++k)
+        if (marked[size_t(list[0])] && marked[size_t(list[k])]) parent[size_t(root(list[k]))] = root(list[0]);
+    std::map<int, std::vector<int>> out;
+    for (int i = 0; i < int(tris.size()); ++i)
+      if (marked[size_t(i)]) out[root(i)].push_back(i);
+    std::vector<std::vector<int>> list;
+    for (auto& [r, members] : out) list.push_back(std::move(members));
+    return list;
+  };
+  auto ordinals = [](const std::vector<int>& members) {
+    json faces = json::array();
+    for (size_t k = 0; k < members.size() && k < 2000; ++k) faces.push_back(members[k]);
+    return faces;
+  };
+
+  double contact = 0;
+  std::vector<char> overhang(tris.size(), 0);
+  for (size_t i = 0; i < tris.size(); ++i) {
+    const Tri& t = tris[i];
+    if (t.area <= 1e-18) continue;
+    const double facing_down = -t.n.Dot(up);
+    bool onPlate = facing_down > 1 - 1e-6;
+    for (const auto& p : t.p) onPlate = onPlate && gp_Vec(p.XYZ()).Dot(up) - plate < tol;
+    if (onPlate) contact += t.area;
+    else if (facing_down > steep) overhang[i] = 1;
+  }
+  std::vector<std::pair<double, json>> found;
+  for (const auto& members : regions(overhang)) {
+    double worst = 0, area = 0;
+    for (int i : members) {
+      worst = std::max(worst, -tris[size_t(i)].n.Dot(up));
+      area += tris[size_t(i)].area;
+    }
+    if (area < 1e-6) continue;
+    found.push_back({area, {{"face", members.front()}, {"faces", ordinals(members)}, {"triangles", members.size()},
+                            {"overhang_deg", std::asin(std::min(1.0, worst)) * 180.0 / M_PI}, {"area_mm2", area}}});
+  }
+  std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+  json overhangs = json::array();
+  for (auto& [area, item] : found) overhangs.push_back(std::move(item));
+
+  json thin = json::array();
+  if (min_wall > 0 && !tris.empty()) {
+    // A uniform grid of the triangles, cells sized for a few dozen triangles each, laid out as offsets + indices.
+    const gp_Pnt lo = box.CornerMin(), hi = box.CornerMax();
+    const double ex = std::max(hi.X() - lo.X(), 1e-9), ey = std::max(hi.Y() - lo.Y(), 1e-9), ez = std::max(hi.Z() - lo.Z(), 1e-9);
+    double cell = std::cbrt(ex * ey * ez / std::max(1.0, double(tris.size()) / 16));
+    cell = std::max({cell, std::max({ex, ey, ez}) / 256, 1e-6});
+    const int nx = std::max(1, int(std::ceil(ex / cell))), ny = std::max(1, int(std::ceil(ey / cell))), nz = std::max(1, int(std::ceil(ez / cell)));
+    auto clampi = [](double v, int n) { return std::clamp(int(std::floor(v)), 0, n - 1); };
+    auto range = [&](const gp_Pnt& a, const gp_Pnt& b, int r[6]) {
+      r[0] = clampi((std::min(a.X(), b.X()) - lo.X()) / cell, nx); r[1] = clampi((std::max(a.X(), b.X()) - lo.X()) / cell, nx);
+      r[2] = clampi((std::min(a.Y(), b.Y()) - lo.Y()) / cell, ny); r[3] = clampi((std::max(a.Y(), b.Y()) - lo.Y()) / cell, ny);
+      r[4] = clampi((std::min(a.Z(), b.Z()) - lo.Z()) / cell, nz); r[5] = clampi((std::max(a.Z(), b.Z()) - lo.Z()) / cell, nz);
+    };
+    const size_t cells = size_t(nx) * size_t(ny) * size_t(nz);
+    std::vector<uint32_t> start(cells + 1, 0), slots;
+    for (int pass = 0; pass < 2; ++pass) {
+      std::vector<uint32_t> fill(pass ? start.begin() : start.end(), pass ? start.end() - 1 : start.end());
+      for (size_t i = 0; i < tris.size(); ++i) {
+        const Tri& t = tris[i];
+        gp_Pnt a(std::min({t.p[0].X(), t.p[1].X(), t.p[2].X()}), std::min({t.p[0].Y(), t.p[1].Y(), t.p[2].Y()}), std::min({t.p[0].Z(), t.p[1].Z(), t.p[2].Z()}));
+        gp_Pnt b(std::max({t.p[0].X(), t.p[1].X(), t.p[2].X()}), std::max({t.p[0].Y(), t.p[1].Y(), t.p[2].Y()}), std::max({t.p[0].Z(), t.p[1].Z(), t.p[2].Z()}));
+        int r[6];
+        range(a, b, r);
+        for (int z = r[4]; z <= r[5]; ++z)
+          for (int y = r[2]; y <= r[3]; ++y)
+            for (int x = r[0]; x <= r[1]; ++x) {
+              const size_t c = (size_t(z) * size_t(ny) + size_t(y)) * size_t(nx) + size_t(x);
+              if (pass == 0) ++start[c + 1];
+              else slots[fill[c]++] = uint32_t(i);
+            }
+      }
+      if (pass == 0) {
+        for (size_t c = 0; c < cells; ++c) start[c + 1] += start[c];
+        slots.resize(start[cells]);
+      }
+    }
+    std::vector<char> thinMark(tris.size(), 0);
+    std::vector<double> thickness(tris.size(), 1e300);
+    std::vector<uint32_t> seen(tris.size(), 0);
+    uint32_t stamp = 0;
+    const size_t stride = std::max<size_t>(1, tris.size() / 200000);  // a ray per triangle up to 200k of them
+    for (size_t i = 0; i < tris.size(); i += stride) {
+      if ((i / stride) % 4096 == 0 && cancelled && cancelled()) throw Error("cancelled");
+      const Tri& t = tris[i];
+      if (t.area <= 1e-18) continue;
+      const gp_Pnt centre((t.p[0].XYZ() + t.p[1].XYZ() + t.p[2].XYZ()) / 3);
+      const gp_Vec d = -t.n;
+      const gp_Pnt s = centre.Translated(d * 1e-4), e = centre.Translated(d * min_wall);
+      int r[6];
+      range(s, e, r);
+      ++stamp;
+      double nearest = 1e300;
+      for (int z = r[4]; z <= r[5]; ++z)
+        for (int y = r[2]; y <= r[3]; ++y)
+          for (int x = r[0]; x <= r[1]; ++x) {
+            const size_t c = (size_t(z) * size_t(ny) + size_t(y)) * size_t(nx) + size_t(x);
+            for (uint32_t k = start[c]; k < start[c + 1]; ++k) {
+              const uint32_t j = slots[k];
+              if (j == i || seen[j] == stamp) continue;
+              seen[j] = stamp;
+              const Tri& o = tris[j];
+              if (o.area <= 1e-18 || o.n.Dot(t.n) > -0.5) continue;  // only the wall's back, facing the other way
+              bool neighbour = false;  // a fold or knife edge right beside it is not a wall
+              for (int a = 0; a < 3; ++a)
+                for (int b = 0; b < 3; ++b) neighbour = neighbour || o.v[a] == t.v[b];
+              if (neighbour) continue;
+              // Moller-Trumbore
+              const gp_Vec e1(o.p[0], o.p[1]), e2(o.p[0], o.p[2]), pv = d.Crossed(e2);
+              const double det = e1.Dot(pv);
+              if (std::abs(det) < 1e-18) continue;
+              const gp_Vec tv(o.p[0], s);
+              const double u = tv.Dot(pv) / det;
+              if (u < 0 || u > 1) continue;
+              const gp_Vec qv = tv.Crossed(e1);
+              const double v = d.Dot(qv) / det;
+              if (v < 0 || u + v > 1) continue;
+              const double h = e2.Dot(qv) / det + 1e-4;
+              if (h > 1e-4 && h < nearest) nearest = h;
+            }
+          }
+      if (nearest < min_wall) {
+        thinMark[i] = 1;
+        thickness[i] = nearest;
+      }
+    }
+    std::vector<std::pair<double, json>> walls;
+    for (const auto& members : regions(thinMark)) {
+      int worst = members.front();
+      for (int i : members)
+        if (thickness[size_t(i)] < thickness[size_t(worst)]) worst = i;
+      const Tri& t = tris[size_t(worst)];
+      const gp_Pnt at((t.p[0].XYZ() + t.p[1].XYZ() + t.p[2].XYZ()) / 3);
+      walls.push_back({thickness[size_t(worst)], {{"face", worst}, {"faces", ordinals(members)}, {"triangles", members.size()},
+                                                  {"thickness_mm", thickness[size_t(worst)]}, {"point", {at.X(), at.Y(), at.Z()}}}});
+    }
+    std::sort(walls.begin(), walls.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    for (auto& [value, item] : walls) thin.push_back(std::move(item));
+  }
+  // Long lists help nobody: the worst regions first, the rest counted.
+  json shownOverhangs = json::array(), shownThin = json::array();
+  for (size_t k = 0; k < overhangs.size() && k < 50; ++k) shownOverhangs.push_back(overhangs[k]);
+  for (size_t k = 0; k < thin.size() && k < 50; ++k) shownThin.push_back(thin[k]);
+  findings += overhangs.size() + thin.size();
+  json out = {{"contact_area_mm2", contact}, {"overhangs", shownOverhangs}, {"thin_walls", shownThin}, {"thin_features", json::array()},
+              {"mesh", true}, {"triangles", tris.size()}};
+  if (overhangs.size() > shownOverhangs.size()) out["more_overhangs"] = overhangs.size() - shownOverhangs.size();
+  if (thin.size() > shownThin.size()) out["more_thin_walls"] = thin.size() - shownThin.size();
+  return out;
 }
 
 }  // namespace
@@ -181,13 +397,20 @@ json check_print(const Document& doc, const Scene& scene, const json& args, cons
   if (!(overhang >= 0 && overhang < 90)) throw Error("overhang_deg is from 0 up to 90");
   if (!(min_wall >= 0)) throw Error("min_wall_mm must be zero or more");
   const double steep = std::sin(overhang * M_PI / 180.0);  // a face facing down more than this is an overhang
-  const std::vector<std::string> bodies = solid_bodies(scene, args);
+  const std::vector<std::string> bodies = solid_bodies(scene, args, true);
   const size_t offset = arg_size(args, "offset", 0, 1u << 30), limit = arg_size(args, "limit", 25, 100);
   json items = json::array();
   size_t findings = 0;
   for (size_t bi = offset; bi < bodies.size() && items.size() < limit; ++bi) {
     const std::string& id = bodies[bi];
     const TopoDS_Shape shape = node_world_shape(doc, scene, id);
+    if (scene.node(id)->representation == "mesh") {
+      json item = print_mesh(shape, up, steep, min_wall, cancelled, findings);
+      item["id"] = id;
+      item["name"] = scene.node(id)->name;
+      items.push_back(std::move(item));
+      continue;
+    }
     TopTools_IndexedMapOfShape faces;
     TopExp::MapShapes(shape, TopAbs_FACE, faces);
     // The build plate: the lowest point of the body along the build direction.

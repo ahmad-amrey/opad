@@ -130,10 +130,19 @@ void CheckPanel::setResult(const opad::json& r) {
       m_findings.push_back({{"body", body.value("id", "")}, {"faces", faces}, {"kind", kind}});
       ++total;
     };
+    // A mesh (STL...) has no faces to name: its findings are regions of triangles.
+    const bool mesh = body.value("mesh", false);
+    auto faces = [](const opad::json& f) { return f.contains("faces") ? f["faces"] : opad::json::array({f.value("face", 0)}); };
     for (const auto& o : body.value("overhangs", opad::json::array()))
-      add(tr("%1: face %2 overhangs %3°").arg(who).arg(o.value("face", 0)).arg(o.value("overhang_deg", 0.0), 0, 'f', 0), opad::json::array({o.value("face", 0)}), "overhang");
+      add(mesh ? tr("%1: overhang up to %2° over %3 mm²").arg(who).arg(o.value("overhang_deg", 0.0), 0, 'f', 0).arg(o.value("area_mm2", 0.0), 0, 'f', 1)
+               : tr("%1: face %2 overhangs %3°").arg(who).arg(o.value("face", 0)).arg(o.value("overhang_deg", 0.0), 0, 'f', 0),
+          faces(o), "overhang");
     for (const auto& w : body.value("thin_walls", opad::json::array()))
-      add(tr("%1: wall %2 mm at face %3").arg(who).arg(w.value("thickness_mm", 0.0), 0, 'f', 2).arg(w.value("face", 0)), opad::json::array({w.value("face", 0)}), "thin_wall");
+      add(mesh ? tr("%1: wall %2 mm thin over %3 triangles").arg(who).arg(w.value("thickness_mm", 0.0), 0, 'f', 2).arg(w.value("triangles", 0))
+               : tr("%1: wall %2 mm at face %3").arg(who).arg(w.value("thickness_mm", 0.0), 0, 'f', 2).arg(w.value("face", 0)),
+          faces(w), "thin_wall");
+    if (const int more = body.value("more_overhangs", 0) + body.value("more_thin_walls", 0); more > 0)
+      add(tr("%1: %2 smaller findings not listed").arg(who).arg(more), opad::json::array(), "more");
     for (const auto& t : body.value("thin_features", opad::json::array()))
       add(tr("%1: face %2 is %3 mm wide").arg(who).arg(t.value("face", 0)).arg(t.value("width_mm", 0.0), 0, 'f', 2), opad::json::array({t.value("face", 0)}), "thin_feature");
     if (body.value("contact_area_mm2", 0.0) <= 0)
