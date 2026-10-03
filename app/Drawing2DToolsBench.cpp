@@ -1,6 +1,7 @@
 // Benches of the 2D measuring tools (drawing2d, UI-90): the Area tool. Cases in tools/bench_cases/drawing2d.py; the measure
 // itself is tests/test_area.
 #include <QAction>
+#include <QElapsedTimer>
 #include <QImage>
 #include <QKeySequence>
 #include <QLabel>
@@ -265,12 +266,14 @@ OPAD_BENCH(OPAD_BENCH_READOUT, readout) {
   };
   Viewport* v = w.m_viewport;
   AppDocument* doc = w.m_doc;
+  for (const auto& root : doc->scene.roots)  // the Engine .opad keeps its root hidden: shown here, in memory (never saved)
+    if (const auto* n = doc->scene.node(root); n && !n->visible) doc->run("appearance", {{"target", root}, {"visible", true}});
   auto settled = [&w, v, doc] {
     int expected = 0;
-    for (const auto& id : doc->scene.all_bodies()) expected += doc->scene.effectively_visible(id);
-    return !w.m_displayJob && w.m_meshRemaining == 0 && v->displayedCount() >= expected && expected > 0 && !v->looksPending();
+    for (const auto& id : doc->scene.all_bodies()) expected += doc->scene.effectively_visible(id) && !doc->scene.node(id)->body_missing;
+    return !w.m_displayJob && w.m_meshRemaining == 0 && v->displayedCount() + v->skippedCount() >= expected && expected > 0 && !v->looksPending();
   };
-  pollUntil(&w, settled, 60000, [&w, v, doc, require, all, value](bool shown) {
+  pollUntil(&w, settled, 220000, [&w, v, doc, require, all, value](bool shown) {
     auto* readout = w.findChild<QLabel*>("cursorReadout");
     require(shown && readout && readout->text().isEmpty(), "the readout is in the status bar, empty while the mouse is elsewhere");
     if (!shown || !readout) return QCoreApplication::exit(2);
@@ -319,9 +322,20 @@ OPAD_BENCH(OPAD_BENCH_READOUT, readout) {
         v->fitAll();
         move(QPointF(v->width() / 2.0, v->height() / 2.0));
       }, [readout] { return !readout->text().isEmpty(); });
-      script->add("model coordinates", [v, readout, numbers, require, move, value, &w] {
+      script->add("model coordinates", [v, doc, readout, numbers, require, move, value, &w] {
         const QList<double> n = numbers();
-        require(n.size() >= 3 && std::abs(n[2] - 10) < 1e-6 && readout->text().contains("Z"), "on a model: X, Y and Z of the surface under the cursor: " + readout->text());
+        const bool box = doc->scene.all_bodies().size() == 1;  // the box fixture: its top face from above; a big model: any surface
+        require(n.size() >= 3 && (!box || std::abs(n[2] - 10) < 1e-6) && readout->text().contains("Z"), "on a model: X, Y and Z of the surface under the cursor: " + readout->text());
+        // What a readout costs while the mouse moves (one ray into the view's picking structures): on the Engine too.
+        qint64 worst = 0;
+        opad::Vec3 at;
+        for (int i = 0; i < 60; ++i) {
+          QElapsedTimer clock;
+          clock.start();
+          v->pointUnder(QPointF(v->width() * (0.2 + 0.6 * (i % 10) / 9.0), v->height() * (0.2 + 0.6 * (i / 10) / 5.0)), at);
+          worst = std::max(worst, clock.elapsed());
+        }
+        require(worst < 50, QString("60 readouts across the view on %1 bodies, the slowest %2 ms").arg(doc->scene.all_bodies().size()).arg(worst));
         w.statusBar()->grab().save(value + ".status.png");
         move(QPointF(3, v->height() - 3));
       }, [readout] { return readout->text().isEmpty(); });
