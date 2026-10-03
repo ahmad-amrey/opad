@@ -1,4 +1,18 @@
 """gui_benches cases of the core area (T0); the benches are in app/CoreBench.cpp, app/AreaBench.cpp and app/ContractsBench.cpp."""
+import uuid
+
+
+def newer_file(root, document):
+    """A box document with records of a newer build: a one-line sheet and a multi-line sheet item (UI-65)."""
+    path = document("newer", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+    text = path.read_text(encoding="utf-8")
+    sheet = str(uuid.uuid4())
+    records = (f'{{"op":"sheet","id":"{sheet}","ts":"2026-10-03T10:00:00Z","by":"newer","name":"Sheet 1","size":"A3"}}\n'
+               f'{{"op":"sheet_item","id":"{uuid.uuid4()}","ts":"2026-10-03T10:00:01Z","by":"newer","sheet":"{sheet}",\n'
+               '  "points": [\n    [0,0],\n    [10,5]]}\n')
+    path.write_text(text.replace("#bodies\n", records + "#bodies\n", 1), encoding="utf-8", newline="\n")
+    return path
+
 
 CASES = [
     # The extension seams (UI-119), run in Arabic so the translation fragments are looked up through tr().
@@ -21,4 +35,6 @@ CASES = [
     # contextual tab with a split button. <prefix>.<width>.<workspace>.png, <prefix>.narrow.png.
     ("ribbon", "box", {"OPAD_BENCH_RIBBON": "1280,1600", "OPAD_BENCH_UISHOT": "{prefix}"}),
     ("ribbon-rtl", "box", {"OPAD_BENCH_RIBBON": "1280,1600", "OPAD_BENCH_UISHOT": "{prefix}", "OPAD_LANG": "ar"}),
+    # A file of a newer build (unknown op types) opens, hides those records from the timeline and saves them back (UI-65).
+    ("tolerant", newer_file, {"OPAD_BENCH_TOLERANT": "{prefix}.opad"}),
 ]

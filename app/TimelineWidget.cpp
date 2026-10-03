@@ -24,6 +24,7 @@ QString shortId(const std::string& id) { return QString::fromStdString(id.substr
 // tombstones go with them.
 bool timelineShows(const opad::Document& doc, const opad::Op& op) {
   if (op.type == "annotation" || op.type == "measurement") return false;
+  if (!opad::Document::known_type(op.type)) return false;  // a newer build's op (drawing sheets...): nothing to show or edit here
   // The design history shows sketches and features; edits and the results they regenerate are how those
   // changed, not steps of their own, and parameters live in their dialog.
   if (op.type == "edit" || op.type == "regen" || op.type == "param") return false;
