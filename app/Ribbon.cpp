@@ -368,6 +368,7 @@ RibbonGroup::RibbonGroup(const RibbonLayout::Group& group, QWidget* parent) : QW
   m_probe = tool();
   m_probe->hide();
   style(m_collapsed, Large);
+  if (!m_slots.isEmpty()) m_collapsed->setIcon(m_slots.first().action->icon());  // measured as it will show
 }
 
 QList<QToolButton*> RibbonGroup::buttons() const {

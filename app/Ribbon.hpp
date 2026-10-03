@@ -146,7 +146,7 @@ class RibbonGroup : public QWidget {
   QToolButton* m_probe;  // hidden: sizes of the tools at the other levels
   QString m_signature;   // labels and visibility the widths were measured for
   std::array<int, 4> m_widths{{-1, -1, -1, -1}};
-  int m_level = -1;
+  int m_level = Large;
 };
 
 // A tab's page: its groups left to right (mirrored right to left), each at the level that lets the row fit the width.
