@@ -14,7 +14,11 @@
 #include <QTimer>
 #include <QToolButton>
 
+#include <set>
+
 #include "AreaController.hpp"
+#include "BrowserDelegate.hpp"
+#include "BrowserPanel.hpp"
 #include "Commands.hpp"
 #include "Drawing2D.hpp"
 #include "I18n.hpp"
@@ -125,6 +129,34 @@ class Drawing2DArea : public AreaController {
     connect(services().viewport(), &Viewport::isolationChanged, this, [this] {
       if (m_layers->walking() && !services().viewport()->isIsolated()) m_layers->stopWalk();
     });
+    // A layer's row in the browser: the layers icon, a frozen layer's snowflake (a click opens it in the Layers panel), and
+    // a mark when it is not plotted.
+    services().browser()->addDecorator([this](const browser::Row& row, browser::Decoration& d) {
+      if (row.kind != "component" || !row.node || !m_layerIds.count(row.id)) return;
+      d.typeIcon = "layers";
+      const opad::json& fields = row.node->layer;
+      if (!fields.is_object()) return;
+      const std::string id = row.id;
+      if (!row.node->visible && fields.value("frozen", false)) {
+        browser::Badge frozen;
+        frozen.icon = "freeze";
+        frozen.color = &Tokens::sel;
+        frozen.fill = nullptr;
+        frozen.tooltip = tr("Frozen layer: click to see it in the Layers panel");
+        frozen.clicked = [this, id] {
+          showLayers(true);
+          m_layers->selectLayer(id);
+        };
+        d.badges << frozen;
+      }
+      if (!fields.value("plot", true)) {
+        browser::Badge unplotted;
+        unplotted.icon = "noPlot";
+        unplotted.fill = nullptr;
+        unplotted.tooltip = tr("Not plotted");
+        d.badges << unplotted;
+      }
+    });
     // The 2D vocabulary follows the scene and 2D mode; the rollover card the hovered drawing entity.
     if (QAction* twoD = services().action("view.2d")) connect(twoD, &QAction::toggled, this, [this] { applyVocabulary(); });
     m_card = new RolloverCard(services().window());
@@ -167,7 +199,9 @@ class Drawing2DArea : public AreaController {
 
   void documentChanged(bool replaced) override {
     if (replaced && m_layers) m_layers->stopWalk();
-    m_hasLayers = !drawing2d::layers(services().document()->scene).empty();
+    m_layerIds.clear();
+    for (const auto& l : drawing2d::layers(services().document()->scene)) m_layerIds.insert(l.id);
+    m_hasLayers = !m_layerIds.empty();
     applyVocabulary();
     if (m_tool && m_tool->isVisible()) {
       if (!m_hasLayers) m_tool->hide();
@@ -251,6 +285,7 @@ class Drawing2DArea : public AreaController {
   QLabel* m_walkChip = nullptr;
   QAction *m_layersAction = nullptr, *m_walkAction = nullptr, *m_isolateAction = nullptr;
   bool m_hasLayers = false, m_words = false;
+  std::set<std::string> m_layerIds;  // for the browser's rows: asked at every paint
   RolloverCard* m_card = nullptr;
   QTimer m_cardTimer;
   opad::json m_hovered;

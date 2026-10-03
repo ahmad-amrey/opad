@@ -12,6 +12,7 @@
 #include <QStatusBar>
 #include <QTimer>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 
 #include <algorithm>
 #include <cmath>
@@ -20,6 +21,8 @@
 #include <memory>
 
 #include "BenchRegistry.hpp"
+#include "BrowserDelegate.hpp"
+#include "BrowserPanel.hpp"
 #include "Drawing2D.hpp"
 #include "I18n.hpp"
 #include "LayersPanel.hpp"
@@ -226,6 +229,16 @@ OPAD_BENCH(OPAD_BENCH_LAYERS, layers) {
     }, [layer, drawn] { return !layer("Notes").on && !drawn(layer("Notes")); });
     script->add("freeze Plain by its cell", [panel, layer] { clickCell(panel->tree(), panel->item(layer("Plain").id), LayersPanel::Freeze); },
                 [layer, drawn] { return layer("Plain").frozen && !drawn(layer("Plain")); });
+    script->add("the browser marks it frozen", [&w, layer, require] {
+      BrowserTree* tree = w.m_browser->tree();
+      auto* delegate = qobject_cast<BrowserDelegate*>(tree->itemDelegate());
+      QTreeWidgetItem* row = nullptr;
+      for (QTreeWidgetItemIterator it(tree); *it && !row; ++it)
+        if ((*it)->data(0, browser::kIdRole).toString().toStdString() == layer("Plain").id) row = *it;
+      const browser::Decoration d = row && delegate ? delegate->decoration(tree->indexFromItem(row)) : browser::Decoration();
+      require(d.typeIcon == "layers" && std::any_of(d.badges.begin(), d.badges.end(), [](const browser::Badge& b) { return b.icon == "freeze" && b.clicked; }),
+              "the browser shows a layer as one, a frozen one with a snowflake that opens it in the Layers panel");
+    });
     script->add("thaw Plain", [panel, layer] { clickCell(panel->tree(), panel->item(layer("Plain").id), LayersPanel::Freeze); },
                 [layer, drawn, settled] { return !layer("Plain").frozen && layer("Plain").on && settled() && drawn(layer("Plain")); });
     script->add("thaw Old", [panel, layer] { clickCell(panel->tree(), panel->item(layer("Old").id), LayersPanel::Freeze); },
