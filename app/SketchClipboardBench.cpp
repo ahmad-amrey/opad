@@ -18,7 +18,8 @@ using namespace opad::design;
 // new ids and the constraints kept, selected, in one undo step (undo, redo); a second paste typed @0,-40 lands 40 below
 // where it was copied; Cut takes the selection to the clipboard in one undo step; Copy with base point takes the clicked
 // corner as the base; after Finish sketch, Ctrl+C on the timeline copies the marker's op id, Ctrl+V outside a sketch
-// changes nothing. <prefix>.png: the paste following the pointer.
+// changes nothing; the tool panel is headed Paste and Copy with base point, not the tool before. <prefix>.png: the paste
+// following the pointer.
 void SketchEditor::benchClipboard() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_CLIPBOARD");
   auto ok = std::make_shared<bool>(true);
@@ -60,6 +61,10 @@ void SketchEditor::benchClipboard() {
     const QMimeData* mime = QApplication::clipboard()->mimeData();
     return mime && mime->hasFormat(kClipMime) ? opad::json::parse(mime->data(kClipMime).toStdString()) : opad::json();
   };
+  auto heading = [window] {  // the sketch tool panel's title
+    auto* panel = window->findChild<SketchPanel*>();
+    return panel ? panel->window()->windowTitle() : QString();
+  };
   const auto original = curves();
   check(original.size() == 5 && dimensions() == 3, "a rectangle with its width and height and a circle with its diameter");
   m_sel = original;
@@ -89,6 +94,7 @@ void SketchEditor::benchClipboard() {
         sketchMove(100, 50, Qt::AltModifier, false);
         check(m_tool == "paste" && m_clip->curves == 5 && transientSolid(m_viewport->tokens().hov) >= 12, "Paste carries the copy's outline at the pointer");
         check(m_input->count() == 2 && m_input->key(0) == "x" && m_input->key(1) == "y" && m_sk.entities.size() == 5, "with X and Y boxes; nothing is added before the click");
+        check(heading() == tr("Paste"), "the tool panel is headed Paste, not the tool before it: " + heading());
         m_viewport->grabImage().save(prefix + ".png");
         sketchPress(100, 50, Qt::AltModifier);
         sketchRelease(100, 50, Qt::AltModifier);
@@ -118,7 +124,7 @@ void SketchEditor::benchClipboard() {
         check(m_sk.entities.size() == 10 && m_undo.size() == before + 1 && clip().at("sketch").at("entities").size() == 5, "Cut takes the selection to the clipboard in one undo step");
         m_sel = {original[0], original[1], original[2], original[3]};
         action("sketch.copybase")->trigger();
-        check(m_tool == "copybase", "Copy with base point asks for the base point");
+        check(m_tool == "copybase" && heading() == tr("Copy with base point"), "Copy with base point asks for the base point, its panel headed so: " + heading());
         sketchMove(40, 25, Qt::NoModifier, false);
         sketchPress(40, 25, Qt::NoModifier);
         sketchRelease(40, 25, Qt::NoModifier);

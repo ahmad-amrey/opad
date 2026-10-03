@@ -29,6 +29,7 @@
 #include <atomic>
 
 #include "I18n.hpp"
+#include "SketchSteps.hpp"
 #include "Units.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/geometry.hpp"
@@ -982,7 +983,12 @@ void DesignController::showSketchPanel(const QString& page) {
   if(m_sketch->active() && m_sketchPanel && m_openPanel){
     // A page (Constraints, Snaps, Selection) is named in the header: it read "Select", the tool, above the constraint list.
     if(!page.isEmpty())m_sketchPanel->setHeader("sketch",page);
-    else for(const auto& tool:SketchPanel::tools())if(tool.id==m_sketch->tool()){m_sketchPanel->setHeader("sketch",tool.label);break;}
+    else {  // a tool outside the panel's registry (paste, copy with base point) by its steps' name
+      const auto& registry=SketchPanel::tools();
+      const auto tool=std::find_if(registry.begin(),registry.end(),[this](const SketchPanel::Tool& t){return t.id==m_sketch->tool();});
+      const auto* steps=sketchsteps::find(m_sketch->tool().toStdString());
+      if(tool!=registry.end())m_sketchPanel->setHeader("sketch",tool->label);else if(steps)m_sketchPanel->setHeader("sketch",i18n::t(steps->name));
+    }
     m_openPanel(m_sketchPanel);
   }
 }

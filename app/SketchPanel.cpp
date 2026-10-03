@@ -292,10 +292,12 @@ void SketchPanel::refresh() {
   m_refreshing=true;
   const QString tool=m_editor->tool();
   m_precise->setVisible(QStringList{"line","rect","crect","circle","circle2","circle3","arc3","arcc","polygon","polygon_outer","slot","cslot","arcslot","ellipse","spline","control_spline","point","text","conic","rect3"}.contains(tool));
+  bool listed=false;
   for(const auto& t:tools())if(t.id==tool) {
     {QSignalBlocker block(m_group);m_group->setCurrentText(t.group);}chooseGroup();
-    QSignalBlocker block(m_tools);m_tools->setCurrentIndex(m_tools->findData(tool));break;
+    QSignalBlocker block(m_tools);m_tools->setCurrentIndex(m_tools->findData(tool));listed=true;break;
   }
+  if(!listed){QSignalBlocker block(m_tools);m_tools->setCurrentIndex(-1);}  // paste, copy with base point: not the last tool's name
   if(m_shown!=tool || m_editor->m_panelFieldsDirty) {m_shown=tool;m_editor->m_panelFieldsDirty=false;buildFields();}
   for(auto* edit:findChildren<QLineEdit*>())if(edit->objectName().startsWith("sketchOption-") && !edit->hasFocus()) {
     const auto key=edit->objectName().mid(13);if(m_editor->m_options.contains(key)){QSignalBlocker block(edit);edit->setText(m_editor->option(key));}
