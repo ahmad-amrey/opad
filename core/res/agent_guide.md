@@ -224,6 +224,11 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   need `expected_revision` and `request_id`, and not during a transaction.
 - `export` inside a transaction writes its staged state; outside, the document. STEP files are reproducible: the
   header carries the document's last change time and the file's name, so the same document exports the same bytes.
+- Exploded views: `explode` lists the units (what moves together) and their moves at `t` (0 assembled, 1 exploded).
+  `levels` is how deep components split (0 = all); `keep` holds a component together (a PCB), `split` spreads its
+  parts beyond the level (screws), `groups` move node lists as one, small parts ride on what they touch; `mode`
+  radial, axis or stack (along `axis`). `name` saves it as a view op, `view` + `update` saves into that view (an
+  `edit`). `measure` and `render` take `explode` (a view id or the spec) and see the parts where they are drawn.
 
 ## Checking the result
 

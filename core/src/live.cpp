@@ -20,6 +20,7 @@ bool live_mutation(const std::string& name) {
 bool live_mutation(const std::string& name,const json& args) {
   // A measurement only writes when pinned; otherwise it is a read and leaves the revision alone (gap log #4).
   if(name=="measure")return args.value("pin",false);
+  if(name=="explode")return args.contains("name") || args.value("update",false);  // otherwise a read, like measure
   return live_mutation(name);
 }
 json transaction_policy() {
@@ -135,9 +136,10 @@ const json& live_tools() {
       schema["properties"]["preview"]={{"type","boolean"},{"default",false}};
       schema["properties"]["references"]={{"type","array"},{"items",{{"type","object"}}},{"maxItems",100}};
       schema["properties"]["verbosity"]=verbosity();
-      // measure writes only with pin: then (and only then) it needs the revision and a request id.
+      // measure writes only with pin, explode only with name or update: then (and only then) they need the revision
+      // and a request id.
       if(c.name=="measure")schema["properties"]["pin"]={{"type","boolean"},{"default",false},{"description","Append a measurement op; then expected_revision and request_id are required. Without pin, measure is a read."}};
-      else{schema["required"].push_back("expected_revision");schema["required"].push_back("request_id");}
+      else if(c.name!="explode"){schema["required"].push_back("expected_revision");schema["required"].push_back("request_id");}
     }
     add(c.name,c.description,schema);
   }

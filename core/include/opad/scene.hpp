@@ -64,6 +64,7 @@ struct SectionPlane {
 struct ViewBookmark {
   std::string id, name;
   json camera;
+  json explode;  // optional exploded view (explode.hpp ExplodeSpec); null for a plain camera bookmark
 };
 
 struct Unresolved {

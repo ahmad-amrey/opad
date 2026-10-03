@@ -82,4 +82,26 @@ with tempfile.TemporaryDirectory(prefix="opad-merge-") as folder:
     theirs.write_text(contents, encoding="utf-8")
     result = subprocess.run([sys.executable, str(driver), str(base), str(ours), str(theirs)], capture_output=True)
     assert result.returncode == 1 and b"hash mismatch" in result.stderr
-print("Git merge: multiline drawings/sketches/comments retained; overlapping edits rejected")
+    # TODO 11 UI-35: an exploded view is an optional field of a view op. Saving into one view (an edit) merges with a new
+    # exploded view from another branch; two edits of the same view's explode are a conflict.
+    view = opad("explode", doc, levels=0, name="Exploded")["id"]
+    run("git", "commit", "-qam", "exploded view", cwd=root)
+    run("git", "checkout", "-qb", "explode-edit", cwd=root)
+    opad("explode", doc, view=view, mode="stack", update=True)
+    run("git", "commit", "-qam", "stack it", cwd=root)
+    run("git", "checkout", "-qb", "explode-new", "main", cwd=root)
+    other = opad("explode", doc, levels=1, name="Exploded 2")["id"]
+    run("git", "commit", "-qam", "another exploded view", cwd=root)
+    run("git", "checkout", "-q", "main", cwd=root)
+    run("git", "merge", "-q", "--no-edit", "explode-edit", cwd=root)
+    run("git", "merge", "-q", "--no-edit", "explode-new", cwd=root)
+    views = {v["id"]: v for v in opad("annotations", doc)["views"]}
+    assert views[view]["explode"]["mode"] == "stack" and views[other]["explode"]["levels"] == 1, views
+    shutil.copyfile(doc, base)
+    for path, spacing in ((ours, 2), (theirs, 3)):
+        shutil.copyfile(base, path)
+        opad("explode", path, view=view, spacing=spacing, update=True)
+    before = ours.read_bytes()
+    result = subprocess.run([sys.executable, str(driver), str(base), str(ours), str(theirs)], capture_output=True)
+    assert result.returncode == 1 and ours.read_bytes() == before and b"explode" in result.stderr
+print("Git merge: multiline drawings/sketches/comments and exploded views retained; overlapping edits rejected")

@@ -93,6 +93,11 @@ with tempfile.TemporaryDirectory(prefix="opad-mcp-") as folder:
         output = str(pathlib.Path(folder) / "plate.step")
         call("export", doc=doc, format="step", out=output)
         assert pathlib.Path(output).stat().st_size > 100
+        # TODO 11 UI-35: an exploded view through the same tools (one body: one unit, moved by hand), saved as a view.
+        assert tools["explode"]["inputSchema"]["properties"]["groups"]["items"]["type"] == "array"
+        exploded = call("explode", doc=doc, levels=0, mode="stack", axis=[0, 0, 1], groups=[[ids[0]]], offsets={ids[0]: [0, 0, 5]}, name="Exploded")
+        assert exploded["units"][0]["id"] == ids[0] and exploded["offsets"][ids[0]] == [0, 0, 5], exploded
+        assert call("annotations", doc=doc)["views"][-1]["explode"]["offsets"] == {ids[0]: [0, 0, 5]}
         # TODO 10 B4: a phone frame outline (a rounded rectangle and its inner offset) and a text label, as shapes.
         framed = call("sketch", doc=doc, name="Frame", plane={"base": "xy"}, geometry={"shapes": [
             {"kind": "rounded_rect", "picks": [[100, 0], [170, 150]], "options": {"radius": 8}},

@@ -418,6 +418,7 @@ struct SceneBuilder::Impl {
       v.id = id;
       v.name = d["name"].get<std::string>();
       v.camera = d["camera"];
+      if (d.contains("explode") && d["explode"].is_object()) v.explode = d["explode"];
       scene.views.push_back(v);
     } else if (type == "param") {
       Param p;

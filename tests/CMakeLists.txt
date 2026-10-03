@@ -51,6 +51,11 @@ add_executable(opad-test-agent test_agent.cpp)
 target_link_libraries(opad-test-agent PRIVATE opad::core)
 add_test(NAME agent COMMAND opad-test-agent)
 
+add_executable(opad-test-explode test_explode.cpp)
+target_link_libraries(opad-test-explode PRIVATE opad::core)
+add_test(NAME explode COMMAND opad-test-explode)
+set_tests_properties(explode PROPERTIES ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache")
+
 add_executable(opad-test-mass test_mass.cpp)
 target_link_libraries(opad-test-mass PRIVATE opad::core)
 add_test(NAME mass COMMAND opad-test-mass)
