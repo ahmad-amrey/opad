@@ -2,6 +2,7 @@
 #include "opad/design/sketch_pattern.hpp"
 #include "opad/design/sketch_modify.hpp"
 // SketchEditor, the tools: what a click means for each of them, constraints, dimensions, fillet, trim, mirror.
+#include "CurveSamples.hpp"
 #include "SketchEditor.hpp"
 #include "SketchGeometryCache.hpp"
 #include "SketchPanel.hpp"
@@ -984,6 +985,11 @@ Crossings crossings(const Sketch& sk, const SkEntity& target) {
           if (on_round(k, x, y)) hits.push_back({x, y});
         }
       }
+    } else if (o.type == ET::Ellipse || o.type == ET::Spline) {  // the kernel's crossings (UI-28)
+      try {
+        for (const auto& [x, y] : curve_crossings(sk, target, o)) hits.push_back({x, y});
+      } catch (...) {
+      }
     } else {
       continue;
     }
@@ -1007,6 +1013,20 @@ Crossings crossings(const Sketch& sk, const SkEntity& target) {
 std::vector<std::pair<double, double>> SketchEditor::trimPreview(int id, double u, double v) const {
   std::vector<std::pair<double, double>> piece;
   const SkEntity* target = m_sk.entity(id);
+  if (target && (target->type == ET::Spline || target->type == ET::Ellipse)) {  // the kernel's cuts, once per curve and edit
+    if (m_trimCutsRevision != m_modelRevision) m_trimCuts.clear(), m_trimCutsRevision = m_modelRevision;
+    auto& cuts = m_trimCuts[id];
+    std::vector<TrimPiece> keep, gone;
+    try {
+      if (!cuts) cuts = std::make_shared<const CurveCuts>(curve_cuts(m_sk, id));
+      if (!trim_pieces(*cuts, u, v, keep, gone)) return piece;
+      for (const auto& g : gone)
+        for (const auto& p : curveSamples(piece_edge(*cuts, g), std::max(1e-7, m_viewport->pixelSize() * 0.25))) piece.push_back({p.X(), p.Y()});
+    } catch (...) {
+      piece.clear();
+    }
+    return piece;
+  }
   if (!target || (target->type != ET::Line && target->type != ET::Circle && target->type != ET::Arc)) return piece;
   const Crossings c = crossings(m_sk, *target);
   if (c.line) {
@@ -1060,8 +1080,19 @@ void SketchEditor::trimAt(const Hit& h, double u, double v) {
 // false and why: nothing trimmed, nothing changed.
 bool SketchEditor::trimPiece(int id, double u, double v, QString& why) {
   SkEntity* target = m_sk.entity(id);
+  if (target && (target->type == ET::Spline || target->type == ET::Ellipse)) {  // the kernel's trim (core trim_curve), as it was when it fails
+    try {
+      trim_curve(m_sk, id, u, v);
+      return true;
+    } catch (const std::exception& e) {
+      why = tr("Trim: %1").arg(i18n::t(QString::fromUtf8(e.what())));
+    } catch (const Standard_Failure& e) {
+      why = tr("Trim: %1").arg(QString::fromUtf8(e.GetMessageString()));
+    }
+    return false;
+  }
   if (!target || (target->type != ET::Line && target->type != ET::Circle && target->type != ET::Arc)) {
-    why = tr("Trim: click a line, a circle or an arc");
+    why = tr("Trim: click a curve");
     return false;
   }
   const Crossings found = crossings(m_sk, *target);
@@ -1078,9 +1109,9 @@ bool SketchEditor::trimPiece(int id, double u, double v, QString& why) {
   for (const auto& c : m_sk.constraints)
     if (c.is_dimension() && c.type == CT::Distance && c.refs.size() == 1 && c.refs[0] == id) stale.push_back(c.id);
   for (int c : stale) m_sk.remove(c);
-  auto cut_point = [&](double x, double y, int other) {
+  auto cut_point = [&](double x, double y, int other) {  // on the cutting curve (a point can be held on a line, a circle or an arc)
     const int p = m_sk.add_point(x, y);
-    m_sk.add_constraint(CT::Coincident, {p, other});
+    if (const SkEntity* by = m_sk.entity(other); by && (by->type == ET::Line || by->type == ET::Circle || by->type == ET::Arc)) m_sk.add_constraint(CT::Coincident, {p, other});
     return p;
   };
   if (cuts.empty()) {
@@ -1158,7 +1189,7 @@ bool SketchEditor::trimPiece(int id, double u, double v, QString& why) {
   return true;
 }
 
-// Where the fence from (au, av) to (bu, bv) crosses the lines, circles and arcs near it (UI-28), in order along it.
+// Where the fence from (au, av) to (bu, bv) crosses the curves near it (UI-28), in order along it.
 std::vector<std::tuple<int, double, double>> SketchEditor::fenceHits(double au, double av, double bu, double bv) const {
   std::vector<std::tuple<double, int, double, double>> along;
   if (!m_geometry || m_geometryJob) return {};
@@ -1184,6 +1215,14 @@ std::vector<std::tuple<int, double, double>> SketchEditor::fenceHits(double au, 
       }
       for (double t : line_circle(au, av, bu, bv, k.cx, k.cy, k.r))
         if (t >= 0 && t <= 1 && on_round(k, au + t * dx, av + t * dy)) along.push_back({t, e.id, au + t * dx, av + t * dy});
+    } else if (e.type == ET::Ellipse || e.type == ET::Spline) {  // on its samples: the trim finds the curve there
+      const auto poly = sampled(e);
+      for (size_t i = 1; i < poly.size(); ++i) {
+        const double cx = poly[i - 1].first, cy = poly[i - 1].second, ex = poly[i].first - cx, ey = poly[i].second - cy, den = dx * ey - dy * ex;
+        if (std::fabs(den) < 1e-15) continue;
+        const double t = ((cx - au) * ey - (cy - av) * ex) / den, s = ((cx - au) * dy - (cy - av) * dx) / den;
+        if (t >= 0 && t <= 1 && s >= 0 && s < 1) along.push_back({t, e.id, au + t * dx, av + t * dy});
+      }
     }
   }
   std::sort(along.begin(), along.end());
@@ -1192,7 +1231,7 @@ std::vector<std::tuple<int, double, double>> SketchEditor::fenceHits(double au, 
   return out;
 }
 
-// The line, circle or arc through (u, v) as the sketch is now (a trim may have split or taken the one there), 0: none.
+// The curve through (u, v) as the sketch is now (a trim may have split or taken the one there), 0: none.
 int SketchEditor::curveThrough(double u, double v) const {
   const double eps = 1e-7 * (1 + std::fabs(u) + std::fabs(v));
   for (const auto& e : m_sk.entities) {
@@ -1211,6 +1250,14 @@ int SketchEditor::curveThrough(double u, double v) const {
         k.sweep = norm_angle(std::atan2(s1->y - c->y, s1->x - c->x) - k.a0);
       }
       if (std::fabs(std::hypot(u - k.cx, v - k.cy) - k.r) < eps && on_round(k, u, v)) return e.id;
+    } else if (e.type == ET::Ellipse || e.type == ET::Spline) {  // near its samples (a fence's hit is on them)
+      const auto poly = sampled(e);
+      const double reach = std::max(eps, 2 * m_viewport->pixelSize());
+      for (size_t i = 1; i < poly.size(); ++i) {
+        const double ax = poly[i - 1].first, ay = poly[i - 1].second, dx = poly[i].first - ax, dy = poly[i].second - ay, len2 = dx * dx + dy * dy;
+        const double t = len2 < 1e-18 ? 0 : std::clamp(((u - ax) * dx + (v - ay) * dy) / len2, 0.0, 1.0);
+        if (std::hypot(ax + t * dx - u, ay + t * dy - v) < reach) return e.id;
+      }
     }
   }
   return 0;
@@ -1247,8 +1294,8 @@ static Arc2 roundOf(const Sketch& sk, const SkEntity& f) {
   return k;
 }
 
-// One-click extend's preview (UI-28): the end of the line or arc nearer (u, v) run on to the first line, circle or arc it
-// meets (the click asks the kernel, splines too: core extend_entity), as a polyline from the end; empty: it meets none.
+// One-click extend's preview (UI-28): the end of the line or arc nearer (u, v) run on to the first curve it meets (a spline
+// or an ellipse by its samples; the click asks the kernel: core extend_entity), as a polyline from the end; empty: none.
 std::vector<std::pair<double, double>> SketchEditor::extendPreview(int id, double u, double v) {
   const SkEntity* e = m_sk.entity(id);
   if (!e || e->fixed || (e->type != ET::Line && e->type != ET::Arc)) return {};
@@ -1277,6 +1324,14 @@ std::vector<std::pair<double, double>> SketchEditor::extendPreview(int id, doubl
         const Arc2 k = roundOf(m_sk, f);
         for (double t : line_circle(end->x, end->y, end->x + dx, end->y + dy, k.cx, k.cy, k.r))
           if (t > 1e-9 && on_round(k, end->x + t * dx, end->y + t * dy)) best = std::min(best, t);
+      } else if (f.type == ET::Ellipse || f.type == ET::Spline) {  // on its samples (the click asks the kernel)
+        const auto poly = sampled(f);
+        for (size_t i = 1; i < poly.size(); ++i) {
+          const double cx = poly[i - 1].first, cy = poly[i - 1].second, ex = poly[i].first - cx, ey = poly[i].second - cy, den = dx * ey - dy * ex;
+          if (std::fabs(den) < 1e-15) continue;
+          const double t = ((cx - end->x) * ey - (cy - end->y) * ex) / den, s = ((cx - end->x) * dy - (cy - end->y) * dx) / den;
+          if (t > 1e-9 && s >= 0 && s <= 1) best = std::min(best, t);
+        }
       }
     }
     if (best < 1e300) m_extendShown = {{end->x, end->y}, {end->x + best * dx, end->y + best * dy}};
@@ -1305,6 +1360,11 @@ std::vector<std::pair<double, double>> SketchEditor::extendPreview(int id, doubl
         const double x = mx + sgn * h * (k.cy - self.cy) / dist, y = my - sgn * h * (k.cx - self.cx) / dist;
         if (on_round(k, x, y)) consider(x, y);
       }
+    } else if (f.type == ET::Ellipse || f.type == ET::Spline) {
+      const auto poly = sampled(f);
+      for (size_t i = 1; i < poly.size(); ++i)
+        for (double s : line_circle(poly[i - 1].first, poly[i - 1].second, poly[i].first, poly[i].second, self.cx, self.cy, self.r))
+          if (s >= 0 && s <= 1) consider(poly[i - 1].first + s * (poly[i].first - poly[i - 1].first), poly[i - 1].second + s * (poly[i].second - poly[i - 1].second));
     }
   }
   if (best < 1e300)
@@ -1317,7 +1377,9 @@ std::vector<std::pair<double, double>> SketchEditor::extendPreview(int id, doubl
 // collapse it), else the line, circle or arc in reach that the dragged point is not on; (x, y) where it lands.
 bool SketchEditor::dropTarget(int dragged, double u, double v, double& x, double& y) {
   m_dropPoint = m_dropCurve = 0;
-  if (!m_geometry || m_geometryJob || m_sk.points.size() > 300) return false;  // a drop on a large sketch would solve it on the UI thread
+  // The index as it is (a large sketch's is rebuilt on a worker while the drag moves its curves): it finds what is near,
+  // the distances below are the sketch's own.
+  if (!m_geometry) return false;
   const double t = tol();
   std::set<int> joined{dragged};
   for (size_t index : m_geometry->curvesAt(dragged))

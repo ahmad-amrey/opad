@@ -323,5 +323,15 @@
  "the clipboard was written by a newer OPAD": "كُتبت الحافظة بإصدار أحدث من OPAD",
  "the clipboard does not carry these shapes: they were copied from a file opened for viewing, or were too large; paste them in the window they came from": "لا تحمل الحافظة هذه الأشكال: نُسخت من ملف مفتوح للعرض، أو كانت كبيرة جدًا؛ الصقها في النافذة التي جاءت منها",
  "a body on the clipboard is damaged": "جسم في الحافظة تالف",
- "a component's placement cannot be inverted": "لا يمكن عكس موضع أحد المكونات"
+ "a component's placement cannot be inverted": "لا يمكن عكس موضع أحد المكونات",
+ "Merging points": "جارٍ دمج النقاط",
+ "Putting the point on the curve": "جارٍ وضع النقطة على المنحنى",
+ "Trim: %1": "قص: %1",
+ "Trim: click a curve": "قص: انقر منحنى",
+ "trim: pick an editable spline or ellipse": "قص: اختر منحنى شريحيًا أو قطعًا ناقصًا قابلًا للتحرير",
+ "break the pattern before trimming its curves": "افصل النمط قبل قص منحنياته",
+ "the curve is crossed only once; nothing to cut between": "لا يقطع المنحنى إلا مرة واحدة؛ لا شيء للقص بينهما",
+ "the trimmed piece could not be made": "تعذر إنشاء الجزء المقصوص",
+ "pick a curve to trim": "اختر منحنى لقصه",
+ "that curve cannot be trimmed": "لا يمكن قص هذا المنحنى"
 }

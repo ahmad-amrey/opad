@@ -184,3 +184,47 @@ TEST(merging_points_shares_one_point) {
   CHECK_THROWS(merge_points(sk,e,d));  // a dimension keeps them apart
   CHECK_THROWS(merge_points(sk,d,d));
 }
+
+TEST(trim_cuts_splines_and_ellipses_at_any_curve) {
+  using T=SkConstraint::Type;
+  // A fit spline through (0,0) ... (40,0), crossed by vertical lines at x = 15 and 25.
+  Sketch sk;SkEntity fit;fit.type=E::Spline;
+  for(auto [x,y]:std::vector<std::pair<double,double>>{{0,0},{10,4},{20,0},{30,4},{40,0}})fit.p.push_back(sk.add_point(x,y));
+  fit.id=sk.next_id();sk.entities.push_back(fit);
+  const int spline=fit.id,start=fit.p.front(),end=fit.p.back();
+  const int left=sk.add_line(sk.add_point(15,-10),sk.add_point(15,10)),right=sk.add_line(sk.add_point(25,-10),sk.add_point(25,10));
+  const CurveCuts cuts=curve_cuts(sk,spline);
+  CHECK_EQ(cuts.at.size(),size_t(2));CHECK_EQ(cuts.at[0].second,left);CHECK_EQ(cuts.at[1].second,right);
+  CHECK_EQ(curve_crossings(sk,*sk.entity(left),*sk.entity(spline)).size(),size_t(1));  // a spline cuts a line too
+  // The middle goes: from the old start to the left line, from the right line to the old end; the ends on the lines.
+  const auto pieces=trim_curve(sk,spline,20,0.5);
+  CHECK_EQ(pieces.size(),size_t(2));CHECK_EQ(pieces[0],spline);
+  const SkEntity a=*sk.entity(pieces[0]),b=*sk.entity(pieces[1]);
+  CHECK(a.type==E::Spline && a.degree>0 && a.p.front()==start && b.p.back()==end);
+  CHECK_NEAR(sk.point(a.p.back())->x,15,1e-6);CHECK_NEAR(sk.point(b.p.front())->x,25,1e-6);
+  auto on=[&](int point,int line){return std::any_of(sk.constraints.begin(),sk.constraints.end(),[&](const SkConstraint& c){return c.type==T::Coincident && c.refs==std::vector<int>{point,line};});};
+  CHECK(on(a.p.back(),left) && on(b.p.front(),right));
+  CHECK(!sk.point(fit.p[2]));  // the fit points went with the old curve
+  CHECK(solve(sk).converged);sk.validate();
+  // Nothing crosses the right piece past its start: a trim takes all of it, its old end point too.
+  CHECK(trim_curve(sk,pieces[1],35,2).empty());CHECK(!sk.entity(pieces[1]));CHECK(!sk.point(end));
+  // An ellipse crossed twice by a line loses the side clicked: one piece round the other side, its ends on the line.
+  Sketch el;SkEntity ellipse;ellipse.type=E::Ellipse;ellipse.p={el.add_point(0,0),el.add_point(10,0)};ellipse.r=5;ellipse.id=el.next_id();el.entities.push_back(ellipse);
+  const int cut=el.add_line(el.add_point(5,-10),el.add_point(5,10));
+  CHECK_EQ(curve_cuts(el,ellipse.id).at.size(),size_t(2));
+  std::vector<TrimPiece> keep,gone;CHECK(trim_pieces(curve_cuts(el,ellipse.id),10,0,keep,gone));CHECK_EQ(gone.size(),size_t(1));
+  const auto rest=trim_curve(el,ellipse.id,10,0);
+  CHECK_EQ(rest.size(),size_t(1));
+  const SkEntity& r=*el.entity(rest[0]);
+  CHECK(r.type==E::Spline);CHECK_NEAR(el.point(r.p.front())->x,5,1e-6);CHECK_NEAR(el.point(r.p.back())->x,5,1e-6);
+  BRepAdaptor_Curve c(entity_edge(el,r,{}));
+  double leftmost=0;for(int i=0;i<=20;++i)leftmost=std::min(leftmost,c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*i/20).X());
+  CHECK_NEAR(leftmost,-10,1e-3);  // the far side stays
+  CHECK(solve(el).converged);
+  // Crossed once (a line from the centre out), a closed curve has nothing to cut between: refused, as it was.
+  Sketch once;SkEntity e2=ellipse;e2.p={once.add_point(0,0),once.add_point(10,0)};e2.id=once.next_id();once.entities.push_back(e2);
+  once.add_line(once.add_point(0,0),once.add_point(20,0));
+  const auto json=once.to_json();
+  CHECK_THROWS(trim_curve(once,e2.id,-10,0));CHECK(once.to_json()==json);
+  CHECK_THROWS(trim_curve(once,once.entities.back().id,5,0));  // a line is the editor's to trim
+}

@@ -348,7 +348,7 @@ bool SketchEditor::end_change(const QString& what) {
     const auto oldPlane=m_beforePlane;const auto oldFrame=m_beforeFrame;const auto options=solveOptions();const int session=m_session;
     std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});QPointer<SketchEditor> guard(this);
     m_editJob=m_jobs->async(what,[after,result,options,defs](Progress p){if(p.cancelled())return;evaluate_dimensions(*after,ParamTable(defs));*result=solve(*after,options);if(!result->converged)throw opad::Error("the edit conflicts with existing constraints");},[this,guard,after,before,result,session,oldPlane,oldFrame](bool ok,const QString& error){
-      if(!guard||!m_active||session!=m_session)return;m_editJob=nullptr;
+      if(!guard||!m_active||session!=m_session)return;m_editJob=nullptr;++m_modelRevision;  // what previews cached is stale either way
       if(ok){m_sk=*after;m_solved=*result;m_undo.push_back({*before,oldPlane,oldFrame});m_redo.clear();m_modified=true;}
       else {const bool planeChanged=m_plane!=oldPlane;m_sk=*before;m_plane=oldPlane;m_frame=oldFrame;if(planeChanged){m_viewport->endSketchInput();m_viewport->beginSketchInput(this,m_frame,m_id);fitSketch();}m_chain.clear();m_clicks.clear();m_picked.clear();m_placingDim=false;m_dimEditing=0;m_conflicts={result->failed.begin(),result->failed.end()};emit status(error);}
       m_panelFieldsDirty=true;rebuild();scheduleFill();emit changed();
@@ -1127,8 +1127,40 @@ void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
   if (!m_dragMoved) return;
   m_dragMoved = false;
   // Dropped on a point: merged into it; on a curve: kept on it (UI-28), when the sketch still solves so (else it stays
-  // where the drag left it).
-  if (m_dropPoint || m_dropCurve) {
+  // where the drag left it). A large sketch is solved so on a worker (as end_change does), in the drag's undo step.
+  if ((m_dropPoint || m_dropCurve) && m_sk.points.size() > 300) {
+    const auto attempt = std::make_shared<Sketch>(m_sk);
+    const auto result = std::make_shared<SolveResult>();
+    const int dragged = m_dragHit.id, point = m_dropPoint, curve = m_dropCurve, session = m_session;
+    const auto options = solveOptions();
+    std::vector<ParamDef> defs;
+    for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+    QPointer<SketchEditor> guard(this);
+    m_editJob = m_jobs->async(point ? tr("Merging points") : tr("Putting the point on the curve"), [attempt, result, dragged, point, curve, options, defs](Progress progress) {
+      if (progress.cancelled()) return;
+      if (point) merge_points(*attempt, dragged, point);
+      else attempt->add_constraint(SkConstraint::Type::Coincident, {dragged, curve});
+      evaluate_dimensions(*attempt, ParamTable(defs));
+      *result = solve(*attempt, options);
+      if (!result->converged) throw opad::Error("the sketch would not solve so");
+    }, [this, guard, attempt, result, point, curve, session](bool ok, const QString& error) {
+      if (!guard || !m_active || session != m_session) return;
+      m_editJob = nullptr;
+      ++m_modelRevision;
+      if (ok) {
+        m_sk = std::move(*attempt);
+        m_solved = *result;
+        m_sel.clear();
+        emit status(point ? tr("Merged with point %1").arg(point) : tr("Put on curve %1").arg(curve));
+      } else if (!error.isEmpty()) {
+        emit status(tr("Not joined: %1").arg(i18n::t(error)));
+      }
+      scheduleFill();
+      rebuild();
+      emit changed();
+    });
+    m_dropPoint = m_dropCurve = 0;
+  } else if (m_dropPoint || m_dropCurve) {
     Sketch attempt = m_sk;
     try {
       if (m_dropPoint) merge_points(attempt, m_dragHit.id, m_dropPoint);

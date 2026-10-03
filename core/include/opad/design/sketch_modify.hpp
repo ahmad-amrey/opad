@@ -1,4 +1,6 @@
 #pragma once
+#include <Geom_Curve.hxx>
+#include <array>
 #include "sketch_geom.hpp"
 namespace opad::design {
 std::vector<int> connected_entities(const Sketch& sketch,const std::vector<int>& seeds);
@@ -30,6 +32,31 @@ int fillet_corner(Sketch& sk,int point,double r,const std::string& expr={});
 // `into`; constraints that become empty go. Throws (the sketch as it was) when that would collapse a curve or a dimension
 // keeps the two apart.
 void merge_points(Sketch& sk,int from,int into);
+// Trim for splines and ellipses (TODO 11 UI-28; the editor trims lines, circles and arcs exactly itself). curve_cuts: where
+// the other curves cross curve `id` (any kind: the kernel intersects them), as parameters along it, sorted, each with the
+// curve crossing there; an open curve touched at an end is not cut there.
+struct CurveCuts {
+  Handle(Geom_Curve) curve;  // in sketch coordinates (z = 0)
+  double first=0,last=0;
+  bool closed=false;
+  std::vector<std::pair<double,int>> at;
+};
+CurveCuts curve_cuts(const Sketch& sk,int id);
+// Where two curves cross, by the kernel (nothing for a point, or when boxes from their points are apart): what cuts a line,
+// a circle or an arc that the editor's exact trim does not intersect itself (a spline, an ellipse).
+std::vector<std::array<double,2>> curve_crossings(const Sketch& sk,const SkEntity& a,const SkEntity& b);
+// A stretch of that curve between two parameters (`to` past `last` crosses a periodic curve's seam), with the curve that
+// cuts it at each end (0: an end of the curve, or the seam).
+struct TrimPiece { double from=0,to=0; int from_by=0,to_by=0; };
+TopoDS_Edge piece_edge(const CurveCuts& cuts,const TrimPiece& piece);
+// What a trim at (x, y) keeps (empty: nothing, the whole curve goes) and takes (the span between the cuts on either side of
+// it, two stretches when it crosses a closed curve's seam that is not periodic); false: nothing to cut between (a closed
+// curve crossed once).
+bool trim_pieces(const CurveCuts& cuts,double x,double y,std::vector<TrimPiece>& keep,std::vector<TrimPiece>& gone);
+// Makes it: the pieces kept become exact B-splines whose ends are the curve's old end points or new points on the crossing
+// curves (coincident with a line, circle or arc); the first keeps the id. Returns the pieces. Throws (the sketch as it was)
+// when the curve is not an editable spline or ellipse or is crossed once and closed.
+std::vector<int> trim_curve(Sketch& sk,int id,double x,double y);
 void chamfer_corner(Sketch& sk,int point,double first,double second);
 void delete_curve_node(Sketch& sk,int point);
 void boolean_regions(Sketch& sk,double ax,double ay,double bx,double by,const std::string& operation);
