@@ -1,12 +1,14 @@
 #include "CommandLine.hpp"
 
 #include <QAction>
+#include <QApplication>
 #include <QEvent>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMainWindow>
 #include <QPainterPath>
 #include <QSettings>
 #include <QToolButton>
@@ -289,9 +291,21 @@ class SketchCommandLine : public AreaController {
       services().viewport()->setFocus();
       refresh();
     });
+    qApp->installEventFilter(this);
     refresh();
   }
   void workspaceChanged(const QString&) override { refresh(); }
+  // Space is the view's: a widget with the keyboard keeps its own (the browser's tree, a list, a button), so the window
+  // shortcut sees only a Space typed over the view (a Tool window's keys reach its owner's shortcuts too).
+  bool eventFilter(QObject* target, QEvent* event) override {
+    if (event->type() != QEvent::ShortcutOverride || !services().design()->sketch()->active()) return false;
+    auto* key = static_cast<QKeyEvent*>(event);
+    auto* widget = qobject_cast<QWidget*>(target);
+    QWidget* view = services().viewport();
+    if (key->key() != Qt::Key_Space || key->modifiers() != Qt::NoModifier || !widget || widget == view || widget->isAncestorOf(view)) return false;  // the view's, as it goes up
+    key->accept();  // delivered to the widget as a key press, not as the shortcut
+    return false;
+  }
   void positionOverlays(const QRect&) override {
     if (m_line) m_line->place();
   }

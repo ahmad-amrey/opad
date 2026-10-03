@@ -1,3 +1,4 @@
+#include "BrowserPanel.hpp"
 #include "CommandLine.hpp"
 #include "GuidedTool.hpp"
 #include "Jobs.hpp"
@@ -23,7 +24,8 @@ using namespace opad::design;
 // typed; an unknown word is said in red and changes nothing; C, 100,15, 20 make a circle of diameter 20; a bare value for a
 // first point is refused, a value that does not evaluate is said and the chain waits; F then 3 sets the fillet's radius;
 // Enter on an empty line with no tool repeats the last command; the keyboard stays in the line; its close button hides it,
-// the command (Space) brings it back with the keyboard. <prefix>.png: the strip, <prefix>.view.png: the window.
+// the command (Space) brings it back with the keyboard; Space typed in the browser's tree is the tree's. <prefix>.png: the
+// strip, <prefix>.view.png: the window.
 void SketchEditor::benchCommandLine() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_COMMANDLINE");
   auto ok = std::make_shared<bool>(true);
@@ -205,5 +207,18 @@ void SketchEditor::benchCommandLine() {
   check(line->isVisible() && window->focusWidget() == edit && QSettings().value("sketch/commandLine", true).toBool(),
         QString("its command shows it again with the keyboard (shown %1, keyboard %2, active %3)")
             .arg(line->isVisible()).arg(window->focusWidget() ? window->focusWidget()->objectName() : QString("none")).arg(window->isActiveWindow()));
+  // Space is the view's: typed with the browser's tree holding the keyboard it is the tree's (a list's own key), not the
+  // command line's.
+  auto space = [](QWidget* to) {
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier, " ");
+    QApplication::sendEvent(to, &press);
+  };
+  auto* browser = window->findChild<BrowserPanel*>();
+  QApplication::setActiveWindow(window);
+  m_viewport->setFocus();
+  if (browser) space(browser->tree());
+  check(browser && window->focusWidget() == m_viewport, "Space typed in the browser's tree is the tree's, not the command line's");
+  space(m_viewport);
+  check(window->focusWidget() == edit, "Space typed over the view gives the command line the keyboard");
   QTimer::singleShot(0, this, [ok] { QCoreApplication::exit(*ok ? 0 : 2); });
 }
