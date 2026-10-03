@@ -58,6 +58,7 @@ class SheetPartItem : public QGraphicsItem {
   double pictureScale = 0;
   const Display* pictureOf = nullptr;  // the display the picture shows
   const Display* askedOf = nullptr;    // a picture on its way: of what, at what scale, of which part of it
+  std::shared_ptr<const opad::drawing::SnapIndex> snaps;  // of the display shown
   double askedScale = 0;
   QRectF askedRect;
   void setPicture(QImage image, const QRectF& rect, double scale, const Display* of) {
@@ -71,7 +72,7 @@ class SheetPartItem : public QGraphicsItem {
     prepareGeometryChange();
     display = std::move(d);
     paperW = w, paperH = h;
-    if (!display) picture = QImage(), pictureOf = nullptr;
+    if (!display) picture = QImage(), pictureOf = nullptr, snaps = nullptr;
     displayRect = display && b[2] > b[0] ? QRectF(QPointF(b[0], h - b[3]), QPointF(b[2], h - b[1])) : QRectF();
     update();
   }
@@ -153,7 +154,7 @@ class SheetViewItem : public SheetPartItem {
       QPen pen(selected ? t.sel : !display ? t.fg3 : t.fg2, selected ? 1.5 : 1, Qt::DashLine);
       pen.setCosmetic(true);
       p->setPen(pen);
-      p->setBrush(selected ? QColor(t.sel.red(), t.sel.green(), t.sel.blue(), 18) : Qt::NoBrush);
+      p->setBrush(selected ? QBrush(QColor(t.sel.red(), t.sel.green(), t.sel.blue(), 18)) : QBrush(Qt::NoBrush));  // not a bare NoBrush: QColor(color0), black
       p->drawRect(drawn.adjusted(-1.5, -1.5, 1.5, 1.5));
     }
     if (!error.isEmpty()) caption(p, drawn.topLeft(), error, Qt::white, t.error);
@@ -168,6 +169,14 @@ class SheetGuides : public QGraphicsItem {
   std::vector<QLineF> lines;
   QRectF ghost;
   QString label;
+  QPointF snap;  // scene: the point the pointer would take, with what it is
+  int snapKind = -1;
+  QString snapLabel;
+  void setSnap(const QPointF& at = {}, int kind = -1, const QString& text = {}) {
+    if (kind == snapKind && at == snap) return;
+    snap = at, snapKind = kind, snapLabel = text;
+    update();
+  }
   void setArea(const QRectF& r) {
     prepareGeometryChange();
     area = r;
@@ -190,6 +199,29 @@ class SheetGuides : public QGraphicsItem {
       p->setBrush(QColor(t.sel.red(), t.sel.green(), t.sel.blue(), 30));
       p->drawRect(ghost);
       if (!label.isEmpty()) caption(p, ghost.topLeft(), label, t.onsel, t.sel);
+    }
+    if (snapKind >= 0) {  // a marker 10 px across whatever the zoom: square end, triangle middle, circle centre, ...
+      const QPointF c = p->transform().map(snap);
+      p->save();
+      p->resetTransform();
+      p->setRenderHint(QPainter::Antialiasing);
+      p->setPen(QPen(t.sel, 1.6));
+      p->setBrush(Qt::NoBrush);
+      const double k = 5;
+      using K = opad::drawing::SnapKind;
+      switch (static_cast<K>(snapKind)) {
+        case K::End: p->drawRect(QRectF(c - QPointF(k, k), QSizeF(2 * k, 2 * k))); break;
+        case K::Mid: p->drawPolygon(QPolygonF({c + QPointF(0, -k - 1), c + QPointF(k + 1, k), c + QPointF(-k - 1, k)})); break;
+        case K::Centre: p->drawEllipse(c, k, k); break;
+        case K::Quadrant: p->drawPolygon(QPolygonF({c + QPointF(0, -k - 1), c + QPointF(k + 1, 0), c + QPointF(0, k + 1), c + QPointF(-k - 1, 0)})); break;
+        case K::Intersection:
+          p->drawLine(c + QPointF(-k, -k), c + QPointF(k, k));
+          p->drawLine(c + QPointF(-k, k), c + QPointF(k, -k));
+          break;
+        case K::Nearest: p->drawPolygon(QPolygonF({c + QPointF(-k, -k), c + QPointF(k, -k), c + QPointF(-k, k), c + QPointF(k, k)})); break;
+      }
+      p->restore();
+      caption(p, snap + QPointF(5, 5) / std::max(p->transform().m11(), 1e-6), snapLabel, t.fg, QColor(t.bg2.red(), t.bg2.green(), t.bg2.blue(), 230));
     }
   }
 };
@@ -376,6 +408,7 @@ void SheetCanvas::start() {
         pp.kind = Part::Paper;
         pp.display = paper;
         pp.bounds = paper->bounds();
+        pp.snaps = std::make_shared<const SnapIndex>(*paper);
         send(std::move(pp));
         for (size_t i = 0; i < frames.size(); ++i) {
           if (p.cancelled()) return;
@@ -397,6 +430,7 @@ void SheetCanvas::start() {
             vp.display = out;
             vp.box = fr.box;
             vp.bounds = out->bounds();
+            vp.snaps = std::make_shared<const SnapIndex>(*out);
             vp.draft = draft;
             send(std::move(vp));
           };
@@ -461,10 +495,12 @@ void SheetCanvas::apply(Part& part) {
       for (const auto& [it, o] : m_drag.origins) it->setPos(o + m_drag.delta);
   } else if (part.kind == Part::Paper) {
     m_paper->setDisplay(part.display, m_paperW, m_paperH, part.bounds);
+    m_paper->snaps = part.snaps;
     renderPictures();
   } else if (SheetViewItem* item = viewItem(part.id)) {
     if (!part.draft || !item->final) {
       item->show(part.display, part.bounds, sceneBox(part.box), part.draft, m_paperW, m_paperH);
+      item->snaps = part.snaps;
       m_draftsShown += part.draft;
       partLog.push_back({part.id, part.draft});
       renderPictures();
@@ -658,8 +694,15 @@ void SheetCanvas::mousePressEvent(QMouseEvent* e) {
 
 void SheetCanvas::mouseMoveEvent(QMouseEvent* e) {
   const QPointF at = mapToScene(e->pos());
-  const Vec2 paper = toPaper(at);
-  emit cursorMoved(paper[0], paper[1], paper[0] >= 0 && paper[1] >= 0 && paper[0] <= m_paperW && paper[1] <= m_paperH);
+  const bool plain = m_panning || m_place.active || m_drag.active || dragMode() == QGraphicsView::RubberBandDrag;
+  if (plain) {  // no snapping meanwhile
+    m_hoverSnap.reset();
+    m_guides->setSnap();
+    const Vec2 paper = toPaper(at);
+    emit cursorMoved(paper[0], paper[1], paper[0] >= 0 && paper[1] >= 0 && paper[0] <= m_paperW && paper[1] <= m_paperH, QString());
+  } else {
+    hover(at);
+  }
   if (m_panning) {
     const QPoint d = e->pos() - m_panLast;
     m_panLast = e->pos();
@@ -981,6 +1024,55 @@ void SheetCanvas::cancelPlacement() {
 }
 
 
+// ---------------------------------------------------------------- snaps
+QString SheetCanvas::snapName(opad::drawing::SnapKind kind) {
+  using K = opad::drawing::SnapKind;
+  switch (kind) {
+    case K::End: return tr("End");
+    case K::Mid: return tr("Midpoint");
+    case K::Centre: return tr("Centre");
+    case K::Quadrant: return tr("Quadrant");
+    case K::Intersection: return tr("Intersection");
+    case K::Nearest: return tr("Nearest");
+  }
+  return {};
+}
+
+void SheetCanvas::setSnapKinds(unsigned kinds) {
+  m_snapKinds = kinds & opad::drawing::kAllSnaps;
+  m_hoverSnap.reset();
+  m_guides->setSnap();
+}
+
+std::optional<opad::drawing::Snap> SheetCanvas::snapAt(const QPointF& scene) const {
+  using opad::drawing::SnapKind;
+  if (!m_snapKinds) return std::nullopt;
+  const double r = 8 / std::max(pixelsPerMm(), 1e-6);
+  std::optional<opad::drawing::Snap> best;
+  const auto consider = [&](const SheetPartItem* item) {
+    if (!item->snaps) return;
+    const QPointF local = scene - item->pos();  // the display's paper, where the item was drawn
+    auto s = item->snaps->find({local.x(), m_paperH - local.y()}, r, m_snapKinds);
+    if (!s) return;
+    s->at = toPaper(QPointF(s->at[0], m_paperH - s->at[1]) + item->pos());
+    const bool point = s->kind != SnapKind::Nearest, bestPoint = best && best->kind != SnapKind::Nearest;
+    if (!best || (point && !bestPoint) || (point == bestPoint && s->distance < best->distance)) best = s;
+  };
+  consider(m_paper);
+  for (const auto& [id, item] : m_views)
+    if ((item->frame() | item->displayRect.translated(item->pos())).adjusted(-r, -r, r, r).contains(scene)) consider(item);
+  return best;
+}
+
+void SheetCanvas::hover(const QPointF& scene) {
+  m_hoverSnap = snapAt(scene);
+  const Vec2 paper = m_hoverSnap ? m_hoverSnap->at : toPaper(scene);
+  if (m_hoverSnap) m_guides->setSnap(toScene(m_hoverSnap->at), static_cast<int>(m_hoverSnap->kind), snapName(m_hoverSnap->kind));
+  else m_guides->setSnap();
+  emit cursorMoved(paper[0], paper[1], paper[0] >= 0 && paper[1] >= 0 && paper[0] <= m_paperW && paper[1] <= m_paperH,
+                   m_hoverSnap ? snapName(m_hoverSnap->kind) : QString());
+}
+
 // ---------------------------------------------------------------- state
 std::vector<SheetCanvas::ViewState> SheetCanvas::viewStates() const {
   std::vector<ViewState> out;
@@ -999,6 +1091,8 @@ bool SheetCanvas::paperPictured() const { return m_paper->current(); }
 void SheetCanvas::leaveEvent(QEvent* e) {
   for (auto& [id, item] : m_views)
     if (std::exchange(item->hovered, false)) item->update();
-  emit cursorMoved(0, 0, false);
+  m_hoverSnap.reset();
+  m_guides->setSnap();
+  emit cursorMoved(0, 0, false, QString());
   QGraphicsView::leaveEvent(e);
 }

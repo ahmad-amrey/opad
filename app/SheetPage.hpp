@@ -1,7 +1,8 @@
 #pragma once
 // The Drawings workspace's page in the viewport's place (UI-78): the sheet canvas over a bar with the document's sheets as
-// tabs (a drawing's sheets side by side, "+" adds one to the shown sheet's drawing), what a placement asks for, the
-// cursor on paper in mm and the sheet's size, scale and projection. With no sheet in the document it shows how to start
+// tabs (a drawing's sheets side by side, "+" adds one to the shown sheet's drawing), what a placement asks for, the snap
+// switch (its menu: which kinds), the cursor on paper in mm with what it snapped to and the sheet's size, scale and
+// projection. With no sheet in the document it shows how to start
 // one instead (New drawing…).
 #include <QWidget>
 #include <string>
@@ -24,6 +25,8 @@ class SheetPage : public QWidget {
   void showSheet(const std::string& id);
   const std::string& sheet() const;
   QTabBar* tabs() const { return m_tabs; }  // benches
+  QToolButton* snapButton() const { return m_snap; }
+  QLabel* cursorLabel() const { return m_cursor; }
   bool empty() const;                       // the "no drawing yet" card is shown
 
  signals:
@@ -38,7 +41,7 @@ class SheetPage : public QWidget {
   SheetCanvas* m_canvas;
   QStackedWidget* m_stack;
   QTabBar* m_tabs;
-  QToolButton* m_add;
+  QToolButton *m_add, *m_snap;
   QLabel *m_prompt, *m_cursor, *m_info;
   bool m_filling = false;
 };

@@ -12,8 +12,8 @@
 // (Ctrl adds), a drag on empty paper selects with a rectangle, a drag on a view moves it with the views projected from it:
 // a base or pictorial view anywhere, its centre snapping to the other views' centres (guides shown) and to whole
 // millimetres; a projected view only away from or towards its parent (its gap); one edit op on release. Keys: F fits the
-// sheet, Del deletes the selected views, Esc ends a placement or clears the selection. Nothing here measures or projects
-// on the UI thread.
+// sheet, Del deletes the selected views, Esc ends a placement or clears the selection. The pointer snaps to what the
+// sheet draws (snap.hpp: an index per part, built on the worker). Nothing here measures or projects on the UI thread.
 #include <QGraphicsView>
 #include <QPointer>
 #include <QTimer>
@@ -23,11 +23,13 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "opad/drawing/sheet.hpp"
+#include "opad/drawing/snap.hpp"
 
 class AppDocument;
 class Job;
@@ -87,10 +89,17 @@ class SheetCanvas : public QGraphicsView {
   // Drags a view by `delta` paper mm through the same path as the mouse (snapping off): one edit, as on release.
   void benchDrag(const std::string& id, opad::drawing::Vec2 delta);
   void placeAt(opad::drawing::Vec2 paper);  // a click at that point while placing (the mouse, benches)
+  // Snaps on what the sheet draws (ends, midpoints, centres, quadrants, crossings, the nearest point of a line), within 8
+  // pixels: the pointer shows the one it would take and the cursor readout gives its point. kinds: SnapKind bits, 0 off.
+  void setSnapKinds(unsigned kinds);
+  unsigned snapKinds() const { return m_snapKinds; }
+  std::optional<opad::drawing::Snap> snapAt(const QPointF& scene) const;  // its point in paper mm
+  const std::optional<opad::drawing::Snap>& hoverSnap() const { return m_hoverSnap; }
+  static QString snapName(opad::drawing::SnapKind kind);
 
  signals:
   void selectionChanged(const std::vector<std::string>& views);
-  void cursorMoved(double x, double y, bool onPaper);  // paper mm
+  void cursorMoved(double x, double y, bool onPaper, const QString& snap);  // paper mm; snap: what the point snapped to
   void promptChanged(const QString& text);             // what a placement asks for; empty when none
   void partsArrived();                                 // a part of the sheet was shown
   void contextMenuRequested(const std::vector<std::string>& views, const QPoint& globalPos);
@@ -120,6 +129,7 @@ class SheetCanvas : public QGraphicsView {
     std::shared_ptr<const opad::drawing::Display> display;
     std::array<double, 4> box{0, 0, 0, 0};     // the frame the view was drawn in (paper)
     std::array<double, 4> bounds{0, 0, 0, 0};  // the display's (measured on the worker)
+    std::shared_ptr<const opad::drawing::SnapIndex> snaps;  // its curves' snaps (built on the worker)
     bool draft = false;
   };
   struct Outbox {
@@ -157,6 +167,7 @@ class SheetCanvas : public QGraphicsView {
   void commitDrag();
   void updatePlacement(const QPointF& scenePos);
   void emitSelection();
+  void hover(const QPointF& scene);  // the snap under the pointer and the cursor readout
 
   AppDocument* m_doc;
   JobRunner* m_jobs;
@@ -175,4 +186,6 @@ class SheetCanvas : public QGraphicsView {
   Drag m_drag;
   Placement m_place;
   int m_draftsShown = 0, m_paused = 0, m_rendering = 0;
+  unsigned m_snapKinds = opad::drawing::kAllSnaps;
+  std::optional<opad::drawing::Snap> m_hoverSnap;
 };

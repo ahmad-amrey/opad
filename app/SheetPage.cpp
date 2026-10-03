@@ -2,7 +2,9 @@
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
+#include <QSettings>
 #include <QStackedWidget>
 #include <QTabBar>
 #include <QToolButton>
@@ -83,6 +85,39 @@ SheetPage::SheetPage(AppDocument* doc, JobRunner* jobs, QWidget* parent) : QWidg
   h->addWidget(m_add);
   h->addSpacing(12);
   h->addWidget(m_prompt, 1);
+  // Snaps: on or off, and which kinds (remembered).
+  m_snap = new QToolButton(bar);
+  m_snap->setObjectName("sheetSnap");
+  m_snap->setText(tr("Snap"));
+  m_snap->setCheckable(true);
+  m_snap->setAutoRaise(true);
+  m_snap->setPopupMode(QToolButton::MenuButtonPopup);
+  m_snap->setToolTip(tr("Snap the pointer to ends, midpoints, centres, quadrants, crossings and lines of the drawing"));
+  auto* kinds = new QMenu(m_snap);
+  QSettings settings;
+  const unsigned chosen = settings.value("drawings/snaps", opad::drawing::kAllSnaps).toUInt() & opad::drawing::kAllSnaps;
+  for (int k = 0; k <= static_cast<int>(opad::drawing::SnapKind::Nearest); ++k) {
+    const auto kind = static_cast<opad::drawing::SnapKind>(k);
+    QAction* a = kinds->addAction(SheetCanvas::snapName(kind));
+    a->setCheckable(true);
+    a->setChecked(chosen & opad::drawing::snap_bit(kind));
+    a->setData(opad::drawing::snap_bit(kind));
+  }
+  m_snap->setMenu(kinds);
+  m_snap->setChecked(settings.value("drawings/snap", true).toBool());
+  const auto applySnaps = [this, kinds] {
+    unsigned bits = 0;
+    for (QAction* a : kinds->actions())
+      if (a->isChecked()) bits |= a->data().toUInt();
+    QSettings s;
+    s.setValue("drawings/snaps", bits);
+    s.setValue("drawings/snap", m_snap->isChecked());
+    m_canvas->setSnapKinds(m_snap->isChecked() ? bits : 0);
+  };
+  connect(m_snap, &QToolButton::toggled, this, applySnaps);
+  connect(kinds, &QMenu::triggered, this, applySnaps);
+  m_canvas->setSnapKinds(m_snap->isChecked() ? chosen : 0);
+  h->addWidget(m_snap);
   h->addWidget(m_cursor);
   h->addWidget(m_info);
   bar->setFixedHeight(30);
@@ -101,8 +136,8 @@ SheetPage::SheetPage(AppDocument* doc, JobRunner* jobs, QWidget* parent) : QWidg
     showSheet(m_tabs->tabData(i).toString().toStdString());
   });
   connect(m_canvas, &SheetCanvas::promptChanged, m_prompt, &QLabel::setText);
-  connect(m_canvas, &SheetCanvas::cursorMoved, this, [this](double x, double y, bool on) {
-    m_cursor->setText(on ? QString("x %1  y %2 mm").arg(x, 0, 'f', 1).arg(y, 0, 'f', 1) : QString());
+  connect(m_canvas, &SheetCanvas::cursorMoved, this, [this](double x, double y, bool on, const QString& snap) {
+    m_cursor->setText(on ? QString("x %1  y %2 mm").arg(x, 0, 'f', 2).arg(y, 0, 'f', 2) + (snap.isEmpty() ? QString() : " · " + snap) : QString());
   });
   documentChanged();
 }

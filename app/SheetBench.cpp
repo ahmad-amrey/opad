@@ -6,11 +6,13 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QListWidget>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QTabBar>
+#include <QToolButton>
 
 #include <cmath>
 #include <map>
@@ -28,14 +30,15 @@
 
 // OPAD_BENCH_SHEET=<prefix> (UI-78): the Drawings workspace on a 60 x 40 x 10 plate with a 10 mm hole, made through the UI
 // code: Ctrl+3 shows the sheet page in the viewport's place (the "no drawing yet" card), New drawing… (the dialog's
-// template thumbnails, ISO A3, front + top + side + iso) lays the views out at 2:1 in first angle, the canvas shows each
+// template thumbnails, ISO A3, front + top + side + iso) lays the views out at 2:1 in first angle, snaps on the views (an
+// end, a middle, a centre, a point on an edge; the hover marker and readout; the Snap switch), the canvas shows each
 // view's draft before its final linework once the projections are not cached, the base view dragged on the canvas
 // takes its projected views along (alignment kept) and a projected view drags only along its axis (its gap), Ctrl+Z, a
 // base and a projected view placed with the mouse path, hidden lines from the ribbon, the sheet's properties (A2: the
 // template follows), Document properties (Approved by in the title block), a template from a DXF file (its placeholders
 // filled in), Title block fields (a field added and one moved with the mouse), a new sheet in the drawing, the browser's
 // row opening its sheet, PDF export, Del and Esc on the canvas, and back to Design. <prefix>.empty.png, .sheet.png,
-// .final.png, .window.png, .fields.png, .template.png.
+// .snap.png, .final.png, .window.png, .fields.png, .template.png.
 OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
   const QString& prefix = value;
   DocsArea* docs = DocsArea::of(w.m_areas);
@@ -127,6 +130,44 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
     check(canvas->paperPrims() > 80 && state(front).prims >= 4, QString("the paper draws its frame, zones and title block (%1 primitives), the front view its edges (%2)")
                                                                     .arg(canvas->paperPrims()).arg(state(front).prims));
     page->grab().save(prefix + ".sheet.png");
+
+    // Snaps on the projected geometry: a corner of the front view, the middle of its top edge, the hole's centre in the
+    // top view; the pointer shows the one it takes and the readout gives its point; the Snap switch turns them off.
+    {
+      const auto paperOf = [&](const QPointF& scene) { return canvas->toPaper(scene); };
+      const QRectF lf = state(front).linework, lt = state(top).linework;
+      const auto snapped = [&](const QPointF& around, opad::drawing::SnapKind kind, const QPointF& want) {
+        const auto s = canvas->snapAt(around);
+        const opad::drawing::Vec2 p = paperOf(want);
+        return s && s->kind == kind && std::hypot(s->at[0] - p[0], s->at[1] - p[1]) < 0.02;
+      };
+      check(snapped(lf.topLeft() + QPointF(0.4, 0.3), opad::drawing::SnapKind::End, lf.topLeft()) &&
+                snapped(QPointF(lf.center().x() + 0.4, lf.top() + 0.3), opad::drawing::SnapKind::Mid, QPointF(lf.center().x(), lf.top())) &&
+                snapped(lt.center() + QPointF(0.4, 0.4), opad::drawing::SnapKind::Centre, lt.center()) &&
+                snapped(QPointF(lf.left() + 7.3, lf.top() + 0.2), opad::drawing::SnapKind::Nearest, QPointF(lf.left() + 7.3, lf.top())),
+            "snaps: the front view's corner (end), its top edge's middle, the hole's centre in the top view, a point on an edge");
+      QWidget* vp = canvas->viewport();
+      const QPoint px = canvas->mapFromScene(lf.topLeft() + QPointF(0.4, 0.3));
+      QMouseEvent move(QEvent::MouseMove, QPointF(px), QPointF(vp->mapToGlobal(px)), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+      QApplication::sendEvent(vp, &move);
+      QLabel* readout = page->cursorLabel();
+      const opad::drawing::Vec2 corner = paperOf(lf.topLeft());
+      check(canvas->hoverSnap() && canvas->hoverSnap()->kind == opad::drawing::SnapKind::End && readout &&
+                readout->text().contains(SheetCanvas::snapName(opad::drawing::SnapKind::End)) &&
+                readout->text().contains(QString::number(corner[0], 'f', 2)),
+            "hovering near the corner shows the end snap; the readout gives the corner: " + (readout ? readout->text() : QString()));
+      QCoreApplication::processEvents();  // the readout laid out for its text
+      const QImage seen = page->grab().toImage();
+      seen.save(prefix + ".snap.png");
+      const QPoint inside = canvas->mapTo(page, canvas->mapFromScene(QPointF(lf.center().x(), lf.top() + 0.25 * lf.height())));
+      check(QColor(seen.pixel(inside * seen.devicePixelRatio())).lightness() > 200, "the hovered view keeps its white paper (its dashed frame only)");
+      page->snapButton()->setChecked(false);
+      QApplication::sendEvent(vp, &move);
+      check(!canvas->hoverSnap() && canvas->snapKinds() == 0 && !readout->text().contains(SheetCanvas::snapName(opad::drawing::SnapKind::End)),
+            "the Snap switch turns them off");
+      page->snapButton()->setChecked(true);
+      check(canvas->snapKinds() == opad::drawing::kAllSnaps, "and on again, every kind");
+    }
 
     // Never projected as it is now: the drafts show first, then the final linework.
     for (const auto& id : v) {

@@ -273,5 +273,7 @@
   "Remove field": "حذف الحقل",
   "Drawing the template": "رسم القالب",
   "This sheet has no template: choose one in Sheet properties first.": "لا قالب لهذه اللوحة: اختر قالبًا من خصائص اللوحة أولًا.",
-  "Centred": "في الوسط"
+  "Centred": "في الوسط",
+  "End": "طرف",
+  "Snap the pointer to ends, midpoints, centres, quadrants, crossings and lines of the drawing": "انجذاب المؤشر إلى أطراف الرسم ومنتصفاته ومراكزه وأرباع دوائره وتقاطعاته وخطوطه"
 }
