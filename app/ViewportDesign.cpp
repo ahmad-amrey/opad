@@ -347,6 +347,9 @@ void Viewport::clearPreviewBodies() {
 
 void Viewport::setEdgeHover(bool on) {
   if (!m_initialised) return;
+  const bool references = ghostsPickable();
+  m_edgeHover = on;
+  referencesChanged(references);  // Project takes edges of other components too (UI-33)
   if (on) {
     m_bodiesPickable = true;
     setSelectionFilter(SelFilter::Edge);

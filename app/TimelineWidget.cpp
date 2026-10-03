@@ -138,6 +138,12 @@ void TimelineWidget::setEditingOp(const std::string& id) {
   else update();
 }
 
+void TimelineWidget::setDimmedOps(std::set<std::string> ops) {
+  if (ops == m_dimmed) return;
+  m_dimmed = std::move(ops);
+  update();
+}
+
 void TimelineWidget::step(int delta) {
   const auto& ops = m_doc->doc.ops;
   if (m_shown.empty()) return;
@@ -216,6 +222,7 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     QRect r = markerRect(static_cast<int>(k));
     const bool deleted = m_deleted.count(ops[i].id) > 0, unresolved = isUnresolved(ops[i].id);
     const bool current = ops[i].id == m_current, hovered = static_cast<int>(k) == m_hover;
+    p.setOpacity(m_dimmed.count(ops[i].id) && !current && !hovered ? 0.35 : 1.0);  // outside the active component
     QColor fill = t.bg4, iconColor = t.fg;
     if (ops[i].type == "annotation") { fill = t.amber; iconColor = QColor("#1e1f22"); }
     if (current) { fill = t.sel; iconColor = t.onsel; }
@@ -261,6 +268,7 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
       p.drawEllipse(QPointF(r.right() - 1, r.top() + 1), 3.5, 3.5);
     }
   }
+  p.setOpacity(1.0);
   if (!m_shown.empty()) {
     int x = markerRect(int(m_shown.size()) - 1).right() + 9;
     p.setPen(Qt::NoPen);
@@ -302,7 +310,8 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                             [&] {
                               const opad::Feature* f = op.type == "feature" ? m_doc->scene.feature(op.id) : nullptr;
                               return f && !f->result.value("rehinted", opad::json::array()).empty() ? QString("<div style='color:%1'>%2</div>").arg(t.amber.name(), tr("a reference was re-picked by its nearest match after its body changed; check it")) : QString();
-                            }() + (op.id == m_editing ? tr("being edited · the change applies from here in the history")
+                            }() + (m_dimmed.count(op.id) ? QString("<div style='color:%1'>%2</div>").arg(t.fg3.name(), tr("does not touch the active component")) : QString()) +
+                            (op.id == m_editing ? tr("being edited · the change applies from here in the history")
                             : m_deleted.count(op.id) ? (op.type == "delete" ? tr("undone · right-click to delete it again") : tr("tombstoned · right-click to restore"))
                             : isUnresolved(op.id) ? tr("unresolved · kept, never hidden")
                             : op.type == "delete" ? tr("right-click to restore what it deleted") : tr("Right-click for actions")));

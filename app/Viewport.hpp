@@ -140,8 +140,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // A sketch (no component) takes the entries under its own id: visible, colour, opacity or ghost (faded lines), pickable.
   void setLookLayer(LookSource source, std::map<std::string, LookDelta> deltas);
   void clearLookLayer(LookSource source) { setLookLayer(source, {}); }
-  void setGhostsPickable(bool on);  // feature inputs, sketch Project, measuring: ghosts can be picked as references
-  bool ghostsPickable() const { return m_ghostsPickable; }
+  // Ghosts can be picked as references, never selected (UI-33): on request (a sketch plane being chosen), and by
+  // themselves while picks accumulate (guided tools, feature inputs) or sketch Project hovers body edges.
+  void setGhostsPickable(bool on);
+  bool ghostsPickable() const { return m_ghostsPickable || m_pickAccumulate || m_edgeHover; }
   BodyLook bodyLook(const std::string& body) const;  // as composed now (whether displayed yet or not); a sketch's too
   BodyLook shownLook(const std::string& body) const;  // as applied to the displayed body or sketch (the default look if none)
   QString hoverName(const std::string& node) const;   // the status text of a hovered node: "Lid (inactive)" for a ghost
@@ -149,6 +151,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   opad::json benchLookState(const std::string& body) const;  // OPAD_BENCH_LOOKS: what AIS holds for a displayed body or sketch
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
   bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
+  void benchClickAt(int x, int y);  // a left click at this device pixel through the mouse handlers, then the frame's flush
 
   // Section: the clip plane, and its gizmo (ViewportSection.cpp): the plane's outline over the model, edges only,
   // sized to the model's extent in the plane. A strip inside each side is a drag handle: hovering it shows a
@@ -353,7 +356,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   };
   // looks (ViewportLooks.cpp)
   std::array<std::unordered_map<std::string, LookDelta>, kLookSources> m_lookLayers;
-  bool m_ghostsPickable = false;
+  bool m_ghostsPickable = false, m_edgeHover = false;
+  void referencesChanged(bool wasPickable);  // ghostsPickable() may have changed: ghosts (de)activated by the look job
   Job* m_lookJob = nullptr;
   std::deque<std::string> m_lookQueue;  // displayed bodies whose look may have changed, applied in this order
   std::unordered_set<std::string> m_lookQueued;

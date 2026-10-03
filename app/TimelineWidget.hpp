@@ -21,6 +21,9 @@ class TimelineWidget : public QWidget {
   // The op an open sketch or feature editor changes: marked, and what follows it dimmed, since the edit applies from
   // that point in the history.
   void setEditingOp(const std::string& id);
+  // While a component is active (UI-33): the markers of these ops, which do not touch it, are dimmed. Empty: none.
+  void setDimmedOps(std::set<std::string> ops);
+  const std::set<std::string>& dimmedOps() const { return m_dimmed; }
   void step(int delta);
   QString describe(const opad::Op& op) const;
 
@@ -51,7 +54,7 @@ class TimelineWidget : public QWidget {
   QRect markerRect(int i) const;
   bool isUnresolved(const std::string& opId) const;
   AppDocument* m_doc;
-  std::set<std::string> m_deleted, m_unresolved;
+  std::set<std::string> m_deleted, m_unresolved, m_dimmed;
   std::vector<size_t> m_shown;  // indices into doc.ops drawn as markers (see timelineShows)
   int m_hover = -1;             // marker index (into m_shown)
   std::string m_current, m_editing;

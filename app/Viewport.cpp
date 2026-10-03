@@ -1358,7 +1358,9 @@ void Viewport::updateClipPlanes() {
 // ---------------------------------------------------------------- guided-tool picking
 void Viewport::setPickAccumulate(bool on, bool retainPicks) {
   if(m_pickAccumulate!=on || m_retainToolPicks!=(on && retainPicks))resetHoverFade();
+  const bool references = ghostsPickable();
   m_pickAccumulate = on;
+  referencesChanged(references);  // a tool's or a feature input's picks may be on ghosts (UI-33)
   m_retainToolPicks = on && retainPicks;
   ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, on ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
   if (!on) {

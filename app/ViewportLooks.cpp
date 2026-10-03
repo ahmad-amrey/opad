@@ -5,6 +5,9 @@
 #include "Viewport.hpp"
 
 #include <AIS_TexturedShape.hxx>
+#include <QCoreApplication>
+#include <QMouseEvent>
+#include <QScopedValueRollback>
 #include <Prs3d_LineAspect.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include <SelectMgr_ViewerSelector.hxx>
@@ -47,7 +50,7 @@ BodyLook Viewport::composeLook(const opad::Node& body) const {
         }
     }
   }
-  return looks::compose(base, found, m_ghostsPickable, ghostOf(m_tokens));
+  return looks::compose(base, found, ghostsPickable(), ghostOf(m_tokens));
 }
 
 BodyLook Viewport::bodyLook(const std::string& body) const {
@@ -67,7 +70,7 @@ BodyLook Viewport::sketchLook(const std::string& id) const {
   std::array<const LookDelta*, kLookSources> found{};
   for (size_t s = 0; s < kLookSources; ++s)
     if (const auto it = m_lookLayers[s].find(id); it != m_lookLayers[s].end()) found[s] = &it->second;
-  return looks::compose(base, found, m_ghostsPickable, ghostOf(m_tokens));
+  return looks::compose(base, found, ghostsPickable(), ghostOf(m_tokens));
 }
 
 QString Viewport::hoverName(const std::string& node) const {
@@ -91,9 +94,13 @@ void Viewport::setLookLayer(LookSource source, std::map<std::string, LookDelta> 
 }
 
 void Viewport::setGhostsPickable(bool on) {
-  if (m_ghostsPickable == on) return;
+  const bool was = ghostsPickable();
   m_ghostsPickable = on;
-  scheduleLooks();
+  referencesChanged(was);
+}
+
+void Viewport::referencesChanged(bool wasPickable) {
+  if (ghostsPickable() != wasPickable && layered()) scheduleLooks();  // nothing to do without a layer that could ghost
 }
 
 void Viewport::scheduleLooks() {
@@ -260,6 +267,18 @@ std::string Viewport::benchPickAt(int x, int y, opad::Vec3* at) {
     }
   m_ctx->ClearDetected(Standard_False);
   return found;
+}
+
+void Viewport::benchClickAt(int x, int y) {
+  if (!m_initialised) return;
+  m_view->Redraw();  // the picker clips to the z range of the last frame
+  const QPointF local(x / viewScale().x(), y / viewScale().y());
+  for (const QEvent::Type type : {QEvent::MouseMove, QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+    QMouseEvent e(type, local, mapToGlobal(local), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(this, &e);
+  }
+  QScopedValueRollback<bool> flushing(m_flushingViewEvents, true);
+  FlushViewEvents(m_ctx, m_view, Standard_True);  // what the next frame does (a hidden window has none)
 }
 
 bool Viewport::benchBodyPoint(const std::string& body, int& x, int& y) {
