@@ -370,7 +370,7 @@ OPAD_BENCH(OPAD_BENCH_FEATURE_KEYS, featureKeys) {
 // the plane exactly there (the slider has 1000 steps), the filter stays; Enter keeps it, Esc closes the panel, and then 2
 // is the Faces filter's key again. A drawing being placed: 12, Tab, -3 typed over the view move it by (12, -3) as they are
 // typed, the filter stays; Enter places it there. Print check: 30 typed over the view is its overhang (no filter, no
-// display style), Enter checks again. A new sketch's origin
+// display style), Enter checks again; Tab from its Check button moves through the panel (no boxes). A new sketch's origin
 // step: its plane step names the plane (XY plane, not "Ready"), 25, Tab, 5 typed over the view put the origin at (25, 5)
 // (the vertex filter stays), Enter opens the sketch there. <prefix>.section-box.png, <prefix>.placer-boxes.png,
 // <prefix>.check-box.png, <prefix>.origin-boxes.png.
@@ -457,6 +457,12 @@ OPAD_BENCH(OPAD_BENCH_TOOL_KEYS, toolKeys) {
       press(Qt::Key_Return);
       (*check)(window->m_checkJob && !boxes->isVisible(), "Enter checks again");
       waitFor(window, [window] { return !window->m_checkJob; }, 30000, [=](bool) {
+        QPushButton* run = nullptr;
+        for (auto* b : panel->findChildren<QPushButton*>())
+          if (b->isVisible() && b->isEnabled() && b->focusPolicy() != Qt::NoFocus) run = b;
+        if (run) panelHasKeyboard(window->m_toolPanel, run, window->m_timeline);
+        press(Qt::Key_Tab);
+        (*check)(run && !boxes->isVisible() && QApplication::focusWidget() != run, "Tab from its Check button moves through the panel, it starts no boxes");
         window->m_toolPanel->hide();
         // A new sketch's origin, typed.
         DesignController* design = window->m_design;
