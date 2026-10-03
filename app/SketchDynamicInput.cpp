@@ -39,7 +39,7 @@ QString liveAngle(double radians) {
 }
 // Tools that place points: the next one can be typed (X and Y; a polyline goes on by length and angle).
 const QStringList kPointTools = {"point", "line", "spline", "rect", "crect", "circle", "circle2", "circle3", "arc3", "arcc", "polygon", "polygon_outer",
-                                 "slot", "cslot", "arcslot", "ellipse", "conic", "rect3", "control_spline", "tangent_arc"};
+                                 "slot", "cslot", "arcslot", "ellipse", "conic", "rect3", "control_spline", "tangent_arc", "text"};
 // Option tools Enter applies, once there is something picked to apply them to.
 const QStringList kApplied = {"offset", "chamfer", "move", "copy", "rotate", "scale", "rect_pattern", "polar_pattern"};
 // Steps that take the shape's own sizes (UI-17): after the first click, after the second.
@@ -162,27 +162,28 @@ QList<DynamicInput::Field> SketchEditor::inputStage() const {
   if (m_tool == "rect_pattern") return {value("count", tr("Count"), "3"), value("dx", tr("Spacing X"), "10 mm"), value("rows", tr("Rows"), "1"), value("dy", tr("Spacing Y"), "10 mm")};
   if (m_tool == "polar_pattern") return {value("count", tr("Count"), "3"), value("angle", tr("Total angle"), "360 deg"), value("cx", tr("Centre X"), "0 mm"), value("cy", tr("Centre Y"), "0 mm")};
   if (m_tool == "heal") return {value("healTolerance", tr("Gap"), "0.05 mm")};
-  if (m_tool == "text") return {value("height", tr("Text height"), "10 mm")};
   if (m_tool == "image_insert") return {value("imageWidth", tr("Image width"), "100 mm")};
   if (m_tool == "image_calibrate") return {value("knownDistance", tr("Known distance"), "10 mm")};
   if (!kPointTools.contains(m_tool)) return {};
+  // The text tool's words first (every printable key typed goes there), its height, then where it goes.
+  QList<Field> out;
+  if (m_tool == "text") out = {Field{"text", tr("Text"), option("text", "OPAD"), true, {}, {}, false, true}, value("height", tr("Text height"), "10 mm")};
   const double unit = unitLength(), pixel = m_viewport->pixelSize() / unit, u = m_haveCursor ? m_cursor.u : 0, v = m_haveCursor ? m_cursor.v : 0;
   auto number = [&](double mm) { return liveNumber(mm / unit, pixel); };
   double bu = 0, bv = 0;
   const bool base = inputBase(bu, bv);
   const QString tip = base ? tr("Typed first: # X and Y · @ ΔX and ΔY from the last point · 30<45 length and angle") : QString();
   auto field = [&](const char* key, const QString& label, const QString& live, const QString& chip = {}) { return Field{key, label, live, false, chip, tip}; };
-  QList<Field> out;
   switch (base ? entry() : Entry::Absolute) {
-    case Entry::Shape: out = shapeFields(); break;
+    case Entry::Shape: out << shapeFields(); break;
     case Entry::Polar: {
       // A polyline's angle can be measured from its last segment: the switch after the box says which.
       const QString chip = m_tool == "line" && m_chain.size() >= 2 ? (m_angleRelative ? tr("∠ last line") : tr("∠ X axis")) : QString();
-      out = {field("length", tr("Length"), number(std::hypot(u - bu, v - bv))), field("angle", tr("Angle"), liveAngle(std::atan2(v - bv, u - bu) - angleReference()), chip)};
+      out << field("length", tr("Length"), number(std::hypot(u - bu, v - bv))) << field("angle", tr("Angle"), liveAngle(std::atan2(v - bv, u - bu) - angleReference()), chip);
       break;
     }
-    case Entry::Relative: out = {field("dx", tr("ΔX"), number(u - bu)), field("dy", tr("ΔY"), number(v - bv))}; break;
-    case Entry::Absolute: out = {field("x", tr("X"), number(u)), field("y", tr("Y"), number(v))}; break;
+    case Entry::Relative: out << field("dx", tr("ΔX"), number(u - bu)) << field("dy", tr("ΔY"), number(v - bv)); break;
+    case Entry::Absolute: out << field("x", tr("X"), number(u)) << field("y", tr("Y"), number(v)); break;
   }
   if (m_tool == "conic") out << value("rho", tr("Rho"), "0.5");  // in every step: how full the curve is
   return out;
@@ -197,6 +198,7 @@ bool SketchEditor::typingKey(const QKeyEvent* e) const {
   if (e->key() == Qt::Key_Tab || e->key() == Qt::Key_Backtab) return true;
   const QString text = e->text();
   if (text.size() != 1 || m_tool == "select") return false;
+  if (m_tool == "text" && text.front().isPrint()) return true;  // the text box takes every printable key
   return inputkeys::valueChar(text.front().unicode()) || (inputkeys::entryChar(text.front().unicode()) && kPointTools.contains(m_tool));
 }
 
@@ -434,6 +436,7 @@ bool SketchEditor::useTyped(const Snap* at) {
     if (m_tool == "heal") applyTool();
     else if (appliesOnEnter()) applyTool();
     else if (kApplied.contains(m_tool)) emit status(tr("The value waits: pick what it applies to."));
+    else if (m_tool == "text") emit status(tr("Click where the text goes, or Tab to its X and Y and Enter."));
     updateInput();
     emit changed();
     return true;

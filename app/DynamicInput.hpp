@@ -29,6 +29,7 @@ class DynamicInput : public QWidget {
     QString chip;         // a switch after the box (what an angle is measured from): a click emits chipClicked
     QString tip;          // more for the tooltip (the keys that switch a point's boxes)
     bool valued = false;  // the box holds the value itself (nothing is "typed" over it); Up/Down and the wheel emit stepped
+    bool text = false;    // words, not a number: every printable key typed goes into it as it is (a comma, '@'), no stepping
   };
   // Beside the pointer over `view`; with a `host`, a plain part of that widget (no frame of its own), `view` taking the
   // keyboard back.
@@ -41,7 +42,8 @@ class DynamicInput : public QWidget {
   bool typed() const;                        // something typed and not used yet
   QString text(const QString& key) const;    // what was typed into that box (empty: the pointer gives it)
   bool editing() const;                      // a box has the keyboard
-  void type(const QString& text);            // a value key typed elsewhere: into the box being typed (the first when none)
+  void type(const QString& text);            // a value key typed elsewhere: into the box being typed (the first when none); a key
+                                             // that is no part of a number into the text box
   void cycle(bool back);                     // Tab, Shift+Tab
   bool backspace();                          // the last character of the box being typed; false when it is empty
   void dropTyped();                          // Esc: the typed values go, option boxes put their old values back

@@ -160,10 +160,14 @@ void DynamicInput::makeCurrent(int index,bool selectAll) {
 
 void DynamicInput::type(const QString& text) {
   if(m_boxes.isEmpty() || text.isEmpty())return;
+  const bool number=text.size()==1 && (inputkeys::valueChar(text.front().unicode()) || inputkeys::entryChar(text.front().unicode()));
+  if(!number && (m_current<0 || m_current>=count() || !m_boxes[m_current].field.text))  // a letter: the text box's
+    for(int i=0;i<count();++i)if(m_boxes[i].field.text){makeCurrent(i,false);break;}
   if(m_current<0 || m_current>=count())makeCurrent(0,m_boxes[0].field.valued);  // a value it holds: the first key replaces it
   else focusBox(m_current);  // keys that still arrive over the view (the box did not get the keyboard) go on in it
-  if(m_keyHook && text.size()==1 && m_keyHook(m_current,text.front()))return;
-  if(text==QLatin1String(",")) {
+  const bool words=m_boxes[m_current].field.text;
+  if(!words && m_keyHook && text.size()==1 && m_keyHook(m_current,text.front()))return;
+  if(!words && text==QLatin1String(",")) {
     if(inputkeys::comma(count())==inputkeys::Comma::NextBox)return cycle(false);
     return type(QStringLiteral("."));
   }
@@ -242,17 +246,18 @@ bool DynamicInput::eventFilter(QObject* target,QEvent* event) {
     auto* key=static_cast<QKeyEvent*>(event);const bool press=event->type()==QEvent::KeyPress;
     if(key->key()==Qt::Key_Up || key->key()==Qt::Key_Down) {  // Ctrl steps by 0.1, so before the shortcut test
       if(key->modifiers()&(Qt::AltModifier|Qt::MetaModifier))return false;
-      key->accept();if(press)nudge(index,key->key()==Qt::Key_Up?1:-1,key->modifiers());return true;
+      key->accept();if(press && !box.field.text)nudge(index,key->key()==Qt::Key_Up?1:-1,key->modifiers());return true;
     }
-    // A prefix that switches the boxes ('@' is AltGr+Q on some layouts: Ctrl+Alt on Windows).
+    // A prefix that switches the boxes ('@' is AltGr+Q on some layouts: Ctrl+Alt on Windows); in a text box it is a letter.
     const QString text=key->text();
-    if(press && m_keyHook && text.size()==1 && text.front().isPrint() && (!(key->modifiers()&(Qt::ControlModifier|Qt::AltModifier|Qt::MetaModifier)) || inputkeys::entryChar(text.front().unicode()))
+    if(press && m_keyHook && !box.field.text && text.size()==1 && text.front().isPrint() && (!(key->modifiers()&(Qt::ControlModifier|Qt::AltModifier|Qt::MetaModifier)) || inputkeys::entryChar(text.front().unicode()))
        && m_keyHook(index,text.front())){key->accept();return true;}
     if(key->modifiers()&(Qt::ControlModifier|Qt::AltModifier|Qt::MetaModifier))return false;
     switch(key->key()) {
       case Qt::Key_Tab:case Qt::Key_Backtab:
         key->accept();if(press)cycle(key->key()==Qt::Key_Backtab || key->modifiers().testFlag(Qt::ShiftModifier));return true;
       case Qt::Key_Comma:
+        if(box.field.text)return false;
         key->accept();if(press)type(QStringLiteral(","));return true;
       case Qt::Key_Return:case Qt::Key_Enter:
         key->accept();if(press)emit committed();return true;
@@ -276,6 +281,7 @@ bool DynamicInput::eventFilter(QObject* target,QEvent* event) {
 // Up/Down or the wheel: the number the box starts with (what it shows grey when nothing is typed) steps by 1, Shift 10,
 // Ctrl 0.1.
 void DynamicInput::nudge(int index,double steps,Qt::KeyboardModifiers modifiers) {
+  if(m_boxes[index].field.text)return;
   if(m_boxes[index].field.valued)return emit stepped(index,steps,modifiers);
   auto* edit=m_boxes[index].edit;
   std::string text=(edit->text().isEmpty()?edit->placeholderText():edit->text()).toStdString();

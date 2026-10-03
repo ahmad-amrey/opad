@@ -3,11 +3,13 @@
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
+#include <QElapsedTimer>
 #include <QKeyEvent>
 #include <QSettings>
 #include <QToolButton>
 #include <cmath>
 #include <functional>
+#include <set>
 
 using namespace opad::design;
 using CT = SkConstraint::Type;
@@ -353,11 +355,39 @@ void SketchEditor::benchShapes() {
     for (const auto& e : m_sk.entities)
       if (e.type == SkEntity::Type::Arc && at(e.p[0], 47, 13)) rounded = e.id;
     check(rounded && has(CT::Radius, {rounded}, 3), "a click rounds it by 3");
-    // The text's height and an image's calibration distance are typed like the others.
-    setTool("text");
+  });
+
+  // Text from the keyboard alone: every printable key goes into its words (L, the line's key, a comma and '@' too), Tab
+  // goes on to its height, X and Y, Enter places it there.
+  auto before = std::make_shared<std::set<int>>();
+  step([=] {
+    for (const auto& p : m_sk.points) before->insert(p.id);
+    tool(0, {}, "text");
+    check(m_input->count() == 4 && m_input->key(0) == "text" && m_input->key(1) == "height" && m_input->key(2) == "x" && m_input->key(3) == "y",
+          "the text tool's boxes: its words, its height, X and Y");
+    for (const QChar c : QString("Hi, L@1")) {
+      const ushort u = c.toUpper().unicode();
+      const int key = c.isLetter() ? Qt::Key_A + (u - 'A') : c == ' ' ? Qt::Key_Space : c == ',' ? Qt::Key_Comma : c == '@' ? Qt::Key_At : Qt::Key_0 + c.digitValue();
+      send(key, c.isUpper() || c == '@' ? Qt::ShiftModifier : Qt::NoModifier, QString(c));
+    }
+    check(m_tool == "text" && option("text") == "Hi, L@1", "Hi, L@1 typed goes into the text box as it is, the tool stays: " + option("text"));
+    tab();
     type("12");
+    tab();
+    type("200");
+    tab();
+    type("-80");
+    check(option("height") == "12" && held(200, -80), "Tab 12 Tab 200 Tab -80: 12 high, held at (200, -80) " + where());
+    m_input->grab().save(prefix + ".text-input.png");
     enter();
-    check(option("height") == "12", "the text tool takes its height from the keyboard");
+  });
+  step([=] {
+    double left = 1e9, top = -1e9;
+    int added = 0;
+    for (const auto& p : m_sk.points)
+      if (!before->count(p.id)) ++added, left = std::min(left, p.x), top = std::max(top, p.y);
+    check(added > 20 && left > 199.5 && left < 202 && top > -68.5 && top < -66, QString("Enter writes it there: %1 points from x %2 up to y %3").arg(added).arg(left).arg(top));
+    // An image's calibration distance is typed like the others.
     setTool("image_calibrate");
     type("25");
     check(m_input->key(0) == "knownDistance" && option("knownDistance") == "25", "image calibration takes its known distance");
@@ -369,7 +399,14 @@ void SketchEditor::benchShapes() {
   auto next = std::make_shared<size_t>(0);
   auto* timer = new QTimer(this);
   timer->setInterval(0);
-  connect(timer, &QTimer::timeout, this, [steps, next, timer, ok] {
+  auto waited = std::make_shared<QElapsedTimer>();
+  connect(timer, &QTimer::timeout, this, [this, steps, next, timer, ok, waited, check] {
+    if (m_editJob) {  // a change made on a worker (the text's outlines): the next part sees it done
+      if (!waited->isValid()) waited->start();
+      if (waited->elapsed() < 30000) return;
+      check(false, "an edit job finished");
+    }
+    waited->invalidate();
     if (*next < steps->size()) return (*steps)[(*next)++]();
     timer->stop();
     QCoreApplication::exit(*ok ? 0 : 2);

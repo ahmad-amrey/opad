@@ -53,5 +53,6 @@
  "the radius is less than half the distance between the ends": "نصف القطر أقل من نصف المسافة بين الطرفين",
  "Typed values become dimensions": "القيم المكتوبة تصبح أبعادًا",
  "A length, size or angle typed while drawing stays as a driving dimension (an axis angle as horizontal or vertical)": "يبقى الطول أو المقاس أو الزاوية المكتوبة أثناء الرسم بُعدًا حاكمًا (وزاوية المحور قيدَ أفقي أو رأسي)",
- "Sweep angle": "زاوية القوس"
+ "Sweep angle": "زاوية القوس",
+ "Click where the text goes, or Tab to its X and Y and Enter.": "انقر حيث يوضع النص، أو انتقل بـ Tab إلى X وY ثم Enter."
 }
