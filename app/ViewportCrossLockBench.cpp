@@ -125,11 +125,17 @@ bool Viewport::benchCrossLock(const QString& prefix) {
   paintEvent(nullptr);
   const QRect inside = rect().adjusted(40, 40, -40, -40);
   auto inView = [&](const gp_Pnt& p) { return inside.contains(widget(p).toPoint()) && (flat || !(widget(p).x() > width() - 220 && widget(p).y() < 220)); };
-  // The locked line's axis: the one drawn longest on screen (X first), and the other in-plane axis for synthetic guides.
+  // The locked line's axis: the one drawn longest on screen, X first among those within 2 px of it (the iso view draws all
+  // three alike, and Z, picked on a rounding, leaves the two blocks no third level), and the longest other one for
+  // synthetic guides.
   std::vector<std::pair<double, gp_Vec>> axes;
   for (const gp_Vec& d : {gp_Vec(1, 0, 0), gp_Vec(0, 1, 0), gp_Vec(0, 0, 1)}) axes.push_back({px(gp_Pnt(0, 0, 0), gp_Pnt(0, 0, 0).Translated(d * (pixelSize() * 100))), d});
-  std::stable_sort(axes.begin(), axes.end(), [](const auto& a, const auto& b) { return std::round(a.first) > std::round(b.first); });
-  const gp_Vec u = axes[0].second, v = axes[1].second;
+  auto longer = [](const auto& a, const auto& b) { return a.first < b.first; };
+  const double longest = std::max_element(axes.begin(), axes.end(), longer)->first;
+  const auto chosen = std::find_if(axes.begin(), axes.end(), [longest](const auto& a) { return a.first > longest - 2; });
+  const gp_Vec u = chosen->second;
+  axes.erase(chosen);
+  const gp_Vec v = std::max_element(axes.begin(), axes.end(), longer)->second;
   struct Vertex { gp_Pnt p; std::string body; };
   std::vector<Vertex> vertices;
   for (const auto& [id, item] : m_items) {
@@ -281,8 +287,10 @@ bool Viewport::benchCrossLock(const QString& prefix) {
   lockOn(Q, true, "locked for the crossings in reach");
   waitFor(450);  // the next taps are no double tap
   const double r = 1 / std::sqrt(2.0), unit = pixelSize();
-  const gp_Pnt b1 = P.Translated((u + v) * r * (60 * unit)), p2 = along(P, 6), b2 = p2.Translated(v * (50 * unit));
-  m_trackingAnchors = {{a, u, true, A->body}, {b1, (u + v) * r, true, {}}, {b2, {}, false, {}}};
+  // b1 lies past P away from A: its own coordinate along the line meets it there, never where the pointer goes back to.
+  const gp_Vec slant = (u * (gp_Vec(a, P).Dot(u) >= 0 ? 1 : -1) + v) * r;
+  const gp_Pnt b1 = P.Translated(slant * (60 * unit)), p2 = along(P, 6), b2 = p2.Translated(v * (50 * unit));
+  m_trackingAnchors = {{a, u, true, A->body}, {b1, slant, true, {}}, {b2, {}, false, {}}};
   showTrackingAnchors();
   hover(widget(along(P, 3)));
   gp_Pnt first, second, third;
