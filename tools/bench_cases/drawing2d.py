@@ -50,6 +50,16 @@ def layers_document(root, document):
     return document("layers", ("import", "--file", str(layers_file(root)), "--center", "true"))
 
 
+def room_file(root, document=None):
+    """A 100 x 50 room split at x = 60 into two cells, every wall meeting the others at its ends (the Area tool's)."""
+    walls = [(0, 0, 60, 0), (60, 0, 100, 0), (100, 0, 100, 50), (100, 50, 60, 50), (60, 50, 0, 50), (0, 50, 0, 0), (60, 0, 60, 50)]
+    return dxf(root / "room.dxf", [("Walls", 7, 0, ())], [line("Walls", *wall) for wall in walls])
+
+
+def room_document(root, document):
+    return document("room", ("import", "--file", str(room_file(root)), "--center", "true"))
+
+
 CASES = [
     # UI-10: a drawing in colour 7 on every background in both themes stands out by 4.5:1 or more. <prefix>.<theme>.<bg>.png
     ("contrast", contrast_file, {"OPAD_BENCH_CONTRAST": "{prefix}"}),
@@ -63,4 +73,8 @@ CASES = [
     ("vocabulary", contrast_file, {"OPAD_BENCH_VOCABULARY": "{prefix}"}),
     ("vocabulary-rtl", contrast_file, {"OPAD_BENCH_VOCABULARY": "{prefix}", "OPAD_LANG": "ar"}),
     ("vocabulary-3d", "box", {"OPAD_BENCH_VOCABULARY": "{prefix}"}),
+    # UI-90: the Area tool on a room: a wall grows into its cell, an open boundary, a closed one pinned, three corners.
+    # <prefix>.prompt.png, .panel.png, .viewport.png
+    ("area", room_document, {"OPAD_BENCH_AREA": "{prefix}"}),
+    ("area-viewer", room_file, {"OPAD_BENCH_AREA": "{prefix}"}),
 ]

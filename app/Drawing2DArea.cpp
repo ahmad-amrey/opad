@@ -43,7 +43,8 @@ OPAD_ICON_TABLE(drawing2d,
                 {"unlock", R"(<rect x="5" y="11" width="14" height="10"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>)"},
                 {"plot", R"(<path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8"/><path d="M7 14h10v7H7z"/>)"},
                 {"palette", R"(<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.9 1-1.8-.6-1-.1-2.2 1.1-2.2H17a4 4 0 0 0 4-4c0-5.5-4-10-9-10z"/><circle cx="7.5" cy="11" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16.5" cy="11" r="1"/>)"},
-                {"noPlot", R"(<path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8"/><path d="M7 14h10v7H7z"/><path d="M2 2l20 20"/>)"});
+                {"noPlot", R"(<path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8"/><path d="M7 14h10v7H7z"/><path d="M2 2l20 20"/>)"},
+                {"area", R"(<path d="M4 19l2-14 13 3 1 11z"/><path d="M8 15l5-5M11 17l6-6"/>)"});
 
 namespace {
 // What is under the mouse in a drawing, after a moment's rest (a rollover tooltip): its type, layer, colour, linetype,
@@ -90,6 +91,13 @@ class Drawing2DArea : public AreaController {
   }
 
   void menus(QMenuBar*, const QMap<QString, QMenu*>& menus) override {
+    if (QMenu* inspect = menus.value("inspect"); inspect && services().action("inspect.area")) {  // Area after the other measuring tools
+      const QList<QAction*> entries = inspect->actions();
+      QAction* before = nullptr;
+      for (int i = 0; i + 1 < entries.size(); ++i)
+        if (entries[i]->objectName() == "inspect.bbox") before = entries[i + 1];
+      inspect->insertAction(before, services().action("inspect.area"));
+    }
     QMenu* view = menus.value("view");
     if (!view) return;
     QAction* before = nullptr;  // after Exit isolate
@@ -100,6 +108,7 @@ class Drawing2DArea : public AreaController {
   }
 
   void ribbon(RibbonLayout& layout) override {
+    if (QAction* area = services().action("inspect.area")) layout.addAction("review.inspect.measure", area);  // UI-90
     for (const QString tab : {"review.view", "design.view"})
       if (layout.addGroup(tab, tab + ".drawing", tr("Drawing"))) {
         layout.addAction(tab + ".drawing", m_layersAction);

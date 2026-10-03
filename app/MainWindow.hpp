@@ -135,7 +135,7 @@ class MainWindow : public QMainWindow {
   void refreshToolUi();
   QList<ToolStep> toolSteps() const;
   QString refLabel(const opad::Ref& r) const;
-  bool toolMeasures() const { return m_tool.id == "distance" || m_tool.id == "angle" || m_tool.id == "radius" || m_tool.id == "bbox"; }
+  bool toolMeasures() const { return m_tool.id == "distance" || m_tool.id == "angle" || m_tool.id == "radius" || m_tool.id == "bbox" || m_tool.id == "area"; }
   void updateUndoActions();
   QMenu* historyMenu(bool undo);  // the steps under the quick-access Undo ▾ / Redo ▾
   void sectionFromFace(const opad::Ref& face);  // "Pick face": a planar face sets the section plane
@@ -198,7 +198,7 @@ class MainWindow : public QMainWindow {
   QToolButton* m_alignPlane = nullptr;
   struct Tool {
     QString id, title, icon;
-    int steps = 0;
+    int steps = 0;  // 0: open (Area): measured after every pick, as many as the user makes
   };
   Tool m_tool;  // id empty: no tool is running
   std::vector<opad::Ref> m_toolPicks;
