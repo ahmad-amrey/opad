@@ -205,6 +205,9 @@ CASES = [
     ("recovery-diff", recovered, {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}"}),
     # A merge stopped on the document, resolved here: per conflict, the rest of both sides merged, the merge committed.
     ("conflict", conflicted, {"OPAD_BENCH_CONFLICT": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),
+    # A clone without OPAD's driver: git writes conflict markers into the file; the index stages still resolve it.
+    ("conflict-markers", lambda root, document: conflicted(root, document, "conflict-markers"),
+     {"OPAD_BENCH_CONFLICT": "{prefix}", "OPAD_BENCH_CONFLICT_MARKERS": "1", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),
     ("conflict-ar", lambda root, document: conflicted(root, document, "conflict-ar"),
      {"OPAD_BENCH_CONFLICT": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
     # Who added which op, from git: the timeline's tooltips, Show in version history on a marker and on a body, a new commit
