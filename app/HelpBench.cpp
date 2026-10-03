@@ -14,11 +14,13 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QPainter>
+#include <QScreen>
 #include <QSettings>
 #include <QHelpEvent>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QStatusBar>
 #include <QToolButton>
@@ -27,7 +29,9 @@
 // OPAD_BENCH_RICHTIP=<prefix>: every command has its help record (translated in a translated run); the rich card on
 // real ribbon buttons through synthesised events: nothing before 450 ms, compact after, expanded after +1200 ms,
 // theme change, press hides, disabled button with its reason, Shift and F1 at once, browse mode, Qt's tooltip held
-// back, the clip slot, grace on leaving. Cards saved as <prefix>.compact/.expanded/.expanded-light/.disabled/.clip.png.
+// back, the clip slot, grace on leaving; then the View menu's entries: a card beside the menu after 450 ms, none on a
+// submenu entry, browse mode, F1, a disabled entry's reason, gone with the menu. Cards saved as
+// <prefix>.compact/.expanded/.expanded-light/.disabled/.clip/.menu/.menu-expanded.png.
 OPAD_BENCH(OPAD_BENCH_RICHTIP, richtip) {
   const QString prefix = value;
   const bool translated = i18n::current() != "en";
@@ -85,6 +89,11 @@ OPAD_BENCH(OPAD_BENCH_RICHTIP, richtip) {
     const QPointF at(w->width() / 2.0, w->height() / 2.0);
     QMouseEvent e(QEvent::MouseMove, at, w->mapToGlobal(at), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
     QApplication::sendEvent(w, &e);
+  };
+  auto moveTo = [](QMenu* menu, QAction* entry) {  // onto a menu's entry
+    const QPointF at = QRectF(menu->actionGeometry(entry)).center();
+    QMouseEvent e(QEvent::MouseMove, at, menu->mapToGlobal(at), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(menu, &e);
   };
   auto key = [](QWidget* w, int k, QEvent::Type type = QEvent::KeyPress) {
     QKeyEvent e(type, k, k == Qt::Key_Shift ? Qt::ShiftModifier : Qt::NoModifier);
@@ -158,7 +167,7 @@ OPAD_BENCH(OPAD_BENCH_RICHTIP, richtip) {
     check(save("clip"), "clip slot card saved");
     tip->showFor(fit, State::Compact);
     check(!tip->clip(), "no clip in the compact card");
-    RichTip::setClipFactory(nullptr);
+    RichTip::setClipFactory([](const QString& clip, QWidget* parent) -> QWidget* { return new ClipView(clip, parent); }, &clips::has);  // the help area's
     tip->hideTip();
     move(w.statusBar());
     move(fit);
@@ -175,8 +184,38 @@ OPAD_BENCH(OPAD_BENCH_RICHTIP, richtip) {
     move(w.statusBar());
     check(tip->state() == State::Expanded, "leaving keeps the card for a moment");
   });
+  add(450, [=] { check(tip->state() == State::Hidden, "the card hides 300 ms after leaving"); });
+  add(400, [=, &w] {  // past the browse grace
+    // Menus: the menu bar's View menu, as it drops down in the middle of the screen (kept off it by the bench).
+    w.m_viewMenu->popup(QGuiApplication::primaryScreen()->availableGeometry().center() - QPoint(0, 200));
+    moveTo(w.m_viewMenu, w.action("view.fit"));
+  });
+  add(250, [=] { check(tip->state() == State::Hidden, "menu: no card before 450 ms"); });
+  add(350, [=, &w] {
+    QMenu* menu = w.m_viewMenu;
+    check(tip->state() == State::Compact && tip->target() == menu && tip->entry() == w.action("view.fit") && tip->commandId() == "view.fit", "menu: a command entry shows its card after 450 ms");
+    const QRect frame(menu->mapToGlobal(QPoint(0, 0)), menu->size()), card = tip->geometry().adjusted(RichTip::kMargin, RichTip::kMargin, -RichTip::kMargin, -RichTip::kMargin);
+    const bool rtl = tip->layoutDirection() == Qt::RightToLeft;
+    const QRect entry(menu->mapToGlobal(menu->actionGeometry(w.action("view.fit")).topLeft()), menu->actionGeometry(w.action("view.fit")).size());
+    check((rtl ? card.right() < frame.left() : card.left() > frame.right()) && card.top() <= entry.bottom() && card.bottom() >= entry.top(),
+          QString("menu: the card beside the menu, level with its entry (%1 by the menu's %2 side)").arg(card.left()).arg(rtl ? "left" : "right"));
+    check(save("menu"), "menu card saved");
+    moveTo(menu, w.m_viewsMenu->menuAction());  // a submenu entry is no command
+    check(tip->state() == State::Compact, "menu: the card stays for a moment off its entry");
+  });
   add(450, [=, &w] {
-    check(tip->state() == State::Hidden, "the card hides 300 ms after leaving");
+    check(tip->state() == State::Hidden, "menu: an entry that is no command hides the card");
+    moveTo(w.m_viewMenu, w.action("view.isolate"));  // within the grace: browse mode
+    check(tip->state() == State::Compact && tip->commandId() == "view.isolate", "menu: the next command's card at once (browse mode)");
+    const bool f1 = key(w.m_viewMenu, Qt::Key_F1, QEvent::ShortcutOverride);
+    key(w.m_viewMenu, Qt::Key_F1);
+    check(f1 && tip->state() == State::Expanded && tip->clip(), "menu: F1 expands it with the clip");
+    check(save("menu-expanded"), "expanded menu card saved");
+    moveTo(w.m_viewMenu, w.action("view.unisolate"));
+    key(w.m_viewMenu, Qt::Key_Shift);
+    check(tip->commandId() == "view.unisolate" && tip->showsRequirement(), "menu: a disabled entry says what it needs");
+    w.m_viewMenu->hide();
+    check(tip->state() == State::Hidden && !tip->isVisible(), "menu: closing the menu hides the card");
     trace::log(QString("bench: richtip: %1").arg(run->ok ? "PASS" : "FAIL: " + run->failed.join("; ")));
     QCoreApplication::exit(run->ok && missing.isEmpty() ? 0 : 2);
   });

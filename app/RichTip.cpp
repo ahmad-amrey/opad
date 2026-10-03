@@ -8,6 +8,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -23,6 +24,7 @@ QPointer<RichTip> g_tip;
 std::function<QAction*(const QString&)> g_lookup;
 RichTip::ClipFactory g_clips;
 std::function<bool(const QString&)> g_hasClip;
+bool g_menus = false;
 constexpr int kPad = 12, kMinText = 200, kMaxText = 336, kShowMs = 450, kGraceMs = 300, kGrowMs = 120;
 
 // "Ctrl+Shift+U" -> Ctrl, Shift, U (a "+" key stays one cap); the first chord only.
@@ -94,6 +96,16 @@ void RichTip::setClipFactory(ClipFactory factory, std::function<bool(const QStri
   g_hasClip = std::move(has);
 }
 
+void RichTip::setMenuCards(bool on) {
+  g_menus = on;
+  if (on) instance();  // the filter is there before the first menu opens
+}
+
+QAction* RichTip::commandEntry(const QMenu* menu, const QPoint& pos) {
+  QAction* a = menu ? menu->actionAt(pos) : nullptr;
+  return a && !a->isSeparator() && !a->menu() && !a->objectName().isEmpty() && help::find(a->objectName()) ? a : nullptr;
+}
+
 int RichTip::mode() { return QSettings().value("ui/tips", 2).toInt(); }
 
 QWidget* RichTip::attachedAt(QObject* o) const {
@@ -106,14 +118,16 @@ QWidget* RichTip::attachedAt(QObject* o) const {
 }
 
 QAction* RichTip::actionFor() const {
+  if (m_entry) return m_entry;
   if (auto* button = qobject_cast<QToolButton*>(m_target.data()); button && button->defaultAction()) return button->defaultAction();
   return g_lookup ? g_lookup(m_id) : nullptr;
 }
 
-void RichTip::showFor(QWidget* target, State state) {
-  if (target != m_target) delete m_clip;  // another command: its own clip
+void RichTip::showFor(QWidget* target, State state, QAction* entry) {
+  if (target != m_target || entry != m_entry) delete m_clip;  // another command: its own clip
   m_target = target;
-  m_id = m_attached.value(target);
+  m_entry = entry;
+  m_id = entry ? entry->objectName() : m_attached.value(target);
   m_suppressed = nullptr;
   m_show.stop();
   m_hide.stop();
@@ -135,27 +149,33 @@ void RichTip::hideTip() {
 // A press, a key, a wheel or a drag: hidden, and quiet on this target until the pointer leaves it (no browse mode).
 void RichTip::dismiss() {
   m_suppressed = m_target;
+  m_suppressedEntry = m_entry;
   hideTip();
   m_lastShown.invalidate();
 }
 
-// The attached widget under the pointer changed (nullptr: none).
-void RichTip::hover(QWidget* target) {
-  if (!target) {
+// The attached widget, or the menu and its command entry, under the pointer changed (nullptr: none; a menu without an
+// entry: the pointer is on no command of it).
+void RichTip::hover(QWidget* target, QAction* entry) {
+  if (!target || (!entry && qobject_cast<QMenu*>(target) && !m_attached.contains(target))) {
     m_show.stop();
     m_expand.stop();
     m_target = nullptr;
+    m_entry = nullptr;
     m_suppressed = nullptr;
+    m_suppressedEntry = nullptr;
     if (m_state != State::Hidden && !m_hide.isActive()) m_hide.start();
     return;
   }
   m_hide.stop();
-  if (target == m_target) return;
+  if (target == m_target && entry == m_entry) return;
   m_target = target;
-  m_id = m_attached.value(target);
+  m_entry = entry;
+  m_id = entry ? entry->objectName() : m_attached.value(target);
   m_expand.stop();
-  if (m_suppressed == target) return;  // pressed: quiet until the pointer leaves it
+  if (suppressed()) return;  // pressed: quiet until the pointer leaves it
   m_suppressed = nullptr;
+  m_suppressedEntry = nullptr;
   if (mode() < 2) return hideTip();
   if (m_state != State::Hidden || (m_lastShown.isValid() && m_lastShown.elapsed() < kGraceMs)) return present(State::Compact);
   if (isVisible()) hideTip();
@@ -163,7 +183,10 @@ void RichTip::hover(QWidget* target) {
 }
 
 void RichTip::present(State state) {
-  if (m_target) m_anchor = QRect(m_target->mapToGlobal(QPoint(0, 0)), m_target->size());
+  auto* menu = m_entry ? qobject_cast<QMenu*>(m_target.data()) : nullptr;
+  m_menu = menu ? QRect(menu->mapToGlobal(QPoint(0, 0)), menu->size()) : QRect();
+  if (menu) m_anchor = QRect(menu->mapToGlobal(menu->actionGeometry(m_entry).topLeft()), menu->actionGeometry(m_entry).size());
+  else if (m_target) m_anchor = QRect(m_target->mapToGlobal(QPoint(0, 0)), m_target->size());
   const bool grow = m_state == State::Compact && state == State::Expanded && isVisible() && clips::animations();
   m_show.stop();
   m_expand.stop();
@@ -248,11 +271,21 @@ void RichTip::place(bool animate) {
   if (!screen) screen = QGuiApplication::primaryScreen();
   const QRect avail = screen->availableGeometry();
   const QSize size = this->size();
-  int x = layoutDirection() == Qt::RightToLeft ? m_anchor.right() + 1 + kMargin - size.width() : m_anchor.left() - kMargin;
-  x = std::clamp(x, avail.left(), std::max(avail.left(), avail.right() + 1 - size.width()));
-  const int below = m_anchor.bottom() + 1 + 4 - kMargin, above = m_anchor.top() - 4 + kMargin - size.height();
-  m_below = below + size.height() <= avail.bottom() + 1 || above < avail.top();
-  const QRect final(x, m_below ? below : above, size.width(), size.height());
+  QRect final;
+  if (!m_menu.isEmpty()) {  // a menu entry: beside the menu, the title level with the entry; the other side without room
+    const int after = m_menu.right() + 1 + 2 - kMargin, before = m_menu.left() - 2 + kMargin - size.width();
+    const bool fitsAfter = after + size.width() <= avail.right() + 1, fitsBefore = before >= avail.left();
+    int x = layoutDirection() == Qt::RightToLeft ? (fitsBefore || !fitsAfter ? before : after) : (fitsAfter || !fitsBefore ? after : before);
+    x = std::clamp(x, avail.left(), std::max(avail.left(), avail.right() + 1 - size.width()));
+    m_below = true;
+    final = QRect(x, std::clamp(m_anchor.center().y() - kMargin - 20, avail.top(), std::max(avail.top(), avail.bottom() + 1 - size.height())), size.width(), size.height());
+  } else {
+    int x = layoutDirection() == Qt::RightToLeft ? m_anchor.right() + 1 + kMargin - size.width() : m_anchor.left() - kMargin;
+    x = std::clamp(x, avail.left(), std::max(avail.left(), avail.right() + 1 - size.width()));
+    const int below = m_anchor.bottom() + 1 + 4 - kMargin, above = m_anchor.top() - 4 + kMargin - size.height();
+    m_below = below + size.height() <= avail.bottom() + 1 || above < avail.top();
+    final = QRect(x, m_below ? below : above, size.width(), size.height());
+  }
   if (m_grow) m_grow->stop();
   if (!animate) return setGeometry(final);
   // Compact -> expanded: the height grows over 120 ms from the edge next to the target.
@@ -331,7 +364,7 @@ void RichTip::paintEvent(QPaintEvent*) {
 }
 
 bool RichTip::eventFilter(QObject* o, QEvent* e) {
-  if (m_attached.isEmpty()) return false;
+  if (m_attached.isEmpty() && !g_menus) return false;
   switch (e->type()) {
     case QEvent::ToolTip:
       return attachedAt(o) && mode() == 2;  // the card instead of Qt's plain tooltip
@@ -349,14 +382,15 @@ bool RichTip::eventFilter(QObject* o, QEvent* e) {
         return false;
       }
       if (o == this || (o->isWidgetType() && isAncestorOf(static_cast<QWidget*>(o)))) { m_hide.stop(); return false; }  // reading the card
-      hover(attachedAt(o));
+      if (auto* menu = g_menus ? qobject_cast<QMenu*>(o) : nullptr; menu && !m_attached.contains(menu)) hover(menu, commandEntry(menu, me->position().toPoint()));
+      else hover(attachedAt(o));
       return false;
     }
     case QEvent::Leave:
       if (o == this || (m_target && (o == m_target.data() || o == m_target->window()))) hover(nullptr);
       return false;
     case QEvent::Hide:
-      if (o == m_target.data()) { hideTip(); m_target = nullptr; }
+      if (o == m_target.data()) { hideTip(); m_target = nullptr; m_entry = nullptr; }
       return false;
     case QEvent::MouseButtonPress:
     case QEvent::MouseButtonDblClick:

@@ -17,6 +17,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QListWidget>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QRegularExpression>
 #include <QSettings>
@@ -219,6 +220,45 @@ TEST(rich_tip_states_and_layout) {
   QApplication::setLayoutDirection(Qt::LeftToRight);
   tip->hideTip();
   RichTip::detach(button);
+}
+
+// Menu entries that are commands with help show their card beside the menu; other entries (no id, a submenu) none.
+TEST(rich_tip_menu_entries) {
+  help::load("en");
+  QMenu menu;
+  QAction* extrude = menu.addAction("Extrude");
+  extrude->setObjectName("design.extrude");
+  QAction* plain = menu.addAction("Recent file");
+  QMenu* sub = menu.addMenu("More");
+  sub->menuAction()->setObjectName("design.fillet");  // a submenu entry is no command even with an id
+  menu.popup(QPoint(100, 100));
+  CHECK(RichTip::commandEntry(&menu, menu.actionGeometry(extrude).center()) == extrude);
+  CHECK(!RichTip::commandEntry(&menu, menu.actionGeometry(plain).center()) && !RichTip::commandEntry(&menu, menu.actionGeometry(sub->menuAction()).center()));
+  auto moveTo = [&menu](QAction* a) {
+    const QPointF at = QRectF(menu.actionGeometry(a)).center();
+    QMouseEvent e(QEvent::MouseMove, at, menu.mapToGlobal(at), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(&menu, &e);
+  };
+  RichTip* tip = RichTip::instance();
+  RichTip::setMenuCards(false);
+  moveTo(extrude);
+  QTest::qWait(600);
+  CHECK(tip->state() == RichTip::State::Hidden);  // off: menus are left alone
+  RichTip::setMenuCards(true);
+  moveTo(plain);
+  moveTo(extrude);
+  QTest::qWait(600);
+  CHECK(tip->state() == RichTip::State::Compact && tip->entry() == extrude && tip->target() == &menu && tip->commandId() == "design.extrude");
+  CHECK(tip->geometry().left() + RichTip::kMargin > menu.geometry().right());
+  moveTo(plain);
+  QTest::qWait(450);
+  CHECK(tip->state() == RichTip::State::Hidden);
+  moveTo(extrude);
+  tip->showFor(&menu, RichTip::State::Expanded, extrude);
+  CHECK(tip->state() == RichTip::State::Expanded && tip->entry() == extrude);
+  menu.hide();
+  CHECK(tip->state() == RichTip::State::Hidden && !tip->entry());
+  RichTip::setMenuCards(false);
 }
 
 // UI-107: the clips. The library loads without a problem and has the clips the help promises, with contiguous steps.

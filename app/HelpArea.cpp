@@ -1,5 +1,5 @@
-// The help area (UI-106/107): every ribbon button and status-bar toggle shows its command's rich card (RichTip) with the
-// command's animated clip (ClipView), and Help > Command reference (F1) opens at the command running now. The tool,
+// The help area (UI-106/107): every ribbon button, status-bar toggle and menu command shows its command's rich card
+// (RichTip) with the command's animated clip (ClipView), and Help > Command reference (F1) opens at the command running now. The tool,
 // feature and sketch panels play their own guides (ToolGuide); the command palette previews the current command.
 #include <QMainWindow>
 #include <QMenu>
@@ -20,11 +20,13 @@ class HelpArea : public AreaController {
     RibbonBar::setCommandButtonHook(&RichTip::attach);  // the ribbon is built after the areas are made
     RichTip::setActionLookup([&services](const QString& id) { return services.action(id); });
     RichTip::setClipFactory([](const QString& clip, QWidget* parent) -> QWidget* { return new ClipView(clip, parent); }, &clips::has);
+    RichTip::setMenuCards(true);  // every menu's command entries
   }
   ~HelpArea() override {
     RibbonBar::setCommandButtonHook({});
     RichTip::setActionLookup({});
     RichTip::setClipFactory({});
+    RichTip::setMenuCards(false);
   }
 
   void buildActions() override {
