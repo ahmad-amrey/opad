@@ -23,6 +23,7 @@
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/kicad_pcb.hpp"
+#include "opad/mesh.hpp"
 
 using namespace opad;
 
@@ -324,6 +325,33 @@ TEST(panels_open_outlines_and_errors) {
   CHECK_THROWS(import_file(d, p, {}));
   write(p, "(kicad_pcb (version 1) (gr_line (start 0 0)");
   CHECK_THROWS(import_file(d, p, {}));
+}
+
+// A board with more drills than the default triangulator handles in time (it grew about quadratically with the holes of
+// one face): meshed by Delabella, the mesh still closes on the exact volume.
+TEST(many_drills_mesh) {
+  Files files;
+  const auto p = files.dir / "drills.kicad_pcb";
+  std::string text = "(kicad_pcb (version 20241229) (general (thickness 1.6))\n(gr_rect (start 0 0) (end 60 40) (layer \"Edge.Cuts\"))\n";
+  for (int i = 0; i < 10; ++i)
+    for (int j = 0; j < 8; ++j)
+      text += "(footprint \"H\" (layer \"F.Cu\") (at " + std::to_string(5 + i * 5.5) + " " + std::to_string(5 + j * 4.3) +
+              ") (pad \"\" np_thru_hole circle (at 0 0) (size 1 1) (drill 1)))\n";
+  write(p, text + ")\n");
+  Document d = Document::create();
+  import_file(d, p, {});
+  const Scene s = resolve(d);
+  const TopoDS_Shape board = body_shape(d, named(s, "Board")->body_key);
+  const Mesh m = tessellate(board, 0.01, 10);
+  double volume = 0;
+  for (size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+    const float* a = &m.positions[3 * m.indices[t]];
+    const float* b = &m.positions[3 * m.indices[t + 1]];
+    const float* c = &m.positions[3 * m.indices[t + 2]];
+    volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6.0;
+  }
+  const double exact = (60 * 40 - 80 * kPi * 0.25) * 1.6;
+  CHECK(std::abs(std::abs(volume) - exact) < exact * 1e-3);
 }
 
 int main(int argc, char** argv) { return check::run_all(argc, argv); }
