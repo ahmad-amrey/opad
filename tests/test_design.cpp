@@ -1921,6 +1921,32 @@ TEST(sketches_and_planes_follow_their_component) {
   CHECK_NEAR(plane_at()[2], 30, 1e-9);
 }
 
+// TODO 11 UI-33: while a component is active the timeline dims the ops that do not touch it; ops_in_component says
+// which do: what made what is in it (also a body moved into it later), what was made in it, changes to a body in it,
+// its moves and anything put into it. A body elsewhere, its name and a parameter do not.
+TEST(ops_that_touch_a_component) {
+  Document doc = Document::create();
+  const std::string lid = commands::run("component", {{"name", "Lid"}}, &doc)["component_id"];
+  const std::string lid_op = resolve(doc).node(lid)->source_op;
+  const std::string sketch = commands::run("sketch", {{"geometry", rectangle(0, 0, 20, 10).to_json()}, {"component", lid}}, &doc)["sketch_id"];
+  const json pad = commands::run("feature", {{"kind", "extrude"}, {"inputs", {{"profiles", json::array({{{"sketch", sketch}, {"at", {5, 5}}}})}, {"distance", "5 mm"}}}, {"component", lid}}, &doc);
+  const std::string plate = pad["body_ids"][0];
+  const json loose = feature_cmd(doc, "box", {{"x", "50 mm"}, {"length", "5 mm"}, {"width", "5 mm"}, {"height", "5 mm"}});
+  const json pin = feature_cmd(doc, "box", {{"x", "80 mm"}, {"length", "2 mm"}, {"width", "2 mm"}, {"height", "8 mm"}});
+  const std::string moved = commands::run("transform", {{"target", lid}, {"matrix", Mat4::translation(0, 0, 10).to_json()}}, &doc)["id"];
+  const std::string renamed = commands::run("rename", {{"target", loose["body_ids"][0]}, {"name", "Loose"}}, &doc)["id"];
+  const std::string into = commands::run("reparent", {{"target", pin["body_ids"][0]}, {"parent", lid}}, &doc)["id"];
+  const std::string round = feature_cmd(doc, "fillet", {{"edges", json::array({plate + "/edge/0"})}, {"radius", "1 mm"}})["feature_id"];
+  const std::string note = commands::run("annotate", {{"anchor", plate + "/face/0"}, {"text", "check"}}, &doc)["id"];
+  const std::string param = commands::run("param", {{"name", "gap"}, {"expr", "2 mm"}}, &doc)["ids"][0];
+  const Scene s = resolve(doc);
+  const std::set<std::string> in = ops_in_component(doc, s, lid);
+  for (const std::string op : {lid_op, sketch, pad["feature_id"].get<std::string>(), pin["feature_id"].get<std::string>(), moved, into, round, note}) CHECK(in.count(op));
+  for (const std::string op : {loose["feature_id"].get<std::string>(), renamed, param}) CHECK(!in.count(op));
+  CHECK_EQ(in.size(), 8u);
+  CHECK_EQ(ops_in_component(doc, s, "").size(), effective_ops(doc).size());
+}
+
 // TODO 11 UI-37: a locked body, or one under a locked component, is not changed, moved or removed: the change is
 // refused naming it and the document stays as it was. It is still a reference (a sketch on its face) and a source (a
 // copy of it), automatic join / cut targets leave it out, its colour and name still change, a component above it still

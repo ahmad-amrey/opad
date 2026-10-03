@@ -1,6 +1,7 @@
 #pragma once
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -179,5 +180,11 @@ class SceneBuilder {
 
 // `until`: stop before this op (the state an earlier feature was computed in; timeline roll-back).
 Scene resolve(const Document& doc, const std::string& until = {});
+
+// The ops (of the effective log) that touch a component and what is under it, for a timeline that dims the others
+// while it is active (TODO 11 UI-33): what made its nodes, sketches and features made in it, features that change a
+// body in it, reparent / transform / appearance / rename ops on something in it or putting something into it, and notes
+// and measurements on it. An empty component is the document root: every op.
+std::set<std::string> ops_in_component(const Document& doc, const Scene& scene, const std::string& component);
 
 }  // namespace opad

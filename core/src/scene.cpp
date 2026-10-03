@@ -649,4 +649,39 @@ Scene resolve(const Document& doc, const std::string& until) {
   return b.take();
 }
 
+std::set<std::string> ops_in_component(const Document& doc, const Scene& scene, const std::string& component) {
+  std::set<std::string> out;
+  auto under = [&](const json& id) {
+    if (!id.is_string()) return false;
+    for (const Node* n = scene.node(id.get<std::string>()); n; n = n->parent.empty() ? nullptr : scene.node(n->parent))
+      if (n->id == component) return true;
+    return false;
+  };
+  for (const auto& [id, n] : scene.nodes)  // what made the nodes in it (the component itself, imports, features)
+    if (component.empty() || under(id)) out.insert(n.source_op);
+  for (const auto& e : effective_ops(doc)) {
+    const json& d = e.data();
+    const std::string& type = e.op->type;
+    bool in = component.empty() || out.count(e.op->id);
+    if (!in && (type == "sketch" || type == "feature")) in = under(d.value("component", json()));
+    if (!in && type == "feature")
+      for (const auto& b : d.value("result", json::object()).value("bodies", json::array())) in = in || under(b.value("id", json()));
+    if (!in && (type == "reparent" || type == "transform" || type == "appearance" || type == "rename")) in = under(d.value("target", json()));
+    if (!in && type == "reparent") in = under(d.value("parent", json()));
+    if (!in && type == "import") in = under(d.value("parent", json()));
+    auto ref_under = [&](const json& r) {
+      try {
+        return under(json(Ref::from_json(r).body));
+      } catch (const std::exception&) {
+        return false;
+      }
+    };
+    if (!in && type == "annotation" && d.contains("anchor")) in = ref_under(d["anchor"]);
+    if (!in && type == "measurement")
+      for (const auto& r : d.value("refs", json::array())) in = in || ref_under(r);
+    if (in) out.insert(e.op->id);
+  }
+  return out;
+}
+
 }  // namespace opad
