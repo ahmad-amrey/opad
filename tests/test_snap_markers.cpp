@@ -84,6 +84,22 @@ TEST(every_pictogram_fits_and_differs) {
   for (size_t i = 0; i < h.size(); ++i) CHECK(std::abs(h[i].x0 - v[i].y0) < 1e-12 && std::abs(h[i].y0 - v[i].x0) < 1e-12);
 }
 
+TEST(a_turned_marker_follows_its_line) {
+  // The extension's stem points +x; turned a quarter it points up, a half left; a turn keeps the size and the shape.
+  const auto e = marker(Marker::Extension, 10);
+  auto stem = [](const std::vector<Seg>& segs) { return segs.back(); };  // the stem: from the bar out along the line
+  const auto up = turned(e, std::acos(-1.0) / 2), left = turned(e, std::acos(-1.0));
+  CHECK(up.size() == e.size() && fits(up, 10 * std::sqrt(2.0)) && ends(up) == ends(e));
+  CHECK(stem(up).y1 > stem(up).y0 + 1 && std::abs(stem(up).x1 - stem(up).x0) < 1e-9);
+  CHECK(stem(left).x1 < stem(left).x0 - 1 && std::abs(stem(left).y1 - stem(left).y0) < 1e-9);
+  for (size_t i = 0; i < e.size(); ++i) {
+    CHECK_NEAR(std::hypot(up[i].x1 - up[i].x0, up[i].y1 - up[i].y0), std::hypot(e[i].x1 - e[i].x0, e[i].y1 - e[i].y0), 1e-12);
+    CHECK_NEAR(up[i].x0, -e[i].y0, 1e-12);
+    CHECK_NEAR(up[i].y0, e[i].x0, 1e-12);
+  }
+  CHECK(shape(turned(e, 0)) == shape(e) && shape(turned(e, 2 * std::acos(-1.0))) == shape(e));
+}
+
 TEST(a_badge_is_a_closed_frame_of_its_size) {
   const auto b = badge(14, 14, 3);
   CHECK(b.size() == 8 && ends(b) == 0 && fits(b, 14));

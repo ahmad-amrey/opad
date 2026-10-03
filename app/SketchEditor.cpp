@@ -51,6 +51,7 @@ class SketchPrs : public AIS_InteractiveObject {
   struct Pt { opad::Vec3 p; QColor c; };
   struct Txt { opad::Vec3 p; QString s; QColor c; bool left = false; };  // left: starts at p (labels beside the cursor)
   std::vector<Seg> solid, dashed, thin, marks;  // marks: snap markers and constraint pictograms (SnapMarkers.hpp), 1.5 px
+  std::vector<Seg> locked;                      // the line a Shift lock holds the pointer to: thick dashed, 3 px
   std::vector<Pt> points, bigPoints;
   std::vector<Txt> texts;
   std::vector<opad::Vec3> fill;
@@ -91,6 +92,7 @@ class SketchPrs : public AIS_InteractiveObject {
     lines(dashed, Aspect_TOL_DASH, 1.5 * scale);
     lines(solid, Aspect_TOL_SOLID, 2.0 * scale);
     lines(marks, Aspect_TOL_SOLID, 1.5 * scale);
+    lines(locked, Aspect_TOL_DASH, 3.0 * scale);
     auto markers = [&](const std::vector<Pt>& pts, double scale) {
       if (pts.empty()) return;
       Handle(Graphic3d_ArrayOfPoints) arr = new Graphic3d_ArrayOfPoints(static_cast<int>(pts.size()), Standard_True);
@@ -1382,6 +1384,8 @@ QStringList SketchEditor::transientTexts() const {
   return out;
 }
 
+size_t SketchEditor::transientLocked() const { return m_transientPrs.IsNull() ? 0 : static_cast<const SketchPrs*>(m_transientPrs.get())->locked.size(); }
+
 const std::vector<std::vector<std::pair<double, double>>>& SketchEditor::textPreview() {
   const QString text = option("text", "OPAD"), style = option("textStyle", "outline");
   const QString key = text + '\n' + option("height", "10 mm") + '\n' + style + '\n' + option("font", "Arial");
@@ -1420,7 +1424,7 @@ const std::vector<std::vector<std::pair<double, double>>>& SketchEditor::textPre
 void SketchEditor::updateTransient() {
   if(m_transientPrs.IsNull() || !m_geometry || m_geometryJob)return;
   auto& d=*static_cast<SketchPrs*>(m_transientPrs.get());
-  d.solid.clear();d.thin.clear();d.dashed.clear();d.marks.clear();d.points.clear();d.bigPoints.clear();d.texts.clear();d.fill.clear();
+  d.solid.clear();d.thin.clear();d.dashed.clear();d.marks.clear();d.locked.clear();d.points.clear();d.bigPoints.clear();d.texts.clear();d.fill.clear();
   const auto& t=m_viewport->tokens();d.textBack=t.bg2;d.scale=m_viewport->displayScale();d.font=theme::ui().family().toStdString();
   auto W=[&](double u,double v){return m_frame.to_world(u,v);};
   const double px=m_viewport->pixelSize();
@@ -1438,6 +1442,7 @@ void SketchEditor::updateTransient() {
     for(const auto& s:segs)d.marks.push_back({at(s.x0,s.y0),at(s.x1,s.y1),c});
   };
   m_marker.reset();
+  m_markerTurn=0;
   m_glyphs.clear();
   if(m_hover.kind==Hit::Point) {
     if(const auto* p=m_geometry->point(m_sk,m_hover.id))d.bigPoints.push_back({W(p->x,p->y),t.hov});
@@ -1642,11 +1647,15 @@ void SketchEditor::updateTransient() {
       case K::Perpendicular: curve(m_cursor.target); towards(-1); label = tr("Perpendicular"); m_marker = M::Perpendicular; break;
       case K::Tangent: curve(m_cursor.target); towards(-1); label = tr("Tangent"); m_marker = M::Tangent; break;
       case K::Curve: curve(m_cursor.target); label = m_cursor.entity ? tr("On curve") : tr("Nearest"); m_marker = M::Nearest; break;
-      case K::Extension:
+      case K::Extension: {  // its ⊢ turned along the line, the stem out of the line's end (the line in screen pixels)
         m_marker = M::Extension;
         past(m_cursor.target);
+        const auto& g = m_cursor.line;
+        const double out = (cu - g.x) * g.dx + (cv - g.y) * g.dy < 0 ? -1 : 1, det = rx * uy - ry * ux;
+        if (std::fabs(det) > 0) m_markerTurn = std::atan2(out * (rx * g.dy - ry * g.dx) / det, out * (g.dx * uy - g.dy * ux) / det);
         label = tr("Extension");
         break;
+      }
       case K::Aligned:
         towards(m_cursor.target);
         label = tr("Tracking");
@@ -1665,7 +1674,7 @@ void SketchEditor::updateTransient() {
       case K::Locked: {  // the locked line from its anchor past the pointer, and what stops the pointer on it
         const auto& g = m_cursor.line;
         const double past = ((cu - g.x) * g.dx + (cv - g.y) * g.dy < 0 ? -40 : 40) * px;
-        d.dashed.push_back({W(g.x, g.y), W(cu + g.dx * past, cv + g.dy * past), snapColor});
+        (m_cursor.ortho ? d.dashed : d.locked).push_back({W(g.x, g.y), W(cu + g.dx * past, cv + g.dy * past), snapColor});  // a lock's thick
         towards(m_cursor.other);
         if (m_cursor.curve) curve(m_cursor.curve);
         const bool sticky = m_lock && m_lock->sticky;
@@ -1707,7 +1716,7 @@ void SketchEditor::updateTransient() {
       }
       case K::None: break;
     }
-    if (m_marker) mark(cu, cv, snapmarkers::marker(*m_marker), 0, 0, snapColor);
+    if (m_marker) mark(cu, cv, snapmarkers::turned(snapmarkers::marker(*m_marker), m_markerTurn), 0, 0, snapColor);
     else d.bigPoints.push_back({W(cu, cv), snapped ? t.green : rb});
     if (m_cursor.grid && m_marker != M::Grid) mark(cu, cv, snapmarkers::marker(M::Grid, 7), -12, -12, snapColor);  // quantised to the grid too
     if ((m_cursor.horizontal || m_cursor.vertical) && m_cursor.kind == K::None) {

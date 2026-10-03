@@ -223,7 +223,9 @@ class SketchEditor : public QObject, public SketchInput {
   std::vector<Readout> readouts() const;
   bool boxed(const QString& key) const;               // a box of the step takes that readout's value (and sits on it)
   QStringList transientTexts() const;                 // what the rubber band reads out (benches)
+  size_t transientLocked() const;                     // segments drawn thick dashed: a Shift lock's line (benches)
   std::optional<snapmarkers::Marker> m_marker;        // the marker drawn where the pointer snapped (none: a dot)
+  double m_markerTurn = 0;                            // its turn on the screen (radians): an extension's follows its line
   Hit hitTest(double u, double v) const;
   double tol() const;  // pick distance in sketch units
   int pointFor(const Snap& s);           // reuse or create (with the on-curve constraint and the snap's holds)

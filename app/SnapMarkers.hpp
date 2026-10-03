@@ -4,8 +4,8 @@
 // drawings: plain segments in pixels (x right, y up) about the snapped point (a marker) or the pictogram's centre, which
 // the caller maps into its view (the sketch plane, the screen plane) and draws in the inference colour, 1.5 px wide.
 //   Markers: endpoint □, midpoint △, centre ○, quadrant ◇, intersection ✕, apparent intersection ✕ in a square, nearest
-//   (on a curve) ⧗, perpendicular ⟂, tangent ○ under a line, extension ⊢ (beside its dashed line), tracking ✛, locked: a
-//   padlock, grid #.
+//   (on a curve) ⧗, perpendicular ⟂, tangent ○ under a line, extension ⊢ (turned() along its dashed line, out of the
+//   line's end), tracking ✛, locked: a padlock (by its line, which is drawn thick dashed), grid #.
 //   Pictograms (constraints): coincident ●, on a curve (a dot on a line), midpoint, horizontal, vertical, perpendicular,
 //   tangent, parallel, equal, concentric, collinear, symmetric, fix; badge(): the frame they sit in.
 // No Qt and no OCCT: tests/test_snap_markers.cpp.
@@ -151,6 +151,14 @@ inline std::vector<Seg> glyph(Glyph g, double size = 10) {
       break;
   }
   return out;
+}
+
+// Segments turned by `a` radians about (0, 0), counter-clockwise (x right, y up): a marker that follows its line, as the
+// extension's ⊢, whose stem (+x) points the way the line goes on past its end.
+inline std::vector<Seg> turned(std::vector<Seg> segs, double a) {
+  const double c = std::cos(a), s = std::sin(a);
+  for (auto& g : segs) g = {c * g.x0 - s * g.y0, s * g.x0 + c * g.y0, c * g.x1 - s * g.y1, s * g.x1 + c * g.y1};
+  return segs;
 }
 
 // The frame a pictogram sits in, w x h px about (0, 0), its corners cut by r (a rounded badge drawn in segments).

@@ -15,7 +15,8 @@ using namespace opad::design;
 // diamond quadrant, cross intersection, hourglass on a curve, # grid, plus at a tracked point); a click keeps what it
 // snapped to as constraints (a midpoint, both curves, a quadrant above its centre, level with a tracked point), shown
 // before as pictograms beside the pointer, variant primitives too; perpendicular, tangent and apparent-intersection snaps;
-// Shift taps go through the snaps in reach; slots, polygons and ellipses infer horizontal, vertical and angles; Ortho F8.
+// Shift taps go through the snaps in reach; an extension's marker turned along its line, a lock's line thick dashed; slots,
+// polygons and ellipses infer horizontal, vertical and angles; Ortho F8.
 void SketchEditor::benchSnaps() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_SNAPS");
   bool ok = true;
@@ -223,6 +224,29 @@ void SketchEditor::benchSnaps() {
   shot(".apparent.png");
   place(-25 + 2 * px, y0 + 20 + px);
   check(has(CT::Coincident, {newPoint(), r1}) && has(CT::Coincident, {newPoint(), r2}) && solved(), "the click keeps the point on both lines");
+  // An extension's marker follows its line out of the end it goes on from (E, slanted 45 degrees up right, its end tracked);
+  // a Shift lock onto it draws the locked line thick dashed.
+  const int ext = line(30, y0 - 22, 36, y0 - 16), ee = m_sk.entity(ext)->p[1];
+  setTool("point");
+  sketchMove(36 + px, y0 - 16, Qt::NoModifier, false);
+  rest(450);
+  check(m_tracked == std::vector<int>{ee}, "resting on E's end tracks it");
+  auto turn = [&](double a) { return std::abs(std::remainder(m_markerTurn - a, 2 * M_PI)) < 0.02; };
+  sketchMove(41 + px, y0 - 11 - 2 * px, Qt::NoModifier, false);
+  check(m_cursor.kind == Snap::Kind::Extension && m_cursor.target == ext && shows(M::Extension) && turn(M_PI / 4) && (m_glyphs == std::vector<G>{G::OnCurve}) && !transientLocked(),
+        QString("on E's extension past its end: the extension marker turned along it, out of the end (%1 degrees), on E").arg(m_markerTurn * 180 / M_PI) + where());
+  shot(".extension.png");
+  sketchMove(28 - px, y0 - 24 + 2 * px, Qt::NoModifier, false);
+  check(m_cursor.kind == Snap::Kind::Extension && turn(-3 * M_PI / 4), QString("past E's start: turned the other way (%1 degrees)").arg(m_markerTurn * 180 / M_PI) + where());
+  sketchMove(41 + px, y0 - 11 - 2 * px, Qt::NoModifier, false);
+  shift(true);
+  sketchMove(43, y0 - 8, Qt::ShiftModifier, false);
+  check(m_lock && m_cursor.kind == Snap::Kind::Locked && std::abs(m_cursor.u - m_cursor.v + y0 - 52) < 1e-9 && transientLocked() == 1 && transientTexts().contains("Locked"),
+        QString("Shift held on it: locked, its line drawn thick dashed (%1)").arg(transientLocked()) + where());
+  shot(".locked.png");
+  rest(350);
+  shift(false);
+  check(!m_lock && !transientLocked(), "let go: no lock, no thick line");
   // Shift taps go through the snaps in reach: a 0.6 mm line's two ends and its midpoint.
   const int tiny = line(5, y0 - 20, 5.6, y0 - 20), ta = m_sk.entity(tiny)->p[0], tb = m_sk.entity(tiny)->p[1];
   setTool("point");
@@ -283,8 +307,8 @@ void SketchEditor::benchSnaps() {
   check(!exact(m_cursor.v, y0 - 5), "Ortho off: the pointer is free");
   if (f8) f8->setChecked(true);
   check(m_cursor.kind == Snap::Kind::Locked && m_cursor.ortho && exact(m_cursor.v, y0 - 5) && exact(m_cursor.u, -37) && m_cursor.horizontal && transientTexts().contains("Ortho") &&
-            (m_glyphs == std::vector<G>{G::Horizontal}),
-        QString("F8: at once on the horizontal from the last point, \"Ortho\", horizontal") + where());
+            (m_glyphs == std::vector<G>{G::Horizontal}) && !transientLocked(),
+        QString("F8: at once on the horizontal from the last point, \"Ortho\", horizontal (dashed, not the thick line of a lock)") + where());
   shot(".ortho.png");
   place(-37, y0 - 2);
   check(has(CT::Horizontal, {m_sk.entities.back().id}) && exact(m_sk.point(m_chain.back())->y, y0 - 5), "the segment is kept horizontal");
