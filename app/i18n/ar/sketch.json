@@ -334,5 +334,12 @@
  "the trimmed piece could not be made": "تعذر إنشاء الجزء المقصوص",
  "pick a curve to trim": "اختر منحنى لقصه",
  "that curve cannot be trimmed": "لا يمكن قص هذا المنحنى",
- "The sketch changed while the curves were copied: they were copied, not cut": "تغيّر الرسم التخطيطي أثناء نسخ المنحنيات: نُسخت ولم تُقص"
+ "The sketch changed while the curves were copied: they were copied, not cut": "تغيّر الرسم التخطيطي أثناء نسخ المنحنيات: نُسخت ولم تُقص",
+ "XY plane": "المستوى XY",
+ "XZ plane": "المستوى XZ",
+ "YZ plane": "المستوى YZ",
+ "Face of %1": "وجه من %1",
+ "A face": "وجه",
+ "The view's plane": "مستوى العرض",
+ "Not an angle": "ليست زاوية"
 }

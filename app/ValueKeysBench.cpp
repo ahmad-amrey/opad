@@ -26,9 +26,12 @@
 #include <optional>
 
 #include "BenchRegistry.hpp"
+#include "CheckPanel.hpp"
 #include "DimensionHandle.hpp"
 #include "DrawingPlacer.hpp"
 #include "MainWindow.hpp"
+#include "PlanePicker.hpp"
+#include "SketchEditor.hpp"
 #include "ToolValues.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/geometry.hpp"
@@ -366,7 +369,11 @@ OPAD_BENCH(OPAD_BENCH_FEATURE_KEYS, featureKeys) {
 // OPAD_BENCH_TOOL_KEYS=<prefix> on a document with a body (UI-122): the Section panel open, 4.537 typed over the view puts
 // the plane exactly there (the slider has 1000 steps), the filter stays; Enter keeps it, Esc closes the panel, and then 2
 // is the Faces filter's key again. A drawing being placed: 12, Tab, -3 typed over the view move it by (12, -3) as they are
-// typed, the filter stays; Enter places it there. <prefix>.section-box.png, <prefix>.placer-boxes.png.
+// typed, the filter stays; Enter places it there. Print check: 30 typed over the view is its overhang (no filter, no
+// display style), Enter checks again. A new sketch's origin
+// step: its plane step names the plane (XY plane, not "Ready"), 25, Tab, 5 typed over the view put the origin at (25, 5)
+// (the vertex filter stays), Enter opens the sketch there. <prefix>.section-box.png, <prefix>.placer-boxes.png,
+// <prefix>.check-box.png, <prefix>.origin-boxes.png.
 OPAD_BENCH(OPAD_BENCH_TOOL_KEYS, toolKeys) {
   auto check = std::make_shared<Checks>(Checks{"tool keys"});
   auto finish = [check] { QCoreApplication::exit(check->all ? 0 : 2); };
@@ -431,7 +438,55 @@ OPAD_BENCH(OPAD_BENCH_TOOL_KEYS, toolKeys) {
     press(Qt::Key_Return);
     (*check)(placed->has_value() && std::abs((**placed)[0] - 12) < 1e-9 && std::abs((**placed)[1] + 3) < 1e-9 && !placer->active(), "Enter places the drawing at (12, -3)");
     QFile::remove(drawing);
-    finish();
+    // Print check: its overhang typed over the view.
+    QAction* style = nullptr;
+    for (const char* id : {"view.shaded", "view.edges", "view.wire"})
+      if (window->action(id)->isChecked()) style = window->action(id);
+    window->startCheck(true);
+    waitFor(window, [window] { return !window->m_checkJob; }, 30000, [=](bool checked) {
+      CheckPanel* panel = window->m_checks;
+      const opad::json before = panel->options();
+      keyboard();
+      press(Qt::Key_3, Qt::NoModifier, "3");
+      press(Qt::Key_0, Qt::NoModifier, "0");
+      DynamicInput* boxes = panel->values()->input();
+      (*check)(checked && boxes->isVisible() && boxes->count() == 2 && boxes->key(0) == "overhang" && boxes->box(0)->text() == "30" &&
+                   std::abs(panel->options().value("overhang_deg", 0.0) - 30) < 1e-9 && unchanged() && style && style->isChecked(),
+               QString("Print check: 30 typed over the view is its overhang (was %1), no filter, no display style").arg(before.value("overhang_deg", 0.0)));
+      if (!prefix.isEmpty()) boxes->shot().save(prefix + ".check-box.png");
+      press(Qt::Key_Return);
+      (*check)(window->m_checkJob && !boxes->isVisible(), "Enter checks again");
+      waitFor(window, [window] { return !window->m_checkJob; }, 30000, [=](bool) {
+        window->m_toolPanel->hide();
+        // A new sketch's origin, typed.
+        DesignController* design = window->m_design;
+        PlanePicker* picker = design->planePicker();
+        keyboard();
+        design->startSketch();
+        picker->choose({{"base", "xy"}});
+        waitFor(window, [picker] { return picker->positioning(); }, 20000, [=](bool positioning) {
+          const auto steps = picker->steps();
+          (*check)(positioning && !steps.isEmpty() && steps[0].picked == QObject::tr("XY plane"), "the plane step names the plane chosen: " + (steps.isEmpty() ? QString() : steps[0].picked));
+          keyboard();
+          DynamicInput* origin = picker->values()->input();
+          press(Qt::Key_2, Qt::NoModifier, "2");
+          press(Qt::Key_5, Qt::NoModifier, "5");
+          (*check)(origin->isVisible() && origin->count() == 2 && origin->box(0)->text() == "25" && std::abs(picker->frame().origin[0] - 25) < 1e-9 &&
+                       view->selectionFilter() == Viewport::SelFilter::Vertex,
+                   "25 typed over the view is the sketch origin's X, the vertex filter stays");
+          press(Qt::Key_Tab);
+          press(Qt::Key_5, Qt::NoModifier, "5");
+          (*check)(std::abs(picker->frame().origin[0] - 25) < 1e-9 && std::abs(picker->frame().origin[1] - 5) < 1e-9, "Tab, then 5: its Y");
+          if (!prefix.isEmpty()) origin->shot().save(prefix + ".origin-boxes.png");
+          press(Qt::Key_Return);
+          SketchEditor* sketch = design->sketch();
+          (*check)(!picker->active() && sketch->active() && std::abs(sketch->frame().origin[0] - 25) < 1e-9 && std::abs(sketch->frame().origin[1] - 5) < 1e-9,
+                   "Enter opens the sketch with its origin at (25, 5)");
+          design->cancelSketch();
+          finish();
+        });
+      });
+    });
   });
   return true;
 }

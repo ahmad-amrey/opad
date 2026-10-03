@@ -1,5 +1,6 @@
 #include "PlanePicker.hpp"
 #include "GuidedTool.hpp"
+#include "ToolValues.hpp"
 #include "Units.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch_geom.hpp"
@@ -77,6 +78,22 @@ PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget
   m_panel->setEscapeHandler([this]{cancel();});connect(m_panel,&ToolPanel::visibilityChanged,this,[this](bool on){if(!on&&m_active)cancel();});
   m_tiles=new PlaneTiles(view);m_tiles->chosen=[this](int i){choose({{"base",i==0?"xy":i==1?"xz":"yz"}});};
   m_tiles->hovered=[this](int i){if(!m_active||m_originStage)return;if(i<0)preview(nullptr);else {const auto f=base_frame(i==0?"xy":i==1?"xz":"yz");preview(&f);}};
+  // UI-122: the origin's X and Y typed over the view or the panel (never the filters' digits), the marker following; Enter
+  // uses the plane, Esc puts the origin back, then cancels.
+  m_values=new ToolValues(view,this);
+  m_values->fields=[this]{
+    if(!m_active||!m_originStage)return QList<DynamicInput::Field>{};
+    double u,v;m_supportFrame.to_local(m_frame.origin,u,v);
+    return QList<DynamicInput::Field>{ToolValues::box("x",tr("Plane X"),units::editable(units::Kind::Length,u)),ToolValues::box("y",tr("Plane Y"),units::editable(units::Kind::Length,v))};
+  };
+  m_values->edited=[this](const QString& key,const QString& value){  // or the origin before, put back by Esc
+    const auto mm=units::parse(units::Kind::Length,value);
+    m_values->input()->setProblem(key,mm?QString():tr("Not a length"));
+    if(!mm)return;
+    double u,v;m_supportFrame.to_local(m_frame.origin,u,v);setOrigin(key=="x"?*mm:u,key=="y"?*mm:v);
+  };
+  m_values->commit=[this]{apply();};
+  m_values->escape=[this]{cancel();};
   view->installEventFilter(this);
 }
 
@@ -94,7 +111,7 @@ void PlanePicker::start(bool positionOrigin,std::function<void(ToolPanel*)> open
   }
 }
 void PlanePicker::stop(bool restoreCamera) {
-  const bool wasActive=m_active;m_active=false;m_originStage=false;m_drag=false;m_mouseDown=false;++m_serial;++m_candidateSerial;
+  const bool wasActive=m_active;m_active=false;m_originStage=false;m_drag=false;m_mouseDown=false;++m_serial;++m_candidateSerial;m_values->reset();
   if(m_job)m_job->cancel();m_job=nullptr;preview(nullptr);m_tiles->hide();m_panel->hide();
   if(wasActive){if(restoreCamera)m_view->setCameraJson(m_cameraBefore);m_view->clearCandidates();m_view->clearSelection();m_view->setSelectionFilter(m_oldFilter);}
 }
@@ -117,11 +134,25 @@ void PlanePicker::selectionChanged() {
 void PlanePicker::back(){if(!m_active)return;++m_serial;if(m_job)m_job->cancel();m_job=nullptr;m_originStage=false;m_view->setCameraJson(m_cameraBefore);m_view->setSelectionFilter(Viewport::SelFilter::Face);preview(nullptr);m_tiles->show();constructionPlanes();refresh();}
 void PlanePicker::setOrigin(double u,double v){if(!m_originStage||!std::isfinite(u)||!std::isfinite(v))return;++m_serial;if(m_job)m_job->cancel();m_job=nullptr;m_origin={{"uv",{u,v}}};m_frame=m_supportFrame;m_frame.origin=m_supportFrame.to_world(u,v);m_status->clear();refresh();}
 void PlanePicker::apply(){if(!m_active||!m_originStage||m_job)return;const opad::json plane={{"support",m_support},{"origin",m_origin},{"frame",m_frame.to_json()}};const auto frame=m_frame;stop(false);emit accepted(plane,frame);}
+// What the plane step took (UI-25: never "Ready"): a base plane, a body's face, a sketch's or a construction plane's name.
+QString PlanePicker::supportName() const {
+  if(m_support.contains("base")){const std::string b=m_support.value("base",std::string());return b=="xz"?tr("XZ plane"):b=="yz"?tr("YZ plane"):tr("XY plane");}
+  if(m_support.contains("face")) {
+    std::string body;try{body=opad::Ref::from_json(m_support.at("face")).body;}catch(...){}
+    const opad::Node* n=m_doc->scene.node(body);return n?tr("Face of %1").arg(QString::fromStdString(n->name)):tr("A face");
+  }
+  if(m_support.contains("sketch"))if(const auto* s=m_doc->scene.sketch(m_support.value("sketch",std::string())))return QString::fromStdString(s->name);
+  if(m_support.contains("feature"))if(const auto* f=m_doc->scene.feature(m_support.value("feature",std::string())))return QString::fromStdString(f->name);
+  return tr("The view's plane");
+}
+QList<ToolStep> PlanePicker::steps() const {
+  QList<ToolStep> steps;steps.push_back({tr("Choose plane"),m_originStage?supportName():QString()});
+  if(m_positionOrigin)steps.push_back({tr("Position sketch origin"),{}});
+  return steps;
+}
 void PlanePicker::refresh(){
   m_refreshing=true;
-  QList<ToolStep> steps;steps.push_back({tr("Choose plane"),m_originStage?tr("Ready"):QString()});
-  if(m_positionOrigin)steps.push_back({tr("Position sketch origin"),{}});
-  m_steps->setSteps(steps,{});
+  m_steps->setSteps(steps(),{});
   m_panel->findChild<QLabel*>("planeHint")->setVisible(!m_originStage);m_originControls->setVisible(m_originStage);m_construction->setVisible(!m_originStage);m_apply->setVisible(m_originStage);m_apply->setEnabled(!m_job);m_back->setVisible(m_originStage);
   if(m_originStage){double u,v;m_supportFrame.to_local(m_frame.origin,u,v);m_u->setText(units::editable(units::Kind::Length,u));m_v->setText(units::editable(units::Kind::Length,v));preview(&m_frame);}m_refreshing=false;
 }
