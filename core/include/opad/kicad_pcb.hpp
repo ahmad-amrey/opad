@@ -64,16 +64,19 @@ KicadCli kicad_cli(bool ask = false);
 // tracks, pads, silkscreen and "origin_at", the frame OPAD's reader picks for `opt` (so both readers put the board in one place).
 json kicad_export_options(const std::filesystem::path& board, const KicadOptions& opt);
 
-// The STEP KiCad itself makes of `board`: kicad-cli pcb export step --subst-models --force, origin at options.origin_at, the
-// switches the options ask for as this KiCad spells them (only these reach its command line, never text from a document),
-// written to OPAD's cache (one file per board and options, made again each time). Throws with what KiCad said when it fails;
-// `progress` returning false stops it.
+// The STEP KiCad itself makes of `board`: kicad-cli pcb export step --subst-models --force, origin at options.origin_at
+// (--user-origin "<x>x<y>mm", a page point, as KiCad 7 to 10 read it), the switches the options ask for as this KiCad spells
+// them (only these reach its command line, never text from a document; KiCad 8 exports pads with its tracks), written to
+// OPAD's cache (one file per board and options, made again each time). Throws with what KiCad said when it fails; `progress`
+// returning false stops it.
 std::filesystem::path kicad_cli_export(const std::filesystem::path& board, const json& options,
                                        const std::function<bool(double, const std::string&)>& progress = {});
 
 // Names the parts of a kicad-cli STEP after their footprints (an import op's `data`, read from that STEP into `shapes`): a part
-// KiCad named by its reference designator (R1, R1_2) is that footprint's, any other near a footprint without one on its side
-// is that one's by place; each footprint becomes a component "R1 R_0603" carrying kicad {ref, uuid, footprint, side, models}
+// KiCad named by its reference designator (KiCad 7 to 10 name each model's instance "R1"; R1_2 also counts) is that
+// footprint's, the nearest one when a panel repeats the reference; the board's own parts ("<board>_PCB", "<board>_pad_3",
+// "<board>_copper", ...) stay the board's; any other near a footprint without one on its side is that one's by place; each
+// footprint becomes a component "R1 R_0603" carrying kicad {ref, uuid, footprint, side, models}
 // at the footprint's place, as OPAD's own reader makes it (sync previews and stable ids by footprint uuid). The op gets the
 // board's name and its "kicad" record; returns {"by_name", "by_place", "unplaced" (references without a part)}.
 json kicad_label_export(json& data, const Document& shapes, const std::filesystem::path& board, const json& options);

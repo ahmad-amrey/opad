@@ -352,9 +352,11 @@ bool MainWindow::benchKicadCli() {
       const QString said = QString::fromUtf8(f.readAll());
       if (exports() != 1 || !said.contains("--include-tracks") || !said.contains("--user-origin 120.000000x110.000000mm")) return fail("kicad-cli's arguments: " + said);
       if (refs.join(',') != "R1,R2,U1") return fail("components named after their footprints");
-      bool tracks = false;
-      for (const auto& id : m_doc->scene.all_bodies()) tracks = tracks || m_doc->node(id)->name == "tracks";
-      if (!tracks) return fail("the tracks KiCad was asked for");
+      int boards = 0;  // the board and the copper KiCad was asked for, named as KiCad names them, the board's (not a footprint's)
+      for (const auto& id : m_doc->scene.all_bodies())
+        if (const auto* n = m_doc->node(id); n->name == "board_PCB" || n->name == "board_copper")
+          boards += m_doc->scene.roots.size() == 1 && n->parent == m_doc->scene.roots[0];
+      if (boards != 2) return fail("the board and the tracks KiCad was asked for");
       auto* timer = new QTimer(this);
       auto clock = std::make_shared<QElapsedTimer>();
       clock->start();

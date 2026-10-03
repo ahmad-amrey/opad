@@ -1712,6 +1712,20 @@ void node_box(const json& n, const Mat4& at, const Document& shapes, Bnd_Box& bo
   }
   for (const auto& c : n.value("children", json::array())) node_box(c, at * transform_of(c), shapes, box);
 }
+
+// A part KiCad's export makes of the board itself, never a footprint's, by the names its exporter gives them (KiCad's
+// sources, 7.0 to 10.0; `stem` is the board's file name without its extension): "<stem> PCB", "<stem> PCB2" (7);
+// "<stem>_PCB", "<stem>_track_12", "<stem>_pad_3", "<stem>_zone" (8: one per shape); "<stem>_PCB", "<stem>_copper",
+// "<stem>_pad", "<stem>_via", "<stem>_silkscreen", "<stem>_soldermask" (9 and 10). A footprint's part is named by its
+// reference alone ("R1"): a board called "J1" makes "J1_PCB", which is not J1's.
+bool board_part(const std::string& name, const std::string& stem) {
+  if (name.size() <= stem.size() + 1 || name.compare(0, stem.size(), stem) != 0 || (name[stem.size()] != '_' && name[stem.size()] != ' ')) return false;
+  const std::string rest = name.substr(stem.size() + 1);
+  for (const std::string kind : {"PCB", "track", "zone", "pad", "via", "copper", "silkscreen", "soldermask"})
+    if (rest.compare(0, kind.size(), kind) == 0 && (rest.size() == kind.size() || rest[kind.size()] == '_' || std::isdigit(static_cast<unsigned char>(rest[kind.size()]))))
+      return true;
+  return false;
+}
 }  // namespace
 
 int KicadCli::major() const { return std::atoi(version.c_str()); }
@@ -1778,11 +1792,14 @@ std::filesystem::path kicad_cli_export(const std::filesystem::path& board, const
   auto need = [&](int at_least, const std::string& what) {
     if (major && major < at_least) throw Error(what + " in KiCad's export need KiCad " + std::to_string(at_least) + " or later; this is KiCad " + cli.version);
   };
+  // The switches as KiCad's sources spell them: 7 has --board-only and no --no-dnp; 8 adds --no-dnp and --include-tracks,
+  // which brings the pads along; 9 and 10 add --no-components, --include-pads and --include-silkscreen.
   std::vector<std::filesystem::path> args = {"pcb", "export", "step", "--subst-models", "--force"};
+  const bool tracks = options.value("tracks", false);
   if (!options.value("components", true)) args.push_back(major && major < 9 ? "--board-only" : "--no-components");
   if (!options.value("dnp", true) && (!major || major >= 8)) args.push_back("--no-dnp");
-  if (options.value("tracks", false)) need(8, "Tracks"), args.push_back("--include-tracks");
-  if (options.value("pads", false)) need(9, "Pads"), args.push_back("--include-pads");
+  if (tracks) need(8, "Tracks"), args.push_back("--include-tracks");
+  if (options.value("pads", false) && !(major == 8 && tracks)) need(9, "Pads without the tracks"), args.push_back("--include-pads");
   if (options.value("silkscreen", false)) need(9, "Silkscreen"), args.push_back("--include-silkscreen");
   if (const json at = options.value("origin_at", json()); at.is_array() && at.size() == 2 && at[0].is_number() && at[1].is_number()) {
     char text[96];
@@ -1835,24 +1852,25 @@ json kicad_label_export(json& data, const Document& shapes, const std::filesyste
   if (const json at = options.value("origin_at", json()); at.is_array() && at.size() == 2) ko.origin_at = {at[0].get<double>(), at[1].get<double>()};
   const json b = kicad_board(board, ko);
   const json& fps = b["components"];
-  std::map<std::string, size_t> by_ref;
+  const std::string stem = utf8(board.stem());
+  std::map<std::string, std::vector<size_t>> by_ref;  // a panel repeats its references
   for (size_t i = 0; i < fps.size(); ++i)
-    if (const std::string ref = fps[i].value("ref", ""); !ref.empty()) by_ref.emplace(ref, i);
+    if (const std::string ref = fps[i].value("ref", ""); !ref.empty()) by_ref[ref].push_back(i);
   // "R1", or "R1" followed by a separator ("R1_2", "R1 (R_0603)"), the longest reference that fits.
-  auto footprint_of = [&](const std::string& name) {
-    if (const auto it = by_ref.find(name); it != by_ref.end()) return static_cast<int>(it->second);
-    int found = -1;
+  auto footprints_of = [&](const std::string& name) -> const std::vector<size_t>* {
+    if (const auto it = by_ref.find(name); it != by_ref.end()) return &it->second;
+    const std::vector<size_t>* found = nullptr;
     size_t length = 0;
-    for (const auto& [ref, i] : by_ref)
+    for (const auto& [ref, list] : by_ref)
       if (ref.size() > length && name.size() > ref.size() && name.compare(0, ref.size(), ref) == 0 && !std::isalnum(static_cast<unsigned char>(name[ref.size()])))
-        found = static_cast<int>(i), length = ref.size();
+        found = &list, length = ref.size();
     return found;
   };
   json& nodes = data["nodes"];
   if (!nodes.is_array() || nodes.size() != 1 || nodes[0].value("type", "") != "component")
     nodes = json::array({{{"type", "component"}, {"id", new_uuid()}, {"children", nodes.is_array() ? nodes : json::array()}}});
   json& root = nodes[0];
-  root["name"] = utf8(board.stem());
+  root["name"] = stem;
   struct Claim {
     json node;
     Mat4 above;  // where what held it put it, in the root's frame
@@ -1861,8 +1879,20 @@ json kicad_label_export(json& data, const Document& shapes, const std::filesyste
   std::set<std::string> taken;  // node ids
   std::function<void(const json&, const Mat4&)> named = [&](const json& list, const Mat4& above) {
     for (const auto& n : list) {
-      if (const int i = footprint_of(n.value("name", "")); i >= 0) {
-        claims[static_cast<size_t>(i)].push_back({n, above});
+      const std::string name = n.value("name", "");
+      if (board_part(name, stem)) continue;
+      if (const auto* refs = footprints_of(name)) {
+        size_t i = refs->front();
+        if (refs->size() > 1) {  // the nearest footprint of that reference
+          Bnd_Box bb;
+          node_box(n, above * transform_of(n), shapes, bb);
+          double x0 = 0, y0 = 0, z0, x1 = 0, y1 = 0, z1;
+          if (!bb.IsVoid()) bb.Get(x0, y0, z0, x1, y1, z1);
+          double best = 1e300;
+          for (const size_t j : *refs)
+            if (const double d = std::hypot(fps[j]["at"][0].get<double>() - (x0 + x1) / 2, fps[j]["at"][1].get<double>() - (y0 + y1) / 2); d < best) best = d, i = j;
+        }
+        claims[i].push_back({n, above});
         taken.insert(n.value("id", ""));
       } else if (n.contains("children")) {
         named(n["children"], above * transform_of(n));
@@ -1871,9 +1901,9 @@ json kicad_label_export(json& data, const Document& shapes, const std::filesyste
   };
   named(root["children"], Mat4{});
   const size_t by_name = claims.size();
-  // Parts KiCad did not name after a footprint: the nearest footprint without a part on their side, within their own size
-  // (5 mm at least: a model's offset); anything as large as half the board (the board, its copper and silkscreen) is looked
-  // into instead.
+  // Parts not named after a footprint (KiCad 7 to 10 name every one by its reference; the board's own parts are left alone):
+  // the nearest footprint without a part on their side, within their own size (5 mm at least: a model's offset); anything as
+  // large as half the board is looked into instead.
   const json box = b.value("outline", json::object()).value("box", json::array({0, 0, 0, 0}));
   const double board_size = std::hypot(box[2].get<double>() - box[0].get<double>(), box[3].get<double>() - box[1].get<double>());
   const double thickness = b.value("thickness", 1.6);
@@ -1885,7 +1915,7 @@ json kicad_label_export(json& data, const Document& shapes, const std::filesyste
   std::vector<Loose> loose;
   std::function<void(const json&, const Mat4&)> collect = [&](const json& list, const Mat4& above) {
     for (const auto& n : list) {
-      if (taken.count(n.value("id", ""))) continue;
+      if (taken.count(n.value("id", "")) || board_part(n.value("name", ""), stem)) continue;
       Bnd_Box bb;
       node_box(n, above * transform_of(n), shapes, bb);
       if (bb.IsVoid()) continue;

@@ -643,11 +643,13 @@ TEST(kicad_cli_found_and_its_switches) {
   eight["dnp"] = false;
   eight["components"] = false;
   eight["tracks"] = true;
+  eight["pads"] = true;  // KiCad 8 exports the pads with its tracks
   const auto step = kicad_cli_export(f.board, eight);
   CHECK(std::filesystem::is_regular_file(step) && step.extension() == ".step");
   const std::string said = log_text(log);
   CHECK(said.find("pcb export step --subst-models --force --board-only --no-dnp --include-tracks --user-origin 100.000000x100.000000mm -o ") != std::string::npos);
-  eight["pads"] = true;
+  CHECK(said.find("--include-pads") == std::string::npos);
+  eight["tracks"] = false;
   try {
     kicad_cli_export(f.board, eight);
     CHECK(false);
@@ -673,44 +675,110 @@ TEST(kicad_cli_found_and_its_switches) {
   set_env("OPAD_FAKE_KICAD_LOG", "");
 }
 
+// A part directly in the board's root (not in a footprint's component).
+bool at_root(const Scene& s, const std::string& name) {
+  for (const auto& id : s.node(s.roots[0])->children)
+    if (s.node(id)->name == name) return true;
+  return false;
+}
+
+// The stand-in as KiCad `version`, spelled anew per major version (kicad_cli asks each program once).
+void use_kicad(const std::string& version) {
+  std::filesystem::path p = std::filesystem::path(OPAD_FAKE_KICAD_CLI).parent_path();
+  for (int i = 0; i < std::atoi(version.c_str()); ++i) p /= ".";
+  set_env("OPAD_KICAD_CLI", p / std::filesystem::path(OPAD_FAKE_KICAD_CLI).filename());
+  set_env("OPAD_FAKE_KICAD_VERSION", version);
+}
+
 TEST(kicad_export_named_after_the_footprints) {
   Fixture f;
   set_env("OPAD_KICAD_CLI", std::filesystem::path(OPAD_FAKE_KICAD_CLI));
   const Document own = f.read();
   const Scene mine = resolve(own);
-  for (const char* unnamed : {"", "1"}) {  // KiCad names its parts by reference; else they are found by place
-    set_env("OPAD_FAKE_KICAD_UNNAMED", unnamed);
-    Document d = Document::create();
-    ImportOptions o;
-    o.kicad.kicad_cli = true;
-    o.kicad.tracks = true;
-    const ImportResult r = import_file(d, f.board, o);
-    const Scene s = resolve(d);
-    CHECK(s.unresolved.empty());
-    CHECK(r.info[*unnamed ? "by_place" : "by_name"] == 7 && r.info[*unnamed ? "by_name" : "by_place"] == 0);
-    CHECK(r.info["unplaced"] == json({"J2", "O1"}));  // no model found: KiCad leaves them out
-    const Op& op = d.ops.back();
-    CHECK(op.data["source"] == "board.kicad_pcb" && op.data["kicad"]["reader"] == "kicad-cli" && op.data["kicad"]["origin"] == json({100.0, 100.0}));
-    CHECK(s.node(s.roots[0])->name == "board" && named(s, "tracks"));
-    // Each footprint a component at its place, as OPAD's own reader makes it: the same parts in the same places.
-    for (const char* ref : {"R1", "R2", "U1", "J1", "S1", "D1", "X1"}) {
-      const Node* c = component_for(s, ref);
-      const Node* theirs = component_for(mine, ref);
-      CHECK(c && theirs && c->name == theirs->name);
-      if (!c || !theirs) continue;
-      const json kc = node_json(d, c->id).value("kicad", json()), kt = node_json(own, theirs->id).value("kicad", json());
-      CHECK(kc.value("ref", "") == ref && kc.value("footprint", "") == kt.value("footprint", ""));
-      CHECK(!kc.value("uuid", "").empty() && kc["uuid"] == kt["uuid"]);
-      double a[6], b[6];
-      world_box(d, s, c).Get(a[0], a[1], a[2], a[3], a[4], a[5]);
-      world_box(own, mine, theirs).Get(b[0], b[1], b[2], b[3], b[4], b[5]);
-      for (int i = 0; i < 6; ++i) CHECK(about(a[i], b[i], 0.01));
-      CHECK(about(s.world(c->id).at(0, 3), mine.world(theirs->id).at(0, 3)) && about(s.world(c->id).at(1, 0), mine.world(theirs->id).at(1, 0)));
+  // KiCad names its parts by reference (else they are found by place); its tracks and pads (one per pad in KiCad 8, at the
+  // footprints whose models are missing too) and the board stay the board's, by the names each version gives them.
+  for (const char* version : {"7.0.11", "8.0.4", "9.0.1"})
+    for (const char* unnamed : {"", "1"}) {
+      use_kicad(version);
+      set_env("OPAD_FAKE_KICAD_UNNAMED", unnamed);
+      const int major = std::atoi(version);
+      Document d = Document::create();
+      ImportOptions o;
+      o.kicad.kicad_cli = true;
+      o.kicad.tracks = o.kicad.pads = major >= 8;
+      o.kicad.silkscreen = major >= 9;
+      const ImportResult r = import_file(d, f.board, o);
+      const Scene s = resolve(d);
+      CHECK(s.unresolved.empty());
+      CHECK(r.info[*unnamed ? "by_place" : "by_name"] == 7 && r.info[*unnamed ? "by_name" : "by_place"] == 0);
+      CHECK(r.info["unplaced"] == json({"J2", "O1"}));  // no model found: KiCad leaves them out
+      const Op& op = d.ops.back();
+      CHECK(op.data["source"] == "board.kicad_pcb" && op.data["kicad"]["reader"] == "kicad-cli" && op.data["kicad"]["origin"] == json({100.0, 100.0}));
+      CHECK(s.node(s.roots[0])->name == "board" && at_root(s, major < 8 ? "board PCB" : "board_PCB"));
+      if (major == 8) CHECK(at_root(s, "board_track_1") && at_root(s, "board_track_2") && at_root(s, "board_pad_1") && at_root(s, "board_pad_9"));
+      if (major >= 9) CHECK(at_root(s, "board_copper") && at_root(s, "board_pad") && at_root(s, "board_silkscreen") && !named(s, "board_pad_1"));
+      // Each footprint a component at its place, as OPAD's own reader makes it: the same parts in the same places.
+      for (const char* ref : {"R1", "R2", "U1", "J1", "S1", "D1", "X1"}) {
+        const Node* c = component_for(s, ref);
+        const Node* theirs = component_for(mine, ref);
+        CHECK(c && theirs && c->name == theirs->name);
+        if (!c || !theirs) continue;
+        const json kc = node_json(d, c->id).value("kicad", json()), kt = node_json(own, theirs->id).value("kicad", json());
+        CHECK(kc.value("ref", "") == ref && kc.value("footprint", "") == kt.value("footprint", ""));
+        CHECK(!kc.value("uuid", "").empty() && kc["uuid"] == kt["uuid"] && c->children.size() == theirs->children.size());
+        double a[6], b[6];
+        world_box(d, s, c).Get(a[0], a[1], a[2], a[3], a[4], a[5]);
+        world_box(own, mine, theirs).Get(b[0], b[1], b[2], b[3], b[4], b[5]);
+        for (int i = 0; i < 6; ++i) CHECK(about(a[i], b[i], 0.01));
+        CHECK(about(s.world(c->id).at(0, 3), mine.world(theirs->id).at(0, 3)) && about(s.world(c->id).at(1, 0), mine.world(theirs->id).at(1, 0)));
+      }
+      // The sync preview reads it as it reads the reader's.
+      CHECK(!kicad_sync_preview(d, {}, f.board)["changed"].get<bool>());
     }
-    // The sync preview reads it as it reads the reader's.
-    CHECK(!kicad_sync_preview(d, {}, f.board)["changed"].get<bool>());
-  }
   set_env("OPAD_FAKE_KICAD_UNNAMED", "");
+  set_env("OPAD_FAKE_KICAD_VERSION", "");
+  set_env("OPAD_KICAD_CLI", std::filesystem::path(OPAD_FAKE_KICAD_CLI));
+}
+
+// A board whose name starts like a reference ("J1": KiCad calls its parts "J1_PCB", "J1_pad_3") keeps them; a panel repeats
+// its references, each part goes to the nearest footprint of its reference.
+TEST(kicad_export_board_named_like_a_reference_and_a_panel) {
+  Fixture f;
+  std::string text = board_text();
+  const std::string r7 = "    (pad \"1\" smd rect (at -0.8 0) (size 0.8 0.9) (layers \"F.Cu\"))\n" + model("${KICAD9_3DMODEL_DIR}/Test.3dshapes/box.step");
+  text.insert(text.rfind(')'), footprint("Test:R", "R7", "112 110", r7) + footprint("Test:R", "R7", "138 108 90", r7));
+  const std::filesystem::path j1 = f.board.parent_path() / "J1.kicad_pcb";
+  write(j1, text);
+  use_kicad("8.0.4");
+  Document own = Document::create();
+  import_file(own, j1, ImportOptions{});
+  Document d = Document::create();
+  ImportOptions o;
+  o.kicad.kicad_cli = o.kicad.tracks = true;
+  const ImportResult r = import_file(d, j1, o);
+  const Scene s = resolve(d), mine = resolve(own);
+  CHECK(r.info["by_name"] == 9 && r.info["by_place"] == 0 && r.info["unplaced"] == json({"J2", "O1"}));
+  CHECK(at_root(s, "J1_PCB") && at_root(s, "J1_track_1") && at_root(s, "J1_pad_1"));
+  const Node* conn = named(s, "J1 Conn");  // (the board itself is "J1")
+  CHECK(conn && conn->children.size() == 1 && s.node(conn->children[0])->name == "conn");
+  auto sevens = [](const Scene& in) {
+    std::vector<const Node*> out;
+    for (const auto& [id, n] : in.nodes)
+      if (n.kind == Node::Kind::Component && n.name == "R7 R") out.push_back(&n);
+    std::sort(out.begin(), out.end(), [&](const Node* a, const Node* b) { return in.world(a->id).at(0, 3) < in.world(b->id).at(0, 3); });
+    return out;
+  };
+  const auto ours = sevens(s), theirs = sevens(mine);
+  CHECK(ours.size() == 2 && theirs.size() == 2);
+  for (size_t k = 0; k < std::min(ours.size(), theirs.size()); ++k) {
+    CHECK(ours[k]->children.size() == 1);
+    double a[6], b[6];
+    world_box(d, s, ours[k]).Get(a[0], a[1], a[2], a[3], a[4], a[5]);
+    world_box(own, mine, theirs[k]).Get(b[0], b[1], b[2], b[3], b[4], b[5]);
+    for (int i = 0; i < 6; ++i) CHECK(about(a[i], b[i], 0.01));
+  }
+  set_env("OPAD_FAKE_KICAD_VERSION", "");
+  set_env("OPAD_KICAD_CLI", std::filesystem::path(OPAD_FAKE_KICAD_CLI));
 }
 
 TEST(kicad_export_linked) {
