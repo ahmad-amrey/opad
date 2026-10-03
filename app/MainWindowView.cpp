@@ -118,7 +118,8 @@ void MainWindow::buildNavigationActions() {
         m_toolPoints.clear();
         refreshToolUi();
       }
-      for (QAction* o : m_actions) if (o->objectName().startsWith("select.")) o->setChecked(o->objectName() == "select." + n.toLower());
+      for (const QString other : {"bodies", "faces", "edges", "vertices"})  // not select.through: a setting of its own
+        if (QAction* o = action("select." + other)) o->setChecked(other == n.toLower());
     }, true);
     if (f == Viewport::SelFilter::Body) a->setChecked(true);
   }

@@ -75,6 +75,16 @@ OPAD_BENCH(OPAD_BENCH_COMMANDS, commands) {
               registry.find("sketch.line")->workspaces == QStringList{"sketch"} && registry.inWorkspace("review").contains("inspect.distance") &&
               !registry.inWorkspace("review").contains("design.extrude"),
           "workspaces from the ribbon, menu paths from the menu bar");
+  // The filters are one choice among four; Select through objects is a setting of its own that they leave as it is.
+  QAction* through = w.action("select.through");
+  const bool wasThrough = through->isChecked();
+  through->setChecked(true);
+  w.action("select.faces")->trigger();
+  const bool kept = through->isChecked() && w.action("select.faces")->isChecked() && !w.action("select.bodies")->isChecked();
+  w.action("select.bodies")->trigger();
+  require(kept && through->isChecked() && w.action("select.bodies")->isChecked() && !w.action("select.faces")->isChecked(),
+          "a selection filter leaves Select through objects on");
+  through->setChecked(wasThrough);
   // An area's command with its whole record.
   require(w.m_doc->browse && !w.m_doc->scene.all_bodies().empty(), "a STEP file in viewer mode");
   static int edits = 0, looks = 0;
