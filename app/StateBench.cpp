@@ -189,10 +189,17 @@ OPAD_BENCH(OPAD_BENCH_STATE, state) {
           QString("Ctrl+Shift+Z redoes (redo keys: %1)").arg(QKeySequence::listToString(keys)));
   doc->undo();
 
-  // (5) V right after a modal dialog: nothing hidden; 300 ms later V hides.
-  w.m_browser->setSelectedIds({boxes[1]});
-  w.onBrowserSelection({boxes[1]});
-  waitUntil([&] { return w.currentNodeIds() == std::vector<std::string>{boxes[1]}; }, 10000);
+  // (5) V right after a modal dialog: nothing hidden; 300 ms later V hides. The middle box is selected once the view has
+  // settled after the undo, and again should a late selection-mode pass clear it (seen once in a full run).
+  const std::vector<std::string> middle{boxes[1]};
+  bool picked = false;
+  for (int attempt = 0; attempt < 3 && !picked; ++attempt) {
+    waitUntil(settled, 10000);
+    w.m_browser->setSelectedIds(middle);
+    w.onBrowserSelection(middle);
+    picked = waitUntil([&] { return w.currentNodeIds() == middle; }, 3000) && !waitUntil([&] { return w.currentNodeIds() != middle; }, 300);
+  }
+  require(picked, "the middle box selected");
   int hides = 0;
   const auto watch = QObject::connect(w.action("edit.hide"), &QAction::triggered, &w, [&hides] { ++hides; });
   {
