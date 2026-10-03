@@ -155,7 +155,8 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   });
   trace::installUiWatchdog(this);  // logs any UI-thread stall over 250 ms (OPAD_TRACE)
   // A name typed into the browser is not taken as one-key commands (UI-09), nor one typed right after a dialog closed.
-  qApp->installEventFilter(new KeyGuard([browser = QPointer<BrowserPanel>(m_browser)] { return browser ? browser->renameEditor() : nullptr; }, this));
+  m_keyGuard = new KeyGuard([browser = QPointer<BrowserPanel>(m_browser)] { return browser ? browser->renameEditor() : nullptr; }, this);
+  qApp->installEventFilter(m_keyGuard);
   m_browserOverlay->setHold([browser = QPointer<BrowserPanel>(m_browser)] { return browser && browser->renameEditor(); });
   connect(m_browser, &BrowserPanel::selectionChanged, this, &MainWindow::onBrowserSelection);
   connect(m_browser, &BrowserPanel::contextMenuRequested, this, [this](const QPoint& p, const std::vector<std::string>& ids) { showContextMenu(p, ids); });

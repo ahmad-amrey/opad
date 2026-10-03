@@ -116,8 +116,8 @@ TEST(shift_digit_capture_and_lookup) {
   QKeyEvent hash(QEvent::KeyPress,Qt::Key_NumberSign,Qt::ShiftModifier,"#");QApplication::sendEvent(binding,&hash);
   CHECK(binding->keySequence()==QKeySequence("Shift+3"));
 }
-// UI-09: one-key shortcuts are held back for a moment after a modal dialog closed, and while an inline editor is open its
-// keys go there; other keys pass.
+// UI-09: one-key shortcuts are held back for a moment after a modal dialog closed, while an inline editor is open its
+// keys go there, and between hold() and release() they are kept for the editor that opens; other keys pass.
 TEST(key_guard_holds_one_key_shortcuts) {
   QKeyEvent v(QEvent::KeyPress,Qt::Key_V,Qt::NoModifier,"v"),shiftV(QEvent::KeyPress,Qt::Key_V,Qt::ShiftModifier,"V"),ctrlV(QEvent::KeyPress,Qt::Key_V,Qt::ControlModifier),
       del(QEvent::KeyPress,Qt::Key_Delete,Qt::NoModifier),escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier),f2(QEvent::KeyPress,Qt::Key_F2,Qt::NoModifier);
@@ -143,6 +143,18 @@ TEST(key_guard_holds_one_key_shortcuts) {
   QTest::keyClick(QApplication::focusWidget(),Qt::Key_N);CHECK_EQ(editor->text(),QString("vn"));
   editor->setText("kept");editor->hide();editor=nullptr;  // closed: V is the shortcut again
   QTest::keyClick(target,Qt::Key_V);CHECK_EQ(hidden,3);
+  // Held while a command waits to resume (Rename after Edit unsaved copy): kept, then typed into the editor it opened.
+  guard.hold();guard.hold();
+  QTest::keyClick(target,Qt::Key_V);QTest::keyClick(target,Qt::Key_A);QTest::keyClick(target,Qt::Key_Z,Qt::ControlModifier);
+  CHECK_EQ(hidden,3);CHECK_EQ(undone,2);  // V kept, Ctrl+Z not
+  auto* opened=new QLineEdit(&window);opened->setText("Body");opened->selectAll();opened->show();editor=opened;
+  guard.release();CHECK(guard.holding());CHECK_EQ(opened->text(),QString("Body"));  // nested: the outer release delivers
+  guard.release();CHECK(!guard.holding());CHECK_EQ(opened->text(),QString("va"));CHECK(QApplication::focusWidget()==opened);
+  opened->hide();editor=nullptr;target->setFocus();
+  guard.hold();QTest::keyClick(target,Qt::Key_V);guard.release();  // no editor opened: dropped, not run
+  CHECK_EQ(hidden,3);
+  QTest::keyClick(target,Qt::Key_V);CHECK_EQ(hidden,4);
+  guard.release();CHECK(!guard.holding());  // one too many: nothing
   qApp->removeEventFilter(&guard);
 }
 int main(int argc,char** argv) {

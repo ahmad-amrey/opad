@@ -16,6 +16,7 @@
 
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "KeyGuard.hpp"
 #include "opad/drawing_io.hpp"
 
 void MainWindow::buildFileActions() {
@@ -118,8 +119,17 @@ void MainWindow::saveViewerAs(std::function<void()> then) {
 // on a worker if one was chosen; `then` runs when the document can be edited.
 void MainWindow::makeEditable(const QString& savePath, std::function<void()> then) {
   statusBar()->showMessage(tr("Preparing %1 for editing…").arg(QFileInfo(m_doc->viewing).fileName()));
-  m_doc->startEditable(m_jobs, [this, savePath, then](bool ok, const QString& error) {
+  // A command resumed afterwards (Rename) gets the one-key presses typed while the copy is made, the window's shortcuts
+  // none of them (UI-09); KeyGuard drops them when it opens no editor.
+  QPointer<KeyGuard> guard = then ? m_keyGuard : nullptr;
+  if (guard) guard->hold();
+  auto finish = [then, guard](bool resume) {
+    if (resume && then) then();
+    if (guard) guard->release();
+  };
+  m_doc->startEditable(m_jobs, [this, savePath, finish](bool ok, const QString& error) {
     if (!ok) {
+      finish(false);
       statusBar()->clearMessage();
       QMessageBox::warning(this, tr("OPAD"), i18n::t(error));
       return;
@@ -127,18 +137,21 @@ void MainWindow::makeEditable(const QString& savePath, std::function<void()> the
     updateViewerCard();
     if (savePath.isEmpty()) {
       statusBar()->showMessage(tr("Editable copy: save it to keep your changes"), 8000);
-      if (then) then();
+      finish(true);
       return;
     }
+    bool saving = false;
     guarded([&] {
-      m_doc->saveAsync(m_jobs, savePath, true, [this, savePath, then](bool saved, const QString& why) {
-        if (!saved) { QMessageBox::warning(this, tr("OPAD"), i18n::t(why)); return; }
+      m_doc->saveAsync(m_jobs, savePath, true, [this, savePath, finish](bool saved, const QString& why) {
+        if (!saved) { finish(false); QMessageBox::warning(this, tr("OPAD"), i18n::t(why)); return; }
         addRecent(savePath);
         m_viewPath = QFileInfo(savePath).absoluteFilePath();
         statusBar()->showMessage(tr("Saved %1; it can be edited now").arg(QDir::toNativeSeparators(savePath)), 8000);
-        if (then) then();
+        finish(true);
       });
+      saving = true;
     });
+    if (!saving) finish(false);
   });
 }
 

@@ -12,6 +12,23 @@ bool KeyGuard::oneKey(const QKeyEvent* e) {
   return (e->key() >= Qt::Key_Space && e->key() <= Qt::Key_ydiaeresis) || (!e->text().isEmpty() && e->text().at(0).isPrint());
 }
 
+void KeyGuard::type(QWidget* editor, const Key& key) {  // into the editor, which takes the keyboard from here on
+  if (!editor->hasFocus()) {
+    editor->window()->activateWindow();
+    editor->setFocus(Qt::OtherFocusReason);
+  }
+  QKeyEvent press(QEvent::KeyPress, key.key, key.modifiers, key.text);
+  QCoreApplication::sendEvent(editor, &press);
+}
+
+void KeyGuard::release() {
+  if (m_holds == 0 || --m_holds > 0) return;
+  const auto held = std::move(m_held);
+  m_held.clear();
+  if (QWidget* editor = m_editor ? m_editor() : nullptr)
+    for (const Key& key : held) type(editor, key);
+}
+
 bool KeyGuard::eventFilter(QObject* object, QEvent* event) {
   const auto type = event->type();
   if (type == QEvent::Hide) {
@@ -22,13 +39,13 @@ bool KeyGuard::eventFilter(QObject* object, QEvent* event) {
   auto* key = static_cast<QKeyEvent*>(event);
   if (!oneKey(key)) return false;
   QWidget* editor = m_editor ? m_editor() : nullptr;
+  if (!editor && m_holds > 0) {  // kept for the editor the resumed command opens
+    if (type == QEvent::KeyPress) m_held.push_back({key->key(), key->modifiers(), key->text()});
+    event->accept();
+    return true;
+  }
   if (editor && object != editor && !editor->hasFocus()) {
-    if (type == QEvent::KeyPress) {  // into the editor, which takes the keyboard from here on
-      editor->window()->activateWindow();
-      editor->setFocus(Qt::OtherFocusReason);
-      QKeyEvent press(QEvent::KeyPress, key->key(), key->modifiers(), key->text(), key->isAutoRepeat(), key->count());
-      QCoreApplication::sendEvent(editor, &press);
-    }
+    if (type == QEvent::KeyPress) this->type(editor, {key->key(), key->modifiers(), key->text()});
     event->accept();  // an accepted override: no shortcut, the key comes as a press
     return true;
   }

@@ -1,11 +1,12 @@
 // OPAD_BENCH_STATE=<prefix> (UI-09): state and selection bugs found by hand. Case in tools/bench_cases/viewer.py, on a
 // drawing opened in viewer mode. (1) "Edit unsaved copy" then Rename: once the copy is made the row's editor is open in
-// the expanded browser with the name, and a name typed goes into it (no one-key command runs), Return renames; again with
-// an editor that did not get the keyboard (the keys are handed over). (2) The drawing viewed again (2D mode on, the
-// viewer card), 2D mode set again by hand, then Ctrl+N: 2D mode off, the card gone, and a click on a stale "Save to edit"
-// changes nothing; 2D mode turned on in the new document ends with Ctrl+N too. (3) Three boxes: Ctrl+click adds a body to the selection
-// and takes a picked one out; the status's hover text is cleared by a document change and says the new name on the next
-// frame. (4) Ctrl+Shift+Z redoes. (5) V right after a modal dialog closed hides nothing; 300 ms later it hides.
+// the expanded browser with the keys typed while it was made, the rest of the name goes into it (no one-key command
+// runs), Return renames; again with an editor that did not get the keyboard (the keys are handed over). (2) The drawing
+// viewed again (2D mode on, the viewer card), 2D mode set again by hand, then Ctrl+N: 2D mode off, the card gone, and a
+// click on a stale "Save to edit" changes nothing; 2D mode turned on in the new document ends with Ctrl+N too. (3) Three
+// boxes: Ctrl+click adds a body to the selection and takes a picked one out; the status's hover text is cleared by a
+// document change and says the new name on the next frame. (4) Ctrl+Shift+Z redoes. (5) V right after a modal dialog
+// closed hides nothing; 300 ms later it hides.
 // <prefix>.png is the window with the selection.
 #include <QApplication>
 #include <QDialog>
@@ -76,17 +77,23 @@ OPAD_BENCH(OPAD_BENCH_STATE, state) {
   w.m_browser->setSelectedIds({body});
   w.onBrowserSelection({body});
   waitUntil([&] { return w.currentNodeIds() == std::vector<std::string>{body}; }, 10000);
+  // The first keys typed at once, while the copy is still being made (the command resumes after it): kept for the editor.
+  *commands = 0;
   w.makeEditable({}, [&w] { w.action("edit.rename")->trigger(); });  // as "Edit unsaved copy" resumes the command
+  const bool converting = doc->browse && w.m_keyGuard->holding();
+  for (const QChar c : QString("Pa")) key(Qt::Key_A + (c.toLower().unicode() - 'a'), c.isUpper() ? Qt::ShiftModifier : Qt::NoModifier, QString(c));
+  const int during = *commands;
   const bool editing = waitUntil([&] { return !doc->browse && w.m_browser->renameEditor(); }, 60000);
   auto* editor = qobject_cast<QLineEdit*>(w.m_browser->renameEditor());
-  require(editing && editor && !editor->isHidden() && w.m_browserOverlay->expanded() && editor->text() == doc->nodeName(body) && !cardShown(),
-          QString("editable copy: the row's editor open in the expanded browser with \"%1\", the viewer card gone").arg(editor ? editor->text() : QString()));
+  require(converting && editing && editor && !editor->isHidden() && w.m_browserOverlay->expanded() && editor->text() == "Pa" && during == 0 &&
+              !w.m_keyGuard->holding() && !cardShown(),
+          QString("editable copy: the row's editor open in the expanded browser with \"%1\" typed while the copy was made (%2 one-key "
+                  "commands run), the viewer card gone").arg(editor ? editor->text() : QString()).arg(during));
   if (!editor) return finish();
   // Typed where the keyboard is: the editor itself, or (its window not active) the view, from where KeyGuard hands the
-  // keys over (tests/test_shortcuts covers that path on its own).
+  // keys over (1b).
   const bool focused = QApplication::focusWidget() == editor;
-  *commands = 0;
-  for (const QChar c : QString("Part")) key(Qt::Key_A + (c.toLower().unicode() - 'a'), c.isUpper() ? Qt::ShiftModifier : Qt::NoModifier, QString(c));
+  for (const QChar c : QString("rt")) key(Qt::Key_A + (c.toLower().unicode() - 'a'), Qt::NoModifier, QString(c));
   const QString typed = editor->text();
   require(typed == "Part" && *commands == 0 && !w.m_annotationEditor,
           QString("typed into the editor (%1): \"%2\", %3 one-key commands run").arg(focused ? "it has the keyboard" : "handed over").arg(typed).arg(*commands));

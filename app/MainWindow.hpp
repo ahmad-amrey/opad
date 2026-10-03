@@ -24,6 +24,7 @@
 #include "BrowserOverlay.hpp"
 class RecoveryManager;
 class AgentBridge;
+class KeyGuard;
 class QToolButton;
 template <class Tag>
 struct MainWindowBench;
@@ -221,6 +222,7 @@ class MainWindow : public QMainWindow {
   void showFinding(const opad::json& finding);
   void endCheck();
   LoadShade* m_loadShade = nullptr;
+  KeyGuard* m_keyGuard = nullptr;
   bool m_timelineHiddenByViewer = false;
   bool m_autoTwoD = false, m_settingTwoD = false;  // 2D mode turned on for a viewed drawing (any 2D mode ends with its document)
   bool m_autoEdges = false;      // the Edge filter set for a drawing (and set back to Bodies after it)
