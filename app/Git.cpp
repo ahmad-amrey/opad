@@ -243,7 +243,10 @@ Result run(const Context& c, const QStringList& args, const RunOptions& o) {
   p.setProgram(c.program);
   p.setArguments(QStringList{"-c", "core.quotepath=off"} + args);
   if (!c.dir.isEmpty()) p.setWorkingDirectory(c.dir);
-  p.setProcessEnvironment(c.environment(o.optionalLocks));
+  QProcessEnvironment env = c.environment(o.optionalLocks);
+  // git-lfs is silent without a terminal: an upload of big assets said nothing for minutes and read as a stall (idleMs).
+  if (o.progress || o.idleMs > 0) env.insert("GIT_LFS_FORCE_PROGRESS", "1");
+  p.setProcessEnvironment(env);
 #ifndef _WIN32
   p.setChildProcessModifier([] { ::setpgid(0, 0); });
 #endif
@@ -259,15 +262,9 @@ Result run(const Context& c, const QStringList& args, const RunOptions& o) {
   p.closeWriteChannel();
   QElapsedTimer quiet;
   quiet.start();
-  QByteArray pending;  // stderr not split into lines yet
-  auto drain = [&] {
-    const QByteArray out = p.readAllStandardOutput(), err = p.readAllStandardError();
-    if (out.isEmpty() && err.isEmpty()) return;
-    quiet.restart();
-    r.out += out;
-    r.err += err;
-    if (!o.progress || err.isEmpty()) return;
-    pending += err;
+  QByteArray pendingOut, pendingErr;  // not split into lines yet
+  auto lines = [&o](QByteArray& pending, const QByteArray& more) {
+    pending += more;
     for (;;) {  // --progress rewrites its line with \r
       const qsizetype a = pending.indexOf('\r'), b = pending.indexOf('\n');
       const qsizetype cut = a < 0 ? b : b < 0 ? a : qMin(a, b);
@@ -275,6 +272,16 @@ Result run(const Context& c, const QStringList& args, const RunOptions& o) {
       progressLine(pending.left(cut), o);
       pending.remove(0, cut + 1);
     }
+  };
+  auto drain = [&] {
+    const QByteArray out = p.readAllStandardOutput(), err = p.readAllStandardError();
+    if (out.isEmpty() && err.isEmpty()) return;
+    quiet.restart();
+    r.out += out;
+    r.err += err;
+    if (!o.progress) return;
+    lines(pendingErr, err);
+    lines(pendingOut, out);  // git-lfs's pre-push hook writes its upload progress there
   };
   while (!p.waitForFinished(50)) {
     if (p.state() == QProcess::NotRunning) break;

@@ -3,9 +3,12 @@
 // driver merging and diffing for real through opad-cli and through opad.exe alone, timeouts and Cancel ending git with
 // everything it started, clone progress, a new clone set up for OPAD and its documents found. UI-136: errors as
 // sentences, safe.directory, the environment (BatchMode ssh, no inherited GIT_DIR), opad.exe answering git's sign-in
-// prompts as GIT_ASKPASS, the author, Locate git, warnings before a push. Temporary repositories only; git's global
-// and system config are left out.
+// prompts as GIT_ASKPASS, the author, Locate git, warnings before a push. UI-62 against a host: Git LFS files going up
+// to a remote's LFS store and down into a new clone; push, clone, fetch and pull over smart HTTP behind a sign-in (a
+// host on this machine), OPAD answering git's prompts, a refused sign-in as a sentence. Temporary repositories only;
+// git's global and system config are left out.
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
@@ -14,9 +17,13 @@
 #include <QProcess>
 #include <QRandomGenerator>
 #include <QSettings>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUrl>
+
+#include <atomic>
 
 #include "Git.hpp"
 #include "check.hpp"
@@ -72,6 +79,134 @@ git::Install fromBuild(bool cli) {
   i.app = bin("opad");
   return i;
 }
+
+QByteArray noise(int size) {
+  QByteArray bytes(size, '\0');
+  for (char& b : bytes) b = char(QRandomGenerator::global()->generate());
+  return bytes;
+}
+
+// A git host on this machine: smart HTTP through git http-backend behind a Basic sign-in (`account`: "user:password"),
+// served on a thread of its own, one request per connection. As a hosting service, minus TLS: the first request of a git
+// command is refused (401), git asks its credential helper or askpass, and asks again signed in.
+class Host {
+ public:
+  Host(const QString& root, const QByteArray& account) : m_root(root), m_account("Basic " + account.toBase64()) {
+    m_thread = QThread::create([this] { serve(); });
+    m_thread->start();
+    while (m_port == 0) QThread::msleep(5);
+  }
+  ~Host() {
+    m_stop = true;
+    m_thread->wait();
+    delete m_thread;
+  }
+  QString url(const QString& repository) const { return QStringLiteral("http://127.0.0.1:%1/%2").arg(m_port.load()).arg(repository); }
+  bool listening() const { return m_port > 0; }
+  std::atomic<int> refused{0}, served{0};
+
+ private:
+  void serve() {
+    QTcpServer server;
+    if (!server.listen(QHostAddress::LocalHost, 0)) {
+      m_port = -1;
+      return;
+    }
+    m_port = server.serverPort();
+    while (!m_stop)
+      if (server.waitForNewConnection(50))
+        while (QTcpSocket* s = server.nextPendingConnection()) {
+          answer(s);
+          delete s;
+        }
+  }
+  void answer(QTcpSocket* s) {
+    QByteArray in;
+    auto more = [&] {
+      if (!s->bytesAvailable() && !s->waitForReadyRead(10000)) return false;
+      in += s->readAll();
+      return true;
+    };
+    qsizetype end;
+    while ((end = in.indexOf("\r\n\r\n")) < 0)
+      if (!more()) return;
+    const QList<QByteArray> lines = in.left(end).split('\n');
+    in.remove(0, end + 4);
+    const QList<QByteArray> request = lines[0].trimmed().split(' ');
+    if (request.size() < 2) return;
+    QHash<QByteArray, QByteArray> h;
+    for (qsizetype i = 1; i < lines.size(); ++i)
+      if (const qsizetype colon = lines[i].indexOf(':'); colon > 0) h[lines[i].left(colon).trimmed().toLower()] = lines[i].mid(colon + 1).trimmed();
+    if (h.value("expect").toLower() == "100-continue") {
+      s->write("HTTP/1.1 100 Continue\r\n\r\n");
+      s->flush();
+    }
+    QByteArray body;
+    if (h.value("transfer-encoding").toLower() == "chunked")
+      for (;;) {
+        qsizetype eol;
+        while ((eol = in.indexOf("\r\n")) < 0)
+          if (!more()) return;
+        const qsizetype size = in.left(eol).split(';')[0].trimmed().toLongLong(nullptr, 16);
+        while (in.size() < eol + 2 + size + 2)
+          if (!more()) return;
+        body += in.mid(eol + 2, size);
+        in.remove(0, eol + 2 + size + 2);
+        if (size == 0) break;
+      }
+    else {
+      const qsizetype size = h.value("content-length").toLongLong();
+      while (in.size() < size)
+        if (!more()) return;
+      body = in.left(size);
+    }
+    QByteArray reply;
+    if (h.value("authorization") != m_account) {
+      ++refused;
+      reply = "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"host\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    } else {
+      ++served;
+      const QByteArray target = request[1];
+      const qsizetype q = target.indexOf('?');
+      QProcessEnvironment e = QProcessEnvironment::systemEnvironment();
+      e.insert("GIT_PROJECT_ROOT", m_root);
+      e.insert("GIT_HTTP_EXPORT_ALL", "1");
+      e.insert("REMOTE_USER", "s3cret");
+      e.insert("REMOTE_ADDR", "127.0.0.1");
+      e.insert("REQUEST_METHOD", QString::fromLatin1(request[0]));
+      e.insert("PATH_INFO", QString::fromUtf8(QByteArray::fromPercentEncoding(q < 0 ? target : target.left(q))));
+      e.insert("QUERY_STRING", q < 0 ? QString() : QString::fromLatin1(target.mid(q + 1)));
+      e.insert("CONTENT_TYPE", QString::fromLatin1(h.value("content-type")));
+      e.insert("CONTENT_LENGTH", QString::number(body.size()));
+      if (h.contains("content-encoding")) e.insert("HTTP_CONTENT_ENCODING", QString::fromLatin1(h.value("content-encoding")));
+      if (h.contains("git-protocol")) e.insert("GIT_PROTOCOL", QString::fromLatin1(h.value("git-protocol")));
+      QProcess cgi;
+      cgi.setProcessEnvironment(e);
+      cgi.start(git::findProgram(), {"http-backend"});
+      cgi.write(body);
+      cgi.closeWriteChannel();
+      cgi.waitForFinished(60000);
+      const QByteArray out = cgi.readAllStandardOutput();
+      const qsizetype split = out.indexOf("\r\n\r\n");
+      QByteArray status = "200 OK", headers;
+      for (const QByteArray& line : out.left(std::max<qsizetype>(split, 0)).split('\n'))
+        if (line.trimmed().isEmpty()) continue;
+        else if (line.startsWith("Status:")) status = line.mid(7).trimmed();
+        else headers += line.trimmed() + "\r\n";
+      const QByteArray content = split < 0 ? QByteArray() : out.mid(split + 4);
+      reply = "HTTP/1.1 " + status + "\r\n" + headers + "Content-Length: " + QByteArray::number(content.size()) + "\r\nConnection: close\r\n\r\n" + content;
+    }
+    s->write(reply);
+    while (s->bytesToWrite() && s->waitForBytesWritten(10000)) {}
+    s->disconnectFromHost();
+    if (s->state() != QAbstractSocket::UnconnectedState) s->waitForDisconnected(2000);
+  }
+  QString m_root;
+  QByteArray m_account;
+  QThread* m_thread = nullptr;
+  std::atomic<int> m_port{0};
+  std::atomic<bool> m_stop{false};
+};
 
 // A document in a fresh repository set up by OPAD (no LFS: the hooks would want git-lfs on every push of the tests).
 QString setUpRepository(const QString& dir, const git::Install& install) {
@@ -497,7 +632,7 @@ TEST(push_warnings) {
   CHECK(git::pushWarnings(in(dir)).isEmpty());  // the real limits: nothing big here
   git_(tmp.path(), {"init", "-q", "--bare", "-b", "main", tmp.path() + "/remote.git"});
   git_(dir, {"remote", "add", "origin", tmp.path() + "/remote.git"});
-  git_(dir, {"push", "-q", "--no-verify", "-u", "origin", "main"});  // no LFS server here: the pre-push hook would want one
+  git_(dir, {"push", "-q", "--no-verify", "-u", "origin", "main"});  // the LFS upload itself: lfs_push_and_clone
   CHECK(git::pushWarnings(in(dir), 4096, 1024).isEmpty());
 }
 
@@ -570,6 +705,93 @@ TEST(history_and_branches) {
   git_(dir, {"gc", "-q"});
   const git::Objects packed = git::countObjects(in(dir));
   CHECK(packed.loose < objects.loose && packed.packs >= 1);
+}
+
+// UI-62 Push and UI-61 Clone with Git LFS: files under assets/ go up through git-lfs's pre-push hook into the remote's LFS
+// store (a remote on this disk takes them as a host does), the progress names the upload, nothing is left to warn about
+// once pushed, and a new clone gets them back through afterClone (pointers until then: no LFS in git's global config).
+TEST(lfs_push_and_clone) {
+  QTemporaryDir tmp;
+  const QString dir = tmp.path() + "/work", remote = tmp.path() + "/remote.git";
+  QDir().mkpath(dir + "/assets");
+  cli({"new", dir + "/model.opad"});
+  const git::Install install = fromBuild(true);
+  git::setUp(in(dir), dir, install, git::SetupOptions{});
+  if (git::probe(in(dir), dir + "/model.opad").lfsVersion.isEmpty()) {
+    std::printf("git-lfs not found: lfs_push_and_clone skipped\n");
+    return;
+  }
+  const QByteArray bytes = noise(300000);
+  QFile asset(dir + "/assets/board.step");
+  CHECK(asset.open(QIODevice::WriteOnly) && asset.write(bytes) == bytes.size());
+  asset.close();
+  git_(dir, {"add", "-A"});
+  git_(dir, {"commit", "-q", "-m", "a board"});
+  git_(tmp.path(), {"init", "-q", "--bare", "-b", "main", remote});
+  git_(dir, {"remote", "add", "origin", remote});
+  CHECK(git::pushWarnings(in(dir), 4096, 1024).join('\n').contains("in 1 Git LFS files go up"));
+  QStringList phases;
+  git::RunOptions o = git::RunOptions::network();
+  o.progress = [&phases](const QString& phase, int) { phases << phase; };
+  const git::Result pushed = git::run(in(dir), {"push", "--progress", "-u", "origin", "main"}, o);  // as VersionControl::runPush
+  CHECK(pushed.ok());
+  CHECK(phases.contains("Uploading LFS objects") && phases.contains("Writing objects"));
+  const QString oid = QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
+  CHECK(QFileInfo::exists(remote + "/lfs/objects/" + oid.left(2) + "/" + oid.mid(2, 2) + "/" + oid));
+  CHECK(git::pushWarnings(in(dir), 4096, 1024).isEmpty());
+  const QString copy = tmp.path() + "/copy";
+  CHECK(git::clone(in(tmp.path()), QDir::toNativeSeparators(remote), copy, git::RunOptions::network()).ok());
+  QFile pointer(copy + "/assets/board.step");
+  CHECK(pointer.open(QIODevice::ReadOnly) && pointer.readAll().startsWith("version https://git-lfs.github.com/spec/v1"));
+  pointer.close();
+  CHECK(git::afterClone(in(copy), copy, install).contains("Git LFS is set up for this clone."));
+  QFile cloned(copy + "/assets/board.step");
+  CHECK(cloned.open(QIODevice::ReadOnly) && cloned.readAll() == bytes);
+}
+
+// UI-62 against a host, UI-136 sign-in: a remote behind an HTTP sign-in. Without a credential helper or askpass git
+// cannot ask and says so in a sentence; with OPAD as the askpass (offscreen, answered by OPAD_BENCH_ASKPASS) push -u,
+// clone, another clone's push, fetch and a fast-forward pull go through; a wrong password is refused in a sentence.
+TEST(http_host_sign_in) {
+  QTemporaryDir tmp;
+  git_(tmp.path(), {"init", "-q", "--bare", "-b", "main", tmp.path() + "/robot.git"});
+  Host host(tmp.path(), "s3cret:s3cret");
+  CHECK(host.listening());
+  const QString dir = tmp.path() + "/work";
+  QDir().mkpath(dir);
+  const git::Install install = fromBuild(true);
+  const QString doc = setUpRepository(dir, install);
+  git_(dir, {"add", "-A"});
+  git_(dir, {"commit", "-q", "-m", "first"});
+  git_(dir, {"remote", "add", "origin", host.url("robot.git")});
+  const QStringList push{"push", "--progress", "-u", "origin", "main"};
+  git::Result r = git::run(in(dir), push, git::RunOptions::network());
+  CHECK(!r.ok() && r.error().contains("credential helper") && host.refused > 0 && host.served == 0);
+  qputenv("QT_QPA_PLATFORM", "offscreen");
+  qputenv("OPAD_BENCH_ASKPASS", "s3cret");
+  auto signedIn = [](const QString& folder) {
+    git::Context c = in(folder);
+    c.askpass = bin("opad");
+    return c;
+  };
+  r = git::run(signedIn(dir), push, git::RunOptions::network());
+  CHECK(r.ok());
+  CHECK(host.served >= 2 && git::revParse(in(dir), "origin/main") == git::revParse(in(dir), "HEAD"));
+  const QString copy = tmp.path() + "/copy";
+  CHECK(git::clone(signedIn(tmp.path()), host.url("robot.git"), copy, git::RunOptions::network()).ok());
+  git::afterClone(in(copy), copy, install);
+  box(copy + "/model.opad", 20);
+  git_(copy, {"commit", "-q", "-am", "a box from the other clone"});
+  CHECK(git::run(signedIn(copy), {"push", "--progress"}, git::RunOptions::network()).ok());
+  CHECK(git::run(signedIn(dir), {"fetch", "--progress"}, git::RunOptions::network()).ok());
+  git::Repo repo = git::probe(in(dir), doc);
+  CHECK(repo.sync() == git::Repo::Sync::Behind && repo.status.behind == 1);
+  CHECK(git::run(signedIn(dir), {"pull", "--progress", "--no-rebase"}, git::RunOptions::network()).ok());
+  CHECK_EQ(features(doc), size_t(1));
+  qputenv("OPAD_BENCH_ASKPASS", "wrong");
+  r = git::run(signedIn(dir), {"fetch"}, git::RunOptions::network());
+  CHECK(!r.ok() && r.error().contains("refused the sign-in"));
+  for (const char* k : {"QT_QPA_PLATFORM", "OPAD_BENCH_ASKPASS"}) qunsetenv(k);
 }
 
 int main(int argc, char** argv) {
