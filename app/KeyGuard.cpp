@@ -21,11 +21,11 @@ void KeyGuard::type(QWidget* editor, const Key& key) {  // into the editor, whic
   QCoreApplication::sendEvent(editor, &press);
 }
 
-void KeyGuard::release() {
-  if (m_holds == 0 || --m_holds > 0) return;
-  const auto held = std::move(m_held);
-  m_held.clear();
-  if (QWidget* editor = m_editor ? m_editor() : nullptr)
+void KeyGuard::release(const std::function<void()>& then) {
+  std::vector<Key> held;
+  if (m_holds > 0 && --m_holds == 0) held.swap(m_held);
+  if (then) then();  // keys typed meanwhile (into a dialog it opens) are its own
+  if (QWidget* editor = held.empty() || !m_editor ? nullptr : m_editor())
     for (const Key& key : held) type(editor, key);
 }
 

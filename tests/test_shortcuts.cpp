@@ -155,6 +155,14 @@ TEST(key_guard_holds_one_key_shortcuts) {
   CHECK_EQ(hidden,3);
   QTest::keyClick(target,Qt::Key_V);CHECK_EQ(hidden,4);
   guard.release();CHECK(!guard.holding());  // one too many: nothing
+  // The resumed command runs unheld: a dialog it opens takes its keys.
+  guard.hold();QString asked;
+  guard.release([&]{
+    QDialog dialog(&window);auto* field=new QLineEdit(&dialog);
+    QTimer::singleShot(0,&dialog,[&]{QTest::qWaitForWindowActive(&dialog);field->setFocus();QTest::keyClick(field,Qt::Key_V);asked=field->text();dialog.accept();});
+    dialog.exec();
+  });
+  CHECK_EQ(asked,QString("v"));CHECK_EQ(hidden,4);
   qApp->removeEventFilter(&guard);
 }
 int main(int argc,char** argv) {

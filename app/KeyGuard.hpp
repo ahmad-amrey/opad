@@ -5,7 +5,8 @@
 //  - for kQuietMs after a modal window closed (a name typed right after "Edit unsaved copy"), a one-key shortcut of the
 //    window is not taken: the key goes to the widget with the focus (which may still use it, as a sketch does);
 //  - between hold() and release() (a command that resumes after a wait: Rename after Edit unsaved copy), one-key presses
-//    are kept, and release() gives them to the editor that command opened (dropped without one), never to shortcuts.
+//    are kept; release(command) runs the command and gives them to the editor it opened (dropped without one), never to
+//    shortcuts.
 // One key: a printing character (Shift allowed), Delete or Backspace, without Ctrl, Alt or Meta. Installed on the
 // application (qApp->installEventFilter); everything else passes untouched.
 #include <QElapsedTimer>
@@ -24,7 +25,7 @@ class KeyGuard : public QObject {
   static bool oneKey(const QKeyEvent* e);
   bool quiet() const { return m_closed.isValid() && m_closed.elapsed() < kQuietMs; }  // a modal window closed just now
   void hold() { ++m_holds; }  // nests: the last release() delivers
-  void release();
+  void release(const std::function<void()>& then = {});  // runs `then` (the resumed command) unheld, then delivers
   bool holding() const { return m_holds > 0; }
 
  protected:

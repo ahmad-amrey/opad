@@ -124,8 +124,9 @@ void MainWindow::makeEditable(const QString& savePath, std::function<void()> the
   QPointer<KeyGuard> guard = then ? m_keyGuard : nullptr;
   if (guard) guard->hold();
   auto finish = [then, guard](bool resume) {
-    if (resume && then) then();
-    if (guard) guard->release();
+    const std::function<void()> command = resume ? then : nullptr;
+    if (guard) guard->release(command);
+    else if (command) command();
   };
   m_doc->startEditable(m_jobs, [this, savePath, finish](bool ok, const QString& error) {
     if (!ok) {
