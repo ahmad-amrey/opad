@@ -6,7 +6,8 @@
 // without a refusal. Then a snapshot renames Box3, the session undoes that and saves another change: the offer reads it
 // as one newer change on disk, Merge into current adds the rename as one undo step, and Restore into file puts the rename
 // after the file's change. Show unsaved changes is Review changes… in the unsaved-changes question, and Discard deletes a
-// snapshot with its .meta. perf:<prefix> times a snapshot, the offer's preview and Restore into file on any saved document.
+// snapshot with its .meta. Last, a file that became another document is restored into but never written over unasked.
+// perf:<prefix> times a snapshot, the offer's preview and Restore into file on any saved document.
 #include <QAction>
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -26,6 +27,7 @@
 #include <memory>
 
 #include "AppDocument.hpp"
+#include "Banner.hpp"
 #include "BenchRegistry.hpp"
 #include "CompareMode.hpp"
 #include "Jobs.hpp"
@@ -323,6 +325,35 @@ OPAD_BENCH(OPAD_BENCH_RECOVERY_DIFF, recovery_diff) {
           if (!st->answered || !idle()) return false;
           require(st->ok && !QFileInfo::exists(st->first.file) && !QFileInfo::exists(st->first.file + ".meta"), "discarded: " + st->answer);
           pass("Discard deletes the snapshot and its .meta");
+          require(doc->save(), "saved before the last snapshot");
+          doc->run("rename", {{"target", st->body["Box2"]}, {"name", "Arm"}});
+          snap();
+          return true;
+        },
+        [=] {  // its file then becomes another document: Restore into file never writes over that unasked
+          if (!st->snapped || !idle()) return false;
+          st->second = newest();
+          doc->undo();
+          opad::Document::create().save_as(std::filesystem::path(st->file.toStdU16String()));
+          open({st->second});
+          return true;
+        },
+        [=] {
+          if (!read()) return false;
+          require(base()->property("state") == "other" && base()->property("hash") == "changed", "another document: " + base()->text());
+          require(press(RecoveryManager::RestoreFile, st->second) == RecoveryManager::RestoreFile, "Restore into file");
+          return true;
+        },
+        [=] {
+          if (!st->answered || !idle()) return false;
+          require(st->ok && QFileInfo(doc->path()) == QFileInfo(st->file) && name(st->body["Box2"]) == "Arm" && doc->isDirty() && doc->diskChanged(),
+                  "restored over another document: " + st->answer);
+          bool replaced = false;
+          for (auto* b : win->m_viewport->findChildren<Banner*>()) replaced = replaced || b->state() == "replaced";
+          require(replaced, "the bar over the view says the file was replaced");
+          require(!doc->save(), "Save refused while the file is another document");
+          require(opad::Document::load_index(std::filesystem::path(st->file.toStdU16String())).header.uuid != doc->doc.header.uuid, "the other document left as it is");
+          pass("a file that became another document is not written over unasked: " + st->answer);
           return true;
         },
     };
