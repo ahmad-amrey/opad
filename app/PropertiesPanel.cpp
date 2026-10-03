@@ -15,6 +15,7 @@
 
 namespace {
 constexpr int kPropKeyRole = Qt::UserRole + 3;  // properties table: the untranslated property name
+constexpr int kActionRole = Qt::UserRole + 4;   // a provided section's link: index into m_actions
 
 QString fmtNum(double v) { return QString::number(v, 'g', 7); }
 
@@ -79,6 +80,10 @@ PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
     m_table->setStyleSheet(QString("QTreeWidget::item { border-bottom: 1px solid %1; }").arg(theme::css(t.line)));
     for (int i = 0; i < m_table->topLevelItemCount(); ++i) {
       QTreeWidgetItem* row = m_table->topLevelItem(i);
+      if (row->data(0, kActionRole).isValid()) {  // a provided section's link
+        row->setForeground(1, t.sel);
+        continue;
+      }
       row->setForeground(0, t.fg2);
       const QString key = row->data(0, kPropKeyRole).toString();
       row->setForeground(1, key == "key" || key == "source_op" ? t.fg3 : t.fg);
@@ -87,6 +92,10 @@ PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
   m_table->viewport()->installEventFilter(this);
   connect(m_table, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* it, int) {
     if (it->data(0, Qt::UserRole).isValid()) emit faceChosen(it->data(0, Qt::UserRole).toInt());
+    else if (const int i = it->data(0, kActionRole).toInt() - 1; i >= 0 && i < static_cast<int>(m_actions.size())) {
+      const std::function<void()> run = m_actions[static_cast<size_t>(i)];  // it may fill the panel again
+      if (run) run();
+    }
   });
 }
 
@@ -205,6 +214,43 @@ void PropertiesPanel::fill() {
   };
   section(tr("ADJACENT FACES"), props.value("adjacent_faces", opad::json()), "face");
   section(tr("BOUNDING EDGES"), props.value("edges", opad::json()), "edge");
+  m_actions.clear();
+  QList<PropertySection> sections;
+  for (const PropertySectionProvider& provide : m_providers) provide(m_subject, props, sections);
+  for (const PropertySection& s : sections) {
+    auto* h = new QTreeWidgetItem(m_table);
+    h->setText(0, s.title.toUpper());
+    h->setFont(0, theme::ui(11, QFont::Medium));
+    h->setForeground(0, t.fg3);
+    h->setFlags(Qt::ItemIsEnabled);
+    h->setFirstColumnSpanned(true);
+    for (const auto& [label, value] : s.rows) {
+      auto* r = new QTreeWidgetItem(m_table);
+      r->setText(0, label);
+      r->setForeground(0, t.fg2);
+      r->setText(1, QChar(0x202A) + value + QChar(0x202C));  // like the built-in rows: paths and numbers keep their order
+      r->setToolTip(1, value);
+    }
+    for (const auto& [label, run] : s.actions) {
+      auto* r = new QTreeWidgetItem(m_table);
+      r->setText(1, label);
+      r->setForeground(1, t.sel);
+      r->setData(0, kActionRole, static_cast<int>(m_actions.size()) + 1);
+      r->setToolTip(1, label);
+      m_actions.push_back(run);
+    }
+  }
+}
+
+void PropertiesPanel::setSubject(PropertySubject subject) { m_subject = std::move(subject); }
+
+void PropertiesPanel::addSectionProvider(PropertySectionProvider provider) {
+  m_providers.push_back(std::move(provider));
+  refresh();
+}
+
+void PropertiesPanel::refresh() {
+  if (!m_props.is_null()) fill();
 }
 
 void PropertiesPanel::clear() {
@@ -212,5 +258,7 @@ void PropertiesPanel::clear() {
   m_subtitle->setText(tr("Click a body, or pick faces, edges and vertices with the Select filter (1–4)."));
   m_id->clear();
   m_props = opad::json();
+  m_subject = PropertySubject();
+  m_actions.clear();
   m_table->clear();
 }

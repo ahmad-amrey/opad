@@ -85,6 +85,7 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
     m_props->clear();
     return;
   }
+  m_props->setSubject({refs, {}});  // for the areas' sections
   try {
     const opad::Ref& r = refs.front();
     const opad::Node* node = r.kind == opad::Ref::Kind::Body ? m_doc->node(r.body) : nullptr;

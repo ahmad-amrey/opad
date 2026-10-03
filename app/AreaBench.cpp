@@ -26,13 +26,14 @@ class ProbeArea : public AreaController {
   QStringList hooks;  // construction hooks, in call order
   QAction* command = nullptr;
   QLabel* label = nullptr;
-  int ran = 0, asked = 0, menuCalls = 0, badgeClicks = 0;
+  int ran = 0, asked = 0, menuCalls = 0, badgeClicks = 0, propertyActions = 0, sectionRows = 1;
   bool veto = false;
   SelectionContext selected, menuSelection;
   QStringList menuEntries;
   std::vector<bool> changes;  // documentChanged(replaced)
   QRect overlays;
   std::string activated, folderMenu = "none";
+  PropertySubject subject;  // the last one the section provider saw
 
   void buildActions() override {
     hooks << "buildActions";
@@ -86,6 +87,17 @@ class ProbeArea : public AreaController {
     };
     folder.activated = [this](const std::string& id) { activated = id; };
     services().browser()->addFolder(folder);
+    // A section for bodies: rows and a link.
+    services().properties()->addSectionProvider([this](const PropertySubject& s, const opad::json&, QList<PropertySection>& out) {
+      subject = s;
+      if (s.refs.empty() || s.refs.front().kind != opad::Ref::Kind::Body) return;
+      PropertySection section;
+      section.title = "Probe section";
+      section.rows = {{"Probe key", "probe value"}};
+      for (int i = 1; i < sectionRows; ++i) section.rows.append({QString("Probe row %1").arg(i), "x"});
+      section.actions = {{"Probe action", [this] { ++propertyActions; }}};
+      out << section;
+    });
   }
   void contextMenu(const SelectionContext& selection, QMenu& menu) override {
     ++menuCalls;
@@ -120,7 +132,8 @@ QTreeWidgetItem* rowOf(QTreeWidget* tree, const QString& id) {
 // and selection, positionOverlays with the viewport; the browser's decorations (badges right of the name and left of the
 // built-in ones, a badge click that runs its callback and selects nothing, tooltips) and the probe's folder (rows after
 // Sketches, selection, double-click, its own context menu, no eye, open or closed across rebuilds, breadcrumb), the
-// browser saved as <prefix>.browser.png; last maybeClose keeping the document, then letting New replace it.
+// browser saved as <prefix>.browser.png; the probe's Properties section (after the built-in rows, its link, refresh, an
+// op as the subject; the panel saved as <prefix>.properties.png); last maybeClose keeping the document, then letting New replace it.
 OPAD_BENCH(OPAD_BENCH_AREAS, areas) {
   auto all = std::make_shared<bool>(true);
   auto require = [all](bool ok, const QString& what) {
@@ -232,6 +245,43 @@ OPAD_BENCH(OPAD_BENCH_AREAS, areas) {
     w.m_browser->rebuild();
     QTreeWidgetItem* again = tree->topLevelItem(0)->child(0);
     require(again && again->text(0) == "Probe folder" && !again->isExpanded() && rowOf(tree, "probe:a1"), "folder: closed stays closed across a rebuild");
+
+    // Properties: the probe's section under the built-in rows, its link, a refill, an op as the subject.
+    w.m_browser->selectIds({body});
+    w.action("inspect.properties")->trigger();
+    QTreeWidget* table = w.m_props->table();
+    auto rowAt = [table](const QString& text, int column) {
+      for (int i = 0; i < table->topLevelItemCount(); ++i)
+        if (table->topLevelItem(i)->text(column).contains(text)) return i;
+      return -1;
+    };
+    const int header = rowAt("PROBE SECTION", 0), key = rowAt("Probe key", 0), link = rowAt("Probe action", 1);
+    require(w.m_propsPanel->isVisible() && w.m_props->subject().refs.size() == 1 && w.m_props->subject().refs.front().body == body && probe->subject.refs.size() == 1 && probe->subject.refs.front().str() == w.m_props->subject().refs.front().str() &&
+                header > 2 && key == header + 1 && table->topLevelItem(key)->text(1).contains("probe value") && link == key + 1,
+            QString("properties: the section after %1 built-in rows").arg(header));
+    QRect linkRect;
+    if (link >= 0) {
+      table->scrollToItem(table->topLevelItem(link));
+      linkRect = table->visualItemRect(table->topLevelItem(link));
+      const QPoint at = linkRect.center();
+      for (QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+        QMouseEvent e(type, QPointF(at), QPointF(table->viewport()->mapToGlobal(at)), Qt::LeftButton, type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(table->viewport(), &e);
+      }
+    }
+    require(probe->propertyActions == 1, QString("properties: the link runs its action (at %1,%2 in %3x%4)").arg(linkRect.center().x()).arg(linkRect.center().y()).arg(table->viewport()->width()).arg(table->viewport()->height()));
+    probe->sectionRows = 3;
+    w.m_props->refresh();
+    require(rowAt("Probe row 2", 0) == rowAt("Probe key", 0) + 2, "properties: refresh() asks the providers again");
+    table->scrollToBottom();
+    w.m_propsPanel->grab().save(prefix + ".properties.png");
+    for (QToolButton* b : w.m_propsPanel->findChildren<QToolButton*>())
+      if (b->isCheckable()) b->setChecked(true);  // pinned: it stays open for the op
+    std::string feature;
+    for (const auto& op : w.m_doc->doc.ops)
+      if (op.type == "feature") feature = op.id;
+    w.selectOpTargets(feature);
+    require(!feature.empty() && w.m_props->subject().op == feature && probe->subject.op == feature && rowAt("PROBE SECTION", 0) < 0, "properties: a timeline op as the subject");
 
     const auto generation = w.m_doc->generation;
     const int asked = probe->asked;  // opening the file on the command line asked once already
