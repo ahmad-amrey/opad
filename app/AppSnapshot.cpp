@@ -72,7 +72,7 @@ Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwr
   });timer->start();return job;
 }
 
-bool AppDocument::captureSnapshot(JobRunner* jobs, SnapshotCallback done) {
+bool AppDocument::captureSnapshot(JobRunner* jobs, SnapshotCallback done, bool background) {
   if (!hasDocument || loading || designBusy || m_capturing) return false;
   struct Copy {
     std::shared_ptr<opad::Document> document;
@@ -82,6 +82,7 @@ bool AppDocument::captureSnapshot(JobRunner* jobs, SnapshotCallback done) {
   auto copy=std::make_shared<Copy>();
   m_capturing=true;designBusy=true;emit undoChanged();
   auto source=m_storage;
+  if(background)jobs->backgroundNext();
   QPointer<Job> job=jobs->async(tr("Capturing document"),[source,copy](Progress p){
     try { if(!p.cancelled())copy->document=std::make_shared<opad::Document>(*source); }
     catch(const std::exception& e){copy->error=QString::fromUtf8(e.what());}

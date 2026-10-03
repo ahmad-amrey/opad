@@ -73,7 +73,8 @@ class AppDocument : public QObject {
   void cancelLoad();
   void refresh();
   using SnapshotCallback = std::function<void(std::shared_ptr<opad::Document>, const QString&)>;
-  bool captureSnapshot(JobRunner* jobs, SnapshotCallback done);
+  // `background`: nobody waits for it (recovery, the agent bridge): no busy cursor, no completion toast.
+  bool captureSnapshot(JobRunner* jobs, SnapshotCallback done, bool background = false);
   bool snapshotBusy() const { return m_capturing; }
   void recover(opad::Document&& document, opad::Scene&& resolved);
   // Prepared on a worker. Swaps the old values back into the caller for worker disposal.

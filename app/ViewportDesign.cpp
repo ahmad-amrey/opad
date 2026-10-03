@@ -53,6 +53,7 @@ void Viewport::syncSketches() {
       if(found==m_preparedSketches.end() || found->second->stamp!=stamp) {
         prepared=std::make_shared<PreparedSketch>();prepared->stamp=stamp;m_preparedSketches[s.id]=prepared;
         const auto geometry=s.geometry;const auto frame=s.frame;const auto id=s.id;const auto generation=m_doc->generation;
+        m_jobs->backgroundNext();
         m_jobs->async(tr("Preparing sketch curves"),[prepared,geometry,frame](Progress progress) {
           TopoDS_Compound shape;BRep_Builder b;b.MakeCompound(shape);
           auto sk=opad::design::Sketch::from_json(geometry);

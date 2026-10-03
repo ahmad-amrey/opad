@@ -140,6 +140,11 @@ OPAD_BENCH(OPAD_BENCH_FEEDBACK, feedback) {
   }, idle);
   steps.add(300, [=, &w] {
     check(!w.m_jobs->busyCursor() && !QGuiApplication::overrideCursor(), "a background job leaves the cursor alone");
+    // Recovery and the agent bridge copy the document in the background (every 2 min while it is dirty).
+    const bool started = w.m_doc->captureSnapshot(w.m_jobs, [](std::shared_ptr<opad::Document>, const QString&) {}, true);
+    Job* capture = w.m_jobs->current();
+    check(started && capture && capture->title() == QCoreApplication::translate("AppDocument", "Capturing document") && capture->background(),
+          "a recovery snapshot's capture is a background job");
   });
   auto waiting = std::make_shared<QPointer<Job>>();
   steps.add(100, [=, &w] {

@@ -162,6 +162,7 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
     auto sk = std::make_shared<Sketch>(m_sk);
     auto out = std::make_shared<std::vector<opad::Vec3>>();
     const opad::Frame frame = m_frame;
+    m_jobs->backgroundNext();  // after every change, while drawing: never the busy cursor over the crosshair
     m_fillJob = m_jobs->async(tr("Finding profiles"), [sk, out, frame](Progress progress) {
       for (const auto& region : sketch_regions(*sk, frame)) {
         if(progress.cancelled())return;
@@ -847,6 +848,7 @@ bool SketchEditor::prepareGeometry() {
   }
   auto snapshot=std::make_shared<Sketch>(m_sk);const auto previous=m_geometry;
   auto result=std::make_shared<std::shared_ptr<SketchGeometryCache>>();QPointer<SketchEditor> guard(this);
+  m_jobs->backgroundNext();
   m_geometryJob=m_jobs->async(tr("Preparing sketch curves"),[snapshot,previous,result,deflection](Progress p){
     if(p.cancelled())return;
     *result=previous?std::make_shared<SketchGeometryCache>(*previous):std::make_shared<SketchGeometryCache>();
