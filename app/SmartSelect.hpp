@@ -31,6 +31,9 @@ class QMenu;
 class QToolButton;
 namespace opad {
 class Document;
+namespace design {
+struct Plan;
+}
 }
 
 // The chip: a native child of the viewport (rounded by a mask: no translucency over the GL surface), 28 px high, never
@@ -139,7 +142,8 @@ class SmartSelect : public AreaController {
   QList<QAction*> actionsFor(int index, QObject* parent);  // new actions for that candidate (the chip's buttons, the menus)
   void askDependents(const smart::Candidate& c, const std::vector<std::pair<std::string, std::string>>& deps, const std::vector<Viewport::PreviewPart>& parts,
                      const std::vector<std::string>& hidden);
-  void commitDelete(const smart::Candidate& c, std::vector<std::string> ops);
+  // One undo step; `planned`: the plan deleteFeature made for exactly these ops on the document as it is.
+  void commitDelete(const smart::Candidate& c, std::vector<std::string> ops, std::shared_ptr<opad::design::Plan> planned = {});
   void deletePicks();
   void tangentFaces();  // Alt+double-click on a face: the faces joined to it by smooth edges
   int owner() const;    // the candidate of the feature or import that made every pick, -1 if none

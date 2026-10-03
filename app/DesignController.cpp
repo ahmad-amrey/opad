@@ -220,6 +220,31 @@ void DesignController::applyOps(std::vector<opad::json> ops, const QString& labe
   });
 }
 
+void DesignController::commitPlanned(std::shared_ptr<Plan> plan, const QString& label, std::function<void(bool, const QString&)> done) {
+  if (!m_doc->hasDocument || m_doc->browse) return;
+  if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, plan, label, done] { commitPlanned(plan, label, done); });
+  auto report = [this, done](bool ok, const QString& error) {
+    if (done) done(ok, error);
+    else if (!ok) emit failed(error);
+    emit stateChanged();
+  };
+  if (m_doc->designBusy) return report(false, tr("The design is still being recomputed; try again in a moment."));
+  m_doc->designBusy = true;
+  const auto generation = m_doc->generation;
+  whenNobodyReads(this, [this, plan, label, report, generation] {
+    if (generation != m_doc->generation) return;
+    m_doc->designBusy = false;
+    try {
+      const opad::json rep = m_doc->commitPlan(std::move(*plan), label);
+      const size_t errors = rep.value("errors", opad::json::array()).size();
+      if (errors > 0) emit status(tr("%1 later feature(s) could not be recomputed; they are marked on the timeline.").arg(errors));
+      report(true, {});
+    } catch (const std::exception& e) {
+      report(false, QString::fromUtf8(e.what()));
+    }
+  });
+}
+
 void DesignController::regenerate(bool force) {
   if (!m_doc->hasDocument || m_doc->browse || m_doc->designBusy) return;
   m_doc->designBusy = true;

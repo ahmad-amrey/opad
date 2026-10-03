@@ -47,6 +47,9 @@ class DesignController : public QObject {
   void setSuppressed(const std::string& featureId, bool on);
   // Plans `ops` on a worker and commits them. `done(ok, error)` runs on the UI thread.
   void applyOps(std::vector<opad::json> ops, const QString& label, std::function<void(bool, const QString&)> done = {});
+  // A plan made on a worker over a copy of the document as it is now (the caller compared the revision) committed as
+  // applyOps commits its own, without planning again.
+  void commitPlanned(std::shared_ptr<opad::design::Plan> plan, const QString& label, std::function<void(bool, const QString&)> done = {});
 
   bool featureActive() const { return m_form->spec() != nullptr && m_featureOn; }
   bool pickingPlane() const { return m_pickPlane; }
