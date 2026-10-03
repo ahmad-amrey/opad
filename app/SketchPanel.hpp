@@ -22,6 +22,7 @@ class SketchPanel : public QWidget {
   QSize toolSizeHint(int width) const;
  protected:
   void keyPressEvent(QKeyEvent* e) override;
+  void resizeEvent(QResizeEvent* e) override;
  signals:
   void finishRequested();
   void contentChanged();  // refreshed: the tool page may need another height
@@ -30,6 +31,7 @@ class SketchPanel : public QWidget {
   void chooseTool();
   void buildFields();
   void keysToView();  // after a footer button: the keys go on in the view
+  void fitSteps();
   SketchEditor* m_editor;
   QComboBox *m_group, *m_tools, *m_coordinates;
   QLineEdit *m_u, *m_v;

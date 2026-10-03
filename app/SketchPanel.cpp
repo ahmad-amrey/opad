@@ -303,11 +303,7 @@ void SketchPanel::refresh() {
     m_undoPoint->setVisible(tool!="select");m_closeTool->setVisible(tool!="select");
   }
   m_steps->setSteps(steps(),{});
-  // The measurement widget owns an inner scroll area: give its numbered rows room before Qt's deferred
-  // show/layout pass (minimumSizeHint otherwise sees newly created rows as hidden and collapses them).
-  int stepsHeight=20;
-  for(const auto& step:steps())stepsHeight+=fontMetrics().boundingRect(QRect(0,0,std::max(200,width()-90),1000),Qt::TextWordWrap,step.label).height()+14+(step.picked.isEmpty()?0:fontMetrics().height()+3);
-  m_steps->setFixedHeight(stepsHeight);
+  fitSteps();
   m_state->setText((m_editor->visible()?QString():tr("This sketch is hidden. Show it in the browser to see your edits.")+"\n")+(m_editor->modified()?tr("Modified sketch"):tr("Sketch"))+tr(" · %1 degrees of freedom").arg(m_editor->dof()));
   const int selected=m_constraints->currentItem()?m_constraints->currentItem()->data(0,Qt::UserRole).toInt():0;
   m_constraints->clear();
@@ -330,6 +326,12 @@ void SketchPanel::refresh() {
   QTimer::singleShot(0,this,[this]{emit contentChanged();});
 }
 void SketchPanel::showPage(int page){m_pages->setCurrentIndex(page);refresh();}
+// The steps' own scroll area as tall as its rows at the width they get, so none hides under the fields (UI-25).
+void SketchPanel::fitSteps() {
+  const int width=m_steps->isVisible()?m_steps->width():this->width()-28;
+  m_steps->setFixedHeight(m_steps->stepsHeight(std::max(160,width))+2);
+}
+void SketchPanel::resizeEvent(QResizeEvent* e){QWidget::resizeEvent(e);if(m_editor->active())fitSteps();}
 void SketchPanel::keysToView() {
   QWidget* view=m_editor->m_viewport;
   if(!view->isVisible())return;

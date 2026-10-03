@@ -6,6 +6,7 @@
 #include "SketchPanel.hpp"
 #include "DimensionHandle.hpp"
 #include "ShapeInput.hpp"
+#include "SketchSteps.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepOffsetAPI_MakeOffset.hxx>
@@ -103,34 +104,16 @@ void SketchEditor::setTool(const QString& tool) {
   scheduleToolPreview();
 }
 
+// The step that waits, as the prompt bar and the tool panel list it (SketchSteps.hpp, UI-25), and the tool's note.
 void SketchEditor::toolPrompt() {
   QString t;
-  const int n = static_cast<int>(m_clicks.size());
-  if (m_tool == "select") t = tr("Select or drag geometry · double-click a dimension to change it · Del deletes · X construction");
-  else if (m_tool == "line") t = m_chain.empty() ? tr("Line: click the start point") : tr("Line: click the next point · a double-click, Enter or Esc ends the chain · Backspace takes the last point back");
-  else if (m_tool == "rect") t = n == 0 ? tr("Rectangle: click the first corner") : tr("Rectangle: click the opposite corner");
-  else if (m_tool == "crect") t = n == 0 ? tr("Centre rectangle: click the centre") : tr("Centre rectangle: click a corner");
-  else if (m_tool == "circle") t = n == 0 ? tr("Circle: click the centre") : tr("Circle: click a point on the circle");
-  else if (m_tool == "circle3") t = tr("3-point circle: click point %1 of 3").arg(n + 1);
-  else if (m_tool == "arc3") t = n == 0 ? tr("3-point arc: click the start") : n == 1 ? tr("3-point arc: click the end") : tr("3-point arc: click a point on the arc");
-  else if (m_tool == "arcc") t = n == 0 ? tr("Centre arc: click the centre") : n == 1 ? tr("Centre arc: click the start") : tr("Centre arc: click the end");
-  else if (m_tool == "polygon") t = n == 0 ? tr("Polygon: click the centre") : tr("Polygon: click a corner");
-  else if (m_tool == "slot") t = n == 0 ? tr("Slot: click the first centre") : n == 1 ? tr("Slot: click the second centre") : tr("Slot: click to set the width");
-  else if (m_tool == "ellipse") t = n == 0 ? tr("Ellipse: click the centre") : n == 1 ? tr("Ellipse: click the end of the first axis") : tr("Ellipse: click to set the second axis");
-  else if (m_tool == "point") t = tr("Point: click to place (holes are drilled at sketch points)");
-  else if (m_tool == "spline") t = tr("Spline: click nodes; Enter finishes. Alt-click a finished spline to insert a node; double-click a node to edit weights.");
-  else if (m_tool == "fillet") t = tr("Sketch fillet: click the corner where two lines meet");
-  else if (m_tool == "trim") t = tr("Trim: click the part of a curve to remove");
-  else if (m_tool == "mirror") {
-    // Two stages: clicks pick the curves until Enter (or Pick mirror line) moves on to the line; said as such, since the
-    // prompt used to ask for the line while clicks still added curves.
-    if (option("mirrorAxis", "picked") != "picked") t = tr("Mirror: click the curves to mirror, then Apply");
-    else if (option("mirrorStage", "seed") != "axis") t = tr("Mirror: click the curves to mirror, then press Enter to pick the mirror line");
-    else t = m_picked.empty() ? tr("Mirror: click the mirror line") : tr("Mirror: Apply, or click another mirror line");
+  if (const auto* entry = sketchsteps::find(m_tool.toStdString())) {
+    const QList<ToolStep> steps = toolSteps();
+    int waiting = 0;
+    while (waiting + 1 < steps.size() && !steps[waiting].picked.isEmpty()) ++waiting;
+    t = tr("%1: %2").arg(i18n::t(entry->name), steps[waiting].label);
+    if (*entry->note) t += QStringLiteral(" · ") + i18n::t(entry->note);
   }
-  else if (m_tool == "project") t = tr("Project: click straight or circular edges of bodies; they become fixed reference curves");
-  else if (m_tool == "dimension") t = m_placingDim ? tr("Dimension: click where the value should sit (or pick a second entity)") : tr("Dimension: pick a line, a circle, an arc, or two points");
-  else if (m_tool.startsWith("c:")) t = tr("%1: pick the geometry it applies to").arg(i18n::t(m_tool.mid(2).left(1).toUpper() + m_tool.mid(3)));
   emit status(t);
   emit workflowChanged();
   updateInput();  // the boxes of the step that waits now
@@ -200,7 +183,7 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     if (p == m_chain.back()) return cancel_change();
     if (m_tool == "spline") {
       m_chain.push_back(p);
-      end_change(tr("Point"));
+      if (end_change(tr("Point")) && m_chain.size() == 2) toolPrompt();
       return;
     }
     const int line = m_sk.add_line(m_chain.back(), p);
@@ -232,9 +215,8 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     const bool closes = p == m_chain.front() && m_chain.size() > 1;
     if (!end_change(tr("Line"))) return;
     m_chain.push_back(p);
-    if (closes) {  // back at the start: the profile is closed, the chain is done
-      finishChain();
-    }
+    if (closes) finishChain();  // back at the start: the profile is closed, the chain is done
+    else if (m_chain.size() == 2) toolPrompt();  // more points, or Enter ends it
     return;
   }
 
@@ -627,11 +609,13 @@ void SketchEditor::constraintClick(const Hit& h) {
   const bool lineOnly = (type == CT::Horizontal || type == CT::Vertical) && m_sk.point(h.id) != nullptr && ids.size() < 2;
   if (!lineOnly && applyConstraint(type, ids, true)) {
     m_picked.clear();
-  } else if (m_picked.size() >= 3) {
+  } else if (m_picked.size() >= 3 || !m_conflicts.empty()) {  // the reason stays on the status line
+    if (m_conflicts.empty()) emit status(tr("That constraint does not fit what was picked; pick again."));
     m_picked.clear();
-    emit status(tr("That constraint does not fit what was picked; pick again."));
+    return rebuild();
   }
   rebuild();
+  toolPrompt();  // the next pick, or the next constraint
 }
 
 // ---------------------------------------------------------------- dimensions
@@ -795,7 +779,7 @@ void SketchEditor::editDimension(int id, bool fresh) {
   m_options["reference"] = c->reference ? "1" : "0";
   m_panelFieldsDirty = true;
   emit toolChanged(m_tool);
-  emit workflowChanged();
+  toolPrompt();  // the value step waits (the status line still asked for the geometry)
 
   const Tokens& t = theme::current();
   m_dimEdit->setStyleSheet(QString("#sketchDimensionValue { background: %1; color: %2; border: 1px solid %3; border-radius: 4px; padding: 1px 6px; selection-background-color: %4; }")
@@ -845,11 +829,13 @@ void SketchEditor::commitDimensionEdit() {
   c->expr = expr;
   c->reference = option("reference", "0") == "1";
   if (c->reference) c->expr.clear();
+  m_panelFieldsDirty = true;
   if(end_change(tr("Dimension"))) {
     if(m_dimFresh && m_undo.size()>1)m_undo.pop_back(); // placement and its value are one user edit
     m_dimFresh=false;m_dimEditing=0;
+    return toolPrompt();  // the next dimension (a refusal's reason stays on the status line)
   }
-  m_panelFieldsDirty = true; emit workflowChanged();
+  emit workflowChanged();
 }
 
 // ---------------------------------------------------------------- sketch fillet
@@ -1324,6 +1310,7 @@ void SketchEditor::bench(const QString&) {
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SHAPES"))return benchShapes();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_CROSSLOCK"))return benchCrossLock();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SNAPS"))return benchSnaps();
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_STEPS"))return benchSteps();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY"))return benchModify();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES"))return benchPrimitives();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW"))return benchWorkflow();

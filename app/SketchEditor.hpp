@@ -106,6 +106,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchShapes();
   void benchCrossLock();
   void benchSnaps();
+  void benchSteps();
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
   void benchLarge(const QString& output, opad::json metrics);
 

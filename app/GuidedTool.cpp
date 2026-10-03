@@ -253,6 +253,7 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
   m_grid->setRootIsDecorated(false);
   m_grid->setSelectionMode(QAbstractItemView::NoSelection);
   m_grid->setFocusPolicy(Qt::NoFocus);
+  m_grid->hide();  // until there is a result (setResult): its empty frame took 6 px under the steps
   auto* gridRow = new QHBoxLayout();  // the grid lines stop 12 px short of the panel's edges, like the summary text
   gridRow->setContentsMargins(12, 0, 12, 0);
   gridRow->addWidget(m_grid);
@@ -348,8 +349,17 @@ void ToolStepsPanel::setSteps(const QList<ToolStep>& steps, const QString& hover
     l->addWidget(ring, 0, Qt::AlignTop);
     l->addLayout(text, 1);
     m_stepRows->addWidget(row);
+    for (QWidget* w : {static_cast<QWidget*>(ring), static_cast<QWidget*>(label), static_cast<QWidget*>(row)}) w->show();  // counted by stepsHeight() at once
+    row->ensurePolished();  // its style sheet's border too
   }
   emit contentSizeChanged();
+}
+
+// The rows as they lay out at `width` (UI-25): a new row is hidden for the layout until Qt shows it a turn later, so a height
+// guessed from the labels cut the last row off under the fields below it (the sketch panel's dimension tool).
+int ToolStepsPanel::stepsHeight(int width) const {
+  m_body->layout()->invalidate();
+  return m_body->layout()->totalHeightForWidth(std::max(1, width));
 }
 
 void ToolStepsPanel::setSummary(const QString& title, const QString& subtitle, const QString& state) {

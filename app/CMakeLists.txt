@@ -39,10 +39,11 @@ set(OPAD_APP_SOURCES
   SketchSnap.hpp
   SketchGridBench.cpp
   SketchKeys.hpp
+  SketchSteps.hpp
   SketchLadderBench.cpp
   InputKeys.hpp DynamicInput.cpp DynamicInput.hpp SketchDynamicInput.cpp SketchKeysBench.cpp
   ShapeInput.hpp
-  SketchShapesBench.cpp SketchCrossLockBench.cpp SketchSnapsBench.cpp
+  SketchShapesBench.cpp SketchCrossLockBench.cpp SketchSnapsBench.cpp SketchStepsBench.cpp
   GeometrySelection.cpp
   Panels.cpp Panels.hpp
   ShortcutEditor.cpp ShortcutEditor.hpp ShortcutBench.cpp

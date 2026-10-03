@@ -28,6 +28,7 @@ class PromptBar : public QWidget {
   explicit PromptBar(QWidget* parent = nullptr);
   void set(const QString& icon, const QString& title, const QList<ToolStep>& steps, const QString& hints);
   QString hints() const { return m_hints; }
+  const QList<ToolStep>& steps() const { return m_steps; }
   QSize sizeHint() const override;
  protected:
   void paintEvent(QPaintEvent*) override;
@@ -56,6 +57,7 @@ class ToolStepsPanel : public QWidget {
   void setComponentsState(bool visible, bool checked);
   void setAnchorOptions(const QStringList& labels, int current);
   QSize preferredSize(int width);
+  int stepsHeight(int width) const;  // what the scrolled part needs at that width, new step rows counted at once
  signals:
   void clearRequested();
   void pinRequested();
