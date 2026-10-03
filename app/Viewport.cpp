@@ -1113,11 +1113,12 @@ void Viewport::isolate(const std::vector<std::string>& ids) {
 }
 
 // ---------------------------------------------------------------- camera (F17/F18)
-// What Fit frames: the model as drawn (bodies, sketches and their images, a feature preview), never the grid, overlays,
-// gizmos or annotations. V3d_View::FitAll(margin) boxes every structure in the view, and OCCT 7.9 adds the centre of
-// any *infinite* structure more than 500 m across (Graphic3d_Layer::BoundingBox, centerOfinfiniteBndBox). The grid is one,
-// and it used to reach from the world origin to the farthest coordinate: a house 600 m out (an OBJ keeping its site
-// coordinates) was framed together with (0,0,0), 9x too small, in the corner under the cube.
+// What Fit frames: the model as drawn (bodies, sketches and their images, a feature preview, finite overlays such as a
+// drawing being placed), never the grid, gizmos or annotations (infinite). V3d_View::FitAll(margin) boxes every
+// structure in the view, and OCCT 7.9 adds the centre of any *infinite* structure more than 500 m across
+// (Graphic3d_Layer::BoundingBox, centerOfinfiniteBndBox). The grid is one, and it used to reach from the world origin to
+// the farthest coordinate: a house 600 m out (an OBJ keeping its site coordinates) was framed together with (0,0,0), 9x
+// too small, in the corner under the cube.
 Bnd_Box Viewport::fitBounds(bool fallback) const {
   Bnd_Box bounds;
   auto add = [&](const Handle(AIS_InteractiveObject)& object) {
@@ -1132,6 +1133,7 @@ Bnd_Box Viewport::fitBounds(bool fallback) const {
     for (const auto& image : wire.backdrops) add(image);
   }
   for (const auto& preview : m_previewBodies) add(preview);
+  for (const auto& overlay : m_overlays) if (!overlay->IsInfinite() && overlay->TransformPersistence().IsNull()) add(overlay);
   if (fallback && bounds.IsVoid()) {  // nothing to frame: the default grid, as Home does
     const double extent = std::max(1.0, QSettings().value("view/gridExtent", 100.0).toDouble());
     bounds.Add(gp_Pnt(-extent, -extent, 0));

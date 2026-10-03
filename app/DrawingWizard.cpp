@@ -267,6 +267,10 @@ bool MainWindow::benchDrawingImport() {
         *expected = m_drawingPlacer->placement();
         const opad::Vec3 origin = expected->apply({0, 0, 0});
         if (std::abs(origin[0] - 100) > 1e-9 || std::abs(origin[1]) > 1e-9 || std::abs(origin[2] - 50) > 1e-9) return fail("snapping did not move the vertex onto the target");
+        // Fit frames the drawing being placed (an overlay) with the 40 mm box, where it now lies: x from 100 on.
+        const Bnd_Box fit = m_viewport->benchFitBox();
+        if (fit.IsVoid() || fit.CornerMax().X() < 100 - 1e-6 || fit.CornerMin().X() > 1e-6) return fail("Fit does not frame the drawing being placed");
+        trace::log("bench: Fit frames the drawing being placed PASS");
         m_drawingPlacer->panel()->findChild<QPushButton*>("primary")->click();
         ++*phase;
         break;

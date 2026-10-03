@@ -77,6 +77,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool gridSnap() const { return m_gridSnap; }
   double gridStep() const { return m_gridStep; }
   Bnd_Box benchGridBox() const;  // where the grid is drawn (OCCT's structure, world box), for benches
+  Bnd_Box benchFitBox() const { return fitBounds(false); }  // what Fit frames, for benches
   opad::json circleInfo(const opad::Ref& ref) const;
   void setShadows(bool on);
   void setRenderQuality(int level);
@@ -524,6 +525,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_candidates;
   std::vector<Handle(AIS_Shape)> m_pointMarks;  // markPickedPoints
   std::vector<Handle(AIS_Shape)> m_previewBodies;
+  std::vector<Handle(AIS_InteractiveObject)> m_overlays;  // showOverlay's: Fit frames the finite ones (a drawing being placed)
   std::set<std::string> m_previewHidden;  // nodes whose own object is erased while the preview shows
   bool m_bodiesPickable = true;
   SketchInput* m_sketchInput = nullptr;

@@ -401,6 +401,8 @@ void Viewport::showOverlay(const Handle(AIS_InteractiveObject)& obj) {
   if (!m_initialised || obj.IsNull()) return;
   obj->SetZLayer(Graphic3d_ZLayerId_Topmost);
   m_ctx->Display(obj, 0, -1, Standard_False);
+  m_overlays.erase(std::remove_if(m_overlays.begin(), m_overlays.end(), [&](const Handle(AIS_InteractiveObject)& o) { return o == obj || !m_ctx->IsDisplayed(o); }), m_overlays.end());
+  m_overlays.push_back(obj);
   redrawScene();
 }
 
@@ -413,6 +415,7 @@ void Viewport::updateOverlay(const Handle(AIS_InteractiveObject)& obj) {
 void Viewport::removeOverlay(const Handle(AIS_InteractiveObject)& obj) {
   if (!m_initialised || obj.IsNull()) return;
   m_ctx->Remove(obj, Standard_False);
+  m_overlays.erase(std::remove(m_overlays.begin(), m_overlays.end(), obj), m_overlays.end());
   redrawScene();
 }
 
