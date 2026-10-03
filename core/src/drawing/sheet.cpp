@@ -172,6 +172,7 @@ std::string item_name(const SheetItem& t) {
   }
   if (t.kind == "note") return d.value("text", "");
   if (t.kind == "datum") return d.value("letter", "");
+  if (t.kind == "issue") return d.value("rev", "");
   const json v = d.value("value", json());
   const std::string value = v.is_string() ? v.get<std::string>() : v.is_number() ? number(v.get<double>(), 4) : std::string();
   if (t.kind == "fcf") return characteristic_glyph(d.value("characteristic", "")) + " " + (d.value("zone", "") == "diameter" ? "⌀" : "") + value;
@@ -237,14 +238,26 @@ bool is_sheet_record(const std::string& op_type) { return op_type == "sheet" || 
 void validate_record(const json& op) {
   const std::string type = op.value("op", "");
   const auto fail = [&](const std::string& why) { throw Error(type + ": " + why); };
-  for (const char* k : {"sheet", "view", "parent"})
+  for (const char* k : {"sheet", "view", "parent", "list"})
     if (op.contains(k) && !(op[k].is_string() && is_uuid(op[k].get<std::string>()))) fail(std::string("'") + k + "' must be an op id");
-  for (const char* k : {"name", "drawing", "kind", "type", "standard", "projection", "units", "side", "scale", "text", "prefix", "suffix"})
+  for (const char* k : {"name", "drawing", "kind", "type", "standard", "projection", "units", "side", "scale", "text", "prefix", "suffix", "rev", "date",
+                        "description", "approved", "pdf", "pdf_sha256", "tag", "grow"})
     if (op.contains(k) && !op[k].is_string()) fail(std::string("'") + k + "' must be text");
-  for (const char* k : {"size", "template", "values", "source", "orient", "style", "label", "place", "result", "tol", "frozen"})
+  for (const char* k : {"size", "template", "values", "source", "orient", "style", "label", "place", "result", "tol", "frozen", "bom", "headers",
+                        "fingerprints", "frames"})
     if (op.contains(k) && !op[k].is_object()) fail(std::string("'") + k + "' must be an object");
-  for (const char* k : {"gap", "height", "precision"})
+  for (const char* k : {"gap", "height", "precision", "width", "diameter"})
     if (op.contains(k) && !finite(op[k])) fail(std::string("'") + k + "' must be a number");
+  if (op.contains("sheets") && !(op["sheets"].is_array() && std::all_of(op["sheets"].begin(), op["sheets"].end(), [](const json& s) {
+                                   return s.is_string() && is_uuid(s.get<std::string>());
+                                 })))
+    fail("'sheets' must be op ids");
+  if (op.contains("columns") && !(op["columns"].is_array() && std::all_of(op["columns"].begin(), op["columns"].end(), [](const json& c) { return c.is_string(); })))
+    fail("'columns' must be column names");
+  if (op.contains("numbers") && !(op["numbers"].is_array() && std::all_of(op["numbers"].begin(), op["numbers"].end(), [](const json& e) {
+                                    return e.is_object() && e.value("n", json()).is_number_integer() && e["n"].get<long long>() > 0;
+                                  })))
+    fail("item numbers are [{n, identity, node}] with n from 1");
   if (op.contains("at") && !point2(op["at"])) fail("'at' must be [x, y] in paper mm");
   if (op.contains("place"))
     for (const auto& [k, v] : op["place"].items())

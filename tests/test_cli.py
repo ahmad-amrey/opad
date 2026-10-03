@@ -3,6 +3,7 @@
 
 usage: test_cli.py <path-to-opad-cli> <fixtures-dir>
 """
+import hashlib
 import json
 import os
 import re
@@ -148,11 +149,21 @@ def basic_workflow():
     sheet_doc = os.path.join(tmp, "sheet.opad")
     shutil.copy(DOC, sheet_doc)
     s = run("sheet", sheet_doc, "--size", "A3", "--name", "Assembly")
-    run("sheet_view", sheet_doc, "--sheet", s["id"], "--orient", "iso", "--scale", "auto")
+    iso = run("sheet_view", sheet_doc, "--sheet", s["id"], "--orient", "iso", "--scale", "auto")
     pdf = os.path.join(tmp, "sheet.pdf")
     v = run("export", sheet_doc, "--sheet", "Assembly", "--format", "pdf", "--out", pdf)
     assert v["paper"] == "A3" and v["page"] == [420, 297] and v["sheet"]["views"] == 1 and v["layers"]["Visible"] > 0, v
     assert open(pdf, "rb").read(5) == b"%PDF-"
+    # a parts list, auto-balloons and an issued revision whose PDF is written and hashed (UI-84)
+    run("sheet_item", sheet_doc, "--sheet", s["id"], "--kind", "parts_list")
+    balloons = run("sheet_balloons", sheet_doc, "--sheet", s["id"], "--view", iso["id"])
+    assert balloons["ids"] and not balloons["created"], balloons
+    issued_pdf = os.path.join(tmp, "issued.pdf")
+    issue = run("sheet_issue", sheet_doc, "--sheet", s["id"], "--description", "First release", "--out", issued_pdf)
+    assert issue["rev"] == "A" and issue["frozen"] == 1 and issue["pdf"] == "issued.pdf", issue
+    assert issue["pdf_sha256"] == hashlib.sha256(open(issued_pdf, "rb").read()).hexdigest()
+    info = run("sheet_info", sheet_doc, "--sheet", s["id"])
+    assert info["issues"][0]["rev"] == "A" and not info["issues"][0]["changed"]["views"], info["issues"]
     # delete (tombstone) the annotation: it disappears from the resolved list but stays in the log
     run("delete", DOC, "--target", a["id"])
     assert len(run("annotations", DOC)["annotations"]) == 0

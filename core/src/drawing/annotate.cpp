@@ -26,6 +26,7 @@
 #include "opad/design/feature.hpp"
 #include "opad/drawing/holes.hpp"
 #include "opad/drawing/symbols.hpp"
+#include "opad/drawing/tables.hpp"
 #include "opad/geometry.hpp"
 
 namespace opad::drawing {
@@ -426,7 +427,8 @@ json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, 
 }
 
 bool known_item(const std::string& kind, const std::string& type) {
-  static const std::set<std::string> kinds = {"dimension", "note", "centermark", "centerline", "hole_callout", "hole_table", "datum", "fcf", "surface", "dimension_set"};
+  static const std::set<std::string> kinds = {"dimension",     "note",       "centermark", "centerline",     "hole_callout", "hole_table", "datum", "fcf",
+                                              "surface",       "dimension_set", "parts_list", "balloon", "revision_table", "issue"};
   static const std::set<std::string> dimensions = {"horizontal", "vertical", "aligned", "radius", "diameter", "angle"};
   static const std::set<std::string> sets = {"ordinate", "baseline", "chain"};
   if (!kinds.count(kind)) return false;
@@ -500,8 +502,41 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
     }
     return m;
   }
+  if (kind == "parts_list") return parts_rows(doc, scene, sheet, d);
+  if (kind == "issue") return json::object();
+  if (kind == "revision_table") {
+    json rows = json::array();
+    for (const SheetItem* t : drawing_issues(scene, sheet))
+      rows.push_back({{"rev", t->def.value("rev", "")}, {"description", t->def.value("description", "")}, {"date", t->def.value("date", "")},
+                      {"approved", t->def.value("approved", "")}, {"id", t->id}});
+    return {{"rows", rows}};
+  }
   if (!known_item(kind, item.type)) throw Error("needs a newer OPAD (sheet_item kind '" + kind + "')");
   if (!frame) throw Error("a " + kind + " needs its view");
+  if (kind == "balloon") {  // its leader on the part, its number from the parts list's row of that part
+    if (refs.size() != 1) throw Error("a balloon points at one part");
+    if (!frame->error.empty()) throw Error("its view cannot be drawn: " + frame->error);
+    const Resolver R(doc, scene);
+    const Pick k = pick_of(R, refs[0]);
+    if (k.node.empty()) throw Error("a balloon points at a part of the model");
+    const Paper paper{*frame};
+    Vec2 tip = paper(k.p);
+    if (k.circle && !k.point && paper.along(k.axis)) {  // onto the circle, on the balloon's side
+      const Vec2 c = paper(k.centre);
+      tip = add(c, mul(unit(sub(vec2(d.value("place", json::object()).value("text", json()), c), c), {1, 1}), k.r * frame->scale));
+    } else if (k.circle && !k.point) {
+      tip = paper(k.a);
+    }
+    const SheetItem* list = parts_list_of(scene, sheet, d.value("list", ""));
+    const Sheet* listed = list ? scene.sheet(list->sheet) : &sheet;
+    const json rows = parts_rows(doc, scene, listed ? *listed : sheet, list ? list->def : json::object());
+    const json* row = row_of(scene, rows["rows"], k.node);
+    if (!row) throw Error(list ? "that part is not in the parts list" : "that part is not in the bill of materials");
+    json m = {{"tip", js(tip)}, {"number", std::to_string(row->value("number", 0))}, {"qty", row->value("qty", 1)}, {"dot", k.plane || k.cylinder || (!k.edge && !k.point)}};
+    if (list && !row->value("settled", false)) m["settle"] = {{"list", list->id}, {"numbers", rows["numbers"]}};
+    if (R.notes.contains("rehinted")) m["rehinted"] = R.notes["rehinted"];
+    return m;
+  }
   if (!frame->error.empty()) throw Error("its view cannot be drawn: " + frame->error);
   const Resolver R(doc, scene);
   const Paper paper{*frame};
@@ -720,6 +755,7 @@ json item_result(const json& def, const json& m) {
   if (kind == "dimension") return {{"value", m.value("value", 0.0)}, {"shown", m.value("shown", "")}};
   if (kind == "hole_callout") return {{"shown", m.value("shown", "")}, {"count", m.value("count", 1)}};
   if (kind == "dimension_set") return {{"values", m.value("values", json::array())}, {"shown", m.value("shown", json::array())}};
+  if (kind == "balloon") return {{"shown", m.value("number", "")}};
   if (kind == "hole_table") {
     json rows = json::array();
     for (const auto& r : m.value("rows", json::array())) rows.push_back({{"tag", r["tag"]}, {"x", r3(r["x"].get<double>())}, {"y", r3(r["y"].get<double>())}, {"size", r["size"]}});
@@ -810,6 +846,14 @@ void draw_item(Display& d, const Sheet& sheet, const json& def, const json& m, V
     }
     return;
   }
+  if (kind == "parts_list" || kind == "revision_table") return draw_table_item(d, def, m, s);
+  if (kind == "issue") return;
+  if (kind == "balloon") {
+    const long long qty = m.value("qty", 1LL);
+    balloon(d, dims, place, def.value("diameter", 10.0), m.value("number", "?"), P(m["tip"]), m.value("dot", false),
+            def.value("qty", false) && qty > 1 ? std::to_string(qty) + "×" : std::string(), s);
+    return;
+  }
   const int center = d.layer({"Center", kInk, LineType::Continuous, 0.25});
   if (kind == "centermark") {
     centre_mark(d, center, P(m["centre"]), m.value("r", 0.0), def.value("extend", 2.0) * s.scale, {1, 0}, s);
@@ -892,6 +936,18 @@ json plan_item(const Document& doc, const Scene& scene, const json& args, json* 
   const Sheet* sheet = sheet_of(scene, sheetId);
   if (!sheet) throw Error("sheet " + sheetId + " does not exist (sheet_info lists the sheets)");
   const std::string kind = args.value("kind", args.contains("refs") || args.contains("picks") ? "dimension" : "note");
+  if (kind == "issue") throw Error("sheet_item: an issue is made by sheet_issue");
+  if (kind == "parts_list" || kind == "revision_table") {  // on the sheet itself, from the BoM or the drawing's issues
+    const json op = kind == "parts_list" ? plan_parts_list(doc, scene, args) : plan_revision_table(scene, args);
+    if (measured_out) {
+      SheetItem t;
+      t.sheet = sheet->id;
+      t.kind = kind;
+      t.def = op;
+      *measured_out = measure_item(doc, scene, *sheet, t, nullptr);
+    }
+    return op;
+  }
   json op = {{"op", "sheet_item"}, {"sheet", sheet->id}};
   std::vector<ViewFrame> frames;
   const ViewFrame* frame = nullptr;
@@ -907,14 +963,15 @@ json plan_item(const Document& doc, const Scene& scene, const json& args, json* 
   if (kind != "note" && !known_item(kind, kind == "dimension" || kind == "dimension_set" ? args.value("type", kind == "dimension" ? "aligned" : "ordinate") : "")) {
     if (kind == "dimension") throw Error("sheet_item: type is horizontal, vertical, aligned, radius, diameter or angle");
     if (kind == "dimension_set") throw Error("sheet_item: a dimension set's type is ordinate, baseline or chain");
-    throw Error("sheet_item: kind is dimension, note, centermark, centerline, hole_callout, hole_table, datum, fcf, surface or dimension_set");
+    throw Error("sheet_item: kind is dimension, note, centermark, centerline, hole_callout, hole_table, datum, fcf, surface, dimension_set, parts_list, "
+                "balloon or revision_table");
   }
   // References: given, or picked on the view (the app's snaps).
   json refs = json::array();
   if (args.contains("picks")) {
     if (!frame) throw Error("sheet_item: picks are made on a view");
     // A point on an edge matters to dimensions, sets, leaders and centre lines; the others take the edge itself.
-    const bool points = kind == "dimension" || kind == "dimension_set" || kind == "note" || kind == "centerline";
+    const bool points = kind == "dimension" || kind == "dimension_set" || kind == "note" || kind == "centerline" || kind == "balloon";
     for (const auto& p : args["picks"]) {
       json r = pick_reference(doc, scene, *frame, p)["ref"];
       if (!points) r.erase("aspect");
@@ -986,6 +1043,18 @@ json plan_item(const Document& doc, const Scene& scene, const json& args, json* 
   } else if (kind == "hole_table") {
     const auto room = drawing_room(sheet->def);
     op["at"] = args.contains("at") ? args["at"] : json::array({room[0] + 5, room[3] - 5});
+  } else if (kind == "balloon") {
+    if (refs.size() != 1) throw Error("sheet_item: a balloon points at one part");
+    if (const std::string list = args.value("list", ""); !list.empty()) {
+      const SheetItem* l = scene.sheet_item(list);
+      if (!l || l->kind != "parts_list") throw Error("sheet_item: list " + list + " is not a parts list");
+      op["list"] = list;
+    }
+    if (args.value("qty", false)) op["qty"] = true;
+    if (args.contains("diameter")) {
+      if (!args["diameter"].is_number() || args["diameter"].get<double>() < 3 || args["diameter"].get<double>() > 50) throw Error("sheet_item: diameter is 3 to 50 mm");
+      op["diameter"] = args["diameter"];
+    }
   }
   if (kind == "note") {
     op["at"] = args.contains("at") ? args["at"] : op.contains("view") ? json::array({0, 0}) : json::array({sheet->width / 2, sheet->height / 2});
@@ -1025,6 +1094,9 @@ json plan_item(const Document& doc, const Scene& scene, const json& args, json* 
       const Vec2 a = vec2(m["anchor"]);
       const std::string type = op["type"];
       op["place"] = {{"text", type == "vertical" ? js(add(a, {8, 0})) : type == "radius" || type == "diameter" ? js(add(a, {8, 8})) : js(add(a, {0, 8}))}};
+    } else if (kind == "balloon") {  // out from the view's middle
+      const Vec2 tip = vec2(m["tip"]);
+      op["place"] = {{"text", js(add(tip, mul(unit(tip, {0.7071, 0.7071}), 15)))}};
     } else if (kind == "hole_callout") {
       const Vec2 c = vec2(m["centre"]);
       const double r = m.value("r", 0.0);

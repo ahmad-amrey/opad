@@ -17,6 +17,7 @@
 #include <set>
 
 #include "opad/drawing/sheet.hpp"
+#include "opad/drawing/tables.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
@@ -260,6 +261,9 @@ json title_values(const Document& doc, const Scene& scene, const Sheet& sheet, b
   // The document's own properties: what every drawing of it says (owner, project, approvals); for a drawing of the whole
   // document also its title, number and description, before the one root part's.
   const auto own = [&](const std::string& k) { return text_of(scene.properties.value(k == "owner" && !scene.properties.contains("owner") ? "company" : k, json())); };
+  // The drawing's latest issue gives its revision, its date of issue and who approved it (UI-84).
+  const auto issues = drawing_issues(scene, sheet);
+  const json issued = issues.empty() ? json::object() : issues.back()->def;
   const auto lookup = [&](const std::string& what) -> std::string {
     if (what == "title") {
       if (whole && !own("title").empty()) return own("title");
@@ -272,7 +276,9 @@ json title_values(const Document& doc, const Scene& scene, const Sheet& sheet, b
       return !mine.empty() || !whole ? mine : own(what);
     }
     if (what == "author") return !own("author").empty() ? own("author") : sheet.def.value("by", "");
-    if (what == "date") return sheet.def.value("ts", "").substr(0, 10);
+    if (what == "date") return issued.contains("date") ? text_of(issued["date"]) : sheet.def.value("ts", "").substr(0, 10);
+    if (what == "revision" && issued.contains("rev")) return text_of(issued["rev"]);
+    if (what == "approved" && issued.contains("approved")) return text_of(issued["approved"]);
     if (what == "scale") return scale_text(sheet.scale);
     if (what == "units") return inches ? "in" : "mm";
     if (what == "drawing") return sheet.drawing;

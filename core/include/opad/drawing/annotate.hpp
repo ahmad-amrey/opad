@@ -16,6 +16,7 @@
 //   dimension_set type ordinate | baseline | chain; axis horizontal | vertical; refs [origin, features...]; place {text}
 //                 (ordinate: where the values stand; else the first dimension line); spacing (baseline, 7); precision;
 //                 result {values, shown}
+//   parts_list, balloon, revision_table, issue: tables.hpp (UI-84)
 // Places are paper mm from the item's view's centre. A build that does not know a kind keeps the record and reports it.
 #include <set>
 #include <string>

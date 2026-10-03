@@ -3,6 +3,7 @@
 // appended, so a wrong pick or an unknown orientation never reaches the document.
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <set>
 
 #include "opad/commands.hpp"
@@ -11,6 +12,7 @@
 #include "opad/drawing/bom.hpp"
 #include "opad/drawing/holes.hpp"
 #include "opad/drawing/sheet.hpp"
+#include "opad/drawing/tables.hpp"
 #include "opad/geometry.hpp"
 #include "opad/materials.hpp"
 #include "opad/render.hpp"
@@ -245,9 +247,10 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
 
   add({"sheet_item",
        "Add an annotation to a sheet, measured in its view with its value kept: dimension, note (refs: a leader), centermark, centerline, hole_callout, "
-       "hole_table, datum, fcf (feature control frame), surface (texture), dimension_set (ordinate/baseline/chain from refs[0])",
+       "hole_table, datum, fcf (feature control frame), surface (texture), dimension_set (ordinate/baseline/chain from refs[0]), parts_list, balloon, "
+       "revision_table",
        {{"doc", "path"}, {"sheet", "uuid"}, {"view", "uuid"},
-        {"kind", "dimension|note|centermark|centerline|hole_callout|hole_table|datum|fcf|surface|dimension_set"},
+        {"kind", "dimension|note|centermark|centerline|hole_callout|hole_table|datum|fcf|surface|dimension_set|parts_list|balloon|revision_table"},
         {"type", "horizontal|vertical|aligned|radius|diameter|angle; sets: ordinate|baseline|chain"},
         {"refs", "array - what it measures or points at"}, {"aspects", "array - per ref: start|end|mid|center"},
         {"place", "[x,y] - text or symbol, paper mm from the view's centre"}, {"text", "string - a note; <> is a dimension's value"},
@@ -256,12 +259,13 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         {"characteristic", "string - fcf: position, flatness, perpendicularity, ..."}, {"value", "number|string - fcf tolerance, surface requirement"},
         {"zone", "diameter"}, {"material", "M|L|S"}, {"datums", "array - fcf datum letters, B(M) with a modifier"},
         {"process", "any|removal|no_removal"}, {"axis", "horizontal|vertical - sets"}, {"extend", "number - centre marks and lines, mm"},
+        {"bom", "object - parts_list {mode: top|parts, root}"}, {"columns", "array"}, {"list", "uuid - balloon's parts list"}, {"qty", "bool"},
         {"op", "object - a record planned beforehand"}, {"by", "string"}},
        true},
       [](Document* d, const json& a) {
         Document& doc = need_doc(d);
         const Scene scene = resolve(doc);
-        json op;
+        json op, settle = a.value("settle", json());
         if (a.contains("op")) {  // planned on a worker (the app): checked as replay takes it
           op = a["op"];
           if (!op.is_object() || op.value("op", "") != "sheet_item") throw Error("sheet_item: op is a sheet_item record");
@@ -269,8 +273,17 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
           if (op.contains("view"))
             if (const SheetView* v = scene.sheet_view(op["view"].get<std::string>()); !v || v->sheet != sheet.id) throw Error("sheet_item: its view is not on its sheet");
           if (op.value("kind", "") != "note" && !drawing::known_item(op.value("kind", ""), op.value("type", ""))) throw Error("sheet_item: a kind this build does not know");
+          if (op.value("kind", "") == "issue") throw Error("sheet_item: an issue is made by sheet_issue");
         } else {
-          op = drawing::plan_item(doc, scene, a);
+          json measured;
+          op = drawing::plan_item(doc, scene, a, &measured);
+          settle = measured.value("settle", json());
+        }
+        // A balloon on a row whose number was not settled settles its parts list's numbers first (planned with it).
+        if (settle.is_object()) {
+          const SheetItem* list = scene.sheet_item(settle.value("list", ""));
+          if (!list || list->kind != "parts_list") throw Error("sheet_item: settle names a parts list");
+          doc.append({{"op", "edit"}, {"target", list->id}, {"set", {{"numbers", settle.at("numbers")}}}}, a.value("by", ""));
         }
         const std::string id = doc.append(op, a.value("by", "")).id;
         json out = {{"id", id}};
@@ -300,6 +313,85 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
           results.push_back(op.value("result", json::object()));
         }
         return json{{"ids", ids}, {"results", results}};
+      });
+
+  add({"sheet_balloons", "Auto-balloon a view from its parts list (one added when there is none)",
+       {{"doc", "path"}, {"sheet", "uuid"}, {"view", "uuid"}, {"list", "uuid"}, {"qty", "bool"}, {"all", "bool"}, {"plan", "object"}, {"by", "string"}},
+       true},
+      [](Document* d, const json& a) {
+        Document& doc = need_doc(d);
+        const Scene scene = resolve(doc);
+        const json plan = a.contains("plan") ? a["plan"] : drawing::plan_balloons(doc, scene, a);
+        const std::string by = a.value("by", "");
+        for (const auto& op : plan.value("ops", json::array()))
+          if (!op.is_object() || op.value("kind", "") != "balloon" || !scene.sheet(op.value("sheet", ""))) throw Error("sheet_balloons: ops are balloons of a sheet");
+        std::string list = plan.value("list", "");
+        if (plan.contains("create")) {
+          if (plan["create"].value("kind", "") != "parts_list") throw Error("sheet_balloons: create is a parts list");
+          list = doc.append(plan["create"], by).id;
+        } else if (plan.contains("numbers") && !list.empty()) {
+          doc.append({{"op", "edit"}, {"target", list}, {"set", {{"numbers", plan["numbers"]}}}}, by);
+        }
+        json ids = json::array();
+        for (json op : plan.value("ops", json::array())) {
+          if (!list.empty()) op["list"] = list;
+          ids.push_back(doc.append(op, by).id);
+        }
+        return json{{"ids", ids}, {"list", list}, {"created", plan.contains("create")}};
+      });
+
+  add({"sheet_issue", "Issue a revision of a sheet's drawing: values, views and their linework kept; out: its PDF, hashed",
+       {{"doc", "path"}, {"sheet", "uuid"}, {"rev", "string - default next"}, {"description", "string"}, {"approved", "string"}, {"date", "string"},
+        {"freeze", "bool"}, {"out", "path"}, {"tag", "string"}, {"op", "object"}, {"frozen", "object"}, {"edits", "array"}, {"by", "string"}},
+       true},
+      [](Document* d, const json& a) {
+        Document& doc = need_doc(d);
+        const Scene scene = resolve(doc);
+        json op, edits;
+        std::map<std::string, std::string> frozen;
+        if (a.contains("op")) {  // planned (and its PDF written) on a worker: the app
+          op = a["op"];
+          if (!op.is_object() || op.value("op", "") != "sheet_item" || op.value("kind", "") != "issue") throw Error("sheet_issue: op is an issue record");
+          const Sheet& sheet = need_sheet(scene, op.value("sheet", ""));
+          for (const SheetItem* t : drawing::drawing_issues(scene, sheet))
+            if (t->def.value("rev", "") == op.value("rev", "")) throw Error("sheet_issue: revision " + op.value("rev", "") + " was issued already");
+          const json given = a.value("frozen", json::object());
+          for (const auto& [view, brep] : given.items()) frozen[view] = brep.get<std::string>();
+          edits = a.value("edits", json::array());
+          for (const auto& e : edits)
+            if (const SheetItem* t = scene.sheet_item(e.value("target", "")); e.value("op", "") != "edit" || !t || t->kind != "parts_list")
+              throw Error("sheet_issue: edits settle parts lists' numbers");
+        } else {
+          const json plan = drawing::plan_issue(doc, scene, a, &frozen);
+          op = plan["op"];
+          edits = plan["edits"];
+          if (a.contains("out")) {  // the PDF of the drawing as it shows once issued (its revision in the title block)
+            if (!drawing::can_paint()) throw Error("sheet_issue: PDF is written by the OPAD app and opad-cli");
+            const Scene issued = drawing::with_issue(scene, op);
+            std::vector<drawing::Display> pages;
+            for (const auto& id : op["sheets"]) pages.push_back(drawing::sheet_display(doc, issued, *issued.sheet(id.get<std::string>())));
+            std::vector<const drawing::Display*> list;
+            for (const auto& p : pages) list.push_back(&p);
+            const auto file = path_from_utf8(a["out"].get<std::string>());
+            drawing::write_pages(list, file, "pdf");
+            const auto name = file.filename().u8string();
+            op["pdf"] = std::string(name.begin(), name.end());
+            op["pdf_sha256"] = sha256_hex(read_text_file(file));
+          }
+        }
+        for (const auto& [view, brep] : frozen) {
+          if (shape_from_brep(brep).IsNull()) throw Error("sheet_issue: the linework of view " + view + " is not BREP");
+          const SheetView* v = scene.sheet_view(view);
+          const std::string name = (v && !v->name.empty() ? v->name : "View") + " rev " + op.value("rev", "");
+          op["frozen"][view] = doc.add_body(brep, {{"name", name}, {"representation", "drawing2d"}, {"frozen", true}});
+        }
+        const std::string by = a.value("by", "");
+        for (const auto& e : edits) doc.append(e, by);
+        const std::string id = doc.append(op, by).id;
+        json out = {{"id", id}, {"rev", op["rev"]}, {"frozen", op.value("frozen", json::object()).size()}};
+        for (const char* k : {"pdf", "pdf_sha256"})
+          if (op.contains(k)) out[k] = op[k];
+        return out;
       });
 
   add({"holes", "Holes of a body: diameter, depth or through, counterbore, countersink, drill point, the faces they are made of",
@@ -359,6 +451,12 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
               set["template"]["fields"] = was["fields"];  // placed on the sheet by hand: kept
           }
         }
+        if (set.value("renumber", false)) {  // a parts list's items numbered 1, 2, ... again in the BoM's order
+          const SheetItem* t = scene.sheet_item(id);
+          if (!t || t->kind != "parts_list") throw Error("sheet_edit: renumber is a parts list's");
+          set["numbers"] = drawing::parts_rows(doc, scene, *scene.sheet(t->sheet), t->def, true)["numbers"];
+        }
+        set.erase("renumber");
         if (set.contains("refs") && target->type == "sheet_item")  // re-attached: references as sheet_item keeps them
           set["refs"] = drawing::item_references(doc, scene, set["refs"], set.value("aspects", json()));
         set.erase("aspects");
@@ -387,7 +485,7 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
           if (after.contains("view"))
             if (const SheetView* v = scene.sheet_view(after["view"].get<std::string>()); !v || v->sheet != sheet.id)
               throw Error("sheet_edit: its view is not on its sheet");
-          static const std::set<std::string> touches = {"refs", "type", "view", "precision", "prefix", "suffix", "text", "tol", "obtuse", "axis"};
+          static const std::set<std::string> touches = {"refs", "type", "view", "precision", "prefix", "suffix", "text", "tol", "obtuse", "axis", "list"};
           bool again = false;
           for (const auto& [k, v] : set.items()) again = again || touches.count(k);
           if (again)
@@ -457,7 +555,17 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
           if (j.contains("error")) unresolved.push_back(id);
           items.push_back(j);
         }
-        return json{{"sheet", summary(sheet)}, {"views", views}, {"items", items}, {"unresolved", unresolved}};
+        json issues = json::array();  // the drawing's revisions and what changed since each
+        for (const SheetItem* t : drawing::drawing_issues(scene, sheet)) {
+          json j = {{"id", t->id}, {"rev", t->def.value("rev", "")}, {"date", t->def.value("date", "")}};
+          for (const char* k : {"pdf", "pdf_sha256", "tag"})
+            if (t->def.contains(k)) j[k] = t->def[k];
+          j["changed"] = drawing::issue_changes(doc, scene, *t);
+          issues.push_back(j);
+        }
+        json out = {{"sheet", summary(sheet)}, {"views", views}, {"items", items}, {"unresolved", unresolved}};
+        if (!issues.empty()) out["issues"] = issues;
+        return out;
       });
 
   add({"part_properties", "Part properties of nodes: part_number, description, material, density g/cm3, mass g, vendor, notes, bom include|exclude|purchased; null removes",

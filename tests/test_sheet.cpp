@@ -335,7 +335,7 @@ TEST(sheet_edits_and_auto_scale) {
   CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", note}, {"set", {{"view", there}}}}));
   run(p.doc, "sheet_edit", {{"target", note}, {"set", {{"view", nullptr}, {"at", {20, 20}}}}});
   CHECK(resolve(p.doc).sheet_item(note)->view.empty());
-  const std::string later = p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"kind", "balloon"}}).id;
+  const std::string later = p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"kind", "weld"}}).id;
   CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", later}, {"set", {{"at", {1, 1}}}}}));
 }
 
@@ -424,7 +424,7 @@ TEST(sheet_outline_for_the_browser) {
   const std::string named = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"name", "Detail"}, {"dir", {1, 2, 3}}, {"at", {40, 40}}})["id"];
   const std::string width = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", p.front}, {"type", "horizontal"}, {"refs", {p.edge({0, -20, 10}, {1, 0, 0})}}})["id"];
   const std::string note = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"text", "BREAK SHARP EDGES\nALL OVER"}})["id"];
-  const std::string later = p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"view", below}, {"kind", "balloon"}}).id;
+  const std::string later = p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"view", below}, {"kind", "weld"}}).id;
   const std::string housing = run(p.doc, "sheet", {{"name", "Cover"}, {"drawing", "Housing"}})["id"];
   const std::string second = run(p.doc, "sheet", {{"name", "Parts"}, {"drawing", "Drawing 1"}})["id"];
   const std::string loose = p.doc.append({{"op", "sheet"}, {"name", "Loose"}, {"size", {{"w", 297}, {"h", 210}}}}).id;
