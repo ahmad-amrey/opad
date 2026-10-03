@@ -346,17 +346,22 @@ multiline records, so use the record-aware merge driver rather than Git's union 
 *.opad text eol=lf merge=opad diff=opad
 ```
 
-Configure the driver in each clone (use the absolute path for your machine):
+Configure the driver in each clone (git never copies it; use the absolute path for your machine). It is built into
+`opad-cli` and into the desktop program, so the portable and single-file builds need neither Python nor the CLI:
 
 ```sh
 git config merge.opad.name "OPAD append-only records"
-git config merge.opad.driver 'python "C:/path/to/opad/tools/opad_merge.py" %O %A %B'
+git config merge.opad.driver '"C:/path/to/opad-cli" merge-driver %O %A %B %P'
+# with the desktop program only:
+git config merge.opad.driver '"C:/path/to/OPAD/opad.exe" --merge-driver %O %A %B %P'
 ```
 
-The driver runs on Windows, Linux and macOS with Python 3. It merges independent records and reports
-overlapping edits, rewritten history or pruned body stores for review. A conflict leaves the ours file
-intact; inspect both branches before resolving it. Without configuration Git falls back to normal text
-merging. After merging design changes, check unresolved references and regenerate/validate dependencies.
+`tools/opad_merge.py` (Python 3: `python "C:/path/to/opad/tools/opad_merge.py" %O %A %B`) is the reference the
+built-in driver is tested against (`tests/test_git_merge.py` runs both on the same branches, cases and damaged
+files); either works the same. The driver merges independent records and reports overlapping edits, rewritten
+history or pruned body stores for review. A conflict leaves the ours file intact and prints the reason; inspect both
+branches before resolving it. Without configuration Git falls back to normal text merging. After merging design
+changes, check unresolved references and regenerate/validate dependencies.
 Large meshes and embedded images can still produce large diffs; Git LFS is optional and gives up normal
 text diffs/merges. The detailed [format guide](docs/format.md#git) explains the record layout.
 

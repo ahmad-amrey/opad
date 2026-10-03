@@ -128,8 +128,10 @@ def git_merge_story():
     repo = os.path.join(tmp, "repo")
     os.makedirs(repo)
     git(repo, "init", "-q", "-b", "main")
-    with open(os.path.join(repo, ".gitattributes"), "w") as f:
-        f.write("*.opad text eol=lf merge=union\n")
+    with open(os.path.join(repo, ".gitattributes"), "w", newline="\n") as f:
+        f.write("*.opad text eol=lf merge=opad\n")  # the record-aware driver, never union (multiline records)
+    git(repo, "config", "merge.opad.name", "OPAD append-only records")
+    git(repo, "config", "merge.opad.driver", '"%s" merge-driver %%O %%A %%B %%P' % CLI.replace("\\", "/"))
     doc = os.path.join(repo, "model.opad")
     run("new", doc)
     run("import", doc, os.path.join(FIXTURES, "box.step"))
@@ -154,6 +156,9 @@ def git_merge_story():
     git(repo, "merge", "-q", "--no-edit", "bob")  # would raise on conflict
     status = git(repo, "status", "--porcelain")
     assert status.strip() == "", status
+    with open(doc, encoding="utf-8", newline="") as f:
+        text = f.read()
+    assert text.index('"op":"annotation"') < text.index('"op":"rename"') and "\r" not in text  # ours, then theirs' new ops
 
     info = run("info", doc)
     assert info["unresolved"] == 0, info

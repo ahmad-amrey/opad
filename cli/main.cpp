@@ -55,6 +55,8 @@ void print_usage() {
   std::printf("  inspect <doc> <ref>...        export <doc> --format stl --out f.stl\n");
   std::printf("  diff <a> <b> [--text] [--metrics]   what changed; a side is a file or git:REV[:path], one file alone = since git:HEAD\n");
   std::printf("  textconv <doc.opad>           the document as readable lines, for git: diff.opad.textconv \"opad-cli textconv\"\n");
+  std::printf("  merge-driver %%O %%A %%B [%%P]    git's merge driver: base, ours and theirs merged into ours (exit 0), or ours left\n");
+  std::printf("                                as it was (exit 1); merge.opad.driver \"opad-cli merge-driver %%O %%A %%B %%P\"\n");
   std::printf("  render <doc> --out shot.png --view iso --size 1280x720\n");
   std::printf("  probe <file> [--viewer] [--mesh] [--cache]   reads any supported file as OPAD opens it; reports contents and timings\n");
   std::printf("  thumbnail <file> --out <png|bgra> [--size 256]   a picture of the file (Explorer thumbnails)\n");
@@ -228,6 +230,11 @@ int main(int argc, char** argv) {
     argv = utf8_argv.data();
   }
 #endif
+  if (argc >= 2 && std::string(argv[1]) == "merge-driver") {  // git's: merge.opad.driver "opad-cli merge-driver %O %A %B %P"
+    std::vector<std::filesystem::path> files;
+    for (int i = 2; i < argc; ++i) files.push_back(opad::path_from_utf8(argv[i]));
+    return opad::merge_driver(files);
+  }
   opad::configure_kernel_logging();
   if (argc >= 2 && std::string(argv[1]) == "mcp") {
     if(argc==2 || (argc==3 && std::string(argv[2])=="--headless"))return opad_mcp();

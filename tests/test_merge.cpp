@@ -1,6 +1,9 @@
 // Reconciling versions of one document (UI-56): manifests, how a version relates to a base, and the in-memory
-// three-way merge (the git driver's rules, ours' unsaved ops after theirs). No OCCT geometry involved.
+// three-way merge (the git driver's rules, ours' unsaved ops after theirs); and the git driver itself over whole files
+// (UI-60). No OCCT geometry involved.
+#include <filesystem>
 #include <set>
+#include <sstream>
 
 #include "check.hpp"
 #include "opad/document.hpp"
@@ -233,6 +236,110 @@ TEST(design_on_both_sides_asks_for_regeneration) {
   Document plain = Document::parse(v.base_text);
   rename(plain, v.a, "x");
   CHECK(!plan_merge(v.base, plain, theirs).design);
+}
+
+// The git driver over whole files (UI-60); tests/test_git_merge.py compares it with tools/opad_merge.py.
+TEST(file_merge_keeps_ours_and_appends_theirs) {
+  Versions v = make_base();
+  Document ours = Document::parse(v.base_text), theirs = Document::parse(v.base_text);
+  rename(ours, v.a, "Mine");
+  import_body(ours, 4, "D");
+  rename(theirs, v.b, "Theirs");
+  import_body(theirs, 3, "C");
+  import_body(theirs, 4, "D again");  // the same body as ours' D: one entry
+  const std::string o = ours.serialize(), t = theirs.serialize();
+  const FileMerge m = merge_files(v.base_text, o, t);
+  CHECK(m.error.empty() && m.conflicts.empty());
+  const std::string text = m.text();
+  std::ostringstream written;
+  m.write(written);
+  CHECK_EQ(written.str(), text);
+  CHECK_EQ(ops_part(text).substr(0, ops_part(o).size()), ops_part(o));  // ours as written, then theirs' new ops
+  CHECK_EQ(bodies_part(text).substr(0, bodies_part(o).size()), bodies_part(o));
+  const Document d = Document::parse(text);
+  CHECK_EQ(d.ops.size(), 7u);
+  CHECK_EQ(d.body_count(), 4u);
+  CHECK(d.ops[3].raw == ours.ops[3].raw && d.ops[4].raw == theirs.ops[2].raw && d.ops[6].raw == theirs.ops[4].raw);
+  const Scene s = resolve(d);
+  CHECK(s.node(v.a)->name == "Mine" && s.node(v.b)->name == "Theirs");
+  // CRLF and CR read as LF; Python's == on JSON: key order, 1 == 1.0 == true.
+  std::string crlf;
+  for (char c : o) crlf += c == '\n' ? std::string("\r\n") : std::string(1, c);
+  CHECK_EQ(merge_files(v.base_text, crlf, t).text(), text);
+  const std::string renamed = ours.ops[2].raw;
+  json same = json::parse(renamed);
+  json reordered = json::object();
+  for (auto it = same.rbegin(); it != same.rend(); ++it) reordered[it.key()] = *it;
+  std::string flipped = o;
+  flipped.replace(flipped.find(renamed), renamed.size(), reordered.dump());
+  CHECK(merge_files(v.base_text, flipped, t).error.empty());
+  std::string base1 = v.base_text;
+  base1.replace(0, 7, "#opad 1");
+  CHECK_EQ(merge_files(base1, o, t).text().substr(0, 8), "#opad 2\n");
+}
+
+TEST(file_merge_refuses_as_the_driver_does) {
+  Versions v = make_base();
+  const std::string importA = Document::parse(v.base_text).ops[0].id;
+  Document ours = Document::parse(v.base_text), theirs = Document::parse(v.base_text);
+  rename(ours, v.a, "Mine");
+  ours.append(json{{"op", "delete"}, {"target", importA}});
+  rename(theirs, v.a, "Theirs");
+  theirs.append(json{{"op", "edit"}, {"target", importA}, {"set", {{"source", "x.step"}}}});
+  const std::string o = ours.serialize(), t = theirs.serialize();
+  const FileMerge m = merge_files(v.base_text, o, t);
+  CHECK_EQ(m.error, "concurrent changes to " + v.a + "/name; manual review required");
+  CHECK(m.pieces.empty() && m.text().empty());
+  CHECK_EQ(m.conflicts.size(), 2u);
+  CHECK(m.conflicts[0].target == v.a && m.conflicts[0].field == "name" && m.conflicts[0].ours == ours.ops[2].id);
+  CHECK(m.conflicts[1].target == importA && m.conflicts[1].field == "source" && m.conflicts[1].theirs == theirs.ops[3].id);
+  auto refused = [&](std::string base, std::string a, std::string b) { return merge_files(std::move(base), std::move(a), std::move(b)).error; };
+  CHECK_EQ(refused(v.base_text, o, t.substr(0, t.find("#bodies\n"))), "missing body store");
+  std::string corrupt = t;
+  corrupt.replace(corrupt.find("Locations 1"), 11, "Locations 7");
+  CHECK_EQ(refused(v.base_text, o, corrupt), "body hash mismatch");
+  corrupt += "#body x 1\n";  // a malformed entry after the corrupted one: the hash is what the driver meets first
+  CHECK_EQ(refused(v.base_text, o, corrupt), "body hash mismatch");
+  CHECK_EQ(refused(v.base_text, o, t + "#body x 1\n"), "invalid body header");
+  CHECK_EQ(refused(v.base_text, o, t + "#body x 9 {}\n"), "invalid body length");
+  std::string blank = o;
+  blank.insert(blank.find("#bodies\n"), "\n");
+  CHECK_EQ(refused(v.base_text, blank, t), "unexpected metadata in operation log");
+  CHECK_EQ(refused(v.base_text, o, "\xef\xbb\xbf" + t), "unsupported OPAD header");
+  CHECK_EQ(refused(v.base_text, o, t + "\xff"), "not UTF-8 text");
+  std::string units = t;
+  units.replace(units.find("\"mm\""), 4, "\"in\"");
+  CHECK_EQ(refused(v.base_text, o, units), "document header changed; manual review required");
+  CHECK_EQ(refused(v.base_text, o, Document::create().serialize()), "document header changed; manual review required");
+  Document fewer = Document::parse(v.base_text);
+  fewer.truncate_ops(1);
+  CHECK_EQ(refused(v.base_text, o, fewer.serialize()), "history was rewritten; manual review required");
+  std::vector<std::string> keys;
+  CHECK_EQ(refused(v.base_text, o, read_skipping(t, v.base, keys).serialize()), "body store was pruned; manual review required");
+}
+
+TEST(merge_driver_writes_ours_only_when_merged) {
+  Versions v = make_base();
+  Document ours = Document::parse(v.base_text), theirs = Document::parse(v.base_text);
+  rename(ours, v.a, "Mine");
+  rename(theirs, v.b, "Theirs");
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-merge-driver-" + new_uuid());
+  std::filesystem::create_directories(dir);
+  const auto base = dir / "base", mine = dir / "ours", other = dir / "theirs";
+  write_text_file(base, v.base_text);
+  write_text_file(mine, ours.serialize());
+  write_text_file(other, theirs.serialize());
+  CHECK_EQ(merge_driver({base, mine}), 1);
+  CHECK_EQ(merge_driver({base, mine, other, "part.opad"}), 0);
+  const std::string merged = read_text_file(mine);
+  CHECK_EQ(merged, merge_files(v.base_text, ours.serialize(), theirs.serialize()).text());
+  CHECK(!std::filesystem::exists(dir / "ours.tmp"));
+  rename(theirs, v.a, "Again");
+  write_text_file(other, theirs.serialize());
+  CHECK_EQ(merge_driver({base, mine, other}), 1);
+  CHECK_EQ(read_text_file(mine), merged);
+  CHECK_EQ(merge_driver({base, dir / "missing", other}), 1);
+  std::filesystem::remove_all(dir);
 }
 
 TEST(arrange_bodies_checks_before_moving) {

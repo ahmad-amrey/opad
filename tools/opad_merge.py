@@ -3,6 +3,9 @@
 Usage: python tools/opad_merge.py BASE OURS THEIRS
 Only OURS is written, and only after a complete successful merge. Conflicts
 return nonzero, preserving the user's version for normal Git resolution.
+This is the reference for the C++ driver that OPAD ships (core/src/merge.cpp,
+`opad-cli merge-driver %O %A %B %P` or `opad --merge-driver %O %A %B %P`);
+tests/test_git_merge.py checks that both merge and refuse alike.
 """
 import hashlib
 import json
@@ -12,7 +15,11 @@ import sys
 
 def read(path):
     text = Path(path).read_text(encoding="utf-8")
-    lines = text.splitlines(keepends=True)
+    # Lines end at "\n" only: splitlines() also breaks at U+2028, U+0085 and form feeds, which JSON text may hold.
+    lines = [line + "\n" for line in text.split("\n")]
+    lines[-1] = lines[-1][:-1]
+    if not lines[-1]:
+        lines.pop()
     if len(lines) < 4 or lines[0].strip() not in ("#opad 1", "#opad 2") or lines[2].strip() != "#ops":
         raise ValueError("unsupported OPAD header")
     header = json.loads(lines[1])

@@ -1,3 +1,11 @@
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#endif
+
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
@@ -30,9 +38,26 @@ class FileOpenEvents : public QObject {
  private:
   MainWindow* m_window;
 };
+
+// git's merge driver (merge.opad.driver "opad.exe --merge-driver %O %A %B %P"): before Qt and without a window, so a
+// portable or single-file install merges .opad files without Python or opad-cli.
+int mergeDriver(int argc, char** argv) {
+  std::vector<std::filesystem::path> files;
+#ifdef _WIN32
+  int n = 0;  // the paths as UTF-16: the narrow argv is in the ANSI code page
+  if (LPWSTR* wide = CommandLineToArgvW(GetCommandLineW(), &n)) {
+    for (int i = 2; i < n; ++i) files.emplace_back(wide[i]);
+    LocalFree(wide);
+    return opad::merge_driver(files);
+  }
+#endif
+  for (int i = 2; i < argc; ++i) files.push_back(opad::path_from_utf8(argv[i]));
+  return opad::merge_driver(files);
+}
 }  // namespace
 
 int main(int argc, char** argv) {
+  if (argc >= 2 && std::string_view(argv[1]) == "--merge-driver") return mergeDriver(argc, argv);
   trace::log("startup: main");
   installCrashHandler();
   // Derived ids are for scripted builds (gap log #15): a desktop session restarted on the same document would derive
