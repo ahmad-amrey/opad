@@ -47,9 +47,16 @@ void MainWindow::buildToolsActions() {
     opad::json r = opad::commands::run("cache", opad::json{{"action", "clear"}});
     statusBar()->showMessage(tr("Cache cleared: %1").arg(QString::fromStdString(r["dir"].get<std::string>())), 4000);
   });
-  addAction("help.about", tr("&About OPAD"), "", QKeySequence(), [this] { legal::showAbout(this); });
-  addAction("help.licenses", tr("Third-party licences…"), "", QKeySequence(), [this] { legal::showNotices(this); });
-  addAction("help.aboutqt", tr("About Qt"), "", QKeySequence(), [this] { QMessageBox::aboutQt(this); })->setMenuRole(QAction::AboutQtRole);
+  auto help = [this](const QString& id, const QString& label, const QStringList& keywords, std::function<void()> fn) {
+    CommandInfo info;  // with the words the palette finds it by
+    info.id = id;
+    info.label = label;
+    info.keywords = keywords;
+    return addCommand(info, std::move(fn));
+  };
+  help("help.about", tr("&About OPAD"), {"version", "licence", "license", "copyright", "trademarks"}, [this] { legal::showAbout(this); });
+  help("help.licenses", tr("Third-party licences…"), {"licenses", "notices", "open source", "copyright", "GPL", "LGPL", "MIT"}, [this] { legal::showNotices(this); });
+  help("help.aboutqt", tr("About Qt"), {"Qt", "licence", "license", "version"}, [this] { QMessageBox::aboutQt(this); })->setMenuRole(QAction::AboutQtRole);
 }
 
 void MainWindow::buildMenus() {
@@ -289,8 +296,15 @@ void MainWindow::buildRibbon() {
   connect(viewerMode, &QAction::toggled, this, [this](bool on) { m_doc->viewerOpens = on; m_settings.setValue("files/viewerMode", on); });
   if (associations::supported()) settings->addAction(tr("File types…"), this, [this] { FileTypesDialog(this).exec(); });
   legal::applySettings();  // the ODA File Converter is opt-in (its terms: non-members non-commercial only)
-  auto* oda = settings->addAction(tr("Use the ODA File Converter for DWG"));
-  oda->setObjectName("files.useOda"); oda->setCheckable(true); oda->setChecked(m_settings.value("files/useOda", false).toBool());
+  CommandInfo odaInfo;
+  odaInfo.id = "files.useOda";
+  odaInfo.label = tr("Use the ODA File Converter for DWG");
+  odaInfo.checkable = true;
+  odaInfo.group = commands::defaultGroup("file");
+  odaInfo.keywords = {"DWG", "ODA", "converter", "LibreDWG"};
+  auto* oda = addCommand(odaInfo, [] {});
+  oda->setChecked(m_settings.value("files/useOda", false).toBool());
+  settings->addAction(oda);
   connect(oda, &QAction::toggled, this, [this, oda](bool on) { legal::setUseOda(this, oda, on); });
   settings->addAction(action("panel.browser"));
   auto* autoBrowser = settings->addAction(tr("Auto-hide scene browser"));

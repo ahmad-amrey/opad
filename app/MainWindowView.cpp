@@ -81,7 +81,10 @@ void MainWindow::buildViewActions() {
   auto* through=addAction("select.through",tr("Select through objects"),"wireframe",QKeySequence("Alt+X"),[this]{},true);
   through->setChecked(m_settings.value("view/selectThrough",false).toBool());
   connect(through,&QAction::toggled,this,[this](bool on){m_settings.setValue("view/selectThrough",on);m_viewport->setSelectThrough(on);});
-  auto* cubeParts=addAction("view.cubeEdgesCorners",tr("View cube edges and corners turn the view"),"",QKeySequence(),[this]{},true);  // off: faces only (UI-54)
+  CommandInfo cubeInfo;  // off: faces only (UI-54)
+  cubeInfo.id="view.cubeEdgesCorners";cubeInfo.label=tr("View cube edges and corners turn the view");cubeInfo.checkable=true;
+  cubeInfo.keywords={"view cube","navigation cube","corner","edge","faces only"};
+  auto* cubeParts=addCommand(cubeInfo,[]{});
   cubeParts->setChecked(m_settings.value("view/cubeEdgesCorners",true).toBool());
   connect(cubeParts,&QAction::toggled,this,[this](bool on){m_settings.setValue("view/cubeEdgesCorners",on);m_viewport->setCubeEdgesCorners(on);});
   addAction("view.isolate", tr("Isolate"), "isolate", QKeySequence("I"), [this] { m_viewport->isolate(currentNodeIds()); });

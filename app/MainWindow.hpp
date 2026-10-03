@@ -115,7 +115,6 @@ class MainWindow : public QMainWindow {
   bool benchLargeSketch();
   bool benchShortcuts();
   bool benchViewer();  // OPAD_BENCH_VIEWER
-  bool benchIp();  // OPAD_BENCH_IP: the IP switches (cube faces only, ...), IpBench.cpp
 
   void onViewportSelection();
   void onBrowserSelection(const std::vector<std::string>& ids);

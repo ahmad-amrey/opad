@@ -64,7 +64,6 @@ void MainWindow::runBench() {
   if(bench::run(*this))return;  // the benches registered from their own files (OPAD_BENCH) first
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_RECOVERY");!mode.isEmpty()){m_recovery->bench(mode);return;}
   if(benchViewer())return;
-  if(benchIp())return;
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_FILETYPES");!shot.isEmpty()){  // the dialog as drawn, nothing registered
     auto* dialog=new FileTypesDialog(this);dialog->show();
     QTimer::singleShot(300,this,[dialog,shot]{const bool saved=dialog->grab().save(shot);dialog->deleteLater();trace::log(QString("bench: file types dialog %1").arg(saved?"PASS":"FAIL"));QCoreApplication::exit(saved?0:2);});

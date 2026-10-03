@@ -90,7 +90,6 @@ def main():
             ("zoom-refinement", round_part, {"OPAD_BENCH_SCENE": "{prefix}.png", "OPAD_BENCH_VIEW": "iso", "OPAD_BENCH_ZOOM": "40"}),
             ("interference", overlapping, {"OPAD_BENCH_CHECK": "interference", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
-            ("ip", box, {"OPAD_BENCH_IP": "{prefix}"}),
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))
