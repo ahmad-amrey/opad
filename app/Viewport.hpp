@@ -181,6 +181,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // stretch while the exact preview is computed.
   void setPreviewDisplay(const std::vector<std::shared_ptr<const BodyPrs>>& arrays);
   void clearPreviewBodies();
+  size_t previewBodyCount() const { return m_previewBodies.size(); }  // bench checks: a feature preview is on screen
   void setPreparedPreview(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden);
   // Sketch editing.
   void beginSketchInput(SketchInput* input, const opad::Frame& frame, const std::string& hiddenSketch);

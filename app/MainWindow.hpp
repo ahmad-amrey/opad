@@ -19,6 +19,7 @@
 #include "Ribbon.hpp"
 #include "Viewport.hpp"
 #include "BrowserOverlay.hpp"
+#include "opad/recognize.hpp"
 class RecoveryManager;
 class AgentBridge;
 
@@ -45,6 +46,17 @@ class MainWindow : public QMainWindow {
   void buildActions();
   void buildMenus();
   void selectGeometry();
+  // TODO 11 UI-97: the picked face's or edge's rule over its body (holes of its size, fillets of its radius, faces
+  // facing its way ...), found on a worker; asked again on what it selected, the next rule.
+  void selectSimilar();
+  void applySimilar(size_t rule);
+  struct Similar {
+    std::vector<opad::Recognized> rules;
+    std::string body;
+    size_t current = 0;
+    std::vector<opad::Ref> selected;
+    unsigned long long revision = 0, generation = 0;
+  } m_similar;
   void buildRibbon();
   void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")
   void buildDesign();         // the controller, its floating panel and the wiring
@@ -81,6 +93,7 @@ class MainWindow : public QMainWindow {
   bool benchLargeSketch();
   bool benchShortcuts();
   bool benchViewer();  // OPAD_BENCH_VIEWER
+  bool benchSmart();   // OPAD_BENCH_SMART: Select similar and Remove faces on an imported plate
 
   void onViewportSelection();
   void onBrowserSelection(const std::vector<std::string>& ids);

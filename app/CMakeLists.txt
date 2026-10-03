@@ -46,7 +46,7 @@ set(OPAD_APP_SOURCES
   CrashLog.cpp CrashLog.hpp
   I18n.cpp I18n.hpp i18n.qrc
   res.qrc
-  MainWindow.cpp MainWindow.hpp DrawingWizard.cpp DrawingPlacer.cpp DrawingPlacer.hpp ExportDialog.cpp Todo5Bench.cpp Todo9Bench.cpp LargeSketchBench.cpp)
+  MainWindow.cpp MainWindow.hpp DrawingWizard.cpp DrawingPlacer.cpp DrawingPlacer.hpp ExportDialog.cpp Todo5Bench.cpp Todo9Bench.cpp LargeSketchBench.cpp SmartBench.cpp)
 if(APPLE)
   list(APPEND OPAD_APP_SOURCES ViewportCocoa.mm)
   find_program(OPAD_SIPS NAMES sips REQUIRED)

@@ -524,6 +524,9 @@ void MainWindow::buildActions() {
     openPanel(m_propsPanel);
   });
   addAction("select.geometry", tr("Select by geometry..."), "edges", QKeySequence(), [this] { selectGeometry(); });
+  QAction* similar = addAction("select.similar", tr("Select similar"), "similar", QKeySequence(), [this] { selectSimilar(); });
+  similar->setProperty("shortcutHint", tr("The faces or edges like the picked one: holes of its size, fillets of its radius, faces facing its way. Again: the next rule."));
+  shortcuts::updateTooltip(similar);
   // Section is an inspection: it looks inside without changing anything.
   QAction* section = addAction("inspect.section", tr("Section"), "section", QKeySequence("X"), [this] {}, true);
   connect(section, &QAction::toggled, this, [this](bool on) {
@@ -640,7 +643,7 @@ void MainWindow::buildMenus() {
   m_recentMenu = file->addMenu(tr("Recent"));
   add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
-  add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
+  add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "select.similar", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = menuBar()->addMenu(tr("&View"));
   add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
@@ -649,7 +652,7 @@ void MainWindow::buildMenus() {
   add(nav, {"nav.fusion", "nav.solidworks", "nav.onshape", "nav.blender"});
   add(view, {"view.dark", "-", "workspace.review", "workspace.design", "-", "panel.browser", "panel.annotations", "panel.section", "panel.timeline", "panel.reset"});
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
-  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.geometry", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip"});
+  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.geometry", "select.similar", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip"});
   QMenu* designMenu = menuBar()->addMenu(tr("&Design"));
   add(designMenu, {"design.sketch", "design.convertDrawing", "design.parameters", "-"});
   for (const char* group : {"create", "modify", "combine", "pattern", "body", "construct"}) {
@@ -680,12 +683,12 @@ void MainWindow::buildRibbon() {
   sketchWs.contextual = true;
   m_sketchWorkspace = m_ribbon->addWorkspace(sketchWs);
   m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho", "view.2d"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"}), acts({"view.isolate", "view.unisolate"})});
-  m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"}), acts({"inspect.interference", "inspect.printcheck"}), acts({"inspect.section", "inspect.flip"})});
+  m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties", "select.similar"}), acts({"inspect.interference", "inspect.printcheck"}), acts({"inspect.section", "inspect.flip"})});
   m_ribbon->addTab(review, tr("Annotate"), {acts({"panel.annotations", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
   m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
   m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
                                          acts({"design.box", "design.cylinder", "design.sphere", "design.cone", "design.torus"}), acts({"design.parameters"})});
-  m_ribbon->addTab(design, tr("Modify"), {acts({"design.offset_face", "design.thicken", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.scale"}),
+  m_ribbon->addTab(design, tr("Modify"), {acts({"design.offset_face", "design.thicken", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.remove_faces", "design.scale"}),
                                           acts({"design.combine", "design.split", "design.move", "design.remove"}),
                                           acts({"design.mirror", "design.pattern_rect", "design.pattern_circ"})});
   m_ribbon->addTab(design, tr("Construct"), {acts({"design.plane", "design.axis", "design.interference"}), acts({"design.parameters", "design.edit", "design.regenerate"})});
@@ -1734,6 +1737,11 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     add("inspect.distance");
     add("inspect.radius");
     add("inspect.properties");
+    // TODO 11 UI-97: picked faces or edges: the ones like them, and taking the faces away.
+    if (const auto picks = m_viewport->selection(); !picks.empty() && (picks.front().kind == opad::Ref::Kind::Face || picks.front().kind == opad::Ref::Kind::Edge)) {
+      add("select.similar");
+      if (picks.front().kind == opad::Ref::Kind::Face) add("design.remove_faces");
+    }
     menu.addSeparator();
     QAction* del = menu.addAction(icons::themed("delete", 16), tr("Delete (tombstone import)"));
     connect(del, &QAction::triggered, this, [this, ids] {
@@ -2526,6 +2534,7 @@ void MainWindow::runBench() {
   if(benchShortcuts())return;
   if(benchDrawingImport())return;
   if(benchTodo9())return;
+  if(benchSmart())return;
   if(benchAnnotateLarge())return;
   if(qEnvironmentVariableIsSet("OPAD_BENCH_INSTANCES")) {
     if(m_doc->scene.all_bodies().empty()){QCoreApplication::exit(2);return;}
