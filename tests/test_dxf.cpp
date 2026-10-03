@@ -134,6 +134,63 @@ TEST(blocks_land_rotated_mirrored_scaled_and_flipped_in_their_colours) {
   }
 }
 
+// A block at one scale is copied once and placed rigidly everywhere else, a block holding a scaled block waits for that
+// copy, a skewed one holds the text laid out after the entities are read, and a repeated text is laid out once.
+TEST(scaled_blocks_and_repeated_texts_are_made_once_and_land_in_place) {
+  Files f;
+  const std::string text =
+      section("BLOCKS", {{0, "BLOCK"}, {2, "B"}, {70, "0"}, {10, "0"}, {20, "0"},
+                         {0, "LINE"}, {8, "0"}, {10, "0"}, {20, "0"}, {11, "10"}, {21, "0"},
+                         {0, "ENDBLK"},
+                         {0, "BLOCK"}, {2, "T"}, {70, "0"}, {10, "0"}, {20, "0"},
+                         {0, "LINE"}, {8, "0"}, {10, "0"}, {20, "0"}, {11, "10"}, {21, "0"},
+                         {0, "TEXT"}, {8, "0"}, {10, "0"}, {20, "0"}, {40, "10"}, {1, "HI"},
+                         {0, "ENDBLK"},
+                         {0, "BLOCK"}, {2, "N"}, {70, "0"}, {10, "0"}, {20, "0"},
+                         {0, "INSERT"}, {8, "NB"}, {2, "B"}, {10, "0"}, {20, "0"}, {41, "3"}, {42, "3"},
+                         {0, "INSERT"}, {8, "NT"}, {2, "T"}, {10, "0"}, {20, "20"}, {41, "2"}, {42, "2"},
+                         {0, "ENDBLK"}}) +
+      section("ENTITIES", {
+          {0, "INSERT"}, {8, "S1"}, {2, "B"}, {10, "0"}, {20, "100"}, {41, "2"}, {42, "2"},
+          {0, "INSERT"}, {8, "S2"}, {2, "B"}, {10, "0"}, {20, "200"}, {41, "2"}, {42, "2"}, {50, "90"},
+          {0, "INSERT"}, {8, "S3"}, {2, "B"}, {10, "0"}, {20, "300"}, {41, "-2"}, {42, "2"},
+          {0, "INSERT"}, {8, "S4"}, {2, "N"}, {10, "0"}, {20, "400"}, {41, "0.5"}, {42, "0.5"},  // B at 1.5, T at 1
+          {0, "INSERT"}, {8, "S5"}, {2, "T"}, {10, "0"}, {20, "600"}, {41, "2"}, {42, "1"},      // skewed: a copy of its own
+          {0, "TEXT"}, {8, "S6"}, {10, "0"}, {20, "700"}, {40, "10"}, {1, "HI"},
+          {0, "TEXT"}, {8, "S6"}, {10, "100"}, {20, "700"}, {40, "10"}, {50, "90"}, {1, "HI"},
+          {0, "TEXT"}, {8, "S7"}, {10, "0"}, {20, "800"}, {40, "10"}, {1, "HI"},
+      }) +
+      kEof;
+  write_text_file(f.dir / "scaled.dxf", text);
+  for (bool viewer : {true, false}) {
+    ImportResult result;
+    const auto all = bodies(import(f.dir / "scaled.dxf", viewer, false, &result));
+    const auto* s1 = find(all, "S1");
+    const auto* s2 = find(all, "S2");
+    const auto* s3 = find(all, "S3");
+    const auto* nb = find(all, "NB");
+    CHECK(s1 && near_box(s1->box, 0, 100, 20, 100));
+    CHECK(s2 && near_box(s2->box, 0, 200, 0, 220));
+    CHECK(s3 && near_box(s3->box, -20, 300, 0, 300));
+    CHECK(nb && near_box(nb->box, 0, 400, 15, 400) && nb->edges == 1);
+    const auto* s7 = find(all, "S7");
+    if (!s7) continue;  // no font on this machine
+    const auto one = extent(s7->box);
+    CHECK(s7->faces >= 2 && one[3] > 809.5 && one[3] < 810.5);
+    const auto* s6 = find(all, "S6");
+    CHECK(s6 && s6->faces == 2 * s7->faces);
+    const auto* nt = find(all, "NT");  // T at 2 inside N at 0.5: the text as written, 10 high on its line
+    CHECK(nt && nt->faces == s7->faces);
+    const auto t = extent(nt->box);
+    CHECK(std::abs(t[0]) < 0.5 && std::abs(t[1] - 410) < 0.5 && t[3] > 419.5 && t[3] < 420.5);
+    const auto* s5 = find(all, "S5");  // twice as wide, as high
+    CHECK(s5 && s5->faces == s7->faces);
+    const auto w = extent(s5->box);
+    CHECK(std::abs(w[1] - 600) < 0.5 && w[3] > 609.5 && w[3] < 610.5 && w[2] - w[0] > 2 * (one[2] - one[0]) - 0.5);
+    CHECK(result.warnings.empty());
+  }
+}
+
 TEST(hatches_fill_with_holes_draw_patterns_and_read_clockwise_arcs) {
   Files f;
   const Groups square_with_hole = {
