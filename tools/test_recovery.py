@@ -20,10 +20,12 @@ def main():
         document = root / "source.opad"
         subprocess.run([str(cli), "new", str(document)], check=True, capture_output=True)
         original = document.read_bytes()
-        for feature, legacy in ((False, False), (True, False), (False, True)):
-            settings = root / ("legacy" if legacy else "feature" if feature else "sketch")
+        # A sketch edit, a pending feature, the sketch edit from a format 1 record, a new sketch drawn in the active component.
+        for variant, legacy in (("", False), ("-feature", False), ("", True), ("-component", False)):
+            feature = variant == "-feature"
+            settings = root / ("legacy" if legacy else variant[1:] or "sketch")
             for stage in ("write", "read"):
-                mode = stage + ("-feature" if feature else "")
+                mode = stage + variant
                 log = root / f"{mode}.log"
                 env = dict(os.environ, OPAD_LANG="en", OPAD_BENCH_SETTINGS=str(settings),
                            OPAD_BENCH_RECOVERY=mode, OPAD_TRACE=str(log))
@@ -47,6 +49,7 @@ def main():
                     assert "document" not in record
                     assert (files[-1].parent / record["delta"]["base"]).exists()
                     assert record["edit"]["type"] == ("feature" if feature else "sketch")
+                    assert ("component" in record["edit"]) == (variant == "-component")
                     if legacy:
                         for path in files:
                             delta = json.loads(path.read_text(encoding="utf-8"))

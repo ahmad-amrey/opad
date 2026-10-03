@@ -17,6 +17,7 @@ void SketchEditor::captureRecovery(std::function<void(opad::json,const QString&)
   auto copy=std::make_shared<opad::design::Sketch>();
   auto state=std::make_shared<opad::json>(opad::json{{"type","sketch"},{"id",m_id},{"name",m_name.toStdString()},
     {"plane",m_plane},{"frame",m_frame.to_json()},{"visible",m_visible},{"modified",m_modified}});
+  if(m_id.empty() && !m_doc->activeComponent().empty())(*state)["component"]=m_doc->activeComponent();  // a new sketch goes there on Finish (UI-33)
   auto index=std::make_shared<size_t>(0);auto valid=std::make_shared<bool>(true);
   const auto points=m_sk.points.size(),entities=m_sk.entities.size(),constraints=m_sk.constraints.size(),images=m_sk.images.size(),patterns=m_sk.patterns.size();
   const auto total=points+entities+constraints+images+patterns;

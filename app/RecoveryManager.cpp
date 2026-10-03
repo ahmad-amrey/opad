@@ -252,8 +252,9 @@ void RecoveryManager::restore(const Entry& entry,std::function<void(bool,QString
     }
     if(edit.is_object() && edit.value("type","")=="sketch"){
       const auto id=edit.value("id",std::string());
-      const auto op=id.empty()?opad::design::make_sketch_op(edit.value("name","Recovered sketch"),edit.at("plane"),edit.at("geometry")):
+      auto op=id.empty()?opad::design::make_sketch_op(edit.value("name","Recovered sketch"),edit.at("plane"),edit.at("geometry")):
         opad::json{{"op","edit"},{"target",id},{"set",{{"plane",[&]{const auto* sketch=result->scene.sketch(id);const auto& plane=edit.at("plane");return sketch&&plane!=sketch->plane?opad::design::plane_as_made(*sketch,plane):plane;}()},{"geometry",edit.at("geometry")}}}};
+      if(const auto* c=result->scene.node(edit.value("component",std::string()));id.empty() && c && c->kind==opad::Node::Kind::Component)op["component"]=c->id;  // drawn in a component (UI-33)
       result->draft=opad::design::plan_ops(result->document,{op});
     }
   },[=,this](bool ok,const QString& error){
@@ -304,16 +305,19 @@ void RecoveryManager::finishSession(std::function<void()> done) {
 void RecoveryManager::bench(const QString& mode) {
   auto fail=[](const QString& e){trace::log("bench: recovery FAIL: "+e);QCoreApplication::exit(2);};
   if(mode.startsWith("read")) {
-    const bool feature=mode=="read-feature";
-    scan([this,fail,feature](std::vector<Entry> entries,QString error){
+    const bool feature=mode=="read-feature",component=mode=="read-component";
+    scan([this,fail,feature,component](std::vector<Entry> entries,QString error){
       if(!error.isEmpty() || entries.empty())return fail("missing abandoned snapshot "+error);
-      restore(entries.front(),[this,fail,feature](bool ok,QString error){try{
+      restore(entries.front(),[this,fail,feature,component](bool ok,QString error){try{
         if(!ok)return fail(error);
         if(!m_doc->isDirty() || !m_doc->path().isEmpty() || m_design->featureActive() || m_design->sketchActive())return fail("recovery reopened a tool or lost dirty state");
         if(!m_doc->scene.features.empty())return fail("unfinished feature was committed");
         const auto id=m_doc->scene.sketches.back().id;
         auto sketch=opad::design::Sketch::from_json(m_doc->scene.sketch(id)->geometry);
-        if(!feature){
+        if(component){  // a new sketch drawn in the active component comes back in it (UI-33)
+          const auto* lid=m_doc->scene.node(m_doc->scene.sketch(id)->component);
+          if(!lid || lid->name!="Lid")return fail("the new sketch drawn in the Lid came back at the root");
+        }else if(!feature){
           if(sketch.points.back().x!=32)return fail("sketch draft missing");
           m_doc->undo();if(opad::design::Sketch::from_json(m_doc->scene.sketch(id)->geometry).points.back().x!=20)return fail("draft undo baseline missing");m_doc->redo();
         }
@@ -326,6 +330,14 @@ void RecoveryManager::bench(const QString& mode) {
   try {
     opad::design::Sketch sk;const auto a=sk.add_point(0,0,true),b=sk.add_point(20,0);sk.add_line(a,b);
     if(mode=="write-feature"){const auto c=sk.add_point(20,10),d=sk.add_point(0,10);sk.add_line(b,c);sk.add_line(c,d);sk.add_line(d,a);}
+    if(mode=="write-component"){  // a new sketch being drawn in the active component
+      m_doc->setActiveComponent(m_doc->run("component",{{"name","Lid"}}).value("id",""));
+      m_design->restoreRecovery({{"type","sketch"},{"id",""},{"name","Lid sketch"},{"plane",{{"base","xy"}}},{"frame",opad::Frame{}.to_json()},{"geometry",sk.to_json()}});
+      auto* timer=new QTimer(this);timer->setInterval(30);
+      connect(timer,&QTimer::timeout,this,[this,timer,fail]{if(m_design->sketch()->busy())return;timer->stop();timer->deleteLater();
+        saveNow([fail](bool ok,const QString& error){if(!ok)return fail(error);trace::log("bench: new sketch in a component recovery snapshot PASS; simulated crash");std::_Exit(0);});});
+      timer->start();return;
+    }
     auto plan=opad::design::plan_ops(m_doc->doc,{opad::design::make_sketch_op("Recovery sketch",{{"base","xy"}},sk.to_json())});
     m_doc->commitPlan(std::move(plan),tr("sketch"));const auto id=m_doc->scene.sketches.back().id;
     if(mode=="write-feature"){
