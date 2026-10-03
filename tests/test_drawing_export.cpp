@@ -495,4 +495,37 @@ TEST(dwg_through_libredwg_keeps_a_view) {
   CHECK_EQ(edges["Hidden"], 2);
 }
 
+TEST(dwg_converter_found_as_the_export_looks) {
+  // OPAD_DXF2DWG names the one file it takes; without it, DWG is offered exactly when the export finds a converter.
+  Files f;
+  const auto set = [](const std::string& v) {
+#ifdef _WIN32
+    _putenv_s("OPAD_DXF2DWG", v.c_str());  // empty: removed
+#else
+    if (v.empty()) unsetenv("OPAD_DXF2DWG");
+    else setenv("OPAD_DXF2DWG", v.c_str(), 1);
+#endif
+  };
+  const char* was = std::getenv("OPAD_DXF2DWG");
+  const std::string before = was ? was : "";
+  set((f.dir / "missing-dxf2dwg.exe").string());
+  CHECK(!dwg_converter(true));
+  write_text_file(f.dir / "dxf2dwg.exe", "not a program\n");
+  set((f.dir / "dxf2dwg.exe").string());
+  CHECK(dwg_converter(true));
+  set(before);
+  auto doc = Document::create();
+  import_brep(doc, brep_from_shape(BRepPrimAPI_MakeBox(40, 30, 20).Shape()), "Block");
+  ExportOptions o;
+  o.format = "dwg";
+  o.view = {{"view", "front"}};
+  std::string error;
+  try {
+    export_drawing(doc, resolve(doc), f.dir / "front.dwg", o);
+  } catch (const Error& e) {
+    error = e.what();
+  }
+  CHECK_EQ(error.find("needs a converter") == std::string::npos, dwg_converter(true));
+}
+
 CHECK_MAIN()

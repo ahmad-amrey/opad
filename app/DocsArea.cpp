@@ -22,6 +22,7 @@
 #include "PropertiesPanel.hpp"
 #include "Ribbon.hpp"
 #include "SheetDialogs.hpp"
+#include "opad/drawing_io.hpp"
 
 OPAD_ICON_TABLE(docs,
                 {"drawingSheet", R"(<rect x="3" y="5" width="18" height="14" rx="1"/><path d="M13 19v-4h8"/><path d="M6 8h4" opacity=".55"/>)"},
@@ -219,14 +220,14 @@ void DocsArea::exportSheet(const std::string& id, const std::string& issue) {
   if (!issue.empty()) stem += tr(" rev %1 as issued").arg(QString::fromStdString(issue));
   for (const QChar c : QString("<>:\"/\\|?*")) stem.replace(c, '_');
   QSettings settings;
-  const QString last = sheets > 1 ? "pdf" : settings.value("export/sheetFormat", "pdf").toString();
+  const auto types = sheetExportTypes(sheets > 1);
+  QString last = settings.value("export/sheetFormat", "pdf").toString();
+  if (std::none_of(types.begin(), types.end(), [&](const auto& t) { return t.first == last; })) last = "pdf";
   QString out = qEnvironmentVariable("OPAD_BENCH_EXPORT_OUT");  // benches: no file dialog
   if (out.isEmpty()) {
     QStringList filters;
     QString chosen;
-    for (const auto& [f, label] : std::initializer_list<std::pair<QString, QString>>{
-             {"pdf", tr("PDF files (*.pdf)")}, {"svg", tr("SVG files (*.svg)")}, {"dxf", tr("DXF files (*.dxf)")}, {"dwg", tr("DWG files (*.dwg)")}, {"png", tr("PNG pictures (*.png)")}}) {
-      if (sheets > 1 && f != "pdf") continue;  // several sheets: the pages of one PDF
+    for (const auto& [f, label] : types) {
       filters << label;
       if (f == last) chosen = label;
     }
@@ -249,6 +250,14 @@ void DocsArea::exportSheet(const std::string& id, const std::string& issue) {
                 });
     });
   });
+}
+
+std::vector<std::pair<QString, QString>> DocsArea::sheetExportTypes(bool several) {
+  if (several) return {{"pdf", tr("PDF files (*.pdf)")}};  // the pages of one PDF
+  std::vector<std::pair<QString, QString>> out = {{"pdf", tr("PDF files (*.pdf)")}, {"svg", tr("SVG files (*.svg)")}, {"dxf", tr("DXF files (*.dxf)")}};
+  if (opad::dwg_converter(true)) out.push_back({"dwg", tr("DWG files (*.dwg)")});  // file checks only
+  out.push_back({"png", tr("PNG pictures (*.png)")});
+  return out;
 }
 
 DocsArea* DocsArea::of(const std::vector<AreaController*>& areas) {

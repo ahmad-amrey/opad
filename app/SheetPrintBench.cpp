@@ -2,11 +2,14 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QLabel>
 #include <QRadioButton>
 #include <QRegularExpression>
+
+#include <algorithm>
 
 #include "AppDocument.hpp"
 #include "BenchRegistry.hpp"
@@ -18,8 +21,8 @@
 // OPAD_BENCH_SHEET_PRINT=<prefix> (UI-86): a two-sheet drawing of a plate. Print… (Ctrl+Alt+P) draws the drawing's sheets on
 // a worker and opens the print dialog on the shown sheet: its preview rendered on a worker (white paper, black ink, the
 // sheet's proportions), "sheet 1 of 2 · A3", the next sheet's preview; printed at actual size to a PDF through the printer
-// path on a worker: two A3 landscape pages; this sheet alone fitted to the printer's paper: one landscape page.
-// <prefix>.print.png, <prefix>.actual.pdf, <prefix>.fit.pdf.
+// path on a worker: two A3 landscape pages; this sheet alone fitted to the printer's paper: one landscape page. Export sheet…
+// offers DWG only while a converter is found. <prefix>.print.png, <prefix>.actual.pdf, <prefix>.fit.pdf.
 OPAD_BENCH(OPAD_BENCH_SHEET_PRINT, sheetPrint) {
   const QString& prefix = value;
   DocsArea* docs = DocsArea::of(w.m_areas);
@@ -117,6 +120,20 @@ OPAD_BENCH(OPAD_BENCH_SHEET_PRINT, sheetPrint) {
     size = {};
     const int one = pdfPages(fit, &size);
     check(one == 1 && size.width() > size.height(), QString("fitted: one landscape page of %1 x %2 pt").arg(size.width()).arg(size.height()));
+    // Export sheet… offers DWG only while a converter is found (here: OPAD_DXF2DWG naming a file, then none); a drawing only PDF.
+    const auto has = [](const std::vector<std::pair<QString, QString>>& types, const char* f) {
+      return std::any_of(types.begin(), types.end(), [&](const auto& t) { return t.first == f; });
+    };
+    const QByteArray was = qgetenv("OPAD_DXF2DWG");
+    qputenv("OPAD_DXF2DWG", QDir(QDir::tempPath()).filePath("no-such-dxf2dwg.exe").toUtf8());
+    const auto without = DocsArea::sheetExportTypes(false);
+    qputenv("OPAD_DXF2DWG", QCoreApplication::applicationFilePath().toUtf8());
+    const auto with = DocsArea::sheetExportTypes(false);
+    if (was.isEmpty()) qunsetenv("OPAD_DXF2DWG");
+    else qputenv("OPAD_DXF2DWG", was);
+    check(!has(without, "dwg") && has(without, "pdf") && has(without, "svg") && has(without, "dxf") && has(without, "png") && has(with, "dwg") &&
+              DocsArea::sheetExportTypes(true).size() == 1,
+          "Export sheet offers DWG only with a converter, a drawing only PDF");
   } catch (const std::exception& e) {
     check(false, QString("bench: %1").arg(QString::fromUtf8(e.what())));
   }

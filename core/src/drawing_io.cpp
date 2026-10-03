@@ -692,4 +692,29 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
   for(const auto& [k,v]:counts.items()) result.details[k]=v;
   return result;
 }
+
+bool dwg_converter(bool toDwg) {
+  std::error_code error;
+  const char* override=std::getenv(toDwg?"OPAD_DXF2DWG":"OPAD_DWG2DXF");
+  if(override && *override) return std::filesystem::is_regular_file(path_from_utf8(override),error);
+  if(!oda_converter().empty()) return true;
+#ifdef _WIN32
+  const std::wstring name=toDwg?L"dxf2dwg.exe":L"dwg2dxf.exe";
+  const wchar_t* path=_wgetenv(L"PATH");
+  const wchar_t separator=L';';
+  std::wstring dirs=path?path:L"";
+#else
+  const std::string name=toDwg?"dxf2dwg":"dwg2dxf";
+  const char* path=std::getenv("PATH");
+  const char separator=':';
+  std::string dirs=path?path:"";
+#endif
+  if(!executable_dir().empty() && std::filesystem::is_regular_file(executable_dir()/name,error)) return true;
+  for(size_t at=0;at<=dirs.size();) {  // on PATH
+    const size_t end=std::min(dirs.find(separator,at),dirs.size());
+    if(end>at && std::filesystem::is_regular_file(std::filesystem::path(dirs.substr(at,end-at))/name,error)) return true;
+    at=end+1;
+  }
+  return false;
+}
 }
