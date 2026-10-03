@@ -321,9 +321,11 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
       });
 
   // TODO 11 UI-94: face provenance from the body key chain; one implementation for the CLI, MCP and the app's worker.
+  // TODO 11 UI-97: then the groups the geometry shows, on imported bodies too.
   reg("related", "The feature that made each picked face or edge (boss, pocket, hole, fillet, pattern, ...) and every face each such feature made on those bodies, from the design history; "
-      "imported bodies have none",
-      {{"doc", "path"}, {"refs", "array"}, {"kinds", json{{"type", "array"}, {"items", {{"type", "string"}, {"enum", {"feature", "import", "body"}}}}}},
+      "then recognised groups holding the picks (hole, fillet, chamfer, boss, pocket, wall, tangent, loop, similar), also on imported bodies",
+      {{"doc", "path"}, {"refs", "array"},
+       {"kinds", json{{"type", "array"}, {"items", {{"type", "string"}, {"enum", {"feature", "import", "body", "hole", "fillet", "chamfer", "boss", "pocket", "wall", "tangent", "loop", "similar"}}}}}},
        {"limit", "int - face refs per candidate (500)"}},
       false, [](Document* d, const json& a) { return design::related(need(d), a); });
 

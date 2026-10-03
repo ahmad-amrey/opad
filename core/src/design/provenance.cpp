@@ -30,9 +30,11 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <unordered_map>
 
 #include "opad/geometry.hpp"
+#include "opad/recognize.hpp"
 
 namespace opad::design {
 
@@ -679,16 +681,24 @@ json related(const Document& doc, const json& args, const Cancel& cancel) {
   json refs = args.contains("refs") ? args["refs"] : args.contains("ref") ? args["ref"] : json();
   if (refs.is_string() || refs.is_object()) refs = json::array({refs});
   if (!refs.is_array() || refs.empty()) throw Error("related needs refs: faces, edges or bodies, e.g. \"<body>/face/3\"");
-  std::set<std::string> kinds = {"feature", "import", "body"};
-  if (args.contains("kinds") && args["kinds"].is_array()) {
+  std::set<std::string> kinds = {"feature", "import", "body"}, known = kinds;
+  known.insert(recognizer_kinds().begin(), recognizer_kinds().end());
+  const bool asked = args.contains("kinds") && args["kinds"].is_array();
+  if (asked) {
     kinds.clear();
-    for (const auto& k : args["kinds"]) kinds.insert(k.get<std::string>());
+    for (const auto& k : args["kinds"]) {
+      if (!k.is_string() || !known.count(k.get<std::string>())) throw Error("related: unknown kind " + k.dump() + " (feature, import, body, hole, fillet, chamfer, boss, pocket, wall, tangent, loop, similar)");
+      kinds.insert(k.get<std::string>());
+    }
+  } else {
+    kinds = known;
   }
   const size_t limit = static_cast<size_t>(std::clamp(args.value("limit", 500), 1, 5000));
   Provenance p(doc, cancel);
   const Scene& scene = p.scene();
   std::vector<std::string> bodies;
   std::map<std::string, std::vector<std::string>> picked;  // body -> owners of its picked faces and edges
+  std::map<std::string, std::pair<std::vector<int>, std::vector<int>>> subs;  // body -> picked face and edge ordinals
   json items = json::array();
   for (const auto& r : refs) {
     const Ref ref = Ref::from_json(r);
@@ -697,6 +707,7 @@ json related(const Document& doc, const json& args, const Cancel& cancel) {
     const Node* n = scene.node(ref.body);
     if (!n || n->kind != Node::Kind::Body) throw Error("related: " + ref.body + " is not a body of the document");
     if (std::find(bodies.begin(), bodies.end(), ref.body) == bodies.end()) bodies.push_back(ref.body);
+    if (ref.kind != Ref::Kind::Body) (ref.kind == Ref::Kind::Face ? subs[ref.body].first : subs[ref.body].second).push_back(ref.index);
     json item = {{"ref", ref.str()}};
     if (ref.kind != Ref::Kind::Body) {
       const auto owners = ref.kind == Ref::Kind::Face ? p.face_owners(ref.body) : p.edge_owners(ref.body);
@@ -721,8 +732,10 @@ json related(const Document& doc, const json& args, const Cancel& cancel) {
   std::vector<std::string> listed;
   std::set<std::string> wanted;
   for (const auto& [b, ops] : picked) wanted.insert(ops.begin(), ops.end());
+  std::map<std::string, size_t> face_total;
   for (const auto& b : bodies) {
     const auto owners = p.face_owners(b);
+    face_total[b] = owners.size();
     if (owners.empty()) continue;
     TopTools_IndexedMapOfShape faces;
     TopExp::MapShapes(body_shape(doc, scene.node(b)->body_key), TopAbs_FACE, faces);
@@ -759,12 +772,53 @@ json related(const Document& doc, const json& args, const Cancel& cancel) {
       for (const auto& v : c.via) j["via"].push_back(p.op_info(v));
     }
     if (type == "import") j["provenance"] = false;
+    // A feature that made part of the body comes first; the one that made (nearly) all of it, or the import, after the
+    // groups recognised on it.
+    size_t total = 0;
+    for (const auto& b : c.bodies) total += face_total[b];
+    j["_tier"] = !all ? 5 : type == "feature" && c.count * 10 < total * 9 ? 0 : 2;
     candidates.push_back(j);
   }
-  std::stable_sort(candidates.begin(), candidates.end(), [](const json& a, const json& b) {
-    if (a["contains_selection"] != b["contains_selection"]) return a["contains_selection"].get<bool>();
-    return a["count"].get<size_t>() < b["count"].get<size_t>();
-  });
+  // TODO 11 UI-97: what the geometry itself shows (holes, fillets, chamfers, bosses, pockets, walls, chains, loops,
+  // similar entities), on the picked solids; for bodies picked whole, every group of the kinds asked for.
+  std::set<std::string> recognize;
+  for (const auto& k : recognizer_kinds())
+    if (kinds.count(k)) recognize.insert(k);
+  for (const auto& b : recognize.empty() ? std::vector<std::string>() : bodies) {
+    const Node* n = scene.node(b);
+    const auto sub = subs.find(b);
+    if (n->representation != "solid" || n->body_missing || (sub == subs.end() && !asked)) continue;
+    Recognizer rec(node_world_shape(doc, scene, b), cancel);
+    std::vector<Recognized> found;
+    if (sub != subs.end()) {
+      found = rec.around(sub->second.first, sub->second.second, recognize);
+    } else {
+      for (const char* k : {"hole", "fillet", "chamfer", "boss", "pocket", "wall"})
+        if (recognize.count(k))
+          for (auto& g : rec.all(k)) found.push_back(std::move(g));
+    }
+    const bool only = sub != subs.end() && bodies.size() == 1;
+    for (const auto& g : found) {
+      const bool edges = g.faces.empty();
+      json list = json::array();
+      for (int i : edges ? g.edges : g.faces) {
+        if (list.size() >= limit) break;
+        list.push_back(b + (edges ? "/edge/" : "/face/") + std::to_string(i));
+      }
+      const size_t count = edges ? g.edges.size() : g.faces.size();
+      json j = {{"kind", g.kind}, {"label", g.label}, {"params", g.params}, {"bodies", {b}}, {"refs", list}, {"count", count}, {"contains_selection", only}};
+      if (!g.rule.empty()) j["rule"] = g.rule;
+      if (list.size() < count) j["truncated"] = true;
+      j["_tier"] = !only ? 5 : g.kind == "similar" ? 4 : g.kind == "tangent" || g.kind == "loop" ? 3 : 1;
+      candidates.push_back(j);
+    }
+  }
+  auto rank = [](const json& c) {  // smaller first within a tier; similar rules keep their order
+    const bool similar = c["kind"] == "similar";
+    return std::make_tuple(c["_tier"].get<int>(), similar, similar ? size_t(0) : c["count"].get<size_t>());
+  };
+  std::stable_sort(candidates.begin(), candidates.end(), [&](const json& a, const json& b) { return rank(a) < rank(b); });
+  for (auto& c : candidates) c.erase("_tier");
   if (kinds.count("body"))
     for (const auto& b : bodies) {
       const Node* n = scene.node(b);

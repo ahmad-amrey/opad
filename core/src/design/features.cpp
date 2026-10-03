@@ -2,7 +2,9 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Common.hxx>
+#include <BOPAlgo_Alerts.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Defeaturing.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Splitter.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
@@ -155,6 +157,9 @@ std::vector<FeatureSpec> build_specs() {
   add("draft", "Draft", "draft", "modify", "Tilt faces about a neutral plane, for moulds.",
       {pick("faces", "Faces", "faces", 1, 0), in("plane", "Neutral plane", "plane"), in("angle", "Angle", "angle", "3 deg")});
   add("offset_face", "Press pull", "presspull", "modify", "Push planar faces in or pull them out.", {pick("faces", "Faces", "faces", 1, 0), in("distance", "Distance", "length", "5 mm")});
+  // TODO 11 UI-97: deleting a detail of an imported or dumb body is an op in the timeline.
+  add("remove_faces", "Remove faces", "removeFaces", "modify",
+      "Delete faces and close the gap by extending the faces around them (holes, fillets, chamfers, bosses, imported details).", {pick("faces", "Faces", "faces", 1, 0)});
   add("scale", "Scale", "scale", "modify", "Resize bodies uniformly.", {pick("bodies", "Bodies", "bodies", 1, 0), in("factor", "Factor", "number", "2"), choice("about", "About", {"origin", "centre"})});
   add("combine", "Combine", "combine", "combine", "Join, cut or intersect bodies.",
       {pick("target", "Target bodies", "bodies", 1, 0), pick("tools", "Tool bodies", "bodies", 1, 0), choice("operation", "Operation", {"join", "cut", "intersect"}), in("keep_tools", "Keep tools", "bool", false)});
@@ -1065,6 +1070,27 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
       const auto pieces = solids_of(body);
       if (pieces.empty()) throw Error("nothing is left of the body");
       out.bodies.push_back({node, healed(pieces.size() == 1 ? pieces.front() : body)});
+    }
+    return out;
+  }
+  if (kind == "remove_faces") {  // the faces go, their neighbours are extended until they close the gap
+    for (const auto& [node, faces] : by_body(ctx, in.value("faces", json()), TopAbs_FACE, "faces")) {
+      ctx.check_cancel();
+      const TopoDS_Shape body = ctx.node_shape(node);
+      BRepAlgoAPI_Defeaturing df;
+      df.SetShape(body);
+      for (const auto& f : faces) df.AddFaceToRemove(same_in(body, f));
+      df.SetRunParallel(Standard_True);
+      df.SetToFillHistory(Standard_False);
+      df.Build();
+      // The kernel keeps a feature it cannot remove and only warns: that is a failure here.
+      if (!df.IsDone() || df.HasErrors() || df.HasWarning(STANDARD_TYPE(BOPAlgo_AlertUnableToRemoveTheFeature)))
+        throw Error("these faces cannot be removed: the faces around them do not meet when extended (a round on a convex corner, or neighbours tangent to each other); pick the whole detail, or fewer faces");
+      const auto pieces = solids_of(df.Shape());
+      if (pieces.empty()) throw Error("removing these faces leaves no solid");
+      if (std::fabs(volume_of(df.Shape()) - volume_of(body)) <= 1e-9 * std::max(1.0, std::fabs(volume_of(body))) && subshape_count(df.Shape(), Ref::Kind::Face) == subshape_count(body, Ref::Kind::Face))
+        throw Error("removing these faces changes nothing");
+      out.bodies.push_back({node, healed(pieces.size() == 1 ? pieces.front() : bundle(pieces))});
     }
     return out;
   }

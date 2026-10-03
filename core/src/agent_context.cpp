@@ -3,6 +3,7 @@
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 #include "opad/mass.hpp"
+#include "opad/recognize.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/provenance.hpp"
 #include "opad/design/sketch_geom.hpp"
@@ -130,14 +131,17 @@ json query_entities(const Document& doc,const Scene& scene,const json& args,cons
   const auto refKind=kind=="face"?Ref::Kind::Face:kind=="vertex"?Ref::Kind::Vertex:Ref::Kind::Edge;
   const auto shape=node_world_shape(doc,scene,body);const int entities=subshape_count(shape,refKind);
   if(entities>10000)throw Error("Body exceeds query budget of 10000 entities");
-  const auto filters=args.value("filters",json::object());
+  const auto [recognition,filters]=split_recognized(args.value("filters",json::object()));
   const double tolerance=args.value("tolerance_mm",1e-5);
+  std::vector<int> recognized;  // TODO 11 UI-97: {"recognized":"hole","diameter":6} narrows the scan to those groups' faces
+  if(!recognition.is_null()){if(refKind!=Ref::Kind::Face)throw Error("a \"recognized\" filter picks faces: give kind \"face\"");recognized=recognized_faces(shape,recognition,tolerance,cancelled);}
   if(filters.contains("radius_min") && filters.contains("radius_max") && filters["radius_min"].get<double>()>filters["radius_max"].get<double>())throw Error("radius_min exceeds radius_max");
   auto axis=[](const std::string& a){return a=="x"?0:a=="y"?1:2;};
   if(filters.contains("bounds"))for(int i=0;i<3;++i)if(filters["bounds"]["min"][i].get<double>()>filters["bounds"]["max"][i].get<double>())throw Error("Invalid bounding region");
   size_t count=0;json items=json::array();
   for(int i=0;i<entities;++i){
     if(cancelled && cancelled())throw Error("cancelled");
+    if(!recognition.is_null() && !std::binary_search(recognized.begin(),recognized.end(),i))continue;
     Ref ref;ref.body=body;ref.kind=refKind;ref.index=i;
     auto detail=inspect_ref(doc,scene,ref);
     if(!entity_matches(detail,filters,tolerance))continue;  // the same filters rule selectors use (TODO 10 B7)

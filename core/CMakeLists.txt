@@ -36,6 +36,7 @@ add_library(opad_core STATIC
   src/formats.cpp
   src/viewer_cache.cpp
   src/inspect.cpp
+  src/recognize.cpp
   src/render.cpp
   src/diff.cpp
   src/commands.cpp
