@@ -154,7 +154,6 @@
  "Cache cleared: %1": "تم مسح الذاكرة المؤقتة: %1",
  "&About OPAD": "حول OPAD",
  "About OPAD": "حول OPAD",
- "<b>OPAD %1</b><br>Git-native STEP viewer.<br>MIT licence. Built on Open CASCADE Technology and Qt.<br><br>Headless twin: <code>opad-cli</code>; Python: <code>import opad</code>.": "<b>OPAD %1</b><br>عارض STEP مبني على git.<br>رخصة MIT. مبني على Open CASCADE Technology وQt.<br><br>النسخة بلا واجهة: <code>opad-cli</code>؛ بايثون: <code>import opad</code>.",
  "&File": "ملف",
  "Recent": "الأخيرة",
  "&Edit": "تحرير",

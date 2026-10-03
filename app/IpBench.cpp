@@ -1,12 +1,18 @@
 #include "MainWindow.hpp"
 #include <QApplication>
+#include <QDialog>
+#include <QMenu>
+#include <QMenuBar>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPushButton>
+#include "Legal.hpp"
 #include "opad/drawing_io.hpp"
 
 // OPAD_BENCH_IP=<prefix>: the IP switches through their actions. The view cube's corner under the pointer is a corner
 // view with view/cubeEdgesCorners on, the face it lies on with it off (UI-54), and back. The ODA File Converter is off
-// by default and turns on only through its terms box (UI-14; <prefix>.oda-terms.png).
+// by default and turns on only through its terms box (UI-14; <prefix>.oda-terms.png). Help shows the third-party notices
+// (UI-13; <prefix>.notices.png), About Qt and an About box that names the licences.
 bool MainWindow::benchIp() {
   const QString prefix=qEnvironmentVariable("OPAD_BENCH_IP");if(prefix.isEmpty())return false;
   bool all=true;
@@ -42,6 +48,23 @@ bool MainWindow::benchIp() {
   QStringList presets;bool styled=true;
   for(const char* id:{"nav.fusion","nav.solidworks","nav.onshape","nav.blender"}){const QString text=action(id)->text();presets<<text;styled=styled&&text.endsWith("-style");}
   report("navigation presets: "+presets.join(", "),styled && presets[1]=="Navigation: SOLIDWORKS-style");
+
+  // Help > Third-party licences (UI-13): the notices compiled in from the link libraries, in a dialog with About Qt.
+  QMenu* help=nullptr;
+  for(QAction* a:menuBar()->actions())if(a->menu() && a->menu()->actions().contains(action("help.licenses")))help=a->menu();
+  report("Help menu: Third-party licences, About Qt, About",help && help->actions().contains(action("help.aboutqt")) && help->actions().contains(action("help.about")));
+  action("help.licenses")->trigger();
+  auto* notices=findChild<QDialog*>("thirdPartyNotices");
+  auto* text=notices?notices->findChild<QPlainTextEdit*>("noticesText"):nullptr;
+  const QString body=text?text->toPlainText():QString();
+  if(notices)notices->grab().save(prefix+".notices.png");
+  report(QString("third-party licences: %1 characters").arg(body.size()),body.startsWith("OPAD ") && body.contains("MIT licence") && body.contains("Trademarks") &&
+         (!body.contains("packages.msys2.org") || (body.contains("* opencascade ") && body.contains("* qt6-") && body.contains("Licence texts"))));
+  if(notices)notices->close();
+  const QString about=legal::aboutText();
+  report("About: licences and trademarks, no 'STEP viewer'",!about.contains("STEP viewer") && about.contains("MIT licence") && about.contains("Third-party licences") && about.contains("not affiliated"));
+  action("help.about")->trigger();  // message boxes: dismissed by the bench (BenchQuiet), logged
+  action("help.aboutqt")->trigger();
   QCoreApplication::exit(all?0:2);
   return true;
 }

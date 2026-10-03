@@ -618,9 +618,9 @@ void MainWindow::buildActions() {
     opad::json r = opad::commands::run("cache", opad::json{{"action", "clear"}});
     statusBar()->showMessage(tr("Cache cleared: %1").arg(QString::fromStdString(r["dir"].get<std::string>())), 4000);
   });
-  addAction("help.about", tr("&About OPAD"), "", QKeySequence(), [this] {
-    QMessageBox::about(this, tr("About OPAD"), tr("<b>OPAD %1</b><br>Git-native STEP viewer.<br>MIT licence. Built on Open CASCADE Technology and Qt.<br><br>Headless twin: <code>opad-cli</code>; Python: <code>import opad</code>.").arg(QString::fromStdString(opad::version_string())));
-  });
+  addAction("help.about", tr("&About OPAD"), "", QKeySequence(), [this] { legal::showAbout(this); });
+  addAction("help.licenses", tr("Third-party licences…"), "", QKeySequence(), [this] { legal::showNotices(this); });
+  addAction("help.aboutqt", tr("About Qt"), "", QKeySequence(), [this] { QMessageBox::aboutQt(this); })->setMenuRole(QAction::AboutQtRole);
 }
 
 void MainWindow::refreshIcons() {
@@ -666,7 +666,7 @@ void MainWindow::buildMenus() {
   QMenu* tools = menuBar()->addMenu(tr("&Tools"));
   add(tools, {"tools.commands", "tools.shortcuts", "tools.cache"});
   QMenu* help = menuBar()->addMenu(tr("&Help"));
-  add(help, {"help.about"});
+  add(help, {"help.licenses", "help.aboutqt", "-", "help.about"});
   rebuildRecentMenu();
 }
 
