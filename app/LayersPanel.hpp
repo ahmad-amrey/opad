@@ -66,6 +66,7 @@ class LayersPanel : public QWidget {
   void cellClicked(QTreeWidgetItem* item, int column);
   void filter();
   void showWalk();
+  void retheme();  // the header's and the buttons' icons in the theme's colours (the rows are rebuilt with the document)
   const drawing2d::Layer* layer(const std::string& id) const { return drawing2d::find(m_layers, id); }
   AreaServices& m_services;
   std::vector<drawing2d::Layer> m_layers;
@@ -77,4 +78,5 @@ class LayersPanel : public QWidget {
   QComboBox* m_states;
   QToolButton *m_restore, *m_delete;
   PanelFooter* m_footer;
+  std::vector<std::pair<QToolButton*, QString>> m_icons;  // the tool buttons and their icon names
 };

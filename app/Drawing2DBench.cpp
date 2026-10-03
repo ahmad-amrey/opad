@@ -183,6 +183,31 @@ OPAD_BENCH(OPAD_BENCH_LAYERS, layers) {
     auto camera = std::make_shared<opad::json>();
     auto steps = std::make_shared<int>(0);
     script->add("open", [open] { open->trigger(); }, [panel] { return panel->isVisible() && panel->layers().size() == 4; });
+    // A theme switch (View > Dark theme) re-colours the panel's header and buttons and the object snap switch (checked).
+    auto ink = [](const QIcon& icon) {  // an icon's most opaque pixel
+      const QImage image = icon.pixmap(QSize(18, 18)).toImage();
+      QColor best(0, 0, 0, 0);
+      for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x)
+          if (const QColor c = image.pixelColor(x, y); c.alpha() > best.alpha()) best = c;
+      return best;
+    };
+    auto alike = [](const QColor& a, const QColor& b) { return std::abs(a.red() - b.red()) + std::abs(a.green() - b.green()) + std::abs(a.blue() - b.blue()) < 40; };
+    auto themed = [&w, panel, ink, alike] {
+      const Tokens& t = theme::current();
+      QAction* snap = w.action("drawing2d.objectSnap");
+      return alike(ink(panel->tree()->headerItem()->icon(LayersPanel::On)), t.fg) && snap->isChecked() && alike(ink(snap->icon()), t.onsel);
+    };
+    auto dark = std::make_shared<bool>(false);
+    script->add("theme", [&w, dark, require, themed] {
+      require(themed(), "the header and the object snap switch are in the theme's colours");
+      *dark = w.m_darkAction->isChecked();
+      w.m_darkAction->toggle();
+    }, [&w, dark, themed] { return w.m_darkAction->isChecked() != *dark && themed(); });
+    script->add("theme back", [&w, require] {
+      require(true, "after a theme switch the header icons and the checked object snap switch take the new theme's colours");
+      w.m_darkAction->toggle();
+    }, [&w, dark, themed] { return w.m_darkAction->isChecked() == *dark && themed(); });
     script->add("as the file has them", [v, panel, layer, drawn, require, value, stippled, fileDashed] {
       const auto walls = layer("Walls"), notes = layer("Notes"), old = layer("Old"), plain = layer("Plain");
       require(walls.locked && walls.on && walls.linetype == "DASHED" && std::abs(walls.lineweight - 0.5) < 1e-9 && !notes.on && !notes.plot && old.frozen && old.on &&

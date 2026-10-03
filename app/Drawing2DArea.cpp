@@ -139,7 +139,8 @@ class Drawing2DArea : public AreaController {
       button->setStyleSheet(QString("QToolButton { border: 1px solid %1; border-radius: 3px; background: %2; } QToolButton:checked { background: %3; border: 2px solid %3; } "
                                     "QToolButton:hover { border-color: %3; }").arg(t.line.name(), t.bg2.name(), t.sel.name()));
     };
-    connect(theme::notifier(), &theme::Notifier::changed, button, paint);
+    // Queued: the window gives every command its plain themed icon after the theme changes (MainWindow::refreshIcons).
+    connect(theme::notifier(), &theme::Notifier::changed, button, paint, Qt::QueuedConnection);
     connect(m_snapAction, &QAction::toggled, button, paint);
     paint();
     bar->addPermanentWidget(button);
