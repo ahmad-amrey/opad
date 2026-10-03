@@ -1,4 +1,4 @@
-find_package(Qt6 COMPONENTS Widgets Gui Network QUIET)
+find_package(Qt6 COMPONENTS Widgets Gui Network PrintSupport QUIET)
 if(NOT Qt6_FOUND)
   message(WARNING "OPAD: Qt 6 not found; skipping the desktop app (set OPAD_BUILD_APP=OFF to silence)")
   return()
@@ -63,7 +63,7 @@ if(WIN32)
 endif()
 
 add_executable(opad WIN32 MACOSX_BUNDLE ${OPAD_APP_SOURCES})
-target_link_libraries(opad PRIVATE opad::core opad_paint ${OPAD_OCCT_VIS_LIBS} Qt6::Widgets Qt6::Gui Qt6::Network)
+target_link_libraries(opad PRIVATE opad::core opad_paint ${OPAD_OCCT_VIS_LIBS} Qt6::Widgets Qt6::Gui Qt6::Network Qt6::PrintSupport)
 if(WIN32)
   target_link_libraries(opad PRIVATE dbghelp)
 endif()
@@ -81,7 +81,8 @@ if(OPAD_STATIC)
   target_compile_definitions(opad PRIVATE OPAD_SINGLE_FILE=1)  # portable by default: settings and cache beside the exe
   # Static Qt links every plugin of every type it knows by default; OPAD reads PNG (built into QtGui) and writes
   # PNG/JPEG screenshots, so the other image formats (TIFF alone drags in zstd, lzma, jbig, lerc, libdeflate) and
-  # the SVG icon engine stay out. The Windows platform and style plugins come in as usual.
+  # the SVG icon engine stay out. The Windows platform and style plugins come in as usual, and so does the print support
+  # plugin where the platform has one (CUPS on Linux; Windows prints from QtPrintSupport itself, through winspool).
   qt_import_plugins(opad INCLUDE_BY_TYPE imageformats Qt6::QJpegPlugin EXCLUDE_BY_TYPE iconengines)
 endif()
 install(TARGETS opad RUNTIME DESTINATION bin BUNDLE DESTINATION .)

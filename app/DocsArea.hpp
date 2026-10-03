@@ -18,6 +18,7 @@
 #include "opad/json.hpp"
 
 class SheetPage;
+class SheetPrintDialog;
 class QMenu;
 
 class DocsArea : public AreaController {
@@ -72,6 +73,10 @@ class DocsArea : public AreaController {
   void issueRevision();
   void issue(const opad::json& args, const QString& pdf, bool tagged, std::function<void(const opad::json&)> done = {});
   opad::json lastIssue;
+  // Print… (SheetPrint.cpp, UI-86): the shown drawing's sheets drawn on a worker, then the print dialog with its preview;
+  // printing runs on a worker. opened gets the dialog (benches); lastPrint: {"pages"} or {"error"} once printed.
+  void printSheets(std::function<void(SheetPrintDialog*)> opened = {});
+  opad::json lastPrint;
   // A command once nothing reads the document (the sheet's own worker is stopped for it); `then` gets the result, or null
   // when it was refused (a message box said why).
   void run(const std::string& command, opad::json args, std::function<void(const opad::json&)> then = {});

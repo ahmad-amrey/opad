@@ -83,6 +83,7 @@ void DocsArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
   if (QMenu* file = menus.value("file")) {
     insertAfter(file, services().action("file.export"), services().action("file.exportBom"));
     insertAfter(file, services().action("file.exportBom"), services().action("file.documentProperties"));
+    insertAfter(file, services().action("file.exportBom"), services().action("drawings.print"));  // a drawing's sheets (UI-86)
   }
   if (QMenu* inspect = menus.value("inspect")) insertAfter(inspect, services().action("inspect.properties"), services().action("inspect.partProperties"));
 }

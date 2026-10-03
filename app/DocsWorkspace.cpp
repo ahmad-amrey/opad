@@ -30,6 +30,7 @@
 #include "opad/drawing/sheet.hpp"
 
 OPAD_ICON_TABLE(sheets,
+                {"print", R"(<path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8" rx="1"/><path d="M7 14h10v7H7z"/><path d="M17.5 12h1" opacity=".55"/>)"},
                 {"sheetAdd", R"(<rect x="3" y="6" width="14" height="14" rx="1"/><path d="M19.5 2.5v6M16.5 5.5h6"/>)"},
                 {"sheetProperties", R"(<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M11 20v-5.5h10M11 17.2h10"/><path d="M6 8h5M6 11h3" opacity=".55"/>)"},
                 {"templateFile", R"(<path d="M5 3h10l4 4v14H5z"/><path d="M15 3v4h4"/><path d="M10 21v-4.5h9"/>)"},
@@ -107,6 +108,24 @@ void DocsArea::buildDrawingCommands() {
   add("drawings.fit", tr("Fit sheet"), "fit", [this] { m_page->canvas()->fitSheet(); }, sheetShown, {"zoom"});
   add("drawings.exportSheet", tr("Export sheet…"), "export", [this] { exportSheet(m_page->sheet()); }, sheetShown, {"PDF", "DXF", "DWG", "SVG", "PNG", "print"});
   add("drawings.issue", tr("Issue revision…"), "issueRevision", [this] { issueRevision(); }, sheetShown, {"release", "revision", "freeze", "git tag", "approve"});
+  {
+    CommandInfo print;
+    print.id = "drawings.print";
+    print.label = tr("Print…");
+    print.icon = "print";
+    print.key = QKeySequence("Ctrl+Alt+P");  // Ctrl+P is Properties
+    print.group = tr("Drawings");
+    print.keywords = {"printer", "plot", "paper", "preview", "PDF"};
+    print.workspaces = {"drawings"};
+    print.enabledWhen = sheetShown;
+    services().addCommand(print, [self] {
+      if (self) self->services().guarded([&] { self->printSheets(); });
+    });
+  }
+  add("drawings.exportDrawing", tr("Export drawing as PDF…"), "export", [this] {
+        const opad::Sheet* s = services().document()->scene.sheet(m_page->sheet());
+        exportSheet(s && !s->drawing.empty() ? "drawing:" + s->drawing : m_page->sheet());
+      }, sheetShown, {"PDF", "pages", "all sheets"});
   buildAnnotateCommands();
 }
 
@@ -127,7 +146,10 @@ void DocsArea::drawingsRibbon(RibbonLayout& layout) {
   layout.addAction("drawings.drawing.views", services().action("drawings.projectedView"));
   layout.addAction("drawings.drawing.views", services().action("drawings.isoView"));
   group("style", tr("Style"), {"drawings.hiddenLines", "drawings.tangentEdges", "drawings.update"});
-  group("output", tr("Output"), {"drawings.exportSheet", "drawings.issue", "file.export", "file.exportBom", "drawings.fit"});
+  layout.addGroup("drawings.drawing", "drawings.drawing.output", tr("Output"));
+  layout.addAction("drawings.drawing.output", services().action("drawings.print"));
+  layout.addAction("drawings.drawing.output", services().action("drawings.exportSheet"), RibbonLayout::Size::Large, {services().action("drawings.exportDrawing")});
+  for (const char* id : {"drawings.issue", "file.export", "file.exportBom", "drawings.fit"}) layout.addAction("drawings.drawing.output", services().action(id));
   annotateRibbon(layout);
 }
 
@@ -429,8 +451,8 @@ void DocsArea::openSheet(const std::string& row) {
 void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
   const opad::Scene& s = services().document()->scene;
   if (views.empty()) {  // on the paper: what goes onto it
-    for (const char* id : {"drawings.baseView", "drawings.isoView", "drawings.sheetProperties", "drawings.templateFields", "drawings.newSheet", "drawings.exportSheet",
-                            "drawings.issue"})
+    for (const char* id : {"drawings.baseView", "drawings.isoView", "drawings.sheetProperties", "drawings.templateFields", "drawings.newSheet", "drawings.print",
+                            "drawings.exportSheet", "drawings.issue"})
       if (QAction* a = services().action(id)) menu.addAction(a);
     return;
   }

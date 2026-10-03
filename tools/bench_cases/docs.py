@@ -39,4 +39,8 @@ CASES = [
     # linework frozen, the document saved, committed and tagged; the sheet bar names the revision and warns once the model
     # changed; a second revision without PDF or git. <prefix>.dialog.png, <prefix>.issue.png.
     ("sheet-issue", "empty", {"OPAD_BENCH_SHEET_ISSUE": "{prefix}"}),
+    # Print… (UI-86): the drawing's sheets drawn on a worker, the dialog's previews rendered on a worker page by page, both
+    # sheets printed at actual size and one fitted, through the printer path into PDFs whose pages are checked.
+    # <prefix>.print.png, .actual.pdf, .fit.pdf.
+    ("sheet-print", "empty", {"OPAD_BENCH_SHEET_PRINT": "{prefix}"}),
 ]
