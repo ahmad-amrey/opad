@@ -18,17 +18,21 @@
 #include <QWidget>
 #include <array>
 #include <atomic>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <set>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <TopoDS_Shape.hxx>
 
 #include "AppDocument.hpp"
+#include "BodyLook.hpp"
 #include "BodyShape.hpp"
 #include "Theme.hpp"
 
@@ -128,6 +132,20 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<std::string> isolatedNodes() const {return {m_isolated.begin(),m_isolated.end()};}
   int isolatedCount() const { return static_cast<int>(m_isolated.size()); }
   int displayedCount() const { return static_cast<int>(m_items.size()); }
+
+  // Per-body looks (ViewportLooks.cpp, UI-121): each source owns one layer of deltas by node id (a component's covers the
+  // bodies under it; the nearest entry wins), composed over the document's appearance in LookSource order (BodyLook.hpp)
+  // and applied by a sliced job, aspects in place, never Redisplay. looksApplied() once every displayed body shows it.
+  void setLookLayer(LookSource source, std::map<std::string, LookDelta> deltas);
+  void clearLookLayer(LookSource source) { setLookLayer(source, {}); }
+  void setGhostsPickable(bool on);  // feature inputs, sketch Project, measuring: ghosts can be picked as references
+  bool ghostsPickable() const { return m_ghostsPickable; }
+  BodyLook bodyLook(const std::string& body) const;  // as composed now (whether displayed yet or not)
+  BodyLook shownLook(const std::string& body) const;  // as applied to the displayed body (the default look if none)
+  bool looksPending() const { return m_lookJob != nullptr || !m_lookQueue.empty(); }
+  opad::json benchLookState(const std::string& body) const;  // OPAD_BENCH_LOOKS: what AIS holds for a displayed body
+  std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
+  bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
 
   // Section: the clip plane, and its gizmo (ViewportSection.cpp): the plane's outline over the model, edges only,
   // sized to the model's extent in the plane. A strip inside each side is a drag handle: hovering it shows a
@@ -246,6 +264,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void meshingProgress(int remaining);
   void isolationChanged();  // entered, left, or left because every isolated object was deleted
   void sectionDragged(const opad::Vec3& origin);  // the section plane's handle was dragged here
+  void looksApplied();  // a setLookLayer (or a scene change under one) has reached every displayed body
 
  public slots:
   void sync();
@@ -326,7 +345,21 @@ class Viewport : public QWidget, protected AIS_ViewController {
     double opacity;
     TopoDS_Shape located;
     Handle(NavigationShape) navigation;
+    BodyLook look;      // as applied (ViewportLooks.cpp)
+    bool rigid = true;  // the world placement is the object's local transformation (else baked into `located`)
   };
+  // looks (ViewportLooks.cpp)
+  std::array<std::unordered_map<std::string, LookDelta>, kLookSources> m_lookLayers;
+  bool m_ghostsPickable = false;
+  Job* m_lookJob = nullptr;
+  std::deque<std::string> m_lookQueue;  // displayed bodies whose look may have changed, applied in this order
+  std::unordered_set<std::string> m_lookQueued;
+  BodyLook composeLook(const opad::Node& body) const;
+  bool layered() const;
+  // The AIS state of the look that differs from item.look: colour and opacity in place (SynchronizeAspects), erase or
+  // display, (de)activate, Z layer, location (SetLocation: picking follows). True when it moved the body.
+  bool applyLook(const std::string& id, Item& item, const BodyLook& look);
+  void scheduleLooks();  // every displayed body checked again by the sliced job
   void initViewer();
   void trackpadScroll(const QPointF& position, const QPointF& delta, bool orbit);
   void finishTrackpadScroll();
@@ -341,7 +374,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   gp_Pnt orbitPoint(const Graphic3d_Vec2i& cursor);
   void focusCube();
   void syncWindowSize();
-  void applyStyle(const Handle(AIS_Shape)& ais);
+  void applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look = nullptr);  // look: a ghost's edges fade with it
   void activateSelection(const Handle(AIS_Shape)& ais);
   void startMeshing(std::vector<std::string> keys);
   void displayBody(const std::string& id);

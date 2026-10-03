@@ -154,7 +154,7 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
 #endif
 }
 
-Viewport::~Viewport() { if(m_bodyGlowJob) m_bodyGlowJob->cancel(); *m_alive = false; }
+Viewport::~Viewport() { if(m_bodyGlowJob) m_bodyGlowJob->cancel(); if(m_lookJob) m_lookJob->cancel(); *m_alive = false; }
 
 void Viewport::setBlocked(bool on) {
   if (on) {
@@ -494,10 +494,19 @@ void Viewport::twoDimensionalHint(const QPoint& global) {
 }
 
 // ---------------------------------------------------------------- display styles (F19)
-void Viewport::applyStyle(const Handle(AIS_Shape)& ais) {
+void Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
   Handle(Prs3d_Drawer) d = ais->Attributes();
   d->SetFaceBoundaryDraw(m_style == Style::ShadedEdges);
-  d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.medge), Aspect_TOL_SOLID, 1.0));
+  // Line aspects ignore alpha here: a ghost's edges are blended towards the background instead. The body's own aspect
+  // is changed in place, so the drawn groups (which share it) follow SynchronizeAspects as well as a recompute.
+  QColor edge = m_tokens.medge;
+  if (look && look->ghost) {
+    const double t = 1 - look->opacity;
+    edge = QColor::fromRgbF(edge.redF() + (m_tokens.vp.redF() - edge.redF()) * t, edge.greenF() + (m_tokens.vp.greenF() - edge.greenF()) * t,
+                            edge.blueF() + (m_tokens.vp.blueF() - edge.blueF()) * t);
+  }
+  if (d->HasOwnFaceBoundaryAspect()) d->FaceBoundaryAspect()->SetColor(occ(edge));
+  else d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(edge), Aspect_TOL_SOLID, 1.0));
   m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, Standard_False);
 }
 
@@ -506,7 +515,7 @@ void Viewport::setStyle(Style s) {
   if (!m_initialised) return;
   bool selected = false;
   for (auto& [id, it] : m_items) {
-    applyStyle(it.ais);
+    applyStyle(it.ais, &it.look);
     m_ctx->RecomputePrsOnly(it.ais, Standard_False, Standard_True);  // not Redisplay: that dropped the body from the selection
     selected = selected || m_ctx->IsSelected(it.ais);
   }
@@ -628,6 +637,8 @@ void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
   m_ctx->Load(ais, -1);  // register with the selection manager (picking BVH); Display() with mode -1 does not
   m_ctx->Deactivate(ais);
   if (!m_bodiesPickable) return;  // sketching, or a feature input that only takes sketch regions / planes
+  if (const auto node = m_nodeOf.find(ais.get()); node != m_nodeOf.end())  // a ghost, a locked or a hidden body (its look)
+    if (const auto item = m_items.find(node->second); item != m_items.end() && !item->second.look.shownPickable()) return;
   TopAbs_ShapeEnum t = TopAbs_SHAPE;
   switch (m_filter) {
     case SelFilter::Body: t = TopAbs_SHAPE; break;
@@ -934,7 +945,9 @@ void Viewport::applySelectionLayers() {
   for(const auto& [ais,glow]:m_bodyGlows) if(!state->keep.count(ais)) state->stale.push_back(ais);
   auto update=[this](const Handle(AIS_Shape)& ais,const std::shared_ptr<BodyPrs>& prs) {
     const bool selected=m_ctx->IsSelected(ais);
-    const auto want=selected?Graphic3d_ZLayerId_Topmost:Graphic3d_ZLayerId_Default;
+    Graphic3d_ZLayerId rest=Graphic3d_ZLayerId_Default;  // where its look puts it (UI-121); selected: Topmost, the X-ray, last
+    if(const auto node=m_nodeOf.find(ais.get());node!=m_nodeOf.end()) if(const auto item=m_items.find(node->second);item!=m_items.end()) rest=item->second.look.layer;
+    const auto want=selected?Graphic3d_ZLayerId_Topmost:rest;
     if(ais->ZLayer()!=want) m_ctx->SetZLayer(ais,want);
     if(!selected || !prs) return;
     // A body a feature preview stands in for (moved, joined, cut) shows no glow where it was: it read as a copy left behind.
@@ -1648,8 +1661,7 @@ void Viewport::sync() {
       if (item.color != n->color || item.opacity != n->opacity) {
         item.color = n->color;
         item.opacity = n->opacity;
-        item.ais->SetColor(qcolor(n->color));
-        item.ais->SetTransparency(1.0 - n->opacity);
+        applyLook(id, item, composeLook(*n));  // the new appearance under the layers of looks (UI-121)
         // The presentation only: Redisplay also rebuilt the selection owners, which dropped the body from the selection
         // (a colour picked for the selection left it unselected, though the status bar still counted it).
         m_ctx->RecomputePrsOnly(item.ais, Standard_False);
@@ -1687,6 +1699,7 @@ void Viewport::sync() {
   if(removed) applySelectionLayers();
   if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // Remove() dropped that body's selected sub-shapes
   if (!pending.empty()) startMeshing(pending);
+  if (layered()) scheduleLooks();  // the hierarchy under a layer's components may have changed
   syncSketches();
   applySelectionLayers();
   updateAnnotations();
@@ -1731,6 +1744,7 @@ void Viewport::displayBody(const std::string& id) {
     auto p = m_prs.find(n->body_key);
     if (p != m_prs.end()) prs = p->second;
   }
+  const BodyLook look = composeLook(*n);  // the document's appearance under the layers of looks (UI-121)
   // Rigid placements go on the object as a local transformation, so the prototype's precomputed arrays
   // (and sub-shape ordinals) are shared by every instance; anything else gets a transformed copy.
   TopoDS_Shape located = proto;
@@ -1769,7 +1783,10 @@ void Viewport::displayBody(const std::string& id) {
       } else emit hoverChanged(tr("Embedded image could not be decoded; showing its frame"));
     }
   }
-  if (rigid && !world.is_identity()) ais->SetLocalTransformation(opad::trsf_from_mat(world));
+  gp_Trsf placed;
+  if (look.offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(look.offset[0], look.offset[1], look.offset[2]));  // an explode offset, after the placement
+  if (rigid && !world.is_identity()) placed.Multiply(opad::trsf_from_mat(world));
+  if (placed.Form() != gp_Identity) ais->SetLocalTransformation(placed);
   ais->Attributes()->SetTypeOfDeflection(Aspect_TOD_ABSOLUTE);
   ais->Attributes()->SetMaximalChordialDeviation(deflectionFor(n->body_key));
   ais->Attributes()->SetDeviationAngle(20.0 * M_PI / 180.0);
@@ -1778,9 +1795,10 @@ void Viewport::displayBody(const std::string& id) {
   // minutes on big bodies. Meshing happens once, on the worker; unmeshed faces get box sensitives.
   ais->Attributes()->SetAutoTriangulation(Standard_False);
   ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
-  ais->SetColor(qcolor(n->color));
-  if (n->opacity < 1.0) ais->SetTransparency(1.0 - n->opacity);
-  applyStyle(ais);
+  ais->SetColor(qcolor(look.color));
+  if (look.opacity < 1.0) ais->SetTransparency(1.0 - look.opacity);
+  if (look.layer != Graphic3d_ZLayerId_Default) ais->SetZLayer(look.layer);
+  applyStyle(ais, &look);
   if(n->representation=="drawing2d" && n->raster.is_null()) {
     Handle(Prs3d_Drawer) selected=new Prs3d_Drawer();selected->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected));
     selected->SetDisplayMode(AIS_WireFrame);selected->SetColor(selectionTint());
@@ -1791,16 +1809,17 @@ void Viewport::displayBody(const std::string& id) {
     hover->SetDisplayMode(AIS_WireFrame);hover->SetColor(Quantity_NOC_WHITE);ais->SetDynamicHilightAttributes(hover);
   }
   m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, -1, Standard_False);  // selection activated below, once
+  if (!look.visible) m_ctx->Erase(ais, Standard_False);
   const qint64 displayMs = t.elapsed();
-  activateSelection(ais);
-  if (trace::enabled() && t.elapsed() > 50) trace::log(QStringLiteral("displayBody %1: display %2 ms, selection %3 ms").arg(QString::fromStdString(n->name)).arg(displayMs).arg(t.elapsed() - displayMs));
-  m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located, {}};
+  m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located, {}, look, rigid};
   m_nodeOf[ais.get()] = id;
+  activateSelection(ais);  // after m_items: its look may say not pickable
+  if (trace::enabled() && t.elapsed() > 50) trace::log(QStringLiteral("displayBody %1: display %2 ms, selection %3 ms").arg(QString::fromStdString(n->name)).arg(displayMs).arg(t.elapsed() - displayMs));
   if (prs && !prs->navigation.IsNull()) {
     Handle(NavigationShape) nav = new NavigationShape(prs->navigation);
-    if (rigid && !world.is_identity()) nav->SetLocalTransformation(opad::trsf_from_mat(world));
+    if (placed.Form() != gp_Identity) nav->SetLocalTransformation(placed);
     m_navSelection->Load(nav, -1);
-    m_navSelection->Activate(nav, 0);
+    if (look.visible) m_navSelection->Activate(nav, 0);
     m_items[id].navigation = nav;
     m_navNodes[nav.get()] = id;
   }

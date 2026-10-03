@@ -333,7 +333,7 @@ void Viewport::clearPreviewBodies() {
   m_previewBodies.clear();
   for (const auto& node : m_previewHidden) {
     auto it = m_items.find(node);
-    if (it == m_items.end()) continue;
+    if (it == m_items.end() || !it->second.look.visible) continue;  // hidden by its look meanwhile (UI-121)
     m_ctx->Display(it->second.ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, -1, Standard_False);
     activateSelection(it->second.ais);
   }
