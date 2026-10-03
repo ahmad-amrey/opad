@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/">
+    <file>help/commands.json</file>
+    <file>help/commands.ar.json</file>
+  </qresource>
+</RCC>

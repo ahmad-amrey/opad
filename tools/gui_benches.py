@@ -63,6 +63,9 @@ def main():
             ("zoom-refinement", round_part, {"OPAD_BENCH_SCENE": "{prefix}.png", "OPAD_BENCH_VIEW": "iso", "OPAD_BENCH_ZOOM": "40"}),
             ("interference", overlapping, {"OPAD_BENCH_CHECK": "interference", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
+            # UI-106: help for every command, the rich hover card on ribbon buttons (English, then Arabic right to left).
+            ("richtip", box, {"OPAD_BENCH_RICHTIP": "{prefix}"}),
+            ("richtip-ar", box, {"OPAD_BENCH_RICHTIP": "{prefix}", "OPAD_LANG": "ar"}),
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))

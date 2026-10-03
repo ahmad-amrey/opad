@@ -2524,6 +2524,7 @@ void MainWindow::runBench() {
   }
   if(qEnvironmentVariableIsSet("OPAD_BENCH_LEAVE")){const bool ok=m_viewport->benchLeave();QCoreApplication::exit(ok?0:2);return;}
   if(benchShortcuts())return;
+  if(benchRichTip())return;
   if(benchDrawingImport())return;
   if(benchTodo9())return;
   if(benchAnnotateLarge())return;

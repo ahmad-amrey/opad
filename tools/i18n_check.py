@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lists the app's tr("...") strings that a translation file does not cover yet.
 
-  python tools/i18n_check.py            # every app/i18n/*.json
+  python tools/i18n_check.py            # every app/i18n/*.json, and the command help app/help/commands.<code>.json
   python tools/i18n_check.py --dump     # print all source strings as a JSON skeleton
 
 Translations are plain JSON (source text -> translation, see app/I18n.hpp); keys starting with "@" are
@@ -32,6 +32,21 @@ def sources():
     return found
 
 
+def help_missing():
+    """app/help/commands.json (English) against each commands.<code>.json: a record's text fields, translated by id."""
+    english = json.load(open(os.path.join(ROOT, 'app', 'help', 'commands.json'), encoding='utf-8'))['commands']
+    bad = 0
+    for path in sorted(glob.glob(os.path.join(ROOT, 'app', 'help', 'commands.*.json'))):
+        have = json.load(open(path, encoding='utf-8'))
+        missing = [(c['id'], field) for c in english for field in ('title', 'summary', 'details', 'requires', 'keywords')
+                   if c.get(field) and not have.get(c['id'], {}).get(field)]
+        print('%s: %d commands, %d fields missing' % (os.path.basename(path), len(english), len(missing)))
+        for command, field in missing:
+            print('  %-28s %s' % (command, field))
+        bad += len(missing)
+    return bad
+
+
 def main():
     sys.stdout.reconfigure(encoding='utf-8')
     src = sources()
@@ -46,6 +61,7 @@ def main():
         for s in missing:
             print('  %-16s %s' % (src[s], json.dumps(s, ensure_ascii=False)))
         bad += len(missing)
+    bad += help_missing()
     return 1 if bad else 0
 
 

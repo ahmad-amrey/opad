@@ -38,6 +38,18 @@ if(TARGET opad)
     qt_import_plugins(opad-test-associations EXCLUDE_BY_TYPE imageformats iconengines)
   endif()
   add_test(NAME associations COMMAND opad-test-associations)
+  # UI-106: command help records (English + Arabic) for every registered command, the rich hover card.
+  add_executable(opad-test-help test_help.cpp ../app/CommandHelp.cpp ../app/RichTip.cpp ../app/RichTip.hpp ../app/Theme.cpp ../app/Theme.hpp
+                 ../app/Icons.cpp ../app/I18n.cpp ../app/help.qrc)
+  set_target_properties(opad-test-help PROPERTIES AUTOMOC ON AUTORCC ON)
+  target_include_directories(opad-test-help PRIVATE ../app)
+  target_compile_definitions(opad-test-help PRIVATE OPAD_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+  target_link_libraries(opad-test-help PRIVATE opad::core Qt6::Widgets Qt6::Test)
+  if(OPAD_STATIC)
+    qt_import_plugins(opad-test-help INCLUDE Qt6::QOffscreenIntegrationPlugin EXCLUDE_BY_TYPE imageformats iconengines)
+  endif()
+  add_test(NAME help COMMAND opad-test-help)
+  set_tests_properties(help PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 60)
   set_tests_properties(app-document PROPERTIES FIXTURES_REQUIRED step_fixtures TIMEOUT 40)
 endif()
 
