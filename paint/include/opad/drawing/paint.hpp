@@ -26,11 +26,11 @@ struct Page {
 };
 Page page_for(const Display& d, double margin = 10, bool standard = true);
 
-// PDF: one vector page as page_for chooses (title, creator OPAD <version>), fonts embedded; returns {"page": [w, h] mm,
-// "paper", "scale": "1:5"}. PNG: its paper, else the drawing with 2 mm of paper around it, on white at `dpi` (lowered so
-// that no side passes 16384 pixels nor the picture 50 million); returns {"pixels": [w, h], "dpi"}. Throw Error when the
-// file cannot be written.
-json write_pdf(const Display& d, const std::filesystem::path& file);
+// PDF: a vector page each as page_for chooses (titled as the first, creator OPAD <version>), fonts embedded; returns
+// {"page": [w, h] mm, "paper", "scale": "1:5"}, for several pages {"pages": [those]}. PNG: its paper, else the drawing
+// with 2 mm of paper around it, on white at `dpi` (lowered so that no side passes 16384 pixels nor the picture 50
+// million); returns {"pixels": [w, h], "dpi"}. Throw Error when the file cannot be written.
+json write_pdf(const std::vector<const Display*>& pages, const std::filesystem::path& file);
 QImage paint_image(const Display& d, double dpi);
 json write_png(const Display& d, const std::filesystem::path& file, double dpi = 300);
 

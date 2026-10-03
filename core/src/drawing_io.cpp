@@ -1,6 +1,7 @@
 #include "opad/drawing_io.hpp"
 #include "opad/drawing/display.hpp"
 #include "opad/drawing/sheet.hpp"
+#include <functional>
 #include <set>
 #include "opad/design/sketch_geom.hpp"
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -621,18 +622,34 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
   if(painted && !drawing::can_paint()) throw Error("PDF and PNG drawings are written by the OPAD app and opad-cli, not by this build");
   const auto stem=doc.path.stem().u8string();
   const std::string title=doc.path.empty()?std::string("OPAD drawing"):std::string(stem.begin(),stem.end());
-  drawing::Display d; json details=json::object(); int bodies=0;
-  if(options.sheet.empty()) d=objects_display(doc,scene,options,title,details,bodies);
-  else {  // a drawing sheet as drawn (UI-86), by id or name
-    const Sheet* sheet=scene.sheet(options.sheet);
-    for(const auto& s:scene.sheets) if(!sheet && s.name==options.sheet) sheet=&s;
-    if(!sheet) throw Error("sheet "+options.sheet+" does not exist (sheet_info lists the sheets)");
-    json report;
-    d=drawing::sheet_display(doc,scene,*sheet,options.progress,&report);
-    details["sheet"]={{"id",sheet->id},{"name",sheet->name},{"views",report["views"]},{"items",report["items"]}};
-    if(!report["skipped"].empty()) details["skipped"]=report["skipped"];
-    bodies=report["bodies"].get<int>();
+  std::vector<drawing::Display> pages(1); json details=json::object(); int bodies=0;
+  if(options.sheet.empty()) pages[0]=objects_display(doc,scene,options,title,details,bodies);
+  else {  // drawing sheets as drawn (UI-86): one by id or name, or every sheet of "drawing:<name>" (a PDF page each)
+    std::vector<const Sheet*> sheets;
+    if(options.sheet.rfind("drawing:",0)==0) {
+      for(const auto& s:scene.sheets) if(s.drawing==options.sheet.substr(8)) sheets.push_back(&s);
+      if(sheets.empty()) throw Error("drawing "+options.sheet.substr(8)+" has no sheets (sheet_info lists the sheets)");
+    } else {
+      const Sheet* sheet=scene.sheet(options.sheet);
+      for(const auto& s:scene.sheets) if(!sheet && s.name==options.sheet) sheet=&s;
+      if(!sheet) throw Error("sheet "+options.sheet+" does not exist (sheet_info lists the sheets)");
+      sheets.push_back(sheet);
+    }
+    if(sheets.size()>1 && options.format!="pdf") throw Error("several sheets go into one PDF (a page each), or one sheet at a time into "+options.format);
+    pages.resize(sheets.size());
+    json drawn=json::array(), skipped=json::array();
+    for(size_t i=0;i<sheets.size();++i) {
+      json report;
+      const double n=double(sheets.size());
+      pages[i]=drawing::sheet_display(doc,scene,*sheets[i],[&](double f,const std::string& phase){ return !options.progress || options.progress(f<0?-1:(double(i)+f)/n,phase); },&report);
+      drawn.push_back({{"id",sheets[i]->id},{"name",sheets[i]->name},{"views",report["views"]},{"items",report["items"]}});
+      for(const auto& s:report["skipped"]) skipped.push_back(s);
+      bodies+=report["bodies"].get<int>();
+    }
+    if(drawn.size()==1) details["sheet"]=drawn[0]; else details["sheets"]=drawn;
+    if(!skipped.empty()) details["skipped"]=skipped;
   }
+  const drawing::Display& d=pages[0];
   if(options.format=="dwg") {  // DXF R2000 through the converter; text of several lines as one TEXT a line
     Conversion work; const auto intermediate=work.directory/"drawing.dxf", converted=work.directory/"drawing.dwg";
     write_text_file(intermediate,drawing::dxf_text(d,options.decimals,false));
@@ -640,11 +657,21 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
     if(file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
     std::filesystem::copy_file(converted,file,std::filesystem::copy_options::overwrite_existing);
   } else {
-    const json wrote=drawing::write_drawing(d,file,options.format,options.decimals,{{"dpi",options.dpi}});
+    std::vector<const drawing::Display*> list;
+    for(const auto& p:pages) list.push_back(&p);
+    const json wrote=drawing::write_pages(list,file,options.format,options.decimals,{{"dpi",options.dpi}});
     for(const auto& [k,v]:wrote.items()) details[k]=v;
   }
   ExportResult result{{file},bodies,details};
-  const json counts=d.counts();
+  // What was written, the pages together.
+  std::function<void(json&,const json&)> add=[&](json& to,const json& from){
+    for(const auto& [k,v]:from.items()) {
+      if(!v.is_object()) to[k]=to.value(k,0)+v.get<int>();
+      else { if(!to.contains(k)) to[k]=json::object(); add(to[k],v); }
+    }
+  };
+  json counts=json::object();
+  for(const auto& p:pages) add(counts,p.counts());
   for(const auto& [k,v]:counts.items()) result.details[k]=v;
   return result;
 }

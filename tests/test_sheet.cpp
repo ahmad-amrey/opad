@@ -399,6 +399,12 @@ TEST(sheet_draws_as_a_drawing) {
   for (const auto& id : round.all_bodies()) layers.insert(round.node(id)->name);
   CHECK(layers.count("Frame") && layers.count("Visible") && layers.count("Dimensions") && layers.count("Text"));
   CHECK_THROWS(run(p.doc, "export", {{"format", "dxf"}, {"sheet", "Sheet 9"}, {"out", (dir / "none.dxf").string()}}));
+  // A drawing of one sheet goes in any format; of two, only as PDF pages (a painter's: not in this build).
+  run(p.doc, "sheet_edit", {{"target", p.sheet}, {"set", {{"drawing", "Plate"}}}});
+  CHECK_EQ(run(p.doc, "export", {{"format", "svg"}, {"sheet", "drawing:Plate"}, {"out", (dir / "plate.svg").string()}})["sheet"]["views"], 3);
+  run(p.doc, "sheet", {{"drawing", "Plate"}});
+  CHECK_THROWS(run(p.doc, "export", {{"format", "svg"}, {"sheet", "drawing:Plate"}, {"out", (dir / "plate.svg").string()}}));
+  CHECK_THROWS(run(p.doc, "export", {{"format", "pdf"}, {"sheet", "drawing:Plate"}, {"out", (dir / "plate.pdf").string()}}));
   std::error_code e;
   std::filesystem::remove_all(dir, e);
 }

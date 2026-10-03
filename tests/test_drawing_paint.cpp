@@ -250,6 +250,18 @@ TEST(a_sheet_prints_on_its_own_paper) {
   r = commands::run("export", {{"format", "pdf"}, {"sheet", a2}, {"out", (f.dir / "a2.pdf").string()}}, &doc);
   CHECK(r["paper"] == "A2" && r["page"] == json::array({420.0, 594.0}) && r["sheet"]["views"] == 0);
   CHECK(read_text_file(f.dir / "a2.pdf").find("/MediaBox [0 0 1191") != std::string::npos);
+  // A drawing's sheets as the pages of one PDF, each on its paper; not as one SVG.
+  for (const std::string& id : {custom, a2}) commands::run("sheet_edit", {{"target", id}, {"set", {{"drawing", "Parts"}}}}, &doc);
+  r = commands::run("export", {{"format", "pdf"}, {"sheet", "drawing:Parts"}, {"out", (f.dir / "parts.pdf").string()}}, &doc);
+  CHECK_EQ(r["pages"].size(), 2u);
+  CHECK(r["pages"][0]["paper"] == "" && r["pages"][1]["paper"] == "A2" && r["sheets"].size() == 2 && r["sheets"][0]["views"] == 1);
+  const std::string parts = read_text_file(f.dir / "parts.pdf");
+  size_t pages = 0;
+  for (size_t at = parts.find("/Type /Page"); at != std::string::npos; at = parts.find("/Type /Page", at + 1)) pages += parts.compare(at, 12, "/Type /Pages") != 0;
+  CHECK_EQ(pages, 2u);
+  CHECK(parts.find("/MediaBox [0 0 1191") != std::string::npos && parts.find("/MediaBox [0 0 56") != std::string::npos);  // A2; 200 x 100 mm
+  CHECK_THROWS(commands::run("export", {{"format", "svg"}, {"sheet", "drawing:Parts"}, {"out", (f.dir / "parts.svg").string()}}, &doc));
+  CHECK_THROWS(commands::run("export", {{"format", "pdf"}, {"sheet", "drawing:None"}, {"out", (f.dir / "none.pdf").string()}}, &doc));
 }
 
 int main(int argc, char** argv) { return check::run_all(argc, argv); }

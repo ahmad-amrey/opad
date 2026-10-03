@@ -25,8 +25,8 @@ void rename(AppDocument* doc, const std::string& id, const QString& name);  // t
 // Tombstones those of `ids` that are drawings or drawing records, in one undo step; what goes with a sheet or a view
 // that goes too is left to it. Returns how many records it deleted.
 int remove(AppDocument* doc, const std::vector<std::string>& ids);
-// Right-click on a row: rename (startRename puts its editor up), copy its id (for the CLI and agents), export a sheet
-// (exportSheet, when given: PDF, SVG, DXF, DWG or PNG of it), delete.
+// Right-click on a row: rename (startRename puts its editor up), copy its id (for the CLI and agents), export a sheet or
+// a drawing (exportSheet, when given: PDF, SVG, DXF, DWG or PNG of a sheet, a drawing's sheets as PDF pages), delete.
 void contextMenu(AppDocument* doc, const std::string& id, QMenu& menu, const std::function<void()>& startRename,
                  const std::function<void()>& exportSheet = {});
 }  // namespace drawings

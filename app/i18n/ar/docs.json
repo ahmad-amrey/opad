@@ -148,5 +148,8 @@
   "PNG pictures (*.png)": "صور PNG (*.png)",
   "Exporting a sheet": "جارٍ تصدير اللوحة",
   "Projecting the views": "جارٍ إسقاط المساقط",
-  "That sheet is gone.": "لم تعد هذه اللوحة موجودة."
+  "That sheet is gone.": "لم تعد هذه اللوحة موجودة.",
+  "Export drawing…": "تصدير الرسم…",
+  "Export drawing": "تصدير الرسم",
+  "Exporting a drawing": "جارٍ تصدير الرسم"
 }

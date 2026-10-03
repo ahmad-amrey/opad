@@ -118,11 +118,14 @@ std::string dxf_text(const Display& d, int decimals = 6, bool mtext = true);
 // as even-odd paths, text as <text>, images as <image>.
 std::string svg_text(const Display& d, int decimals = 6);
 // PDF and PNG are painted with Qt (paint/: opad_paint, the same list through one QPainter backend), which the app and
-// opad-cli install; the core alone cannot write them. options: {"dpi"} for PNG; it returns what it wrote (page, pixels).
-using PaintWriter = std::function<json(const Display&, const std::filesystem::path&, const std::string& format, const json& options)>;
+// opad-cli install; the core alone cannot write them. The painter gets pages (PDF: one page each; PNG: one) and options
+// ({"dpi"} for PNG); it returns what it wrote (pages, paper, pixels).
+using PaintWriter = std::function<json(const std::vector<const Display*>& pages, const std::filesystem::path&, const std::string& format, const json& options)>;
 void set_paint_writer(PaintWriter writer);
 bool can_paint();
 // dxf | svg | pdf | png (the last two when a painter is installed); returns the painter's report, else an empty object.
 json write_drawing(const Display& d, const std::filesystem::path& file, const std::string& format, int decimals = 6, const json& options = {});
+// Several drawings as the pages of one PDF (the sheets of a drawing); one page goes as write_drawing writes it in any format.
+json write_pages(const std::vector<const Display*>& pages, const std::filesystem::path& file, const std::string& format, int decimals = 6, const json& options = {});
 
 }  // namespace opad::drawing

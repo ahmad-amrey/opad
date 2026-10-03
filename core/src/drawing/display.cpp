@@ -392,11 +392,20 @@ PaintWriter& painter() {
 void set_paint_writer(PaintWriter writer) { painter() = std::move(writer); }
 bool can_paint() { return static_cast<bool>(painter()); }
 
+json write_pages(const std::vector<const Display*>& pages, const std::filesystem::path& file, const std::string& format, int decimals, const json& options) {
+  if (pages.empty()) throw Error("nothing to write");
+  if (pages.size() == 1) return write_drawing(*pages[0], file, format, decimals, options);
+  if (format != "pdf") throw Error("several sheets go into one PDF (a page each), or one sheet at a time into " + format);
+  if (!can_paint()) throw Error("PDF and PNG drawings are written by the OPAD app and opad-cli, not by this build");
+  if (file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
+  return painter()(pages, file, format, options);
+}
+
 json write_drawing(const Display& d, const std::filesystem::path& file, const std::string& format, int decimals, const json& options) {
   if (format == "pdf" || format == "png") {
     if (!can_paint()) throw Error("PDF and PNG drawings are written by the OPAD app and opad-cli, not by this build");
     if (file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
-    return painter()(d, file, format, options);
+    return painter()({&d}, file, format, options);
   }
   const std::string text = format == "dxf" ? dxf_text(d, decimals) : format == "svg" ? svg_text(d, decimals) : throw Error("2D formats are dxf, svg, pdf and png, not " + format);
   if (file.has_parent_path()) std::filesystem::create_directories(file.parent_path());

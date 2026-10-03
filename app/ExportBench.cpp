@@ -14,6 +14,7 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QRegularExpression>
 #include <QTimer>
 
 #include <functional>
@@ -37,7 +38,8 @@
 // dialog, <prefix>.front.dxf and <prefix>.iso.svg the files. Then PDF (UI-87: one vector page on A4, the hidden lines
 // in it) and PNG (300 dpi, the outline where the drawing puts it) of the front view: <prefix>.front.pdf/.png, and the
 // dialog with PDF chosen, <prefix>.pdf-dialog.png. Last a drawing sheet (two views, a dimension, a note) exported from
-// its row's Export sheet… as a PDF of its A4 paper: <prefix>.sheet.pdf.
+// its row's Export sheet… as a PDF of its A4 paper, and with a second (A3) sheet the drawing's Export drawing… as a
+// PDF of two pages: <prefix>.sheet.pdf, <prefix>.drawing.pdf.
 // OPAD_BENCH_EXPORT_OPEN=<prefix>: the loaded file's roots (hidden or not) as a front view with hidden lines through the
 // dialog, as DXF or as OPAD_BENCH_EXPORT_FORMAT says (pdf, png, ...), timed (the Engine: the stall watchdog stays quiet
 // while the worker projects and writes); <prefix>.<format>.
@@ -234,7 +236,7 @@ bool MainWindow::benchExport() {
           std::abs(e["bbox"]["center"][2].get<double>() - z1) < 1e-6)
         width = r.str();
     }
-    const std::string sheet = m_doc->run("sheet", {{"size", "A4"}, {"name", "Plate"}})["id"];
+    const std::string sheet = m_doc->run("sheet", {{"size", "A4"}, {"name", "Plate"}, {"drawing", "Plate drawing"}})["id"];
     const std::string base = m_doc->run("sheet_view", {{"sheet", sheet}, {"orient", "front"}, {"at", {90, 160}}})["id"];
     m_doc->run("sheet_view", {{"sheet", sheet}, {"parent", base}, {"side", "bottom"}});
     m_doc->run("sheet_item", {{"sheet", sheet}, {"view", base}, {"type", "horizontal"}, {"refs", {width}}});
@@ -256,6 +258,27 @@ bool MainWindow::benchExport() {
     check(drawn.value("views", 0) == 2 && drawn.value("items", 0) == 2 && m_lastExport.value("paper", "") == "A4" &&
               m_lastExport.value("layers", opad::json::object()).value("Dimensions", 0) > 0 && sheetOpen && sheetFile.read(5) == "%PDF-",
           "the sheet as an A4 PDF page: 2 views, the dimension and the note " + QString::fromStdString(m_lastExport.dump()).left(400));
+
+    // The whole drawing (its row's Export drawing…): a second sheet, A3 with an isometric view, as the second page.
+    const std::string second = m_doc->run("sheet", {{"size", "A3"}, {"name", "Plate iso"}, {"drawing", "Plate drawing"}})["id"];
+    m_doc->run("sheet_view", {{"sheet", second}, {"orient", "iso"}, {"scale", "2:1"}});
+    QMenu drawingMenu;
+    drawings::contextMenu(m_doc, "drawing:Plate drawing", drawingMenu, [] {}, [this] { emit m_browser->sheetExportRequested("drawing:Plate drawing"); });
+    QAction* exportDrawing = drawingMenu.findChild<QAction*>("drawings.export");
+    check(exportDrawing && exportDrawing->text().contains("drawing"), "a drawing row offers Export drawing…");
+    const QString drawingPdf = prefix + ".drawing.pdf";
+    QFile::remove(drawingPdf);
+    qputenv("OPAD_BENCH_EXPORT_OUT", drawingPdf.toUtf8());
+    m_lastExport = opad::json();
+    if (exportDrawing) exportDrawing->trigger();
+    check(m_jobs->busy() && m_lastExport.is_null(), "the drawing is projected and written by a job");
+    settle([&] { return !m_lastExport.is_null(); }, 60000);
+    QFile drawingFile(drawingPdf);
+    const QByteArray pdfData = drawingFile.open(QIODevice::ReadOnly) ? drawingFile.readAll() : QByteArray();
+    const auto pages = m_lastExport.value("pages", opad::json::array());
+    check(pages.size() == 2 && pages[0].value("paper", "") == "A4" && pages[1].value("paper", "") == "A3" && m_lastExport.value("sheets", opad::json::array()).size() == 2 &&
+              pdfData.startsWith("%PDF-") && QString::fromLatin1(pdfData).count(QRegularExpression("/Type\\s*/Page(?!s)")) == 2,
+          "the drawing as a PDF of two pages, A4 and A3 " + QString::fromStdString(m_lastExport.dump()).left(400));
   } catch (const std::exception& e) {
     check(false, QString("error: ") + e.what());
   }

@@ -213,30 +213,39 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   runExport(args, out);
 }
 
-// A drawing sheet (the Drawings folder's Export sheet…): the file's type is the format, the views projected on the worker.
+// A drawing sheet, or a drawing's sheets as the pages of one PDF ("drawing:<name>", the Drawings folder's ids), from the
+// folder's Export sheet… / Export drawing…: the file's type is the format, the views projected on the worker.
 void MainWindow::exportSheet(const std::string& id) {
-  const opad::Sheet* sheet = m_doc->scene.sheet(id);
-  if (!sheet) throw opad::Error("That sheet is gone.");
-  QString stem = QString::fromStdString(sheet->name);
-  for (const QChar c : QString("<>:\"/\\|?*")) stem.replace(c, '_');
-  const QString last = m_settings.value("export/sheetFormat", "pdf").toString();
+  QString stem;
+  int sheets = 0;
+  if (id.rfind("drawing:", 0) == 0) {
+    for (const auto& s : m_doc->scene.sheets) sheets += s.drawing == id.substr(8);
+    stem = QString::fromStdString(id.substr(8));
+  } else if (const opad::Sheet* sheet = m_doc->scene.sheet(id)) {
+    sheets = 1;
+    stem = QString::fromStdString(sheet->name);
+  }
+  if (!sheets) throw opad::Error("That sheet is gone.");
+  for (const QChar c : QString("<>:\"/\|?*")) stem.replace(c, '_');
+  const QString last = sheets > 1 ? "pdf" : m_settings.value("export/sheetFormat", "pdf").toString();
   QString out = qEnvironmentVariable("OPAD_BENCH_EXPORT_OUT");  // benches: no file dialog
   if (out.isEmpty()) {
     QStringList filters;
     QString chosen;
     for (const auto& [f, label] : std::initializer_list<std::pair<QString, QString>>{
              {"pdf", tr("PDF files (*.pdf)")}, {"svg", tr("SVG files (*.svg)")}, {"dxf", tr("DXF files (*.dxf)")}, {"dwg", tr("DWG files (*.dwg)")}, {"png", tr("PNG pictures (*.png)")}}) {
+      if (sheets > 1 && f != "pdf") continue;  // several sheets: the pages of one PDF
       filters << label;
       if (f == last) chosen = label;
     }
-    out = QFileDialog::getSaveFileName(this, tr("Export sheet"), QDir(m_settings.value("ui/lastDir", QDir::homePath()).toString()).filePath(stem + "." + last),
-                                       filters.join(";;"), &chosen);
+    out = QFileDialog::getSaveFileName(this, sheets > 1 ? tr("Export drawing") : tr("Export sheet"),
+                                       QDir(m_settings.value("ui/lastDir", QDir::homePath()).toString()).filePath(stem + "." + last), filters.join(";;"), &chosen);
     if (out.isEmpty()) return;
   }
   QString format = QFileInfo(out).suffix().toLower();
   if (format != "pdf" && format != "svg" && format != "dxf" && format != "dwg" && format != "png") out += "." + (format = last);
   m_settings.setValue("ui/lastDir", QFileInfo(out).absolutePath());
-  m_settings.setValue("export/sheetFormat", format);
+  if (sheets == 1) m_settings.setValue("export/sheetFormat", format);
   runExport({{"format", format.toStdString()}, {"out", out.toStdString()}, {"sheet", id}}, out);
 }
 
@@ -247,7 +256,9 @@ void MainWindow::runExport(const opad::json& args, const QString& out) {
   const QString phase = sheet ? tr("Projecting the views") : tr("Projecting the view");
   auto result = std::make_shared<opad::json>();
   QPointer<MainWindow> self(this);
-  Job* job = m_doc->readAsync(m_jobs, sheet ? tr("Exporting a sheet") : view ? tr("Exporting a 2D view") : tr("Exporting"), [args, result, view, phase](const opad::Document& doc, const opad::Scene& scene, Progress p) {
+  const QString title = !sheet ? (view ? tr("Exporting a 2D view") : tr("Exporting"))
+                        : args["sheet"].get<std::string>().rfind("drawing:", 0) == 0 ? tr("Exporting a drawing") : tr("Exporting a sheet");
+  Job* job = m_doc->readAsync(m_jobs, title, [args, result, view, phase](const opad::Document& doc, const opad::Scene& scene, Progress p) {
     if (view) p.setPhase(phase, -1);
     *result = opad::commands::export_document(doc, scene, args, [p, phase](double f, const std::string&) {
       p.setPhase(phase, f < 0 ? -1 : static_cast<int>(f * 100));

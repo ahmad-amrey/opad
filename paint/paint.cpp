@@ -211,34 +211,43 @@ Page page_for(const Display& d, double margin, bool standard) {
   return page;
 }
 
-json write_pdf(const Display& d, const std::filesystem::path& file) {
-  const Page page = page_for(d);
+json write_pdf(const std::vector<const Display*>& pages, const std::filesystem::path& file) {
+  if (pages.empty()) throw Error("nothing to write");
   QFile out(qpath(file));
   if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) throw Error("cannot write " + name_of(file));
+  json report = json::array();
   {
     QPdfWriter pdf(&out);
     static const std::map<std::string, QPageSize::PageSizeId> ids = {
         {"A4", QPageSize::A4},         {"A3", QPageSize::A3},         {"A2", QPageSize::A2},         {"A1", QPageSize::A1},
         {"A0", QPageSize::A0},         {"ANSI-A", QPageSize::AnsiA}, {"ANSI-B", QPageSize::AnsiB}, {"ANSI-C", QPageSize::AnsiC},
         {"ANSI-D", QPageSize::AnsiD}, {"ANSI-E", QPageSize::AnsiE}};
-    const auto id = ids.find(page.paper);
-    const QPageSize size = id != ids.end() ? QPageSize(id->second)
-                                           : QPageSize(QSizeF(std::min(page.w, page.h), std::max(page.w, page.h)), QPageSize::Millimeter, QString(), QPageSize::ExactMatch);
-    pdf.setPageLayout(QPageLayout(size, page.w > page.h ? QPageLayout::Landscape : QPageLayout::Portrait, QMarginsF(0, 0, 0, 0), QPageLayout::Millimeter));
+    const auto layout = [&](const Page& page) {
+      const auto id = ids.find(page.paper);
+      const QPageSize size = id != ids.end() ? QPageSize(id->second)
+                                             : QPageSize(QSizeF(std::min(page.w, page.h), std::max(page.w, page.h)), QPageSize::Millimeter, QString(), QPageSize::ExactMatch);
+      return QPageLayout(size, page.w > page.h ? QPageLayout::Landscape : QPageLayout::Portrait, QMarginsF(0, 0, 0, 0), QPageLayout::Millimeter);
+    };
     pdf.setResolution(1200);
-    pdf.setTitle(QString::fromStdString(d.title));
+    pdf.setTitle(QString::fromStdString(pages[0]->title));
     pdf.setCreator(QStringLiteral("OPAD ") + QString::fromStdString(version_string()));
     QPainter p;
-    if (!p.begin(&pdf)) throw Error("cannot write " + name_of(file));
-    p.setRenderHint(QPainter::Antialiasing);
-    const double dots = 1200 / 25.4;
-    paint(p, d, page.window, QRectF(0, 0, page.w * dots, page.h * dots));
+    for (size_t i = 0; i < pages.size(); ++i) {
+      const Display& d = *pages[i];
+      const Page page = page_for(d);
+      pdf.setPageLayout(layout(page));  // before the page it is for: the first before begin(), the others before newPage()
+      if (i == 0 ? !p.begin(&pdf) : !pdf.newPage()) throw Error("cannot write " + name_of(file));
+      p.setRenderHint(QPainter::Antialiasing);
+      const double dots = 1200 / 25.4;
+      paint(p, d, page.window, QRectF(0, 0, page.w * dots, page.h * dots));
+      report.push_back({{"page", {page.w, page.h}}, {"paper", page.paper}, {"scale", scale_text(1 / (d.pen_scale > 0 ? d.pen_scale : 1))}});
+    }
     p.end();
   }
   out.close();
   if (out.error() != QFileDevice::NoError) throw Error("cannot write " + name_of(file));
-  const double ps = d.pen_scale > 0 ? d.pen_scale : 1;
-  return {{"page", {page.w, page.h}}, {"paper", page.paper}, {"scale", scale_text(1 / ps)}};
+  if (report.size() == 1) return report[0];
+  return {{"pages", report}};
 }
 
 QImage paint_image(const Display& d, double dpi) {
@@ -263,7 +272,7 @@ json write_png(const Display& d, const std::filesystem::path& file, double dpi) 
 }
 
 void install_painter() {
-  set_paint_writer([](const Display& d, const std::filesystem::path& file, const std::string& format, const json& options) {
+  set_paint_writer([](const std::vector<const Display*>& pages, const std::filesystem::path& file, const std::string& format, const json& options) {
     {
       static std::mutex mu;
       std::lock_guard<std::mutex> lock(mu);
@@ -281,9 +290,9 @@ void install_painter() {
         new QGuiApplication(argc, argv);  // for the rest of the process
       }
     }
-    if (format == "pdf") return write_pdf(d, file);
-    if (format == "png") return write_png(d, file, options.value("dpi", 300.0));
-    throw Error("the painter writes pdf and png, not " + format);
+    if (format == "pdf") return write_pdf(pages, file);
+    if (format == "png" && pages.size() == 1) return write_png(*pages[0], file, options.value("dpi", 300.0));
+    throw Error("the painter writes pdf (pages) and png (one), not " + format);
   });
 }
 
