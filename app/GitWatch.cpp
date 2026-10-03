@@ -912,12 +912,12 @@ bool GitWatch::bench() {
     size_t step = 0;
     int wait = 0, ticks = 0, runs = 0, exit = 0;
     bool running = false;
-    QString file, dir, error, git, clone;
+    QString file, dir, error, git, clone, current;  // current: the outside command running
     QByteArray out;
     std::vector<QStringList> pending;
     std::shared_ptr<git::Result> result;
     std::function<void()> next;
-    QElapsedTimer clock;
+    QElapsedTimer clock, since;
   };
   auto st = std::make_shared<State>();
   st->file = m_file;
@@ -953,11 +953,16 @@ bool GitWatch::bench() {
       }
       QStringList c = st->pending.front();
       st->pending.erase(st->pending.begin());
+      QStringList shown = c;  // the program's name and its arguments, without the -c settings gitArgs puts first
+      while (shown.size() > 2 && shown[1] == "-c") shown.remove(1, 2);
+      st->current = QFileInfo(shown.front()).completeBaseName() + ' ' + shown.mid(1).join(' ');
+      st->since.start();
       auto* p = new QProcess(this);
       p->setWorkingDirectory(st->dir);
       const bool mayFail = c.front().startsWith('?');
       if (mayFail) c.front().remove(0, 1);
       connect(p, &QProcess::finished, this, [st, p, c, mayFail](int code) {
+        if (trace::enabled()) trace::log(QStringLiteral("git: outside, %1: %2 in %3 ms").arg(st->current).arg(code).arg(st->since.elapsed()));
         st->exit = mayFail ? 0 : code;
         st->out += p->readAllStandardOutput();
         if (st->exit) st->error = c.join(' ') + ": " + QString::fromUtf8(p->readAllStandardError());
@@ -1305,7 +1310,7 @@ bool GitWatch::bench() {
   };
   auto* timer = new QTimer(this);
   timer->setInterval(150);
-  connect(timer, &QTimer::timeout, this, [st, steps, timer] {
+  connect(timer, &QTimer::timeout, this, [this, st, steps, timer] {
     try {
       if (st->step >= steps.size()) {
         timer->stop();
@@ -1315,8 +1320,10 @@ bool GitWatch::bench() {
       if (steps[st->step]()) {
         ++st->step;
         st->wait = 0;
-      } else if (++st->wait > 400) {
-        throw std::runtime_error("timed out in step " + std::to_string(st->step));
+      } else if (++st->wait > 400) {  // 60 s: say what it waited on
+        QString why = QStringLiteral("timed out in step %1 (the chip: %2, %3 reads").arg(st->step).arg(m_chip->property("text").toString()).arg(m_runs);
+        if (st->running) why += QStringLiteral("; still running: %1, for %2 ms").arg(st->current).arg(st->since.elapsed());
+        throw std::runtime_error((why + ")").toStdString());
       }
     } catch (const std::exception& e) {
       timer->stop();
