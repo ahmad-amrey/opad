@@ -1,15 +1,25 @@
 #include "ToolPanel.hpp"
 
+#include <QAbstractItemView>
+#include <QAbstractSpinBox>
+#include <QApplication>
+#include <QComboBox>
+#include <QCursor>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLayout>
+#include <QLineEdit>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPlainTextEdit>
+#include <QPointer>
 #include <QScreen>
 #include <QSettings>
 #include <QShortcut>
+#include <QTextEdit>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -18,6 +28,83 @@
 
 #include "Icons.hpp"
 #include "Theme.hpp"
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+// ---------------------------------------------------------------- the keyboard's home (UI-05)
+namespace {
+QPointer<QWidget> g_home;
+// A click in a popup (a combo's list) is a click on the widget that opened it.
+QWidget* opener(QWidget* w) {
+  QWidget* window = w ? w->window() : nullptr;
+  return window && window->windowType() == Qt::Popup && window->parentWidget() ? window->parentWidget() : w;
+}
+// After a click in a panel that is no typing, the window and the keyboard go back home, unless the click opened a dialog or
+// a menu, or put the keyboard into a text field (a button that starts an edit).
+class PanelKeyboard : public QObject {
+ public:
+  using QObject::QObject;
+  bool eventFilter(QObject* o, QEvent* e) override {
+    if (e->type() != QEvent::MouseButtonRelease || m_pending || !o->isWidgetType()) return false;  // seen again as it goes up
+    QWidget* w = opener(static_cast<QWidget*>(o));
+    if (!w || !w->window()->inherits("ToolPanel") || ToolPanel::keepsKeyboard(w)) return false;
+    m_pending = true;
+    QTimer::singleShot(0, this, [this, before = QPointer<QWidget>(QApplication::focusWidget())] {  // once the click has acted
+      m_pending = false;
+      giveBack(before);
+    });
+    return false;
+  }
+ private:
+  static void giveBack(QWidget* before) {
+    if (!g_home || !g_home->isVisible() || QApplication::activeModalWidget() || QApplication::activePopupWidget()) return;
+    QWidget* active = QApplication::activeWindow();
+    if (!active || !active->inherits("ToolPanel")) return;  // the window kept the keyboard
+    if (QWidget* focus = QApplication::focusWidget(); focus && focus != before && ToolPanel::keepsKeyboard(focus)) return;
+    QWidget* main = g_home->window();
+    main->activateWindow();
+    QWidget* focus = main->focusWidget();  // a value box over the view (DynamicInput) keeps it
+    if (!focus || !g_home->isAncestorOf(focus) || !focus->objectName().startsWith("dynamicInput-")) g_home->setFocus(Qt::OtherFocusReason);
+  }
+  bool m_pending = false;
+};
+}  // namespace
+
+void ToolPanel::setKeyboardHome(QWidget* home) {
+  static PanelKeyboard* filter = nullptr;
+  if (!filter) qApp->installEventFilter(filter = new PanelKeyboard(qApp));
+  g_home = home;
+}
+
+bool ToolPanel::keepsKeyboard(const QWidget* w) {
+  for (; w; w = w->parentWidget()) {
+    if (qobject_cast<const QLineEdit*>(w) || qobject_cast<const QAbstractSpinBox*>(w) || qobject_cast<const QTextEdit*>(w) || qobject_cast<const QPlainTextEdit*>(w) ||
+        qobject_cast<const QKeySequenceEdit*>(w) || qobject_cast<const QAbstractItemView*>(w))
+      return true;
+    if (auto* combo = qobject_cast<const QComboBox*>(w); combo && combo->isEditable()) return true;
+    if (w->isWindow()) break;
+  }
+  return false;
+}
+
+bool ToolPanel::takesKeyboardAt(const QPoint& global) const { return keepsKeyboard(childAt(mapFromGlobal(global))); }
+
+#ifdef Q_OS_WIN
+bool ToolPanel::nativeEvent(const QByteArray& type, void* message, qintptr* result) {
+  // Windows activates a window on a click: not this one, unless the click is on a text field or a list.
+  const MSG* msg = static_cast<const MSG*>(message);
+  if (msg->message == WM_MOUSEACTIVATE && LOWORD(msg->lParam) == HTCLIENT && g_home && !takesKeyboardAt(QCursor::pos())) {
+    *result = MA_NOACTIVATE;
+    return true;
+  }
+  return QWidget::nativeEvent(type, message, result);
+}
+#endif
 
 // ---------------------------------------------------------------- ToolPanel
 // Right-anchored panels grow into the viewport from their bottom-left corner.
@@ -80,9 +167,6 @@ ToolPanel::ToolPanel(const QString& id, const QString& icon, QColor Tokens::* ti
   setAttribute(Qt::WA_TranslucentBackground);
   setAttribute(Qt::WA_ShowWithoutActivating);
   setWindowTitle(title);
-  auto* escape=new QShortcut(QKeySequence(Qt::Key_Escape),this);
-  escape->setContext(Qt::WidgetWithChildrenShortcut);
-  connect(escape,&QShortcut::activated,this,[this] { if(m_escapeHandler) m_escapeHandler(); else hide(); });
   const int m = kMargin;
   setMinimumSize(280 + 2 * m, 120 + 2 * m);
   setMaximumWidth(480 + 2 * m);
@@ -290,4 +374,17 @@ void ToolPanel::mouseDoubleClickEvent(QMouseEvent* e) {
 void ToolPanel::keyPressEvent(QKeyEvent* e) {
   if (e->key() == Qt::Key_Escape) { if(m_escapeHandler) m_escapeHandler(); else hide(); }
   else QWidget::keyPressEvent(e);
+}
+
+bool ToolPanel::event(QEvent* e) {
+  // Esc that nothing in the panel took is the panel's (keyPressEvent). Qt offers a tool window's keys to the main window's
+  // shortcuts too: its Esc and a panel shortcut were ambiguous, and neither ran.
+  if (e->type() == QEvent::ShortcutOverride) {
+    const auto* key = static_cast<QKeyEvent*>(e);
+    if (key->key() == Qt::Key_Escape && !(key->modifiers() & ~Qt::KeypadModifier)) {
+      e->accept();
+      return true;
+    }
+  }
+  return QWidget::event(e);
 }

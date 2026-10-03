@@ -19,6 +19,15 @@ bool conflicts(const QKeySequence& first,const QKeySequence& second);
 void migrate(QSettings&);
 void initialize(QAction*,const QKeySequence&,QSettings&);
 void updateTooltip(QAction*);
+// A key that types a value into a running sketch tool (UI-16): a digit, the decimal point, a comma or a sign, unmodified
+// (the keypad's too). A sketch command cannot have one.
+bool typesValue(const QKeySequence&);
+// While a sketch is open the commands scoped outside it let their keys go (the display styles stay in the menus, their
+// 5, 6 and 7 used to switch the style while a value was typed) and take them back after. binding() is the key a command
+// has whether or not it is let go, bind() sets it.
+void suspendOutsideSketch(const QList<QAction*>&,bool sketching);
+QKeySequence binding(const QAction*);
+void bind(QAction*,const QKeySequence&);
 }
 
 class ShortcutEditor : public QDialog {

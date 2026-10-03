@@ -76,6 +76,7 @@ class MainWindow : public QMainWindow {
   void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")
   void buildDesign();         // the controller, its floating panel and the wiring
   void updateDesignState();   // sketch mode <-> ribbon tab set, action enabling
+  void updateSketchPrompt();  // the sketch's prompt: its steps and what the keys do now
   // "review", "design" or an area's (RibbonLayout ids): swaps the ribbon tab set (same document, same timeline); an id
   // that is not there changes nothing. The sketch's contextual workspace is entered and left by updateDesignState.
   void setWorkspace(const QString& id);
@@ -112,7 +113,6 @@ class MainWindow : public QMainWindow {
   bool benchTodo9();
   bool benchDrawingImport();
   bool benchAnnotateLarge();  // OPAD_BENCH_ANNOTATE: the note / drawing editors on the loaded file's heaviest body
-  bool benchLargeSketch();
   bool benchShortcuts();
   bool benchViewer();  // OPAD_BENCH_VIEWER
 

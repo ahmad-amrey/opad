@@ -108,12 +108,18 @@ void MainWindow::buildDesignActions() {
            {"c:coincident", tr("Coincident"), "cCoincident"}, {"c:parallel", tr("Parallel"), "cParallel"}, {"c:perpendicular", tr("Perpendicular"), "cPerpendicular"},
            {"c:tangent", tr("Tangent"), "cTangent"}, {"c:equal", tr("Equal"), "cEqual"}, {"c:concentric", tr("Concentric"), "cConcentric"}, {"c:midpoint", tr("Midpoint"), "cMidpoint"},
            {"c:symmetric", tr("Symmetric"), "cSymmetric"}, {"c:collinear", tr("Collinear"), "cCollinear"}, {"c:fix", tr("Fix"), "cFix"}}) {
-    const QMap<QString,QString> keys{{"line","L"},{"rect","R"},{"circle","C"},{"arc3","A"},{"dimension","D"},{"trim","T"},{"offset","O"},{"spline","B"},{"project","P"},{"mirror","Shift+M"}};
+    const QMap<QString,QString> keys{{"line","L"},{"rect","R"},{"circle","C"},{"arc3","A"},{"dimension","D"},{"trim","T"},{"offset","O"},{"spline","B"},{"project","P"},{"mirror","Shift+M"},{"slot","U"},{"polygon","N"}};
     QAction* a = addAction("sketch." + QString(tool).replace(':', '.'), text, icon, QKeySequence(keys.value(tool)), [this, t = tool] { m_design->sketch()->setTool(t); }, true);
     a->setProperty("sketchTool", tool);
     tools->addAction(a);
   }
   addAction("sketch.construction", tr("Construction"), "construction", QKeySequence("X"), [this] { m_design->sketch()->toggleConstruction(); });
+  {
+    CommandInfo info{"sketch.showConstraints", tr("Show or hide constraints"), "cHorizontal"};
+    info.keywords = {tr("constraint badges"), tr("glyphs")};
+    info.editsDocument = isEditAction(info.id);
+    addCommand(info, [this] { m_design->sketch()->setShowConstraints(!m_design->sketch()->showConstraints()); });
+  }
   const auto registry=SketchPanel::tools();
   // Each tool its own icon (they all showed the generic sketch one): its own name where the table has it.
   const QMap<QString,QString> toolIcons{{"tangent_circle","tangentCircle"},{"tangent_arc","tangentArc"},{"polygon_outer","polygonOuter"},{"control_spline","controlSpline"},
@@ -169,7 +175,7 @@ void MainWindow::buildDesign() {
   connect(m_design->sketch(),&SketchEditor::status,sketchPanel,&ToolPanel::requestContentFit);
   connect(sketchContent,&SketchPanel::contentChanged,sketchPanel,&ToolPanel::requestContentFit);
   m_design->setSketchPanel(sketchPanel);
-  sketchPanel->setEscapeHandler([this]{m_design->sketch()->stepBack();});
+  sketchPanel->setEscapeHandler([this]{m_design->sketch()->escape();});  // the same Esc ladder as in the view
   connect(sketchContent,&SketchPanel::finishRequested,this,[this]{m_design->finishSketch();});
   m_panels<<m_design->planePanel();
   m_drawingPlacer = new DrawingPlacer(m_doc, m_viewport, m_jobs, this);
@@ -178,6 +184,7 @@ void MainWindow::buildDesign() {
   connect(m_design, &DesignController::status, this, [this](const QString& text) { m_statusHover->setText(text); });
   connect(m_design, &DesignController::failed, this, [this](const QString& error) { QMessageBox::warning(this, tr("OPAD"), i18n::t(error)); });
   connect(m_design, &DesignController::stateChanged, this, &MainWindow::updateDesignState);
+  connect(m_design->sketch(), &SketchEditor::hintsChanged, this, [this] { if (m_design->sketchActive() && !m_design->pickingPlane()) updateSketchPrompt(); });
   connect(m_timeline, &TimelineWidget::opActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });
   connect(m_browser, &BrowserPanel::sketchActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });
   connect(m_browser,&BrowserPanel::editedSketchVisibilityRequested,this,[this]{auto* sketch=m_design->sketch();sketch->setVisible(!sketch->visible());});
@@ -196,6 +203,7 @@ void MainWindow::updateDesignState() {
     m_ribbon->setWorkspace(m_workspaceBeforeSketch);
   }
   const QString tool = sketching ? m_design->sketch()->tool() : QString();
+  shortcuts::suspendOutsideSketch(m_actions, sketching);  // 5/6/7 and the filters' digits never act in a sketch (UI-16)
   for (QAction* a : m_actions) {
     const QString id = a->objectName();
     if (id.startsWith("sketch.")) {
@@ -210,10 +218,8 @@ void MainWindow::updateDesignState() {
   action("view.alignPlane")->setEnabled(m_doc->hasDocument && !m_doc->loading);
   if(m_design->pickingPlane()) {
     m_prompt->hide(); // The side panel guides this flow; leave the corner selector unobstructed.
-  } else if(sketching) {
-    m_prompt->set("sketch",tr("Sketch"),m_design->sketch()->toolSteps(),m_design->sketch()->visible()?tr("Esc steps back"):tr("This sketch is hidden. Show it in the browser to see your edits."));
-    m_prompt->show();positionOverlays();
-  } else if(m_tool.id.isEmpty()) m_prompt->hide();
+  } else if(sketching) updateSketchPrompt();
+  else if(m_tool.id.isEmpty()) m_prompt->hide();
   m_browser->setEnabled(true);
   m_browser->setEditedSketch(sketching?(m_design->sketch()->sketchId().empty()?"active-sketch":m_design->sketch()->sketchId()):"",sketching?m_design->sketch()->name():QString(),!sketching || m_design->sketch()->visible());
   updateUndoActions();
@@ -222,4 +228,13 @@ void MainWindow::updateDesignState() {
     m_statusSel->setText(dof == 0 ? tr("Sketch fully constrained") : tr("Sketch · %1 degrees of freedom").arg(dof));
   }
   updateCommands();
+}
+
+// The keys say what they do now (UI-20; Shift as the pointer comes onto a guide, UI-19); with nothing to undo, end or
+// close: how to finish the sketch.
+void MainWindow::updateSketchPrompt() {
+  QString hints=m_design->sketch()->keyHints();
+  if(hints.isEmpty())hints=tr("%1 finish sketch").arg(action("sketch.finish")->shortcut().toString(QKeySequence::NativeText));
+  m_prompt->set("sketch",tr("Sketch"),m_design->sketch()->toolSteps(),m_design->sketch()->visible()?hints:tr("This sketch is hidden. Show it in the browser to see your edits."));
+  m_prompt->show();positionOverlays();
 }

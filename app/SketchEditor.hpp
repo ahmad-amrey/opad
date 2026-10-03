@@ -10,12 +10,19 @@
 #include <QPointer>
 #include <array>
 #include <map>
+#include <optional>
 #include <set>
 
 #include "AppDocument.hpp"
+#include "DynamicInput.hpp"
 #include "Viewport.hpp"
 #include "GuidedTool.hpp"
+#include "InputKeys.hpp"
+#include "SketchKeys.hpp"
+#include "SketchSnap.hpp"
+#include "SnapMarkers.hpp"
 #include "opad/design/sketch.hpp"
+#include <QElapsedTimer>
 
 class JobRunner;
 class Job;
@@ -59,9 +66,17 @@ class SketchEditor : public QObject, public SketchInput {
   void applyTool();
   void previewTool();
   void invalidatePreview(bool keepOverlay = false);  // keepOverlay: the shown one stays until the next replaces it (live drags)
+  void dropPreviewJob();  // a preview being computed is cancelled: a click or a key acts on the sketch as it is
   void scheduleToolPreview();
-  void placePrecise(const QString& u, const QString& v, int mode);
-  void stepBack();
+  bool placePrecise(const QString& u, const QString& v, int mode);  // false: not placed, the status says why
+  // The editing keys and the panel's buttons (SketchKeys.hpp): Backspace / Undo point, Enter / Done, Esc (one rung of
+  // the ladder) and Close tool (Esc until the tool is closed). Each returns whether it did something.
+  sketchkeys::State keyState() const;
+  bool undoPoint();
+  bool done();
+  bool escape();
+  void closeTool();
+  QString keyHints() const;  // what Backspace, Enter, Esc and Shift do now, for the prompt
   void toggleReference();
   void selectConnected();
   void selectType();
@@ -87,6 +102,19 @@ class SketchEditor : public QObject, public SketchInput {
   void benchModify();
   void benchHandles();
   void benchDrag();
+  void benchGrid();
+  void benchLadder();
+  void benchKeys();
+  void benchShapes();
+  void benchCrossLock();
+  void benchSnaps();
+  void benchSteps();
+  void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
+  // Show constraints (UI-24, setting sketch/showConstraints): their badges and coincidence dots; off, only those in conflict
+  // or selected show.
+  bool showConstraints() const { return m_showConstraints; }
+  void setShowConstraints(bool on);
+  void benchConstraints();
   void benchLarge(const QString& output, opad::json metrics);
 
   // SketchInput
@@ -96,6 +124,7 @@ class SketchEditor : public QObject, public SketchInput {
   void sketchRelease(double u, double v, Qt::KeyboardModifiers mods) override;
   void sketchDoubleClick(double u, double v) override;
   bool sketchKey(QKeyEvent* e) override;
+  bool sketchType(QKeyEvent* e) override;
 
  protected:
   bool eventFilter(QObject* o, QEvent* e) override;  // Esc in the dimension field
@@ -105,13 +134,15 @@ class SketchEditor : public QObject, public SketchInput {
   void status(const QString& text);  // what the tool waits for, or why a change was refused
   void changed();                    // geometry, selection or undo state
   void workflowChanged();
+  void hintsChanged();  // what Shift does changed (the pointer onto a guide or off it): keyHints() again
 
  private:
   friend class SketchPanel;
   opad::design::SolveOptions solveOptions() const;
   bool selectable(int id) const;
   void runSketchEdit(const QString& label,std::function<void(opad::design::Sketch&)> work);
-  bool primitiveClick(double u,double v);
+  struct Snap;
+  bool primitiveClick(const Snap& s);
   void finishPrimitive();
   opad::design::Sketch primitivePreview() const;
   opad::json primitiveOptions() const;
@@ -119,23 +150,108 @@ class SketchEditor : public QObject, public SketchInput {
   bool modifyClick(double u,double v);
   bool applyModify();
   struct Snap {
+    // A constraint the click's new point gets with `ref` (UI-21): Midpoint of a line, Coincident on a second curve (an
+    // intersection), Horizontal / Vertical with a tracked point or a circle's centre (a quadrant).
+    struct Hold { opad::design::SkConstraint::Type type; int ref; };
     double u = 0, v = 0;
     int point = 0;     // an existing point to reuse
     int entity = 0;    // a curve the new point will lie on
-    bool horizontal = false, vertical = false;  // relative to the previous click
-    bool tracking = false;
+    std::vector<Hold> holds;  // what else holds the new point there (with automatic constraints on)
+    // The segment the click ends (the line tool), with `ref` (UI-23): Perpendicular to a line, Tangent to a circle or an
+    // arc, a circle's centre Coincident on it (square to the circle).
+    std::vector<Hold> segment;
+    bool horizontal = false, vertical = false;  // from the step's last point (fromPoint)
+    bool grid = false;  // on a grid node, or whole grid steps along the inference
     // What the pointer was pulled to, for the display: that object is highlighted and named beside the cursor.
-    enum class Kind { None, Point, Midpoint, Quadrant, Intersection, Curve, Extension, Aligned, Angle, Locked } kind = Kind::None;
-    int target = 0, other = 0;  // the point (Point, Aligned) or the curves (the others) behind the snap
+    enum class Kind { None, Point, Midpoint, Quadrant, Intersection, Apparent, Perpendicular, Tangent, Curve, Extension, Aligned, Cross, Angle, Locked, Grid, Typed } kind = Kind::None;
+    int target = 0, other = 0;  // the point (Point, Aligned, Angle), the crossing guides' points (Cross, Locked) or the curves (the others)
+    int curve = 0;  // Cross, Locked: the curve a guide crosses there
+    sketchsnap::Guide line;  // the guide or angle ray it lies on (onLine): what Shift locks onto
+    bool onLine = false;
+    int stops = 0, stop = -1;  // Locked: the stops along the line in reach, the one it is on (-1: none)
+    int choices = 0, choice = 0;  // object snaps in reach of the pointer, the one shown (Shift taps go through them, UI-23)
+    bool ortho = false;  // Locked: by Ortho (F8), not by Shift
+    std::map<QString, std::pair<double, QString>> typed;  // the values typed for this click (mm, radians; as typed)
   };
   struct Hit {
     enum Kind { None, Point, Entity, Dimension } kind = None;
     int id = 0;
   };
   Snap snap(double u, double v, bool infer = true) const;
+  // Typed values (UI-16, SketchDynamicInput.cpp): the boxes of the step that waits (an option of the tool, or where the
+  // next point goes), which keys type into them, and using what was typed (Enter, or a click: the typed values win, the
+  // pointer gives the rest). A point's typed values hold the rubber band at once (typedPoint); '#', '@', ',' and '<' switch
+  // between X/Y, ΔX/ΔY from the last point and length/angle from it (entryKey).
+  QList<DynamicInput::Field> inputStage() const;
+  bool typingKey(const QKeyEvent* e) const;
+  bool appliesOnEnter() const;  // an option tool with what it applies to picked: Enter applies
+  bool useTyped(const Snap* at = nullptr);
+  bool pointTyped() const;  // a value typed that places the next point (not only an option of the tool)
+  void updateInput();
+  inputkeys::Entry entry() const;
+  QString inputStep() const;                         // the step that waits: a chosen entry lasts while it does
+  bool inputBase(double& u, double& v) const;        // the last point, what ΔX/ΔY and length/angle are measured from
+  double angleReference() const;                     // what a typed angle is measured from (radians from X)
+  void retype();                                     // the typed values evaluated, the rubber band moved to them
+  Snap typedPoint(const Snap& pointer) const;        // where the next point goes: the typed values, the pointer the rest
+  bool entryKey(int box, QChar c);                   // DynamicInput's key hook
+  void forgetTyped();
+  void setAngled(bool angled);  // the second box of a chamfer (a move): its angle to the first line (the move's direction)
+  // A shape's own sizes (UI-17): the step's boxes (a rectangle's width and height after its first corner, a slot's width
+  // after its centres), where they put the click, and what the click made keeps them as driving dimensions (setting
+  // sketch/input/addDimensions, on by default) in the shape's own undo step. The rubber band reads them out as it goes.
+  bool shaped() const;                                // the step that waits takes the shape's sizes
+  QList<DynamicInput::Field> shapeFields() const;
+  bool shapePoint(const Snap& pointer, double& u, double& v) const;
+  int keepTyped(const Snap& s, const char* key, opad::design::SkConstraint::Type type, std::vector<int> refs, double scale = 1);  // 0: none
+  void labelOff(int id, int line, double u, double v, double offset);  // its value beside the line, away from (u, v)
+  void labelAt(int id, double u, double v);
+  // A typed angle (`angle` the direction it made, radians from X): horizontal or vertical (`axis`: a line, or two points),
+  // else against the line before (`line` after `previous`).
+  void keepDirection(const Snap& s, const char* key, std::vector<int> axis, double angle, int line = 0, int previous = 0);
+  void keepAligned(const Snap& s, std::vector<int> axis);  // the click's horizontal or vertical from the step's last point (UI-23)
+  int referenceX();                                   // a fixed line along +X to hold an angle from the X axis against
+  bool keepSweep(const Snap& s, int arc, int radius, double r);  // a typed sweep as the arc's length, radius dimension times it
+  int pointAt(double u, double v) const;              // an existing point exactly there (typed values land on it)
+  const opad::design::SkPoint* pointOf(int id) const;  // through the geometry cache's index (a mouse move never scans, UI-27)
+  bool tangentStart(double& u, double& v, double& tu, double& tv) const;  // a tangent arc's line end and the way it leaves it
+  std::vector<std::pair<double, double>> filletPreview(int corner) const;  // the fillet's arc at a corner (empty: none fits)
+  double unitLength() const;                          // mm in one unit of the document
+  // A size or an angle the rubber band reads out, at (u, v); an angle's arc about (cu, cv) of radius r > 0 from the direction
+  // `from` through `sweep`, a size's leader from (fu, fv) to (tu, tv) where the rubber band does not draw it already.
+  struct Readout {
+    QString key;  // the box that takes it: that box sits there instead of the text (off (bu, bv) the way (bx, by))
+    double u = 0, v = 0, bu = 0, bv = 0, bx = 0, by = 1;
+    QString text;
+    bool locked = false;  // typed: it holds
+    double ox = 0, oy = 1, ext = 0;  // the way it sits off what it measures, how far it reaches that way (its padlock beyond)
+    double cu = 0, cv = 0, r = 0, from = 0, sweep = 0;
+    bool leader = false;
+    double fu = 0, fv = 0, tu = 0, tv = 0;
+  };
+  std::vector<Readout> readouts() const;
+  bool boxed(const QString& key) const;               // a box of the step takes that readout's value (and sits on it)
+  QStringList transientTexts() const;                 // what the rubber band reads out (benches)
+  size_t transientLocked() const;                     // segments drawn thick dashed: a Shift lock's line (benches)
+  QStringList overlayTexts() const;                   // the texts the sketch's overlay draws (benches)
+  size_t badgeTriangles() const;                      // the constraint badges' backs, two triangles each (benches)
+  size_t coincidenceDots() const;                     // the dots drawn for coincidences, explicit and where curves meet (benches)
+  size_t transientSolid(const QColor& c) const;       // rubber band and highlight segments in that colour (benches)
+  std::optional<snapmarkers::Marker> m_marker;        // the marker drawn where the pointer snapped (none: a dot)
+  double m_markerTurn = 0;                            // its turn on the screen (radians): an extension's follows its line
   Hit hitTest(double u, double v) const;
   double tol() const;  // pick distance in sketch units
-  int pointFor(const Snap& s);           // reuse or create (with the on-curve constraint)
+  int pointFor(const Snap& s);           // reuse or create (with the on-curve constraint and the snap's holds)
+  // The constraints a click at `s` adds, for the pictograms beside the pointer (UI-21): the new point's (it reuses a point,
+  // lies on a curve, holds as the snap says) when the click that waits makes a point there, the segment's (the line tool).
+  std::vector<snapmarkers::Glyph> snapGlyphs(const Snap& s) const;
+  bool pointHere() const;    // the click that waits makes a point where it lands (else it sizes or passes a curve through)
+  bool curveHere() const;    // the click that waits passes a curve through where it lands (a circle's rim): a point there lies on it
+  bool alignsHere() const;   // the click's horizontal or vertical from the step's last point is kept as a constraint
+  // The point the step's next click is measured from (UI-23): a polyline's or spline's last point, else the shape's last
+  // click (an arc's end: its centre) for the tools whose next point has a direction from it; id: its point (-1: none).
+  bool fromPoint(double& x, double& y, int& id) const;
+  std::vector<snapmarkers::Glyph> m_glyphs;  // the pictograms drawn beside the pointer (benches)
   void begin_change();                   // snapshot for undo
   bool end_change(const QString& what);  // solve; false = refused and rolled back
   void cancel_change();
@@ -192,6 +308,7 @@ class SketchEditor : public QObject, public SketchInput {
   bool m_previewRequested=false,m_previewComputing=false;
   QTimer m_toolPreviewTimer;
   QPointer<DimensionHandle> m_dimensionHandle;
+  QPointer<DynamicInput> m_input;
   int m_offsetAnchor = 0;  // the selected curve the offset arrow sits on: the last one hovered
   int m_previewRevision=0;
   std::shared_ptr<opad::design::Sketch> m_toolPreview;
@@ -199,7 +316,11 @@ class SketchEditor : public QObject, public SketchInput {
   opad::design::SolveResult m_previewSolved;
   QString m_selectionFilter = "all",m_constraintFilter;
   std::set<int> m_conflicts;
-  std::vector<std::tuple<int,double,double>> m_glyphHits;
+  std::vector<std::tuple<int,double,double>> m_glyphHits;  // each constraint badge: its constraint and centre (picking, hover)
+  std::vector<std::tuple<int,double,double>> m_coincidentDots;  // each coincidence drawn: its constraint and point
+  std::vector<int> m_joinDots;  // points two curves end on (a coincidence they share, no constraint): drawn as its dot; sorted
+  bool m_showConstraints = true;
+  void pixelAxes(double& rx, double& ry, double& ux, double& uy) const;  // one screen pixel right and up, in sketch coordinates
   bool m_boxSelecting = false;
   bool m_undoPending=false;
   double m_boxU=0,m_boxV=0;
@@ -223,17 +344,53 @@ class SketchEditor : public QObject, public SketchInput {
   std::vector<int> m_sel;
   std::set<int> m_dangling;
   Hit m_hover;
-  Snap m_cursor;
+  Snap m_cursor;   // where the next point goes (the typed values applied)
+  Snap m_pointer;  // where the pointer put it
   bool m_haveCursor = false;
-  int m_trackingPoint = 0;
-  bool m_inferenceLocked = false;
-  double m_lockX = 0, m_lockY = 0, m_lockDx = 1, m_lockDy = 0;
+  std::map<QString, double> m_typedValues;  // the point's typed values that evaluate (mm, radians)
+  std::optional<inputkeys::Entry> m_entry;  // switched by a prefix, for the step m_entryStep
+  QString m_entryStep;
+  bool m_angleRelative = false;  // setting sketch/input/angleRelative: a polyline's typed angles from its last segment
+  bool m_circleRadius = false;   // setting sketch/input/circleRadius: a circle's box takes its radius, not its diameter
+  // Cross-locking (UI-19): points acquired by resting on them (oldest first, at most 6) add their guides; Shift locks the
+  // pointer onto the guide it is on (or the way from the last point to it) while held, a tap until a click or Esc; then
+  // Shift taps go through the stops along the line (stop: the one shown, counted from where the pointer was, su sv).
+  std::vector<int> m_tracked;
+  int m_dwellPoint = 0;  // the point the pointer rests on
+  QTimer m_dwellTimer;
+  struct Lock { sketchsnap::Guide line; bool horizontal = false, vertical = false, sticky = false; int stop = -1; double su = 0, sv = 0; std::vector<Snap::Hold> holds; };
+  std::optional<Lock> m_lock;
+  bool m_shiftDown = false, m_shiftUsed = false, m_shiftSpent = false, m_unstick = false, m_inView = false;
+  // The snap and solver settings, read once (UI-27: a mouse move read them a dozen times): when a sketch opens and when one
+  // changes (refreshSnap: the snaps page, F8, F9, F11, F12).
+  struct Settings {
+    bool endpoint = true, midpoint = true, center = true, quadrant = true, intersection = true, apparent = true, perpendicular = true, tangent = true,
+         nearest = true, angle = true, inference = true, extensions = true, tracking = true, ortho = false;
+    double angleStep = 15, tolerance = 1e-8;
+    int iterations = 100;
+  } m_settings;
+  void readSettings();
+  size_t m_settingsReads = 0;  // benches: a mouse move reads nothing
+  int m_snapChoice = 0;  // the object snap shown when several are in reach (Shift taps, UI-23), counted from (m_choiceU, m_choiceV)
+  double m_choiceU = 0, m_choiceV = 0;
+  bool m_cyclePending = false;  // Shift went down over several object snaps: a tap shows the next, a hold locks
+  QElapsedTimer m_shiftClock;
+  double m_lastU = 0, m_lastV = 0;
+  Qt::KeyboardModifiers m_lastMods;
+  bool placing() const;  // the tool places points: snapping, tracking and the lock apply
+  bool lockOn();         // locks onto what the pointer is on now; false: nothing to lock onto
+  void unlock();
+  void shiftKey(bool pressed);
+  void resnap();         // the pointer's snap again where it is (a point acquired, a lock taken or let go)
+  void noteHints();      // hintsChanged when what Shift does changed
+  sketchkeys::Shift m_shiftHint = sketchkeys::Shift::None;
   // dragging with the select tool
   bool m_dragging = false, m_dragMoved = false;
   bool m_dragPending=false,m_dragReleased=false;double m_dragNextU=0,m_dragNextV=0;
   Hit m_dragHit;
   double m_dragU = 0, m_dragV = 0;
   std::vector<std::pair<int, std::pair<double, double>>> m_dragStart;  // point -> where it was
+  bool m_dragGrid = false;double m_dragGridU = 0, m_dragGridV = 0;  // the grid node the dragged geometry snapped to
 
   Handle(AIS_InteractiveObject) m_prs;  // a SketchPrs (SketchEditor.cpp)
   Handle(AIS_InteractiveObject) m_transientPrs;

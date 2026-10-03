@@ -45,14 +45,18 @@ void MainWindow::buildStatusBar() {
   struct Toggle { const char* id; const char* label; const char* icon; const char* key; const char* setting; bool defaultOn; };
   for(const auto& spec : {Toggle{"view.extensions","Extensions","extensions","F11","view/extensions",true},
       Toggle{"view.tracking","Tracking","tracking","F12","view/tracking",true},
-      Toggle{"view.gridSnap","Grid snapping","grid","F9","view/gridSnap",false}}) {
-    auto* a=addAction(spec.id,tr(spec.label),spec.icon,QKeySequence(spec.key),[] {},true);
+      Toggle{"view.gridSnap","Grid snapping","grid","F9","view/gridSnap",false},
+      Toggle{"view.orthoSnap","Ortho mode","orthoSnap","F8","view/orthoSnap",false}}) {
+    CommandInfo info{spec.id,tr(spec.label),spec.icon,QKeySequence(spec.key)};info.checkable=true;
+    if(info.id=="view.orthoSnap")info.keywords={tr("orthogonal"),tr("horizontal vertical lock")};
+    auto* a=addCommand(info,[] {});
     a->setChecked(m_settings.value(spec.setting,spec.defaultOn).toBool());
     auto apply=[this,spec](bool on) {
       m_settings.setValue(spec.setting,on);
       if(QString(spec.id)=="view.extensions") m_viewport->setExtensionTracking(on);
       else if(QString(spec.id)=="view.tracking") m_viewport->setTracking(on);
-      else m_viewport->setGridSnap(on);
+      else if(QString(spec.id)=="view.gridSnap") m_viewport->setGridSnap(on);
+      if(m_design && m_design->sketch()) m_design->sketch()->refreshSnap();  // the sketch reads them once (UI-27), again now
     };
     connect(a,&QAction::toggled,this,apply); apply(a->isChecked());
     auto* button=new QToolButton(this); button->setDefaultAction(a); button->setToolButtonStyle(Qt::ToolButtonIconOnly);
@@ -65,6 +69,9 @@ void MainWindow::buildStatusBar() {
     connect(theme::notifier(),&theme::Notifier::changed,button,paint); connect(a,&QAction::toggled,button,paint); paint();
     button->setFocusPolicy(Qt::NoFocus); statusBar()->addPermanentWidget(button);
   }
+  // One grid snapping switch: the sketch panel's checkbox turns the viewport's, and F9 follows (and saves it).
+  connect(m_viewport,&Viewport::gridSnapChanged,this,[this](bool on){action("view.gridSnap")->setChecked(on);});
+  connect(m_viewport,&Viewport::gridShownChanged,action("view.grid"),&QAction::setChecked);  // G shows the sketch's own grid state in a sketch
   statusBar()->addPermanentWidget(m_statusSel);
   statusBar()->addPermanentWidget(m_statusUnits);
   statusBar()->setSizeGripEnabled(false);

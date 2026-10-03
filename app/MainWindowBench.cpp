@@ -183,7 +183,6 @@ void MainWindow::runBench() {
       panel->hide();valid=valid&&!m_viewport->isIsolated()&&m_doc->doc.ops.size()==count;}
     trace::log(valid?"bench: instance next/previous, isolation restoration and no document edits PASS":"bench: instance browser FAIL");QCoreApplication::exit(valid?0:2);return;
   }
-  if(benchLargeSketch())return;
   if(benchTodo5())return;
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_NAVIGATION");!mode.isEmpty()) {
     if(mode=="write") {

@@ -121,6 +121,18 @@ TEST(expressions) {
 TEST(document_units_are_undoable_and_do_not_resize_stored_features) {
   ParamTable inches({},"in");CHECK_NEAR(inches.length("2"),50.8,1e-10);CHECK_NEAR(inches.length("2 mm"),2,1e-10);
   CHECK_NEAR(ParamTable().length(inches.explicit_length("2+1")),76.2,1e-10);
+  // UI-26: a plain number is stored with its unit as a word, not as "(15) * 1 mm" (which panels then showed), and that
+  // older form reads back the same way; expressions keep their form.
+  CHECK_EQ(ParamTable().explicit_length("15"),std::string("15 mm"));
+  CHECK_EQ(inches.explicit_length(" -2.5 "),std::string("-2.5 in"));
+  CHECK_EQ(inches.explicit_length("1e1"),std::string("1e1 in"));
+  CHECK_EQ(ParamTable().explicit_length("(15) * 1 mm"),std::string("15 mm"));
+  CHECK_EQ(inches.explicit_length("(0.5)*1 in"),std::string("0.5 in"));
+  CHECK_EQ(inches.explicit_length("(15) * 1 mm"),std::string("15 mm"));  // the unit it was stored with
+  CHECK_EQ(inches.explicit_length("2+1"),std::string("(2+1) * 1 in"));
+  CHECK_EQ(ParamTable().explicit_length("(15) * 1 mm + 2 mm"),std::string("(15) * 1 mm + 2 mm"));
+  CHECK_EQ(ParamTable().explicit_length("15 cm"),std::string("15 cm"));
+  CHECK_EQ(ParamTable({{"w","w","4 mm",""}}).explicit_length("w"),std::string("w"));
   Document doc=Document::create();auto sketch=rectangle(0,0,10,10);
   const auto id=run_id(sketch_cmd(doc,sketch));const auto regions=sketch_regions(sketch,{});
   feature_cmd(doc,"extrude",{{"profiles",json::array({{{"sketch",id},{"at",{5,5}},{"boundary",regions[0].boundary}}})},{"distance","10 mm"},{"operation","new"}});

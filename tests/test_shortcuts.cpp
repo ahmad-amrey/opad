@@ -94,6 +94,45 @@ TEST(editor_prefix_conflict_and_reserved_keys) {
   choose(dialog,"view.home","Return");assign(dialog,"cancel");CHECK(item(dialog,"view.home")->text(1)==QKeySequence("Ctrl+K").toString(QKeySequence::NativeText));
   dialog.reject();CHECK(b.shortcut()==QKeySequence("Ctrl+K, C"));
 }
+TEST(value_keys_display_styles_and_the_sketch) {
+  // UI-16: a running sketch tool types digits into its value boxes, so the display styles' 5, 6 and 7 (like the filters'
+  // 1 to 4) are scoped outside the sketch, let go while one is open and taken back after; a sketch command cannot have one.
+  for(const char* id:{"view.shaded","view.edges","view.wire","select.edges"})CHECK(shortcuts::scope(id)==shortcuts::OutsideSketch);
+  CHECK(!shortcuts::overlaps("view.wire","sketch.line"));CHECK(shortcuts::overlaps("view.wire","view.home"));
+  for(const char* key:{"5","0",".",",","-","+"})CHECK(shortcuts::typesValue(QKeySequence(key)));
+  CHECK(shortcuts::typesValue(QKeySequence(QKeyCombination(Qt::KeypadModifier,Qt::Key_5))));
+  for(const char* key:{"Shift+2","Ctrl+5","Alt+1","L","Esc",""})CHECK(!shortcuts::typesValue(QKeySequence(key)));
+  QSettings().clear();QAction wire,line,fit;init(wire,"view.wire","7");init(line,"sketch.line","L");init(fit,"view.fit","F");
+  shortcuts::suspendOutsideSketch({&wire,&line,&fit},true);
+  CHECK(wire.shortcut().isEmpty() && shortcuts::binding(&wire)==QKeySequence("7"));
+  CHECK(line.shortcut()==QKeySequence("L") && fit.shortcut()==QKeySequence("F"));  // the sketch's own and the everywhere ones stay
+  CHECK(wire.toolTip().contains("(7)"));
+  shortcuts::suspendOutsideSketch({&wire,&line,&fit},true);  // again: still held, not lost
+  CHECK(shortcuts::binding(&wire)==QKeySequence("7"));
+  shortcuts::bind(&wire,QKeySequence("8"));  // changed in the editor while sketching: taken back as changed
+  CHECK(wire.shortcut().isEmpty() && shortcuts::binding(&wire)==QKeySequence("8"));
+  shortcuts::suspendOutsideSketch({&wire,&line,&fit},false);
+  CHECK(wire.shortcut()==QKeySequence("8") && shortcuts::binding(&wire)==QKeySequence("8") && !wire.property("heldShortcut").isValid());
+  {
+    ShortcutEditor dialog({&wire,&line,&fit});
+    CHECK(item(dialog,"view.wire")->text(2)=="Outside sketch");
+    choose(dialog,"sketch.line","5");assign(dialog,"cancel");  // refused: a running tool types 5
+    CHECK(item(dialog,"sketch.line")->text(1)=="L");
+    choose(dialog,"view.wire","5");dialog.findChild<QPushButton*>("shortcutAssign")->click();
+    CHECK(item(dialog,"view.wire")->text(1)=="5");
+    dialog.reject();
+  }
+  QSettings().clear();
+}
+TEST(value_key_migration) {
+  QSettings s;s.clear();s.setValue("shortcuts/sketch.line","5");s.setValue("shortcuts/sketch.circle","Alt+5");s.setValue("shortcuts/view.fit","0");s.setValue("shortcuts/sketch.trim",".");
+  shortcuts::migrate(s);
+  CHECK(!s.contains("shortcuts/sketch.line") && !s.contains("shortcuts/sketch.trim"));  // back to their defaults
+  CHECK(s.value("shortcuts/sketch.circle").toString()=="Alt+5" && s.value("shortcuts/view.fit").toString()=="0");
+  CHECK(s.value("shortcuts/inputDefaultsVersion").toInt()==1);
+  s.setValue("shortcuts/sketch.line","5");shortcuts::migrate(s);CHECK(s.value("shortcuts/sketch.line").toString()=="5");  // once
+  s.clear();
+}
 TEST(shift_digit_and_arrow_activation) {
   QWidget window;QAction flat(&window),ortho(&window),top(&window);
   flat.setShortcut(QKeySequence("Shift+2"));ortho.setShortcut(QKeySequence("Shift+3"));top.setShortcut(QKeySequence("Shift+Up"));

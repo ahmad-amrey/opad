@@ -50,7 +50,8 @@ class SketchInput {
   virtual void sketchMove(double u, double v, Qt::KeyboardModifiers mods, bool dragging) = 0;
   virtual void sketchRelease(double u, double v, Qt::KeyboardModifiers mods) = 0;
   virtual void sketchDoubleClick(double u, double v) = 0;
-  virtual bool sketchKey(QKeyEvent* e) = 0;  // true = handled
+  virtual bool sketchKey(QKeyEvent* e) = 0;  // at the shortcut override: true = the sketch's key (no shortcut sees it)
+  virtual bool sketchType(QKeyEvent*) { return false; }  // the press of a key that types a value (or Tab), taken above
   virtual void sketchLeave() {}               // the pointer left the view: nothing is hovered any more
 };
 
@@ -69,13 +70,19 @@ class Viewport : public QWidget, protected AIS_ViewController {
   NavPreset navPreset() const { return m_preset; }
   void setStyle(Style s);
   Style style() const { return m_style; }
+  // G: the grid's visibility, one state outside sketches (view/grid) and one inside (sketch/grid, on unless hidden
+  // there); gridShownChanged tells the G action which one it shows.
   void setGrid(bool on);
   void configureGrid(double spacing,double extent);
   void setSelectThrough(bool on) {m_selectThrough=on;}
   void UpdateRubberBand(const Graphic3d_Vec2i& from,const Graphic3d_Vec2i& to) override;
-  void setGridSnap(bool on) { m_gridSnap=on; }
+  // Grid snapping is one switch (F9, mirrored by the sketch panel): gridSnapChanged tells both. It does not depend on
+  // the grid being shown (the snap marker shows the node); in a sketch or 2D mode the step follows the zoom.
+  void setGridSnap(bool on);
   bool gridSnap() const { return m_gridSnap; }
-  double gridStep() const { return m_gridStep; }
+  double gridStep() const;
+  bool gridShown() const { return m_sketchInput ? m_sketchGrid : m_grid; }
+  double gridShownStep() const { return m_gridShownStep; }  // as the sketch / 2D grid was last laid out
   Bnd_Box benchGridBox() const;  // where the grid is drawn (OCCT's structure, world box), for benches
   Bnd_Box benchFitBox() const { return fitBounds(false); }  // what Fit frames, for benches
   opad::json circleInfo(const opad::Ref& ref) const;
@@ -243,7 +250,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool hoveredReference(opad::Ref& ref) const;
   bool referenceAt(const QPointF& point,opad::Ref& ref);
   bool originReferenceAt(const QPointF& point,opad::Ref& ref);
-  void setPreviewCurves(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden);
+  // Drawing to sketch's preview (UI-29): segment and point arrays built on the worker, construction ones dashed; showing
+  // them hands the arrays to the driver. previewSegments() counts what the preview draws.
+  void setPreviewCurves(std::shared_ptr<const BodyPrs> curves,std::shared_ptr<const BodyPrs> construction,const std::vector<std::string>& hidden);
+  size_t previewSegments() const;
+  size_t previewParts() const { return m_previewBodies.size(); }
   void showBackdrop(const Handle(AIS_InteractiveObject)& obj);
   opad::json sectionState() const;
   void restoreSection(const opad::json& state);
@@ -269,6 +280,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void meshingProgress(int remaining);
   void isolationChanged();  // entered, left, or left because every isolated object was deleted
   void sectionDragged(const opad::Vec3& origin);  // the section plane's handle was dragged here
+  void gridSnapChanged(bool on);
+  void gridShownChanged(bool on);
   void looksApplied();  // a setLookLayer (or a scene change under one) has reached every displayed body
 
  public slots:
@@ -310,12 +323,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Job* m_boxJob=nullptr;
   CursorWarpGate m_warpGate;
   void updateGridExtent();
+  void showGrid();  // gridShown() on screen
   void placeGrid(double u, double v, double step, double extent);  // centred on (u, v) of the privileged plane
   // The box Fit All, Home and the load-time fit frame: displayed bodies, sketches, their images and a feature preview
   // (never the grid, gizmos, overlays or annotations); the default grid square when there is nothing (void if !fallback).
   Bnd_Box fitBounds(bool fallback = true) const;
   void applySelectionFilter(SelFilter f);  // setSelectionFilter's work, also for the filter already set (re-activates)
-  // 2D mode: the grid follows the view (its plane, the visible area, a spacing for the zoom), so it never ends.
+  // 2D mode and sketches: the grid follows the view (its plane, the visible area, a spacing for the zoom), so it never ends.
   void updateInfiniteGrid(bool force);
   gp_Pnt drawingOrbitPoint(const QPointF* cursor=nullptr,bool* found=nullptr);
   gp_Pnt drawingPlanePoint(const QPointF& cursor,bool& found);
@@ -468,6 +482,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   double m_gridStep=10;
   double m_gridSpacing=0;  // view/gridSpacing (0 = automatic), read when the grid settings change
   double m_gridShownStep=0, m_gridShownExtent=0, m_gridShownX=0, m_gridShownY=0;  // the infinite grid as last laid out
+  bool m_sketchGrid = true;  // the grid in sketches (sketch/grid)
   bool m_grid = false, m_sectionEnabled = false, m_sectionCaps = true, m_initialised = false, m_needFit = false;
   std::vector<std::string> m_fitNodesOnSync;
   bool m_flushingViewEvents = false, m_repaintAfterFlush = false;

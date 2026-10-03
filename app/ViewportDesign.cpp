@@ -25,6 +25,7 @@
 #include <QGestureEvent>
 #include <QPinchGesture>
 #include <QCursor>
+#include <QSettings>
 
 #include "Jobs.hpp"
 #include "opad/geometry.hpp"
@@ -385,15 +386,28 @@ bool Viewport::originReferenceAt(const QPointF& point,opad::Ref& ref) {
   setCenterPicking(true,point);
   return referenceAt(point,ref);
 }
-void Viewport::setPreviewCurves(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden) {
+void Viewport::setPreviewCurves(std::shared_ptr<const BodyPrs> curves,std::shared_ptr<const BodyPrs> construction,const std::vector<std::string>& hidden) {
   if(!m_initialised)return;
   clearPreviewBodies();
   for(const auto& id:hidden)if(auto it=m_items.find(id);it!=m_items.end()) {
     m_ctx->Erase(it->second.ais,false);m_previewHidden.insert(id);
   }
-  Handle(AIS_Shape) ais=new BodyShape(shape,std::move(prs));
-  ais->SetColor(occ(m_tokens.sel));ais->SetWidth(2);
-  m_ctx->Display(ais,AIS_WireFrame,-1,false);m_previewBodies.push_back(ais);redrawScene();
+  // Line-only arrays: BodyShape draws them as they are (no shape behind them to walk here).
+  TopoDS_Compound none;BRep_Builder().MakeCompound(none);
+  for(auto* prs:{&curves,&construction}) {
+    if(!*prs || ((*prs)->boundaries.IsNull() && (*prs)->loosePoints.IsNull())) continue;
+    Handle(AIS_Shape) ais=new BodyShape(none,std::move(*prs));
+    ais->SetColor(occ(m_tokens.sel));ais->SetWidth(prs==&curves?2:1.5);
+    if(prs==&construction) ais->Attributes()->WireAspect()->SetTypeOfLine(Aspect_TOL_DASH);
+    m_ctx->Display(ais,AIS_WireFrame,-1,false);m_previewBodies.push_back(ais);
+  }
+  redrawScene();
+}
+size_t Viewport::previewSegments() const {
+  size_t n=0;
+  for(const auto& ais:m_previewBodies)
+    if(Handle(BodyShape) body=Handle(BodyShape)::DownCast(ais);!body.IsNull() && body->prs() && !body->prs()->boundaries.IsNull()) n+=size_t(body->prs()->boundaries->VertexNumber()/2);
+  return n;
 }
 
 // ---------------------------------------------------------------- overlays
@@ -426,7 +440,8 @@ void Viewport::beginSketchInput(SketchInput* input, const opad::Frame& frame, co
   m_sketchFrame = frame;
   const auto normal=frame.normal();
   m_viewer->SetPrivilegedPlane(gp_Ax3(gp_Pnt(frame.origin[0],frame.origin[1],frame.origin[2]),gp_Dir(normal[0],normal[1],normal[2]),gp_Dir(frame.x[0],frame.x[1],frame.x[2])));
-  updateGridExtent();
+  m_sketchGrid = QSettings().value("sketch/grid", true).toBool();
+  showGrid();  // on the sketch plane, following the zoom
   m_sketchDrag = false;
   m_hiddenSketch = hiddenSketch;
   clearSelection();
@@ -440,7 +455,7 @@ void Viewport::endSketchInput() {
   resetHoverFade();
   m_sketchInput = nullptr;
   m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(),gp::DZ(),gp::DX()));
-  updateGridExtent();
+  showGrid();
   m_hiddenSketch.clear();
   setBodiesPickable(true);
   syncSketches();
@@ -543,7 +558,7 @@ bool Viewport::event(QEvent* e) {
       return true;
     }
   }
-  // Sketch editing keeps Esc/Enter/Delete. Tool shortcuts are configurable QActions;
+  // Sketch editing keeps Esc/Enter/Delete and the keys that type values. Tool shortcuts are configurable QActions;
   // their outside-sketch counterparts are disabled while the editor is active.
   if (e->type() == QEvent::ShortcutOverride && m_sketchInput) {
     auto* k = static_cast<QKeyEvent*>(e);
@@ -552,11 +567,23 @@ bool Viewport::event(QEvent* e) {
       return true;
     }
   }
+  // Tab goes round the tool's value boxes; QWidget::event would move the keyboard off the view before keyPressEvent.
+  if (e->type() == QEvent::KeyPress && m_sketchInput) {
+    auto* k = static_cast<QKeyEvent*>(e);
+    if ((k->key() == Qt::Key_Tab || k->key() == Qt::Key_Backtab) && !(k->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
+      m_sketchInput->sketchType(k);
+      e->accept();
+      return true;
+    }
+  }
   return QWidget::event(e);
 }
 
 void Viewport::keyPressEvent(QKeyEvent* e) {
-  if (m_sketchInput) return e->accept();  // already handled (or refused) at the shortcut-override stage
+  if (m_sketchInput) {  // the editing keys were handled (or refused) at the shortcut override; values are typed now
+    m_sketchInput->sketchType(e);
+    return e->accept();
+  }
   if (inferenceKey(e)) return e->accept();
   QWidget::keyPressEvent(e);
 }

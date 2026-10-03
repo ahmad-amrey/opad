@@ -22,7 +22,7 @@ Scope scope(const QString& id) {
   if(id.startsWith("sketch."))return SketchOnly;
   if(id.startsWith("select.") || id.startsWith("annotate.") ||
       (id.startsWith("inspect.") && id!="inspect.clear") ||
-      id=="edit.selecttouched" || id=="design.move")return OutsideSketch;
+      id=="edit.selecttouched" || id=="design.move" || id=="view.shaded" || id=="view.edges" || id=="view.wire")return OutsideSketch;
   return Everywhere;
 }
 bool overlaps(const QString& a,const QString& b) {
@@ -31,7 +31,34 @@ bool overlaps(const QString& a,const QString& b) {
 bool conflicts(const QKeySequence& a,const QKeySequence& b) {
   return !a.isEmpty()&&!b.isEmpty()&&(a.matches(b)!=QKeySequence::NoMatch||b.matches(a)!=QKeySequence::NoMatch);
 }
+bool typesValue(const QKeySequence& key) {
+  if(key.count()!=1 || (key[0].keyboardModifiers()&~Qt::KeypadModifier))return false;
+  const int code=key[0].key();
+  return (code>=Qt::Key_0 && code<=Qt::Key_9) || code==Qt::Key_Period || code==Qt::Key_Comma || code==Qt::Key_Minus || code==Qt::Key_Plus;
+}
+void suspendOutsideSketch(const QList<QAction*>& actions,bool sketching) {
+  for(auto* a:actions) {
+    if(scope(a->objectName())!=OutsideSketch)continue;
+    const QVariant held=a->property("heldShortcut");
+    if(sketching && !held.isValid()){a->setProperty("heldShortcut",QVariant::fromValue(a->shortcut()));a->setShortcut({});}
+    else if(!sketching && held.isValid()){a->setProperty("heldShortcut",QVariant());a->setShortcut(held.value<QKeySequence>());}
+  }
+}
+QKeySequence binding(const QAction* a) {
+  const QVariant held=a->property("heldShortcut");return held.isValid()?held.value<QKeySequence>():a->shortcut();
+}
+void bind(QAction* a,const QKeySequence& key) {
+  if(a->property("heldShortcut").isValid())a->setProperty("heldShortcut",QVariant::fromValue(key));else a->setShortcut(key);
+  updateTooltip(a);
+}
 void migrate(QSettings& settings) {
+  if(settings.value("shortcuts/inputDefaultsVersion",0).toInt()<1) {
+    // UI-16: a running sketch tool types digits, the point, a comma and the signs into its value boxes; a sketch command
+    // saved on one of them could no longer be reached. Back to its default.
+    settings.beginGroup("shortcuts");const auto keys=settings.childKeys();settings.endGroup();
+    for(const auto& id:keys)if(scope(id)==SketchOnly && typesValue(QKeySequence(settings.value("shortcuts/"+id).toString(),QKeySequence::PortableText)))settings.remove("shortcuts/"+id);
+    settings.setValue("shortcuts/inputDefaultsVersion",1);
+  }
   if(settings.value("shortcuts/annotationDefaultsVersion",0).toInt()<1) {
     if(QKeySequence(settings.value("shortcuts/annotate.show").toString())==QKeySequence("Shift+N"))settings.remove("shortcuts/annotate.show");
     if(settings.contains("shortcuts/annotate.draw")&&settings.value("shortcuts/annotate.draw").toString().isEmpty())settings.remove("shortcuts/annotate.draw");
@@ -57,7 +84,7 @@ void migrate(QSettings& settings) {
 }
 void updateTooltip(QAction* a) {
   QString text=a->text();text.remove('&');
-  if(!a->shortcut().isEmpty())text+="  ("+a->shortcut().toString(QKeySequence::NativeText)+")";
+  if(!binding(a).isEmpty())text+="  ("+binding(a).toString(QKeySequence::NativeText)+")";
   if(!a->property("shortcutHint").toString().isEmpty())text+="\n"+a->property("shortcutHint").toString();
   a->setToolTip(text);
 }
@@ -151,10 +178,11 @@ ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions,QWidget* parent):Q
       parentItem=folders[path];
     }
     auto* item=new QTreeWidgetItem(parentItem);item->setText(0,QString(action->text()).remove('&'));item->setToolTip(0,action->objectName());item->setData(0,Qt::UserRole,m_entries.size());
-    item->setText(2,scopeName(action->objectName()));m_entries.push_back({action,item,action->shortcut(),action->shortcut()});
+    item->setText(2,scopeName(action->objectName()));m_entries.push_back({action,item,shortcuts::binding(action),shortcuts::binding(action)});
   }
   auto* reservedGroup=new QTreeWidgetItem(m_tree);reservedGroup->setText(0,tr("Editing controls (reserved)"));reservedGroup->setData(0,Qt::UserRole,-1);
-  for(const auto& pair:QList<QPair<QString,QString>>{{tr("Cancel or step back"),"Esc"},{tr("Complete current input"),"Return"},{tr("Delete sketch selection"),"Del"},{tr("Delete sketch selection"),"Backspace"}}) {
+  for(const auto& pair:QList<QPair<QString,QString>>{{tr("End the current step, then close the tool"),"Esc"},{tr("Complete current input"),"Return"},{tr("Delete sketch selection"),"Del"},{tr("Undo the last sketch point"),"Backspace"},
+                                                      {tr("Type a value into the tool's boxes"),"0-9 . , - +"},{tr("Next or previous value box"),"Tab, Shift+Tab"}}) {
     auto* item=new QTreeWidgetItem(reservedGroup);item->setText(0,pair.first);item->setText(1,pair.second);item->setText(2,tr("In sketch"));item->setData(0,Qt::UserRole,-1);
   }
   m_tree->sortItems(0,Qt::AscendingOrder);m_tree->expandAll();
@@ -221,6 +249,9 @@ bool ShortcutEditor::assign(int i,const QKeySequence& key) {
   if(reserved(key)&&key!=e.initial&&key!=QKeySequence(e.action->property("defaultShortcut").toString())) {
     QMessageBox::warning(this,tr("Reserved shortcut"),tr("Esc, Enter, Delete and Backspace are reserved for editing controls. Choose another shortcut."));return false;
   }
+  if(shortcuts::scope(e.action->objectName())==shortcuts::SketchOnly && shortcuts::typesValue(key) && key!=e.initial) {
+    QMessageBox::warning(this,tr("Reserved shortcut"),tr("Digits, the decimal point, the comma and the signs type values into a running sketch tool. Choose another shortcut for a sketch command."));return false;
+  }
   const auto hits=collisions(i,key);
   if(!hits.isEmpty()) {
     QStringList labels;for(int n:hits)labels<<name(n)+" ("+scopeName(m_entries[n].action->objectName())+")";
@@ -244,7 +275,7 @@ void ShortcutEditor::accept() {
   for(int n=0;n<m_entries.size();++n)if(!collisions(n,m_entries[n].key).isEmpty()&&!assign(n,m_entries[n].key))return;
   QSettings settings;
   for(const auto& e:m_entries) {
-    e.action->setShortcut(e.key);shortcuts::updateTooltip(e.action);
+    shortcuts::bind(e.action,e.key);
     const QString path="shortcuts/"+e.action->objectName();
     if(e.key==QKeySequence(e.action->property("defaultShortcut").toString()))settings.remove(path);
     else settings.setValue(path,e.key.toString(QKeySequence::PortableText));

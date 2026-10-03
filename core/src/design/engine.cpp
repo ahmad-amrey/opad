@@ -972,7 +972,7 @@ json commit(Document& doc, Plan&& plan, const std::string& author) {
     doc.add_body(b.brep, b.meta);
     if (b.shape) cache_shape(doc, b.key, *b.shape);
   }
-  for (auto& op : plan.ops) doc.append(op, author);
+  for (auto& op : plan.ops) doc.append(std::move(op), author);  // not copied: a converted drawing's curves are big
   return plan.report;
 }
 

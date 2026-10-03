@@ -14,6 +14,9 @@
 #include <QTabBar>
 #include <QFontComboBox>
 #include <QFileDialog>
+#include <QApplication>
+#include <QAbstractItemView>
+#include <QKeyEvent>
 
 QList<SketchPanel::Tool> SketchPanel::tools() {
   return {
@@ -79,12 +82,13 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   m_group->hide();m_tools->hide();
   m_steps=new ToolStepsPanel(this);m_steps->setSummary({},{},{});tool->addWidget(m_steps);
   m_fields=new QFormLayout; tool->addLayout(m_fields);
-  auto* apply=new QPushButton(tr("Apply"),this); apply->setObjectName("primary"); layout->addWidget(apply);
+  // The chain tools' Apply is Done (Enter): it ends the chain and keeps the tool.
+  auto* apply=new QPushButton(tr("Apply"),this); apply->setObjectName("primary"); apply->setProperty("sketchApply",true); layout->addWidget(apply);m_apply=apply;
   connect(tabs,&QTabWidget::currentChanged,apply,[apply](int index){apply->setVisible(index==0);});
-  connect(apply,&QPushButton::clicked,editor,&SketchEditor::applyTool);
+  connect(apply,&QPushButton::clicked,this,[this]{m_editor->applyTool();keysToView();});
   m_precise=new QWidget(this);auto* precise=new QFormLayout(m_precise);tool->addWidget(m_precise);
   m_coordinates=new QComboBox(this); m_coordinates->addItems({tr("Absolute coordinates"),tr("Relative coordinates"),tr("Polar: length and angle")});
-  m_u=new QLineEdit("0",this); m_v=new QLineEdit("0",this);
+  m_u=new QLineEdit("0",this); m_v=new QLineEdit("0",this); m_u->setObjectName("sketchPreciseU");
   precise->addRow(tr("Input"),m_coordinates); precise->addRow(tr("X / length"),m_u); precise->addRow(tr("Y / angle"),m_v);
   auto* place=new QPushButton(tr("Place point"),this); precise->addRow(place);
   auto submit=[this] { m_editor->placePrecise(m_u->text(),m_v->text(),m_coordinates->currentIndex()); };
@@ -105,6 +109,10 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   button(selection,tr("Delete"),[this]{m_editor->deleteSelection();});
   selection->addStretch();
   auto* constraints=page(tr("Constraints"));
+  // Their badges in the view (UI-24): off, only those in conflict or selected show.
+  m_showConstraints=new QCheckBox(tr("Show constraints"),this);m_showConstraints->setObjectName("sketch-showConstraints");constraints->addWidget(m_showConstraints);
+  m_showConstraints->setToolTip(tr("Constraint badges and coincidence dots in the view; off, only those in conflict or selected show"));
+  connect(m_showConstraints,&QCheckBox::toggled,this,[this](bool on){m_editor->setShowConstraints(on);});
   auto* constraintFilter=new QLineEdit(this);constraintFilter->setPlaceholderText(tr("Filter constraints"));constraints->addWidget(constraintFilter);
   m_constraints=new QTreeWidget(this);m_constraints->setRootIsDecorated(false);m_constraints->setColumnCount(3);
   m_constraints->setHeaderLabels({tr("ID"),tr("Type"),tr("Value")}); m_constraints->setColumnWidth(0,45);m_constraints->setColumnWidth(1,105);
@@ -120,24 +128,42 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   auto* settings=page(tr("Snaps"));
   auto* section=new QCheckBox(tr("Section at sketch plane"),this);settings->addWidget(section);
   connect(section,&QCheckBox::toggled,this,[this](bool on){auto normal=m_editor->m_frame.normal();for(auto& v:normal)v=-v;if(on)m_editor->m_viewport->setSection(true,m_editor->m_frame.origin,normal,false);else m_editor->m_viewport->restoreSection(m_editor->m_sectionBefore);});
-  for(const auto& [key,title]:QList<QPair<QString,QString>>{{"endpoint",tr("Endpoints")},{"midpoint",tr("Midpoints")},{"center",tr("Centres")},{"quadrant",tr("Quadrants")},{"intersection",tr("Intersections")},{"nearest",tr("Nearest on curve")},{"grid",tr("Grid snapping")},{"angle",tr("Angle increments")},{"inference",tr("Automatic constraints")}}) {
-    auto* check=new QCheckBox(title,this);check->setChecked(QSettings().value("sketch/snap/"+key,true).toBool());settings->addWidget(check);
-    connect(check,&QCheckBox::toggled,this,[key](bool on){QSettings().setValue("sketch/snap/"+key,on);});
+  for(const auto& [key,title]:QList<QPair<QString,QString>>{{"endpoint",tr("Endpoints")},{"midpoint",tr("Midpoints")},{"center",tr("Centres")},{"quadrant",tr("Quadrants")},{"intersection",tr("Intersections")},{"apparent",tr("Apparent intersections")},{"perpendicular",tr("Perpendicular")},{"tangent",tr("Tangent")},{"nearest",tr("Nearest on curve")},{"grid",tr("Grid snapping")},{"angle",tr("Angle increments")},{"inference",tr("Automatic constraints")}}) {
+    auto* check=new QCheckBox(title,this);check->setObjectName("snap-"+key);settings->addWidget(check);
+    if(key=="grid") {  // the same switch as F9 (view.gridSnap), not a second one that also had to be on
+      Viewport* view=m_editor->m_viewport;check->setChecked(view->gridSnap());
+      connect(check,&QCheckBox::toggled,view,&Viewport::setGridSnap);
+      connect(view,&Viewport::gridSnapChanged,check,[check](bool on){QSignalBlocker block(check);check->setChecked(on);});
+      continue;
+    }
+    check->setChecked(QSettings().value("sketch/snap/"+key,true).toBool());
+    connect(check,&QCheckBox::toggled,this,[this,key](bool on){QSettings().setValue("sketch/snap/"+key,on);m_editor->refreshSnap();});
   }
+  // A size or an angle typed while drawing holds what it made (UI-17).
+  auto* keep=new QCheckBox(tr("Typed values become dimensions"),this);keep->setObjectName("input-addDimensions");settings->addWidget(keep);
+  keep->setToolTip(tr("A length, size or angle typed while drawing stays as a driving dimension (an axis angle as horizontal or vertical)"));
+  keep->setChecked(QSettings().value("sketch/input/addDimensions",true).toBool());
+  connect(keep,&QCheckBox::toggled,this,[](bool on){QSettings().setValue("sketch/input/addDimensions",on);});
   auto* advanced=new QFormLayout;settings->addLayout(advanced);
   auto* angle=new QDoubleSpinBox(this);angle->setRange(1,90);angle->setValue(QSettings().value("sketch/angleStep",15).toDouble());advanced->addRow(tr("Angle step"),angle);
-  connect(angle,&QDoubleSpinBox::valueChanged,this,[](double v){QSettings().setValue("sketch/angleStep",v);});
+  connect(angle,&QDoubleSpinBox::valueChanged,this,[this](double v){QSettings().setValue("sketch/angleStep",v);m_editor->refreshSnap();});
   auto* tolerance=new QLineEdit(QSettings().value("sketch/tolerance","1e-8").toString(),this);advanced->addRow(tr("Solver tolerance"),tolerance);
-  connect(tolerance,&QLineEdit::editingFinished,this,[tolerance]{bool ok=false;double v=tolerance->text().toDouble(&ok);if(ok && v>=1e-12 && v<=1e-2) QSettings().setValue("sketch/tolerance",v);else tolerance->setText(QSettings().value("sketch/tolerance","1e-8").toString());});
+  connect(tolerance,&QLineEdit::editingFinished,this,[this,tolerance]{bool ok=false;double v=tolerance->text().toDouble(&ok);if(ok && v>=1e-12 && v<=1e-2) {QSettings().setValue("sketch/tolerance",v);m_editor->refreshSnap();}else tolerance->setText(QSettings().value("sketch/tolerance","1e-8").toString());});
   auto* iterations=new QSpinBox(this);iterations->setRange(1,1000);iterations->setValue(QSettings().value("sketch/iterations",100).toInt());advanced->addRow(tr("Solver iterations"),iterations);
-  connect(iterations,&QSpinBox::valueChanged,this,[](int v){QSettings().setValue("sketch/iterations",v);});settings->addStretch();
+  connect(iterations,&QSpinBox::valueChanged,this,[this](int v){QSettings().setValue("sketch/iterations",v);m_editor->refreshSnap();});settings->addStretch();
   m_status=new QLabel(this);m_status->setWordWrap(true);layout->addWidget(m_status);
   auto* footer=new QHBoxLayout;layout->addLayout(footer);
-  // Finish sketch lives in the ribbon, next to Cancel sketch; the tool panel only steps back or leaves the tool.
-  auto* back=new QPushButton(tr("Back"),this);auto* cancel=new QPushButton(tr("Cancel tool"),this);
-  footer->addWidget(back);footer->addWidget(cancel);
-  connect(back,&QPushButton::clicked,editor,&SketchEditor::stepBack);
-  connect(cancel,&QPushButton::clicked,this,[this]{m_editor->setTool("select");});
+  // Finish sketch lives in the ribbon, next to Cancel sketch. The footer is Backspace and Esc as buttons (UI-20): Undo
+  // point takes the last point of the step in progress back and never leaves the tool, Close tool is Esc until the tool
+  // is closed (a chain keeps its segments, a shape not made yet is dropped). They hand the keyboard back to the view.
+  m_undoPoint=new QPushButton(this);m_undoPoint->setObjectName("sketchUndoPoint");
+  m_closeTool=new QPushButton(tr("Close tool   Esc"),this);m_closeTool->setObjectName("sketchCloseTool");
+  m_undoPoint->setToolTip(tr("Takes the last point or pick back; the tool stays (Backspace)"));
+  m_closeTool->setToolTip(tr("Leaves the tool. Esc ends the current chain or step first, a second Esc leaves the tool"));
+  for(auto* b:{m_undoPoint,m_closeTool})b->setFocusPolicy(Qt::NoFocus);
+  footer->addWidget(m_undoPoint);footer->addStretch();footer->addWidget(m_closeTool);
+  connect(m_undoPoint,&QPushButton::clicked,this,[this]{m_editor->undoPoint();keysToView();});
+  connect(m_closeTool,&QPushButton::clicked,this,[this]{m_editor->closeTool();keysToView();});
   connect(editor,&SketchEditor::status,m_status,&QLabel::setText);
   connect(editor,&SketchEditor::changed,this,&SketchPanel::refresh);
   connect(editor,&SketchEditor::toolChanged,this,[this]{m_pages->setCurrentIndex(0);refresh();});
@@ -222,13 +248,27 @@ void SketchPanel::buildFields() {
     auto* chain=new QCheckBox(tr("Select connected chain on click"),this);chain->setChecked(m_editor->option("chain",m_shown=="offset"?"1":"0")=="1");m_fields->addRow(chain);
     connect(chain,&QCheckBox::toggled,this,[this](bool on){m_editor->m_options["chain"]=on?"1":"0";});
   }
-  if(m_shown=="move"||m_shown=="copy"||m_shown=="rect_pattern") {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"0 mm");}
+  if(m_shown=="move"||m_shown=="copy") {
+    auto* mode=new QComboBox(this);mode->setObjectName("sketchOption-moveMode");mode->addItem(tr("X and Y offsets"),"xy");mode->addItem(tr("Distance and angle"),"polar");
+    mode->setCurrentIndex(std::max(0,mode->findData(m_editor->option("moveMode","xy"))));m_fields->addRow(tr("Offset by"),mode);
+    connect(mode,&QComboBox::currentIndexChanged,this,[this,mode]{QTimer::singleShot(0,this,[this,polar=mode->currentData().toString()=="polar"]{m_editor->setAngled(polar);});});
+    if(m_editor->option("moveMode","xy")=="polar"){field("moveDistance",tr("Distance"),"10 mm");field("moveAngle",tr("Angle"),"0 deg");}
+    else {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"0 mm");}
+    if(m_shown=="copy")field("copies",tr("Copies"),"1");
+  }
+  if(m_shown=="rect_pattern") {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"0 mm");}
   if(m_shown=="rotate"||m_shown=="scale"||m_shown=="polar_pattern") {field("cx",tr("Centre X"),"0 mm");field("cy",tr("Centre Y"),"0 mm");}
   if(m_shown=="rotate"||m_shown=="polar_pattern")field("angle",tr("Angle"),m_shown=="rotate"?"45 deg":"360 deg");
   if(m_shown=="scale")field("scale",tr("Scale factor"),"2");
   if(m_shown=="rect_pattern"||m_shown=="polar_pattern")field("count",tr("Count"),"3");
   if(m_shown=="rect_pattern")field("rows",tr("Rows"),"1");
-  if(m_shown=="chamfer") {field("first",tr("First distance"),"2 mm");field("second",tr("Second distance"),"2 mm");}
+  if(m_shown=="chamfer") {
+    auto* mode=new QComboBox(this);mode->setObjectName("sketchOption-chamferMode");mode->addItem(tr("Two distances"),"distance");mode->addItem(tr("Distance and angle"),"angle");
+    mode->setCurrentIndex(std::max(0,mode->findData(m_editor->option("chamferMode","distance"))));m_fields->addRow(tr("Chamfer by"),mode);
+    connect(mode,&QComboBox::currentIndexChanged,this,[this,mode]{QTimer::singleShot(0,this,[this,angled=mode->currentData().toString()=="angle"]{m_editor->setAngled(angled);});});
+    field("first",tr("First distance"),"2 mm");
+    if(m_editor->option("chamferMode","distance")=="angle")field("chamferAngle",tr("Angle to the first line"),"45 deg");else field("second",tr("Second distance"),"2 mm");
+  }
   if(m_shown=="heal")field("healTolerance",tr("Gap tolerance"),"0.05 mm");
   if(m_shown=="mirror") {
     choice("mirrorAxis",tr("Mirror axis"),{{"picked",tr("Picked line")},{"x",tr("X axis")},{"y",tr("Y axis")}});
@@ -260,12 +300,17 @@ void SketchPanel::refresh() {
   for(auto* edit:findChildren<QLineEdit*>())if(edit->objectName().startsWith("sketchOption-") && !edit->hasFocus()) {
     const auto key=edit->objectName().mid(13);if(m_editor->m_options.contains(key)){QSignalBlocker block(edit);edit->setText(m_editor->option(key));}
   }
+  {
+    using namespace sketchkeys;
+    const State keys=m_editor->keyState();const Back back=backspace(keys);const bool chain=chainTool(keys.tool);
+    m_apply->setText(chain?tr("Done   Enter"):tr("Apply"));m_apply->setEnabled(!chain || enter(keys)!=Enter::None);
+    m_undoPoint->setText(back==Back::UndoPick?tr("Undo pick   ⌫"):tr("Undo point   ⌫"));
+    m_undoPoint->setEnabled(back==Back::UndoPoint || back==Back::UndoPick);
+    m_undoPoint->setVisible(tool!="select");m_closeTool->setVisible(tool!="select");
+  }
   m_steps->setSteps(steps(),{});
-  // The measurement widget owns an inner scroll area: give its numbered rows room before Qt's deferred
-  // show/layout pass (minimumSizeHint otherwise sees newly created rows as hidden and collapses them).
-  int stepsHeight=20;
-  for(const auto& step:steps())stepsHeight+=fontMetrics().boundingRect(QRect(0,0,std::max(200,width()-90),1000),Qt::TextWordWrap,step.label).height()+14+(step.picked.isEmpty()?0:fontMetrics().height()+3);
-  m_steps->setFixedHeight(stepsHeight);
+  fitSteps();
+  {QSignalBlocker block(m_showConstraints);m_showConstraints->setChecked(m_editor->showConstraints());}
   m_state->setText((m_editor->visible()?QString():tr("This sketch is hidden. Show it in the browser to see your edits.")+"\n")+(m_editor->modified()?tr("Modified sketch"):tr("Sketch"))+tr(" · %1 degrees of freedom").arg(m_editor->dof()));
   const int selected=m_constraints->currentItem()?m_constraints->currentItem()->data(0,Qt::UserRole).toInt():0;
   m_constraints->clear();
@@ -288,6 +333,26 @@ void SketchPanel::refresh() {
   QTimer::singleShot(0,this,[this]{emit contentChanged();});
 }
 void SketchPanel::showPage(int page){m_pages->setCurrentIndex(page);refresh();}
+// The steps' own scroll area as tall as its rows at the width they get, so none hides under the fields (UI-25).
+void SketchPanel::fitSteps() {
+  const int width=m_steps->isVisible()?m_steps->width():this->width()-28;
+  m_steps->setFixedHeight(m_steps->stepsHeight(std::max(160,width))+2);
+}
+void SketchPanel::resizeEvent(QResizeEvent* e){QWidget::resizeEvent(e);if(m_editor->active())fitSteps();}
+void SketchPanel::keysToView() {
+  QWidget* view=m_editor->m_viewport;
+  if(!view->isVisible())return;
+  view->activateWindow();view->setFocus(Qt::OtherFocusReason);
+}
+void SketchPanel::keyPressEvent(QKeyEvent* e) {
+  // Backspace and Enter that no field took (a button or a check box had the keyboard): the sketch's keys, as in the
+  // view. A text field keeps them (Backspace edits it, Enter there places the typed point).
+  QWidget* focus=QApplication::focusWidget();
+  const bool typing=qobject_cast<QLineEdit*>(focus) || qobject_cast<QAbstractSpinBox*>(focus) || qobject_cast<QComboBox*>(focus) || qobject_cast<QAbstractItemView*>(focus);
+  const int key=e->key();
+  if(!typing && (key==Qt::Key_Backspace || key==Qt::Key_Return || key==Qt::Key_Enter) && m_editor->sketchKey(e))return e->accept();
+  QWidget::keyPressEvent(e);
+}
 QSize SketchPanel::toolSizeHint(int width) const {
   if(m_pages->currentIndex()!=0)return {width,440};
   // The panel as laid out at this width, with the scrolled tool page at its full height. A fixed allowance for the

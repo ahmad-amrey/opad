@@ -64,7 +64,7 @@ void MainWindow::buildViewActions() {
     updateChips();
   });
   QAction* grid = addAction("view.grid", tr("Grid"), "grid", QKeySequence("G"), [this] {}, true);
-  connect(grid, &QAction::toggled, this, [this](bool on) { m_viewport->setGrid(on); m_settings.setValue("view/grid",on); });
+  connect(grid, &QAction::toggled, this, [this](bool on) { m_viewport->setGrid(on); m_settings.setValue(m_viewport->sketching()?"sketch/grid":"view/grid",on); });
   addAction("view.gridSettings",tr("Grid settings"),"grid",QKeySequence("Shift+G"),[this] {
     auto* dialog=new QDialog(this,Qt::Tool);dialog->setAttribute(Qt::WA_DeleteOnClose);dialog->setWindowTitle(tr("Grid settings"));
     auto* form=new QFormLayout(dialog);auto* spacing=new QDoubleSpinBox(dialog);spacing->setRange(0,units::toDisplay(units::Kind::Length,100000));spacing->setDecimals(units::decimalsFor(0.001));spacing->setSpecialValueText(tr("Automatic"));
@@ -158,6 +158,7 @@ void MainWindow::buildCentral() {
   m_empty = new EmptyState(m_stack);
   m_viewport = new Viewport(m_doc, m_stack);
   m_viewport->setSelectThrough(action("select.through")->isChecked());
+  ToolPanel::setKeyboardHome(m_viewport);  // a click on a panel's button leaves the keys with the view (UI-05)
   m_stack->addWidget(m_empty);
   m_stack->addWidget(m_viewport);
   setCentralWidget(m_stack);

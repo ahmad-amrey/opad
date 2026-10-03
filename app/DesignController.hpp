@@ -56,6 +56,7 @@ class DesignController : public QObject {
   void viewportSelectionChanged();
   bool escape();  // Esc: leaves the plane pick or the feature; false when there was nothing to leave
   void bench();   // OPAD_BENCH_DESIGN
+  void benchSketch(std::function<void()> run);  // Sketch1 on XY opened, then run (a bench)
   opad::json recoveryState() const;
   void restoreRecovery(const opad::json& state);
 

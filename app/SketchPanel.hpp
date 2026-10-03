@@ -8,6 +8,8 @@
 #include "GuidedTool.hpp"
 
 class SketchEditor;
+class QPushButton;
+class QCheckBox;
 class QTabWidget;
 class SketchPanel : public QWidget {
   Q_OBJECT
@@ -19,6 +21,9 @@ class SketchPanel : public QWidget {
   static QList<Tool> tools();
   void showPage(int page);
   QSize toolSizeHint(int width) const;
+ protected:
+  void keyPressEvent(QKeyEvent* e) override;
+  void resizeEvent(QResizeEvent* e) override;
  signals:
   void finishRequested();
   void contentChanged();  // refreshed: the tool page may need another height
@@ -26,6 +31,8 @@ class SketchPanel : public QWidget {
   void chooseGroup();
   void chooseTool();
   void buildFields();
+  void keysToView();  // after a footer button: the keys go on in the view
+  void fitSteps();
   SketchEditor* m_editor;
   QComboBox *m_group, *m_tools, *m_coordinates;
   QLineEdit *m_u, *m_v;
@@ -37,4 +44,6 @@ class SketchPanel : public QWidget {
   bool m_refreshing = false;
   QTabWidget* m_pages;
   QWidget* m_precise;
+  QPushButton *m_apply, *m_undoPoint, *m_closeTool;
+  QCheckBox* m_showConstraints;
 };

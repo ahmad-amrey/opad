@@ -201,9 +201,10 @@ void DesignController::applyOps(std::vector<opad::json> ops, const QString& labe
   const auto generation = m_doc->generation;
   auto plan = std::make_shared<Plan>();
   auto doc = std::make_shared<opad::Document>(m_doc->doc);
-  m_jobs->async(tr("Updating the design"), [doc, ops, plan](Progress p) {
+  auto list = std::make_shared<std::vector<opad::json>>(std::move(ops));  // not copied with the job (a converted drawing's curves)
+  m_jobs->async(tr("Updating the design"), [doc, list, plan](Progress p) {
     Reading reading;
-    *plan = plan_ops(*doc, ops, true, [p] { return p.cancelled(); });
+    *plan = plan_ops(*doc, std::move(*list), true, [p] { return p.cancelled(); });
   }, [this, plan, label, report, generation](bool ok, const QString& error) {
     whenNobodyReads(this, [this, plan, label, report, ok, error, generation] {
       if (generation != m_doc->generation) return;
@@ -995,13 +996,19 @@ void DesignController::cancelSketch() {
 }
 
 // ---------------------------------------------------------------- bench
-// OPAD_BENCH_DESIGN: a sketch drawn through the editor's tools, extruded through the feature panel's plan and
-// commit path, then a parameter-driven edit. No mouse or keyboard driving.
-void DesignController::bench() {
+// Sketch1 on XY in a new document if there is none, then `run` once the look-at animation has ended (pick distances are
+// in pixels). OPAD_BENCH_DESIGN and the registered sketch benches (SketchBench.cpp) start here.
+void DesignController::benchSketch(std::function<void()> run) {
   if (!m_doc->hasDocument) m_doc->newDocument();
   const opad::Frame frame = base_frame("xy");
   enterSketch({}, "Sketch1", opad::json{{"base", "xy"}, {"frame", frame.to_json()}}, frame, opad::json::object());
-  QTimer::singleShot(700, this, [this] {  // the look-at animation has ended: pick distances are in pixels
+  QTimer::singleShot(700, this, std::move(run));
+}
+
+// OPAD_BENCH_DESIGN: a sketch drawn through the editor's tools, extruded through the feature panel's plan and
+// commit path, then a parameter-driven edit. No mouse or keyboard driving.
+void DesignController::bench() {
+  benchSketch([this] {
   m_sketch->bench({});
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_HANDLES"))return;
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_REFERENCE") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_DRAG") || qEnvironmentVariableIsSet("OPAD_BENCH_SPLINE") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY")) return;
@@ -1033,8 +1040,31 @@ void DesignController::bench() {
           }
           QMouseEvent release(QEvent::MouseButtonRelease,local+QPointF(25,-35),global+QPointF(25,-35),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(m_distanceHandle,&release);
           if(m_form->inputs().at("distance")==before)throw opad::Error("extrude drag did not change distance");++*phase;
-        }else if(*phase==1){if(!m_readyPlan)throw opad::Error("extrude drag preview missing");runPreview(true);++*phase;}
-        else {if(m_featureOn)return;if(m_doc->scene.features.empty() || m_distanceHandle->isVisible())throw opad::Error("extrude handle commit/cleanup");timer->stop();trace::log("bench: extrusion start offset, drag, preview and commit PASS");QCoreApplication::exit(0);}
+        }else if(*phase==1){
+          if(!m_readyPlan)throw opad::Error("extrude drag preview missing");
+          // UI-16: the box by the arrow takes the tools' keys: digits typed over the view (keypad too) replace the value, Up
+          // steps it, Enter is OK.
+          QApplication::setActiveWindow(m_viewport->window());m_viewport->setFocus();
+          auto key=[this](int code,Qt::KeyboardModifiers mods,const QString& text){
+            QWidget* to=QApplication::focusWidget();QKeyEvent press(QEvent::KeyPress,code,mods,text);QApplication::sendEvent(to?to:static_cast<QWidget*>(m_viewport),&press);};
+          key(Qt::Key_2,Qt::KeypadModifier,"2");key(Qt::Key_5,Qt::NoModifier,"5");
+          auto* box=m_distanceHandle->findChild<QLineEdit*>();
+          auto distance=[this]{return m_form->inputs().at("distance").dump();};
+          if(!box || box->text()!="25" || distance().find("25")==std::string::npos)throw opad::Error("digits typed over the view did not replace the extrude distance: "+distance());
+          // UI-26: a plain number typed is stored with its unit as a word (it was "(25) * 1 mm", shown so when edited again).
+          if(m_form->inputs().at("distance")!="25 mm")throw opad::Error("a typed 25 is stored as "+distance()+", not \"25 mm\"");
+          trace::log("bench: extrude box: a typed 25 is stored as \"25 mm\" PASS");
+          if(QApplication::focusWidget()!=box)throw opad::Error("the extrude box did not take the keyboard");
+          key(Qt::Key_Up,Qt::NoModifier,{});
+          if(box->text()!="26 mm" || distance().find("26")==std::string::npos)throw opad::Error("Up did not step the extrude distance: "+distance());
+          trace::log("bench: extrude box: keypad 2 and 5 typed over the view replace the distance, Up steps it to 26 mm PASS");
+          ++*phase;
+        }else if(*phase==2){
+          if(QApplication::focusWidget()!=m_distanceHandle->findChild<QLineEdit*>())throw opad::Error("the extrude box lost the keyboard");
+          QKeyEvent enter(QEvent::KeyPress,Qt::Key_Return,Qt::NoModifier);QApplication::sendEvent(QApplication::focusWidget(),&enter);
+          ++*phase;
+        }
+        else {if(m_featureOn)return;if(m_doc->scene.features.empty() || m_distanceHandle->isVisible())throw opad::Error("extrude handle commit/cleanup");timer->stop();trace::log("bench: extrusion start offset, drag, typed value, preview and commit by Enter PASS");QCoreApplication::exit(0);}
       }catch(const std::exception& e){timer->stop();trace::log(QString("bench: extrude handle FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();return;
     }
     // TODO 10 B14: the panel's New body section names and colours the body in the same step.
