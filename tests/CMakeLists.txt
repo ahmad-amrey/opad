@@ -82,6 +82,11 @@ elseif(TARGET zstd::libzstd_shared)
 endif()
 add_test(NAME kicad COMMAND opad-test-kicad)
 
+add_executable(opad-test-assets test_assets.cpp)
+target_link_libraries(opad-test-assets PRIVATE opad::core)
+add_test(NAME assets COMMAND opad-test-assets)
+set_tests_properties(assets PROPERTIES ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache")
+
 add_executable(opad-test-dxf test_dxf.cpp)
 target_link_libraries(opad-test-dxf PRIVATE opad::core)
 target_compile_definitions(opad-test-dxf PRIVATE OPAD_LIBREDWG_DATA="${PROJECT_SOURCE_DIR}/third_party/libredwg/test/test-data")

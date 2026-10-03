@@ -75,10 +75,10 @@ void evict() {
   }
 }
 
-}  // namespace
+// An entry keyed by content (a linked asset's file hash and how it is read) rather than by where the file is.
+std::filesystem::path content_entry(const std::string& content) { return folder() / (sha256_hex("asset|" + content + "|" + version_string()).substr(0, 40) + ".bin"); }
 
-bool viewer_cache_load(Document& doc, const std::filesystem::path& file, const ImportOptions& opt) {
-  const auto entry = entry_for(file, opt);
+bool load_entry(Document& doc, const std::filesystem::path& entry, const ImportOptions& opt) {
   std::error_code error;
   if (entry.empty() || !std::filesystem::exists(entry, error)) return false;
   try {
@@ -118,9 +118,8 @@ bool viewer_cache_load(Document& doc, const std::filesystem::path& file, const I
   }
 }
 
-void viewer_cache_store(const Document& doc, const std::filesystem::path& file, const ImportOptions& opt, const std::function<bool()>& cancelled) {
+void store_entry(const Document& doc, const std::filesystem::path& entry, const std::function<bool()>& cancelled) {
   const Op* op = import_op(doc);
-  const auto entry = entry_for(file, opt);
   if (!op || entry.empty()) return;
   json data = op->data;
   for (const char* field : {"id", "ts", "by", "parent"}) data.erase(field);
@@ -163,5 +162,17 @@ void viewer_cache_store(const Document& doc, const std::filesystem::path& file, 
   if (error) std::filesystem::remove(partial, error);
   evict();
 }
+
+}  // namespace
+
+bool viewer_cache_load(Document& doc, const std::filesystem::path& file, const ImportOptions& opt) { return load_entry(doc, entry_for(file, opt), opt); }
+void viewer_cache_store(const Document& doc, const std::filesystem::path& file, const ImportOptions& opt, const std::function<bool()>& cancelled) {
+  store_entry(doc, entry_for(file, opt), cancelled);
+}
+
+namespace detail {
+bool asset_cache_load(Document& doc, const std::string& content, const ImportOptions& opt) { return load_entry(doc, content_entry(content), opt); }
+void asset_cache_store(const Document& doc, const std::string& content, const std::function<bool()>& cancelled) { store_entry(doc, content_entry(content), cancelled); }
+}  // namespace detail
 
 }  // namespace opad

@@ -36,6 +36,7 @@ add_library(opad_core STATIC
   src/formats.cpp
   src/kicad_pcb.cpp
   src/viewer_cache.cpp
+  src/assets.cpp
   src/inspect.cpp
   src/render.cpp
   src/diff.cpp

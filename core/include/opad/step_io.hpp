@@ -19,6 +19,7 @@ struct KicadOptions {
   bool vias = false;                              // drill the through vias too (thousands of holes on a dense board)
   double placeholder_height = 1.0;                // mm: the box shown for a footprint whose model is not found
   std::string origin = "auto";                    // auto (the drill/place origin when set, else the board's centre) | center | page
+  std::vector<double> origin_at;                  // [x, y] on the page: this frame whatever `origin` says (a linked board's sync)
 };
 
 struct ImportOptions {

@@ -202,6 +202,19 @@ std::string sha256_hex(std::string_view data) {
   return s.finish();
 }
 
+std::string sha256_file(const std::filesystem::path& p, const std::function<bool()>& cancelled) {
+  std::ifstream in(p, std::ios::binary);
+  if (!in) throw Error("cannot open file: " + p.string());
+  Sha256 s;
+  std::vector<char> chunk(size_t(4) << 20);
+  while (in) {
+    if (cancelled && cancelled()) throw Error("cancelled");
+    in.read(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+    s.update(reinterpret_cast<const uint8_t*>(chunk.data()), static_cast<size_t>(in.gcount()));
+  }
+  return s.finish();
+}
+
 // ---------------------------------------------------------------- files
 std::filesystem::path path_from_utf8(std::string_view utf8) {
   return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(utf8.data()), utf8.size()));

@@ -433,6 +433,29 @@ std::string store_body(Document& doc, TopoDS_Shape shape, json meta, const Impor
   return key;
 }
 
+std::string persist_body(TopoDS_Shape& shape, const std::string& representation, bool& healed) {
+  if (representation == "mesh") {  // the triangulation is the geometry
+    std::ostringstream ss;
+    ss.precision(17);
+    BRepTools::Write(shape, ss, Standard_True, Standard_False, TopTools_FormatVersion_VERSION_1);
+    std::string brep;
+    for (char c : ss.str())
+      if (c != '\r') brep.push_back(c);
+    if (brep.empty() || brep.back() != '\n') brep.push_back('\n');
+    return brep;
+  }
+  if (representation == "solid") {
+    BRepCheck_Analyzer ana(shape);
+    if (!ana.IsValid()) {
+      ShapeFix_Shape fix(shape);
+      fix.Perform();
+      shape = fix.Shape();
+      healed = true;
+    }
+  }
+  return brep_from_shape(shape);
+}
+
 ImportResult import_xcaf(Document& doc, const Handle(TDocStd_Document)& xdoc, const std::filesystem::path& step, const ImportOptions& opt, bool mesh,
                          double scale, const Mat4& root) {
   Importer imp{doc, opt, XCAFDoc_DocumentTool::ShapeTool(xdoc->Main()), XCAFDoc_DocumentTool::ColorTool(xdoc->Main()), {},
@@ -536,26 +559,7 @@ Document make_editable(const Document& viewer, EditableKeys* changed, const std:
     Work& w = work[static_cast<size_t>(i)];
     try {
       w.shape = body_shape(viewer, b.key);
-      const std::string representation = b.meta.value("representation", "solid");
-      if (representation == "mesh") {
-        std::ostringstream ss;
-        ss.precision(17);
-        BRepTools::Write(w.shape, ss, Standard_True, Standard_False, TopTools_FormatVersion_VERSION_1);
-        for (char c : ss.str())
-          if (c != '\r') w.brep.push_back(c);
-        if (w.brep.empty() || w.brep.back() != '\n') w.brep.push_back('\n');
-      } else {
-        if (representation == "solid") {
-          BRepCheck_Analyzer ana(w.shape);
-          if (!ana.IsValid()) {
-            ShapeFix_Shape fix(w.shape);
-            fix.Perform();
-            w.shape = fix.Shape();
-            w.healed = true;
-          }
-        }
-        w.brep = brep_from_shape(w.shape);
-      }
+      w.brep = detail::persist_body(w.shape, b.meta.value("representation", "solid"), w.healed);
     } catch (const Standard_Failure& e) {
       w.error = e.GetMessageString();
     } catch (const std::exception& e) {

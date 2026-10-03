@@ -2,6 +2,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -26,6 +27,7 @@ void set_id_context(const std::string& context);
 bool is_uuid(std::string_view s);
 std::string now_iso8601();
 std::string sha256_hex(std::string_view data);
+std::string sha256_file(const std::filesystem::path& p, const std::function<bool()>& cancelled = {});  // read in chunks
 std::string default_author();
 std::string version_string();
 // Routes OCCT kernel messages to stderr (alarms only unless verbose or OPAD_VERBOSE=1) so stdout stays JSON.

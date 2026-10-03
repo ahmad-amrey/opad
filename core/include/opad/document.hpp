@@ -37,6 +37,7 @@ struct BodyEntry {
   std::string key;
   json meta;         // name, color, units, source, ...
   std::string brep;  // OCCT ASCII BREP, LF line endings, trailing newline
+  bool external = false;  // a linked asset's body (assets.hpp): its shape comes from the file, never from the store
 };
 
 struct ShapeCache;  // opaque; defined in geometry.cpp
@@ -61,6 +62,12 @@ class Document {
   // holding such bodies cannot be serialised (see has_live_bodies).
   std::string add_live_body(const std::string& key, json meta);
   bool has_live_bodies() const;
+  // A linked asset's body (assets.hpp): registered when the asset is read, never written by serialize(), so a saved
+  // document refers to it by key only (an older build shows such a body as missing).
+  std::string add_external_body(const std::string& key, json meta);
+  // Ops already in the file (save writes them back verbatim); later ones may still be rewritten (rebase_asset_paths).
+  size_t persisted_ops() const { return persisted_ops_; }
+  void rewrite_op(size_t index, json data);  // an op not saved yet, same id and type; validated, its text made anew
   const BodyEntry* body(const std::string& key) const;
   bool has_body(const std::string& key) const { return bodies_index_.count(key) > 0; }
   std::vector<std::string> body_keys() const;

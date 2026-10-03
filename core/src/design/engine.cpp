@@ -956,6 +956,8 @@ struct Walk {
 
 }  // namespace
 
+bool same_shapes(const TopoDS_Shape& a, const TopoDS_Shape& b) { return same_geometry(a, b); }
+
 Plan plan_ops(const Document& doc, std::vector<json> new_ops, bool strict, const Cancel& cancel) {
   Walk w{doc, new_ops, false, cancel, {}, {}, {}, json::object(), {}};
   return w.run(strict);
@@ -969,7 +971,8 @@ Plan plan_regenerate(const Document& doc, bool force, const Cancel& cancel) {
 
 json commit(Document& doc, Plan&& plan, const std::string& author) {
   for (auto& b : plan.bodies) {
-    doc.add_body(b.brep, b.meta);
+    if (b.brep.empty()) doc.add_external_body(b.key, b.meta);  // a linked asset's body (asset sync)
+    else doc.add_body(b.brep, b.meta);
     if (b.shape) cache_shape(doc, b.key, *b.shape);
   }
   for (auto& op : plan.ops) doc.append(op, author);

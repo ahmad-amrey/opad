@@ -49,6 +49,7 @@
 #endif
 
 #include "import_common.hpp"
+#include "opad/assets.hpp"
 #include "opad/cache.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
@@ -1054,7 +1055,8 @@ class Builder {
       for (const auto& p : polygon(l)) grow(p);
     if (x0 > x1)
       for (const auto& f : footprints) grow({f.place.x, f.place.y});
-    if (opt.kicad.origin == "page") origin = {0, 0};
+    if (opt.kicad.origin_at.size() == 2) origin = {opt.kicad.origin_at[0], opt.kicad.origin_at[1]};
+    else if (opt.kicad.origin == "page") origin = {0, 0};
     else if (aux && opt.kicad.origin != "center") origin = *aux;
     else if (x0 <= x1) origin = {(x0 + x1) / 2, (y0 + y1) / 2};
     std::vector<std::vector<P2>> polys;  // the outline's area (cutouts taken off) and box on the page, for sync previews
@@ -1532,16 +1534,19 @@ json kicad_download_models(const std::filesystem::path& board, const KicadOption
 }
 
 json kicad_sync_preview(const Document& doc, const std::string& import_id, const std::filesystem::path& board) {
-  const Op* op = nullptr;
-  for (const auto& o : doc.ops)
-    if (o.type == "import" && o.data.contains("kicad") && (import_id.empty() || o.id == import_id)) {
+  const std::vector<EffectiveOp> ops = effective_ops(doc);  // as synced since (an asset's edits)
+  const EffectiveOp* op = nullptr;
+  for (const auto& e : ops)
+    if (e.op->type == "import" && e.data().contains("kicad") && (import_id.empty() || e.op->id == import_id)) {
       if (op && import_id.empty()) throw Error("the document holds several KiCad boards: name the import");
-      op = &o;
+      op = &e;
     }
   if (!op) throw Error(import_id.empty() ? "the document holds no KiCad board" : "no KiCad board import " + import_id);
-  const json& was = op->data["kicad"];
+  const json& data = op->data();
+  const json& was = data["kicad"];
   std::filesystem::path file = board;
-  if (file.empty()) file = doc.path.parent_path() / path_from_utf8(op->data.value("source", ""));
+  if (file.empty() && data.contains("asset")) file = locate_asset(doc, data["asset"]);
+  if (file.empty()) file = doc.path.parent_path() / path_from_utf8(data.value("source", ""));
   ImportOptions o;
   const json options = was.value("options", json::object());
   o.kicad.components = options.value("components", true);
@@ -1568,8 +1573,8 @@ json kicad_sync_preview(const Document& doc, const std::string& import_id, const
       if (n.contains("children")) walk(n["children"]);
     }
   };
-  walk(op->data.value("nodes", json::array()));
-  json out = {{"import", op->id}, {"board", utf8(file)}, {"moved", json::array()}, {"flipped", json::array()}, {"models_changed", json::array()},
+  walk(data.value("nodes", json::array()));
+  json out = {{"import", op->op->id}, {"board", utf8(file)}, {"moved", json::array()}, {"flipped", json::array()}, {"models_changed", json::array()},
               {"footprint_changed", json::array()}, {"added", json::array()}, {"removed", json::array()}, {"unchanged", 0}};
   std::vector<bool> matched(before.size());
   auto find = [&](const json& c) -> int {

@@ -2,7 +2,7 @@
 #include <set>
 namespace opad::agent {
 namespace {
-const std::set<std::string> excluded={"new","append","diff","cache","gc","mesh","render","kicad_models","kicad_sync_preview"};
+const std::set<std::string> excluded={"new","append","diff","cache","gc","mesh","render","kicad_models","kicad_sync_preview","asset"};
 json object(json properties={},json required=json::array()) {
   if(properties.is_null())properties=json::object();
   return {{"type","object"},{"properties",properties},{"required",required},{"additionalProperties",false}};

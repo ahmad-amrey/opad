@@ -372,6 +372,19 @@ merging. After merging design changes, check unresolved references and regenerat
 Large meshes and embedded images can still produce large diffs; Git LFS is optional and gives up normal
 text diffs/merges. The detailed [format guide](docs/format.md#git) explains the record layout.
 
+A big STEP, mesh, drawing or KiCad board you design around without editing can be linked instead of copied:
+`opad-cli import doc.opad board.step --link true`. The import records the file's path beside the document (and its
+absolute path), its SHA-256 and how it was read; its bodies are never written into the document but read from the file
+whenever the document opens (a slow read is remembered by content in the user cache, so a clone or another branch opens
+it fast). A file outside the document's folder or its git work tree is read only once you agree (OPAD asks, and can trust
+the folder for good; `--trust_assets true` for opad-cli); a missing one leaves only its own bodies out.
+`opad-cli asset doc.opad --action status|sync|embed|pack` reports each link (ok, changed, missing, untrusted), syncs a
+changed file as one edit of its import (parts keep their ids with their renames, colours, placements and references,
+unchanged parts keep their geometry keys, and what depends on the rest is regenerated), embeds a link as ordinary,
+editable bodies, or packs the file into `assets/` beside the document. A document with links opens in OPAD builds without
+them: the linked parts are listed in the browser and their bodies shown as missing; editing and saving it there keeps the
+links.
+
 ## Python
 
 ```python
