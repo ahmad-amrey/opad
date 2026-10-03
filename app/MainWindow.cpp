@@ -352,7 +352,8 @@ void MainWindow::showDocument(bool has) {
   m_browserOverlay->setVisible(has && action("panel.browser")->isChecked());
   for (QAction* a : m_actions) {
     QString id = a->objectName();
-    if (id.startsWith("view.") && id != "view.dark") a->setEnabled(has && (id != "view.unisolate" || m_viewport->isIsolated()));
+    const bool setting = id == "view.dark" || id == "view.cubeEdgesCorners";  // in the Settings menu: also without a document
+    if (id.startsWith("view.") && !setting) a->setEnabled(has && (id != "view.unisolate" || m_viewport->isIsolated()));
     if (id.startsWith("inspect.") || id.startsWith("annotate.") || id.startsWith("select.") || id == "file.export" || id == "file.screenshot" || id == "file.save" || id == "file.saveas" || id == "file.close")
       a->setEnabled(has);
     if (id == "file.importdoc") a->setEnabled(m_doc->browse);

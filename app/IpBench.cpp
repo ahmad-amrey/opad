@@ -37,6 +37,10 @@ OPAD_BENCH(OPAD_BENCH_IP, ip) {
   cube->trigger();
   const QString back = w.m_viewport->benchCubePart(0, -5);
   report(QString("cube full again: %1").arg(back), back == "corner" && w.m_settings.value("view/cubeEdgesCorners").toBool());
+  w.showDocument(false);  // the start page: the view commands are off, the cube switch (a setting, like the theme) is not
+  const bool startPage = cube->isEnabled() && !w.action("view.fit")->isEnabled();
+  w.showDocument(true);
+  report("cube switch enabled with no document open", startPage && w.action("view.fit")->isEnabled());
 
   QAction* oda = w.action("files.useOda");
   // Answered on the first turn of the box's loop, before the bench's own dismissal (BenchQuiet: Cancel).
