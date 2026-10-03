@@ -1,5 +1,6 @@
 #include "opad/commands.hpp"
 
+#include <OSD_Parallel.hxx>
 #include <Standard_Failure.hxx>
 
 #include <algorithm>
@@ -431,12 +432,40 @@ void register_builtins() {
         return j;
       });
 
-  reg("diff", "Added/removed/changed ops between two documents, optionally with a geometric diff image",
-      {{"a", "path"}, {"b", "path"}, {"image", "path - optional .png"}, {"view", "string"}, {"width", "int"}, {"height", "int"}}, false,
+  reg("diff", "What changed between two versions of a document: parameters, sketches (entities, constraints, dimensions), feature inputs "
+      "before -> after, bodies added/removed/moved/geometry/renamed/appearance/reparented, notes, assets, how the histories relate, and the "
+      "op-level lists; optionally a geometric diff image. A side is a file or git:REV[:path]; one side alone is compared with git:HEAD",
+      {{"a", "path | git:REV | git:REV:path - the earlier version"}, {"b", "path | git:REV | git:REV:path - the later version"},
+       {"metrics", "bool - volume, area and size of each body whose geometry changed"}, {"text", "bool - also the diff as text"},
+       {"image", "path - optional .png"}, {"view", "string"}, {"width", "int"}, {"height", "int"}}, false,
       [](Document*, const json& a) {
-        Document da = Document::load(path_from_utf8(a.at("a").get<std::string>()));
-        Document db = Document::load(path_from_utf8(a.at("b").get<std::string>()));
-        json j = diff_documents(da, db);
+        std::string as = a.value("a", ""), bs = a.value("b", "");
+        if (bs.empty()) std::swap(as, bs);
+        if (bs.empty()) throw Error("diff: name a version: a and b, or one document to compare with git:HEAD");
+        if (as.empty()) as = "git:HEAD";
+        // Both at once, in index mode: only bodies something looks at (metrics, the image) are ever parsed, nothing is hashed.
+        Document versions[2];
+        std::exception_ptr failed[2];
+        OSD_Parallel::For(0, 2, [&](int i) {
+          const std::string& spec = i ? bs : as;
+          const std::string& other = i ? as : bs;
+          try {
+            std::filesystem::path file;
+            std::string text = version_text(spec, other.rfind("git:", 0) == 0 ? std::filesystem::path() : path_from_utf8(other), &file);
+            versions[i] = Document::parse_index(std::move(text), file);
+          } catch (...) {
+            failed[i] = std::current_exception();
+          }
+        });
+        for (const auto& f : failed)
+          if (f) std::rethrow_exception(f);
+        const Document &da = versions[0], &db = versions[1];
+        DiffOptions opt;
+        opt.metrics = a.value("metrics", false);
+        json j = semantic_diff(da, db, opt);
+        j["a"] = as;
+        j["b"] = bs;
+        if (a.value("text", false)) j["text"] = diff_text(j);
         if (a.contains("image") && a["image"].is_string()) {
           RenderOptions o = render_options(a);
           write_png(a["image"].get<std::string>(), render_diff(da, db, o));

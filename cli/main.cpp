@@ -6,6 +6,8 @@
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#include <fcntl.h>
+#include <io.h>
 #endif
 #include <cstdio>
 #include <cstring>
@@ -25,6 +27,7 @@
 #include <thread>
 
 #include "opad/core.hpp"
+#include "opad/diff.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/render.hpp"
@@ -49,7 +52,9 @@ void print_usage() {
   }
   std::printf("\nshorthands:\n");
   std::printf("  new <doc>                     import <doc> <file.step>        append <doc> <op.json|->\n");
-  std::printf("  inspect <doc> <ref>...        diff <a.opad> <b.opad>          export <doc> --format stl --out f.stl\n");
+  std::printf("  inspect <doc> <ref>...        export <doc> --format stl --out f.stl\n");
+  std::printf("  diff <a> <b> [--text] [--metrics]   what changed; a side is a file or git:REV[:path], one file alone = since git:HEAD\n");
+  std::printf("  textconv <doc.opad>           the document as readable lines, for git: diff.opad.textconv \"opad-cli textconv\"\n");
   std::printf("  render <doc> --out shot.png --view iso --size 1280x720\n");
   std::printf("  probe <file> [--viewer] [--mesh] [--cache]   reads any supported file as OPAD opens it; reports contents and timings\n");
   std::printf("  thumbnail <file> --out <png|bgra> [--size 256]   a picture of the file (Explorer thumbnails)\n");
@@ -295,6 +300,21 @@ int main(int argc, char** argv) {
       std::fputc('\n', stdout);
       return 0;
     }
+    if (command == "textconv") {  // git's diff driver: whatever the file holds, print something readable and succeed
+      if (positional.empty()) throw opad::Error("usage: opad-cli textconv <doc.opad>");
+      const auto path = opad::path_from_utf8(positional[0]);
+      std::string out;
+      try {
+        out = opad::document_outline(opad::Document::parse_index(opad::read_text_file(path), path));
+      } catch (const std::exception& e) {
+        out = opad::text_outline(opad::read_text_file(path), e.what());
+      }
+#ifdef _WIN32
+      _setmode(_fileno(stdout), _O_BINARY);  // LF, as git compares it
+#endif
+      std::fwrite(out.data(), 1, out.size(), stdout);
+      return 0;
+    }
     if (command == "probe") {
       if (positional.empty()) throw opad::Error("usage: opad-cli probe <file> [--viewer] [--mesh]");
       const json out = probe(positional[0], args.value("viewer", false), args.value("mesh", false), args.value("cache", false));
@@ -341,6 +361,14 @@ int main(int argc, char** argv) {
     }
 
     json out = opad::commands::run(command, args);
+    if (command == "diff" && args.value("text", false)) {
+#ifdef _WIN32
+      _setmode(_fileno(stdout), _O_BINARY);
+#endif
+      const std::string text = out.value("text", "");
+      std::fwrite(text.data(), 1, text.size(), stdout);
+      return 0;
+    }
     std::string text = compact ? out.dump() : out.dump(2);
     std::fwrite(text.data(), 1, text.size(), stdout);
     std::fputc('\n', stdout);

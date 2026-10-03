@@ -183,6 +183,55 @@ def git_merge_story():
 
 
 
+def semantic_diff_and_textconv():
+    """UI-57: diff against git revisions, as JSON and text, and git diff through `diff=opad` textconv."""
+    repo = os.path.join(tmp, "diffrepo")
+    os.makedirs(repo)
+    git(repo, "init", "-q", "-b", "main")
+    with open(os.path.join(repo, ".gitattributes"), "w", newline="\n") as f:
+        f.write("*.opad text eol=lf diff=opad\n")
+    git(repo, "config", "diff.opad.textconv", '"%s" textconv' % CLI.replace("\\", "/"))
+    doc = os.path.join(repo, "model.opad")
+    run("new", doc)
+    run("import", doc, os.path.join(FIXTURES, "assembly.step"), "--by", "alice")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "base")
+    lid = find_node(run("tree", doc), "Lid")["id"]
+    run("rename", doc, "--target", lid, "--name", "Cover")
+    run("transform", doc, "--target", lid, "--matrix", "[1,0,0,5,0,1,0,0,0,0,1,7,0,0,0,1]")
+    run("annotate", doc, lid, "chamfer the rim", "--by", "bob")
+
+    d = run("diff", doc)  # one file: since git:HEAD
+    assert d["a"] == "git:HEAD" and d["relation"] == "descendant" and d["common_ops"] == 1, d
+    kinds = {(c["kind"], c["change"]) for c in d["changes"]}
+    assert kinds == {("body", "renamed"), ("body", "moved"), ("annotation", "added")}, kinds
+    moved = next(c for c in d["changes"] if c["change"] == "moved")
+    assert moved["translation"] == [5.0, 0.0, 2.0], moved  # the lid sat at z = 5
+    assert d["summary"] == 'Rename Lid to Cover; move Cover; note "chamfer the rim"', d["summary"]
+    assert len(d["ops"]["added"]) == 3 and d["geometry"]["moved"] == 1, d
+    p = subprocess.run([CLI, "diff", "--a", "git:HEAD", doc, "--text"], capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    assert "  ~ Cover: renamed from Lid\n" in p.stdout and "  + [note] \"chamfer the rim\" by bob\n" in p.stdout, p.stdout
+    # git:REV:path is the repository's path, read from its working directory.
+    git(repo, "commit", "-q", "-am", "edits")
+    p = subprocess.run([CLI, "--compact", "diff", "git:HEAD~1:model.opad", "git:HEAD:model.opad"], capture_output=True, text=True, cwd=repo)
+    assert p.returncode == 0, p.stderr
+    assert json.loads(p.stdout)["summary"] == d["summary"], p.stdout
+    err = run("diff", "--a", "git:nope", doc, expect_ok=False)
+    assert "git cat-file blob nope:./model.opad" in err["error"], err
+
+    # git diff shows what changed, not BREP text.
+    shown = git(repo, "diff", "HEAD~1", "HEAD")
+    assert "CASCADE" not in shown and "#body " not in shown, shown
+    assert "-  Lid  [body" in shown and "+  Cover  [body" in shown, shown
+    assert "rename  to \"Cover\"" in shown and "+[note] \"chamfer the rim\" on Cover" in shown, shown
+    # A file git left conflict markers in still converts (and the command never fails git).
+    with open(doc, "a", newline="\n") as f:
+        f.write("<<<<<<< ours\n")
+    p = subprocess.run([CLI, "textconv", doc], capture_output=True, text=True)
+    assert p.returncode == 0 and p.stdout.startswith("unreadable OPAD document:") and "CASCADE" not in p.stdout, p.stdout[:300]
+
+
 def deterministic_builds():
     """Gap log #15: with OPAD_DETERMINISTIC the same script writes the same file, wherever it writes it."""
     def build(path, seed):
@@ -214,6 +263,7 @@ def deterministic_builds():
 
 test(basic_workflow)
 test(git_merge_story)
+test(semantic_diff_and_textconv)
 test(deterministic_builds)
 shutil.rmtree(tmp, ignore_errors=True)
 sys.exit(1 if FAILED else 0)

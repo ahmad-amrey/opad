@@ -1,10 +1,48 @@
 #pragma once
+// Versions of a document compared as a person reads them (UI-57). Both sides are usually read in index mode
+// (Document::load_index): only the bodies a caller asks about are ever parsed.
+#include <filesystem>
+#include <string>
+
 #include "document.hpp"
 #include "render.hpp"
 
 namespace opad {
-// Op-level and body-store diff between two documents.
-json diff_documents(const Document& a, const Document& b);
+
+struct DiffOptions {
+  bool metrics = false;  // volume, area and size of each body whose geometry changed, before and after (parses those)
+};
+
+// What changed from `a` to `b`:
+//   relation    same | descendant (b continues a) | ancestor (b is an earlier a) | diverged | unrelated (another document)
+//   common_ops  length of the op logs' common prefix
+//   changes     [{kind, change, id, name, ...}] in a fixed order: units, param, sketch, feature, asset, component and
+//               body (tree order), annotation, measurement, section, view. Bodies and components: added (a component
+//               with the count of its bodies; what is under it is not listed again), removed, renamed (before/after),
+//               moved (local placement only: translation, rotation_deg, axis), geometry (key_before/key_after, metrics
+//               on request), appearance (fields: color/opacity/visible/locked before/after), reparented. Features:
+//               added, removed, renamed, edited (details [{key, label, before, after}] as text), regenerated (same
+//               inputs, other results), suppressed, unsuppressed, failed, fixed. Params: added/removed/renamed/edited.
+//               Sketches: added/removed/renamed/edited (points/entities/constraints {added, removed, changed},
+//               dimensions [{id, type, before, after}], plane, dof). Notes: added, removed, resolved (tombstoned),
+//               reopened, edited, restyled, reanchored, commented. Assets: synced, storage.
+//   counts      {kind: {change: n}}
+//   summary     one line naming the main changes ("Edit Extrude 1 distance; add Fillet 2"), a commit message draft
+//   ops, bodies, geometry   the op-level lists, body-store keys and geometry counts of the first diff (kept for callers)
+json semantic_diff(const Document& a, const Document& b, const DiffOptions& opt = {});
+inline json diff_documents(const Document& a, const Document& b) { return semantic_diff(a, b); }
+// A semantic diff as text, one change per line under a heading per kind (opad-cli diff --text).
+std::string diff_text(const json& diff);
+// One document as line-oriented text for git's textconv (`diff=opad`): history, parameters, sketches, features, the
+// tree, notes and the body store, every body's BREP one line, so a git diff of two versions reads as what changed.
+std::string document_outline(const Document& doc);
+// The same for text that does not read as a document (conflict markers, a broken file): the error, then the text with
+// each body's BREP lines left out.
+std::string text_outline(const std::string& text, const std::string& error);
+// The text of the version a diff side names: a file, or `git:REV` / `git:REV:path` (`git cat-file blob`): without a
+// path, the file `other` names in its own repository; a relative path is the repository's, as git reads it. `file`
+// receives the path the version stands for.
+std::string version_text(const std::string& spec, const std::filesystem::path& other, std::filesystem::path* file = nullptr);
 // Geometric diff image: unchanged grey, only-in-a red, only-in-b green.
 Image render_diff(const Document& a, const Document& b, const RenderOptions& opt);
 }  // namespace opad

@@ -343,7 +343,7 @@ geometry. Existing operation text is preserved on save. New sketches and hand dr
 multiline records, so use the record-aware merge driver rather than Git's union driver:
 
 ```
-*.opad text eol=lf merge=opad
+*.opad text eol=lf merge=opad diff=opad
 ```
 
 Configure the driver in each clone (use the absolute path for your machine):
@@ -359,6 +359,23 @@ intact; inspect both branches before resolving it. Without configuration Git fal
 merging. After merging design changes, check unresolved references and regenerate/validate dependencies.
 Large meshes and embedded images can still produce large diffs; Git LFS is optional and gives up normal
 text diffs/merges. The detailed [format guide](docs/format.md#git) explains the record layout.
+
+`diff=opad` makes `git diff`, `git log -p` and `git show` print a readable outline of each version (history,
+parameters, sketches, features, the tree, notes, one line per body) instead of BREP text:
+
+```sh
+git config diff.opad.textconv '"C:/path/to/opad-cli" textconv'
+git config diff.opad.cachetextconv true
+```
+
+`opad-cli diff` compares two versions semantically: parameters, sketch entities and dimensions, feature inputs
+before -> after, bodies added, removed, moved, renamed, restyled, reparented or with new geometry, notes resolved or
+answered, and how the histories relate. A side is a file or `git:REV[:path]`; one file alone is compared with `HEAD`.
+
+```sh
+opad-cli diff model.opad --text                  # what changed since the last commit
+opad-cli diff --a git:main~3 model.opad          # JSON; --metrics adds volume and area of changed bodies
+```
 
 ## Python
 

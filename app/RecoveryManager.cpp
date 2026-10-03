@@ -191,7 +191,7 @@ void RecoveryManager::saveNow(std::function<void(bool,const QString&)> done) {
         size_t keep=0;while(keep<session->baseOps.size() && keep<document->ops.size() && session->baseOps[keep]==document->ops[keep].id)++keep;
         opad::json delta={{"base",session->baseFile.toStdString()},{"base_sha256",session->baseHash.toStdString()},{"keep_ops",keep},{"ops",opad::json::array()},{"bodies",opad::json::array()}};
         for(size_t i=keep;i<document->ops.size();++i)delta["ops"].push_back(document->ops[i].data);
-        for(const auto& body:document->bodies())if(!session->baseBodies.count(body.key))delta["bodies"].push_back({{"key",body.key},{"meta",body.meta},{"brep",body.brep}});
+        for(const auto& body:document->bodies())if(!session->baseBodies.count(body.key))delta["bodies"].push_back({{"key",body.key},{"meta",body.meta},{"brep",std::string(body.text())}});
         auto draft=edit;
         if(draft.is_object() && draft.value("type","")=="sketch" && draft.contains("geometry")){
           const auto scene=opad::resolve(*document);const auto* sketch=scene.sketch(draft.value("id",std::string()));

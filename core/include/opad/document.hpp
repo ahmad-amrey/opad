@@ -38,6 +38,10 @@ struct BodyEntry {
   std::string key;
   json meta;         // name, color, units, source, ...
   std::string brep;  // OCCT ASCII BREP, LF line endings, trailing newline
+  // Index mode (Document::parse_index): the entry's lines in the text the document was read from, neither copied nor
+  // verified; `brep` stays empty. text() is the BREP either way.
+  std::string_view indexed;
+  std::string_view text() const { return indexed.empty() ? std::string_view(brep) : indexed; }
 };
 
 struct ShapeCache;  // opaque; defined in geometry.cpp
@@ -52,6 +56,12 @@ class Document {
   using BodyFilter = std::function<bool(const std::string& key)>;
   static Document load(const std::filesystem::path& path, const BodyFilter& skip_body = {});
   static Document parse(const std::string& text, const std::filesystem::path& origin = {}, const BodyFilter& skip_body = {});
+  // Index mode, for reading a version rather than editing it (diff, compare, textconv, history): body entries are
+  // listed with their meta but their BREP is neither copied nor hashed (git or the session that wrote it verified it).
+  // The document keeps the text; a body's BREP is read from there when it is asked for. Saves byte-identically.
+  static Document load_index(const std::filesystem::path& path, const BodyFilter& skip_body = {});
+  static Document parse_index(std::string text, const std::filesystem::path& origin = {}, const BodyFilter& skip_body = {});
+  bool indexed() const { return source_ != nullptr; }
 
   std::string serialize() const;
   void save();                                     // to `path`
@@ -96,9 +106,11 @@ class Document {
   static const std::vector<std::string>& op_types();
 
  private:
+  static Document parse_text(std::string_view text, const std::filesystem::path& origin, const BodyFilter& skip_body, bool index);
   std::vector<BodyEntry> bodies_;
   std::unordered_map<std::string, size_t> bodies_index_;
   size_t persisted_ops_ = 0;
+  std::shared_ptr<const std::string> source_;  // index mode: the text the entries' views point into
 };
 
 }  // namespace opad
