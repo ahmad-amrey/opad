@@ -4,6 +4,7 @@
 #include "BenchRegistry.hpp"
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
@@ -127,5 +128,42 @@ OPAD_BENCH(OPAD_BENCH_STANDARDKEYS, standardkeys) {
     });
   };
   (*next)(0, 0);
+  return true;
+}
+
+// OPAD_BENCH_SELECTALL=1 on a large model (the Engine): Select all, Invert and Select all again each return within a
+// frame budget of 50 ms (the highlighting is the viewport's sliced job), and the selection ends up whole.
+OPAD_BENCH(OPAD_BENCH_SELECTALL, selectall) {
+  auto failed = std::make_shared<QStringList>();
+  auto check = [failed](bool ok, const QString& what) {
+    trace::log(QString("bench: select all: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    if (!ok) *failed << what;
+  };
+  auto timed = [&w](const char* id) {
+    QElapsedTimer clock;
+    clock.start();
+    w.action(id)->trigger();
+    return clock.elapsed();
+  };
+  auto shown = std::make_shared<size_t>(0);
+  auto waitIdle = std::make_shared<std::function<void(std::function<void()>)>>();
+  *waitIdle = [&w, waitIdle](std::function<void()> then) {
+    QTimer::singleShot(100, &w, [&w, waitIdle, then] { if (w.m_jobs->busy()) (*waitIdle)(then); else then(); });
+  };
+  w.action("edit.showall")->trigger();  // the Engine's root is hidden: everything on screen first
+  (*waitIdle)([=, &w] {
+    *shown = w.shownBodies().size();
+    const qint64 all = timed("edit.selectall");
+    check(all < 50, QString("Select all on %1 bodies returns in %2 ms").arg(*shown).arg(all));
+    (*waitIdle)([=, &w] {
+      check(w.m_selRefs.size() == *shown, QString("all %1 selected").arg(w.m_selRefs.size()));
+      const qint64 inverted = timed("edit.invert");
+      check(inverted < 50 && w.m_selRefs.empty(), QString("Invert returns in %1 ms with nothing left").arg(inverted));
+      (*waitIdle)([=, &w] {
+        trace::log(QString("bench: select all: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
+        QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
+      });
+    });
+  });
   return true;
 }

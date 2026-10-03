@@ -78,15 +78,18 @@ std::vector<std::string> MainWindow::shownBodies() const {
   for (const auto& id : m_viewport->isolatedNodes())
     for (const auto& b : m_doc->scene.bodies_under(id)) isolated.insert(b);
   std::vector<std::string> out;
-  for (const auto& b : m_doc->scene.all_bodies()) {
-    const auto path = m_doc->scene.path_to(b);
-    const bool visible = std::all_of(path.begin(), path.end(), [this](const std::string& id) { const opad::Node* n = m_doc->node(id); return n && n->visible; });
-    if (visible && (isolated.empty() || isolated.count(b))) out.push_back(b);
-  }
+  const std::function<void(const std::string&)> walk = [&](const std::string& id) {  // one pass down the tree
+    const opad::Node* n = m_doc->node(id);
+    if (!n || !n->visible) return;
+    if (n->kind == opad::Node::Kind::Body && (isolated.empty() || isolated.count(id))) out.push_back(id);
+    for (const auto& child : n->children) walk(child);
+  };
+  for (const auto& root : m_doc->scene.roots) walk(root);
   return out;
 }
 
 void MainWindow::selectShown(bool invert) {
+  trace::Scope scope(invert ? "MainWindow: invert selection" : "MainWindow: select all");
   if (m_design->sketchActive()) return m_design->sketch()->selectAll(invert);
   if (!m_doc->hasDocument || m_design->ownsSelection() || !m_tool.id.isEmpty() || m_annotationEditor) return;
   std::set<std::string> selected;
