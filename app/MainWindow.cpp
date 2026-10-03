@@ -12,6 +12,7 @@
 #include <QPointer>
 #include <QScopedValueRollback>
 #include <QStatusBar>
+#include <QStyle>
 #include <QToolButton>
 #include <QUrl>
 
@@ -386,6 +387,16 @@ void MainWindow::resumePendingPick() {
   if (m_pendingToast) m_pendingToast->dismiss();
   if (trace::enabled()) trace::log("hint: " + id + " runs with the selection");
   QTimer::singleShot(0, this, [this, id] { if (QAction* a = action(id); a && a->isEnabled()) a->trigger(); });  // after the selection has settled
+}
+
+// A change that failed and left the document as it was (UI-109): a toast with a red edge for 10 s instead of a message box
+// that stopped the work. Without a view to show it over, the box.
+void MainWindow::failedToast(const QString& text) {
+  if (!m_toasts || !m_viewport->isVisible()) return (void)QMessageBox::warning(this, tr("OPAD"), text);
+  Toast* toast = m_toasts->toast(text, QString(), {}, 10000);
+  toast->setProperty("kind", "error");
+  toast->style()->unpolish(toast);
+  toast->style()->polish(toast);
 }
 
 void MainWindow::resultToast(const QString& text, const QString& folder) {

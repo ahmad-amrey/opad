@@ -115,6 +115,7 @@ class MainWindow : public QMainWindow {
   void resumePendingPick();
   void cancelPendingPick();
   void resultToast(const QString& text, const QString& folder = QString());  // a result; folder: an Open folder action
+  void failedToast(const QString& text);  // a change that failed, the document unchanged (DesignController::failed)
   QString m_runningCommand, m_pendingPick;  // the command whose function runs now; the one waiting for a selection
   QPointer<Toast> m_pendingToast;
   // Before the document goes: unfinished work, then unsaved changes. resume: what asked, run again once a sketch the

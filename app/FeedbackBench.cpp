@@ -48,8 +48,10 @@ Toast* toastWith(ToastStack* stack, const QString& text) {
 // drop the wait, a hint without a pick goes by itself and nothing waits; Save ends in a toast with Open folder. Then the
 // jobs: a background job leaves the cursor alone, one the user waits for turns the busy cursor on after 150 ms; three at
 // once show "+2" beside the newest in the strip; those that ran long enough end in a completion toast (the background one
-// does not); reopening the file names it and its phase on the load shade and ends in "Opened box.opad · 1 bodies". No
-// message box may open on the way. <prefix>.hint.png (the waiting toast), <prefix>.strip.png, <prefix>.shade.png.
+// does not); a change that fails is an error toast, a cancelled one says nothing; reopening the file names it and its
+// phase on the load shade and ends in "Opened box.opad · 1 bodies". No
+// message box may open on the way. <prefix>.hint.png (the waiting toast), <prefix>.failed.png, <prefix>.strip.png,
+// <prefix>.shade.png.
 OPAD_BENCH(OPAD_BENCH_FEEDBACK, feedback) {
   static bool started = false;  // reopening the file below finishes a load, which asks the benches again
   if (std::exchange(started, true)) return true;
@@ -118,6 +120,18 @@ OPAD_BENCH(OPAD_BENCH_FEEDBACK, feedback) {
     const QString name = QFileInfo(w.m_doc->path()).fileName();
     Toast* saved = toastWith(stack, QCoreApplication::translate("MainWindow", "Saved %1").arg(name));
     check(saved && saved->actionButton() && saved->actionButton()->text() == QCoreApplication::translate("MainWindow", "Open folder"), "Save ends in a toast with Open folder");
+    stack->clear();
+    // A change that failed, the document as it was: a toast with a red edge for 10 s, no message box; cancelled: nothing.
+    w.m_doc->designBusy = true;
+    w.m_design->applyOps({opad::json{{"op", "units"}, {"length", "in"}}}, "bench");
+    w.m_doc->designBusy = false;
+    Toast* refused = toastWith(stack, QCoreApplication::translate("DesignController", "The design is still being recomputed; try again in a moment."));
+    check(refused && refused->property("kind").toString() == "error" && refused->timeout() == 10000 && !QApplication::activeModalWidget() && w.m_doc->scene.units == "mm",
+          "a change refused while the design recomputes: an error toast, no message box, nothing changed");
+    if (refused) refused->grab().save(prefix + ".failed.png");
+    const auto shown = stack->toasts().size();
+    emit w.m_design->failed("cancelled");
+    check(stack->toasts().size() == shown, "a cancelled change says nothing");
     stack->clear();
   });
   steps.add(100, [=, &w] {  // a background job never turns the busy cursor on

@@ -177,7 +177,7 @@ void MainWindow::buildDesign() {
 
   connect(m_design, &DesignController::status, this, &MainWindow::setPrompt);
   connect(m_design, &DesignController::notice, this, [this](const QString& text) { resultToast(text); });
-  connect(m_design, &DesignController::failed, this, [this](const QString& error) { QMessageBox::warning(this, tr("OPAD"), i18n::t(error)); });
+  connect(m_design, &DesignController::failed, this, [this](const QString& error) { if (error != "cancelled") failedToast(i18n::t(error)); });  // cancelled by the user
   connect(m_design, &DesignController::stateChanged, this, &MainWindow::updateDesignState);
   connect(m_timeline, &TimelineWidget::opActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });
   connect(m_browser, &BrowserPanel::sketchActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });
