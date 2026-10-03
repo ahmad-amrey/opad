@@ -91,6 +91,8 @@ class MainWindow : public QMainWindow {
   void bindPanel(QAction* a, QDockWidget* dock);
   void resetLayout();
   void buildStatusBar();
+  void setPrompt(const QString& text);  // what the running tool waits for (a status-bar message goes first while it lasts)
+  QString m_promptText;
   void buildUnitsButton();
   void toggleMenu(QToolButton* button, const QString& id);  // right-click on a drafting toggle (UI-112)
   class CoordinateReadout* m_readout = nullptr;  // the cursor's X/Y/Z in the status bar
@@ -260,7 +262,8 @@ class MainWindow : public QMainWindow {
   QLabel* m_statusPath = nullptr;
   QLabel* m_statusGitIcon = nullptr;
   QLabel* m_statusGit = nullptr;
-  QLabel* m_statusHover = nullptr;
+  QLabel* m_statusPrompt = nullptr;  // the prompt and status-bar messages (setPrompt)
+  QLabel* m_statusHover = nullptr;   // what is under the mouse (Viewport::hoverChanged)
   QLabel* m_statusSel = nullptr;
   QToolButton* m_statusUnits = nullptr;  // the shown length unit (UI-123): a click offers the document's
   QList<QAction*> m_actions;

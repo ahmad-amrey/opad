@@ -64,7 +64,8 @@ class DesignController : public QObject {
 
  signals:
   void stateChanged();                  // what is active changed: actions, ribbon
-  void status(const QString& text);
+  void status(const QString& text);     // what the tool waits for (the status bar's prompt), or why a change was refused
+  void notice(const QString& text);     // a result or a hint that goes by itself (a toast)
   void failed(const QString& error);    // an apply that had no `done` of its own
 
  private:

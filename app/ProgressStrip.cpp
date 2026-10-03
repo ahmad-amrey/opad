@@ -29,7 +29,7 @@ ProgressStrip::ProgressStrip(QWidget* parent) : QWidget(parent) {
   m_title->setObjectName("progressTitle");
   // The title takes every spare pixel (its width comes from the layout, not the text, so the bars never
   // shift as the phase changes); text longer than that is elided in the middle.
-  m_title->setMinimumWidth(240);
+  m_title->setMinimumWidth(80);  // elided: the prompt and the hover keep their room beside the strip
   m_title->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
   m_others = new QLabel(this);
   m_others->setObjectName("progressOthers");

@@ -175,7 +175,8 @@ void MainWindow::buildDesign() {
   m_drawingPlacer = new DrawingPlacer(m_doc, m_viewport, m_jobs, this);
   m_panels << m_drawingPlacer->panel();
 
-  connect(m_design, &DesignController::status, this, [this](const QString& text) { m_statusHover->setText(text); });
+  connect(m_design, &DesignController::status, this, &MainWindow::setPrompt);
+  connect(m_design, &DesignController::notice, this, [this](const QString& text) { resultToast(text); });
   connect(m_design, &DesignController::failed, this, [this](const QString& error) { QMessageBox::warning(this, tr("OPAD"), i18n::t(error)); });
   connect(m_design, &DesignController::stateChanged, this, &MainWindow::updateDesignState);
   connect(m_timeline, &TimelineWidget::opActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });

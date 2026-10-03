@@ -6,9 +6,12 @@
 #include <QFileInfo>
 #include <QLabel>
 #include <QMenu>
+#include <QPainter>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QStatusBar>
+#include <QStyle>
+#include <QStyleOption>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -23,16 +26,75 @@
 OPAD_ICON_TABLE(status, {"orthoLines", R"(<path d="M5 4v15h15"/><path d="M5 13h6v6"/>)"},
                 {"polar", R"(<path d="M4 20h16"/><path d="M4 20 17 7"/><path d="M4 20 9.5 5.5"/><path d="M12.5 20a8.5 8.5 0 0 0-2.4-6"/>)"});
 
+namespace {
+// A status-bar text that gives way: elided to the room it gets down to `minimum` px, the whole text in its tooltip unless
+// the owner keeps the tooltip (tip false: the path's says what is unresolved).
+class StatusText : public QLabel {
+ public:
+  StatusText(Qt::TextElideMode mode, int minimum, bool tip, QWidget* parent) : QLabel(parent), m_mode(mode), m_minimum(minimum), m_tip(tip) {}
+  QSize minimumSizeHint() const override { return {std::min(m_minimum, sizeHint().width()), QLabel::minimumSizeHint().height()}; }
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter p(this);
+    const QRect r = contentsRect();
+    const QString shown = fontMetrics().elidedText(text(), m_mode, r.width());
+    if (m_tip) setToolTip(shown == text() ? QString() : text());
+    style()->drawItemText(&p, r, int(QStyle::visualAlignment(layoutDirection(), alignment())) | Qt::TextSingleLine, palette(), isEnabled(), shown, foregroundRole());
+  }
+ private:
+  Qt::TextElideMode m_mode;
+  int m_minimum;
+  bool m_tip;
+};
+
+// QStatusBar hides its normal widgets (the path, the git chip) while a message shows and paints the message where they
+// were (UI-109). This one keeps them and paints no message: MainWindow::setPrompt shows it in the prompt instead, and
+// currentMessage() still says what it is.
+class StatusBar : public QStatusBar {
+ public:
+  explicit StatusBar(QWidget* parent) : QStatusBar(parent) {
+    connect(this, &QStatusBar::messageChanged, this, [this](const QString& text) {
+      if (text.isEmpty()) return;
+      for (QWidget* w : findChildren<QWidget*>(Qt::FindDirectChildrenOnly))  // hidden for the message, not by their owner
+        if (!w->isWindow() && w->isHidden() && !w->testAttribute(Qt::WA_WState_ExplicitShowHide)) w->show();
+    });
+  }
+ protected:
+  void paintEvent(QPaintEvent*) override {  // QStatusBar's, without the message
+    QPainter p(this);
+    QStyleOption panel;
+    panel.initFrom(this);
+    style()->drawPrimitive(QStyle::PE_PanelStatusBar, &panel, &p, this);
+    for (QWidget* w : findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+      if (w->isWindow() || !w->isVisible()) continue;
+      QStyleOption item(0);
+      item.rect = w->geometry().adjusted(-2, -1, 2, 1);
+      item.palette = palette();
+      item.state = QStyle::State_None;
+      style()->drawPrimitive(QStyle::PE_FrameStatusBarItem, &item, &p, w);
+    }
+  }
+};
+}  // namespace
+
+// Left to right: the path and the git chip, then the prompt (what the running tool waits for, or a message for its
+// seconds), the hover readout (what is under the mouse), the progress strip, the drafting toggles, the cursor's
+// coordinates, the selection, the units chip. The prompt and the hover keep their room while a job runs (UI-109).
 void MainWindow::buildStatusBar() {
+  setStatusBar(new StatusBar(this));
   const Tokens& t = theme::current();
-  m_statusPath = new QLabel(this);
+  m_statusPath = new StatusText(Qt::ElideMiddle, 120, false, this);  // the folder gives way first, the file name stays
   m_statusPath->setFont(theme::mono(12));
   m_statusPath->setContentsMargins(12, 2, 4, 2);
   m_statusGitIcon = new QLabel(this);
   m_statusGitIcon->setPixmap(icons::pixmap("git", t.fg2, 14, devicePixelRatioF()));
   m_statusGit = new QLabel(this);
   m_statusGit->setTextFormat(Qt::RichText);
-  m_statusHover = new QLabel(this);
+  m_statusPrompt = new StatusText(Qt::ElideRight, 140, true, this);
+  m_statusPrompt->setObjectName("statusPrompt");
+  m_statusPrompt->setAlignment(Qt::AlignLeading | Qt::AlignVCenter);
+  m_statusPrompt->setContentsMargins(8, 0, 4, 0);
+  m_statusHover = new StatusText(Qt::ElideRight, 100, true, this);
   m_statusHover->setAlignment(Qt::AlignCenter);
   m_statusHover->setObjectName("tertiary");
   m_statusSel = new QLabel(this);
@@ -43,9 +105,10 @@ void MainWindow::buildStatusBar() {
   statusBar()->addWidget(m_statusPath);
   statusBar()->addWidget(m_statusGitIcon);
   statusBar()->addWidget(m_statusGit);
-  // Permanent: QStatusBar hides normal widgets while a temporary message shows and re-shows them after,
-  // which fought with the strip's own show/hide and drew the message across the bars.
+  // Permanent, so that an area's widgets (the git chip) come before them.
+  statusBar()->addPermanentWidget(m_statusPrompt, 1);
   statusBar()->addPermanentWidget(m_statusHover, 1);
+  connect(statusBar(), &QStatusBar::messageChanged, this, [this] { setPrompt(m_promptText); });
   statusBar()->addPermanentWidget(m_progress, 1);
   // The drafting toggles (UI-112 adds Ortho and Polar, the sketch's line directions): each a command with its key, its
   // setting, and a right-click menu of its quick settings (toggleMenu).
@@ -86,7 +149,6 @@ void MainWindow::buildStatusBar() {
   statusBar()->addPermanentWidget(m_statusSel);
   statusBar()->addPermanentWidget(m_statusUnits);
   statusBar()->setSizeGripEnabled(false);
-  connect(m_jobs, &JobRunner::stripShown, this, [this](bool shown) { m_statusHover->setVisible(!shown); });  // free room for the bars
   for (AreaController* area : m_areas) area->statusWidgets(statusBar());
 }
 
@@ -225,9 +287,19 @@ void MainWindow::updateTitle() {
   for (const auto& u : m_doc->scene.unresolved)
     if (opad::Document::known_type(u.op_type) && ++others <= 10) tip << QString("%1: %2").arg(QString::fromStdString(u.op_type), i18n::t(QString::fromStdString(u.reason)));
   if (others > 10) tip << tr("… and %1 more").arg(others - 10);
+  tip << path;  // the whole of it, last: the label elides the folder
   m_statusPath->setToolTip(tip.join('\n'));
-  if (!m_doc->hasDocument) m_statusHover->setText(tr("File › Open a design file (OPAD, STEP, STL, 3MF, DXF, …), or drop one here"));
-  else if (m_statusHover->text() == tr("File › Open a design file (OPAD, STEP, STL, 3MF, DXF, …), or drop one here")) m_statusHover->clear();
+  const QString start = tr("File › Open a design file (OPAD, STEP, STL, 3MF, DXF, …), or drop one here");
+  if (!m_doc->hasDocument) setPrompt(start);
+  else if (m_promptText == start) setPrompt({});
+}
+
+// The prompt: a status-bar message while it lasts (any showMessage; the status bar no longer hides the path for it),
+// else what the running tool waits for.
+void MainWindow::setPrompt(const QString& text) {
+  m_promptText = text;
+  const QString message = statusBar()->currentMessage();
+  m_statusPrompt->setText(message.isEmpty() ? text : message);
 }
 
 QString MainWindow::newerRecords() const {

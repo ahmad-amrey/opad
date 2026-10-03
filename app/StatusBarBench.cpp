@@ -1,15 +1,18 @@
 // Bench of the status bar for CAD work (UI-112): Ortho and Polar beside the other drafting toggles, their right-click
-// menus, the cursor's coordinate readout (CoordinateReadout.cpp) and Ortho in the sketch's Line tool.
+// menus, the cursor's coordinate readout (CoordinateReadout.cpp), Ortho in the sketch's Line tool, and its channels (UI-109):
+// the prompt, status-bar messages that leave the path alone, the hover, all beside the progress strip.
 #include "MainWindow.hpp"
 #include "BenchRegistry.hpp"
 #include "CoordinateReadout.hpp"
 #include "Preferences.hpp"
+#include "ProgressStrip.hpp"
 #include "Units.hpp"
 
 #include <QApplication>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QPointer>
 #include <QSettings>
 #include <QStatusBar>
 #include <QToolButton>
@@ -46,7 +49,7 @@ bool hasPoint(const opad::json& geometry, double x, double y) {
 // Polar its angle step, and both their page of Preferences at the row. The readout: on the XY plane where nothing is under
 // the mouse (top view), on the model where the box is, live from mouse moves over the view, in the sketch's own X and Y
 // while sketching, only X and Y in 2D mode. In the sketch, Ortho levels a line's second point; without it the point stays
-// where it was clicked. <prefix>.status.png (the status bar), <prefix>.grid-menu.png.
+// where it was clicked. <prefix>.status.png (the status bar), <prefix>.message.png and .busy.png (a message, a job), <prefix>.grid-menu.png.
 OPAD_BENCH(OPAD_BENCH_STATUSBAR, statusbar) {
   const QString prefix = value;
   auto failed = std::make_shared<QStringList>();
@@ -60,7 +63,32 @@ OPAD_BENCH(OPAD_BENCH_STATUSBAR, statusbar) {
   auto idle = [&w] { return !w.m_jobs->busy(); };
   auto toggle = [&w](const char* id) { return w.statusBar()->findChild<QToolButton*>(QString("toggle.") + id); };
   CoordinateReadout* readout = w.m_readout;
+  // UI-109: one channel each. A status-bar message no longer hides the path: it shows in the prompt while it lasts, then
+  // the tool's prompt is back; what is under the mouse has its own label; both keep their room while a job shows.
+  auto job = std::make_shared<QPointer<Job>>();
   add(800, [=, &w] {
+    emit w.m_design->status("Extrude: pick a profile");
+    w.statusBar()->showMessage("Bench note", 5000);
+    check(w.m_statusPath->isVisible() && w.m_statusPrompt->text() == "Bench note" && w.statusBar()->currentMessage() == "Bench note",
+          "a message leaves the path where it is and shows in the prompt");
+    w.statusBar()->grab().save(prefix + ".message.png");
+    w.statusBar()->clearMessage();
+    check(w.m_statusPrompt->text() == "Extrude: pick a profile" && w.m_statusPath->isVisible(), "then the tool's prompt is back");
+    emit w.m_viewport->hoverChanged("Box · Face 3");
+    check(w.m_statusHover->text() == "Box · Face 3" && w.m_statusPrompt->text() == "Extrude: pick a profile", "what is under the mouse has its own label beside the prompt");
+    w.m_jobs->backgroundNext();
+    *job = w.m_jobs->begin("Bench: a long job");
+  });
+  add(900, [=, &w] {
+    check(w.m_progress->isVisible() && w.m_statusHover->isVisible() && w.m_statusPrompt->isVisible() && w.m_statusPath->isVisible() &&
+              w.m_statusHover->width() >= 50 && w.m_statusPrompt->width() >= 120,
+          QString("with the progress strip showing, the prompt (%1 px) and the hover (%2 px) keep their room").arg(w.m_statusPrompt->width()).arg(w.m_statusHover->width()));
+    w.statusBar()->grab().save(prefix + ".busy.png");
+    if (*job) (*job)->finish(true);
+    emit w.m_design->status(QString());
+    emit w.m_viewport->hoverChanged(QString());
+  });
+  add(300, [=, &w] {
     const bool rtl = w.layoutDirection() == Qt::RightToLeft;
     QList<QWidget*> order{toggle("view.orthoSnap"), toggle("view.polarSnap"), toggle("view.extensions"), toggle("view.tracking"), toggle("view.gridSnap"), readout, w.m_statusSel, w.m_statusUnits};
     bool inOrder = !order.contains(nullptr);

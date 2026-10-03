@@ -212,7 +212,7 @@ void DesignController::applyOps(std::vector<opad::json> ops, const QString& labe
       try {
         const opad::json rep = m_doc->commitPlan(std::move(*plan), label);
         const size_t errors = rep.value("errors", opad::json::array()).size();
-        if (errors > 0) emit status(tr("%1 later feature(s) could not be recomputed; they are marked on the timeline.").arg(errors));
+        if (errors > 0) emit notice(tr("%1 later feature(s) could not be recomputed; they are marked on the timeline.").arg(errors));
         report(true, {});
       } catch (const std::exception& e) {
         report(false, QString::fromUtf8(e.what()));
@@ -237,7 +237,7 @@ void DesignController::regenerate(bool force) {
       if (!ok) return emit failed(error);
       const bool nothing = plan->ops.empty();
       m_doc->commitPlan(std::move(*plan), tr("regenerate"));
-      emit status(nothing ? tr("The design is up to date.") : tr("Design regenerated."));
+      emit notice(nothing ? tr("The design is up to date.") : tr("Design regenerated."));
     });
   });
 }
@@ -305,7 +305,7 @@ void DesignController::startFeature(const QString& kind) {
 
 void DesignController::editOp(const std::string& opId) {
   if (!m_doc->hasDocument || m_doc->browse || m_doc->designBusy) return;
-  if (m_sketch->active() || m_featureOn) return emit status(tr("Finish what is open first."));
+  if (m_sketch->active() || m_featureOn) return emit notice(tr("Finish what is open first."));
   if (const opad::SketchItem* s = m_doc->scene.sketch(opId)) {
     const opad::SketchItem sketch = *s;
     // Keep current visibility and the edited sketch in the browser. The editor
@@ -701,7 +701,7 @@ void DesignController::runPreview(bool commit) {
         const opad::json rep = m_doc->commitPlan(std::move(*plan), label);
         const size_t errors = rep.value("errors", opad::json::array()).size();
         endFeature();
-        if (errors > 0) emit status(tr("%1 later feature(s) could not be recomputed; they are marked on the timeline.").arg(errors));
+        if (errors > 0) emit notice(tr("%1 later feature(s) could not be recomputed; they are marked on the timeline.").arg(errors));
       } catch (const std::exception& e) {
         m_form->setStatus(i18n::t(QString::fromUtf8(e.what())), true);
       }
@@ -965,7 +965,7 @@ void DesignController::enterSketch(const std::string& sketchId, const QString& n
 }
 
 void DesignController::finishSketch(std::function<void()> then) {
-  if(m_sketch->busy())return emit status(tr("Wait for the sketch operation to finish."));
+  if(m_sketch->busy())return emit notice(tr("Wait for the sketch operation to finish."));
   if (!m_sketch->active()) return;
   auto leave = [this, then] {
     m_sketch->end();
