@@ -10,11 +10,13 @@
 // OPAD_BENCH_SMART=<prefix> (TODO 11 UI-97), on an imported plate with four through holes Ø6 and a blind Ø6: Select
 // similar from one hole wall selects the four walls, again the next rule (every inside R3 face, the blind one too);
 // Remove faces started on the four shows its preview and commits through the panel path (Enter in the view) as one
-// feature op that takes the holes away; Undo brings them back. Shots at <prefix>.similar.png / .preview.png / .panel.png.
-// On the STEP opened in viewer mode only Select similar runs (editing asks to save first).
+// feature op that takes the holes away; Undo brings them back. Then the body picked whole: Select similar selects its
+// top perimeter (the view switches to edges), again the bottom one, on to the upward faces (back to faces) and all
+// holes: the modal Select by geometry's rules without the dialog. Shots at <prefix>.similar.png / .preview.png /
+// .panel.png / .body.png. On the STEP opened in viewer mode Remove faces is left out (editing asks to save first).
 bool MainWindow::benchSmart() {
   const auto prefix=qEnvironmentVariable("OPAD_BENCH_SMART");if(prefix.isEmpty())return false;
-  struct State {int phase=0,ticks=0,wait=0;std::string body;opad::Ref wall;std::vector<opad::Ref> four;int faces=0;size_t ops=0;double volume=0;};
+  struct State {int phase=0,ticks=0,wait=0;std::string body;opad::Ref wall;std::vector<opad::Ref> four;int faces=0;size_t ops=0;double volume=0;std::vector<opad::Recognized> rules;};
   auto state=std::make_shared<State>();
   auto* timer=new QTimer(this);timer->setInterval(200);
   connect(timer,&QTimer::timeout,this,[this,state,timer,prefix] {try {
@@ -61,7 +63,7 @@ bool MainWindow::benchSmart() {
       case 4:
         require(m_viewport->selection().size()==5 && m_similar.current==1,"again: every inside R3 face, the blind hole too");
         trace::log("bench: smart: Select similar again selected the next rule (5 faces) PASS");
-        if(m_doc->browse){trace::log("bench: smart: Select similar works on a file opened in viewer mode PASS");timer->stop();QCoreApplication::exit(0);return;}
+        if(m_doc->browse){trace::log("bench: smart: Select similar works on a file opened in viewer mode PASS");action("select.bodies")->trigger();state->phase=9;return;}
         m_viewport->selectRefs(state->four);
         break;
       case 5:
@@ -90,7 +92,41 @@ bool MainWindow::benchSmart() {
       case 8: {
         require(opad::subshape_count(body(),opad::Ref::Kind::Face)==state->faces && m_doc->doc.ops.size()==state->ops,"Undo brings the holes back");
         trace::log("bench: smart: Undo restored the holes PASS");
-        timer->stop();QCoreApplication::exit(0);return;
+        action("select.bodies")->trigger();
+        break;
+      }
+      // The body picked whole: its edges and faces by rule, cycled as the face's rules are.
+      case 9:
+        if(m_viewport->selectionFilter()!=Viewport::SelFilter::Body)return;
+        m_viewport->selectNodes({state->body});
+        break;
+      case 10: {
+        const auto picks=m_viewport->selection();
+        require(picks.size()==1 && picks.front().kind==opad::Ref::Kind::Body,"the plate picked whole");
+        state->rules=opad::Recognizer(body()).body_rules();
+        std::string names;for(const auto& r:state->rules)names+=" "+r.rule;
+        require(names==" top bottom x y z circle up holes","the plate's rules:"+names);
+        require(state->rules[0].edges.size()==9 && state->rules[1].edges.size()==8 && state->rules[6].faces.size()==2,"top 9 edges (outline, five rims), bottom 8, two upward faces");
+        action("select.similar")->trigger();
+        break;
+      }
+      case 11: case 12: case 13: case 14: case 15: case 16: case 17: case 18: {
+        // Every press: the next rule, in the filter its members need (the first switches the view from bodies to edges).
+        const size_t rule=size_t(state->phase-11);const opad::Recognized& r=state->rules[rule];
+        auto refs=[&]{std::vector<opad::Ref> v;for(int i:r.faces.empty()?r.edges:r.faces){opad::Ref x;x.body=state->body;x.kind=r.faces.empty()?opad::Ref::Kind::Edge:opad::Ref::Kind::Face;x.index=i;v.push_back(x);}return v;}();
+        const auto filter=r.faces.empty()?Viewport::SelFilter::Edge:Viewport::SelFilter::Face;
+        if(m_viewport->selectionFilter()!=filter || !same(m_viewport->selection(),refs)){require(++state->wait<50,"Select similar on the body: rule "+r.rule+" selected in its filter");return;}
+        state->wait=0;
+        require(m_similar.current==rule && m_similar.rules.size()==state->rules.size(),"the app found the same rules");
+        require(action(filter==Viewport::SelFilter::Edge?"select.edges":"select.faces")->isChecked(),"the filter chips follow");
+        trace::log(QString("bench: smart: body rule %1: %2 %3, status \"%4\" PASS").arg(QString::fromStdString(r.rule)).arg(refs.size()).arg(r.faces.empty()?"edges":"faces").arg(statusBar()->currentMessage()));
+        if(rule==0){
+          require(statusBar()->currentMessage().startsWith("Top perimeter · 9 selected · again: Bottom perimeter"),"the status bar names the rule and the next");
+          m_viewport->grabImage().save(prefix+".body.png");
+        }
+        if(rule+1==state->rules.size()){timer->stop();QCoreApplication::exit(0);return;}
+        action("select.similar")->trigger();
+        break;
       }
     }
     ++state->phase;

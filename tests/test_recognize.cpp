@@ -3,6 +3,7 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_NurbsConvert.hxx>
 #include <BRepFilletAPI_MakeChamfer.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
@@ -11,11 +12,13 @@
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRep_Builder.hxx>
 #include <GProp_GProps.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
 #include <gp_Ax2.hxx>
 
 #include <cmath>
@@ -332,6 +335,37 @@ TEST(similar_faces_and_edges_by_rule) {
   const auto rules = q.similar_edges(edge_at(b, gp_Pnt(20, 0, 0)));
   CHECK_EQ(rules.front().rule, "direction");
   CHECK_EQ(rules.front().edges.size(), size_t(4));
+}
+
+// A body picked whole (Select similar without a face or edge; what the modal Select by geometry offered).
+TEST(body_rules_in_world_coordinates) {
+  auto names = [](const std::vector<Recognized>& rules) {
+    std::string s;
+    for (const auto& g : rules) s += (s.empty() ? "" : " ") + g.rule + "=" + std::to_string(g.faces.empty() ? g.edges.size() : g.faces.size());
+    return s;
+  };
+  Recognizer b(box(0, 0, 0, 10, 8, 3));
+  CHECK_EQ(names(b.body_rules()), "top=4 bottom=4 x=4 y=4 z=4 up=1");
+  CHECK_EQ(b.body_rules().front().label, "Top perimeter \xC2\xB7 4");
+  const TopoDS_Shape s = holes_plate();
+  Recognizer r(s);
+  const auto rules = r.body_rules();
+  show("plate", rules);
+  // Top: the outline and the nine holes' rims at z 10 (seams left out); bottom: the outline and the seven holes through;
+  // up: the top, the counterbores' steps and the flat floor; no chamfers (left out).
+  const std::string all = names(rules);
+  CHECK_EQ(all.substr(0, all.find(" circle=")), "top=13 bottom=11 x=4 y=4 z=4");
+  CHECK_EQ(all.substr(all.find(" up=")), " up=4 holes=16");
+  CHECK_EQ(rules.back().params["count"], 9);  // the holes, not their faces
+  CHECK_EQ(rules.back().label, "All holes \xC2\xB7 9");
+  // A drawing's lines (no faces, flat): no top or bottom, edges along x and y.
+  BRep_Builder bb;
+  TopoDS_Compound lines;
+  bb.MakeCompound(lines);
+  for (auto [a, c] : {std::pair{gp_Pnt(0, 0, 0), gp_Pnt(5, 0, 0)}, {gp_Pnt(0, 2, 0), gp_Pnt(5, 2, 0)}, {gp_Pnt(0, 0, 0), gp_Pnt(0, 2, 0)}, {gp_Pnt(0, 0, 0), gp_Pnt(3, 3, 0)}})
+    bb.Add(lines, BRepBuilderAPI_MakeEdge(a, c).Edge());
+  CHECK_EQ(count(lines, TopAbs_FACE), 0);
+  CHECK_EQ(names(Recognizer(lines).body_rules()), "x=2 y=1");
 }
 
 TEST(fitted_surfaces_of_imported_splines) {

@@ -28,7 +28,8 @@ namespace opad {
 
 struct Recognized {
   std::string kind;               // tangent, loop, fillet, chamfer, hole, boss, pocket, wall, similar
-  std::string rule;               // similar: what the members share (hole, fillet, chamfer, wall, radius, normal, area, direction, length, type)
+  std::string rule;               // similar: what the members share (hole, fillet, chamfer, wall, radius, normal, area, direction, length,
+                                  // type; body_rules: top, bottom, x, y, z, circle, up, holes, fillets, chamfers)
   std::string label;              // English: "Hole Ø6 through", "Fillet chain R3", "Wall 2 mm", "All holes Ø6"
   std::vector<int> faces, edges;  // ordinals from 0 in TopExp::MapShapes order, as references count them
   json params = json::object();   // diameter, depth, through, type, radius, convex, distance, thickness, count, ...
@@ -61,6 +62,11 @@ class Recognizer {
   // Entities following the picked one's rule (faces: radius, normal, area; edges: direction, radius, length).
   std::vector<Recognized> similar_faces(int face);
   std::vector<Recognized> similar_edges(int edge);
+  // A body picked whole: its edges and faces by rule in the frame it was given (world for users), in this order:
+  // top and bottom perimeter (the edges lying at its highest and lowest edge height), edges parallel to x, y, z,
+  // circular edges, upward planar faces, every hole, fillet and chamfer. Rules nothing follows are left out. Edges of
+  // sheets and wires (drawings) count, seams and degenerate ones do not.
+  std::vector<Recognized> body_rules();
   // Every group holding the picks (a picked edge is held when a face of it is), the kinds asked for, groups first
   // (smallest first), then chains and loops, then similar ones. Groups equal to the picks themselves are left out,
   // except for kinds that say what the picks are (a single fillet face).

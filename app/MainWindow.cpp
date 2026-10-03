@@ -516,9 +516,8 @@ void MainWindow::buildActions() {
     showProperties(m_selRefs);
     openPanel(m_propsPanel);
   });
-  addAction("select.geometry", tr("Select by geometry..."), "edges", QKeySequence(), [this] { selectGeometry(); });
   QAction* similar = addAction("select.similar", tr("Select similar"), "similar", QKeySequence(), [this] { selectSimilar(); });
-  similar->setProperty("shortcutHint", tr("The faces or edges like the picked one: holes of its size, fillets of its radius, faces facing its way. Again: the next rule."));
+  similar->setProperty("shortcutHint", tr("The faces or edges like the picked one: holes of its size, fillets of its radius, faces facing its way. On a body: its top perimeter, edges along an axis, upward faces, all holes. Again: the next rule."));
   shortcuts::updateTooltip(similar);
   // Section is an inspection: it looks inside without changing anything.
   QAction* section = addAction("inspect.section", tr("Section"), "section", QKeySequence("X"), [this] {}, true);
@@ -645,7 +644,7 @@ void MainWindow::buildMenus() {
   add(nav, {"nav.fusion", "nav.solidworks", "nav.onshape", "nav.blender"});
   add(view, {"view.dark", "-", "workspace.review", "workspace.design", "-", "panel.browser", "panel.annotations", "panel.section", "panel.timeline", "panel.reset"});
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
-  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.geometry", "select.similar", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip"});
+  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.similar", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip"});
   QMenu* designMenu = menuBar()->addMenu(tr("&Design"));
   add(designMenu, {"design.sketch", "design.convertDrawing", "design.parameters", "-"});
   for (const char* group : {"create", "modify", "combine", "pattern", "body", "construct"}) {
@@ -1738,11 +1737,12 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     add("inspect.distance");
     add("inspect.radius");
     add("inspect.properties");
-    // TODO 11 UI-97: picked faces or edges: the ones like them, and taking the faces away.
+    // TODO 11 UI-97: picked faces or edges: the ones like them, and taking the faces away; one body: its edges and
+    // faces by rule.
     if (const auto picks = m_viewport->selection(); !picks.empty() && (picks.front().kind == opad::Ref::Kind::Face || picks.front().kind == opad::Ref::Kind::Edge)) {
       add("select.similar");
       if (picks.front().kind == opad::Ref::Kind::Face) add("design.remove_faces");
-    }
+    } else if (ids.size() == 1 && n && n->kind == opad::Node::Kind::Body) add("select.similar");
     menu.addSeparator();
     QAction* del = menu.addAction(icons::themed("delete", 16), tr("Delete (tombstone import)"));
     connect(del, &QAction::triggered, this, [this, ids] {

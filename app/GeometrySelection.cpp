@@ -1,51 +1,11 @@
 #include "MainWindow.hpp"
-#include "opad/agent.hpp"
 #include "opad/geometry.hpp"
-#include "opad/inspect.hpp"
-#include <QInputDialog>
+#include "opad/recognize.hpp"
 #include <QStatusBar>
 #include <algorithm>
 #include <cmath>
 #include <set>
 #include <tuple>
-
-void MainWindow::selectGeometry() {
-  if(m_doc->loading || m_doc->designBusy || m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane())
-    throw opad::Error("Finish the current operation before selecting geometry.");
-  const auto ids=currentNodeIds();
-  if(ids.size()!=1 || !m_doc->scene.node(ids[0]) || m_doc->scene.node(ids[0])->kind!=opad::Node::Kind::Body)
-    throw opad::Error("Select one body to find matching geometry.");
-  const QStringList choices={tr("Top perimeter"),tr("Bottom perimeter"),tr("Edges parallel to X"),tr("Edges parallel to Y"),tr("Edges parallel to Z"),tr("Circular edges"),tr("Upward planar faces")};
-  bool accepted=false;
-  const auto choice=QInputDialog::getItem(this,tr("Select by geometry"),tr("Match in world coordinates:"),choices,0,false,&accepted);
-  if(!accepted)return;
-  const int mode=choices.indexOf(choice);const auto body=ids[0];const auto revision=m_doc->revision,generation=m_doc->generation;
-  if(!m_doc->captureSnapshot(m_jobs,[this,mode,body,revision,generation](std::shared_ptr<opad::Document> document,const QString& error){
-    if(!document){statusBar()->showMessage(error,6000);return;}
-    auto matches=std::make_shared<std::vector<opad::Ref>>();
-    m_jobs->async(tr("Select by geometry"),[document,matches,body,mode](Progress progress){
-      const auto scene=opad::resolve(*document);opad::json filters;
-      if(mode<2){
-        const auto properties=opad::node_properties(*document,scene,body);
-        filters={{"at_plane",{{"axis","z"},{"value",properties.at("bbox").at(mode==0?"max":"min").at(2)}}}};
-      }else if(mode<5)filters={{"parallel_to",mode==2?"x":mode==3?"y":"z"}};
-      else if(mode==5)filters={{"curve","circle"}};
-      else filters={{"normal","+z"}};
-      const auto result=opad::agent::query_entities(*document,scene,{{"body",body},{"kind",mode==6?"face":"edge"},{"filters",filters},{"limit",100}},[progress]{return progress.cancelled();});
-      if(result.at("total").get<int>()>100)throw opad::Error("More than 100 matches. Select a smaller body or use a narrower geometric query.");
-      for(const auto& item:result.at("items"))matches->push_back(opad::Ref::from_json(item.at("reference").at("ref")));
-    },[this,matches,revision,generation,mode](bool ok,const QString& error){
-      if(!ok){statusBar()->showMessage(error,6000);return;}
-      if(m_doc->revision!=revision || m_doc->generation!=generation || m_design->ownsSelection())return;
-      if(matches->empty()){statusBar()->showMessage(tr("No matching geometry."),6000);return;}
-      connect(m_viewport,&Viewport::filterApplied,this,[this,matches,revision,generation]{
-        if(m_doc->revision==revision && m_doc->generation==generation && !m_design->ownsSelection())m_viewport->selectRefs(*matches);
-      },Qt::SingleShotConnection);
-      m_viewport->setSelectionFilter(mode==6?Viewport::SelFilter::Face:Viewport::SelFilter::Edge);
-      statusBar()->showMessage(tr("%1 matching entities selected.").arg(matches->size()),5000);
-    });
-  }))throw opad::Error("Document is busy; try again shortly.");
-}
 
 namespace {
 QString amount(double v) { return QString::number(std::round(v * 1000) / 1000, 'g', 10); }
@@ -62,6 +22,17 @@ QString similarText(const opad::Recognized& r) {
   if (r.rule == "normal") return MainWindow::tr("Faces facing the same way");
   if (r.rule == "area") return MainWindow::tr("Faces of the same area");
   if (r.rule == "direction") return MainWindow::tr("Parallel edges");
+  // A body's rules (Recognizer::body_rules), in world coordinates.
+  if (r.rule == "top") return MainWindow::tr("Top perimeter");
+  if (r.rule == "bottom") return MainWindow::tr("Bottom perimeter");
+  if (r.rule == "x") return MainWindow::tr("Edges parallel to X");
+  if (r.rule == "y") return MainWindow::tr("Edges parallel to Y");
+  if (r.rule == "z") return MainWindow::tr("Edges parallel to Z");
+  if (r.rule == "circle") return MainWindow::tr("Circular edges");
+  if (r.rule == "up") return MainWindow::tr("Upward planar faces");
+  if (r.rule == "holes") return MainWindow::tr("All holes (%1)").arg(p.value("count", 0));
+  if (r.rule == "fillets") return MainWindow::tr("All fillets");
+  if (r.rule == "chamfers") return MainWindow::tr("All chamfers");
   return MainWindow::tr("Edges of the same length");
 }
 bool sameRefs(std::vector<opad::Ref> a, std::vector<opad::Ref> b) {
@@ -76,14 +47,18 @@ void MainWindow::selectSimilar() {
   if(m_doc->loading || m_doc->designBusy || m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane() || !m_tool.id.isEmpty())
     throw opad::Error("Finish the current operation before selecting geometry.");
   const auto picks=m_viewport->selection();
-  if(picks.empty() || (picks.front().kind!=opad::Ref::Kind::Face && picks.front().kind!=opad::Ref::Kind::Edge))
-    throw opad::Error("Select a face or an edge to find the ones like it.");
   // Again on what the last rule selected: the next rule of the same pick.
   if(!m_similar.rules.empty() && m_similar.revision==m_doc->revision && m_similar.generation==m_doc->generation && sameRefs(picks,m_similar.selected))
     return applySimilar((m_similar.current+1)%m_similar.rules.size());
-  const opad::Ref seed=picks.front();
+  // A face or an edge: the ones like it. A body picked whole (here or in the browser): its edges and faces by rule, top
+  // perimeter first (what the modal Select by geometry offered, without the dialog and the cap of 100).
+  opad::Ref seed;
+  if(!picks.empty() && (picks.front().kind==opad::Ref::Kind::Face || picks.front().kind==opad::Ref::Kind::Edge))seed=picks.front();
+  else if(const auto ids=currentNodeIds(); ids.size()==1 && (picks.empty() || picks.front().kind==opad::Ref::Kind::Body) && m_doc->node(ids[0]) && m_doc->node(ids[0])->kind==opad::Node::Kind::Body)seed.body=ids[0];
+  else throw opad::Error("Select a body, a face or an edge to find the ones like it.");
   const opad::Node* node=m_doc->node(seed.body);
-  if(!node || node->representation!="solid")throw opad::Error("Select similar works on the faces and edges of solids.");
+  if(!node || node->body_missing)throw opad::Error("Select a body, a face or an edge to find the ones like it.");
+  if(seed.kind!=opad::Ref::Kind::Body && node->representation!="solid")throw opad::Error("Select similar works on the faces and edges of solids.");
   const auto revision=m_doc->revision,generation=m_doc->generation;
   if(!m_doc->captureSnapshot(m_jobs,[this,seed,revision,generation](std::shared_ptr<opad::Document> document,const QString& error){
     if(!document){statusBar()->showMessage(error,6000);return;}
@@ -91,16 +66,17 @@ void MainWindow::selectSimilar() {
     m_jobs->async(tr("Select similar"),[document,rules,seed](Progress progress){
       const auto scene=opad::resolve(*document);
       opad::Recognizer recognizer(opad::node_world_shape(*document,scene,seed.body),[progress]{return progress.cancelled();});
+      const bool whole=seed.kind==opad::Ref::Kind::Body;
       std::set<std::vector<int>> seen;
-      for(auto& r:seed.kind==opad::Ref::Kind::Face?recognizer.similar_faces(seed.index):recognizer.similar_edges(seed.index)) {
+      for(auto& r:whole?recognizer.body_rules():seed.kind==opad::Ref::Kind::Face?recognizer.similar_faces(seed.index):recognizer.similar_edges(seed.index)) {
         const auto& members=r.faces.empty()?r.edges:r.faces;
-        if(members.size()>1 && seen.insert(members).second)rules->push_back(std::move(r));
+        if(members.size()>(whole?0u:1u) && seen.insert(members).second)rules->push_back(std::move(r));
       }
     },[this,rules,seed,revision,generation](bool ok,const QString& error){
       if(!ok){statusBar()->showMessage(error,6000);return;}
       if(m_doc->revision!=revision || m_doc->generation!=generation || m_design->ownsSelection())return;
-      if(rules->empty()){statusBar()->showMessage(tr("Nothing else on this body is like it."),6000);return;}
-      m_similar={*rules,seed.body,0,{},revision,generation};
+      if(rules->empty()){statusBar()->showMessage(seed.kind==opad::Ref::Kind::Body?tr("No edges or faces of this body follow a rule."):tr("Nothing else on this body is like it."),6000);return;}
+      m_similar={*rules,seed.body,0,{},revision,generation,m_similar.token};
       applySimilar(0);
     });
   }))throw opad::Error("Document is busy; try again shortly.");
@@ -112,8 +88,16 @@ void MainWindow::applySimilar(size_t rule) {
   std::vector<opad::Ref> refs;
   for(int i:edges?r.edges:r.faces){opad::Ref ref;ref.body=m_similar.body;ref.kind=edges?opad::Ref::Kind::Edge:opad::Ref::Kind::Face;ref.index=i;refs.push_back(ref);}
   m_similar.current=rule;m_similar.selected=refs;
-  m_viewport->selectRefs(refs);
+  const auto token=++m_similar.token;  // a rule still waiting for its filter is dropped
   const QString next=m_similar.rules.size()>1?tr(" · again: %1").arg(similarText(m_similar.rules[(rule+1)%m_similar.rules.size()])):QString();
-  statusBar()->showMessage(tr("%1 · %2 selected").arg(similarText(r)).arg(refs.size())+next,8000);
-  trace::log(QString("select similar: %1 %2 (%3 rules)").arg(QString::fromStdString(r.rule)).arg(refs.size()).arg(m_similar.rules.size()));
+  const QString text=tr("%1 · %2 selected").arg(similarText(r)).arg(refs.size())+next;
+  const QString log=QString("select similar: %1 %2 (%3 rules)").arg(QString::fromStdString(r.rule)).arg(refs.size()).arg(m_similar.rules.size());
+  auto show=[this,refs,text,log]{m_viewport->selectRefs(refs);statusBar()->showMessage(text,8000);trace::log(log);};
+  const auto filter=edges?Viewport::SelFilter::Edge:Viewport::SelFilter::Face;
+  if(m_viewport->selectionFilter()==filter)return show();
+  // A body's rules pick edges or faces: the view picks those from now on (the filter chips follow).
+  connect(m_viewport,&Viewport::filterApplied,this,[this,show,filter,token,revision=m_similar.revision,generation=m_similar.generation]{
+    if(token==m_similar.token && m_viewport->selectionFilter()==filter && m_doc->revision==revision && m_doc->generation==generation && !m_design->ownsSelection())show();
+  },Qt::SingleShotConnection);
+  m_viewport->setSelectionFilter(filter);
 }

@@ -241,9 +241,13 @@ Use Settings > 2D projection mode to lock the camera for drawings or model proje
 endpoint to acquire an extension/alignment guide; Shift locks its direction. Layers live in the
 browser, and imported mesh and drawing objects are labelled. See [tracking details](docs/drawings.md).
 
-Inspect > Select by geometry finds top/bottom perimeters, parallel or circular edges, and
-upward planar faces on a selected body. The same filters are available through the paged
-`query_entities` command, with geometric evidence and fresh checked reference tokens.
+Select similar (Inspect, Edit and the context menu) works without a dialog: on a picked face or
+edge it selects the ones like it (holes of its size, fillets of its radius, faces facing its way),
+on a body picked whole its top/bottom perimeter, edges parallel to X/Y/Z, circular edges, upward
+planar faces, all holes, fillets and chamfers; pressing it again moves to the next rule, and the
+status bar names the current and the next one. The same filters are available through the paged
+`query_entities` command (also `{"recognized":"hole","diameter":6}`), with geometric evidence and
+fresh checked reference tokens.
 
 The timeline keeps operation markers at a readable size for long histories. Scroll with the
 mouse wheel, trackpad or horizontal scrollbar; Left/Right steps through operations and

@@ -45,9 +45,9 @@ class MainWindow : public QMainWindow {
   QAction* action(const QString& id) const;
   void buildActions();
   void buildMenus();
-  void selectGeometry();
   // TODO 11 UI-97: the picked face's or edge's rule over its body (holes of its size, fillets of its radius, faces
-  // facing its way ...), found on a worker; asked again on what it selected, the next rule.
+  // facing its way ...), or a whole body's edges and faces by rule (top perimeter, edges along x ...), found on a worker;
+  // asked again on what it selected, the next rule. Replaces the modal Select by geometry dialog.
   void selectSimilar();
   void applySimilar(size_t rule);
   struct Similar {
@@ -56,6 +56,7 @@ class MainWindow : public QMainWindow {
     size_t current = 0;
     std::vector<opad::Ref> selected;
     unsigned long long revision = 0, generation = 0;
+    unsigned token = 0;  // the last applySimilar: one waiting for its selection filter is dropped by the next
   } m_similar;
   void buildRibbon();
   void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")

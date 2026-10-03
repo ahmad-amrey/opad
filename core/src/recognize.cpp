@@ -28,6 +28,7 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Vertex.hxx>
 #include <TopoDS_Wire.hxx>
+#include <gp.hxx>
 #include <gp_Ax3.hxx>
 #include <gp_Circ.hxx>
 #include <gp_Cone.hxx>
@@ -40,6 +41,7 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <tuple>
 
 #include "opad/util.hpp"
 
@@ -1193,6 +1195,77 @@ std::vector<Recognized> Recognizer::similar_edges(int e) {
                          return m->curve(x).type == 0 && BRepAdaptor_Curve(m->edge(x)).GetType() == type && std::fabs(m->length(x) - len) <= 1e-3 * len + m->tol;
                        }), true, {{"length", len}}));
   }
+  return out;
+}
+
+std::vector<Recognized> Recognizer::body_rules() {
+  std::vector<Recognized> out;
+  auto keep = [&](Recognized r) {
+    if (!r.faces.empty() || !r.edges.empty()) out.push_back(std::move(r));
+  };
+  std::vector<int> lines;                           // edges users see: no seams, nothing degenerate
+  std::vector<std::pair<double, double>> heights;   // the lowest and highest z along each of them
+  double top = -1e300, bottom = 1e300;
+  for (int e = 0; e < edge_count(); ++e) {
+    m->check();
+    const TopoDS_Edge x = m->edge(e);
+    const auto& faces = m->edge_faces[static_cast<size_t>(e)];
+    if (BRep_Tool::Degenerated(x) || (faces.size() == 1 && BRep_Tool::IsClosed(x, m->face(faces.front())))) continue;
+    try {
+      BRepAdaptor_Curve c(x);
+      double lo = 1e300, hi = -1e300;
+      for (int i = 0; i <= 8; ++i) {
+        const double z = c.Value(c.FirstParameter() + (c.LastParameter() - c.FirstParameter()) * i / 8).Z();
+        lo = std::min(lo, z), hi = std::max(hi, z);
+      }
+      lines.push_back(e);
+      heights.emplace_back(lo, hi);
+      top = std::max(top, hi), bottom = std::min(bottom, lo);
+    } catch (const Standard_Failure&) {
+    }
+  }
+  auto edges = [&](const std::function<bool(size_t)>& follows) {
+    std::vector<int> v;
+    for (size_t i = 0; i < lines.size(); ++i) {
+      m->check();
+      if (follows(i)) v.push_back(lines[i]);
+    }
+    return v;
+  };
+  const double t = m->fit;
+  if (top - bottom > t) {  // a flat body (a drawing) has no top and bottom: both would be every edge
+    keep(rule("top", "Top perimeter", edges([&](size_t i) { return heights[i].first >= top - t; }), true, {{"z", top}}));
+    keep(rule("bottom", "Bottom perimeter", edges([&](size_t i) { return heights[i].second <= bottom + t; }), true, {{"z", bottom}}));
+  }
+  for (int k = 0; k < 3; ++k) {
+    const gp_Dir d(k == 0 ? 1.0 : 0.0, k == 1 ? 1.0 : 0.0, k == 2 ? 1.0 : 0.0);
+    keep(rule(std::string(1, char('x' + k)), std::string("Edges parallel to ") + char('X' + k), edges([&](size_t i) {
+                const EdgeData& c = m->curve(lines[i]);
+                return c.type == 1 && c.line.Direction().IsParallel(d, kParallel);
+              }), true, {{"direction", {d.X(), d.Y(), d.Z()}}}));
+  }
+  keep(rule("circle", "Circular edges", edges([&](size_t i) { return m->curve(lines[i]).type == 2; }), true, json::object()));
+  std::vector<int> up;
+  for (int f = 0; f < m->nf(); ++f) {
+    m->check();
+    gp_Pnt p;
+    gp_Dir n;
+    if (m->surf(f).kind == Kind::Plane && m->sample(f, p, n) && n.Angle(gp::DZ()) < kParallel) up.push_back(f);
+  }
+  keep(rule("up", "Upward planar faces", up, false, {{"normal", {0, 0, 1}}}));
+  if (m->nf() <= 20000)  // all() refuses more
+    for (const auto& [kind, name, label] : {std::tuple{"hole", "holes", "All holes"}, std::tuple{"fillet", "fillets", "All fillets"}, std::tuple{"chamfer", "chamfers", "All chamfers"}}) {
+      std::vector<int> faces;
+      size_t n = 0;
+      for (const auto& g : all(kind)) {
+        faces.insert(faces.end(), g.faces.begin(), g.faces.end());
+        ++n;
+      }
+      Recognized r = rule(name, label, sorted(faces), false, json::object());
+      r.params["count"] = n;  // the holes, not their faces
+      r.label = std::string(label) + kDot + std::to_string(n);
+      keep(std::move(r));
+    }
   return out;
 }
 
