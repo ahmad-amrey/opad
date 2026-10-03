@@ -1261,6 +1261,10 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
   }
   if (kind == "remove") {
     out.removed = body_ids(ctx, in.value("bodies", json()));
+    if (in.value("bodies", json()).is_array())  // a component goes whole: its node after its bodies, an empty one too
+      for (const auto& r : in["bodies"])
+        if (const Node* n = ctx.scene.node(Ref::from_json(r).body); n && n->kind == Node::Kind::Component && std::find(out.removed.begin(), out.removed.end(), n->id) == out.removed.end())
+          out.removed.push_back(n->id);
     if (out.removed.empty()) throw Error("pick at least one body");
     return out;
   }

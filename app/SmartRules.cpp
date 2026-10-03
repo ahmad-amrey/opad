@@ -2,6 +2,7 @@
 #include "SmartRules.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <map>
 #include <set>
 #include <tuple>
@@ -71,34 +72,53 @@ int headline(const std::vector<Candidate>& c, const std::vector<opad::Ref>& pick
 
 Deletion routeDelete(const opad::Scene& scene, const std::vector<std::string>& ids) {
   Deletion d;
-  std::vector<std::string> bodies;
   auto add = [](std::vector<std::string>& v, const std::string& s) {
     if (std::find(v.begin(), v.end(), s) == v.end()) v.push_back(s);
   };
+  std::vector<std::string> items;  // the picked bodies and components, none inside another
   for (const auto& id : ids) {
-    if (scene.sketch(id)) {
-      add(d.tombstone, id);  // a sketch is its op
-      continue;
-    }
-    const opad::Node* n = scene.node(id);
-    if (!n) continue;
-    for (const auto& b : n->kind == opad::Node::Kind::Body ? std::vector<std::string>{id} : scene.bodies_under(id)) add(bodies, b);
+    if (scene.sketch(id)) add(d.tombstone, id);  // a sketch is its op
+    else if (scene.node(id)) add(items, id);
   }
-  if (bodies.empty()) return d;
-  if (!scene.features.empty() || !scene.sketches.empty()) {
-    d.remove = bodies;
+  auto inside = [&](const std::string& id) {
+    for (const opad::Node* n = scene.node(id); n && !n->parent.empty(); n = scene.node(n->parent))
+      if (std::find(items.begin(), items.end(), n->parent) != items.end()) return true;
+    return false;
+  };
+  items.erase(std::remove_if(items.begin(), items.end(), inside), items.end());
+  if (items.empty()) return d;
+  if (!scene.features.empty() || !scene.sketches.empty()) {  // a component goes whole, an empty one too
+    d.remove = items;
     return d;
   }
-  // Without a history: by the import that made them, whole or in part.
-  const std::set<std::string> picked(bodies.begin(), bodies.end());
-  std::map<std::string, bool> whole;  // source op -> every body it made is picked
-  for (const auto& b : bodies) whole[scene.node(b)->source_op] = true;
-  for (const auto& b : scene.all_bodies())
-    if (const auto it = whole.find(scene.node(b)->source_op); it != whole.end() && !picked.count(b)) it->second = false;
-  for (const auto& b : bodies) {
-    const std::string& op = scene.node(b)->source_op;
-    if (whole[op] && !op.empty()) add(d.tombstone, op);
-    else d.remove.push_back(b);
+  // Without a history: by the import that made them, whole or in part. An import is whole when every body it made is
+  // picked, or, when it made none (a New component), every component it made.
+  std::set<std::string> covered;  // the items and all under them
+  std::function<void(const std::string&)> cover = [&](const std::string& id) {
+    if (!covered.insert(id).second) return;
+    for (const auto& c : scene.node(id)->children) cover(c);
+  };
+  for (const auto& id : items) cover(id);
+  std::map<std::string, bool> whole;  // source op -> all it made is picked
+  std::set<std::string> madeBodies;
+  for (const auto& id : covered) whole[scene.node(id)->source_op] = true;
+  for (const auto& [id, n] : scene.nodes)
+    if (n.kind == opad::Node::Kind::Body && whole.count(n.source_op)) madeBodies.insert(n.source_op);
+  for (const auto& [id, n] : scene.nodes)
+    if (const auto it = whole.find(n.source_op); it != whole.end() && !covered.count(id) && (n.kind == opad::Node::Kind::Body || !madeBodies.count(n.source_op)))
+      it->second = false;
+  for (const auto& id : items) {
+    std::vector<std::string> made;  // the ops behind it: its bodies', and those of the components in it that made no body
+    std::function<void(const std::string&)> walk = [&](const std::string& n) {
+      const opad::Node* x = scene.node(n);
+      if (x->kind == opad::Node::Kind::Body || !madeBodies.count(x->source_op)) add(made, x->source_op);
+      for (const auto& c : x->children) walk(c);
+    };
+    walk(id);
+    if (std::all_of(made.begin(), made.end(), [&](const std::string& op) { return !op.empty() && whole[op]; }))
+      for (const auto& op : made) add(d.tombstone, op);
+    else
+      d.remove.push_back(id);
   }
   return d;
 }

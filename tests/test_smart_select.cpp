@@ -208,8 +208,48 @@ TEST(del_on_objects_takes_out_only_what_was_selected) {
   d = smart::routeDelete(scene, {component});  // the component: its bodies, the whole import
   CHECK(d.tombstone == std::vector<std::string>{import} && d.remove.empty());
   CHECK(smart::routeDelete(scene, {"no-such-node"}).empty());
+  // New components, empty, without a history: one goes with its op; one in the import's component goes with the import.
+  const std::string empty = commands::run("component", {{"name", "Empty"}}, &doc)["id"];
+  const std::string inner = commands::run("component", {{"name", "Inner"}, {"parent", component}}, &doc)["id"];
+  scene = resolve(doc);
+  CHECK(scene.node(inner) && scene.node(inner)->parent == component);
+  d = smart::routeDelete(scene, {empty});
+  CHECK(d.tombstone == std::vector<std::string>{scene.node(empty)->source_op} && d.remove.empty());
+  d = smart::routeDelete(scene, {inner, component});
+  CHECK(d.tombstone == (std::vector<std::string>{import, scene.node(inner)->source_op}) && d.remove.empty());
+  d = smart::routeDelete(scene, {inner, bodies[0]});  // the import in part: the body and the inner component's op
+  CHECK(d.tombstone == std::vector<std::string>{scene.node(inner)->source_op} && d.remove == std::vector<std::string>{bodies[0]});
+  design::apply_ops(doc, smart::deletionOps(smart::routeDelete(scene, {empty}), scene));
+  CHECK(!resolve(doc).node(empty) && resolve(doc).node(inner));
+  scene = resolve(doc);
   design::apply_ops(doc, smart::deletionOps(smart::routeDelete(scene, {bodies[0]}), scene));
   CHECK_EQ(resolve(doc).all_bodies(), std::vector<std::string>{bodies[1]});
+}
+
+TEST(a_component_goes_whole_with_a_history) {
+  // Designed: a component (with the body in it, or empty) goes to the Remove feature whole, its node too.
+  Part p = boss_part();
+  const std::string assembly = commands::run("component", {{"name", "Assembly"}}, &p.doc)["id"];
+  const std::string empty = commands::run("component", {{"name", "Empty"}}, &p.doc)["id"];
+  commands::run("reparent", {{"target", p.body}, {"parent", assembly}}, &p.doc);
+  Scene scene = resolve(p.doc);
+  smart::Deletion d = smart::routeDelete(scene, {empty});
+  CHECK(d.tombstone.empty() && d.remove == std::vector<std::string>{empty});
+  design::apply_ops(p.doc, smart::deletionOps(d, scene));
+  scene = resolve(p.doc);
+  CHECK(!scene.node(empty) && scene.node(assembly) && scene.all_bodies().size() == 1);
+  const Feature* remove = nullptr;
+  for (const auto& f : scene.features)
+    if (f.kind == "remove") remove = &f;
+  CHECK(remove && remove->error.empty() && remove->result["removed"] == json::array({empty}));
+  d = smart::routeDelete(scene, {p.body, assembly});  // the body is in the component: the component alone is named
+  CHECK(d.remove == std::vector<std::string>{assembly});
+  design::apply_ops(p.doc, smart::deletionOps(d, scene));
+  scene = resolve(p.doc);
+  CHECK(!scene.node(assembly) && !scene.node(p.body) && scene.all_bodies().empty());
+  CHECK(scene.feature(p.boss) && scene.feature(p.round));  // the history stays
+  for (const auto& f : scene.features)
+    if (f.kind == "remove" && f.name == "Remove2") CHECK(f.result["removed"] == json::array({p.body, assembly}));
 }
 
 CHECK_MAIN()
