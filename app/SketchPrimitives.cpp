@@ -71,6 +71,7 @@ void SketchEditor::finishPrimitive() {
       keepTyped(second,"radius",SkConstraint::Type::Distance,{centre,start});
       keepDirection(second,"angle",{centre,start},direction(centre,start));
       keepDirection(last,"sweep",{centre,end},direction(centre,end));
+      keepTyped(last,"width",SkConstraint::Type::Diameter,{made[swapped?2:3]});  // its width typed: the start cap's diameter
     } else if(m_tool=="cslot" && made.size()>=4) {
       const int c1=m_sk.entity(made[2])->p[0],c2=m_sk.entity(made[3])->p[0];const auto *p=m_sk.point(c1),*q=m_sk.point(c2);
       const double r=std::hypot(m_sk.point(m_sk.entity(made[2])->p[1])->x-p->x,m_sk.point(m_sk.entity(made[2])->p[1])->y-p->y),l=std::max(1e-12,std::hypot(q->x-p->x,q->y-p->y));

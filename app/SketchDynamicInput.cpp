@@ -517,6 +517,13 @@ bool SketchEditor::useTyped(const Snap* at) {
     }
   Snap s = typedPoint(at ? *at : m_pointer);
   for (const auto& [key, value] : m_typedValues) s.typed[key] = {value, m_input->text(key)};  // what the click made keeps them
+  for (const auto& field : fields)  // a size typed into an option box of the step (an arc slot's width) too
+    if (const QString text = m_input->text(field.key); field.option && kSizes.contains(field.key) && !text.isEmpty()) try {
+        std::vector<ParamDef> defs;
+        for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+        s.typed[field.key] = {sketch_parameters(m_sk, ParamTable(defs, m_doc->scene.units)).length(text.toStdString()), text};
+      } catch (const std::exception&) {  // set as typed, it is the tool's option; not kept
+      }
   if (!s.point)
     if (const int id = pointAt(s.u, s.v)) {  // typed onto a point (the origin, where the chain started): that point
       s.point = id;

@@ -395,6 +395,31 @@ void SketchEditor::benchShapes() {
     send(Qt::Key_Escape);
   });
 
+  // An arc slot by its radius and start angle, then its sweep and (an option of the tool) its width: held by them.
+  step([=] {
+    tool(0, {}, "arcslot");
+    type("100,-120");
+    enter();
+    type("20");
+    tab();
+    type("0");
+    enter();
+    check(m_input->count() == 2 && m_input->key(0) == "sweep" && m_input->key(1) == "width", "the arc slot's boxes after its start: sweep, and its width");
+    type("90");
+    tab();
+    type("4");
+    enter();
+    const int centre = pointAtXY(100, -120), start = pointAtXY(120, -120), end = pointAtXY(100, -100);
+    int outer = 0, cap = 0;
+    for (const auto& e : m_sk.entities)
+      if (e.type == SkEntity::Type::Arc && e.p[0] == centre && at(e.p[1], 122, -120) && at(e.p[2], 100, -98)) outer = e.id;
+      else if (e.type == SkEntity::Type::Arc && e.p[0] == start) cap = e.id;
+    check(centre && start && end && outer && cap, "a quarter arc slot of radius 20 and width 4 from (120, -120) round to (100, -100), exactly");
+    check(has(CT::Distance, {centre, start}, 20) && has(CT::Horizontal, {centre, start}) && has(CT::Vertical, {centre, end}) && has(CT::Diameter, {cap}, 4),
+          "held by its radius, its ends along the axes and its width (the start cap's diameter)");
+    send(Qt::Key_Escape);
+  });
+
   // The panel's switch off: what is typed places the shape only. Then a tangent arc off that line's end.
   step([=] {
     if (keep) keep->setChecked(false);
