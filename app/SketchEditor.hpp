@@ -125,7 +125,8 @@ class SketchEditor : public QObject, public SketchInput {
     bool grid = false;  // on a grid node, or whole grid steps along the inference
     // What the pointer was pulled to, for the display: that object is highlighted and named beside the cursor.
     enum class Kind { None, Point, Midpoint, Quadrant, Intersection, Curve, Extension, Aligned, Cross, Angle, Locked, Grid } kind = Kind::None;
-    int target = 0, other = 0;  // the point (Point, Aligned, Angle), the two guides' points (Cross) or the curves (the others)
+    int target = 0, other = 0;  // the point (Point, Aligned, Angle), the crossing guides' points (Cross) or the curves (the others)
+    int curve = 0;  // Cross: the curve a guide crosses there
   };
   struct Hit {
     enum Kind { None, Point, Entity, Dimension } kind = None;

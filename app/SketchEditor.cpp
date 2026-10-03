@@ -484,9 +484,9 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   }
   if(s.kind!=Snap::Kind::None)return s;
 
-  // Below the object snaps (sketchsnap::resolve): guides crossing, a grid node, one guide, the angle ray, a curve, the
-  // grid. Guides: horizontal and vertical from the line's last point (constraints when automatic), the same from the
-  // tracked point, and the tracked point's lines extended past their ends.
+  // Below the object snaps (sketchsnap::resolve): a crossing (of guides, the angle ray and curves), a grid node, one
+  // guide, the angle ray, a curve, the grid. Guides: horizontal and vertical from the line's last point (constraints
+  // when automatic), the same from the tracked point, and the tracked point's lines extended past their ends.
   struct Meaning { Snap::Kind kind; int target; bool horizontal, vertical; };
   std::vector<sketchsnap::Guide> guides;
   std::vector<Meaning> meaning;
@@ -512,33 +512,25 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
     const double k=((u-a->x)*dx+(v-a->y)*dy)/(len*len);
     if(k<0 || k>1)guide({tracked->x,tracked->y,dx/len,dy/len,tracked->id},{Snap::Kind::Extension,e.id,false,false});
   }
-  sketchsnap::Guide ray;
+  sketchsnap::Guide ray{0,0,1,0,from?from->id:0};
   const bool angled=from && enabled("angle") && sketchsnap::angleRay(from->x,from->y,u,v,QSettings().value("sketch/angleStep",15).toDouble()*M_PI/180,t,ray);
-  double foot[2]={u,v};int curve=0;
-  best=t;
+  // The lines, circles and arcs under the pointer: it lands on the nearest, or where a guide crosses one.
+  std::vector<sketchsnap::Curve> curves;
+  std::vector<int> curveIds;
   if(enabled("nearest"))for(size_t index:localCandidates.entities) {
     const auto& e=m_sk.entities[index];
-    if (e.type != SkEntity::Type::Line && e.type != SkEntity::Type::Circle && e.type != SkEntity::Type::Arc) continue;
-    const double d = distanceTo(e, u, v);
-    if (d >= best) continue;
-    best = d;
-    curve = e.id;
-    // Foot of the perpendicular, so the new point starts on the curve.
-    if (e.type == SkEntity::Type::Line) {
-      const SkPoint *a = m_sk.point(e.p[0]), *b = m_sk.point(e.p[1]);
-      const double dx = b->x - a->x, dy = b->y - a->y, len2 = dx * dx + dy * dy;
-      const double k = len2 < 1e-18 ? 0 : ((u - a->x) * dx + (v - a->y) * dy) / len2;
-      foot[0] = a->x + k * dx;
-      foot[1] = a->y + k * dy;
-    } else {
-      const SkPoint* c = m_sk.point(e.p[0]);
-      const double r = e.type == SkEntity::Type::Circle ? e.r : std::hypot(m_sk.point(e.p[1])->x - c->x, m_sk.point(e.p[1])->y - c->y);
-      const double d0 = std::hypot(u - c->x, v - c->y);
-      if (d0 > 1e-12) { foot[0] = c->x + (u - c->x) * r / d0; foot[1] = c->y + (v - c->y) * r / d0; }
-    }
+    if((e.type!=SkEntity::Type::Line && e.type!=SkEntity::Type::Circle && e.type!=SkEntity::Type::Arc) || distanceTo(e,u,v)>=t)continue;
+    const SkPoint *a=m_sk.point(e.p[0]),*b=e.p.size()>1?m_sk.point(e.p[1]):nullptr,*end=e.p.size()>2?m_sk.point(e.p[2]):nullptr;
+    sketchsnap::Curve c;
+    if(!a || (e.type==SkEntity::Type::Line && !b) || (e.type==SkEntity::Type::Arc && !end))continue;
+    c.x=a->x;c.y=a->y;
+    if(e.type==SkEntity::Type::Line){c.ex=b->x;c.ey=b->y;}
+    else if(e.type==SkEntity::Type::Circle){c.r=e.r;c.sweep=2*M_PI;}
+    else{c.r=std::hypot(b->x-a->x,b->y-a->y);c.start=std::atan2(b->y-a->y,b->x-a->x);c.sweep=std::atan2(end->y-a->y,end->x-a->x)-c.start;if(c.sweep<=0)c.sweep+=2*M_PI;}
+    curves.push_back(c);curveIds.push_back(e.id);
   }
   using By=sketchsnap::Pick::By;
-  const auto pick=sketchsnap::resolve(u,v,t,step,guides,angled?&ray:nullptr,curve?foot:nullptr);
+  const auto pick=sketchsnap::resolve(u,v,t,step,guides,angled?&ray:nullptr,curves);
   s.u=pick.u;s.v=pick.v;
   s.grid=step>0 && (pick.by==By::Node || pick.by==By::Guide || pick.by==By::Ray || pick.by==By::Grid);
   auto follow=[&](int i){  // what a guide adds: its constraint, or the guide to draw
@@ -547,11 +539,22 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
     if(m.kind!=Snap::Kind::None){s.kind=m.kind;s.target=m.target;}
   };
   switch(pick.by) {
-    case By::Cross: follow(pick.guide);follow(pick.other);s.kind=Snap::Kind::Cross;s.target=guides[size_t(pick.guide)].anchor;s.other=guides[size_t(pick.other)].anchor;break;
-    case By::Node: s.kind=Snap::Kind::Grid;if(pick.guide>=0)follow(pick.guide);break;
+    case By::Cross:  // two of the guides and the ray, or one of them and a curve (which the point then lies on)
+      if(pick.guide>=0)follow(pick.guide);
+      if(pick.other>=0)follow(pick.other);
+      s.kind=Snap::Kind::Cross;
+      s.target=pick.guide>=0?guides[size_t(pick.guide)].anchor:from->id;
+      s.other=pick.other>=0?guides[size_t(pick.other)].anchor:pick.ray && pick.guide>=0?from->id:0;
+      if(pick.curve>=0){s.curve=curveIds[size_t(pick.curve)];s.entity=automatic?s.curve:0;}
+      break;
+    case By::Node:  // a guide or the angle ray through the node names it
+      s.kind=Snap::Kind::Grid;
+      if(pick.guide>=0)follow(pick.guide);
+      else if(pick.ray){s.kind=Snap::Kind::Angle;s.target=from->id;}
+      break;
     case By::Guide: follow(pick.guide);break;
     case By::Ray: s.kind=Snap::Kind::Angle;s.target=from->id;break;
-    case By::Curve: s.entity=automatic?curve:0;s.kind=Snap::Kind::Curve;s.target=curve;break;
+    case By::Curve: s.target=curveIds[size_t(pick.curve)];s.entity=automatic?s.target:0;s.kind=Snap::Kind::Curve;break;
     case By::Grid: s.kind=Snap::Kind::Grid;break;
     case By::Pointer: break;
   }
@@ -1290,10 +1293,11 @@ void SketchEditor::updateTransient() {
         if (const auto* from = m_geometry->point(m_sk, m_cursor.target))
           label = QString::fromUtf8("%1°").arg(std::round(std::atan2(cv - from->y, cu - from->x) * 180 / M_PI));
         break;
-      case K::Cross:  // two guides crossing: both drawn
+      case K::Cross:  // guides crossing (both drawn), or a guide meeting a curve (highlighted)
         for (int id : {m_cursor.target, m_cursor.other})
           if (const auto* reference = m_geometry->point(m_sk, id)) d.dashed.push_back({W(reference->x, reference->y), W(cu, cv), snapColor});
-        label = tr("Tracking");
+        if (m_cursor.curve) curve(m_cursor.curve);
+        label = m_cursor.curve ? tr("Intersection") : tr("Tracking");
         break;
       case K::Locked:
         d.dashed.push_back({W(m_lockX, m_lockY), W(cu, cv), snapColor});

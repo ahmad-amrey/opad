@@ -12,8 +12,9 @@ using namespace opad::design;
 // OPAD_BENCH_SKETCH_GRID=<prefix> (TODO 11 UI-18): grid snapping through the tool code, as the mouse drives it. One
 // switch (F9's action, the panel's checkbox and the viewport agree), the sketch shows its own grid (G hides it there
 // only, apart from snapping), the step follows the zoom, a pointer near a node lands on it although the angle or a
-// guide would take it, a guide away from the nodes is quantised along itself, a dragged point lands on a node (Alt
-// drags freely), and off is off.
+// guide would take it, a guide away from the nodes is quantised along itself, a node on the angle ray keeps the angle's
+// name, a guide crossing a curve beats the nodes and lands on both, a dragged point lands on a node (Alt drags
+// freely), and off is off.
 void SketchEditor::benchGrid() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_GRID");
   bool ok = true;
@@ -126,6 +127,29 @@ void SketchEditor::benchGrid() {
   sketchMove(-2 * s + 1.38 * s, -s + 0.61 * s, Qt::NoModifier, true);
   sketchRelease(-2 * s + 1.38 * s, -s + 0.61 * s, Qt::NoModifier);
   check(at(free, -s, 0) && m_undo.size() == undo + 1, "dropped on a node, one undo step");
+
+  // A circle off the grid (Alt places exactly), then a line from node (-4s, s): its horizontal crosses the circle at
+  // u = -2s - w, away from every node and quadrant.
+  setTool("circle");
+  place(-2 * s, 0.6 * s, Qt::AltModifier);
+  place(-1.17 * s, 0.6 * s, Qt::AltModifier);
+  const int circle = m_sk.entities.back().id;
+  setTool("line");
+  place(-4 * s + 2 * px, s - 2 * px);
+  check(at(m_chain.back(), -4 * s, s), "the line starts on a node");
+  sketchMove(-3 * s + 2 * px, 2 * s - px, Qt::NoModifier, false);  // node (-3s, 2s) is on the 45 degree ray
+  check(m_cursor.kind == Snap::Kind::Angle && m_cursor.grid && same(m_cursor.u, -3 * s) && same(m_cursor.v, 2 * s), "a node on the angle ray: the node, named by the angle");
+  const double w = std::sqrt(0.83 * 0.83 - 0.4 * 0.4) * s, xu = -2 * s - w;
+  sketchMove(xu + 2 * px, s + 2 * px, Qt::NoModifier, false);
+  check(m_cursor.kind == Snap::Kind::Cross && m_cursor.curve == circle && m_cursor.entity == circle && m_cursor.horizontal && same(m_cursor.u, xu) && same(m_cursor.v, s),
+        QString("the horizontal crossing the circle beats the grid (%1, %2)").arg(m_cursor.u / s).arg(m_cursor.v / s));
+  m_viewport->grabImage().save(prefix + ".cross.png");
+  place(xu + 2 * px, s + 2 * px);
+  bool onCircle = false;
+  for (const auto& c : m_sk.constraints) onCircle |= c.type == SkConstraint::Type::Coincident && c.refs == std::vector<int>{m_chain.back(), circle};
+  check(at(m_chain.back(), xu, s) && constrained(SkConstraint::Type::Horizontal) && onCircle, "the click lands there, horizontal and on the circle");
+  finishChain();
+  setTool("select");
 
   f9->trigger();
   check(!m_viewport->gridSnap() && !box->isChecked() && m_viewport->gridShown(), "F9 turns snapping off again, the grid stays");
