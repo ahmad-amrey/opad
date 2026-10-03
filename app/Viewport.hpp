@@ -124,6 +124,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setBlocked(bool on);  // while a file loads: mouse input is ignored (the shade window covers the view)
   bool blocked() const { return m_blocked; }
   const Job* pumpJob() const { return m_displayJob; }  // the display pump's job while it runs (benches)
+  int pumpRuns() const { return m_pumpRuns; }          // pump jobs started so far (benches: one per stream, not per batch)
   void benchShot(const QString& path);  // --bench-select with OPAD_BENCH_SHOT: hover the view cube, save a frame
   std::string benchHeaviest() const;       // OPAD_BENCH_FILTER: the body with the most faces, the pick target
   void benchBand();                        // OPAD_BENCH_BAND: rubber band over the whole view in the current mode
@@ -568,6 +569,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::deque<std::string> m_displayQueue;
   bool m_streamAdded = false;  // bodies displayed since the stream last settled completely
   unsigned m_pumpSteps = 0;
+  int m_pumpRuns = 0;
   QElapsedTimer m_streamFit;   // the last fit while streaming
   QPointer<Job> m_streamJob;
   int m_syncs = 0;

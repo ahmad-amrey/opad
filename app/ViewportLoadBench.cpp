@@ -2,7 +2,8 @@
 // (CI) and the Engine beside the repository. The file is opened again from the bench and watched while it loads: the
 // strip's job is the load from first to last (never a sub-job), its overall progress only goes up and, once the document
 // is built, the workspace is unlocked (no shade, the view takes the mouse, panels enabled, a view command runs) while the
-// bodies still stream in under the same job; the display pump is the load's child; an edit asked for meanwhile waits
+// bodies still stream in under the same job; the display pump is the load's child, one job paused between batches of
+// meshes; an edit asked for meanwhile waits
 // with a toast and runs when every body is shown; the load costs a few full syncs, not one per batch of meshes, and makes
 // no empty selection-layer jobs. Then once more, cancelled from the strip as soon as the bodies stream in: the load job
 // and its pump stop at once and the bodies not shown stay out. A big file (the Engine) also reports the reading and
@@ -73,7 +74,7 @@ OPAD_BENCH(OPAD_BENCH_LOADING, loading) {
   // bodies are still to come.
   struct Seen {
     bool foreignStrip = false, lockedWhileBuilding = true, unlocked = false, streamed = false, childPump = true, backwards = false;
-    int lastOverall = -1, openingSteps = 0, finishedAt = -1;
+    int lastOverall = -1, openingSteps = 0, finishedAt = -1, pumpRuns = -1;
     QStringList phases;
   };
   auto watch = [&](const std::function<void(Seen&)>& streaming) {
@@ -84,7 +85,7 @@ OPAD_BENCH(OPAD_BENCH_LOADING, loading) {
     });
     doc->newDocument();  // the same file again would keep what is on screen (same bodies, same places): nothing would stream
     waitUntil([&] { return v->displayedCount() == 0 && !w.m_jobs->busy(); }, 30000);  // nothing older than the load runs
-    const int syncs = v->syncCount(), begun = w.m_jobs->begun();
+    const int syncs = v->syncCount(), begun = w.m_jobs->begun(), pumps = v->pumpRuns();
     w.openPath(path);
     Job* load = w.m_loadJob;
     QObject::connect(load, &Job::overallChanged, &context, [&seen](int overall) {
@@ -108,8 +109,9 @@ OPAD_BENCH(OPAD_BENCH_LOADING, loading) {
       return false;
     }, 300000);
     seen.finishedAt = ended ? v->syncCount() - syncs : -1;
-    trace::log(QString("bench: loading: %1 full syncs, %2 jobs begun, overall progress up to %3%, %4 opening steps")
-                   .arg(v->syncCount() - syncs).arg(w.m_jobs->begun() - begun).arg(seen.lastOverall).arg(seen.openingSteps));
+    seen.pumpRuns = v->pumpRuns() - pumps;
+    trace::log(QString("bench: loading: %1 full syncs, %2 jobs begun, %3 display pump jobs, overall progress up to %4%, %5 opening steps")
+                   .arg(v->syncCount() - syncs).arg(w.m_jobs->begun() - begun).arg(seen.pumpRuns).arg(seen.lastOverall).arg(seen.openingSteps));
     return seen;
   };
 
@@ -138,6 +140,7 @@ OPAD_BENCH(OPAD_BENCH_LOADING, loading) {
   require(viewRan, "a view command (Top) runs while the bodies stream in");
   require(deferred && pins >= 2 && !w.m_afterStream, QString("an edit asked for meanwhile waits with a toast and runs after (%1 runs)").arg(pins));
   require(first.childPump, "the display pump runs as a child of the load");
+  require(first.pumpRuns == 1, QString("the display pump is one job for the whole stream, paused while meshes are on their way (%1 jobs)").arg(first.pumpRuns));
   require(first.finishedAt >= 0 && first.finishedAt <= 2, QString("%1 full syncs for the load (one per document change, none per batch of meshes)").arg(first.finishedAt));
   if (big) require(first.openingSteps >= 3, QString("the .opad read and parse report per cent (%1 steps)").arg(first.openingSteps));
 

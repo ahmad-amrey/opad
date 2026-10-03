@@ -179,6 +179,11 @@ Job* JobRunner::sliced(const QString& title, std::function<bool(Job&)> step, std
   return j;
 }
 
+void JobRunner::resume(Job* j) {
+  if (!j || !j->active() || !std::exchange(j->m_paused, false)) return;
+  QTimer::singleShot(0, j, [this, j] { slice(j); });
+}
+
 // One time-boxed slice of a sliced job, then yield to the event loop and reschedule.
 void JobRunner::slice(Job* j) {
   if (!j->active() || !j->m_step) return;
@@ -186,7 +191,7 @@ void JobRunner::slice(Job* j) {
   t.start();
   bool more = true;
   const bool tracing = trace::enabled();
-  while (more && !j->cancelled() && t.elapsed() < kSliceMs) {
+  while (more && !j->m_paused && !j->cancelled() && t.elapsed() < kSliceMs) {
     const qint64 before = t.elapsed();
     more = j->m_step(*j);
     const qint64 took = t.elapsed() - before;
@@ -194,7 +199,7 @@ void JobRunner::slice(Job* j) {
   }
   if (!j->active()) return;  // cancelled from inside step (or via the strip) - finish already ran
   if (more && !j->cancelled()) {
-    QTimer::singleShot(0, j, [this, j] { slice(j); });
+    if (!j->m_paused) QTimer::singleShot(0, j, [this, j] { slice(j); });  // paused: resume() slices again
     return;
   }
   const bool completed = !j->cancelled();

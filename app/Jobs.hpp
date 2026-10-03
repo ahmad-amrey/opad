@@ -71,6 +71,10 @@ class Job : public QObject {
   void setOverall(int percent);
   void cancel();                                           // sets the flag, emits cancelRequested, finishes the job
   void finish(bool ok = true, const QString& error = {});  // idempotent; emits finished once, on the UI thread
+  // A sliced job waiting for work that arrives from elsewhere (meshes from workers): from inside its step, no slice runs
+  // until JobRunner::resume. One job then lives as long as the stream instead of one per batch (UI-40).
+  void pause() { m_paused = true; }
+  bool paused() const { return m_paused; }
  signals:
   void phaseChanged(const QString& text, int percent);
   void overallChanged(int percent);
@@ -82,7 +86,7 @@ class Job : public QObject {
   Job(const QString& title, bool twoBars, QObject* parent);
   QString m_title;
   bool m_twoBars;
-  bool m_active = true;
+  bool m_active = true, m_paused = false;
   JobKind m_kind = JobKind::Foreground;
   QPointer<Job> m_parent;
   std::shared_ptr<detail::JobState> m_state;
@@ -108,6 +112,7 @@ class JobRunner : public QObject {
   // runs once, before finished(); completed is false when the job was cancelled.
   Job* sliced(const QString& title, std::function<bool(Job&)> step, std::function<void(bool completed)> done = {},
               JobKind kind = JobKind::Foreground, Job* parent = nullptr);
+  void resume(Job* job);  // a paused sliced job slices again from the next event-loop turn
   bool busy() const { return !m_jobs.empty(); }
   Job* current() const;  // the oldest Foreground job: what the strip shows and cancels
   QStringList background() const;  // titles of the Background jobs (and orphaned children) running now

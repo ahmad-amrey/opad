@@ -1650,17 +1650,25 @@ void Viewport::pumpMeshed() {
     }
     if (!moved) return;
   }
-  if (m_displayQueue.empty()) return streamSettled();
-  emit meshingProgress(remainingBodies());
+  if (!m_displayQueue.empty()) emit meshingProgress(remainingBodies());
   runPump();
 }
 
-// One long-lived sliced job displays the queued bodies (UI-40); it ends when the queue runs dry and starts again with the
-// next batch of meshes. It is a child of the job that reports the stream (a load, Displaying bodies), else Background.
+// One long-lived sliced job displays the queued bodies (UI-40). While the queue is dry and meshes are still on their way
+// it pauses, and the next batch resumes it; it ends once nothing is queued or waiting. It is a child of the job that
+// reports the stream (a load, Displaying bodies), else Background. Neither a job nor a queue: the stream has settled.
 void Viewport::runPump() {
-  if (m_displayJob || m_displayQueue.empty() || !m_jobs) return;
-  m_displayJob = m_jobs->sliced(tr("Displaying bodies"), [this](Job&) {
-    if (m_displayQueue.empty() || m_doc->loading) return false;
+  if (m_displayJob) return m_jobs->resume(m_displayJob);
+  if (m_displayQueue.empty() || !m_jobs) return streamSettled();
+  ++m_pumpRuns;
+  m_displayJob = m_jobs->sliced(tr("Displaying bodies"), [this](Job& job) {
+    if (m_doc->loading) return false;
+    if (m_displayQueue.empty()) {
+      if (m_waitingNodes == 0) return false;
+      streamSettled();
+      job.pause();
+      return true;
+    }
     const std::string id = std::move(m_displayQueue.front());
     m_displayQueue.pop_front();
     const size_t before = m_items.size();
@@ -1671,7 +1679,7 @@ void Viewport::runPump() {
       m_view->Invalidate();
       requestRedraw();  // bodies appear as they are added
     }
-    return !m_displayQueue.empty();
+    return true;
   }, [this](bool completed) {
     m_displayJob = nullptr;
     if (!completed) m_displayQueue.clear();  // cancelled with the stream: what is meshed shows on the next change
@@ -1837,8 +1845,7 @@ void Viewport::sync() {
   updateClipPlanes();
   ++m_syncs;
   m_syncMs += clock.elapsed();
-  if (m_displayQueue.empty()) return streamSettled();
-  emit meshingProgress(remainingBodies());  // first: the window may make a job to report the stream (the pump's parent)
+  if (!m_displayQueue.empty()) emit meshingProgress(remainingBodies());  // first: the window may make a job to report the stream (the pump's parent)
   runPump();
 }
 
