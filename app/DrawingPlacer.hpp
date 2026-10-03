@@ -3,9 +3,11 @@
 #include "Panels.hpp"
 #include "Jobs.hpp"
 #include <QPointer>
+#include <optional>
 class QLineEdit;
 class QLabel;
 class QPushButton;
+class ToolValues;
 
 // Import of a drawing with no face selected (TODO 10 A12): after the plane is chosen, the drawing is shown on it, its
 // own origin at the plane's, and moved there before the import op is written: dragged, given a typed offset, or
@@ -19,6 +21,9 @@ class DrawingPlacer : public QObject {
   void cancel();
   bool active() const { return m_active; }
   ToolPanel* panel() const { return m_panel; }
+  // The offset typed from the keyboard (TODO 11 UI-122): X and Y boxes beside the pointer, the drawing following as they
+  // are typed; Enter places it.
+  ToolValues* values() const { return m_values; }
   opad::Mat4 placement() const;  // drawing XY -> world, with the current offset
   void setOffset(double u, double v);
   bool snap(const opad::Vec3& from, const opad::Vec3& to);  // move so `from` (on the drawing) lands on `to`
@@ -34,7 +39,10 @@ class DrawingPlacer : public QObject {
   void refresh();
   void move();
   bool nearestVertex(const QPointF& at, opad::Vec3& world) const;  // of the drawing, within a few pixels
+  std::optional<double> length(const QString& text, QString* problem) const;  // typed, in the shown unit; parameters work
+  void escape();  // Esc: the snap given up, else the placing
   AppDocument* m_doc;
+  ToolValues* m_values = nullptr;
   Viewport* m_view;
   JobRunner* m_jobs;
   ToolPanel* m_panel;

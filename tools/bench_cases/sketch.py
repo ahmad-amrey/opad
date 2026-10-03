@@ -27,6 +27,8 @@ CASES = [
     ("panel-focus", "box", {"OPAD_BENCH_PANEL_FOCUS": "1"}),
     # Typed values outside the sketch: a fillet's radius, the extrude's distance and taper by the arrow (UI-122).
     ("feature-keys", "box", {"OPAD_BENCH_FEATURE_KEYS": "{prefix}"}),
+    # ... the section's offset and a drawing's offset while it is placed (UI-122).
+    ("tool-keys", "box", {"OPAD_BENCH_TOOL_KEYS": "{prefix}"}),
     # 30,000 segments: converted, opened, hovered, panned, snapped, selected and dragged in time (UI-27, UI-29).
     ("sketch-large", segments, {"OPAD_BENCH_LARGE": "{prefix}.json"}, EDITING),
     ("drawing-preview", segments, {"OPAD_BENCH_WIZARD": "{prefix}.png", "OPAD_BENCH_WIZARD_PREVIEW": "30000"}, EDITING),

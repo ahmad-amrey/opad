@@ -1,6 +1,8 @@
 #include "DrawingPlacer.hpp"
 #include "BodyShape.hpp"
+#include "I18n.hpp"
 #include "Theme.hpp"
+#include "ToolValues.hpp"
 #include "Units.hpp"
 #include "opad/design/expr.hpp"
 #include "opad/geometry.hpp"
@@ -76,25 +78,32 @@ DrawingPlacer::DrawingPlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, 
   footer->addWidget(cancelButton);
   layout->addLayout(footer);
   m_panel = new ToolPanel("drawing-place", "drawing", &Tokens::sel, tr("Place drawing"), body, 420, window);
-  m_panel->setEscapeHandler([this] {
-    if (m_snapStage) { m_snapStage = 0; m_view->setSelectionFilter(m_oldFilter); refresh(); }
-    else cancel();
-  });
+  m_panel->setEscapeHandler([this] { escape(); });
   connect(m_panel, &ToolPanel::visibilityChanged, this, [this](bool on) { if (!on && m_active) cancel(); });
   auto typed = [this] {  // a box left as shown keeps its value: "0.275591 in" would move a snapped drawing by 1e-5 mm
     if (!m_u->isModified() && !m_v->isModified()) return;
-    try {
-      std::vector<opad::design::ParamDef> defs;
-      for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
-      const opad::design::ParamTable params(defs, units::current().length);
-      const double u = m_u->isModified() ? params.length(m_u->text().toStdString()) : m_du, v = m_v->isModified() ? params.length(m_v->text().toStdString()) : m_dv;
-      m_u->setModified(false);
-      m_v->setModified(false);
-      setOffset(u, v);
-    } catch (const std::exception& e) {
-      m_status->setText(QString::fromUtf8(e.what()));
-    }
+    QString problem;
+    const auto u = m_u->isModified() ? length(m_u->text(), &problem) : m_du, v = m_v->isModified() ? length(m_v->text(), &problem) : m_dv;
+    m_u->setModified(false);
+    m_v->setModified(false);
+    if (u && v) setOffset(*u, *v);
+    else m_status->setText(problem);
   };
+  // UI-122: X and Y typed over the view or a panel (no window shortcut sees the digits), the drawing following.
+  m_values = new ToolValues(view, this);
+  m_values->fields = [this] {
+    if (!m_active || !m_loaded || m_snapStage) return QList<DynamicInput::Field>{};
+    return QList<DynamicInput::Field>{DynamicInput::Field{"x", tr("Offset X"), units::editable(units::Kind::Length, m_du), true},
+                                      DynamicInput::Field{"y", tr("Offset Y"), units::editable(units::Kind::Length, m_dv), true}};
+  };
+  m_values->edited = [this](const QString& key, const QString& value) {  // or the offset before, put back by Esc
+    QString problem;
+    const auto mm = length(value, &problem);
+    m_values->input()->setProblem(key, problem);
+    if (mm) setOffset(key == "x" ? *mm : m_du, key == "y" ? *mm : m_dv);
+  };
+  m_values->commit = [this] { if (m_loaded) m_place->click(); };
+  m_values->escape = [this] { escape(); };
   connect(m_u, &QLineEdit::editingFinished, this, typed);
   connect(m_v, &QLineEdit::editingFinished, this, typed);
   connect(m_snap, &QPushButton::toggled, this, [this](bool on) {
@@ -171,6 +180,7 @@ void DrawingPlacer::start(const QString& file, const opad::Frame& plane, std::fu
 
 void DrawingPlacer::stop() {
   m_active = m_dragging = false;
+  m_values->reset();
   ++m_serial;
   if (m_job) m_job->cancel();
   m_job = nullptr;
@@ -188,6 +198,25 @@ void DrawingPlacer::cancel() {
   if (!m_active) return;
   stop();
   emit cancelled();
+}
+
+void DrawingPlacer::escape() {
+  if (!m_snapStage) return cancel();
+  m_snapStage = 0;
+  { QSignalBlocker block(m_snap); m_snap->setChecked(false); }
+  m_view->setSelectionFilter(m_oldFilter);
+  refresh();
+}
+
+std::optional<double> DrawingPlacer::length(const QString& text, QString* problem) const {
+  try {
+    std::vector<opad::design::ParamDef> defs;
+    for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+    return opad::design::ParamTable(defs, units::current().length).length(text.toStdString());
+  } catch (const std::exception& e) {
+    if (problem) *problem = i18n::t(QString::fromUtf8(e.what()));
+    return std::nullopt;
+  }
 }
 
 opad::Mat4 DrawingPlacer::placement() const {

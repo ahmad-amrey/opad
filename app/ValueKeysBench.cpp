@@ -1,7 +1,9 @@
 // Tool panels and the keyboard (TODO 11 UI-05), typed values outside the sketch (UI-122). Cases in
 // tools/bench_cases/sketch.py; keys and clicks are Qt events sent where the keyboard is, as a user's would arrive.
 #include <QApplication>
+#include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QKeyEvent>
 #include <QLineEdit>
 #include <QListWidget>
@@ -13,11 +15,14 @@
 
 #include <cmath>
 #include <memory>
+#include <optional>
 
 #include "BenchRegistry.hpp"
 #include "DimensionHandle.hpp"
+#include "DrawingPlacer.hpp"
 #include "MainWindow.hpp"
 #include "ToolValues.hpp"
+#include "opad/design/sketch_geom.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 
@@ -308,5 +313,78 @@ OPAD_BENCH(OPAD_BENCH_FEATURE_KEYS, featureKeys) {
     });
   });
   next();
+  return true;
+}
+
+// OPAD_BENCH_TOOL_KEYS=<prefix> on a document with a body (UI-122): the Section panel open, 4.537 typed over the view puts
+// the plane exactly there (the slider has 1000 steps), the filter stays; Enter keeps it, Esc closes the panel, and then 2
+// is the Faces filter's key again. A drawing being placed: 12, Tab, -3 typed over the view move it by (12, -3) as they are
+// typed, the filter stays; Enter places it there. <prefix>.section-box.png, <prefix>.placer-boxes.png.
+OPAD_BENCH(OPAD_BENCH_TOOL_KEYS, toolKeys) {
+  auto check = std::make_shared<Checks>(Checks{"tool keys"});
+  auto finish = [check] { QCoreApplication::exit(check->all ? 0 : 2); };
+  const QString prefix = value;
+  MainWindow* window = &w;
+  Viewport* view = w.m_viewport;
+  SectionPanel* section = w.m_section;
+  DrawingPlacer* placer = w.m_drawingPlacer;
+  QAction* bodies = w.action("select.bodies");
+  auto keyboard = [window, view] {
+    QApplication::setActiveWindow(window);
+    view->setFocus();
+  };
+  auto unchanged = [view, bodies] { return view->selectionFilter() == Viewport::SelFilter::Body && bodies->isChecked(); };
+  keyboard();
+  w.action("inspect.section")->setChecked(true);
+  DynamicInput* offset = section->values()->input();
+  (*check)(w.m_sectionPanel->isVisible() && section->enabled() && unchanged(), "the Section panel is open, the filter on bodies");
+  press(Qt::Key_4, Qt::NoModifier, "4");
+  (*check)(offset->isVisible() && offset->count() == 1 && offset->key(0) == "offset" && offset->box(0)->text() == "4" && QApplication::focusWidget() == offset->box(0) &&
+               std::abs(section->along() - 4) < 1e-9 && unchanged(),
+           "4 typed over the view starts the section's Offset box: the plane at 4 mm, the filter stays");
+  for (const QChar c : QString(".537")) press(c == '.' ? Qt::Key_Period : Qt::Key_0 + c.digitValue(), Qt::NoModifier, QString(c));
+  (*check)(std::abs(section->along() - 4.537) < 1e-9 && std::abs(section->origin()[2] - 4.537) < 1e-9, "4.537 puts the plane exactly there, not on the slider's step");
+  if (!prefix.isEmpty()) offset->shot().save(prefix + ".section-box.png");
+  press(Qt::Key_Return);
+  (*check)(!offset->isVisible() && std::abs(section->along() - 4.537) < 1e-9 && QApplication::focusWidget() == view, "Enter keeps it and gives the keyboard back to the view");
+  press(Qt::Key_Escape);
+  (*check)(!w.m_sectionPanel->isVisible() && section->enabled(), "Esc closes the panel, the section stays");
+  press(Qt::Key_2, Qt::NoModifier, "2");
+  (*check)(view->selectionFilter() == Viewport::SelFilter::Face && !offset->isVisible(), "with the panel closed, 2 is the Faces filter's key again");
+  press(Qt::Key_1, Qt::NoModifier, "1");
+  w.action("inspect.section")->setChecked(false);
+
+  // A drawing being placed on XY.
+  const QString drawing = QDir::temp().filePath(QString("opad-tool-keys-%1.svg").arg(QCoreApplication::applicationPid()));
+  {
+    QFile file(drawing);
+    file.open(QIODevice::WriteOnly);
+    file.write("<svg width=\"40mm\" viewBox=\"0 0 40 40\"><rect width=\"20\" height=\"10\"/></svg>");
+  }
+  auto placed = std::make_shared<std::optional<opad::Vec3>>();
+  auto ready = std::make_shared<bool>(false);
+  placer->placed = [placed](const opad::Mat4& m) { *placed = m.apply({0, 0, 0}); };
+  QObject::connect(placer, &DrawingPlacer::ready, window, [ready] { *ready = true; }, Qt::SingleShotConnection);
+  placer->start(drawing, opad::design::base_frame("xy"), [window](ToolPanel* panel) { window->openPanel(panel); });
+  waitFor(window, [ready] { return *ready; }, 20000, [=](bool shown) {
+    (*check)(shown && placer->active(), "the drawing is on the plane, to be placed");
+    keyboard();
+    DynamicInput* boxes = placer->values()->input();
+    press(Qt::Key_1, Qt::NoModifier, "1");
+    press(Qt::Key_2, Qt::NoModifier, "2");
+    const opad::Vec3 at = placer->placement().apply({0, 0, 0});
+    (*check)(boxes->isVisible() && boxes->count() == 2 && boxes->box(0)->text() == "12" && std::abs(at[0] - 12) < 1e-9 && std::abs(at[1]) < 1e-9 && unchanged(),
+             "12 typed over the view moves the drawing 12 along X as it is typed, the filter stays");
+    press(Qt::Key_Tab);
+    press(Qt::Key_Minus, Qt::NoModifier, "-");
+    press(Qt::Key_3, Qt::NoModifier, "3");
+    const opad::Vec3 to = placer->placement().apply({0, 0, 0});
+    (*check)(QApplication::focusWidget() == boxes->box(1) && std::abs(to[0] - 12) < 1e-9 && std::abs(to[1] + 3) < 1e-9, "Tab, then -3: the Y offset");
+    if (!prefix.isEmpty()) boxes->shot().save(prefix + ".placer-boxes.png");
+    press(Qt::Key_Return);
+    (*check)(placed->has_value() && std::abs((**placed)[0] - 12) < 1e-9 && std::abs((**placed)[1] + 3) < 1e-9 && !placer->active(), "Enter places the drawing at (12, -3)");
+    QFile::remove(drawing);
+    finish();
+  });
   return true;
 }
