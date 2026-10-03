@@ -84,6 +84,37 @@ void apply_style(ViewSpec& s, const json& style) {
   if (style.contains("quality") && style["quality"].is_string()) s.quality = quality_from_name(style["quality"].get<std::string>());
 }
 
+// A view projected from `s` to the side (sx, sy) of it. First angle: the view right of its parent shows the object from the
+// left; third angle from the right. Corners are pictorial views from that corner.
+void turn_to_side(ViewSpec& s, int sx, int sy, bool third) {
+  const double sign = third ? 1 : -1;
+  Vec3 x, y, z;
+  view_axes(s, x, y, z);
+  if (sy == 0) {
+    s.dir = scaled(x, sign * sx);
+    s.up = y;
+  } else if (sx == 0) {
+    s.dir = scaled(y, sign * sy);
+    s.up = cross3(s.dir, x);
+  } else {
+    s.dir = unit(plus3(plus3(scaled(x, sx), scaled(y, sy)), z));
+    s.up = y;
+  }
+}
+
+void apply_source(const Scene& scene, ViewSpec& s, const json& src) {
+  if (!src.is_object()) return;
+  s.nodes.clear();
+  s.hide.clear();
+  for (const char* key : {"nodes", "hide"})
+    if (src.contains(key) && src[key].is_array())
+      for (const auto& n : src[key]) {
+        if (!n.is_string() || !scene.node(n.get<std::string>())) throw Error("its source node " + n.dump() + " does not exist");
+        (std::string(key) == "nodes" ? s.nodes : s.hide).push_back(n.get<std::string>());
+      }
+  s.visible_only = src.value("visible_only", false);
+}
+
 ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
   if (depth > 32) throw Error("its parent views form a loop");
   const json& d = v.def;
@@ -95,22 +126,8 @@ ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
     int sx = 0, sy = 0;
     const std::string side = d.value("side", "");
     if (!side_step(side, sx, sy)) throw Error("side is left, right, top, bottom or a corner such as top-right, not '" + side + "'");
-    // First angle: the view right of its parent shows the object from the left; third angle from the right. Corners are
-    // pictorial views from that corner.
     const Sheet* sheet = scene.sheet(v.sheet);
-    const double sign = sheet && sheet->projection == "third" ? 1 : -1;
-    Vec3 x, y, z;
-    view_axes(s, x, y, z);
-    if (sy == 0) {
-      s.dir = scaled(x, sign * sx);
-      s.up = y;
-    } else if (sx == 0) {
-      s.dir = scaled(y, sign * sy);
-      s.up = cross3(s.dir, x);
-    } else {
-      s.dir = unit(plus3(plus3(scaled(x, sx), scaled(y, sy)), z));
-      s.up = y;
-    }
+    turn_to_side(s, sx, sy, sheet && sheet->projection == "third");
   } else if (v.kind == "base") {
     const json o = d.value("orient", json::object());
     if (o.contains("preset") && o["preset"].is_string()) {
@@ -133,18 +150,7 @@ ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
   } else {
     throw Error("needs a newer OPAD (sheet_view kind '" + v.kind + "')");
   }
-  if (d.contains("source") && d["source"].is_object()) {
-    const json& src = d["source"];
-    s.nodes.clear();
-    s.hide.clear();
-    for (const char* key : {"nodes", "hide"})
-      if (src.contains(key) && src[key].is_array())
-        for (const auto& n : src[key]) {
-          if (!n.is_string() || !scene.node(n.get<std::string>())) throw Error("its source node " + n.dump() + " does not exist");
-          (std::string(key) == "nodes" ? s.nodes : s.hide).push_back(n.get<std::string>());
-        }
-    s.visible_only = src.value("visible_only", false);
-  }
+  if (d.contains("source")) apply_source(scene, s, d["source"]);
   apply_style(s, d.value("style", json()));
   return s;
 }
@@ -389,6 +395,129 @@ std::vector<ViewFrame> layout(const Document& doc, const Scene& scene, const She
   std::vector<ViewFrame> out;
   for (const auto& id : sheet.views) out.push_back(place(id, 0));
   return out;
+}
+
+json plan_views(const Document& doc, const Scene& scene, const json& sheet, const std::vector<std::string>& views, const json& source,
+                const std::string& scale, const json& style, double gap) {
+  if (views.empty()) throw Error("a drawing needs at least one view");
+  const bool third = sheet.value("projection", sheet.value("standard", "iso") == "asme" ? "third" : "first") == "third";
+  struct Planned {
+    std::string view, side;
+    ViewSpec spec;
+    int cx = 0, cy = 0;
+    bool pictorial = false;
+    double w = 0, h = 0;
+  };
+  const auto standard = [&](const std::string& name) {
+    ViewSpec s = ViewSpec::preset(name);  // throws for a name it does not know
+    apply_source(scene, s, source);
+    s.hidden = false;
+    apply_style(s, style);
+    return s;
+  };
+  std::vector<Planned> plan(1);
+  plan[0].view = views[0] == "side" ? "front" : views[0];
+  plan[0].spec = standard(plan[0].view);
+  std::set<std::pair<int, int>> used{{0, 0}};
+  std::vector<std::string> pictorial;
+  for (size_t i = 1; i < views.size(); ++i) {
+    Planned p;
+    p.view = views[i];
+    p.spec = plan[0].spec;
+    if (p.view == "side") {
+      p.side = "right";
+    } else {
+      const Vec3 want = unit(Camera::preset(p.view).eye);
+      for (const char* side : {"right", "left", "top", "bottom"}) {
+        int sx = 0, sy = 0;
+        side_step(side, sx, sy);
+        ViewSpec turned = plan[0].spec;
+        turn_to_side(turned, sx, sy, third);
+        if (dot3(unit(turned.dir), want) > 1 - 1e-9) p.side = side;
+      }
+    }
+    if (p.side.empty()) {  // no side shows it: a pictorial view of its own
+      p.pictorial = true;
+      p.spec = standard(p.view);
+    } else {
+      side_step(p.side, p.cx, p.cy);
+      if (!used.insert({p.cx, p.cy}).second) continue;
+      turn_to_side(p.spec, p.cx, p.cy, third);
+    }
+    plan.push_back(std::move(p));
+  }
+  // Pictorial views go into the corner between the projected ones (first angle: below right; third: above right), else
+  // beside the base view.
+  int hx = 0, vy = 0;
+  for (const auto& p : plan)
+    if (!p.pictorial) {
+      if (p.cy == 0 && p.cx != 0 && !hx) hx = p.cx;
+      if (p.cx == 0 && p.cy != 0 && !vy) vy = p.cy;
+    }
+  for (auto& p : plan) {
+    if (!p.pictorial) continue;
+    std::vector<std::pair<int, int>> cells;
+    if (hx || vy) cells.push_back({hx ? hx : 1, vy ? vy : (third ? 1 : -1)});
+    for (const auto& c : std::initializer_list<std::pair<int, int>>{{1, 0}, {1, third ? 1 : -1}, {1, third ? -1 : 1}, {-1, 0}, {0, third ? 1 : -1}, {-1, -1}, {-1, 1}, {2, 0}, {3, 0}})
+      cells.push_back(c);
+    for (const auto& c : cells)
+      if (used.insert(c).second) {
+        p.cx = c.first, p.cy = c.second;
+        break;
+      }
+  }
+  std::map<int, double> cols, rows;
+  for (auto& p : plan) {
+    const std::array<double, 4> e = view_extent(doc, scene, p.spec);
+    p.w = e[2] - e[0], p.h = e[3] - e[1];
+    cols[p.cx] = std::max(cols[p.cx], p.w);
+    rows[p.cy] = std::max(rows[p.cy], p.h);
+  }
+  double sumW = 0, sumH = 0;
+  for (const auto& [c, w] : cols) sumW += w;
+  for (const auto& [r, h] : rows) sumH += h;
+  const std::array<double, 4> room = drawing_room(sheet);
+  const double pad = 5, roomW = room[2] - room[0] - 2 * pad, roomH = room[3] - room[1] - 2 * pad;
+  const double gapsW = gap * static_cast<double>(cols.size() - 1), gapsH = gap * static_cast<double>(rows.size() - 1);
+  double s = 1;
+  if (scale.empty() || scale == "auto") {
+    s = roomW - gapsW > 0 && roomH - gapsH > 0 ? fit_scale(sumW, sumH, roomW - gapsW, roomH - gapsH) : standard_scales().back();
+  } else {
+    s = parse_scale(scale);
+  }
+  std::map<int, double> cx, cy;
+  double at = room[0] + pad + (roomW - (sumW * s + gapsW)) / 2;
+  for (const auto& [c, w] : cols) {
+    cx[c] = at + w * s / 2;
+    at += w * s + gap;
+  }
+  at = room[3] - pad - (roomH - (sumH * s + gapsH)) / 2;
+  for (auto it = rows.rbegin(); it != rows.rend(); ++it) {
+    cy[it->first] = at - it->second * s / 2;
+    at -= it->second * s + gap;
+  }
+  const auto r2 = [](double v) { return std::round(v * 100) / 100; };
+  const auto base_record = [&](const Planned& p, bool pictorial) {
+    json r = {{"op", "sheet_view"}, {"kind", "base"}, {"orient", {{"preset", p.view}}}, {"at", {r2(cx[p.cx]), r2(cy[p.cy])}}};
+    if (source.is_object() && !source.empty()) r["source"] = source;
+    json st = style.is_object() ? style : json::object();
+    if (pictorial) st["hidden"] = false;  // pictorial views show no hidden lines
+    if (!st.empty()) r["style"] = st;
+    return r;
+  };
+  json out = json::array();
+  for (const auto& p : plan) {
+    json record;
+    if (&p == &plan[0] || p.pictorial) {
+      record = base_record(p, p.pictorial);
+    } else {
+      const Planned& b = plan[0];
+      const double between = p.cy == 0 ? std::fabs(cx[p.cx] - cx[0]) - (b.w + p.w) * s / 2 : std::fabs(cy[p.cy] - cy[0]) - (b.h + p.h) * s / 2;
+      record = {{"op", "sheet_view"}, {"kind", "projected"}, {"parent", "base"}, {"side", p.side}, {"gap", r2(std::max(1.0, between))}};
+    }
+    out.push_back({{"view", p.view}, {"record", record}});
+  }
+  return {{"scale", scale_text(s)}, {"views", out}};
 }
 
 // ---------------------------------------------------------------- dimensions

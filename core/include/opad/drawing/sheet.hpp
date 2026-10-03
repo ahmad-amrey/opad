@@ -98,5 +98,50 @@ json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, 
 // "items", "bodies", "skipped": [{"id", "error"}]}. Projects every view: workers only; progress as project() takes it.
 Display sheet_display(const Document& doc, const Scene& scene, const Sheet& sheet, const ProjectionProgress& progress = {}, json* report = nullptr);
 std::string format_value(double value, const json& item);  // precision, prefix, tolerance and suffix of an item
+// The parts of sheet_display, for an editor that shows each as soon as it is ready (UI-78); each primitive's source is the
+// view or item that drew it. draw_paper: the paper's own drawing, its template (frame, zones, title block with its values,
+// a template file's geometry) or for a sheet without one the plain ISO 5457 frame (title values may measure the part's
+// mass: workers only). draw_view: a projected view placed by its frame, in the view's style. draw_items: the items of one
+// view ("" those on the sheet itself), dimensions measured now (a dangling one in magenta with the value it was made with,
+// listed in skipped as {id, error}); returns how many it drew.
+void draw_paper(Display& d, const Document& doc, const Scene& scene, const Sheet& sheet);
+void draw_view(Display& d, const ViewFrame& frame, const SheetView& view, const ViewGeometry& g);
+int draw_items(Display& d, const Document& doc, const Scene& scene, const Sheet& sheet, const std::vector<ViewFrame>& frames, const std::string& view,
+               json& skipped);
+
+// ---- templates (UI-78): frames and title blocks drawn from scratch. A sheet record embeds its template (`template`), so
+// a document draws the same everywhere and a later build's templates never change an existing sheet:
+//   {"id": "iso" | "ansi" | "file", "name", "standard", "frame": {left, right, top, bottom, width}, "marks": centring marks,
+//    "zones": {x, y, from: top-left (ISO: numbers from the left, letters from the top) | bottom-right (ASME)},
+//    "title_block": {w, h, label_height, lines: [[x1, y1, x2, y2, width]], fields: [{key, label, rect: [x, y, w, h],
+//    height, align left|center, valign bottom|middle|top}]} (in the block: mm from its bottom-left corner, which sits in
+//    the frame's bottom-right corner), "geometry": a body key of a template file's drawing, "at": [x, y] where it goes}
+// make_template: the ISO 5457 border (20 mm filing margin, 10 mm elsewhere, centring marks, zones of about 50 mm) with an
+// ISO 7200 style block 180 mm wide, or the ASME style border with a block holding a general tolerance note; throws for
+// another standard or a paper too small.
+json make_template(const std::string& standard, double w, double h);
+// Inside the frame and above the title block (paper mm: xmin, ymin, xmax, ymax), where views go; of a sheet record.
+std::array<double, 4> drawing_room(const json& sheet);
+// The title block's text by field key: the sheet's `values` (a value "=what" looks up what, as an empty one does its own
+// key), else filled in: title (the drawn part's name, else the file's), number (its part number), author (who made the
+// sheet), date (when), scale, size, units, sheet ("2 / 3" of its drawing), doctype (part or assembly drawing), material,
+// mass (measured: workers only), tolerance (a general note), description, drawing, name, file, prop:<key> (a part
+// property). The drawn part: the one node of the first base view, or the document's one root.
+json title_values(const Document& doc, const Scene& scene, const Sheet& sheet);
+// A company's frame and title block from a DXF or DWG file: its 2D geometry goes into the body store (gc keeps it for the
+// sheet) and the returned template draws it, on the smallest standard paper that holds it ("size"), moved onto it when it
+// was drawn elsewhere ("at"). Throws Error when the file has no 2D geometry.
+json template_from_file(Document& doc, const std::filesystem::path& file);
+
+// A new drawing's views (UI-78): `views` names standard views (front, back, top, bottom, left, right, iso, iso-back; "side"
+// the one the projection puts right of the first). The first is the base view; the next ones are projected from it where
+// the sheet's projection (first or third angle) puts them, the others (iso) are pictorial base views in a free corner.
+// They are laid out on a grid around the base view, centred in the sheet's drawing room, `gap` paper mm apart; scale
+// "auto" takes the largest standard scale (ISO 5455) at which they fit. sheet: the sheet record (size, template,
+// projection); source: {nodes, hide}; style: the views' {hidden, tangent}. Returns {"scale", "views": [{"view", "record"}]}
+// with sheet_view records without their sheet (a projected one's parent is "base"). Measures the bodies' boxes the first
+// time: workers only. Throws for an unknown view or scale.
+json plan_views(const Document& doc, const Scene& scene, const json& sheet, const std::vector<std::string>& views, const json& source,
+                const std::string& scale, const json& style = json::object(), double gap = 20);
 
 }  // namespace opad::drawing

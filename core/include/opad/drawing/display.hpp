@@ -45,6 +45,7 @@ struct Prim {
   int halign = 0, valign = 0;             // Text: 0 left, 1 centre, 2 right; 0 baseline, 1 bottom, 2 middle, 3 top
   std::array<Vec2, 3> corners{};          // Image: its top-left, top-right and bottom-left corners
   std::string fit;                        // Image: SVG preserveAspectRatio
+  std::string source;                     // the sheet record that drew it (a view or an item); empty: the sheet's own
 };
 
 struct Display {

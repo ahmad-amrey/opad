@@ -364,7 +364,7 @@ TEST(sheet_draws_as_a_drawing) {
   CHECK_EQ(report["skipped"].size(), 1u);
   CHECK(d.paper == (std::array<double, 4>{0, 0, 297, 210}));
   const json counts = d.counts();
-  CHECK_EQ(counts["layers"]["Frame"], 5);  // the frame and four centring marks
+  CHECK(counts["layers"]["Frame"].get<int>() > 5 && counts["layers"]["Title block"].get<int>() > 20);  // the frame, its centring marks and the ISO title block
   CHECK(counts["layers"]["Visible"].get<int>() >= 12 && counts["layers"].value("Hidden", 0) == 0);
   std::map<std::string, const Prim*> texts;
   for (const auto& prim : d.prims)

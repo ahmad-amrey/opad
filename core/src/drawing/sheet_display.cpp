@@ -1,5 +1,7 @@
-// A drawing sheet as a drawing::Display (TODO 11 UI-86): the frame, the views placed by layout() and projected, the
-// dimensions drawn as geometry from their references now, the notes; every writer (DXF, SVG, PDF, PNG) takes it.
+// A drawing sheet as a drawing::Display (TODO 11 UI-86): the paper (template or frame), the views placed by layout() and
+// projected, the dimensions drawn as geometry from their references now, the notes; every writer (DXF, SVG, PDF, PNG)
+// takes it, and the sheet canvas (UI-78) shows its parts one by one.
+#include <algorithm>
 #include <cmath>
 #include <map>
 
@@ -24,61 +26,43 @@ Curve placed(Curve c, const ViewFrame& f) {
   return c;
 }
 
+void tag(Display& d, size_t from, const std::string& source) {
+  for (size_t i = from; i < d.prims.size(); ++i) d.prims[i].source = source;
+}
+
 }  // namespace
 
-Display sheet_display(const Document& doc, const Scene& scene, const Sheet& sheet, const ProjectionProgress& progress, json* report) {
-  Display d;
-  d.title = sheet.name;
-  d.paper = {0, 0, sheet.width, sheet.height};
-  const int frame = d.layer({"Frame", kInk, LineType::Continuous, 0.7});
+void draw_view(Display& d, const ViewFrame& f, const SheetView& v, const ViewGeometry& g) {
   const int visible = d.layer({"Visible", kInk, LineType::Continuous, 0.5});
   const int tangent = d.layer({"Tangent", kInk, LineType::Continuous, 0.25});
   const int hidden = d.layer({"Hidden", kInk, LineType::Hidden, 0.25});
+  const json style = v.def.value("style", json::object());
+  const bool thin = !style.contains("tangent") || style["tangent"] != "show";
+  const size_t from = d.prims.size();
+  for (const auto& c : g.curves) {
+    const bool smooth = c.kind == Curve::Kind::Tangent || c.kind == Curve::Kind::Seam;
+    d.curve(c.hidden ? hidden : smooth && thin ? tangent : visible, placed(c, f));
+  }
+  tag(d, from, v.id);
+}
+
+int draw_items(Display& d, const Document& doc, const Scene& scene, const Sheet& sheet, const std::vector<ViewFrame>& frames, const std::string& view,
+               json& skipped) {
   const int dims = d.layer({"Dimensions", kInk, LineType::Continuous, 0.25});
   const int notes = d.layer({"Text", kInk, LineType::Continuous, 0.25});
-  const double w = sheet.width, h = sheet.height;
-  if (w > 60 && h > 40) {  // ISO 5457: the frame, a centring mark in the middle of each side from 5 mm outside to 5 inside
-    d.polyline(frame, {{20, 10}, {w - 10, 10}, {w - 10, h - 10}, {20, h - 10}}, true);
-    const double cx = (20 + w - 10) / 2, cy = h / 2;
-    d.line(frame, {cx, 5}, {cx, 15});
-    d.line(frame, {cx, h - 5}, {cx, h - 15});
-    d.line(frame, {15, cy}, {25, cy});
-    d.line(frame, {w - 5, cy}, {w - 15, cy});
-  }
-  json skipped = json::array();
-  int views = 0, items = 0, bodies = 0;
-  const auto frames = layout(doc, scene, sheet);
   std::map<std::string, const ViewFrame*> by_id;
   for (const auto& f : frames) by_id[f.id] = &f;
-  for (size_t i = 0; i < frames.size(); ++i) {
-    const ViewFrame& f = frames[i];
-    const SheetView* v = scene.sheet_view(f.id);
-    if (!f.error.empty() || !v) {
-      skipped.push_back({{"id", f.id}, {"error", f.error}});
-      continue;
-    }
-    const ViewSpec spec = view_spec(scene, *v);
-    const double n = static_cast<double>(frames.size());
-    const auto g = project(doc, scene, spec, [&](double t, const std::string& phase) {
-      return !progress || progress(t < 0 ? -1 : (static_cast<double>(i) + t) / n, phase);
-    });
-    const json style = v->def.value("style", json::object());
-    const bool thin = !style.contains("tangent") || style["tangent"] != "show";
-    for (const auto& c : g->curves) {
-      const bool smooth = c.kind == Curve::Kind::Tangent || c.kind == Curve::Kind::Seam;
-      d.curve(c.hidden ? hidden : smooth && thin ? tangent : visible, placed(c, f));
-    }
-    bodies += static_cast<int>(g->bodies.size());
-    ++views;
-  }
   DimStyle style;
+  int items = 0;
   for (const auto& id : sheet.items) {
     const SheetItem* t = scene.sheet_item(id);
-    if (!t) continue;
+    if (!t || t->view != view) continue;
+    const size_t from = d.prims.size();
     const ViewFrame* f = t->view.empty() ? nullptr : by_id.count(t->view) ? by_id[t->view] : nullptr;
     const Vec2 origin = f ? f->at : Vec2{0, 0};
     if (t->kind == "note") {
       d.text(notes, t->def.value("text", ""), plus(origin, vec2(t->def.value("at", json()))), t->def.value("height", 3.5));
+      tag(d, from, id);
       ++items;
       continue;
     }
@@ -105,10 +89,49 @@ Display sheet_display(const Document& doc, const Scene& scene, const Sheet& shee
       }
       ++items;
     } catch (const std::exception& e) {  // dangling: the value it was made with, in magenta, where its text was
+      d.prims.resize(from);
       d.text(dims, t->def.value("result", json::object()).value("shown", "?"), place, style.text, 0, 1, 0, 0xFF00FF);
       skipped.push_back({{"id", id}, {"error", e.what()}});
     }
+    tag(d, from, id);
   }
+  return items;
+}
+
+Display sheet_display(const Document& doc, const Scene& scene, const Sheet& sheet, const ProjectionProgress& progress, json* report) {
+  Display d;
+  d.title = sheet.name;
+  d.paper = {0, 0, sheet.width, sheet.height};
+  // The layers in a fixed order whatever is on the sheet (DXF tables, SVG groups), the template's after them.
+  d.layer({"Frame", kInk, LineType::Continuous, 0.7});
+  d.layer({"Visible", kInk, LineType::Continuous, 0.5});
+  d.layer({"Tangent", kInk, LineType::Continuous, 0.25});
+  d.layer({"Hidden", kInk, LineType::Hidden, 0.25});
+  d.layer({"Dimensions", kInk, LineType::Continuous, 0.25});
+  d.layer({"Text", kInk, LineType::Continuous, 0.25});
+  draw_paper(d, doc, scene, sheet);
+  json skipped = json::array();
+  int views = 0, items = 0, bodies = 0;
+  const auto frames = layout(doc, scene, sheet);
+  for (size_t i = 0; i < frames.size(); ++i) {
+    const ViewFrame& f = frames[i];
+    const SheetView* v = scene.sheet_view(f.id);
+    if (!f.error.empty() || !v) {
+      skipped.push_back({{"id", f.id}, {"error", f.error}});
+      continue;
+    }
+    const double n = static_cast<double>(frames.size());
+    const auto g = project(doc, scene, view_spec(scene, *v), [&](double t, const std::string& phase) {
+      return !progress || progress(t < 0 ? -1 : (static_cast<double>(i) + t) / n, phase);
+    });
+    draw_view(d, f, *v, *g);
+    bodies += static_cast<int>(g->bodies.size());
+    ++views;
+  }
+  std::vector<std::string> owners;  // the views items hang on, the sheet's own ("") among them, in the items' order
+  for (const auto& id : sheet.items)
+    if (const SheetItem* t = scene.sheet_item(id); t && std::find(owners.begin(), owners.end(), t->view) == owners.end()) owners.push_back(t->view);
+  for (const auto& owner : owners) items += draw_items(d, doc, scene, sheet, frames, owner, skipped);
   if (report) *report = {{"views", views}, {"items", items}, {"bodies", bodies}, {"skipped", skipped}};
   return d;
 }

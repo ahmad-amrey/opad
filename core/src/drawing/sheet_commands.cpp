@@ -126,12 +126,15 @@ json default_place(const json& result, const std::string& type) {
 }  // namespace
 
 void register_sheet_commands(const std::function<void(const CommandInfo&, Handler)>& add) {
-  add({"sheet", "Add a drawing sheet",
+  add({"sheet", "Add a drawing sheet, with a template's frame and title block and, given views, its standard views laid out at a scale that fits",
        {{"doc", "path"}, {"name", "string"}, {"drawing", "string - the drawing it belongs to"},
         {"size", "A4|A3|A2|A1|A0|ANSI-A|ANSI-B|ANSI-C|ANSI-D|ANSI-E - default A3"}, {"orientation", "landscape|portrait"},
         {"width", "number - mm, a custom size with height"}, {"height", "number"}, {"standard", "iso|asme"},
-        {"projection", "first|third - angle; default by standard"}, {"scale", "string - the views' scale, 1:2 (default 1:1)"},
-        {"values", "object - title block fields"}, {"by", "string"}},
+        {"projection", "first|third - angle; default by standard"}, {"scale", "string - the views' scale, 1:2 (default 1:1), auto with views"},
+        {"template", "iso|ansi|none|object - frame and title block; default by standard"}, {"template_file", "path - a DXF or DWG frame and title block"},
+        {"values", "object - title block fields (=key looks one up)"}, {"views", "array|csv - front,top,side,iso: base first, then projected"},
+        {"select", "array|csv - nodes the views draw (default all)"}, {"hide", "array|csv"}, {"hidden", "bool - hidden lines"},
+        {"tangent", "show|thin|hide - edges between tangent faces"}, {"by", "string"}},
        true},
       [](Document* d, const json& a) {
         Document& doc = need_doc(d);
@@ -139,28 +142,73 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         json op = {{"op", "sheet"}};
         op["name"] = a.value("name", "Sheet " + std::to_string(scene.sheets.size() + 1));
         op["drawing"] = a.value("drawing", scene.sheets.empty() ? std::string("Drawing 1") : scene.sheets.back().drawing);
+        const std::string standard = a.value("standard", "iso");
+        if (standard != "iso" && standard != "asme") throw Error("sheet: standard is iso or asme");
+        json tmpl;
+        if (a.contains("template_file")) tmpl = drawing::template_from_file(doc, path_from_utf8(a["template_file"].get<std::string>()));
         if (a.contains("width") || a.contains("height")) {
           const double w = a.value("width", 0.0), h = a.value("height", 0.0);
           if (!(w > 0 && h > 0 && w < 1e5 && h < 1e5)) throw Error("sheet: width and height are the paper's size in mm");
           op["size"] = {{"w", w}, {"h", h}};
+        } else if (tmpl.contains("size") && !a.contains("size")) {
+          op["size"] = tmpl["size"];
         } else {
           const std::string o = a.value("orientation", "landscape");
           if (o != "landscape" && o != "portrait") throw Error("sheet: orientation is landscape or portrait");
           op["size"] = drawing::paper_size(a.value("size", "A3"), o == "landscape");
         }
-        const std::string standard = a.value("standard", "iso");
-        if (standard != "iso" && standard != "asme") throw Error("sheet: standard is iso or asme");
+        if (tmpl.is_null()) {
+          const json t = a.value("template", json(standard == "asme" ? "ansi" : "iso"));
+          if (t.is_object()) tmpl = t;
+          else if (t.is_string() && t != "none") tmpl = drawing::make_template(t.get<std::string>(), op["size"]["w"].get<double>(), op["size"]["h"].get<double>());
+          else if (!t.is_string()) throw Error("sheet: template is iso, ansi, none or a template object");
+        }
+        if (tmpl.is_object()) tmpl.erase("size");
+        if (!tmpl.is_null()) op["template"] = tmpl;
         const std::string projection = a.value("projection", standard == "asme" ? "third" : "first");
         if (projection != "first" && projection != "third") throw Error("sheet: projection is first or third (angle)");
         op["standard"] = standard;
         op["projection"] = projection;
-        op["scale"] = drawing::scale_text(drawing::parse_scale(a.value("scale", "1:1")));
         if (a.contains("values")) {
           if (!a["values"].is_object()) throw Error("sheet: values is an object of title block fields");
           op["values"] = a["values"];
         }
+        const std::vector<std::string> views = strings(a.value("views", json()));
+        const std::string scale = a.value("scale", views.empty() ? "1:1" : "auto");
+        json plan;
+        if (!views.empty()) {
+          json source = json::object(), style = json::object();
+          if (const auto nodes = strings(a.value("select", json())); !nodes.empty()) source["nodes"] = nodes;
+          if (const auto hide = strings(a.value("hide", json())); !hide.empty()) source["hide"] = hide;
+          if (a.contains("hidden")) style["hidden"] = a["hidden"].get<bool>();
+          if (a.contains("tangent")) {
+            const std::string t = a["tangent"].get<std::string>();
+            if (t != "show" && t != "thin" && t != "hide") throw Error("sheet: tangent is show, thin or hide");
+            style["tangent"] = t;
+          }
+          plan = drawing::plan_views(doc, scene, op, views, source, scale, style);
+          op["scale"] = plan["scale"];
+        } else {
+          if (scale == "auto") throw Error("sheet: scale auto needs views to fit");
+          op["scale"] = drawing::scale_text(drawing::parse_scale(scale));
+        }
         const std::string id = doc.append(op, a.value("by", "")).id;
-        return json{{"id", id}, {"size", op["size"]}, {"scale", op["scale"]}, {"projection", projection}};
+        json out = {{"id", id}, {"size", op["size"]}, {"scale", op["scale"]}, {"projection", projection}};
+        if (op.contains("template")) out["template"] = op["template"].value("id", "");
+        if (!plan.is_null()) {
+          json made = json::array();
+          std::string base;
+          for (const auto& v : plan["views"]) {
+            json record = v["record"];
+            record["sheet"] = id;
+            if (record.value("parent", "") == "base") record["parent"] = base;
+            const std::string view = doc.append(record, a.value("by", "")).id;
+            if (base.empty()) base = view;
+            made.push_back({{"id", view}, {"view", v["view"]}, {"kind", record["kind"]}});
+          }
+          out["views"] = made;
+        }
+        return out;
       });
 
   add({"sheet_view", "Add a base view, or one projected from parent (first/third angle as the sheet says); returns its paper frame",
@@ -267,7 +315,7 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         return out;
       });
 
-  add({"sheet_edit", "Change a sheet, view or item: set fields as sheet_info shows them (null removes); a dimension is measured again",
+  add({"sheet_edit", "Change a sheet, view or item: set fields as sheet_info shows them (null removes); a dimension is measured again; a sheet takes size A3 (its template follows), template iso|ansi|none, template_file",
        {{"doc", "path"}, {"target", "uuid"}, {"set", "object"}, {"by", "string"}}, true},
       [](Document* d, const json& a) {
         Document& doc = need_doc(d);
@@ -284,7 +332,23 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         else if (const SheetItem* t = scene.sheet_item(id)) def = t->def;
         else throw Error("sheet_edit: it is not on a sheet any more");
         if (set.contains("size") && set["size"].is_string())
-          set["size"] = drawing::paper_size(set["size"].get<std::string>(), def["size"].value("w", 0.0) >= def["size"].value("h", 0.0));
+          set["size"] = drawing::paper_size(set["size"].get<std::string>(), set.value("orientation", def["size"].value("w", 0.0) >= def["size"].value("h", 0.0) ? "landscape" : "portrait") == "landscape");
+        set.erase("orientation");
+        if (target->type == "sheet") {  // a built-in template is drawn for its paper: made again for a new one
+          if (set.contains("template_file")) {
+            json t = drawing::template_from_file(doc, path_from_utf8(set["template_file"].get<std::string>()));
+            t.erase("size");
+            set["template"] = t;
+            set.erase("template_file");
+          }
+          const json size = set.value("size", def.value("size", json::object()));
+          const json was = def.value("template", json());
+          std::string remake = set.contains("template") && set["template"].is_string() ? set["template"].get<std::string>() : "";
+          if (remake.empty() && set.contains("size") && !set.contains("template") && was.is_object() && (was.value("id", "") == "iso" || was.value("id", "") == "ansi"))
+            remake = was["id"].get<std::string>();
+          if (remake == "none") set["template"] = nullptr;
+          else if (!remake.empty()) set["template"] = drawing::make_template(remake, size.value("w", 0.0), size.value("h", 0.0));
+        }
         if (set.contains("refs")) set["refs"] = references(doc, scene, set["refs"], set.value("aspects", json()));
         set.erase("aspects");
         if (set.contains("place") && set["place"].is_array()) set["place"] = {{"text", set["place"]}};
