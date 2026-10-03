@@ -142,6 +142,7 @@ std::string kind_of(const fs::path& file) {
   if (ext == ".brep" || ext == ".brp") return "brep";
   if (ext == ".dxf" || ext == ".dwg" || ext == ".svg") return "drawing";
   if (ext == ".kicad_pcb") return "kicad_pcb";
+  if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".gif" || ext == ".webp") return "image";
   return "mesh";
 }
 
@@ -291,8 +292,10 @@ const json& nodes_of(const json& data) {
   return data.contains("nodes") ? data["nodes"] : none;
 }
 
-// The bodies a read's nodes name (`order`: each once, as the nodes list them), each with the key of its geometry.
-std::map<std::string, std::string> derived_keys(const Document& scratch, const json& nodes, std::vector<std::string>& order) {
+// The bodies a read's nodes name (`order`: each once, as the nodes list them), each with the key of its geometry (and of its
+// picture: another picture of the same size is another body).
+std::map<std::string, std::string> derived_keys(const Document& scratch, const json& nodes, std::vector<std::string>& order,
+                                                const std::map<std::string, json>& pictures) {
   std::set<std::string> seen;
   each_body(nodes, [&](const json& n) {
     if (seen.insert(n.value("key", "")).second) order.push_back(n.value("key", ""));
@@ -301,7 +304,10 @@ std::map<std::string, std::string> derived_keys(const Document& scratch, const j
   for (const auto& from : order) shapes.push_back(body_shape(scratch, from));
   const std::vector<std::string> keys = asset_keys(shapes);
   std::map<std::string, std::string> out;
-  for (size_t i = 0; i < order.size(); ++i) out[order[i]] = keys[i];
+  for (size_t i = 0; i < order.size(); ++i) {
+    const auto it = pictures.find(order[i]);
+    out[order[i]] = it == pictures.end() ? keys[i] : sha256_hex(keys[i] + "|" + sha256_hex(it->second.dump()));
+  }
   return out;
 }
 
@@ -399,17 +405,32 @@ json read_op(const Document& scratch) {
   throw Error("the file holds nothing to show");
 }
 
-json body_meta(const Document& scratch, const std::string& from, const std::string& import_id) {
+// A linked picture's bytes stay in its file: the read's rasters give up their data (`href`), which goes with the body entry
+// (never saved) and reaches the scene from there. Body in the read -> its picture.
+std::map<std::string, json> take_pictures(json& nodes) {
+  std::map<std::string, json> out;
+  each_body(nodes, [&](json& n) {
+    if (n.contains("raster") && n["raster"].is_object() && n["raster"].contains("href")) {
+      out[n.value("key", "")] = n["raster"]["href"];
+      n["raster"].erase("href");
+    }
+  });
+  return out;
+}
+
+json body_meta(const Document& scratch, const std::string& from, const std::string& import_id, const std::map<std::string, json>& pictures = {}) {
   const BodyEntry* e = scratch.body(from);
   json meta = e ? e->meta : json::object();
   meta["asset"] = import_id;
+  if (const auto it = pictures.find(from); it != pictures.end()) meta["href"] = it->second;
   return meta;
 }
 
 // `stale`: read from a file that is not the one synced, so the shape is not what the key stood for when the document's
 // features were computed (a sync must not keep such a key: what depends on it has to be computed again).
-void bind_body(Document& doc, const Document& scratch, const std::string& from, const std::string& key, const std::string& import_id, bool stale = false) {
-  json meta = body_meta(scratch, from, import_id);
+void bind_body(Document& doc, const Document& scratch, const std::string& from, const std::string& key, const std::string& import_id,
+               const std::map<std::string, json>& pictures, bool stale = false) {
+  json meta = body_meta(scratch, from, import_id, pictures);
   if (stale) meta["stale"] = true;
   doc.add_external_body(key, meta);
   cache_shape(doc, key, body_shape(scratch, from));
@@ -628,13 +649,14 @@ std::vector<AssetState> load_assets(Document& doc, const AssetOptions& opt) {
           read_file(scratch, st.file, asset, content_of(asset, st.sha256, st.models), opt);
         }
         json nodes = read_op(scratch)["nodes"];
+        const std::map<std::string, json> pictures = take_pictures(nodes);
         relabel(nodes, e.op->id, "", &nodes_of(e.data()));
         std::map<std::string, std::string> from;  // node id -> body in the read
         each_body(nodes, [&](const json& n) { from[n.value("id", "")] = n.value("key", ""); });
         // In a changed file, a part whose geometry gives the key it had is the part synced, not stale.
         std::vector<std::string> order;
         std::map<std::string, std::string> derived;  // body in the read -> its key
-        if (stale) derived = derived_keys(scratch, nodes, order);
+        if (stale) derived = derived_keys(scratch, nodes, order, pictures);
         st.unbound = 0;
         int changed = 0;
         // Bound by place, under the keys the import names.
@@ -645,7 +667,7 @@ std::vector<AssetState> load_assets(Document& doc, const AssetOptions& opt) {
           if (it == from.end()) return void(++st.unbound);
           const bool differs = stale && derived[it->second] != key;
           changed += differs;
-          bind_body(doc, scratch, it->second, key, e.op->id, differs);
+          bind_body(doc, scratch, it->second, key, e.op->id, pictures, differs);
         });
         if (stale) st.reason = changed ? std::to_string(changed) + " parts differ from the version synced" : "the parts are as synced";
         if (st.unbound) st.reason = std::to_string(st.unbound) + " parts are no longer in the file" + (changed ? ", " + std::to_string(changed) + " differ" : "");
@@ -707,14 +729,15 @@ ImportResult link(Document& doc, const fs::path& file, const fs::path& derived, 
   const std::string id = new_uuid();
   relabel(data["nodes"], id, "");
   ImportResult res;
+  const std::map<std::string, json> pictures = take_pictures(data["nodes"]);
   std::vector<std::string> order;
-  std::map<std::string, std::string> keys = derived_keys(scratch, data["nodes"], order);  // body in the read -> its key
+  std::map<std::string, std::string> keys = derived_keys(scratch, data["nodes"], order, pictures);  // body in the read -> its key
   each_node(data["nodes"], [&](json& n) {
     if (n.value("type", "") != "body") return void(++res.components);
     ++res.bodies;
     n["key"] = keys[n.value("key", "")];
   });
-  for (const auto& from : order) bind_body(doc, scratch, from, keys[from], id);
+  for (const auto& from : order) bind_body(doc, scratch, from, keys[from], id, pictures);
   data["op"] = "import";
   data["id"] = id;
   data["asset"] = asset;
@@ -772,6 +795,7 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
     read_file(scratch, where, asset, content_of(asset, sha, models), opt);
   }
   json fresh = read_op(scratch);
+  const std::map<std::string, json> pictures = take_pictures(fresh["nodes"]);
   relabel(fresh["nodes"], id, "", &nodes_of(data));
   // A body whose geometry did not change keeps its key (no needless regeneration downstream): the key of its geometry is
   // the one its place had, or the shape its place had is loaded, not stale and the same to the kernel's noise.
@@ -783,7 +807,7 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
     if (const auto it = was.find(n.value("id", "")); it != was.end()) before[n.value("key", "")].insert(it->second);
   });
   std::vector<std::string> order;
-  std::map<std::string, std::string> keys = derived_keys(scratch, fresh["nodes"], order);
+  std::map<std::string, std::string> keys = derived_keys(scratch, fresh["nodes"], order, pictures);
   int kept = 0;
   for (size_t i = 0; i < order.size(); ++i) {
     if (opt.progress && !opt.progress(double(i + 1) / double(order.size()), "comparing")) throw Error("cancelled");
@@ -796,7 +820,7 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
       continue;
     }
     const std::string& old = *it->second.begin();
-    if (it->second.size() == 1 && doc.has_body(old) && !doc.body(old)->meta.value("stale", false)) {
+    if (it->second.size() == 1 && !pictures.count(from) && doc.has_body(old) && !doc.body(old)->meta.value("stale", false)) {
       try {
         if (design::same_shapes(body_shape(scratch, from), body_shape(doc, old))) key = old, ++kept;
       } catch (const Standard_Failure&) {
@@ -832,7 +856,7 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
     // A key shown stale holds another version's shape (the shared cache gets the right one now: it is that key's geometry).
     if ((doc.has_body(key) && !doc.body(key)->meta.value("stale", false)) || !staging.insert(key).second) continue;
     const TopoDS_Shape shape = body_shape(scratch, from);
-    const json meta = body_meta(scratch, from, id);
+    const json meta = body_meta(scratch, from, id, pictures);
     staged.add_external_body(key, meta);
     cache_shape(staged, key, shape);
     bodies.push_back({key, "", meta, std::make_shared<TopoDS_Shape>(shape)});
@@ -884,6 +908,7 @@ design::Plan plan_asset_embed(const Document& doc, const std::string& import_id,
   for (size_t i = 0; i < keys.size(); ++i) {
     json meta = doc.body(keys[i])->meta;
     meta.erase("asset");
+    meta.erase("href");
     if (!work[i].error.empty()) throw Error("body '" + meta.value("name", keys[i].substr(0, 12)) + "' cannot be embedded: " + work[i].error);
     const std::string key = sha256_hex(work[i].brep);
     renamed[keys[i]] = key;
@@ -894,7 +919,11 @@ design::Plan plan_asset_embed(const Document& doc, const std::string& import_id,
     bodies.push_back({key, std::move(work[i].brep), meta, std::make_shared<TopoDS_Shape>(work[i].shape)});
   }
   json nodes = nodes_of(data);
-  each_body(nodes, [&](json& n) { n["key"] = renamed[n.value("key", "")]; });
+  each_body(nodes, [&](json& n) {
+    if (const json& meta = doc.body(n.value("key", ""))->meta; meta.contains("href") && n.contains("raster") && n["raster"].is_object())
+      n["raster"]["href"] = meta["href"];  // a picture's bytes come into the document with it
+    n["key"] = renamed[n.value("key", "")];
+  });
   asset["storage"] = "embedded";
   design::Plan plan = design::plan_ops(staged, {design::make_edit_op(e.op->id, {{"nodes", nodes}, {"asset", asset}})}, false, cancel);
   plan.bodies.insert(plan.bodies.begin(), bodies.begin(), bodies.end());

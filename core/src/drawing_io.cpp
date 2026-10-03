@@ -506,6 +506,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     if(ext==".3mf") return detail::import_3mf(doc,file,options);
     if(ext==".obj" || ext==".gltf" || ext==".glb" || ext==".wrl" || ext==".vrml") return detail::import_mesh_scene(doc,file,options);
     if(ext==".kicad_pcb") return import_kicad_pcb(doc,file,options);
+    if(ext==".png" || ext==".jpg" || ext==".jpeg" || ext==".bmp" || ext==".gif" || ext==".webp") return detail::import_image(doc,file,options);
   } catch(const Standard_Failure& e) { throw Error("cannot read "+file.filename().string()+": "+e.GetMessageString()); }
   if(ext==".dwg") {
     Conversion work; auto name=file.stem(); name+=".dxf";  // keeps the drawing's own name

@@ -11,6 +11,7 @@
 #include <STEPControl_Writer.hxx>
 #include <TopoDS_Compound.hxx>
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 
@@ -467,6 +468,75 @@ TEST(derived_file_read_in_the_sources_place) {
   const json packed = pack_asset(clone, import_id);
   CHECK_EQ(asset_of(clone, import_id)["derived"]["path"], "assets/.opad/part.step");
   CHECK(fs::exists(f.dir / "assets" / ".opad" / "part.step") && packed["copied"] == 2);
+}
+
+// Pictures as a canvas: a rectangle at the picture's resolution with the file's own bytes on it. Linked, the bytes stay in the
+// file (the body entry carries them, never the op); embedded, they come into the document once.
+namespace {
+std::string be32(uint32_t v) { return {char(v >> 24), char(v >> 16), char(v >> 8), char(v)}; }
+std::string chunk(const std::string& type, const std::string& data) { return be32(uint32_t(data.size())) + type + data + be32(0); }
+// A PNG as far as its headers go (w x h pixels, `ppm` pixels per metre; `tag` stands for the picture data).
+void png(const fs::path& p, uint32_t w, uint32_t h, uint32_t ppm, const std::string& tag) {
+  write(p, std::string("\x89PNG\r\n\x1a\n", 8) + chunk("IHDR", be32(w) + be32(h) + std::string("\x08\x06\0\0\0", 5)) +
+               chunk("pHYs", be32(ppm) + be32(ppm) + std::string(1, '\x01')) + chunk("IDAT", tag) + chunk("IEND", ""));
+}
+std::array<double, 2> extent(const Document& d, const Scene& s, const std::string& id) {
+  double x0, y0, z0, x1, y1, z1;
+  node_world_bbox(d, s, id).Get(x0, y0, z0, x1, y1, z1);
+  return {x1 - x0, y1 - y0};
+}
+}  // namespace
+
+TEST(pictures_import_and_link) {
+  Files f;
+  const fs::path pic = f.dir / "front.png", photo = f.dir / "photo.jpg";
+  png(pic, 400, 200, 3937, "first");  // 100 dpi: 101.6 x 50.8 mm
+  // A JPEG's headers: JFIF at 300 dpi, a 640 x 480 frame.
+  write(photo, std::string("\xFF\xD8\xFF\xE0\x00\x10JFIF\0\x01\x01\x01\x01\x2C\x01\x2C\0\0", 20) +
+                   std::string("\xFF\xC0\x00\x11\x08\x01\xE0\x02\x80\x03\x01\x22\x00\x02\x11\x01\x03\x11\x01\xFF\xD9", 21));
+  Document d = Document::create();
+  const ImportResult r = import_file(d, photo);
+  CHECK_EQ(r.info["px"][0], 640);
+  Scene s = resolve(d);
+  const Node* n = s.node(s.all_bodies()[0]);
+  CHECK_EQ(n->representation, "image");
+  CHECK(n->raster["href"].get<std::string>().rfind("data:image/jpeg;base64,", 0) == 0);
+  auto size = extent(d, s, n->id);
+  CHECK(about(size[0], 640 * 25.4 / 300, 0.01) && about(size[1], 480 * 25.4 / 300, 0.01));
+  CHECK_THROWS(import_file(d, [&] { write(f.dir / "fake.png", "not a picture"); return f.dir / "fake.png"; }()));
+  // Linked: the op keeps no bytes; the scene shows them, read from the file.
+  d.save_as(f.dir / "design.opad");
+  link_file(d, pic);
+  const std::string import_id = last_import(d).id;
+  CHECK_EQ(last_import(d).data["asset"]["kind"], "image");
+  CHECK(!last_import(d).data["nodes"][0]["raster"].contains("href"));
+  s = resolve(d);
+  const std::string canvas = linked(s, 0);
+  CHECK(s.node(canvas)->raster["href"].get<std::string>().rfind("data:image/png;base64,", 0) == 0);
+  size = extent(d, s, canvas);
+  CHECK(about(size[0], 101.6, 0.01) && about(size[1], 50.8, 0.01));
+  d.save();
+  const std::string text = read_text_file(f.dir / "design.opad");
+  CHECK(text.find("data:image/png") == std::string::npos && text.find("data:image/jpeg") != std::string::npos);
+  Document reopened = Document::load(f.dir / "design.opad");
+  CHECK_EQ(load_assets(reopened)[0].state, "ok");
+  CHECK(resolve(reopened).node(canvas)->raster.contains("href"));
+  CHECK(!resolve(Document::load(f.dir / "design.opad")).node(canvas)->raster.contains("href"));  // as an older build: a frame
+  // Another picture of the same size: the same rectangle, yet another body (its key follows the bytes).
+  const std::string was = resolve(reopened).node(canvas)->body_key;
+  png(pic, 400, 200, 3937, "second");
+  design::Plan plan = plan_asset_sync(reopened, import_id);
+  CHECK_EQ(plan.report["changed"].size(), 1u);
+  design::commit(reopened, std::move(plan));
+  s = resolve(reopened);
+  CHECK(s.node(canvas)->body_key != was && s.node(canvas)->raster["href"] != resolve(d).node(canvas)->raster["href"]);
+  // Embedded: the bytes come into the document with it.
+  design::commit(reopened, plan_asset_embed(reopened, import_id));
+  reopened.save();
+  fs::remove(pic);
+  Document alone = Document::load(f.dir / "design.opad");
+  s = resolve(alone);
+  CHECK(s.node(canvas)->raster["href"] == resolve(reopened).node(canvas)->raster["href"] && !s.node(canvas)->body_missing);
 }
 
 TEST(embed_and_pack) {

@@ -46,6 +46,9 @@ ImportResult import_iges(Document& doc, const std::filesystem::path& file, const
 // glTF, GLB, OBJ, VRML; `kicad_vrml`: a KiCad footprint model, in 2.54 mm units and Z up (VRML is otherwise metres, Y up).
 ImportResult import_mesh_scene(Document& doc, const std::filesystem::path& file, const ImportOptions& opt, bool kicad_vrml = false);
 ImportResult import_brep_file(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
+// A picture (.png .jpg .bmp .gif .webp) as a canvas: a flat rectangle at the picture's resolution with its bytes as a raster
+// (image_io.cpp).
+ImportResult import_image(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
 ImportResult import_stl(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
 ImportResult import_ply(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
 ImportResult import_3mf(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);

@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QImage>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QStatusBar>
@@ -53,7 +54,8 @@ bool MainWindow::offerAssetTrust() {
 // also links ../outside/other.step, and parts/third.step. Opened: the part's bodies come from its file (state "changed"),
 // the outside file is not read (its bodies missing) and the question about it is asked; read once trusted, its bodies are
 // displayed; saved, the file holds no body of either; a sync planned on a worker commits as one edit of the import that
-// keeps the node and changes its body, and undoes and redoes; third.step imported linked shows its bodies, none stored.
+// keeps the node and changes its body, and undoes and redoes; third.step imported linked shows its bodies, none stored; a
+// picture linked last is shown on its canvas (its colour in the frame) while the op keeps none of its bytes.
 bool MainWindow::benchAssets() {
   const QString shot = qEnvironmentVariable("OPAD_BENCH_ASSETS");
   if (shot.isEmpty()) return false;
@@ -129,6 +131,34 @@ bool MainWindow::benchAssets() {
     });
     return true;
   }
+  if (phase == 2) {
+    const std::string picture = import_of("picture.png");
+    bool gone = true;
+    if (picture.empty() || linked(picture, gone) != 1 || gone || state("picture.png") != "ok") return fail("the linked picture");
+    const opad::Op* op = m_doc->doc.find_op(picture);
+    std::string canvas;
+    for (const auto& id : m_doc->scene.all_bodies())
+      if (m_doc->node(id)->source_op == picture) canvas = id;
+    if (op->data["asset"].value("kind", "") != "image" || op->data["nodes"][0]["raster"].contains("href") || !m_doc->node(canvas)->raster.contains("href"))
+      return fail("the picture's bytes belong with its file, shown, never in the op");
+    QTimer::singleShot(1500, this, [=, this] {
+      m_viewport->standardView("top");
+      m_viewport->fitAll();
+      QTimer::singleShot(800, this, [=, this] {
+        const QImage frame = m_viewport->grabImage().convertToFormat(QImage::Format_RGB32);
+        int magenta = 0;
+        for (int y = 0; y < frame.height(); ++y)
+          for (int x = 0; x < frame.width(); ++x)
+            if (const QRgb c = frame.pixel(x, y); qRed(c) > 200 && qGreen(c) < 60 && qBlue(c) > 200) ++magenta;
+        trace::log(QString("bench: assets: picture pixels %1 of %2").arg(magenta).arg(frame.width() * frame.height()));
+        if (magenta < frame.width() * frame.height() / 50) return (void)fail("the picture is not shown on its canvas");
+        frame.save(QString(shot).replace(".png", ".picture.png"));
+        trace::log("bench: assets picture linked, shown on its canvas, its bytes not in the document PASS");
+        QCoreApplication::exit(0);
+      });
+    });
+    return true;
+  }
   const std::string third = import_of("third.step");
   bool missing = true;
   if (third.empty() || linked(third, missing) != 1 || missing || state("third.step") != "ok") return fail("the linked import");
@@ -142,7 +172,14 @@ bool MainWindow::benchAssets() {
     QTimer::singleShot(800, this, [=, this] {
       if (!m_viewport->grabImage().save(shot)) return (void)fail("frame");
       trace::log("bench: assets import linked, displayed, not stored PASS");
-      QCoreApplication::exit(0);
+      // A picture, linked: one colour, so the frame shows whether it is on its canvas.
+      const QString picture = QFileInfo(m_doc->path()).absolutePath() + "/parts/picture.png";
+      QImage pixels(64, 32, QImage::Format_RGB32);
+      pixels.fill(QColor(255, 0, 255));
+      if (!pixels.save(picture)) return (void)fail("picture");
+      phase = 2;
+      beginLoad({});
+      m_doc->startImport(picture, {}, {}, {}, true);  // runBench again
     });
   });
   return true;

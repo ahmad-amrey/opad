@@ -1,7 +1,7 @@
 #pragma once
 // Linked assets (TODO 11 UI-67): a file imported by reference rather than by copy, for a STEP or a board one designs
 // around without editing it. Its import op carries an `asset` object:
-//   {"v":1, "kind":"step|iges|brep|mesh|drawing|kicad_pcb", "path":"<relative to the document, forward slashes>",
+//   {"v":1, "kind":"step|iges|brep|mesh|drawing|kicad_pcb|image", "path":"<relative to the document, forward slashes>",
 //    "abs":"<absolute fallback>", "sha256":"<the file's>", "size":N, "storage":"linked|project|embedded",
 //    "builder":{"name":"opad","version":1,"options":{...how it was read}}, "synced":"<time>",
 //    "models_sha256":"<a KiCad board: its 3D models' names and contents as found>",

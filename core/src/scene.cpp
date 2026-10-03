@@ -233,6 +233,9 @@ struct SceneBuilder::Impl {
           const auto& c = b->meta["color"];
           placed.color = {c[0].get<double>(), c[1].get<double>(), c[2].get<double>()};
         }
+        // A linked picture: its bytes come with the body read from the file, never with the op.
+        if (b && b->external && placed.raster.is_object() && !placed.raster.contains("href") && b->meta.contains("href"))
+          placed.raster["href"] = b->meta["href"];
       }
       attach(nid, parent, -1);
       if (!body && jn.contains("children")) build_nodes(jn["children"], nid, op_id, op_type);
