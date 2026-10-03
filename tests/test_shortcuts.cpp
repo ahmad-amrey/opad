@@ -2,6 +2,7 @@
 #include "check.hpp"
 #include <QApplication>
 #include <QKeySequenceEdit>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
@@ -123,6 +124,21 @@ TEST(value_keys_display_styles_and_the_sketch) {
     dialog.reject();
   }
   QSettings().clear();
+}
+TEST(value_keys_outside_the_sketch_are_explained) {
+  // UI-122: a tool that takes values (a feature, the section, a drawing being placed) types the value keys too; the defaults
+  // on them stay (no migration), the editor says when a command's key is one.
+  QSettings().clear();QAction wire,fit,line;init(wire,"view.wire","7");init(fit,"view.fit","F");init(line,"sketch.line","L");
+  ShortcutEditor dialog({&wire,&fit,&line});
+  auto* details=dialog.findChild<QLabel*>("shortcutDetails");CHECK(details);
+  const QString note="this key types into its boxes instead";
+  auto* tree=dialog.findChild<QTreeWidget*>("shortcutTree");
+  tree->setCurrentItem(item(dialog,"view.wire"));CHECK(details->text().contains(note));
+  tree->setCurrentItem(item(dialog,"view.fit"));CHECK(!details->text().contains(note));
+  choose(dialog,"view.fit","0");CHECK(details->text().contains(note));  // as a key is pressed in the binding box
+  choose(dialog,"view.fit","Ctrl+0");CHECK(!details->text().contains(note));
+  tree->setCurrentItem(item(dialog,"sketch.line"));CHECK(!details->text().contains(note));
+  dialog.reject();QSettings().clear();
 }
 TEST(value_key_migration) {
   QSettings s;s.clear();s.setValue("shortcuts/sketch.line","5");s.setValue("shortcuts/sketch.circle","Alt+5");s.setValue("shortcuts/view.fit","0");s.setValue("shortcuts/sketch.trim",".");

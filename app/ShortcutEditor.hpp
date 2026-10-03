@@ -45,6 +45,7 @@ class ShortcutEditor : public QDialog {
   int current() const;
   void filter();
   void selectCurrent();
+  void describe();  // the selected command's details, for the key in the binding box
   void refresh();
   bool assign(int index,const QKeySequence& key);
   QVector<int> collisions(int index,const QKeySequence& key) const;
