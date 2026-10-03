@@ -425,6 +425,7 @@ class Reader {
   struct Style {
     std::string font, family;  // its font file (a shape font, .shx, or a TrueType one) and its TrueType family (XDATA)
     double height = 0, width = 1;
+    bool bold = false, italic = false;  // the family's faces (XDATA flags)
   };
   struct Block {
     size_t first = 0, last = 0;  // entity range in m_blockEntities
@@ -624,7 +625,12 @@ void Reader::tables(const std::vector<Entity>& section) {
     } else if (e.type == "STYLE") {
       Style style;
       style.font = decode(trimmed(f.str(3)));
-      if (f.has(1001)) style.family = decode(trimmed(f.str(1000)));  // ACAD's XDATA: the TrueType family
+      if (f.has(1001)) {  // ACAD's XDATA: the TrueType family and its italic (0x1000000) and bold (0x2000000) flags
+        style.family = decode(trimmed(f.str(1000)));
+        const long flags = long(f.num(1071, 0));
+        style.italic = flags & 0x1000000;
+        style.bold = flags & 0x2000000;
+      }
       style.height = f.num(40);
       style.width = f.num(41, 1);
       if (!(style.width > 0)) style.width = 1;
@@ -1301,6 +1307,8 @@ TextRequest Reader::text_request(std::string_view styleName, std::string text, d
   if (style != m_styles.end()) {
     r.font = style->second.font;
     r.family = style->second.family;
+    r.bold = style->second.bold;
+    r.italic = style->second.italic;
     r.width = style->second.width;
   }
   if (!(height > 0)) height = style != m_styles.end() && style->second.height > 0 ? style->second.height : 2.5;

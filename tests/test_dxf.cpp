@@ -290,6 +290,16 @@ TEST(mtext_leading_formatting_holds_for_all_of_it) {
   CHECK(std::abs((wide[2] - wide[0]) / (p[2] - p[0]) - 2) < 0.1);
   CHECK(find(all, "Red")->has_color && find(all, "Red")->color[0] == 1 && find(all, "Red")->color[1] == 0);
   CHECK(bold[2] - bold[0] > (p[2] - p[0]) * 1.02);  // Arial Bold is wider
+  // A style's XDATA flags: arial.ttf in the family's bold face.
+  write_text_file(f.dir / "styles.dxf",
+                  section("TABLES", {{0, "TABLE"}, {2, "STYLE"}, {0, "STYLE"}, {2, "B"}, {70, "0"}, {40, "0"}, {41, "1"}, {3, "arial.ttf"},
+                                     {1001, "ACAD"}, {1000, "Arial"}, {1071, "33554466"}, {0, "ENDTAB"}}) +
+                      section("ENTITIES", {{0, "TEXT"}, {8, "Bold"}, {7, "B"}, {10, "0"}, {20, "0"}, {40, "5"}, {1, "HELL"},
+                                           {0, "TEXT"}, {8, "Plain"}, {10, "0"}, {20, "20"}, {40, "5"}, {1, "HELL"}}) +
+                      kEof);
+  const auto styled = bodies(import(f.dir / "styles.dxf"));
+  const auto styledBold = extent(find(styled, "Bold")->box), styledPlain = extent(find(styled, "Plain")->box);
+  CHECK(styledBold[2] - styledBold[0] > (styledPlain[2] - styledPlain[0]) * 1.02);
 }
 
 // Bodies share no sub-shapes (the view meshes them on several threads at once): the same text, or a block with a fill,

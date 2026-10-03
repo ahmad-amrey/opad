@@ -639,9 +639,12 @@ struct TextOutliner::Impl {
     const std::string name = trim(r.font);
     const auto dot = name.find_last_of('.');
     const std::string ext = dot == std::string::npos || name.find_first_of("/\\", dot) != std::string::npos ? "" : lower(name.substr(dot));
-    if (ext == ".ttf" || ext == ".ttc" || ext == ".otf") {
+    if ((r.bold || r.italic) && !r.family.empty())  // the family has the bold or italic face the file is the regular of
+      for (const auto& family : split_families(r.family))
+        if (!found) found = load_family(family, false, aspect);
+    if (!found && (ext == ".ttf" || ext == ".ttc" || ext == ".otf")) {
       if (const auto ref = file_font(name, folders)) found = load_font(*ref);
-    } else if (ext != ".shx" && ext != ".shp") {
+    } else if (!found && ext != ".shx" && ext != ".shp") {
       for (const auto& family : split_families(name))
         if (!found) found = load_family(family, false, aspect);
     }
