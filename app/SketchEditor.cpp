@@ -135,6 +135,14 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   connect(m_input,&DynamicInput::committed,this,[this]{if(!done())m_viewport->setFocus();});
   connect(m_input,&DynamicInput::escaped,this,[this]{escape();});
   connect(m_input,&DynamicInput::undoPoint,this,[this]{undoPoint();});
+  connect(m_input,&DynamicInput::valueTyped,this,[this]{if(m_active)retype();});  // the rubber band follows what is typed
+  connect(m_input,&DynamicInput::dropped,this,[this]{if(!m_active)return;m_entry.reset();retype();updateInput();});
+  connect(m_input,&DynamicInput::chipClicked,this,[this](const QString& key) {
+    if(!m_active || key!="angle")return;
+    m_angleRelative=!m_angleRelative;QSettings().setValue("sketch/input/angleRelative",m_angleRelative);
+    retype();updateInput();updateTransient();
+  });
+  m_input->setKeyHook([this](int box,QChar c){return m_active && entryKey(box,c);});
   connect(m_viewport,&Viewport::notesMoved,this,[this] {
     if(!m_active) return;
     const double pixels=m_viewport->pixelSize();
@@ -197,7 +205,7 @@ void SketchEditor::setVisible(bool visible) {
 void SketchEditor::begin(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry) {
   ++m_geometryRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   ++m_session;m_toolPreview.reset();m_previewRequested=false;
-  m_trackingPoint = 0; m_inferenceLocked = false;m_dragging=false;m_dragMoved=false;m_dragPending=false;m_dragReleased=false;m_inChange=false;m_options.clear();m_conflicts.clear();
+  m_trackingPoint = 0; m_inferenceLocked = false;m_typedValues.clear();m_entry.reset();m_pointer=m_cursor={};m_angleRelative=QSettings().value("sketch/input/angleRelative",false).toBool();m_dragging=false;m_dragMoved=false;m_dragPending=false;m_dragReleased=false;m_inChange=false;m_options.clear();m_conflicts.clear();
   m_id = sketchId;
   m_name = name;
   m_plane = plane;
@@ -234,7 +242,7 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
 
 void SketchEditor::end() {
   if (!m_active) return;
-  m_toolPreviewTimer.stop();m_dimensionHandle->hide();m_input->used();m_input->setFields({});m_input->hide();
+  m_toolPreviewTimer.stop();m_dimensionHandle->hide();forgetTyped();m_input->setFields({});m_input->hide();
   m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
   ++m_geometryRevision;++m_fillRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   m_viewport->setEdgeHover(false);
@@ -711,7 +719,8 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
   const bool redraw = h.kind != m_hover.kind || h.id != m_hover.id || m_tool != "select" || m_placingDim;
   const bool dimensionHover=h.kind==Hit::Dimension||m_hover.kind==Hit::Dimension;
   m_hover = h;
-  m_cursor = s;
+  m_pointer = s;
+  m_cursor = typedPoint(s);  // typed values hold it
   m_haveCursor = true;
   if(m_tool=="offset" && !dragging && !m_geometryJob)updateDimensionHandle();
   if (redraw) {if(m_placingDim||dimensionHover)rebuild();else updateTransient();}
@@ -1300,6 +1309,28 @@ void SketchEditor::updateTransient() {
         label = tr("Locked");
         break;
       case K::Grid: label = tr("Grid"); break;
+      case K::Typed: {  // what the typed values hold the point to, dashed: the X or Y line, the ΔX/ΔY legs, the angle's ray
+        double bu = 0, bv = 0;
+        const bool base = inputBase(bu, bv);
+        auto typed = [&](const char* key) { return m_typedValues.count(key) > 0; };
+        const double reach = 60 * px;
+        if (typed("x")) d.dashed.push_back({W(cu, cv - reach), W(cu, cv + reach), snapColor});
+        if (typed("y")) d.dashed.push_back({W(cu - reach, cv), W(cu + reach, cv), snapColor});
+        if (base && (typed("dx") || typed("dy"))) {
+          d.dashed.push_back({W(bu, bv), W(cu, bv), snapColor});
+          d.dashed.push_back({W(cu, bv), W(cu, cv), snapColor});
+        }
+        if (base && typed("angle")) {  // the ray, and what the angle is measured from
+          const double a = std::atan2(cv - bv, cu - bu), r = angleReference();
+          d.dashed.push_back({W(bu, bv), W(cu + reach * std::cos(a), cv + reach * std::sin(a)), snapColor});
+          d.dashed.push_back({W(bu, bv), W(bu + reach * std::cos(r), bv + reach * std::sin(r)), snapColor});
+        }
+        if (base && typed("length") && !typed("angle")) {  // a length alone: the point slides round this circle
+          const double r = m_typedValues.at("length");
+          for (int i = 0; i < 96; ++i) d.thin.push_back({W(bu + r * std::cos(i * M_PI / 48), bv + r * std::sin(i * M_PI / 48)), W(bu + r * std::cos((i + 1) * M_PI / 48), bv + r * std::sin((i + 1) * M_PI / 48)), snapColor});
+        }
+        break;
+      }
       case K::None: break;
     }
     if (m_cursor.grid) gridRing(cu, cv);

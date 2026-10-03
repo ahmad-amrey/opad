@@ -8,6 +8,9 @@
 #include <QApplication>
 #include <QKeyEvent>
 #include <QPushButton>
+#include <QSettings>
+#include <QToolButton>
+#include <QWheelEvent>
 #include <cmath>
 
 using namespace opad::design;
@@ -17,9 +20,11 @@ using namespace opad::design;
 // the picked chain's preview and box use it, a keypad digit typed into the box by the arrow replaces it, Enter applies it,
 // the value is still there after Apply, and a value typed while the tool panel has the keyboard reaches the tool, Esc puts
 // the old value back, the next Esc closes the tool. A polyline typed: X, Tab, Y, Shift+Tab and Tab, Enter; length, Tab,
-// angle, Enter; "20,0" (a comma moves on); keypad digits and the keypad's Enter. A click takes the typed values. Move: X,
-// Tab, Y, Enter at once. Tab never takes the keyboard off the view, and 5, 6 and 7 never switch the display style in a
-// sketch (their keys are let go there).
+// angle, Enter; "20,0" (a comma after a length: ΔX, ΔY); keypad digits and the keypad's Enter. A click takes the typed
+// values. Typed values hold the rubber band before Enter: X alone, X and Y (Tab locks X), a value that does not evaluate
+// (red, the pointer meanwhile), a length alone, an angle alone, the angle from the last line (the box's switch), '#'
+// absolute, "30<180", '@' relative in a rectangle, Esc going back to X/Y. Move: X, Tab, Y, Enter at once. Tab never takes
+// the keyboard off the view, and 5, 6 and 7 never switch the display style in a sketch (their keys are let go there).
 void SketchEditor::benchKeys() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_KEYS");
   QWidget* window = m_viewport->window();
@@ -53,6 +58,8 @@ void SketchEditor::benchKeys() {
   };
   auto box = [this](int i) { return m_input->box(i) ? m_input->box(i)->text() : QStringLiteral("<none>"); };
   auto at = [this](int id, double u, double v) { const SkPoint* p = m_sk.point(id); return p && std::abs(p->x - u) < 1e-6 && std::abs(p->y - v) < 1e-6; };
+  auto held = [this](double u, double v) { return m_cursor.kind == Snap::Kind::Typed && std::abs(m_cursor.u - u) < 1e-6 && std::abs(m_cursor.v - v) < 1e-6; };
+  auto where = [this] { return QString("(%1, %2)").arg(m_cursor.u).arg(m_cursor.v); };
   auto extent = [](const Sketch& sk, bool maximum) {
     double out = maximum ? -1e300 : 1e300;
     for (const auto& p : sk.points) out = maximum ? std::max(out, p.x) : std::min(out, p.x);
@@ -183,7 +190,8 @@ void SketchEditor::benchKeys() {
         send(Qt::Key_Return);
         check(m_chain.size() == 2 && at(m_chain[1], 10, 80), "30 at 90 degrees goes to (10, 80)");
         type("20,0");
-        check(box(0) == "20" && box(1) == "0" && m_input->current() == 1, "a comma moves on from length to angle");
+        check(m_input->key(0) == "dx" && m_input->key(1) == "dy" && box(0) == "20" && box(1) == "0" && m_input->current() == 1,
+              "a comma after a length switches to ΔX and ΔY, the 20 kept as ΔX");
         send(Qt::Key_Return);
         check(m_chain.size() == 3 && at(m_chain[2], 30, 80), "20 at 0 degrees goes to (30, 80)");
         type("15", true);
@@ -206,6 +214,110 @@ void SketchEditor::benchKeys() {
         send(Qt::Key_Escape);
         send(Qt::Key_Escape);
         check(m_tool == "select", "Esc cancels the corner, then closes the tool");
+
+        // Typed values hold the rubber band at once: X typed, the pointer gives Y; X and Y typed, the pointer gives nothing.
+        setTool("line");
+        sketchMove(120, 40, Qt::NoModifier, false);
+        type("130");
+        check(held(130, 40), "X 130 typed holds the next point at X 130, the pointer's Y " + where());
+        sketchMove(125, 45, Qt::NoModifier, false);
+        check(held(130, 45), "the pointer moves it along X 130 only " + where());
+        send(Qt::Key_Plus, Qt::NoModifier, "+");
+        check(!m_input->problem("x").isEmpty() && m_input->box(0)->property("invalid").toBool() && std::abs(m_cursor.u - 125) < 1e-6,
+              "130+ does not evaluate: the box is red, its tooltip says why (" + m_input->problem("x") + "), the pointer gives X meanwhile");
+        m_input->grab().save(prefix + ".invalid-input.png");
+        send(Qt::Key_Backspace);
+        check(m_input->problem("x").isEmpty() && held(130, 45), "Backspace puts it right");
+        send(Qt::Key_Tab);
+        type("60");
+        check(m_input->box(0)->property("locked").toBool() && !m_input->box(1)->property("locked").toBool() && held(130, 60),
+              "Tab locks X (padlock), 60 typed into Y: the point is (130, 60)");
+        sketchMove(10, 10, Qt::NoModifier, false);
+        check(held(130, 60), "wherever the pointer goes " + where());
+        m_input->grab().save(prefix + ".locked-input.png");
+        send(Qt::Key_Return);
+        check(m_chain.size() == 1 && at(m_chain[0], 130, 60) && !m_input->typed(), "Enter starts the line there");
+        // Length and angle: a length alone keeps the pointer's direction, an angle alone goes as far as the pointer along it.
+        sketchMove(130, 100, Qt::NoModifier, false);
+        type("25");
+        check(held(130, 85), "a length of 25 typed: 25 towards the pointer " + where());
+        sketchMove(170, 60, Qt::NoModifier, false);
+        check(held(155, 60), "the pointer turns it round, still 25 long " + where());
+        send(Qt::Key_Escape);
+        check(!m_input->typed() && m_chain.size() == 1 && m_cursor.kind != Snap::Kind::Typed, "Esc undoes the 25: the pointer again, the line goes on");
+        send(Qt::Key_Tab);
+        type("90");
+        sketchMove(100, 90, Qt::NoModifier, false);
+        check(held(130, 90), "an angle of 90 typed alone: up the ray as far as the pointer goes up " + where());
+        send(Qt::Key_Return);
+        check(m_chain.size() == 2 && at(m_chain[1], 130, 90), "Enter puts the point there");
+        // The angle from the last line: the switch after the angle box.
+        sketchMove(150, 95, Qt::NoModifier, false);
+        auto chipNow = [this]() -> QToolButton* {  // boxes of earlier steps wait to be deleted
+          for (auto* b : m_input->findChildren<QToolButton*>("dynamicInputChip"))
+            if (!b->isHidden()) return b;
+          return nullptr;
+        };
+        QToolButton* chip = chipNow();
+        check(chip && chip->text() == QString::fromUtf8("∠ X axis") && !m_angleRelative, "with a line before it the angle box says it measures from the X axis");
+        if (chip) chip->click();
+        chip = chipNow();
+        check(m_angleRelative && QSettings().value("sketch/input/angleRelative").toBool() && chip && chip->text() == QString::fromUtf8("∠ last line"),
+              "a click on it measures from the last line (saved)");
+        type("10");
+        send(Qt::Key_Tab);
+        type("-90");
+        check(held(140, 90), "10 at -90 from the last line (which goes up) goes right " + where());
+        m_input->grab().save(prefix + ".polar-input.png");
+        send(Qt::Key_Return);
+        check(m_chain.size() == 3 && at(m_chain[2], 140, 90), "and Enter puts it there");
+        if (chip = chipNow(); chip) chip->click();
+        check(!m_angleRelative, "a second click: from the X axis again");
+        // '#' first: absolute X and Y; '<' after a length: on to the angle.
+        check(m_input->box(0) && m_input->box(0)->toolTip().contains("@ ΔX and ΔY from the last point"), "the boxes' tooltip names the keys that switch them");
+        type("#");
+        check(m_input->key(0) == "x" && m_input->key(1) == "y" && box(0).isEmpty(), "# switches the polyline's boxes to absolute X and Y");
+        type("100");
+        send(Qt::Key_Up, Qt::ControlModifier);
+        check(box(0) == "100.1" && held(100.1, m_cursor.v), "Ctrl+Up steps X by 0.1 " + box(0));
+        QWheelEvent wheel(QPointF(5, 5), QPointF(), QPoint(), QPoint(0, -120), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QApplication::sendEvent(m_input->box(0), &wheel);
+        check(box(0) == "99.1", "the wheel over the box steps it by 1 " + box(0));
+        m_input->box(0)->selectAll();
+        type("100");
+        send(Qt::Key_Tab);
+        type("120");
+        check(held(100, 120), "# 100, 120 holds it at (100, 120) " + where());
+        send(Qt::Key_Return);
+        check(m_chain.size() == 4 && at(m_chain[3], 100, 120) && m_input->key(0) == "length", "Enter puts it there; the next point is length and angle again");
+        type("30");
+        send(Qt::Key_Less, Qt::ShiftModifier, "<");
+        type("180");
+        check(m_input->current() == 1 && box(0) == "30" && box(1) == "180" && held(70, 120), "30<180: '<' moves on to the angle " + where());
+        send(Qt::Key_Return);
+        check(m_chain.size() == 5 && at(m_chain[4], 70, 120), "and Enter goes to (70, 120)");
+        send(Qt::Key_Escape);
+        check(m_chain.empty() && m_tool == "line", "Esc ends the chain");
+        // '@' first: ΔX and ΔY from the last point (a rectangle's opposite corner from its first).
+        setTool("rect");
+        placePrecise("300", "0", 0);
+        sketchMove(320, 40, Qt::NoModifier, false);
+        type("@");
+        check(m_input->key(0) == "dx" && m_input->key(1) == "dy" && m_clicks.size() == 1, "@ switches the corner's boxes to ΔX and ΔY from the first corner");
+        type("50");
+        check(held(350, 40), "ΔX 50, the pointer's ΔY " + where());
+        m_viewport->setFocus();  // the keyboard back on the view: Esc there drops the typed values and the @ with them
+        send(Qt::Key_Escape);
+        check(m_input->key(0) == "x" && !m_input->typed() && m_clicks.size() == 1 && m_cursor.kind != Snap::Kind::Typed, "Esc drops ΔX and goes back to X and Y, the corner stays");
+        type("@50");
+        send(Qt::Key_Tab);
+        type("20");
+        send(Qt::Key_Return);
+        bool corner = false;
+        for (const auto& p : m_sk.points) corner |= std::abs(p.x - 350) < 1e-6 && std::abs(p.y - 20) < 1e-6;
+        check(corner && m_clicks.empty(), "@50, Tab, 20, Enter: a 50 x 20 rectangle from (300, 0)");
+        send(Qt::Key_Escape);
+        check(m_tool == "select", "Esc closes the tool");
 
         // Tab with the select tool keeps the keyboard on the view; tools without boxes drop digits.
         m_viewport->setFocus();

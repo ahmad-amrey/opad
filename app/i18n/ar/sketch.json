@@ -36,5 +36,8 @@
  "The value waits: pick what it applies to.": "القيمة بالانتظار: اختر ما تنطبق عليه.",
  "Enter use typed values": "Enter استخدام القيم المكتوبة",
  "Esc drop typed values": "Esc إسقاط القيم المكتوبة",
- "Enter apply": "Enter تطبيق"
+ "Enter apply": "Enter تطبيق",
+ "∠ X axis": "∠ المحور X",
+ "∠ last line": "∠ الخط الأخير",
+ "Typed first: # X and Y · @ ΔX and ΔY from the last point · 30<45 length and angle": "اكتب أولًا: # لـ X وY · @ لـ ΔX وΔY من آخر نقطة · 30<45 للطول والزاوية"
 }

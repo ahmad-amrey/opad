@@ -10,9 +10,10 @@
 #include <string>
 
 namespace inputkeys {
-// A key that types into a value box: a digit (top row or keypad), the decimal point, a comma, a sign. Shift may be held
-// (a '+', and the digits of layouts that shift them); with Ctrl, Alt or Meta it is a shortcut.
-inline bool valueChar(char32_t c) { return (c >= U'0' && c <= U'9') || c == U'.' || c == U',' || c == U'-' || c == U'+'; }
+// A key that types into a value box: a digit (top row or keypad), the decimal point, a comma, a sign, a bracket that opens
+// an expression. Shift may be held (a '+', and the digits of layouts that shift them); with Ctrl, Alt or Meta it is a
+// shortcut.
+inline bool valueChar(char32_t c) { return (c >= U'0' && c <= U'9') || c == U'.' || c == U',' || c == U'-' || c == U'+' || c == U'('; }
 inline bool typesValue(char32_t c, bool command) { return !command && valueChar(c); }
 
 // The box Tab (back: Shift+Tab) goes to among `count`: round within the step; from none, the first (back: the last).
@@ -25,6 +26,28 @@ inline int cycle(int current, int count, bool back) {
 // A comma between boxes moves on (40,30 is X then Y, as typed in AutoCAD); with one box it is the decimal comma.
 enum class Comma { NextBox, Decimal };
 inline Comma comma(int count) { return count > 1 ? Comma::NextBox : Comma::Decimal; }
+
+// How the next point is typed: X and Y in the sketch (absolute), ΔX and ΔY from the last point (relative), or a length and
+// an angle from it (polar, how a polyline goes on). As typed in AutoCAD a prefix or a separator switches: '#' first is
+// absolute, '@' first relative, a comma after a length makes it ΔX (then ΔY), '<' after a number goes on to an angle.
+// What a key does to the entry (`box` the box it is typed into, `empty` that box, `base` a last point to measure from):
+//   Type: an ordinary key (a comma: the rule above), Swallow: dropped (never part of a value), Next: the next box,
+//   Switch: to the entry `to` with empty boxes, Carry: to `to` with the first box's text kept; then box `focus` is typed.
+enum class Entry { Absolute, Relative, Polar };
+enum class Turn { Type, Swallow, Next, Switch, Carry };
+struct EntryKey { Turn turn = Turn::Type; Entry to = Entry::Absolute; int focus = 0; };
+inline bool entryChar(char32_t c) { return c == U'@' || c == U'#' || c == U'<'; }
+inline EntryKey entryKey(Entry entry, int box, bool empty, char32_t c, bool base) {
+  const bool first = box <= 0;
+  if (c == U'#') return first && empty && entry != Entry::Absolute ? EntryKey{Turn::Switch, Entry::Absolute, 0} : EntryKey{Turn::Swallow};
+  if (c == U'@') return first && empty && base && entry != Entry::Relative ? EntryKey{Turn::Switch, Entry::Relative, 0} : EntryKey{Turn::Swallow};
+  if (c == U'<') {
+    if (!first || empty || !base) return {Turn::Swallow};
+    return entry == Entry::Polar ? EntryKey{Turn::Next, Entry::Polar, 1} : EntryKey{Turn::Carry, Entry::Polar, 1};
+  }
+  if (c == U',' && entry == Entry::Polar && first && !empty) return {Turn::Carry, Entry::Relative, 1};
+  return {};
+}
 
 // Esc while values are typed: the edit of the box that has the keyboard is undone first, then every typed value is
 // dropped, then Esc is the tool's (its own ladder: end the step, close the tool, clear the selection).

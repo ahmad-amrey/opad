@@ -10,12 +10,14 @@
 #include <QPointer>
 #include <array>
 #include <map>
+#include <optional>
 #include <set>
 
 #include "AppDocument.hpp"
 #include "DynamicInput.hpp"
 #include "Viewport.hpp"
 #include "GuidedTool.hpp"
+#include "InputKeys.hpp"
 #include "SketchKeys.hpp"
 #include "opad/design/sketch.hpp"
 
@@ -137,7 +139,7 @@ class SketchEditor : public QObject, public SketchInput {
     bool horizontal = false, vertical = false;  // relative to the previous click
     bool grid = false;  // on a grid node, or whole grid steps along the inference
     // What the pointer was pulled to, for the display: that object is highlighted and named beside the cursor.
-    enum class Kind { None, Point, Midpoint, Quadrant, Intersection, Curve, Extension, Aligned, Cross, Angle, Locked, Grid } kind = Kind::None;
+    enum class Kind { None, Point, Midpoint, Quadrant, Intersection, Curve, Extension, Aligned, Cross, Angle, Locked, Grid, Typed } kind = Kind::None;
     int target = 0, other = 0;  // the point (Point, Aligned, Angle), the crossing guides' points (Cross) or the curves (the others)
     int curve = 0;  // Cross: the curve a guide crosses there
   };
@@ -148,12 +150,21 @@ class SketchEditor : public QObject, public SketchInput {
   Snap snap(double u, double v, bool infer = true) const;
   // Typed values (UI-16, SketchDynamicInput.cpp): the boxes of the step that waits (an option of the tool, or where the
   // next point goes), which keys type into them, and using what was typed (Enter, or a click: the typed values win, the
-  // pointer gives the rest).
+  // pointer gives the rest). A point's typed values hold the rubber band at once (typedPoint); '#', '@', ',' and '<' switch
+  // between X/Y, ΔX/ΔY from the last point and length/angle from it (entryKey).
   QList<DynamicInput::Field> inputStage() const;
   bool typingKey(const QKeyEvent* e) const;
   bool appliesOnEnter() const;  // an option tool with what it applies to picked: Enter applies
   bool useTyped(const Snap* at = nullptr);
   void updateInput();
+  inputkeys::Entry entry() const;
+  QString inputStep() const;                         // the step that waits: a chosen entry lasts while it does
+  bool inputBase(double& u, double& v) const;        // the last point, what ΔX/ΔY and length/angle are measured from
+  double angleReference() const;                     // what a typed angle is measured from (radians from X)
+  void retype();                                     // the typed values evaluated, the rubber band moved to them
+  Snap typedPoint(const Snap& pointer) const;        // where the next point goes: the typed values, the pointer the rest
+  bool entryKey(int box, QChar c);                   // DynamicInput's key hook
+  void forgetTyped();
   Hit hitTest(double u, double v) const;
   double tol() const;  // pick distance in sketch units
   int pointFor(const Snap& s);           // reuse or create (with the on-curve constraint)
@@ -246,8 +257,13 @@ class SketchEditor : public QObject, public SketchInput {
   std::vector<int> m_sel;
   std::set<int> m_dangling;
   Hit m_hover;
-  Snap m_cursor;
+  Snap m_cursor;   // where the next point goes (the typed values applied)
+  Snap m_pointer;  // where the pointer put it
   bool m_haveCursor = false;
+  std::map<QString, double> m_typedValues;  // the point's typed values that evaluate (mm, radians)
+  std::optional<inputkeys::Entry> m_entry;  // switched by a prefix, for the step m_entryStep
+  QString m_entryStep;
+  bool m_angleRelative = false;  // setting sketch/input/angleRelative: a polyline's typed angles from its last segment
   int m_trackingPoint = 0;
   bool m_inferenceLocked = false;
   double m_lockX = 0, m_lockY = 0, m_lockDx = 1, m_lockDy = 0;

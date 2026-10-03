@@ -3,15 +3,20 @@
 // pointer, the pointer's (or the option's) value shown grey until something is typed. The tool hands it the keys typed
 // over the view or a tool panel (a digit starts the first box); the boxes then have the keyboard: Tab / Shift+Tab (or a
 // comma) go round them, Enter is the tool's (it uses the typed values), Esc undoes the edit, then drops the typed values,
-// then is the tool's; Backspace in an empty box takes the tool's last point back; Up/Down step a value. Rules without
-// widgets: InputKeys.hpp. A native child of the view (it sits over OpenGL), rounded by a mask; numbers stay left to right.
+// then is the tool's; Backspace in an empty box takes the tool's last point back; Up/Down or the wheel step a value.
+// Rules without widgets: InputKeys.hpp. A native child of the view (it sits over OpenGL), rounded by a mask; numbers stay
+// left to right. A typed value the box is not being typed into is locked (accent border, padlock); one that does not
+// evaluate is red, its tooltip says why.
 #include <QList>
 #include <QPoint>
 #include <QString>
 #include <QWidget>
+#include <functional>
 
+class QAction;
 class QLabel;
 class QLineEdit;
+class QToolButton;
 
 class DynamicInput : public QWidget {
   Q_OBJECT
@@ -20,6 +25,8 @@ class DynamicInput : public QWidget {
     QString key, label;
     QString live;         // shown grey while nothing is typed: where the pointer is, or the option's value
     bool option = false;  // the tool's option `key`: typing sets it at once (it waits for what it applies to), Esc puts it back
+    QString chip;         // a switch after the box (what an angle is measured from): a click emits chipClicked
+    QString tip;          // more for the tooltip (the keys that switch a point's boxes)
   };
   explicit DynamicInput(QWidget* view);
   void setFields(const QList<Field>& fields);  // the step's boxes; while the keys stay the same the typed values stay
@@ -35,12 +42,21 @@ class DynamicInput : public QWidget {
   bool backspace();                          // the last character of the box being typed; false when it is empty
   void dropTyped();                          // Esc: the typed values go, option boxes put their old values back
   void used();                               // the typed values were used: forgotten, options keep them
+  void setText(int index, const QString& text);  // typed into that box by the tool (a value carried over from another box)
+  void select(int index);                        // that box is typed into next
+  void setProblem(const QString& key, const QString& problem);  // why its text does not evaluate (red), empty: it does
+  QString problem(const QString& key) const;
+  // A key about to be typed into box `index`: true when the tool took it (a prefix that switches its boxes).
+  void setKeyHook(std::function<bool(int index, QChar c)> hook) { m_keyHook = std::move(hook); }
   void placeNear(const QPoint& cursor);      // beside the pointer (view coordinates), never under it
   // Where a typed key may be the tool's: the view's window or one of its tool panels, and not a text field there.
   static bool takesKeysFrom(QWidget* view, QObject* target);
  signals:
   void optionEdited(const QString& key, const QString& value);  // typed into an option box, or its old value put back
   void typedChanged();
+  void valueTyped(const QString& key);  // the text of that box changed (typed, undone, dropped)
+  void dropped();                       // Esc dropped the typed values
+  void chipClicked(const QString& key);
   void committed();  // Enter in a box
   void escaped();    // Esc in a box with nothing left to undo there
   void undoPoint();  // Backspace in an empty box
@@ -53,11 +69,15 @@ class DynamicInput : public QWidget {
     Field field;
     QLabel* label = nullptr;
     QLineEdit* edit = nullptr;
+    QAction* lock = nullptr;
+    QToolButton* chip = nullptr;
+    QString problem;
     QString before;        // the text when the box became the one typed into: Esc puts it back
     QString optionBefore;  // an option box: the option's value before anything was typed
     bool typed = false;
   };
   void edited(int index);
+  void nudge(int index, double steps, Qt::KeyboardModifiers modifiers);
   void makeCurrent(int index, bool selectAll);
   void focusBox(int index);
   void giveBack();  // a box had the keyboard: back to the view
@@ -68,4 +88,5 @@ class DynamicInput : public QWidget {
   bool m_wasTyped = false;
   int m_look = -1;
   QPoint m_cursor;
+  std::function<bool(int, QChar)> m_keyHook;
 };

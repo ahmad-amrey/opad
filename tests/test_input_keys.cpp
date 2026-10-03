@@ -1,11 +1,12 @@
 // Typed values (app/InputKeys.hpp, TODO 11 UI-16): which keys type a value (keypad digits too, never with Ctrl, Alt or
-// Meta), Tab going round the boxes, a comma moving on, the Esc rungs of the boxes, Up/Down stepping a value.
+// Meta), Tab going round the boxes, a comma moving on, '@' '#' ',' '<' switching how a point is typed, the Esc rungs of the
+// boxes, Up/Down stepping a value.
 #include "check.hpp"
 #include "InputKeys.hpp"
 using namespace inputkeys;
 
 TEST(digits_points_commas_and_signs_type_values) {
-  for (char32_t c : {U'0', U'5', U'9', U'.', U',', U'-', U'+'}) {
+  for (char32_t c : {U'0', U'5', U'9', U'.', U',', U'-', U'+', U'('}) {
     CHECK(valueChar(c));
     CHECK(typesValue(c, false));
     CHECK(!typesValue(c, true));  // Ctrl+5 is a shortcut
@@ -30,6 +31,37 @@ TEST(a_comma_moves_on_between_boxes_and_is_a_decimal_comma_alone) {
   CHECK(comma(2) == Comma::NextBox);
   CHECK(comma(4) == Comma::NextBox);
   CHECK(comma(1) == Comma::Decimal);
+}
+
+TEST(prefixes_and_separators_switch_how_a_point_is_typed) {
+  for (char32_t c : {U'@', U'#', U'<'}) CHECK(entryChar(c) && !valueChar(c));
+  CHECK(!entryChar(U'5') && !entryChar(U','));
+  // '#' first: absolute; '@' first: relative to the last point (none yet: dropped); either later in a box: dropped.
+  auto k = entryKey(Entry::Polar, 0, true, U'#', true);
+  CHECK(k.turn == Turn::Switch && k.to == Entry::Absolute && k.focus == 0);
+  CHECK(entryKey(Entry::Absolute, 0, true, U'#', true).turn == Turn::Swallow);
+  CHECK(entryKey(Entry::Polar, 0, false, U'#', true).turn == Turn::Swallow);
+  k = entryKey(Entry::Absolute, 0, true, U'@', true);
+  CHECK(k.turn == Turn::Switch && k.to == Entry::Relative && k.focus == 0);
+  CHECK(entryKey(Entry::Absolute, 0, true, U'@', false).turn == Turn::Swallow);
+  CHECK(entryKey(Entry::Absolute, 1, true, U'@', true).turn == Turn::Swallow);
+  CHECK(entryKey(Entry::Relative, 0, true, U'@', true).turn == Turn::Swallow);
+  // A comma after a length: ΔX then ΔY, the length kept as ΔX; elsewhere it is the ordinary comma.
+  k = entryKey(Entry::Polar, 0, false, U',', true);
+  CHECK(k.turn == Turn::Carry && k.to == Entry::Relative && k.focus == 1);
+  CHECK(entryKey(Entry::Polar, 0, true, U',', true).turn == Turn::Type);
+  CHECK(entryKey(Entry::Polar, 1, false, U',', true).turn == Turn::Type);
+  CHECK(entryKey(Entry::Absolute, 0, false, U',', true).turn == Turn::Type);
+  CHECK(entryKey(Entry::Relative, 0, false, U',', true).turn == Turn::Type);
+  // '<' after a number: on to the angle (from X/Y or ΔX/ΔY the number becomes the length); nothing to measure from: dropped.
+  k = entryKey(Entry::Polar, 0, false, U'<', true);
+  CHECK(k.turn == Turn::Next && k.focus == 1);
+  k = entryKey(Entry::Relative, 0, false, U'<', true);
+  CHECK(k.turn == Turn::Carry && k.to == Entry::Polar && k.focus == 1);
+  CHECK(entryKey(Entry::Absolute, 0, false, U'<', true).turn == Turn::Carry);
+  CHECK(entryKey(Entry::Absolute, 0, false, U'<', false).turn == Turn::Swallow);
+  CHECK(entryKey(Entry::Polar, 0, true, U'<', true).turn == Turn::Swallow);
+  CHECK(entryKey(Entry::Absolute, 0, false, U'5', true).turn == Turn::Type);
 }
 
 TEST(esc_undoes_the_edit_then_the_typed_values_then_is_the_tools) {

@@ -1,7 +1,9 @@
 #include "DynamicInput.hpp"
+#include "Icons.hpp"
 #include "InputKeys.hpp"
 #include "Theme.hpp"
 #include <QAbstractSpinBox>
+#include <QAction>
 #include <QApplication>
 #include <QComboBox>
 #include <QCursor>
@@ -19,7 +21,16 @@
 #include <QStyle>
 #include <QTextEdit>
 #include <QTimer>
+#include <QToolButton>
+#include <QWheelEvent>
 #include <algorithm>
+
+namespace {
+QString hint(const QString& tip) {
+  const QString keys=DynamicInput::tr("Type a value or an expression · Tab next box · Enter uses the values · Esc undoes · ↑/↓ step it (Shift ×10, Ctrl ×0.1)");
+  return tip.isEmpty()?keys:keys+QLatin1Char('\n')+tip;
+}
+}
 
 DynamicInput::DynamicInput(QWidget* view) : QWidget(view) {
   setObjectName("dynamicInput");setAttribute(Qt::WA_NativeWindow);setAttribute(Qt::WA_StyledBackground);
@@ -44,22 +55,33 @@ bool DynamicInput::takesKeysFrom(QWidget* view,QObject* target) {
 
 void DynamicInput::setFields(const QList<Field>& fields) {
   bool same=fields.size()==m_boxes.size();
-  for(int i=0;same && i<fields.size();++i)same=fields[i].key==m_boxes[i].field.key;
+  for(int i=0;same && i<fields.size();++i)same=fields[i].key==m_boxes[i].field.key && fields[i].option==m_boxes[i].field.option && fields[i].chip.isEmpty()==m_boxes[i].field.chip.isEmpty();
   if(!same) {
     const bool typedBefore=typed();
     giveBack();
     // Later: this can run inside a box's own key event (Enter placed the point, the next step has other boxes).
-    for(auto& box:m_boxes){box.edit->removeEventFilter(this);box.edit->disconnect(this);box.label->hide();box.edit->hide();box.label->deleteLater();box.edit->deleteLater();}
+    for(auto& box:m_boxes) {
+      box.edit->removeEventFilter(this);box.edit->disconnect(this);box.label->hide();box.edit->hide();box.label->deleteLater();box.edit->deleteLater();
+      if(box.chip){box.chip->disconnect(this);box.chip->hide();box.chip->deleteLater();}
+    }
     m_boxes.clear();m_current=-1;
     auto* row=static_cast<QHBoxLayout*>(layout());
     for(const auto& field:fields) {
       Box box;box.field=field;
       box.label=new QLabel(field.label,this);
       box.edit=new QLineEdit(this);box.edit->setObjectName("dynamicInput-"+field.key);box.edit->setFrame(false);
-      box.edit->setToolTip(tr("Type a value or an expression · Tab next box · Enter uses the values · Esc undoes · ↑/↓ step it (Shift ×10, Ctrl ×0.1)"));
+      box.edit->setToolTip(hint(field.tip));
       box.edit->installEventFilter(this);
-      row->addWidget(box.label);row->addWidget(box.edit);
+      box.lock=box.edit->addAction(icons::icon("lock",theme::current().sel),QLineEdit::TrailingPosition);box.lock->setVisible(false);
+      // Shown at once: a layout shows a new child of a visible widget only an event loop turn later, and until then the box
+      // cannot take the keyboard (keys typed quickly after Enter went past it).
+      row->addWidget(box.label);row->addWidget(box.edit);box.label->show();box.edit->show();
       const int index=int(m_boxes.size());
+      if(!field.chip.isEmpty()) {
+        box.chip=new QToolButton(this);box.chip->setObjectName("dynamicInputChip");box.chip->setFocusPolicy(Qt::NoFocus);box.chip->setCursor(Qt::PointingHandCursor);
+        row->addWidget(box.chip);box.chip->show();
+        connect(box.chip,&QToolButton::clicked,this,[this,index]{if(index<count())emit chipClicked(m_boxes[index].field.key);});
+      }
       connect(box.edit,&QLineEdit::textEdited,this,[this,index]{edited(index);});
       m_boxes.push_back(box);
     }
@@ -71,6 +93,8 @@ void DynamicInput::setFields(const QList<Field>& fields) {
     auto& box=m_boxes[i];
     if(box.field.label!=fields[i].label){box.label->setText(fields[i].label);changed=true;}
     if(box.edit->placeholderText()!=fields[i].live){box.edit->setPlaceholderText(fields[i].live);changed=true;}
+    if(box.chip && box.chip->text()!=fields[i].chip){box.chip->setText(fields[i].chip);changed=true;}
+    if(box.field.tip!=fields[i].tip && box.problem.isEmpty())box.edit->setToolTip(hint(fields[i].tip));
     box.field=fields[i];
   }
   if(changed)fit();
@@ -91,7 +115,28 @@ void DynamicInput::edited(int index) {
   box.typed=!text.trimmed().isEmpty();
   if(box.field.option)emit optionEdited(box.field.key,box.typed?text.trimmed():box.optionBefore);
   restyle();fit();
+  const QString key=box.field.key;
   if(typed()!=m_wasTyped){m_wasTyped=typed();emit typedChanged();}
+  emit valueTyped(key);
+}
+
+void DynamicInput::setText(int index,const QString& text) {
+  if(index<0 || index>=count())return;
+  {QSignalBlocker block(m_boxes[index].edit);m_boxes[index].edit->setText(text);}
+  edited(index);
+}
+
+void DynamicInput::select(int index) { makeCurrent(index,false); }
+
+void DynamicInput::setProblem(const QString& key,const QString& problem) {
+  for(auto& box:m_boxes)if(box.field.key==key && box.problem!=problem) {
+    box.problem=problem;box.edit->setToolTip(problem.isEmpty()?hint(box.field.tip):problem);restyle();
+  }
+}
+
+QString DynamicInput::problem(const QString& key) const {
+  for(const auto& box:m_boxes)if(box.field.key==key)return box.problem;
+  return {};
 }
 
 void DynamicInput::focusBox(int index) {
@@ -112,6 +157,7 @@ void DynamicInput::type(const QString& text) {
   if(m_boxes.isEmpty() || text.isEmpty())return;
   if(m_current<0 || m_current>=count())makeCurrent(0,false);
   else focusBox(m_current);  // keys that still arrive over the view (the box did not get the keyboard) go on in it
+  if(m_keyHook && text.size()==1 && m_keyHook(m_current,text.front()))return;
   if(text==QLatin1String(",")) {
     if(inputkeys::comma(count())==inputkeys::Comma::NextBox)return cycle(false);
     return type(QStringLiteral("."));
@@ -137,6 +183,7 @@ void DynamicInput::dropTyped() {
     edited(i);
   }
   m_current=-1;giveBack();restyle();
+  emit dropped();
 }
 
 void DynamicInput::used() {
@@ -179,9 +226,22 @@ bool DynamicInput::eventFilter(QObject* target,QEvent* event) {
     restyle();
   } else if(event->type()==QEvent::FocusOut) {
     restyle();
+  } else if(event->type()==QEvent::Wheel) {
+    auto* wheel=static_cast<QWheelEvent*>(event);
+    const int delta=wheel->angleDelta().y()?wheel->angleDelta().y():wheel->angleDelta().x();  // Shift turns the wheel sideways
+    if(delta)nudge(index,delta>0?1:-1,wheel->modifiers());
+    wheel->accept();return true;
   } else if(event->type()==QEvent::KeyPress || event->type()==QEvent::ShortcutOverride) {
     // The box's own keys: no window shortcut sees them (Esc would close the tool, a comma or Tab would leave the box).
     auto* key=static_cast<QKeyEvent*>(event);const bool press=event->type()==QEvent::KeyPress;
+    if(key->key()==Qt::Key_Up || key->key()==Qt::Key_Down) {  // Ctrl steps by 0.1, so before the shortcut test
+      if(key->modifiers()&(Qt::AltModifier|Qt::MetaModifier))return false;
+      key->accept();if(press)nudge(index,key->key()==Qt::Key_Up?1:-1,key->modifiers());return true;
+    }
+    // A prefix that switches the boxes ('@' is AltGr+Q on some layouts: Ctrl+Alt on Windows).
+    const QString text=key->text();
+    if(press && m_keyHook && text.size()==1 && text.front().isPrint() && (!(key->modifiers()&(Qt::ControlModifier|Qt::AltModifier|Qt::MetaModifier)) || inputkeys::entryChar(text.front().unicode()))
+       && m_keyHook(index,text.front())){key->accept();return true;}
     if(key->modifiers()&(Qt::ControlModifier|Qt::AltModifier|Qt::MetaModifier))return false;
     switch(key->key()) {
       case Qt::Key_Tab:case Qt::Key_Backtab:
@@ -201,19 +261,20 @@ bool DynamicInput::eventFilter(QObject* target,QEvent* event) {
       case Qt::Key_Backspace:
         if(!box.edit->text().isEmpty())return false;  // the box edits its text
         key->accept();if(press)emit undoPoint();return true;
-      case Qt::Key_Up:case Qt::Key_Down: {
-        key->accept();if(!press)return true;
-        std::string text=(box.edit->text().isEmpty()?box.edit->placeholderText():box.edit->text()).toStdString();
-        if(inputkeys::nudge(text,key->key()==Qt::Key_Up?1:-1,inputkeys::step(key->modifiers().testFlag(Qt::ShiftModifier),false))) {
-          {QSignalBlocker block(box.edit);box.edit->setText(QString::fromStdString(text));}
-          m_current=index;edited(index);
-        }
-        return true;
-      }
       default:return false;
     }
   }
   return QWidget::eventFilter(target,event);
+}
+
+// Up/Down or the wheel: the number the box starts with (what it shows grey when nothing is typed) steps by 1, Shift 10,
+// Ctrl 0.1.
+void DynamicInput::nudge(int index,double steps,Qt::KeyboardModifiers modifiers) {
+  auto* edit=m_boxes[index].edit;
+  std::string text=(edit->text().isEmpty()?edit->placeholderText():edit->text()).toStdString();
+  if(!inputkeys::nudge(text,steps,inputkeys::step(modifiers.testFlag(Qt::ShiftModifier),modifiers.testFlag(Qt::ControlModifier))))return;
+  {QSignalBlocker block(edit);edit->setText(QString::fromStdString(text));}
+  m_current=index;edited(index);
 }
 
 void DynamicInput::restyle() {
@@ -221,23 +282,32 @@ void DynamicInput::restyle() {
   const bool active=editing() || typed();
   const int look=(active?1:0)|(t.dark?2:0)|(int(t.sel.rgb()&0xffff)<<2);  // a style sheet is parsed again when set: only on a change
   if(look!=m_look) {
+    if((look|1)!=(m_look|1))for(auto& box:m_boxes)box.lock->setIcon(icons::icon("lock",t.sel));
     m_look=look;
     auto palette=this->palette();palette.setColor(QPalette::Window,t.bg2);setPalette(palette);
     setStyleSheet(QString("#dynamicInput { background: %1; border: 1px solid %2; border-radius: 5px; }"
                         "#dynamicInput QLabel { color: %3; font-size: 11px; }"
-                        "#dynamicInput QLineEdit { background: transparent; color: %4; border: none; border-radius: 3px; padding: 0 3px; font-family: '%5'; font-size: 12px; selection-background-color: %6; }"
+                        "#dynamicInput QLineEdit { background: transparent; color: %4; border: 1px solid transparent; border-radius: 3px; padding: 0 2px; font-family: '%5'; font-size: 12px; selection-background-color: %6; }"
                         "#dynamicInput QLineEdit[current=\"true\"] { background: %6; }"
-                        "#dynamicInput QLineEdit[typed=\"true\"] { font-weight: 600; }")
-                    .arg(theme::css(t.bg2),theme::css(active?t.sel:t.line),theme::css(t.fg2),theme::css(t.fg),theme::mono().family(),theme::css(t.selbg)));
+                        "#dynamicInput QLineEdit[typed=\"true\"] { font-weight: 600; }"
+                        "#dynamicInput QLineEdit[locked=\"true\"] { border-color: %7; }"
+                        "#dynamicInput QLineEdit[invalid=\"true\"] { border-color: %8; color: %8; }"
+                        "#dynamicInput QToolButton { color: %3; background: transparent; border: 1px solid %9; border-radius: 3px; padding: 0 4px; font-size: 11px; }"
+                        "#dynamicInput QToolButton:hover { color: %4; border-color: %7; }")
+                    .arg(theme::css(t.bg2),theme::css(active?t.sel:t.line),theme::css(t.fg2),theme::css(t.fg),theme::mono().family(),theme::css(t.selbg),theme::css(t.sel),theme::css(t.red))
+                    .arg(theme::css(t.line)));
   }
   for(int i=0;i<count();++i) {
     auto* edit=m_boxes[i].edit;
     if(edit->palette().color(QPalette::PlaceholderText)!=t.fg3){auto p=edit->palette();p.setColor(QPalette::PlaceholderText,t.fg3);edit->setPalette(p);}
-    const bool current=i==m_current && active,typedBox=m_boxes[i].typed;
-    if(edit->property("current").toBool()!=current || edit->property("typed").toBool()!=typedBox || !edit->property("current").isValid()) {
-      edit->setProperty("current",current);edit->setProperty("typed",typedBox);
+    const bool current=i==m_current && active,typedBox=m_boxes[i].typed,invalid=typedBox && !m_boxes[i].problem.isEmpty();
+    const bool locked=typedBox && !invalid && !(current && edit->hasFocus());  // typed and left (Tab, the view): it holds
+    if(edit->property("current").toBool()!=current || edit->property("typed").toBool()!=typedBox || edit->property("locked").toBool()!=locked
+       || edit->property("invalid").toBool()!=invalid || !edit->property("current").isValid()) {
+      edit->setProperty("current",current);edit->setProperty("typed",typedBox);edit->setProperty("locked",locked);edit->setProperty("invalid",invalid);
       edit->style()->unpolish(edit);edit->style()->polish(edit);
     }
+    if(m_boxes[i].lock->isVisible()!=locked){m_boxes[i].lock->setVisible(locked);fit();}
   }
 }
 
@@ -247,7 +317,7 @@ void DynamicInput::fit() {
   bool resized=false;
   for(auto& box:m_boxes) {
     const QString shown=box.edit->text().isEmpty()?box.edit->placeholderText():box.edit->text();
-    const int width=std::clamp(box.edit->fontMetrics().horizontalAdvance(shown+"  ")+8,box.edit->fontMetrics().horizontalAdvance("-0000.00")+8,220);
+    const int width=std::clamp(box.edit->fontMetrics().horizontalAdvance(shown+"  ")+8,box.edit->fontMetrics().horizontalAdvance("-0000.00")+8,220)+(box.lock->isVisible()?18:0);
     if(box.edit->width()!=width || box.edit->minimumWidth()!=width){box.edit->setFixedWidth(width);resized=true;}
   }
   if(resized){adjustSize();placeNear(m_cursor);}
