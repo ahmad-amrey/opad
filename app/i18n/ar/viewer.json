@@ -1,0 +1,12 @@
+{
+ "Locked line ∩ alignment from another anchor": "الخط المثبت ∩ المحاذاة من نقطة ارتكاز أخرى",
+ "Tracking locked": "التتبع مثبت",
+ "Extension intersection": "تقاطع الامتدادات",
+ "Extension / alignment": "امتداد / محاذاة",
+ "tap Shift to cycle, double-tap to lock, hold to lock while held": "اضغط Shift للتنقل، واضغط مرتين للتثبيت، واستمر بالضغط للتثبيت أثناء الضغط",
+ "tap Shift to lock, hold to lock while held": "اضغط Shift للتثبيت، واستمر بالضغط للتثبيت أثناء الضغط",
+ "release Shift to unlock": "حرر Shift لإلغاء التثبيت",
+ "click to pick, tap Shift for the next crossing, Esc to unlock": "انقر للاختيار، واضغط Shift للتقاطع التالي، وEsc لإلغاء التثبيت",
+ "click to pick, Esc or tap Shift to unlock": "انقر للاختيار، وEsc أو اضغط Shift لإلغاء التثبيت",
+ "%1 from the anchor": "%1 من نقطة الارتكاز"
+}

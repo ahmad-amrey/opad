@@ -416,6 +416,15 @@ template<class Sensitive> using MeshSensitive=Sensitive;
 }
 
 void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode) {
+  computeSubShapes(selection, mode);
+  if (!m_prs || m_prs->navigation.IsNull() || (mode != AIS_Shape::SelectionMode(TopAbs_EDGE) && mode != AIS_Shape::SelectionMode(TopAbs_VERTEX))) return;
+  // One pixel: the faces block only what lies behind them; an edge on a face keeps its own depth tolerance, so it wins.
+  Handle(OccluderSensitive) faces = new OccluderSensitive(new OccluderOwner(this), m_prs->navigation);
+  faces->SetSensitivityFactor(1);
+  selection->Add(faces);
+}
+
+void BodyShape::computeSubShapes(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode) {
   if(mode!=0 && opad::is_mesh_shape(myshape)) {
     const auto type=AIS_Shape::SelectionType(mode);
     const auto kind=type==TopAbs_FACE?opad::Ref::Kind::Face:type==TopAbs_EDGE?opad::Ref::Kind::Edge:opad::Ref::Kind::Vertex;

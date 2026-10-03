@@ -3,6 +3,7 @@
 #include "NavCube.hpp"
 
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <StdSelect_BRepOwner.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
@@ -47,8 +48,88 @@ void Viewport::setCenterPicking(bool on,const QPointF& position) {
     }
   }
   ResetPreviousMoveTo();m_hoverOwner=nullptr;
-  const auto at=devicePos(position);m_ctx->MoveTo(at.x(),at.y(),m_view,false);
+  moveTo(devicePos(position));
   discoverCenter();redrawScene();
+}
+
+// UI-31. First one ray from the point towards the eye (nothing behind the point or behind the eye counts), then what is
+// drawn over its pixel, as box selection tests it: a part thinner than a pixel, or a gap between facets that the exact
+// ray slips through, still covers the point on screen. The pixel's pick tolerance reaches faces beside the point, far
+// nearer when seen edge-on (a cylinder's silhouette): its margin is wider and the point's own body is left to the ray.
+bool Viewport::pointVisible(const gp_Pnt& p, const std::string& own, double slackPx) const {
+  if (!m_initialised || m_selectThrough || m_navSelector.IsNull()) return true;
+  const auto camera = m_view->Camera();
+  const bool ortho = camera->IsOrthographic();
+  gp_Vec back = ortho ? gp_Vec(camera->Direction()).Reversed() : gp_Vec(p, camera->Eye());
+  const double reach = ortho ? RealLast() : back.Magnitude();
+  if (back.SquareMagnitude() < 1e-24) return true;
+  back.Normalize();
+  const gp_Vec ahead(camera->Direction());
+  const double scale = ortho ? 1.0 : std::max(1e-6, gp_Vec(camera->Eye(), p).Dot(ahead) / camera->Distance());
+  const double pixel = pixelSize() * scale, slack = slackPx * pixel;  // at the point's depth
+  auto occludes = [&](int i, bool others) {
+    const auto node = m_navNodes.find(m_navSelector->Picked(i)->Selectable().get());
+    if (node == m_navNodes.end() || (others && node->second == own)) return false;
+    const auto item = m_items.find(node->second);
+    return item != m_items.end() && !item->second.look.ghost && m_ctx->IsDisplayed(item->second.ais);  // a ghost is seen through
+  };
+  const gp_Pnt from = p.Translated(back * slack);
+  m_navSelector->Pick(gp_Ax1(from, gp_Dir(back)), m_view);
+  for (int i = 1; i <= m_navSelector->NbPicked(); ++i)
+    if (occludes(i, false) && m_navSelector->PickedPoint(i).Distance(from) < reach - slack) return false;
+  Standard_Integer x = 0, y = 0;
+  m_view->Convert(p.X(), p.Y(), p.Z(), x, y);
+  m_navSelector->Pick(x, y, m_view);
+  for (int i = 1; i <= m_navSelector->NbPicked(); ++i)
+    if (occludes(i, true) && gp_Vec(m_navSelector->PickedPoint(i), p).Dot(ahead) > std::max(slack, 8 * pixel)) return false;
+  return true;
+}
+
+bool Viewport::detectedPoint(gp_Pnt& p) const {
+  if (!m_initialised || !m_ctx->HasDetected()) return false;
+  const auto& selector = m_ctx->MainSelector();
+  const auto owner = m_ctx->DetectedOwner();
+  for (int i = 1; i <= selector->NbPicked(); ++i)
+    if (selector->Picked(i) == owner) { p = selector->PickedPoint(i); return true; }
+  return false;
+}
+
+// The pick tolerance reaches past what is drawn both ways: a vertex's through a thin wall, and a face's to the face of a
+// silhouette edge seen edge-on, nearer than that edge or vertex though both are in sight. So the pointer takes the first
+// owner in pick order that is not an occluder and whose point is in sight, else nothing.
+bool Viewport::dropOccluded() {
+  if (!m_initialised || !m_ctx->HasDetected()) return false;
+  const bool subShapes = m_filter == SelFilter::Edge || m_filter == SelFilter::Vertex;
+  const auto& selector = m_ctx->MainSelector();
+  auto hidden = [&](const Handle(SelectMgr_EntityOwner)& owner) {
+    if (!Handle(OccluderOwner)::DownCast(owner).IsNull()) return true;
+    const auto body = subShapes && !Handle(StdSelect_BRepOwner)::DownCast(owner).IsNull()
+        ? m_nodeOf.find(Handle(AIS_InteractiveObject)::DownCast(owner->Selectable()).get()) : m_nodeOf.end();
+    if (body == m_nodeOf.end()) return false;
+    for (int i = 1; i <= selector->NbPicked(); ++i)
+      if (selector->Picked(i) == owner) return !pointVisible(selector->PickedPoint(i), body->second);
+    return false;
+  };
+  const auto first = m_ctx->DetectedOwner();
+  if (!hidden(first)) return false;
+  Handle(SelectMgr_EntityOwner) take;
+  int rank = 0;
+  for (m_ctx->InitDetected(); m_ctx->MoreDetected() && rank < 16 && take.IsNull(); m_ctx->NextDetected(), ++rank)
+    if (const auto owner = m_ctx->DetectedCurrentOwner(); owner != first && !hidden(owner)) take = owner;
+  for (int i = 0; !take.IsNull() && i < 64 && m_ctx->DetectedOwner() != take; ++i) m_ctx->HilightNextDetected(m_view, Standard_False);
+  if (take.IsNull() || m_ctx->DetectedOwner() != take) m_ctx->ClearDetected(Standard_False);
+  m_view->InvalidateImmediate();
+  return !m_ctx->HasDetected();
+}
+
+void Viewport::moveTo(const Graphic3d_Vec2i& at) {
+  m_ctx->MoveTo(at.x(), at.y(), m_view, Standard_False);
+  dropOccluded();
+}
+
+void Viewport::contextLazyMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view, const Graphic3d_Vec2i& point) {
+  AIS_ViewController::contextLazyMoveTo(ctx, view, point);
+  dropOccluded();
 }
 
 void Viewport::discoverCenter() {
@@ -82,9 +163,9 @@ void Viewport::refreshCenterStyles() {
     const bool selected=m_ctx->IsSelected(marker.ais);
     const bool center=key==m_activeCenter, tracking=key==m_trackingMarker;
     const bool candidate=tracking;
-    const bool locked=(center && m_centerLocked) || (tracking && m_trackingLocked);
+    const bool locked=(center && m_centerLocked) || (tracking && m_shift.locked());
     auto aspect=marker.ais->Attributes()->PointAspect();
-    aspect->SetTypeOfMarker(selected ? Aspect_TOM_O_PLUS : Aspect_TOM_O);
+    aspect->SetTypeOfMarker(selected ? Aspect_TOM_O_PLUS : tracking && m_trackingCross ? Aspect_TOM_X : Aspect_TOM_O);
     aspect->SetScale(selected ? 4.0 : locked ? 7.0 : candidate ? 5.0 : 3.0);
     marker.ais->SynchronizeAspects();
   }
@@ -92,26 +173,42 @@ void Viewport::refreshCenterStyles() {
 
 bool Viewport::inferenceKey(QKeyEvent* key) {
   if (key->key()!=Qt::Key_Shift || key->isAutoRepeat() || m_sketchInput || m_blocked || !m_initialised) return false;
+  if (!m_shiftClock.isValid()) m_shiftClock.start();
+  using R=tracking::ShiftLock::Result;
+  const int count=int(m_trackingCandidates.size());
   if (key->type()==QEvent::KeyPress) {
-    if (m_shiftHeld || QApplication::mouseButtons()!=Qt::NoButton) return false;
-    const int count=int(m_trackingCandidates.size());
-    if (!count) return false;
-    m_inferenceChoice=std::clamp(m_inferenceChoice,0,count-1);
-    m_shiftHeld=true; m_shiftClock.start();
+    if (QApplication::mouseButtons()!=Qt::NoButton) return false;
+    const R r=m_shift.press(m_shiftClock.elapsed(),count);
+    if (r==R::Ignored) return false;
     m_centerLocked=false;
-    m_trackingLocked=true;
-    m_lockedTracking=m_trackingCandidates[m_inferenceChoice];
+    if (r==R::Locked) m_lockedTracking=m_trackingCandidates[m_inferenceChoice=std::clamp(m_inferenceChoice,0,count-1)];
   } else {
-    if (!m_shiftHeld) return false;
-    const bool tap=m_shiftClock.elapsed()<250;
-    m_shiftHeld=m_centerLocked=m_trackingLocked=false;
-    const int count=int(m_trackingCandidates.size());
-    if(tap && count>1) m_inferenceChoice=(m_inferenceChoice+1)%count;
+    const auto held=m_lockedTracking;
+    const R r=m_shift.release(m_shiftClock.elapsed(),count,m_crossings);
+    if (r==R::Ignored) return false;
+    m_centerLocked=false;
+    if (r==R::StuckPrevious) m_lockedTracking=m_tapLock;  // the guide shown before the double tap's first tap
+    else if (r==R::NextCrossing) ++m_crossChoice;
+    else if (r==R::Cycled || r==R::Unlocked) {
+      m_tapLock=held; m_crossChoice=0;
+      if (r==R::Cycled) m_inferenceChoice=(m_inferenceChoice+1)%count;
+    }
   }
   m_trackingDirty=true; m_hoverOwner=nullptr;
   refreshCenterStyles();
-  emit hoverChanged(m_trackingLocked ? tr("Tracking locked - release Shift to unlock") : tr("Tap Shift to cycle tracking points; hold Shift to lock"));
   redrawScene(); return true;
+}
+
+bool Viewport::trackingEscape(QEvent* e) {
+  if (e->type()!=QEvent::ShortcutOverride && e->type()!=QEvent::KeyPress) return false;
+  auto* key=static_cast<QKeyEvent*>(e);
+  if (key->key()!=Qt::Key_Escape || (key->modifiers() & ~Qt::KeypadModifier)) return false;
+  if (e->type()==QEvent::KeyPress && std::exchange(m_eatEscape,false)) return true;  // the press after its override
+  if (!m_shift.escape()) return false;
+  m_eatEscape=e->type()==QEvent::ShortcutOverride; e->accept();
+  m_trackingDirty=true; m_hoverOwner=nullptr;
+  refreshCenterStyles(); redrawScene();
+  return true;
 }
 
 bool Viewport::eventFilter(QObject* object, QEvent* e) {
@@ -123,13 +220,16 @@ bool Viewport::eventFilter(QObject* object, QEvent* e) {
       && (object==this || underMouse() || m_ctrlCenterPick))
     setCenterPicking(e->type()==QEvent::KeyPress,m_trackingCursor);
   if ((e->type()==QEvent::KeyPress || e->type()==QEvent::KeyRelease)
-      && (object==this || underMouse() || m_shiftHeld)
-      && (window()->isActiveWindow() || m_shiftHeld
+      && (object==this || underMouse() || m_shift.held())
+      && (window()->isActiveWindow() || m_shift.held()
           || (QApplication::activeWindow() && window()->isAncestorOf(QApplication::activeWindow()))))
     if(inferenceKey(static_cast<QKeyEvent*>(e))) return true;
+  // Esc on a tracking lock beats the window's Esc (the guided tool's step back): at the override stage, its press eaten.
+  if (((e->type()==QEvent::ShortcutOverride && (object==this || underMouse())) || (e->type()==QEvent::KeyPress && m_eatEscape)) && trackingEscape(e))
+    return true;
   if (e->type()==QEvent::ApplicationDeactivate) {
     setCenterPicking(false,m_trackingCursor);
-    m_shiftHeld=m_centerLocked=m_trackingLocked=false; refreshCenterStyles();
+    m_centerLocked=false; m_shift.deactivate(); refreshCenterStyles();
   }
   return QWidget::eventFilter(object,e);
 }
@@ -142,7 +242,6 @@ void Viewport::clearCenters() {
   m_centerObjects.clear();
   m_activeCenter.clear();
   m_centerLocked = false;
-  m_shiftHeld = false;
   m_hoverOwner = nullptr;
 }
 

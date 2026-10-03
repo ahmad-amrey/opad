@@ -65,10 +65,12 @@ class BodyShape : public AIS_Shape {
   const std::shared_ptr<const BodyPrs>& prs() const { return m_prs; }
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
-  // Sub-shape modes: the stock owners are swapped for SubShapeOwner.
+  // Sub-shape modes: the stock owners are swapped for SubShapeOwner. The Edge and Vertex modes also hold the body's
+  // faces under an OccluderOwner (UI-31).
   void ComputeSelection(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode) override;
 
  private:
+  void computeSubShapes(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode);
   std::shared_ptr<const BodyPrs> m_prs, m_display;
   double m_rayBias=0;
   Handle(Graphic3d_ArrayOfTriangles) m_rayTriangles;
@@ -104,6 +106,18 @@ class CircleOwner : public SubShapeOwner {
   gp_Pnt center;
 };
 
+// The faces of a body in the Edge and Vertex modes (UI-31): its navigation triangles under one owner that is never
+// highlighted or kept selected. A face in front of an edge or vertex is picked before it, and the viewport takes that
+// pick for nothing (Viewport::dropOccluded), so what is drawn behind a face cannot be hovered, clicked or tracked.
+class OccluderOwner : public SelectMgr_EntityOwner {
+  DEFINE_STANDARD_RTTI_INLINE(OccluderOwner, SelectMgr_EntityOwner)
+ public:
+  explicit OccluderOwner(const Handle(SelectMgr_SelectableObject)& body) : SelectMgr_EntityOwner(body, 0) {}
+  void HilightWithColor(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Drawer)&, const Standard_Integer) override {}
+  void Unhilight(const Handle(PrsMgr_PresentationManager)&, const Standard_Integer) override {}
+  Standard_Boolean IsHilighted(const Handle(PrsMgr_PresentationManager)&, const Standard_Integer) const override { return Standard_False; }
+};
+
 // A cheap instance of a worker-built sensitive. Matches runs only on the UI thread; the shared
 // prototype's traversal scratch state is never accessed concurrently. No per-instance BVH rebuild.
 class SharedSensitive : public Select3D_SensitiveEntity {
@@ -118,6 +132,17 @@ class SharedSensitive : public Select3D_SensitiveEntity {
   Standard_Boolean ToBuildBVH() const override { return false; }
  private:
   Handle(Select3D_SensitiveEntity) m_prototype;
+};
+
+// An OccluderOwner's faces: they stand in front only of a point pick (hover, click). A box takes no faces in the Edge and
+// Vertex modes, and testing a window box for whole triangles of every body in it took seconds on a big assembly.
+class OccluderSensitive : public SharedSensitive {
+  DEFINE_STANDARD_RTTI_INLINE(OccluderSensitive, SharedSensitive)
+ public:
+  using SharedSensitive::SharedSensitive;
+  Standard_Boolean Matches(SelectBasics_SelectingVolumeManager& mgr, SelectBasics_PickResult& result) override {
+    return mgr.GetActiveSelectionType() == SelectMgr_SelectionType_Point && SharedSensitive::Matches(mgr, result);
+  }
 };
 
 // Only registered with the navigation selector, never displayed or activated in the UI selection.

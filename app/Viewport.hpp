@@ -35,6 +35,7 @@
 #include "BodyLook.hpp"
 #include "BodyShape.hpp"
 #include "Theme.hpp"
+#include "Tracking.hpp"
 
 class JobRunner;
 class Job;
@@ -128,6 +129,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void benchSubShot(const QString& path);  // OPAD_BENCH_SUBSHOT: frame from behind the picked sub-shape (X-ray check)
   void benchClick(double fx, double fy);  // OPAD_BENCH_TOOL: a left click at this fraction of the view, as the mouse handlers deliver it
   bool benchPicking();  // OPAD_BENCH_PICKING: circle discovery, locking, exact picks and orbit regression
+  // OPAD_BENCH_TRACKING (ViewportTrackingBench.cpp): what is behind a face is never hovered, acquired or offered (UI-31)
+  bool benchTracking(const QString& prefix, bool endsOnly = false);
+  // OPAD_BENCH_CROSSLOCK (ViewportCrossLockBench.cpp): lock on one anchor, acquire another, take where they line up (UI-32)
+  bool benchCrossLock(const QString& prefix);
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
   void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner
   std::vector<opad::Ref> selection() const;
@@ -311,6 +316,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void handleSelectionPoly(const Handle(AIS_InteractiveContext)& ctx,const Handle(V3d_View)& view) override;
   void handleMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
   void handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
+  // Every hover and click pick of the controller: what lies behind a face is taken for nothing (dropOccluded).
+  void contextLazyMoveTo(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view, const Graphic3d_Vec2i& point) override;
 
  private:
   int m_renderQuality = 1, m_sceneBackground = 0;
@@ -334,25 +341,48 @@ class Viewport : public QWidget, protected AIS_ViewController {
   gp_Pnt drawingOrbitPoint(const QPointF* cursor=nullptr,bool* found=nullptr);
   gp_Pnt drawingPlanePoint(const QPointF& cursor,bool& found);
   gp_Pnt nearestCurvePoint(const QPointF& cursor,bool& found,double& distance);
+  // Tracking and extension (ViewportTracking.cpp), only while a tool takes points (m_pickAccumulate). Occlusion-aware
+  // (UI-31): the vertex or line end under the pointer becomes an anchor after kTrackingDwellMs on it when it can be seen,
+  // resting on an anchor again releases it, a camera move drops the anchors it hides, and a guide point that lies behind
+  // a face is not offered.
   void updateTracking();
   void clearTracking();
-  bool m_trackingEnabled = true, m_haveTrackingAnchor = false, m_trackingLocked = false;
-  bool m_extensionEnabled = true, m_shiftHeld = false;
-  QElapsedTimer m_shiftClock;
-  int m_inferenceChoice = 0;
-  struct TrackingAnchor { gp_Pnt point; gp_Vec direction; bool hasDirection; };
-  struct TrackingCandidate { gp_Pnt anchor, point; gp_Vec direction; bool intersection = false; gp_Pnt secondAnchor; };
-  std::vector<TrackingAnchor> m_trackingAnchors;
+  void dwellAnchor();          // acquisition and release under the pointer
+  void showTrackingAnchors();  // a small cross on each anchor
+  void pruneTracking();        // from handleViewRedraw: the camera moved
+  // False when a displayed, non-ghost body's face lies in front of `p` by more than slackPx pixels (the navigation
+  // selector, one ray from p towards the eye; section clipping honoured) or, for bodies other than `own` (the point's,
+  // whose faces seen edge-on reach its pixel), covers its pixel 8 px in front; always true while selecting through.
+  bool pointVisible(const gp_Pnt& p, const std::string& own = {}, double slackPx = 3) const;
+  bool detectedPoint(gp_Pnt& p) const;  // where the pointer met the detected owner
+  // A detected occluder, or a detected edge or vertex whose point is behind a face (Edge and Vertex modes): cleared.
+  bool dropOccluded();
+  void moveTo(const Graphic3d_Vec2i& at);  // the context's MoveTo, then dropOccluded
+  static constexpr int kTrackingDwellMs = 350;
+  bool m_trackingEnabled = true, m_extensionEnabled = true;
+  // Shift over the guides (Tracking.hpp): held = locked while held, a tap with one guide or a double tap = locked until
+  // a click or Esc. Cross lock (UI-32): anchors are still acquired while locked, and the locked line snaps to where it
+  // lines up with another anchor (m_crossChoice among those in reach, m_crossings of them; a tap on a sticky lock cycles).
+  tracking::ShiftLock m_shift;
+  QElapsedTimer m_shiftClock;  // the key's time base, started at the first press
+  int m_inferenceChoice = 0, m_crossChoice = 0, m_crossings = 0;
+  bool m_trackingCross = false, m_eatEscape = false;  // the point shown is where two guides cross (an X); Esc unlocked
+  struct TrackingAnchor { gp_Pnt point; gp_Vec direction; bool hasDirection; std::string body; };  // body: whose vertex or edge
+  struct TrackingCandidate { gp_Pnt anchor, point; gp_Vec direction; bool intersection = false; gp_Pnt secondAnchor; std::string body; };
+  std::vector<TrackingAnchor> m_trackingAnchors;  // at most 6, oldest first
   std::vector<TrackingCandidate> m_trackingCandidates;
-  TrackingCandidate m_lockedTracking;
+  TrackingCandidate m_lockedTracking, m_tapLock;  // m_tapLock: what the last tap held, for a double tap's lock
   bool inferenceKey(QKeyEvent* event);
+  bool trackingEscape(QEvent* event);  // Esc on a tracking lock unlocks it and goes no further (not to the tool)
   void refreshCenterStyles();
-  bool m_trackingDirty = false;
+  bool m_trackingDirty = false, m_trackingShown = false;
   QPointF m_trackingCursor;
-  gp_Pnt m_trackingAnchor;
-  gp_Vec m_trackingDirection, m_trackingLockDirection;
-  bool m_trackingHasDirection = false;
-  Handle(AIS_Shape) m_trackingGuide;
+  TrackingAnchor m_dwellAnchor{};      // under the pointer since m_dwellClock
+  bool m_dwelling = false, m_dwellDone = false;
+  QElapsedTimer m_dwellClock;
+  QTimer m_dwellTimer;                 // a paint once the dwell is over, the pointer resting
+  Graphic3d_WorldViewProjState m_trackingCamera;
+  Handle(AIS_Shape) m_trackingGuide, m_trackingGuideBehind, m_anchorMarks;  // the guide where seen, where behind a face
   std::string m_trackingMarker, m_snapClick;
   bool m_ctrlCenterPick=false;
   void setCenterPicking(bool on,const QPointF& position);

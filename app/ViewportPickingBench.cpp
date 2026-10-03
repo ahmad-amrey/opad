@@ -551,36 +551,40 @@ bool Viewport::benchPicking() {
       return true;
     }
     m_ctx->ClearDetected(false);
-    m_haveTrackingAnchor=true; m_trackingAnchor=gp_Pnt(0,0,0);
-    m_trackingDirection=gp_Vec(1,0,0); m_trackingHasDirection=true;
-    const double reach=pixelSize()*40;
-    m_trackingCursor=widgetPoint({reach,0,0}); m_trackingDirty=true;
+    // Above the model (the view looks down), so nothing hides the guides (UI-31).
+    const double lift=fitBounds().CornerMax().Z()+1, reach=pixelSize()*40;
+    setPickAccumulate(false);  // the Distance tool runs: off, no tool takes points
+    m_trackingAnchors={{gp_Pnt(0,0,lift),gp_Vec(1,0,0),true}};
+    m_trackingCursor=widgetPoint({reach,0,lift}); m_trackingDirty=true;
     updateTracking();
+    require(m_trackingMarker.empty() && m_trackingAnchors.empty(), "2D mode tracked with no tool taking points");
+    setPickAccumulate(true,true);
+    m_trackingAnchors={{gp_Pnt(0,0,lift),gp_Vec(1,0,0),true}};
+    m_trackingDirty=true; updateTracking();
     require(!m_trackingMarker.empty(), "extension tracking did not create a point");
     auto tracked=m_centers.at(m_trackingMarker).ref;
     require(tracked.kind==opad::Ref::Kind::Point && std::abs(tracked.point[1])<1e-8, "tracking point left its extension line");
-    setPickAccumulate(true,true);
     QMouseEvent extensionPress(QEvent::MouseButtonPress,m_trackingCursor,mapToGlobal(m_trackingCursor),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);
     QMouseEvent extensionRelease(QEvent::MouseButtonRelease,m_trackingCursor,mapToGlobal(m_trackingCursor),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);
     QCoreApplication::sendEvent(this,&extensionPress); QCoreApplication::sendEvent(this,&extensionRelease);
     require(!selection().empty() && selection().back().kind==opad::Ref::Kind::Point,"extension was not selectable in measurement mode");
-    m_ctx->ClearSelected(false); setPickAccumulate(false);
-    m_trackingAnchors={{gp_Pnt(0,reach,0),gp_Vec(1,0,0),true},{gp_Pnt(reach,0,0),gp_Vec(0,1,0),true}};
-    m_trackingCursor=widgetPoint({reach,reach,0}); m_trackingDirty=true; updateTracking();
+    m_ctx->ClearSelected(false);
+    m_trackingAnchors={{gp_Pnt(0,reach,lift),gp_Vec(1,0,0),true},{gp_Pnt(reach,0,lift),gp_Vec(0,1,0),true}};
+    m_trackingCursor=widgetPoint({reach,reach,lift}); m_trackingDirty=true; updateTracking();
     require(!m_trackingCandidates.empty() && m_trackingCandidates.front().intersection,
             "two extensions did not produce a composite intersection");
-    require(m_trackingCandidates.front().point.Distance(gp_Pnt(reach,reach,0))<1e-7,"incorrect intersection");
+    require(m_trackingCandidates.front().point.Distance(gp_Pnt(reach,reach,lift))<1e-7,"incorrect intersection");
     opad::Ref candidateCenter; candidateCenter.kind=opad::Ref::Kind::Point; candidateCenter.point={0,0,0};
     centerMarker(candidateCenter,gp_Pnt(0,0,0)); m_activeCenter=candidateCenter.str(); m_inferenceChoice=0;
     QKeyEvent down(QEvent::KeyPress,Qt::Key_Shift,Qt::ShiftModifier),up(QEvent::KeyRelease,Qt::Key_Shift,Qt::NoModifier);
-    inferenceKey(&down); require(!m_centerLocked && m_trackingLocked,"Shift must only lock tracking/extension");
+    inferenceKey(&down); require(!m_centerLocked && m_shift.locked(),"Shift must only lock tracking/extension");
     inferenceKey(&up);
-    inferenceKey(&down); require(m_trackingLocked && !m_centerLocked,"Shift did not lock selected inference");
+    inferenceKey(&down); require(m_shift.locked() && !m_centerLocked,"Shift did not lock selected inference");
     inferenceKey(&up); m_activeCenter.clear(); clearTracking();
-    m_trackingAnchors={{gp_Pnt(0,reach,0),gp_Vec(1,0,0),true},{gp_Pnt(reach,0,reach),gp_Vec(0,1,0),true}};
+    m_trackingAnchors={{gp_Pnt(0,reach,lift),gp_Vec(1,0,0),true},{gp_Pnt(reach,0,lift+reach),gp_Vec(0,1,0),true}};
     m_trackingDirty=true; updateTracking();
     for(const auto& c:m_trackingCandidates) require(!c.intersection,"skew 3D lines produced a false intersection");
-    clearTracking();
+    clearTracking(); setPickAccumulate(false);
     const gp_Dir flatDirection=m_view->Camera()->Direction();
     trackpadScroll(QPointF(width()/2,height()/2),QPointF(20,10),true);
     FlushViewEvents(m_ctx,m_view,true);finishTrackpadScroll();

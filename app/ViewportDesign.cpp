@@ -376,7 +376,7 @@ void Viewport::setPreparedPreview(const TopoDS_Shape& shape,std::shared_ptr<cons
 
 bool Viewport::referenceAt(const QPointF& point,opad::Ref& ref) {
   if(!m_initialised)return false;
-  const auto pos=devicePos(point);m_ctx->MoveTo(pos.x(),pos.y(),m_view,false);
+  moveTo(devicePos(point));
   return hoveredReference(ref);
 }
 bool Viewport::originReferenceAt(const QPointF& point,opad::Ref& ref) {
@@ -584,7 +584,7 @@ void Viewport::keyPressEvent(QKeyEvent* e) {
     m_sketchInput->sketchType(e);
     return e->accept();
   }
-  if (inferenceKey(e)) return e->accept();
+  if (inferenceKey(e) || trackingEscape(e)) return e->accept();
   QWidget::keyPressEvent(e);
 }
 

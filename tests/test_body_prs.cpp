@@ -18,6 +18,8 @@
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <TColgp_HArray1OfPnt.hxx>
 #include <array>
@@ -50,14 +52,26 @@ TEST(mesh_selection_has_independent_facet_edge_and_vertex_owners) {
   for(const auto [type,count]:{std::pair{TopAbs_FACE,2},std::pair{TopAbs_EDGE,6},std::pair{TopAbs_VERTEX,4}}) {
     Handle(SelectMgr_Selection) selection=new SelectMgr_Selection(AIS_Shape::SelectionMode(type));
     body->ComputeSelection(selection,AIS_Shape::SelectionMode(type));
-    CHECK_EQ(selection->Entities().Size(),count);
+    const int occluding=type==TopAbs_FACE?0:1;  // UI-31: the Edge and Vertex modes hold the faces too
+    CHECK_EQ(selection->Entities().Size(),count+occluding);
     SelectMgr_SelectingVolumeManager volume;
     volume.InitBoxSelectingVolume(gp_Pnt2d(0,0),gp_Pnt2d(1000,1000));
     volume.SetCamera(camera); volume.SetWindowSize(1000,1000); volume.AllowOverlapDetection(true); volume.BuildSelectingVolume();
     std::set<int> owners;
+    int occluders=0;
     for(const auto& entity:selection->Entities()) {
       SelectBasics_PickResult result;
-      CHECK(entity->BaseSensitive()->Matches(volume,result));
+      const bool matched=entity->BaseSensitive()->Matches(volume,result);
+      if(auto face=Handle(OccluderOwner)::DownCast(entity->BaseSensitive()->OwnerId());!face.IsNull()) {
+        CHECK(!matched);  // a box never takes the faces standing in front
+        CHECK_EQ(face->Priority(),0);CHECK_EQ(entity->BaseSensitive()->SensitivityFactor(),1);CHECK(face->Selectable()==body);
+        SelectMgr_SelectingVolumeManager point;
+        point.InitPointSelectingVolume(gp_Pnt2d(500,500));
+        point.SetCamera(camera); point.SetWindowSize(1000,1000); point.BuildSelectingVolume();
+        CHECK(entity->BaseSensitive()->Matches(point,result));  // the pointer over the face: in front of what is behind it
+        ++occluders;continue;
+      }
+      CHECK(matched);
       auto owner=Handle(SubShapeOwner)::DownCast(entity->BaseSensitive()->OwnerId());
       CHECK(!owner.IsNull());
       CHECK(!owner->HasShape()); // A box candidate must not construct analytic geometry.
@@ -66,6 +80,31 @@ TEST(mesh_selection_has_independent_facet_edge_and_vertex_owners) {
       CHECK_EQ(owner->Shape().ShapeType(),type); owners.insert(owner->index());
     }
     CHECK_EQ(owners.size(),size_t(count));
+    CHECK_EQ(occluders,occluding);
+  }
+}
+
+// UI-31: a BRep body's faces stand in front of its edges and vertices under one owner that is never highlighted, and only
+// in the Edge and Vertex modes (the Face and Body modes pick faces themselves). Without the worker's arrays there is none.
+TEST(edge_and_vertex_modes_hold_the_faces_as_occluders) {
+  struct TestBody : BodyShape { using BodyShape::BodyShape; using BodyShape::ComputeSelection; };
+  const TopoDS_Shape box=BRepPrimAPI_MakeBox(10,10,10).Shape();
+  BRepMesh_IncrementalMesh(box,0.1);
+  Bnd_Box bounds; BRepBndLib::Add(box,bounds);
+  Handle(TestBody) body=new TestBody(box,BodyPrs::build(box,bounds)), bare=new TestBody(box,nullptr);
+  for(const auto type:{TopAbs_SHAPE,TopAbs_FACE,TopAbs_EDGE,TopAbs_VERTEX}) for(const auto& shape:{body,bare}) {
+    Handle(SelectMgr_Selection) selection=new SelectMgr_Selection(AIS_Shape::SelectionMode(type));
+    shape->ComputeSelection(selection,AIS_Shape::SelectionMode(type));
+    int occluders=0;
+    for(const auto& entity:selection->Entities()) {
+      const auto face=Handle(OccluderOwner)::DownCast(entity->BaseSensitive()->OwnerId());
+      if(face.IsNull()) continue;
+      ++occluders;
+      CHECK_EQ(face->Priority(),0);
+      CHECK(!face->IsHilighted(nullptr,0));
+      CHECK_EQ(entity->BaseSensitive()->NbSubElements(),12);  // the box's triangles, shared with the navigation picking
+    }
+    CHECK_EQ(occluders,(type==TopAbs_EDGE || type==TopAbs_VERTEX) && shape==body ? 1 : 0);
   }
 }
 
@@ -92,6 +131,7 @@ TEST(mesh_circle_rim_retains_vertex_and_center_targets) {
   int centers=0,vertices=0;
   for(const auto& entity:selection->Entities()) {
     SelectBasics_PickResult result;if(!entity->BaseSensitive()->Matches(volume,result)) continue;
+    if(!Handle(OccluderOwner)::DownCast(entity->BaseSensitive()->OwnerId()).IsNull()) continue;  // the disc itself (UI-31)
     auto owner=Handle(CircleOwner)::DownCast(entity->BaseSensitive()->OwnerId());
     if(!owner.IsNull()) {CHECK_NEAR(owner->center.Distance(gp::Origin()),0,1e-7);++centers;}
     else {auto vertex=Handle(SubShapeOwner)::DownCast(entity->BaseSensitive()->OwnerId());CHECK(!vertex.IsNull());vertex->prepare();CHECK_EQ(vertex->Shape().ShapeType(),TopAbs_VERTEX);++vertices;}
