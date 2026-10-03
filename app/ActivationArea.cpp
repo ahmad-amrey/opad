@@ -5,9 +5,10 @@
 // dims what is outside, and its breadcrumb leads to it; the chips row names it with the way back to the root; the
 // timeline dims the ops that do not touch it. A ghost under the resting mouse is named in the status bar with its
 // component, a double click on it activates that component (as SketchUp opens a group), and so does the right-click
-// menu there (Viewport::ghostAt: the navigation selector, which keeps ghosts). New sketches, features, bodies, imports and components go into
-// it (DesignController, AppDocument::startImport, design.newcomponent) and F frames it (view.fit). The one activated last
-// in a document is remembered (setting view/active/<uuid>) and active again when the document is opened again. Active
+// menu there (Viewport::ghostAt: the navigation selector, which keeps ghosts). New sketches, features, bodies, imports
+// and components go into it (DesignController, AppDocument::startImport, design.newcomponent) and F frames it
+// (view.fit). The one activated last in a document is remembered (setting view/active/<uuid>) and active again when the
+// document is opened again. Active
 // component visibility (setting view/activeVisibility) off draws and picks the rest as it is; Inactive opacity (setting
 // view/inactiveOpacity, absent: the theme's ghost alpha) is the ghosts' opacity; Only the active component's history
 // (setting view/activeHistoryOnly) leaves the other ops off the timeline; all in the Design menu and the chip's right-click.
@@ -234,11 +235,10 @@ class Activation : public AreaController {
   // activate its component, a double click activates that, and the right-click menu offers it. True: consumed.
   bool viewEvent(QEvent* event) {
     Viewport* view = services().viewport();
-    const auto* e = dynamic_cast<const QMouseEvent*>(event);
-    const bool idle = m_ghosting && !view->ghostsPickable() && !services().design()->sketchActive() && !services().design()->featureActive();
+    const auto* e = static_cast<const QMouseEvent*>(event);  // for the mouse events below
     switch (event->type()) {
       case QEvent::MouseMove:
-        if (e->buttons() == Qt::NoButton && (idle || !m_hint.isEmpty())) {
+        if (e->buttons() == Qt::NoButton && (ghostsIdle() || !m_hint.isEmpty())) {
           m_hoverAt = e->position();
           m_hoverTimer.start();
         }
@@ -257,7 +257,7 @@ class Activation : public AreaController {
         }
         return false;
       case QEvent::MouseButtonDblClick: {
-        const opad::Node* ghost = idle && e->button() == Qt::LeftButton && e->modifiers() == Qt::NoModifier ? services().document()->scene.node(view->ghostAt(e->position())) : nullptr;
+        const opad::Node* ghost = e->button() == Qt::LeftButton && e->modifiers() == Qt::NoModifier && ghostsIdle() ? services().document()->scene.node(view->ghostAt(e->position())) : nullptr;
         if (!ghost) return false;
         setActive(ghost->parent);  // a ghost at the root: the root
         showHint({});
@@ -268,10 +268,14 @@ class Activation : public AreaController {
     }
   }
 
+  // Ghosts shown and nothing else taking the mouse (references picked, a sketch or feature being edited).
+  bool ghostsIdle() const {
+    return m_ghosting && !services().viewport()->ghostsPickable() && !services().design()->sketchActive() && !services().design()->featureActive();
+  }
+
   void hoverHint() {
     Viewport* view = services().viewport();
-    const bool idle = m_ghosting && !view->ghostsPickable() && !services().design()->sketchActive() && !services().design()->featureActive();
-    const opad::Node* ghost = idle && view->hoverText().isEmpty() ? services().document()->scene.node(view->ghostAt(m_hoverAt)) : nullptr;
+    const opad::Node* ghost = ghostsIdle() && view->hoverText().isEmpty() ? services().document()->scene.node(view->ghostAt(m_hoverAt)) : nullptr;
     const AppDocument* doc = services().document();
     showHint(!ghost ? QString()
              : ghost->parent.empty() ? tr("%1 (inactive) · double-click to activate the root").arg(doc->nodeName(ghost->id))
