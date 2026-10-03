@@ -1,6 +1,7 @@
 // Hidden-line projection (core/src/drawing, TODO 11 UI-77): the exact, draft and hybrid tiers on small parts, typed
 // curves and their sources, instances, the cache and cancelling.
 #include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -252,13 +253,28 @@ TEST(projection_tangent_edges_and_silhouettes) {
   }
 }
 
-// The draft tier: polylines from the polygonal algorithm, roughly where the exact lines are.
+// The draft tier: polylines from the polygonal algorithm, roughly where the exact lines are. The box's edges are sharp
+// and name their edge; the hole's outline at x = 16 lies inside its cylindrical face and names that face, the one at
+// x = 24 runs along the cylinder's seam edge.
 TEST(projection_draft_polylines) {
   const Document doc = doc_of({block_with_hole()});
-  const auto g = project(doc, resolve(doc), spec_of("front", Quality::Draft), {}, false);
+  const Scene scene = resolve(doc);
+  const auto g = project(doc, scene, spec_of("front", Quality::Draft), {}, false);
   CHECK(g->tier == Quality::Draft);
   for (const auto& c : g->curves) CHECK(c.type == Curve::Type::Polyline && c.pts.size() >= 2);
   CHECK_NEAR(total(*g, false), 120, 0.5);
+  CHECK_NEAR(total(*g, false, static_cast<int>(Curve::Kind::Sharp)), 120, 0.5);
+  const TopoDS_Shape shape = node_world_shape(doc, scene, g->bodies[0].node);
+  int faces = 0, seams = 0;
+  for (const auto& c : g->curves) {
+    CHECK(c.body == 0 && (c.edge >= 0) != (c.face >= 0));
+    if (c.kind != Curve::Kind::Silhouette) continue;
+    CHECK(c.hidden && std::fabs(c.pts.front()[0] - (c.face >= 0 ? 16 : 24)) < 1e-6);
+    if (c.face >= 0) CHECK(BRepAdaptor_Surface(TopoDS::Face(subshape(shape, Ref::Kind::Face, c.face))).GetType() == GeomAbs_Cylinder);
+    (c.face >= 0 ? faces : seams) += 1;
+  }
+  CHECK(faces == 1 && seams == 1);
+  check_sources(doc, scene, *g);
 }
 
 // Options: no hidden lines; an exploded offset moves a node's curves; a triangulation-only body (OBJ) goes hybrid.

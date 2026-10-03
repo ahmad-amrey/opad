@@ -57,7 +57,7 @@ using detail::View;
 
 namespace {
 
-constexpr const char* kAlgorithm = "proj-1";  // part of every fingerprint: bump when the output of any tier changes
+constexpr const char* kAlgorithm = "proj-2";  // part of every fingerprint: bump when the output of any tier changes
 constexpr double kTwoPi = 2 * M_PI;
 
 Vec2 operator+(Vec2 a, Vec2 b) { return {a[0] + b[0], a[1] + b[1]}; }
@@ -445,13 +445,16 @@ void draft(const Document& doc, const std::vector<Source>& sources, const ViewSp
   });
   run.check();
   Handle(HLRBRep_PolyAlgo) poly = new HLRBRep_PolyAlgo();
-  NCollection_DataMap<TopoDS_Shape, std::pair<int, int>, TopTools_ShapeMapHasher> where;
+  // An edge's pieces name the edge; an internal outline (a silhouette inside a face) names the face.
+  NCollection_DataMap<TopoDS_Shape, std::pair<int, int>, TopTools_ShapeMapHasher> where, where_face;
   for (size_t i = 0; i < sources.size(); ++i) {
     const size_t k = static_cast<size_t>(std::find(keys.begin(), keys.end(), sources[i].key) - keys.begin());
     const TopoDS_Shape placed = placed_copy(sources[i], meshed[k]);
-    TopTools_IndexedMapOfShape edges;
+    TopTools_IndexedMapOfShape edges, faces;
     TopExp::MapShapes(placed, TopAbs_EDGE, edges);
+    TopExp::MapShapes(placed, TopAbs_FACE, faces);
     for (int e = 1; e <= edges.Extent(); ++e) where.Bind(edges(e), {static_cast<int>(i), e - 1});
+    for (int f = 1; f <= faces.Extent(); ++f) where_face.Bind(faces(f), {static_cast<int>(i), f - 1});
     poly->Load(placed);
   }
   run.report(0.5, "hidden lines: polygonal", true);
@@ -470,12 +473,14 @@ void draft(const Document& doc, const std::vector<Source>& sources, const ViewSp
     const HLRAlgo_BiPoint::PointsT& p = poly->Hide(status, shape, reg1, regn, outline, internal);
     Curve like;
     like.type = Curve::Type::Polyline;
-    if (internal || outline) like.kind = Curve::Kind::Silhouette;
-    else if (reg1) like.kind = regn ? Curve::Kind::Seam : Curve::Kind::Tangent;
+    // As the exact tier: a sharp edge on the outline stays sharp, a smooth one there is a silhouette.
+    if (internal) like.kind = Curve::Kind::Silhouette;
+    else if (reg1 && !outline) like.kind = regn ? Curve::Kind::Seam : Curve::Kind::Tangent;
+    else if (reg1) like.kind = Curve::Kind::Silhouette;
     if ((like.kind == Curve::Kind::Tangent && !spec.tangent) || (like.kind == Curve::Kind::Seam && !spec.seams) || (internal && !spec.silhouettes)) continue;
-    if (const auto* w = where.Seek(shape)) {
+    if (const auto* w = (internal ? where_face : where).Seek(shape)) {
       like.body = w->first;
-      if (!internal) like.edge = w->second;  // an internal outline names some edge of its body, not where it lies
+      (internal ? like.face : like.edge) = w->second;
     }
     const Vec2 a{p.PntP1.X(), p.PntP1.Y()}, b{p.PntP2.X(), p.PntP2.Y()};
     HLRAlgo_EdgeIterator it;
@@ -495,19 +500,19 @@ void draft(const Document& doc, const std::vector<Source>& sources, const ViewSp
   // A segment comes once for its edge and again as an outline: repeats are dropped (edges first), then each edge's
   // segments are joined into polylines.
   std::stable_sort(pieces.begin(), pieces.end(), [](const Piece& x, const Piece& y) {
-    return (x.like.kind == Curve::Kind::Silhouette) < (y.like.kind == Curve::Kind::Silhouette);
+    return (x.like.face >= 0) < (y.like.face >= 0);
   });
   using Key = std::pair<long long, long long>;
   auto key = [](const Vec2& p) { return Key{std::llround(p[0] * 1e6), std::llround(p[1] * 1e6)}; };
   std::set<std::tuple<Key, Key, bool>> seen;
-  std::map<std::tuple<int, int, int, bool>, std::vector<size_t>> groups;
+  std::map<std::tuple<int, int, int, int, bool>, std::vector<size_t>> groups;
   for (size_t i = 0; i < pieces.size(); ++i) {
     Key ka = key(pieces[i].a), kb = key(pieces[i].b);
     if (ka == kb) continue;
     if (kb < ka) std::swap(ka, kb);
     if (!seen.insert({ka, kb, pieces[i].like.hidden}).second) continue;
     const Curve& l = pieces[i].like;
-    groups[{l.body, l.edge, static_cast<int>(l.kind), l.hidden}].push_back(i);
+    groups[{l.body, l.edge, l.face, static_cast<int>(l.kind), l.hidden}].push_back(i);
   }
   for (const auto& [group, members] : groups) {
     std::map<Key, std::vector<size_t>> at;
