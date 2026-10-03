@@ -98,17 +98,33 @@ void SketchEditor::setTool(const QString& tool) {
 
 // The step that waits, as the prompt bar and the tool panel list it (SketchSteps.hpp, UI-25), and the tool's note.
 void SketchEditor::toolPrompt() {
-  QString t;
-  if (const auto* entry = sketchsteps::find(m_tool.toStdString())) {
-    const QList<ToolStep> steps = toolSteps();
-    int waiting = 0;
-    while (waiting + 1 < steps.size() && !steps[waiting].picked.isEmpty()) ++waiting;
-    t = tr("%1: %2").arg(i18n::t(entry->name), steps[waiting].label);
-    if (*entry->note) t += QStringLiteral(" · ") + i18n::t(entry->note);
-  }
-  emit status(t);
+  emit status(prompt(true));
   emit workflowChanged();
   updateInput();  // the boxes of the step that waits now
+}
+
+QString SketchEditor::prompt(bool note) const {
+  const auto* entry = sketchsteps::find(m_tool.toStdString());
+  if (!entry) return {};
+  const QList<ToolStep> steps = toolSteps();
+  int waiting = 0;
+  while (waiting + 1 < steps.size() && !steps[waiting].picked.isEmpty()) ++waiting;
+  QString t = tr("%1: %2").arg(i18n::t(entry->name), steps[waiting].label);
+  if (note && *entry->note) t += QStringLiteral(" · ") + i18n::t(entry->note);
+  return t;
+}
+
+// "close" on the command line: the polyline's last segment back to its first point, which ends it.
+bool SketchEditor::closeChain() {
+  if (!m_active || m_editJob || m_tool != "line" || m_chain.size() < 3) return false;
+  const SkPoint* first = m_sk.point(m_chain.front());
+  if (!first) return false;
+  Snap s;
+  s.u = first->x;
+  s.v = first->y;
+  s.point = first->id;
+  click(s, Qt::AltModifier);
+  return true;
 }
 
 // ---------------------------------------------------------------- clicks

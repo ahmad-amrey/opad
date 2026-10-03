@@ -26,3 +26,4 @@ OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_CROSSLOCK, sketchCrossLock, benchCrossLock) 
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_SNAPS, sketchSnaps, benchSnaps)                   // UI-21, UI-23
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_STEPS, sketchSteps, benchSteps)                   // UI-25
 OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_CONSTRAINTS, sketchConstraints, benchConstraints)  // UI-24
+OPAD_SKETCH_BENCH(OPAD_BENCH_SKETCH_COMMANDLINE, sketchCommandLine, benchCommandLine)  // UI-133

@@ -11,6 +11,7 @@
 #include "I18n.hpp"
 #include "InputKeys.hpp"
 #include "ShapeInput.hpp"
+#include "SketchCommands.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
 #include "opad/design/expr.hpp"
@@ -557,6 +558,61 @@ bool SketchEditor::useTyped(const Snap* at) {
   rebuild();
   emit changed();
   return true;
+}
+
+// The command line's entry (UI-133): the keys SketchCommands.hpp makes of it typed into the step's boxes one by one, as keys
+// over the view are (the boxes, the entry hook and InputKeys.hpp read them), then Enter. A point step takes x,y (absolute),
+// @dx,dy, @len<ang and len<ang, and a bare value in its first box unless that is X; a tool's values go into its boxes in
+// order. A value that does not evaluate is said and dropped, so the step waits as it did.
+QString SketchEditor::enter(const QString& text) {
+  namespace sc = sketchcommands;
+  const QString line = text.trimmed();
+  if (!m_active || line.isEmpty()) return {};
+  dropPreviewJob();
+  if (m_editJob) return tr("The sketch is busy; try again");
+  if (m_tool == "select") return tr("Choose a tool first: type its name (L, C, REC, ...)");
+  if (m_dimensionHandle->isVisible()) {  // the offset's curves are picked: its distance, then it applies
+    m_options["distance"] = line;
+    m_panelFieldsDirty = true;
+    scheduleToolPreview();
+    emit workflowChanged();
+    applyTool();
+    return {};
+  }
+  forgetTyped();
+  updateInput();
+  const auto fields = inputStage();
+  const auto boxes = std::find_if(fields.begin(), fields.end(), [](const DynamicInput::Field& f) { return !f.option; });
+  const bool point = kPointTools.contains(m_tool) && boxes != fields.end();
+  if (fields.isEmpty() || !m_input->count()) return tr("This tool takes no values: pick in the view");
+  std::string keys = sc::keys(line.toStdString(), point);
+  double bu = 0, bv = 0;
+  if (point && !inputBase(bu, bv)) {
+    std::string length, angle;
+    if (sc::polar(line.toStdString(), length, angle)) try {  // from the origin: no last point to measure from
+        std::vector<ParamDef> defs;
+        for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+        const auto table = sketch_parameters(m_sk, ParamTable(defs, m_doc->scene.units));
+        const double r = table.length(length), a = table.angle(angleExpression(QString::fromStdString(angle)));
+        keys = QStringLiteral("#%1 mm,%2 mm").arg(r * std::cos(a), 0, 'g', 15).arg(r * std::sin(a), 0, 'g', 15).toStdString();
+      } catch (const std::exception& e) {
+        return i18n::t(QString::fromUtf8(e.what()));
+      }
+  }
+  if (point && sc::bare(line.toStdString()) && boxes->key == "x") return tr("A point needs X and Y: type x,y (or @dx,dy, @length<angle)");
+  m_input->select(point ? int(boxes - fields.begin()) : 0);  // past the text tool's words to its X
+  for (const QChar c : QString::fromStdString(keys)) m_input->type(QString(c));
+  if (point) retype();
+  for (const auto& field : inputStage())
+    if (const QString problem = m_input->problem(field.key); !problem.isEmpty()) {
+      m_input->dropTyped();
+      forgetTyped();
+      updateInput();
+      return problem;
+    }
+  if (!m_input->typed()) return tr("Nothing to type there");
+  done();
+  return {};
 }
 
 bool SketchEditor::boxed(const QString& key) const {

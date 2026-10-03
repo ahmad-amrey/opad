@@ -77,6 +77,11 @@ class SketchEditor : public QObject, public SketchInput {
   bool escape();
   void closeTool();
   QString keyHints() const;  // what Backspace, Enter, Esc and Shift do now, for the prompt
+  QString prompt(bool note = false) const;  // "<tool>: <the step that waits>" (the prompt bar's step), then the tool's note
+  // The command line (UI-133, SketchCommands.hpp): a point or the tool's values typed into the step's boxes key by key as
+  // over the view, then Enter; the reason when that did not work (nothing typed stays behind then), else empty.
+  QString enter(const QString& text);
+  bool closeChain();  // the polyline back to its first point
   void toggleReference();
   void selectConnected();
   void selectType();
@@ -109,6 +114,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchCrossLock();
   void benchSnaps();
   void benchSteps();
+  void benchCommandLine();
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
   // Show constraints (UI-24, setting sketch/showConstraints): their badges and coincidence dots; off, only those in conflict
   // or selected show.
