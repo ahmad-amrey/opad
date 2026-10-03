@@ -335,9 +335,18 @@ opad::json AppDocument::commitPlan(opad::design::Plan&& plan, const QString& lab
 }
 
 void AppDocument::setRollback(const std::string& opId) {
+  m_userRollback = false;
   if (m_rollback == opId) return;
   m_rollback = opId;
   refresh();
+}
+
+void AppDocument::rollBackTo(const std::string& opId) {
+  if (m_rollback == opId && m_userRollback == !opId.empty()) return;
+  const bool moved = m_rollback != opId;
+  m_rollback = opId;
+  m_userRollback = !opId.empty();
+  if (moved) refresh();
 }
 
 void AppDocument::refresh() {
@@ -373,6 +382,11 @@ void AppDocument::commitSnapshot(opad::Document& document,opad::Scene& resolved,
 
 void AppDocument::recordStep(const QString& label, size_t opsBefore) {
   if (doc.ops.size() <= opsBefore) return;  // the command appended nothing
+  if (rolledBack()) {  // the new step goes at the end: shown from there (the caller refreshes)
+    m_rollback.clear();
+    m_userRollback = false;
+    emit message(tr("Rolled forward to the end of the timeline: new steps are added there."));
+  }
   m_undo.push_back(Step{label, doc.ops.size() - opsBefore, {}});
   m_redo.clear();
   while (static_cast<int>(m_undo.size()) > m_undoLimit) m_undo.erase(m_undo.begin());

@@ -1,0 +1,272 @@
+#include <BRepAdaptor_Curve.hxx>
+#include <QApplication>
+#include <QClipboard>
+#include <QKeyEvent>
+#include <QMenu>
+#include <QMimeData>
+#include <QMouseEvent>
+#include <QToolButton>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS.hxx>
+
+#include "BenchRegistry.hpp"
+#include "MainWindow.hpp"
+#include "SmartSelect.hpp"
+#include "Theme.hpp"
+#include "TimelineArea.hpp"
+#include "opad/design/feature.hpp"
+#include "opad/design/provenance.hpp"
+#include "opad/geometry.hpp"
+
+// OPAD_BENCH_TIMELINE=<prefix> (TODO 11 UI-99; case timeline in tools/bench_cases/smart.py) on the 40 mm base with a 10 mm
+// boss joined on top; the bench rounds the boss's top edges (Round), renames the body and colours it first. The pointer on
+// a marker (mouse events into the timeline): Boss's five faces in the candidate amber, Round's four, the rename's body
+// tinted whole, nothing once it leaves. A click on Round's marker selects its four faces with its actions on the chip, on
+// Base's (it made the body) the body, Right from there Boss's faces; Ctrl+C on the timeline copies the marker's op id (the
+// clipboard is given back). Names on the markers make them wider; the design history alone hides the rename and the
+// colour. Roll back to here on Boss: the round is not there, the playhead between the two markers, the chip says so; the
+// playhead dragged to the end rolls forward, dragged before Boss rolls back past it; a change made then is appended and
+// rolls forward, so does a command that edits. The menu on no marker offers the view entries. Shots: <prefix>.hover.png,
+// .names.png, .design.png, .rolledback.png, .menu.png.
+OPAD_BENCH(OPAD_BENCH_TIMELINE, timeline) {
+  struct State {
+    int phase = 0, ticks = 0, wait = 0;
+    std::string body, base, boss, round, rename, colour;
+    std::vector<opad::Ref> bossFaces, roundFaces;
+    std::unique_ptr<QMimeData> clipboard;
+  };
+  auto state = std::make_shared<State>();
+  SmartSelect* area = nullptr;
+  TimelineArea* timelineArea = nullptr;
+  for (AreaController* a : w.m_areas) {
+    if (auto* smart = dynamic_cast<SmartSelect*>(a)) area = smart;
+    if (auto* t = dynamic_cast<TimelineArea*>(a)) timelineArea = t;
+  }
+  if (!area || !timelineArea) {
+    trace::log("bench: timeline FAIL: the smart selection or timeline area is off");
+    QCoreApplication::exit(2);
+    return true;
+  }
+  auto* timer = new QTimer(&w);
+  timer->setInterval(100);
+  QObject::connect(timer, &QTimer::timeout, &w, [&w, area, timelineArea, state, timer, prefix = value] {
+    TimelineWidget* t = w.m_timeline;
+    try {
+      if (++state->ticks > 1200) throw opad::Error("timed out in phase " + std::to_string(state->phase));
+      if (w.m_doc->loading || w.m_doc->designBusy || w.m_doc->snapshotBusy() || w.m_jobs->busy() || area->busy()) return;
+      auto require = [](bool ok, const std::string& why) {
+        if (!ok) throw opad::Error(why);
+      };
+      auto pass = [](const QString& what) { trace::log("bench: timeline: " + what + " PASS"); };
+      auto waitFor = [&](bool ok, const std::string& why) {
+        if (ok) {
+          state->wait = 0;
+          return true;
+        }
+        require(++state->wait < 80, why);
+        return false;
+      };
+      auto mouse = [&](QEvent::Type type, const QPoint& at, Qt::MouseButton button = Qt::NoButton) {
+        const Qt::MouseButtons buttons = type == QEvent::MouseButtonPress || (type == QEvent::MouseMove && button != Qt::NoButton) ? Qt::MouseButtons(Qt::LeftButton) : Qt::NoButton;
+        QMouseEvent e(type, QPointF(at), QPointF(t->mapToGlobal(at)), type == QEvent::MouseMove ? Qt::NoButton : button, buttons, Qt::NoModifier);
+        QApplication::sendEvent(t, &e);
+      };
+      auto hover = [&](const std::string& op) { mouse(QEvent::MouseMove, t->markerAt(op).center()); };
+      auto click = [&](const std::string& op) {
+        mouse(QEvent::MouseMove, t->markerAt(op).center());
+        mouse(QEvent::MouseButtonPress, t->markerAt(op).center(), Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, t->markerAt(op).center(), Qt::LeftButton);
+      };
+      auto drag = [&](int x) {  // the playhead, to x
+        const QPoint from = t->playhead().center();
+        mouse(QEvent::MouseMove, from);
+        mouse(QEvent::MouseButtonPress, from, Qt::LeftButton);
+        mouse(QEvent::MouseMove, QPoint((from.x() + x) / 2, from.y()), Qt::LeftButton);
+        mouse(QEvent::MouseMove, QPoint(x, from.y()), Qt::LeftButton);
+        mouse(QEvent::MouseButtonRelease, QPoint(x, from.y()), Qt::LeftButton);
+      };
+      auto selected = [&](const std::vector<opad::Ref>& refs) { return smart::sameRefs(w.m_viewport->selection(), refs); };
+      const auto amber = theme::current().candidate;
+      auto tinted = [&] {
+        const auto c = w.m_viewport->bodyLook(state->body).color;
+        return std::abs(c[0] - amber.redF()) < 1e-3 && std::abs(c[1] - amber.greenF()) < 1e-3 && std::abs(c[2] - amber.blueF()) < 1e-3;
+      };
+      switch (state->phase) {
+        case 0: {
+          require(w.m_doc->scene.all_bodies().size() == 1, "one body");
+          state->body = w.m_doc->scene.all_bodies().front();
+          for (const auto& f : w.m_doc->scene.features) {
+            if (f.name == "Base") state->base = f.id;
+            if (f.name == "Boss") state->boss = f.id;
+          }
+          require(!state->base.empty() && !state->boss.empty(), "the fixture's Base and Boss");
+          TopTools_IndexedMapOfShape edges;
+          TopExp::MapShapes(opad::node_world_shape(w.m_doc->doc, w.m_doc->scene, state->body), TopAbs_EDGE, edges);
+          opad::json top = opad::json::array();
+          for (int i = 1; i <= edges.Extent(); ++i) {
+            BRepAdaptor_Curve c(TopoDS::Edge(edges(i)));
+            if (std::abs(c.Value(c.FirstParameter()).Z() - 20) < 1e-6 && std::abs(c.Value(c.LastParameter()).Z() - 20) < 1e-6) top.push_back(state->body + "/edge/" + std::to_string(i - 1));
+          }
+          require(top.size() == 4, "four top edges on the boss");
+          w.m_design->applyOps({opad::design::make_feature_op("fillet", "Round", {{"edges", top}, {"radius", "2 mm"}})}, "fillet");
+          break;
+        }
+        case 1: {
+          for (const auto& f : w.m_doc->scene.features)
+            if (f.name == "Round") state->round = f.id;
+          require(!state->round.empty() && w.m_doc->scene.feature(state->round)->error.empty(), "Round applied");
+          state->rename = w.m_doc->run("rename", opad::json{{"target", state->body}, {"name", "Part"}}).value("id", "");
+          state->colour = w.m_doc->run("appearance", opad::json{{"target", state->body}, {"color", {0.2, 0.5, 0.8}}}).value("id", "");
+          require(!state->rename.empty() && !state->colour.empty(), "a rename and a colour step");
+          opad::design::Provenance provenance(w.m_doc->doc);
+          const auto owners = provenance.face_owners(state->body);
+          for (size_t i = 0; i < owners.size(); ++i) {
+            const opad::Ref r = opad::Ref::parse(state->body + "/face/" + std::to_string(i));
+            if (owners[i].op == state->boss) state->bossFaces.push_back(r);
+            if (owners[i].op == state->round) state->roundFaces.push_back(r);
+          }
+          require(state->bossFaces.size() == 5 && state->roundFaces.size() == 4, "the boss owns 5 faces, Round 4");
+          require(t->markerCount() == 5 && !t->showNames() && !t->designOnly(), "five markers, icons only, every step");
+          w.setWorkspace("design");
+          w.m_viewport->standardView("iso");
+          hover(state->boss);
+          break;
+        }
+        case 2: {
+          if (!waitFor(w.m_viewport->candidateRefsShown() == 5, "the pointer on Boss's marker draws its five faces (" + std::to_string(w.m_viewport->candidateRefsShown()) + ")")) return;
+          w.m_viewport->grabImage().save(prefix + ".hover.png");
+          pass("the pointer on Boss's marker draws its five faces in amber");
+          hover(state->round);
+          break;
+        }
+        case 3: {
+          if (!waitFor(w.m_viewport->candidateRefsShown() == 4, "the pointer on Round's marker draws its four faces")) return;
+          pass("on Round's marker, its four faces");
+          hover(state->rename);
+          break;
+        }
+        case 4: {
+          if (!waitFor(tinted() && w.m_viewport->candidateRefsShown() == 0 && !w.m_viewport->looksPending(), "the pointer on the rename's marker tints the body")) return;
+          pass("on the rename's marker, the body it renamed tinted whole");
+          QEvent leave(QEvent::Leave);
+          QApplication::sendEvent(t, &leave);
+          break;
+        }
+        case 5: {
+          if (!waitFor(!tinted() && w.m_viewport->candidateRefsShown() == 0, "leaving the timeline clears the amber")) return;
+          pass("off the markers, nothing in amber");
+          click(state->round);
+          break;
+        }
+        case 6: {
+          if (!waitFor(selected(state->roundFaces) && area->found().active >= 0 && area->chip()->isVisible(), "a click on Round's marker selects its four faces")) return;
+          QStringList buttons;
+          for (QToolButton* b : area->chip()->actionButtons()) buttons << b->defaultAction()->objectName();
+          require(buttons.contains("smartDelete") && buttons.contains("smartEdit") && area->chip()->text() == SmartSelect::tr("%1 · %2 faces").arg("Round").arg(4),
+                  "the chip names Round with its actions: " + area->chip()->text().toStdString() + " " + buttons.join(",").toStdString());
+          pass("a click on Round's marker selects the four faces it made, the chip carries Round's actions");
+          click(state->base);
+          break;
+        }
+        case 7: {
+          if (!waitFor(w.m_viewport->selection().size() == 1 && w.m_viewport->selection().front().kind == opad::Ref::Kind::Body && w.m_viewport->selection().front().body == state->body,
+                       "a click on Base's marker selects the body")) return;
+          pass("Base made the body: a click on its marker selects the body");
+          QKeyEvent right(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
+          QApplication::sendEvent(t, &right);
+          break;
+        }
+        case 8: {
+          if (!waitFor(t->currentOp() == state->boss && selected(state->bossFaces), "Right on the timeline goes to Boss and selects its faces")) return;
+          pass("Right on the timeline steps to Boss's marker and selects its five faces");
+          // Ctrl+C: the marker's op id (what was on the clipboard is put back).
+          state->clipboard = std::make_unique<QMimeData>();
+          if (const QMimeData* was = QGuiApplication::clipboard()->mimeData())
+            for (const QString& format : was->formats()) state->clipboard->setData(format, was->data(format));
+          QKeyEvent override(QEvent::ShortcutOverride, Qt::Key_C, Qt::ControlModifier);
+          QApplication::sendEvent(t, &override);
+          require(override.isAccepted(), "the timeline takes Ctrl+C before the window's shortcuts");
+          QKeyEvent copy(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier);
+          QApplication::sendEvent(t, &copy);
+          const QString copied = QGuiApplication::clipboard()->text();
+          QGuiApplication::clipboard()->setMimeData(state->clipboard.release());
+          require(copied == QString::fromStdString(state->boss), "Ctrl+C copied \"" + copied.toStdString() + "\"");
+          pass("Ctrl+C on the timeline copies the marker's op id");
+          const int narrow = t->markerAt(state->boss).width();
+          w.action("timeline.names")->trigger();
+          require(t->showNames() && t->markerAt(state->boss).width() > narrow + 20, "names make the markers wider");
+          t->grab().save(prefix + ".names.png");
+          pass(QString("names on the markers: Boss's marker %1 px wide, was %2").arg(t->markerAt(state->boss).width()).arg(narrow));
+          w.action("timeline.designOnly")->trigger();
+          require(t->designOnly() && t->markerCount() == 3 && t->markerAt(state->rename).isNull() && t->markerAt(state->colour).isNull(), "the design history alone: three markers");
+          t->grab().save(prefix + ".design.png");
+          pass("the design history alone hides the rename and the colour");
+          w.action("timeline.designOnly")->trigger();
+          w.action("timeline.names")->trigger();
+          require(!t->designOnly() && !t->showNames() && t->markerCount() == 5, "back to every step, icons only");
+          // Roll back to here, on Boss: the model as it was right after it.
+          QMenu menu;
+          w.buildTimelineMenu(menu, state->boss);
+          QAction* back = menu.findChild<QAction*>("timelineRollBack");
+          require(back && back->isEnabled(), "the marker's menu offers Roll back to here");
+          back->trigger();
+          break;
+        }
+        case 9: {
+          if (!waitFor(w.m_doc->rolledBack(), "Roll back to here rolls back")) return;
+          const QRect boss = t->markerAt(state->boss), round = t->markerAt(state->round), head = t->playhead();
+          require(w.m_doc->rollback() == state->round && w.m_doc->scene.feature(state->boss) && !w.m_doc->scene.feature(state->round), "rolled back before Round");
+          require(head.center().x() > boss.right() && head.center().x() < round.left(), "the playhead between Boss and Round");
+          require(timelineArea->chip() && timelineArea->chip()->isVisibleTo(w.m_chips) && w.action("timeline.rollForward")->isEnabled(), "the chip and Roll forward say it is rolled back");
+          t->grab().save(prefix + ".rolledback.png");
+          pass("Roll back to here on Boss: Round is not there, the playhead between them, the chip \"" + timelineArea->chip()->text() + "\"");
+          drag(t->width() - 80);
+          break;
+        }
+        case 10: {
+          if (!waitFor(!w.m_doc->rolledBack() && w.m_doc->rollback().empty() && w.m_doc->scene.feature(state->round), "the playhead dragged to the end rolls forward")) return;
+          require(!timelineArea->chip()->isVisibleTo(w.m_chips), "the chip goes");
+          pass("the playhead dragged to the end rolls forward");
+          drag(t->markerAt(state->boss).left() - 4);
+          break;
+        }
+        case 11: {
+          if (!waitFor(w.m_doc->rollback() == state->boss && !w.m_doc->scene.feature(state->boss), "the playhead dragged before Boss rolls back past it")) return;
+          pass("the playhead dragged before Boss: the model without the boss");
+          const size_t ops = w.m_doc->doc.ops.size();
+          w.m_doc->run("rename", opad::json{{"target", state->body}, {"name", "Part 2"}});
+          require(w.m_doc->doc.ops.size() == ops + 1 && !w.m_doc->rolledBack() && w.m_doc->scene.feature(state->round), "a change made while rolled back is appended and rolls forward");
+          pass("a change made while rolled back is appended at the end and rolls forward");
+          require(timelineArea->rollTo(state->round) && w.m_doc->rolledBack(), "rolled back again");
+          w.action("design.chamfer")->trigger();  // a command that edits
+          require(!w.m_doc->rolledBack() && w.m_design->featureActive(), "a command that edits rolls forward first");
+          pass("a command that edits rolls forward before it starts");
+          w.m_design->escape();
+          break;
+        }
+        case 12: {
+          if (!waitFor(!w.m_design->featureActive(), "Esc leaves the chamfer")) return;
+          QMenu menu;
+          w.buildTimelineMenu(menu, std::string());
+          QStringList entries;
+          for (QAction* a : menu.actions())
+            if (!a->isSeparator()) entries << a->objectName();
+          require(entries == QStringList{"timeline.names", "timeline.designOnly"}, "on no marker the menu offers the view entries: " + entries.join(",").toStdString());
+          menu.grab().save(prefix + ".menu.png");
+          pass("the menu on no marker: names and the design history");
+          timer->stop();
+          QCoreApplication::exit(0);
+          return;
+        }
+      }
+      ++state->phase;
+    } catch (const std::exception& e) {
+      timer->stop();
+      trace::log(QString("bench: timeline FAIL: %1").arg(e.what()));
+      QCoreApplication::exit(2);
+    }
+  });
+  timer->start();
+  return true;
+}

@@ -306,14 +306,20 @@ void SmartSelect::ready() {
     hideChip();
   });
   v->installEventFilter(this);
+  // A timeline marker the pointer rests on shows what it made (UI-99).
+  m_markerWait.setSingleShot(true);
+  m_markerWait.setInterval(80);  // sweeping along the strip shows nothing on the way
+  connect(&m_markerWait, &QTimer::timeout, this, &SmartSelect::showMarker);
+  connect(services().timeline(), &TimelineWidget::markerHovered, this, &SmartSelect::markerHovered);
 }
 
 bool SmartSelect::idle() const {
   const AppDocument* doc = services().document();
   const DesignController* design = services().design();
   const Viewport* v = services().viewport();
+  // Rolled back (the timeline's marker): the bodies shown are earlier states, the related command reads the last ones.
   return doc && design && v && doc->hasDocument && !doc->loading && !doc->annotationEditing && !design->sketchActive() && !design->ownsSelection() &&
-         !v->pickAccumulate();
+         !v->pickAccumulate() && doc->rollback().empty();
 }
 
 bool SmartSelect::suggesting() const { return !m_suggest || m_suggest->isChecked(); }
@@ -439,7 +445,11 @@ void SmartSelect::capture() {
   const auto revision = doc->revision, generation = doc->generation;
   m_capturing = doc->captureSnapshot(services().jobs(), [this, revision, generation](std::shared_ptr<opad::Document> copy, const QString&) {
     m_capturing = false;
-    if (!copy) return m_afterCapture.clear();
+    if (!copy) {
+      m_madeRunning = false;  // what waited for the copy is dropped
+      m_afterMade.clear();
+      return m_afterCapture.clear();
+    }
     const AppDocument* d = services().document();
     if (d->revision != revision || d->generation != generation) return capture();  // changed meanwhile: what it is now
     m_snap = {std::move(copy), revision, generation};
@@ -541,6 +551,7 @@ void SmartSelect::positionOverlays(const QRect&) { place(); }
 void SmartSelect::hover(int index) {
   Viewport* v = services().viewport();
   if (!v) return;
+  m_markerShown = false;  // the one candidate highlight: a marker's goes
   if (index < 0 || index >= int(m_found.candidates.size())) return v->showCandidateRefs({});
   const smart::Candidate& c = m_found.candidates[size_t(index)];
   v->showCandidateRefs(smart::sameRefs(c.refs, m_current) ? std::vector<opad::Ref>{} : c.refs);  // the selection is shown already
@@ -614,6 +625,7 @@ void SmartSelect::shrink() {
 
 bool SmartSelect::command(const QString& id, const SelectionContext& selection) {
   if (!idle()) return false;
+  if (id == "timeline.select") return markerClicked(selection.op);
   if (id == "edit.selectparent") {
     if (subPicks(selection.refs)) {
       grow();
@@ -792,6 +804,10 @@ void SmartSelect::documentChanged(bool replaced) {
     m_afterCapture.clear();
     m_current.clear();
     m_previous.clear();
+    m_made.reset();
+    m_afterMade.clear();
+    m_madeRunning = false;
+    ++m_madeToken;  // a job still running drops its answer
   }
   hideChip();
   if (idle() && subPicks(m_current)) request(false);  // the picks may still stand

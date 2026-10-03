@@ -65,7 +65,8 @@ class MainWindow : public QMainWindow {
   // Feature areas (AreaController.hpp, MainWindowAreas.cpp): made after the built-in commands, hooks called from here.
   void createAreas();
   SelectionContext selectionContext() const;
-  bool areaCommand(const QString& id);  // an area takes this built-in command for the selection (AreaController::command)
+  // An area takes this built-in command for the selection, or for a timeline marker (AreaController::command).
+  bool areaCommand(const QString& id, const std::string& op = {});
   template <class Hook>
   void forEachArea(Hook hook) {  // the hooks that run once the window is built
     if (m_areasReady)
@@ -125,6 +126,7 @@ class MainWindow : public QMainWindow {
   void bindPanel(QAction* a, ToolPanel* panel);
   void showContextMenu(const QPoint& globalPos, std::vector<std::string> ids);
   void timelineMenu(const std::string& opId, const QPoint& globalPos);
+  void buildTimelineMenu(QMenu& menu, const std::string& opId);  // what timelineMenu shows (benches fill one without showing it)
   // Guided tools: the tool is started first and asks for its picks one step at a time (see GuidedTool.hpp).
   void toggleTool(const QString& id);  // distance, angle, radius, bbox, note, sectionface
   void startTool(const QString& id);

@@ -70,40 +70,48 @@ void MainWindow::buildEditActions() {
 }
 
 void MainWindow::timelineMenu(const std::string& requestedId, const QPoint& globalPos) {
+  QMenu menu(this);
+  buildTimelineMenu(menu, requestedId);
+  menu.exec(globalPos);
+}
+
+// A marker's actions, then the roll-back marker and how the timeline shows; on no marker (empty id) only the latter.
+void MainWindow::buildTimelineMenu(QMenu& menu, const std::string& requestedId) {
   const std::string opId=requestedId;
   const auto generation=m_doc->generation;
-  bool deleted = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) != m_doc->scene.deleted_ops.end();
-  QMenu menu(this);
   menu.setMinimumWidth(232);  // not fixed: that cut the shortcuts off ("Shift+" for Shift+Del)
-  const opad::Op* menuOp = m_doc->doc.find_op(opId);
-  // Tombstoning a delete op brings back what it deleted (docs/format.md), so on a delete marker that entry is offered
-  // as what it does; once undone, the delete can be applied again.
-  const bool deleteMarker = menuOp && menuOp->type == "delete";
-  QAction* del = menu.addAction(icons::themed(deleteMarker ? "restore" : "delete", 16), deleteMarker ? tr("Restore what it deleted\tDel") : tr("Delete (tombstone)\tDel"));
-  del->setEnabled(!deleted);
-  QAction* restore = menu.addAction(icons::themed(deleteMarker ? "delete" : "restore", 16), deleteMarker ? tr("Delete it again\tShift+Del") : tr("Restore\tShift+Del"));
-  restore->setEnabled(deleted);
-  const bool designOp = menuOp && (menuOp->type == "feature" || menuOp->type == "sketch") && !deleted;
-  const opad::Feature* feat = m_doc->scene.feature(opId);
-  const bool suppressed=feat && feat->suppressed;
-  QAction* editOp = designOp ? menu.addAction(icons::themed("rename", 16), menuOp->type == "sketch" ? tr("Edit sketch") : tr("Edit feature")) : nullptr;
-  QAction* suppress = designOp && feat ? menu.addAction(icons::themed(feat->suppressed ? "eye" : "hide", 16), feat->suppressed ? tr("Unsuppress") : tr("Suppress")) : nullptr;
-  QAction* exportSketch=designOp && menuOp->type=="sketch" ? menu.addAction(icons::themed("export",16),tr("Export sketch")) : nullptr;
-  if (designOp) menu.addSeparator();
-  QAction* sel = menu.addAction(icons::themed("isolate", 16), tr("Select what it touches\tT"));
-  menu.addSeparator();
-  QAction* copy = menu.addAction(icons::themed("commit", 16), tr("Copy op id\tCtrl+C"));
-  QAction* log = menu.addAction(icons::themed("git", 16), tr("Show in git log"));
-  QAction* chosen = menu.exec(globalPos);
-  if (!chosen || generation!=m_doc->generation) return;
-  if (chosen == exportSketch) exportDialog({opId});
-  else if (chosen == editOp) m_design->editOp(opId);
-  else if (chosen == suppress) m_design->setSuppressed(opId, !suppressed);
-  else if (chosen == del) deleteOp(opId);
-  else if (chosen == restore) restoreOp(opId);
-  else if (chosen == sel) selectOpTargets(opId);
-  else if (chosen == copy) QApplication::clipboard()->setText(QString::fromStdString(opId));
-  else if (chosen == log) showOpGitLog(opId,m_doc->path());
+  // Each entry acts only on the document it was offered for (a load may replace it while the menu is open).
+  auto entry = [&](const QString& icon, const QString& text, const char* name, std::function<void()> fn) {
+    QAction* a = icon.isEmpty() ? menu.addAction(text) : menu.addAction(icons::themed(icon, 16), text);
+    a->setObjectName(name);
+    connect(a, &QAction::triggered, this, [this, generation, fn] { if (generation == m_doc->generation) guarded(fn); });
+    return a;
+  };
+  if (const opad::Op* menuOp = m_doc->doc.find_op(opId)) {
+    const bool deleted = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) != m_doc->scene.deleted_ops.end();
+    // Tombstoning a delete op brings back what it deleted (docs/format.md), so on a delete marker that entry is offered
+    // as what it does; once undone, the delete can be applied again.
+    const bool deleteMarker = menuOp->type == "delete";
+    entry(deleteMarker ? "restore" : "delete", deleteMarker ? tr("Restore what it deleted\tDel") : tr("Delete (tombstone)\tDel"), "timelineDelete", [this, opId] { deleteOp(opId); })->setEnabled(!deleted);
+    entry(deleteMarker ? "delete" : "restore", deleteMarker ? tr("Delete it again\tShift+Del") : tr("Restore\tShift+Del"), "timelineRestore", [this, opId] { restoreOp(opId); })->setEnabled(deleted);
+    const bool designOp = (menuOp->type == "feature" || menuOp->type == "sketch") && !deleted;
+    const opad::Feature* feat = m_doc->scene.feature(opId);
+    if (designOp) entry("rename", menuOp->type == "sketch" ? tr("Edit sketch") : tr("Edit feature"), "timelineEdit", [this, opId] { m_design->editOp(opId); });
+    if (designOp && feat) entry(feat->suppressed ? "eye" : "hide", feat->suppressed ? tr("Unsuppress") : tr("Suppress"), "timelineSuppress", [this, opId, on = !feat->suppressed] { m_design->setSuppressed(opId, on); });
+    if (designOp && menuOp->type == "sketch") entry("export", tr("Export sketch"), "timelineExport", [this, opId] { exportDialog({opId}); });
+    if (designOp) menu.addSeparator();
+    entry("isolate", tr("Select what it touches\tT"), "timelineTouched", [this, opId] { selectOpTargets(opId); });
+    // The model as it was right after this step (UI-99): the playhead goes after its marker.
+    if (!deleted && !m_doc->browse)
+      entry("rollBack", tr("Roll back to here"), "timelineRollBack", [this, opId] { emit m_timeline->rollbackRequested(m_timeline->rollPointAfter(opId)); })
+          ->setEnabled(!m_timeline->rollPointAfter(opId).empty() || m_doc->rolledBack());
+    menu.addSeparator();
+    entry("commit", tr("Copy op id\tCtrl+C"), "timelineCopy", [opId] { QApplication::clipboard()->setText(QString::fromStdString(opId)); });
+    entry("git", tr("Show in git log"), "timelineLog", [this, opId] { showOpGitLog(opId, m_doc->path()); });
+    menu.addSeparator();
+  }
+  for (const char* id : {"timeline.rollForward", "timeline.names", "timeline.designOnly"})
+    if (QAction* a = action(id); a && (std::string(id) != "timeline.rollForward" || m_doc->rolledBack())) menu.addAction(a);
 }
 
 void MainWindow::updateUndoActions() {

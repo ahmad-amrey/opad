@@ -78,7 +78,9 @@ class SmartSelect : public AreaController {
   const Found& found() const { return m_found; }
   SmartChip* chip() const { return m_chip; }
   QMenu* openMenu() const { return m_menu; }  // the candidates menu or the delete question while it shows
-  bool busy() const { return m_job || m_chainJob || m_capturing || m_retrying || m_wait.isActive() || m_pending != Pending::None; }
+  bool busy() const {
+    return m_job || m_chainJob || m_madeRunning || m_capturing || m_retrying || m_wait.isActive() || m_markerWait.isActive() || m_pending != Pending::None;
+  }
   size_t ladder() const { return m_stack.size(); }  // Ctrl+Down steps left
   int suggestDelay() const { return m_wait.interval(); }  // ms the picks stand before the chip asks (Edit > Suggestion delay)
 
@@ -102,6 +104,12 @@ class SmartSelect : public AreaController {
   // Select what depends on a feature (the menu's Select dependents): the faces of the later features that would fail
   // without it, their markers pulsed; named in the status bar (sketches and features without faces of their own too).
   void selectUsers(const smart::Candidate& c);
+  // The timeline (UI-99, SmartTimeline.cpp): a hovered marker shows what its op made in the candidate amber (a feature's
+  // faces, an import's or a move's bodies; while rolled back the bodies as shown); a click on a feature that changed
+  // bodies (a boss, a fillet) selects the faces it made, with its actions on the chip. What each op made is found once per
+  // document state on a worker (smart::madeBy).
+  void markerHovered(const std::string& op);
+  const std::map<std::string, smart::Made>* made() const;  // for the document as it is now; null until found
 
  protected:
   bool eventFilter(QObject* watched, QEvent* event) override;
@@ -164,4 +172,18 @@ class SmartSelect : public AreaController {
   QTimer m_doubleTimer;
   QAction *m_shrink = nullptr, *m_related = nullptr, *m_suggest = nullptr;
   bool suggesting() const;  // setting selection/suggest: the chip comes by itself (else on Ctrl+Up, Shift+Space, Del)
+  // The timeline's markers (SmartTimeline.cpp).
+  bool markerClicked(const std::string& op);  // command timeline.select: true when it selects that feature's faces
+  void showMarker();
+  std::vector<opad::Ref> markerBodies(const std::string& op) const;  // what an op made or changed, as bodies of the scene shown
+  void withMade(std::function<void(const std::map<std::string, smart::Made>&)> then);
+  std::shared_ptr<const std::map<std::string, smart::Made>> m_made;
+  unsigned long long m_madeRevision = 0, m_madeGeneration = 0;
+  std::vector<std::function<void(const std::map<std::string, smart::Made>&)>> m_afterMade;
+  bool m_madeRunning = false;
+  unsigned m_madeToken = 0;
+  std::string m_marker;  // hovered
+  bool m_markerShown = false;
+  unsigned m_markerToken = 0;
+  QTimer m_markerWait;
 };

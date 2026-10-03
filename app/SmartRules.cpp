@@ -147,4 +147,39 @@ Users usersOf(const opad::Document& doc, const std::string& op, const std::funct
   return out;
 }
 
+std::map<std::string, Made> madeBy(const opad::Document& doc, const std::function<bool()>& cancel) {
+  std::map<std::string, Made> out;
+  opad::design::Provenance provenance(doc, cancel);
+  const opad::Scene& scene = provenance.scene();
+  for (const auto& id : scene.all_bodies())
+    if (const opad::Node* n = scene.node(id); !scene.feature(n->source_op)) out[n->source_op].bodies.push_back(id);  // imports
+  std::vector<std::string> touched;
+  for (const auto& f : scene.features) {
+    if (f.suppressed || !f.result.is_object()) continue;
+    Made& m = out[f.id];
+    bool own = false;
+    for (const auto& b : f.result.value("bodies", opad::json::array())) {
+      const std::string id = b.is_object() ? b.value("id", "") : "";
+      const opad::Node* n = scene.node(id);
+      if (!n || n->kind != opad::Node::Kind::Body || std::count(m.bodies.begin(), m.bodies.end(), id)) continue;
+      m.bodies.push_back(id);
+      own = own || n->source_op == f.id;
+      if (!std::count(touched.begin(), touched.end(), id)) touched.push_back(id);
+    }
+    m.changes = !m.bodies.empty() && !own;
+  }
+  for (const auto& b : touched) {
+    if (cancel && cancel()) return {};
+    const auto owners = provenance.face_owners(b);
+    for (size_t i = 0; i < owners.size(); ++i) {
+      if (!scene.feature(owners[i].op)) continue;
+      Made& m = out[owners[i].op];  // also a feature whose faces a later one carried onto another body (a combine)
+      m.faces.push_back(opad::Ref::parse(b + "/face/" + std::to_string(i)));
+      if (!std::count(m.bodies.begin(), m.bodies.end(), b)) m.bodies.push_back(b);
+    }
+  }
+  out.erase(std::string());
+  return out;
+}
+
 }  // namespace smart

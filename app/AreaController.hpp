@@ -49,6 +49,7 @@ struct SelectionContext {
   std::vector<std::string> ids;  // nodes (bodies, components), sketches or browser folder rows, each once, in order
   std::vector<opad::Ref> refs;   // as picked in the view (faces, edges, ...); from the browser one body ref per id
   bool sketching = false;        // a sketch is open: the context menu is the sketch's
+  std::string op;                // a timeline command's marker (command "timeline.select", "timeline.delete")
   bool empty() const { return ids.empty() && refs.empty(); }
 };
 
@@ -133,9 +134,10 @@ class AreaController : public QObject {
   // Before the document is replaced (open, new, close) or the window closes: false keeps it, e.g. when the user cancels
   // giving up unfinished work. Asked first, also in benches (which answer no other question).
   virtual bool maybeClose() { return true; }
-  // A built-in command about to act on the selection: "edit.delete" (Del) and "edit.selectparent" (Ctrl+Up). True: the
+  // A built-in command about to act on the selection: "edit.delete" (Del) and "edit.selectparent" (Ctrl+Up); or on a
+  // timeline marker (selection.op): "timeline.select" (a click on it), "timeline.delete" (its Delete, Del on it). True: the
   // area did it, the window does nothing more (smart selection takes Del on picked faces and grows them to their
-  // feature). Asked in area order; the first true wins.
+  // feature, selects the faces a clicked feature made). Asked in area order; the first true wins.
   virtual bool command(const QString& id, const SelectionContext& selection) { return false; }
 
  private:

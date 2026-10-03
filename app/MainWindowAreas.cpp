@@ -75,9 +75,10 @@ void AreaServices::select(const std::vector<opad::Ref>& refs) {
   w->onViewportSelection();
 }
 
-bool MainWindow::areaCommand(const QString& id) {
+bool MainWindow::areaCommand(const QString& id, const std::string& op) {
   if (!m_areasReady) return false;
-  const SelectionContext selection = selectionContext();
+  SelectionContext selection = selectionContext();
+  selection.op = op;
   for (AreaController* area : m_areas)
     if (area->command(id, selection)) return true;
   return false;

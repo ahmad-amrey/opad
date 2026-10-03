@@ -3,6 +3,7 @@
 // check them: the related command's candidates as the chip reads them, which one the chip offers, what Del does to a
 // selection of objects and which later features deleting a feature would break.
 #include <functional>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -60,5 +61,16 @@ struct Users {
   std::vector<opad::Ref> faces;
 };
 Users usersOf(const opad::Document& doc, const std::string& op, const std::function<bool()>& cancel = {});
+
+// What the ops of the history made, as the timeline points at them (UI-99), by op: the faces a feature made on the bodies
+// it produced or changed (provenance, the whole history replayed) and those bodies; an import's bodies (no faces: they
+// are the import). `changes`: the feature made no body of its own (a boss, a fillet: its faces are what it is, a click on
+// its marker selects them), else its bodies are. Every body a feature touched is walked once. Workers only.
+struct Made {
+  std::vector<opad::Ref> faces;
+  std::vector<std::string> bodies;
+  bool changes = false;
+};
+std::map<std::string, Made> madeBy(const opad::Document& doc, const std::function<bool()>& cancel = {});
 
 }  // namespace smart

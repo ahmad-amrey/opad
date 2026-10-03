@@ -139,6 +139,32 @@ TEST(deleting_a_feature_names_what_it_breaks) {
   CHECK_EQ(subshape_count(node_world_shape(p.doc, resolve(p.doc), p.body), Ref::Kind::Face), 6);
 }
 
+TEST(the_timeline_points_at_what_each_op_made) {
+  Part p = boss_part();
+  const auto made = smart::madeBy(p.doc);
+  // The base made the body: a click on its marker selects the body; the boss and the round changed it: their faces.
+  CHECK(made.count(p.base) && made.count(p.boss) && made.count(p.round));
+  const smart::Made& base = made.at(p.base);
+  CHECK(!base.changes && base.bodies == std::vector<std::string>{p.body});
+  CHECK(made.at(p.boss).changes && made.at(p.round).changes);
+  CHECK(smart::sameRefs(made.at(p.boss).faces, owned(p, p.boss)));
+  CHECK(smart::sameRefs(made.at(p.round).faces, owned(p, p.round)));
+  CHECK_EQ(base.faces.size() + made.at(p.boss).faces.size() + made.at(p.round).faces.size(),
+           size_t(subshape_count(node_world_shape(p.doc, resolve(p.doc), p.body), Ref::Kind::Face)));
+  // Suppressed, the round makes nothing; tombstoned, the boss is not there; the faces go back to the base.
+  design::apply_ops(p.doc, {design::make_edit_op(p.round, {{"suppressed", true}})});
+  auto now = smart::madeBy(p.doc);
+  CHECK(now.count(p.round) == 0 && now.at(p.boss).faces.size() == 5);
+  design::apply_ops(p.doc, {{{"op", "delete"}, {"target", p.boss}}});
+  now = smart::madeBy(p.doc);
+  CHECK(now.count(p.boss) == 0 && now.at(p.base).faces.size() == 6);
+  // An import: its bodies, no faces of its own.
+  Document doc = Document::create();
+  const std::string import = import_brep(doc, brep_from_shape(BRepPrimAPI_MakeBox(10, 10, 10).Shape()), "Block").op_id;
+  now = smart::madeBy(doc);
+  CHECK(now.size() == 1 && now.at(import).bodies.size() == 1 && now.at(import).faces.empty() && !now.at(import).changes);
+}
+
 TEST(del_on_objects_takes_out_only_what_was_selected) {
   // A designed document: a body goes to one Remove feature, history kept.
   Part p = boss_part();
