@@ -106,6 +106,9 @@ void Viewport::setRenderQuality(int level) {
   p.IsAntialiasingEnabled = rayTracing;
   p.IsGlobalIlluminationEnabled = false;  // bounded interactive cost; no progressive path-tracing stall
   p.RaytracingDepth = 2;
+  // Translucent things (a body's opacity, ghosts, the selection's tints) blend order-independently when rasterised
+  // (UI-39): unordered blending gave where two overlap the colour of whichever was displayed last.
+  p.TransparencyMethod = Graphic3d_RTM_BLEND_OIT;
   setShadows(m_renderQuality >= 1);
   updateDepthBias();
   m_view->Invalidate();

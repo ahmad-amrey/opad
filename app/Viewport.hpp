@@ -140,6 +140,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // OPAD_BENCH_BIGDRAWING (ViewportDrawingBench.cpp): a drawing layer of 100,000 lines is picked in groups (UI-42): hover,
   // click, Ctrl+click, crossing and window boxes and selectRefs reach the right edges
   bool benchBigDrawing(const QString& prefix);
+  // OPAD_BENCH_TRANSPARENCY (ViewportViewBench.cpp): two translucent boxes overlap in the same colour whichever is
+  // displayed last, in the rasterised qualities (UI-39)
+  bool benchTransparency(const QString& prefix);
   // The longest displayBody so far, in wall and UI-thread CPU time (benches: no display step over 50 ms, UI-42).
   qint64 longestDisplay() const { return m_longestDisplay; }
   qint64 longestDisplayCpu() const { return m_longestDisplayCpu; }

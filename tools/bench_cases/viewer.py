@@ -137,4 +137,7 @@ CASES = [
     # Selection publishing (UI-06): nothing with agent access off; on, the selection at once with O(1) fields per ref,
     # a rubber band over every face capped at 2,000 refs and written off the UI thread; off again, the file goes.
     ("selection-publish", boxes, {"OPAD_BENCH_SELPUBLISH": "{prefix}"}),
+    # Order-independent transparency (UI-39): two translucent boxes overlap in the same colour whichever is displayed last,
+    # in the Draft and Studio qualities, while unordered blending (the control) depends on the order. <prefix>.oit.png.
+    ("transparency", "box", {"OPAD_BENCH_TRANSPARENCY": "{prefix}"}),
 ]
