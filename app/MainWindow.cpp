@@ -250,7 +250,10 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_empty, &EmptyState::filesDropped, this, [this](const QStringList& paths) { openPath(paths.first()); });
 
   m_gitTimer.setInterval(5000);
-  connect(&m_gitTimer, &QTimer::timeout, this, &MainWindow::refreshGit);
+  connect(&m_gitTimer, &QTimer::timeout, this, [this] {  // every git/refreshSeconds (Preferences, Version control)
+    refreshGit();
+    m_gitTimer.setInterval(std::clamp(m_settings.value("git/refreshSeconds", 5).toInt(), 2, 600) * 1000);
+  });
   m_gitTimer.start();
 
   restoreGeometry(m_settings.value("ui/geometry").toByteArray());

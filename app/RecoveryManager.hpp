@@ -23,6 +23,7 @@ class RecoveryManager : public QObject {
   void saveNow(std::function<void(bool,const QString&)> done = {});
   void finishSession(std::function<void()> done);
   void bench(const QString& mode);
+  void configureTimer();  // after recovery/enabled or recovery/minutes changed (Preferences)
  signals:
   void status(const QString& text);
  private:
@@ -30,7 +31,6 @@ class RecoveryManager : public QObject {
   struct Entry {QString file,title,time,source;};
   void scan(std::function<void(std::vector<Entry>,QString)> done);
   void restore(const Entry&,std::function<void(bool,QString)> done);
-  void configureTimer();
   void discardCurrent();
   void requestCheckpoint();
   AppDocument* m_doc;

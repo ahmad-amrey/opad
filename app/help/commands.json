@@ -667,9 +667,16 @@
   {
    "id": "tools.settings",
    "title": "Settings",
-   "summary": "Opens the settings menu: theme, recovery, rendering, navigation, file types and more.",
-   "details": "Every setting is kept for the next start. Language changes apply after a restart.",
+   "summary": "Opens the settings menu: Preferences, keyboard shortcuts, the theme, the navigation preset and the panels.",
+   "details": "Everything that is set once lives in Preferences; this menu keeps the switches used every day. Every setting is kept for the next start.",
    "keywords": ["preferences", "options", "configuration", "gear"]
+  },
+  {
+   "id": "tools.preferences",
+   "title": "Preferences",
+   "summary": "Shows every setting of OPAD in one window, with a search.",
+   "details": "Pages for display, units and precision, sketch snaps, the grid, files, autosave, version control, keyboard and mouse, and AI access. Type in the search field to keep only the pages and rows that match. Changes apply at once and are kept for the next start.",
+   "keywords": ["settings", "options", "configure", "setup", "gear"]
   },
   {
    "id": "help.current",
