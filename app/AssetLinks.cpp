@@ -12,6 +12,8 @@
 #include <QPushButton>
 #include <QStatusBar>
 #include <QTimer>
+#include <QToolButton>
+#include <algorithm>
 #include <filesystem>
 #include <functional>
 
@@ -27,11 +29,12 @@ bool MainWindow::offerAssetTrust() {
 }
 
 // OPAD_BENCH_ASSETS=<png>: tools/gui_benches.py writes a document beside parts/part.step (changed since it was linked) that
-// also links ../outside/other.step, and parts/third.step. Opened: the part's bodies come from its file (state "changed"),
-// the outside file is not read (its bodies missing) and the question about it is asked; read once trusted, its bodies are
-// displayed; saved, the file holds no body of either; a sync planned on a worker commits as one edit of the import that
-// keeps the node and changes its body, and undoes and redoes; third.step imported linked shows its bodies, none stored; a
-// picture linked last is shown on its canvas (its colour in the frame) while the op keeps none of its bytes.
+// also links ../outside/other.step, and parts/third.step. Opened: the part's bodies come from its file (state "changed", a toast
+// offers to sync it), the outside file is not read (its bodies missing, its badge offers to read it) and the question about it
+// is asked; read once trusted, its bodies are displayed; saved, the file holds no body of either; a sync planned on a worker
+// commits as one edit of the import that keeps the node and changes its body, and undoes and redoes; third.step imported
+// linked shows its bodies, none stored; a picture linked last is shown on its canvas (its colour in the frame) while the op
+// keeps none of its bytes.
 OPAD_BENCH(OPAD_BENCH_ASSETS, assets) {
   const QString shot = value;
   static int phase = 0;
@@ -81,6 +84,21 @@ OPAD_BENCH(OPAD_BENCH_ASSETS, assets) {
     if (state("part.step") != "changed" || state("other.step") != "untrusted") return fail("states");
     if (partMissing || !otherMissing) return fail("the part read, the outside file not");
     if (w.m_doc->isDirty() || w.m_viewport->displayedCount() != 1) return fail("opened dirty, or not one body displayed");
+    {  // The asset UI (UI-68): the load's toast offers to sync the changed file; the outside file's badge offers to read it.
+      AssetsArea* area = nullptr;
+      for (AreaController* a : w.m_areas)
+        if (auto* found = qobject_cast<AssetsArea*>(a)) area = found;
+      const QList<Toast*> toasts = w.m_toasts->toasts();
+      const bool toast = std::any_of(toasts.begin(), toasts.end(), [](Toast* t) {
+        return t->text() == "part.step changed since the last sync" && t->actionButton() && t->actionButton()->text() == "Sync";
+      });
+      std::string body;
+      for (const auto& id : w.m_doc->scene.all_bodies())
+        if (w.m_doc->node(id)->source_op == other) body = id;
+      browser::Decoration d;
+      if (area) area->decorate({body, "body", {}, w.m_doc->node(body)}, d);
+      if (!toast || d.badges.isEmpty() || d.badges[0].text != "not read" || !d.badges[0].clicked || !d.italic) return fail("the changed file's toast, the outside file's badge");
+    }
     if (!w.offerAssetTrust()) return fail("no question about the outside file");  // dismissed: nothing read
     if (linked(other, otherMissing) != 1 || !otherMissing) return fail("read without the user's answer");
     w.m_doc->loadAssets(w.m_jobs, true, [=, &w](bool ok, const QString& error) {
