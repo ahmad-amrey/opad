@@ -1,0 +1,428 @@
+// OPAD_BENCH_CANVAS=<prefix> (UI-70), on a document holding a box beside the XZ plane (case "canvas" in
+// tools/bench_cases/assets.py): a JPEG inserted as a canvas on XZ through the placer at a typed width; a corner dragged by the
+// real mouse handlers' path (the canvas drawn where the drag puts it at every step, nothing written until let go, then one
+// transform op, the opposite corner fixed, undo and redo); digits typed in the view landing in the panel's X (never the
+// filter shortcut) and applied with Enter; Calibrate by two clicks on the picture and a typed distance; Align to model onto two
+// vertices of the box; lock (no handles, a drag moves nothing); flip (the picture drawn mirrored), show through and
+// selectable; Trace to sketch; Replace (same node, width kept); a sketch's backdrop turned into a canvas; Insert canvas with
+// the box's top face selected (the placer on the face, centred on it). Frames:
+// <prefix>.png (handles), .panel.png, .place.png, .flipped.png.
+#include <QApplication>
+#include <QCheckBox>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QImage>
+#include <QKeyEvent>
+#include <QLineEdit>
+#include <QMouseEvent>
+#include <QPainter>
+#include <QPushButton>
+#include <QTimer>
+
+#include <cmath>
+#include <functional>
+#include <memory>
+
+#include "BenchRegistry.hpp"
+#include "CanvasArea.hpp"
+#include "CanvasEditor.hpp"
+#include "DesignController.hpp"
+#include "DrawingPlacer.hpp"
+#include "MainWindow.hpp"
+#include "ToolPanel.hpp"
+#include "Viewport.hpp"
+#include "opad/canvas.hpp"
+#include "opad/design/feature.hpp"
+#include "opad/design/sketch.hpp"
+#include "opad/inspect.hpp"
+
+namespace {
+using Step = std::function<void(std::function<void()> next)>;
+
+void waitFor(QObject* context, std::function<bool()> ready, int ms, std::function<void(bool)> then) {
+  auto* timer = new QTimer(context);
+  auto clock = std::make_shared<QElapsedTimer>();
+  clock->start();
+  QObject::connect(timer, &QTimer::timeout, context, [timer, clock, ready, ms, then] {
+    const bool ok = ready();
+    if (!ok && clock->elapsed() < ms) return;
+    timer->stop();
+    timer->deleteLater();
+    then(ok);
+  });
+  timer->start(50);
+}
+
+double gap(const opad::Vec3& a, const opad::Vec3& b) { return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2])); }
+bool same(const opad::Mat4& a, const opad::Mat4& b, double tol = 1e-6) {
+  for (size_t i = 0; i < 12; ++i)
+    if (std::fabs(a.m[i] - b.m[i]) > tol * std::max(1.0, std::fabs(a.m[i]))) return false;
+  return true;
+}
+void mouse(QWidget* widget, QEvent::Type type, const QPointF& at, Qt::MouseButtons buttons, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+  QMouseEvent e(type, at, widget->mapToGlobal(at), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, mods);
+  QApplication::sendEvent(widget, &e);
+}
+// Where the picture's blue block is in a frame: the mean position of its pixels, and how many.
+QPointF blueCentre(const QImage& frame, int& count) {
+  double x = 0, y = 0;
+  count = 0;
+  for (int j = 0; j < frame.height(); ++j)
+    for (int i = 0; i < frame.width(); ++i)
+      if (const QRgb c = frame.pixel(i, j); qBlue(c) > 150 && qRed(c) < 90 && qGreen(c) < 110) x += i, y += j, ++count;
+  return count ? QPointF(x / count, y / count) : QPointF();
+}
+}  // namespace
+
+OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
+  static bool running = false;  // the registry asks again after every load: the canvas's own import too
+  if (running) return true;
+  running = true;
+  const QString prefix = value;
+  CanvasArea* area = w.findChild<CanvasArea*>();
+  if (!area) {
+    trace::log("bench: canvas FAIL: no canvas area");
+    QCoreApplication::exit(2);
+    return true;
+  }
+  struct State {
+    std::string canvas;
+    opad::Mat4 world;
+    size_t ops = 0;
+    std::vector<opad::Vec3> picks;
+    bool ok = true;
+  };
+  auto st = std::make_shared<State>();
+  Viewport* view = w.m_viewport;
+  AppDocument* doc = w.m_doc;
+  CanvasEditor* editor = area->editor();
+  auto check = [st](bool ok, const QString& what) {
+    trace::log(QString("bench: canvas: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    st->ok = st->ok && ok;
+    return ok;
+  };
+  auto canvasWorld = [doc, st] { return doc->scene.world(st->canvas); };
+  // The picture: white, a black disc in its top left quarter, a blue block bottom right (its top half dark for the trace).
+  const QString photo = prefix + ".photo.jpg", square = prefix + ".square.png";
+  {
+    QImage pixels(400, 200, QImage::Format_RGB32);
+    pixels.fill(Qt::white);
+    QPainter p(&pixels);
+    p.setPen(Qt::NoPen);
+    p.setBrush(Qt::black);
+    p.drawEllipse(QRectF(30, 20, 70, 70));
+    p.setBrush(QColor(20, 40, 200));
+    p.drawRect(260, 120, 110, 60);
+    p.end();
+    QImage other(300, 300, QImage::Format_RGB32);
+    other.fill(QColor(30, 30, 30));
+    if (!pixels.save(photo, "JPG", 92) || !other.save(square, "PNG")) {
+      trace::log("bench: canvas FAIL: the pictures could not be written");
+      QCoreApplication::exit(2);
+      return true;
+    }
+  }
+  const opad::Frame xz = opad::design::resolve_plane(doc->doc, doc->scene, {{"base", "xz"}});
+  std::vector<Step> steps;
+  // 1. Insert on XZ through the placer, 200 mm wide.
+  steps.push_back([=, &w](std::function<void()> next) {
+    DrawingPlacer* placer = area->placer();
+    QObject::connect(placer, &DrawingPlacer::ready, area, [=] {
+      check(placer->picture() && std::fabs(placer->imageWidth() - 400 * 25.4 / 96) < 1 , "the placer shows the picture at its own size");
+      placer->setImageWidth(200);
+      placer->panel()->grab().save(prefix + ".place.png");
+      st->ops = doc->doc.ops.size();
+      placer->panel()->findChild<QPushButton*>("primary")->click();  // Place
+      waitFor(area, [=] { return editor->active() && view->showsPicture(editor->canvas()) && !doc->loading; }, 20000, [=](bool ok) {
+        if (!check(ok, "Place imports the canvas, shown with its picture, its editor open")) return QCoreApplication::exit(2);
+        st->canvas = editor->canvas();
+        const opad::CanvasPlace p = opad::canvas_place(doc->scene, st->canvas);
+        const opad::json& op = doc->doc.ops.back().data;
+        check(doc->doc.ops.size() == st->ops + 1 && op["op"] == "import" && op.contains("canvas") && std::fabs(p.width - 200) < 1e-6 && p.on_plane &&
+                  std::fabs(p.x) < 1e-9 && std::fabs(p.y) < 1e-9 && std::fabs(p.plane.normal()[1] - xz.normal()[1]) < 1e-12,
+              "one import op: 200 mm wide, centred on the XZ plane's origin");
+        check(area->panel()->isVisible() && area->field(2)->text().startsWith("200"), "the canvas panel shows its width");
+        next();
+      });
+    }, Qt::SingleShotConnection);
+    area->placeOn(photo, xz, 0, 0, false);
+  });
+  // 2. Drag the top right corner: drawn where the drag is at every step, nothing written until let go; then one op.
+  steps.push_back([=](std::function<void()> next) {
+    QElapsedTimer clock;
+    clock.start();
+    view->benchDesignShot(prefix + ".fit.png");  // a frame: the view is laid out for the clicks
+    trace::log(QString("bench: canvas: frame in %1 ms").arg(clock.restart()));
+    st->world = canvasWorld();
+    st->ops = doc->doc.ops.size();
+    const opad::CanvasPlace before = editor->place();
+    const auto corners = opad::canvas_points(st->world, before.body_w, before.body_h);
+    QPointF at;
+    editor->gripPoint(CanvasEditor::Grip::Corner2, at);
+    mouse(view, QEvent::MouseMove, at, Qt::NoButton);
+    mouse(view, QEvent::MouseButtonPress, at, Qt::LeftButton);
+    bool live = true;
+    for (int i = 1; i <= 6; ++i) {
+      mouse(view, QEvent::MouseMove, at + QPointF(8 * i, -5 * i), Qt::LeftButton);
+      opad::Mat4 shown;
+      live = live && view->shownPlacement(st->canvas, shown) && same(shown, opad::canvas_world(editor->place())) && !same(shown, st->world) &&
+             doc->doc.ops.size() == st->ops && editor->dragging();
+    }
+    trace::log(QString("bench: canvas: 6 drag steps in %1 ms").arg(clock.restart()));
+    check(live, "the drag shows the canvas where it goes at every step, nothing written meanwhile");
+    mouse(view, QEvent::MouseButtonRelease, at + QPointF(48, -30), Qt::NoButton);
+    const opad::CanvasPlace after = opad::canvas_place(doc->scene, st->canvas);
+    const auto moved = opad::canvas_points(canvasWorld(), after.body_w, after.body_h);
+    check(doc->doc.ops.size() == st->ops + 1 && doc->doc.ops.back().type == "transform" && after.width > before.width + 1 && gap(moved[0], corners[0]) < 1e-6 &&
+              std::fabs(after.height / after.width - before.height / before.width) < 1e-9,
+          QString("letting go writes one transform op: %1 -> %2 mm wide about the fixed opposite corner").arg(before.width).arg(after.width));
+    trace::log(QString("bench: canvas: let go in %1 ms").arg(clock.restart()));
+    view->grabImage().save(prefix + ".png");
+    trace::log(QString("bench: canvas: grabbed in %1 ms").arg(clock.restart()));
+    doc->undo();
+    const bool undone = same(canvasWorld(), st->world);
+    doc->redo();
+    check(undone && !same(canvasWorld(), st->world), "undo puts it back, redo again");
+    // Esc during a drag: claimed from the window's shortcuts, the canvas back where it was, nothing written.
+    const size_t ops = doc->doc.ops.size();
+    QPointF grip;
+    editor->gripPoint(CanvasEditor::Grip::Move, grip);
+    mouse(view, QEvent::MouseButtonPress, grip, Qt::LeftButton);
+    mouse(view, QEvent::MouseMove, grip + QPointF(40, 10), Qt::LeftButton);
+    const bool moving = editor->dragging();
+    QKeyEvent over(QEvent::ShortcutOverride, Qt::Key_Escape, Qt::NoModifier);
+    over.ignore();
+    QApplication::sendEvent(view, &over);
+    QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(view, &esc);
+    mouse(view, QEvent::MouseButtonRelease, grip + QPointF(40, 10), Qt::NoButton);
+    opad::Mat4 shown;
+    check(moving && over.isAccepted() && !editor->dragging() && view->shownPlacement(st->canvas, shown) && same(shown, canvasWorld()) && doc->doc.ops.size() == ops,
+          "Esc during a drag puts the canvas back and writes nothing");
+    next();
+  });
+  // 3. Digits typed in the view go into X (not the Body filter of key 1); Enter applies them.
+  steps.push_back([=](std::function<void()> next) {
+    view->setFocus();
+    const auto filter = view->selectionFilter();
+    st->ops = doc->doc.ops.size();
+    bool claimed = true;
+    for (const QString& t : {QString("1"), QString("2"), QString("0")}) {  // as the window delivers them: the shortcut stage first
+      const int key = Qt::Key_0 + t.toInt();
+      QKeyEvent over(QEvent::ShortcutOverride, key, Qt::NoModifier, t);
+      over.ignore();
+      QApplication::sendEvent(view, &over);
+      claimed = claimed && over.isAccepted();
+      QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier, t);
+      QApplication::sendEvent(view, &press);
+    }
+    QLineEdit* x = area->field(0);
+    trace::log(QString("bench: canvas: typed X \"%1\", claimed %2, filter %3 -> %4").arg(x->text()).arg(claimed).arg(int(filter)).arg(int(view->selectionFilter())));
+    check(claimed && x->text() == "120" && view->selectionFilter() == filter, "digits typed in the view land in X; the filter shortcut never sees them");
+    QKeyEvent tab(QEvent::KeyPress, Qt::Key_Tab, Qt::NoModifier);
+    QApplication::sendEvent(x, &tab);
+    check(area->field(1)->window()->focusWidget() == area->field(1), "Tab goes on to Y");
+    emit x->returnPressed();
+    const opad::CanvasPlace p = opad::canvas_place(doc->scene, st->canvas);
+    check(doc->doc.ops.size() == st->ops + 1 && std::fabs(p.x - 120) < 1e-9, "Enter moves its centre to X = 120 mm, one op");
+    area->panel()->grab().save(prefix + ".panel.png");
+    view->setFocus();
+    next();
+  });
+  // 4. Calibrate: two clicks on the picture, then the real distance typed.
+  steps.push_back([=](std::function<void()> next) {
+    view->benchDesignShot(prefix + ".fit2.png");
+    area->calibrate();
+    const opad::CanvasPlace p = editor->place();
+    const opad::Mat4 world = canvasWorld();
+    st->world = world;
+    for (const double dx : {-p.width / 4, p.width / 5}) {
+      const QPoint at = view->widgetPoint(p.plane.to_world(p.x + dx, p.y));
+      mouse(view, QEvent::MouseButtonPress, at, Qt::LeftButton);
+      mouse(view, QEvent::MouseButtonRelease, at, Qt::NoButton);
+    }
+    st->picks = area->flowPoints();
+    if (!check(st->picks.size() == 2 && area->field(5)->isVisible(), "two clicks on the picture, then the distance is asked")) return next();
+    const opad::Mat4 inverse = opad::affine_inverse(world);
+    const opad::Vec3 a = inverse.apply(st->picks[0]), b = inverse.apply(st->picks[1]);
+    area->field(5)->setText("100");
+    emit area->field(5)->returnPressed();
+    const opad::Mat4 now = canvasWorld();
+    check(std::fabs(gap(now.apply(a), now.apply(b)) - 100) < 1e-6 && gap(now.apply(a), st->picks[0]) < 1e-6 && area->flow() == CanvasArea::Flow::None,
+          QString("calibrated: the two points are 100 mm apart, the first stays (was %1 mm)").arg(gap(st->picks[0], st->picks[1])));
+    next();
+  });
+  // 5. Align to model: a point of the picture onto a vertex of the box, another onto another.
+  steps.push_back([=](std::function<void()> next) {
+    view->benchDesignShot(prefix + ".fit3.png");
+    st->world = canvasWorld();
+    area->align();
+    waitFor(area, [view] { return view->selectionFilter() == Viewport::SelFilter::Vertex; }, 5000, [=](bool) {
+      QTimer::singleShot(600, area, [=] {  // the vertex filter reaches every body
+        view->benchDesignShot(prefix + ".fit4.png");
+        const opad::CanvasPlace p = editor->place();
+        const opad::Vec3 to1{130, 0, 0}, to2{170, 0, 40};
+        auto click = [&](const opad::Vec3& at) {
+          const QPoint pt = view->widgetPoint(at);
+          mouse(view, QEvent::MouseButtonPress, pt, Qt::LeftButton);
+          mouse(view, QEvent::MouseButtonRelease, pt, Qt::NoButton);
+        };
+        click(p.plane.to_world(p.x - p.width / 4, p.y - p.height / 4));
+        const auto first = area->flowPoints();
+        click(to1);
+        click(p.plane.to_world(p.x + p.width / 4, p.y + p.height / 4));
+        const auto second = area->flowPoints();
+        click(to2);
+        trace::log(QString("bench: canvas: align picks %1, %2, flow %3").arg(first.size()).arg(second.size()).arg(int(area->flow())));
+        if (!check(first.size() == 1 && second.size() == 3 && area->flow() == CanvasArea::Flow::None, "picture, vertex, picture, vertex: aligned")) return next();
+        const opad::Mat4 was = opad::affine_inverse(st->world), now = canvasWorld();
+        check(gap(second[1], to1) < 1e-6 && gap(now.apply(was.apply(second[0])), to1) < 1e-6 && gap(now.apply(was.apply(second[2])), to2) < 1e-6,
+              "the picture's two points lie on the box's two vertices");
+        next();
+      });
+    });
+  });
+  // 6. Lock: no handles, a drag moves nothing; unlocked again.
+  steps.push_back([=](std::function<void()> next) {
+    QCheckBox* lock = area->panel()->findChild<QCheckBox*>("canvasLock");
+    lock->click();
+    st->ops = doc->doc.ops.size();
+    const opad::Mat4 before = canvasWorld();
+    QPointF at;
+    editor->gripPoint(CanvasEditor::Grip::Move, at);
+    mouse(view, QEvent::MouseButtonPress, at, Qt::LeftButton);
+    mouse(view, QEvent::MouseMove, at + QPointF(30, 0), Qt::LeftButton);
+    const bool dragging = editor->dragging();
+    mouse(view, QEvent::MouseButtonRelease, at + QPointF(30, 0), Qt::NoButton);
+    check(doc->node(st->canvas)->locked && editor->locked() && !dragging && same(canvasWorld(), before) && !area->field(0)->isEnabled() &&
+              !doc->doc.ops.empty() && doc->doc.ops.back().type == "appearance",
+          "locked: no handles, the drag moved nothing, X is off");
+    lock->click();
+    check(!doc->node(st->canvas)->locked, "unlocked");
+    next();
+  });
+  // 7. Flags: flipped left-right (drawn mirrored), shown through the model, not selectable in the view.
+  steps.push_back([=](std::function<void()> next) {
+    area->run({{"action", "place"}, {"set", {{"angle", 0.0}}}});  // upright in its plane, the plane's x to the right on screen
+    view->lookAt(editor->place().plane, true, false);
+    QTimer::singleShot(500, area, [=] {
+      int dark = 0;
+      const QImage straight = view->grabImage().convertToFormat(QImage::Format_RGB32);
+      straight.save(prefix + ".upright.png");
+      const QPoint centre = view->widgetPoint(editor->place().plane.to_world(editor->place().x, editor->place().y)) * view->displayScale();
+      const QPointF disc = blueCentre(straight, dark);
+      const int decoded = view->rastersDecoded();
+      area->panel()->findChild<QCheckBox*>("canvasFlipH")->click();
+      waitFor(area, [=] { return view->rastersDecoded() > decoded && view->showsPicture(st->canvas); }, 10000, [=](bool ok) {
+        QTimer::singleShot(500, area, [=] {
+          int darkFlipped = 0;
+          const QImage flipped = view->grabImage().convertToFormat(QImage::Format_RGB32);
+          flipped.save(prefix + ".flipped.png");
+          const QPointF mirrored = blueCentre(flipped, darkFlipped);
+          trace::log(QString("bench: canvas: blue block at %1,%2 then %3,%4 (centre %5,%6, %7/%8 pixels)").arg(disc.x()).arg(disc.y()).arg(mirrored.x()).arg(mirrored.y())
+                         .arg(centre.x()).arg(centre.y()).arg(dark).arg(darkFlipped));
+          check(dark > 20 && disc.x() > centre.x() && disc.y() > centre.y(), "the picture is drawn upright: its blue block bottom right");
+          check(ok && darkFlipped > 20 && mirrored.x() < centre.x() && mirrored.y() > centre.y() && doc->doc.ops.back().type == "edit",
+                "Flip left-right: decoded again on a worker, the block drawn bottom left; an edit of the import");
+          area->panel()->findChild<QCheckBox*>("canvasThrough")->click();
+          area->panel()->findChild<QCheckBox*>("canvasSelectable")->click();
+          waitFor(area, [=] {
+            const opad::json s = view->benchLookState(st->canvas);
+            return s.is_object() && s.value("layer", 0) == int(Graphic3d_ZLayerId_Topmost) && s.value("activated", 1) == 0;
+          }, 5000, [=](bool shown) {
+            check(shown, "shown through the model (Topmost) and not selectable in the view (no selection modes)");
+            area->panel()->findChild<QCheckBox*>("canvasSelectable")->click();
+            area->panel()->findChild<QCheckBox*>("canvasThrough")->click();
+            next();
+          });
+        });
+      });
+    });
+  });
+  // 8. Trace to sketch: a sketch on the canvas's plane with the dark shapes as curves.
+  steps.push_back([=](std::function<void()> next) {
+    const size_t sketches = doc->scene.sketches.size();
+    QObject::connect(area, &CanvasArea::traced, area, [=](bool ok, const QString& error) {
+      const bool made = ok && doc->scene.sketches.size() == sketches + 1 && doc->scene.sketches.back().geometry.value("entities", opad::json::array()).size() >= 2;
+      check(made, "Trace to sketch: a new sketch with the picture's shapes " + error);
+      next();
+    }, Qt::SingleShotConnection);
+    area->trace();
+  });
+  // 9. Replace: the same node shows a square picture, as wide as before.
+  steps.push_back([=](std::function<void()> next) {
+    const opad::CanvasPlace was = opad::canvas_place(doc->scene, st->canvas);
+    QObject::connect(area, &CanvasArea::planDone, area, [=](bool ok, const QString& error) {
+      const opad::CanvasPlace p = opad::canvas_place(doc->scene, st->canvas);
+      check(ok && std::fabs(p.width - was.width) < 1e-6 && std::fabs(p.height - p.width) < 1e-6 && doc->node(st->canvas)->raster.value("px", opad::json())[0] == 300,
+            "Replace: the same canvas shows the square picture, as wide as before " + error);
+      next();
+    }, Qt::SingleShotConnection);
+    area->replace(square);
+  });
+  // 10. A sketch's backdrop becomes a canvas where it lay; the sketch keeps its lines.
+  steps.push_back([=, &w](std::function<void()> next) {
+    QFile file(photo);
+    file.open(QIODevice::ReadOnly);
+    opad::design::Sketch sk;
+    sk.add_line(sk.add_point(0, 0), sk.add_point(30, 0));
+    sk.images.push_back({{"id", sk.next_id()}, {"name", photo.toStdString()}, {"data", file.readAll().toBase64().toStdString()}, {"position", {10, 20}},
+                         {"width", 80.0}, {"height", 40.0}, {"angle", 0.0}, {"opacity", 0.5}});
+    w.m_design->applyOps({opad::design::make_sketch_op("Backdrop", {{"base", "xy"}}, sk.to_json())}, MainWindow::tr("sketch"), [=](bool ok, const QString& error) {
+      if (!check(ok, "a sketch with a backdrop " + error)) return next();
+      const std::string sketch = doc->scene.sketches.back().id;
+      const size_t canvases = [doc] {
+        size_t n = 0;
+        for (const auto& id : doc->scene.all_bodies()) n += opad::is_canvas(*doc->node(id));
+        return n;
+      }();
+      QObject::connect(area, &CanvasArea::planDone, area, [=](bool done, const QString& why) {
+        size_t now = 0;
+        for (const auto& id : doc->scene.all_bodies()) now += opad::is_canvas(*doc->node(id));
+        const opad::SketchItem* s = doc->scene.sketch(sketch);
+        check(done && now == canvases + 1 && s && s->geometry.value("images", opad::json::array()).empty() && s->geometry["entities"].size() == 1,
+              "the backdrop is a canvas now, the sketch keeps its line " + why);
+        next();
+      }, Qt::SingleShotConnection);
+      area->fromBackdrop(sketch);
+    });
+  });
+  // 11. Insert canvas with a face selected: the placer opens on its plane, the picture centred on the face.
+  steps.push_back([=](std::function<void()> next) {
+    area->finish();
+    opad::Ref top;
+    for (const auto& id : doc->scene.all_bodies())
+      if (!opad::is_canvas(*doc->node(id)))
+        for (int i = 0; i < 6 && top.body.empty(); ++i) {
+          const opad::json box = opad::inspect_ref(doc->doc, doc->scene, {id, opad::Ref::Kind::Face, i}).value("bbox", opad::json());
+          if (box.is_object() && std::fabs(box["size"][2].get<double>()) < 1e-9 && box["center"][2].get<double>() > 39) top = {id, opad::Ref::Kind::Face, i};
+        }
+    if (!check(!top.body.empty(), "the box's top face")) return next();
+    view->setSelectionFilter(Viewport::SelFilter::Face);
+    QTimer::singleShot(600, area, [=] {
+      view->selectRefs({top});
+      if (!check(view->selection().size() == 1 && view->selection().front().kind == opad::Ref::Kind::Face, "the top face selected")) return next();
+      DrawingPlacer* placer = area->placer();
+      QObject::connect(placer, &DrawingPlacer::ready, area, [=] {
+        const opad::Vec3 origin = placer->placement().apply({0, 0, 0}), normal = placer->placement().apply_dir({0, 0, 1});
+        check(placer->picture() && gap(origin, {150, 20, 40}) < 1e-6 && gap(normal, {0, 0, 1}) < 1e-9,
+              QString("Insert canvas on the selected face: the placer on its plane, centred on it (%1, %2, %3)").arg(origin[0]).arg(origin[1]).arg(origin[2]));
+        placer->cancel();
+        view->setSelectionFilter(Viewport::SelFilter::Body);
+        next();
+      }, Qt::SingleShotConnection);
+      area->insert(photo);
+    });
+  });
+  auto runner = std::make_shared<std::function<void(size_t)>>();
+  *runner = [steps, runner, st, area](size_t i) {
+    if (i >= steps.size()) {
+      area->finish();
+      trace::log(st->ok ? "bench: canvas all PASS" : "bench: canvas FAIL");
+      return QCoreApplication::exit(st->ok ? 0 : 2);
+    }
+    steps[i]([runner, i, area] { QTimer::singleShot(0, area, [runner, i] { (*runner)(i + 1); }); });
+  };
+  (*runner)(0);
+  return true;
+}

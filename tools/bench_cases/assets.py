@@ -189,6 +189,12 @@ def colors_3mf(root, document):
     return colors / "painted.3mf", {"OPAD_CACHE_DIR": str(root / "colors-cache")}
 
 
+def canvas_document(root, document):
+    """A 40 mm box centred on x = 150, y = 20 (130..170, 0..40, 0..40): its front face lies on the XZ plane, so a canvas inserted
+    on XZ is aligned onto its vertices."""
+    return document("canvas/design", ("feature", "--kind", "box", "--inputs", '{"x":"150 mm","y":"20 mm","length":"40 mm","width":"40 mm","height":"40 mm"}'))
+
+
 def viewer_cache(root, document):
     """The screw read and stored once shown, its copy elsewhere opened from the cache, a drawing never stored."""
     screw = ROOT / "tests" / "corpus" / "occt-screw.step"
@@ -227,6 +233,10 @@ CASES = [
     # Pictures (UI-71): a JPEG canvas decoded on a worker, a sketch backdrop kept as the file has it, a move storing only
     # its fields (<prefix>.canvas.png).
     ("pictures", "empty", {"OPAD_BENCH_PICTURES": "{prefix}"}),
+    # The image canvas (UI-70): inserted on XZ through the placer at a width, a corner dragged (live, one op), digits into X,
+    # Calibrate, Align to the box, lock, flip/through/selectable, Trace, Replace, a backdrop turned into a canvas
+    # (<prefix>.png, .panel.png, .place.png, .flipped.png).
+    ("canvas", canvas_document, {"OPAD_BENCH_CANVAS": "{prefix}"}),
     # Import colours (UI-74): an OBJ material per face, recoloured (<prefix>.png, .red.png); a painted 3MF, also stretched.
     ("colors", colors_obj, {"OPAD_BENCH_COLORS": "{prefix}.png"}),
     ("colors-3mf", colors_3mf, {"OPAD_BENCH_COLORS": "{prefix}.png", "OPAD_BENCH_COLORS_PAINTED": "1"}),
