@@ -13,6 +13,15 @@ def engine():
     return str(Path("..") / name)
 
 
+def viewed_step(root, document):
+    """Two boxes side by side as a STEP file, made by opad-cli (a new document, two features, an export)."""
+    step = root / "explode-viewer.step"
+    document("explode-viewer", ("feature", "--kind", "box", "--inputs", '{"length":"20 mm","width":"20 mm","height":"10 mm"}'),
+             ("feature", "--kind", "box", "--inputs", '{"x":"30 mm","length":"10 mm","width":"10 mm","height":"10 mm"}'),
+             ("export", "--out", str(step)))
+    return step
+
+
 CASES = [
     # Activate component (UI-33) on two components made by the bench (Housing and Lid, a box made in each) and a sketch at
     # the root: the Lid activated by its browser radio, Alt+click on rows, the breadcrumb; the Housing ghosted and refused
@@ -35,6 +44,8 @@ CASES = [
     # .chips.png, .ribbon.png.
     ("explode", lambda root, document: document("explode"), {"OPAD_BENCH_EXPLODE": "{prefix}"}),
     ("explode-rtl", lambda root, document: document("explode-rtl"), {"OPAD_BENCH_EXPLODE": "{prefix}", "OPAD_LANG": "ar"}),
+    # A STEP file (two boxes exported by opad-cli) in viewer mode: exploded and collapsed; Save as view writes nothing.
+    ("explode-viewer", viewed_step, {"OPAD_BENCH_EXPLODE": "{prefix}"}),
     # The Engine (skipped where it is not): laid out, level 2, 60 ticks from 0 to 1 each timed until every body moved, and
     # collapsed, with no event-loop gap over 250 ms.
     ("explode-engine", engine(), {"OPAD_BENCH_EXPLODE": "{prefix}"}),

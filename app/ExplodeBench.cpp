@@ -120,7 +120,8 @@ bool clickBadge(BrowserTree* tree, const std::string& id, const QString& icon, Q
 // two screws grouped move as one, ungrouped apart; Save as view writes a view op with the explode, Collapse puts every
 // part back, View > Named views explodes it again; Update view appends an edit; a feature started collapses the view and
 // leaving it opens the view again. <prefix>.view.png, .panel.png, .browser.png, .chips.png, .ribbon.png. On a big model
-// (the Engine): laying out, level 2 and 60 ticks from 0 to 1, each timed, no event-loop gap over 250 ms.
+// (the Engine): laying out, level 2 and 60 ticks from 0 to 1, each timed, no event-loop gap over 250 ms. A viewed file
+// (viewer mode): exploded and collapsed, Save as view writes nothing.
 OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
   auto all = std::make_shared<bool>(true);
   auto require = [all](bool ok, const QString& what) {
@@ -215,6 +216,26 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                       size_t moved = v->shownOffsets().size();
                       require(off && moved == 0 && ticker->worst < 250, QString("collapsed: %1 bodies off their place, worst event-loop gap %2 ms").arg(moved).arg(ticker->worst));
                     }, 120000});
+    runSteps(&w, steps, 0, [all] { QCoreApplication::exit(*all ? 0 : 2); });
+    return true;
+  }
+
+  if (doc->browse) {
+    // Viewer mode (a STEP file viewed read-only): exploding is a view of it, saving it as a view waits for an OPAD document.
+    list.push_back({[=] { return idle() && v->displayedCount() >= 2; }, [=, &w](bool shown) {
+                      require(shown, QString("a viewed file with %1 bodies").arg(v->displayedCount()));
+                      w.action("assembly.explode")->trigger();
+                    }});
+    list.push_back({[=] { return laidOut() && area->t() > 0.999; }, [=, &w](bool out) {
+                      const size_t ops = doc->doc.ops.size();
+                      const std::string id = area->saveView("Viewed");
+                      require(out && area->units().size() >= 2 && !v->shownOffsets().empty() && area->chip()->isVisible() && id.empty() && doc->doc.ops.size() == ops,
+                              QString("viewer mode: %1 units exploded, %2 bodies moved; Save as view writes nothing").arg(area->units().size()).arg(v->shownOffsets().size()));
+                      area->setOn(false);
+                    }});
+    list.push_back({[=] { return !area->isOn() && !area->playing() && !v->looksPending(); }, [=, &w](bool off) {
+                      require(off && v->shownOffsets().empty() && !doc->isDirty(), "collapsed, the viewed file unchanged");
+                    }});
     runSteps(&w, steps, 0, [all] { QCoreApplication::exit(*all ? 0 : 2); });
     return true;
   }
