@@ -144,6 +144,10 @@ OPAD_BENCH(OPAD_BENCH_AREA, area) {
       if (!w.m_doc->browse) {
         const auto& m = w.m_doc->scene.measurements.back();
         require(m.kind == "area" && std::abs(m.result.value("value", 0.0) - 2000) < 1e-6 && m.refs.size() == 4, "pinned as an area measurement with its four walls");
+        QString card;  // the Annotations panel's card: the area as an area, and its perimeter
+        for (auto* label : w.m_annotations->findChildren<QLabel*>())
+          if (label->text().contains(units::format(units::Kind::Area, 2000))) card = label->text();
+        require(card.contains(units::format(units::Kind::Length, 180)), "the Annotations panel shows the pinned area as an area with its perimeter: " + card);
       }
       pick({edge(200, 0, 300, 0)});
     }, measured);

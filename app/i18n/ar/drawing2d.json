@@ -175,5 +175,6 @@
  "The file, the date and time, the paper and the scale along the bottom margin": "الملف والتاريخ والوقت والورق والمقياس على طول الهامش السفلي",
  "(its own)": "(خاص به)",
  "Select an object": "حدد عنصرًا",
- "point or center": "نقطة أو مركز"
+ "point or center": "نقطة أو مركز",
+ "perimeter %1": "المحيط %1"
 }
