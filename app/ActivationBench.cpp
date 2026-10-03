@@ -297,6 +297,41 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                         buttons += b->defaultAction() == w.action("assembly.activate") || b->defaultAction() == w.action("assembly.activateRoot");
                     w.m_ribbon->grab().save(prefix + ".ribbon.png");
                     require(buttons == 2, QString("the Assemble tab has Activate and Activate root (%1 buttons)").arg(buttons));
+                    w.action("assembly.activeVisibility")->trigger();  // off: the rest drawn and picked as it is
+                  }});
+  // Active component visibility and the inactive opacity.
+  list.push_back({[=] { return idle() && !v->shownLook(s->boxA).ghost; }, [=, &w](bool plain) {
+                    const auto a = v->benchLookState(s->boxA);
+                    QLabel* chip = nullptr;
+                    for (QLabel* label : w.m_chips->findChildren<QLabel*>())
+                      if (label->isVisibleTo(w.m_chips) && label->text().contains("Lid")) chip = label;
+                    require(plain && a.value("transparency", 1.0) == 0.0 && a.value("activated", 0) > 0 && v->benchPickAt(s->ax, s->ay) == s->boxA && chip && doc->activeComponent() == s->lid,
+                            "visibility off: the Housing's box drawn and picked as it is, the Lid still active and named");
+                    w.action("assembly.activeVisibility")->trigger();
+                    QMenu* opacity = w.findChild<QMenu*>("assembly.inactiveOpacity");
+                    for (QAction* preset : opacity ? opacity->actions() : QList<QAction*>())
+                      if (std::abs(preset->data().toDouble() - 0.1) < 1e-9) preset->trigger();
+                  }});
+  list.push_back({[=] { return idle() && v->shownLook(s->boxA).ghost; }, [=, &w](bool ghost) {
+                    const auto a = v->benchLookState(s->boxA);
+                    const QMenu* chipMenu = w.findChild<QMenu*>("activationChipMenu");
+                    const QMenu* opacity = w.findChild<QMenu*>("assembly.inactiveOpacity");
+                    auto menus = [](QAction* a) {  // the menus it is in: at least the Design menu and the chip's
+                      int n = 0;
+                      for (QObject* o : a ? a->associatedObjects() : QList<QObject*>()) n += qobject_cast<QMenu*>(o) != nullptr;
+                      return n;
+                    };
+                    require(ghost && std::abs(a.value("transparency", 0.0) - 0.9) < 0.01 && a.value("activated", -1) == 0 && w.action("assembly.activeVisibility")->isChecked() &&
+                                chipMenu && opacity && chipMenu->actions() == QList<QAction*>({w.action("assembly.activateRoot"), w.action("assembly.activeVisibility"), opacity->menuAction()}) &&
+                                menus(w.action("assembly.activeVisibility")) >= 2 && menus(opacity->menuAction()) >= 2,
+                            QString("visibility on at 10 %: the Housing's box a ghost at transparency %1, not pickable (%2 modes); the chip's menu (%3 entries) and the Design menu have both (%4, %5 menus)")
+                                .arg(a.value("transparency", 0.0)).arg(a.value("activated", -1)).arg(chipMenu ? chipMenu->actions().size() : -1)
+                                .arg(menus(w.action("assembly.activeVisibility"))).arg(opacity ? menus(opacity->menuAction()) : -1));
+                    for (QAction* preset : opacity ? opacity->actions() : QList<QAction*>())
+                      if (preset->data().toDouble() == 0) preset->trigger();  // the theme's again
+                  }});
+  list.push_back({[=] { return idle() && std::abs(v->benchLookState(s->boxA).value("transparency", 0.0) - (1 - v->tokens().ghost.alphaF())) < 1e-6; }, [=](bool themed) {
+                    require(themed, "the Theme preset: the ghost at the theme's opacity again");
                     v->benchClickAt(s->bx, s->by);  // the positive control: the same click on the Lid's box selects it
                   }});
   list.push_back({[=] { return picked() == std::vector<std::string>{s->boxB}; }, [=](bool selected) {

@@ -5,16 +5,23 @@
 // dims what is outside, and its breadcrumb leads to it; the chips row names it with the way back to the root; the
 // timeline dims the ops that do not touch it. New sketches, features, bodies, imports and components go into
 // it (DesignController, AppDocument::startImport, design.newcomponent) and F frames it (view.fit). The one activated last
-// in a document is remembered (setting view/active/<uuid>) and active again when the document is opened again.
+// in a document is remembered (setting view/active/<uuid>) and active again when the document is opened again. Active
+// component visibility (setting view/activeVisibility) off draws and picks the rest as it is; Inactive opacity (setting
+// view/inactiveOpacity, absent: the theme's ghost alpha) is the ghosts' opacity; both in the Design menu and the chip's
+// right-click.
+#include <QActionGroup>
+#include <QContextMenuEvent>
 #include <QElapsedTimer>
 #include <QEvent>
 #include <QLabel>
+#include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMouseEvent>
 #include <QSettings>
 
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <set>
 
@@ -33,7 +40,8 @@ OPAD_ICON_TABLE(activation,
                 {"radioOn", R"(<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/>)"},
                 {"radioOff", R"(<circle cx="12" cy="12" r="7"/>)"},
                 {"activate", R"(<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/><circle cx="12" cy="8" r="1.8" fill="currentColor"/>)"},
-                {"activateRoot", R"(<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><circle cx="12" cy="14" r="2.5" fill="currentColor"/>)"});
+                {"activateRoot", R"(<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><circle cx="12" cy="14" r="2.5" fill="currentColor"/>)"},
+                {"activeVisibility", R"(<path d="M10 5l6-3 6 3v8l-6 3" stroke-dasharray="2 2"/><path d="M2 10l6-3 6 3v8l-6 3-6-3z"/><path d="M2 10l6 3 6-3M8 13v8"/>)"});
 
 namespace {
 // `id` is `component` or under it (a node); the root ("") holds everything.
@@ -69,6 +77,42 @@ class Activation : public AreaController {
     root.keywords = {"active", "deactivate"};
     root.enabledWhen = [this](const CommandContext& c) { return c.document && !services().document()->activeComponent().empty(); };
     m_root = services().addCommand(root, [this] { setActive({}); });
+    // How the rest of the model is drawn while a component is active: ghosted (at the theme's opacity or the user's), or
+    // as it is (Active component visibility off: nothing ghosted, everything picked as usual).
+    QSettings settings;
+    CommandInfo visibility = root;
+    visibility.id = "assembly.activeVisibility";
+    visibility.label = tr("Active component visibility");
+    visibility.icon = "activeVisibility";
+    visibility.enabledWhen = {};
+    visibility.keywords = {"ghost", "fade", "inactive", "transparent"};
+    visibility.checkable = true;
+    m_visibility = services().addCommand(visibility, [this] {
+      QSettings().setValue("view/activeVisibility", m_visibility->isChecked());
+      refresh();
+    });
+    m_visibility->setChecked(settings.value("view/activeVisibility", true).toBool());
+    m_visibility->setProperty("shortcutHint", tr("While a component is active the rest of the model is ghosted; off, it is drawn and picked as it is."));
+    shortcuts::updateTooltip(m_visibility);
+    m_opacity = new QMenu(tr("Inactive opacity"), services().window());
+    m_opacity->setObjectName("assembly.inactiveOpacity");
+    auto* group = new QActionGroup(m_opacity);
+    const double chosen = settings.value("view/inactiveOpacity", 0.0).toDouble();  // 0: the theme's ghost
+    for (const double value : {0.0, 0.1, 0.25, 0.5, 0.75}) {
+      QAction* a = m_opacity->addAction(value == 0 ? tr("Theme") : tr("%1 %").arg(qRound(value * 100)));
+      a->setCheckable(true);
+      a->setChecked(std::abs(value - chosen) < 1e-6);
+      a->setData(value);
+      group->addAction(a);
+      connect(a, &QAction::triggered, this, [this, value] {
+        if (value == 0) QSettings().remove("view/inactiveOpacity");
+        else QSettings().setValue("view/inactiveOpacity", value);
+        refresh();
+      });
+    }
+    m_chipMenu = new QMenu(services().window());
+    m_chipMenu->setObjectName("activationChipMenu");
+    m_chipMenu->addActions({m_root, m_visibility, m_opacity->menuAction()});
   }
 
   void menus(QMenuBar*, const QMap<QString, QMenu*>& menus) override {
@@ -76,12 +120,13 @@ class Activation : public AreaController {
     if (!design) return;
     const QList<QAction*> items = design->actions();
     const qsizetype at = items.indexOf(services().action("design.newcomponent"));
-    design->insertActions(at >= 0 && at + 1 < items.size() ? items[at + 1] : nullptr, {m_activate, m_root});  // after New component
+    design->insertActions(at >= 0 && at + 1 < items.size() ? items[at + 1] : nullptr, {m_activate, m_root, m_visibility, m_opacity->menuAction()});  // after New component
   }
 
   void ribbon(RibbonLayout& layout) override {
     layout.addAction("design.assemble.components", m_activate);
     layout.addAction("design.assemble.components", m_root, RibbonLayout::Size::Small);
+    layout.addAction("design.assemble.components", m_visibility, RibbonLayout::Size::Small);
   }
 
   void ready() override {
@@ -123,8 +168,12 @@ class Activation : public AreaController {
 
  protected:
   bool eventFilter(QObject* object, QEvent* event) override {
-    if (object == m_chip && event->type() == QEvent::MouseButtonRelease) {  // the chip's way back to the root
-      setActive({});
+    if (object == m_chip && event->type() == QEvent::MouseButtonRelease && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
+      setActive({});  // the chip's way back to the root
+      return true;
+    }
+    if (object == m_chip && event->type() == QEvent::ContextMenu) {  // how the rest is drawn
+      m_chipMenu->exec(static_cast<QContextMenuEvent*>(event)->globalPos());
       return true;
     }
     BrowserTree* tree = services().browser()->tree();
@@ -195,26 +244,28 @@ class Activation : public AreaController {
     const opad::Scene& scene = doc->scene;
     const std::string& active = doc->activeComponent();
     const bool shown = !active.empty() && scene.node(active);  // rolled back to before it: nothing to set apart
+    const bool ghosted = shown && m_visibility->isChecked();
     std::map<std::string, LookDelta> layer;
-    if (shown) {
+    if (ghosted) {
       LookDelta ghost;
       ghost.ghost = true;
+      if (const double opacity = QSettings().value("view/inactiveOpacity", 0.0).toDouble(); opacity > 0) ghost.ghostOpacity = std::clamp(opacity, 0.02, 1.0);
       for (const auto& root : scene.roots) layer[root] = ghost;
       layer[active] = LookDelta{};  // the nearest entry wins: what is under it is drawn as it is
       for (const auto& sketch : scene.sketches)
         if (sketch.component.empty() || !under(scene, sketch.component, active)) layer[sketch.id] = ghost;
     }
     Viewport* view = services().viewport();
-    if (shown || m_ghosting) view->setLookLayer(LookSource::Activation, std::move(layer));  // the root active: the layer left alone
-    m_ghosting = shown;
-    if (shown && !view->ghostsPickable()) {  // what was selected outside it is a ghost now: not selected any more
+    if (ghosted || m_ghosting) view->setLookLayer(LookSource::Activation, std::move(layer));  // the root active: the layer left alone
+    m_ghosting = ghosted;
+    if (ghosted && !view->ghostsPickable()) {  // what was selected outside it is a ghost now: not selected any more
       const auto picked = view->selection();
       if (std::any_of(picked.begin(), picked.end(), [&](const opad::Ref& r) { return r.kind != opad::Ref::Kind::Point && !under(scene, r.body, active); })) view->clearSelection();
     }
     m_chip->setVisible(shown);
     if (shown) {
       m_chip->setText(tr("Active: %1  ×").arg(doc->nodeName(active)));
-      m_chip->setToolTip(tr("%1 is the active component: new sketches, features, bodies and imports go into it, the rest of the model is ghosted. Click to activate the root.").arg(doc->nodeName(active)));
+      m_chip->setToolTip(tr("%1 is the active component: new sketches, features, bodies and imports go into it, the rest of the model is ghosted. Click to activate the root, right-click for how the rest is drawn.").arg(doc->nodeName(active)));
     }
     if (!shown) services().timeline()->setDimmedOps({});
     else if (doc->rollback().empty()) {  // an edit rolled back to an earlier op: the markers keep what they said
@@ -234,6 +285,9 @@ class Activation : public AreaController {
 
   QAction* m_activate = nullptr;
   QAction* m_root = nullptr;
+  QAction* m_visibility = nullptr;  // Active component visibility (setting view/activeVisibility)
+  QMenu* m_opacity = nullptr;       // Inactive opacity (setting view/inactiveOpacity, absent: the theme's)
+  QMenu* m_chipMenu = nullptr;      // the chip's right-click
   QLabel* m_chip = nullptr;
   bool m_ghosting = false;  // the Activation layer is ours and set (a component was active)
 };
