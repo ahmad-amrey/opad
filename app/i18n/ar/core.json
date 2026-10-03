@@ -60,5 +60,7 @@
  "Offset Y": "الإزاحة Y",
  "Plane X": "محور X للمستوى",
  "Plane Y": "محور Y للمستوى",
- "Minimum extent": "أقل امتداد"
+ "Minimum extent": "أقل امتداد",
+ "This file has %1 records from a newer OPAD (%2); they are kept and saved back unchanged.": "يحتوي هذا الملف على %1 من السجلات من إصدار أحدث من OPAD ‏(%2)؛ تُبقى وتُحفظ كما هي دون تغيير.",
+ "… and %1 more": "… و%1 غيرها"
 }

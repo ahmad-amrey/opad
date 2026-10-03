@@ -91,6 +91,7 @@ class MainWindow : public QMainWindow {
   void applyTheme(bool dark);
   void refreshIcons();
   void updateTitle();
+  QString newerRecords() const;  // what of the file only a newer build reads (UI-65): one sentence, empty when nothing
   void updateChips();
   void refreshGit();
   void showOpGitLog(const std::string& opId,const QString& path);

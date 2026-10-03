@@ -13,6 +13,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "I18n.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
@@ -155,8 +156,27 @@ void MainWindow::updateTitle() {
   QString path = m_doc->hasDocument ? (m_doc->browse ? tr("Viewer (read-only): %1").arg(QDir::toNativeSeparators(m_doc->viewing)) : (m_doc->path().isEmpty() ? tr("unsaved document") : m_doc->path())) : tr("No document");
   if (!m_doc->scene.unresolved.empty()) path += tr("   ·   %1 unresolved").arg(m_doc->scene.unresolved.size());
   m_statusPath->setText(path);
+  // What is unresolved and why: a newer build's records in one sentence, the others by op type and reason.
+  QStringList tip;
+  if (const QString newer = newerRecords(); !newer.isEmpty()) tip << newer;
+  int others = 0;
+  for (const auto& u : m_doc->scene.unresolved)
+    if (opad::Document::known_type(u.op_type) && ++others <= 10) tip << QString("%1: %2").arg(QString::fromStdString(u.op_type), i18n::t(QString::fromStdString(u.reason)));
+  if (others > 10) tip << tr("… and %1 more").arg(others - 10);
+  m_statusPath->setToolTip(tip.join('\n'));
   if (!m_doc->hasDocument) m_statusHover->setText(tr("File › Open a design file (OPAD, STEP, STL, 3MF, DXF, …), or drop one here"));
   else if (m_statusHover->text() == tr("File › Open a design file (OPAD, STEP, STL, 3MF, DXF, …), or drop one here")) m_statusHover->clear();
+}
+
+QString MainWindow::newerRecords() const {
+  int count = 0;
+  QStringList types;
+  for (const auto& op : m_doc->doc.ops)
+    if (!opad::Document::known_type(op.type)) {
+      ++count;
+      if (!types.contains(QString::fromStdString(op.type))) types << QString::fromStdString(op.type);
+    }
+  return count ? tr("This file has %1 records from a newer OPAD (%2); they are kept and saved back unchanged.").arg(count).arg(types.join(", ")) : QString();
 }
 
 // ---------------------------------------------------------------- git status (F33)

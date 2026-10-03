@@ -69,6 +69,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   });
   connect(m_doc, &AppDocument::loadFinished, this, [this](bool ok, const QString&) {
     if (!ok) return;
+    if (const QString newer = newerRecords(); !newer.isEmpty()) m_toasts->toast(newer, QString(), {}, 10000);  // UI-65
     const auto bodies = m_doc->scene.all_bodies();
     const bool drawing = !bodies.empty() && std::all_of(bodies.begin(), bodies.end(), [this](const auto& id) { return m_doc->scene.node(id)->representation == "drawing2d"; });
     // Drawing files get a useful initial view. Viewing one (DXF, DWG, SVG) also turns 2D mode on; the next file that

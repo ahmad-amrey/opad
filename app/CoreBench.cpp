@@ -79,6 +79,13 @@ OPAD_BENCH(OPAD_BENCH_TOLERANT, tolerant) {
   for (const auto& u : w.m_doc->scene.unresolved) newer += u.reason.find("needs a newer OPAD") != std::string::npos;
   require(w.m_doc->hasDocument && opaque.size() == 2 && newer == 2 && !w.m_doc->scene.all_bodies().empty(),
           QString("opened with %1 records of a newer build, %2 reported, %3 bodies").arg(opaque.size()).arg(newer).arg(w.m_doc->scene.all_bodies().size()));
+  // Said on opening (a toast) and under the status path's unresolved count (its tooltip), with their types.
+  const QString told = w.newerRecords();
+  bool toasted = false;
+  for (const Toast* t : w.m_viewport->findChildren<Toast*>()) toasted = toasted || t->text() == told;
+  require(told.contains(QString("%1 records").arg(opaque.size())) && told.contains(QString::fromStdString(opaque.front()->type)) && toasted &&
+              w.m_statusPath->toolTip().startsWith(told),
+          "a toast and the status path's tooltip say: " + told);
   std::set<std::string> visited;
   w.m_timeline->setCurrentOp({});
   for (int i = 0; i <= int(w.m_doc->doc.ops.size()); ++i) {
