@@ -14,6 +14,8 @@
 #include <QImage>
 #include <QKeyEvent>
 #include <QLineEdit>
+#include <QMenu>
+#include <QTreeWidget>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
@@ -28,7 +30,9 @@
 #include "CanvasEditor.hpp"
 #include "DesignController.hpp"
 #include "DrawingPlacer.hpp"
+#include "BrowserPanel.hpp"
 #include "MainWindow.hpp"
+#include "PropertiesPanel.hpp"
 #include "ToolPanel.hpp"
 #include "Viewport.hpp"
 #include "opad/canvas.hpp"
@@ -504,6 +508,30 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
         next();
       }, Qt::SingleShotConnection);
       area->insert(photo);
+    });
+  });
+  // 12. Selected in the browser: the canvas commands, its context menu and its Properties section.
+  steps.push_back([=, &w](std::function<void()> next) {
+    w.m_browser->selectIds({st->canvas});
+    QTimer::singleShot(300, area, [=, &w] {
+      check(w.action("canvas.calibrate")->isEnabled() && w.action("canvas.trace")->isEnabled() && !w.action("canvas.fromBackdrop")->isEnabled(),
+            "the canvas commands follow the selection");
+      QMenu menu;
+      area->contextMenu(w.selectionContext(), menu);
+      QStringList entries;
+      for (QAction* a : menu.actions()) entries << (a->menu() ? a->menu()->title() + ": " + QStringList([&] { QStringList s; for (QAction* b : a->menu()->actions()) s << b->text(); return s; }()).join("/") : a->text());
+      check(entries.contains(w.action("canvas.calibrate")->text()) && entries.join('|').contains("Flip left-right"), "its context menu: " + entries.join(", "));
+      w.action("inspect.properties")->trigger();
+      QTreeWidget* table = w.m_props->table();
+      int header = -1, size = -1;
+      for (int i = 0; i < table->topLevelItemCount(); ++i) {
+        if (table->topLevelItem(i)->text(0) == "CANVAS") header = i;
+        if (header >= 0 && size < 0 && table->topLevelItem(i)->text(0) == "Size") size = i;
+      }
+      check(header > 0 && size > header && table->topLevelItem(size)->text(1).contains("×"), QString("Properties: the Canvas section (%1)").arg(size > 0 ? table->topLevelItem(size)->text(1) : QString()));
+      w.m_propsPanel->grab().save(prefix + ".properties.png");
+      w.m_propsPanel->hide();
+      next();
     });
   });
   auto runner = std::make_shared<std::function<void(size_t)>>();
