@@ -64,7 +64,7 @@ void MainWindow::buildMenus() {
   m_recentMenu->setObjectName("recent");
   add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
-  add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "select.similar", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
+  add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = m_viewMenu = menuBar()->addMenu(tr("&View"));
   add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
@@ -134,7 +134,7 @@ void MainWindow::buildRibbon() {
   group("review.view", "isolate", tr("Isolate"), {"view.isolate", "view.unisolate"});
   layout.addTab("review", "review.inspect", tr("Inspect"));
   group("review.inspect", "measure", tr("Measure"), {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"});
-  group("review.inspect", "results", tr("Results"), {"inspect.pin", "inspect.properties", "select.similar"});
+  group("review.inspect", "results", tr("Results"), {"inspect.pin", "inspect.properties"});
   group("review.inspect", "check", tr("Check"), {"inspect.interference", "inspect.printcheck"});
   group("review.inspect", "section", tr("Section"), {"inspect.section", "inspect.flip"});
   layout.addTab("review", "review.annotate", tr("Annotate"));
@@ -148,7 +148,7 @@ void MainWindow::buildRibbon() {
   group("design.solid", "primitives", tr("Primitives"), {"design.box", "design.cylinder", "design.sphere", "design.cone", "design.torus"});
   group("design.solid", "parameters", tr("Parameters"), {"design.parameters"});
   layout.addTab("design", "design.modify", tr("Modify"));
-  group("design.modify", "modify", tr("Modify"), {"design.offset_face", "design.thicken", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.remove_faces", "design.scale"});
+  group("design.modify", "modify", tr("Modify"), {"design.offset_face", "design.thicken", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.scale"});
   group("design.modify", "combine", tr("Combine"), {"design.combine", "design.split", "design.move", "design.remove"});
   group("design.modify", "pattern", tr("Pattern"), {"design.mirror", "design.pattern_rect", "design.pattern_circ"});
   layout.addTab("design", "design.construct", tr("Construct"));

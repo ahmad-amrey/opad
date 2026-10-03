@@ -110,8 +110,6 @@ QHash<QString, QString>& table() {
       {"chamfer", R"(<path d="M4 20v-9l7-7h9"/><path d="M4 4h5M4 4v5" opacity=".45" stroke-dasharray="2 2"/>)"},
       {"shell", R"(<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M7 9.5l5-2.5 5 2.5v5l-5 2.5-5-2.5z" opacity=".6"/>)"},
       {"draft", R"(<path d="M6 20L9 5h9l3 15z"/><path d="M6 20V5h3" opacity=".45" stroke-dasharray="2 2"/>)"},
-      {"removeFaces", R"(<path d="M3 12l9-4 9 4-9 4z"/><path d="M3 12v4l9 4 9-4v-4" opacity=".45"/><ellipse cx="12" cy="12" rx="3.2" ry="1.5" stroke-dasharray="1.6 1.4"/><path d="M15.5 2.5l4 4M19.5 2.5l-4 4"/>)"},
-      {"similar", R"(<circle cx="6.5" cy="6.5" r="3" fill="currentColor" fill-opacity=".5"/><circle cx="17.5" cy="6.5" r="3"/><circle cx="6.5" cy="17.5" r="3"/><circle cx="17.5" cy="17.5" r="3"/>)"},
       {"presspull", R"(<path d="M4 14l8-3 8 3-8 3z"/><path d="M4 14v4l8 3 8-3v-4" opacity=".6"/><path d="M12 2v7M9.5 4.5L12 2l2.5 2.5M9.5 6.5L12 9l2.5-2.5"/>)"},
       {"scale", R"(<rect x="3" y="11" width="10" height="10"/><path d="M8 7V3h13v13h-4" opacity=".6"/><path d="M13 11l6-6M15 5h4v4"/>)"},
       {"combine", R"(<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/><path d="M12 6.8a6 6 0 0 1 0 10.4 6 6 0 0 1 0-10.4z" fill="currentColor" fill-opacity=".4"/>)"},

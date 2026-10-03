@@ -47,11 +47,6 @@ void MainWindow::buildInspectActions() {
     showProperties(m_selRefs);
     openPanel(m_propsPanel);
   });
-  CommandInfo similarInfo{"select.similar", tr("Select similar"), "similar"};
-  similarInfo.keywords = {tr("select by geometry"), tr("holes"), tr("fillets"), tr("same size")};
-  QAction* similar = addCommand(similarInfo, [this] { selectSimilar(); });
-  similar->setProperty("shortcutHint", tr("The faces or edges like the picked one: holes of its size, fillets of its radius, faces facing its way. On a body: its top perimeter, edges along an axis, upward faces, all holes. Again: the next rule."));
-  shortcuts::updateTooltip(similar);
   // Section is an inspection: it looks inside without changing anything.
   QAction* section = addAction("inspect.section", tr("Section"), "section", QKeySequence("X"), [this] {}, true);
   connect(section, &QAction::toggled, this, [this](bool on) {

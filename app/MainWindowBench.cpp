@@ -169,7 +169,6 @@ void MainWindow::runBench() {
   if(benchShortcuts())return;
   if(benchDrawingImport())return;
   if(benchTodo9())return;
-  if(benchSmart())return;
   if(benchAnnotateLarge())return;
   if(qEnvironmentVariableIsSet("OPAD_BENCH_INSTANCES")) {
     if(m_doc->scene.all_bodies().empty()){QCoreApplication::exit(2);return;}

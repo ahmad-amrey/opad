@@ -264,12 +264,6 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     add("inspect.distance");
     add("inspect.radius");
     add("inspect.properties");
-    // TODO 11 UI-97: picked faces or edges: the ones like them, and taking the faces away; one body: its edges and
-    // faces by rule.
-    if (const auto picks = m_viewport->selection(); !picks.empty() && (picks.front().kind == opad::Ref::Kind::Face || picks.front().kind == opad::Ref::Kind::Edge)) {
-      add("select.similar");
-      if (picks.front().kind == opad::Ref::Kind::Face) add("design.remove_faces");
-    } else if (ids.size() == 1 && n && n->kind == opad::Node::Kind::Body) add("select.similar");
     menu.addSeparator();
     QAction* del = menu.addAction(icons::themed("delete", 16), tr("Delete (tombstone import)"));
     connect(del, &QAction::triggered, this, [this, ids] {

@@ -16,7 +16,6 @@ Besides the cases below, every tools/bench_cases/<area>.py module adds its CASES
 """
 import argparse
 import importlib.util
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -68,13 +67,6 @@ def main():
                                ("feature", "--kind", "cylinder", "--inputs", '{"x":"8 mm","diameter":"10 mm","height":"20 mm"}'))
         overhang = document("overhang", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'),
                             ("feature", "--kind", "box", "--inputs", '{"plane":{"origin":[0,0,10],"normal":[0,0,1]},"length":"30 mm","width":"10 mm","height":"2 mm","operation":"join"}'))
-        # TODO 11 UI-97: an imported plate (no history) with four 6 mm through holes and a 6 mm blind one.
-        holes = [("feature", "--kind", "cylinder", "--inputs", json.dumps({"plane": {"origin": [x, y, -1], "normal": [0, 0, 1]}, "diameter": "6 mm", "height": "12 mm", "operation": "cut"}))
-                 for x, y in ((10, 10), (70, 10), (10, 40), (70, 40))]
-        drilled = document("smart-source", ("feature", "--kind", "box", "--inputs", '{"length":"80 mm","width":"50 mm","height":"10 mm","centered":false}'), *holes,
-                           ("feature", "--kind", "cylinder", "--inputs", '{"plane":{"origin":[40,25,6],"normal":[0,0,1]},"diameter":"6 mm","height":"5 mm","operation":"cut"}'))
-        subprocess.run([str(cli), "export", str(drilled), "--format", "step", "--out", str(root / "smart-plate.step")], check=True, capture_output=True)
-        smart = document("smart", ("import", str(root / "smart-plate.step")))
         screw = ROOT / "tests" / "corpus" / "occt-screw.step"
         # A 30 x 20 x 12 m block 600 m from the origin, Y up, as SketchUp exports a house with its site coordinates.
         far = root / "far-block.obj"
@@ -98,8 +90,6 @@ def main():
             ("zoom-refinement", round_part, {"OPAD_BENCH_SCENE": "{prefix}.png", "OPAD_BENCH_VIEW": "iso", "OPAD_BENCH_ZOOM": "40"}),
             ("interference", overlapping, {"OPAD_BENCH_CHECK": "interference", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
-            ("smart", smart, {"OPAD_BENCH_SMART": "{prefix}"}),
-            ("smart-viewer", root / "smart-plate.step", {"OPAD_BENCH_SMART": "{prefix}"}),  # the STEP itself, read-only
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))

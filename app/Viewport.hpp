@@ -169,6 +169,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // adds to the selection (or takes a picked item out again) instead of replacing it, so selection() is the
   // tool's ordered pick list.
   void setPickAccumulate(bool on, bool retainPicks = false);
+  bool pickAccumulate() const { return m_pickAccumulate; }  // a guided tool or a design input owns the picks
   void deselectLast();      // one step back
   void keepLastSelected();  // a pick after the last step starts over from that pick
   bool lastPickPoint(opad::Vec3& p) const;  // where the last click hit the geometry
