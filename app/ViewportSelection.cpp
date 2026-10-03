@@ -73,7 +73,9 @@ void Viewport::handleSelectionPoly(const Handle(AIS_InteractiveContext)& ctx,con
   m_boxJob=m_jobs->sliced(tr("Selecting visible objects"),[=,this](Job& job) {
     if(generation!=m_doc->generation || camera!=view->Camera()->WorldViewProjState()) {job.cancel();return false;}
     if(state->remaining.empty()) return false;
-    for(int count=0;count<8;++count) {
+    // Up to 8 pixels, but no longer than 10 ms: in the Edge mode of a big assembly one pick alone takes ~20 ms.
+    QElapsedTimer step;step.start();
+    for(int count=0;count<8 && (count==0 || step.elapsed()<10);++count) {
       const bool seed=state->seeded<state->seeds.size();
       const QPoint pixel=seed?state->seeds[state->seeded++]:QPoint(state->x,state->y);
       selector->Pick(pixel.x(),pixel.y(),view);
