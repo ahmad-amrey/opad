@@ -61,6 +61,28 @@ void apply_merge(Document& ours, Document& theirs, const MergePlan& plan, const 
 // The keys an op changes (target, field), as the git driver computes them: "*" is the whole target.
 std::vector<std::pair<std::string, std::string>> op_effects(const json& op);
 
+// Whether `version` changes the design after `base` (UI-62): an op base does not have that is a param, sketch, feature or
+// regen, or an edit or delete of one. Two branches that both do were computed without each other's changes: regenerate
+// after merging them.
+bool changes_design(const Document& base, const Document& version);
+
+// History (UI-62): an earlier version of `current` restored as new changes, the log only growing. Every op of `version`
+// must be in current's log as written (current continues it, merges in between allowed); replaying it is then what
+// tombstones of current's later ops give: one each, except a delete or an edit of one of those later ops (gone with its
+// target). The version's bodies current no longer has (gc) come over from it.
+struct RestorePlan {
+  enum class Problem { none, current, other_document, not_ancestor };
+  Problem problem = Problem::none;  // current: nothing came after it; not_ancestor: it has ops current lacks or holds otherwise
+  std::string op;                   // not_ancestor: the first such op
+  std::vector<std::string> tombstones;  // current's later ops to delete, in log order
+  std::vector<std::string> bodies;      // the version's body keys current lacks
+  size_t later = 0;                     // current's ops the version does not have
+};
+RestorePlan plan_restore(const Document& current, const Document& version);
+// Appends the plan's tombstones (by `author`) to `current` and moves the bodies it lacks over from `version`. Throws on a
+// plan with a problem, or when a body is missing from `version`.
+void apply_restore(Document& current, Document& version, const RestorePlan& plan, const std::string& author = {});
+
 // The git merge driver (UI-60) over whole files, rule for rule tools/opad_merge.py (the reference; tests/test_git_merge.py
 // runs both). Each file is read as records: '#opad 1|2', a header line, '#ops', ops (JSON objects with a string id, one
 // or more lines, no blank or '#' lines between them), '#bodies', '#body <key> <lines> <meta>' entries whose text must

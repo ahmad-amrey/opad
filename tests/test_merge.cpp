@@ -356,4 +356,69 @@ TEST(arrange_bodies_checks_before_moving) {
   CHECK_EQ(other.body_count(), 0u);
 }
 
+// History (UI-62): an earlier version restored as new changes replays as that version did.
+namespace {
+std::string picture(const Scene& s) {  // what replay gives: the bodies (name, key, shown) and the parameters
+  std::set<std::string> lines;
+  for (const auto& id : s.all_bodies()) {
+    const Node* n = s.node(id);
+    lines.insert(id + " " + n->name + " " + n->body_key + (s.effectively_visible(id) ? "" : " hidden"));
+  }
+  for (const auto& p : s.params) lines.insert("param " + p.name + "=" + p.expr);
+  std::string out;
+  for (const auto& l : lines) out += l + "\n";
+  return out;
+}
+}  // namespace
+
+TEST(restore_an_earlier_version_as_new_changes) {
+  Versions v = make_base();
+  Document version = Document::parse(v.base_text);
+  const std::string param = version.append(json{{"op", "param"}, {"name", "w"}, {"expr", "2 mm"}}).id;
+  const std::string nodeD = import_body(version, 4, "D");
+  const std::string importD = version.ops.back().id, keyD = version.body_keys().back();
+  const std::string versionText = version.serialize();
+  CHECK(changes_design(Document::parse(v.base_text), version) && !changes_design(version, Document::parse(v.base_text)));
+  Document current = Document::parse(versionText);
+  rename(current, v.a, "A2");
+  current.append(json{{"op", "edit"}, {"target", param}, {"set", {{"expr", "3 mm"}}}});
+  const std::string nodeC = import_body(current, 3, "C");
+  const std::string importC = current.ops.back().id;
+  const std::string deleteB = current.append(json{{"op", "delete"}, {"target", current.ops[1].id}}).id;  // B's import gone
+  current.append(json{{"op", "delete"}, {"target", deleteB}});  // and back: a delete of a later op needs no tombstone
+  current.append(json{{"op", "rename"}, {"target", nodeC}, {"name", "C2"}});
+  current.append(json{{"op", "delete"}, {"target", importD}});
+  CHECK(current.gc() == std::vector<std::string>{keyD});  // D's body no longer stored
+  CHECK(!changes_design(Document::parse(versionText), Document::parse(versionText)));
+  Document indexed = Document::parse_index(versionText);
+  const std::string wanted = picture(resolve(indexed));
+  CHECK(picture(resolve(current)) != wanted);
+  const RestorePlan plan = plan_restore(current, indexed);
+  CHECK(plan.problem == RestorePlan::Problem::none);
+  CHECK_EQ(plan.later, 7u);
+  CHECK_EQ(plan.tombstones.size(), 6u);  // all but the delete of the delete
+  CHECK(std::find(plan.tombstones.begin(), plan.tombstones.end(), importC) != plan.tombstones.end());
+  CHECK(std::find(plan.tombstones.begin(), plan.tombstones.end(), deleteB) != plan.tombstones.end());
+  CHECK(plan.bodies == std::vector<std::string>{keyD});
+  const size_t before = current.ops.size();
+  apply_restore(current, indexed, plan, "bob");
+  CHECK_EQ(current.ops.size(), before + 6);
+  CHECK(current.ops.back().type == "delete" && current.ops.back().data.value("by", "") == "bob");
+  CHECK(current.has_body(keyD) && current.body(keyD)->brep == brep(4));
+  CHECK(resolve(current).node(nodeD) && resolve(current).param("w")->expr == "2 mm");
+  CHECK_EQ(picture(resolve(current)), wanted);
+  // Saved and read back: the same, the log only grew; restored again, nothing is left to do.
+  const std::string text = current.serialize();
+  CHECK_EQ(picture(resolve(Document::parse(text))), wanted);
+  CHECK(text.compare(0, versionText.find("#bodies"), versionText, 0, versionText.find("#bodies")) == 0);
+  CHECK(plan_restore(current, Document::parse(text)).problem == RestorePlan::Problem::current);
+  // Not this way: another document, or a version with ops the current lacks (another branch).
+  CHECK(plan_restore(current, Document::create()).problem == RestorePlan::Problem::other_document);
+  Document branch = Document::parse(versionText);
+  rename(branch, v.b, "B on a branch");
+  const RestorePlan foreign = plan_restore(current, branch);
+  CHECK(foreign.problem == RestorePlan::Problem::not_ancestor && foreign.op == branch.ops.back().id);
+  CHECK_THROWS(apply_restore(current, branch, foreign));
+}
+
 CHECK_MAIN()

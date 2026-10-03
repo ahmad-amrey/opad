@@ -151,6 +151,69 @@ void apply_merge(Document& ours, Document& theirs, const MergePlan& plan, const 
   ours.dirty = true;
 }
 
+bool changes_design(const Document& base, const Document& version) {
+  std::unordered_set<std::string_view> old;
+  for (const auto& o : base.ops) old.insert(o.id);
+  std::unordered_map<std::string_view, const std::string*> types;
+  for (const auto& o : version.ops) types.emplace(o.id, &o.type);
+  for (const auto& o : version.ops) {
+    if (old.count(o.id)) continue;
+    if (design_type(o.type)) return true;
+    if (o.type != "edit" && o.type != "delete") continue;
+    const auto it = types.find(o.data.value("target", ""));
+    if (it != types.end() && design_type(*it->second)) return true;
+  }
+  return false;
+}
+
+RestorePlan plan_restore(const Document& current, const Document& version) {
+  RestorePlan p;
+  if (version.header.uuid != current.header.uuid) {
+    p.problem = RestorePlan::Problem::other_document;
+    return p;
+  }
+  std::unordered_map<std::string_view, const Op*> at;
+  for (const auto& o : current.ops) at.emplace(o.id, &o);
+  std::unordered_set<std::string_view> kept;
+  for (const auto& o : version.ops) {
+    const auto it = at.find(o.id);
+    const bool same = it != at.end() && (!o.raw.empty() && !it->second->raw.empty() ? o.raw == it->second->raw : o.data == it->second->data);
+    if (!same) {
+      p.problem = RestorePlan::Problem::not_ancestor;
+      p.op = o.id;
+      return p;
+    }
+    kept.insert(o.id);
+  }
+  std::unordered_set<std::string_view> later;
+  for (const auto& o : current.ops)
+    if (!kept.count(o.id)) later.insert(o.id);
+  p.later = later.size();
+  if (!p.later) {
+    p.problem = RestorePlan::Problem::current;
+    return p;
+  }
+  for (const auto& o : current.ops) {
+    if (!later.count(o.id)) continue;
+    if ((o.type == "delete" || o.type == "edit") && later.count(o.data.value("target", ""))) continue;  // gone with its target
+    p.tombstones.push_back(o.id);
+  }
+  for (const auto& b : version.bodies())
+    if (!current.has_body(b.key)) p.bodies.push_back(b.key);
+  return p;
+}
+
+void apply_restore(Document& current, Document& version, const RestorePlan& plan, const std::string& author) {
+  if (plan.problem != RestorePlan::Problem::none) throw Error("cannot restore this version as new changes");
+  if (!plan.bodies.empty()) {
+    std::vector<std::string> keys = current.body_keys();
+    keys.insert(keys.end(), plan.bodies.begin(), plan.bodies.end());
+    current.arrange_bodies(keys, version, true);
+  }
+  for (const auto& id : plan.tombstones) current.append(json{{"op", "delete"}, {"target", id}}, author);
+  current.dirty = true;
+}
+
 // ---------------------------------------------------------------- the git driver (tools/opad_merge.py, rule for rule)
 namespace {
 // Python's str.strip(): ASCII whitespace, the separators 0x1c-0x1f and the Unicode spaces (the text is valid UTF-8).
