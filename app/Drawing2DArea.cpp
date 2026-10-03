@@ -11,6 +11,8 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QScreen>
+#include <QSettings>
+#include <QStatusBar>
 #include <QTimer>
 #include <QToolButton>
 
@@ -44,7 +46,8 @@ OPAD_ICON_TABLE(drawing2d,
                 {"plot", R"(<path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8"/><path d="M7 14h10v7H7z"/>)"},
                 {"palette", R"(<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.9 1-1.8-.6-1-.1-2.2 1.1-2.2H17a4 4 0 0 0 4-4c0-5.5-4-10-9-10z"/><circle cx="7.5" cy="11" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16.5" cy="11" r="1"/>)"},
                 {"noPlot", R"(<path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8"/><path d="M7 14h10v7H7z"/><path d="M2 2l20 20"/>)"},
-                {"area", R"(<path d="M4 19l2-14 13 3 1 11z"/><path d="M8 15l5-5M11 17l6-6"/>)"});
+                {"area", R"(<path d="M4 19l2-14 13 3 1 11z"/><path d="M8 15l5-5M11 17l6-6"/>)"},
+                {"objectSnap", R"(<rect x="8" y="8" width="8" height="8"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>)"});
 
 namespace {
 // What is under the mouse in a drawing, after a moment's rest (a rollover tooltip): its type, layer, colour, linetype,
@@ -88,6 +91,44 @@ class Drawing2DArea : public AreaController {
     isolate.keywords = {"layiso", "show only this layer"};
     isolate.enabledWhen = [this](const CommandContext& c) { return c.document && m_hasLayers && !selectedLayers(c.selection).empty(); };
     m_isolateAction = services().addCommand(isolate, [this] { m_layers->isolate(selectedLayers(services().selection())); });
+    // Object snap (UI-90): F3, as in AutoCAD; the kinds are the sketch's (Snap settings), shared by Review picks.
+    CommandInfo snap{"drawing2d.objectSnap", tr("Object snap"), "objectSnap", QKeySequence("F3")};
+    snap.checkable = true;
+    snap.group = tr("View");
+    snap.keywords = {"osnap", "endpoint", "midpoint", "center", "quadrant", "intersection", "nearest", "snap to objects"};
+    m_snapAction = services().addCommand(snap, [this] {
+      QSettings().setValue("view/objectSnap", m_snapAction->isChecked());
+      if (Viewport* v = services().viewport()) v->setObjectSnap(m_snapAction->isChecked());
+    });
+    m_snapAction->setChecked(QSettings().value("view/objectSnap", true).toBool());
+  }
+
+  // Beside the other snapping switches' row: the object snap switch (F3), styled as they are.
+  void statusWidgets(QStatusBar* bar) override {
+    QWidget* units = bar->findChild<QWidget*>("statusUnits");  // stays last
+    if (units) bar->removeWidget(units);
+    auto* button = new QToolButton(bar);
+    button->setObjectName("objectSnapToggle");
+    button->setDefaultAction(m_snapAction);
+    button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    button->setAccessibleName(m_snapAction->text());
+    button->setIconSize({18, 18});
+    button->setFixedSize(30, 26);
+    button->setFocusPolicy(Qt::NoFocus);
+    auto paint = [this, button] {
+      const Tokens& t = theme::current();
+      m_snapAction->setIcon(icons::icon("objectSnap", m_snapAction->isChecked() ? t.onsel : t.fg2));
+      button->setStyleSheet(QString("QToolButton { border: 1px solid %1; border-radius: 3px; background: %2; } QToolButton:checked { background: %3; border: 2px solid %3; } "
+                                    "QToolButton:hover { border-color: %3; }").arg(t.line.name(), t.bg2.name(), t.sel.name()));
+    };
+    connect(theme::notifier(), &theme::Notifier::changed, button, paint);
+    connect(m_snapAction, &QAction::toggled, button, paint);
+    paint();
+    bar->addPermanentWidget(button);
+    if (units) {
+      bar->addPermanentWidget(units);
+      units->show();
+    }
   }
 
   void menus(QMenuBar*, const QMap<QString, QMenu*>& menus) override {
@@ -118,6 +159,7 @@ class Drawing2DArea : public AreaController {
   }
 
   void ready() override {
+    services().viewport()->setObjectSnap(m_snapAction->isChecked());
     m_layers = new LayersPanel(services());
     m_tool = new ToolPanel("layers", "layers", &Tokens::sel, tr("Layers"), m_layers, 460, services().window());
     m_tool->setDefaultWidth(460);
@@ -336,7 +378,7 @@ class Drawing2DArea : public AreaController {
   LayersPanel* m_layers = nullptr;
   ToolPanel* m_tool = nullptr;
   QLabel* m_walkChip = nullptr;
-  QAction *m_layersAction = nullptr, *m_walkAction = nullptr, *m_isolateAction = nullptr;
+  QAction *m_layersAction = nullptr, *m_walkAction = nullptr, *m_isolateAction = nullptr, *m_snapAction = nullptr;
   bool m_hasLayers = false, m_words = false, m_filterWords = false;
   std::set<std::string> m_layerIds;  // for the browser's rows: asked at every paint
   RolloverCard* m_card = nullptr;

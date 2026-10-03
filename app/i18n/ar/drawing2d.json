@@ -116,5 +116,9 @@
  "Area %1 · perimeter %2": "المساحة %1 · المحيط %2",
  "Pick fills, closed objects or points around an area": "اختر تعبئات أو عناصر مغلقة أو نقاطًا حول مساحة",
  "Pick fills, faces, objects or points around an area, not whole bodies": "اختر تعبئات أو أوجهًا أو عناصر أو نقاطًا حول مساحة، لا أجسامًا كاملة",
- "Pick fills, objects or points for an area, not a mix of them": "اختر تعبئات أو عناصر أو نقاطًا للمساحة، لا خليطًا منها"
+ "Pick fills, objects or points for an area, not a mix of them": "اختر تعبئات أو عناصر أو نقاطًا للمساحة، لا خليطًا منها",
+ "Object snap": "الالتقاط بالعناصر",
+ "Endpoint": "نقطة طرفية",
+ "Preparing object snaps": "تجهيز الالتقاط بالعناصر",
+ "%1 · click to pick this point (F3 turns object snap off)": "%1 · انقر لاختيار هذه النقطة (F3 يوقف الالتقاط بالعناصر)"
 }

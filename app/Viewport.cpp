@@ -1975,6 +1975,7 @@ void Viewport::paintEvent(QPaintEvent*) {
   if (trace::enabled() && frame.elapsed() > 100) trace::log(QStringLiteral("slow frame: %1 ms (%2 objects)").arg(frame.elapsed()).arg(m_items.size()));
   updateTracking();
   updateHover();
+  updateObjectSnap();
 }
 
 // The status text, the hovered drawing entity and the point under the mouse, after a frame's detection.
@@ -2117,6 +2118,7 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
     // Only the Replace scheme hands a click to the cube (HandleMouseClick); a guided tool's XOR would toggle it as a pick.
     ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, AIS_SelectionScheme_Replace);
   }
+  if (m_initialised && !m_cubeGesture && objectSnapPress(e)) return;
   if (!m_cubeGesture && e->button()==Qt::LeftButton && m_initialised && m_pickAccumulate && !m_measureSelectionLocked) {
     auto tracked=m_centers.find(m_trackingMarker);
     if(tracked!=m_centers.end() && (!m_ctx->HasDetected() || m_ctx->DetectedInteractive()==tracked->second.ais) && (QPointF(widgetPoint(tracked->second.ref.point))-e->position()).manhattanLength()<16) {

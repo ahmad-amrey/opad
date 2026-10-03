@@ -56,6 +56,14 @@ def room_file(root, document=None):
     return dxf(root / "room.dxf", [("Walls", 7, 0, ())], [line("Walls", *wall) for wall in walls])
 
 
+def snaps_file(root, document=None):
+    """The room, a circle (Holes, red: centre (30, 25), radius 10) and a line across both cells (Axis, blue: (10, 20) to
+    (90, 20)), each layer its own body: a crossing between bodies, a centre, quadrants and points on a circle."""
+    walls = [(0, 0, 60, 0), (60, 0, 100, 0), (100, 0, 100, 50), (100, 50, 60, 50), (60, 50, 0, 50), (0, 50, 0, 0), (60, 0, 60, 50)]
+    return dxf(root / "snaps.dxf", [("Walls", 7, 0, ()), ("Holes", 1, 0, ()), ("Axis", 5, 0, ())],
+               [line("Walls", *wall) for wall in walls] + [("CIRCLE", "Holes", [(10, 30), (20, 25), (40, 10)]), line("Axis", 10, 20, 90, 20)])
+
+
 def room_document(root, document):
     return document("room", ("import", "--file", str(room_file(root)), "--center", "true"))
 
@@ -77,4 +85,7 @@ CASES = [
     # <prefix>.prompt.png, .panel.png, .viewport.png
     ("area", room_document, {"OPAD_BENCH_AREA": "{prefix}"}),
     ("area-viewer", room_file, {"OPAD_BENCH_AREA": "{prefix}"}),
+    # UI-90: object snap (F3) in the Distance tool's point picks: midpoint, a crossing of two layers, centre, quadrant,
+    # nearest on the circle, the sketch's kind switches, F3 off, none with the Objects filter. <prefix>.snap.png
+    ("object-snap", snaps_file, {"OPAD_BENCH_OSNAP": "{prefix}"}),
 ]

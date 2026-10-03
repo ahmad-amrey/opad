@@ -39,6 +39,7 @@
 class JobRunner;
 class Job;
 class QKeyEvent;
+struct ObjectSnapState;
 class QNativeGestureEvent;
 
 // Sketch editing (SketchEditor) takes the left mouse button and the keyboard while it is active; positions
@@ -186,6 +187,17 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showPickMarkers(const std::vector<opad::Vec3>& points);  // numbered end markers, 1-based
   void showPreview(const opad::Vec3& a, const opad::Vec3& b, const QString& label);  // dashed hov line to the hovered candidate
   void clearPreview();
+  // Object snap (UI-90, ViewportSnap.cpp): while a tool picks points (Vertex filter, a drawing's Points), the drawings' ends,
+  // midpoints, centres, quadrants, intersections and nearest points under the mouse, as the sketch offers them (its snap
+  // set, settings sketch/snap/<kind>): a marker of the kind's shape, its name in the status bar, and a click picks the
+  // point (a Point ref). F3 switches it (view/objectSnap). Each body's index is built on a worker when first needed.
+  void setObjectSnap(bool on);
+  bool objectSnap() const { return m_objectSnap; }
+  bool snapAt(const QPointF& widgetPos, opad::Vec3& world, QString* kind = nullptr);  // any point consumer: false until indexed
+  bool shownSnap(opad::Vec3& world, QString* kind = nullptr) const;                // the one the cursor shows now
+  bool snapIndexesReady();  // asks for the missing indexes; true once every displayed drawing has one
+  static QString snapWord(const QString& kind);  // "endpoint" -> "Endpoint", translated
+  bool benchSnap(const QPointF& widgetPos);  // the snap a mouse move here shows (hidden windows never paint)
 
   // ---- design (ViewportDesign.cpp)
   // Things a feature input can pick that are not part of a body: sketch regions, sketch points and lines,
@@ -576,4 +588,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_cubeClick = false;       // the current left press is on the view cube: its click is not a selection change
   bool m_pickAccumulate = false;  // guided tools: left click toggles (XOR)
   bool m_cubeGesture = false;  // this left press started on the view cube: dragging orbits instead of rubber-banding
+  // object snap (ViewportSnap.cpp)
+  bool m_objectSnap = true;
+  std::shared_ptr<ObjectSnapState> m_osnap;
+  ObjectSnapState& snapState();
+  bool objectSnapActive() const;
+  void updateObjectSnap();                 // after the hover, every frame
+  bool objectSnapPress(QMouseEvent* e);  // true: the press picks the shown snap
 };
