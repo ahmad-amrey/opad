@@ -803,5 +803,18 @@
  "Menu key": "مفتاح القائمة",
  "The design is being recomputed; try again in a moment.": "يُعاد حساب التصميم؛ حاول مرة أخرى بعد لحظات.",
  "That operation is already tombstoned.": "هذه العملية محذوفة بالفعل.",
- "Repeat the last tool, in the view while nothing runs": "تكرار آخر أداة، في العرض حين لا يعمل شيء"
+ "Repeat the last tool, in the view while nothing runs": "تكرار آخر أداة، في العرض حين لا يعمل شيء",
+ "Ortho F8": "متعامد F8",
+ "Polar F10": "قطبي F10",
+ "F8 turns Ortho on": "F8 يشغّل الوضع المتعامد",
+ "Each new line runs level or plumb": "كل خط جديد يمتد أفقيًا أو رأسيًا",
+ "F10 turns Polar on": "F10 يشغّل الوضع القطبي",
+ "A line's direction snaps to the angle step": "يلتقط اتجاه الخط خطوة الزاوية",
+ "Press Ctrl+A": "اضغط Ctrl+A",
+ "Every body on screen is selected": "يُحدَّد كل جسم ظاهر على الشاشة",
+ "Select what to leave out": "حدّد ما تريد استبعاده",
+ "Ctrl+Shift+I selects everything else": "Ctrl+Shift+I يحدّد كل ما سواه",
+ "Run a command, such as Hide (V)": "شغّل أمرًا، مثل الإخفاء (V)",
+ "Select something else": "حدّد شيئًا آخر",
+ "Shift+Enter runs it again": "Shift+Enter يشغّله مرة أخرى"
 }

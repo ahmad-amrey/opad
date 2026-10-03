@@ -1341,6 +1341,100 @@
    ]
   },
   {
+   "id": "view.orthoSnap", "duration": 5.6, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Ortho F8", "keys": [[1.0, {"dot": "fg3"}], [1.05, {"dot": "sel"}]], "dot": "fg3"},
+    {"el": "key", "caps": ["F8"], "press": 1.0, "from": 0.7, "to": 1.5},
+    {"el": "poly", "color": "hov", "from": 1.6, "to": 3.6, "fade": 0, "points": [[-18, -7], [-18, -7]],
+     "keys": [[1.6, {"points": [[-18, -7], [-18, -7]]}], [2.4, {"points": [[-18, -7], [-4, -7]]}], [3.0, {"points": [[-18, -7], [6, -7]]}], [3.5, {"points": [[-18, -7], [8, -7]]}]]},
+    {"el": "poly", "points": [[-18, -7], [8, -7]], "dots": true, "from": 3.6, "fade": 0},
+    {"el": "glyph", "kind": "horizontal", "at": [-5, -7], "dx": 0, "dy": 13, "from": 3.6},
+    {"el": "poly", "color": "hov", "from": 3.6, "to": 5.0, "fade": 0, "points": [[8, -7], [8, -7]],
+     "keys": [[3.6, {"points": [[8, -7], [8, -7]]}], [4.3, {"points": [[8, -7], [8, 3]]}], [4.9, {"points": [[8, -7], [8, 7]]}]]},
+    {"el": "poly", "points": [[8, -7], [8, 7]], "dots": true, "from": 5.0, "fade": 0},
+    {"el": "glyph", "kind": "vertical", "at": [8, 0], "dx": 13, "dy": 0, "from": 5.0},
+    {"use": "sketchDraw", "args": {"badge": "line", "keys": [[0, {"pos": [-24, 2]}], [1.6, {"pos": [-18, -7], "click": 1}], [2.4, {"pos": [-4, -4]}], [3.0, {"pos": [6, -9.5]}],
+                                                      [3.5, {"pos": [8, -5.5], "click": 1}], [4.3, {"pos": [10.5, 3]}], [4.9, {"pos": [6.5, 7], "click": 1}], [5.6, {"pos": [14, 10]}]]}}
+   ],
+   "steps": [
+    {"to": 1.5, "caption": "F8 turns Ortho on"},
+    {"to": 5.6, "caption": "Each new line runs level or plumb"}
+   ]
+  },
+  {
+   "id": "view.polarSnap", "duration": 5.0, "extent": [-30, -14, 30, 14],
+   "items": [
+    {"use": "sketchScene"},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Polar F10", "keys": [[1.0, {"dot": "fg3"}], [1.05, {"dot": "sel"}]], "dot": "fg3"},
+    {"el": "key", "caps": ["F10"], "press": 1.0, "from": 0.7, "to": 1.5},
+    {"el": "poly", "points": [[-16, -8], [14, 9.32]], "color": "green", "dash": true, "width": 1.2, "from": 2.0, "to": 3.6, "fade": 0.15},
+    {"el": "poly", "points": [[-16, -8], [-4, -8]], "color": "fg3", "dash": true, "width": 1, "from": 2.0, "to": 3.6, "fade": 0.15},
+    {"el": "label", "at": [-9.5, -6.6], "value": "30°", "color": "green", "from": 2.0, "to": 3.6},
+    {"el": "poly", "color": "hov", "from": 1.6, "to": 3.6, "fade": 0, "points": [[-16, -8], [-16, -8]],
+     "keys": [[1.6, {"points": [[-16, -8], [-16, -8]]}], [2.4, {"points": [[-16, -8], [-7.34, -3]]}], [3.0, {"points": [[-16, -8], [1.32, 2]]}], [3.5, {"points": [[-16, -8], [6.52, 5]]}]]},
+    {"el": "poly", "points": [[-16, -8], [6.52, 5]], "dots": true, "from": 3.6, "fade": 0},
+    {"use": "sketchDraw", "args": {"badge": "line", "keys": [[0, {"pos": [-24, 4]}], [1.6, {"pos": [-16, -8], "click": 1}], [2.4, {"pos": [-7.8, -1.8]}], [3.0, {"pos": [1.9, 3.2]}],
+                                                      [3.5, {"pos": [6.2, 5.8], "click": 1}], [5.0, {"pos": [14, 0]}]]}}
+   ],
+   "steps": [
+    {"to": 1.5, "caption": "F10 turns Polar on"},
+    {"to": 5.0, "caption": "A line's direction snaps to the angle step"}
+   ]
+  },
+  {
+   "id": "edit.selectall", "duration": 3.8, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5, "tone": "sel", "toneAmount": 0, "keys": [[1, {"toneAmount": 0}], [1.1, {"toneAmount": 0.4}]]},
+    {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0, "keys": [[1, {"toneAmount": 0}], [1.1, {"toneAmount": 0.4}]]},
+    {"el": "solid", "profile": {"circle": [-6, 10, 2.5]}, "height": 7, "tone": "sel", "toneAmount": 0, "keys": [[1, {"toneAmount": 0}], [1.1, {"toneAmount": 0.4}]]},
+    {"el": "key", "caps": ["Ctrl", "A"], "press": 0.95, "from": 0.6, "to": 1.45}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Press Ctrl+A"},
+    {"to": 3.8, "caption": "Every body on screen is selected"}
+   ]
+  },
+  {
+   "id": "edit.invert", "duration": 4.0, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5, "tone": "sel", "toneAmount": 0,
+     "keys": [[0.6, {"toneAmount": 0}], [0.7, {"toneAmount": 0.4}], [1.5, {"toneAmount": 0.4}], [1.6, {"toneAmount": 0}]]},
+    {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0, "keys": [[1.5, {"toneAmount": 0}], [1.6, {"toneAmount": 0.4}]]},
+    {"el": "solid", "profile": {"circle": [-6, 10, 2.5]}, "height": 7, "tone": "sel", "toneAmount": 0, "keys": [[1.5, {"toneAmount": 0}], [1.6, {"toneAmount": 0.4}]]},
+    {"el": "key", "caps": ["Ctrl", "Shift", "I"], "press": 1.45, "from": 1.1, "to": 1.95},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.6, {"pos": [-1, -3, 5], "click": 1}], [1.4, {"pos": [14, 8, 0]}]]}
+   ],
+   "steps": [
+    {"to": 1.2, "caption": "Select what to leave out"},
+    {"to": 4.0, "caption": "Ctrl+Shift+I selects everything else"}
+   ]
+  },
+  {
+   "id": "edit.repeat", "duration": 4.4, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5},
+    {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0,
+     "keys": [[0.5, {"toneAmount": 0}], [0.6, {"toneAmount": 0.4}], [1.0, {"opacity": 1}], [1.5, {"opacity": 0}]]},
+    {"el": "solid", "profile": {"circle": [-6, 10, 2.5]}, "height": 7, "tone": "sel", "toneAmount": 0,
+     "keys": [[2.0, {"toneAmount": 0}], [2.1, {"toneAmount": 0.4}], [2.8, {"opacity": 1}], [3.3, {"opacity": 0}]]},
+    {"el": "key", "caps": ["V"], "press": 0.95, "from": 0.6, "to": 1.45},
+    {"el": "key", "caps": ["Shift", "Enter"], "press": 2.75, "from": 2.4, "to": 3.3},
+    {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.5, {"pos": [8, 0, 10], "click": 1}], [1.5, {"pos": [14, -8, 4]}], [2.0, {"pos": [-6, 10, 7], "click": 1}], [3.0, {"pos": [14, 8, 0]}]]}
+   ],
+   "steps": [
+    {"to": 1.5, "caption": "Run a command, such as Hide (V)"},
+    {"to": 2.3, "caption": "Select something else"},
+    {"to": 4.4, "caption": "Shift+Enter runs it again"}
+   ]
+  },
+  {
    "id": "inspect.bbox", "duration": 4.8, "view": "iso", "extent": [-26, -11, 26, 16],
    "items": [
     {"el": "camera", "center": [-8, 0]},
