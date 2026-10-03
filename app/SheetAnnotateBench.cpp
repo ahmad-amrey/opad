@@ -249,10 +249,13 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ANNOTATE, sheetAnnotate) {
     }
     click(plus(hole2, {r6 * 0.7071, r6 * 0.7071}));
     planned();
+    moveTo(plus(hole2, {14, 24}));
+    check(tools->inputKeys() == std::vector<std::string>{"value"} && tools->inputText("value") == "0.1", "the frame's card offers its tolerance (0.1 from the bar)");
+    for (int k : {Qt::Key_0, Qt::Key_Period, Qt::Key_0, Qt::Key_5}) key(k);
     click(plus(hole2, {14, 24}));
     check(added("fcf", 1) && items("fcf")[0]->def["characteristic"] == "position" && items("fcf")[0]->def["datums"] == opad::json({"A", "B"}) &&
-              items("fcf")[0]->def["zone"] == "diameter",
-          "a position frame ⌀0.1 to A and B on the hole");
+              items("fcf")[0]->def["zone"] == "diameter" && items("fcf")[0]->def["value"] == 0.05,
+          "a position frame ⌀0.05 (typed on the card) to A and B on the hole");
     key(Qt::Key_Escape);
     w.action("drawings.surface")->trigger();
     tools->valueEdit()->setText("Ra 1.6");
