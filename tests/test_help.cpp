@@ -37,14 +37,14 @@ QString source(const QString& path) {
   return QString::fromUtf8(f.readAll());
 }
 
-// Command ids registered by MainWindow (MainWindow*.cpp): literal addAction ids, CommandInfo ids, the generated families,
-// the sketch tool tables and the feature kinds of the core spec table. The bench OPAD_BENCH_RICHTIP checks the live list of
-// the running app.
+// Command ids registered by MainWindow (MainWindow*.cpp): literal addAction ids (and the Help menu's help("help.about",
+// ...) helper of the IP branch), CommandInfo ids, the generated families, the sketch tool tables and the feature kinds of
+// the core spec table. The bench OPAD_BENCH_RICHTIP checks the live list of the running app.
 std::set<QString> registeredIds() {
   std::set<QString> ids;
   QString main;
   for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"MainWindow*.cpp"}, QDir::Files, QDir::Name)) main += source("app/" + file);
-  for (const auto& m : QRegularExpression(R"(addAction\("([a-z]+\.[A-Za-z0-9_.]+)\")").globalMatch(main)) ids.insert(m.captured(1));
+  for (const auto& m : QRegularExpression(R"(\b(?:addAction|help)\("([a-z]+\.[A-Za-z0-9_.]+)\")").globalMatch(main)) ids.insert(m.captured(1));
   const QRegularExpression info(R"(\.id\s*=\s*"([a-z]+\.[A-Za-z0-9_.]+)\")");
   for (const auto& m : info.globalMatch(main)) ids.insert(m.captured(1));
   for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"*Area.cpp"}, QDir::Files, QDir::Name))
