@@ -1,4 +1,11 @@
-add_executable(opad-cli main.cpp mcp.cpp live_mcp.cpp)
+set(_opad_cli_sources main.cpp mcp.cpp live_mcp.cpp)
+if(WIN32)  # icon and version info (copyright line) in the exe's properties
+  enable_language(RC)
+  configure_file(opad-cli.rc.in ${CMAKE_CURRENT_BINARY_DIR}/opad-cli.rc @ONLY)
+  list(APPEND _opad_cli_sources ${CMAKE_CURRENT_BINARY_DIR}/opad-cli.rc)
+  set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/opad-cli.rc PROPERTIES OBJECT_DEPENDS ${PROJECT_SOURCE_DIR}/app/res/opad.ico)
+endif()
+add_executable(opad-cli ${_opad_cli_sources})
 target_link_libraries(opad-cli PRIVATE opad::core)
 find_package(Qt6 COMPONENTS Core Network QUIET)
 if(Qt6_FOUND)
