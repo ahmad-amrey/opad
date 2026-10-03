@@ -92,7 +92,7 @@ TEST(canvas_moved_sized_turned_calibrated_and_aligned) {
   std::string id = only_canvas(resolve(d));
   // Place: its centre, width and turn; each a transform op of well under a kilobyte (the picture is never stored again).
   size_t before = d.serialize().size();
-  json r = run(d, "canvas", {{"action", "place"}, {"target", id}, {"x", 10.0}, {"y", -5.0}, {"width", 50.0}, {"angle", 90.0}});
+  json r = run(d, "canvas", {{"action", "place"}, {"target", id}, {"set", {{"x", 10.0}, {"y", -5.0}, {"width", 50.0}, {"angle", 90.0}}}});
   CHECK(d.serialize().size() - before < 1024 && d.ops.back().type == "transform");
   CHECK(about(r["x"], 10, 1e-9) && about(r["y"], -5, 1e-9) && about(r["width"], 50, 1e-9) && about(r["height"], 25, 1e-9) && about(r["angle"], 90, 1e-9));
   Scene s = resolve(d);
@@ -100,20 +100,20 @@ TEST(canvas_moved_sized_turned_calibrated_and_aligned) {
   auto pts = canvas_points(s.world(id), p.body_w, p.body_h);
   CHECK(near(pts[4], {10, -5, 0}) && near(pts[0], {22.5, -30, 0}));  // turned a quarter: its bottom edge runs up +Y
   // Height instead of width: the aspect stays.
-  r = run(d, "canvas", {{"action", "place"}, {"target", id}, {"height", 40.0}});
+  r = run(d, "canvas", {{"action", "place"}, {"target", id}, {"set", {{"height", 40.0}}}});
   CHECK(about(r["width"], 80, 1e-9));
   // Calibrate: two of its points 30 mm apart as it stands become 120 mm apart; the first stays put.
   s = resolve(d);
   const double along = 30 / (80 / canvas_place(s, id).body_w);  // 30 mm as shown, in the body's own millimetres
   const Vec3 a = s.world(id).apply({10, 10, 0}), b = s.world(id).apply({10 + along, 10, 0});
   CHECK(about(dist(a, b), 30, 1e-9));
-  run(d, "canvas", {{"action", "calibrate"}, {"target", id}, {"a", a}, {"b", b}, {"distance", 120.0}});
+  run(d, "canvas", {{"action", "calibrate"}, {"target", id}, {"points", {a, b}}, {"distance", 120.0}});
   s = resolve(d);
   CHECK(near(s.world(id).apply({10, 10, 0}), a) && about(dist(s.world(id).apply({10, 10, 0}), s.world(id).apply({10 + along, 10, 0})), 120, 1e-6));
   CHECK(about(canvas_place(s, id).width, 320, 1e-6));
   // Align: two canvas points onto two model points off the plane (a residual), turned, scaled and moved in the plane.
   const Vec3 c = s.world(id).apply({0, 0, 0}), e = s.world(id).apply({50, 0, 0});
-  r = run(d, "canvas", {{"action", "align"}, {"target", id}, {"a", c}, {"a_to", Vec3{100, 100, 3}}, {"b", e}, {"b_to", Vec3{100, 200, 3}}});
+  r = run(d, "canvas", {{"action", "align"}, {"target", id}, {"points", {c, Vec3{100, 100, 3}, e, Vec3{100, 200, 3}}}});
   CHECK(about(r["residual"], 3, 1e-9));
   s = resolve(d);
   CHECK(near(s.world(id).apply({0, 0, 0}), {100, 100, 0}) && near(s.world(id).apply({50, 0, 0}), {100, 200, 0}));
@@ -125,13 +125,13 @@ TEST(canvas_moved_sized_turned_calibrated_and_aligned) {
   s = resolve(d);
   p = canvas_place(s, id);
   CHECK(!p.on_plane);  // lifted 50 mm off XY with its component: the canvas's own frame from then on
-  run(d, "canvas", {{"action", "place"}, {"target", id}, {"x", 5.0}, {"angle", 0.0}});
+  run(d, "canvas", {{"action", "place"}, {"target", id}, {"set", {{"x", 5.0}, {"angle", 0.0}}}});
   s = resolve(d);
   CHECK(near(canvas_points(s.world(id), p.body_w, p.body_h)[4], p.plane.to_world(5, 0)) && about(p.plane.origin[2], 50, 1e-9));
   // Locked: placing refuses, the flags still change.
   run(d, "appearance", {{"target", id}, {"locked", true}});
-  CHECK_THROWS(run(d, "canvas", {{"action", "place"}, {"target", id}, {"x", 0.0}}));
-  CHECK_THROWS(run(d, "canvas", {{"action", "place"}, {"target", component}, {"x", 0.0}}));  // not a canvas
+  CHECK_THROWS(run(d, "canvas", {{"action", "place"}, {"target", id}, {"set", {{"x", 0.0}}}}));
+  CHECK_THROWS(run(d, "canvas", {{"action", "place"}, {"target", component}, {"set", {{"x", 0.0}}}}));  // not a canvas
 }
 
 TEST(canvas_flags_are_an_edit_of_its_import) {
@@ -140,7 +140,7 @@ TEST(canvas_flags_are_an_edit_of_its_import) {
   import_file(d, write(f.dir / "a.png", png(100, 100, "a")));
   const std::string id = only_canvas(resolve(d)), import_id = d.ops.back().id;
   const size_t before = d.serialize().size();
-  json r = run(d, "canvas", {{"action", "flags"}, {"target", id}, {"flip", {true, false}}, {"display_through", true}, {"selectable", false}});
+  json r = run(d, "canvas", {{"action", "flags"}, {"target", id}, {"set", {{"flip", {true, false}}, {"display_through", true}, {"selectable", false}}}});
   CHECK(d.serialize().size() - before < 1024);
   const Op& edit = d.ops.back();
   CHECK(edit.type == "edit" && edit.data["target"] == import_id && edit.data["set"].size() == 1u);
@@ -157,7 +157,7 @@ TEST(canvas_replaced_in_its_place) {
   Document d = Document::create();
   import_file(d, write(f.dir / "old.png", png(400, 200, "old")));
   const std::string id = only_canvas(resolve(d));
-  run(d, "canvas", {{"action", "place"}, {"target", id}, {"x", 40.0}, {"y", 10.0}, {"width", 120.0}, {"angle", 30.0}});
+  run(d, "canvas", {{"action", "place"}, {"target", id}, {"set", {{"x", 40.0}, {"y", 10.0}, {"width", 120.0}, {"angle", 30.0}}}});
   run(d, "appearance", {{"target", id}, {"opacity", 0.4}});
   run(d, "rename", {{"target", id}, {"name", "Front view"}});
   const Scene was = resolve(d);

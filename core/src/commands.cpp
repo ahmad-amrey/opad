@@ -393,11 +393,11 @@ void register_builtins() {
         return j;
       });
 
-  reg("import", "Import STEP, IGES, BREP, STL, 3MF, OBJ, PLY, glTF, VRML, DXF, DWG (converter), SVG, a KiCad board or a picture (a canvas) into the document",
-      {{"doc", "path"}, {"file", "path - .step/.iges/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg/.kicad_pcb/.png/.jpg/.bmp/.gif/.webp"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
+  reg("import", "Import STEP, IGES, BREP, STL, 3MF, OBJ, PLY, glTF, VRML, DXF, DWG (converter), SVG, a KiCad board or a picture into the document",
+      {{"doc", "path"}, {"file", "path - .step/.iges/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg/.kicad_pcb/.png/.jpg"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
        {"placement", "[16] - drawings and boards: where the file's XY plane and origin go (row-major 4x4, mm)"}, {"plane", "object - drawings: place on this plane instead, {\"base\":\"xz\"} or {\"face\":ref}, its origin at the plane's"},
        {"center", "bool - drawings: centre the drawing on its origin (default false)"},
-       {"width", "number - pictures: the canvas's width, mm (default: the file's resolution, else 96 dpi)"},
+       {"width", "number - pictures: mm"},
        {"model_dirs", "string|array - KiCad: model folders"}, {"components", "bool - KiCad: models (default true)"}, {"dnp", "bool - KiCad: do-not-populate parts"},
        {"vias", "bool - KiCad (default false)"}, {"placeholder_height", "number - KiCad: missing-model box, mm"}, {"origin", "auto|center|page - KiCad"},
        {"kicad_cli", "string|array - KiCad: via kicad-cli, adding tracks,pads,silkscreen or none"},
@@ -629,14 +629,11 @@ void register_builtins() {
         return j;
       });
 
-  reg("canvas", "Image canvases (pictures imported as canvases): info; place (x, y: its centre in its plane, width or height, angle: any of them); "
-      "calibrate (its points a and b, world, are `distance` apart); align (its points a and b onto the model points a_to and b_to); "
-      "flags (selectable, display_through, flip [h, v]); replace (file: another picture in its place); from_backdrop (a sketch's backdrop images as canvases)",
-      {{"doc", "path"}, {"action", "info|place|calibrate|align|flags|replace|from_backdrop"}, {"target", "uuid - the canvas (its body node)"},
-       {"x", "number - mm"}, {"y", "number - mm"}, {"width", "number - mm"}, {"height", "number - mm (the width follows)"}, {"angle", "number - degrees"},
-       {"a", "[x,y,z]"}, {"b", "[x,y,z]"}, {"a_to", "[x,y,z]"}, {"b_to", "[x,y,z]"}, {"distance", "number - mm"},
-       {"selectable", "bool"}, {"display_through", "bool"}, {"flip", "[bool, bool] - left-right, upside down"}, {"file", "path - replace: a picture"},
-       {"sketch", "uuid - from_backdrop: the sketch op"}, {"images", "array of ints - from_backdrop: its image ids (default all)"}, {"by", "string"}},
+  reg("canvas", "Image canvas: info; place (set: x y its centre in its plane, width|height, angle deg); calibrate (points [a,b], distance); align "
+      "(points [a,a_to,b,b_to]); flags (set: selectable display_through flip); replace (file); from_backdrop (sketch, images)",
+      {{"doc", "path"}, {"action", "info|place|calibrate|align|flags|replace|from_backdrop"}, {"target", "uuid"}, {"set", "object"},
+       {"points", {{"type", "array"}, {"items", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3}}}}}, {"distance", "number"},
+       {"file", "path"}, {"sketch", "uuid"}, {"images", {{"type", "array"}, {"items", {{"type", "integer"}}}}}, {"by", "string"}},
       true, [](Document* d, const json& a) {
         Document& doc = need(d);
         const std::string action = a.value("action", "info"), by = a.value("by", "");
@@ -665,11 +662,13 @@ void register_builtins() {
           json report = design::commit(doc, plan_canvas_replace(doc, id, path_from_utf8(a.at("file").get<std::string>())), by);
           return report.update(describe(resolve(doc), id)), report;
         }
+        const json set = a.value("set", json::object());
+        auto point = [&](size_t i) { return a.at("points").at(i).get<Vec3>(); };
         if (action == "flags") {
           CanvasFlags f = CanvasFlags::of(n.canvas);
-          if (a.contains("selectable")) f.selectable = a["selectable"].get<bool>();
-          if (a.contains("display_through")) f.through = a["display_through"].get<bool>();
-          if (a.contains("flip")) f.flip = {a["flip"].at(0).get<bool>(), a["flip"].at(1).get<bool>()};
+          if (set.contains("selectable")) f.selectable = set["selectable"].get<bool>();
+          if (set.contains("display_through")) f.through = set["display_through"].get<bool>();
+          if (set.contains("flip")) f.flip = {set["flip"].at(0).get<bool>(), set["flip"].at(1).get<bool>()};
           if (!f.plane.is_object()) f.plane = canvas_place(scene, id).plane.to_json();
           json j = describe(scene, id);
           j["id"] = doc.append(design::make_edit_op(n.source_op, {{"canvas", f.to_json()}}), by).id;
@@ -680,16 +679,16 @@ void register_builtins() {
         double residual = 0;
         if (action == "place") {
           CanvasPlace p = canvas_place(scene, id);
-          if (a.contains("x")) p.x = a["x"].get<double>();
-          if (a.contains("y")) p.y = a["y"].get<double>();
-          if (a.contains("angle")) p.angle = a["angle"].get<double>() * M_PI / 180;
-          if (a.contains("width")) p.width = a["width"].get<double>();
-          else if (a.contains("height")) p.width = a["height"].get<double>() * p.body_w / p.body_h;
+          if (set.contains("x")) p.x = set["x"].get<double>();
+          if (set.contains("y")) p.y = set["y"].get<double>();
+          if (set.contains("angle")) p.angle = set["angle"].get<double>() * M_PI / 180;
+          if (set.contains("width")) p.width = set["width"].get<double>();
+          else if (set.contains("height")) p.width = set["height"].get<double>() * p.body_w / p.body_h;
           world = canvas_world(p);
         } else if (action == "calibrate") {
-          world = canvas_calibrate(scene.world(id), a.at("a").get<Vec3>(), a.at("b").get<Vec3>(), a.at("distance").get<double>());
+          world = canvas_calibrate(scene.world(id), point(0), point(1), a.at("distance").get<double>());
         } else if (action == "align") {
-          world = canvas_align(scene.world(id), a.at("a").get<Vec3>(), a.at("a_to").get<Vec3>(), a.at("b").get<Vec3>(), a.at("b_to").get<Vec3>(), &residual);
+          world = canvas_align(scene.world(id), point(0), point(1), point(2), point(3), &residual);
         } else {
           throw Error("action is info, place, calibrate, align, flags, replace or from_backdrop");
         }

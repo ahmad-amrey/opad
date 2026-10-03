@@ -231,11 +231,11 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   Status, sync (after the file changed), embed (an editable copy) and pack (a copy in `assets/`) are the `opad-cli
   asset` command.
 - Pictures (`.png .jpg .bmp .gif .webp`) import as a flat canvas on XY at the picture's resolution (96 dpi unless the
-  file says), or on `plane` at `width` mm (with `center: true` its centre on the plane's origin). The `canvas` command
-  places it in its plane (`x`, `y` of its centre, `width` or `height`, `angle` in degrees), calibrates it (two of its
-  points `a`, `b` and their real `distance`), aligns it (its points `a`, `b` onto model points `a_to`, `b_to`), sets
-  its flags (`selectable`, `display_through`, `flip`), replaces its picture in place and turns a sketch's backdrop
-  images into canvases (`from_backdrop`); `info` reports all of it. Opacity and lock are `appearance`.
+  file says), or on `plane` at `width` mm (with `center: true` its centre on the plane's origin). The headless `canvas`
+  command places it in its plane (`set`: `x`, `y` of its centre, `width` or `height`, `angle` in degrees), calibrates
+  it (`points` [a, b] of it and their real `distance`), aligns it (`points` [a, a_to, b, b_to]: its points onto model
+  points), sets its flags (`set`: `selectable`, `display_through`, `flip`), replaces its picture in place and turns a
+  sketch's backdrop images into canvases (`from_backdrop`); `info` reports all of it. Opacity and lock are `appearance`.
 
 ## Checking the result
 
