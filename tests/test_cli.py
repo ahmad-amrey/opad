@@ -107,6 +107,20 @@ def basic_workflow():
     png = os.path.join(tmp, "shot.png")
     r = run("render", DOC, "--view", "iso", "--out", png, "--size", "640x400")
     assert r["width"] == 640 and open(png, "rb").read(4) == b"\x89PNG"
+    # hidden-line projection (drawing views): typed curves with their sources, all of them in a file, a preview
+    p = run("project", DOC, "--view", "front", "--quality", "exact", "--curves", "true")
+    assert p["tier"] == "exact" and p["counts"]["visible"] > 0 and p["counts"]["hidden"] > 0
+    assert all(c["type"] in ("line", "arc", "ellipse", "spline", "polyline") and "body" in c for c in p["curves"])
+    assert abs(p["bounds"][2] - p["bounds"][0] - 100) < 1e-6 and len(p["bodies"]) == 10
+    lines = os.path.join(tmp, "front.json")
+    h = run("project", DOC, "--view", "front", "--quality", "hybrid", "--hidden", "false", "--out", lines)
+    with open(lines) as f:
+        full = json.load(f)
+    assert h["tier"] == "hybrid" and h["counts"]["hidden"] == 0 and "curves" not in h
+    assert len(full["curves"]) == h["counts"]["curves"] and full["fingerprint"] == h["fingerprint"]
+    png = os.path.join(tmp, "iso-lines.png")
+    run("project", DOC, "--view", "iso", "--out", png, "--width", "400")
+    assert open(png, "rb").read(4) == b"\x89PNG"
     # delete (tombstone) the annotation: it disappears from the resolved list but stays in the log
     run("delete", DOC, "--target", a["id"])
     assert len(run("annotations", DOC)["annotations"]) == 0

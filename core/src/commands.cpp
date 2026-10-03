@@ -16,6 +16,7 @@
 #include "opad/design/feature.hpp"
 #include "opad/step_io.hpp"
 #include "opad/drawing_io.hpp"
+#include "opad/drawing/projection.hpp"
 
 namespace opad::commands {
 
@@ -428,6 +429,30 @@ void register_builtins() {
         j["out"] = out;
         j["width"] = img.width;
         j["height"] = img.height;
+        return j;
+      });
+
+  reg("project", "Hidden-line projection: typed 2D curves with source edge or face, kind and hidden flag; out .json (all curves) or .png",
+      {{"doc", "path"}, {"view", "front|top|right|iso|..."}, {"dir", "[x,y,z]"}, {"up", "[x,y,z]"}, {"select", "array|csv - node uuids"},
+       {"hide", "array|csv"}, {"quality", "auto|exact|draft|hybrid"}, {"hidden", "bool"}, {"tangent", "bool"}, {"silhouettes", "bool"},
+       {"resolution", "int"}, {"tolerance", "number"}, {"curves", "bool"}, {"out", "path"}, {"width", "int"}, {"cache", "bool"}},
+      false, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        json spec = a;
+        spec["nodes"] = str_list(a.value("select", json()));
+        spec["hide"] = str_list(a.value("hide", json()));
+        const auto g = drawing::project(doc, resolve(doc), drawing::ViewSpec::from_json(spec), {}, a.value("cache", true));
+        json j = g->to_json(a.value("curves", false));
+        if (const std::string out = a.value("out", ""); !out.empty()) {
+          const auto path = path_from_utf8(out);
+          std::string ext = path.extension().string();
+          std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
+          const int width = std::clamp(a.value("width", 1600), 16, 8192);  // the height follows the view
+          const double w = g->bounds[2] - g->bounds[0], h = g->bounds[3] - g->bounds[1];
+          if (ext == ".png") write_png(path, drawing::preview_image(*g, width, std::clamp(static_cast<int>(width * (w > 0 ? h / w : 0.75)), 16, 8192)));
+          else write_text_file(path, g->to_json(true).dump());
+          j["out"] = out;
+        }
         return j;
       });
 
