@@ -4,6 +4,7 @@
 #include "opad/inspect.hpp"
 #include "opad/mass.hpp"
 #include "opad/design/feature.hpp"
+#include "opad/design/provenance.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_modify.hpp"
 #include <BRepCheck_Analyzer.hxx>
@@ -113,7 +114,13 @@ json entity_details(const Document& doc,const Scene& scene,const json& args) {
   }
   const auto ref=Ref::from_json(args.at("ref"));auto out=inspect_ref(doc,scene,ref);
   for(const char* key:{"edges","vertices","adjacent_faces","modified_by","path"})if(out.contains(key)&&out[key].is_array())out[key]=slice(out[key],args);
-  out["reference"]=reference_token(doc,scene,ref);return out;
+  out["reference"]=reference_token(doc,scene,ref);
+  // TODO 11 UI-94: the feature that made it, so an agent can act on "the boss" (related lists its faces).
+  if(ref.kind==Ref::Kind::Face || ref.kind==Ref::Kind::Edge)try{
+    design::Provenance provenance(doc);const auto owners=ref.kind==Ref::Kind::Face?provenance.face_owners(ref.body):provenance.edge_owners(ref.body);
+    if(ref.index>=0 && size_t(ref.index)<owners.size())out["created_by"]=provenance.describe(owners[size_t(ref.index)]);
+  }catch(...){}  // optional evidence: the details stand without it
+  return out;
 }
 json query_entities(const Document& doc,const Scene& scene,const json& args,const std::function<bool()>& cancelled) {
   const auto body=args.at("body").get<std::string>();

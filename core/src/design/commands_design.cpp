@@ -6,6 +6,7 @@
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch.hpp"
 #include "opad/design/drawing_sketch.hpp"
+#include "opad/design/provenance.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_shapes.hpp"
 #include "opad/scene.hpp"
@@ -318,6 +319,13 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         }
         return out;
       });
+
+  // TODO 11 UI-94: face provenance from the body key chain; one implementation for the CLI, MCP and the app's worker.
+  reg("related", "The feature that made each picked face or edge (boss, pocket, hole, fillet, pattern, ...) and every face each such feature made on those bodies, from the design history; "
+      "imported bodies have none",
+      {{"doc", "path"}, {"refs", "array"}, {"kinds", json{{"type", "array"}, {"items", {{"type", "string"}, {"enum", {"feature", "import", "body"}}}}}},
+       {"limit", "int - face refs per candidate (500)"}},
+      false, [](Document* d, const json& a) { return design::related(need(d), a); });
 
   reg("regenerate", "Recompute whatever in the design history is out of date (after a merge or a hand edit)", {{"doc", "path"}, {"force", "bool - recompute everything"}, {"by", "string"}}, true,
       [](Document* d, const json& a) {

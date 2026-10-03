@@ -224,6 +224,13 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   need `expected_revision` and `request_id`, and not during a transaction.
 - `export` inside a transaction writes its staged state; outside, the document. STEP files are reproducible: the
   header carries the document's last change time and the file's name, so the same document exports the same bytes.
+- Which feature made a face: `entity_details` of a face or edge has `created_by` (`op`, `name`, `kind`, `category`:
+  body, boss, pocket, hole, groove, fillet, chamfer, shell, draft, press_pull, pattern, mirror, combine, split,
+  transform or imported). `related` with `refs` lists, for the picked faces/edges, each owning feature with every
+  face it made on those bodies (`refs`, `count`), the one holding the whole selection first: "delete the boss" is a
+  `delete` of that feature's `op`. Copies (pattern, mirror, move with copy) are the copying feature's, with `via`
+  naming the source's feature; `merged` marks a face that a Boolean made one with an older coplanar face (it is
+  listed under the older feature). Imported bodies have no history: their faces belong to the import.
 
 ## Checking the result
 

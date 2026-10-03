@@ -82,6 +82,10 @@ def basic_workflow():
     assert abs(props["volume"] - 100 * 60 * 5) < 1e-3
     faces = run("inspect", DOC, "--uuid", plate["id"] + "/face/0")
     assert faces["type"] == "face"
+    # TODO 11 UI-94: an imported face has no feature history; related names the import that brought it
+    rel = run("related", DOC, plate["id"] + "/face/0", plate["id"] + "/edge/0")
+    assert rel["candidates"][0]["kind"] == "import" and rel["candidates"][0]["count"] == 6, rel
+    assert rel["refs"][0]["owner"]["category"] == "imported" and rel["refs"][1]["owner"]["op"] == ops[0]["id"], rel
     m = run("measure", DOC, plate["id"], find_node(tree, "Lid")["id"], "--kind", "distance", "--pin", "true")
     assert abs(m["value"]) < 1e-6 and "pinned_op" in m
     a = run("annotate", DOC, plate["id"], "check flatness", "--by", "reviewer")

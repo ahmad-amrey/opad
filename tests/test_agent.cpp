@@ -80,8 +80,8 @@ int main(){try {
   const size_t live=agent::live_tools().dump().size();
   size_t headless=0;for(const auto& c:commands::list())headless+=agent::command_schema(c).dump().size()+c.description.size();
   std::printf("tools/list: live %zu bytes, headless schemas %zu bytes\n",live,headless);
-  CHECK(live<105000);
-  CHECK(headless<50000);
+  CHECK(live<107000);  // TODO 11 UI-94: +2 KB for related (its refs carry the reference schema)
+  CHECK(headless<51500);
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});
