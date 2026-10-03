@@ -47,7 +47,7 @@ std::vector<gp_Pnt> spread(const std::vector<gp_Pnt>& all, size_t n) {  // n of 
 // (4) Edge mode: no edge behind a face is hovered or boxed, the edges in sight are. (5) 2D mode with no tool taking points tracks
 // nothing; with the tool it does. <prefix>.anchor.png, <prefix>.guide.png, <prefix>.cue.png (a guide faint behind a face),
 // <prefix>.hidden.png, <prefix>.box.png (the edges a window over the view selects).
-bool Viewport::benchTracking(const QString& prefix) {
+bool Viewport::benchTracking(const QString& prefix, bool endsOnly) {
   bool all = true;
   auto require = [&](bool ok, const QString& what) {
     trace::log(QString("bench: tracking: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
@@ -196,6 +196,63 @@ bool Viewport::benchTracking(const QString& prefix) {
     trace::log(QString("bench: tracking: %1 mode picks: median %2 ms, worst %3 ms over %4 (first pass worst %5 ms)")
                    .arg(mode).arg(times[times.size() / 2], 0, 'f', 1).arg(times.back(), 0, 'f', 1).arg(times.size()).arg(cold, 0, 'f', 1));
   };
+  // A line's end (edge mode): resting on the line in sight 5-12 px from its end acquires that end when it is in sight,
+  // nothing when it is behind a face (the line runs behind a face just before its end). Up to 6 of each, from the eight
+  // corner views (at most 3000 ends looked at in each, 15 s in all); needHidden: an end behind a face must be met.
+  auto lineEnds = [&](bool needHidden) {
+    int hiddenEnds = 0, acquiredHidden = 0, seenEnds = 0, acquiredSeen = 0;
+    QElapsedTimer spent;
+    spent.start();
+    for (const auto o : {V3d_XposYnegZpos, V3d_XnegYposZneg, V3d_XnegYnegZpos, V3d_XposYposZpos, V3d_XposYposZneg, V3d_XnegYnegZneg,
+                         V3d_XposYnegZneg, V3d_XnegYposZpos}) {
+      if ((hiddenEnds >= 6 && seenEnds >= 6) || spent.elapsed() > 15000) break;
+      view(o);
+      int looked = 0;
+      for (const auto& [id, item] : m_items) {
+        if (!m_ctx->IsDisplayed(item.ais) || (hiddenEnds >= 6 && seenEnds >= 6) || looked > 3000 || spent.elapsed() > 15000) continue;
+        TopTools_IndexedMapOfShape map;
+        TopExp::MapShapes(item.ais->Shape(), TopAbs_EDGE, map);
+        const gp_Trsf tr = item.ais->Transformation();
+        for (int i = 1; i <= map.Extent() && (hiddenEnds < 6 || seenEnds < 6) && looked <= 3000 && spent.elapsed() <= 15000; ++i) {
+          const BRepAdaptor_Curve curve(TopoDS::Edge(map(i)));
+          if (curve.GetType() != GeomAbs_Line) continue;
+          const gp_Pnt a = curve.Value(curve.FirstParameter()).Transformed(tr), b = curve.Value(curve.LastParameter()).Transformed(tr);
+          const double length = QLineF(widget(a), widget(b)).length();
+          if (length < 40) continue;
+          for (const auto& [end, other] : {std::pair{a, b}, std::pair{b, a}}) {
+            if (!rect().adjusted(24, 24, -24, -24).contains(widget(end).toPoint())) continue;
+            ++looked;
+            const int s = seen(end);
+            if (s == 0 || (s < 0 ? hiddenEnds : seenEnds) >= 6) continue;
+            gp_Pnt inner;
+            bool inSight = false;
+            for (const double px : {5.0, 8.0, 12.0})
+              if (!inSight) inner = end.Translated(gp_Vec(end, other) * (px / length)), inSight = seen(inner) > 0;
+            if (!inSight) continue;
+            hover(away);
+            hover(widget(inner));
+            const auto owner = Handle(SubShapeOwner)::DownCast(m_ctx->DetectedOwner());
+            const auto body = m_ctx->HasDetected() ? m_nodeOf.find(m_ctx->DetectedInteractive().get()) : m_nodeOf.end();
+            if (owner.IsNull() || owner->index() != i - 1 || body == m_nodeOf.end() || body->second != id) continue;  // another edge took it
+            rest(widget(inner));
+            const bool anchored = std::any_of(m_trackingAnchors.begin(), m_trackingAnchors.end(), [&](const auto& t) { return t.point.Distance(end) < 1e-6; });
+            if (s < 0) ++hiddenEnds, acquiredHidden += anchored;
+            else ++seenEnds, acquiredSeen += anchored && m_trackingAnchors.back().hasDirection;
+            clearTracking();
+          }
+        }
+      }
+    }
+    view(V3d_XposYnegZpos);
+    return require(acquiredHidden == 0 && seenEnds > 0 && acquiredSeen == seenEnds && (hiddenEnds > 0 || !needHidden),
+                   QString("resting on a line near its end: %1 of %2 ends behind a face acquired, %3 of %4 in sight acquired with the line").arg(acquiredHidden).arg(hiddenEnds).arg(acquiredSeen).arg(seenEnds));
+  };
+  if (endsOnly) {
+    clearTracking();
+    setSelectionFilter(SelFilter::Edge);
+    settle();
+    return lineEnds(true);
+  }
   clearTracking();
   setSelectionFilter(SelFilter::Vertex);
   settle();
@@ -351,6 +408,7 @@ bool Viewport::benchTracking(const QString& prefix) {
   sweep(visibleEdges, opad::Ref::Kind::Edge, behind, inSight);
   require(behind == 0 && !visibleEdges.empty() && inSight * 10 >= int(visibleEdges.size()) * 8,
           QString("edge mode: %1 of %2 edges in sight hovered, none behind").arg(inSight).arg(visibleEdges.size()));
+  lineEnds(false);
   // The box's verdict against the judgement above, over up to 400 edges wholly in it (nine points along each; 10 s): one whose
   // middle is in sight is selected (once the scan finished), one behind a face at all nine points is not.
   auto judgeBox = [&](const QRect& box, bool finished) {
@@ -507,7 +565,8 @@ bool Viewport::benchTracking(const QString& prefix) {
   return all;
 }
 
-// The model once every body is displayed: the Distance tool in vertex mode, then Viewport::benchTracking.
+// The model once every body is displayed: the Distance tool in vertex mode, then Viewport::benchTracking (with
+// OPAD_BENCH_TRACKING_PART=ends only the line ends, an end behind a face required: the tracking-ends case).
 OPAD_BENCH(OPAD_BENCH_TRACKING, tracking) {
   Viewport* v = w.m_viewport;
   for (const auto& root : w.m_doc->scene.roots)  // the Engine .opad keeps its root hidden: shown here, in memory
@@ -527,7 +586,7 @@ OPAD_BENCH(OPAD_BENCH_TRACKING, tracking) {
     else {
       w.startTool("distance");
       w.action("select.vertices")->trigger();
-      ok = v->benchTracking(value);
+      ok = v->benchTracking(value, qEnvironmentVariable("OPAD_BENCH_TRACKING_PART") == "ends");
       w.cancelTool();
     }
     QCoreApplication::exit(ok ? 0 : 2);

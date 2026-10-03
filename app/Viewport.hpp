@@ -120,7 +120,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void benchClick(double fx, double fy);  // OPAD_BENCH_TOOL: a left click at this fraction of the view, as the mouse handlers deliver it
   bool benchPicking();  // OPAD_BENCH_PICKING: circle discovery, locking, exact picks and orbit regression
   // OPAD_BENCH_TRACKING (ViewportTrackingBench.cpp): what is behind a face is never hovered, acquired or offered (UI-31)
-  bool benchTracking(const QString& prefix);
+  bool benchTracking(const QString& prefix, bool endsOnly = false);
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
   void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner
   std::vector<opad::Ref> selection() const;
