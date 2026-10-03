@@ -26,6 +26,15 @@ ToolValues::ToolValues(QWidget* view, QObject* parent) : QObject(parent), m_view
 
 void ToolValues::setHandle(DimensionHandle* handle) { m_handle = handle; }
 
+DynamicInput::Field ToolValues::box(const QString& key, const QString& label, const QString& value) {
+  DynamicInput::Field field;
+  field.key = key;
+  field.label = label;
+  field.live = value;
+  field.option = true;
+  return field;
+}
+
 bool ToolValues::takes(const QKeyEvent* key) const {
   if (key->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) return false;  // the keypad's digits too
   const bool tab = key->key() == Qt::Key_Tab || key->key() == Qt::Key_Backtab;

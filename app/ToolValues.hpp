@@ -21,6 +21,7 @@ class ToolValues : public QObject {
  public:
   ToolValues(QWidget* view, QObject* parent);
   std::function<QList<DynamicInput::Field>()> fields;  // the boxes now (option boxes, live = the value); empty: no keys taken
+  static DynamicInput::Field box(const QString& key, const QString& label, const QString& value);  // such a box
   std::function<void(const QString& key, const QString& value)> edited;  // typed into a box, or the value before put back
   std::function<void()> commit;                                          // Enter in a box
   std::function<void()> escape;                                          // Esc with nothing typed left

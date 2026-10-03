@@ -676,13 +676,7 @@ QList<DynamicInput::Field> DesignController::valueFields(const QString& except) 
   QList<DynamicInput::Field> out;
   for (const QString& name : m_form->valueInputs()) {
     const InputSpec* in = m_form->input(name);
-    if (name == except || !in) continue;
-    DynamicInput::Field field;
-    field.key = name;
-    field.label = i18n::t(QString::fromStdString(in->label));
-    field.live = m_form->valueText(name);
-    field.option = true;
-    out << field;
+    if (name != except && in) out << ToolValues::box(name, i18n::t(QString::fromStdString(in->label)), m_form->valueText(name));
   }
   return out;
 }

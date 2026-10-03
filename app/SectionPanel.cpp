@@ -260,7 +260,7 @@ void SectionPanel::takeValues(QWidget* view, std::function<bool()> active) {
   m_values = new ToolValues(view, this);
   m_values->fields = [this, active] {
     if (!active()) return QList<DynamicInput::Field>{};
-    return QList<DynamicInput::Field>{DynamicInput::Field{"offset", tr("Offset"), units::editable(units::Kind::Length, along()), true}};
+    return QList<DynamicInput::Field>{ToolValues::box("offset", tr("Offset"), units::editable(units::Kind::Length, along()))};
   };
   m_values->edited = [this](const QString&, const QString& value) {  // or the place before, put back by Esc
     const auto mm = units::parse(units::Kind::Length, value);

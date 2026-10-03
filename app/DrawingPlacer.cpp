@@ -93,8 +93,8 @@ DrawingPlacer::DrawingPlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, 
   m_values = new ToolValues(view, this);
   m_values->fields = [this] {
     if (!m_active || !m_loaded || m_snapStage) return QList<DynamicInput::Field>{};
-    return QList<DynamicInput::Field>{DynamicInput::Field{"x", tr("Offset X"), units::editable(units::Kind::Length, m_du), true},
-                                      DynamicInput::Field{"y", tr("Offset Y"), units::editable(units::Kind::Length, m_dv), true}};
+    return QList<DynamicInput::Field>{ToolValues::box("x", tr("Offset X"), units::editable(units::Kind::Length, m_du)),
+                                      ToolValues::box("y", tr("Offset Y"), units::editable(units::Kind::Length, m_dv))};
   };
   m_values->edited = [this](const QString& key, const QString& value) {  // or the offset before, put back by Esc
     QString problem;
