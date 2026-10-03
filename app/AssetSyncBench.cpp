@@ -76,7 +76,7 @@ double width(AppDocument* doc, const std::string& node) {
 // as two undo steps keeping their node ids and taking the new geometry (wider part); undo and redo. The part changed again:
 // its badge's click syncs it. The second file moved away: missing badge, located (synced from its new place). The part
 // packed into the project (assets/, LFS badge), the second embedded (editable, stored). Import choice and reveal command.
-// Frames: <prefix>.browser.png, .changed.png, .properties.png, .final.png.
+// Frames: <prefix>.browser.png, .changed.png, .syncing.png, .properties.png, .final.png.
 OPAD_BENCH(OPAD_BENCH_ASSET_SYNC, asset_sync) {
   auto require = std::make_shared<Checks>();
   const QString prefix = value;
@@ -201,8 +201,16 @@ OPAD_BENCH(OPAD_BENCH_ASSET_SYNC, asset_sync) {
       if (!toast || !toast->actionButton()) return QCoreApplication::exit(2);
       const size_t ops = doc->doc.ops.size();
       toast->actionButton()->click();  // Sync all
+      {  // The file being read: a turning badge, painted again while it shows.
+        const browser::Decoration d = decoration(partRoot);
+        w.m_browser->grab().save(prefix + ".syncing.png");
+        (*require)(monitor->syncing(part) && d.badges.size() == 1 && d.badges[0].spin && d.badges[0].text == "syncing…" && delegate->spinning(),
+                   "syncing: the badge turns (" + (d.badges.isEmpty() ? QString("none") : d.badges[0].text) + ")");
+      }
       waitFor(&w, [=] { return doc->doc.ops.size() == ops + 2 && !area->busy() && state(part) == "ok" && state(second) == "ok" && !monitor->checking(); }, 30000,
               [=, &w](bool synced) {
+        w.m_browser->grab();
+        (*require)(!delegate->spinning() && !decoration(partRoot).badges.value(0).spin, "synced: nothing turns");
         const opad::Node* p = doc->node(partBody);
         const opad::Node* s = doc->node(secondBody);
         const QStringList undo = doc->undoLabels();

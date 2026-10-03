@@ -1,6 +1,9 @@
 #pragma once
 #include <QList>
+#include <QPointer>
+#include <QRegion>
 #include <QStyledItemDelegate>
+#include <QTimer>
 #include <functional>
 #include <string>
 #include <vector>
@@ -36,6 +39,7 @@ struct Badge {
   QColor Tokens::* fill = &Tokens::bg4;   // the pill; nullptr: none
   QString tooltip;
   std::function<void()> clicked;  // a button then (pointing hand); its click neither selects nor drags the row
+  bool spin = false;  // work under way: the icon turns, the delegate painting the row again while it is on screen
 };
 
 struct Decoration {
@@ -74,7 +78,7 @@ struct Folder {
 class BrowserDelegate : public QStyledItemDelegate {
   Q_OBJECT
  public:
-  explicit BrowserDelegate(AppDocument* doc, QObject* parent = nullptr) : QStyledItemDelegate(parent), m_doc(doc) {}
+  explicit BrowserDelegate(AppDocument* doc, QObject* parent = nullptr);
   void paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& index) const override;
   QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override { return QSize(100, 28); }
   QWidget* createEditor(QWidget* parent, const QStyleOptionViewItem& opt, const QModelIndex& index) const override;
@@ -84,12 +88,18 @@ class BrowserDelegate : public QStyledItemDelegate {
   browser::Decoration decoration(const QModelIndex& index) const;  // what the decorators say about a row
   // A decorator's badge on the row (visual rect `row`) at `pos`, its rect in `rect`: null if there is none there.
   const browser::Badge* badgeAt(const browser::Decoration& d, const QModelIndex& index, const QRect& row, const QPoint& pos, QRect* rect = nullptr) const;
+  bool spinning() const { return m_spin.isActive(); }  // a turning badge was painted and is painted again shortly (benches)
  private:
   static QRect leadRect(const QRect& row) { return QRect(row.left() + browser::kSwatchX - 3, row.top() + 6, 16, 16); }
   void paintLead(QPainter* p, const browser::Decoration& d, const QRect& row) const;
   int builtinBadges(QPainter* p, const QRect& r, const opad::Node* n, const QColor& text) const;  // paints them (p set); returns the x left of them
   std::vector<QRect> badgeRects(const browser::Decoration& d, const QRect& r, int right) const;  // right to left from `right`
-  void paintBadges(QPainter* p, const browser::Decoration& d, const std::vector<QRect>& rects) const;
+  void paintBadges(QPainter* p, const browser::Decoration& d, const std::vector<QRect>& rects, const QWidget* view) const;
   AppDocument* m_doc;
   std::vector<browser::Decorator> m_decorators;
+  // Turning badges: the rects painted since the last frame, repainted 80 ms later (a row scrolled away is not painted, so
+  // nothing asks again: the animation stops by itself).
+  mutable QTimer m_spin;
+  mutable QPointer<QWidget> m_spinView;
+  mutable QRegion m_spinRegion;
 };

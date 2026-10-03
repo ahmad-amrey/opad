@@ -1,6 +1,7 @@
 #include "BrowserDelegate.hpp"
 
 #include <QAbstractItemView>
+#include <QDateTime>
 #include <QFontMetrics>
 #include <QHelpEvent>
 #include <QLineEdit>
@@ -21,6 +22,15 @@ using browser::kTypeX;
 using browser::kNameX;
 
 // ---------------------------------------------------------------- BrowserDelegate
+BrowserDelegate::BrowserDelegate(AppDocument* doc, QObject* parent) : QStyledItemDelegate(parent), m_doc(doc) {
+  m_spin.setSingleShot(true);
+  m_spin.setInterval(80);
+  connect(&m_spin, &QTimer::timeout, this, [this] {
+    auto* view = qobject_cast<QAbstractItemView*>(m_spinView.data());
+    if (view) view->viewport()->update(std::exchange(m_spinRegion, QRegion()));
+  });
+}
+
 void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& index) const {
   const Tokens& t = theme::current();
   std::string id = index.data(kIdRole).toString().toStdString();
@@ -44,7 +54,7 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   // The name up to the decorators' badges (cut short before them), or as it always was when there are none.
   auto drawName = [&](const QString& name, int right) {
     const std::vector<QRect> badges = badgeRects(d, r, right);
-    paintBadges(p, d, badges);
+    paintBadges(p, d, badges, opt.widget);
     p->setFont(nameFont);
     const int width = badges.empty() ? r.width() - kNameX : std::max(10, badges.back().left() - 6 - (r.left() + kNameX));
     p->drawText(QRect(r.left() + kNameX, r.top(), width, r.height()), Qt::AlignVCenter | Qt::AlignLeft,
@@ -101,7 +111,7 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   int x = r.left() + kNameX;
   int right = builtinBadges(p, r, n, text);
   const std::vector<QRect> badges = badgeRects(d, r, right);
-  paintBadges(p, d, badges);
+  paintBadges(p, d, badges, opt.widget);
   if (!badges.empty()) right = badges.back().left() - 6;
   p->setFont(nameFont);
   p->setPen(text);
@@ -170,7 +180,7 @@ std::vector<QRect> BrowserDelegate::badgeRects(const browser::Decoration& d, con
   return out;
 }
 
-void BrowserDelegate::paintBadges(QPainter* p, const browser::Decoration& d, const std::vector<QRect>& rects) const {
+void BrowserDelegate::paintBadges(QPainter* p, const browser::Decoration& d, const std::vector<QRect>& rects, const QWidget* view) const {
   const Tokens& t = theme::current();
   const qreal dpr = p->device()->devicePixelRatioF();
   for (size_t i = 0; i < rects.size(); ++i) {
@@ -183,7 +193,19 @@ void BrowserDelegate::paintBadges(QPainter* p, const browser::Decoration& d, con
       br.adjust(5, 0, -5, 0);
     }
     const bool rtl = b.text.isRightToLeft();  // the row is painted left to right: an Arabic label reads from its icon leftwards
-    if (!b.icon.isEmpty()) {
+    if (!b.icon.isEmpty() && b.spin) {  // a twelfth of a turn per frame
+      const QPointF centre(rtl ? br.right() - 5 : br.left() + 6, br.top() + 8);
+      p->save();
+      p->translate(centre);
+      p->rotate(double(QDateTime::currentMSecsSinceEpoch() / m_spin.interval() % 12) * 30);
+      p->drawPixmap(QPointF(-6, -6), icons::pixmap(b.icon, t.*b.color, 12, dpr));
+      p->restore();
+      m_spinView = const_cast<QWidget*>(view);
+      m_spinRegion += rects[i];
+      if (!m_spin.isActive()) m_spin.start();
+      if (rtl) br.setRight(br.right() - 15);
+      else br.setLeft(br.left() + 15);
+    } else if (!b.icon.isEmpty()) {
       p->drawPixmap(rtl ? br.right() - 11 : br.left(), br.top() + 2, icons::pixmap(b.icon, t.*b.color, 12, dpr));
       if (rtl) br.setRight(br.right() - 15);
       else br.setLeft(br.left() + 15);

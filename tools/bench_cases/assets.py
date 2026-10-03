@@ -169,7 +169,7 @@ CASES = [
     # linked picture (<prefix>.png, .picture.png).
     ("assets", linked_files, {"OPAD_BENCH_ASSETS": "{prefix}.png"}),
     # The linked-file UI (UI-68): badges, read-only parts, Properties, the monitor's toast and Sync all, a badge's sync, a
-    # missing file located, pack (LFS badge) and embed (<prefix>.browser.png, .changed.png, .properties.png, .final.png).
+    # missing file located, pack (LFS badge) and embed (<prefix>.browser.png, .changed.png, .syncing.png, .properties.png, .final.png).
     ("asset-sync", asset_sync, {"OPAD_BENCH_ASSET_SYNC": "{prefix}"}),
     # Pictures (UI-71): a JPEG canvas decoded on a worker, a sketch backdrop kept as the file has it, a move storing only
     # its fields (<prefix>.canvas.png).

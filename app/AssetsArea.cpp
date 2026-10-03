@@ -312,6 +312,7 @@ void AssetsArea::decorate(const browser::Row& row, browser::Decoration& d) {
     badge.text = tr("syncing…");
     badge.color = &Tokens::fg3;
     badge.tooltip = tr("Reading %1 again").arg(file);
+    badge.spin = true;
   } else if (state != "embedded") {
     badge.icon = "check";
     badge.color = &Tokens::assetLinked;
