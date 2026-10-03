@@ -124,6 +124,10 @@ class SmartSelect : public AreaController {
   void tangentFaces();  // Alt+double-click on a face: the faces joined to it by smooth edges
   QString label(const smart::Candidate& c) const;
   QString iconOf(const smart::Candidate& c) const;
+  // A detail's sizes as the recogniser read them, in the shown units ("Ø 6 mm", "Depth 10 mm (through)", "Radius 2 mm",
+  // "Thickness 2 mm", "Height 10 mm"): the chip's tooltip and Measure. Empty for features, chains and loops.
+  QStringList measures(const smart::Candidate& c) const;
+  void measure(const smart::Candidate& c);  // the readout as a toast, with Copy
 
   SmartChip* m_chip = nullptr;
   QPointer<QMenu> m_menu;

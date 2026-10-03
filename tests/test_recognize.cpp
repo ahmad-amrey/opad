@@ -281,10 +281,12 @@ TEST(bosses_pockets_windows_and_slots) {
   std::printf("  boss: %s\n", boss->label.c_str());
   CHECK_EQ(boss->kind, "boss");
   CHECK_EQ(boss->faces.size(), size_t(5));
+  CHECK(std::abs(boss->params.value("height", 0.0) - 5) < 1e-6);  // out of the plate's top
   const auto pocket = r.boss_or_pocket({face_at(s, gp_Pnt(42.5, 25, 6))});
   CHECK(pocket.has_value());
   CHECK_EQ(pocket->kind, "pocket");
   CHECK_EQ(pocket->faces.size(), size_t(5));
+  CHECK(std::abs(pocket->params.value("depth", 0.0) - 4) < 1e-6);
   const auto window = r.boss_or_pocket({face_at(s, gp_Pnt(35, 8.5, 5))});
   CHECK(window.has_value());
   CHECK_EQ(window->kind, "pocket");

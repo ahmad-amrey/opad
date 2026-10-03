@@ -49,7 +49,8 @@ CASES = [
     # deleting the boss from its faces (Round named, previewed, both deleted, the base remains, Undo on the toast).
     ("smartselect", boss, {"OPAD_BENCH_SMARTSELECT": "{prefix}"}),
     ("smartselect-rtl", boss, {"OPAD_BENCH_SMARTSELECT": "{prefix}", "OPAD_LANG": "ar"}),
-    # The chip on the imported plate (no history): a hole wall is the hole, its Remove and Del start Remove faces.
+    # The chip on the imported plate (no history): a hole wall is the hole, its sizes in the tooltip and Measure's toast, its
+    # Remove and Del start Remove faces.
     ("smartselect-import", imported, {"OPAD_BENCH_SMARTIMPORT": "{prefix}"}),
     # The chip on the Engine (beside the repository; skipped where it is not): its answer for two faces of the heaviest
     # body and of another, Ctrl+Up, with no event-loop gap over 250 ms.

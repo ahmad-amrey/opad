@@ -16,7 +16,9 @@
 
 #include <QAction>
 #include <QBitmap>
+#include <QClipboard>
 #include <QCursor>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMainWindow>
@@ -29,6 +31,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <optional>
 
 #include "AppDocument.hpp"
 #include "Commands.hpp"
@@ -462,6 +465,10 @@ void SmartSelect::refreshChip() {
   if (m_found.active < 0)
     if (const QAction* grow = services().action("edit.selectparent")) hint = grow->shortcut().toString(QKeySequence::NativeText);
   m_chip->setContent(iconOf(c), label(c), hint, m_found.active >= 0 ? actionsFor(m_found.active, m_chip) : QList<QAction*>{});
+  QStringList tip = {label(c)};
+  tip << measures(c);
+  if (!hint.isEmpty()) tip << tr("%1 selects it").arg(hint);
+  m_chip->setToolTip(tip.join("\n"));
   m_chip->show();
   place();
 }
@@ -727,6 +734,7 @@ QList<QAction*> SmartSelect::actionsFor(int index, QObject* parent) {
       });
     });
   }
+  if (c.group() && !measures(c).isEmpty()) add("distance", tr("Measure %1").arg(name), "smartMeasure", [this, c] { measure(c); });
   const auto bodies = c.bodies();
   add("isolate", bodies.size() == 1 ? tr("Isolate %1").arg(services().document()->nodeName(bodies.front())) : tr("Isolate %1 bodies").arg(bodies.size()),
       "smartIsolate", [this, bodies] { services().viewport()->isolate(bodies); });
@@ -1048,6 +1056,42 @@ QString SmartSelect::label(const smart::Candidate& c) const {
   const bool edges = !c.refs.empty() && c.refs.front().kind == opad::Ref::Kind::Edge;
   if (c.count == 1) return (edges ? tr("%1 · 1 edge") : tr("%1 · 1 face")).arg(name);
   return (edges ? tr("%1 · %2 edges") : tr("%1 · %2 faces")).arg(name).arg(c.count);
+}
+
+QStringList SmartSelect::measures(const smart::Candidate& c) const {
+  const opad::json& p = c.params;
+  auto number = [&](const char* key) { return p.contains(key) && p[key].is_number() ? std::optional<double>(p[key].get<double>()) : std::nullopt; };
+  auto length = [](double v) { return units::compact(units::Kind::Length, v); };
+  auto angle = [](double v) { return units::compact(units::Kind::Angle, v); };
+  QStringList out;
+  if (c.kind == "hole") {
+    if (const auto d = number("diameter")) out << tr("Ø %1").arg(length(*d));
+    if (const auto depth = number("depth")) out << (p.value("through", false) ? tr("Depth %1 (through)") : tr("Depth %1")).arg(length(*depth));
+    if (const auto d = number("cb_diameter")) out << tr("Counterbore Ø %1, %2 deep").arg(length(*d), length(number("cb_depth").value_or(0)));
+    if (const auto d = number("cs_diameter")) out << tr("Countersink Ø %1, %2").arg(length(*d), angle(number("cs_angle").value_or(0)));
+    if (const auto a = number("tip_angle")) out << tr("Drill point %1").arg(angle(*a));
+  } else if (c.kind == "fillet") {
+    if (const auto r = number("radius")) out << tr("Radius %1").arg(length(*r));
+    if (p.contains("convex") && p["convex"].is_boolean()) out << (p["convex"].get<bool>() ? tr("Rounds an outside edge") : tr("Fills an inside corner"));
+  } else if (c.kind == "chamfer") {
+    if (const auto d = number("distance")) out << tr("Distance %1").arg(length(*d));
+    if (const auto w = number("width")) out << tr("Width %1").arg(length(*w));
+  } else if (c.kind == "wall") {
+    if (const auto t = number("thickness")) out << tr("Thickness %1").arg(length(*t));
+  } else if (c.kind == "boss") {
+    if (const auto h = number("height")) out << tr("Height %1").arg(length(*h));
+  } else if (c.kind == "pocket") {
+    if (const auto d = number("depth")) out << tr("Depth %1").arg(length(*d));
+  }
+  return out;
+}
+
+void SmartSelect::measure(const smart::Candidate& c) {
+  const QStringList lines = measures(c);
+  if (lines.isEmpty()) return;
+  const QString text = tr("%1: %2").arg(label(c), lines.join(" · "));
+  trace::log("smart select: measured " + text);
+  services().toast(text, tr("Copy"), [text] { QGuiApplication::clipboard()->setText(text); }, 10000);
 }
 
 QString SmartSelect::iconOf(const smart::Candidate& c) const {

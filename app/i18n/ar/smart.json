@@ -98,5 +98,20 @@
   "chip": "شريحة",
   "After faces or edges are picked, a chip beside them names what they belong to. Off: it comes on Ctrl+Up, Shift+Space or Del only.": "بعد اختيار أوجه أو حواف تظهر بجانبها شريحة تسمّي ما تنتمي إليه. عند الإيقاف: تظهر فقط مع Ctrl+Up أو Shift+Space أو Del.",
   "No face continues this one tangentially.": "لا يوجد وجه يكمل هذا الوجه تماسًّا.",
-  "Remove its faces instead (Remove faces, at the end of the timeline)": "إزالة أوجهه بدلًا من ذلك (إزالة الأوجه، في آخر الخط الزمني)"
+  "Remove its faces instead (Remove faces, at the end of the timeline)": "إزالة أوجهه بدلًا من ذلك (إزالة الأوجه، في آخر الخط الزمني)",
+  "%1 selects it": "%1 يحدّده",
+  "Measure %1": "قياس %1",
+  "Ø %1": "Ø %1",
+  "Depth %1 (through)": "العمق %1 (نافذ)",
+  "Depth %1": "العمق %1",
+  "Counterbore Ø %1, %2 deep": "تجويف علوي Ø %1، بعمق %2",
+  "Countersink Ø %1, %2": "تخويش Ø %1، %2",
+  "Drill point %1": "رأس المثقب %1",
+  "Radius %1": "نصف القطر %1",
+  "Rounds an outside edge": "يدوّر حافة خارجية",
+  "Fills an inside corner": "يملأ زاوية داخلية",
+  "Width %1": "العرض %1",
+  "Thickness %1": "السماكة %1",
+  "Height %1": "الارتفاع %1",
+  "%1: %2": "%1: %2"
 }

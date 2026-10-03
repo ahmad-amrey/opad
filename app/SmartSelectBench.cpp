@@ -537,7 +537,8 @@ OPAD_BENCH(OPAD_BENCH_SMARTPERF, smartperf) {
 
 // OPAD_BENCH_SMARTIMPORT=<prefix> (UI-95 on a body without history; case smartselect-import: the imported plate of
 // tools/bench_cases/smart.py, four 6 mm through holes and a blind one). One hole wall picked: the chip names the hole and
-// carries Remove faces, Select similar and Isolate (no history: nothing to find in the timeline); its Remove starts Remove faces with the wall adopted (cancelled);
+// carries Remove faces, Select similar, Measure and Isolate (no history: nothing to find in the timeline); its tooltip and
+// Measure's toast read Ø and depth; its Remove starts Remove faces with the wall adopted (cancelled);
 // Del on the wall does the same (UI-04: never the import). Shot <prefix>.chip.png.
 OPAD_BENCH(OPAD_BENCH_SMARTIMPORT, smartimport) {
   struct State {
@@ -592,9 +593,20 @@ OPAD_BENCH(OPAD_BENCH_SMARTIMPORT, smartimport) {
           require(area->chip()->text() == hole, "the chip says \"" + hole.toStdString() + "\", not \"" + area->chip()->text().toStdString() + "\"");
           QStringList buttons;
           for (QToolButton* b : area->chip()->actionButtons()) buttons << b->defaultAction()->objectName();
-          require(buttons.join(",") == "smartRemove,smartSimilar,smartIsolate", "the hole's actions: " + buttons.join(",").toStdString());
+          require(buttons.join(",") == "smartRemove,smartSimilar,smartMeasure,smartIsolate", "the hole's actions: " + buttons.join(",").toStdString());
           area->chip()->grab().save(prefix + ".chip.png");
-          trace::log("bench: smartimport: a hole wall of the imported plate: the chip says \"" + area->chip()->text() + "\" with Remove faces, Select similar, Isolate PASS");
+          trace::log("bench: smartimport: a hole wall of the imported plate: the chip says \"" + area->chip()->text() + "\" with Remove faces, Select similar, Measure, Isolate PASS");
+          // Its sizes: in the chip's tooltip, and Measure's toast (with Copy).
+          const QString diameter = SmartSelect::tr("Ø %1").arg(units::compact(units::Kind::Length, 6)), depth = SmartSelect::tr("Depth %1 (through)").arg(units::compact(units::Kind::Length, 10));
+          const QStringList tip = area->chip()->toolTip().split('\n');
+          require(tip.contains(diameter) && tip.contains(depth), "the chip's tooltip reads the hole's sizes: " + area->chip()->toolTip().toStdString());
+          area->chip()->actionButtons()[2]->click();  // Measure
+          Toast* toast = w.m_toasts->toasts().isEmpty() ? nullptr : w.m_toasts->toasts().back();
+          const QString readout = SmartSelect::tr("%1: %2").arg(hole, diameter + " · " + depth);
+          // (Copy is not clicked: the clipboard is the desktop's.)
+          require(toast && toast->text() == readout && toast->actionButton() && toast->actionButton()->text() == SmartSelect::tr("Copy"), "Measure shows \"" + readout.toStdString() + "\" with Copy");
+          trace::log("bench: smartimport: the hole's sizes in the chip's tooltip and Measure's toast \"" + readout + "\" with Copy PASS");
+          toast->dismiss();
           area->chip()->actionButtons()[0]->click();  // Remove
           break;
         }

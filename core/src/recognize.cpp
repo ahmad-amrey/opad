@@ -832,6 +832,14 @@ struct Recognizer::Impl {
     r.faces = std::move(region);
     r.params = {{"faces", r.faces.size()}};
     if (base >= 0) r.params["base"] = base;
+    if (base >= 0 && surf(base).kind == Kind::Plane) {  // how far it stands out of (goes into) the plane it is on
+      const gp_Ax1& plane = surf(base).axis;
+      double h = 0;
+      for (int f : r.faces)
+        for (TopExp_Explorer v(face(f), TopAbs_VERTEX); v.More(); v.Next())
+          h = std::max(h, std::fabs(gp_Vec(plane.Location(), BRep_Tool::Pnt(TopoDS::Vertex(v.Current()))).Dot(gp_Vec(plane.Direction()))));
+      r.params[boss ? "height" : "depth"] = h;
+    }
     r.label = std::string(boss ? "Boss" : "Pocket") + kDot + std::to_string(r.faces.size()) + (r.faces.size() == 1 ? " face" : " faces");
     return r;
   }
