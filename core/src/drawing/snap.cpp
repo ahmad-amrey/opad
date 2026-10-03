@@ -80,7 +80,7 @@ SnapIndex::SnapIndex(const Display& d, double tol) {
     auto [it, fresh] = sources.emplace(prim.source, static_cast<int>(m_sources.size()));
     if (fresh) m_sources.push_back(prim.source);
     const int src = it->second, id = curves++;
-    const auto point = [&](Vec2 p, SnapKind k) { m_points.push_back({p, k, src}); };
+    const auto point = [&](Vec2 p, SnapKind k) { m_points.push_back({p, k, src, id}); };
     std::vector<Vec2> pts;
     try {
       pts = c.sample(tol);
@@ -134,14 +134,14 @@ SnapIndex::SnapIndex(const Display& d, double tol) {
   }
 }
 
-std::optional<Snap> SnapIndex::find(Vec2 p, double radius, unsigned kinds) const {
+std::optional<Snap> SnapIndex::find(Vec2 p, double radius, unsigned kinds, int curves) const {
   if (!(radius > 0) || empty()) return std::nullopt;
   const long ix0 = cell(p[0] - radius), ix1 = cell(p[0] + radius), iy0 = cell(p[1] - radius), iy1 = cell(p[1] + radius);
   if ((ix1 - ix0 + 1) * (iy1 - iy0 + 1) > 40000) return std::nullopt;  // seen from so far that nothing is to be told apart
   std::optional<Snap> best;
-  const auto offer = [&](Vec2 at, SnapKind k, int src) {
+  const auto offer = [&](Vec2 at, SnapKind k, int src, int curve) {
     const double d = dist(at, p);
-    if (d <= radius && (!best || d < best->distance - 1e-12)) best = Snap{k, at, d, m_sources[static_cast<size_t>(src)]};
+    if (d <= radius && (!best || d < best->distance - 1e-12)) best = Snap{k, at, d, m_sources[static_cast<size_t>(src)], curve};
   };
   std::vector<int> near;
   for (long ix = ix0; ix <= ix1; ++ix)
@@ -149,9 +149,11 @@ std::optional<Snap> SnapIndex::find(Vec2 p, double radius, unsigned kinds) const
       if (auto it = m_pointGrid.find(key(ix, iy)); it != m_pointGrid.end())
         for (int i : it->second) {
           const Point& q = m_points[static_cast<size_t>(i)];
-          if (kinds & snap_bit(q.kind)) offer(q.at, q.kind, q.source);
+          if ((kinds & snap_bit(q.kind)) && (curves <= 0 || q.curve < curves)) offer(q.at, q.kind, q.source, q.curve);
         }
-      if (auto it = m_segmentGrid.find(key(ix, iy)); it != m_segmentGrid.end()) near.insert(near.end(), it->second.begin(), it->second.end());
+      if (auto it = m_segmentGrid.find(key(ix, iy)); it != m_segmentGrid.end())
+        for (int i : it->second)
+          if (curves <= 0 || m_segments[static_cast<size_t>(i)].curve < curves) near.push_back(i);
     }
   std::sort(near.begin(), near.end());
   near.erase(std::unique(near.begin(), near.end()), near.end());
@@ -160,12 +162,12 @@ std::optional<Snap> SnapIndex::find(Vec2 p, double radius, unsigned kinds) const
       for (size_t j = i + 1; j < near.size(); ++j) {
         const Segment &a = m_segments[static_cast<size_t>(near[i])], &b = m_segments[static_cast<size_t>(near[j])];
         Vec2 at;
-        if (a.curve != b.curve && cross(a.a, a.b, b.a, b.b, at)) offer(at, SnapKind::Intersection, a.source);
+        if (a.curve != b.curve && cross(a.a, a.b, b.a, b.b, at)) offer(at, SnapKind::Intersection, a.source, a.curve);
       }
   if (best || !(kinds & snap_bit(SnapKind::Nearest))) return best;
   for (int i : near) {
     const Segment& s = m_segments[static_cast<size_t>(i)];
-    offer(closest_on(p, s.a, s.b), SnapKind::Nearest, s.source);
+    offer(closest_on(p, s.a, s.b), SnapKind::Nearest, s.source, s.curve);
   }
   return best;
 }

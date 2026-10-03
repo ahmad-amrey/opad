@@ -6,11 +6,14 @@
 // The Drawings workspace (Ctrl+3, DocsWorkspace.cpp, UI-78): its ribbon tab (temporary until the ribbon is reorganised),
 // the sheet page in the viewport's place (SheetPage, SheetCanvas), New drawing from a template, new sheets, sheet
 // properties, a template from a DXF or DWG file, base, projected and isometric views placed with the mouse, view styles.
+// Its Annotate tab (DocsAnnotate.cpp, UI-79 to UI-81): dimensions, hole callouts and tables, centre marks and lines, notes,
+// datums, feature control frames, surface texture, ordinate/baseline/chain sets and dimensions from datums, re-attach.
 #include <functional>
 #include <string>
 #include <vector>
 
 #include "AreaController.hpp"
+#include "SheetAnnotate.hpp"
 #include "opad/json.hpp"
 
 class SheetPage;
@@ -53,6 +56,11 @@ class DocsArea : public AreaController {
   void setViewStyle(const std::vector<std::string>& views, const opad::json& style);  // merged into each view's style
   void openSheet(const std::string& rowId);   // a Drawings folder row: its sheet in the Drawings workspace
   void viewMenu(const std::vector<std::string>& views, QMenu& menu);  // right-click on views
+  // Annotations (DocsAnnotate.cpp).
+  void startTool(SheetAnnotator::Tool tool);       // on the shown sheet (New drawing… without one)
+  void reattachSelected();                          // the selected annotation's references picked again
+  void dimensionFromDatums(const std::string& type);  // ordinate | baseline | chain sets from the view's datums, planned on a worker
+  void itemMenu(const std::vector<std::string>& items, QMenu& menu);  // right-click on annotations
   // A command once nothing reads the document (the sheet's own worker is stopped for it); `then` gets the result, or null
   // when it was refused (a message box said why).
   void run(const std::string& command, opad::json args, std::function<void(const opad::json&)> then = {});
@@ -63,6 +71,9 @@ class DocsArea : public AreaController {
   void buildDrawingCommands();
   void drawingsRibbon(RibbonLayout& layout);
   void readyDrawings();
+  void buildAnnotateCommands();
+  void annotateRibbon(RibbonLayout& layout);
+  void readyAnnotate();
   void syncStyleActions();  // Hidden lines / Tangent edges checked as the selected views show them
   SheetPage* m_page = nullptr;
 };

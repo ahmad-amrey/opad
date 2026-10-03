@@ -106,6 +106,7 @@ void DocsArea::buildDrawingCommands() {
   add("drawings.update", tr("Update views"), "viewsUpdate", [this] { m_page->canvas()->refresh(); }, sheetShown, {"refresh", "regenerate", "rebuild"});
   add("drawings.fit", tr("Fit sheet"), "fit", [this] { m_page->canvas()->fitSheet(); }, sheetShown, {"zoom"});
   add("drawings.exportSheet", tr("Export sheet…"), "export", [this] { exportSheet(m_page->sheet()); }, sheetShown, {"PDF", "DXF", "DWG", "SVG", "PNG", "print"});
+  buildAnnotateCommands();
 }
 
 void DocsArea::drawingsRibbon(RibbonLayout& layout) {
@@ -126,6 +127,7 @@ void DocsArea::drawingsRibbon(RibbonLayout& layout) {
   layout.addAction("drawings.drawing.views", services().action("drawings.isoView"));
   group("style", tr("Style"), {"drawings.hiddenLines", "drawings.tangentEdges", "drawings.update"});
   group("output", tr("Output"), {"drawings.exportSheet", "file.export", "file.exportBom", "drawings.fit"});
+  annotateRibbon(layout);
 }
 
 // ---------------------------------------------------------------- the page
@@ -146,12 +148,14 @@ void DocsArea::readyDrawings() {
   });
   connect(canvas, &SheetCanvas::contextMenuRequested, this, [this](const std::vector<std::string>& views, const QPoint& at) {
     QMenu menu;
-    viewMenu(views, menu);
+    if (!views.empty() && services().document()->scene.sheet_item(views[0])) itemMenu(views, menu);
+    else viewMenu(views, menu);
     if (!menu.isEmpty()) menu.exec(at);
   });
   connect(canvas, &SheetCanvas::deleteRequested, this, [this](const std::vector<std::string>& views) {
     whenFree([this, views] { services().guarded([&] { drawings::remove(services().document(), views); }); });
   });
+  readyAnnotate();
   if (services().workspace() == "drawings") workspaceChanged("drawings");  // the one the window started in
 }
 
@@ -163,6 +167,7 @@ void DocsArea::workspaceChanged(const QString& id) {
     m_page->canvas()->setFocus();
   } else if (services().centralPage() == m_page) {
     m_page->canvas()->cancelPlacement();
+    m_page->annotator()->cancel();
     services().setCentralPage(nullptr);
   }
   services().updateCommands();
@@ -176,25 +181,31 @@ void DocsArea::documentChanged(bool) {
 
 void DocsArea::selectionChanged(const SelectionContext& selection) {
   if (!m_page || !m_page->isVisible()) return;
-  std::vector<std::string> views;
+  std::vector<std::string> views, items;
   const opad::Scene& s = services().document()->scene;
-  for (const auto& id : selection.ids)
+  for (const auto& id : selection.ids) {
     if (const opad::SheetView* v = s.sheet_view(id); v && v->sheet == m_page->sheet()) views.push_back(id);
+    if (const opad::SheetItem* t = s.sheet_item(id); t && t->sheet == m_page->sheet()) items.push_back(id);
+  }
   m_page->canvas()->selectViews(views);
+  m_page->canvas()->selectItems(items);
+  m_page->annotator()->itemsSelected(items);
   syncStyleActions();
 }
 
 void DocsArea::syncStyleActions() {
-  QAction *hidden = services().action("drawings.hiddenLines"), *tangent = services().action("drawings.tangentEdges");
+  QAction *hidden = services().action("drawings.hiddenLines"), *tangent = services().action("drawings.tangentEdges"), *marks = services().action("drawings.centerMarks");
   if (!m_page || !hidden || !tangent) return;
   const opad::Scene& s = services().document()->scene;
   std::vector<std::string> views = m_page->canvas()->selectedViews();
   if (views.empty())
     if (const opad::Sheet* sheet = s.sheet(m_page->sheet())) views = sheet->views;
-  bool anyHidden = false, allHidden = !views.empty(), anyTangent = false;
+  bool anyHidden = false, allHidden = !views.empty(), anyTangent = false, allMarks = !views.empty();
   for (const auto& id : views) {
     const opad::SheetView* v = s.sheet_view(id);
     if (!v) continue;
+    const opad::json style = v->def.value("style", opad::json::object());
+    allMarks = allMarks && style.is_object() && style.value("centermarks", false);
     try {
       const auto spec = opad::drawing::view_spec(s, *v);
       anyHidden = anyHidden || spec.hidden;
@@ -205,6 +216,7 @@ void DocsArea::syncStyleActions() {
   }
   hidden->setChecked(allHidden && anyHidden);
   tangent->setChecked(anyTangent);
+  if (marks) marks->setChecked(allMarks);
 }
 
 // ---------------------------------------------------------------- commands

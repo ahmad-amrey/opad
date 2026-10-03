@@ -23,6 +23,7 @@ struct Snap {
   Vec2 at{0, 0};
   double distance = 0;
   std::string source;  // the record that drew the curve (Prim::source)
+  int curve = -1;      // the curve's place among the display's curves (a view's first ones are its projection's, in order)
 };
 
 class SnapIndex {
@@ -34,7 +35,8 @@ class SnapIndex {
   explicit SnapIndex(const Display& d, double tol = 0.01);
   // Within `radius` of p, of `kinds`: the closest of the points (ends, middles, centres, quadrants, the crossings of two
   // curves), else the closest point on a curve. Null when nothing is that close.
-  std::optional<Snap> find(Vec2 p, double radius, unsigned kinds = kAllSnaps) const;
+  // curves > 0: only the display's first that many curves (a sheet view's own projection, not its annotations).
+  std::optional<Snap> find(Vec2 p, double radius, unsigned kinds = kAllSnaps, int curves = 0) const;
   size_t points() const { return m_points.size(); }
   size_t segments() const { return m_segments.size(); }
   bool empty() const { return m_points.empty() && m_segments.empty(); }
@@ -43,7 +45,7 @@ class SnapIndex {
   struct Point {
     Vec2 at;
     SnapKind kind;
-    int source;
+    int source, curve;
   };
   struct Segment {
     Vec2 a, b;

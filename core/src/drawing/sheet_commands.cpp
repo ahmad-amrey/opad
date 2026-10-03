@@ -279,11 +279,20 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
 
   add({"sheet_datum_dimensions", "Dimension a view's features (default: its holes) from its datum symbols: ordinate, baseline or chain sets",
        {{"doc", "path"}, {"sheet", "uuid"}, {"view", "uuid"}, {"type", "ordinate|baseline|chain"}, {"datums", "array - letters (default all)"},
-        {"refs", "array - features"}, {"precision", "int"}, {"by", "string"}},
+        {"refs", "array - features"}, {"precision", "int"}, {"ops", "array - sets planned beforehand"}, {"by", "string"}},
        true},
       [](Document* d, const json& a) {
         Document& doc = need_doc(d);
-        const json planned = drawing::datum_dimensions(doc, resolve(doc), a);
+        json planned;
+        if (a.contains("ops")) {  // planned on a worker (the app): sets of a sheet that exists
+          const Scene scene = resolve(doc);
+          for (const auto& op : a["ops"])
+            if (!op.is_object() || op.value("op", "") != "sheet_item" || op.value("kind", "") != "dimension_set" || !scene.sheet(op.value("sheet", "")))
+              throw Error("sheet_datum_dimensions: ops are dimension_set records of a sheet");
+          planned = {{"ops", a["ops"]}};
+        } else {
+          planned = drawing::datum_dimensions(doc, resolve(doc), a);
+        }
         json ids = json::array(), results = json::array();
         for (const auto& op : planned["ops"]) {
           ids.push_back(doc.append(op, a.value("by", "")).id);

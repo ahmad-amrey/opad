@@ -617,13 +617,13 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
     need(1, 1, "one edge");
     const Pick k = pick_of(R, refs[0]);
     Vec2 a, b;
-    if (k.line && !k.point) {
+    if (k.line) {  // the edge (a point picked on it names it too)
       a = paper(k.a), b = paper(k.b);
     } else if (k.cylinder && paper.across(k.axis)) {  // the side of it towards the place
       const Vec2 c0 = paper(k.a), c1 = paper(k.b), n = left(unit(sub(c1, c0)));
       const double side = dot(sub(place, c0), n) >= 0 ? 1 : -1;
       a = add(c0, mul(n, side * k.r * frame->scale)), b = add(c1, mul(n, side * k.r * frame->scale));
-    } else if (k.circle && !k.point && paper.along(k.axis)) {
+    } else if (k.circle && paper.along(k.axis)) {
       const Vec2 c = paper(k.centre), out = unit(sub(place, c), {0, 1});
       return {{"foot", js(add(c, mul(out, k.r * frame->scale)))}, {"out", js(out)}};
     } else if (k.plane && paper.across(k.axis)) {  // a flat face seen edge on: through its middle, along it
@@ -644,7 +644,7 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
     if (refs.empty()) return json::object();
     const Pick k = pick_of(R, refs[0]);
     Vec2 tip = paper(k.p);
-    if (k.line && !k.point) {  // the edge's point nearest the frame
+    if (k.line) {  // the edge's point nearest the frame
       const Vec2 a = paper(k.a), b = paper(k.b), u = unit(sub(b, a));
       tip = add(a, mul(u, std::clamp(dot(sub(place, a), u), 0.0, len(sub(b, a)))));
     } else if ((k.circle || k.cylinder) && !k.point && paper.along(k.axis)) {  // onto the circle, towards the frame's corner
@@ -861,7 +861,13 @@ json plan_item(const Document& doc, const Scene& scene, const json& args, json* 
   json refs = json::array();
   if (args.contains("picks")) {
     if (!frame) throw Error("sheet_item: picks are made on a view");
-    for (const auto& p : args["picks"]) refs.push_back(pick_reference(doc, scene, *frame, p)["ref"]);
+    // A point on an edge matters to dimensions, sets, leaders and centre lines; the others take the edge itself.
+    const bool points = kind == "dimension" || kind == "dimension_set" || kind == "note" || kind == "centerline";
+    for (const auto& p : args["picks"]) {
+      json r = pick_reference(doc, scene, *frame, p)["ref"];
+      if (!points) r.erase("aspect");
+      refs.push_back(r);
+    }
   } else if (args.contains("refs") && !(args["refs"].is_array() && args["refs"].empty())) {
     refs = references(doc, scene, args["refs"], args.value("aspects", json()));
   }

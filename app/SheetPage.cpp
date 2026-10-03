@@ -15,6 +15,7 @@
 
 #include "AppDocument.hpp"
 #include "Icons.hpp"
+#include "SheetAnnotate.hpp"
 #include "SheetCanvas.hpp"
 #include "Theme.hpp"
 
@@ -58,6 +59,8 @@ SheetPage::SheetPage(AppDocument* doc, JobRunner* jobs, QWidget* parent) : QWidg
   m_stack->addWidget(m_canvas);
   m_stack->addWidget(start);
   v->addWidget(m_stack, 1);
+  m_annotator = new SheetAnnotator(doc, m_canvas, this);
+  v->addWidget(m_annotator->bar());
   // The bar: sheets, +, prompt, cursor, sheet info.
   auto* bar = new QWidget(this);
   bar->setObjectName("sheetBar");
@@ -118,6 +121,18 @@ SheetPage::SheetPage(AppDocument* doc, JobRunner* jobs, QWidget* parent) : QWidg
   connect(kinds, &QMenu::triggered, this, applySnaps);
   m_canvas->setSnapKinds(m_snap->isChecked() ? chosen : 0);
   h->addWidget(m_snap);
+  // Annotations whose references are gone: their count, a menu to re-attach each.
+  m_dangling = new QToolButton(bar);
+  m_dangling->setObjectName("sheetDangling");
+  m_dangling->setAutoRaise(true);
+  m_dangling->setIcon(icons::themed("warning"));
+  m_dangling->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  m_dangling->setPopupMode(QToolButton::InstantPopup);
+  m_dangling->setMenu(new QMenu(m_dangling));
+  m_dangling->setToolTip(tr("Annotations that cannot find what they measure any more: shown in magenta with the value they were made with"));
+  m_dangling->hide();
+  connect(m_canvas, &SheetCanvas::danglingChanged, this, &SheetPage::updateDangling);
+  h->addWidget(m_dangling);
   h->addWidget(m_cursor);
   h->addWidget(m_info);
   bar->setFixedHeight(30);
@@ -187,6 +202,22 @@ void SheetPage::rebuildTabs() {
   }
   m_add->setVisible(!ordered.empty());
   m_filling = false;
+}
+
+void SheetPage::updateDangling() {
+  const auto dangling = m_canvas->dangling();
+  m_dangling->setVisible(!dangling.empty());
+  m_dangling->setText(tr("%n dangling", nullptr, static_cast<int>(dangling.size())));
+  QMenu* menu = m_dangling->menu();
+  menu->clear();
+  for (const auto& [id, why] : dangling) {
+    const opad::SheetItem* t = m_doc->scene.sheet_item(id);
+    if (!t) continue;
+    const opad::json shown = t->def.value("result", opad::json::object()).value("shown", opad::json());
+    const QString name = shown.is_string() ? QString::fromStdString(shown.get<std::string>()).section('\n', 0, 0) : QString::fromStdString(t->kind);
+    QAction* a = menu->addAction(tr("Re-attach %1").arg(name), this, [this, id = id] { emit reattachRequested(id); });
+    a->setToolTip(why);
+  }
 }
 
 void SheetPage::updateInfo() {

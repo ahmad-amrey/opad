@@ -115,6 +115,7 @@ class SheetViewItem : public SheetPartItem {
     stale.start();
   }
   QString error;
+  std::shared_ptr<const opad::drawing::ViewGeometry> geometry;  // of the display shown: picks trace its curves to the model
   QRectF drawn;  // local (the scene when it was drawn): the frame the display was drawn in
   SheetViewItem() {
     setFlag(ItemIsSelectable);
@@ -162,13 +163,23 @@ class SheetViewItem : public SheetPartItem {
   }
 };
 
-// Snap guides, and the frame of a view being placed.
+// Snap guides, the frame of a view being placed, the selected annotations and a tool's preview.
 class SheetGuides : public QGraphicsItem {
  public:
   QRectF area;
   std::vector<QLineF> lines;
   QRectF ghost;
   QString label;
+  std::vector<QRectF> marks;  // the selected annotations' boxes (scene)
+  std::shared_ptr<const Display> preview;  // sheet paper mm
+  void setMarks(std::vector<QRectF> m) {
+    marks = std::move(m);
+    update();
+  }
+  void setPreview(std::shared_ptr<const Display> d) {
+    preview = std::move(d);
+    update();
+  }
   QPointF snap;  // scene: the point the pointer would take, with what it is
   int snapKind = -1;
   QString snapLabel;
@@ -188,6 +199,19 @@ class SheetGuides : public QGraphicsItem {
   }
   void paint(QPainter* p, const QStyleOptionGraphicsItem*, QWidget*) override {
     const Tokens& t = theme::current();
+    if (preview && !preview->prims.empty()) {  // drawn as the sheet draws, in paper mm (scene y = height - y)
+      p->save();
+      opad::drawing::paint(*p, *preview, {area.left(), area.top(), area.right(), area.bottom()}, area, 1.0);
+      p->restore();
+    }
+    for (const QRectF& m : marks) {
+      QPen box(t.sel, 1.2, Qt::DashLine);
+      box.setCosmetic(true);
+      p->setPen(box);
+      p->setBrush(QColor(t.sel.red(), t.sel.green(), t.sel.blue(), 28));
+      p->drawRect(m);
+    }
+    p->setBrush(Qt::NoBrush);
     QPen pen(t.sel, 1, Qt::DashLine);
     pen.setCosmetic(true);
     p->setPen(pen);
@@ -286,6 +310,11 @@ void SheetCanvas::setSheet(const std::string& id) {
   m_sheet = id;
   m_fitted = false;
   m_draftsShown = 0;
+  m_items.clear();
+  m_dangling.clear();
+  m_selItems.clear();
+  m_frames.clear();
+  emit danglingChanged();
   dropViews({});
   m_paper->setDisplay(nullptr, 0, 0);
   m_outbox.reset();
@@ -368,6 +397,8 @@ void SheetCanvas::dropViews(const std::set<std::string>& keep) {
       continue;
     }
     selected = selected || it->second->isSelected();
+    m_items.erase(it->first);
+    m_dangling.erase(it->first);
     delete it->second;
     it = m_views.erase(it);
   }
@@ -417,6 +448,33 @@ void SheetCanvas::start() {
         }
         send(std::move(f));
         opad::json skipped = opad::json::array();
+        // The annotations drawn in a part (their boxes, for picking them) and those it could not measure.
+        const auto annotations = [&](Part& part, const std::string& self, size_t from) {
+          std::map<std::string, ItemHit> each;
+          for (const auto& prim : part.display->prims) {
+            if (prim.source.empty() || prim.source == self) continue;
+            ItemHit& hit = each[prim.source];
+            hit.id = prim.source;
+            if (prim.kind == Prim::Kind::Curve) {
+              const auto pts = prim.curve.sample(0.05);
+              for (size_t k = 1; k < pts.size() && hit.lines.size() < 4000; ++k) hit.lines.push_back({pts[k - 1], pts[k]});
+            } else {
+              Display one;
+              one.prims.push_back(prim);
+              hit.boxes.push_back(one.bounds());
+            }
+          }
+          for (auto& [item, hit] : each) {
+            std::array<double, 4> b{1e300, 1e300, -1e300, -1e300};
+            const auto take = [&](double x, double y) { b = {std::min(b[0], x), std::min(b[1], y), std::max(b[2], x), std::max(b[3], y)}; };
+            for (const auto& box : hit.boxes) take(box[0], box[1]), take(box[2], box[3]);
+            for (const auto& l : hit.lines) take(l[0][0], l[0][1]), take(l[1][0], l[1][1]);
+            if (b[0] > b[2]) continue;
+            hit.bounds = b;
+            part.items.push_back(std::move(hit));
+          }
+          for (size_t k = from; k < skipped.size(); ++k) part.dangling.push_back({skipped[k].value("id", ""), skipped[k].value("error", "")});
+        };
         auto paper = std::make_shared<Display>();
         draw_paper(*paper, doc, scene, *sheet);
         draw_items(*paper, doc, scene, *sheet, frames, "", skipped);
@@ -425,6 +483,7 @@ void SheetCanvas::start() {
         pp.display = paper;
         pp.bounds = paper->bounds();
         pp.snaps = std::make_shared<const SnapIndex>(*paper);
+        annotations(pp, "", 0);
         send(std::move(pp));
         for (size_t i = 0; i < frames.size(); ++i) {
           if (p.cancelled()) return;
@@ -436,18 +495,21 @@ void SheetCanvas::start() {
             p.setPhase(phase, t < 0 ? -1 : static_cast<int>(100 * (static_cast<double>(i) + t) / static_cast<double>(frames.size())));
             return !p.cancelled();
           };
-          const auto part = [&](const ViewGeometry& g, bool draft) {
+          const auto part = [&](std::shared_ptr<const ViewGeometry> g, bool draft) {
             auto out = std::make_shared<Display>();
-            draw_view(*out, fr, *v, g, &doc, &scene);
+            draw_view(*out, fr, *v, *g, &doc, &scene);
+            const size_t from = skipped.size();
             if (!draft) draw_items(*out, doc, scene, *sheet, frames, fr.id, skipped);
             Part vp;
             vp.kind = Part::View;
             vp.id = fr.id;
             vp.display = out;
-            vp.box = hug(fr, g).box;
+            vp.box = hug(fr, *g).box;
             vp.bounds = out->bounds();
             vp.snaps = std::make_shared<const SnapIndex>(*out);
+            vp.geometry = g;
             vp.draft = draft;
+            annotations(vp, fr.id, from);
             send(std::move(vp));
           };
           auto g = cached_projection(doc, scene, spec);
@@ -457,11 +519,11 @@ void SheetCanvas::start() {
             if (spec.quality != Quality::Draft && choose_tier(doc, scene, spec) == Quality::Exact) {
               ViewSpec draft = spec;
               draft.quality = Quality::Draft;
-              part(*project(doc, scene, draft, progress), true);
+              part(project(doc, scene, draft, progress), true);
             }
             g = project(doc, scene, spec, progress);
           }
-          part(*g, false);
+          part(g, false);
         }
       },
       [self, box](bool ok, const QString& error) {
@@ -499,6 +561,7 @@ void SheetCanvas::drain() {
 
 void SheetCanvas::apply(Part& part) {
   if (part.kind == Part::Frames) {  // a new pass: every view is drawn again (at once when its projection is cached)
+    m_frames = part.frames;
     for (const auto& f : part.frames) {
       SheetViewItem* item = viewItem(f.id);
       if (!item) continue;
@@ -512,11 +575,20 @@ void SheetCanvas::apply(Part& part) {
   } else if (part.kind == Part::Paper) {
     m_paper->setDisplay(part.display, m_paperW, m_paperH, part.bounds);
     m_paper->snaps = part.snaps;
+    m_items[""] = part.items;
+    if (std::exchange(m_dangling[""], part.dangling) != part.dangling) emit danglingChanged();
+    updateItemMarks();
     renderPictures();
   } else if (SheetViewItem* item = viewItem(part.id)) {
     if (!part.draft || !item->final) {
       item->show(part.display, part.bounds, sceneBox(part.box), part.draft, m_paperW, m_paperH);
       item->snaps = part.snaps;
+      item->geometry = part.geometry;
+      if (!part.draft) {
+        m_items[part.id] = part.items;
+        if (std::exchange(m_dangling[part.id], part.dangling) != part.dangling) emit danglingChanged();
+        updateItemMarks();
+      }
       m_draftsShown += part.draft;
       partLog.push_back({part.id, part.draft});
       renderPictures();
@@ -686,7 +758,36 @@ void SheetCanvas::mousePressEvent(QMouseEvent* e) {
     else if (e->button() == Qt::RightButton) cancelPlacement();
     return;
   }
+  if (m_interaction && m_interaction->mousePress(e, at)) return;
   if (e->button() != Qt::LeftButton) return QGraphicsView::mousePressEvent(e);
+  if (const std::string it = itemAt(at); !it.empty()) {  // an annotation: selected, dragged by its text or symbol
+    std::vector<std::string> items = m_selItems;
+    const bool had = std::find(items.begin(), items.end(), it) != items.end();
+    if (e->modifiers() & Qt::ControlModifier) {
+      if (had) items.erase(std::find(items.begin(), items.end(), it));
+      else items.push_back(it);
+    } else if (!had) {
+      items = {it};
+    }
+    m_quietSelection = true;
+    m_scene->clearSelection();
+    m_quietSelection = false;
+    m_selItems = items;
+    updateItemMarks();
+    emit itemSelectionChanged(m_selItems);
+    if (!(e->modifiers() & Qt::ControlModifier)) {
+      m_itemDrag = ItemDrag();
+      m_itemDrag.active = true;
+      m_itemDrag.id = it;
+      m_itemDrag.start = at;
+    }
+    return;
+  }
+  if (!m_selItems.empty() && !(e->modifiers() & Qt::ControlModifier)) {
+    m_selItems.clear();
+    updateItemMarks();
+    emit itemSelectionChanged(m_selItems);
+  }
   if (SheetViewItem* item = viewAt(m_views, at)) {
     if (e->modifiers() & Qt::ControlModifier) {
       item->setSelected(!item->isSelected());
@@ -710,7 +811,7 @@ void SheetCanvas::mousePressEvent(QMouseEvent* e) {
 
 void SheetCanvas::mouseMoveEvent(QMouseEvent* e) {
   const QPointF at = mapToScene(e->pos());
-  const bool plain = m_panning || m_place.active || m_drag.active || dragMode() == QGraphicsView::RubberBandDrag;
+  const bool plain = m_panning || m_place.active || m_drag.active || m_itemDrag.active || dragMode() == QGraphicsView::RubberBandDrag;
   if (plain) {  // no snapping meanwhile
     m_hoverSnap.reset();
     m_guides->setSnap();
@@ -727,6 +828,15 @@ void SheetCanvas::mouseMoveEvent(QMouseEvent* e) {
     return;
   }
   if (m_place.active) return updatePlacement(at);
+  if (m_interaction && m_interaction->mouseMove(e, at)) return;
+  if (m_itemDrag.active) {
+    const QPointF d = at - m_itemDrag.start;
+    if (!m_itemDrag.moved && QLineF(QPointF(), d).length() * pixelsPerMm() < QApplication::startDragDistance()) return;
+    m_itemDrag.moved = true;
+    m_itemDrag.delta = QPointF(std::round(d.x() * 2) / 2, std::round(d.y() * 2) / 2);  // half millimetres on paper
+    updateItemMarks();
+    return;
+  }
   if (m_drag.active) {
     SheetViewItem* item = viewItem(m_drag.id);
     if (!item) return;
@@ -770,6 +880,12 @@ void SheetCanvas::mouseReleaseEvent(QMouseEvent* e) {
     if (m_drag.moved) commitDrag();
     m_drag = Drag();
     m_guides->set({});
+    return;
+  }
+  if (m_interaction && m_interaction->mouseRelease(e, mapToScene(e->pos()))) return;
+  if (m_itemDrag.active) {
+    if (m_itemDrag.moved) commitItemDrag();
+    else m_itemDrag = ItemDrag();
     return;
   }
   QGraphicsView::mouseReleaseEvent(e);
@@ -824,7 +940,15 @@ void SheetCanvas::benchDrag(const std::string& id, Vec2 delta) {
 }
 
 void SheetCanvas::contextMenuEvent(QContextMenuEvent* e) {
-  if (m_place.active) return;
+  if (m_place.active || (m_interaction && m_interaction->active())) return;
+  if (const std::string it = itemAt(mapToScene(e->pos())); !it.empty()) {  // an annotation's menu
+    if (std::find(m_selItems.begin(), m_selItems.end(), it) == m_selItems.end()) {
+      m_selItems = {it};
+      updateItemMarks();
+      emit itemSelectionChanged(m_selItems);
+    }
+    return emit contextMenuRequested(m_selItems, e->globalPos());
+  }
   SheetViewItem* item = viewAt(m_views, mapToScene(e->pos()));
   if (item && !item->isSelected()) {
     m_scene->clearSelection();
@@ -838,6 +962,10 @@ bool SheetCanvas::event(QEvent* e) {
   if (e->type() == QEvent::ShortcutOverride) {  // these keys are the sheet's while it has the focus
     auto* k = static_cast<QKeyEvent*>(e);
     const bool plain = !(k->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier));
+    if (m_interaction && m_interaction->wantsKey(k)) {
+      e->accept();
+      return true;
+    }
     if (plain && (k->key() == Qt::Key_F || k->key() == Qt::Key_Home || k->key() == Qt::Key_Delete || k->key() == Qt::Key_Backspace ||
                   k->key() == Qt::Key_Escape || k->key() == Qt::Key_Space)) {
       e->accept();
@@ -848,15 +976,24 @@ bool SheetCanvas::event(QEvent* e) {
 }
 
 void SheetCanvas::keyPressEvent(QKeyEvent* e) {
+  if (m_interaction && m_interaction->keyPress(e)) return;
   switch (e->key()) {
     case Qt::Key_F:
     case Qt::Key_Home: return fitSheet();
     case Qt::Key_Delete:
-    case Qt::Key_Backspace:
-      if (!selectedViews().empty()) emit deleteRequested(selectedViews());
+    case Qt::Key_Backspace: {
+      std::vector<std::string> gone = selectedViews();
+      gone.insert(gone.end(), m_selItems.begin(), m_selItems.end());
+      if (!gone.empty()) emit deleteRequested(gone);
       return;
+    }
     case Qt::Key_Escape:
       if (m_place.active) return cancelPlacement();
+      if (!m_selItems.empty()) {
+        m_selItems.clear();
+        updateItemMarks();
+        emit itemSelectionChanged(m_selItems);
+      }
       return m_scene->clearSelection();
     case Qt::Key_Space:
       if (!e->isAutoRepeat()) {
@@ -1111,4 +1248,170 @@ void SheetCanvas::leaveEvent(QEvent* e) {
   m_guides->setSnap();
   emit cursorMoved(0, 0, false, QString());
   QGraphicsView::leaveEvent(e);
+}
+
+// ---------------------------------------------------------------- annotations (UI-79)
+const opad::drawing::ViewFrame* SheetCanvas::frame(const std::string& view) const {
+  for (const auto& f : m_frames)
+    if (f.id == view) return &f;
+  return nullptr;
+}
+
+std::string SheetCanvas::viewUnder(const QPointF& scene) const {
+  const SheetViewItem* v = ::viewAt(m_views, scene);
+  return v ? v->id : std::string();
+}
+
+std::optional<SheetPick> SheetCanvas::pickAt(const QPointF& scene) const {
+  using opad::drawing::SnapKind;
+  const double r = 8 / std::max(pixelsPerMm(), 1e-6);
+  std::optional<SheetPick> best;
+  double bestD = 1e300;
+  bool bestPoint = false;
+  for (const auto& [id, item] : m_views) {
+    if (!item->snaps || !item->geometry || !(item->frame() | item->displayRect.translated(item->pos())).adjusted(-r, -r, r, r).contains(scene)) continue;
+    const QPointF local = scene - item->pos();
+    const int own = static_cast<int>(item->geometry->curves.size());  // the projection's curves, not the annotations'
+    const auto s = item->snaps->find({local.x(), m_paperH - local.y()}, r, opad::drawing::kAllSnaps & ~opad::drawing::snap_bit(SnapKind::Intersection), own);
+    if (!s || s->curve < 0 || s->curve >= own) continue;
+    const opad::drawing::Curve& c = item->geometry->curves[static_cast<size_t>(s->curve)];
+    if (c.body < 0 || (c.edge < 0 && c.face < 0)) continue;
+    const bool point = s->kind != SnapKind::Nearest;
+    if (best && (bestPoint && !point || (point == bestPoint && s->distance >= bestD))) continue;
+    SheetPick p;
+    p.view = id;
+    p.kind = s->kind;
+    p.at = toPaper(QPointF(s->at[0], m_paperH - s->at[1]) + item->pos());
+    p.circle = c.type == opad::drawing::Curve::Type::Arc && c.a1 - c.a0 >= 2 * M_PI - 1e-6;
+    p.line = c.type == opad::drawing::Curve::Type::Line;
+    // The display was drawn where the view stood then: its paper point as the core lays the view out now.
+    const opad::drawing::Vec2 drawnAt{s->at[0], s->at[1]};
+    p.pick = {{"node", item->geometry->bodies[static_cast<size_t>(c.body)].node}, {"snap", opad::drawing::snap_kind_name(s->kind)},
+              {"at", {drawnAt[0] + item->pos().x(), drawnAt[1] - item->pos().y()}}};
+    if (c.edge >= 0) p.pick["edge"] = c.edge;
+    else p.pick["face"] = c.face;
+    if (item->display && static_cast<size_t>(s->curve) < item->display->prims.size()) {  // a view's first primitives are its curves
+      p.curve = item->display->prims[static_cast<size_t>(s->curve)].curve;
+      const double dx = item->pos().x(), dy = -item->pos().y();
+      for (auto& q : p.curve.pts) q = {q[0] + dx, q[1] + dy};
+      p.curve.c = {p.curve.c[0] + dx, p.curve.c[1] + dy};
+    }
+    best = p, bestD = s->distance, bestPoint = point;
+  }
+  return best;
+}
+
+void SheetCanvas::setPreview(std::shared_ptr<const Display> preview) { m_guides->setPreview(std::move(preview)); }
+const std::shared_ptr<const Display>& SheetCanvas::preview() const { return m_guides->preview; }
+
+void SheetCanvas::read(const QString& title, ReadWork work, std::function<void(bool, const QString&)> done) {
+  // Waits for the sheet's own worker: it is stopped (pause) and drawn again when this one is done (resume).
+  struct Retry {
+    static void attempt(QPointer<SheetCanvas> self, QString title, ReadWork work, std::function<void(bool, const QString&)> done, bool paused, int tries) {
+      if (!self) return;
+      if (!self->m_doc->hasDocument || tries > 1500) {
+        if (paused) self->resume();
+        if (done) done(false, tr("The document is busy"));
+        return;
+      }
+      Job* job = self->m_doc->readAsync(self->m_jobs, title, work, [self, done, paused](bool ok, const QString& error) {
+        if (self && paused) self->resume();
+        if (done) done(ok, error);
+      });
+      if (job) return;
+      if (!paused) self->pause();
+      QTimer::singleShot(20, self, [self, title, work, done, tries] { attempt(self, title, work, done, true, tries + 1); });
+    }
+  };
+  Retry::attempt(this, title, std::move(work), std::move(done), false, 0);
+}
+
+std::string SheetCanvas::itemAt(const QPointF& scene) const {
+  // The nearest annotation whose text, symbol or line is within a few pixels; of equals the smallest.
+  std::string best;
+  double bestD = 1e300, area = 1e300;
+  const double m = std::max(0.5, 4 / std::max(pixelsPerMm(), 1e-6));
+  for (const auto& [part, items] : m_items) {
+    QPointF offset;
+    if (!part.empty()) {
+      const SheetViewItem* v = viewItem(part);
+      if (!v) continue;
+      offset = v->pos();
+    }
+    const Vec2 p = toPaper(scene - offset);
+    for (const auto& hit : items) {
+      const auto& b = hit.bounds;
+      if (p[0] < b[0] - m || p[0] > b[2] + m || p[1] < b[1] - m || p[1] > b[3] + m) continue;
+      double d = 1e300;
+      for (const auto& box : hit.boxes)
+        d = std::min(d, std::hypot(std::max({box[0] - p[0], 0.0, p[0] - box[2]}), std::max({box[1] - p[1], 0.0, p[1] - box[3]})));
+      for (const auto& [a, c] : hit.lines) {
+        const double dx = c[0] - a[0], dy = c[1] - a[1], l2 = dx * dx + dy * dy;
+        const double t = l2 > 0 ? std::clamp(((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2, 0.0, 1.0) : 0;
+        d = std::min(d, std::hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy));
+      }
+      const double size = (b[2] - b[0]) * (b[3] - b[1]);
+      if (d <= m && (d < bestD - 1e-9 || (std::fabs(d - bestD) <= 1e-9 && size < area))) best = hit.id, bestD = d, area = size;
+    }
+  }
+  return best;
+}
+
+std::optional<QRectF> SheetCanvas::itemBox(const std::string& id) const {
+  for (const auto& [part, items] : m_items)
+    for (const auto& hit : items)
+      if (hit.id == id) {
+        const SheetViewItem* v = part.empty() ? nullptr : viewItem(part);
+        return sceneBox(hit.bounds).translated(v ? v->pos() : QPointF());
+      }
+  return std::nullopt;
+}
+
+void SheetCanvas::selectItems(const std::vector<std::string>& ids) {
+  m_selItems.clear();
+  for (const auto& id : ids)
+    if (const opad::SheetItem* t = m_doc->scene.sheet_item(id); t && t->sheet == m_sheet) m_selItems.push_back(id);
+  updateItemMarks();
+}
+
+void SheetCanvas::updateItemMarks() {
+  std::vector<QRectF> marks;
+  for (const auto& id : m_selItems)
+    if (const auto b = itemBox(id)) marks.push_back(b->adjusted(-0.8, -0.8, 0.8, 0.8).translated(m_itemDrag.active && m_itemDrag.id == id ? m_itemDrag.delta : QPointF()));
+  m_guides->setMarks(std::move(marks));
+}
+
+std::map<std::string, QString> SheetCanvas::dangling() const {
+  std::map<std::string, QString> out;
+  for (const auto& [part, list] : m_dangling)
+    for (const auto& [id, why] : list)
+      if (m_doc->scene.sheet_item(id)) out[id] = QString::fromStdString(why);
+  return out;
+}
+
+void SheetCanvas::commitItemDrag() {
+  const ItemDrag drag = m_itemDrag;
+  m_itemDrag = ItemDrag();
+  updateItemMarks();
+  const opad::SheetItem* t = m_doc->scene.sheet_item(drag.id);
+  if (!t || !m_runner) return;
+  const auto r2 = [](double v) { return std::round(v * 100) / 100; };
+  const Vec2 d{drag.delta.x(), -drag.delta.y()};  // paper: y up
+  const auto moved = [&](const opad::json& p) {
+    const double x = p.is_array() && p.size() == 2 ? p[0].get<double>() : 0, y = p.is_array() && p.size() == 2 ? p[1].get<double>() : 0;
+    return opad::json::array({r2(x + d[0]), r2(y + d[1])});
+  };
+  opad::json set;
+  if (t->def.contains("place")) set["place"] = moved(t->def["place"].value("text", opad::json()));
+  else if (t->def.contains("at")) set["at"] = moved(t->def["at"]);
+  else return;
+  m_runner("sheet_edit", {{"target", drag.id}, {"set", set}}, {});
+}
+
+void SheetCanvas::benchDragItem(const std::string& id, Vec2 delta) {
+  m_itemDrag = ItemDrag();
+  m_itemDrag.active = m_itemDrag.moved = true;
+  m_itemDrag.id = id;
+  m_itemDrag.delta = QPointF(delta[0], -delta[1]);
+  commitItemDrag();
 }
