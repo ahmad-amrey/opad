@@ -69,6 +69,13 @@ def far_file(root, document=None):
     return dxf(root / "far.dxf", [("Site", 7, 0, ())], [line("Site", 1000010, 2000020, 1000110, 2000020), line("Site", 1000010, 2000020, 1000010, 2000080)])
 
 
+def plot_file(root, document=None):
+    """A 200 x 100 frame in colour 7, a red line on a 0.70 mm layer, a blue fill, a green line on a layer left out of plots."""
+    frame = [(0, 0, 200, 0), (200, 0, 200, 100), (200, 100, 0, 100), (0, 100, 0, 0)]
+    return dxf(root / "plot.dxf", [("Frame", 7, 0, ()), ("Red", 1, 0, [(370, "70")]), ("Fill", 5, 0, ()), ("Hidden", 3, 0, [(290, "0")])],
+               [line("Frame", *edge) for edge in frame] + [line("Red", 20, 50, 180, 50), solid("Fill", 150, 10, 190, 40), line("Hidden", 20, 80, 180, 80)])
+
+
 def room_document(root, document):
     return document("room", ("import", "--file", str(room_file(root)), "--center", "true"))
 
@@ -96,4 +103,8 @@ CASES = [
     # UI-90: the cursor readout in the status bar: a far drawing's own coordinates (and a snapped point's), a model's X, Y, Z.
     ("readout", far_file, {"OPAD_BENCH_READOUT": "{prefix}"}),
     ("readout-3d", "box", {"OPAD_BENCH_READOUT": "{prefix}"}),
+    # UI-88: Plot: extents fit, monochrome, lineweights, 1:N and a scale that does not fit, display and window areas, a printer
+    # (to a PDF file) and a PDF. <prefix>.dialog.png, .preview.png, .pdf, .printer.pdf
+    ("plot", plot_file, {"OPAD_BENCH_PLOT": "{prefix}"}),
+    ("plot-rtl", plot_file, {"OPAD_BENCH_PLOT": "{prefix}", "OPAD_LANG": "ar"}),
 ]

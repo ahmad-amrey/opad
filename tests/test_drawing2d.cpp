@@ -22,6 +22,7 @@
 #include <tuple>
 
 #include "Drawing2D.hpp"
+#include "Plot2D.hpp"
 #include "check.hpp"
 #include "opad/commands.hpp"
 #include "opad/drawing_io.hpp"
@@ -329,6 +330,78 @@ TEST(drawing_properties_in_2d_words) {
   CHECK(edge == json({{"type", "edge"}, {"curve", "circle"}, {"length", 3.14}, {"radius", 1}, {"start", {1, 0, 0}}, {"end", {-1, 0, 0}}}));
   const json fill = properties({{"type", "face"}, {"surface", "plane"}, {"normal", {0, 0, 1}}, {"origin", {0, 0, 0}}, {"area", 4}, {"edges", {1, 2}}, {"adjacent_faces", {3}}});
   CHECK(fill == json({{"type", "face"}, {"area", 4}}));
+}
+
+// What a plot draws (UI-88): visible bodies of plotted layers (not Notes, off and unplotted, nor Old, frozen), each with its
+// colour (or the ink), lineweight and linetype; a layer turned on but left out of plots stays out.
+TEST(a_plot_draws_the_visible_plotted_layers) {
+  opad::Document doc = opad::Document::create();
+  opad::import_file(doc, layersDxf());
+  opad::Scene scene = opad::resolve(doc);
+  const opad::Frame plane = plot::plane(doc, scene, opad::Frame{});
+  plot::Sheet sheet = plot::collect(doc, scene, plane);
+  CHECK_EQ(sheet.bodies, 3);  // Walls, Plain's blue lines, Plain's colour-7 line
+  CHECK_EQ(sheet.items.size(), 3u);
+  CHECK(std::abs(sheet.x0) < 1e-9 && std::abs(sheet.x1 - 10) < 1e-9 && std::abs(sheet.y0) < 1e-9 && std::abs(sheet.y1 - 5) < 1e-9);
+  int dashed = 0, inked = 0, blue = 0;
+  for (const auto& s : sheet.styles) {
+    dashed += !s.dashes.empty() && std::abs(s.weight - 0.5) < 1e-9;
+    inked += s.ink;
+    blue += !s.ink && s.color == hex(0x0000ff);
+  }
+  CHECK(dashed == 1 && inked == 1 && blue == 1 && sheet.styles.size() == 3);
+  auto all = byName(scene);
+  opad::commands::run("appearance", setOn(all["Notes"], true), &doc);
+  scene = opad::resolve(doc);
+  CHECK_EQ(plot::collect(doc, scene, plane).bodies, 3);  // shown now, still not plotted
+  opad::commands::run("appearance", setPlot(byName(scene)["Notes"], true), &doc);
+  scene = opad::resolve(doc);
+  CHECK_EQ(plot::collect(doc, scene, plane).bodies, 4);
+  // Paper: black for the ink and in monochrome, the layer's lineweight (0.25 mm by default), the thinnest without lineweights.
+  plot::Settings settings;
+  const plot::Style& walls = *std::find_if(sheet.styles.begin(), sheet.styles.end(), [](const plot::Style& s) { return !s.dashes.empty(); });
+  CHECK(plot::paperColor(walls, settings) == hex(0xff0000));
+  settings.monochrome = true;
+  CHECK(plot::paperColor(walls, settings) == hex(0x000000));
+  CHECK(std::abs(plot::paperWeight(walls, settings) - 0.5) < 1e-12);
+  plot::Style plain;
+  CHECK(std::abs(plot::paperWeight(plain, settings) - plot::kDefaultWeight) < 1e-12);
+  settings.lineweights = false;
+  CHECK(std::abs(plot::paperWeight(walls, settings) - plot::kThinnest) < 1e-12);
+}
+
+// Where a plot lands (UI-88): fit to the printable rectangle and centred, 1:N at its own size (clipped when too big), the
+// display's and a window's area; the scale as people say it.
+TEST(a_plot_fits_or_takes_its_scale) {
+  plot::Sheet sheet;
+  sheet.x0 = 0, sheet.y0 = 0, sheet.x1 = 1000, sheet.y1 = 500;  // a 1 m by 0.5 m drawing
+  sheet.items.push_back({});
+  plot::Settings s;  // A4 landscape, 10 mm margins: 277 x 190 printable
+  plot::Placement p = plot::place(sheet, s);
+  CHECK(p.valid() && !p.clipped);
+  CHECK_NEAR(p.scale, 0.277, 1e-12);
+  CHECK_NEAR(p.x, 10, 1e-9);
+  CHECK_NEAR(p.y, 10 + (190 - 500 * 0.277) / 2, 1e-9);
+  s.fit = false;
+  s.scale = 1.0 / 5;
+  p = plot::place(sheet, s);
+  CHECK(!p.clipped && std::abs(p.scale - 0.2) < 1e-12 && std::abs(p.x - (10 + (277 - 200) / 2.0)) < 1e-9);
+  s.scale = 1;  // 1:1 does not fit on A4
+  CHECK(plot::place(sheet, s).clipped);
+  s.fit = true;
+  s.region = plot::Region::Window;
+  s.window = {600, 400, 200, 100};  // corners either way round
+  p = plot::place(sheet, s);
+  CHECK(std::abs(p.area.x0 - 200) < 1e-12 && std::abs(p.area.y1 - 400) < 1e-12 && std::abs(p.scale - std::min(277 / 400.0, 190 / 300.0)) < 1e-12);
+  s.region = plot::Region::Display;
+  s.display = {0, 0, 100, 50};
+  CHECK_NEAR(plot::place(sheet, s).scale, 2.77, 1e-12);
+  plot::Sheet line;  // one horizontal line: room for its width
+  line.x0 = 0, line.x1 = 100, line.y0 = line.y1 = 0;
+  line.items.push_back({});
+  CHECK(plot::place(line, plot::Settings{}).valid());
+  CHECK(!plot::place(plot::Sheet{}, plot::Settings{}).valid());
+  CHECK(plot::scaleText(0.02) == "1:50" && plot::scaleText(2) == "2:1" && plot::scaleText(1 / 37.4249) == "1:37.42" && plot::scaleText(1) == "1:1");
 }
 
 // The cursor readout's drawing coordinates (UI-90): a drawing read far from (0,0) keeps the offset on its root, so a world

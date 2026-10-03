@@ -29,6 +29,7 @@
 #include "Icons.hpp"
 #include "LayersPanel.hpp"
 #include "PanelFooter.hpp"
+#include "PlotDialog.hpp"
 #include "PropertiesPanel.hpp"
 #include "Ribbon.hpp"
 #include "ShortcutEditor.hpp"
@@ -102,6 +103,15 @@ class Drawing2DArea : public AreaController {
       if (Viewport* v = services().viewport()) v->setObjectSnap(m_snapAction->isChecked());
     });
     m_snapAction->setChecked(QSettings().value("view/objectSnap", true).toBool());
+    // Plot (UI-88): a drawing to PDF or a printer.
+    CommandInfo plot{"drawing2d.plot", tr("Plot…"), "plot"};
+    plot.group = tr("File");
+    plot.keywords = {"print", "pdf", "plot to pdf", "printer", "paper", "monochrome", "lineweights", "plot window", "scale"};
+    plot.enabledWhen = [this](const CommandContext& c) { return c.document && m_hasDrawings; };
+    m_plotAction = services().addCommand(plot, [this] {
+      if (!m_plot) m_plot = new PlotDialog(services(), services().window());
+      m_plot->start();
+    });
   }
 
   // Beside the other snapping switches' row: the object snap switch (F3), styled as they are; then the cursor readout.
@@ -141,6 +151,13 @@ class Drawing2DArea : public AreaController {
   }
 
   void menus(QMenuBar*, const QMap<QString, QMenu*>& menus) override {
+    if (QMenu* file = menus.value("file")) {  // Plot after Export
+      const QList<QAction*> entries = file->actions();
+      QAction* before = nullptr;
+      for (int i = 0; i + 1 < entries.size(); ++i)
+        if (entries[i]->objectName() == "file.export") before = entries[i + 1];
+      file->insertAction(before, m_plotAction);
+    }
     if (QMenu* inspect = menus.value("inspect"); inspect && services().action("inspect.area")) {  // Area after the other measuring tools
       const QList<QAction*> entries = inspect->actions();
       QAction* before = nullptr;
@@ -159,6 +176,7 @@ class Drawing2DArea : public AreaController {
 
   void ribbon(RibbonLayout& layout) override {
     if (QAction* area = services().action("inspect.area")) layout.addAction("review.inspect.measure", area);  // UI-90
+    for (const QString group : {"review.export.export", "design.export.export"}) layout.addAction(group, m_plotAction);  // UI-88
     for (const QString tab : {"review.view", "design.view"})
       if (layout.addGroup(tab, tab + ".drawing", tr("Drawing"))) {
         layout.addAction(tab + ".drawing", m_layersAction);
@@ -310,6 +328,7 @@ class Drawing2DArea : public AreaController {
     m_layerIds.clear();
     for (const auto& l : drawing2d::layers(services().document()->scene)) m_layerIds.insert(l.id);
     m_hasLayers = !m_layerIds.empty();
+    m_hasDrawings = services().document()->hasDocument && drawing2d::hasDrawings(services().document()->scene);
     applyVocabulary();
     if (m_tool && m_tool->isVisible()) {
       if (!m_hasLayers) m_tool->hide();
@@ -448,7 +467,9 @@ class Drawing2DArea : public AreaController {
   LayersPanel* m_layers = nullptr;
   ToolPanel* m_tool = nullptr;
   QLabel* m_walkChip = nullptr;
-  QAction *m_layersAction = nullptr, *m_walkAction = nullptr, *m_isolateAction = nullptr, *m_snapAction = nullptr;
+  QAction *m_layersAction = nullptr, *m_walkAction = nullptr, *m_isolateAction = nullptr, *m_snapAction = nullptr, *m_plotAction = nullptr;
+  PlotDialog* m_plot = nullptr;
+  bool m_hasDrawings = false;
   bool m_hasLayers = false, m_words = false, m_filterWords = false;
   std::set<std::string> m_layerIds;  // for the browser's rows: asked at every paint
   RolloverCard* m_card = nullptr;
