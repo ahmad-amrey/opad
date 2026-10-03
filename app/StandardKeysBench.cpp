@@ -7,6 +7,7 @@
 
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QKeyEvent>
 #include <QKeySequenceEdit>
 #include <QMenu>
 #include <QMessageBox>
@@ -18,10 +19,11 @@
 // OPAD_BENCH_STANDARDKEYS=<prefix> (a box, a cylinder beside it and a sketch "Plate", started with Properties saved on
 // Ctrl+P as the old editor wrote it): the keys (Ctrl+A, Ctrl+Shift+I, Shift+Enter, Alt+Enter now and the setting gone,
 // F1, Ctrl+, and Redo also on Ctrl+Shift+Z); Select all takes the visible bodies only, in the body filter; Invert takes
-// the others; Repeat names and reruns the last tool and leads the view's context menu; in the sketch, Select all and
-// Invert work on its curves; Keyboard shortcuts shows Redo's alternate and gives Repeat a second key that is kept, in its
-// tooltip and the cheat sheet, until Restore default (<prefix>.shortcut-editor.png); an unfinished sketch whose question
-// is answered Finish is saved as an op and then what asked goes on.
+// the others; Repeat names and reruns the last tool (Enter in the view too while nothing runs) and leads the view's
+// context menu; in the sketch, Select all and Invert work on its curves; Keyboard shortcuts shows Redo's alternate and
+// gives Repeat a second key that is kept, in its tooltip and the cheat sheet, until Restore default
+// (<prefix>.shortcut-editor.png); an unfinished sketch whose question is answered Finish is saved as an op and then what
+// asked goes on.
 OPAD_BENCH(OPAD_BENCH_STANDARDKEYS, standardkeys) {
   auto failed = std::make_shared<QStringList>();
   auto check = [failed](bool ok, const QString& what) {
@@ -122,6 +124,19 @@ OPAD_BENCH(OPAD_BENCH_STANDARDKEYS, standardkeys) {
           "Repeat names it: " + repeat->text());
     repeat->trigger();
     check(w.m_tool.id == "distance", "Repeat runs it again");
+    w.cancelTool();
+    // Enter in the view: Repeat while nothing runs; with the tool running it is the tool's (it stays, not started again).
+    auto enter = [&w](bool held) {
+      QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier, "\r", held);
+      return QCoreApplication::sendEvent(w.m_viewport, &press) && press.isAccepted();
+    };
+    enter(true);
+    check(w.m_tool.id.isEmpty(), "a held Enter repeats nothing");
+    enter(false);
+    check(w.m_tool.id == "distance", "Enter in the view repeats it too");
+    const int run = w.m_toolRun;
+    enter(false);
+    check(w.m_tool.id == "distance" && w.m_toolRun == run, "Enter while it runs is the tool's: not started again");
     w.cancelTool();
     QTimer::singleShot(400, &w, [=, &w] {  // the menu runs its own loop: look at it from inside, then close it
       QMenu* menu = nullptr;

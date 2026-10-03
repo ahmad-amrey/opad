@@ -24,6 +24,7 @@
 #include "BrowserOverlay.hpp"
 class RecoveryManager;
 class AgentBridge;
+class QKeyEvent;
 class QToolButton;
 template <class Tag>
 struct MainWindowBench;
@@ -76,6 +77,7 @@ class MainWindow : public QMainWindow {
   void selectShown(bool invert);                 // Select all / Invert selection (UI-111)
   static bool repeatable(const QString& id);
   void noteCommand(const QString& id);  // a command ran: Repeat runs it again
+  bool repeatOnEnter(const QKeyEvent* key);  // Enter in the view with nothing running: Repeat
   QString m_lastCommand;
   void buildRibbon();
   void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")

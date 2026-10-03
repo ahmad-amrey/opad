@@ -584,7 +584,7 @@
    "id": "edit.repeat",
    "title": "Repeat",
    "summary": "Runs the last tool, feature, check or edit again.",
-   "details": "The menu entry names the command it repeats, and it is the first entry of the view's context menu. View changes, file commands and selection commands are never repeated.",
+   "details": "The menu entry names the command it repeats, and it is the first entry of the view's context menu. Enter in the view repeats it too while nothing runs. View changes, file commands and selection commands are never repeated.",
    "keywords": ["again", "redo command", "last command", "repeat last"]
   },
   {

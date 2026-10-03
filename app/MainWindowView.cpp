@@ -8,6 +8,7 @@
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QInputDialog>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QMoveEvent>
 #include <QResizeEvent>
@@ -20,7 +21,9 @@
 #include <utility>
 #include <vector>
 
+#include "DrawingPlacer.hpp"
 #include "I18n.hpp"
+#include "PlanePicker.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
@@ -296,7 +299,21 @@ void MainWindow::setLoading(bool on) {
 
 bool MainWindow::eventFilter(QObject* o, QEvent* e) {
   if (o == m_viewport && (e->type() == QEvent::Resize || e->type() == QEvent::Show)) positionOverlays();
+  if (o == m_viewport && e->type() == QEvent::KeyPress && repeatOnEnter(static_cast<QKeyEvent*>(e))) return true;
   return QMainWindow::eventFilter(o, e);
+}
+
+// Enter in the view while nothing runs repeats the last command, as in SOLIDWORKS and AutoCAD (UI-111). While a tool, a
+// feature, a sketch, a note or a plane pick runs, Enter is theirs (OK, finish, the typed value); a held key does nothing.
+bool MainWindow::repeatOnEnter(const QKeyEvent* key) {
+  if ((key->key() != Qt::Key_Return && key->key() != Qt::Key_Enter) || (key->modifiers() & ~Qt::KeypadModifier) || key->isAutoRepeat()) return false;
+  if (!m_doc->hasDocument || !m_tool.id.isEmpty() || m_annotationEditor || m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane() ||
+      m_design->planePicker()->active() || m_drawingPlacer->active() || m_toolPanel->isVisible())
+    return false;
+  QAction* repeat = action("edit.repeat");
+  if (!repeat || !repeat->isEnabled()) return false;
+  repeat->trigger();
+  return true;
 }
 
 // ---------------------------------------------------------------- named views (view op)
