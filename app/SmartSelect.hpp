@@ -3,14 +3,16 @@
 // picked a chip floats beside them naming what they belong to: the feature that made them, from the design history
 // ("Boss · 5 faces"), else a detail the geometry shows (a hole, a fillet chain, a boss, a wall), a tangent chain or a
 // loop. Hovering it shows those faces in the candidate amber and pulses the feature's timeline marker; a click (or
-// Ctrl+Up) selects them, and on a selection that is such a set the chip carries its actions: Delete, Edit, Suppress,
-// Find in timeline, Isolate for a feature; Remove faces, Select similar, Isolate for a detail. ▾ (Shift+Space) lists
-// every candidate with those actions. Ctrl+Up climbs faces -> feature or detail -> body -> component -> parent and
-// Ctrl+Down climbs back. Double-click: a face -> its feature or detail (again on a face of it: edit the feature), an edge
-// -> the loop on the face on the pointer's side of it, Alt -> its tangent chain. Del on picked faces or edges never tombstones
-// the body's source (UI-04): a feature's whole face set deletes the feature (asking first when later features use it,
-// with the result previewed), anything else opens the menu. Everything comes from the related command (provenance and
-// rules: nothing is suggested by resemblance, D4), run on a worker over a document snapshot, newest selection only.
+// Ctrl+Up) selects them, and on a selection that is such a set the chip carries its actions: Delete, Edit (Enter),
+// Suppress, Find in timeline, Isolate for a feature; Remove faces, Select similar, Measure, Isolate for a detail (its
+// sizes are the chip's tooltip). ▾ (Shift+Space) lists every candidate with those actions, and for a feature Select what
+// depends on it. Ctrl+Up climbs faces -> feature or detail -> body -> component -> parent and Ctrl+Down climbs back.
+// Double-click: a face -> its feature or detail (again on a face of it: edit the feature), an edge -> the loop on the
+// face on the pointer's side of it, Alt -> its tangent chain. Del on picked faces or edges never tombstones the body's
+// source (UI-04): a feature's whole face set deletes the feature (asking first when later features use it, with the
+// result previewed), anything else opens the menu. Edit > Suggest related selections and Suggestion delay (settings
+// selection/suggest, selection/suggestDelay). Everything comes from the related command (provenance and rules: nothing
+// is suggested by resemblance, D4), run on a worker over a document snapshot, newest selection only.
 #include <QFrame>
 #include <QPointer>
 #include <QTimer>
