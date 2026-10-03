@@ -289,10 +289,13 @@ QJsonValue lerp(const QJsonValue& a, const QJsonValue& b, double f) {
   }
   return a;
 }
+// Indexes (a highlighted row, a focused box, a side count) change at the key, never pass through the ones between.
+const QStringList kDiscrete{"hl", "focus", "n"};
 QJsonValue valueAt(const Track& k, double t) {
   if (t <= k.t.first()) return k.v.first();
+  const bool discrete = kDiscrete.contains(k.prop);
   for (qsizetype i = 1; i < k.t.size(); ++i)
-    if (t < k.t[i]) return lerp(k.v[i - 1], k.v[i], eased(k.ease[i], (t - k.t[i - 1]) / std::max(1e-9, k.t[i] - k.t[i - 1])));
+    if (t < k.t[i]) return discrete ? k.v[i - 1] : lerp(k.v[i - 1], k.v[i], eased(k.ease[i], (t - k.t[i - 1]) / std::max(1e-9, k.t[i] - k.t[i - 1])));
   return k.v.last();
 }
 // Before its first key a property keeps the item's own value (when it has one), else the first key's.
@@ -924,6 +927,13 @@ void lathe(Ctx& c, const QJsonObject& o, const Xf& x) {
     for (int k = 0; k <= 8; ++k) for (const QPointF& q : prof) c.map(P(start + sweep * k / 8, q));
     return;
   }
+  // A ring is drawn where the profile turns a corner, not along a smooth curve (a sphere is not striped).
+  QVector<bool> corner(m);
+  for (qsizetype j = 0; j < m; ++j) {
+    const QPointF in = prof[j] - prof[(j + m - 1) % m], out = prof[(j + 1) % m] - prof[j];
+    const double li = std::hypot(in.x(), in.y()), lo = std::hypot(out.x(), out.y());
+    corner[j] = li < 1e-9 || lo < 1e-9 || (in.x() * out.x() + in.y() * out.y()) / (li * lo) < std::cos(25 * kPi / 180);
+  }
   QVector<Face> faces;
   QVector<QVector<bool>> front(m, QVector<bool>(n));
   for (qsizetype j = 0; j < m; ++j) {
@@ -936,7 +946,7 @@ void lathe(Ctx& c, const QJsonObject& o, const Xf& x) {
       f.n = len < 1e-9 ? V3(0, 0, 1) : x.normal(V3(float(d.y() / len * std::cos(mid)), float(d.y() / len * std::sin(mid)), float(-d.x() / len)));
       f.front = len > 1e-9 && V3::dotProduct(f.n, c.V) > 1e-4;
       front[j][k] = f.front;
-      f.edge = {true, false, true, false};
+      f.edge = {corner[j], false, corner[(j + 1) % m], false};
       faces << f;
     }
   }
@@ -1406,8 +1416,8 @@ void dimension(Ctx& c, const QJsonObject& o, const Xf& x) {
 // An original stand-in photograph for the canvas clips: a machined plate with two holes on a bench, soft light.
 void picture(Ctx& c, const QJsonObject& o, const Xf& x) {
   const QJsonArray k = o.value("corners").toArray();
-  const V3 a = c.pt(k.at(0), x), b = c.pt(k.at(1), x);
-  const QPolygonF to{c.map(V3(a.x(), b.y(), a.z())), c.map(V3(b.x(), b.y(), a.z())), c.map(V3(b.x(), a.y(), a.z())), c.map(V3(a.x(), a.y(), a.z()))};
+  const V3 a = vec(k.at(0)), b = vec(k.at(1));  // the picture's own corners, then turned and moved with the item
+  const QPolygonF to{c.map(x.apply(V3(a.x(), b.y(), a.z()))), c.map(x.apply(V3(b.x(), b.y(), a.z()))), c.map(x.apply(V3(b.x(), a.y(), a.z()))), c.map(x.apply(V3(a.x(), a.y(), a.z())))};
   QTransform tr;
   if (!QTransform::quadToQuad(QPolygonF{{0, 0}, {1, 0}, {1, 1}, {0, 1}}, to, tr)) return;
   QPainter& p = *c.p;
