@@ -2,6 +2,7 @@
 #include <QCommandLineParser>
 #include <QDir>
 #include <QFile>
+#include <QFileOpenEvent>
 #include <QSettings>
 #include <QTimer>
 #include <QSurfaceFormat>
@@ -9,10 +10,30 @@
 #include "CrashLog.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "Jobs.hpp"
 #include "MainWindow.hpp"
 #include "opad/core.hpp"
 
+namespace {
+// macOS hands the files a user opens from Finder (or drops on the Dock icon) to a running app as events, not arguments.
+class FileOpenEvents : public QObject {
+ public:
+  explicit FileOpenEvents(MainWindow* window) : QObject(window), m_window(window) {}
+  bool eventFilter(QObject* watched, QEvent* event) override {
+    if (event->type() == QEvent::FileOpen) {
+      const QString file = static_cast<QFileOpenEvent*>(event)->file();
+      if (!file.isEmpty()) m_window->openPath(file);
+      return true;
+    }
+    return QObject::eventFilter(watched, event);
+  }
+ private:
+  MainWindow* m_window;
+};
+}  // namespace
+
 int main(int argc, char** argv) {
+  trace::log("startup: main");
   installCrashHandler();
   // Derived ids are for scripted builds (gap log #15): a desktop session restarted on the same document would derive
   // the same ones again.
@@ -47,20 +68,24 @@ int main(int argc, char** argv) {
       qputenv("OPAD_CACHE_DIR", QDir::toNativeSeparators(dataDir + "/cache").toLocal8Bit());
   }
   i18n::install(app);  // before any widget exists: translator and layout direction (needs the names above for QSettings)
+  trace::log("startup: application");
 
   QCommandLineParser parser;
-  parser.setApplicationDescription("OPAD: git-native STEP viewer");
+  parser.setApplicationDescription("OPAD: CAD viewer and git-native parametric modeller");
   parser.addHelpOption();
   parser.addVersionOption();
-  parser.addPositionalArgument("file", "An .opad document or a .step file to browse");
+  parser.addPositionalArgument("file", "An .opad document, or a STEP, IGES, STL, 3MF, OBJ, glTF, PLY, DXF, DWG or SVG file to view");
   QCommandLineOption bench("bench-select", "Select every root once the file has loaded, log the timing (OPAD_TRACE) and quit");
   bench.setFlags(QCommandLineOption::HiddenFromHelp);
   parser.addOption(bench);
   parser.process(app);
 
   MainWindow win;
+  app.installEventFilter(new FileOpenEvents(&win));
+  trace::log("startup: window built");
   win.setBenchSelect(parser.isSet(bench));
   win.show();
+  trace::log("startup: window shown");
   QTimer::singleShot(0, &win, [&win] { win.warmUpViewport(); });  // GL init off the first-open path
   const QStringList args = parser.positionalArguments();
   if (!args.isEmpty()) win.openPath(args.first());

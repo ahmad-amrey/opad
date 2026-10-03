@@ -122,7 +122,7 @@ NoteCard::NoteCard(const NoteInfo& note, QWidget* parent, AppDocument* doc) : QF
   auto* author = new QLabel(QString::fromStdString(note.by), this);
   author->setFont(theme::ui(13, QFont::Medium));
   head->addWidget(author);
-  auto* time = new QLabel(QString::fromStdString(note.ts).left(16).replace('T', ' '), this);
+  auto* time = new QLabel(i18n::localTime(note.ts), this);
   time->setObjectName("secondary");
   head->addWidget(time, 1);
   auto* id = new QLabel(QString::fromStdString(note.id.substr(0, 8)), this);

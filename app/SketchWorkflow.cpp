@@ -8,13 +8,16 @@
 #include <QImage>
 #include <QFileInfo>
 #include "Jobs.hpp"
+#include <algorithm>
 #include <cmath>
+#include <map>
 #include "I18n.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_modify.hpp"
 #include <BRep_Builder.hxx>
 #include <BRepBndLib.hxx>
 #include <TopoDS_Compound.hxx>
+#include "opad/geometry.hpp"
 
 using namespace opad::design;
 
@@ -69,7 +72,8 @@ QList<ToolStep> SketchEditor::toolSteps() const {
   if(m_tool=="line" || m_tool=="spline") count=m_chain.empty()?0:m_chain.size()==1?1:2;
   if(m_tool.startsWith("c:"))count=int(m_picked.size());
   if(m_tool=="dimension")count=m_dimEditing?2:m_placingDim?1:0;
-  if(m_tool=="select" || m_tool=="offset" || m_tool=="mirror" || m_tool=="node")count=m_sel.empty()?0:1;
+  if(m_tool=="select" || m_tool=="offset" || m_tool=="node")count=m_sel.empty()?0:1;
+  if(m_tool=="mirror")count=option("mirrorAxis","picked")!="picked"?(m_sel.empty()?0:2):option("mirrorStage","seed")!="axis"?0:m_picked.empty()?1:2;
   if(m_tool=="fillet")count=1;
   QList<ToolStep> result;
   for(int i=0;i<labels.size();++i)result.push_back({labels[i],i<count?tr("Ready"):QString()});
@@ -84,7 +88,9 @@ void SketchEditor::applyTool() {
     ++m_modelRevision;
     m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
     m_undo.push_back({m_sk,m_plane,m_frame});m_redo.clear();m_sk=*m_toolPreview;m_solved=m_previewSolved;m_toolPreview.reset();m_modified=true;m_panelFieldsDirty=true;
-    m_clicks.clear();m_picked.clear();m_sel.clear();updateDimensionHandle();rebuild();scheduleFill();toolPrompt();emit changed();return;
+    m_clicks.clear();m_picked.clear();m_sel.clear();updateDimensionHandle();rebuild();scheduleFill();toolPrompt();
+    if(m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d"){m_options.remove("projectionSource");emit workflowChanged();}  // next source
+    emit changed();return;
   }
   if(applyReference()||applyImageTool())return;
   if(applyModify())return;
@@ -144,12 +150,17 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
   },[this,guard,before,after,solved,session,preview,previewRevision,modelRevision,shape,prs](bool ok,const QString& error){
     if(!guard || !m_active || m_session!=session)return;
     m_editJob=nullptr;m_previewComputing=false;
-    if(preview && previewRevision!=m_previewRevision)return;
-    if(!ok){emit status(error);return;}
+    // A preview for an older value: shown while the handle is still dragged (the newest one is computed next), but
+    // never kept for Apply. Otherwise the newer run replaces it.
+    const bool stale=preview && previewRevision!=m_previewRevision;
+    if(stale && !m_dimensionHandle->dragging())return;
+    if(!ok){if(!stale){if(preview){m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();}emit status(error);}return;}
     if(m_modelRevision!=modelRevision)return;
-    if(preview){m_toolPreview=after;m_previewSolved=*solved;
-      auto overlay=new BodyShape(*shape,*prs);overlay->SetColor(Quantity_Color(.95,.65,.2,Quantity_TOC_sRGB));overlay->SetWidth(2);m_toolPreviewOverlay=overlay;if(m_visible)m_viewport->showOverlay(m_toolPreviewOverlay);
-      emit status(tr("Preview ready. Apply to keep it, or change parameters and preview again."));return;}
+    if(preview){
+      if(!stale){m_toolPreview=after;m_previewSolved=*solved;}
+      m_viewport->removeOverlay(m_toolPreviewOverlay);
+      auto overlay=new BodyShape(*shape,*prs);overlay->SetColor(Quantity_Color(.95,.65,.2,Quantity_TOC_sRGB));overlay->SetWidth(2*m_viewport->displayScale());m_toolPreviewOverlay=overlay;if(m_visible)m_viewport->showOverlay(m_toolPreviewOverlay);
+      if(!stale)emit status(tr("Preview ready. Apply to keep it, or change parameters and preview again."));return;}
     ++m_modelRevision;m_undo.push_back({*before,m_plane,m_frame});m_redo.clear();m_sk=*after;m_solved=*solved;m_modified=true;m_panelFieldsDirty=true;
     m_clicks.clear();m_picked.clear();m_sel.clear();rebuild();scheduleFill();toolPrompt();emit changed();
     if(m_tool=="mirror")m_options["mirrorStage"]="seed";
@@ -307,7 +318,18 @@ void SketchEditor::fitSketch() {
     const double a=image.value("angle",0.0),x=image.at("position")[0].get<double>(),y=image.at("position")[1].get<double>(),w=image.at("width").get<double>(),h=image.at("height").get<double>();
     for(auto [u,v]:std::vector<std::pair<double,double>>{{0,0},{w,0},{w,h},{0,h}}){double px=x+u*std::cos(a)-v*std::sin(a),py=y+u*std::sin(a)+v*std::cos(a);if(!any){x0=x1=px;y0=y1=py;any=true;}else{x0=std::min(x0,px);x1=std::max(x1,px);y0=std::min(y0,py);y1=std::max(y1,py);}}
   }
-  if(!any || x1-x0+y1-y0<1e-8){x0=y0=-60;x1=y1=60;}
+  if(!any || x1-x0+y1-y0<1e-8) {
+    // An empty sketch frames the visible model as seen on its plane (a fixed 120 mm window shrank a 20 mm face the
+    // plane pick had just filled the view with). The view boxes are cached per body: no geometry walked here.
+    any=false;
+    for(const auto& id:m_doc->scene.all_bodies()) {
+      if(!m_doc->scene.effectively_visible(id))continue;
+      Bnd_Box box;try{box=opad::node_world_bbox(m_doc->doc,m_doc->scene,id);}catch(const std::exception&){continue;}
+      if(box.IsVoid())continue;double bx0,by0,bz0,bx1,by1,bz1;box.Get(bx0,by0,bz0,bx1,by1,bz1);
+      for(int c=0;c<8;++c){double u,v;m_frame.to_local({c&1?bx1:bx0,c&2?by1:by0,c&4?bz1:bz0},u,v);if(!any){x0=x1=u;y0=y1=v;any=true;}else{x0=std::min(x0,u);x1=std::max(x1,u);y0=std::min(y0,v);y1=std::max(y1,v);}}
+    }
+    if(!any || x1-x0+y1-y0<1e-8){x0=y0=-60;x1=y1=60;}
+  }
   const double aspect=double(std::max(1,m_viewport->width()))/std::max(1,m_viewport->height());const double scale=std::max({20.0,(y1-y0)*1.3,(x1-x0)*1.3/aspect});
   auto camera=m_viewport->cameraJson();auto center=m_frame.to_world((x0+x1)/2,(y0+y1)/2),eye=center;const auto normal=m_frame.normal();for(int i=0;i<3;++i)eye[i]+=normal[i]*std::max(100.0,scale*2);
   camera["eye"]=eye;camera["target"]=center;camera["scale"]=scale;camera["projection"]="orthographic";m_viewport->setCameraJson(camera);
@@ -319,24 +341,38 @@ void SketchEditor::analyseSketch() {
 }
 
 void SketchEditor::previewTool() {
-  if(!m_active||m_editJob)return;invalidatePreview();m_previewRequested=true;applyTool();m_previewRequested=false;
+  // The shown preview stays until this one replaces it (or fails): no blank frame between two previews.
+  if(!m_active||m_editJob)return;invalidatePreview(true);m_previewRequested=true;applyTool();m_previewRequested=false;
 }
-void SketchEditor::invalidatePreview() {
+void SketchEditor::invalidatePreview(bool keepOverlay) {
   ++m_previewRevision;
-  m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
+  if(!keepOverlay){m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();}
   if(!m_toolPreview)return;m_toolPreview.reset();rebuild();
 }
 void SketchEditor::scheduleToolPreview() {
-  invalidatePreview();updateDimensionHandle();
+  // While the offset arrow is dragged the preview follows as fast as it is computed (throttled, the shown one stays
+  // until the next replaces it); otherwise it waits for the value to rest. Restarting the timer on every move meant
+  // no preview until the button was let go.
+  const bool live=m_dimensionHandle->dragging();
+  invalidatePreview(live);updateDimensionHandle();
   const QStringList tools={"offset","move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","chamfer","union","subtract","intersect"};
-  if(m_active && tools.contains(m_tool) && (!m_sel.empty() || m_clicks.size()==2))m_toolPreviewTimer.start();
+  if(m_active && tools.contains(m_tool) && (!m_sel.empty() || m_clicks.size()==2)) {
+    if(!live)m_toolPreviewTimer.start(120);
+    else if(!m_toolPreviewTimer.isActive())m_toolPreviewTimer.start(16);
+  }
   else m_toolPreviewTimer.stop();
 }
 void SketchEditor::updateDimensionHandle() {
   if(!m_active || !m_visible || m_tool!="offset" || m_sel.empty()){m_dimensionHandle->hide();return;}
   if(m_dimensionHandle->interacting())return;
-  const SkEntity* entity=std::find(m_sel.begin(),m_sel.end(),m_hover.id)!=m_sel.end()?m_sk.entity(m_hover.id):nullptr;
-  if(!entity)for(int id:m_sel)if((entity=m_sk.entity(id)))break;if(!entity || entity->p.empty())return;
+  // The arrow goes to the selected curve under the pointer and stays on it after the pointer leaves it (on its way to
+  // the arrow): falling back to the first selected curve made the arrow jump back there, so only that edge could be
+  // pulled.
+  auto selected=[&](int id){return std::find(m_sel.begin(),m_sel.end(),id)!=m_sel.end() && m_sk.entity(id);};
+  if(m_hover.kind==Hit::Entity && selected(m_hover.id))m_offsetAnchor=m_hover.id;
+  if(!selected(m_offsetAnchor)){m_offsetAnchor=0;for(int id:m_sel)if(m_sk.entity(id)){m_offsetAnchor=id;break;}}
+  const SkEntity* entity=m_offsetAnchor?m_sk.entity(m_offsetAnchor):nullptr;
+  if(!entity || entity->p.empty())return;
   const auto* a=m_sk.point(entity->p.front());if(!a)return;
   double x=a->x,y=a->y,dx=1,dy=0;
   if(entity->type==SkEntity::Type::Circle || entity->type==SkEntity::Type::Arc){
@@ -352,6 +388,19 @@ void SketchEditor::updateDimensionHandle() {
         const double t=std::clamp(((m_cursor.u-ax)*ex+(m_cursor.v-ay)*ey)/l2,0.,1.),px=ax+t*ex,py=ay+t*ey,d=std::hypot(px-m_cursor.u,py-m_cursor.v);
         if(d<best){best=d;x=px;y=py;dx=ey/std::sqrt(l2);dy=-ex/std::sqrt(l2);}
       }
+    }
+    // A closed chain grows outward for a positive distance whichever way its curves run: point the arrow outward.
+    std::vector<std::pair<std::pair<double,double>,std::pair<double,double>>> loop;std::map<int,int> ends;
+    for(int id:m_sel)if(const auto* e=m_sk.entity(id)) {
+      if(e->type==SkEntity::Type::Line || e->type==SkEntity::Type::Arc || e->type==SkEntity::Type::Spline){
+        const int first=e->type==SkEntity::Type::Arc?e->p[1]:e->p.front(),last=e->type==SkEntity::Type::Arc?e->p[2]:e->p.back();++ends[first];++ends[last];}
+      const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i)loop.push_back({pts[i-1],pts[i]});
+    }
+    const bool closed=!ends.empty() && std::all_of(ends.begin(),ends.end(),[](const auto& end){return end.second%2==0;});
+    if(closed) {
+      const double probe=std::max(1e-9,0.25*tol());const double qx=x+dx*probe,qy=y+dy*probe;bool inside=false;
+      for(const auto& [a,b]:loop)if((a.second>qy)!=(b.second>qy) && qx<a.first+(qy-a.second)*(b.first-a.first)/(b.second-a.second))inside=!inside;
+      if(inside){dx=-dx;dy=-dy;}
     }
   }
   try {

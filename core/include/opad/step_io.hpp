@@ -1,5 +1,7 @@
 #pragma once
 #include <functional>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -36,6 +38,22 @@ ImportResult import_step(Document& doc, const std::filesystem::path& step, const
 
 // Browse mode (F1): a transient, never-saved document with the STEP imported.
 Document browse_step(const std::filesystem::path& step, const ImportOptions& opt = {});
+
+// Viewer mode -> an editable document, in place of a second read of the file: every live body (ImportOptions::viewer)
+// gets its BREP text and content key, healed like a full import, and the ops are rewritten to the new keys, so hidden
+// layers, colours and other view changes carry over. Live keys whose shape came through unchanged are in `renamed`
+// (a view can keep what it shows for them); `healed` lists new keys whose shape the healing changed.
+struct EditableKeys {
+  std::map<std::string, std::string> renamed;  // live key -> content key
+  std::set<std::string> healed;
+};
+Document make_editable(const Document& viewer, EditableKeys* changed = nullptr, const std::function<bool(double)>& progress = {});
+
+// Viewer mode remembers slow reads (viewer_cache.cpp): the shapes of a viewer document's import, with any display meshes
+// made since, kept under the user cache and keyed by the file's path, size and time and the options that shape the read.
+// load: false when nothing usable is kept (then read the file); store: best effort, never throws for cache trouble.
+bool viewer_cache_load(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
+void viewer_cache_store(const Document& doc, const std::filesystem::path& file, const ImportOptions& opt, const std::function<bool()>& cancelled = {});
 
 // Imports a shape given as OCCT ASCII BREP text (the bridge for build123d/CadQuery/OCP users): solids in a
 // compound become separate bodies under a component named `name`.

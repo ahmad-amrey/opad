@@ -4,7 +4,9 @@
 // thread), committed on the UI thread as one undo step.
 #include <QObject>
 #include <QTimer>
+#include <array>
 #include <functional>
+#include <tuple>
 
 #include "AppDocument.hpp"
 #include "DesignPanels.hpp"
@@ -27,7 +29,7 @@ class DesignController : public QObject {
   void setSketchPanel(ToolPanel* panel);
   // The component selected in the browser (empty: none): where a new feature's bodies go unless its panel says else.
   void setCurrentComponent(std::function<std::string()> current) { m_currentComponent = std::move(current); }
-  void showSketchPanel();
+  void showSketchPanel(const QString& page = {});  // page: the title of the page shown instead of the tool
   void redefineSketchPlane();
 
   void startFeature(const QString& kind);
@@ -57,6 +59,9 @@ class DesignController : public QObject {
   opad::json recoveryState() const;
   void restoreRecovery(const opad::json& state);
 
+ protected:
+  bool eventFilter(QObject* watched, QEvent* event) override;  // Enter in the view accepts the open feature
+
  signals:
   void stateChanged();                  // what is active changed: actions, ribbon
   void status(const QString& text);
@@ -67,6 +72,7 @@ class DesignController : public QObject {
   void endFeature();
   void activateInput(const QString& name);
   void showCandidatesFor(const QString& type);
+  double modelReach() const;
   void syncSelectionToInput();
   void schedulePreview();
   void runPreview(bool commit);
@@ -93,6 +99,7 @@ class DesignController : public QObject {
 
   bool m_featureOn = false;
   std::string m_editing;        // feature op being edited (empty: a new one)
+  opad::json m_editResult;      // what that feature made when editing began: the preview until an input changes it
   bool m_previewPending = false;  // a handle drag changed the value while a preview plan was running
   std::string m_newId;          // id the new feature's op will get (so previews can be matched to it)
   std::function<void(opad::json,opad::Frame)> m_planePicked;
@@ -103,8 +110,26 @@ class DesignController : public QObject {
   QPointer<DimensionHandle> m_distanceHandle;
   Job* m_planJob = nullptr;
   Job* m_candidateJob = nullptr;
+  QString m_nothingToPick;      // the active input has no candidates at all: says so instead of "Pick: …"
   int m_planSerial = 0;
   std::shared_ptr<opad::design::Plan> m_readyPlan;  // computed for m_readyInputs on m_readyOps ops
   std::string m_readyInputs;
   size_t m_readyOps = 0;
+  // What preview plans read: copies of the document and the (rolled back) scene, made once per document state
+  // instead of once per plan (on the Engine each copy cost the UI thread tens of ms per drag step).
+  std::shared_ptr<const opad::Document> m_planDoc;
+  std::shared_ptr<const opad::Scene> m_planScene;
+  std::tuple<unsigned long long, unsigned long long, size_t> m_planStamp{};
+  // The extrude handle's live stretch: the last exact preview and how to pull it along the axis while the next plan
+  // runs, so the body follows the pointer at the frame rate whatever a plan costs.
+ public:
+  struct Stretch {
+    bool valid = false, symmetric = false, footprint = false;
+    std::array<double, 3> origin{}, axis{0, 0, 1}, u{1, 0, 0}, v{0, 1, 0};
+    double from = 0, u0 = 0, u1 = 0, v0 = 0, v1 = 0;
+    std::vector<std::shared_ptr<const BodyPrs>> base;  // the preview parts' arrays, in their order
+  };
+ private:
+  Stretch m_stretch;
+  void stretchPreview(double value);
 };

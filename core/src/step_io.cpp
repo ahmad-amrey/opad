@@ -29,13 +29,23 @@
 #include <XCAFDoc_ColorTool.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
 #include <XCAFDoc_ShapeTool.hxx>
+#include <XCAFDoc_VisMaterial.hxx>
+#include <XCAFDoc_VisMaterialTool.hxx>
+#include <BRep_Tool.hxx>
+#include <Poly_Triangulation.hxx>
+#include <BRepTools.hxx>
+#include <TopTools_FormatVersion.hxx>
+#include <sstream>
 #if __has_include(<RWGltf_CafWriter.hxx>)
 #include <RWGltf_CafWriter.hxx>
 #include <TColStd_IndexedDataMapOfStringString.hxx>
 #define OPAD_HAS_GLTF 1
 #endif
 
+#include <OSD_Parallel.hxx>
+
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
@@ -45,6 +55,7 @@
 
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
+#include "import_common.hpp"
 
 namespace opad {
 
@@ -142,12 +153,82 @@ struct Importer {
   std::map<const void*, std::string> key_by_tshape;
   int body_counter = 0;
   int visited = 0, total = 0;  // shape labels walked / present, for a coarse "building" percentage
-  int live_counter = 0;        // viewer mode: sequential keys for live (never hashed) bodies
+  Handle(XCAFDoc_VisMaterialTool) vt = nullptr;  // glTF, OBJ and newer STEP files keep colours as materials
+  bool mesh = false;                   // the shapes are triangulations (glTF, OBJ, VRML), not B-reps
+  double scale = 1.0;                  // file units -> mm, for readers that do not convert (VRML)
+  std::map<const void*, TopoDS_Shape> meshes = {};  // product shape -> its plain, scaled triangulation (once per product)
+
+  json placement(const TopLoc_Location& loc) const {
+    Mat4 m = mat_from_trsf(loc.Transformation());
+    for (int r = 0; r < 3; ++r) m.at(r, 3) *= scale;
+    return m.to_json();
+  }
+
+  // A reader's mesh as plain triangulated faces in mm: the readers' own arrays may defer their data (glTF), which a saved
+  // document could not hold, and VRML comes in metres. Null when there is not one triangle.
+  TopoDS_Shape plain_mesh(const TopoDS_Shape& s) {
+    auto known = meshes.find(s.TShape().get());
+    if (known != meshes.end() && s.Location().IsIdentity()) return known->second;
+    BRep_Builder builder;
+    TopoDS_Compound all;
+    builder.MakeCompound(all);
+    int count = 0;
+    TopoDS_Face last;
+    for (TopExp_Explorer e(s, TopAbs_FACE); e.More(); e.Next()) {
+      const TopoDS_Face& face = TopoDS::Face(e.Current());
+      TopLoc_Location loc;
+      Handle(Poly_Triangulation) t = BRep_Tool::Triangulation(face, loc);
+      if (!t.IsNull() && t->NbNodes() == 0 && t->HasDeferredData()) t = t->DetachedLoadDeferredData();  // glTF loads late
+      if (t.IsNull() || t->NbTriangles() == 0 || t->NbNodes() == 0) continue;
+      const bool reversed = face.Orientation() == TopAbs_REVERSED;
+      const gp_Trsf trsf = loc.Transformation();
+      Handle(Poly_Triangulation) copy = new Poly_Triangulation(t->NbNodes(), t->NbTriangles(), Standard_False, t->HasNormals());
+      for (int i = 1; i <= t->NbNodes(); ++i) {
+        const gp_Pnt p = t->Node(i).Transformed(trsf);
+        copy->SetNode(i, gp_Pnt(p.X() * scale, p.Y() * scale, p.Z() * scale));
+        if (t->HasNormals()) {
+          gp_Dir n = t->Normal(i).Transformed(trsf);
+          if (reversed) n.Reverse();
+          copy->SetNormal(i, n);
+        }
+      }
+      for (int i = 1; i <= t->NbTriangles(); ++i) {
+        int a, b, c;
+        t->Triangle(i).Get(a, b, c);
+        copy->SetTriangle(i, reversed ? Poly_Triangle(a, c, b) : Poly_Triangle(a, b, c));
+      }
+      TopoDS_Face plain;
+      builder.MakeFace(plain, copy);
+      builder.Add(all, plain);
+      last = plain;
+      ++count;
+    }
+    TopoDS_Shape out = count == 0 ? TopoDS_Shape() : count == 1 ? TopoDS_Shape(last) : TopoDS_Shape(all);
+    if (s.Location().IsIdentity()) meshes[s.TShape().get()] = out;
+    return out;
+  }
 
   bool label_color(const TDF_Label& l, Quantity_Color& c) {
     if (l.IsNull()) return false;
-    return ct->GetColor(l, XCAFDoc_ColorSurf, c) || ct->GetColor(l, XCAFDoc_ColorGen, c) ||
-           ct->GetColor(l, XCAFDoc_ColorCurv, c);
+    if (!ct.IsNull() && (ct->GetColor(l, XCAFDoc_ColorSurf, c) || ct->GetColor(l, XCAFDoc_ColorGen, c) ||
+                         ct->GetColor(l, XCAFDoc_ColorCurv, c)))
+      return true;
+    const Handle(XCAFDoc_VisMaterial) m = material(l);
+    if (m.IsNull()) return false;
+    c = m->BaseColor().GetRGB();
+    return true;
+  }
+  Handle(XCAFDoc_VisMaterial) material(const TDF_Label& l) const {
+    if (vt.IsNull() || l.IsNull()) return {};
+    return vt->GetShapeMaterial(l);
+  }
+  // The material's name and opacity, from the occurrence or else the product it refers to.
+  void label_look(const TDF_Label& l, const TDF_Label& ref, std::string& name, double& opacity) const {
+    Handle(XCAFDoc_VisMaterial) m = material(l);
+    if (m.IsNull()) m = material(ref);
+    if (m.IsNull()) return;
+    if (!m->RawName().IsNull()) name = TCollection_AsciiString(m->RawName()->String()).ToCString();
+    opacity = std::clamp(static_cast<double>(m->BaseColor().Alpha()), 0.05, 1.0);
   }
 
   void progress(double frac, const std::string& what) {
@@ -155,61 +236,35 @@ struct Importer {
   }
   double fraction() const { return total > 0 ? std::min(0.99, static_cast<double>(visited) / total) : -1.0; }
 
-  std::string store(TopoDS_Shape proto, const std::string& name, const Quantity_Color* color) {
+  std::string store(TopoDS_Shape proto, const std::string& name, const Quantity_Color* color, const std::string& material) {
     const void* ts = proto.TShape().get();
     auto it = key_by_tshape.find(ts);
     if (it != key_by_tshape.end() && proto.Location().IsIdentity()) return it->second;
-    if (opt.viewer) {
-      // Viewer mode skips everything that only serves persistence: the validity check and healing, the BREP
-      // text and its SHA-256 key, and the later re-parse of that text. The reader's shape is cached as is.
-      std::string key = sha256_hex("live:" + std::to_string(++live_counter));  // keys must look like content hashes
-      json meta;
-      meta["name"] = name;
-      if (color) meta["color"] = {color->Red(), color->Green(), color->Blue()};
-      meta["units"] = "mm";
-      meta["source"] = source;
-      ++res.new_entries;
-      doc.add_live_body(key, meta);
-      cache_shape(doc, key, proto);
-      key_by_tshape[ts] = key;
-      return key;
-    }
-    if (opt.heal) {
-      BRepCheck_Analyzer ana(proto);
-      if (!ana.IsValid()) {
-        ShapeFix_Shape fix(proto);
-        fix.Perform();
-        proto = fix.Shape();
-        ++res.healed;
-        BRepCheck_Analyzer again(proto);
-        if (!again.IsValid()) res.warnings.push_back("body '" + name + "' still has invalid topology after healing");
-      }
-    }
-    std::string brep;
-    std::string key = body_key_for(proto, &brep);
     json meta;
     meta["name"] = name;
     if (color) meta["color"] = {color->Red(), color->Green(), color->Blue()};
+    if (!material.empty()) meta["material"] = material;
     meta["units"] = "mm";
     meta["source"] = source;
-    if (!doc.has_body(key)) ++res.new_entries;
-    doc.add_body(brep, meta);
-    cache_shape(doc, key, proto);  // retain translated/healed geometry; do not parse our own BREP again
+    if (mesh) meta["representation"] = "mesh";
+    std::string key = detail::store_body(doc, proto, meta, opt, mesh, &res);
     key_by_tshape[ts] = key;
     return key;
   }
 
   json body_node(const TopoDS_Shape& placed, const std::string& name, const Quantity_Color* color,
-                 const TopLoc_Location& outer) {
+                 const TopLoc_Location& outer, const std::string& material = {}, double opacity = 1.0) {
     TopLoc_Location loc = outer * placed.Location();
     TopoDS_Shape proto = placed.Located(TopLoc_Location());
     json n;
     n["type"] = "body";
     n["id"] = new_uuid();
     n["name"] = name;
-    n["key"] = store(proto, name, color);
-    if (!loc.IsIdentity()) n["transform"] = mat_from_trsf(loc.Transformation()).to_json();
+    n["key"] = store(proto, name, color, material);
+    if (mesh) n["representation"] = "mesh";
+    if (!loc.IsIdentity()) n["transform"] = placement(loc);
     if (color) n["color"] = {color->Red(), color->Green(), color->Blue()};
+    if (opacity < 1.0) n["opacity"] = opacity;
     ++res.bodies;
     if (++body_counter % 25 == 0) progress(fraction(), "building");
     return n;
@@ -233,13 +288,25 @@ struct Importer {
     if (name.empty() || name.rfind("=>", 0) == 0) name = fallback_name;
     Quantity_Color col;
     bool has_col = label_color(label, col) || label_color(ref, col);
+    std::string material;
+    double opacity = 1.0;
+    label_look(label, ref, material, opacity);
+    if (!has_col && !st->IsAssembly(ref)) {  // mesh readers often colour the part's faces, not the part
+      TDF_LabelSequence subs;
+      st->GetSubShapes(ref, subs);
+      for (int i = 1; i <= subs.Length() && !has_col; ++i)
+        if (label_color(subs.Value(i), col)) {
+          has_col = true;
+          if (material.empty()) label_look(subs.Value(i), subs.Value(i), material, opacity);
+        }
+    }
 
     if (st->IsAssembly(ref)) {
       json node;
       node["type"] = "component";
       node["id"] = new_uuid();
       node["name"] = name;
-      if (!loc.IsIdentity()) node["transform"] = mat_from_trsf(loc.Transformation()).to_json();
+      if (!loc.IsIdentity()) node["transform"] = placement(loc);
       json children = json::array();
       TDF_LabelSequence comps;
       st->GetComponents(ref, comps);
@@ -251,6 +318,7 @@ struct Importer {
     }
 
     TopoDS_Shape shape = st->GetShape(ref);
+    if (mesh) shape = plain_mesh(shape);
     std::vector<TopoDS_Shape> parts = split_bodies(shape);
     if (parts.empty()) {
       res.warnings.push_back("'" + name + "' contains no solids, shells or faces; skipped");
@@ -261,13 +329,13 @@ struct Importer {
       node["children"] = json::array();
       return node;
     }
-    if (parts.size() == 1) return body_node(parts[0], name, has_col ? &col : nullptr, loc);
+    if (parts.size() == 1) return body_node(parts[0], name, has_col ? &col : nullptr, loc, material, opacity);
 
     json node;
     node["type"] = "component";
     node["id"] = new_uuid();
     node["name"] = name;
-    if (!loc.IsIdentity()) node["transform"] = mat_from_trsf(loc.Transformation()).to_json();
+    if (!loc.IsIdentity()) node["transform"] = placement(loc);
     json children = json::array();
     int i = 1;
     for (const auto& p : parts) {
@@ -277,7 +345,7 @@ struct Importer {
       if (st->FindSubShape(ref, p, sub) && label_color(sub, pc)) pcol = &pc;
       std::string pname = name + "[" + std::to_string(i++) + "]";
       if (!sub.IsNull() && !label_name(sub).empty()) pname = label_name(sub);
-      children.push_back(body_node(p, pname, pcol, TopLoc_Location()));
+      children.push_back(body_node(p, pname, pcol, TopLoc_Location(), material, opacity));
     }
     node["children"] = children;
     ++res.components;
@@ -302,7 +370,8 @@ ImportResult import_step(Document& doc, const std::filesystem::path& step, const
   if (opt.progress && !opt.progress(-1, "reading")) throw Error("import cancelled");
   IFSelect_ReturnStatus status;
   try {
-    status = reader.ReadFile(step.string().c_str());
+    const auto utf8 = step.u8string();  // OCCT widens UTF-8 on Windows; the ANSI form failed for non-Latin file names
+    status = reader.ReadFile(std::string(utf8.begin(), utf8.end()).c_str());
   } catch (const Standard_Failure& e) {
     throw Error(std::string("STEP read failed: ") + e.GetMessageString());
   }
@@ -318,9 +387,58 @@ ImportResult import_step(Document& doc, const std::filesystem::path& step, const
   }
   if (prog->cancelled) throw Error("import cancelled");
   if (!ok) throw Error("STEP transfer produced no shapes: " + step.string());
+  return detail::import_xcaf(doc, xdoc, step, opt, false);
+}
 
+namespace detail {
+
+std::string store_body(Document& doc, TopoDS_Shape shape, json meta, const ImportOptions& opt, bool mesh, ImportResult* res) {
+  const size_t before = doc.body_count();
+  std::string key;
+  if (opt.viewer) {
+    // Viewer mode skips everything that only serves persistence: the validity check and healing, the BREP text and
+    // its SHA-256 key, and the later re-parse of that text. The reader's shape is cached as is, under a random key
+    // that looks like a content hash (make_editable() replaces it with the real one).
+    key = sha256_hex("live:" + new_uuid());
+    doc.add_live_body(key, meta);
+  } else {
+    std::string brep;
+    if (mesh) {
+      // A mesh has no surfaces: its triangulation is the geometry, so it goes into the text.
+      std::ostringstream ss;
+      ss.precision(17);
+      BRepTools::Write(shape, ss, Standard_True, Standard_False, TopTools_FormatVersion_VERSION_1);
+      for (char c : ss.str())
+        if (c != '\r') brep.push_back(c);
+      if (brep.empty() || brep.back() != '\n') brep.push_back('\n');
+    } else {
+      if (opt.heal) {
+        BRepCheck_Analyzer ana(shape);
+        if (!ana.IsValid()) {
+          ShapeFix_Shape fix(shape);
+          fix.Perform();
+          shape = fix.Shape();
+          if (res) ++res->healed;
+          BRepCheck_Analyzer again(shape);
+          if (!again.IsValid() && res) res->warnings.push_back("body '" + meta.value("name", std::string()) + "' still has invalid topology after healing");
+        }
+      }
+      brep = brep_from_shape(shape);
+    }
+    key = doc.add_body(brep, meta);
+  }
+  if (res && doc.body_count() > before) ++res->new_entries;
+  cache_shape(doc, key, shape);  // retain the translated/healed geometry; do not parse our own BREP again
+  return key;
+}
+
+ImportResult import_xcaf(Document& doc, const Handle(TDocStd_Document)& xdoc, const std::filesystem::path& step, const ImportOptions& opt, bool mesh,
+                         double scale, const Mat4& root) {
   Importer imp{doc, opt, XCAFDoc_DocumentTool::ShapeTool(xdoc->Main()), XCAFDoc_DocumentTool::ColorTool(xdoc->Main()), {},
                step.filename().string(), {}, 0};
+  imp.vt = XCAFDoc_DocumentTool::VisMaterialTool(xdoc->Main());
+  imp.mesh = mesh;
+  imp.scale = scale;
   TDF_LabelSequence free_shapes;
   imp.st->GetFreeShapes(free_shapes);
   {
@@ -334,6 +452,9 @@ ImportResult import_step(Document& doc, const std::filesystem::path& step, const
   for (int i = 1; i <= free_shapes.Length(); ++i)
     nodes.push_back(imp.walk(free_shapes.Value(i), free_shapes.Length() == 1 ? stem : stem + "." + std::to_string(i)));
 
+  if (!root.is_identity())  // the file's axes turned to OPAD's (Z up), for readers that do not
+    for (auto& n : nodes) n["transform"] = (root * (n.contains("transform") ? Mat4::from_json(n["transform"]) : Mat4{})).to_json();
+  if (mesh && imp.res.bodies == 0) throw Error(step.filename().string() + " holds no triangles to show");
   json op;
   op["op"] = "import";
   op["source"] = step.filename().string();
@@ -345,6 +466,8 @@ ImportResult import_step(Document& doc, const std::filesystem::path& step, const
   if (imp.res.bodies == 0) imp.res.warnings.push_back("no bodies were imported");
   return imp.res;
 }
+
+}  // namespace detail
 
 Document browse_step(const std::filesystem::path& step, const ImportOptions& opt) {
   Document d = Document::create();
@@ -383,6 +506,89 @@ ImportResult import_brep(Document& doc, const std::string& brep, const std::stri
   op["nodes"] = nodes;
   imp.res.op_id = doc.append(op, opt.author).id;
   return imp.res;
+}
+
+// ---------------------------------------------------------------- viewer -> editable
+namespace {
+void rename_keys(json& nodes, const std::map<std::string, std::string>& keys) {
+  if (!nodes.is_array()) return;
+  for (auto& n : nodes) {
+    if (!n.is_object()) continue;
+    if (auto k = n.find("key"); k != n.end() && k->is_string())
+      if (auto it = keys.find(k->get<std::string>()); it != keys.end()) *k = it->second;
+    if (auto c = n.find("children"); c != n.end()) rename_keys(*c, keys);
+  }
+}
+}  // namespace
+
+Document make_editable(const Document& viewer, EditableKeys* changed, const std::function<bool(double)>& progress) {
+  const auto& bodies = viewer.bodies();
+  // Per live body: its BREP text (healed like a full import), side by side; the kernel work is independent per shape.
+  struct Work { TopoDS_Shape shape; std::string brep; bool healed = false; std::string error; };
+  std::vector<Work> work(bodies.size());
+  std::atomic<size_t> done{0};
+  std::atomic<bool> cancelled{false};
+  OSD_Parallel::For(0, static_cast<int>(bodies.size()), [&](int i) {
+    if (cancelled) return;
+    const BodyEntry& b = bodies[static_cast<size_t>(i)];
+    if (!b.brep.empty()) return;
+    Work& w = work[static_cast<size_t>(i)];
+    try {
+      w.shape = body_shape(viewer, b.key);
+      const std::string representation = b.meta.value("representation", "solid");
+      if (representation == "mesh") {
+        std::ostringstream ss;
+        ss.precision(17);
+        BRepTools::Write(w.shape, ss, Standard_True, Standard_False, TopTools_FormatVersion_VERSION_1);
+        for (char c : ss.str())
+          if (c != '\r') w.brep.push_back(c);
+        if (w.brep.empty() || w.brep.back() != '\n') w.brep.push_back('\n');
+      } else {
+        if (representation == "solid") {
+          BRepCheck_Analyzer ana(w.shape);
+          if (!ana.IsValid()) {
+            ShapeFix_Shape fix(w.shape);
+            fix.Perform();
+            w.shape = fix.Shape();
+            w.healed = true;
+          }
+        }
+        w.brep = brep_from_shape(w.shape);
+      }
+    } catch (const Standard_Failure& e) {
+      w.error = e.GetMessageString();
+    } catch (const std::exception& e) {
+      w.error = e.what();
+    }
+    if (progress && !progress(static_cast<double>(++done) / static_cast<double>(bodies.size()))) cancelled = true;
+  });
+  if (cancelled) throw Error("cancelled");
+  // The rebuilt store: persisted entries as they are, live ones under their content keys. Same header, path and shape
+  // cache, so the shapes on screen stay loaded and meshed.
+  Document rebuilt = Document::create(viewer.header.units);
+  rebuilt.header = viewer.header;
+  rebuilt.path = viewer.path;
+  rebuilt.shape_cache = viewer.shape_cache;
+  std::map<std::string, std::string> keys;
+  for (size_t i = 0; i < bodies.size(); ++i) {
+    const BodyEntry& b = bodies[i];
+    if (!b.brep.empty()) { rebuilt.add_body(b.brep, b.meta); continue; }
+    if (!work[i].error.empty()) throw Error("body '" + b.meta.value("name", b.key.substr(0, 12)) + "' cannot be saved: " + work[i].error);
+    const std::string key = rebuilt.add_body(work[i].brep, b.meta);
+    cache_shape(rebuilt, key, work[i].shape);
+    keys[b.key] = key;
+    if (changed) {
+      if (work[i].healed) changed->healed.insert(key);
+      else changed->renamed[b.key] = key;
+    }
+  }
+  for (const Op& o : viewer.ops) {
+    json data = o.data;
+    if (o.type == "import") rename_keys(data["nodes"], keys);
+    rebuilt.append(std::move(data));
+  }
+  rebuilt.dirty = true;
+  return rebuilt;
 }
 
 // ---------------------------------------------------------------- export

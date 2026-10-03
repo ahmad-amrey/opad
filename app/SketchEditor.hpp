@@ -56,7 +56,7 @@ class SketchEditor : public QObject, public SketchInput {
   QString option(const QString& key, const QString& fallback = {}) const { return m_options.value(key, fallback); }
   void applyTool();
   void previewTool();
-  void invalidatePreview();
+  void invalidatePreview(bool keepOverlay = false);  // keepOverlay: the shown one stays until the next replaces it (live drags)
   void scheduleToolPreview();
   void placePrecise(const QString& u, const QString& v, int mode);
   void stepBack();
@@ -122,6 +122,9 @@ class SketchEditor : public QObject, public SketchInput {
     int entity = 0;    // a curve the new point will lie on
     bool horizontal = false, vertical = false;  // relative to the previous click
     bool tracking = false;
+    // What the pointer was pulled to, for the display: that object is highlighted and named beside the cursor.
+    enum class Kind { None, Point, Midpoint, Quadrant, Intersection, Curve, Extension, Aligned, Angle, Locked } kind = Kind::None;
+    int target = 0, other = 0;  // the point (Point, Aligned) or the curves (the others) behind the snap
   };
   struct Hit {
     enum Kind { None, Point, Entity, Dimension } kind = None;
@@ -136,6 +139,10 @@ class SketchEditor : public QObject, public SketchInput {
   void cancel_change();
   void rebuild();                        // redraw the overlay
   void updateTransient();
+  // The text tool's letters as they will land, relative to the insertion point (cached per text, font and height).
+  const std::vector<std::vector<std::pair<double, double>>>& textPreview();
+  QString m_textPreviewKey;
+  std::vector<std::vector<std::pair<double, double>>> m_textPreview;
   bool prepareGeometry();
   void scheduleFill();
   void click(const Snap& s, Qt::KeyboardModifiers mods);
@@ -148,6 +155,7 @@ class SketchEditor : public QObject, public SketchInput {
   void commitDimensionEdit();
   void filletAt(const Hit& h, double u, double v);
   void trimAt(const Hit& h, double u, double v);
+  std::vector<std::pair<double, double>> trimPreview(int id, double u, double v) const;  // the piece trimAt would remove
   void mirrorSelection(int axisLine);
   void offsetSelection();
   void updateDimensionHandle();
@@ -183,6 +191,7 @@ class SketchEditor : public QObject, public SketchInput {
   bool m_previewRequested=false,m_previewComputing=false;
   QTimer m_toolPreviewTimer;
   QPointer<DimensionHandle> m_dimensionHandle;
+  int m_offsetAnchor = 0;  // the selected curve the offset arrow sits on: the last one hovered
   int m_previewRevision=0;
   std::shared_ptr<opad::design::Sketch> m_toolPreview;
   Handle(AIS_InteractiveObject) m_toolPreviewOverlay;

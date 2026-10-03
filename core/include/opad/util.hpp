@@ -31,6 +31,9 @@ std::string version_string();
 // Routes OCCT kernel messages to stderr (alarms only unless verbose or OPAD_VERBOSE=1) so stdout stays JSON.
 void configure_kernel_logging(bool verbose = false);
 
+// A path given as UTF-8 text (JSON, the command line): std::filesystem reads a narrow string in the ANSI code page on
+// Windows, which garbled any name outside it (Arabic, Chinese).
+std::filesystem::path path_from_utf8(std::string_view utf8);
 std::string read_text_file(const std::filesystem::path& p);
 void write_text_file(const std::filesystem::path& p, std::string_view text);
 

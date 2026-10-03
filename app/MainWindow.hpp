@@ -29,7 +29,7 @@ class MainWindow : public QMainWindow {
   ~MainWindow() override;
   void openPath(const QString& path);
   void warmUpViewport() { m_viewport->warmUp(); }
-  void setBenchSelect(bool on) { m_benchSelect = on; }  // --bench-select: select every root after loading, log, quit
+  void setBenchSelect(bool on);  // --bench-select: select every root after loading, log, quit; nothing else shows on screen
 
  protected:
   void closeEvent(QCloseEvent* e) override;
@@ -80,6 +80,7 @@ class MainWindow : public QMainWindow {
   bool benchAnnotateLarge();  // OPAD_BENCH_ANNOTATE: the note / drawing editors on the loaded file's heaviest body
   bool benchLargeSketch();
   bool benchShortcuts();
+  bool benchViewer();  // OPAD_BENCH_VIEWER
 
   void onViewportSelection();
   void onBrowserSelection(const std::vector<std::string>& ids);
@@ -127,6 +128,14 @@ class MainWindow : public QMainWindow {
   QStringList recent() const;
   void rebuildRecentMenu();
   std::vector<std::string> currentNodeIds() const;
+  QColor nodeColour(const std::string& id) const;  // its own colour, or the default body grey
+  // Viewer mode (a file other than .opad shown read-only): edits ask to save it as an OPAD document first.
+  static bool isEditAction(const QString& id);
+  static QString fileFilter(bool withOpad);                 // "*.step *.stl ..." for the file dialogs
+  bool requireEditable(std::function<void()> resume = {});  // true when the document can be edited
+  void saveViewerAs(std::function<void()> then = {});       // Save as OPAD: made editable in place, then written
+  void makeEditable(const QString& savePath, std::function<void()> then = {});
+  void updateViewerCard();
 
   AppDocument* m_doc = nullptr;
   RecoveryManager* m_recovery = nullptr;
@@ -167,6 +176,7 @@ class MainWindow : public QMainWindow {
   void endCheck();
   LoadShade* m_loadShade = nullptr;
   bool m_timelineHiddenByViewer = false;
+  bool m_autoTwoD = false, m_settingTwoD = false;  // 2D mode turned on for a viewed drawing (and turned off after it)
   RibbonBar* m_ribbon = nullptr;
   BrowserPanel* m_browser = nullptr;
   PropertiesPanel* m_props = nullptr;

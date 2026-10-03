@@ -1,5 +1,6 @@
 #include "AppDocument.hpp"
 #include "Jobs.hpp"
+#include "opad/geometry.hpp"
 #include <QPointer>
 #include <QDir>
 #include <QFileInfo>
@@ -96,4 +97,59 @@ bool AppDocument::captureSnapshot(JobRunner* jobs, SnapshotCallback done) {
     if(progress.cancelled())done({},tr("Snapshot cancelled"));
     else done(std::move(copy->document),copy->error);
   });timer->start();return true;
+}
+
+// Viewer mode -> editable (kept beside the other worker-backed document jobs; AppDocument.cpp stays free of JobRunner).
+void AppDocument::startEditable(JobRunner* jobs, std::function<void(bool, const QString&)> done) {
+  if (!browse || loading || designBusy || m_converting || m_capturing) {
+    if (done) done(false, tr("The document is busy; try again in a moment."));
+    return;
+  }
+  m_converting = true;
+  designBusy = true;  // nothing changes the document while the worker reads it
+  emit undoChanged();
+  struct Out {
+    opad::Document doc;
+    opad::EditableKeys keys;
+  };
+  auto out = std::make_shared<Out>();
+  auto source = m_storage;
+  const auto identity = generation;
+  jobs->async(tr("Preparing the document for editing"), [source, out](Progress p) {
+    p.setPhase(tr("Preparing bodies for editing"), 0);
+    out->doc = opad::make_editable(*source, &out->keys, [p](double f) {
+      p.setPhase(tr("Preparing bodies for editing"), static_cast<int>(f * 100));
+      return !p.cancelled();
+    });
+    opad::warm_shape_cache(out->doc);
+  }, [this, out, identity, done](bool ok, const QString& error) {
+    m_converting = false;
+    designBusy = false;
+    emit undoChanged();
+    if (!ok || generation != identity || !browse) {
+      if (done) done(false, ok ? tr("The document changed meanwhile; try again.") : error);
+      return;
+    }
+    emit bodyKeysRenamed(out->keys.renamed);
+    doc = std::move(out->doc);
+    browse = false;
+    clearHistory();  // what was changed while viewing is part of the document now
+    m_savedIds.clear();
+    m_savedBodies = 0;
+    refresh();
+    emit pathChanged();
+    if (done) done(true, {});
+  });
+}
+
+void AppDocument::storeViewerCache(JobRunner* jobs) {
+  if (!browse || m_cacheSource.isEmpty()) return;
+  const QString source = std::exchange(m_cacheSource, QString());
+  auto copy = std::make_shared<opad::Document>(doc);  // the import op and body entries; the shapes stay shared
+  opad::ImportOptions options;
+  options.center_drawing = m_cacheCenter;
+  const std::filesystem::path file(source.toStdU16String());
+  jobs->async(tr("Remembering %1 for faster opening").arg(QFileInfo(source).fileName()), [copy, file, options](Progress p) {
+    opad::viewer_cache_store(*copy, file, options, [p] { return p.cancelled(); });
+  });
 }

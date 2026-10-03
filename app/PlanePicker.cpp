@@ -18,6 +18,8 @@
 #include <QComboBox>
 #include <QCheckBox>
 #include <QLabel>
+#include <QSignalBlocker>
+#include <algorithm>
 #include <cmath>
 
 using namespace opad::design;
@@ -78,7 +80,10 @@ PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget
 
 void PlanePicker::start(bool positionOrigin,std::function<void(ToolPanel*)> open) {
   const auto selected=m_view->selection();
-  stop();m_cameraBefore=m_view->cameraJson();m_active=true;m_positionOrigin=positionOrigin;m_originStage=false;m_oldFilter=m_view->selectionFilter();m_tiles->selected=-1;m_status->clear();m_construction->setChecked(false);
+  stop();m_cameraBefore=m_view->cameraJson();m_active=true;m_positionOrigin=positionOrigin;m_originStage=false;m_oldFilter=m_view->selectionFilter();m_tiles->selected=-1;m_status->clear();
+  // Construction planes are offered when there are any: they are made to be sketched on, and hidden behind an unticked
+  // box the one just made could not be found.
+  {const QSignalBlocker block(m_construction);m_construction->setChecked(std::any_of(m_doc->scene.features.begin(),m_doc->scene.features.end(),[](const opad::Feature& f){return !f.suppressed && f.result.contains("plane");}));}
   m_view->clearSelection();m_view->clearCandidates();m_view->setSelectionFilter(Viewport::SelFilter::Face);m_tiles->move(std::max(8,m_view->width()-450),42);m_tiles->show();constructionPlanes();refresh();open(m_panel);
   if(selected.size()==1 && selected.front().kind==opad::Ref::Kind::Face) {
     m_positionOrigin=false;choose({{"face",selected.front().to_json()}});

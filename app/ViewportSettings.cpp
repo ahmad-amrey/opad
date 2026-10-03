@@ -162,6 +162,15 @@ void Viewport::setTwoDimensional(bool on) {
     m_ctx->Display(m_cube, false);
     m_ctx->Activate(m_cube, 0);
   }
+  // The grid lies in the plane 2D mode looks at (a sketch keeps its own plane), and in 2D mode it never ends.
+  if (!m_sketchInput) {
+    const gp_Dir d = m_view->Camera()->Direction();
+    const double ax = std::abs(d.X()), ay = std::abs(d.Y()), az = std::abs(d.Z());
+    if (!on || az >= std::max(ax, ay)) m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DZ(), gp::DX()));
+    else if (ax >= ay) m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DX(), gp::DY()));
+    else m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DY(), gp::DZ()));
+  }
+  updateGridExtent();
   m_ctx->ClearDetected(false);
   ResetPreviousMoveTo();
   redrawScene();

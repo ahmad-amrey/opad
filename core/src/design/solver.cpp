@@ -24,6 +24,10 @@ constexpr double kDragSpring = 1e-3; // drag spring against "leave the sketch al
 constexpr double kRankTol = 1e-7;    // a unit row this close to the span of the earlier ones adds no rank
 constexpr double kFreeTol = 1e-9;    // squared null-space share of a coordinate that counts as "can move"
 constexpr int kSlots = 12;           // variables one constraint can touch (two lines or two arcs = 8)
+// A repair step is the smallest change with a circle's radius counting this many times its position: a constraint
+// that can be met either way moves the circle and keeps its size (a tangent tripled a circle's radius instead of
+// moving it over to the line).
+constexpr double kRadiusCost = 10.0;
 
 // ------------------------------------------------------------- dual numbers
 struct Dual {
@@ -524,12 +528,12 @@ void cholesky_apply(const std::vector<double>& a, size_t m, std::vector<double>&
 // The scaled Jacobian A = rs * J by columns, and M = A A^T (lower triangle), accumulated column by column: a
 // column holds only the few rows that touch that variable, so this is far cheaper than a dense product.
 using Columns = std::vector<std::vector<std::pair<size_t, double>>>;
-void gram(const System& sys, const std::vector<double>& rs, Columns& cols, std::vector<double>& M) {
+void gram(const System& sys, const std::vector<double>& rs, Columns& cols, std::vector<double>& M, const std::vector<double>* cs = nullptr) {
   const size_t m = sys.nrows;
   cols.resize(size_t(sys.nvars));
   for (auto& c : cols) c.clear();
   for (size_t i = 0; i < m; ++i)
-    for (const auto& e : sys.rows[i].j) cols[size_t(e.first)].emplace_back(i, rs[i] * e.second);
+    for (const auto& e : sys.rows[i].j) cols[size_t(e.first)].emplace_back(i, rs[i] * e.second * (cs ? (*cs)[size_t(e.first)] : 1.0));
   M.assign(m * m, 0.0);
   for (const auto& c : cols)
     for (const auto& p : c)
@@ -560,6 +564,11 @@ bool minimise(System& sys, std::vector<double>& x, const SolveOptions& opt, bool
     return s;
   };
 
+  // Column scales: the step is dx = C A^T (A A^T + lambda)^-1 (-f) with A = R J C, the minimum of |C^-1 dx|.
+  std::vector<double> cs(n, 1.0);
+  for (int r : sys.vr)
+    if (r >= 0) cs[size_t(r)] = 1.0 / std::sqrt(kRadiusCost);
+
   double err = merit(), res = sys.max_residual();
   double lambda = 1e-6;
   int polish = 0, stalled = 0;
@@ -574,7 +583,7 @@ bool minimise(System& sys, std::vector<double>& x, const SolveOptions& opt, bool
       if (good.empty()) good = x;
       if (!polish_after || res <= tol * 1e-4 || polish++ >= 2) break;
     }
-    gram(sys, rs, cols, M);
+    gram(sys, rs, cols, M, &cs);
 
     bool moved = false;
     for (int tries = 0; tries < 40 && lambda <= 1e12; ++tries, lambda *= 10) {
@@ -590,7 +599,7 @@ bool minimise(System& sys, std::vector<double>& x, const SolveOptions& opt, bool
       for (size_t j = 0; j < n; ++j) {
         double s = 0;
         for (const auto& p : cols[j]) s += p.second * y[p.first];
-        xn[j] += s;
+        xn[j] += cs[j] * s;
       }
       // Probe on a copy of the rows: a rejected step must leave the current Jacobian intact.
       const std::vector<Row> keep(sys.rows.begin(), sys.rows.begin() + std::ptrdiff_t(m));

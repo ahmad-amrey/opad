@@ -32,6 +32,9 @@ add_library(opad_core STATIC
   src/mesh_recovery.cpp
   src/step_io.cpp
   src/drawing_io.cpp
+  src/dxf_reader.cpp
+  src/formats.cpp
+  src/viewer_cache.cpp
   src/inspect.cpp
   src/render.cpp
   src/diff.cpp
@@ -70,7 +73,7 @@ target_include_directories(opad_core
     ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(opad_core
   PUBLIC ${OPAD_OCCT_LIBS} nlohmann_json::nlohmann_json
-  PRIVATE ${CMAKE_DL_LIBS})
+  PRIVATE ${CMAKE_DL_LIBS} ZLIB::ZLIB)
 target_compile_definitions(opad_core PUBLIC _USE_MATH_DEFINES)
 if(TARGET TKV3d AND TARGET TKService)
   target_compile_definitions(opad_core PRIVATE OPAD_HAVE_FONT=1)

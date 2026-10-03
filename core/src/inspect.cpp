@@ -363,6 +363,11 @@ json node_properties(const Document& doc, const Scene& scene, const std::string&
     j["key"] = n->body_key;
     auto it = scene.instance_count.find(n->body_key);
     j["instances"] = it == scene.instance_count.end() ? 1 : it->second;
+    j["representation"] = n->representation;  // solid | mesh | drawing2d
+    if (const BodyEntry* b = doc.body(n->body_key)) {  // as the file had them (glTF, OBJ and newer STEP name materials)
+      if (b->meta.contains("material")) j["material"] = b->meta["material"];
+      if (b->meta.contains("source")) j["source"] = b->meta["source"];
+    }
     if (n->body_missing) {
       j["missing"] = true;
       return j;

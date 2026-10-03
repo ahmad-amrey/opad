@@ -24,12 +24,15 @@
 #include <QApplication>
 #include <QSettings>
 #include <QPointer>
+#include <QFontMetricsF>
+#include <QPainterPath>
 #include <cmath>
 
 #include "I18n.hpp"
 #include "Jobs.hpp"
 #include "opad/design/expr.hpp"
 #include "opad/design/sketch_geom.hpp"
+#include "opad/design/sketch_text.hpp"
 
 using namespace opad::design;
 
@@ -45,12 +48,16 @@ class SketchPrs : public AIS_InteractiveObject {
  public:
   struct Seg { opad::Vec3 a, b; QColor c; };
   struct Pt { opad::Vec3 p; QColor c; };
-  struct Txt { opad::Vec3 p; QString s; QColor c; };
+  struct Txt { opad::Vec3 p; QString s; QColor c; bool left = false; };  // left: starts at p (labels beside the cursor)
   std::vector<Seg> solid, dashed, thin;
   std::vector<Pt> points, bigPoints;
   std::vector<Txt> texts;
   std::vector<opad::Vec3> fill;
   QColor fillColor, textBack;
+  // Line widths, marker sizes and text heights are device pixels: times the display scale they read the same at
+  // 100 % and 150 % (at 1.0 they were tiny on a 4K screen).
+  double scale = 1.0;
+  std::string font;
 
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs, const Standard_Integer) override {
@@ -78,9 +85,9 @@ class SketchPrs : public AIS_InteractiveObject {
       g->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(occ(segs.front().c), type, width));
       g->AddPrimitiveArray(arr);
     };
-    lines(thin, Aspect_TOL_SOLID, 1.0);
-    lines(dashed, Aspect_TOL_DASH, 1.5);
-    lines(solid, Aspect_TOL_SOLID, 2.0);
+    lines(thin, Aspect_TOL_SOLID, 1.0 * scale);
+    lines(dashed, Aspect_TOL_DASH, 1.5 * scale);
+    lines(solid, Aspect_TOL_SOLID, 2.0 * scale);
     auto markers = [&](const std::vector<Pt>& pts, double scale) {
       if (pts.empty()) return;
       Handle(Graphic3d_ArrayOfPoints) arr = new Graphic3d_ArrayOfPoints(static_cast<int>(pts.size()), Standard_True);
@@ -89,23 +96,23 @@ class SketchPrs : public AIS_InteractiveObject {
       g->SetGroupPrimitivesAspect(new Graphic3d_AspectMarker3d(Aspect_TOM_O_POINT, occ(pts.front().c), scale));
       g->AddPrimitiveArray(arr);
     };
-    markers(points, 1.5);
-    markers(bigPoints, 2.5);
+    markers(points, 2.0 * scale);
+    markers(bigPoints, 3.0 * scale);
     // One group per colour: a text aspect has a single colour.
     std::map<QRgb, Handle(Graphic3d_Group)> groups;
     for (const auto& t : texts) {
       Handle(Graphic3d_Group)& g = groups[t.c.rgb()];
       if (g.IsNull()) {
         g = prs->NewGroup();
-        Handle(Graphic3d_AspectText3d) a = new Graphic3d_AspectText3d(occ(t.c), "", 1.0, 0.0);
+        Handle(Graphic3d_AspectText3d) a = new Graphic3d_AspectText3d(occ(t.c), font.empty() ? "" : font.c_str(), 1.0, 0.0);
         a->SetDisplayType(Aspect_TODT_SUBTITLE);
         a->SetColorSubTitle(Quantity_ColorRGBA(occ(textBack)));
         g->SetGroupPrimitivesAspect(a);
       }
-      Handle(Graphic3d_Text) text = new Graphic3d_Text(13.0f);
+      Handle(Graphic3d_Text) text = new Graphic3d_Text(static_cast<float>(13.0 * scale));
       text->SetText(TCollection_ExtendedString(t.s.toUtf8().constData(), Standard_True));
       text->SetPosition(gp_Pnt(t.p[0], t.p[1], t.p[2]));
-      text->SetHorizontalAlignment(Graphic3d_HTA_CENTER);
+      text->SetHorizontalAlignment(t.left ? Graphic3d_HTA_LEFT : Graphic3d_HTA_CENTER);
       text->SetVerticalAlignment(Graphic3d_VTA_CENTER);
       g->AddText(text);
     }
@@ -125,6 +132,10 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
     if(!m_active) return;
     const double pixels=m_viewport->pixelSize();
     if(pixels<m_samplePixelSize*.75 || pixels>m_samplePixelSize*1.5) rebuild();
+    if(m_dimEdit && m_dimEdit->isVisible())if(const auto* c=m_sk.constraint(m_dimEditing)) {  // the value box stays on its label
+      double lu,lv;labelPosition(*c,lu,lv);const QPoint at=m_viewport->widgetPoint(m_frame.to_world(lu,lv));
+      m_dimEdit->move(at.x()-m_dimEdit->width()/2,at.y()-m_dimEdit->height()/2);
+    }
   });
   m_fillTimer.setSingleShot(true);
   m_fillTimer.setInterval(150);
@@ -433,7 +444,7 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   std::sort(nearestEntities.begin(),nearestEntities.end());nearestEntities.erase(std::unique(nearestEntities.begin(),nearestEntities.end()),nearestEntities.end());
   if (m_inferenceLocked && infer) {
     const double along=(u-m_lockX)*m_lockDx+(v-m_lockY)*m_lockDy;
-    s.u=m_lockX+along*m_lockDx; s.v=m_lockY+along*m_lockDy; s.tracking=true; return s;
+    s.u=m_lockX+along*m_lockDx; s.v=m_lockY+along*m_lockDy; s.tracking=true; s.kind=Snap::Kind::Locked; return s;
   }
 
   double best = t;
@@ -444,23 +455,23 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
     if(!(centers.count(p.id)?enabled("center"):enabled("endpoint")))continue;
     if (!m_chain.empty() && p.id == m_chain.back()) continue;  // not onto the point the segment starts at
     const double d = std::hypot(p.x - u, p.y - v);
-    if (d < best) { best = d; s.point = p.id; s.u = p.x; s.v = p.y; }
+    if (d < best) { best = d; s.point = p.id; s.u = p.x; s.v = p.y; s.kind = Snap::Kind::Point; s.target = p.id; }
   }
   if (s.point) return s;
-  auto candidate=[&](double x,double y){double d=std::hypot(x-u,y-v);if(d<best){best=d;s.u=x;s.v=y;s.tracking=true;}};
+  auto candidate=[&](double x,double y,Snap::Kind kind,int a,int b){double d=std::hypot(x-u,y-v);if(d<best){best=d;s.u=x;s.v=y;s.tracking=true;s.kind=kind;s.target=a;s.other=b;}};
   std::vector<const SkEntity*> nearby;
   for(size_t index:localCandidates.entities) {
     const auto& e=m_sk.entities[index];
     if(e.type==SkEntity::Type::Line) {
       const auto *a=m_sk.point(e.p[0]),*b=m_sk.point(e.p[1]);
-      if(enabled("midpoint"))candidate((a->x+b->x)/2,(a->y+b->y)/2);
+      if(enabled("midpoint"))candidate((a->x+b->x)/2,(a->y+b->y)/2,Snap::Kind::Midpoint,e.id,0);
       if(enabled("intersection") && distanceTo(e,u,v)<t)nearby.push_back(&e);
     } else if(e.type==SkEntity::Type::Circle || e.type==SkEntity::Type::Arc) {
       const auto* c=m_sk.point(e.p[0]);
       const double r=e.type==SkEntity::Type::Circle?e.r:std::hypot(m_sk.point(e.p[1])->x-c->x,m_sk.point(e.p[1])->y-c->y);
       if(enabled("quadrant"))for(int q=0;q<4;++q) {
         const double x=c->x+r*std::cos(q*M_PI/2),y=c->y+r*std::sin(q*M_PI/2);
-        if(distanceTo(e,x,y)<t)candidate(x,y);
+        if(distanceTo(e,x,y)<t)candidate(x,y,Snap::Kind::Quadrant,e.id,0);
       }
       if(enabled("intersection") && distanceTo(e,u,v)<t)nearby.push_back(&e);
     }
@@ -473,7 +484,7 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
       const double bx=b[l-1].first,by=b[l-1].second,ex=b[l].first-bx,ey=b[l].second-by,den=dx*ey-dy*ex;
       if(std::fabs(den)<1e-15)continue;
       const double ta=((bx-ax)*ey-(by-ay)*ex)/den,tb=((bx-ax)*dy-(by-ay)*dx)/den;
-      if(ta>=0 && ta<=1 && tb>=0 && tb<=1)candidate(ax+ta*dx,ay+ta*dy);
+      if(ta>=0 && ta<=1 && tb>=0 && tb<=1)candidate(ax+ta*dx,ay+ta*dy,Snap::Kind::Intersection,nearby[i]->id,nearby[j]->id);
     }
   }
   if(s.tracking)return s;
@@ -483,14 +494,17 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
     if(!enabled("nearest"))break;
     if (e.type != SkEntity::Type::Line && e.type != SkEntity::Type::Circle && e.type != SkEntity::Type::Arc) continue;
     double d = distanceTo(e, u, v);
+    bool extension = false;
     if (extensions && e.type==SkEntity::Type::Line && e.p.size()==2 && (e.p[0]==m_trackingPoint || e.p[1]==m_trackingPoint)) {
       const auto *a=m_sk.point(e.p[0]), *b=m_sk.point(e.p[1]);
-      if(a && b) { const double dx=b->x-a->x,dy=b->y-a->y,len=std::hypot(dx,dy); if(len>1e-9) d=std::abs((u-a->x)*dy-(v-a->y)*dx)/len; }
+      if(a && b) { const double dx=b->x-a->x,dy=b->y-a->y,len=std::hypot(dx,dy); if(len>1e-9) { const double line=std::abs((u-a->x)*dy-(v-a->y)*dx)/len; extension=line<d-1e-12; d=line; } }
     }
     if (d >= best) continue;
     best = d;
     s.entity = automatic ? e.id : 0;
     s.tracking = !automatic;
+    s.kind = extension ? Snap::Kind::Extension : Snap::Kind::Curve;
+    s.target = e.id;
     // Foot of the perpendicular, so the new point starts on the curve.
     if (e.type == SkEntity::Type::Line) {
       const SkPoint *a = m_sk.point(e.p[0]), *b = m_sk.point(e.p[1]);
@@ -509,7 +523,7 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   if (const auto* reference=m_sk.point(m_trackingPoint); tracking && reference) {
     if(std::abs(u-reference->x)<t) { s.u=reference->x; s.tracking=true; }
     if(std::abs(v-reference->y)<t) { s.v=reference->y; s.tracking=true; }
-    if(s.tracking) return s;
+    if(s.tracking) { s.kind=Snap::Kind::Aligned; s.target=m_trackingPoint; return s; }
   }
   // Horizontal / vertical inference against the previous click of a line-like tool.
   const bool lineLike = m_tool == "line" && !m_chain.empty();
@@ -524,7 +538,7 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   if(lineLike && enabled("angle") && !s.horizontal && !s.vertical) {
     const auto* p=m_sk.point(m_chain.back());const double dx=u-p->x,dy=v-p->y,len=std::hypot(dx,dy),step=QSettings().value("sketch/angleStep",15).toDouble()*M_PI/180;
     const double angle=std::round(std::atan2(dy,dx)/step)*step;
-    if(len>t && std::fabs(std::sin(angle-std::atan2(dy,dx))*len)<t){s.u=p->x+len*std::cos(angle);s.v=p->y+len*std::sin(angle);s.tracking=true;}
+    if(len>t && std::fabs(std::sin(angle-std::atan2(dy,dx))*len)<t){s.u=p->x+len*std::cos(angle);s.v=p->y+len*std::sin(angle);s.tracking=true;s.kind=Snap::Kind::Angle;s.target=m_chain.back();}
   }
   if(enabled("grid") && m_viewport->gridSnap() && !s.tracking && !s.horizontal && !s.vertical) {
     const double step=m_viewport->gridStep(); s.u=std::round(s.u/step)*step; s.v=std::round(s.v/step)*step;
@@ -728,8 +742,9 @@ bool SketchEditor::sketchKey(QKeyEvent* e) {
   switch (e->key()) {
     case Qt::Key_Escape:
       if(m_boxSelecting){m_boxSelecting=false;rebuild();return true;}
+      if(m_tool=="mirror" && option("mirrorStage","seed")=="axis" && m_picked.empty()){m_options["mirrorStage"]="seed";toolPrompt();rebuild();emit changed();return true;}  // back to choosing curves
       if (m_placingDim || !m_clicks.empty() || !m_chain.empty() || !m_picked.empty()) {
-        if (m_chain.size() > 1) finishChain();
+        if (!m_chain.empty()) finishChain();  // one point alone is taken back too (it used to stay behind)
         else {
           cancel_change();
           m_clicks.clear();
@@ -749,6 +764,9 @@ bool SketchEditor::sketchKey(QKeyEvent* e) {
     case Qt::Key_Return:
     case Qt::Key_Enter:
       if(m_tool=="control_spline"){finishPrimitive();return true;}
+      if(m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && option("mirrorStage","seed")!="axis" && !m_sel.empty()){
+        m_options["mirrorStage"]="axis";toolPrompt();rebuild();emit changed();return true;  // the curves are chosen: now the line
+      }
       if (!m_chain.empty()) { finishChain(); return true; }
       return false;
     case Qt::Key_Delete:
@@ -834,6 +852,8 @@ void SketchEditor::rebuild() {
   d.fillColor = t.sel;
   m_glyphHits.clear();
   d.textBack = t.bg2;
+  d.scale = m_viewport->displayScale();
+  d.font = theme::ui().family().toStdString();
   auto W = [&](double u, double v) { return m_frame.to_world(u, v); };
   const double px = m_viewport->pixelSize();
   m_samplePixelSize=px;
@@ -879,6 +899,9 @@ void SketchEditor::rebuild() {
 
   // Constraint glyphs next to what they hold.
   std::map<int, int> stacked;  // several glyphs on one entity sit side by side
+  // One glyph of a kind per curve: a hexagon's first side holds five "equal"s and a slot's caps two tangents each,
+  // which drew rows of identical glyphs. The others stay reachable through the glyph on the other curve.
+  std::set<std::pair<int, std::string>> shownGlyphs;
   for (const auto& c : m_sk.constraints) {
     if (c.is_dimension() || c.refs.empty()) continue;
     if(!i18n::t(QString::fromLatin1(SkConstraint::type_name(c.type))).contains(m_constraintFilter,Qt::CaseInsensitive))continue;
@@ -914,6 +937,7 @@ void SketchEditor::rebuild() {
       } else {
         continue;
       }
+      if (!shownGlyphs.insert({ref, glyph}).second && !selected.count(c.id) && !m_conflicts.count(c.id)) continue;
       const int k = stacked[ref]++;
       d.texts.push_back({W(gu + (14 + 16 * k) * px, gv + 12 * px), QString::fromLatin1(glyph), m_conflicts.count(c.id)?t.red:selected.count(c.id) ? t.hov : t.green});
       m_glyphHits.push_back({c.id,gu+(14+16*k)*px,gv+12*px});
@@ -1006,14 +1030,15 @@ void SketchEditor::rebuild() {
           d.thin.push_back({W(ox + r * std::cos(a0 + sweep * i / n), oy + r * std::sin(a0 + sweep * i / n)), W(ox + r * std::cos(a0 + sweep * (i + 1) / n), oy + r * std::sin(a0 + sweep * (i + 1) / n)), col});
       }
     }
-    d.texts.push_back({W(lu, lv), dimensionText(c), col});
+    if (!(m_dimEdit && m_dimEdit->isVisible() && m_dimEditing == c.id)) d.texts.push_back({W(lu, lv), dimensionText(c), col});  // the value box covers it while typing
   };
   for (const auto& c : m_sk.constraints)
-    if (c.is_dimension() && !(m_dimEdit && m_dimEdit->isVisible() && m_dimEditing == c.id)) dimension(c, false);
+    if (c.is_dimension()) dimension(c, false);
   if (m_placingDim && m_haveCursor) {
     SkConstraint c = m_pendingDim;
     c.pos[0] = m_cursor.u;
     c.pos[1] = m_cursor.v;
+    try { c.value = dimension_value(m_sk, c); } catch (const std::exception&) {}  // what it measures now (it read "0 mm")
     dimension(c, true);
   }
 
@@ -1028,17 +1053,55 @@ void SketchEditor::rebuild() {
   updateTransient();
 }
 
+const std::vector<std::vector<std::pair<double, double>>>& SketchEditor::textPreview() {
+  const QString text = option("text", "OPAD"), style = option("textStyle", "outline");
+  const QString key = text + '\n' + option("height", "10 mm") + '\n' + style + '\n' + option("font", "Arial");
+  if (key == m_textPreviewKey) return m_textPreview;
+  m_textPreviewKey = key;
+  m_textPreview.clear();
+  try {
+    if (text.isEmpty() || text.size() > 512) return m_textPreview;
+    std::vector<ParamDef> defs;
+    for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+    const double height = ParamTable(defs, m_doc->scene.units).length(option("height", "10 mm").toStdString());
+    if (!(height > 0)) return m_textPreview;
+    if (style == "stroke" || style == "block") {  // the built-in font's strokes (cap height 1), as createText lays them out
+      for (auto stroke : stroke_text(text.toStdString())) {
+        for (auto& p : stroke) p = {p.first * height, p.second * height};
+        m_textPreview.push_back(std::move(stroke));
+      }
+    } else {  // the system font's outlines, scaled as createText scales them
+      QFont font(option("font", "Arial"));
+      font.setPixelSize(1000);
+      QPainterPath path;
+      path.addText(0, 0, font, text);
+      const double scale = height / std::max(1.0, QFontMetricsF(font).capHeight());
+      for (const QPolygonF& polygon : path.toSubpathPolygons()) {
+        std::vector<std::pair<double, double>> line;
+        for (const QPointF& p : polygon) line.push_back({p.x() * scale, -p.y() * scale});
+        m_textPreview.push_back(std::move(line));
+      }
+    }
+  } catch (const std::exception&) {  // an expression that does not evaluate (yet): no preview
+    m_textPreview.clear();
+  }
+  return m_textPreview;
+}
+
 void SketchEditor::updateTransient() {
   if(m_transientPrs.IsNull() || !m_geometry || m_geometryJob)return;
   auto& d=*static_cast<SketchPrs*>(m_transientPrs.get());
   d.solid.clear();d.thin.clear();d.dashed.clear();d.points.clear();d.bigPoints.clear();d.texts.clear();
-  const auto& t=m_viewport->tokens();d.textBack=t.bg2;
+  const auto& t=m_viewport->tokens();d.textBack=t.bg2;d.scale=m_viewport->displayScale();d.font=theme::ui().family().toStdString();
   auto W=[&](double u,double v){return m_frame.to_world(u,v);};
   const double px=m_viewport->pixelSize();
   if(m_hover.kind==Hit::Point) {
     if(const auto* p=m_geometry->point(m_sk,m_hover.id))d.bigPoints.push_back({W(p->x,p->y),t.hov});
   } else if(m_hover.kind==Hit::Entity) {
-    if(const auto* e=m_sk.entity(m_hover.id)){const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i)d.solid.push_back({W(pts[i-1].first,pts[i-1].second),W(pts[i].first,pts[i].second),t.hov.lighter(115)});}
+    // Trim lights up the piece the click removes, in red; the whole curve read as "this curve goes".
+    const auto piece=m_tool=="trim"&&m_haveCursor?trimPreview(m_hover.id,m_cursor.u,m_cursor.v):std::vector<std::pair<double,double>>{};
+    if(!piece.empty())for(size_t i=1;i<piece.size();++i)d.solid.push_back({W(piece[i-1].first,piece[i-1].second),W(piece[i].first,piece[i].second),t.red});
+    else if(const auto* e=m_sk.entity(m_hover.id)){const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i)d.solid.push_back({W(pts[i-1].first,pts[i-1].second),W(pts[i].first,pts[i].second),t.hov.lighter(115)});}
   }
   if(m_boxSelecting) {
     const QColor color=m_boxU<m_dragU?t.green:t.sel;
@@ -1072,13 +1135,72 @@ void SketchEditor::updateTransient() {
       else if (m_tool == "crect") {
         const double w = std::fabs(cu - a.u), h = std::fabs(cv - a.v);
         seg(a.u - w, a.v - h, a.u + w, a.v - h); seg(a.u + w, a.v - h, a.u + w, a.v + h); seg(a.u + w, a.v + h, a.u - w, a.v + h); seg(a.u - w, a.v + h, a.u - w, a.v - h);
-      } else if (m_tool == "circle" || m_tool == "polygon") circle(a.u, a.v, std::hypot(cu - a.u, cv - a.v));
-      else if (m_tool == "ellipse" && m_clicks.size() == 1) seg(a.u, a.v, cu, cv);
-      else if (m_tool == "slot" || m_tool == "arc3" || m_tool == "arcc" || m_tool == "circle3" || m_tool == "ellipse") {
-        seg(m_clicks.back().u, m_clicks.back().v, cu, cv);
-        if (m_clicks.size() == 2) seg(a.u, a.v, m_clicks[1].u, m_clicks[1].v);
+      } else if (m_tool == "circle") circle(a.u, a.v, std::hypot(cu - a.u, cv - a.v));
+      else if (m_tool == "polygon") {
+        // The polygon itself, its first corner at the pointer, as the click will make it.
+        const int sides = std::clamp(option("sides", "6").toInt(), 3, 256);
+        const double r = std::hypot(cu - a.u, cv - a.v), a0 = std::atan2(cv - a.v, cu - a.u);
+        for (int i = 0; i < sides; ++i) {
+          const double t0 = a0 + 2 * M_PI * i / sides, t1 = a0 + 2 * M_PI * (i + 1) / sides;
+          seg(a.u + r * std::cos(t0), a.v + r * std::sin(t0), a.u + r * std::cos(t1), a.v + r * std::sin(t1));
+        }
       }
+      // The final shape through the pointer for the three-click tools, instead of straight rubber bands.
+      else if (m_clicks.size() == 2 && (m_tool == "arc3" || m_tool == "circle3" || m_tool == "arcc" || m_tool == "slot" || m_tool == "ellipse")) {
+        const Snap& b = m_clicks[1];
+        auto positive = [](double t) { t = std::fmod(t, 2 * M_PI); return t < 0 ? t + 2 * M_PI : t; };
+        auto arc = [&](double x, double y, double r, double from, double sweep) {
+          const int n = std::max(8, int(std::ceil(std::fabs(sweep) / (2 * M_PI) * 96)));
+          for (int i = 0; i < n; ++i) seg(x + r * std::cos(from + sweep * i / n), y + r * std::sin(from + sweep * i / n), x + r * std::cos(from + sweep * (i + 1) / n), y + r * std::sin(from + sweep * (i + 1) / n));
+        };
+        if (m_tool == "arc3" || m_tool == "circle3") {
+          const double ax = a.u, ay = a.v, bx = b.u, by = b.v, cx = cu, cy = cv, dd = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by));
+          if (std::fabs(dd) < 1e-12) { seg(ax, ay, bx, by); seg(bx, by, cx, cy); }
+          else {
+            const double ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / dd;
+            const double uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / dd;
+            const double r = std::hypot(ax - ux, ay - uy);
+            if (m_tool == "circle3") circle(ux, uy, r);
+            else {  // from the first click to the second, round the side the pointer is on (as the click decides it)
+              const double a0 = std::atan2(ay - uy, ax - ux), a1 = std::atan2(by - uy, bx - ux), am = std::atan2(cy - uy, cx - ux);
+              const bool ccw = positive(am - a0) < positive(a1 - a0);
+              arc(ux, uy, r, a0, ccw ? positive(a1 - a0) : -positive(a0 - a1));
+            }
+          }
+        } else if (m_tool == "arcc") {
+          const double r = std::hypot(b.u - a.u, b.v - a.v), from = std::atan2(b.v - a.v, b.u - a.u);
+          double sweep = std::atan2(cv - a.v, cu - a.u) - from;
+          while (sweep > M_PI) sweep -= 2 * M_PI;
+          while (sweep <= -M_PI) sweep += 2 * M_PI;
+          arc(a.u, a.v, r, from, sweep);
+          d.dashed.push_back({W(a.u, a.v), W(b.u, b.v), rb});
+        } else if (m_tool == "slot") {
+          const double dx = b.u - a.u, dy = b.v - a.v, len = std::hypot(dx, dy);
+          if (len > 1e-9) {
+            const double nx = -dy / len, ny = dx / len, r = std::fabs((cu - a.u) * nx + (cv - a.v) * ny), along = std::atan2(dy, dx);
+            seg(a.u + nx * r, a.v + ny * r, b.u + nx * r, b.v + ny * r);
+            seg(a.u - nx * r, a.v - ny * r, b.u - nx * r, b.v - ny * r);
+            arc(b.u, b.v, r, along - M_PI / 2, M_PI);
+            arc(a.u, a.v, r, along + M_PI / 2, M_PI);
+            d.dashed.push_back({W(a.u, a.v), W(b.u, b.v), rb});
+          }
+        } else {  // ellipse: centre, end of the major axis, then the minor half-axis from the pointer
+          const double dx = b.u - a.u, dy = b.v - a.v, major = std::hypot(dx, dy);
+          if (major > 1e-9) {
+            const double minor = std::fabs((cu - a.u) * (-dy / major) + (cv - a.v) * (dx / major)), ux = dx / major, uy = dy / major;
+            for (int i = 0; i < 96; ++i) {
+              auto at = [&](int k) { const double t = 2 * M_PI * k / 96; return std::pair<double, double>{a.u + major * std::cos(t) * ux - minor * std::sin(t) * uy, a.v + major * std::cos(t) * uy + minor * std::sin(t) * ux}; };
+              const auto p = at(i), q = at(i + 1);
+              seg(p.first, p.second, q.first, q.second);
+            }
+          }
+        }
+      } else if (m_tool == "slot" || m_tool == "arc3" || m_tool == "arcc" || m_tool == "circle3" || m_tool == "ellipse") seg(a.u, a.v, cu, cv);
+      for (const auto& k : m_clicks) d.points.push_back({W(k.u, k.v), rb});  // where the clicks so far went (a centre, the first end)
     }
+    if (m_tool == "text")  // the letters on their baseline from the pointer, as the click places them (there was only a dot)
+      for (const auto& line : textPreview())
+        for (size_t i = 1; i < line.size(); ++i) seg(cu + line[i - 1].first, cv + line[i - 1].second, cu + line[i].first, cv + line[i].second);
     const Sketch preview=primitivePreview();
     for(const auto& e:preview.entities) {
       const auto edge=entity_edge(preview,e,opad::Frame{});
@@ -1086,15 +1208,74 @@ void SketchEditor::updateTransient() {
       const auto pts=curveSamples(edge,px*0.25);
       for(size_t i=1;i<pts.size();++i)seg(pts[i-1].X(),pts[i-1].Y(),pts[i].X(),pts[i].Y());
     }
-    d.bigPoints.push_back({W(cu, cv), m_cursor.point || m_cursor.entity ? t.green : rb});
-    if (const auto* reference=m_geometry->point(m_sk,m_trackingPoint); QSettings().value("view/tracking",true).toBool() && reference) {
-      if(m_cursor.tracking || m_cursor.entity) {
-        d.dashed.push_back({W(reference->x,reference->y),W(cu,cv),t.green});
-        d.texts.push_back({W(cu+14*px,cv+12*px),m_inferenceLocked?tr("Locked"):tr("Tracking"),t.green});
-      }
+    // Snapping only means something to tools that place points; trim, offset, constraints and the like pick curves.
+    static const QStringList placing = {"line", "rect", "crect", "circle", "circle2", "circle3", "arc3", "arcc", "polygon", "polygon_outer", "slot", "cslot", "arcslot",
+                                        "ellipse", "spline", "control_spline", "point", "text", "conic", "rect3", "image_insert", "image_calibrate"};
+    if (!placing.contains(m_tool)) {
+      m_transientPrs->SetToUpdate();
+      if (m_visible) m_viewport->updateOverlay(m_transientPrs);
+      return;
     }
-    if (m_cursor.horizontal) d.texts.push_back({W(cu + 14 * px, cv + 12 * px), "H", t.green});
-    if (m_cursor.vertical) d.texts.push_back({W(cu + 14 * px, cv + 12 * px), "V", t.green});
+    const bool snapped = m_cursor.kind != Snap::Kind::None || m_cursor.horizontal || m_cursor.vertical;
+    d.bigPoints.push_back({W(cu, cv), snapped ? t.green : rb});
+    // What the pointer is pulled to: that object is drawn in the inference colour and named beside the cursor, so
+    // the user sees which point, curve or alignment will be used (and constrained) before clicking.
+    const QColor snapColor = t.green;
+    auto curve = [&](int id) {
+      if (const auto* e = m_sk.entity(id)) {
+        const auto pts = sampled(*e);
+        for (size_t i = 1; i < pts.size(); ++i) d.solid.push_back({W(pts[i - 1].first, pts[i - 1].second), W(pts[i].first, pts[i].second), snapColor});
+      }
+    };
+    auto isCentre = [&](int id) {
+      for (const auto& e : m_sk.entities)
+        if ((e.type == SkEntity::Type::Circle || e.type == SkEntity::Type::Arc || e.type == SkEntity::Type::Ellipse) && !e.p.empty() && e.p[0] == id) return true;
+      return false;
+    };
+    QString label;
+    using K = Snap::Kind;
+    switch (m_cursor.kind) {
+      case K::Point: label = isCentre(m_cursor.target) ? tr("Centre") : tr("Point"); break;
+      case K::Midpoint: curve(m_cursor.target); label = tr("Midpoint"); break;
+      case K::Quadrant: curve(m_cursor.target); label = tr("Quadrant"); break;
+      case K::Intersection: curve(m_cursor.target); curve(m_cursor.other); label = tr("Intersection"); break;
+      case K::Curve: curve(m_cursor.target); label = m_cursor.entity ? tr("On curve") : tr("Nearest"); break;
+      case K::Extension:
+        if (const auto* e = m_sk.entity(m_cursor.target); e && e->p.size() == 2) {
+          const auto *a = m_geometry->point(m_sk, e->p[0]), *b = m_geometry->point(m_sk, e->p[1]);
+          if (a && b) {
+            const auto* from = std::hypot(a->x - cu, a->y - cv) < std::hypot(b->x - cu, b->y - cv) ? a : b;
+            d.dashed.push_back({W(from->x, from->y), W(cu, cv), snapColor});
+          }
+        }
+        label = tr("Extension");
+        break;
+      case K::Aligned:
+        if (const auto* reference = m_geometry->point(m_sk, m_cursor.target)) d.dashed.push_back({W(reference->x, reference->y), W(cu, cv), snapColor});
+        label = tr("Tracking");
+        break;
+      case K::Angle:
+        if (const auto* from = m_geometry->point(m_sk, m_cursor.target))
+          label = QString::fromUtf8("%1°").arg(std::round(std::atan2(cv - from->y, cu - from->x) * 180 / M_PI));
+        break;
+      case K::Locked:
+        d.dashed.push_back({W(m_lockX, m_lockY), W(cu, cv), snapColor});
+        label = tr("Locked");
+        break;
+      case K::None: break;
+    }
+    if (m_cursor.horizontal || m_cursor.vertical) {
+      if (!m_chain.empty())
+        if (const auto* from = m_geometry->point(m_sk, m_chain.back())) d.dashed.push_back({W(from->x, from->y), W(cu, cv), snapColor});
+      label = m_cursor.horizontal ? tr("Horizontal") : tr("Vertical");
+    }
+    // The acquired point that alignments are measured from: a cross, while it is not the point under the cursor.
+    if (const auto* reference = m_geometry->point(m_sk, m_trackingPoint); QSettings().value("view/tracking", true).toBool() && reference && m_cursor.point != m_trackingPoint) {
+      const double r = 6 * px;
+      d.solid.push_back({W(reference->x - r, reference->y), W(reference->x + r, reference->y), snapColor});
+      d.solid.push_back({W(reference->x, reference->y - r), W(reference->x, reference->y + r), snapColor});
+    }
+    if (!label.isEmpty()) d.texts.push_back({W(cu + 14 * px, cv + 14 * px), label, snapColor, true});  // above right: the pointer covers below right
   }
   m_transientPrs->SetToUpdate();if(m_visible)m_viewport->updateOverlay(m_transientPrs);
 }

@@ -81,6 +81,9 @@ class FeaturePanel : public QWidget {
   opad::json bodyStyle() const;
   void setBodyName(const QString& name);  // benches
   void setBodyColour(const QColor& colour);
+  // As tall as the rows this feature shows (a fillet's two no longer sat in an extrude-sized panel), and wide enough
+  // for a pick box beside "By rule…" to say "3 selected" rather than "3 selec…".
+  QSize preferredSize(int width) const;
  signals:
   void inputsChanged();                 // anything that changes the result
   void activeInputChanged(const QString& input);
@@ -88,6 +91,7 @@ class FeaturePanel : public QWidget {
   void ruleRequested(const QString& input, QWidget* anchor);
   void accepted();
   void cancelled();
+  void contentResized();  // rows were added, shown or hidden: the panel fits itself again
  protected:
   void keyPressEvent(QKeyEvent* e) override;
  private:
@@ -141,6 +145,7 @@ class ParametersDialog : public QWidget {
   void addParameter();
   void removeCurrent();
   void itemEdited(QTreeWidgetItem* item, int column);
+  bool eventFilter(QObject* watched, QEvent* event) override;  // in a narrow panel, name, expression and value share the width
   AppDocument* m_doc;
   std::function<void(std::vector<opad::json>, QString)> m_apply;
   QTreeWidget* m_table;

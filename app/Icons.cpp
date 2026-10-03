@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QHash>
+#include <QIconEngine>
 #include <QImage>
 #include <QPainter>
 #include <QPainterPath>
@@ -131,6 +132,30 @@ const QHash<QString, QString>& table() {
       {"ellipse", R"(<ellipse cx="12" cy="12" rx="9" ry="5.5"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/>)"},
       {"spline", R"(<path d="M3 17c4-12 7 6 10-3s4-8 8-7"/><circle cx="3" cy="17" r="1.5" fill="currentColor"/><circle cx="21" cy="7" r="1.5" fill="currentColor"/>)"},
       {"point", R"(<circle cx="12" cy="12" r="2.2" fill="currentColor"/><path d="M12 4v4M12 16v4M4 12h4M16 12h4"/>)"},
+      // The sketch tools listed in the More tools menus (they all showed the generic sketch icon).
+      {"rect3", R"(<path d="M4 15l9-9 7 7-9 9z"/><circle cx="4" cy="15" r="1.6" fill="currentColor"/><circle cx="13" cy="6" r="1.6" fill="currentColor"/><circle cx="20" cy="13" r="1.6" fill="currentColor"/>)"},
+      {"circle2", R"(<circle cx="12" cy="12" r="8"/><path d="M4 12h16" opacity=".45" stroke-dasharray="2 2"/><circle cx="4" cy="12" r="1.6" fill="currentColor"/><circle cx="20" cy="12" r="1.6" fill="currentColor"/>)"},
+      {"tangentCircle", R"(<path d="M3 20h18M3 20L13 3" opacity=".55"/><circle cx="11" cy="14.2" r="5.8"/>)"},
+      {"tangentArc", R"(<path d="M3 18h8" opacity=".55"/><path d="M11 18a7 7 0 0 0 7-7V5"/><circle cx="11" cy="18" r="1.6" fill="currentColor"/>)"},
+      {"cslot", R"(<path d="M8 8h8a4 4 0 0 1 0 8H8a4 4 0 0 1 0-8z"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/>)"},
+      {"arcslot", R"(<path d="M3.5 16a8.5 8.5 0 0 1 17 0M8 16a4 4 0 0 1 8 0M3.5 16a2.25 2.25 0 0 0 4.5 0M16 16a2.25 2.25 0 0 0 4.5 0"/>)"},
+      {"polygonOuter", R"(<path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z"/><circle cx="12" cy="12" r="6.8" opacity=".5"/>)"},
+      {"controlSpline", R"(<path d="M4 18C7 6 15 18 20 6"/><path d="M4 18L8 7l8 10 4-11" opacity=".45" stroke-dasharray="2 2"/>)"},
+      {"conic", R"(<path d="M4 19C8 5 16 5 20 19"/><path d="M4 19L12 7l8 12" opacity=".45" stroke-dasharray="2 2"/>)"},
+      {"text", R"(<path d="M5 5h14M12 5v14"/><path d="M8.5 19h7" opacity=".55"/>)"},
+      {"rotate", R"(<path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M19 4v4h-4"/>)"},
+      {"copy", R"(<rect x="9" y="9" width="11" height="11"/><path d="M5 15V5h10" opacity=".6"/>)"},
+      {"extend", R"(<path d="M3 12h11"/><path d="M14 12h5" stroke-dasharray="2 2"/><path d="M21 5v14"/>)"},
+      {"breakCurve", R"(<path d="M4 4l6 6M14 14l6 6M20 4l-6 6M10 14l-6 6"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/>)"},
+      {"subtract", R"(<circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6" opacity=".5" stroke-dasharray="2 2"/>)"},
+      {"intersect", R"(<circle cx="9" cy="12" r="6" opacity=".4"/><circle cx="15" cy="12" r="6" opacity=".4"/><path d="M12 7.2a6 6 0 0 1 0 9.6a6 6 0 0 1 0-9.6z"/>)"},
+      {"heal", R"(<path d="M3 17l7-4.5M14 11.5L21 7"/><circle cx="12" cy="12" r="2" fill="currentColor"/>)"},
+      {"explode", R"(<rect x="9" y="9" width="6" height="6"/><path d="M6.5 6.5L3 3M17.5 6.5L21 3M6.5 17.5L3 21M17.5 17.5L21 21"/>)"},
+      {"simplify", R"(<path d="M3 8c2-3 4 3 6 0s4 3 6 0 4 3 6 0" opacity=".45"/><path d="M3 17l18-2"/>)"},
+      {"image", R"(<rect x="3" y="5" width="18" height="14"/><path d="M3 16l5-5 5 5 3-3 5 5"/><circle cx="16" cy="9" r="1.5" fill="currentColor"/>)"},
+      {"breakLink", R"(<path d="M10 7H8a5 5 0 0 0 0 10h2M14 7h2a5 5 0 0 1 0 10h-2"/><path d="M12 3v3M12 18v3" opacity=".6"/>)"},
+      {"magnet", R"(<path d="M6 4v8a6 6 0 0 0 12 0V4"/><path d="M6 8h3.5M14.5 8H18" opacity=".6"/>)"},
+      {"list", R"(<path d="M9 7h11M9 12h11M9 17h11"/><circle cx="5" cy="7" r="1.2" fill="currentColor"/><circle cx="5" cy="12" r="1.2" fill="currentColor"/><circle cx="5" cy="17" r="1.2" fill="currentColor"/>)"},
       {"trim", R"(<circle cx="7" cy="7" r="2.5"/><circle cx="7" cy="17" r="2.5"/><path d="M9 8.5L20 17M9 15.5L20 7"/>)"},
       {"dimension", R"(<path d="M4 6v12M20 6v12M4 12h16M7 9.5L4 12l3 2.5M17 9.5l3 2.5-3 2.5"/>)"},
       {"construction", R"(<path d="M4 20L20 4" stroke-dasharray="4 3"/>)"},
@@ -268,19 +293,30 @@ struct PathParser {
   }
 };
 
-double attr_num(const QString& attrs, const char* name, double def) {
-  QRegularExpression re(QString("\\b%1=\"([^\"]*)\"").arg(name));
-  auto m = re.match(attrs);
-  return m.hasMatch() ? m.captured(1).toDouble() : def;
-}
+// The value of name="..." where the name starts a word (as \b would: "opacity" also matches in "fill-opacity", which the
+// icons were drawn with). Compiling a regular expression per lookup made building the menus take half a second.
 QString attr_str(const QString& attrs, const char* name) {
-  QRegularExpression re(QString("\\b%1=\"([^\"]*)\"").arg(name));
-  auto m = re.match(attrs);
-  return m.hasMatch() ? m.captured(1) : QString();
+  const QString key = QLatin1String(name) + QLatin1String("=\"");
+  for (qsizetype at = attrs.indexOf(key); at >= 0; at = attrs.indexOf(key, at + 1)) {
+    const QChar before = at > 0 ? attrs[at - 1] : QChar(' ');
+    if (before.isLetterOrNumber() || before == '_') continue;
+    const qsizetype start = at + key.size(), end = attrs.indexOf('"', start);
+    if (end < 0) return {};
+    return attrs.mid(start, end - start);
+  }
+  return {};
+}
+double attr_num(const QString& attrs, const char* name, double def) {
+  const QString value = attr_str(attrs, name);
+  if (value.isNull()) return def;
+  bool ok = false;
+  const double v = value.toDouble(&ok);
+  return ok ? v : 0.0;  // as QString::toDouble gave before
 }
 
 void render(QPainter& p, const QString& markup, const QColor& color) {
-  static const QRegularExpression el("<(path|rect|circle)([^>]*?)/?>");
+  // Ellipses too: without them the cylinder, sphere and cone icons lost their rims and the torus icon was blank.
+  static const QRegularExpression el("<(path|rect|circle|ellipse)([^>]*?)/?>");
   auto it = el.globalMatch(markup);
   while (it.hasNext()) {
     auto m = it.next();
@@ -292,6 +328,8 @@ void render(QPainter& p, const QString& markup, const QColor& color) {
       path = pp.path;
     } else if (tag == "rect") {
       path.addRect(attr_num(attrs, "x", 0), attr_num(attrs, "y", 0), attr_num(attrs, "width", 0), attr_num(attrs, "height", 0));
+    } else if (tag == "ellipse") {
+      path.addEllipse(QPointF(attr_num(attrs, "cx", 0), attr_num(attrs, "cy", 0)), attr_num(attrs, "rx", 0), attr_num(attrs, "ry", 0));
     } else {
       double r = attr_num(attrs, "r", 0);
       path.addEllipse(QPointF(attr_num(attrs, "cx", 0), attr_num(attrs, "cy", 0)), r, r);
@@ -318,6 +356,43 @@ void render(QPainter& p, const QString& markup, const QColor& color) {
 
 QHash<QString, QPixmap> g_cache;
 
+// Renders the icon when it is first painted, at that display scale and state only: drawing every icon at four scales
+// and three states up front cost most of a second at startup.
+class LazyIcon : public QIconEngine {
+ public:
+  LazyIcon(QString name, QColor normal, QColor disabled, QColor selected, int size)
+      : m_name(std::move(name)), m_normal(normal), m_disabled(disabled.isValid() ? disabled : normal),
+        m_selected(selected.isValid() ? selected : normal), m_size(size) {}
+  QSize actualSize(const QSize& size, QIcon::Mode, QIcon::State) override {
+    const int side = std::min({size.width(), size.height(), m_size});  // never larger than drawn, as with pixmaps
+    return {side, side};
+  }
+  QPixmap pixmap(const QSize& size, QIcon::Mode mode, QIcon::State state) override { return scaledPixmap(size, mode, state, 1.0); }
+  QPixmap scaledPixmap(const QSize& size, QIcon::Mode mode, QIcon::State, qreal scale) override {
+    const QColor& c = mode == QIcon::Disabled ? m_disabled : mode == QIcon::Selected ? m_selected : m_normal;
+    QPixmap pm = icons::pixmap(m_name, c, m_size, scale);
+    const int side = std::min({size.width(), size.height(), m_size});
+    if (side >= m_size || side <= 0) return pm;
+    QPixmap smaller = pm.scaled(QSize(side, side) * scale, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    smaller.setDevicePixelRatio(scale);
+    return smaller;
+  }
+  void paint(QPainter* painter, const QRect& rect, QIcon::Mode mode, QIcon::State state) override {
+    const qreal scale = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
+    const QPixmap pm = scaledPixmap(rect.size(), mode, state, scale);
+    const QSize logical = (QSizeF(pm.size()) / pm.devicePixelRatio()).toSize();
+    painter->drawPixmap(QRect(rect.center() - QPoint(logical.width() / 2, logical.height() / 2), logical), pm);
+  }
+  QList<QSize> availableSizes(QIcon::Mode, QIcon::State) override { return {QSize(m_size, m_size)}; }
+  QIconEngine* clone() const override { return new LazyIcon(*this); }
+  QString key() const override { return QStringLiteral("opad-lazy"); }
+
+ private:
+  QString m_name;
+  QColor m_normal, m_disabled, m_selected;
+  int m_size;
+};
+
 }  // namespace
 
 namespace icons {
@@ -342,14 +417,7 @@ QPixmap pixmap(const QString& name, const QColor& color, int size, qreal dpr) {
 }
 
 QIcon icon(const QString& name, const QColor& normal, const QColor& disabled, const QColor& selected, int size) {
-  QIcon ic;
-  for (qreal dpr : {1.0, 1.25, 1.5, 2.0}) {
-    ic.addPixmap(pixmap(name, normal, size, dpr), QIcon::Normal);
-    ic.addPixmap(pixmap(name, disabled.isValid() ? disabled : normal, size, dpr), QIcon::Disabled);
-    ic.addPixmap(pixmap(name, selected.isValid() ? selected : normal, size, dpr), QIcon::Selected);
-    ic.addPixmap(pixmap(name, normal, size, dpr), QIcon::Active);
-  }
-  return ic;
+  return QIcon(new LazyIcon(name, normal, disabled, selected, size));
 }
 
 QIcon themed(const QString& name, int size) {

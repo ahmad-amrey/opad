@@ -5,6 +5,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QKeyEvent>
+#include <QResizeEvent>
 #include <QPainter>
 #include <QSettings>
 #include <QStringListModel>
@@ -110,7 +111,8 @@ void PickBox::paintEvent(QPaintEvent*) {
   p.setFont(theme::ui(12));
   p.setPen(m_count > 0 ? t.fg : m_satisfied ? t.fg3 : (m_active ? t.sel : t.fg2));
   const QString text = m_count > 0 ? (m_what.isEmpty() ? tr("%1 selected").arg(m_count) : m_what) : m_active ? tr("Pick in the view…") : m_satisfied ? tr("Optional") : tr("Select");
-  p.drawText(QRect(30, 0, width() - 56, height()), Qt::AlignVCenter | Qt::AlignLeft, p.fontMetrics().elidedText(text, Qt::ElideRight, width() - 56));
+  const int room = width() - 30 - (m_count > 0 ? 26 : 8);  // the clear button's place only when there is something to clear
+  p.drawText(QRect(30, 0, room, height()), Qt::AlignVCenter | Qt::AlignLeft, p.fontMetrics().elidedText(text, Qt::ElideRight, room));
   if (m_count > 0) p.drawPixmap(width() - 22, 6, icons::pixmap("close", t.fg2, 16, devicePixelRatioF()));
 }
 
@@ -288,7 +290,10 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
       connect(w.pick, &QPushButton::clicked, this, [this, key] { activate(m_active == key ? QString() : key); });
       connect(w.pick, &PickBox::cleared, this, [this, key] {
         setPicks(key, opad::json());
-        activate(key);
+        // Already active: say so again, so the view drops the picks too (they stayed selected, and the next click
+        // added to them: a cleared shell face came back as "2 selected").
+        if (m_active == key) emit activeInputChanged(key);
+        else activate(key);
         emit inputsChanged();
       });
       h->addWidget(label);
@@ -401,6 +406,7 @@ void FeaturePanel::refreshNewBody() {
     m_bodyColour->setText(makesCopies() ? tr("As the picked bodies") : tr("Automatic"));
   }
   m_bodyColourReset->setVisible(m_colour.isValid());
+  emit contentResized();  // after every change of which rows show (refreshVisibility ends here too)
 }
 
 opad::json FeaturePanel::bodyStyle() const {
@@ -500,12 +506,18 @@ void FeaturePanel::activateNextPick() {
     const int n = p.is_array() ? static_cast<int>(p.size()) : p.is_null() ? 0 : 1;
     if (n < std::max(1, in.min_count) && !in.optional) return activate(it->first);
   }
-  // Nothing is missing: stay on (or go to) the first pick input so clicks still mean something.
+  // Nothing is missing: stay on (or go to) the first pick input so clicks still mean something. Not a plane that has
+  // one already: that opens the plane picker, which a box on its default XY plane does not need at the start.
   if (!m_active.isEmpty()) return;
   for (const auto& in : m_spec->inputs) {
     auto it = m_widgets.find(QString::fromStdString(in.name));
-    if (it != m_widgets.end() && it->second.pick && !it->second.row->isHidden()) return activate(it->first);
+    if (it != m_widgets.end() && it->second.pick && !it->second.row->isHidden() && in.type != "plane") return activate(it->first);
   }
+}
+
+QSize FeaturePanel::preferredSize(int width) const {
+  const int w = width > 0 ? width : 372;
+  return QSize(372, layout()->hasHeightForWidth() ? layout()->heightForWidth(w) : layout()->sizeHint().height());
 }
 
 void FeaturePanel::keyPressEvent(QKeyEvent* e) {
@@ -541,6 +553,7 @@ ParametersDialog::ParametersDialog(AppDocument* doc, std::function<void(std::vec
   m_table->setColumnWidth(1, 170);
   m_table->setColumnWidth(2, 100);
   m_table->setColumnWidth(3, 170);
+  m_table->viewport()->installEventFilter(this);
   v->addWidget(m_table, 1);
   m_status = new QLabel(this);
   m_status->setObjectName("tertiary");
@@ -585,9 +598,25 @@ void ParametersDialog::rebuild() {
     for (const auto& u : opad::design::param_users(m_doc->doc, p.name)) users << QString::fromStdString(u);
     it->setText(4, users.join(", "));
     it->setForeground(4, t.fg3);
+    QString tip = QString::fromStdString(p.comment);
+    if (!users.isEmpty()) tip += (tip.isEmpty() ? QString() : QString("\n")) + tr("Used by") + ": " + users.join(", ");
+    for (int c = 0; c < 3; ++c) it->setToolTip(c, tip);
     if (it->data(0, Qt::UserRole).toString() == current) m_table->setCurrentItem(it);
   }
   m_filling = false;
+}
+
+bool ParametersDialog::eventFilter(QObject* watched, QEvent* event) {
+  if (watched == m_table->viewport() && event->type() == QEvent::Resize) {
+    const int w = static_cast<QResizeEvent*>(event)->size().width();
+    if (w > 0 && w < 670) {  // else the dialog's widths fit
+      const int name = w * 34 / 100, expr = w * 36 / 100;
+      m_table->setColumnWidth(0, name);
+      m_table->setColumnWidth(1, expr);
+      m_table->setColumnWidth(2, w - name - expr);
+    }
+  }
+  return QWidget::eventFilter(watched, event);
 }
 
 void ParametersDialog::failed(const QString& error) {

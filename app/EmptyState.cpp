@@ -67,7 +67,7 @@ EmptyState::EmptyState(QWidget* parent) : QWidget(parent) {
   title->setFont(theme::ui(20, QFont::Medium));
   title->setAlignment(Qt::AlignCenter);
   z->addWidget(title);
-  auto* ext = new QLabel(QString::fromUtf8(".step · .stp · .opad"), zone);
+  auto* ext = new QLabel(QString::fromUtf8(".opad · .step · .iges · .stl · .3mf · .obj · .gltf · .dxf · .dwg · .svg"), zone);
   ext->setObjectName("secondary");
   ext->setFont(theme::mono(12));
   ext->setAlignment(Qt::AlignCenter);
@@ -95,8 +95,8 @@ EmptyState::EmptyState(QWidget* parent) : QWidget(parent) {
 
   auto* cards = new QHBoxLayout();
   cards->setSpacing(16);
-  cards->addWidget(infoCard("browse", tr("Browse"), tr("Open a design in a new document, then save geometry, measurements and notes together as OPAD."), column));
-  cards->addWidget(infoCard("import", tr("Import"), tr("Bring the STEP into an .opad document. Geometry is stored once, every later change is one operation, and the file diffs and merges in git."), column));
+  cards->addWidget(infoCard("browse", tr("View"), tr("Open any STEP, IGES, STL, 3MF, OBJ, glTF, DXF, DWG or SVG file read-only, at once: measure, section, hide, colour. Nothing is converted until you save."), column));
+  cards->addWidget(infoCard("import", tr("Edit"), tr("Save a viewed file as an .opad document to edit it. Geometry is stored once, every later change is one operation, and the file diffs and merges in git."), column));
   col->addLayout(cards);
 
   auto* recentTitle = new QLabel(tr("RECENT"), column);

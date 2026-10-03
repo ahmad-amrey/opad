@@ -33,6 +33,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 if(MINGW AND NOT OPAD_STATIC)
   include(cmake/mingw.cmake)  # runtime DLLs staged in bin/
 endif()
+include(cmake/libredwg.cmake)  # DWG converters (third_party/libredwg) built and staged in bin/
 
 if(OPAD_STATIC)
   include(cmake/static.cmake)       # link flags of the single-file build
@@ -42,6 +43,7 @@ find_package(OpenCASCADE CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 include(cmake/occt.cmake)
+find_package(ZLIB REQUIRED)  # 3MF parts are deflated zip entries (core) and its tests write some
 
 add_subdirectory(core)
 if(OPAD_BUILD_CLI)
@@ -52,6 +54,9 @@ if(OPAD_BUILD_PLUGINS)
 endif()
 if(OPAD_BUILD_PYTHON)
   add_subdirectory(python)
+endif()
+if(WIN32 AND OPAD_BUILD_CLI AND NOT OPAD_STATIC)
+  add_subdirectory(shell)  # Explorer thumbnails (opad-thumbnails.dll, runs opad-cli); before app: its package takes it
 endif()
 if(OPAD_BUILD_APP)
   add_subdirectory(app)

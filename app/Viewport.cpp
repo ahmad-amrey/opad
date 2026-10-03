@@ -14,6 +14,7 @@
 
 #include <QElapsedTimer>
 #include <QScopedValueRollback>
+#include <QThread>
 #include <QTimer>
 #include <QWindow>
 
@@ -242,6 +243,13 @@ void Viewport::initViewer() {
   Handle(V3d_DirectionalLight) overhead=new V3d_DirectionalLight(gp_Dir(0,0,-1),Quantity_NOC_WHITE,false);
   overhead->SetIntensity(0.75f);m_viewer->AddLight(overhead);m_viewer->SetLightOn(overhead);
   m_ctx = new AIS_InteractiveContext(m_viewer);
+  {  // TopOSD (notes, the drawing being made, measurement labels) has no depth test, but it kept the depth, so what is
+     // translucent in Topmost (a note target's tint) was drawn after it, over it: red strokes came out pink. Clearing
+     // the depth draws what is pending first.
+    Graphic3d_ZLayerSettings osd = m_viewer->ZLayerSettings(Graphic3d_ZLayerId_TopOSD);
+    osd.SetClearDepth(Standard_True);
+    m_viewer->SetZLayerSettings(Graphic3d_ZLayerId_TopOSD, osd);
+  }
   m_hoverFadeEnabled=QSettings().value("view/hoverFade",true).toBool();
   m_hoverFadeSeconds=std::clamp(QSettings().value("view/hoverFadeSeconds",5.0).toDouble(),.1,60.0);
   m_hoverFadeTimer.setSingleShot(true);connect(&m_hoverFadeTimer,&QTimer::timeout,this,&Viewport::requestRedraw);
@@ -490,10 +498,13 @@ void Viewport::applyStyle(const Handle(AIS_Shape)& ais) {
 void Viewport::setStyle(Style s) {
   m_style = s;
   if (!m_initialised) return;
+  bool selected = false;
   for (auto& [id, it] : m_items) {
     applyStyle(it.ais);
-    m_ctx->Redisplay(it.ais, Standard_False);
+    m_ctx->RecomputePrsOnly(it.ais, Standard_False, Standard_True);  // not Redisplay: that dropped the body from the selection
+    selected = selected || m_ctx->IsSelected(it.ais);
   }
+  if (selected) m_ctx->HilightSelected(Standard_False);
   redrawScene();
 }
 
@@ -508,6 +519,8 @@ void Viewport::setGrid(bool on) {
 
 void Viewport::updateGridExtent() {
   if (!m_initialised) return;
+  m_gridSpacing=QSettings().value("view/gridSpacing",0.0).toDouble();
+  if (m_twoDimensional) { updateInfiniteGrid(true); return; }
   Bnd_Box bounds;
   for (const auto& [id,item]:m_items) { Bnd_Box b; item.ais->BoundingBox(b); bounds.Add(b); }
   for (const auto& [id,wire]:m_sketchWires) { Bnd_Box b; wire.ais->BoundingBox(b); bounds.Add(b); }
@@ -520,8 +533,35 @@ void Viewport::updateGridExtent() {
   const double custom=QSettings().value("view/gridSpacing",0.0).toDouble();
   const double step=custom>0?custom:std::pow(10.0,std::floor(std::log10(extent/10.0)));
   m_gridStep=step;
+  m_gridShownStep=0;
   m_viewer->SetRectangularGridValues(0,0,step,step,0);
   m_viewer->SetRectangularGridGraphicValues(extent,extent,0);
+}
+
+// OCCT's grid is a finite patch. In 2D mode it is laid out again around what the view shows whenever the view gets
+// near its edge or the zoom asks for another spacing (lines a tenth of the view apart, or the set spacing while that
+// gives at most 400 lines); its lines stay on world multiples of the spacing. Called from every redraw, so the test
+// whether anything changed comes first and is cheap.
+void Viewport::updateInfiniteGrid(bool force) {
+  if (!m_initialised || !m_grid) return;
+  const auto camera = m_view->Camera();
+  const gp_XYZ size = camera->ViewDimensions();
+  const double span = std::max(size.X(), size.Y());
+  if (!(span > 1e-9) || !std::isfinite(span)) return;
+  const gp_Ax3 plane = m_viewer->PrivilegedPlane();
+  const gp_Vec rel(plane.Location(), camera->Center());
+  const double cx = rel.Dot(gp_Vec(plane.XDirection())), cy = rel.Dot(gp_Vec(plane.YDirection()));
+  const double step = m_gridSpacing > 0 && span / m_gridSpacing <= 400 ? m_gridSpacing : std::pow(10.0, std::floor(std::log10(span / 10.0)));
+  const double off = std::hypot(cx - m_gridShownX, cy - m_gridShownY);
+  if (!force && step == m_gridShownStep && off + span / 2 <= m_gridShownExtent * 0.9 && m_gridShownExtent <= span * 3) return;
+  const double ox = std::round(cx / step) * step, oy = std::round(cy / step) * step, extent = std::ceil(span * 1.5 / step) * step;
+  m_gridStep = m_gridShownStep = step;
+  m_gridShownX = ox;
+  m_gridShownY = oy;
+  m_gridShownExtent = extent;
+  m_viewer->SetRectangularGridValues(ox, oy, step, step, 0);
+  m_viewer->SetRectangularGridGraphicValues(extent, extent, 0);
+  if (trace::enabled()) trace::log(QStringLiteral("2D grid: spacing %1 around (%2, %3), %4 each way").arg(step).arg(ox).arg(oy).arg(extent));
 }
 
 void Viewport::setShadows(bool on) {
@@ -560,6 +600,16 @@ void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
 }
 
 void Viewport::setSelectionFilter(SelFilter f) {
+  // The same filter again changes nothing: every body was activated in it as it was displayed (re-activating a big
+  // drawing layer's thousands of edges costs OCCT a few hundred ms per layer). Who waits for filterApplied still gets it.
+  if (f == m_filter && !m_filterJob && m_initialised) {
+    QTimer::singleShot(0, this, [this] { emit filterApplied(); });
+    return;
+  }
+  applySelectionFilter(f);
+}
+
+void Viewport::applySelectionFilter(SelFilter f) {
   resetHoverFade();
   m_filter = f;
   m_hoverOwner = nullptr;  // owners are rebuilt per mode; an address may be reused
@@ -831,6 +881,7 @@ void Viewport::refreshSubHighlight() {
 // boundary glow. Share worker-built arrays and slice large selections.
 void Viewport::applySelectionLayers() {
   if(m_bodyGlowJob) m_bodyGlowJob->cancel();
+  markPickedPoints();
   struct State {
     std::vector<std::pair<Handle(AIS_Shape),std::shared_ptr<BodyPrs>>> targets;
     std::vector<const AIS_InteractiveObject*> stale;
@@ -847,12 +898,18 @@ void Viewport::applySelectionLayers() {
     const auto want=selected?Graphic3d_ZLayerId_Topmost:Graphic3d_ZLayerId_Default;
     if(ais->ZLayer()!=want) m_ctx->SetZLayer(ais,want);
     if(!selected || !prs) return;
+    // A body a feature preview stands in for (moved, joined, cut) shows no glow where it was: it read as a copy left behind.
+    if(const auto node=m_nodeOf.find(ais.get());node!=m_nodeOf.end() && m_previewHidden.count(node->second)) return;
     auto& glow=m_bodyGlows[ais.get()];
     if(glow.IsNull()) {
+      // The arrays the body is drawn with: a zoom-refined body with a glow on its coarser base mesh z-fought with it
+      // on curved faces (dark blotches all over a selected loft).
+      std::shared_ptr<const BodyPrs> shown=prs;
+      if(const auto body=Handle(BodyShape)::DownCast(ais);!body.IsNull() && body->displayPrs() && !body->displayPrs()->triangles.IsNull()) shown=body->displayPrs();
       glow=new SubHighlight(selectionTint());
-      if(!prs->triangles.IsNull()) glow->m_triangles.push_back(prs->triangles);
-      if(!prs->boundaries.IsNull()) glow->m_segments.push_back(prs->boundaries);
-      if(!prs->loosePoints.IsNull()) glow->m_points.push_back(prs->loosePoints);
+      if(!shown->triangles.IsNull()) glow->m_triangles.push_back(shown->triangles);
+      if(!shown->boundaries.IsNull()) glow->m_segments.push_back(shown->boundaries);
+      if(!shown->loosePoints.IsNull()) glow->m_points.push_back(shown->loosePoints);
       glow->SetZLayer(Graphic3d_ZLayerId_Topmost);
       glow->SetClipPlanes(ais->ClipPlanes());
       m_ctx->Display(glow,0,-1,false);
@@ -930,6 +987,7 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   noteCameraMoved();
   scheduleRefinement();
   trackHoverFade();
+  if (m_twoDimensional) updateInfiniteGrid(false);
   AIS_ViewController::handleViewRedraw(ctx, view);
   if (trace::enabled() && clock.elapsed() > 50) trace::log(QStringLiteral("slow frame part: redraw %1 ms").arg(clock.elapsed()));
 }
@@ -1344,17 +1402,23 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
   auto alive = m_alive;
   auto cancel = m_meshCancel;
   auto cache = m_doc->doc.shape_cache;  // the worker fills the bbox cache too, so later UI queries are O(1)
-  std::thread([this, alive, cancel, cache, jobs = std::move(jobs)]() {
-    for (size_t i = 0; i < jobs.size(); ++i) {
-      const auto& j = jobs[i];
+  // Bodies side by side on several workers (each also meshes its own faces in parallel): one after another, an
+  // assembly of many small parts took seconds to appear while most cores idled. Bodies share no sub-shapes, so
+  // meshing them at once writes to separate topology.
+  auto queue = std::make_shared<const std::vector<MeshJob>>(std::move(jobs));
+  auto next = std::make_shared<std::atomic<size_t>>(0);
+  const int workers = std::min(static_cast<int>(queue->size()), std::clamp(QThread::idealThreadCount() - 1, 1, 8));
+  for (int w = 0; w < workers; ++w) {
+   QThread* worker = QThread::create([this, alive, cancel, cache, queue, next]() {
+    for (size_t i; (i = (*next)++) < queue->size();) {
+      const auto& j = (*queue)[i];
       if (*cancel) {
+        if (!*alive) return;
         std::lock_guard<std::mutex> lock(m_meshMu);
-        for (size_t k = i; k < jobs.size(); ++k) {
-          m_meshing.erase(jobs[k].key);
-          if (m_activeCache == cache.get()) m_meshSkipped.insert(jobs[k].key);
-        }
+        m_meshing.erase(j.key);
+        if (m_activeCache == cache.get()) m_meshSkipped.insert(j.key);
         QMetaObject::invokeMethod(this, "requestSync", Qt::QueuedConnection);
-        return;
+        continue;
       }
       std::shared_ptr<BodyPrs> prs;
       try {
@@ -1379,7 +1443,10 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
       }
       QMetaObject::invokeMethod(this, "requestSync", Qt::QueuedConnection);
     }
-  }).detach();
+   });
+   connect(worker, &QThread::finished, worker, &QObject::deleteLater);
+   worker->start(QThread::LowPriority);  // the UI thread stays first in line
+  }
 }
 
 void Viewport::benchClick(double fx, double fy) {
@@ -1452,6 +1519,26 @@ void Viewport::warmUp() {
   }
 }
 
+void Viewport::renameBodyKeys(const std::map<std::string, std::string>& keys) {
+  {
+    std::lock_guard<std::mutex> lock(m_meshMu);
+    for (const auto& [from, to] : keys) {
+      if (m_meshed.erase(from)) m_meshed.insert(to);
+      if (m_meshSkipped.erase(from)) m_meshSkipped.insert(to);
+      if (auto it = m_prs.find(from); it != m_prs.end()) {
+        m_prs[to] = it->second;
+        m_prs.erase(it);
+      }
+      if (auto it = m_refined.find(from); it != m_refined.end()) {
+        m_refined[to] = it->second;
+        m_refined.erase(it);
+      }
+    }
+  }
+  for (auto& [id, item] : m_items)
+    if (auto it = keys.find(item.key); it != keys.end()) item.key = it->second;
+}
+
 void Viewport::requestSync() {
   if (!m_syncTimer.isActive()) m_syncTimer.start();
 }
@@ -1488,6 +1575,7 @@ void Viewport::sync() {
   }
   std::set<std::string> keep, replace;
   std::vector<std::string> pending, toAdd;
+  bool recoloredSelected = false;
   for (const auto& id : scene.all_bodies()) {
     const opad::Node* n = scene.node(id);
     if (!n || n->body_missing) continue;
@@ -1502,7 +1590,10 @@ void Viewport::sync() {
         item.opacity = n->opacity;
         item.ais->SetColor(qcolor(n->color));
         item.ais->SetTransparency(1.0 - n->opacity);
-        m_ctx->Redisplay(item.ais, Standard_False);
+        // The presentation only: Redisplay also rebuilt the selection owners, which dropped the body from the selection
+        // (a colour picked for the selection left it unselected, though the status bar still counted it).
+        m_ctx->RecomputePrsOnly(item.ais, Standard_False);
+        recoloredSelected = recoloredSelected || m_ctx->IsSelected(item.ais);
       }
       continue;
     }
@@ -1532,6 +1623,7 @@ void Viewport::sync() {
     it = m_items.erase(it);
     removed = true;
   }
+  if (recoloredSelected) m_ctx->HilightSelected(Standard_False);  // its highlight was on the old presentation
   if(removed) applySelectionLayers();
   if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // Remove() dropped that body's selected sub-shapes
   if (!pending.empty()) startMeshing(pending);
@@ -1663,15 +1755,20 @@ void Viewport::updateDepthBias() {
   }
   const auto ranks = depthSlots(boxes);
   size_t i = 0;
+  bool reselect = false;
   for (const auto& [id, item] : m_items) {
     // Whole depth units, with slope separation for oblique coplanar faces.
     // Fractional hash offsets used to quantize to the same depth and flicker.
     const int slot = ranks[i++];
     const auto body=Handle(BodyShape)::DownCast(item.ais);
     const double extent=boxes[i-1].IsVoid()?1:boxes[i-1].CornerMin().Distance(boxes[i-1].CornerMax());
-    if (!body.IsNull() && body->setRayBias(m_renderQuality==2 ? -slot*std::max(1e-5,extent*2e-6) : 0)) m_ctx->Redisplay(body,false);
+    if (!body.IsNull() && body->setRayBias(m_renderQuality==2 ? -slot*std::max(1e-5,extent*2e-6) : 0)) {
+      m_ctx->RecomputePrsOnly(body,false);  // keeps it selected (Redisplay did not)
+      reselect = reselect || m_ctx->IsSelected(body);
+    }
     item.ais->SetPolygonOffsets(Aspect_POM_Fill, 1.0f + 0.25f * slot, 1.0f + 4.0f * slot);
   }
+  if (reselect) m_ctx->HilightSelected(Standard_False);
 }
 
 void Viewport::finishSync(int pendingCount, bool added) {

@@ -31,7 +31,7 @@ TEST(dxf_native_rational_spline_and_invalid_data) {
   CHECK_NEAR(middle.X(),std::sqrt(.5),1e-10);CHECK_NEAR(middle.Y(),std::sqrt(.5),1e-10);
   auto invalid=[&](const std::string& data){write_text_file(file,data);auto bad=Document::create();CHECK_THROWS(import_file(bad,file));};
   invalid(header+"41\n1\n"+poles+footer);
-  invalid(header+poles+"30\n4\n"+footer);
+  {write_text_file(file,header+poles+"30\n4\n"+footer);auto lifted=Document::create();CHECK(import_file(lifted,file).bodies==1);}  // off the XY plane: projected onto it
   invalid(header+"40\n-1\n"+poles+footer);
   std::filesystem::remove(file);
 }

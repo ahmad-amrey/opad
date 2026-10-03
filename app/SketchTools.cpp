@@ -14,6 +14,8 @@
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QApplication>
+#include <QRegularExpression>
+#include <algorithm>
 #include <cmath>
 
 #include "I18n.hpp"
@@ -27,6 +29,13 @@ using CT = SkConstraint::Type;
 using ET = SkEntity::Type;
 
 namespace {
+
+// A value with nothing to evaluate: "12", "12.5 mm", "30 deg". Only anything else is kept as an expression (shown with
+// "fx:"); "50 mm", the form the fields suggest, used to be.
+bool plainValue(const QString& text) {
+  static const QRegularExpression number(QStringLiteral(R"(^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*(mm|cm|m|in|ft|deg|rad|°)?\s*$)"));
+  return number.match(text).hasMatch();
+}
 
 ParamTable paramTable(const opad::Scene& scene) {
   std::vector<ParamDef> defs;
@@ -108,7 +117,13 @@ void SketchEditor::toolPrompt() {
   else if (m_tool == "spline") t = tr("Spline: click nodes; Enter finishes. Alt-click a finished spline to insert a node; double-click a node to edit weights.");
   else if (m_tool == "fillet") t = tr("Sketch fillet: click the corner where two lines meet");
   else if (m_tool == "trim") t = tr("Trim: click the part of a curve to remove");
-  else if (m_tool == "mirror") t = tr("Mirror: click the mirror line");
+  else if (m_tool == "mirror") {
+    // Two stages: clicks pick the curves until Enter (or Pick mirror line) moves on to the line; said as such, since the
+    // prompt used to ask for the line while clicks still added curves.
+    if (option("mirrorAxis", "picked") != "picked") t = tr("Mirror: click the curves to mirror, then Apply");
+    else if (option("mirrorStage", "seed") != "axis") t = tr("Mirror: click the curves to mirror, then press Enter to pick the mirror line");
+    else t = m_picked.empty() ? tr("Mirror: click the mirror line") : tr("Mirror: Apply, or click another mirror line");
+  }
   else if (m_tool == "project") t = tr("Project: click straight or circular edges of bodies; they become fixed reference curves");
   else if (m_tool == "dimension") t = m_placingDim ? tr("Dimension: click where the value should sit (or pick a second entity)") : tr("Dimension: pick a line, a circle, an arc, or two points");
   else if (m_tool.startsWith("c:")) t = tr("%1: pick the geometry it applies to").arg(i18n::t(m_tool.mid(2).left(1).toUpper() + m_tool.mid(3)));
@@ -122,9 +137,13 @@ void SketchEditor::finishChain() {
     begin_change();
     add_cubic_spline(m_sk,m_chain);
     end_change(tr("Spline"));
-  } else if (m_chain.size() == 1) {
-    // A start point that never got its segment.
-    m_sk.remove(m_chain.front());
+  } else if (m_chain.size() == 1 && m_undo.size() > m_chainUndoStart) {
+    // A start point that never got its segment: back to before that click. (Removing the point by id deleted an
+    // existing point the chain had started on, a rectangle corner with its sides.)
+    m_sk = m_undo[m_chainUndoStart].geometry;
+    m_undo.erase(m_undo.begin() + static_cast<std::ptrdiff_t>(m_chainUndoStart), m_undo.end());
+    analyseSketch();
+    scheduleFill();
   }
   if(!m_chain.empty() && m_undo.size()>m_chainUndoStart+1)m_undo.erase(m_undo.begin()+m_chainUndoStart+1,m_undo.end());
   m_chain.clear();
@@ -435,8 +454,7 @@ QString SketchEditor::dimensionText(const SkConstraint& c) const {
   QString value = c.type == CT::Angle ? trimmedNumber(c.value * 180.0 / M_PI, 2) + QString::fromUtf8("°") : trimmedNumber(c.value / ParamTable({},m_doc->scene.units).length("1"), 3) + " " + QString::fromStdString(m_doc->scene.units);
   if (c.type == CT::Radius) value = "R" + value;
   if (c.type == CT::Diameter) value = QString::fromUtf8("Ø") + value;
-  bool plain = false;
-  QString::fromStdString(c.expr).toDouble(&plain);
+  const bool plain = plainValue(QString::fromStdString(c.expr));
   if (!c.expr.empty() && !plain) value = QStringLiteral("fx: ") + value;
   if (c.reference) value = "(" + value + ")";
   return value;
@@ -570,7 +588,18 @@ void SketchEditor::placeDimension(double u, double v) {
 void SketchEditor::editDimension(int id, bool fresh) {
   const SkConstraint* c = m_sk.constraint(id);
   if (!c || !c->is_dimension()) return;
-  if (!m_dimEdit) m_dimEdit = new QLineEdit(m_viewport);
+  if (!m_dimEdit) {
+    // Typed where the value is, right after placing a dimension (or double-clicking one): Enter applies, Esc keeps the
+    // measured value. The box existed but was never shown, so values could only be typed in the panel.
+    m_dimEdit = new QLineEdit(m_viewport);
+    m_dimEdit->setObjectName("sketchDimensionValue");
+    m_dimEdit->setAttribute(Qt::WA_NativeWindow);  // over the OCCT window, like the drag handles' value box
+    m_dimEdit->setAutoFillBackground(true);
+    m_dimEdit->setAlignment(Qt::AlignCenter);
+    m_dimEdit->setToolTip(tr("Type a value or an expression · Enter applies · Esc keeps the measured value"));
+    connect(m_dimEdit, &QLineEdit::textEdited, this, [this](const QString& text) { m_options["expression"] = text; });
+    connect(m_dimEdit, &QLineEdit::returnPressed, this, [this] { m_options["expression"] = m_dimEdit->text(); commitDimensionEdit(); });
+  }
   if (m_tool != "dimension") setTool("dimension");
 
   m_dimEditing = id;
@@ -583,6 +612,21 @@ void SketchEditor::editDimension(int id, bool fresh) {
   emit toolChanged(m_tool);
   emit workflowChanged();
 
+  const Tokens& t = theme::current();
+  m_dimEdit->setStyleSheet(QString("#sketchDimensionValue { background: %1; color: %2; border: 1px solid %3; border-radius: 4px; padding: 1px 6px; selection-background-color: %4; }")
+                               .arg(theme::css(t.bg2), theme::css(t.fg), theme::css(t.sel), theme::css(t.selbg)));
+  m_dimEdit->setFont(theme::ui(13));
+  m_dimEdit->setFixedWidth(std::clamp(m_dimEdit->fontMetrics().horizontalAdvance(shown + "    ") + 16, 90, 260));
+  m_dimEdit->adjustSize();
+  double lu, lv;
+  labelPosition(*c, lu, lv);
+  const QPoint at = m_viewport->widgetPoint(m_frame.to_world(lu, lv));
+  m_dimEdit->move(std::clamp(at.x() - m_dimEdit->width() / 2, 0, std::max(0, m_viewport->width() - m_dimEdit->width())),
+                  std::clamp(at.y() - m_dimEdit->height() / 2, 0, std::max(0, m_viewport->height() - m_dimEdit->height())));
+  m_dimEdit->show();
+  m_dimEdit->raise();
+  m_dimEdit->setFocus();
+  m_dimEdit->selectAll();
   rebuild();
 }
 
@@ -606,8 +650,7 @@ void SketchEditor::commitDimensionEdit() {
     emit status(tr("A dimension must be positive"));
     return rebuild();
   }
-  bool plain = false;
-  text.toDouble(&plain);
+  const bool plain = plainValue(text);
   const std::string expr = plain ? std::string() : c->type==CT::Angle?text.toStdString():sketch_parameters(m_sk,paramTable(m_doc->scene)).explicit_length(text.toStdString());
   if (std::fabs(value - c->value) < 1e-12 && expr == c->expr && c->reference == (option("reference", "0") == "1")) return rebuild();
   const int id = c->id;
@@ -667,10 +710,36 @@ void SketchEditor::filletAt(const Hit& h, double, double) {
   const int arc = m_sk.add_arc(centre, ccw ? t1 : t2, ccw ? t2 : t1);
   m_sk.add_constraint(CT::Tangent, {line1, arc});
   m_sk.add_constraint(CT::Tangent, {line2, arc});
-  bool plain = false;
-  text.toDouble(&plain);
+  const bool plain = plainValue(text);
   m_sk.add_constraint(CT::Radius, {arc}, r, plain ? std::string() : text.toStdString());
-  m_sk.remove(h.id);  // the old corner, unless something else still uses it
+  // The two sides are shorter now. What measured a whole side (a polygon's "equal"s, a length, a midpoint) moves to a
+  // construction line along the old side, from its far end to the old corner: held on the trimmed side it pulled the
+  // whole shape out of place.
+  bool referenced = false;
+  for (const int line : {line1, line2}) {
+    auto measures = [line](const SkConstraint& c) {
+      return std::find(c.refs.begin(), c.refs.end(), line) != c.refs.end() && (c.type == CT::Equal || c.type == CT::Midpoint || (c.type == CT::Distance && c.refs.size() == 1));
+    };
+    if (std::none_of(m_sk.constraints.begin(), m_sk.constraints.end(), measures)) continue;
+    const SkEntity* side = m_sk.entity(line);
+    const int outer = side->p[0] == t1 || side->p[0] == t2 ? side->p[1] : side->p[0];
+    const int whole = m_sk.add_line(outer, h.id, true);
+    for (auto& c : m_sk.constraints)
+      if (measures(c)) std::replace(c.refs.begin(), c.refs.end(), line, whole);
+    referenced = true;
+  }
+  // The old corner stays as a virtual sharp on both lines when something still refers to it (those lines, a dimension,
+  // a point on a polygon's guide circle), so that keeps holding; otherwise it goes.
+  for (const auto& c : m_sk.constraints)
+    if (std::find(c.refs.begin(), c.refs.end(), h.id) != c.refs.end()) referenced = true;
+  for (const auto& e : m_sk.entities)
+    if (std::find(e.p.begin(), e.p.end(), h.id) != e.p.end()) referenced = true;
+  if (referenced) {
+    m_sk.add_constraint(CT::Coincident, {h.id, line1});
+    m_sk.add_constraint(CT::Coincident, {h.id, line2});
+  } else {
+    m_sk.remove(h.id);
+  }
   end_change(tr("Sketch fillet"));
 }
 
@@ -690,15 +759,23 @@ std::vector<double> line_circle(double ax, double ay, double bx, double by, doub
   const double s = std::sqrt(disc);
   return {(-B - s) / (2 * A), (-B + s) / (2 * A)};
 }
-}  // namespace
 
-void SketchEditor::trimAt(const Hit& h, double u, double v) {
-  SkEntity* target = h.kind == Hit::Entity ? m_sk.entity(h.id) : nullptr;
-  if (!target || (target->type != ET::Line && target->type != ET::Circle && target->type != ET::Arc)) return emit status(tr("Trim: click a line, a circle or an arc"));
-  auto P = [&](int id) { return m_sk.point(id); };
-  struct Round { double cx, cy, r, a0, sweep; };  // sweep 2 pi = full circle
+struct Arc2 { double cx, cy, r, a0, sweep; };  // sweep 2 pi = full circle
+
+bool on_round(const Arc2& k, double x, double y) { return k.sweep >= 2 * M_PI - 1e-12 || norm_angle(std::atan2(y - k.cy, x - k.cx) - k.a0) <= k.sweep + 1e-9; }
+
+// Where the other curves cross `target`, sorted along it. A trim at a point removes the span between the cuts on
+// either side of it (or the whole curve when nothing crosses it); the hover shows that span before the click.
+struct Crossings {
+  bool line = true;
+  double ax = 0, ay = 0, bx = 0, by = 0;  // a line's ends
+  Arc2 self{};                           // a circle's or an arc's
+  std::vector<Cut> cuts;
+};
+Crossings crossings(const Sketch& sk, const SkEntity& target) {
+  auto P = [&](int id) { return sk.point(id); };
   auto round_of = [&](const SkEntity& e) {
-    Round k{P(e.p[0])->x, P(e.p[0])->y, e.r, 0, 2 * M_PI};
+    Arc2 k{P(e.p[0])->x, P(e.p[0])->y, e.r, 0, 2 * M_PI};
     if (e.type == ET::Arc) {
       k.r = std::hypot(P(e.p[1])->x - k.cx, P(e.p[1])->y - k.cy);
       k.a0 = std::atan2(P(e.p[1])->y - k.cy, P(e.p[1])->x - k.cx);
@@ -707,15 +784,20 @@ void SketchEditor::trimAt(const Hit& h, double u, double v) {
     }
     return k;
   };
-  auto on_round = [&](const Round& k, double x, double y) { return k.sweep >= 2 * M_PI - 1e-12 || norm_angle(std::atan2(y - k.cy, x - k.cx) - k.a0) <= k.sweep + 1e-9; };
   const double eps = 1e-7;
-
-  std::vector<Cut> cuts;
-  const bool isLine = target->type == ET::Line;
-  const Round self = isLine ? Round{} : round_of(*target);
-  const double ax = isLine ? P(target->p[0])->x : 0, ay = isLine ? P(target->p[0])->y : 0, bx = isLine ? P(target->p[1])->x : 0, by = isLine ? P(target->p[1])->y : 0;
-  for (const auto& o : m_sk.entities) {
-    if (o.id == target->id) continue;
+  Crossings out;
+  out.line = target.type == ET::Line;
+  if (out.line) {
+    out.ax = P(target.p[0])->x, out.ay = P(target.p[0])->y, out.bx = P(target.p[1])->x, out.by = P(target.p[1])->y;
+  } else {
+    out.self = round_of(target);
+  }
+  const bool isLine = out.line;
+  const Arc2& self = out.self;
+  const double ax = out.ax, ay = out.ay, bx = out.bx, by = out.by;
+  std::vector<Cut>& cuts = out.cuts;
+  for (const auto& o : sk.entities) {
+    if (o.id == target.id) continue;
     std::vector<std::pair<double, double>> hits;  // intersection points
     if (o.type == ET::Line) {
       const double cx = P(o.p[0])->x, cy = P(o.p[0])->y, dx = P(o.p[1])->x, dy = P(o.p[1])->y;
@@ -729,7 +811,7 @@ void SketchEditor::trimAt(const Hit& h, double u, double v) {
           if (s >= -eps && s <= 1 + eps) hits.push_back({cx + s * (dx - cx), cy + s * (dy - cy)});
       }
     } else if (o.type == ET::Circle || o.type == ET::Arc) {
-      const Round k = round_of(o);
+      const Arc2 k = round_of(o);
       if (isLine) {
         for (double t : line_circle(ax, ay, bx, by, k.cx, k.cy, k.r)) {
           const double x = ax + t * (bx - ax), y = ay + t * (by - ay);
@@ -760,6 +842,61 @@ void SketchEditor::trimAt(const Hit& h, double u, double v) {
     }
   }
   std::sort(cuts.begin(), cuts.end(), [](const Cut& a, const Cut& b) { return a.t < b.t; });
+  return out;
+}
+}  // namespace
+
+// What a trim click at (u, v) on curve `id` removes, as a polyline (empty: nothing it could trim).
+std::vector<std::pair<double, double>> SketchEditor::trimPreview(int id, double u, double v) const {
+  std::vector<std::pair<double, double>> piece;
+  const SkEntity* target = m_sk.entity(id);
+  if (!target || (target->type != ET::Line && target->type != ET::Circle && target->type != ET::Arc)) return piece;
+  const Crossings c = crossings(m_sk, *target);
+  if (c.line) {
+    const double len2 = (c.bx - c.ax) * (c.bx - c.ax) + (c.by - c.ay) * (c.by - c.ay);
+    if (len2 < 1e-18) return piece;
+    const double tc = ((u - c.ax) * (c.bx - c.ax) + (v - c.ay) * (c.by - c.ay)) / len2;
+    double lo = 0, hi = 1;
+    for (const auto& k : c.cuts) {
+      if (k.t < tc) lo = k.t;
+      else { hi = k.t; break; }
+    }
+    piece = {{c.ax + lo * (c.bx - c.ax), c.ay + lo * (c.by - c.ay)}, {c.ax + hi * (c.bx - c.ax), c.ay + hi * (c.by - c.ay)}};
+    return piece;
+  }
+  const Arc2& k = c.self;
+  const bool full = target->type == ET::Circle;
+  if (full && c.cuts.size() < 2) return piece;  // trimAt refuses: crossed once at most
+  const double tc = norm_angle(std::atan2(v - k.cy, u - k.cx) - k.a0);
+  double from = 0, to = k.sweep;
+  if (full) {
+    size_t hi = 0;
+    while (hi < c.cuts.size() && c.cuts[hi].t < tc) ++hi;
+    from = c.cuts[(hi + c.cuts.size() - 1) % c.cuts.size()].t;
+    to = c.cuts[hi % c.cuts.size()].t;
+    if (to <= from) to += 2 * M_PI;
+  } else {
+    for (const auto& cut : c.cuts) {
+      if (cut.t < tc) from = cut.t;
+      else { to = cut.t; break; }
+    }
+  }
+  const int n = std::max(8, int(std::ceil((to - from) / (2 * M_PI) * 96)));
+  for (int i = 0; i <= n; ++i) {
+    const double a = k.a0 + from + (to - from) * i / n;
+    piece.push_back({k.cx + k.r * std::cos(a), k.cy + k.r * std::sin(a)});
+  }
+  return piece;
+}
+
+void SketchEditor::trimAt(const Hit& h, double u, double v) {
+  SkEntity* target = h.kind == Hit::Entity ? m_sk.entity(h.id) : nullptr;
+  if (!target || (target->type != ET::Line && target->type != ET::Circle && target->type != ET::Arc)) return emit status(tr("Trim: click a line, a circle or an arc"));
+  const Crossings found = crossings(m_sk, *target);
+  const bool isLine = found.line;
+  const Arc2 self = found.self;
+  const double ax = found.ax, ay = found.ay, bx = found.bx, by = found.by;
+  const std::vector<Cut>& cuts = found.cuts;
 
   begin_change();
   const int id = target->id;

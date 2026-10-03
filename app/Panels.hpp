@@ -142,7 +142,7 @@ class BrowserPanel : public QWidget {
   void expandAll();
   void collapseAll();  // everything but the document row
   void scrollToSelected();
-  void setViewerMode(bool on);  // no rename, drag-to-reparent or colour edits
+  void setViewerMode(bool on);  // no rename or drag-to-reparent (colours stay: a view setting)
   void setEditedSketch(const std::string& id,const QString& name,bool visible);
 
  signals:
@@ -272,8 +272,11 @@ class ViewportChips : public QWidget {
  public:
   explicit ViewportChips(QWidget* parent = nullptr);
   void set(const QString& mode, const QString& projection, const QString& section, const QString& isolate, bool twoDimensional = false);
+  // Viewer mode: "Viewer · read-only" first in the row, then Save to edit. An empty file hides them.
+  void setViewer(const QString& file);
  signals:
   void leaveTwoDimensional();  // the 2D mode card was clicked
+  void saveToEditRequested();
  protected:
   bool eventFilter(QObject* object, QEvent* event) override;
  private:
@@ -282,6 +285,8 @@ class ViewportChips : public QWidget {
   QLabel* m_twoD;
   QLabel* m_section;
   QLabel* m_isolate;
+  QLabel* m_viewer;
+  QToolButton* m_saveToEdit;
 };
 
 // ---------------------------------------------------------------- timeline

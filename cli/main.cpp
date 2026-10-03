@@ -1,5 +1,12 @@
 // opad-cli: the headless command-line surface over the OPAD command layer.
 // Every command prints JSON on stdout; errors go to stderr as {"error": "..."} with exit code 1.
+#ifdef _WIN32  // first: OCCT's headers leave out parts of it (the code-page API) when they include it themselves
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#endif
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -7,7 +14,21 @@
 #include <string>
 #include <vector>
 
+#include <Bnd_Box.hxx>
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <set>
+#include <fstream>
+#include <thread>
+
 #include "opad/core.hpp"
+#include "opad/drawing_io.hpp"
+#include "opad/geometry.hpp"
+#include "opad/render.hpp"
+
 
 using opad::json;
 int opad_mcp();
@@ -18,7 +39,7 @@ namespace {
 void print_usage() {
   std::printf("opad-cli %s - git-native STEP viewer, headless interface\n\n", opad::version_string().c_str());
   std::printf("usage: opad-cli [--plugin <lib>]... [--compact] <command> [<doc>] [args...]\n\n");
-  std::printf("  <doc> is a .opad document, or a .step file opened in browse mode (read-only, nothing persisted).\n");
+  std::printf("  <doc> is a .opad document, or any file OPAD reads (STEP, IGES, STL, 3MF, OBJ, DXF, SVG, ...) opened read-only.\n");
   std::printf("  Arguments are --key value pairs (JSON values are parsed: numbers, true/false, [..], {..}).\n\n");
   std::printf("commands:\n");
   for (const auto& c : opad::commands::list()) {
@@ -30,8 +51,128 @@ void print_usage() {
   std::printf("  new <doc>                     import <doc> <file.step>        append <doc> <op.json|->\n");
   std::printf("  inspect <doc> <ref>...        diff <a.opad> <b.opad>          export <doc> --format stl --out f.stl\n");
   std::printf("  render <doc> --out shot.png --view iso --size 1280x720\n");
+  std::printf("  probe <file> [--viewer] [--mesh] [--cache]   reads any supported file as OPAD opens it; reports contents and timings\n");
+  std::printf("  thumbnail <file> --out <png|bgra> [--size 256]   a picture of the file (Explorer thumbnails)\n");
   std::printf("\nreferences: <uuid> | <uuid>/face/N | <uuid>/edge/N | <uuid>/vertex/N | point/x,y,z\n");
   std::printf("environment: OPAD_AUTHOR (default author), OPAD_CACHE_DIR, OPAD_PLUGINS (path list)\n");
+}
+
+// probe: what opening a file costs, phase by phase, without a window (viewer: the desktop's read-only fast path).
+json probe(const std::string& file, bool viewer, bool mesh, bool cache) {
+  using clock = std::chrono::steady_clock;
+  const auto ms = [](clock::time_point a, clock::time_point b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+  const auto t0 = clock::now();
+  opad::Document doc = opad::Document::create();
+  opad::ImportOptions o;
+  o.viewer = viewer;
+  const bool cached = viewer && cache && opad::viewer_cache_load(doc, opad::path_from_utf8(file), o);
+  const opad::ImportResult r = cached ? opad::ImportResult{} : opad::import_file(doc, opad::path_from_utf8(file), o);
+  const auto t1 = clock::now();
+  opad::warm_shape_cache(doc);
+  const auto t2 = clock::now();
+  const opad::Scene scene = opad::resolve(doc);
+  const auto t3 = clock::now();
+  json out = r.to_json();
+  out["file"] = file;
+  out["viewer"] = viewer;
+  out["read_ms"] = ms(t0, t1);
+  out["prepare_ms"] = ms(t1, t2);
+  out["resolve_ms"] = ms(t2, t3);
+  out["body_entries"] = doc.body_count();
+  std::set<std::string> representations;
+  for (const auto& id : scene.all_bodies()) representations.insert(scene.node(id)->representation);
+  out["representations"] = representations;
+  if (mesh) {  // the display's tessellation, on every core as the desktop does it
+    const auto keys = doc.body_keys();
+    std::atomic<size_t> next{0}, triangles{0};
+    std::vector<std::thread> pool;
+    for (unsigned i = 0; i < std::max(1u, std::thread::hardware_concurrency()); ++i)
+      pool.emplace_back([&] {
+        for (size_t k; (k = next++) < keys.size();) {
+          const double tol = [&] {
+            const Bnd_Box box = opad::body_bbox(doc, keys[k]);
+            return std::clamp((box.IsVoid() ? 1.0 : std::sqrt(box.SquareExtent())) * 0.001, 0.001, 5.0);
+          }();
+          triangles += opad::tessellate_body(doc, keys[k], tol).triangle_count();
+        }
+      });
+    for (auto& t : pool) t.join();
+    out["mesh_ms"] = ms(t3, clock::now());
+    out["triangles"] = triangles.load();
+  }
+  out["cache"] = cached ? "hit" : "miss";
+  if (viewer && cache && !cached) {
+    const auto t4 = clock::now();
+    opad::viewer_cache_store(doc, opad::path_from_utf8(file), o);
+    out["cache_store_ms"] = ms(t4, clock::now());
+  }
+  return out;
+}
+
+// thumbnail: a small picture of a file for Explorer and the Open dialog (shell/thumbnails runs this). Read as the
+// viewer reads it, so the viewer cache serves a big STEP opened before; models from the iso corner, drawings from the
+// top. `.bgra` output: "OPADTHMB", width and height (uint32), then premultiplied BGRA rows top-down with a transparent
+// background, recovered from one render on white and one on black. Any other output: a PNG on white.
+json thumbnail(const std::string& file, const std::string& out, int size) {
+  const auto path = opad::path_from_utf8(file);
+  std::string ext = path.extension().string();
+  for (auto& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+  opad::Document doc = opad::Document::create();
+  if (ext == ".opad") {
+    doc = opad::Document::load(path);
+  } else {
+    opad::ImportOptions o;
+    o.viewer = true;
+    o.center_drawing = ext == ".dxf" || ext == ".dwg" || ext == ".svg";
+    if (!opad::viewer_cache_load(doc, path, o)) opad::import_file(doc, path, o);
+  }
+  const opad::Scene scene = opad::resolve(doc);
+  bool drawing = true, any = false;
+  Bnd_Box box;
+  for (const auto& id : scene.all_bodies()) {
+    if (!scene.effectively_visible(id) || scene.node(id)->body_missing) continue;
+    any = true;
+    drawing = drawing && scene.node(id)->representation == "drawing2d";
+    box.Add(opad::node_world_bbox(doc, scene, id));
+  }
+  if (!any || box.IsVoid()) throw opad::Error("nothing to show");
+  opad::RenderOptions opt;
+  opt.width = opt.height = std::clamp(size, 16, 1024);
+  opt.camera = opad::Camera::preset(drawing ? "top" : "iso");
+  opt.edges = !drawing;
+  opt.edge_lines = drawing;  // a drawing is its lines
+  opt.smooth = true;
+  opt.tolerance = std::clamp(std::sqrt(box.SquareExtent()) * 0.002, 0.005, 50.0);  // a few pixels' worth at this size
+  const bool raw = out.size() > 5 && out.compare(out.size() - 5, 5, ".bgra") == 0;
+  opt.background = {1, 1, 1};
+  const opad::Image white = opad::render_scene(doc, scene, opt);
+  if (!raw) {
+    opad::write_png(opad::path_from_utf8(out), white);
+    return {{"out", out}, {"width", white.width}, {"height", white.height}};
+  }
+  // A drawing stays on its white sheet: dark lines on a transparent background vanish in a dark Explorer.
+  opt.background = {0, 0, 0};
+  const opad::Image black = drawing ? white : opad::render_scene(doc, scene, opt);
+  std::string bytes = "OPADTHMB";
+  auto u32 = [&](uint32_t v) { for (int k = 0; k < 4; ++k) bytes += char((v >> (8 * k)) & 0xFF); };
+  u32(uint32_t(white.width));
+  u32(uint32_t(white.height));
+  bytes.reserve(bytes.size() + size_t(white.width) * size_t(white.height) * 4);
+  for (int y = 0; y < white.height; ++y)
+    for (int x = 0; x < white.width; ++x) {
+      const uint8_t* w = white.px(x, y);
+      const uint8_t* b = black.px(x, y);
+      // On white a pixel is c + (1 - a), on black c (premultiplied): a = 1 - (white - black).
+      int spread = 0;
+      for (int k = 0; k < 3; ++k) spread = std::max(spread, int(w[k]) - int(b[k]));
+      const int alpha = std::clamp(255 - spread, 0, 255);
+      for (int k = 2; k >= 0; --k) bytes += char(std::min<int>(b[k], alpha));  // BGR
+      bytes += char(alpha);
+    }
+  std::ofstream f(opad::path_from_utf8(out), std::ios::binary);
+  f.write(bytes.data(), std::streamsize(bytes.size()));
+  if (!f) throw opad::Error("cannot write the thumbnail");
+  return {{"out", out}, {"width", white.width}, {"height", white.height}, {"transparent", true}};
 }
 
 json parse_value(const std::string& s) {
@@ -63,6 +204,25 @@ std::string read_all(std::istream& in) {
 }  // namespace
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+  // Arguments as UTF-8, as the command layer reads them: the narrow argv is in the ANSI code page, and a file named in
+  // Arabic or Chinese arrived as question marks.
+  std::vector<std::string> utf8;
+  std::vector<char*> utf8_argv;
+  if (int n = 0; LPWSTR* wide = CommandLineToArgvW(GetCommandLineW(), &n)) {
+    for (int i = 0; i < n; ++i) {
+      const int size = WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, nullptr, 0, nullptr, nullptr);
+      std::string arg(size > 0 ? static_cast<size_t>(size - 1) : 0, '\0');
+      if (size > 1) WideCharToMultiByte(CP_UTF8, 0, wide[i], -1, arg.data(), size, nullptr, nullptr);
+      utf8.push_back(std::move(arg));
+    }
+    LocalFree(wide);
+    for (auto& arg : utf8) utf8_argv.push_back(arg.data());
+    utf8_argv.push_back(nullptr);
+    argc = n;
+    argv = utf8_argv.data();
+  }
+#endif
   opad::configure_kernel_logging();
   if (argc >= 2 && std::string(argv[1]) == "mcp") {
     if(argc==2 || (argc==3 && std::string(argv[2])=="--headless"))return opad_mcp();
@@ -127,6 +287,22 @@ int main(int argc, char** argv) {
     }
     for (const auto& p : plugins) opad::load_plugin(p);
 
+    if (command == "thumbnail") {
+      if (positional.empty() || !args.contains("out")) throw opad::Error("usage: opad-cli thumbnail <file> --out <png|bgra> [--size 256]");
+      const json out = thumbnail(positional[0], args["out"].get<std::string>(), args.value("size", 256));
+      const std::string text = out.dump();
+      std::fwrite(text.data(), 1, text.size(), stdout);
+      std::fputc('\n', stdout);
+      return 0;
+    }
+    if (command == "probe") {
+      if (positional.empty()) throw opad::Error("usage: opad-cli probe <file> [--viewer] [--mesh]");
+      const json out = probe(positional[0], args.value("viewer", false), args.value("mesh", false), args.value("cache", false));
+      const std::string text = compact ? out.dump() : out.dump(2);
+      std::fwrite(text.data(), 1, text.size(), stdout);
+      std::fputc('\n', stdout);
+      return 0;
+    }
     // Positional conventions.
     const bool docless = command == "diff" || command == "version" || command == "commands" || command == "cache" ||
                          command == "selection";

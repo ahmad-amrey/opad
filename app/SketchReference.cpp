@@ -3,6 +3,7 @@
 #include "opad/design/sketch_reference.hpp"
 #include "opad/design/feature.hpp"
 #include <QCoreApplication>
+#include <QCursor>
 using namespace opad::design;
 
 void SketchEditor::referenceHover() {
@@ -15,7 +16,9 @@ void SketchEditor::referenceHover() {
 }
 void SketchEditor::pickReference() {
   opad::Ref ref;
-  if(!m_viewport->hoveredReference(ref))return emit status(tr("Pick source geometry in the view, or choose it in the panel."));
+  // What the pointer rests on, else what is under the press: a click that came before any hover pass picked nothing.
+  if(!m_viewport->hoveredReference(ref) && !m_viewport->referenceAt(m_viewport->mapFromGlobal(QCursor::pos()),ref))
+    return emit status(tr("Pick source geometry in the view, or choose it in the panel."));
   m_options["projectionSource"]=QString::fromStdString(ref.to_json().dump());
   emit status(tr("Source picked. Choose linked or editable copy, then Apply."));emit workflowChanged();
 }
@@ -24,6 +27,8 @@ bool SketchEditor::applyReference() {
     const auto ids=m_sel;runSketchEdit(tr("Break projection link"),[ids](Sketch& sk){break_reference(sk,ids);});return true;
   }
   if(m_tool!="project"&&m_tool!="intersect_body"&&m_tool!="silhouette"&&m_tool!="include3d")return false;
+  // Apply before a source is picked: say what is missing (it showed a JSON parse error).
+  if(option("projectionSource").isEmpty()){if(!m_previewRequested)emit status(tr("Pick source geometry in the view, or choose it in the panel."));return true;}
   try {
     auto source=opad::json::parse(option("projectionSource").toStdString());
     if(source.value("sketch","")==m_id && !m_id.empty())throw opad::Error("a sketch cannot project itself");
@@ -34,6 +39,8 @@ bool SketchEditor::applyReference() {
       if(source.contains("body"))source=make_ref(*doc,*scene,opad::Ref::from_json(source));
       const auto generated=derive_sketch(*doc,*scene,frame,source,mode);append_reference(sk,generated,source,mode,linked);
     });
+    // Done with that source: the tool asks for the next one (it stayed "ready", and Apply again projected it twice).
+    if(!m_previewRequested){m_options.remove("projectionSource");emit workflowChanged();}
   }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
   return true;
 }

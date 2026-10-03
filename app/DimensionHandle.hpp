@@ -21,6 +21,10 @@ class DimensionHandle : public QWidget {
   void setAnchorSegments(std::vector<Segment> segments);
   bool interacting() const {return m_dragging || m_edit->hasFocus();}
   bool dragging() const {return m_dragging;}
+  double value() const {return m_value;}  // what the drag or the arrows made of it (the box shows it rounded)
+  // How far the arrow sits along the axis per unit of value: 0.5 for a symmetric extrusion, whose end moves half the
+  // distance. Kept while a drag runs.
+  void setScale(double scale) {if(!m_dragging)m_scale=scale;}
  signals:
   void valueChanged(const QString& expression);
   void accepted();  // Enter in the value box: apply the operation
@@ -51,7 +55,7 @@ class DimensionHandle : public QWidget {
   QString m_before;  // the text when the box took focus: Esc restores it
   opad::Vec3 m_origin{},m_axis{1,0,0};
   QPointF m_start,m_screenAxis;
-  double m_value=0,m_startValue=0;
+  double m_value=0,m_startValue=0,m_scale=1;
   bool m_dragging=false,m_drawn=false;
   QPointF m_arrowStart,m_arrowEnd;
   Handle(AIS_InteractiveObject) m_arrow;

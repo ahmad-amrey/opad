@@ -96,6 +96,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void fitNodesWhenReady(std::vector<std::string> ids);
   void cancelMeshing();  // stop tessellating the remaining bodies (they stay hidden until resetMeshing)
   void resetMeshing();
+  // A viewer document became editable: the same shapes under content keys. What is meshed and drawn carries over.
+  void renameBodyKeys(const std::map<std::string, std::string>& keys);
   int skippedCount() const { return static_cast<int>(m_meshSkipped.size()); }
   void fitSelection();
   void fitNodes(const std::vector<std::string>& ids);
@@ -124,6 +126,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool isIsolated() const { return !m_isolated.empty(); }
   std::vector<std::string> isolatedNodes() const {return {m_isolated.begin(),m_isolated.end()};}
   int isolatedCount() const { return static_cast<int>(m_isolated.size()); }
+  int displayedCount() const { return static_cast<int>(m_items.size()); }
 
   // Section: the clip plane, and its gizmo (ViewportSection.cpp): the plane's outline over the model, edges only,
   // sized to the model's extent in the plane. A strip inside each side is a drag handle: hovering it shows a
@@ -146,6 +149,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void deselectLast();      // one step back
   void keepLastSelected();  // a pick after the last step starts over from that pick
   bool lastPickPoint(opad::Vec3& p) const;  // where the last click hit the geometry
+  bool lastClickHit() const { return m_hasLastPick; }  // false: the last click was on empty space
   void showPickMarkers(const std::vector<opad::Vec3>& points);  // numbered end markers, 1-based
   void showPreview(const opad::Vec3& a, const opad::Vec3& b, const QString& label);  // dashed hov line to the hovered candidate
   void clearPreview();
@@ -170,6 +174,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // Feature preview: these shapes (world coordinates, already meshed by the worker) are drawn in place of the
   // nodes they change; `hidden` nodes are not drawn at all (consumed tools, removed bodies).
   void setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_Shape>>& shapes, const std::vector<std::string>& hidden);
+  // The same, with arrays built on the worker (BodyPrs::build): displaying them walks no triangulation here.
+  struct PreviewPart { std::string node; TopoDS_Shape shape; std::shared_ptr<const BodyPrs> prs; };
+  void setPreviewBodies(const std::vector<PreviewPart>& parts, const std::vector<std::string>& hidden);
+  // Other arrays to draw for the preview bodies, in the parts' order (nullptr: their own): a handle drag's live
+  // stretch while the exact preview is computed.
+  void setPreviewDisplay(const std::vector<std::shared_ptr<const BodyPrs>>& arrays);
   void clearPreviewBodies();
   void setPreparedPreview(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden);
   // Sketch editing.
@@ -179,6 +189,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void lookAt(const opad::Frame& frame, bool fit = true, bool animate = true);  // camera along the plane normal, plane x to the right
   bool planePoint(const QPointF& widgetPos, const opad::Frame& frame, double& u, double& v) const;
   double pixelSize() const;                    // world units per widget pixel at the view's focus
+  double displayScale() const { return viewScale().x(); }  // device pixels per widget point: overlay text, markers, lines
   opad::Vec3 viewDirection() const;            // unit direction the camera looks along (into the scene)
   QPoint widgetPoint(const opad::Vec3& world) const;
   // Notes: NoteCards places one card per open note and tells the view where each pointer ends (widget
@@ -273,6 +284,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Job* m_boxJob=nullptr;
   CursorWarpGate m_warpGate;
   void updateGridExtent();
+  void applySelectionFilter(SelFilter f);  // setSelectionFilter's work, also for the filter already set (re-activates)
+  // 2D mode: the grid follows the view (its plane, the visible area, a spacing for the zoom), so it never ends.
+  void updateInfiniteGrid(bool force);
   gp_Pnt drawingOrbitPoint(const QPointF* cursor=nullptr,bool* found=nullptr);
   gp_Pnt drawingPlanePoint(const QPointF& cursor,bool& found);
   gp_Pnt nearestCurvePoint(const QPointF& cursor,bool& found,double& distance);
@@ -329,6 +343,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showShade(const std::vector<std::string>& ids);
   void refreshSubHighlight();   // rebuilds m_subHl from the context's selected faces/edges/vertices (sliced)
   void applySelectionLayers();  // selected bodies live in the Topmost layer (own depth buffer): X-ray through occluders
+  void markPickedPoints();      // a filled dot on each picked point candidate
   void clearShade();
   double deflectionFor(const std::string& key);
   QPointF viewScale() const;  // OCCT view coordinates per Qt widget point
@@ -405,6 +420,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   SelFilter m_filter = SelFilter::Body;
   bool m_gridSnap=false;
   double m_gridStep=10;
+  double m_gridSpacing=0;  // view/gridSpacing (0 = automatic), read when the grid settings change
+  double m_gridShownStep=0, m_gridShownExtent=0, m_gridShownX=0, m_gridShownY=0;  // the infinite grid as last laid out
   bool m_grid = false, m_sectionEnabled = false, m_sectionCaps = true, m_initialised = false, m_needFit = false;
   std::vector<std::string> m_fitNodesOnSync;
   bool m_flushingViewEvents = false, m_repaintAfterFlush = false;
@@ -457,6 +474,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::map<std::string,std::shared_ptr<PreparedSketch>> m_preparedSketches;
   std::string m_hiddenSketch;  // being edited: the editor draws it
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_candidates;
+  std::vector<Handle(AIS_Shape)> m_pointMarks;  // markPickedPoints
   std::vector<Handle(AIS_Shape)> m_previewBodies;
   std::set<std::string> m_previewHidden;  // nodes whose own object is erased while the preview shows
   bool m_bodiesPickable = true;

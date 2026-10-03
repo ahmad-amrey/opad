@@ -18,6 +18,9 @@ bool isExternalPath(const QString& path) {
   QString ext = QFileInfo(path).suffix().toLower();
   return ext != "opad";
 }
+// A file name as the core's std::filesystem wants it: from UTF-16, since a narrow string is read in the ANSI code page on
+// Windows and a file named in Arabic or Chinese did not open.
+std::filesystem::path fsPath(const QString& path) { return std::filesystem::path(path.toStdU16String()); }
 QString phaseLabel(const std::string& what, const QString& file) {
   if (what == "reading") return AppDocument::tr("Reading %1").arg(file);
   if (what == "building") return AppDocument::tr("Building document");
@@ -60,30 +63,47 @@ opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<b
 
 void AppDocument::cancelLoad() {
   if (m_cancel) *m_cancel = true;
+  if (!loading) return;
+  // The worker may sit in a step that does not poll (OCCT parsing a big STEP): stop waiting for it. Whatever it
+  // produces later is dropped, so the next file can open at once.
+  ++*m_loadToken;
+  loading = false;
+  emit loadFinished(false, QStringLiteral("cancelled"));
 }
 
 void AppDocument::startOpen(const QString& path) {
-  if (loading || designBusy) return;
+  if (designBusy || m_converting) return;
+  if (loading) cancelLoad();
   loading = true;
   auto cancel = std::make_shared<std::atomic<bool>>(false);
   m_cancel = cancel;
+  const unsigned token = ++*m_loadToken;
+  auto current = m_loadToken;
   const bool external = isExternalPath(path);
+  const bool viewer = external && viewerOpens;
   const QString file = QFileInfo(path).fileName() + QStringLiteral(" (%1 MB)").arg(QFileInfo(path).size() / (1024.0 * 1024.0), 0, 'f', 0);
   opad::ImportOptions o = loadOptions(cancel, file);
+  o.viewer = viewer;  // viewer mode: nothing is prepared for saving (no healing, BREP text or hashing)
   const QString suffix = QFileInfo(path).suffix().toLower();
   o.center_drawing = suffix == "dxf" || suffix == "svg" || suffix == "dwg";  // opened on its own: centred on the grid
   auto alive = m_alive;
   emit loadProgress(external ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1);
-  std::thread([this, alive, cancel, path, external, o]() {
+  std::thread([this, alive, cancel, path, external, viewer, o, token, current]() {
     auto result = std::make_shared<opad::Document>();
     QString error;
     QStringList warnings;
+    bool slowRead = false;  // worth remembering (viewer cache): the next open skips the translation
     try {
       if (external) {
         *result = opad::Document::create();
-        const auto imported=opad::import_file(*result, path.toStdString(), o);
-        for(const auto& warning:imported.warnings) warnings.append(QString::fromStdString(warning));
-      } else *result = opad::Document::load(path.toStdString());
+        QElapsedTimer clock;
+        clock.start();
+        if (!viewer || !opad::viewer_cache_load(*result, fsPath(path), o)) {
+          const auto imported=opad::import_file(*result, fsPath(path), o);
+          for(const auto& warning:imported.warnings) warnings.append(QString::fromStdString(warning));
+          slowRead = viewer && clock.elapsed() > 1500;
+        }
+      } else *result = opad::Document::load(fsPath(path));
       // Parse the bodies here rather than on the UI thread when they are first displayed.
       if (!*cancel) opad::warm_shape_cache(*result, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
       if (*cancel) error = QStringLiteral("cancelled");
@@ -92,8 +112,9 @@ void AppDocument::startOpen(const QString& path) {
     } catch (const std::exception& e) {
       error = QString::fromUtf8(e.what());
     }
-    if (!*alive) return;
-    QMetaObject::invokeMethod(this, [this, result, error, path, external, warnings] {
+    if (!*alive || current->load() != token) return;  // dropped: freed here, off the UI thread
+    QMetaObject::invokeMethod(this, [this, result, error, path, external, viewer, warnings, token, current, slowRead, o] {
+      if (current->load() != token) return;
       loading = false;
       if (!error.isEmpty()) {
         emit loadFinished(false, error);
@@ -103,14 +124,18 @@ void AppDocument::startOpen(const QString& path) {
       ++generation;
       m_rollback.clear();
       doc = std::move(*result);
-      browse = false;
+      browse = viewer;
+      viewing = viewer ? QFileInfo(path).absoluteFilePath() : QString();
+      m_cacheSource = slowRead ? viewing : QString();
+      m_cacheCenter = o.center_drawing;
       hasDocument = true;
       clearHistory();
-      markSaved();
-      if (external) m_savedIds.clear();  // imported content has not been saved as an OPAD document
+      markSaved();  // a viewed file is never "unsaved": closing it asks nothing
+      if (external && !viewer) m_savedIds.clear();  // imported for editing: not saved as an OPAD document yet
       refresh();
       emit pathChanged();
-      if (external) emit message(tr("Imported %1 into a new document").arg(QFileInfo(path).fileName()));
+      if (viewer) emit message(tr("Viewing %1 (read-only)").arg(QFileInfo(path).fileName()));
+      else if (external) emit message(tr("Imported %1 into a new document").arg(QFileInfo(path).fileName()));
       else emit message(tr("Opened %1").arg(path));
       if(!warnings.isEmpty()) emit message(warnings.join("; "));
       emit loadFinished(true, {});
@@ -140,8 +165,10 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
   const size_t opsBefore = work->ops.size();
   const bool dirtyBefore = work->dirty;
   auto alive = m_alive;
+  const unsigned token = ++*m_loadToken;
+  auto current = m_loadToken;
   emit loadProgress(tr("Reading %1").arg(file), -1);
-  std::thread([this, alive, cancel, path, o, work, opsBefore, dirtyBefore, plane]() mutable {
+  std::thread([this, alive, cancel, path, o, work, opsBefore, dirtyBefore, plane, token, current]() mutable {
     QString error;
     opad::json r;
     try {
@@ -152,7 +179,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
         for (int r = 0; r < 3; ++r) { m.at(r, 0) = f.x[r]; m.at(r, 1) = f.y[r]; m.at(r, 2) = n[r]; m.at(r, 3) = f.origin[r]; }
         o.placement = m * o.placement;
       }
-      r = opad::import_file(*work, path.toStdString(), o).to_json();
+      r = opad::import_file(*work, fsPath(path), o).to_json();
       if (!*cancel) opad::warm_shape_cache(*work, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
       if (*cancel) error = QStringLiteral("cancelled");
     } catch (const Standard_Failure& e) {
@@ -160,8 +187,9 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
     } catch (const std::exception& e) {
       error = QString::fromUtf8(e.what());
     }
-    if (!*alive) return;
-    QMetaObject::invokeMethod(this, [this, work, error, r, path, opsBefore, dirtyBefore] {
+    if (!*alive || current->load() != token) return;  // cancelled: the document never saw it
+    QMetaObject::invokeMethod(this, [this, work, error, r, path, opsBefore, dirtyBefore, token, current] {
+      if (current->load() != token) return;
       if (!error.isEmpty() && work->ops.size() > opsBefore) {
         // Cancelled after the op was appended: roll it back and drop the orphaned body entries.
         work->ops.resize(opsBefore);
@@ -224,10 +252,10 @@ void AppDocument::open(const QString& path) {
     next = opad::Document::create();
     opad::ImportOptions options;
     options.author = QSettings().value("user/name").toString().trimmed().toStdString();
-    opad::import_file(next, path.toStdString(), options);
+    opad::import_file(next, fsPath(path), options);
     emit message(tr("Imported %1 into a new document").arg(QFileInfo(path).fileName()));
   } else {
-    next = opad::Document::load(path.toStdString());
+    next = opad::Document::load(fsPath(path));
     emit message(tr("Opened %1").arg(path));
   }
   emit aboutToReplace();
@@ -276,7 +304,7 @@ void AppDocument::save() {
 void AppDocument::saveAs(const QString& path) {
   if (loading || m_capturing) throw opad::Error("Document snapshot is in progress; try saving again shortly.");
   if (browse) throw opad::Error("viewer mode: export to an OPAD document first");
-  doc.save_as(path.toStdString());
+  doc.save_as(fsPath(path));
   markSaved();
   emit pathChanged();
   emit saved();
@@ -284,7 +312,10 @@ void AppDocument::saveAs(const QString& path) {
 }
 
 opad::json AppDocument::run(const std::string& command, opad::json args) {
+  if (m_converting) throw opad::Error("The document is being prepared for editing; try again in a moment.");
   if (designBusy) throw opad::Error("The design is being recomputed; try again in a moment.");
+  // Viewer mode changes how things look (shown, colour, opacity), never the model.
+  if (browse && command != "appearance") throw opad::Error("Viewer mode: save the file as an OPAD document to edit it.");
   const size_t before = doc.ops.size();
   if (!args.contains("by")) args["by"] = QSettings().value("user/name").toString().trimmed().toStdString();
   opad::json out = opad::commands::run(command, args, &doc);
@@ -295,6 +326,7 @@ opad::json AppDocument::run(const std::string& command, opad::json args) {
 
 opad::json AppDocument::commitPlan(opad::design::Plan&& plan, const QString& label) {
   if (m_capturing) throw opad::Error("Document snapshot is in progress; try again shortly.");
+  if (browse) throw opad::Error("Viewer mode: save the file as an OPAD document to edit it.");
   const size_t before = doc.ops.size();
   opad::json report = opad::design::commit(doc, std::move(plan), QSettings().value("user/name").toString().trimmed().toStdString());
   recordStep(label, before);
@@ -327,6 +359,7 @@ void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved) {
 // ---------------------------------------------------------------- undo / redo
 void AppDocument::commitSnapshot(opad::Document& document,opad::Scene& resolved,
                                  unsigned long long expectedRevision,const QString& label) {
+  if(browse) throw opad::Error("viewer_mode: the open file is shown read-only; the user has to save it as an OPAD document before it can be edited");
   if(loading || designBusy || revision!=expectedRevision || document.header.uuid!=doc.header.uuid)
     throw opad::Error("stale_revision: the document changed while the agent was working");
   const auto before=doc.ops.size();
@@ -418,7 +451,7 @@ QString AppDocument::labelFor(const std::string& command, const opad::json& args
 QString AppDocument::title() const {
   if (!hasDocument) return tr("OPAD");
   QString name = doc.path.empty() ? tr("Untitled") : QString::fromStdU16String(doc.path.filename().u16string());
-  if (browse) name = tr("[viewer] ") + name;
+  if (browse) return tr("%1 · Viewer - OPAD").arg(QFileInfo(viewing).fileName());
   if (isDirty()) name += "*";
   return name + " - OPAD";
 }

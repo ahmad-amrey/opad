@@ -4,6 +4,8 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopExp.hxx>
 #include "opad/geometry.hpp"
+#include "import_common.hpp"
+#include "drawing_common.hpp"
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <gp_Pln.hxx>
@@ -50,6 +52,7 @@
 #endif
 #include <windows.h>
 #else
+#include <fcntl.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -57,6 +60,26 @@ extern char** environ;
 #endif
 
 namespace opad {
+namespace detail {
+void Drawing::add(const std::string& layer, const TopoDS_Shape& s, uint32_t color) {
+  if (layers.size() >= 10000 && !layers.count(layer)) throw Error("drawing exceeds 10000 layers");
+  auto& c = layers[layer][color]; if (c.IsNull()) builder.MakeCompound(c);
+  if(transform.is_identity()) builder.Add(c,s);
+  else if(mat_is_rigid(transform)) builder.Add(c,BRepBuilderAPI_Transform(s,trsf_from_mat(transform),true).Shape());
+  else {
+    gp_GTrsf t; for(int r=0;r<3;++r)for(int col=0;col<4;++col)t.SetValue(r+1,col+1,transform.at(r,col));
+    builder.Add(c,BRepBuilderAPI_GTransform(s,t,true).Shape());
+  }
+}
+void Drawing::line(const std::string& layer, double x, double y, double u, double v) {
+  if (std::hypot(x-u, y-v) > 1e-9) add(layer, BRepBuilderAPI_MakeEdge(gp_Pnt(x,y,0), gp_Pnt(u,v,0)).Edge());
+}
+void Drawing::circle(const std::string& layer, double x, double y, double r) {
+  if (!(r > 1e-9)) throw Error("drawing circle radius must be positive");
+  add(layer, BRepBuilderAPI_MakeEdge(gp_Circ(gp_Ax2(gp_Pnt(x,y,0), gp::DZ()), r)).Edge());
+}
+}  // namespace detail
+using detail::Drawing;
 namespace {
 std::string xml_text(const LDOMString& value) {
   Standard_Integer integer;
@@ -67,81 +90,150 @@ struct Conversion {
   Conversion() { std::filesystem::create_directory(directory); }
   ~Conversion() { std::error_code error; std::filesystem::remove_all(directory, error); }
 };
-void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& out, bool toDwg) {
-  const char* override = std::getenv(toDwg ? "OPAD_DXF2DWG" : "OPAD_DWG2DXF");
-  const std::string program = override && *override ? override : toDwg ? "dxf2dwg" : "dwg2dxf";
-  std::vector<std::string> args = {program, "-y", "-o", out.string(), in.string()};
+// Runs a converter and waits for it (two minutes at most); its exit status, or -1 when it did not start. Arguments go as
+// wide strings on Windows, so a drawing named in Arabic reaches the converter intact.
+int run_program(const std::filesystem::path& program, const std::vector<std::filesystem::path>& args, const std::filesystem::path& cwd = {}) {
   int status = -1;
 #ifdef _WIN32
   std::wstring command;
-  for (const auto& a : args) {
+  auto quote = [&](const std::wstring& a) {
     command += L"\""; unsigned slashes=0;
-    for(wchar_t c:std::filesystem::path(a).wstring()) {
+    for(wchar_t c:a) {
       if(c==L'\\') { ++slashes; continue; }
       command.append(c==L'\"'?slashes*2+1:slashes,L'\\'); slashes=0; command+=c;
     }
     command.append(slashes*2,L'\\'); command+=L"\" ";
-  }
-  STARTUPINFOW startup{}; startup.cb=sizeof(startup); startup.dwFlags=STARTF_USESTDHANDLES;
-  startup.hStdInput=GetStdHandle(STD_INPUT_HANDLE);
-  startup.hStdOutput=startup.hStdError=GetStdHandle(STD_ERROR_HANDLE);
+  };
+  quote(program.wstring());
+  for (const auto& a : args) quote(a.wstring());
+  STARTUPINFOW startup{}; startup.cb=sizeof(startup); startup.dwFlags=STARTF_USESTDHANDLES|STARTF_USESHOWWINDOW;
+  startup.wShowWindow=0;  // SW_HIDE (the OCCT headers leave winuser.h out): converters with a window (ODA) stay out of sight
+  // Converters report progress on stdout and stderr, which nobody reads: both go to NUL.
+  SECURITY_ATTRIBUTES inherit{sizeof(inherit),nullptr,TRUE};
+  HANDLE nul=CreateFileW(L"NUL",GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&inherit,OPEN_EXISTING,0,nullptr);
+  startup.hStdInput=startup.hStdOutput=startup.hStdError=nul;
   PROCESS_INFORMATION process{};
-  if(CreateProcessW(nullptr,command.data(),nullptr,nullptr,TRUE,CREATE_NO_WINDOW,nullptr,nullptr,&startup,&process)) {
+  if(CreateProcessW(nullptr,command.data(),nullptr,nullptr,TRUE,CREATE_NO_WINDOW,nullptr,cwd.empty()?nullptr:cwd.c_str(),&startup,&process)) {
     if(WaitForSingleObject(process.hProcess,120000)==WAIT_OBJECT_0) { DWORD code; if(GetExitCodeProcess(process.hProcess,&code)) status=int(code); }
     else { TerminateProcess(process.hProcess,1); WaitForSingleObject(process.hProcess,5000); }
     CloseHandle(process.hThread); CloseHandle(process.hProcess);
   }
+  if(nul!=INVALID_HANDLE_VALUE) CloseHandle(nul);
 #else
-  std::vector<char*> ptrs; for (auto& a : args) ptrs.push_back(a.data()); ptrs.push_back(nullptr);
+  (void)cwd;  // callers pass absolute paths here
+  std::vector<std::string> text = {program.string()};
+  for (const auto& a : args) text.push_back(a.string());
+  std::vector<char*> ptrs; for (auto& a : text) ptrs.push_back(a.data()); ptrs.push_back(nullptr);
   pid_t pid;
   posix_spawn_file_actions_t actions; posix_spawn_file_actions_init(&actions);
-  posix_spawn_file_actions_adddup2(&actions, STDERR_FILENO, STDOUT_FILENO);
-  const int error = posix_spawnp(&pid, program.c_str(), &actions, nullptr, ptrs.data(), environ);
+  posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);  // converter chatter: nobody reads it
+  posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+  const int error = posix_spawnp(&pid, text[0].c_str(), &actions, nullptr, ptrs.data(), environ);
   posix_spawn_file_actions_destroy(&actions);
   if (!error) { int code=0; while(waitpid(pid,&code,0)<0 && errno==EINTR) {} if(WIFEXITED(code)) status=WEXITSTATUS(code); }
 #endif
-  if (status != 0 || !std::filesystem::exists(out))
-    throw Error("DWG conversion failed or converter unavailable. Install LibreDWG and set " + std::string(toDwg ? "OPAD_DXF2DWG" : "OPAD_DWG2DXF") + " to its executable path. Alternatively convert the file to DXF manually.");
+  return status;
+}
+
+std::filesystem::path executable_dir() {
+#ifdef _WIN32
+  std::wstring buffer(32768, L'\0');
+  const DWORD n = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+  if (n == 0 || n >= buffer.size()) return {};
+  buffer.resize(n);
+  return std::filesystem::path(buffer).parent_path();
+#else
+  std::error_code error;
+  const auto self = std::filesystem::read_symlink("/proc/self/exe", error);
+  return error ? std::filesystem::path() : self.parent_path();
+#endif
+}
+
+// The free ODA File Converter, where its installers put it (the newest version when several are installed).
+std::filesystem::path oda_converter() {
+  std::vector<std::filesystem::path> found;
+  std::error_code error;
+#ifdef _WIN32
+  for (const char* variable : {"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"}) {
+    const char* root = std::getenv(variable);
+    if (!root || !*root) continue;
+    const auto oda = std::filesystem::path(root) / "ODA";
+    if (!std::filesystem::is_directory(oda, error)) continue;
+    for (const auto& entry : std::filesystem::directory_iterator(oda, error))
+      if (std::filesystem::exists(entry.path() / "ODAFileConverter.exe", error)) found.push_back(entry.path() / "ODAFileConverter.exe");
+  }
+#else
+  for (const char* candidate : {"/usr/bin/ODAFileConverter", "/usr/local/bin/ODAFileConverter", "/opt/ODAFileConverter/ODAFileConverter",
+                                "/Applications/ODAFileConverter.app/Contents/MacOS/ODAFileConverter"})
+    if (std::filesystem::exists(candidate, error)) found.push_back(candidate);
+#endif
+  std::sort(found.begin(), found.end());
+  return found.empty() ? std::filesystem::path() : found.back();
+}
+
+// DWG <-> DXF through an external converter (DWG is a closed format): OPAD_DWG2DXF / OPAD_DXF2DWG when set, else the
+// ODA File Converter when installed (it reads every DWG version faithfully), else LibreDWG's dwg2dxf / dxf2dwg, which
+// the build puts beside the program (third_party/libredwg), else on PATH.
+void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& out, bool toDwg) {
+  const std::string name = toDwg ? "dxf2dwg" : "dwg2dxf";
+  const char* override = std::getenv(toDwg ? "OPAD_DXF2DWG" : "OPAD_DWG2DXF");
+  auto libre = [&](const std::filesystem::path& program) {
+    // LibreDWG opens files by their ANSI names on Windows, so it works on plain names in a scratch folder it runs in.
+    Conversion work;
+    const std::filesystem::path source = toDwg ? "in.dxf" : "in.dwg", target = toDwg ? "out.dwg" : "out.dxf";
+    std::filesystem::copy_file(in, work.directory / source);
+#ifdef _WIN32
+    const bool ok = run_program(program, {"-v0", "-y", "-o", target, source}, work.directory) == 0;
+#else
+    const bool ok = run_program(program, {"-v0", "-y", "-o", work.directory / target, work.directory / source}) == 0;
+#endif
+    std::error_code error;
+    if (!ok || !std::filesystem::exists(work.directory / target, error)) return false;
+    std::filesystem::copy_file(work.directory / target, out, std::filesystem::copy_options::overwrite_existing);
+    return true;
+  };
+  if (override && *override && libre(path_from_utf8(override))) return;
+  if (const auto oda = oda_converter(); !oda.empty() && !(override && *override)) {
+    // ODA converts folders: the drawing alone in one, the result in another.
+    Conversion work;
+    const auto from = work.directory / "in", to = work.directory / "out";
+    std::filesystem::create_directories(from);
+    std::filesystem::create_directories(to);
+    std::filesystem::copy_file(in, from / in.filename());
+    run_program(oda, {from, to, "ACAD2018", toDwg ? "DWG" : "DXF", "0", "1", in.filename()});
+    const auto produced = to / (in.stem().wstring() + (toDwg ? L".dwg" : L".dxf"));
+    std::error_code error;
+    if (std::filesystem::exists(produced, error)) {
+      std::filesystem::copy_file(produced, out, std::filesystem::copy_options::overwrite_existing);
+      return;
+    }
+  }
+  bool tried = (override && *override) || !oda_converter().empty();
+  if (!(override && *override)) {
+    std::error_code error;
+#ifdef _WIN32
+    const auto beside = executable_dir() / (name + ".exe");
+#else
+    const auto beside = executable_dir() / name;
+#endif
+    if (!executable_dir().empty() && std::filesystem::exists(beside, error)) {
+      tried = true;
+      if (libre(beside)) return;
+    }
+    if (libre(name)) return;  // on PATH
+  }
+  if (tried)
+    throw Error(std::string(toDwg ? "Writing DWG failed" : "Reading DWG failed") +
+                ": the converter could not handle this drawing (it may be damaged, or saved by a newer AutoCAD)");
+  throw Error(std::string(toDwg ? "Writing DWG" : "Reading DWG") + " needs a converter: put LibreDWG's " + name +
+              " beside OPAD or on PATH (or set " + (toDwg ? "OPAD_DXF2DWG" : "OPAD_DWG2DXF") +
+              " to it), or install the free ODA File Converter. Saving the drawing as DXF works without one.");
 }
 std::string extension(const std::filesystem::path& file) {
   std::string e = file.extension().string();
   std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) { return std::tolower(c); });
   return e;
 }
-double number(const std::string& s) {
-  size_t used = 0; double v;
-  try { v = std::stod(s, &used); } catch (...) { throw Error("invalid drawing coordinate: " + s.substr(0, 60)); }
-  if (!std::isfinite(v) || std::abs(v) > 1e12 || s.find_first_not_of(" \r\t", used) != std::string::npos)
-    throw Error("invalid drawing coordinate: " + s.substr(0, 60));
-  return v;
-}
-struct Drawing {
-  std::map<std::string, TopoDS_Compound> layers;
-  std::map<std::string, bool> visible;
-  std::map<std::string, json> images;
-  std::vector<std::string> warnings;
-  BRep_Builder builder;
-  Mat4 transform;
-  void add(const std::string& layer, const TopoDS_Shape& s) {
-    if (layers.size() > 10000) throw Error("drawing exceeds 10000 layers");
-    auto& c = layers[layer]; if (c.IsNull()) builder.MakeCompound(c);
-    if(transform.is_identity()) builder.Add(c,s);
-    else if(mat_is_rigid(transform)) builder.Add(c,BRepBuilderAPI_Transform(s,trsf_from_mat(transform),true).Shape());
-    else {
-      gp_GTrsf t; for(int r=0;r<3;++r)for(int col=0;col<4;++col)t.SetValue(r+1,col+1,transform.at(r,col));
-      builder.Add(c,BRepBuilderAPI_GTransform(s,t,true).Shape());
-    }
-  }
-  void line(const std::string& layer, double x, double y, double u, double v) {
-    if (std::hypot(x-u, y-v) > 1e-9) add(layer, BRepBuilderAPI_MakeEdge(gp_Pnt(x,y,0), gp_Pnt(u,v,0)).Edge());
-  }
-  void circle(const std::string& layer, double x, double y, double r, double a = 0, double b = 2*M_PI) {
-    if (!(r > 1e-9)) throw Error("drawing circle radius must be positive");
-    gp_Circ c(gp_Ax2(gp_Pnt(x,y,0), gp::DZ()), r);
-    add(layer, BRepBuilderAPI_MakeEdge(c, a, b).Edge());
-  }
-};
-
 // SVG numbers allow comma/space separators and adjacent signs ("10-5").
 struct SvgNumbers {
   std::string text; size_t at=0;
@@ -228,118 +320,6 @@ void svg_path(Drawing& out,const std::string& layer,const std::string& data) {
     } else throw Error("Unsupported SVG path command: " + std::string(1,cmd));
     previous=op;
   }
-}
-
-Drawing read_dxf(const std::filesystem::path& file) {
-  std::ifstream in(file); if (!in) throw Error("cannot open DXF");
-  struct Pair { int code; std::string value; };
-  std::vector<Pair> pairs;
-  std::string a, b;
-  while (std::getline(in,a)) {
-    if (!std::getline(in,b)) throw Error("truncated DXF group");
-    if (!b.empty() && b.back() == '\r') b.pop_back();
-    double code = number(a); if (code != std::floor(code) || code < 0 || code > 1071) throw Error("invalid DXF group code");
-    pairs.push_back({int(code),b});
-  }
-  if (pairs.empty() || pairs.back().code != 0 || pairs.back().value != "EOF") throw Error("DXF missing EOF marker");
-  double unitScale=1.0;
-  for(size_t i=0;i+1<pairs.size();++i) if(pairs[i].code==9 && pairs[i].value=="$INSUNITS") {
-    const int units=int(number(pairs[i+1].value));
-    switch(units) {
-      case 0: case 4: unitScale=1;break;
-      case 1: unitScale=25.4;break;
-      case 2: unitScale=304.8;break;
-      case 5: unitScale=10;break;
-      case 6: unitScale=1000;break;
-      case 7: unitScale=1000000;break;
-      case 13: unitScale=0.001;break;
-      default: throw Error("DXF insertion units are unsupported; convert the drawing to millimetres");
-    }
-  }
-  Drawing out; bool entities = false;
-  for (size_t i=0; i<pairs.size();) {
-    if (pairs[i].code != 0) { ++i; continue; }
-    const std::string type = pairs[i].value;
-    size_t end=i+1; while(end<pairs.size() && pairs[end].code != 0) ++end;
-    auto str = [&](int code, const std::string& fallback = "") { for(size_t j=i+1;j<end;++j) if(pairs[j].code==code) return pairs[j].value; return fallback; };
-    auto num = [&](int code, double fallback=0) { auto s=str(code); return s.empty()?fallback:number(s); };
-    if (type=="SECTION") entities = str(2)=="ENTITIES";
-    else if (type=="ENDSEC") entities=false;
-    else if(type=="LAYER") out.visible[str(2,"0")] = num(62,7)>=0 && !(int(num(70)) & 1);
-    else if(entities) {
-      const auto layer=str(8,"0");
-      if (num(30)!=0 || num(31)!=0 || num(38)!=0 || num(210)!=0 || num(220)!=0 || num(230,1)!=1)
-        throw Error("DXF: only planar XY entities are supported; project to XY before import");
-      if(type=="LINE") out.line(layer,num(10),num(20),num(11),num(21));
-      else if(type=="CIRCLE") out.circle(layer,num(10),num(20),num(40));
-      else if(type=="ARC") { double start=num(50)*M_PI/180, stop=num(51)*M_PI/180; if(stop<=start)stop+=2*M_PI; out.circle(layer,num(10),num(20),num(40),start,stop); }
-      else if(type=="POINT") out.add(layer,BRepBuilderAPI_MakeVertex(gp_Pnt(num(10),num(20),0)).Vertex());
-      else if(type=="SPLINE") {
-        // DXF stores the expanded knot vector, WCS control points and optional weights.
-        std::vector<gp_Pnt> poles;
-        std::vector<double> knots, weights;
-        std::vector<int> multiplicities;
-        int knotCount=0;
-        for(size_t j=i+1;j<end;++j) {
-          const double v = (pairs[j].code==10 || pairs[j].code==20 || pairs[j].code==30 || pairs[j].code==40 || pairs[j].code==41) ? number(pairs[j].value) : 0;
-          switch(pairs[j].code) {
-            case 10: poles.emplace_back(v,0,0);break;
-            case 20: if(poles.empty())throw Error("DXF spline has incomplete control points");poles.back().SetY(v);break;
-            case 30: if(v!=0)throw Error("DXF: only planar XY entities are supported; project to XY before import");break;
-            case 40:
-              if(!knots.empty() && v<knots.back())throw Error("DXF spline knots must be nondecreasing");
-              if(!knots.empty() && v==knots.back())++multiplicities.back();
-              else {knots.push_back(v);multiplicities.push_back(1);}++knotCount;break;
-            case 41: if(v<=0)throw Error("DXF spline weights must be positive");weights.push_back(v);break;
-          }
-        }
-        const int degree=int(num(71)),flags=int(num(70));
-        if(degree<1 || degree>Geom_BSplineCurve::MaxDegree() || poles.size()<2 || knots.size()<2 ||
-           num(72)!=knotCount || num(73)!=double(poles.size()) || (!weights.empty() && weights.size()!=poles.size()))
-          throw Error("DXF spline has invalid degree, knots or control points");
-        TColgp_Array1OfPnt p(1,int(poles.size()));TColStd_Array1OfReal w(1,int(poles.size())),k(1,int(knots.size()));TColStd_Array1OfInteger m(1,int(knots.size()));
-        for(int n=1;n<=p.Length();++n){p(n)=poles[n-1];w(n)=weights.empty()?1:weights[n-1];}
-        for(int n=1;n<=k.Length();++n){k(n)=knots[n-1];m(n)=multiplicities[n-1];}
-        try {
-          // Periodic DXF writers may emit an already expanded, nonperiodic representation.
-          const bool periodic=(flags&2) && knotCount!=int(poles.size())+degree+1;
-          Handle(Geom_BSplineCurve) curve=new Geom_BSplineCurve(p,w,k,m,degree,periodic);
-          out.add(layer,BRepBuilderAPI_MakeEdge(curve).Edge());
-        } catch(const Standard_Failure& e) {throw Error(std::string("Invalid DXF spline: ")+e.GetMessageString());}
-      }
-      else if(type=="LWPOLYLINE") {
-        std::vector<std::array<double,3>> points;
-        for(size_t j=i+1;j<end;++j) {
-          if(pairs[j].code==10) points.push_back({number(pairs[j].value),0,0});
-          if(pairs[j].code==20 && !points.empty()) points.back()[1]=number(pairs[j].value);
-          if(pairs[j].code==42 && !points.empty()) points.back()[2]=number(pairs[j].value);
-        }
-        if(points.empty()) throw Error("DXF polyline needs at least one point");
-        // Laser/vector exporters also emit closed one-vertex polylines for isolated dots.
-        if(points.size()==1)out.add(layer,BRepBuilderAPI_MakeVertex(gp_Pnt(points[0][0],points[0][1],0)).Vertex());
-        size_t segments=points.size()==1?0:points.size()-1+(int(num(70))&1);
-        for(size_t k=0;k<segments;++k) {
-          auto p=points[k], q=points[(k+1)%points.size()];
-          if(std::abs(p[2])<1e-12) out.line(layer,p[0],p[1],q[0],q[1]);
-          else {
-            const double dx=q[0]-p[0], dy=q[1]-p[1], chord=std::hypot(dx,dy), bulge=p[2];
-            if(chord<1e-9) throw Error("degenerate DXF bulge");
-            const double cx=(p[0]+q[0])/2-dy*(1-bulge*bulge)/(4*bulge), cy=(p[1]+q[1])/2+dx*(1-bulge*bulge)/(4*bulge);
-            double start=std::atan2(p[1]-cy,p[0]-cx), stop=start+4*std::atan(bulge);
-            if(bulge<0) std::swap(start,stop);
-            out.circle(layer,cx,cy,chord*(1+bulge*bulge)/(4*std::abs(bulge)),start,stop);
-          }
-        }
-      } else throw Error("Unsupported DXF entity: " + type + ". Explode blocks/text/hatches to supported curves before importing.");
-    }
-    i=end;
-  }
-  if(out.layers.empty()) throw Error("DXF contains no supported geometry");
-  if(unitScale!=1) {
-    gp_Trsf scale;scale.SetScale(gp_Pnt(0,0,0),unitScale);
-    for(auto& [name,shape]:out.layers)shape=TopoDS::Compound(BRepBuilderAPI_Transform(shape,scale,true).Shape());
-  }
-  return out;
 }
 
 std::string base64(const std::string& bytes) {
@@ -495,98 +475,74 @@ Drawing read_svg(const std::filesystem::path& file) {
     scale=length(width)*25.4/96/w;
   }
   gp_Trsf scaling; scaling.SetScale(gp_Pnt(0,0,0),scale);
-  for(auto& [name,shape]:out.layers) shape=TopoDS::Compound(BRepBuilderAPI_Transform(shape,scaling,true).Shape());
+  for(auto& [name,groups]:out.layers) for(auto& [color,shape]:groups) shape=TopoDS::Compound(BRepBuilderAPI_Transform(shape,scaling,true).Shape());
   for(auto& [name,image]:out.images) for(auto& point:image["corners"]) for(auto& v:point) v=v.get<double>()*scale;
   if(out.layers.empty()) throw Error("SVG contains no drawable geometry");
   return out;
 }
 
-TopoDS_Shape read_mesh(const std::filesystem::path& file) {
-  std::vector<gp_Pnt> vertices; std::vector<std::array<int,3>> triangles;
-  const std::string text=read_text_file(file);
-  auto add=[&](double x,double y,double z) { if(!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(z)||std::max({std::abs(x),std::abs(y),std::abs(z)})>1e12) throw Error("invalid mesh vertex"); vertices.emplace_back(x,y,z); };
-  if(extension(file)==".stl") {
-    uint32_t count=0; if(text.size()>=84) { for(int i=0;i<4;++i) count |= uint32_t(static_cast<unsigned char>(text[80+i]))<<(8*i); }
-    if(count>0 && count <= (text.size()-std::min<size_t>(84,text.size()))/50 && text.size()==84+size_t(count)*50) {
-      for(uint32_t i=0;i<count;++i) {
-        for(int j=0;j<3;++j) {
-          float v[3]; for(int k=0;k<3;++k) { uint32_t bits=0; size_t at=84+size_t(i)*50+12+j*12+k*4; for(int q=0;q<4;++q) bits|=uint32_t(static_cast<unsigned char>(text[at+q]))<<(8*q); std::memcpy(&v[k],&bits,4); }
-          add(v[0],v[1],v[2]);
-        }
-        const int n=int(vertices.size()); triangles.push_back({n-2,n-1,n});
-      }
-    } else {
-      std::istringstream in(text); std::string word,x,y,z;
-      while(in>>word) if(word=="vertex") { if(!(in>>x>>y>>z)) throw Error("truncated STL vertex"); add(number(x),number(y),number(z)); }
-      if(vertices.empty() || vertices.size()%3 || text.find("endsolid")==std::string::npos) throw Error("invalid or truncated STL");
-      for(int i=1;i<=int(vertices.size());i+=3) triangles.push_back({i,i+1,i+2});
-    }
-  } else {
-    std::istringstream in(text); std::string line;
-    while(std::getline(in,line)) {
-      std::istringstream ss(line); std::string tag,x,y,z; ss>>tag;
-      if(tag=="v") { if(!(ss>>x>>y>>z)) throw Error("invalid OBJ vertex"); add(number(x),number(y),number(z)); }
-      else if(tag=="f") {
-        std::vector<int> f;
-        while(ss>>x) { auto slash=x.find('/'); double raw=number(x.substr(0,slash)); if(raw!=std::floor(raw)||raw==0||std::abs(raw)>vertices.size()) throw Error("OBJ vertex index out of range"); int i=int(raw); f.push_back(i<0?int(vertices.size())+i+1:i); }
-        if(f.size()!=3) throw Error("OBJ faces must be triangulated before import");
-        triangles.push_back({f[0],f[1],f[2]});
-      }
-    }
-  }
-  if(vertices.empty() || triangles.empty() || vertices.size()>10000000 || triangles.size()>10000000) throw Error("empty or oversized mesh");
-  Handle(Poly_Triangulation) mesh=new Poly_Triangulation(int(vertices.size()),int(triangles.size()),false);
-  for(size_t i=0;i<vertices.size();++i) mesh->SetNode(int(i+1),vertices[i]);
-  for(size_t i=0;i<triangles.size();++i) { auto t=triangles[i]; mesh->SetTriangle(int(i+1),Poly_Triangle(t[0],t[1],t[2])); }
-  TopoDS_Face face; BRep_Builder().MakeFace(face,mesh); return face;
-}
 std::string xml(const std::string& in) { std::string out; for(char c:in) { if(c=='&')out+="&amp;"; else if(c=='<')out+="&lt;"; else if(c=='\"')out+="&quot;"; else out+=c; } return out; }
+}
+
+const std::vector<std::string>& importable_extensions() {
+  static const std::vector<std::string> list = {".step", ".stp", ".iges", ".igs", ".brep", ".brp", ".stl", ".obj", ".3mf", ".ply",
+                                                ".gltf", ".glb", ".wrl", ".vrml", ".dxf", ".dwg", ".svg"};
+  return list;
 }
 
 ImportResult import_file(Document& doc, const std::filesystem::path& file, const ImportOptions& options) {
   const auto ext=extension(file);
-  if(ext==".step" || ext==".stp") return import_step(doc,file,options);
+  if(!std::filesystem::exists(file)) throw Error("file not found: "+file.filename().string());
+  try {
+    if(ext==".step" || ext==".stp") return import_step(doc,file,options);
+    if(ext==".iges" || ext==".igs") return detail::import_iges(doc,file,options);
+    if(ext==".brep" || ext==".brp") return detail::import_brep_file(doc,file,options);
+    if(ext==".stl") return detail::import_stl(doc,file,options);
+    if(ext==".ply") return detail::import_ply(doc,file,options);
+    if(ext==".3mf") return detail::import_3mf(doc,file,options);
+    if(ext==".obj" || ext==".gltf" || ext==".glb" || ext==".wrl" || ext==".vrml") return detail::import_mesh_scene(doc,file,options);
+  } catch(const Standard_Failure& e) { throw Error("cannot read "+file.filename().string()+": "+e.GetMessageString()); }
   if(ext==".dwg") {
-    Conversion work; auto converted=work.directory/"drawing.dxf";
-    convert_dwg(file,converted,false);
-    return import_file(doc,converted,options);
+    Conversion work; auto name=file.stem(); name+=".dxf";  // keeps the drawing's own name
+    convert_dwg(file,work.directory/name,false);
+    return import_file(doc,work.directory/name,options);
   }
   try {
-    Drawing drawing; bool mesh=ext==".stl" || ext==".obj";
-    if(mesh) drawing.add("Mesh",read_mesh(file));
-    else if(ext==".dxf") drawing=read_dxf(file);
+    Drawing drawing;
+    if(ext==".dxf") drawing=detail::read_dxf(file,options);
     else if(ext==".svg") drawing=read_svg(file);
-    else throw Error("unsupported import format: " + ext);
+    else throw Error("unsupported file format: " + ext);
     ImportResult result; result.warnings=drawing.warnings; json children=json::array();
     // Parse fully before touching the document. Stage stores and op so cancellation is atomic.
     Document staged=doc;
-    for(const auto& [name, shape]:drawing.layers) {
+    for(const auto& [name, groups]:drawing.layers) {
       if(options.progress && !options.progress(double(children.size())/drawing.layers.size(),"building")) throw Error("cancelled");
-      std::string brep;
-      if(mesh) { std::ostringstream ss; ss.precision(17); BRepTools::Write(shape,ss,true,false,TopTools_FormatVersion_VERSION_1); brep=ss.str(); }
-      else brep=brep_from_shape(shape);
-      if(brep.empty() || brep.back()!='\n') brep+='\n';
-      const auto key=staged.add_body(brep,{{"representation",mesh?"mesh":"drawing2d"},{"layer",name},{"source",file.filename().string()}});
-      cache_shape(staged,key,shape);
-      json body={{"type","body"},{"id",new_uuid()},{"name",name},{"key",key},{"representation",mesh?"mesh":"drawing2d"}};
-      if(drawing.images.count(name)) body["raster"]=drawing.images.at(name);
-      if(!mesh) children.push_back({{"type","component"},{"id",new_uuid()},{"name",name},{"visible",!drawing.visible.count(name)||drawing.visible.at(name)},{"children",json::array({body})}});
-      else children.push_back(body);
-      ++result.bodies;
+      json bodies=json::array();
+      for(const auto& [color, shape]:groups) {  // one body per colour the layer's entities are drawn in
+        json meta={{"representation","drawing2d"},{"layer",name},{"source",file.filename().string()}};
+        json body={{"type","body"},{"id",new_uuid()},{"name",name},{"representation","drawing2d"}};
+        if(color!=Drawing::kNoColor) meta["color"]=body["color"]={((color>>16)&255)/255.0,((color>>8)&255)/255.0,(color&255)/255.0};
+        body["key"]=detail::store_body(staged,shape,meta,options,false);
+        if(bodies.empty() && drawing.images.count(name)) body["raster"]=drawing.images.at(name);
+        bodies.push_back(std::move(body));
+        ++result.bodies;
+      }
+      children.push_back({{"type","component"},{"id",new_uuid()},{"name",name},{"visible",!drawing.visible.count(name)||drawing.visible.at(name)},{"children",bodies}});
     }
     json root={{"type","component"},{"id",new_uuid()},{"name",file.stem().string()},{"children",children}};
-    if(!mesh) {
-      Mat4 placement=options.placement;
-      if(options.center_drawing) {
-        Bnd_Box box;for(const auto& [name,shape]:drawing.layers)BRepBndLib::Add(shape,box);
-        if(!box.IsVoid()){double x0,y0,z0,x1,y1,z1;box.Get(x0,y0,z0,x1,y1,z1);placement=placement*Mat4::translation(-(x0+x1)/2,-(y0+y1)/2,0);}
-      }
-      if(!placement.is_identity())root["transform"]=placement.to_json();
+    Mat4 placement=options.placement;
+    if(options.center_drawing) {
+      Bnd_Box box;for(const auto& [name,groups]:drawing.layers)for(const auto& [color,shape]:groups)BRepBndLib::Add(shape,box);
+      if(!box.IsVoid()){double x0,y0,z0,x1,y1,z1;box.Get(x0,y0,z0,x1,y1,z1);placement=placement*Mat4::translation(-(x0+x1)/2,-(y0+y1)/2,0);}
+    } else if(drawing.origin.Modulus()>0) {
+      placement=placement*Mat4::translation(drawing.origin.X(),drawing.origin.Y(),drawing.origin.Z());  // read near (0,0), back in place
     }
+    if(!placement.is_identity())root["transform"]=placement.to_json();
     json op={{"op","import"},{"source",file.filename().string()},{"nodes",json::array({root})}};
-    if(ext==".svg" && !drawing.warnings.empty()) { op["svg_source"]=read_text_file(file); op["warnings"]=drawing.warnings; }
+    // The source keeps what the drawing could not show; a viewer never writes it back, so it skips the copy.
+    if(ext==".svg" && !drawing.warnings.empty() && !options.viewer) { op["svg_source"]=read_text_file(file); op["warnings"]=drawing.warnings; }
     if(!options.parent.empty()) op["parent"]=options.parent;
-    result.op_id=staged.append(op,options.author).id; result.components=mesh?1:int(children.size())+1;
+    result.op_id=staged.append(op,options.author).id; result.components=int(children.size())+1;
     result.new_entries=int(staged.body_count()-doc.body_count()); doc=std::move(staged); return result;
   } catch(const Standard_Failure& e) { throw Error(std::string("cannot import geometry: ")+e.GetMessageString()); }
 }

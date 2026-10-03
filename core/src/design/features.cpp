@@ -47,6 +47,7 @@
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <gp_Circ.hxx>
 #include <gp_Pln.hxx>
 
@@ -276,7 +277,11 @@ enum class BoolOp { Fuse, Cut, Common };
 TopoDS_Shape boolean(BoolOp op, const TopoDS_Shape& a, const TopoDS_Shape& b) {
   TopTools_ListOfShape args, tools;
   args.Append(a);
-  tools.Append(b);
+  // A compound's parts go in as separate tools: OCCT merges overlapping tools, but parts that overlap inside one
+  // compound argument made the cut a no-op (four counterbores 8.9 mm apart: "the cut does not touch any body").
+  if (b.ShapeType() == TopAbs_COMPOUND)
+    for (TopoDS_Iterator it(b); it.More(); it.Next()) tools.Append(it.Value());
+  if (tools.IsEmpty()) tools.Append(b);
   auto run = [&](BRepAlgoAPI_BooleanOperation& algo) {
     algo.SetArguments(args);
     algo.SetTools(tools);
@@ -1087,8 +1092,9 @@ Out compute_feature(const Ctx& ctx, const std::string& kind, const json& in) {
     const std::vector<std::string> targets = body_ids(ctx, in.value("target", json()));
     std::vector<std::string> tools = body_ids(ctx, in.value("tools", json()));
     if (targets.empty()) throw Error("pick a target body");
+    const bool pickedTools = !tools.empty();
     for (const auto& target : targets) tools.erase(std::remove(tools.begin(), tools.end(), target), tools.end());
-    if (tools.empty()) throw Error("pick at least one tool body");
+    if (tools.empty()) throw Error(pickedTools ? "the tool bodies are the target bodies: pick other bodies as tools" : "pick at least one tool body");
     const std::string op = in.value("operation", "join");
     // Several targets (gap log #14): a cut or an intersection works on each; a join makes the first of them one body
     // with the others and the tools.

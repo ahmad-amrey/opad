@@ -705,8 +705,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     if (n) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !n->visible}});
     else if (const opad::SketchItem* s = m_doc->scene.sketch(id)) m_doc->run("appearance", opad::json{{"target", id}, {"visible", !s->visible}});
   });
-  connect(m_tree, &BrowserTree::swatchClicked, this, [this](const std::string& id) {
-    if (m_viewer) return;
+  connect(m_tree, &BrowserTree::swatchClicked, this, [this](const std::string& id) {  // a view setting in viewer mode too
     const opad::Node* n = m_doc->node(id);
     QColor start = n && n->has_color ? QColor::fromRgbF(n->color[0], n->color[1], n->color[2]) : QColor(190, 190, 195);
     QColor c = QColorDialog::getColor(start, this, tr("Colour of %1").arg(QString::fromStdString(n ? n->name : id)));
@@ -979,7 +978,15 @@ PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
 void PropertiesPanel::addRow(const QString& key, const opad::json& v) {
   const Tokens& t = theme::current();
   auto* row = new QTreeWidgetItem(m_table);
-  row->setText(0, i18n::t(key));  // property names come from the core as data
+  // Property names come from the core as data. Untranslated (English), the key is shown as words: "center_of_mass"
+  // and "bbox min" read "Center of mass" and "Box min".
+  QString label = i18n::t(key);
+  if (label == key) {
+    label.replace('_', ' ');
+    if (label.startsWith("bbox")) label.replace(0, 4, "box");
+    if (!label.isEmpty()) label[0] = label[0].toUpper();
+  }
+  row->setText(0, label);
   row->setData(0, kPropKeyRole, key);
   row->setForeground(0, t.fg2);
   row->setToolTip(1, fmtValue(v));
@@ -1005,7 +1012,14 @@ void PropertiesPanel::addRow(const QString& key, const opad::json& v) {
     row->setFont(1, theme::mono(12));
     return;
   }
-  row->setText(1, QChar(0x202A) + fmtValue(v) + QChar(0x202C));  // LRE..PDF: numbers and vectors keep their order in a right-to-left UI
+  // Measures say what they measure in (the geometry is stored in mm): "9593.088" alone read as a bare count.
+  QString unit;
+  if (v.is_number()) {
+    if (key == "area") unit = QString::fromUtf8(" mm²");
+    else if (key == "volume") unit = QString::fromUtf8(" mm³");
+    else if (key == "length" || key == "radius" || key == "diameter" || key == "distance" || key == "thickness") unit = " mm";
+  }
+  row->setText(1, QChar(0x202A) + fmtValue(v) + unit + QChar(0x202C));  // LRE..PDF: numbers and vectors keep their order in a right-to-left UI
   if (v.is_number() || v.is_array() || (v.is_string() && key == "key")) row->setFont(1, theme::mono(12));
   if (key == "key" || key == "source_op") row->setForeground(1, t.fg3);
 }
@@ -1036,8 +1050,8 @@ void PropertiesPanel::fill() {
   m_splitVectors = false;
   m_table->clear();
   static const char* order[] = {"surface", "curve", "area", "length", "volume", "radius", "diameter", "normal", "axis", "center", "center_of_mass",
-                                "start", "end", "origin", "bbox", "faces", "edges", "vertices", "solid", "instances", "opacity", "visible", "locked",
-                                "transform", "world", "component", "key", "source_op"};
+                                "start", "end", "origin", "bbox", "faces", "edges", "vertices", "solid", "representation", "material", "instances",
+                                "opacity", "visible", "locked", "transform", "world", "component", "source", "key", "source_op"};
   std::set<std::string> done;
   auto addKey = [&](const std::string& k) {
     if (!props.contains(k) || done.count(k)) return;
@@ -1202,6 +1216,7 @@ SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   layout->setSpacing(8);
   m_state = new QLabel(this);
   m_state->setObjectName("secondary");
+  m_state->setWordWrap(true);  // the hint is longer than the panel is wide: it was cut off mid-word
   layout->addWidget(m_state);
   auto* axisLabel = new QLabel(tr("AXIS"), this);
   axisLabel->setObjectName("sectionHeader");
@@ -1221,6 +1236,7 @@ SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     b->setFont(i < 3 ? theme::mono(12) : theme::ui(12));
     b->setFixedHeight(26);
     b->setAutoRaise(true);
+    b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);  // fill the segment: the checked one was a box round its letter
     sl->addWidget(b, 1);
     m_axisButtons << b;
     connect(b, &QToolButton::clicked, this, [this, i] {
@@ -1413,7 +1429,7 @@ void SectionPanel::applyNamed(const std::string& id) {
 
 // ---------------------------------------------------------------- ViewportChips
 ViewportChips::ViewportChips(QWidget* parent) : QWidget(parent) {
-  setAttribute(Qt::WA_TransparentForMouseEvents);
+  // Not transparent for the mouse: the row is opaque anyway, and its cards are buttons (2D mode, viewer mode).
   setObjectName("chipsHost");
   setAutoFillBackground(true);
   auto paintHost = [this] {
@@ -1441,6 +1457,20 @@ ViewportChips::ViewportChips(QWidget* parent) : QWidget(parent) {
   m_section->setObjectName("chipSel");
   m_isolate = new QLabel(this);
   m_isolate->setObjectName("chipSel");
+  // Viewer mode: what is shown, and saving it to edit.
+  m_viewer = new QLabel(tr("Viewer · read-only"), this);
+  m_viewer->setObjectName("chipSel");
+  m_saveToEdit = new QToolButton(this);
+  m_saveToEdit->setObjectName("chipAction");
+  m_saveToEdit->setText(tr("Save to edit"));
+  m_saveToEdit->setToolTip(tr("Save as an OPAD document, which can be edited (Ctrl+S). The file you opened is not changed."));
+  m_saveToEdit->setCursor(Qt::PointingHandCursor);
+  m_saveToEdit->setFocusPolicy(Qt::NoFocus);
+  connect(m_saveToEdit, &QToolButton::clicked, this, &ViewportChips::saveToEditRequested);
+  for (QWidget* w : std::initializer_list<QWidget*>{m_viewer, m_saveToEdit}) {
+    l->addWidget(w);
+    w->hide();
+  }
   l->addWidget(m_mode);
   l->addWidget(m_proj);
   l->addWidget(m_twoD);
@@ -1455,6 +1485,14 @@ bool ViewportChips::eventFilter(QObject* object, QEvent* event) {
     return true;
   }
   return QWidget::eventFilter(object, event);
+}
+
+void ViewportChips::setViewer(const QString& file) {
+  const bool on = !file.isEmpty();
+  m_viewer->setVisible(on);
+  m_viewer->setToolTip(on ? tr("%1 is shown read-only: measure, section, hide and colour freely. Editing needs it saved as an OPAD document.").arg(file) : QString());
+  m_saveToEdit->setVisible(on);
+  adjustSize();
 }
 
 void ViewportChips::set(const QString& mode, const QString& projection, const QString& section, const QString& isolate, bool twoDimensional) {
@@ -1713,7 +1751,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
     QString html = QString("<div style='width:248px'><table cellspacing='0' cellpadding='0'><tr><td style='background:%1;width:14px;height:14px;'>&nbsp;&nbsp;&nbsp;</td><td>&nbsp;<b>%2</b>&nbsp;&nbsp;<span style='color:%3;font-family:%4;font-size:11px'>%5</span></td></tr></table>"
                            "<div style='color:%6'>%7 · %8</div>%9<div style='color:%3;font-size:11px'>%10</div></div>")
                        .arg(sw.name(), describe(op).toHtmlEscaped(), t.fg3.name(), theme::mono().family(), shortId(op.id), t.fg2.name(),
-                            QString::fromStdString(op.data.value("by", "")).toHtmlEscaped(), QString::fromStdString(op.data.value("ts", "")).left(16).replace('T', ' '),
+                            QString::fromStdString(op.data.value("by", "")).toHtmlEscaped(), i18n::localTime(op.data.value("ts", "")),
                             target.isEmpty() ? QString() : QString("<div>target %1</div>").arg(target.toHtmlEscaped()),
                             [&] {
                               const opad::Feature* f = op.type == "feature" ? m_doc->scene.feature(op.id) : nullptr;

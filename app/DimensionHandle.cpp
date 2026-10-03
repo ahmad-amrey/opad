@@ -146,7 +146,7 @@ void DimensionHandle::indexAnchors() {
   if(m_indexJob)m_indexJob->cancel();m_indexJob=nullptr;m_indexReady=false;
   if(!isVisible() || m_segments.empty())return;
   m_cells.clear();m_screenSegments.resize(m_segments.size());auto index=std::make_shared<size_t>(0);
-  const auto axis=m_axis;const double value=m_value;
+  const auto axis=m_axis;const double value=m_value*m_scale;
   m_indexJob=m_jobs->sliced(tr("Preparing drag handle"),[this,index,axis,value](Job&){
     const size_t i=(*index)++;auto a=m_segments[i][0],b=m_segments[i][1];for(int n=0;n<3;++n){a[n]+=axis[n]*value;b[n]+=axis[n]*value;}
     auto& screen=m_screenSegments[i];screen={m_view->widgetPoint(a),m_view->widgetPoint(b)};
@@ -175,7 +175,7 @@ void DimensionHandle::reposition() {
   if(!isVisible() || m_arrow.IsNull())return;
   opad::Vec3 tip=m_origin,next=m_origin;
   const double pixel=std::max(.000001,m_view->pixelSize()),step=pixel*50;
-  for(int i=0;i<3;++i){tip[i]+=m_axis[i]*m_value;next[i]+=m_axis[i]*step;}
+  for(int i=0;i<3;++i){tip[i]+=m_axis[i]*m_value*m_scale;next[i]+=m_axis[i]*step;}
   m_screenAxis=(QPointF(m_view->widgetPoint(next))-QPointF(m_view->widgetPoint(m_origin)))/step;
   if(QPointF::dotProduct(m_screenAxis,m_screenAxis)*pixel*pixel<0.0625)m_screenAxis={0,-1/pixel};  // along the view: pull up
   auto* arrow=static_cast<ScalarArrow*>(m_arrow.get());
@@ -201,7 +201,7 @@ void DimensionHandle::mousePressEvent(QMouseEvent* e) {
 void DimensionHandle::mouseMoveEvent(QMouseEvent* e) {
   if(!m_dragging)return;
   const auto delta=e->globalPosition()-m_start;
-  const double raw=m_startValue+QPointF::dotProduct(delta,m_screenAxis)/QPointF::dotProduct(m_screenAxis,m_screenAxis);
+  const double raw=m_startValue+QPointF::dotProduct(delta,m_screenAxis)/QPointF::dotProduct(m_screenAxis,m_screenAxis)/std::max(1e-9,m_scale);
   const double step=dragStep(std::max(1e-6,m_view->pixelSize()));
   m_value=std::round(raw/step)*step;  // round values at this zoom, not 12.3456789 mm
   setText(millimetres(m_value,step),false);reposition();emit valueChanged(m_edit->text());e->accept();

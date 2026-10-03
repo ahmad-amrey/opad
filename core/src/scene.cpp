@@ -551,8 +551,12 @@ Scene resolve(const Document& doc, const std::string& until) {
   for (const auto& op : doc.ops)
     if (op.type == "delete" && !std::binary_search(deleted.begin(), deleted.end(), op.id) && !doc.find_op(op.data["target"].get<std::string>()))
       b.scene().unresolved.push_back({op.id, op.type, "delete target op " + op.data["target"].get<std::string>() + " does not exist"});
+  bool rolledBack = false;
   for (const auto& e : ops) {
-    if (!until.empty() && e.op->id == until) break;
+    if (!until.empty() && e.op->id == until) rolledBack = true;
+    // Parameters are global (the engine evaluates every feature against all of them), so a rolled-back scene keeps
+    // the later ones: editing a feature can use a parameter defined after it.
+    if (rolledBack && e.op->type != "param") continue;
     try {
       b.apply(e.op->id, e.op->type, e.data());
     } catch (const std::exception& ex) {

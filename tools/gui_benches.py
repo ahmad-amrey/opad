@@ -66,6 +66,14 @@ def main():
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))
+            # Viewer mode: a STEP opened read-only beside a drawing (so there is a next file in the folder).
+            folder = root / "viewer"
+            folder.mkdir()
+            (folder / "a-screw.step").write_bytes(screw.read_bytes())
+            (folder / "b-layers.svg").write_bytes(drawing.read_bytes())
+            cases.append(("viewer", folder / "a-screw.step", {"OPAD_BENCH_VIEWER": str(folder / "a-screw.opad")}))
+        # These open a STEP or a drawing and then edit it: as with viewer mode turned off in the settings.
+        editing = {"drawing-to-sketch", "picking"}
         failures = []
         for name, doc, switches in cases:
             if args.only and name not in args.only:
@@ -75,6 +83,10 @@ def main():
             env = {key: value for key, value in os.environ.items() if not key.startswith("OPAD_BENCH_")}
             env.update(OPAD_LANG="en", OPAD_BENCH_SETTINGS=str(root / f"{name}-settings"), OPAD_TRACE=str(log))
             env.update({key: value.format(prefix=output / name) for key, value in switches.items()})
+            if name in editing:
+                ini = root / f"{name}-settings" / "opad" / "OPAD.ini"
+                ini.parent.mkdir(parents=True, exist_ok=True)
+                ini.write_text("[files]\nviewerMode=false\n", encoding="utf-8")
             startup = None
             if os.name == "nt":
                 startup = subprocess.STARTUPINFO()

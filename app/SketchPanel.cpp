@@ -6,6 +6,7 @@
 #include <QSpinBox>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QTimer>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QTabWidget>
@@ -166,8 +167,10 @@ void SketchPanel::buildFields() {
   if(m_shown=="text") {
     field("text",tr("Text"),"OPAD");field("height",tr("Text height"),"10 mm");
     auto* style=new QComboBox(this);style->addItem(tr("Outline font"),"outline");style->addItem(tr("Single-stroke font"),"stroke");style->addItem(tr("Built-in block letters"),"block");style->setCurrentIndex(style->findData(m_editor->option("textStyle","outline")));m_fields->addRow(tr("Style"),style);
-    connect(style,&QComboBox::currentIndexChanged,this,[this,style]{m_editor->m_options["textStyle"]=style->currentData().toString();});
     auto* font=new QFontComboBox(this);font->setCurrentFont(QFont(m_editor->option("font","Arial")));m_fields->addRow(tr("Font"),font);
+    // The built-in letters have no font to choose: the list is off for them (it looked like it applied).
+    font->setEnabled(style->currentData().toString()=="outline");
+    connect(style,&QComboBox::currentIndexChanged,this,[this,style,font]{m_editor->m_options["textStyle"]=style->currentData().toString();font->setEnabled(style->currentData().toString()=="outline");});
     connect(font,&QFontComboBox::currentFontChanged,this,[this](const QFont& f){m_editor->m_options["font"]=f.family();});
   }
   auto choice=[&](const QString& key,const QString& label,const QList<QPair<QString,QString>>& choices) {
@@ -267,17 +270,31 @@ void SketchPanel::refresh() {
   for(const auto& c:m_editor->m_sk.constraints) {
     auto* row=new QTreeWidgetItem(m_constraints);row->setData(0,Qt::UserRole,c.id);
     row->setText(0,QString(c.is_dimension()?"d%1":"%1").arg(c.id));
-    row->setText(1,i18n::t(QString::fromLatin1(opad::design::SkConstraint::type_name(c.type))));
+    {  // The type's id is data; untranslated it is shown as a word ("point_on_curve" -> "Point on curve")
+      const QString id=QString::fromLatin1(opad::design::SkConstraint::type_name(c.type));QString type=i18n::t(id);
+      if(type==id){type.replace('_',' ');if(!type.isEmpty())type[0]=type[0].toUpper();}
+      row->setText(1,type);
+    }
     if(c.is_dimension())row->setText(2,m_editor->dimensionText(c));
     row->setHidden(!row->text(1).contains(m_editor->m_constraintFilter,Qt::CaseInsensitive));
     if(m_editor->m_conflicts.count(c.id))row->setForeground(1,Qt::red);
     if(c.id==selected)m_constraints->setCurrentItem(row);
   }
   m_refreshing=false;
+  // Rebuilt fields after an edit: the panel was fitted to the old ones and cut the new off. A turn later: Qt shows new
+  // children of a visible widget by a queued call, and until then the layout counts them as hidden.
+  QTimer::singleShot(0,this,[this]{emit contentChanged();});
 }
 void SketchPanel::showPage(int page){m_pages->setCurrentIndex(page);refresh();}
 QSize SketchPanel::toolSizeHint(int width) const {
   if(m_pages->currentIndex()!=0)return {width,440};
-  const int content=m_steps->height()+m_fields->sizeHint().height()+(m_precise->isVisible()?m_precise->sizeHint().height():0)+160;
-  return {width,std::clamp(content,300,580)};
+  // The panel as laid out at this width, with the scrolled tool page at its full height. A fixed allowance for the
+  // rest cut off a tool's last fields (Project's Preview) once its prompt wrapped to two lines.
+  const int w=std::max(120,width>0?width:340);
+  QLayout* box=layout();
+  const int outer=box->hasHeightForWidth()?box->heightForWidth(w):box->sizeHint().height();
+  const auto* page=qobject_cast<QScrollArea*>(m_pages->widget(0));
+  const QWidget* body=page?page->widget():nullptr;
+  const int inner=!body?0:body->hasHeightForWidth()?body->heightForWidth(w-8):body->sizeHint().height();
+  return {width,std::clamp(outer-m_pages->sizeHint().height()+inner+8,300,640)};
 }

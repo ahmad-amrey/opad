@@ -21,6 +21,13 @@ else()
     endif()
   endforeach()
 endif()
+# Readers for IGES, OBJ, VRML and STL (OCCT >= 7.8 names; older releases split them differently and are not supported for
+# these formats).
+foreach(_lib IN ITEMS TKDEIGES TKDEOBJ TKDEVRML TKDESTL TKRWMesh)
+  if(TARGET ${_lib})
+    list(APPEND OPAD_OCCT_LIBS ${_lib})
+  endif()
+endforeach()
 if(TARGET TKDEGLTF)
   list(APPEND OPAD_OCCT_LIBS TKDEGLTF)
   set(OPAD_HAVE_GLTF ON)

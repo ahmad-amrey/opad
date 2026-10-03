@@ -121,6 +121,7 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
   if (!m_initialised) return;
   for (const auto& c : m_candidates) m_ctx->Remove(c.second, Standard_False);
   m_candidates.clear();
+  markPickedPoints();
   for (const auto& c : candidates) {
     if (c.shape.IsNull()) continue;
     // Small planar regions and a few curves: meshing them here is cheaper than a job round trip. (The
@@ -128,19 +129,42 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
     if (!c.presentation && c.shape.ShapeType() <= TopAbs_FACE) BRepMesh_IncrementalMesh(c.shape, 0.05, Standard_False, 0.3, Standard_False);
     Handle(AIS_Shape) ais = c.presentation?new BodyShape(c.shape,c.presentation):new AIS_Shape(c.shape);
     const bool surface = c.presentation?!c.presentation->triangles.IsNull():c.shape.ShapeType() <= TopAbs_FACE;
+    // A plain material: the default physical one ignores colours, so profiles were drawn as opaque grey sheets and
+    // the hover and pick tints below never showed on them.
+    ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
     ais->SetColor(occ(m_tokens.sel));
     if (surface) {
       ais->SetTransparency(c.strong ? 0.6 : 0.82);
+      ais->Attributes()->ShadingAspect()->Aspect()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);  // a flat tint
       ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
       ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.0));
     } else {
       ais->SetWidth(3.0);
-      ais->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_POINT, occ(m_tokens.sel), 3.0));
+      ais->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_O_POINT, occ(m_tokens.sel), 4.0 * displayScale()));
     }
-    ais->SetZLayer(Graphic3d_ZLayerId_Top);  // over coplanar body faces
+    // Over coplanar body faces. A sketch point lies *on* its face, which hid half of its marker in Top (that layer
+    // shares the depth buffer), leaving a speck to aim at: points go to Topmost.
+    const bool point = !surface && c.shape.ShapeType() == TopAbs_VERTEX;
+    const Graphic3d_ZLayerId layer = point ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top;
+    ais->SetZLayer(layer);
+    // A quiet tint for hovering and picking these, not the bodies' white hover and grey X-ray selection: on a large
+    // sketch region those flooded the view, and the X-ray layer showed the picked profile through the preview.
+    auto style = [&](Prs3d_TypeOfHighlight kind, const QColor& colour, float transparency) {
+      Handle(Prs3d_Drawer) d = new Prs3d_Drawer();
+      d->SetLink(m_ctx->HighlightStyle(kind));
+      d->SetDisplayMode(surface ? AIS_Shaded : AIS_WireFrame);
+      d->SetColor(occ(colour));
+      d->SetTransparency(surface ? transparency : 0.0f);
+      d->SetZLayer(layer);
+      return d;
+    };
+    ais->SetDynamicHilightAttributes(style(Prs3d_TypeOfHighlight_Dynamic, m_tokens.hov, 0.72f));
+    ais->SetHilightAttributes(style(Prs3d_TypeOfHighlight_Selected, m_tokens.sel, 0.55f));
     m_ctx->Display(ais, surface ? AIS_Shaded : AIS_WireFrame, -1, Standard_False);
     m_ctx->Load(ais, -1);
     m_ctx->Activate(ais, 0);
+    // A sketch line or point is a hair to aim at: the context's 4 px missed a path clicked a few pixels off.
+    if (!surface) m_ctx->SetSelectionSensitivity(ais, 0, static_cast<int>(std::lround(7 * displayScale())));
     m_candidates.push_back({c.id, ais});
   }
   redrawScene();
@@ -150,7 +174,24 @@ void Viewport::clearCandidates() {
   if (!m_initialised || m_candidates.empty()) return;
   for (const auto& c : m_candidates) m_ctx->Remove(c.second, Standard_False);
   m_candidates.clear();
+  markPickedPoints();
   redrawScene();
+}
+
+// Highlighting only recolours a marker, so in the candidates' own blue a picked point's ring looked like the others:
+// a filled dot (not pickable) sits in each picked one.
+void Viewport::markPickedPoints() {
+  if (!m_initialised) return;
+  for (const auto& mark : m_pointMarks) m_ctx->Remove(mark, Standard_False);
+  m_pointMarks.clear();
+  for (const auto& [id, ais] : m_candidates) {
+    if (ais->Shape().IsNull() || ais->Shape().ShapeType() != TopAbs_VERTEX || !m_ctx->IsSelected(ais)) continue;
+    Handle(AIS_Shape) mark = new AIS_Shape(ais->Shape());
+    mark->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL, occ(m_tokens.sel), 3.0 * displayScale()));
+    mark->SetZLayer(Graphic3d_ZLayerId_Topmost);
+    m_ctx->Display(mark, AIS_WireFrame, -1, Standard_False);  // -1: never picked
+    m_pointMarks.push_back(mark);
+  }
 }
 
 std::string Viewport::hoveredCandidate() const {
@@ -219,7 +260,7 @@ void Viewport::setBodiesPickable(bool on) {
   m_bodiesPickable = on;
   if (!on) clearCenters();
   if (!m_initialised) return;
-  if (on) return setSelectionFilter(m_filter);  // sliced: re-activates every body in the current mode
+  if (on) return applySelectionFilter(m_filter);  // sliced: re-activates every body in the current mode
   if (m_filterJob) m_filterJob->cancel();
   for (auto& [id, it] : m_items) m_ctx->Deactivate(it.ais);
   for (auto& [id, it] : m_sketchWires) m_ctx->Deactivate(it.ais);
@@ -227,19 +268,30 @@ void Viewport::setBodiesPickable(bool on) {
 
 // ---------------------------------------------------------------- feature preview
 void Viewport::setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_Shape>>& shapes, const std::vector<std::string>& hidden) {
+  std::vector<PreviewPart> parts;
+  for (const auto& [node, shape] : shapes) parts.push_back({node, shape, nullptr});
+  setPreviewBodies(parts, hidden);
+}
+
+void Viewport::setPreviewBodies(const std::vector<PreviewPart>& parts, const std::vector<std::string>& hidden) {
   if (!m_initialised) return;
   clearPreviewBodies();
   auto hide = [this](const std::string& node) {
     auto it = m_items.find(node);
     if (it == m_items.end() || m_previewHidden.count(node)) return;
     m_ctx->Erase(it->second.ais, Standard_False);
+    // Its selection glow goes too: left behind, a moved body looked copied. clearPreviewBodies brings it back.
+    if (auto glow = m_bodyGlows.find(it->second.ais.get()); glow != m_bodyGlows.end()) {
+      m_ctx->Remove(glow->second, Standard_False);
+      m_bodyGlows.erase(glow);
+    }
     m_previewHidden.insert(node);
   };
   for (const auto& id : hidden) hide(id);
-  for (const auto& [node, shape] : shapes) {
+  for (const auto& [node, shape, prs] : parts) {
     if (shape.IsNull()) continue;
     if (!node.empty()) hide(node);
-    Handle(AIS_Shape) ais = new AIS_Shape(shape);
+    Handle(AIS_Shape) ais = prs ? Handle(AIS_Shape)(new BodyShape(shape, prs)) : new AIS_Shape(shape);
     ais->Attributes()->SetAutoTriangulation(Standard_False);  // the worker meshed it
     ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
     QColor tint = m_tokens.sel;
@@ -251,13 +303,27 @@ void Viewport::setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_
       }
     }
     ais->SetColor(occ(tint));
-    ais->SetTransparency(0.25);
+    // A lone face is a construction plane's sheet: see-through, it must not hide the model it cuts through.
+    ais->SetTransparency(shape.ShapeType() == TopAbs_FACE ? 0.78 : 0.25);
+    if (shape.ShapeType() == TopAbs_EDGE) ais->SetWidth(2.5);  // a construction axis
     ais->Attributes()->SetFaceBoundaryDraw(Standard_True);
     ais->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.sel), Aspect_TOL_SOLID, 1.0));
     m_ctx->Display(ais, AIS_Shaded, -1, Standard_False);
     m_previewBodies.push_back(ais);
   }
   redrawScene();
+}
+
+void Viewport::setPreviewDisplay(const std::vector<std::shared_ptr<const BodyPrs>>& arrays) {
+  if (!m_initialised) return;
+  bool any = false;
+  for (size_t i = 0; i < m_previewBodies.size() && i < arrays.size(); ++i) {
+    Handle(BodyShape) body = Handle(BodyShape)::DownCast(m_previewBodies[i]);
+    if (body.IsNull() || !body->setDisplayPrs(arrays[i])) continue;
+    m_ctx->Redisplay(body, Standard_False);
+    any = true;
+  }
+  if (any) redrawScene();
 }
 
 void Viewport::clearPreviewBodies() {
@@ -271,7 +337,9 @@ void Viewport::clearPreviewBodies() {
     m_ctx->Display(it->second.ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, -1, Standard_False);
     activateSelection(it->second.ais);
   }
+  const bool hadHidden = !m_previewHidden.empty();
   m_previewHidden.clear();
+  if (hadHidden) applySelectionLayers();  // glows of the ones still selected
   redrawScene();
 }
 
@@ -499,8 +567,16 @@ bool Viewport::hoveredReference(opad::Ref& ref) const {
   if(!m_initialised||!m_ctx->HasDetected())return false;
   const auto object=m_ctx->DetectedInteractive();const auto found=m_nodeOf.find(object.get());if(found==m_nodeOf.end())return false;
   ref.body=found->second;ref.kind=opad::Ref::Kind::Body;
-  const auto owner=Handle(SubShapeOwner)::DownCast(m_ctx->DetectedOwner());
-  if(m_filter!=SelFilter::Body){if(owner.IsNull())return false;ref.kind=owner->kind();ref.index=owner->index();}return true;
+  if(m_filter==SelFilter::Body)return true;
+  if(const auto owner=Handle(SubShapeOwner)::DownCast(m_ctx->DetectedOwner());!owner.IsNull()){ref.kind=owner->kind();ref.index=owner->index();return true;}
+  // A body drawn through the stock AIS_Shape (a reopened document) has owners without an ordinal: work it out the way
+  // selection() does, or a projection could not take its edges.
+  const auto stock=Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());const auto ais=Handle(AIS_Shape)::DownCast(object);
+  if(stock.IsNull()||!stock->HasShape()||ais.IsNull())return false;
+  const TopoDS_Shape& sub=stock->Shape();
+  ref.kind=sub.ShapeType()==TopAbs_FACE?opad::Ref::Kind::Face:sub.ShapeType()==TopAbs_EDGE?opad::Ref::Kind::Edge:sub.ShapeType()==TopAbs_VERTEX?opad::Ref::Kind::Vertex:opad::Ref::Kind::Body;
+  if(ref.kind==opad::Ref::Kind::Body)return false;
+  ref.index=opad::subshape_index(ais->Shape(),sub);return true;
 }
 void Viewport::showBackdrop(const Handle(AIS_InteractiveObject)& obj) {
   if(!m_initialised||obj.IsNull())return;obj->SetZLayer(Graphic3d_ZLayerId_Default);m_ctx->Display(obj,3,-1,false);redrawScene();

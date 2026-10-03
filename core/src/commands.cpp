@@ -71,10 +71,12 @@ Document& need(Document* d) {
   return *d;
 }
 
-bool is_step_path(const std::filesystem::path& p) {
+// A file OPAD reads but does not write as a document (STEP, STL, DXF, ...): commands see it read-only.
+bool is_foreign_path(const std::filesystem::path& p) {
   std::string e = p.extension().string();
   std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) { return std::tolower(c); });
-  return e == ".step" || e == ".stp";
+  const auto& known = importable_extensions();
+  return std::find(known.begin(), known.end(), e) != known.end();
 }
 
 }  // namespace
@@ -187,7 +189,7 @@ void register_builtins() {
   reg("new", "Create an empty document", {{"doc", "path - .opad file to create"}, {"units", "string - mm (default)"}}, true,
       [](Document*, const json& a) {
         Document d = Document::create(a.value("units", "mm"));
-        d.save_as(a.at("doc").get<std::string>());
+        d.save_as(path_from_utf8(a.at("doc").get<std::string>()));
         json j;
         j["doc"] = d.path.string();
         j["uuid"] = d.header.uuid;
@@ -356,8 +358,8 @@ void register_builtins() {
         return j;
       });
 
-  reg("import", "Import STEP, DXF, SVG, DWG (converter), STL or OBJ into the document",
-      {{"doc", "path"}, {"file", "path - .step/.stp/.dxf/.svg/.dwg/.stl/.obj"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
+  reg("import", "Import STEP, IGES, BREP, STL, 3MF, OBJ, PLY, glTF, VRML, DXF, DWG (converter) or SVG into the document",
+      {{"doc", "path"}, {"file", "path - .step/.iges/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
        {"placement", "[16] - drawings: where the drawing's XY plane and origin go (row-major 4x4, mm)"}, {"plane", "object - drawings: place on this plane instead, {\"base\":\"xz\"} or {\"face\":ref}, its origin at the plane's"},
        {"center", "bool - drawings: centre the drawing on its origin (default false)"}},
       true, [](Document* d, const json& a) {
@@ -374,7 +376,7 @@ void register_builtins() {
           o.placement = m * o.placement;
         }
         o.center_drawing = a.value("center", false);
-        return import_file(need(d), a.at("file").get<std::string>(), o).to_json();
+        return import_file(need(d), path_from_utf8(a.at("file").get<std::string>()), o).to_json();
       });
 
   reg("import_brep", "Import a shape given as OCCT ASCII BREP text (build123d/CadQuery/OCP bridge)",
@@ -384,7 +386,7 @@ void register_builtins() {
         o.author = a.value("by", "");
         o.parent = a.value("parent", "");
         std::string text = a.value("brep", "");
-        if (text.empty() && a.contains("file")) text = read_text_file(a["file"].get<std::string>());
+        if (text.empty() && a.contains("file")) text = read_text_file(path_from_utf8(a["file"].get<std::string>()));
         if (text.empty()) throw Error("import_brep: pass \"brep\" text or \"file\"");
         return import_brep(need(d), text, a.value("name", "Body"), o).to_json();
       });
@@ -406,8 +408,8 @@ void register_builtins() {
         o.mtl = a.value("mtl", true);
         std::string out = a.value("out", "");
         if (out.empty()) throw Error("export: \"out\" path required");
-        if (fmt == "svg" || fmt == "dxf" || fmt == "dwg") return export_drawing(doc, resolve(doc), out, o).to_json();
-        return export_selection(doc, resolve(doc), out, o).to_json();
+        if (fmt == "svg" || fmt == "dxf" || fmt == "dwg") return export_drawing(doc, resolve(doc), path_from_utf8(out), o).to_json();
+        return export_selection(doc, resolve(doc), path_from_utf8(out), o).to_json();
       });
 
   reg("render", "Headless screenshot (PNG). views puts several fitted views in one labelled grid; edge_lines draws the model's edges; highlight tints faces and edges; shading smooth uses vertex normals",
@@ -421,7 +423,7 @@ void register_builtins() {
         Image img = render_scene(doc, resolve(doc), o);
         std::string out = a.value("out", "");
         if (out.empty()) throw Error("render: \"out\" path required");
-        write_png(out, img);
+        write_png(path_from_utf8(out), img);
         json j;
         j["out"] = out;
         j["width"] = img.width;
@@ -432,8 +434,8 @@ void register_builtins() {
   reg("diff", "Added/removed/changed ops between two documents, optionally with a geometric diff image",
       {{"a", "path"}, {"b", "path"}, {"image", "path - optional .png"}, {"view", "string"}, {"width", "int"}, {"height", "int"}}, false,
       [](Document*, const json& a) {
-        Document da = Document::load(a.at("a").get<std::string>());
-        Document db = Document::load(a.at("b").get<std::string>());
+        Document da = Document::load(path_from_utf8(a.at("a").get<std::string>()));
+        Document db = Document::load(path_from_utf8(a.at("b").get<std::string>()));
         json j = diff_documents(da, db);
         if (a.contains("image") && a["image"].is_string()) {
           RenderOptions o = render_options(a);
@@ -654,9 +656,11 @@ json run(const std::string& name, const json& args, Document* live) {
   };
   bool save_after = false, transient = false;
   if (!doc && name != "new" && args.contains("doc") && args["doc"].is_string()) {
-    std::filesystem::path p = args["doc"].get<std::string>();
-    if (is_step_path(p)) {
-      loaded = browse_step(p);
+    std::filesystem::path p = path_from_utf8(args["doc"].get<std::string>());
+    if (is_foreign_path(p)) {
+      loaded = Document::create();
+      import_file(loaded, p);
+      loaded.dirty = false;
       transient = true;
     } else {
       loaded = Document::load(p);
