@@ -1,4 +1,5 @@
-"""gui_benches cases of the assembly area (T2b): components and exploded views. The benches are in app/ActivationBench.cpp."""
+"""gui_benches cases of the assembly area (T2b): components and exploded views. The benches are in app/ActivationBench.cpp
+and app/ExplodeBench.cpp."""
 from pathlib import Path
 
 
@@ -24,4 +25,16 @@ CASES = [
     # The same on the Engine (skipped where it is not): a component with about half of the bodies activated and the root
     # again, no event-loop gap over 250 ms; a ghost's hover pick under 50 ms.
     ("activate-engine", engine(), {"OPAD_BENCH_ACTIVATE": "{prefix}"}),
+    # Exploded view (UI-36) on an enclosure made by the bench (shell, lid, a PCB subassembly with a board, a chip and a
+    # capacitor, four screws in a Screws component): the command plays the parts out frame by frame, level 1 moves the PCB
+    # whole, level 2 splits it (the capacitor rides on the board), the PCB's browser badge keeps it whole, Explode its parts
+    # on the Screws, the slider at 50 %, a click on the board selects the PCB's unit, the lid's handle dragged and a value
+    # typed over the view, the distance tool measuring where the parts are drawn (not pinned), group and ungroup, Save as
+    # view / Collapse / View > Named views / Update view, a feature edit collapsing the view. <prefix>.view.png,
+    # .panel.png, .browser.png, .chips.png, .ribbon.png.
+    ("explode", lambda root, document: document("explode"), {"OPAD_BENCH_EXPLODE": "{prefix}"}),
+    ("explode-rtl", lambda root, document: document("explode-rtl"), {"OPAD_BENCH_EXPLODE": "{prefix}", "OPAD_LANG": "ar"}),
+    # The Engine (skipped where it is not): laid out, level 2, 60 ticks from 0 to 1 each timed until every body moved, and
+    # collapsed, with no event-loop gap over 250 ms.
+    ("explode-engine", engine(), {"OPAD_BENCH_EXPLODE": "{prefix}"}),
 ]

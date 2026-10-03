@@ -321,7 +321,8 @@ void MainWindow::rebuildViewsMenu() {
   if (!m_viewsMenu) return;
   m_viewsMenu->clear();
   for (const auto& v : m_doc->scene.views) {
-    QAction* a = m_viewsMenu->addAction(icons::themed("home", 16), QString::fromStdString(v.name));
+    QAction* a = m_viewsMenu->addAction(icons::themed(v.explode.is_object() ? "explodedView" : "home", 16), QString::fromStdString(v.name));
+    a->setData(QString::fromStdString(v.id));  // areas show more of a view (an exploded one: Explode, ExplodeArea.cpp)
     connect(a, &QAction::triggered, this, [this, id = v.id] { restoreNamedView(id); });
   }
   if (m_viewsMenu->isEmpty()) m_viewsMenu->addAction(tr("(none saved)"))->setEnabled(false);
