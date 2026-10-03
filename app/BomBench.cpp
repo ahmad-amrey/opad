@@ -59,6 +59,13 @@ bool MainWindow::benchBom() {
       bom->grab().save(shot);
       listed(bom, "indented");
       listed(bom, "top");
+      bom->reject();
+    }
+    if (m_doc->browse) {  // part properties are an edit: Save first to edit (the bench answers Cancel), no dialog
+      editPartProperties(m_doc->scene.roots);
+      const bool asked = !findChild<PartPropertiesDialog*>() && !m_doc->isDirty();
+      trace::log(QString("bench: bom-open: Part properties in viewer mode asks to save first %1").arg(asked ? "PASS" : "FAIL"));
+      ok = ok && asked;
     }
     QCoreApplication::exit(ok ? 0 : 2);
     return true;
