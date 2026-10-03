@@ -123,7 +123,23 @@
     {"el": "card", "screen": [0.03, 0.06], "w": "$w", "title": "$title", "rows": "$rows", "from": 1.0, "to": 3.3},
     {"el": "key", "caps": ["Enter"], "press": 3.1, "from": 2.85, "to": 3.6},
     {"el": "cursor", "keys": [[0, {"pos": [16, -14, 0]}], [0.8, {"pos": [2, 1, 0]}], [1.0, {"pos": [2, 1, 0], "click": 1}], [1.8, {"pos": [14, -6, 0]}], [3.0, {"pos": [16, -8, 0]}]]}],
-   "steps": [{"to": 1.1, "caption": "Pick a plane and a position"}, {"to": 3.0, "caption": "Set the sizes"}, {"to": 4.4, "caption": "$caption3"}]}
+   "steps": [{"to": 1.1, "caption": "Pick a plane and a position"}, {"to": 3.0, "caption": "Set the sizes"}, {"to": 4.4, "caption": "$caption3"}]},
+  "navPreset": {"params": {"name": null, "orbit": null, "pan": null, "zoom": null, "caps1": [], "caps2": [], "caps3": []},
+   "duration": 5.4, "view": "iso", "extent": [-26, -11, 26, 22],
+   "items": [
+    {"el": "camera", "keys": [[0, {"az": -45, "elev": 35.264, "center": [-10, 0], "zoom": 1}], [0.4, {"az": -45}], [1.6, {"az": -95}], [2.0, {"center": [-10, 0]}], [3.2, {"center": [-14, -2]}],
+                              [3.6, {"zoom": 1}], [4.8, {"zoom": 1.25}]]},
+    {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
+    {"use": "bracket"},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "$name", "hl": 0, "rows": [["Orbit", "$orbit"], ["Pan", "$pan"], ["Zoom", "$zoom"]],
+     "keys": [[0.3, {"hl": 0}], [1.9, {"hl": 1}], [3.5, {"hl": 2}]]},
+    {"el": "key", "caps": "$caps1", "press": 0.3, "from": 0.1, "to": 1.7},
+    {"el": "key", "caps": "$caps2", "press": 1.9, "from": 1.7, "to": 3.3},
+    {"el": "key", "caps": "$caps3", "press": 3.5, "from": 3.3, "to": 4.9},
+    {"el": "cursor", "kind": "move", "keys": [[0, {"screen": [0.62, 0.55]}], [0.3, {"screen": [0.62, 0.55], "down": true}], [1.6, {"screen": [0.82, 0.55], "down": false}],
+                                             [1.9, {"screen": [0.62, 0.55], "down": true}], [3.2, {"screen": [0.78, 0.66], "down": false}], [3.5, {"screen": [0.66, 0.5], "down": true}],
+                                             [4.8, {"screen": [0.66, 0.38], "down": false}], [5.2, {"screen": [0.7, 0.4]}]]}],
+   "steps": [{"to": 1.8, "caption": "Orbit"}, {"to": 3.4, "caption": "Pan"}, {"to": 5.4, "caption": "Zoom"}]}
  },
  "clips": [
   {
@@ -3071,6 +3087,138 @@
     {"to": 1.3, "caption": "Open Annotations (Alt+2); filter"},
     {"to": 2.9, "caption": "The list narrows"},
     {"to": 4.6, "caption": "Click a card: its target lights up"}
+   ]
+  },
+  {"id": "nav.fusion", "template": "navPreset", "args": {"name": "Fusion buttons", "orbit": "Shift + middle", "pan": "Middle", "zoom": "Wheel", "caps1": ["Shift"]}},
+  {"id": "nav.solidworks", "template": "navPreset", "args": {"name": "SolidWorks buttons", "orbit": "Middle", "pan": "Ctrl + middle", "zoom": "Wheel", "caps2": ["Ctrl"]}},
+  {"id": "nav.onshape", "template": "navPreset", "args": {"name": "Onshape buttons", "orbit": "Right", "pan": "Middle", "zoom": "Wheel"}},
+  {"id": "nav.blender", "template": "navPreset", "args": {"name": "Blender buttons", "orbit": "Middle", "pan": "Shift + middle", "zoom": "Wheel", "caps2": ["Shift"]}},
+  {
+   "id": "tools.commands", "duration": 4.6, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"el": "card", "screen": [0.03, 0.06], "w": 156, "title": "Search commands", "from": 0.6, "to": 2.6, "hl": 0, "rows": [{"entry": ""}, {"text": "Fillet", "icon": "fillet"}, {"text": "Fit", "icon": "fit"}, {"text": "Fit all", "icon": "fit"}], "keys": [[1.1, {"rows": [{"entry": "fil"}, {"text": "Fillet", "icon": "fillet"}, {"text": "Sketch fillet", "icon": "fillet"}, {"text": "Filter objects", "icon": "search"}], "hl": 1, "ease": "step"}]]},
+    {"el": "chip", "screen": [0.03, 0.05], "icon": "fillet", "text": "Fillet", "dot": "sel", "from": 2.6},
+    {"el": "key", "caps": ["S"], "press": 0.5, "from": 0.2, "to": 1},
+    {"el": "key", "caps": ["Enter"], "press": 2.5, "from": 2.2, "to": 3}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Press S"},
+    {"to": 2.6, "caption": "Type part of a name; Enter runs it"},
+    {"to": 4.6, "caption": "The command starts"}
+   ]
+  },
+  {
+   "id": "file.open", "duration": 4.4, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Open", "from": 0.6, "to": 2, "hl": -1, "rows": [{"label": "bracket.opad", "icon": "doc"}, {"label": "housing.step", "icon": "body"}, {"label": "floor-plan.dxf", "icon": "drawing"}], "keys": [[1.4, {"hl": 1}]]},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "from": 2, "fade": 0.4},
+    {"el": "chip", "screen": [0.03, 0.05], "icon": "eye", "value": "housing.step", "dot": "amber", "from": 2.1},
+    {"el": "key", "caps": ["Ctrl", "O"], "press": 0.5, "from": 0.2, "to": 1},
+    {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.85]}], [1.3, {"screen": [0.25, 0.4]}], [1.4, {"screen": [0.25, 0.4], "click": 1}], [1.5, {"screen": [0.25, 0.4], "click": 1}], [2.4, {"screen": [0.7, 0.85]}]]}
+   ],
+   "steps": [
+    {"to": 1.5, "caption": "Press Ctrl+O and pick a file"},
+    {"to": 4.4, "caption": "A model or drawing opens to view, fast"}
+   ]
+  },
+  {
+   "id": "file.new", "duration": 3.4, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "to": 1, "fade": 0.3},
+    {"el": "chip", "screen": [0.03, 0.05], "icon": "doc", "value": "bracket.opad", "to": 1, "fade": 0},
+    {"el": "chip", "screen": [0.03, 0.05], "icon": "doc", "text": "Untitled", "from": 1, "fade": 0},
+    {"el": "key", "caps": ["Ctrl", "N"], "press": 0.9, "from": 0.6, "to": 1.4}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Press Ctrl+N"},
+    {"to": 3.4, "caption": "An empty design starts"}
+   ]
+  },
+  {
+   "id": "workspace.design", "duration": 3.6, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "View", "from": -1, "to": 1, "fade": 0.15},
+    {"el": "chip", "screen": [0.2, 0.05], "text": "Inspect", "from": -1, "to": 1, "fade": 0.15},
+    {"el": "chip", "screen": [0.43, 0.05], "text": "Annotate", "from": -1, "to": 1, "fade": 0.15},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Solid", "from": 1, "to": 9, "fade": 0.15},
+    {"el": "chip", "screen": [0.22, 0.05], "text": "Modify", "from": 1, "to": 9, "fade": 0.15},
+    {"el": "chip", "screen": [0.43, 0.05], "text": "Assemble", "from": 1, "to": 9, "fade": 0.15},
+    {"el": "key", "caps": ["Ctrl", "2"], "press": 0.9, "from": 0.6, "to": 1.4}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Press Ctrl+2"},
+    {"to": 3.6, "caption": "The ribbon shows the modelling tabs"}
+   ]
+  },
+  {
+   "id": "workspace.review", "duration": 3.6, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "Solid", "from": -1, "to": 1, "fade": 0.15},
+    {"el": "chip", "screen": [0.22, 0.05], "text": "Modify", "from": -1, "to": 1, "fade": 0.15},
+    {"el": "chip", "screen": [0.43, 0.05], "text": "Assemble", "from": -1, "to": 1, "fade": 0.15},
+    {"el": "chip", "screen": [0.03, 0.05], "text": "View", "from": 1, "to": 9, "fade": 0.15},
+    {"el": "chip", "screen": [0.2, 0.05], "text": "Inspect", "from": 1, "to": 9, "fade": 0.15},
+    {"el": "chip", "screen": [0.43, 0.05], "text": "Annotate", "from": 1, "to": 9, "fade": 0.15},
+    {"el": "key", "caps": ["Ctrl", "1"], "press": 0.9, "from": 0.6, "to": 1.4}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Press Ctrl+1"},
+    {"to": 3.6, "caption": "Look, measure and annotate tabs"}
+   ]
+  },
+  {
+   "id": "panel.browser", "duration": 3.8, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"el": "card", "screen": [-0.6, 0.06], "w": 140, "title": "Browser", "hl": -1, "rows": [{"text": "Assembly", "icon": "component"}, {"text": "Plate", "icon": "body", "indent": 1}, {"text": "Sketch 1", "icon": "sketch", "indent": 1}], "keys": [[0.9, {"screen": [-0.6, 0.06]}], [1.4, {"screen": [0.03, 0.06]}], [2.2, {"hl": 1}]]},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "tone": "sel", "toneAmount": 0.4, "from": 2.2, "fade": 0.1},
+    {"el": "key", "caps": ["Alt", "1"], "press": 0.8, "from": 0.5, "to": 1.3},
+    {"el": "cursor", "keys": [[0, {"screen": [0.7, 0.85]}], [2.1, {"screen": [0.15, 0.36]}], [2.2, {"screen": [0.15, 0.36], "click": 1}], [3, {"screen": [0.7, 0.85]}]]}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Press Alt+1"},
+    {"to": 3.8, "caption": "Every component, body and sketch is listed"}
+   ]
+  },
+  {
+   "id": "panel.timeline", "duration": 3.8, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"el": "timeline", "screen": [0.03, 0.8], "markers": ["sketch", "extrude", "hole", "fillet"], "states": ["", "", "", ""], "from": 0.9, "fade": 0.3, "keys": [[2.2, {"states": ["", "", "sel", ""], "ease": "step"}]]},
+    {"el": "chip", "screen": [0.03, 0.62], "value": "Hole 1 · Ahmad · 10:42", "from": 2.2},
+    {"el": "key", "caps": ["Alt", "3"], "press": 0.8, "from": 0.5, "to": 1.3},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.5]}], [2.1, {"screen": [0.22, 0.89]}], [3, {"screen": [0.22, 0.89]}]]}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Press Alt+3"},
+    {"to": 3.8, "caption": "Each step; hover for who and when"}
+   ]
+  },
+  {
+   "id": "panel.section", "duration": 4.4, "view": "iso", "extent": [-32, -12, 32, 22],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-22, -16, 22, 16]}},
+    {"el": "solid", "plane": "yz", "at": [-16, 0, 0], "profile": {"rect": [0, 7, 20, 14]}, "holes": [{"circle": [0, 7, 4]}], "capColor": "cap", "hatch": true, "height": 16, "keys": [[1.8, {"height": 16}], [2.8, {"height": 10}]]},
+    {"el": "plane", "plane": "yz", "center": [0, 0, 7], "size": [26, 18], "color": "sel", "fillOpacity": 0.1, "keys": [[1.8, {"center": [0, 0, 7]}], [2.8, {"center": [-6, 0, 7]}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Section", "rows": [["Plane", "YZ (X = 0)"], {"text": "Offset", "entry": "0 mm"}, {"text": "Cap", "check": true}], "keys": [[1.8, {"rows": [["Plane", "YZ (X = 0)"], {"text": "Offset", "entry": "-6"}, {"text": "Cap", "check": true}], "ease": "step"}], [2.2, {"rows": [["Plane", "YZ (X = 0)"], {"text": "Offset", "entry": "-6 mm"}, {"text": "Cap", "check": true}], "ease": "step"}]]}
+   ],
+   "steps": [
+    {"to": 1.6, "caption": "Open the Section panel"},
+    {"to": 4.4, "caption": "Type an exact offset; the cut moves"}
    ]
   }
  ]
