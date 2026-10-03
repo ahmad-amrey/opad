@@ -1,6 +1,7 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <QApplication>
 #include <QClipboard>
+#include <QElapsedTimer>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMimeData>
@@ -315,6 +316,104 @@ OPAD_BENCH(OPAD_BENCH_TIMELINE, timeline) {
     } catch (const std::exception& e) {
       timer->stop();
       trace::log(QString("bench: timeline FAIL: %1").arg(e.what()));
+      QCoreApplication::exit(2);
+    }
+  });
+  timer->start();
+  return true;
+}
+
+// OPAD_BENCH_TIMELINEPERF=1 (UI-99 on a big model; case timeline-engine, the Engine beside the repository): its hidden
+// root shown first (an appearance step), then the pointer rests on every marker (an import's bodies tinted, what a feature
+// made found on a worker), the model is rolled back before the last step and forward again by the playhead, names and the
+// design history toggled; no event-loop gap over 250 ms meanwhile.
+OPAD_BENCH(OPAD_BENCH_TIMELINEPERF, timelineperf) {
+  struct State {
+    int phase = 0, ticks = 0;
+    size_t marker = 0;
+    QElapsedTimer clock, tick;
+    qint64 gap = 0;
+    std::vector<std::string> markers;
+  };
+  auto state = std::make_shared<State>();
+  SmartSelect* area = nullptr;
+  for (AreaController* a : w.m_areas)
+    if (auto* smart = dynamic_cast<SmartSelect*>(a)) area = smart;
+  auto* timer = new QTimer(&w);
+  timer->setInterval(20);
+  QObject::connect(timer, &QTimer::timeout, &w, [&w, area, state, timer] {
+    TimelineWidget* t = w.m_timeline;
+    try {
+      if (state->tick.isValid() && state->phase >= 3) state->gap = std::max(state->gap, state->tick.restart());
+      if (++state->ticks > 30000) throw opad::Error("timed out in phase " + std::to_string(state->phase));
+      if (!area) throw opad::Error("the smart selection area is off");
+      if (w.m_doc->loading || w.m_jobs->busy() || area->busy() || w.m_viewport->looksPending()) return;
+      auto move = [&](const QPoint& at, Qt::MouseButton button, QEvent::Type type) {
+        QMouseEvent e(type, QPointF(at), QPointF(t->mapToGlobal(at)), type == QEvent::MouseMove ? Qt::NoButton : button,
+                      type == QEvent::MouseButtonRelease || button == Qt::NoButton ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(t, &e);
+      };
+      switch (state->phase) {
+        case 0: {
+          std::vector<std::string> hidden;
+          for (const auto& [id, n] : w.m_doc->scene.nodes)
+            if (!n.visible) hidden.push_back(id);
+          if (!hidden.empty()) w.m_doc->run("appearance", opad::json{{"targets", hidden}, {"visible", true}});
+          break;
+        }
+        case 1:
+          if (w.m_viewport->displayedCount() < int(w.m_doc->scene.all_bodies().size()) / 2) return;
+          for (const auto& op : w.m_doc->doc.ops)
+            if (!t->markerAt(op.id).isNull()) state->markers.push_back(op.id);
+          if (state->markers.size() < 2) throw opad::Error("two markers at least");
+          trace::log(QString("bench: timelineperf: %1 bodies, %2 markers PASS").arg(w.m_doc->scene.all_bodies().size()).arg(state->markers.size()));
+          break;
+        case 2:
+          state->tick.start();
+          state->clock.start();
+          move(t->markerAt(state->markers[0]).center(), Qt::NoButton, QEvent::MouseMove);
+          break;
+        case 3: {  // one marker after another, each once the last one's highlight is applied
+          trace::log(QString("bench: timelineperf: marker %1 of %2 (%3) shown in %4 ms PASS").arg(state->marker + 1).arg(state->markers.size())
+                         .arg(t->label(*w.m_doc->doc.find_op(state->markers[state->marker]))).arg(state->clock.elapsed()));
+          if (++state->marker < state->markers.size()) {
+            state->clock.start();
+            move(t->markerAt(state->markers[state->marker]).center(), Qt::NoButton, QEvent::MouseMove);
+            return;
+          }
+          QEvent leave(QEvent::Leave);
+          QApplication::sendEvent(t, &leave);
+          state->clock.start();
+          const QPoint head = t->playhead().center();  // before the last marker
+          move(head, Qt::LeftButton, QEvent::MouseButtonPress);
+          move(QPoint(t->markerAt(state->markers.back()).left() - 4, head.y()), Qt::LeftButton, QEvent::MouseMove);
+          move(QPoint(t->markerAt(state->markers.back()).left() - 4, head.y()), Qt::LeftButton, QEvent::MouseButtonRelease);
+          break;
+        }
+        case 4: {
+          if (!w.m_doc->rolledBack()) throw opad::Error("the playhead rolled the model back");
+          trace::log(QString("bench: timelineperf: rolled back before the last step in %1 ms PASS").arg(state->clock.elapsed()));
+          state->clock.start();
+          w.action("timeline.rollForward")->trigger();
+          break;
+        }
+        case 5: {
+          if (w.m_doc->rolledBack()) throw opad::Error("rolled forward");
+          trace::log(QString("bench: timelineperf: rolled forward in %1 ms PASS").arg(state->clock.elapsed()));
+          state->clock.start();
+          for (const char* id : {"timeline.names", "timeline.designOnly", "timeline.designOnly", "timeline.names"}) w.action(id)->trigger();
+          trace::log(QString("bench: timelineperf: names and the design history toggled in %1 ms PASS").arg(state->clock.elapsed()));
+          if (state->gap > 250) throw opad::Error("the event loop waited " + std::to_string(state->gap) + " ms");
+          trace::log(QString("bench: timelineperf: longest event-loop gap %1 ms PASS").arg(state->gap));
+          timer->stop();
+          QCoreApplication::exit(0);
+          return;
+        }
+      }
+      ++state->phase;
+    } catch (const std::exception& e) {
+      timer->stop();
+      trace::log(QString("bench: timelineperf FAIL: %1").arg(e.what()));
       QCoreApplication::exit(2);
     }
   });

@@ -55,6 +55,9 @@ CASES = [
     # names on the markers, the design history alone; Roll back to here, the playhead dragged to the end and back, a change
     # made while rolled back rolls forward.
     ("timeline", boss, {"OPAD_BENCH_TIMELINE": "{prefix}"}),
+    # The same on the Engine (skipped where it is not): the pointer on every marker, rolled back and forward by the
+    # playhead, names and the design history toggled, no event-loop gap over 250 ms.
+    ("timeline-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_TIMELINEPERF": "1"}),
     # Context menus by what they are about (UI-100): nothing, a face, an edge, a vertex, the body, a component, a sketch and
     # the open sketch, each with its own entries (Repeat of the last tool first, the picks' feature to edit or find).
     ("context-menus", boss, {"OPAD_BENCH_CONTEXT": "{prefix}"}),
