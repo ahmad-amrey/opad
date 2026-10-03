@@ -292,6 +292,36 @@ TEST(layer_table_state_reaches_the_layer_nodes) {
   }
 }
 
+// TODO 11 UI-89: a layer's linetype brings its dashes from the LTYPE table (the shapes and text of a complex one left
+// out), sized as acad.lin's: the file's DASHED and HIDDEN, in inches here, say how much larger its dashes are.
+TEST(linetype_patterns_reach_the_layers) {
+  Files f;
+  Groups lines;
+  for (const char* layer : {"Walls", "Hidden", "Fence", "Plain"}) lines.insert(lines.end(), {{0, "LINE"}, {8, layer}, {10, "0"}, {20, "0"}, {11, "10"}, {21, "0"}});
+  write_text_file(f.dir / "linetypes.dxf",
+                  section("TABLES", {{0, "TABLE"}, {2, "LTYPE"},
+                                     {0, "LTYPE"}, {2, "CONTINUOUS"}, {73, "0"}, {40, "0"},
+                                     {0, "LTYPE"}, {2, "DASHED"}, {73, "2"}, {40, "0.75"}, {49, "0.5"}, {74, "0"}, {49, "-0.25"}, {74, "0"},
+                                     {0, "LTYPE"}, {2, "HIDDEN"}, {73, "2"}, {40, "0.375"}, {49, "0.25"}, {74, "0"}, {49, "-0.125"}, {74, "0"},
+                                     {0, "LTYPE"}, {2, "FENCE"}, {73, "4"}, {40, "0.5"}, {49, "0.3"}, {74, "0"}, {49, "-0.1"}, {74, "2"}, {75, "0"},
+                                     {46, "0.1"}, {50, "0"}, {44, "0"}, {45, "0"}, {9, "GAS"}, {49, "0"}, {74, "0"}, {49, "-0.1"}, {74, "0"},
+                                     {0, "ENDTAB"}, {0, "TABLE"}, {2, "LAYER"},
+                                     {0, "LAYER"}, {2, "Walls"}, {62, "1"}, {70, "0"}, {6, "DASHED"},
+                                     {0, "LAYER"}, {2, "Hidden"}, {62, "2"}, {70, "0"}, {6, "HIDDEN"},
+                                     {0, "LAYER"}, {2, "Fence"}, {62, "3"}, {70, "0"}, {6, "FENCE"},
+                                     {0, "LAYER"}, {2, "Plain"}, {62, "5"}, {70, "0"}, {6, "CONTINUOUS"},
+                                     {0, "ENDTAB"}}) +
+                      section("ENTITIES", lines) + kEof);
+  const Scene s = resolve(import(f.dir / "linetypes.dxf"));
+  std::map<std::string, json> layers;
+  for (const auto& [id, n] : s.nodes)
+    if (n.layer.is_object()) layers[n.name] = n.layer;
+  CHECK(layers["Walls"] == json({{"name", "Walls"}, {"linetype", "DASHED"}, {"pattern", {12.7, -6.35}}}));
+  CHECK(layers["Hidden"] == json({{"name", "Hidden"}, {"linetype", "HIDDEN"}, {"pattern", {6.35, -3.175}}}));
+  CHECK(layers["Fence"] == json({{"name", "Fence"}, {"linetype", "FENCE"}, {"pattern", {7.62, -2.54, 0.0, -2.54}}}));
+  CHECK(layers["Plain"] == json({{"name", "Plain"}}));
+}
+
 // TODO 11 UI-89: the body of a layer's BYLAYER entities says so (by_layer), so a colour given to the layer reaches it and
 // not the entities drawn in colours of their own; a block's layer-0 BYLAYER entities follow the insert's layer.
 TEST(by_layer_bodies_are_marked) {

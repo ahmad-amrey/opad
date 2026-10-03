@@ -208,18 +208,29 @@ OPAD_BENCH(OPAD_BENCH_LAYERS, layers) {
       const opad::json state = l.bodies.empty() ? opad::json() : v->benchLookState(l.bodies.front());  // null: not in the view
       return state.is_object() && state.value("displayed", false);
     };
+    // A body drawn in a linetype's dashes: the view's stipple is the one Drawing2D makes of them at the view's scale.
+    auto stippled = [v](const std::string& body, const std::string& linetype, const std::vector<double>& pattern) {
+      const opad::json state = v->benchLookState(body);
+      const drawing2d::LinePattern p = drawing2d::linePattern(drawing2d::dashes(linetype, pattern), drawing2d::kPatternPixelsPerMm * v->displayScale() * v->renderScale());
+      return state.is_object() && state.value("linePattern", 0) == p.bits && state.value("lineFactor", 0) == p.factor;
+    };
+    const std::vector<double> fileDashed{12.7, -6.35, 0, -6.35};  // the file's DASHED (with a dot), sized as acad.lin's
     auto script = std::make_shared<Script>();
     auto camera = std::make_shared<opad::json>();
     auto steps = std::make_shared<int>(0);
     script->add("open", [open] { open->trigger(); }, [panel] { return panel->isVisible() && panel->layers().size() == 4; });
-    script->add("as the file has them", [v, panel, layer, drawn, require, value] {
+    script->add("as the file has them", [v, panel, layer, drawn, require, value, stippled, fileDashed] {
       const auto walls = layer("Walls"), notes = layer("Notes"), old = layer("Old"), plain = layer("Plain");
       require(walls.locked && walls.on && walls.linetype == "DASHED" && std::abs(walls.lineweight - 0.5) < 1e-9 && !notes.on && !notes.plot && old.frozen && old.on &&
                   plain.on && !plain.frozen && !plain.locked && panel->tree()->topLevelItemCount() == 4,
               "the panel lists the layers as the file has them (Walls locked, dashed, 0.5 mm; Notes off, not plotted; Old frozen)");
       const opad::json state = v->benchLookState(walls.bodies.at(0));
-      require(drawn(walls) && drawn(plain) && !drawn(notes) && !drawn(old) && state.is_object() && state.value("lineType", 0) == 1 && state.value("lineWidth", 0.0) == v->lineWidth(2),
-              QString("the view draws them so: off and frozen hidden, Walls dashed %1 px wide").arg(state.value("lineWidth", 0.0)));
+      require(drawn(walls) && drawn(plain) && !drawn(notes) && !drawn(old) && state.is_object() && state.value("lineWidth", 0.0) == v->lineWidth(2),
+              QString("the view draws them so: off and frozen hidden, Walls %1 px wide").arg(state.value("lineWidth", 0.0)));
+      require(walls.pattern == fileDashed && stippled(walls.bodies.at(0), "DASHED", fileDashed) && !stippled(walls.bodies.at(0), "DASHED", {}) &&
+                  stippled(plain.bodies.at(0), "", {}) && state.value("linePattern", 0) != 0xFFFF,
+              QString("Walls is drawn in the file's DASHED (dash and dot: stipple %1 x %2), not acad.lin's, Plain solid")
+                  .arg(state.value("linePattern", 0), 0, 16).arg(state.value("lineFactor", 0)));
       panel->window()->grab().save(value + ".panel.png");
     });
     script->add("turn Notes on by its cell", [panel, layer] { clickCell(panel->tree(), panel->item(layer("Notes").id), LayersPanel::On); },
@@ -251,10 +262,21 @@ OPAD_BENCH(OPAD_BENCH_LAYERS, layers) {
     script->add("Plain as Center, 1 mm", [panel, layer] {
       panel->setLinetype(layer("Plain").id, "Center");
       panel->setLineweight(layer("Plain").id, 1.0);
-    }, [v, layer] {
+    }, [v, layer, stippled] {
       const opad::json state = v->benchLookState(layer("Plain").bodies.at(0));
-      return state.is_object() && layer("Plain").linetype == "Center" && state.value("lineType", 0) == 3 && state.value("lineWidth", 0.0) == v->lineWidth(4);
+      return state.is_object() && layer("Plain").linetype == "Center" && stippled(layer("Plain").bodies.at(0), "Center", {}) && state.value("lineWidth", 0.0) == v->lineWidth(4);
     });
+    script->add("Plain as Hidden", [panel, layer] { panel->setLinetype(layer("Plain").id, "Hidden"); },
+                [layer, stippled] { return layer("Plain").linetype == "Hidden" && stippled(layer("Plain").bodies.at(0), "Hidden", {}); });
+    script->add("Plain as the file's DASHED", [v, panel, layer, require, stippled] {
+      require(!stippled(layer("Plain").bodies.at(0), "Center", {}), "Hidden is drawn in its own dashes, not Center's");
+      panel->setLinetype(layer("Plain").id, "Dashed");
+    }, [layer, stippled, fileDashed] { return layer("Plain").pattern == fileDashed && stippled(layer("Plain").bodies.at(0), "Dashed", fileDashed); });
+    script->add("Plain back to Center", [panel, layer, require] {
+      require(true, "a linetype the drawing defines brings its dashes to another layer");
+      panel->setLinetype(layer("Plain").id, "Center");
+    },
+                [layer, stippled] { return layer("Plain").linetype == "Center" && layer("Plain").pattern.empty() && stippled(layer("Plain").bodies.at(0), "Center", {}); });
     script->add("Walls green", [panel, layer] { panel->setColor(layer("Walls").id, {0, 0.8, 0}); },
                 [v, layer] { return v->shownLook(layer("Walls").bodies.at(0)).color == drawing2d::Rgb{0, 0.8, 0}; });
     script->add("Walls in its drawing colour again", [panel, layer] { panel->setDrawingColor(layer("Walls").id); },
@@ -319,7 +341,7 @@ OPAD_BENCH(OPAD_BENCH_LAYERS, layers) {
         panel->setLinetype(layer("Walls").id, "Continuous");
         *steps = int(doc->undoLabels().size());
         panel->restoreState(*state);
-      }, [layer] { return layer("Notes").on == false && layer("Walls").locked == false && layer("Walls").linetype == "DASHED"; });
+      }, [layer, fileDashed] { return layer("Notes").on == false && layer("Walls").locked == false && layer("Walls").linetype == "DASHED" && layer("Walls").pattern == fileDashed; });
       script->add("one step", [doc, steps, require, layer, drawn] {
         require(int(doc->undoLabels().size()) == *steps + 1 && doc->undoLabel() == LayersPanel::tr("restore layer state") && !drawn(layer("Notes")),
                 "the layer state came back in one step: " + doc->undoLabel());

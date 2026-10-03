@@ -11,7 +11,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
+#include <map>
 
 namespace drawing2d {
 double luminance(const Rgb& c) {
@@ -38,6 +40,13 @@ std::string upper(std::string s) {
   return s;
 }
 json nullIf(bool empty, json value) { return empty ? json(nullptr) : std::move(value); }
+std::vector<double> patternOf(const json& fields) {
+  std::vector<double> out;
+  if (fields.contains("pattern") && fields["pattern"].is_array())
+    for (const auto& d : fields["pattern"])
+      if (d.is_number()) out.push_back(d.get<double>());
+  return out;
+}
 // The on/frozen pair as fields and the visible it leaves.
 void shown(json& op, bool on, bool frozen) {
   op["visible"] = on && !frozen;
@@ -68,6 +77,7 @@ Layer make(const opad::Scene& scene, const opad::Node& n, const std::string& dra
   l.locked = n.locked;
   l.plot = f.value("plot", true);
   if (f.contains("linetype") && f["linetype"].is_string()) l.linetype = f["linetype"].get<std::string>();
+  l.pattern = patternOf(f);
   if (f.contains("lineweight") && f["lineweight"].is_number()) l.lineweight = f["lineweight"].get<double>();
   for (const auto& child : n.children)
     if (const opad::Node* b = scene.node(child); b && b->kind == opad::Node::Kind::Body && b->representation == "drawing2d") {
@@ -148,9 +158,10 @@ json setDefaultColor(const Layer& layer) {
   return {{"targets", targets}, {"default_color", true}};
 }
 
-json setLinetype(const Layer& layer, const std::string& linetype) {
+json setLinetype(const Layer& layer, const std::string& linetype, const std::vector<double>& pattern) {
   const bool continuous = linetype.empty() || upper(linetype) == "CONTINUOUS";
-  return {{"target", layer.id}, {"visible", layer.on && !layer.frozen}, {"layer", {{"linetype", nullIf(continuous, linetype)}}}};
+  return {{"target", layer.id}, {"visible", layer.on && !layer.frozen},
+          {"layer", {{"linetype", nullIf(continuous, linetype)}, {"pattern", nullIf(continuous || pattern.empty(), pattern)}}}};
 }
 
 json setLineweight(const Layer& layer, double mm) {
@@ -172,13 +183,86 @@ const std::vector<double>& lineweights() {
   return list;
 }
 
-int lineType(const std::string& linetype) {
-  const std::string name = upper(linetype);
-  if (name.empty() || name == "CONTINUOUS" || name == "BYLAYER" || name == "BYBLOCK") return 0;
-  for (const char* dotDash : {"DASHDOT", "CENTER", "PHANTOM", "BORDER", "DIVIDE"})
-    if (name.find(dotDash) != std::string::npos) return 3;
-  if (name.find("DOT") != std::string::npos) return 2;
-  return 1;  // dashed, hidden, and any other named pattern
+std::vector<double> dashes(const std::string& linetype, const std::vector<double>& pattern) {
+  std::string name = upper(linetype);
+  if (name.empty() || name == "CONTINUOUS" || name == "BYLAYER" || name == "BYBLOCK") return {};
+  if (!pattern.empty())  // the file's own: drawn when it has a gap
+    return std::any_of(pattern.begin(), pattern.end(), [](double d) { return d < 0; }) ? pattern : std::vector<double>{};
+  static const std::map<int, std::vector<double>> iso = {  // acadiso.lin, ACAD_ISOnnW100
+      {2, {12, -3}}, {3, {12, -18}}, {4, {24, -3, 0.5, -3}}, {5, {24, -3, 0.5, -3, 0.5, -3}}, {6, {24, -3, 0.5, -3, 0.5, -3, 0.5, -3}}, {7, {0.5, -3}},
+      {8, {24, -3, 6, -3}}, {9, {24, -3, 6, -3, 6, -3}}, {10, {12, -3, 0.5, -3}}, {11, {12, -3, 12, -3, 0.5, -3}}, {12, {12, -3, 0.5, -3, 0.5, -3}},
+      {13, {12, -3, 12, -3, 0.5, -3, 0.5, -3}}, {14, {12, -3, 0.5, -3, 0.5, -3, 0.5, -3}}, {15, {12, -3, 12, -3, 0.5, -3, 0.5, -3, 0.5, -3}}};
+  if (name.rfind("ACAD_ISO", 0) == 0)
+    if (const auto it = iso.find(std::atoi(name.c_str() + 8)); it != iso.end()) return it->second;
+  static const std::vector<std::pair<std::string, std::vector<double>>> acad = {  // acad.lin in mm, the names a guess looks for in this order
+      {"DASHDOT", {12.7, -6.35, 0, -6.35}},  {"CENTER", {31.75, -6.35, 6.35, -6.35}}, {"PHANTOM", {31.75, -6.35, 6.35, -6.35, 6.35, -6.35}},
+      {"BORDER", {12.7, -6.35, 12.7, -6.35, 0, -6.35}}, {"DIVIDE", {12.7, -6.35, 0, -6.35, 0, -6.35}}, {"HIDDEN", {6.35, -3.175}},
+      {"DASHED", {12.7, -6.35}}, {"DOT", {0, -6.35}}};
+  double size = 1;  // DASHED2 half, DASHEDX2 twice
+  if (name.size() > 2 && name.compare(name.size() - 2, 2, "X2") == 0) size = 2, name.resize(name.size() - 2);
+  else if (name.size() > 1 && name.back() == '2') size = 0.5, name.pop_back();
+  auto sized = [size](std::vector<double> d) {
+    for (double& v : d) v *= size;
+    return d;
+  };
+  for (const auto& [base, d] : acad)
+    if (name == base) return sized(d);
+  for (const auto& [base, d] : acad)  // other names, as they read: "CENTERLINE", "HIDDEN_LINE", "DOTTED"
+    if (name.find(base) != std::string::npos || (base == "DASHDOT" && name.find("DASH") != std::string::npos && name.find("DOT") != std::string::npos) ||
+        (base == "DASHED" && name.find("DASH") != std::string::npos))
+      return d;
+  return acad[6].second;  // dashed
+}
+
+LinePattern linePattern(const std::vector<double>& dashes, double pixelsPerMm) {
+  std::vector<std::pair<bool, double>> e;  // on or off, pixels; neighbours of a kind merged, around the end too
+  for (double d : dashes) {
+    const bool on = d >= 0;
+    const double px = std::abs(d) * pixelsPerMm;
+    if (!e.empty() && e.back().first == on) e.back().second += px;
+    else e.push_back({on, px});
+  }
+  if (e.size() > 1 && e.front().first == e.back().first) e.front().second += e.back().second, e.pop_back();
+  if (e.size() < 2) return {};
+  double period = 0;
+  for (const auto& x : e) period += x.second;
+  // Each dash and gap a whole number of bits (dots one) of f pixels, the period repeated k times in 16 bits: the k and f
+  // whose lengths come closest.
+  LinePattern best{0xFFC0, 1};  // more dashes than 16 bits hold: OCCT's dash
+  double bestError = 1e300;
+  for (int k : {1, 2, 4, 8}) {
+    const int bits = 16 / k;
+    if (bits < int(e.size())) break;
+    for (int f = 1; f <= 256 && f <= period + 1; ++f) {
+      std::vector<int> b(e.size());
+      int sum = 0;
+      for (size_t i = 0; i < e.size(); ++i) sum += b[i] = std::max(1, int(std::lround(e[i].second / f)));
+      while (sum != bits) {  // shave the one most over its length (keeping one bit), or lengthen the one most short of it
+        int at = -1;
+        double worst = -1e300;
+        for (size_t i = 0; i < e.size(); ++i) {
+          const double off = sum > bits ? b[i] * f - e[i].second : e[i].second - b[i] * f;
+          if ((sum < bits || b[i] > 1) && off > worst) worst = off, at = int(i);
+        }
+        if (at < 0) break;
+        b[size_t(at)] += sum > bits ? -1 : 1;
+        sum += sum > bits ? -1 : 1;
+      }
+      if (sum != bits) continue;
+      double error = 0;
+      for (size_t i = 0; i < e.size(); ++i) error += std::abs(b[i] * f - e[i].second);
+      if (error >= bestError - 1e-9) continue;
+      bestError = error;
+      uint16_t pattern = 0;
+      int bit = 15;
+      for (int r = 0; r < k; ++r)
+        for (size_t i = 0; i < e.size(); ++i)
+          for (int n = 0; n < b[i]; ++n, --bit)
+            if (e[i].first) pattern |= uint16_t(1u << bit);
+      best = {pattern, uint16_t(f)};
+    }
+  }
+  return best;
 }
 
 double linePoints(double lineweight) { return lineweight < 0 ? 1.0 : std::max(1.0, std::ceil(lineweight * 96 / 25.4 - 0.05)); }
@@ -190,6 +274,7 @@ json captureState(const opad::Scene& scene) {
     json s = {{"name", l.name}, {"on", l.on}, {"frozen", l.frozen}, {"locked", l.locked}, {"plot", l.plot}};
     if (l.colored && !l.mixed) s["color"] = {l.color[0], l.color[1], l.color[2]};
     if (!l.linetype.empty()) s["linetype"] = l.linetype;
+    if (!l.pattern.empty()) s["pattern"] = l.pattern;
     if (l.lineweight >= 0) s["lineweight"] = l.lineweight;
     all[l.id] = std::move(s);
   }
@@ -296,7 +381,11 @@ std::vector<json> restoreState(const opad::Scene& scene, const json& display) {
     if (on != l.on || frozen != l.frozen) shown(op, on, frozen);
     if (locked != l.locked) op["locked"] = locked;
     if (plot != l.plot) patch["plot"] = nullIf(plot, false);
-    if (upper(linetype) != upper(l.linetype)) patch["linetype"] = nullIf(linetype.empty(), linetype);
+    const std::vector<double> pattern = patternOf(*s);
+    if (upper(linetype) != upper(l.linetype) || pattern != l.pattern) {
+      patch["linetype"] = nullIf(linetype.empty(), linetype);
+      patch["pattern"] = nullIf(linetype.empty() || pattern.empty(), pattern);
+    }
     if (std::abs(lineweight - l.lineweight) > 1e-9) patch["lineweight"] = nullIf(lineweight < 0, lineweight);
     if (!patch.empty()) {
       for (const auto& [key, value] : patch.items()) op["layer"][key] = value;

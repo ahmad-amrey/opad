@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <set>
 #include <sstream>
 #include <tuple>
 
@@ -153,8 +154,16 @@ TEST(layer_changes_are_appearance_ops_an_earlier_build_reads) {
   opad::commands::run("appearance", {{"target", id}, {"layer", {{"plot", false}}}}, &doc);
   CHECK(doc.ops.back().data.value("visible", false) && doc.ops.back().data["layer"]["plot"] == false);
   // Lines drawn as their layer says.
-  CHECK(lineType("") == 0 && lineType("Continuous") == 0 && lineType("DASHED") == 1 && lineType("HIDDEN2") == 1 && lineType("Dot") == 2 &&
-        lineType("CENTER") == 3 && lineType("PHANTOM") == 3 && lineType("DashDot") == 3 && lineType("ACAD_ISO02W100") == 1);
+  using Dashes = std::vector<double>;
+  CHECK(dashes("").empty() && dashes("Continuous").empty() && dashes("BYLAYER").empty());
+  CHECK(dashes("DASHED") == Dashes({12.7, -6.35}) && dashes("Dashed2") == Dashes({6.35, -3.175}) && dashes("DASHEDX2") == Dashes({25.4, -12.7}) &&
+        dashes("HIDDEN") == Dashes({6.35, -3.175}) && dashes("ACAD_ISO02W100") == Dashes({12, -3}) && dashes("Center") == Dashes({31.75, -6.35, 6.35, -6.35}));
+  CHECK(dashes("CENTERLINE") == dashes("CENTER") && dashes("Dash_Dot") == dashes("DASHDOT") && dashes("DOTTED") == dashes("DOT") && dashes("FENCE") == dashes("DASHED"));
+  CHECK(dashes("CUSTOM", {5, -1, 0, -1}) == Dashes({5, -1, 0, -1}) && dashes("CUSTOM", {5}).empty());  // the file's own; no gap: continuous
+  all = run(setLinetype(all["Plain"], "FENCE", {5, -1, 0, -1}));
+  CHECK(all["Plain"].linetype == "FENCE" && all["Plain"].pattern == Dashes({5, -1, 0, -1}));
+  all = run(setLinetype(all["Plain"], "Dashed"));  // the pattern goes with the name
+  CHECK(all["Plain"].linetype == "Dashed" && all["Plain"].pattern.empty());
   CHECK(linePoints(-1) == 1 && linePoints(0) == 1 && linePoints(0.25) == 1 && linePoints(0.3) == 2 && linePoints(0.5) == 2 && linePoints(1.0) == 4 &&
         linePoints(2.11) == 8);
 }
@@ -195,6 +204,50 @@ TEST(layer_states_come_back_in_one_go) {
   const auto byNames = restoreState(opad::resolve(again), saved);
   CHECK_EQ(byNames.size(), 1u);
   CHECK(byNames.at(0)["target"] == all["Notes"].id && byNames.at(0)["visible"] == false);
+}
+
+// A linetype as the view draws it: a 16-bit stipple of its dashes, each dash and gap close to its length on screen.
+TEST(linetypes_draw_as_their_dashes) {
+  using Dashes = std::vector<double>;
+  auto runs = [](LinePattern p) {  // on/off runs of bits, around the end
+    std::vector<std::pair<bool, int>> r;
+    for (int b = 15; b >= 0; --b) {
+      const bool on = (p.bits >> b) & 1;
+      if (!r.empty() && r.back().first == on) ++r.back().second;
+      else r.push_back({on, 1});
+    }
+    if (r.size() > 1 && r.front().first == r.back().first) r.front().second += r.back().second, r.pop_back();
+    return r;
+  };
+  const double px = kPatternPixelsPerMm;
+  CHECK(linePattern({}, px) == LinePattern{} && linePattern({5}, px) == LinePattern{} && linePattern(dashes("Continuous"), px) == LinePattern{});
+  std::set<std::pair<int, int>> distinct;
+  for (const char* name : {"DASHED", "HIDDEN", "CENTER", "PHANTOM", "DOT", "DASHDOT", "BORDER", "DIVIDE", "ACAD_ISO02W100", "DASHEDX2"}) {
+    const auto d = dashes(name);
+    const LinePattern p = linePattern(d, px);
+    distinct.insert({p.bits, p.factor});
+    const auto r = runs(p);
+    int ons = 0, elements = 0;
+    double period = 0;
+    for (double v : d) period += std::abs(v) * px, ons += v >= 0;
+    for (const auto& run : r) elements += run.first;
+    CHECK(elements % ons == 0);  // whole periods in 16 bits
+    const double shown = 16.0 * p.factor / (elements / ons);
+    CHECK(std::abs(shown - period) <= 0.25 * period + p.factor);  // its size on screen
+    for (const auto& run : r)
+      if (run.first && std::string(name) == "DOT") CHECK(run.second == 1);  // dots one bit
+  }
+  CHECK_EQ(distinct.size(), 10u);  // each draws differently: HIDDEN is a smaller DASHED, CENTER and PHANTOM differ by a dot
+  const auto center = runs(linePattern(dashes("CENTER"), px));
+  CHECK(center.size() == 4 && center[0].first && center[0].second >= 3 * center[2].second);
+  // Larger on a denser screen, the same shape.
+  const LinePattern one = linePattern(dashes("CENTER"), px), two = linePattern(dashes("CENTER"), 2 * px);
+  CHECK(two.factor >= 2 * one.factor - 1 && runs(two).size() == 4);
+  // Dashes more than 16 bits hold: a plain dash.
+  CHECK(linePattern(Dashes(20, 1.0) /* all on */, px) == LinePattern{});
+  std::vector<double> many;
+  for (int i = 0; i < 10; ++i) many.insert(many.end(), {1.0, -1.0});
+  CHECK(linePattern(many, px).bits != 0xFFFF);
 }
 
 // An import that does not say which bodies are in their layer's colour (an earlier build's, an SVG): a layer colour is

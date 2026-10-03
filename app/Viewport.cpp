@@ -522,7 +522,8 @@ void Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
                                     {d->HasOwnFreeBoundaryAspect(), d->FreeBoundaryAspect()}})
       if (own) {
         line->SetWidth(look->lineWidth);
-        line->SetTypeOfLine(static_cast<Aspect_TypeOfLine>(look->lineType));
+        line->Aspect()->SetLinePattern(look->linePattern);
+        line->Aspect()->SetLineStippleFactor(look->lineFactor);
       }
     d->FaceBoundaryAspect()->SetWidth(lineWidth());  // outlines of fills and text stay hairlines
   }

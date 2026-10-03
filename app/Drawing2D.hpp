@@ -2,6 +2,7 @@
 // 2D drawings in the view (area drawing2d): what is shown of a drawing's layers, independent of Qt and OCCT's view so
 // tests/test_drawing2d covers it. The viewport, the Layers panel and the 2D vocabulary build on these.
 #include <array>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
@@ -37,6 +38,7 @@ struct Layer {
   int own = 0;  // bodies in colours of their own, which keep them
   Rgb color{0, 0, 0};
   std::string linetype;  // "" = continuous
+  std::vector<double> pattern;  // its dashes as the file's LTYPE table has them (mm; < 0 gap, 0 dot); empty: by its name
   double lineweight = -1;  // mm; < 0 = the default
 };
 bool isLayer(const opad::Scene& scene, const std::string& id);
@@ -53,16 +55,28 @@ opad::json setFrozen(const Layer& layer, bool frozen);
 opad::json setLocked(const Layer& layer, bool locked);
 opad::json setColor(const Layer& layer, const Rgb& color);  // the layer and its byLayer bodies
 opad::json setDefaultColor(const Layer& layer);  // back to the colour they were imported in (none: the ink)
-opad::json setLinetype(const Layer& layer, const std::string& linetype);  // "" or Continuous: back to continuous
+// "" or Continuous: back to continuous. `pattern`: the file's dashes for that name (another layer's), else none.
+opad::json setLinetype(const Layer& layer, const std::string& linetype, const std::vector<double>& pattern = {});
 opad::json setLineweight(const Layer& layer, double mm);  // < 0: the default
 opad::json setPlot(const Layer& layer, bool plot);
 
 // The linetypes offered (with those the drawing's layers name) and the DXF lineweights (mm).
 const std::vector<std::string>& linetypes();
 const std::vector<double>& lineweights();
-// How the view draws them: Aspect_TypeOfLine (0 solid, 1 dash, 2 dot, 3 dot-dash) and a width in screen points (a
-// lineweight as wide as on paper at 96 dpi, at least one point: 0.25 mm and less are hairlines).
-int lineType(const std::string& linetype);
+// A linetype's dashes (mm; < 0 gap, 0 dot): the file's own pattern when it has one, else acad.lin's and acadiso.lin's
+// (DASHED, HIDDEN, CENTER, PHANTOM, DOT, DASHDOT, BORDER, DIVIDE with their 2 and X2 sizes, ACAD_ISO02W100..15), else
+// one guessed from the name (dot, dash-dot or dashed); empty for a continuous line.
+std::vector<double> dashes(const std::string& linetype, const std::vector<double>& pattern = {});
+// How the view draws dashes: a 16-bit line stipple and its factor (pixels per bit), the dashes `pixelsPerMm` pixels per
+// millimetre in screen space (drawn at the same size whatever the zoom, as long as the pattern fits 16 x 256 pixels).
+// Each dash and gap gets at least one bit, dots exactly one. {0xFFFF, 1}: solid.
+struct LinePattern {
+  uint16_t bits = 0xFFFF, factor = 1;
+  bool operator==(const LinePattern&) const = default;
+};
+LinePattern linePattern(const std::vector<double>& dashes, double pixelsPerMm);
+constexpr double kPatternPixelsPerMm = 1.25;  // logical pixels per pattern millimetre: DASHED repeats every 24 px
+// A lineweight as wide as on paper at 96 dpi, in screen points, at least one: 0.25 mm and less are hairlines.
 double linePoints(double lineweight);
 
 // Layer states (LAYERSTATE): every layer's on, frozen, locked, plot, colour, linetype and lineweight, saved as

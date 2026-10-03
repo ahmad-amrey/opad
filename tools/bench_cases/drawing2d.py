@@ -1,9 +1,16 @@
 """gui_benches cases of the 2D drawing area (drawing2d); the benches are in app/Drawing2DBench.cpp."""
 
 
-def dxf(path, layers, entities):
-    """A minimal DXF: layers [(name, aci, flags, extra groups)], entities [(type, layer, groups)] as (code, value) pairs."""
-    pairs = [(0, "SECTION"), (2, "HEADER"), (9, "$INSUNITS"), (70, "4"), (0, "ENDSEC"), (0, "SECTION"), (2, "TABLES"), (0, "TABLE"), (2, "LAYER")]
+def dxf(path, layers, entities, linetypes=()):
+    """A minimal DXF: layers [(name, aci, flags, extra groups)], entities [(type, layer, groups)] as (code, value) pairs,
+    linetypes [(name, dashes)] in the LTYPE table."""
+    pairs = [(0, "SECTION"), (2, "HEADER"), (9, "$INSUNITS"), (70, "4"), (0, "ENDSEC"), (0, "SECTION"), (2, "TABLES")]
+    if linetypes:
+        pairs += [(0, "TABLE"), (2, "LTYPE")]
+        for name, dashes in linetypes:
+            pairs += [(0, "LTYPE"), (2, name), (73, str(len(dashes)))] + [(49, str(d)) for d in dashes]
+        pairs += [(0, "ENDTAB")]
+    pairs += [(0, "TABLE"), (2, "LAYER")]
     for name, aci, flags, extra in layers:
         pairs += [(0, "LAYER"), (2, name), (70, str(flags)), (62, str(aci))] + list(extra)
     pairs += [(0, "ENDTAB"), (0, "ENDSEC"), (0, "SECTION"), (2, "ENTITIES")]
@@ -31,9 +38,11 @@ def contrast_file(root, document):
 
 def layers_file(root, document=None):
     """Walls locked, dashed and 0.5 mm; Notes off and not plotted; Old frozen; Plain as it comes. A line on each, and on
-    Plain a second one in colour 7 of its own (a layer colour leaves it)."""
+    Plain a second one in colour 7 of its own (a layer colour leaves it). The file's DASHED has a dot (in inches, as
+    acad.lin's): Walls is drawn with it, not with acad.lin's."""
     return dxf(root / "layers.dxf", [("Walls", 1, 4, [(6, "DASHED"), (370, "50")]), ("Notes", -3, 0, [(290, "0")]), ("Old", 2, 1, ()), ("Plain", 5, 0, ())],
-               [line(name, 0, 10 * i, 100, 10 * i + 5) for i, name in enumerate(["Walls", "Notes", "Old", "Plain"])] + [line("Plain", 0, 45, 100, 45, 7)])
+               [line(name, 0, 10 * i, 100, 10 * i + 5) for i, name in enumerate(["Walls", "Notes", "Old", "Plain"])] + [line("Plain", 0, 45, 100, 45, 7)],
+               [("CONTINUOUS", []), ("DASHED", [0.5, -0.25, 0, -0.25])])
 
 
 def layers_document(root, document):

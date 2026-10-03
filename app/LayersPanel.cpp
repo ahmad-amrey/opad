@@ -345,7 +345,12 @@ void LayersPanel::setDrawingColor(const std::string& id) {
 }
 
 void LayersPanel::setLinetype(const std::string& id, const std::string& linetype) {
-  if (const drawing2d::Layer* l = layer(id)) apply({{"appearance", drawing2d::setLinetype(*l, linetype)}}, tr("layer linetype"));
+  const drawing2d::Layer* l = layer(id);
+  if (!l) return;
+  std::vector<double> pattern;  // the drawing's own dashes for that name, as another layer has them
+  for (const auto& other : m_layers)
+    if (!other.pattern.empty() && QString::fromStdString(other.linetype).compare(QString::fromStdString(linetype), Qt::CaseInsensitive) == 0) pattern = other.pattern;
+  apply({{"appearance", drawing2d::setLinetype(*l, linetype, pattern)}}, tr("layer linetype"));
 }
 
 void LayersPanel::setLineweight(const std::string& id, double mm) {
