@@ -162,6 +162,7 @@ bool SheetPage::empty() const { return m_stack->currentIndex() == 1; }
 
 void SheetPage::showSheet(const std::string& id) {
   if (!m_doc->scene.sheet(id)) return;
+  if (id != m_canvas->sheet()) m_annotator->cancel();  // its picks were on the other sheet
   m_canvas->setSheet(id);
   rebuildTabs();
   updateInfo();
@@ -172,6 +173,7 @@ void SheetPage::documentChanged() {
   const auto& sheets = m_doc->scene.sheets;
   const bool none = !m_doc->hasDocument || sheets.empty();
   m_stack->setCurrentIndex(none ? 1 : 0);
+  if (none || !m_doc->scene.sheet(m_canvas->sheet())) m_annotator->cancel();
   if (none) {
     m_canvas->setSheet("");
   } else if (!m_doc->scene.sheet(m_canvas->sheet())) {
