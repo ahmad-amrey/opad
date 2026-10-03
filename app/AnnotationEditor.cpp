@@ -27,6 +27,7 @@
 #include "Notes.hpp"
 #include "Panels.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 #include "Viewport.hpp"
 
 namespace {
@@ -620,7 +621,7 @@ void AnnotationEditor::refreshStrokes() {
     const QColor tint = pen->color;
     mark->setPixmap(painted(QSize(18, 10), dpr, [tint, width](QPainter& p) { sample(p, QPointF(3, 5), QPointF(15, 5), std::min(width, 4), tint); }));
     auto* label = new QLabel(tr("Pen · %1 · %2 px").arg(i18n::t(pen->label)).arg(width), row);
-    auto* size = new QLabel(length < 10 ? tr("%1 mm").arg(length, 0, 'f', 1) : tr("%1 mm").arg(qRound(length)), row);
+    auto* size = new QLabel(units::format(units::Kind::Length, length, units::toDisplay(units::Kind::Length, length) < 10 ? 1 : 0), row);
     size->setProperty("annotationRole", "value");
     auto* remove = flatButton(row, "annotationRemoveStroke", "close", tr("Delete stroke %1").arg(i + 1), 20);
     remove->setProperty("strokeIndex", int(i));

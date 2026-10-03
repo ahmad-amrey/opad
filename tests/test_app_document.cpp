@@ -59,6 +59,29 @@ int main(int argc, char** argv) {
     loop.exec();
     CHECK(success);
     CHECK_EQ(doc.scene.all_bodies().size(),bodies*2);
+    // Undo/redo several steps at once (the quick-access Undo ▾ / Redo ▾): the labels the next one first, one refresh.
+    {
+      const std::string body = doc.scene.all_bodies().front();
+      const size_t ops = doc.doc.ops.size();
+      doc.run("rename", opad::json{{"target", body}, {"name", "one"}});
+      doc.run("rename", opad::json{{"target", body}, {"name", "two"}});
+      doc.run("appearance", opad::json{{"target", body}, {"visible", false}});
+      std::vector<std::string> ids;
+      for (const auto& op : doc.doc.ops) ids.push_back(op.id);
+      CHECK(doc.undoLabels().mid(0, 3) == QStringList({AppDocument::tr("hide"), AppDocument::tr("rename"), AppDocument::tr("rename")}) && doc.redoLabels().isEmpty());
+      int changes = 0;
+      auto counted = QObject::connect(&doc, &AppDocument::changed, &doc, [&changes] { ++changes; });
+      doc.undo(2);
+      CHECK(changes == 1 && doc.doc.ops.size() == ops + 1 && doc.nodeName(body) == "one" && doc.scene.node(body)->visible);
+      CHECK(doc.redoLabels() == QStringList({AppDocument::tr("rename"), AppDocument::tr("hide")}) && doc.undoLabels().first() == AppDocument::tr("rename"));
+      doc.redo(5);  // more than there are: all of them
+      std::vector<std::string> again;
+      for (const auto& op : doc.doc.ops) again.push_back(op.id);
+      CHECK(changes == 2 && again == ids && doc.nodeName(body) == "two" && !doc.scene.node(body)->visible && doc.redoLabels().isEmpty());
+      QObject::disconnect(counted);
+      doc.undo(3);
+      CHECK_EQ(doc.doc.ops.size(), ops);
+    }
     int resets=0;
     QObject::connect(&doc,&AppDocument::aboutToReplace,&doc,[&]{++resets;});
     const auto generation=doc.generation;

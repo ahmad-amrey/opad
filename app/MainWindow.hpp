@@ -9,7 +9,9 @@
 #include <functional>
 
 #include "AnnotationEditor.hpp"
+#include "AreaController.hpp"
 #include "AppDocument.hpp"
+#include "Commands.hpp"
 #include "DesignController.hpp"
 #include "EmptyState.hpp"
 #include "GuidedTool.hpp"
@@ -17,13 +19,20 @@
 #include "Notes.hpp"
 #include "Panels.hpp"
 #include "Ribbon.hpp"
+#include "Toast.hpp"
 #include "Viewport.hpp"
 #include "BrowserOverlay.hpp"
 class RecoveryManager;
 class AgentBridge;
+class QToolButton;
+template <class Tag>
+struct MainWindowBench;
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
+  template <class Tag>
+  friend struct MainWindowBench;  // the benches of BenchRegistry.hpp (OPAD_BENCH), each in its own file
+  friend class AreaServices;      // what feature areas reach of the window (AreaController.hpp, MainWindowAreas.cpp)
  public:
   MainWindow();
   ~MainWindow() override;
@@ -41,23 +50,48 @@ class MainWindow : public QMainWindow {
 
  private:
   QAction* addAction(const QString& id, const QString& text, const QString& icon, const QKeySequence& shortcut, std::function<void()> fn, bool checkable = false);
+  QAction* addCommand(const CommandInfo& info, std::function<void()> fn);  // every command is made here (Commands.hpp)
   QAction* action(const QString& id) const;
-  void buildActions();
+  CommandContext commandContext() const;
+  void updateCommands();  // the commands with an enabledWhen: after document, selection, workspace or sketch changes
+  void buildActions();  // the area builders below, in command order
+  void buildFileActions();        // MainWindowFile.cpp
+  void buildViewActions();        // MainWindowView.cpp: view.*, panel toggles, workspaces
+  void buildNavigationActions();  // MainWindowView.cpp: layout reset, theme, navigation presets, selection filters
+  void buildInspectActions();     // MainWindowInspect.cpp
+  void buildAnnotateActions();    // MainWindowAnnotate.cpp
+  void buildEditActions();        // MainWindowEdit.cpp
+  void buildToolsActions();       // MainWindowRibbon.cpp: tools.*, help.*
+  // Feature areas (AreaController.hpp, MainWindowAreas.cpp): made after the built-in commands, hooks called from here.
+  void createAreas();
+  SelectionContext selectionContext() const;
+  template <class Hook>
+  void forEachArea(Hook hook) {  // the hooks that run once the window is built
+    if (m_areasReady)
+      for (AreaController* area : m_areas) hook(area);
+  }
   void buildMenus();
   void selectGeometry();
   void buildRibbon();
   void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")
   void buildDesign();         // the controller, its floating panel and the wiring
   void updateDesignState();   // sketch mode <-> ribbon tab set, action enabling
-  void setWorkspace(int index);  // 0 Review, 1 Design: swaps the ribbon tab set (same document, same timeline)
+  // "review", "design" or an area's (RibbonLayout ids): swaps the ribbon tab set (same document, same timeline); an id
+  // that is not there changes nothing. The sketch's contextual workspace is entered and left by updateDesignState.
+  void setWorkspace(const QString& id);
+  bool setContextualTab(const QString& id, bool shown);  // a contextual tab (RibbonLayout::addContextualTab) shown or hidden
+  QString workspaceId() const { return m_workspaceId; }  // the one shown, "sketch" included
   void buildCentral();
   void buildDocks();
   void bindPanel(QAction* a, QDockWidget* dock);
   void resetLayout();
   void buildStatusBar();
+  void buildUnitsButton();
+  void setDocumentUnit(const std::string& unit);
   void applyTheme(bool dark);
   void refreshIcons();
   void updateTitle();
+  QString newerRecords() const;  // what of the file only a newer build reads (UI-65): one sentence, empty when nothing
   void updateChips();
   void refreshGit();
   void showOpGitLog(const std::string& opId,const QString& path);
@@ -103,6 +137,7 @@ class MainWindow : public QMainWindow {
   QString refLabel(const opad::Ref& r) const;
   bool toolMeasures() const { return m_tool.id == "distance" || m_tool.id == "angle" || m_tool.id == "radius" || m_tool.id == "bbox"; }
   void updateUndoActions();
+  QMenu* historyMenu(bool undo);  // the steps under the quick-access Undo ▾ / Redo ▾
   void sectionFromFace(const opad::Ref& face);  // "Pick face": a planar face sets the section plane
   void pinMeasurement();
   void clearMeasurement();
@@ -138,16 +173,25 @@ class MainWindow : public QMainWindow {
   void updateViewerCard();
 
   AppDocument* m_doc = nullptr;
+  AreaServices m_areaServices{this};
+  std::vector<AreaController*> m_areas;  // owned; deleted first in ~MainWindow
+  bool m_areasReady = false;
+  unsigned long long m_areaGeneration = 0;  // the document generation the areas last saw (documentChanged's "replaced")
   RecoveryManager* m_recovery = nullptr;
   AgentBridge* m_agent = nullptr;
   bool m_closePending = false, m_recoveryClosed = false;
   DesignController* m_design = nullptr;
   ToolPanel* m_featurePanel = nullptr;
   int m_sketchWorkspace = -1, m_workspaceBeforeSketch = 0;
+  QStringList m_workspaceIds;            // by RibbonBar index
+  QString m_workspaceId, m_workspaceKeys;  // the one shown (as the areas were told); "Ctrl+1 / 2" for the status bar
+  class QActionGroup* m_workspaceGroup = nullptr;  // the workspace.* commands: one checked
+  QMenu* m_viewMenu = nullptr;
   QStackedWidget* m_stack = nullptr;
   EmptyState* m_empty = nullptr;
   Viewport* m_viewport = nullptr;
   ViewportChips* m_chips = nullptr;
+  ToastStack* m_toasts = nullptr;  // results and warnings at the bottom centre of the viewport (Toast.hpp)
   QWidget* m_homeBtn = nullptr;  // floating Home button above the view cube
   QToolButton* m_rollLeft = nullptr;   // 90 degree turns about the view axis, either side of the cube
   QToolButton* m_rollRight = nullptr;
@@ -190,6 +234,7 @@ class MainWindow : public QMainWindow {
   ToolPanel* m_sectionPanel = nullptr;
   QList<ToolPanel*> m_panels;
   std::vector<opad::Ref> m_selRefs;   // the current selection as last reported by the viewport or the browser
+  std::vector<std::string> m_selRows;  // areas' browser rows selected (provided folders): not nodes, so only in SelectionContext::ids
   TimelineWidget* m_timeline = nullptr;
   QMenu* m_viewsMenu = nullptr;
   QMenu* m_recentMenu = nullptr;
@@ -198,8 +243,9 @@ class MainWindow : public QMainWindow {
   QLabel* m_statusGit = nullptr;
   QLabel* m_statusHover = nullptr;
   QLabel* m_statusSel = nullptr;
-  QLabel* m_statusUnits = nullptr;
+  QToolButton* m_statusUnits = nullptr;  // the shown length unit (UI-123): a click offers the document's
   QList<QAction*> m_actions;
+  CommandRegistry m_commands;  // the record of every action in m_actions, same order
   QAction* m_pinAction = nullptr;
   QAction* m_darkAction = nullptr;
   ProgressStrip* m_progress = nullptr;

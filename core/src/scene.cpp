@@ -525,6 +525,8 @@ struct SceneBuilder::Impl {
       scene.sketches.push_back(std::move(s));
     } else if (type == "feature") {
       apply_feature(id, d);
+    } else if (!Document::known_type(type)) {
+      unresolved(id, type, "needs a newer OPAD (op '" + type + "')");
     }
   }
 

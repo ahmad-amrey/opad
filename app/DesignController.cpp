@@ -6,7 +6,6 @@
 #include <TopExp_Explorer.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <QMenu>
-#include <QRegularExpression>
 #include <TopoDS.hxx>
 
 #include <BRepBndLib.hxx>
@@ -29,6 +28,7 @@
 #include <atomic>
 
 #include "I18n.hpp"
+#include "Units.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
@@ -275,8 +275,8 @@ void DesignController::startFeature(const QString& kind) {
   m_ruleMatches.clear();
   m_newId = opad::new_uuid();
   opad::json inputs = opad::json::object();
-  for (const auto& in : spec->inputs)
-    if (!in.def.is_null()) inputs[in.name] = in.def;
+  for (const auto& in : spec->inputs)  // lengths offered in the document's unit ("0.5 in" for "10 mm")
+    if (!in.def.is_null()) inputs[in.name] = in.type == "length" && in.def.is_string() ? opad::json(units::presetText(QString::fromStdString(in.def.get<std::string>())).toStdString()) : in.def;
   m_featureOn = true;
   m_filterBefore = m_viewport->selectionFilter();
   m_viewport->setPickAccumulate(true);
@@ -516,26 +516,26 @@ void DesignController::offerRules(const QString& input, QWidget* anchor) {
   auto doc = std::make_shared<opad::Document>(m_doc->doc);
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);
   const QPointer<QWidget> where(anchor);
-  m_jobs->async(tr("Finding matching entities"), [doc, scene, picked, rules](Progress p) {
+  m_jobs->async(tr("Finding matching entities"), [doc, scene, picked, rules, shown = units::current()](Progress p) {
     Reading reading;
     const TopoDS_Shape body = opad::node_world_shape(*doc, *scene, picked.body);
     TopTools_IndexedMapOfShape map;
     TopExp::MapShapes(body, picked.kind == opad::Ref::Kind::Face ? TopAbs_FACE : TopAbs_EDGE, map);
     if (picked.index < 0 || picked.index >= map.Extent()) return;
     const opad::json d = opad::describe_entity(map(picked.index + 1));
-    auto fixed = [](double v) { return QString::number(v, 'f', 3).remove(QRegularExpression("\\.?0+$")); };
+    auto fixed = [&shown](double v) { return units::format(units::Kind::Length, v, -1, shown); };
     if (picked.kind == opad::Ref::Kind::Edge) {
       if (d.contains("direction")) rules->push_back({tr("Straight edges parallel to this one"), {{"curve", "line"}, {"parallel_to", d["direction"]}}, {}});
       if (d.contains("radius") && d.value("curve", "") == "circle") {
         const double r = d["radius"];
-        rules->push_back({tr("Circular edges of radius %1 mm").arg(fixed(r)), {{"curve", "circle"}, {"radius_min", r}, {"radius_max", r}}, {}});
+        rules->push_back({tr("Circular edges of radius %1").arg(fixed(r)), {{"curve", "circle"}, {"radius_min", r}, {"radius_max", r}}, {}});
       }
       rules->push_back({tr("All %1 edges").arg(QString::fromStdString(d.value("curve", ""))), {{"curve", d.value("curve", "")}}, {}});
     } else {
       if (d.contains("normal")) rules->push_back({tr("Faces with this normal"), {{"normal", d["normal"]}}, {}});
       if (d.contains("radius") && d.value("surface", "") == "cylinder") {
         const double r = d["radius"];
-        rules->push_back({tr("Cylindrical faces of radius %1 mm").arg(fixed(r)), {{"surface", "cylinder"}, {"radius_min", r}, {"radius_max", r}}, {}});
+        rules->push_back({tr("Cylindrical faces of radius %1").arg(fixed(r)), {{"surface", "cylinder"}, {"radius_min", r}, {"radius_max", r}}, {}});
       }
       rules->push_back({tr("All %1 faces").arg(QString::fromStdString(d.value("surface", ""))), {{"surface", d.value("surface", "")}}, {}});
     }

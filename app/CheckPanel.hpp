@@ -42,4 +42,5 @@ class CheckPanel : public QWidget {
   QLabel* m_status = nullptr;
   QListWidget* m_list = nullptr;
   std::vector<opad::json> m_findings;
+  opad::json m_result;  // shown again when the unit changes
 };

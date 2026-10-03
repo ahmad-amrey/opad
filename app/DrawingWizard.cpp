@@ -2,6 +2,7 @@
 #include "DesignController.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 #include "I18n.hpp"
 #include "opad/design/drawing_sketch.hpp"
 #include "opad/inspect.hpp"
@@ -83,7 +84,9 @@ void MainWindow::drawingToSketch() {
   if(!tree->topLevelItemCount()) { panel->deleteLater(); throw opad::Error("Import a 2D drawing before converting to a sketch."); }
   auto* form=new QFormLayout; auto* name=new QLineEdit(tr("Converted drawing"),dialog);
   for(int i=0;i<tree->topLevelItemCount();++i)if(tree->topLevelItem(i)->checkState(0)==Qt::Checked){const auto* n=m_doc->scene.node(tree->topLevelItem(i)->data(0,Qt::UserRole).toString().toStdString());while(n && !n->parent.empty()){const auto* parent=m_doc->scene.node(n->parent);if(!parent || parent->source_op!=n->source_op)break;n=parent;}name->setText(n?QString::fromStdString(n->name):tree->topLevelItem(i)->text(0));break;}
-  auto* tolerance=new QDoubleSpinBox(dialog); tolerance->setDecimals(4); tolerance->setRange(0.0001,10); tolerance->setValue(0.01); tolerance->setSuffix(" mm");
+  // In the shown unit (UI-123); the conversion takes mm.
+  auto* tolerance=new QDoubleSpinBox(dialog); tolerance->setDecimals(units::decimalsFor(0.0001)); tolerance->setRange(units::toDisplay(units::Kind::Length,0.0001),units::toDisplay(units::Kind::Length,10));
+  tolerance->setValue(units::toDisplay(units::Kind::Length,0.01)); tolerance->setSuffix(' '+units::symbol(units::Kind::Length));
   form->addRow(tr("Sketch name"),name); form->addRow(tr("Curve tolerance"),tolerance); layout->addLayout(form);
   auto* preview=new QCheckBox(tr("Preview converted curves"),dialog); layout->addWidget(preview);
   auto* removeSource=new QCheckBox(tr("Remove source drawing after conversion"),dialog);layout->addWidget(removeSource);
@@ -118,7 +121,7 @@ void MainWindow::drawingToSketch() {
     const int serial=++state->serial; if(state->job) state->job->cancel();
     auto snapshot=std::make_shared<opad::Document>(m_doc->doc); auto geometry=std::make_shared<opad::design::Sketch>(); auto shape=std::make_shared<TopoDS_Compound>();
     auto presentation=std::make_shared<std::shared_ptr<BodyPrs>>();
-    const auto chosen=layers(); const auto plane=state->plane; const auto frame=state->frame; const double tol=tolerance->value(); const auto title=name->text().trimmed().toStdString();
+    const auto chosen=layers(); const auto plane=state->plane; const auto frame=state->frame; const double tol=units::fromDisplay(units::Kind::Length,tolerance->value()); const auto title=name->text().trimmed().toStdString();
     if(commit) { state->applying=true; update(); }
     state->job=m_jobs->async(commit?tr("Converting drawing layers"):tr("Previewing curves"),[=](Progress p) {
       *geometry=opad::design::drawing_sketch(*snapshot,opad::resolve(*snapshot),chosen,frame,tol); if(p.cancelled()) return;
@@ -253,12 +256,26 @@ bool MainWindow::benchDrawingImport() {
         break;
       case 5: {  // then moved on it: an offset, then one of its vertices snapped onto a point, then Place
         if (!m_drawingPlacer->active() || !m_drawingPlacer->panel()->findChild<QPushButton*>("primary")->isEnabled()) return;
+        auto* offsetX = m_drawingPlacer->panel()->findChild<QLineEdit*>("placeOffsetX");
+        offsetX->setText("1 in");  // typed with a unit, read back in the shown one (UI-123)
+        offsetX->setModified(true);
+        emit offsetX->editingFinished();
+        if (offsetX->text() != "25.4 mm") return fail("the offset box read 1 in as " + offsetX->text());
+        m_drawingPlacer->setOffset(7.123456789, 3);  // shown rounded; Enter on the box as shown keeps the value
+        const opad::Mat4 shown = m_drawingPlacer->placement();
+        emit offsetX->editingFinished();
+        if (!close(m_drawingPlacer->placement(), shown)) return fail("Enter on the offset box as shown moved the drawing");
         m_drawingPlacer->setOffset(7, 3);
+        if (offsetX->text() != "7 mm") return fail("the offset box shows " + offsetX->text());
         const opad::Vec3 from = m_drawingPlacer->placement().apply({0, 0, 0}), to{100, -20, 50};
         m_drawingPlacer->snap(from, to);  // the drawing's origin onto (100, 50) of the XZ plane; -20 is off the plane
         *expected = m_drawingPlacer->placement();
         const opad::Vec3 origin = expected->apply({0, 0, 0});
         if (std::abs(origin[0] - 100) > 1e-9 || std::abs(origin[1]) > 1e-9 || std::abs(origin[2] - 50) > 1e-9) return fail("snapping did not move the vertex onto the target");
+        // Fit frames the drawing being placed (an overlay) with the 40 mm box, where it now lies: x from 100 on.
+        const Bnd_Box fit = m_viewport->benchFitBox();
+        if (fit.IsVoid() || fit.CornerMax().X() < 100 - 1e-6 || fit.CornerMin().X() > 1e-6) return fail("Fit does not frame the drawing being placed");
+        trace::log("bench: Fit frames the drawing being placed PASS");
         m_drawingPlacer->panel()->findChild<QPushButton*>("primary")->click();
         ++*phase;
         break;
