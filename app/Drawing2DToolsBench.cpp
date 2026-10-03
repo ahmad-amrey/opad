@@ -5,6 +5,8 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QRegularExpression>
+#include <QStatusBar>
 #include <QSettings>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -18,6 +20,7 @@
 #include <cmath>
 
 #include "BenchRegistry.hpp"
+#include "Drawing2D.hpp"
 #include "Drawing2DBench.hpp"
 #include "GuidedTool.hpp"
 #include "MainWindow.hpp"
@@ -245,6 +248,85 @@ OPAD_BENCH(OPAD_BENCH_OSNAP, osnap) {
       require(v->objectSnap() && !v->benchSnap(widget(30, 0)), "F3 on again; with the Objects filter no point is snapped (the object is picked)");
       w.action("inspect.distance")->trigger();
     }, [&w] { return w.m_tool.id.isEmpty(); });
+    Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
+  });
+  return true;
+}
+
+// OPAD_BENCH_READOUT=<prefix>. On a drawing far from (0, 0) (opened centred): the status bar's readout gives the cursor's
+// X and Y as the file has them (1 000 060, 2 000 045 within a pixel), at a snapped point exactly that point (the Distance
+// tool's Points filter, near a line's end), and nothing once the mouse leaves the view. On a model (the box): X, Y and Z
+// of the surface under the cursor (the top face from above: Z 10), nothing over empty space. <prefix>.status.png.
+OPAD_BENCH(OPAD_BENCH_READOUT, readout) {
+  auto all = std::make_shared<bool>(true);
+  Check require = [all](bool ok, const QString& what) {
+    trace::log(QString("bench: readout: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    *all = *all && ok;
+  };
+  Viewport* v = w.m_viewport;
+  AppDocument* doc = w.m_doc;
+  auto settled = [&w, v, doc] {
+    int expected = 0;
+    for (const auto& id : doc->scene.all_bodies()) expected += doc->scene.effectively_visible(id);
+    return !w.m_displayJob && w.m_meshRemaining == 0 && v->displayedCount() >= expected && expected > 0 && !v->looksPending();
+  };
+  pollUntil(&w, settled, 60000, [&w, v, doc, require, all, value](bool shown) {
+    auto* readout = w.findChild<QLabel*>("cursorReadout");
+    require(shown && readout && readout->text().isEmpty(), "the readout is in the status bar, empty while the mouse is elsewhere");
+    if (!shown || !readout) return QCoreApplication::exit(2);
+    auto numbers = [readout] {  // X, Y (and Z) as shown
+      QList<double> out;
+      static const QRegularExpression number("-?[0-9]+(\.[0-9]+)?");
+      for (auto it = number.globalMatch(readout->text()); it.hasNext();) out << it.next().captured(0).toDouble();
+      return out;
+    };
+    auto move = [v](const QPointF& at) {
+      QMouseEvent e(QEvent::MouseMove, at, v->mapToGlobal(at), Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+      QCoreApplication::sendEvent(v, &e);
+    };
+    auto script = std::make_shared<Script>();
+    const auto frames = drawing2d::drawingFrames(doc->doc, doc->scene);
+    if (!frames.empty()) {
+      const drawing2d::DrawingFrame frame = frames.front();
+      auto widget = [v, frame](double x, double y, double dx = 0, double dy = 0) { return QPointF(v->widgetPoint(drawing2d::fromDrawing(frame, {x, y, 0}))) + QPointF(dx, dy); };
+      script->add("over the drawing", [v, move, widget] {
+        v->fitAll();
+        move(widget(1000060, 2000045));
+      }, [readout] { return !readout->text().isEmpty(); });
+      script->add("drawing coordinates", [&w, v, readout, numbers, require, value, move, widget] {
+        const QList<double> n = numbers();
+        const double tolerance = 2 * v->pixelSize();
+        require(n.size() >= 2 && std::abs(n[0] - 1000060) < tolerance && std::abs(n[1] - 2000045) < tolerance && !readout->text().contains("Z"),
+                QString("X and Y as the file has them, far from (0, 0): %1 (within %2)").arg(readout->text()).arg(tolerance));
+        w.statusBar()->grab().save(value + ".status.png");
+        w.action("inspect.distance")->trigger();
+        w.action("select.vertices")->trigger();
+      }, [&w, v] { return w.m_tool.id == "distance" && v->selectionFilter() == Viewport::SelFilter::Vertex && v->snapIndexesReady(); });
+      script->add("snapped", [v, move, widget] {
+        v->benchSnap(widget(1000010, 2000020, 3, -2));
+        move(widget(1000010, 2000020, 3, -2));
+      }, [readout] { return readout->toolTip().contains(QObject::tr("At the snapped point")); });
+      script->add("exactly", [&w, readout, numbers, require] {
+        const QList<double> n = numbers();
+        require(n.size() >= 2 && std::abs(n[0] - 1000010) < 1e-3 && std::abs(n[1] - 2000020) < 1e-3, "at a snapped point the readout is that point: " + readout->text());
+        w.action("inspect.distance")->trigger();
+        QEvent leave(QEvent::Leave);
+        QCoreApplication::sendEvent(w.m_viewport, &leave);
+      }, [readout] { return readout->text().isEmpty(); });
+    } else {
+      script->add("over the model", [v, move] {
+        v->standardView("top");
+        v->fitAll();
+        move(QPointF(v->width() / 2.0, v->height() / 2.0));
+      }, [readout] { return !readout->text().isEmpty(); });
+      script->add("model coordinates", [v, readout, numbers, require, move, value, &w] {
+        const QList<double> n = numbers();
+        require(n.size() >= 3 && std::abs(n[2] - 10) < 1e-6 && readout->text().contains("Z"), "on a model: X, Y and Z of the surface under the cursor: " + readout->text());
+        w.statusBar()->grab().save(value + ".status.png");
+        move(QPointF(3, v->height() - 3));
+      }, [readout] { return readout->text().isEmpty(); });
+      script->add("empty space", [require] { require(true, "over empty space the readout is empty"); });
+    }
     Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   });
   return true;

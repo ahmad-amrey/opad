@@ -120,5 +120,8 @@
  "Object snap": "الالتقاط بالعناصر",
  "Endpoint": "نقطة طرفية",
  "Preparing object snaps": "تجهيز الالتقاط بالعناصر",
- "%1 · click to pick this point (F3 turns object snap off)": "%1 · انقر لاختيار هذه النقطة (F3 يوقف الالتقاط بالعناصر)"
+ "%1 · click to pick this point (F3 turns object snap off)": "%1 · انقر لاختيار هذه النقطة (F3 يوقف الالتقاط بالعناصر)",
+ "Cursor position in the coordinates of %1, as its file has them": "موضع المؤشر بإحداثيات %1، كما هي في ملفه",
+ "Cursor position on the model, in world coordinates": "موضع المؤشر على النموذج، بالإحداثيات العامة",
+ "At the snapped point": "عند النقطة الملتقطة"
 }

@@ -64,6 +64,11 @@ def snaps_file(root, document=None):
                [line("Walls", *wall) for wall in walls] + [("CIRCLE", "Holes", [(10, 30), (20, 25), (40, 10)]), line("Axis", 10, 20, 90, 20)])
 
 
+def far_file(root, document=None):
+    """Two lines a million millimetres from (0, 0): read near it, opened centred, shown in the file's own coordinates."""
+    return dxf(root / "far.dxf", [("Site", 7, 0, ())], [line("Site", 1000010, 2000020, 1000110, 2000020), line("Site", 1000010, 2000020, 1000010, 2000080)])
+
+
 def room_document(root, document):
     return document("room", ("import", "--file", str(room_file(root)), "--center", "true"))
 
@@ -88,4 +93,7 @@ CASES = [
     # UI-90: object snap (F3) in the Distance tool's point picks: midpoint, a crossing of two layers, centre, quadrant,
     # nearest on the circle, the sketch's kind switches, F3 off, none with the Objects filter. <prefix>.snap.png
     ("object-snap", snaps_file, {"OPAD_BENCH_OSNAP": "{prefix}"}),
+    # UI-90: the cursor readout in the status bar: a far drawing's own coordinates (and a snapped point's), a model's X, Y, Z.
+    ("readout", far_file, {"OPAD_BENCH_READOUT": "{prefix}"}),
+    ("readout-3d", "box", {"OPAD_BENCH_READOUT": "{prefix}"}),
 ]

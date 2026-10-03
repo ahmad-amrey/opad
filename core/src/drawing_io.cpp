@@ -544,6 +544,9 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
       placement=placement*Mat4::translation(drawing.origin.X(),drawing.origin.Y(),drawing.origin.Z());  // read near (0,0), back in place
     }
     if(!placement.is_identity())root["transform"]=placement.to_json();
+    // Read near (0,0): the drawing's own coordinates are the root's local ones plus this (the cursor readout's, UI-90; older
+    // builds ignore it).
+    if(drawing.origin.Modulus()>0) root["drawing_origin"]={drawing.origin.X(),drawing.origin.Y(),drawing.origin.Z()};
     json op={{"op","import"},{"source",file.filename().string()},{"nodes",json::array({root})}};
     // The source keeps what the drawing could not show; a viewer never writes it back, so it skips the copy.
     if(ext==".svg" && !drawing.warnings.empty() && !options.viewer) { op["svg_source"]=read_text_file(file); op["warnings"]=drawing.warnings; }

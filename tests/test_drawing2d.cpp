@@ -5,6 +5,9 @@
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRep_Tool.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Vertex.hxx>
@@ -22,6 +25,7 @@
 #include "check.hpp"
 #include "opad/commands.hpp"
 #include "opad/drawing_io.hpp"
+#include "opad/geometry.hpp"
 #include "opad/util.hpp"
 
 using namespace drawing2d;
@@ -325,6 +329,41 @@ TEST(drawing_properties_in_2d_words) {
   CHECK(edge == json({{"type", "edge"}, {"curve", "circle"}, {"length", 3.14}, {"radius", 1}, {"start", {1, 0, 0}}, {"end", {-1, 0, 0}}}));
   const json fill = properties({{"type", "face"}, {"surface", "plane"}, {"normal", {0, 0, 1}}, {"origin", {0, 0, 0}}, {"area", 4}, {"edges", {1, 2}}, {"adjacent_faces", {3}}});
   CHECK(fill == json({{"type", "face"}, {"area", 4}}));
+}
+
+// The cursor readout's drawing coordinates (UI-90): a drawing read far from (0,0) keeps the offset on its root, so a world
+// point reads as the file has it whether the drawing was opened centred or placed where it is, and after a reload.
+TEST(drawing_coordinates_of_a_far_drawing) {
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-2d-" + opad::new_uuid());
+  std::filesystem::create_directory(dir);
+  opad::write_text_file(dir / "far.dxf", "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nSite\n10\n1000010\n20\n2000020\n11\n1000110\n21\n2000020\n0\nENDSEC\n0\nEOF\n");
+  for (const bool centre : {false, true}) {
+    auto doc = opad::Document::create();
+    opad::ImportOptions options;
+    options.center_drawing = centre;
+    opad::import_file(doc, dir / "far.dxf", options);
+    doc = opad::Document::parse(doc.serialize());  // what a reload reads
+    const auto scene = opad::resolve(doc);
+    const auto frames = drawingFrames(doc, scene);
+    CHECK_EQ(frames.size(), 1u);
+    CHECK_NEAR(frames[0].origin[0], 1000000, 1e-6);
+    CHECK_NEAR(frames[0].origin[1], 2000000, 1e-6);
+    CHECK(frames[0].x0 < 1000010 + 1 && frames[0].x1 > 1000110 - 1 && frames[0].y0 < 2000020 + 1 && frames[0].y1 > 2000020 - 1);
+    std::set<long> xs;
+    for (TopExp_Explorer v(opad::node_world_shape(doc, scene, scene.all_bodies().at(0)), TopAbs_VERTEX); v.More(); v.Next()) {
+      const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(v.Current()));
+      const opad::Vec3 d = toDrawing(frames[0], {p.X(), p.Y(), p.Z()});
+      CHECK_NEAR(d[1], 2000020, 1e-6);
+      xs.insert(std::lround(d[0]));
+      const opad::Vec3 back = fromDrawing(frames[0], d);
+      CHECK_NEAR(back[0], p.X(), 1e-6);
+      CHECK_NEAR(back[1], p.Y(), 1e-6);
+    }
+    CHECK(xs == std::set<long>({1000010, 1000110}));
+    const opad::Frame plane = planeOf(frames[0]);
+    CHECK_NEAR(plane.x[0], 1, 1e-12);
+  }
+  std::filesystem::remove_all(dir);
 }
 
 CHECK_MAIN()

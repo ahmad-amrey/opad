@@ -2,6 +2,7 @@
 
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepGProp.hxx>
+#include <Bnd_Box.hxx>
 #include <GCPnts_AbscissaPoint.hxx>
 #include <GProp_GProps.hxx>
 #include <Standard_Failure.hxx>
@@ -14,6 +15,9 @@
 #include <cstdlib>
 #include <functional>
 #include <map>
+#include <set>
+
+#include "opad/geometry.hpp"
 
 namespace drawing2d {
 double luminance(const Rgb& c) {
@@ -362,6 +366,78 @@ bool drawingOnly(const opad::Scene& scene) {
 
 bool hasDrawings(const opad::Scene& scene) {
   return std::any_of(scene.nodes.begin(), scene.nodes.end(), [](const auto& entry) { return entry.second.representation == "drawing2d"; });
+}
+
+// ---------------------------------------------------------------- drawing coordinates
+namespace {
+// The inverse of an affine matrix (rotation, translation, a scale).
+opad::Mat4 inverse(const opad::Mat4& m) {
+  const double a = m.at(0, 0), b = m.at(0, 1), c = m.at(0, 2), d = m.at(1, 0), e = m.at(1, 1), f = m.at(1, 2), g = m.at(2, 0), h = m.at(2, 1), k = m.at(2, 2);
+  const double det = a * (e * k - f * h) - b * (d * k - f * g) + c * (d * h - e * g);
+  opad::Mat4 r;
+  if (std::abs(det) < 1e-300) return r;
+  const double inv[3][3] = {{(e * k - f * h) / det, (c * h - b * k) / det, (b * f - c * e) / det},
+                            {(f * g - d * k) / det, (a * k - c * g) / det, (c * d - a * f) / det},
+                            {(d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det}};
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) r.at(i, j) = inv[i][j];
+    r.at(i, 3) = -(inv[i][0] * m.at(0, 3) + inv[i][1] * m.at(1, 3) + inv[i][2] * m.at(2, 3));
+  }
+  return r;
+}
+}  // namespace
+
+std::vector<DrawingFrame> drawingFrames(const opad::Document& doc, const opad::Scene& scene) {
+  std::vector<DrawingFrame> out;
+  std::set<std::string> seen;
+  for (const Layer& l : layers(scene)) {
+    const opad::Node* layer = scene.node(l.id);
+    const std::string root = layer && !layer->parent.empty() ? layer->parent : l.id;
+    if (!seen.insert(root).second) continue;
+    DrawingFrame f;
+    f.root = root;
+    f.world = scene.world(root);
+    if (const opad::Node* n = scene.node(root))
+      if (const opad::Op* op = doc.find_op(n->source_op); op && op->data.contains("nodes") && op->data["nodes"].is_array())
+        for (const auto& node : op->data["nodes"])
+          if (node.value("id", "") == root && node.contains("drawing_origin") && node["drawing_origin"].is_array() && node["drawing_origin"].size() == 3)
+            f.origin = node["drawing_origin"].get<opad::Vec3>();
+    for (const auto& body : scene.bodies_under(root)) {
+      const Bnd_Box box = opad::node_world_bbox(doc, scene, body);
+      if (box.IsVoid()) continue;
+      double x0, y0, z0, x1, y1, z1;
+      box.Get(x0, y0, z0, x1, y1, z1);
+      for (int corner = 0; corner < 8; ++corner) {
+        const opad::Vec3 p = toDrawing(f, {corner & 1 ? x1 : x0, corner & 2 ? y1 : y0, corner & 4 ? z1 : z0});
+        if (f.x0 > f.x1) f.x0 = f.x1 = p[0], f.y0 = f.y1 = p[1];
+        f.x0 = std::min(f.x0, p[0]), f.x1 = std::max(f.x1, p[0]), f.y0 = std::min(f.y0, p[1]), f.y1 = std::max(f.y1, p[1]);
+      }
+    }
+    out.push_back(std::move(f));
+  }
+  return out;
+}
+
+opad::Vec3 toDrawing(const DrawingFrame& frame, const opad::Vec3& world) {
+  const opad::Vec3 local = inverse(frame.world).apply(world);
+  return {local[0] + frame.origin[0], local[1] + frame.origin[1], local[2] + frame.origin[2]};
+}
+
+opad::Vec3 fromDrawing(const DrawingFrame& frame, const opad::Vec3& drawing) {
+  return frame.world.apply({drawing[0] - frame.origin[0], drawing[1] - frame.origin[1], drawing[2] - frame.origin[2]});
+}
+
+opad::Frame planeOf(const DrawingFrame& frame) {
+  auto unit = [](opad::Vec3 v) {
+    const double l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    for (auto& c : v) c /= l > 0 ? l : 1;
+    return v;
+  };
+  opad::Frame f;
+  f.origin = frame.world.apply({0, 0, 0});
+  f.x = unit(frame.world.apply_dir({1, 0, 0}));
+  f.y = unit(frame.world.apply_dir({0, 1, 0}));
+  return f;
 }
 
 std::vector<json> restoreState(const opad::Scene& scene, const json& display) {

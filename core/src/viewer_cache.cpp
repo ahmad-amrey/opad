@@ -22,8 +22,9 @@ namespace {
 constexpr const char* kMagic = "OPADVC1";
 constexpr std::uintmax_t kBudget = 2ull << 30;  // all viewer entries together; the oldest go first
 // Bumped when a reader writes something new into its import op, so entries cached before it are read again (2: the
-// DXF layer table's off / frozen / locked / plot / linetype / lineweight, TODO 11 UI-37; 3: by_layer, 4: a layer's linetype pattern, UI-89).
-constexpr const char* kReaders = "4";
+// DXF layer table's off / frozen / locked / plot / linetype / lineweight, TODO 11 UI-37; 3: by_layer, 4: a layer's linetype pattern, UI-89;
+// 5: a far drawing's drawing_origin, UI-90).
+constexpr const char* kReaders = "5";
 
 std::filesystem::path folder() { return cache_dir() / "viewer"; }
 

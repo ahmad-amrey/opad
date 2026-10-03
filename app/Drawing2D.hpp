@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "opad/document.hpp"
 #include "opad/scene.hpp"
 
 class TopoDS_Shape;
@@ -102,4 +103,19 @@ const char* nodeWord(const opad::Scene& scene, const std::string& id);
 opad::json properties(opad::json props);
 bool drawingOnly(const opad::Scene& scene);  // bodies, all of them drawings
 bool hasDrawings(const opad::Scene& scene);  // some body is a drawing
+
+// ---- drawing coordinates (UI-90): where a world point lies in a drawing as its file has it. A drawing's root (its import's
+// component) is placed by its world matrix; a drawing read far from (0,0) keeps the offset as the root's drawing_origin.
+struct DrawingFrame {
+  std::string root;
+  opad::Mat4 world;              // the root's placement now
+  opad::Vec3 origin{0, 0, 0};    // drawing_origin: the drawing coordinates of the root's local (0, 0, 0)
+  double x0 = 0, y0 = 0, x1 = -1, y1 = -1;  // its extents in drawing coordinates (x0 > x1: none)
+};
+// Every drawing of the scene (roots holding drawing layers), in tree order; extents from the cached boxes.
+std::vector<DrawingFrame> drawingFrames(const opad::Document& doc, const opad::Scene& scene);
+opad::Vec3 toDrawing(const DrawingFrame& frame, const opad::Vec3& world);
+opad::Vec3 fromDrawing(const DrawingFrame& frame, const opad::Vec3& drawing);
+// The frame's plane in the world: origin at the root's local (0, 0, 0), x and y its axes.
+opad::Frame planeOf(const DrawingFrame& frame);
 }  // namespace drawing2d

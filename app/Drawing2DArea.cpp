@@ -10,6 +10,7 @@
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMouseEvent>
 #include <QScreen>
 #include <QSettings>
 #include <QStatusBar>
@@ -103,7 +104,7 @@ class Drawing2DArea : public AreaController {
     m_snapAction->setChecked(QSettings().value("view/objectSnap", true).toBool());
   }
 
-  // Beside the other snapping switches' row: the object snap switch (F3), styled as they are.
+  // Beside the other snapping switches' row: the object snap switch (F3), styled as they are; then the cursor readout.
   void statusWidgets(QStatusBar* bar) override {
     QWidget* units = bar->findChild<QWidget*>("statusUnits");  // stays last
     if (units) bar->removeWidget(units);
@@ -125,6 +126,14 @@ class Drawing2DArea : public AreaController {
     connect(m_snapAction, &QAction::toggled, button, paint);
     paint();
     bar->addPermanentWidget(button);
+    // The cursor's X and Y in the drawing's own coordinates (as its file has them), or X, Y and Z on a model (UI-90).
+    m_readout = new QLabel(bar);
+    m_readout->setObjectName("cursorReadout");
+    m_readout->setFont(theme::mono(12));
+    m_readout->setContentsMargins(10, 2, 6, 2);
+    m_readout->setMinimumWidth(QFontMetrics(m_readout->font()).horizontalAdvance("X -0000000.000  Y -0000000.000  Z -00000.000 mm") + 16);
+    m_readout->setAlignment(Qt::AlignVCenter | Qt::AlignLeading);
+    bar->addPermanentWidget(m_readout);
     if (units) {
       bar->addPermanentWidget(units);
       units->show();
@@ -160,6 +169,10 @@ class Drawing2DArea : public AreaController {
 
   void ready() override {
     services().viewport()->setObjectSnap(m_snapAction->isChecked());
+    services().viewport()->installEventFilter(this);  // the cursor readout follows the mouse
+    m_readoutTimer.setSingleShot(true);
+    m_readoutTimer.setInterval(30);  // at most one readout per 30 ms of moving
+    connect(&m_readoutTimer, &QTimer::timeout, this, [this] { updateReadout(); });
     m_layers = new LayersPanel(services());
     m_tool = new ToolPanel("layers", "layers", &Tokens::sel, tr("Layers"), m_layers, 460, services().window());
     m_tool->setDefaultWidth(460);
@@ -274,7 +287,25 @@ class Drawing2DArea : public AreaController {
     });
   }
 
+  bool eventFilter(QObject* watched, QEvent* event) override {
+    if (watched == services().viewport() && m_readout) {
+      if (event->type() == QEvent::MouseMove) {
+        m_cursor = static_cast<QMouseEvent*>(event)->position();
+        m_over = true;
+        if (!m_readoutTimer.isActive()) m_readoutTimer.start();
+      } else if (event->type() == QEvent::Leave) {
+        m_over = false;
+        m_readoutTimer.stop();
+        updateReadout();
+      }
+    }
+    return AreaController::eventFilter(watched, event);
+  }
+
   void documentChanged(bool replaced) override {
+    m_frames = services().document()->hasDocument ? drawing2d::drawingFrames(services().document()->doc, services().document()->scene) : std::vector<drawing2d::DrawingFrame>();
+    if (replaced) m_over = false;
+    updateReadout();
     if (replaced && m_layers) m_layers->stopWalk();
     m_layerIds.clear();
     for (const auto& l : drawing2d::layers(services().document()->scene)) m_layerIds.insert(l.id);
@@ -323,6 +354,45 @@ class Drawing2DArea : public AreaController {
         shortcuts::updateTooltip(a);
         if (on) a->setToolTip(a->toolTip() + "\n" + tip);
       }
+  }
+
+  // The point under the mouse: the snap it shows (exact), else on the drawing's plane (the drawing whose extents hold it,
+  // else the first), else on a model's surface; empty off the view, while sketching (the sketch has its own) or over nothing.
+  void updateReadout() {
+    if (!m_readout) return;
+    Viewport* v = services().viewport();
+    QString text, tip;
+    opad::Vec3 at;
+    const bool snapped = m_over && v->shownSnap(at);
+    if (!m_over || !services().document()->hasDocument || v->sketching()) {
+    } else if (!m_frames.empty()) {
+      const drawing2d::DrawingFrame* chosen = nullptr;
+      opad::Vec3 best{0, 0, 0};
+      for (const auto& f : m_frames) {
+        opad::Vec3 world = at;
+        double u, w;
+        const opad::Frame plane = drawing2d::planeOf(f);
+        if (!snapped) {
+          if (!v->planePoint(m_cursor, plane, u, w)) continue;
+          world = plane.to_world(u, w);
+        }
+        const opad::Vec3 d = drawing2d::toDrawing(f, world);
+        const bool inside = d[0] >= f.x0 && d[0] <= f.x1 && d[1] >= f.y0 && d[1] <= f.y1;
+        if (!chosen || inside) chosen = &f, best = d;
+        if (inside) break;
+      }
+      if (chosen) {
+        text = QString("X %1  Y %2 %3").arg(units::number(units::Kind::Length, best[0]), units::number(units::Kind::Length, best[1]), units::symbol(units::Kind::Length));
+        tip = tr("Cursor position in the coordinates of %1, as its file has them").arg(services().document()->nodeName(chosen->root));
+      }
+    } else if (snapped || v->pointUnder(m_cursor, at)) {
+      text = QString("X %1  Y %2  Z %3 %4").arg(units::number(units::Kind::Length, at[0]), units::number(units::Kind::Length, at[1]), units::number(units::Kind::Length, at[2]),
+                                               units::symbol(units::Kind::Length));
+      tip = tr("Cursor position on the model, in world coordinates");
+    }
+    if (snapped && !tip.isEmpty()) tip += "\n" + tr("At the snapped point");
+    m_readout->setText(text.isEmpty() ? QString() : QChar(0x202A) + text + QChar(0x202C));  // the numbers keep their order right to left
+    m_readout->setToolTip(tip);
   }
 
   void showCard() {
@@ -383,6 +453,11 @@ class Drawing2DArea : public AreaController {
   std::set<std::string> m_layerIds;  // for the browser's rows: asked at every paint
   RolloverCard* m_card = nullptr;
   QTimer m_cardTimer;
+  QLabel* m_readout = nullptr;
+  QTimer m_readoutTimer;
+  QPointF m_cursor;
+  bool m_over = false;
+  std::vector<drawing2d::DrawingFrame> m_frames;
   opad::json m_hovered;
 };
 }  // namespace

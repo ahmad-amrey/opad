@@ -244,6 +244,13 @@ bool Viewport::objectSnapPress(QMouseEvent* e) {
   return true;
 }
 
+bool Viewport::pointUnder(const QPointF& widgetPos, opad::Vec3& world) {
+  gp_Pnt p;
+  if (!m_initialised || !navigationPoint(devicePos(widgetPos), p)) return false;
+  world = {p.X(), p.Y(), p.Z()};
+  return true;
+}
+
 bool Viewport::benchSnap(const QPointF& widgetPos) {
   if (!m_initialised) return false;
   m_view->Redraw();  // the camera range a frame sets
