@@ -20,5 +20,7 @@
  "%1 %": "%1٪",
  "Activate %1": "تنشيط %1",
  "%1 (inactive) · double-click to activate the root": "%1 (غير نشط) · انقر نقرًا مزدوجًا لتنشيط الجذر",
- "%1 (inactive, in %2) · double-click to activate %2": "%1 (غير نشط، في %2) · انقر نقرًا مزدوجًا لتنشيط %2"
+ "%1 (inactive, in %2) · double-click to activate %2": "%1 (غير نشط، في %2) · انقر نقرًا مزدوجًا لتنشيط %2",
+ "Only the active component's history": "سجلّ المكوّن النشط وحده",
+ "While a component is active the timeline shows only the steps that touch it; off, the others are dimmed.": "ما دام مكوّن نشطًا لا يعرض الخط الزمني إلا الخطوات التي تمسّه؛ وعند الإيقاف تظهر الخطوات الأخرى باهتة."
 }

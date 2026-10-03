@@ -96,7 +96,7 @@ struct Ticker {
 // activates the root and everything is drawn and picked as before; the Lid activated, saved and opened again is active
 // again. With the Lid active: <prefix>.ghost.png (the view),
 // <prefix>.browser.png, <prefix>.chips.png, <prefix>.timeline.png and <prefix>.ribbon.png (Design > Assemble); with its
-// sketch made and selected, <prefix>.sketches.png (the browser).
+// sketch made and selected, <prefix>.sketches.png (the browser); <prefix>.history.png (the timeline with only its ops).
 OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
   auto all = std::make_shared<bool>(true);
   auto require = [all](bool ok, const QString& what) {
@@ -300,6 +300,15 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                     require(na && nb && dimmed.count(doc->scene.node(s->housing)->source_op) && dimmed.count(na->source_op) && !dimmed.count(doc->scene.node(s->lid)->source_op) && !dimmed.count(nb->source_op),
                             QString("timeline: the Housing's ops dimmed, the Lid's not (%1 of %2 dimmed)").arg(dimmed.size()).arg(doc->doc.ops.size()));
                     require(w.action("assembly.activateRoot")->isEnabled() && !w.action("assembly.activate")->isEnabled(), "Activate root enabled, Activate not (nothing selected)");
+                    // Only the active component's history: the dimmed ops leave the timeline, and come back.
+                    const size_t markers = w.m_timeline->shownOps().size();
+                    w.action("assembly.activeHistory")->trigger();
+                    const auto only = w.m_timeline->shownOps();
+                    const bool outside = std::any_of(only.begin(), only.end(), [&](const std::string& id) { return dimmed.count(id) > 0; });
+                    w.m_timeline->grab().save(prefix + ".history.png");
+                    w.action("assembly.activeHistory")->trigger();
+                    require(!only.empty() && only.size() < markers && !outside && w.m_timeline->shownOps().size() == markers,
+                            QString("only the active component's history: %1 of %2 markers, none dimmed; all %3 again when off").arg(only.size()).arg(markers).arg(w.m_timeline->shownOps().size()));
                     const opad::json live = w.m_agent->liveState();
                     require(live.contains("active_component") && live["active_component"].value("id", "") == s->lid && live["active_component"].value("name", "") == "Lid",
                             "MCP live_state reports the active component: " + QString::fromStdString(live.value("active_component", opad::json()).dump()));
@@ -339,8 +348,8 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                       for (QObject* o : a ? a->associatedObjects() : QList<QObject*>()) n += qobject_cast<QMenu*>(o) != nullptr;
                       return n;
                     };
-                    require(ghost && std::abs(a.value("transparency", 0.0) - 0.9) < 0.01 && a.value("activated", -1) == 0 && w.action("assembly.activeVisibility")->isChecked() &&
-                                chipMenu && opacity && chipMenu->actions() == QList<QAction*>({w.action("assembly.activateRoot"), w.action("assembly.activeVisibility"), opacity->menuAction()}) &&
+                    require(ghost && std::abs(a.value("transparency", 0.0) - 0.9) < 0.01 && a.value("activated", -1) == 0 && w.action("assembly.activeVisibility")->isChecked() && chipMenu && opacity &&
+                                chipMenu->actions() == QList<QAction*>({w.action("assembly.activateRoot"), w.action("assembly.activeVisibility"), opacity->menuAction(), w.action("assembly.activeHistory")}) &&
                                 menus(w.action("assembly.activeVisibility")) >= 2 && menus(opacity->menuAction()) >= 2,
                             QString("visibility on at 10 %: the Housing's box a ghost at transparency %1, not pickable (%2 modes); the chip's menu (%3 entries) and the Design menu have both (%4, %5 menus)")
                                 .arg(a.value("transparency", 0.0)).arg(a.value("activated", -1)).arg(chipMenu ? chipMenu->actions().size() : -1)

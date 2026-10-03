@@ -76,7 +76,7 @@ void TimelineWidget::rebuild() {
   if (!m_current.empty() && !m_doc->doc.find_op(m_current)) m_current.clear();
   m_shown.clear();
   for (size_t i = 0; i < m_doc->doc.ops.size(); ++i)
-    if (timelineShows(m_doc->doc, m_doc->doc.ops[i])) m_shown.push_back(i);
+    if (const opad::Op& op = m_doc->doc.ops[i]; timelineShows(m_doc->doc, op) && !(m_hideDimmed && m_dimmed.count(op.id) && op.id != m_editing)) m_shown.push_back(i);
   m_hover = -1;
   updateScrollRange();
   if (atEnd) m_scroll->setValue(m_scroll->maximum());
@@ -134,14 +134,24 @@ void TimelineWidget::setCurrentOp(const std::string& id) {
 void TimelineWidget::setEditingOp(const std::string& id) {
   if (id == m_editing) return;
   m_editing = id;
+  if (m_hideDimmed && !m_dimmed.empty()) rebuild();  // an edited op outside the active component is shown while edited
   if (!id.empty()) setCurrentOp(id);  // selected and scrolled into view
   else update();
 }
 
-void TimelineWidget::setDimmedOps(std::set<std::string> ops) {
-  if (ops == m_dimmed) return;
+void TimelineWidget::setDimmedOps(std::set<std::string> ops, bool hidden) {
+  if (ops == m_dimmed && hidden == m_hideDimmed) return;
+  const bool markers = hidden || m_hideDimmed;  // which markers there are changes
   m_dimmed = std::move(ops);
-  update();
+  m_hideDimmed = hidden;
+  if (markers) rebuild();
+  else update();
+}
+
+std::vector<std::string> TimelineWidget::shownOps() const {
+  std::vector<std::string> ids;
+  for (const size_t i : m_shown) ids.push_back(m_doc->doc.ops[i].id);
+  return ids;
 }
 
 void TimelineWidget::step(int delta) {

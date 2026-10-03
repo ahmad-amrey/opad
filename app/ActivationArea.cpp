@@ -9,8 +9,8 @@
 // it (DesignController, AppDocument::startImport, design.newcomponent) and F frames it (view.fit). The one activated last
 // in a document is remembered (setting view/active/<uuid>) and active again when the document is opened again. Active
 // component visibility (setting view/activeVisibility) off draws and picks the rest as it is; Inactive opacity (setting
-// view/inactiveOpacity, absent: the theme's ghost alpha) is the ghosts' opacity; both in the Design menu and the chip's
-// right-click.
+// view/inactiveOpacity, absent: the theme's ghost alpha) is the ghosts' opacity; Only the active component's history
+// (setting view/activeHistoryOnly) leaves the other ops off the timeline; all in the Design menu and the chip's right-click.
 #include <QActionGroup>
 #include <QContextMenuEvent>
 #include <QElapsedTimer>
@@ -46,7 +46,8 @@ OPAD_ICON_TABLE(activation,
                 {"radioOff", R"(<circle cx="12" cy="12" r="7"/>)"},
                 {"activate", R"(<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M4 8l8 4 8-4M12 12v8"/><circle cx="12" cy="8" r="1.8" fill="currentColor"/>)"},
                 {"activateRoot", R"(<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><circle cx="12" cy="14" r="2.5" fill="currentColor"/>)"},
-                {"activeVisibility", R"(<path d="M10 5l6-3 6 3v8l-6 3" stroke-dasharray="2 2"/><path d="M2 10l6-3 6 3v8l-6 3-6-3z"/><path d="M2 10l6 3 6-3M8 13v8"/>)"});
+                {"activeVisibility", R"(<path d="M10 5l6-3 6 3v8l-6 3" stroke-dasharray="2 2"/><path d="M2 10l6-3 6 3v8l-6 3-6-3z"/><path d="M2 10l6 3 6-3M8 13v8"/>)"},
+                {"activeHistory", R"(<path d="M2 12h3M9 12h6M19 12h3"/><circle cx="7" cy="12" r="2" fill="currentColor"/><rect x="15" y="8" width="4" height="8" rx="1" stroke-dasharray="1.5 1.5"/>)"});
 
 namespace {
 // `id` is `component` or under it (a node); the root ("") holds everything.
@@ -115,9 +116,21 @@ class Activation : public AreaController {
         refresh();
       });
     }
+    CommandInfo history = visibility;  // the timeline: only the ops that touch the active component (setting view/activeHistoryOnly)
+    history.id = "assembly.activeHistory";
+    history.label = tr("Only the active component's history");
+    history.icon = "activeHistory";
+    history.keywords = {"timeline", "history", "filter"};
+    m_history = services().addCommand(history, [this] {
+      QSettings().setValue("view/activeHistoryOnly", m_history->isChecked());
+      refresh();
+    });
+    m_history->setChecked(settings.value("view/activeHistoryOnly", false).toBool());
+    m_history->setProperty("shortcutHint", tr("While a component is active the timeline shows only the steps that touch it; off, the others are dimmed."));
+    shortcuts::updateTooltip(m_history);
     m_chipMenu = new QMenu(services().window());
     m_chipMenu->setObjectName("activationChipMenu");
-    m_chipMenu->addActions({m_root, m_visibility, m_opacity->menuAction()});
+    m_chipMenu->addActions({m_root, m_visibility, m_opacity->menuAction(), m_history});
   }
 
   void menus(QMenuBar*, const QMap<QString, QMenu*>& menus) override {
@@ -125,7 +138,7 @@ class Activation : public AreaController {
     if (!design) return;
     const QList<QAction*> items = design->actions();
     const qsizetype at = items.indexOf(services().action("design.newcomponent"));
-    design->insertActions(at >= 0 && at + 1 < items.size() ? items[at + 1] : nullptr, {m_activate, m_root, m_visibility, m_opacity->menuAction()});  // after New component
+    design->insertActions(at >= 0 && at + 1 < items.size() ? items[at + 1] : nullptr, {m_activate, m_root, m_visibility, m_opacity->menuAction(), m_history});  // after New component
   }
 
   void ribbon(RibbonLayout& layout) override {
@@ -351,7 +364,7 @@ class Activation : public AreaController {
       for (const auto& op : doc->doc.ops)
         if (!in.count(op.id) && !(op.type == "delete" && in.count(op.data.value("target", ""))))  // nor the tombstone of one that does
           dimmed.insert(op.id);
-      services().timeline()->setDimmedOps(std::move(dimmed));
+      services().timeline()->setDimmedOps(std::move(dimmed), m_history->isChecked());
       if (trace::enabled()) trace::log(QStringLiteral("activation: timeline scope %1 ms").arg(clock.elapsed()));
     }
     services().browser()->refreshDecorations();
@@ -362,6 +375,7 @@ class Activation : public AreaController {
   QAction* m_root = nullptr;
   QAction* m_visibility = nullptr;  // Active component visibility (setting view/activeVisibility)
   QMenu* m_opacity = nullptr;       // Inactive opacity (setting view/inactiveOpacity, absent: the theme's)
+  QAction* m_history = nullptr;     // Only the active component's history (setting view/activeHistoryOnly)
   QMenu* m_chipMenu = nullptr;      // the chip's right-click
   QLabel* m_chip = nullptr;
   bool m_ghosting = false;  // the Activation layer is ours and set (a component was active)
