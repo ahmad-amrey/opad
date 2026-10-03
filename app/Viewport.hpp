@@ -225,7 +225,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool hoveredReference(opad::Ref& ref) const;
   bool referenceAt(const QPointF& point,opad::Ref& ref);
   bool originReferenceAt(const QPointF& point,opad::Ref& ref);
-  void setPreviewCurves(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden);
+  // Drawing to sketch's preview (UI-29): segment and point arrays built on the worker, construction ones dashed; showing
+  // them hands the arrays to the driver. previewSegments() counts what the preview draws.
+  void setPreviewCurves(std::shared_ptr<const BodyPrs> curves,std::shared_ptr<const BodyPrs> construction,const std::vector<std::string>& hidden);
+  size_t previewSegments() const;
   void showBackdrop(const Handle(AIS_InteractiveObject)& obj);
   opad::json sectionState() const;
   void restoreSection(const opad::json& state);

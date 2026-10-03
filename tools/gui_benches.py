@@ -72,6 +72,7 @@ def main():
             ("drawing-import", empty, {"OPAD_BENCH_DRAWING_IMPORT": str(drawing)}),
             ("drawing-to-sketch", drawing, {"OPAD_BENCH_WIZARD": "{prefix}.png", "OPAD_BENCH_WIZARD_CREATE": "1"}),
             ("sketch-large", large, {"OPAD_BENCH_LARGE": "{prefix}.json"}),
+            ("drawing-preview", large, {"OPAD_BENCH_WIZARD": "{prefix}.png", "OPAD_BENCH_WIZARD_PREVIEW": "30000"}),
             ("notes", empty, {"OPAD_BENCH_NOTES": "{prefix}"}),
             ("zoom-refinement", round_part, {"OPAD_BENCH_SCENE": "{prefix}.png", "OPAD_BENCH_VIEW": "iso", "OPAD_BENCH_ZOOM": "40"}),
             ("interference", overlapping, {"OPAD_BENCH_CHECK": "interference", "OPAD_BENCH_UISHOT": "{prefix}"}),
@@ -86,7 +87,7 @@ def main():
             (folder / "b-layers.svg").write_bytes(drawing.read_bytes())
             cases.append(("viewer", folder / "a-screw.step", {"OPAD_BENCH_VIEWER": str(folder / "a-screw.opad")}))
         # These open a STEP or a drawing and then edit it: as with viewer mode turned off in the settings.
-        editing = {"drawing-to-sketch", "sketch-large", "picking"}
+        editing = {"drawing-to-sketch", "drawing-preview", "sketch-large", "picking"}
         failures = []
         for name, doc, switches in cases:
             if args.only and name not in args.only:

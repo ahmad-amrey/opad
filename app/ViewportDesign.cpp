@@ -384,15 +384,28 @@ bool Viewport::originReferenceAt(const QPointF& point,opad::Ref& ref) {
   setCenterPicking(true,point);
   return referenceAt(point,ref);
 }
-void Viewport::setPreviewCurves(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden) {
+void Viewport::setPreviewCurves(std::shared_ptr<const BodyPrs> curves,std::shared_ptr<const BodyPrs> construction,const std::vector<std::string>& hidden) {
   if(!m_initialised)return;
   clearPreviewBodies();
   for(const auto& id:hidden)if(auto it=m_items.find(id);it!=m_items.end()) {
     m_ctx->Erase(it->second.ais,false);m_previewHidden.insert(id);
   }
-  Handle(AIS_Shape) ais=new BodyShape(shape,std::move(prs));
-  ais->SetColor(occ(m_tokens.sel));ais->SetWidth(2);
-  m_ctx->Display(ais,AIS_WireFrame,-1,false);m_previewBodies.push_back(ais);redrawScene();
+  // Line-only arrays: BodyShape draws them as they are (no shape behind them to walk here).
+  TopoDS_Compound none;BRep_Builder().MakeCompound(none);
+  for(auto* prs:{&curves,&construction}) {
+    if(!*prs || ((*prs)->boundaries.IsNull() && (*prs)->loosePoints.IsNull())) continue;
+    Handle(AIS_Shape) ais=new BodyShape(none,std::move(*prs));
+    ais->SetColor(occ(m_tokens.sel));ais->SetWidth(prs==&curves?2:1.5);
+    if(prs==&construction) ais->Attributes()->WireAspect()->SetTypeOfLine(Aspect_TOL_DASH);
+    m_ctx->Display(ais,AIS_WireFrame,-1,false);m_previewBodies.push_back(ais);
+  }
+  redrawScene();
+}
+size_t Viewport::previewSegments() const {
+  size_t n=0;
+  for(const auto& ais:m_previewBodies)
+    if(Handle(BodyShape) body=Handle(BodyShape)::DownCast(ais);!body.IsNull() && body->prs() && !body->prs()->boundaries.IsNull()) n+=size_t(body->prs()->boundaries->VertexNumber()/2);
+  return n;
 }
 
 // ---------------------------------------------------------------- overlays

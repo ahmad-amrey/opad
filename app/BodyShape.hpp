@@ -62,6 +62,7 @@ class BodyShape : public AIS_Shape {
   // the drawn arrays change: picking, sub-shape ordinals and highlights keep using the prototype's own mesh.
   bool setDisplayPrs(std::shared_ptr<const BodyPrs> prs) { if (prs==m_display) return false; m_display=std::move(prs); m_rayTriangles.Nullify(); SetToUpdate(); return true; }
   const std::shared_ptr<const BodyPrs>& displayPrs() const { return m_display; }
+  const std::shared_ptr<const BodyPrs>& prs() const { return m_prs; }
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
   // Sub-shape modes: the stock owners are swapped for SubShapeOwner.
