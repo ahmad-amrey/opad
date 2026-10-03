@@ -111,9 +111,6 @@ class MainWindow : public QMainWindow {
   bool benchTodo5();
   bool benchTodo9();
   bool benchDrawingImport();
-  bool benchDrawings();  // OPAD_BENCH_DRAWINGS: the browser's Drawings folder and the timeline without drawing ops
-  bool benchBom();       // OPAD_BENCH_BOM: the Properties panel's PART section, its dialog and Export bill of materials
-  bool benchExport();    // OPAD_BENCH_EXPORT: 2D views of solids from the Export dialog (ExportBench.cpp)
   bool benchAnnotateLarge();  // OPAD_BENCH_ANNOTATE: the note / drawing editors on the loaded file's heaviest body
   bool benchLargeSketch();
   bool benchShortcuts();
@@ -149,10 +146,7 @@ class MainWindow : public QMainWindow {
   void resolveCurrentAnnotation();
   void restyleAnnotation(const std::string& opId, const std::string& style);  // an edit op on the note
   void exportDialog(std::vector<std::string> ids = {});
-  void runExport(const opad::json& args, const QString& out);  // ExportDialog.cpp: on a worker, the result in m_lastExport
-  void exportSheet(const std::string& id);  // ExportDialog.cpp: a sheet as PDF, SVG, DXF, DWG or PNG, "drawing:<name>" as PDF pages (UI-86)
-  void editPartProperties(std::vector<std::string> ids);  // PartProperties.cpp: the nodes' part properties dialog
-  void exportBom(std::vector<std::string> ids = {});      // BomExport.cpp: File > Export bill of materials
+  void runExport(const opad::json& args, const QString& out);  // ExportDialog.cpp: on a worker (ExportJob.hpp), the result in m_lastExport
   void drawingToSketch();
   void browseInstances(const std::string& id);
   void screenshot();
@@ -182,6 +176,7 @@ class MainWindow : public QMainWindow {
   AppDocument* m_doc = nullptr;
   AreaServices m_areaServices{this};
   std::vector<AreaController*> m_areas;  // owned; deleted first in ~MainWindow
+  qsizetype m_ownCommands = 0;           // the window's own commands, first in m_actions; the areas' follow
   bool m_areasReady = false;
   unsigned long long m_areaGeneration = 0;  // the document generation the areas last saw (documentChanged's "replaced")
   RecoveryManager* m_recovery = nullptr;

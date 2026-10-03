@@ -13,7 +13,7 @@ class AppDocument;
 class QMenu;
 
 namespace drawings {
-struct Row {  // a browser row, as browser::Item has it in the folder providers
+struct Row {  // a browser row, as browser::Item has it (DocsArea hands them to the browser as its Drawings folder)
   std::string id;
   QString name, icon, tooltip;
   bool error = false;     // not drawn (a kind of a newer OPAD, a missing parent, ...): the tooltip says why

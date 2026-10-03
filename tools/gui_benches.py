@@ -90,9 +90,6 @@ def main():
             ("zoom-refinement", round_part, {"OPAD_BENCH_SCENE": "{prefix}.png", "OPAD_BENCH_VIEW": "iso", "OPAD_BENCH_ZOOM": "40"}),
             ("interference", overlapping, {"OPAD_BENCH_CHECK": "interference", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
-            ("drawings-browser", empty, {"OPAD_BENCH_DRAWINGS": "{prefix}"}),
-            ("bom", empty, {"OPAD_BENCH_BOM": "{prefix}"}),
-            ("export-view", empty, {"OPAD_BENCH_EXPORT": "{prefix}"}),  # 2D views of solids from the Export dialog (UI-87)
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))
@@ -102,7 +99,6 @@ def main():
             (folder / "a-screw.step").write_bytes(screw.read_bytes())
             (folder / "b-layers.svg").write_bytes(drawing.read_bytes())
             cases.append(("viewer", folder / "a-screw.step", {"OPAD_BENCH_VIEWER": str(folder / "a-screw.opad")}))
-            cases.append(("bom-viewer", screw, {"OPAD_BENCH_BOM_OPEN": "{prefix}.png", "OPAD_BENCH_BOM_VIEWER": "1"}))  # a STEP's BoM in viewer mode
         # Settings before the start. These open a STEP or a drawing and then edit it: viewer mode off. The fits load with
         # the grid on; fit-wide's 1 km minimum grid lies around the origin and would pull a box-less FitAll there.
         editing, grid = "[files]\nviewerMode=false\n", "[view]\ngrid=true\n"

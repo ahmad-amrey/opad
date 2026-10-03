@@ -144,7 +144,6 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_browser, &BrowserPanel::selectionChanged, this, &MainWindow::onBrowserSelection);
   connect(m_browser, &BrowserPanel::contextMenuRequested, this, [this](const QPoint& p, const std::vector<std::string>& ids) { showContextMenu(p, ids); });
   connect(m_browser, &BrowserPanel::fitRequested, m_viewport, &Viewport::fitNodes);
-  connect(m_browser, &BrowserPanel::sheetExportRequested, this, [this](const std::string& id) { guarded([&] { exportSheet(id); }); });
   connect(m_annotations, &AnnotationsPanel::addRequested, this, [this] { startAnnotation(false); });
   connect(m_annotations, &AnnotationsPanel::resolveRequested, this, &MainWindow::deleteOp);
   connect(m_annotations, &AnnotationsPanel::restoreRequested, this, &MainWindow::restoreOp);
@@ -157,12 +156,6 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_noteCards, &NoteCards::pressed, this, [this](const std::string& opId, const std::string& body) {
     m_timeline->setCurrentOp(opId);
     if (!body.empty()) { onBrowserSelection({body}); m_browser->setSelectedIds({body}); }
-  });
-  connect(m_props, &PropertiesPanel::partEditRequested, this, [this] {  // the PART section's link: the nodes inspected
-    std::vector<std::string> ids;
-    for (const auto& r : m_selRefs)
-      if (r.kind == opad::Ref::Kind::Body && std::find(ids.begin(), ids.end(), r.body) == ids.end()) ids.push_back(r.body);
-    guarded([&] { editPartProperties(ids); });
   });
   connect(m_props, &PropertiesPanel::faceChosen, this, [this](int index) {
     auto refs = m_viewport->selection();
@@ -360,7 +353,7 @@ void MainWindow::showDocument(bool has) {
   for (QAction* a : m_actions) {
     QString id = a->objectName();
     if (id.startsWith("view.") && id != "view.dark") a->setEnabled(has && (id != "view.unisolate" || m_viewport->isIsolated()));
-    if (id.startsWith("inspect.") || id.startsWith("annotate.") || id.startsWith("select.") || id == "file.export" || id == "file.exportBom" || id == "file.screenshot" || id == "file.save" || id == "file.saveas" || id == "file.close")
+    if (id.startsWith("inspect.") || id.startsWith("annotate.") || id.startsWith("select.") || id == "file.export" || id == "file.screenshot" || id == "file.save" || id == "file.saveas" || id == "file.close")
       a->setEnabled(has);
     if (id == "file.importdoc") a->setEnabled(m_doc->browse);
     // Viewer mode keeps the editing commands: they say that the file has to be saved first (isEditAction).

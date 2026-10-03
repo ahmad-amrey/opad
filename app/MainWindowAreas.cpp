@@ -8,6 +8,7 @@
 void MainWindow::createAreas() {
   m_areas = areas::create(m_areaServices);
   for (AreaController* area : m_areas) area->setParent(this);
+  m_ownCommands = m_actions.size();
   for (AreaController* area : m_areas) area->buildActions();
 }
 

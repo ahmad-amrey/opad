@@ -57,7 +57,6 @@ void MainWindow::buildFileActions() {
     addRecent(p);
   });
   addAction("file.export", tr("&Export…"), "export", QKeySequence("Ctrl+E"), [this] { exportDialog(); });
-  addAction("file.exportBom", tr("Export &bill of materials…"), "list", QKeySequence(), [this] { exportBom(); });
   addAction("file.screenshot", tr("Save screens&hot…"), "export", QKeySequence("Ctrl+Shift+P"), [this] { screenshot(); });
   addAction("file.close", tr("&Close document"), "close", QKeySequence("Ctrl+W"), [this] {
     if (!m_doc->hasDocument || m_doc->loading || !maybeSave()) return;
@@ -73,7 +72,7 @@ bool MainWindow::isEditAction(const QString& id) {
   // Design tools change the model; how it looks (colour, opacity, lock) is a view setting while viewing.
   if (id.startsWith("design.")) return id != "design.colour" && id != "design.opacity" && id != "design.lock";
   static const QStringList edits = {"edit.rename", "edit.delete", "edit.restore", "annotate.add", "annotate.draw", "annotate.resolve",
-                                    "inspect.pin", "inspect.partProperties", "view.saveview", "file.import"};
+                                    "inspect.pin", "view.saveview", "file.import"};
   return edits.contains(id);
 }
 

@@ -47,7 +47,6 @@ void MainWindow::buildInspectActions() {
     showProperties(m_selRefs);
     openPanel(m_propsPanel);
   });
-  addAction("inspect.partProperties", tr("Part properties…"), "list", QKeySequence(), [this] { editPartProperties(currentNodeIds()); });
   addAction("select.geometry", tr("Select by geometry..."), "edges", QKeySequence(), [this] { selectGeometry(); });
   // Section is an inspection: it looks inside without changing anything.
   QAction* section = addAction("inspect.section", tr("Section"), "section", QKeySequence("X"), [this] {}, true);

@@ -43,7 +43,6 @@ class PropertiesPanel : public QWidget {
   QTreeWidget* table() const { return m_table; }  // benches
  signals:
   void faceChosen(int index);
-  void partEditRequested();  // the PART section's link (PartProperties.hpp)
  protected:
   bool eventFilter(QObject* o, QEvent* e) override;
  private:

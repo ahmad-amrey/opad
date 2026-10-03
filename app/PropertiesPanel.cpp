@@ -20,7 +20,6 @@
 namespace {
 constexpr int kPropKeyRole = Qt::UserRole + 3;  // properties table: the untranslated property name
 constexpr int kActionRole = Qt::UserRole + 4;   // a provided section's link: index into m_actions
-constexpr int kPartRole = Qt::UserRole + 5;     // the PART section's link
 
 QString fmtNum(double v) { return QString::number(v, 'g', 7); }
 
@@ -100,7 +99,7 @@ PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
     m_table->setStyleSheet(QString("QTreeWidget::item { border-bottom: 1px solid %1; }").arg(theme::css(t.line)));
     for (int i = 0; i < m_table->topLevelItemCount(); ++i) {
       QTreeWidgetItem* row = m_table->topLevelItem(i);
-      if (row->data(0, kActionRole).isValid() || row->data(0, kPartRole).isValid()) {  // a provided section's link, the PART section's
+      if (row->data(0, kActionRole).isValid()) {  // a provided section's link
         row->setForeground(1, t.sel);
         continue;
       }
@@ -112,7 +111,6 @@ PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
   m_table->viewport()->installEventFilter(this);
   connect(m_table, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* it, int) {
     if (it->data(0, Qt::UserRole).isValid()) emit faceChosen(it->data(0, Qt::UserRole).toInt());
-    else if (it->data(0, kPartRole).isValid()) emit partEditRequested();
     else if (const int i = it->data(0, kActionRole).toInt() - 1; i >= 0 && i < static_cast<int>(m_actions.size())) {
       const std::function<void()> run = m_actions[static_cast<size_t>(i)];  // it may fill the panel again
       if (run) run();
@@ -238,27 +236,6 @@ void PropertiesPanel::fill() {
   };
   section(tr("ADJACENT FACES"), props.value("adjacent_faces", opad::json()), "face");
   section(tr("BOUNDING EDGES"), props.value("edges", opad::json()), "edge");
-  // A body's or component's part properties (what it sets itself) and the link to edit them.
-  if (const parts::Section part = parts::section(props); !part.title.isEmpty()) {
-    auto* h = new QTreeWidgetItem(m_table);
-    h->setText(0, part.title.toUpper());
-    h->setFont(0, theme::ui(11, QFont::Medium));
-    h->setForeground(0, t.fg3);
-    h->setFlags(Qt::ItemIsEnabled);
-    h->setFirstColumnSpanned(true);
-    for (const auto& [label, value] : part.rows) {
-      auto* r = new QTreeWidgetItem(m_table);
-      r->setText(0, label);
-      r->setForeground(0, t.fg2);
-      r->setText(1, QChar(0x202A) + value + QChar(0x202C));
-      r->setToolTip(1, value);
-    }
-    auto* link = new QTreeWidgetItem(m_table);
-    link->setText(1, tr("Edit part properties…"));
-    link->setForeground(1, t.sel);
-    link->setData(0, kPartRole, true);
-    link->setToolTip(1, tr("Part number, description, material, vendor, notes and the bill of materials"));
-  }
   m_actions.clear();
   QList<PropertySection> sections;
   for (const PropertySectionProvider& provide : m_providers) provide(m_subject, props, sections);

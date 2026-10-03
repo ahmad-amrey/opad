@@ -264,7 +264,6 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     add("inspect.distance");
     add("inspect.radius");
     add("inspect.properties");
-    add("inspect.partProperties");
     menu.addSeparator();
     QAction* del = menu.addAction(icons::themed("delete", 16), tr("Delete (tombstone import)"));
     connect(del, &QAction::triggered, this, [this, ids] {

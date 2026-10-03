@@ -62,7 +62,7 @@ void MainWindow::buildMenus() {
   add(file, {"file.new", "file.open", "file.import", "file.importdoc"});
   m_recentMenu = file->addMenu(tr("Recent"));
   m_recentMenu->setObjectName("recent");
-  add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.exportBom", "file.screenshot", "-", "file.quit"});
+  add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
   add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = m_viewMenu = menuBar()->addMenu(tr("&View"));
@@ -75,7 +75,7 @@ void MainWindow::buildMenus() {
   add(nav, {"nav.fusion", "nav.solidworks", "nav.onshape", "nav.blender"});
   add(view, {"view.dark", "-", "workspace.review", "workspace.design", "-", "panel.browser", "panel.annotations", "panel.section", "panel.timeline", "panel.reset"});
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
-  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "inspect.partProperties", "select.geometry", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip"});
+  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.geometry", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip"});
   QMenu* designMenu = menuBar()->addMenu(tr("&Design"));
   add(designMenu, {"design.sketch", "design.convertDrawing", "design.parameters", "-"});
   for (const char* group : {"create", "modify", "combine", "pattern", "body", "construct"}) {
@@ -134,14 +134,14 @@ void MainWindow::buildRibbon() {
   group("review.view", "isolate", tr("Isolate"), {"view.isolate", "view.unisolate"});
   layout.addTab("review", "review.inspect", tr("Inspect"));
   group("review.inspect", "measure", tr("Measure"), {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"});
-  group("review.inspect", "results", tr("Results"), {"inspect.pin", "inspect.properties", "inspect.partProperties"});
+  group("review.inspect", "results", tr("Results"), {"inspect.pin", "inspect.properties"});
   group("review.inspect", "check", tr("Check"), {"inspect.interference", "inspect.printcheck"});
   group("review.inspect", "section", tr("Section"), {"inspect.section", "inspect.flip"});
   layout.addTab("review", "review.annotate", tr("Annotate"));
   group("review.annotate", "markup", tr("Markup"), {"panel.annotations", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show"});
   group("review.annotate", "objects", tr("Objects"), {"edit.rename", "edit.hide", "edit.showall", "view.saveview"});
   layout.addTab("review", "review.export", tr("Export"));
-  group("review.export", "export", tr("Export"), {"file.export", "file.exportBom", "file.screenshot"});
+  group("review.export", "export", tr("Export"), {"file.export", "file.screenshot"});
   group("review.export", "file", tr("File"), {"file.import", "file.save"});
   layout.addTab("design", "design.solid", tr("Solid"));
   group("design.solid", "create", tr("Create"), {"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"});
@@ -162,7 +162,7 @@ void MainWindow::buildRibbon() {
   group("design.view", "navigate", tr("Navigate"), {"view.fit", "view.home", "view.2d", "view.ortho"});
   group("design.view", "display", tr("Display"), {"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"});
   layout.addTab("design", "design.export", tr("Export"));
-  group("design.export", "export", tr("Export"), {"file.export", "file.exportBom", "file.screenshot"});
+  group("design.export", "export", tr("Export"), {"file.export", "file.screenshot"});
   group("design.export", "file", tr("File"), {"file.import", "file.save"});
   layout.addTab("sketch", "sketch.create", tr("Create"));
   group("sketch.create", "sketch", tr("Sketch"), {"sketch.finish", "sketch.cancel", "view.2d", "view.alignPlane"});

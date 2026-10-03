@@ -2,9 +2,6 @@
 
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDir>
-#include <QFileDialog>
-#include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -12,7 +9,6 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSettings>
-#include <QStatusBar>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -22,7 +18,6 @@
 #include "AppDocument.hpp"
 #include "I18n.hpp"
 #include "Jobs.hpp"
-#include "MainWindow.hpp"
 #include "PartProperties.hpp"
 #include "Theme.hpp"
 #include "opad/drawing/bom.hpp"
@@ -279,26 +274,4 @@ void BomDialog::write() {
                   if (ok) self->accept();
                   else self->m_status->setText(i18n::t(error));
                 });
-}
-
-// File > Export bill of materials: the dialog, then where to.
-void MainWindow::exportBom(std::vector<std::string> ids) {
-  if (!m_doc->hasDocument) throw opad::Error("Nothing to export.");
-  if (ids.empty()) ids = currentNodeIds();
-  auto* dialog = new BomDialog(m_doc, m_jobs, ids, this);
-  dialog->setAttribute(Qt::WA_DeleteOnClose);
-  const QString stem = m_doc->doc.path.empty() ? (m_doc->browse ? QFileInfo(m_doc->viewing).completeBaseName() : tr("Untitled"))
-                                               : QString::fromStdU16String(m_doc->doc.path.stem().u16string());
-  connect(dialog, &BomDialog::exportRequested, this, [this, dialog, stem] {
-    const QString suggested = QDir(m_settings.value("ui/lastDir", QDir::homePath()).toString()).filePath(tr("%1 bill of materials.csv").arg(stem));
-    QString out = QFileDialog::getSaveFileName(dialog, tr("Export bill of materials"), suggested, tr("CSV files (*.csv)"));
-    if (out.isEmpty()) return;
-    if (QFileInfo(out).suffix().isEmpty()) out += ".csv";
-    m_settings.setValue("ui/lastDir", QFileInfo(out).absolutePath());
-    dialog->exportTo(out);
-  });
-  connect(dialog, &BomDialog::exported, this, [this](const QString& path, const QString& error) {
-    if (error.isEmpty()) statusBar()->showMessage(tr("Bill of materials written to %1").arg(QDir::toNativeSeparators(path)), 8000);
-  });
-  dialog->open();
 }

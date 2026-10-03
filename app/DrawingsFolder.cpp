@@ -82,7 +82,7 @@ Row make(const opad::Scene& s, const Index& ix, const opad::drawing::OutlineRow&
     tip << r.name << tr("Drawing · %1 sheets").arg(o.children.size());
   } else if (const opad::Sheet* sheet = o.kind == "sheet" ? Index::get(ix.sheets, o.id) : nullptr) {
     r.name = qs(o.name);
-    r.icon = "doc";
+    r.icon = "drawingSheet";  // DocsArea.cpp's icon table
     r.editable = true;
     const opad::json size = sheet->def.value("size", opad::json::object());
     const QString paper = QString::fromUtf8("%1 × %2 mm").arg(mm(sheet->width), mm(sheet->height));

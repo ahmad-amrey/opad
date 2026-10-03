@@ -55,6 +55,7 @@ class BrowserPanel : public QWidget {
   void addDecorator(browser::Decorator decorator);  // repaints
   void addFolder(browser::Folder folder);           // after the ones added before; rebuilds
   void refreshDecorations();                        // repaints: a decorator's answer changed (a folder's items: rebuild())
+  bool removeRows(const std::vector<std::string>& ids);  // Del on provided rows: their folders' remove; false when none took them
   BrowserTree* tree() const { return m_tree; }      // benches
 
  signals:
@@ -63,7 +64,6 @@ class BrowserPanel : public QWidget {
   void fitRequested(const std::vector<std::string>& ids);
   void autoHideChanged(bool on);
   void sketchActivated(const std::string& sketchId);  // double-click on a sketch row: edit it
-  void sheetExportRequested(const std::string& id);  // a sheet or drawing row's Export sheet… / Export drawing…
   void editedSketchVisibilityRequested();
 
  public slots:

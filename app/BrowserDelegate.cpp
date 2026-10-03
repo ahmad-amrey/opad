@@ -51,27 +51,18 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
                 badges.empty() ? name : QFontMetrics(nameFont).elidedText(name, Qt::ElideRight, width));
   };
   const QString rowKind = index.data(Qt::UserRole).toString();
-  if (rowKind == "drawing") {  // the Drawings folder's rows: icon and name, the icon red and the name grey when not drawn
-    const bool error = index.data(browser::kErrorRole).toBool();
-    p->drawPixmap(r.left() + kTypeX, r.top() + 6, icons::pixmap(index.data(browser::kIconRole).toString(), error ? t.red : t.fg2, 16, p->device()->devicePixelRatioF()));
-    p->setFont(theme::ui(13));
-    p->setPen(error ? t.fg3 : t.fg);
-    const int w = std::max(10, r.width() - kNameX - 6);
-    p->drawText(QRect(r.left() + kNameX, r.top(), w, r.height()), Qt::AlignVCenter | Qt::AlignLeft, QFontMetrics(theme::ui(13)).elidedText(index.data(kNameRole).toString(), Qt::ElideRight, w));
-    p->restore();
-    return;
-  }
   if (rowKind == "folder" || rowKind == "sketch" || rowKind == "provided") {
     const opad::SketchItem* sk = rowKind == "sketch" ? m_doc->scene.sketch(id) : nullptr;
     const bool editing=index.data(Qt::UserRole+8).toBool();
     const bool off = editing?!index.data(Qt::UserRole+9).toBool():sk && !sk->visible;
-    const bool grey = off || d.dim;
+    const bool error = index.data(browser::kErrorRole).toBool();  // a provided row that is not drawn
+    const bool grey = off || d.dim || error;
     const qreal ratio = p->device()->devicePixelRatioF();
     if (sk || editing) p->drawPixmap(r.left() + kEyeX, r.top() + 6, icons::pixmap(off ? "hide" : "eye", grey ? t.fg3 : t.fg2, 16, ratio));
     paintLead(p, d, r);
     const QString own = index.data(browser::kIconRole).toString();  // a provided folder's or row's
     const QString icon = !d.typeIcon.isEmpty() ? d.typeIcon : sk ? QString("sketch") : !own.isEmpty() ? own : QString("open");
-    p->drawPixmap(r.left() + kTypeX, r.top() + 6, icons::pixmap(icon, sk && !sk->error.empty() ? t.red : grey ? t.fg3 : t.fg2, 16, ratio));
+    p->drawPixmap(r.left() + kTypeX, r.top() + 6, icons::pixmap(icon, (sk && !sk->error.empty()) || error ? t.red : grey ? t.fg3 : t.fg2, 16, ratio));
     p->setFont(theme::ui(13));
     p->setPen(grey ? t.fg3 : rowKind == "folder" ? t.fg2 : t.fg);
     drawName(index.data(kNameRole).toString(), r.right() - 6);

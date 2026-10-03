@@ -16,7 +16,6 @@
 
 #include "AppDocument.hpp"
 #include "I18n.hpp"
-#include "MainWindow.hpp"
 #include "Theme.hpp"
 #include "opad/drawing/bom.hpp"
 #include "opad/materials.hpp"
@@ -258,17 +257,4 @@ void PartPropertiesDialog::apply() {
   }
   emit applied();
   accept();
-}
-
-// From the Properties panel's PART section, the context menu or Inspect > Part properties: bodies and components only.
-void MainWindow::editPartProperties(std::vector<std::string> ids) {
-  ids.erase(std::remove_if(ids.begin(), ids.end(), [this](const std::string& id) { return !m_doc->node(id); }), ids.end());
-  if (ids.empty()) throw opad::Error("Select bodies or components to give them part properties.");
-  if (!requireEditable([this, ids] { guarded([&] { editPartProperties(ids); }); })) return;
-  auto* dialog = new PartPropertiesDialog(m_doc, ids, this);
-  dialog->setAttribute(Qt::WA_DeleteOnClose);
-  connect(dialog, &PartPropertiesDialog::applied, this, [this] {
-    if (m_propsPanel->isVisible()) showProperties(m_selRefs);
-  });
-  dialog->open();
 }

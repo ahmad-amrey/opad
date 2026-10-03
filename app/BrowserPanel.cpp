@@ -15,7 +15,6 @@
 #include <algorithm>
 #include <functional>
 
-#include "DrawingsFolder.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "Theme.hpp"
@@ -206,13 +205,6 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   });
   connect(m_tree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& p) {
     QTreeWidgetItem* it = m_tree->itemAt(p);
-    if (it && it->data(0, Qt::UserRole).toString() == "drawing") {  // the Drawings folder's own
-      const std::string id = it->data(0, kIdRole).toString().toStdString();
-      QMenu menu(this);
-      drawings::contextMenu(m_doc, id, menu, [this, id] { startRename(id); }, [this, id] { emit sheetExportRequested(id); });
-      menu.exec(m_tree->viewport()->mapToGlobal(p));
-      return;
-    }
     if (const browser::Folder* folder = providedFolder(it)) {  // its own menu, not the objects' one
       if (!folder->contextMenu) return;
       QMenu menu(this);
@@ -229,7 +221,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
       return;
     }
     if (it->data(0, Qt::UserRole).toString() == "sketch") emit sketchActivated(id);
-    else if (!id.empty() && it->data(0, Qt::UserRole).toString() != "drawing") emit fitRequested({id});
+    else if (!id.empty()) emit fitRequested({id});
   });
   connect(m_tree, &BrowserTree::eyeClicked, this, [this](const std::string& id) {
     if(!m_editedSketch.empty() && id==m_editedSketch){emit editedSketchVisibilityRequested();return;}
@@ -255,8 +247,13 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     QString newName = it->text(0).trimmed();
     QString oldName = it->data(0, kNameRole).toString();
     if (newName.isEmpty() || newName == oldName) { rebuild(); return; }
-    if (it->data(0, Qt::UserRole).toString() == "drawing") {  // a drawing, sheet or view: its record's name
-      try { drawings::rename(m_doc, id, newName); } catch (const std::exception& e) { emit m_doc->message(QString::fromUtf8(e.what())); rebuild(); }
+    if (const browser::Folder* folder = providedFolder(it)) {  // editable only with a rename: the area's record takes the name
+      try {
+        folder->rename(id, newName);
+      } catch (const std::exception& e) {
+        emit m_doc->message(QString::fromUtf8(e.what()));
+        rebuild();
+      }
       return;
     }
     m_doc->run("rename", opad::json{{"target", id}, {"name", newName.toStdString()}});
@@ -354,31 +351,6 @@ void BrowserPanel::rebuild() {
       }
       folder->setExpanded(!m_editedSketch.empty() || expanded.empty() || expanded.count("folder:sketches") > 0);
     }
-    if (const auto rows = drawings::rows(*m_doc); !rows.empty()) {  // DrawingsFolder.hpp
-      auto* folder = new QTreeWidgetItem(root);
-      folder->setText(0, tr("Drawings"));
-      folder->setData(0, kIdRole, QString());
-      folder->setData(0, kNameRole, tr("Drawings"));
-      folder->setData(0, Qt::UserRole, "folder");
-      folder->setData(0, browser::kFolderRole, "drawings");
-      folder->setFlags(folder->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled & ~Qt::ItemIsSelectable);
-      std::function<void(const drawings::Row&, QTreeWidgetItem*)> add = [&](const drawings::Row& row, QTreeWidgetItem* parent) {
-        auto* item = new QTreeWidgetItem(parent);
-        item->setText(0, row.name);
-        item->setData(0, kIdRole, QString::fromStdString(row.id));
-        item->setData(0, kNameRole, row.name);
-        item->setData(0, Qt::UserRole, "drawing");
-        item->setData(0, browser::kIconRole, row.icon);
-        item->setData(0, browser::kErrorRole, row.error);
-        item->setToolTip(0, row.tooltip);
-        item->setFlags((item->flags() | (row.editable ? Qt::ItemIsEditable : Qt::NoItemFlags)) & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled);
-        m_index[row.id] = item;
-        for (const auto& c : row.children) add(c, item);
-        item->setExpanded(expanded.count(row.id) || !known.count(row.id));
-      };
-      for (const auto& row : rows) add(row, folder);
-      folder->setExpanded(expanded.count("folder:drawings") || !known.count("folder:drawings"));
-    }
     for (const auto& r : m_doc->scene.roots) build(r, root, expanded);
     QString category;
     if(root->childCount()) category=root->child(0)->data(0,Qt::UserRole+4).toString();
@@ -407,14 +379,16 @@ void BrowserPanel::rebuild() {
         it->setData(0, Qt::UserRole, "provided");
         it->setData(0, browser::kFolderRole, f.id);
         it->setData(0, browser::kIconRole, item.icon);
+        it->setData(0, browser::kErrorRole, item.error);
         it->setToolTip(0, item.tooltip);
-        it->setFlags(it->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled);
+        it->setFlags((it->flags() | (item.editable && f.rename ? Qt::ItemIsEditable : Qt::NoItemFlags)) & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled);
         m_index[item.id] = it;
         for (const browser::Item& child : item.children) add(it, child);
-        it->setExpanded(expanded.empty() || expanded.count(item.id) > 0);
+        it->setExpanded(expanded.count(item.id) > 0 || !known.count(item.id));  // a new row opens
       };
       for (const browser::Item& item : items) add(folder, item);
-      folder->setExpanded(expanded.empty() || expanded.count("folder:" + f.id.toStdString()) > 0);
+      const std::string key = "folder:" + f.id.toStdString();
+      folder->setExpanded(expanded.count(key) > 0 || !known.count(key));
     }
     root->setExpanded(true);
   }
@@ -451,6 +425,17 @@ void BrowserPanel::addFolder(browser::Folder folder) {
 }
 
 void BrowserPanel::refreshDecorations() { m_tree->viewport()->update(); }
+
+bool BrowserPanel::removeRows(const std::vector<std::string>& ids) {
+  bool taken = false;
+  for (const browser::Folder& f : m_folders) {
+    std::vector<std::string> own;
+    for (const auto& id : ids)
+      if (const QTreeWidgetItem* it = itemFor(id); it && it->data(0, Qt::UserRole).toString() == "provided" && providedFolder(it) == &f) own.push_back(id);
+    if (!own.empty() && f.remove) taken = f.remove(own) || taken;  // m_folders stays: remove() rebuilds the rows, not the folders
+  }
+  return taken;
+}
 
 const browser::Folder* BrowserPanel::providedFolder(const QTreeWidgetItem* item) const {
   const QString id = item ? item->data(0, browser::kFolderRole).toString() : QString();
@@ -559,11 +544,6 @@ void BrowserPanel::updateBreadcrumb() {
     else parts << QString("<a href='%1' style='color:%2;text-decoration:none'>%3</a>").arg(QString::fromStdString(path[i]).toHtmlEscaped(), t.fg2.name(), name);
   }
   QTreeWidgetItem* it = path.empty() ? itemFor(ids.front()) : nullptr;
-  if (it && it->data(0, Qt::UserRole).toString() == "drawing") {  // a drawings row: its folders above it
-    for (const QTreeWidgetItem* q = it; q->parent(); q = q->parent())
-      parts.prepend(QString("<span style='color:%1'>%2</span>").arg(q == it ? t.fg.name() : t.fg2.name(), q->data(0, kNameRole).toString().toHtmlEscaped()));
-    it = nullptr;
-  }
   if (it && it->data(0, Qt::UserRole).toString() == "provided")  // a provided folder's row: the folder, then the rows above it
     for (bool last = true; it && it->data(0, Qt::UserRole).toString() != "document"; it = it->parent(), last = false) {
       const QString name = it->data(0, kNameRole).toString().toHtmlEscaped(), id = it->data(0, kIdRole).toString().toHtmlEscaped();
