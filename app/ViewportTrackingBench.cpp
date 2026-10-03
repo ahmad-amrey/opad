@@ -381,8 +381,9 @@ bool Viewport::benchTracking(const QString& prefix, bool endsOnly) {
   }
   require(dropped > 0 && wrong == 0, QString("seen from the other side: %1 of %2 anchors dropped, %3 wrong").arg(dropped).arg(before.size()).arg(wrong));
   clearTracking();
-  bool reacquired = false;
+  int tried = 0, reacquired = 0;  // up to 4: on a big assembly the judgement here and the tracker's can differ at a rim
   for (const auto& p : hidden) {
+    if (tried == 4) break;
     if (seen(p) <= 0) continue;
     hover(away);
     hover(widget(p));
@@ -390,10 +391,11 @@ bool Viewport::benchTracking(const QString& prefix, bool endsOnly) {
     gp_Pnt at;
     if (!taken(kind, at) || kind != opad::Ref::Kind::Vertex || seen(at) <= 0) continue;
     rest(widget(p));
-    reacquired = anchorAt(at);
-    break;
+    ++tried;
+    reacquired += anchorAt(at);
+    clearTracking();
   }
-  require(reacquired, "a vertex hidden in the first view is acquired from the other side");
+  require(tried > 0 && reacquired * 4 >= tried * 3, QString("vertices hidden in the first view are acquired from the other side: %1 of %2").arg(reacquired).arg(tried));
 
   // (4) edges
   clearTracking();
