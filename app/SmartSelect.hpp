@@ -76,7 +76,7 @@ class SmartSelect : public AreaController {
   const Found& found() const { return m_found; }
   SmartChip* chip() const { return m_chip; }
   QMenu* openMenu() const { return m_menu; }  // the candidates menu or the delete question while it shows
-  bool busy() const { return m_job || m_chainJob || m_capturing || m_wait.isActive() || m_pending != Pending::None; }
+  bool busy() const { return m_job || m_chainJob || m_capturing || m_retrying || m_wait.isActive() || m_pending != Pending::None; }
   size_t ladder() const { return m_stack.size(); }  // Ctrl+Down steps left
 
   void buildActions() override;
@@ -139,7 +139,9 @@ class SmartSelect : public AreaController {
   Job* m_job = nullptr;
   Job* m_chainJob = nullptr;
   bool m_capturing = false;
-  std::function<void(std::shared_ptr<const opad::Document>)> m_afterCapture;
+  std::vector<std::function<void(std::shared_ptr<const opad::Document>)>> m_afterCapture;  // waiting for the copy
+  bool m_retrying = false;
+  void capture();  // a copy of the document for what waits (again shortly while the document is busy)
   struct Snapshot {
     std::shared_ptr<const opad::Document> doc;
     unsigned long long revision = 0, generation = 0;

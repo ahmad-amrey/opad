@@ -366,25 +366,30 @@ void SmartSelect::withSnapshot(std::function<void(std::shared_ptr<const opad::Do
     m_dropSnapshot.start();
     return fn(m_snap.doc);
   }
-  m_afterCapture = std::move(fn);  // the newest asks; an older request waiting for the copy is dropped
-  if (m_capturing) return;
+  // Everything that asks while the copy is made gets it (each drops a stale answer itself); a handful at most.
+  if (m_afterCapture.size() >= 8) m_afterCapture.erase(m_afterCapture.begin());
+  m_afterCapture.push_back(std::move(fn));
+  capture();
+}
+
+void SmartSelect::capture() {
+  if (m_capturing || m_retrying || m_afterCapture.empty()) return;
+  AppDocument* doc = services().document();
   const auto revision = doc->revision, generation = doc->generation;
   m_capturing = doc->captureSnapshot(services().jobs(), [this, revision, generation](std::shared_ptr<opad::Document> copy, const QString&) {
     m_capturing = false;
-    auto then = std::exchange(m_afterCapture, {});
+    if (!copy) return m_afterCapture.clear();
     const AppDocument* d = services().document();
-    if (!copy || !then) return;
-    if (d->revision != revision || d->generation != generation) return withSnapshot(std::move(then));  // changed meanwhile
+    if (d->revision != revision || d->generation != generation) return capture();  // changed meanwhile: what it is now
     m_snap = {std::move(copy), revision, generation};
     m_dropSnapshot.start();
-    then(m_snap.doc);
+    for (auto& fn : std::exchange(m_afterCapture, {})) fn(m_snap.doc);
   });
-  if (!m_capturing) {  // busy (a design change, a save, another copy): once more shortly, while it is still wanted
-    const unsigned token = m_token;
-    QTimer::singleShot(250, this, [this, token] {
-      if (m_capturing || !m_afterCapture || token != m_token) return;
-      auto fn = std::exchange(m_afterCapture, {});
-      withSnapshot(std::move(fn));
+  if (!m_capturing) {  // busy (a design change, a save, another copy): once more shortly
+    m_retrying = true;
+    QTimer::singleShot(250, this, [this] {
+      m_retrying = false;
+      capture();
     });
   }
 }
@@ -709,8 +714,10 @@ void SmartSelect::documentChanged(bool replaced) {
   m_stack.clear();
   m_expect.clear();
   m_chosen = {};
+  m_switching = false;
   if (replaced) {
     m_snap = {};
+    m_afterCapture.clear();
     m_current.clear();
     m_previous.clear();
   }
