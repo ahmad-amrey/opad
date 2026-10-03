@@ -54,6 +54,7 @@ class SketchEditor : public QObject, public SketchInput {
   void setTool(const QString& tool);
   QList<ToolStep> toolSteps() const;
   QString option(const QString& key, const QString& fallback = {}) const { return m_options.value(key, fallback); }
+  void setOption(const QString& key, const QString& value) { m_options[key] = value; }
   void applyTool();
   void previewTool();
   void invalidatePreview(bool keepOverlay = false);  // keepOverlay: the shown one stays until the next replaces it (live drags)

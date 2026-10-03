@@ -132,6 +132,7 @@ def main():
             ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("kicad", board, {"OPAD_BENCH_KICAD": "{prefix}.png", **kicad_env}),
             ("assets", linked, {"OPAD_BENCH_ASSETS": "{prefix}.png", **assets_env}),
+            ("pictures", empty, {"OPAD_BENCH_PICTURES": "{prefix}"}),
             ("colors", colors / "cube.obj", {"OPAD_BENCH_COLORS": "{prefix}.png", "OPAD_CACHE_DIR": str(root / "colors-cache")}),
             ("colors-3mf", colors / "painted.3mf",
              {"OPAD_BENCH_COLORS": "{prefix}.png", "OPAD_BENCH_COLORS_PAINTED": "1", "OPAD_CACHE_DIR": str(root / "colors-cache")}),

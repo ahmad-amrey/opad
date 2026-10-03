@@ -750,7 +750,10 @@ struct Walk {
     result["dof"] = solved.dof;
     // Whether the solved sketch differs from what was given is asked only here, when it is recomputed (gap log #3: a
     // parse and two serialisations per sketch per walk, 1 MB each for the arm's discs).
-    if (solved.converged && sk.to_json() != Sketch::from_json(geometry).to_json()) result["geometry"] = sk.to_json();
+    if (solved.converged && sk.to_json() != Sketch::from_json(geometry).to_json()) {
+      result["geometry"] = sk.to_json();
+      result["geometry"].erase("images");  // as given (solved_geometry): a picture is never stored again per regeneration
+    }
     if (frame_moved) result["frame"] = frame.to_json();
     if (!error.empty()) result["error"] = error;
     return result;
@@ -1070,7 +1073,7 @@ json map_expressions(const std::string& type, const json& data, const std::funct
         }
     if (changed) set["inputs"] = inputs;
   } else if (type == "sketch") {
-    const json original = data.value("result",json::object()).value("geometry",data.value("geometry",json::object()));
+    const json original = solved_geometry(data);
     json geometry = original;
     bool changed = false;
     if (geometry.contains("constraints"))

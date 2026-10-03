@@ -117,9 +117,14 @@ struct Sketch {
   void validate() const;
 };
 
-// Entity-ID deltas are append-only document edits, independent of array ordering.
+// Entity-ID deltas are append-only document edits, independent of array ordering. An image whose bytes did not change
+// goes as "image_fields": [{"id", <only the fields that changed>, a field removed as null}], so moving, scaling or fading
+// a backdrop never stores its picture again (an older build keeps that key as a sketch field and shows the image unmoved).
 json sketch_delta(const json& before, const json& after);
 json apply_sketch_delta(const json& before, const json& delta);
+// A sketch op's geometry as last solved: the regeneration's result, else what was given. A result never repeats the
+// images (the solver leaves them alone): they come from the given geometry.
+json solved_geometry(const json& sketch_op_data);
 double dimension_value(const Sketch& sk, const SkConstraint& c);
 ParamTable sketch_parameters(const Sketch& sk, const ParamTable& params = {});
 void evaluate_dimensions(Sketch& sk, const ParamTable& params = {});

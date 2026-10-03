@@ -445,11 +445,10 @@ struct SceneBuilder::Impl {
       s.id = id;
       s.name = d.value("name", "Sketch");
       s.plane = d.value("plane", json::object());
-      s.geometry = d.value("geometry", json::object());
-      s.frame = Frame::from_json(s.plane.value("frame", json()));
       // A regeneration (changed parameters, a moved face) leaves the solved state in the result.
+      s.geometry = design::solved_geometry(d);
+      s.frame = Frame::from_json(s.plane.value("frame", json()));
       const json res = d.value("result", json::object());
-      if (res.contains("geometry")) s.geometry = res["geometry"];
       if (res.contains("frame")) s.frame = Frame::from_json(res["frame"]);
       s.dof = res.value("dof", d.value("dof", -1));
       s.error = res.value("error", "");
@@ -535,8 +534,7 @@ std::vector<EffectiveOp> effective_ops(const std::vector<const Op*>& ops, std::v
       for (const auto& [k, v] : op.data["set"].items()) {
         if (k == "geometry_delta") {
           // Start from the last solved geometry, including parameter-driven changes.
-          const json base = data.value("result", json::object()).value("geometry", data.value("geometry", json::object()));
-          data["geometry"] = design::apply_sketch_delta(base, v);
+          data["geometry"] = design::apply_sketch_delta(design::solved_geometry(data), v);
           if (data.contains("result")) data["result"].erase("geometry");
         }
         else if (v.is_null()) data.erase(k);

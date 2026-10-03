@@ -85,6 +85,7 @@ class MainWindow : public QMainWindow {
   bool benchAssets();  // OPAD_BENCH_ASSETS (AssetLinks.cpp)
   bool benchColors();  // OPAD_BENCH_COLORS (KicadBench.cpp)
   bool benchCache();   // OPAD_BENCH_CACHE (KicadBench.cpp)
+  bool benchPictures();  // OPAD_BENCH_PICTURES (PictureBench.cpp)
 
   void onViewportSelection();
   void onBrowserSelection(const std::vector<std::string>& ids);
