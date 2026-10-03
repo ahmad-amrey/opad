@@ -1,6 +1,7 @@
 // Benches of the core area (T0), registered through BenchRegistry; cases in tools/bench_cases/core.py.
 #include <QCoreApplication>
 #include <QDir>
+#include <QDoubleSpinBox>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QMenu>
@@ -15,11 +16,15 @@
 #include <set>
 
 #include "BenchRegistry.hpp"
+#include "CheckPanel.hpp"
+#include "DesignController.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "MainWindow.hpp"
 #include "TimelineWidget.hpp"
 #include "Units.hpp"
+#include "opad/design/feature.hpp"
+#include "opad/design/sketch.hpp"
 #include "opad/inspect.hpp"
 
 // OPAD_BENCH_SEAMS=1 [OPAD_LANG=ar]: the extension seams (UI-119) in the running app. This bench is itself dispatched
@@ -122,7 +127,9 @@ void pollUntil(QObject* context, std::function<bool()> done, int ms, std::functi
 // OPAD_BENCH_UNITS=<prefix> on the box (30 x 20 x 10 mm): the status bar's unit is live (UI-123). Choosing Inches in its
 // menu appends one units op; a Distance between the two end faces then reads 1.181 in in the tool's result and in the
 // view's label, Properties shows inches, a precision change and fractional inches redraw the result at once, and undo
-// brings millimetres back. <prefix>.status.png / .panel.png are the status bar and the tool panel in inches.
+// brings millimetres back; the check panel's overhang follows radians; a new feature's and a sketch tool's defaults are
+// offered in inches and a sketch dimension reads in inches. <prefix>.status.png / .panel.png / .sketch.png: the status
+// bar, the tool panel and the sketch in inches.
 OPAD_BENCH(OPAD_BENCH_UNITS, units) {
   auto all = std::make_shared<bool>(true);
   auto require = [all](bool ok, const QString& what) {
@@ -181,11 +188,54 @@ OPAD_BENCH(OPAD_BENCH_UNITS, units) {
       require(result(w.m_tool.title) == "1.2 in" && w.m_viewport->measurementCaptions().contains(QString::fromUtf8("ΔX +1.2 in")), "one decimal redraws the result: " + result(w.m_tool.title));
       units::setPrecision(3, false, 64);
       require(result(w.m_tool.title) == "1 3/16 in", "fractional inches: " + result(w.m_tool.title));
+      const CheckPanel::Mode mode = w.m_checks->mode();
+      w.m_checks->begin(CheckPanel::Mode::Print);
+      units::setPrecision(3, true, 0);
+      const opad::json checks = w.m_checks->options();
+      w.m_checks->begin(mode);
+      const QDoubleSpinBox* overhang = nullptr;
+      for (const auto* box : w.m_checks->findChildren<QDoubleSpinBox*>())
+        if (box->property("stored").toDouble() == 45) overhang = box;
+      require(overhang && overhang->suffix() == " rad" && std::abs(overhang->value() - 0.785) < 1e-9 && checks.value("overhang_deg", 0.0) == 45,
+              "the overhang box in radians: " + (overhang ? overhang->text() : QString()));
       units::setPrecision(3, false, 0);
       w.cancelTool();
-      w.m_doc->undo();
-      require(w.m_doc->scene.units == "mm" && w.m_statusUnits->text() == "mm" && units::current().length == "mm", "undo brings millimetres back: " + w.m_statusUnits->text());
-      finish();
+      // Defaults and sketch dimensions in inches: a new fillet offers 0.1 in, a sketch tool's 2 mm default reads 0.1 in,
+      // and a sketch line of 1.5 in is dimensioned "1.5 in" in the editor (1 1/2 in with fractions on).
+      w.m_design->startFeature("fillet");
+      const opad::json radius = w.m_design->featurePanel()->inputs().value("radius", opad::json());
+      w.m_design->escape();
+      require(radius == "0.1 in" && w.m_design->sketch()->option("radius", "2 mm") == "0.1 in", "defaults in inches: " + QString::fromStdString(radius.dump()));
+      opad::design::Sketch sk;
+      const int line = sk.add_line(sk.add_point(0, 0), sk.add_point(38.1, 0));
+      sk.add_constraint(opad::design::SkConstraint::Type::Horizontal, {line});
+      sk.add_constraint(opad::design::SkConstraint::Type::Distance, {line}, 38.1);
+      w.m_design->applyOps({opad::design::make_sketch_op("Inch sketch", {{"base", "xy"}}, sk.to_json())}, "bench sketch", [&w, require, finish](bool ok, const QString& error) {
+        require(ok && !w.m_doc->scene.sketches.empty(), "a sketch with a 1.5 in line " + error);
+        if (!ok || w.m_doc->scene.sketches.empty()) return finish();
+        w.m_design->editOp(w.m_doc->scene.sketches.back().id);
+        auto dimension = [&w] {
+          for (auto* tree : w.findChildren<QTreeWidget*>())
+            for (int i = 0; tree->columnCount() == 3 && i < tree->topLevelItemCount(); ++i)  // the constraint list: "d<n>" rows
+              if (tree->topLevelItem(i)->text(0).startsWith('d')) return tree->topLevelItem(i)->text(2);
+          return QString();
+        };
+        pollUntil(&w, [&w, dimension] { return w.m_design->sketchActive() && !dimension().isEmpty(); }, 20000, [&w, require, finish, dimension](bool editing) {
+          require(editing && dimension() == "1.5 in", "the sketch dimension reads " + dimension());
+          w.m_viewport->grabImage().save(qEnvironmentVariable("OPAD_BENCH_UNITS") + ".sketch.png");
+          units::setPrecision(3, false, 16);
+          require(dimension() == "1 1/2 in", "with fractions it reads " + dimension());
+          units::setPrecision(3, false, 0);
+          require(!w.m_design->sketch()->modified(), "looking changed nothing");
+          if (w.m_design->sketch()->modified()) w.m_design->sketch()->end();  // never the discard question
+          w.m_design->cancelSketch();
+          w.m_doc->setRollback({});
+          w.m_doc->undo();  // the sketch
+          w.m_doc->undo();  // the units
+          require(w.m_doc->scene.units == "mm" && w.m_statusUnits->text() == "mm" && units::current().length == "mm", "undo brings millimetres back: " + w.m_statusUnits->text());
+          finish();
+        });
+      });
     });
   });
   return true;

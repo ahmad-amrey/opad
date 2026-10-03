@@ -36,6 +36,18 @@ double scale(Kind kind, const Display& d) {
   return 1.0;
 }
 QString fixed(double v, int decimals) { return QString::number(std::abs(v) < 0.5 * std::pow(10.0, -decimals) ? 0.0 : v, 'f', decimals); }
+QString trimmed(QString s) {
+  if (s.contains('.')) {
+    while (s.endsWith('0')) s.chop(1);
+    if (s.endsWith('.')) s.chop(1);
+  }
+  return s;
+}
+QString labelled(Kind kind, double value, const QString& n, const Display& d) {
+  if (kind == Kind::Angle && !d.radians) return n + symbol(kind, d);
+  if (kind == Kind::Mass && !imperial(d) && std::abs(value) >= 1000) return n + QStringLiteral(" kg");
+  return n + ' ' + symbol(kind, d);
+}
 QString lengthSymbol(const std::string& unit) { return unit == "um" ? QString::fromUtf8("µm") : QString::fromStdString(unit); }
 // The length unit shown: the session's (viewer mode) over the document's. Tells everyone when the display changed.
 void settle(const Display& before) {
@@ -160,15 +172,44 @@ QString number(Kind kind, double value, int decimals, const Display& d) {
   return fixed(shown, decimals);
 }
 
-QString format(Kind kind, double value, int decimals, const Display& d) {
-  const QString n = number(kind, value, decimals, d);
-  if (kind == Kind::Angle && !d.radians) return n + symbol(kind, d);
-  if (kind == Kind::Mass && !imperial(d) && std::abs(value) >= 1000) return n + QStringLiteral(" kg");
-  return n + ' ' + symbol(kind, d);
-}
+QString format(Kind kind, double value, int decimals, const Display& d) { return labelled(kind, value, number(kind, value, decimals, d), d); }
 
 QString vector(Kind kind, const std::array<double, 3>& v, int decimals, const Display& d) {
   return QString("(%1, %2, %3) %4").arg(number(kind, v[0], decimals, d), number(kind, v[1], decimals, d), number(kind, v[2], decimals, d), symbol(kind, d));
+}
+
+QString compact(Kind kind, double value, const Display& d) { return labelled(kind, value, trimmed(number(kind, value, -1, d)), d); }
+
+QString editable(Kind kind, double value, const Display& d) {
+  if (kind == Kind::Length) return trimmed(fixed(toDisplay(kind, value, d), decimalsFor(1e-4, d))) + ' ' + QString::fromStdString(mmPer(d.length) > 0 ? d.length : "mm");
+  if (kind == Kind::Angle) return d.radians ? trimmed(fixed(value * kPi / 180, 6)) + QStringLiteral(" rad") : trimmed(fixed(value, 4)) + QStringLiteral(" deg");
+  return labelled(kind, value, trimmed(number(kind, value, 6, d)), d);
+}
+
+QString preset(double mm, const Display& d) {
+  const std::string unit = mmPer(d.length) > 0 ? d.length : "mm";
+  if (unit == "mm") return QString::number(mm, 'g', 12) + QStringLiteral(" mm");
+  double v = mm / mmPer(unit);
+  int power = 0;
+  if (v != 0) {
+    power = int(std::floor(std::log10(std::abs(v))));
+    const double tenths = std::abs(v) / std::pow(10.0, power - 1);  // two significant digits: a whole number of these
+    if (std::abs(tenths - std::round(tenths)) > 1e-6 * tenths) {
+      const double mantissa = std::abs(v) / std::pow(10.0, power);
+      double best = 1;
+      for (const double step : {1.0, 2.0, 2.5, 5.0, 10.0})
+        if (std::abs(std::log(mantissa / step)) < std::abs(std::log(mantissa / best))) best = step;
+      v = std::copysign(best * std::pow(10.0, power), v);
+    }
+  }
+  return trimmed(fixed(v, std::max(0, 2 - power))) + ' ' + QString::fromStdString(unit);
+}
+
+QString presetText(const QString& text, const Display& d) {
+  static const QRegularExpression plain(R"(^\s*([-+]?(?:\d+\.?\d*|\.\d+))\s*mm\s*$)");
+  if (d.length == "mm") return text;
+  const auto m = plain.match(text);
+  return m.hasMatch() ? preset(m.captured(1).toDouble(), d) : text;
 }
 
 int decimalsFor(double mm, const Display& d) {

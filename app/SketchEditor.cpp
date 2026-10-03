@@ -129,6 +129,7 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   connect(m_dimensionHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){m_options["distance"]=text;scheduleToolPreview();emit workflowChanged();});
   m_dimensionHandle->setLabel(tr("Offset"));
   connect(m_dimensionHandle,&DimensionHandle::accepted,this,[this]{if(m_active && m_tool=="offset" && !m_sel.empty())applyTool();});
+  connect(units::notifier(),&units::Notifier::changed,this,[this]{if(m_active)rebuild();});  // dimension labels in the shown unit
   connect(m_viewport,&Viewport::notesMoved,this,[this] {
     if(!m_active) return;
     const double pixels=m_viewport->pixelSize();

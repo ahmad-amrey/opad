@@ -47,6 +47,16 @@ double fromDisplay(Kind kind, double shown, const Display& d = current());
 QString number(Kind kind, double value, int decimals = -1, const Display& d = current());
 QString format(Kind kind, double value, int decimals = -1, const Display& d = current());
 QString vector(Kind kind, const std::array<double, 3>& v, int decimals = -1, const Display& d = current());  // "(1, 2, 3) in"
+// Labels on the model (sketch dimensions): the precision's decimals without trailing zeros ("1 in", "25.4 mm", "45°").
+QString compact(Kind kind, double value, const Display& d = current());
+// What a value box starts from: an expression the design parser reads back, decimals enough for 0.0001 mm or 0.0001°,
+// no trailing zeros, the raw unit name ("1.181102 in", "250 um", "45 deg", "0.785398 rad").
+QString editable(Kind kind, double value, const Display& d = current());
+// A default amount offered in the shown unit, as an expression: exact when it takes two significant digits there ("4 cm"),
+// else the nearest 1, 2, 2.5 or 5 times a power of ten ("0.5 in" for 10 mm). presetText: `text` itself unless it is a
+// plain "<number> mm" (how the defaults are written), else its preset. Millimetres stay as written.
+QString preset(double mm, const Display& d = current());
+QString presetText(const QString& text, const Display& d = current());
 // Decimals a value box needs to show a length step of `mm` in the shown unit (0.01 mm: 2 in mm, 4 in inches).
 int decimalsFor(double mm, const Display& d = current());
 // A typed value in OPAD's units. A bare number is in the display unit; "3 mm", "1/2 in", "1 1/2\"", "2'", "30°", "0.5 rad"

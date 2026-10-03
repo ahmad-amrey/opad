@@ -53,7 +53,9 @@ class SketchEditor : public QObject, public SketchInput {
   // tangent, equal, concentric, midpoint, symmetric, collinear, fix).
   void setTool(const QString& tool);
   QList<ToolStep> toolSteps() const;
-  QString option(const QString& key, const QString& fallback = {}) const { return m_options.value(key, fallback); }
+  // What was typed for `key`, else `fallback`; a fallback in millimetres ("2 mm") is offered in the document's unit.
+  QString option(const QString& key, const QString& fallback = {}) const;
+  QString dimensionText(const opad::design::SkConstraint& c) const;  // "R1 in", "fx: 12.5 mm", "(45°)"
   void applyTool();
   void previewTool();
   void invalidatePreview(bool keepOverlay = false);  // keepOverlay: the shown one stays until the next replaces it (live drags)
@@ -169,7 +171,6 @@ class SketchEditor : public QObject, public SketchInput {
   std::vector<std::pair<double, double>> sampled(const opad::design::SkEntity& e) const;  // polyline of a curve, sketch coordinates
   double distanceTo(const opad::design::SkEntity& e, double u, double v) const;
   void labelPosition(const opad::design::SkConstraint& c, double& u, double& v) const;
-  QString dimensionText(const opad::design::SkConstraint& c) const;
   void toolPrompt();
   bool isFixedPoint(int id) const;
 

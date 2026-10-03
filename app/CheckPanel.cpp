@@ -14,18 +14,19 @@
 #include "Units.hpp"
 
 namespace {
-// A length typed in the shown unit (UI-123); the check takes mm, kept in the box's "mm" property.
-void lengthBox(QDoubleSpinBox* box, double mm, double maxMm) {
-  auto show = [box, maxMm] {
+// A length or angle typed in the shown unit (UI-123); the check takes mm and degrees, kept in the box's "stored" property.
+void unitBox(QDoubleSpinBox* box, units::Kind kind, double value, double max) {
+  auto show = [box, kind, max] {
     QSignalBlocker block(box);
-    box->setDecimals(units::decimalsFor(0.01));
-    box->setRange(0, units::toDisplay(units::Kind::Length, maxMm));
-    box->setSuffix(' ' + units::symbol(units::Kind::Length));
-    box->setValue(units::toDisplay(units::Kind::Length, box->property("mm").toDouble()));
+    const bool angle = kind == units::Kind::Angle;
+    box->setDecimals(angle ? (units::current().radians ? 3 : 0) : units::decimalsFor(0.01));
+    box->setRange(0, units::toDisplay(kind, max));
+    box->setSingleStep(angle ? (units::current().radians ? 0.05 : 1) : 0.1);
+    box->setSuffix(angle && !units::current().radians ? units::symbol(kind) : ' ' + units::symbol(kind));
+    box->setValue(units::toDisplay(kind, box->property("stored").toDouble()));
   };
-  box->setProperty("mm", mm);
-  box->setSingleStep(0.1);
-  QObject::connect(box, &QDoubleSpinBox::valueChanged, box, [box](double v) { box->setProperty("mm", units::fromDisplay(units::Kind::Length, v)); });
+  box->setProperty("stored", value);
+  QObject::connect(box, &QDoubleSpinBox::valueChanged, box, [box, kind](double v) { box->setProperty("stored", units::fromDisplay(kind, v)); });
   QObject::connect(units::notifier(), &units::Notifier::changed, box, show);
   show();
 }
@@ -40,7 +41,7 @@ CheckPanel::CheckPanel(QWidget* parent) : QWidget(parent) {
   auto* fi = new QFormLayout(m_interference);
   fi->setContentsMargins(0, 0, 0, 0);
   m_clearance = new QDoubleSpinBox(m_interference);
-  lengthBox(m_clearance, 0, 1000);
+  unitBox(m_clearance, units::Kind::Length, 0, 1000);
   m_clearance->setToolTip(tr("Also list pairs closer than this; 0 lists only overlaps"));
   fi->addRow(tr("Clearance"), m_clearance);
   v->addWidget(m_interference);
@@ -52,12 +53,10 @@ CheckPanel::CheckPanel(QWidget* parent) : QWidget(parent) {
   for (const char* d : {"+z", "-z", "+x", "-x", "+y", "-y"}) m_direction->addItem(QString::fromLatin1(d).toUpper(), QString::fromLatin1(d));
   fp->addRow(tr("Build direction"), m_direction);
   m_overhang = new QDoubleSpinBox(m_print);
-  m_overhang->setRange(0, 89);
-  m_overhang->setValue(45);
-  m_overhang->setSuffix(tr(" deg"));
+  unitBox(m_overhang, units::Kind::Angle, 45, 89);
   fp->addRow(tr("Overhang"), m_overhang);
   m_minWall = new QDoubleSpinBox(m_print);
-  lengthBox(m_minWall, 0.8, 100);
+  unitBox(m_minWall, units::Kind::Length, 0.8, 100);
   fp->addRow(tr("Minimum wall"), m_minWall);
   v->addWidget(m_print);
   auto* row = new QHBoxLayout();
@@ -100,8 +99,8 @@ void CheckPanel::showFindings() {
 }
 
 opad::json CheckPanel::options() const {
-  if (m_mode == Mode::Interference) return {{"clearance_mm", m_clearance->property("mm").toDouble()}};
-  return {{"build_direction", m_direction->currentData().toString().toStdString()}, {"overhang_deg", m_overhang->value()}, {"min_wall_mm", m_minWall->property("mm").toDouble()}};
+  if (m_mode == Mode::Interference) return {{"clearance_mm", m_clearance->property("stored").toDouble()}};
+  return {{"build_direction", m_direction->currentData().toString().toStdString()}, {"overhang_deg", m_overhang->property("stored").toDouble()}, {"min_wall_mm", m_minWall->property("stored").toDouble()}};
 }
 
 void CheckPanel::setRunning(const QString& status) {

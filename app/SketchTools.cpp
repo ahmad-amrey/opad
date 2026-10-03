@@ -21,6 +21,7 @@
 #include "I18n.hpp"
 #include "Jobs.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 #include "opad/design/expr.hpp"
 #include "opad/design/sketch_geom.hpp"
 
@@ -33,7 +34,7 @@ namespace {
 // A value with nothing to evaluate: "12", "12.5 mm", "30 deg". Only anything else is kept as an expression (shown with
 // "fx:"); "50 mm", the form the fields suggest, used to be.
 bool plainValue(const QString& text) {
-  static const QRegularExpression number(QStringLiteral(R"(^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*(mm|cm|m|in|ft|deg|rad|°)?\s*$)"));
+  static const QRegularExpression number(QStringLiteral(R"(^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*(mm|cm|m|um|in|ft|deg|rad|°)?\s*$)"));
   return number.match(text).hasMatch();
 }
 
@@ -41,15 +42,6 @@ ParamTable paramTable(const opad::Scene& scene) {
   std::vector<ParamDef> defs;
   for (const auto& p : scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
   return ParamTable(defs,scene.units);
-}
-
-QString trimmedNumber(double v, int decimals) {
-  QString s = QString::number(v, 'f', decimals);
-  if (s.contains('.')) {
-    while (s.endsWith('0')) s.chop(1);
-    if (s.endsWith('.')) s.chop(1);
-  }
-  return s == "-0" ? QStringLiteral("0") : s;
 }
 
 double norm_angle(double a) {  // into [0, 2 pi)
@@ -450,8 +442,13 @@ void SketchEditor::constraintClick(const Hit& h) {
 }
 
 // ---------------------------------------------------------------- dimensions
+QString SketchEditor::option(const QString& key, const QString& fallback) const {
+  const auto it = m_options.constFind(key);
+  return it != m_options.cend() ? *it : units::presetText(fallback);
+}
+
 QString SketchEditor::dimensionText(const SkConstraint& c) const {
-  QString value = c.type == CT::Angle ? trimmedNumber(c.value * 180.0 / M_PI, 2) + QString::fromUtf8("°") : trimmedNumber(c.value / ParamTable({},m_doc->scene.units).length("1"), 3) + " " + QString::fromStdString(m_doc->scene.units);
+  QString value = c.type == CT::Angle ? units::compact(units::Kind::Angle, c.value * 180.0 / M_PI) : units::compact(units::Kind::Length, c.value);
   if (c.type == CT::Radius) value = "R" + value;
   if (c.type == CT::Diameter) value = QString::fromUtf8("Ø") + value;
   const bool plain = plainValue(QString::fromStdString(c.expr));
@@ -604,7 +601,7 @@ void SketchEditor::editDimension(int id, bool fresh) {
 
   m_dimEditing = id;
   m_dimFresh = fresh;
-  const QString shown = !c->expr.empty() ? QString::fromStdString(c->expr) : c->type == CT::Angle ? trimmedNumber(c->value * 180 / M_PI, 4) + " deg" : trimmedNumber(c->value, 4) + " mm";
+  const QString shown = !c->expr.empty() ? QString::fromStdString(c->expr) : c->type == CT::Angle ? units::editable(units::Kind::Angle, c->value * 180 / M_PI) : units::editable(units::Kind::Length, c->value);
   m_dimEdit->setText(shown);
   m_options["expression"] = shown;
   m_options["reference"] = c->reference ? "1" : "0";

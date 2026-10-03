@@ -1,6 +1,7 @@
 #include "SketchPanel.hpp"
 #include "SketchEditor.hpp"
 #include "I18n.hpp"
+#include "Units.hpp"
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
@@ -141,6 +142,7 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   connect(editor,&SketchEditor::changed,this,&SketchPanel::refresh);
   connect(editor,&SketchEditor::toolChanged,this,[this]{m_pages->setCurrentIndex(0);refresh();});
   connect(editor,&SketchEditor::workflowChanged,this,&SketchPanel::refresh);
+  connect(units::notifier(),&units::Notifier::changed,this,[this]{m_editor->m_panelFieldsDirty=true;refresh();});  // values and defaults in the shown unit
   connect(m_group,&QComboBox::currentIndexChanged,this,&SketchPanel::chooseGroup);
   connect(m_tools,&QComboBox::currentIndexChanged,this,&SketchPanel::chooseTool);
   chooseGroup();

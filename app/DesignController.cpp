@@ -275,8 +275,8 @@ void DesignController::startFeature(const QString& kind) {
   m_ruleMatches.clear();
   m_newId = opad::new_uuid();
   opad::json inputs = opad::json::object();
-  for (const auto& in : spec->inputs)
-    if (!in.def.is_null()) inputs[in.name] = in.def;
+  for (const auto& in : spec->inputs)  // lengths offered in the document's unit ("0.5 in" for "10 mm")
+    if (!in.def.is_null()) inputs[in.name] = in.type == "length" && in.def.is_string() ? opad::json(units::presetText(QString::fromStdString(in.def.get<std::string>())).toStdString()) : in.def;
   m_featureOn = true;
   m_filterBefore = m_viewport->selectionFilter();
   m_viewport->setPickAccumulate(true);

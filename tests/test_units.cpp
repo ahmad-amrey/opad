@@ -83,6 +83,43 @@ TEST(value_boxes_read_back) {
   CHECK(!units::parse(Kind::Mass, "1.5 kg", in("in")));
 }
 
+TEST(labels_value_boxes_and_defaults) {
+  CHECK_EQ(units::compact(Kind::Length, 25.4, in("in")), "1 in");
+  CHECK_EQ(units::compact(Kind::Length, 12.5, in("mm")), "12.5 mm");
+  CHECK_EQ(units::compact(Kind::Length, 30, in("in")), "1.181 in");
+  CHECK_EQ(units::compact(Kind::Length, -0.0001, in("mm")), "0 mm");
+  CHECK_EQ(units::compact(Kind::Angle, 45, in("mm")), QString::fromUtf8("45°"));
+  Display fractions = in("in");
+  fractions.fraction = 16;
+  CHECK_EQ(units::compact(Kind::Length, 25.4 * 1.1875, fractions), "1 3/16 in");
+  CHECK_EQ(units::editable(Kind::Length, 30, in("mm")), "30 mm");
+  CHECK_EQ(units::editable(Kind::Length, 30, in("in")), "1.181102 in");
+  CHECK_EQ(units::editable(Kind::Length, 0.25, in("um")), "250 um");  // the parser's name, not µm
+  CHECK_EQ(units::editable(Kind::Angle, 45, in("in")), "45 deg");
+  Display radians = in("mm");
+  radians.radians = true;
+  CHECK_EQ(units::editable(Kind::Angle, 45, radians), "0.785398 rad");
+  CHECK(std::abs(*units::parse(Kind::Length, units::editable(Kind::Length, 30, fractions), in("mm")) - 30) < 1e-4);  // never a fraction
+  CHECK_EQ(units::preset(10, in("mm")), "10 mm");
+  CHECK_EQ(units::preset(10, in("in")), "0.5 in");
+  CHECK_EQ(units::preset(20, in("in")), "1 in");
+  CHECK_EQ(units::preset(2, in("in")), "0.1 in");
+  CHECK_EQ(units::preset(5, in("in")), "0.2 in");
+  CHECK_EQ(units::preset(0.05, in("in")), "0.002 in");
+  CHECK_EQ(units::preset(0, in("in")), "0 in");
+  CHECK_EQ(units::preset(-10, in("in")), "-0.5 in");
+  CHECK_EQ(units::preset(40, in("cm")), "4 cm");  // exact where it is short
+  CHECK_EQ(units::preset(15, in("cm")), "1.5 cm");
+  CHECK_EQ(units::preset(0.05, in("m")), "0.00005 m");
+  CHECK_EQ(units::preset(2, in("um")), "2000 um");
+  CHECK_EQ(units::preset(10, in("ft")), "0.025 ft");
+  CHECK_EQ(units::presetText("2 mm", in("in")), "0.1 in");
+  CHECK_EQ(units::presetText("2.50 mm", in("mm")), "2.50 mm");  // as written
+  CHECK_EQ(units::presetText("10 mm * 2", in("in")), "10 mm * 2");  // an expression is kept
+  CHECK_EQ(units::presetText("45 deg", in("in")), "45 deg");
+  CHECK_EQ(units::presetText("6", in("in")), "6");
+}
+
 TEST(the_document_unit_is_followed_and_announced) {
   int announced = 0;
   QObject::connect(units::notifier(), &units::Notifier::changed, [&announced] { ++announced; });
