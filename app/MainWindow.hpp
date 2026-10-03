@@ -49,6 +49,7 @@ class MainWindow : public QMainWindow {
   void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")
   void buildDesign();         // the controller, its floating panel and the wiring
   void updateDesignState();   // sketch mode <-> ribbon tab set, action enabling
+  void updateSketchPrompt();  // the sketch's prompt: its steps and what the keys do now
   void setWorkspace(int index);  // 0 Review, 1 Design: swaps the ribbon tab set (same document, same timeline)
   void buildCentral();
   void buildDocks();

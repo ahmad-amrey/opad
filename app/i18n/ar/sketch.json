@@ -75,5 +75,7 @@
  "Locked ∩ curve": "مثبت ∩ منحنى",
  "Locked · Shift or Esc lets go": "مثبت · Shift أو Esc لفك التثبيت",
  "Esc release lock": "Esc فك التثبيت",
- "Locked · Shift goes to the next stop": "مثبت · Shift للانتقال إلى نقطة التوقف التالية"
+ "Locked · Shift goes to the next stop": "مثبت · Shift للانتقال إلى نقطة التوقف التالية",
+ "Shift lock": "Shift للتثبيت",
+ "Shift next stop": "Shift نقطة التوقف التالية"
 }

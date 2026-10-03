@@ -156,7 +156,9 @@ TEST(a_lock_left_on_by_a_shift_tap_is_the_next_esc) {
 TEST(a_shift_tap_on_a_lock_that_stays_goes_to_its_next_stop_or_lets_go) {
   State s = tool("line");
   s.chain = 2;
-  CHECK(shift(s) == Shift::None);  // not locked: a tap makes a lock
+  CHECK(shift(s) == Shift::None);  // not locked, off any guide
+  s.guide = true;
+  CHECK(shift(s) == Shift::Lock);  // on a guide: Shift locks onto it
   s.locked = true;
   CHECK(shift(s) == Shift::Release);  // no stop along it (or only the one the pointer is on)
   s.stops = 2;

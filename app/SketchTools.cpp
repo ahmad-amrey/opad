@@ -71,7 +71,7 @@ void SketchEditor::setTool(const QString& tool) {
   invalidatePreview();
   if (!m_chain.empty()) finishChain();
   cancel_change();
-  m_tracked.clear();m_dwellPoint=0;m_dwellTimer.stop();unlock();  // tracking points and the lock are the tool's
+  m_tracked.clear();m_dwellPoint=0;m_dwellTimer.stop();unlock();m_pointer.onLine=false;  // tracking points, their guides and the lock are the tool's
   m_clicks.clear();
   m_chain.clear();
   m_picked.clear();

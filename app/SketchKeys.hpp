@@ -9,7 +9,8 @@
 //   Values typed into the tool's boxes (UI-16) come first: Enter uses them, Esc drops them. With nothing typed, Enter
 //     applies a tool whose curves are picked (an offset, a move, a pattern), as its Apply button does.
 //   A lock that a Shift tap left on (UI-19) is the next Esc's: it lets go of the line, the step goes on. Shift taps on it
-//     go through the stops along its line (where other guides or curves cross it); with none, a tap lets go too.
+//     go through the stops along its line (where other guides or curves cross it); with none, a tap lets go too. With
+//     nothing locked and the pointer on a guide or the angle ray, Shift locks onto it: the prompt says so.
 // No Qt and no sketch here: tests/test_sketch_keys.cpp.
 #include <cstddef>
 #include <string>
@@ -28,11 +29,12 @@ struct State {
   bool applies = false;  // the tool's Apply would act now: an offset, move, rotate, scale or pattern with its curves picked
   bool locked = false;   // the pointer is locked onto a guide by a Shift tap (until a click or Esc)
   std::size_t stops = 0;  // locked: the stops along the line in reach besides the one the pointer is on
+  bool guide = false;     // nothing locked, the pointer on a guide or the angle ray of a tool that places points
 };
 enum class Back { None, UndoPoint, UndoPick, Delete };
 enum class Enter { None, UseTyped, EndChain, PickMirrorLine, Apply };
 enum class Esc { None, CancelBox, DropTyped, Unlock, BackToCurves, EndChain, CancelStep, CloseTool, ClearSelection };
-enum class Shift { None, NextStop, Release };  // what a Shift tap does
+enum class Shift { None, Lock, NextStop, Release };  // what Shift does
 
 // Tools that draw a chain until Enter: Enter is their Done button.
 inline bool chainTool(const std::string& tool) { return tool == "line" || tool == "spline" || tool == "control_spline"; }
@@ -65,7 +67,7 @@ inline Esc escape(const State& s) {
 }
 
 inline Shift shift(const State& s) {
-  if (!s.locked) return Shift::None;
+  if (!s.locked) return s.guide ? Shift::Lock : Shift::None;
   return s.stops ? Shift::NextStop : Shift::Release;
 }
 }  // namespace sketchkeys

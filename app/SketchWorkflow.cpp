@@ -195,6 +195,7 @@ sketchkeys::State SketchEditor::keyState() const {
   s.mirrorSeeds=m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && !s.mirrorAxis;
   s.typed=m_input && m_input->typed();s.applies=appliesOnEnter();s.locked=m_lock && m_lock->sticky;
   if(s.locked && m_pointer.kind==Snap::Kind::Locked)s.stops=size_t(std::max(0,m_pointer.stops-(m_pointer.stop>=0?1:0)));
+  s.guide=!m_lock && m_inView && placing() && m_pointer.onLine;
   return s;
 }
 
@@ -283,7 +284,14 @@ QString SketchEditor::keyHints() const {
   else if(esc==Esc::CancelStep)out<<(back==Back::UndoPick?tr("Esc clear picks"):tr("Esc cancel shape"));
   else if(esc==Esc::CloseTool)out<<tr("Esc close tool");
   else if(esc==Esc::ClearSelection)out<<tr("Esc clear selection");
+  const Shift shift=sketchkeys::shift(s);  // last: it comes and goes with the guides under the pointer
+  if(shift==Shift::Lock)out<<tr("Shift lock");
+  else if(shift==Shift::NextStop)out<<tr("Shift next stop");
   return out.join(QStringLiteral(" · "));
+}
+
+void SketchEditor::noteHints() {
+  if(const auto shift=sketchkeys::shift(keyState());shift!=m_shiftHint){m_shiftHint=shift;emit hintsChanged();}
 }
 
 void SketchEditor::toggleReference() {

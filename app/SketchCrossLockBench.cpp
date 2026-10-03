@@ -1,4 +1,5 @@
 #include "SketchEditor.hpp"
+#include "GuidedTool.hpp"
 #include "Jobs.hpp"
 #include <QAction>
 #include <QApplication>
@@ -28,10 +29,14 @@ void SketchEditor::benchCrossLock() {
   auto exact = [](double a, double b) { return std::abs(a - b) < 1e-9; };
   auto at = [&](int id, double u, double v) { const SkPoint* p = m_sk.point(id); return p && exact(p->x, u) && exact(p->y, v); };
   auto* f9 = m_viewport->window()->findChild<QAction*>("view.gridSnap");
-  if (!f9) {
-    check(false, "the F9 action exists");
+  PromptBar* prompt = nullptr;
+  for (auto* bar : m_viewport->findChildren<PromptBar*>(Qt::FindDirectChildrenOnly))
+    if (bar->objectName().isEmpty()) prompt = bar;
+  if (!f9 || !prompt) {
+    check(false, "the F9 action and the prompt bar exist");
     return QCoreApplication::exit(2);
   }
+  auto says = [&](const QString& hint) { return prompt->hints() == keyHints() && keyHints().contains(hint); };  // the prompt shows what the keys do now
   QSettings().setValue("view/tracking", true);
   QSettings().setValue("view/extensions", true);
   QSettings().setValue("sketch/snap/angle", true);
@@ -190,12 +195,20 @@ void SketchEditor::benchCrossLock() {
   dwell(d);
   check((m_tracked == Tracked{a, b, d}), "D acquired");
   sketchMove(ax + 2 * px, 0, Qt::NoModifier, false);
-  check(m_cursor.kind == Snap::Kind::Aligned && m_cursor.target == a && exact(m_cursor.u, ax), "the pointer follows A's vertical");
+  check(m_cursor.kind == Snap::Kind::Aligned && m_cursor.target == a && exact(m_cursor.u, ax) && says("Shift lock") && keyHints().endsWith("Shift lock"),
+        QString("the pointer follows A's vertical; the prompt says Shift locks onto it (%1)").arg(prompt->hints()));
+  sketchMove(ax + 5, 0, Qt::NoModifier, false);
+  check(m_cursor.kind == Snap::Kind::None && prompt->hints() == keyHints() && !keyHints().contains("Shift"), QString("off the guide it does not (%1)").arg(prompt->hints()));
+  sketchMove(ax + 2 * px, 0, Qt::NoModifier, false);
+  check(says("Shift lock"), "back on it, it does again");
   shift(true);
+  check(m_lock && !m_lock->sticky && prompt->hints() == keyHints() && !keyHints().contains("Shift"), "Shift held: locked, nothing about Shift any more");
   shift(false);
   check(m_lock && m_lock->sticky && m_cursor.kind == Snap::Kind::Locked && exact(m_cursor.v, 0) && m_pointer.stops == 2 && m_pointer.stop == -1 &&
             transientTexts().contains("Locked · Shift goes to the next stop"),
         QString("a Shift tap locks onto it: %1 stops in the view (not D's, below it), none under the pointer, \"Locked · Shift goes to the next stop\"").arg(m_pointer.stops));
+  check(says("Shift next stop") && keyHints().contains("Esc release lock"), QString("the prompt says Shift goes to the next stop, Esc lets go (%1)").arg(prompt->hints()));
+  prompt->grab().save(prefix + ".prompt.png");
   shift(true);
   shift(false);
   check(m_cursor.stop == 0 && m_cursor.point == a && exact(m_cursor.u, ax) && exact(m_cursor.v, ay) && transientTexts().contains("Locked ∩ tracking · 1/2"),
@@ -272,7 +285,8 @@ void SketchEditor::benchCrossLock() {
   sketchMove(45, 10, Qt::NoModifier, false);
   shift(true);
   shift(false);
-  check(m_lock && m_lock->sticky && m_pointer.stops == 0 && transientTexts().contains("Locked · Shift or Esc lets go"), "a lock that stays where nothing crosses it: no stop, \"Shift or Esc lets go\"");
+  check(m_lock && m_lock->sticky && m_pointer.stops == 0 && transientTexts().contains("Locked · Shift or Esc lets go") && says("Esc release lock") && !keyHints().contains("Shift next stop"),
+        "a lock that stays where nothing crosses it: no stop, \"Shift or Esc lets go\" (the prompt: Esc)");
   shift(true);
   shift(false);
   check(!m_lock, "a Shift tap then lets go");

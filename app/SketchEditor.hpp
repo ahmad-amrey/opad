@@ -73,7 +73,7 @@ class SketchEditor : public QObject, public SketchInput {
   bool done();
   bool escape();
   void closeTool();
-  QString keyHints() const;  // what Backspace, Enter and Esc do now, for the prompt
+  QString keyHints() const;  // what Backspace, Enter, Esc and Shift do now, for the prompt
   void toggleReference();
   void selectConnected();
   void selectType();
@@ -123,6 +123,7 @@ class SketchEditor : public QObject, public SketchInput {
   void status(const QString& text);  // what the tool waits for, or why a change was refused
   void changed();                    // geometry, selection or undo state
   void workflowChanged();
+  void hintsChanged();  // what Shift does changed (the pointer onto a guide or off it): keyHints() again
 
  private:
   friend class SketchPanel;
@@ -326,6 +327,8 @@ class SketchEditor : public QObject, public SketchInput {
   void unlock();
   void shiftKey(bool pressed);
   void resnap();         // the pointer's snap again where it is (a point acquired, a lock taken or let go)
+  void noteHints();      // hintsChanged when what Shift does changed
+  sketchkeys::Shift m_shiftHint = sketchkeys::Shift::None;
   // dragging with the select tool
   bool m_dragging = false, m_dragMoved = false;
   bool m_dragPending=false,m_dragReleased=false;double m_dragNextU=0,m_dragNextV=0;

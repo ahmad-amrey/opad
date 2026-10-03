@@ -1216,6 +1216,7 @@ void MainWindow::buildDesign() {
   connect(m_design, &DesignController::status, this, [this](const QString& text) { m_statusHover->setText(text); });
   connect(m_design, &DesignController::failed, this, [this](const QString& error) { QMessageBox::warning(this, tr("OPAD"), i18n::t(error)); });
   connect(m_design, &DesignController::stateChanged, this, &MainWindow::updateDesignState);
+  connect(m_design->sketch(), &SketchEditor::hintsChanged, this, [this] { if (m_design->sketchActive() && !m_design->pickingPlane()) updateSketchPrompt(); });
   connect(m_timeline, &TimelineWidget::opActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });
   connect(m_browser, &BrowserPanel::sketchActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });
   connect(m_browser,&BrowserPanel::editedSketchVisibilityRequested,this,[this]{auto* sketch=m_design->sketch();sketch->setVisible(!sketch->visible());});
@@ -1249,13 +1250,8 @@ void MainWindow::updateDesignState() {
   action("view.alignPlane")->setEnabled(m_doc->hasDocument && !m_doc->loading);
   if(m_design->pickingPlane()) {
     m_prompt->hide(); // The side panel guides this flow; leave the corner selector unobstructed.
-  } else if(sketching) {
-    // The keys say what they do now (UI-20); with nothing to undo, end or close: how to finish the sketch.
-    QString hints=m_design->sketch()->keyHints();
-    if(hints.isEmpty())hints=tr("%1 finish sketch").arg(action("sketch.finish")->shortcut().toString(QKeySequence::NativeText));
-    m_prompt->set("sketch",tr("Sketch"),m_design->sketch()->toolSteps(),m_design->sketch()->visible()?hints:tr("This sketch is hidden. Show it in the browser to see your edits."));
-    m_prompt->show();positionOverlays();
-  } else if(m_tool.id.isEmpty()) m_prompt->hide();
+  } else if(sketching) updateSketchPrompt();
+  else if(m_tool.id.isEmpty()) m_prompt->hide();
   m_browser->setEnabled(true);
   m_browser->setEditedSketch(sketching?(m_design->sketch()->sketchId().empty()?"active-sketch":m_design->sketch()->sketchId()):"",sketching?m_design->sketch()->name():QString(),!sketching || m_design->sketch()->visible());
   updateUndoActions();
@@ -1263,6 +1259,15 @@ void MainWindow::updateDesignState() {
     const int dof = m_design->sketch()->dof();
     m_statusSel->setText(dof == 0 ? tr("Sketch fully constrained") : tr("Sketch · %1 degrees of freedom").arg(dof));
   }
+}
+
+// The keys say what they do now (UI-20; Shift as the pointer comes onto a guide, UI-19); with nothing to undo, end or
+// close: how to finish the sketch.
+void MainWindow::updateSketchPrompt() {
+  QString hints=m_design->sketch()->keyHints();
+  if(hints.isEmpty())hints=tr("%1 finish sketch").arg(action("sketch.finish")->shortcut().toString(QKeySequence::NativeText));
+  m_prompt->set("sketch",tr("Sketch"),m_design->sketch()->toolSteps(),m_design->sketch()->visible()?hints:tr("This sketch is hidden. Show it in the browser to see your edits."));
+  m_prompt->show();positionOverlays();
 }
 
 // ---------------------------------------------------------------- theme (F31)
