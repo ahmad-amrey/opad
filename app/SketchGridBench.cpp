@@ -10,9 +10,10 @@
 using namespace opad::design;
 
 // OPAD_BENCH_SKETCH_GRID=<prefix> (TODO 11 UI-18): grid snapping through the tool code, as the mouse drives it. One
-// switch (F9's action, the panel's checkbox and the viewport agree), the step follows the zoom and the sketch shows
-// the grid it snaps to, a pointer near a node lands on it although the angle or a guide would take it, a guide away
-// from the nodes is quantised along itself, a dragged point lands on a node (Alt drags freely), and off is off.
+// switch (F9's action, the panel's checkbox and the viewport agree), the sketch shows its own grid (G hides it there
+// only, apart from snapping), the step follows the zoom, a pointer near a node lands on it although the angle or a
+// guide would take it, a guide away from the nodes is quantised along itself, a dragged point lands on a node (Alt
+// drags freely), and off is off.
 void SketchEditor::benchGrid() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_GRID");
   bool ok = true;
@@ -25,8 +26,9 @@ void SketchEditor::benchGrid() {
   QWidget* window = m_viewport->window();
   auto* f9 = window->findChild<QAction*>("view.gridSnap");
   auto* box = window->findChild<QCheckBox*>("snap-grid");
-  if (!f9 || !box) {
-    check(false, "the F9 action and the panel's checkbox exist");
+  auto* g = window->findChild<QAction*>("view.grid");
+  if (!f9 || !box || !g) {
+    check(false, "the F9 and G actions and the panel's checkbox exist");
     return QCoreApplication::exit(2);
   }
   QSettings().setValue("sketch/snap/angle", true);
@@ -34,10 +36,20 @@ void SketchEditor::benchGrid() {
   QSettings().setValue("view/tracking", true);
 
   f9->setChecked(false);
-  check(!m_viewport->gridSnap() && !box->isChecked() && !m_viewport->gridShown(), "off: the switch, the panel and the sketch grid agree");
+  check(!m_viewport->gridSnap() && !box->isChecked(), "off: the switch and the panel agree");
+  check(m_viewport->gridShown() && g->isChecked() && !QSettings().value("view/grid", false).toBool(), "the sketch shows its grid although the 3D grid is off, and G says so");
+  g->trigger();
+  check(!m_viewport->gridShown() && !g->isChecked() && !QSettings().value("sketch/grid", true).toBool() && !QSettings().value("view/grid", false).toBool(),
+        "G hides the sketch's grid and keeps that for sketches only");
   f9->trigger();
-  check(m_viewport->gridSnap() && box->isChecked() && m_viewport->gridShown() && QSettings().value("view/gridSnap").toBool(),
-        "F9 turns it on, the panel shows it, the sketch shows its grid, the setting is saved");
+  check(m_viewport->gridSnap() && box->isChecked() && !m_viewport->gridShown() && QSettings().value("view/gridSnap").toBool(),
+        "F9 turns snapping on, the panel shows it, the setting is saved, a hidden grid stays hidden");
+  m_viewport->endSketchInput();  // as replacing the sketch's plane does: out and in again
+  check(!m_viewport->gridShown() && !g->isChecked(), "out of the sketch, G shows the 3D grid (off)");
+  m_viewport->beginSketchInput(this, m_frame, m_id);
+  check(!m_viewport->gridShown() && !g->isChecked(), "back in, the sketch's grid is still hidden");
+  g->trigger();
+  check(m_viewport->gridShown() && g->isChecked() && QSettings().value("sketch/grid", false).toBool() && !QSettings().value("view/grid", false).toBool(), "G shows it again");
   box->click();
   check(!m_viewport->gridSnap() && !f9->isChecked() && !QSettings().value("view/gridSnap").toBool(), "the panel's checkbox is the same switch (off)");
   box->click();
@@ -116,7 +128,7 @@ void SketchEditor::benchGrid() {
   check(at(free, -s, 0) && m_undo.size() == undo + 1, "dropped on a node, one undo step");
 
   f9->trigger();
-  check(!m_viewport->gridSnap() && !box->isChecked() && !m_viewport->gridShown(), "F9 turns it off again");
+  check(!m_viewport->gridSnap() && !box->isChecked() && m_viewport->gridShown(), "F9 turns snapping off again, the grid stays");
   setTool("line");
   place(-5 * s + 3 * px, 3 * s + 2 * px);
   check(!m_chain.empty() && at(m_chain.back(), -5 * s + 3 * px, 3 * s + 2 * px), "off, a click stays where it is");

@@ -329,7 +329,7 @@ void Viewport::initViewer() {
   applyTokens();
   setRenderQuality(savedRenderQuality());
   setSceneBackground(m_sceneBackground);
-  setGrid(m_grid);
+  showGrid();
   setTwoDimensional(m_twoDimensional);
   sync();
 }
@@ -510,18 +510,22 @@ void Viewport::setStyle(Style s) {
 }
 
 void Viewport::setGrid(bool on) {
-  m_grid = on;
+  (m_sketchInput ? m_sketchGrid : m_grid) = on;
+  showGrid();
+}
+
+void Viewport::showGrid() {
   if (!m_initialised) return;
   updateGridExtent();
   if (gridShown()) m_viewer->ActivateGrid(Aspect_GT_Rectangular, Aspect_GDM_Lines);
   else m_viewer->DeactivateGrid();
   redrawScene();
+  emit gridShownChanged(gridShown());
 }
 
 void Viewport::setGridSnap(bool on) {
   if (m_gridSnap == on) return;
   m_gridSnap = on;
-  if (m_sketchInput) setGrid(m_grid);  // a sketch shows the grid it snaps to
   emit gridSnapChanged(on);
 }
 

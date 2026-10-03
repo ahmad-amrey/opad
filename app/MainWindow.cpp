@@ -435,7 +435,7 @@ void MainWindow::buildActions() {
     updateChips();
   });
   QAction* grid = addAction("view.grid", tr("Grid"), "grid", QKeySequence("G"), [this] {}, true);
-  connect(grid, &QAction::toggled, this, [this](bool on) { m_viewport->setGrid(on); m_settings.setValue("view/grid",on); });
+  connect(grid, &QAction::toggled, this, [this](bool on) { m_viewport->setGrid(on); m_settings.setValue(m_viewport->sketching()?"sketch/grid":"view/grid",on); });
   addAction("view.gridSettings",tr("Grid settings"),"grid",QKeySequence("Shift+G"),[this] {
     auto* dialog=new QDialog(this,Qt::Tool);dialog->setAttribute(Qt::WA_DeleteOnClose);dialog->setWindowTitle(tr("Grid settings"));
     auto* form=new QFormLayout(dialog);auto* spacing=new QDoubleSpinBox(dialog);spacing->setRange(0,100000);spacing->setDecimals(3);spacing->setSpecialValueText(tr("Automatic"));spacing->setValue(m_settings.value("view/gridSpacing",0).toDouble());
@@ -1048,6 +1048,7 @@ void MainWindow::buildStatusBar() {
   }
   // One grid snapping switch: the sketch panel's checkbox turns the viewport's, and F9 follows (and saves it).
   connect(m_viewport,&Viewport::gridSnapChanged,this,[this](bool on){action("view.gridSnap")->setChecked(on);});
+  connect(m_viewport,&Viewport::gridShownChanged,action("view.grid"),&QAction::setChecked);  // G shows the sketch's own grid state in a sketch
   statusBar()->addPermanentWidget(m_statusSel);
   statusBar()->addPermanentWidget(m_statusUnits);
   statusBar()->setSizeGripEnabled(false);

@@ -65,16 +65,18 @@ class Viewport : public QWidget, protected AIS_ViewController {
   NavPreset navPreset() const { return m_preset; }
   void setStyle(Style s);
   Style style() const { return m_style; }
+  // G: the grid's visibility, one state outside sketches (view/grid) and one inside (sketch/grid, on unless hidden
+  // there); gridShownChanged tells the G action which one it shows.
   void setGrid(bool on);
   void configureGrid(double spacing,double extent);
   void setSelectThrough(bool on) {m_selectThrough=on;}
   void UpdateRubberBand(const Graphic3d_Vec2i& from,const Graphic3d_Vec2i& to) override;
-  // Grid snapping is one switch (F9, mirrored by the sketch panel): gridSnapChanged tells both. While sketching the
-  // grid is shown when it is on (or the grid is), and in a sketch or 2D mode its step follows the zoom.
+  // Grid snapping is one switch (F9, mirrored by the sketch panel): gridSnapChanged tells both. It does not depend on
+  // the grid being shown (the snap marker shows the node); in a sketch or 2D mode the step follows the zoom.
   void setGridSnap(bool on);
   bool gridSnap() const { return m_gridSnap; }
   double gridStep() const;
-  bool gridShown() const { return m_grid || (m_gridSnap && m_sketchInput); }
+  bool gridShown() const { return m_sketchInput ? m_sketchGrid : m_grid; }
   double gridShownStep() const { return m_gridShownStep; }  // as the sketch / 2D grid was last laid out
   opad::json circleInfo(const opad::Ref& ref) const;
   void setShadows(bool on);
@@ -249,6 +251,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void isolationChanged();  // entered, left, or left because every isolated object was deleted
   void sectionDragged(const opad::Vec3& origin);  // the section plane's handle was dragged here
   void gridSnapChanged(bool on);
+  void gridShownChanged(bool on);
 
  public slots:
   void sync();
@@ -289,6 +292,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Job* m_boxJob=nullptr;
   CursorWarpGate m_warpGate;
   void updateGridExtent();
+  void showGrid();  // gridShown() on screen
   void applySelectionFilter(SelFilter f);  // setSelectionFilter's work, also for the filter already set (re-activates)
   // 2D mode and sketches: the grid follows the view (its plane, the visible area, a spacing for the zoom), so it never ends.
   void updateInfiniteGrid(bool force);
@@ -427,6 +431,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   double m_gridStep=10;
   double m_gridSpacing=0;  // view/gridSpacing (0 = automatic), read when the grid settings change
   double m_gridShownStep=0, m_gridShownExtent=0, m_gridShownX=0, m_gridShownY=0;  // the infinite grid as last laid out
+  bool m_sketchGrid = true;  // the grid in sketches (sketch/grid)
   bool m_grid = false, m_sectionEnabled = false, m_sectionCaps = true, m_initialised = false, m_needFit = false;
   std::vector<std::string> m_fitNodesOnSync;
   bool m_flushingViewEvents = false, m_repaintAfterFlush = false;
