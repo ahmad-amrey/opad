@@ -485,6 +485,26 @@ void FeaturePanel::setValue(const QString& name, const opad::json& value) {
   emit inputsChanged();
 }
 
+QStringList FeaturePanel::valueInputs() const {
+  QStringList out;
+  if (!m_spec) return out;
+  for (const auto& in : m_spec->inputs) {
+    const auto it = m_widgets.find(QString::fromStdString(in.name));
+    if (it != m_widgets.end() && it->second.expr && !it->second.row->isHidden()) out << it->first;
+  }
+  return out;
+}
+
+QString FeaturePanel::valueText(const QString& input) const {
+  const auto it = m_widgets.find(input);
+  return it != m_widgets.end() && it->second.expr ? it->second.expr->lineEdit()->text() : QString();
+}
+
+QString FeaturePanel::problem(const QString& input) const {
+  const auto it = m_widgets.find(input);
+  return it != m_widgets.end() && it->second.expr ? it->second.expr->problem() : QString();
+}
+
 QString FeaturePanel::statusText() const { return m_status->text(); }
 
 void FeaturePanel::setStatus(const QString& text, bool error) {

@@ -13,6 +13,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <functional>
+#include <tuple>
 
 namespace shortcuts {
 static QHash<QString,Scope>& scopes() { static QHash<QString,Scope> given; return given; }
@@ -181,9 +182,12 @@ ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions,QWidget* parent):Q
     item->setText(2,scopeName(action->objectName()));m_entries.push_back({action,item,shortcuts::binding(action),shortcuts::binding(action)});
   }
   auto* reservedGroup=new QTreeWidgetItem(m_tree);reservedGroup->setText(0,tr("Editing controls (reserved)"));reservedGroup->setData(0,Qt::UserRole,-1);
-  for(const auto& pair:QList<QPair<QString,QString>>{{tr("End the current step, then close the tool"),"Esc"},{tr("Complete current input"),"Return"},{tr("Delete sketch selection"),"Del"},{tr("Undo the last sketch point"),"Backspace"},
-                                                      {tr("Type a value into the tool's boxes"),"0-9 . , - +"},{tr("Next or previous value box"),"Tab, Shift+Tab"}}) {
-    auto* item=new QTreeWidgetItem(reservedGroup);item->setText(0,pair.first);item->setText(1,pair.second);item->setText(2,tr("In sketch"));item->setData(0,Qt::UserRole,-1);
+  // The value keys belong to every tool that takes values (UI-122): a sketch tool, a feature panel, the section, a drawing
+  // being placed. The filters' and display styles' digits work while none runs.
+  for(const auto& [text,keys,where]:QList<std::tuple<QString,QString,QString>>{{tr("End the current step, then close the tool"),"Esc",tr("In sketch")},{tr("Complete current input"),"Return",tr("In sketch")},
+                                                                             {tr("Delete sketch selection"),"Del",tr("In sketch")},{tr("Undo the last sketch point"),"Backspace",tr("In sketch")},
+                                                                             {tr("Type a value into the tool's boxes"),"0-9 . , - +",tr("In tools that take values")},{tr("Next or previous value box"),"Tab, Shift+Tab",tr("In tools that take values")}}) {
+    auto* item=new QTreeWidgetItem(reservedGroup);item->setText(0,text);item->setText(1,keys);item->setText(2,where);item->setData(0,Qt::UserRole,-1);
   }
   m_tree->sortItems(0,Qt::AscendingOrder);m_tree->expandAll();
   m_details=new QLabel(this);m_details->setWordWrap(true);layout->addWidget(m_details);

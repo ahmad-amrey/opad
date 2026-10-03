@@ -109,12 +109,11 @@ DimensionHandle::DimensionHandle(Viewport* view,JobRunner* jobs):QWidget(view),m
   auto* row=new QHBoxLayout(this);row->setContentsMargins(8,2,6,2);row->setSpacing(6);
   // The box holds the value; its keys are DynamicInput's: the first key typed replaces the value, Tab stays, a comma is
   // the decimal comma, Esc undoes, then gives the keyboard back to the view, Up/Down and the wheel step the value here.
-  m_input=new DynamicInput(view,this);m_input->setFields({DynamicInput::Field{"value",tr("Distance"),{},false,{},{},true}});
-  box()->setToolTip(tr("Type a value or an expression · Enter applies · Esc restores · ↑/↓ or the wheel step it (Shift ×10, Ctrl ×0.1)"));
+  m_input=new DynamicInput(view,this);m_label=tr("Distance");setFields();
   m_result=new QLabel(this);m_result->setObjectName("dimensionResult");m_result->hide();
   row->addWidget(m_input);row->addWidget(m_result);
-  box()->installEventFilter(this);
-  connect(m_input,&DynamicInput::valueTyped,this,[this]{fit();emit valueChanged(text());});
+  connect(m_input,&DynamicInput::valueTyped,this,[this](const QString& key){fit();if(key=="value")emit valueChanged(text());});
+  connect(m_input,&DynamicInput::optionEdited,this,&DimensionHandle::extraEdited);
   connect(m_input,&DynamicInput::committed,this,&DimensionHandle::accepted);  // the value went out as it was typed: the shown preview stays valid
   connect(m_input,&DynamicInput::stepped,this,[this](int,double steps,Qt::KeyboardModifiers modifiers){nudge(steps,modifiers);});
   connect(view,&Viewport::notesMoved,this,[this]{reposition();indexAnchors();});qApp->installEventFilter(this);hide();
@@ -131,7 +130,18 @@ void DimensionHandle::restyle() {
                     .arg(theme::css(t.bg2),theme::css(active?t.sel:t.line),theme::css(t.fg3)));
   auto* arrow=static_cast<ScalarArrow*>(m_arrow.get());arrow->fill=t.sel;arrow->rim=t.dark?QColor("#0b0d10"):QColor("#ffffff");
 }
-void DimensionHandle::setLabel(const QString& label){m_input->setFields({DynamicInput::Field{"value",label,{},false,{},{},true}});fit();}
+void DimensionHandle::setLabel(const QString& label){m_label=label;setFields();fit();}
+void DimensionHandle::setExtraFields(const QList<DynamicInput::Field>& fields) {
+  m_extras=fields;setFields();fit();
+  if(isVisible())reposition();  // as wide as its boxes
+}
+void DimensionHandle::setFields() {
+  QLineEdit* before=box();
+  m_input->setFields(QList<DynamicInput::Field>{DynamicInput::Field{"value",m_label,{},false,{},{},true}}+m_extras);
+  if(box()==before)return;  // the boxes were made again (another set of keys)
+  box()->setToolTip(tr("Type a value or an expression · Enter applies · Esc restores · ↑/↓ or the wheel step it (Shift ×10, Ctrl ×0.1)"));
+  for(int i=0;i<m_input->count();++i)m_input->box(i)->installEventFilter(this);
+}
 void DimensionHandle::fit() {
   // Wide enough for what is typed; the evaluated value shows next to an expression.
   const bool expression=!plainNumber(text()) && !text().trimmed().isEmpty();
@@ -174,7 +184,10 @@ void DimensionHandle::configure(const opad::Vec3& origin,const opad::Vec3& axis,
   show();raise();reposition();indexAnchors();
 }
 void DimensionHandle::showEvent(QShowEvent*) {restyle();reposition();}
-void DimensionHandle::hideEvent(QHideEvent*) {if(m_indexJob)m_indexJob->cancel();m_indexJob=nullptr;m_indexReady=false;m_dragging=false;m_drawn=false;if(m_input->editing())m_view->setFocus();m_view->removeOverlay(m_arrow);}
+void DimensionHandle::hideEvent(QHideEvent*) {
+  if(m_indexJob)m_indexJob->cancel();m_indexJob=nullptr;m_indexReady=false;m_dragging=false;m_drawn=false;if(m_input->editing())m_view->setFocus();m_view->removeOverlay(m_arrow);
+  if(m_input->typed())m_input->used();  // the tool has what was typed into the other boxes; the next time they start empty
+}
 void DimensionHandle::reposition() {
   if(!isVisible() || m_arrow.IsNull())return;
   opad::Vec3 tip=m_origin,next=m_origin;
@@ -220,10 +233,10 @@ void DimensionHandle::nudge(double steps,Qt::KeyboardModifiers modifiers) {
   setText(lengthText(m_value,std::min(step,units::fromDisplay(units::Kind::Length,1))),true);reposition();
 }
 void DimensionHandle::type(const QString& text) {m_input->type(text);}  // the first key replaces the value, the next go on
-void DimensionHandle::focusValue() {m_input->cycle(false);}            // the box, its value selected
+void DimensionHandle::focusValue(bool back) {m_input->cycle(back);}    // the box, its value selected
 bool DimensionHandle::eventFilter(QObject* target,QEvent* event) {
   if(!isVisible())return false;
-  if(target==box()) {  // its keys are DynamicInput's; the frame lights up while it has the keyboard
+  if(auto* edit=qobject_cast<QLineEdit*>(target);edit && m_input->isAncestorOf(edit)) {  // its keys are DynamicInput's; the frame lights up while one has the keyboard
     if(event->type()==QEvent::FocusIn || event->type()==QEvent::FocusOut)restyle();
     return false;
   }

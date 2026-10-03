@@ -28,13 +28,19 @@ class DimensionHandle : public QWidget {
   // distance. Kept while a drag runs.
   void setScale(double scale) {if(!m_dragging)m_scale=scale;}
   // Value keys (digits, keypad too, point, comma, sign) typed over the view or one of its tool panels start the box. A
-  // tool that routes its keys itself (the sketch, UI-16) turns that off and calls type() and focusValue().
+  // tool that routes its keys itself (the sketch, UI-16; a feature, UI-122) turns that off and calls type() and focusValue().
   void setCapturesKeys(bool on) {m_capturesKeys=on;}
-  void type(const QString& text);  // into the box, which takes the keyboard for the keys that follow
-  void focusValue();               // Tab: the box, its value selected
+  void type(const QString& text);       // into the box, which takes the keyboard for the keys that follow
+  void focusValue(bool back = false);   // Tab: the box (Shift+Tab: the last), its value selected
+  // More boxes after the value, Tab going round them (the extrude's taper, UI-122): option boxes showing the tool's value
+  // grey; typed into, extraEdited gives it at once, Esc the value before. Forgotten when the handle hides.
+  void setExtraFields(const QList<DynamicInput::Field>& fields);
+  void setProblem(const QString& key, const QString& problem) {m_input->setProblem(key,problem);}  // "value": the arrow's
+  DynamicInput* input() const {return m_input;}
  signals:
   void valueChanged(const QString& expression);
-  void accepted();  // Enter in the value box: apply the operation
+  void extraEdited(const QString& key, const QString& value);
+  void accepted();  // Enter in a box: apply the operation
  protected:
   void showEvent(QShowEvent*) override;
   void hideEvent(QHideEvent*) override;
@@ -58,7 +64,10 @@ class DimensionHandle : public QWidget {
   std::vector<std::array<QPointF,2>> m_screenSegments;
   bool m_indexReady=false;
   Viewport* m_view;
+  void setFields();
   DynamicInput* m_input;
+  QString m_label;
+  QList<DynamicInput::Field> m_extras;
   QLabel* m_result;
   opad::Vec3 m_origin{},m_axis{1,0,0};
   QPointF m_start,m_screenAxis;

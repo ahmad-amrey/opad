@@ -193,7 +193,7 @@ bool DynamicInput::backspace() {
 
 void DynamicInput::dropTyped() {
   for(int i=0;i<count();++i) {
-    auto& box=m_boxes[i];if(!box.typed && box.edit->text().isEmpty())continue;
+    auto& box=m_boxes[i];if(box.field.valued || (!box.typed && box.edit->text().isEmpty()))continue;  // a box that holds its value keeps it
     {QSignalBlocker block(box.edit);box.edit->clear();}
     edited(i);
   }

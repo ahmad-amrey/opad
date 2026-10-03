@@ -25,6 +25,7 @@ class ExprEdit : public QWidget {
   void setText(const QString& text);
   QString text() const;
   bool valid() const { return m_valid; }
+  QString problem() const { return m_valid ? QString() : m_value->text(); }  // why it does not evaluate
   QLineEdit* lineEdit() const { return m_edit; }
  signals:
   void changed();
@@ -73,6 +74,10 @@ class FeaturePanel : public QWidget {
   QString statusText() const;
   void setEditHidden(bool hidden);
   void setValue(const QString& input, const opad::json& value);  // expression, choice or flag, as the user would type it
+  // The values shown (lengths, angles, numbers, counts), in the form's order: what the keyboard types into (UI-122).
+  QStringList valueInputs() const;
+  QString valueText(const QString& input) const;  // as its field shows it
+  QString problem(const QString& input) const;    // why it does not evaluate; empty: it does
   void activate(const QString& input);  // empty: none
   void activateNextPick();              // the first shown pick input that still needs picks
   // TODO 10 B14: the name, colour and component of the bodies a new feature makes, shown while its operation is
