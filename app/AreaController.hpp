@@ -96,6 +96,10 @@ class AreaServices {
   // Shows a contextual tab the area added (RibbonLayout::addContextualTab) first in its workspace's row, current, in its
   // accent; hidden again, the tab that was current comes back. False: no such contextual tab.
   bool setContextualTab(const QString& id, bool shown);
+  // A page of the area in the viewport's place (a drawing sheet) while a document is open and nothing loads; null brings
+  // the viewport back. The window takes the page into its central stack; the browser floats over whichever is shown.
+  void setCentralPage(QWidget* page);
+  QWidget* centralPage() const;
  private:
   MainWindow* m_window;
 };

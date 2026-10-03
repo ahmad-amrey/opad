@@ -15,6 +15,7 @@
 
 class JobRunner;
 class Job;
+class Progress;
 class AppDocument : public QObject {
   Q_OBJECT
   // Snapshots retain the source even if the window closes while its worker is copying.
@@ -73,6 +74,11 @@ class AppDocument : public QObject {
   using SnapshotCallback = std::function<void(std::shared_ptr<opad::Document>, const QString&)>;
   bool captureSnapshot(JobRunner* jobs, SnapshotCallback done);
   bool snapshotBusy() const { return m_capturing; }
+  // A worker that only reads the document (a bill of materials) without copying it: nothing changes the document
+  // meanwhile (designBusy), until the worker has really stopped, also after a cancel; then `done(ok, error)` runs on the
+  // UI thread. `work` gets the document and a copy of the scene. Null when the document is busy or there is none.
+  Job* readAsync(JobRunner* jobs, const QString& title, std::function<void(const opad::Document&, const opad::Scene&, Progress)> work,
+                 std::function<void(bool ok, const QString& error)> done);
   void recover(opad::Document&& document, opad::Scene&& resolved);
   // Prepared on a worker. Swaps the old values back into the caller for worker disposal.
   void commitSnapshot(opad::Document& document, opad::Scene& resolved,

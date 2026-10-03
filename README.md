@@ -346,6 +346,88 @@ language's own name) and `"@rtl"`. To add a language, copy `ar.json`, translate 
 cover yet. A file `i18n/<code>.json` next to `opad.exe` overrides the built-in one, so a translation can be tried
 without rebuilding.
 
+## Technical drawings (sheets)
+
+A drawing is a set of sheets in the document itself. `sheet`, `sheet_view` and `sheet_item` operations hold the
+definitions: paper size and standard (ISO or ASME, first or third angle projection, scale, title block values),
+views (a base view of the model or of chosen components, and views projected from it, which stay aligned with their
+parent and follow it when it moves), dimensions and notes. A `properties` operation gives bodies and components part
+properties (part number, description, material, BoM flag) for parts lists. The commands are `sheet`, `sheet_view`,
+`sheet_item`, `sheet_edit`, `sheet_info` and `part_properties` (CLI, MCP and Python):
+
+```sh
+opad-cli sheet plate.opad --size A4 --values '{"title": "Plate"}'
+opad-cli sheet_view plate.opad --sheet <sheet> --orient front --at '[100,150]'
+opad-cli sheet_view plate.opad --sheet <sheet> --parent <front view> --side bottom
+opad-cli sheet_item plate.opad --sheet <sheet> --view <top view> --type diameter --refs '["<body>/edge/9"]'
+opad-cli sheet_info plate.opad --sheet <sheet>
+```
+
+The hidden-line linework of a view is never stored: it is a pure function of the bodies' content keys, their
+placements and the view's definition, so it is projected when a sheet is shown or exported and cached under that
+fingerprint (`opad-cli project`). Opening a document with sheets costs nothing, and a model edit adds no drawing lines
+to a diff. A dimension keeps the value it was made with, as a pinned measurement does; `sheet_info` measures it again
+and marks the ones the model has changed. Sheets, views and dimensions carry no `target`, so two people adding views and
+dimensions to one sheet merge without a conflict; part properties merge field by field.
+
+In the app the browser lists them in a Drawings folder: drawing, sheets, their views (named by the standard view they
+show when they have no name of their own) with their dimensions, and the sheet's notes; a record a newer OPAD wrote is
+marked with the reason. F2 renames a drawing, sheet or view; Del or the row's menu deletes in one step (a sheet takes its
+views and items with it, a base view the views projected from it) and Ctrl+Z brings them back; Copy id gives the id the
+commands above take. These operations are not design steps, so the timeline does not show them.
+
+Compatibility: these are new operation types and the format version is unchanged, so a document without drawings is
+exactly what it was and opens everywhere. A document with sheets or part properties opens in builds that keep
+operation types they do not know (the tolerant loader); older builds refuse it with "unknown op type: sheet".
+Within the drawing records the same rule holds one level down: a view kind, dimension type, standard or orientation
+this build does not know is kept, written back unchanged and listed among the unresolved operations as needing a
+newer OPAD.
+
+### Materials and mass
+
+`material` takes a library id or any name; `opad-cli materials` lists the library (steel, stainless steel, aluminium
+6061, brass, copper, titanium, ABS, PLA, PETG, nylon PA6 and PA12, polycarbonate, POM, FR-4 and glass) with densities
+and display colours, and `opad-cli materials --match "Aluminum 6061-T6"` shows what a name maps to. A body is made of
+the nearest material set upwards (its own, else its component's), else the material its file names (STEP, glTF and
+OBJ material names such as "Stainless Steel 316L", "SS304", "PA12" or "Plastic - ABS" map onto the library). Its mass
+is the enclosed volume times the density; a `density` property (g/cm3) overrides the library's and a `mass` property
+(g) the whole computation, for purchased parts modelled as shells. The Properties panel and `opad-cli properties` show
+`material`, `density` and `mass` (g, for a component the sum of its bodies when all of them have one).
+`part_properties --appearance true` also colours the targets as their material.
+
+```sh
+opad-cli part_properties housing.opad --target <body> --set '{"material": "PETG", "part_number": "OP-1002"}'
+```
+
+### Bill of materials
+
+`opad-cli bom` lists the parts of a document (or of one component, `--root`) with their quantities, part properties
+and masses. A part is a body, or a component marked `bom: purchased` (bought as one; what is in it is not listed).
+Parts are the same when they share a part number, or else the same shape and material: instances of one body entry,
+and also copies stored as their own geometry (design patterns, mirrors of symmetric parts, STEP files that write each
+occurrence out) when they are the same solid moved and turned. A mirror image of an asymmetric part is a part of its
+own. Assemblies are the same when they hold the same items in the same places. `bom: exclude` leaves a node out with
+everything under it; mesh and drawing bodies are left out unless `--references true`. Occurrence numbers from CAD
+exports ("Bracket:2", "Bolt<3>") and instance numbers shared by a row ("Screw 1" to "Screw 4") are dropped from the
+names.
+
+* `--mode parts` (default): every part once, its quantity in the whole product.
+* `--mode top`: the items of the assembly itself (a document with one root component is that assembly).
+* `--mode indented`: assemblies with their items below them, numbered 1, 1.2, 1.2.1, with the quantity per assembly
+  and in total.
+
+Masses are in g (`--mass_unit kg|lb`); a row whose material has no density says why (`mass_error`), and the totals say
+whether the mass is complete. `--format csv` writes RFC 4180 text in UTF-8 with a byte order mark (Excel opens it as
+such) and CRLF line ends, to `--out` or to stdout; text a spreadsheet would run as a formula (`=`, `+`, `-`, `@`) gets a
+leading `'`; `--separator ";"` for locales that use the comma as decimal point. Columns: Item, (Level,) Qty, (Total
+qty,) Part number, Name, Description, Material, Mass, Total mass, Vendor, Purchased, Source, Notes and one per custom
+property.
+
+```sh
+opad-cli bom robot.opad --mode indented --format csv --out robot-bom.csv
+opad-cli bom robot.opad --mode top --mass_unit kg
+```
+
 ## Using it in a git repository
 
 OPAD documents remain readable UTF-8 text with LF endings, append-only operations and immutable

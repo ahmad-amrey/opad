@@ -295,11 +295,18 @@ void MainWindow::moveEvent(QMoveEvent* e) {
 }
 
 void MainWindow::setLoading(bool on) {
-  m_stack->setCurrentIndex(on || m_doc->hasDocument ? 1 : 0);  // the viewport (dimmed, spinner) rather than the start page while loading
+  m_loadShown = on;
+  showCentral();  // the viewport (dimmed, spinner) rather than the start page while loading
   m_viewport->setBlocked(on);
   m_loadShade->setVisible(on);
   for (QWidget* w : std::initializer_list<QWidget*>{m_browser, m_timeline, m_propsPanel, m_annotationsPanel, m_sectionPanel, m_toolPanel, m_featurePanel}) w->setEnabled(!on);
   if (on) positionOverlays();
+}
+
+void MainWindow::showCentral() {
+  QWidget* page = m_loadShown ? m_viewport : !m_doc->hasDocument ? static_cast<QWidget*>(m_empty) : m_centralPage ? m_centralPage : m_viewport;
+  m_stack->setCurrentWidget(page);
+  if (m_browserOverlay) m_browserOverlay->setScene(page == m_empty ? m_viewport : page);
 }
 
 bool MainWindow::eventFilter(QObject* o, QEvent* e) {

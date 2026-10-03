@@ -32,6 +32,7 @@ void MainWindow::buildEditActions() {
   addAction("edit.rename", tr("Rename"), "rename", QKeySequence("F2"), [this] {
     auto ids = currentNodeIds();
     if (ids.size() == 1) return m_browser->startRename(ids.front());
+    if (ids.empty() && m_selRows.size() == 1) return m_browser->startRename(m_selRows.front());  // an area's row, when its folder renames
     if (ids.empty()) return;
     // Several at once: one name, numbered in selection order (TODO 10 B15).
     QString base = m_doc->nodeName(ids.front());
@@ -168,6 +169,7 @@ void MainWindow::restoreOp(const std::string& requestedId) {
 void MainWindow::deleteCurrent() {
   std::string id = m_timeline->currentOp();
   if (!id.empty() && m_timeline->hasFocus()) return deleteOp(id);
+  if (!m_selRows.empty() && m_browser->removeRows(m_selRows)) return;  // an area's rows (the Drawings folder's): its folder deletes them
   std::set<std::string> ops;
   const auto selected = currentNodeIds();
   for (const auto& nid : selected) if (const opad::Node* n = m_doc->node(nid)) ops.insert(n->source_op);

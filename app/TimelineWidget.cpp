@@ -14,6 +14,7 @@
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
+#include "opad/drawing/sheet.hpp"
 
 namespace {
 QString shortId(const std::string& id) { return QString::fromStdString(id.substr(0, 8)); }
@@ -24,7 +25,8 @@ QString shortId(const std::string& id) { return QString::fromStdString(id.substr
 // tombstones go with them.
 bool timelineShows(const opad::Document& doc, const opad::Op& op) {
   if (op.type == "annotation" || op.type == "measurement") return false;
-  if (!opad::Document::known_type(op.type)) return false;  // a newer build's op (drawing sheets...): nothing to show or edit here
+  if (!opad::Document::known_type(op.type)) return false;  // a newer build's op: nothing to show or edit here
+  if (opad::drawing::is_drawing_op(op.type)) return false;  // sheets and part properties: the Drawings folder, Properties
   // The design history shows sketches and features; edits and the results they regenerate are how those
   // changed, not steps of their own, and parameters live in their dialog.
   if (op.type == "edit" || op.type == "regen" || op.type == "param") return false;
@@ -81,6 +83,12 @@ void TimelineWidget::rebuild() {
   updateScrollRange();
   if (atEnd) m_scroll->setValue(m_scroll->maximum());
   update();
+}
+
+std::vector<std::string> TimelineWidget::shownOps() const {
+  std::vector<std::string> ids;
+  for (size_t i : m_shown) ids.push_back(m_doc->doc.ops[i].id);
+  return ids;
 }
 
 bool TimelineWidget::isUnresolved(const std::string& opId) const { return m_unresolved.count(opId) > 0; }

@@ -101,6 +101,7 @@ class MainWindow : public QMainWindow {
   void guarded(const std::function<void()>& fn);
   bool maybeSave();
   void showDocument(bool has);
+  void showCentral();  // the start page, the viewport (also while loading) or an area's page; the browser floats over it
   void beginLoad(std::function<void()> after);
   void setLoadPhase(const QString& phase, int pct);
   QString meshPhase() const;
@@ -146,6 +147,7 @@ class MainWindow : public QMainWindow {
   void resolveCurrentAnnotation();
   void restyleAnnotation(const std::string& opId, const std::string& style);  // an edit op on the note
   void exportDialog(std::vector<std::string> ids = {});
+  void runExport(const opad::json& args, const QString& out);  // ExportDialog.cpp: on a worker (ExportJob.hpp), the result in m_lastExport
   void drawingToSketch();
   void browseInstances(const std::string& id);
   void screenshot();
@@ -175,6 +177,7 @@ class MainWindow : public QMainWindow {
   AppDocument* m_doc = nullptr;
   AreaServices m_areaServices{this};
   std::vector<AreaController*> m_areas;  // owned; deleted first in ~MainWindow
+  qsizetype m_ownCommands = 0;           // the window's own commands, first in m_actions; the areas' follow
   bool m_areasReady = false;
   unsigned long long m_areaGeneration = 0;  // the document generation the areas last saw (documentChanged's "replaced")
   RecoveryManager* m_recovery = nullptr;
@@ -188,6 +191,8 @@ class MainWindow : public QMainWindow {
   class QActionGroup* m_workspaceGroup = nullptr;  // the workspace.* commands: one checked
   QMenu* m_viewMenu = nullptr;
   QStackedWidget* m_stack = nullptr;
+  QWidget* m_centralPage = nullptr;  // an area's page in the viewport's place (AreaServices::setCentralPage)
+  bool m_loadShown = false;
   EmptyState* m_empty = nullptr;
   Viewport* m_viewport = nullptr;
   ViewportChips* m_chips = nullptr;
@@ -267,6 +272,7 @@ class MainWindow : public QMainWindow {
   BrowserOverlay* m_browserOverlay = nullptr;
   QDockWidget* m_timelineDock = nullptr;
   opad::json m_lastMeasure;
+  opad::json m_lastExport;  // the last export's result, or {"error"}
   QSettings m_settings;
   QTimer m_gitTimer;
   bool m_syncing = false;

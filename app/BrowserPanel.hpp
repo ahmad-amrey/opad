@@ -55,6 +55,7 @@ class BrowserPanel : public QWidget {
   void addDecorator(browser::Decorator decorator);  // repaints
   void addFolder(browser::Folder folder);           // after the ones added before; rebuilds
   void refreshDecorations();                        // repaints: a decorator's answer changed (a folder's items: rebuild())
+  bool removeRows(const std::vector<std::string>& ids);  // Del on provided rows: their folders' remove; false when none took them
   BrowserTree* tree() const { return m_tree; }      // benches
 
  signals:

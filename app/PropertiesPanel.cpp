@@ -13,6 +13,7 @@
 #include <string>
 
 #include "I18n.hpp"
+#include "PartProperties.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
 
@@ -159,7 +160,10 @@ void PropertiesPanel::addRow(const QString& key, const opad::json& v) {
   }
   // Measures say what they measure in, in the document's unit (the geometry is stored in mm): "9593.088" alone read as a
   // bare count.
-  const QString text = measure && v.is_number() ? units::format(*measure, v.get<double>()) : fmtValue(v);
+  const QString text = measure && v.is_number() ? units::format(*measure, v.get<double>())
+                       : key == "density" && v.is_number() ? fmtValue(v) + QString::fromUtf8(" g/cm³")
+                       : key == "material" && v.is_string() ? parts::materialName(v.get<std::string>())  // a library material by its translated name
+                                                            : fmtValue(v);
   if (measure && v.is_number()) row->setToolTip(1, fmtNum(shown(v.get<double>())) + ' ' + units::symbol(*measure));
   row->setText(1, QChar(0x202A) + text + QChar(0x202C));  // LRE..PDF: numbers and vectors keep their order in a right-to-left UI
   if (v.is_number() || v.is_array() || (v.is_string() && key == "key")) row->setFont(1, theme::mono(12));
@@ -191,8 +195,8 @@ void PropertiesPanel::fill() {
   m_filledWidth = m_table->viewport()->width() - m_table->columnWidth(0);
   m_splitVectors = false;
   m_table->clear();
-  static const char* order[] = {"surface", "curve", "area", "length", "volume", "radius", "diameter", "normal", "axis", "center", "center_of_mass",
-                                "start", "end", "origin", "bbox", "faces", "edges", "vertices", "solid", "representation", "material", "instances",
+  static const char* order[] = {"surface", "curve", "area", "length", "volume", "mass", "radius", "diameter", "normal", "axis", "center", "center_of_mass",
+                                "start", "end", "origin", "bbox", "faces", "edges", "vertices", "solid", "representation", "material", "density", "instances",
                                 "opacity", "visible", "locked", "transform", "world", "component", "source", "key", "source_op"};
   std::set<std::string> done;
   auto addKey = [&](const std::string& k) {
@@ -211,7 +215,7 @@ void PropertiesPanel::fill() {
   for (const char* k : order) addKey(k);
   for (auto it = props.begin(); it != props.end(); ++it) {
     const std::string& k = it.key();
-    if (done.count(k) || k == "id" || k == "ref" || k == "type" || k == "name" || k == "path" || k == "adjacent_faces" || k == "edges" || k == "modified_by" || k == "body" || k == "body_name" || k == "index" || k == "parent" || k == "effectively_visible" || k == "missing")
+    if (done.count(k) || k == "id" || k == "ref" || k == "type" || k == "name" || k == "path" || k == "adjacent_faces" || k == "edges" || k == "modified_by" || k == "body" || k == "body_name" || k == "index" || k == "parent" || k == "effectively_visible" || k == "missing" || k == "part")
       continue;
     addKey(k);
   }

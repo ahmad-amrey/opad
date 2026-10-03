@@ -67,11 +67,21 @@ struct ExportOptions {
   bool ascii = false;                 // STL text instead of binary
   bool per_body = false;              // STL: one file per body
   bool mtl = true;                    // OBJ: write a material library for colours
+  // 2D formats (dxf, svg, dwg; pdf and png where a painter is installed, drawing::can_paint): solids and meshes export as
+  // a hidden-line view (TODO 11 UI-87), described as the projection reads it ({"view": "front"} or {"dir": [..], "up": [..]},
+  // "hidden" (default false), "tangent", "quality"); drawings and sketches are left out of a view. Null: drawings and sketches
+  // as drawn, and solids as seen from the top (their XY plane, where drawings lie).
+  json view;
+  int decimals = 6;                   // 2D coordinates
+  int dpi = 300;                      // PNG
+  std::string sheet;                  // 2D: a drawing sheet (id or name) as drawn, or "drawing:<name>": its sheets (PDF pages)
+  std::function<bool(double, const std::string&)> progress;  // 2D views: return false to cancel
 };
 
 struct ExportResult {
   std::vector<std::filesystem::path> files;
   int bodies = 0;
+  json details = json::object();  // 2D: entities and layers written, the view's tier
   json to_json() const;
 };
 

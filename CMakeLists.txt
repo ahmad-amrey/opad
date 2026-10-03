@@ -46,6 +46,9 @@ include(cmake/occt.cmake)
 find_package(ZLIB REQUIRED)  # 3MF parts are deflated zip entries (core) and its tests write some
 
 add_subdirectory(core)
+if(OPAD_BUILD_CLI OR OPAD_BUILD_APP)
+  add_subdirectory(paint)  # PDF and PNG drawings (Qt Gui), for opad-cli and the app
+endif()
 if(OPAD_BUILD_CLI)
   add_subdirectory(cli)
 endif()

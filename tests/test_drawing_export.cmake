@@ -1,0 +1,1 @@
+set_tests_properties(${name} PROPERTIES ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache" TIMEOUT 120)

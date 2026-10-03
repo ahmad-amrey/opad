@@ -79,10 +79,14 @@ def effects(op):
     if kind == "edit":
         return {(target, "geometry" if key in ("geometry_delta", "geometry", "result", "inputs", "plane") else key)
                 for key in op.get("set", {})}
+    if kind == "properties":
+        # Part properties are set key by key: two people setting different ones on one part do not collide.
+        return {(target, "property:" + key) for key in op.get("set", {})}
     if kind == "delete":
         return {(target, "*")}
     if target:
         return {(target, key) for key in op if key not in ("op", "id", "ts", "by", "target")}
+    # Records without a target (sheets, their views and items, notes, sketches) never collide; edits of one do, by field.
     return set()
 
 

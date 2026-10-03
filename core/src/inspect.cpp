@@ -41,6 +41,7 @@
 #include <set>
 
 #include "opad/geometry.hpp"
+#include "opad/materials.hpp"
 #include "opad/mass.hpp"
 
 namespace opad {
@@ -219,6 +220,8 @@ json document_info(const Document& doc, const Scene& scene) {
   j["measurements"] = scene.measurements.size();
   j["sections"] = scene.sections.size();
   j["views"] = scene.views.size();
+  if (!scene.sheets.empty()) j["sheets"] = scene.sheets.size();
+  if (!scene.properties.empty()) j["properties"] = scene.properties;
   j["unresolved"] = scene.unresolved.size();
   Vec3 lo, hi;
   if (scene_tight_bbox(doc, scene, {}, lo, hi)) {
@@ -359,15 +362,19 @@ json node_properties(const Document& doc, const Scene& scene, const std::string&
   j["visible"] = n->visible;
   j["effectively_visible"] = scene.effectively_visible(node_id);
   j["locked"] = n->locked;
+  if (!n->properties.empty()) j["part"] = n->properties;  // part properties (properties ops)
+  // What it is made of (UI-140): its own or its component's material property, else what its file named (glTF, OBJ and
+  // newer STEP name materials); density in g/cm3, mass in g.
+  const MaterialChoice material = material_of(doc, scene, node_id);
+  if (!material.text.empty()) j["material"] = material.shown();
+  if (material.density > 0) j["density"] = material.density;
   if (n->kind == Node::Kind::Body) {
     j["key"] = n->body_key;
     auto it = scene.instance_count.find(n->body_key);
     j["instances"] = it == scene.instance_count.end() ? 1 : it->second;
     j["representation"] = n->representation;  // solid | mesh | drawing2d
-    if (const BodyEntry* b = doc.body(n->body_key)) {  // as the file had them (glTF, OBJ and newer STEP name materials)
-      if (b->meta.contains("material")) j["material"] = b->meta["material"];
+    if (const BodyEntry* b = doc.body(n->body_key))
       if (b->meta.contains("source")) j["source"] = b->meta["source"];
-    }
     if (n->body_missing) {
       j["missing"] = true;
       return j;
@@ -395,6 +402,11 @@ json node_properties(const Document& doc, const Scene& scene, const std::string&
     } catch (const Error& e) {
       j["mass_error"] = e.what();
     }
+    if (n->properties.contains("mass")) {
+      if (const auto m = body_mass(doc, scene, node_id)) j["mass"] = *m;
+    } else if (material.density > 0 && j.contains("volume")) {
+      j["mass"] = j["volume"].get<double>() * material.density / 1000;
+    }
     j["bbox"] = bbox_json(node_tight_bbox(doc, scene, node_id));
   } else {
     j["children"] = n->children.size();
@@ -405,6 +417,28 @@ json node_properties(const Document& doc, const Scene& scene, const std::string&
       Bnd_Box b;
       b.Update(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
       j["bbox"] = bbox_json(b);
+    }
+    // Its mass when every solid body in it has one (a material with a density, or a mass property); a mass property on
+    // the component itself stands for all of it.
+    if (geometry) {
+      std::vector<std::string> keys;
+      bool known = true;
+      for (const auto& id : bodies) {
+        const Node* b = scene.node(id);
+        if (b->representation != "solid" || b->properties.contains("mass")) continue;
+        known = known && !b->body_missing && material_of(doc, scene, id).density > 0;
+        keys.push_back(b->body_key);
+      }
+      if (const double given = property_number(n->properties.value("mass", json())); given > 0) {
+        j["mass"] = given;
+      } else if (known && !bodies.empty()) {
+        warm_volumes(doc, keys, cancelled);
+        double sum = 0;
+        for (const auto& id : bodies)
+          if (scene.node(id)->representation == "solid")
+            if (const auto m = body_mass(doc, scene, id)) sum += *m;
+        j["mass"] = sum;
+      }
     }
   }
   return j;

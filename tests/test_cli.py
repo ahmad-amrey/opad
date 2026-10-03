@@ -5,6 +5,7 @@ usage: test_cli.py <path-to-opad-cli> <fixtures-dir>
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -107,6 +108,51 @@ def basic_workflow():
     png = os.path.join(tmp, "shot.png")
     r = run("render", DOC, "--view", "iso", "--out", png, "--size", "640x400")
     assert r["width"] == 640 and open(png, "rb").read(4) == b"\x89PNG"
+    # hidden-line projection (drawing views): typed curves with their sources, all of them in a file, a preview
+    p = run("project", DOC, "--view", "front", "--quality", "exact", "--curves", "true")
+    assert p["tier"] == "exact" and p["counts"]["visible"] > 0 and p["counts"]["hidden"] > 0
+    assert all(c["type"] in ("line", "arc", "ellipse", "spline", "polyline") and "body" in c for c in p["curves"])
+    assert abs(p["bounds"][2] - p["bounds"][0] - 100) < 1e-6 and len(p["bodies"]) == 10
+    lines = os.path.join(tmp, "front.json")
+    h = run("project", DOC, "--view", "front", "--quality", "hybrid", "--hidden", "false", "--out", lines)
+    with open(lines) as f:
+        full = json.load(f)
+    assert h["tier"] == "hybrid" and h["counts"]["hidden"] == 0 and "curves" not in h
+    assert len(full["curves"]) == h["counts"]["curves"] and full["fingerprint"] == h["fingerprint"]
+    b = run("project", DOC, "--view", "iso", "--quality", "hybrid", "--curves", "true", "--bezier", "true")
+    curved = [c for c in b["curves"] if c["type"] in ("arc", "ellipse", "spline")]
+    assert curved and all(c["bezier"] and all(len(q) == 8 for q in c["bezier"]) for c in curved)
+    assert all("bezier" not in c for c in b["curves"] if c["type"] in ("line", "polyline"))
+    png = os.path.join(tmp, "iso-lines.png")
+    run("project", DOC, "--view", "iso", "--out", png, "--width", "400")
+    assert open(png, "rb").read(4) == b"\x89PNG"
+    # a view of the model as a 2D drawing (DXF R2000 / SVG): visible and hidden lines on their layers, 6 decimals
+    dxf = os.path.join(tmp, "front.dxf")
+    v = run("export", DOC, "--format", "dxf", "--view", "front", "--hidden", "true", "--out", dxf)
+    assert v["bodies"] == 10 and v["layers"]["Visible"] > 0 and v["layers"]["Hidden"] > 0 and v["view"]["hidden"]
+    text = open(dxf, encoding="ascii").read()
+    assert "AC1015" in text and "\nHIDDEN\n" in text and "$INSUNITS" in text
+    assert not re.search(r"\n-?\d+\.\d{7,}\n", text)
+    svg = os.path.join(tmp, "iso.svg")
+    v = run("export", DOC, "--format", "svg", "--view", "iso", "--out", svg)
+    assert "Hidden" not in v["layers"] and open(svg, encoding="utf-8").read().startswith("<?xml")
+    # and as PDF (one vector page on the smallest ISO sheet) and PNG, painted by Qt offscreen in the CLI
+    pdf = os.path.join(tmp, "front.pdf")
+    v = run("export", DOC, "--format", "pdf", "--view", "front", "--hidden", "true", "--out", pdf)
+    data = open(pdf, "rb").read()
+    assert data.startswith(b"%PDF-") and len(re.findall(rb"/Type /Page\b(?!s)", data)) == 1 and v["paper"].startswith("A"), v
+    png = os.path.join(tmp, "front.png")
+    v = run("export", DOC, "--format", "png", "--view", "front", "--dpi", "100", "--out", png)
+    assert open(png, "rb").read(4) == b"\x89PNG" and v["dpi"] == 100 and v["pixels"][0] > 100, v
+    # a drawing sheet (on a copy) as a PDF page of its own paper, named by its name
+    sheet_doc = os.path.join(tmp, "sheet.opad")
+    shutil.copy(DOC, sheet_doc)
+    s = run("sheet", sheet_doc, "--size", "A3", "--name", "Assembly")
+    run("sheet_view", sheet_doc, "--sheet", s["id"], "--orient", "iso", "--scale", "auto")
+    pdf = os.path.join(tmp, "sheet.pdf")
+    v = run("export", sheet_doc, "--sheet", "Assembly", "--format", "pdf", "--out", pdf)
+    assert v["paper"] == "A3" and v["page"] == [420, 297] and v["sheet"]["views"] == 1 and v["layers"]["Visible"] > 0, v
+    assert open(pdf, "rb").read(5) == b"%PDF-"
     # delete (tombstone) the annotation: it disappears from the resolved list but stays in the log
     run("delete", DOC, "--target", a["id"])
     assert len(run("annotations", DOC)["annotations"]) == 0
@@ -122,6 +168,31 @@ def basic_workflow():
     assert info["bodies"] == 1
     cmds = run("commands")
     assert any(c["name"] == "render" for c in cmds)
+
+
+def bill_of_materials():
+    doc = os.path.join(tmp, "bom.opad")
+    run("new", doc)
+    run("import", doc, os.path.join(FIXTURES, "assembly.step"))
+    parts = run("bom", doc)
+    assert parts["mode"] == "parts" and parts["assembly"]["name"] == "Fixture"
+    assert [(r["name"], r["qty"]) for r in parts["rows"]] == [("Plate", 1), ("Lid", 1), ("Bolt[1]", 4), ("Bolt[2]", 4)]
+    assert [(r["item"], r["qty"], r["total_qty"]) for r in run("bom", doc, "--mode", "indented")["rows"]][2:4] == [("3", 1, 1), ("3.1", 4, 4)]
+    plate = find_node(run("tree", doc), "Plate")["id"]
+    p = run("part_properties", doc, "--target", plate, "--set", '{"material": "Aluminum 6061-T6", "part_number": "OP-7"}')
+    assert p["material"]["id"] == "aluminium-6061"
+    assert abs(run("properties", doc, "--node", plate)["mass"] - 100 * 60 * 5 * 2.7 / 1000) < 1e-6
+    row = run("bom", doc, "--mode", "top", "--mass-unit", "kg")["rows"][0]
+    assert row["part_number"] == "OP-7" and abs(row["mass"] - 0.081) < 1e-9
+    # CSV: on stdout byte for byte (byte order mark, CRLF), or into a file
+    raw = subprocess.run([CLI, "bom", doc, "--format", "csv"], capture_output=True).stdout
+    assert raw.startswith(b"\xef\xbb\xbfItem,Qty,Part number,Name,") and raw.count(b"\r\n") == 5 and b"\r\r" not in raw
+    assert b"\r\n1,1,OP-7,Plate,,Aluminum 6061-T6,81.00,81.00," in raw
+    out = os.path.join(tmp, "bom.csv")
+    assert run("bom", doc, "--format", "csv", "--out", out)["rows"] == 4
+    with open(out, "rb") as f:
+        assert f.read() == raw
+    assert run("materials", "--match", "SS304")["match"]["id"] == "stainless"
 
 
 def git_merge_story():
@@ -241,6 +312,7 @@ def licenses():
 
 test(basic_workflow)
 test(git_merge_story)
+test(bill_of_materials)
 test(deterministic_builds)
 test(licenses)
 shutil.rmtree(tmp, ignore_errors=True)

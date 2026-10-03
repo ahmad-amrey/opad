@@ -99,6 +99,44 @@ bool AppDocument::captureSnapshot(JobRunner* jobs, SnapshotCallback done) {
   });timer->start();return true;
 }
 
+Job* AppDocument::readAsync(JobRunner* jobs, const QString& title, std::function<void(const opad::Document&, const opad::Scene&, Progress)> work,
+                            std::function<void(bool, const QString&)> done) {
+  if (!hasDocument || loading || designBusy || m_capturing || m_converting) return nullptr;
+  struct Read {
+    std::atomic<bool> finished{false};
+    bool ok = false;
+    QString error;
+  };
+  auto read = std::make_shared<Read>();
+  auto source = m_storage;
+  auto resolved = std::make_shared<opad::Scene>(scene);
+  designBusy = true;  // nothing changes the document while the worker reads it
+  emit undoChanged();
+  QPointer<Job> job = jobs->async(title, [source, resolved, read, work = std::move(work)](Progress p) {
+    try {
+      work(*source, *resolved, p);
+      read->ok = !p.cancelled();
+      if (!read->ok) read->error = QStringLiteral("cancelled");
+    } catch (const std::exception& e) {
+      read->error = QString::fromUtf8(e.what());
+    }
+    read->finished.store(true, std::memory_order_release);
+  });
+  // The job reports a cancel at once while its worker runs on: the document is released when the worker has stopped.
+  auto* timer = new QTimer(this);
+  timer->setInterval(10);
+  connect(timer, &QTimer::timeout, this, [this, timer, read, done = std::move(done)] {
+    if (!read->finished.load(std::memory_order_acquire)) return;
+    timer->stop();
+    timer->deleteLater();
+    designBusy = false;
+    emit undoChanged();
+    if (done) done(read->ok, read->error);
+  });
+  timer->start();
+  return job;
+}
+
 // Viewer mode -> editable (kept beside the other worker-backed document jobs; AppDocument.cpp stays free of JobRunner).
 void AppDocument::startEditable(JobRunner* jobs, std::function<void(bool, const QString&)> done) {
   if (!browse || loading || designBusy || m_converting || m_capturing) {

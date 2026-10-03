@@ -16,11 +16,15 @@
 #include "opad/design/feature.hpp"
 #include "opad/step_io.hpp"
 #include "opad/drawing_io.hpp"
+#include "opad/drawing/display.hpp"
+#include "opad/drawing/projection.hpp"
+#include "opad/drawing/sheet.hpp"
 
 namespace opad::commands {
 
 void register_design_commands(const std::function<void(const CommandInfo&, Handler)>& add);  // design/commands_design.cpp
 void register_agent_commands(const std::function<void(const CommandInfo&, Handler)>& add);
+void register_sheet_commands(const std::function<void(const CommandInfo&, Handler)>& add);  // drawing/sheet_commands.cpp
 
 namespace {
 
@@ -391,25 +395,14 @@ void register_builtins() {
         return import_brep(need(d), text, a.value("name", "Body"), o).to_json();
       });
 
-  reg("export", "Export selected objects (or everything) to step|obj|stl|glb|dxf|svg|dwg or a plugin format",
-      {{"doc", "path"}, {"format", "step|obj|stl|glb|dxf|svg|dwg|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
-       {"tolerance", "number - mesh deflection mm"}, {"ascii", "bool - STL text"}, {"per_body", "bool - STL one file per body"}, {"mtl", "bool - OBJ materials"}},
+  reg("export", "Export selected objects (or everything) to step|obj|stl|glb|dxf|svg|dwg|pdf|png or a plugin format (2D of solids: a hidden-line view)",
+      {{"doc", "path"}, {"format", "step|obj|stl|glb|dxf|svg|dwg|pdf|png|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
+       {"tolerance", "number - mesh deflection mm"}, {"ascii", "bool - STL text"}, {"per_body", "bool - STL one file per body"}, {"mtl", "bool - OBJ materials"},
+       {"view", "2D: front|top|iso|..."}, {"dir", "[x,y,z]"}, {"up", "[x,y,z]"}, {"hidden", "bool"}, {"tangent", "bool"}, {"decimals", "int"}, {"dpi", "int - PNG"}, {"sheet", "uuid|name|drawing:<name> - 2D: a sheet, or a drawing's"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
-        std::string fmt = a.value("format", "step");
-        if (has_exporter(fmt)) return run_exporter(fmt, doc, a);
-        ExportOptions o;
-        o.format = fmt;
-        o.select = str_list(a.value("select", json()));
-        o.step_schema = a.value("schema", "AP214");
-        o.tolerance = a.value("tolerance", 0.1);
-        o.ascii = a.value("ascii", false);
-        o.per_body = a.value("per_body", false);
-        o.mtl = a.value("mtl", true);
-        std::string out = a.value("out", "");
-        if (out.empty()) throw Error("export: \"out\" path required");
-        if (fmt == "svg" || fmt == "dxf" || fmt == "dwg") return export_drawing(doc, resolve(doc), path_from_utf8(out), o).to_json();
-        return export_selection(doc, resolve(doc), path_from_utf8(out), o).to_json();
+        if (has_exporter(a.value("format", "step"))) return run_exporter(a.value("format", "step"), doc, a);
+        return export_document(doc, resolve(doc), a);
       });
 
   reg("render", "Headless screenshot (PNG). views puts several fitted views in one labelled grid; edge_lines draws the model's edges; highlight tints faces and edges; shading smooth uses vertex normals",
@@ -428,6 +421,32 @@ void register_builtins() {
         j["out"] = out;
         j["width"] = img.width;
         j["height"] = img.height;
+        return j;
+      });
+
+  reg("project", "Hidden-line projection: typed 2D curves with source edge or face, kind and hidden flag; out .json (all curves) or .png",
+      {{"doc", "path"}, {"view", "front|top|right|iso|..."}, {"dir", "[x,y,z]"}, {"up", "[x,y,z]"}, {"select", "array|csv - node uuids"},
+       {"hide", "array|csv"}, {"quality", "auto|exact|draft|hybrid"}, {"hidden", "bool"}, {"tangent", "bool"}, {"silhouettes", "bool"},
+       {"resolution", "int"}, {"tolerance", "number"}, {"curves", "bool"}, {"bezier", "bool"}, {"out", "path"}, {"width", "int"}, {"cache", "bool"}},
+      false, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        json spec = a;
+        spec["nodes"] = str_list(a.value("select", json()));
+        spec["hide"] = str_list(a.value("hide", json()));
+        const auto view = drawing::ViewSpec::from_json(spec);
+        const auto g = drawing::project(doc, resolve(doc), view, {}, a.value("cache", true));
+        const double bezier = a.value("bezier", false) ? view.tolerance : 0;  // arcs, ellipses, splines as cubics too
+        json j = g->to_json(a.value("curves", false), bezier);
+        if (const std::string out = a.value("out", ""); !out.empty()) {
+          const auto path = path_from_utf8(out);
+          std::string ext = path.extension().string();
+          std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return std::tolower(c); });
+          const int width = std::clamp(a.value("width", 1600), 16, 8192);  // the height follows the view
+          const double w = g->bounds[2] - g->bounds[0], h = g->bounds[3] - g->bounds[1];
+          if (ext == ".png") write_png(path, drawing::preview_image(*g, width, std::clamp(static_cast<int>(width * (w > 0 ? h / w : 0.75)), 16, 8192)));
+          else write_text_file(path, g->to_json(true, bezier).dump());
+          j["out"] = out;
+        }
         return j;
       });
 
@@ -510,10 +529,15 @@ void register_builtins() {
   reg("delete", "Tombstone an earlier op (annotation resolved, rename undone, import removed...)",
       {{"doc", "path"}, {"target", "uuid - op id"}, {"by", "string"}}, true, [](Document* d, const json& a) {
         // Through the design engine: tombstoning (or restoring) a sketch or feature changes what the later
-        // features produce, and that is recomputed in the same step.
+        // features produce, and that is recomputed in the same step. Drawing records and part properties (and
+        // edits of them) are never read by the features: no walk for those (the app deletes them on the UI thread).
         json op = op_with_target("delete", a);
+        Document& doc = need(d);
+        const Op* t = op["target"].is_string() ? doc.find_op(op["target"].get<std::string>()) : nullptr;
+        while (t && (t->type == "delete" || t->type == "edit")) t = doc.find_op(t->data.value("target", ""));
+        if (t && drawing::is_drawing_op(t->type)) return json{{"id", doc.append(op, a.value("by", "")).id}};
         op["id"] = new_uuid();
-        json j = design::apply_ops(need(d), {op}, a.value("by", ""));
+        json j = design::apply_ops(doc, {op}, a.value("by", ""));
         j["id"] = op["id"];
         return j;
       });
@@ -608,6 +632,10 @@ void register_builtins() {
     r.handlers[info.name] = std::move(h);
   });
   register_agent_commands([&](const CommandInfo& info,Handler h){r.infos.push_back(info);r.handlers[info.name]=std::move(h);});
+  register_sheet_commands([&](const CommandInfo& info, Handler h) {
+    r.infos.push_back(info);
+    r.handlers[info.name] = std::move(h);
+  });
 }
 
 }  // namespace
@@ -705,8 +733,35 @@ json run_exporter(const std::string& format, const Document& doc, const json& ar
   return fn(doc, args);
 }
 
+json export_document(const Document& doc, const Scene& scene, const json& a, const std::function<bool(double, const std::string&)>& progress) {
+  const std::string fmt = a.value("format", "step");
+  if (has_exporter(fmt)) return run_exporter(fmt, doc, a);
+  ExportOptions o;
+  o.format = fmt;
+  o.select = str_list(a.value("select", json()));
+  o.step_schema = a.value("schema", "AP214");
+  o.tolerance = a.value("tolerance", 0.1);
+  o.ascii = a.value("ascii", false);
+  o.per_body = a.value("per_body", false);
+  o.mtl = a.value("mtl", true);
+  if (a.contains("view") || a.contains("dir")) {
+    o.view = json::object();
+    for (const char* k : {"view", "dir", "up", "hidden", "tangent", "quality"})
+      if (a.contains(k)) o.view[k] = a[k];
+  }
+  o.decimals = std::clamp(a.value("decimals", 6), 0, 12);
+  o.dpi = std::clamp(a.value("dpi", 300), 10, 2400);
+  o.sheet = a.value("sheet", "");
+  o.progress = progress;
+  const std::string out = a.value("out", "");
+  if (out.empty()) throw Error("export: \"out\" path required");
+  if (fmt == "svg" || fmt == "dxf" || fmt == "dwg" || fmt == "pdf" || fmt == "png") return export_drawing(doc, scene, path_from_utf8(out), o).to_json();
+  return export_selection(doc, scene, path_from_utf8(out), o).to_json();
+}
+
 std::vector<std::string> exporter_formats() {
   std::vector<std::string> out = {"step", "obj", "stl", "glb", "dxf", "svg", "dwg"};
+  if (drawing::can_paint()) out.insert(out.end(), {"pdf", "png"});
   auto& r = registry();
   std::lock_guard<std::recursive_mutex> lock(r.mu);
   for (const auto& [k, v] : r.exporters) out.push_back(k);

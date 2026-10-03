@@ -67,9 +67,10 @@ OPAD_BENCH(OPAD_BENCH_COMMANDS, commands) {
   for (QAction* a : w.m_actions) names << a->objectName();
   require(registry.ids() == names && registry.actions() == w.m_actions && registry.clashes().isEmpty(),
           QString("every command has one record, in command order (%1)").arg(names.size()));
-  bool built = true;
-  for (const QString& id : names) built = built && registry.editsDocument(id) == MainWindow::isEditAction(id) && !registry.find(id)->group.isEmpty();
-  require(built, "built-in records: a group each, editsDocument as isEditAction");
+  bool built = true;  // the areas' commands (after the window's own) carry their own editsDocument
+  for (qsizetype i = 0; i < names.size(); ++i)
+    built = built && (i >= w.m_ownCommands || registry.editsDocument(names[i]) == MainWindow::isEditAction(names[i])) && !registry.find(names[i])->group.isEmpty();
+  require(built && w.m_ownCommands > 0, "built-in records: a group each, editsDocument as isEditAction");
   const CommandInfo* extrude = registry.find("design.extrude");
   require(extrude && extrude->group == commands::defaultGroup("design.extrude") && extrude->menuPath == "design/create" &&
               extrude->workspaces == QStringList{"design"} && opGroup(w.action("design.extrude")) == extrude->group,

@@ -1,4 +1,7 @@
 #include "opad/drawing_io.hpp"
+#include "opad/drawing/display.hpp"
+#include "opad/drawing/sheet.hpp"
+#include <functional>
 #include <set>
 #include "opad/design/sketch_geom.hpp"
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -492,7 +495,6 @@ Drawing read_svg(const std::filesystem::path& file) {
   return out;
 }
 
-std::string xml(const std::string& in) { std::string out; for(char c:in) { if(c=='&')out+="&amp;"; else if(c=='<')out+="&lt;"; else if(c=='\"')out+="&quot;"; else out+=c; } return out; }
 }
 
 void set_use_oda(bool on) { g_use_oda = on; }
@@ -570,90 +572,130 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
   } catch(const Standard_Failure& e) { throw Error(std::string("cannot import geometry: ")+e.GetMessageString()); }
 }
 
-ExportResult export_drawing(const Document& doc,const Scene& scene,const std::filesystem::path& file,const ExportOptions& options) {
-  if (options.format == "dwg") {
-    Conversion work; auto intermediate=work.directory/"drawing.dxf", converted=work.directory/"drawing.dwg";
-    ExportOptions dxf=options; dxf.format="dxf";
-    auto result=export_drawing(doc,scene,intermediate,dxf);
-    convert_dwg(intermediate,converted,true);
-    std::filesystem::copy_file(converted,file,std::filesystem::copy_options::overwrite_existing);
-    result.files={file}; return result;
-  }
-  const bool svg=options.format=="svg"; std::ostringstream body; body.precision(17);
-  double xmin=0,ymin=0,xmax=1,ymax=1; int bodies=0;
-  auto line=[&](const std::string& layer,const gp_Pnt& a,const gp_Pnt& b) {
-    for(const auto& p:{a,b}) { xmin=std::min(xmin,p.X()); xmax=std::max(xmax,p.X()); ymin=std::min(ymin,-p.Y()); ymax=std::max(ymax,-p.Y()); }
-    if(svg) body<<"<line x1=\""<<a.X()<<"\" y1=\""<<-a.Y()<<"\" x2=\""<<b.X()<<"\" y2=\""<<-b.Y()<<"\"/>\n";
-    else body<<"0\nLINE\n8\n"<<layer<<"\n10\n"<<a.X()<<"\n20\n"<<a.Y()<<"\n11\n"<<b.X()<<"\n21\n"<<b.Y()<<'\n';
-  };
+namespace {
+// The selection (or the document) as drawn: solids and meshes as a view, drawings and sketches as they lie.
+drawing::Display objects_display(const Document& doc,const Scene& scene,const ExportOptions& options,const std::string& title,json& details,int& bodies) {
+  const bool painted=options.format=="pdf" || options.format=="png";
   std::vector<std::string> nodes, sketches;
   for(const auto& id:options.select) { if(scene.sketch(id)) sketches.push_back(id); else nodes.push_back(id); }
   std::vector<std::string> objects;
   if(options.select.empty() || !nodes.empty()) objects=select_bodies(scene,nodes);
   if(options.select.empty()) for(const auto& sk:scene.sketches) if(sk.visible) sketches.push_back(sk.id);
-  objects.insert(objects.end(),sketches.begin(),sketches.end());
+  std::vector<std::string> drawn, modelled;  // as drawn (drawings, sketches, images) / seen in a view (solids, meshes)
   std::set<std::string> seen;
   for(const auto& id:objects) {
     if(!seen.insert(id).second) continue;
+    const Node* n=scene.node(id);
+    if(n->body_missing || (options.select.empty() && !scene.effectively_visible(id))) continue;
+    (n->representation=="drawing2d" || !n->raster.is_null()?drawn:modelled).push_back(id);
+  }
+  for(const auto& id:sketches) if(seen.insert(id).second) drawn.push_back(id);
+  drawing::Display d; d.title=title;
+  // Solids and meshes: a hidden-line view; solids without one asked for as seen from the top, in XY with the drawings.
+  if(options.view.is_null())
+    for(const auto& id:modelled) if(scene.node(id)->representation=="mesh") throw Error("mesh reference objects require STL, OBJ or GLB export, or a 2D view");
+  if(!modelled.empty()) {
+    json spec=options.view.is_object()?options.view:json{{"view","top"}};
+    if(!spec.contains("hidden")) spec["hidden"]=false;
+    spec["nodes"]=modelled;
+    const auto view=drawing::ViewSpec::from_json(spec);
+    const auto g=drawing::project(doc,scene,view,options.progress);
+    d=drawing::view_display(*g,title);
+    details["view"]={{"dir",view.dir},{"up",view.up},{"hidden",view.hidden},{"tier",drawing::quality_name(g->tier)},{"ms",g->stats.value("ms",0)}};
+    bodies+=int(g->bodies.size());
+  }
+  if(!options.view.is_null()) {
+    if(modelled.empty()) throw Error("Nothing to project: a 2D view shows solids and meshes");
+    if(!drawn.empty()) details["skipped"]=drawn.size();  // drawings and sketches lie in their own planes, not in the view
+    drawn.clear();
+  }
+  for(const auto& id:drawn) {
     const auto* sketch=scene.sketch(id);
-    if(options.select.empty() && !sketch && !scene.effectively_visible(id)) continue;
-    Node sketchNode; if(sketch) {sketchNode.name=sketch->name;sketchNode.representation="drawing2d";}
-    const Node* n=sketch?&sketchNode:scene.node(id);
-    if (n->representation == "mesh") throw Error("mesh reference objects require STL, OBJ or GLB export");
-    std::string layer=n->name;
-    std::replace(layer.begin(),layer.end(),'\n','_'); std::replace(layer.begin(),layer.end(),'\r','_');
-    if(svg) body<<"<g id=\""<<xml(layer)<<"\">\n";
-    if(!n->raster.is_null()) {
-      if(!svg) throw Error("Raster images require SVG export; DXF raster references are not supported");
+    const Node* n=sketch?nullptr:scene.node(id);
+    std::string name=sketch?sketch->name:n->name;
+    std::replace(name.begin(),name.end(),'\n','_'); std::replace(name.begin(),name.end(),'\r','_');
+    const uint32_t rgb=n && n->has_color?uint32_t(std::lround(std::clamp(n->color[0],0.0,1.0)*255))<<16|uint32_t(std::lround(std::clamp(n->color[1],0.0,1.0)*255))<<8|uint32_t(std::lround(std::clamp(n->color[2],0.0,1.0)*255)):drawing::kInk;
+    drawing::Layer pen{name,rgb,drawing::LineType::Continuous,0.25};
+    const int layer=d.layer(pen);
+    const uint32_t own=d.layers[size_t(layer)].rgb==rgb?drawing::kByLayer:rgb;
+    if(n && !n->raster.is_null()) {
+      if(options.format!="svg" && !painted) throw Error("Raster images require SVG, PDF or PNG export; DXF raster references are not supported");
       const auto world=scene.world(id);
-      std::array<Vec3,3> p;
-      for(int i=0;i<3;++i) p[i]=world.apply(n->raster.at("corners").at(i).get<Vec3>());
-      for(int i=0;i<4;++i) {
-        Vec3 q=i<3?p[i]:Vec3{p[1][0]+p[2][0]-p[0][0],p[1][1]+p[2][1]-p[0][1],0};
-        xmin=std::min(xmin,q[0]);xmax=std::max(xmax,q[0]);ymin=std::min(ymin,-q[1]);ymax=std::max(ymax,-q[1]);
-      }
-      body<<"<image width=\"1\" height=\"1\" preserveAspectRatio=\""<<xml(n->raster.value("preserveAspectRatio",""))
-          <<"\" transform=\"matrix("<<p[1][0]-p[0][0]<<' '<<-(p[1][1]-p[0][1])<<' '
-          <<p[2][0]-p[0][0]<<' '<<-(p[2][1]-p[0][1])<<' '<<p[0][0]<<' '<<-p[0][1]
-          <<")\" href=\""<<xml(n->raster.value("href",""))<<"\"/>\n</g>\n";
-      ++bodies; continue;
+      drawing::Prim image; image.kind=drawing::Prim::Kind::Image; image.layer=layer;
+      for(size_t i=0;i<3;++i) { const auto p=world.apply(n->raster.at("corners").at(i).get<Vec3>()); image.corners[i]={p[0],p[1]}; }
+      image.text=n->raster.value("href",""); image.fit=n->raster.value("preserveAspectRatio","");
+      d.prims.push_back(std::move(image)); ++bodies; continue;
     }
-    auto shape=node_world_shape(doc,scene,id);
     if(sketch) {
       // A sketch exports in its own 2D coordinates, independent of its world plane.
       TopoDS_Compound local; BRep_Builder builder; builder.MakeCompound(local);
       for(const auto& edge:design::sketch_edges(design::Sketch::from_json(sketch->geometry),Frame{},true)) builder.Add(local,edge);
-      shape=local;
-    }
-    TopTools_IndexedMapOfShape edges; TopExp::MapShapes(shape,TopAbs_EDGE,edges);
-    for(int edgeIndex=1;edgeIndex<=edges.Extent();++edgeIndex) {
-      BRepAdaptor_Curve c(TopoDS::Edge(edges(edgeIndex)));
-      if(c.GetType()==GeomAbs_Circle && std::abs(c.Circle().Axis().Direction().Z())>1-1e-9) {
-        const auto circle=c.Circle(); const auto center=circle.Location(); const double r=circle.Radius();
-        const bool full=std::abs(c.LastParameter()-c.FirstParameter())>=2*M_PI-1e-8;
-        xmin=std::min(xmin,center.X()-r); xmax=std::max(xmax,center.X()+r); ymin=std::min(ymin,-center.Y()-r); ymax=std::max(ymax,-center.Y()+r);
-        if(svg && full) { body<<"<circle cx=\""<<center.X()<<"\" cy=\""<<-center.Y()<<"\" r=\""<<r<<"\"/>\n"; continue; }
-        if(!svg) {
-          body<<"0\n"<<(full?"CIRCLE":"ARC")<<"\n8\n"<<layer<<"\n10\n"<<center.X()<<"\n20\n"<<center.Y()<<"\n40\n"<<r<<'\n';
-          if(!full) {
-            auto a=c.Value(c.FirstParameter()),b=c.Value(c.LastParameter()); if(circle.Axis().Direction().Z()<0)std::swap(a,b);
-            auto angle=[&](const gp_Pnt& p){double value=std::atan2(p.Y()-center.Y(),p.X()-center.X())*180/M_PI;return value<0?value+360:value;};
-            body<<"50\n"<<angle(a)<<"\n51\n"<<angle(b)<<'\n';
-          }
-          continue;
-        }
-      }
-      const int segments=c.GetType()==GeomAbs_Line?1:128;
-      for(int i=0;i<segments;++i) line(layer,c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*i/segments),c.Value(c.FirstParameter()+(c.LastParameter()-c.FirstParameter())*(i+1)/segments));
-    }
-    if(svg) body<<"</g>\n";
+      drawing::add_shape(d,layer,local,0.01,own);
+    } else drawing::add_shape(d,layer,node_world_shape(doc,scene,id),0.01,own);
     ++bodies;
   }
-  std::ostringstream out; out.precision(17);
-  if(svg) out<<"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\""<<xmax-xmin+2<<"mm\" height=\""<<ymax-ymin+2<<"mm\" viewBox=\""<<xmin-1<<' '<<ymin-1<<' '<<xmax-xmin+2<<' '<<ymax-ymin+2<<"\" fill=\"none\" stroke=\"black\" stroke-width=\"0.2\">\n"<<body.str()<<"</svg>\n";
-  else out<<"0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n"<<body.str()<<"0\nENDSEC\n0\nEOF\n";
   if(!bodies) throw Error("No drawing objects selected for export");
-  if(file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
-  write_text_file(file,out.str()); return {{file},bodies};
+  return d;
+}
+}
+
+ExportResult export_drawing(const Document& doc,const Scene& scene,const std::filesystem::path& file,const ExportOptions& options) {
+  const bool painted=options.format=="pdf" || options.format=="png";
+  if(options.format!="dxf" && options.format!="svg" && options.format!="dwg" && !painted) throw Error("2D formats are dxf, svg, dwg, pdf and png, not "+options.format);
+  if(painted && !drawing::can_paint()) throw Error("PDF and PNG drawings are written by the OPAD app and opad-cli, not by this build");
+  const auto stem=doc.path.stem().u8string();
+  const std::string title=doc.path.empty()?std::string("OPAD drawing"):std::string(stem.begin(),stem.end());
+  std::vector<drawing::Display> pages(1); json details=json::object(); int bodies=0;
+  if(options.sheet.empty()) pages[0]=objects_display(doc,scene,options,title,details,bodies);
+  else {  // drawing sheets as drawn (UI-86): one by id or name, or every sheet of "drawing:<name>" (a PDF page each)
+    std::vector<const Sheet*> sheets;
+    if(options.sheet.rfind("drawing:",0)==0) {
+      for(const auto& s:scene.sheets) if(s.drawing==options.sheet.substr(8)) sheets.push_back(&s);
+      if(sheets.empty()) throw Error("drawing "+options.sheet.substr(8)+" has no sheets (sheet_info lists the sheets)");
+    } else {
+      const Sheet* sheet=scene.sheet(options.sheet);
+      for(const auto& s:scene.sheets) if(!sheet && s.name==options.sheet) sheet=&s;
+      if(!sheet) throw Error("sheet "+options.sheet+" does not exist (sheet_info lists the sheets)");
+      sheets.push_back(sheet);
+    }
+    if(sheets.size()>1 && options.format!="pdf") throw Error("several sheets go into one PDF (a page each), or one sheet at a time into "+options.format);
+    pages.resize(sheets.size());
+    json drawn=json::array(), skipped=json::array();
+    for(size_t i=0;i<sheets.size();++i) {
+      json report;
+      const double n=double(sheets.size());
+      pages[i]=drawing::sheet_display(doc,scene,*sheets[i],[&](double f,const std::string& phase){ return !options.progress || options.progress(f<0?-1:(double(i)+f)/n,phase); },&report);
+      drawn.push_back({{"id",sheets[i]->id},{"name",sheets[i]->name},{"views",report["views"]},{"items",report["items"]}});
+      for(const auto& s:report["skipped"]) skipped.push_back(s);
+      bodies+=report["bodies"].get<int>();
+    }
+    if(drawn.size()==1) details["sheet"]=drawn[0]; else details["sheets"]=drawn;
+    if(!skipped.empty()) details["skipped"]=skipped;
+  }
+  const drawing::Display& d=pages[0];
+  if(options.format=="dwg") {  // DXF R2000 through the converter; text of several lines as one TEXT a line
+    Conversion work; const auto intermediate=work.directory/"drawing.dxf", converted=work.directory/"drawing.dwg";
+    write_text_file(intermediate,drawing::dxf_text(d,options.decimals,false));
+    convert_dwg(intermediate,converted,true);
+    if(file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
+    std::filesystem::copy_file(converted,file,std::filesystem::copy_options::overwrite_existing);
+  } else {
+    std::vector<const drawing::Display*> list;
+    for(const auto& p:pages) list.push_back(&p);
+    const json wrote=drawing::write_pages(list,file,options.format,options.decimals,{{"dpi",options.dpi}});
+    for(const auto& [k,v]:wrote.items()) details[k]=v;
+  }
+  ExportResult result{{file},bodies,details};
+  // What was written, the pages together.
+  std::function<void(json&,const json&)> add=[&](json& to,const json& from){
+    for(const auto& [k,v]:from.items()) {
+      if(!v.is_object()) to[k]=to.value(k,0)+v.get<int>();
+      else { if(!to.contains(k)) to[k]=json::object(); add(to[k],v); }
+    }
+  };
+  json counts=json::object();
+  for(const auto& p:pages) add(counts,p.counts());
+  for(const auto& [k,v]:counts.items()) result.details[k]=v;
+  return result;
 }
 }

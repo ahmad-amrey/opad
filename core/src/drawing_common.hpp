@@ -36,5 +36,7 @@ struct Drawing {
 
 // DXF as AutoCAD, LibreDWG's dwg2dxf and the ODA converter write it: everything model space shows.
 Drawing read_dxf(const std::filesystem::path& file, const ImportOptions& options);
+// An AutoCAD Color Index as 0xRRGGBB (1-255; Drawing::kNoColor otherwise).
+uint32_t aci_rgb(int i);
 
 }  // namespace opad::detail

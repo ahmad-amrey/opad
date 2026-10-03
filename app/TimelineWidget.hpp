@@ -22,6 +22,7 @@ class TimelineWidget : public QWidget {
   // that point in the history.
   void setEditingOp(const std::string& id);
   void step(int delta);
+  std::vector<std::string> shownOps() const;  // the ops drawn as markers, in order (benches)
   QString describe(const opad::Op& op) const;
 
  signals:

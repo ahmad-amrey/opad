@@ -55,13 +55,14 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
     const opad::SketchItem* sk = rowKind == "sketch" ? m_doc->scene.sketch(id) : nullptr;
     const bool editing=index.data(Qt::UserRole+8).toBool();
     const bool off = editing?!index.data(Qt::UserRole+9).toBool():sk && !sk->visible;
-    const bool grey = off || d.dim;
+    const bool error = index.data(browser::kErrorRole).toBool();  // a provided row that is not drawn
+    const bool grey = off || d.dim || error;
     const qreal ratio = p->device()->devicePixelRatioF();
     if (sk || editing) p->drawPixmap(r.left() + kEyeX, r.top() + 6, icons::pixmap(off ? "hide" : "eye", grey ? t.fg3 : t.fg2, 16, ratio));
     paintLead(p, d, r);
     const QString own = index.data(browser::kIconRole).toString();  // a provided folder's or row's
     const QString icon = !d.typeIcon.isEmpty() ? d.typeIcon : sk ? QString("sketch") : !own.isEmpty() ? own : QString("open");
-    p->drawPixmap(r.left() + kTypeX, r.top() + 6, icons::pixmap(icon, sk && !sk->error.empty() ? t.red : grey ? t.fg3 : t.fg2, 16, ratio));
+    p->drawPixmap(r.left() + kTypeX, r.top() + 6, icons::pixmap(icon, (sk && !sk->error.empty()) || error ? t.red : grey ? t.fg3 : t.fg2, 16, ratio));
     p->setFont(theme::ui(13));
     p->setPen(grey ? t.fg3 : rowKind == "folder" ? t.fg2 : t.fg);
     drawName(index.data(kNameRole).toString(), r.right() - 6);

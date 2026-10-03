@@ -247,6 +247,15 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     QString newName = it->text(0).trimmed();
     QString oldName = it->data(0, kNameRole).toString();
     if (newName.isEmpty() || newName == oldName) { rebuild(); return; }
+    if (const browser::Folder* folder = providedFolder(it)) {  // editable only with a rename: the area's record takes the name
+      try {
+        folder->rename(id, newName);
+      } catch (const std::exception& e) {
+        emit m_doc->message(QString::fromUtf8(e.what()));
+        rebuild();
+      }
+      return;
+    }
     m_doc->run("rename", opad::json{{"target", id}, {"name", newName.toStdString()}});
   });
   connect(m_tree, &BrowserTree::reparentRequested, this, [this](const std::vector<std::string>& ids, const std::string& parent, int index) {
@@ -295,10 +304,12 @@ QTreeWidgetItem* BrowserPanel::build(const std::string& id, QTreeWidgetItem* par
 void BrowserPanel::rebuild() {
   trace::Scope scope("BrowserPanel::rebuild");
   m_updating = true;
-  std::set<std::string> expanded;
+  std::set<std::string> expanded, known;  // known: every row there was, so rows that are new open
   std::vector<std::string> selected = selectedIds();
   std::function<void(QTreeWidgetItem*)> collect = [&](QTreeWidgetItem* it) {
-    if (it->isExpanded()) expanded.insert(it->data(0, Qt::UserRole).toString() == "folder" ? "folder:" + it->data(0, browser::kFolderRole).toString().toStdString() : it->data(0, kIdRole).toString().toStdString());
+    const std::string key = it->data(0, Qt::UserRole).toString() == "folder" ? "folder:" + it->data(0, browser::kFolderRole).toString().toStdString() : it->data(0, kIdRole).toString().toStdString();
+    known.insert(key);
+    if (it->isExpanded()) expanded.insert(key);
     for (int i = 0; i < it->childCount(); ++i) collect(it->child(i));
   };
   for (int i = 0; i < m_tree->topLevelItemCount(); ++i) collect(m_tree->topLevelItem(i));
@@ -368,14 +379,16 @@ void BrowserPanel::rebuild() {
         it->setData(0, Qt::UserRole, "provided");
         it->setData(0, browser::kFolderRole, f.id);
         it->setData(0, browser::kIconRole, item.icon);
+        it->setData(0, browser::kErrorRole, item.error);
         it->setToolTip(0, item.tooltip);
-        it->setFlags(it->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled);
+        it->setFlags((it->flags() | (item.editable && f.rename ? Qt::ItemIsEditable : Qt::NoItemFlags)) & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled);
         m_index[item.id] = it;
         for (const browser::Item& child : item.children) add(it, child);
-        it->setExpanded(expanded.empty() || expanded.count(item.id) > 0);
+        it->setExpanded(expanded.count(item.id) > 0 || !known.count(item.id));  // a new row opens
       };
       for (const browser::Item& item : items) add(folder, item);
-      folder->setExpanded(expanded.empty() || expanded.count("folder:" + f.id.toStdString()) > 0);
+      const std::string key = "folder:" + f.id.toStdString();
+      folder->setExpanded(expanded.count(key) > 0 || !known.count(key));
     }
     root->setExpanded(true);
   }
@@ -412,6 +425,17 @@ void BrowserPanel::addFolder(browser::Folder folder) {
 }
 
 void BrowserPanel::refreshDecorations() { m_tree->viewport()->update(); }
+
+bool BrowserPanel::removeRows(const std::vector<std::string>& ids) {
+  bool taken = false;
+  for (const browser::Folder& f : m_folders) {
+    std::vector<std::string> own;
+    for (const auto& id : ids)
+      if (const QTreeWidgetItem* it = itemFor(id); it && it->data(0, Qt::UserRole).toString() == "provided" && providedFolder(it) == &f) own.push_back(id);
+    if (!own.empty() && f.remove) taken = f.remove(own) || taken;  // m_folders stays: remove() rebuilds the rows, not the folders
+  }
+  return taken;
+}
 
 const browser::Folder* BrowserPanel::providedFolder(const QTreeWidgetItem* item) const {
   const QString id = item ? item->data(0, browser::kFolderRole).toString() : QString();

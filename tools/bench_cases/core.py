@@ -3,12 +3,13 @@ import uuid
 
 
 def newer_file(root, document):
-    """A box document with records of a newer build: a one-line sheet and a multi-line sheet item (UI-65)."""
+    """A box document with records of a newer build: a one-line sheet and a multi-line sheet item (UI-65), as types no
+    build knows (drawing sheets themselves are known since UI-76)."""
     path = document("newer", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
     text = path.read_text(encoding="utf-8")
     sheet = str(uuid.uuid4())
-    records = (f'{{"op":"sheet","id":"{sheet}","ts":"2026-10-03T10:00:00Z","by":"newer","name":"Sheet 1","size":"A3"}}\n'
-               f'{{"op":"sheet_item","id":"{uuid.uuid4()}","ts":"2026-10-03T10:00:01Z","by":"newer","sheet":"{sheet}",\n'
+    records = (f'{{"op":"newer_sheet","id":"{sheet}","ts":"2026-10-03T10:00:00Z","by":"newer","name":"Sheet 1","size":"A3"}}\n'
+               f'{{"op":"newer_item","id":"{uuid.uuid4()}","ts":"2026-10-03T10:00:01Z","by":"newer","sheet":"{sheet}",\n'
                '  "points": [\n    [0,0],\n    [10,5]]}\n')
     path.write_text(text.replace("#bodies\n", records + "#bodies\n", 1), encoding="utf-8", newline="\n")
     return path

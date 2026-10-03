@@ -6,6 +6,7 @@
 #include <set>
 #include <sstream>
 
+#include "opad/drawing/sheet.hpp"
 #include "opad/scene.hpp"
 
 namespace opad {
@@ -51,7 +52,8 @@ Document Document::create(const std::string& units) {
 const std::vector<std::string>& Document::op_types() {
   static const std::vector<std::string> t = {"import",     "reparent",    "transform", "appearance", "rename", "annotation",
                                              "measurement", "section",    "view",      "delete",     "param",  "sketch",
-                                             "feature",    "edit",        "regen", "units"};
+                                             "feature",    "edit",        "regen", "units",      "sheet",  "sheet_view",
+                                             "sheet_item", "properties"};
   return t;
 }
 
@@ -194,6 +196,14 @@ void Document::validate_op(const json& op) {
     if (!op.contains("set") || !op["set"].is_object()) throw Error("edit: 'set' must be an object");
   } else if (type == "regen") {
     if (!op.contains("results") || !op["results"].is_object()) throw Error("regen: 'results' must be an object");
+  } else if (drawing::is_sheet_record(type)) {
+    drawing::validate_record(op);
+  } else if (type == "properties") {
+    require(op, "target", "uuid");
+    if (!op.contains("set") || !op["set"].is_object() || op["set"].empty()) throw Error("properties: 'set' must be a non-empty object");
+    for (const auto& [k, v] : op["set"].items())
+      if (k.empty() || !(v.is_string() || v.is_number() || v.is_boolean() || v.is_null()))
+        throw Error("properties: '" + k + "' must be text, a number, true, false or null");
   }
 }
 
@@ -216,7 +226,9 @@ const Op& Document::append(json op, const std::string& author) {
   if (out["op"] == "edit") {
     const auto* target = find_op(out["target"].get<std::string>());
     if (target && !known_type(target->type)) throw Error("edit: op '" + target->type + "' needs a newer OPAD; this build cannot edit it");
-    if (target && target->type == "annotation") {
+    if (target && (target->type == "annotation" || drawing::is_sheet_record(target->type))) {
+      for (const char* k : {"op", "id", "ts", "by"})
+        if (target->type != "annotation" && out["set"].contains(k)) throw Error(std::string("edit: '") + k + "' cannot be changed");
       json effective = target->data;
       for (const auto& e : effective_ops(*this)) if (e.op->id == target->id) effective = e.data();
       for (const auto& [key,value] : out["set"].items()) {if(value.is_null()) effective.erase(key); else effective[key]=value;}
@@ -330,6 +342,11 @@ std::vector<std::string> Document::gc() {
     if (o.op->type == "import") collect_keys(o.data().value("nodes", json::array()), live);
     else if (o.op->type == "feature" && o.data().contains("result"))
       for (const auto& b : o.data()["result"].value("bodies", json::array())) live.insert(b.value("key", ""));
+    else if (drawing::is_sheet_record(o.op->type)) {  // a sheet's template geometry, an issue's frozen linework
+      std::vector<std::string> keys;
+      drawing::record_body_keys(o.data(), keys);
+      live.insert(keys.begin(), keys.end());
+    }
     else if (!known_type(o.op->type)) collect_mentioned_keys(o.data(), bodies_index_, live);
   }
   std::vector<std::string> removed;

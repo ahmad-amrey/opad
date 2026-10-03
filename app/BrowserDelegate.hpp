@@ -17,6 +17,7 @@ constexpr int kIdRole = Qt::UserRole + 1;
 constexpr int kNameRole = Qt::UserRole + 2;
 constexpr int kFolderRole = Qt::UserRole + 5;  // a folder row's id ("sketches", or a provided folder's), and a provided row's folder
 constexpr int kIconRole = Qt::UserRole + 6;    // a provided folder's or row's icon
+constexpr int kErrorRole = Qt::UserRole + 7;   // a provided row that is not drawn (Item::error)
 constexpr int kEyeX = 2, kSwatchX = 24, kTypeX = 42, kNameX = 66;
 
 // ---- row decorations: what a feature area adds to rows it knows something about (an asset's sync state, the active
@@ -57,6 +58,8 @@ struct Item {  // a row of a provided folder
   std::string id;  // unique among all browser ids (nodes, sketches, other folders): prefix it, e.g. "drawing:<op id>"
   QString name, icon, tooltip;
   std::vector<Item> children;
+  bool editable = false;  // F2 (edit.rename) renames it in place through Folder::rename
+  bool error = false;     // not drawn (a kind of a newer build, a missing parent): its icon red, its name grey, the tooltip says why
 };
 
 struct Folder {
@@ -64,10 +67,13 @@ struct Folder {
   std::function<std::vector<Item>()> items;  // asked at every rebuild (the document changed, BrowserPanel::rebuild); none: no folder
   std::function<void(const std::string& id, QMenu& menu)> contextMenu;  // right-click on a row (its id) or the folder (empty id)
   std::function<void(const std::string& id)> activated;                 // double-click on a row
+  std::function<void(const std::string& id, const QString& name)> rename;  // an editable row renamed in place; throws to refuse
+  std::function<bool(const std::vector<std::string>& ids)> remove;  // Del (edit.delete) on its selected rows: true when it took them
 };
 // Its rows are selected like nodes: BrowserPanel::selectionChanged (and the areas' selectionChanged) carry their ids.
-// They have no eye, colour, rename or drag; the view, the edit commands and the tools never see them (the window keeps
-// them out of the node selection), and Properties shows only the areas' sections for one (subject: a ref to its id).
+// They have no eye, colour or drag; F2 and Del reach them through the folder's rename and remove; the view, the other
+// edit commands and the tools never see them (the window keeps them out of the node selection), and Properties shows
+// only the areas' sections for one (subject: a ref to its id). A row that is new since the last rebuild starts open.
 }  // namespace browser
 
 class BrowserDelegate : public QStyledItemDelegate {

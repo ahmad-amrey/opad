@@ -37,5 +37,8 @@ void register_exporter(const std::string& format, ExportFn fn);
 bool has_exporter(const std::string& format);
 json run_exporter(const std::string& format, const Document& doc, const json& args);
 std::vector<std::string> exporter_formats();
+// The export command's work on a document already resolved (the app runs it on a worker with its own scene); `progress`
+// (2D views) returns false to cancel.
+json export_document(const Document& doc, const Scene& scene, const json& args, const std::function<bool(double, const std::string&)>& progress = {});
 
 }  // namespace opad::commands

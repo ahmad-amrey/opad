@@ -6,6 +6,8 @@
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#include <fcntl.h>
+#include <io.h>
 #endif
 #include <cstdio>
 #include <cstring>
@@ -28,6 +30,9 @@
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/render.hpp"
+#ifdef OPAD_PAINT
+#include "opad/drawing/paint.hpp"
+#endif
 
 
 using opad::json;
@@ -51,6 +56,10 @@ void print_usage() {
   std::printf("  new <doc>                     import <doc> <file.step>        append <doc> <op.json|->\n");
   std::printf("  inspect <doc> <ref>...        diff <a.opad> <b.opad>          export <doc> --format stl --out f.stl\n");
   std::printf("  render <doc> --out shot.png --view iso --size 1280x720\n");
+  std::printf("  project <doc> --view front --out lines.json|preview.png   hidden-line projection (drawing views)\n");
+  std::printf("  export <doc> --format dxf|svg|dwg|pdf|png --view front|top|iso|... [--hidden true] --out f.dxf   a 2D view of the model\n");
+  std::printf("  export <doc> --sheet <id|name> --format pdf|svg|dxf|dwg|png --out sheet.pdf   a drawing sheet as drawn\n");
+  std::printf("  bom <doc> [--mode parts|top|indented] [--format csv] [--out bom.csv]   bill of materials (CSV on stdout without --out)\n");
   std::printf("  probe <file> [--viewer] [--mesh] [--cache]   reads any supported file as OPAD opens it; reports contents and timings\n");
   std::printf("  thumbnail <file> --out <png|bgra> [--size 256]   a picture of the file (Explorer thumbnails)\n");
   std::printf("  licenses                      the third-party notices of this build (plain text)\n");
@@ -227,6 +236,9 @@ int main(int argc, char** argv) {
   }
 #endif
   opad::configure_kernel_logging();
+#ifdef OPAD_PAINT
+  opad::drawing::install_painter();  // export --format pdf|png
+#endif
   if (argc >= 2 && std::string(argv[1]) == "mcp") {
     if(argc==2 || (argc==3 && std::string(argv[2])=="--headless"))return opad_mcp();
     if(std::string(argv[2])=="--live")return opad_live_mcp(argc,argv);
@@ -337,7 +349,7 @@ int main(int argc, char** argv) {
     } else if (command == "annotate") {
       if (pi < positional.size() && !args.contains("anchor")) args["anchor"] = positional[pi++];
       if (pi < positional.size() && !args.contains("text")) args["text"] = positional[pi++];
-    } else if (command == "render") {
+    } else if (command == "render" || command == "project") {
       if (pi < positional.size() && !args.contains("out")) args["out"] = positional[pi++];
     }
     if (!uuids.empty()) {
@@ -349,6 +361,14 @@ int main(int argc, char** argv) {
     }
 
     json out = opad::commands::run(command, args);
+    if (command == "bom" && out.contains("csv")) {  // the CSV itself, byte for byte (its byte order mark and CRLF)
+#ifdef _WIN32
+      _setmode(_fileno(stdout), _O_BINARY);
+#endif
+      const std::string csv = out["csv"].get<std::string>();
+      std::fwrite(csv.data(), 1, csv.size(), stdout);
+      return 0;
+    }
     std::string text = compact ? out.dump() : out.dump(2);
     std::fwrite(text.data(), 1, text.size(), stdout);
     std::fputc('\n', stdout);
