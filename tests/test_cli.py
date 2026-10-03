@@ -136,6 +136,14 @@ def basic_workflow():
     svg = os.path.join(tmp, "iso.svg")
     v = run("export", DOC, "--format", "svg", "--view", "iso", "--out", svg)
     assert "Hidden" not in v["layers"] and open(svg, encoding="utf-8").read().startswith("<?xml")
+    # and as PDF (one vector page on the smallest ISO sheet) and PNG, painted by Qt offscreen in the CLI
+    pdf = os.path.join(tmp, "front.pdf")
+    v = run("export", DOC, "--format", "pdf", "--view", "front", "--hidden", "true", "--out", pdf)
+    data = open(pdf, "rb").read()
+    assert data.startswith(b"%PDF-") and len(re.findall(rb"/Type /Page\b(?!s)", data)) == 1 and v["sheet"].startswith("A"), v
+    png = os.path.join(tmp, "front.png")
+    v = run("export", DOC, "--format", "png", "--view", "front", "--dpi", "100", "--out", png)
+    assert open(png, "rb").read(4) == b"\x89PNG" and v["dpi"] == 100 and v["pixels"][0] > 100, v
     # delete (tombstone) the annotation: it disappears from the resolved list but stays in the log
     run("delete", DOC, "--target", a["id"])
     assert len(run("annotations", DOC)["annotations"]) == 0

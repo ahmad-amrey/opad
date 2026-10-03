@@ -25,28 +25,7 @@ inline std::string num(double v, int decimals) {
 
 inline bool full_turn(const Curve& c) { return c.a1 - c.a0 >= 2 * M_PI - 1e-9; }
 
-// A text's lines, each with the point on its baseline that its horizontal alignment refers to: lines 1.6 heights apart,
-// the block placed by the vertical alignment (top: the first line's capitals touch the anchor; middle: the block's
-// middle; bottom: the last line's descenders, 0.3 heights below its baseline; baseline: the first line's).
-struct TextLine {
-  std::string text;
-  Vec2 at;
-};
-inline std::vector<TextLine> text_lines(const Prim& p) {
-  std::vector<TextLine> lines(1);
-  for (char ch : p.text) {
-    if (ch == '\n') lines.emplace_back();
-    else lines.back().text += ch;
-  }
-  const double pitch = 1.6 * p.height, block = p.height + pitch * static_cast<double>(lines.size() - 1);
-  const double first = p.valign == 3 ? -p.height : p.valign == 2 ? block / 2 - p.height : p.valign == 1 ? block - p.height + 0.3 * p.height : 0;
-  const Vec2 v{-std::sin(p.angle), std::cos(p.angle)};
-  for (size_t i = 0; i < lines.size(); ++i) {
-    const double up = first - pitch * static_cast<double>(i);
-    lines[i].at = {p.at[0] + v[0] * up, p.at[1] + v[1] * up};
-  }
-  return lines;
-}
+using drawing::text_lines;
 
 // The colour a primitive is drawn in: its own, else its layer's.
 inline uint32_t color_of(const Display& d, const Prim& p) {

@@ -1,13 +1,14 @@
 #pragma once
 // A 2D drawing ready to be written (TODO 11 UI-86): layers with a pen each (colour, line type, line weight) and
-// primitives in drawing millimetres, y up. One list feeds every writer (DXF R2000, SVG; PDF and the sheet canvas in the
-// app later), so a sheet, a quick view of the model and an exported sketch come out the same in each. Curves are the
+// primitives in drawing millimetres, y up. One list feeds every writer (DXF R2000, SVG, and through Qt PDF and PNG), so a
+// sheet, a quick view of the model and an exported sketch come out the same in each. Curves are the
 // projection's (lines, arcs, ellipses, splines, polylines: exact, never chopped into segments), fills are closed outlines
 // (holes inside outer ones, even-odd), text is UTF-8. Dimensions are written as their geometry (lines, filled arrowheads,
 // text), which every reader shows.
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,16 @@ struct Display {
   json counts() const;                   // primitives by DXF entity and by layer
 };
 
+// A text's lines as every writer lays them out, each with the point on its baseline that its horizontal alignment refers
+// to: lines 1.6 heights apart, the block placed by the vertical alignment (top: the first line's capitals touch the
+// anchor; middle: the block's middle; bottom: the last line's descenders, 0.3 heights below its baseline; baseline: the
+// first line's).
+struct TextLine {
+  std::string text;
+  Vec2 at;
+};
+std::vector<TextLine> text_lines(const Prim& p);
+
 // Edges and faces of a shape as the drawing shows them seen from +Z (z dropped): analytic curves where they lie in a
 // plane parallel to XY (lines, circles, ellipses, B-splines, Béziers as splines), polylines within `tol` elsewhere;
 // each face a fill of its outline and holes, its own edges not drawn again. Free vertices are left out.
@@ -99,6 +110,12 @@ std::string dxf_text(const Display& d, int decimals = 6, bool mtext = true);
 // layer (arcs and ellipses as arc commands, splines as cubic Béziers), full circles and ellipses as their elements, fills
 // as even-odd paths, text as <text>, images as <image>.
 std::string svg_text(const Display& d, int decimals = 6);
-void write_drawing(const Display& d, const std::filesystem::path& file, const std::string& format, int decimals = 6);  // dxf | svg
+// PDF and PNG are painted with Qt (paint/: opad_paint, the same list through one QPainter backend), which the app and
+// opad-cli install; the core alone cannot write them. options: {"dpi"} for PNG; it returns what it wrote (page, pixels).
+using PaintWriter = std::function<json(const Display&, const std::filesystem::path&, const std::string& format, const json& options)>;
+void set_paint_writer(PaintWriter writer);
+bool can_paint();
+// dxf | svg | pdf | png (the last two when a painter is installed); returns the painter's report, else an empty object.
+json write_drawing(const Display& d, const std::filesystem::path& file, const std::string& format, int decimals = 6, const json& options = {});
 
 }  // namespace opad::drawing

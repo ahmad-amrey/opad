@@ -167,3 +167,13 @@ add_executable(opad-test-drawing-export test_drawing_export.cpp)
 target_link_libraries(opad-test-drawing-export PRIVATE opad::core)
 add_test(NAME drawing-export COMMAND opad-test-drawing-export)
 set_tests_properties(drawing-export PROPERTIES ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache" TIMEOUT 120)
+
+if(TARGET opad_paint)  # PDF and PNG of drawings; the painter makes its own (offscreen) Qt application, as in opad-cli
+  add_executable(opad-test-drawing-paint test_drawing_paint.cpp)
+  target_link_libraries(opad-test-drawing-paint PRIVATE opad_paint)
+  if(OPAD_STATIC)
+    qt_import_plugins(opad-test-drawing-paint INCLUDE_BY_TYPE platforms Qt6::QOffscreenIntegrationPlugin Qt6::QWindowsIntegrationPlugin EXCLUDE_BY_TYPE imageformats iconengines)
+  endif()
+  add_test(NAME drawing-paint COMMAND opad-test-drawing-paint)
+  set_tests_properties(drawing-paint PROPERTIES ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache" TIMEOUT 60)
+endif()

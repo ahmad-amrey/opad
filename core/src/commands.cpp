@@ -16,6 +16,7 @@
 #include "opad/design/feature.hpp"
 #include "opad/step_io.hpp"
 #include "opad/drawing_io.hpp"
+#include "opad/drawing/display.hpp"
 #include "opad/drawing/projection.hpp"
 #include "opad/drawing/sheet.hpp"
 
@@ -394,10 +395,10 @@ void register_builtins() {
         return import_brep(need(d), text, a.value("name", "Body"), o).to_json();
       });
 
-  reg("export", "Export selected objects (or everything) to step|obj|stl|glb|dxf|svg|dwg or a plugin format (2D of solids: a hidden-line view)",
-      {{"doc", "path"}, {"format", "step|obj|stl|glb|dxf|svg|dwg|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
+  reg("export", "Export selected objects (or everything) to step|obj|stl|glb|dxf|svg|dwg|pdf|png or a plugin format (2D of solids: a hidden-line view)",
+      {{"doc", "path"}, {"format", "step|obj|stl|glb|dxf|svg|dwg|pdf|png|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
        {"tolerance", "number - mesh deflection mm"}, {"ascii", "bool - STL text"}, {"per_body", "bool - STL one file per body"}, {"mtl", "bool - OBJ materials"},
-       {"view", "2D: front|top|iso|..."}, {"dir", "[x,y,z]"}, {"up", "[x,y,z]"}, {"hidden", "bool"}, {"tangent", "bool"}, {"decimals", "int"}},
+       {"view", "2D: front|top|iso|..."}, {"dir", "[x,y,z]"}, {"up", "[x,y,z]"}, {"hidden", "bool"}, {"tangent", "bool"}, {"decimals", "int"}, {"dpi", "int - PNG"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
         if (has_exporter(a.value("format", "step"))) return run_exporter(a.value("format", "step"), doc, a);
@@ -749,15 +750,17 @@ json export_document(const Document& doc, const Scene& scene, const json& a, con
       if (a.contains(k)) o.view[k] = a[k];
   }
   o.decimals = std::clamp(a.value("decimals", 6), 0, 12);
+  o.dpi = std::clamp(a.value("dpi", 300), 10, 2400);
   o.progress = progress;
   const std::string out = a.value("out", "");
   if (out.empty()) throw Error("export: \"out\" path required");
-  if (fmt == "svg" || fmt == "dxf" || fmt == "dwg") return export_drawing(doc, scene, path_from_utf8(out), o).to_json();
+  if (fmt == "svg" || fmt == "dxf" || fmt == "dwg" || fmt == "pdf" || fmt == "png") return export_drawing(doc, scene, path_from_utf8(out), o).to_json();
   return export_selection(doc, scene, path_from_utf8(out), o).to_json();
 }
 
 std::vector<std::string> exporter_formats() {
   std::vector<std::string> out = {"step", "obj", "stl", "glb", "dxf", "svg", "dwg"};
+  if (drawing::can_paint()) out.insert(out.end(), {"pdf", "png"});
   auto& r = registry();
   std::lock_guard<std::recursive_mutex> lock(r.mu);
   for (const auto& [k, v] : r.exporters) out.push_back(k);

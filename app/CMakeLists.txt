@@ -84,7 +84,7 @@ if(WIN32)
 endif()
 
 add_executable(opad WIN32 MACOSX_BUNDLE ${OPAD_APP_SOURCES})
-target_link_libraries(opad PRIVATE opad::core ${OPAD_OCCT_VIS_LIBS} Qt6::Widgets Qt6::Gui Qt6::Network)
+target_link_libraries(opad PRIVATE opad::core opad_paint ${OPAD_OCCT_VIS_LIBS} Qt6::Widgets Qt6::Gui Qt6::Network)
 if(WIN32)
   target_link_libraries(opad PRIVATE dbghelp)
 endif()

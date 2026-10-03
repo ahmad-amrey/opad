@@ -134,6 +134,9 @@
   "Projecting the view": "جارٍ إسقاط المسقط",
   "Nothing to project: a 2D view shows solids and meshes": "لا شيء للإسقاط: المسقط ثنائي الأبعاد يعرض المجسّمات والشبكات",
   "mesh reference objects require STL, OBJ or GLB export, or a 2D view": "عناصر الشبكة المرجعية تُصدَّر بصيغة STL أو OBJ أو GLB، أو كمسقط ثنائي الأبعاد",
-  "Raster images require SVG export; DXF raster references are not supported": "الصور النقطية تتطلب التصدير بصيغة SVG؛ مراجع الصور في DXF غير مدعومة",
-  "No drawing objects selected for export": "لم تُحدَّد عناصر رسم للتصدير"
+  "Raster images require SVG, PDF or PNG export; DXF raster references are not supported": "الصور النقطية تتطلب التصدير بصيغة SVG أو PDF أو PNG؛ مراجع الصور في DXF غير مدعومة",
+  "No drawing objects selected for export": "لم تُحدَّد عناصر رسم للتصدير",
+  "A vector page on the smallest ISO sheet that holds the view; hidden lines dashed.": "صفحة متجهية على أصغر ورقة ISO تتسع للمسقط؛ والخطوط المخفية متقطعة.",
+  "A picture of the view at 300 dpi on white; hidden lines dashed.": "صورة للمسقط بدقة 300 نقطة في البوصة على خلفية بيضاء؛ والخطوط المخفية متقطعة.",
+  "PDF and PNG drawings are written by the OPAD app and opad-cli, not by this build": "رسومات PDF وPNG يكتبها تطبيق OPAD وopad-cli، لا هذا الإصدار"
 }

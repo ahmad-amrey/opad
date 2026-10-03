@@ -21,6 +21,7 @@
 #include <sstream>
 
 #include "check.hpp"
+#include "drawing_sample.hpp"
 #include "opad/commands.hpp"
 #include "opad/drawing/display.hpp"
 #include "opad/drawing_io.hpp"
@@ -87,48 +88,6 @@ int count(const std::vector<Entity>& es, const std::string& type, const std::str
   int n = 0;
   for (const auto& e : es) n += e.type == type && (layer.empty() || e.layer == layer);
   return n;
-}
-
-// A drawing with a bit of everything the writers know.
-Display sample() {
-  Display d;
-  d.title = "Sample";
-  const int visible = d.layer({"Visible", kInk, LineType::Continuous, 0.5});
-  const int hidden = d.layer({"Hidden", kInk, LineType::Hidden, 0.25});
-  const int red = d.layer({"Red centre", 0xFF0000, LineType::Center, 0.35});
-  const int arabic = d.layer({"\xD8\xB9\xD8\xB1\xD8\xA8\xD9\x8A", 0x0000FF, LineType::Continuous, 0.25});  // "عربي"
-  d.line(visible, {0, 0}, {100, 0});
-  d.line(visible, {100, 0}, {100.0 / 3, 50});
-  d.polyline(visible, {{0, 0}, {10, 60}, {0, 60}}, true);
-  d.circle(red, {50, 25}, 10);
-  d.arc(red, {50, 25}, 15, 0, M_PI / 2);
-  d.line(hidden, {0, 10}, {100, 10});
-  Curve e;
-  e.type = Curve::Type::Ellipse;
-  e.c = {150, 25};
-  e.r1 = 20;
-  e.r2 = 10;
-  e.rot = M_PI / 6;
-  e.a0 = 0;
-  e.a1 = 2 * M_PI;
-  d.curve(visible, e);
-  e.c = {150, 80};
-  e.a1 = M_PI;
-  d.curve(visible, e);
-  Curve s;  // a quarter circle as a rational quadratic spline, radius 30 about (0, 100)
-  s.type = Curve::Type::Spline;
-  s.degree = 2;
-  s.pts = {{30, 100}, {30, 130}, {0, 130}};
-  s.weights = {1, std::sqrt(0.5), 1};
-  s.knots = {0, 0, 0, 1, 1, 1};
-  d.curve(visible, s);
-  d.fill(arabic, {{{200, 0}, {210, 0}, {210, 10}, {200, 10}}, {{203, 3}, {207, 3}, {207, 7}, {203, 7}}});  // a square with a hole
-  d.fill(arabic, {{{220, 0}, {230, 0}, {225, 8}}});                                                          // a triangle
-  d.text(visible, "OPAD 1/3", {0, -10}, 3.5);
-  d.text(visible, "Line one\n\xD8\xB3\xD8\xB7\xD8\xB1 {2}", {50, -10}, 2.5, 0, 1, 3);  // "سطر"
-  linear_dimension(d, red, {0, 0}, {100, 0}, {1, 0}, {50, -20}, "100");
-  radial_dimension(d, red, {50, 25}, 10, {75, 45}, "\xC3\x98" "20", true);
-  return d;
 }
 
 }  // namespace
@@ -383,6 +342,33 @@ TEST(sketches_and_drawings_export_exactly_on_their_own_layers) {
     if (e.type == "LINE") CHECK_EQ(e.layer, "Outline");
   }
   CHECK(read_text_file(out).find("\nArcs\n 70\n0\n 62\n1\n") != std::string::npos);
+}
+
+TEST(text_bounds_reach_from_descenders_to_capitals) {
+  // The SVG view box and the PDF page come from bounds(): text on its baseline used to lose its top 3 tenths.
+  Display d;
+  const int l = d.layer({"T"});
+  d.text(l, "HEH", {0, 0}, 10);
+  auto b = d.bounds();
+  CHECK_NEAR(b[1], -3, 1e-9);
+  CHECK_NEAR(b[3], 10, 1e-9);
+  CHECK_NEAR(b[2], 21, 1e-9);
+  d.prims.clear();
+  d.text(l, "a\nbb", {0, 0}, 10, M_PI / 2, 0, 3);  // two lines up the page, the first one's capitals at the anchor
+  b = d.bounds();
+  CHECK_NEAR(b[0], 0, 1e-9);
+  CHECK_NEAR(b[2], 10 + 16 + 3, 1e-9);
+  CHECK_NEAR(b[3], 14, 1e-9);
+}
+
+TEST(pdf_and_png_are_left_to_the_painter) {
+  // The core has no Qt: PDF and PNG come from opad_paint, which the app and opad-cli install (test_drawing_paint).
+  Files f;
+  CHECK(!can_paint());
+  CHECK_THROWS(write_drawing(sample(), f.dir / "x.pdf", "pdf"));
+  const auto formats = commands::exporter_formats();
+  CHECK(std::find(formats.begin(), formats.end(), "pdf") == formats.end());
+  CHECK(!std::filesystem::exists(f.dir / "x.pdf"));
 }
 
 TEST(dwg_through_libredwg_keeps_a_view) {

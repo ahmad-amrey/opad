@@ -9,6 +9,7 @@
 #include <QDialog>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QImage>
 #include <QLabel>
 #include <QPushButton>
 #include <QRadioButton>
@@ -29,9 +30,12 @@
 // front view with hidden lines as DXF on a worker (the call returns while the job runs); the file read back has the
 // plate's outline on Visible (4 lines) and the hole's sides on Hidden (2). Then SVG of the current camera (iso): the
 // hole's rims come out as arcs, no hidden layer. The dialog opens again with those choices. <prefix>.dialog.png is the
-// dialog, <prefix>.front.dxf and <prefix>.iso.svg the files.
-// OPAD_BENCH_EXPORT_OPEN=<prefix>: the loaded file's roots (hidden or not) as a front view with hidden lines, DXF, through
-// the dialog, timed (the Engine: the stall watchdog stays quiet while the worker projects and writes); <prefix>.dxf.
+// dialog, <prefix>.front.dxf and <prefix>.iso.svg the files. Then PDF (UI-87: one vector page on A4, the hidden lines
+// in it) and PNG (300 dpi, the outline where the drawing puts it) of the front view: <prefix>.front.pdf/.png, and the
+// dialog with PDF chosen, <prefix>.pdf-dialog.png.
+// OPAD_BENCH_EXPORT_OPEN=<prefix>: the loaded file's roots (hidden or not) as a front view with hidden lines through the
+// dialog, as DXF or as OPAD_BENCH_EXPORT_FORMAT says (pdf, png, ...), timed (the Engine: the stall watchdog stays quiet
+// while the worker projects and writes); <prefix>.<format>.
 bool MainWindow::benchExport() {
   QString prefix = qEnvironmentVariable("OPAD_BENCH_EXPORT");
   const QString open = qEnvironmentVariable("OPAD_BENCH_EXPORT_OPEN");
@@ -73,14 +77,14 @@ bool MainWindow::benchExport() {
     return edges;
   };
   if (!open.isEmpty()) {  // the loaded file (the Engine): timed, the watchdog's stalls in the trace
-    const QString out = open + ".dxf";
+    const QString format = qEnvironmentVariable("OPAD_BENCH_EXPORT_FORMAT", "dxf"), out = open + "." + format;
     QFile::remove(out);
     qputenv("OPAD_BENCH_EXPORT_OUT", out.toUtf8());
     m_lastExport = opad::json();
     QElapsedTimer clock;
     try {
       withDialog([&](QDialog* d) {
-        radio(d, "dxf")->click();
+        radio(d, format.toUtf8().constData())->click();
         auto* view = d->findChild<QComboBox*>("export.view");
         view->setCurrentIndex(view->findData("front"));
         d->findChild<QCheckBox*>("export.hidden")->setChecked(true);
@@ -170,6 +174,49 @@ bool MainWindow::benchExport() {
             "the dialog opens with the last view and hidden-line choice");
       return false;
     });
+
+    // PDF of the front view with hidden lines: one vector page on an A4 sheet, written on a worker.
+    const QString pdf = prefix + ".front.pdf";
+    QFile::remove(pdf);
+    qputenv("OPAD_BENCH_EXPORT_OUT", pdf.toUtf8());
+    m_lastExport = opad::json();
+    withDialog([&](QDialog* d) {
+      auto* view = d->findChild<QComboBox*>("export.view");
+      check(radio(d, "pdf") && radio(d, "pdf")->isEnabled() && radio(d, "png") && radio(d, "png")->isEnabled(), "PDF and PNG are offered for a solid");
+      if (!radio(d, "pdf")) return false;
+      radio(d, "pdf")->click();
+      bool note = false;
+      for (auto* l : d->findChildren<QLabel*>()) note = note || (l->isVisibleTo(d) && l->text().contains("ISO sheet"));
+      check(view->isVisibleTo(d) && note, "PDF shows the view row and says what page it makes");
+      view->setCurrentIndex(view->findData("front"));
+      d->findChild<QCheckBox*>("export.hidden")->setChecked(true);
+      d->grab().save(prefix + ".pdf-dialog.png");
+      return true;
+    });
+    check(m_jobs->busy() && m_lastExport.is_null(), "the PDF is written by a job, the dialog's call has returned");
+    settle([&] { return !m_lastExport.is_null(); }, 60000);
+    QFile pdfFile(pdf);
+    const bool pdfOpen = pdfFile.open(QIODevice::ReadOnly);
+    check(m_lastExport.value("sheet", "") == "A4" && m_lastExport.value("layers", opad::json::object()).value("Hidden", 0) == 2 && pdfOpen &&
+              pdfFile.read(5) == "%PDF-",
+          "the front view as a PDF page on A4 with its hidden lines " + QString::fromStdString(m_lastExport.dump()).left(300));
+
+    // PNG of the front view without hidden lines: the plate's outline 2 mm in from the picture's edges, at 300 dpi.
+    const QString png = prefix + ".front.png";
+    QFile::remove(png);
+    qputenv("OPAD_BENCH_EXPORT_OUT", png.toUtf8());
+    m_lastExport = opad::json();
+    withDialog([&](QDialog* d) {
+      radio(d, "png")->click();
+      d->findChild<QCheckBox*>("export.hidden")->setChecked(false);
+      return true;
+    });
+    settle([&] { return !m_lastExport.is_null(); }, 60000);
+    const QImage picture(png);
+    const auto pixels = m_lastExport.value("pixels", opad::json::array());
+    check(pixels.size() == 2 && pixels[0] == 756 && pixels[1] == 165 && picture.width() == 756 && qGray(picture.pixel(24, 83)) < 110 &&
+              qGray(picture.pixel(378, 83)) > 240,
+          "the front view as a 300 dpi picture: 64 x 14 mm, its left side dark, no hidden lines " + QString::fromStdString(m_lastExport.dump()).left(300));
   } catch (const std::exception& e) {
     check(false, QString("error: ") + e.what());
   }

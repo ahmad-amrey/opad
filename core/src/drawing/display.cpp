@@ -161,6 +161,22 @@ void Display::text(int layer, const std::string& s, Vec2 at, double height, doub
   prims.push_back(std::move(p));
 }
 
+std::vector<TextLine> text_lines(const Prim& p) {
+  std::vector<TextLine> lines(1);
+  for (char ch : p.text) {
+    if (ch == '\n') lines.emplace_back();
+    else lines.back().text += ch;
+  }
+  const double pitch = 1.6 * p.height, block = p.height + pitch * static_cast<double>(lines.size() - 1);
+  const double first = p.valign == 3 ? -p.height : p.valign == 2 ? block / 2 - p.height : p.valign == 1 ? block - p.height + 0.3 * p.height : 0;
+  const Vec2 v{-std::sin(p.angle), std::cos(p.angle)};
+  for (size_t i = 0; i < lines.size(); ++i) {
+    const double up = first - pitch * static_cast<double>(i);
+    lines[i].at = {p.at[0] + v[0] * up, p.at[1] + v[1] * up};
+  }
+  return lines;
+}
+
 std::array<double, 4> Display::bounds() const {
   std::array<double, 4> b{1e300, 1e300, -1e300, -1e300};
   auto take = [&](Vec2 p) { b = {std::min(b[0], p[0]), std::min(b[1], p[1]), std::max(b[2], p[0]), std::max(b[3], p[1])}; };
@@ -172,17 +188,16 @@ std::array<double, 4> Display::bounds() const {
       for (const auto& q : p.corners) take(q);
       take(add(p.corners[1], sub(p.corners[2], p.corners[0])));
     } else if (p.kind == Prim::Kind::Text) {
-      // A rough box: 0.7 of the height per character of the longest line, lines 1.6 heights apart.
-      size_t widest = 0, lines = 1, run = 0;
-      for (char ch : p.text) {
-        if (ch == '\n') { ++lines; run = 0; continue; }
-        if ((static_cast<unsigned char>(ch) & 0xC0) != 0x80) widest = std::max(widest, ++run);
-      }
-      const double w = 0.7 * p.height * static_cast<double>(widest), h = p.height * (1 + 1.6 * static_cast<double>(lines - 1));
-      const double x0 = p.halign == 1 ? -w / 2 : p.halign == 2 ? -w : 0, y0 = p.valign == 2 ? -h / 2 : p.valign == 3 ? -h : -0.3 * p.height;
+      // A rough box a line: 0.7 of the height per character, from its descenders (0.3 heights below its baseline) to
+      // its capitals.
       const Vec2 u{std::cos(p.angle), std::sin(p.angle)}, v = left(u);
-      for (const auto& [x, y] : std::initializer_list<std::pair<double, double>>{{x0, y0}, {x0 + w, y0}, {x0, y0 + h}, {x0 + w, y0 + h}})
-        take(add(p.at, add(mul(u, x), mul(v, y))));
+      for (const auto& line : text_lines(p)) {
+        size_t n = 0;
+        for (char ch : line.text) n += (static_cast<unsigned char>(ch) & 0xC0) != 0x80;
+        const double w = 0.7 * p.height * static_cast<double>(n), x0 = p.halign == 1 ? -w / 2 : p.halign == 2 ? -w : 0;
+        for (const auto& [x, y] : std::initializer_list<std::pair<double, double>>{{x0, -0.3 * p.height}, {x0 + w, -0.3 * p.height}, {x0, p.height}, {x0 + w, p.height}})
+          take(add(line.at, add(mul(u, x), mul(v, y))));
+      }
     } else if (p.curve.type == Curve::Type::Arc || p.curve.type == Curve::Type::Ellipse) {
       for (const auto& q : p.curve.sample(std::max(p.curve.r1, 1e-6) * 1e-3)) take(q);
     } else {
@@ -338,10 +353,26 @@ void radial_dimension(Display& d, int layer, Vec2 centre, double r, Vec2 place, 
 
 // ---------------------------------------------------------------- files
 
-void write_drawing(const Display& d, const std::filesystem::path& file, const std::string& format, int decimals) {
-  const std::string text = format == "dxf" ? dxf_text(d, decimals) : format == "svg" ? svg_text(d, decimals) : throw Error("2D formats are dxf and svg, not " + format);
+namespace {
+PaintWriter& painter() {
+  static PaintWriter w;
+  return w;
+}
+}  // namespace
+
+void set_paint_writer(PaintWriter writer) { painter() = std::move(writer); }
+bool can_paint() { return static_cast<bool>(painter()); }
+
+json write_drawing(const Display& d, const std::filesystem::path& file, const std::string& format, int decimals, const json& options) {
+  if (format == "pdf" || format == "png") {
+    if (!can_paint()) throw Error("PDF and PNG drawings are written by the OPAD app and opad-cli, not by this build");
+    if (file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
+    return painter()(d, file, format, options);
+  }
+  const std::string text = format == "dxf" ? dxf_text(d, decimals) : format == "svg" ? svg_text(d, decimals) : throw Error("2D formats are dxf, svg, pdf and png, not " + format);
   if (file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
   write_text_file(file, text);
+  return json::object();
 }
 
 }  // namespace opad::drawing

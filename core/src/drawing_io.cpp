@@ -548,7 +548,9 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
 }
 
 ExportResult export_drawing(const Document& doc,const Scene& scene,const std::filesystem::path& file,const ExportOptions& options) {
-  if(options.format!="dxf" && options.format!="svg" && options.format!="dwg") throw Error("2D formats are dxf, svg and dwg, not "+options.format);
+  const bool painted=options.format=="pdf" || options.format=="png";
+  if(options.format!="dxf" && options.format!="svg" && options.format!="dwg" && !painted) throw Error("2D formats are dxf, svg, dwg, pdf and png, not "+options.format);
+  if(painted && !drawing::can_paint()) throw Error("PDF and PNG drawings are written by the OPAD app and opad-cli, not by this build");
   const auto stem=doc.path.stem().u8string();
   const std::string title=doc.path.empty()?std::string("OPAD drawing"):std::string(stem.begin(),stem.end());
   std::vector<std::string> nodes, sketches;
@@ -594,7 +596,7 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
     const int layer=d.layer(pen);
     const uint32_t own=d.layers[size_t(layer)].rgb==rgb?drawing::kByLayer:rgb;
     if(n && !n->raster.is_null()) {
-      if(options.format!="svg") throw Error("Raster images require SVG export; DXF raster references are not supported");
+      if(options.format!="svg" && !painted) throw Error("Raster images require SVG, PDF or PNG export; DXF raster references are not supported");
       const auto world=scene.world(id);
       drawing::Prim image; image.kind=drawing::Prim::Kind::Image; image.layer=layer;
       for(size_t i=0;i<3;++i) { const auto p=world.apply(n->raster.at("corners").at(i).get<Vec3>()); image.corners[i]={p[0],p[1]}; }
@@ -616,7 +618,10 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
     convert_dwg(intermediate,converted,true);
     if(file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
     std::filesystem::copy_file(converted,file,std::filesystem::copy_options::overwrite_existing);
-  } else drawing::write_drawing(d,file,options.format,options.decimals);
+  } else {
+    const json wrote=drawing::write_drawing(d,file,options.format,options.decimals,{{"dpi",options.dpi}});
+    for(const auto& [k,v]:wrote.items()) details[k]=v;
+  }
   ExportResult result{{file},bodies,details};
   const json counts=d.counts();
   for(const auto& [k,v]:counts.items()) result.details[k]=v;

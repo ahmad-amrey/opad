@@ -45,9 +45,9 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   auto* grid = new QGridLayout();
   auto* group = new QButtonGroup(&dlg);
   struct Fmt { QString label, format, schema; };
-  QList<Fmt> fmts = {{"STEP AP214", "step", "AP214"}, {"STEP AP242", "step", "AP242"}, {"OBJ (+MTL)", "obj", ""}, {"STL", "stl", ""}, {"GLB", "glb", ""}, {"DXF (2D)", "dxf", ""}, {"SVG (2D)", "svg", ""}, {"DWG (converter)", "dwg", ""}};
+  QList<Fmt> fmts = {{"STEP AP214", "step", "AP214"}, {"STEP AP242", "step", "AP242"}, {"OBJ (+MTL)", "obj", ""}, {"STL", "stl", ""}, {"GLB", "glb", ""}, {"DXF (2D)", "dxf", ""}, {"SVG (2D)", "svg", ""}, {"DWG (converter)", "dwg", ""}, {"PDF (2D)", "pdf", ""}, {"PNG (2D)", "png", ""}};
   for (const auto& f : opad::commands::exporter_formats())
-    if (f != "step" && f != "obj" && f != "stl" && f != "glb" && f != "dxf" && f != "svg" && f != "dwg") fmts << Fmt{QString::fromStdString(f).toUpper() + tr(" (plugin)"), QString::fromStdString(f), ""};
+    if (f != "step" && f != "obj" && f != "stl" && f != "glb" && f != "dxf" && f != "svg" && f != "dwg" && f != "pdf" && f != "png") fmts << Fmt{QString::fromStdString(f).toUpper() + tr(" (plugin)"), QString::fromStdString(f), ""};
   int i = 0;
   for (const auto& f : fmts) {
     auto* r = new QRadioButton(f.label, &dlg);
@@ -149,7 +149,7 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
       for(const auto& cat:categories) {
         if(fmt=="step") compatible &= cat=="solid";
         else if(fmt=="stl" || fmt=="obj" || fmt=="glb") compatible &= cat=="solid" || cat=="mesh";
-        else if(fmt=="svg" || fmt=="dxf" || fmt=="dwg") compatible &= cat=="drawing2d" || cat=="solid" || cat=="mesh";  // solids: a view of them
+        else if(fmt=="svg" || fmt=="dxf" || fmt=="dwg" || fmt=="pdf" || fmt=="png") compatible &= cat=="drawing2d" || cat=="solid" || cat=="mesh";  // solids: a view of them
       }
       format->setEnabled(compatible);
     }
@@ -160,7 +160,7 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
     QString fmt = b ? b->property("format").toString() : "step";
     int n = scopeSel->isChecked() ? selBodies : allBodies;
     summary->setText(tr("%1 · %2 objects · %3 mm").arg(b ? b->text() : fmt).arg(n).arg(tol->value(), 0, 'f', 3));
-    const bool twoD = fmt=="svg" || fmt=="dxf" || fmt=="dwg";
+    const bool twoD = fmt=="svg" || fmt=="dxf" || fmt=="dwg" || fmt=="pdf" || fmt=="png";
     asView = twoD && (categories.count("solid") || categories.count("mesh"));
     if(asView) summary->setText(tr("%1 · a 2D view of %2 objects · %3").arg(b->text()).arg(n).arg(viewBox->currentText()));
     if(!available) summary->setText(tr("Select objects of a compatible export category."));
@@ -171,7 +171,10 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
     form->setRowVisible(tol,fmt!="step" && !twoD);
     for(QWidget* w:{static_cast<QWidget*>(viewLabel),static_cast<QWidget*>(viewBox),static_cast<QWidget*>(hiddenLines),static_cast<QWidget*>(tangentEdges),static_cast<QWidget*>(viewNote)}) w->setVisible(asView);
     viewNote->setText(categories.count("drawing2d") ? tr("Drawings and sketches are left out of a view of the model.")
-                                                    : tr("Exact lines and arcs at full size in mm; hidden lines go on their own layer."));
+                      : fmt == "pdf" ? tr("A vector page on the smallest ISO sheet that holds the view; hidden lines dashed.")
+                      : fmt == "png" ? tr("A picture of the view at 300 dpi on white; hidden lines dashed.")
+                                     : tr("Exact lines and arcs at full size in mm; hidden lines go on their own layer."));
+    dlg.adjustSize();  // the rows shown and the note's lines change its height
   };
   connect(group, &QButtonGroup::idClicked, &dlg, [&](int) { refresh(); });
   connect(viewBox, &QComboBox::currentIndexChanged, &dlg, [&](int) { refresh(); });
