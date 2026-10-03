@@ -255,6 +255,7 @@ void SketchEditor::setVisible(bool visible) {
 void SketchEditor::begin(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry) {
   ++m_geometryRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   ++m_session;m_toolPreview.reset();m_previewRequested=false;
+  ++m_modelRevision;  // what previews cached by curve id (trim cuts, an extend's run) was the last sketch's: ids start again
   m_showConstraints=QSettings().value("sketch/showConstraints",true).toBool();
   m_tracked.clear();m_dwellPoint=0;m_lock.reset();m_shiftDown=m_shiftSpent=m_inView=false;m_typedValues.clear();m_entry.reset();m_pointer=m_cursor={};m_angleRelative=QSettings().value("sketch/input/angleRelative",false).toBool();m_circleRadius=QSettings().value("sketch/input/circleRadius",false).toBool();m_dragging=false;m_dragMoved=false;m_dragPending=false;m_dragReleased=false;m_inChange=false;m_options.clear();m_conflicts.clear();
   readSettings();

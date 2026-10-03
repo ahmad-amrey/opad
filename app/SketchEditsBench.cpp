@@ -13,7 +13,8 @@ using namespace opad::design;
 // upright (the run shown dashed before), a second click to the next. A dragged point snaps to a point in reach (marked
 // "Merge") and is merged into it on the drop, one undo step; dropped near a line it is put on it. Trim on a spline and an
 // ellipse: the hovered piece between two uprights in red, a click takes it (the pieces' ends on the uprights); a spline cuts
-// a line too; a fence takes an ellipse's side; extend runs a line on to an ellipse. <prefix>.fillet.png, <prefix>.fence.png, <prefix>.merge.png, <prefix>.spline.png.
+// a line too, and a line it ends on is cut there in its hover (from the spline's samples, once per edit); a fence takes an
+// ellipse's side; extend runs a line on to an ellipse; a new sketch starts with nothing either cached. <prefix>.fillet.png, <prefix>.fence.png, <prefix>.merge.png, <prefix>.spline.png.
 void SketchEditor::benchEdits() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_EDITS");
   auto ok = std::make_shared<bool>(true);
@@ -236,6 +237,16 @@ void SketchEditor::benchEdits() {
       case 3: {  // the extend ran on a worker
         const SkEntity* e = m_sk.entity(int(extended->first));
         check(e && std::abs(m_sk.point(e->p[1])->x - extended->second) < 1e-6, "a click runs it on to the ellipse");
+        // What the trim and the extend cached by curve id is this sketch's: the next one (its ids start again) starts afresh.
+        setTool("trim");
+        sketchMove(95, 37, Qt::NoModifier, false);
+        setTool("extend");
+        sketchMove(131, 48.52, Qt::NoModifier, false);
+        const bool cached = m_trimCutsRevision == m_modelRevision && std::get<2>(m_extendKey) == m_modelRevision;
+        end();
+        begin({}, "Bench other", {{"base", "xy"}}, opad::Frame(), opad::json::object());
+        check(cached && m_trimCutsRevision != m_modelRevision && std::get<2>(m_extendKey) != m_modelRevision, "a new sketch starts with nothing the trim or the extend cached in the last one");
+        end();
         timer->stop();
         QCoreApplication::exit(*ok ? 0 : 2);
         return;
