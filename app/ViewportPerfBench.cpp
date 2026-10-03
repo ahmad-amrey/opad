@@ -1,11 +1,12 @@
 // OPAD_BENCH_PERF=<prefix> (UI-11): the evaluation's latency budgets on a large document. Cases in
 // tools/bench_cases/viewer.py: 1,000 boxes made for the run (CI) and the Engine beside the repository (its hidden root
-// shown in memory). Each step (a hide, its undo and redo, Hide others and its undo, select all, a filter switch there and
-// back, a new document) is timed from the command until everything it started has settled, through the watchdog
-// (OPAD_TRACE_STALL_MS, default 50): neither the command itself nor any stall after it may take longer than
-// OPAD_BENCH_PERF_BUDGET ms (default 150) of UI-thread CPU time, nor 4x that in wall time: other builds and benches share
-// the machine, and a step waiting for a core is not the step's work, while a wait of 600 ms still fails. A round with a
-// step over budget runs once more on the file reopened, and that round counts. The trace ends with the stall histogram.
+// shown in memory). Each step (a hide, its undo and redo, Hide others and its undo, everything hidden and shown again,
+// select all, a filter switch there and back, a new document) is timed from the command until everything it started has
+// settled, through the watchdog (OPAD_TRACE_STALL_MS, default 50): neither the command itself nor any stall after it may
+// take longer than OPAD_BENCH_PERF_BUDGET ms (default 150) of UI-thread CPU time, nor 4x that in wall time: other builds
+// and benches share the machine, and a step waiting for a core is not the step's work, while a wait of 600 ms still
+// fails. A round with a step over budget runs once more on the file reopened, and that round counts. The trace ends with
+// the stall histogram.
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QStringList>
@@ -91,9 +92,12 @@ OPAD_BENCH(OPAD_BENCH_PERF, perf) {
   waitUntil(idle, 30000);
   step("Hide others", [&] { w.action("view.hideothers")->trigger(); }, [&] { return v->displayedCount() == 1; });
   step("undo Hide others", [&] { doc->undo(); }, [&] { return v->displayedCount() == shown; });
+  const auto roots = doc->scene.roots;
+  // Everything hidden and shown again: every body leaves the view, then streams back in through the display pump.
+  step("hide everything", [&] { doc->run("appearance", {{"targets", roots}, {"visible", false}}); }, [&] { return v->displayedCount() == 0; });
+  step("show everything (undo)", [&] { doc->undo(); }, [&] { return v->displayedCount() == shown; });
   bool applied = false;
   const auto watch = QObject::connect(v, &Viewport::selectionApplied, &w, [&applied] { applied = true; });
-  const auto roots = doc->scene.roots;
   step("select all", [&] { w.m_browser->setSelectedIds(roots); w.onBrowserSelection(roots); }, [&] { return applied && !v->selection().empty(); });
   QObject::disconnect(watch);
   bool filtered = false;
