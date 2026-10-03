@@ -303,6 +303,26 @@ TEST(metrics_on_request) {
   CHECK(has(diff_text(diff), "volume 6000 -> 8000 mm3"));
 }
 
+TEST(linked_assets) {  // the asset record the asset design writes on its import (an edit when it syncs)
+  Document d = Document::create();
+  const json asset = {{"v", 1}, {"kind", "step"}, {"path", "../hw/board.step"}, {"sha256", std::string(64, 'a')}, {"storage", "linked"}};
+  const std::string import = d.append(json{{"op", "import"}, {"source", "board.step"}, {"asset", asset},
+                                           {"nodes", json::array({body_node(new_uuid(), "Board", d.add_body(brep(1), json::object()))})}}).id;
+  const std::string base = d.serialize();
+  json synced = asset;
+  synced["sha256"] = std::string(64, 'b');
+  synced["storage"] = "embedded";
+  d.append(json{{"op", "edit"}, {"target", import}, {"set", {{"asset", synced}}}});
+  const json diff = semantic_diff(Document::parse_index(base), d);
+  const json c = find(diff, "asset", "synced", "board.step");
+  CHECK_EQ(c["before"], "aaaaaaa");
+  CHECK_EQ(c["after"], "bbbbbbb");
+  CHECK_EQ(find(diff, "asset", "storage")["after"], "embedded");
+  CHECK_EQ(diff["summary"], "Sync board.step");
+  CHECK(has(diff_text(diff), "Assets\n  ~ board.step: synced aaaaaaa -> bbbbbbb\n  ~ board.step: linked -> embedded\n"));
+  CHECK(has(document_outline(d), "import  board.step (1 bodies) linked\n"));
+}
+
 TEST(unreadable_text_still_outlines) {
   Tree t;
   std::string text = t.doc.serialize();
