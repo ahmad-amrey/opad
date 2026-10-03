@@ -247,6 +247,31 @@ TEST(arabic_text_aligns_and_text_fits_between_its_points) {
   CHECK(std::abs((middle[1] + middle[3]) / 2) < 0.05);
 }
 
+// Bodies share no sub-shapes (the view meshes them on several threads at once): the same text, or a block with a fill,
+// on two layers gives each layer's body its own edges, in a viewer (shapes kept as read) and in a document.
+TEST(bodies_share_no_edges) {
+  Files f;
+  write_text_file(f.dir / "shared.dxf",
+                  section("BLOCKS", {{0, "BLOCK"}, {2, "K"}, {70, "0"}, {10, "0"}, {20, "0"}, {0, "SOLID"}, {8, "0"}, {10, "0"}, {20, "0"},
+                                     {11, "1"}, {21, "0"}, {12, "0"}, {22, "1"}, {13, "1"}, {23, "1"}, {0, "ENDBLK"}}) +
+                      section("ENTITIES", {{0, "TEXT"}, {8, "A"}, {10, "0"}, {20, "0"}, {40, "10"}, {1, "HELLO"},
+                                           {0, "TEXT"}, {8, "B"}, {10, "0"}, {20, "20"}, {40, "10"}, {1, "HELLO"},
+                                           {0, "INSERT"}, {8, "A"}, {2, "K"}, {10, "50"}, {20, "0"},
+                                           {0, "INSERT"}, {8, "B"}, {2, "K"}, {10, "50"}, {20, "20"}}) +
+                      kEof);
+  for (bool viewer : {true, false}) {
+    const Document d = import(f.dir / "shared.dxf", viewer);
+    std::map<const TopoDS_TShape*, std::string> owner;
+    bool shared = false;
+    for (const auto& key : d.body_keys())
+      for (TopExp_Explorer e(body_shape(d, key), TopAbs_EDGE); e.More(); e.Next()) {
+        const auto [it, added] = owner.emplace(e.Current().TShape().get(), key);
+        shared = shared || (!added && it->second != key);
+      }
+    CHECK(d.body_keys().size() == 2 && !owner.empty() && !shared);
+  }
+}
+
 TEST(survey_coordinates_and_metres) {
   Files f;
   write_text_file(f.dir / "site.dxf",

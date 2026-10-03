@@ -32,6 +32,10 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS.hxx>
 #include <TopExp_Explorer.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
+#include <TopoDS_Iterator.hxx>
+#include <functional>
+#include <unordered_map>
 #include <Standard_Failure.hxx>
 #include <gp_Circ.hxx>
 #include <algorithm>
@@ -481,6 +485,50 @@ const std::vector<std::string>& importable_extensions() {
   return list;
 }
 
+namespace {
+// Bodies share no sub-shapes: the view meshes them side by side on several threads, and a viewer keeps the reader's
+// shapes as they are. What a group holds that an earlier group holds too (a glyph, or a block placed on two layers) is
+// copied for it, once per group whatever its number of placements; sharing within one body stays.
+void unshare(Drawing& drawing) {
+  std::unordered_map<const TopoDS_TShape*, int> owner;  // the first group holding it
+  std::function<void(const TopoDS_Shape&, int)> mark = [&](const TopoDS_Shape& s, int group) {
+    if (!owner.emplace(s.TShape().get(), group).second) return;  // its children are marked
+    for (TopoDS_Iterator i(s, false, false); i.More(); i.Next()) mark(i.Value(), group);
+  };
+  std::vector<TopoDS_Compound*> groups;
+  for (auto& [name, byPen] : drawing.layers)
+    for (auto& [pen, shape] : byPen) mark(shape, int(groups.size())), groups.push_back(&shape);
+  BRep_Builder builder;
+  for (int group = 1; group < int(groups.size()); ++group) {
+    std::unordered_map<const TopoDS_TShape*, TopoDS_Shape> done;  // its own one of each, unlocated
+    std::function<TopoDS_Shape(const TopoDS_Shape&)> own = [&](const TopoDS_Shape& s) {
+      const TopoDS_TShape* t = s.TShape().get();
+      auto found = done.find(t);
+      if (found == done.end()) {
+        const TopoDS_Shape base = s.Located(TopLoc_Location()).Oriented(TopAbs_FORWARD);
+        TopoDS_Shape result = base;
+        if (owner[t] != group) {
+          result = BRepBuilderAPI_Copy(base, false, false).Shape();
+        } else if (base.ShapeType() == TopAbs_COMPOUND) {
+          TopoDS_Compound rebuilt;
+          builder.MakeCompound(rebuilt);
+          bool changed = false;
+          for (TopoDS_Iterator i(base, false, false); i.More(); i.Next()) {
+            const TopoDS_Shape child = own(i.Value());
+            changed = changed || child.TShape() != i.Value().TShape();
+            builder.Add(rebuilt, child);
+          }
+          if (changed) result = rebuilt;
+        }
+        found = done.emplace(t, result).first;
+      }
+      return found->second.Located(s.Location()).Oriented(s.Orientation());
+    };
+    *groups[size_t(group)] = TopoDS::Compound(own(*groups[size_t(group)]));
+  }
+}
+}  // namespace
+
 ImportResult import_file(Document& doc, const std::filesystem::path& file, const ImportOptions& options) {
   const auto ext=extension(file);
   if(!std::filesystem::exists(file)) throw Error("file not found: "+file.filename().string());
@@ -505,6 +553,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     else throw Error("unsupported file format: " + ext);
     ImportResult result; result.warnings=drawing.warnings; json children=json::array();
     // Parse fully before touching the document. Stage stores and op so cancellation is atomic.
+    unshare(drawing);
     Document staged=doc;
     for(const auto& [name, groups]:drawing.layers) {
       if(options.progress && !options.progress(double(children.size())/drawing.layers.size(),"building")) throw Error("cancelled");
