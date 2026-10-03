@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 
 #include "BenchRegistry.hpp"
 #include "BrowserDelegate.hpp"
@@ -345,11 +346,13 @@ OPAD_BENCH(OPAD_BENCH_LAYERS, layers) {
 }
 
 // OPAD_BENCH_VOCABULARY=<prefix>. On a drawing (drawing-only, viewer mode): the Faces filter is gone (its segment, its
-// action) and so are the display style and projection chips; a hovered line reads "Line on <layer> · 100 mm" and, after a
-// rest, a rollover card names its type, layer, colour, linetype, lineweight and length; a picked one counts as an object
-// in the status bar; with the Bodies filter a drawing body is an object on its layer. On a solid (the box fixture): all of
-// that stays as it is until 2D mode, which takes the Faces filter and the chips away, and brings them back when it ends.
-// <prefix>.card.png, <prefix>.status.png.
+// action) and so are the display style and projection chips, the other filters are Groups, Objects and Points; a hovered
+// line reads "Line on <layer> · 100 mm" and, after a rest, a rollover card names its type, layer, colour, linetype,
+// lineweight and length; a picked one counts as an object in the status bar and Properties call it a line on its layer
+// with the layer's section; with the Groups (Bodies) filter a drawing body is a group on its layer, its Properties count
+// fills, objects and points. On a solid (the box fixture): all of that stays as it is until 2D mode, which takes the
+// Faces filter and the chips away (the filters keep their names: no drawing), and brings them back when it ends.
+// <prefix>.card.png, <prefix>.status.png, <prefix>.properties.png.
 OPAD_BENCH(OPAD_BENCH_VOCABULARY, vocabulary) {
   auto all = std::make_shared<bool>(true);
   Check require = [all](bool ok, const QString& what) {
@@ -384,23 +387,43 @@ OPAD_BENCH(OPAD_BENCH_VOCABULARY, vocabulary) {
       return v->drawingWords() && !faces->isVisible() && !segmentShown() && !chipShown(MainWindow::tr("Shaded + edges")) && !chipShown(MainWindow::tr("Orthographic")) &&
              v->selectionFilter() != Viewport::SelFilter::Face;
     };
+    // The selection filters' names: a drawing's (groups, objects, points) or the 3D ones.
+    auto filterWords = [&w](bool drawing) {
+      const QString bodies = w.action("select.bodies")->text(), edges = w.action("select.edges")->text(), vertices = w.action("select.vertices")->text();
+      if (!drawing) return bodies == i18n::t("Bodies") && edges == i18n::t("Edges") && vertices == i18n::t("Vertices");
+      return bodies == QObject::tr("Groups") && edges == QObject::tr("Objects") && vertices == QObject::tr("Points") &&
+             w.action("select.bodies")->toolTip().contains(QObject::tr("A layer's objects of one colour, picked together"));
+    };
+    constexpr int kPropKey = Qt::UserRole + 3;  // PropertiesPanel's kPropKeyRole: a row's property name
+    auto propKeys = [&w] {
+      QStringList keys;
+      for (int i = 0; i < w.m_props->table()->topLevelItemCount(); ++i) keys << w.m_props->table()->topLevelItem(i)->data(0, kPropKey).toString();
+      return keys;
+    };
+    auto propRow = [&w](const QString& label) -> std::optional<QString> {  // the value beside a label (a provided section's rows too)
+      for (int i = 0; i < w.m_props->table()->topLevelItemCount(); ++i)
+        if (w.m_props->table()->topLevelItem(i)->text(0) == label) return w.m_props->table()->topLevelItem(i)->text(1);
+      return std::nullopt;
+    };
     auto script = std::make_shared<Script>();
     if (!drawing2d::drawingOnly(doc->scene)) {  // a solid: 3D words until 2D mode
       QAction* flat = w.action("view.2d");
-      script->add("a solid in 3D", [v, faces, require, threeD] {
+      script->add("a solid in 3D", [v, faces, require, threeD, filterWords] {
         faces->trigger();
-        require(!v->drawingWords() && threeD(), "a solid keeps the Faces filter, the display chips and the 3D words");
+        require(!v->drawingWords() && threeD() && filterWords(false), "a solid keeps the Faces filter, the display chips and the 3D words");
       });
       script->add("2D mode", [flat] { flat->setChecked(true); }, [twoD] { return twoD(); });
-      script->add("2D mode off", [flat, require] {
-        require(true, "2D mode takes the Faces filter (a Faces pick moves to Edges) and the display chips away");
+      script->add("2D mode off", [flat, require, filterWords] {
+        require(filterWords(false), "2D mode takes the Faces filter (a Faces pick moves to Edges) and the display chips away; with no drawing the filters keep their names");
         flat->setChecked(false);
       }, [v, threeD] { return !v->drawingWords() && threeD(); });
-      script->add("back", [require] { require(true, "leaving 2D mode brings them back"); });
+      script->add("back", [require, filterWords] { require(filterWords(false), "leaving 2D mode brings them back"); });
     } else {
       auto at = std::make_shared<QPointF>();
-      script->add("a drawing", [&w, v, doc, require, twoD, at] {
+      script->add("a drawing", [&w, v, doc, require, twoD, at, filterWords] {
         require(twoD(), "a drawing has no Faces filter or display chips, and the 2D words");
+        require(filterWords(true), QString("the filters are named as a drawing's picks: %1, %2, %3")
+                                       .arg(w.action("select.bodies")->text(), w.action("select.edges")->text(), w.action("select.vertices")->text()));
         const std::string lines = layerNamed(doc->scene, "Lines");
         Bnd_Box box;
         for (const auto& body : doc->scene.bodies_under(lines)) box.Add(opad::node_world_bbox(doc->doc, doc->scene, body));
@@ -437,13 +460,43 @@ OPAD_BENCH(OPAD_BENCH_VOCABULARY, vocabulary) {
         const QString text = w.m_statusSel->text();
         require(text == MainWindow::tr("%1 selected · %2").arg(1).arg(i18n::t("object")), "a picked line counts as an object: " + text);
         w.statusBar()->grab().save(value + ".status.png");
+        w.action("inspect.properties")->trigger();
+      }, [&w] { return w.m_propsPanel->isVisible(); });
+      auto title = [&w] { return w.m_props->findChild<QLabel*>("panelTitle")->text(); };
+      auto subtitle = [&w] {
+        for (auto* label : w.m_props->findChildren<QLabel*>())
+          if (label->objectName() == "secondary") return label->text();
+        return QString();
+      };
+      script->add("its properties", [&w, require, value, title, subtitle, propKeys, propRow] {
+        const QStringList keys = propKeys();
+        require(title() == Viewport::tr("Line") && subtitle().contains("Lines") && subtitle().contains(i18n::t("object")) && keys.contains("length") &&
+                    !keys.contains("vertices") && !keys.contains("adjacent_faces") && !keys.contains("axis"),
+                QString("Properties name a picked line as a line on its layer, without solid words: %1 / %2 / %3").arg(title(), subtitle(), keys.join(",")));
+        require(propRow(QObject::tr("Layer").toUpper()) && propRow(QObject::tr("Name")) == QChar(0x202A) + QString("Lines") + QChar(0x202C) &&
+                    propRow(QObject::tr("Lineweight")).value_or(QString()).contains(QObject::tr("Default")),
+                "Properties have the layer's section: " + propRow(QObject::tr("Name")).value_or("none"));
+        w.m_propsPanel->grab().save(value + ".properties.png");
         w.action("select.bodies")->trigger();
       }, [v] { return v->selectionFilter() == Viewport::SelFilter::Body; });
       script->add("hover a body", [&w, v, require, at] {
         v->benchHover(QPointF(at->x() + 1, at->y()));
         v->benchHover(*at);
         const QString text = w.m_statusHover->text();
-        require(text == Viewport::tr("Object on %1").arg("Lines"), "with the Bodies filter a drawing body is an object on its layer: " + text);
+        require(text == Viewport::tr("Group on %1").arg("Lines"), "with the Bodies (Groups) filter a drawing body is a group on its layer: " + text);
+      });
+      script->add("pick the group", [&w, v, doc] {
+        opad::Ref group;
+        group.body = doc->scene.bodies_under(layerNamed(doc->scene, "Lines")).at(0);
+        v->selectRefs({group});
+        w.onViewportSelection();
+        w.action("inspect.properties")->trigger();
+      }, [&w, propKeys] { return w.m_propsPanel->isVisible() && propKeys().contains("objects"); });  // counted on a worker
+      script->add("the group's properties", [&w, require, title, propKeys] {
+        const QStringList keys = propKeys();
+        require(w.m_statusSel->text() == MainWindow::tr("%1 selected · %2").arg(1).arg(i18n::t("group")) && title() == "Lines" && keys.contains("fills") &&
+                    keys.contains("points") && !keys.contains("faces") && !keys.contains("edges") && !keys.contains("solid") && !keys.contains("volume"),
+                QString("a picked group counts as one, its Properties count objects, fills and points: %1 / %2").arg(w.m_statusSel->text(), keys.join(",")));
       });
     }
     Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });

@@ -55,43 +55,47 @@ bool isLayer(const opad::Scene& scene, const std::string& id) {
   });
 }
 
+namespace {
+Layer make(const opad::Scene& scene, const opad::Node& n, const std::string& drawing) {
+  const json& f = fields(n);
+  Layer l;
+  l.id = n.id;
+  l.name = n.name;
+  l.drawing = drawing;
+  const bool frozenField = f.value("frozen", false);
+  l.frozen = !n.visible && frozenField;
+  l.on = n.visible || (l.frozen && !f.value("off", false));
+  l.locked = n.locked;
+  l.plot = f.value("plot", true);
+  if (f.contains("linetype") && f["linetype"].is_string()) l.linetype = f["linetype"].get<std::string>();
+  if (f.contains("lineweight") && f["lineweight"].is_number()) l.lineweight = f["lineweight"].get<double>();
+  for (const auto& child : n.children)
+    if (const opad::Node* b = scene.node(child); b && b->kind == opad::Node::Kind::Body && b->representation == "drawing2d") {
+      l.bodies.push_back(child);
+      if (b->by_layer) l.byLayer.push_back(child);
+    }
+  if (l.byLayer.empty()) l.byLayer = l.bodies;
+  l.own = int(l.bodies.size() - l.byLayer.size());
+  bool first = true, uncolored = false;
+  for (const auto& child : l.byLayer) {
+    const opad::Node* b = scene.node(child);
+    if (!b->has_color) uncolored = true;
+    else if (first || b->color == l.color) l.color = b->color, l.colored = true;
+    else l.mixed = true;
+    first = false;
+  }
+  if (l.colored && uncolored) l.mixed = true;
+  if (n.has_color && !l.mixed) l.color = n.color, l.colored = true;
+  return l;
+}
+}  // namespace
+
 std::vector<Layer> layers(const opad::Scene& scene) {
   std::vector<Layer> out;
   std::function<void(const std::string&, const std::string&)> walk = [&](const std::string& id, const std::string& drawing) {
     const opad::Node* n = scene.node(id);
     if (!n || n->kind != opad::Node::Kind::Component) return;
-    if (isLayer(scene, id)) {
-      const json& f = fields(*n);
-      Layer l;
-      l.id = id;
-      l.name = n->name;
-      l.drawing = drawing;
-      const bool frozenField = f.value("frozen", false);
-      l.frozen = !n->visible && frozenField;
-      l.on = n->visible || (l.frozen && !f.value("off", false));
-      l.locked = n->locked;
-      l.plot = f.value("plot", true);
-      if (f.contains("linetype") && f["linetype"].is_string()) l.linetype = f["linetype"].get<std::string>();
-      if (f.contains("lineweight") && f["lineweight"].is_number()) l.lineweight = f["lineweight"].get<double>();
-      for (const auto& child : n->children)
-        if (const opad::Node* b = scene.node(child); b && b->kind == opad::Node::Kind::Body && b->representation == "drawing2d") {
-          l.bodies.push_back(child);
-          if (b->by_layer) l.byLayer.push_back(child);
-        }
-      if (l.byLayer.empty()) l.byLayer = l.bodies;
-      l.own = int(l.bodies.size() - l.byLayer.size());
-      bool first = true, uncolored = false;
-      for (const auto& child : l.byLayer) {
-        const opad::Node* b = scene.node(child);
-        if (!b->has_color) uncolored = true;
-        else if (first || b->color == l.color) l.color = b->color, l.colored = true;
-        else l.mixed = true;
-        first = false;
-      }
-      if (l.colored && uncolored) l.mixed = true;
-      if (n->has_color && !l.mixed) l.color = n->color, l.colored = true;
-      out.push_back(std::move(l));
-    }
+    if (isLayer(scene, id)) out.push_back(make(scene, *n, drawing));
     for (const auto& child : n->children) walk(child, drawing);
   };
   for (const auto& root : scene.roots)
@@ -108,6 +112,14 @@ std::string layerOf(const opad::Scene& scene, const std::string& node) {
   for (const opad::Node* n = scene.node(node); n; n = n->parent.empty() ? nullptr : scene.node(n->parent))
     if (isLayer(scene, n->id)) return n->id;
   return {};
+}
+
+std::optional<Layer> layerAt(const opad::Scene& scene, const std::string& node) {
+  const opad::Node* n = scene.node(layerOf(scene, node));
+  if (!n) return std::nullopt;
+  const opad::Node* root = n;
+  while (!root->parent.empty() && scene.node(root->parent)) root = scene.node(root->parent);
+  return make(scene, *n, root->name);
 }
 
 json setOn(const Layer& layer, bool on) {
@@ -212,8 +224,25 @@ json entityInfo(const TopoDS_Shape& sub) try {
   return {{"type", sub.ShapeType() == TopAbs_FACE ? "fill" : "curve"}};
 }
 
+std::string entityType(const json& inspected) {
+  const std::string type = inspected.value("type", ""), curve = inspected.value("curve", "");
+  if (type == "vertex" || type == "point") return "point";
+  if (type == "face") return "fill";
+  if (type != "edge") return {};
+  if (curve == "line") return "line";
+  if (curve == "ellipse") return "ellipse";
+  if (curve == "bspline" || curve == "bezier") return "spline";
+  if (curve != "circle") return "curve";
+  const json &a = inspected.value("start", json()), &b = inspected.value("end", json());
+  if (!a.is_array() || !b.is_array() || a.size() != 3 || b.size() != 3) return "arc";
+  double gap = 0;
+  for (int i = 0; i < 3; ++i) gap = std::max(gap, std::abs(a[i].get<double>() - b[i].get<double>()));
+  return gap <= 1e-7 * std::max(1.0, inspected.value("radius", 1.0)) ? "circle" : "arc";
+}
+
 const char* kindWord(opad::Ref::Kind kind) {
   switch (kind) {
+    case opad::Ref::Kind::Body: return "group";
     case opad::Ref::Kind::Vertex:
     case opad::Ref::Kind::Point: return "point";
     case opad::Ref::Kind::Face: return "fill";
@@ -222,9 +251,32 @@ const char* kindWord(opad::Ref::Kind kind) {
   }
 }
 
+const char* nodeWord(const opad::Scene& scene, const std::string& id) {
+  const opad::Node* n = scene.node(id);
+  if (!n) return "object";
+  if (n->kind == opad::Node::Kind::Body) return n->representation == "drawing2d" ? "group" : "object";
+  if (isLayer(scene, id)) return "layer";
+  return std::any_of(n->children.begin(), n->children.end(), [&](const std::string& child) { return isLayer(scene, child); }) ? "drawing" : "object";
+}
+
+json properties(json props) {
+  if (!props.is_object()) return props;
+  for (const char* solidOnly : {"solid", "volume", "axis", "normal", "origin", "surface", "adjacent_faces"}) props.erase(solidOnly);
+  for (const auto& [from, to] : {std::pair{"faces", "fills"}, {"edges", "objects"}, {"vertices", "points"}}) {
+    if (!props.contains(from)) continue;
+    if (props[from].is_number()) props[to] = props[from];
+    props.erase(from);  // a face's bounding edges and an edge's vertices: their ends are start and end
+  }
+  return props;
+}
+
 bool drawingOnly(const opad::Scene& scene) {
   const auto bodies = scene.all_bodies();
   return !bodies.empty() && std::all_of(bodies.begin(), bodies.end(), [&](const std::string& id) { return scene.node(id)->representation == "drawing2d"; });
+}
+
+bool hasDrawings(const opad::Scene& scene) {
+  return std::any_of(scene.nodes.begin(), scene.nodes.end(), [](const auto& entry) { return entry.second.representation == "drawing2d"; });
 }
 
 std::vector<json> restoreState(const opad::Scene& scene, const json& display) {

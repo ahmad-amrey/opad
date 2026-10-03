@@ -17,7 +17,7 @@ QString Viewport::drawingWord(const std::string& type) {
   if (type == "spline") return tr("Spline");
   if (type == "fill") return tr("Fill");
   if (type == "point") return tr("Point");
-  if (type == "object") return tr("Object");
+  if (type == "group") return tr("Group");
   return tr("Curve");
 }
 

@@ -15,6 +15,7 @@
 #include <QToolButton>
 
 #include <set>
+#include <tuple>
 
 #include "AreaController.hpp"
 #include "BrowserDelegate.hpp"
@@ -25,7 +26,9 @@
 #include "Icons.hpp"
 #include "LayersPanel.hpp"
 #include "PanelFooter.hpp"
+#include "PropertiesPanel.hpp"
 #include "Ribbon.hpp"
+#include "ShortcutEditor.hpp"
 #include "Theme.hpp"
 #include "ToolPanel.hpp"
 #include "Units.hpp"
@@ -43,6 +46,9 @@ OPAD_ICON_TABLE(drawing2d,
                 {"noPlot", R"(<path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8"/><path d="M7 14h10v7H7z"/><path d="M2 2l20 20"/>)"});
 
 namespace {
+// A lineweight is a pen's width on paper: in millimetres whatever the document's unit (as the Layers panel shows it).
+QString weightText(double mm) { return mm < 0 ? LayersPanel::tr("Default") : LayersPanel::tr("%1 mm").arg(mm, 0, 'f', 2); }
+
 // What is under the mouse in a drawing, after a moment's rest (a rollover tooltip): its type, layer, colour, linetype,
 // lineweight and size. A tooltip window of the main window; it never takes the focus or the mouse.
 class RolloverCard : public QLabel {
@@ -169,6 +175,29 @@ class Drawing2DArea : public AreaController {
       if (info.is_null()) m_cardTimer.stop();
       else m_cardTimer.start();
     });
+    // Properties of what lies on a drawing layer (a body, a picked entity, the layer's row): the layer as the Layers
+    // panel has it, and a link to it there.
+    services().properties()->addSectionProvider([this](const PropertySubject& subject, const opad::json&, QList<PropertySection>& out) {
+      if (subject.refs.empty()) return;
+      const auto l = drawing2d::layerAt(services().document()->scene, subject.refs.front().body);
+      if (!l) return;
+      PropertySection s;
+      s.title = tr("Layer");
+      s.rows << qMakePair(tr("Name"), QString::fromStdString(l->name));
+      s.rows << qMakePair(tr("Colour"), l->mixed ? tr("Several colours") : l->colored ? QColor::fromRgbF(l->color[0], l->color[1], l->color[2]).name() : tr("Drawing colour"));
+      s.rows << qMakePair(tr("Linetype"), l->linetype.empty() ? tr("Continuous") : QString::fromStdString(l->linetype));
+      s.rows << qMakePair(tr("Lineweight"), weightText(l->lineweight));
+      QString state = !l->on ? tr("Off") : l->frozen ? tr("Frozen") : tr("On");
+      if (l->locked) state += " · " + tr("Locked");
+      s.rows << qMakePair(tr("State"), state);
+      s.rows << qMakePair(tr("Plot"), l->plot ? tr("Plotted") : tr("Not plotted"));
+      const std::string id = l->id;
+      s.actions << qMakePair(tr("Layer properties…"), std::function<void()>([this, id] {
+        showLayers(true);
+        m_layers->selectLayer(id);
+      }));
+      out << s;
+    });
     documentChanged(true);
   }
 
@@ -217,6 +246,7 @@ class Drawing2DArea : public AreaController {
     QAction* twoD = services().action("view.2d");
     const bool on = services().document()->hasDocument && (drawing2d::drawingOnly(services().document()->scene) || (twoD && twoD->isChecked()));
     if (!on) m_card->hide();
+    applyFilterWords(on && drawing2d::hasDrawings(services().document()->scene));
     if (on == m_words) return;
     m_words = on;
     services().viewport()->setDrawingWords(on);
@@ -228,6 +258,23 @@ class Drawing2DArea : public AreaController {
       if (on && services().viewport()->selectionFilter() == Viewport::SelFilter::Face)
         if (QAction* edges = services().action("select.edges")) edges->trigger();
     }
+  }
+
+  // The selection filters named as a drawing's picks (while there are drawings to pick: a solid in 2D mode keeps its
+  // words): Bodies are groups (a layer's objects of one colour), Edges objects, Vertices points. Their menu entries,
+  // the Select segment's tooltips and the palette follow the actions.
+  void applyFilterWords(bool on) {
+    if (on == m_filterWords) return;
+    m_filterWords = on;
+    for (const auto& [id, word, tip] : {std::tuple{"select.bodies", tr("Groups"), tr("A layer's objects of one colour, picked together")},
+                                        {"select.edges", tr("Objects"), tr("Lines, arcs, circles, curves and the outlines of fills, one at a time")},
+                                        {"select.vertices", tr("Points"), tr("Ends, corners and points")}})
+      if (QAction* a = services().action(id)) {
+        if (!a->property("words3d").isValid()) a->setProperty("words3d", a->text());
+        a->setText(on ? word : a->property("words3d").toString());
+        shortcuts::updateTooltip(a);
+        if (on) a->setToolTip(a->toolTip() + "\n" + tip);
+      }
   }
 
   void showCard() {
@@ -246,7 +293,7 @@ class Drawing2DArea : public AreaController {
     rows += row(tr("Colour"), colour.isValid() ? QString("<span style=\"color:%1\">&#9632;</span> %1").arg(colour.name()) : tr("Drawing colour").toHtmlEscaped());
     if (layer) {
       rows += row(tr("Linetype"), (layer->linetype.empty() ? tr("Continuous") : QString::fromStdString(layer->linetype)).toHtmlEscaped());
-      rows += row(tr("Lineweight"), layer->lineweight < 0 ? tr("Default") : units::format(units::Kind::Length, layer->lineweight));
+      rows += row(tr("Lineweight"), layer->lineweight < 0 ? tr("Default") : weightText(layer->lineweight));
     }
     if (m_hovered.contains("radius")) rows += row(tr("Radius"), units::format(units::Kind::Length, m_hovered["radius"].get<double>()));
     if (m_hovered.contains("length")) rows += row(tr("Length"), units::format(units::Kind::Length, m_hovered["length"].get<double>()));
@@ -284,7 +331,7 @@ class Drawing2DArea : public AreaController {
   ToolPanel* m_tool = nullptr;
   QLabel* m_walkChip = nullptr;
   QAction *m_layersAction = nullptr, *m_walkAction = nullptr, *m_isolateAction = nullptr;
-  bool m_hasLayers = false, m_words = false;
+  bool m_hasLayers = false, m_words = false, m_filterWords = false;
   std::set<std::string> m_layerIds;  // for the browser's rows: asked at every paint
   RolloverCard* m_card = nullptr;
   QTimer m_cardTimer;

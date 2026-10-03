@@ -2,6 +2,7 @@
 // 2D drawings in the view (area drawing2d): what is shown of a drawing's layers, independent of Qt and OCCT's view so
 // tests/test_drawing2d covers it. The viewport, the Layers panel and the 2D vocabulary build on these.
 #include <array>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,6 +43,7 @@ bool isLayer(const opad::Scene& scene, const std::string& id);
 std::vector<Layer> layers(const opad::Scene& scene);  // in tree order
 const Layer* find(const std::vector<Layer>& all, const std::string& id);
 std::string layerOf(const opad::Scene& scene, const std::string& node);  // the layer a node (a drawing body) lies on, "" none
+std::optional<Layer> layerAt(const opad::Scene& scene, const std::string& node);  // that layer alone, without a walk over the scene
 // A layer frozen by its file or here is hidden like one turned off, and stays so while it is turned on: On and Freeze are
 // told apart by the `off` and `frozen` fields; visible is what both leave.
 
@@ -74,6 +76,16 @@ std::vector<opad::json> restoreState(const opad::Scene& scene, const opad::json&
 // What a picked sub-shape of a drawing is: {"type": line|arc|circle|ellipse|spline|curve|fill|point, "length" (mm, curves),
 // "radius" (arcs and circles), "area" (fills)}; one curve or face, no walk over its body.
 opad::json entityInfo(const TopoDS_Shape& sub);
-const char* kindWord(opad::Ref::Kind kind);  // "object", "point", "fill", "center" (source text for i18n::t)
+// The same type from what opad::inspect_ref says of a picked sub-shape (Properties), "" when it is none of them.
+std::string entityType(const opad::json& inspected);
+// What a pick is called (source text for i18n::t): a body is a "group" (a layer's objects of one colour, picked
+// together), an edge an "object", a vertex a "point", a face a "fill", a centre a "center".
+const char* kindWord(opad::Ref::Kind kind);
+// A browser row: "layer", "drawing" (an import's root holding layers), "group" (a drawing body), else "object".
+const char* nodeWord(const opad::Scene& scene, const std::string& id);
+// Properties of a drawing's body or entity in 2D words: its faces, edges and vertices counted as fills, objects and
+// points; what only a solid has (volume, solid, a flat drawing's axis, normal and plane, neighbours, vertex lists) goes.
+opad::json properties(opad::json props);
 bool drawingOnly(const opad::Scene& scene);  // bodies, all of them drawings
+bool hasDrawings(const opad::Scene& scene);  // some body is a drawing
 }  // namespace drawing2d

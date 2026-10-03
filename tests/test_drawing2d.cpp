@@ -231,15 +231,47 @@ TEST(what_a_drawing_entity_is_called) {
   CHECK(square["type"] == "fill" && std::abs(square["area"].get<double>() - 6) < 1e-9);
   CHECK(entityInfo(BRepBuilderAPI_MakeVertex(gp_Pnt(1, 2, 0)).Vertex())["type"] == "point");
   CHECK(entityInfo(TopoDS_Shape()).is_null());
-  CHECK(std::string(kindWord(opad::Ref::Kind::Body)) == "object" && std::string(kindWord(opad::Ref::Kind::Edge)) == "object" &&
+  CHECK(std::string(kindWord(opad::Ref::Kind::Body)) == "group" && std::string(kindWord(opad::Ref::Kind::Edge)) == "object" &&
         std::string(kindWord(opad::Ref::Kind::Vertex)) == "point" && std::string(kindWord(opad::Ref::Kind::Face)) == "fill");
   // A drawing-only scene: bodies, all drawings.
   opad::Document doc = opad::Document::create();
-  CHECK(!drawingOnly(opad::resolve(doc)));
+  CHECK(!drawingOnly(opad::resolve(doc)) && !hasDrawings(opad::resolve(doc)));
   opad::import_file(doc, layersDxf());
-  CHECK(drawingOnly(opad::resolve(doc)));
+  CHECK(drawingOnly(opad::resolve(doc)) && hasDrawings(opad::resolve(doc)));
   opad::commands::run("feature", {{"kind", "box"}, {"inputs", {{"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}}}}, &doc);
-  CHECK(!drawingOnly(opad::resolve(doc)));
+  const opad::Scene scene = opad::resolve(doc);
+  CHECK(!drawingOnly(scene) && hasDrawings(scene));
+  // Browser rows: the drawing, its layers, their bodies; a solid is an object.
+  auto all = byName(scene);
+  const std::string root = scene.node(all["Walls"].id)->parent;
+  CHECK(std::string(nodeWord(scene, root)) == "drawing" && std::string(nodeWord(scene, all["Walls"].id)) == "layer" &&
+        std::string(nodeWord(scene, all["Walls"].bodies.at(0))) == "group");
+  for (const auto& id : scene.all_bodies())
+    if (scene.node(id)->representation != "drawing2d") CHECK(std::string(nodeWord(scene, id)) == "object");
+  // One layer without a walk: the same as in the list, from a body or the layer itself.
+  for (const auto& [name, l] : all) {
+    const auto one = layerAt(scene, l.bodies.at(0)), self = layerAt(scene, l.id);
+    CHECK(one && self && one->id == l.id && one->drawing == l.drawing && one->byLayer == l.byLayer && one->color == l.color && one->on == l.on &&
+          one->frozen == l.frozen && one->locked == l.locked && one->linetype == l.linetype && self->id == l.id);
+  }
+  CHECK(!layerAt(scene, root) && !layerAt(scene, "nothing"));
+}
+
+// Properties of a drawing in 2D words (UI-118): what a picked entity is, its counts as fills, objects and points, no solid words.
+TEST(drawing_properties_in_2d_words) {
+  using opad::json;
+  CHECK(entityType({{"type", "edge"}, {"curve", "line"}}) == "line" && entityType({{"type", "vertex"}}) == "point" && entityType({{"type", "face"}}) == "fill" &&
+        entityType({{"type", "edge"}, {"curve", "bspline"}}) == "spline" && entityType({{"type", "edge"}, {"curve", "other"}}) == "curve" &&
+        entityType({{"type", "center"}}).empty());
+  CHECK(entityType({{"type", "edge"}, {"curve", "circle"}, {"radius", 5}, {"start", {5, 0, 0}}, {"end", {5, 0, 0}}}) == "circle");
+  CHECK(entityType({{"type", "edge"}, {"curve", "circle"}, {"radius", 5}, {"start", {5, 0, 0}}, {"end", {0, 5, 0}}}) == "arc");
+  const json body = properties({{"faces", 2}, {"edges", 9}, {"vertices", 8}, {"solid", false}, {"area", 12.5}, {"name", "Walls"}, {"bbox", json::object()}});
+  CHECK(body == json({{"area", 12.5}, {"name", "Walls"}, {"bbox", json::object()}, {"fills", 2}, {"objects", 9}, {"points", 8}}));  // in order
+  const json edge = properties({{"type", "edge"}, {"curve", "circle"}, {"length", 3.14}, {"axis", {0, 0, 1}}, {"radius", 1}, {"adjacent_faces", json::array()},
+                                {"vertices", {0, 1}}, {"start", {1, 0, 0}}, {"end", {-1, 0, 0}}});
+  CHECK(edge == json({{"type", "edge"}, {"curve", "circle"}, {"length", 3.14}, {"radius", 1}, {"start", {1, 0, 0}}, {"end", {-1, 0, 0}}}));
+  const json fill = properties({{"type", "face"}, {"surface", "plane"}, {"normal", {0, 0, 1}}, {"origin", {0, 0, 0}}, {"area", 4}, {"edges", {1, 2}}, {"adjacent_faces", {3}}});
+  CHECK(fill == json({{"type", "face"}, {"area", 4}}));
 }
 
 CHECK_MAIN()
