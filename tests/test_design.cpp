@@ -2073,3 +2073,51 @@ TEST(reparent_keeps_place) {
   commands::run("reparent", {{"target", c}, {"parent", inner}}, &doc);
   CHECK(!same(resolve(doc).world(c), wc));
 }
+
+// A body made in a placed component and moved out of it keeping its place (a transform counting on the frame it was
+// made in) stays put when the component is deleted, as one moved into another component does; one left in it stays
+// put too (it is made again in world coordinates).
+TEST(bodies_moved_out_of_a_deleted_component_stay) {
+  Document doc = Document::create();
+  const std::string lid = commands::run("component", {{"name", "Lid"}}, &doc)["component_id"];
+  const std::string shelf = commands::run("component", {{"name", "Shelf"}}, &doc)["component_id"];
+  commands::run("transform", {{"target", lid}, {"matrix", Mat4::translation(0, 0, 40).to_json()}}, &doc);
+  commands::run("transform", {{"target", shelf}, {"matrix", Mat4::translation(10, 0, 0).to_json()}}, &doc);
+  auto box = [&](const char* x) {
+    return commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", x}, {"length", "4 mm"}, {"width", "4 mm"}, {"height", "3 mm"}}}, {"component", lid}}, &doc)["body_ids"][0].get<std::string>();
+  };
+  const std::string out = box("0 mm"), moved = box("10 mm"), stays = box("20 mm");
+  auto where = [&](const std::string& id) {
+    Bnd_Box b;
+    BRepBndLib::Add(node_world_shape(doc, resolve(doc), id), b);
+    return std::array<double, 2>{b.CornerMin().X(), b.CornerMin().Z()};
+  };
+  const auto out0 = where(out), moved0 = where(moved), stays0 = where(stays);
+  commands::run("reparent", {{"target", out}, {"parent", nullptr}, {"keep_place", true}}, &doc);
+  commands::run("reparent", {{"target", moved}, {"parent", shelf}, {"keep_place", true}}, &doc);
+  auto unchanged = [&](const std::string& id, const std::array<double, 2>& at) {
+    const auto now = where(id);
+    CHECK_NEAR(now[0], at[0], 1e-6);
+    CHECK_NEAR(now[1], at[1], 1e-6);
+  };
+  unchanged(out, out0);
+  unchanged(moved, moved0);
+  const std::string removal = commands::run("delete", {{"target", resolve(doc).node(lid)->source_op}}, &doc)["id"];
+  Scene s = resolve(doc);
+  CHECK(!s.node(lid) && s.node(out)->parent.empty() && s.node(moved)->parent == shelf && s.node(stays)->parent.empty());
+  unchanged(out, out0);
+  unchanged(moved, moved0);
+  unchanged(stays, stays0);
+  CHECK(design::plan_regenerate(doc).ops.empty());
+  commands::run("delete", {{"target", removal}}, &doc);  // the lid back: each where it was, the last one in it again
+  s = resolve(doc);
+  CHECK(s.node(out)->parent.empty() && s.node(moved)->parent == shelf && s.node(stays)->parent == lid);
+  unchanged(out, out0);
+  unchanged(moved, moved0);
+  unchanged(stays, stays0);
+  // Moved back into the lid, a body counts as left in it again.
+  commands::run("reparent", {{"target", out}, {"parent", lid}, {"keep_place", true}}, &doc);
+  commands::run("delete", {{"target", resolve(doc).node(lid)->source_op}}, &doc);
+  unchanged(out, out0);
+  for (const auto& u : resolve(doc).unresolved) CHECK(u.op_type == "transform" || u.op_type == "reparent");  // of the lid, into the lid
+}
