@@ -1146,7 +1146,7 @@ void MainWindow::buildDesignActions() {
            {"c:coincident", tr("Coincident"), "cCoincident"}, {"c:parallel", tr("Parallel"), "cParallel"}, {"c:perpendicular", tr("Perpendicular"), "cPerpendicular"},
            {"c:tangent", tr("Tangent"), "cTangent"}, {"c:equal", tr("Equal"), "cEqual"}, {"c:concentric", tr("Concentric"), "cConcentric"}, {"c:midpoint", tr("Midpoint"), "cMidpoint"},
            {"c:symmetric", tr("Symmetric"), "cSymmetric"}, {"c:collinear", tr("Collinear"), "cCollinear"}, {"c:fix", tr("Fix"), "cFix"}}) {
-    const QMap<QString,QString> keys{{"line","L"},{"rect","R"},{"circle","C"},{"arc3","A"},{"dimension","D"},{"trim","T"},{"offset","O"},{"spline","B"},{"project","P"},{"mirror","Shift+M"}};
+    const QMap<QString,QString> keys{{"line","L"},{"rect","R"},{"circle","C"},{"arc3","A"},{"dimension","D"},{"trim","T"},{"offset","O"},{"spline","B"},{"project","P"},{"mirror","Shift+M"},{"slot","U"},{"polygon","N"}};
     QAction* a = addAction("sketch." + QString(tool).replace(':', '.'), text, icon, QKeySequence(keys.value(tool)), [this, t = tool] { m_design->sketch()->setTool(t); }, true);
     a->setProperty("sketchTool", tool);
     tools->addAction(a);

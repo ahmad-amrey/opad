@@ -17,8 +17,8 @@ using CT = SkConstraint::Type;
 // starts on the origin; 50 Tab 30 Enter is a line 50 long at 30 degrees, the rubber band held and read out (50 mm, 30°)
 // before Enter; 40 Tab 120 is perpendicular to it; 20 Tab 45 from the last line (the angle box's switch) is held at 45
 // degrees to it. R, 10,10 Enter, 40 Tab 25 Enter: a 40 x 25 rectangle, its sides dimensioned; a negative width goes left;
-// a zero size is refused. The slot: two centres 30 apart, then its width 8. C: diameter 20, then (the box's switch) a
-// radius 5. A pentagon by its diameter, angle and sides; a three-point arc by its chord and radius; a centre arc that
+// a zero size is refused. U, the slot: two centres 30 apart, then its width 8. C: diameter 20, then (the box's switch) a
+// radius 5. N, a pentagon by its diameter, angle and sides; a three-point arc by its chord and radius; a centre arc that
 // sweeps 270 degrees; with the panel's switch off nothing typed becomes a dimension; a tangent arc by its radius and
 // sweep; the fillet's radius typed before its corner is picked, its arc shown on the hovered corner; the text's height and
 // an image's calibration distance.
@@ -174,9 +174,9 @@ void SketchEditor::benchShapes() {
     check(m_clicks.empty() && m_tool == "rect", "Esc drops the value, then the corner");
   });
 
-  // A slot: its centres, then its width.
+  // A slot (U): its centres, then its width.
   step([=] {
-    tool(0, {}, "slot");
+    tool(Qt::Key_U, "u", "slot");
     type("0,-40");
     enter();
     type("30");
@@ -234,7 +234,7 @@ void SketchEditor::benchShapes() {
 
   // A pentagon by its diameter, its angle and its sides.
   step([=] {
-    tool(0, {}, "polygon");
+    tool(Qt::Key_N, "n", "polygon");
     type("150,60");
     enter();
     check(m_input->count() == 3 && m_input->key(0) == "diameter" && m_input->key(2) == "sides", "the polygon's boxes: diameter, angle, sides");
