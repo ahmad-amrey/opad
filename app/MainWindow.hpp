@@ -82,6 +82,7 @@ class MainWindow : public QMainWindow {
   bool benchShortcuts();
   bool benchViewer();  // OPAD_BENCH_VIEWER
   bool benchKicad();   // OPAD_BENCH_KICAD (KicadBench.cpp)
+  bool benchAssets();  // OPAD_BENCH_ASSETS (AssetLinks.cpp)
 
   void onViewportSelection();
   void onBrowserSelection(const std::vector<std::string>& ids);
@@ -213,6 +214,9 @@ class MainWindow : public QMainWindow {
   // KiCad boards (KicadBoards.cpp): after a board loads with models of KiCad's library missing, offer to download them
   // (setting kicad/download: ask, always, never; once per board and session), then read a viewed board again.
   void offerKicadModels();
+  // Linked files (AssetLinks.cpp): after a load, one question before reading those outside the document's project
+  // (read once, trust their folders in the settings, or not now). Whether it asked.
+  bool offerAssetTrust();
   QStringList m_kicadOffered;
   int m_displayTotal = 0;
   Job* m_selFileJob = nullptr;      // selection.json writer

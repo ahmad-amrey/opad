@@ -10,6 +10,7 @@
 
 #include "opad/core.hpp"
 #include "opad/design/feature.hpp"
+#include "opad/assets.hpp"
 #include "opad/step_io.hpp"
 
 class JobRunner;
@@ -34,6 +35,8 @@ class AppDocument : public QObject {
   unsigned long long revision = 0;
   bool loading = false;      // a worker thread owns the document content until loadFinished
   opad::json lastLoad;       // what the reader of the last finished open or import said (ImportResult::to_json + "file")
+  // Linked files (opad/assets.hpp) of the open document as the last load found them: AssetState::to_json per asset.
+  opad::json assetStates = opad::json::array();
 
   void newDocument();
   void closeDocument();  // back to the start screen; nothing is saved here (ask first)
@@ -67,7 +70,14 @@ class AppDocument : public QObject {
   void storeViewerCache(JobRunner* jobs);
   bool converting() const { return m_converting; }
   // A drawing goes where `placement` puts its XY plane and origin, after `plane` (resolved on the worker) if given.
-  void startImport(const QString& path, const QString& parent = {}, const opad::Mat4& placement = {}, const opad::json& plane = {});
+  // `link`: a linked asset (opad::link_file) rather than a copy.
+  void startImport(const QString& path, const QString& parent = {}, const opad::Mat4& placement = {}, const opad::json& plane = {}, bool link = false);
+  // Reads the linked files whose bodies are not loaded (missing then, or not trusted) on a worker; `trustAll` for files the
+  // user has just agreed to. The bodies join the document on the UI thread; assetStates is updated.
+  void loadAssets(JobRunner* jobs, bool trustAll, std::function<void(bool, const QString&)> done = {});
+  // Linked files: the folders trusted in the settings (assets/trusted) and this machine's KiCad options.
+  static opad::AssetOptions assetOptions();
+  static QString assetSummary(const opad::json& states);  // "Linked files: 1 changed since the last sync, ..." or empty
   void cancelLoad();
   void refresh();
   // KiCad boards: the reader's options from the settings (kicad/*).

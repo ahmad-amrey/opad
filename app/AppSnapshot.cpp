@@ -7,6 +7,7 @@
 #include <QSaveFile>
 #include <QTemporaryFile>
 #include <QThread>
+#include <set>
 
 Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwrite,
                            std::function<void(bool,const QString&)> done,int testDelayMs) {
@@ -16,6 +17,7 @@ Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwr
   if(destination.isEmpty())throw opad::Error("This document has no file path. Supply an absolute .opad path for the first save.");
   if(!QDir::isAbsolutePath(destination) || QFileInfo(destination).suffix().compare("opad",Qt::CaseInsensitive)!=0)
     throw opad::Error("Save requires an absolute path ending in .opad.");
+  opad::rebase_asset_paths(doc,std::filesystem::path(QFileInfo(destination).absolutePath().toStdU16String()));  // linked files not saved yet
   struct Save {
     std::atomic<bool> finished{false};bool written=false;QString error;
     std::vector<std::string> ids;size_t bodies=0;
@@ -138,6 +140,60 @@ void AppDocument::startEditable(JobRunner* jobs, std::function<void(bool, const 
     m_savedBodies = 0;
     refresh();
     emit pathChanged();
+    if (done) done(true, {});
+  });
+}
+
+void AppDocument::loadAssets(JobRunner* jobs, bool trustAll, std::function<void(bool, const QString&)> done) {
+  if (!hasDocument || browse || loading || designBusy) {
+    if (done) done(false, tr("The document is busy; try again in a moment."));
+    return;
+  }
+  // The linked imports whose bodies are not loaded, with their edits, in a document of their own (the ops only, never the
+  // body store); read on a worker into the shared shape cache, their body entries join this document afterwards.
+  auto probe = std::make_shared<opad::Document>(opad::Document::create());
+  probe->path = doc.path;
+  probe->shape_cache = doc.shape_cache;
+  std::set<std::string> wanted;
+  for (const auto& e : opad::effective_ops(doc)) {
+    if (e.op->type != "import" || !e.data().contains("asset")) continue;
+    bool loaded = true;
+    std::function<void(const opad::json&)> walk = [&](const opad::json& nodes) {
+      for (const auto& n : nodes) {
+        if (n.value("type", "") == "body") loaded = loaded && doc.has_body(n.value("key", ""));
+        if (n.contains("children")) walk(n["children"]);
+      }
+    };
+    walk(e.data().value("nodes", opad::json::array()));
+    if (!loaded) wanted.insert(e.op->id);
+  }
+  try {
+    for (const auto& o : doc.ops)
+      if (wanted.count(o.id) || ((o.type == "edit" || o.type == "delete") && wanted.count(o.data.value("target", "")))) probe->append(o.data);
+  } catch (const std::exception& e) {
+    if (done) done(false, QString::fromUtf8(e.what()));
+    return;
+  }
+  opad::AssetOptions options = assetOptions();
+  options.trust_all = trustAll;
+  auto states = std::make_shared<opad::json>(opad::json::array());
+  const auto identity = generation;
+  jobs->async(tr("Reading linked files"), [probe, options, states](Progress p) mutable {
+    options.progress = [p](double, const std::string&) { return !p.cancelled(); };
+    for (const auto& s : opad::load_assets(*probe, options)) states->push_back(s.to_json());
+    opad::warm_shape_cache(*probe, [p](size_t, size_t) { return !p.cancelled(); });
+  }, [this, probe, states, identity, done](bool ok, const QString& error) {
+    if (!ok || generation != identity) {
+      if (done) done(false, ok ? tr("The document changed meanwhile; try again.") : error);
+      return;
+    }
+    for (const auto& b : probe->bodies())
+      if (b.external) doc.add_external_body(b.key, b.meta);
+    for (const auto& s : *states)  // the states of the files read again
+      for (auto& known : assetStates)
+        if (known.value("import", "") == s.value("import", "")) known = s;
+    refresh();
+    if (const QString linked = assetSummary(assetStates); !linked.isEmpty()) emit message(linked);
     if (done) done(true, {});
   });
 }

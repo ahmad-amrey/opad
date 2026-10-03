@@ -32,5 +32,21 @@
   "The KiCad 3D models could not be downloaded: %1": "تعذر تنزيل نماذج KiCad ثلاثية الأبعاد: %1",
   "%1 KiCad 3D models downloaded, %2 not found in the library": "نُزّل %1 من نماذج KiCad ثلاثية الأبعاد، و%2 غير موجود في المكتبة",
   "%1 KiCad 3D models downloaded": "نُزّل %1 من نماذج KiCad ثلاثية الأبعاد",
-  "%1 KiCad 3D models downloaded: import the board again to show them": "نُزّل %1 من نماذج KiCad ثلاثية الأبعاد: استورد اللوحة مرة أخرى لإظهارها"
+  "%1 KiCad 3D models downloaded: import the board again to show them": "نُزّل %1 من نماذج KiCad ثلاثية الأبعاد: استورد اللوحة مرة أخرى لإظهارها",
+  "Reading linked files": "قراءة الملفات المرتبطة",
+  "%1 changed since the last sync": "%1 تغيّر منذ آخر مزامنة",
+  "%1 not found": "%1 غير موجود",
+  "%1 outside the document's project, not read": "%1 خارج مشروع المستند، لم يُقرأ",
+  "%1 could not be read": "%1 تعذرت قراءته",
+  "Linked files: %1": "الملفات المرتبطة: %1",
+  ", ": "، ",
+  "Linked files": "الملفات المرتبطة",
+  "This document links files outside its project folder:\n\n%1\n\nRead them?": "يرتبط هذا المستند بملفات خارج مجلد مشروعه:\n\n%1\n\nأتُقرأ؟",
+  "Read them": "اقرأها",
+  "Always trust this folder": "الثقة بهذا المجلد دائما",
+  "Always trust these folders": "الثقة بهذه المجلدات دائما",
+  "Syncing linked file": "مزامنة الملف المرتبط",
+  "Sync linked file": "مزامنة الملف المرتبط",
+  "linked": "مرتبط",
+  "linked_file": "الملف المرتبط"
 }

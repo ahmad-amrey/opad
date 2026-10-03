@@ -1,5 +1,6 @@
 #include "AppDocument.hpp"
 
+#include "opad/assets.hpp"
 #include "opad/geometry.hpp"
 #include "opad/drawing_io.hpp"
 #include "Jobs.hpp"
@@ -25,6 +26,7 @@ QString phaseLabel(const std::string& what, const QString& file) {
   if (what == "reading") return AppDocument::tr("Reading %1").arg(file);
   if (what == "building") return AppDocument::tr("Building document");
   if (what == "preparing") return AppDocument::tr("Preparing bodies");
+  if (what == "linked") return AppDocument::tr("Reading linked files");
   if (what.rfind("translating", 0) == 0) {  // "translating" or "translating <scope> <i>/<n>" from the STEP reader
     const QString detail = QString::fromStdString(what.substr(11)).trimmed();
     return detail.isEmpty() ? AppDocument::tr("Translating geometry") : AppDocument::tr("Translating %1").arg(detail);
@@ -49,6 +51,31 @@ opad::KicadOptions AppDocument::kicadOptions() {
   const QString origin = s.value("kicad/origin", "auto").toString();
   o.origin = origin == "center" || origin == "page" ? origin.toStdString() : "auto";
   return o;
+}
+
+opad::AssetOptions AppDocument::assetOptions() {
+  opad::AssetOptions o;
+  for (const QString& dir : QSettings().value("assets/trusted").toStringList())  // folders the user said to trust
+    if (!dir.trimmed().isEmpty()) o.trusted.push_back(fsPath(dir.trimmed()));
+  o.kicad = kicadOptions();
+  return o;
+}
+
+QString AppDocument::assetSummary(const opad::json& states) {
+  int changed = 0, missing = 0, untrusted = 0, failed = 0;
+  for (const auto& s : states) {
+    const std::string state = s.value("state", "");
+    changed += state == "changed";
+    missing += state == "missing";
+    untrusted += state == "untrusted";
+    failed += state == "error";
+  }
+  QStringList parts;
+  if (changed) parts << tr("%1 changed since the last sync").arg(changed);
+  if (missing) parts << tr("%1 not found").arg(missing);
+  if (untrusted) parts << tr("%1 outside the document's project, not read").arg(untrusted);
+  if (failed) parts << tr("%1 could not be read").arg(failed);
+  return parts.isEmpty() ? QString() : tr("Linked files: %1").arg(parts.join(tr(", ")));
 }
 
 opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<bool>>& cancel, const QString& file) {
@@ -102,9 +129,11 @@ void AppDocument::startOpen(const QString& path) {
   const QString suffix = QFileInfo(path).suffix().toLower();
   o.center_drawing = suffix == "dxf" || suffix == "svg" || suffix == "dwg";  // opened on its own: centred on the grid
   const bool cacheable = viewer && suffix != "kicad_pcb";  // a board's 3D models change without the board: never remembered
+  opad::AssetOptions assets = assetOptions();
+  assets.progress = [progress = o.progress](double f, const std::string& what) { return progress(f, what == "reading" ? "linked" : what); };
   auto alive = m_alive;
   emit loadProgress(external ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1);
-  std::thread([this, alive, cancel, path, external, viewer, cacheable, o, token, current]() {
+  std::thread([this, alive, cancel, path, external, viewer, cacheable, o, assets, token, current]() {
     auto result = std::make_shared<opad::Document>();
     QString error;
     QStringList warnings;
@@ -121,7 +150,14 @@ void AppDocument::startOpen(const QString& path) {
           report = imported.to_json();
           slowRead = cacheable && clock.elapsed() > 1500;
         }
-      } else *result = opad::Document::load(fsPath(path));
+      } else {
+        *result = opad::Document::load(fsPath(path));
+        // Linked files are read where they are now; one that is missing or untrusted leaves only its own bodies out.
+        if (opad::has_assets(*result)) {
+          report["assets"] = opad::json::array();
+          for (const auto& s : opad::load_assets(*result, assets)) report["assets"].push_back(s.to_json());
+        }
+      }
       // Parse the bodies here rather than on the UI thread when they are first displayed.
       if (!*cancel) opad::warm_shape_cache(*result, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
       if (*cancel) error = QStringLiteral("cancelled");
@@ -140,6 +176,7 @@ void AppDocument::startOpen(const QString& path) {
         emit loadFinished(false, error);
         return;
       }
+      assetStates = report.is_object() ? report.value("assets", opad::json::array()) : opad::json::array();
       emit aboutToReplace();
       ++generation;
       m_rollback.clear();
@@ -158,15 +195,17 @@ void AppDocument::startOpen(const QString& path) {
       else if (external) emit message(tr("Imported %1 into a new document").arg(QFileInfo(path).fileName()));
       else emit message(tr("Opened %1").arg(path));
       if(!warnings.isEmpty()) emit message(warnings.join("; "));
+      if (const QString linked = assetSummary(assetStates); !linked.isEmpty()) emit message(linked);
       emit loadFinished(true, {});
     }, Qt::QueuedConnection);
   }).detach();
 }
 
-void AppDocument::startImport(const QString& path, const QString& parent, const opad::Mat4& placement, const opad::json& plane) {
+void AppDocument::startImport(const QString& path, const QString& parent, const opad::Mat4& placement, const opad::json& plane, bool link) {
   if (loading || designBusy) return;
   if (!hasDocument || browse) {
     doc = opad::Document::create();
+    assetStates = opad::json::array();
     browse = false;
     hasDocument = true;
     clearHistory();
@@ -188,7 +227,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
   const unsigned token = ++*m_loadToken;
   auto current = m_loadToken;
   emit loadProgress(tr("Reading %1").arg(file), -1);
-  std::thread([this, alive, cancel, path, o, work, opsBefore, dirtyBefore, plane, token, current]() mutable {
+  std::thread([this, alive, cancel, path, o, work, opsBefore, dirtyBefore, plane, link, token, current]() mutable {
     QString error;
     opad::json r;
     try {
@@ -199,7 +238,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
         for (int r = 0; r < 3; ++r) { m.at(r, 0) = f.x[r]; m.at(r, 1) = f.y[r]; m.at(r, 2) = n[r]; m.at(r, 3) = f.origin[r]; }
         o.placement = m * o.placement;
       }
-      r = opad::import_file(*work, fsPath(path), o).to_json();
+      r = (link ? opad::link_file(*work, fsPath(path), o) : opad::import_file(*work, fsPath(path), o)).to_json();
       if (!*cancel) opad::warm_shape_cache(*work, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
       if (*cancel) error = QStringLiteral("cancelled");
     } catch (const Standard_Failure& e) {
@@ -221,6 +260,9 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
       doc = std::move(*work);
       loading = false;
       if (error.isEmpty()) recordStep(tr("import"), opsBefore);
+      if (error.isEmpty() && r.contains("info") && r["info"].value("linked", false))  // read just now: as it is
+        assetStates.push_back({{"import", r.value("op", "")}, {"name", QFileInfo(path).fileName().toStdString()}, {"kind", r["info"].value("kind", "")},
+                               {"storage", "linked"}, {"state", "ok"}, {"bodies", r.value("bodies", 0)}});
       refresh();
       emit undoChanged();
       if (!error.isEmpty()) {
@@ -243,6 +285,7 @@ void AppDocument::newDocument() {
   ++generation;
   m_rollback.clear();
   doc = opad::Document::create();
+  assetStates = opad::json::array();
   browse = false;
   hasDocument = true;
   clearHistory();
@@ -258,6 +301,7 @@ void AppDocument::closeDocument() {
   ++generation;
   m_rollback.clear();
   doc = opad::Document();
+  assetStates = opad::json::array();
   browse = false;
   hasDocument = false;
   clearHistory();
@@ -278,6 +322,7 @@ void AppDocument::open(const QString& path) {
     emit message(tr("Imported %1 into a new document").arg(QFileInfo(path).fileName()));
   } else {
     next = opad::Document::load(fsPath(path));
+    assetStates = opad::json::array();  // synchronous: linked files stay unread (loadAssets reads them on a worker)
     emit message(tr("Opened %1").arg(path));
   }
   emit aboutToReplace();

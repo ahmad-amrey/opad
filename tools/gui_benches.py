@@ -74,6 +74,25 @@ def main():
                          + footprint("D1", "104 114", "F", "library.step").replace("${OPAD_BENCH_UNSET_DIR}", "${KICAD9_3DMODEL_DIR}")
                          + '(footprint "MountingHole:MountingHole_3.2mm" (layer "F.Cu") (at 126 116) (pad "" np_thru_hole circle (at 0 0) (size 3.2 3.2) (drill 3.2)))\n)\n',
                          encoding="utf-8")
+        # Linked files: a document linking parts/part.step beside it (changed since) and ../outside/other.step, and a third
+        # file in parts/ for a linked import; their own cache, so nothing reaches the user's.
+        assets = root / "assets"
+        (assets / "project" / "parts").mkdir(parents=True)
+        (assets / "outside").mkdir()
+        assets_env = {"OPAD_CACHE_DIR": str(root / "assets-cache")}
+
+        def step(name, inputs, out):
+            source = document(name, ("feature", "--kind", "box", "--inputs", inputs))
+            subprocess.run([str(cli), "export", str(source), "--format", "step", "--out", str(out)], check=True, capture_output=True)
+
+        step("asset-part", '{"length":"10 mm","width":"10 mm","height":"10 mm"}', assets / "project" / "parts" / "part.step")
+        step("asset-other", '{"x":"30 mm","length":"10 mm","width":"10 mm","height":"6 mm"}', assets / "outside" / "other.step")
+        step("asset-third", '{"y":"30 mm","length":"8 mm","width":"8 mm","height":"8 mm"}', assets / "project" / "parts" / "third.step")
+        linked = assets / "project" / "design.opad"
+        subprocess.run([str(cli), "new", str(linked)], check=True, capture_output=True)
+        for target in (assets / "project" / "parts" / "part.step", assets / "outside" / "other.step"):
+            subprocess.run([str(cli), "import", str(linked), str(target), "--link", "true"], check=True, capture_output=True, env={**os.environ, **assets_env})
+        step("asset-part-2", '{"length":"12 mm","width":"10 mm","height":"10 mm"}', assets / "project" / "parts" / "part.step")
         screw = ROOT / "tests" / "corpus" / "occt-screw.step"
         cases = [
             ("design", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_UISHOT": "{prefix}.ui.png", "OPAD_BENCH_RULE": "1"}),
@@ -90,6 +109,7 @@ def main():
             ("interference", overlapping, {"OPAD_BENCH_CHECK": "interference", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("kicad", board, {"OPAD_BENCH_KICAD": "{prefix}.png", **kicad_env}),
+            ("assets", linked, {"OPAD_BENCH_ASSETS": "{prefix}.png", **assets_env}),
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))
