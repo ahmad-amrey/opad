@@ -301,6 +301,15 @@ OPAD_BENCH(OPAD_BENCH_OSNAP, osnap) {
       require(v->objectSnap() && !v->benchSnap(widget(30, 0)), "F3 on again; with the Objects filter no point is snapped (the object is picked)");
       w.action("inspect.distance")->trigger();
     }, [&w] { return w.m_tool.id.isEmpty(); });
+    script->add("radius", [&w] {
+      w.action("select.vertices")->trigger();
+      w.action("inspect.radius")->trigger();
+    }, [&w, v] { return w.m_tool.id == "radius" && v->selectionFilter() == Viewport::SelFilter::Vertex; });
+    script->add("no snap for a centre", [&w, v, widget, require] {
+      require(v->snapPicks() == Viewport::SnapPicks::None && !v->benchSnap(widget(30, 25, 2, 2)) && !v->benchSnap(widget(30, 0)),
+              "Radius in the Points filter shows no object snap: its click picks the circle's centre, not a free point");
+      w.action("inspect.radius")->trigger();
+    }, [&w, v] { return w.m_tool.id.isEmpty() && v->snapPicks() == Viewport::SnapPicks::None; });
     Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   });
   return true;

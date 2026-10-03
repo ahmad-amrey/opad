@@ -143,6 +143,8 @@ void MainWindow::startTool(const QString& id) {
   // Area takes fills or faces, objects or points, never bodies: a drawing's objects, a solid's faces.
   const bool wantEdges = id == "area" && f == Viewport::SelFilter::Body && drawing2d::drawingOnly(m_doc->scene);
   m_viewport->setPickAccumulate(true, id == "distance");
+  // Object snap where a free point is a pick; Radius takes a circle's centre (its marker), the section a face.
+  m_viewport->setSnapPicks(id == "distance" || id == "bbox" || id == "area" ? Viewport::SnapPicks::Points : Viewport::SnapPicks::None);
   for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.area"})
     action(a)->setChecked(id == QString(a).section('.', 1));
   if (toolMeasures()) {
@@ -169,6 +171,7 @@ void MainWindow::cancelTool() {
   m_toolPicks.clear();
   m_toolPoints.clear();
   m_viewport->setSnapFrom(std::nullopt);
+  m_viewport->setSnapPicks(Viewport::SnapPicks::None);
   for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.area"}) action(a)->setChecked(false);
   m_viewport->setPickAccumulate(false);
   m_prompt->hide();

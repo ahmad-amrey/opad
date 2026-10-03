@@ -72,9 +72,16 @@ void Viewport::setObjectSnap(bool on) {
   redrawScene();
 }
 
+void Viewport::setSnapPicks(SnapPicks picks) {
+  if (m_snapPicks == picks) return;
+  m_snapPicks = picks;
+  if (m_osnap) m_osnap->cursor = {-1e9, -1e9};
+  requestRedraw();  // the marker comes or goes with the next frame
+}
+
 bool Viewport::objectSnapActive() const {
-  return m_objectSnap && m_pickAccumulate && m_filter == SelFilter::Vertex && !m_sketchInput && !m_blocked && !m_measureSelectionLocked && m_bodiesPickable &&
-         !m_ctrlCenterPick;
+  if (!m_objectSnap || m_snapPicks == SnapPicks::None || m_sketchInput || m_blocked || !m_bodiesPickable || m_ctrlCenterPick) return false;
+  return m_snapPicks == SnapPicks::Always || (m_pickAccumulate && m_filter == SelFilter::Vertex && !m_measureSelectionLocked);
 }
 
 QString Viewport::snapWord(const QString& kind) {
@@ -297,7 +304,7 @@ void Viewport::updateObjectSnap() {
 
 // A left press while a snap is shown picks its point: a free point (Point ref) selected like a tracking point.
 bool Viewport::objectSnapPress(QMouseEvent* e) {
-  if (!m_osnap || !m_osnap->shown || e->button() != Qt::LeftButton || m_cubeGesture || !objectSnapActive()) return false;
+  if (!m_osnap || !m_osnap->shown || e->button() != Qt::LeftButton || m_cubeGesture || m_snapPicks != SnapPicks::Points || !objectSnapActive()) return false;
   if ((QPointF(widgetPoint(m_osnap->point)) - e->position()).manhattanLength() > 2 * kAperture + 4) return false;
   opad::Ref ref;
   ref.kind = opad::Ref::Kind::Point;

@@ -193,6 +193,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // marker of the kind's shape, its name in the status bar, and a click picks the point (a Point ref). F3 switches it
   // (view/objectSnap). Each body's (sketch's) index is built on a worker when first needed.
   void setObjectSnap(bool on);
+  // Who takes snapped points (the snap shows only then): a guided tool that picks free points (Distance, Bounding box,
+  // Area) while in the Points filter, or a pick of its own in any filter (the plot window's corners: it reads snapAt
+  // itself). None: what needs the entity it picks (Radius a circle's centre, the section's face, feature inputs).
+  enum class SnapPicks { None, Points, Always };
+  void setSnapPicks(SnapPicks picks);
+  SnapPicks snapPicks() const { return m_snapPicks; }
   void setSnapFrom(const std::optional<opad::Vec3>& from);  // the point picked before (a tool's last pick), none
   bool objectSnap() const { return m_objectSnap; }
   bool snapAt(const QPointF& widgetPos, opad::Vec3& world, QString* kind = nullptr);  // any point consumer: false until indexed
@@ -593,6 +599,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_cubeGesture = false;  // this left press started on the view cube: dragging orbits instead of rubber-banding
   // object snap (ViewportSnap.cpp)
   bool m_objectSnap = true;
+  SnapPicks m_snapPicks = SnapPicks::None;
   std::shared_ptr<ObjectSnapState> m_osnap;
   ObjectSnapState& snapState();
   std::string sketchSnapKey(const std::string& id);  // a displayed sketch's index key, new with each version of it
