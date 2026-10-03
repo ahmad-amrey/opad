@@ -355,32 +355,38 @@ bool Viewport::benchTracking(const QString& prefix) {
     QSignalBlocker quiet(this);  // the Distance tool would take the boxed edges as its picks
     const QPoint c = widget(visibleEdges.front()).toPoint();
     for (const bool crossing : {false, true}) {
-      m_ctx->ClearSelected(false);
-      const QPoint a = c - QPoint(70, 70), b = c + QPoint(70, 70);
-      UpdateRubberBand(devicePos(crossing ? b : a), devicePos(crossing ? a : b));
-      myGL.Selection = myUI.Selection;
-      myGL.Selection.Scheme = AIS_SelectionScheme_Replace;
-      myGL.Selection.ToApplyTool = true;
-      QElapsedTimer t;
-      t.start();
-      handleSelectionPoly(m_ctx, m_view);  // OCCT's rectangle pick, synchronous; then the visibility job in slices
-      const qint64 rectangle = t.restart();
-      QElapsedTimer gap;
-      gap.start();
-      qint64 worst = 0;
-      QTimer ticker;
-      ticker.setTimerType(Qt::PreciseTimer);
-      QObject::connect(&ticker, &QTimer::timeout, [&] { worst = std::max(worst, gap.restart()); });
-      ticker.start(1);
-      while (m_boxJob && t.elapsed() < 20000) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-      ticker.stop();
-      const bool finished = !m_boxJob;  // a big model's visibility scan may take longer: what it published so far counts
-      if (m_boxJob) m_boxJob->cancel();
+      qint64 rectangle = 0, worst = 0, took = 0;
+      bool finished = false;
       int faces = 0, edges = 0, other = 0;
-      for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected()) faces += !Handle(OccluderOwner)::DownCast(m_ctx->SelectedOwner()).IsNull();
-      for (const auto& ref : selection()) (ref.kind == opad::Ref::Kind::Edge ? edges : other) += 1;
+      for (const int half : {70, 140, 280}) {  // a window box takes whole edges only: larger until it holds some
+        m_ctx->ClearSelected(false);
+        const QPoint a = c - QPoint(half, half), b = c + QPoint(half, half);
+        UpdateRubberBand(devicePos(crossing ? b : a), devicePos(crossing ? a : b));
+        myGL.Selection = myUI.Selection;
+        myGL.Selection.Scheme = AIS_SelectionScheme_Replace;
+        myGL.Selection.ToApplyTool = true;
+        QElapsedTimer t;
+        t.start();
+        handleSelectionPoly(m_ctx, m_view);  // OCCT's rectangle pick, synchronous; then the visibility job in slices
+        rectangle = std::max(rectangle, t.restart());
+        QElapsedTimer gap;
+        gap.start();
+        QTimer ticker;
+        ticker.setTimerType(Qt::PreciseTimer);
+        QObject::connect(&ticker, &QTimer::timeout, [&] { worst = std::max(worst, gap.restart()); });
+        ticker.start(1);
+        while (m_boxJob && t.elapsed() < 20000) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        ticker.stop();
+        took = t.elapsed();
+        finished = !m_boxJob;  // a big model's visibility scan may take longer: what it published so far counts
+        if (m_boxJob) m_boxJob->cancel();
+        faces = edges = other = 0;
+        for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected()) faces += !Handle(OccluderOwner)::DownCast(m_ctx->SelectedOwner()).IsNull();
+        for (const auto& ref : selection()) (ref.kind == opad::Ref::Kind::Edge ? edges : other) += 1;
+        if (edges > 0) break;
+      }
       require(faces == 0 && other == 0 && edges > 0, QString("edge mode %1 box (%2 in %3 ms): %4 edges, %5 other picks, %6 occluding faces selected")
-                                                         .arg(crossing ? "crossing" : "window", finished ? "finished" : "stopped").arg(t.elapsed()).arg(edges).arg(other).arg(faces));
+                                                         .arg(crossing ? "crossing" : "window", finished ? "finished" : "stopped").arg(took).arg(edges).arg(other).arg(faces));
       require(rectangle < 1000 && worst < 250, QString("edge mode %1 box: the rectangle pick %2 ms, then the event loop never held over %3 ms")
                                                    .arg(crossing ? "crossing" : "window").arg(rectangle).arg(worst));
     }
