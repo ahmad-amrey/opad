@@ -23,6 +23,8 @@ CASES = [
     ("sketch-snaps", "empty", {"OPAD_BENCH_SKETCH_SNAPS": "{prefix}"}),  # snap markers, snaps that constrain (UI-21, UI-23)
     ("sketch-steps", "empty", {"OPAD_BENCH_SKETCH_STEPS": "{prefix}"}),  # prompts and steps from one source (UI-25)
     ("sketch-constraints", "empty", {"OPAD_BENCH_SKETCH_CONSTRAINTS": "{prefix}"}),  # constraint badges (UI-24)
+    # Tool panels hand the keyboard back to the view after a click on a button or the slider; Esc in a panel is its (UI-05).
+    ("panel-focus", "box", {"OPAD_BENCH_PANEL_FOCUS": "1"}),
     # 30,000 segments: converted, opened, hovered, panned, snapped, selected and dragged in time (UI-27, UI-29).
     ("sketch-large", segments, {"OPAD_BENCH_LARGE": "{prefix}.json"}, EDITING),
     ("drawing-preview", segments, {"OPAD_BENCH_WIZARD": "{prefix}.png", "OPAD_BENCH_WIZARD_PREVIEW": "30000"}, EDITING),

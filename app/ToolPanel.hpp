@@ -38,15 +38,26 @@ class ToolPanel : public QWidget {
   void setContentSizeHint(std::function<QSize(int)> hint);
   void requestContentFit();
   static constexpr int kMargin = 6;  // translucent rim the shadow is painted in
+  // Where the keyboard lives (the viewport, TODO 11 UI-05). A panel takes the keyboard only for a text field or a list
+  // clicked; a click on its buttons, check boxes, combos, sliders or header leaves the window that has the keyboard active
+  // (Windows) and, if the panel has it all the same (a text field typed into before), gives it back to `home` when the
+  // click is done, so digits, Esc and the tools' keys go on reaching the tool, never a window shortcut through the panel.
+  static void setKeyboardHome(QWidget* home);
+  static bool keepsKeyboard(const QWidget* widget);  // a text field or a list, or a part of one: it types into its panel
+  bool takesKeyboardAt(const QPoint& global) const;  // a click there activates the panel
  signals:
   void visibilityChanged(bool visible);
  protected:
+#ifdef Q_OS_WIN
+  bool nativeEvent(const QByteArray& type, void* message, qintptr* result) override;
+#endif
   void paintEvent(QPaintEvent*) override;
   void mousePressEvent(QMouseEvent* e) override;
   void mouseMoveEvent(QMouseEvent* e) override;
   void mouseReleaseEvent(QMouseEvent* e) override;
   void mouseDoubleClickEvent(QMouseEvent* e) override;
   void keyPressEvent(QKeyEvent* e) override;
+  bool event(QEvent* e) override;
   void resizeEvent(QResizeEvent* e) override;
   void showEvent(QShowEvent*) override { emit visibilityChanged(true); }
   void hideEvent(QHideEvent*) override { emit visibilityChanged(false); }

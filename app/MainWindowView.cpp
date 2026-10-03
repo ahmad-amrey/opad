@@ -151,6 +151,7 @@ void MainWindow::buildCentral() {
   m_empty = new EmptyState(m_stack);
   m_viewport = new Viewport(m_doc, m_stack);
   m_viewport->setSelectThrough(action("select.through")->isChecked());
+  ToolPanel::setKeyboardHome(m_viewport);  // a click on a panel's button leaves the keys with the view (UI-05)
   m_stack->addWidget(m_empty);
   m_stack->addWidget(m_viewport);
   setCentralWidget(m_stack);
