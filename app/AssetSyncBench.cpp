@@ -461,7 +461,8 @@ OPAD_BENCH(OPAD_BENCH_ASSET_LOOK, asset_look) {
 // (60 mm) in next/: plan.dxf linked as Import… does with "Link as asset" chosen (MainWindow::importDrawing with link): the
 // XY plane picked, the drawing moved there by an offset in the placer, Place. The import is a linked drawing whose asset
 // records that placement, its top node marked linked in the browser, in sync; the file changes: marked changed, synced,
-// the same node now 60 mm long where it was placed. Frame: <prefix>.browser.png.
+// the same node now 60 mm long where it was placed. Sync changed files automatically turned on, the file changes back: synced
+// with nothing clicked, 40 mm again, its toast offering Undo. Frame: <prefix>.browser.png.
 OPAD_BENCH(OPAD_BENCH_ASSET_DRAWING, asset_drawing) {
   static bool started = false;
   if (std::exchange(started, true)) return true;  // the import's load comes back here: the timers below go on
@@ -534,7 +535,22 @@ OPAD_BENCH(OPAD_BENCH_ASSET_DRAWING, asset_drawing) {
             (*require)(synced && doc->node(body) && after == recorded && std::abs(now[0] - 15) < 0.5 && std::abs(now[1] - 75) < 0.5 && std::abs(now[2] - 25) < 0.5,
                        QString("synced where it was placed: the same node from x %1 to %2 at y %3").arg(now[0]).arg(now[1]).arg(now[2]));
             w.m_browser->grab().save(prefix + ".browser.png");
-            QCoreApplication::exit(require->all ? 0 : 2);
+            QAction* autoSync = w.action("assets.autoSync");
+            (*require)(autoSync && autoSync->isCheckable() && !autoSync->isChecked(), "Sync changed files automatically: off by default");
+            if (!autoSync) return QCoreApplication::exit(2);
+            autoSync->trigger();
+            const size_t ops = doc->doc.ops.size();
+            const bool back = rewrite(dir + "/next/plan-40.dxf", dir + "/plan.dxf");
+            waitFor(&w, [=] { return doc->doc.ops.size() == ops + 1 && !area->busy() && state() == "ok" && !monitor->checking(); }, 30000, [=, &w](bool synced) {
+              const auto again = span();
+              QList<Toast*> toasts = w.m_toasts->toasts();
+              Toast* toast = toasts.isEmpty() ? nullptr : toasts.back();
+              (*require)(back && synced && QSettings().value("assets/autoSync").toBool() && std::abs(again[1] - 55) < 0.5 && toast && toast->text().startsWith("Synced plan.dxf") &&
+                             toast->actionButton() && toast->actionButton()->text() == "Undo",
+                         QString("auto sync: changed back, synced with nothing clicked (to x %1): %2").arg(again[1]).arg(toast ? toast->text() : QString("no toast")));
+              autoSync->trigger();
+              QCoreApplication::exit(require->all ? 0 : 2);
+            });
           });
         });
       });

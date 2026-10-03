@@ -134,6 +134,7 @@ def asset_drawing(root, document):
     line = "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nCut\n10\n0\n20\n0\n11\n{}\n21\n0\n0\nENDSEC\n0\nEOF\n"
     (folder / "plan.dxf").write_text(line.format(40), encoding="ascii")
     (folder / "next" / "plan.dxf").write_text(line.format(60), encoding="ascii")
+    (folder / "next" / "plan-40.dxf").write_text(line.format(40), encoding="ascii")
     design = document("asset-drawing/design", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'))
     return design, {"OPAD_CACHE_DIR": str(root / "asset-drawing-cache")}
 

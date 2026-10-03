@@ -166,5 +166,6 @@
   "Model folders…": "مجلدات النماذج…",
   "Download KiCad models…": "تنزيل نماذج KiCad…",
   "%1 3D models of %2 come from KiCad's library, which is not installed here": "%1 من النماذج ثلاثية الأبعاد في %2 من مكتبة KiCad، وهي غير مثبتة هنا",
-  "Download…": "تنزيل…"
+  "Download…": "تنزيل…",
+  "Sync changed files automatically": "مزامنة الملفات المتغيرة تلقائيًا"
 }

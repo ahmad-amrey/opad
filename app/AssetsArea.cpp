@@ -213,6 +213,20 @@ void AssetsArea::buildActions() {
             return a && a->asset.value("storage", "linked") == "linked" && !services().document()->doc.path.empty();
           },
           [this, selected] { if (const auto s = selected(); s.size() == 1) pack(s.front()); });
+  {  // Changed files synced as soon as the monitor sees them (each still one undo step, its toast offering Undo).
+    CommandInfo info;
+    info.id = "assets.autoSync";
+    info.label = tr("Sync changed files automatically");
+    info.group = tr("Linked files");
+    info.keywords = {"auto", "reload", "watch"};
+    info.checkable = true;
+    QAction* action = services().addCommand(info, [this] {
+      const bool on = services().action("assets.autoSync")->isChecked();
+      QSettings().setValue("assets/autoSync", on);
+      if (on) syncAll();
+    });
+    action->setChecked(QSettings().value("assets/autoSync", false).toBool());
+  }
 }
 
 void AssetsArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
@@ -226,7 +240,8 @@ void AssetsArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
   if (QMenu* design = menus.value("design")) {
     QMenu* sub = design->addMenu(tr("Linked files"));
     sub->setObjectName("assets");
-    for (const char* id : {"assets.link", "assets.sync", "assets.syncAll", "assets.replace", "assets.reveal", "assets.copyPath", "assets.embed", "assets.pack"})
+    for (const char* id : {"assets.link", "assets.sync", "assets.syncAll", "assets.autoSync", "assets.replace", "assets.reveal", "assets.copyPath", "assets.embed",
+                           "assets.pack"})
       sub->addAction(services().action(id));
   }
 }
@@ -480,6 +495,7 @@ void AssetsArea::notify(const QString& text, bool undo, int ms) {
 
 void AssetsArea::filesChanged(const std::vector<std::string>&) {
   const std::vector<std::string> all = m_monitor->changed();
+  if (!all.empty() && QSettings().value("assets/autoSync", false).toBool()) return syncAll();  // queued behind a sync running
   if (all.empty() || m_busy) return;
   if (m_toast) m_toast->dismiss();
   m_toast = services().toast(all.size() == 1 ? tr("%1 changed since the last sync").arg(name(all.front())) : tr("%1 linked files changed since the last sync").arg(all.size()),

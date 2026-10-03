@@ -60,7 +60,7 @@ class AssetsArea : public AreaController {
   // Each on one linked import; the commands, badges, context menu and Properties run these. Sync reads the file again
   // (from `file` when given: Locate, Replace), one undo step per file; several are synced one after the other.
   void sync(std::vector<std::string> imports, const QString& file = {});
-  void syncAll();  // every file that changed since its last sync
+  void syncAll();  // every file that changed since its last sync; also as the monitor finds them while assets.autoSync is on
   void locate(const std::string& import);   // a file dialog, then sync from the file chosen
   void replace(const std::string& import);
   void embed(const std::string& import);
