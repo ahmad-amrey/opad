@@ -8,6 +8,8 @@
 #include <QMenu>
 #include <QPainter>
 #include <QTimer>
+#include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 
 #include <algorithm>
 #include <memory>
@@ -16,6 +18,7 @@
 #include "DesignPanels.hpp"
 #include "PanelFooter.hpp"
 #include "CommandPalette.hpp"
+#include "ShortcutEditor.hpp"
 #include "MainWindow.hpp"
 
 namespace {
@@ -105,6 +108,15 @@ OPAD_BENCH(OPAD_BENCH_COMMANDS, commands) {
   require(w.action("bench.edit") == editAction && registry.find("bench.edit")->group == "Bench" && registry.inGroup("Bench").size() == 2 &&
               w.m_areaServices.commands().editsDocument("bench.edit") && !editAction->isEnabled(),
           "an area's command: registered with its record, disabled with nothing selected");
+  {  // Keyboard shortcuts lists it under its record's group, a help command still under Help
+    ShortcutEditor editor(w.m_actions, &w);
+    QString benchGroup, helpGroup;
+    for (QTreeWidgetItemIterator it(editor.findChild<QTreeWidget*>("shortcutTree")); *it; ++it) {
+      if ((*it)->toolTip(0) == "bench.edit" && (*it)->parent()) benchGroup = (*it)->parent()->text(0);
+      if ((*it)->toolTip(0).startsWith("help.") && (*it)->parent()) helpGroup = (*it)->parent()->text(0);
+    }
+    require(benchGroup == "Bench" && helpGroup == ShortcutEditor::tr("Help"), "Keyboard shortcuts: the area's command under " + benchGroup + ", help under " + helpGroup);
+  }
   const std::string body = w.m_doc->scene.all_bodies().front();
   w.m_browser->selectIds({body});
   require(editAction->isEnabled() && lookAction->isEnabled(), "enabledWhen follows the selection");

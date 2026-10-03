@@ -88,8 +88,9 @@ class ShortcutCapture : public QKeySequenceEdit {
     QKeySequenceEdit::keyPressEvent(event);
   }
 };
-QStringList groups(const QString& id) {
+QStringList groups(const QAction* action) {
   using T=ShortcutEditor;
+  const QString id=action->objectName();
   if(id.startsWith("view.")) {
     if(QStringList{"view.top","view.bottom","view.left","view.right","view.front","view.back","view.iso","view.alignPlane","view.rollleft","view.rollright"}.contains(id))return {T::tr("View"),T::tr("Orientation")};
     if(QStringList{"view.home","view.fit","view.fitall","view.saveview"}.contains(id))return {T::tr("View"),T::tr("Framing")};
@@ -107,6 +108,8 @@ QStringList groups(const QString& id) {
   if(id.startsWith("panel.")||id.startsWith("workspace."))return {T::tr("Panels and workspaces")};
   if(id.startsWith("nav."))return {T::tr("Navigation")};
   if(id.startsWith("tools."))return {T::tr("Settings and commands")};
+  // An area's commands: the group of their record (Commands.hpp), as the palette shows it.
+  if(const QString group=action->property("commandGroup").toString();!id.startsWith("help.")&&!group.isEmpty())return {group};
   return {T::tr("Help")};
 }
 QString scopeName(const QString& id) {
@@ -139,7 +142,7 @@ ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions,QWidget* parent):Q
   for(auto* action:actions) {
     if(action->text().isEmpty()||action->isSeparator())continue;
     QTreeWidgetItem* parentItem=nullptr;QString path;
-    for(const auto& part:groups(action->objectName())) {
+    for(const auto& part:groups(action)) {
       path+="/"+part;
       if(!folders.contains(path)) {
         auto* folder=parentItem?new QTreeWidgetItem(parentItem):new QTreeWidgetItem(m_tree);
@@ -175,7 +178,7 @@ ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions,QWidget* parent):Q
 int ShortcutEditor::current() const {
   const auto* item=m_tree->currentItem();return item?item->data(0,Qt::UserRole).toInt():-1;
 }
-QString ShortcutEditor::name(int i)const {return groups(m_entries[i].action->objectName()).join(" / ")+" / "+m_entries[i].item->text(0);}
+QString ShortcutEditor::name(int i)const {return groups(m_entries[i].action).join(" / ")+" / "+m_entries[i].item->text(0);}
 QVector<int> ShortcutEditor::collisions(int i,const QKeySequence& key)const {
   QVector<int> result;
   for(int n=0;n<m_entries.size();++n)if(n!=i&&shortcuts::overlaps(m_entries[i].action->objectName(),m_entries[n].action->objectName())&&shortcuts::conflicts(key,m_entries[n].key))result.push_back(n);
