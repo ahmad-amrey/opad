@@ -14,4 +14,7 @@ ExportResult export_drawing(const Document& doc, const Scene& scene, const std::
 void set_use_oda(bool on);
 bool use_oda();
 std::filesystem::path oda_file_converter();
+// The converter a DWG is read through now: "oda", "libredwg" or "override:<OPAD_DWG2DXF>". The viewer cache keys DWG reads
+// on it, so switching ODA on or off reads a remembered drawing again.
+std::string dwg_reader();
 }

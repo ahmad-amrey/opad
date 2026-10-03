@@ -501,6 +501,11 @@ bool use_oda() {
   return g_use_oda || (env && *env && std::strcmp(env, "0") != 0);
 }
 std::filesystem::path oda_file_converter() { return oda_converter(); }
+std::string dwg_reader() {
+  const char* override = std::getenv("OPAD_DWG2DXF");
+  if (override && *override) return std::string("override:") + override;
+  return use_oda() && !oda_converter().empty() ? "oda" : "libredwg";
+}
 
 const std::vector<std::string>& importable_extensions() {
   static const std::vector<std::string> list = {".step", ".stp", ".iges", ".igs", ".brep", ".brp", ".stl", ".obj", ".3mf", ".ply",

@@ -21,6 +21,16 @@
 using namespace opad;
 
 namespace {
+// The viewer cache lives under cache_dir(), which reads OPAD_CACHE_DIR once: aim it at a scratch folder before any test.
+const std::filesystem::path kCacheDir = [] {
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-dxf-cache-" + new_uuid());
+#ifdef _WIN32
+  _putenv_s("OPAD_CACHE_DIR", dir.string().c_str());
+#else
+  setenv("OPAD_CACHE_DIR", dir.string().c_str(), 1);
+#endif
+  return dir;
+}();
 struct Files {
   std::filesystem::path dir = std::filesystem::temp_directory_path() / ("opad-dxf-" + new_uuid());
   Files() { std::filesystem::create_directory(dir); }
@@ -326,6 +336,22 @@ TEST(oda_converter_only_when_switched_on) {
   set_use_oda(false);
   _wputenv_s(L"OPAD_USE_ODA", L"1");
   CHECK(use_oda() && !bodies(import(f.dir / "plan.dwg")).empty());
+  // A remembered slow read names its converter: switched off, the drawing is read again (LibreDWG); on, it is found.
+  _wputenv_s(L"OPAD_USE_ODA", L"");
+  set_use_oda(true);
+  ImportOptions viewer;
+  viewer.viewer = true;
+  Document read = Document::create();
+  import_file(read, f.dir / "plan.dwg", viewer);
+  viewer_cache_store(read, f.dir / "plan.dwg", viewer);
+  Document again = Document::create();
+  CHECK(viewer_cache_load(again, f.dir / "plan.dwg", viewer) && bodies(again).size() == 1 && bodies(again)[0].layer == "ODA");
+  set_use_oda(false);
+  CHECK_EQ(dwg_reader(), std::string("libredwg"));
+  Document off = Document::create();
+  CHECK(!viewer_cache_load(off, f.dir / "plan.dwg", viewer));
+  std::error_code e;
+  std::filesystem::remove_all(kCacheDir, e);
 }
 #endif
 

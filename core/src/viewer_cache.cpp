@@ -13,6 +13,7 @@
 #include <sstream>
 
 #include "opad/cache.hpp"
+#include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/step_io.hpp"
 
@@ -39,6 +40,9 @@ std::filesystem::path entry_for(const std::filesystem::path& file, const ImportO
 #endif
   identity += "|" + std::to_string(size) + "|" + std::to_string(time.time_since_epoch().count()) + "|" + version_string() +
               "|" + (opt.center_drawing ? "c" : "") + "|" + opt.placement.to_json().dump();
+  auto ext = file.extension().string();
+  std::transform(ext.begin(), ext.end(), ext.begin(), [](char c) { return c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c; });
+  if (ext == ".dwg") identity += "|" + dwg_reader();  // LibreDWG and ODA read a drawing differently
   return folder() / (sha256_hex(identity).substr(0, 40) + ".bin");
 }
 
