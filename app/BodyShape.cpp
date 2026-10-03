@@ -322,6 +322,33 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
       set->BVH();
       p->whole.push_back(set);
     }
+  } else if (!p->navigation.IsNull()) {
+    // Any other meshed body picks as a whole (the Body filter, which every display activates) through the same set: OCCT
+    // builds a triangulation sensitive and its BVH per face on the UI thread, 50-90 ms for a heavy Engine part (UI-40).
+    // A face without a mesh or a vertex of its own keeps the stock path.
+    bool meshed = !TopExp_Explorer(meshedProto, TopAbs_VERTEX, TopAbs_EDGE).More();
+    for (TopExp_Explorer f(meshedProto, TopAbs_FACE); f.More() && meshed; f.Next()) {
+      TopLoc_Location at;
+      meshed = !BRep_Tool::Triangulation(TopoDS::Face(f.Current()), at).IsNull();
+    }
+    if (meshed) {
+      TopTools_IndexedDataMapOfShapeListOfShape faces;
+      TopExp::MapShapesAndAncestors(meshedProto, TopAbs_EDGE, TopAbs_FACE, faces);
+      const double span = box.IsVoid() ? 1.0 : std::sqrt(box.SquareExtent());
+      std::vector<gp_Pnt> loose;
+      for (int i = 1; i <= edges.Extent(); ++i) {
+        const TopoDS_Edge& edge = TopoDS::Edge(edges(i));
+        if (BRep_Tool::Degenerated(edge) || (faces.Contains(edge) && !faces.FindFromKey(edge).IsEmpty())) continue;
+        const auto samples = curveSamples(edge, std::max(1e-6, span * 1e-5));
+        for (size_t j = 1; j < samples.size(); ++j) { loose.push_back(samples[j - 1]); loose.push_back(samples[j]); }
+      }
+      p->whole.push_back(p->navigation);
+      if (!loose.empty()) {
+        Handle(SegmentSet) set = new SegmentSet(std::move(loose));
+        set->BVH();
+        p->whole.push_back(set);
+      }
+    }
   }
   p->closed = false;
   for (TopExp_Explorer e(meshedProto, TopAbs_SHELL); e.More(); e.Next()) {
@@ -479,7 +506,7 @@ void BodyShape::computeSubShapes(const Handle(SelectMgr_Selection)& selection, c
     }
     return;
   }
-  if (mode == 0 && m_prs && !m_prs->whole.empty()) {  // a big body: its picking was built on the worker
+  if (mode == 0 && m_prs && !m_prs->whole.empty()) {  // a meshed body: its picking was built on the worker
     Handle(SelectMgr_EntityOwner) owner=new BodySelectionOwner(myshape,this,5);
     for (const auto& sensitive : m_prs->whole) selection->Add(new SharedSensitive(owner,sensitive));
     return;

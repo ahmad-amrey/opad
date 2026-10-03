@@ -35,8 +35,9 @@ struct BodyPrs {
   std::map<int,std::shared_ptr<const std::vector<gp_Pnt>>> curves;
   std::map<int, Circle> circles;  // edge ordinals, including trimmed circular arcs
   Handle(Select3D_SensitiveEntity) navigation;  // triangles + BVH, shared by instances
-  // A big body's picking, built here rather than by OCCT on the UI thread: the whole body (selection mode 0: its
-  // triangles and free edges) and each edge by ordinal (the Edge filter). Empty for small bodies.
+  // Picking built here rather than by OCCT on the UI thread: the whole body (selection mode 0: its triangles and free
+  // edges; any meshed body without unmeshed faces or lone vertices) and, for a big body, each edge by ordinal (the Edge
+  // filter; empty otherwise).
   std::vector<Handle(Select3D_SensitiveEntity)> whole, edgeSensitives;
   bool closed = false;                           // closed solid: back faces can be culled
   std::vector<gp_Pnt> drawingSegments; // sampled pairs for drawing-only orbit fallback

@@ -2,6 +2,7 @@
 #include "DepthBias.hpp"
 #include "check.hpp"
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
@@ -222,6 +223,49 @@ TEST(wire_display_and_selection_share_smooth_samples) {
     CHECK(100-midpoint.Distance(gp::Origin())<.003);
     CHECK(prs->boundaries->Vertice(int(i)*2).Distance(points[i])<1e-4);
   }
+}
+
+// UI-40: a meshed body picks as a whole (the Body filter, activated on every display) through the worker's triangles and
+// free edges under one body owner, never OCCT's per-face sensitives built on the UI thread; without the worker's arrays,
+// or with a vertex of its own, the stock entities.
+TEST(body_mode_picks_through_the_worker_set) {
+  struct TestBody : BodyShape { using BodyShape::BodyShape; using BodyShape::ComputeSelection; };
+  const TopoDS_Shape box=BRepPrimAPI_MakeBox(10,10,10).Shape();
+  BRepMesh_IncrementalMesh(box,0.1);
+  BRep_Builder builder;
+  TopoDS_Compound wired, dotted;
+  builder.MakeCompound(wired); builder.Add(wired,box); builder.Add(wired,BRepBuilderAPI_MakeEdge(gp_Pnt(20,0,0),gp_Pnt(30,0,0)).Edge());
+  builder.MakeCompound(dotted); builder.Add(dotted,box); builder.Add(dotted,BRepBuilderAPI_MakeVertex(gp_Pnt(20,0,0)).Vertex());
+  auto build=[](const TopoDS_Shape& shape) { Bnd_Box bounds; BRepBndLib::Add(shape,bounds); return BodyPrs::build(shape,bounds); };
+  auto select=[](const Handle(TestBody)& body) {
+    Handle(SelectMgr_Selection) selection=new SelectMgr_Selection(0);
+    body->ComputeSelection(selection,0);
+    return selection;
+  };
+  Handle(Graphic3d_Camera) camera=new Graphic3d_Camera();
+  camera->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+  camera->SetEyeAndCenter(gp_Pnt(5,5,100),gp_Pnt(5,5,0)); camera->SetUp(gp::DY()); camera->SetScale(40);
+  for(const auto& [shape,count]:{std::pair{box,1},std::pair{TopoDS_Shape(wired),2}}) {
+    Handle(TestBody) body=new TestBody(shape,build(shape));
+    const auto selection=select(body);
+    CHECK_EQ(selection->Entities().Size(),count);
+    CHECK_EQ(selection->Entities().First()->BaseSensitive()->NbSubElements(),12);  // the navigation triangles, shared
+    if(count==2) CHECK_EQ(selection->Entities().Last()->BaseSensitive()->NbSubElements(),1);  // the free edge's segment
+    for(const auto& entity:selection->Entities()) {
+      const auto owner=Handle(StdSelect_BRepOwner)::DownCast(entity->BaseSensitive()->OwnerId());
+      CHECK(!owner.IsNull()); CHECK(Handle(SubShapeOwner)::DownCast(owner).IsNull()); CHECK(owner->Selectable()==body);
+      CHECK(owner->Shape().IsSame(shape));
+    }
+    SelectMgr_SelectingVolumeManager point;
+    point.InitPointSelectingVolume(gp_Pnt2d(500,500));
+    point.SetCamera(camera); point.SetWindowSize(1000,1000); point.BuildSelectingVolume();
+    SelectBasics_PickResult result;
+    CHECK(selection->Entities().First()->BaseSensitive()->Matches(point,result));
+  }
+  Handle(TestBody) bare=new TestBody(box,nullptr);
+  CHECK(select(bare)->Entities().Size()>=6);  // OCCT's: a sensitive per face
+  CHECK(build(dotted)->whole.empty());
+  CHECK(!build(box)->whole.empty());
 }
 
 CHECK_MAIN()
