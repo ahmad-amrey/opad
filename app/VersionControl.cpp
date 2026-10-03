@@ -378,6 +378,8 @@ void VersionControl::commit() {
   const git::Repo& r = m_git->repo();
   const QString rel = r.rel, name = QFileInfo(rel).fileName();
   const bool merging = r.merging, fresh = r.status.oid == "(initial)";
+  if (merging && r.status.count('u'))  // git add would take the files as they are now: one side's version, silently
+    return failed(tr("Commit the merge"), tr("Files are still in conflict: resolve them first, or abort the merge."));
   auto* d = new QDialog(m_services.window());
   d->setObjectName("vcsCommit");
   d->setAttribute(Qt::WA_DeleteOnClose);

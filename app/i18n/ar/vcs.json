@@ -561,5 +561,6 @@
  "On remotes": "في المستودعات البعيدة",
  "%1\n%2\nLast commit: %3": "%1\n%2\nآخر إيداع: %3",
  "a branch of the remote": "فرع من المستودع البعيد",
- "follows no remote branch": "لا يتبع أي فرع بعيد"
+ "follows no remote branch": "لا يتبع أي فرع بعيد",
+ "Files are still in conflict: resolve them first, or abort the merge.": "ما زالت ملفات في تعارض: حُلّها أولًا، أو ألغِ الدمج."
 }

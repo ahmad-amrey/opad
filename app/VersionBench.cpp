@@ -168,7 +168,61 @@ bool VersionControl::bench(const QString& prefix) {
     if (st->exit != 0) throw std::runtime_error(st->error.toStdString());
     return true;
   };
-  const std::vector<std::function<bool()>> steps = {
+  std::vector<std::function<bool()>> steps;
+  // OPAD_BENCH_VERSION=perf:<prefix> on a big committed document (the Engine): how long each command takes, with nothing
+  // on the UI thread meanwhile (the trace's stall lines). git's author comes from GIT_CONFIG_GLOBAL.
+  auto clock = std::make_shared<QElapsedTimer>();
+  auto timed = [clock](const QString& what) { trace::log(QStringLiteral("bench: version: perf: %1 in %2 ms PASS").arg(what).arg(clock->elapsed())); };
+  if (prefix.startsWith("perf:")) steps = {
+      [=, this] {
+        if (!idle() || m_git->repo().state != git::Repo::State::Ready || doc->loading) return false;
+        if (m_git->repo().needsDriver()) m_git->setUpDriver();
+        clock->start();
+        m_services.action("vcs.panel")->trigger();
+        return true;
+      },
+      [=, this] {
+        if (!idle() || m_history.empty()) return false;
+        timed(QStringLiteral("the panel's history and branches (%1 commits)").arg(m_history.size()));
+        const auto bodies = doc->scene.all_bodies();
+        doc->run("transform", {{"target", bodies.front()}, {"matrix", {1, 0, 0, 10, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}}});
+        clock->start();
+        m_services.action("vcs.commit")->trigger();
+        return true;
+      },
+      [=, this] {
+        QDialog* d = dialog("vcsCommit");
+        require(d, "the commit dialog");
+        if (d->findChild<QLabel*>("suggestion")->property("state") == "reading") return false;
+        timed("the commit message suggested: \"" + d->findChild<QPlainTextEdit*>("message")->toPlainText() + "\"");
+        clock->start();
+        require(press(d, "vcsCommitRun"), "Commit");
+        return true;
+      },
+      [=, this] {
+        if (!idle() || !finished("commit")) return false;
+        timed("saved and committed");
+        std::unique_ptr<QMenu> menu(m_panel->commitMenu(m_history.back()));
+        clock->start();
+        menu->findChild<QAction*>("vcs.restore")->trigger();
+        require(answer("vcsRestore", "restore"), "Restore");
+        return true;
+      },
+      [=, this] {
+        if (!idle() || !finished("restore")) return false;
+        timed(QStringLiteral("the first commit restored as new changes (%1 ops)").arg(doc->doc.ops.size()));
+        doc->undo();
+        clock->start();
+        m_services.action("vcs.pack")->trigger();
+        return true;
+      },
+      [=, this] {
+        if (!idle() || !finished("pack")) return false;
+        timed("packed");
+        return true;
+      },
+  };
+  else steps = {
       [=, this] {  // the clone's merge driver (the case committed .gitattributes asking for it)
         if (!idle() || m_git->repo().state != git::Repo::State::Ready) return false;
         require(m_git->repo().needsDriver(), "the driver not set up yet");
@@ -466,6 +520,9 @@ bool VersionControl::bench(const QString& prefix) {
         for (QMessageBox* m : window->findChildren<QMessageBox*>("vcsFailed")) m->close();
         require(m_lastFailure.contains(git::explain("Automatic merge failed")) || m_lastFailure.contains(git::explain("CONFLICT (")), "the stop explained: " + m_lastFailure);
         require(!doc->isDirty() && doc->nodeName(st->boxBody.toStdString()) == "Ours", "the document keeps ours");
+        m_services.action("vcs.commit")->trigger();
+        require(!dialog("vcsCommit") && m_lastFailure.contains(tr("Files are still in conflict: resolve them first, or abort the merge.")),
+                "Commit refused while files are in conflict");
         require(press(m_panel, "vcsAbortMerge") && !m_panel->button("vcsCommitMerge")->isEnabled(), "Abort merge offered, Commit the merge not");
         shot(m_tool, ".merging.png");
         require(answer("vcsAbortMerge", "abort"), "Abort asked first");
