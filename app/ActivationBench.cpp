@@ -86,17 +86,21 @@ struct Ticker {
 }  // namespace
 
 // OPAD_BENCH_ACTIVATE=<prefix> on two components, Housing and Lid, a box in each, and a sketch at the root. The Lid's radio
-// in the browser activates it without selecting it; the Housing's box and the root sketch are ghosted at the theme's
-// ghost opacity and not pickable (a click there selects nothing, the same click on the Lid's box does), the Lid's box is
-// drawn as it is; the chip names the Lid, the browser bolds it and dims the Housing, the timeline dims the Housing's
-// ops; a guided tool picks the ghost as a reference, and after it the ghost is unpickable again; F frames the Lid; a
-// sketch made through the plane picker (ghosts pickable while choosing) and the sketch editor, a box made through the
-// feature panel and an import all land in the Lid (no reparent op); the context menu offers Activate for a body of
-// another component and Activate root; an undone active component hands activation back to the root; the chip's click
-// activates the root and everything is drawn and picked as before; the Lid activated, saved and opened again is active
-// again. With the Lid active: <prefix>.ghost.png (the view),
-// <prefix>.browser.png, <prefix>.chips.png, <prefix>.timeline.png and <prefix>.ribbon.png (Design > Assemble); with its
-// sketch made and selected, <prefix>.sketches.png (the browser); <prefix>.history.png (the timeline with only its ops).
+// in the browser activates it without selecting it, so does Alt+click on a row (the document's: the root), and the
+// breadcrumb leads to it; the Housing's box and the root sketch are ghosted at the theme's ghost opacity and not pickable
+// (a click there selects nothing, the same click on the Lid's box does), the Lid's box is drawn as it is; the chip names
+// the Lid, the browser bolds it (an 'active' pill) and dims the Housing, the timeline dims the Housing's ops (or leaves
+// them out), live_state names the Lid; visibility off draws and picks the Housing as it is, the inactive opacity presets
+// set the ghost's; resting on the ghost names it in the status bar, the right-click menu there and a double click on a
+// ghost activate its component; a guided tool picks the ghost as a reference, and after it the ghost is unpickable again;
+// F frames the Lid; a sketch made through the plane picker (ghosts pickable while choosing) and the sketch editor, a box
+// made through the feature panel and an import all land in the Lid (no reparent op), the sketch listed in the Lid's own
+// Sketches folder (also while it is made); the context menu offers Activate for a body of another component and Activate
+// root; an undone active component hands activation back to the root; the chip's click activates the root and
+// everything is drawn and picked as before; the Lid activated, saved and opened again is active again. With the Lid
+// active: <prefix>.ghost.png (the view), <prefix>.browser.png, <prefix>.chips.png, <prefix>.timeline.png,
+// <prefix>.history.png (only its ops) and <prefix>.ribbon.png (Design > Assemble); with its sketch made and selected,
+// <prefix>.sketches.png (the browser).
 OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
   auto all = std::make_shared<bool>(true);
   auto require = [all](bool ok, const QString& what) {
