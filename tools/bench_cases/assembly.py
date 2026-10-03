@@ -27,11 +27,12 @@ CASES = [
     ("activate-engine", engine(), {"OPAD_BENCH_ACTIVATE": "{prefix}"}),
     # Exploded view (UI-36) on an enclosure made by the bench (shell, lid, a PCB subassembly with a board, a chip and a
     # capacitor, four screws in a Screws component): the command plays the parts out frame by frame, level 1 moves the PCB
-    # whole, level 2 splits it (the capacitor rides on the board), the PCB's browser badge keeps it whole, Explode its parts
-    # on the Screws, the slider at 50 %, a click on the board selects the PCB's unit, the lid's handle dragged and a value
-    # typed over the view, the distance tool measuring where the parts are drawn (not pinned), group and ungroup, Save as
-    # view / Collapse / View > Named views / Update view, a feature edit collapsing the view. <prefix>.view.png,
-    # .panel.png, .browser.png, .chips.png, .ribbon.png.
+    # whole, the PCB activated explodes alone, level 2 splits it (the capacitor rides on the board), the PCB's browser badge
+    # keeps it whole, Explode its parts on the Screws, the slider at 50 %, a click on the board selects the PCB's unit, the
+    # lid's handle dragged and a value typed over the view, a hand drawing on the moved lid stored where the lid is in the
+    # model, the distance tool measuring where the parts are drawn (not pinned), group and ungroup, Save as view / Collapse
+    # / View > Named views / Update view, a feature edit collapsing the view. <prefix>.view.png, .panel.png, .browser.png,
+    # .chips.png, .ribbon.png.
     ("explode", lambda root, document: document("explode"), {"OPAD_BENCH_EXPLODE": "{prefix}"}),
     ("explode-rtl", lambda root, document: document("explode-rtl"), {"OPAD_BENCH_EXPLODE": "{prefix}", "OPAD_LANG": "ar"}),
     # The Engine (skipped where it is not): laid out, level 2, 60 ticks from 0 to 1 each timed until every body moved, and

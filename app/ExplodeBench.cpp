@@ -8,6 +8,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QPushButton>
 #include <QSlider>
 #include <QTimer>
 #include <QToolButton>
@@ -19,6 +20,7 @@
 #include <memory>
 #include <set>
 
+#include "AnnotationEditor.hpp"
 #include "BenchRegistry.hpp"
 #include "DesignController.hpp"
 #include "DimensionHandle.hpp"
@@ -109,11 +111,12 @@ bool clickBadge(BrowserTree* tree, const std::string& id, const QString& icon, Q
 
 // OPAD_BENCH_EXPLODE=<prefix>. An enclosure made through the command layer: a shell and a lid, a PCB subassembly (board,
 // chip, a small capacitor) and a Screws component with four screws. Exploded view (its command) opens the panel and plays
-// the parts out (the lid rising frame by frame, the chip following), level 1 moving the PCB whole; level 2 splits it (the
+// the parts out (the lid rising frame by frame, the chip following), level 1 moving the PCB whole; the PCB activated, the
+// explode is the PCB's, the root again the enclosure's; level 2 splits it (the
 // capacitor riding on the board); the PCB's browser badge keeps it whole again at level 2; level 1 with Explode its parts on
 // the Screws spreads every screw; the slider at 50 % has the first level out and the screws still in their folder; a click
 // on the board selects the PCB's unit; the lid's handle dragged up moves it while the mouse moves, a digit typed over the
-// view sets its travel (typed values); the distance tool measures lid to shell where they are drawn and is not pinned;
+// view sets its travel (typed values); a hand drawing on the moved lid is stored where the lid is in the model; the distance tool measures lid to shell where they are drawn and is not pinned;
 // two screws grouped move as one, ungrouped apart; Save as view writes a view op with the explode, Collapse puts every
 // part back, View > Named views explodes it again; Update view appends an edit; a feature started collapses the view and
 // leaving it opens the view again. <prefix>.view.png, .panel.png, .browser.png, .chips.png, .ribbon.png. On a big model
@@ -290,6 +293,17 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     for (QToolButton* b : form->levelButtons()) levels << b->text() + (b->isChecked() ? "*" : "");
                     require(levels == QStringList({"1*", "2", ExplodePanel::tr("All")}) && chipText().contains("100") && area->trailCount() >= 3,
                             QString("the level control (%1) apart from the distance; the chip reads '%2'; %3 trail lines").arg(levels.join(' '), chipText()).arg(area->trailCount()));
+                    doc->setActiveComponent(s->pcb);  // the explode follows the active component
+                  }});
+  list.push_back({[=] { return laidOut() && area->spec().root == s->pcb; }, [=, &w](bool followed) {
+                    std::set<std::string> moved;
+                    for (const auto& u : area->units()) moved.insert(u.bodies.begin(), u.bodies.end());
+                    require(followed && moved == std::set<std::string>{s->board, s->chip, s->cap} && area->units().size() == 2,
+                            QString("the PCB activated: the explode is the PCB's (%1 units: the board with the capacitor, the chip)").arg(area->units().size()));
+                    doc->setActiveComponent({});
+                  }});
+  list.push_back({[=] { return laidOut() && area->spec().root.empty() && area->units().size() > 2; }, [=, &w](bool back) {
+                    require(back, "the root active again: the whole enclosure explodes");
                     for (QToolButton* b : form->levelButtons())
                       if (b->text() == "2") b->click();
                   }});
@@ -387,6 +401,47 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     const double typed = opad::explode_travel(area->units()[static_cast<size_t>(area->dragUnit())], area->spec(), u.dir);
                     require(box && std::abs(seven - 7) < 1e-6 && std::abs(typed - 22.5) < 1e-6, QString("typed over the view: 7 -> %1 mm, '12.5 mm + 10 mm' -> %2 mm").arg(seven).arg(typed));
                     if (box) box->clearFocus();
+                  }});
+  // A hand drawing on the moved lid: stored where the lid is in the model, drawn where it is now.
+  auto pickedAt = std::make_shared<opad::Vec3>();
+  list.push_back({[=, &w] { return !v->looksPending() && !w.m_jobs->busy(); }, [=, &w](bool) {
+                    w.m_browser->selectIds({});
+                    v->clearSelection();
+                    s->ops = doc->doc.ops.size();
+                    w.startAnnotation(true);
+                    int x = 0, y = 0;
+                    v->benchBodyPoint(s->lid, x, y);
+                    const QPoint at(qRound(x / v->displayScale()), qRound(y / v->displayScale()));
+                    auto mouse = [v](QEvent::Type type, QPoint p) {
+                      QMouseEvent e(type, QPointF(p), QPointF(v->mapToGlobal(p)), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                                    type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+                      QCoreApplication::sendEvent(v, &e);
+                    };
+                    mouse(QEvent::MouseButtonPress, at);  // the target
+                    mouse(QEvent::MouseButtonRelease, at);
+                    AnnotationEditor* editor = w.m_annotationEditor;
+                    const bool anchored = editor && editor->anchored() && editor->target().body == s->lid;
+                    if (anchored) *pickedAt = editor->target().point;
+                    mouse(QEvent::MouseButtonPress, at + QPoint(4, 4));  // a stroke
+                    for (int i = 1; i <= 4; ++i) mouse(QEvent::MouseMove, at + QPoint(4 + 12 * i, 4 + 3 * i));
+                    mouse(QEvent::MouseButtonRelease, at + QPoint(52, 16));
+                    QPushButton* save = w.m_annotationPanel->findChild<QPushButton*>("annotationSave");
+                    require(anchored && save && save->isEnabled(), "a hand drawing anchored on the moved lid, one stroke drawn");
+                    if (save) save->click();
+                  }});
+  list.push_back({[=] { return doc->doc.ops.size() > s->ops; }, [=, &w](bool saved) {
+                    const opad::Op& op = doc->doc.ops.back();
+                    const opad::Vec3 origin = saved && op.type == "annotation" ? op.data["drawing"]["plane"]["origin"].get<opad::Vec3>() : opad::Vec3{0, 0, 0};
+                    const opad::Vec3 lift = v->shownOffset(s->lid);
+                    double model = 0, drawn = 0;
+                    for (size_t k = 0; k < 3; ++k) {
+                      model = std::max(model, std::abs(origin[k] + lift[k] - (*pickedAt)[k]));
+                      drawn = std::max(drawn, std::abs(origin[k] - (*pickedAt)[k]));
+                    }
+                    require(saved && op.type == "annotation" && model < 1e-6 && drawn > 5,
+                            QString("saved where the lid is in the model: the plane's origin %1 off where it was picked (picked %2, stored %3, the lid's offset %4)")
+                                .arg(drawn, 0, 'f', 1).arg(vec(*pickedAt), vec(origin), vec(lift)));
+                    if (saved) doc->undo();
                   }});
   // Measuring where the parts are drawn: lid to shell.
   list.push_back({[=] { return !v->looksPending(); }, [=, &w](bool) {
