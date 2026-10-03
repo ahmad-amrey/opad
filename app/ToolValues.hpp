@@ -36,6 +36,6 @@ class ToolValues : public QObject {
   void type(const QKeyEvent* key);
   void show();
   QWidget* m_view;
-  DynamicInput* m_input;
+  QPointer<DynamicInput> m_input;  // the view's child: gone first when the window closes
   QPointer<DimensionHandle> m_handle;
 };

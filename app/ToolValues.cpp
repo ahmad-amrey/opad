@@ -66,7 +66,7 @@ void ToolValues::type(const QKeyEvent* key) {
     return;
   }
   refresh();
-  if (!m_input->count()) return;
+  if (!m_input || !m_input->count()) return;
   show();
   if (tab) m_input->cycle(back);
   else m_input->type(key->text());
@@ -82,11 +82,13 @@ void ToolValues::show() {
 }
 
 void ToolValues::refresh() {
+  if (!m_input) return;
   m_input->setFields(fields ? fields() : QList<DynamicInput::Field>{});
   if (!m_input->count()) m_input->hide();
 }
 
 void ToolValues::reset() {
+  if (!m_input) return;  // the window closing (a panel hidden after the view went)
   m_input->used();
   m_input->setFields({});
   m_input->hide();
