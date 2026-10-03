@@ -250,6 +250,9 @@ class PreferencesArea : public AreaController {
     };
     shown();
     QObject::connect(units::notifier(), &units::Notifier::changed, page, shown);
+    QObject::connect(preferences::notifier(), &preferences::Notifier::changed, page, [shown](const QString& key) {  // Grid snapping's menu
+      if (key.isEmpty() || key.startsWith("view/grid")) shown();
+    });
     auto apply = [view, spacing, extent, automatic] {
       view->configureGrid(automatic->isChecked() ? 0 : units::fromDisplay(units::Kind::Length, spacing->value()), units::fromDisplay(units::Kind::Length, extent->value()));
     };

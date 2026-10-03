@@ -125,8 +125,12 @@ void MainWindow::buildStatusBar() {
       if(QString(spec.id)=="view.extensions") m_viewport->setExtensionTracking(on);
       else if(QString(spec.id)=="view.tracking") m_viewport->setTracking(on);
       else if(QString(spec.id)=="view.gridSnap") m_viewport->setGridSnap(on);  // Ortho and Polar: the sketch reads the setting
+      preferences::changed(spec.setting);  // its other faces: Preferences, the sketch panel's snaps
     };
     connect(a,&QAction::toggled,this,apply); apply(a->isChecked());
+    connect(preferences::notifier(),&preferences::Notifier::changed,a,[a,spec](const QString& key) {  // set from one of them
+      if(key.isEmpty() || key==spec.setting) a->setChecked(QSettings().value(spec.setting,spec.defaultOn).toBool());
+    });
     auto* button=new QToolButton(this); button->setDefaultAction(a); button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     button->setAccessibleName(tr(spec.label)); button->setIconSize({18,18}); button->setFixedSize(30,26);
     auto paint=[button,a,spec] {
@@ -170,6 +174,7 @@ void MainWindow::toggleMenu(QToolButton* button, const QString& id) {
       a->setChecked(std::abs(spacing - mm) < 1e-9);
       connect(a, &QAction::triggered, this, [this, mm] {
         m_viewport->configureGrid(mm, m_settings.value("view/gridExtent", 100).toDouble());
+        preferences::changed("view/gridSpacing");
         if (!action("view.grid")->isChecked()) action("view.grid")->setChecked(true);
       });
     }
@@ -182,6 +187,7 @@ void MainWindow::toggleMenu(QToolButton* button, const QString& id) {
       a->setChecked(std::abs(step - deg) < 1e-9);
       connect(a, &QAction::triggered, this, [this, deg] {
         m_settings.setValue("sketch/angleStep", deg);
+        preferences::changed("sketch/angleStep");
         if (!action("view.polarSnap")->isChecked()) action("view.polarSnap")->setChecked(true);
       });
     }

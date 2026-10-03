@@ -2,6 +2,7 @@
 #include "SketchEditor.hpp"
 #include "HelpClip.hpp"
 #include "I18n.hpp"
+#include "Preferences.hpp"
 #include "Units.hpp"
 #include <QCheckBox>
 #include <QDoubleSpinBox>
@@ -123,16 +124,16 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   auto* section=new QCheckBox(tr("Section at sketch plane"),this);settings->addWidget(section);
   connect(section,&QCheckBox::toggled,this,[this](bool on){auto normal=m_editor->m_frame.normal();for(auto& v:normal)v=-v;if(on)m_editor->m_viewport->setSection(true,m_editor->m_frame.origin,normal,false);else m_editor->m_viewport->restoreSection(m_editor->m_sectionBefore);});
   for(const auto& [key,title]:QList<QPair<QString,QString>>{{"endpoint",tr("Endpoints")},{"midpoint",tr("Midpoints")},{"center",tr("Centres")},{"quadrant",tr("Quadrants")},{"intersection",tr("Intersections")},{"nearest",tr("Nearest on curve")},{"grid",tr("Grid snapping")},{"angle",tr("Angle increments")},{"inference",tr("Automatic constraints")}}) {
-    auto* check=new QCheckBox(title,this);check->setChecked(QSettings().value("sketch/snap/"+key,true).toBool());settings->addWidget(check);
-    connect(check,&QCheckBox::toggled,this,[key](bool on){QSettings().setValue("sketch/snap/"+key,on);});
+    auto* check=new QCheckBox(title,this);check->setObjectName("snap-"+key);settings->addWidget(check);
+    preferences::bind(check,"sketch/snap/"+key,true);  // one more face of the setting: Preferences and Polar (angle) follow
   }
   auto* advanced=new QFormLayout;settings->addLayout(advanced);
-  auto* angle=new QDoubleSpinBox(this);angle->setRange(1,90);angle->setValue(QSettings().value("sketch/angleStep",15).toDouble());advanced->addRow(tr("Angle step"),angle);
-  connect(angle,&QDoubleSpinBox::valueChanged,this,[](double v){QSettings().setValue("sketch/angleStep",v);});
+  auto* angle=new QDoubleSpinBox(this);angle->setObjectName("sketch-angleStep");angle->setRange(1,90);advanced->addRow(tr("Angle step"),angle);
+  preferences::bind(angle,"sketch/angleStep",15.0);
   auto* tolerance=new QLineEdit(QSettings().value("sketch/tolerance","1e-8").toString(),this);advanced->addRow(tr("Solver tolerance"),tolerance);
   connect(tolerance,&QLineEdit::editingFinished,this,[tolerance]{bool ok=false;double v=tolerance->text().toDouble(&ok);if(ok && v>=1e-12 && v<=1e-2) QSettings().setValue("sketch/tolerance",v);else tolerance->setText(QSettings().value("sketch/tolerance","1e-8").toString());});
-  auto* iterations=new QSpinBox(this);iterations->setRange(1,1000);iterations->setValue(QSettings().value("sketch/iterations",100).toInt());advanced->addRow(tr("Solver iterations"),iterations);
-  connect(iterations,&QSpinBox::valueChanged,this,[](int v){QSettings().setValue("sketch/iterations",v);});settings->addStretch();
+  auto* iterations=new QSpinBox(this);iterations->setRange(1,1000);advanced->addRow(tr("Solver iterations"),iterations);
+  preferences::bind(iterations,"sketch/iterations",100);settings->addStretch();
   m_status=new QLabel(this);m_status->setWordWrap(true);layout->addWidget(m_status);
   auto* footer=new QHBoxLayout;layout->addLayout(footer);
   // Finish sketch lives in the ribbon, next to Cancel sketch; the tool panel only steps back or leaves the tool.

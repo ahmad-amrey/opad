@@ -6,6 +6,7 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -16,6 +17,7 @@
 #include <QScrollArea>
 #include <QSet>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QStyle>
@@ -23,6 +25,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <utility>
 
 #include "Icons.hpp"
 #include "Theme.hpp"
@@ -53,7 +56,56 @@ void setMarked(QWidget* w, bool on) {
   w->style()->unpolish(w);
   w->style()->polish(w);
 }
+
+QWidget* g_from = nullptr;  // the control whose change is being said: it does not read itself back (typing "2." stays)
+void say(QWidget* from, const QString& key) {
+  QWidget* before = std::exchange(g_from, from);
+  changed(key);
+  g_from = before;
+}
+
+// The control reads `key` again (signals blocked) whenever another face changes it, or every setting is said to have.
+void follow(QWidget* w, const QString& key, std::function<void()> read) {
+  read();
+  QObject::connect(notifier(), &Notifier::changed, w, [w, key, read](const QString& changed) {
+    if (w == g_from || (!changed.isEmpty() && changed != key)) return;
+    const QSignalBlocker block(w);
+    read();
+  });
+}
 }  // namespace
+
+Notifier* notifier() {
+  static Notifier* n = new Notifier;
+  return n;
+}
+
+void changed(const QString& key) { emit notifier()->changed(key); }
+
+void bind(QCheckBox* box, const QString& key, bool fallback) {
+  follow(box, key, [box, key, fallback] { box->setChecked(QSettings().value(key, fallback).toBool()); });
+  QObject::connect(box, &QCheckBox::toggled, box, [box, key](bool on) { QSettings().setValue(key, on); say(box, key); });
+}
+
+void bind(QSpinBox* box, const QString& key, int fallback) {
+  follow(box, key, [box, key, fallback] { box->setValue(QSettings().value(key, fallback).toInt()); });
+  QObject::connect(box, &QSpinBox::valueChanged, box, [box, key](int v) { QSettings().setValue(key, v); say(box, key); });
+}
+
+void bind(QDoubleSpinBox* box, const QString& key, double fallback) {
+  follow(box, key, [box, key, fallback] { box->setValue(QSettings().value(key, fallback).toDouble()); });
+  QObject::connect(box, &QDoubleSpinBox::valueChanged, box, [box, key](double v) { QSettings().setValue(key, v); say(box, key); });
+}
+
+void bind(QComboBox* box, const QString& key, int fallback) {
+  follow(box, key, [box, key, fallback] { box->setCurrentIndex(std::clamp(QSettings().value(key, fallback).toInt(), 0, std::max(0, static_cast<int>(box->count()) - 1))); });
+  QObject::connect(box, &QComboBox::currentIndexChanged, box, [box, key](int i) { QSettings().setValue(key, i); say(box, key); });
+}
+
+void bind(QLineEdit* edit, const QString& key, const QString& fallback) {
+  follow(edit, key, [edit, key, fallback] { if (!edit->hasFocus()) edit->setText(QSettings().value(key, fallback).toString()); });
+  QObject::connect(edit, &QLineEdit::editingFinished, edit, [edit, key] { QSettings().setValue(key, edit->text().trimmed()); say(edit, key); });
+}
 
 void addPage(const Page& page) {
   QList<Page>& list = registry();
@@ -113,11 +165,8 @@ QLabel* Form::note(const QString& text) {
 QCheckBox* Form::check(const QString& key, const QString& label, bool fallback, std::function<void(bool)> apply) {
   auto* box = new QCheckBox(label, m_page);
   box->setObjectName(key);
-  box->setChecked(QSettings().value(key, fallback).toBool());
-  QObject::connect(box, &QCheckBox::toggled, box, [key, apply](bool on) {
-    QSettings().setValue(key, on);
-    if (apply) apply(on);
-  });
+  bind(box, key, fallback);
+  if (apply) QObject::connect(box, &QCheckBox::toggled, box, apply);
   form()->addRow(box);
   return box;
 }
@@ -137,11 +186,8 @@ QSpinBox* Form::integer(const QString& key, const QString& label, int fallback, 
   box->setObjectName(key);
   box->setRange(min, max);
   box->setSuffix(suffix);
-  box->setValue(QSettings().value(key, fallback).toInt());
-  QObject::connect(box, &QSpinBox::valueChanged, box, [key, apply](int v) {
-    QSettings().setValue(key, v);
-    if (apply) apply(v);
-  });
+  bind(box, key, fallback);
+  if (apply) QObject::connect(box, &QSpinBox::valueChanged, box, apply);
   form()->addRow(label, box);
   return box;
 }
@@ -153,11 +199,8 @@ QDoubleSpinBox* Form::number(const QString& key, const QString& label, double fa
   box->setRange(min, max);
   box->setDecimals(decimals);
   box->setSuffix(suffix);
-  box->setValue(QSettings().value(key, fallback).toDouble());
-  QObject::connect(box, &QDoubleSpinBox::valueChanged, box, [key, apply](double v) {
-    QSettings().setValue(key, v);
-    if (apply) apply(v);
-  });
+  bind(box, key, fallback);
+  if (apply) QObject::connect(box, &QDoubleSpinBox::valueChanged, box, apply);
   form()->addRow(label, box);
   return box;
 }
@@ -166,23 +209,18 @@ QComboBox* Form::choice(const QString& key, const QString& label, const QStringL
   auto* box = new QComboBox(m_page);
   box->setObjectName(key);
   box->addItems(items);
-  box->setCurrentIndex(std::clamp(QSettings().value(key, fallback).toInt(), 0, static_cast<int>(items.size()) - 1));
-  QObject::connect(box, &QComboBox::currentIndexChanged, box, [key, apply](int i) {
-    QSettings().setValue(key, i);
-    if (apply) apply(i);
-  });
+  bind(box, key, fallback);
+  if (apply) QObject::connect(box, &QComboBox::currentIndexChanged, box, apply);
   form()->addRow(label, box);
   return box;
 }
 
 QLineEdit* Form::text(const QString& key, const QString& label, const QString& fallback, std::function<void(const QString&)> apply) {
-  auto* edit = new QLineEdit(QSettings().value(key, fallback).toString(), m_page);
+  auto* edit = new QLineEdit(m_page);
   edit->setObjectName(key);
   edit->setMinimumWidth(220);
-  QObject::connect(edit, &QLineEdit::editingFinished, edit, [edit, key, apply] {
-    QSettings().setValue(key, edit->text().trimmed());
-    if (apply) apply(edit->text().trimmed());
-  });
+  bind(edit, key, fallback);
+  if (apply) QObject::connect(edit, &QLineEdit::editingFinished, edit, [edit, apply] { apply(edit->text().trimmed()); });
   form()->addRow(label, edit);
   return edit;
 }
@@ -291,6 +329,11 @@ void PreferencesDialog::setPage(const QString& id) {
   if (row < 0) return;
   if (m_list->item(row)->isHidden()) m_search->clear();
   m_list->setCurrentRow(row);
+}
+
+bool PreferencesDialog::event(QEvent* e) {
+  if (e->type() == QEvent::WindowActivate) preferences::changed({});  // a setting written elsewhere while it was behind
+  return QDialog::event(e);
 }
 
 QString PreferencesDialog::page() const { return m_ids.value(m_list->currentRow()); }

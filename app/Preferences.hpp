@@ -15,6 +15,7 @@
 // The window builds every page once, the first time it opens; open() shows it at a page and a control (its objectName
 // is the setting's key), which is how the gear menu's old entries and the status bar's toggles lead there.
 #include <QDialog>
+#include <QObject>
 #include <QString>
 #include <QStringList>
 #include <functional>
@@ -45,6 +46,24 @@ void addPage(const Page& page);  // a page with the same id replaces the earlier
 QList<Page> pages();              // by order
 // Every word of the query is in one of the texts (case and accents aside); an empty query matches everything.
 bool matches(const QStringList& texts, const QString& query);
+
+// A setting a page shows may have other faces (a status-bar toggle and its menu, the sketch panel's snaps): whoever writes
+// it says so with changed(key) and every face follows. An empty key is every setting: the window says that when it is
+// activated, for writers that say nothing.
+class Notifier : public QObject {
+  Q_OBJECT
+ signals:
+  void changed(const QString& key);
+};
+Notifier* notifier();
+void changed(const QString& key);
+// A control that is one face of a setting: it starts with the saved value (fallback when none), saves and says each
+// change, and follows the others. The page rows below are bound this way; so are the sketch panel's snaps.
+void bind(QCheckBox* box, const QString& key, bool fallback);
+void bind(QSpinBox* box, const QString& key, int fallback);
+void bind(QDoubleSpinBox* box, const QString& key, double fallback);
+void bind(QComboBox* box, const QString& key, int fallback);
+void bind(QLineEdit* edit, const QString& key, const QString& fallback);
 
 // Rows of a page: titled sections of check boxes, numbers and choices bound to a QSettings key (also their objectName),
 // each calling `apply` with the new value after saving it.
@@ -86,6 +105,8 @@ class PreferencesDialog : public QDialog {
   QWidget* pageWidget(const QString& id) const;
   void setSearch(const QString& text);
   QStringList marked() const;  // the texts of the rows marked on the page shown
+ protected:
+  bool event(QEvent* e) override;  // activated: every row reads its setting again (preferences::changed({}))
  private:
   void filter();
   void mark();
