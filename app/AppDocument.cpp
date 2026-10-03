@@ -230,7 +230,7 @@ void AppDocument::startOpen(const QString& path) {
   }).detach();
 }
 
-void AppDocument::startImport(const QString& path, const QString& parent, const opad::Mat4& placement, const opad::json& plane, bool link) {
+void AppDocument::startImport(const QString& path, const QString& parent, const opad::Mat4& placement, const opad::json& plane, bool link, const opad::json& canvas) {
   if (loading || designBusy) return;
   if (!hasDocument || browse) {
     doc = opad::Document::create();
@@ -248,6 +248,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
   opad::ImportOptions o = loadOptions(cancel, file);
   o.parent = parent.toStdString();
   o.placement = placement;
+  o.canvas = canvas;
   // Import into a snapshot: selection/render callbacks retain a valid live document.
   auto work = std::make_shared<opad::Document>(doc);
   const size_t opsBefore = work->ops.size();
@@ -560,6 +561,11 @@ QString AppDocument::labelFor(const std::string& command, const opad::json& args
   if (command == "view") return tr("named view");
   if (command == "import") return tr("import");
   if (command == "transform") return tr("transform");
+  if (command == "canvas") {  // the image canvas (opad/canvas.hpp)
+    const std::string action = args.value("action", "");
+    return action == "flags" ? tr("canvas settings") : action == "calibrate" ? tr("calibrate canvas") : action == "align" ? tr("align canvas")
+         : action == "replace" ? tr("replace picture") : action == "from_backdrop" ? tr("backdrop to canvas") : tr("move canvas");
+  }
   if (command == "component") return tr("new component");
   return QString::fromStdString(command);
 }

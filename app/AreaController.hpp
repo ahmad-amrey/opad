@@ -84,6 +84,9 @@ class AreaServices {
   // Imports a file as Import… does (load progress, the view fitted, recent files, a KiCad board's options asked first):
   // `link` a linked asset (opad/assets.hpp) rather than a copy.
   void importFile(const QString& path, bool link);
+  // The same for a file already placed (a drawing's or a picture's plane and offset, AppDocument::startImport): `options` are
+  // a picture's canvas options (ImportOptions::canvas); `then` runs once it has loaded.
+  void importPlaced(const QString& path, const opad::Mat4& placement, const opad::json& options, bool link, std::function<void()> then = {});
   void guarded(const std::function<void()>& fn);           // runs fn; an exception becomes a message box
   void showMessage(const QString& text, int ms = 4000);    // status bar
   // A toast at the bottom centre of the viewport (Toast.hpp): a result or a warning, with an optional action ("Undo")

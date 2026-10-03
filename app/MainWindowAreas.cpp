@@ -53,6 +53,14 @@ void AreaServices::openPanel(ToolPanel* panel) {
 
 bool AreaServices::requireEditable(std::function<void()> resume) { return m_window->requireEditable(std::move(resume)); }
 void AreaServices::importFile(const QString& path, bool link) { m_window->importPath(path, link ? 1 : 0); }
+void AreaServices::importPlaced(const QString& path, const opad::Mat4& placement, const opad::json& options, bool link, std::function<void()> then) {
+  m_window->beginLoad([this, path, then] {
+    m_window->addRecent(path);
+    m_window->m_viewport->fitWhenReady();
+    if (then) then();
+  });
+  m_window->m_doc->startImport(path, {}, placement, {}, link, options);
+}
 void AreaServices::guarded(const std::function<void()>& fn) { m_window->guarded(fn); }
 void AreaServices::showMessage(const QString& text, int ms) { m_window->statusBar()->showMessage(text, ms); }
 Toast* AreaServices::toast(const QString& text, const QString& actionText, std::function<void()> callback, int ms) {

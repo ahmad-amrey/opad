@@ -78,6 +78,7 @@ Handle(Aspect_Window) opad_make_cocoa_window(void* nsview);
 #include <cmath>
 #include <thread>
 
+#include "opad/canvas.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 #include "Jobs.hpp"
@@ -967,7 +968,9 @@ void Viewport::applySelectionLayers() {
       std::shared_ptr<const BodyPrs> shown=prs;
       if(const auto body=Handle(BodyShape)::DownCast(ais);!body.IsNull() && body->displayPrs() && !body->displayPrs()->triangles.IsNull()) shown=body->displayPrs();
       glow=new SubHighlight(selectionTint());
-      if(!shown->triangles.IsNull()) glow->m_triangles.push_back(shown->triangles);
+      const auto node=m_nodeOf.find(ais.get());
+      const opad::Node* body=node==m_nodeOf.end()?nullptr:m_doc->scene.node(node->second);
+      if(!shown->triangles.IsNull() && !(body && opad::is_canvas(*body))) glow->m_triangles.push_back(shown->triangles);  // a picture: its outline only
       if(!shown->boundaries.IsNull()) glow->m_segments.push_back(shown->boundaries);
       if(!shown->loosePoints.IsNull()) glow->m_points.push_back(shown->loosePoints);
       glow->SetZLayer(Graphic3d_ZLayerId_Topmost);
@@ -1491,16 +1494,20 @@ const std::string* rasterHref(const opad::Node& n) {
   return href.rfind("data:image/", 0) == 0 && comma != std::string::npos && href.substr(0, comma).find(";base64") != std::string::npos ? &href : nullptr;
 }
 
+// A canvas's picture mirrored (its flags, opad/canvas.hpp): [left-right, upside down].
+std::array<bool, 2> rasterFlip(const opad::Node& n) { return n.canvas.is_null() ? std::array<bool, 2>{false, false} : opad::CanvasFlags::of(n.canvas).flip; }
+
 // Which picture a raster node shows and how it is fitted, without reading all of it (the scene is synced often and a
-// picture is megabytes): its length, its first and last 4 KB, the corners and the fitting.
+// picture is megabytes): its length, its first and last 4 KB, the corners, the fitting and a canvas's mirroring.
 std::string rasterKey(const opad::Node& n) {
   const std::string* href = rasterHref(n);
   if (!href) return {};
   const std::string_view v(*href);
   const size_t edge = std::min<size_t>(v.size(), 4096);
+  const auto flip = rasterFlip(n);
   return std::to_string(v.size()) + ":" + std::to_string(std::hash<std::string_view>{}(v.substr(0, edge))) + ":" +
          std::to_string(std::hash<std::string_view>{}(v.substr(v.size() - edge))) + "|" + n.raster.value("corners", opad::json()).dump() + "|" +
-         n.raster.value("preserveAspectRatio", "");
+         n.raster.value("preserveAspectRatio", "") + (flip[0] ? "|h" : "") + (flip[1] ? "|v" : "");
 }
 
 // Worker: the texture of a raster node, fitted into its corners' proportions as SVG's preserveAspectRatio says (at most
@@ -1509,6 +1516,8 @@ Handle(Image_PixMap) rasterPixels(const std::string& base64, const opad::json& r
   const std::string aspect = raster.value("preserveAspectRatio", "");
   QImage image = decodePicture(QByteArray::fromBase64(QByteArray::fromStdString(base64)), aspect != "none" ? 4096 : 8192);
   if (image.isNull()) return {};
+  if (const opad::json& flip = raster.value("flip", opad::json()); flip.is_array() && (flip[0] == true || flip[1] == true))
+    image = image.flipped((flip[0] == true ? Qt::Horizontal : Qt::Orientations()) | (flip[1] == true ? Qt::Vertical : Qt::Orientations()));
   const auto& corners = raster.at("corners");
   auto point = [&](int i) { return gp_Pnt(corners[i][0].get<double>(), corners[i][1].get<double>(), corners[i][2].get<double>()); };
   const double ratio = point(0).Distance(point(1)) / std::max(1e-12, point(0).Distance(point(2)));
@@ -1523,12 +1532,7 @@ Handle(Image_PixMap) rasterPixels(const std::string& base64, const opad::json& r
     painter.end();
     image = canvas;
   }
-  image = image.convertToFormat(QImage::Format_RGBA8888);
-  Handle(Image_PixMap) pixels = new Image_PixMap();
-  pixels->InitTrash(Image_Format_RGBA, image.width(), image.height());
-  pixels->SetTopDown(false);
-  for (int row = 0; row < image.height(); ++row) std::memcpy(pixels->ChangeRow(row), image.constScanLine(row), size_t(image.width()) * 4);
-  return pixels;
+  return texturePixels(image);
 }
 }  // namespace
 
@@ -1536,7 +1540,8 @@ void Viewport::decodeRaster(const opad::Node& n, const std::string& key) {
   if (!m_rasterDecoding.insert(key).second) return;
   const std::string& href = *rasterHref(n);
   auto data = std::make_shared<const std::string>(href.substr(href.find(',') + 1));  // the scene moves on meanwhile
-  auto fit = std::make_shared<const opad::json>(opad::json{{"corners", n.raster.at("corners")}, {"preserveAspectRatio", n.raster.value("preserveAspectRatio", "")}});
+  const auto flip = rasterFlip(n);
+  auto fit = std::make_shared<const opad::json>(opad::json{{"corners", n.raster.at("corners")}, {"preserveAspectRatio", n.raster.value("preserveAspectRatio", "")}, {"flip", {flip[0], flip[1]}}});
   auto made = std::make_shared<Handle(Image_PixMap)>();
   QPointer<Viewport> guard(this);
   m_jobs->async(tr("Decoding pictures"), [data, fit, made](Progress progress) {
@@ -1749,7 +1754,7 @@ void Viewport::sync() {
   }
   std::set<std::string> keep, replace, rasters;
   std::vector<std::string> pending, toAdd;
-  bool recoloredSelected = false;
+  bool recoloredSelected = false, moved = false;
   for (const auto& id : scene.all_bodies()) {
     const opad::Node* n = scene.node(id);
     if (!n || n->body_missing) continue;
@@ -1758,10 +1763,26 @@ void Viewport::sync() {
     auto it = m_items.find(id);
     const std::string raster = rasterKey(*n);
     if (!raster.empty()) rasters.insert(raster);
+    if (const opad::Mat4 world = scene.world(id); it != m_items.end() && it->second.key == n->body_key && it->second.raster == raster && it->second.rigid &&
+                                                  it->second.world.m != world.m && (world.is_identity() || opad::mat_is_rigid(world))) {
+      // Only moved (a transform op: a canvas let go, a part placed): its location, as a look's offset is; nothing is
+      // displayed again, so it never blinks out for a frame.
+      Item& item = it->second;
+      item.world = world;
+      gp_Trsf placed;
+      if (item.look.offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(item.look.offset[0], item.look.offset[1], item.look.offset[2]));
+      if (!world.is_identity()) placed.Multiply(opad::trsf_from_mat(world));
+      m_ctx->SetLocation(item.ais, placed.Form() == gp_Identity ? TopLoc_Location() : TopLoc_Location(placed));
+      if (!item.navigation.IsNull()) {
+        item.navigation->SetLocalTransformation(placed);
+        m_navSelection->Update(item.navigation, Standard_False);
+      }
+      moved = true;
+    }
     if (it != m_items.end() && it->second.key == n->body_key && it->second.world.m == scene.world(id).m && it->second.raster == raster) {
       keep.insert(id);
       Item& item = it->second;
-      if (item.color != n->color || item.opacity != n->opacity) {
+      if (item.color != n->color || item.opacity != n->opacity || (!n->canvas.is_null() && !(composeLook(*n) == item.look))) {  // a canvas's flags too
         item.color = n->color;
         item.opacity = n->opacity;
         applyLook(id, item, composeLook(*n));  // the new appearance under the layers of looks (UI-121)
@@ -1803,6 +1824,15 @@ void Viewport::sync() {
     m_nodeOf.erase(it->second.ais.get());
     it = m_items.erase(it);
     removed = true;
+  }
+  if (moved) {
+    clearCenters();  // found where the bodies were
+    if (!m_subHl.IsNull() || m_subJob) refreshSubHighlight();
+    if (!m_notes.empty()) {  // notes pinned to them follow
+      m_noteCamera.Reset();
+      QMetaObject::invokeMethod(this, [this] { emit notesMoved(); }, Qt::QueuedConnection);
+    }
+    recoloredSelected = true;  // the highlight follows the new location
   }
   if (recoloredSelected) m_ctx->HilightSelected(Standard_False);  // its highlight was on the old presentation
   if(removed) applySelectionLayers();
@@ -1895,7 +1925,7 @@ void Viewport::displayBody(const std::string& id) {
   if (look.opacity < 1.0) ais->SetTransparency(1.0 - look.opacity);
   if (look.layer != Graphic3d_ZLayerId_Default) ais->SetZLayer(look.layer);
   applyStyle(ais, &look);
-  if(n->representation=="drawing2d" && n->raster.is_null()) {
+  if((n->representation=="drawing2d" && n->raster.is_null()) || opad::is_canvas(*n)) {  // outlined when selected: never a tint over a picture
     Handle(Prs3d_Drawer) selected=new Prs3d_Drawer();selected->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected));
     selected->SetDisplayMode(AIS_WireFrame);selected->SetColor(selectionTint());
     selected->SetLineAspect(new Prs3d_LineAspect(selected->Color(),Aspect_TOL_SOLID,3));

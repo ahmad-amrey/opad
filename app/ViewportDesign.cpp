@@ -414,6 +414,13 @@ void Viewport::updateOverlay(const Handle(AIS_InteractiveObject)& obj) {
   redrawScene();
 }
 
+void Viewport::moveOverlay(const Handle(AIS_InteractiveObject)& obj, const gp_Trsf& to) {
+  if (!m_initialised || obj.IsNull()) return;
+  if (m_ctx->IsDisplayed(obj)) m_ctx->SetLocation(obj, TopLoc_Location(to));
+  else obj->SetLocalTransformation(to);
+  redrawScene();
+}
+
 void Viewport::removeOverlay(const Handle(AIS_InteractiveObject)& obj) {
   if (!m_initialised || obj.IsNull()) return;
   m_ctx->Remove(obj, Standard_False);
@@ -588,5 +595,29 @@ bool Viewport::hoveredReference(opad::Ref& ref) const {
 void Viewport::showBackdrop(const Handle(AIS_InteractiveObject)& obj) {
   if(!m_initialised||obj.IsNull())return;obj->SetZLayer(Graphic3d_ZLayerId_Default);m_ctx->Display(obj,3,-1,false);redrawScene();
 }
+bool Viewport::previewPlacement(const std::string& node, const opad::Mat4& world) {
+  const auto it = m_items.find(node);
+  if (!m_initialised || it == m_items.end() || !it->second.rigid || !opad::mat_is_rigid(world)) return false;
+  gp_Trsf placed;
+  const auto& o = it->second.look.offset;
+  if (o != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(o[0], o[1], o[2]));
+  placed.Multiply(opad::trsf_from_mat(world));
+  m_ctx->SetLocation(it->second.ais, TopLoc_Location(placed));
+  if (const auto glow = m_bodyGlows.find(it->second.ais.get()); glow != m_bodyGlows.end()) glow->second->SetLocalTransformation(it->second.ais->Transformation());
+  redrawScene();
+  return true;
+}
+
+void Viewport::endPlacementPreview(const std::string& node) {
+  if (const auto it = m_items.find(node); it != m_items.end() && it->second.rigid) previewPlacement(node, it->second.world.is_identity() ? opad::Mat4() : it->second.world);
+}
+
+bool Viewport::shownPlacement(const std::string& node, opad::Mat4& world) const {
+  const auto it = m_items.find(node);
+  if (!m_initialised || it == m_items.end()) return false;
+  world = opad::mat_from_trsf(it->second.ais->LocalTransformation());
+  return true;
+}
+
 opad::json Viewport::sectionState() const {return {{"enabled",m_sectionEnabled},{"origin",m_sectionOrigin},{"normal",m_sectionNormal},{"caps",m_sectionCaps}};}
 void Viewport::restoreSection(const opad::json& state) {setSection(state.at("enabled").get<bool>(),state.at("origin").get<opad::Vec3>(),state.at("normal").get<opad::Vec3>(),state.at("caps").get<bool>());}

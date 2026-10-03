@@ -131,6 +131,15 @@ std::vector<Handle(AIS_InteractiveObject)> prepareSketchBackdrops(const opad::js
   return made;
 }
 
+Handle(Image_PixMap) texturePixels(const QImage& picture) {
+  const QImage image=picture.convertToFormat(QImage::Format_RGBA8888);
+  Handle(Image_PixMap) pixels=new Image_PixMap();
+  pixels->InitTrash(Image_Format_RGBA,image.width(),image.height());
+  pixels->SetTopDown(false);
+  for(int row=0;row<image.height();++row)std::memcpy(pixels->ChangeRow(row),image.constScanLine(row),size_t(image.width())*4);
+  return pixels;
+}
+
 QImage decodePicture(const QByteArray& bytes,int maxSide) {
   QBuffer buffer;buffer.setData(bytes);buffer.open(QIODevice::ReadOnly);QImageReader reader(&buffer);reader.setAutoTransform(true);
   if(const QSize size=reader.size();size.isValid()&&(size.width()>maxSide||size.height()>maxSide))reader.setScaledSize(size.scaled(maxSide,maxSide,Qt::KeepAspectRatio));

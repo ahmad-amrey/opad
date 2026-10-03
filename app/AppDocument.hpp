@@ -71,8 +71,9 @@ class AppDocument : public QObject {
   void storeViewerCache(JobRunner* jobs);
   bool converting() const { return m_converting; }
   // A drawing goes where `placement` puts its XY plane and origin, after `plane` (resolved on the worker) if given.
-  // `link`: a linked asset (opad::link_file) rather than a copy.
-  void startImport(const QString& path, const QString& parent = {}, const opad::Mat4& placement = {}, const opad::json& plane = {}, bool link = false);
+  // `link`: a linked asset (opad::link_file) rather than a copy. `canvas`: a picture's canvas options (ImportOptions::canvas).
+  void startImport(const QString& path, const QString& parent = {}, const opad::Mat4& placement = {}, const opad::json& plane = {}, bool link = false,
+                   const opad::json& canvas = {});
   // Reads the linked files whose bodies are not loaded (missing then, or not trusted) on a worker; `trustAll` for files the
   // user has just agreed to. The bodies join the document on the UI thread; assetStates is updated. `only`: those imports.
   void loadAssets(JobRunner* jobs, bool trustAll, std::function<void(bool, const QString&)> done = {}, const std::vector<std::string>& only = {});

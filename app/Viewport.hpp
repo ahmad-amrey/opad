@@ -240,6 +240,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showOverlay(const Handle(AIS_InteractiveObject)& obj);
   void updateOverlay(const Handle(AIS_InteractiveObject)& obj);
   void removeOverlay(const Handle(AIS_InteractiveObject)& obj);
+  void moveOverlay(const Handle(AIS_InteractiveObject)& obj, const gp_Trsf& to);  // its location only: nothing recomputed
   const Tokens& tokens() const { return m_tokens; }
   // Sketch "Project": lets body edges be hovered while the editor keeps the clicks, and hands over the edge
   // under the mouse (world coordinates).
@@ -250,6 +251,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool originReferenceAt(const QPointF& point,opad::Ref& ref);
   void setPreviewCurves(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden);
   void showBackdrop(const Handle(AIS_InteractiveObject)& obj);
+  // A canvas dragged by its handles (CanvasEditor): drawn at `world` through its local transformation (no remesh; picking
+  // and its selection glow follow) until endPlacementPreview, or until a scene sync puts it where the document says. False:
+  // not displayed, or not placed rigidly.
+  bool previewPlacement(const std::string& node, const opad::Mat4& world);
+  void endPlacementPreview(const std::string& node);
+  bool shownPlacement(const std::string& node, opad::Mat4& world) const;  // what it is drawn at now (benches)
   opad::json sectionState() const;
   void restoreSection(const opad::json& state);
   void benchDesignShot(const QString& path);  // OPAD_BENCH_DESIGN: fit, redraw, dump the 3D frame

@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "Jobs.hpp"
+#include "opad/canvas.hpp"
 #include "opad/geometry.hpp"
 
 namespace {
@@ -34,6 +35,11 @@ BodyLook Viewport::composeLook(const opad::Node& body) const {
   BodyLook base;
   base.color = body.color;
   base.opacity = body.opacity;
+  if (!body.canvas.is_null()) {  // a canvas's flags (opad/canvas.hpp): picked in the view or only from the browser, drawn through the model
+    const opad::CanvasFlags flags = opad::CanvasFlags::of(body.canvas);
+    base.pickable = flags.selectable;
+    if (flags.through) base.layer = Graphic3d_ZLayerId_Topmost;
+  }
   std::array<const LookDelta*, kLookSources> found{};
   if (layered()) {
     const opad::Scene& scene = m_doc->scene;

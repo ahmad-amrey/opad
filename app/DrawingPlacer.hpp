@@ -11,6 +11,8 @@ class QPushButton;
 // own origin at the plane's, and moved there before the import op is written: dragged, given a typed offset, or
 // snapped by one of its vertices onto another vertex (a body's, a drawing's or a sketch's) projected on the plane. The
 // result is one placement matrix, stored in the import op; a sketch converted later keeps that plane and origin.
+// A picture (an image canvas, UI-70) is placed the same way, its centre at the offset, shown as it will look, with a
+// width to give (its corners and centre are its vertices); the import scales it (ImportOptions::canvas).
 class DrawingPlacer : public QObject {
   Q_OBJECT
  public:
@@ -20,6 +22,9 @@ class DrawingPlacer : public QObject {
   bool active() const { return m_active; }
   ToolPanel* panel() const { return m_panel; }
   opad::Mat4 placement() const;  // drawing XY -> world, with the current offset
+  bool picture() const { return m_image; }
+  double imageWidth() const { return m_width; }  // a picture's width (mm); its own size at its resolution until changed
+  void setImageWidth(double mm);
   void setOffset(double u, double v);
   bool snap(const opad::Vec3& from, const opad::Vec3& to);  // move so `from` (on the drawing) lands on `to`
   std::function<void(const opad::Mat4&)> placed;  // Place: import with this placement
@@ -33,13 +38,17 @@ class DrawingPlacer : public QObject {
   void stop();
   void refresh();
   void move();
+  opad::Mat4 shown() const;  // the preview's matrix: a picture scaled to its width about its centre
   bool nearestVertex(const QPointF& at, opad::Vec3& world) const;  // of the drawing, within a few pixels
   AppDocument* m_doc;
   Viewport* m_view;
   JobRunner* m_jobs;
   ToolPanel* m_panel;
-  QLabel* m_status;
-  QLineEdit *m_u, *m_v;
+  QLabel *m_status, *m_hint;
+  QLineEdit *m_u, *m_v, *m_widthEdit;
+  class QFormLayout* m_form;
+  bool m_image = false;
+  double m_imageW = 0, m_imageH = 0, m_width = 0;
   QPushButton *m_snap, *m_place;
   bool m_active = false, m_dragging = false, m_loaded = false;
   int m_snapStage = 0;  // 1: pick a vertex of the drawing, 2: pick where it goes
