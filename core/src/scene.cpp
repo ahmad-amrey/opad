@@ -32,11 +32,25 @@ bool Scene::effectively_visible(const std::string& id) const {
   return false;
 }
 
-bool Scene::effectively_locked(const std::string& id) const {
+bool Scene::effectively_locked(const std::string& id) const { return lock_holder(id) != nullptr; }
+
+const Node* Scene::lock_holder(const std::string& id) const {
   for (const Node* n = node(id); n; n = n->parent.empty() ? nullptr : node(n->parent))
-    if (n->locked) return true;
-  return false;
+    if (n->locked) return n;
+  return nullptr;
 }
+
+namespace {
+std::string locked_text(const std::string& node, const std::string& holder, const std::string& what, size_t more) {
+  std::string s = node == holder ? "\"" + node + "\" is locked: unlock it before " + what + " it"
+                                 : "\"" + node + "\" is locked with \"" + holder + "\": unlock \"" + holder + "\" before " + what + " it";
+  if (more > 0) s += " (and " + std::to_string(more) + " more locked)";
+  return s;
+}
+}  // namespace
+
+LockedError::LockedError(std::string node_, std::string holder_, std::string change_, size_t more_)
+    : Error(locked_text(node_, holder_, change_, more_)), node(std::move(node_)), holder(std::move(holder_)), change(std::move(change_)), more(more_) {}
 
 std::vector<std::string> Scene::bodies_under(const std::string& id) const {
   std::vector<std::string> out;

@@ -167,13 +167,13 @@ json append_per_target(Document& doc, const std::string& command, const json& a,
 }
 
 // TODO 11 UI-37: a locked node, or one under a locked component, is not moved (a transform, a reparent): refused naming
-// it before anything is appended.
+// it and what holds the lock before anything is appended.
 void refuse_locked(const Document& doc, const std::vector<json>& targets, const char* what) {
   if (!design::has_locks(doc)) return;
   const Scene s = resolve(doc);
   for (const auto& t : targets)
-    if (const Node* n = t.is_string() ? s.node(t.get<std::string>()) : nullptr; n && s.effectively_locked(n->id))
-      throw Error("\"" + n->name + "\" is locked: unlock it before " + what + " it");
+    if (const Node* n = t.is_string() ? s.node(t.get<std::string>()) : nullptr)
+      if (const Node* holder = s.lock_holder(n->id)) throw LockedError(n->name, holder->name, what);
 }
 
 void register_builtins() {

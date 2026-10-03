@@ -1973,6 +1973,9 @@ TEST(locked_bodies_are_left_alone) {
     return why;
   };
   auto locked = [&](const std::string& name, const char* verb) { return "\"" + name + "\" is locked: unlock it before " + verb + " it"; };
+  auto held = [&](const std::string& name, const std::string& holder, const char* verb) {  // locked with a component above it: that is unlocked
+    return "\"" + name + "\" is locked with \"" + holder + "\": unlock \"" + holder + "\" before " + verb + " it";
+  };
   const std::string name = s.node(plate)->name;
   CHECK_EQ(refusal("feature", {{"kind", "fillet"}, {"inputs", {{"edges", json::array({plate + "/edge/0"})}, {"radius", "1 mm"}}}}), locked(name, "changing"));
   CHECK_EQ(refusal("feature", {{"kind", "box"}, {"inputs", {{"length", "4 mm"}, {"width", "4 mm"}, {"height", "20 mm"}, {"operation", "cut"}, {"targets", json::array({body_ref(plate)})}}}}),
@@ -2003,9 +2006,15 @@ TEST(locked_bodies_are_left_alone) {
   commands::run("appearance", {{"target", inner}, {"locked", true}}, &doc);
   s = resolve(doc);
   CHECK(s.effectively_locked(pin) && !s.node(pin)->locked);
-  CHECK_EQ(refusal("feature", {{"kind", "fillet"}, {"inputs", {{"edges", json::array({pin + "/edge/0"})}, {"radius", "0.5 mm"}}}}), locked(s.node(pin)->name, "changing"));
+  CHECK_EQ(refusal("feature", {{"kind", "fillet"}, {"inputs", {{"edges", json::array({pin + "/edge/0"})}, {"radius", "0.5 mm"}}}}), held(s.node(pin)->name, "Inner", "changing"));
   CHECK_EQ(refusal("transform", {{"target", inner}, {"matrix", Mat4::translation(0, 0, 5).to_json()}}), locked("Inner", "moving"));
-  CHECK_EQ(refusal("reparent", {{"target", pin}, {"parent", nullptr}}), locked(s.node(pin)->name, "moving"));
+  CHECK_EQ(refusal("reparent", {{"target", pin}, {"parent", nullptr}}), held(s.node(pin)->name, "Inner", "moving"));
+  try {  // what a UI words in its own language
+    commands::run("transform", {{"target", pin}, {"matrix", Mat4::translation(0, 0, 5).to_json()}}, &doc);
+    CHECK(false);
+  } catch (const LockedError& e) {
+    CHECK(e.node == s.node(pin)->name && e.holder == "Inner" && e.change == "moving" && e.more == 0);
+  }
   CHECK_EQ(refusal("reparent", {{"target", inner}, {"parent", shelf}}), locked("Inner", "moving"));
   commands::run("reparent", {{"target", outer}, {"parent", shelf}}, &doc);  // the component above it may, it along
   commands::run("reparent", {{"target", outer}, {"parent", nullptr}}, &doc);
@@ -2017,8 +2026,9 @@ TEST(locked_bodies_are_left_alone) {
   Scene gone = s;
   gone.nodes.erase(plate);
   gone.nodes.erase(pin);
-  CHECK(locked_change(s, gone).find(" is locked: unlock it before removing it (and 1 more locked)") != std::string::npos);
-  CHECK(locked_change(s, s).empty());
+  const auto two = locked_change(s, gone);
+  CHECK(two && two->more == 1 && two->change == "removing" && std::string(two->what()).find(" before removing it (and 1 more locked)") != std::string::npos);
+  CHECK(!locked_change(s, s));
   // A drawing whose layer is locked (an import node's "locked"): the layer's body alone is not removed, the drawing is.
   const json line = {{"type", "body"}, {"id", new_uuid()}, {"name", "Walls"}, {"key", block_key}};
   const json walls = {{"type", "component"}, {"id", new_uuid()}, {"name", "Walls"}, {"locked", true}, {"layer", {{"name", "Walls"}, {"locked", true}}}, {"children", json::array({line})}};

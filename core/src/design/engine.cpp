@@ -946,7 +946,7 @@ struct Walk {
       for (const auto& err : errors)
         if (direct.count(err["op"].get<std::string>())) throw Error(err["error"].get<std::string>());
       if (locked_before)
-        if (const std::string why = locked_change(*locked_before, builder.scene()); !why.empty()) throw Error(why);
+        if (const auto why = locked_change(*locked_before, builder.scene())) throw *why;
     }
 
     plan.ops = new_ops;
@@ -1022,8 +1022,8 @@ bool has_locks(const Document& doc) {
   return false;
 }
 
-std::string locked_change(const Scene& before, const Scene& after) {
-  std::string first;
+std::optional<LockedError> locked_change(const Scene& before, const Scene& after) {
+  std::optional<LockedError> first;
   size_t count = 0;
   std::function<void(const std::string&)> visit = [&](const std::string& id) {  // in tree order: the outermost is named
     const Node* n = before.node(id);
@@ -1040,11 +1040,14 @@ std::string locked_change(const Scene& before, const Scene& after) {
     } else if (now->local.m != n->local.m) {
       what = "moving";
     }
-    if (what && ++count == 1) first = "\"" + n->name + "\" is locked: unlock it before " + what + " it";
+    if (what && ++count == 1) first.emplace(n->name, before.lock_holder(id)->name, what);
     for (const auto& c : n->children) visit(c);
   };
   for (const auto& r : before.roots) visit(r);
-  if (count > 1) first += " (and " + std::to_string(count - 1) + " more locked)";
+  if (count > 1) {
+    const LockedError one = *first;
+    first.emplace(one.node, one.holder, one.change, count - 1);
+  }
   return first;
 }
 
