@@ -543,6 +543,8 @@ AssetState status_of(const Document& doc, const EffectiveOp& e, const AssetOptio
         if (st.derived.empty() && !opt.derive) {
           st.state = "missing";
           st.reason = "the file read in its place is missing and " + builder_name(*dv) + " is not available here: " + dv->value("path", dv->value("abs", std::string()));
+        } else if (st.state == "ok" && st.derived.empty() && st.unbound == 0) {
+          st.reason = "the file read in its place is missing: it is made again when it is read next";  // its shapes are here: nothing to sync
         } else if (st.state == "ok" && st.derived_sha256 != dv->value("sha256", "")) {
           st.state = "changed";
           st.reason = st.derived.empty() ? "the file read in its place is missing: it is made again" : "the file read in its place changed";
@@ -1021,8 +1023,9 @@ json pack_asset(Document& doc, const std::string& import_id, const std::string& 
     copy(made, to);
     place_derived(asset["derived"], to, dv->value("sha256", ""), dir);
   }
-  doc.append(design::make_edit_op(e.op->id, {{"asset", asset}}), author);
-  return {{"import", e.op->id}, {"path", asset["path"]}, {"copied", copied}};
+  const std::string id = e.op->id;  // appending may move the log's ops
+  doc.append(design::make_edit_op(id, {{"asset", asset}}), author);
+  return {{"import", id}, {"path", asset["path"]}, {"copied", copied}};
 }
 
 void rebase_asset_paths(Document& doc, const fs::path& dir) {

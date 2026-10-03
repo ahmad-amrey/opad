@@ -506,6 +506,7 @@ TEST(derived_file_read_in_the_sources_place) {
   reopened.save();
   // The derived file gone (a clone): missing without the converter, made again with it.
   remove_tree(f.dir / "made");
+  CHECK_EQ(asset_status(reopened, converter)[0].state, "ok");  // its shapes are loaded here: nothing to sync (the app's monitor)
   Document clone = Document::load(f.dir / "design.opad");
   st = load_assets(clone, uncached)[0];
   CHECK_EQ(st.state, "missing");
@@ -599,6 +600,7 @@ TEST(embed_and_pack) {
   // Pack: a copy under assets/, the asset pointing there.
   const json packed = pack_asset(d, import_id);
   CHECK_EQ(packed["path"], "assets/model.step");
+  CHECK_EQ(packed["import"], import_id);  // read before the edit was appended (the log may move)
   CHECK_EQ(packed["copied"], 1);
   CHECK(fs::exists(f.dir / "project" / "assets" / "model.step"));
   CHECK_EQ(asset_of(d, import_id)["storage"], "project");
