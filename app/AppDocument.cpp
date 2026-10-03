@@ -343,6 +343,9 @@ void AppDocument::setRollback(const std::string& opId) {
 void AppDocument::refresh() {
   if (!m_rollback.empty() && !doc.find_op(m_rollback)) m_rollback.clear();  // undone or closed
   scene = hasDocument ? opad::resolve(doc, m_rollback) : opad::Scene{};
+  if (!m_rollback.empty())  // an earlier op edited: values are still shown and typed in the document's unit, the last one
+    for (const auto& e : opad::effective_ops(doc))
+      if (e.op->type == "units" && e.data().contains("length")) scene.units = e.data()["length"].get<std::string>();
   updateDirty();
   ++revision;
   emit changed();

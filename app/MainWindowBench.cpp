@@ -27,6 +27,7 @@
 #include <Bnd_Box.hxx>
 
 #include "Theme.hpp"
+#include "Units.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 
@@ -623,12 +624,16 @@ bool MainWindow::benchViewer() {
   bool refused = false;
   try { m_doc->run("rename", opad::json{{"target", body}, {"name", "x"}}); } catch (const std::exception&) { refused = true; }
   if (!refused || !m_doc->browse || m_doc->doc.ops.size() != ops) { fail("an edit went through in viewer mode"); return true; }
+  setDocumentUnit("in");  // viewer mode: shown in inches for the session, the file untouched (UI-123)
+  if (units::sessionUnit() != "in" || units::current().length != "in" || m_doc->doc.ops.size() != ops) { fail("inches in viewer mode"); return true; }
   QTimer::singleShot(500, this, [this, out, fail, body] {
     const int shown = m_viewport->displayedCount();
     auto remeshed = std::make_shared<int>(0);
     auto watch = connect(m_viewport, &Viewport::meshingProgress, this, [remeshed](int remaining) { if (remaining > 0) ++*remeshed; });
     makeEditable(out, [this, out, fail, body, shown, remeshed, watch] {
       disconnect(watch);
+      // An editable document shows its own unit: the viewer session's inches end with viewer mode.
+      if (!units::sessionUnit().empty() || units::current().length != m_doc->scene.units) return fail("the viewer's inches outlived viewer mode");
       const bool editable = !m_doc->browse && !m_doc->doc.has_live_bodies() && !m_doc->node(body)->visible;
       QTimer::singleShot(800, this, [this, out, fail, editable, shown, remeshed] {
         bool reloads = false;

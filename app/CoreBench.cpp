@@ -170,6 +170,14 @@ OPAD_BENCH(OPAD_BENCH_UNITS, units) {
     require(switched && w.m_doc->doc.ops.size() == ops + 1 && last.type == "units" && last.data.value("length", "") == "in" &&
                 w.m_statusUnits->text() == "in" && units::current().length == "in",
             "Inches appends one units op and the status bar follows: " + w.m_statusUnits->text());
+    // Editing the box (an op before the units op) rolls the scene back before it: still shown in inches.
+    for (const auto& op : w.m_doc->doc.ops)
+      if (op.type == "feature") {
+        w.m_doc->setRollback(op.id);
+        require(units::current().length == "in" && w.m_statusUnits->text() == "in", "rolled back before the box, still inches: " + w.m_statusUnits->text());
+        w.m_doc->setRollback({});
+        break;
+      }
     w.startTool("distance");
     w.toolPicksChanged(ends, false);
     pollUntil(&w, [&w] { return !w.m_lastMeasure.is_null(); }, 20000, [&w, require, finish, result](bool measured) {

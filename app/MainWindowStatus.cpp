@@ -124,7 +124,10 @@ void MainWindow::buildUnitsButton() {
     connect(radians, &QAction::toggled, this, [](bool on) { units::setPrecision(units::current().decimals, on, units::current().fraction); });
   });
   connect(m_doc, &AppDocument::aboutToReplace, this, [] { units::setSessionUnit({}); });
-  connect(m_doc, &AppDocument::changed, this, [this] { units::setDocumentUnit(m_doc->hasDocument ? m_doc->scene.units : m_doc->doc.header.units); });
+  connect(m_doc, &AppDocument::changed, this, [this] {
+    units::setDocumentUnit(m_doc->hasDocument ? m_doc->scene.units : m_doc->doc.header.units);
+    if (!m_doc->browse) units::setSessionUnit({});  // viewer mode left (Edit unsaved copy, an import): the file's unit
+  });
   connect(units::notifier(), &units::Notifier::changed, this, [this, shown] {
     shown();
     refreshToolUi();  // the result rows of a guided tool
