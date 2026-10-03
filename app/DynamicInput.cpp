@@ -32,13 +32,18 @@ QString hint(const QString& tip) {
 }
 }
 
-DynamicInput::DynamicInput(QWidget* view) : QWidget(view) {
-  setObjectName("dynamicInput");setAttribute(Qt::WA_NativeWindow);setAttribute(Qt::WA_StyledBackground);
-  // A native child over OpenGL paints every pixel (holes come out black on Windows); the corners go by a mask.
-  setAutoFillBackground(true);setLayoutDirection(Qt::LeftToRight);setFixedHeight(28);
-  auto* row=new QHBoxLayout(this);row->setContentsMargins(8,2,4,2);row->setSpacing(4);
+DynamicInput::DynamicInput(QWidget* view,QWidget* host) : QWidget(host?host:view),m_view(view),m_embedded(host!=nullptr) {
+  setObjectName("dynamicInput");setLayoutDirection(Qt::LeftToRight);
+  auto* row=new QHBoxLayout(this);row->setSpacing(4);
+  if(m_embedded)row->setContentsMargins(0,0,0,0);
+  else {
+    // A native child over OpenGL paints every pixel (holes come out black on Windows); the corners go by a mask.
+    setAttribute(Qt::WA_NativeWindow);setAttribute(Qt::WA_StyledBackground);setAutoFillBackground(true);setFixedHeight(28);
+    row->setContentsMargins(8,2,4,2);
+  }
   connect(theme::notifier(),&theme::Notifier::changed,this,[this]{m_look=-1;restyle();});
-  restyle();hide();
+  restyle();
+  if(!m_embedded)hide();
 }
 
 bool DynamicInput::takesKeysFrom(QWidget* view,QObject* target) {
@@ -112,7 +117,7 @@ void DynamicInput::edited(int index) {
   auto& box=m_boxes[index];
   const QString text=box.edit->text();
   if(!box.typed && !text.isEmpty())box.optionBefore=box.field.live;
-  box.typed=!text.trimmed().isEmpty();
+  box.typed=!box.field.valued && !text.trimmed().isEmpty();
   if(box.field.option)emit optionEdited(box.field.key,box.typed?text.trimmed():box.optionBefore);
   restyle();fit();
   const QString key=box.field.key;
@@ -155,7 +160,7 @@ void DynamicInput::makeCurrent(int index,bool selectAll) {
 
 void DynamicInput::type(const QString& text) {
   if(m_boxes.isEmpty() || text.isEmpty())return;
-  if(m_current<0 || m_current>=count())makeCurrent(0,false);
+  if(m_current<0 || m_current>=count())makeCurrent(0,m_boxes[0].field.valued);  // a value it holds: the first key replaces it
   else focusBox(m_current);  // keys that still arrive over the view (the box did not get the keyboard) go on in it
   if(m_keyHook && text.size()==1 && m_keyHook(m_current,text.front()))return;
   if(text==QLatin1String(",")) {
@@ -193,12 +198,12 @@ void DynamicInput::used() {
 }
 
 void DynamicInput::giveBack() {
-  if(!editing())return;
-  if(auto* view=parentWidget())view->setFocus(Qt::OtherFocusReason);
+  if(editing() && m_view)m_view->setFocus(Qt::OtherFocusReason);
 }
 
 void DynamicInput::placeNear(const QPoint& cursor) {
   m_cursor=cursor;
+  if(m_embedded)return;
   auto* view=parentWidget();if(!view)return;
   constexpr int gap=20;
   int x=cursor.x()+gap,y=cursor.y()+gap;
@@ -211,7 +216,7 @@ void DynamicInput::placeNear(const QPoint& cursor) {
 // The pointer ran into the boxes (they follow it a little behind): out of its way, unless they are being typed into.
 void DynamicInput::enterEvent(QEnterEvent* e) {
   QWidget::enterEvent(e);
-  if(!typed() && !editing() && parentWidget())placeNear(parentWidget()->mapFromGlobal(QCursor::pos()));
+  if(!m_embedded && !typed() && !editing() && parentWidget())placeNear(parentWidget()->mapFromGlobal(QCursor::pos()));
 }
 
 bool DynamicInput::eventFilter(QObject* target,QEvent* event) {
@@ -225,6 +230,7 @@ bool DynamicInput::eventFilter(QObject* target,QEvent* event) {
     if(reason==Qt::MouseFocusReason)QTimer::singleShot(0,box.edit,&QLineEdit::selectAll);
     restyle();
   } else if(event->type()==QEvent::FocusOut) {
+    if(box.field.valued && m_current==index)m_current=-1;  // typed into again later: the first key replaces the value
     restyle();
   } else if(event->type()==QEvent::Wheel) {
     auto* wheel=static_cast<QWheelEvent*>(event);
@@ -270,6 +276,7 @@ bool DynamicInput::eventFilter(QObject* target,QEvent* event) {
 // Up/Down or the wheel: the number the box starts with (what it shows grey when nothing is typed) steps by 1, Shift 10,
 // Ctrl 0.1.
 void DynamicInput::nudge(int index,double steps,Qt::KeyboardModifiers modifiers) {
+  if(m_boxes[index].field.valued)return emit stepped(index,steps,modifiers);
   auto* edit=m_boxes[index].edit;
   std::string text=(edit->text().isEmpty()?edit->placeholderText():edit->text()).toStdString();
   if(!inputkeys::nudge(text,steps,inputkeys::step(modifiers.testFlag(Qt::ShiftModifier),modifiers.testFlag(Qt::ControlModifier))))return;
@@ -285,17 +292,17 @@ void DynamicInput::restyle() {
     if((look|1)!=(m_look|1))for(auto& box:m_boxes)box.lock->setIcon(icons::icon("lock",t.sel));
     m_look=look;
     auto palette=this->palette();palette.setColor(QPalette::Window,t.bg2);setPalette(palette);
-    setStyleSheet(QString("#dynamicInput { background: %1; border: 1px solid %2; border-radius: 5px; }"
-                        "#dynamicInput QLabel { color: %3; font-size: 11px; }"
-                        "#dynamicInput QLineEdit { background: transparent; color: %4; border: 1px solid transparent; border-radius: 3px; padding: 0 2px; font-family: '%5'; font-size: 12px; selection-background-color: %6; }"
-                        "#dynamicInput QLineEdit[current=\"true\"] { background: %6; }"
-                        "#dynamicInput QLineEdit[typed=\"true\"] { font-weight: 600; }"
-                        "#dynamicInput QLineEdit[locked=\"true\"] { border-color: %7; }"
-                        "#dynamicInput QLineEdit[invalid=\"true\"] { border-color: %8; color: %8; }"
-                        "#dynamicInput QToolButton { color: %3; background: transparent; border: 1px solid %9; border-radius: 3px; padding: 0 4px; font-size: 11px; }"
-                        "#dynamicInput QToolButton:hover { color: %4; border-color: %7; }")
-                    .arg(theme::css(t.bg2),theme::css(active?t.sel:t.line),theme::css(t.fg2),theme::css(t.fg),theme::mono().family(),theme::css(t.selbg),theme::css(t.sel),theme::css(t.red))
-                    .arg(theme::css(t.line)));
+    const QString frame=m_embedded?QString("#dynamicInput { background: transparent; border: none; }")  // the host draws it
+                                  :QString("#dynamicInput { background: %1; border: 1px solid %2; border-radius: 5px; }").arg(theme::css(t.bg2),theme::css(active?t.sel:t.line));
+    setStyleSheet(frame+QString("#dynamicInput QLabel { color: %1; font-size: 11px; }"
+                                "#dynamicInput QLineEdit { background: transparent; color: %2; border: 1px solid transparent; border-radius: 3px; padding: 0 2px; font-family: '%3'; font-size: 12px; selection-background-color: %4; }"
+                                "#dynamicInput QLineEdit[current=\"true\"] { background: %4; }"
+                                "#dynamicInput QLineEdit[typed=\"true\"] { font-weight: 600; }"
+                                "#dynamicInput QLineEdit[locked=\"true\"] { border-color: %5; }"
+                                "#dynamicInput QLineEdit[invalid=\"true\"] { border-color: %6; color: %6; }"
+                                "#dynamicInput QToolButton { color: %1; background: transparent; border: 1px solid %7; border-radius: 3px; padding: 0 4px; font-size: 11px; }"
+                                "#dynamicInput QToolButton:hover { color: %2; border-color: %5; }")
+                         .arg(theme::css(t.fg2),theme::css(t.fg),theme::mono().family(),theme::css(t.selbg),theme::css(t.sel),theme::css(t.red),theme::css(t.line)));
   }
   for(int i=0;i<count();++i) {
     auto* edit=m_boxes[i].edit;
@@ -320,7 +327,7 @@ void DynamicInput::fit() {
     const int width=std::clamp(box.edit->fontMetrics().horizontalAdvance(shown+"  ")+8,box.edit->fontMetrics().horizontalAdvance("-0000.00")+8,220)+(box.lock->isVisible()?18:0);
     if(box.edit->width()!=width || box.edit->minimumWidth()!=width){box.edit->setFixedWidth(width);resized=true;}
   }
-  if(resized){adjustSize();placeNear(m_cursor);}
+  if(resized){adjustSize();placeNear(m_cursor);if(m_embedded && parentWidget())parentWidget()->adjustSize();}
 }
 
 void DynamicInput::resizeEvent(QResizeEvent* e) {

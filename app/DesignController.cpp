@@ -1033,8 +1033,28 @@ void DesignController::bench() {
           }
           QMouseEvent release(QEvent::MouseButtonRelease,local+QPointF(25,-35),global+QPointF(25,-35),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);QApplication::sendEvent(m_distanceHandle,&release);
           if(m_form->inputs().at("distance")==before)throw opad::Error("extrude drag did not change distance");++*phase;
-        }else if(*phase==1){if(!m_readyPlan)throw opad::Error("extrude drag preview missing");runPreview(true);++*phase;}
-        else {if(m_featureOn)return;if(m_doc->scene.features.empty() || m_distanceHandle->isVisible())throw opad::Error("extrude handle commit/cleanup");timer->stop();trace::log("bench: extrusion start offset, drag, preview and commit PASS");QCoreApplication::exit(0);}
+        }else if(*phase==1){
+          if(!m_readyPlan)throw opad::Error("extrude drag preview missing");
+          // UI-16: the box by the arrow takes the tools' keys: digits typed over the view (keypad too) replace the value, Up
+          // steps it, Enter is OK.
+          QApplication::setActiveWindow(m_viewport->window());m_viewport->setFocus();
+          auto key=[this](int code,Qt::KeyboardModifiers mods,const QString& text){
+            QWidget* to=QApplication::focusWidget();QKeyEvent press(QEvent::KeyPress,code,mods,text);QApplication::sendEvent(to?to:static_cast<QWidget*>(m_viewport),&press);};
+          key(Qt::Key_2,Qt::KeypadModifier,"2");key(Qt::Key_5,Qt::NoModifier,"5");
+          auto* box=m_distanceHandle->findChild<QLineEdit*>();
+          auto distance=[this]{return m_form->inputs().at("distance").dump();};
+          if(!box || box->text()!="25" || distance().find("25")==std::string::npos)throw opad::Error("digits typed over the view did not replace the extrude distance: "+distance());
+          if(QApplication::focusWidget()!=box)throw opad::Error("the extrude box did not take the keyboard");
+          key(Qt::Key_Up,Qt::NoModifier,{});
+          if(box->text()!="26 mm" || distance().find("26")==std::string::npos)throw opad::Error("Up did not step the extrude distance: "+distance());
+          trace::log("bench: extrude box: keypad 2 and 5 typed over the view replace the distance, Up steps it to 26 mm PASS");
+          ++*phase;
+        }else if(*phase==2){
+          if(QApplication::focusWidget()!=m_distanceHandle->findChild<QLineEdit*>())throw opad::Error("the extrude box lost the keyboard");
+          QKeyEvent enter(QEvent::KeyPress,Qt::Key_Return,Qt::NoModifier);QApplication::sendEvent(QApplication::focusWidget(),&enter);
+          ++*phase;
+        }
+        else {if(m_featureOn)return;if(m_doc->scene.features.empty() || m_distanceHandle->isVisible())throw opad::Error("extrude handle commit/cleanup");timer->stop();trace::log("bench: extrusion start offset, drag, typed value, preview and commit by Enter PASS");QCoreApplication::exit(0);}
       }catch(const std::exception& e){timer->stop();trace::log(QString("bench: extrude handle FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();return;
     }
     // TODO 10 B14: the panel's New body section names and colours the body in the same step.

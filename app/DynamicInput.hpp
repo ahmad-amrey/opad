@@ -6,7 +6,8 @@
 // then is the tool's; Backspace in an empty box takes the tool's last point back; Up/Down or the wheel step a value.
 // Rules without widgets: InputKeys.hpp. A native child of the view (it sits over OpenGL), rounded by a mask; numbers stay
 // left to right. A typed value the box is not being typed into is locked (accent border, padlock); one that does not
-// evaluate is red, its tooltip says why.
+// evaluate is red, its tooltip says why. Embedded in another widget (the DimensionHandle by an arrow), one box that holds
+// its value (`valued`) gets the same keys: the first key typed replaces the value, Esc undoes, then gives the keyboard back.
 #include <QList>
 #include <QPoint>
 #include <QString>
@@ -27,8 +28,11 @@ class DynamicInput : public QWidget {
     bool option = false;  // the tool's option `key`: typing sets it at once (it waits for what it applies to), Esc puts it back
     QString chip;         // a switch after the box (what an angle is measured from): a click emits chipClicked
     QString tip;          // more for the tooltip (the keys that switch a point's boxes)
+    bool valued = false;  // the box holds the value itself (nothing is "typed" over it); Up/Down and the wheel emit stepped
   };
-  explicit DynamicInput(QWidget* view);
+  // Beside the pointer over `view`; with a `host`, a plain part of that widget (no frame of its own), `view` taking the
+  // keyboard back.
+  explicit DynamicInput(QWidget* view, QWidget* host = nullptr);
   void setFields(const QList<Field>& fields);  // the step's boxes; while the keys stay the same the typed values stay
   int count() const { return int(m_boxes.size()); }
   QString key(int index) const { return index >= 0 && index < count() ? m_boxes[index].field.key : QString(); }
@@ -57,6 +61,7 @@ class DynamicInput : public QWidget {
   void valueTyped(const QString& key);  // the text of that box changed (typed, undone, dropped)
   void dropped();                       // Esc dropped the typed values
   void chipClicked(const QString& key);
+  void stepped(int index, double steps, Qt::KeyboardModifiers modifiers);  // Up/Down or the wheel in a valued box
   void committed();  // Enter in a box
   void escaped();    // Esc in a box with nothing left to undo there
   void undoPoint();  // Backspace in an empty box
@@ -89,4 +94,6 @@ class DynamicInput : public QWidget {
   int m_look = -1;
   QPoint m_cursor;
   std::function<bool(int, QChar)> m_keyHook;
+  QWidget* m_view;
+  bool m_embedded;
 };

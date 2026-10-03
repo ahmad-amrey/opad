@@ -1,14 +1,16 @@
 #pragma once
+#include "DynamicInput.hpp"
 #include "Viewport.hpp"
-#include <QLineEdit>
 #include <QHash>
+#include <QLineEdit>
 #include <QPointer>
 class JobRunner;
 class Job;
 class QLabel;
 
 // A camera-aware scalar handle shared by sketch and solid tools: a flat arrow that always faces the camera (drawn in
-// the selection colour, pulled to change the value) and a value box beside it.
+// the selection colour, pulled to change the value) and a value box beside it: a one-box DynamicInput, so the box takes
+// the same keys as the tools' boxes beside the pointer (UI-16).
 class DimensionHandle : public QWidget {
   Q_OBJECT
  public:
@@ -19,7 +21,7 @@ class DimensionHandle : public QWidget {
   void reposition();
   using Segment=std::array<opad::Vec3,2>;
   void setAnchorSegments(std::vector<Segment> segments);
-  bool interacting() const {return m_dragging || m_edit->hasFocus();}
+  bool interacting() const {return m_dragging || m_input->editing();}
   bool dragging() const {return m_dragging;}
   double value() const {return m_value;}  // what the drag or the arrows made of it (the box shows it rounded)
   // How far the arrow sits along the axis per unit of value: 0.5 for a symmetric extrusion, whose end moves half the
@@ -48,17 +50,16 @@ class DimensionHandle : public QWidget {
   void fit();
   void nudge(double steps,Qt::KeyboardModifiers modifiers);
   void setText(const QString& text,bool notify);
+  QLineEdit* box() const {return m_input->box(0);}
+  QString text() const {return box()->text();}
   JobRunner* m_jobs;
   QPointer<Job> m_indexJob;
   QHash<quint64,QVector<size_t>> m_cells;
   std::vector<std::array<QPointF,2>> m_screenSegments;
   bool m_indexReady=false;
   Viewport* m_view;
-  QLabel* m_label;
-  QLineEdit* m_edit;
+  DynamicInput* m_input;
   QLabel* m_result;
-  QString m_before;  // the text when the box took focus: Esc restores it
-  bool m_typing=false;  // keys typed over the view are going into the box
   opad::Vec3 m_origin{},m_axis{1,0,0};
   QPointF m_start,m_screenAxis;
   double m_value=0,m_startValue=0,m_scale=1;

@@ -116,6 +116,14 @@ void SketchEditor::benchKeys() {
         check(m_toolPreview && std::abs(extent(*m_toolPreview, false) + 12) < 1e-6, "the preview offsets by the 12 typed before the pick");
         type("8", true);
         check(handleBox->text() == "8" && option("distance") == "8" && sameStyle(), "a keypad 8 typed with the curves picked replaces the value in the box by the arrow");
+        // The box by the arrow is a DynamicInput box too: Up and Down step the value, typing over a selection replaces it.
+        send(Qt::Key_Up);
+        check(handleBox->text() == "9 mm" && option("distance") == "9 mm", "Up in the box by the arrow steps the value: " + handleBox->text());
+        send(Qt::Key_Down, Qt::ShiftModifier);
+        check(handleBox->text() == "0 mm" && option("distance") == "0 mm", "Shift+Down steps it down to the next ten: " + handleBox->text());
+        handleBox->selectAll();
+        type("8");
+        check(handleBox->text() == "8" && option("distance") == "8", "8 typed over the selected value replaces it");
         break;
       }
       case 1: {
