@@ -2,6 +2,7 @@
 #include "opad/design/sketch_edit.hpp"
 #include "SketchEditor.hpp"
 #include "SketchGeometryCache.hpp"
+#include "SketchSnap.hpp"
 #include "DimensionHandle.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
@@ -430,21 +431,15 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   Snap s;
   s.u = u;
   s.v = v;
-  if(!infer || !m_geometry || m_geometryJob)return s; // Alt suppresses both inference and automatic coincidence
-  const double t = tol();
+  if(!infer || !m_geometry || m_geometryJob)return s; // Alt suppresses inference, automatic coincidence and the grid
+  const double t = tol(), step = m_viewport->gridSnap() ? m_viewport->gridStep() : 0;
   const auto localCandidates=m_geometry->query(u-t*1.1,v-t*1.1,u+t*1.1,v+t*1.1);
   auto enabled=[](const char* name){return QSettings().value(QString("sketch/snap/")+name,true).toBool();};
   const bool automatic=enabled("inference");
   const bool extensions=QSettings().value("view/extensions",true).toBool(), tracking=QSettings().value("view/tracking",true).toBool();
-  auto nearestEntities=localCandidates.entities;
-  // A tracked line's extension can be outside its finite bounding box.
-  if(extensions && m_trackingPoint)for(size_t i=0;i<m_sk.entities.size();++i){const auto& e=m_sk.entities[i];
-    if(e.type==SkEntity::Type::Line && std::find(e.p.begin(),e.p.end(),m_trackingPoint)!=e.p.end())nearestEntities.push_back(i);
-  }
-  std::sort(nearestEntities.begin(),nearestEntities.end());nearestEntities.erase(std::unique(nearestEntities.begin(),nearestEntities.end()),nearestEntities.end());
-  if (m_inferenceLocked && infer) {
-    const double along=(u-m_lockX)*m_lockDx+(v-m_lockY)*m_lockDy;
-    s.u=m_lockX+along*m_lockDx; s.v=m_lockY+along*m_lockDy; s.tracking=true; s.kind=Snap::Kind::Locked; return s;
+  if (m_inferenceLocked) {
+    sketchsnap::project({m_lockX,m_lockY,m_lockDx,m_lockDy},u,v,step,s.u,s.v);
+    s.grid=step>0; s.kind=Snap::Kind::Locked; return s;
   }
 
   double best = t;
@@ -458,7 +453,7 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
     if (d < best) { best = d; s.point = p.id; s.u = p.x; s.v = p.y; s.kind = Snap::Kind::Point; s.target = p.id; }
   }
   if (s.point) return s;
-  auto candidate=[&](double x,double y,Snap::Kind kind,int a,int b){double d=std::hypot(x-u,y-v);if(d<best){best=d;s.u=x;s.v=y;s.tracking=true;s.kind=kind;s.target=a;s.other=b;}};
+  auto candidate=[&](double x,double y,Snap::Kind kind,int a,int b){double d=std::hypot(x-u,y-v);if(d<best){best=d;s.u=x;s.v=y;s.kind=kind;s.target=a;s.other=b;}};
   std::vector<const SkEntity*> nearby;
   for(size_t index:localCandidates.entities) {
     const auto& e=m_sk.entities[index];
@@ -487,62 +482,82 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
       if(ta>=0 && ta<=1 && tb>=0 && tb<=1)candidate(ax+ta*dx,ay+ta*dy,Snap::Kind::Intersection,nearby[i]->id,nearby[j]->id);
     }
   }
-  if(s.tracking)return s;
-  best = t;
-  for (size_t index : nearestEntities) {
+  if(s.kind!=Snap::Kind::None)return s;
+
+  // Below the object snaps (sketchsnap::resolve): guides crossing, a grid node, one guide, the angle ray, a curve, the
+  // grid. Guides: horizontal and vertical from the line's last point (constraints when automatic), the same from the
+  // tracked point, and the tracked point's lines extended past their ends.
+  struct Meaning { Snap::Kind kind; int target; bool horizontal, vertical; };
+  std::vector<sketchsnap::Guide> guides;
+  std::vector<Meaning> meaning;
+  auto guide=[&](const sketchsnap::Guide& g,const Meaning& m){guides.push_back(g);meaning.push_back(m);};
+  const SkPoint* from=m_tool=="line" && !m_chain.empty()?m_sk.point(m_chain.back()):nullptr;
+  if(from && tracking) {
+    const auto kind=automatic?Snap::Kind::None:Snap::Kind::Aligned;
+    if(std::fabs(u-from->x)>3*t)guide({from->x,from->y,1,0,from->id},{kind,from->id,automatic,false});
+    if(std::fabs(v-from->y)>3*t)guide({from->x,from->y,0,1,from->id},{kind,from->id,false,automatic});
+  }
+  const SkPoint* tracked=m_sk.point(m_trackingPoint);
+  if(tracked && tracking && tracked!=from) {
+    guide({tracked->x,tracked->y,1,0,tracked->id},{Snap::Kind::Aligned,tracked->id,false,false});
+    guide({tracked->x,tracked->y,0,1,tracked->id},{Snap::Kind::Aligned,tracked->id,false,false});
+  }
+  // A tracked line's extension can be outside its finite bounding box.
+  if(tracked && extensions)for(const auto& e:m_sk.entities) {
+    if(e.type!=SkEntity::Type::Line || e.p.size()!=2 || (e.p[0]!=tracked->id && e.p[1]!=tracked->id))continue;
+    const auto *a=m_sk.point(e.p[0]),*b=m_sk.point(e.p[1]);
+    if(!a || !b)continue;
+    const double dx=b->x-a->x,dy=b->y-a->y,len=std::hypot(dx,dy);
+    if(len<1e-9)continue;
+    const double k=((u-a->x)*dx+(v-a->y)*dy)/(len*len);
+    if(k<0 || k>1)guide({tracked->x,tracked->y,dx/len,dy/len,tracked->id},{Snap::Kind::Extension,e.id,false,false});
+  }
+  sketchsnap::Guide ray;
+  const bool angled=from && enabled("angle") && sketchsnap::angleRay(from->x,from->y,u,v,QSettings().value("sketch/angleStep",15).toDouble()*M_PI/180,t,ray);
+  double foot[2]={u,v};int curve=0;
+  best=t;
+  if(enabled("nearest"))for(size_t index:localCandidates.entities) {
     const auto& e=m_sk.entities[index];
-    if(!enabled("nearest"))break;
     if (e.type != SkEntity::Type::Line && e.type != SkEntity::Type::Circle && e.type != SkEntity::Type::Arc) continue;
-    double d = distanceTo(e, u, v);
-    bool extension = false;
-    if (extensions && e.type==SkEntity::Type::Line && e.p.size()==2 && (e.p[0]==m_trackingPoint || e.p[1]==m_trackingPoint)) {
-      const auto *a=m_sk.point(e.p[0]), *b=m_sk.point(e.p[1]);
-      if(a && b) { const double dx=b->x-a->x,dy=b->y-a->y,len=std::hypot(dx,dy); if(len>1e-9) { const double line=std::abs((u-a->x)*dy-(v-a->y)*dx)/len; extension=line<d-1e-12; d=line; } }
-    }
+    const double d = distanceTo(e, u, v);
     if (d >= best) continue;
     best = d;
-    s.entity = automatic ? e.id : 0;
-    s.tracking = !automatic;
-    s.kind = extension ? Snap::Kind::Extension : Snap::Kind::Curve;
-    s.target = e.id;
+    curve = e.id;
     // Foot of the perpendicular, so the new point starts on the curve.
     if (e.type == SkEntity::Type::Line) {
       const SkPoint *a = m_sk.point(e.p[0]), *b = m_sk.point(e.p[1]);
       const double dx = b->x - a->x, dy = b->y - a->y, len2 = dx * dx + dy * dy;
       const double k = len2 < 1e-18 ? 0 : ((u - a->x) * dx + (v - a->y) * dy) / len2;
-      s.u = a->x + k * dx;
-      s.v = a->y + k * dy;
+      foot[0] = a->x + k * dx;
+      foot[1] = a->y + k * dy;
     } else {
       const SkPoint* c = m_sk.point(e.p[0]);
       const double r = e.type == SkEntity::Type::Circle ? e.r : std::hypot(m_sk.point(e.p[1])->x - c->x, m_sk.point(e.p[1])->y - c->y);
       const double d0 = std::hypot(u - c->x, v - c->y);
-      if (d0 > 1e-12) { s.u = c->x + (u - c->x) * r / d0; s.v = c->y + (v - c->y) * r / d0; }
+      if (d0 > 1e-12) { foot[0] = c->x + (u - c->x) * r / d0; foot[1] = c->y + (v - c->y) * r / d0; }
     }
   }
-  if (s.entity || s.tracking) return s;
-  if (const auto* reference=m_sk.point(m_trackingPoint); tracking && reference) {
-    if(std::abs(u-reference->x)<t) { s.u=reference->x; s.tracking=true; }
-    if(std::abs(v-reference->y)<t) { s.v=reference->y; s.tracking=true; }
-    if(s.tracking) { s.kind=Snap::Kind::Aligned; s.target=m_trackingPoint; return s; }
+  using By=sketchsnap::Pick::By;
+  const auto pick=sketchsnap::resolve(u,v,t,step,guides,angled?&ray:nullptr,curve?foot:nullptr);
+  s.u=pick.u;s.v=pick.v;
+  s.grid=step>0 && (pick.by==By::Node || pick.by==By::Guide || pick.by==By::Ray || pick.by==By::Grid);
+  auto follow=[&](int i){  // what a guide adds: its constraint, or the guide to draw
+    const auto& m=meaning[size_t(i)];
+    s.horizontal|=m.horizontal;s.vertical|=m.vertical;
+    if(m.kind!=Snap::Kind::None){s.kind=m.kind;s.target=m.target;}
+  };
+  switch(pick.by) {
+    case By::Cross: follow(pick.guide);follow(pick.other);s.kind=Snap::Kind::Cross;s.target=guides[size_t(pick.guide)].anchor;s.other=guides[size_t(pick.other)].anchor;break;
+    case By::Node: s.kind=Snap::Kind::Grid;if(pick.guide>=0)follow(pick.guide);break;
+    case By::Guide: follow(pick.guide);break;
+    case By::Ray: s.kind=Snap::Kind::Angle;s.target=from->id;break;
+    case By::Curve: s.entity=automatic?curve:0;s.kind=Snap::Kind::Curve;s.target=curve;break;
+    case By::Grid: s.kind=Snap::Kind::Grid;break;
+    case By::Pointer: break;
   }
-  // Horizontal / vertical inference against the previous click of a line-like tool.
-  const bool lineLike = m_tool == "line" && !m_chain.empty();
-  if (lineLike && tracking && automatic) {
-    const SkPoint* from = m_sk.point(m_chain.back());
-    if (from) {
-      const double dx = u - from->x, dy = v - from->y;
-      if (std::fabs(dy) < t && std::fabs(dx) > 3 * t) { s.v = from->y; s.horizontal = true; }
-      else if (std::fabs(dx) < t && std::fabs(dy) > 3 * t) { s.u = from->x; s.vertical = true; }
-    }
-  }
-  if(lineLike && enabled("angle") && !s.horizontal && !s.vertical) {
-    const auto* p=m_sk.point(m_chain.back());const double dx=u-p->x,dy=v-p->y,len=std::hypot(dx,dy),step=QSettings().value("sketch/angleStep",15).toDouble()*M_PI/180;
-    const double angle=std::round(std::atan2(dy,dx)/step)*step;
-    if(len>t && std::fabs(std::sin(angle-std::atan2(dy,dx))*len)<t){s.u=p->x+len*std::cos(angle);s.v=p->y+len*std::sin(angle);s.tracking=true;s.kind=Snap::Kind::Angle;s.target=m_chain.back();}
-  }
-  if(enabled("grid") && m_viewport->gridSnap() && !s.tracking && !s.horizontal && !s.vertical) {
-    const double step=m_viewport->gridStep(); s.u=std::round(s.u/step)*step; s.v=std::round(s.v/step)*step;
-  }
+  if((s.horizontal || s.vertical) && s.kind==Snap::Kind::Grid)s.kind=Snap::Kind::None;  // the inference names it; the grid ring stays
+  // Quantised back onto the line's last point: that point again, which the click ignores (no zero-length line).
+  if(from && std::hypot(s.u-from->x,s.v-from->y)<1e-9*std::max(1.0,step)){s.point=from->id;s.horizontal=s.vertical=false;}
   return s;
 }
 
@@ -580,7 +595,7 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
     }
     // A press on geometry may become a drag.
     m_dragging = h.kind != Hit::None;
-    m_dragMoved = false;m_dragPending=false;m_dragReleased=false;
+    m_dragMoved = false;m_dragPending=false;m_dragReleased=false;m_dragGrid=false;
     m_dragHit = h;
     m_dragU = u;
     m_dragV = v;
@@ -624,12 +639,26 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
     }
     Sketch attempt = m_sk; // carry forward the last constrained solution during a drag
     SolveOptions opt=solveOptions();
+    // Grid snapping: the grabbed point (a curve's first one) lands on a grid node and the rest moves with it; a rim
+    // drag takes whole steps of radius. Alt drags freely.
+    const double step=m_viewport->gridSnap() && !mods.testFlag(Qt::AltModifier)?m_viewport->gridStep():0;
+    m_dragGrid=step>0;
     const SkEntity* e = m_dragHit.kind == Hit::Entity ? attempt.entity(m_dragHit.id) : nullptr;
     if (e && e->type == SkEntity::Type::Circle && !e->fixed) {
       // Dragging the rim changes the radius (unless a dimension holds it: the solver pulls it back).
-      if (const SkPoint* c = attempt.point(e->p[0])) attempt.entity(m_dragHit.id)->r = std::max(1e-3, std::hypot(u - c->x, v - c->y));
+      if (const SkPoint* c = attempt.point(e->p[0])) {
+        const double d=std::hypot(u-c->x,v-c->y),r=step>0?std::max(step,sketchsnap::onGrid(d,step)):std::max(1e-3,d);
+        attempt.entity(m_dragHit.id)->r = r;
+        if(d>1e-12){m_dragGridU=c->x+(u-c->x)*r/d;m_dragGridV=c->y+(v-c->y)*r/d;}
+      }
     } else {
-      for (const auto& [pid, at] : m_dragStart) opt.drags.push_back({pid, at.first + du, at.second + dv});
+      double su=du,sv=dv;
+      if(step>0 && !m_dragStart.empty()) {
+        const auto& at=m_dragStart.front().second;
+        m_dragGridU=sketchsnap::onGrid(at.first+du,step);m_dragGridV=sketchsnap::onGrid(at.second+dv,step);
+        su=m_dragGridU-at.first;sv=m_dragGridV-at.second;
+      }
+      for (const auto& [pid, at] : m_dragStart) opt.drags.push_back({pid, at.first + su, at.second + sv});
     }
     if(attempt.points.size()>300) {
       const auto result=std::make_shared<Sketch>(std::move(attempt));const auto solved=std::make_shared<SolveResult>();const int session=m_session;
@@ -1111,6 +1140,9 @@ void SketchEditor::updateTransient() {
     lines.push_back({W(m_boxU,m_boxV),W(m_dragU,m_boxV),color});
     lines.push_back({W(m_dragU,m_boxV),W(m_dragU,m_dragV),color});
   }
+  // A grid node the pointer or a dragged point snapped to: a small ring, apart from the inference's own marks.
+  auto gridRing=[&](double x,double y){const double r=6*px;for(int i=0;i<16;++i)d.solid.push_back({W(x+r*std::cos(i*M_PI/8),y+r*std::sin(i*M_PI/8)),W(x+r*std::cos((i+1)*M_PI/8),y+r*std::sin((i+1)*M_PI/8)),t.green});};
+  if(m_dragging && m_dragMoved && m_dragGrid)gridRing(m_dragGridU,m_dragGridV);
   // Rubber band of the running tool.
   if (m_haveCursor && m_tool != "select") {
     const QColor rb = t.hov;
@@ -1258,13 +1290,20 @@ void SketchEditor::updateTransient() {
         if (const auto* from = m_geometry->point(m_sk, m_cursor.target))
           label = QString::fromUtf8("%1°").arg(std::round(std::atan2(cv - from->y, cu - from->x) * 180 / M_PI));
         break;
+      case K::Cross:  // two guides crossing: both drawn
+        for (int id : {m_cursor.target, m_cursor.other})
+          if (const auto* reference = m_geometry->point(m_sk, id)) d.dashed.push_back({W(reference->x, reference->y), W(cu, cv), snapColor});
+        label = tr("Tracking");
+        break;
       case K::Locked:
         d.dashed.push_back({W(m_lockX, m_lockY), W(cu, cv), snapColor});
         label = tr("Locked");
         break;
+      case K::Grid: label = tr("Grid"); break;
       case K::None: break;
     }
-    if (m_cursor.horizontal || m_cursor.vertical) {
+    if (m_cursor.grid) gridRing(cu, cv);
+    if ((m_cursor.horizontal || m_cursor.vertical) && m_cursor.kind == K::None) {
       if (!m_chain.empty())
         if (const auto* from = m_geometry->point(m_sk, m_chain.back())) d.dashed.push_back({W(from->x, from->y), W(cu, cv), snapColor});
       label = m_cursor.horizontal ? tr("Horizontal") : tr("Vertical");

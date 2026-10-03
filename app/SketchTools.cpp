@@ -1085,6 +1085,7 @@ void SketchEditor::bench(const QString&) {
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_HANDLES"))return benchHandles();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_REFERENCE"))return benchWorkflow();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_DRAG"))return benchDrag();
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_GRID"))return benchGrid();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY"))return benchModify();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES"))return benchPrimitives();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW"))return benchWorkflow();

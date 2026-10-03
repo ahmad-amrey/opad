@@ -69,9 +69,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void configureGrid(double spacing,double extent);
   void setSelectThrough(bool on) {m_selectThrough=on;}
   void UpdateRubberBand(const Graphic3d_Vec2i& from,const Graphic3d_Vec2i& to) override;
-  void setGridSnap(bool on) { m_gridSnap=on; }
+  // Grid snapping is one switch (F9, mirrored by the sketch panel): gridSnapChanged tells both. While sketching the
+  // grid is shown when it is on (or the grid is), and in a sketch or 2D mode its step follows the zoom.
+  void setGridSnap(bool on);
   bool gridSnap() const { return m_gridSnap; }
-  double gridStep() const { return m_gridStep; }
+  double gridStep() const;
+  bool gridShown() const { return m_grid || (m_gridSnap && m_sketchInput); }
+  double gridShownStep() const { return m_gridShownStep; }  // as the sketch / 2D grid was last laid out
   opad::json circleInfo(const opad::Ref& ref) const;
   void setShadows(bool on);
   void setRenderQuality(int level);
@@ -244,6 +248,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void meshingProgress(int remaining);
   void isolationChanged();  // entered, left, or left because every isolated object was deleted
   void sectionDragged(const opad::Vec3& origin);  // the section plane's handle was dragged here
+  void gridSnapChanged(bool on);
 
  public slots:
   void sync();
@@ -285,7 +290,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   CursorWarpGate m_warpGate;
   void updateGridExtent();
   void applySelectionFilter(SelFilter f);  // setSelectionFilter's work, also for the filter already set (re-activates)
-  // 2D mode: the grid follows the view (its plane, the visible area, a spacing for the zoom), so it never ends.
+  // 2D mode and sketches: the grid follows the view (its plane, the visible area, a spacing for the zoom), so it never ends.
   void updateInfiniteGrid(bool force);
   gp_Pnt drawingOrbitPoint(const QPointF* cursor=nullptr,bool* found=nullptr);
   gp_Pnt drawingPlanePoint(const QPointF& cursor,bool& found);

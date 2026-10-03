@@ -1046,6 +1046,8 @@ void MainWindow::buildStatusBar() {
     connect(theme::notifier(),&theme::Notifier::changed,button,paint); connect(a,&QAction::toggled,button,paint); paint();
     button->setFocusPolicy(Qt::NoFocus); statusBar()->addPermanentWidget(button);
   }
+  // One grid snapping switch: the sketch panel's checkbox turns the viewport's, and F9 follows (and saves it).
+  connect(m_viewport,&Viewport::gridSnapChanged,this,[this](bool on){action("view.gridSnap")->setChecked(on);});
   statusBar()->addPermanentWidget(m_statusSel);
   statusBar()->addPermanentWidget(m_statusUnits);
   statusBar()->setSizeGripEnabled(false);

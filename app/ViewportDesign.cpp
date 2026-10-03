@@ -421,7 +421,7 @@ void Viewport::beginSketchInput(SketchInput* input, const opad::Frame& frame, co
   m_sketchFrame = frame;
   const auto normal=frame.normal();
   m_viewer->SetPrivilegedPlane(gp_Ax3(gp_Pnt(frame.origin[0],frame.origin[1],frame.origin[2]),gp_Dir(normal[0],normal[1],normal[2]),gp_Dir(frame.x[0],frame.x[1],frame.x[2])));
-  updateGridExtent();
+  setGrid(m_grid);  // on the sketch plane, following the zoom; shown while grid snapping is on
   m_sketchDrag = false;
   m_hiddenSketch = hiddenSketch;
   clearSelection();
@@ -435,7 +435,7 @@ void Viewport::endSketchInput() {
   resetHoverFade();
   m_sketchInput = nullptr;
   m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(),gp::DZ(),gp::DX()));
-  updateGridExtent();
+  setGrid(m_grid);
   m_hiddenSketch.clear();
   setBodiesPickable(true);
   syncSketches();

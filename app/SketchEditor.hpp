@@ -85,6 +85,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchModify();
   void benchHandles();
   void benchDrag();
+  void benchGrid();
   void benchLarge(const QString& output, opad::json metrics);
 
   // SketchInput
@@ -121,10 +122,10 @@ class SketchEditor : public QObject, public SketchInput {
     int point = 0;     // an existing point to reuse
     int entity = 0;    // a curve the new point will lie on
     bool horizontal = false, vertical = false;  // relative to the previous click
-    bool tracking = false;
+    bool grid = false;  // on a grid node, or whole grid steps along the inference
     // What the pointer was pulled to, for the display: that object is highlighted and named beside the cursor.
-    enum class Kind { None, Point, Midpoint, Quadrant, Intersection, Curve, Extension, Aligned, Angle, Locked } kind = Kind::None;
-    int target = 0, other = 0;  // the point (Point, Aligned) or the curves (the others) behind the snap
+    enum class Kind { None, Point, Midpoint, Quadrant, Intersection, Curve, Extension, Aligned, Cross, Angle, Locked, Grid } kind = Kind::None;
+    int target = 0, other = 0;  // the point (Point, Aligned, Angle), the two guides' points (Cross) or the curves (the others)
   };
   struct Hit {
     enum Kind { None, Point, Entity, Dimension } kind = None;
@@ -233,6 +234,7 @@ class SketchEditor : public QObject, public SketchInput {
   Hit m_dragHit;
   double m_dragU = 0, m_dragV = 0;
   std::vector<std::pair<int, std::pair<double, double>>> m_dragStart;  // point -> where it was
+  bool m_dragGrid = false;double m_dragGridU = 0, m_dragGridV = 0;  // the grid node the dragged geometry snapped to
 
   Handle(AIS_InteractiveObject) m_prs;  // a SketchPrs (SketchEditor.cpp)
   Handle(AIS_InteractiveObject) m_transientPrs;

@@ -7,6 +7,7 @@
 #include <V3d_DirectionalLight.hxx>
 #include "DepthBias.hpp"
 #include "CursorWrap.hpp"
+#include "SketchSnap.hpp"
 #include <QScreen>
 #include <QApplication>
 
@@ -512,15 +513,30 @@ void Viewport::setGrid(bool on) {
   m_grid = on;
   if (!m_initialised) return;
   updateGridExtent();
-  if (on) m_viewer->ActivateGrid(Aspect_GT_Rectangular, Aspect_GDM_Lines);
+  if (gridShown()) m_viewer->ActivateGrid(Aspect_GT_Rectangular, Aspect_GDM_Lines);
   else m_viewer->DeactivateGrid();
   redrawScene();
+}
+
+void Viewport::setGridSnap(bool on) {
+  if (m_gridSnap == on) return;
+  m_gridSnap = on;
+  if (m_sketchInput) setGrid(m_grid);  // a sketch shows the grid it snaps to
+  emit gridSnapChanged(on);
+}
+
+// What updateInfiniteGrid lays out for the current zoom, without waiting for the redraw that lays it out.
+double Viewport::gridStep() const {
+  if (!m_initialised || !(m_twoDimensional || m_sketchInput)) return m_gridStep;
+  const gp_XYZ size = m_view->Camera()->ViewDimensions();
+  const double span = std::max(size.X(), size.Y());
+  return span > 1e-9 && std::isfinite(span) ? sketchsnap::gridStep(span, m_gridSpacing) : m_gridStep;
 }
 
 void Viewport::updateGridExtent() {
   if (!m_initialised) return;
   m_gridSpacing=QSettings().value("view/gridSpacing",0.0).toDouble();
-  if (m_twoDimensional) { updateInfiniteGrid(true); return; }
+  if (m_twoDimensional || m_sketchInput) { updateInfiniteGrid(true); return; }
   Bnd_Box bounds;
   for (const auto& [id,item]:m_items) { Bnd_Box b; item.ais->BoundingBox(b); bounds.Add(b); }
   for (const auto& [id,wire]:m_sketchWires) { Bnd_Box b; wire.ais->BoundingBox(b); bounds.Add(b); }
@@ -538,12 +554,12 @@ void Viewport::updateGridExtent() {
   m_viewer->SetRectangularGridGraphicValues(extent,extent,0);
 }
 
-// OCCT's grid is a finite patch. In 2D mode it is laid out again around what the view shows whenever the view gets
-// near its edge or the zoom asks for another spacing (lines a tenth of the view apart, or the set spacing while that
-// gives at most 400 lines); its lines stay on world multiples of the spacing. Called from every redraw, so the test
-// whether anything changed comes first and is cheap.
+// OCCT's grid is a finite patch. In 2D mode and while sketching (in the sketch's plane) it is laid out again around
+// what the view shows whenever the view gets near its edge or the zoom asks for another spacing (lines a tenth of
+// the view apart, or the set spacing while that gives at most 400 lines); its lines stay on multiples of the spacing,
+// which is what grid snapping rounds to. Called from every redraw, so the test whether anything changed comes first.
 void Viewport::updateInfiniteGrid(bool force) {
-  if (!m_initialised || !m_grid) return;
+  if (!m_initialised || !gridShown()) return;
   const auto camera = m_view->Camera();
   const gp_XYZ size = camera->ViewDimensions();
   const double span = std::max(size.X(), size.Y());
@@ -551,7 +567,7 @@ void Viewport::updateInfiniteGrid(bool force) {
   const gp_Ax3 plane = m_viewer->PrivilegedPlane();
   const gp_Vec rel(plane.Location(), camera->Center());
   const double cx = rel.Dot(gp_Vec(plane.XDirection())), cy = rel.Dot(gp_Vec(plane.YDirection()));
-  const double step = m_gridSpacing > 0 && span / m_gridSpacing <= 400 ? m_gridSpacing : std::pow(10.0, std::floor(std::log10(span / 10.0)));
+  const double step = sketchsnap::gridStep(span, m_gridSpacing);
   const double off = std::hypot(cx - m_gridShownX, cy - m_gridShownY);
   if (!force && step == m_gridShownStep && off + span / 2 <= m_gridShownExtent * 0.9 && m_gridShownExtent <= span * 3) return;
   const double ox = std::round(cx / step) * step, oy = std::round(cy / step) * step, extent = std::ceil(span * 1.5 / step) * step;
@@ -987,7 +1003,7 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   noteCameraMoved();
   scheduleRefinement();
   trackHoverFade();
-  if (m_twoDimensional) updateInfiniteGrid(false);
+  if (m_twoDimensional || m_sketchInput) updateInfiniteGrid(false);
   AIS_ViewController::handleViewRedraw(ctx, view);
   if (trace::enabled() && clock.elapsed() > 50) trace::log(QStringLiteral("slow frame part: redraw %1 ms").arg(clock.elapsed()));
 }
@@ -1225,6 +1241,7 @@ void Viewport::setCameraJson(const opad::json& j) {
 
 QImage Viewport::grabImage() {
   if (!m_initialised) return QImage();
+  if (m_twoDimensional || m_sketchInput) updateInfiniteGrid(false);  // the grid the next redraw lays out (a hidden view has none)
   Image_PixMap pix;
   V3d_ImageDumpOptions o;
   o.Width = static_cast<int>(width() * devicePixelRatioF());
