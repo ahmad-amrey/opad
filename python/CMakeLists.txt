@@ -11,8 +11,13 @@ target_link_libraries(opad_python PRIVATE opad::core)
 
 if(SKBUILD)
   install(TARGETS opad_python LIBRARY DESTINATION . RUNTIME DESTINATION .)
-  # The libraries the module links (core/CMakeLists.txt writes the list at build time); the repaired wheel adds OCCT's.
-  install(FILES ${CMAKE_BINARY_DIR}/THIRD-PARTY-NOTICES.txt DESTINATION . OPTIONAL)
+  # The libraries the module links (core/CMakeLists.txt writes the list at build time), beside the wheel's licence
+  # files in .dist-info/licenses (scikit-build-core's metadata folder); the repaired wheel adds OCCT's DLLs.
+  set(_opad_notices_dir .)
+  if(SKBUILD_METADATA_DIR)
+    set(_opad_notices_dir ${SKBUILD_METADATA_DIR}/licenses)
+  endif()
+  install(FILES ${CMAKE_BINARY_DIR}/THIRD-PARTY-NOTICES.txt ${PROJECT_SOURCE_DIR}/LICENSE DESTINATION ${_opad_notices_dir})
 else()
   install(TARGETS opad_python LIBRARY DESTINATION python RUNTIME DESTINATION python)
 endif()

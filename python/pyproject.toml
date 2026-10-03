@@ -27,5 +27,5 @@ cmake.args = [
   "-DOPAD_BUILD_PYTHON=ON",
 ]
 wheel.packages = []
-# OCCT is a shared-library dependency: CI repairs the wheel (delvewheel / auditwheel / delocate) so the
-# TK*.dll/.so/.dylib files ship inside it. See .github/workflows/ci.yml.
+# OCCT is a shared-library dependency: repair the wheel (delvewheel / auditwheel / delocate) before handing it out, so
+# the TK*.dll/.so/.dylib files ship inside it. THIRD-PARTY-NOTICES.txt (the module's link libraries) is in the wheel.

@@ -382,8 +382,9 @@ d.save_as("gearbox.opad")
 ```
 
 `Document.body_brep(key)` and `Document.import_brep(text)` exchange OCCT ASCII BREP with OCP, CadQuery and
-build123d. Build the pip package with `pip install ./python` (needs OCCT on the build machine; CI repairs the
-wheel so OCCT's shared libraries ship inside it).
+build123d. Build the pip package with `pip install ./python` (needs OCCT on the build machine). The wheel carries
+THIRD-PARTY-NOTICES.txt for the libraries the module links; before handing it to other machines, repair it (delvewheel,
+auditwheel or delocate) so OCCT's shared libraries travel inside it.
 
 ## Status
 
