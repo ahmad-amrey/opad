@@ -2071,8 +2071,9 @@ void Viewport::mousePressEvent(QMouseEvent* e) {
     ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, AIS_SelectionScheme_Replace);
   }
   if (!m_cubeGesture && e->button()==Qt::LeftButton && m_initialised && m_pickAccumulate && !m_measureSelectionLocked) {
+    // A locked guide's point is taken wherever the click lands (a cross lock's crossing can be far from the pointer).
     auto tracked=m_centers.find(m_trackingMarker);
-    if(tracked!=m_centers.end() && (!m_ctx->HasDetected() || m_ctx->DetectedInteractive()==tracked->second.ais) && (QPointF(widgetPoint(tracked->second.ref.point))-e->position()).manhattanLength()<16) {
+    if(tracked!=m_centers.end() && (m_shift.locked() || ((!m_ctx->HasDetected() || m_ctx->DetectedInteractive()==tracked->second.ais) && (QPointF(widgetPoint(tracked->second.ref.point))-e->position()).manhattanLength()<16))) {
       m_snapClick=m_trackingMarker; e->accept(); return;
     }
   }
@@ -2106,6 +2107,8 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
       const auto ref=marker->second.ref; m_ctx->AddOrRemoveSelected(marker->second.ais,false);
       // Retain the exact acquired point rather than a stale selector hit.
       OnSelectionChanged(m_ctx,m_view);
+      m_shift.clicked();  // the pick ends a sticky lock
+      m_trackingDirty=true;
     }
     m_snapClick.clear(); e->accept(); return;
   }

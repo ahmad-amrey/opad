@@ -35,6 +35,7 @@
 #include "BodyLook.hpp"
 #include "BodyShape.hpp"
 #include "Theme.hpp"
+#include "Tracking.hpp"
 
 class JobRunner;
 class Job;
@@ -121,6 +122,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool benchPicking();  // OPAD_BENCH_PICKING: circle discovery, locking, exact picks and orbit regression
   // OPAD_BENCH_TRACKING (ViewportTrackingBench.cpp): what is behind a face is never hovered, acquired or offered (UI-31)
   bool benchTracking(const QString& prefix, bool endsOnly = false);
+  // OPAD_BENCH_CROSSLOCK (ViewportCrossLockBench.cpp): lock on one anchor, acquire another, take where they line up (UI-32)
+  bool benchCrossLock(const QString& prefix);
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
   void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner
   std::vector<opad::Ref> selection() const;
@@ -340,16 +343,21 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool dropOccluded();
   void moveTo(const Graphic3d_Vec2i& at);  // the context's MoveTo, then dropOccluded
   static constexpr int kTrackingDwellMs = 350;
-  bool m_trackingEnabled = true, m_trackingLocked = false;
-  bool m_extensionEnabled = true, m_shiftHeld = false;
-  QElapsedTimer m_shiftClock;
-  int m_inferenceChoice = 0;
+  bool m_trackingEnabled = true, m_extensionEnabled = true;
+  // Shift over the guides (Tracking.hpp): held = locked while held, a tap with one guide or a double tap = locked until
+  // a click or Esc. Cross lock (UI-32): anchors are still acquired while locked, and the locked line snaps to where it
+  // lines up with another anchor (m_crossChoice among those in reach, m_crossings of them; a tap on a sticky lock cycles).
+  tracking::ShiftLock m_shift;
+  QElapsedTimer m_shiftClock;  // the key's time base, started at the first press
+  int m_inferenceChoice = 0, m_crossChoice = 0, m_crossings = 0;
+  bool m_trackingCross = false, m_eatEscape = false;  // the point shown is where two guides cross (an X); Esc unlocked
   struct TrackingAnchor { gp_Pnt point; gp_Vec direction; bool hasDirection; std::string body; };  // body: whose vertex or edge
   struct TrackingCandidate { gp_Pnt anchor, point; gp_Vec direction; bool intersection = false; gp_Pnt secondAnchor; std::string body; };
   std::vector<TrackingAnchor> m_trackingAnchors;  // at most 6, oldest first
   std::vector<TrackingCandidate> m_trackingCandidates;
-  TrackingCandidate m_lockedTracking;
+  TrackingCandidate m_lockedTracking, m_tapLock;  // m_tapLock: what the last tap held, for a double tap's lock
   bool inferenceKey(QKeyEvent* event);
+  bool trackingEscape(QEvent* event);  // Esc on a tracking lock unlocks it and goes no further (not to the tool)
   void refreshCenterStyles();
   bool m_trackingDirty = false, m_trackingShown = false;
   QPointF m_trackingCursor;

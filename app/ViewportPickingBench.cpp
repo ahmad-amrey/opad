@@ -577,9 +577,9 @@ bool Viewport::benchPicking() {
     opad::Ref candidateCenter; candidateCenter.kind=opad::Ref::Kind::Point; candidateCenter.point={0,0,0};
     centerMarker(candidateCenter,gp_Pnt(0,0,0)); m_activeCenter=candidateCenter.str(); m_inferenceChoice=0;
     QKeyEvent down(QEvent::KeyPress,Qt::Key_Shift,Qt::ShiftModifier),up(QEvent::KeyRelease,Qt::Key_Shift,Qt::NoModifier);
-    inferenceKey(&down); require(!m_centerLocked && m_trackingLocked,"Shift must only lock tracking/extension");
+    inferenceKey(&down); require(!m_centerLocked && m_shift.locked(),"Shift must only lock tracking/extension");
     inferenceKey(&up);
-    inferenceKey(&down); require(m_trackingLocked && !m_centerLocked,"Shift did not lock selected inference");
+    inferenceKey(&down); require(m_shift.locked() && !m_centerLocked,"Shift did not lock selected inference");
     inferenceKey(&up); m_activeCenter.clear(); clearTracking();
     m_trackingAnchors={{gp_Pnt(0,reach,lift),gp_Vec(1,0,0),true},{gp_Pnt(reach,0,lift+reach),gp_Vec(0,1,0),true}};
     m_trackingDirty=true; updateTracking();

@@ -557,7 +557,7 @@ bool Viewport::event(QEvent* e) {
 
 void Viewport::keyPressEvent(QKeyEvent* e) {
   if (m_sketchInput) return e->accept();  // already handled (or refused) at the shortcut-override stage
-  if (inferenceKey(e)) return e->accept();
+  if (inferenceKey(e) || trackingEscape(e)) return e->accept();
   QWidget::keyPressEvent(e);
 }
 

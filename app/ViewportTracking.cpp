@@ -1,4 +1,5 @@
 #include "Viewport.hpp"
+#include "Units.hpp"
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
@@ -28,8 +29,8 @@ void Viewport::clearTracking() {
     m_centerObjects.erase(old->second.ais.get());
     m_ctx->Remove(old->second.ais, false); m_centers.erase(old);
   }
-  m_trackingLocked = false; m_trackingMarker.clear();
-  m_trackingAnchors.clear(); m_trackingCandidates.clear(); m_inferenceChoice = 0;
+  m_shift.reset(); m_trackingMarker.clear(); m_trackingCross = false;
+  m_trackingAnchors.clear(); m_trackingCandidates.clear(); m_inferenceChoice = m_crossChoice = m_crossings = 0;
   m_dwelling = false; m_dwellTimer.stop();
   bool removed = false;
   for (auto* object : {&m_trackingGuide, &m_trackingGuideBehind, &m_anchorMarks}) {
@@ -122,7 +123,7 @@ void Viewport::updateTracking() {
     clearTracking(); return;
   }
   if (QApplication::mouseButtons() != Qt::NoButton) return;
-  if (!m_shiftHeld) dwellAnchor();
+  dwellAnchor();  // also while locked: the second anchor of a cross lock
   const auto at = devicePos(m_trackingCursor);
   double x,y,z,dx,dy,dz; m_view->ConvertWithProj(at.x(),at.y(),x,y,z,dx,dy,dz);
   const gp_Pnt origin(x,y,z); const gp_Vec ray(dx,dy,dz);
@@ -146,20 +147,14 @@ void Viewport::updateTracking() {
     const double t = (b*ray.Dot(w)-ray.SquareMagnitude()*d.Dot(w))/denominator;
     candidate.point = candidate.anchor.Translated(d*t); return true;
   };
-  if (!m_trackingLocked) {
+  if (!m_shift.locked()) {
     m_trackingCandidates.clear();
     // A composite snap is a real world-space intersection, not just two lines
     // crossing in screen projection. Skew lines in 3D must never create a false pick.
     for (size_t i=0;i<lines.size();++i) for (size_t j=i+1;j<lines.size();++j) {
       const auto& a=lines[i]; const auto& b=lines[j];
-      if (a.anchor.Distance(b.anchor)<1e-7) continue;
-      const double dot=a.direction.Dot(b.direction), det=1-dot*dot;
-      if (det<1e-10) continue;
-      const gp_Vec delta(a.anchor,b.anchor);
-      const double t=(delta.Dot(a.direction)-dot*delta.Dot(b.direction))/det;
-      const double u=(dot*delta.Dot(a.direction)-delta.Dot(b.direction))/det;
-      const gp_Pnt p=a.anchor.Translated(a.direction*t), q=b.anchor.Translated(b.direction*u);
-      if(p.Distance(q)>1e-7 || distance(p)>10) continue;
+      gp_Pnt p;
+      if (a.anchor.Distance(b.anchor)<1e-7 || !tracking::meet({a.anchor,a.direction},{b.anchor,b.direction},p) || distance(p)>10) continue;
       bool duplicate=false;
       for(const auto& c:m_trackingCandidates) if(c.point.Distance(p)<1e-7) duplicate=true;
       if(!duplicate && pointVisible(p,a.body)) m_trackingCandidates.push_back({a.anchor,p,a.direction,true,b.anchor,a.body});
@@ -171,9 +166,30 @@ void Viewport::updateTracking() {
   if (count) m_inferenceChoice = std::clamp(m_inferenceChoice,0,count-1);
   const int chosen = m_inferenceChoice;
   TrackingCandidate candidate;
-  bool found = false;
-  if (m_trackingLocked) {
+  bool found = false, crossing = false;
+  m_crossings = 0;
+  if (m_shift.locked()) {
     candidate=m_lockedTracking; found=candidate.intersection || project(candidate);
+    if (found && !candidate.intersection) {
+      // Cross lock (UI-32): the locked line snaps to where it lines up with another anchor (its x, y or z, or one of its
+      // lines met in space) once the pointer is within 10 px of that anchor's guide to it; a crossing behind a face is not offered.
+      std::vector<gp_Pnt> anchors; std::vector<tracking::Line> others;
+      for (const auto& a : m_trackingAnchors) anchors.push_back(a.point);
+      for (const auto& l : lines) others.push_back({l.anchor,l.direction});
+      auto xy=[&](const gp_Pnt& p) { const QPoint w=widgetPoint({p.X(),p.Y(),p.Z()}); return gp_XY(w.x(),w.y()); };
+      const gp_XY cursor(m_trackingCursor.x(),m_trackingCursor.y()), locked=xy(candidate.point);
+      const gp_XY along=xy(candidate.anchor.Translated(candidate.direction*(pixelSize()*100)))-xy(candidate.anchor);
+      std::vector<std::pair<double,tracking::Crossing>> inReach;
+      for (const auto& c : tracking::crossings({candidate.anchor,candidate.direction},anchors,others))
+        if (const double r=tracking::reach(cursor,locked,along,xy(c.from),xy(c.point)); r<10 && pointVisible(c.point,candidate.body)) inReach.push_back({r,c});
+      std::stable_sort(inReach.begin(),inReach.end(),[](const auto& a,const auto& b) { return a.first<b.first; });
+      m_crossings=int(inReach.size());
+      if (inReach.empty()) m_crossChoice=0;
+      else {
+        const auto& c=inReach[m_crossChoice%inReach.size()].second;
+        candidate.point=c.point; candidate.secondAnchor=c.from; candidate.intersection=crossing=true;
+      }
+    }
   } else if (!m_centerLocked && !m_trackingCandidates.empty()) {
     // Keep a nearby guide visible even while the circle is the Shift candidate.
     candidate=m_trackingCandidates[std::max(0,chosen)]; found=true;
@@ -189,7 +205,7 @@ void Viewport::updateTracking() {
   }
   m_trackingMarker.clear();
   if (!found) {
-    refreshCenterStyles();
+    m_trackingCross=false; refreshCenterStyles();
     if (hadGuide) redrawScene();
     if (m_trackingShown) { m_trackingShown = false; emit hoverChanged(m_hover); }  // the status speaks of guides only while one shows
     return;
@@ -216,14 +232,22 @@ void Viewport::updateTracking() {
     object->Attributes()->SetWireAspect(new Prs3d_LineAspect(Quantity_Color(tone.redF(),tone.greenF(),tone.blueF(),Quantity_TOC_sRGB),line,width));
     object->SetZLayer(Graphic3d_ZLayerId_Topmost); m_ctx->Display(object,0,-1,false);
   };
-  show(m_trackingGuide,seen,c,Aspect_TOL_DASH,m_trackingLocked?3.0:1.5);
+  show(m_trackingGuide,seen,c,Aspect_TOL_DASH,m_shift.locked()?3.0:1.5);
   if(anyBehind) show(m_trackingGuideBehind,behind,faint,Aspect_TOL_DOT,1.0);
   opad::Ref ref; ref.kind=opad::Ref::Kind::Point; ref.point={candidate.point.X(),candidate.point.Y(),candidate.point.Z()};
   centerMarker(ref,candidate.point); m_trackingMarker=ref.str();
+  m_trackingCross=candidate.intersection;  // two guides cross there: an X
   refreshCenterStyles();
   m_trackingShown = true;
-  emit hoverChanged(m_trackingLocked ? tr("Tracking locked - release Shift to unlock")
-                    : candidate.intersection ? tr("Extension intersection - tap Shift to cycle, hold to lock")
-                    : tr("Extension / alignment - tap Shift to cycle, hold to lock"));
+  const bool locked=m_shift.locked();
+  const QString what=crossing ? tr("Locked line ∩ alignment from another anchor") : locked ? tr("Tracking locked")
+                    : candidate.intersection ? tr("Extension intersection") : tr("Extension / alignment");
+  const QString keys=!locked ? (count>1 ? tr("tap Shift to cycle, double-tap to lock, hold to lock while held") : tr("tap Shift to lock, hold to lock while held"))
+                    : !m_shift.sticky() ? tr("release Shift to unlock")
+                    : m_crossings>1 ? tr("click to pick, tap Shift for the next crossing, Esc to unlock") : tr("click to pick, Esc or tap Shift to unlock");
+  QString text=what+QStringLiteral(" - ")+keys;
+  if (locked && !m_lockedTracking.intersection)  // the distance along the locked line, nothing to other edges
+    text+=QStringLiteral(" · ")+tr("%1 from the anchor").arg(units::format(units::Kind::Length,candidate.anchor.Distance(candidate.point)));
+  emit hoverChanged(text);
   emit hoverPoint(true,ref.point);
 }

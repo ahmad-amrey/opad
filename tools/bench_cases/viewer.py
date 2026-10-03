@@ -18,6 +18,20 @@ def bar_behind_plate(root, document):
                      '"length":"1 mm","width":"20 mm","height":"10.4 mm"}'))
 
 
+def two_blocks(root, document):
+    """A 10 mm cube at the origin and a 10 x 10 x 20 mm block 40 mm along X and 30 mm along Y: corners line up in the air."""
+    return document("two-blocks", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'),
+                    ("feature", "--kind", "box", "--inputs", '{"x":"40 mm","y":"30 mm","length":"10 mm","width":"10 mm","height":"20 mm"}'))
+
+
+def strokes(root, document):
+    """A drawing of three short strokes far apart (opened, it shows in 2D): their ends line up in empty space only."""
+    path = root / "strokes.svg"
+    path.write_text('<svg width="80mm" height="60mm" viewBox="0 0 80 60"><g id="Strokes" stroke="black" fill="none">'
+                    '<path d="M5 50 L15 50"/><path d="M62 8 L62 16"/><path d="M34 30 L41 33"/></g></svg>', encoding="utf-8")
+    return path
+
+
 CASES = [
     # Occlusion-aware tracking (UI-31) on the as1 assembly with the Distance tool: no vertex or edge behind a face is
     # hovered, acquired or boxed, the ones in sight are (after the dwell; resting again releases), guide points behind a
@@ -28,4 +42,10 @@ CASES = [
     ("tracking-ends", bar_behind_plate, {"OPAD_BENCH_TRACKING": "{prefix}", "OPAD_BENCH_TRACKING_PART": "ends"}),
     # The same on the Engine (beside the repository; skipped where it is not): the occlusion tests per hover stay cheap.
     ("tracking-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_TRACKING": "{prefix}"}),
+    # Cross lock (UI-32) in the Distance tool: lock on vertex A's guide, rest on vertex B while locked (acquired), the
+    # locked point snaps to where the line lines up with B (exact, both guides, an X), a click far from it takes it; Esc
+    # unlocks before the tool's Esc; a held lock acquires too; an edge's line and a coordinate plane in reach take turns on
+    # Shift taps. On two blocks in 3D and on a drawing in 2D mode. <prefix>.cross.png, <prefix>.held.png.
+    ("crosslock", two_blocks, {"OPAD_BENCH_CROSSLOCK": "{prefix}"}),
+    ("crosslock-drawing", strokes, {"OPAD_BENCH_CROSSLOCK": "{prefix}", "OPAD_BENCH_CROSSLOCK_2D": "1"}),
 ]

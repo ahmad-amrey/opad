@@ -163,9 +163,9 @@ void Viewport::refreshCenterStyles() {
     const bool selected=m_ctx->IsSelected(marker.ais);
     const bool center=key==m_activeCenter, tracking=key==m_trackingMarker;
     const bool candidate=tracking;
-    const bool locked=(center && m_centerLocked) || (tracking && m_trackingLocked);
+    const bool locked=(center && m_centerLocked) || (tracking && m_shift.locked());
     auto aspect=marker.ais->Attributes()->PointAspect();
-    aspect->SetTypeOfMarker(selected ? Aspect_TOM_O_PLUS : Aspect_TOM_O);
+    aspect->SetTypeOfMarker(selected ? Aspect_TOM_O_PLUS : tracking && m_trackingCross ? Aspect_TOM_X : Aspect_TOM_O);
     aspect->SetScale(selected ? 4.0 : locked ? 7.0 : candidate ? 5.0 : 3.0);
     marker.ais->SynchronizeAspects();
   }
@@ -173,26 +173,42 @@ void Viewport::refreshCenterStyles() {
 
 bool Viewport::inferenceKey(QKeyEvent* key) {
   if (key->key()!=Qt::Key_Shift || key->isAutoRepeat() || m_sketchInput || m_blocked || !m_initialised) return false;
+  if (!m_shiftClock.isValid()) m_shiftClock.start();
+  using R=tracking::ShiftLock::Result;
+  const int count=int(m_trackingCandidates.size());
   if (key->type()==QEvent::KeyPress) {
-    if (m_shiftHeld || QApplication::mouseButtons()!=Qt::NoButton) return false;
-    const int count=int(m_trackingCandidates.size());
-    if (!count) return false;
-    m_inferenceChoice=std::clamp(m_inferenceChoice,0,count-1);
-    m_shiftHeld=true; m_shiftClock.start();
+    if (QApplication::mouseButtons()!=Qt::NoButton) return false;
+    const R r=m_shift.press(m_shiftClock.elapsed(),count);
+    if (r==R::Ignored) return false;
     m_centerLocked=false;
-    m_trackingLocked=true;
-    m_lockedTracking=m_trackingCandidates[m_inferenceChoice];
+    if (r==R::Locked) m_lockedTracking=m_trackingCandidates[m_inferenceChoice=std::clamp(m_inferenceChoice,0,count-1)];
   } else {
-    if (!m_shiftHeld) return false;
-    const bool tap=m_shiftClock.elapsed()<250;
-    m_shiftHeld=m_centerLocked=m_trackingLocked=false;
-    const int count=int(m_trackingCandidates.size());
-    if(tap && count>1) m_inferenceChoice=(m_inferenceChoice+1)%count;
+    const auto held=m_lockedTracking;
+    const R r=m_shift.release(m_shiftClock.elapsed(),count,m_crossings);
+    if (r==R::Ignored) return false;
+    m_centerLocked=false;
+    if (r==R::StuckPrevious) m_lockedTracking=m_tapLock;  // the guide shown before the double tap's first tap
+    else if (r==R::NextCrossing) ++m_crossChoice;
+    else if (r==R::Cycled || r==R::Unlocked) {
+      m_tapLock=held; m_crossChoice=0;
+      if (r==R::Cycled) m_inferenceChoice=(m_inferenceChoice+1)%count;
+    }
   }
   m_trackingDirty=true; m_hoverOwner=nullptr;
   refreshCenterStyles();
-  emit hoverChanged(m_trackingLocked ? tr("Tracking locked - release Shift to unlock") : tr("Tap Shift to cycle tracking points; hold Shift to lock"));
   redrawScene(); return true;
+}
+
+bool Viewport::trackingEscape(QEvent* e) {
+  if (e->type()!=QEvent::ShortcutOverride && e->type()!=QEvent::KeyPress) return false;
+  auto* key=static_cast<QKeyEvent*>(e);
+  if (key->key()!=Qt::Key_Escape || (key->modifiers() & ~Qt::KeypadModifier)) return false;
+  if (e->type()==QEvent::KeyPress && std::exchange(m_eatEscape,false)) return true;  // the press after its override
+  if (!m_shift.escape()) return false;
+  m_eatEscape=e->type()==QEvent::ShortcutOverride; e->accept();
+  m_trackingDirty=true; m_hoverOwner=nullptr;
+  refreshCenterStyles(); redrawScene();
+  return true;
 }
 
 bool Viewport::eventFilter(QObject* object, QEvent* e) {
@@ -204,13 +220,16 @@ bool Viewport::eventFilter(QObject* object, QEvent* e) {
       && (object==this || underMouse() || m_ctrlCenterPick))
     setCenterPicking(e->type()==QEvent::KeyPress,m_trackingCursor);
   if ((e->type()==QEvent::KeyPress || e->type()==QEvent::KeyRelease)
-      && (object==this || underMouse() || m_shiftHeld)
-      && (window()->isActiveWindow() || m_shiftHeld
+      && (object==this || underMouse() || m_shift.held())
+      && (window()->isActiveWindow() || m_shift.held()
           || (QApplication::activeWindow() && window()->isAncestorOf(QApplication::activeWindow()))))
     if(inferenceKey(static_cast<QKeyEvent*>(e))) return true;
+  // Esc on a tracking lock beats the window's Esc (the guided tool's step back): at the override stage, its press eaten.
+  if (((e->type()==QEvent::ShortcutOverride && (object==this || underMouse())) || (e->type()==QEvent::KeyPress && m_eatEscape)) && trackingEscape(e))
+    return true;
   if (e->type()==QEvent::ApplicationDeactivate) {
     setCenterPicking(false,m_trackingCursor);
-    m_shiftHeld=m_centerLocked=m_trackingLocked=false; refreshCenterStyles();
+    m_centerLocked=false; m_shift.deactivate(); refreshCenterStyles();
   }
   return QWidget::eventFilter(object,e);
 }
@@ -223,7 +242,6 @@ void Viewport::clearCenters() {
   m_centerObjects.clear();
   m_activeCenter.clear();
   m_centerLocked = false;
-  m_shiftHeld = false;
   m_hoverOwner = nullptr;
 }
 
