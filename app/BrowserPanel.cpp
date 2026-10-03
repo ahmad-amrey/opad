@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <map>
 
 #include "Icons.hpp"
 #include "Jobs.hpp"
@@ -25,6 +26,15 @@ using browser::kEyeX;
 using browser::kSwatchX;
 using browser::kTypeX;
 using browser::kNameX;
+
+namespace {
+// A folder row's key for keeping it open across rebuilds: its id, and the component it is in (a component's Sketches).
+std::string folderKey(const QTreeWidgetItem* folder) {
+  const QTreeWidgetItem* parent = folder->parent();
+  const bool owned = parent && parent->data(0, Qt::UserRole).toString() == "component";
+  return "folder:" + folder->data(0, browser::kFolderRole).toString().toStdString() + (owned ? ":" + parent->data(0, kIdRole).toString().toStdString() : std::string());
+}
+}  // namespace
 
 // ---------------------------------------------------------------- BrowserTree
 BrowserTree::BrowserTree(AppDocument* doc, QWidget* parent) : QTreeWidget(parent), m_doc(doc) {
@@ -48,6 +58,8 @@ void BrowserTree::dropEvent(QDropEvent* e) {
   std::string parent;
   int index = -1;
   if (target) {
+    // Among a folder's rows (sketches, an area's): beside the folder, in the node that holds it.
+    for (QTreeWidgetItem* p = target->parent(); p && (p->data(0, Qt::UserRole).toString() == "folder" || p->data(0, Qt::UserRole).toString() == "provided"); p = p->parent()) target = p;
     bool onto = pos == QAbstractItemView::OnItem;
     bool target_is_component = target->data(0, Qt::UserRole).toString() == "component";
     if (onto && target_is_component) {
@@ -55,8 +67,11 @@ void BrowserTree::dropEvent(QDropEvent* e) {
     } else {
       QTreeWidgetItem* p = target->parent();
       parent = p ? p->data(0, kIdRole).toString().toStdString() : std::string();
-      index = p ? p->indexOfChild(target) : indexOfTopLevelItem(target);
-      if (pos == QAbstractItemView::BelowItem) ++index;
+      const int at = p ? p->indexOfChild(target) : indexOfTopLevelItem(target);
+      auto isNode = [](const QTreeWidgetItem* it) { const QString kind = it->data(0, Qt::UserRole).toString(); return kind == "body" || kind == "component"; };
+      index = 0;  // among the nodes: the folder rows before them (Sketches, an area's) are no children of the node
+      for (int i = 0; i < at; ++i) index += isNode(p ? p->child(i) : topLevelItem(i));
+      if (pos == QAbstractItemView::BelowItem && isNode(target)) ++index;
       if (onto) index = -1;
     }
   }
@@ -74,7 +89,7 @@ void BrowserTree::mousePressEvent(QMouseEvent* e) {
     int x = e->pos().x() - r.left();
     std::string id = idx.data(kIdRole).toString().toStdString();
     const QString folder = idx.data(browser::kFolderRole).toString();  // provided folders and rows have no eye or colour
-    if (folder.isEmpty() || folder == "sketches") {
+    if ((folder.isEmpty() || folder == "sketches") && idx.data(Qt::UserRole).toString() != "folder") {  // nor have folders
       if (x >= kEyeX && x < kEyeX + 18) { emit eyeClicked(id); return; }
       if (x >= kSwatchX - 2 && x < kSwatchX + 14) { emit swatchClicked(id); return; }
     }
@@ -299,7 +314,7 @@ void BrowserPanel::rebuild() {
   std::set<std::string> expanded;
   std::vector<std::string> selected = selectedIds();
   std::function<void(QTreeWidgetItem*)> collect = [&](QTreeWidgetItem* it) {
-    if (it->isExpanded()) expanded.insert(it->data(0, Qt::UserRole).toString() == "folder" ? "folder:" + it->data(0, browser::kFolderRole).toString().toStdString() : it->data(0, kIdRole).toString().toStdString());
+    if (it->isExpanded()) expanded.insert(it->data(0, Qt::UserRole).toString() == "folder" ? folderKey(it) : it->data(0, kIdRole).toString().toStdString());
     for (int i = 0; i < it->childCount(); ++i) collect(it->child(i));
   };
   for (int i = 0; i < m_tree->topLevelItemCount(); ++i) collect(m_tree->topLevelItem(i));
@@ -313,35 +328,55 @@ void BrowserPanel::rebuild() {
     root->setData(0, kNameRole, docName);
     root->setData(0, Qt::UserRole, "document");
     root->setFlags((root->flags() | Qt::ItemIsDropEnabled) & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled);
-    if (!m_doc->scene.sketches.empty() || !m_editedSketch.empty()) {
-      auto* folder = new QTreeWidgetItem(root);
+    // Sketches: the document's Sketches folder holds those made at the root, a component's own Sketches folder (first
+    // under it) those made in it (SketchItem::component, UI-33); the one being made goes where it will be (the active one).
+    std::map<std::string, std::vector<const opad::SketchItem*>> sketchesIn;  // component ("" = the root) -> its sketches
+    auto ownerOf = [this](const std::string& component) {
+      const opad::Node* c = component.empty() ? nullptr : m_doc->node(component);
+      return c && c->kind == opad::Node::Kind::Component ? component : std::string();
+    };
+    for (const auto& s : m_doc->scene.sketches) sketchesIn[ownerOf(s.component)].push_back(&s);
+    const opad::SketchItem* edited = m_editedSketch.empty() ? nullptr : m_doc->scene.sketch(m_editedSketch);
+    const opad::Op* editedOp = edited || m_editedSketch.empty() ? nullptr : m_doc->doc.find_op(m_editedSketch);  // rolled back to before it
+    const std::string editedIn = m_editedSketch.empty() ? std::string()
+                                 : ownerOf(edited ? edited->component : editedOp ? editedOp->data.value("component", "") : m_doc->activeComponent());
+    if (!m_editedSketch.empty()) sketchesIn[editedIn];
+    std::map<std::string, QTreeWidgetItem*> sketchFolders;
+    auto addSketches = [&](QTreeWidgetItem* parent, const std::string& owner) {
+      auto* folder = new QTreeWidgetItem();
+      parent->insertChild(0, folder);
       folder->setText(0, tr("Sketches"));
       folder->setData(0, kIdRole, QString());
       folder->setData(0, kNameRole, tr("Sketches"));
       folder->setData(0, Qt::UserRole, "folder");
       folder->setData(0, browser::kFolderRole, "sketches");
       folder->setFlags(folder->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled & ~Qt::ItemIsSelectable);
-      for (const auto& s : m_doc->scene.sketches) {
+      for (const opad::SketchItem* s : sketchesIn[owner]) {
         auto* item = new QTreeWidgetItem(folder);
-        const QString name = QString::fromStdString(s.name);
+        const QString name = QString::fromStdString(s->name);
         item->setText(0, name);
-        item->setData(0, kIdRole, QString::fromStdString(s.id));
+        item->setData(0, kIdRole, QString::fromStdString(s->id));
         item->setData(0, kNameRole, name);
         item->setData(0, Qt::UserRole, "sketch");
         item->setFlags(item->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled);
-        item->setToolTip(0, s.error.empty() ? tr("%1\nDouble-click to edit").arg(name) : QString::fromStdString(s.error));
-        m_index[s.id] = item;
+        item->setToolTip(0, s->error.empty() ? tr("%1\nDouble-click to edit").arg(name) : QString::fromStdString(s->error));
+        m_index[s->id] = item;
       }
-      if(!m_editedSketch.empty()) {
+      if (!m_editedSketch.empty() && owner == editedIn) {
         auto* item=itemFor(m_editedSketch);
         if(!item){item=new QTreeWidgetItem(folder);item->setData(0,kIdRole,QString::fromStdString(m_editedSketch));item->setData(0,Qt::UserRole,"sketch");m_index[m_editedSketch]=item;}
         const auto label=tr("%1 (editing)").arg(m_editedName);
         item->setText(0,label);item->setData(0,kNameRole,label);item->setData(0,Qt::UserRole+8,true);item->setData(0,Qt::UserRole+9,m_editedVisible);
         item->setFlags(item->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled);
       }
-      folder->setExpanded(!m_editedSketch.empty() || expanded.empty() || expanded.count("folder:sketches") > 0);
-    }
+      sketchFolders[owner] = folder;
+    };
+    if (sketchesIn.count({})) addSketches(root, {});
     for (const auto& r : m_doc->scene.roots) build(r, root, expanded);
+    for (const auto& [owner, sketches] : sketchesIn)
+      if (QTreeWidgetItem* parent = owner.empty() ? nullptr : itemFor(owner)) addSketches(parent, owner);
+    for (const auto& [owner, folder] : sketchFolders)
+      folder->setExpanded((!m_editedSketch.empty() && owner == editedIn) || expanded.empty() || expanded.count(folderKey(folder)) > 0);
     QString category;
     if(root->childCount()) category=root->child(0)->data(0,Qt::UserRole+4).toString();
     for(int i=1;i<root->childCount();++i) if(root->child(i)->data(0,Qt::UserRole+4).toString()!=category) {category.clear();break;}

@@ -54,6 +54,17 @@ const opad::Node* named(const opad::Scene& scene, const std::string& name) {
   return nullptr;
 }
 
+// Where the browser lists a sketch (the row being made when `id` is empty): the id of the row holding its Sketches folder
+// ("" = the document), "?" when it is in none (or, `open`, when that folder is closed).
+std::string sketchFolderOwner(BrowserTree* tree, const std::string& id, bool open = true) {
+  QTreeWidgetItem* row = nullptr;
+  for (QTreeWidgetItemIterator it(tree); *it; ++it)
+    if ((*it)->data(0, Qt::UserRole).toString() == "sketch" && (id.empty() ? (*it)->data(0, Qt::UserRole + 8).toBool() : (*it)->data(0, browser::kIdRole).toString().toStdString() == id)) row = *it;
+  QTreeWidgetItem* folder = row ? row->parent() : nullptr;
+  if (!folder || folder->data(0, browser::kFolderRole).toString() != "sketches" || !folder->parent() || (open && !folder->isExpanded())) return "?";
+  return folder->parent()->data(0, browser::kIdRole).toString().toStdString();
+}
+
 // The longest the event loop was held while something ran: a 1 ms ticker's worst gap.
 struct Ticker {
   QTimer timer;
@@ -82,7 +93,8 @@ struct Ticker {
 // another component and Activate root; an undone active component hands activation back to the root; the chip's click
 // activates the root and everything is drawn and picked as before; the Lid activated, saved and opened again is active
 // again. With the Lid active: <prefix>.ghost.png (the view),
-// <prefix>.browser.png, <prefix>.chips.png, <prefix>.timeline.png and <prefix>.ribbon.png (Design > Assemble).
+// <prefix>.browser.png, <prefix>.chips.png, <prefix>.timeline.png and <prefix>.ribbon.png (Design > Assemble); with its
+// sketch made and selected, <prefix>.sketches.png (the browser).
 OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
   auto all = std::make_shared<bool>(true);
   auto require = [all](bool ok, const QString& what) {
@@ -320,8 +332,9 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                     require(ok, "the XY plane chosen");
                     design->planePicker()->apply();
                   }});
-  list.push_back({[=] { return design->sketchActive(); }, [=](bool ok) {
+  list.push_back({[=] { return design->sketchActive(); }, [=, &w](bool ok) {
                     require(ok && !v->ghostsPickable(), "the sketch editor is open; ghosts not pickable any more");
+                    require(sketchFolderOwner(w.m_browser->tree(), {}) == s->lid, "the browser lists the sketch being made in the Lid's own Sketches folder");
                     SketchEditor* sketch = design->sketch();
                     sketch->setTool("rect");
                     for (const auto& [u, x] : std::vector<std::pair<double, double>>{{45, 2}, {55, 12}}) {
@@ -332,11 +345,22 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                     sketch->setTool("select");
                     design->finishSketch();
                   }});
-  list.push_back({[=] { return doc->scene.sketches.size() > s->sketches && !design->sketchActive() && !doc->designBusy && !v->looksPending(); }, [=](bool made) {
+  list.push_back({[=] { return doc->scene.sketches.size() > s->sketches && !design->sketchActive() && !doc->designBusy && !v->looksPending(); }, [=, &w](bool made) {
                     const opad::SketchItem* sketch = made ? &doc->scene.sketches.back() : nullptr;
                     const opad::Op* op = sketch ? doc->doc.find_op(sketch->id) : nullptr;
                     require(sketch && sketch->component == s->lid && op && op->data.value("component", "") == s->lid && !v->shownLook(sketch->id).ghost && v->shownLook(s->sketch).ghost,
                             "the new sketch is made in the Lid (its op says so), drawn as it is; the root's stays a ghost");
+                    BrowserTree* tree = w.m_browser->tree();
+                    const std::string in = sketch ? sketchFolderOwner(tree, sketch->id) : "?", root = sketchFolderOwner(tree, s->sketch, false);
+                    require(in == s->lid && root.empty(), QString("browser: the new sketch in the Lid's Sketches folder (open), the root's in the document's (%1, %2)")
+                                                              .arg(QString::fromStdString(in == s->lid ? "Lid" : in), QString::fromStdString(root)));
+                    if (sketch) w.m_browser->selectIds({sketch->id});
+                    w.m_browser->grab().save(prefix + ".sketches.png");
+                    QString crumb;
+                    for (QLabel* label : w.m_browser->findChildren<QLabel*>())
+                      if (label->textFormat() == Qt::RichText) crumb = label->text();
+                    w.m_browser->selectIds({});
+                    require(sketch && crumb.contains("Lid<span") && crumb.contains(QString::fromStdString(sketch->name)), "the sketch selected, the breadcrumb goes through the Lid: " + crumb);
                     s->features = doc->scene.features.size();
                     design->startFeature("box");
                     FeaturePanel* form = design->featurePanel();
