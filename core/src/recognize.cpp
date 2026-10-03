@@ -16,7 +16,7 @@
 #include <GProp_GProps.hxx>
 #include <GeomAPI_ProjectPointOnCurve.hxx>
 #include <Geom_Curve.hxx>
-#include <IntCurvesFace_ShapeIntersector.hxx>
+#include <IntCurvesFace_Intersector.hxx>
 #include <Precision.hxx>
 #include <ShapeAnalysis_CanonicalRecognition.hxx>
 #include <Standard_Failure.hxx>
@@ -40,6 +40,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
+#include <limits>
 #include <map>
 #include <tuple>
 
@@ -163,10 +165,12 @@ struct Recognizer::Impl {
   std::vector<FaceData> fd;
   std::vector<EdgeData> ed;
   double diag = 1, tol = 1e-6, fit = 1e-4;
-  double total_area = -1;
-  std::unique_ptr<IntCurvesFace_ShapeIntersector> rays;
+  std::vector<Bnd_Box> boxes;                                  // per face, for rays (all at the first)
+  std::map<int, Handle(IntCurvesFace_Intersector)> crossings;  // per face, as rays meet their boxes
   std::map<int, std::optional<Recognized>> hole_memo, wall_memo;
   std::vector<std::pair<int, std::vector<int>>> inner;  // faces' inner loops: (face, edges)
+  std::vector<std::vector<size_t>> inner_on;            // per face: its loops in `inner`
+  std::vector<std::optional<std::vector<int>>> loop_memo;  // per loop: the faces it encloses
   bool inner_ready = false;
   std::optional<std::vector<Recognized>> enclosed_memo;
 
@@ -337,12 +341,34 @@ struct Recognizer::Impl {
     measure(f);
     return fd[static_cast<size_t>(f)].area;
   }
-  double body_area() {
-    if (total_area < 0) {
-      total_area = 0;
-      for (int f = 0; f < nf(); ++f) total_area += area(f);
+  // The nearest face a ray meets past `from`, and where: only faces whose boxes it passes, each with an intersector of its
+  // own (one for the whole body loads every face first: 0.45 s on a 4000-face casting).
+  std::pair<int, double> first_hit(const gp_Lin& ray, double from) {
+    if (boxes.empty()) {
+      boxes.resize(static_cast<size_t>(nf()));
+      for (int f = 0; f < nf(); ++f) {
+        check();
+        BRepBndLib::Add(face(f), boxes[static_cast<size_t>(f)], Standard_True);
+        boxes[static_cast<size_t>(f)].Enlarge(10 * tol);
+      }
     }
-    return total_area;
+    int hit = -1;
+    double at = Precision::Infinite();
+    for (int f = 0; f < nf(); ++f) {
+      const Bnd_Box& b = boxes[static_cast<size_t>(f)];
+      if (b.IsVoid() || b.IsOut(ray)) continue;
+      Handle(IntCurvesFace_Intersector)& x = crossings[f];
+      try {
+        if (x.IsNull()) x = new IntCurvesFace_Intersector(face(f), tol);
+        x->Perform(ray, from, at);
+      } catch (const Standard_Failure&) {
+        continue;
+      }
+      if (!x->IsDone()) continue;
+      for (int i = 1; i <= x->NbPnt(); ++i)
+        if (const double w = x->WParameter(i); w > from && w < at) at = w, hit = f;
+    }
+    return {hit, at};
   }
   double extent(int f) {  // the face's size: its box's diagonal
     Bnd_Box b;
@@ -733,18 +759,11 @@ struct Recognizer::Impl {
     gp_Pnt p;
     gp_Dir n;
     if (s.kind != Kind::Plane || !sample(f, p, n)) return std::nullopt;
-    if (!rays) {
-      rays = std::make_unique<IntCurvesFace_ShapeIntersector>();
-      rays->Load(body, tol);
-    }
     int g = -1;
     double t = -1;
     for (const gp_Pnt& q : points_in(f, 5)) {
       check();
-      rays->PerformNearest(gp_Lin(q, n.Reversed()), 10 * tol, Precision::Infinite());
-      if (!rays->IsDone() || rays->NbPnt() < 1) return std::nullopt;
-      const int h = F.FindIndex(rays->Face(1)) - 1;
-      const double w = rays->WParameter(1);
+      const auto [h, w] = first_hit(gp_Lin(q, n.Reversed()), 10 * tol);
       if (h < 0 || h == f) return std::nullopt;
       if (g < 0) g = h, t = w;
       else if (h != g || std::fabs(w - t) > 1e-3 * t + 10 * tol) return std::nullopt;
@@ -799,6 +818,9 @@ struct Recognizer::Impl {
         if (!loop.empty()) inner.push_back({f, sorted(loop)});
       }
     }
+    inner_on.resize(static_cast<size_t>(nf()));
+    for (size_t i = 0; i < inner.size(); ++i) inner_on[static_cast<size_t>(inner[i].first)].push_back(i);
+    loop_memo.resize(inner.size());
   }
   // +1: the faces look at each other (a pocket: walls facing in, a floor facing the opening); -1: away (a boss).
   int facing(const std::vector<int>& region) {
@@ -821,10 +843,25 @@ struct Recognizer::Impl {
     score /= total;
     return score > 0.2 ? 1 : score < -0.2 ? -1 : 0;
   }
-  bool local(const std::vector<int>& region) {  // a detail of the body, not most of it
+  size_t detail_cap() const { return static_cast<size_t>(std::max(1, nf() / 2)); }  // more faces: the body, no detail of it
+  bool local(const std::vector<int>& region) {  // a detail of the body, not most of it: no more than half its area
+    if (region.empty() || static_cast<int>(region.size()) >= nf()) return false;
     double a = 0;
     for (int f : region) a += area(f);
-    return !region.empty() && static_cast<int>(region.size()) < nf() && a <= 0.5 * body_area();
+    // As much of the rest as it takes to outweigh it, the faces around it first (the whole body only for most of it).
+    std::vector<char> in(static_cast<size_t>(nf()), 0);
+    for (int f : region) in[static_cast<size_t>(f)] = 1;
+    double rest = 0;
+    auto add = [&](int f) {
+      if (in[static_cast<size_t>(f)]) return;
+      in[static_cast<size_t>(f)] = 1;
+      rest += area(f);
+    };
+    for (int f : region)
+      for (int e : face_edges[static_cast<size_t>(f)])
+        for (int g : edge_faces[static_cast<size_t>(e)]) add(g);
+    for (int f = 0; f < nf() && rest < a; ++f) add(f);
+    return rest >= a;
   }
   Recognized region_result(std::vector<int> region, bool boss, int base) {
     Recognized r;
@@ -843,34 +880,50 @@ struct Recognizer::Impl {
     r.label = std::string(boss ? "Boss" : "Pocket") + kDot + std::to_string(r.faces.size()) + (r.faces.size() == 1 ? " face" : " faces");
     return r;
   }
+  // The faces an inner loop encloses: reached from it without crossing it or touching the face it is on. Empty when they
+  // reach that face elsewhere or are most of the body. Topology only: cheap.
+  const std::vector<int>& loop_faces(size_t i) {
+    if (loop_memo[i]) return *loop_memo[i];
+    const int base = inner[i].first;
+    const std::vector<int>& loop = inner[i].second;
+    std::vector<int> start;
+    for (int e : loop)
+      if (const int g = other(e, base); g >= 0 && g != base) add_unique(start, g);
+    bool back = false;
+    std::vector<int> region = flood(start, [&](int e, int, int to) {
+      if (has(loop, e)) return false;
+      if (to == base) back = true;
+      return to != base;
+    }, detail_cap());
+    if (back) region.clear();
+    return loop_memo[i].emplace(std::move(region));
+  }
+  // A loop's region as a boss or a pocket: a detail of the body that stands out or sinks in (areas, samples: the costly part).
+  std::optional<Recognized> loop_result(size_t i, const std::vector<int>& region) {
+    if (!local(region)) return std::nullopt;
+    int side = facing(region);
+    if (side == 0) {  // flat regions: the loop's edges say (convex round a pocket's mouth, concave round a boss's foot)
+      int convex = 0, concave_ = 0;
+      for (int e : inner[i].second) {
+        convex += join(e) == Join::Convex;
+        concave_ += join(e) == Join::Concave;
+      }
+      side = convex > concave_ ? 1 : concave_ > convex ? -1 : 0;
+    }
+    if (side == 0) return std::nullopt;
+    return region_result(region, side < 0, inner[i].first);
+  }
   // The faces each inner loop encloses (not reaching back to the face the loop is on).
   const std::vector<Recognized>& enclosed() {
     if (enclosed_memo) return *enclosed_memo;
     find_inner();
     std::vector<Recognized>& out = enclosed_memo.emplace();
     std::set<std::vector<int>> seen;
-    const size_t cap = static_cast<size_t>(std::max(1.0, 0.6 * nf()));
-    for (const auto& [base, loop] : inner) {
-      std::vector<int> start;
-      for (int e : loop)
-        if (const int g = other(e, base); g >= 0 && g != base) add_unique(start, g);
-      bool back = false;
-      const std::vector<int> region = flood(start, [&, base = base, &loop = loop](int e, int, int to) {
-        if (has(loop, e)) return false;
-        if (to == base) back = true;
-        return to != base;
-      }, cap);
-      if (back || !local(region) || !seen.insert(region).second) continue;
-      int side = facing(region);
-      if (side == 0) {  // flat regions: the loop's edges say (convex round a pocket's mouth, concave round a boss's foot)
-        int convex = 0, concave_ = 0;
-        for (int e : loop) {
-          convex += join(e) == Join::Convex;
-          concave_ += join(e) == Join::Concave;
-        }
-        side = convex > concave_ ? 1 : concave_ > convex ? -1 : 0;
-      }
-      if (side != 0) out.push_back(region_result(region, side < 0, base));
+    for (size_t i = 0; i < inner.size(); ++i) {
+      check();
+      const std::vector<int>& region = loop_faces(i);
+      if (region.empty() || !seen.insert(region).second) continue;
+      if (auto r = loop_result(i, region)) out.push_back(std::move(*r));
     }
     return out;
   }
@@ -878,12 +931,37 @@ struct Recognizer::Impl {
     if (seeds.empty()) return std::nullopt;
     const std::vector<int> want = sorted(seeds);
     auto holds = [&](const std::vector<int>& region) { return std::all_of(want.begin(), want.end(), [&](int f) { return has(region, f); }); };
-    std::optional<Recognized> best;
-    for (const auto& r : enclosed())
-      if (holds(r.faces) && (!best || r.faces.size() < best->faces.size())) best = r;
-    if (best) return best;
+    // The smallest region a loop encloses holding them all. The loops on the faces nearest the seeds are found first, and
+    // a loop on a face d steps away encloses d faces at least: once the smallest region found is smaller than that, no
+    // loop further away can beat it, so it is checked (areas, samples: the costly part) and is the answer when it is one.
+    find_inner();
+    std::vector<std::pair<size_t, size_t>> found;  // (faces, loop), smallest last
+    auto smallest = [&](size_t below) -> std::optional<Recognized> {
+      while (!found.empty() && found.back().first < below) {
+        const size_t i = found.back().second;
+        found.pop_back();
+        if (auto r = loop_result(i, loop_faces(i))) return r;
+      }
+      return std::nullopt;
+    };
+    std::vector<int> steps(static_cast<size_t>(nf()), -1), queue;
+    for (int f : want)
+      if (f >= 0 && f < nf() && steps[static_cast<size_t>(f)] < 0) steps[static_cast<size_t>(f)] = 0, queue.push_back(f);
+    for (size_t q = 0; q < queue.size(); ++q) {
+      check();
+      const int f = queue[q];
+      if (auto r = smallest(static_cast<size_t>(steps[static_cast<size_t>(f)]))) return r;
+      const size_t before = found.size();
+      for (size_t i : inner_on[static_cast<size_t>(f)])
+        if (const std::vector<int>& region = loop_faces(i); !region.empty() && holds(region)) found.emplace_back(region.size(), i);
+      if (found.size() > before) std::sort(found.begin(), found.end(), std::greater<>());
+      for (int e : face_edges[static_cast<size_t>(f)])
+        for (int g : edge_faces[static_cast<size_t>(e)])
+          if (steps[static_cast<size_t>(g)] < 0) steps[static_cast<size_t>(g)] = steps[static_cast<size_t>(f)] + 1, queue.push_back(g);
+    }
+    if (auto r = smallest(std::numeric_limits<size_t>::max())) return r;
     // A region closed by concave edges (a boss) or convex ones (a pocket): through cuts, open slots, ribs.
-    const size_t cap = static_cast<size_t>(std::max(1.0, 0.6 * nf()));
+    const size_t cap = detail_cap();
     for (const bool boss : {false, true}) {
       const Join barrier = boss ? Join::Concave : Join::Convex;
       const std::vector<int> region = flood({want.front()}, [&](int e, int, int) { return join(e) != barrier; }, cap);

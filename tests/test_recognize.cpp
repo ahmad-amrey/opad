@@ -298,6 +298,10 @@ TEST(bosses_pockets_windows_and_slots) {
   CHECK(!r.boss_or_pocket({face_at(s, gp_Pnt(30, 20, 0))}));  // the bottom is the body, not a detail
   CHECK_EQ(r.all("boss").size(), size_t(1));
   CHECK_EQ(r.all("pocket").size(), size_t(1));  // the closed one; windows and slots are found from a pick
+  // A pick's search (the loops nearest it) finds what the walk over every loop finds, on a fresh recogniser too.
+  CHECK(r.all("boss").front().faces == boss->faces && r.all("pocket").front().faces == pocket->faces);
+  Recognizer fresh(s);
+  CHECK(fresh.boss_or_pocket({face_at(s, gp_Pnt(42.5, 25, 6))})->faces == pocket->faces);
 }
 
 TEST(walls_of_a_shell) {

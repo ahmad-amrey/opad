@@ -59,16 +59,8 @@ OPAD_ICON_TABLE(smartselect,
 
 namespace {
 constexpr size_t kMaxPicks = 2000;  // a rubber band over more is no question of what they belong to
-// Bodies with more faces skip bosses, pockets and walls: finding those walks the whole body (2.8 s on the Engine's
-// 4140-face casting, for a region that was most of it), where holes, fillets, chamfers, chains and loops stay local.
-constexpr int kRegionFaces = 1500;
 // What the chip and the menu ask the related command for: history and rules, never "similar" (asked for explicitly).
-opad::json kinds(bool regions) {
-  opad::json k = {"feature", "import", "body", "hole", "fillet", "chamfer", "tangent", "loop"};
-  if (regions)
-    for (const char* r : {"boss", "pocket", "wall"}) k.push_back(r);
-  return k;
-}
+const opad::json kKinds = {"feature", "import", "body", "hole", "fillet", "chamfer", "tangent", "loop", "boss", "pocket", "wall"};
 bool has(const std::vector<opad::Ref>& refs, const opad::Ref& r) {
   return std::any_of(refs.begin(), refs.end(), [&](const opad::Ref& x) { return x.body == r.body && x.kind == r.kind && x.index == r.index; });
 }
@@ -390,7 +382,6 @@ void SmartSelect::run() {
       const opad::Scene scene = opad::resolve(*document);
       std::map<std::string, std::pair<TopTools_IndexedMapOfShape, TopTools_IndexedMapOfShape>> maps;
       Bnd_Box box;
-      int largest = 0;
       for (const auto& r : out->picks) {
         if (cancel()) return;
         auto [it, added] = maps.try_emplace(r.body);
@@ -399,14 +390,13 @@ void SmartSelect::run() {
           TopExp::MapShapes(shape, TopAbs_FACE, it->second.first);
           TopExp::MapShapes(shape, TopAbs_EDGE, it->second.second);
           out->faces += size_t(it->second.first.Extent());
-          largest = std::max(largest, it->second.first.Extent());
         }
         const TopTools_IndexedMapOfShape& map = r.kind == opad::Ref::Kind::Face ? it->second.first : it->second.second;
         if (r.index >= 0 && r.index < map.Extent()) BRepBndLib::Add(map(r.index + 1), box, Standard_True);
       }
       opad::json refs = opad::json::array();
       for (const auto& r : out->picks) refs.push_back(r.str());
-      out->candidates = smart::candidates(opad::design::related(*document, {{"refs", refs}, {"kinds", kinds(largest <= kRegionFaces)}, {"limit", 5000}}, cancel));
+      out->candidates = smart::candidates(opad::design::related(*document, {{"refs", refs}, {"kinds", kKinds}, {"limit", 5000}}, cancel));
       if (box.IsVoid()) return;
       double x0, y0, z0, x1, y1, z1;
       box.Get(x0, y0, z0, x1, y1, z1);
