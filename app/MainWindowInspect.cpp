@@ -168,6 +168,7 @@ void MainWindow::cancelTool() {
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();
   m_toolPicks.clear();
   m_toolPoints.clear();
+  m_viewport->setSnapFrom(std::nullopt);
   for (const char* a : {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.area"}) action(a)->setChecked(false);
   m_viewport->setPickAccumulate(false);
   m_prompt->hide();
@@ -202,6 +203,9 @@ void MainWindow::toolPicksChanged(const std::vector<opad::Ref>& refs, bool fromC
     m_toolPoints.resize(picks.size());
   }
   m_toolPicks = picks;
+  // Perpendicular and tangent snaps go from the point picked last (UI-90).
+  m_viewport->setSnapFrom(picks.empty() ? std::nullopt : picks.back().kind == opad::Ref::Kind::Point ? std::optional(picks.back().point)
+                          : m_toolPoints.back().first ? std::optional(m_toolPoints.back().second) : std::nullopt);
   ++m_toolRun;
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();  // a superseded measure must stop computing, not just be ignored
   m_lastMeasure = opad::json();

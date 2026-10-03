@@ -26,6 +26,8 @@ const char* kind_name(Kind kind) {
     case Kind::Quadrant: return "quadrant";
     case Kind::Intersection: return "intersection";
     case Kind::Nearest: return "nearest";
+    case Kind::Perpendicular: return "perpendicular";
+    case Kind::Tangent: return "tangent";
     default: return "";
   }
 }
@@ -38,6 +40,8 @@ bool Kinds::on(Kind kind) const {
     case Kind::Quadrant: return quadrant;
     case Kind::Intersection: return intersection;
     case Kind::Nearest: return nearest;
+    case Kind::Perpendicular: return perpendicular;
+    case Kind::Tangent: return tangent;
     default: return false;
   }
 }
@@ -66,6 +70,7 @@ int Index::add_line(P a, P b) {
   m_points.push_back({along(a, b, 0.5), Kind::Midpoint, id});
   m_pieces.push_back({a, b, id});
   m_round.back().line = true;
+  m_round.back().a = a, m_round.back().b = b;
   return id;
 }
 
@@ -162,6 +167,12 @@ bool Index::onRound(int curve, P q, P& out) const {
   if (d < 1e-12 || !onArc(std::atan2(q.y - c.center.y, q.x - c.center.x), c.from, c.sweep)) return false;
   out = {c.center.x + (q.x - c.center.x) * c.radius / d, c.center.y + (q.y - c.center.y) * c.radius / d};
   return true;
+}
+
+bool Index::spans(int curve, P q) const {
+  if (curve < 0 || curve >= int(m_round.size()) || !m_round[curve].round) return false;
+  const Round& c = m_round[curve];
+  return snap2d::onArc(std::atan2(q.y - c.center.y, q.x - c.center.x), c.from, c.sweep);
 }
 
 const Index::Round* Index::round(int curve) const { return curve >= 0 && curve < int(m_round.size()) ? &m_round[curve] : nullptr; }
@@ -268,7 +279,7 @@ P refine(const std::vector<Placed>& sources, const Found& u, const Found& v, P a
 }
 }  // namespace
 
-Snap snap(const std::vector<Placed>& sources, P at, double aperture, const Kinds& kinds) {
+Snap snap(const std::vector<Placed>& sources, P at, double aperture, const Kinds& kinds, const P* from) {
   Snap best;
   int bestClass = 3;
   double bestDistance = 1e300;
@@ -305,6 +316,43 @@ Snap snap(const std::vector<Placed>& sources, P at, double aperture, const Kinds
         if (s < -1e-9 || s > 1 + 1e-9 || t < -1e-9 || t > 1 + 1e-9) continue;
         consider(1, refine(sources, u, v, along(u.a, u.b, s)), Kind::Intersection, u.source, u.curve, v.source, v.curve);
       }
+  }
+  // From the point picked before: square onto a line or a circle, touching a circle.
+  if (from && (kinds.perpendicular || kinds.tangent) && bestClass > 0) {
+    std::vector<std::pair<int, int>> curves;
+    for (const auto& f : found) curves.push_back({f.source, f.curve});
+    std::sort(curves.begin(), curves.end());
+    curves.erase(std::unique(curves.begin(), curves.end()), curves.end());
+    const P F = *from;
+    for (const auto& [source, curve] : curves) {
+      const Placed& p = sources[source];
+      const Index::Round* round = p.index->round(curve);
+      if (!round) continue;
+      auto out = [&](P q) { return P{p.a * q.x + p.b * q.y + p.c, p.d * q.x + p.e * q.y + p.f}; };
+      const double det = p.a * p.e - p.b * p.d;
+      auto local = [&](P q) { return P{(p.e * (q.x - p.c) - p.b * (q.y - p.f)) / det, (-p.d * (q.x - p.c) + p.a * (q.y - p.f)) / det}; };
+      if (round->line && kinds.perpendicular) {
+        const P a = out(round->a), b = out(round->b);
+        const double dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy;
+        if (len2 < 1e-30) continue;
+        const double t = ((F.x - a.x) * dx + (F.y - a.y) * dy) / len2;
+        if (t >= -1e-9 && t <= 1 + 1e-9 && dist(along(a, b, t), F) > 1e-9 * std::sqrt(len2)) consider(1, along(a, b, t), Kind::Perpendicular, source, curve);
+      } else if (round->round) {
+        const P c = out(round->center);
+        const double r = round->radius * std::sqrt(std::abs(det)), d = dist(F, c);
+        if (d < 1e-12) continue;
+        const double base = std::atan2(F.y - c.y, F.x - c.x);
+        auto onCircle = [&](double angle) { return P{c.x + r * std::cos(angle), c.y + r * std::sin(angle)}; };
+        if (kinds.perpendicular)
+          for (const double angle : {base, base + M_PI})
+            if (const P q = onCircle(angle); p.index->spans(curve, local(q))) consider(1, q, Kind::Perpendicular, source, curve);
+        if (kinds.tangent && d > r * (1 + 1e-12)) {
+          const double turn = std::acos(r / d);
+          for (const double angle : {base - turn, base + turn})
+            if (const P q = onCircle(angle); p.index->spans(curve, local(q))) consider(1, q, Kind::Tangent, source, curve);
+        }
+      }
+    }
   }
   if (kinds.nearest && bestClass > 1)
     for (const auto& f : found) {

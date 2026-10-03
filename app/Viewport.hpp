@@ -187,11 +187,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showPickMarkers(const std::vector<opad::Vec3>& points);  // numbered end markers, 1-based
   void showPreview(const opad::Vec3& a, const opad::Vec3& b, const QString& label);  // dashed hov line to the hovered candidate
   void clearPreview();
-  // Object snap (UI-90, ViewportSnap.cpp): while a tool picks points (Vertex filter, a drawing's Points), the drawings' ends,
-  // midpoints, centres, quadrants, intersections and nearest points under the mouse, as the sketch offers them (its snap
-  // set, settings sketch/snap/<kind>): a marker of the kind's shape, its name in the status bar, and a click picks the
-  // point (a Point ref). F3 switches it (view/objectSnap). Each body's index is built on a worker when first needed.
+  // Object snap (UI-90, ViewportSnap.cpp): while a tool picks points (Vertex filter, a drawing's Points), the drawings' and
+  // sketches' ends, midpoints, centres, quadrants, intersections and nearest points under the mouse, perpendicular and
+  // tangent points from the point picked before, as the sketch offers them (its snap set, settings sketch/snap/<kind>): a
+  // marker of the kind's shape, its name in the status bar, and a click picks the point (a Point ref). F3 switches it
+  // (view/objectSnap). Each body's (sketch's) index is built on a worker when first needed.
   void setObjectSnap(bool on);
+  void setSnapFrom(const std::optional<opad::Vec3>& from);  // the point picked before (a tool's last pick), none
   bool objectSnap() const { return m_objectSnap; }
   bool snapAt(const QPointF& widgetPos, opad::Vec3& world, QString* kind = nullptr);  // any point consumer: false until indexed
   bool shownSnap(opad::Vec3& world, QString* kind = nullptr) const;                // the one the cursor shows now
@@ -593,6 +595,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_objectSnap = true;
   std::shared_ptr<ObjectSnapState> m_osnap;
   ObjectSnapState& snapState();
+  std::string sketchSnapKey(const std::string& id);  // a displayed sketch's index key, new with each version of it
   bool objectSnapActive() const;
   void updateObjectSnap();                 // after the hover, every frame
   bool objectSnapPress(QMouseEvent* e);  // true: the press picks the shown snap

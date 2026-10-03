@@ -80,6 +80,14 @@ def plot_file(root, document=None):
                [line("Frame", *edge) for edge in frame] + [line("Red", 20, 50, 180, 50), solid("Fill", 150, 10, 190, 40), line("Hidden", 20, 80, 180, 80)])
 
 
+def osnap_sketch_document(root, document):
+    """One sketch on XY: a 100 x 50 rectangle of four lines and a circle at (30, 25), radius 10."""
+    import json
+    points = [{"id": i + 1, "x": x, "y": y} for i, (x, y) in enumerate([(0, 0), (100, 0), (100, 50), (0, 50), (30, 25)])]
+    entities = [{"id": 10 + i, "type": "line", "p": [i + 1, (i + 1) % 4 + 1]} for i in range(4)] + [{"id": 20, "type": "circle", "p": [5], "r": 10}]
+    return document("osnap-sketch", ("sketch", "--geometry", json.dumps({"points": points, "entities": entities})))
+
+
 def room_document(root, document):
     return document("room", ("import", "--file", str(room_file(root)), "--center", "true"))
 
@@ -103,8 +111,11 @@ CASES = [
     ("area", room_document, {"OPAD_BENCH_AREA": "{prefix}"}),
     ("area-viewer", room_file, {"OPAD_BENCH_AREA": "{prefix}"}),
     # UI-90: object snap (F3) in the Distance tool's point picks: midpoint, a crossing of two layers, centre, quadrant,
-    # nearest on the circle, the sketch's kind switches, F3 off, none with the Objects filter. <prefix>.snap.png
+    # nearest on the circle, perpendicular and tangent from a picked point, the sketch's kind switches, F3 off, none with
+    # the Objects filter. <prefix>.snap.png, .perpendicular.png
     ("object-snap", snaps_file, {"OPAD_BENCH_OSNAP": "{prefix}"}),
+    # UI-90: the same snaps on a sketch's curves in Review picks (indexed in its plane), perpendicular from a picked point.
+    ("object-snap-sketch", osnap_sketch_document, {"OPAD_BENCH_OSNAP_SKETCH": "{prefix}"}),
     # UI-90: the cursor readout in the status bar: a far drawing's own coordinates (and a snapped point's), a model's X, Y, Z.
     ("readout", far_file, {"OPAD_BENCH_READOUT": "{prefix}"}),
     ("readout-3d", "box", {"OPAD_BENCH_READOUT": "{prefix}"}),
