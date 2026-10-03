@@ -90,8 +90,9 @@ struct Basis {
   double half_w, half_h, focal;  // ortho half extents in mm, or perspective focal length in px
 };
 
-// A canvas's picture decoded (OCCT's image reader: FreeImage where the build has it), at most 1024 pixels on a side,
-// mirrored as its flags say; null when it cannot be read.
+// A canvas's picture decoded (OCCT's image reader: FreeImage where OCCT has it, else on Windows the Windows Imaging Component,
+// as in the static single-file build, whose OCCT is built without FreeImage), at most 1024 pixels on a side, mirrored as its
+// flags say; null when it cannot be read (an OCCT with neither: the canvas keeps its colour).
 std::shared_ptr<const RenderItem::Picture> canvas_picture(const Node& n) {
   const auto href = n.raster.find("href");
   if (href == n.raster.end() || !href->is_string()) return nullptr;
