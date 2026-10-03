@@ -354,8 +354,7 @@ class Activation : public AreaController {
       const std::set<std::string> in = opad::ops_in_component(doc->doc, scene, active);
       std::set<std::string> dimmed;
       for (const auto& op : doc->doc.ops)
-        if (!in.count(op.id) && !(op.type == "delete" && in.count(op.data.value("target", ""))))  // nor the tombstone of one that does
-          dimmed.insert(op.id);
+        if (!in.count(op.id)) dimmed.insert(op.id);  // tombstoned ones and their tombstones are weighed too
       services().timeline()->setDimmedOps(std::move(dimmed), m_history->isChecked());
       if (trace::enabled()) trace::log(QStringLiteral("activation: timeline scope %1 ms").arg(clock.elapsed()));
     }

@@ -1945,6 +1945,18 @@ TEST(ops_that_touch_a_component) {
   for (const std::string op : {loose["feature_id"].get<std::string>(), renamed, param}) CHECK(!in.count(op));
   CHECK_EQ(in.size(), 8u);
   CHECK_EQ(ops_in_component(doc, s, "").size(), effective_ops(doc).size());
+  // A feature made in it and tombstoned still touches it, as do its tombstone and the restore of it.
+  const std::string box = commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", "30 mm"}, {"length", "2 mm"}, {"width", "2 mm"}, {"height", "2 mm"}}}, {"component", lid}}, &doc)["feature_id"];
+  const std::string gone = commands::run("delete", {{"target", box}}, &doc)["id"];
+  const std::string other = commands::run("delete", {{"target", loose["feature_id"]}}, &doc)["id"];
+  std::set<std::string> now = ops_in_component(doc, resolve(doc), lid);
+  CHECK(now.count(box) && now.count(gone) && !now.count(other) && !now.count(loose["feature_id"].get<std::string>()));
+  const std::string back = commands::run("delete", {{"target", gone}}, &doc)["id"];
+  now = ops_in_component(doc, resolve(doc), lid);
+  CHECK(now.count(box) && now.count(gone) && now.count(back));
+  size_t listed = 0;
+  for (const auto& op : doc.ops) listed += op.type != "edit" && op.type != "regen";
+  CHECK_EQ(ops_in_component(doc, resolve(doc), "").size(), listed);
 }
 
 // TODO 11 UI-37: a locked body, or one under a locked component, is not changed, moved or removed: the change is

@@ -535,6 +535,17 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                             "the converted sketch is made in the Lid, not ghosted");
                     doc->undo(2);  // the sketch and the drawing
                   }});
+  // A Lid feature deleted while the Lid is active: it and its tombstone still touch the Lid on the timeline.
+  list.push_back({[=] { return !doc->designBusy && idle(); }, [=, &w](bool) {
+                    std::string made;
+                    for (const auto& f : doc->scene.features)
+                      if (f.component == s->lid) made = f.id;
+                    const std::string removal = made.empty() ? std::string() : doc->run("delete", {{"target", made}}).value("id", "");
+                    const auto& dimmed = w.m_timeline->dimmedOps();
+                    require(!removal.empty() && doc->doc.is_deleted(made) && !dimmed.count(made) && !dimmed.count(removal) && !dimmed.empty(),
+                            QString("a Lid feature deleted: it and its tombstone are not dimmed (%1 of %2 dimmed)").arg(dimmed.size()).arg(doc->doc.ops.size()));
+                    if (!removal.empty()) doc->undo();
+                  }});
   // The chip: back to the root, everything as before.
   list.push_back({idle, [=, &w](bool) {
                     QLabel* chip = nullptr;

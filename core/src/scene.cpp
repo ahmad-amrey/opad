@@ -675,13 +675,21 @@ std::set<std::string> ops_in_component(const Document& doc, const Scene& scene, 
   };
   for (const auto& [id, n] : scene.nodes)  // what made the nodes in it (the component itself, imports, features)
     if (component.empty() || under(id)) out.insert(n.source_op);
-  for (const auto& e : effective_ops(doc)) {
-    const json& d = e.data();
-    const std::string& type = e.op->type;
-    bool in = component.empty() || out.count(e.op->id);
+  std::vector<std::string> deleted;
+  const std::vector<EffectiveOp> effective = effective_ops(doc, &deleted);
+  std::vector<std::pair<const Op*, const json*>> ops;  // the effective log, then tombstoned ops as written
+  for (const auto& e : effective) ops.push_back({e.op, &e.data()});
+  for (const auto& op : doc.ops)
+    if (std::binary_search(deleted.begin(), deleted.end(), op.id)) ops.push_back({&op, &op.data});
+  for (const auto& [op, data] : ops) {
+    const json& d = *data;
+    const std::string& type = op->type;
+    bool in = component.empty() || out.count(op->id);
     if (!in && (type == "sketch" || type == "feature")) in = under(d.value("component", json()));
     if (!in && type == "feature")
-      for (const auto& b : d.value("result", json::object()).value("bodies", json::array())) in = in || under(b.value("id", json()));
+      if (const auto r = d.find("result"); r != d.end() && r->is_object())
+        if (const auto bodies = r->find("bodies"); bodies != r->end() && bodies->is_array())
+          for (const auto& b : *bodies) in = in || under(b.value("id", json()));
     if (!in && (type == "reparent" || type == "transform" || type == "appearance" || type == "rename")) in = under(d.value("target", json()));
     if (!in && type == "reparent") in = under(d.value("parent", json()));
     if (!in && type == "import") in = under(d.value("parent", json()));
@@ -695,8 +703,10 @@ std::set<std::string> ops_in_component(const Document& doc, const Scene& scene, 
     if (!in && type == "annotation" && d.contains("anchor")) in = ref_under(d["anchor"]);
     if (!in && type == "measurement")
       for (const auto& r : d.value("refs", json::array())) in = in || ref_under(r);
-    if (in) out.insert(e.op->id);
+    if (in) out.insert(op->id);
   }
+  for (const auto& op : doc.ops)  // the tombstone (or the restore) of one that touches it, in log order
+    if (op.type == "delete" && out.count(op.data.value("target", ""))) out.insert(op.id);
   return out;
 }
 
