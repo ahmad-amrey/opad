@@ -998,22 +998,25 @@ bool has_locks(const Document& doc) {
 std::string locked_change(const Scene& before, const Scene& after) {
   std::string first;
   size_t count = 0;
-  for (const auto& [id, n] : before.nodes) {
-    if (!before.effectively_locked(id)) continue;
+  std::function<void(const std::string&)> visit = [&](const std::string& id) {  // in tree order: the outermost is named
+    const Node* n = before.node(id);
+    if (!n) return;
     const Node* now = after.node(id);
     const char* what = nullptr;
-    if (!now) {
-      std::string top = id;  // the outermost component that goes with it
-      for (const Node* p = before.node(n.parent); p && !after.node(p->id); p = p->parent.empty() ? nullptr : before.node(p->parent)) top = p->id;
-      if (before.effectively_locked(top)) what = "removing";
-    } else if (now->body_key != n.body_key) {
+    if (!before.effectively_locked(id)) {
+    } else if (!now) {
+      // Only the outermost node that goes is weighed: with an unlocked component above it, it may go.
+      const Node* parent = n->parent.empty() ? nullptr : before.node(n->parent);
+      if (!parent || after.node(parent->id)) what = "removing";
+    } else if (now->body_key != n->body_key) {
       what = "changing";
-    } else if (now->local.m != n.local.m) {
+    } else if (now->local.m != n->local.m) {
       what = "moving";
     }
-    if (!what) continue;
-    if (++count == 1) first = "\"" + n.name + "\" is locked: unlock it before " + what + " it";
-  }
+    if (what && ++count == 1) first = "\"" + n->name + "\" is locked: unlock it before " + what + " it";
+    for (const auto& c : n->children) visit(c);
+  };
+  for (const auto& r : before.roots) visit(r);
   if (count > 1) first += " (and " + std::to_string(count - 1) + " more locked)";
   return first;
 }

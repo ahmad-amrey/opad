@@ -1856,6 +1856,7 @@ TEST(locked_bodies_are_left_alone) {
   CHECK(s.effectively_locked(pin) && !s.node(pin)->locked);
   CHECK_EQ(refusal("feature", {{"kind", "fillet"}, {"inputs", {{"edges", json::array({pin + "/edge/0"})}, {"radius", "0.5 mm"}}}}), locked(s.node(pin)->name, "changing"));
   CHECK_EQ(refusal("transform", {{"target", inner}, {"matrix", Mat4::translation(0, 0, 5).to_json()}}), locked("Inner", "moving"));
+  CHECK_EQ(refusal("delete", {{"target", s.node(inner)->source_op}}), locked("Inner", "removing"));
   commands::run("transform", {{"target", outer}, {"matrix", Mat4::translation(0, 0, 10).to_json()}}, &doc);
   CHECK_NEAR(resolve(doc).world(pin).at(2, 3), 10, 1e-12);
   // Several at once: the first is named and the rest counted.
