@@ -27,6 +27,7 @@
 #include "DesignController.hpp"
 #include "DimensionHandle.hpp"
 #include "ExplodePanel.hpp"
+#include "GuidedTool.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "PanelFooter.hpp"
@@ -233,12 +234,14 @@ void Explode::ready() {
   m_panel->setEscapeHandler(escape);
   services().addPanel(m_panel);
   connect(m_panel, &ToolPanel::visibilityChanged, this, [this] {
+    if (!m_panel->isVisible()) hideHint(false);
     placeHandle();
     services().browser()->refreshDecorations();
   });
   connect(m_form, &ExplodePanel::switched, this, &Explode::setOn);
   connect(m_form, &ExplodePanel::levelsChosen, this, &Explode::setLevels);
   connect(m_form, &ExplodePanel::distanceChosen, this, [this](double t) {
+    hideHint(true);
     if (!m_on) setOn(true);
     m_target = -1;
     setT(t);
@@ -278,6 +281,7 @@ void Explode::ready() {
     if (m_dragUnit < 0 || m_dragUnit >= static_cast<int>(m_units.size())) return;
     const std::optional<double> travel = units::parse(units::Kind::Length, text);
     if (!travel) return;
+    hideHint(true);
     const opad::ExplodeUnit& u = m_units[static_cast<size_t>(m_dragUnit)];
     opad::set_explode_travel(m_spec, u, dragAxis(u), *travel);
     if (!m_handle->dragging()) opad::explode_stage(m_units, m_spec);  // typed: one after another, its turn now
@@ -288,6 +292,10 @@ void Explode::ready() {
     opad::explode_stage(m_units, m_spec);
     apply();
   });
+  m_hint = new PromptBar(view);  // the first time: what can be done besides the panel
+  m_hint->setObjectName("explodeHint");
+  m_hint->setAttribute(Qt::WA_NativeWindow);
+  m_hint->hide();
   m_chip = new QLabel;
   m_chip->setObjectName("chipSel");
   m_chip->setCursor(Qt::PointingHandCursor);
@@ -308,6 +316,25 @@ void Explode::ready() {
 void Explode::open() {
   services().openPanel(m_panel);
   setOn(true);
+  if (!QSettings().value("hints/explode", false).toBool()) showHint();
+}
+
+void Explode::showHint() {
+  m_hint->setText("explodedView", tr("Exploded view"), tr("Drag the slider or a part · the badges in the browser choose what moves together"));
+  m_hint->show();
+  positionOverlays({});
+}
+
+void Explode::hideHint(bool seen) {
+  if (!m_hint || m_hint->isHidden()) return;
+  m_hint->hide();
+  if (seen) QSettings().setValue("hints/explode", true);
+}
+
+void Explode::positionOverlays(const QRect&) {
+  if (!m_hint || m_hint->isHidden()) return;
+  m_hint->move(std::max(8, (services().viewport()->width() - m_hint->width()) / 2), 44);  // where a guided tool's prompt goes
+  m_hint->raise();
 }
 
 void Explode::setOn(bool on) {
@@ -397,7 +424,7 @@ void Explode::tick() {
 void Explode::fitIfOutside() {
   m_fitAfter = false;
   Viewport* view = services().viewport();
-  if (!view->showsAll()) view->fitAll();
+  if (!view->showsAll()) view->animateFitAll();
 }
 
 void Explode::setLevels(int levels) {
@@ -405,6 +432,7 @@ void Explode::setLevels(int levels) {
 }
 
 void Explode::setRule(const std::string& component, opad::ExplodeRule rule) {
+  hideHint(true);
   edit([&](opad::ExplodeSpec& s) { opad::set_explode_rule(s, component, rule); });
 }
 

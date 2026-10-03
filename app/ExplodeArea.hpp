@@ -28,6 +28,7 @@ struct Row;
 struct Decoration;
 }  // namespace browser
 class Job;
+class PromptBar;
 class QLabel;
 class QMenu;
 class ToolPanel;
@@ -44,6 +45,7 @@ class Explode : public AreaController {
   void contextMenu(const SelectionContext& selection, QMenu& menu) override;
   void selectionChanged(const SelectionContext& selection) override;
   void documentChanged(bool replaced) override;
+  void positionOverlays(const QRect& viewport) override;
 
   // What the panel, the commands, the browser and the benches drive.
   void open();             // the panel; the explode on (the active component's when no view was chosen)
@@ -72,6 +74,7 @@ class Explode : public AreaController {
   ToolPanel* panel() const { return m_panel; }
   ExplodePanel* form() const { return m_form; }
   QLabel* chip() const { return m_chip; }
+  PromptBar* hint() const { return m_hint; }  // the first-use hint over the view
   DimensionHandle* handle() const { return m_handle; }
   int dragUnit() const { return m_dragUnit; }
   size_t trailCount() const { return m_trailCount; }
@@ -95,6 +98,8 @@ class Explode : public AreaController {
   void tick();
   void fitIfOutside();
   void designState();  // a sketch or feature edit collapses the view, its end opens it again
+  void showHint();
+  void hideHint(bool seen);  // seen: the user did what it says, it is not shown again (setting hints/explode)
   opad::Vec3 dragAxis(const opad::ExplodeUnit& unit) const;
   std::vector<std::string> members(int unit) const;  // what selecting a unit selects
   void decorate(const browser::Row& row, browser::Decoration& d);  // what moves together, while the panel is open
@@ -122,6 +127,7 @@ class Explode : public AreaController {
   DimensionHandle* m_handle = nullptr;
   int m_dragUnit = -1;
   QLabel* m_chip = nullptr;
+  PromptBar* m_hint = nullptr;
   QMenu* m_chipMenu = nullptr;
   ToolPanel* m_panel = nullptr;
   ExplodePanel* m_form = nullptr;

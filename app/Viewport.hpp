@@ -96,6 +96,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   SelFilter selectionFilter() const { return m_filter; }
 
   void fitAll();
+  void animateFitAll(double seconds = 0.35);  // the camera glides to what fitAll frames, also in a view that draws no frames
+  bool cameraMoving() const;  // a camera animation (fit, cube, roll) is under way
   bool showsAll() const;  // every corner of what Fit All frames is inside the view
   void requestRefinement() { m_refineTimer.start(); }  // zoom refinement without waiting for a frame (benches)
   bool benchLeave();  // OPAD_BENCH_LEAVE: hover a body, leave the view, nothing may stay highlighted
@@ -546,6 +548,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_sketchDrag = false;
 
   QTimer m_timer;
+  bool m_glide = false;  // animateFitAll: the timer advances the camera animation itself
   QTimer m_trackpadEndTimer;
   enum class TrackpadMode { None, Pan, Orbit };
   TrackpadMode m_trackpadMode = TrackpadMode::None;

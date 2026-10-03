@@ -9,6 +9,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QSettings>
 #include <QSlider>
 #include <QTimer>
 #include <QToolButton>
@@ -26,6 +27,7 @@
 #include "DimensionHandle.hpp"
 #include "ExplodeArea.hpp"
 #include "ExplodePanel.hpp"
+#include "GuidedTool.hpp"
 #include "MainWindow.hpp"
 #include "opad/explode.hpp"
 #include "opad/inspect.hpp"
@@ -246,6 +248,7 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
     std::vector<double> rising;  // the lid's height while it plays out
     std::set<QString> chips;     // the chip's texts meanwhile
     double lidOut = 0;  // the lid's height at 100 %
+    int glide = 0;      // polls that found the camera gliding to frame the parts
     size_t ops = 0;
     int x = 0, y = 0;
   };
@@ -297,16 +300,18 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                       s->rising.push_back(offset(s->lid)[2]);
                       s->chips.insert(chipText());
                     }
-                    return laidOut() && area->t() > 0.999;
+                    if (v->cameraMoving()) ++s->glide;
+                    return laidOut() && area->t() > 0.999 && !v->cameraMoving();
                   },
                   [=, &w](bool out) {
                     std::vector<double> distinct;
                     for (double z : s->rising)
                       if (distinct.empty() || std::abs(z - distinct.back()) > 1e-6) distinct.push_back(z);
                     const bool monotonic = std::is_sorted(distinct.begin(), distinct.end());
-                    require(out && area->panel()->isVisible() && distinct.size() >= 4 && monotonic && s->chips.size() >= 3 && v->showsAll(),
-                            QString("Exploded view opens the panel and plays out: the lid at %1 heights on the way up, the chip read %2 texts; the exploded parts in view")
-                                .arg(distinct.size()).arg(s->chips.size()));
+                    require(out && area->panel()->isVisible() && distinct.size() >= 4 && monotonic && s->chips.size() >= 3 && v->showsAll() && s->glide > 0,
+                            QString("Exploded view opens the panel and plays out: the lid at %1 heights on the way up, the chip read %2 texts; the camera glides "
+                                    "(%3 polls) to have the exploded parts in view")
+                                .arg(distinct.size()).arg(s->chips.size()).arg(s->glide));
                     const auto lid = offset(s->lid), board = offset(s->board), chip = offset(s->chip), cap = offset(s->cap), shell = offset(s->shell);
                     require(lid[2] > 5 && same(board, chip) && same(board, cap) && length(board) > 0 && !same(board, lid),
                             QString("level 1: the lid up %1, the PCB whole %2 (board, chip and capacitor together), the shell %3").arg(lid[2], 0, 'f', 1).arg(vec(board), vec(shell)));
@@ -314,6 +319,10 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     for (QToolButton* b : form->levelButtons()) levels << b->text() + (b->isChecked() ? "*" : "");
                     require(levels == QStringList({"1*", "2", ExplodePanel::tr("All")}) && chipText().contains("100") && area->trailCount() >= 3,
                             QString("the level control (%1) apart from the distance; the chip reads '%2'; %3 trail lines").arg(levels.join(' '), chipText()).arg(area->trailCount()));
+                    const QPoint hintAt = area->hint()->pos();
+                    require(!area->hint()->isHidden() && std::abs(hintAt.x() + area->hint()->width() / 2 - v->width() / 2) <= 1 && !QSettings().value("hints/explode", false).toBool(),
+                            QString("the first time: a hint at the top centre of the view (%1, %2)").arg(hintAt.x()).arg(hintAt.y()));
+                    area->hint()->grab().save(prefix + ".hint.png");
                     doc->setActiveComponent(s->pcb);  // the explode follows the active component
                   }});
   list.push_back({[=] { return laidOut() && area->spec().root == s->pcb; }, [=, &w](bool followed) {
@@ -335,6 +344,7 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     QString tip;
                     const bool clicked = clickBadge(w.m_browser->tree(), s->pcb, "explodeLevel", &tip);
                     require(clicked && area->spec().keep.count(s->pcb), "the PCB's browser badge (" + tip + ") keeps it together");
+                    require(area->hint()->isHidden() && QSettings().value("hints/explode", false).toBool(), "a badge used: the hint goes for good");
                   }});
   list.push_back({laidOut, [=, &w](bool done) {
                     const auto board = offset(s->board), chip = offset(s->chip), cap = offset(s->cap);

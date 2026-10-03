@@ -49,6 +49,14 @@ void PromptBar::set(const QString& icon, const QString& title, const QList<ToolS
   m_title = title;
   m_steps = steps;
   m_hints = hints;
+  m_text.clear();
+  resize(sizeHint());
+  update();
+}
+
+void PromptBar::setText(const QString& icon, const QString& title, const QString& text) {
+  set(icon, title, {}, {});
+  m_text = text;
   resize(sizeHint());
   update();
 }
@@ -57,6 +65,7 @@ QList<PromptBar::Piece> PromptBar::pieces() const {
   QFontMetrics title(theme::ui(13, QFont::Medium)), text(theme::ui(13)), hint(theme::mono(11));
   QList<Piece> out;
   out << Piece{Piece::Icon, {}, {}, 0, 16} << Piece{Piece::Title, m_title, {}, 0, title.horizontalAdvance(m_title)} << Piece{Piece::Rule, {}, {}, 0, 1};
+  if (!m_text.isEmpty()) return out << Piece{Piece::Text, m_text, StepState::Waiting, 0, text.horizontalAdvance(m_text)};
   bool waitingSeen = false;
   for (int i = 0; i < m_steps.size(); ++i) {
     const ToolStep& s = m_steps[i];

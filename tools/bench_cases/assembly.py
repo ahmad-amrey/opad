@@ -35,7 +35,8 @@ CASES = [
     # again, no event-loop gap over 250 ms; a ghost's hover pick under 50 ms.
     ("activate-engine", engine(), {"OPAD_BENCH_ACTIVATE": "{prefix}"}),
     # Exploded view (UI-36) on an enclosure made by the bench (shell, lid, a PCB subassembly with a board, a chip and a
-    # capacitor, four screws in a Screws component): the command plays the parts out frame by frame, level 1 moves the PCB
+    # capacitor, four screws in a Screws component): the command plays the parts out frame by frame and the camera glides
+    # to frame them, the first-use hint at the top centre goes for good once a badge is used, level 1 moves the PCB
     # whole, the PCB activated explodes alone, level 2 splits it (the capacitor rides on the board), the PCB's browser badge
     # keeps it whole, Explode its parts on the Screws, the slider at 50 %, a click on the board selects the PCB's unit, the
     # lid's handle dragged and a value typed over the view, One after another staged again without a layout when the
