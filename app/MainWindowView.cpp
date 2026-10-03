@@ -67,12 +67,14 @@ void MainWindow::buildViewActions() {
   connect(grid, &QAction::toggled, this, [this](bool on) { m_viewport->setGrid(on); m_settings.setValue("view/grid",on); });
   addAction("view.gridSettings",tr("Grid settings"),"grid",QKeySequence("Shift+G"),[this] {
     auto* dialog=new QDialog(this,Qt::Tool);dialog->setAttribute(Qt::WA_DeleteOnClose);dialog->setWindowTitle(tr("Grid settings"));
-    auto* form=new QFormLayout(dialog);auto* spacing=new QDoubleSpinBox(dialog);spacing->setRange(0,100000);spacing->setDecimals(3);spacing->setSpecialValueText(tr("Automatic"));spacing->setValue(m_settings.value("view/gridSpacing",0).toDouble());
-    auto* extent=new QDoubleSpinBox(dialog);extent->setRange(1,1000000);extent->setValue(m_settings.value("view/gridExtent",100).toDouble());
+    auto* form=new QFormLayout(dialog);auto* spacing=new QDoubleSpinBox(dialog);spacing->setRange(0,units::toDisplay(units::Kind::Length,100000));spacing->setDecimals(units::decimalsFor(0.001));spacing->setSpecialValueText(tr("Automatic"));
+    auto* extent=new QDoubleSpinBox(dialog);extent->setRange(units::toDisplay(units::Kind::Length,1),units::toDisplay(units::Kind::Length,1000000));extent->setDecimals(units::decimalsFor(1));
+    for(auto* box:{spacing,extent})box->setSuffix(' '+units::symbol(units::Kind::Length));  // mm in the settings, the shown unit here
+    spacing->setValue(units::toDisplay(units::Kind::Length,m_settings.value("view/gridSpacing",0).toDouble()));extent->setValue(units::toDisplay(units::Kind::Length,m_settings.value("view/gridExtent",100).toDouble()));
     auto* automatic=new QCheckBox(tr("Automatic spacing"),dialog);automatic->setChecked(spacing->value()==0);spacing->setEnabled(!automatic->isChecked());
-    form->addRow(automatic);form->addRow(tr("Spacing (mm)"),spacing);form->addRow(tr("Minimum extent (mm)"),extent);
-    auto changed=[this,spacing,extent,automatic]{m_viewport->configureGrid(automatic->isChecked()?0:spacing->value(),extent->value());};
-    connect(automatic,&QCheckBox::toggled,dialog,[=](bool on){spacing->setEnabled(!on);if(!on && spacing->value()==0)spacing->setValue(1);changed();});
+    form->addRow(automatic);form->addRow(tr("Spacing"),spacing);form->addRow(tr("Minimum extent"),extent);
+    auto changed=[this,spacing,extent,automatic]{m_viewport->configureGrid(automatic->isChecked()?0:units::fromDisplay(units::Kind::Length,spacing->value()),units::fromDisplay(units::Kind::Length,extent->value()));};
+    connect(automatic,&QCheckBox::toggled,dialog,[=](bool on){spacing->setEnabled(!on);if(!on && spacing->value()==0)spacing->setValue(units::toDisplay(units::Kind::Length,1));changed();});
     connect(spacing,&QDoubleSpinBox::valueChanged,dialog,changed);connect(extent,&QDoubleSpinBox::valueChanged,dialog,changed);
     action("view.grid")->setChecked(true);dialog->show();
   });

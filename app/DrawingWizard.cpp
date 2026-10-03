@@ -256,7 +256,12 @@ bool MainWindow::benchDrawingImport() {
         break;
       case 5: {  // then moved on it: an offset, then one of its vertices snapped onto a point, then Place
         if (!m_drawingPlacer->active() || !m_drawingPlacer->panel()->findChild<QPushButton*>("primary")->isEnabled()) return;
+        auto* offsetX = m_drawingPlacer->panel()->findChild<QLineEdit*>("placeOffsetX");
+        offsetX->setText("1 in");  // typed with a unit, read back in the shown one (UI-123)
+        emit offsetX->editingFinished();
+        if (offsetX->text() != "25.4 mm") return fail("the offset box read 1 in as " + offsetX->text());
         m_drawingPlacer->setOffset(7, 3);
+        if (offsetX->text() != "7 mm") return fail("the offset box shows " + offsetX->text());
         const opad::Vec3 from = m_drawingPlacer->placement().apply({0, 0, 0}), to{100, -20, 50};
         m_drawingPlacer->snap(from, to);  // the drawing's origin onto (100, 50) of the XZ plane; -20 is off the plane
         *expected = m_drawingPlacer->placement();

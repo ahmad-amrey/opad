@@ -55,5 +55,10 @@
  "Distance %1": "المسافة %1",
  "R %1": "نصف القطر %1",
  "Updating %1 bodies": "تحديث %1 من الأجسام",
- " (inactive)": " (غير نشط)"
+ " (inactive)": " (غير نشط)",
+ "Offset X": "الإزاحة X",
+ "Offset Y": "الإزاحة Y",
+ "Plane X": "محور X للمستوى",
+ "Plane Y": "محور Y للمستوى",
+ "Minimum extent": "أقل امتداد"
 }
