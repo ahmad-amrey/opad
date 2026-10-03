@@ -291,9 +291,10 @@ void MainWindow::refreshToolUi() {
                   : ends ? tr("Not closed yet: loose ends %1. Pick the objects that close it.").arg(ends)
                          : tr("These objects enclose nothing. Pick a closed object, or every object around the area.");
   } else if (done && m_tool.id == "area") {
-    explanation = m_lastMeasure.value("grown", false) ? tr("The smallest area the picked object closes with the objects it meets. Pick more to add them.")
-                  : m_lastMeasure.value("points", 0) ? tr("The polygon through the picked points, closed back to the first.")
-                                                     : tr("The area inside the picked boundary; areas inside it are holes.");
+    explanation = m_lastMeasure.value("grown", false) ? tr("The smaller area beside the clicked part of the object, closed by the objects it meets or crosses. Pick more to give the boundary yourself.")
+                  : m_lastMeasure.value("points", 0)  ? tr("The polygon through the picked points, closed back to the first.")
+                  : m_lastMeasure.value("trimmed", false) ? tr("The area inside the picked objects, trimmed where they cross; areas inside it are holes.")
+                                                          : tr("The area inside the picked boundary; areas inside it are holes.");
   } else if (done) {
     if (m_tool.id == "distance" && m_lastMeasure.contains("anchors")) explanation = tr("Click an anchor marker to move that measurement point. Edges stay selected until Esc or Clear. Choose a preset pair below.");
     else if (m_tool.id == "distance") explanation = tr("Shortest distance between the selections. Δ = point 2 − point 1 in world axes.");

@@ -837,7 +837,7 @@ json measure_area(const Document& doc, const Scene& scene, const std::vector<Ref
         if (clicked) q.SetCoord((*clicked)[0], (*clicked)[1], (*clicked)[2]);
         else q = makeEdge({picked[0], true, 0, -1}, nodes).mid;
         Face found;
-        for (double reach = std::max({pb[2] - pb[0], pb[3] - pb[1], extent / 1024});; reach *= 2) {
+        for (double reach = std::max({pb[2] - pb[0], pb[3] - pb[1], extent / 1024, tol});; reach *= 2) {
           const std::array<double, 4> w{pb[0] - reach, pb[1] - reach, pb[2] + reach, pb[3] + reach};
           const bool everything = w[0] <= total[0] && w[1] <= total[1] && w[2] >= total[2] && w[3] >= total[3];
           std::vector<TopoDS_Edge> near;
