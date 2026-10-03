@@ -439,4 +439,73 @@ TEST(spec_json) {
   CHECK_EQ(ExplodeSpec::from_json({{"unknown", true}}).levels, 1);
 }
 
+// What the Explode panel (UI-36) edits: trails, the unit a click lands in, a drag along an axis, keep/split, groups.
+TEST(editor_helpers) {
+  Device d = device();
+  const Scene s = resolve(d.doc);
+  ExplodeSpec spec = spec_of({{"levels", 1}, {"keep", {d.pcb}}, {"split", {d.screws}}});
+  auto units = explode_units(d.doc, s, spec);
+  auto index = [&](const std::string& id) { return explode_unit_of(s, units, id); };
+  // A body finds its unit, a kept component is its own, a body riding on another part finds that part's unit.
+  CHECK_EQ(units[static_cast<size_t>(index(d.chip))].id, d.pcb);
+  CHECK_EQ(units[static_cast<size_t>(index(d.pcb))].id, d.pcb);
+  CHECK_EQ(units[static_cast<size_t>(index(d.led))].id, d.lid);
+  CHECK_EQ(units[static_cast<size_t>(index(d.screw[1]))].id, d.screw[1]);
+  CHECK_EQ(index(d.device), -1);  // the explode root: its bodies are in many units
+  CHECK_EQ(index("nothing"), -1);
+  // Trails: none assembled; at t = 1 one per moving unit, a screw's from where its folder alone takes it.
+  CHECK(explode_trails(units, spec, 0).empty());
+  const auto trails = explode_trails(units, spec, 1);
+  const auto moves = explode_unit_offsets(units, spec, 1);
+  size_t moving = 0;
+  for (size_t i = 0; i < units.size(); ++i) {
+    const Vec3 base = units[i].parent >= 0 ? moves[static_cast<size_t>(units[i].parent)] : Vec3{0, 0, 0};
+    moving += std::hypot(moves[i][0] - base[0], moves[i][1] - base[1], moves[i][2] - base[2]) > 1e-6;
+  }
+  CHECK_EQ(trails.size(), moving);
+  const size_t s1 = static_cast<size_t>(index(d.screw[0])), folder = static_cast<size_t>(index(d.screws));
+  for (const auto& tr : trails)
+    if (tr.unit == s1)
+      for (size_t k = 0; k < 3; ++k) {
+        CHECK_NEAR(tr.from[k], units[s1].centre[k] + moves[folder][k], 1e-9);
+        CHECK_NEAR(tr.to[k], units[s1].centre[k] + moves[s1][k], 1e-9);
+      }
+  // A drag along +Z sets the lid's own move there and keeps the rest of it; back to the automatic move drops the offset.
+  const ExplodeUnit& lid = units[static_cast<size_t>(index(d.lid))];
+  const double automatic = explode_travel(lid, spec, {0, 0, 1});
+  CHECK_NEAR(automatic, lid.distance * lid.dir[2], 1e-9);
+  set_explode_travel(spec, lid, {0, 0, 2}, automatic + 15);
+  CHECK_NEAR(explode_travel(lid, spec, {0, 0, 1}), automatic + 15, 1e-9);
+  CHECK_NEAR(spec.offsets.at(d.lid)[2], 15, 1e-9);
+  set_explode_travel(spec, lid, {1, 0, 0}, 10);  // across: the Z part stays
+  CHECK_NEAR(spec.offsets.at(d.lid)[0], 10 - lid.distance * lid.dir[0], 1e-9);
+  CHECK_NEAR(spec.offsets.at(d.lid)[2], 15, 1e-9);
+  set_explode_travel(spec, lid, {1, 0, 0}, lid.distance * lid.dir[0]);
+  set_explode_travel(spec, lid, {0, 0, 1}, automatic);
+  CHECK(!spec.offsets.count(d.lid));
+  // Keep / split / follow the level.
+  CHECK(explode_rule(spec, d.pcb) == ExplodeRule::Keep && explode_rule(spec, d.screws) == ExplodeRule::Split && explode_rule(spec, d.device) == ExplodeRule::Level);
+  set_explode_rule(spec, d.pcb, ExplodeRule::Split);
+  CHECK(!spec.keep.count(d.pcb) && spec.split.count(d.pcb));
+  set_explode_rule(spec, d.pcb, ExplodeRule::Level);
+  CHECK(!spec.keep.count(d.pcb) && !spec.split.count(d.pcb));
+  // Groups: two screws move as one; grouping one of them again takes it out of the first group, which then goes.
+  spec.offsets[d.screw[1]] = {1, 0, 0};
+  explode_group(spec, {d.screw[0], d.screw[1], d.screw[0]});
+  CHECK_EQ(spec.groups.size(), size_t(1));
+  CHECK_EQ(spec.groups[0], (std::vector<std::string>{d.screw[0], d.screw[1]}));
+  CHECK(!spec.offsets.count(d.screw[1]));
+  units = explode_units(d.doc, s, spec);
+  CHECK_EQ(index(d.screw[1]), index(d.screw[0]));
+  CHECK_EQ(explode_group_of(spec, d.screw[1]), 0);
+  explode_group(spec, {d.screw[1], d.screw[2]});
+  CHECK_EQ(spec.groups.size(), size_t(1));
+  CHECK_EQ(spec.groups[0], (std::vector<std::string>{d.screw[1], d.screw[2]}));
+  explode_group(spec, {d.screw[3]});  // one node is no group
+  CHECK_EQ(spec.groups.size(), size_t(1));
+  spec.offsets[d.screw[1]] = {0, 0, 5};
+  CHECK(explode_ungroup(spec, d.screw[2]) && spec.groups.empty() && !spec.offsets.count(d.screw[1]));
+  CHECK(!explode_ungroup(spec, d.screw[2]));
+}
+
 CHECK_MAIN()

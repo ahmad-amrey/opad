@@ -68,6 +68,30 @@ std::unordered_map<std::string, Vec3> explode_offsets(const std::vector<ExplodeU
 Scene exploded_scene(const Scene& scene, const std::unordered_map<std::string, Vec3>& offsets);
 // The view op's explode (Error when there is no such view; the defaults when it has none).
 ExplodeSpec view_explode(const Scene& scene, const std::string& view_id);
+
+// ---- what an explode editor needs (UI-36); pure, microseconds per unit.
+// The trail lines at t: each moving unit's centre from where its parent units alone take it to where it is drawn.
+struct ExplodeTrail {
+  size_t unit = 0;
+  Vec3 from{0, 0, 0}, to{0, 0, 0};
+};
+std::vector<ExplodeTrail> explode_trails(const std::vector<ExplodeUnit>& units, const ExplodeSpec& spec, double t);
+// The unit that moves a node: the unit with that id (a group's is its first member's), the unit holding a body, or for
+// a component the one unit holding all of its shown bodies. -1 when none (hidden, outside the root, split among units).
+int explode_unit_of(const Scene& scene, const std::vector<ExplodeUnit>& units, const std::string& id);
+// A unit's own move at t = 1 (automatic plus manual) along a unit axis, and the manual offset that makes it `travel`
+// there, keeping the move across the axis. A manual offset that comes out zero is dropped.
+double explode_travel(const ExplodeUnit& unit, const ExplodeSpec& spec, const Vec3& axis);
+void set_explode_travel(ExplodeSpec& spec, const ExplodeUnit& unit, const Vec3& axis, double travel);
+// Per component: follow the level setting, keep together (one unit at any level) or explode its parts (split).
+enum class ExplodeRule { Level, Keep, Split };
+ExplodeRule explode_rule(const ExplodeSpec& spec, const std::string& component);
+void set_explode_rule(ExplodeSpec& spec, const std::string& component, ExplodeRule rule);
+// Groups of nodes that move as one: grouping takes the ids out of the groups they were in (a group left with one
+// member goes) and drops their manual offsets but the first's; ungrouping removes the group holding id and its offset.
+int explode_group_of(const ExplodeSpec& spec, const std::string& id);  // index into spec.groups, -1 none
+void explode_group(ExplodeSpec& spec, const std::vector<std::string>& ids);
+bool explode_ungroup(ExplodeSpec& spec, const std::string& id);
 // An `explode` argument (a view op id or a spec object) applied at the spec's t.
 Scene exploded_scene(const Document& doc, const Scene& scene, const json& explode);
 

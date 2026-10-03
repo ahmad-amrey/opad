@@ -699,6 +699,91 @@ ExplodeSpec view_explode(const Scene& scene, const std::string& view_id) {
   return v->explode.is_object() ? ExplodeSpec::from_json(v->explode) : ExplodeSpec{};
 }
 
+std::vector<ExplodeTrail> explode_trails(const std::vector<ExplodeUnit>& units, const ExplodeSpec& spec, double t) {
+  const std::vector<Vec3> moves = explode_unit_offsets(units, spec, t);
+  std::vector<ExplodeTrail> out;
+  for (size_t i = 0; i < units.size(); ++i) {
+    const Vec3 base = units[i].parent >= 0 ? moves[static_cast<size_t>(units[i].parent)] : Vec3{0, 0, 0};
+    const Vec3 own = sub(moves[i], base);
+    if (norm(own) <= 1e-6 * std::max(1.0, norm(sub(units[i].hi, units[i].lo)))) continue;
+    out.push_back({i, add(units[i].centre, base), add(units[i].centre, moves[i])});
+  }
+  return out;
+}
+
+int explode_unit_of(const Scene& scene, const std::vector<ExplodeUnit>& units, const std::string& id) {
+  for (size_t i = 0; i < units.size(); ++i)
+    if (units[i].id == id) return static_cast<int>(i);
+  const Node* n = scene.node(id);
+  if (!n) return -1;
+  std::unordered_map<std::string, int> of;
+  for (size_t i = 0; i < units.size(); ++i)
+    for (const auto& b : units[i].bodies) of.emplace(b, static_cast<int>(i));
+  if (n->kind == Node::Kind::Body) {
+    const auto it = of.find(id);
+    return it == of.end() ? -1 : it->second;
+  }
+  int found = -1;
+  for (const auto& b : scene.bodies_under(id)) {
+    const auto it = of.find(b);
+    if (it == of.end()) continue;  // hidden
+    if (found >= 0 && it->second != found) return -1;
+    found = it->second;
+  }
+  return found;
+}
+
+double explode_travel(const ExplodeUnit& u, const ExplodeSpec& spec, const Vec3& axis) {
+  Vec3 own = mul(u.dir, u.distance);
+  if (const auto m = spec.offsets.find(u.id); m != spec.offsets.end()) own = add(own, m->second);
+  return dot(own, unit(axis));
+}
+
+void set_explode_travel(ExplodeSpec& spec, const ExplodeUnit& u, const Vec3& axis, double travel) {
+  const Vec3 a = unit(axis);
+  Vec3 manual = spec.offsets.count(u.id) ? spec.offsets[u.id] : Vec3{0, 0, 0};
+  manual = add(manual, mul(a, travel - explode_travel(u, spec, a)));
+  if (norm(manual) < 1e-9) spec.offsets.erase(u.id);
+  else spec.offsets[u.id] = manual;
+}
+
+ExplodeRule explode_rule(const ExplodeSpec& spec, const std::string& component) {
+  return spec.keep.count(component) ? ExplodeRule::Keep : spec.split.count(component) ? ExplodeRule::Split : ExplodeRule::Level;
+}
+
+void set_explode_rule(ExplodeSpec& spec, const std::string& component, ExplodeRule rule) {
+  spec.keep.erase(component);
+  spec.split.erase(component);
+  if (rule == ExplodeRule::Keep) spec.keep.insert(component);
+  else if (rule == ExplodeRule::Split) spec.split.insert(component);
+}
+
+int explode_group_of(const ExplodeSpec& spec, const std::string& id) {
+  for (size_t g = 0; g < spec.groups.size(); ++g)
+    if (std::find(spec.groups[g].begin(), spec.groups[g].end(), id) != spec.groups[g].end()) return static_cast<int>(g);
+  return -1;
+}
+
+void explode_group(ExplodeSpec& spec, const std::vector<std::string>& ids) {
+  std::vector<std::string> members;
+  for (const auto& id : ids)
+    if (std::find(members.begin(), members.end(), id) == members.end()) members.push_back(id);
+  if (members.size() < 2) return;
+  for (auto& g : spec.groups)
+    g.erase(std::remove_if(g.begin(), g.end(), [&](const std::string& id) { return std::find(members.begin(), members.end(), id) != members.end(); }), g.end());
+  spec.groups.erase(std::remove_if(spec.groups.begin(), spec.groups.end(), [](const std::vector<std::string>& g) { return g.size() < 2; }), spec.groups.end());
+  for (size_t i = 1; i < members.size(); ++i) spec.offsets.erase(members[i]);
+  spec.groups.push_back(members);
+}
+
+bool explode_ungroup(ExplodeSpec& spec, const std::string& id) {
+  const int g = explode_group_of(spec, id);
+  if (g < 0) return false;
+  spec.offsets.erase(spec.groups[static_cast<size_t>(g)].front());
+  spec.groups.erase(spec.groups.begin() + g);
+  return true;
+}
+
 Scene exploded_scene(const Document& doc, const Scene& scene, const json& explode) {
   ExplodeSpec spec;
   if (explode.is_string()) {
