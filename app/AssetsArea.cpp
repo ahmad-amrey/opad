@@ -254,6 +254,7 @@ void AssetsArea::ready() {
     services().updateCommands();
   });
   connect(m_monitor, &AssetMonitor::filesChanged, this, &AssetsArea::filesChanged);
+  connect(theme::notifier(), &theme::Notifier::changed, this, &AssetsArea::updateLooks);  // the stale colour is the theme's
   services().browser()->addDecorator([this](const browser::Row& row, browser::Decoration& d) { decorate(row, d); });
   services().properties()->addSectionProvider([this](const PropertySubject& s, const opad::json& props, QList<PropertySection>& out) { section(s, props, out); });
   m_monitor->documentChanged(true);

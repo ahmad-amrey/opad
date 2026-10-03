@@ -372,7 +372,7 @@ OPAD_BENCH(OPAD_BENCH_ASSET_LOOK, asset_look) {
   };
   waitFor(&w, [=] { return settled() && state() == "changed" && !monitor->checking(); }, 20000, [=, &w](bool opened) {
     const opad::Node* n = doc->node(body);
-    const QColor& c = v->tokens().assetStale;
+    const QColor c = v->tokens().assetStale;
     const std::array<double, 3> tint = looks::mix(n->color, {c.redF(), c.greenF(), c.blueF()}, 0.6);
     const BodyLook look = v->bodyLook(body);
     (*require)(opened && monitor->stale() == std::set<std::string>{body} && monitor->asset(part)->stale == 1,
@@ -381,12 +381,21 @@ OPAD_BENCH(OPAD_BENCH_ASSET_LOOK, asset_look) {
                "the stale part is tinted the stale colour, as composed and as drawn");
     const opad::json* s = monitor->state(part);
     (*require)(s && s->value("reason", "") == "1 parts differ from the version synced", "its state says so: " + QString::fromStdString(s ? s->value("reason", "") : ""));
+    {  // The other theme's stale colour, then back.
+      const bool dark = v->tokens().dark;
+      w.applyTheme(!dark);
+      const QColor o = v->tokens().assetStale;
+      const auto shown = v->bodyLook(body).color;
+      const bool other = same(shown, looks::mix(doc->node(body)->color, {o.redF(), o.greenF(), o.blueF()}, 0.6)) && o != c;
+      w.applyTheme(dark);
+      (*require)(other && same(v->bodyLook(body).color, tint), QString("a theme switch takes that theme's stale colour (%1, then %2)").arg(c.name(), o.name()));
+    }
     int x = 0, y = 0;
     const bool found = v->benchBodyPoint(body, x, y);
     const QImage stale = v->grabImage();
     stale.save(prefix + ".stale.png");
     const QColor before = found ? stale.pixelColor(x, y) : QColor();
-    const std::string key = n->body_key;
+    const std::string key = doc->node(body)->body_key;  // the theme switch may have rebuilt the scene (n)
     area->sync({part});
     const BodyLook reading = v->bodyLook(body);
     (*require)(monitor->syncing(part) && std::abs(reading.opacity - 0.45) < 1e-9 && same(reading.color, tint), QString("syncing: the file's part fades (%1)").arg(reading.opacity));
