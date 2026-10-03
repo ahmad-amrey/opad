@@ -156,8 +156,9 @@ std::string unicode_escapes(std::string s) {
   return out;
 }
 
-// TEXT control codes: %%d degree, %%p plus/minus, %%c diameter, %%nnn a character, %%u/%%o/%%k underline toggles, ^J.
-std::string text_codes(std::string_view s) {
+// TEXT control codes: %%d degree, %%p plus/minus, %%c diameter, %%nnn a character, %%u/%%o/%%k underline toggles, ^J;
+// ^I a space, or with `tabs` a tab (MTEXT's go to its tab stops).
+std::string text_codes(std::string_view s, bool tabs = false) {
   std::string out;
   for (size_t i = 0; i < s.size(); ++i) {
     if (s[i] == '%' && i + 2 < s.size() && s[i + 1] == '%') {
@@ -180,7 +181,7 @@ std::string text_codes(std::string_view s) {
       const char c = s[i + 1];
       if (c == ' ') { out += '^'; ++i; continue; }
       if (c == 'J') { out += '\n'; ++i; continue; }
-      if (c == 'I') { out += ' '; ++i; continue; }
+      if (c == 'I') { out += tabs ? '\t' : ' '; ++i; continue; }
       if (c >= '@' && c <= '_') { ++i; continue; }
     }
     out += s[i];
@@ -253,20 +254,20 @@ std::vector<TextSpan> text_spans(std::string_view s, const TextFormat& base) {
 // space, a {group}'s formatting ends with it; \f a TrueType family (|b1 bold, |i1 italic) and \F a shape font, \H a height
 // (drawing units, or times the current one with x), \W a width factor, \Q an obliquing angle, \T tracking, \A an
 // alignment (0 baseline, 1 middle, 2 top), \C a colour index and \c a true colour (0 and 256: the entity's), \L \O \K
-// a line under, over and through on (lower case: off), \S a stacked pair (a/b, a#b, a^b), \p a paragraph's alignment (xqc,
-// xqr, xql, xqj: kept by the paragraphs after it, in `justify`). Each part's text takes the TEXT codes (%%d ...).
-std::vector<TextSpan> mtext_spans(std::string_view s, const TextFormat& base, double unit, std::vector<int>& justify) {
+// a line under, over and through on (lower case: off), \S a stacked pair (a/b, a#b, a^b), \p a paragraph's layout (x, then
+// i first-line indent, l left and r right indent, t tab stops, in text heights; q its alignment, c r l j or d), kept by
+// the paragraphs after it (`paragraphs`). Each part's text takes the TEXT codes (%%d ..., ^I a tab).
+std::vector<TextSpan> mtext_spans(std::string_view s, const TextFormat& base, double unit, std::vector<TextParagraph>& paragraphs) {
   std::vector<TextSpan> out;
   std::vector<TextFormat> groups;
   TextFormat f = base;
   std::string text;
-  int paragraph = -1;
-  justify.assign(1, -1);
+  paragraphs.assign(1, TextParagraph());
   auto flush = [&] {
     if (text.empty()) return;
     TextSpan span;
     static_cast<TextFormat&>(span) = f;
-    span.text = text_codes(text);
+    span.text = text_codes(text, true);
     out.push_back(std::move(span));
     text.clear();
   };
@@ -280,7 +281,7 @@ std::vector<TextSpan> mtext_spans(std::string_view s, const TextFormat& base, do
     }
     if (c != '\\' || i + 1 >= s.size()) { text += c; continue; }
     const char k = s[++i];
-    if (k == 'P' || k == 'X' || k == 'N') { text += '\n'; justify.push_back(paragraph); continue; }
+    if (k == 'P' || k == 'X' || k == 'N') { text += '\n'; paragraphs.push_back(paragraphs.back()); continue; }
     if (k == '~') { text += "\xC2\xA0"; continue; }
     if (std::string_view("LlOoKk").find(k) != std::string_view::npos) {
       flush();
@@ -319,14 +320,36 @@ std::vector<TextSpan> mtext_spans(std::string_view s, const TextFormat& base, do
         TextSpan span;
         static_cast<TextFormat&>(span) = f;
         span.stack = kind;
-        span.text = text_codes(parts[0]);
-        span.bottom = text_codes(parts[1]);
+        span.text = text_codes(parts[0], true);
+        span.bottom = text_codes(parts[1], true);
         if (!blank(span.text + span.bottom)) out.push_back(std::move(span));
       } else if (k == 'p') {
-        const auto q = value.find('q');
-        const char a = q != std::string_view::npos && q + 1 < value.size() ? value[q + 1] : 0;
-        if (a == 'c' || a == 'r' || a == 'l' || a == 'j' || a == 'd')
-          justify.back() = paragraph = a == 'c' ? TextRequest::Center : a == 'r' ? TextRequest::Right : TextRequest::Left;
+        TextParagraph& p = paragraphs.back();
+        bool tabs = false;  // after t: the stops, each a number (c or r before it: a centred or right one, taken as a stop)
+        for (size_t at = 0; at <= value.size();) {
+          const size_t comma = std::min(value.find(',', at), value.size());
+          std::string_view item = value.substr(at, comma - at);
+          at = comma + 1;
+          if (!item.empty() && item[0] == 'x' && !tabs) item.remove_prefix(1);
+          if (item.empty()) continue;
+          const bool stop = tabs && (std::isdigit(static_cast<unsigned char>(item[0])) || item[0] == '.' || item[0] == 'c' || item[0] == 'r');
+          const char key = stop ? 't' : item[0];
+          if (!stop) item.remove_prefix(1);
+          tabs = key == 't';
+          try {
+            if (key == 'q') {
+              const char a = item.empty() ? 0 : item[0];
+              if (a == 'c' || a == 'r' || a == 'l' || a == 'j' || a == 'd') p.justify = a == 'c' ? TextRequest::Center : a == 'r' ? TextRequest::Right : TextRequest::Left;
+            } else if (key == 't') {
+              if (!stop) p.tabs.clear();
+              if (!item.empty() && (item[0] == 'c' || item[0] == 'r')) item.remove_prefix(1);
+              if (!item.empty()) p.tabs.push_back(parse_number(item) * base.size);
+            } else if (key == 'i' || key == 'l' || key == 'r') {
+              (key == 'i' ? p.first : key == 'l' ? p.left : p.right) = parse_number(item) * base.size;
+            }
+          } catch (const Error&) {
+          }
+        }
       } else {
         const bool times = !value.empty() && (value.back() == 'x' || value.back() == 'X');
         if (times) value.remove_suffix(1);
@@ -1454,7 +1477,7 @@ void Reader::mtext(const Fields& f, Out& o, const Place& at) {
     if ((*f.pairs)[j].code == 3) raw += decode((*f.pairs)[j].value);
   raw += decode(f.str(1));
   TextRequest r = text_request(f.str(7, "STANDARD"), "", f.num(40));
-  r.spans = mtext_spans(raw, r, m_unit, r.justify);
+  r.spans = mtext_spans(raw, r, m_unit, r.paragraphs);
   std::string all;
   for (const auto& span : r.spans) all += span.text + span.bottom;
   if (blank(all)) return;

@@ -299,7 +299,9 @@ TEST(parts_of_a_text_keep_their_own_formats) {
   auto second = span("\nHH", 20);
   auto r = spans({span("HHHHHH"), second});
   r.spacing = 50.0 / 3;
-  r.justify = {-1, TextRequest::Center};
+  TextParagraph centred;
+  centred.justify = TextRequest::Center;
+  r.paragraphs = {{}, centred};
   const auto two = t.shape(r);
   CHECK(two.size() == 2);
   const auto p = extent(t.outline(r, at));
@@ -307,6 +309,19 @@ TEST(parts_of_a_text_keep_their_own_formats) {
   r.spans[1].text = "\n";  // an empty second paragraph keeps its place
   r.spans.push_back(span("\nH"));
   CHECK(t.shape(r).size() == 3);
+  // A hanging indent with a tab stop (a numbered list): the number at the left end, its text and the lines it wraps into
+  // from the stop; without stops a tab goes on to the next 4 text heights.
+  auto listed = span("AAAA BBBB");
+  listed.color = 0xFF0000;
+  r = spans({span("1.\t"), listed});
+  r.paragraphs = {{-1, 15, -15, 0, {15}}};
+  r.wrap = 60;
+  r.spacing = 50.0 / 3;
+  colored.clear();
+  const auto number = extent(t.outline(r, at, &colored)), item = extent(colored[0xFF0000]);
+  CHECK(number[0] < 3 && std::abs(item[0] - 15) < 0.5 && item[1] < -50.0 / 3 + 1);  // AAAA and, a line down, BBBB from 15
+  const auto tabbed = extent(t.outline(spans({span("A\tH")}), at)), h = extent(t.outline(spans({span("H")}), at));
+  CHECK(std::abs(tabbed[2] - (40 + h[2])) < 0.05);
   // Arabic letters join across parts: beh beh in one part and beh in another (another colour) are the word's forms.
   if (arabic(t)) {
     const std::string beh = "\xD8\xA8";

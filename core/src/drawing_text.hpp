@@ -45,6 +45,15 @@ struct TextSpan : TextFormat {
   std::string bottom;
 };
 
+// A paragraph's own layout (MTEXT \p), mm: its alignment, how far its lines start from the block's left end (the first
+// line `first` further, a hanging indent when negative) and end before its right end, its tab stops from the block's
+// left end (after the last, one every 4 text heights).
+struct TextParagraph {
+  int justify = -1;  // its TextRequest::H, -1 the request's
+  double left = 0, first = 0, right = 0;
+  std::vector<double> tabs;
+};
+
 struct TextRequest : TextFormat {
   std::string text;    // UTF-8; '\n' starts a line
   bool cap = false;
@@ -53,14 +62,14 @@ struct TextRequest : TextFormat {
   double fit = 0;      // mm: one line stretched to this length; wider only or, `aligned`, larger
   bool aligned = false;
   // The block (as wide as `wrap`, else its widest line) on the origin by its left end, middle or right end, each line
-  // within it so too (or as its paragraph's `justify` says).
+  // within it so too (or as its paragraph says). A tab goes on to the next stop (every 4 sizes, or its paragraph's).
   enum H { Left, Center, Right } h = Left;
   // What lies on the origin: the first line's baseline, the block's top (the first line's capitals), its middle, its
   // bottom (the last baseline) or the last line's descent.
   enum V { Baseline, Top, Middle, Bottom, Descent } v = Baseline;
   // Text in parts of their own formats instead of `text` in the request's (whose size stays the line spacing's measure).
   std::vector<TextSpan> spans;
-  std::vector<int> justify;  // per paragraph: its H (MTEXT \pxq), -1 or none the request's
+  std::vector<TextParagraph> paragraphs;  // per paragraph (none: as the request lays it out)
 };
 
 // One shaped line: glyphs left to right, positions in ems from the line's left end on its baseline.

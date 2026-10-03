@@ -319,7 +319,8 @@ TEST(mtext_parts_keep_their_own_formats) {
   Groups entities;
   for (const auto& g : {mtext("Plain", 0, "HELL"), mtext("Big", 50, "HE{\\H2x;LL}"), mtext("Red", 100, "HE{\\C1;LL}O"), mtext("Blue", 150, "H\\c16711680;E"),
                         mtext("Under", 200, "H\\LELL\\lO"), mtext("Fraction", 250, "1\\S1/2;"), mtext("Tolerance", 300, "12\\S+0.1^-0.2;"),
-                        mtext("Centre", 350, "HHHHHHHH\\P\\pxqc;{\\C1;HH}"), text("TextPlain", 400, "IIII"), text("TextUnder", 450, "%%uIIII%%u"),
+                        mtext("Centre", 350, "HHHHHHHH\\P\\pxqc;{\\C1;HH}"), mtext("List", 650, "\\pxi-3,l3,t3;1.^I{\\C1;HE}\\P2.^I{\\C1;EH}"),
+                        text("TextPlain", 400, "IIII"), text("TextUnder", 450, "%%uIIII%%u"),
                         text("Leaning", 500, "IIII", {{51, "15"}}), text("Styled", 550, "IIII", {{7, "SLANT"}})})
     entities.insert(entities.end(), g.begin(), g.end());
   write_text_file(f.dir / "parts.dxf", section("TABLES", {{0, "TABLE"}, {2, "STYLE"}, {0, "STYLE"}, {2, "SLANT"}, {70, "0"}, {40, "0"}, {41, "1"},
@@ -347,6 +348,9 @@ TEST(mtext_parts_keep_their_own_formats) {
     if (b.layer == "Centre" && !b.has_color) first = &b;
   const auto block = extent(first->box);
   CHECK(std::abs((centred[0] + centred[2]) / 2 - (block[0] + block[2]) / 2) < 0.3 && centred[0] > block[0] + 5);
+  // A numbered list (hanging indent 3 text heights, a tab stop there): the items start 15 from the numbers' left end.
+  const auto items = extent(find(all, "List", 1, 0, 0)->box);
+  CHECK(items[0] >= 15 && items[0] < 15.8 && items[3] - items[1] > 10);  // H and E a side bearing in; both lines
   CHECK(find(all, "TextUnder")->lines == 1 && find(all, "TextPlain")->lines == 0);
   const double upright = extent(find(all, "TextPlain")->box)[2];
   CHECK(extent(find(all, "Leaning")->box)[2] - upright > 2.4 && extent(find(all, "Styled")->box)[2] - upright > 2.4);  // 10 tan 15 = 2.7

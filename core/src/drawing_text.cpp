@@ -759,6 +759,7 @@ struct Line {
   std::vector<Piece> pieces;  // left to right
   double width = 0;
   int direction = 0, justify = -1;  // the paragraph's: 0 left to right, 1 right to left; its own H, -1 the text's
+  double indent = 0, right = 0;  // mm from the block's left end to where it starts, and kept free at its right end
   size_t style = 0;  // its largest part's
 };
 // A stacked pair: its upper and lower line in its own style (70 % of its part's), and how wide it is in its line.
@@ -859,8 +860,10 @@ struct TextOutliner::Impl {
   }
 
   // One paragraph's lines, each laid out in visual order, every character in the style `owner` gives it; wrap > 0 breaks
-  // lines longer than that (mm). An empty paragraph is one line in style `empty`.
-  std::vector<Line> paragraph(const std::u32string& text, const std::vector<size_t>& owner, const std::vector<Style>& styles, double wrap, size_t empty) {
+  // lines longer than that (mm), less the paragraph's indents. An empty paragraph is one line in style `empty`. Tabs go
+  // on to the paragraph's stops, then one every `every` mm.
+  std::vector<Line> paragraph(const std::u32string& text, const std::vector<size_t>& owner, const std::vector<Style>& styles, double wrap, size_t empty,
+                              const TextParagraph& p = {}, double every = 0) {
     const size_t n = text.size();
     int base = 0;
     const std::vector<uint8_t> levels = bidi_levels(text, base);
@@ -889,12 +892,12 @@ struct TextOutliner::Impl {
     std::vector<std::pair<size_t, size_t>> ranges;
     if (wrap > 0 && n > 0) {
       std::vector<double> advance(n, 0.0), sum(n + 1, 0.0);
-      line(text, 0, n, levels, base, scripts, fonts, owner, styles, empty, &advance);
+      line(text, 0, n, levels, base, scripts, fonts, owner, styles, empty, p.left + p.first, p, every, &advance);
       for (size_t i = 0; i < n; ++i) sum[i + 1] = sum[i] + advance[i];
       size_t start = 0, opening = 0;  // the line's first character; the last place a line may start after it (0: none)
       for (size_t i = 0; i < n; ++i) {
         if (i > start && ((space(text[i - 1]) && !space(text[i])) || ideograph(text[i - 1]) || ideograph(text[i]))) opening = i;
-        if (!space(text[i]) && sum[i + 1] - sum[start] > wrap && opening > start) {
+        if (!space(text[i]) && sum[i + 1] - sum[start] > wrap - p.left - p.right - (start == 0 ? p.first : 0) && opening > start) {
           ranges.push_back({start, opening});
           start = opening;
         }
@@ -908,17 +911,21 @@ struct TextOutliner::Impl {
       auto [a, b] = ranges[k];
       if (k + 1 < ranges.size())
         while (b > a && space(text[b - 1])) --b;  // the spaces a line was broken at
-      out.push_back(line(text, a, b, levels, base, scripts, fonts, owner, styles, empty, nullptr));
+      const double indent = p.left + (k == 0 ? p.first : 0);
+      out.push_back(line(text, a, b, levels, base, scripts, fonts, owner, styles, empty, indent, p, every, nullptr));
+      out.back().justify = p.justify;
+      out.back().indent = indent;
+      out.back().right = p.right;
     }
     return out;
   }
 
   // Characters [a, b) of a paragraph as one line: runs of one level, script, font and style, in visual order, each shaped
-  // with the paragraph around it as context (so letters join across runs and formats). `advance`: each character's share
-  // (mm), for wrapping.
+  // with the paragraph around it as context (so letters join across runs and formats); a tab on to the next stop, the
+  // line starting `indent` mm from the block's left end. `advance`: each character's share (mm), for wrapping.
   Line line(const std::u32string& text, size_t a, size_t b, std::vector<uint8_t> levels, int base, const std::vector<hb_script_t>& scripts,
             const std::vector<const FontFile*>& fonts, const std::vector<size_t>& owner, const std::vector<Style>& styles, size_t empty,
-            std::vector<double>* advance) {
+            double indent, const TextParagraph& p, double every, std::vector<double>* advance) {
     Line out;
     out.text = text.substr(a, b - a);
     out.direction = base;
@@ -931,7 +938,7 @@ struct TextOutliner::Impl {
     std::vector<Run> runs;
     for (size_t i = a; i < b; ++i) {
       if (runs.empty() || levels[i] != runs.back().level || fonts[i] != fonts[runs.back().a] || scripts[i] != scripts[runs.back().a] ||
-          owner[i] != owner[runs.back().a])
+          owner[i] != owner[runs.back().a] || (text[i] == U'\t') != (text[runs.back().a] == U'\t'))
         runs.push_back({i, i + 1, levels[i]});
       else runs.back().b = i + 1;
     }
@@ -944,6 +951,18 @@ struct TextOutliner::Impl {
       const Style& s = styles[k];
       if (!(s.kx > 0)) continue;
       const double track = run.level & 1 || !(s.format->tracking > 0) ? 1 : s.format->tracking;
+      if (text[run.a] == U'\t') {  // to the next stop after where the line has got to
+        for (size_t i = run.a; i < run.b; ++i) {
+          const double at = indent + x, step = every > 0 ? every : 4 * s.size;
+          double to = (std::floor(at / step + 1e-9) + 1) * step;
+          for (double stop : p.tabs)
+            if (stop > at + 1e-9) { to = stop; break; }
+          out.pieces.push_back({k, nullptr, 0u, uint32_t(i - a), x, 0, to - at});
+          if (advance) (*advance)[i] += to - at;
+          x = to - indent;
+        }
+        continue;
+      }
       if (s.shx || s.stack) {  // character by character, as the shape font's pen moves (no shaping), or the stack
         double y = 0;
         for (size_t j = 0; j < run.b - run.a; ++j) {
@@ -1018,11 +1037,10 @@ struct TextOutliner::Impl {
     std::u32string text;
     std::vector<size_t> owner;
     size_t paragraphs = 0, current = 0;
+    const TextParagraph plain;
     auto flush = [&] {
-      for (auto& l : paragraph(text, owner, out.styles, r.wrap, current)) {
-        l.justify = paragraphs < r.justify.size() ? r.justify[paragraphs] : -1;
+      for (auto& l : paragraph(text, owner, out.styles, r.wrap, current, paragraphs < r.paragraphs.size() ? r.paragraphs[paragraphs] : plain, 4 * r.size))
         out.lines.push_back(std::move(l));
-      }
       text.clear();
       owner.clear();
       ++paragraphs;
@@ -1176,16 +1194,17 @@ TopoDS_Shape TextOutliner::outline(const TextRequest& r, const gp_Ax3& at, std::
                     : r.v == TextRequest::Descent ? last + styles[lines.back().style].descent * sy : 0;
   gp_Trsf place;
   place.SetDisplacement(gp_Ax3(gp::XOY()), at);
-  // The block (as wide as it wraps at, else its widest line) lies by the request's H; each line in it by its paragraph's.
+  // The block (as wide as it wraps at, else its widest line with its indents) lies by the request's H; each line in it
+  // (between its indents) by its paragraph's.
   double box = r.wrap > 0 ? r.wrap : 0;
   if (box == 0)
-    for (const auto& l : lines) box = std::max(box, l.width * sx);
+    for (const auto& l : lines) box = std::max(box, l.indent + l.width * sx + l.right);
   const double left = r.h == TextRequest::Center ? -box / 2 : r.h == TextRequest::Right ? -box : 0;
   for (size_t i = 0; i < lines.size(); ++i) {
     const int h = lines[i].justify >= 0 ? lines[i].justify : int(r.h);
-    const double w = lines[i].width * sx;
-    m->emit(lines[i], styles, left + (h == TextRequest::Center ? (box - w) / 2 : h == TextRequest::Right ? box - w : 0), dy + baseline[i], sx, sy,
-            place, builder, out, colored);
+    const double w = lines[i].width * sx, room = box - lines[i].indent - lines[i].right;
+    m->emit(lines[i], styles, left + lines[i].indent + (h == TextRequest::Center ? (room - w) / 2 : h == TextRequest::Right ? room - w : 0),
+            dy + baseline[i], sx, sy, place, builder, out, colored);
   }
   return out;
 }

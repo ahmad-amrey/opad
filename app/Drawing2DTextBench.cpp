@@ -26,8 +26,8 @@ using namespace bench2d;
 // word right-aligned on the guide line ends at it; Latin and Arabic in one line lie side by side, not on top of each
 // other; "III" in a shape font (.shx) beside the drawing is three strokes, lines without fills; MTEXT formatted part by
 // part shows its red part in red, its fraction's parts above the capitals and below the baseline over each other, and
-// its underline as one run of ink under the word; "I." in a right-to-left override is drawn ".I" (its leftmost ink is
-// the dot, low, not the stroke). <prefix>.png.
+// its underline as one run of ink under the word, its numbered list's items 3 text heights (15 mm) right of their
+// numbers; "I." in a right-to-left override is drawn ".I" (its leftmost ink is the dot, low, not the stroke). <prefix>.png.
 OPAD_BENCH(OPAD_BENCH_TEXT2D, text2d) {
   auto all = std::make_shared<bool>(true);
   Check require = [all](bool ok, const QString& what) {
@@ -155,6 +155,24 @@ OPAD_BENCH(OPAD_BENCH_TEXT2D, text2d) {
         for (int x = std::max(0, under.left() - 2), run = 0; x <= std::min(image.width() - 1, under.right() + 2); ++x)
           longest = std::max(longest, run = ink(x, y) ? run + 1 : 0);
       require(longest >= 0.8 * under.width(), QString("the underline is one run of ink under its word (%1 of %2 px)").arg(longest).arg(under.width()));
+      // The list (List: "\pxi-3,l3,t3;1.^I{\C1;HE}\P2.^I{\C1;EH}", 5 high): its red items start 15 mm right of its numbers.
+      const std::string list = layerNamed(scene, "List");
+      std::string items;
+      for (const auto& id : list.empty() ? std::vector<std::string>{} : scene.bodies_under(list))
+        if (scene.node(id)->has_color) items = id;
+      int numbers = 1 << 30, firstRed = 1 << 30;
+      if (!items.empty()) {
+        const QRect all = pixels(list);
+        for (int y = std::max(0, all.top()); y <= std::min(image.height() - 1, all.bottom()); ++y)
+          for (int x = std::max(0, all.left() - 2); x <= std::min(image.width() - 1, all.right() + 2); ++x) {
+            const QColor c = image.pixelColor(x, y);
+            if (c.red() > 150 && c.green() < 90 && c.blue() < 90) firstRed = std::min(firstRed, x);
+            else if (ink(x, y)) numbers = std::min(numbers, x);
+          }
+      }
+      const double mm = area(0, 0, 100, 0).width() / 100.0;  // pixels per mm
+      require(!items.empty() && std::abs(firstRed - numbers - 15 * mm) < 1.2 * mm,
+              QString("the numbered list's items start 15 mm right of their numbers (%1 px, 15 mm = %2 px)").arg(firstRed - numbers).arg(15 * mm, 0, 'f', 1));
       // An explicit override (RLO "I." PDF): the leftmost column of ink is the dot's, short, not the full-height stroke's.
       const std::string override = layerNamed(scene, "Override");
       const QRect turned = override.empty() ? QRect() : pixels(override);
