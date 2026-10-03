@@ -1,6 +1,7 @@
 #include "DesignController.hpp"
 #include "opad/inspect.hpp"
 #include "DimensionHandle.hpp"
+#include "ToolValues.hpp"
 #include "CurveSamples.hpp"
 #include <TopExp.hxx>
 #include <TopExp_Explorer.hxx>
@@ -129,8 +130,26 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
     : QObject(window), m_doc(doc), m_viewport(viewport), m_jobs(jobs), m_window(window) {
   m_form = new FeaturePanel(doc, window);
   m_distanceHandle=new DimensionHandle(viewport,jobs);
-  connect(m_distanceHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){if(m_featureOn)m_form->setValue("distance",text.toStdString());});
+  connect(m_distanceHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){
+    if(!m_featureOn)return;
+    m_form->setValue("distance",text.toStdString());m_distanceHandle->setProblem("value",m_form->problem("distance"));
+  });
+  connect(m_distanceHandle,&DimensionHandle::extraEdited,this,&DesignController::typeValue);  // the taper and the others by the arrow
   connect(m_distanceHandle,&DimensionHandle::accepted,this,[this]{if(m_featureOn)runPreview(true);});  // Enter in the box: OK
+  // Typed values (UI-122): while a feature with values is open, digits and Tab over the view or a panel are its, never the
+  // filters' or the display styles' keys; the boxes beside the pointer, or by the extrude's arrow while it shows.
+  m_values = new ToolValues(viewport, this);
+  m_values->setHandle(m_distanceHandle);
+  m_distanceHandle->setCapturesKeys(false);
+  m_values->fields = [this] {
+    if (!m_featureOn || m_pickPlane || m_sketch->active()) return QList<DynamicInput::Field>{};
+    // The arrow's boxes take over once it shows, unless these are being typed into (keys typed before the preview came).
+    const DynamicInput* typing = m_values->input();
+    return m_distanceHandle->isVisible() && !typing->typed() && !typing->editing() ? QList<DynamicInput::Field>{} : valueFields();
+  };
+  m_values->edited = [this](const QString& key, const QString& value) { typeValue(key, value); };
+  m_values->commit = [this] { if (m_featureOn) runPreview(true); };
+  m_values->escape = [this] { escape(); };
   m_sketch = new SketchEditor(doc, viewport, jobs, this);
   m_planePicker=new PlanePicker(doc,viewport,jobs,window);
   m_planePicker->accepted=[this](const opad::json& plane,const opad::Frame& frame){
@@ -158,6 +177,7 @@ DesignController::DesignController(AppDocument* doc, Viewport* viewport, JobRunn
   m_previewTimer.setInterval(280);
   connect(&m_previewTimer, &QTimer::timeout, this, [this] { runPreview(false); });
   connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::schedulePreview);
+  connect(m_form, &FeaturePanel::inputsChanged, this, &DesignController::refreshValues);
   connect(m_form, &FeaturePanel::activeInputChanged, this, &DesignController::activateInput);
   connect(m_form, &FeaturePanel::ruleRequested, this, &DesignController::offerRules);
   connect(m_form, &FeaturePanel::accepted, this, [this] { runPreview(true); });
@@ -351,6 +371,7 @@ void DesignController::editOp(const std::string& opId) {
 
 void DesignController::endFeature() {
   m_distanceHandle->hide();
+  m_values->reset();
   if (!m_featureOn) return;
   m_featureOn = false;
   ++m_planSerial;
@@ -648,6 +669,38 @@ void DesignController::viewportSelectionChanged() {
   else if (in->max_count > 0 && static_cast<int>(picks.size()) == in->max_count) m_form->activateNextPick();
 }
 
+DimensionHandle* DesignController::distanceHandle() const { return m_distanceHandle; }
+
+// The panel's values that show, in its order (UI-122): one box each, grey with what the panel holds until typed into.
+QList<DynamicInput::Field> DesignController::valueFields(const QString& except) const {
+  QList<DynamicInput::Field> out;
+  for (const QString& name : m_form->valueInputs()) {
+    const InputSpec* in = m_form->input(name);
+    if (name != except && in) out << ToolValues::box(name, i18n::t(QString::fromStdString(in->label)), m_form->valueText(name));
+  }
+  return out;
+}
+
+// What is typed goes into the panel at once (the preview follows as for a value typed there); a bare number in an angle's
+// box is in the shown unit (UI-123). A box whose text does not evaluate turns red and says why.
+void DesignController::typeValue(const QString& key, QString value) {
+  const InputSpec* in = m_featureOn ? m_form->input(key) : nullptr;
+  if (!in) return;
+  bool plain = false;
+  value.trimmed().toDouble(&plain);
+  if (plain && in->type == "angle") value = value.trimmed() + (units::current().radians ? " rad" : " deg");
+  m_form->setValue(key, value.toStdString());
+  const QString problem = m_form->problem(key);
+  m_values->input()->setProblem(key, problem);
+  m_distanceHandle->setProblem(key, problem);
+}
+
+void DesignController::refreshValues() {
+  if (!m_featureOn) return;
+  m_values->refresh();
+  if (m_distanceHandle->isVisible()) m_distanceHandle->setExtraFields(valueFields("distance"));
+}
+
 void DesignController::schedulePreview() {
   if (!m_featureOn) return;
   m_readyPlan.reset();
@@ -860,10 +913,12 @@ void DesignController::runPreview(bool commit) {
         }
         m_distanceHandle->setScale(symmetric?0.5:1.0);  // a symmetric extrusion's end moves half the distance: so does the arrow
         m_distanceHandle->setAnchorSegments(std::move(*anchors));
+        m_distanceHandle->setExtraFields(valueFields("distance"));  // Tab goes on to the taper (UI-122)
         m_distanceHandle->configure(origin,axis,value,QString::fromStdString(m_form->inputs().at("distance").get<std::string>()));
       }
     }
     if(!hasHandle)m_distanceHandle->hide();
+    m_values->refresh();  // the boxes beside the pointer give way to the handle's
     std::vector<Viewport::PreviewPart> parts;
     std::vector<std::string> hidden;
     for (size_t i = 0; i < plan->changed.size(); ++i) {

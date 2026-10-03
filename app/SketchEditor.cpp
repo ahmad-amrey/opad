@@ -28,6 +28,7 @@
 #include <QPointer>
 #include <QFontMetricsF>
 #include <QPainterPath>
+#include <QCursor>
 #include <cmath>
 
 #include "I18n.hpp"
@@ -46,14 +47,13 @@ Quantity_Color occ(const QColor& c) { return Quantity_Color(c.redF(), c.greenF()
 // ---------------------------------------------------------------- the overlay object
 // Everything the editor shows, as plain arrays it fills before each redisplay: never pickable (the editor
 // hit-tests in sketch coordinates itself), drawn in the Topmost layer.
-class SketchPrs : public AIS_InteractiveObject {
-  DEFINE_STANDARD_RTTI_INLINE(SketchPrs, AIS_InteractiveObject)
- public:
-  struct Seg { opad::Vec3 a, b; QColor c; };
-  struct Pt { opad::Vec3 p; QColor c; };
-  struct Txt { opad::Vec3 p; QString s; QColor c; bool left = false; };  // left: starts at p (labels beside the cursor)
+struct SketchDrawing {
+  struct Seg { opad::Vec3 a, b; QColor c; bool operator==(const Seg&) const = default; };
+  struct Pt { opad::Vec3 p; QColor c; bool operator==(const Pt&) const = default; };
+  struct Txt { opad::Vec3 p; QString s; QColor c; bool left = false; bool operator==(const Txt&) const = default; };  // left: starts at p (labels beside the cursor)
   std::vector<Seg> solid, dashed, thin, marks;  // marks: snap markers and constraint pictograms (SnapMarkers.hpp), 1.5 px
   std::vector<Seg> locked;                      // the line a Shift lock holds the pointer to: thick dashed, 3 px
+  std::vector<Seg> cursor, cursorHalo;          // the drawing cursor (grid snapping): 1 px on a 3 px halo, over everything
   std::vector<Pt> points, bigPoints;
   std::vector<Pt> dots;  // coincidences (UI-24): a filled dot on the point, over its ring
   std::vector<Txt> texts;
@@ -65,7 +65,12 @@ class SketchPrs : public AIS_InteractiveObject {
   // 100 % and 150 % (at 1.0 they were tiny on a 4K screen).
   double scale = 1.0;
   std::string font;
+  bool operator==(const SketchDrawing&) const = default;  // the same picture: no redisplay (a move within a grid cell)
+};
 
+class SketchPrs : public AIS_InteractiveObject, public SketchDrawing {
+  DEFINE_STANDARD_RTTI_INLINE(SketchPrs, AIS_InteractiveObject)
+ public:
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)&, const Handle(Prs3d_Presentation)& prs, const Standard_Integer) override {
     if (!fill.empty()) {
@@ -146,6 +151,10 @@ class SketchPrs : public AIS_InteractiveObject {
       text->SetVerticalAlignment(Graphic3d_VTA_CENTER);
       g->AddText(text);
     }
+    // Whole device pixels, so the cursor stays crisp at 150 %.
+    const double hair = std::max(1.0, std::round(scale));
+    lines(cursorHalo, Aspect_TOL_SOLID, hair + 2);
+    lines(cursor, Aspect_TOL_SOLID, hair);
   }
   void ComputeSelection(const Handle(SelectMgr_Selection)&, const Standard_Integer) override {}
 };
@@ -183,8 +192,15 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   });
   m_input->setKeyHook([this](int box,QChar c){return m_active && entryKey(box,c);});
   connect(units::notifier(),&units::Notifier::changed,this,[this]{if(m_active)rebuild();});  // dimension labels in the shown unit
+  // Grid snapping on or off (F9, the panel's checkbox): the pointer's snap again, the drawing cursor or the pointer.
+  connect(m_viewport,&Viewport::gridSnapChanged,this,[this]{if(m_active)resnap();});
+  // The system pointer blank (the cursor drawn) or back: drawn or gone at once. Blank again after a camera gesture or a
+  // menu, the pointer may have moved meanwhile: the snap where it is now, so a click without a move goes where it is drawn.
+  connect(m_viewport,&Viewport::ownCursorChanged,this,[this](bool shown){if(m_active && !m_inTransient && !(shown && followPointer()))updateTransient();});
   connect(m_viewport,&Viewport::notesMoved,this,[this] {
     if(!m_active) return;
+    // The camera moved under a still pointer (the wheel zooms about it, the step may change): the drawing cursor's node again.
+    if(m_inView && m_viewport->ownCursor())followPointer();
     const double pixels=m_viewport->pixelSize();
     if(pixels<m_samplePixelSize*.75 || pixels>m_samplePixelSize*1.5) rebuild();
     if(m_dimEdit && m_dimEdit->isVisible())if(const auto* c=m_sk.constraint(m_dimEditing)) {  // the value box stays on its label
@@ -241,7 +257,7 @@ SketchEditor::~SketchEditor() {delete m_dimensionHandle;delete m_input;}
 void SketchEditor::setVisible(bool visible) {
   if(!m_active || m_visible==visible)return;
   m_visible=visible;
-  updateDimensionHandle();updateInput();
+  updateDimensionHandle();updateInput();m_viewport->setOwnCursor(drawsCursor());
   for(const auto& prs:{m_prs,m_transientPrs,m_toolPreviewOverlay}) {
     if(visible)m_viewport->showOverlay(prs);else m_viewport->removeOverlay(prs);
   }
@@ -494,12 +510,18 @@ SketchEditor::Hit SketchEditor::hitTest(double u, double v) const {
   return hit;
 }
 
-SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
+SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer, bool grid) const {
   Snap s;
   s.u = u;
   s.v = v;
-  if(!infer || !m_geometry || m_geometryJob)return s; // Alt suppresses inference, automatic coincidence and the grid
-  const double t = tol(), step = m_viewport->gridSnap() ? m_viewport->gridStep() : 0;
+  if(!infer)return s; // Alt suppresses inference, automatic coincidence and the grid
+  // Grid snapping takes the points a tool places; a pick (trim, a dimension's curve, a constraint) is where the pointer is.
+  const double step = grid && gridPoints() && m_viewport->gridSnap() ? m_viewport->gridStep() : 0;
+  if(!m_geometry || m_geometryJob) {  // a large sketch's curves being prepared: the grid alone meanwhile (the cursor moves on)
+    if(step>0){s.u=sketchsnap::onGrid(u,step);s.v=sketchsnap::onGrid(v,step);s.grid=true;s.kind=Snap::Kind::Grid;}
+    return s;
+  }
+  const double t = tol();
   // What is near the pointer, never the whole sketch, and the settings as read (UI-27).
   const Settings& on = m_settings;
   const bool automatic = on.inference, extensions = on.extensions, tracking = on.tracking;
@@ -662,10 +684,14 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
     if(k<0 || k>1)guide({p->x,p->y,dx/len,dy/len,p->id},{Snap::Kind::Extension,e.id,false,false,{SkConstraint::Type::Coincident,e.id}});
   }
   sketchsnap::Guide ray{0,0,1,0,fid};
-  const bool angled=from && on.angle && sketchsnap::angleRay(fx,fy,pu,pv,on.angleStep*M_PI/180,t,ray);
-  // The lines, circles and arcs under the pointer: it lands on the nearest, or where a guide crosses one. Locked: those
-  // along the locked line within reach (the view's diagonal) of where the stops are counted from, the pointer (or where
-  // it was when a Shift tap showed one).
+  // With a grid (and nothing locked) the angle only names a node exactly on one of its rays: the point stays on the node.
+  const double gu=sketchsnap::onGrid(pu,step>0?step:1),gv=sketchsnap::onGrid(pv,step>0?step:1);
+  const bool nodes=step>0 && !lock;
+  const bool angled=from && on.angle && (nodes?sketchsnap::angleRay(fx,fy,gu,gv,on.angleStep*M_PI/180,step*1e-6,ray)
+                                             :sketchsnap::angleRay(fx,fy,pu,pv,on.angleStep*M_PI/180,t,ray));
+  // The lines, circles and arcs under the pointer: it lands on the nearest, or where a guide crosses one (with a grid,
+  // also those through the node, which then lies on them). Locked: those along the locked line within reach (the view's
+  // diagonal) of where the stops are counted from, the pointer (or where it was when a Shift tap showed one).
   const double reach=std::hypot(m_viewport->width(),m_viewport->height())*m_viewport->pixelSize();
   double su=u,sv=v;
   if(lock && lock->stop>=0){su=lock->su;sv=lock->sv;}
@@ -683,6 +709,15 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
     sketchsnap::Curve c;
     if(!curveOf(e,c) || (!lock && distanceTo(e,pu,pv)>=t))continue;
     curves.push_back(c);curveIds.push_back(e.id);
+  }
+  if(on.nearest && nodes) {
+    const double onNode=step*1e-6;
+    for(size_t index:m_geometry->query(gu-onNode,gv-onNode,gu+onNode,gv+onNode).entities) {
+      const auto& e=m_sk.entities[index];
+      sketchsnap::Curve c;
+      if(std::find(curveIds.begin(),curveIds.end(),e.id)!=curveIds.end() || !curveOf(e,c))continue;
+      if(double fu,fv;sketchsnap::foot(c,gu,gv,fu,fv)<onNode){curves.push_back(c);curveIds.push_back(e.id);}
+    }
   }
   using By=sketchsnap::Pick::By;
   if(lock) {  // along the locked line: where another guide, the angle ray or a curve crosses it, else a grid line
@@ -717,7 +752,7 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   } else {
     const auto pick=sketchsnap::resolve(u,v,t,step,guides,angled?&ray:nullptr,curves);
     s.u=pick.u;s.v=pick.v;
-    s.grid=step>0 && (pick.by==By::Node || pick.by==By::Guide || pick.by==By::Ray || pick.by==By::Grid);
+    s.grid=pick.by==By::Node;
     auto follow=[&](int i){  // what a guide adds: its constraint, or the guide to draw; and the line Shift locks onto
       const auto& m=meaning[size_t(i)];
       s.horizontal|=m.horizontal;s.vertical|=m.vertical;
@@ -734,15 +769,40 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
         s.other=pick.other>=0?guides[size_t(pick.other)].anchor:pick.ray && pick.guide>=0?fid:0;
         if(pick.curve>=0){s.curve=curveIds[size_t(pick.curve)];s.entity=automatic?s.curve:0;}
         break;
-      case By::Node:  // a guide or the angle ray through the node names it
+      case By::Node:  // a guide or the angle ray through the node names it; a curve through it holds it
         s.kind=Snap::Kind::Grid;
         if(pick.guide>=0)follow(pick.guide);
         else if(pick.ray){s.kind=Snap::Kind::Angle;s.target=fid;s.line=ray;s.onLine=true;}
+        if(pick.curve>=0){s.curve=curveIds[size_t(pick.curve)];s.entity=automatic?s.curve:0;}
+        {  // a point already on the node, or a hair off it (under the drawn cursor): that one, as its snap, never a second
+           // point beside it (the object snaps above are measured from the hidden pointer, up to half a step away)
+          const double hair=2*m_viewport->pixelSize();
+          int there=0;
+          double best=hair;
+          for(size_t index:m_geometry->query(s.u-hair,s.v-hair,s.u+hair,s.v+hair).points) {
+            if(index>=m_sk.points.size())continue;
+            const auto& p=m_sk.points[index];
+            if(from && p.id==fid)continue;
+            if(!m_chain.empty() && p.id==m_chain.back())continue;
+            if(const double d=std::hypot(p.x-s.u,p.y-s.v);d<best){best=d;there=p.id;}
+          }
+          if(there) {
+            const auto& p=*m_sk.point(there);
+            s.u=p.x;s.v=p.y;s.grid=best<1e-9*std::max(1.0,step);
+            if(!s.grid)s.horizontal=s.vertical=false;  // off the node: no longer level with what the node was
+            s.point=there;s.kind=Snap::Kind::Point;s.target=there;s.entity=s.curve=0;s.holds.clear();
+          }
+        }
+        if(!s.onLine) {  // the pointer on a guide or the angle ray that misses the node: Shift locks onto it (lockOn; the prompt says so)
+          double nearest=t;
+          for(const auto& g:guides)if(const double d=sketchsnap::distance(g,u,v);d<nearest){nearest=d;s.line=g;s.onLine=true;}
+          sketchsnap::Guide held{0,0,1,0,fid};
+          if(!s.onLine && from && on.angle && sketchsnap::angleRay(fx,fy,u,v,on.angleStep*M_PI/180,t,held)){s.line=held;s.onLine=true;}
+        }
         break;
       case By::Guide: follow(pick.guide);break;
       case By::Ray: s.kind=Snap::Kind::Angle;s.target=fid;s.line=ray;s.onLine=true;break;
       case By::Curve: s.target=curveIds[size_t(pick.curve)];s.entity=automatic?s.target:0;s.kind=Snap::Kind::Curve;break;
-      case By::Grid: s.kind=Snap::Kind::Grid;break;
       case By::Pointer: break;
     }
   }
@@ -870,14 +930,58 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
   m_shiftUsed = true;  // Shift with a click is no tap
   if (m_lock) m_shiftSpent = mods.testFlag(Qt::ShiftModifier) || m_shiftDown;  // the lock was this click's: Shift again for the next
   if (pointTyped()) { useTyped(&s); return; }  // the typed values win
+  const bool gridded = gridPoints();
   click(s, mods);
+  if (m_active && gridPoints() != gridded && m_viewport->gridSnap()) resnap();  // a tangent arc's end: on the grid from now
+}
+
+bool SketchEditor::dragSnap(double u, double v, Qt::KeyboardModifiers mods, double& su, double& sv, double& r) {
+  const double du = u - m_dragU, dv = v - m_dragV;
+  su = du;
+  sv = dv;
+  r = 0;
+  // Grid snapping: the grabbed point (a curve's first one) lands on a grid node and the rest moves with it; a rim drag takes
+  // whole steps of radius. Alt drags freely.
+  const double step = m_viewport->gridSnap() && !mods.testFlag(Qt::AltModifier) ? m_viewport->gridStep() : 0;
+  m_dragGrid = step > 0;
+  m_dragCursorU = u;
+  m_dragCursorV = v;
+  const SkEntity* e = m_dragHit.kind == Hit::Entity ? m_sk.entity(m_dragHit.id) : nullptr;
+  if (e && e->type == SkEntity::Type::Circle && !e->fixed) {  // the rim: the radius, the cursor on the rim where the hand is
+    if (const SkPoint* c = m_sk.point(e->p[0])) {
+      const double d = std::hypot(u - c->x, v - c->y);
+      r = step > 0 ? std::max(step, sketchsnap::onGrid(d, step)) : std::max(1e-3, d);
+      if (d > 1e-12) {
+        m_dragGridU = m_dragCursorU = c->x + (u - c->x) * r / d;
+        m_dragGridV = m_dragCursorV = c->y + (v - c->y) * r / d;
+      }
+    }
+    return m_dragGrid;
+  }
+  if (step > 0 && !m_dragStart.empty()) {
+    const auto& at = m_dragStart.front().second;
+    m_dragGridU = sketchsnap::onGrid(at.first + du, step);
+    m_dragGridV = sketchsnap::onGrid(at.second + dv, step);
+    su = m_dragGridU - at.first;
+    sv = m_dragGridV - at.second;
+    // The cursor: on that node when a point is dragged; a curve's first point can be far from the hand (a line's start,
+    // an arc's centre), so there it is where the hand took the curve, moved by the same whole steps.
+    if (m_dragHit.kind == Hit::Point) m_dragCursorU = m_dragGridU, m_dragCursorV = m_dragGridV;
+    else m_dragCursorU = m_dragU + su, m_dragCursorV = m_dragV + sv;
+  }
+  return m_dragGrid;
 }
 
 void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bool dragging) {
   if (!m_active) return;
   if(m_boxSelecting && dragging) {m_boxU=u;m_boxV=v;updateTransient();return;}
   if (m_tool == "select" && dragging && m_dragging) {
-    if(m_editJob){m_dragPending=true;m_dragNextU=u;m_dragNextV=v;return;}
+    if(m_editJob) {  // the last solve still runs (a large sketch): the drawing cursor follows the hand meanwhile
+      m_dragPending=true;m_dragNextU=u;m_dragNextV=v;m_dragNextMods=mods;
+      double su,sv,radius;
+      if(m_dragMoved && m_dragHit.kind!=Hit::Dimension && dragSnap(u,v,mods,su,sv,radius))updateTransient();
+      return;
+    }
     if (!m_dragMoved && std::hypot(u - m_dragU, v - m_dragV) < 0.5 * tol()) return;
     if (!m_dragMoved) {
       m_dragMoved = true;
@@ -896,27 +1000,10 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
     }
     Sketch attempt = m_sk; // carry forward the last constrained solution during a drag
     SolveOptions opt=solveOptions();
-    // Grid snapping: the grabbed point (a curve's first one) lands on a grid node and the rest moves with it; a rim
-    // drag takes whole steps of radius. Alt drags freely.
-    const double step=m_viewport->gridSnap() && !mods.testFlag(Qt::AltModifier)?m_viewport->gridStep():0;
-    m_dragGrid=step>0;
-    const SkEntity* e = m_dragHit.kind == Hit::Entity ? attempt.entity(m_dragHit.id) : nullptr;
-    if (e && e->type == SkEntity::Type::Circle && !e->fixed) {
-      // Dragging the rim changes the radius (unless a dimension holds it: the solver pulls it back).
-      if (const SkPoint* c = attempt.point(e->p[0])) {
-        const double d=std::hypot(u-c->x,v-c->y),r=step>0?std::max(step,sketchsnap::onGrid(d,step)):std::max(1e-3,d);
-        attempt.entity(m_dragHit.id)->r = r;
-        if(d>1e-12){m_dragGridU=c->x+(u-c->x)*r/d;m_dragGridV=c->y+(v-c->y)*r/d;}
-      }
-    } else {
-      double su=du,sv=dv;
-      if(step>0 && !m_dragStart.empty()) {
-        const auto& at=m_dragStart.front().second;
-        m_dragGridU=sketchsnap::onGrid(at.first+du,step);m_dragGridV=sketchsnap::onGrid(at.second+dv,step);
-        su=m_dragGridU-at.first;sv=m_dragGridV-at.second;
-      }
-      for (const auto& [pid, at] : m_dragStart) opt.drags.push_back({pid, at.first + su, at.second + sv});
-    }
+    double su=du,sv=dv,radius=0;
+    dragSnap(u,v,mods,su,sv,radius);
+    if(radius>0)attempt.entity(m_dragHit.id)->r = radius;  // the rim (unless a dimension holds it: the solver pulls it back)
+    else for (const auto& [pid, at] : m_dragStart) opt.drags.push_back({pid, at.first + su, at.second + sv});
     if(attempt.points.size()>300) {
       const auto result=std::make_shared<Sketch>(std::move(attempt));const auto solved=std::make_shared<SolveResult>();const int session=m_session;
       QPointer<SketchEditor> guard(this);
@@ -926,8 +1013,8 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
           if(ok&&solved->converged){m_sk=*result;m_solved=*solved;rebuild();}
           else if(!error.isEmpty())emit status(error);
           const bool released=m_dragReleased;
-          if(m_dragPending){m_dragPending=false;sketchMove(m_dragNextU,m_dragNextV,Qt::NoModifier,true);}
-          if(released)sketchRelease(m_dragNextU,m_dragNextV,Qt::NoModifier);
+          if(m_dragPending){m_dragPending=false;sketchMove(m_dragNextU,m_dragNextV,m_dragNextMods,true);}
+          if(released)sketchRelease(m_dragNextU,m_dragNextV,m_dragNextMods);
         });
       return;
     }
@@ -971,7 +1058,11 @@ void SketchEditor::sketchLeave() {
   m_dwellPoint = 0;
   m_dwellTimer.stop();
   noteHints();
-  if (!m_active || m_hover.kind == Hit::None) return;
+  if (!m_active) return;
+  if (m_hover.kind == Hit::None) {
+    if (m_drawnCursor && !m_dragging) updateTransient();  // the drawing cursor goes with the pointer
+    return;
+  }
   const bool dimension = m_hover.kind == Hit::Dimension;
   m_hover = Hit{};
   if (dimension) rebuild();
@@ -985,20 +1076,41 @@ bool SketchEditor::placing() const {
   return tools.contains(m_tool);
 }
 
+bool SketchEditor::gridPoints() const { return placing() || (m_tool == "tangent_arc" && m_clicks.size() == 1); }
+
+void SketchEditor::altKey(bool pressed) {
+  if (!m_active || m_lastMods.testFlag(Qt::AltModifier) == pressed) return;
+  m_lastMods.setFlag(Qt::AltModifier, pressed);
+  resnap();
+}
+
+bool SketchEditor::followPointer() {
+  if (!m_active || m_dragging || m_boxSelecting || m_tool == "select" || !m_viewport->isVisible()) return false;
+  const QPoint global = QCursor::pos(), at = m_viewport->mapFromGlobal(global);
+  if (QApplication::widgetAt(global) != m_viewport) return false;  // off the view, over an overlay on it or a window over it
+  double u, v;
+  if (!m_viewport->planePoint(QPointF(at), m_frame, u, v)) return false;
+  sketchMove(u, v, m_lastMods, false);
+  return true;
+}
+
 // Shift locks the pointer onto the guide or angle ray it is on; off them, onto the way to it from the last point (of the
 // polyline, or the shape's last click), else from the newest tracked point.
 bool SketchEditor::lockOn() {
   if (m_lock || !m_haveCursor || !placing()) return false;
+  // With grid snapping the pointer's point is a node: the guide or the angle ray the pointer itself is on, and what it
+  // means, are as without the grid (along the lock the stops are then on grid lines).
+  const Snap on = m_viewport->gridSnap() && m_inView ? snap(m_lastU, m_lastV, !m_lastMods.testFlag(Qt::AltModifier), false) : m_pointer;
   Lock lock;
-  if (m_pointer.onLine) {
-    lock.line = m_pointer.line;
-    lock.horizontal = m_pointer.horizontal;
-    lock.vertical = m_pointer.vertical;
-    lock.holds = m_pointer.holds;  // level with a tracked point, on a line's extension: still so along it
+  if (on.onLine) {
+    lock.line = on.line;
+    lock.horizontal = on.horizontal;
+    lock.vertical = on.vertical;
+    lock.holds = on.holds;  // level with a tracked point, on a line's extension: still so along it
   } else {
     const SkPoint* p = m_sk.point(!m_chain.empty() ? m_chain.back() : !m_clicks.empty() ? m_clicks.back().point : m_tracked.empty() ? 0 : m_tracked.back());
     if (!p && m_clicks.empty()) return false;
-    const double x = p ? p->x : m_clicks.back().u, y = p ? p->y : m_clicks.back().v, dx = m_pointer.u - x, dy = m_pointer.v - y, len = std::hypot(dx, dy);
+    const double x = p ? p->x : m_clicks.back().u, y = p ? p->y : m_clicks.back().v, dx = m_pointer.u - x, dy = m_pointer.v - y, len = std::hypot(dx, dy);  // to the cursor
     if (!(len > 1e-9)) return false;
     lock.line = {x, y, dx / len, dy / len, p ? p->id : 0};
   }
@@ -1204,6 +1316,7 @@ bool SketchEditor::prepareGeometry() {
     if(!guard||!m_active||revision!=m_geometryRevision)return;m_geometryJob=nullptr;
     if(!ok){emit status(error);return;}
     m_geometry=*result;rebuild();
+    resnap();  // meanwhile the pointer had the grid alone: its object snaps again, so the cursor drawn and a click agree
   });return false;
 }
 
@@ -1506,6 +1619,16 @@ size_t SketchEditor::transientSolid(const QColor& c) const {
 }
 
 size_t SketchEditor::transientLocked() const { return m_transientPrs.IsNull() ? 0 : static_cast<const SketchPrs*>(m_transientPrs.get())->locked.size(); }
+size_t SketchEditor::transientCursor() const { return m_transientPrs.IsNull() ? 0 : static_cast<const SketchPrs*>(m_transientPrs.get())->cursor.size(); }
+
+bool SketchEditor::cursorCrisp() const {
+  if (m_transientPrs.IsNull()) return false;
+  const auto& c = static_cast<const SketchPrs*>(m_transientPrs.get())->cursor;
+  if (c.size() != 4) return false;
+  const int hair = int(std::max(1.0, std::round(m_viewport->displayScale())));
+  // crosshair(): a horizontal arm, then a vertical one (SnapMarkers.hpp): on whole pixels across them
+  return std::abs(m_viewport->pixelAlign(c[0].a, hair).y()) < 0.01 && std::abs(m_viewport->pixelAlign(c[2].a, hair).x()) < 0.01;
+}
 
 const std::vector<std::vector<std::pair<double, double>>>& SketchEditor::textPreview() {
   const QString text = option("text", "OPAD"), style = option("textStyle", "outline");
@@ -1557,17 +1680,56 @@ void SketchEditor::setShowConstraints(bool on) {
   emit changed();
 }
 
+// Grid snapping: the drawing cursor jumps between the nodes (AutoCAD's SNAP), so the editor draws it at the snapped point
+// and the system pointer is hidden over the view, while a tool takes points (Alt frees it) and while a dragged point
+// snaps to the nodes.
+bool SketchEditor::drawsCursor() const {
+  if (!m_active || !m_visible || m_transientPrs.IsNull() || !m_viewport->gridSnap()) return false;
+  if (m_tool == "select") return m_dragging && m_dragMoved && m_dragGrid;
+  return gridPoints() && !m_lastMods.testFlag(Qt::AltModifier);
+}
+
 void SketchEditor::updateTransient() {
-  if(m_transientPrs.IsNull() || !m_geometry || m_geometryJob)return;
+  m_inTransient = true;
+  m_viewport->setOwnCursor(drawsCursor());  // ownCursorChanged lands here again: this call draws what it means
+  m_inTransient = false;
+  if(m_transientPrs.IsNull())return;
   auto& d=*static_cast<SketchPrs*>(m_transientPrs.get());
-  d.solid.clear();d.thin.clear();d.dashed.clear();d.marks.clear();d.locked.clear();d.points.clear();d.bigPoints.clear();d.texts.clear();d.fill.clear();
-  const auto& t=m_viewport->tokens();d.textBack=t.bg2;d.scale=m_viewport->displayScale();d.font=theme::ui().family().toStdString();
+  const SketchDrawing before=d;  // the same picture again (a move within one grid cell): no redisplay, no frame
+  const auto& t=m_viewport->tokens();
   auto W=[&](double u,double v){return m_frame.to_world(u,v);};
   const double px=m_viewport->pixelSize();
   // Snap markers and pictograms face the viewer (SnapMarkers.hpp): one pixel right (rx, ry) and up (ux, uy) on the screen,
   // in sketch coordinates.
   double rx=px,ry=0,ux=0,uy=px;
   pixelAxes(rx,ry,ux,uy);
+  // The drawing cursor where the click goes (the pointer's snap; typed values move the rubber band, not the cursor), or
+  // where a drag takes the hand; while the system pointer is hidden for it, and the pointer is over the view.
+  auto drawCursor=[&] {
+    d.cursor.clear();d.cursorHalo.clear();
+    m_drawnCursor.reset();
+    if(!m_viewport->ownCursor() || !(m_inView || m_dragging))return;
+    const double x=m_tool=="select"?m_dragCursorU:m_pointer.u,y=m_tool=="select"?m_dragCursorV:m_pointer.v;
+    m_drawnCursor=std::make_pair(x,y);
+    // On whole device pixels (SketchPrs draws it round(scale) px wide), so it is crisp wherever the node falls on the screen.
+    const QPointF shift=m_viewport->pixelAlign(W(x,y),int(std::max(1.0,std::round(m_viewport->displayScale()))));
+    const double cx=x+shift.x()*rx-shift.y()*ux,cy=y+shift.x()*ry-shift.y()*uy;
+    auto at=[&](double sx,double sy){return W(cx+sx*rx+sy*ux,cy+sx*ry+sy*uy);};
+    for(const auto& s:snapmarkers::crosshair()) {
+      d.cursorHalo.push_back({at(s.x0,s.y0),at(s.x1,s.y1),t.vp});
+      d.cursor.push_back({at(s.x0,s.y0),at(s.x1,s.y1),t.fg});
+    }
+  };
+  auto show=[&] {
+    drawCursor();
+    if(static_cast<const SketchDrawing&>(d)==before)return;
+    ++m_transientRedisplays;
+    m_transientPrs->SetToUpdate();
+    if(m_visible)m_viewport->updateOverlay(m_transientPrs);
+  };
+  if(!m_geometry || m_geometryJob)return show();  // a large sketch's curves being prepared: only the cursor moves on meanwhile
+  d.solid.clear();d.thin.clear();d.dashed.clear();d.marks.clear();d.locked.clear();d.points.clear();d.bigPoints.clear();d.texts.clear();d.fill.clear();
+  d.textBack=t.bg2;d.scale=m_viewport->displayScale();d.font=theme::ui().family().toStdString();
   auto mark=[&](double x,double y,const std::vector<snapmarkers::Seg>& segs,double ox,double oy,const QColor& c) {  // (ox, oy): px off (x, y)
     auto at=[&](double sx,double sy){return W(x+(sx+ox)*rx+(sy+oy)*ux,y+(sx+ox)*ry+(sy+oy)*uy);};
     for(const auto& s:segs)d.marks.push_back({at(s.x0,s.y0),at(s.x1,s.y1),c});
@@ -1595,7 +1757,7 @@ void SketchEditor::updateTransient() {
       const auto arc=filletPreview(m_hover.id);
       for(size_t i=1;i<arc.size();++i)d.solid.push_back({W(arc[i-1].first,arc[i-1].second),W(arc[i].first,arc[i].second),t.hov});
     }
-  } else if(m_hover.kind==Hit::Entity) {
+  } else if(m_hover.kind==Hit::Entity && !(gridPoints() && m_viewport->ownCursor())) {  // on the grid only the snap's own curve lights up
     // Trim lights up the piece the click removes, in red; the whole curve read as "this curve goes".
     const auto piece=m_tool=="trim"&&m_haveCursor?trimPreview(m_hover.id,m_cursor.u,m_cursor.v):std::vector<std::pair<double,double>>{};
     if(!piece.empty())for(size_t i=1;i<piece.size();++i)d.solid.push_back({W(piece[i-1].first,piece[i-1].second),W(piece[i].first,piece[i].second),t.red});
@@ -1732,11 +1894,7 @@ void SketchEditor::updateTransient() {
           d.thin.push_back({W(x + 2.5 * px * std::cos(i * M_PI / 8), y + h + 2.5 * px * std::sin(i * M_PI / 8)), W(x + 2.5 * px * std::cos((i + 1) * M_PI / 8), y + h + 2.5 * px * std::sin((i + 1) * M_PI / 8)), color});
       }
     }
-    if (!placing()) {
-      m_transientPrs->SetToUpdate();
-      if (m_visible) m_viewport->updateOverlay(m_transientPrs);
-      return;
-    }
+    if (!placing()) return show();
     const bool snapped = m_cursor.kind != Snap::Kind::None || m_cursor.horizontal || m_cursor.vertical;
     // What the pointer is pulled to: that object is drawn in the inference colour and named beside the cursor, so
     // the user sees which point, curve or alignment will be used (and constrained) before clicking; an object snap by
@@ -1833,7 +1991,11 @@ void SketchEditor::updateTransient() {
         mark(cu, cv, snapmarkers::marker(M::Locked, 9), -14, 12, snapColor);  // the padlock above left: the label is above right
         break;
       }
-      case K::Grid: label = tr("Grid"); m_marker = M::Grid; break;
+      case K::Grid:  // a node; a curve through it, which the point will lie on, lit up
+        if (m_cursor.curve) curve(m_cursor.curve);
+        label = tr("Grid");
+        m_marker = M::Grid;
+        break;
       case K::Typed: {  // what the typed values hold the point to, dashed: the X or Y line, the ΔX/ΔY legs, the angle's ray
         double bu = 0, bv = 0;
         const bool base = inputBase(bu, bv);
@@ -1883,5 +2045,5 @@ void SketchEditor::updateTransient() {
     d.fillColor = t.bg2;
     d.fillAlpha = 0.92f;
   }
-  m_transientPrs->SetToUpdate();if(m_visible)m_viewport->updateOverlay(m_transientPrs);
+  show();
 }

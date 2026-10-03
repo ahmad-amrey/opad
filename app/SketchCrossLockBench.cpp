@@ -43,7 +43,8 @@ void SketchEditor::benchCrossLock() {
   QSettings().setValue("sketch/angleStep", 15);
   refreshSnap();  // read once, not per move (UI-27)
   f9->setChecked(false);
-  // A view about 105 mm across (as the grid bench): a 10 mm grid.
+  // A view about 105 mm across with the grid spacing set to 10 mm (152 px, kept up to a quarter of the view: automatic it would be 2 mm here).
+  m_viewport->configureGrid(10, 100);
   auto camera = [&](double scale) {
     m_viewport->setCameraJson({{"eye", {0, 0, 100}}, {"target", {0, 0, 0}}, {"up", {0, 1, 0}}, {"scale", scale}, {"projection", "orthographic"}, {"absolute", true}});
   };

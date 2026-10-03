@@ -1,6 +1,7 @@
 #include "MainWindow.hpp"
 #include "AgentBridge.hpp"
 #include "CheckPanel.hpp"
+#include "DrawingPlacer.hpp"
 #include "RecoveryManager.hpp"
 
 #include <QCloseEvent>
@@ -187,6 +188,11 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_section, &SectionPanel::pickRequested, this, [this] { startTool("sectionface"); });
   connect(m_section, &SectionPanel::enabledChanged, this, [this](bool on) {
     if (action("inspect.section")->isChecked() != on) action("inspect.section")->setChecked(on);
+  });
+  // Its offset typed from the keyboard while its panel is open and no other tool runs (UI-122).
+  m_section->takeValues(m_viewport, [this] {
+    return m_sectionPanel->isVisible() && m_section->enabled() && !m_design->featureActive() && !m_design->sketchActive() && !m_design->pickingPlane() &&
+           m_tool.id.isEmpty() && !m_drawingPlacer->active() && !m_annotationEditor;
   });
   connect(m_section, &SectionPanel::saveRequested, this, [this](const QString& name, const opad::Vec3& o, const opad::Vec3& n) {
     if (!requireEditable()) return;

@@ -11,6 +11,7 @@
 
 #include "Icons.hpp"
 #include "Theme.hpp"
+#include "ToolValues.hpp"
 #include "Units.hpp"
 #include "opad/inspect.hpp"
 
@@ -50,6 +51,7 @@ SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
       for (int k = 0; k < 4; ++k) m_axisButtons[k]->setChecked(k == i);
       m_pick = false;
       m_axis = i;
+      m_exact.reset();
       emitChange();
     });
   }
@@ -100,8 +102,11 @@ SectionPanel::SectionPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   save->setObjectName("primary");
   layout->addWidget(save);
 
+  connect(m_slider, &QSlider::actionTriggered, this, [this](int) { m_exact.reset(); });  // moved by hand: the slider's place
   connect(m_slider, &QSlider::valueChanged, this, [this](int) { emitChange(); });
-  connect(m_value, &QLineEdit::editingFinished, this, [this] { setAlong(m_value->text().section(' ', 0, 0).toDouble()); });
+  connect(m_value, &QLineEdit::editingFinished, this, [this] {  // in the shown unit ("0.5 in"), a bare number too
+    if (const auto mm = units::parse(units::Kind::Length, m_value->text())) setAlong(*mm);
+  });
   connect(m_flipButton, &QToolButton::toggled, this, [this](bool on) { m_flip = on; emitChange(); });
   connect(m_capButton, &QToolButton::toggled, this, [this](bool) { emitChange(); });
   connect(save, &QPushButton::clicked, this, [this] {
@@ -131,17 +136,22 @@ bool SectionPanel::pickRange(double& dmin, double& dmax) const {
 opad::Vec3 SectionPanel::origin() const {
   if (m_pick) {
     // The slider slides the picked plane along its normal; 0..1000 spans the model in that direction.
-    double dmin, dmax;
-    if (!pickRange(dmin, dmax)) return m_pickOrigin;
-    const double d = dmin + m_slider->value() / 1000.0 * (dmax - dmin);
+    double dmin = 0, dmax = 0;
+    if (!pickRange(dmin, dmax) && !m_exact) return m_pickOrigin;
+    const double d = m_exact ? *m_exact : dmin + m_slider->value() / 1000.0 * (dmax - dmin);
     const double d0 = m_pickOrigin[0] * m_pickNormal[0] + m_pickOrigin[1] * m_pickNormal[1] + m_pickOrigin[2] * m_pickNormal[2];
     return {m_pickOrigin[0] + m_pickNormal[0] * (d - d0), m_pickOrigin[1] + m_pickNormal[1] * (d - d0), m_pickOrigin[2] + m_pickNormal[2] * (d - d0)};
   }
   opad::Vec3 lo{0, 0, 0}, hi{0, 0, 0};
-  if (!opad::scene_bbox(m_doc->doc, m_doc->scene, {}, lo, hi)) return {0, 0, 0};
+  if (!opad::scene_bbox(m_doc->doc, m_doc->scene, {}, lo, hi)) lo = hi = {0, 0, 0};
   opad::Vec3 o{(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2};
-  o[m_axis] = lo[m_axis] + m_slider->value() / 1000.0 * (hi[m_axis] - lo[m_axis]);
+  o[m_axis] = m_exact ? *m_exact : lo[m_axis] + m_slider->value() / 1000.0 * (hi[m_axis] - lo[m_axis]);
   return o;
+}
+
+double SectionPanel::along() const {
+  const opad::Vec3 o = origin();
+  return m_pick ? o[0] * m_pickNormal[0] + o[1] * m_pickNormal[1] + o[2] * m_pickNormal[2] : o[m_axis];  // pick mode: along the face normal
 }
 
 opad::Vec3 SectionPanel::normal() const {
@@ -153,16 +163,23 @@ opad::Vec3 SectionPanel::normal() const {
 
 bool SectionPanel::caps() const { return m_capButton->isChecked(); }
 
+bool SectionPanel::range(double& lo, double& hi) const {
+  if (m_pick) return pickRange(lo, hi);
+  opad::Vec3 a, b;
+  if (!opad::scene_bbox(m_doc->doc, m_doc->scene, {}, a, b)) return false;
+  lo = a[m_axis];
+  hi = b[m_axis];
+  return hi > lo;
+}
+
 void SectionPanel::setAlong(double along) {
-  if (m_pick) {
-    double dmin, dmax;
-    if (pickRange(dmin, dmax)) m_slider->setValue(static_cast<int>(std::clamp((along - dmin) / (dmax - dmin), 0.0, 1.0) * 1000));
-    return;
+  m_exact = along;
+  double lo, hi;
+  if (range(lo, hi)) {
+    QSignalBlocker block(m_slider);
+    m_slider->setValue(static_cast<int>(std::lround(std::clamp((along - lo) / (hi - lo), 0.0, 1.0) * 1000)));
   }
-  opad::Vec3 lo, hi;
-  if (!opad::scene_bbox(m_doc->doc, m_doc->scene, {}, lo, hi)) return;
-  const double range = hi[m_axis] - lo[m_axis];
-  if (range > 0) m_slider->setValue(static_cast<int>(std::clamp((along - lo[m_axis]) / range, 0.0, 1.0) * 1000));
+  emitChange();
 }
 
 void SectionPanel::setOrigin(const opad::Vec3& o) {
@@ -177,8 +194,8 @@ void SectionPanel::emitChange() {
 
 void SectionPanel::describe() {
   const char axes[] = {'X', 'Y', 'Z'};
-  opad::Vec3 o = origin();
-  const double along = m_pick ? o[0] * m_pickNormal[0] + o[1] * m_pickNormal[1] + o[2] * m_pickNormal[2] : o[m_axis];  // pick mode: distance along the face normal
+  const opad::Vec3 o = origin();
+  const double along = this->along();
   m_value->setText(units::format(units::Kind::Length, along));
   m_state->setText(!m_enabled ? tr("Section off · press X or use Inspect › Section to enable")
                    : m_pick ? tr("Section along the picked face = %1 · drag the slider or the plane's edge, Shift+X flips").arg(units::format(units::Kind::Length, along))
@@ -196,6 +213,7 @@ void SectionPanel::flip() { m_flipButton->setChecked(!m_flipButton->isChecked())
 
 void SectionPanel::beginPick() {
   m_pick = true;
+  m_exact.reset();
   for (int k = 0; k < 4; ++k) m_axisButtons[k]->setChecked(k == 3);
   m_state->setText(tr("Pick face · click a planar face in the 3D view"));
   emit pickRequested();
@@ -203,6 +221,7 @@ void SectionPanel::beginPick() {
 
 void SectionPanel::setFromFace(const opad::Vec3& origin, const opad::Vec3& normal) {
   m_pick = true;
+  m_exact.reset();
   m_pickOrigin = origin;
   m_pickNormal = normal;
   for (int k = 0; k < 4; ++k) m_axisButtons[k]->setChecked(k == 3);
@@ -235,4 +254,22 @@ void SectionPanel::applyNamed(const std::string& id) {
       emit enabledChanged(true);
       return;
     }
+}
+
+void SectionPanel::takeValues(QWidget* view, std::function<bool()> active) {
+  m_values = new ToolValues(view, this);
+  m_values->fields = [this, active] {
+    if (!active()) return QList<DynamicInput::Field>{};
+    return QList<DynamicInput::Field>{ToolValues::box("offset", tr("Offset"), units::editable(units::Kind::Length, along()))};
+  };
+  m_values->edited = [this](const QString&, const QString& value) {  // or the place before, put back by Esc
+    const auto mm = units::parse(units::Kind::Length, value);
+    m_values->input()->setProblem("offset", mm ? QString() : tr("Not a length"));
+    if (mm) setAlong(*mm);
+  };
+}
+
+void SectionPanel::hideEvent(QHideEvent* e) {
+  QWidget::hideEvent(e);
+  if (m_values) m_values->reset();
 }

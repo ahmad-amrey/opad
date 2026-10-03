@@ -227,6 +227,14 @@ bool Viewport::eventFilter(QObject* object, QEvent* e) {
   // Esc on a tracking lock beats the window's Esc (the guided tool's step back): at the override stage, its press eaten.
   if (((e->type()==QEvent::ShortcutOverride && (object==this || underMouse())) || (e->type()==QEvent::KeyPress && m_eatEscape)) && trackingEscape(e))
     return true;
+  // A popup menu takes the mouse: the system pointer is back over the view while it is open (looked at once it is in).
+  if ((e->type()==QEvent::Show || e->type()==QEvent::Hide) && m_ownCursorWanted)
+    if (const auto* popup=qobject_cast<QWidget*>(object); popup && popup->windowType()==Qt::Popup)
+      QTimer::singleShot(0,this,[this]{applyOwnCursor();});
+  // Onto an overlay on the view (the prompt, the chips, a value box): Qt sends the view no Leave (it is still under the
+  // pointer, as the overlay's parent), but the sketch is not under the pointer any more, nor is the drawing cursor.
+  if (e->type()==QEvent::Enter && m_sketchInput && object!=this)
+    if (const auto* widget=qobject_cast<QWidget*>(object); widget && !widget->isWindow() && isAncestorOf(widget)) m_sketchInput->sketchLeave();
   if (e->type()==QEvent::ApplicationDeactivate) {
     setCenterPicking(false,m_trackingCursor);
     m_centerLocked=false; m_shift.deactivate(); refreshCenterStyles();

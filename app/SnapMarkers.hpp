@@ -89,6 +89,12 @@ inline std::vector<Seg> marker(Marker m, double size = 10) {
   return out;
 }
 
+// The drawing cursor with grid snapping (the system pointer hidden): a crosshair `arm` px out each way from the snapped
+// point, open `gap` px around it for the snap's marker or dot.
+inline std::vector<Seg> crosshair(double arm = 11, double gap = 4) {
+  return {{-arm, 0, -gap, 0}, {gap, 0, arm, 0}, {0, -arm, 0, -gap}, {0, gap, 0, arm}};
+}
+
 // A constraint's pictogram `size` px across, centred on (0, 0).
 inline std::vector<Seg> glyph(Glyph g, double size = 10) {
   using detail::poly;

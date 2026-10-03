@@ -17,12 +17,17 @@
 #include "Viewport.hpp"
 #include "PlanePicker.hpp"
 
+class ToolValues;
+
 class DesignController : public QObject {
   Q_OBJECT
  public:
   DesignController(AppDocument* doc, Viewport* viewport, JobRunner* jobs, QWidget* window);
   FeaturePanel* featurePanel() const { return m_form; }
   SketchEditor* sketch() const { return m_sketch; }
+  // The feature's values typed from the keyboard (UI-122): its boxes beside the pointer, and the extrude's by the arrow.
+  ToolValues* values() const { return m_values; }
+  DimensionHandle* distanceHandle() const;
   // The existing sketch or feature op an open editor changes (empty while nothing is edited, or for a new one).
   std::string editingOp() const;
   void setPanel(ToolPanel* panel, std::function<void(ToolPanel*)> open);  // the floating panel the form lives in
@@ -78,6 +83,9 @@ class DesignController : public QObject {
   void syncSelectionToInput();
   void schedulePreview();
   void runPreview(bool commit);
+  QList<DynamicInput::Field> valueFields(const QString& except = {}) const;  // the panel's values shown, as boxes
+  void typeValue(const QString& key, QString value);  // typed into a box: into the panel (the preview follows)
+  void refreshValues();                                // the boxes follow the panel
   void enterSketch(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry);
   opad::json pickToJson(const opad::Ref& ref) const;
 
@@ -110,6 +118,7 @@ class DesignController : public QObject {
   Viewport::SelFilter m_filterBefore = Viewport::SelFilter::Body;
   QTimer m_previewTimer;
   QPointer<DimensionHandle> m_distanceHandle;
+  ToolValues* m_values = nullptr;
   Job* m_planJob = nullptr;
   Job* m_candidateJob = nullptr;
   QString m_nothingToPick;      // the active input has no candidates at all: says so instead of "Pick: …"

@@ -231,5 +231,8 @@
  "constraint badges": "شارات القيود",
  "glyphs": "رموز",
  "orthogonal": "متعامد",
- "horizontal vertical lock": "قفل أفقي رأسي"
+ "horizontal vertical lock": "قفل أفقي رأسي",
+ "In tools that take values": "في الأدوات التي تأخذ قيمًا",
+ "Not a length": "ليست طولًا",
+ "While a tool that takes values runs (a sketch tool, a feature, the section, a drawing being placed), this key types into its boxes instead.": "أثناء تشغيل أداة تأخذ قيمًا (أداة رسم، أو ميزة، أو المقطع، أو رسم يجري وضعه) يكتب هذا المفتاح في خاناتها بدلًا من ذلك."
 }

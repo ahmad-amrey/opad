@@ -112,6 +112,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchCrossLock();
   void benchSnaps();
   void benchSteps();
+  void benchGridCursor();
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
   // Show constraints (UI-24, setting sketch/showConstraints): their badges and coincidence dots; off, only those in conflict
   // or selected show.
@@ -180,7 +181,7 @@ class SketchEditor : public QObject, public SketchInput {
     enum Kind { None, Point, Entity, Dimension } kind = None;
     int id = 0;
   };
-  Snap snap(double u, double v, bool infer = true) const;
+  Snap snap(double u, double v, bool infer = true, bool grid = true) const;  // grid: grid snapping as switched (false: as if off)
   // Typed values (UI-16, SketchDynamicInput.cpp): the boxes of the step that waits (an option of the tool, or where the
   // next point goes), which keys type into them, and using what was typed (Enter, or a click: the typed values win, the
   // pointer gives the rest). A point's typed values hold the rubber band at once (typedPoint); '#', '@', ',' and '<' switch
@@ -236,10 +237,16 @@ class SketchEditor : public QObject, public SketchInput {
   bool boxed(const QString& key) const;               // a box of the step takes that readout's value (and sits on it)
   QStringList transientTexts() const;                 // what the rubber band reads out (benches)
   size_t transientLocked() const;                     // segments drawn thick dashed: a Shift lock's line (benches)
+  size_t transientCursor() const;                     // segments of the drawing cursor drawn (benches)
+  bool cursorCrisp() const;                           // its arms lie on whole device pixels (benches)
   QStringList overlayTexts() const;                   // the texts the sketch's overlay draws (benches)
   size_t badgeTriangles() const;                      // the constraint badges' backs, two triangles each (benches)
   size_t coincidenceDots() const;                     // the dots drawn for coincidences, explicit and where curves meet (benches)
   size_t transientSolid(const QColor& c) const;       // rubber band and highlight segments in that colour (benches)
+  bool drawsCursor() const;  // grid snapping: the editor draws the drawing cursor at the snapped point, the pointer is hidden
+  std::optional<std::pair<double, double>> m_drawnCursor;  // where it was last drawn (none: not drawn), sketch coordinates
+  bool m_inTransient = false;  // updateTransient is telling the viewport whether it draws the cursor
+  size_t m_transientRedisplays = 0;  // the rubber band's overlay redisplayed (benches: not again for the same picture)
   std::optional<snapmarkers::Marker> m_marker;        // the marker drawn where the pointer snapped (none: a dot)
   double m_markerTurn = 0;                            // its turn on the screen (radians): an extension's follows its line
   Hit hitTest(double u, double v) const;
@@ -381,19 +388,30 @@ class SketchEditor : public QObject, public SketchInput {
   double m_lastU = 0, m_lastV = 0;
   Qt::KeyboardModifiers m_lastMods;
   bool placing() const;  // the tool places points: snapping, tracking and the lock apply
+  // Grid snapping applies to the step: a point placed (placing(), a tangent arc's end), never a pick (trim, dimension,
+  // constraints, the modify tools: they hit-test where the pointer is).
+  bool gridPoints() const;
   bool lockOn();         // locks onto what the pointer is on now; false: nothing to lock onto
   void unlock();
   void shiftKey(bool pressed);
+  void altKey(bool pressed);  // Alt frees the point (no snap, no grid): the cursor drawn and the click agree without a move
   void resnap();         // the pointer's snap again where it is (a point acquired, a lock taken or let go)
+  // The pointer did not move but the view or what is over it did (a zoom, a camera gesture or a menu ended): the snap
+  // again where the pointer is now. False: it is not over the sketch (off the view, over an overlay, a drag runs).
+  bool followPointer();
   void noteHints();      // hintsChanged when what Shift does changed
   sketchkeys::Shift m_shiftHint = sketchkeys::Shift::None;
   // dragging with the select tool
   bool m_dragging = false, m_dragMoved = false;
-  bool m_dragPending=false,m_dragReleased=false;double m_dragNextU=0,m_dragNextV=0;
+  bool m_dragPending=false,m_dragReleased=false;double m_dragNextU=0,m_dragNextV=0;Qt::KeyboardModifiers m_dragNextMods;
   Hit m_dragHit;
   double m_dragU = 0, m_dragV = 0;
   std::vector<std::pair<int, std::pair<double, double>>> m_dragStart;  // point -> where it was
   bool m_dragGrid = false;double m_dragGridU = 0, m_dragGridV = 0;  // the grid node the dragged geometry snapped to
+  double m_dragCursorU = 0, m_dragCursorV = 0;  // the drawing cursor while it snaps: on that node (a point), else the hand by whole steps
+  // A drag at (u, v) with grid snapping (Alt: free): the grabbed point (a curve's first one) on a node and the rest by as
+  // much (su, sv), or a rim by whole steps of radius (r > 0); sets m_dragGrid*, m_dragCursor* and returns whether it snaps.
+  bool dragSnap(double u, double v, Qt::KeyboardModifiers mods, double& su, double& sv, double& r);
 
   Handle(AIS_InteractiveObject) m_prs;  // a SketchPrs (SketchEditor.cpp)
   Handle(AIS_InteractiveObject) m_transientPrs;

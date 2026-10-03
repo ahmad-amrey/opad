@@ -193,7 +193,7 @@ bool DynamicInput::backspace() {
 
 void DynamicInput::dropTyped() {
   for(int i=0;i<count();++i) {
-    auto& box=m_boxes[i];if(!box.typed && box.edit->text().isEmpty())continue;
+    auto& box=m_boxes[i];if(box.field.valued || (!box.typed && box.edit->text().isEmpty()))continue;  // a box that holds its value keeps it
     {QSignalBlocker block(box.edit);box.edit->clear();}
     edited(i);
   }
@@ -211,8 +211,8 @@ void DynamicInput::giveBack() {
   if(editing() && m_view)m_view->setFocus(Qt::OtherFocusReason);
 }
 
-void DynamicInput::placeNear(const QPoint& cursor,const QList<Anchor>& anchors) {
-  m_cursor=cursor;m_anchors=anchors;
+void DynamicInput::placeNear(const QPoint& cursor,const QList<Anchor>& anchors,int gap) {
+  m_cursor=cursor;m_anchors=anchors;m_gap=gap;
   arrange();
 }
 
@@ -223,7 +223,7 @@ void DynamicInput::arrange() {
   for(int i=0;i<count();++i)if(m_boxes[i].label->isHidden()!=anchored(i)) {
     m_boxes[i].label->setHidden(anchored(i));m_boxes[i].pill->layout()->invalidate();m_boxes[i].pill->resize(m_boxes[i].pill->sizeHint());
   }
-  constexpr int gap=20,spacing=4;
+  const int gap=m_gap;constexpr int spacing=4;
   int rowWidth=-spacing,rowHeight=0;
   for(int i=0;i<count();++i)if(!anchored(i)){rowWidth+=m_boxes[i].pill->width()+spacing;rowHeight=std::max(rowHeight,m_boxes[i].pill->height());}
   int x=m_cursor.x()+gap,y=m_cursor.y()+gap;

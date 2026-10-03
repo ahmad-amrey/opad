@@ -216,6 +216,7 @@ void Viewport::setTwoDimensional(bool on) {
     else m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(), gp::DY(), gp::DZ()));
   }
   updateGridExtent();
+  applyGridColors();
   m_ctx->ClearDetected(false);
   ResetPreviousMoveTo();
   redrawScene();

@@ -6,9 +6,13 @@
 #include <QSlider>
 #include <QToolButton>
 #include <QWidget>
+#include <functional>
+#include <optional>
 #include <string>
 
 #include "AppDocument.hpp"
+
+class ToolValues;
 
 // ---------------------------------------------------------------- section
 class SectionPanel : public QWidget {
@@ -17,6 +21,11 @@ class SectionPanel : public QWidget {
   explicit SectionPanel(AppDocument* doc, QWidget* parent = nullptr);
   bool enabled() const { return m_enabled; }
   opad::Vec3 origin() const;
+  double along() const;  // where the plane is along its axis (or the picked face's normal), mm
+  // The offset typed from the keyboard (TODO 11 UI-122): while `active`, value keys typed over the view or a tool panel go
+  // into an Offset box beside the pointer, the plane following as it is typed (exactly: the slider has 1000 steps).
+  void takeValues(QWidget* view, std::function<bool()> active);
+  ToolValues* values() const { return m_values; }
   bool pickRange(double& dmin, double& dmax) const;  // the model's extent along the picked normal
   opad::Vec3 normal() const;
   bool caps() const;
@@ -34,11 +43,16 @@ class SectionPanel : public QWidget {
   void setOrigin(const opad::Vec3& origin);  // the plane was dragged in the view: move the slider to it (clamped to the model)
   void rebuild();
   void applyNamed(const std::string& id);
+ protected:
+  void hideEvent(QHideEvent* e) override;  // typed values are forgotten with the panel
  private:
   void emitChange();
   void describe();  // the value and state text, in the shown unit
-  void setAlong(double along);  // slider from a distance along the axis (or the picked normal)
+  void setAlong(double along);  // the plane there exactly, the slider as near as it goes
+  bool range(double& lo, double& hi) const;  // the model's extent along the axis (or the picked normal)
   AppDocument* m_doc;
+  std::optional<double> m_exact;  // typed (or dragged in the view): where the plane is, rather than the slider's step
+  ToolValues* m_values = nullptr;
   bool m_enabled = false;
   int m_axis = 2;
   bool m_flip = false;
