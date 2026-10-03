@@ -18,3 +18,7 @@ set(CMAKE_FIND_LIBRARY_SUFFIXES .a ${CMAKE_FIND_LIBRARY_SUFFIXES})  # an archive
 # HarfBuzz's own CMake config names its import library outright (libharfbuzz.dll.a, an imported DLL), so Qt's
 # FindWrapSystemHarfbuzz must fall back to pkg-config, whose -lharfbuzz the static link resolves to the archive.
 set(CMAKE_DISABLE_FIND_PACKAGE_harfbuzz ON)
+# QtNetwork names OpenSSL on its link interface only for the TLS backend plugins, which the executables do not import
+# (app/ and cli/CMakeLists.txt): an empty WrapOpenSSL target keeps libssl and libcrypto off the link lines, and so out
+# of the third-party notices, as they are out of the exes.
+add_library(WrapOpenSSL::WrapOpenSSL INTERFACE IMPORTED GLOBAL)
