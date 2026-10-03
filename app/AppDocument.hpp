@@ -45,6 +45,10 @@ class AppDocument : public QObject {
   Job* saveAsync(JobRunner*, const QString& path, bool overwrite,
                  std::function<void(bool,const QString&)> done, int testDelayMs=0);
   opad::json run(const std::string& command, opad::json args);
+  // Several commands as one step (UI-02): run() inside `fn` appends its ops without an undo step or a refresh of its own;
+  // the step, named `label`, and one refresh come after. A command that throws takes the batch's ops back off the log
+  // before the exception goes on. Nested, it is part of the outer one.
+  void batch(const QString& label, const std::function<void()>& fn);
 
   // Design changes are planned on a worker (design::plan_ops reads the document, see DesignController) and
   // committed here. While a plan is being computed the document must not change under it: designBusy makes
@@ -126,6 +130,7 @@ class AppDocument : public QObject {
   void updateDirty();    // dirty = log or body store differs from the snapshot
   static QString labelFor(const std::string& command, const opad::json& args);
   std::string m_rollback;
+  bool m_batch = false;
   std::vector<Step> m_undo, m_redo;
   int m_undoLimit = 50;
   std::vector<std::string> m_savedIds;

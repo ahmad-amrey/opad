@@ -9,5 +9,7 @@
  "click to pick, tap Shift for the next crossing, Esc to unlock": "انقر للاختيار، واضغط Shift للتقاطع التالي، وEsc لإلغاء التثبيت",
  "click to pick, Esc or tap Shift to unlock": "انقر للاختيار، وEsc أو اضغط Shift لإلغاء التثبيت",
  "%1 from the anchor": "%1 من نقطة الارتكاز",
- "Placing notes": "وضع الملاحظات"
+ "Placing notes": "وضع الملاحظات",
+ "hide others": "إخفاء الباقي",
+ "Select the objects to keep shown first.": "حدد أولاً العناصر التي تبقى ظاهرة."
 }

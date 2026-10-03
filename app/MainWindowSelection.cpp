@@ -235,13 +235,8 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     connect(exportObject,&QAction::triggered,this,[this,ids] { guarded([&] { exportDialog(ids); }); });
     add("edit.selectparent");
     add("view.isolate");
-    QAction* hideOthers = menu.addAction(icons::themed("hide", 16), tr("Hide others"));
-    connect(hideOthers, &QAction::triggered, this, [this, ids] {
-      std::set<std::string> keep;
-      for (const auto& id : ids) for (const auto& b : m_doc->scene.bodies_under(id)) keep.insert(b);
-      for (const auto& b : m_doc->scene.all_bodies())
-        if (!keep.count(b) && m_doc->node(b)->visible) m_doc->run("appearance", opad::json{{"target", b}, {"visible", false}});
-    });
+    QAction* others = menu.addAction(icons::themed("hide", 16), tr("Hide others"));
+    connect(others, &QAction::triggered, this, [this, ids] { guarded([&] { hideOthers(ids); }); });
     add("edit.hide");
     add("edit.rename");
     QAction* color = menu.addAction(icons::themed("dot", 16), tr("Colour…"));  // a view setting in viewer mode too
@@ -256,7 +251,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     if(ids.size()==1 && n && !n->body_key.empty() && m_doc->scene.instance_count[n->body_key]>1)
       menu.addAction(tr("Browse linked instances"),this,[this,id=ids.front()]{browseInstances(id);});
     connect(lock, &QAction::triggered, this, [this, ids, locked = n && n->locked] {
-      for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"locked", !locked}});
+      m_doc->run("appearance", opad::json{{"targets", ids}, {"locked", !locked}});
     });
     menu.addSeparator();
     add("annotate.add");
@@ -270,7 +265,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
       if (!requireEditable()) return;
       std::set<std::string> ops;
       for (const auto& id : ids) if (const opad::Node* nn = m_doc->node(id)) ops.insert(nn->source_op);
-      for (const auto& op : ops) deleteOp(op);
+      deleteOps({ops.begin(), ops.end()});
     });
   } else {
     add("view.fit");

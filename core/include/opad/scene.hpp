@@ -130,6 +130,9 @@ struct Scene {
   bool effectively_visible(const std::string& id) const;
   std::vector<std::string> bodies_under(const std::string& id) const;  // depth-first
   std::vector<std::string> all_bodies() const;
+  // Hide others (UI-02): the fewest shown nodes to hide so that only the bodies under `keep` stay shown: every visible
+  // subtree with bodies but none kept, as high up as it goes. Sketches are not nodes: they stay as they are.
+  std::vector<std::string> others_to_hide(const std::vector<std::string>& keep) const;
   std::vector<std::string> path_to(const std::string& id) const;  // root..id
   json tree_json(int max_depth = -1) const;
   const SketchItem* sketch(const std::string& id) const;

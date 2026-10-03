@@ -82,6 +82,33 @@ int main(int argc, char** argv) {
       doc.undo(3);
       CHECK_EQ(doc.doc.ops.size(), ops);
     }
+    // Several commands as one step and one refresh (UI-02); a failing one takes the batch back off the log.
+    {
+      const auto all = doc.scene.all_bodies();
+      const size_t ops = doc.doc.ops.size(), steps = doc.undoLabels().size();
+      int changes = 0;
+      auto counted = QObject::connect(&doc, &AppDocument::changed, &doc, [&changes] { ++changes; });
+      doc.batch(AppDocument::tr("hide others"), [&] {
+        doc.run("appearance", opad::json{{"targets", {all[0], all[1]}}, {"visible", false}});
+        doc.batch("inner", [&] { doc.run("appearance", opad::json{{"target", all[0]}, {"opacity", 0.5}}); });  // part of the outer one
+        doc.run("rename", opad::json{{"target", all[1]}, {"name", "kept"}});
+      });
+      CHECK(changes == 1 && doc.doc.ops.size() == ops + 4 && doc.undoLabels().size() == steps + 1 && doc.undoLabel() == AppDocument::tr("hide others"));
+      CHECK(!doc.scene.node(all[0])->visible && doc.scene.node(all[0])->opacity == 0.5 && doc.nodeName(all[1]) == "kept");
+      doc.undo();
+      CHECK(changes == 2 && doc.doc.ops.size() == ops && doc.scene.node(all[0])->visible && doc.scene.node(all[1])->visible);
+      doc.redo();
+      CHECK(doc.doc.ops.size() == ops + 4 && !doc.scene.node(all[1])->visible);
+      doc.undo();
+      CHECK_THROWS(doc.batch("broken", [&] {
+        doc.run("appearance", opad::json{{"target", all[0]}, {"visible", false}});
+        doc.run("rename", opad::json{{"target", all[0]}});  // no name: throws
+      }));
+      CHECK(doc.doc.ops.size() == ops && doc.scene.node(all[0])->visible && doc.undoLabels().size() == steps && doc.canRedo());
+      doc.batch("nothing", [] {});
+      CHECK(doc.undoLabels().size() == steps && doc.canRedo());  // no step, the redo kept
+      QObject::disconnect(counted);
+    }
     int resets=0;
     QObject::connect(&doc,&AppDocument::aboutToReplace,&doc,[&]{++resets;});
     const auto generation=doc.generation;

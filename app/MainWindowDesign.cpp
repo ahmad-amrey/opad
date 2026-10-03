@@ -81,13 +81,13 @@ void MainWindow::buildDesignActions() {
     const opad::Node* n = m_doc->node(ids.front());
     const int pct = QInputDialog::getInt(this, tr("Opacity"), tr("Opacity (10–100 %):"), n ? static_cast<int>(n->opacity * 100) : 100, 10, 100, 10, &ok);
     if (!ok) return;
-    for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"opacity", pct / 100.0}});
+    m_doc->run("appearance", opad::json{{"targets", ids}, {"opacity", pct / 100.0}});  // one step for all of them (UI-02)
   });
   addAction("design.lock", tr("Lock"), "lock", QKeySequence(), [this] {
     const auto ids = currentNodeIds();
     if (ids.empty()) throw opad::Error("Select the objects to lock or unlock first.");
     const opad::Node* n = m_doc->node(ids.front());
-    for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"locked", !(n && n->locked)}});
+    m_doc->run("appearance", opad::json{{"targets", ids}, {"locked", !(n && n->locked)}});
   });
 
   // Sketch mode.

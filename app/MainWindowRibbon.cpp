@@ -66,7 +66,7 @@ void MainWindow::buildMenus() {
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
   add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = m_viewMenu = menuBar()->addMenu(tr("&View"));
-  add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "-", "view.saveview"});
+  add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "view.hideothers", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
   m_viewsMenu->setObjectName("views");
   view->addSeparator();
@@ -131,7 +131,7 @@ void MainWindow::buildRibbon() {
   layout.addTab("review", "review.view", tr("View"));
   group("review.view", "navigate", tr("Navigate"), {"view.fit", "view.home", "view.ortho", "view.2d"});
   group("review.view", "display", tr("Display"), {"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"});
-  group("review.view", "isolate", tr("Isolate"), {"view.isolate", "view.unisolate"});
+  group("review.view", "isolate", tr("Isolate"), {"view.isolate", "view.unisolate", "view.hideothers"});
   layout.addTab("review", "review.inspect", tr("Inspect"));
   group("review.inspect", "measure", tr("Measure"), {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"});
   group("review.inspect", "results", tr("Results"), {"inspect.pin", "inspect.properties"});

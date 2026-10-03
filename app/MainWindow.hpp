@@ -154,6 +154,8 @@ class MainWindow : public QMainWindow {
   void rebuildViewsMenu();
   void selectOpTargets(const std::string& opId);
   void deleteOp(const std::string& opId);
+  void deleteOps(const std::vector<std::string>& opIds);  // several tombstones as one step (UI-02)
+  void hideOthers(const std::vector<std::string>& keep);  // one step hiding the fewest nodes (Scene::others_to_hide)
   void restoreOp(const std::string& opId);
   void deleteCurrent();
   void writeSelectionFile();

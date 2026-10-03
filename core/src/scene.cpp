@@ -53,6 +53,25 @@ std::vector<std::string> Scene::all_bodies() const {
   return out;
 }
 
+std::vector<std::string> Scene::others_to_hide(const std::vector<std::string>& keep) const {
+  std::set<std::string> holds, filled;  // nodes with a kept body under them; nodes with any body under them
+  auto up = [this](const std::string& body, std::set<std::string>& into) {
+    for (const Node* n = node(body); n && into.insert(n->id).second; n = n->parent.empty() ? nullptr : node(n->parent)) {}
+  };
+  for (const auto& id : keep)
+    for (const auto& b : bodies_under(id)) up(b, holds);
+  for (const auto& b : all_bodies()) up(b, filled);
+  std::vector<std::string> out;
+  std::function<void(const std::string&)> walk = [&](const std::string& id) {
+    const Node* n = node(id);
+    if (!n || !n->visible || !filled.count(id)) return;  // nothing shown below
+    if (!holds.count(id)) return out.push_back(id);       // nothing kept below: hidden as a whole
+    for (const auto& c : n->children) walk(c);
+  };
+  for (const auto& r : roots) walk(r);
+  return out;
+}
+
 std::vector<std::string> Scene::path_to(const std::string& id) const {
   std::vector<std::string> p;
   const Node* n = node(id);

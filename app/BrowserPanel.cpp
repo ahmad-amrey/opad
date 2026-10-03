@@ -228,7 +228,9 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     if (id.empty()) {  // document row: toggle every root
       bool anyVisible = false;
       for (const auto& r : m_doc->scene.roots) anyVisible = anyVisible || m_doc->node(r)->visible;
-      for (const auto& r : m_doc->scene.roots) m_doc->run("appearance", opad::json{{"target", r}, {"visible", !anyVisible}});
+      std::vector<std::string> roots;  // the ones that change, in one step (UI-02)
+      for (const auto& r : m_doc->scene.roots) if (m_doc->node(r)->visible == anyVisible) roots.push_back(r);
+      if (!roots.empty()) m_doc->run("appearance", opad::json{{"targets", roots}, {"visible", !anyVisible}});
       return;
     }
     const opad::Node* n = m_doc->node(id);

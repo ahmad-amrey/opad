@@ -82,6 +82,7 @@ void MainWindow::buildViewActions() {
   through->setChecked(m_settings.value("view/selectThrough",false).toBool());
   connect(through,&QAction::toggled,this,[this](bool on){m_settings.setValue("view/selectThrough",on);m_viewport->setSelectThrough(on);});
   addAction("view.isolate", tr("Isolate"), "isolate", QKeySequence("I"), [this] { m_viewport->isolate(currentNodeIds()); });
+  addAction("view.hideothers", tr("Hide others"), "hide", QKeySequence(), [this] { hideOthers(currentNodeIds()); });  // one step (UI-02)
   // macOS treats any action starting with "Exit" as Quit unless its menu role is explicit.
   addAction("view.unisolate", tr("Exit isolate"), "showAll", QKeySequence("Shift+I"), [this] { m_viewport->isolate({}); })->setMenuRole(QAction::NoRole);
   addAction("view.saveview", tr("Save view…"), "home", QKeySequence(), [this] { saveNamedView(); });

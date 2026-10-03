@@ -319,9 +319,30 @@ opad::json AppDocument::run(const std::string& command, opad::json args) {
   const size_t before = doc.ops.size();
   if (!args.contains("by")) args["by"] = QSettings().value("user/name").toString().trimmed().toStdString();
   opad::json out = opad::commands::run(command, args, &doc);
+  if (m_batch) return out;  // the batch makes the step and refreshes once
   recordStep(labelFor(command, args), before);
   refresh();
   return out;
+}
+
+void AppDocument::batch(const QString& label, const std::function<void()>& fn) {
+  if (m_batch) return fn();
+  const size_t before = doc.ops.size();
+  m_batch = true;
+  try {
+    fn();
+  } catch (...) {
+    m_batch = false;
+    if (doc.ops.size() > before) {
+      doc.truncate_ops(before);
+      refresh();
+    }
+    throw;
+  }
+  m_batch = false;
+  if (doc.ops.size() == before) return;
+  recordStep(label, before);
+  refresh();
 }
 
 opad::json AppDocument::commitPlan(opad::design::Plan&& plan, const QString& label) {
@@ -451,6 +472,7 @@ QString AppDocument::labelFor(const std::string& command, const opad::json& args
     if (args.contains("visible")) return args["visible"].get<bool>() ? tr("show") : tr("hide");
     if (args.contains("color")) return tr("colour");
     if (args.contains("locked")) return args["locked"].get<bool>() ? tr("lock") : tr("unlock");
+    if (args.contains("opacity")) return tr("opacity");
     return tr("appearance");
   }
   if (command == "rename") return tr("rename");

@@ -176,7 +176,27 @@ void MainWindow::deleteCurrent() {
     return deleteOp(id);
   }
   if (QMessageBox::question(this, tr("Delete"), tr("Tombstone %1 import operation(s)? History is kept; Shift+Del on the timeline restores.").arg(ops.size())) != QMessageBox::Yes) return;
-  for (const auto& op : ops) deleteOp(op);
+  deleteOps({ops.begin(), ops.end()});
+}
+
+void MainWindow::deleteOps(const std::vector<std::string>& opIds) {
+  if (opIds.size() == 1) return deleteOp(opIds.front());
+  if (opIds.empty()) return;
+  if (!m_doc->scene.features.empty() || !m_doc->scene.sketches.empty()) {  // one plan on a worker, one step
+    std::vector<opad::json> ops;
+    for (const auto& id : opIds) ops.push_back(opad::json{{"op", "delete"}, {"target", id}});
+    return m_design->applyOps(std::move(ops), tr("delete"));
+  }
+  m_doc->batch(tr("delete"), [&] { for (const auto& id : opIds) m_doc->run("delete", opad::json{{"target", id}}); });
+}
+
+// Hide others (UI-02): one step, and the fewest nodes (a subtree with nothing kept is hidden as a whole), where it used to
+// be one command and one undo step per body (1,294 on the Engine, about 100 s).
+void MainWindow::hideOthers(const std::vector<std::string>& keep) {
+  if (keep.empty()) throw opad::Error("Select the objects to keep shown first.");
+  const auto hide = m_doc->scene.others_to_hide(keep);
+  if (hide.empty()) return;
+  m_doc->batch(tr("hide others"), [&] { m_doc->run("appearance", opad::json{{"targets", hide}, {"visible", false}}); });
 }
 
 void MainWindow::selectOpTargets(const std::string& opId) {

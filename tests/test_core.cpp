@@ -1,4 +1,5 @@
 // Headless tests for the document model and .opad format (no OCCT geometry involved).
+#include <algorithm>
 #include <set>
 
 #include "check.hpp"
@@ -244,6 +245,34 @@ TEST(resolve_hierarchy_and_edits) {
   CHECK_EQ(resolve(d).annotations[2].style, "issue");
   d.append(json{{"op", "edit"}, {"target", tagged}, {"set", {{"style", "ok"}}}});
   CHECK_EQ(resolve(d).annotations[2].style, "ok");
+}
+
+// Hide others (UI-02): the fewest nodes, each subtree without a kept body as high up as it goes; hidden or empty
+// subtrees are left alone.
+TEST(others_to_hide_is_the_fewest_nodes) {
+  Document d = Document::create();
+  std::string key = d.add_body(kFakeBrep, json{{"name", "Fake"}});
+  std::string engine = new_uuid(), head = new_uuid(), block = new_uuid(), empty = new_uuid(), gone = new_uuid();
+  std::string valve = new_uuid(), spring = new_uuid(), bolt = new_uuid(), crank = new_uuid(), pin = new_uuid(), loose = new_uuid();
+  json imp;
+  imp["op"] = "import";
+  imp["nodes"] = json::array({component("Engine", json::array({component("Head", json::array({body_node(key, "Valve", valve), body_node(key, "Spring", spring),
+                                                                                              body_node(key, "Bolt", bolt)}), head),
+                                                                component("Block", json::array({body_node(key, "Crank", crank)}), block),
+                                                                component("Empty", json::array(), empty),
+                                                                component("Gone", json::array({body_node(key, "Pin", pin)}), gone)}), engine),
+                              body_node(key, "Loose", loose)});
+  d.append(imp);
+  d.append(json{{"op", "appearance"}, {"target", gone}, {"visible", false}});
+  Scene s = resolve(d);
+  auto sorted = [](std::vector<std::string> v) { std::sort(v.begin(), v.end()); return v; };
+  CHECK(sorted(s.others_to_hide({valve})) == sorted({spring, bolt, block, loose}));  // not Crank one by one, not Empty or Gone
+  CHECK(sorted(s.others_to_hide({head})) == sorted({block, loose}));
+  CHECK(sorted(s.others_to_hide({valve, crank})) == sorted({spring, bolt, loose}));
+  CHECK(s.others_to_hide({engine}) == std::vector<std::string>{loose});
+  CHECK(sorted(s.others_to_hide({})) == sorted({engine, loose}));
+  d.append(json{{"op", "appearance"}, {"target", spring}, {"visible", false}});
+  CHECK(sorted(resolve(d).others_to_hide({valve})) == sorted({bolt, block, loose}));  // already hidden: nothing to do
 }
 
 TEST(tombstones_and_gc) {

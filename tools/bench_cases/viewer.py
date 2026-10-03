@@ -60,4 +60,10 @@ CASES = [
     # case is the evaluation's (every sync took 15-18 s with two body notes). <prefix>.png.
     ("note-anchors", three_parts, {"OPAD_BENCH_NOTEANCHORS": "{prefix}"}),
     ("note-anchors-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_NOTEANCHORS": "{prefix}"}),
+    # Commands on several objects (UI-02): Hide others (the fewest nodes), Lock, Opacity, the document eye and Delete of
+    # two operations are each one step with one refresh, and undone in one. On as1 (editable), on three parts with a
+    # design history (Delete is one plan) and on the Engine (Hide others was ~1,294 commands and ~100 s).
+    ("batch", "tests/corpus/stepcode-as1-oc-214.stp", {"OPAD_BENCH_BATCH": "{prefix}"}, "[files]\nviewerMode=false\n"),
+    ("batch-design", three_parts, {"OPAD_BENCH_BATCH": "{prefix}"}),
+    ("batch-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_BATCH": "{prefix}"}),
 ]
