@@ -100,7 +100,7 @@ class SmartSelect : public AreaController {
   bool eventFilter(QObject* watched, QEvent* event) override;
 
  private:
-  enum class Pending { None, Grow, Menu, Delete };
+  enum class Pending { None, Grow, Menu, Delete, Tangent };
   bool idle() const;  // nothing else owns the picks: no load, sketch, feature input, guided tool or note
   static bool subPicks(const std::vector<opad::Ref>& refs);  // faces and edges only, a few thousand at most
   void request(bool now);
@@ -120,6 +120,7 @@ class SmartSelect : public AreaController {
                      const std::vector<std::string>& hidden);
   void commitDelete(const smart::Candidate& c, std::vector<std::string> ops);
   void deletePicks();
+  void tangentFaces();  // Alt+double-click on a face: the faces joined to it by smooth edges
   QString label(const smart::Candidate& c) const;
   QString iconOf(const smart::Candidate& c) const;
 
@@ -147,5 +148,6 @@ class SmartSelect : public AreaController {
   bool m_doubleArmed = false, m_double = false, m_doubleAlt = false;
   std::vector<opad::Ref> m_doubleBefore, m_doubleFirst;
   QTimer m_doubleTimer;
-  QAction *m_shrink = nullptr, *m_related = nullptr;
+  QAction *m_shrink = nullptr, *m_related = nullptr, *m_suggest = nullptr;
+  bool suggesting() const;  // setting selection/suggest: the chip comes by itself (else on Ctrl+Up, Shift+Space, Del)
 };

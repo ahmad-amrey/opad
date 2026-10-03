@@ -22,6 +22,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QSettings>
 #include <QToolButton>
 
 #include <algorithm>
@@ -179,7 +180,19 @@ void SmartSelect::buildActions() {
   related.keywords = {tr("smart selection"), tr("feature of a face"), tr("find in timeline")};
   m_related = services().addCommand(related, [this] { showMenu(); });
   m_related->setProperty("shortcutHint", tr("What the picked faces or edges belong to (the feature that made them, a hole, a fillet chain, a loop) and what to do with it: delete, edit, suppress, find it in the timeline."));
-  for (QAction* a : {m_shrink, m_related}) shortcuts::updateTooltip(a);
+  CommandInfo suggest;
+  suggest.id = "select.suggest";
+  suggest.label = tr("Suggest related selections");
+  suggest.keywords = {tr("smart selection"), tr("chip")};
+  suggest.checkable = true;
+  m_suggest = services().addCommand(suggest, [this] {
+    QSettings().setValue("selection/suggest", m_suggest->isChecked());
+    if (!m_suggest->isChecked()) return hideChip();
+    if (idle() && subPicks(m_current)) request(true);
+  });
+  m_suggest->setChecked(QSettings().value("selection/suggest", true).toBool());
+  m_suggest->setProperty("shortcutHint", tr("After faces or edges are picked, a chip beside them names what they belong to. Off: it comes on Ctrl+Up, Shift+Space or Del only."));
+  for (QAction* a : {m_shrink, m_related, m_suggest}) shortcuts::updateTooltip(a);
   if (QAction* parent = services().action("edit.selectparent")) {  // Ctrl+Up: this area grows picked faces (command)
     parent->setProperty("shortcutHint", tr("Grow the selection: picked faces or edges to the feature or detail they belong to, then the body, its component, the parent. Ctrl+Down goes back."));
     shortcuts::updateTooltip(parent);
@@ -192,7 +205,7 @@ void SmartSelect::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
   if (!edit || !parent) return;
   const QList<QAction*> all = edit->actions();
   const int at = int(all.indexOf(parent));
-  edit->insertActions(at >= 0 && at + 1 < all.size() ? all[at + 1] : nullptr, {m_shrink, m_related});
+  edit->insertActions(at >= 0 && at + 1 < all.size() ? all[at + 1] : nullptr, {m_shrink, m_related, m_suggest});
 }
 
 void SmartSelect::ready() {
@@ -240,6 +253,8 @@ bool SmartSelect::idle() const {
          !v->pickAccumulate();
 }
 
+bool SmartSelect::suggesting() const { return !m_suggest || m_suggest->isChecked(); }
+
 bool SmartSelect::subPicks(const std::vector<opad::Ref>& refs) {
   return !refs.empty() && refs.size() <= kMaxPicks &&
          std::all_of(refs.begin(), refs.end(), [](const opad::Ref& r) { return r.kind == opad::Ref::Kind::Face || r.kind == opad::Ref::Kind::Edge; });
@@ -276,7 +291,7 @@ void SmartSelect::selectionChanged(const SelectionContext& selection) {
   }
   m_found = std::move(next);
   refreshChip();
-  request(ours);
+  if (suggesting() || ours) request(ours);  // not suggesting: asked for when a key wants it
 }
 
 void SmartSelect::request(bool now) {
@@ -385,6 +400,7 @@ void SmartSelect::finished() {
     case Pending::Grow: return grow();
     case Pending::Menu: return showMenu();
     case Pending::Delete: return deletePicks();
+    case Pending::Tangent: return tangentFaces();
     case Pending::None: return;
   }
 }
@@ -393,7 +409,7 @@ void SmartSelect::refreshChip() {
   if (!m_chip) return;
   if (!idle() || !subPicks(m_current) || !smart::sameRefs(m_found.picks, m_current)) return hideChip();
   const int shown = m_found.active >= 0 ? m_found.active : m_found.best;
-  if (shown < 0 || shown >= int(m_found.candidates.size())) return hideChip();
+  if (shown < 0 || shown >= int(m_found.candidates.size()) || (!suggesting() && m_found.active < 0)) return hideChip();
   if (m_settle.isActive()) return;  // the camera moves: back once it is still
   const smart::Candidate& c = m_found.candidates[size_t(shown)];
   QString hint;
@@ -721,7 +737,19 @@ void SmartSelect::doubleClicked(bool alt) {
     return;
   }
   if (!smart::sameRefs(m_current, picks)) m_current = picks;
-  grow();
+  alt ? tangentFaces() : grow();
+}
+
+void SmartSelect::tangentFaces() {
+  if (!idle() || !subPicks(m_current)) return;
+  if (!m_found.ready || !smart::sameRefs(m_found.picks, m_current)) {
+    m_pending = Pending::Tangent;
+    if (m_wait.isActive() || (!m_job && !m_capturing)) request(true);
+    return;
+  }
+  for (size_t i = 0; i < m_found.candidates.size(); ++i)
+    if (m_found.candidates[i].kind == "tangent") return choose(int(i));
+  services().showMessage(tr("No face continues this one tangentially."), 4000);
 }
 
 // An edge's loop on the face turned most to the viewer, or its tangent chain: found on a worker.
@@ -899,6 +927,15 @@ void SmartSelect::askDependents(const smart::Candidate& c, const std::vector<std
   connect(only, &QAction::triggered, this, [this, c, done] {
     *done = true;
     commitDelete(c, {c.op});
+  });
+  QAction* faces = menu->addAction(icons::themed("removeFaces", 16), tr("Remove its faces instead (Remove faces, at the end of the timeline)"));
+  faces->setObjectName("deleteFacesInstead");
+  connect(faces, &QAction::triggered, this, [this, c, done] {
+    *done = true;
+    services().viewport()->clearPreviewBodies();
+    select(c.refs, [this] {
+      if (QAction* remove = services().action("design.remove_faces")) remove->trigger();
+    });
   });
   menu->addSeparator();
   menu->addAction(tr("Cancel"))->setObjectName("deleteCancel");

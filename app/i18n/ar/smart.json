@@ -93,5 +93,10 @@
   "Faces and edges go with what made them: delete it from this menu, or remove the faces.": "تُحذف الأوجه والحواف مع ما أنشأها: احذفه من هذه القائمة، أو أزِل الأوجه.",
   "Faces and edges are deleted through the feature that made them: select it with Ctrl+Up, or use Remove faces.": "تُحذف الأوجه والحواف عبر الميزة التي أنشأتها: حدِّدها بـ Ctrl+Up، أو استخدم إزالة الأوجه.",
   "Nothing selected can be deleted.": "لا يمكن حذف أي شيء من المحدَّد.",
-  "Select objects, or a marker on the timeline, to delete.": "حدِّد كائنات، أو علامة على الخط الزمني، للحذف."
+  "Select objects, or a marker on the timeline, to delete.": "حدِّد كائنات، أو علامة على الخط الزمني، للحذف.",
+  "Suggest related selections": "اقتراح تحديدات ذات صلة",
+  "chip": "شريحة",
+  "After faces or edges are picked, a chip beside them names what they belong to. Off: it comes on Ctrl+Up, Shift+Space or Del only.": "بعد اختيار أوجه أو حواف تظهر بجانبها شريحة تسمّي ما تنتمي إليه. عند الإيقاف: تظهر فقط مع Ctrl+Up أو Shift+Space أو Del.",
+  "No face continues this one tangentially.": "لا يوجد وجه يكمل هذا الوجه تماسًّا.",
+  "Remove its faces instead (Remove faces, at the end of the timeline)": "إزالة أوجهه بدلًا من ذلك (إزالة الأوجه، في آخر الخط الزمني)"
 }

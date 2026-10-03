@@ -34,6 +34,7 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
     std::string body, boss, round;
     std::vector<opad::Ref> bossFaces, roundFaces, two;
     opad::Ref top;  // the boss's top face
+    bool tangentAsked = false, tangent = false, quietAsked = false;
     size_t ops = 0;
     int faces = 0;
   };
@@ -288,6 +289,18 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
         }
         case 16:
           if (w.m_viewport->selectionFilter() != Viewport::SelFilter::Face) return;
+          if (!state->tangent) {  // Alt+double-click on the boss's top: the faces smooth edges join to it
+            if (!std::exchange(state->tangentAsked, true)) {
+              pick({state->top});
+              area->doubleClicked(true);
+              return;
+            }
+            const auto& f = area->found();
+            if (!waitFor(f.ready && w.m_viewport->selection().size() == 9, "Alt+double-click on a face selects its tangent chain: the top, four rounds, four walls")) return;
+            pass("Alt+double-click on the boss's top selected its tangent chain (top, rounds, walls: 9 faces)");
+            state->tangent = true;
+            return;
+          }
           pick(state->two);
           w.action("edit.selectparent")->trigger();  // waits for the chip's answer, then climbs
           break;
@@ -305,6 +318,7 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
           if (!waitFor(question && question->isVisible() && question->objectName() == "smartDeleteQuestion", "deleting the boss asks about Round")) return;
           QAction* all = question->findChild<QAction*>("deleteWithDependents");
           require(all && all->text() == SmartSelect::tr("Delete %1 and %2").arg("Boss", "Round"), "the question names Round");
+          require(question->findChild<QAction*>("deleteOnly") && question->findChild<QAction*>("deleteFacesInstead"), "it offers deleting the boss alone, or removing its faces instead");
           require(w.m_viewport->previewBodyCount() > 0, "the result is previewed while it asks");
           question->grab().save(prefix + ".question.png");
           pass("Delete on the boss asks \"" + all->text() + "\" with the result previewed");
@@ -384,6 +398,21 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
           const opad::Feature* boss = w.m_doc->scene.feature(state->boss);
           if (!waitFor(boss && !boss->suppressed && faceCount() == state->faces, "the toast's Undo brings the boss back")) return;
           pass("the toast's Undo unsuppressed the boss");
+          w.action("select.suggest")->trigger();  // off: no chip by itself
+          require(!w.action("select.suggest")->isChecked(), "suggestions off");
+          pick(state->two);
+          break;
+        }
+        case 27: {
+          if (!std::exchange(state->quietAsked, true)) return;  // a tick later: nothing may be asked for meanwhile
+          require(!area->chip()->isVisible() && !area->found().ready, "with suggestions off no chip comes by itself");
+          w.action("edit.selectparent")->trigger();  // Ctrl+Up still asks
+          break;
+        }
+        case 28: {
+          if (!waitFor(selected(state->bossFaces) && area->chip()->isVisible(), "Ctrl+Up still climbs with suggestions off")) return;
+          pass("with suggestions off no chip came by itself; Ctrl+Up still selected the boss, with its actions");
+          w.action("select.suggest")->trigger();
           timer->stop();
           QCoreApplication::exit(0);
           return;
