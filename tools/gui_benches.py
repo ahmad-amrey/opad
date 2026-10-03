@@ -93,6 +93,13 @@ def main():
         for target in (assets / "project" / "parts" / "part.step", assets / "outside" / "other.step"):
             subprocess.run([str(cli), "import", str(linked), str(target), "--link", "true"], check=True, capture_output=True, env={**os.environ, **assets_env})
         step("asset-part-2", '{"length":"12 mm","width":"10 mm","height":"10 mm"}', assets / "project" / "parts" / "part.step")
+        # An OBJ cube, Y up: its top in a gold material of its own, the rest grey (Kd 0.439, which OCCT reads as sRGB).
+        colors = root / "colors"
+        colors.mkdir()
+        (colors / "cube.mtl").write_text("newmtl grey\nKd 0.439 0.439 0.439\nnewmtl gold\nKd 1 0.766 0.336\n", encoding="utf-8")
+        corners = "".join(f"v {x} {y} {z}\n" for x, y, z in [(0, 0, 0), (20, 0, 0), (20, 0, 20), (0, 0, 20), (0, 20, 0), (20, 20, 0), (20, 20, 20), (0, 20, 20)])
+        (colors / "cube.obj").write_text("mtllib cube.mtl\no Cube\n" + corners + "usemtl grey\nf 1 2 3 4\nf 1 5 6 2\nf 4 3 7 8\nf 1 4 8 5\nf 2 6 7 3\n"
+                                         "usemtl gold\nf 5 8 7 6\n", encoding="utf-8")
         screw = ROOT / "tests" / "corpus" / "occt-screw.step"
         cases = [
             ("design", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_UISHOT": "{prefix}.ui.png", "OPAD_BENCH_RULE": "1"}),
@@ -110,6 +117,7 @@ def main():
             ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("kicad", board, {"OPAD_BENCH_KICAD": "{prefix}.png", **kicad_env}),
             ("assets", linked, {"OPAD_BENCH_ASSETS": "{prefix}.png", **assets_env}),
+            ("colors", colors / "cube.obj", {"OPAD_BENCH_COLORS": "{prefix}.png", "OPAD_CACHE_DIR": str(root / "colors-cache")}),
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))

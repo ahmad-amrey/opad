@@ -20,6 +20,9 @@
 
 #include <AIS_AnimationCamera.hxx>
 #include <AIS_TexturedShape.hxx>
+#include <Graphic3d_AspectFillArea3d.hxx>
+#include <Graphic3d_Group.hxx>
+#include <PrsMgr_Presentation.hxx>
 #include <QPainter>
 #include <cstring>
 #include <AIS_ViewCube.hxx>
@@ -1245,6 +1248,22 @@ QImage Viewport::grabImage() {
   return img;
 }
 
+std::vector<std::array<double, 3>> Viewport::drawnColors(const std::string& nodeId) const {
+  std::vector<std::array<double, 3>> out;
+  const auto it = m_items.find(nodeId);
+  if (it == m_items.end()) return out;
+  for (const auto& p : it->second.ais->Presentations()) {
+    if (p->Mode() != AIS_Shaded) continue;
+    for (const auto& g : p->Groups())
+      if (const auto fill = Handle(Graphic3d_AspectFillArea3d)::DownCast(g->Aspects()); !fill.IsNull()) {
+        double r, gr, b;
+        fill->InteriorColor().Values(r, gr, b, Quantity_TOC_sRGB);
+        out.push_back({r, gr, b});
+      }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- section (F20)
 void Viewport::setSection(bool enabled, const opad::Vec3& origin, const opad::Vec3& normal, bool caps) {
   m_sectionEnabled = enabled;
@@ -1387,14 +1406,15 @@ double Viewport::deflectionFor(const std::string& key) { return deflectionForBox
 
 // Tessellation runs off the UI thread (F21); bodies appear once their mesh is ready.
 void Viewport::startMeshing(std::vector<std::string> keys) {
-  struct MeshJob { TopoDS_Shape shape; std::string key; };
+  struct MeshJob { TopoDS_Shape shape; std::string key; std::shared_ptr<const opad::FaceColors> colors; };
   std::vector<MeshJob> jobs;
   {
     std::lock_guard<std::mutex> lock(m_meshMu);
     for (const auto& k : keys) {
       if (m_meshed.count(k) || m_meshing.count(k) || m_meshSkipped.count(k)) continue;
       m_meshing.insert(k);
-      jobs.push_back({opad::body_shape(m_doc->doc, k), k});
+      auto colors = std::make_shared<const opad::FaceColors>(opad::face_colors(m_doc->doc, k));
+      jobs.push_back({opad::body_shape(m_doc->doc, k), k, colors->empty() ? nullptr : colors});
     }
   }
   if (jobs.empty()) return;
@@ -1428,7 +1448,7 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
           trace::log(QString("mesh %1: status=%2 recovered=%3 incomplete cones=%4").arg(QString::fromStdString(j.key)).arg(mesh.status).arg(mesh.recovered_faces).arg(mesh.incomplete_cones));
         // The box from before the mesh is only good for the deflection: it follows the surfaces' poles, and one
         // small body with a 10 m box zoomed Fit All out of the whole Engine. The presentation gets the mesh's box.
-        prs = BodyPrs::build(j.shape, opad::refine_body_bbox(*cache, j.key, j.shape));  // so Display() on the UI thread is cheap
+        prs = BodyPrs::build(j.shape, opad::refine_body_bbox(*cache, j.key, j.shape), false, j.colors);  // so Display() on the UI thread is cheap
         prs->deflection = deflectionForBox(box);
       } catch (...) {
       }

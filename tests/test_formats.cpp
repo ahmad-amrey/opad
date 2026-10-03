@@ -8,8 +8,15 @@
 #include <IGESControl_Controller.hxx>
 #include <IGESControl_Writer.hxx>
 #include <Poly_Triangulation.hxx>
+#include <Quantity_Color.hxx>
+#include <STEPCAFControl_Writer.hxx>
+#include <TDocStd_Document.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
+#include <XCAFApp_Application.hxx>
+#include <XCAFDoc_ColorTool.hxx>
+#include <XCAFDoc_DocumentTool.hxx>
+#include <XCAFDoc_ShapeTool.hxx>
 #include <zlib.h>
 
 #include <chrono>
@@ -22,6 +29,8 @@
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
+#include "opad/mesh.hpp"
+#include "opad/render.hpp"
 #include "opad/step_io.hpp"
 
 using namespace opad;
@@ -278,6 +287,133 @@ TEST(obj_polygons_groups_and_material_colours) {
   // Y-up: the plate drawn in the file's XZ plane stands in OPAD's XY plane.
   const Bnd_Box box = scene_box(d);
   CHECK_NEAR(box.CornerMax().Z() - box.CornerMin().Z(), 5.0, 0.05);
+}
+
+TEST(face_colors_are_run_lengths_and_read_tolerantly) {
+  FaceColors colors;
+  colors.colors = {{1, 0, 0}, {0, 1, 0}};
+  colors.face = {-1, 0, 0, 1, -1, -1};
+  const json j = colors.to_json();
+  CHECK(j["runs"] == json::array({1, -1, 2, 0, 1, 1}));  // the faces after the last run are the body's colour
+  const FaceColors back = FaceColors::from_json(j);
+  CHECK_EQ(back.face.size(), 4u);
+  CHECK_EQ(back.at(2), 0);
+  CHECK_EQ(back.at(3), 1);
+  CHECK_EQ(back.at(5), -1);
+  CHECK(FaceColors::from_json(json{{"colors", {{1, 0, 0}}}, {"runs", {2, 5}}}).empty());  // no colour 5
+  CHECK(FaceColors::from_json(json{{"colors", {{1, 0, 0}}}, {"runs", {-2, 0}}}).empty());
+  CHECK(FaceColors::from_json(json("nonsense")).empty());
+  CHECK(FaceColors{}.to_json().is_null());
+}
+
+// OBJ materials (and glTF's) are kept as the file shows them: OCCT holds them linear, and taken as they came a Kd of 0.439
+// was 0.162 (the model drew nearly black). Each material of an object is a colour group of its body, which the exports keep.
+TEST(obj_materials_keep_their_shown_colour_as_face_groups) {
+  Files f;
+  write_text_file(f.dir / "two.mtl", "newmtl grey\nKd 0.439 0.439 0.439\nnewmtl red\nKd 1 0 0\n");
+  write_text_file(f.dir / "two.obj", "mtllib two.mtl\no Block\nv 0 0 0\nv 10 0 0\nv 10 10 0\nv 0 10 0\nv 0 0 10\nv 10 0 10\n"
+                                     "usemtl grey\nf 1 2 3\nf 1 3 4\nf 1 2 6\nusemtl red\nf 1 6 5\n");
+  auto expect = [](const Document& d, const std::string& what) {
+    const Scene s = resolve(d);
+    CHECK_EQ(s.all_bodies().size(), 1u);
+    const Node* n = s.node(s.all_bodies().front());
+    if (!n->has_color || std::abs(n->color[0] - 0.439) > 0.003) throw check::Failure(what + ": body colour " + std::to_string(n->color[0]));
+    const FaceColors faces = face_colors(d, n->body_key);
+    CHECK_EQ(faces.colors.size(), 1u);
+    CHECK_NEAR(faces.colors[0][0], 1.0, 0.003);
+    CHECK_NEAR(faces.colors[0][1], 0.0, 0.003);
+    CHECK_EQ(std::count_if(faces.face.begin(), faces.face.end(), [](int c) { return c == 0; }), 1);
+  };
+  for (bool viewer : {true, false}) expect(open(f.dir / "two.obj", viewer), viewer ? "viewer" : "full");
+  Document d = open(f.dir / "two.obj", false);
+  ExportOptions eo;
+  eo.format = "obj";
+  export_selection(d, resolve(d), f.dir / "out.obj", eo);
+  const std::string mtl = read_text_file(f.dir / "out.mtl");
+  CHECK(mtl.find("newmtl m0\nKd 0.4390 0.4390 0.4390") != std::string::npos);
+  CHECK(mtl.find("newmtl m0_0\nKd 1.0000 0.0000 0.0000") != std::string::npos);
+  expect(open(f.dir / "out.obj", false), "OBJ written and read again");
+  // glTF stores colours linear and OPAD reads them back as shown; its writer makes a mesh's pieces nodes of their own.
+  eo.format = "glb";
+  export_selection(d, resolve(d), f.dir / "out.glb", eo);
+  const Document gltf = open(f.dir / "out.glb", true);
+  const Scene s = resolve(gltf);
+  bool grey = false, red = false;
+  for (const auto& id : s.all_bodies()) {
+    const Node* n = s.node(id);
+    grey = grey || (std::abs(n->color[0] - 0.439) < 0.003 && std::abs(n->color[2] - 0.439) < 0.003);
+    red = red || (std::abs(n->color[0] - 1.0) < 0.003 && n->color[1] < 0.003);
+  }
+  CHECK(grey);
+  CHECK(red);
+}
+
+// A STEP that styles single faces (KiCad's models: a black body, gold pins) keeps them: the body takes the common colour,
+// the others are face colours, through viewer mode and the conversion to editable, the STEP and OBJ exports and the renderer.
+TEST(step_face_colours_follow_the_faces) {
+  Files f;
+  const TopoDS_Shape box = BRepPrimAPI_MakeBox(20, 20, 10).Shape();
+  Handle(TDocStd_Document) xdoc;
+  XCAFApp_Application::GetApplication()->NewDocument("MDTV-XCAF", xdoc);
+  const auto st = XCAFDoc_DocumentTool::ShapeTool(xdoc->Main());
+  const auto ct = XCAFDoc_DocumentTool::ColorTool(xdoc->Main());
+  const TDF_Label part = st->AddShape(box, Standard_False);
+  auto top = [](const TopoDS_Shape& face) {
+    Bnd_Box b;
+    BRepBndLib::Add(face, b);
+    return b.CornerMin().Z() > 9.9;
+  };
+  for (TopExp_Explorer e(box, TopAbs_FACE); e.More(); e.Next())
+    ct->SetColor(st->AddSubShape(part, e.Current()), top(e.Current()) ? Quantity_Color(0.9, 0.7, 0.2, Quantity_TOC_RGB) : Quantity_Color(0.1, 0.1, 0.1, Quantity_TOC_RGB), XCAFDoc_ColorSurf);
+  STEPCAFControl_Writer writer;
+  writer.SetColorMode(Standard_True);
+  CHECK(writer.Transfer(xdoc, STEPControl_AsIs));
+  CHECK(writer.Write((f.dir / "part.step").string().c_str()) == IFSelect_RetDone);
+
+  auto expect = [&](const Document& d, const std::string& what) {
+    const Scene s = resolve(d);
+    CHECK_EQ(s.all_bodies().size(), 1u);
+    const Node* n = s.node(s.all_bodies().front());
+    const FaceColors faces = face_colors(d, n->body_key);
+    if (!n->has_color || std::abs(n->color[0] - 0.1) > 0.003 || faces.colors.size() != 1) throw check::Failure(what + ": body or face colours");
+    CHECK_NEAR(faces.colors[0][0], 0.9, 0.003);
+    CHECK_NEAR(faces.colors[0][2], 0.2, 0.003);
+    const TopoDS_Shape shape = body_shape(d, n->body_key);
+    int gold = 0;
+    for (int i = 0; i < subshape_count(shape, Ref::Kind::Face); ++i)
+      if (faces.at(i) == 0) {
+        ++gold;
+        if (!top(subshape(shape, Ref::Kind::Face, i))) throw check::Failure(what + ": the gold face is not the top");
+      }
+    CHECK_EQ(gold, 1);
+  };
+  Document full = open(f.dir / "part.step", false), viewer = open(f.dir / "part.step", true);
+  expect(full, "full read");
+  expect(viewer, "viewer");
+  expect(make_editable(viewer), "viewer made editable");
+  ExportOptions eo;
+  export_selection(full, resolve(full), f.dir / "again.step", eo);
+  expect(open(f.dir / "again.step", false), "STEP written and read again");
+  eo.format = "obj";
+  export_selection(full, resolve(full), f.dir / "part.obj", eo);
+  CHECK(read_text_file(f.dir / "part.mtl").find("newmtl m0_0\nKd 0.9000 0.7000 0.2000") != std::string::npos);
+
+  // The renderer: from above the top is gold; the body recoloured red keeps it, and its sides turn red.
+  const std::string body = resolve(full).all_bodies().front();
+  full.append({{"op", "appearance"}, {"target", body}, {"color", {1.0, 0.0, 0.0}}});
+  RenderOptions ro;
+  ro.width = 120;
+  ro.height = 90;
+  ro.edges = false;
+  auto centre = [&](const std::string& view) {
+    ro.camera = Camera::preset(view);
+    const Image image = render_scene(full, resolve(full), ro);
+    const uint8_t* p = image.px(image.width / 2, image.height / 2);
+    return std::array<int, 3>{p[0], p[1], p[2]};
+  };
+  const auto above = centre("top"), side = centre("front");
+  CHECK(above[0] > above[2] + 60 && above[1] > above[2] + 30);  // gold
+  CHECK(side[0] > side[1] + 60 && side[0] > side[2] + 60);      // red
 }
 
 TEST(gltf_round_trip_keeps_millimetres) {

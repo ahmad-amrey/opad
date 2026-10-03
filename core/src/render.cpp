@@ -235,6 +235,12 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
         std::vector<std::pair<uint32_t, uint32_t>> tinted;
         for (const auto& f : it.mesh->faces)
           if (std::find(it.highlight_faces.begin(), it.highlight_faces.end(), f.face) != it.highlight_faces.end()) tinted.push_back({f.first, f.first + f.count});
+        // Faces with a colour of their own, as index ranges in order.
+        std::vector<std::pair<std::pair<uint32_t, uint32_t>, std::array<float, 3>>> painted;
+        if (!it.face_colors.empty())
+          for (const auto& f : it.mesh->faces)
+            if (auto c = it.face_colors.find(f.face); c != it.face_colors.end()) painted.push_back({{f.first, f.first + f.count}, c->second});
+        size_t paint = 0;
         const bool smooth = opt.smooth && N.size() == P.size();
         const Mat4& m = it.world;
         for (size_t k = 0; k + 2 < I.size(); k += 3) {
@@ -261,10 +267,12 @@ Image render_items(const std::vector<RenderItem>& items, const RenderOptions& op
             }
           }
           t.id = it.id;
-          t.r = it.color[0]; t.g = it.color[1]; t.bl = it.color[2]; t.a = it.opacity;
+          while (paint < painted.size() && painted[paint].first.second <= k) ++paint;
+          const std::array<float, 3>& color = paint < painted.size() && k >= painted[paint].first.first ? painted[paint].second : it.color;
+          t.r = color[0]; t.g = color[1]; t.bl = color[2]; t.a = it.opacity;
           for (const auto& [a, e] : tinted)
             if (k >= a && k < e) {
-              t.r = it.color[0] * 0.35f + 0.65f * 1.0f; t.g = it.color[1] * 0.35f + 0.65f * 0.55f; t.bl = it.color[2] * 0.35f + 0.65f * 0.1f;
+              t.r = color[0] * 0.35f + 0.65f * 1.0f; t.g = color[1] * 0.35f + 0.65f * 0.55f; t.bl = color[2] * 0.35f + 0.65f * 0.1f;
             }
           raster(t);
         }
@@ -460,6 +468,10 @@ Image render_scene(const Document& doc, const Scene& scene, const RenderOptions&
     it.color = {static_cast<float>(n->color[0]), static_cast<float>(n->color[1]), static_cast<float>(n->color[2])};
     it.opacity = static_cast<float>(n->opacity);
     it.id = id++;
+    const FaceColors faces = face_colors(doc, n->body_key);
+    for (size_t f = 0; f < faces.face.size(); ++f)
+      if (const int c = faces.face[f]; c >= 0)
+        it.face_colors[static_cast<int>(f)] = {static_cast<float>(faces.colors[size_t(c)][0]), static_cast<float>(faces.colors[size_t(c)][1]), static_cast<float>(faces.colors[size_t(c)][2])};
     // B9: edges and highlights.
     bool mine = false;
     for (const auto& h : opt.highlight) mine |= h.body == bid;

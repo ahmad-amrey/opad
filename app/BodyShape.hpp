@@ -42,9 +42,16 @@ struct BodyPrs {
   std::vector<gp_Pnt> drawingSegments; // sampled pairs for drawing-only orbit fallback
   Bnd_Box box;                                   // of the prototype; spares Display() a pass over every vertex
   double deflection = 0;                         // chordal deflection the triangles were meshed with (mm)
+  // Faces the file coloured otherwise than the body (opad::FaceColors, UI-74) are drawn as one group per colour, `own`
+  // holding the faces in the body's colour; `triangles` still has every face for picking, glows and highlights.
+  struct Painted { Quantity_Color color; Handle(Graphic3d_ArrayOfTriangles) triangles; };
+  std::vector<Painted> painted;
+  Handle(Graphic3d_ArrayOfTriangles) own;
+  std::shared_ptr<const opad::FaceColors> faceColors;  // what `painted` was made from (the zoom refinement uses it again)
   // Worker thread; needs triangulation. `drawingOnly` skips what only picking uses (circles, navigation BVH, curves):
   // the zoom refinement's finer arrays are drawn, never picked.
-  static std::shared_ptr<BodyPrs> build(const TopoDS_Shape& meshedProto, const Bnd_Box& box, bool drawingOnly = false);
+  static std::shared_ptr<BodyPrs> build(const TopoDS_Shape& meshedProto, const Bnd_Box& box, bool drawingOnly = false,
+                                        std::shared_ptr<const opad::FaceColors> faceColors = {});
   // Worker thread: how every view path meshes a body before build() (whole-model display, zoom refinement, previews):
   // BRepMesh at `deflection`, then cylinders and extrusions of any curve as upright strips (test_body_prs pins it).
   static opad::MeshingReport meshForDisplay(const TopoDS_Shape& shape, double deflection);
@@ -57,10 +64,10 @@ class BodyShape : public AIS_Shape {
   BodyShape(const TopoDS_Shape& proto, std::shared_ptr<const BodyPrs> prs) : AIS_Shape(proto), m_prs(std::move(prs)) {}
 
  public:
-  bool setRayBias(double offset) { if (offset==m_rayBias) return false; m_rayBias=offset; m_rayTriangles.Nullify(); SetToUpdate(); return true; }
+  bool setRayBias(double offset) { if (offset==m_rayBias) return false; m_rayBias=offset; m_rayTriangles.clear(); SetToUpdate(); return true; }
   // A finer mesh of the same body for the current zoom (Viewport::refineVisible), or nullptr for the base one. Only
   // the drawn arrays change: picking, sub-shape ordinals and highlights keep using the prototype's own mesh.
-  bool setDisplayPrs(std::shared_ptr<const BodyPrs> prs) { if (prs==m_display) return false; m_display=std::move(prs); m_rayTriangles.Nullify(); SetToUpdate(); return true; }
+  bool setDisplayPrs(std::shared_ptr<const BodyPrs> prs) { if (prs==m_display) return false; m_display=std::move(prs); m_rayTriangles.clear(); SetToUpdate(); return true; }
   const std::shared_ptr<const BodyPrs>& displayPrs() const { return m_display; }
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
@@ -70,7 +77,7 @@ class BodyShape : public AIS_Shape {
  private:
   std::shared_ptr<const BodyPrs> m_prs, m_display;
   double m_rayBias=0;
-  Handle(Graphic3d_ArrayOfTriangles) m_rayTriangles;
+  std::map<const Graphic3d_ArrayOfTriangles*, Handle(Graphic3d_ArrayOfTriangles)> m_rayTriangles;  // drawn array -> its biased copy
 };
 
 // Owner of one face, edge or vertex of a BodyShape. It knows its ordinal within the body and leaves the

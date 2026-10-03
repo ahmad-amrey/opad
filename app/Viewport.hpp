@@ -127,6 +127,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<std::string> isolatedNodes() const {return {m_isolated.begin(),m_isolated.end()};}
   int isolatedCount() const { return static_cast<int>(m_isolated.size()); }
   int displayedCount() const { return static_cast<int>(m_items.size()); }
+  // The colours a displayed body's shaded presentation fills its groups with (sRGB): one, or the body's own and each face
+  // colour (UI-74). Benches check what is drawn with it.
+  std::vector<std::array<double, 3>> drawnColors(const std::string& nodeId) const;
 
   // Section: the clip plane, and its gizmo (ViewportSection.cpp): the plane's outline over the model, edges only,
   // sized to the model's extent in the plane. A strip inside each side is a drag handle: hovering it shows a

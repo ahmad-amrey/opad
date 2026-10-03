@@ -17,9 +17,10 @@ namespace opad::detail {
 // hashing); otherwise the BREP text goes into the body store, with the triangulation for a mesh (it has no surfaces).
 std::string store_body(Document& doc, TopoDS_Shape shape, json meta, const ImportOptions& opt, bool mesh, ImportResult* res = nullptr);
 
-// A live shape (viewer mode, a linked asset) as body-store text: a mesh with its triangulation; a solid checked and healed
-// like a full import first (`healed` set when that changed it); a drawing as it is.
-std::string persist_body(TopoDS_Shape& shape, const std::string& representation, bool& healed);
+// A live shape (viewer mode, a linked asset) as body-store text, by its meta's representation: a mesh with its
+// triangulation; a solid checked and healed like a full import first (`healed` set when that changed it, the meta's face
+// colours moved to the faces healing made); a drawing as it is.
+std::string persist_body(TopoDS_Shape& shape, json& meta, bool& healed);
 
 // Walks an XCAF document (assemblies, instances, names, colours, materials) into one import op. `mesh`: the shapes are
 // triangulations (glTF, OBJ, VRML), not B-reps. For readers that do not convert units or axes themselves, `scale` takes

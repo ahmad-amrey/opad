@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -20,6 +21,20 @@ struct Mesh {
   std::string serialize() const;
   static Mesh deserialize(const std::string& blob);
 };
+
+// The colours a file gave single faces of a body (body meta "face_colors", UI-74): {"colors": [[r,g,b] sRGB, ...],
+// "runs": [count, colour, count, colour, ...]} over the body's faces in ordinal order (TopExp::MapShapes; a mesh's pieces,
+// not its facets). Colour -1, and every face past the runs, is the body's own colour, so recolouring a body keeps the
+// faces its file coloured otherwise (a connector's gold pins on a black housing).
+struct FaceColors {
+  std::vector<std::array<double, 3>> colors;
+  std::vector<int> face;  // colour index per face ordinal, -1 = the body's colour
+  bool empty() const;
+  int at(int ordinal) const { return ordinal >= 0 && static_cast<size_t>(ordinal) < face.size() ? face[static_cast<size_t>(ordinal)] : -1; }
+  json to_json() const;                       // null when no face has a colour of its own
+  static FaceColors from_json(const json& j);  // anything malformed reads as no face colours
+};
+FaceColors face_colors(const Document& doc, const std::string& key);  // from the body entry's meta
 
 struct MeshingReport {
   int status = 0;

@@ -897,15 +897,16 @@ design::Plan plan_asset_embed(const Document& doc, const std::string& import_id,
     if (std::find(keys.begin(), keys.end(), key) == keys.end()) keys.push_back(key);
   });
   // Each body as the store keeps it (healed like a full import), side by side: the kernel work is independent per shape.
-  struct Work { TopoDS_Shape shape; std::string brep, error; bool healed = false; };
+  struct Work { TopoDS_Shape shape; json meta; std::string brep, error; bool healed = false; };
   std::vector<Work> work(keys.size());
   std::atomic<bool> stop{false};
   OSD_Parallel::For(0, static_cast<int>(keys.size()), [&](int i) {
     if (stop || (cancel && cancel())) { stop = true; return; }
     Work& w = work[static_cast<size_t>(i)];
     try {
+      w.meta = doc.body(keys[static_cast<size_t>(i)])->meta;
       w.shape = body_shape(doc, keys[static_cast<size_t>(i)]);
-      w.brep = detail::persist_body(w.shape, doc.body(keys[static_cast<size_t>(i)])->meta.value("representation", "solid"), w.healed);
+      w.brep = detail::persist_body(w.shape, w.meta, w.healed);
     } catch (const Standard_Failure& ex) {
       w.error = ex.GetMessageString();
     } catch (const std::exception& ex) {
@@ -918,7 +919,7 @@ design::Plan plan_asset_embed(const Document& doc, const std::string& import_id,
   std::vector<design::NewBody> bodies;
   int healed = 0;
   for (size_t i = 0; i < keys.size(); ++i) {
-    json meta = doc.body(keys[i])->meta;
+    json meta = work[i].meta;
     meta.erase("asset");
     meta.erase("href");
     if (!work[i].error.empty()) throw Error("body '" + meta.value("name", keys[i].substr(0, 12)) + "' cannot be embedded: " + work[i].error);

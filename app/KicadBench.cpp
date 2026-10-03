@@ -1,6 +1,7 @@
 #include "MainWindow.hpp"
 
 #include <QApplication>
+#include <algorithm>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -15,6 +16,73 @@
 #include "KicadBoards.hpp"
 #include "Viewport.hpp"
 #include "opad/kicad_pcb.hpp"
+#include "opad/mesh.hpp"
+
+// OPAD_BENCH_COLORS=<png>: an OBJ cube (tools/gui_benches.py writes it) whose top is in a gold material of its own and the
+// rest in Kd 0.439 grey, opened as a viewer (UI-74). The body must keep the grey as the file shows it (0.439: taken linear
+// it was 0.162 and drew the model nearly black), carry the top as a face colour and draw it in a group of its own; the
+// frame (<png>) must show gold and grey. Recoloured red, the body keeps its gold top: groups and frame (<png>.red.png).
+bool MainWindow::benchColors() {
+  const QString shot = qEnvironmentVariable("OPAD_BENCH_COLORS");
+  if (shot.isEmpty()) return false;
+  static bool ran = false;
+  if (std::exchange(ran, true)) return true;
+  auto fail = [](const QString& why) {
+    trace::log("bench: colors FAIL: " + why);
+    QCoreApplication::exit(2);
+    return true;
+  };
+  const auto bodies = m_doc->scene.all_bodies();
+  if (!m_doc->browse || bodies.size() != 1) return fail("one body in viewer mode expected");
+  const std::string id = bodies.front();
+  const opad::Node* n = m_doc->scene.node(id);
+  const opad::FaceColors faces = opad::face_colors(m_doc->doc, n->body_key);
+  const int painted = int(std::count_if(faces.face.begin(), faces.face.end(), [](int c) { return c >= 0; }));
+  auto alike = [](const std::array<double, 3>& a, const std::array<double, 3>& b) {
+    return std::abs(a[0] - b[0]) < 0.02 && std::abs(a[1] - b[1]) < 0.02 && std::abs(a[2] - b[2]) < 0.02;
+  };
+  const std::array<double, 3> grey{0.439, 0.439, 0.439}, gold{1.0, 0.766, 0.336}, red{1.0, 0.0, 0.0};
+  auto drawn = [this, id, alike](const std::array<double, 3>& c) {
+    const auto colors = m_viewport->drawnColors(id);
+    return std::any_of(colors.begin(), colors.end(), [&](const auto& d) { return alike(d, c); });
+  };
+  // Pixels of a hue: gold (warm, blue well below red) and red (green and blue well below red), whatever the shading.
+  auto pixels = [](const QImage& image, bool goldish) {
+    int count = 0;
+    for (int y = 0; y < image.height(); ++y)
+      for (int x = 0; x < image.width(); ++x) {
+        const QColor c = image.pixelColor(x, y);
+        const double r = c.redF(), g = c.greenF(), b = c.blueF();
+        count += goldish ? (r > 0.35 && r - b > 0.2 && g - b > 0.1 && r >= g) : (r > 0.3 && r - g > 0.25 && r - b > 0.25 && g < 0.25);
+      }
+    return count;
+  };
+  trace::log(QString("bench: colors: body colour %1 %2 %3, %4 face colours on %5 faces, drawn in %6 groups")
+                 .arg(n->color[0]).arg(n->color[1]).arg(n->color[2]).arg(faces.colors.size()).arg(painted).arg(m_viewport->drawnColors(id).size()));
+  if (!n->has_color || !alike(n->color, grey)) return fail("the grey material was not kept as the file shows it");
+  if (faces.colors.size() != 1 || painted != 1 || !alike(faces.colors[0], gold)) return fail("the gold top is not a face colour");
+  if (m_viewport->drawnColors(id).size() != 2 || !drawn(grey) || !drawn(gold)) return fail("not drawn as a grey and a gold group");
+  m_viewport->standardView("iso");
+  m_viewport->fitAll();
+  QTimer::singleShot(800, this, [this, shot, fail, pixels, drawn, id, gold, red, grey] {
+    const QImage before = m_viewport->grabImage();
+    const int goldBefore = pixels(before, true);
+    trace::log(QString("bench: colors: %1 gold pixels").arg(goldBefore));
+    if (!before.save(shot) || goldBefore < 500) return (void)fail("the gold top does not show");
+    m_doc->run("appearance", opad::json{{"target", id}, {"color", {1.0, 0.0, 0.0}}});  // a view change, allowed in viewer mode
+    QTimer::singleShot(800, this, [this, shot, fail, pixels, drawn, gold, red, grey, goldBefore] {
+      const QImage after = m_viewport->grabImage();
+      const int goldAfter = pixels(after, true), redAfter = pixels(after, false);
+      trace::log(QString("bench: colors: recoloured red: %1 gold pixels, %2 red pixels").arg(goldAfter).arg(redAfter));
+      if (!after.save(QString(shot).replace(".png", ".red.png"))) return (void)fail("frame not saved");
+      if (!drawn(red) || !drawn(gold) || drawn(grey)) return (void)fail("the groups did not follow the body's new colour");
+      if (redAfter < 500 || goldAfter < goldBefore / 2) return (void)fail("the red body or its gold top does not show");
+      trace::log("bench: colors OBJ material kept as shown, own face colour drawn as its own group, body recoloured keeps it PASS");
+      QCoreApplication::exit(0);
+    });
+  });
+  return true;
+}
 
 // OPAD_BENCH_KICAD=<png>: a KiCad board opened as a viewer (tools/gui_benches.py writes it: two footprints sharing a model
 // that only the "KiCad 3D model folders" setting finds, one whose model is missing, one whose model is KiCad's library's,
