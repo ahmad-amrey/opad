@@ -1165,7 +1165,8 @@ void card(Ctx& c, const QJsonObject& o) {
   const int hl = o.value("hl").toInt(-1);
   double y = ltr.top() + titleH + 2 * u;
   for (qsizetype i = 0; i < rows.size(); ++i, y += rowH) {
-    // [label, value], or {"text" (translated) | "label" (as written), "value", "radio", "check", "indent", "icon", "slider", "dim", "color"}
+    // [label, value], or {"text" (translated) | "label" (as written), "value", "entry" (a text field, as written), "radio", "check",
+    // "indent", "icon", "slider", "dim", "color"}
     const QJsonObject r = rows[i].isArray() ? QJsonObject{{"text", rows[i].toArray().at(0)}, {"value", rows[i].toArray().at(1)}} : rows[i].toObject();
     const QRectF row(ltr.left() + 2 * u, y, w - 4 * u, rowH);
     if (i == hl) {
@@ -1215,6 +1216,21 @@ void card(Ctx& c, const QJsonObject& o) {
       const QPointF knob = c.mirror(QRectF(sx0 + (sx1 - sx0) * f - 0.5, cy - 0.5, 1, 1)).center();
       p.setBrush(t.fg);
       p.drawEllipse(knob, 4.5 * u, 4.5 * u);
+    } else if (r.contains("entry")) {  // a text field and what is typed in it, as written, with a caret
+      const double fx = r.contains("text") || r.contains("label") ? row.left() + w * 0.42 : x;
+      const QRectF field = c.mirror(QRectF(fx, y + 1.5 * u, row.right() - pad - fx + 2 * u, rowH - 3 * u));
+      p.setPen(QPen(t.sel, 1 * u));
+      p.setBrush(t.bg);
+      p.drawRoundedRect(field, 2.5 * u, 2.5 * u);
+      const QString entry = r.value("entry").toString();
+      const double tw = QFontMetricsF(p.font()).horizontalAdvance(entry);
+      p.setPen(t.fg);
+      p.drawText(field.adjusted(4 * u, 0, -4 * u, 0), (c.rtl ? Qt::AlignRight : Qt::AlignLeft) | Qt::AlignVCenter, literal(entry));
+      if (std::fmod(c.t, 1.0) < 0.6) {
+        const double cx = c.rtl ? field.right() - 4 * u + 1 * u : field.left() + 4 * u + tw + 1 * u;
+        p.setPen(QPen(t.sel, 1.1 * u));
+        p.drawLine(QPointF(cx, field.top() + 3 * u), QPointF(cx, field.bottom() - 3 * u));
+      }
     } else if (r.contains("value")) {
       p.setPen(dim ? t.fg3 : r.value("color").isString() ? c.col(r.value("color"), "fg") : t.fg);
       const QString value = r.value("value").toString();
@@ -1496,10 +1512,35 @@ void letters(Ctx& c, const QJsonObject& o, const Xf& x) {
   p.drawPath(tr.map(path));
 }
 
-// Where the cursor is: a model point ("pos"), or a place on the screen chrome ("screen", mirrored like cards), plus px.
-QPointF cursorAt(const Ctx& c, const QJsonObject& o) {
-  const QPointF at = o.contains("screen") ? c.screen(o.value("screen")) : c.map(c.pt(o.value("pos"), xform(o)));
-  return at + QPointF(o.value("dx").toDouble() * (o.contains("screen") && c.rtl ? -1 : 1), o.value("dy").toDouble()) * c.u;
+// Where the cursor is at t: keyed model points ("pos") and places on the screen chrome ("screen", mirrored like cards)
+// mix freely, gliding on the screen from one to the next; plus px.
+QPointF cursorAt(const Ctx& c, const Item& it, double t) {
+  const QJsonObject o = evaluate(it, t);
+  struct Anchor { double t; QPointF at; Ease ease; bool screen; };
+  QList<Anchor> anchors;
+  for (const Track& k : it.tracks)
+    if (k.prop == "pos" || k.prop == "screen")
+      for (qsizetype i = 0; i < k.t.size(); ++i)
+        anchors << Anchor{k.t[i], k.prop == "screen" ? c.screen(k.v[i]) : c.map(c.pt(k.v[i], xform(o))), k.ease[i], k.prop == "screen"};
+  std::stable_sort(anchors.begin(), anchors.end(), [](const Anchor& a, const Anchor& b) { return a.t < b.t; });
+  QPointF at;
+  bool screen = o.contains("screen");
+  if (anchors.isEmpty()) {
+    at = screen ? c.screen(o.value("screen")) : c.map(c.pt(o.value("pos"), xform(o)));
+  } else if (t <= anchors.first().t || anchors.size() == 1) {
+    at = anchors.first().at;
+    screen = anchors.first().screen;
+  } else if (t >= anchors.last().t) {
+    at = anchors.last().at;
+    screen = anchors.last().screen;
+  } else {
+    qsizetype i = 1;
+    while (anchors[i].t <= t) ++i;
+    const Anchor &a = anchors[i - 1], &b = anchors[i];
+    at = a.at + (b.at - a.at) * eased(b.ease, (t - a.t) / std::max(1e-9, b.t - a.t));
+    screen = a.screen;
+  }
+  return at + QPointF(o.value("dx").toDouble() * (screen && c.rtl ? -1 : 1), o.value("dy").toDouble()) * c.u;
 }
 
 void ripples(Ctx& c, const Item& it) {
@@ -1509,7 +1550,7 @@ void ripples(Ctx& c, const Item& it) {
   QList<QPointF> placed;
   for (const double tc : it.clicks) {
     ++number;
-    const QPointF at = cursorAt(c, evaluate(it, tc));
+    const QPointF at = cursorAt(c, it, tc);
     if (c.still) {  // the still frame numbers the clicks instead (side by side where clicks land on one place)
       if (tc > c.t + 1e-6) continue;
       QPointF b = at + QPointF(-9, -9) * c.u;
@@ -1706,7 +1747,7 @@ void paintItem(Ctx& c, const Item& it, const QJsonObject& o) {
   } else if (el == "cursor") {
     ripples(c, it);
     if (c.still) return;  // the numbered clicks tell the story; a resting cursor would hide them
-    const QPointF at = cursorAt(c, o);
+    const QPointF at = cursorAt(c, it, c.t);
     if (o.value("down").toBool()) {
       p.setPen(Qt::NoPen);
       p.setBrush(alpha(token(*c.tk, "sel"), 0.45));
