@@ -763,7 +763,7 @@ bool SketchEditor::fromPoint(double& x, double& y, int& id) const {
   static const QStringList directed = {"rect3", "circle2", "circle3", "arc3", "arcc", "polygon", "polygon_outer", "slot", "cslot", "arcslot", "ellipse", "conic", "control_spline"};
   const size_t n = m_clicks.size();
   if (!n || !directed.contains(m_tool)) return false;
-  if (n == 2 && (m_tool == "arc3" || m_tool == "slot" || m_tool == "cslot" || m_tool == "ellipse")) return false;  // a size or a side: no direction
+  if (n == 2 && (m_tool == "arc3" || m_tool == "slot" || m_tool == "cslot" || m_tool == "ellipse" || m_tool == "rect3")) return false;  // a size or a side: no direction
   const Snap& c = n == 2 && (m_tool == "arcc" || m_tool == "arcslot") ? m_clicks[0] : m_clicks.back();  // an arc's end: about its centre
   x = c.u, y = c.v, id = c.point ? c.point : -1;
   return true;
@@ -818,8 +818,8 @@ bool SketchEditor::alignsHere() const {
   const size_t n = m_clicks.size();
   const QString& k = m_tool;
   if (k == "line") return !m_chain.empty();
-  if (k == "arcc" || k == "arcslot" || k == "rect3") return n == 1 || n == 2;
-  return n == 1 && (k == "arc3" || k == "polygon" || k == "polygon_outer" || k == "slot" || k == "cslot" || k == "ellipse");
+  if (k == "arcc" || k == "arcslot") return n == 1 || n == 2;
+  return n == 1 && (k == "arc3" || k == "rect3" || k == "polygon" || k == "polygon_outer" || k == "slot" || k == "cslot" || k == "ellipse");
 }
 
 // ---------------------------------------------------------------- input
