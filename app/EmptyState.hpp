@@ -74,6 +74,7 @@ class EmptyState : public QWidget {
   Q_OBJECT
  public:
   explicit EmptyState(QWidget* parent = nullptr);
+  ~EmptyState() override;
   void setRecent(const QStringList& paths);
   QStringList recent() const { return m_paths; }
   void setJobs(JobRunner* jobs);  // the pictures and file states are read through it; until then the cards show their icons
@@ -105,6 +106,7 @@ class EmptyState : public QWidget {
   void dragEnterEvent(QDragEnterEvent* e) override;
   void dropEvent(QDropEvent* e) override;
   void showEvent(QShowEvent* e) override;
+  void hideEvent(QHideEvent* e) override;
   bool eventFilter(QObject* watched, QEvent* e) override;  // the cards' column count follows their room
 
  private:

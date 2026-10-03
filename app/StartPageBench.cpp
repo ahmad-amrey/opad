@@ -142,6 +142,21 @@ OPAD_BENCH(OPAD_BENCH_STARTPAGE, startpage) {
       if (m->isVisible()) return true;
     return false;
   });
+  // The page hidden (a document opened, the window closed) while it renders: the reading and its thumbnailer stop.
+  add([=, &w] {
+    for (QMenu* m : w.m_empty->findChildren<QMenu*>("recentMenu")) m->close();
+    QDir(pictures).removeRecursively();
+    w.m_empty->refresh();
+    check(w.m_empty->reading(), "without the cache the page renders its pictures again");
+    w.m_stack->setCurrentIndex(1);
+  });
+  until(500, "the reading to stop", [=, &w] { return !w.m_jobs->titles().contains(QCoreApplication::translate("EmptyState", "Reading recent files")); });
+  add([=, &w] {
+    check(!w.m_empty->isVisible() && !w.m_empty->reading(), "hiding the page stops its reading and the thumbnailer");
+    w.m_stack->setCurrentIndex(0);
+    check(w.m_empty->reading(), "shown again, it reads again");
+  });
+  until(90000, "the pictures again", [=, &w] { return !w.m_empty->reading() && QDir(pictures).entryList({"*.png"}).size() >= 2; });
   add([=, &w] {
     for (QMenu* m : w.m_empty->findChildren<QMenu*>("recentMenu")) m->close();
     check(true, "the Menu key opens a card's menu");

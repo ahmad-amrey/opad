@@ -35,6 +35,13 @@
 
 #include <algorithm>
 
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "Theme.hpp"
@@ -91,8 +98,28 @@ struct FileState {
   QImage picture;
 };
 
+// The thumbnailer goes with OPAD: a quit while it renders (the single-file build's own exe) never leaves it behind.
+void tieToApp(const QProcess& process) {
+#ifdef Q_OS_WIN
+  static const HANDLE killOnClose = [] {
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (job) SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof limits);
+    return job;
+  }();
+  if (HANDLE child = killOnClose ? OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE, DWORD(process.processId())) : nullptr) {
+    AssignProcessToJobObject(killOnClose, child);
+    CloseHandle(child);
+  }
+#else
+  Q_UNUSED(process);
+#endif
+}
+
 // On the worker: the file's state, and its picture from the cache or rendered by the thumbnailer (killed when the job is
-// cancelled or after two minutes). A file it cannot picture (an empty document) is remembered as such.
+// cancelled, when the page hides, or after two minutes). A file it cannot picture (an empty document) or not in two minutes
+// is remembered as such, until it changes.
 FileState readFile(const QString& path, const Thumbnailer& cli, const QString& cache, const Progress& progress) {
   FileState s;
   const QFileInfo info(path);
@@ -109,6 +136,7 @@ FileState readFile(const QString& path, const Thumbnailer& cli, const QString& c
   QProcess process;
   process.start(cli.program, cli.args + QStringList{info.absoluteFilePath(), "--out", raw, "--size", "256"});
   if (!process.waitForStarted(10000)) return s;
+  tieToApp(process);
   QElapsedTimer clock;
   clock.start();
   while (!process.waitForFinished(100))
@@ -116,6 +144,7 @@ FileState readFile(const QString& path, const Thumbnailer& cli, const QString& c
       process.kill();
       process.waitForFinished(3000);
       QFile::remove(raw);
+      if (!progress.cancelled()) QFile(none).open(QIODevice::WriteOnly);  // too slow: not tried again on every show
       return s;
     }
   if (process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0) s.picture = readBgra(raw);
@@ -587,6 +616,16 @@ void EmptyState::showEvent(QShowEvent* e) {
   fillTemplates();  // a template saved meanwhile
   fillCommands();
   refresh();
+}
+
+// A document opened, the window closed: no thumbnailer keeps rendering behind them (shown again: read again).
+void EmptyState::hideEvent(QHideEvent* e) {
+  QWidget::hideEvent(e);
+  if (m_job) m_job->cancel();
+}
+
+EmptyState::~EmptyState() {
+  if (m_job) m_job->cancel();
 }
 
 // The files' states and pictures, read on a worker; the cards fill in as each file is read. A newer reading drops the older.
