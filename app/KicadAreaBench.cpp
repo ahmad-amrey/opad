@@ -1,6 +1,6 @@
 // The KiCad area in the running app (KicadArea.hpp): Insert KiCad PCB, repeated models meshed once, the sync preview from the
 // changed board's toast and an incremental sync from its footer; a board projected into a sketch that follows a sync
-// (UI-134). Cases in tools/bench_cases/kicad.py.
+// (UI-134); small parts hidden while the view moves. Cases in tools/bench_cases/kicad.py.
 #include <QApplication>
 #include <QCheckBox>
 #include <QDialog>
@@ -330,3 +330,59 @@ OPAD_BENCH(OPAD_BENCH_KICAD_PROJECT, kicad_project) {
   return true;
 }
 
+// OPAD_BENCH_SMALL_PARTS=<prefix> on a document linking a board with twelve 2 mm chips and a 9 mm connector. Hide small parts
+// while navigating (View menu, the View tabs) turned on (3 mm), R1 selected: a camera move hides the other eleven chips (the
+// connector, the board and R1 stay), and they come back once the view is still; off, a move hides nothing. Frames:
+// <prefix>.moving.png, .still.png.
+OPAD_BENCH(OPAD_BENCH_SMALL_PARTS, small_parts) {
+  static bool ran = false;  // each load that ends comes back here (the insert's too)
+  if (std::exchange(ran, true)) return true;
+  auto require = std::make_shared<Checks>("small-parts");
+  auto settled = [&w] {  // displayed and settled: no load, display or look job, every visible body shown
+    int visible = 0;
+    for (const auto& id : w.m_doc->scene.all_bodies()) visible += w.m_doc->scene.effectively_visible(id) && !w.m_doc->node(id)->body_missing;
+    return !w.m_doc->loading && !w.m_loadJob && !w.m_displayJob && w.m_meshRemaining == 0 && !w.m_viewport->looksPending() && w.m_viewport->displayedCount() == visible;
+  };
+  const QString prefix = value;
+  AppDocument* doc = w.m_doc;
+  Viewport* v = w.m_viewport;
+  QAction* hide = w.action("view.hideSmallParts");
+  const CommandInfo* info = w.m_commands.find("view.hideSmallParts");
+  (*require)(hide && hide->isCheckable() && !hide->isChecked() && info && info->menuPath == "view" && w.m_commands.inWorkspace("review").contains("view.hideSmallParts"),
+             "Hide small parts while navigating in the View menu and on the View tabs, off by default");
+  if (!hide) return require->finish(), true;
+  waitFor(&w, [=, &w] { return settled() && w.m_viewport->displayedCount() >= 14; }, 20000, [=, &w](bool shown) {
+    (*require)(shown, QString("the board shown: %1 bodies").arg(v->displayedCount()));
+    std::vector<std::string> chips;
+    for (int i = 1; i <= 12; ++i) chips.push_back(bodyOf(doc, part(doc, QString("R%1").arg(i))));
+    const std::string j1 = bodyOf(doc, part(doc, "J1"));
+    hide->trigger();
+    (*require)(hide->isChecked() && std::abs(v->smallPartFilter() - 3) < 1e-9 && w.m_settings.value("view/hideSmallParts").toBool(), "turned on: parts under 3 mm, remembered");
+    v->selectNodes({chips[0]});
+    v->standardView("iso");
+    v->fitAll();
+    QTimer::singleShot(400, &w, [=, &w] {
+      v->standardView("front");  // a move, as a frame reports it
+      v->cameraMoving();
+      waitFor(&w, [=] { return v->smallPartsHidden() && !v->looksPending(); }, 5000, [=, &w](bool hidden) {
+        int gone = 0;
+        for (size_t i = 1; i < chips.size(); ++i) gone += !v->shownLook(chips[i]).visible;
+        (*require)(hidden && v->smallPartCount() == 11 && gone == 11 && v->shownLook(chips[0]).visible && v->shownLook(j1).visible,
+                   QString("moving: %1 chips hidden, the selected one and the connector shown").arg(gone));
+        (*require)(v->grabImage().save(prefix + ".moving.png"), "frame while moving");
+        waitFor(&w, [=] { return !v->smallPartsHidden() && !v->looksPending(); }, 3000, [=, &w](bool back) {
+          int seen = 0;
+          for (const auto& c : chips) seen += v->shownLook(c).visible;
+          (*require)(back && seen == 12, QString("still for 300 ms: all %1 chips shown again").arg(seen));
+          (*require)(v->grabImage().save(prefix + ".still.png"), "frame when still");
+          hide->trigger();
+          v->standardView("top");
+          v->cameraMoving();
+          (*require)(!hide->isChecked() && v->smallPartFilter() == 0 && !v->smallPartsHidden(), "off: a move hides nothing");
+          require->finish();
+        });
+      });
+    });
+  });
+  return true;
+}

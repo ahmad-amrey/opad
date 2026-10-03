@@ -20,7 +20,8 @@
 #include <cstddef>
 #include <optional>
 
-enum class LookSource { Asset, Lock, Activation, Compare, Explode, Candidate, Count };
+// Navigation: parts hidden while the view moves (Viewport::setSmallPartFilter), over everything else.
+enum class LookSource { Asset, Lock, Activation, Compare, Explode, Candidate, Navigation, Count };
 constexpr std::size_t kLookSources = static_cast<std::size_t>(LookSource::Count);
 
 struct LookDelta {

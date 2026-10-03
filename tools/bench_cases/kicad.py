@@ -1,5 +1,5 @@
 """gui_benches cases of the KiCad area (KicadArea: UI-72 UI, UI-134): Insert KiCad PCB, the sync preview and an incremental
-sync, projecting a board into a sketch that follows a sync. The benches are in
+sync, projecting a board into a sketch that follows a sync, small parts hidden while navigating. The benches are in
 app/KicadAreaBench.cpp. Each case writes its own synthetic board (never a user's board) and STEP models through opad-cli,
 with its own cache (OPAD_CACHE_DIR) in the run's folder."""
 import os
@@ -64,6 +64,19 @@ def kicad_project(root, document):
     return design, env
 
 
+def small_parts(root, document):
+    """A document linking a board crowded with 0402-sized chips (12 of them) around one connector."""
+    folder = root / "small-parts"
+    folder.mkdir()
+    models(document, folder)
+    chips = [(f"R{i + 1}", f"{105 + 4 * (i % 6)} {108 + 6 * (i // 6)}", "chip.step", "F") for i in range(12)]
+    (folder / "board.kicad_pcb").write_text(board_text(RECT, [("H1", "104 104")], chips + [("J1", "145 125", "conn.step", "F")]), encoding="utf-8")
+    design = document("small-parts/design")
+    env = {"OPAD_CACHE_DIR": str(root / "small-parts-cache")}
+    subprocess.run([str(document.cli), "import", str(design), str(folder / "board.kicad_pcb"), "--link", "true"], check=True, capture_output=True, env={**os.environ, **env})
+    return design, env
+
+
 CASES = [
     # Insert KiCad PCB (the board's dialog answered, linked), repeated models meshed once, the changed board's toast opening the
     # sync preview (moved, model changed, added, holes; tinted), Sync from its footer re-meshing only the changed shapes and
@@ -72,4 +85,6 @@ CASES = [
     # UI-134: the board's outline, its mounting holes and J1 projected into a sketch from the dialog, kept by a sync that
     # notches the outline, moves a hole and turns J1 (<prefix>.png, .dialog.png).
     ("kicad-project", kicad_project, {"OPAD_BENCH_KICAD_PROJECT": "{prefix}"}),
+    # Small parts hidden while the view moves, the selected one kept, all back once still (<prefix>.moving.png, .still.png).
+    ("small-parts", small_parts, {"OPAD_BENCH_SMALL_PARTS": "{prefix}"}),
 ]

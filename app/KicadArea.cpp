@@ -1,5 +1,5 @@
 // KiCad boards in the window (UI-72 UI, UI-134; KicadArea.hpp): Insert KiCad PCB, the sync preview, projecting a board into a
-// sketch and the board's Properties section.
+// sketch, the board's Properties section and the small-part filter.
 #include "KicadArea.hpp"
 
 #include <QCheckBox>
@@ -9,6 +9,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -45,10 +46,12 @@
 #include "opad/scene.hpp"
 
 OPAD_ICON_TABLE(kicad,
-                {"kicadboard", R"(<rect x="3" y="5" width="18" height="14" rx="1"/><rect x="9" y="9" width="6" height="6"/><path d="M15 12h3M6 9h3M6 15h3"/><circle cx="18" cy="8" r="1"/>)"});
+                {"kicadboard", R"(<rect x="3" y="5" width="18" height="14" rx="1"/><rect x="9" y="9" width="6" height="6"/><path d="M15 12h3M6 9h3M6 15h3"/><circle cx="18" cy="8" r="1"/>)"},
+                {"smallparts", R"(<rect x="3" y="11" width="9" height="9"/><rect x="15" y="5" width="2" height="2"/><rect x="18" y="10" width="2" height="2"/><rect x="15" y="15" width="2" height="2"/><path d="M14 3l7 18"/>)"});
 
 namespace {
 std::filesystem::path fsPath(const QString& path) { return std::filesystem::path(path.toStdU16String()); }
+constexpr double kSmallPartSize = 3.0;  // mm: chip resistors and capacitors, small diodes
 QString refOf(const QString& name) { return name.section(' ', 0, 0); }  // "J1 USB_C" -> "J1"
 
 // The node ids of an import's KiCad records, by reference designator (the parts, and the mounting holes apart).
@@ -67,7 +70,7 @@ AssetsArea* KicadArea::assets() const { return services().window()->findChild<As
 
 void KicadArea::buildActions() {
   auto add = [this](const char* id, const QString& label, const char* icon, const QString& group, const QStringList& keywords,
-                    std::function<bool(const CommandContext&)> when, std::function<void()> fn, bool edits = false) {
+                    std::function<bool(const CommandContext&)> when, std::function<void()> fn, bool edits = false, bool checkable = false) {
     CommandInfo info;
     info.id = id;
     info.label = label;
@@ -76,6 +79,7 @@ void KicadArea::buildActions() {
     info.keywords = keywords;
     info.enabledWhen = std::move(when);
     info.editsDocument = edits;
+    info.checkable = checkable;
     return services().addCommand(info, std::move(fn));
   };
   const QString kicad = tr("KiCad");
@@ -91,6 +95,10 @@ void KicadArea::buildActions() {
       [this] { preview(boardOf(services().selection())); });
   add("kicad.project", tr("Project KiCad board…"), "project", kicad, {"kicad", "outline", "mounting holes", "connector", "enclosure", "pcb"},
       [this](const CommandContext& c) { return c.sketching && !m_boards.empty(); }, [this] { project(); });
+  QAction* small = add("view.hideSmallParts", tr("Hide small parts while navigating"), "smallparts", QString(), {"performance", "fast", "orbit", "pcb", "level of detail"},
+                       {}, [this] { setSmallParts(services().action("view.hideSmallParts")->isChecked()); }, false, true);
+  small->setChecked(QSettings().value("view/hideSmallParts", false).toBool());
+  add("view.smallPartSize", tr("Small part size…"), "", QString(), {"performance", "hide", "navigating"}, {}, [this] { askSmallPartSize(); });
 }
 
 void KicadArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
@@ -106,6 +114,11 @@ void KicadArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
     sub->setObjectName("kicad");
     for (const char* id : {"kicad.insert", "kicad.previewSync", "kicad.project"}) sub->addAction(services().action(id));
   }
+  if (QMenu* view = menus.value("view")) {
+    view->addSeparator();
+    view->addAction(services().action("view.hideSmallParts"));
+    view->addAction(services().action("view.smallPartSize"));
+  }
 }
 
 void KicadArea::ribbon(RibbonLayout& layout) {
@@ -118,12 +131,14 @@ void KicadArea::ribbon(RibbonLayout& layout) {
     g->items.insert(std::min(at, int(g->items.size())), item);
   }
   layout.addAction("sketch.reference.reference", services().action("kicad.project"));
+  for (const char* group : {"review.view.display", "design.view.display"}) layout.addAction(group, services().action("view.hideSmallParts"), RibbonLayout::Size::Small);
 }
 
 void KicadArea::ready() {
   buildPanel();
   if (AssetsArea* a = assets()) a->setPreviewer([this](const std::string& import) { preview(import); });
   services().properties()->addSectionProvider([this](const PropertySubject& s, const opad::json&, QList<PropertySection>& out) { section(s, out); });
+  setSmallParts(QSettings().value("view/hideSmallParts", false).toBool());
   documentChanged(true);
 }
 
@@ -440,6 +455,26 @@ void KicadArea::contextMenu(const SelectionContext& selection, QMenu& menu) {
   if (import.empty() || services().document()->browse) return;
   if (const AssetsArea* a = assets(); a && a->monitor() && a->monitor()->asset(import))
     menu.addAction(icons::themed("regen", 16), tr("Preview KiCad sync…"), this, [this, import] { preview(import); });
+}
+
+// ---------------------------------------------------------------- small parts while navigating
+void KicadArea::setSmallParts(bool on) {
+  QSettings settings;
+  settings.setValue("view/hideSmallParts", on);
+  if (QAction* a = services().action("view.hideSmallParts"); a && a->isChecked() != on) a->setChecked(on);
+  services().viewport()->setSmallPartFilter(on ? settings.value("view/smallPartSize", kSmallPartSize).toDouble() : 0);
+}
+
+void KicadArea::askSmallPartSize() {
+  QSettings settings;
+  bool ok = false;
+  const double was = settings.value("view/smallPartSize", kSmallPartSize).toDouble();
+  const double shown = QInputDialog::getDouble(services().window(), tr("Small part size"),
+                                               tr("While the view moves, hide parts smaller than (%1):").arg(units::symbol(units::Kind::Length)),
+                                               units::toDisplay(units::Kind::Length, was), 0, 1e6, 3, &ok);
+  if (!ok) return;
+  settings.setValue("view/smallPartSize", units::fromDisplay(units::Kind::Length, shown));
+  setSmallParts(true);
 }
 
 OPAD_AREA(KicadArea)

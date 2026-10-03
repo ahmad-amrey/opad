@@ -4,7 +4,8 @@
 // per reference designator (moved, turned, flipped, model or footprint changed, added, removed, the mounting holes and the
 // board itself), the parts it names tinted in the view, Sync in its footer; Project KiCad board puts the board's outline,
 // its mounting holes and chosen parts into the open sketch as references by node, which every sync keeps (opad
-// design::derive_sketch, "asset" sources); a board's Properties say it explodes as one.
+// design::derive_sketch, "asset" sources); a board's Properties say it explodes as one; Hide small parts while navigating
+// (the viewport's small-part filter, its size a setting) keeps orbiting a dense board fluid.
 #include <QPointer>
 #include <QString>
 #include <string>
@@ -53,6 +54,8 @@ class KicadArea : public AreaController {
   // Board outline, mounting holes (all, as one reference: holes added later come with a sync) and parts (node ids) of
   // `import` into the open sketch; false when the sketch is busy.
   bool projectInto(const std::string& import, bool outline, bool holes, const std::vector<std::string>& parts, bool linked);
+  void setSmallParts(bool on);    // the filter on or off (setting view/hideSmallParts)
+  void askSmallPartSize();        // its size (setting view/smallPartSize, mm)
 
   ToolPanel* previewPanel() const { return m_panel; }
   QTreeWidget* previewList() const { return m_list; }

@@ -1061,6 +1061,7 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   refreshMeasurement();
   noteCameraMoved();
   scheduleRefinement();
+  cameraMoving();  // the small-part filter
   trackHoverFade();
   if (m_twoDimensional) updateInfiniteGrid(false);
   AIS_ViewController::handleViewRedraw(ctx, view);
@@ -1752,6 +1753,7 @@ void Viewport::sync() {
       m_meshSkipped.clear();
       m_prs.clear();
       m_refined.clear();
+      m_partSizes.clear();
     }
   }
   if (!m_isolated.empty()) {  // the mode ends by itself once every isolated object is gone (deleted)

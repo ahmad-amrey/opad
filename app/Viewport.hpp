@@ -138,6 +138,14 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // moved part is relocated, never displayed again): bodies meshed (one per key), displayed, relocated in place.
   struct DisplayStats { int meshed = 0, displayed = 0, relocated = 0; };
   DisplayStats displayStats() const { return {m_meshCount.load(), m_displayCount, m_relocateCount}; }
+  // Small parts hidden while the view moves (ViewportSmallParts.cpp): bodies whose box's longest side is under `mm` are
+  // hidden (LookSource::Navigation) from the first frame the camera moves until it has been still for 300 ms, selected
+  // ones excepted; 0 turns it off. A camera change outside a frame (benches) is reported with cameraMoving().
+  void setSmallPartFilter(double mm);
+  double smallPartFilter() const { return m_smallParts; }
+  bool smallPartsHidden() const { return m_smallHidden; }
+  int smallPartCount() const { return m_smallCount; }  // hidden by the last move
+  void cameraMoving();
   // The colours a displayed body's shaded presentation fills its groups with (sRGB): one, or the body's own and each face
   // colour (UI-74). Benches check what is drawn with it.
   std::vector<std::array<double, 3>> drawnColors(const std::string& nodeId) const;
@@ -513,6 +521,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::map<std::string, Refined> m_refined;
   std::atomic<int> m_meshCount{0};
   int m_displayCount = 0, m_relocateCount = 0;
+  double m_smallParts = 0;
+  bool m_smallHidden = false;
+  int m_smallCount = 0;
+  QTimer m_smallTimer;
+  Graphic3d_WorldViewProjState m_smallCamera;
+  std::unordered_map<std::string, double> m_partSizes;  // body key -> its box's longest side (the cached view box)
+  void restoreSmallParts();
   QTimer m_refineTimer;
   Graphic3d_WorldViewProjState m_refineCamera;
   Job* m_refineJob = nullptr;
