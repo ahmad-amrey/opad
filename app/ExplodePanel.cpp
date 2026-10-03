@@ -249,9 +249,6 @@ void ExplodePanel::showSpec(const opad::ExplodeSpec& spec, int depth, bool on, b
   m_axis->setCurrentIndex(axis);
   m_axis->setEnabled(spec.mode != "radial");
   m_spacing->setValue(spec.spacing);
-  const int levelled = m_stages->findData("levels");
-  if (spec.stages == "levels" && levelled < 0) m_stages->addItem(tr("Level by level (as saved)"), "levels");
-  else if (spec.stages != "levels" && levelled >= 0) m_stages->removeItem(levelled);
   m_stages->setCurrentIndex(std::max(0, m_stages->findData(QString::fromStdString(spec.stages))));
   m_attach->setChecked(spec.attach_small);
   m_fasteners->setChecked(spec.fasteners);

@@ -518,7 +518,7 @@ json ExplodeSpec::to_json() const {
     for (const auto& [id, v] : offsets) o[id] = v;
     j["offsets"] = o;
   }
-  if (stages != d.stages) j["stages"] = stages;
+  j["stages"] = stages;  // always: what a spec without it means has changed once (TODO 11 D4)
   if (duration != d.duration) j["duration"] = duration;
   j["t"] = t;
   return j;
@@ -572,7 +572,8 @@ ExplodeSpec ExplodeSpec::from_json(const json& j) {
   }
   if (j.contains("stages")) {
     s.stages = j["stages"].is_string() ? j["stages"].get<std::string>() : "";
-    if (s.stages != "levels" && s.stages != "together" && s.stages != "units") bad("stages is levels, together or units");
+    if (s.stages == "levels") s.stages = "together";  // no longer staged by level (TODO 11 D4)
+    if (s.stages != "together" && s.stages != "units") bad("stages is together or units");
   }
   s.duration = number_of(j, "duration", s.duration, 0, 600);
   s.t = number_of(j, "t", s.t, 0, 1);
@@ -765,33 +766,45 @@ std::vector<ExplodeUnit> explode_units(const Document& doc, const Scene& scene, 
 }
 
 void explode_stage(std::vector<ExplodeUnit>& units, const ExplodeSpec& spec) {
-  int stages = 0;
   for (auto& u : units) {
-    stages = std::max(stages, u.level);
     u.t0 = 0;
     u.t1 = 1;
   }
-  if (spec.stages == "levels") {
-    for (auto& u : units) {
-      u.t0 = double(u.level - 1) / stages;
-      u.t1 = double(u.level) / stages;
+  if (spec.stages != "units") return;
+  // One after another: the farthest move first, a unit never before the moving unit that holds it (the screws leave the
+  // lid once it is out). The order follows the moves, not the levels (TODO 11 D4).
+  std::vector<double> travel(units.size(), 0);
+  std::vector<char> moves(units.size(), 0);
+  for (size_t i = 0; i < units.size(); ++i) {
+    Vec3 own = mul(units[i].dir, units[i].distance);
+    if (const auto m = spec.offsets.find(units[i].id); m != spec.offsets.end()) own = add(own, m->second);
+    travel[i] = norm(own);
+    moves[i] = units[i].distance > 0 || spec.offsets.count(units[i].id);
+  }
+  auto later = [&](size_t x, size_t y) { return travel[x] != travel[y] ? travel[x] < travel[y] : x > y; };  // heap: farthest, then tree order
+  std::vector<size_t> ready;
+  std::vector<std::vector<size_t>> after(units.size());
+  for (size_t i = 0; i < units.size(); ++i) {
+    if (!moves[i]) continue;
+    int above = units[i].parent;
+    while (above >= 0 && !moves[static_cast<size_t>(above)]) above = units[static_cast<size_t>(above)].parent;
+    (above < 0 ? ready : after[static_cast<size_t>(above)]).push_back(i);
+  }
+  std::make_heap(ready.begin(), ready.end(), later);
+  std::vector<size_t> order;
+  while (!ready.empty()) {
+    std::pop_heap(ready.begin(), ready.end(), later);
+    const size_t i = ready.back();
+    ready.pop_back();
+    order.push_back(i);
+    for (const size_t c : after[i]) {
+      ready.push_back(c);
+      std::push_heap(ready.begin(), ready.end(), later);
     }
-  } else if (spec.stages == "units") {  // one after another: level by level, the farthest first (outer parts leave first)
-    std::vector<size_t> order;
-    std::vector<double> travel(units.size(), 0);
-    for (size_t i = 0; i < units.size(); ++i) {
-      Vec3 own = mul(units[i].dir, units[i].distance);
-      if (const auto m = spec.offsets.find(units[i].id); m != spec.offsets.end()) own = add(own, m->second);
-      travel[i] = norm(own);
-      if (units[i].distance > 0 || spec.offsets.count(units[i].id)) order.push_back(i);
-    }
-    std::stable_sort(order.begin(), order.end(), [&](size_t x, size_t y) {
-      return units[x].level != units[y].level ? units[x].level < units[y].level : travel[x] > travel[y];
-    });
-    for (size_t n = 0; n < order.size(); ++n) {
-      units[order[n]].t0 = double(n) / order.size();
-      units[order[n]].t1 = double(n + 1) / order.size();
-    }
+  }
+  for (size_t n = 0; n < order.size(); ++n) {
+    units[order[n]].t0 = double(n) / order.size();
+    units[order[n]].t1 = double(n + 1) / order.size();
   }
 }
 

@@ -40,7 +40,10 @@ struct ExplodeSpec {
   std::set<std::string> split;  // components whose children move apart beyond `levels` (the screws)
   std::vector<std::vector<std::string>> groups;  // nodes that move as one unit; the unit's id is the first member's
   std::map<std::string, Vec3> offsets;           // manual moves (mm) per unit id, on top of the automatic ones
-  std::string stages = "levels";  // levels: level k moves while t runs through [(k-1)/L, k/L] | together | units: one by one
+  // together: every unit over the whole of t | units: one after another, the farthest first, never before the unit
+  // holding it. No staging is keyed to the levels (a slider cut into a stretch per level, TODO 11 D4): a spec saved with
+  // "levels" reads as together.
+  std::string stages = "together";
   double duration = 1.2;        // seconds a full play takes
   double t = 1;                 // the saved distance: 0 = assembled, 1 = exploded
   json to_json() const;
@@ -82,7 +85,7 @@ struct FastenerAxes {
 };
 ExplodeAxisFn fastener_axes(const Document& doc, const Scene& scene, std::shared_ptr<FastenerAxes> cache = {});
 // The stretch of t each unit moves over (t0, t1) for spec.stages; explode_units ends with it. Again after manual offsets
-// change: one after another, a unit dragged out of its place takes a turn of its own.
+// change: one after another, a unit dragged out of its place takes a turn of its own, and the turns follow the moves.
 void explode_stage(std::vector<ExplodeUnit>& units, const ExplodeSpec& spec);
 // How far along its own move a unit is at t: 0 before its stretch [t0, t1], 1 after it, eased in between.
 double explode_progress(const ExplodeUnit& unit, double t);

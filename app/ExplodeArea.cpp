@@ -84,11 +84,10 @@ opad::ExplodeRule nextRule(opad::ExplodeRule r) {
 }  // namespace
 
 namespace {
-// What a new explode starts from: every level moving with the distance at once (the core's default moves the levels in
-// turn, one stretch of the slider each: not offered here, TODO 11 D4), screws and pins out along their axis.
+// What a new explode starts from: every level moving with the distance at once (never a stretch of the slider per level,
+// TODO 11 D4), screws and pins out along their axis.
 opad::ExplodeSpec fresh() {
   opad::ExplodeSpec spec;
-  spec.stages = "together";
   spec.fasteners = true;
   return spec;
 }

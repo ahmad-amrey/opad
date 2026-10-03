@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 
 #include "check.hpp"
@@ -187,45 +188,65 @@ TEST(staging_and_manual_offsets) {
   Device d = device();
   const Scene s = resolve(d.doc);
   ExplodeSpec spec = spec_of({{"levels", 1}, {"keep", {d.pcb}}, {"split", {d.screws}}, {"offsets", {{d.lid, {0, 0, 30}}}}});
+  // By default every unit moves over the whole distance: no stretch of t per level (TODO 11 D4); a spec saved with
+  // "levels" reads so too, and is written with its staging from now on.
+  CHECK_EQ(spec.stages, "together");
+  CHECK_EQ(ExplodeSpec::from_json({{"stages", "levels"}}).stages, "together");
+  CHECK_EQ(ExplodeSpec{}.to_json()["stages"], "together");
   const auto units = explode_units(d.doc, s, spec);
+  for (const auto& u : units) CHECK(u.t0 == 0 && u.t1 == 1);
   const ExplodeUnit& lid = unit_of(units, d.lid);
-  CHECK_NEAR(lid.t0, 0, 1e-12);
-  CHECK_NEAR(lid.t1, 0.5, 1e-12);
-  CHECK_NEAR(unit_of(units, d.screw[0]).t0, 0.5, 1e-12);
   auto at = [&](double t) { return explode_offsets(units, spec, t); };
   for (const auto& [id, v] : at(0)) CHECK(v == (Vec3{0, 0, 0}));
   CHECK_NEAR(at(1)[d.lid][2], lid.distance + 30, 1e-9);
   CHECK(at(1)[d.led] == at(1)[d.lid]);
-  CHECK_NEAR(at(0.25)[d.lid][2], 0.5 * (lid.distance + 30), 1e-9);  // half way through its stage, eased
-  // At 0.5 the screws have moved with their folder only; by 1 they have spread from it too.
+  CHECK_NEAR(at(0.5)[d.lid][2], 0.5 * (lid.distance + 30), 1e-9);  // half way at half the distance
+  // At 0.5 the screws are half way out of their folder while it is half way out: the levels move at once.
   const ExplodeUnit& folder = unit_of(units, d.screws);
   const ExplodeUnit& s1 = unit_of(units, d.screw[0]);
   for (int i = 0; i < 3; ++i) {
-    const double folderMove = folder.dir[static_cast<size_t>(i)] * folder.distance;
-    CHECK_NEAR(at(0.5)[d.screw[0]][static_cast<size_t>(i)], folderMove, 1e-9);
-    CHECK_NEAR(at(1)[d.screw[0]][static_cast<size_t>(i)], folderMove + s1.dir[static_cast<size_t>(i)] * s1.distance, 1e-9);
+    const double folderMove = folder.dir[static_cast<size_t>(i)] * folder.distance, own = s1.dir[static_cast<size_t>(i)] * s1.distance;
+    CHECK_NEAR(at(0.5)[d.screw[0]][static_cast<size_t>(i)], 0.5 * (folderMove + own), 1e-9);
+    CHECK_NEAR(at(1)[d.screw[0]][static_cast<size_t>(i)], folderMove + own, 1e-9);
   }
-  // together: everything at once; units: one after another, never overlapping.
-  spec.stages = "together";
-  const auto together = explode_units(d.doc, s, spec);
-  for (const auto& u : together) CHECK(u.t0 == 0 && u.t1 == 1);
+  // units: one after another, never overlapping; the farthest move first, and never before the moving unit holding it.
   spec.stages = "units";
-  auto seq = explode_units(d.doc, s, spec);
-  std::erase_if(seq, [](const ExplodeUnit& u) { return u.distance == 0; });
-  std::sort(seq.begin(), seq.end(), [](const ExplodeUnit& a, const ExplodeUnit& b) { return a.t0 < b.t0; });
-  CHECK_EQ(seq.size(), size_t(7));  // the bottom shell stays
-  for (size_t i = 1; i < seq.size(); ++i) CHECK(seq[i].t0 >= seq[i - 1].t1 - 1e-12);
-  CHECK_EQ(seq.front().level, 1);
-  CHECK_EQ(seq.back().level, 2);
-  // The bottom shell dragged down takes a turn of its own once staged again (no new layout); together again: all at once.
   auto staged = explode_units(d.doc, s, spec);
+  auto travel = [&](const ExplodeUnit& u) {
+    Vec3 v{u.dir[0] * u.distance, u.dir[1] * u.distance, u.dir[2] * u.distance};
+    if (const auto m = spec.offsets.find(u.id); m != spec.offsets.end()) v = {v[0] + m->second[0], v[1] + m->second[1], v[2] + m->second[2]};
+    return std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+  };
+  auto check_turns = [&](const std::vector<ExplodeUnit>& us, size_t turns) {
+    std::vector<const ExplodeUnit*> seq;
+    for (const auto& u : us)
+      if (u.t1 - u.t0 < 1 - 1e-12) seq.push_back(&u);
+    CHECK_EQ(seq.size(), turns);
+    std::sort(seq.begin(), seq.end(), [](const ExplodeUnit* a, const ExplodeUnit* b) { return a->t0 < b->t0; });
+    for (size_t i = 1; i < seq.size(); ++i) CHECK(seq[i]->t0 >= seq[i - 1]->t1 - 1e-12);
+    for (const auto* u : seq) {
+      int above = u->parent;
+      while (above >= 0 && us[static_cast<size_t>(above)].t1 - us[static_cast<size_t>(above)].t0 >= 1 - 1e-12) above = us[static_cast<size_t>(above)].parent;
+      if (above >= 0) CHECK(u->t0 >= us[static_cast<size_t>(above)].t1 - 1e-12);
+    }
+    // Of the units ready at a turn (what holds them is out), none is farther than the one moving then.
+    for (size_t i = 0; i < seq.size(); ++i)
+      for (size_t j = i + 1; j < seq.size(); ++j) {
+        int above = seq[j]->parent;
+        while (above >= 0 && us[static_cast<size_t>(above)].t1 - us[static_cast<size_t>(above)].t0 >= 1 - 1e-12) above = us[static_cast<size_t>(above)].parent;
+        if (above < 0 || us[static_cast<size_t>(above)].t1 <= seq[i]->t0 + 1e-12) CHECK(travel(*seq[j]) <= travel(*seq[i]) + 1e-9);
+      }
+    return seq;
+  };
+  const auto seq = check_turns(staged, 7);  // the bottom shell stays
+  CHECK(seq.front()->id == d.lid);  // 30 mm dragged on top of its own move: the farthest
+  CHECK(std::any_of(seq.begin(), seq.end() - 1, [](const ExplodeUnit* u) { return u->level == 2; }));  // not level by level
+  // The bottom shell dragged down takes a turn of its own once staged again (no new layout); together again: all at once.
   CHECK_NEAR(unit_of(staged, d.shell).t1 - unit_of(staged, d.shell).t0, 1, 1e-12);
   spec.offsets[d.shell] = {0, 0, -10};
   explode_stage(staged, spec);
   CHECK_NEAR(unit_of(staged, d.shell).t1 - unit_of(staged, d.shell).t0, 1.0 / 8, 1e-12);
-  CHECK(unit_of(staged, d.shell).t1 <= 0.5 + 1e-12);  // level 1: before every screw
-  std::sort(staged.begin(), staged.end(), [](const ExplodeUnit& a, const ExplodeUnit& b) { return a.t0 < b.t0; });
-  for (size_t i = 1; i < staged.size(); ++i) CHECK(staged[i].t0 >= staged[i - 1].t1 - 1e-12);
+  check_turns(staged, 8);
   spec.stages = "together";
   explode_stage(staged, spec);
   for (const auto& u : staged) CHECK(u.t0 == 0 && u.t1 == 1);
@@ -299,7 +320,7 @@ TEST(view_op_and_commands) {
   const json made = commands::run("explode", {{"levels", 1}, {"keep", d.pcb}, {"split", json::array({d.screws})}, {"name", "Exploded"}}, &d.doc);
   CHECK_EQ(made["root"], d.device);
   CHECK_EQ(made["depth"], 2);
-  CHECK_EQ(made["stages"], 2);
+  CHECK_EQ(made["deepest_level"], 2);
   CHECK_EQ(made["units"].size(), size_t(8));
   CHECK(!made.contains("warnings"));
   CHECK(made["offsets"].contains(d.cap1) && made["offsets"].contains(d.led));
@@ -488,7 +509,7 @@ TEST(spec_json) {
   CHECK_EQ(ExplodeSpec::from_json(s.to_json()).to_json(), s.to_json());
   CHECK_EQ(s.to_json()["t"], 0.25);
   const json plain = ExplodeSpec{}.to_json();
-  CHECK(!plain.contains("axis") && !plain.contains("keep") && !plain.contains("stages") && !plain.contains("duration"));
+  CHECK(!plain.contains("axis") && !plain.contains("keep") && plain["stages"] == "together" && !plain.contains("duration"));
   CHECK_THROWS(ExplodeSpec::from_json(json::array()));
   CHECK_THROWS(ExplodeSpec::from_json({{"axis", {0, 0, 0}}}));
   CHECK_THROWS(ExplodeSpec::from_json({{"keep", "abc"}}));
@@ -532,9 +553,15 @@ TEST(editor_helpers) {
       }
   // A drag along +Z sets the lid's own move there and keeps the rest of it; back to the automatic move drops the offset.
   const ExplodeUnit& lid = units[static_cast<size_t>(index(d.lid))];
-  CHECK_NEAR(explode_progress(lid, 0.25), 0.5, 1e-12);  // half way through its stage (level 1 of 2), eased
-  CHECK_NEAR(explode_progress(lid, 0.6), 1, 1e-12);
-  CHECK_NEAR(explode_progress(units[s1], 0.25), 0, 1e-12);
+  CHECK_NEAR(explode_progress(lid, 0.5), 0.5, 1e-12);  // over the whole distance, eased
+  CHECK_NEAR(explode_progress(lid, 0.25), 0.15625, 1e-12);
+  CHECK_NEAR(explode_progress(units[s1], 0.25), 0.15625, 1e-12);  // every level at once
+  ExplodeUnit turn = lid;  // a turn of its own, one after another
+  turn.t0 = 0.5;
+  turn.t1 = 0.75;
+  CHECK_NEAR(explode_progress(turn, 0.25), 0, 1e-12);
+  CHECK_NEAR(explode_progress(turn, 0.625), 0.5, 1e-12);
+  CHECK_NEAR(explode_progress(turn, 0.8), 1, 1e-12);
   const double automatic = explode_travel(lid, spec, {0, 0, 1});
   CHECK_NEAR(automatic, lid.distance * lid.dir[2], 1e-9);
   set_explode_travel(spec, lid, {0, 0, 2}, automatic + 15);

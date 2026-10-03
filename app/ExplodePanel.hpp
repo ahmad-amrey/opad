@@ -51,7 +51,7 @@ class ExplodePanel : public QWidget {
   void playRequested();           // Play / Pause, Space
   void modeChosen(const QString& mode, int axis);  // radial | axis | stack; axis 0-2: X, Y, Z, 3: the view's up
   void spacingChosen(double spacing);
-  void stagesChosen(const QString& stages);  // levels | together | units
+  void stagesChosen(const QString& stages);  // together | units
   void attachSmallToggled(bool on);
   void fastenersToggled(bool on);
   void linesToggled(bool on);

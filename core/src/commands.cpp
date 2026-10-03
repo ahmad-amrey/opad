@@ -629,7 +629,7 @@ void register_builtins() {
        {"groups", "array - node id lists, each moving as one unit"}, {"offsets", "object - manual moves {unit id: [x,y,z]}"},
        {"attach_small", "bool - small parts ride on what they touch"}, {"fasteners", "bool - radial: screws, pins and bolts leave along their axis"},
        {"small_ratio", "number - small: diagonal share of the parent (0.05)"},
-       {"small_size", "number - small: diagonal in mm"}, {"stages", "levels|together|units"}, {"t", "number - 0 assembled .. 1 exploded"},
+       {"small_size", "number - small: diagonal in mm"}, {"stages", "together|units (one after another)"}, {"t", "number - 0 assembled .. 1 exploded"},
        {"name", "string - save as a new view"}, {"camera", "object - the new view's camera"}, {"update", "bool - save into view"}, {"by", "string"}},
       true, [](Document* d, const json& a) {
         Document& doc = need(d);
@@ -645,6 +645,7 @@ void register_builtins() {
           throw Error("explode: root " + spec.root + " is not a component of the document");
         if (a.contains("name") && a.value("update", false)) throw Error("explode: name saves a new view, update saves into view: give one");
         json warnings = json::array();
+        if (a.value("stages", json()) == "levels") warnings.push_back("stages levels is read as together: the parts no longer move level by level");
         auto known = [&](const std::string& id, const std::string& what) {
           if (!s.node(id)) warnings.push_back(what + " " + id + " is not in the document");
         };
@@ -655,10 +656,10 @@ void register_builtins() {
         const std::vector<ExplodeUnit> units = explode_units(doc, s, spec);
         const std::vector<Vec3> moves = explode_unit_offsets(units, spec, spec.t);
         json list = json::array(), offsets = json::object();
-        int stages = 0;
+        int deepest = 0;
         for (size_t i = 0; i < units.size(); ++i) {
           const ExplodeUnit& u = units[i];
-          stages = std::max(stages, u.level);
+          deepest = std::max(deepest, u.level);
           list.push_back({{"id", u.id}, {"name", u.name}, {"level", u.level}, {"parent", u.parent < 0 ? json(nullptr) : json(units[static_cast<size_t>(u.parent)].id)},
                           {"bodies", u.bodies}, {"centre", u.centre}, {"dir", u.dir}, {"distance", u.distance}, {"t0", u.t0}, {"t1", u.t1}, {"offset", moves[i]}});
           if (moves[i] != Vec3{0, 0, 0})
@@ -670,7 +671,7 @@ void register_builtins() {
         json j;
         j["root"] = root.empty() ? json(nullptr) : json(root);
         j["depth"] = explode_depth(s, spec);
-        j["stages"] = stages;
+        j["deepest_level"] = deepest;
         j["explode"] = spec.to_json();
         j["units"] = list;
         j["offsets"] = offsets;
