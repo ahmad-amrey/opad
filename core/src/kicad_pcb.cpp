@@ -884,7 +884,7 @@ struct ModelMemo {
 constexpr size_t kMemoModels = 256;
 constexpr std::uint64_t kMemoBytes = 256ull << 20;
 std::mutex memo_mu;
-std::map<std::string, ModelMemo> memo;
+std::map<std::string, ModelMemo>& memo = *new std::map<std::string, ModelMemo>;  // never destroyed: its shapes freed after OCCT's own statics at exit could fault
 std::uint64_t memo_clock = 0;
 
 class Builder {
