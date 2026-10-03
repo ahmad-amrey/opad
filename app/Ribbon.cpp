@@ -14,6 +14,45 @@
 #include "Icons.hpp"
 #include "Theme.hpp"
 
+// ---------------------------------------------------------------- RibbonLayout
+RibbonLayout::Space& RibbonLayout::addWorkspace(const QString& id, const Workspace& w) {
+  if (Space* s = workspace(id)) return *s;
+  spaces.append(Space{id, w, {}});
+  return spaces.last();
+}
+
+RibbonLayout::Tab* RibbonLayout::addTab(const QString& ws, const QString& id, const QString& title, const QList<QList<QAction*>>& groups) {
+  Space* s = workspace(ws);
+  if (!s) return nullptr;
+  s->tabs.append(Tab{id, title, groups});
+  return &s->tabs.last();
+}
+
+bool RibbonLayout::addGroup(const QString& id, const QList<QAction*>& actions) {
+  Tab* t = tab(id);
+  if (t) t->groups.append(actions);
+  return t;
+}
+
+RibbonLayout::Space* RibbonLayout::workspace(const QString& id) {
+  for (Space& s : spaces)
+    if (s.id == id) return &s;
+  return nullptr;
+}
+
+RibbonLayout::Tab* RibbonLayout::tab(const QString& id) {
+  for (Space& s : spaces)
+    for (Tab& t : s.tabs)
+      if (t.id == id) return &t;
+  return nullptr;
+}
+
+int RibbonLayout::index(const QString& id) const {
+  for (int i = 0; i < spaces.size(); ++i)
+    if (spaces[i].id == id) return i;
+  return -1;
+}
+
 // ---------------------------------------------------------------- SegmentButton
 SegmentButton::SegmentButton(QAction* action, const QString& hint, bool primary, QWidget* parent) : QToolButton(parent), m_hint(hint) {
   setObjectName(primary ? "segmentPrimary" : "segment");

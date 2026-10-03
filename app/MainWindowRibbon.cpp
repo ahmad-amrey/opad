@@ -85,6 +85,8 @@ void MainWindow::buildMenus() {
   add(tools, {"tools.commands", "tools.shortcuts", "tools.cache"});
   QMenu* help = menuBar()->addMenu(tr("&Help"));
   add(help, {"help.about"});
+  const QMap<QString, QMenu*> menus{{"file", file}, {"edit", edit}, {"view", view}, {"inspect", inspect}, {"design", designMenu}, {"tools", tools}, {"help", help}};
+  for (AreaController* area : m_areas) area->menus(menuBar(), menus);
   rebuildRecentMenu();
 }
 
@@ -97,33 +99,48 @@ void MainWindow::buildRibbon() {
     for (const char* id : ids) if (QAction* a = action(id)) out << a;
     return out;
   };
-  const int review = m_ribbon->addWorkspace({tr("Review"), "eye", "Ctrl+1", tr("Look, measure, annotate. Nothing here changes geometry or structure."), tr("ops: annotation · measurement · section · view")});
-  const int design = m_ribbon->addWorkspace({tr("Design"), "component", "Ctrl+2", tr("Model parts: sketches, features, parameters; arrange the assembly."), tr("ops: param · sketch · feature · edit · regen · import · reparent · appearance")});
+  RibbonLayout layout;
+  layout.addWorkspace("review", {tr("Review"), "eye", "Ctrl+1", tr("Look, measure, annotate. Nothing here changes geometry or structure."), tr("ops: annotation · measurement · section · view")});
+  layout.addWorkspace("design", {tr("Design"), "component", "Ctrl+2", tr("Model parts: sketches, features, parameters; arrange the assembly."), tr("ops: param · sketch · feature · edit · regen · import · reparent · appearance")});
   Workspace sketchWs{tr("Sketch"), "sketch", "", tr("Drawing a sketch. Finish sketch returns to Design."), tr("ops: sketch · edit")};
   sketchWs.contextual = true;
-  m_sketchWorkspace = m_ribbon->addWorkspace(sketchWs);
-  m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho", "view.2d"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"}), acts({"view.isolate", "view.unisolate"})});
-  m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"}), acts({"inspect.interference", "inspect.printcheck"}), acts({"inspect.section", "inspect.flip"})});
-  m_ribbon->addTab(review, tr("Annotate"), {acts({"panel.annotations", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
-  m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
-  m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
+  layout.addWorkspace("sketch", sketchWs);
+  layout.addTab("review", "review.view", tr("View"), {acts({"view.fit", "view.home", "view.ortho", "view.2d"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"}), acts({"view.isolate", "view.unisolate"})});
+  layout.addTab("review", "review.inspect", tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"}), acts({"inspect.interference", "inspect.printcheck"}), acts({"inspect.section", "inspect.flip"})});
+  layout.addTab("review", "review.annotate", tr("Annotate"), {acts({"panel.annotations", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
+  layout.addTab("review", "review.export", tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
+  layout.addTab("design", "design.solid", tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
                                          acts({"design.box", "design.cylinder", "design.sphere", "design.cone", "design.torus"}), acts({"design.parameters"})});
-  m_ribbon->addTab(design, tr("Modify"), {acts({"design.offset_face", "design.thicken", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.scale"}),
+  layout.addTab("design", "design.modify", tr("Modify"), {acts({"design.offset_face", "design.thicken", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.scale"}),
                                           acts({"design.combine", "design.split", "design.move", "design.remove"}),
                                           acts({"design.mirror", "design.pattern_rect", "design.pattern_circ"})});
-  m_ribbon->addTab(design, tr("Construct"), {acts({"design.plane", "design.axis", "design.interference"}), acts({"design.parameters", "design.edit", "design.regenerate"})});
-  m_ribbon->addTab(design, tr("Assemble"), {acts({"file.import", "design.newcomponent", "design.reparent"}), acts({"edit.rename", "edit.delete", "edit.restore"}),
+  layout.addTab("design", "design.construct", tr("Construct"), {acts({"design.plane", "design.axis", "design.interference"}), acts({"design.parameters", "design.edit", "design.regenerate"})});
+  layout.addTab("design", "design.assemble", tr("Assemble"), {acts({"file.import", "design.newcomponent", "design.reparent"}), acts({"edit.rename", "edit.delete", "edit.restore"}),
                                             acts({"design.colour", "design.opacity", "design.lock", "edit.hide", "view.isolate"})});
-  m_ribbon->addTab(design,tr("View"),{acts({"view.fit","view.home","view.2d","view.ortho"}),acts({"view.shaded","view.edges","view.wire","view.grid","view.gridSettings","select.through"})});
-  m_ribbon->addTab(design, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
-  m_ribbon->addTab(m_sketchWorkspace, tr("Create"), {acts({"sketch.finish", "sketch.cancel", "view.2d", "view.alignPlane"}),
+  layout.addTab("design","design.view",tr("View"),{acts({"view.fit","view.home","view.2d","view.ortho"}),acts({"view.shaded","view.edges","view.wire","view.grid","view.gridSettings","select.through"})});
+  layout.addTab("design", "design.export", tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
+  layout.addTab("sketch", "sketch.create", tr("Create"), {acts({"sketch.finish", "sketch.cancel", "view.2d", "view.alignPlane"}),
       acts({"sketch.line", "sketch.rect", "sketch.circle", "sketch.arc3", "sketch.spline", "sketch.ellipse", "sketch.slot", "sketch.polygon", "sketch.point", "sketch.moreCreate"})});
-  m_ribbon->addTab(m_sketchWorkspace, tr("Modify"), {acts({"sketch.finish", "view.2d"}),
+  layout.addTab("sketch", "sketch.modify", tr("Modify"), {acts({"sketch.finish", "view.2d"}),
       acts({"sketch.select", "sketch.trim", "sketch.fillet", "sketch.offset", "sketch.mirror", "sketch.construction", "sketch.node", "sketch.openEnds", "sketch.moreModify"})});
-  m_ribbon->addTab(m_sketchWorkspace, tr("Constrain"), {acts({"sketch.finish", "sketch.constraints", "sketch.dimension"}),
+  layout.addTab("sketch", "sketch.constrain", tr("Constrain"), {acts({"sketch.finish", "sketch.constraints", "sketch.dimension"}),
       acts({"sketch.c.horizontal", "sketch.c.vertical", "sketch.c.coincident", "sketch.c.parallel", "sketch.c.perpendicular", "sketch.c.tangent", "sketch.c.fix", "sketch.moreConstrain"})});
-  m_ribbon->addTab(m_sketchWorkspace, tr("Reference"), {acts({"sketch.finish", "sketch.moreReference", "sketch.moreFiles", "sketch.snaps", "sketch.selectionOptions"}),
+  layout.addTab("sketch", "sketch.reference", tr("Reference"), {acts({"sketch.finish", "sketch.moreReference", "sketch.moreFiles", "sketch.snaps", "sketch.selectionOptions"}),
       acts({"sketch.project", "sketch.replane", "design.parameters", "view.grid", "view.gridSettings"})});
+  for (AreaController* area : m_areas) area->ribbon(layout);  // their workspaces, tabs and groups
+  for (const RibbonLayout::Space& space : layout.spaces) {
+    const int index = m_ribbon->addWorkspace(space.workspace);
+    for (const RibbonLayout::Tab& tab : space.tabs) {
+      QList<QList<QAction*>> groups;
+      for (QList<QAction*> group : tab.groups) {
+        group.removeAll(nullptr);
+        if (!group.isEmpty()) groups << group;
+      }
+      m_ribbon->addTab(index, tab.title, groups);
+    }
+  }
+  const int review = layout.index("review"), design = layout.index("design");
+  m_sketchWorkspace = layout.index("sketch");
   m_ribbon->setWorkspace(m_settings.value("ui/workspace", 0).toInt() == 1 ? design : review);
   action(m_ribbon->workspace() == design ? "workspace.design" : "workspace.review")->setChecked(true);
   connect(m_ribbon, &RibbonBar::workspaceChanged, this, [this](int i) {  // from the shortcuts or the chip's list

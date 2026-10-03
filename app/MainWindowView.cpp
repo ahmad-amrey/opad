@@ -266,6 +266,7 @@ void MainWindow::positionOverlays() {
   for (ToolPanel* p : m_panels)
     if (p->isVisible()) p->anchorTo(vp);  // the panels follow the viewport's top-right corner
   if (m_annotationPanel && m_annotationPanel->isVisible()) m_annotationPanel->anchorTo(vp);
+  forEachArea([&vp](AreaController* area) { area->positionOverlays(vp); });
 }
 
 void MainWindow::resizeEvent(QResizeEvent* e) {

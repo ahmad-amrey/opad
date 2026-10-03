@@ -41,6 +41,29 @@ struct Workspace {
   bool contextual = false;   // entered by the app (sketch mode), never offered in the switcher's list
 };
 
+// The ribbon as data, before it is built (MainWindow::buildRibbon): the built-in workspaces and tabs, then what the
+// feature areas add (AreaController::ribbon), then RibbonBar is made from it in this order. Workspaces have ids ("review",
+// "design", "sketch"), tabs "<workspace>.<name>" ("review.view", "design.assemble", "sketch.constrain"); a group is a run
+// of tools between separators. Null actions are left out, and so is a group left empty.
+struct RibbonLayout {
+  struct Tab {
+    QString id, title;
+    QList<QList<QAction*>> groups;
+  };
+  struct Space {
+    QString id;
+    Workspace workspace;
+    QList<Tab> tabs;
+  };
+  QList<Space> spaces;  // the switcher's order
+  Space& addWorkspace(const QString& id, const Workspace& workspace);  // at the end; an id that is there already: that one
+  Tab* addTab(const QString& workspace, const QString& id, const QString& title, const QList<QList<QAction*>>& groups = {});  // null: no such workspace
+  bool addGroup(const QString& tab, const QList<QAction*>& actions);  // after the tab's groups; false: no such tab
+  Space* workspace(const QString& id);
+  Tab* tab(const QString& id);
+  int index(const QString& workspace) const;  // its RibbonBar index once built; -1 if none
+};
+
 // Switcher chip: 26 px, bg2, 1 px line, icon in sel + name 500 + mono key + chevron.
 class WorkspaceChip : public QAbstractButton {
   Q_OBJECT

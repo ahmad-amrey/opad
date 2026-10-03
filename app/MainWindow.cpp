@@ -30,6 +30,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   applyTheme(m_settings.value("ui/dark", true).toBool());
   shortcuts::migrate(m_settings);
   buildActions();
+  createAreas();
   buildMenus();
   buildCentral();
   buildRibbon();
@@ -62,6 +63,8 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     rebuildViewsMenu();
     updateChips();
     showDocument(m_doc->hasDocument);
+    const bool replaced = std::exchange(m_areaGeneration, m_doc->generation) != m_doc->generation;
+    forEachArea([replaced](AreaController* area) { area->documentChanged(replaced); });
   });
   connect(m_doc, &AppDocument::loadFinished, this, [this](bool ok, const QString&) {
     if (!ok) return;
@@ -251,10 +254,15 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   showDocument(false);
   updateTitle();
   updateChips();
+  m_areaGeneration = m_doc->generation;
+  for (AreaController* area : m_areas) area->ready();
+  m_areasReady = true;
+  if (!m_areas.empty()) positionOverlays();
 }
 
 // ---------------------------------------------------------------- actions
 MainWindow::~MainWindow() {
+  for (AreaController* area : std::exchange(m_areas, {})) delete area;  // first, while everything they use is there
   delete m_agent;m_agent=nullptr; // stop bridge jobs while the document and viewport still exist
   // QProcess can emit finished while QObject deletes children, after our status
   // widgets and C++ members are gone. Disconnect callbacks before base teardown.
@@ -339,6 +347,9 @@ void MainWindow::showDocument(bool has) {
 }
 
 bool MainWindow::maybeSave() {
+  if (m_areasReady)
+    for (AreaController* area : m_areas)
+      if (!area->maybeClose()) return false;  // unfinished work in an area that the user did not give up
   if (m_benchSelect) return true;  // benches run in hidden windows: a question here would pop up on the user's desktop
   if(m_doc->snapshotBusy()){statusBar()->showMessage(tr("A snapshot is being captured. Try again shortly."),4000);return false;}
   if(m_design->sketchActive() && m_design->sketch()->modified()) {

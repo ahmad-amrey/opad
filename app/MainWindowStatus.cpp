@@ -68,6 +68,7 @@ void MainWindow::buildStatusBar() {
   statusBar()->addPermanentWidget(m_statusUnits);
   statusBar()->setSizeGripEnabled(false);
   connect(m_jobs, &JobRunner::stripShown, this, [this](bool shown) { m_statusHover->setVisible(!shown); });  // free room for the bars
+  for (AreaController* area : m_areas) area->statusWidgets(statusBar());
 }
 
 void MainWindow::updateTitle() {

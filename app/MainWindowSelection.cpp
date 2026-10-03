@@ -69,6 +69,10 @@ void MainWindow::selectionMoved(const std::vector<opad::Ref>& refs) {
     const auto current=panel->property("instanceCurrent").toString().toStdString();
     if(refs.size()!=1 || refs.front().body!=current)panel->hide();
   }
+  if (m_areasReady) {
+    const SelectionContext selection = selectionContext();
+    for (AreaController* area : m_areas) area->selectionChanged(selection);
+  }
   if (!m_propsPanel->isVisible()) return;
   if (m_propsPanel->pinned()) showProperties(refs);  // O(1): only the first ref is inspected and geometry walks are deferred to a job
   else m_propsPanel->hide();
@@ -179,17 +183,22 @@ void MainWindow::writeSelectionFile() {
 }
 
 void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids) {
+  SelectionContext context = selectionContext();  // for the areas' entries: the objects the menu is about
+  context.ids = ids;
   if(auto* instances=findChild<ToolPanel*>("instanceBrowser"))instances->hide();
   if(m_design->sketchActive()) {
     QMenu menu(this);
     if(!ids.empty()) {
       auto* sketch=m_design->sketch();
       menu.addAction(sketch->visible()?tr("Hide sketch"):tr("Show sketch"),this,[sketch]{sketch->setVisible(!sketch->visible());});
-      menu.addAction(action("sketch.replane"));menu.addAction(action("view.alignPlane"));menu.exec(globalPos);return;
+      menu.addAction(action("sketch.replane"));menu.addAction(action("view.alignPlane"));
+      forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });
+      menu.exec(globalPos);return;
     }
     for(const char* id:{"sketch.construction","sketch.dimension","sketch.c.horizontal","sketch.c.vertical","sketch.c.coincident","sketch.c.tangent","sketch.c.fix","sketch.node","sketch.openEnds"})menu.addAction(action(id));
     menu.addSeparator();menu.addAction(tr("Driving / reference"),m_design->sketch(),&SketchEditor::toggleReference);
     menu.addAction(tr("Delete"),m_design->sketch(),&SketchEditor::deleteSelection);
+    forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });
     menu.exec(globalPos);return;
   }
   QMenu menu(this);
@@ -251,6 +260,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     menu.addSeparator();
     add("file.import");
   }
+  forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });
   menu.exec(globalPos);
 }
 

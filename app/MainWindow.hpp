@@ -9,6 +9,7 @@
 #include <functional>
 
 #include "AnnotationEditor.hpp"
+#include "AreaController.hpp"
 #include "AppDocument.hpp"
 #include "DesignController.hpp"
 #include "EmptyState.hpp"
@@ -28,6 +29,7 @@ class MainWindow : public QMainWindow {
   Q_OBJECT
   template <class Tag>
   friend struct MainWindowBench;  // the benches of BenchRegistry.hpp (OPAD_BENCH), each in its own file
+  friend class AreaServices;      // what feature areas reach of the window (AreaController.hpp, MainWindowAreas.cpp)
  public:
   MainWindow();
   ~MainWindow() override;
@@ -54,6 +56,14 @@ class MainWindow : public QMainWindow {
   void buildAnnotateActions();    // MainWindowAnnotate.cpp
   void buildEditActions();        // MainWindowEdit.cpp
   void buildToolsActions();       // MainWindowRibbon.cpp: tools.*, help.*
+  // Feature areas (AreaController.hpp, MainWindowAreas.cpp): made after the built-in commands, hooks called from here.
+  void createAreas();
+  SelectionContext selectionContext() const;
+  template <class Hook>
+  void forEachArea(Hook hook) {  // the hooks that run once the window is built
+    if (m_areasReady)
+      for (AreaController* area : m_areas) hook(area);
+  }
   void buildMenus();
   void selectGeometry();
   void buildRibbon();
@@ -149,6 +159,10 @@ class MainWindow : public QMainWindow {
   void updateViewerCard();
 
   AppDocument* m_doc = nullptr;
+  AreaServices m_areaServices{this};
+  std::vector<AreaController*> m_areas;  // owned; deleted first in ~MainWindow
+  bool m_areasReady = false;
+  unsigned long long m_areaGeneration = 0;  // the document generation the areas last saw (documentChanged's "replaced")
   RecoveryManager* m_recovery = nullptr;
   AgentBridge* m_agent = nullptr;
   bool m_closePending = false, m_recoveryClosed = false;

@@ -1,5 +1,7 @@
 // The extension seams of UI-119 that parallel work adds to without editing shared lines: area icon tables
-// (OPAD_ICON_TABLE), translation fragments (app/i18n/<code>/*.json) and the bench registry (OPAD_BENCH).
+// (OPAD_ICON_TABLE), translation fragments (app/i18n/<code>/*.json), the bench registry (OPAD_BENCH), the feature-area
+// registry (OPAD_AREA) and the ribbon layout areas add to.
+#include <QAction>
 #include <QApplication>
 #include <QDirIterator>
 #include <QFile>
@@ -7,9 +9,11 @@
 #include <QImage>
 #include <QTemporaryDir>
 
+#include "AreaController.hpp"
 #include "BenchRegistry.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "Ribbon.hpp"
 #include "check.hpp"
 
 OPAD_ICON_TABLE(seams, {"seamsSquare", R"(<rect x="4" y="4" width="16" height="16"/>)"},
@@ -19,6 +23,22 @@ OPAD_ICON_TABLE(seamsAgain, {"seamsDot", R"(<circle cx="12" cy="12" r="3" fill="
 OPAD_BENCH(OPAD_BENCH_SEAMS_TEST_B, second) { return true; }
 OPAD_BENCH(OPAD_BENCH_SEAMS_TEST_A, first) { return true; }
 OPAD_BENCH(OPAD_BENCH_SEAMS_TEST_A, again) { return false; }
+
+namespace {
+struct SeamsAreaB : AreaController {
+  using AreaController::AreaController;
+};
+struct SeamsAreaA : AreaController {
+  using AreaController::AreaController;
+};
+struct SeamsAreaAgain : AreaController {
+  using AreaController::AreaController;
+};
+}  // namespace
+OPAD_AREA(SeamsAreaB)
+OPAD_AREA(SeamsAreaA)
+[[maybe_unused]] static const bool seamsAreaAgain = areas::add("SeamsAreaA", [](AreaServices& s) -> AreaController* { return new SeamsAreaAgain(s); });
+[[maybe_unused]] static const bool seamsAreaOff = areas::add("SeamsAreaOff", [](AreaServices&) -> AreaController* { return nullptr; });
 
 namespace {
 void write(const QString& path, const char* text) {
@@ -82,6 +102,33 @@ TEST(bench_registry) {
   qunsetenv("OPAD_BENCH_SEAMS_TEST_A");
   qunsetenv("OPAD_BENCH_SEAMS_TEST_B");
   CHECK(bench::pending().isEmpty());
+}
+
+TEST(area_registry) {
+  CHECK(areas::names() == QStringList({"SeamsAreaA", "SeamsAreaB", "SeamsAreaOff"}));
+  CHECK(areas::clashes() == QStringList{"SeamsAreaA"});  // two files claim one name: the first keeps it
+  AreaServices services(nullptr);
+  const std::vector<AreaController*> made = areas::create(services);
+  CHECK(made.size() == 2);  // SeamsAreaOff declined this run
+  CHECK(made[0]->objectName() == "SeamsAreaA" && dynamic_cast<SeamsAreaA*>(made[0]) && made[1]->objectName() == "SeamsAreaB");
+  CHECK(&made[0]->services() == &services && made[0]->maybeClose());
+  for (AreaController* area : made) delete area;
+}
+
+TEST(ribbon_layout) {
+  QAction a("a"), b("b"), c("c");
+  RibbonLayout layout;
+  layout.addWorkspace("review", {"Review", "eye", "Ctrl+1", "", ""});
+  layout.addWorkspace("design", {"Design", "component", "Ctrl+2", "", ""});
+  CHECK(layout.addWorkspace("review", {"Other", "", "", "", ""}).workspace.name == "Review");  // an id once
+  CHECK(layout.addTab("review", "review.view", "View", {{&a}}) && layout.addTab("design", "design.solid", "Solid"));
+  CHECK(!layout.addTab("drawings", "drawings.sheet", "Sheet"));  // no such workspace
+  CHECK(layout.addGroup("review.view", {&b, &c}) && !layout.addGroup("review.none", {&a}));
+  layout.addWorkspace("drawings", {"Drawings", "drawing", "Ctrl+3", "", ""});
+  layout.addTab("drawings", "drawings.sheet", "Sheet", {{&c}});
+  CHECK(layout.index("review") == 0 && layout.index("design") == 1 && layout.index("drawings") == 2 && layout.index("none") == -1);
+  CHECK(layout.tab("review.view")->groups == QList<QList<QAction*>>({{&a}, {&b, &c}}));
+  CHECK(layout.workspace("design")->tabs.size() == 1 && layout.tab("drawings.sheet")->title == "Sheet" && !layout.tab("sheet"));
 }
 
 int main(int argc, char** argv) {
