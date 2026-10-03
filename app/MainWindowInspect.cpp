@@ -176,7 +176,7 @@ void MainWindow::cancelTool() {
 }
 
 void MainWindow::toolEscape() {
-  if (!m_lastMeasure.is_null()) m_viewport->clearSelection();  // a result is showing: clear it and measure again
+  if (!m_lastMeasure.is_null() && m_tool.steps) m_viewport->clearSelection();  // a result is showing: clear it and measure again (Area: one pick back)
   else if (!m_toolPicks.empty()) m_viewport->deselectLast();   // one step back
   else cancelTool();
 }
@@ -333,6 +333,7 @@ void MainWindow::refreshToolUi() {
       if (r.value("grown", false)) rows << qMakePair(tr("Objects around it"), QString::number(r.value("edges", 0)));
     }
     m_toolSteps->setResult(rows);
+    m_toolSteps->footer()->setCancel(tr("Back"));  // Esc takes the last pick back
     m_toolSteps->setFooter(done, !m_doc->browse);
     return;
   }
@@ -359,6 +360,7 @@ void MainWindow::refreshToolUi() {
     if(info.contains("segments")) rows << qMakePair(tr("Circle %1 mesh segments (approximate)").arg(i+1),QString::number(info["segments"].get<int>()));
   }
   m_toolSteps->setResult(rows);
+  m_toolSteps->footer()->setCancel(tr("Clear"));
   m_toolSteps->setFooter(done, !m_doc->browse);
 }
 

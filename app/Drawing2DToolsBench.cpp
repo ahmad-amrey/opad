@@ -25,6 +25,7 @@
 #include "Drawing2DBench.hpp"
 #include "GuidedTool.hpp"
 #include "MainWindow.hpp"
+#include "PanelFooter.hpp"
 #include "ToolPanel.hpp"
 #include "Units.hpp"
 #include "opad/geometry.hpp"
@@ -110,6 +111,7 @@ OPAD_BENCH(OPAD_BENCH_AREA, area) {
       require(rows().value(0) == w.m_tool.title + "=" + expected && rows().join(",").contains(units::format(units::Kind::Length, 220)), "the panel shows the area and the perimeter: " + rows().join(", "));
       require(v->measurementCaptions().join(",").contains(expected), "the view labels the area inside it: " + v->measurementCaptions().join(", "));
       require(w.m_pinAction->isEnabled() == !w.m_doc->browse, "a closed area can be pinned in a document, not in viewer mode");
+      require(PanelFooter::text(w.m_toolSteps->footer()->cancel()) == QObject::tr("Back"), "its footer's Esc button takes the last pick back");
     });
     script->add("shots", [&w, v, value] {  // a step later: the panel's new step rows are shown by a queued call
       w.m_prompt->grab().save(value + ".prompt.png");
@@ -126,6 +128,10 @@ OPAD_BENCH(OPAD_BENCH_AREA, area) {
       require(!r.value("closed", true) && r.value("open_ends", 0) == 2 && !w.m_pinAction->isEnabled() && rows().join(",").contains(units::format(units::Kind::Length, 130)) &&
                   !v->measurementCaptions().join(",").contains(units::format(units::Kind::Area, 0)),
               "three walls are open: two loose ends, their length, no area and nothing to pin: " + rows().join(", "));
+      w.toolEscape();
+    }, [&w, measured] { return w.m_toolPicks.size() == 2 && measured(); });
+    script->add("one back", [&w, require, pick, edge] {
+      require(w.m_tool.id == "area" && !w.m_lastMeasure.value("closed", true), "Esc takes the last pick back, the tool stays");
       pick({edge(60, 0, 100, 0), edge(100, 0, 100, 50), edge(100, 50, 60, 50), edge(60, 50, 60, 0)});
     }, [&w, measured] { return measured() && w.m_lastMeasure.value("closed", false); });
     script->add("closed", [&w, require] {
