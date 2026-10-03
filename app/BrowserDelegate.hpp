@@ -40,6 +40,9 @@ struct Badge {
 
 struct Decoration {
   QList<Badge> badges;
+  // In the colour swatch's place, left of the type icon (a component's activation radio): its icon (14 px, its color; no
+  // text, no fill), tooltip and click as above. None while lead.icon is empty; without a click there, the swatch's click.
+  Badge lead;
   QString typeIcon;  // in place of the row's type icon
   QString tooltip;   // a line under the row's own tooltip
   bool italic = false, bold = false, dim = false;  // the name's style; dim greys the name and the icons (fg3)
@@ -80,6 +83,8 @@ class BrowserDelegate : public QStyledItemDelegate {
   // A decorator's badge on the row (visual rect `row`) at `pos`, its rect in `rect`: null if there is none there.
   const browser::Badge* badgeAt(const browser::Decoration& d, const QModelIndex& index, const QRect& row, const QPoint& pos, QRect* rect = nullptr) const;
  private:
+  static QRect leadRect(const QRect& row) { return QRect(row.left() + browser::kSwatchX - 3, row.top() + 6, 16, 16); }
+  void paintLead(QPainter* p, const browser::Decoration& d, const QRect& row) const;
   int builtinBadges(QPainter* p, const QRect& r, const opad::Node* n, const QColor& text) const;  // paints them (p set); returns the x left of them
   std::vector<QRect> badgeRects(const browser::Decoration& d, const QRect& r, int right) const;  // right to left from `right`
   void paintBadges(QPainter* p, const browser::Decoration& d, const std::vector<QRect>& rects) const;

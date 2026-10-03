@@ -27,7 +27,7 @@ class ProbeArea : public AreaController {
   QStringList hooks;  // construction hooks, in call order
   QAction* command = nullptr;
   QLabel* label = nullptr;
-  int ran = 0, asked = 0, menuCalls = 0, badgeClicks = 0, propertyActions = 0, sectionRows = 1;
+  int ran = 0, asked = 0, menuCalls = 0, badgeClicks = 0, leadClicks = 0, propertyActions = 0, sectionRows = 1;
   bool veto = false;
   SelectionContext selected, menuSelection;
   QStringList menuEntries;
@@ -64,6 +64,15 @@ class ProbeArea : public AreaController {
     // Bodies get a clickable text badge (Arabic in a right-to-left UI) and an icon badge, an italic name and a tooltip line.
     const bool rtl = QGuiApplication::layoutDirection() == Qt::RightToLeft;
     services().browser()->addDecorator([this, rtl](const browser::Row& row, browser::Decoration& d) {
+      if (row.kind == "document") {  // a clickable lead (as an activation radio would be); a provided row's has no click
+        d.lead.icon = "dot";
+        d.lead.color = &Tokens::sel;
+        d.lead.tooltip = "probe lead";
+        d.lead.clicked = [this] { ++leadClicks; };
+      } else if (row.id == "probe:b") {
+        d.lead.icon = "check";
+        d.lead.tooltip = "probe row lead";
+      }
       if (row.kind != "body" || !row.node) return;
       browser::Badge sync;
       sync.text = rtl ? QString::fromUtf8("مزامنة") : QString("sync");
@@ -265,6 +274,21 @@ OPAD_BENCH(OPAD_BENCH_AREAS, areas) {
     };
     const QString badgeTip = tip(index, syncRect.center()), rowTip = tip(index, QPoint(r.left() + browser::kNameX + 4, r.center().y()));
     require(badgeTip == "probe badge" && rowTip.startsWith("Probe body\n") && rowTip.endsWith("\nprobe row"), "tooltips: the badge's, the row's with the decorators' line");
+    // The lead: in the swatch's column, clickable without selecting; a provided row's shows its tooltip, the body keeps its swatch.
+    const QModelIndex docIndex = tree->indexFromItem(root), bIndex = tree->indexFromItem(rowOf(tree, "probe:b"));
+    const QRect docRect = tree->visualRect(docIndex), bRect = tree->visualRect(bIndex);
+    QRect leadRect, bLeadRect;
+    const browser::Decoration docDecoration = delegate->decoration(docIndex), bDecoration = delegate->decoration(bIndex);
+    const browser::Badge* lead = delegate->badgeAt(docDecoration, docIndex, docRect, QPoint(docRect.left() + browser::kSwatchX + 5, docRect.center().y()), &leadRect);
+    const browser::Badge* bLead = delegate->badgeAt(bDecoration, bIndex, bRect, QPoint(bRect.left() + browser::kSwatchX + 5, bRect.center().y()), &bLeadRect);
+    require(lead && lead->tooltip == "probe lead" && leadRect.left() >= docRect.left() + browser::kEyeX + 18 && leadRect.right() < docRect.left() + browser::kTypeX && bLead && !bLead->clicked &&
+                !delegate->badgeAt(d, index, r, QPoint(r.left() + browser::kSwatchX + 5, r.center().y())),
+            QString("lead: between the eye and the type icon (%1 to %2 px), not on the body").arg(leadRect.left() - docRect.left()).arg(leadRect.right() - docRect.left()));
+    mouse(QEvent::MouseButtonPress, leadRect.center(), Qt::LeftButton);
+    mouse(QEvent::MouseButtonRelease, leadRect.center(), Qt::LeftButton);
+    require(probe->leadClicks == 1 && w.m_browser->selectedIds() == std::vector<std::string>{"probe:b"} && tip(docIndex, leadRect.center()) == "probe lead" &&
+                tip(bIndex, bLeadRect.center()) == "probe row lead",
+            "lead: a click runs its callback and selects nothing; tooltips");
 
     const size_t ops = w.m_doc->doc.ops.size();
     const QRect b = tree->visualRect(tree->indexFromItem(rowOf(tree, "probe:b")));

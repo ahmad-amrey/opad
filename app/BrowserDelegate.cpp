@@ -58,6 +58,7 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
     const bool grey = off || d.dim;
     const qreal ratio = p->device()->devicePixelRatioF();
     if (sk || editing) p->drawPixmap(r.left() + kEyeX, r.top() + 6, icons::pixmap(off ? "hide" : "eye", grey ? t.fg3 : t.fg2, 16, ratio));
+    paintLead(p, d, r);
     const QString own = index.data(browser::kIconRole).toString();  // a provided folder's or row's
     const QString icon = !d.typeIcon.isEmpty() ? d.typeIcon : sk ? QString("sketch") : !own.isEmpty() ? own : QString("open");
     p->drawPixmap(r.left() + kTypeX, r.top() + 6, icons::pixmap(icon, sk && !sk->error.empty() ? t.red : grey ? t.fg3 : t.fg2, 16, ratio));
@@ -74,12 +75,16 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   const qreal dpr = p->device()->devicePixelRatioF();
   int y = r.top() + 6;
   p->drawPixmap(r.left() + kEyeX, y, icons::pixmap(hidden ? "hide" : "eye", iconColor, 16, dpr));
-  QRectF sw(r.left() + kSwatchX, r.top() + 9, 10, 10);
-  p->setPen(QPen(t.line, 1));
   const bool isBody = n && n->kind == opad::Node::Kind::Body;
-  if (isBody) p->setBrush(n->has_color ? QColor::fromRgbF(n->color[0], n->color[1], n->color[2]) : (hidden ? t.fg3 : t.fg2));
-  else p->setBrush(t.bg);  // components and the document: hollow square
-  p->drawRoundedRect(sw, 2, 2);
+  if (!d.lead.icon.isEmpty()) {
+    paintLead(p, d, r);
+  } else {
+    QRectF sw(r.left() + kSwatchX, r.top() + 9, 10, 10);
+    p->setPen(QPen(t.line, 1));
+    if (isBody) p->setBrush(n->has_color ? QColor::fromRgbF(n->color[0], n->color[1], n->color[2]) : (hidden ? t.fg3 : t.fg2));
+    else p->setBrush(t.bg);  // components and the document: hollow square
+    p->drawRoundedRect(sw, 2, 2);
+  }
   QString typeIcon = isDoc ? "doc" : isBody ? (n->representation=="drawing2d" ? "drawing" : n->representation=="mesh" ? "mesh" : "body") : "component";
   const auto category=index.data(Qt::UserRole+4).toString();
   if(category=="drawing2d") typeIcon="drawing"; else if(category=="mesh") typeIcon="mesh";
@@ -193,6 +198,12 @@ void BrowserDelegate::paintBadges(QPainter* p, const browser::Decoration& d, con
   }
 }
 
+void BrowserDelegate::paintLead(QPainter* p, const browser::Decoration& d, const QRect& row) const {
+  if (d.lead.icon.isEmpty()) return;
+  const QRect at = leadRect(row);
+  p->drawPixmap(at.left() + 1, at.top() + 1, icons::pixmap(d.lead.icon, theme::current().*d.lead.color, 14, p->device()->devicePixelRatioF()));
+}
+
 browser::Decoration BrowserDelegate::decoration(const QModelIndex& index) const {
   browser::Decoration d;
   if (m_decorators.empty()) return d;
@@ -206,10 +217,14 @@ browser::Decoration BrowserDelegate::decoration(const QModelIndex& index) const 
 }
 
 const browser::Badge* BrowserDelegate::badgeAt(const browser::Decoration& d, const QModelIndex& index, const QRect& row, const QPoint& pos, QRect* rect) const {
-  if (d.badges.isEmpty()) return nullptr;
+  if (d.badges.isEmpty() && d.lead.icon.isEmpty()) return nullptr;
   const QString kind = index.data(Qt::UserRole).toString();
   const opad::Node* n = kind == "body" || kind == "component" ? m_doc->node(index.data(kIdRole).toString().toStdString()) : nullptr;
   if ((kind == "body" || kind == "component") && !n) return nullptr;  // not painted
+  if (!d.lead.icon.isEmpty() && leadRect(row).contains(pos)) {
+    if (rect) *rect = leadRect(row);
+    return &d.lead;
+  }
   const std::vector<QRect> rects = badgeRects(d, row, n ? builtinBadges(nullptr, row, n, QColor()) : row.right() - 6);
   for (size_t i = 0; i < rects.size(); ++i)
     if (rects[i].contains(pos)) {
