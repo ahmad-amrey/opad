@@ -77,6 +77,14 @@ target_compile_definitions(opad-test-dxf PRIVATE OPAD_LIBREDWG_DATA="${PROJECT_S
 if(TARGET opad-dwg)
   add_dependencies(opad-test-dxf opad-dwg)  # its DWG case runs the dwg2dxf staged beside it
 endif()
+if(WIN32)  # a stand-in ODA File Converter: the converter is used only when switched on
+  add_executable(opad-fake-oda fake_oda.cpp)
+  if(MINGW)
+    target_link_options(opad-fake-oda PRIVATE -static)
+  endif()
+  target_compile_definitions(opad-test-dxf PRIVATE OPAD_FAKE_ODA="$<TARGET_FILE:opad-fake-oda>")
+  add_dependencies(opad-test-dxf opad-fake-oda)
+endif()
 add_test(NAME dxf COMMAND opad-test-dxf)
 
 if(TARGET opad-thumbnails)

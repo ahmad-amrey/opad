@@ -59,6 +59,7 @@
 #include <BRepBndLib.hxx>
 #include <QElapsedTimer>
 #include "FileAssociations.hpp"
+#include "Legal.hpp"
 #include <QSignalBlocker>
 #include "opad/drawing_io.hpp"
 
@@ -761,6 +762,10 @@ void MainWindow::buildRibbon() {
   viewerMode->setToolTip(tr("STEP, IGES, STL, 3MF, OBJ, DXF, SVG and the other formats open read-only and fast; Save makes them editable OPAD documents."));
   connect(viewerMode, &QAction::toggled, this, [this](bool on) { m_doc->viewerOpens = on; m_settings.setValue("files/viewerMode", on); });
   if (associations::supported()) settings->addAction(tr("File types…"), this, [this] { FileTypesDialog(this).exec(); });
+  legal::applySettings();  // the ODA File Converter is opt-in (its terms: non-members non-commercial only)
+  auto* oda = settings->addAction(tr("Use the ODA File Converter for DWG"));
+  oda->setObjectName("files.useOda"); oda->setCheckable(true); oda->setChecked(m_settings.value("files/useOda", false).toBool());
+  connect(oda, &QAction::toggled, this, [this, oda](bool on) { legal::setUseOda(this, oda, on); });
   settings->addAction(action("panel.browser"));
   auto* autoBrowser = settings->addAction(tr("Auto-hide scene browser"));
   autoBrowser->setCheckable(true);

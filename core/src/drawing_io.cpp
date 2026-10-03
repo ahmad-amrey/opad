@@ -39,6 +39,7 @@
 #include <gp_Circ.hxx>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -149,6 +150,8 @@ std::filesystem::path executable_dir() {
 #endif
 }
 
+std::atomic<bool> g_use_oda{false};
+
 // The free ODA File Converter, where its installers put it (the newest version when several are installed).
 std::filesystem::path oda_converter() {
   std::vector<std::filesystem::path> found;
@@ -172,8 +175,8 @@ std::filesystem::path oda_converter() {
 }
 
 // DWG <-> DXF through an external converter (DWG is a closed format): OPAD_DWG2DXF / OPAD_DXF2DWG when set, else the
-// ODA File Converter when installed (it reads every DWG version faithfully), else LibreDWG's dwg2dxf / dxf2dwg, which
-// the build puts beside the program (third_party/libredwg), else on PATH.
+// ODA File Converter when switched on (use_oda) and installed (it reads every DWG version faithfully), else LibreDWG's
+// dwg2dxf / dxf2dwg, which the build puts beside the program (third_party/libredwg), else on PATH.
 void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& out, bool toDwg) {
   const std::string name = toDwg ? "dxf2dwg" : "dwg2dxf";
   const char* override = std::getenv(toDwg ? "OPAD_DXF2DWG" : "OPAD_DWG2DXF");
@@ -192,8 +195,10 @@ void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& o
     std::filesystem::copy_file(work.directory / target, out, std::filesystem::copy_options::overwrite_existing);
     return true;
   };
-  if (override && *override && libre(path_from_utf8(override))) return;
-  if (const auto oda = oda_converter(); !oda.empty() && !(override && *override)) {
+  const bool overridden = override && *override;
+  if (overridden && libre(path_from_utf8(override))) return;
+  const auto oda = overridden || !use_oda() ? std::filesystem::path() : oda_converter();
+  if (!oda.empty()) {
     // ODA converts folders: the drawing alone in one, the result in another.
     Conversion work;
     const auto from = work.directory / "in", to = work.directory / "out";
@@ -208,8 +213,8 @@ void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& o
       return;
     }
   }
-  bool tried = (override && *override) || !oda_converter().empty();
-  if (!(override && *override)) {
+  bool tried = overridden || !oda.empty();
+  if (!overridden) {
     std::error_code error;
 #ifdef _WIN32
     const auto beside = executable_dir() / (name + ".exe");
@@ -222,12 +227,18 @@ void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& o
     }
     if (libre(name)) return;  // on PATH
   }
+  // The ODA File Converter is third-party software whose terms allow non-members non-commercial use only: never used
+  // unless switched on, only pointed to.
+  const std::string oda_hint = !overridden && oda.empty() && !oda_converter().empty()
+      ? " The ODA File Converter is installed but not switched on (Settings > Use the ODA File Converter for DWG, if its"
+        " licence covers your use)."
+      : "";
   if (tried)
     throw Error(std::string(toDwg ? "Writing DWG failed" : "Reading DWG failed") +
-                ": the converter could not handle this drawing (it may be damaged, or saved by a newer AutoCAD)");
+                ": the converter could not handle this drawing (it may be damaged, or saved by a newer AutoCAD)." + oda_hint);
   throw Error(std::string(toDwg ? "Writing DWG" : "Reading DWG") + " needs a converter: put LibreDWG's " + name +
               " beside OPAD or on PATH (or set " + (toDwg ? "OPAD_DXF2DWG" : "OPAD_DWG2DXF") +
-              " to it), or install the free ODA File Converter. Saving the drawing as DXF works without one.");
+              " to it). Saving the drawing as DXF works without one." + oda_hint);
 }
 std::string extension(const std::filesystem::path& file) {
   std::string e = file.extension().string();
@@ -483,6 +494,13 @@ Drawing read_svg(const std::filesystem::path& file) {
 
 std::string xml(const std::string& in) { std::string out; for(char c:in) { if(c=='&')out+="&amp;"; else if(c=='<')out+="&lt;"; else if(c=='\"')out+="&quot;"; else out+=c; } return out; }
 }
+
+void set_use_oda(bool on) { g_use_oda = on; }
+bool use_oda() {
+  const char* env = std::getenv("OPAD_USE_ODA");
+  return g_use_oda || (env && *env && std::strcmp(env, "0") != 0);
+}
+std::filesystem::path oda_file_converter() { return oda_converter(); }
 
 const std::vector<std::string>& importable_extensions() {
   static const std::vector<std::string> list = {".step", ".stp", ".iges", ".igs", ".brep", ".brp", ".stl", ".obj", ".3mf", ".ply",

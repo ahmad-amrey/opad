@@ -1,8 +1,12 @@
 #include "MainWindow.hpp"
-#include <QCoreApplication>
+#include <QApplication>
+#include <QMessageBox>
+#include <QPushButton>
+#include "opad/drawing_io.hpp"
 
 // OPAD_BENCH_IP=<prefix>: the IP switches through their actions. The view cube's corner under the pointer is a corner
-// view with view/cubeEdgesCorners on, the face it lies on with it off (UI-54), and back.
+// view with view/cubeEdgesCorners on, the face it lies on with it off (UI-54), and back. The ODA File Converter is off
+// by default and turns on only through its terms box (UI-14; <prefix>.oda-terms.png).
 bool MainWindow::benchIp() {
   const QString prefix=qEnvironmentVariable("OPAD_BENCH_IP");if(prefix.isEmpty())return false;
   bool all=true;
@@ -17,6 +21,23 @@ bool MainWindow::benchIp() {
   cube->trigger();
   const QString back=m_viewport->benchCubePart(0,-5);
   report(QString("cube full again: %1").arg(back),back=="corner" && m_settings.value("view/cubeEdgesCorners").toBool());
+
+  QAction* oda=findChild<QAction*>("files.useOda");
+  // Answered on the first turn of the box's loop, before the bench's own dismissal (BenchQuiet: Cancel).
+  auto answer=[this,prefix](bool accept){QTimer::singleShot(0,this,[this,accept,prefix]{
+    auto* box=findChild<QMessageBox*>("odaTerms");if(!box)return;
+    if(accept)box->grab().save(prefix+".oda-terms.png");
+    for(auto* b:box->buttons())if(box->buttonRole(b)==(accept?QMessageBox::AcceptRole:QMessageBox::RejectRole))return b->click();});};
+  const bool odaSet=m_settings.value("files/useOda",false).toBool();
+  report(QString("ODA converter off by default (action %1, core %2, setting %3)").arg(oda && oda->isChecked()).arg(opad::use_oda()).arg(odaSet),oda && !oda->isChecked() && !opad::use_oda() && !odaSet);
+  if(oda){
+    answer(false);oda->trigger();
+    report("ODA terms box cancelled: stays off",!oda->isChecked() && !opad::use_oda() && !m_settings.value("files/useOda",false).toBool());
+    answer(true);oda->trigger();
+    report("ODA terms accepted: on",oda->isChecked() && opad::use_oda() && m_settings.value("files/useOda",false).toBool());
+    oda->trigger();
+    report("ODA off again without asking",!oda->isChecked() && !opad::use_oda() && !m_settings.value("files/useOda",false).toBool());
+  }
   QCoreApplication::exit(all?0:2);
   return true;
 }

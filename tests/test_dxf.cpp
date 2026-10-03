@@ -293,4 +293,40 @@ TEST(dwg_opens_through_libredwg) {
   CHECK(!bodies(import(folder / std::filesystem::path(u8"المخطط.dwg"))).empty());
 }
 
+#ifdef OPAD_FAKE_ODA
+// The ODA File Converter is opt-in (its terms allow non-members non-commercial use only): installed but off, a DWG never
+// goes through it and the error points to the setting; switched on (the setting or OPAD_USE_ODA), it converts.
+TEST(oda_converter_only_when_switched_on) {
+  Files f;
+  const auto converter = f.dir / "ODA" / "ODAFileConverter 99.0" / "ODAFileConverter.exe";
+  std::filesystem::create_directories(converter.parent_path());
+  std::filesystem::copy_file(OPAD_FAKE_ODA, converter);
+  write_text_file(f.dir / "plan.dwg", "not a drawing");
+  struct Env {
+    std::vector<std::pair<std::wstring, std::wstring>> saved;
+    Env() {
+      for (const wchar_t* name : {L"ProgramFiles", L"ProgramFiles(x86)", L"ProgramW6432", L"OPAD_DWG2DXF", L"OPAD_USE_ODA"}) {
+        const wchar_t* value = _wgetenv(name);
+        saved.emplace_back(name, value ? value : L"");
+        _wputenv_s(name, L"");
+      }
+    }
+    ~Env() { for (const auto& [name, value] : saved) _wputenv_s(name.c_str(), value.c_str()); set_use_oda(false); }
+  } env;
+  _wputenv_s(L"ProgramFiles", f.dir.wstring().c_str());
+  CHECK(std::filesystem::equivalent(oda_file_converter(), converter));
+  set_use_oda(false);
+  CHECK(!use_oda());
+  std::string message;
+  try { import(f.dir / "plan.dwg"); } catch (const Error& e) { message = e.what(); }
+  CHECK(message.find("not switched on") != std::string::npos);
+  set_use_oda(true);
+  const auto all = bodies(import(f.dir / "plan.dwg"));
+  CHECK(all.size() == 1 && all[0].layer == "ODA");
+  set_use_oda(false);
+  _wputenv_s(L"OPAD_USE_ODA", L"1");
+  CHECK(use_oda() && !bodies(import(f.dir / "plan.dwg")).empty());
+}
+#endif
+
 CHECK_MAIN()

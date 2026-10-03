@@ -1,3 +1,8 @@
 {
- "View cube edges and corners turn the view": "حواف مكعب العرض وزواياه تغيّر اتجاه العرض"
+ "View cube edges and corners turn the view": "حواف مكعب العرض وزواياه تغيّر اتجاه العرض",
+ "Use the ODA File Converter for DWG": "استخدام ODA File Converter لملفات DWG",
+ "ODA File Converter": "ODA File Converter",
+ "The ODA File Converter is third-party software from the Open Design Alliance, not part of OPAD. Its licence lets non-members use it for non-commercial purposes only: turn this on only if your use is covered.\n\nWhen on, OPAD reads and writes DWG through an installed ODA File Converter; otherwise through LibreDWG, which comes with OPAD.": "ODA File Converter برنامج من طرف ثالث (Open Design Alliance) وليس جزءًا من OPAD. ترخيصه يسمح لغير الأعضاء باستخدامه لأغراض غير تجارية فقط: فعّل هذا الخيار فقط إن كان استخدامك مشمولًا بالترخيص.\n\nعند تفعيله يقرأ OPAD ملفات DWG ويكتبها عبر ODA File Converter المثبّت؛ وإلا فعبر LibreDWG المرفق مع OPAD.",
+ "No ODA File Converter is installed on this computer (OPAD looks in Program Files\\ODA).": "لا يوجد ODA File Converter مثبّت على هذا الحاسوب (يبحث OPAD في Program Files\\ODA).",
+ "Use it": "استخدمه"
 }

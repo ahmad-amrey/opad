@@ -54,7 +54,9 @@ void print_usage() {
   std::printf("  probe <file> [--viewer] [--mesh] [--cache]   reads any supported file as OPAD opens it; reports contents and timings\n");
   std::printf("  thumbnail <file> --out <png|bgra> [--size 256]   a picture of the file (Explorer thumbnails)\n");
   std::printf("\nreferences: <uuid> | <uuid>/face/N | <uuid>/edge/N | <uuid>/vertex/N | point/x,y,z\n");
-  std::printf("environment: OPAD_AUTHOR (default author), OPAD_CACHE_DIR, OPAD_PLUGINS (path list)\n");
+  std::printf("environment: OPAD_AUTHOR (default author), OPAD_CACHE_DIR, OPAD_PLUGINS (path list),\n");
+  std::printf("             OPAD_USE_ODA=1 (DWG through an installed ODA File Converter instead of LibreDWG; ODA's terms allow\n");
+  std::printf("             non-members non-commercial use only)\n");
 }
 
 // probe: what opening a file costs, phase by phase, without a window (viewer: the desktop's read-only fast path).
