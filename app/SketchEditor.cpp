@@ -14,6 +14,7 @@
 #include <Graphic3d_AspectFillArea3d.hxx>
 #include <Graphic3d_AspectLine3d.hxx>
 #include <Graphic3d_AspectMarker3d.hxx>
+#include <TColStd_HArray1OfByte.hxx>
 #include <Graphic3d_AspectText3d.hxx>
 #include <Graphic3d_Text.hxx>
 #include <Poly_Triangulation.hxx>
@@ -53,6 +54,7 @@ class SketchPrs : public AIS_InteractiveObject {
   std::vector<Seg> solid, dashed, thin, marks;  // marks: snap markers and constraint pictograms (SnapMarkers.hpp), 1.5 px
   std::vector<Seg> locked;                      // the line a Shift lock holds the pointer to: thick dashed, 3 px
   std::vector<Pt> points, bigPoints;
+  std::vector<Pt> dots;  // coincidences (UI-24): a filled dot on the point, over its ring
   std::vector<Txt> texts;
   std::vector<opad::Vec3> fill;
   std::vector<opad::Vec3> badges;  // the constraint badges' backs (UI-24): opaque triangles, over the curves, under the marks
@@ -106,16 +108,25 @@ class SketchPrs : public AIS_InteractiveObject {
     }
     lines(marks, Aspect_TOL_SOLID, 1.5 * scale);
     lines(locked, Aspect_TOL_DASH, 3.0 * scale);
-    auto markers = [&](const std::vector<Pt>& pts, double scale) {
+    auto markers = [&](const std::vector<Pt>& pts, const Handle(Graphic3d_AspectMarker3d)& aspect) {
       if (pts.empty()) return;
       Handle(Graphic3d_ArrayOfPoints) arr = new Graphic3d_ArrayOfPoints(static_cast<int>(pts.size()), Standard_True);
       for (const auto& p : pts) arr->AddVertex(gp_Pnt(p.p[0], p.p[1], p.p[2]), occ(p.c));
       Handle(Graphic3d_Group) g = prs->NewGroup();
-      g->SetGroupPrimitivesAspect(new Graphic3d_AspectMarker3d(Aspect_TOM_O_POINT, occ(pts.front().c), scale));
+      aspect->SetColor(occ(pts.front().c));
+      g->SetGroupPrimitivesAspect(aspect);
       g->AddPrimitiveArray(arr);
     };
-    markers(points, 2.0 * scale);
-    markers(bigPoints, 3.0 * scale);
+    markers(points, new Graphic3d_AspectMarker3d(Aspect_TOM_O_POINT, Quantity_NOC_WHITE, 2.0 * scale));
+    markers(bigPoints, new Graphic3d_AspectMarker3d(Aspect_TOM_O_POINT, Quantity_NOC_WHITE, 3.0 * scale));
+    if (!dots.empty()) {  // a filled disc inside the point's ring, in each vertex's colour (the stock POINT marker is a pixel)
+      const int d = std::max(3, int(std::lround(5 * scale))), row = (d + 7) / 8;
+      Handle(TColStd_HArray1OfByte) bits = new TColStd_HArray1OfByte(0, row * d - 1, 0);
+      for (int y = 0; y < d; ++y)
+        for (int x = 0; x < d; ++x)
+          if (std::hypot(x + 0.5 - d / 2.0, y + 0.5 - d / 2.0) <= d / 2.0) bits->ChangeValue(y * row + x / 8) |= Standard_Byte(0x80 >> (x % 8));
+      markers(dots, new Graphic3d_AspectMarker3d(Quantity_NOC_WHITE, d, d, bits));
+    }
     // One group per colour: a text aspect has a single colour.
     std::map<QRgb, Handle(Graphic3d_Group)> groups;
     for (const auto& t : texts) {
@@ -1207,6 +1218,7 @@ void SketchEditor::rebuild() {
   d.badges.clear();
   d.points.clear();
   d.bigPoints.clear();
+  d.dots.clear();
   d.texts.clear();
   d.fill = m_fill;
   d.fillColor = t.sel;
@@ -1258,8 +1270,9 @@ void SketchEditor::rebuild() {
   }
 
   // Constraint badges next to what they hold (UI-24): a pictogram in a badge, green (red in conflict, the hover colour when
-  // selected or hovered), laid out so that none covers another; an explicit coincidence is a dot on its point. With Show
-  // constraints off only the conflicting and selected ones show.
+  // selected or hovered), laid out so that none covers another; a coincidence is a dot on its point, the explicit ones (a
+  // point on a curve) and where curves end on one point (they share it: no constraint). With Show constraints off only the
+  // conflicting and selected ones show.
   // One badge of a kind per curve: a hexagon's first side holds five "equal"s and a slot's caps two tangents each, which drew
   // rows of identical badges. The others stay reachable through the badge on the other curve.
   using G = snapmarkers::Glyph;
@@ -1302,8 +1315,7 @@ void SketchEditor::rebuild() {
     if (!i18n::t(QString::fromLatin1(SkConstraint::type_name(c.type))).contains(m_constraintFilter, Qt::CaseInsensitive)) continue;
     if (c.type == SkConstraint::Type::Coincident) {  // a dot on the point it holds
       if (const SkPoint* p = m_geometry->point(m_sk, c.refs[0])) {
-        for (const auto& s : snapmarkers::glyph(G::Coincident, 7))
-          d.marks.push_back({lifted(p->x + s.x0 * rx + s.y0 * ux, p->y + s.x0 * ry + s.y0 * uy, 2), lifted(p->x + s.x1 * rx + s.y1 * ux, p->y + s.x1 * ry + s.y1 * uy, 2), colourOf(c)});
+        d.dots.push_back({lifted(p->x, p->y, 2), colourOf(c)});
         m_coincidentDots.push_back({c.id, p->x, p->y});
       }
       continue;
@@ -1328,6 +1340,22 @@ void SketchEditor::rebuild() {
       badges.push_back({c.id, *glyph, {(gu * uy - ux * gv) / det, (rx * gv - gu * ry) / det}, colourOf(c)});  // in pixels
       if (c.type == SkConstraint::Type::Midpoint || c.type == SkConstraint::Type::Symmetric || c.type == SkConstraint::Type::Fix) break;  // one badge is enough
     }
+  }
+  m_joinDots.clear();
+  if (i18n::t(QString::fromLatin1(SkConstraint::type_name(SkConstraint::Type::Coincident))).contains(m_constraintFilter, Qt::CaseInsensitive)) {
+    std::unordered_map<int, int> ends;  // curves ending on each point; a closed curve's ends count once
+    for (const auto& e : m_sk.entities) {
+      if (e.p.empty() || e.periodic) continue;
+      const bool line = e.type == SkEntity::Type::Line || e.type == SkEntity::Type::Spline, arc = e.type == SkEntity::Type::Arc && e.p.size() == 3;
+      const int a = line ? e.p.front() : arc ? e.p[1] : e.type == SkEntity::Type::Point ? e.p[0] : 0, b = line ? e.p.back() : arc ? e.p[2] : a;
+      if (!a) continue;
+      ++ends[a];
+      if (b != a) ++ends[b];
+    }
+    for (const auto& [id, n] : ends)
+      if (n > 1 && (m_showConstraints || selected.count(id)))
+        if (const SkPoint* p = m_geometry->point(m_sk, id)) { m_joinDots.push_back(id); d.dots.push_back({lifted(p->x, p->y, 2), selected.count(id) || picked.count(id) ? t.hov : t.green}); }
+    std::sort(m_joinDots.begin(), m_joinDots.end());
   }
   std::vector<snapmarkers::Place> anchors;
   for (const auto& b : badges) anchors.push_back(b.at);
@@ -1466,6 +1494,7 @@ QStringList SketchEditor::overlayTexts() const {
 }
 
 size_t SketchEditor::badgeTriangles() const { return m_prs.IsNull() ? 0 : static_cast<const SketchPrs*>(m_prs.get())->badges.size() / 3; }
+size_t SketchEditor::coincidenceDots() const { return m_prs.IsNull() ? 0 : static_cast<const SketchPrs*>(m_prs.get())->dots.size(); }
 
 size_t SketchEditor::transientSolid(const QColor& c) const {
   size_t n = 0;
@@ -1555,6 +1584,11 @@ void SketchEditor::updateTransient() {
     }
   } else if(m_hover.kind==Hit::Point) {
     if(const auto* p=m_geometry->point(m_sk,m_hover.id))d.bigPoints.push_back({W(p->x,p->y),t.hov});
+    if(m_tool=="select" && std::binary_search(m_joinDots.begin(),m_joinDots.end(),m_hover.id))  // a join's dot: the curves meeting there light up
+      for(size_t index:m_geometry->curvesAt(m_hover.id)) if(index<m_sk.entities.size()) {
+        const auto pts=sampled(m_sk.entities[index]);
+        for(size_t i=1;i<pts.size();++i)d.solid.push_back({W(pts[i-1].first,pts[i-1].second),W(pts[i].first,pts[i].second),t.hov});
+      }
     if(m_tool=="fillet") {  // the arc a click there makes, at the radius set (typed before anything is picked too)
       const auto arc=filletPreview(m_hover.id);
       for(size_t i=1;i<arc.size();++i)d.solid.push_back({W(arc[i-1].first,arc[i-1].second),W(arc[i].first,arc[i].second),t.hov});

@@ -233,6 +233,7 @@ class SketchEditor : public QObject, public SketchInput {
   size_t transientLocked() const;                     // segments drawn thick dashed: a Shift lock's line (benches)
   QStringList overlayTexts() const;                   // the texts the sketch's overlay draws (benches)
   size_t badgeTriangles() const;                      // the constraint badges' backs, two triangles each (benches)
+  size_t coincidenceDots() const;                     // the dots drawn for coincidences, explicit and where curves meet (benches)
   size_t transientSolid(const QColor& c) const;       // rubber band and highlight segments in that colour (benches)
   std::optional<snapmarkers::Marker> m_marker;        // the marker drawn where the pointer snapped (none: a dot)
   double m_markerTurn = 0;                            // its turn on the screen (radians): an extension's follows its line
@@ -316,6 +317,7 @@ class SketchEditor : public QObject, public SketchInput {
   std::set<int> m_conflicts;
   std::vector<std::tuple<int,double,double>> m_glyphHits;  // each constraint badge: its constraint and centre (picking, hover)
   std::vector<std::tuple<int,double,double>> m_coincidentDots;  // each coincidence drawn: its constraint and point
+  std::vector<int> m_joinDots;  // points two curves end on (a coincidence they share, no constraint): drawn as its dot; sorted
   bool m_showConstraints = true;
   void pixelAxes(double& rx, double& ry, double& ux, double& uy) const;  // one screen pixel right and up, in sketch coordinates
   bool m_boxSelecting = false;

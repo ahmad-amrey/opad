@@ -10,8 +10,9 @@ using namespace opad::design;
 
 // OPAD_BENCH_SKETCH_CONSTRAINTS=<prefix> (TODO 11 UI-24): constraints show as pictograms in badges, laid out so that none
 // covers another (a rectangle's bottom line holding a horizontal, an equal, a perpendicular and a midpoint on one spot);
-// an explicit coincidence is a dot on its point; hovering a badge lights up what it holds; Show constraints (the panel's
-// check box and the command) hides them, leaving those selected.
+// a coincidence is a dot on its point, the explicit one and the corners where two sides end (no constraint there); hovering
+// a badge lights up what it holds, hovering a corner the sides meeting there; Show constraints (the panel's check box and
+// the command) hides them, leaving those selected.
 void SketchEditor::benchConstraints() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_CONSTRAINTS");
   bool ok = true;
@@ -80,6 +81,10 @@ void SketchEditor::benchConstraints() {
   check(m_glyphHits.size() == 9 && badgeTriangles() == 2 * m_glyphHits.size() && letters.isEmpty(), QString("%1 badges with pictograms, no letters (%2)").arg(m_glyphHits.size()).arg(letters.join(" ")));
   check(apart, "no badge covers another, also four on the bottom line's middle");
   check(m_coincidentDots.size() == 1 && std::get<0>(m_coincidentDots[0]) == coincident && std::abs(std::get<2>(m_coincidentDots[0]) - 10) < 1e-6, "the coincidence is a dot on its point");
+  int corner = 0;
+  for (int id : m_joinDots)
+    if (const auto* p = m_sk.point(id); p && std::hypot(p->x - 30, p->y - 20) < 1e-9) corner = id;
+  check(m_joinDots.size() == 4 && corner && coincidenceDots() == 5, QString("the four corners, where two sides end on one point, are dots too (%1 of %2 dots)").arg(m_joinDots.size()).arg(coincidenceDots()));
   m_viewport->grabImage().save(prefix + ".png");
 
   // Hovering a badge lights up what it holds.
@@ -91,16 +96,19 @@ void SketchEditor::benchConstraints() {
   m_viewport->grabImage().save(prefix + ".hover.png");
   sketchMove(15, 40, Qt::NoModifier, false);
   check(m_hover.kind == Hit::None && transientSolid(m_viewport->tokens().hov) == 0, "off the badge nothing is lit");
+  sketchMove(30, 20, Qt::NoModifier, false);
+  check(m_hover.kind == Hit::Point && m_hover.id == corner && transientSolid(m_viewport->tokens().hov) == 2, QString("hovering a corner's dot lights up the two sides ending there (%1)").arg(transientSolid(m_viewport->tokens().hov)));
+  sketchMove(15, 40, Qt::NoModifier, false);
 
   // Show constraints: off hides them all, but a selected one; the command turns them on again.
   box->click();
-  check(!showConstraints() && m_glyphHits.empty() && m_coincidentDots.empty() && badgeTriangles() == 0, "Show constraints off hides the badges and the dot");
+  check(!showConstraints() && m_glyphHits.empty() && m_coincidentDots.empty() && m_joinDots.empty() && coincidenceDots() == 0 && badgeTriangles() == 0, "Show constraints off hides the badges and the dots");
   m_sel = {horizontal};
   rebuild();
   check(m_glyphHits.size() == 1 && std::get<0>(m_glyphHits[0]) == horizontal, "a selected constraint still shows");
   m_sel.clear();
   command->trigger();
   QCoreApplication::processEvents();
-  check(showConstraints() && box->isChecked() && m_glyphHits.size() == 9 && m_coincidentDots.size() == 1, "the command shows them again, the check box follows");
+  check(showConstraints() && box->isChecked() && m_glyphHits.size() == 9 && m_coincidentDots.size() == 1 && m_joinDots.size() == 4, "the command shows them again, the check box follows");
   QCoreApplication::exit(ok ? 0 : 2);
 }
