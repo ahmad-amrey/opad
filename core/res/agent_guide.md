@@ -224,6 +224,14 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   need `expected_revision` and `request_id`, and not during a transaction.
 - `export` inside a transaction writes its staged state; outside, the document. STEP files are reproducible: the
   header carries the document's last change time and the file's name, so the same document exports the same bytes.
+- `import` with `link: true` links the file instead of copying it (a bought part, a KiCad board, a picture to design
+  around): the document records where it is and its hash, and reads it whenever it opens. Its parts are read-only:
+  use them as references, sketch projections and tools (`combine` cut with `keep_tools: true`); a feature that would
+  change, move, copy or consume one is refused ("embed the file first"), and automatic join/cut targets skip them.
+  Status, sync (after the file changed), embed (an editable copy) and pack (a copy in `assets/`) are the `opad-cli
+  asset` command.
+- Pictures (`.png .jpg .bmp .gif .webp`) import as a flat canvas on XY at the picture's resolution (96 dpi unless the
+  file says); `transform` places and scales it.
 
 ## Checking the result
 
