@@ -6,6 +6,8 @@
 //   Enter, "Done": ends the chain (a polyline keeps its segments, a spline is made from its points), keeps the tool.
 //   Esc, a ladder: ends the step in progress (a chain as Enter does, a shape not made yet is dropped), then closes the
 //     tool, then clears the selection. The same from the view, the tool panel and the main window.
+//   Values typed into the tool's boxes (UI-16) come first: Enter uses them, Esc drops them. With nothing typed, Enter
+//     applies a tool whose curves are picked (an offset, a move, a pattern), as its Apply button does.
 // No Qt and no sketch here: tests/test_sketch_keys.cpp.
 #include <cstddef>
 #include <string>
@@ -20,10 +22,12 @@ struct State {
   bool mirrorSeeds = false;  // mirror about a picked line, its curves being chosen: Enter goes on to the line
   bool mirrorAxis = false;   // mirror, the line being picked
   bool selection = false;
+  bool typed = false;    // values typed into the tool's boxes and not used yet
+  bool applies = false;  // the tool's Apply would act now: an offset, move, rotate, scale or pattern with its curves picked
 };
 enum class Back { None, UndoPoint, UndoPick, Delete };
-enum class Enter { None, EndChain, PickMirrorLine };
-enum class Esc { None, CancelBox, BackToCurves, EndChain, CancelStep, CloseTool, ClearSelection };
+enum class Enter { None, UseTyped, EndChain, PickMirrorLine, Apply };
+enum class Esc { None, CancelBox, DropTyped, BackToCurves, EndChain, CancelStep, CloseTool, ClearSelection };
 
 // Tools that draw a chain until Enter: Enter is their Done button.
 inline bool chainTool(const std::string& tool) { return tool == "line" || tool == "spline" || tool == "control_spline"; }
@@ -38,12 +42,15 @@ inline Back backspace(const State& s) {
 }
 
 inline Enter enter(const State& s) {
+  if (s.typed) return Enter::UseTyped;
   if (inChain(s)) return Enter::EndChain;
-  return s.tool == "mirror" && s.mirrorSeeds && s.selection ? Enter::PickMirrorLine : Enter::None;
+  if (s.tool == "mirror" && s.mirrorSeeds && s.selection) return Enter::PickMirrorLine;
+  return s.applies ? Enter::Apply : Enter::None;
 }
 
 inline Esc escape(const State& s) {
   if (s.boxSelecting) return Esc::CancelBox;
+  if (s.typed) return Esc::DropTyped;
   if (s.tool == "mirror" && s.mirrorAxis && !s.picks) return Esc::BackToCurves;
   if (inChain(s)) return Esc::EndChain;
   if (s.clicks || s.picks) return Esc::CancelStep;

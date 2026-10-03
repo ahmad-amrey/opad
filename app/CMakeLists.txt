@@ -40,6 +40,7 @@ set(OPAD_APP_SOURCES
   SketchGridBench.cpp
   SketchKeys.hpp
   SketchLadderBench.cpp
+  InputKeys.hpp DynamicInput.cpp DynamicInput.hpp SketchDynamicInput.cpp SketchKeysBench.cpp
   GeometrySelection.cpp
   Panels.cpp Panels.hpp
   ShortcutEditor.cpp ShortcutEditor.hpp ShortcutBench.cpp

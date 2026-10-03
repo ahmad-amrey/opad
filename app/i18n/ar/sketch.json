@@ -21,5 +21,20 @@
  "Esc clear picks": "Esc مسح الاختيارات",
  "Esc cancel shape": "Esc إلغاء الشكل",
  "Esc close tool": "Esc إغلاق الأداة",
- "Esc clear selection": "Esc مسح التحديد"
+ "Esc clear selection": "Esc مسح التحديد",
+ "Type a value or an expression · Tab next box · Enter uses the values · Esc undoes · ↑/↓ step it (Shift ×10, Ctrl ×0.1)": "اكتب قيمة أو تعبيرًا · Tab للخانة التالية · Enter يستخدم القيم · Esc يتراجع · ↑/↓ لتغييرها (Shift ×10، Ctrl ×0.1)",
+ "Type a value into the tool's boxes": "كتابة قيمة في خانات الأداة",
+ "Next or previous value box": "خانة القيمة التالية أو السابقة",
+ "Digits, the decimal point, the comma and the signs type values into a running sketch tool. Choose another shortcut for a sketch command.": "الأرقام والفاصلة العشرية والفاصلة والإشارات تكتب قيمًا في أداة الرسم الجارية. اختر اختصارًا آخر لأمر الرسم.",
+ "Distance 1": "المسافة 1",
+ "Distance 2": "المسافة 2",
+ "ΔX": "ΔX",
+ "ΔY": "ΔY",
+ "Spacing X": "التباعد X",
+ "Spacing Y": "التباعد Y",
+ "Gap": "الفجوة",
+ "The value waits: pick what it applies to.": "القيمة بالانتظار: اختر ما تنطبق عليه.",
+ "Enter use typed values": "Enter استخدام القيم المكتوبة",
+ "Esc drop typed values": "Esc إسقاط القيم المكتوبة",
+ "Enter apply": "Enter تطبيق"
 }

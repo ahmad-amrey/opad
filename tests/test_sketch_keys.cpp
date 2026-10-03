@@ -110,4 +110,29 @@ TEST(the_ladder_ends_the_step_then_closes_the_tool) {
   CHECK(escape(s) == Esc::None);
 }
 
+TEST(typed_values_come_first) {
+  // UI-16: values typed into the tool's boxes are used by Enter (not the end of the chain) and dropped by the first Esc,
+  // before the chain ends; Backspace still takes points back (in a box it edits the text, which the box does itself).
+  State s = tool("line");
+  s.chain = 2;
+  s.typed = true;
+  CHECK(enter(s) == Enter::UseTyped);
+  CHECK(escape(s) == Esc::DropTyped);
+  CHECK(backspace(s) == Back::UndoPoint);
+  s.typed = false;
+  CHECK(enter(s) == Enter::EndChain && escape(s) == Esc::EndChain);
+  State o = tool("offset");  // a distance typed before anything is selected
+  o.typed = true;
+  CHECK(enter(o) == Enter::UseTyped && escape(o) == Esc::DropTyped);
+  o.typed = false;
+  CHECK(enter(o) == Enter::None && escape(o) == Esc::CloseTool);
+  o.selection = o.applies = true;  // the curves picked: Enter applies, as the Apply button does
+  CHECK(enter(o) == Enter::Apply && escape(o) == Esc::CloseTool);
+  o.typed = true;  // a value typed for them is used first (and applied with it)
+  CHECK(enter(o) == Enter::UseTyped);
+  State b = tool("select");  // a band being dragged still goes first
+  b.boxSelecting = b.typed = true;
+  CHECK(escape(b) == Esc::CancelBox);
+}
+
 CHECK_MAIN()

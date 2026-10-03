@@ -1,4 +1,6 @@
 #include "DimensionHandle.hpp"
+#include "DynamicInput.hpp"
+#include "InputKeys.hpp"
 #include "Jobs.hpp"
 #include "Theme.hpp"
 #include <QApplication>
@@ -170,7 +172,7 @@ void DimensionHandle::configure(const opad::Vec3& origin,const opad::Vec3& axis,
   show();raise();reposition();indexAnchors();
 }
 void DimensionHandle::showEvent(QShowEvent*) {restyle();reposition();}
-void DimensionHandle::hideEvent(QHideEvent*) {if(m_indexJob)m_indexJob->cancel();m_indexJob=nullptr;m_indexReady=false;m_dragging=false;m_drawn=false;m_edit->clearFocus();m_view->removeOverlay(m_arrow);}
+void DimensionHandle::hideEvent(QHideEvent*) {if(m_indexJob)m_indexJob->cancel();m_indexJob=nullptr;m_indexReady=false;m_dragging=false;m_drawn=false;m_typing=false;if(m_edit->hasFocus())m_view->setFocus();m_view->removeOverlay(m_arrow);}
 void DimensionHandle::reposition() {
   if(!isVisible() || m_arrow.IsNull())return;
   opad::Vec3 tip=m_origin,next=m_origin;
@@ -213,6 +215,18 @@ void DimensionHandle::nudge(double steps,Qt::KeyboardModifiers modifiers) {
   m_value=std::round((m_value+steps*step)/step)*step;
   setText(millimetres(m_value,step<1?0.1:1),true);reposition();
 }
+void DimensionHandle::type(const QString& text) {
+  if(text.isEmpty())return;
+  if(!m_edit->hasFocus()){if(!isActiveWindow())window()->activateWindow();m_edit->setFocus();}
+  // The first key replaces the value; keys that still arrive over the view (the box did not get the keyboard) go on.
+  if(!m_typing){m_typing=true;m_before=m_edit->text();setText(QString(),false);}
+  m_edit->deselect();m_edit->setCursorPosition(m_edit->text().size());
+  setText(m_edit->text()+(text==QLatin1String(",")?QStringLiteral("."):text),true);
+}
+void DimensionHandle::focusValue() {
+  if(!m_edit->hasFocus()){if(!isActiveWindow())window()->activateWindow();m_edit->setFocus(Qt::TabFocusReason);}
+  m_edit->selectAll();m_typing=false;
+}
 bool DimensionHandle::eventFilter(QObject* target,QEvent* event) {
   if(!isVisible())return false;
   if(target==m_edit) {
@@ -223,11 +237,15 @@ bool DimensionHandle::eventFilter(QObject* target,QEvent* event) {
       const auto reason=static_cast<QFocusEvent*>(event)->reason();
       if(reason==Qt::MouseFocusReason || reason==Qt::TabFocusReason || reason==Qt::BacktabFocusReason)QTimer::singleShot(0,m_edit,&QLineEdit::selectAll);
     }
-    else if(event->type()==QEvent::FocusOut)restyle();
+    else if(event->type()==QEvent::FocusOut){m_typing=false;restyle();}
     else if(event->type()==QEvent::KeyPress || event->type()==QEvent::ShortcutOverride) {
-      auto* key=static_cast<QKeyEvent*>(event);
-      if(key->key()==Qt::Key_Escape){key->accept();if(event->type()==QEvent::KeyPress){if(m_edit->text()!=m_before)setText(m_before,true);m_edit->clearFocus();}return true;}
-      if(key->key()==Qt::Key_Up || key->key()==Qt::Key_Down){key->accept();if(event->type()==QEvent::KeyPress)nudge(key->key()==Qt::Key_Up?1:-1,key->modifiers());return true;}
+      auto* key=static_cast<QKeyEvent*>(event);const bool press=event->type()==QEvent::KeyPress;
+      // Esc undoes the edit, then gives the keyboard back to the view (the next Esc is the tool's there).
+      if(key->key()==Qt::Key_Escape){key->accept();if(press){if(m_edit->text()!=m_before)setText(m_before,true);else m_view->setFocus();}return true;}
+      if(key->key()==Qt::Key_Up || key->key()==Qt::Key_Down){key->accept();if(press)nudge(key->key()==Qt::Key_Up?1:-1,key->modifiers());return true;}
+      // One box: Tab stays in it (Qt would move the keyboard on to some other widget); a comma is the decimal comma.
+      if(key->key()==Qt::Key_Tab || key->key()==Qt::Key_Backtab){key->accept();if(press)m_edit->selectAll();return true;}
+      if(key->key()==Qt::Key_Comma && !(key->modifiers()&(Qt::ControlModifier|Qt::AltModifier|Qt::MetaModifier))){key->accept();if(press)m_edit->insert(QStringLiteral("."));return true;}
     }
     return false;
   }
@@ -245,12 +263,13 @@ bool DimensionHandle::eventFilter(QObject* target,QEvent* event) {
       if(found){m_origin=closest;reposition();}
     }
   }
-  if(event->type()==QEvent::ShortcutOverride || event->type()==QEvent::KeyPress) {
-    auto* widget=qobject_cast<QWidget*>(target);if(!widget || (widget!=m_view && !m_view->window()->isAncestorOf(widget)))return false;
-    if(qobject_cast<QLineEdit*>(widget))return false;
+  // A value key typed over the view or one of its tool panels (not a text field) starts the box. A keypad digit carries
+  // the keypad modifier and a tool panel is a window of its own: both used to be refused.
+  if(m_capturesKeys && (event->type()==QEvent::ShortcutOverride || event->type()==QEvent::KeyPress) && DynamicInput::takesKeysFrom(m_view,target)) {
     auto* key=static_cast<QKeyEvent*>(event);
-    if(key->modifiers()==Qt::NoModifier && ((!key->text().isEmpty() && key->text().front().isDigit()) || key->key()==Qt::Key_Minus || key->key()==Qt::Key_Period)) {
-      key->accept();if(event->type()==QEvent::KeyPress){m_edit->setFocus();setText(key->text(),true);m_edit->deselect();m_edit->setCursorPosition(m_edit->text().size());}return true;
+    const bool command=key->modifiers()&(Qt::ControlModifier|Qt::AltModifier|Qt::MetaModifier);
+    if(key->text().size()==1 && inputkeys::typesValue(key->text().front().unicode(),command)) {
+      key->accept();if(event->type()==QEvent::KeyPress)type(key->text());return true;
     }
   }
   return QWidget::eventFilter(target,event);

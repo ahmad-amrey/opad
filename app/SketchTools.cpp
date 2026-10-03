@@ -3,6 +3,7 @@
 #include "opad/design/sketch_modify.hpp"
 // SketchEditor, the tools: what a click means for each of them, constraints, dimensions, fillet, trim, mirror.
 #include "SketchEditor.hpp"
+#include "SketchPanel.hpp"
 #include "DimensionHandle.hpp"
 
 #include <BRepAdaptor_Curve.hxx>
@@ -129,6 +130,7 @@ void SketchEditor::toolPrompt() {
   else if (m_tool.startsWith("c:")) t = tr("%1: pick the geometry it applies to").arg(i18n::t(m_tool.mid(2).left(1).toUpper() + m_tool.mid(3)));
   emit status(t);
   emit workflowChanged();
+  updateInput();  // the boxes of the step that waits now
 }
 
 // ---------------------------------------------------------------- clicks
@@ -1067,6 +1069,17 @@ bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
     if(widget && (widget==m_viewport || m_viewport->window()->isAncestorOf(widget)) && key->key()==Qt::Key_Z && key->modifiers().testFlag(Qt::ControlModifier)){
       key->accept();if(e->type()==QEvent::KeyPress){const bool forward=key->modifiers().testFlag(Qt::ShiftModifier);QTimer::singleShot(0,this,[this,forward]{if(m_active){if(forward)redo();else undo();}});}return true;
     }
+    // A value typed while a tool panel (or another part of the window that is not a text field) has the keyboard is the
+    // tool's too, never a window shortcut: Qt hands a tool window's unclaimed keys to the main window's shortcuts. Tab
+    // stays the panel's; the view routes its own keys (Viewport::event).
+    if(o!=m_viewport && key->key()!=Qt::Key_Tab && key->key()!=Qt::Key_Backtab && typingKey(key) && DynamicInput::takesKeysFrom(m_viewport,o)){
+      key->accept();if(e->type()==QEvent::KeyPress)sketchType(key);return true;
+    }
+    // Esc in the sketch's tool panel: the view's ladder. Left to Qt, the panel's Esc and the main window's (which Qt also
+    // offers a tool window's keys to) were ambiguous, and neither ran.
+    if(widget && key->key()==Qt::Key_Escape && !(key->modifiers()&~Qt::KeypadModifier) && widget->window()!=m_viewport->window() && widget->window()->findChild<SketchPanel*>()){
+      key->accept();if(e->type()==QEvent::KeyPress)escape();return true;
+    }
   }
   if (o == m_dimEdit && e->type() == QEvent::KeyPress && static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape) {
     m_dimEdit->hide();
@@ -1087,6 +1100,7 @@ void SketchEditor::bench(const QString&) {
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_DRAG"))return benchDrag();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_GRID"))return benchGrid();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_LADDER"))return benchLadder();
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_KEYS"))return benchKeys();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY"))return benchModify();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES"))return benchPrimitives();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW"))return benchWorkflow();

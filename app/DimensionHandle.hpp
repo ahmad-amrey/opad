@@ -25,6 +25,11 @@ class DimensionHandle : public QWidget {
   // How far the arrow sits along the axis per unit of value: 0.5 for a symmetric extrusion, whose end moves half the
   // distance. Kept while a drag runs.
   void setScale(double scale) {if(!m_dragging)m_scale=scale;}
+  // Value keys (digits, keypad too, point, comma, sign) typed over the view or one of its tool panels start the box. A
+  // tool that routes its keys itself (the sketch, UI-16) turns that off and calls type() and focusValue().
+  void setCapturesKeys(bool on) {m_capturesKeys=on;}
+  void type(const QString& text);  // into the box, which takes the keyboard for the keys that follow
+  void focusValue();               // Tab: the box, its value selected
  signals:
   void valueChanged(const QString& expression);
   void accepted();  // Enter in the value box: apply the operation
@@ -53,10 +58,11 @@ class DimensionHandle : public QWidget {
   QLineEdit* m_edit;
   QLabel* m_result;
   QString m_before;  // the text when the box took focus: Esc restores it
+  bool m_typing=false;  // keys typed over the view are going into the box
   opad::Vec3 m_origin{},m_axis{1,0,0};
   QPointF m_start,m_screenAxis;
   double m_value=0,m_startValue=0,m_scale=1;
-  bool m_dragging=false,m_drawn=false;
+  bool m_dragging=false,m_drawn=false,m_capturesKeys=true;
   QPointF m_arrowStart,m_arrowEnd;
   Handle(AIS_InteractiveObject) m_arrow;
   std::vector<Segment> m_segments;

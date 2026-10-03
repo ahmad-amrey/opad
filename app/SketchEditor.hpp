@@ -13,6 +13,7 @@
 #include <set>
 
 #include "AppDocument.hpp"
+#include "DynamicInput.hpp"
 #include "Viewport.hpp"
 #include "GuidedTool.hpp"
 #include "SketchKeys.hpp"
@@ -58,8 +59,9 @@ class SketchEditor : public QObject, public SketchInput {
   void applyTool();
   void previewTool();
   void invalidatePreview(bool keepOverlay = false);  // keepOverlay: the shown one stays until the next replaces it (live drags)
+  void dropPreviewJob();  // a preview being computed is cancelled: a click or a key acts on the sketch as it is
   void scheduleToolPreview();
-  void placePrecise(const QString& u, const QString& v, int mode);
+  bool placePrecise(const QString& u, const QString& v, int mode);  // false: not placed, the status says why
   // The editing keys and the panel's buttons (SketchKeys.hpp): Backspace / Undo point, Enter / Done, Esc (one rung of
   // the ladder) and Close tool (Esc until the tool is closed). Each returns whether it did something.
   sketchkeys::State keyState() const;
@@ -95,6 +97,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchDrag();
   void benchGrid();
   void benchLadder();
+  void benchKeys();
   void benchLarge(const QString& output, opad::json metrics);
 
   // SketchInput
@@ -104,6 +107,7 @@ class SketchEditor : public QObject, public SketchInput {
   void sketchRelease(double u, double v, Qt::KeyboardModifiers mods) override;
   void sketchDoubleClick(double u, double v) override;
   bool sketchKey(QKeyEvent* e) override;
+  bool sketchType(QKeyEvent* e) override;
 
  protected:
   bool eventFilter(QObject* o, QEvent* e) override;  // Esc in the dimension field
@@ -142,6 +146,14 @@ class SketchEditor : public QObject, public SketchInput {
     int id = 0;
   };
   Snap snap(double u, double v, bool infer = true) const;
+  // Typed values (UI-16, SketchDynamicInput.cpp): the boxes of the step that waits (an option of the tool, or where the
+  // next point goes), which keys type into them, and using what was typed (Enter, or a click: the typed values win, the
+  // pointer gives the rest).
+  QList<DynamicInput::Field> inputStage() const;
+  bool typingKey(const QKeyEvent* e) const;
+  bool appliesOnEnter() const;  // an option tool with what it applies to picked: Enter applies
+  bool useTyped(const Snap* at = nullptr);
+  void updateInput();
   Hit hitTest(double u, double v) const;
   double tol() const;  // pick distance in sketch units
   int pointFor(const Snap& s);           // reuse or create (with the on-curve constraint)
@@ -202,6 +214,7 @@ class SketchEditor : public QObject, public SketchInput {
   bool m_previewRequested=false,m_previewComputing=false;
   QTimer m_toolPreviewTimer;
   QPointer<DimensionHandle> m_dimensionHandle;
+  QPointer<DynamicInput> m_input;
   int m_offsetAnchor = 0;  // the selected curve the offset arrow sits on: the last one hovered
   int m_previewRevision=0;
   std::shared_ptr<opad::design::Sketch> m_toolPreview;

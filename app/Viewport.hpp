@@ -46,7 +46,8 @@ class SketchInput {
   virtual void sketchMove(double u, double v, Qt::KeyboardModifiers mods, bool dragging) = 0;
   virtual void sketchRelease(double u, double v, Qt::KeyboardModifiers mods) = 0;
   virtual void sketchDoubleClick(double u, double v) = 0;
-  virtual bool sketchKey(QKeyEvent* e) = 0;  // true = handled
+  virtual bool sketchKey(QKeyEvent* e) = 0;  // at the shortcut override: true = the sketch's key (no shortcut sees it)
+  virtual bool sketchType(QKeyEvent*) { return false; }  // the press of a key that types a value (or Tab), taken above
   virtual void sketchLeave() {}               // the pointer left the view: nothing is hovered any more
 };
 

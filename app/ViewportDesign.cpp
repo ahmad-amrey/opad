@@ -540,7 +540,7 @@ bool Viewport::event(QEvent* e) {
       return true;
     }
   }
-  // Sketch editing keeps Esc/Enter/Delete. Tool shortcuts are configurable QActions;
+  // Sketch editing keeps Esc/Enter/Delete and the keys that type values. Tool shortcuts are configurable QActions;
   // their outside-sketch counterparts are disabled while the editor is active.
   if (e->type() == QEvent::ShortcutOverride && m_sketchInput) {
     auto* k = static_cast<QKeyEvent*>(e);
@@ -549,11 +549,23 @@ bool Viewport::event(QEvent* e) {
       return true;
     }
   }
+  // Tab goes round the tool's value boxes; QWidget::event would move the keyboard off the view before keyPressEvent.
+  if (e->type() == QEvent::KeyPress && m_sketchInput) {
+    auto* k = static_cast<QKeyEvent*>(e);
+    if ((k->key() == Qt::Key_Tab || k->key() == Qt::Key_Backtab) && !(k->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
+      m_sketchInput->sketchType(k);
+      e->accept();
+      return true;
+    }
+  }
   return QWidget::event(e);
 }
 
 void Viewport::keyPressEvent(QKeyEvent* e) {
-  if (m_sketchInput) return e->accept();  // already handled (or refused) at the shortcut-override stage
+  if (m_sketchInput) {  // the editing keys were handled (or refused) at the shortcut override; values are typed now
+    m_sketchInput->sketchType(e);
+    return e->accept();
+  }
   if (inferenceKey(e)) return e->accept();
   QWidget::keyPressEvent(e);
 }

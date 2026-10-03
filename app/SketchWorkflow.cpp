@@ -82,6 +82,7 @@ QList<ToolStep> SketchEditor::toolSteps() const {
 
 void SketchEditor::applyTool() {
   if(!m_active)return;
+  if(!m_previewRequested)dropPreviewJob();  // Apply (or Enter) right after a value changed: not lost to the preview being computed
   if(m_editJob)return;
   if(!m_previewRequested)m_toolPreviewTimer.stop();
   if(!m_previewRequested && m_toolPreview) {
@@ -167,7 +168,7 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
   });
 }
 
-void SketchEditor::placePrecise(const QString& u,const QString& v,int mode) {
+bool SketchEditor::placePrecise(const QString& u,const QString& v,int mode) {
   try {
     std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});
     const auto table=sketch_parameters(m_sk,ParamTable(defs,m_doc->scene.units));
@@ -177,9 +178,10 @@ void SketchEditor::placePrecise(const QString& u,const QString& v,int mode) {
       if(!m_chain.empty()){const auto* p=m_sk.point(m_chain.back());x+=p->x;y+=p->y;}
       else if(!m_clicks.empty()){x+=m_clicks.back().u;y+=m_clicks.back().v;}
     }
-    if(m_tool=="select")return emit status(tr("Choose a drawing tool first."));
+    if(m_tool=="select"){emit status(tr("Choose a drawing tool first."));return false;}
     click(Snap{x,y},Qt::AltModifier); // exact coordinates: no inferred constraints or grid snapping
-  }catch(const std::exception& e){emit status(i18n::t(QString::fromUtf8(e.what())));}
+    return true;
+  }catch(const std::exception& e){emit status(i18n::t(QString::fromUtf8(e.what())));return false;}
 }
 
 // ---------------------------------------------------------------- Undo point, Done, Esc (UI-20)
@@ -191,6 +193,7 @@ sketchkeys::State SketchEditor::keyState() const {
   s.boxSelecting=m_boxSelecting;s.selection=!m_sel.empty();
   s.mirrorAxis=m_tool=="mirror" && option("mirrorStage","seed")=="axis";
   s.mirrorSeeds=m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && !s.mirrorAxis;
+  s.typed=m_input && m_input->typed();s.applies=appliesOnEnter();
   return s;
 }
 
@@ -224,11 +227,14 @@ bool SketchEditor::undoPoint() {
 }
 
 bool SketchEditor::done() {
+  dropPreviewJob();
   if(!m_active || m_editJob)return false;
   switch(sketchkeys::enter(keyState())) {
     case sketchkeys::Enter::None:return false;
+    case sketchkeys::Enter::UseTyped:return useTyped();
     case sketchkeys::Enter::EndChain:if(m_tool=="control_spline")finishPrimitive();else finishChain();break;
     case sketchkeys::Enter::PickMirrorLine:m_options["mirrorStage"]="axis";toolPrompt();break;  // the curves are chosen: now the line
+    case sketchkeys::Enter::Apply:applyTool();break;
   }
   rebuild();emit changed();return true;
 }
@@ -239,6 +245,7 @@ bool SketchEditor::escape() {
   switch(sketchkeys::escape(keyState())) {
     case Esc::None:return false;
     case Esc::CancelBox:m_boxSelecting=false;break;
+    case Esc::DropTyped:m_input->dropTyped();break;  // option values go back to what they were
     case Esc::BackToCurves:m_options["mirrorStage"]="seed";toolPrompt();break;
     case Esc::EndChain:  // as Enter, and over for sure (a control-point spline with too few points is dropped)
       if(m_tool=="control_spline"){finishPrimitive();m_clicks.clear();toolPrompt();}else finishChain();
@@ -251,7 +258,7 @@ bool SketchEditor::escape() {
 }
 
 void SketchEditor::closeTool() {
-  for(int rung=0;rung<4 && m_tool!="select" && escape();++rung){}
+  for(int rung=0;rung<6 && m_tool!="select" && escape();++rung){}
 }
 
 QString SketchEditor::keyHints() const {
@@ -262,9 +269,12 @@ QString SketchEditor::keyHints() const {
   else if(back==Back::UndoPick)out<<tr("⌫ undo pick");
   else if(back==Back::Delete)out<<tr("Del/⌫ delete");
   const Esc esc=sketchkeys::escape(s);
-  if(esc==Esc::EndChain)  // Enter does the same; only a second Esc goes on to close the tool
+  if(sketchkeys::enter(s)==Enter::UseTyped)out<<tr("Enter use typed values");
+  if(esc==Esc::DropTyped)out<<tr("Esc drop typed values");
+  else if(esc==Esc::EndChain)  // Enter does the same; only a second Esc goes on to close the tool
     out<<(m_tool!="line" && std::max(s.chain,s.clicks)>1?tr("Enter/Esc finish spline"):tr("Enter/Esc end chain"));
   else if(sketchkeys::enter(s)==Enter::PickMirrorLine)out<<tr("Enter pick mirror line");
+  else if(sketchkeys::enter(s)==Enter::Apply)out<<tr("Enter apply");
   if(esc==Esc::BackToCurves)out<<tr("Esc back to curves");
   else if(esc==Esc::CancelStep)out<<(back==Back::UndoPick?tr("Esc clear picks"):tr("Esc cancel shape"));
   else if(esc==Esc::CloseTool)out<<tr("Esc close tool");
@@ -425,6 +435,9 @@ void SketchEditor::previewTool() {
   // The shown preview stays until this one replaces it (or fails): no blank frame between two previews.
   if(!m_active||m_editJob)return;invalidatePreview(true);m_previewRequested=true;applyTool();m_previewRequested=false;
 }
+void SketchEditor::dropPreviewJob() {
+  if(m_editJob && m_previewComputing){m_editJob->cancel();m_editJob=nullptr;m_previewComputing=false;}
+}
 void SketchEditor::invalidatePreview(bool keepOverlay) {
   ++m_previewRevision;
   if(!keepOverlay){m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();}
@@ -435,7 +448,7 @@ void SketchEditor::scheduleToolPreview() {
   // until the next replaces it); otherwise it waits for the value to rest. Restarting the timer on every move meant
   // no preview until the button was let go.
   const bool live=m_dimensionHandle->dragging();
-  invalidatePreview(live);updateDimensionHandle();
+  invalidatePreview(live);updateDimensionHandle();updateInput();
   const QStringList tools={"offset","move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","chamfer","union","subtract","intersect"};
   if(m_active && tools.contains(m_tool) && (!m_sel.empty() || m_clicks.size()==2)) {
     if(!live)m_toolPreviewTimer.start(120);

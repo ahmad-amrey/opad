@@ -1234,6 +1234,7 @@ void MainWindow::updateDesignState() {
     m_ribbon->setWorkspace(m_workspaceBeforeSketch);
   }
   const QString tool = sketching ? m_design->sketch()->tool() : QString();
+  shortcuts::suspendOutsideSketch(m_actions, sketching);  // 5/6/7 and the filters' digits never act in a sketch (UI-16)
   for (QAction* a : m_actions) {
     const QString id = a->objectName();
     if (id.startsWith("sketch.")) {

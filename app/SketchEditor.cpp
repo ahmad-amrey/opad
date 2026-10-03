@@ -127,8 +127,14 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   m_toolPreviewTimer.setSingleShot(true);m_toolPreviewTimer.setInterval(120);
   connect(&m_toolPreviewTimer,&QTimer::timeout,this,[this]{if(!m_active)return;if(m_editJob){m_toolPreviewTimer.start();return;}previewTool();});
   connect(m_dimensionHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){m_options["distance"]=text;scheduleToolPreview();emit workflowChanged();});
-  m_dimensionHandle->setLabel(tr("Offset"));
+  m_dimensionHandle->setLabel(tr("Offset"));m_dimensionHandle->setCapturesKeys(false);  // the keys come through sketchKey
   connect(m_dimensionHandle,&DimensionHandle::accepted,this,[this]{if(m_active && m_tool=="offset" && !m_sel.empty())applyTool();});
+  m_input=new DynamicInput(viewport);
+  connect(m_input,&DynamicInput::optionEdited,this,[this](const QString& key,const QString& value){m_options[key]=value;scheduleToolPreview();emit workflowChanged();});
+  connect(m_input,&DynamicInput::typedChanged,this,[this]{if(m_active)emit changed();});  // the prompt says what Enter and Esc do now
+  connect(m_input,&DynamicInput::committed,this,[this]{if(!done())m_viewport->setFocus();});
+  connect(m_input,&DynamicInput::escaped,this,[this]{escape();});
+  connect(m_input,&DynamicInput::undoPoint,this,[this]{undoPoint();});
   connect(m_viewport,&Viewport::notesMoved,this,[this] {
     if(!m_active) return;
     const double pixels=m_viewport->pixelSize();
@@ -174,11 +180,11 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   });
 }
 
-SketchEditor::~SketchEditor() {delete m_dimensionHandle;}
+SketchEditor::~SketchEditor() {delete m_dimensionHandle;delete m_input;}
 void SketchEditor::setVisible(bool visible) {
   if(!m_active || m_visible==visible)return;
   m_visible=visible;
-  updateDimensionHandle();
+  updateDimensionHandle();updateInput();
   for(const auto& prs:{m_prs,m_transientPrs,m_toolPreviewOverlay}) {
     if(visible)m_viewport->showOverlay(prs);else m_viewport->removeOverlay(prs);
   }
@@ -228,7 +234,7 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
 
 void SketchEditor::end() {
   if (!m_active) return;
-  m_toolPreviewTimer.stop();m_dimensionHandle->hide();
+  m_toolPreviewTimer.stop();m_dimensionHandle->hide();m_input->used();m_input->setFields({});m_input->hide();
   m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
   ++m_geometryRevision;++m_fillRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   m_viewport->setEdgeHover(false);
@@ -574,7 +580,7 @@ int SketchEditor::pointFor(const Snap& s) {
 // ---------------------------------------------------------------- input
 void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
   invalidatePreview();
-  if(m_previewComputing && m_editJob){m_editJob->cancel();m_editJob=nullptr;m_previewComputing=false;}
+  dropPreviewJob();
   if (!m_active || m_editJob || m_geometryJob) return;
   const bool edgeSelection=QStringList{"offset","move","rotate","scale","copy","rect_pattern","polar_pattern","break","explode","mirror"}.contains(m_tool);
   if(edgeSelection && hitTest(u,v).kind==Hit::None){
@@ -616,7 +622,9 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
     emit changed();
     return;
   }
-  click(snap(u, v, !mods.testFlag(Qt::AltModifier)), mods);
+  const Snap s = snap(u, v, !mods.testFlag(Qt::AltModifier));
+  if (m_input->typed() && !inputStage().isEmpty() && !inputStage().front().option) { useTyped(&s); return; }  // the typed values win
+  click(s, mods);
 }
 
 void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bool dragging) {
@@ -707,6 +715,7 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
   m_haveCursor = true;
   if(m_tool=="offset" && !dragging && !m_geometryJob)updateDimensionHandle();
   if (redraw) {if(m_placingDim||dimensionHover)rebuild();else updateTransient();}
+  updateInput();  // the pointer's values, beside it
 }
 
 // Off the view: no point or curve is under the pointer any more (a tool's rubber band keeps its last place).
@@ -767,11 +776,18 @@ void SketchEditor::sketchDoubleClick(double u, double v) {
   if (h.kind == Hit::Dimension) editDimension(h.id, false);
 }
 
+// At the shortcut override (from the view, a tool panel or the main window): which keys are the sketch's, so no window
+// shortcut sees them, and the editing keys act. Keys that type values act when they are pressed (sketchType): the box
+// they start takes the keyboard for the keys that follow, not for this one.
 bool SketchEditor::sketchKey(QKeyEvent* e) {
-  if(m_editJob)return false;
   if (!m_active) return false;
+  if (typingKey(e)) return true;  // also while a job runs: a digit never falls through to a shortcut
   if((e->modifiers()&~Qt::KeypadModifier)!=Qt::NoModifier)return false;  // the keypad's Enter is Enter
-  switch (e->key()) {
+  const int key = e->key();
+  if (key != Qt::Key_Escape && key != Qt::Key_Return && key != Qt::Key_Enter && key != Qt::Key_Backspace && key != Qt::Key_Delete) return false;
+  dropPreviewJob();  // the editing keys act on the sketch as it is (Enter right after a value: not lost to its preview)
+  if(m_editJob)return false;
+  switch (key) {
     case Qt::Key_Escape:
       escape();
       return true;
@@ -779,6 +795,7 @@ bool SketchEditor::sketchKey(QKeyEvent* e) {
     case Qt::Key_Enter:
       return done();
     case Qt::Key_Backspace:
+      if (m_input->backspace()) return true;  // a value typed over the view (its box did not get the keyboard)
       undoPoint();  // never deletes curves while a tool runs, never leaves the tool
       return true;
     case Qt::Key_Delete:
