@@ -677,3 +677,71 @@ OPAD_BENCH(OPAD_BENCH_PALETTE, palette) {
   (*next)(0);
   return true;
 }
+
+// OPAD_BENCH_PANELHELP=<prefix> (a document with a box): the "?" in every tool panel's header (UI-108) opens the
+// reference at the panel's command: Properties, Section, the Distance tool, the print check and a new extrude (the
+// tool running in the shared panels); without the help hook the "?" goes. Saved as <prefix>.tool/.reference.png.
+OPAD_BENCH(OPAD_BENCH_PANELHELP, panelhelp) {
+  const QString prefix = value;
+  auto failed = std::make_shared<QStringList>();
+  auto check = [failed](bool ok, const QString& what) {
+    trace::log(QString("bench: panel help: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    if (!ok) *failed << what;
+  };
+  struct Step { int delay; std::function<void()> fn; };
+  auto steps = std::make_shared<std::vector<Step>>();
+  auto add = [steps](int delay, std::function<void()> fn) { steps->push_back({delay, std::move(fn)}); };
+  // Clicks the panel's "?" and says where the reference opened.
+  auto ask = [&w](ToolPanel* panel) {
+    if (auto* reference = w.findChild<CommandReference*>()) reference->hide();
+    panel->helpButton()->click();
+    auto* reference = w.findChild<CommandReference*>();
+    return reference && reference->isVisible() ? reference->current() : QString();
+  };
+  add(800, [=, &w] {
+    QStringList without;
+    const auto panels = w.findChildren<ToolPanel*>();
+    for (ToolPanel* p : panels) if (!p->helpButton()->isVisibleTo(p)) without << p->id();
+    check(panels.size() >= 8 && without.isEmpty(), QString("every tool panel has its \"?\" (%1 panels) %2").arg(panels.size()).arg(without.join(' ')));
+    w.openPanel(w.m_propsPanel);
+    QString at = ask(w.m_propsPanel);
+    check(at == "inspect.properties", "Properties: its guide (" + at + ")");
+    w.openPanel(w.m_sectionPanel);
+    at = ask(w.m_sectionPanel);
+    check(at == "panel.section", "Section: its guide (" + at + ")");
+    w.startTool("distance");
+    at = ask(w.m_toolPanel);
+    check(at == "inspect.distance", "the Distance tool's panel: the Distance guide (" + at + ")");
+    auto* reference = w.findChild<CommandReference*>();
+    check(reference && reference->preview()->clip()->isVisible() && reference->preview()->clip()->clip() == "inspect.distance", "with its clip");
+  });
+  add(400, [=, &w] {
+    w.m_toolPanel->grab().save(prefix + ".tool.png");
+    if (auto* reference = w.findChild<CommandReference*>()) reference->grab().save(prefix + ".reference.png");
+    w.cancelTool();
+    w.startCheck(true);
+    QString at = ask(w.m_toolPanel);
+    check(at == "inspect.printcheck", "the same panel in the print check: its guide (" + at + ")");
+    w.endCheck();
+    w.m_toolPanel->hide();
+    w.m_design->startFeature("extrude");
+    at = ask(w.m_featurePanel);
+    check(at == "design.extrude", "a new extrude's panel: the Extrude guide (" + at + ")");
+    w.m_design->escape();
+    ToolPanel::setHelpHook({});
+    check(!w.m_propsPanel->helpButton()->isVisibleTo(w.m_propsPanel), "no help hook, no \"?\"");
+    if (i18n::current() != "en") check(w.m_propsPanel->helpButton()->toolTip() != "Guide for this tool", "the \"?\" in the UI language");
+    trace::log(QString("bench: panel help: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
+    QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
+  });
+  auto next = std::make_shared<std::function<void(size_t)>>();
+  *next = [&w, steps, next, check](size_t i) {
+    if (i >= steps->size()) return;
+    QTimer::singleShot((*steps)[i].delay, &w, [steps, next, check, i] {
+      try { (*steps)[i].fn(); } catch (const std::exception& e) { check(false, QString::fromUtf8(e.what())); }
+      (*next)(i + 1);
+    });
+  };
+  (*next)(0);
+  return true;
+}

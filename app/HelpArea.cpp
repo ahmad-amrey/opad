@@ -1,6 +1,7 @@
 // The help area (UI-106/107): every ribbon button, status-bar toggle and menu command shows its command's rich card
 // (RichTip) with the command's animated clip (ClipView), and Help > Command reference (F1) opens at the command running now. The tool,
-// feature and sketch panels play their own guides (ToolGuide); the command palette previews the current command.
+// feature and sketch panels play their own guides (ToolGuide), and the "?" of every tool panel opens the reference at
+// its command; the command palette previews the current command.
 #include <QMainWindow>
 #include <QMenu>
 #include <QStatusBar>
@@ -12,8 +13,12 @@
 #include "Commands.hpp"
 #include "HelpClip.hpp"
 #include "HelpReference.hpp"
+#include "Icons.hpp"
 #include "Ribbon.hpp"
 #include "RichTip.hpp"
+#include "ToolPanel.hpp"
+
+OPAD_ICON_TABLE(help, {"help", R"(<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5 a2.6 2.6 0 0 1 5.1 0.4 c0 1.9 -2.6 2.3 -2.6 4.1"/><path d="M12 17.2h.01"/>)"});
 
 class HelpArea : public AreaController {
  public:
@@ -22,12 +27,14 @@ class HelpArea : public AreaController {
     RichTip::setActionLookup([&services](const QString& id) { return services.action(id); });
     RichTip::setClipFactory([](const QString& clip, QWidget* parent) -> QWidget* { return new ClipView(clip, parent); }, &clips::has);
     RichTip::setMenuCards(true);  // every menu's command entries
+    ToolPanel::setHelpHook([this](ToolPanel* panel) { openReference(panelCommand(panel)); });  // the panels are built later
   }
   ~HelpArea() override {
     RibbonBar::setCommandButtonHook({});
     RichTip::setActionLookup({});
     RichTip::setClipFactory({});
     RichTip::setMenuCards(false);
+    ToolPanel::setHelpHook({});
   }
 
   void buildActions() override {
@@ -37,7 +44,7 @@ class HelpArea : public AreaController {
     reference.label = tr("Command reference");
     reference.icon = "list";
     reference.key = QKeySequence("F1");
-    services().addCommand(reference, [this] { openReference(); });
+    services().addCommand(reference, [this] { openReference(currentCommand()); });
   }
 
   void menus(QMenuBar*, const QMap<QString, QMenu*>& menus) override {
@@ -52,10 +59,26 @@ class HelpArea : public AreaController {
   }
 
  private:
-  // At the command running now (a measure tool, a sketch tool, a feature) or whose card is up, else where it was.
-  void openReference() {
+  // The command running now (a measure tool, a sketch tool, a feature) or whose card is up; empty: none.
+  QString currentCommand() const {
     QString id = services().activeCommand();
     if (id.isEmpty() && RichTip::instance()->state() != RichTip::State::Hidden) id = RichTip::instance()->commandId();
+    return id;
+  }
+
+  // What a panel's "?" opens: its own help id, else the tool running in it, else the panel's command.
+  QString panelCommand(const ToolPanel* panel) const {
+    if (help::find(panel->helpId())) return panel->helpId();
+    static const QHash<QString, QString> commands{{"properties", "inspect.properties"}, {"annotations", "panel.annotations"}, {"section", "panel.section"},
+                                                  {"parameters", "design.parameters"}, {"sketch", "sketch.panel"}, {"drawing", "design.convertDrawing"},
+                                                  {"drawing-place", "file.import"}, {"sketch-plane", "design.sketch"}};
+    const QString active = services().activeCommand();
+    if (!active.isEmpty() && QStringList({"tool", "feature", "annotation", "sketch"}).contains(panel->id())) return active;
+    return commands.value(panel->id(), active);
+  }
+
+  // The reference at `id` (empty: where it was).
+  void openReference(const QString& id) {
     QWidget* window = services().window();
     auto* reference = window->findChild<CommandReference*>();
     if (!reference) reference = new CommandReference([this](const QString& command) { return services().action(command); }, window);

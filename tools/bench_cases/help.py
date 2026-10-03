@@ -27,4 +27,7 @@ CASES = [
     # UI-106: the command palette's recent commands, summaries and what a command not available now needs.
     ("palette", "box", {"OPAD_BENCH_PALETTE": "{prefix}"}),
     ("palette-ar", "box", {"OPAD_BENCH_PALETTE": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-108: the "?" in every tool panel's header opens the guide of the panel's command.
+    ("panel-help", "box", {"OPAD_BENCH_PANELHELP": "{prefix}"}),
+    ("panel-help-ar", "box", {"OPAD_BENCH_PANELHELP": "{prefix}", "OPAD_LANG": "ar"}),
 ]

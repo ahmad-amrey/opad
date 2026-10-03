@@ -555,5 +555,6 @@
  "Cap": "الغطاء",
  "Open the Section panel": "افتح لوحة المقطع",
  "Type an exact offset; the cut moves": "اكتب إزاحة دقيقة؛ ينتقل القطع",
- "%1 is not available right now.": "%1 غير متاح الآن."
+ "%1 is not available right now.": "%1 غير متاح الآن.",
+ "Guide for this tool": "دليل هذه الأداة"
 }

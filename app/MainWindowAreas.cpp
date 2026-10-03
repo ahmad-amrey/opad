@@ -1,5 +1,6 @@
 // Feature areas (AreaController.hpp): what they reach of the window, and their creation.
 #include "MainWindow.hpp"
+#include "CheckPanel.hpp"
 
 #include <QStatusBar>
 
@@ -61,8 +62,12 @@ SelectionContext AreaServices::selection() const { return m_window->selectionCon
 QString AreaServices::activeCommand() const {
   const MainWindow& w = *m_window;
   if (!w.m_tool.id.isEmpty()) return w.m_tool.id == "sectionface" ? QString("inspect.section") : "inspect." + w.m_tool.id;
+  if (w.m_toolPanel && w.m_toolPanel->isVisible() && w.m_toolStack->currentWidget() == w.m_checks)
+    return w.m_checks->mode() == CheckPanel::Mode::Print ? "inspect.printcheck" : "inspect.interference";
+  if (w.m_annotationEditor) return w.m_annotationEditor->drawingMode() ? "annotate.draw" : "annotate.add";
   if (w.m_design && w.m_design->sketchActive()) return "sketch." + w.m_design->sketch()->tool().replace(':', '.');
   if (w.m_design && w.m_design->featureActive()) return "design." + QString::fromStdString(w.m_design->featurePanel()->spec()->kind);
+  if (w.m_design && w.m_design->pickingPlane()) return "design.sketch";
   return {};
 }
 void AreaServices::positionOverlays() { m_window->positionOverlays(); }
