@@ -63,10 +63,6 @@ def main():
         drawing = root / "layers.svg"
         drawing.write_text('<svg width="40mm" viewBox="0 0 40 40"><g id="Outline"><rect width="20" height="10"/></g>'
                            '<g id="Guide"><circle cx="5" cy="5" r="2"/></g></svg>', encoding="utf-8")
-        # A drawing of 30,000 separate segments (UI-29: converting it to a sketch was quadratic; UI-27: snapping over it).
-        large = root / "segments.dxf"
-        lines = [f"0\nLINE\n8\nLines\n10\n{(i % 300) * 3}\n20\n{(i // 300) * 3}\n11\n{(i % 300) * 3 + 2}\n21\n{(i // 300) * 3 + 1}\n" for i in range(30000)]
-        large.write_text("0\nSECTION\n2\nENTITIES\n" + "".join(lines) + "0\nENDSEC\n0\nEOF\n", encoding="utf-8")
         overlapping = document("overlap", ("feature", "--kind", "box", "--inputs", '{"length":"20 mm","width":"20 mm","height":"10 mm"}'),
                                ("feature", "--kind", "cylinder", "--inputs", '{"x":"8 mm","diameter":"10 mm","height":"20 mm"}'))
         overhang = document("overhang", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'),
@@ -85,21 +81,11 @@ def main():
             ("extrude-handle", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_EXTRUDE_HANDLE": "1", "OPAD_BENCH_HANDLESHOT": "{prefix}"}),
             ("sketch-handles", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_HANDLES": "{prefix}"}),
             ("sketch-primitives", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_PRIMITIVES": "{prefix}"}),
-            ("sketch-grid", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_GRID": "{prefix}"}),
-            ("sketch-ladder", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_LADDER": "{prefix}"}),
-            ("sketch-keys", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_KEYS": "{prefix}"}),
-            ("sketch-shapes", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_SHAPES": "{prefix}"}),
-            ("sketch-crosslock", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_CROSSLOCK": "{prefix}"}),
-            ("sketch-snaps", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_SNAPS": "{prefix}"}),
-            ("sketch-steps", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_STEPS": "{prefix}"}),
-            ("sketch-constraints", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_CONSTRAINTS": "{prefix}"}),
             ("leave", box, {"OPAD_BENCH_LEAVE": "1"}),
             ("two-d", box, {"OPAD_BENCH_TWOD": "{prefix}.png"}),
             ("instances", box, {"OPAD_BENCH_INSTANCES": "1"}),
             ("drawing-import", empty, {"OPAD_BENCH_DRAWING_IMPORT": str(drawing)}),
             ("drawing-to-sketch", drawing, {"OPAD_BENCH_WIZARD": "{prefix}.png", "OPAD_BENCH_WIZARD_CREATE": "1"}),
-            ("sketch-large", large, {"OPAD_BENCH_LARGE": "{prefix}.json"}),
-            ("drawing-preview", large, {"OPAD_BENCH_WIZARD": "{prefix}.png", "OPAD_BENCH_WIZARD_PREVIEW": "30000"}),
             ("notes", empty, {"OPAD_BENCH_NOTES": "{prefix}"}),
             ("zoom-refinement", round_part, {"OPAD_BENCH_SCENE": "{prefix}.png", "OPAD_BENCH_VIEW": "iso", "OPAD_BENCH_ZOOM": "40"}),
             ("interference", overlapping, {"OPAD_BENCH_CHECK": "interference", "OPAD_BENCH_UISHOT": "{prefix}"}),
@@ -116,7 +102,7 @@ def main():
         # Settings before the start. These open a STEP or a drawing and then edit it: viewer mode off. The fits load with
         # the grid on; fit-wide's 1 km minimum grid lies around the origin and would pull a box-less FitAll there.
         editing, grid = "[files]\nviewerMode=false\n", "[view]\ngrid=true\n"
-        settings = {"drawing-to-sketch": editing, "drawing-preview": editing, "sketch-large": editing, "picking": editing, "fit-far": grid, "fit-near": grid, "fit-wide": grid + "gridExtent=1000000\n"}
+        settings = {"drawing-to-sketch": editing, "picking": editing, "fit-far": grid, "fit-near": grid, "fit-wide": grid + "gridExtent=1000000\n"}
         fixtures = {"empty": empty, "box": box, "cylinder": round_part, "drawing": drawing, "overlap": overlapping,
                     "overhang": overhang, "screw": screw, "far": far}
         known = {case[0] for case in cases}

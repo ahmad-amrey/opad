@@ -113,7 +113,6 @@ class MainWindow : public QMainWindow {
   bool benchTodo9();
   bool benchDrawingImport();
   bool benchAnnotateLarge();  // OPAD_BENCH_ANNOTATE: the note / drawing editors on the loaded file's heaviest body
-  bool benchLargeSketch();
   bool benchShortcuts();
   bool benchViewer();  // OPAD_BENCH_VIEWER
 

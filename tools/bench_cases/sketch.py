@@ -1,0 +1,29 @@
+"""gui_benches cases of the sketch input area (T1); the benches are registered in app/SketchBench.cpp (SketchEditor's
+Sketch*Bench.cpp) and app/LargeSketchBench.cpp."""
+
+
+def segments(root, document):
+    """A drawing of 30,000 separate segments (UI-29: converting it to a sketch was quadratic; UI-27: snapping over it)."""
+    path = root / "segments.dxf"
+    if not path.exists():
+        lines = [f"0\nLINE\n8\nLines\n10\n{(i % 300) * 3}\n20\n{(i // 300) * 3}\n11\n{(i % 300) * 3 + 2}\n21\n{(i // 300) * 3 + 1}\n" for i in range(30000)]
+        path.write_text("0\nSECTION\n2\nENTITIES\n" + "".join(lines) + "0\nENDSEC\n0\nEOF\n", encoding="utf-8")
+    return path
+
+
+EDITING = "[files]\nviewerMode=false\n"  # the drawing is opened to be converted, not viewed
+
+CASES = [
+    # Each opens Sketch1 on XY in an empty document and drives the tool code as the mouse and keyboard do.
+    ("sketch-grid", "empty", {"OPAD_BENCH_SKETCH_GRID": "{prefix}"}),  # grid snapping, the sketch's own grid (UI-18)
+    ("sketch-ladder", "empty", {"OPAD_BENCH_SKETCH_LADDER": "{prefix}"}),  # Backspace / Enter / Esc (UI-20)
+    ("sketch-keys", "empty", {"OPAD_BENCH_SKETCH_KEYS": "{prefix}"}),  # typed values beside the pointer (UI-16)
+    ("sketch-shapes", "empty", {"OPAD_BENCH_SKETCH_SHAPES": "{prefix}"}),  # a shape's own sizes typed (UI-17)
+    ("sketch-crosslock", "empty", {"OPAD_BENCH_SKETCH_CROSSLOCK": "{prefix}"}),  # tracking guides and the Shift lock (UI-19)
+    ("sketch-snaps", "empty", {"OPAD_BENCH_SKETCH_SNAPS": "{prefix}"}),  # snap markers, snaps that constrain (UI-21, UI-23)
+    ("sketch-steps", "empty", {"OPAD_BENCH_SKETCH_STEPS": "{prefix}"}),  # prompts and steps from one source (UI-25)
+    ("sketch-constraints", "empty", {"OPAD_BENCH_SKETCH_CONSTRAINTS": "{prefix}"}),  # constraint badges (UI-24)
+    # 30,000 segments: converted, opened, hovered, panned, snapped, selected and dragged in time (UI-27, UI-29).
+    ("sketch-large", segments, {"OPAD_BENCH_LARGE": "{prefix}.json"}, EDITING),
+    ("drawing-preview", segments, {"OPAD_BENCH_WIZARD": "{prefix}.png", "OPAD_BENCH_WIZARD_PREVIEW": "30000"}, EDITING),
+]

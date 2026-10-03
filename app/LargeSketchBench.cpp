@@ -1,4 +1,5 @@
 #include "MainWindow.hpp"
+#include "BenchRegistry.hpp"
 #include "DesignController.hpp"
 #include "opad/design/drawing_sketch.hpp"
 #include "SketchGeometryCache.hpp"
@@ -8,13 +9,14 @@
 #include <QPaintEvent>
 #include <algorithm>
 
-bool MainWindow::benchLargeSketch() {
-  const auto output=qEnvironmentVariable("OPAD_BENCH_LARGE");
-  if(output.isEmpty())return false;
-  auto doc=std::make_shared<opad::Document>(m_doc->doc);
-  auto scene=std::make_shared<opad::Scene>(m_doc->scene);
+// OPAD_BENCH_LARGE=<metrics.json> on a big drawing (case sketch-large in tools/bench_cases/sketch.py): its layers to a
+// sketch on a worker, then the sketch opened and driven (SketchEditor::benchLarge).
+OPAD_BENCH(OPAD_BENCH_LARGE, largeSketch) {
+  const QString output=value;
+  auto doc=std::make_shared<opad::Document>(w.m_doc->doc);
+  auto scene=std::make_shared<opad::Scene>(w.m_doc->scene);
   auto sk=std::make_shared<opad::design::Sketch>();auto metrics=std::make_shared<opad::json>();
-  m_jobs->async(tr("Converting drawing layers"),[doc,scene,sk,metrics](Progress p){
+  w.m_jobs->async(MainWindow::tr("Converting drawing layers"),[doc,scene,sk,metrics](Progress p){
     std::vector<opad::design::DrawingLayer> layers;
     for(const auto& id:scene->all_bodies())if(scene->node(id)->representation=="drawing2d")layers.push_back({id,false});
     QElapsedTimer time;time.start();*sk=opad::design::drawing_sketch(*doc,*scene,layers,{},.01,[p]{return p.cancelled();});
@@ -26,11 +28,11 @@ bool MainWindow::benchLargeSketch() {
     trace::log(QString("bench: large sketch: %1 curves converted in %2 ms PASS").arg(sk->entities.size()).arg((*metrics)["conversion_ms"].get<double>()));
     time.restart();auto solved=opad::design::solve(*sk);(*metrics)["solve_ms"]=time.nsecsElapsed()/1e6;
     if(!solved.converged)throw opad::Error("large drawing solve failed");
-  },[this,output,sk,metrics](bool ok,const QString& error){
+  },[&w,output,sk,metrics](bool ok,const QString& error){
     if(!ok){trace::log("bench: large sketch FAIL: "+error);QCoreApplication::exit(2);return;}
-    QElapsedTimer time;time.start();m_design->sketch()->begin({},"Drawing benchmark",{{"base","xy"}},{},sk->to_json());
+    QElapsedTimer time;time.start();w.m_design->sketch()->begin({},"Drawing benchmark",{{"base","xy"}},{},sk->to_json());
     (*metrics)["open_ms"]=time.nsecsElapsed()/1e6;
-    m_design->sketch()->benchLarge(output,*metrics);
+    w.m_design->sketch()->benchLarge(output,*metrics);
   });return true;
 }
 

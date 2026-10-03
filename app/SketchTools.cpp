@@ -1304,14 +1304,6 @@ void SketchEditor::bench(const QString&) {
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_HANDLES"))return benchHandles();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_REFERENCE"))return benchWorkflow();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_DRAG"))return benchDrag();
-  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_GRID"))return benchGrid();
-  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_LADDER"))return benchLadder();
-  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_KEYS"))return benchKeys();
-  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SHAPES"))return benchShapes();
-  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_CROSSLOCK"))return benchCrossLock();
-  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SNAPS"))return benchSnaps();
-  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_STEPS"))return benchSteps();
-  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_CONSTRAINTS"))return benchConstraints();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY"))return benchModify();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES"))return benchPrimitives();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW"))return benchWorkflow();

@@ -227,5 +227,9 @@
  "Show constraints": "إظهار القيود",
  "Constraint badges and coincidence dots in the view; off, only those in conflict or selected show": "شارات القيود ونقاط التطابق في العرض؛ عند الإيقاف تظهر المتعارضة أو المحددة فقط",
  "Show or hide constraints": "إظهار القيود أو إخفاؤها",
- "The sketch gets %L1 lines, %L2 arcs and circles, %L3 splines and %L4 points.": "يحصل الرسم التخطيطي على %L1 خطًا و%L2 قوسًا ودائرة و%L3 منحنى سبلاين و%L4 نقطة."
+ "The sketch gets %L1 lines, %L2 arcs and circles, %L3 splines and %L4 points.": "يحصل الرسم التخطيطي على %L1 خطًا و%L2 قوسًا ودائرة و%L3 منحنى سبلاين و%L4 نقطة.",
+ "constraint badges": "شارات القيود",
+ "glyphs": "رموز",
+ "orthogonal": "متعامد",
+ "horizontal vertical lock": "قفل أفقي رأسي"
 }

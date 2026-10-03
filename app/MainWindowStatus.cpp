@@ -47,7 +47,9 @@ void MainWindow::buildStatusBar() {
       Toggle{"view.tracking","Tracking","tracking","F12","view/tracking",true},
       Toggle{"view.gridSnap","Grid snapping","grid","F9","view/gridSnap",false},
       Toggle{"view.orthoSnap","Ortho mode","orthoSnap","F8","view/orthoSnap",false}}) {
-    auto* a=addAction(spec.id,tr(spec.label),spec.icon,QKeySequence(spec.key),[] {},true);
+    CommandInfo info{spec.id,tr(spec.label),spec.icon,QKeySequence(spec.key)};info.checkable=true;
+    if(info.id=="view.orthoSnap")info.keywords={tr("orthogonal"),tr("horizontal vertical lock")};
+    auto* a=addCommand(info,[] {});
     a->setChecked(m_settings.value(spec.setting,spec.defaultOn).toBool());
     auto apply=[this,spec](bool on) {
       m_settings.setValue(spec.setting,on);

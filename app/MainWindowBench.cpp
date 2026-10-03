@@ -183,7 +183,6 @@ void MainWindow::runBench() {
       panel->hide();valid=valid&&!m_viewport->isIsolated()&&m_doc->doc.ops.size()==count;}
     trace::log(valid?"bench: instance next/previous, isolation restoration and no document edits PASS":"bench: instance browser FAIL");QCoreApplication::exit(valid?0:2);return;
   }
-  if(benchLargeSketch())return;
   if(benchTodo5())return;
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_NAVIGATION");!mode.isEmpty()) {
     if(mode=="write") {
@@ -395,8 +394,7 @@ void MainWindow::runBench() {
   if (const QString shot = qEnvironmentVariable("OPAD_BENCH_DESIGN"); !shot.isEmpty()) {
     setWorkspace("design");
     m_design->bench();
-    // The keyboard shapes and cross-lock benches end themselves; this is their fallback (they wait for timers past 9 s).
-    QTimer::singleShot(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SHAPES") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_CROSSLOCK") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SNAPS") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_STEPS") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_CONSTRAINTS") ? 60000 : qEnvironmentVariableIsSet("OPAD_BENCH_RULE") ? 13000 : 9000, this, [this, shot] {
+    QTimer::singleShot(qEnvironmentVariableIsSet("OPAD_BENCH_RULE") ? 13000 : 9000, this, [this, shot] {
       trace::log(QStringLiteral("bench: design: %1 bodies, %2 features, %3 unresolved").arg(m_doc->scene.all_bodies().size()).arg(m_doc->scene.features.size()).arg(m_doc->scene.unresolved.size()));
       m_viewport->benchDesignShot(shot);
       if (const QByteArray ui = qgetenv("OPAD_BENCH_UISHOT"); !ui.isEmpty()) grab().save(QString::fromLocal8Bit(ui));

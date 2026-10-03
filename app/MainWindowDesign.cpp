@@ -114,7 +114,12 @@ void MainWindow::buildDesignActions() {
     tools->addAction(a);
   }
   addAction("sketch.construction", tr("Construction"), "construction", QKeySequence("X"), [this] { m_design->sketch()->toggleConstruction(); });
-  addAction("sketch.showConstraints", tr("Show or hide constraints"), "cHorizontal", QKeySequence(), [this] { m_design->sketch()->setShowConstraints(!m_design->sketch()->showConstraints()); });
+  {
+    CommandInfo info{"sketch.showConstraints", tr("Show or hide constraints"), "cHorizontal"};
+    info.keywords = {tr("constraint badges"), tr("glyphs")};
+    info.editsDocument = isEditAction(info.id);
+    addCommand(info, [this] { m_design->sketch()->setShowConstraints(!m_design->sketch()->showConstraints()); });
+  }
   const auto registry=SketchPanel::tools();
   // Each tool its own icon (they all showed the generic sketch one): its own name where the table has it.
   const QMap<QString,QString> toolIcons{{"tangent_circle","tangentCircle"},{"tangent_arc","tangentArc"},{"polygon_outer","polygonOuter"},{"control_spline","controlSpline"},

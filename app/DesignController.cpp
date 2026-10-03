@@ -996,16 +996,22 @@ void DesignController::cancelSketch() {
 }
 
 // ---------------------------------------------------------------- bench
-// OPAD_BENCH_DESIGN: a sketch drawn through the editor's tools, extruded through the feature panel's plan and
-// commit path, then a parameter-driven edit. No mouse or keyboard driving.
-void DesignController::bench() {
+// Sketch1 on XY in a new document if there is none, then `run` once the look-at animation has ended (pick distances are
+// in pixels). OPAD_BENCH_DESIGN and the registered sketch benches (SketchBench.cpp) start here.
+void DesignController::benchSketch(std::function<void()> run) {
   if (!m_doc->hasDocument) m_doc->newDocument();
   const opad::Frame frame = base_frame("xy");
   enterSketch({}, "Sketch1", opad::json{{"base", "xy"}, {"frame", frame.to_json()}}, frame, opad::json::object());
-  QTimer::singleShot(700, this, [this] {  // the look-at animation has ended: pick distances are in pixels
+  QTimer::singleShot(700, this, std::move(run));
+}
+
+// OPAD_BENCH_DESIGN: a sketch drawn through the editor's tools, extruded through the feature panel's plan and
+// commit path, then a parameter-driven edit. No mouse or keyboard driving.
+void DesignController::bench() {
+  benchSketch([this] {
   m_sketch->bench({});
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_HANDLES"))return;
-  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_REFERENCE") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_DRAG") || qEnvironmentVariableIsSet("OPAD_BENCH_SPLINE") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_GRID") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_LADDER") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_KEYS") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SHAPES") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_CROSSLOCK") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SNAPS") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_STEPS") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_CONSTRAINTS")) return;
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_REFERENCE") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_DRAG") || qEnvironmentVariableIsSet("OPAD_BENCH_SPLINE") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY")) return;
   if (const QString shot = qEnvironmentVariable("OPAD_BENCH_SKETCHSHOT"); !shot.isEmpty()) m_viewport->grabImage().save(shot);  // the editor's overlay: curves, dimensions, glyphs
   finishSketch([this] {
     trace::log(QStringLiteral("bench: design: sketch committed, %1 sketches in the scene").arg(m_doc->scene.sketches.size()));
