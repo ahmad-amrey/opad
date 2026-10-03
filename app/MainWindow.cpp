@@ -314,6 +314,7 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
         forward->trigger();
         statusBar()->showMessage(tr("Rolled forward to the end of the timeline: the change is added there."), 6000);
       }
+    if (repeatable(id)) m_lastCommand = id;  // Repeat, first in the context menus (UI-100)
     guarded(fn);
   });
   m_commands.add(info, a);

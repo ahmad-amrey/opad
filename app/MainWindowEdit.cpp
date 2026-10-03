@@ -67,6 +67,12 @@ void MainWindow::buildEditActions() {
   addAction("edit.selecttouched", tr("Select what it touches"), "isolate", QKeySequence("T"), [this] {
     if (!m_timeline->currentOp().empty()) selectOpTargets(m_timeline->currentOp());
   });
+  // The last tool again (UI-100): first in the context menus as "Repeat Fillet"; no key of its own unless one is set.
+  addAction("edit.repeat", tr("Repeat last command"), "repeat", QKeySequence(), [this] {
+    QAction* last = m_lastCommand.isEmpty() ? nullptr : action(m_lastCommand);
+    if (!last || !last->isEnabled()) return statusBar()->showMessage(tr("Nothing to repeat yet: start a feature, a sketch tool or a measurement first."), 5000);
+    last->trigger();
+  })->setProperty("shortcutHint", tr("Starts the last feature, sketch tool, measurement or note again."));
 }
 
 void MainWindow::timelineMenu(const std::string& requestedId, const QPoint& globalPos) {

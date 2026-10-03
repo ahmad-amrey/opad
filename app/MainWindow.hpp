@@ -125,6 +125,12 @@ class MainWindow : public QMainWindow {
   bool closeTopPanel();              // Esc: hides one unpinned panel
   void bindPanel(QAction* a, ToolPanel* panel);
   void showContextMenu(const QPoint& globalPos, std::vector<std::string> ids);
+  // The context menu by what it is about (UI-100): picked faces, edges or vertices, bodies, components, sketches, nothing;
+  // the areas add theirs (smart selection the history of the picks after the title, "contextTitle"). Benches fill one.
+  void buildContextMenu(QMenu& menu, const std::vector<std::string>& ids);
+  QAction* repeatAction();  // edit.repeat worded for the last tool started ("Repeat Fillet"); null when there is none to offer
+  bool repeatable(const QString& id) const;  // a tool worth repeating: a feature, a sketch tool, a measurement, a note
+  QString m_lastCommand;
   void timelineMenu(const std::string& opId, const QPoint& globalPos);
   void buildTimelineMenu(QMenu& menu, const std::string& opId);  // what timelineMenu shows (benches fill one without showing it)
   // Guided tools: the tool is started first and asks for its picks one step at a time (see GuidedTool.hpp).

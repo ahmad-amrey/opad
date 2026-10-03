@@ -1,6 +1,6 @@
 """gui_benches cases of the smart selection area (TODO 11 UI-95, UI-97); the benches are app/SmartBench.cpp (OPAD_BENCH_SMART) and
-app/SmartSelectBench.cpp (OPAD_BENCH_SMARTSELECT), app/DeleteBench.cpp (OPAD_BENCH_DELETE) and app/TimelineBench.cpp
-(OPAD_BENCH_TIMELINE)."""
+app/SmartSelectBench.cpp (OPAD_BENCH_SMARTSELECT), app/DeleteBench.cpp (OPAD_BENCH_DELETE), app/TimelineBench.cpp
+(OPAD_BENCH_TIMELINE) and app/ContextMenuBench.cpp (OPAD_BENCH_CONTEXT)."""
 import json
 
 
@@ -55,6 +55,10 @@ CASES = [
     # names on the markers, the design history alone; Roll back to here, the playhead dragged to the end and back, a change
     # made while rolled back rolls forward.
     ("timeline", boss, {"OPAD_BENCH_TIMELINE": "{prefix}"}),
+    # Context menus by what they are about (UI-100): nothing, a face, an edge, a vertex, the body, a component, a sketch and
+    # the open sketch, each with its own entries (Repeat of the last tool first, the picks' feature to edit or find).
+    ("context-menus", boss, {"OPAD_BENCH_CONTEXT": "{prefix}"}),
+    ("context-menus-rtl", boss, {"OPAD_BENCH_CONTEXT": "{prefix}", "OPAD_LANG": "ar"}),
     # The chip on the imported plate (no history): a hole wall is the hole, its sizes in the tooltip and Measure's toast, its
     # Remove and Del start Remove faces.
     ("smartselect-import", imported, {"OPAD_BENCH_SMARTIMPORT": "{prefix}"}),

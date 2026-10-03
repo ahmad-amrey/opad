@@ -21,8 +21,7 @@
 OPAD_ICON_TABLE(timeline,
   {"historyFilter", R"(<path d="M4 5h16l-6 7.5V18l-4 2v-7.5z"/>)"},
   {"rollBack", R"(<path d="M20 12H9M13 8l-4 4 4 4"/><path d="M5 4v16"/>)"},
-  {"rollForward", R"(<path d="M4 12h11M11 8l4 4-4 4"/><path d="M19 4v16"/>)"},
-  {"repeat", R"(<path d="M17 3l3 3-3 3"/><path d="M4 12v-2a4 4 0 0 1 4-4h12"/><path d="M7 21l-3-3 3-3"/><path d="M20 12v2a4 4 0 0 1-4 4H4"/>)"});
+  {"rollForward", R"(<path d="M4 12h11M11 8l4 4-4 4"/><path d="M19 4v16"/>)"});
 
 void TimelineArea::buildActions() {
   CommandInfo names;

@@ -345,7 +345,9 @@ QString TimelineWidget::label(const opad::Op& op) const {
   if (op.type == "import") {
     const QString source = QString::fromStdString(d.value("source", ""));
     const qsizetype slash = std::max(source.lastIndexOf('/'), source.lastIndexOf('\\'));
-    return source.isEmpty() ? tr("Import") : source.mid(slash + 1);
+    if (!source.isEmpty()) return source.mid(slash + 1);
+    const opad::json nodes = d.value("nodes", opad::json::array());  // New component: its name
+    return nodes.size() == 1 && nodes[0].is_object() ? QString::fromStdString(nodes[0].value("name", "")) : tr("Import");
   }
   if (op.type == "delete") {
     const opad::Op* t = m_doc->doc.find_op(d.value("target", ""));

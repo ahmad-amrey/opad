@@ -6,6 +6,7 @@
 #include <QMenu>
 
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <set>
 
@@ -13,8 +14,13 @@
 
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "SmartRules.hpp"
+#include "opad/design/feature.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
+
+OPAD_ICON_TABLE(contextmenu,
+  {"repeat", R"(<path d="M17 3l3 3-3 3"/><path d="M4 12v-2a4 4 0 0 1 4-4h12"/><path d="M7 21l-3-3 3-3"/><path d="M20 12v2a4 4 0 0 1-4 4H4"/>)"});
 
 // ---------------------------------------------------------------- selection plumbing (F22/F25)
 std::vector<std::string> MainWindow::currentNodeIds() const {
@@ -203,91 +209,225 @@ void MainWindow::writeSelectionFile() {
 }
 
 void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids) {
+  if(auto* instances=findChild<ToolPanel*>("instanceBrowser"))instances->hide();
+  QMenu menu(this);
+  buildContextMenu(menu, ids);
+  menu.exec(globalPos);
+}
+
+// What the menu is about (UI-100): faces, edges or vertices picked in the view, else the objects (bodies, components,
+// sketches), else nothing. Each kind gets its own entries; Repeat of the last tool comes first in every one.
+void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& ids) {
   SelectionContext context = selectionContext();  // for the areas' entries: the objects the menu is about
   context.ids = ids;
-  if(auto* instances=findChild<ToolPanel*>("instanceBrowser"))instances->hide();
+  auto add = [&](const char* id) { if (QAction* a = action(id)) menu.addAction(a); };  // viewer mode: editing entries ask to save first
+  auto entry = [&](const QString& icon, const QString& text, const char* name, std::function<void()> fn) {
+    QAction* a = icon.isEmpty() ? menu.addAction(text) : menu.addAction(icons::themed(icon, 16), text);
+    a->setObjectName(name);
+    connect(a, &QAction::triggered, this, [this, fn] { guarded(fn); });
+    return a;
+  };
+  auto title = [&](const QString& text) { menu.addSection(text)->setObjectName("contextTitle"); };  // areas insert after it
+  if (QAction* repeat = repeatAction()) {
+    menu.addAction(repeat);
+    menu.addSeparator();
+  }
   if(m_design->sketchActive()) {
-    QMenu menu(this);
+    add("sketch.finish");  // a sketch is left from its menu too (it was only in the ribbon and the panel)
+    add("sketch.cancel");
+    menu.addSeparator();
     if(!ids.empty()) {
       auto* sketch=m_design->sketch();
       menu.addAction(sketch->visible()?tr("Hide sketch"):tr("Show sketch"),this,[sketch]{sketch->setVisible(!sketch->visible());});
       menu.addAction(action("sketch.replane"));menu.addAction(action("view.alignPlane"));
       forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });
-      menu.exec(globalPos);return;
+      return;
     }
     for(const char* id:{"sketch.construction","sketch.dimension","sketch.c.horizontal","sketch.c.vertical","sketch.c.coincident","sketch.c.tangent","sketch.c.fix","sketch.node","sketch.openEnds"})menu.addAction(action(id));
     menu.addSeparator();menu.addAction(tr("Driving / reference"),m_design->sketch(),&SketchEditor::toggleReference);
     menu.addAction(tr("Delete"),m_design->sketch(),&SketchEditor::deleteSelection);
     forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });
-    menu.exec(globalPos);return;
+    return;
   }
-  QMenu menu(this);
-  auto add = [&](const char* id) { if (QAction* a = action(id)) menu.addAction(a); };  // viewer mode: editing entries ask to save first
-  if (!ids.empty()) {
-    menu.addSection(ids.size() == 1 ? m_doc->nodeName(ids.front()) : tr("%1 objects").arg(ids.size()));
-    QAction* fit = menu.addAction(icons::themed("fit", 16), tr("Fit to"));
-    connect(fit, &QAction::triggered, this, [this, ids] { m_viewport->fitNodes(ids); });
-    if(std::any_of(ids.begin(),ids.end(),[this](const auto& id){for(const auto& body:m_doc->scene.bodies_under(id))if(m_doc->scene.node(body)->representation=="drawing2d")return true;return false;}))add("design.convertDrawing");
-    if(ids.size()==1 && m_doc->scene.sketch(ids.front())) {
-      menu.addAction(tr("Redefine sketch plane"),this,[this,id=ids.front()]{m_design->editOp(id);m_design->redefineSketchPlane();});
-    }
-    auto* exportObject=menu.addAction(icons::themed("export",16),tr("Export selected objects"));
-    connect(exportObject,&QAction::triggered,this,[this,ids] { guarded([&] { exportDialog(ids); }); });
-    add("edit.selectparent");
-    add("view.isolate");
-    QAction* hideOthers = menu.addAction(icons::themed("hide", 16), tr("Hide others"));
-    connect(hideOthers, &QAction::triggered, this, [this, ids] {
+  const opad::Scene& scene = m_doc->scene;
+  auto all = [&](auto pred) { return !ids.empty() && std::all_of(ids.begin(), ids.end(), pred); };
+  auto picked = [&](opad::Ref::Kind kind) {
+    return !context.refs.empty() && std::all_of(context.refs.begin(), context.refs.end(), [kind](const opad::Ref& r) { return r.kind == kind; });
+  };
+  const bool faces = picked(opad::Ref::Kind::Face), edges = picked(opad::Ref::Kind::Edge), vertices = picked(opad::Ref::Kind::Vertex);
+  const bool sketches = !faces && !edges && !vertices && all([&](const std::string& id) { return scene.sketch(id) != nullptr; });
+  const bool components = !faces && !edges && !vertices && all([&](const std::string& id) { const opad::Node* n = scene.node(id); return n && n->kind == opad::Node::Kind::Component; });
+  const QString one = ids.size() == 1 ? m_doc->nodeName(ids.front()) : QString();
+  // The op that made the objects (one for all of them): Edit it when it is a feature or a sketch, find it on the timeline.
+  std::string source;
+  for (const auto& id : ids) {
+    const opad::Node* n = scene.node(id);
+    const std::string op = n ? n->source_op : scene.sketch(id) ? id : std::string();
+    source = source.empty() || source == op ? op : std::string("-");
+  }
+  const opad::Op* sourceOp = source.empty() || source == "-" ? nullptr : m_doc->doc.find_op(source);
+  auto history = [&] {
+    if (!sourceOp || m_doc->browse) return;
+    const QString name = m_timeline->label(*sourceOp);
+    if ((scene.feature(source) || scene.sketch(source)) && !sketches)
+      entry("rename", tr("Edit %1").arg(name), "contextEditSource", [this, source] { if (requireEditable()) m_design->editOp(source); });
+    entry("locate", tr("Find %1 in the timeline").arg(name), "contextFind", [this, source] {
+      if (!m_timelineDock->isVisible()) m_timelineDock->show();
+      m_timeline->setCurrentOp(source);
+      m_timeline->pulse(source);
+    });
+  };
+  auto hideOthers = [&] {
+    entry("hide", tr("Hide others"), "contextHideOthers", [this, ids] {
       std::set<std::string> keep;
       for (const auto& id : ids) for (const auto& b : m_doc->scene.bodies_under(id)) keep.insert(b);
+      std::vector<std::string> hide;
       for (const auto& b : m_doc->scene.all_bodies())
-        if (!keep.count(b) && m_doc->node(b)->visible) m_doc->run("appearance", opad::json{{"target", b}, {"visible", false}});
+        if (!keep.count(b) && m_doc->node(b)->visible) hide.push_back(b);
+      if (!hide.empty()) m_doc->run("appearance", opad::json{{"targets", hide}, {"visible", false}});  // one step for all of them
     });
-    add("edit.hide");
-    add("edit.rename");
-    QAction* color = menu.addAction(icons::themed("dot", 16), tr("Colour…"));  // a view setting in viewer mode too
-    connect(color, &QAction::triggered, this, [this, ids] {
+  };
+  auto looks = [&] {
+    entry("dot", tr("Colour…"), "contextColour", [this, ids] {  // a view setting in viewer mode too
       // From the object's own colour, and one step to undo for all of them (it was one per object).
       QColor c = QColorDialog::getColor(nodeColour(ids.front()), this, tr("Colour"));
       if (!c.isValid()) return;
       m_doc->run("appearance", opad::json{{"targets", ids}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
     });
     const opad::Node* n = m_doc->node(ids.front());
-    QAction* lock = menu.addAction(icons::themed("lock", 16), n && n->locked ? tr("Unlock") : tr("Lock"));
+    entry("lock", n && n->locked ? tr("Unlock") : tr("Lock"), "contextLock", [this, ids, locked = n && n->locked] {
+      m_doc->run("appearance", opad::json{{"targets", ids}, {"locked", !locked}});
+    });
+  };
+  // Picked faces and edges as Del does (UI-04), through smart selection; objects by what the selection covers.
+  auto remove = [&](bool picks) {
+    const QString key = "\t" + action("edit.delete")->shortcut().toString(QKeySequence::NativeText);
+    QString text = tr("Delete") + key;
+    if (!picks) {
+      const smart::Deletion d = smart::routeDelete(scene, ids);
+      const QString what = sketches && ids.size() == 1 ? QString::fromStdString(scene.sketch(ids.front())->name) : !one.isEmpty() ? one : tr("%1 objects").arg(ids.size());
+      text = (d.remove.empty() ? tr("Delete %1") : tr("Remove %1")).arg(what) + key;
+    }
+    QAction* del = entry("delete", text, "contextDelete", [this, ids, picks] {
+      if (!requireEditable()) return;
+      if (picks) {
+        if (!areaCommand("edit.delete")) throw opad::Error("Faces and edges are deleted through the feature that made them: select it with Ctrl+Up, or use Remove faces.");
+        return;
+      }
+      deleteNodes(ids);
+    });
+    if (!picks && !smart::routeDelete(scene, ids).remove.empty()) del->setToolTip(tr("A Remove step at the end of the timeline takes it out; the history that made it stays"));
+  };
+  auto ofBody = [&] {  // what a pick is on
+    entry("body", ids.size() == 1 ? tr("Select %1").arg(one) : tr("Select the %1 bodies").arg(ids.size()), "contextSelectBody", [this, ids] {
+      std::vector<opad::Ref> bodies(ids.size());
+      for (size_t i = 0; i < ids.size(); ++i) bodies[i].body = ids[i];
+      m_areaServices.select(bodies);
+    });
+    add("view.isolate");
+    add("edit.hide");
+  };
+  if (faces || edges || vertices) {
+    const size_t n = context.refs.size();
+    if (faces) title(n == 1 ? tr("Face of %1").arg(m_doc->nodeName(context.refs.front().body)) : tr("%1 faces").arg(n));
+    else if (edges) title(n == 1 ? tr("Edge of %1").arg(m_doc->nodeName(context.refs.front().body)) : tr("%1 edges").arg(n));
+    else title(n == 1 ? tr("Vertex of %1").arg(m_doc->nodeName(context.refs.front().body)) : tr("%1 vertices").arg(n));
+    menu.addSeparator();
+    if (faces && n == 1) {  // a sketch on it, the view square to it (both take the picked face as their plane)
+      entry("sketch", tr("Sketch on this face"), "contextSketchOn", [this] { action("design.sketch")->trigger(); });
+      entry("plane", tr("Look at this face"), "contextLookAt", [this] { action("view.alignPlane")->trigger(); });
+    }
+    if (faces) add("design.offset_face");
+    if (edges) {
+      add("design.fillet");
+      add("design.chamfer");
+    }
+    menu.addSeparator();
+    add("inspect.distance");
+    if (!vertices) add("inspect.angle");
+    if (!vertices) add("inspect.radius");
+    add("inspect.properties");
+    add("annotate.add");
+    menu.addSeparator();
+    ofBody();
+    if (!vertices) {
+      menu.addSeparator();
+      remove(true);
+    }
+  } else if (!ids.empty() && sketches) {
+    title(ids.size() == 1 ? QString::fromStdString(scene.sketch(ids.front())->name) : tr("%1 sketches").arg(ids.size()));
+    if (ids.size() == 1 && !m_doc->browse) {
+      entry("rename", tr("Edit sketch"), "contextEditSketch", [this, id = ids.front()] { if (requireEditable()) m_design->editOp(id); });
+      entry("plane", tr("Redefine sketch plane"), "contextReplane", [this, id = ids.front()] {
+        m_design->editOp(id);
+        m_design->redefineSketchPlane();
+      });
+    }
+    history();
+    entry("export", tr("Export sketch"), "contextExportSketch", [this, ids] { exportDialog(ids); });
+    menu.addSeparator();
+    remove(false);
+  } else if (!ids.empty()) {
+    title(!one.isEmpty() ? one : components ? tr("%1 components").arg(ids.size()) : tr("%1 objects").arg(ids.size()));
+    entry("fit", tr("Fit to"), "contextFit", [this, ids] { m_viewport->fitNodes(ids); });
+    add("view.isolate");
+    hideOthers();
+    add("edit.hide");
+    menu.addSeparator();
+    history();
+    if(std::any_of(ids.begin(),ids.end(),[this](const auto& id){for(const auto& body:m_doc->scene.bodies_under(id))if(m_doc->scene.node(body)->representation=="drawing2d")return true;return false;}))add("design.convertDrawing");
+    menu.addSeparator();
+    add("edit.rename");
+    looks();
+    if (!components) add("design.move");
+    if (components && ids.size() == 1) add("design.newcomponent");
+    const opad::Node* n = m_doc->node(ids.front());
+    if (n && !n->parent.empty()) add("edit.selectparent");
     if(ids.size()==1 && n && !n->body_key.empty() && m_doc->scene.instance_count[n->body_key]>1)
       menu.addAction(tr("Browse linked instances"),this,[this,id=ids.front()]{browseInstances(id);});
-    connect(lock, &QAction::triggered, this, [this, ids, locked = n && n->locked] {
-      for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"locked", !locked}});
-    });
+    entry("export", tr("Export selected objects"), "contextExport", [this, ids] { exportDialog(ids); });
     menu.addSeparator();
     add("annotate.add");
     add("annotate.draw");
     add("inspect.distance");
-    add("inspect.radius");
+    if (!components) add("inspect.radius");
     add("inspect.properties");
     menu.addSeparator();
-    // As Del (UI-04): picked faces and edges through smart selection, objects by what the selection covers.
-    QAction* del = menu.addAction(icons::themed("delete", 16), tr("Delete") + "\t" + action("edit.delete")->shortcut().toString(QKeySequence::NativeText));
-    const bool picks = std::any_of(context.refs.begin(), context.refs.end(), [](const opad::Ref& r) { return r.kind != opad::Ref::Kind::Body; });
-    connect(del, &QAction::triggered, this, [this, ids, picks] {
-      if (!requireEditable()) return;
-      guarded([&] {
-        if (picks) {
-          if (!areaCommand("edit.delete")) throw opad::Error("Faces and edges are deleted through the feature that made them: select it with Ctrl+Up, or use Remove faces.");
-          return;
-        }
-        deleteNodes(ids);
-      });
-    });
+    remove(false);
   } else {
     add("view.fit");
     add("view.home");
     add("view.unisolate");
     add("edit.showall");
     menu.addSeparator();
+    add("design.sketch");
     add("file.import");
   }
   forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });
-  menu.exec(globalPos);
+}
+
+// The last tool started (a feature, a sketch tool, a measurement, a note): offered first in the context menus as
+// "Repeat Fillet". Null when there is none, it is off now or still running.
+QAction* MainWindow::repeatAction() {
+  QAction* last = m_lastCommand.isEmpty() ? nullptr : action(m_lastCommand);
+  QAction* repeat = action("edit.repeat");
+  if (!last || !repeat || !last->isEnabled() || (last->isCheckable() && last->isChecked())) return nullptr;
+  QString label = last->text().split('\t').front();
+  label.remove('&');
+  repeat->setText(tr("Repeat %1").arg(label));
+  repeat->setIcon(last->icon());
+  return repeat;
+}
+
+bool MainWindow::repeatable(const QString& id) const {
+  if (id.startsWith("sketch.")) {
+    const QAction* a = action(id);
+    return a && a->property("sketchTool").isValid() && a->property("sketchTool").toString() != "select";
+  }
+  if (id.startsWith("design.")) return id == "design.sketch" || opad::design::feature_spec(id.mid(7).toStdString()) != nullptr;
+  static const QStringList tools = {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.printcheck", "inspect.interference",
+                                    "annotate.add", "annotate.draw", "select.similar"};
+  return tools.contains(id);
 }
 
 // The bbox of a component walks every body under it; it is added to the panel by a sliced job.

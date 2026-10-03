@@ -477,6 +477,8 @@ void SmartSelect::finished() {
     case Pending::Menu: return showMenu();
     case Pending::Delete: return deletePicks();
     case Pending::Tangent: return tangentFaces();
+    case Pending::Edit: return editOwner();
+    case Pending::Find: return findOwner();
     case Pending::None: return;
   }
 }
@@ -777,19 +779,84 @@ QList<QAction*> SmartSelect::actionsFor(int index, QObject* parent) {
   return out;
 }
 
+// Right after the menu's title (UI-100): what the picks belong to, Edit and Find in timeline for the feature that made
+// them, its Suppress and Delete, an edge's loop and tangent chain, the related list. Not answered yet: the same entries
+// wait for the answer.
 void SmartSelect::contextMenu(const SelectionContext& selection, QMenu& menu) {
-  if (selection.sketching || !idle() || !subPicks(selection.refs) || !m_found.ready || !smart::sameRefs(m_found.picks, selection.refs)) return;
-  menu.addSeparator();
-  if (m_found.best >= 0) {
+  if (selection.sketching || !idle() || !subPicks(selection.refs) || !smart::sameRefs(m_current, selection.refs)) return;
+  QList<QAction*> entries;
+  auto entry = [&](const QString& icon, const QString& text, const char* name, std::function<void()> fn) {
+    auto* a = new QAction(icons::themed(icon, 16), text, &menu);
+    a->setObjectName(name);
+    connect(a, &QAction::triggered, this, [this, fn] { services().guarded(fn); });
+    entries << a;
+  };
+  const bool ready = m_found.ready && smart::sameRefs(m_found.picks, selection.refs);
+  if (ready && m_found.best >= 0) {
     QString text = tr("Select %1").arg(label(m_found.candidates[size_t(m_found.best)]));
-    if (const QAction* grow = services().action("edit.selectparent"); grow && !grow->shortcut().isEmpty()) text += "\t" + grow->shortcut().toString(QKeySequence::NativeText);
-    QAction* a = menu.addAction(icons::themed(iconOf(m_found.candidates[size_t(m_found.best)]), 16), text);
-    connect(a, &QAction::triggered, this, [this, best = m_found.best] { choose(best); });
+    if (const QAction* grow = services().action("edit.selectparent"); grow && !grow->shortcut().isEmpty()) text += "	" + grow->shortcut().toString(QKeySequence::NativeText);
+    entry(iconOf(m_found.candidates[size_t(m_found.best)]), text, "smartSelectBest", [this, best = m_found.best] { choose(best); });
   }
-  if (const int f = focus(); f >= 0 && m_found.candidates[size_t(f)].feature())
-    for (QAction* a : actionsFor(f, &menu))
-      if (a->objectName() != "smartIsolate") menu.addAction(a);
-  menu.addAction(m_related);
+  if (const int o = ready ? owner() : -1; o >= 0) {
+    for (QAction* a : actionsFor(o, &menu)) {
+      const QString name = a->objectName();
+      if (name == "smartEdit" || name == "smartFind" || name == "smartSuppress" || name == "smartDelete") entries << a;
+    }
+  } else if (!ready) {
+    entry("rename", tr("Edit the feature that made it"), "smartEditOwner", [this] { editOwner(); });
+    entry("locate", tr("Find it in the timeline"), "smartFindOwner", [this] { findOwner(); });
+  }
+  if (selection.refs.size() == 1 && selection.refs.front().kind == opad::Ref::Kind::Edge) {
+    const opad::Ref edge = selection.refs.front();
+    entry("smartLoop", tr("Select its loop"), "smartLoop", [this, edge] { chain(edge, false, QPoint(-1, -1)); });
+    entry("smartChain", tr("Select its tangent chain"), "smartTangent", [this, edge] { chain(edge, true, QPoint(-1, -1)); });
+  }
+  entries << m_related;
+  const QList<QAction*> all = menu.actions();
+  int at = -1;
+  for (int i = 0; i < all.size(); ++i)
+    if (all[i]->objectName() == "contextTitle") at = i;
+  QAction* before = at >= 0 && at + 1 < all.size() ? all[at + 1] : nullptr;
+  if (!before) menu.addSeparator();
+  menu.insertActions(before, entries);
+  if (before) menu.insertSeparator(before);
+}
+
+// The feature (or import) that made every pick, -1 when the picks have no one owner.
+int SmartSelect::owner() const {
+  for (size_t i = 0; i < m_found.candidates.size(); ++i)
+    if ((m_found.candidates[i].feature() || m_found.candidates[i].kind == "import") && m_found.candidates[i].containsSelection) return int(i);
+  return -1;
+}
+
+void SmartSelect::editOwner() {
+  if (!idle() || !subPicks(m_current)) return;
+  if (!m_found.ready || !smart::sameRefs(m_found.picks, m_current)) {
+    m_pending = Pending::Edit;
+    if (m_wait.isActive() || (!m_job && !m_capturing)) request(true);
+    return;
+  }
+  const int o = owner();
+  if (o < 0 || !m_found.candidates[size_t(o)].feature())
+    return services().showMessage(o < 0 ? tr("These were made by more than one step of the history: pick fewer to edit what made them.")
+                                        : tr("An import made these: it has no feature to edit (Remove faces changes them)."), 6000);
+  const std::string op = m_found.candidates[size_t(o)].op;  // a copy: editing starts with a roll-back (documentChanged)
+  if (services().requireEditable()) services().design()->editOp(op);
+}
+
+void SmartSelect::findOwner() {
+  if (!idle() || !subPicks(m_current)) return;
+  if (!m_found.ready || !smart::sameRefs(m_found.picks, m_current)) {
+    m_pending = Pending::Find;
+    if (m_wait.isActive() || (!m_job && !m_capturing)) request(true);
+    return;
+  }
+  const int o = owner();
+  if (o < 0) return services().showMessage(tr("These were made by more than one step of the history: pick fewer to find what made them."), 6000);
+  if (TimelineWidget* t = services().timeline()) {
+    t->setCurrentOp(m_found.candidates[size_t(o)].op);
+    t->pulse(m_found.candidates[size_t(o)].op);
+  }
 }
 
 void SmartSelect::documentChanged(bool replaced) {

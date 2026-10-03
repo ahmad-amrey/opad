@@ -118,7 +118,7 @@ class SmartSelect : public AreaController {
   bool eventFilter(QObject* watched, QEvent* event) override;
 
  private:
-  enum class Pending { None, Grow, Menu, Delete, Tangent };
+  enum class Pending { None, Grow, Menu, Delete, Tangent, Edit, Find };
   bool idle() const;  // nothing else owns the picks: no load, sketch, feature input, guided tool or note
   static bool subPicks(const std::vector<opad::Ref>& refs);  // faces and edges only, a few thousand at most
   void request(bool now);
@@ -139,6 +139,9 @@ class SmartSelect : public AreaController {
   void commitDelete(const smart::Candidate& c, std::vector<std::string> ops);
   void deletePicks();
   void tangentFaces();  // Alt+double-click on a face: the faces joined to it by smooth edges
+  int owner() const;    // the candidate of the feature or import that made every pick, -1 if none
+  void editOwner();     // the context menu's Edit (UI-100): that feature, once the answer is there
+  void findOwner();     // its Find in timeline
   QString label(const smart::Candidate& c) const;
   QString iconOf(const smart::Candidate& c) const;
   // A detail's sizes as the recogniser read them, in the shown units ("Ø 6 mm", "Depth 10 mm (through)", "Radius 2 mm",
