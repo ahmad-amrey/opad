@@ -118,6 +118,10 @@ def basic_workflow():
         full = json.load(f)
     assert h["tier"] == "hybrid" and h["counts"]["hidden"] == 0 and "curves" not in h
     assert len(full["curves"]) == h["counts"]["curves"] and full["fingerprint"] == h["fingerprint"]
+    b = run("project", DOC, "--view", "iso", "--quality", "hybrid", "--curves", "true", "--bezier", "true")
+    curved = [c for c in b["curves"] if c["type"] in ("arc", "ellipse", "spline")]
+    assert curved and all(c["bezier"] and all(len(q) == 8 for q in c["bezier"]) for c in curved)
+    assert all("bezier" not in c for c in b["curves"] if c["type"] in ("line", "polyline"))
     png = os.path.join(tmp, "iso-lines.png")
     run("project", DOC, "--view", "iso", "--out", png, "--width", "400")
     assert open(png, "rb").read(4) == b"\x89PNG"

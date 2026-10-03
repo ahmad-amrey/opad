@@ -8,7 +8,10 @@
 #include <BRep_Tool.hxx>
 #include <GCPnts_QuasiUniformDeflection.hxx>
 #include <Geom2dAdaptor_Curve.hxx>
+#include <Geom2dConvert_ApproxCurve.hxx>
+#include <Geom2dConvert_BSplineCurveToBezierCurve.hxx>
 #include <Geom2d_BSplineCurve.hxx>
+#include <Geom2d_BezierCurve.hxx>
 #include <GeomConvert.hxx>
 #include <GeomConvert_ApproxCurve.hxx>
 #include <Geom_BSplineCurve.hxx>
@@ -160,6 +163,19 @@ bool spline(Handle(Geom_BSplineCurve) s, double t0, double t1, const View& v, co
 int arc_steps(double r, double span, double tol) {
   const double h = r > tol ? 2 * std::acos(std::max(-1.0, 1 - tol / r)) : M_PI / 4;
   return std::clamp(static_cast<int>(std::ceil(span / std::max(h, 1e-6))), 2, 8192);
+}
+
+// How far the cubic of a unit circle's arc of angle h (controls 4/3 tan(h/4) along the tangents) strays from the circle;
+// an ellipse's pieces are its affine images, at most r1 times as far off.
+double unit_arc_error(double h) {
+  const double k = 4.0 / 3 * std::tan(h / 4);
+  const Vec2 p0{1, 0}, p1{1, k}, p2{std::cos(h) + k * std::sin(h), std::sin(h) - k * std::cos(h)}, p3{std::cos(h), std::sin(h)};
+  double worst = 0;
+  for (int i = 1; i < 32; ++i) {
+    const double t = i / 32.0, s = 1 - t;
+    worst = std::max(worst, std::fabs(norm(p0 * (s * s * s) + p1 * (3 * s * s * t) + p2 * (3 * s * t * t) + p3 * (t * t * t)) - 1));
+  }
+  return worst;
 }
 
 Handle(Geom2d_BSplineCurve) curve2d(const Curve& k) {
@@ -968,6 +984,59 @@ std::vector<Vec2> Curve::sample(double tol) const {
   }
 }
 
+std::vector<std::array<Vec2, 4>> Curve::beziers(double tol) const {
+  tol = std::max(tol, 1e-9);
+  std::vector<std::array<Vec2, 4>> out;
+  auto straight = [&](const std::vector<Vec2>& p) {
+    for (size_t i = 1; i < p.size(); ++i) out.push_back({p[i - 1], p[i - 1] + (p[i] - p[i - 1]) * (1.0 / 3), p[i - 1] + (p[i] - p[i - 1]) * (2.0 / 3), p[i]});
+  };
+  if (type == Type::Arc || type == Type::Ellipse) {
+    const double span = a1 - a0;
+    if (!(span > 0)) return out;
+    int n = std::max(1, static_cast<int>(std::ceil(span / (M_PI / 2) - 1e-9)));
+    while (n < 4096 && r1 * unit_arc_error(span / n) > tol) n += std::max(1, n / 4);
+    // The pieces of the unit circle (controls along the tangents, 4/3 tan(h/4) long) mapped onto the conic.
+    const double h = span / n, k = 4.0 / 3 * std::tan(h / 4), cr = std::cos(rot), sr = std::sin(rot);
+    auto at = [&](double x, double y) { return Vec2{c[0] + x * cr - y * sr, c[1] + x * sr + y * cr}; };
+    for (int i = 0; i < n; ++i) {
+      const double s0 = a0 + h * i, s1 = i + 1 == n ? a1 : s0 + h;
+      const double x0 = r1 * std::cos(s0), y0 = r2 * std::sin(s0), x1 = r1 * std::cos(s1), y1 = r2 * std::sin(s1);
+      out.push_back({at(x0, y0), at(x0 - k * r1 * std::sin(s0), y0 + k * r2 * std::cos(s0)), at(x1 + k * r1 * std::sin(s1), y1 - k * r2 * std::cos(s1)), at(x1, y1)});
+    }
+    return out;
+  }
+  if (type == Type::Spline) {
+    try {
+      Handle(Geom2d_BSplineCurve) s = curve2d(*this);
+      if (!s.IsNull() && (s->IsRational() || s->Degree() > 3)) {
+        Geom2dConvert_ApproxCurve approx(s, tol, GeomAbs_C1, 2000, 3);
+        s = approx.HasResult() && approx.MaxError() <= tol ? approx.Curve() : nullptr;
+      }
+      if (!s.IsNull()) {
+        if (s->Degree() < 3) s->IncreaseDegree(3);
+        Geom2dConvert_BSplineCurveToBezierCurve split(s);
+        for (int i = 1; i <= split.NbArcs(); ++i) {
+          const Handle(Geom2d_BezierCurve) b = split.Arc(i);
+          if (b->NbPoles() != 4 || b->IsRational()) {
+            out.clear();
+            break;
+          }
+          std::array<Vec2, 4> q;
+          for (int p = 0; p < 4; ++p) q[static_cast<size_t>(p)] = {b->Pole(p + 1).X(), b->Pole(p + 1).Y()};
+          out.push_back(q);
+        }
+        if (!out.empty()) return out;
+      }
+    } catch (const Standard_Failure&) {
+      out.clear();
+    }
+    straight(sample(tol));  // no cubic within tol: its polyline
+    return out;
+  }
+  straight(pts);
+  return out;
+}
+
 double Curve::length() const {
   if (type == Type::Arc) return r1 * (a1 - a0);
   double size = std::max(r1, 1e-3);
@@ -978,7 +1047,7 @@ double Curve::length() const {
   return l;
 }
 
-json Curve::to_json() const {
+json Curve::to_json(double bezier_tol) const {
   json j = {{"type", type_name(type)}, {"kind", kind_name(kind)}, {"hidden", hidden}};
   if (body >= 0) j["body"] = body;
   if (edge >= 0) j["edge"] = edge;
@@ -1000,6 +1069,11 @@ json Curve::to_json() const {
       break;
     default: j["pts"] = points(pts);
   }
+  if (bezier_tol > 0 && (type == Type::Arc || type == Type::Ellipse || type == Type::Spline)) {
+    json b = json::array();
+    for (const auto& q : beziers(bezier_tol)) b.push_back({q[0][0], q[0][1], q[1][0], q[1][1], q[2][0], q[2][1], q[3][0], q[3][1]});
+    j["bezier"] = b;
+  }
   return j;
 }
 
@@ -1014,14 +1088,14 @@ json ViewGeometry::counts() const {
   return j;
 }
 
-json ViewGeometry::to_json(bool with_curves) const {
+json ViewGeometry::to_json(bool with_curves, double bezier_tol) const {
   json b = json::array();
   for (const auto& body : bodies) b.push_back({{"node", body.node}, {"key", body.key}});
   json j = {{"tier", quality_name(tier)}, {"fingerprint", fingerprint}, {"x", vec_json(x)}, {"y", vec_json(y)}, {"dir", vec_json(dir)},
             {"bounds", bounds}, {"bodies", b}, {"counts", counts()}, {"stats", stats}};
   if (with_curves) {
     json c = json::array();
-    for (const auto& k : curves) c.push_back(k.to_json());
+    for (const auto& k : curves) c.push_back(k.to_json(bezier_tol));
     j["curves"] = c;
   }
   return j;

@@ -192,6 +192,73 @@ TEST(projection_splines_keep_their_poles) {
   }
 }
 
+// Cubic Béziers for writers: chained end to end from the curve's start to its end, every point within the tolerance of
+// the curve, with as few pieces as that allows (a quarter turn of an arc; one per span of a cubic spline).
+TEST(projection_beziers) {
+  auto off = [](const std::vector<Vec2>& line, Vec2 q) {
+    double best = 1e300;
+    for (size_t i = 1; i < line.size(); ++i) {
+      const double ex = line[i][0] - line[i - 1][0], ey = line[i][1] - line[i - 1][1];
+      const double t = std::clamp(((q[0] - line[i - 1][0]) * ex + (q[1] - line[i - 1][1]) * ey) / std::max(ex * ex + ey * ey, 1e-30), 0.0, 1.0);
+      best = std::min(best, std::hypot(q[0] - line[i - 1][0] - t * ex, q[1] - line[i - 1][1] - t * ey));
+    }
+    return best;
+  };
+  auto check = [&](const Curve& c, double tol, size_t pieces) {
+    const auto b = c.beziers(tol);
+    const auto line = c.sample(tol * 1e-3);
+    CHECK_EQ(b.size(), pieces);
+    CHECK(std::hypot(b.front()[0][0] - line.front()[0], b.front()[0][1] - line.front()[1]) < 1e-9);
+    CHECK(std::hypot(b.back()[3][0] - line.back()[0], b.back()[3][1] - line.back()[1]) < 1e-9);
+    double worst = 0;
+    for (size_t i = 0; i < b.size(); ++i) {
+      if (i > 0) CHECK(std::hypot(b[i][0][0] - b[i - 1][3][0], b[i][0][1] - b[i - 1][3][1]) < 1e-12);
+      for (int k = 0; k <= 64; ++k) {
+        const double t = k / 64.0, s = 1 - t;
+        const Vec2 q{s * s * s * b[i][0][0] + 3 * s * s * t * b[i][1][0] + 3 * s * t * t * b[i][2][0] + t * t * t * b[i][3][0],
+                     s * s * s * b[i][0][1] + 3 * s * s * t * b[i][1][1] + 3 * s * t * t * b[i][2][1] + t * t * t * b[i][3][1]};
+        worst = std::max(worst, off(line, q));
+      }
+    }
+    CHECK(worst <= tol * 1.01);
+  };
+  Curve line;
+  line.pts = {{1, 2}, {7, -3}};
+  check(line, 0.01, 1);
+  Curve arc;
+  arc.type = Curve::Type::Arc;
+  arc.c = {3, 4};
+  arc.r1 = arc.r2 = 50;
+  arc.a0 = 0.3, arc.a1 = 0.3 + 2 * M_PI;
+  check(arc, 0.01, 5);  // at r = 50 a quarter turn is 0.0136 off, a fifth 0.0035
+  arc.a1 = 1.2;
+  check(arc, 0.01, 1);
+  Curve ellipse = arc;
+  ellipse.type = Curve::Type::Ellipse;
+  ellipse.r2 = 20, ellipse.rot = 0.7, ellipse.a0 = 5.5, ellipse.a1 = 5.5 + 3;
+  check(ellipse, 0.01, 3);  // half a turn: two pieces would be 0.0103 off
+  Curve cubic;  // two spans
+  cubic.type = Curve::Type::Spline;
+  cubic.degree = 3;
+  cubic.pts = {{0, 0}, {10, 15}, {25, -5}, {35, 10}, {50, 0}};
+  cubic.knots = {0, 0, 0, 0, 0.5, 1, 1, 1, 1};
+  check(cubic, 0.01, 2);
+  Curve quarter = cubic;  // a rational quadratic: a quarter of a circle of radius 10, approximated
+  quarter.degree = 2;
+  quarter.pts = {{10, 0}, {10, 10}, {0, 10}};
+  quarter.weights = {1, std::sqrt(0.5), 1};
+  quarter.knots = {0, 0, 0, 1, 1, 1};
+  const auto q = quarter.beziers(1e-4);
+  CHECK(!q.empty());
+  for (const auto& b : q)
+    for (int k = 0; k <= 16; ++k) {
+      const double t = k / 16.0, s = 1 - t;
+      const double x = s * s * s * b[0][0] + 3 * s * s * t * b[1][0] + 3 * s * t * t * b[2][0] + t * t * t * b[3][0];
+      const double y = s * s * s * b[0][1] + 3 * s * s * t * b[1][1] + 3 * s * t * t * b[2][1] + t * t * t * b[3][1];
+      CHECK(std::fabs(std::hypot(x, y) - 10) < 1e-4);
+    }
+}
+
 // Two instances of one body: the one behind is hidden by the one in front, and its lines all lie under the front one's
 // outline, so none is left; moved aside, both show. Curves name their node.
 TEST(projection_instances_and_occlusion) {

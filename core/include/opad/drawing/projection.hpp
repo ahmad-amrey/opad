@@ -66,8 +66,12 @@ struct Curve {
   int face = -1;  // face ordinal: a silhouette inside a face
   double z = 0;   // depth of its middle towards the viewer: of coincident pieces the nearest one is kept
   std::vector<Vec2> sample(double tol) const;  // a polyline within tol of the curve
+  // Cubic Béziers (start, two controls, end) within tol of the curve, for writers without splines or ellipses (SVG
+  // paths, PDF): lines and polylines exactly, arcs and ellipses in equal pieces of at most a quarter turn, splines split
+  // at their knots (first approximated by a cubic one when rational or of a higher degree). Sheets pass 0.01 mm / scale.
+  std::vector<std::array<Vec2, 4>> beziers(double tol) const;
   double length() const;
-  json to_json() const;
+  json to_json(double bezier_tol = 0) const;  // bezier_tol > 0: arcs, ellipses and splines also as "bezier"
   static const char* type_name(Type t);
   static const char* kind_name(Kind k);
 };
@@ -84,7 +88,7 @@ struct ViewGeometry {
   std::array<double, 4> bounds{0, 0, 0, 0};    // xmin, ymin, xmax, ymax of every curve
   json stats = json::object();                  // faces, edges, timings (ms) of the run that made it
   json counts() const;                          // curves by visibility, kind and type
-  json to_json(bool with_curves = true) const;
+  json to_json(bool with_curves = true, double bezier_tol = 0) const;
   std::string serialize() const;
   static ViewGeometry deserialize(const std::string& blob);  // throws Error
 };
