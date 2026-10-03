@@ -66,9 +66,8 @@ class AreaServices {
   DesignController* design() const;
   BrowserPanel* browser() const;        // row decorations and folders
   PropertiesPanel* properties() const;  // property sections
-  TimelineWidget* timeline() const;     // the op markers (setCurrentOp, pulse)
   ViewportChips* chips() const;         // the chips row over the viewport (addChip)
-  TimelineWidget* timeline() const;     // the history strip (dimmed markers, setMarkedOps); from statusWidgets on
+  TimelineWidget* timeline() const;     // the history strip (setCurrentOp, pulse, dimmed and marked ops); from statusWidgets on
   // A widget in the ribbon's tab row (a branch chip): in the cluster after search, before settings; from ribbon on.
   void addTabRowWidget(QWidget* widget);
   QAction* action(const QString& id) const;  // any command by id: "file.open", "view.fit", an area's own; null if none

@@ -196,7 +196,6 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
   bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
   void benchClickAt(int x, int y);  // a left click at this device pixel through the mouse handlers, then the frame's flush
-  void benchFlush();                // what the next frame does with the mouse events so far (a hidden window draws none)
 
   // Compare (ViewportCompare.cpp, UI-58): another version drawn with the model. Parts are bodies the model does not draw
   // as they are: ghosts of the other version (a removed body, a moved one's old place, a modified one's old geometry) and

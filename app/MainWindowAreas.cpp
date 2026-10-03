@@ -35,7 +35,6 @@ BrowserPanel* AreaServices::browser() const { return m_window->m_browser; }
 PropertiesPanel* AreaServices::properties() const { return m_window->m_props; }
 TimelineWidget* AreaServices::timeline() const { return m_window->m_timeline; }
 ViewportChips* AreaServices::chips() const { return m_window->m_chips; }
-TimelineWidget* AreaServices::timeline() const { return m_window->m_timeline; }
 QAction* AreaServices::action(const QString& id) const { return m_window->action(id); }
 
 QAction* AreaServices::addCommand(const CommandInfo& info, std::function<void()> fn) { return m_window->addCommand(info, std::move(fn)); }
