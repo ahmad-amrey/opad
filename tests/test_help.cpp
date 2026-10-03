@@ -89,6 +89,24 @@ TEST(arabic_covers_every_record) {
   help::load("en");
 }
 
+// The help area's own tr() strings have their Arabic in app/i18n/ar/help.json (or ar.json), and loading the Arabic help
+// makes them translate even before i18n::install merges the area fragments; English removes them again.
+TEST(help_area_strings_are_translated) {
+  QJsonObject arabic = QJsonDocument::fromJson(source("app/i18n/ar.json").toUtf8()).object();
+  const QJsonObject fragment = QJsonDocument::fromJson(source("app/i18n/ar/help.json").toUtf8()).object();
+  for (auto it = fragment.begin(); it != fragment.end(); ++it) arabic.insert(it.key(), it.value());
+  QStringList strings;
+  for (const char* file : {"app/RichTip.cpp", "app/RichTip.hpp", "app/CommandHelp.cpp", "app/HelpBench.cpp"})
+    for (const auto& m : QRegularExpression(R"re(\btr\("((?:[^"\\]|\\.)*)"\))re").globalMatch(source(file))) strings << m.captured(1);
+  CHECK(strings.size() >= 2);
+  for (const QString& s : strings)
+    if (arabic.value(s).toString().isEmpty()) throw check::Failure("no Arabic for \"" + s.toStdString() + "\" in app/i18n/ar/help.json");
+  help::load("ar");
+  for (const QString& s : strings) CHECK_EQ(RichTip::tr(s.toUtf8().constData()), arabic.value(s).toString());
+  help::load("en");
+  for (const QString& s : strings) CHECK_EQ(RichTip::tr(s.toUtf8().constData()), s);
+}
+
 TEST(lookups_search_and_tooltips) {
   help::load("en");
   const CommandHelp* extrude = help::find("design.extrude");

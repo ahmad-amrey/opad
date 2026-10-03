@@ -132,6 +132,7 @@ bool MainWindow::benchRichTip() {
     key(fit, Qt::Key_A);
     check(tip->state() == State::Hidden, "another key hides the card");
     if (translated) check(tip->layoutDirection() == (QApplication::isRightToLeft() ? Qt::RightToLeft : Qt::LeftToRight) && help::find("view.fit")->translated, "card in the UI language and direction");
+    if (translated) check(RichTip::tr("Shift or F1 for more") != QLatin1String("Shift or F1 for more"), "the card's own strings translated (app/i18n/ar/help.json)");
     move(statusBar());
     move(home);
     key(home, Qt::Key_Shift);

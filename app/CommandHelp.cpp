@@ -8,7 +8,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
 #include <QRegularExpression>
+#include <QTranslator>
 
 namespace {
 struct Registry {
@@ -80,6 +82,37 @@ void markTranslated(Registry& r, const QJsonObject& english, const QJsonObject& 
 void ensureLoaded() {
   if (!registry().loaded) help::load(i18n::current());
 }
+
+// The help area's own tr() strings (RichTip) live in app/i18n/<language>/help.json, embedded with the help. Until
+// i18n::install merges the per-area fragments (UI-119), the ones no installed translator knows are installed here;
+// once it does, nothing is left to install.
+class FragmentTranslator : public QTranslator {
+ public:
+  using QTranslator::QTranslator;
+  QString translate(const char*, const char* source, const char*, int) const override { return map.value(QByteArray(source)); }
+  bool isEmpty() const override { return map.isEmpty(); }
+  QHash<QByteArray, QString> map;
+};
+QPointer<FragmentTranslator> g_fragment;
+
+void installFragment(const QString& language) {
+  if (g_fragment) {
+    QCoreApplication::removeTranslator(g_fragment);
+    delete g_fragment;
+  }
+  if (language.isEmpty() || language == "en" || !QCoreApplication::instance()) return;
+  auto* tr = new FragmentTranslator(QCoreApplication::instance());
+  for (const QString& path : {":/i18n/" + language + "/help.json", QCoreApplication::applicationDirPath() + "/i18n/" + language + "/help.json"}) {
+    const QJsonObject o = readJson(path);
+    for (auto it = o.begin(); it != o.end(); ++it) {
+      const QByteArray key = it.key().toUtf8();
+      if (!key.startsWith('@') && !it.value().toString().isEmpty() && QCoreApplication::translate(nullptr, key.constData()) == it.key()) tr->map.insert(key, it.value().toString());
+    }
+  }
+  if (tr->isEmpty()) return delete tr;
+  g_fragment = tr;
+  QCoreApplication::installTranslator(tr);
+}
 }  // namespace
 
 namespace help {
@@ -96,6 +129,7 @@ void load(const QString& language, const QString& dir) {
   const QJsonObject english = readJson(base + "/commands.json");
   addEnglish(r, english);
   if (dir.isEmpty()) addEnglish(r, readJson(local + "/commands.json"));
+  installFragment(language);
   if (language.isEmpty() || language == "en") return;
   const QJsonObject translation = readJson(base + "/commands." + language + ".json");
   markTranslated(r, english, translation);
