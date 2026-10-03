@@ -89,8 +89,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // over a tool panel or an overlay on the view (they keep the arrow). ownCursor(): blank now, the editor draws its own.
   void setOwnCursor(bool on);
   bool ownCursor() const { return m_ownCursorShown; }
+  // How far (widget pixels, y down) `world` moves to where lines `width` device pixels wide through it cover whole pixels
+  // (a pixel's centre for an odd width, a corner for an even one): the drawn cursor is crisp there.
+  QPointF pixelAlign(const opad::Vec3& world, int width) const;
   Bnd_Box benchGridBox() const;  // where the grid is drawn (OCCT's structure, world box), for benches
   bool benchGridEcho() const;    // OCCT's grid echo (a star on the node nearest the pointer) is on: it must not be
+  QPointF benchGridOrigin() const { return {m_gridShownX, m_gridShownY}; }  // the sketch / 2D grid's origin as laid out
   Bnd_Box benchFitBox() const { return fitBounds(false); }  // what Fit frames, for benches
   opad::json circleInfo(const opad::Ref& ref) const;
   void setShadows(bool on);
@@ -332,6 +336,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showGrid();  // gridShown() on screen
   void applyGridColors();  // faint lines from the theme in a sketch and 2D mode, OCCT's greys in 3D
   void applyOwnCursor();   // the system pointer blank or back, as setOwnCursor asked and what is under it allows
+  double layoutStep() const;  // the sketch / 2D grid's step at this zoom (0: none)
+  double planePixel() const;  // world units per pixel on the sketch's plane, the longer screen direction (a tilt)
   void placeGrid(double u, double v, double step, double extent);  // centred on (u, v) of the privileged plane
   // The box Fit All, Home and the load-time fit frame: displayed bodies, sketches, their images and a feature preview
   // (never the grid, gizmos, overlays or annotations); the default grid square when there is nothing (void if !fallback).

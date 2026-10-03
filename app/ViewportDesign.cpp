@@ -440,6 +440,10 @@ void Viewport::beginSketchInput(SketchInput* input, const opad::Frame& frame, co
   m_sketchFrame = frame;
   const auto normal=frame.normal();
   m_viewer->SetPrivilegedPlane(gp_Ax3(gp_Pnt(frame.origin[0],frame.origin[1],frame.origin[2]),gp_Dir(normal[0],normal[1],normal[2]),gp_Dir(frame.x[0],frame.x[1],frame.x[2])));
+  // No grid echo while sketching: AIS_ViewController drew OCCT's grey star on the grid node nearest the pointer after
+  // every move, a node the sketch's snapping had not chosen (an object snap won), so the click went elsewhere. The
+  // editor marks the node it uses itself. Outside a sketch the echo is OCCT's as before.
+  m_viewer->SetGridEcho(Standard_False);
   m_sketchGrid = QSettings().value("sketch/grid", true).toBool();
   showGrid();  // on the sketch plane, following the zoom
   m_sketchDrag = false;
@@ -456,6 +460,7 @@ void Viewport::endSketchInput() {
   m_sketchInput = nullptr;
   m_ownCursorWanted = m_ownCursorAside = false;
   applyOwnCursor();
+  m_viewer->SetGridEcho(Standard_True);
   m_viewer->SetPrivilegedPlane(gp_Ax3(gp::Origin(),gp::DZ(),gp::DX()));
   showGrid();
   m_hiddenSketch.clear();
@@ -548,6 +553,10 @@ void Viewport::mouseDoubleClickEvent(QMouseEvent* e) {
 
 bool Viewport::event(QEvent* e) {
   if (e->type() == QEvent::NativeGesture && handleNativeGesture(static_cast<QNativeGestureEvent*>(e))) return true;
+  // An overlay made while the pointer is blank over the view (a toast, a value box) keeps the arrow, as the others do.
+  if (e->type() == QEvent::ChildPolished && m_ownCursorShown)
+    if (auto* child = qobject_cast<QWidget*>(static_cast<QChildEvent*>(e)->child()); child && !child->isWindow() && !child->testAttribute(Qt::WA_SetCursor))
+      child->setCursor(Qt::ArrowCursor);
   if (e->type() == QEvent::Gesture) {
     auto* gestures = static_cast<QGestureEvent*>(e);
     if (auto* pinch = static_cast<QPinchGesture*>(gestures->gesture(Qt::PinchGesture))) {

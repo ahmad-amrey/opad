@@ -1268,6 +1268,9 @@ bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
   // event travels up, hence the state); any other key while it is down, a value box's too, makes it no tap.
   if(m_active && (e->type()==QEvent::KeyPress || e->type()==QEvent::KeyRelease)) {
     const auto* key=static_cast<QKeyEvent*>(e);
+    // Alt frees the point: pressed or let go with the mouse still, the cursor drawn (or the pointer shown) follows at once,
+    // so a click goes where it is shown.
+    if(key->key()==Qt::Key_Alt && !key->isAutoRepeat() && DynamicInput::takesKeysFrom(m_viewport,o))altKey(e->type()==QEvent::KeyPress);
     if(key->key()!=Qt::Key_Shift){if(e->type()==QEvent::KeyPress)m_shiftUsed=true;}
     else if(!key->isAutoRepeat() && DynamicInput::takesKeysFrom(m_viewport,o))shiftKey(e->type()==QEvent::KeyPress);
   }
@@ -1324,6 +1327,7 @@ void SketchEditor::bench(const QString&) {
     return;
   }
 
+  setTool("rect");  // grid snapping takes the points a tool places (a pick, the select tool's, is where the pointer is)
   const bool grid=m_viewport->gridSnap(); const double step=m_viewport->gridStep();
   m_viewport->setGridSnap(true); const auto snapped=snap(1.24*step,2.34*step);
   if(std::abs(snapped.u-step)>1e-9 || std::abs(snapped.v-2*step)>1e-9) throw opad::Error("grid snap missed its lattice");

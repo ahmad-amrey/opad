@@ -33,12 +33,14 @@ struct Pick {
 };
 
 // The grid spacing at `pixel` world units per screen pixel (zoom-adaptive, the 1-2-5 sequence): the smallest of 1, 2 and
-// 5 times a power of ten that is at least `least` pixels on the screen, so a step is 24 to 60 px. A set spacing (> 0) is
-// the finest step: zoomed out, its smallest multiple by 1, 2, 5, 10, 20, ... that is that wide.
-inline double gridStep(double pixel, double spacing, double least = 24) {
-  const double base = spacing > 0 ? spacing : 1, ratio = least * pixel / base;
+// 5 times a power of ten times `unit` (the shown length unit in mm: 25.4 puts the nodes on tenths of an inch) that is at
+// least `least` pixels on the screen, so a step is 24 to 60 px. A set spacing (> 0) is the step from 24 px up to `most`
+// (the view passes a quarter of its shorter side; at least 60): zoomed out its multiples by 2, 5, 10, 20, ..., zoomed in
+// further its fractions by as much (24 to 60 px), so a node is never far off the pointer and some are always in the view.
+inline double gridStep(double pixel, double spacing, double unit = 1, double most = 60, double least = 24) {
+  const double base = spacing > 0 ? spacing : unit > 0 ? unit : 1, ratio = least * pixel / base;
   if (!(ratio > 0) || !std::isfinite(ratio)) return base;
-  if (spacing > 0 && ratio <= 1) return spacing;
+  if (spacing > 0 && ratio <= 1 && ratio * std::max(most, 60.0) / least >= 1 - 1e-12) return spacing;  // 24 px to `most`: itself
   const int k = int(std::floor(std::log10(ratio)));
   for (const double m : {1.0, 2.0, 5.0, 10.0}) {
     // m * 10^k as the decimal it stands for (2 / 100, never 2 * 0.01)

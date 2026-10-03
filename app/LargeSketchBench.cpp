@@ -37,7 +37,7 @@ OPAD_BENCH(OPAD_BENCH_LARGE, largeSketch) {
 }
 
 void SketchEditor::benchLarge(const QString& output,opad::json metrics) {
-  struct Run {int step=0;size_t builds=0,loads=0;opad::json metrics,camera,edited;std::vector<double> hover,pan,frames,snap,move;opad::json original;QElapsedTimer elapsed,drag;};
+  struct Run {int step=0;size_t builds=0,loads=0;opad::json metrics,camera,edited;std::vector<double> hover,pan,frames,snap,move,gridSnap,gridMove;opad::json original;QElapsedTimer elapsed,drag;};
   auto run=std::make_shared<Run>();run->metrics=std::move(metrics);run->original=geometry();
   run->elapsed.start();m_viewport->setNavPreset(Viewport::NavPreset::Fusion);
   auto* timer=new QTimer(this);timer->setInterval(30);
@@ -109,17 +109,32 @@ void SketchEditor::benchLarge(const QString& output,opad::json metrics) {
       run->snap.push_back(time.nsecsElapsed()/1e6);
       if(m_cursor.kind!=Snap::Kind::Point || m_cursor.point!=p.id)throw opad::Error("the pointer beside a point did not snap to it");
       if(m_settingsReads!=run->loads)throw opad::Error("the snap settings were read again on a mouse move");
-    } else if(step==56) {
+    } else if(step<72) {  // the same with grid snapping on (F9): off the points, the grid's own path and the drawn cursor
+      if(step==56){m_viewport->setGridSnap(true);run->loads=m_settingsReads;}
+      const auto& p=m_sk.points[(size_t(step-56)*m_sk.points.size()/16+11)%m_sk.points.size()];
+      const double g=m_viewport->gridStep(),u=p.x+g*.37,v=p.y+g*.41;
+      time.restart();
+      sketchMove(u,v,Qt::NoModifier,false);
+      run->gridMove.push_back(time.nsecsElapsed()/1e6);
+      time.restart();
+      snap(u,v);
+      run->gridSnap.push_back(time.nsecsElapsed()/1e6);
+      if(!m_drawnCursor)throw opad::Error("with grid snapping the line tool drew no cursor");
+      if(m_settingsReads!=run->loads)throw opad::Error("the snap settings were read again on a mouse move (grid snapping on)");
+    } else if(step==72) {
+      m_viewport->setGridSnap(false);
       setTool("select");
-      trace::log(QString("bench: large sketch: line tool snaps beside %1 points without reading the settings again PASS").arg(m_sk.points.size()));
+      trace::log(QString("bench: large sketch: line tool snaps beside %1 points without reading the settings again, with and without the grid PASS").arg(m_sk.points.size()));
     } else {
       if(m_fillTimer.isActive()||m_fillJob){--run->step;return;}
       timer->stop();
       auto report=[](std::vector<double> v){std::sort(v.begin(),v.end());double sum=0;for(double x:v)sum+=x;return opad::json{{"mean_ms",sum/v.size()},{"p95_ms",v[size_t((v.size()-1)*.95)]},{"max_ms",v.back()}};};
       run->metrics["hover"]=report(run->hover);run->metrics["pan_event"]=report(run->pan);run->metrics["line_snap"]=report(run->snap);run->metrics["line_move"]=report(run->move);
+      run->metrics["line_snap_grid"]=report(run->gridSnap);run->metrics["line_move_grid"]=report(run->gridMove);
       // Snapping with the line tool over a big sketch costs what is near the pointer, not the sketch's size (UI-27: 180 ms
       // a move over 30,000 segments, the apparent intersections' curves looked their points up by scanning).
       if(run->metrics["line_snap"]["p95_ms"].get<double>()>8)throw opad::Error("snapping took "+run->metrics["line_snap"].dump()+" per mouse move");
+      if(run->metrics["line_snap_grid"]["p95_ms"].get<double>()>8)throw opad::Error("snapping with the grid took "+run->metrics["line_snap_grid"].dump()+" per mouse move");
       run->metrics["pan_frame"]=report(run->frames);
       auto restored=geometry(),expected=run->original;restored.erase("id_watermark");expected.erase("id_watermark");
       if(restored!=expected)throw opad::Error("selection changed sketch geometry");

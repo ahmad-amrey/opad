@@ -19,9 +19,20 @@ TEST(grid_step_follows_the_zoom_or_the_set_spacing) {
     CHECK(px >= 24 * (1 - 1e-9) && px < 60);
   }
   CHECK_NEAR(gridStep(0.1, 5), 5, 1e-12);     // a set 5 mm: 50 px, itself
-  CHECK_NEAR(gridStep(0.01, 5), 5, 1e-12);    // zoomed in: never finer than it
+  CHECK_NEAR(gridStep(5.0 / 60, 5), 5, 1e-12);  // 60 px: still itself
+  CHECK_NEAR(gridStep(0.05, 5), 2.5, 1e-12);  // 100 px: halved (50 px)
+  CHECK_NEAR(gridStep(0.05, 5, 1, 195), 5, 1e-12);  // in a view 780 px high (up to 195 px): itself
+  CHECK_NEAR(gridStep(0.01, 5, 1, 195), 0.25, 1e-12);  // zoomed far in (500 px): a twentieth (25 px), a node always near
+  CHECK_NEAR(gridStep(0.01, 5), 0.25, 1e-12);
   CHECK_NEAR(gridStep(0.5, 5), 25, 1e-12);    // zoomed out: 5 x 5 mm (50 px)
   CHECK_NEAR(gridStep(0.3, 2.5), 12.5, 1e-12);  // 7.2 mm wanted: 2.5 x 5 (2.5 x 2 is too fine)
+  for (double pixel = 1e-4; pixel < 1e3; pixel *= 1.37) {  // a set 3 mm, every zoom: 24 to 60 px
+    const double px = gridStep(pixel, 3) / pixel;
+    CHECK(px >= 24 * (1 - 1e-9) && px <= 60 * (1 + 1e-9));
+  }
+  // Inches shown: tenths, halves and whole inches, never 0.19685 in.
+  CHECK_NEAR(gridStep(0.1, 0, 25.4), 2.54, 1e-12);  // 2.4 mm wanted: 0.1 in (25.4 px)
+  CHECK_NEAR(gridStep(0.5, 0, 25.4), 12.7, 1e-12);  // 12 mm: 0.5 in (25.4 px)
   CHECK_NEAR(onGrid(-16.3, 10), -20, 1e-12);
   CHECK_NEAR(onGrid(24.9, 10), 20, 1e-12);
 }

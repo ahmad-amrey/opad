@@ -120,8 +120,6 @@ TEST(a_badge_is_a_closed_frame_of_its_size) {
   CHECK(b.size() == 8 && ends(b) == 0 && fits(b, 14));
 }
 
-CHECK_MAIN()
-
 TEST(the_drawing_cursor_is_a_crosshair_open_at_its_point) {
   const auto hair = crosshair(11, 4);
   CHECK(hair.size() == 4 && fits(hair, 22) && solid(hair));
@@ -130,3 +128,5 @@ TEST(the_drawing_cursor_is_a_crosshair_open_at_its_point) {
     CHECK(std::min(std::hypot(s.x0, s.y0), std::hypot(s.x1, s.y1)) >= 4 - 1e-9);  // nothing over the snapped point
   }
 }
+
+CHECK_MAIN()

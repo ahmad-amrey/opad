@@ -346,7 +346,11 @@ void SketchEditor::updateInput() {
       }
     anchors << anchor;
   }
-  m_input->placeNear(m_haveCursor ? m_viewport->widgetPoint(m_frame.to_world(m_pointer.u, m_pointer.v)) : QPoint(m_viewport->width() / 2, m_viewport->height() / 2), anchors);
+  // Beside the cursor: with the drawing cursor on a grid node the hidden pointer is up to half a step off it, so the row
+  // keeps 20 px off both (it never comes under the pointer, which would take its moves).
+  int gap = 20;
+  if (m_viewport->ownCursor() && m_viewport->gridSnap() && px > 0) gap += int(std::ceil(m_viewport->gridStep() / 2 / px));
+  m_input->placeNear(m_haveCursor ? m_viewport->widgetPoint(m_frame.to_world(m_pointer.u, m_pointer.v)) : QPoint(m_viewport->width() / 2, m_viewport->height() / 2), anchors, std::min(gap, 160));
   if (!m_input->isVisible()) {
     m_input->show();
     m_input->raise();

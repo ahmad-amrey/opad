@@ -62,9 +62,9 @@ class DynamicInput : public QWidget {
     bool on = false;
     QPointF at, out;
   };
-  // The boxes anchored where they measure (by index), the others in a row beside the pointer (view coordinates), never
-  // under it.
-  void placeNear(const QPoint& cursor, const QList<Anchor>& anchors = {});
+  // The boxes anchored where they measure (by index), the others in a row `gap` px beside the pointer (view coordinates),
+  // never under it. A cursor drawn on a grid node is up to half a step off the hidden pointer: the gap grows by as much.
+  void placeNear(const QPoint& cursor, const QList<Anchor>& anchors = {}, int gap = 20);
   QRect boxesRect() const;  // where the boxes are, in the view
   QPixmap shot();           // the boxes as shown (benches)
   // Where a typed key may be the tool's: the view's window or one of its tool panels, and not a text field there.
@@ -111,6 +111,7 @@ class DynamicInput : public QWidget {
   bool m_wasTyped = false;
   int m_look = -1;
   QPoint m_cursor;
+  int m_gap = 20;
   std::function<bool(int, QChar)> m_keyHook;
   QWidget* m_view;
   bool m_embedded;

@@ -247,9 +247,6 @@ void Viewport::initViewer() {
   driver->ChangeOptions().buffersNoSwap = Standard_False;
   driver->ChangeOptions().ffpEnable = Standard_False;
   m_viewer = new V3d_Viewer(driver);
-  // No grid echo: AIS_ViewController drew OCCT's grey star on the grid node nearest the pointer after every move, a node
-  // the sketch's snapping had not chosen (an object snap or the pointer itself was used), so the click went elsewhere.
-  m_viewer->SetGridEcho(Standard_False);
   m_viewer->SetDefaultLights();
   m_viewer->SetLightOn();
   Handle(V3d_DirectionalLight) overhead=new V3d_DirectionalLight(gp_Dir(0,0,-1),Quantity_NOC_WHITE,false);
@@ -546,13 +543,13 @@ void Viewport::showGrid() {
   emit gridShownChanged(gridShown());
 }
 
-// In a sketch and in 2D mode every snap step is a line (24 to 60 px apart), so they are faint and every tenth one a
-// little less: the theme's viewport colour with a share of its text colour. In 3D, OCCT's greys on the coarse patch.
+// In a sketch every snap step is a line (24 to 60 px apart), so they are faint and every tenth one a little less: the
+// theme's viewport colour with a share of its text colour. In 3D and 2D mode (a tenth of the view apart), OCCT's greys.
 void Viewport::applyGridColors() {
   if (!m_initialised) return;
   const Handle(Aspect_Grid) grid = m_viewer->Grid(Aspect_GT_Rectangular);
   if (grid.IsNull()) return;
-  if (!(m_twoDimensional || m_sketchInput)) return grid->SetColors(Quantity_NOC_GRAY50, Quantity_NOC_GRAY70);
+  if (!m_sketchInput) return grid->SetColors(Quantity_NOC_GRAY50, Quantity_NOC_GRAY70);
   auto mix = [&](double share) {
     const QColor& a = m_tokens.vp;
     const QColor& b = m_tokens.fg;
@@ -570,8 +567,49 @@ void Viewport::setGridSnap(bool on) {
 // What updateInfiniteGrid lays out for the current zoom, without waiting for the redraw that lays it out.
 double Viewport::gridStep() const {
   if (!m_initialised || !(m_twoDimensional || m_sketchInput)) return m_gridStep;
-  const double pixel = pixelSize();
-  return pixel > 0 && std::isfinite(pixel) ? sketchsnap::gridStep(pixel, m_gridSpacing) : m_gridStep;
+  const double step = layoutStep();
+  return step > 0 ? step : m_gridStep;
+}
+
+// The step the sketch or 2D grid takes at this zoom (0: none). In a sketch every line is a snap step: sketchsnap::gridStep,
+// 24 to 60 px at the plane's own scale, in the shown length unit; a set spacing up to a quarter of the view (then its
+// fractions). In 2D mode (the drawing viewer, its placer) a tenth of the view rounded down to a power of ten, or the set
+// spacing while that draws at most 400 lines.
+double Viewport::layoutStep() const {
+  if (m_sketchInput) {
+    const double pixel = planePixel(), unit = 1 / units::toDisplay(units::Kind::Length, 1.0);
+    return pixel > 0 && std::isfinite(pixel) ? sketchsnap::gridStep(pixel, m_gridSpacing, std::isfinite(unit) ? unit : 1, std::min(width(), height()) / 4.0) : 0;
+  }
+  const gp_XYZ size = m_view->Camera()->ViewDimensions();
+  const double span = std::max(size.X(), size.Y());
+  if (!(span > 1e-9) || !std::isfinite(span)) return 0;
+  return m_gridSpacing > 0 && span / m_gridSpacing <= 400 ? m_gridSpacing : std::pow(10.0, std::floor(std::log10(span / 10.0)));
+}
+
+// World units per widget pixel on the sketch's plane at the view's centre, along the screen direction where they are
+// longest: on a plane tilted away from the screen a step is shorter on the screen along the tilt (by the tilt's cosine),
+// so the grid is laid out for that direction (up to ten times the flat size: a plane seen nearly edge on).
+double Viewport::planePixel() const {
+  const double flat = pixelSize();
+  if (!m_sketchInput || !m_initialised) return flat;
+  const QPointF c(width() / 2.0, height() / 2.0);
+  double u0, v0, u1, v1, u2, v2;
+  if (!planePoint(c, m_sketchFrame, u0, v0) || !planePoint(c + QPointF(100, 0), m_sketchFrame, u1, v1) || !planePoint(c + QPointF(0, 100), m_sketchFrame, u2, v2)) return flat;
+  const double along = std::max(std::hypot(u1 - u0, v1 - v0), std::hypot(u2 - u0, v2 - v0)) / 100;
+  if (!std::isfinite(along) || along < flat * 1.02) return flat;  // facing the screen (to rounding)
+  return std::min(along, 10 * flat);
+}
+
+QPointF Viewport::pixelAlign(const opad::Vec3& world, int width) const {
+  if (!m_initialised || m_view->Window().IsNull()) return {};
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
+  const gp_Pnt ndc = m_view->Camera()->Project(gp_Pnt(world[0], world[1], world[2]));
+  const double x = (ndc.X() + 1) * 0.5 * w, y = (1 - ndc.Y()) * 0.5 * h;  // device pixels from the top left, continuous
+  auto onPixels = [&](double c) { return width % 2 ? std::floor(c) + 0.5 : std::round(c); };
+  const QPointF scale = viewScale();
+  if (!std::isfinite(x) || !std::isfinite(y) || !(scale.x() > 0) || !(scale.y() > 0)) return {};
+  return {(onPixels(x) - x) / scale.x(), (onPixels(y) - y) / scale.y()};
 }
 
 // ---------------------------------------------------------------- the sketch's own cursor
@@ -582,15 +620,20 @@ void Viewport::setOwnCursor(bool on) {
 
 void Viewport::applyOwnCursor() {
   const bool hide = m_ownCursorWanted && m_sketchInput && m_initialised && !m_blocked && !m_ownCursorAside && !QApplication::activePopupWidget();
-  if (hide == m_ownCursorShown) return;
+  // Asked for, it is blank again also when another part of the view set or reset the widget's cursor meanwhile (the
+  // section plane's handle, a measurement anchor, clearing a dimension).
+  const bool blank = testAttribute(Qt::WA_SetCursor) && cursor().shape() == Qt::BlankCursor;
+  if (hide == m_ownCursorShown && (!hide || blank)) return;
+  const bool changed = hide != m_ownCursorShown;
   m_ownCursorShown = hide;
   if (hide) {
-    // The overlays on the view (value boxes, prompt, chips) would inherit the blank cursor: they keep the arrow.
+    // The overlays on the view (value boxes, prompt, chips) would inherit the blank cursor: they keep the arrow (one made
+    // later gets it when it is polished, Viewport::event).
     for (QWidget* child : findChildren<QWidget*>(Qt::FindDirectChildrenOnly))
       if (!child->testAttribute(Qt::WA_SetCursor)) child->setCursor(Qt::ArrowCursor);
     setCursor(Qt::BlankCursor);
   } else unsetCursor();
-  emit ownCursorChanged(hide);
+  if (changed) emit ownCursorChanged(hide);
 }
 
 void Viewport::updateGridExtent() {
@@ -651,22 +694,26 @@ Bnd_Box Viewport::benchGridBox() const {
 }
 
 // OCCT's grid is a finite patch. In 2D mode and while sketching (in the sketch's plane) it is laid out again around
-// what the view shows whenever the view gets near its edge or the zoom asks for another spacing (sketchsnap::gridStep:
-// 1, 2 or 5 times a power of ten, 24 to 60 px apart, never finer than a set spacing); every line is a snap step, so
-// grid snapping lands on what is drawn. Called from every redraw, so the test whether anything changed comes first.
+// what the view shows whenever the view gets near its edge or the zoom asks for another spacing (layoutStep: in a sketch
+// 1, 2 or 5 times a power of ten, 24 to 60 px apart, every line a snap step, so grid snapping lands on what is drawn).
+// Its origin is on a multiple of ten steps: OCCT draws every tenth line from it darker, so those stay on round values
+// (50, 100 mm) through the sketch's axes and do not move with a pan. Called from every redraw, so the test whether
+// anything changed comes first.
 void Viewport::updateInfiniteGrid(bool force) {
   if (!m_initialised || !gridShown()) return;
   const auto camera = m_view->Camera();
   const gp_XYZ size = camera->ViewDimensions();
-  const double span = std::max(size.X(), size.Y()), pixel = pixelSize();
-  if (!(span > 1e-9) || !std::isfinite(span) || !(pixel > 0) || !std::isfinite(pixel)) return;
+  const double pixel = pixelSize(), step = layoutStep();
+  // What the view shows of the plane: longer along a tilt (planePixel), as the step is.
+  const double span = std::max(size.X(), size.Y()) * (m_sketchInput && pixel > 0 ? planePixel() / pixel : 1.0);
+  if (!(span > 1e-9) || !std::isfinite(span) || !(step > 0) || !std::isfinite(step)) return;
   const gp_Ax3 plane = m_viewer->PrivilegedPlane();
   const gp_Vec rel(plane.Location(), camera->Center());
   const double cx = rel.Dot(gp_Vec(plane.XDirection())), cy = rel.Dot(gp_Vec(plane.YDirection()));
-  const double step = sketchsnap::gridStep(pixel, m_gridSpacing);
   const double off = std::hypot(cx - m_gridShownX, cy - m_gridShownY);
   if (!force && step == m_gridShownStep && off + span / 2 <= m_gridShownExtent * 0.9 && m_gridShownExtent <= span * 3) return;
-  const double ox = std::round(cx / step) * step, oy = std::round(cy / step) * step, extent = std::ceil(span * 1.5 / step) * step;
+  const double major = 10 * step, ox = std::round(cx / major) * major, oy = std::round(cy / major) * major;
+  const double extent = std::ceil((span * 1.5 + std::max(std::abs(ox - cx), std::abs(oy - cy))) / step) * step;
   m_gridStep = m_gridShownStep = step;
   m_gridShownX = ox;
   m_gridShownY = oy;
@@ -2196,6 +2243,10 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
     m_sketchDrag = false;
     double u, v;
     if (m_sketchInput && planePoint(e->position(), m_sketchFrame, u, v)) m_sketchInput->sketchRelease(u, v, e->modifiers());
+    if (m_sketchInput && m_ownCursorAside && !rect().contains(e->position().toPoint())) {  // dropped off the view
+      m_ownCursorAside = false;
+      applyOwnCursor();
+    }
     return;
   }
   QPointF releasePosition=e->position();
@@ -2209,6 +2260,12 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   if (m_rightPress && e->button() == Qt::RightButton && (e->position() + m_dragOffset - m_pressPos).manhattanLength() < 4) {
     m_rightPress = false;
     emit contextMenuRequested(e->globalPosition().toPoint());
+  }
+  // A camera gesture is over: the sketch's own cursor again at once (ownCursorChanged: the editor snaps where the pointer is
+  // now), so a click right after it without a move goes where the cursor is drawn.
+  if (m_sketchInput && m_ownCursorAside && e->buttons() == Qt::NoButton) {
+    m_ownCursorAside = m_ownCursorWanted && rect().contains(e->position().toPoint()) && cubeAt(e->position());
+    applyOwnCursor();
   }
   if (e->buttons() == Qt::NoButton) { m_dragOffset = {}; m_warpGate.pending=false; }
 }
@@ -2265,10 +2322,13 @@ void Viewport::mouseMoveEvent(QMouseEvent* e) {
       setToolTip(QString());
     }
   }
-  // The sketch's own cursor gives way to the pointer over the view cube and during a camera gesture (it comes back with
-  // the first move after it).
+  // The sketch's own cursor gives way to the pointer over the view cube, the section plane's handle and during a camera
+  // gesture (it comes back with the first move after it), and while a drag goes off the view (the press holds the mouse,
+  // so the view's blank cursor would stay over the ribbon and panels, and nothing would show where the pointer is).
   if (m_sketchInput) {
-    const bool aside = (e->buttons() != Qt::NoButton && !m_sketchDrag) || (m_ownCursorWanted && e->buttons() == Qt::NoButton && cubeAt(e->position()));
+    const bool off = m_sketchDrag && !rect().contains(e->position().toPoint());
+    const bool aside = (e->buttons() != Qt::NoButton && !m_sketchDrag) || off
+        || (m_ownCursorWanted && e->buttons() == Qt::NoButton && (m_sectionHover >= 0 || cubeAt(e->position())));
     if (aside != m_ownCursorAside) {
       m_ownCursorAside = aside;
       applyOwnCursor();

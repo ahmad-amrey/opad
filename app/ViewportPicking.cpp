@@ -131,6 +131,10 @@ bool Viewport::eventFilter(QObject* object, QEvent* e) {
   if ((e->type()==QEvent::Show || e->type()==QEvent::Hide) && m_ownCursorWanted)
     if (const auto* popup=qobject_cast<QWidget*>(object); popup && popup->windowType()==Qt::Popup)
       QTimer::singleShot(0,this,[this]{applyOwnCursor();});
+  // Onto an overlay on the view (the prompt, the chips, a value box): Qt sends the view no Leave (it is still under the
+  // pointer, as the overlay's parent), but the sketch is not under the pointer any more, nor is the drawing cursor.
+  if (e->type()==QEvent::Enter && m_sketchInput && object!=this)
+    if (const auto* widget=qobject_cast<QWidget*>(object); widget && !widget->isWindow() && isAncestorOf(widget)) m_sketchInput->sketchLeave();
   if (e->type()==QEvent::ApplicationDeactivate) {
     setCenterPicking(false,m_trackingCursor);
     m_shiftHeld=m_centerLocked=m_trackingLocked=false; refreshCenterStyles();
