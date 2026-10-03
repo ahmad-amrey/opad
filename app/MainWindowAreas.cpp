@@ -3,7 +3,6 @@
 
 #include <QStatusBar>
 
-#include <algorithm>
 #include <set>
 
 void MainWindow::createAreas() {

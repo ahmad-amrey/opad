@@ -45,8 +45,9 @@ struct SelectionContext {
   bool empty() const { return ids.empty() && refs.empty(); }
 };
 
-// The window's services for areas. Pointers are null while an area builds its commands (buildActions runs before the
-// viewport, the docks and the status bar exist); from menus() on everything is there.
+// The window's services for areas. The window is built around the construction hooks, so a pointer can still be null
+// there (buildActions and menus come first; the viewport is there from ribbon on, the browser, the Properties panel and
+// jobs from statusWidgets on, the design controller only in ready); from ready() on everything is there.
 class AreaServices {
  public:
   explicit AreaServices(MainWindow* window) : m_window(window) {}
@@ -54,7 +55,7 @@ class AreaServices {
   AppDocument* document() const;
   Viewport* viewport() const;
   JobRunner* jobs() const;              // every long operation (see Jobs.hpp)
-  DesignController* design() const;     // from ready() on
+  DesignController* design() const;
   BrowserPanel* browser() const;        // row decorations and folders
   PropertiesPanel* properties() const;  // property sections
   QAction* action(const QString& id) const;  // any command by id: "file.open", "view.fit", an area's own; null if none
