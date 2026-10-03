@@ -26,6 +26,7 @@ add_library(opad_core STATIC
   src/scene.cpp
   src/geometry.cpp
   src/mass.cpp
+  src/materials.cpp
   src/mesh_circles.cpp
   src/cache.cpp
   src/mesh.cpp

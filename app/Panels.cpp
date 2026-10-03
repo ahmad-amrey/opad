@@ -1079,6 +1079,8 @@ void PropertiesPanel::addRow(const QString& key, const opad::json& v) {
   if (v.is_number()) {
     if (key == "area") unit = QString::fromUtf8(" mm²");
     else if (key == "volume") unit = QString::fromUtf8(" mm³");
+    else if (key == "mass") unit = " g";
+    else if (key == "density") unit = QString::fromUtf8(" g/cm³");
     else if (key == "length" || key == "radius" || key == "diameter" || key == "distance" || key == "thickness") unit = " mm";
   }
   row->setText(1, QChar(0x202A) + fmtValue(v) + unit + QChar(0x202C));  // LRE..PDF: numbers and vectors keep their order in a right-to-left UI
@@ -1111,8 +1113,8 @@ void PropertiesPanel::fill() {
   m_filledWidth = m_table->viewport()->width() - m_table->columnWidth(0);
   m_splitVectors = false;
   m_table->clear();
-  static const char* order[] = {"surface", "curve", "area", "length", "volume", "radius", "diameter", "normal", "axis", "center", "center_of_mass",
-                                "start", "end", "origin", "bbox", "faces", "edges", "vertices", "solid", "representation", "material", "instances",
+  static const char* order[] = {"surface", "curve", "area", "length", "volume", "mass", "radius", "diameter", "normal", "axis", "center", "center_of_mass",
+                                "start", "end", "origin", "bbox", "faces", "edges", "vertices", "solid", "representation", "material", "density", "instances",
                                 "opacity", "visible", "locked", "transform", "world", "component", "source", "key", "source_op"};
   std::set<std::string> done;
   auto addKey = [&](const std::string& k) {

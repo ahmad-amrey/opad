@@ -27,5 +27,7 @@
   "Delete view": "حذف المسقط",
   "edit drawing": "تعديل الرسم",
   "A name cannot be empty.": "لا يمكن أن يكون الاسم فارغًا.",
-  "Only drawings, sheets and views have names.": "الأسماء للرسومات واللوحات والمساقط فقط."
+  "Only drawings, sheets and views have names.": "الأسماء للرسومات واللوحات والمساقط فقط.",
+  "mass": "الكتلة",
+  "density": "الكثافة"
 }

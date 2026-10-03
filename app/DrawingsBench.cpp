@@ -1,6 +1,7 @@
 #include "MainWindow.hpp"
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -86,8 +87,24 @@ bool MainWindow::benchDrawings() {
     const std::string width = m_doc->run("sheet_item", {{"sheet", sheet}, {"view", front}, {"type", "horizontal"}, {"refs", {edge}}})["id"];
     m_doc->run("sheet_item", {{"sheet", sheet}, {"text", "BREAK SHARP EDGES"}});
     m_doc->run("append", {{"op", {{"op", "sheet_item"}, {"sheet", sheet}, {"view", side}, {"kind", "balloon"}}}});
-    m_doc->run("part_properties", {{"target", body}, {"set", {{"part_number", "OP-1002"}}}});
+    m_doc->run("part_properties", {{"target", body}, {"set", {{"part_number", "OP-1002"}, {"material", "aluminium-6061"}}}});
     check(m_timeline->shownOps() == design, QString("timeline keeps its %1 design markers, none for 8 drawing and properties ops").arg(design.size()));
+    // UI-140: Properties names the material and its density at once, and the mass once the worker has the volume.
+    showProperties({opad::Ref{body}});
+    const auto shownProps = [&] {
+      QStringList rows;
+      if (auto* table = m_props->findChild<QTreeWidget*>())
+        for (int i = 0; i < table->topLevelItemCount(); ++i) rows << table->topLevelItem(i)->text(0) + "=" + table->topLevelItem(i)->text(1);
+      return rows.join("; ").remove(QChar(0x202A)).remove(QChar(0x202C));
+    };
+    const QString first = shownProps();
+    QElapsedTimer waited;
+    waited.start();
+    while (m_propsJob && waited.elapsed() < 20000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    const QString measured = shownProps();
+    check(first.contains("Material=Aluminium 6061") && first.contains(QString::fromUtf8("Density=2.7 g/cm³")) && !first.contains("Mass="),
+          "Properties shows the material in force and its density before measuring: " + first);
+    check(measured.contains("Mass=64.8 g") && measured.contains("Volume=24000"), "and the plate's mass (24000 mm3 of aluminium 6061) after: " + measured);
 
     const QString full = "Drawings[Drawing 1[Sheet 1[Front view[60],Left view[balloon!],Isometric view,BREAK SHARP EDGES]]]";
     check(listed() == full, "folder lists drawing > sheet > views with their items > the sheet's note: " + listed());

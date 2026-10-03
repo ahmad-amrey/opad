@@ -55,6 +55,10 @@ add_executable(opad-test-mass test_mass.cpp)
 target_link_libraries(opad-test-mass PRIVATE opad::core)
 add_test(NAME mass COMMAND opad-test-mass)
 
+add_executable(opad-test-bom test_bom.cpp)
+target_link_libraries(opad-test-bom PRIVATE opad::core)
+add_test(NAME bom COMMAND opad-test-bom)
+
 add_executable(opad-test-mesh-recovery test_mesh_recovery.cpp)
 target_link_libraries(opad-test-mesh-recovery PRIVATE opad::core)
 add_test(NAME mesh-recovery COMMAND opad-test-mesh-recovery)

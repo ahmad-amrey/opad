@@ -280,5 +280,7 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   (`result`); `sheet_info` gives the value now (`current`, `changed`), so model edits show as changed dimensions.
 - `sheet_edit` changes a sheet, view or item (`set`; null removes a field); moving a base view moves the views
   projected from it. `delete` removes one; a deleted sheet takes its views and items with it.
-- `part_properties` sets part properties on bodies or components (`part_number`, `description`, `material`, `bom`
-  include|exclude|purchased, any other field); `properties` reports them as `part`.
+- `part_properties` sets part properties on bodies or components (`part_number`, `description`, `material`, `density`
+  g/cm3, `mass` g, `vendor`, `notes`, `bom` include|exclude|purchased, any other field); `properties` reports them as
+  `part`, plus the `material` in force (the nearest one set upwards, else the file's), `density` and `mass` (g).
+  `materials` lists the library ids; `materials --match <name>` maps a name; `appearance: true` colours as the material.

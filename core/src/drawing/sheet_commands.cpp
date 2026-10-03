@@ -8,6 +8,7 @@
 #include "opad/commands.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/drawing/sheet.hpp"
+#include "opad/materials.hpp"
 #include "opad/render.hpp"
 #include "opad/scene.hpp"
 
@@ -379,8 +380,8 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         return json{{"sheet", summary(sheet)}, {"views", views}, {"items", items}, {"unresolved", unresolved}};
       });
 
-  add({"part_properties", "Set part properties of nodes: part_number, description, material, bom (include|exclude|purchased), ...; null removes",
-       {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids"}, {"set", "object"}, {"by", "string"}}, true},
+  add({"part_properties", "Part properties of nodes: part_number, description, material, density g/cm3, mass g, vendor, notes, bom include|exclude|purchased; null removes",
+       {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids"}, {"set", "object"}, {"appearance", "bool - colour as the material"}, {"by", "string"}}, true},
       [](Document* d, const json& a) {
         Document& doc = need_doc(d);
         const Scene scene = resolve(doc);
@@ -390,17 +391,37 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
           static const std::set<std::string> bom = {"include", "exclude", "purchased"};
           if (!set["bom"].is_string() || !bom.count(set["bom"].get<std::string>())) throw Error("part_properties: bom is include, exclude or purchased");
         }
+        for (const char* k : {"part_number", "description", "material", "vendor", "notes"})
+          if (set.contains(k) && !set[k].is_null() && !set[k].is_string()) throw Error(std::string("part_properties: ") + k + " is text");
+        for (const char* k : {"density", "mass"})
+          if (set.contains(k) && !set[k].is_null() && !(set[k].is_number() && property_number(set[k]) > 0))
+            throw Error(std::string("part_properties: ") + k + (std::string(k) == "density" ? " is a positive number, g/cm3" : " is a positive number, g"));
         std::vector<std::string> targets = a.contains("targets") ? strings(a["targets"]) : std::vector<std::string>{a.at("target").get<std::string>()};
         if (targets.empty()) throw Error("part_properties: give target or targets");
         for (const auto& t : targets)
           if (!scene.node(t)) throw Error("part_properties: node " + t + " does not exist");
+        const Material* material = set.contains("material") && set["material"].is_string() ? find_material(set["material"].get<std::string>()) : nullptr;
+        if (a.value("appearance", false) && !material) throw Error("part_properties: appearance needs a material from the library (materials lists them)");
         json ids = json::array();
         for (const auto& t : targets) {
           ids.push_back(doc.append({{"op", "properties"}, {"target", t}, {"set", set}}, a.value("by", "")).id);
+          if (a.value("appearance", false)) doc.append({{"op", "appearance"}, {"target", t}, {"color", material->color}, {"opacity", material->opacity}}, a.value("by", ""));
         }
         json out = {{"id", ids.front()}};
         if (a.contains("targets")) out["ids"] = ids;
+        if (material) out["material"] = material->to_json();
         return out;
+      });
+
+  add({"materials", "Material library: id, name, density g/cm3, colour; match: the one a name stands for", {{"match", "string"}}, false},
+      [](Document*, const json& a) {
+        if (a.contains("match")) {
+          const Material* m = find_material(a["match"].get<std::string>());
+          return json{{"match", m ? m->to_json() : json(nullptr)}};
+        }
+        json list = json::array();
+        for (const auto& m : materials()) list.push_back(m.to_json());
+        return json{{"materials", list}};
       });
 }
 

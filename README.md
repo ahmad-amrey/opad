@@ -373,6 +373,22 @@ Within the drawing records the same rule holds one level down: a view kind, dime
 this build does not know is kept, written back unchanged and listed among the unresolved operations as needing a
 newer OPAD.
 
+### Materials and mass
+
+`material` takes a library id or any name; `opad-cli materials` lists the library (steel, stainless steel, aluminium
+6061, brass, copper, titanium, ABS, PLA, PETG, nylon PA6 and PA12, polycarbonate, POM, FR-4 and glass) with densities
+and display colours, and `opad-cli materials --match "Aluminum 6061-T6"` shows what a name maps to. A body is made of
+the nearest material set upwards (its own, else its component's), else the material its file names (STEP, glTF and
+OBJ material names such as "Stainless Steel 316L", "SS304", "PA12" or "Plastic - ABS" map onto the library). Its mass
+is the enclosed volume times the density; a `density` property (g/cm3) overrides the library's and a `mass` property
+(g) the whole computation, for purchased parts modelled as shells. The Properties panel and `opad-cli properties` show
+`material`, `density` and `mass` (g, for a component the sum of its bodies when all of them have one).
+`part_properties --appearance true` also colours the targets as their material.
+
+```sh
+opad-cli part_properties housing.opad --target <body> --set '{"material": "PETG", "part_number": "OP-1002"}'
+```
+
 ## Using it in a git repository
 
 OPAD documents remain readable UTF-8 text with LF endings, append-only operations and immutable
