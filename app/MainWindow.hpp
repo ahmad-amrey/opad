@@ -70,7 +70,10 @@ class MainWindow : public QMainWindow {
   void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")
   void buildDesign();         // the controller, its floating panel and the wiring
   void updateDesignState();   // sketch mode <-> ribbon tab set, action enabling
-  void setWorkspace(int index);  // 0 Review, 1 Design: swaps the ribbon tab set (same document, same timeline)
+  // "review", "design" or an area's (RibbonLayout ids): swaps the ribbon tab set (same document, same timeline); an id
+  // that is not there changes nothing. The sketch's contextual workspace is entered and left by updateDesignState.
+  void setWorkspace(const QString& id);
+  QString workspaceId() const { return m_workspaceId; }  // the one shown, "sketch" included
   void buildCentral();
   void buildDocks();
   void bindPanel(QAction* a, QDockWidget* dock);
@@ -169,6 +172,10 @@ class MainWindow : public QMainWindow {
   DesignController* m_design = nullptr;
   ToolPanel* m_featurePanel = nullptr;
   int m_sketchWorkspace = -1, m_workspaceBeforeSketch = 0;
+  QStringList m_workspaceIds;            // by RibbonBar index
+  QString m_workspaceId, m_workspaceKeys;  // the one shown (as the areas were told); "Ctrl+1 / 2" for the status bar
+  class QActionGroup* m_workspaceGroup = nullptr;  // the workspace.* commands: one checked
+  QMenu* m_viewMenu = nullptr;
   QStackedWidget* m_stack = nullptr;
   EmptyState* m_empty = nullptr;
   Viewport* m_viewport = nullptr;

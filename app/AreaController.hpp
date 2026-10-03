@@ -6,7 +6,7 @@
 // MainWindow creates every registered area once, in name order, right after its own commands are built; it owns them
 // and deletes them first when it goes. It calls the hooks below at the matching points (the defaults do nothing):
 //   construction, in this order: buildActions, menus, ribbon, statusWidgets, ready;
-//   then, once ready: contextMenu, selectionChanged, positionOverlays, documentChanged, maybeClose.
+//   then, once ready: contextMenu, selectionChanged, positionOverlays, documentChanged, workspaceChanged, maybeClose.
 // What an area needs of the window comes through services(); its own state stays in the area. Browser rows and the
 // Properties panel take providers (BrowserPanel::addDecorator / addFolder, PropertiesPanel::addSectionProvider),
 // registered in ready(). Hooks run on the UI thread: anything that scales with the model goes through jobs().
@@ -70,6 +70,12 @@ class AreaServices {
   void showMessage(const QString& text, int ms = 4000);    // status bar
   SelectionContext selection() const;                       // the current one
   void positionOverlays();  // lay the overlays out again (the areas' positionOverlays too)
+  // The workspace shown, by RibbonLayout id: "review", "design", "sketch" (contextual, while a sketch is open) or an
+  // area's; from statusWidgets on. setWorkspace("drawings") is what its command "workspace.drawings" does: an unknown id or
+  // "sketch" changes nothing, and while a sketch is open the ribbon stays on it. An area's contextual workspace is
+  // entered and left this way too (it is not remembered at exit).
+  QString workspace() const;
+  void setWorkspace(const QString& id);
  private:
   MainWindow* m_window;
 };
@@ -94,6 +100,9 @@ class AreaController : public QObject {
   virtual void positionOverlays(const QRect& viewport) {}  // the viewport (global) moved or resized: place what floats over it
   // After every change of the document (edit, undo, load, close); replaced: it is another document, or none.
   virtual void documentChanged(bool replaced) {}
+  // Another workspace is shown (services().workspace()): the user switched, or a sketch opened ("sketch") or closed. The
+  // one the window starts in is not reported: read it in ready(). An area's own workspace swaps its panels or pages here.
+  virtual void workspaceChanged(const QString& id) {}
   // Before the document is replaced (open, new, close) or the window closes: false keeps it, e.g. when the user cancels
   // giving up unfinished work. Asked first, also in benches (which answer no other question).
   virtual bool maybeClose() { return true; }

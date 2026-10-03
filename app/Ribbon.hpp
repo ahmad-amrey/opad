@@ -44,7 +44,10 @@ struct Workspace {
 // The ribbon as data, before it is built (MainWindow::buildRibbon): the built-in workspaces and tabs, then what the
 // feature areas add (AreaController::ribbon), then RibbonBar is made from it in this order. Workspaces have ids ("review",
 // "design", "sketch"), tabs "<workspace>.<name>" ("review.view", "design.assemble", "sketch.constrain"); a group is a run
-// of tools between separators. Null actions are left out, and so is a group left empty.
+// of tools between separators. Null actions are left out, and so is a group left empty. Every workspace that is not
+// contextual is switched to by the command "workspace.<id>": the window makes it (key = its shortcut, in the View menu
+// after the others) unless the area added one of its own, and keeps it checked while the workspace is shown; the last
+// one is remembered by id (setting ui/workspace).
 struct RibbonLayout {
   struct Tab {
     QString id, title;
@@ -85,6 +88,7 @@ class RibbonBar : public QWidget {
   int addTab(int workspace, const QString& title, const QList<QList<QAction*>>& groups);
   void setWorkspace(int index);  // swaps the tab set; each workspace remembers its current tab
   int workspace() const { return m_workspace; }
+  const Workspace& workspaceAt(int index) const { return m_workspaces[index]; }
   void setSelectFilters(const QList<QAction*>& filters, const QStringList& hints);
   void setSearchAction(QAction* a);
   void setSettingsAction(QAction* a);

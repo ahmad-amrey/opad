@@ -1,6 +1,7 @@
 // The feature-area seams (AreaController.hpp) in the running app: a probe area, made only for OPAD_BENCH_AREAS, records
 // every hook and uses the browser's provider APIs; the bench drives the window and checks what reached it. Cases in
 // tools/bench_cases/core.py.
+#include <QActionGroup>
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QHelpEvent>
@@ -33,6 +34,8 @@ class ProbeArea : public AreaController {
   std::vector<bool> changes;  // documentChanged(replaced)
   QRect overlays;
   std::string activated, folderMenu = "none";
+  QString startWorkspace;  // services().workspace() in ready()
+  QStringList workspaces;  // workspaceChanged
   PropertySubject subject;  // the last one the section provider saw
 
   void buildActions() override {
@@ -47,6 +50,8 @@ class ProbeArea : public AreaController {
     hooks << "ribbon";
     layout.addGroup("review.view", {command, nullptr});
     layout.addTab("review", "review.probe", "Probe", {{command}, {}});
+    layout.addWorkspace("probe", {"Probe", "dot", "Ctrl+Shift+9", "Probe workspace", "ops: none"});
+    layout.addTab("probe", "probe.tools", "Probe tools", {{services().action("view.fit")}});
   }
   void statusWidgets(QStatusBar* bar) override {
     hooks << "statusWidgets";
@@ -55,6 +60,7 @@ class ProbeArea : public AreaController {
   }
   void ready() override {
     hooks << "ready";
+    startWorkspace = services().workspace();
     // Bodies get a clickable text badge (Arabic in a right-to-left UI) and an icon badge, an italic name and a tooltip line.
     const bool rtl = QGuiApplication::layoutDirection() == Qt::RightToLeft;
     services().browser()->addDecorator([this, rtl](const browser::Row& row, browser::Decoration& d) {
@@ -110,6 +116,7 @@ class ProbeArea : public AreaController {
   void selectionChanged(const SelectionContext& selection) override { selected = selection; }
   void positionOverlays(const QRect& viewport) override { overlays = viewport; }
   void documentChanged(bool replaced) override { changes.push_back(replaced); }
+  void workspaceChanged(const QString& id) override { workspaces << id; }
   bool maybeClose() override {
     ++asked;
     return !veto;
@@ -149,6 +156,11 @@ OPAD_BENCH(OPAD_BENCH_AREAS, areas) {
     return true;
   }
   require(probe->hooks == QStringList({"buildActions", "menus", "ribbon", "statusWidgets", "ready"}), "construction hooks in order: " + probe->hooks.join(' '));
+  // OPAD_BENCH_AREAS_WORKSPACE: the workspace the case's settings start in (by id, or Design saved as 1 by earlier builds).
+  const QString start = qEnvironmentVariable("OPAD_BENCH_AREAS_WORKSPACE", "review");
+  require(probe->startWorkspace == start && w.workspaceId() == start && w.action("workspace." + start) && w.action("workspace." + start)->isChecked() && probe->workspaces.isEmpty(),
+          "workspace restored at startup, not reported: " + probe->startWorkspace);
+  w.setWorkspace("review");  // the ribbon checks below look at Review's tabs
   bool inTools = false;
   for (QAction* menu : w.menuBar()->actions())
     inTools = inTools || (menu->text() == QObject::tr("&Tools") && menu->menu()->actions().contains(probe->command));
@@ -174,6 +186,38 @@ OPAD_BENCH(OPAD_BENCH_AREAS, areas) {
   require(probe->overlays == QRect(w.m_viewport->mapToGlobal(QPoint(0, 0)), w.m_viewport->size()) && !probe->overlays.isEmpty(), "positionOverlays: the viewport, global");
   probe->command->trigger();
   require(probe->ran == 1, "the command runs");
+
+  // The probe's workspace: a switcher command made by the window, remembered by id, reported to the areas.
+  QAction* space = w.action("workspace.probe");
+  QAction* review = w.action("workspace.review");
+  const QList<QAction*> viewMenu = w.m_viewMenu->actions();
+  const int at = viewMenu.indexOf(space);
+  require(space && space->isCheckable() && space->shortcut() == QKeySequence("Ctrl+Shift+9") && space->actionGroup() == review->actionGroup() &&
+              review->actionGroup()->isExclusive() && at > 0 && viewMenu[at - 1] == w.action("workspace.design") && w.m_actions.contains(space),
+          "workspace: its command, shortcut, in the View menu after Design, one of the switcher's group");
+  if (!space) {
+    QCoreApplication::exit(2);
+    return true;
+  }
+  const qsizetype reported = probe->workspaces.size();
+  space->trigger();
+  bool tools = false;
+  for (QTabBar* bar : w.m_ribbon->findChildren<QTabBar*>())
+    for (int i = 0; i < bar->count(); ++i) tools = tools || bar->tabText(i) == "Probe tools";
+  require(w.workspaceId() == "probe" && probe->services().workspace() == "probe" && probe->workspaces.size() == reported + 1 && probe->workspaces.back() == "probe" &&
+              space->isChecked() && !review->isChecked() && w.m_settings.value("ui/workspace").toString() == "probe" && tools &&
+              w.statusBar()->currentMessage().contains("Ctrl+1 / 2 / Ctrl+Shift+9"),
+          "workspace: the command shows its tabs, checks it, saves it by id and tells the areas (" + w.statusBar()->currentMessage() + ")");
+  probe->services().setWorkspace("design");
+  require(w.workspaceId() == "design" && probe->workspaces.back() == "design" && w.action("workspace.design")->isChecked() && !space->isChecked() &&
+              w.m_settings.value("ui/workspace").toString() == "design",
+          "workspace: an area switches by id");
+  const qsizetype before = probe->workspaces.size();
+  probe->services().setWorkspace("sketch");
+  probe->services().setWorkspace("no-such-workspace");
+  require(w.workspaceId() == "design" && probe->workspaces.size() == before, "workspace: the sketch's and unknown ids change nothing");
+  review->trigger();
+  require(w.workspaceId() == "review" && probe->workspaces.back() == "review" && review->isChecked(), "workspace: back to Review");
 
   // The browser, opened (its rows get their width when it is shown).
   w.m_browserOverlay->setAutoHide(false);

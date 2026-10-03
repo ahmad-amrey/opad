@@ -90,9 +90,10 @@ void MainWindow::buildViewActions() {
   addAction("panel.section", tr("Section panel"), "section", QKeySequence(), [this] {}, true);
   addAction("panel.timeline", tr("Timeline"), "commit", QKeySequence("Alt+3"), [this] {}, true);
   // Workspaces: one document, one timeline; a workspace only changes the ribbon's tabs and tools.
-  auto* wsGroup = new QActionGroup(this);
-  wsGroup->addAction(addAction("workspace.review", tr("Review workspace"), "eye", QKeySequence("Ctrl+1"), [this] { setWorkspace(0); }, true));
-  wsGroup->addAction(addAction("workspace.design", tr("Design workspace"), "component", QKeySequence("Ctrl+2"), [this] { setWorkspace(1); }, true));
+  // The areas' workspaces get theirs in buildRibbon.
+  m_workspaceGroup = new QActionGroup(this);
+  m_workspaceGroup->addAction(addAction("workspace.review", tr("Review workspace"), "eye", QKeySequence("Ctrl+1"), [this] { setWorkspace("review"); }, true));
+  m_workspaceGroup->addAction(addAction("workspace.design", tr("Design workspace"), "component", QKeySequence("Ctrl+2"), [this] { setWorkspace("design"); }, true));
 }
 
 // Layout reset, theme, navigation presets and the selection filters (after the design commands in the command order).

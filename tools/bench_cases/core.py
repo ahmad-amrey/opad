@@ -4,7 +4,8 @@ CASES = [
     # The extension seams (UI-119), run in Arabic so the translation fragments are looked up through tr().
     ("seams", "empty", {"OPAD_BENCH_SEAMS": "1", "OPAD_LANG": "ar"}),
     # The feature-area hooks (AreaController), browser providers and property sections through a probe area; in Arabic
-    # too, since the browser paints fixed left-to-right columns in a right-to-left UI.
-    ("areas", "box", {"OPAD_BENCH_AREAS": "{prefix}"}),
-    ("areas-rtl", "box", {"OPAD_BENCH_AREAS": "{prefix}", "OPAD_LANG": "ar"}),
+    # too, since the browser paints fixed left-to-right columns in a right-to-left UI. The first starts in the probe's own
+    # workspace (saved by id), the second in Design as earlier builds saved it (1).
+    ("areas", "box", {"OPAD_BENCH_AREAS": "{prefix}", "OPAD_BENCH_AREAS_WORKSPACE": "probe"}, "[ui]\nworkspace=probe\n"),
+    ("areas-rtl", "box", {"OPAD_BENCH_AREAS": "{prefix}", "OPAD_BENCH_AREAS_WORKSPACE": "design", "OPAD_LANG": "ar"}, "[ui]\nworkspace=1\n"),
 ]

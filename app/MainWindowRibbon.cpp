@@ -64,7 +64,7 @@ void MainWindow::buildMenus() {
   add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
   add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
-  QMenu* view = menuBar()->addMenu(tr("&View"));
+  QMenu* view = m_viewMenu = menuBar()->addMenu(tr("&View"));
   add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
   view->addSeparator();
@@ -90,7 +90,9 @@ void MainWindow::buildMenus() {
   rebuildRecentMenu();
 }
 
-void MainWindow::setWorkspace(int index) { m_ribbon->setWorkspace(index); }
+void MainWindow::setWorkspace(const QString& id) {
+  if (const int i = m_workspaceIds.indexOf(id); i != m_sketchWorkspace) m_ribbon->setWorkspace(i);  // the sketch's: updateDesignState
+}
 
 void MainWindow::buildRibbon() {
   m_ribbon = new RibbonBar(this);
@@ -128,8 +130,10 @@ void MainWindow::buildRibbon() {
   layout.addTab("sketch", "sketch.reference", tr("Reference"), {acts({"sketch.finish", "sketch.moreReference", "sketch.moreFiles", "sketch.snaps", "sketch.selectionOptions"}),
       acts({"sketch.project", "sketch.replane", "design.parameters", "view.grid", "view.gridSettings"})});
   for (AreaController* area : m_areas) area->ribbon(layout);  // their workspaces, tabs and groups
+  QString modifiers;  // of the first key: "Ctrl+1 / 2 / Ctrl+Alt+D"
   for (const RibbonLayout::Space& space : layout.spaces) {
     const int index = m_ribbon->addWorkspace(space.workspace);
+    m_workspaceIds << space.id;
     for (const RibbonLayout::Tab& tab : space.tabs) {
       QList<QList<QAction*>> groups;
       for (QList<QAction*> group : tab.groups) {
@@ -138,18 +142,43 @@ void MainWindow::buildRibbon() {
       }
       m_ribbon->addTab(index, tab.title, groups);
     }
+    if (space.workspace.contextual) continue;
+    const QString key = space.workspace.key;
+    if (m_workspaceKeys.isEmpty()) {
+      m_workspaceKeys = key;
+      modifiers = key.left(key.lastIndexOf('+') + 1);
+    } else if (!key.isEmpty()) {
+      const bool same = !modifiers.isEmpty() && key.startsWith(modifiers) && key.lastIndexOf('+') + 1 == modifiers.size();
+      m_workspaceKeys += " / " + (same ? key.mid(modifiers.size()) : key);
+    }
+    QAction* a = action("workspace." + space.id);
+    if (!a) {  // an area's workspace: its command beside the others in the View menu
+      a = addAction("workspace." + space.id, tr("%1 workspace").arg(space.workspace.name), space.workspace.icon, QKeySequence(key), [this, id = space.id] { setWorkspace(id); }, true);
+      const QList<QAction*> entries = m_viewMenu->actions();
+      int last = -1;
+      for (int i = 0; i < entries.size(); ++i)
+        if (entries[i]->objectName().startsWith("workspace.")) last = i;
+      m_viewMenu->insertAction(last >= 0 ? entries.value(last + 1) : nullptr, a);
+    }
+    a->setCheckable(true);
+    if (a->actionGroup() != m_workspaceGroup) m_workspaceGroup->addAction(a);
   }
-  const int review = layout.index("review"), design = layout.index("design");
   m_sketchWorkspace = layout.index("sketch");
-  m_ribbon->setWorkspace(m_settings.value("ui/workspace", 0).toInt() == 1 ? design : review);
-  action(m_ribbon->workspace() == design ? "workspace.design" : "workspace.review")->setChecked(true);
+  // The last one by id; earlier builds saved Review as 0 and Design as 1. A contextual or missing one (an area that is off): Review.
+  const QString saved = m_settings.value("ui/workspace").toString();
+  const int restored = layout.index(saved == "1" ? QString("design") : saved);
+  m_ribbon->setWorkspace(restored >= 0 && !layout.spaces[restored].workspace.contextual ? restored : layout.index("review"));
+  m_workspaceId = m_workspaceIds.value(m_ribbon->workspace());
+  action("workspace." + m_workspaceId)->setChecked(true);
   connect(m_ribbon, &RibbonBar::workspaceChanged, this, [this](int i) {  // from the shortcuts or the chip's list
-    if (i == m_sketchWorkspace) return;  // contextual: entered and left with the sketch, never remembered
-    if (m_design && m_design->sketchActive()) return m_ribbon->setWorkspace(m_sketchWorkspace);  // a sketch is open: finish it first
-    m_settings.setValue("ui/workspace", i);
-    action(i == 1 ? "workspace.design" : "workspace.review")->setChecked(true);
-    if (i == 1 && m_doc->hasDocument && m_viewport->selectionFilter() != Viewport::SelFilter::Body) action("select.bodies")->trigger();  // Design works on bodies
-    statusBar()->showMessage(tr("%1 workspace · Ctrl+1 / 2 switch workspace").arg(i == 1 ? tr("Design") : tr("Review")), 4000);
+    if (i != m_sketchWorkspace && m_design && m_design->sketchActive()) return m_ribbon->setWorkspace(m_sketchWorkspace);  // a sketch is open: finish it first
+    const QString id = m_workspaceIds.value(i);
+    if (std::exchange(m_workspaceId, id) != id) forEachArea([&id](AreaController* area) { area->workspaceChanged(id); });
+    if (m_ribbon->workspaceAt(i).contextual) return;  // entered and left with the sketch (or an area's mode), never remembered
+    m_settings.setValue("ui/workspace", id);
+    if (QAction* a = action("workspace." + id)) a->setChecked(true);
+    if (id == "design" && m_doc->hasDocument && m_viewport->selectionFilter() != Viewport::SelFilter::Body) action("select.bodies")->trigger();  // Design works on bodies
+    statusBar()->showMessage(tr("%1 workspace · %2 switch workspace").arg(m_ribbon->workspaceAt(i).name, m_workspaceKeys), 4000);
   });
   m_ribbon->setSelectFilters(acts({"select.bodies", "select.faces", "select.edges", "select.vertices"}), {"1", "2", "3", "4"});
   m_ribbon->setSearchAction(action("tools.commands"));

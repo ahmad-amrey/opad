@@ -49,3 +49,5 @@ void AreaServices::guarded(const std::function<void()>& fn) { m_window->guarded(
 void AreaServices::showMessage(const QString& text, int ms) { m_window->statusBar()->showMessage(text, ms); }
 SelectionContext AreaServices::selection() const { return m_window->selectionContext(); }
 void AreaServices::positionOverlays() { m_window->positionOverlays(); }
+QString AreaServices::workspace() const { return m_window->workspaceId(); }
+void AreaServices::setWorkspace(const QString& id) { m_window->setWorkspace(id); }

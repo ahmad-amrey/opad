@@ -392,7 +392,7 @@ void MainWindow::runBench() {
   }
   // OPAD_BENCH_DESIGN=<png>: sketch + extrude through the design controller, dump the frame, quit.
   if (const QString shot = qEnvironmentVariable("OPAD_BENCH_DESIGN"); !shot.isEmpty()) {
-    setWorkspace(1);
+    setWorkspace("design");
     m_design->bench();
     QTimer::singleShot(qEnvironmentVariableIsSet("OPAD_BENCH_RULE") ? 13000 : 9000, this, [this, shot] {
       trace::log(QStringLiteral("bench: design: %1 bodies, %2 features, %3 unresolved").arg(m_doc->scene.all_bodies().size()).arg(m_doc->scene.features.size()).arg(m_doc->scene.unresolved.size()));
@@ -552,8 +552,8 @@ void MainWindow::runBench() {
       QTimer::singleShot(1500, this, [this] { m_viewport->fitAll(); m_viewport->benchPick(); });  // the board: a planar face at the centre
       if (const QByteArray shot = qgetenv("OPAD_BENCH_SHOT"); !shot.isEmpty()) m_viewport->benchShot(QString::fromLocal8Bit(shot));
       // The widget side of the window (ribbon, docks, splitters; the native viewport comes out blank): a UI check
-      // that needs no mouse or keyboard driving. OPAD_BENCH_WORKSPACE=1 switches to Design first.
-      if (qEnvironmentVariableIntValue("OPAD_BENCH_WORKSPACE") == 1) setWorkspace(1);
+      // that needs no mouse or keyboard driving. OPAD_BENCH_WORKSPACE=1 (Design) or =<id> switches to that workspace first.
+      if (const QString ws = qEnvironmentVariable("OPAD_BENCH_WORKSPACE"); !ws.isEmpty()) setWorkspace(ws == "1" ? QString("design") : ws);
       if (const QByteArray ui = qgetenv("OPAD_BENCH_UISHOT"); !ui.isEmpty())
         QTimer::singleShot(300, this, [this, ui] { grab().save(QString::fromLocal8Bit(ui)); });  // after the layout has settled
       // OPAD_BENCH_FILTER=face|edge|vertex: switch the selection mode, time it, then pick a sub-shape.
