@@ -84,6 +84,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   static int savedRenderQuality();
   static int savedSceneBackground();
   void setSceneBackground(int style);
+  int sceneBackground() const { return m_sceneBackground; }
+  QColor sceneBackgroundColor() const;  // its colour (the gradient's middle)
+  // What a 2D drawing without a colour (DXF colour 7) is drawn in: light on a dark background, dark on a light one (UI-10).
+  std::array<double, 3> drawingInk() const;
   void setHoverFade(bool enabled,double seconds);
   void resetHoverFade();
   void setTwoDimensional(bool on);
@@ -213,6 +217,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool planePoint(const QPointF& widgetPos, const opad::Frame& frame, double& u, double& v) const;
   double pixelSize() const;                    // world units per widget pixel at the view's focus
   double displayScale() const { return viewScale().x(); }  // device pixels per widget point: overlay text, markers, lines
+  // The width a line must be given to come out at least this many widget points wide: times the display scale and the
+  // render scale (Studio quality renders 1.25 times as large and scales down, which made 1 px hairlines 0.8 px, dim and
+  // blurred across two rows), rounded up to whole pixels since the driver rounds line widths.
+  double lineWidth(double points = 1) const;
+  double renderScale() const;  // the render's size over the view's (Studio quality: 1.25)
   opad::Vec3 viewDirection() const;            // unit direction the camera looks along (into the scene)
   QPoint widgetPoint(const opad::Vec3& world) const;
   // Notes: NoteCards places one card per open note and tells the view where each pointer ends (widget
@@ -363,6 +372,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // display, (de)activate, Z layer, location (SetLocation: picking follows). True when it moved the body.
   bool applyLook(const std::string& id, Item& item, const BodyLook& look);
   void scheduleLooks();  // every displayed body checked again by the sliced job
+  Handle(Prs3d_Drawer) m_drawingSelected, m_drawingHover;  // a drawing's highlights, shared (ViewportSettings.cpp)
+  void updateDrawingHighlights();
   void initViewer();
   void trackpadScroll(const QPointF& position, const QPointF& delta, bool orbit);
   void finishTrackpadScroll();

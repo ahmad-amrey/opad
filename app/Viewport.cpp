@@ -249,6 +249,13 @@ void Viewport::initViewer() {
   Handle(V3d_DirectionalLight) overhead=new V3d_DirectionalLight(gp_Dir(0,0,-1),Quantity_NOC_WHITE,false);
   overhead->SetIntensity(0.75f);m_viewer->AddLight(overhead);m_viewer->SetLightOn(overhead);
   m_ctx = new AIS_InteractiveContext(m_viewer);
+  // Drawings are highlighted as lines, not tinted: shared drawers whose colours follow the background (updateDrawingHighlights).
+  m_drawingSelected = new Prs3d_Drawer();
+  m_drawingSelected->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected));
+  m_drawingSelected->SetDisplayMode(AIS_WireFrame);
+  m_drawingHover = new Prs3d_Drawer();
+  m_drawingHover->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic));
+  m_drawingHover->SetDisplayMode(AIS_WireFrame);
   {  // TopOSD (notes, the drawing being made, measurement labels) has no depth test, but it kept the depth, so what is
      // translucent in Topmost (a note target's tint) was drawn after it, over it: red strokes came out pink. Clearing
      // the depth draws what is pending first.
@@ -506,8 +513,18 @@ void Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
     edge = QColor::fromRgbF(edge.redF() + (m_tokens.vp.redF() - edge.redF()) * t, edge.greenF() + (m_tokens.vp.greenF() - edge.greenF()) * t,
                             edge.blueF() + (m_tokens.vp.blueF() - edge.blueF()) * t);
   }
+  if (look && look->lineWidth > 0) edge = QColor::fromRgbF(look->color[0], look->color[1], look->color[2]);  // a drawing's glyph and hatch outlines
   if (d->HasOwnFaceBoundaryAspect()) d->FaceBoundaryAspect()->SetColor(occ(edge));
   else d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(edge), Aspect_TOL_SOLID, 1.0));
+  if (look && look->lineWidth > 0) {  // a drawing's lines: hairlines times the display scale (UI-10), its layer's weight and type
+    for (const auto& [own, line] : {std::pair{d->HasOwnWireAspect(), d->WireAspect()}, {d->HasOwnLineAspect(), d->LineAspect()},
+                                    {d->HasOwnFreeBoundaryAspect(), d->FreeBoundaryAspect()}})
+      if (own) {
+        line->SetWidth(look->lineWidth);
+        line->SetTypeOfLine(static_cast<Aspect_TypeOfLine>(look->lineType));
+      }
+    d->FaceBoundaryAspect()->SetWidth(lineWidth());  // outlines of fills and text stay hairlines
+  }
   m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, Standard_False);
 }
 
@@ -1803,16 +1820,12 @@ void Viewport::displayBody(const std::string& id) {
   ais->SetColor(qcolor(look.color));
   if (look.opacity < 1.0) ais->SetTransparency(1.0 - look.opacity);
   if (look.layer != Graphic3d_ZLayerId_Default) ais->SetZLayer(look.layer);
-  applyStyle(ais, &look);
   if(n->representation=="drawing2d" && n->raster.is_null()) {
-    Handle(Prs3d_Drawer) selected=new Prs3d_Drawer();selected->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected));
-    selected->SetDisplayMode(AIS_WireFrame);selected->SetColor(selectionTint());
-    selected->SetLineAspect(new Prs3d_LineAspect(selected->Color(),Aspect_TOL_SOLID,3));
-    selected->SetWireAspect(new Prs3d_LineAspect(selected->Color(),Aspect_TOL_SOLID,3));
-    ais->SetHilightAttributes(selected);
-    Handle(Prs3d_Drawer) hover=new Prs3d_Drawer();hover->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic));
-    hover->SetDisplayMode(AIS_WireFrame);hover->SetColor(Quantity_NOC_WHITE);ais->SetDynamicHilightAttributes(hover);
+    ais->Attributes()->ShadingAspect()->Aspect()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);  // fills and text in their colour, unlit
+    ais->SetHilightAttributes(m_drawingSelected);  // shared: their colours follow the background (updateDrawingHighlights)
+    ais->SetDynamicHilightAttributes(m_drawingHover);
   }
+  applyStyle(ais, &look);
   m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, -1, Standard_False);  // selection activated below, once
   if (!look.visible) m_ctx->Erase(ais, Standard_False);
   const qint64 displayMs = t.elapsed();
@@ -1920,6 +1933,7 @@ void Viewport::syncWindowSize() {
     m_cube->SetAxesConeRadius(1.2 * m_cubeScale);
     m_cube->SetAxesSphereRadius(1.0 * m_cubeScale);
     m_ctx->Redisplay(m_cube, Standard_False);
+    scheduleLooks();  // drawings' hairlines follow the display scale
   }
   if (trace::enabled()) {
     Standard_Integer viewW = 0, viewH = 0;

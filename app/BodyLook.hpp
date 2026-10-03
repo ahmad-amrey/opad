@@ -42,6 +42,9 @@ struct BodyLook {
   bool ghost = false, pickable = true;
   Graphic3d_ZLayerId layer = Graphic3d_ZLayerId_Default;
   std::array<double, 3> offset{0, 0, 0};
+  // A 2D drawing's lines (Drawing2D.hpp): width in device pixels and Aspect_TypeOfLine; 0 = not a drawing (the drawer's own).
+  double lineWidth = 0;
+  int lineType = 0;
   bool operator==(const BodyLook&) const = default;
   bool shownPickable() const { return visible && pickable; }
 };

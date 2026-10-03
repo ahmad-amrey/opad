@@ -34,6 +34,10 @@ BodyLook Viewport::composeLook(const opad::Node& body) const {
   BodyLook base;
   base.color = body.color;
   base.opacity = body.opacity;
+  if (body.representation == "drawing2d" && body.raster.is_null()) {  // a drawing's lines (UI-10)
+    if (!body.has_color) base.color = drawingInk();  // DXF colour 7 and no colour: light on dark, dark on light
+    base.lineWidth = lineWidth();  // hairlines at least one screen pixel wide on any display and render scale
+  }
   std::array<const LookDelta*, kLookSources> found{};
   if (layered()) {
     const opad::Scene& scene = m_doc->scene;
@@ -157,7 +161,7 @@ bool Viewport::applyLook(const std::string& id, Item& item, const BodyLook& look
   const BodyLook was = item.look;
   item.look = look;
   const Handle(AIS_Shape)& ais = item.ais;
-  if (look.color != was.color || look.opacity != was.opacity || look.ghost != was.ghost) {
+  if (look.color != was.color || look.opacity != was.opacity || look.ghost != was.ghost || look.lineWidth != was.lineWidth || look.lineType != was.lineType) {
     ais->SetColor(rgb(look.color));
     ais->SetTransparency(1.0 - look.opacity);
     applyStyle(ais, &look);  // a ghost's edges fade with it
@@ -242,8 +246,10 @@ opad::json Viewport::benchLookState(const std::string& body) const {
   double r = 0, g = 0, b = 0;
   c.Values(r, g, b, Quantity_TOC_sRGB);
   const gp_XYZ t = ais->LocalTransformation().TranslationPart();
+  const Handle(Graphic3d_AspectLine3d)& line = ais->Attributes()->WireAspect()->Aspect();
   return {{"displayed", m_ctx->IsDisplayed(ais)}, {"activated", modes.Extent()}, {"transparency", ais->Transparency()}, {"color", {r, g, b}},
-          {"layer", ais->ZLayer()}, {"translation", {t.X(), t.Y(), t.Z()}}, {"selected", m_ctx->IsSelected(ais)}};
+          {"layer", ais->ZLayer()}, {"translation", {t.X(), t.Y(), t.Z()}}, {"selected", m_ctx->IsSelected(ais)},
+          {"lineWidth", line->Width()}, {"lineType", int(line->LineType())}, {"lineColor", {line->Color().Red(), line->Color().Green(), line->Color().Blue()}}};
 }
 
 std::string Viewport::benchPickAt(int x, int y, opad::Vec3* at) {
