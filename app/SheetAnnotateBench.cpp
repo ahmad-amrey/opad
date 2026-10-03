@@ -29,7 +29,9 @@
 // on the opening's end), a centre mark, a centre line,
 // a note with a leader, datums A and B, a feature control frame, surface texture, a chain set, dimensions from the datums,
 // a hole table; Esc steps back; a dimension selected, edited in the bar, dragged and deleted (Ctrl+Z); a dimension of the
-// pin dangles once the pin is gone and is re-attached from the sheet bar's menu. <prefix>.annotate.png, .bar.png.
+// pin dangles once the pin is gone and is re-attached from the sheet bar's menu; typed values on the value card (digits
+// and the keypad's never the window's shortcuts, an offset, Tab to decimals and tolerance, Shift+Tab, Esc, Enter; a
+// baseline set's offset and spacing). <prefix>.annotate.png, .bar.png, .marks.png, .card.png.
 OPAD_BENCH(OPAD_BENCH_SHEET_ANNOTATE, sheetAnnotate) {
   using opad::drawing::Vec2;
   const QString& prefix = value;
@@ -367,6 +369,113 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ANNOTATE, sheetAnnotate) {
               waitFor(settled, 30000),
           "Centre marks on views turns them on for every view");
     page->grab().save(prefix + ".marks.png");
+
+    // Typed values (UI-122 on the sheet): the value card beside a dimension being placed takes digits, Tab, Enter, Esc.
+    waitFor(settled, 15000);
+    const auto shortcutTaken = [&](int k, Qt::KeyboardModifiers m = Qt::NoModifier) {
+      QKeyEvent so(QEvent::ShortcutOverride, k, m, QString(QChar(k)));
+      so.ignore();
+      QApplication::sendEvent(canvas, &so);
+      return so.isAccepted();
+    };
+    canvas->setFocus();
+    check(!shortcutTaken(Qt::Key_5), "without a tool, 5 stays the window's shortcut");
+    w.action("drawings.dimension")->trigger();
+    check(shortcutTaken(Qt::Key_5) && shortcutTaken(Qt::Key_3, Qt::KeypadModifier) && shortcutTaken(Qt::Key_Period),
+          "with a tool, bare and keypad digits are the canvas's, never the window's shortcuts");
+    tools->precisionBox()->setCurrentIndex(tools->precisionBox()->findData("2"));  // the bar's (an edited dimension left it at 1)
+    key(Qt::Key_4);
+    check(tools->pickCount() == 0 && !tools->card()->isVisible() && tools->tool() == SheetAnnotator::Tool::Dimension, "a digit before any pick changes nothing");
+    const size_t dims = items("dimension").size();
+    click(paper(front, {10, -25, 0}));
+    planned();
+    const Vec2 edgeAt = paper(front, {0, -25, 0}), above = plus(edgeAt, {0, 12});
+    moveTo(above);
+    check(tools->card()->isVisible() && tools->inputKeys() == std::vector<std::string>{"offset", "decimals", "plus", "minus"} && tools->inputFocus() == "offset" &&
+              std::fabs(tools->inputText("offset").toDouble() - 12) < 0.11,
+          "placing, the value card shows the offset the pointer gives (" + tools->inputText("offset") + "), decimals and tolerance");
+    const auto lineAt = [&](double y) {  // the preview's dimension line, level at y
+      if (!canvas->preview()) return false;
+      for (const auto& p : canvas->preview()->prims)
+        if (p.kind == opad::drawing::Prim::Kind::Curve && p.curve.type == opad::drawing::Curve::Type::Line && p.curve.pts.size() == 2 &&
+            std::fabs(p.curve.pts[0][1] - y) < 1e-6 && std::fabs(p.curve.pts[1][1] - y) < 1e-6 && std::fabs(p.curve.pts[0][0] - p.curve.pts[1][0]) > 20)
+          return true;
+      return false;
+    };
+    const auto previewText = [&](const std::string& s) {
+      if (!canvas->preview()) return false;
+      for (const auto& p : canvas->preview()->prims)
+        if (p.kind == opad::drawing::Prim::Kind::Text && p.text.find(s) != std::string::npos) return true;
+      return false;
+    };
+    key(Qt::Key_1);
+    key(Qt::Key_5);
+    check(tools->inputTyped("offset") && tools->inputText("offset") == "15" && lineAt(edgeAt[1] + 15), "typed 15: the dimension line stands 15 above the edge");
+    page->grab().save(prefix + ".card.png");
+    moveTo(plus(above, {6, 4}));
+    check(lineAt(edgeAt[1] + 15) && tools->card()->isVisible(), "the pointer moves on, the line stays at 15 and the card follows");
+    key(Qt::Key_Tab);
+    check(tools->inputFocus() == "decimals", "Tab goes to decimals (the focus stays on the canvas)");
+    {
+      QKeyEvent pad(QEvent::KeyPress, Qt::Key_1, Qt::KeypadModifier, "1");
+      QApplication::sendEvent(canvas, &pad);
+    }
+    check(tools->precisionBox()->currentData().toInt() == 1 && tools->inputText("decimals") == "1", "a keypad 1: one decimal, the bar follows");
+    key(Qt::Key_Tab);
+    key(Qt::Key_0);
+    key(Qt::Key_Period);
+    key(Qt::Key_2);
+    check(tools->inputFocus() == "plus" && tools->toleranceBox()->currentData().toString() == "sym" && tools->plusEdit()->text() == "0.2" && previewText("±0.2"),
+          "Tab, 0.2: a symmetric tolerance, shown in the preview");
+    key(Qt::Key_Backtab, Qt::ShiftModifier);
+    check(tools->inputFocus() == "decimals", "Shift+Tab goes back to decimals");
+    key(Qt::Key_Escape);
+    check(tools->tool() == SheetAnnotator::Tool::Dimension && tools->pickCount() == 1 && !tools->inputTyped("decimals") && tools->inputTyped("offset") &&
+              tools->precisionBox()->currentData().toInt() == 2,
+          "Esc takes back the focused field's value first (two decimals again), the pick stays");
+    key(Qt::Key_Return);
+    check(added("dimension", dims + 1), "Enter places it");
+    if (items("dimension").size() > dims) {
+      const opad::SheetItem* typed = items("dimension").back();
+      const opad::drawing::ViewFrame* ff = canvas->frame(front);
+      const double y = typed->def["place"]["text"][1].get<double>() + (ff ? ff->at[1] : 0);
+      check(std::fabs(y - (edgeAt[1] + 15)) < 0.02 && typed->def["result"]["shown"] == "80 ±0.2" && typed->def.value("precision", 0) == 2,
+            "with the typed values: 15 above the edge, " + QString::fromStdString(typed->def["result"].dump()));
+    }
+    check(!tools->card()->isVisible() && tools->tool() == SheetAnnotator::Tool::Dimension, "the card goes with the placed dimension; the tool stays");
+    tools->toleranceBox()->setCurrentIndex(0);
+    tools->plusEdit()->clear();
+    key(Qt::Key_Escape);
+    // A baseline set: its offset past the outermost feature and its spacing typed.
+    w.action("drawings.baseline")->trigger();
+    const size_t sets = items("dimension_set").size();
+    const Vec2 leftMid = paper(top, {-40, 0, 0});
+    click(paper(top, {-40, 8, 0}));
+    planned();
+    click(paper(top, {-25, 10, 0}));
+    planned();
+    click(paper(top, {25, 10, 0}));
+    planned();
+    tools->axisBox()->setCurrentIndex(tools->axisBox()->findData("horizontal"));
+    key(Qt::Key_Return);
+    planned();
+    moveTo(plus(leftMid, {30, -20}));
+    check(tools->card()->isVisible() && tools->inputKeys() == std::vector<std::string>{"offset", "spacing", "decimals"}, "a baseline set's card: offset, spacing, decimals");
+    key(Qt::Key_1);
+    key(Qt::Key_0);
+    key(Qt::Key_Tab);
+    key(Qt::Key_5);
+    key(Qt::Key_Return);
+    check(added("dimension_set", sets + 1), "Enter places the set");
+    if (items("dimension_set").size() > sets) {
+      const opad::SheetItem* set = items("dimension_set").back();
+      const opad::drawing::ViewFrame* tf2 = canvas->frame(top);
+      const double y = set->def["place"]["text"][1].get<double>() + (tf2 ? tf2->at[1] : 0);
+      const double lowest = std::min(leftMid[1], paper(top, {-25, 10, 0})[1]);
+      check(set->type == "baseline" && std::fabs(set->def.value("spacing", 0.0) - 5) < 1e-9 && std::fabs(y - (lowest - 10)) < 0.02,
+            QString("its first line 10 below the lowest feature, lines 5 apart (place %1, lowest %2)").arg(y).arg(lowest));
+    }
+    key(Qt::Key_Escape);
     (void)holeFeature;
   } catch (const std::exception& e) {
     check(false, QString("bench: %1").arg(QString::fromUtf8(e.what())));

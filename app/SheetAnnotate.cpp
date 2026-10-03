@@ -9,6 +9,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPushButton>
+#include <QRegularExpression>
 
 #include <algorithm>
 #include <cmath>
@@ -93,7 +94,108 @@ QIcon glyphIcon(const std::string& glyph) {
   return QIcon(QPixmap::fromImage(img));
 }
 
+// Where an item goes `offset` paper mm from what it measures, on the side of `rel` (the pointer, paper mm from its view's
+// centre) and along it where the pointer is: a dimension line that far past the measured ends on that side (radius,
+// diameter: past the rim; an angle: its arc's radius), a set's first line that far past its outermost feature. offset < 0:
+// the pointer's own place; *live gets the offset the pointer gives.
+Vec2 offsetPlace(const json& def, const json& m, Vec2 rel, double offset, double* live) {
+  const std::string kind = def.value("kind", ""), type = def.value("type", "");
+  const auto dot = [](Vec2 a, Vec2 b) { return a[0] * b[0] + a[1] * b[1]; };
+  const auto unit = [](Vec2 a) {
+    const double l = std::hypot(a[0], a[1]);
+    return l > 1e-12 ? Vec2{a[0] / l, a[1] / l} : Vec2{1, 0};
+  };
+  const auto across = [&](Vec2 u, const std::vector<Vec2>& pts) {  // square to u, past the points on the pointer's side
+    const Vec2 n{-u[1], u[0]};
+    double lo = 1e300, hi = -1e300, mid = 0;
+    for (const Vec2 p : pts) lo = std::min(lo, dot(p, n)), hi = std::max(hi, dot(p, n)), mid += dot(p, n) / static_cast<double>(pts.size());
+    const double at = dot(rel, n), side = at >= mid ? 1 : -1, base = side > 0 ? hi : lo;
+    *live = side * (at - base);
+    return offset < 0 || pts.empty() ? rel : Vec2{rel[0] + n[0] * (base + side * offset - at), rel[1] + n[1] * (base + side * offset - at)};
+  };
+  const auto around = [&](Vec2 c, double r) {  // from a centre, past r
+    const Vec2 d = unit({rel[0] - c[0], rel[1] - c[1]});
+    *live = std::hypot(rel[0] - c[0], rel[1] - c[1]) - r;
+    return offset < 0 ? rel : Vec2{c[0] + d[0] * (r + offset), c[1] + d[1] * (r + offset)};
+  };
+  *live = 0;
+  if (kind == "dimension_set") {
+    std::vector<Vec2> pts;
+    for (const auto& p : m.value("points", json::array())) pts.push_back(vec2(p));
+    return across(def.value("axis", "horizontal") == "vertical" ? Vec2{0, 1} : Vec2{1, 0}, pts);
+  }
+  if (kind != "dimension") return rel;
+  const json g = m.value("geometry", json::object());
+  if (g.contains("lines")) {  // the corner the two lines make
+    const Vec2 a0 = vec2(g["lines"][0][0]), a1 = vec2(g["lines"][0][1]), b0 = vec2(g["lines"][1][0]), b1 = vec2(g["lines"][1][1]);
+    const Vec2 da{a1[0] - a0[0], a1[1] - a0[1]}, db{b1[0] - b0[0], b1[1] - b0[1]};
+    const double c = da[0] * db[1] - da[1] * db[0];
+    if (std::fabs(c) < 1e-12) return rel;
+    const double t = ((b0[0] - a0[0]) * db[1] - (b0[1] - a0[1]) * db[0]) / c;
+    return around({a0[0] + da[0] * t, a0[1] + da[1] * t}, 0);
+  }
+  if (g.contains("centre")) return around(vec2(g["centre"]), g.value("r", 0.0));
+  const Vec2 a = vec2(g.value("from", json())), b = vec2(g.value("to", json()));
+  return across(type == "horizontal" ? Vec2{1, 0} : type == "vertical" ? Vec2{0, 1} : unit({b[0] - a[0], b[1] - a[1]}), {a, b});
+}
+
 }  // namespace
+
+// The value card beside the pointer: the fields a placement takes, the focused one framed, typed values in the text colour
+// and what the pointer or the bar gives in grey.
+class SheetValueCard : public QWidget {
+ public:
+  struct Cell {
+    QString label, text;
+    bool typed = false, focused = false;
+  };
+  explicit SheetValueCard(QWidget* parent) : QWidget(parent) {
+    setAttribute(Qt::WA_TransparentForMouseEvents);
+    setFocusPolicy(Qt::NoFocus);
+    setLayoutDirection(Qt::LeftToRight);  // numbers keep their order under right-to-left
+    hide();
+  }
+  void set(std::vector<Cell> cells) {
+    m_cells = std::move(cells);
+    const QFontMetrics fm(theme::ui(12)), fb(theme::ui(12, QFont::DemiBold));
+    int w = 8;
+    for (const auto& c : m_cells) w += fm.horizontalAdvance(c.label) + 5 + std::max(36, fb.horizontalAdvance(c.text) + 14) + 9;
+    resize(w, 30);
+    update();
+  }
+
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    const Tokens& t = theme::current();
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    p.setPen(QPen(t.line, 1));
+    p.setBrush(t.bg2);
+    p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 5, 5);
+    const QFont font = theme::ui(12), bold = theme::ui(12, QFont::DemiBold);
+    const QFontMetrics fm(font), fb(bold);
+    int x = 8;
+    for (const auto& c : m_cells) {
+      p.setFont(font);
+      p.setPen(t.fg2);
+      const int lw = fm.horizontalAdvance(c.label);
+      p.drawText(QRect(x, 0, lw, height()), Qt::AlignVCenter | Qt::AlignLeft, c.label);
+      x += lw + 5;
+      const int bw = std::max(36, fb.horizontalAdvance(c.text) + 14);
+      const QRectF box(x, 5, bw, height() - 10);
+      p.setPen(c.focused ? QPen(t.sel, 1.5) : QPen(t.line, 1));
+      p.setBrush(t.bg);
+      p.drawRoundedRect(box, 3, 3);
+      p.setFont(c.typed ? bold : font);
+      p.setPen(c.typed ? t.fg : t.fg3);
+      p.drawText(box, Qt::AlignCenter, c.text);
+      x += bw + 9;
+    }
+  }
+
+ private:
+  std::vector<Cell> m_cells;
+};
 
 SheetAnnotator::SheetAnnotator(AppDocument* doc, SheetCanvas* canvas, QWidget* parent) : QObject(parent), m_doc(doc), m_canvas(canvas) {
   buildBar();
@@ -103,6 +205,7 @@ SheetAnnotator::SheetAnnotator(AppDocument* doc, SheetCanvas* canvas, QWidget* p
     if (m_tool != Tool::None && !m_picks.empty()) replan();
   });
   canvas->setInteraction(this);
+  m_card = new SheetValueCard(canvas->viewport());
   showFields();
 }
 
@@ -415,6 +518,7 @@ void SheetAnnotator::cancel() {
   m_type.clear();
   m_item.clear();
   m_debounce.stop();
+  clearInputs();
   if (m_canvas) m_canvas->setPreview(nullptr);
   setPrompt(QString());
   showFields();
@@ -491,7 +595,7 @@ void SheetAnnotator::promptForStep() {
     case Tool::Reattach: text = tr("Pick reference %1 of %2 for the annotation").arg(n + 1).arg(m_needed); break;
     default: break;
   }
-  setPrompt(text + esc);
+  setPrompt(text + (inputKeys().empty() ? QString() : tr(" · Type values, Tab moves between them")) + esc);
 }
 
 json SheetAnnotator::args() const {
@@ -510,9 +614,7 @@ json SheetAnnotator::args() const {
     case Tool::Datum: a["letter"] = (m_letter->text().isEmpty() ? nextLetter() : m_letter->text()).toUpper().toStdString(); break;
     case Tool::Frame: {
       a["characteristic"] = m_characteristic->currentData().toString().toStdString();
-      bool number = false;
-      const double v = m_value->text().toDouble(&number);
-      a["value"] = m_value->text().isEmpty() ? json(0.1) : number ? json(v) : json(m_value->text().toStdString());
+      a["value"] = frameValue();
       if (m_zone->isChecked()) a["zone"] = "diameter";
       if (!m_material->currentData().toString().isEmpty()) a["material"] = m_material->currentData().toString().toStdString();
       json ds = json::array();
@@ -535,6 +637,12 @@ json SheetAnnotator::args() const {
     default: break;
   }
   return a;
+}
+
+json SheetAnnotator::frameValue() const {
+  bool number = false;
+  const double v = m_value->text().toDouble(&number);
+  return m_value->text().isEmpty() ? json(0.1) : number ? json(v) : json(m_value->text().toStdString());
 }
 
 void SheetAnnotator::replan() {
@@ -703,7 +811,25 @@ std::pair<json, json> SheetAnnotator::current() {
   const std::string kind = def.value("kind", "");
   if (kind == "note") def["at"] = js(rel);
   else if (kind == "hole_table") def["at"] = js(paper);
-  else def["place"] = {{"text", js(rel)}};
+  else def["place"] = {{"text", js(offsetPlace(def, measured, rel, typedNumber("offset", -1), &m_liveOffset))}};
+  // The bar's and the card's options as they are now: writing a value needs no worker.
+  const opad::Sheet* sheet = m_doc->scene.sheet(sheetId());
+  if ((kind == "dimension" || kind == "dimension_set") && sheet && m_tool != Tool::Reattach) {
+    def["precision"] = m_precision->currentData().toInt();
+    if (kind == "dimension") {
+      if (const json t = tolerance(); !t.is_null()) def["tol"] = t;
+      else def.erase("tol");
+      measured["shown"] = opad::drawing::format_value(measured.value("value", 0.0), def, sheet);
+    } else {
+      json shown = json::array();
+      for (const auto& v : measured.value("values", json::array())) shown.push_back(opad::drawing::format_number(v.get<double>(), def["precision"].get<int>(), sheet));
+      measured["shown"] = shown;
+      if (def.value("type", "") == "baseline" && inputTyped("spacing")) def["spacing"] = typedNumber("spacing", 7);
+    }
+    if (const json r = opad::drawing::item_result(def, measured); !r.is_null()) def["result"] = r;
+  } else if (kind == "fcf") {
+    def["value"] = frameValue();
+  }
   if ((kind == "datum" || kind == "surface") && measured.contains("line")) {  // the foot follows the pointer along the edge
     const Vec2 a = vec2(measured["line"][0]), b = vec2(measured["line"][1]);
     const double l = std::hypot(b[0] - a[0], b[1] - a[1]);
@@ -741,6 +867,146 @@ void SheetAnnotator::updatePreview() {
     for (size_t i = from; i < d->prims.size(); ++i) d->prims[i].rgb = rgb;
   }
   m_canvas->setPreview(d->prims.empty() ? nullptr : std::shared_ptr<const Display>(d));
+  syncInputs();
+}
+
+// ---------------------------------------------------------------- the value card
+QWidget* SheetAnnotator::card() const { return m_card; }
+
+std::vector<std::string> SheetAnnotator::inputKeys() const {
+  if (!placing()) return {};
+  switch (m_tool) {
+    case Tool::Dimension: return {"offset", "decimals", "plus", "minus"};
+    case Tool::Ordinate:
+    case Tool::Chain: return {"offset", "decimals"};
+    case Tool::Baseline: return {"offset", "spacing", "decimals"};
+    case Tool::Frame: return {"value"};
+    case Tool::HoleCallout:
+    case Tool::HoleTable: return {"decimals"};
+    default: return {};
+  }
+}
+
+bool SheetAnnotator::inputTyped(const std::string& key) const {
+  return std::any_of(m_inputs.begin(), m_inputs.end(), [&](const Input& in) { return in.key == key && !in.typed.isEmpty(); });
+}
+
+double SheetAnnotator::typedNumber(const std::string& key, double fallback) const {
+  for (const auto& in : m_inputs)
+    if (in.key == key && !in.typed.isEmpty()) {
+      bool ok = false;
+      const double v = in.typed.toDouble(&ok);
+      return ok ? v : fallback;
+    }
+  return fallback;
+}
+
+std::string SheetAnnotator::inputFocus() const { return m_focus < m_inputs.size() ? m_inputs[m_focus].key : std::string(); }
+
+QString SheetAnnotator::inputText(const std::string& key) const {
+  for (const auto& in : m_inputs)
+    if (in.key == key && !in.typed.isEmpty()) return in.typed;
+  const QString tol = m_tolBox->currentData().toString();
+  if (key == "offset") return QString::number(std::round(m_liveOffset * 10) / 10, 'f', 1);
+  if (key == "decimals") return m_precision->currentData().toString();
+  if (key == "plus") return tol == "none" ? QString() : m_plus->text().isEmpty() ? QString("0.1") : m_plus->text();
+  if (key == "minus") return tol == "dev" || tol == "limits" ? m_minus->text() : QString();
+  if (key == "spacing") return "7";
+  if (key == "value") return m_value->text().isEmpty() ? QString("0.1") : m_value->text();
+  return {};
+}
+
+void SheetAnnotator::syncInputs() {
+  const auto keys = inputKeys();
+  bool same = keys.size() == m_inputs.size();
+  for (size_t i = 0; same && i < keys.size(); ++i) same = keys[i] == m_inputs[i].key;
+  if (!same && !keys.empty()) {  // a stage with other fields (none while a plan is on its way: what was typed stays)
+    std::vector<Input> next;
+    for (const auto& k : keys) {
+      Input in{k, {}, {}};
+      for (const auto& old : m_inputs)
+        if (old.key == k) in = old;
+      in.label = k == "offset" ? tr("Offset") : k == "decimals" ? tr("Decimals") : k == "plus" ? QString("+") : k == "minus" ? QString::fromUtf8("−") : k == "spacing" ? tr("Spacing") : tr("Tolerance");
+      next.push_back(in);
+    }
+    m_inputs = std::move(next);
+    m_focus = 0;
+  }
+  if (!m_card || !m_canvas) return;
+  if (m_inputs.empty() || !(placing() || m_pending)) return m_card->hide();
+  std::vector<SheetValueCard::Cell> cells;
+  for (size_t i = 0; i < m_inputs.size(); ++i) cells.push_back({m_inputs[i].label, inputText(m_inputs[i].key), !m_inputs[i].typed.isEmpty(), i == m_focus});
+  m_card->set(std::move(cells));
+  const QRect area = m_canvas->viewport()->rect();
+  QPoint at = m_canvas->mapFromScene(m_mouse) + QPoint(18, 22);
+  at.setX(std::clamp(at.x(), 4, std::max(4, area.width() - m_card->width() - 4)));
+  at.setY(std::clamp(at.y(), 4, std::max(4, area.height() - m_card->height() - 4)));
+  m_card->move(at);
+  m_card->show();
+  m_card->raise();
+}
+
+void SheetAnnotator::clearInputs() {
+  m_inputs.clear();
+  m_focus = 0;
+  m_barBefore.clear();
+  if (m_card) m_card->hide();
+}
+
+void SheetAnnotator::applyInput(Input& in) {
+  if (in.key == "offset" || in.key == "spacing") return;  // the card's own
+  if (m_barBefore.isEmpty())
+    m_barBefore = {m_precision->currentData().toString(), m_tolBox->currentData().toString(), m_plus->text(), m_minus->text(), m_value->text()};
+  const auto setTol = [&](const QString& type) { m_tolBox->setCurrentIndex(std::max(0, m_tolBox->findData(type))); };
+  const QString tol = m_tolBox->currentData().toString();
+  if (in.key == "decimals") {
+    m_precision->setCurrentIndex(std::max(0, m_precision->findData(in.typed.isEmpty() ? m_barBefore[0] : in.typed)));
+  } else if (in.key == "plus") {
+    m_plus->setText(in.typed.isEmpty() ? m_barBefore[2] : in.typed);
+    if (!in.typed.isEmpty() && tol == "none") setTol("sym");
+    if (in.typed.isEmpty() && !inputTyped("minus")) setTol(m_barBefore[1]);
+  } else if (in.key == "minus") {  // the lower deviation: below the value unless signed
+    m_minus->setText(in.typed.isEmpty() ? m_barBefore[3] : in.typed.startsWith('+') || in.typed.startsWith('-') ? in.typed : "-" + in.typed);
+    if (!in.typed.isEmpty() && (tol == "none" || tol == "sym")) setTol("dev");
+    if (in.typed.isEmpty() && !inputTyped("plus")) setTol(m_barBefore[1]);
+  } else if (in.key == "value") {
+    m_value->setText(in.typed.isEmpty() ? m_barBefore[4] : in.typed);
+  }
+}
+
+bool SheetAnnotator::inputKey(QKeyEvent* e) {
+  if (e->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) return false;
+  const int key = e->key();  // the keypad's digits come with KeypadModifier, the same keys
+  const bool digit = key >= Qt::Key_0 && key <= Qt::Key_9;
+  if (digit || key == Qt::Key_Period || key == Qt::Key_Comma || key == Qt::Key_Minus || key == Qt::Key_Plus) {
+    if (m_inputs.empty()) return true;  // nothing takes a value now: still not the window's shortcut
+    Input& in = m_inputs[m_focus];
+    const QChar c = digit ? QChar('0' + (key - Qt::Key_0)) : key == Qt::Key_Minus ? QChar('-') : key == Qt::Key_Plus ? QChar('+') : QChar('.');
+    const QString next = in.typed + c;
+    static const QRegularExpression size("^\\d*\\.?\\d*$"), deviation("^[+-]?\\d*\\.?\\d*$");
+    const bool fits = in.key == "decimals" ? digit && next.size() == 1 && next.toInt() <= 4 : (in.key == "plus" || in.key == "minus" ? deviation : size).match(next).hasMatch();
+    if (!fits) return true;
+    in.typed = next;
+    applyInput(in);
+  } else if (key == Qt::Key_Backspace) {
+    if (m_inputs.empty() || m_inputs[m_focus].typed.isEmpty()) return true;
+    m_inputs[m_focus].typed.chop(1);
+    applyInput(m_inputs[m_focus]);  // emptied: the bar's own value again
+  } else if ((key == Qt::Key_Tab || key == Qt::Key_Backtab) && !m_inputs.empty()) {
+    const bool back = key == Qt::Key_Backtab || (e->modifiers() & Qt::ShiftModifier);
+    m_focus = (m_focus + (back ? m_inputs.size() - 1 : 1)) % m_inputs.size();
+  } else if (key == Qt::Key_Escape && std::any_of(m_inputs.begin(), m_inputs.end(), [](const Input& in) { return !in.typed.isEmpty(); })) {
+    const bool one = !m_inputs[m_focus].typed.isEmpty();  // the focused field first, then all
+    for (size_t i = 0; i < m_inputs.size(); ++i)
+      if ((!one || i == m_focus) && !m_inputs[i].typed.isEmpty()) {
+        m_inputs[i].typed.clear();
+        applyInput(m_inputs[i]);
+      }
+  } else {
+    return false;
+  }
+  updatePreview();
+  return true;
 }
 
 void SheetAnnotator::commit() {
@@ -754,6 +1020,7 @@ void SheetAnnotator::commit() {
   m_plan = nullptr;
   m_ending = false;
   m_view.clear();
+  clearInputs();
   updatePreview();
   promptForStep();
   m_runner("sheet_item", {{"op", op}}, [this, alive, tool](const json& out) {
@@ -801,6 +1068,7 @@ void SheetAnnotator::clickAt(const QPointF& scene) {
     if (pick->view != view) return emit message(m_tool == Tool::Reattach ? tr("Pick on the annotation's view") : tr("Pick on the same view"));
     m_view = view;
     m_picks.push_back(*pick);
+    clearInputs();
     if (m_tool == Tool::Dimension || m_tool == Tool::HoleCallout || m_tool == Tool::Datum || m_tool == Tool::Surface || m_tool == Tool::Note || m_tool == Tool::Frame)
       m_plan = nullptr;
     updatePreview();
@@ -862,8 +1130,11 @@ bool SheetAnnotator::mouseRelease(QMouseEvent*, const QPointF&) { return m_tool 
 
 bool SheetAnnotator::wantsKey(QKeyEvent* e) {
   const bool plain = !(e->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier));
-  if (m_tool != Tool::None)
-    return e->key() == Qt::Key_Escape || e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter || (e->key() == Qt::Key_Tab && plain);
+  const int k = e->key();
+  if (m_tool != Tool::None)  // bare digits are a value's, never the window's shortcuts, while a tool runs
+    return k == Qt::Key_Escape || k == Qt::Key_Return || k == Qt::Key_Enter ||
+           (plain && (k == Qt::Key_Tab || k == Qt::Key_Backtab || k == Qt::Key_Backspace || (k >= Qt::Key_0 && k <= Qt::Key_9) || k == Qt::Key_Period ||
+                      k == Qt::Key_Comma || k == Qt::Key_Minus || k == Qt::Key_Plus));
   return plain && !(e->modifiers() & Qt::ShiftModifier) && (e->key() == Qt::Key_D || e->key() == Qt::Key_T);
 }
 
@@ -873,8 +1144,10 @@ bool SheetAnnotator::keyPress(QKeyEvent* e) {
     start(e->key() == Qt::Key_D ? Tool::Dimension : Tool::Note);
     return true;
   }
+  if (inputKey(e)) return true;
   switch (e->key()) {
     case Qt::Key_Escape:
+      clearInputs();
       if (m_ending) {
         m_ending = false;
         m_plan = nullptr;

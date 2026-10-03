@@ -25,6 +25,8 @@ CASES = [
     # diameter with a tolerance from the options bar, a corner to a centre), hole callouts from hole features (also from the side), a centre mark
     # and line, a note with a leader, datums, a feature control frame, surface texture, a chain set, dimensions from datums,
     # a hole table, Esc stepping back, select / edit in the bar / drag / Del / Ctrl+Z, a dangling dimension re-attached from
-    # the sheet bar, the views' own centre marks. <prefix>.annotate.png, .bar.png, .marks.png.
+    # the sheet bar, the views' own centre marks, values typed on the value card (offset, decimals, tolerance, a set's
+    # spacing; Tab, Shift+Tab, Esc, Enter; digits never the window's shortcuts). <prefix>.annotate.png, .bar.png,
+    # .marks.png, .card.png.
     ("sheet-annotate", "empty", {"OPAD_BENCH_SHEET_ANNOTATE": "{prefix}"}),
 ]

@@ -963,6 +963,13 @@ void SheetCanvas::contextMenuEvent(QContextMenuEvent* e) {
 
 // ---------------------------------------------------------------- keys
 bool SheetCanvas::event(QEvent* e) {
+  if (e->type() == QEvent::KeyPress && m_interaction) {  // Tab before QWidget::event moves the focus off the canvas
+    auto* k = static_cast<QKeyEvent*>(e);
+    if ((k->key() == Qt::Key_Tab || k->key() == Qt::Key_Backtab) && m_interaction->wantsKey(k)) {
+      keyPressEvent(k);
+      return true;
+    }
+  }
   if (e->type() == QEvent::ShortcutOverride) {  // these keys are the sheet's while it has the focus
     auto* k = static_cast<QKeyEvent*>(e);
     const bool plain = !(k->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier));
