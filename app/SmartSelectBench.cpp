@@ -1,6 +1,8 @@
 #include "BenchRegistry.hpp"
 #include "MainWindow.hpp"
 #include "SmartSelect.hpp"
+#include "Units.hpp"
+#include "opad/recognize.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/provenance.hpp"
 #include "opad/geometry.hpp"
@@ -508,6 +510,107 @@ OPAD_BENCH(OPAD_BENCH_SMARTPERF, smartperf) {
     } catch (const std::exception& e) {
       timer->stop();
       trace::log(QString("bench: smartperf FAIL: %1").arg(e.what()));
+      QCoreApplication::exit(2);
+    }
+  });
+  timer->start();
+  return true;
+}
+
+// OPAD_BENCH_SMARTIMPORT=<prefix> (UI-95 on a body without history; case smartselect-import: the imported plate of
+// tools/bench_cases/smart.py, four 6 mm through holes and a blind one). One hole wall picked: the chip names the hole and
+// carries Remove faces, Select similar and Isolate (no history: nothing to find in the timeline); its Remove starts Remove faces with the wall adopted (cancelled);
+// Del on the wall does the same (UI-04: never the import). Shot <prefix>.chip.png.
+OPAD_BENCH(OPAD_BENCH_SMARTIMPORT, smartimport) {
+  struct State {
+    int phase = 0, ticks = 0, wait = 0;
+    opad::Ref wall;
+    size_t ops = 0;
+  };
+  auto state = std::make_shared<State>();
+  SmartSelect* area = nullptr;
+  for (AreaController* a : w.m_areas)
+    if (auto* smart = dynamic_cast<SmartSelect*>(a)) area = smart;
+  auto* timer = new QTimer(&w);
+  timer->setInterval(100);
+  QObject::connect(timer, &QTimer::timeout, &w, [&w, area, state, timer, prefix = value] {
+    try {
+      if (++state->ticks > 1200) throw opad::Error("timed out in phase " + std::to_string(state->phase));
+      if (!area) throw opad::Error("the smart selection area is off");
+      if (w.m_doc->loading || w.m_doc->designBusy || w.m_doc->snapshotBusy() || w.m_jobs->busy() || area->busy()) return;
+      auto require = [](bool ok, const std::string& why) {
+        if (!ok) throw opad::Error(why);
+      };
+      auto waitFor = [&](bool ok, const std::string& why) {
+        if (ok) return (state->wait = 0, true);
+        require(++state->wait < 80, why);
+        return false;
+      };
+      auto pick = [&] {
+        w.m_viewport->selectRefs({state->wall});
+        w.onViewportSelection();
+      };
+      switch (state->phase) {
+        case 0: {
+          require(w.m_doc->scene.all_bodies().size() == 1 && w.m_doc->scene.features.empty(), "one imported body, no history");
+          const std::string body = w.m_doc->scene.all_bodies().front();
+          for (const auto& h : opad::Recognizer(opad::node_world_shape(w.m_doc->doc, w.m_doc->scene, body)).all("hole"))
+            if (h.params["through"] == true && state->wall.index < 0) state->wall = opad::Ref::parse(body + "/face/" + std::to_string(h.faces.front()));
+          require(state->wall.index >= 0, "a through hole");
+          state->ops = w.m_doc->doc.ops.size();
+          w.setWorkspace("design");
+          w.action("select.faces")->trigger();
+          break;
+        }
+        case 1:
+          if (w.m_viewport->selectionFilter() != Viewport::SelFilter::Face) return;
+          pick();
+          break;
+        case 2: {
+          const auto& f = area->found();
+          if (!waitFor(f.ready && area->chip()->isVisible(), "the chip shows for a hole wall")) return;
+          require(f.active >= 0 && f.candidates[size_t(f.active)].kind == "hole", "the wall is the hole");
+          const QString hole = SmartSelect::tr("%1 · 1 face").arg(SmartSelect::tr("Hole Ø%1 through").arg(units::compact(units::Kind::Length, 6)));
+          require(area->chip()->text() == hole, "the chip says \"" + hole.toStdString() + "\", not \"" + area->chip()->text().toStdString() + "\"");
+          QStringList buttons;
+          for (QToolButton* b : area->chip()->actionButtons()) buttons << b->defaultAction()->objectName();
+          require(buttons.join(",") == "smartRemove,smartSimilar,smartIsolate", "the hole's actions: " + buttons.join(",").toStdString());
+          area->chip()->grab().save(prefix + ".chip.png");
+          trace::log("bench: smartimport: a hole wall of the imported plate: the chip says \"" + area->chip()->text() + "\" with Remove faces, Select similar, Isolate PASS");
+          area->chip()->actionButtons()[0]->click();  // Remove
+          break;
+        }
+        case 3: {
+          if (!waitFor(w.m_design->featureActive(), "Remove opens Remove faces")) return;
+          const opad::json picks = w.m_design->featurePanel()->picks("faces");
+          require(picks.is_array() && picks.size() == 1 && opad::Ref::from_json(picks[0]).index == state->wall.index, "with the wall adopted: " + picks.dump());
+          trace::log("bench: smartimport: the chip's Remove started Remove faces with the hole wall adopted PASS");
+          w.m_design->escape();
+          break;
+        }
+        case 4:
+          if (w.m_design->featureActive()) return;
+          w.action("select.faces")->trigger();
+          break;
+        case 5:
+          if (w.m_viewport->selectionFilter() != Viewport::SelFilter::Face) return;
+          pick();
+          w.action("edit.delete")->trigger();  // Del: the hole's faces, not the import
+          break;
+        case 6: {
+          if (!waitFor(w.m_design->featureActive(), "Del on the hole wall starts Remove faces")) return;
+          require(w.m_doc->doc.ops.size() == state->ops && w.m_doc->scene.deleted_ops.empty(), "the import is not tombstoned");
+          trace::log("bench: smartimport: Del on the hole wall started Remove faces, the import is untouched PASS");
+          w.m_design->escape();
+          timer->stop();
+          QCoreApplication::exit(0);
+          return;
+        }
+      }
+      ++state->phase;
+    } catch (const std::exception& e) {
+      timer->stop();
+      trace::log(QString("bench: smartimport FAIL: %1").arg(e.what()));
       QCoreApplication::exit(2);
     }
   });
