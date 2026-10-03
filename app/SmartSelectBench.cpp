@@ -13,6 +13,7 @@
 #include <QElapsedTimer>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QSettings>
 #include <QStatusBar>
 #include <QToolButton>
 #include <TopExp.hxx>
@@ -30,7 +31,8 @@
 // front's); Alt on a straight edge says nothing continues it. The chip's
 // Delete on the boss: the question names Round, which uses it, with the result previewed; deleting both leaves the base
 // alone, the toast's Undo brings them back. Deleting Round, which nothing uses, asks nothing. The chip's Find in timeline,
-// Isolate and Suppress (undone from its toast) on the boss. Shots: <prefix>.chip.png,
+// Isolate and Suppress (undone from its toast) on the boss. Suggestions off: no chip by itself, Ctrl+Up still asks; on
+// again with Edit > Suggestion delay at 1 s, the chip comes after a second. Shots: <prefix>.chip.png,
 // .actions.png, .menu.png, .question.png, .hover.png. Texts are compared in the language shown (case smartselect-rtl).
 OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
   struct State {
@@ -42,6 +44,7 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
     bool usersSeen = false, frontSide = false, tangentAsked = false, tangent = false, quietAsked = false;
     size_t ops = 0;
     int faces = 0;
+    QElapsedTimer clock;
   };
   auto state = std::make_shared<State>();
   SmartSelect* area = nullptr;
@@ -448,7 +451,23 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
         case 28: {
           if (!waitFor(selected(state->bossFaces) && area->chip()->isVisible(), "Ctrl+Up still climbs with suggestions off")) return;
           pass("with suggestions off no chip came by itself; Ctrl+Up still selected the boss, with its actions");
+          QMenu* delay = w.findChild<QMenu*>("smartSuggestDelay");
+          require(delay && !delay->menuAction()->isEnabled(), "Edit > Suggestion delay, off with the suggestions");
           w.action("select.suggest")->trigger();
+          require(delay->menuAction()->isEnabled() && area->suggestDelay() == 250, "on again: the delay can be chosen, 0.25 s by default");
+          for (QAction* a : delay->actions())
+            if (a->data().toInt() == 1000) a->trigger();
+          require(area->suggestDelay() == 1000 && QSettings().value("selection/suggestDelay").toInt() == 1000, "a delay of 1 s chosen and kept");
+          pick(state->two);
+          state->clock.start();
+          break;
+        }
+        case 29: {
+          if (!waitFor(area->chip()->isVisible() && area->found().ready && smart::sameRefs(area->found().picks, state->two), "the chip comes after the delay")) return;
+          require(state->clock.elapsed() >= 1000, "not before the second (" + std::to_string(state->clock.elapsed()) + " ms)");
+          pass(QString("with a delay of 1 s the chip came after %1 ms").arg(state->clock.elapsed()));
+          for (QAction* a : w.findChild<QMenu*>("smartSuggestDelay")->actions())
+            if (a->data().toInt() == 250) a->trigger();
           timer->stop();
           QCoreApplication::exit(0);
           return;

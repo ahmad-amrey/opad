@@ -78,6 +78,7 @@ class SmartSelect : public AreaController {
   QMenu* openMenu() const { return m_menu; }  // the candidates menu or the delete question while it shows
   bool busy() const { return m_job || m_chainJob || m_capturing || m_retrying || m_wait.isActive() || m_pending != Pending::None; }
   size_t ladder() const { return m_stack.size(); }  // Ctrl+Down steps left
+  int suggestDelay() const { return m_wait.interval(); }  // ms the picks stand before the chip asks (Edit > Suggestion delay)
 
   void buildActions() override;
   void menus(QMenuBar* bar, const QMap<QString, QMenu*>& menus) override;

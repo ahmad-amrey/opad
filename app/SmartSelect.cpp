@@ -15,12 +15,14 @@
 #include <TopoDS.hxx>
 
 #include <QAction>
+#include <QActionGroup>
 #include <QBitmap>
 #include <QClipboard>
 #include <QCursor>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLocale>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMouseEvent>
@@ -250,7 +252,27 @@ void SmartSelect::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
   if (!edit || !parent) return;
   const QList<QAction*> all = edit->actions();
   const int at = int(all.indexOf(parent));
-  edit->insertActions(at >= 0 && at + 1 < all.size() ? all[at + 1] : nullptr, {m_shrink, m_related, m_suggest});
+  QAction* before = at >= 0 && at + 1 < all.size() ? all[at + 1] : nullptr;
+  edit->insertActions(before, {m_shrink, m_related, m_suggest});
+  // How long the picks stand before the chip asks (setting selection/suggestDelay, ms).
+  auto* delay = new QMenu(tr("Suggestion delay"), edit);
+  delay->setObjectName("smartSuggestDelay");
+  auto* group = new QActionGroup(delay);
+  const int current = QSettings().value("selection/suggestDelay", 250).toInt();
+  for (int ms : {0, 250, 500, 1000}) {
+    QAction* a = delay->addAction(ms == 0 ? tr("At once") : tr("After %1 s").arg(QLocale().toString(ms / 1000.0)));
+    a->setCheckable(true);
+    a->setChecked(ms == current);
+    a->setData(ms);
+    group->addAction(a);
+    connect(a, &QAction::triggered, this, [this, ms] {
+      QSettings().setValue("selection/suggestDelay", ms);
+      m_wait.setInterval(ms);
+    });
+  }
+  edit->insertMenu(before, delay);
+  delay->menuAction()->setEnabled(m_suggest->isChecked());
+  connect(m_suggest, &QAction::toggled, delay->menuAction(), &QAction::setEnabled);
 }
 
 void SmartSelect::ready() {
@@ -263,7 +285,7 @@ void SmartSelect::ready() {
   });
   connect(m_chip, &SmartChip::menuRequested, this, [this] { showMenu(); });
   m_wait.setSingleShot(true);
-  m_wait.setInterval(250);
+  m_wait.setInterval(std::clamp(QSettings().value("selection/suggestDelay", 250).toInt(), 0, 5000));
   connect(&m_wait, &QTimer::timeout, this, &SmartSelect::run);
   m_settle.setSingleShot(true);
   m_settle.setInterval(200);

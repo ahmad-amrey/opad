@@ -121,5 +121,8 @@
   "Nothing depends on %1: no later feature uses it.": "لا شيء يعتمد على %1: لا تستخدمه أي ميزة لاحقة.",
   "%1 depends on %2": "%1 يعتمد على %2",
   "%1 depend on %2": "%1 تعتمد على %2",
-  "%1, with no faces of its own to select": "%1، دون أوجه خاصة به لتحديدها"
+  "%1, with no faces of its own to select": "%1، دون أوجه خاصة به لتحديدها",
+  "Suggestion delay": "مهلة الاقتراح",
+  "At once": "فورًا",
+  "After %1 s": "بعد %1 ث"
 }
