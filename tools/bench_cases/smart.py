@@ -65,6 +65,11 @@ CASES = [
     # the open sketch, each with its own entries (Repeat of the last tool first, the picks' feature to edit or find).
     ("context-menus", boss, {"OPAD_BENCH_CONTEXT": "{prefix}"}),
     ("context-menus-rtl", boss, {"OPAD_BENCH_CONTEXT": "{prefix}", "OPAD_LANG": "ar"}),
+    # Right clicks through the view's own handlers (UI-100): a face not selected becomes the selection and the menu is about
+    # it (its title drawn), on a selected one or on nothing the selection stays, a running tool keeps its picks; the body
+    # in body mode; an empty component's Remove, one step.
+    ("right-click", boss, {"OPAD_BENCH_RIGHTCLICK": "{prefix}"}),
+    ("right-click-rtl", boss, {"OPAD_BENCH_RIGHTCLICK": "{prefix}", "OPAD_LANG": "ar"}),
     # The chip on the imported plate (no history): a hole wall is the hole, its sizes in the tooltip and Measure's toast, its
     # Remove and Del start Remove faces.
     ("smartselect-import", imported, {"OPAD_BENCH_SMARTIMPORT": "{prefix}"}),

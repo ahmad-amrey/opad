@@ -308,6 +308,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const Handle(V3d_View)& view) override;
 
  private:
+  // A right click on a body's face, edge, vertex or the body not selected selects it (Replace) before the menu: the menu is
+  // about what is under the pointer. On what is selected, on nothing, or while a tool or an editor owns the picks: unchanged.
+  void contextPick(const QPointF& at);
   int m_renderQuality = 1, m_sceneBackground = 0;
   void updateDepthBias();
   bool m_twoDimensional = false;

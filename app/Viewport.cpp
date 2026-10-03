@@ -2148,6 +2148,7 @@ void Viewport::mouseReleaseEvent(QMouseEvent* e) {
   }
   if (m_rightPress && e->button() == Qt::RightButton && (e->position() + m_dragOffset - m_pressPos).manhattanLength() < 4) {
     m_rightPress = false;
+    contextPick(e->position());
     emit contextMenuRequested(e->globalPosition().toPoint());
   }
   if (e->buttons() == Qt::NoButton) { m_dragOffset = {}; m_warpGate.pending=false; }
