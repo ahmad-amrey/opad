@@ -37,6 +37,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <list>
@@ -70,6 +71,7 @@ struct KeyInfo {
   std::vector<std::array<int32_t, 3>> next;  // per mesh triangle: the triangles across its sides (Tri::next), mesh-local
   std::shared_ptr<const Mesh> mesh;
   double defl = 0.1;
+  bool outward = false;  // every face bounds a solid, turned outwards (the mesh encloses a positive volume)
 };
 
 bool normal_at(const TopoDS_Face& face, const TopoDS_Edge& edge, double t, gp_Dir& out) {
@@ -380,14 +382,21 @@ void smooth_runs(std::vector<uint8_t>& v) {
   }
 }
 
+// The oriented normals of an edge's two faces against the view direction, at edge parameters (a solid's edges only):
+// where both face away, the way to the viewer leads into the body, so the edge is hidden by the body itself.
+using Folds = std::array<std::function<double(double)>, 2>;
+
 // Samples the curve between a and b every pixel, cuts it where visibility changes (refined by bisection) and emits
-// the pieces, typed.
-void trace(const Context& cx, const Adaptor3d_Curve& c, double a, double b, int own1, int own2, const Curve& like, std::vector<Curve>& out) {
+// the pieces, typed. With `folds`, where the edge's faces both face away it is hidden whatever the buffer says, and a
+// cut there is exact: the buffer's depth margin let a rim run on past the point where its own side face turns away.
+void trace(const Context& cx, const Adaptor3d_Curve& c, double a, double b, int own1, int own2, const Curve& like, std::vector<Curve>& out,
+           const Folds& folds = {}) {
   const Depth& D = cx.depth;
+  auto away = [&](double t) { return folds[0] && folds[0](t) < 0 && folds[1](t) < 0; };
   auto vis = [&](double t) {
     const gp_Pnt p = c.Value(t);
     const Vec2 uv = cx.view.at(p);
-    return D.visible(uv[0], uv[1], cx.view.depth(p), own1, own2, like.kind == Curve::Kind::Silhouette);
+    return D.visible(uv[0], uv[1], cx.view.depth(p), own1, own2, like.kind == Curve::Kind::Silhouette) && !away(t);
   };
   double length = 0;
   Vec2 last = cx.view.at(c.Value(a));
@@ -408,6 +417,11 @@ void trace(const Context& cx, const Adaptor3d_Curve& c, double a, double b, int 
       const double m = 0.5 * (lo + hi);
       (vis(m) == v[static_cast<size_t>(i)] ? lo : hi) = m;
     }
+    if (const bool at_lo = away(lo); folds[0] && at_lo != away(hi))  // the faces turn away in here: exactly where
+      for (int k = 0; k < 40; ++k) {
+        const double m = 0.5 * (lo + hi);
+        (away(m) == at_lo ? lo : hi) = m;
+      }
     const double cut = 0.5 * (lo + hi);
     if (v[static_cast<size_t>(i)] || cx.spec.hidden) {
       Curve k = like;
@@ -442,9 +456,43 @@ void edge_work(const Context& cx, size_t s, int e, std::vector<Curve>& out) {
     if (n.Magnitude() > 1e-12 && std::fabs(n.Normalized().Dot(gp_Vec(cx.view.z))) < 1e-6) like.kind = Curve::Kind::Silhouette;
   }
   if ((like.kind == Curve::Kind::Tangent && !cx.spec.tangent) || (like.kind == Curve::Kind::Seam && !cx.spec.seams)) return;
-  const BRepAdaptor_Curve c(edge_of(cx, s, e));
+  const TopoDS_Edge edge = edge_of(cx, s, e);
+  const BRepAdaptor_Curve c(edge);
   const int base = cx.face_base[s];
-  trace(cx, c, c.FirstParameter(), c.LastParameter(), info.f1 >= 0 ? base + info.f1 : -2, info.f2 >= 0 ? base + info.f2 : -2, like, out);
+  Folds folds;
+  if (key.outward && info.f1 >= 0 && info.f2 >= 0 &&
+      (key.f[static_cast<size_t>(info.f1)] != Surface::Plane || key.f[static_cast<size_t>(info.f2)] != Surface::Plane)) {
+    struct Side {  // made on the first call: most edges never ask
+      TopoDS_Face face;
+      std::unique_ptr<BRepAdaptor_Surface> surface;
+      Handle(Geom2d_Curve) pc;
+    };
+    // In the body's frame when rigid (a moved edge and face carry two locations, and the pcurve lookup compares them by
+    // identity), else on the transformed copy.
+    const Source& src = cx.sources[s];
+    gp_Dir local = cx.view.z;
+    if (src.rigid) local.Transform(src.trsf.Inverted());
+    const gp_Vec z(local);
+    const TopoDS_Edge own = src.rigid ? TopoDS::Edge(key.edges(e + 1)) : edge;
+    for (int k = 0; k < 2; ++k) {
+      auto side = std::make_shared<Side>();
+      side->face = src.rigid ? TopoDS::Face(key.faces((k ? info.f2 : info.f1) + 1)) : face_of(cx, s, k ? info.f2 : info.f1);
+      folds[static_cast<size_t>(k)] = [side, edge = own, z](double t) {
+        if (!side->surface) {
+          double f, l;
+          side->pc = BRep_Tool::CurveOnSurface(edge, side->face, f, l);
+          side->surface = std::make_unique<BRepAdaptor_Surface>(side->face, Standard_False);
+        }
+        if (side->pc.IsNull()) return 1.0;
+        const gp_Pnt2d uv = side->pc->Value(t);
+        gp_Pnt p;
+        gp_Vec du, dv;
+        side->surface->D1(uv.X(), uv.Y(), p, du, dv);
+        return (side->face.Orientation() == TopAbs_REVERSED ? -1 : 1) * du.Crossed(dv).Dot(z);
+      };
+    }
+  }
+  trace(cx, c, c.FirstParameter(), c.LastParameter(), info.f1 >= 0 ? base + info.f1 : -2, info.f2 >= 0 ? base + info.f2 : -2, like, out, folds);
 }
 
 // The parameter runs of [a, b] where `inside` holds, ends refined by bisection.
@@ -1001,6 +1049,16 @@ void hybrid(const Document& doc, const std::vector<Source>& sources, const ViewS
       if (!s.mesh) classify(s.proto, k);
       k.defl = deflection_for(doc, s.key);
       k.mesh = body_mesh(doc, s, k.defl);
+      if (!s.mesh) {
+        TopTools_IndexedMapOfShape in_solids;
+        for (TopExp_Explorer x(s.proto, TopAbs_SOLID); x.More(); x.Next()) TopExp::MapShapes(x.Current(), TopAbs_FACE, in_solids);
+        const auto& P = k.mesh->positions;
+        const auto& I = k.mesh->indices;
+        double volume = 0;
+        auto at = [&](uint32_t i) { return gp_XYZ(P[i * 3], P[i * 3 + 1], P[i * 3 + 2]); };
+        for (size_t t = 0; t + 2 < I.size(); t += 3) volume += at(I[t]).Dot(at(I[t + 1]).Crossed(at(I[t + 2])));
+        k.outward = k.faces.Extent() > 0 && in_solids.Extent() == k.faces.Extent() && volume > 0;
+      }
       const auto& I = k.mesh->indices;
       k.next.assign(I.size() / 3, {-1, -1, -1});
       std::unordered_map<uint64_t, int32_t> first;  // a side's first triangle * 3 + side

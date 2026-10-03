@@ -9,6 +9,7 @@
 #include <BRepBuilderAPI_NurbsConvert.hxx>
 #include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCone.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
@@ -354,6 +355,28 @@ TEST(projection_coincident_pieces) {
     const auto g = project(l, resolve(l), spec_of("front", q), {}, false);
     CHECK_NEAR(total(*g, false), 2 * 20 + 2 * 10 + 2 * 5 + 2 * 5 + 2 * 4, q == Quality::Exact ? 1e-6 : 0.005);  // hybrid: cuts within a tenth of a pixel
     CHECK_NEAR(total(*g, true), 20, q == Quality::Exact ? 1e-6 : 0.005);
+  }
+}
+
+// A rim passes behind its own side face where that face turns away from the viewer: the hybrid tier cuts it exactly
+// there (the depth buffer's margin let it run on ~0.1 mm), so the tiers agree on cylinders and cones from any side.
+TEST(projection_rims_behind_their_side) {
+  const Document doc = doc_of({BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), 5, 12).Shape(),
+                               BRepPrimAPI_MakeCone(gp_Ax2(gp_Pnt(30, 0, 0), gp_Dir(0, 0, 1)), 6, 2, 10).Shape()});
+  const Scene scene = resolve(doc);
+  for (const auto& view : {ViewSpec::preset("iso"), ViewSpec::from_json({{"dir", {-0.3, -1, 0.5}}, {"up", {0, 0, 1}}}),
+                           ViewSpec::from_json({{"dir", {0.2, 0.4, -1}}, {"up", {0, 1, 0}}})}) {
+    for (const auto& body : scene.all_bodies()) {
+      auto s = view;
+      s.nodes = {body};
+      s.quality = Quality::Exact;
+      const auto exact = project(doc, scene, s, {}, false);
+      s.quality = Quality::Hybrid;
+      const auto hybrid = project(doc, scene, s, {}, false);
+      CHECK(total(*exact, true) > 1);
+      CHECK_NEAR(total(*hybrid, false), total(*exact, false), 1e-4);
+      CHECK_NEAR(total(*hybrid, true), total(*exact, true), 1e-4);
+    }
   }
 }
 
