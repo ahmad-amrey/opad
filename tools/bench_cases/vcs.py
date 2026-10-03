@@ -98,6 +98,8 @@ CASES = [
     # A read-only document: view changes kept out of "unsaved", edits ask for a copy, Save a copy, --read-only in another OPAD.
     ("read-only", read_only, {"OPAD_BENCH_READONLY": "{prefix}"}),
     ("read-only-ar", lambda root, document: read_only(root, document, "read-only-ar"), {"OPAD_BENCH_READONLY": "{prefix}", "OPAD_LANG": "ar"}),
+    # The toasts commands end with, on the Engine with its bodies on screen (skipped where the Engine is not beside the tree).
+    ("toast-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_TOASTPERF": "6"}),
     ("recovery-diff", recovered, {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}"}),
     ("recovery-diff-ar", lambda root, document: recovered(root, document, "recovery-ar"), {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}", "OPAD_LANG": "ar"}),
 ]
