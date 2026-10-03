@@ -497,7 +497,8 @@ void apply_operation(const Ctx& ctx, const json& inputs, const TopoDS_Shape& too
     const Bnd_Box tb = box_of(tool);
     for (const auto& id : ctx.scene.all_bodies()) {
       const Node* n = ctx.scene.node(id);
-      if (!n || n->representation != "solid" || (n->body_missing && !ctx.fresh.count(n->body_key))) continue;
+      // A linked file's parts are read-only: never taken by the search (named as a target, the feature says why not).
+      if (!n || n->representation != "solid" || n->linked || (n->body_missing && !ctx.fresh.count(n->body_key))) continue;
       if (!box_of(ctx.node_shape(id)).IsOut(tb)) targets.push_back(id);
     }
   }

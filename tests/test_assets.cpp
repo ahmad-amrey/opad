@@ -285,6 +285,52 @@ TEST(sync_keeps_ids_and_regenerates_what_depends) {
   CHECK_EQ(asset_of(third, import_id)["path"], "moved/model.step");
 }
 
+TEST(linked_parts_are_read_only) {
+  Files f;
+  const fs::path step = f.dir / "model.step";
+  two_boxes(step, 5);
+  Document d = Document::create();
+  d.save_as(f.dir / "design.opad");
+  link_file(d, step);
+  Scene s = resolve(d);
+  const std::string a = linked(s, 0), b = linked(s, 1);
+  const std::string key_a = s.node(a)->body_key;
+  design::apply_ops(d, {design::make_feature_op("box", "Block", {{"length", 40}, {"width", 40}, {"height", 40}})});
+  const std::string block = resolve(d).features.back().result["bodies"][0]["id"];
+  const json a_ref = json::array({{{"body", a}, {"kind", "body"}}});
+  auto refused = [&](const std::string& kind, const json& inputs, const std::string& why) {
+    const size_t ops = d.ops.size();
+    try {
+      commands::run("feature", {{"kind", kind}, {"inputs", inputs}}, &d);
+    } catch (const Error& e) {
+      if (std::string(e.what()).find(why) == std::string::npos) throw check::Failure(kind + ": " + e.what());
+      CHECK_EQ(d.ops.size(), ops);
+      return;
+    }
+    throw check::Failure(kind + " was allowed on a linked part");
+  };
+  refused("move", {{"bodies", a_ref}, {"dz", "5 mm"}}, "cannot be changed");
+  refused("move", {{"bodies", a_ref}, {"dz", "5 mm"}, {"copy", true}}, "cannot be copied");
+  refused("pattern_circ", {{"bodies", a_ref}, {"count", "3"}}, "cannot be copied");
+  commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", "10 mm"}, {"y", "10 mm"}, {"length", "4 mm"}, {"width", "4 mm"}, {"height", "100 mm"}}}}, &d);
+  const std::string pin = resolve(d).features.back().result["bodies"][0]["id"];
+  refused("combine", {{"target", {a}}, {"tools", {pin}}, {"operation", "cut"}, {"keep_tools", true}}, "cannot be changed");
+  refused("combine", {{"target", {a}}, {"tools", {block}}, {"operation", "cut"}, {"keep_tools", true}}, "cannot be consumed");  // all of A
+  refused("combine", {{"target", {block}}, {"tools", {a}}, {"operation", "cut"}}, "cannot be consumed");
+  // A tool it is; an automatic cut passes it by (a bore through the block and A cuts the block only); Remove takes it out.
+  commands::run("feature", {{"kind", "combine"}, {"inputs", {{"target", {block}}, {"tools", {a}}, {"operation", "cut"}, {"keep_tools", true}}}}, &d);
+  commands::run("feature", {{"kind", "cylinder"}, {"inputs", {{"x", "10 mm"}, {"y", "10 mm"}, {"diameter", "4 mm"}, {"height", "60 mm"}, {"operation", "cut"}}}}, &d);
+  s = resolve(d);
+  CHECK_EQ(s.node(a)->body_key, key_a);
+  CHECK(about(volume(d, s, a), 1000));
+  CHECK(about(volume(d, s, block), 64000 - 1000 - M_PI * 4 * 30, 0.01));
+  CHECK(about(volume(d, s, pin), 16 * 100 - M_PI * 4 * 60, 0.01));  // the bore went through the pin too
+  commands::run("feature", {{"kind", "remove"}, {"inputs", {{"bodies", json::array({{{"body", b}, {"kind", "body"}}})}}}}, &d);
+  CHECK(!resolve(d).node(b));
+  CHECK(d.serialize().find("#body ") != std::string::npos);  // the block's, never A's or B's
+  for (const auto& entry : d.bodies()) CHECK(entry.key != key_a || entry.external);
+}
+
 TEST(changed_file_shows_the_version_synced_when_remembered) {
   Files f;
   const fs::path step = f.dir / "model.step";
