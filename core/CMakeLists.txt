@@ -39,6 +39,19 @@ target_link_libraries(opad_core
 target_compile_definitions(opad_core PUBLIC _USE_MATH_DEFINES)
 if(TARGET TKV3d AND TARGET TKService)
   target_compile_definitions(opad_core PRIVATE OPAD_HAVE_FONT=1)
+  # Drawing text is shaped with HarfBuzz (Arabic and other complex scripts, src/drawing_text.cpp; glyph outlines through
+  # its draw API, 7.0 or later); without it OCCT's unshaped text is drawn. The static build's archive comes from the
+  # FreeType group at the end of the link line (occt_static.cmake), which holds HarfBuzz and its dependencies.
+  find_package(PkgConfig QUIET)
+  if(PKG_CONFIG_FOUND)
+    pkg_check_modules(OPAD_HB QUIET IMPORTED_TARGET harfbuzz>=7.0)
+  endif()
+  if(OPAD_HB_FOUND)
+    target_link_libraries(opad_core PRIVATE PkgConfig::OPAD_HB)
+    target_compile_definitions(opad_core PRIVATE OPAD_HAVE_SHAPING=1)
+  else()
+    message(STATUS "HarfBuzz 7 not found: drawing text is drawn unshaped")
+  endif()
 endif()
 if(OPAD_HAVE_GLTF)
   target_compile_definitions(opad_core PRIVATE OPAD_HAVE_GLTF=1)

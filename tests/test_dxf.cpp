@@ -219,6 +219,34 @@ TEST(text_sits_on_its_baseline_and_mtext_hangs_from_its_top) {
   CHECK(find(all, "D") != nullptr);
 }
 
+// TODO 11 UI-92: text is shaped (an Arabic word right-aligned on its point, the letters joined), fitted and aligned
+// between its two points, and MTEXT's bottom and middle attachments hold its last baseline and its middle.
+TEST(arabic_text_aligns_and_text_fits_between_its_points) {
+  Files f;
+  const std::string word = "\xD8\xBA\xD8\xB1\xD9\x81\xD8\xA9";  // "غرفة"
+  write_text_file(f.dir / "text2.dxf",
+                  section("HEADER", {{9, "$ACADVER"}, {1, "AC1027"}}) +
+                      section("ENTITIES", {
+                          {0, "TEXT"}, {8, "R"}, {10, "0"}, {20, "0"}, {40, "10"}, {1, word}, {72, "2"}, {11, "100"}, {21, "0"},
+                          {0, "TEXT"}, {8, "F"}, {10, "0"}, {20, "-50"}, {40, "10"}, {1, "HELL"}, {72, "5"}, {11, "100"}, {21, "-50"},
+                          {0, "TEXT"}, {8, "A"}, {10, "0"}, {20, "-100"}, {40, "10"}, {1, "HELL"}, {72, "3"}, {11, "100"}, {21, "-100"},
+                          {0, "MTEXT"}, {8, "B"}, {10, "200"}, {20, "0"}, {40, "6"}, {71, "7"}, {1, "HE\\PEH"},
+                          {0, "MTEXT"}, {8, "M"}, {10, "300"}, {20, "0"}, {40, "6"}, {71, "5"}, {1, "HE\\PEH"},
+                      }) + kEof);
+  ImportResult result;
+  const auto all = bodies(import(f.dir / "text2.dxf", true, false, &result));
+  const auto* r = find(all, "R");
+  if (!r) return;  // no font on this machine: the warning says so
+  const auto right = extent(r->box);
+  CHECK(right[2] <= 100.01 && right[2] > 98.5 && right[0] > 50 && right[0] < 90);
+  const auto fit = extent(find(all, "F")->box), aligned = extent(find(all, "A")->box);
+  CHECK(fit[0] < 5 && fit[2] > 95 && fit[2] <= 100.01 && std::abs(fit[3] + 40) < 0.05);  // as long as its points, as high
+  CHECK(aligned[0] < 5 && aligned[2] > 95 && aligned[3] + 100 > 15);                     // and larger with them
+  const auto bottom = extent(find(all, "B")->box), middle = extent(find(all, "M")->box);
+  CHECK(std::abs(bottom[1]) < 0.05 && std::abs(bottom[3] - (10 + 6)) < 0.05);  // last baseline on the point, lines 10 apart
+  CHECK(std::abs((middle[1] + middle[3]) / 2) < 0.05);
+}
+
 TEST(survey_coordinates_and_metres) {
   Files f;
   write_text_file(f.dir / "site.dxf",

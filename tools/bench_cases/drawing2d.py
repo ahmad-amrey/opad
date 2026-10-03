@@ -103,6 +103,26 @@ def picture_file(root, document=None):
     return path
 
 
+def text_file(root, document=None):
+    """Text as AutoCAD 2013 writes it (UTF-8): three behs (Joined), 'III' (Latin), an Arabic word right-aligned on a guide
+    line at x = 100 (Right, Guide), Latin and Arabic in one line (Mixed), an Arabic paragraph wrapped at 60 (Para)."""
+    def text(layer, x, y, s, extra=()):
+        return [(0, "TEXT"), (8, layer), (10, x), (20, y), (40, 10), (1, s)] + list(extra)
+    pairs = [(0, "SECTION"), (2, "HEADER"), (9, "$ACADVER"), (1, "AC1027"), (9, "$INSUNITS"), (70, "4"), (0, "ENDSEC"),
+             (0, "SECTION"), (2, "TABLES"), (0, "TABLE"), (2, "STYLE"), (0, "STYLE"), (2, "STANDARD"), (70, "0"), (40, "0"), (41, "1"),
+             (3, "arial.ttf"), (0, "ENDTAB"), (0, "ENDSEC"), (0, "SECTION"), (2, "ENTITIES")]
+    pairs += text("Joined", 0, 0, "ببب") + text("Latin", 0, -20, "III")
+    pairs += text("Right", 0, -40, "غرفة النوم", [(72, 2), (11, 100), (21, -40)])
+    pairs += [(0, "LINE"), (8, "Guide"), (10, 100), (20, -45), (11, 100), (21, -25)]
+    pairs += text("Mixed", 0, -60, "Room غرفة")
+    pairs += [(0, "MTEXT"), (8, "Para"), (10, 120), (20, 0), (40, 5), (41, 60), (71, 1),
+              (1, "هذا نص طويل يلتف على عدة أسطر (مع أقواس) 3.5")]
+    pairs += [(0, "ENDSEC"), (0, "EOF")]
+    path = root / "text.dxf"
+    path.write_text("".join(f"{code}\n{value}\n" for code, value in pairs), encoding="utf-8")
+    return path
+
+
 def room_document(root, document):
     return document("room", ("import", "--file", str(room_file(root)), "--center", "true"))
 
@@ -140,4 +160,7 @@ CASES = [
     ("plot-rtl", plot_file, {"OPAD_BENCH_PLOT": "{prefix}", "OPAD_LANG": "ar"}),
     # UI-88: a drawing's raster image is plotted (red where it lies, grey in monochrome, an image in the PDF).
     ("plot-image", picture_file, {"OPAD_BENCH_PLOT_IMAGE": "{prefix}"}),
+    # UI-92: drawing text shaped: Arabic letters joined in the view, a right-aligned Arabic word on its guide, Latin and
+    # Arabic side by side in one line. <prefix>.png
+    ("drawing-text", text_file, {"OPAD_BENCH_TEXT2D": "{prefix}"}),
 ]

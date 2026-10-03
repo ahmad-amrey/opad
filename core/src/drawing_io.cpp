@@ -6,13 +6,10 @@
 #include "opad/geometry.hpp"
 #include "import_common.hpp"
 #include "drawing_common.hpp"
+#include "drawing_text.hpp"
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <gp_Pln.hxx>
-#ifdef OPAD_HAVE_FONT
-#include <StdPrs_BRepTextBuilder.hxx>
-#include <StdPrs_BRepFont.hxx>
-#endif
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepBndLib.hxx>
@@ -344,6 +341,7 @@ Drawing read_svg(const std::filesystem::path& file) {
   auto local=[](std::string tag) { const auto colon=tag.find(':'); return colon==std::string::npos?tag:tag.substr(colon+1); };
   if(local(root.getTagName().GetString())!="svg") throw Error("expected SVG root");
   Drawing out;
+  detail::TextOutliner outliner({file.parent_path()});  // shaped text (UI-92): font-family's fonts, else a sans-serif
   std::map<std::string,LDOM_Element> ids;
   std::function<void(const LDOM_Element&,int)> index;
   index=[&](const LDOM_Element& e,int depth) {
@@ -444,19 +442,12 @@ Drawing read_svg(const std::filesystem::path& file) {
       };
       content(e);
       if(!value.empty()) {
-#ifdef OPAD_HAVE_FONT
-        StdPrs_BRepFont font;
-        const double size=length(property("font-size","16"));
-        const auto family=property("font-family","sans-serif");
-        if(size>0&&font.FindAndInit(family.c_str(),Font_FA_Regular,size)) {
-          const auto align=property("text-anchor","");
-          const auto h=align=="middle"?Graphic3d_HTA_CENTER:align=="end"?Graphic3d_HTA_RIGHT:Graphic3d_HTA_LEFT;
-          const auto shape=StdPrs_BRepTextBuilder().Perform(font,NCollection_String(value.c_str()),gp_Ax3(gp_Pnt(num("x"),-num("y"),0),gp::DZ()),h,Graphic3d_VTA_BOTTOM);
-          out.add(layer,shape);
-        } else out.warnings.push_back("SVG text font unavailable; text retained in source");
-#else
-        out.warnings.push_back("SVG text outlines need OCCT font support; text retained in source");
-#endif
+        detail::TextRequest request; request.text=value; request.font=property("font-family","sans-serif"); request.size=length(property("font-size","16"));
+        const auto align=property("text-anchor","");
+        request.h=align=="middle"?detail::TextRequest::Center:align=="end"?detail::TextRequest::Right:detail::TextRequest::Left;
+        const auto shape=request.size>0?outliner.outline(request,gp_Ax3(gp_Pnt(num("x"),-num("y"),0),gp::DZ())):TopoDS_Shape();
+        if(!shape.IsNull()) { if(shape.NbChildren()>0) out.add(layer,shape); }
+        else out.warnings.push_back("SVG text font unavailable; text retained in source");
       }
     } else if(tag!="svg"&&tag!="g"&&tag!="symbol"&&tag!="a"&&tag!="switch") {
       out.warnings.push_back("SVG element retained in source: "+full);
