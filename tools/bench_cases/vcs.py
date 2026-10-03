@@ -1,5 +1,5 @@
 """gui_benches cases of version control (T3); the benches are in app/VcsBench.cpp (DiskSync::bench, GitWatch::bench,
-CompareMode::bench) and app/RecoveryBench.cpp."""
+CompareMode::bench), app/VersionBench.cpp (VersionControl::bench) and app/RecoveryBench.cpp."""
 import json
 import shutil
 import subprocess
@@ -42,6 +42,27 @@ def recovered(root, document, name="recovery"):
     return document(f"{name}/model", box(0, 30), box(50, 20), box(100, 10))
 
 
+def versioned_with_remote(root, document, name="version"):
+    """Version control (UI-62): <name>/model.opad (one box) committed on main with .gitattributes asking for OPAD's driver,
+    the bare remote <name>-remote.git added as origin and not pushed yet (<name>-other: the bench's other clone). The bench
+    commits, pushes, branches, merges, pulls what the other clone pushed, compares, restores, opens read-only and aborts a
+    conflicting merge."""
+    folder = root / name
+    folder.mkdir(exist_ok=True)
+    doc = document(f"{name}/model", ("feature", "--kind", "box", "--inputs", '{"length":"5 mm","width":"5 mm","height":"5 mm"}'))
+    git = shutil.which("git")
+    if not git:
+        return folder / "no-git.opad"  # skipped: the case needs git
+    (folder / ".gitattributes").write_bytes(b"*.opad text eol=lf merge=opad diff=opad\n")
+    quiet = dict(cwd=folder, check=True, capture_output=True)
+    subprocess.run([git, "init", "-q", "-b", "main"], **quiet)
+    subprocess.run([git, "add", "-A"], **quiet)
+    subprocess.run([git, "-c", "user.name=bench", "-c", "user.email=bench@example.com", "commit", "-q", "-m", "first"], **quiet)
+    subprocess.run([git, "init", "-q", "--bare", "-b", "main", str(root / f"{name}-remote.git")], **quiet)
+    subprocess.run([git, "remote", "add", "origin", str(root / f"{name}-remote.git")], **quiet)
+    return doc
+
+
 CASES = [
     ("external-change", external, {"OPAD_BENCH_EXTERNAL_CHANGE": "{prefix}", "OPAD_BENCH_CLI": "{cli}"}),
     # git without this machine's settings: a global config of the run's own (the bench sets the author there), no system one.
@@ -55,6 +76,13 @@ CASES = [
      {"OPAD_BENCH_COMPARE": "{prefix}", "OPAD_BENCH_COMPARE_GIT": "1" if shutil.which("git") else "0", "GIT_CONFIG_GLOBAL": "{root}/git-global",
       "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
     # Recovery with diff: the offer's detail pane, Restore into file, Merge into current, Review changes…, Discard; also in Arabic.
+    # Version control: commit, push, branch, merge, pull, history; git's global config the run's own (the author is asked).
+    ("version", versioned_with_remote, {"OPAD_BENCH_VERSION": "{prefix}", "OPAD_BENCH_CLI": "{cli}", "GIT_CONFIG_GLOBAL": "{root}/version-global",
+                                        "GIT_CONFIG_NOSYSTEM": "1"}),
+    # The same right to left: the panel, the dialogs and the toasts translated.
+    ("version-ar", lambda root, document: versioned_with_remote(root, document, "version-ar"),
+     {"OPAD_BENCH_VERSION": "{prefix}", "OPAD_BENCH_CLI": "{cli}", "GIT_CONFIG_GLOBAL": "{root}/version-ar-global", "GIT_CONFIG_NOSYSTEM": "1",
+      "OPAD_LANG": "ar"}),
     ("recovery-diff", recovered, {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}"}),
     ("recovery-diff-ar", lambda root, document: recovered(root, document, "recovery-ar"), {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}", "OPAD_LANG": "ar"}),
 ]

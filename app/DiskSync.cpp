@@ -100,6 +100,7 @@ void DiskSync::check() {
   if (m_dismissed && now == *m_dismissed && !m_saveAfter) return;
   if (!now.exists) {
     m_read.reset();
+    m_adopt = false;
     if (m_banner->state() != "deleted") showDeleted();
     return;
   }
@@ -108,6 +109,14 @@ void DiskSync::check() {
     return;
   }
   read();
+}
+
+void DiskSync::adopt() {
+  m_adopt = true;
+  m_decided = false;
+  m_dismissed.reset();
+  check();
+  if (!m_job && !m_read) m_adopt = false;  // the file is as it was: nothing to take in
 }
 
 void DiskSync::read(bool everyBody) {
@@ -138,6 +147,7 @@ void DiskSync::read(bool everyBody) {
 void DiskSync::decide() {
   const auto& r = *m_read;
   if (std::exchange(m_reloadAfter, false) && r.doc) return reload(true);
+  const bool adopt = std::exchange(m_adopt, false) && !m_doc->isDirty();
   m_decided = true;
   if (!r.doc) return showUnreadable();
   if (r.relation == opad::Relation::same) {  // touched, or written back alike
@@ -147,6 +157,15 @@ void DiskSync::decide() {
     if (m_banner->state() != "merged") m_banner->dismiss();
     if (std::exchange(m_saveAfter, false)) trigger("file.save");
     return;
+  }
+  if (adopt && r.relation != opad::Relation::extends) {  // another branch's version: the window asked for it
+    if (!idle()) {
+      m_decided = false;
+      m_adopt = true;
+      schedule(500);
+      return;
+    }
+    return reload(true);
   }
   if (r.relation == opad::Relation::other) return showReplaced(tr("It is another document now."));
   if (r.relation == opad::Relation::rewritten)

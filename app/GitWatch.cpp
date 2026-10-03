@@ -328,6 +328,7 @@ QMenu* GitWatch::menu(QWidget* parent) {
     a->setObjectName(QString::fromLatin1(id));
     connect(a, &QAction::triggered, this, fn);
   };
+  if (m_extend) m_extend(m);
   using D = git::Repo::Doc;
   if (m_repo.doc() == D::Clean || m_repo.doc() == D::Modified || m_repo.doc() == D::Conflict)
     add("git.compare", tr("Compare with the last commit…"), [this] { emit compareRequested(); });
@@ -382,6 +383,25 @@ Job* GitWatch::command(const QString& title, const QStringList& args, std::funct
       r.err = error.toUtf8();
     }
     if (done) done(r);
+    self->refresh(true);
+  });
+}
+
+Job* GitWatch::job(const QString& title, std::function<void(const git::Context&, const git::RunOptions&)> work, std::function<void(bool, const QString&)> done) {
+  const git::Context c = context();
+#ifdef _WIN32
+  if (!c.askpass.isEmpty()) AllowSetForegroundWindow(ASFW_ANY);
+#endif
+  ++m_busy;
+  return m_jobs->async(title, [c, work = std::move(work)](Progress p) {
+    git::RunOptions o;
+    o.cancelled = [p] { return p.cancelled(); };
+    o.progress = [p](const QString& phase, int percent) { p.setPhase(phase, percent); };
+    work(c, o);
+  }, [self = QPointer<GitWatch>(this), done = std::move(done)](bool ok, const QString& error) {
+    if (!self) return;
+    --self->m_busy;
+    if (done) done(ok, error);
     self->refresh(true);
   });
 }

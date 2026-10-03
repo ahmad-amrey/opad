@@ -43,6 +43,11 @@ class GitWatch : public QObject {
   // A git command as a job (the strip after 0.5 s, Cancel), then `done` on the UI thread and a refresh. The default
   // options stop git after 60 s: network commands pass git::RunOptions::network().
   Job* command(const QString& title, const QStringList& args, std::function<void(const git::Result&)> done = {}, git::RunOptions o = {});
+  // Several git commands as one such job: `work` runs on a worker with the repository's context and options that carry the
+  // job's Cancel and progress (git::run them; throw to fail); `done` on the UI thread, then a refresh. Reads wait meanwhile.
+  Job* job(const QString& title, std::function<void(const git::Context& c, const git::RunOptions& o)> work, std::function<void(bool ok, const QString& error)> done = {});
+  // The chip's menu starts with these (the Version control area's commands, UI-62).
+  void setMenuExtension(std::function<void(QMenu*)> extend) { m_extend = std::move(extend); }
   // The chip's actions by object name: git.compare, git.setup, git.driver, git.identity, git.trust, git.clone, git.locate,
   // git.refresh.
   QMenu* menu(QWidget* parent);
@@ -55,6 +60,7 @@ class GitWatch : public QObject {
   // Runs `then` once git knows the author; asks for a name and an email address first when it does not.
   void ensureIdentity(std::function<void()> then = {});
   void editIdentity(std::function<void()> then = {});
+  bool idle() const { return !m_running && !m_busy && !m_debounce.isActive() && m_repo.state != git::Repo::State::None; }  // benches
   bool bench();  // OPAD_BENCH_GIT=<prefix>
   // opad.exe as git's GIT_ASKPASS: `opad.exe --askpass <prompt>`, or the one argument git gives when OPAD_ASKPASS is set.
   static bool isAskpass(int argc, char** argv);
@@ -95,4 +101,5 @@ class GitWatch : public QObject {
   QSet<QString> m_repaired;  // tops whose stale driver config was rewritten this session
   QSet<QString> m_later;     // tops whose Set up merging banner was closed this session
   QString m_lastFailure;     // the last error shown (benches)
+  std::function<void(QMenu*)> m_extend;
 };

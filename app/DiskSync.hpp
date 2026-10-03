@@ -27,6 +27,9 @@ class DiskSync : public QObject {
  public:
   DiskSync(AppDocument* doc, JobRunner* jobs, QWidget* viewport, QWidget* window);
   void check();  // one stat; reads the file on a worker when it is not what this session last read or wrote
+  // A command of the window changed the file (a branch switch, a merge, a pull: UI-62): what it is now comes in without a
+  // question while nothing is unsaved here, new ops merged and another history reloaded. Asked again when unsaved.
+  void adopt();
   bool bench();  // OPAD_BENCH_EXTERNAL_CHANGE=<prefix>
  private:
   void watch();
@@ -56,6 +59,7 @@ class DiskSync : public QObject {
   bool m_decided = false;    // the banner (or nothing) for m_read is up
   bool m_saveAfter = false;  // Save was refused: it runs once the file turns out unchanged
   bool m_reloadAfter = false;
+  bool m_adopt = false;      // the next change is the window's own (adopt)
   std::optional<AppDocument::DiskStat> m_dismissed;  // the banner was closed for this state of the file
   int m_reads = 0;
 };

@@ -1,7 +1,8 @@
 // Version control as an area of the window (AreaController.hpp): the open file kept in step with the disk (DiskSync,
 // UI-56) and its repository (GitWatch, UI-61 / UI-136): the status chip beside the path, File > Clone repository…;
 // Compare (CompareMode, UI-58): File > Compare versions…, Inspect > Versions, the git chip's Compare with the last commit,
-// the Recovery offer's Compare…; Show unsaved changes (UI-59), also the unsaved-changes question's Review changes….
+// the Recovery offer's Compare…; Show unsaved changes (UI-59), also the unsaved-changes question's Review changes…;
+// the Version control panel and its commands (VersionControl, UI-62): File > Version control, Alt+4, the chip's menu.
 #include <QAction>
 #include <QMainWindow>
 #include <QMenu>
@@ -15,6 +16,7 @@
 #include "GitWatch.hpp"
 #include "RecoveryManager.hpp"
 #include "Ribbon.hpp"
+#include "VersionControl.hpp"
 #include "Viewport.hpp"
 
 namespace {
@@ -48,6 +50,33 @@ class Vcs : public AreaController {
       return c.document && !c.viewer && !c.sketching && d && d->isDirty() && !d->doc.path.empty();
     };
     services().addCommand(unsaved, [this] { if (m_compare) m_compare->showUnsaved(); });
+    // Version control (UI-62): the panel and its commands, for a saved OPAD document; they say why when git cannot.
+    auto saved = [this](const CommandContext& c) {
+      const AppDocument* d = services().document();
+      return c.document && !c.viewer && d && !d->doc.path.empty();
+    };
+    auto command = [&](const char* id, const QString& label, const char* icon, const QStringList& keywords, std::function<void(VersionControl*)> fn,
+                       const QKeySequence& key = {}) {
+      CommandInfo info;
+      info.id = QString::fromLatin1(id);
+      info.label = label;
+      info.icon = QString::fromLatin1(icon);
+      info.group = group;
+      info.key = key;
+      info.keywords = keywords;
+      info.enabledWhen = saved;
+      services().addCommand(info, [this, fn] { if (m_version) fn(m_version); });
+    };
+    command("vcs.panel", tr("Version control"), "git", {"git", "history", "branch", "commit", "push", "pull", "merge", "versions"},
+            [](VersionControl* v) { v->openPanel(); }, QKeySequence(QStringLiteral("Alt+4")));
+    command("vcs.commit", tr("Commit…"), "commit", {"git", "save", "version", "check in"}, [](VersionControl* v) { v->commit(); });
+    command("vcs.push", tr("Push"), "push", {"git", "upload", "share", "remote"}, [](VersionControl* v) { v->push(); });
+    command("vcs.pull", tr("Pull"), "pull", {"git", "update", "download", "remote", "merge"}, [](VersionControl* v) { v->pull(); });
+    command("vcs.fetch", tr("Fetch"), "pull", {"git", "remote", "update"}, [](VersionControl* v) { v->fetch(); });
+    command("vcs.newBranch", tr("New branch…"), "branch", {"git", "branch", "create"}, [](VersionControl* v) { v->newBranch(); });
+    command("vcs.history", tr("History"), "history", {"git", "log", "commits", "restore", "older"}, [](VersionControl* v) { v->openPanel(VersionControl::History); });
+    command("vcs.branches", tr("Branches"), "branch", {"git", "switch", "checkout", "merge"}, [](VersionControl* v) { v->openPanel(VersionControl::Branches); });
+    command("vcs.pack", tr("Pack the repository"), "git", {"git", "gc", "maintenance", "size", "compress"}, [](VersionControl* v) { v->pack(); });
     // ] and [ step through the changes while Compare is open; elsewhere they do nothing.
     for (const auto& [id, label, key, delta] : {std::tuple{"vcs.nextChange", tr("Next change"), "]", 1}, std::tuple{"vcs.previousChange", tr("Previous change"), "[", -1}}) {
       CommandInfo step;
@@ -70,11 +99,21 @@ class Vcs : public AreaController {
     file->insertAction(before, services().action("file.clone"));
     file->insertAction(before, services().action("vcs.compare"));
     file->insertAction(before, services().action("vcs.unsavedChanges"));
+    auto* version = new QMenu(tr("Version control"), file);
+    version->setObjectName("versionMenu");
+    for (const char* id : {"vcs.panel", "vcs.commit", "vcs.pull", "vcs.push", "vcs.fetch", "-", "vcs.history", "vcs.branches", "vcs.newBranch", "-", "vcs.pack"})
+      if (QString::fromLatin1(id) == "-") version->addSeparator();
+      else version->addAction(services().action(QString::fromLatin1(id)));
+    file->insertMenu(before, version);
   }
   void ribbon(RibbonLayout& layout) override {
     layout.addGroup("review.inspect", "review.inspect.versions", tr("Versions"));
     layout.addAction("review.inspect.versions", services().action("vcs.compare"));
     layout.addAction("design.construct.history", services().action("vcs.compare"));
+    for (const char* group : {"review.inspect.versions", "design.construct.history"}) {
+      layout.addAction(QString::fromLatin1(group), services().action("vcs.panel"));
+      layout.addAction(QString::fromLatin1(group), services().action("vcs.commit"));
+    }
   }
   void statusWidgets(QStatusBar* bar) override {  // the chip beside the document's path
     m_git = new GitWatch(services().jobs(), services().window(), services().viewport());
@@ -84,11 +123,12 @@ class Vcs : public AreaController {
   }
   void ready() override {
     AppDocument* doc = services().document();
-    new DiskSync(doc, services().jobs(), services().viewport(), services().window());  // changed on disk: merged or reported, never overwritten
+    auto* disk = new DiskSync(doc, services().jobs(), services().viewport(), services().window());  // changed on disk: merged or reported, never overwritten
     connect(doc, &AppDocument::pathChanged, this, [this, doc] {
       m_git->setFile(doc->hasDocument && !doc->browse && !doc->doc.path.empty() ? doc->path() : QString());
     });
     m_compare = new CompareMode(services(), m_git);
+    m_version = new VersionControl(services(), m_git, m_compare, disk);
     if (auto* recovery = services().window()->findChild<RecoveryManager*>())  // the Recovery offer's Compare…: the file, then the snapshot
       connect(recovery, &RecoveryManager::compareRequested, this, [this](const QString& source, const QString& snapshot, const QString& time) {
         m_compare->compareIn(source, CompareMode::savedVersion(source), CompareMode::recoveryVersion(snapshot, time));
@@ -100,6 +140,7 @@ class Vcs : public AreaController {
  private:
   GitWatch* m_git = nullptr;
   CompareMode* m_compare = nullptr;
+  VersionControl* m_version = nullptr;
 };
 }  // namespace
 
