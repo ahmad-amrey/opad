@@ -52,7 +52,7 @@ json feature_specs_json();
 
 // ---------------------------------------------------------------- plans
 struct NewBody {
-  std::string key, brep;
+  std::string key, brep;  // no brep: a linked asset's body, registered as external (assets.hpp)
   json meta;
   std::shared_ptr<TopoDS_Shape> shape;  // cached on commit so nothing is parsed back from text
 };
@@ -80,6 +80,10 @@ Plan plan_ops(const Document& doc, std::vector<json> new_ops, bool strict = true
 // Recomputes whatever is out of date (after a merge, a hand edit, a tombstone). An empty plan = up to date.
 Plan plan_regenerate(const Document& doc, bool force = false, const Cancel& cancel = {});
 json commit(Document& doc, Plan&& plan, const std::string& author = {});
+
+// Whether two shapes are the same geometry as regeneration judges it (topology counts, vertices to 1e-6 mm, volume, area,
+// centre): a recomputed body that is keeps its stored key (a linked asset's sync too).
+bool same_shapes(const TopoDS_Shape& a, const TopoDS_Shape& b);
 
 // Convenience for the command layer and tests: plan + commit.
 json apply_ops(Document& doc, std::vector<json> new_ops, const std::string& author = {});

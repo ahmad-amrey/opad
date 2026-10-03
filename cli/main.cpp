@@ -69,6 +69,7 @@ void print_usage() {
   std::printf("  thumbnail <file> --out <png|bgra> [--size 256]   a picture of the file (Explorer thumbnails)\n");
   std::printf("  licenses                      the third-party notices of this build (plain text)\n");
   std::printf("\nreferences: <uuid> | <uuid>/face/N | <uuid>/edge/N | <uuid>/vertex/N | point/x,y,z\n");
+  std::printf("linked files (import --link true): read from the document's folder or git work tree; --trust_assets true reads any\n");
   std::printf("environment: OPAD_AUTHOR (default author), OPAD_CACHE_DIR, OPAD_PLUGINS (path list),\n");
   std::printf("             OPAD_USE_ODA=1 (DWG through an installed ODA File Converter instead of LibreDWG; ODA's terms allow\n");
   std::printf("             non-members non-commercial use only)\n");
@@ -120,7 +121,7 @@ json probe(const std::string& file, bool viewer, bool mesh, bool cache) {
   out["cache"] = cached ? "hit" : "miss";
   if (viewer && cache && !cached) {
     const auto t4 = clock::now();
-    opad::viewer_cache_store(doc, opad::path_from_utf8(file), o);
+    out["cache_store"] = opad::viewer_cache_store(doc, opad::path_from_utf8(file), o, ms(t0, t1));
     out["cache_store_ms"] = ms(t4, clock::now());
   }
   return out;
@@ -350,13 +351,13 @@ int main(int argc, char** argv) {
     }
     // Positional conventions.
     const bool docless = command == "diff" || command == "version" || command == "commands" || command == "cache" ||
-                         command == "selection";
+                         command == "selection" || command == "kicad_models";
     size_t pi = 0;
     if (!docless && pi < positional.size() && !args.contains("doc")) args["doc"] = positional[pi++];
     if (command == "diff") {
       if (pi < positional.size() && !args.contains("a")) args["a"] = positional[pi++];
       if (pi < positional.size() && !args.contains("b")) args["b"] = positional[pi++];
-    } else if (command == "import") {
+    } else if (command == "import" || command == "kicad_models" || command == "kicad_sync_preview") {
       if (pi < positional.size() && !args.contains("file")) args["file"] = positional[pi++];
     } else if (command == "append") {
       if (pi < positional.size()) {

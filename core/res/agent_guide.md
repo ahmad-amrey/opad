@@ -238,6 +238,14 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   parts beyond the level (screws), `groups` move node lists as one, small parts ride on what they touch; `mode`
   radial, axis or stack (along `axis`). `name` saves it as a view op, `view` + `update` saves into that view (an
   `edit`). `measure` and `render` take `explode` (a view id or the spec) and see the parts where they are drawn.
+- `import` with `link: true` links the file instead of copying it (a bought part, a KiCad board, a picture to design
+  around): the document records where it is and its hash, and reads it whenever it opens. Its parts are read-only:
+  use them as references, sketch projections and tools (`combine` cut with `keep_tools: true`); a feature that would
+  change, move, copy or consume one is refused ("embed the file first"), and automatic join/cut targets skip them.
+  Status, sync (after the file changed), embed (an editable copy) and pack (a copy in `assets/`) are the `opad-cli
+  asset` command.
+- Pictures (`.png .jpg .bmp .gif .webp`) import as a flat canvas on XY at the picture's resolution (96 dpi unless the
+  file says); `transform` places and scales it.
 
 ## Checking the result
 

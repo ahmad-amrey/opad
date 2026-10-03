@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "opad/drawing/sheet.hpp"
+#include "opad/assets.hpp"
 #include "opad/scene.hpp"
 
 namespace opad {
@@ -237,9 +238,9 @@ const Op& Document::append(json op, const std::string& author) {
   if (out["op"] == "edit") {
     const auto* target = find_op(out["target"].get<std::string>());
     if (target && !known_type(target->type)) throw Error("edit: op '" + target->type + "' needs a newer OPAD; this build cannot edit it");
-    if (target && (target->type == "annotation" || drawing::is_sheet_record(target->type))) {
+    if (target && (target->type == "annotation" || target->type == "import" || drawing::is_sheet_record(target->type))) {  // an asset's sync rewrites the nodes
       for (const char* k : {"op", "id", "ts", "by"})
-        if (target->type != "annotation" && out["set"].contains(k)) throw Error(std::string("edit: '") + k + "' cannot be changed");
+        if (drawing::is_sheet_record(target->type) && out["set"].contains(k)) throw Error(std::string("edit: '") + k + "' cannot be changed");
       json effective = target->data;
       for (const auto& e : effective_ops(*this)) if (e.op->id == target->id) effective = e.data();
       for (const auto& [key,value] : out["set"].items()) {if(value.is_null()) effective.erase(key); else effective[key]=value;}
@@ -254,6 +255,16 @@ const Op& Document::append(json op, const std::string& author) {
   ops.push_back(std::move(o));
   dirty = true;
   return ops.back();
+}
+
+void Document::rewrite_op(size_t index, json data) {
+  if (index < persisted_ops_ || index >= ops.size()) throw Error("only an op not saved yet can be rewritten");
+  Op& o = ops[index];
+  if (data.value("id", "") != o.id || data.value("op", "") != o.type) throw Error("a rewritten op keeps its id and type");
+  validate_op(data);
+  o.raw = sketch_records(data) ? record_text(data) : data.dump();
+  o.data = std::move(data);
+  dirty = true;
 }
 
 std::string Document::add_body(const std::string& brep, json meta) {
@@ -284,8 +295,23 @@ std::string Document::add_live_body(const std::string& key, json meta) {
 
 bool Document::has_live_bodies() const {
   for (const auto& b : bodies_)
-    if (b.brep.empty() && b.indexed.empty()) return true;
+    if (b.brep.empty() && b.indexed.empty() && !b.external) return true;
   return false;
+}
+
+std::string Document::add_external_body(const std::string& key, json meta) {
+  if (auto it = bodies_index_.find(key); it != bodies_index_.end()) {
+    BodyEntry& e = bodies_[it->second];
+    if (e.brep.empty()) e.external = true, e.meta = std::move(meta);  // read again (a live body, a stale shape): as read now
+    return key;
+  }
+  BodyEntry e;
+  e.key = key;
+  e.meta = std::move(meta);
+  e.external = true;
+  bodies_index_[key] = bodies_.size();
+  bodies_.push_back(std::move(e));
+  return key;
 }
 
 std::vector<Op> Document::truncate_ops(size_t count) {
@@ -471,6 +497,7 @@ std::string Document::serialize() const {
   }
   out += "#bodies\n";
   for (const auto& b : bodies_) {
+    if (b.external) continue;  // a linked asset's: read from its file
     const std::string_view brep = b.text();
     size_t lines = static_cast<size_t>(std::count(brep.begin(), brep.end(), '\n'));
     out += "#body ";
@@ -659,6 +686,7 @@ void Document::save() {
 
 void Document::save_as(const std::filesystem::path& p) {
   header.format = kFormatVersion;  // migrate on save (F9)
+  rebase_asset_paths(*this, p.parent_path());
   write_text_file(p, serialize());
   path = p;
   persisted_ops_ = ops.size();

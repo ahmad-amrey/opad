@@ -20,6 +20,7 @@
 
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "KicadBoards.hpp"
 #include "opad/design/feature.hpp"
 
 void MainWindow::buildToolsActions() {
@@ -306,6 +307,8 @@ void MainWindow::buildRibbon() {
   oda->setChecked(m_settings.value("files/useOda", false).toBool());
   settings->addAction(oda);
   connect(oda, &QAction::toggled, this, [this, oda](bool on) { legal::setUseOda(this, oda, on); });
+  // KiCad boards: what is built, where footprints' 3D models are looked for, downloads (read at the next open).
+  settings->addAction(tr("KiCad boards…"), this, [this] { KicadDialog(this, false).exec(); });
   settings->addAction(action("panel.browser"));
   auto* autoBrowser = settings->addAction(tr("Auto-hide scene browser"));
   autoBrowser->setCheckable(true);

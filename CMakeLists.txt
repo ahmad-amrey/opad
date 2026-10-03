@@ -44,6 +44,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 include(cmake/occt.cmake)
 find_package(ZLIB REQUIRED)  # 3MF parts are deflated zip entries (core) and its tests write some
+find_package(zstd CONFIG QUIET)  # optional: models embedded in KiCad boards are zstd-compressed (core)
 
 add_subdirectory(core)
 if(OPAD_BUILD_CLI OR OPAD_BUILD_APP)

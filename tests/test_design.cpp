@@ -548,6 +548,77 @@ TEST(open_endpoint_detection_handles_t_junctions_and_construction) {
   Sketch circle;circle.add_circle(circle.add_point(0,0),10);CHECK(dangling_vertices(circle).empty());
 }
 
+// UI-71: moving, scaling or fading a backdrop stores only the fields that changed (a nudge stored the whole picture again),
+// a regeneration's result leaves the pictures out, and replay brings them back from the sketch as given.
+TEST(sketch_backdrop_edits_never_store_the_picture_again) {
+  Document doc = Document::create();
+  commands::run("param", {{"name", "width"}, {"expr", "40 mm"}}, &doc);
+  Sketch sk = rectangle(0, 0, 40, 20, "width");
+  const std::string picture(200000, 'A');  // a photo's base64 (never decoded here)
+  sk.images.push_back({{"id", sk.next_id()}, {"name", "photo.jpg"}, {"data", picture}, {"position", {0, 0}}, {"width", 50}, {"height", 25}, {"opacity", 0.5}});
+  const std::string id = run_id(sketch_cmd(doc, sk));
+  auto grown = [&, size = doc.serialize().size()]() mutable { const size_t now = doc.serialize().size(), by = now - size; size = now; return by; };
+  auto nudge = [&](double x, double y) {
+    const json before = resolve(doc).sketch(id)->geometry;
+    json after = before;
+    after["images"][0]["position"] = {x, y};
+    after["images"][0]["opacity"] = 0.7;
+    after["images"][0].erase("name");
+    const json delta = sketch_delta(before, after);
+    CHECK(!delta.contains("images"));
+    CHECK_EQ(delta["image_fields"].size(), size_t(1));
+    CHECK(!delta["image_fields"][0].contains("data") && !delta["image_fields"][0].contains("width"));
+    CHECK(!before["images"][0].contains("name") || delta["image_fields"][0].at("name").is_null());
+    CHECK(apply_sketch_delta(before, delta) == after);
+    design::apply_ops(doc, {make_edit_op(id, {{"geometry_delta", delta}})});
+  };
+  nudge(5, 2);
+  CHECK(grown() < 1024);  // was the whole picture again
+  json shown = resolve(doc).sketch(id)->geometry;
+  CHECK(shown["images"][0]["data"] == picture);
+  CHECK(shown["images"][0]["position"] == json({5, 2}));
+  // A parameter re-solves the sketch: its result has the new points, never the pictures.
+  commands::run("param", {{"name", "width"}, {"expr", "60 mm"}}, &doc);
+  CHECK(grown() < 8192);
+  const Op& regen = doc.ops.back();
+  CHECK_EQ(regen.type, std::string("regen"));
+  CHECK(regen.data["results"][id].contains("geometry") && !regen.data["results"][id]["geometry"].contains("images"));
+  shown = resolve(doc).sketch(id)->geometry;
+  CHECK(shown["images"][0]["data"] == picture);
+  CHECK_NEAR(shown["points"][1]["x"].get<double>(), 60, 1e-9);
+  // Moved again after the regeneration: the solved points stay, the picture is still stored once.
+  nudge(-3, 1);
+  CHECK(grown() < 1024);
+  shown = resolve(Document::parse(doc.serialize())).sketch(id)->geometry;
+  CHECK(shown["images"][0]["position"] == json({-3, 1}));
+  CHECK_NEAR(shown["points"][1]["x"].get<double>(), 60, 1e-9);
+  size_t copies = 0;
+  for (size_t at = 0; (at = doc.serialize().find(picture, at)) != std::string::npos; at += picture.size()) ++copies;
+  CHECK_EQ(copies, size_t(1));
+  // Another picture is a whole record; what an older build kept of field changes (a sketch key) is dropped on replay.
+  json before = shown, after = shown;
+  after["images"][0]["data"] = std::string(1000, 'B');
+  CHECK_EQ(sketch_delta(before, after)["images"].size(), size_t(1));
+  CHECK(!sketch_delta(before, after).contains("image_fields"));
+  before["image_fields"] = json::array({{{"id", 99}, {"width", 1}}});
+  CHECK(!apply_sketch_delta(before, json::object()).contains("image_fields"));
+  CHECK_THROWS(apply_sketch_delta(shown, {{"image_fields", json::array({{{"id", 99}, {"width", 1}}})}}));
+  // What the viewport compares on every sync: the picture by its samples, never its bytes; a move, a fade or another picture
+  // of the same length (bytes in the middle) changes it.
+  const std::string stamp = geometry_stamp(shown);
+  CHECK(stamp.size() < 2048 && stamp.find(std::string(64, 'A')) == std::string::npos);
+  CHECK(geometry_stamp(shown) == stamp);
+  json moved = shown, faded = shown, other = shown;
+  moved["images"][0]["position"] = {-3, 2};
+  faded["images"][0]["opacity"] = 0.2;
+  std::string middle = picture;
+  middle[picture.size() / 2] = 'B';
+  other["images"][0]["data"] = middle;
+  CHECK(geometry_stamp(moved) != stamp && geometry_stamp(faded) != stamp && geometry_stamp(other) != stamp);
+  shown["points"][1]["x"] = 61;
+  CHECK(geometry_stamp(shown) != stamp);
+}
+
 TEST(sketch_record_format_and_incremental_replay) {
   Document doc=Document::create();
   Sketch sk; int a=sk.add_point(0,0),b=sk.add_point(10,0); sk.add_line(a,b);

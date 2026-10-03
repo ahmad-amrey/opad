@@ -3,33 +3,61 @@
 #include <cmath>
 #include <set>
 #include <functional>
+#include <string_view>
 
 namespace opad::design {
 
+namespace {
+bool record_list(const std::string& key) { return key == "points" || key == "entities" || key == "constraints" || key == "patterns" || key == "images"; }
+
+bool same_picture(const json& a, const json& b) {
+  const auto x = a.find("data"), y = b.find("data");
+  return (x == a.end()) == (y == b.end()) && (x == a.end() || *x == *y);
+}
+// An image whose bytes stayed: only the fields that changed, a field gone as null (UI-71: every nudge appended the whole
+// picture again, +1.9 MB per move of a 1.4 MB PNG).
+json image_fields(const json& was, const json& now) {
+  json out = {{"id", now.at("id")}};
+  for (const auto& [k, v] : now.items())
+    if (k != "id" && (!was.contains(k) || was.at(k) != v)) out[k] = v;
+  for (const auto& [k, v] : was.items())
+    if (!now.contains(k)) out[k] = nullptr;
+  return out;
+}
+}  // namespace
+
 json sketch_delta(const json& before, const json& after) {
-  json delta = json::object();
+  json delta = json::object(), fields = json::array();
   for (const char* key : {"points", "entities", "constraints", "patterns", "images"}) {
-    std::map<int, json> old, now;
-    for (const auto& v : before.value(key, json::array())) old[v.at("id").get<int>()] = v;
-    for (const auto& v : after.value(key, json::array())) now[v.at("id").get<int>()] = v;
+    std::map<int, const json*> old, now;  // read in place: a picture is megabytes
+    if (const auto it = before.find(key); it != before.end() && it->is_array()) for (const auto& v : *it) old[v.at("id").get<int>()] = &v;
+    if (const auto it = after.find(key); it != after.end() && it->is_array()) for (const auto& v : *it) now[v.at("id").get<int>()] = &v;
     json changes = json::array();
     for (const auto& [id, v] : old) if (!now.count(id)) changes.push_back({{"id", id}, {"deleted", true}});
-    for (const auto& [id, v] : now) if (!old.count(id) || old.at(id) != v) changes.push_back(v);
+    for (const auto& [id, v] : now) {
+      const auto was = old.find(id);
+      if (was != old.end() && *was->second == *v) continue;
+      if (was != old.end() && std::string(key) == "images" && same_picture(*was->second, *v)) fields.push_back(image_fields(*was->second, *v));
+      else changes.push_back(*v);
+    }
     std::sort(changes.begin(), changes.end(), [](const json& a, const json& b) { return a.at("id").get<int>() < b.at("id").get<int>(); });
     if (!changes.empty()) delta[key] = changes;
   }
+  if (!fields.empty()) delta["image_fields"] = fields;
   for (const auto& [key, value] : after.items())
-    if (key != "points" && key != "entities" && key != "constraints" && key != "patterns" && key != "images" && (!before.contains(key) || before.at(key) != value)) delta[key] = value;
+    if (!record_list(key) && key != "image_fields" && (!before.contains(key) || before.at(key) != value)) delta[key] = value;
   for (const auto& [key, value] : before.items())
-    if (key != "points" && key != "entities" && key != "constraints" && key != "patterns" && key != "images" && !after.contains(key)) delta[key] = nullptr;
+    if (!record_list(key) && key != "image_fields" && !after.contains(key)) delta[key] = nullptr;
   return delta;
 }
 
 json apply_sketch_delta(const json& before, const json& delta) {
   if (!delta.is_object()) throw Error("sketch edit: delta must be an object");
   json out = before;
+  out.erase("image_fields");  // what an older build kept of field changes it could not apply
   for (const auto& [key, changes] : delta.items()) {
-    if (key != "points" && key != "entities" && key != "constraints" && key != "patterns" && key != "images") {
+    if (key == "image_fields") continue;
+    if (!record_list(key)) {
       if (changes.is_null()) out.erase(key); else out[key] = changes;
       continue;
     }
@@ -45,7 +73,64 @@ json apply_sketch_delta(const json& before, const json& delta) {
     out[key] = json::array();
     for (const auto& [id, v] : records) out[key].push_back(v);
   }
+  if (const auto f = delta.find("image_fields"); f != delta.end()) {
+    if (!f->is_array()) throw Error("sketch edit: image fields must be an array");
+    std::set<int> seen;
+    for (const auto& v : *f) {
+      const int id = v.at("id").get<int>();
+      json* image = nullptr;
+      if (out.contains("images") && out["images"].is_array())
+        for (auto& i : out["images"]) if (i.at("id").get<int>() == id) image = &i;
+      if (!image || !seen.insert(id).second) throw Error("sketch edit: image " + std::to_string(id) + " does not exist or is changed twice");
+      for (const auto& [k, field] : v.items())
+        if (k == "id") continue;
+        else if (field.is_null()) image->erase(k);
+        else (*image)[k] = field;
+    }
+  }
   Sketch::from_json(out); // reject dangling references atomically
+  return out;
+}
+
+json solved_geometry(const json& data) {
+  static const json none = json::object();
+  const json& given = data.contains("geometry") ? data["geometry"] : none;
+  if (!data.contains("result") || !data["result"].contains("geometry")) return given;
+  json solved = data["result"]["geometry"];
+  if (!solved.contains("images") && given.contains("images")) solved["images"] = given["images"];
+  return solved;
+}
+
+std::string geometry_stamp(const json& geometry) {
+  if (!geometry.is_object()) return geometry.dump();
+  std::string out;
+  for (const auto& [key, value] : geometry.items()) {
+    out += key + ':';
+    if (key != "images" || !value.is_array()) {
+      out += value.dump() + ',';
+      continue;
+    }
+    for (const auto& image : value) {
+      if (!image.is_object()) {
+        out += image.dump() + ',';
+        continue;
+      }
+      out += '{';
+      for (const auto& [field, v] : image.items()) {
+        out += field + ':';
+        if (field != "data" || !v.is_string()) {
+          out += v.dump() + ',';
+          continue;
+        }
+        const std::string_view bytes(v.get_ref<const std::string&>());  // its length, its first, middle and last 4 KB
+        const size_t edge = std::min<size_t>(bytes.size(), 4096);
+        out += std::to_string(bytes.size());
+        for (const size_t at : {size_t(0), (bytes.size() - edge) / 2, bytes.size() - edge}) out += '/' + std::to_string(std::hash<std::string_view>{}(bytes.substr(at, edge)));
+        out += ',';
+      }
+      out += "},";
+    }
+  }
   return out;
 }
 

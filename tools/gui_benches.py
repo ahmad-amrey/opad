@@ -11,9 +11,11 @@ object, a pointer that leaves highlights behind).
 Besides the cases below, every tools/bench_cases/<area>.py module adds its CASES (a new case is a new file): tuples
 (name, document, switches[, settings]) as here, where document is a fixture name ("empty", "box", "cylinder",
 "drawing", "overlap", "overhang", "screw", "far"), a path (relative to the repository) or a callable (root, document)
--> path that makes its own file (document(name, *cli commands) runs opad-cli as below); switches are the environment
-("{prefix}" = the output prefix of the case, "{root}" the run's scratch folder, "{cli}" opad-cli; OPAD_LANG may be
-overridden); settings is the OPAD.ini text to start with.
+-> path that makes its own file (document(name, *cli commands) runs opad-cli as below; document.app and document.cli are
+the two programs' paths); switches are the environment ("{prefix}" = the output prefix of the case, "{root}" the run's
+scratch folder, "{cli}" opad-cli; OPAD_LANG may be overridden); settings is the OPAD.ini text to start with. A callable
+may also return (path, switches[, settings]) for what names the files it made (folders of the run, its own cache); they
+are added to the case's.
 """
 import argparse
 import importlib.util
@@ -58,6 +60,7 @@ def main():
                 subprocess.run([str(cli), command[0], str(path)] + list(command[1:]), check=True, capture_output=True)
             return path
 
+        document.app, document.cli = app, cli
         empty = document("empty")
         box = document("box", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
         round_part = document("cylinder", ("feature", "--kind", "cylinder", "--inputs", '{"diameter":"20 mm","height":"10 mm"}'))
@@ -115,6 +118,9 @@ def main():
                 continue  # its document is not made
             if callable(doc):
                 doc = doc(root, document)
+                if isinstance(doc, tuple):  # (path, switches[, settings]) of the files it made
+                    doc, made, *text = doc
+                    switches, ini = {**switches, **made}, text or ini
             elif isinstance(doc, str) and doc in fixtures:
                 doc = fixtures[doc]
             else:

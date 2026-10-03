@@ -8,6 +8,7 @@
 #include <mutex>
 #include <set>
 
+#include "opad/assets.hpp"
 #include "opad/cache.hpp"
 #include "opad/diff.hpp"
 #include "opad/explode.hpp"
@@ -21,6 +22,7 @@
 #include "opad/drawing/display.hpp"
 #include "opad/drawing/projection.hpp"
 #include "opad/drawing/sheet.hpp"
+#include "opad/kicad_pcb.hpp"
 
 namespace opad::commands {
 
@@ -180,6 +182,37 @@ void refuse_locked(const Document& doc, const std::vector<json>& targets, const 
     if (const Node* n = t.is_string() ? s.node(t.get<std::string>()) : nullptr; n && s.effectively_locked(n->id))
       throw Error("\"" + n->name + "\" is locked: unlock it before " + what + " it");
 }
+
+KicadOptions kicad_options(const json& a) {
+  KicadOptions o;
+  for (const auto& dir : str_list(a.value("model_dirs", json()))) o.model_dirs.push_back(path_from_utf8(dir));
+  o.components = a.value("components", true);
+  o.dnp = a.value("dnp", true);
+  o.vias = a.value("vias", false);
+  o.placeholder_height = a.value("placeholder_height", 1.0);
+  o.origin = a.value("origin", "auto");
+  if (o.origin != "auto" && o.origin != "center" && o.origin != "page") throw Error("origin is auto, center or page");
+  if (a.contains("kicad_cli")) {  // KiCad's own export, with what it is asked to add
+    o.kicad_cli = true;
+    for (const auto& x : str_list(a["kicad_cli"]))
+      if (x == "tracks") o.tracks = true;
+      else if (x == "pads") o.pads = true;
+      else if (x == "silkscreen") o.silkscreen = true;
+      else if (x != "none") throw Error("kicad_cli takes tracks, pads, silkscreen or none");
+  }
+  return o;
+}
+
+// Linked assets as the CLI reads them: the document's project, or every path with trust_assets.
+AssetOptions asset_options(const json& a) {
+  AssetOptions o;
+  o.trust_all = a.value("trust_assets", false);
+  o.kicad.model_dirs = kicad_options(a).model_dirs;
+  o.derive = derive_asset;  // a board read through kicad-cli: its STEP made again when missing or synced
+  return o;
+}
+
+std::string import_arg(const json& a) { return a.value("import", ""); }
 
 void register_builtins() {
   auto& r = raw_registry();
@@ -381,15 +414,20 @@ void register_builtins() {
         return j;
       });
 
-  reg("import", "Import STEP, IGES, BREP, STL, 3MF, OBJ, PLY, glTF, VRML, DXF, DWG (converter) or SVG into the document",
-      {{"doc", "path"}, {"file", "path - .step/.iges/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
-       {"placement", "[16] - drawings: where the drawing's XY plane and origin go (row-major 4x4, mm)"}, {"plane", "object - drawings: place on this plane instead, {\"base\":\"xz\"} or {\"face\":ref}, its origin at the plane's"},
-       {"center", "bool - drawings: centre the drawing on its origin (default false)"}},
+  reg("import", "Import STEP, IGES, BREP, STL, 3MF, OBJ, PLY, glTF, VRML, DXF, DWG (converter), SVG or a KiCad board into the document",
+      {{"doc", "path"}, {"file", "path - .step/.iges/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg/.kicad_pcb"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
+       {"placement", "[16] - drawings and boards: where the file's XY plane and origin go (row-major 4x4, mm)"}, {"plane", "object - drawings: place on this plane instead, {\"base\":\"xz\"} or {\"face\":ref}, its origin at the plane's"},
+       {"center", "bool - drawings: centre the drawing on its origin (default false)"},
+       {"model_dirs", "string|array - KiCad: model folders"}, {"components", "bool - KiCad: models (default true)"}, {"dnp", "bool - KiCad: do-not-populate parts"},
+       {"vias", "bool - KiCad (default false)"}, {"placeholder_height", "number - KiCad: missing-model box, mm"}, {"origin", "auto|center|page - KiCad"},
+       {"kicad_cli", "string|array - KiCad: via kicad-cli, adding tracks,pads,silkscreen or none"},
+       {"link", "bool - link the file (read from it on open, never stored; see asset)"}},
       true, [](Document* d, const json& a) {
         ImportOptions o;
         o.author = a.value("by", "");
         o.parent = a.value("parent", "");
         o.heal = a.value("heal", true);
+        o.kicad = kicad_options(a);
         if (a.contains("placement")) o.placement = Mat4::from_json(a["placement"]);
         if (a.contains("plane")) {  // resolved now, stored as the placement: replay never needs the plane again
           const Frame f = design::resolve_plane(need(d), resolve(need(d)), a["plane"]);
@@ -399,7 +437,48 @@ void register_builtins() {
           o.placement = m * o.placement;
         }
         o.center_drawing = a.value("center", false);
-        return import_file(need(d), path_from_utf8(a.at("file").get<std::string>()), o).to_json();
+        const auto file = path_from_utf8(a.at("file").get<std::string>());
+        return (a.value("link", false) ? link_file(need(d), file, o) : import_file(need(d), file, o)).to_json();
+      });
+
+  reg("asset", "Linked files (import link=true): status, or sync (read the changed file), embed (editable copy) or pack (copy into assets/)",
+      {{"doc", "path"}, {"action", "status|sync|embed|pack"}, {"import", "uuid - its import (default: the only one)"}, {"file", "path - sync: the moved file"},
+       {"by", "string"}},
+      true, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        const std::string action = a.value("action", "status");
+        const AssetOptions o = asset_options(a);
+        if (action == "status") {
+          json out = json::array();
+          for (const auto& s : asset_status(doc, o)) out.push_back(s.to_json());
+          return json{{"assets", out}};
+        }
+        if (action == "pack") return pack_asset(doc, import_arg(a), a.value("by", ""));
+        design::Plan plan = action == "sync" ? plan_asset_sync(doc, import_arg(a), o, a.contains("file") ? path_from_utf8(a["file"].get<std::string>()) : std::filesystem::path())
+                          : action == "embed" ? plan_asset_embed(doc, import_arg(a))
+                                              : throw Error("action is status, sync, embed or pack");
+        json report = plan.report;
+        design::commit(doc, std::move(plan), a.value("by", ""));
+        return report;
+      });
+
+  reg("kicad_models", "A KiCad board's 3D models, where each was found; download fetches missing KiCad library ones (CC-BY-SA) to the cache",
+      {{"file", "path - .kicad_pcb"}, {"model_dirs", "string|array"}, {"dnp", "bool"}, {"download", "bool"}},
+      false, [](Document*, const json& a) {
+        const auto board = path_from_utf8(a.at("file").get<std::string>());
+        const KicadOptions o = kicad_options(a);
+        if (!a.value("download", false)) return kicad_models(board, o);
+        const json fetched = kicad_download_models(board, o);
+        json j = kicad_models(board, o);
+        j["downloaded"] = fetched["downloaded"];
+        j["failed"] = fetched["failed"];
+        return j;
+      });
+
+  reg("kicad_sync_preview", "What re-reading a KiCad board changes in its import, per reference designator",
+      {{"doc", "path"}, {"import", "uuid - default: the only one"}, {"file", "path - default: source beside doc"}},
+      false, [](Document* d, const json& a) {
+        return kicad_sync_preview(need(d), a.value("import", ""), a.contains("file") ? path_from_utf8(a["file"].get<std::string>()) : std::filesystem::path());
       });
 
   reg("import_brep", "Import a shape given as OCCT ASCII BREP text (build123d/CadQuery/OCP bridge)",
@@ -805,6 +884,7 @@ json run(const std::string& name, const json& args, Document* live) {
       transient = true;
     } else {
       loaded = Document::load(p);
+      if (has_assets(loaded)) load_assets(loaded, asset_options(args));  // linked files: read where they are
       save_after = info.mutates && args.value("save", true);
     }
     doc = &loaded;

@@ -40,6 +40,7 @@
 #include <map>
 #include <set>
 
+#include "opad/assets.hpp"
 #include "opad/geometry.hpp"
 #include "opad/materials.hpp"
 #include "opad/mass.hpp"
@@ -368,6 +369,10 @@ json node_properties(const Document& doc, const Scene& scene, const std::string&
   const MaterialChoice material = material_of(doc, scene, node_id);
   if (!material.text.empty()) j["material"] = material.shown();
   if (material.density > 0) j["density"] = material.density;
+  if (n->linked) {  // a linked asset's part: its geometry is read from that file (assets.hpp)
+    j["linked"] = true;
+    if (const json asset = asset_of(doc, n->source_op); asset.is_object()) j["linked_file"] = asset.value("path", asset.value("abs", std::string()));
+  }
   if (n->kind == Node::Kind::Body) {
     j["key"] = n->body_key;
     auto it = scene.instance_count.find(n->body_key);

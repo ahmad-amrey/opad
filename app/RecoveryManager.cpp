@@ -274,7 +274,7 @@ void RecoveryManager::saveNow(std::function<void(bool,const QString&)> done) {
         size_t keep=0;while(keep<session->baseOps.size() && keep<document->ops.size() && session->baseOps[keep]==document->ops[keep].id)++keep;
         opad::json delta={{"base",session->baseFile.toStdString()},{"base_sha256",session->baseHash.toStdString()},{"keep_ops",keep},{"ops",opad::json::array()},{"bodies",opad::json::array()}};
         for(size_t i=keep;i<document->ops.size();++i)delta["ops"].push_back(document->ops[i].data);
-        for(const auto& body:document->bodies())if(!session->baseBodies.count(body.key))delta["bodies"].push_back({{"key",body.key},{"meta",body.meta},{"brep",std::string(body.text())}});
+        for(const auto& body:document->bodies())if(!body.external && !session->baseBodies.count(body.key))delta["bodies"].push_back({{"key",body.key},{"meta",body.meta},{"brep",std::string(body.text())}});
         auto draft=edit;
         std::optional<opad::Scene> scene;
         if(draft.is_object() && draft.value("type","")=="sketch" && draft.contains("geometry")){
@@ -383,6 +383,10 @@ void RecoveryManager::restore(const Entry& entry,bool keepPath,std::function<voi
         if(r.onto=="extends")r.onto="rewritten";
         r.into={source,plan.base,AppDocument::DiskStat{true,-1,-1},plan.manifest};
       }
+    }
+    if(opad::has_assets(r.document)){  // linked files, read again from where the document was (the user's own snapshot)
+      auto assets=AppDocument::assetOptions();assets.trust_all=true;assets.progress=[progress](double,const std::string&){return !progress.cancelled();};
+      r.document.path=std::filesystem::path(entry.source.toStdU16String());opad::load_assets(r.document,assets);
     }
     progress.setPhase(tr("Preparing recovered geometry"));opad::warm_shape_cache(r.document,[progress](size_t,size_t){return !progress.cancelled();});
     r.scene=opad::resolve(r.document);

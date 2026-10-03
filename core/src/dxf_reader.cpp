@@ -19,9 +19,11 @@
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRep_Builder.hxx>
 #include <Bnd_Box.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <Geom_BSplineCurve.hxx>
+#include <OSD_Parallel.hxx>
 #include <Standard_Failure.hxx>
 #include <TColStd_Array1OfInteger.hxx>
 #include <TColStd_Array1OfReal.hxx>
@@ -29,6 +31,7 @@
 #include <TColgp_HArray1OfPnt.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <gp_Circ.hxx>
 #include <gp_Elips.hxx>
 #include <gp_GTrsf.hxx>
@@ -41,8 +44,10 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <functional>
@@ -50,6 +55,7 @@
 #include <set>
 #include <sstream>
 #include <string_view>
+#include <tuple>
 
 #include "opad/util.hpp"
 
@@ -313,6 +319,7 @@ struct Ocs {
 // Geometry by (layer as written, colour key): model space, or a block's content in its own coordinates.
 struct Space {
   std::map<std::pair<std::string, uint32_t>, TopoDS_Compound> groups;
+  int depth = 0;  // 1 + the level of the deepest copy its groups show that is still to be made (Reader::finish), 0 for none
 };
 
 // Where an entity's geometry goes and how its points map: drawing units -> mm, minus the model-space shift, z dropped.
@@ -328,11 +335,13 @@ struct PatternLine {
   std::vector<double> dashes;
 };
 
-// How a block lands: rigid (shared by location), similar (uniform scale or mirror: transformed copy) or general.
+// How a block lands: rigid (shared by location), similar (a uniform scale, then rigid: the block's copy at that scale is
+// made once and shared by location) or general (a transformed copy each time).
 struct Placement {
   enum Kind { None, Location, Similar, General } kind = None;
   gp_Trsf trsf;
   gp_GTrsf gtrsf;
+  double scale = 1;
 };
 
 Placement placement(double a11, double a12, double a21, double a22, double tx, double ty) {
@@ -341,10 +350,10 @@ Placement placement(double a11, double a12, double a21, double a22, double tx, d
   if (s1 < 1e-12 || s2 < 1e-12 || std::abs(det) < 1e-12 * s1 * s2) return p;
   if (std::abs(s1 - s2) <= 1e-9 * std::max(s1, s2) && std::abs(dot) <= 1e-9 * s1 * s2) {
     // A mirror in the plane is a half turn about an in-plane axis in 3D, so z flips with it: never a negative transform.
-    const bool unit = std::abs(s1 - 1) < 1e-9;
-    const double k = unit ? 1 / s1 : 1, z = (det > 0 ? 1 : -1) * (unit ? 1 : s1);
+    const double k = 1 / s1, z = det > 0 ? 1 : -1;
     p.trsf.SetValues(a11 * k, a12 * k, 0, tx, a21 * k, a22 * k, 0, ty, 0, 0, z, 0);
-    p.kind = unit ? Placement::Location : Placement::Similar;
+    p.kind = std::abs(s1 - 1) < 1e-9 ? Placement::Location : Placement::Similar;
+    p.scale = s1;
   } else {
     p.gtrsf.SetValue(1, 1, a11); p.gtrsf.SetValue(1, 2, a12); p.gtrsf.SetValue(1, 4, tx);
     p.gtrsf.SetValue(2, 1, a21); p.gtrsf.SetValue(2, 2, a22); p.gtrsf.SetValue(2, 4, ty);
@@ -392,6 +401,7 @@ class Reader {
     bool xref = false;
     int state = 0;  // 0 not built, 1 building, 2 built
     Space space;
+    std::map<double, Space> scaled;  // its content at each scale it is inserted at (a plan: 1306 scaled inserts, 71 copies)
   };
   struct Out {
     Space* space;
@@ -422,9 +432,10 @@ class Reader {
   void mtext(const Fields& f, Out& o, const Place& at);
 #ifdef OPAD_HAVE_FONT
   const TextFont* text_font(std::string_view style, double height, double width);
-  std::string font_file(std::string_view style) const;
+  std::string font_file(std::string_view style);
+  std::string find_font(const std::string& style) const;
   TopoDS_Shape text_shape(const TextFont& tf, const std::string& s, const gp_Ax3& pen, Graphic3d_HorizontalTextAlignment h,
-                          Graphic3d_VerticalTextAlignment v, double wrap) const;
+                          Graphic3d_VerticalTextAlignment v, double wrap);
 #endif
 
   gp_Pnt pnt(const Place& at, const gp_XYZ& wcs) const { return gp_Pnt(wcs.X() * m_unit - at.sx, wcs.Y() * m_unit - at.sy, 0); }
@@ -452,7 +463,8 @@ class Reader {
   }
   bool pattern(const Out& o, const Place& at, const Ocs& ocs, double elevation, const std::vector<std::vector<gp_XY>>& loops,
                const std::vector<PatternLine>& lines);
-  TopoDS_Shape placed(const TopoDS_Shape& s, const Placement& p) const;
+  TopoDS_Compound later(const TopoDS_Shape& source, const Placement& p, int level);
+  void finish();
   void tick();
 
   const ImportOptions& m_options;
@@ -479,7 +491,31 @@ class Reader {
   std::map<std::string, TextFont> m_fonts;
   std::map<std::string, double> m_capRatio;  // font file -> cap height per em ('H'), < 0 when the font is unusable
   std::string m_fontsDir;
+  std::map<std::string, std::string> m_fontFiles;  // style -> font file, or empty for the stand-in
+  // A text laid out once per font, string and alignment, placed by location (half the texts of a plan repeat one).
+  std::map<std::tuple<const TextFont*, std::string, int, int, double>, TopoDS_Compound> m_texts;
 #endif
+  // Made once every entity is read, side by side (finish): the outlines of each text, per font, and the copies of blocks
+  // placed scaled or skewed, level by level (a copy of a block that shows another copy waits for it). Until then each is an
+  // empty compound, already placed where it shows (a 3 MB DWG's plan: 1.5 s of copies and 0.5 s of text before).
+#ifdef OPAD_HAVE_FONT
+  struct TextJob {
+    const TextFont* font;
+    std::string text;
+    Graphic3d_HorizontalTextAlignment h;
+    Graphic3d_VerticalTextAlignment v;
+    double wrap;
+    TopoDS_Compound into;
+  };
+  std::vector<TextJob> m_textJobs;
+#endif
+  struct CopyJob {
+    TopoDS_Shape source;
+    Placement p;
+    int level;
+    TopoDS_Compound into;
+  };
+  std::vector<CopyJob> m_copyJobs;
 };
 
 void Reader::load(const std::filesystem::path& file) {
@@ -664,13 +700,62 @@ void Reader::bulge(const Out& o, const Place& at, const Ocs& ocs, double elevati
   arc(o, at, ocs, gp_XYZ(cx, cy, elevation), chord * (1 + b * b) / (4 * std::abs(b)), start, stop, false);
 }
 
-TopoDS_Shape Reader::placed(const TopoDS_Shape& s, const Placement& p) const {
-  switch (p.kind) {
-    case Placement::Location: return s.Moved(TopLoc_Location(p.trsf));
-    case Placement::Similar: return BRepBuilderAPI_Transform(s, p.trsf, true).Shape();
-    case Placement::General: return BRepBuilderAPI_GTransform(s, p.gtrsf, true).Shape();
-    default: return {};
+TopoDS_Compound Reader::later(const TopoDS_Shape& source, const Placement& p, int level) {
+  TopoDS_Compound into;
+  m_builder.MakeCompound(into);
+  m_copyJobs.push_back({source, p, level, into});
+  return into;
+}
+
+void Reader::finish() {
+  // A placeholder takes what was made for it in place, so every place that shows it shows that.
+  auto deliver = [](TopoDS_Compound into, const TopoDS_Shape& made) {
+    BRep_Builder builder;
+    into.Free(true);
+    for (TopoDS_Iterator it(made); it.More(); it.Next()) builder.Add(into, it.Value());
+    into.Free(false);
+  };
+  std::atomic<int> broken{0};
+#ifdef OPAD_HAVE_FONT
+  std::map<const TextFont*, std::vector<const TextJob*>> byFont;  // a font's glyph cache and FreeType face are its own
+  for (const auto& job : m_textJobs) byFont[job.font].push_back(&job);
+  std::vector<std::vector<const TextJob*>> fonts;
+  for (auto& [font, jobs] : byFont) fonts.push_back(std::move(jobs));
+  OSD_Parallel::For(0, int(fonts.size()), [&](int i) {
+    for (const TextJob* job : fonts[size_t(i)]) {
+      try {
+        Handle(Font_TextFormatter) formatter = new Font_TextFormatter();
+        formatter->SetupAlignment(job->h, job->v);
+        if (job->wrap > 0) formatter->SetWrapping(float(job->wrap / job->font->font->Scale()));
+        formatter->Append(NCollection_String(job->text.c_str()), *job->font->font->FTFont());
+        formatter->Format();
+        deliver(job->into, StdPrs_BRepTextBuilder().Perform(*job->font->font, formatter, gp_Ax3()));
+      } catch (...) {
+        ++broken;
+      }
+    }
+  });
+  m_textJobs.clear();
+#endif
+  int top = -1;
+  for (const auto& job : m_copyJobs) top = std::max(top, job.level);
+  for (int level = 0; level <= top; ++level) {
+    if (m_options.progress && !m_options.progress(0.99, "reading drawing")) throw Error("cancelled");
+    std::vector<const CopyJob*> now;
+    for (const auto& job : m_copyJobs)
+      if (job.level == level) now.push_back(&job);
+    OSD_Parallel::For(0, int(now.size()), [&](int i) {
+      const CopyJob& job = *now[size_t(i)];
+      try {
+        deliver(job.into, job.p.kind == Placement::General ? BRepBuilderAPI_GTransform(job.source, job.p.gtrsf, true).Shape()
+                                                           : BRepBuilderAPI_Transform(job.source, job.p.trsf, true).Shape());
+      } catch (...) {
+        ++broken;
+      }
+    });
   }
+  m_copyJobs.clear();
+  m_broken += broken;
 }
 
 const Space& Reader::build(Block& b) {
@@ -722,12 +807,25 @@ void Reader::insert(const Fields& f, const Out& o, const Place& at, std::string_
       const double ox = c * column * columnSpacing - s * row * rowSpacing, oy = s * column * columnSpacing + c * row * rowSpacing;
       const auto p = placement(a11, a12, a21, a22, tx + m11 * ox + m12 * oy, ty + m21 * ox + m22 * oy);
       if (p.kind == Placement::None) return;
-      for (const auto& [key, shape] : content.groups) {
+      const Space* source = &content;
+      if (p.kind == Placement::Similar) {  // scaled once (a turned insert's scale may differ in the last digit), then placed rigidly
+        auto it = block.scaled.lower_bound(p.scale * (1 - 1e-9));
+        if (it == block.scaled.end() || it->first > p.scale * (1 + 1e-9)) {
+          it = block.scaled.emplace_hint(it, p.scale, Space());
+          Placement scale;
+          scale.trsf.SetScale(gp::Origin(), p.scale);
+          for (const auto& [key, shape] : content.groups) it->second.groups[key] = later(shape, scale, content.depth);
+          it->second.depth = content.depth + 1;
+        }
+        source = &it->second;
+      }
+      for (const auto& [key, shape] : source->groups) {
         const auto& [layer, color] = key;
         Out target{o.space, layer == "0" ? o.layer : layer, color};
         if (color == kByBlock) target.color = o.color == kByLayer && o.layer != "0" ? layer_color(o.layer) : o.color;
-        add(target, placed(shape, p));
+        add(target, p.kind == Placement::General ? later(shape, p, content.depth) : shape.Moved(TopLoc_Location(p.trsf)));
       }
+      o.space->depth = std::max(o.space->depth, p.kind == Placement::General ? content.depth + 1 : source->depth);
     }
 }
 
@@ -1216,8 +1314,15 @@ void Reader::hatch(const Fields& f, Out& o, const Place& at) {
 }
 
 #ifdef OPAD_HAVE_FONT
-std::string Reader::font_file(std::string_view styleName) const {
-  const auto style = m_styles.find(upper(trimmed(styleName)));
+std::string Reader::font_file(std::string_view styleName) {
+  const std::string name = upper(trimmed(styleName));
+  auto [known, fresh] = m_fontFiles.try_emplace(name);
+  if (fresh) known->second = find_font(name);
+  return known->second;
+}
+
+std::string Reader::find_font(const std::string& styleName) const {
+  const auto style = m_styles.find(styleName);
   std::string file = style == m_styles.end() ? std::string() : style->second.font;
   if (const auto slash = file.find_last_of("/\\"); slash != std::string::npos) file = file.substr(slash + 1);
   for (auto& ch : file) ch = char(std::tolower(static_cast<unsigned char>(ch)));
@@ -1256,10 +1361,10 @@ const Reader::TextFont* Reader::text_font(std::string_view style, double height,
   }
   if (ratio->second < 0) return nullptr;
   const double em = height / ratio->second;
-  std::ostringstream key;
-  key.precision(9);
-  key << file << '|' << em << '|' << width;
-  auto it = m_fonts.find(key.str());
+  char size[64];
+  std::snprintf(size, sizeof size, "|%.9g|%.9g", em, width);
+  const std::string key = file + size;
+  auto it = m_fonts.find(key);
   if (it == m_fonts.end()) {
     TextFont tf;
     tf.font = new StdPrs_BRepFont();
@@ -1269,19 +1374,21 @@ const Reader::TextFont* Reader::text_font(std::string_view style, double height,
       tf.cap = height;
       tf.descent = std::abs(double(tf.font->FTFont()->Descender())) * tf.font->Scale();
     }
-    it = m_fonts.emplace(key.str(), tf).first;
+    it = m_fonts.emplace(key, tf).first;
   }
   return it->second.font.IsNull() ? nullptr : &it->second;
 }
 
 TopoDS_Shape Reader::text_shape(const TextFont& tf, const std::string& s, const gp_Ax3& pen, Graphic3d_HorizontalTextAlignment h,
-                                Graphic3d_VerticalTextAlignment v, double wrap) const {
-  Handle(Font_TextFormatter) formatter = new Font_TextFormatter();
-  formatter->SetupAlignment(h, v);
-  if (wrap > 0) formatter->SetWrapping(float(wrap / tf.font->Scale()));
-  formatter->Append(NCollection_String(s.c_str()), *tf.font->FTFont());
-  formatter->Format();
-  return StdPrs_BRepTextBuilder().Perform(*tf.font, formatter, pen);
+                                Graphic3d_VerticalTextAlignment v, double wrap) {
+  auto [it, fresh] = m_texts.try_emplace({&tf, s, int(h), int(v), wrap});
+  if (fresh) {  // laid out in finish()
+    m_builder.MakeCompound(it->second);
+    m_textJobs.push_back({&tf, s, h, v, wrap, it->second});
+  }
+  gp_Trsf place;
+  place.SetTransformation(pen, gp_Ax3());
+  return it->second.Moved(TopLoc_Location(place));
 }
 #endif
 
@@ -1458,6 +1565,7 @@ Drawing Reader::read() {
   Space model;
   Place at{&model, distant ? out.origin.X() : 0, distant ? out.origin.Y() : 0, true};
   run(m_model, 0, m_model.size(), at);
+  finish();
 
   for (const auto& [key, shape] : model.groups) {
     const auto& [layer, color] = key;

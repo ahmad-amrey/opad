@@ -8,6 +8,7 @@
 #include <AIS_ViewController.hxx>
 #include <AIS_ViewCube.hxx>
 #include <Graphic3d_ClipPlane.hxx>
+#include <Image_PixMap.hxx>
 #include <V3d_View.hxx>
 #include <SelectMgr_SelectionManager.hxx>
 #include <V3d_Viewer.hxx>
@@ -150,6 +151,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<std::string> isolatedNodes() const {return {m_isolated.begin(),m_isolated.end()};}
   int isolatedCount() const { return static_cast<int>(m_isolated.size()); }
   int displayedCount() const { return static_cast<int>(m_items.size()); }
+  // The colours a displayed body's shaded presentation fills its groups with (sRGB): one, or the body's own and each face
+  // colour (UI-74). Benches check what is drawn with it.
+  std::vector<std::array<double, 3>> drawnColors(const std::string& nodeId) const;
+  // Pictures on bodies (SVG images, canvases) decoded on workers so far (UI-71), and whether a displayed body shows one.
+  int rastersDecoded() const { return m_rastersDecoded; }
+  bool showsPicture(const std::string& nodeId) const;
 
   // Per-body looks (ViewportLooks.cpp, UI-121): each source owns one layer of deltas by node id (a component's covers the
   // bodies under it; the nearest entry wins), composed over the document's appearance in LookSource order (BodyLook.hpp)
@@ -447,6 +454,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
     double opacity;
     TopoDS_Shape located;
     Handle(NavigationShape) navigation;
+    std::string raster;  // its picture (rasterKey), empty without one
     BodyLook look;      // as applied (ViewportLooks.cpp)
     bool rigid = true;  // the world placement is the object's local transformation (else baked into `located`)
   };
@@ -588,6 +596,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void refineVisible();
   std::set<std::string> m_meshing;
   std::set<std::string> m_meshSkipped;
+  // A body's picture is decoded on a worker before the body is shown (80 ms for a 12 MP JPEG in displayBody), once per
+  // picture: textures by rasterKey, null when it cannot be decoded (the frame is shown).
+  std::map<std::string, Handle(Image_PixMap)> m_rasters;
+  std::set<std::string> m_rasterDecoding;
+  int m_rastersDecoded = 0;
+  void decodeRaster(const opad::Node& n, const std::string& key);
   std::pair<int, int> m_lastSyncedSize{-1, -1};  // Qt size and display-scale stamp for syncWindowSize
   qreal m_cubeScale = 1.0;  // OCCT backing pixels per Qt point
   JobRunner* m_jobs = nullptr;

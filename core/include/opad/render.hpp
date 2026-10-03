@@ -28,6 +28,7 @@ struct RenderItem {
   // highlight colour; face ordinals tinted with it.
   std::vector<std::vector<std::array<float, 3>>> lines, highlight_lines;
   std::vector<int> highlight_faces;
+  std::map<int, std::array<float, 3>> face_colors;  // face ordinal -> its own colour (FaceColors, UI-74)
 };
 
 struct Camera {

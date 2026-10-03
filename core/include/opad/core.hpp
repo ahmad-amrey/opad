@@ -1,4 +1,5 @@
 #pragma once
+#include "assets.hpp"
 #include "cache.hpp"
 #include "commands.hpp"
 #include "diff.hpp"

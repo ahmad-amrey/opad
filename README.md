@@ -231,6 +231,23 @@ solid, a mesh or a 2D drawing. DWG opens through LibreDWG's `dwg2dxf`, which the
 `third_party/libredwg` submodule and puts beside OPAD (an installed ODA File Converter is used instead only when
 Settings > Use the ODA File Converter for DWG is on, or `OPAD_USE_ODA=1`: ODA allows non-members non-commercial use only); the
 DXF reader shows model space with its blocks, hatches, dimensions, text and colours ([details](docs/drawings.md)). `opad-cli probe <file> --viewer --mesh` reports what opening a file costs, phase by phase.
+A KiCad board (`.kicad_pcb`) opens as the board itself (its Edge.Cuts outline with the drills, thickness and solder-mask
+colour) and its footprints' 3D models, placed as KiCad places them and found as KiCad finds them (`${KIPRJMOD}`, the
+`KICAD*_3DMODEL_DIR` variables from the project, the environment or KiCad's settings, KiCad's install folders, then the
+folders in Settings > KiCad boards); a model that is not found shows as a translucent box over the footprint. Importing a
+board asks what to build (components, do-not-populate parts, vias, the origin, the boxes' height); Settings > KiCad
+boards keeps those choices for opening boards too. KiCad's model libraries are
+not part of OPAD: when a board names models of KiCad's library that are not installed, OPAD offers to download them from
+the library (gitlab.com/kicad/libraries/kicad-packages3D, CC-BY-SA 4.0 with KiCad's design exception) into your user
+cache, and shows them (`opad-cli kicad_models board.kicad_pcb [--download true]` lists and fetches them). Models
+embedded in the board (KiCad 9) are read from it, and a footprint with only KiCad's VRML model shows that. After the board
+changes in KiCad, `opad-cli kicad_sync_preview doc.opad` lists what reading it again would change, per reference
+designator (moved, turned, flipped, model changed, added, removed) and for the board (thickness, drills, outline).
+With KiCad 7 or later installed, a board can instead be read through KiCad's own STEP export (Read with: KiCad's own
+STEP export in the KiCad dialog; `opad-cli import doc.opad board.kicad_pcb --kicad_cli tracks,pads --link true`): OPAD
+runs `kicad-cli pcb export step` (found in KiCad's install folders or on PATH, or set `OPAD_KICAD_CLI`) at its own origin,
+with the copper tracks, pads and silkscreen if asked (KiCad 8/9), names each part after its footprint's reference and
+links the import to the board, so the board is watched and synced and the STEP is made again where it is missing.
 Settings offers six rendering presets (Classic, Technical flat, Studio, Studio fine, ray traced
 shadows and ray traced reflections), four backgrounds and a configurable auto-hide scene browser.
 Unsupported ray tracing falls back to raster rendering. Coplanar faces receive a small display depth
@@ -493,6 +510,19 @@ answered, and how the histories relate. A side is a file or `git:REV[:path]`; on
 opad-cli diff model.opad --text                  # what changed since the last commit
 opad-cli diff --a git:main~3 model.opad          # JSON; --metrics adds volume and area of changed bodies
 ```
+
+A big STEP, mesh, drawing or KiCad board you design around without editing can be linked instead of copied:
+`opad-cli import doc.opad board.step --link true`. The import records the file's path beside the document (and its
+absolute path), its SHA-256 and how it was read; its bodies are never written into the document but read from the file
+whenever the document opens (a slow read is remembered by content in the user cache, so a clone or another branch opens
+it fast). A file outside the document's folder or its git work tree is read only once you agree (OPAD asks, and can trust
+the folder for good; `--trust_assets true` for opad-cli); a missing one leaves only its own bodies out.
+`opad-cli asset doc.opad --action status|sync|embed|pack` reports each link (ok, changed, missing, untrusted), syncs a
+changed file as one edit of its import (parts keep their ids with their renames, colours, placements and references,
+unchanged parts keep their geometry keys, and what depends on the rest is regenerated), embeds a link as ordinary,
+editable bodies, or packs the file into `assets/` beside the document. A document with links opens in OPAD builds without
+them: the linked parts are listed in the browser and their bodies shown as missing; editing and saving it there keeps the
+links.
 
 A record of a type this build does not know (written by a newer OPAD, such as a drawing sheet) is kept as it is: the
 file opens, the record is listed as needing a newer OPAD, is never applied or edited, and is saved back byte for byte.

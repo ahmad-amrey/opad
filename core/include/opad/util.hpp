@@ -2,6 +2,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -26,6 +27,7 @@ void set_id_context(const std::string& context);
 bool is_uuid(std::string_view s);
 std::string now_iso8601();
 std::string sha256_hex(std::string_view data);
+std::string sha256_file(const std::filesystem::path& p, const std::function<bool()>& cancelled = {});  // read in chunks
 std::string default_author();
 std::string version_string();
 // Who else's code this build carries and under which licences (TODO 11 UI-13): THIRD-PARTY-NOTICES.txt beside the

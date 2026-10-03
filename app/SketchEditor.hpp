@@ -62,6 +62,7 @@ class SketchEditor : public QObject, public SketchInput {
   QList<ToolStep> toolSteps() const;
   // What was typed for `key`, else `fallback`; a fallback in millimetres ("2 mm") is offered in the document's unit.
   QString option(const QString& key, const QString& fallback = {}) const;
+  void setOption(const QString& key, const QString& value) { m_options[key] = value; }
   QString dimensionText(const opad::design::SkConstraint& c) const;  // "R1 in", "fx: 12.5 mm", "(45°)"
   void applyTool();
   void previewTool();

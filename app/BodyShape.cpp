@@ -203,11 +203,33 @@ size_t BodyPrs::triangleCount() const {
   return size_t(triangles->EdgeNumber() > 0 ? triangles->EdgeNumber() : triangles->VertexNumber()) / 3;
 }
 
-std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const Bnd_Box& box, bool drawingOnly) {
+std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const Bnd_Box& box, bool drawingOnly,
+                                        std::shared_ptr<const opad::FaceColors> faceColors) {
   auto p = std::make_shared<BodyPrs>();
   p->box = box;
   p->triangles = StdPrs_ShadedShape::FillTriangles(meshedProto);
   p->boundaries = StdPrs_ShadedShape::FillFaceBoundaries(meshedProto);
+  if (faceColors && !faceColors->empty() && !p->triangles.IsNull()) {
+    // The faces by colour (index 0: the body's own), each group's triangles filled as the whole body's are.
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(meshedProto, TopAbs_FACE, faces);
+    BRep_Builder builder;
+    std::vector<TopoDS_Compound> groups(faceColors->colors.size() + 1);
+    std::vector<bool> used(groups.size(), false);
+    for (auto& g : groups) builder.MakeCompound(g);
+    for (int i = 1; i <= faces.Extent(); ++i) {
+      const size_t group = size_t(faceColors->at(i - 1) + 1);
+      builder.Add(groups[group], faces(i));
+      used[group] = true;
+    }
+    p->faceColors = faceColors;
+    if (used[0]) p->own = StdPrs_ShadedShape::FillTriangles(groups[0]);
+    for (size_t g = 1; g < groups.size(); ++g) {
+      if (!used[g]) continue;
+      const auto& c = faceColors->colors[g - 1];
+      if (auto t = StdPrs_ShadedShape::FillTriangles(groups[g]); !t.IsNull()) p->painted.push_back({Quantity_Color(c[0], c[1], c[2], Quantity_TOC_sRGB), t});
+    }
+  }
   if (drawingOnly) {
     p->closed = false;
     for (TopExp_Explorer e(meshedProto, TopAbs_SHELL); e.More(); e.Next()) {
@@ -351,6 +373,31 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
     if(!m_prs->loosePoints.IsNull()) {auto g=prs->NewGroup();g->SetGroupPrimitivesAspect(myDrawer->PointAspect()->Aspect());g->AddPrimitiveArray(m_prs->loosePoints);}
     return;
   }
+  if (mode == AIS_Shaded && !shown && m_faceColors && !m_faceColors->empty()) {
+    // OCCT's shaded path, once per colour: the faces in the body's colour, then each face colour with the same look.
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(myshape, TopAbs_FACE, faces);
+    std::map<int, TopoDS_Compound> groups;
+    BRep_Builder builder;
+    for (int i = 1; i <= faces.Extent(); ++i) {
+      auto& group = groups[m_faceColors->at(i - 1)];
+      if (group.IsNull()) builder.MakeCompound(group);
+      builder.Add(group, faces(i));
+    }
+    for (const auto& [colour, group] : groups) {
+      Handle(Prs3d_Drawer) look = myDrawer;
+      if (colour >= 0) {
+        look = new Prs3d_Drawer();
+        look->SetLink(myDrawer);
+        Handle(Prs3d_ShadingAspect) shading = new Prs3d_ShadingAspect(new Graphic3d_AspectFillArea3d(*myDrawer->ShadingAspect()->Aspect()));
+        const auto& c = m_faceColors->colors[size_t(colour)];
+        shading->SetColor(Quantity_Color(c[0], c[1], c[2], Quantity_TOC_sRGB));
+        look->SetShadingAspect(shading);
+      }
+      StdPrs_ShadedShape::Add(prs, group, look);
+    }
+    return;
+  }
   if (mode != AIS_Shaded || !shown || shown->triangles.IsNull()) {
     AIS_Shape::Compute(mgr, prs, mode);  // wireframe/HLR, or nothing precomputed: the stock path
     return;
@@ -359,22 +406,38 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
   const bool haveBox = !shown->box.IsVoid();
   double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
   if (haveBox) shown->box.Get(x0, y0, z0, x1, y1, z1);
-  Handle(Graphic3d_Group) g = prs->NewGroup();
-  g->SetClosed(shown->closed);
-  g->SetGroupPrimitivesAspect(myDrawer->ShadingAspect()->Aspect());
   // Ray intersections do not use raster depth offsets. Separate only the render
   // skin along its normals; the analytic shape, selection and exports stay exact.
-  if (m_rayBias!=0 && m_rayTriangles.IsNull()) {
-    const auto& src=shown->triangles;
-    m_rayTriangles=new Graphic3d_ArrayOfTriangles(src->VertexNumber(),src->EdgeNumber(),true);
-    for(int i=1;i<=src->VertexNumber();++i) {
-      const gp_Dir n=src->VertexNormal(i);
-      m_rayTriangles->AddVertex(src->Vertice(i).Translated(gp_Vec(n)*m_rayBias),n);
+  auto biased=[this](const Handle(Graphic3d_ArrayOfTriangles)& src) {
+    if (m_rayBias==0) return src;
+    auto& copy=m_rayTriangles[src.get()];
+    if (copy.IsNull()) {
+      copy=new Graphic3d_ArrayOfTriangles(src->VertexNumber(),src->EdgeNumber(),true);
+      for(int i=1;i<=src->VertexNumber();++i) {
+        const gp_Dir n=src->VertexNormal(i);
+        copy->AddVertex(src->Vertice(i).Translated(gp_Vec(n)*m_rayBias),n);
+      }
+      for(int i=1;i<=src->EdgeNumber();++i) copy->AddEdge(src->Edge(i));
     }
-    for(int i=1;i<=src->EdgeNumber();++i) m_rayTriangles->AddEdge(src->Edge(i));
+    return copy;
+  };
+  auto fill=[&](const Handle(Graphic3d_ArrayOfTriangles)& triangles, const Handle(Graphic3d_AspectFillArea3d)& aspect) {
+    Handle(Graphic3d_Group) g = prs->NewGroup();
+    g->SetClosed(shown->closed);
+    g->SetGroupPrimitivesAspect(aspect);
+    g->AddPrimitiveArray(biased(triangles), !haveBox);
+    if (haveBox) g->SetMinMaxValues(x0, y0, z0, x1, y1, z1);
+  };
+  if (shown->painted.empty()) fill(shown->triangles, myDrawer->ShadingAspect()->Aspect());
+  else {
+    // The body's colour where the file gave a face none of its own, each face colour in its own group with the same look.
+    if (!shown->own.IsNull()) fill(shown->own, myDrawer->ShadingAspect()->Aspect());
+    for (const auto& part : shown->painted) {
+      Handle(Prs3d_ShadingAspect) look = new Prs3d_ShadingAspect(new Graphic3d_AspectFillArea3d(*myDrawer->ShadingAspect()->Aspect()));
+      look->SetColor(part.color);
+      fill(part.triangles, look->Aspect());
+    }
   }
-  g->AddPrimitiveArray(m_rayTriangles.IsNull()?shown->triangles:m_rayTriangles, !haveBox);
-  if (haveBox) g->SetMinMaxValues(x0, y0, z0, x1, y1, z1);
   if (myDrawer->FaceBoundaryDraw() && !shown->boundaries.IsNull()) {
     Handle(Graphic3d_Group) e = prs->NewGroup();
     e->SetGroupPrimitivesAspect(myDrawer->FaceBoundaryAspect()->Aspect());

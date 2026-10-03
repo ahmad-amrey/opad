@@ -167,6 +167,7 @@ json Scene::tree_json(int max_depth) const {
       j["instances"] = it == instance_count.end() ? 1 : it->second;
       if (n->body_missing) j["missing"] = true;
     }
+    if (n->linked) j["linked"] = true;
     if (!n->local.is_identity()) j["transform"] = n->local.to_json();
     if (n->has_color) j["color"] = {n->color[0], n->color[1], n->color[2]};
     if (n->opacity != 1.0) j["opacity"] = n->opacity;
@@ -271,10 +272,13 @@ struct SceneBuilder::Impl {
     if (!n.body_key.empty()) drop_instance(n.body_key);
     n.body_key = key;
     n.body_missing = !doc.has_body(key);
-    if (n.body_missing) unresolved(op_id, op_type, "body entry " + key.substr(0, 12) + "... is missing from the body store");
+    if (n.body_missing)
+      unresolved(op_id, op_type, n.linked ? "linked file " + asset_file + " is not loaded: " + n.name
+                                          : "body entry " + key.substr(0, 12) + "... is missing from the body store");
     scene.instance_count[key]++;
   }
 
+  std::string asset_file;  // the linked asset whose nodes are being built (its path, for unresolved reasons)
   void build_nodes(const json& nodes, const std::string& parent, const std::string& op_id, const std::string& op_type) {
     for (const auto& jn : nodes) {
       Node n;
@@ -297,6 +301,7 @@ struct SceneBuilder::Impl {
       n.locked = jn.contains("locked") && jn["locked"].is_boolean() && jn["locked"].get<bool>();  // a drawing's locked layer
       if (jn.contains("layer") && jn["layer"].is_object()) n.layer = jn["layer"];
       n.source_op = op_id;
+      n.linked = !asset_file.empty();
       const std::string nid = n.id;
       const bool body = n.kind == Node::Kind::Body;
       scene.nodes[nid] = std::move(n);
@@ -309,6 +314,9 @@ struct SceneBuilder::Impl {
           const auto& c = b->meta["color"];
           placed.color = {c[0].get<double>(), c[1].get<double>(), c[2].get<double>()};
         }
+        // A linked picture: its bytes come with the body read from the file, never with the op.
+        if (b && b->external && placed.raster.is_object() && !placed.raster.contains("href") && b->meta.contains("href"))
+          placed.raster["href"] = b->meta["href"];
       }
       attach(nid, parent, -1);
       if (!body && jn.contains("children")) build_nodes(jn["children"], nid, op_id, op_type);
@@ -431,7 +439,13 @@ struct SceneBuilder::Impl {
           parent.clear();
         }
       }
+      // A linked asset (assets.hpp): its bodies are registered when the file is read, so an unread file leaves them missing.
+      const json asset = d.value("asset", json());
+      asset_file.clear();
+      if (asset.is_object() && asset.value("storage", "linked") != "embedded")
+        asset_file = asset.value("path", asset.value("abs", d.value("source", std::string("?"))));
       build_nodes(d.value("nodes", json::array()), parent, id, type);
+      asset_file.clear();
     } else if (type == "reparent") {
       Node* n = target_of(id, type, d);
       if (!n) return;
@@ -532,11 +546,10 @@ struct SceneBuilder::Impl {
       s.component = component_of(d);
       if (!s.component.empty()) s.placed = scene.world(s.component);
       s.plane = d.value("plane", json::object());
-      s.geometry = d.value("geometry", json::object());
-      s.frame = Frame::from_json(s.plane.value("frame", json()));
       // A regeneration (changed parameters, a moved face) leaves the solved state in the result.
+      s.geometry = design::solved_geometry(d);
+      s.frame = Frame::from_json(s.plane.value("frame", json()));
       const json res = d.value("result", json::object());
-      if (res.contains("geometry")) s.geometry = res["geometry"];
       if (res.contains("frame")) s.frame = Frame::from_json(res["frame"]);
       s.dof = res.value("dof", d.value("dof", -1));
       s.error = res.value("error", "");
@@ -766,8 +779,7 @@ std::vector<EffectiveOp> effective_ops(const std::vector<const Op*>& ops, std::v
       for (const auto& [k, v] : op.data["set"].items()) {
         if (k == "geometry_delta") {
           // Start from the last solved geometry, including parameter-driven changes.
-          const json base = data.value("result", json::object()).value("geometry", data.value("geometry", json::object()));
-          data["geometry"] = design::apply_sketch_delta(base, v);
+          data["geometry"] = design::apply_sketch_delta(design::solved_geometry(data), v);
           if (data.contains("result")) data["result"].erase("geometry");
         }
         else if (v.is_null()) data.erase(k);

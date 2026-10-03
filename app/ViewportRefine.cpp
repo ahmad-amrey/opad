@@ -42,6 +42,7 @@ void Viewport::refineVisible() {
     double deflection, area, triangles;
     TopoDS_Shape shape;
     Bnd_Box box;
+    std::shared_ptr<const opad::FaceColors> colors;
   };
   std::map<std::string, Want> wants;
   for (const auto& [id, item] : m_items) {
@@ -75,7 +76,7 @@ void Viewport::refineVisible() {
     const double deflection = std::max({pixel * 0.5, 1e-4, base->deflection * triangles / kBodyTriangles});
     if (deflection >= current * 0.7) continue;  // not worth a re-mesh
     auto& want = wants[item.key];
-    if (want.key.empty()) want = {item.key, deflection, 0, triangles * base->deflection / deflection, opad::body_shape(m_doc->doc, item.key), base->box};
+    if (want.key.empty()) want = {item.key, deflection, 0, triangles * base->deflection / deflection, opad::body_shape(m_doc->doc, item.key), base->box, base->faceColors};
     want.area += area;
   }
   if (wants.empty()) return;
@@ -101,7 +102,7 @@ void Viewport::refineVisible() {
       // A copy: the cached shape keeps the base triangulation that picking and highlights are built on.
       TopoDS_Shape copy = BRepBuilderAPI_Copy(want.shape, Standard_True, Standard_False).Shape();
       BodyPrs::meshForDisplay(copy, want.deflection);
-      auto prs = BodyPrs::build(copy, want.box, true);
+      auto prs = BodyPrs::build(copy, want.box, true, want.colors);
       prs->deflection = want.deflection;
       (*results)[i] = std::move(prs);
     }

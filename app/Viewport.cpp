@@ -23,7 +23,11 @@
 
 #include <AIS_AnimationCamera.hxx>
 #include <AIS_TexturedShape.hxx>
+#include <Graphic3d_AspectFillArea3d.hxx>
+#include <Graphic3d_Group.hxx>
+#include <PrsMgr_Presentation.hxx>
 #include <QPainter>
+#include <QPointer>
 #include <cstring>
 #include <AIS_ViewCube.hxx>
 #include <Aspect_DisplayConnection.hxx>
@@ -80,6 +84,7 @@ Handle(Aspect_Window) opad_make_cocoa_window(void* nsview);
 #include "opad/inspect.hpp"
 #include "Jobs.hpp"
 #include "NavCube.hpp"
+#include "SketchBackdrop.hpp"
 #include <TColStd_ListOfInteger.hxx>
 #include <Prs3d_DatumAspect.hxx>
 #include <Prs3d_ShadingAspect.hxx>
@@ -1407,6 +1412,22 @@ QImage Viewport::grabImage() {
   return img;
 }
 
+std::vector<std::array<double, 3>> Viewport::drawnColors(const std::string& nodeId) const {
+  std::vector<std::array<double, 3>> out;
+  const auto it = m_items.find(nodeId);
+  if (it == m_items.end()) return out;
+  for (const auto& p : it->second.ais->Presentations()) {
+    if (p->Mode() != AIS_Shaded) continue;
+    for (const auto& g : p->Groups())
+      if (const auto fill = Handle(Graphic3d_AspectFillArea3d)::DownCast(g->Aspects()); !fill.IsNull()) {
+        double r, gr, b;
+        fill->InteriorColor().Values(r, gr, b, Quantity_TOC_sRGB);
+        out.push_back({r, gr, b});
+      }
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- section (F20)
 void Viewport::setSection(bool enabled, const opad::Vec3& origin, const opad::Vec3& normal, bool caps) {
   m_sectionEnabled = enabled;
@@ -1545,20 +1566,95 @@ double deflectionForBox(const Bnd_Box& box) {
   }
   return d;
 }
+
+// A raster node's picture as a base64 data: URI, or null.
+const std::string* rasterHref(const opad::Node& n) {
+  if (!n.raster.is_object()) return nullptr;
+  const auto it = n.raster.find("href");
+  if (it == n.raster.end() || !it->is_string()) return nullptr;
+  const std::string& href = it->get_ref<const std::string&>();
+  const size_t comma = href.find(',');
+  return href.rfind("data:image/", 0) == 0 && comma != std::string::npos && href.substr(0, comma).find(";base64") != std::string::npos ? &href : nullptr;
+}
+
+// Which picture a raster node shows and how it is fitted, without reading all of it (the scene is synced often and a
+// picture is megabytes): its length, its first and last 4 KB, the corners and the fitting.
+std::string rasterKey(const opad::Node& n) {
+  const std::string* href = rasterHref(n);
+  if (!href) return {};
+  const std::string_view v(*href);
+  const size_t edge = std::min<size_t>(v.size(), 4096);
+  return std::to_string(v.size()) + ":" + std::to_string(std::hash<std::string_view>{}(v.substr(0, edge))) + ":" +
+         std::to_string(std::hash<std::string_view>{}(v.substr(v.size() - edge))) + "|" + n.raster.value("corners", opad::json()).dump() + "|" +
+         n.raster.value("preserveAspectRatio", "");
+}
+
+// Worker: the texture of a raster node, fitted into its corners' proportions as SVG's preserveAspectRatio says (at most
+// 4096 x 2048), else at most 8192 on its longer side; null when the picture cannot be decoded.
+Handle(Image_PixMap) rasterPixels(const std::string& base64, const opad::json& raster) {
+  const std::string aspect = raster.value("preserveAspectRatio", "");
+  QImage image = decodePicture(QByteArray::fromBase64(QByteArray::fromStdString(base64)), aspect != "none" ? 4096 : 8192);
+  if (image.isNull()) return {};
+  const auto& corners = raster.at("corners");
+  auto point = [&](int i) { return gp_Pnt(corners[i][0].get<double>(), corners[i][1].get<double>(), corners[i][2].get<double>()); };
+  const double ratio = point(0).Distance(point(1)) / std::max(1e-12, point(0).Distance(point(2)));
+  if (aspect != "none") {
+    const int h = int(std::clamp(std::max(double(image.height()), image.width() / ratio), 1.0, 2048.0));
+    const int w = int(std::clamp(h * ratio, 1.0, 4096.0));
+    QImage canvas(w, h, QImage::Format_RGBA8888);
+    canvas.fill(Qt::transparent);
+    const auto scaled = image.scaled(w, h, aspect.find("slice") != std::string::npos ? Qt::KeepAspectRatioByExpanding : Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    QPainter painter(&canvas);
+    painter.drawImage((w - scaled.width()) / 2, (h - scaled.height()) / 2, scaled);
+    painter.end();
+    image = canvas;
+  }
+  image = image.convertToFormat(QImage::Format_RGBA8888);
+  Handle(Image_PixMap) pixels = new Image_PixMap();
+  pixels->InitTrash(Image_Format_RGBA, image.width(), image.height());
+  pixels->SetTopDown(false);
+  for (int row = 0; row < image.height(); ++row) std::memcpy(pixels->ChangeRow(row), image.constScanLine(row), size_t(image.width()) * 4);
+  return pixels;
+}
 }  // namespace
+
+void Viewport::decodeRaster(const opad::Node& n, const std::string& key) {
+  if (!m_rasterDecoding.insert(key).second) return;
+  const std::string& href = *rasterHref(n);
+  auto data = std::make_shared<const std::string>(href.substr(href.find(',') + 1));  // the scene moves on meanwhile
+  auto fit = std::make_shared<const opad::json>(opad::json{{"corners", n.raster.at("corners")}, {"preserveAspectRatio", n.raster.value("preserveAspectRatio", "")}});
+  auto made = std::make_shared<Handle(Image_PixMap)>();
+  QPointer<Viewport> guard(this);
+  m_jobs->async(tr("Decoding pictures"), [data, fit, made](Progress progress) {
+    if (!progress.cancelled()) *made = rasterPixels(*data, *fit);
+  }, [this, guard, key, made](bool, const QString&) {
+    if (!guard) return;
+    m_rasterDecoding.erase(key);
+    m_rasters[key] = *made;  // null: the frame is shown
+    ++m_rastersDecoded;
+    if (trace::enabled() && !made->IsNull()) trace::log(QStringLiteral("picture decoded on a worker: %1 x %2").arg((*made)->SizeX()).arg((*made)->SizeY()));
+    requestSync();
+  });
+}
+
+bool Viewport::showsPicture(const std::string& nodeId) const {
+  const auto it = m_items.find(nodeId);
+  return it != m_items.end() && !Handle(AIS_TexturedShape)::DownCast(it->second.ais).IsNull();
+}
 
 double Viewport::deflectionFor(const std::string& key) { return deflectionForBox(opad::body_bbox(m_doc->doc, key)); }
 
 // Tessellation runs off the UI thread (F21); bodies appear once their mesh is ready.
 void Viewport::startMeshing(std::vector<std::string> keys) {
-  struct MeshJob { TopoDS_Shape shape; std::string key; };
+  struct MeshJob { TopoDS_Shape shape; std::string key; std::shared_ptr<const opad::FaceColors> colors; };
   std::vector<MeshJob> jobs;
   {
     std::lock_guard<std::mutex> lock(m_meshMu);
     for (const auto& k : keys) {
       if (m_meshed.count(k) || m_meshing.count(k) || m_meshSkipped.count(k)) continue;
       m_meshing.insert(k);
-      jobs.push_back({opad::body_shape(m_doc->doc, k), k});
+      auto colors = std::make_shared<const opad::FaceColors>(opad::face_colors(m_doc->doc, k));
+      jobs.push_back({opad::body_shape(m_doc->doc, k), k, colors->empty() ? nullptr : colors});
     }
   }
   if (jobs.empty()) return;
@@ -1592,7 +1688,7 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
           trace::log(QString("mesh %1: status=%2 recovered=%3 incomplete cones=%4").arg(QString::fromStdString(j.key)).arg(mesh.status).arg(mesh.recovered_faces).arg(mesh.incomplete_cones));
         // The box from before the mesh is only good for the deflection: it follows the surfaces' poles, and one
         // small body with a 10 m box zoomed Fit All out of the whole Engine. The presentation gets the mesh's box.
-        prs = BodyPrs::build(j.shape, opad::refine_body_bbox(*cache, j.key, j.shape));  // so Display() on the UI thread is cheap
+        prs = BodyPrs::build(j.shape, opad::refine_body_bbox(*cache, j.key, j.shape), false, j.colors);  // so Display() on the UI thread is cheap
         prs->deflection = deflectionForBox(box);
       } catch (...) {
       }
@@ -1737,7 +1833,7 @@ void Viewport::sync() {
       emit isolationChanged();
     }
   }
-  std::set<std::string> keep, replace;
+  std::set<std::string> keep, replace, rasters;
   std::vector<std::string> pending, toAdd;
   bool recoloredSelected = false;
   for (const auto& id : scene.all_bodies()) {
@@ -1746,7 +1842,9 @@ void Viewport::sync() {
     // Isolate mode shows exactly the isolated set and ignores visibility flags; otherwise the flags rule.
     if (!m_isolated.empty() ? !m_isolated.count(id) : !scene.effectively_visible(id)) continue;
     auto it = m_items.find(id);
-    if (it != m_items.end() && it->second.key == n->body_key && it->second.world.m == scene.world(id).m) {
+    const std::string raster = rasterKey(*n);
+    if (!raster.empty()) rasters.insert(raster);
+    if (it != m_items.end() && it->second.key == n->body_key && it->second.world.m == scene.world(id).m && it->second.raster == raster) {
       keep.insert(id);
       Item& item = it->second;
       if (item.color != n->color || item.opacity != n->opacity) {
@@ -1769,10 +1867,16 @@ void Viewport::sync() {
       pending.push_back(n->body_key);
       continue;
     }
+    if (!raster.empty() && !m_rasters.count(raster)) {  // shown once its picture is decoded; what is shown until then stays
+      decodeRaster(*n, raster);
+      if (it != m_items.end()) keep.insert(id);
+      continue;
+    }
     keep.insert(id);
     if (it != m_items.end()) replace.insert(id);
     toAdd.push_back(id);
   }
+  for (auto it = m_rasters.begin(); it != m_rasters.end();) it = rasters.count(it->first) ? std::next(it) : m_rasters.erase(it);
   bool removed = false;
   for (auto it = m_items.begin(); it != m_items.end();) {
     if (keep.count(it->first) && !replace.count(it->first)) { ++it; continue; }
@@ -1845,34 +1949,21 @@ void Viewport::displayBody(const std::string& id) {
     prs.reset();
   }
   Handle(AIS_Shape) ais = new BodyShape(located, prs);
+  if (!rigid)
+    if (auto colors = std::make_shared<const opad::FaceColors>(opad::face_colors(m_doc->doc, n->body_key)); !colors->empty())
+      Handle(BodyShape)::DownCast(ais)->setFaceColors(colors);
   if (auto refined = m_refined.find(n->body_key); rigid && refined != m_refined.end())
     Handle(BodyShape)::DownCast(ais)->setDisplayPrs(refined->second.prs);  // zoomed in before: draw it fine at once
-  if(!n->raster.is_null()) {
-    const std::string href=n->raster.value("href","");
-    const auto comma=href.find(',');
-    if(href.rfind("data:image/",0)==0 && comma!=std::string::npos && href.substr(0,comma).find(";base64")!=std::string::npos) {
-      QImage image=QImage::fromData(QByteArray::fromBase64(QByteArray::fromStdString(href.substr(comma+1))));
-      if(!image.isNull()) {
-        const auto& corners=n->raster.at("corners");
-        auto point=[&](int i) { return gp_Pnt(corners[i][0].get<double>(),corners[i][1].get<double>(),corners[i][2].get<double>()); };
-        const double ratio=point(0).Distance(point(1))/std::max(1e-12,point(0).Distance(point(2)));
-        const auto aspect=n->raster.value("preserveAspectRatio","");
-        if(aspect!="none") {
-          const int h=int(std::clamp(std::max(double(image.height()),image.width()/ratio),1.0,2048.0));
-          const int w=int(std::clamp(h*ratio,1.0,4096.0));
-          QImage canvas(w,h,QImage::Format_RGBA8888); canvas.fill(Qt::transparent);
-          const auto scaled=image.scaled(w,h,aspect.find("slice")!=std::string::npos?Qt::KeepAspectRatioByExpanding:Qt::KeepAspectRatio,Qt::SmoothTransformation);
-          QPainter painter(&canvas); painter.drawImage((w-scaled.width())/2,(h-scaled.height())/2,scaled); painter.end(); image=canvas;
-        }
-        image=image.convertToFormat(QImage::Format_RGBA8888);
-        Handle(Image_PixMap) pixels=new Image_PixMap();
-        pixels->InitTrash(Image_Format_RGBA,image.width(),image.height()); pixels->SetTopDown(false);
-        for(int row=0;row<image.height();++row) std::memcpy(pixels->ChangeRow(row),image.constScanLine(row),image.width()*4);
-        Handle(AIS_TexturedShape) textured=new AIS_TexturedShape(located);
-        textured->SetTexturePixMap(pixels); textured->SetTextureMapOn(); textured->DisableTextureModulate(); textured->SetTextureRepeat(false);
-        ais=textured;
-      } else emit hoverChanged(tr("Embedded image could not be decoded; showing its frame"));
-    }
+  const std::string raster = rasterKey(*n);
+  if (const auto r = m_rasters.find(raster); r != m_rasters.end() && !r->second.IsNull()) {  // decoded on a worker (decodeRaster)
+    Handle(AIS_TexturedShape) textured = new AIS_TexturedShape(located);
+    textured->SetTexturePixMap(r->second);
+    textured->SetTextureMapOn();
+    textured->DisableTextureModulate();
+    textured->SetTextureRepeat(false);
+    ais = textured;
+  } else if (r != m_rasters.end()) {
+    emit hoverChanged(tr("Embedded image could not be decoded; showing its frame"));
   }
   gp_Trsf placed;
   if (look.offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(look.offset[0], look.offset[1], look.offset[2]));  // an explode offset, after the placement
@@ -1903,7 +1994,7 @@ void Viewport::displayBody(const std::string& id) {
   if (!look.visible) m_ctx->Erase(ais, Standard_False);
   if (m_side) maskSide(id, ais);  // side by side: one of B's changes stays out of A's view
   const qint64 displayMs = t.elapsed();
-  m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located, {}, look, rigid};
+  m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located, {}, raster, look, rigid};
   m_nodeOf[ais.get()] = id;
   activateSelection(ais);  // after m_items: its look may say not pickable
   if (trace::enabled() && t.elapsed() > 50) trace::log(QStringLiteral("displayBody %1: display %2 ms, selection %3 ms").arg(QString::fromStdString(n->name)).arg(displayMs).arg(t.elapsed() - displayMs));

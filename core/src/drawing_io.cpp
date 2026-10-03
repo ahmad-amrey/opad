@@ -2,6 +2,7 @@
 #include "opad/drawing/display.hpp"
 #include "opad/drawing/sheet.hpp"
 #include <functional>
+#include "opad/kicad_pcb.hpp"
 #include <set>
 #include "opad/design/sketch_geom.hpp"
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -43,6 +44,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -59,6 +61,7 @@
 #include <fcntl.h>
 #include <spawn.h>
 #include <sys/wait.h>
+#include <signal.h>
 #include <unistd.h>
 extern char** environ;
 #endif
@@ -94,10 +97,15 @@ struct Conversion {
   Conversion() { std::filesystem::create_directory(directory); }
   ~Conversion() { std::error_code error; std::filesystem::remove_all(directory, error); }
 };
-// Runs a converter and waits for it (two minutes at most); its exit status, or -1 when it did not start. Arguments go as
-// wide strings on Windows, so a drawing named in Arabic reaches the converter intact.
-int run_program(const std::filesystem::path& program, const std::vector<std::filesystem::path>& args, const std::filesystem::path& cwd = {}) {
+}  // namespace
+namespace detail {
+int run_program(const std::filesystem::path& program, const std::vector<std::filesystem::path>& args, const std::filesystem::path& cwd, const RunOptions& run) {
   int status = -1;
+  const auto started = std::chrono::steady_clock::now();
+  auto overdue = [&] {
+    return (run.cancelled && run.cancelled()) ||
+           std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count() > run.timeout_ms;
+  };
 #ifdef _WIN32
   std::wstring command;
   auto quote = [&](const std::wstring& a) {
@@ -112,16 +120,20 @@ int run_program(const std::filesystem::path& program, const std::vector<std::fil
   for (const auto& a : args) quote(a.wstring());
   STARTUPINFOW startup{}; startup.cb=sizeof(startup); startup.dwFlags=STARTF_USESTDHANDLES|STARTF_USESHOWWINDOW;
   startup.wShowWindow=0;  // SW_HIDE (the OCCT headers leave winuser.h out): converters with a window (ODA) stay out of sight
-  // Converters report progress on stdout and stderr, which nobody reads: both go to NUL.
+  // Converters report progress on stdout and stderr: to NUL, or to the output file when the caller reads it.
   SECURITY_ATTRIBUTES inherit{sizeof(inherit),nullptr,TRUE};
   HANDLE nul=CreateFileW(L"NUL",GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&inherit,OPEN_EXISTING,0,nullptr);
-  startup.hStdInput=startup.hStdOutput=startup.hStdError=nul;
+  HANDLE out=run.output.empty()?INVALID_HANDLE_VALUE:CreateFileW(run.output.c_str(),GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&inherit,CREATE_ALWAYS,0,nullptr);
+  startup.hStdInput=nul; startup.hStdOutput=startup.hStdError=out!=INVALID_HANDLE_VALUE?out:nul;
   PROCESS_INFORMATION process{};
   if(CreateProcessW(nullptr,command.data(),nullptr,nullptr,TRUE,CREATE_NO_WINDOW,nullptr,cwd.empty()?nullptr:cwd.c_str(),&startup,&process)) {
-    if(WaitForSingleObject(process.hProcess,120000)==WAIT_OBJECT_0) { DWORD code; if(GetExitCodeProcess(process.hProcess,&code)) status=int(code); }
+    DWORD wait;
+    while((wait=WaitForSingleObject(process.hProcess,100))==WAIT_TIMEOUT && !overdue()) {}
+    if(wait==WAIT_OBJECT_0) { DWORD code; if(GetExitCodeProcess(process.hProcess,&code)) status=int(code); }
     else { TerminateProcess(process.hProcess,1); WaitForSingleObject(process.hProcess,5000); }
     CloseHandle(process.hThread); CloseHandle(process.hProcess);
   }
+  if(out!=INVALID_HANDLE_VALUE) CloseHandle(out);
   if(nul!=INVALID_HANDLE_VALUE) CloseHandle(nul);
 #else
   (void)cwd;  // callers pass absolute paths here
@@ -130,14 +142,24 @@ int run_program(const std::filesystem::path& program, const std::vector<std::fil
   std::vector<char*> ptrs; for (auto& a : text) ptrs.push_back(a.data()); ptrs.push_back(nullptr);
   pid_t pid;
   posix_spawn_file_actions_t actions; posix_spawn_file_actions_init(&actions);
-  posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);  // converter chatter: nobody reads it
-  posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+  const std::string sink = run.output.empty() ? std::string("/dev/null") : run.output.string();
+  posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, sink.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
   const int error = posix_spawnp(&pid, text[0].c_str(), &actions, nullptr, ptrs.data(), environ);
   posix_spawn_file_actions_destroy(&actions);
-  if (!error) { int code=0; while(waitpid(pid,&code,0)<0 && errno==EINTR) {} if(WIFEXITED(code)) status=WEXITSTATUS(code); }
+  if (!error) {
+    int code = 0;
+    pid_t done = 0;
+    while ((done = waitpid(pid, &code, WNOHANG)) == 0 && !overdue()) usleep(100000);
+    if (done == 0) { kill(pid, SIGKILL); while (waitpid(pid, &code, 0) < 0 && errno == EINTR) {} }
+    else if (done > 0 && WIFEXITED(code)) status = WEXITSTATUS(code);
+  }
 #endif
   return status;
 }
+}  // namespace detail
+namespace {
+using detail::run_program;
 
 std::filesystem::path executable_dir() {
 #ifdef _WIN32
@@ -243,6 +265,17 @@ void convert_dwg(const std::filesystem::path& in, const std::filesystem::path& o
               " beside OPAD or on PATH (or set " + (toDwg ? "OPAD_DXF2DWG" : "OPAD_DWG2DXF") +
               " to it). Saving the drawing as DXF works without one." + oda_hint);
 }
+
+// Which converter convert_dwg would read a DWG with: a kept conversion is only good for the same one.
+std::string dwg_converter() {
+  if (const char* override = std::getenv("OPAD_DWG2DXF"); override && *override) return std::string("override:") + override;
+  if (const auto oda = oda_converter(); !oda.empty()) {
+    const auto u8 = oda.u8string();
+    return "oda:" + std::string(u8.begin(), u8.end());
+  }
+  return "libredwg";
+}
+
 std::string extension(const std::filesystem::path& file) {
   std::string e = file.extension().string();
   std::transform(e.begin(), e.end(), e.begin(), [](unsigned char c) { return std::tolower(c); });
@@ -511,8 +544,12 @@ std::string dwg_reader() {
 
 const std::vector<std::string>& importable_extensions() {
   static const std::vector<std::string> list = {".step", ".stp", ".iges", ".igs", ".brep", ".brp", ".stl", ".obj", ".3mf", ".ply",
-                                                ".gltf", ".glb", ".wrl", ".vrml", ".dxf", ".dwg", ".svg"};
+                                                ".gltf", ".glb", ".wrl", ".vrml", ".dxf", ".dwg", ".svg", ".kicad_pcb"};
   return list;
+}
+
+namespace {
+ImportResult import_drawing(Document& doc, const std::filesystem::path& file, const std::filesystem::path& shown, const ImportOptions& options);
 }
 
 ImportResult import_file(Document& doc, const std::filesystem::path& file, const ImportOptions& options) {
@@ -526,12 +563,31 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     if(ext==".ply") return detail::import_ply(doc,file,options);
     if(ext==".3mf") return detail::import_3mf(doc,file,options);
     if(ext==".obj" || ext==".gltf" || ext==".glb" || ext==".wrl" || ext==".vrml") return detail::import_mesh_scene(doc,file,options);
+    if(ext==".kicad_pcb") return options.kicad.kicad_cli?import_kicad_export(doc,file,options):import_kicad_pcb(doc,file,options);
+    if(ext==".png" || ext==".jpg" || ext==".jpeg" || ext==".bmp" || ext==".gif" || ext==".webp") return detail::import_image(doc,file,options);
   } catch(const Standard_Failure& e) { throw Error("cannot read "+file.filename().string()+": "+e.GetMessageString()); }
   if(ext==".dwg") {
-    Conversion work; auto name=file.stem(); name+=".dxf";  // keeps the drawing's own name
+    // Converting is what is slow about a DWG: the DXF text it made is kept by the DWG's content (viewer_cache.cpp).
+    auto name=file.stem(); name+=".dxf";  // keeps the drawing's own name
+    const std::string converter=dwg_converter();
+    if(const auto kept=detail::dwg_cache_find(file,converter);!kept.empty()) return import_drawing(doc,kept,name,options);
+    Conversion work;
+    const auto start=std::chrono::steady_clock::now();
     convert_dwg(file,work.directory/name,false);
-    return import_file(doc,work.directory/name,options);
+    const auto converted=std::chrono::steady_clock::now();
+    ImportResult result=import_drawing(doc,work.directory/name,name,options);
+    const auto ms=[](auto a,auto b){return std::chrono::duration<double,std::milli>(b-a).count();};
+    detail::dwg_cache_keep(file,converter,work.directory/name,ms(start,converted),ms(converted,std::chrono::steady_clock::now()));
+    return result;
   }
+  if(ext==".dxf" || ext==".svg") return import_drawing(doc,file,file,options);
+  throw Error("unsupported file format: " + ext);
+}
+
+namespace {
+// A DXF or SVG read from `file`, named as `shown` (a converted DWG's DXF: the drawing's own name).
+ImportResult import_drawing(Document& doc, const std::filesystem::path& file, const std::filesystem::path& shown, const ImportOptions& options) {
+  const auto ext=extension(file);
   try {
     Drawing drawing;
     if(ext==".dxf") drawing=detail::read_dxf(file,options);
@@ -544,7 +600,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
       if(options.progress && !options.progress(double(children.size())/drawing.layers.size(),"building")) throw Error("cancelled");
       json bodies=json::array();
       for(const auto& [color, shape]:groups) {  // one body per colour the layer's entities are drawn in
-        json meta={{"representation","drawing2d"},{"layer",name},{"source",file.filename().string()}};
+        json meta={{"representation","drawing2d"},{"layer",name},{"source",shown.filename().string()}};
         json body={{"type","body"},{"id",new_uuid()},{"name",name},{"representation","drawing2d"}};
         if(color!=Drawing::kNoColor) meta["color"]=body["color"]={((color>>16)&255)/255.0,((color>>8)&255)/255.0,(color&255)/255.0};
         body["key"]=detail::store_body(staged,shape,meta,options,false);
@@ -559,7 +615,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
       }
       children.push_back(std::move(layer));
     }
-    json root={{"type","component"},{"id",new_uuid()},{"name",file.stem().string()},{"children",children}};
+    json root={{"type","component"},{"id",new_uuid()},{"name",shown.stem().string()},{"children",children}};
     Mat4 placement=options.placement;
     if(options.center_drawing) {
       Bnd_Box box;for(const auto& [name,groups]:drawing.layers)for(const auto& [color,shape]:groups)BRepBndLib::Add(shape,box);
@@ -568,7 +624,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
       placement=placement*Mat4::translation(drawing.origin.X(),drawing.origin.Y(),drawing.origin.Z());  // read near (0,0), back in place
     }
     if(!placement.is_identity())root["transform"]=placement.to_json();
-    json op={{"op","import"},{"source",file.filename().string()},{"nodes",json::array({root})}};
+    json op={{"op","import"},{"source",shown.filename().string()},{"nodes",json::array({root})}};
     // The source keeps what the drawing could not show; a viewer never writes it back, so it skips the copy.
     if(ext==".svg" && !drawing.warnings.empty() && !options.viewer) { op["svg_source"]=read_text_file(file); op["warnings"]=drawing.warnings; }
     if(!options.parent.empty()) op["parent"]=options.parent;
@@ -576,6 +632,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     result.new_entries=int(staged.body_count()-doc.body_count()); doc=std::move(staged); return result;
   } catch(const Standard_Failure& e) { throw Error(std::string("cannot import geometry: ")+e.GetMessageString()); }
 }
+}  // namespace
 
 namespace {
 // The selection (or the document) as drawn: solids and meshes as a view, drawings and sketches as they lie.

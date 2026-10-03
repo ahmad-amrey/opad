@@ -10,6 +10,22 @@
 
 namespace opad {
 
+// KiCad boards (.kicad_pcb, kicad_pcb.hpp): what to build and where footprints' 3D models are looked for after
+// ${KIPRJMOD}, the environment, KiCad's own configuration and its install folders.
+struct KicadOptions {
+  std::vector<std::filesystem::path> model_dirs;  // the user's own 3D model folders
+  bool components = true;                         // false: the bare board
+  bool dnp = true;                                // also footprints marked "do not populate"
+  bool vias = false;                              // drill the through vias too (thousands of holes on a dense board)
+  double placeholder_height = 1.0;                // mm: the box shown for a footprint whose model is not found
+  std::string origin = "auto";                    // auto (the drill/place origin when set, else the board's centre) | center | page
+  std::vector<double> origin_at;                  // [x, y] on the page: this frame whatever `origin` says (a linked board's sync)
+  // Read through KiCad's own STEP export (kicad-cli, kicad_pcb.hpp) instead: KiCad's models and placement exactly, and on
+  // request the copper tracks, pads and silkscreen (KiCad 8/9); linked, the board is what is watched and synced.
+  bool kicad_cli = false;
+  bool tracks = false, pads = false, silkscreen = false;
+};
+
 struct ImportOptions {
   bool heal = true;      // run ShapeFix on bodies that fail BRepCheck
   bool viewer = false;   // viewer mode: keep the reader's shapes live in the shape cache; no healing, no BREP
@@ -22,6 +38,7 @@ struct ImportOptions {
   // drawing's bounding-box centre to its origin (a drawing opened on its own is centred on the grid).
   Mat4 placement;
   bool center_drawing = false;
+  KicadOptions kicad;
 };
 
 struct ImportResult {
@@ -31,6 +48,7 @@ struct ImportResult {
   int new_entries = 0;   // body-store entries added (instances of existing keys are free)
   int healed = 0;
   std::vector<std::string> warnings;
+  json info;             // what a reader found beyond the bodies (KiCad: footprints, models, placeholders, holes)
   json to_json() const;
 };
 
@@ -50,10 +68,18 @@ struct EditableKeys {
 Document make_editable(const Document& viewer, EditableKeys* changed = nullptr, const std::function<bool(double)>& progress = {});
 
 // Viewer mode remembers slow reads (viewer_cache.cpp): the shapes of a viewer document's import, with any display meshes
-// made since, kept under the user cache and keyed by the file's path, size and time and the options that shape the read.
-// load: false when nothing usable is kept (then read the file); store: best effort, never throws for cache trouble.
+// made since, kept under the user cache and keyed by the file's content (a copy, a clone or a checkout of it finds them
+// again) and the options that shape the read. Drawings (DXF, SVG, DWG) are not kept this way: their entries were larger
+// and no faster than the file (a DWG keeps its converted DXF text instead, inside import_file). A big file of a format read
+// about as fast as it can be hashed (a mesh over 16 MB) is found only by the hash its store remembered for its path.
+// load: false when nothing usable is kept (then read the file); an entry that read back less than twice as fast as
+// `read_ms` is dropped afterwards. store: `read_ms`, how long reading the file took; the entry is kept only when it reads
+// back at least twice as fast, else the file is marked and not stored again until it changes. Best effort, never throws
+// for cache trouble; reports {"kept", "reason", "bytes", "write_ms", "cached_ms"}.
+bool viewer_cache_applies(const std::filesystem::path& file);
 bool viewer_cache_load(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
-void viewer_cache_store(const Document& doc, const std::filesystem::path& file, const ImportOptions& opt, const std::function<bool()>& cancelled = {});
+json viewer_cache_store(const Document& doc, const std::filesystem::path& file, const ImportOptions& opt, double read_ms,
+                        const std::function<bool()>& cancelled = {});
 
 // Imports a shape given as OCCT ASCII BREP text (the bridge for build123d/CadQuery/OCP users): solids in a
 // compound become separate bodies under a component named `name`.

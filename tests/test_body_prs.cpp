@@ -17,6 +17,7 @@
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
@@ -283,4 +284,33 @@ TEST(extruded_profile_display_arrays_follow_the_profile) {
     }
   std::printf("%d of %d edge segments are not triangle edges\n", missing, lines->VertexNumber() / 2);
   CHECK_EQ(missing, 0);
+}
+
+// UI-74: faces a file coloured otherwise than the body are drawn as one group per colour beside the faces in the body's
+// colour; the whole body's triangles stay as they were for picking, glows and highlights.
+TEST(face_colours_are_drawn_as_groups_beside_the_whole_body) {
+  const TopoDS_Shape box = BRepPrimAPI_MakeBox(10, 10, 10).Shape();
+  BodyPrs::meshForDisplay(box, 0.1);
+  Bnd_Box bounds;
+  BRepBndLib::Add(box, bounds);
+  auto colors = std::make_shared<opad::FaceColors>();
+  colors->colors = {{1.0, 0.8, 0.2}};
+  colors->face = {-1, -1, -1, -1, -1, 0};
+  const auto prs = BodyPrs::build(box, bounds, false, colors);
+  auto count = [](const Handle(Graphic3d_ArrayOfTriangles)& a) { return a->EdgeNumber() / 3; };
+  CHECK_EQ(prs->painted.size(), 1u);
+  CHECK(!prs->own.IsNull());
+  CHECK_EQ(count(prs->triangles), 12);
+  CHECK_EQ(count(prs->own), 10);
+  CHECK_EQ(count(prs->painted[0].triangles), 2);
+  double r, g, b;
+  prs->painted[0].color.Values(r, g, b, Quantity_TOC_sRGB);
+  CHECK(std::abs(r - 1.0) < 1e-3 && std::abs(g - 0.8) < 1e-3 && std::abs(b - 0.2) < 1e-3);
+  CHECK(!prs->navigation.IsNull());  // picking is built from every face
+  colors->face.assign(6, 0);  // every face its own colour: no group in the body's
+  const auto all = BodyPrs::build(box, bounds, true, colors);
+  CHECK(all->own.IsNull());
+  CHECK_EQ(count(all->painted[0].triangles), 12);
+  const auto plain = BodyPrs::build(box, bounds);
+  CHECK(plain->painted.empty() && plain->own.IsNull() && !plain->faceColors);
 }

@@ -599,6 +599,18 @@ struct Walk {
   // renames or moves them, and replay only reads what is stored (TODO 10 B14, C2). A body made from scratch takes
   // the feature's name (numbered when the feature makes several) and goes into the feature's component (UI-33); a copy
   // or a piece takes its source's name, the component its source is in and its source's colour.
+  // A linked file's parts (assets.hpp) are read-only, references and tools only: changing, moving or copying one would store
+  // the file's geometry in the document, so the file is embedded first. A combine does not consume one either (the board an
+  // enclosure was cut with would leave the design); Remove takes one out explicitly.
+  static void check_read_only(const Ctx& ctx, const std::string& kind, const Out& out) {
+    auto refuse = [&](const std::string& node, const std::string& what) {
+      if (const Node* n = ctx.scene.node(node); n && n->linked) throw Error("'" + n->name + "' is part of a linked file and cannot be " + what);
+    };
+    for (const auto& b : out.bodies) refuse(b.node.empty() ? b.source : b.node, b.node.empty() ? "copied: embed the file first" : "changed: embed the file first");
+    if (kind != "remove")
+      for (const auto& r : out.removed) refuse(r, "consumed: keep it as a tool, or embed the file first");
+  }
+
   json materialize(const Ctx& ctx, const Out& out, const json& previous, const std::string& op_id, const std::string& feature_name,
                    const std::string& component) {
     json result = json::object();
@@ -742,7 +754,10 @@ struct Walk {
     result["dof"] = solved.dof;
     // Whether the solved sketch differs from what was given is asked only here, when it is recomputed (gap log #3: a
     // parse and two serialisations per sketch per walk, 1 MB each for the arm's discs).
-    if (solved.converged && sk.to_json() != Sketch::from_json(geometry).to_json()) result["geometry"] = sk.to_json();
+    if (solved.converged && sk.to_json() != Sketch::from_json(geometry).to_json()) {
+      result["geometry"] = sk.to_json();
+      result["geometry"].erase("images");  // as given (solved_geometry): a picture is never stored again per regeneration
+    }
     if (frame_moved) result["frame"] = frame.to_json();
     if (!error.empty()) result["error"] = error;
     return result;
@@ -876,6 +891,7 @@ struct Walk {
         } else {
           try {
             Out out = compute_feature(ctx, kind, inputs);
+            check_read_only(ctx, kind, out);
             for (auto& [k, v] : notes.items()) out.extra[k] = v;
             if (!out.used_targets.empty()) {
               if (json* patch = patchable_inputs(id)) {
@@ -974,6 +990,8 @@ struct Walk {
 
 }  // namespace
 
+bool same_shapes(const TopoDS_Shape& a, const TopoDS_Shape& b) { return same_geometry(a, b); }
+
 Plan plan_ops(const Document& doc, std::vector<json> new_ops, bool strict, const Cancel& cancel) {
   Walk w{doc, new_ops, false, cancel, {}, {}, {}, json::object(), {}};
   return w.run(strict);
@@ -987,7 +1005,8 @@ Plan plan_regenerate(const Document& doc, bool force, const Cancel& cancel) {
 
 json commit(Document& doc, Plan&& plan, const std::string& author) {
   for (auto& b : plan.bodies) {
-    doc.add_body(b.brep, b.meta);
+    if (b.brep.empty()) doc.add_external_body(b.key, b.meta);  // a linked asset's body (asset sync)
+    else doc.add_body(b.brep, b.meta);
     if (b.shape) cache_shape(doc, b.key, *b.shape);
   }
   for (auto& op : plan.ops) doc.append(std::move(op), author);  // not copied: a converted drawing's curves are big
@@ -1105,7 +1124,7 @@ json map_expressions(const std::string& type, const json& data, const std::funct
         }
     if (changed) set["inputs"] = inputs;
   } else if (type == "sketch") {
-    const json original = data.value("result",json::object()).value("geometry",data.value("geometry",json::object()));
+    const json original = solved_geometry(data);
     json geometry = original;
     bool changed = false;
     if (geometry.contains("constraints"))

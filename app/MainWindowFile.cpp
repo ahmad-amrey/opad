@@ -16,6 +16,7 @@
 
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "KicadBoards.hpp"
 #include "opad/drawing_io.hpp"
 
 void MainWindow::buildFileActions() {
@@ -24,7 +25,8 @@ void MainWindow::buildFileActions() {
     // openPath asks about unsaved changes once a file is chosen (asking here too asked twice after Discard).
     QString p = QFileDialog::getOpenFileName(this, tr("Open"), m_settings.value("ui/lastDir").toString(),
                                              tr("Design files (%1);;OPAD document (*.opad);;CAD models (*.step *.stp *.iges *.igs *.brep *.brp);;"
-                                                "Meshes (*.stl *.3mf *.obj *.ply *.gltf *.glb *.wrl *.vrml);;2D drawings (*.dxf *.dwg *.svg)").arg(fileFilter(true)));
+                                                "Meshes (*.stl *.3mf *.obj *.ply *.gltf *.glb *.wrl *.vrml);;2D drawings (*.dxf *.dwg *.svg)").arg(fileFilter(true)) +
+                                                ";;" + tr("KiCad boards (*.kicad_pcb)"));
     if (!p.isEmpty()) openPath(p);
   });
   addAction("file.import", tr("&Import…"), "import", QKeySequence("Ctrl+I"), [this] {
@@ -38,8 +40,9 @@ void MainWindow::buildFileActions() {
       parent = QString::fromStdString(ids[0]);
     const QString suffix = QFileInfo(p).suffix().toLower();
     if (suffix == "dxf" || suffix == "svg" || suffix == "dwg") return importDrawing(p, parent);
+    if (suffix == "kicad_pcb" && KicadDialog(this, true).exec() != QDialog::Accepted) return;
     beginLoad([this, p] { addRecent(p); m_viewport->fitWhenReady(); });
-    m_doc->startImport(p, parent);
+    m_doc->startImport(p, parent, {}, {}, suffix == "kicad_pcb" && KicadDialog::linked());  // KiCad's export: linked to its board
   });
   addAction("file.importdoc", tr("Save as OPAD document…"), "save", QKeySequence("Ctrl+Shift+E"), [this] { if (m_doc->browse) saveViewerAs(); });
   addAction("file.save", tr("&Save"), "save", QKeySequence("Ctrl+S"), [this] {
@@ -231,6 +234,7 @@ void MainWindow::beginLoad(std::function<void()> after) {
     }
     if(ok) {
       m_doc->storeViewerCache(m_jobs);  // a slow viewer read, now meshed: the next open of the file skips it
+      if(!m_benchSelect) QTimer::singleShot(0, this, [this] { offerKicadModels(); offerAssetTrust(); });  // library models, linked files (benches call them)
       if(!m_doc->path().isEmpty()) m_viewPath=QFileInfo(m_doc->path()).absoluteFilePath();
       if((!m_benchSelect || qEnvironmentVariableIsSet("OPAD_BENCH_NAVIGATION")) && !m_viewPath.isEmpty() && m_settings.value("view/lastPath").toString()==m_viewPath) {
         try {

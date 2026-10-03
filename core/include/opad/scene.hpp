@@ -22,6 +22,7 @@ struct Node {
   json raster;  // embedded SVG raster reference, independent of shared geometry
   std::string representation = "solid";  // solid | mesh | drawing2d
   bool body_missing = false;  // Body whose key is not in the store (F8)
+  bool linked = false;        // part of a linked asset (assets.hpp): its geometry comes from the file, read-only
   Mat4 local;
   bool has_color = false;
   std::array<double, 3> color{0.75, 0.75, 0.78};

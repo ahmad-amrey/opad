@@ -43,12 +43,14 @@ void Viewport::syncSketches() {
   for (const auto& s : m_doc->scene.sketches) {
     if (s.id == m_hiddenSketch || (!m_isolated.empty()?!m_isolated.count(s.id):!s.visible)) continue;
     keep.insert(s.id);
-    const std::string stamp = s.geometry.dump() + s.frame.to_json().dump();
+    // Pictures by their samples (UI-71: dumping a photo backdrop's megabytes on every sync).
+    const std::string stamp = opad::design::geometry_stamp(s.geometry) + s.frame.to_json().dump();
     auto it = m_sketchWires.find(s.id);
     if (it != m_sketchWires.end() && it->second.stamp == stamp) continue;
     if (it != m_sketchWires.end()) { for(const auto& image:it->second.backdrops)m_ctx->Remove(image,false);m_nodeOf.erase(it->second.ais.get()); m_ctx->Remove(it->second.ais, Standard_False); }
     std::shared_ptr<PreparedSketch> prepared;
-    if(s.geometry.value("entities",opad::json::array()).size()>256 || !s.geometry.value("images",opad::json::array()).empty()) {
+    auto count=[&](const char* key) { const auto f=s.geometry.find(key); return f!=s.geometry.end() && f->is_array() ? f->size() : size_t(0); };
+    if(count("entities")>256 || count("images")>0) {
       auto found=m_preparedSketches.find(s.id);
       if(found==m_preparedSketches.end() || found->second->stamp!=stamp) {
         prepared=std::make_shared<PreparedSketch>();prepared->stamp=stamp;m_preparedSketches[s.id]=prepared;
