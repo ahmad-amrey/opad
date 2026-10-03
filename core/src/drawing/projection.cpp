@@ -60,7 +60,7 @@ using detail::View;
 
 namespace {
 
-constexpr const char* kAlgorithm = "proj-5";  // part of every fingerprint: bump when the output of any tier changes
+constexpr const char* kAlgorithm = "proj-6";  // part of every fingerprint: bump when the output of any tier changes
 constexpr double kTwoPi = 2 * M_PI;
 
 Vec2 operator+(Vec2 a, Vec2 b) { return {a[0] + b[0], a[1] + b[1]}; }

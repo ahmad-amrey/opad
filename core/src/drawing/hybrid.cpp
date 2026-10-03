@@ -407,7 +407,11 @@ void trace(const Context& cx, const Adaptor3d_Curve& c, double a, double b, int 
   }
   const int n = std::clamp(static_cast<int>(std::ceil(length / D.px)), 2, 1 << 16);
   std::vector<uint8_t> v(static_cast<size_t>(n) + 1);
-  for (int i = 0; i <= n; ++i) v[static_cast<size_t>(i)] = vis(a + (b - a) * i / n);
+  // Every other sample first: one between two that agree could only make a one-sample run, which smooth_runs drops.
+  for (int i = 0; i <= n; i += 2) v[static_cast<size_t>(i)] = vis(a + (b - a) * i / n);
+  if (n % 2) v[static_cast<size_t>(n)] = vis(b);
+  for (int i = 1; i < n; i += 2)
+    v[static_cast<size_t>(i)] = v[static_cast<size_t>(i - 1)] == v[static_cast<size_t>(i + 1)] ? v[static_cast<size_t>(i - 1)] : vis(a + (b - a) * i / n);
   smooth_runs(v);
   double start = a;
   for (int i = 0; i < n; ++i) {
