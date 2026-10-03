@@ -232,10 +232,13 @@ TEST(issued_revisions) {
   const std::string plate = id_of(a.scene(), "Plate"), bracket = id_of(a.scene(), "Bracket");
   run(a.doc, "sheet_item", {{"sheet", a.sheet}, {"view", a.front}, {"kind", "dimension"}, {"type", "horizontal"}, {"refs", {plate + "/vertex/0", bracket + "/vertex/0"}}});
   CHECK_EQ(next_revision(a.scene(), *a.scene().sheet(a.sheet)), "A");
+  Scene s = a.scene();
+  const size_t grows = frozen_bytes(a.doc, s, *s.sheet(a.sheet));
+  CHECK(grows > 1000);
   const json issued = run(a.doc, "sheet_issue", {{"sheet", a.sheet}, {"description", "First release"}, {"approved", "R. Engineer"}, {"date", "2026-10-04"}});
   CHECK_EQ(issued["rev"], "A");
   CHECK_EQ(issued["frozen"], 1);
-  Scene s = a.scene();
+  s = a.scene();
   const SheetItem* issue = s.sheet_item(issued["id"]);
   CHECK(issue && issue->kind == "issue" && issue->error.empty());
   CHECK_EQ(issue->def["values"].size(), 1u);
@@ -244,6 +247,8 @@ TEST(issued_revisions) {
   CHECK(a.doc.has_body(key));
   const TopoDS_Shape lines = shape_from_brep(a.doc.body(key)->brep);
   CHECK(subshape_count(lines, Ref::Kind::Edge) > 4);
+  CHECK_EQ(a.doc.body(key)->brep.size(), grows);
+  CHECK_EQ(frozen_bytes(a.doc, s, *s.sheet(a.sheet)), 0u);  // unchanged since A: nothing more to keep
   a.doc.gc();
   CHECK(a.doc.has_body(key));
   const json values = title_values(a.doc, s, *s.sheet(a.sheet));
@@ -262,6 +267,7 @@ TEST(issued_revisions) {
   CHECK_EQ(changes["views"].size(), 1u);
   CHECK_EQ(changes["values"].size(), 1u);
   CHECK_EQ(run(a.doc, "sheet_info", {{"sheet", a.sheet}})["issues"][0]["changed"]["views"].size(), 1u);
+  CHECK(frozen_bytes(a.doc, s, *s.sheet(a.sheet)) > 1000);
   const json b = run(a.doc, "sheet_issue", {{"sheet", a.sheet}, {"freeze", false}});
   CHECK_EQ(b["rev"], "B");
   CHECK_EQ(b["frozen"], 0);

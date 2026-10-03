@@ -467,5 +467,8 @@
   " rev %1 as issued": " المراجعة %1 كما أُصدرت",
   "Issue the next revision…": "إصدار المراجعة التالية…",
   "Export revision %1 as issued…": "تصدير المراجعة %1 كما أُصدرت…",
-  "Its views as they were frozen when it was issued, with the values it was issued with": "مساقطها كما حُفظت عند إصدارها، بالقيم التي أُصدرت بها"
+  "Its views as they were frozen when it was issued, with the values it was issued with": "مساقطها كما حُفظت عند إصدارها، بالقيم التي أُصدرت بها",
+  "Keep the views' linework in the document (adds about %1)": "احفظ خطوط المساقط في المستند (يضيف نحو %1)",
+  "Keep the views' linework in the document (already in it: unchanged since the last revision)": "احفظ خطوط المساقط في المستند (محفوظة فيه: لم تتغير منذ المراجعة السابقة)",
+  "Measuring the views' linework": "جارٍ قياس خطوط المساقط"
 }

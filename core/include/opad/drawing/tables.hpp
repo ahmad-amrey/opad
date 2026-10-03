@@ -67,6 +67,9 @@ Scene with_issue(const Scene& scene, const json& op);
 std::string linework_brep(const ViewGeometry& g);
 // That linework back as the view's curves (sharp, tangent, hidden; a polyline comes back as its segments).
 ViewGeometry frozen_geometry(const TopoDS_Shape& lines);
+// What issuing the sheet's drawing with frozen linework adds to the body store, in bytes: the linework of every view that
+// the store does not hold yet (a view unchanged since the last issue adds nothing). Projects every view (cached): workers.
+size_t frozen_bytes(const Document& doc, const Scene& scene, const Sheet& sheet, const ProjectionProgress& progress = {});
 // What changed since an issue: {"views": ids whose projection differs, "values": items that show another value now,
 // "gone": items or views that are gone}. Workers (fingerprints count faces, items are measured).
 json issue_changes(const Document& doc, const Scene& scene, const SheetItem& issue);

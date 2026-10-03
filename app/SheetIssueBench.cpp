@@ -134,6 +134,8 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ISSUE, sheetIssue) {
     check(dialog && dialog->revisionEdit()->text() == "A", "Issue revision… opens its dialog on revision A");
     if (!dialog) throw opad::Error("no dialog");
     check(waitFor([&] { return dialog->gitChecked(); }, 20000) && dialog->gitBox()->isEnabled(), "it finds the document's git repository");
+    const bool measured = waitFor([&] { return dialog->freezeBox()->text().contains("adds about"); }, 30000) && waitFor([&] { return !doc->designBusy; }, 10000);
+    check(measured, "it measures what the frozen linework adds: " + dialog->freezeBox()->text());
     const QString pdf = QDir::fromNativeSeparators(dialog->pdfEdit()->text());
     check(QFileInfo(pdf).absolutePath() == QFileInfo(file).absolutePath() && pdf.endsWith("Drawing 1 rev A.pdf"), "the PDF goes beside the document: " + pdf);
     dialog->descriptionEdit()->setText("First release");
@@ -171,6 +173,15 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ISSUE, sheetIssue) {
             "the revision table lists A, the title block says A");
     }
 
+    // Issue revision… again with nothing changed: the linework is in the document already.
+    waitFor([&] { return !w.findChild<IssueDialog*>(); }, 5000);  // the first one is gone (deleted on close)
+    w.action("drawings.issue")->trigger();
+    IssueDialog* again = nullptr;
+    waitFor([&] { return (again = w.findChild<IssueDialog*>()) != nullptr; }, 5000);
+    const bool kept = again && waitFor([&] { return again->freezeBox()->text().contains("already in it"); }, 30000);
+    check(kept && again->revisionEdit()->text() == "B", "again unchanged, on revision B: " + (again ? again->freezeBox()->text() : QString("no dialog")));
+    if (again) again->reject();
+    waitFor([&] { return !doc->designBusy && !w.findChild<IssueDialog*>(); }, 10000);
     // The pin moved: the bar warns.
     bool moved = false;
     docs->run("transform", {{"target", pin}, {"matrix", {1, 0, 0, 5, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}}}, [&](const opad::json& out) { moved = !out.is_null(); });

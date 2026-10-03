@@ -552,6 +552,23 @@ std::string linework_brep(const ViewGeometry& g) {
   return brep_from_shape(all);
 }
 
+size_t frozen_bytes(const Document& doc, const Scene& scene, const Sheet& sheet, const ProjectionProgress& progress) {
+  std::vector<const SheetView*> views;
+  for (const Sheet* s : drawing_sheets(scene, sheet))
+    for (const auto& f : layout(doc, scene, *s))
+      if (const SheetView* v = scene.sheet_view(f.id); v && f.error.empty()) views.push_back(v);
+  size_t bytes = 0;
+  for (size_t i = 0; i < views.size(); ++i) {
+    if (progress && !progress(static_cast<double>(i) / static_cast<double>(views.size()), "linework")) throw Error("cancelled");
+    const auto g = project(doc, scene, view_spec(scene, *views[i]), [&](double t, const std::string& phase) {
+      return !progress || progress(t < 0 ? -1 : (static_cast<double>(i) + t) / static_cast<double>(views.size()), phase);
+    });
+    const std::string brep = linework_brep(*g);
+    if (!doc.has_body(sha256_hex(brep))) bytes += brep.size();
+  }
+  return bytes;
+}
+
 json plan_issue(const Document& doc, const Scene& scene, const json& args, std::map<std::string, std::string>* frozen) {
   const Sheet& sheet = need_sheet(scene, args);
   const auto sheets = drawing_sheets(scene, sheet);

@@ -19,7 +19,8 @@ CASES = [
     # placed with the mouse. <prefix>.empty.png, .sheet.png, .snap.png, .final.png, .window.png, .fields.png, .template.png.
     ("sheet", "empty", {"OPAD_BENCH_SHEET": "{prefix}"}),
     # The same workspace on the Engine (beside the repository; skipped where it is not): an A2 drawing of four views laid
-    # out on a worker, drawn and dragged with no event-loop gap over 250 ms. <prefix>.png.
+    # out on a worker, drawn and dragged, and Issue revision… measuring what the frozen linework adds, with no event-loop
+    # gap over 250 ms. <prefix>.png.
     ("sheet-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_SHEET_LOADED": "{prefix}"}),
     # Annotating a sheet (UI-79, UI-80, UI-81) with mouse and key events on the canvas: smart dimensions (an edge, a hole's
     # diameter with a tolerance from the options bar, a corner to a centre), hole callouts from hole features (also from the side), a centre mark

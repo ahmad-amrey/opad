@@ -22,6 +22,7 @@
 
 #include "BenchRegistry.hpp"
 #include "DocsArea.hpp"
+#include "IssueRevision.hpp"
 #include "SheetCanvas.hpp"
 #include "SheetDialogs.hpp"
 #include "SheetPage.hpp"
@@ -444,9 +445,9 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
 }
 
 // OPAD_BENCH_SHEET_LOADED=<prefix> (UI-78, a big model: the Engine): the loaded file gets a drawing (A2, front + top + side +
-// iso at an automatic scale) through the area's own path; times the frames, the first draft, every view final and a drag
-// of the base view afterwards (cached projections), with a 1 ms ticker whose worst gap is the longest the event loop was
-// held. <prefix>.png is the sheet once drawn.
+// iso at an automatic scale) through the area's own path; times the frames, the first draft, every view final, a drag of the
+// base view afterwards (cached projections) and Issue revision…'s measure of the frozen linework, with a 1 ms ticker whose
+// worst gap is the longest the event loop was held. <prefix>.png is the sheet once drawn.
 OPAD_BENCH(OPAD_BENCH_SHEET_LOADED, sheetLoaded) {
   const QString& prefix = value;
   DocsArea* docs = DocsArea::of(w.m_areas);
@@ -512,6 +513,18 @@ OPAD_BENCH(OPAD_BENCH_SHEET_LOADED, sheetLoaded) {
     const bool moved = waitFor([&] { return w.m_doc->doc.ops.size() == ops + 1; }, 30000) && waitFor(settled, 120000);
     check(moved && worst < 250, QString("the base view dragged: drawn again in %1 ms from cached projections; worst event-loop gap %2 ms").arg(clock.elapsed()).arg(worst));
   }
+  // Issue revision… measures what the frozen linework adds on a worker (UI-84); closed without issuing.
+  worst = 0;
+  gap.restart();
+  clock.restart();
+  w.action("drawings.issue")->trigger();
+  IssueDialog* issue = nullptr;
+  waitFor([&] { return (issue = w.findChild<IssueDialog*>()) != nullptr; }, 5000);
+  const bool measured = issue && waitFor([&] { return issue->freezeBox()->text().contains("adds about"); }, 600000);
+  check(measured && worst < 250, QString("Issue revision… measured the frozen linework in %1 ms: %2; worst event-loop gap %3 ms")
+                                     .arg(clock.elapsed()).arg(issue ? issue->freezeBox()->text() : QString()).arg(worst));
+  if (issue) issue->reject();
+  waitFor([&] { return !w.m_doc->designBusy; }, 60000);
   ticker.stop();
   trace::log(QString("bench: sheet-loaded: done %1").arg(ok ? "PASS" : "FAIL"));
   QCoreApplication::exit(ok ? 0 : 2);

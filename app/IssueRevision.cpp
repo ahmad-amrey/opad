@@ -9,6 +9,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLocale>
 #include <QMainWindow>
 #include <QPointer>
 #include <QProcess>
@@ -17,6 +18,7 @@
 #include <QSettings>
 #include <QVBoxLayout>
 
+#include <atomic>
 #include <filesystem>
 
 #include "AppDocument.hpp"
@@ -222,6 +224,11 @@ opad::json IssueDialog::args() const {
   return a;
 }
 
+void IssueDialog::setFrozenBytes(qint64 bytes) {
+  m_freeze->setText(bytes > 0 ? tr("Keep the views' linework in the document (adds about %1)").arg(QLocale().formattedDataSize(bytes, 1, QLocale::DataSizeTraditionalFormat))
+                              : tr("Keep the views' linework in the document (already in it: unchanged since the last revision)"));
+}
+
 QString IssueDialog::pdf() const { return m_pdf->isChecked() ? QDir::fromNativeSeparators(m_pdfPath->text().trimmed()) : QString(); }
 bool IssueDialog::tagged() const { return m_git->isEnabled() && m_git->isChecked(); }
 
@@ -239,6 +246,25 @@ void DocsArea::issueRevision() {
     services().guarded([&] { issue(args, pdf, tagged); });
   });
   dialog->open();
+  // What the frozen linework adds, measured while the dialog is open (the views' projections are cached for the issue then);
+  // stopped when it closes, so the issue never waits for it.
+  auto bytes = std::make_shared<size_t>(0);
+  auto stop = std::make_shared<std::atomic<bool>>(false);
+  connect(dialog, &QDialog::finished, this, [stop] { *stop = true; });
+  QPointer<IssueDialog> shown(dialog);
+  const QString phase = tr("Measuring the views' linework");
+  m_page->canvas()->read(
+      phase,
+      [sheet, bytes, stop, phase](const opad::Document& doc, const opad::Scene& scene, Progress p) {
+        const opad::Sheet* s = scene.sheet(sheet);
+        if (s && !*stop) *bytes = opad::drawing::frozen_bytes(doc, scene, *s, [&](double f, const std::string&) {
+          p.setPhase(phase, f < 0 ? -1 : static_cast<int>(100 * f));
+          return !p.cancelled() && !*stop;
+        });
+      },
+      [shown, bytes, stop](bool ok, const QString&) {
+        if (shown && ok && !*stop) shown->setFrozenBytes(static_cast<qint64>(*bytes));
+      });
 }
 
 void DocsArea::issue(const opad::json& args, const QString& pdf, bool tagged, std::function<void(const opad::json&)> done) {

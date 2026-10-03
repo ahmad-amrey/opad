@@ -32,12 +32,15 @@ class IssueDialog : public QDialog {
   opad::json args() const;  // sheet_issue's: sheet, rev, description, date, by, approved, freeze, tag (when tagged)
   QString pdf() const;      // where the PDF goes; empty: none
   bool tagged() const;      // commit and tag in git
+  // What keeping the linework adds to the document (drawing::frozen_bytes, measured on a worker by DocsArea::issueRevision).
+  void setFrozenBytes(qint64 bytes);
   // For benches.
   QLineEdit* revisionEdit() const { return m_rev; }
   QLineEdit* descriptionEdit() const { return m_description; }
   QLineEdit* approvedEdit() const { return m_approved; }
   QLineEdit* pdfEdit() const { return m_pdfPath; }
   QCheckBox* gitBox() const { return m_git; }
+  QCheckBox* freezeBox() const { return m_freeze; }
   bool gitChecked() const { return m_checked; }  // the repository look-up has answered
 
  signals:
