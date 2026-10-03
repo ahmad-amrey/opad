@@ -469,16 +469,45 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
           check(dark > 20 && disc.x() > centre.x() && disc.y() > centre.y(), "the picture is drawn upright: its blue block bottom right");
           check(ok && darkFlipped > 20 && mirrored.x() < centre.x() && mirrored.y() > centre.y() && doc->doc.ops.back().type == "edit",
                 "Flip left-right: decoded again on a worker, the block drawn bottom left; an edit of the import");
+          // Show through: centred over the box and seen from behind it, the box's middle is the box, then the picture.
+          area->run({{"action", "place"}, {"set", {{"x", 150.0}, {"y", 20.0}, {"width", 120.0}}}});
+          view->clearSelection();  // a selected canvas is in Topmost, the X-ray, whatever its flags
+          view->standardView("back");
+          view->benchDesignShot(prefix + ".behind.png");
+          auto boxMiddle = [view] {
+            const QImage frame = view->grabImage().convertToFormat(QImage::Format_RGB32);
+            const QPoint at = view->widgetPoint({140, 20, 12}) * view->displayScale();  // off the handles' centre cross
+            return std::make_pair(frame, frame.rect().contains(at) ? QColor(frame.pixel(at)) : QColor());
+          };
+          const auto hidden = boxMiddle();
           area->panel()->findChild<QCheckBox*>("canvasThrough")->click();
           area->panel()->findChild<QCheckBox*>("canvasSelectable")->click();
           waitFor(area, [=] {
             const opad::json s = view->benchLookState(st->canvas);
-            return s.is_object() && s.value("layer", 0) == int(Graphic3d_ZLayerId_Topmost) && s.value("activated", 1) == 0;
+            return s.is_object() && s.value("layer", 0) == int(view->throughLayer()) && s.value("activated", 1) == 0;
           }, 5000, [=](bool shown) {
-            check(shown, "shown through the model (Topmost) and not selectable in the view (no selection modes)");
-            area->panel()->findChild<QCheckBox*>("canvasSelectable")->click();
-            area->panel()->findChild<QCheckBox*>("canvasThrough")->click();
-            next();
+            const opad::json s = view->benchLookState(st->canvas);
+            check(shown && view->throughLayer() != Graphic3d_ZLayerId_Topmost && s.value("depth_test", true) == false && s.value("depth_write", true) == false,
+                  "shown through the model (its own layer: no depth test, no depth written) and not selectable in the view (no selection modes)");
+            const auto through = boxMiddle();
+            through.first.save(prefix + ".through.png");
+            trace::log(QString("bench: canvas: the box's middle from behind %1, shown through %2").arg(hidden.second.name(), through.second.name()));
+            check(hidden.second.isValid() && hidden.second.lightness() < 200 && through.second.lightness() > 235,
+                  "from behind the box, the box hides the canvas until it is shown through: then the picture is drawn over it");
+            // A selected body's X-ray (Topmost) still shows over a canvas shown through (it covered it in Topmost).
+            std::string box;
+            for (const auto& id : doc->scene.all_bodies())
+              if (!opad::is_canvas(*doc->node(id))) box = id;
+            view->selectNodes({box});
+            waitFor(area, [=] { return view->benchLookState(box).value("selected", false); }, 5000, [=](bool selected) {
+              const auto xray = boxMiddle();
+              trace::log(QString("bench: canvas: the box selected behind it %1").arg(xray.second.name()));
+              check(selected && xray.second.lightness() < 235, "a selected body behind it shows over it (its X-ray)");
+              view->clearSelection();
+              area->panel()->findChild<QCheckBox*>("canvasSelectable")->click();
+              area->panel()->findChild<QCheckBox*>("canvasThrough")->click();
+              next();
+            });
           });
         });
       });

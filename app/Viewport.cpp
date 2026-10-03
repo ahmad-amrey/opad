@@ -264,6 +264,16 @@ void Viewport::initViewer() {
     osd.SetClearDepth(Standard_True);
     m_viewer->SetZLayerSettings(Graphic3d_ZLayerId_TopOSD, osd);
   }
+  {  // A canvas shown through the model: drawn after it with no depth test and writing no depth, so the model never hides
+     // it and it hides nothing drawn later (hover in Top, a selected body's X-ray in Topmost, which owns its depth buffer
+     // and where the canvas itself went before and covered selected bodies behind it).
+    Graphic3d_ZLayerSettings through;
+    through.SetName("canvas through");
+    through.SetEnableDepthTest(Standard_False);
+    through.SetEnableDepthWrite(Standard_False);
+    through.SetClearDepth(Standard_False);
+    if (!m_viewer->InsertLayerBefore(m_throughLayer, through, Graphic3d_ZLayerId_Top)) m_throughLayer = Graphic3d_ZLayerId_Topmost;
+  }
   m_hoverFadeEnabled=QSettings().value("view/hoverFade",true).toBool();
   m_hoverFadeSeconds=std::clamp(QSettings().value("view/hoverFadeSeconds",5.0).toDouble(),.1,60.0);
   m_hoverFadeTimer.setSingleShot(true);connect(&m_hoverFadeTimer,&QTimer::timeout,this,&Viewport::requestRedraw);

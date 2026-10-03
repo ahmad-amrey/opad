@@ -154,6 +154,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QString hoverName(const std::string& node) const;   // the status text of a hovered node: "Lid (inactive)" for a ghost
   bool looksPending() const { return m_lookJob != nullptr || !m_lookQueue.empty(); }
   opad::json benchLookState(const std::string& body) const;  // OPAD_BENCH_LOOKS: what AIS holds for a displayed body or sketch
+  Graphic3d_ZLayerId throughLayer() const { return m_throughLayer; }  // where a canvas shown through the model is drawn
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
   bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
 
@@ -379,6 +380,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // looks (ViewportLooks.cpp)
   std::array<std::unordered_map<std::string, LookDelta>, kLookSources> m_lookLayers;
   bool m_ghostsPickable = false;
+  // Canvases shown through the model (opad/canvas.hpp): after the model, no depth test, no depth written (initViewer).
+  Graphic3d_ZLayerId m_throughLayer = Graphic3d_ZLayerId_Topmost;
   Job* m_lookJob = nullptr;
   std::deque<std::string> m_lookQueue;  // displayed bodies whose look may have changed, applied in this order
   std::unordered_set<std::string> m_lookQueued;

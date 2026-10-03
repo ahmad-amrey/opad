@@ -38,7 +38,7 @@ BodyLook Viewport::composeLook(const opad::Node& body) const {
   if (!body.canvas.is_null()) {  // a canvas's flags (opad/canvas.hpp): picked in the view or only from the browser, drawn through the model
     const opad::CanvasFlags flags = opad::CanvasFlags::of(body.canvas);
     base.pickable = flags.selectable;
-    if (flags.through) base.layer = Graphic3d_ZLayerId_Topmost;
+    if (flags.through) base.layer = m_throughLayer;
   }
   std::array<const LookDelta*, kLookSources> found{};
   if (layered()) {
@@ -248,8 +248,10 @@ opad::json Viewport::benchLookState(const std::string& body) const {
   double r = 0, g = 0, b = 0;
   c.Values(r, g, b, Quantity_TOC_sRGB);
   const gp_XYZ t = ais->LocalTransformation().TranslationPart();
+  const Graphic3d_ZLayerSettings& layer = m_viewer->ZLayerSettings(ais->ZLayer());
   return {{"displayed", m_ctx->IsDisplayed(ais)}, {"activated", modes.Extent()}, {"transparency", ais->Transparency()}, {"color", {r, g, b}},
-          {"layer", ais->ZLayer()}, {"translation", {t.X(), t.Y(), t.Z()}}, {"selected", m_ctx->IsSelected(ais)}};
+          {"layer", ais->ZLayer()}, {"depth_test", layer.ToEnableDepthTest()}, {"depth_write", layer.ToEnableDepthWrite()},
+          {"translation", {t.X(), t.Y(), t.Z()}}, {"selected", m_ctx->IsSelected(ais)}};
 }
 
 std::string Viewport::benchPickAt(int x, int y, opad::Vec3* at) {
