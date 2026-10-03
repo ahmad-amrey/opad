@@ -1,7 +1,8 @@
 #pragma once
 // Image canvases (UI-70): a picture imported as one flat rectangle (image_io.cpp) whose raster holds the file's own bytes,
 // stored once and never decoded or encoded again. Everything after the import is an op on it, never the picture again:
-//   placement (move, turn, size)   transform ops; the matrix is the canvas's placement times a uniform scale
+//   placement (move, turn, size)   transform ops; the matrix is the canvas's placement times a scale, uniform unless the
+//                                  canvas was stretched out of its picture's proportions (free aspect: x and y apart)
 //   opacity, visible, locked       appearance ops
 //   flags                          an edit of the import op setting its whole "canvas" object:
 //     {"selectable": true, "display_through": false, "flip": [false, false], "plane": {"origin", "x", "y"}}
@@ -26,18 +27,22 @@ struct CanvasFlags {
 };
 
 // Where a canvas is: its centre (x, y) and turn (radians, about the plane's normal) in its plane, its shown size, and the
-// picture's own rectangle (the body, mm) that the placement scales uniformly.
+// picture's own rectangle (the body, mm) that the placement scales (by width / body_w along x, height / body_h along y).
 struct CanvasPlace {
   Frame plane;
   double x = 0, y = 0, width = 0, height = 0, angle = 0;
   double body_w = 0, body_h = 0;
   bool on_plane = true;  // false: moved off its plane since (a Move): the plane is then the canvas's own frame
+  bool stretched() const;  // shown out of its picture's proportions
 };
 
 bool is_canvas(const Node& n);  // a body showing a picture of its own (representation image, a raster)
 const Node& canvas_node(const Scene& scene, const std::string& id);  // throws when `id` is not a canvas
+void canvas_body_size(const Node& n, double& w, double& h);          // its picture's own rectangle (the body), mm; throws without one
 CanvasPlace canvas_place(const Scene& scene, const std::string& id);
-Mat4 canvas_world(const CanvasPlace& place);  // the canvas's world matrix for that place
+// The canvas's world matrix for that place: a similarity while width and height keep the picture's proportions (to 1e-12),
+// else x and y scaled apart.
+Mat4 canvas_world(const CanvasPlace& place);
 // Bottom left, bottom right, top right, top left and the centre, world (handles, snapping).
 std::array<Vec3, 5> canvas_points(const Mat4& world, double body_w, double body_h);
 // The transform op putting the canvas at `world` (its local matrix under its parent).

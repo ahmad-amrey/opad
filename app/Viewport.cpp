@@ -36,6 +36,8 @@
 #include <Bnd_Box2d.hxx>
 #include <gp_Pnt2d.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRep_Tool.hxx>
@@ -948,7 +950,7 @@ void Viewport::applySelectionLayers() {
     size_t i=0,removed=0;
   };
   auto state=std::make_shared<State>();
-  for(auto& [id,it]:m_items) {auto prs=m_prs.find(it.key);state->targets.push_back({it.ais,prs==m_prs.end()?nullptr:prs->second});}
+  for(auto& [id,it]:m_items) {auto prs=m_prs.find(it.key);state->targets.push_back({it.ais,prs==m_prs.end()||it.stretch!=1?nullptr:prs->second});}  // a stretched canvas: no arrays of that aspect
   for(auto& [id,wire]:m_sketchWires) state->targets.push_back({wire.ais,wire.prs});
   for(const auto& [ais,prs]:state->targets) if(m_ctx->IsSelected(ais) && prs) state->keep.insert(ais.get());
   for(const auto& [ais,glow]:m_bodyGlows) if(!state->keep.count(ais)) state->stale.push_back(ais);
@@ -1764,19 +1766,10 @@ void Viewport::sync() {
     const std::string raster = rasterKey(*n);
     if (!raster.empty()) rasters.insert(raster);
     if (const opad::Mat4 world = scene.world(id); it != m_items.end() && it->second.key == n->body_key && it->second.raster == raster && it->second.rigid &&
-                                                  it->second.world.m != world.m && (world.is_identity() || opad::mat_is_rigid(world))) {
+                                                  it->second.world.m != world.m && relocate(it->second, *n, world)) {
       // Only moved (a transform op: a canvas let go, a part placed): its location, as a look's offset is; nothing is
       // displayed again, so it never blinks out for a frame.
-      Item& item = it->second;
-      item.world = world;
-      gp_Trsf placed;
-      if (item.look.offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(item.look.offset[0], item.look.offset[1], item.look.offset[2]));
-      if (!world.is_identity()) placed.Multiply(opad::trsf_from_mat(world));
-      m_ctx->SetLocation(item.ais, placed.Form() == gp_Identity ? TopLoc_Location() : TopLoc_Location(placed));
-      if (!item.navigation.IsNull()) {
-        item.navigation->SetLocalTransformation(placed);
-        m_navSelection->Update(item.navigation, Standard_False);
-      }
+      it->second.world = world;
       moved = true;
     }
     if (it != m_items.end() && it->second.key == n->body_key && it->second.world.m == scene.world(id).m && it->second.raster == raster) {
@@ -1868,6 +1861,71 @@ void Viewport::sync() {
   });
 }
 
+namespace {
+// A canvas's picture rectangle `stretch` times as tall (free aspect), as image_io builds it (the texture spans its UV range):
+// one face, meshed here (two triangles).
+TopoDS_Shape stretchedCanvas(const opad::Node& n, double stretch) {
+  double w = 0, h = 0;
+  opad::canvas_body_size(n, w, h);
+  const TopoDS_Face face = BRepBuilderAPI_MakeFace(gp_Pln(gp::XOY()), 0, w, 0, h * stretch).Face();
+  BRepMesh_IncrementalMesh(face, std::max(w, h * stretch) / 50);
+  return face;
+}
+}  // namespace
+
+bool Viewport::rigidPlacement(const opad::Node& n, const opad::Mat4& world, gp_Trsf& placement, double& stretch) {
+  placement = gp_Trsf();
+  stretch = 1;
+  if (world.is_identity()) return true;
+  if (opad::mat_is_rigid(world)) return placement = opad::trsf_from_mat(world), true;
+  if (!opad::is_canvas(n)) return false;
+  // A stretched canvas: its axes square to each other, y (and z) scaled apart from x. Its similarity has them all as x.
+  double len[3];
+  for (int c = 0; c < 3; ++c) len[c] = std::sqrt(world.at(0, c) * world.at(0, c) + world.at(1, c) * world.at(1, c) + world.at(2, c) * world.at(2, c));
+  if (!(len[0] > 1e-12) || !(len[1] > 1e-12) || !(len[2] > 1e-12)) return false;
+  opad::Mat4 similar = world;
+  for (int r = 0; r < 3; ++r) similar.at(r, 1) *= len[0] / len[1], similar.at(r, 2) *= len[0] / len[2];
+  if (!opad::mat_is_rigid(similar)) return false;
+  placement = opad::trsf_from_mat(similar);
+  stretch = len[1] / len[0];
+  return true;
+}
+
+bool Viewport::relocate(Item& item, const opad::Node& n, const opad::Mat4& world) {
+  gp_Trsf placement;
+  double stretch = 1;
+  if (!item.rigid || !rigidPlacement(n, world, placement, stretch)) return false;
+  if (std::fabs(stretch - item.stretch) > 1e-12 * stretch) {  // a canvas stretched otherwise: its rectangle at the new aspect, in place
+    const auto textured = Handle(AIS_TexturedShape)::DownCast(item.ais);
+    if (textured.IsNull()) return false;  // its picture is not shown (yet): displayed again
+    item.located = stretch == 1 ? opad::body_shape(m_doc->doc, item.key) : stretchedCanvas(n, stretch);
+    item.stretch = stretch;
+    textured->SetShape(item.located);
+    m_ctx->RecomputePrsOnly(textured, Standard_False);
+    m_ctx->RecomputeSelectionOnly(textured);
+    if (!item.navigation.IsNull()) {  // the orbit pivot's copy of the picture's own rectangle no longer fits it
+      m_navNodes.erase(item.navigation.get());
+      m_navSelection->Remove(item.navigation);
+      item.navigation.Nullify();
+    }
+    if (const auto glow = m_bodyGlows.find(item.ais.get()); glow != m_bodyGlows.end()) {  // its outline: the next selection pass, at this aspect
+      m_ctx->Remove(glow->second, Standard_False);
+      m_bodyGlows.erase(glow);
+    }
+  }
+  item.placement = placement;
+  gp_Trsf placed;
+  if (item.look.offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(item.look.offset[0], item.look.offset[1], item.look.offset[2]));
+  placed.Multiply(placement);
+  m_ctx->SetLocation(item.ais, placed.Form() == gp_Identity ? TopLoc_Location() : TopLoc_Location(placed));
+  if (!item.navigation.IsNull()) {
+    item.navigation->SetLocalTransformation(placed);
+    m_navSelection->Update(item.navigation, Standard_False);
+  }
+  if (const auto glow = m_bodyGlows.find(item.ais.get()); glow != m_bodyGlows.end()) glow->second->SetLocalTransformation(item.ais->Transformation());
+  return true;
+}
+
 // Adds one body to the context: presentation + selection entities are computed here.
 void Viewport::displayBody(const std::string& id) {
   const opad::Scene& scene = m_doc->scene;
@@ -1885,18 +1943,24 @@ void Viewport::displayBody(const std::string& id) {
   }
   const BodyLook look = composeLook(*n);  // the document's appearance under the layers of looks (UI-121)
   // Rigid placements go on the object as a local transformation, so the prototype's precomputed arrays
-  // (and sub-shape ordinals) are shared by every instance; anything else gets a transformed copy.
+  // (and sub-shape ordinals) are shared by every instance; anything else gets a transformed copy, but for a canvas stretched
+  // out of its proportions, which is its own rectangle at that aspect.
   TopoDS_Shape located = proto;
-  const bool rigid = world.is_identity() || opad::mat_is_rigid(world);
+  gp_Trsf placement;
+  double stretch = 1;
+  const bool rigid = rigidPlacement(*n, world, placement, stretch);
   if (!rigid) {
     located = opad::node_world_shape(m_doc->doc, scene, id);
+    prs.reset();
+  } else if (stretch != 1) {
+    located = stretchedCanvas(*n, stretch);
     prs.reset();
   }
   Handle(AIS_Shape) ais = new BodyShape(located, prs);
   if (!rigid)
     if (auto colors = std::make_shared<const opad::FaceColors>(opad::face_colors(m_doc->doc, n->body_key)); !colors->empty())
       Handle(BodyShape)::DownCast(ais)->setFaceColors(colors);
-  if (auto refined = m_refined.find(n->body_key); rigid && refined != m_refined.end())
+  if (auto refined = m_refined.find(n->body_key); rigid && stretch == 1 && refined != m_refined.end())
     Handle(BodyShape)::DownCast(ais)->setDisplayPrs(refined->second.prs);  // zoomed in before: draw it fine at once
   const std::string raster = rasterKey(*n);
   if (const auto r = m_rasters.find(raster); r != m_rasters.end() && !r->second.IsNull()) {  // decoded on a worker (decodeRaster)
@@ -1911,7 +1975,7 @@ void Viewport::displayBody(const std::string& id) {
   }
   gp_Trsf placed;
   if (look.offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(look.offset[0], look.offset[1], look.offset[2]));  // an explode offset, after the placement
-  if (rigid && !world.is_identity()) placed.Multiply(opad::trsf_from_mat(world));
+  if (rigid) placed.Multiply(placement);
   if (placed.Form() != gp_Identity) ais->SetLocalTransformation(placed);
   ais->Attributes()->SetTypeOfDeflection(Aspect_TOD_ABSOLUTE);
   ais->Attributes()->SetMaximalChordialDeviation(deflectionFor(n->body_key));
@@ -1937,7 +2001,7 @@ void Viewport::displayBody(const std::string& id) {
   m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, -1, Standard_False);  // selection activated below, once
   if (!look.visible) m_ctx->Erase(ais, Standard_False);
   const qint64 displayMs = t.elapsed();
-  m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located, {}, raster, look, rigid};
+  m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located, {}, raster, look, rigid, stretch, placement};
   m_nodeOf[ais.get()] = id;
   activateSelection(ais);  // after m_items: its look may say not pickable
   if (trace::enabled() && t.elapsed() > 50) trace::log(QStringLiteral("displayBody %1: display %2 ms, selection %3 ms").arg(QString::fromStdString(n->name)).arg(displayMs).arg(t.elapsed() - displayMs));

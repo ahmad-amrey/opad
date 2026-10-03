@@ -1,7 +1,7 @@
 // OPAD_BENCH_CANVAS=<prefix> (UI-70), on a document holding a box beside the XZ plane (case "canvas" in
 // tools/bench_cases/assets.py): a JPEG inserted as a canvas on XZ through the placer at a typed width; a corner dragged by the
 // real mouse handlers' path (the canvas drawn where the drag puts it at every step, nothing written until let go, then one
-// transform op, the opposite corner fixed, undo and redo); digits typed in the view landing in the panel's X (never the
+// transform op, the opposite corner fixed, undo and redo); Shift on a corner stretching it, Picture proportions; digits typed in the view landing in the panel's X (never the
 // filter shortcut) and applied with Enter; Calibrate by two clicks on the picture and a typed distance; Align to model onto two
 // vertices of the box; lock (no handles, a drag moves nothing); flip (the picture drawn mirrored), show through and
 // selectable; Trace to sketch; Replace (same node, width kept); a sketch's backdrop turned into a canvas; a picture dropped
@@ -40,6 +40,7 @@
 #include "opad/canvas.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch.hpp"
+#include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 
 namespace {
@@ -280,6 +281,52 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
           "Esc during a drag puts the canvas back and writes nothing");
     next();
   });
+  // 2b. Shift on a corner stretches it (free aspect): drawn stretched at every step through its own rectangle at that aspect,
+  // one transform op when let go, the opposite corner fixed; Picture proportions puts the picture's proportions back.
+  steps.push_back([=](std::function<void()> next) {
+    st->world = canvasWorld();
+    st->ops = doc->doc.ops.size();
+    const opad::CanvasPlace before = editor->place();
+    const auto corners = opad::canvas_points(st->world, before.body_w, before.body_h);
+    QPointF at;
+    editor->gripPoint(CanvasEditor::Grip::Corner2, at);
+    mouse(view, QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::ShiftModifier);
+    bool live = true;
+    for (int i = 1; i <= 5; ++i) {
+      mouse(view, QEvent::MouseMove, at + QPointF(12 * i, -i), Qt::LeftButton, Qt::ShiftModifier);
+      opad::Mat4 shown;
+      live = live && view->shownPlacement(st->canvas, shown) && same(shown, opad::canvas_world(editor->place())) && editor->place().stretched() &&
+             doc->doc.ops.size() == st->ops;
+    }
+    check(live && view->showsPicture(st->canvas), "Shift on a corner: drawn stretched at every step, its picture on it, nothing written meanwhile");
+    mouse(view, QEvent::MouseButtonRelease, at + QPointF(60, -5), Qt::NoButton, Qt::ShiftModifier);
+    const opad::CanvasPlace after = opad::canvas_place(doc->scene, st->canvas);
+    const auto moved = opad::canvas_points(canvasWorld(), after.body_w, after.body_h);
+    opad::Mat4 shown;
+    check(doc->doc.ops.size() == st->ops + 1 && doc->doc.ops.back().type == "transform" && after.stretched() && gap(moved[0], corners[0]) < 1e-6 &&
+              after.height / after.width < before.height / before.width - 0.01 && view->shownPlacement(st->canvas, shown) && same(shown, canvasWorld()) &&
+              view->showsPicture(st->canvas),
+          QString("let go: one transform op, %1 x %2 mm -> %3 x %4 mm about the fixed corner, drawn as the document has it")
+              .arg(before.width).arg(before.height).arg(after.width).arg(after.height));
+    view->grabImage().save(prefix + ".stretched.png");
+    QPushButton* proportions = area->panel()->findChild<QPushButton*>("canvasProportions");
+    check(proportions && proportions->isVisible(), "the panel offers Picture proportions while it is stretched");
+    // Width typed alone keeps the stretch; then the picture's proportions back.
+    area->field(2)->setText("150");
+    area->field(2)->setModified(true);
+    emit area->field(2)->returnPressed();
+    const opad::CanvasPlace typed = opad::canvas_place(doc->scene, st->canvas);
+    check(std::fabs(typed.width - 150) < 1e-6 && std::fabs(typed.height / typed.width - after.height / after.width) < 1e-9, "a width typed alone keeps its proportions, stretched");
+    if (proportions) proportions->click();
+    const opad::CanvasPlace back = opad::canvas_place(doc->scene, st->canvas);
+    check(!back.stretched() && std::fabs(back.width - 150) < 1e-6 && opad::mat_is_rigid(canvasWorld()) && view->shownPlacement(st->canvas, shown) && same(shown, canvasWorld()) &&
+              !proportions->isVisible(),
+          "Picture proportions: its height from its width again, drawn as a similarity");
+    doc->undo();
+    check(opad::canvas_place(doc->scene, st->canvas).stretched() && view->shownPlacement(st->canvas, shown) && same(shown, canvasWorld()), "undo: stretched again, drawn so");
+    doc->redo();
+    next();
+  });
   // 3. Digits typed in the view go into X (not the Body filter of key 1); Enter applies them.
   steps.push_back([=](std::function<void()> next) {
     view->setFocus();
@@ -461,7 +508,7 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
   // 10. A sketch's backdrop becomes a canvas where it lay; the sketch keeps its lines.
   steps.push_back([=, &w](std::function<void()> next) {
     QFile file(photo);
-    file.open(QIODevice::ReadOnly);
+    if (!file.open(QIODevice::ReadOnly)) return (void)check(false, "the photo"), next();
     opad::design::Sketch sk;
     sk.add_line(sk.add_point(0, 0), sk.add_point(30, 0));
     sk.images.push_back({{"id", sk.next_id()}, {"name", photo.toStdString()}, {"data", file.readAll().toBase64().toStdString()}, {"position", {10, 20}},

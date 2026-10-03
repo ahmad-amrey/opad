@@ -233,7 +233,8 @@ CASES = [
     # Pictures (UI-71): a JPEG canvas decoded on a worker, a sketch backdrop kept as the file has it, a move storing only
     # its fields (<prefix>.canvas.png).
     ("pictures", "empty", {"OPAD_BENCH_PICTURES": "{prefix}"}),
-    # The image canvas (UI-70): inserted on XZ through the placer at a width, a corner dragged (live, one op), digits into X,
+    # The image canvas (UI-70): inserted on XZ through the placer at a width, a corner dragged (live, one op), Shift on a
+    # corner stretching it, digits into X,
     # Calibrate, Align to the box, lock, flip/through/selectable, Trace, Replace, a backdrop turned into a canvas
     # (<prefix>.png, .panel.png, .place.png, .flipped.png).
     ("canvas", canvas_document, {"OPAD_BENCH_CANVAS": "{prefix}"}),

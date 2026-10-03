@@ -597,25 +597,21 @@ void Viewport::showBackdrop(const Handle(AIS_InteractiveObject)& obj) {
 }
 bool Viewport::previewPlacement(const std::string& node, const opad::Mat4& world) {
   const auto it = m_items.find(node);
-  if (!m_initialised || it == m_items.end() || !it->second.rigid || !opad::mat_is_rigid(world)) return false;
-  gp_Trsf placed;
-  const auto& o = it->second.look.offset;
-  if (o != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(o[0], o[1], o[2]));
-  placed.Multiply(opad::trsf_from_mat(world));
-  m_ctx->SetLocation(it->second.ais, TopLoc_Location(placed));
-  if (const auto glow = m_bodyGlows.find(it->second.ais.get()); glow != m_bodyGlows.end()) glow->second->SetLocalTransformation(it->second.ais->Transformation());
+  const opad::Node* n = m_doc->scene.node(node);
+  if (!m_initialised || it == m_items.end() || !n || !relocate(it->second, *n, world)) return false;
   redrawScene();
   return true;
 }
 
 void Viewport::endPlacementPreview(const std::string& node) {
-  if (const auto it = m_items.find(node); it != m_items.end() && it->second.rigid) previewPlacement(node, it->second.world.is_identity() ? opad::Mat4() : it->second.world);
+  if (const auto it = m_items.find(node); it != m_items.end() && it->second.rigid) previewPlacement(node, it->second.world);
 }
 
 bool Viewport::shownPlacement(const std::string& node, opad::Mat4& world) const {
   const auto it = m_items.find(node);
   if (!m_initialised || it == m_items.end()) return false;
   world = opad::mat_from_trsf(it->second.ais->LocalTransformation());
+  for (int r = 0; r < 3; ++r) world.at(r, 1) *= it->second.stretch;  // a stretched canvas's rectangle is that much taller
   return true;
 }
 

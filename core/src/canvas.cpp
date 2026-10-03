@@ -28,15 +28,6 @@ Mat4 columns(const Vec3& x, const Vec3& y, const Vec3& z, const Vec3& t) {
   return m;
 }
 
-// The body's rectangle from the raster's corners (top left, top right, bottom left).
-void body_size(const Node& n, double& w, double& h) {
-  const json& c = n.raster.at("corners");
-  const Vec3 tl = c.at(0).get<Vec3>(), tr = c.at(1).get<Vec3>(), bl = c.at(2).get<Vec3>();
-  w = length(sub(tr, tl));
-  h = length(sub(tl, bl));
-  if (!(w > 0) || !(h > 0)) throw Error("the canvas " + n.name + " has no size");
-}
-
 std::string base64_decode(const std::string& text) {
   std::string out;
   out.reserve(text.size() * 3 / 4);
@@ -80,6 +71,17 @@ json CanvasFlags::to_json() const {
 
 bool is_canvas(const Node& n) { return n.kind == Node::Kind::Body && n.representation == "image" && n.raster.is_object() && n.raster.contains("corners"); }
 
+// The body's rectangle from the raster's corners (top left, top right, bottom left).
+void canvas_body_size(const Node& n, double& w, double& h) {
+  const json& c = n.raster.at("corners");
+  const Vec3 tl = c.at(0).get<Vec3>(), tr = c.at(1).get<Vec3>(), bl = c.at(2).get<Vec3>();
+  w = length(sub(tr, tl));
+  h = length(sub(tl, bl));
+  if (!(w > 0) || !(h > 0)) throw Error("the canvas " + n.name + " has no size");
+}
+
+bool CanvasPlace::stretched() const { return width > 0 && body_w > 0 && body_h > 0 && std::fabs(height * body_w / (width * body_h) - 1) > 1e-9; }
+
 const Node& canvas_node(const Scene& scene, const std::string& id) {
   const Node* n = scene.node(id);
   if (!n || !is_canvas(*n)) throw Error("not an image canvas: " + id);
@@ -89,12 +91,12 @@ const Node& canvas_node(const Scene& scene, const std::string& id) {
 CanvasPlace canvas_place(const Scene& scene, const std::string& id) {
   const Node& n = canvas_node(scene, id);
   CanvasPlace p;
-  body_size(n, p.body_w, p.body_h);
+  canvas_body_size(n, p.body_w, p.body_h);
   const Mat4 w = scene.world(id);
-  const Vec3 xs = w.apply_dir({1, 0, 0}), x = unit(xs), y = unit(w.apply_dir({0, 1, 0})), normal = cross(x, y);
+  const Vec3 xs = w.apply_dir({1, 0, 0}), ys = w.apply_dir({0, 1, 0}), x = unit(xs), y = unit(ys), normal = cross(x, y);
   const Vec3 centre = w.apply({p.body_w / 2, p.body_h / 2, 0});
   p.width = length(xs) * p.body_w;
-  p.height = length(xs) * p.body_h;
+  p.height = length(ys) * p.body_h;
   const CanvasFlags flags = CanvasFlags::of(n.canvas);
   p.plane = flags.plane.is_object() ? Frame::from_json(flags.plane) : Frame{w.apply({0, 0, 0}), x, y};
   p.on_plane = dot(normal, p.plane.normal()) > 1 - 1e-9 && std::fabs(dot(sub(centre, p.plane.origin), p.plane.normal())) <= 1e-6 * std::max(1.0, p.width);
@@ -105,12 +107,13 @@ CanvasPlace canvas_place(const Scene& scene, const std::string& id) {
 }
 
 Mat4 canvas_world(const CanvasPlace& p) {
-  if (!(p.width > 0) || !(p.body_w > 0) || !std::isfinite(p.width) || !std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.angle))
+  if (!(p.width > 0) || !(p.height > 0) || !(p.body_w > 0) || !(p.body_h > 0) || !std::isfinite(p.width) || !std::isfinite(p.height) || !std::isfinite(p.x) ||
+      !std::isfinite(p.y) || !std::isfinite(p.angle))
     throw Error("a canvas needs a positive size and a place");
-  const double s = p.width / p.body_w, c = std::cos(p.angle), sn = std::sin(p.angle);
+  const double s = p.width / p.body_w, t = p.height / p.body_h, sy = std::fabs(t - s) <= 1e-12 * s ? s : t, c = std::cos(p.angle), sn = std::sin(p.angle);
   const Vec3 x = add(mul(p.plane.x, c), mul(p.plane.y, sn)), y = add(mul(p.plane.x, -sn), mul(p.plane.y, c)), n = p.plane.normal();
-  const Vec3 origin = sub(p.plane.to_world(p.x, p.y), mul(add(mul(x, p.body_w / 2), mul(y, p.body_h / 2)), s));
-  return columns(mul(x, s), mul(y, s), mul(n, s), origin);
+  const Vec3 origin = sub(p.plane.to_world(p.x, p.y), add(mul(x, p.body_w / 2 * s), mul(y, p.body_h / 2 * sy)));
+  return columns(mul(x, s), mul(y, sy), mul(n, s), origin);
 }
 
 std::array<Vec3, 5> canvas_points(const Mat4& w, double bw, double bh) {

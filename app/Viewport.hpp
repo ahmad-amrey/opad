@@ -252,8 +252,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setPreviewCurves(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden);
   void showBackdrop(const Handle(AIS_InteractiveObject)& obj);
   // A canvas dragged by its handles (CanvasEditor): drawn at `world` through its local transformation (no remesh; picking
-  // and its selection glow follow) until endPlacementPreview, or until a scene sync puts it where the document says. False:
-  // not displayed, or not placed rigidly.
+  // and its selection glow follow; stretched out of its proportions, its one rectangle is rebuilt at that aspect) until
+  // endPlacementPreview, or until a scene sync puts it where the document says. False: not displayed, or not placed rigidly.
   bool previewPlacement(const std::string& node, const opad::Mat4& world);
   void endPlacementPreview(const std::string& node);
   bool shownPlacement(const std::string& node, opad::Mat4& world) const;  // what it is drawn at now (benches)
@@ -365,7 +365,17 @@ class Viewport : public QWidget, protected AIS_ViewController {
     std::string raster;  // its picture (rasterKey), empty without one
     BodyLook look;      // as applied (ViewportLooks.cpp)
     bool rigid = true;  // the world placement is the object's local transformation (else baked into `located`)
+    // A canvas stretched out of its picture's proportions (free aspect) is drawn rigidly too: `located` is its rectangle
+    // `stretch` times as tall, `placement` the similarity left of its world matrix.
+    double stretch = 1;
+    gp_Trsf placement;  // its local transformation for `world` (rigid), before a look's offset
   };
+  // Where a rigidly drawn body goes for `world`: its local transformation and, for a canvas, its stretch (1 in its
+  // picture's proportions). False: `world` is neither rigid nor a stretched canvas's.
+  static bool rigidPlacement(const opad::Node& n, const opad::Mat4& world, gp_Trsf& placement, double& stretch);
+  // The item drawn at `world` without displaying it again: its location (with its look's offset), and a canvas whose stretch
+  // changed gets its rectangle at the new one (one face, meshed here). False: it cannot be placed that way.
+  bool relocate(Item& item, const opad::Node& n, const opad::Mat4& world);
   // looks (ViewportLooks.cpp)
   std::array<std::unordered_map<std::string, LookDelta>, kLookSources> m_lookLayers;
   bool m_ghostsPickable = false;

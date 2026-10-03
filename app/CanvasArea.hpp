@@ -1,7 +1,8 @@
 #pragma once
 // Image canvases in the window (UI-70, opad/canvas.hpp): Insert canvas puts a picture on the selected planar face or a picked
-// plane, placed by DrawingPlacer with an offset and a width; the canvas panel gives its centre (X, Y), width, height and
-// angle (Tab goes round them, Enter applies; digits typed in the view while it is open land in them), its opacity, flips,
+// plane, placed by DrawingPlacer with an offset and a width; the canvas panel gives its centre (X, Y), width, height (one
+// typed keeps its proportions, both stretch it) and angle (Tab goes round them, Enter applies; digits typed in the view
+// while it is open land in them), Picture proportions while it is stretched, its opacity, flips,
 // show-through, selectable and lock, and runs Calibrate (two points on the picture, then their real distance), Align to model
 // (two points on the picture onto two vertices or circle centres of the model), Trace to sketch and Replace picture; the
 // on-canvas handles are CanvasEditor's, a double click on a canvas opens it, its context menu has the same; a sketch's
@@ -100,6 +101,7 @@ class CanvasArea : public AreaController {
   QSlider* m_opacity = nullptr;
   QCheckBox *m_flipH = nullptr, *m_flipV = nullptr, *m_through = nullptr, *m_selectable = nullptr, *m_lock = nullptr;
   QList<QPushButton*> m_moves;  // Calibrate and Align: off while locked
+  QPushButton* m_proportions = nullptr;  // shown while it is stretched
   PanelFooter* m_footer = nullptr;
   Flow m_flow = Flow::None;
   std::vector<opad::Vec3> m_points;

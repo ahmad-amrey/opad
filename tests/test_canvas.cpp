@@ -1,6 +1,9 @@
 // Image canvases (UI-70, opad/canvas.hpp): a picture imported on a plane at a width, its place read back; moving, sizing,
 // calibrating and aligning it append a transform op and never the picture; its flags are an edit of the import; Replace keeps
 // the node and its place; a sketch's backdrop becomes a canvas where it lay; the canvas command does all of it.
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
+
 #include <filesystem>
 #include <fstream>
 
@@ -143,6 +146,43 @@ TEST(canvas_moved_sized_turned_calibrated_and_aligned) {
   run(d, "appearance", {{"target", id}, {"locked", true}});
   CHECK_THROWS(run(d, "canvas", {{"action", "place"}, {"target", id}, {"set", {{"x", 0.0}}}}));
   CHECK_THROWS(run(d, "canvas", {{"action", "place"}, {"target", component}, {"set", {{"x", 0.0}}}}));  // not a canvas
+}
+
+// Free aspect: width and height set together stretch it (x and y scaled apart, the body still the picture's rectangle);
+// alone, either keeps the proportions it has; calibrating scales both; the picture's proportions back make it a similarity.
+TEST(canvas_stretched_out_of_its_proportions) {
+  Files f;
+  Document d = Document::create();
+  import_file(d, write(f.dir / "wide.png", png(400, 200, "wide")));  // 101.6 x 50.8 mm
+  const std::string id = only_canvas(resolve(d));
+  const size_t before = d.serialize().size();
+  json r = run(d, "canvas", {{"action", "place"}, {"target", id}, {"set", {{"x", 0.0}, {"y", 0.0}, {"width", 100.0}, {"height", 100.0}, {"angle", 30.0}}}});
+  CHECK(d.serialize().size() - before < 1024 && d.ops.back().type == "transform" && r["stretched"] == true);
+  Scene s = resolve(d);
+  CanvasPlace p = canvas_place(s, id);
+  CHECK(p.stretched() && about(p.width, 100, 1e-9) && about(p.height, 100, 1e-9) && about(p.angle, M_PI / 6, 1e-9) && p.on_plane);
+  CHECK(!mat_is_rigid(s.world(id)));
+  auto pts = canvas_points(s.world(id), p.body_w, p.body_h);
+  CHECK(about(dist(pts[0], pts[1]), 100, 1e-9) && about(dist(pts[1], pts[2]), 100, 1e-9) && near(pts[4], {0, 0, 0}));
+  Bnd_Box box;
+  BRepBndLib::AddOptimal(node_world_shape(d, s, id), box, false, false);
+  double x0, y0, z0, x1, y1, z1;
+  box.Get(x0, y0, z0, x1, y1, z1);
+  CHECK(about(x1 - x0, 100 * (std::cos(M_PI / 6) + std::sin(M_PI / 6)), 1e-6) && about(y1 - y0, x1 - x0, 1e-6));  // a square, turned
+  // Width alone: the proportions it has (square) stay.
+  r = run(d, "canvas", {{"action", "place"}, {"target", id}, {"set", {{"width", 50.0}}}});
+  CHECK(about(r["width"], 50, 1e-9) && about(r["height"], 50, 1e-9));
+  r = run(d, "canvas", {{"action", "place"}, {"target", id}, {"set", {{"height", 80.0}}}});
+  CHECK(about(r["width"], 80, 1e-9) && about(r["height"], 80, 1e-9));
+  // Calibrated: both ways alike, still square.
+  s = resolve(d);
+  const Vec3 a = s.world(id).apply({0, 0, 0}), b = s.world(id).apply({p.body_w, 0, 0});
+  r = run(d, "canvas", {{"action", "calibrate"}, {"target", id}, {"points", {a, b}}, {"distance", 40.0}});
+  CHECK(about(r["width"], 40, 1e-9) && about(r["height"], 40, 1e-9));
+  // The picture's proportions again: a similarity, as before it was stretched.
+  r = run(d, "canvas", {{"action", "place"}, {"target", id}, {"set", {{"width", 40.0}, {"height", 40.0 * p.body_h / p.body_w}}}});
+  s = resolve(d);
+  CHECK(!r.contains("stretched") && !canvas_place(s, id).stretched() && mat_is_rigid(s.world(id)));
 }
 
 TEST(canvas_flags_are_an_edit_of_its_import) {

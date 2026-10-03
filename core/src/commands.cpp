@@ -629,7 +629,7 @@ void register_builtins() {
         return j;
       });
 
-  reg("canvas", "Image canvas: info; place (set: x y its centre in its plane, width|height, angle deg); calibrate (points [a,b], distance); align "
+  reg("canvas", "Image canvas: info; place (set: x y its centre in its plane, width|height (both: stretched), angle deg); calibrate (points [a,b], distance); align "
       "(points [a,a_to,b,b_to]); flags (set: selectable display_through flip); replace (file); from_backdrop (sketch, images)",
       {{"doc", "path"}, {"action", "info|place|calibrate|align|flags|replace|from_backdrop"}, {"target", "uuid"}, {"set", "object"},
        {"points", {{"type", "array"}, {"items", {{"type", "array"}, {"items", {{"type", "number"}}}, {"minItems", 3}, {"maxItems", 3}}}}}, {"distance", "number"},
@@ -646,6 +646,7 @@ void register_builtins() {
                     {"selectable", f.selectable}, {"display_through", f.through}, {"flip", {f.flip[0], f.flip[1]}}, {"opacity", n.opacity},
                     {"visible", n.visible}, {"locked", n.locked}};
           if (n.raster.contains("px")) j["px"] = n.raster["px"];
+          if (p.stretched()) j["stretched"] = true;
           if (n.linked) j["linked"] = true;
           return j;
         };
@@ -682,8 +683,9 @@ void register_builtins() {
           if (set.contains("x")) p.x = set["x"].get<double>();
           if (set.contains("y")) p.y = set["y"].get<double>();
           if (set.contains("angle")) p.angle = set["angle"].get<double>() * M_PI / 180;
-          if (set.contains("width")) p.width = set["width"].get<double>();
-          else if (set.contains("height")) p.width = set["height"].get<double>() * p.body_w / p.body_h;
+          const double ratio = p.height / p.width;  // alone, width or height keeps its proportions (a stretched canvas stays so)
+          if (set.contains("width")) p.width = set["width"].get<double>(), p.height = set.contains("height") ? set["height"].get<double>() : p.width * ratio;
+          else if (set.contains("height")) p.height = set["height"].get<double>(), p.width = p.height / ratio;
           world = canvas_world(p);
         } else if (action == "calibrate") {
           world = canvas_calibrate(scene.world(id), point(0), point(1), a.at("distance").get<double>());

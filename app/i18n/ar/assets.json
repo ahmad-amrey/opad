@@ -183,7 +183,6 @@
   "Replace canvas picture…": "استبدال الصورة المرجعية…",
   "Backdrop images to canvases": "صور الخلفية إلى صور مرجعية",
   "Its centre on the plane it was put on (an expression in the shown unit)": "مركزها على المستوى الذي وُضعت عليه (تعبير بالوحدة المعروضة)",
-  "The width follows: the picture keeps its proportions": "يتبعه العرض: تحتفظ الصورة بنسبها",
   "Flip left-right": "قلب أفقي",
   "Flip upside down": "قلب رأسي",
   "Show through the model": "إظهار عبر النموذج",
@@ -201,7 +200,6 @@
   "Real distance": "المسافة الحقيقية",
   "Type the real distance between the two points": "اكتب المسافة الحقيقية بين النقطتين",
   "Calibrated: the two points are %1 apart": "تمت المعايرة: المسافة بين النقطتين %1",
-  "Drag it, a corner or the knob": "اسحبها أو اسحب زاوية أو المقبض",
   "Locked: unlock it to move it.": "مقفلة: ألغِ القفل لتحريكها.",
   "X and Y place its centre on the plane it was put on.": "يضع X وY مركزها على المستوى الذي وُضعت عليه.",
   "Moved off the plane it was put on: X and Y are in its own plane now.": "نُقلت عن المستوى الذي وُضعت عليه: صار X وY في مستواها الخاص.",
@@ -259,5 +257,10 @@
   "through the model": "عبر النموذج",
   "not selectable in the view": "غير قابلة للتحديد في العرض",
   "insert canvas": "إدراج صورة مرجعية",
-  "Finding snap points": "البحث عن نقاط الالتقاط"
+  "Finding snap points": "البحث عن نقاط الالتقاط",
+  "stretched out of its proportions": "مشدودة خارج نسبها",
+  "Typed alone, width or height keeps its proportions; typed together, both apply (stretched)": "إن كُتب العرض أو الارتفاع وحده بقيت النسب؛ وإن كُتبا معًا طُبّق كلاهما (فتُشدّ الصورة)",
+  "Picture proportions": "نسب الصورة",
+  "Its height from its width as the picture has them: no longer stretched": "ارتفاعها من عرضها بنسب الصورة نفسها: لم تعد مشدودة",
+  "Drag it, a corner (Shift: free proportions) or the knob": "اسحبها أو اسحب زاوية (Shift: نسب حرة) أو المقبض"
 }

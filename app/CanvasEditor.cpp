@@ -285,9 +285,16 @@ void CanvasEditor::dragTo(const QPointF& at, Qt::KeyboardModifiers mods) {
     const auto fixed = (mods & Qt::ControlModifier) ? c[4] : c[size_t((i + 2) % 4)];
     const double ax = c[size_t(i)].first - fixed.first, ay = c[size_t(i)].second - fixed.second, l2 = ax * ax + ay * ay;
     if (l2 < 1e-18) return;
-    const double k = std::max(0.01, ((u - fixed.first) * ax + (v - fixed.second) * ay) / l2);
-    p.width = m_start.width * k, p.height = m_start.height * k;
-    p.x = fixed.first + (m_start.x - fixed.first) * k, p.y = fixed.second + (m_start.y - fixed.second) * k;
+    double kx = std::max(0.01, ((u - fixed.first) * ax + (v - fixed.second) * ay) / l2), ky = kx;
+    const double ca = std::cos(m_start.angle), sa = std::sin(m_start.angle);
+    if (mods & Qt::ShiftModifier) {  // free aspect: the corner follows the mouse along each of the canvas's own axes
+      const double cx = ax * ca + ay * sa, cy = -ax * sa + ay * ca, mx = (u - fixed.first) * ca + (v - fixed.second) * sa, my = -(u - fixed.first) * sa + (v - fixed.second) * ca;
+      if (std::fabs(cx) < 1e-9 || std::fabs(cy) < 1e-9) return;
+      kx = std::max(0.01, mx / cx), ky = std::max(0.01, my / cy);
+    }
+    p.width = m_start.width * kx, p.height = m_start.height * ky;
+    const double ox = (m_start.x - fixed.first) * ca + (m_start.y - fixed.second) * sa, oy = -(m_start.x - fixed.first) * sa + (m_start.y - fixed.second) * ca;
+    p.x = fixed.first + ox * kx * ca - oy * ky * sa, p.y = fixed.second + ox * kx * sa + oy * ky * ca;
   }
   m_moved = true;
   m_place = p;

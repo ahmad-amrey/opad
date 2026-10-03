@@ -1,7 +1,7 @@
 #pragma once
 // On-canvas handles of an image canvas (UI-70, opad/canvas.hpp): the picture itself moves it, the four corner dots scale it
-// about the opposite corner (Ctrl: about its centre), the knob above its top edge turns it about its centre (Shift: in 15
-// degree steps). A drag shows the canvas where it would go through its local transformation (Viewport::previewPlacement:
+// about the opposite corner (Ctrl: about its centre; Shift: width and height apart, out of the picture's proportions), the
+// knob above its top edge turns it about its centre (Shift: in 15 degree steps). A drag shows the canvas where it would go through its local transformation (Viewport::previewPlacement:
 // no remesh, every frame) and the release appends one transform op through the canvas command (one undo step). Moving snaps
 // its corners and centre within a few pixels to the corners and centres of the other canvases and to the model's vertices
 // and circle centres as they project onto its plane (found on a worker when editing starts or the model changes, at most

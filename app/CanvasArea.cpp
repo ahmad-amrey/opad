@@ -149,7 +149,8 @@ void CanvasArea::ready() {
   m_prompt->hide();
   connect(m_editor, &CanvasEditor::dragged, this, [this](const opad::CanvasPlace&) { fillPanel(); });
   connect(m_editor, &CanvasEditor::placed, this, [this](const opad::CanvasPlace& p) {
-    if (!run({{"action", "place"}, {"set", {{"x", p.x}, {"y", p.y}, {"width", p.width}, {"angle", p.angle * 180 / M_PI}}}})) services().viewport()->endPlacementPreview(m_editor->canvas());
+    if (!run({{"action", "place"}, {"set", {{"x", p.x}, {"y", p.y}, {"width", p.width}, {"height", p.height}, {"angle", p.angle * 180 / M_PI}}}}))
+      services().viewport()->endPlacementPreview(m_editor->canvas());
   });
   connect(m_editor, &CanvasEditor::picked, this, &CanvasArea::flowPicked);
   connect(m_editor, &CanvasEditor::pickCancelled, this, &CanvasArea::flowBack);
@@ -180,6 +181,7 @@ void CanvasArea::section(const PropertySubject& subject, QList<PropertySection>&
   if (const opad::json px = n->raster.value("px", opad::json()); px.is_array() && px.size() == 2 && p.width > 0)
     sec.rows << qMakePair(tr("Picture"), tr("%1 × %2 px, %3 dpi as placed").arg(px[0].get<long>()).arg(px[1].get<long>()).arg(px[0].get<double>() / (p.width / 25.4), 0, 'f', 0));
   QStringList shown;
+  if (p.stretched()) shown << tr("stretched out of its proportions");
   if (flags.flip[0]) shown << tr("flipped left-right");
   if (flags.flip[1]) shown << tr("flipped upside down");
   if (flags.through) shown << tr("through the model");
@@ -208,7 +210,8 @@ void CanvasArea::buildPanel() {
     form->addRow(labels[i], m_fields[size_t(i)]);
   }
   m_fields[0]->setToolTip(tr("Its centre on the plane it was put on (an expression in the shown unit)"));
-  m_fields[3]->setToolTip(tr("The width follows: the picture keeps its proportions"));
+  m_fields[3]->setToolTip(tr("Typed alone, width or height keeps its proportions; typed together, both apply (stretched)"));
+  m_fields[2]->setToolTip(m_fields[3]->toolTip());
   m_opacity = new QSlider(Qt::Horizontal, body);
   m_opacity->setObjectName("canvasOpacity");
   m_opacity->setRange(5, 100);
@@ -248,6 +251,11 @@ void CanvasArea::buildPanel() {
     connect(b, &QPushButton::clicked, this, std::move(fn));
     return b;
   };
+  m_proportions = button(tr("Picture proportions"), "image", "canvasProportions", tr("Its height from its width as the picture has them: no longer stretched"), [this] {
+    const opad::CanvasPlace p = m_editor->place();
+    run({{"action", "place"}, {"set", {{"width", p.width}, {"height", p.width * p.body_h / p.body_w}}}});
+  });
+  layout->addWidget(m_proportions);
   auto* tools = new QHBoxLayout;
   m_moves << button(tr("Calibrate"), "calibrate", "canvasCalibrate", tr("Pick two points on the picture and type their real distance"), [this] { calibrate(); })
           << button(tr("Align to model"), "alignto", "canvasAlign", tr("Pick two points on the picture and the two points of the model they belong on"), [this] { align(); });
@@ -284,7 +292,7 @@ void CanvasArea::buildPanel() {
   m_footer = new PanelFooter(body);
   m_footer->setPrimary(PanelFooter::Primary::Close);
   m_footer->setCancelVisible(false);
-  m_footer->setHint(tr("Drag it, a corner or the knob"));
+  m_footer->setHint(tr("Drag it, a corner (Shift: free proportions) or the knob"));
   connect(m_footer, &PanelFooter::accepted, this, &CanvasArea::finish);
   layout->addWidget(m_footer);
   m_panel = new ToolPanel("canvas", "canvas", &Tokens::sel, tr("Canvas"), body, 520, services().window());
@@ -327,6 +335,8 @@ void CanvasArea::fillPanel(bool force) {
   m_selectable->setChecked(flags.selectable);
   m_lock->setChecked(n->locked);
   for (QPushButton* b : m_moves) b->setEnabled(!n->locked);
+  m_proportions->setVisible(p.stretched());
+  m_proportions->setEnabled(!n->locked);
   m_filling = false;
   m_panel->setContext(QString::fromStdString(n->name));
   m_hint->setText(n->locked ? tr("Locked: unlock it to move it.")
@@ -348,7 +358,6 @@ void CanvasArea::applyFields() {
       f->selectAll();
       return;
     }
-    if (i == 3 && args["set"].contains("width")) continue;  // both typed: the width wins (the proportions stay)
     args["set"][std::array<const char*, 5>{"x", "y", "width", "height", "angle"}[size_t(i)]] = *value;
     any = true;
   }
