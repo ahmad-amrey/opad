@@ -180,6 +180,15 @@ void MainWindow::buildDesign() {
   connect(m_design, &DesignController::failed, this, [this](const QString& error) { if (error != "cancelled") failedToast(i18n::t(error)); });  // cancelled by the user
   connect(m_design, &DesignController::stateChanged, this, &MainWindow::updateDesignState);
   connect(m_timeline, &TimelineWidget::opActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });
+  connect(m_timeline, &TimelineWidget::suppressRequested, this, [this](const std::string& id) {
+    if (m_doc->browse || m_design->busy()) return;
+    if (const opad::Feature* f = m_doc->scene.feature(id)) guarded([&] { m_design->setSuppressed(id, !f->suppressed); });
+  });
+  connect(m_timeline, &TimelineWidget::deleteRequested, this, [this](const std::string& id, bool restore) {
+    if (m_doc->browse) return;
+    const bool deleted = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), id) != m_doc->scene.deleted_ops.end();
+    if (deleted == restore) guarded([&] { restore ? restoreOp(id) : deleteOp(id); });
+  });
   connect(m_browser, &BrowserPanel::sketchActivated, this, [this](const std::string& id) { guarded([&] { m_design->editOp(id); }); });
   connect(m_browser,&BrowserPanel::editedSketchVisibilityRequested,this,[this]{auto* sketch=m_design->sketch();sketch->setVisible(!sketch->visible());});
   updateDesignState();

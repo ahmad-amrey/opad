@@ -2030,6 +2030,11 @@ bool Viewport::cubeAt(const QPointF& point) {
   return m_ctx->HasDetected() && m_ctx->DetectedInteractive() == m_cube;
 }
 
+QRect Viewport::cubeRect() const {
+  if (!m_initialised || m_twoDimensional) return {};
+  return QRect(width() - kCubeOffsetX - 48, kCubeOffsetY - 48, 96, 96);
+}
+
 void Viewport::mousePressEvent(QMouseEvent* e) {
   if (m_blocked) return;
   finishTrackpadScroll();

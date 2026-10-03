@@ -6,8 +6,16 @@
 #include <QAbstractButton>
 #include <QAbstractItemView>
 #include <QAbstractSlider>
+#include <QAccessible>
+#include <QAccessibleWidget>
 #include <QAction>
 #include <QApplication>
+#include <QHash>
+#include <QVector3D>
+#include <QWindow>
+
+#include <array>
+#include <cmath>
 #include <QFocusEvent>
 #include <QKeyEvent>
 #include <QMainWindow>
@@ -105,6 +113,187 @@ QString nameFromTip(const QString& tip) {
   static const QRegularExpression key(R"(\s*\([^()]*\)\s*$)");
   return text.remove(key).trimmed();
 }
+
+// ---- items a screen reader sees inside painted widgets: the timeline's markers and the view cube's faces
+// An item of a widget that paints it: no object of its own, its place and words asked of the widget each time.
+class PaintedItem : public QAccessibleInterface, public QAccessibleActionInterface {
+ public:
+  explicit PaintedItem(QWidget* owner) : m_owner(owner) {}
+  QObject* object() const override { return nullptr; }
+  QWindow* window() const override { return m_owner ? m_owner->window()->windowHandle() : nullptr; }
+  QAccessibleInterface* parent() const override { return QAccessible::queryAccessibleInterface(m_owner.data()); }
+  QAccessibleInterface* child(int) const override { return nullptr; }
+  QAccessibleInterface* childAt(int, int) const override { return nullptr; }
+  int childCount() const override { return 0; }
+  int indexOfChild(const QAccessibleInterface*) const override { return -1; }
+  void setText(QAccessible::Text, const QString&) override {}
+  void* interface_cast(QAccessible::InterfaceType type) override { return type == QAccessible::ActionInterface ? static_cast<QAccessibleActionInterface*>(this) : nullptr; }
+  QStringList keyBindingsForAction(const QString&) const override { return {}; }
+
+ protected:
+  QRect global(const QRect& r) const { return m_owner && r.isValid() ? QRect(m_owner->mapToGlobal(r.topLeft()), r.size()) : QRect(); }
+  QPointer<QWidget> m_owner;
+};
+
+// A marker: its op as the tooltip names it, its state (tombstoned, suppressed, ...), selected while current; Press selects
+// what it touches, Show menu opens its menu.
+class MarkerItem : public PaintedItem {
+ public:
+  MarkerItem(TimelineWidget* timeline, int index) : PaintedItem(timeline), m_index(index) {}
+  bool isValid() const override { return m_owner && m_index < timeline()->markerCount(); }
+  QString text(QAccessible::Text t) const override {
+    const opad::Op* op = isValid() ? timeline()->markerOp(m_index) : nullptr;
+    if (!op) return {};
+    if (t == QAccessible::Name) return timeline()->describe(*op);
+    if (t == QAccessible::Description) return timeline()->markerState(m_index);
+    return {};
+  }
+  QRect rect() const override { return isValid() ? global(timeline()->markerGeometry(m_index)) : QRect(); }
+  QAccessible::Role role() const override { return QAccessible::ListItem; }
+  QAccessible::State state() const override {
+    QAccessible::State s;
+    s.focusable = s.selectable = true;
+    if (!isValid()) {
+      s.invisible = true;
+      return s;
+    }
+    const bool current = timeline()->currentMarker() == m_index;
+    s.selected = current;
+    s.focused = current && timeline()->hasFocus();
+    const QRect r = timeline()->markerGeometry(m_index);
+    s.invisible = s.offscreen = !timeline()->isVisible() || r.right() < 125 || r.left() > timeline()->width() - 72;
+    return s;
+  }
+  QStringList actionNames() const override { return {pressAction(), showMenuAction()}; }
+  void doAction(const QString& name) override {
+    const opad::Op* op = isValid() ? timeline()->markerOp(m_index) : nullptr;
+    if (!op) return;
+    const std::string id = op->id;
+    timeline()->setCurrentOp(id);
+    if (name == pressAction()) emit timeline()->opClicked(id);
+    else if (name == showMenuAction()) timeline()->openMenu();
+  }
+
+ private:
+  TimelineWidget* timeline() const { return static_cast<TimelineWidget*>(m_owner.data()); }
+  int m_index;
+};
+
+// The timeline: a list of its markers, then its own child widgets (the scroll bar).
+class TimelineItems : public QAccessibleWidget {
+ public:
+  explicit TimelineItems(TimelineWidget* w) : QAccessibleWidget(w, QAccessible::List) {}
+  ~TimelineItems() override {
+    for (QAccessible::Id id : std::as_const(m_markers)) QAccessible::deleteAccessibleInterface(id);
+  }
+  int childCount() const override { return timeline()->markerCount() + QAccessibleWidget::childCount(); }
+  QAccessibleInterface* child(int i) const override {
+    const int n = timeline()->markerCount();
+    if (i < 0) return nullptr;
+    if (i >= n) return QAccessibleWidget::child(i - n);
+    if (!m_markers.contains(i)) m_markers.insert(i, QAccessible::registerAccessibleInterface(new MarkerItem(timeline(), i)));
+    return QAccessible::accessibleInterface(m_markers.value(i));
+  }
+  int indexOfChild(const QAccessibleInterface* c) const override {
+    for (auto it = m_markers.cbegin(); it != m_markers.cend(); ++it)
+      if (QAccessible::accessibleInterface(it.value()) == c) return it.key() < timeline()->markerCount() ? it.key() : -1;
+    const int own = QAccessibleWidget::indexOfChild(c);
+    return own < 0 ? -1 : own + timeline()->markerCount();
+  }
+
+ private:
+  TimelineWidget* timeline() const { return static_cast<TimelineWidget*>(widget()); }
+  mutable QHash<int, QAccessible::Id> m_markers;
+};
+
+// A face of the view cube: a button named as the view it turns to ("Top view"), shown while it faces the camera; Press
+// runs the window's view command (view.top ...).
+struct CubeSide {
+  const char* view;
+  QVector3D normal;
+};
+constexpr int kCubeSides = 6;
+const CubeSide kSides[kCubeSides] = {{"top", {0, 0, 1}}, {"front", {0, -1, 0}}, {"right", {1, 0, 0}}, {"bottom", {0, 0, -1}}, {"back", {0, 1, 0}}, {"left", {-1, 0, 0}}};
+
+class CubeFace : public PaintedItem {
+ public:
+  CubeFace(Viewport* view, int side) : PaintedItem(view), m_side(side) {}
+  bool isValid() const override { return !m_owner.isNull(); }
+  QAction* command() const { return m_owner ? m_owner->window()->findChild<QAction*>(QString("view.") + kSides[m_side].view) : nullptr; }
+  QString text(QAccessible::Text t) const override {
+    QAction* a = command();
+    if (t == QAccessible::Name) return a ? QString(a->text()).remove('&') : QString();
+    if (t == QAccessible::Accelerator && a) return a->shortcut().toString(QKeySequence::NativeText);
+    return {};
+  }
+  // How much the face looks at the camera (1: straight on, 0 or less: edge on or away) and where its centre is drawn.
+  double facing(QPointF* centre = nullptr) const {
+    auto* view = static_cast<Viewport*>(m_owner.data());
+    const QRect cube = view ? view->cubeRect() : QRect();
+    const opad::json camera = cube.isEmpty() ? opad::json() : view->cameraJson();
+    if (!camera.contains("eye")) return -1;
+    auto vec = [&](const char* key) { return QVector3D(camera[key][0].get<float>(), camera[key][1].get<float>(), camera[key][2].get<float>()); };
+    const QVector3D dir = (vec("target") - vec("eye")).normalized(), right = QVector3D::crossProduct(dir, vec("up")).normalized(),
+                    up = QVector3D::crossProduct(right, dir);
+    const QVector3D n = kSides[m_side].normal;
+    if (centre) *centre = QPointF(cube.center()) + QPointF(QVector3D::dotProduct(n, right), -QVector3D::dotProduct(n, up)) * 32;
+    return -QVector3D::dotProduct(n, dir);
+  }
+  QRect rect() const override {
+    QPointF centre;
+    const double f = facing(&centre);
+    if (f <= 0) return {};
+    const int size = std::max(8, int(std::lround(56 * f)));
+    return global(QRect(centre.toPoint() - QPoint(size / 2, size / 2), QSize(size, size)));
+  }
+  QAccessible::Role role() const override { return QAccessible::PushButton; }
+  QAccessible::State state() const override {
+    QAccessible::State s;
+    s.invisible = s.offscreen = !m_owner || !m_owner->isVisible() || facing() < 0.15;
+    s.disabled = !command() || !command()->isEnabled();
+    return s;
+  }
+  QStringList actionNames() const override { return {pressAction()}; }
+  void doAction(const QString& name) override {
+    if (QAction* a = command(); a && a->isEnabled() && name == pressAction()) a->trigger();
+  }
+
+ private:
+  int m_side;
+};
+
+// The view: its own child widgets (chips, buttons, toasts), then the cube's six faces.
+class ViewItems : public QAccessibleWidget {
+ public:
+  explicit ViewItems(Viewport* w) : QAccessibleWidget(w, QAccessible::Client) {}
+  ~ViewItems() override {
+    for (QAccessible::Id id : m_faces)
+      if (id) QAccessible::deleteAccessibleInterface(id);
+  }
+  int childCount() const override { return QAccessibleWidget::childCount() + kCubeSides; }
+  QAccessibleInterface* child(int i) const override {
+    const int own = QAccessibleWidget::childCount();
+    if (i < own) return QAccessibleWidget::child(i);
+    if (i >= own + kCubeSides) return nullptr;
+    QAccessible::Id& id = m_faces[size_t(i - own)];
+    if (!id) id = QAccessible::registerAccessibleInterface(new CubeFace(static_cast<Viewport*>(widget()), i - own));
+    return QAccessible::accessibleInterface(id);
+  }
+  int indexOfChild(const QAccessibleInterface* c) const override {
+    for (int k = 0; k < kCubeSides; ++k)
+      if (m_faces[size_t(k)] && QAccessible::accessibleInterface(m_faces[size_t(k)]) == c) return QAccessibleWidget::childCount() + k;
+    return QAccessibleWidget::indexOfChild(c);
+  }
+
+ private:
+  mutable std::array<QAccessible::Id, kCubeSides> m_faces{};
+};
+
+QAccessibleInterface* paintedItems(const QString& className, QObject* object) {
+  if (className == QLatin1String("TimelineWidget")) return new TimelineItems(static_cast<TimelineWidget*>(object));
+  if (className == QLatin1String("Viewport")) return new ViewItems(static_cast<Viewport*>(object));
+  return nullptr;
+}
 }  // namespace
 
 class AccessibilityArea : public AreaController {
@@ -112,6 +301,8 @@ class AccessibilityArea : public AreaController {
   explicit AccessibilityArea(AreaServices& services) : AreaController(services) {}
 
   void buildActions() override {
+    static const bool installed = (QAccessible::installFactory(paintedItems), true);
+    Q_UNUSED(installed);
     CommandInfo next;
     next.id = "view.nextRegion";
     next.label = tr("Next region");
@@ -137,9 +328,12 @@ class AccessibilityArea : public AreaController {
     view->setAccessibleDescription(tr("The view cube at the top right turns the view: click a face, an edge or a corner. H goes home, F fits."));
     if (auto* timeline = services().window()->findChild<TimelineWidget*>()) {
       timeline->setAccessibleName(tr("Timeline"));
-      timeline->setAccessibleDescription(tr("The document's history. Left and Right step through it, Home and End go to its ends."));
+      timeline->setAccessibleDescription(tr("The document's history. Left and Right step through it, Home and End go to its ends, Enter or F2 edits a feature or a sketch, Space suppresses a feature, Del tombstones, Shift+Del restores, the Menu key opens the marker's menu."));
     }
-    if (services().browser()) services().browser()->tree()->setAccessibleName(tr("Browser"));
+    if (services().browser()) {
+      services().browser()->tree()->setAccessibleName(tr("Browser"));
+      services().browser()->tree()->setAccessibleDescription(tr("Space shows or hides the selected objects, Enter fits the view to one or edits a sketch, F2 renames, Del tombstones, the Menu key opens the menu."));
+    }
     nameButtons(services().window());
   }
 

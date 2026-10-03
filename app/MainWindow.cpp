@@ -156,6 +156,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_browser, &BrowserPanel::selectionChanged, this, &MainWindow::onBrowserSelection);
   connect(m_browser, &BrowserPanel::contextMenuRequested, this, [this](const QPoint& p, const std::vector<std::string>& ids) { showContextMenu(p, ids); });
   connect(m_browser, &BrowserPanel::fitRequested, m_viewport, &Viewport::fitNodes);
+  connect(m_browser, &BrowserPanel::commandRequested, this, [this](const QString& id) { if (QAction* a = action(id); a && a->isEnabled()) a->trigger(); });
   connect(m_annotations, &AnnotationsPanel::addRequested, this, [this] { startAnnotation(false); });
   connect(m_annotations, &AnnotationsPanel::resolveRequested, this, &MainWindow::deleteOp);
   connect(m_annotations, &AnnotationsPanel::restoreRequested, this, &MainWindow::restoreOp);

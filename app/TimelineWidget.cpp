@@ -1,6 +1,9 @@
 #include "TimelineWidget.hpp"
 
+#include <QAccessible>
+#include <QContextMenuEvent>
 #include <QCursor>
+#include <QDateTime>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -108,13 +111,81 @@ void TimelineWidget::wheelEvent(QWheelEvent* e) {
   const int delta = !pixel.isNull() ? (pixel.x() ? pixel.x() : pixel.y()) : (angle.x() ? angle.x() : angle.y()) * 78 / 120;
   m_scroll->setValue(m_scroll->value() - delta); e->accept();
 }
+// The keyboard (UI-124): Left, Right, Home and End move along the markers (and select what each touches), Enter or F2 edits
+// a feature or a sketch, Space suppresses or brings back a feature, Del tombstones, Shift+Del restores, the Menu key or
+// Shift+F10 opens the marker's menu.
 void TimelineWidget::keyPressEvent(QKeyEvent* e) {
+  const Qt::KeyboardModifiers mods = e->modifiers() & ~Qt::KeypadModifier;
+  const opad::Op* op = markerOp(currentMarker());
+  const bool deleted = op && m_deleted.count(op->id);
   if (e->key() == Qt::Key_Left) step(-1);
   else if (e->key() == Qt::Key_Right) step(1);
   else if (e->key() == Qt::Key_Home || e->key() == Qt::Key_End) {
     if (!m_shown.empty()) { setCurrentOp(m_doc->doc.ops[e->key() == Qt::Key_Home ? m_shown.front() : m_shown.back()].id); emit opClicked(m_current); }
-  } else { QWidget::keyPressEvent(e); return; }
+  } else if (e->key() == Qt::Key_Menu || (e->key() == Qt::Key_F10 && mods == Qt::ShiftModifier)) {
+    openMenu();
+  } else if (e->key() == Qt::Key_Delete && (mods == Qt::NoModifier || mods == Qt::ShiftModifier)) {
+    if (op) emit deleteRequested(op->id, mods == Qt::ShiftModifier);
+  } else if (mods) {
+    QWidget::keyPressEvent(e);
+    return;
+  } else if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter || e->key() == Qt::Key_F2) {
+    if (op && (op->type == "feature" || op->type == "sketch") && !deleted) emit opActivated(op->id);
+  } else if (e->key() == Qt::Key_Space) {
+    if (op && op->type == "feature" && !deleted) emit suppressRequested(op->id);
+  } else {
+    QWidget::keyPressEvent(e);
+    return;
+  }
   e->accept();
+}
+
+void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
+  if (e->reason() != QContextMenuEvent::Keyboard) return e->ignore();  // the right button's press opened it already
+  openMenu();
+}
+
+void TimelineWidget::openMenu() {
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  const int at = currentMarker();
+  if (at < 0 || now - m_menuAt < 400) return;
+  m_menuAt = now;
+  ensureCurrentVisible();
+  emit contextRequested(m_current, mapToGlobal(markerRect(at).bottomLeft() + QPoint(0, 4)));
+}
+
+const opad::Op* TimelineWidget::markerOp(int i) const {
+  return i >= 0 && i < int(m_shown.size()) && m_shown[size_t(i)] < m_doc->doc.ops.size() ? &m_doc->doc.ops[m_shown[size_t(i)]] : nullptr;
+}
+
+int TimelineWidget::currentMarker() const {
+  for (size_t k = 0; k < m_shown.size() && !m_current.empty(); ++k)
+    if (m_doc->doc.ops[m_shown[k]].id == m_current) return int(k);
+  return -1;
+}
+
+QString TimelineWidget::markerState(int i) const {
+  const opad::Op* op = markerOp(i);
+  if (!op) return {};
+  QStringList state;
+  if (op->id == m_editing) state << tr("being edited");
+  if (m_deleted.count(op->id)) state << (op->type == "delete" ? tr("undone") : tr("tombstoned"));
+  else if (isUnresolved(op->id)) state << tr("unresolved");
+  if (const opad::Feature* f = op->type == "feature" ? m_doc->scene.feature(op->id) : nullptr) {
+    if (f->suppressed) state << tr("suppressed");
+    if (!f->error.empty()) state << tr("failed");
+    if (!f->result.value("rehinted", opad::json::array()).empty()) state << tr("a reference was re-picked");
+  }
+  return state.join(", ");
+}
+
+void TimelineWidget::announce() {
+  if (!QAccessible::isActive() || !hasFocus()) return;
+  const int at = currentMarker();
+  if (at < 0) return;
+  QAccessibleEvent focus(this, QAccessible::Focus);
+  focus.setChild(at);
+  QAccessible::updateAccessibility(&focus);
 }
 
 QRect TimelineWidget::markerRect(int i) const { return QRect(128 + i * 26 - m_scroll->value(), 13, 18, 18); }
@@ -129,6 +200,7 @@ void TimelineWidget::setCurrentOp(const std::string& id) {
   m_current = id;
   ensureCurrentVisible();
   update();
+  announce();
 }
 
 void TimelineWidget::setEditingOp(const std::string& id) {

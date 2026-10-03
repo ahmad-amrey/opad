@@ -232,6 +232,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   opad::Frame annotationCameraPlane(const opad::Vec3& origin) const;  // through origin, facing the camera
   void previewAnnotationDrawing(const opad::json& drawing);
   bool cubeAt(const QPointF& point);  // the view cube is under the mouse: a left press there belongs to the cube
+  QRect cubeRect() const;  // around the view cube (widget points; empty while it is not shown): its faces for screen readers
   // Objects owned by an editor (the sketch being drawn, its dimensions): never pickable, drawn on top.
   void showOverlay(const Handle(AIS_InteractiveObject)& obj);
   void updateOverlay(const Handle(AIS_InteractiveObject)& obj);

@@ -23,11 +23,21 @@ class TimelineWidget : public QWidget {
   void setEditingOp(const std::string& id);
   void step(int delta);
   QString describe(const opad::Op& op) const;
+  // The markers one by one, for screen readers (UI-124): how many, each one's op, place in the widget and state in words
+  // (tombstoned, suppressed, failed, ...; empty when none), and the current one (-1: none).
+  int markerCount() const { return int(m_shown.size()); }
+  const opad::Op* markerOp(int i) const;
+  QRect markerGeometry(int i) const { return markerRect(i); }
+  QString markerState(int i) const;
+  int currentMarker() const;
+  void openMenu();  // the current marker's menu below it (the Menu key, Shift+F10)
 
  signals:
   void opClicked(const std::string& opId);
-  void opActivated(const std::string& opId);  // double-click: edit a feature or a sketch
+  void opActivated(const std::string& opId);  // double-click, Enter or F2: edit a feature or a sketch
   void contextRequested(const std::string& opId, const QPoint& globalPos);
+  void suppressRequested(const std::string& opId);  // Space on a feature
+  void deleteRequested(const std::string& opId, bool restore);  // Del (tombstone), Shift+Del (restore)
 
  public slots:
   void rebuild();
@@ -41,8 +51,10 @@ class TimelineWidget : public QWidget {
   void resizeEvent(QResizeEvent*) override;
   void wheelEvent(QWheelEvent*) override;
   void keyPressEvent(QKeyEvent*) override;
+  void contextMenuEvent(QContextMenuEvent*) override;
 
  private:
+  void announce();  // screen readers: the current marker has the focus
   void updateScrollRange();
   void ensureCurrentVisible();
   QScrollBar* m_scroll;
@@ -56,6 +68,7 @@ class TimelineWidget : public QWidget {
   int m_hover = -1;             // marker index (into m_shown)
   std::string m_current, m_editing;
   QRect m_prevBtn, m_nextBtn;
+  qint64 m_menuAt = 0;  // when the keyboard last opened the menu: the Menu key comes as a key and as a context menu event
 };
 
 QString opTypeIcon(const std::string& type);

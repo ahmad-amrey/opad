@@ -2,6 +2,8 @@
 
 #include <QAction>
 #include <QColorDialog>
+#include <QContextMenuEvent>
+#include <QDateTime>
 #include <QDropEvent>
 #include <QHBoxLayout>
 #include <QItemSelection>
@@ -94,6 +96,40 @@ void BrowserTree::mouseMoveEvent(QMouseEvent* e) {
 void BrowserTree::mouseDoubleClickEvent(QMouseEvent* e) {
   if (e->button() == Qt::LeftButton && badgeClick(e->pos())) return;  // the press clicked it already; no fit or edit
   QTreeWidget::mouseDoubleClickEvent(e);
+}
+
+bool BrowserTree::event(QEvent* e) {
+  if (e->type() == QEvent::ContextMenu && static_cast<QContextMenuEvent*>(e)->reason() == QContextMenuEvent::Keyboard) {
+    openMenu();
+    return true;
+  }
+  return QTreeWidget::event(e);
+}
+
+void BrowserTree::keyPressEvent(QKeyEvent* e) {
+  const Qt::KeyboardModifiers mods = e->modifiers() & ~Qt::KeypadModifier;
+  QTreeWidgetItem* current = currentItem();
+  if (state() == EditingState || !current) return QTreeWidget::keyPressEvent(e);
+  if (e->key() == Qt::Key_Menu || (e->key() == Qt::Key_F10 && mods == Qt::ShiftModifier)) return openMenu();
+  if (mods) return QTreeWidget::keyPressEvent(e);
+  switch (e->key()) {
+    case Qt::Key_Space: return emit visibilityKey();
+    case Qt::Key_Return:
+    case Qt::Key_Enter: return emit rowActivated(current);
+    case Qt::Key_F2: return emit commandRequested("edit.rename");
+    case Qt::Key_Delete: return emit commandRequested("edit.delete");
+    default: QTreeWidget::keyPressEvent(e);
+  }
+}
+
+void BrowserTree::openMenu() {
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  QTreeWidgetItem* current = currentItem();
+  if (!current || now - m_menuAt < 400) return;
+  m_menuAt = now;
+  if (!current->isSelected() && (current->flags() & Qt::ItemIsSelectable)) setCurrentItem(current);  // the menu is the selection's
+  scrollToItem(current);
+  emit customContextMenuRequested(visualRect(currentIndex()).center());
 }
 
 std::function<void()> BrowserTree::badgeClick(const QPoint& pos) const {
@@ -215,14 +251,17 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     }
     emit contextMenuRequested(m_tree->viewport()->mapToGlobal(p), selectedIds());
   });
-  connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int) {
-    const std::string id = it->data(0, kIdRole).toString().toStdString();
-    if (const browser::Folder* folder = providedFolder(it)) {
-      if (folder->activated && !id.empty()) folder->activated(id);
-      return;
-    }
-    if (it->data(0, Qt::UserRole).toString() == "sketch") emit sketchActivated(id);
-    else if (!id.empty()) emit fitRequested({id});
+  connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int) { activate(it); });
+  connect(m_tree, &BrowserTree::rowActivated, this, &BrowserPanel::activate);
+  connect(m_tree, &BrowserTree::commandRequested, this, &BrowserPanel::commandRequested);
+  connect(m_tree, &BrowserTree::visibilityKey, this, [this] {
+    std::vector<std::string> ids;
+    for (const auto& id : selectedIds())
+      if (!isProvided(id)) ids.push_back(id);
+    QTreeWidgetItem* current = m_tree->currentItem();
+    const QString kind = current ? current->data(0, Qt::UserRole).toString() : QString();
+    if (ids.empty() && (kind == "document" || kind == "body" || kind == "component" || kind == "sketch")) ids.push_back(current->data(0, kIdRole).toString().toStdString());
+    if (!ids.empty()) toggleVisibility(ids);
   });
   connect(m_tree, &BrowserTree::eyeClicked, this, [this](const std::string& id) {
     if(!m_editedSketch.empty() && id==m_editedSketch){emit editedSketchVisibilityRequested();return;}
@@ -259,6 +298,28 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   });
   connect(doc, &AppDocument::changed, this, &BrowserPanel::rebuild);
   rebuild();
+}
+
+void BrowserPanel::activate(QTreeWidgetItem* it) {
+  const std::string id = it->data(0, kIdRole).toString().toStdString();
+  if (const browser::Folder* folder = providedFolder(it)) {
+    if (folder->activated && !id.empty()) folder->activated(id);
+    return;
+  }
+  if (it->data(0, Qt::UserRole).toString() == "sketch") emit sketchActivated(id);
+  else if (!id.empty()) emit fitRequested({id});
+}
+
+void BrowserPanel::toggleVisibility(const std::vector<std::string>& ids) {
+  if (ids.size() == 1) return emit m_tree->eyeClicked(ids.front());
+  std::vector<std::string> nodes;
+  bool anyShown = false;
+  for (const auto& id : ids)
+    if (const opad::Node* n = m_doc->node(id)) {
+      nodes.push_back(id);
+      anyShown = anyShown || n->visible;
+    }
+  if (!nodes.empty()) m_doc->run("appearance", opad::json{{"targets", nodes}, {"visible", !anyShown}});
 }
 
 void BrowserPanel::focusFilter() {
@@ -307,6 +368,10 @@ void BrowserPanel::rebuild() {
     for (int i = 0; i < it->childCount(); ++i) collect(it->child(i));
   };
   for (int i = 0; i < m_tree->topLevelItemCount(); ++i) collect(m_tree->topLevelItem(i));
+  // The keyboard's row stays where it was (Space or F2 rebuild the rows): by its id, else the folder or document row.
+  const QTreeWidgetItem* was = m_tree->currentItem();
+  const QString wasKind = was ? was->data(0, Qt::UserRole).toString() : QString(), wasFolder = was ? was->data(0, browser::kFolderRole).toString() : QString();
+  const std::string wasId = was ? was->data(0, kIdRole).toString().toStdString() : std::string();
   m_tree->clear();
   m_index.clear();
   if (m_doc->hasDocument) {
@@ -389,6 +454,15 @@ void BrowserPanel::rebuild() {
   m_empty->setVisible(empty);
   applyFilter();
   setSelectedIds(selected);
+  QTreeWidgetItem* now = wasId.empty() ? nullptr : itemFor(wasId);
+  if (!now && (wasKind == "document" || wasKind == "folder") && m_tree->topLevelItemCount()) {
+    QTreeWidgetItem* root = now = m_tree->topLevelItem(0);
+    for (int i = 0; wasKind == "folder" && i < root->childCount(); ++i)
+      if (root->child(i)->data(0, Qt::UserRole).toString() == "folder" && root->child(i)->data(0, browser::kFolderRole).toString() == wasFolder) now = root->child(i);
+  }
+  for (QTreeWidgetItem* p = now ? now->parent() : nullptr; p; p = p->parent())
+    if (!p->isExpanded()) now = p;  // in a closed folder: the folder (going to the row would open it)
+  if (now) m_tree->selectionModel()->setCurrentIndex(m_tree->indexFromItem(now), QItemSelectionModel::NoUpdate);
   m_updating = false;
   updateBreadcrumb();
 }

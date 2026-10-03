@@ -58,4 +58,8 @@ CASES = [
     # only, reduced motion, 24 px hit targets.
     ("accessibility", guided, {"OPAD_BENCH_A11Y": "{prefix}"}),
     ("accessibility-ar", guided, {"OPAD_BENCH_A11Y": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-124: the browser and the timeline from the keyboard (Space, Enter, F2, Del, Shift+Del, the Menu key, Shift+F10);
+    # the timeline's markers and the view cube's faces are items a screen reader finds and presses.
+    ("keyboard", guided, {"OPAD_BENCH_KEYBOARD": "{prefix}"}),
+    ("keyboard-ar", guided, {"OPAD_BENCH_KEYBOARD": "{prefix}", "OPAD_LANG": "ar"}),
 ]
