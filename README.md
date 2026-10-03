@@ -241,6 +241,11 @@ cache, and shows them (`opad-cli kicad_models board.kicad_pcb [--download true]`
 embedded in the board (KiCad 9) are read from it, and a footprint with only KiCad's VRML model shows that. After the board
 changes in KiCad, `opad-cli kicad_sync_preview doc.opad` lists what reading it again would change, per reference
 designator (moved, turned, flipped, model changed, added, removed) and for the board (thickness, drills, outline).
+With KiCad 7 or later installed, a board can instead be read through KiCad's own STEP export (Read with: KiCad's own
+STEP export in the KiCad dialog; `opad-cli import doc.opad board.kicad_pcb --kicad_cli tracks,pads --link true`): OPAD
+runs `kicad-cli pcb export step` (found in KiCad's install folders or on PATH, or set `OPAD_KICAD_CLI`) at its own origin,
+with the copper tracks, pads and silkscreen if asked (KiCad 8/9), names each part after its footprint's reference and
+links the import to the board, so the board is watched and synced and the STEP is made again where it is missing.
 Settings offers six rendering presets (Classic, Technical flat, Studio, Studio fine, ray traced
 shadows and ray traced reflections), four backgrounds and a configurable auto-hide scene browser.
 Unsupported ray tracing falls back to raster rendering. Coplanar faces receive a small display depth
