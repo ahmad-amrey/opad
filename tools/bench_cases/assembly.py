@@ -54,8 +54,10 @@ CASES = [
     # command says Unlock; the locked box faded to half and not picked (a click passes it), its browser row's lock
     # badge, its name in the status bar when resting on it, Unlock in the right-click menu there, picked as a reference
     # by a guided tool and not afterwards; the Housing locked holds its box (a dim badge naming it, whose click unlocks
-    # the Housing; Unlock on the box frees the Housing and says so). <prefix>.view.png, .browser.png.
+    # the Housing; Unlock on the box frees the Housing and says so); a drop of the Housing's box and a feature moving it
+    # refused in the shown language naming the Housing. <prefix>.view.png, .browser.png.
     ("lock", lambda root, document: document("lock"), {"OPAD_BENCH_LOCK": "{prefix}"}),
+    ("lock-rtl", lambda root, document: document("lock-rtl"), {"OPAD_BENCH_LOCK": "{prefix}", "OPAD_LANG": "ar"}),
     # A DXF with a locked layer in viewer mode: its lines faded towards the background and not picked, the plain layer's
     # picked; the layer row's badge unlocks it (a view change). <prefix>.drawing.png.
     ("lock-drawing", locked_drawing, {"OPAD_BENCH_LOCK": "{prefix}"}),

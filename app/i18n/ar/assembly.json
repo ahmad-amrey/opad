@@ -126,5 +126,12 @@
  "Select the objects to make see-through first.": "حدّد أولًا العناصر المراد جعلها شفافة.",
  "Move to": "نقل إلى",
  "Activate": "تنشيط",
- "Make it the active component: what is made next goes into it. The next new component starts the same way.": "اجعله المكوّن النشط: يذهب إليه ما يُنشأ بعده. ويبدأ المكوّن الجديد التالي بالطريقة نفسها."
+ "Make it the active component: what is made next goes into it. The next new component starts the same way.": "اجعله المكوّن النشط: يذهب إليه ما يُنشأ بعده. ويبدأ المكوّن الجديد التالي بالطريقة نفسها.",
+ "“%1” is locked: unlock it before removing it": "‏«%1» مقفل: ألغِ قفله قبل حذفه",
+ "“%1” is locked: unlock it before moving it": "‏«%1» مقفل: ألغِ قفله قبل نقله",
+ "“%1” is locked: unlock it before changing it": "‏«%1» مقفل: ألغِ قفله قبل تغييره",
+ "“%1” is locked with “%2”: unlock “%2” before removing it": "‏«%1» مقفل مع «%2»: ألغِ قفل «%2» قبل حذفه",
+ "“%1” is locked with “%2”: unlock “%2” before moving it": "‏«%1» مقفل مع «%2»: ألغِ قفل «%2» قبل نقله",
+ "“%1” is locked with “%2”: unlock “%2” before changing it": "‏«%1» مقفل مع «%2»: ألغِ قفل «%2» قبل تغييره",
+ "%1 (and %2 more locked)": "‏%1 (و%2 عناصر مقفلة أخرى)"
 }

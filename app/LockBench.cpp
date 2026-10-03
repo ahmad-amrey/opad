@@ -108,6 +108,7 @@ OPAD_BENCH(OPAD_BENCH_LOCK, lock) {
     std::string housing, boxA, boxB, walls, plain;
     int ax = 0, ay = 0, bx = 0, by = 0;
     size_t ops = 0;
+    QString refused;  // what a feature planned on the worker said
   };
   auto s = std::make_shared<State>();
   AppDocument* doc = w.m_doc;
@@ -330,6 +331,23 @@ OPAD_BENCH(OPAD_BENCH_LOCK, lock) {
                     lock->trigger();
                     w.m_browser->selectIds({});
                     require(doc->scene.node(s->housing)->locked && !doc->scene.node(s->boxA)->locked, "the Housing locked (its box is not, it is held by it)");
+                  }});
+  // Refused in the shown language naming what holds the lock: a browser drop (through run) and a feature planned on a worker.
+  auto lockedWith = [doc, s](const char* text) {
+    return AppDocument::tr(text).arg(QString::fromStdString(doc->scene.node(s->boxA)->name), QString::fromStdString(doc->scene.node(s->housing)->name));
+  };
+  list.push_back({idle, [=, &w](bool) {
+                    QString said;
+                    const auto heard = QObject::connect(doc, &AppDocument::message, &w, [&said](const QString& text) { said = text; });
+                    emit w.m_browser->tree()->reparentRequested({s->boxA}, std::string(), -1);
+                    QObject::disconnect(heard);
+                    require(said == lockedWith("“%1” is locked with “%2”: unlock “%2” before moving it") && doc->scene.node(s->boxA)->parent == s->housing,
+                            "dropping the Housing's box on the root is refused naming the Housing: " + said);
+                    const opad::json move = {{"op", "feature"}, {"kind", "move"}, {"name", "Move"}, {"inputs", {{"bodies", opad::json::array({s->boxA})}, {"dx", "0 mm"}, {"dy", "0 mm"}, {"dz", "5 mm"}, {"rotate", false}, {"copy", false}}}};
+                    w.m_design->applyOps({move}, "move", [s](bool ok, const QString& error) { s->refused = ok ? QString("applied") : error; });
+                  }});
+  list.push_back({[s] { return !s->refused.isEmpty(); }, [=](bool done) {
+                    require(done && s->refused == lockedWith("“%1” is locked with “%2”: unlock “%2” before changing it"), "moving it with a feature is refused the same way: " + s->refused);
                   }});
   // A locked component: what it holds is locked with it.
   list.push_back({[=] { return idle() && v->benchLookState(s->boxA).value("activated", -1) == 0; }, [=, &w](bool held) {

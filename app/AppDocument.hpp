@@ -44,7 +44,9 @@ class AppDocument : public QObject {
   // Atomic background save; holds the document write guard until the worker really exits.
   Job* saveAsync(JobRunner*, const QString& path, bool overwrite,
                  std::function<void(bool,const QString&)> done, int testDelayMs=0);
-  opad::json run(const std::string& command, opad::json args);
+  opad::json run(const std::string& command, opad::json args);  // a lock refusal comes back as lockedMessage
+  // A change refused by a lock (UI-37) in the shown language: the node, what holds its lock and the change refused.
+  static QString lockedMessage(const opad::LockedError& e);
   // Several commands as one step (one undo, one refresh): `commands` calls run() as often as it needs, the scene is not
   // resolved in between (read what you need first). One that throws takes back what the others appended, and rethrows.
   void batch(const QString& label, const std::function<void()>& commands);
