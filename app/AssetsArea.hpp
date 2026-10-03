@@ -81,6 +81,7 @@ class AssetsArea : public AreaController {
   void nextSync();
   void filesChanged(const std::vector<std::string>& imports);
   void notify(const QString& text, bool undo = false, int ms = 6000);  // a toast (with Undo), replacing the last one
+  void updateLooks();
   QString name(const std::string& import) const;
   QString stateText(const std::string& import) const;
   AssetMonitor* m_monitor = nullptr;

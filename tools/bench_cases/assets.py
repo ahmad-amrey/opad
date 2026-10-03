@@ -114,6 +114,19 @@ def asset_sync(root, document):
     return design, env
 
 
+def asset_look(root, document):
+    """A document linking parts/part.step (a component holding a box), which changed since its sync; the CLI linked it with a
+    cache of its own, so the app's never saw the version synced and reads the file as it is (its part stale)."""
+    parts = root / "asset-look" / "parts"
+    parts.mkdir(parents=True)
+    assembly_step(document, "look-part", parts / "part.step", '{"length":"10 mm","width":"10 mm","height":"10 mm"}')
+    design = document("asset-look/design")
+    subprocess.run([str(document.cli), "import", str(design), str(parts / "part.step"), "--link", "true"], check=True, capture_output=True,
+                   env={**os.environ, "OPAD_CACHE_DIR": str(root / "asset-look-cli-cache")})
+    assembly_step(document, "look-part-2", parts / "part.step", '{"length":"14 mm","width":"10 mm","height":"10 mm"}')
+    return design, {"OPAD_CACHE_DIR": str(root / "asset-look-cache")}
+
+
 def colors_obj(root, document):
     """An OBJ cube, Y up: its top in a gold material of its own, the rest grey (Kd 0.439, which OCCT reads as sRGB)."""
     colors = root / "colors-obj"
@@ -171,6 +184,9 @@ CASES = [
     # The linked-file UI (UI-68): badges, read-only parts, Properties, the monitor's toast and Sync all, a badge's sync, a
     # missing file located, pack (LFS badge) and embed (<prefix>.browser.png, .changed.png, .syncing.png, .properties.png, .final.png).
     ("asset-sync", asset_sync, {"OPAD_BENCH_ASSET_SYNC": "{prefix}"}),
+    # The asset look in the view (UI-68 / UI-121): a part read from a file not the version synced is tinted stale, fades while
+    # it syncs, then shows in its own colour (<prefix>.stale.png, .synced.png).
+    ("asset-look", asset_look, {"OPAD_BENCH_ASSET_LOOK": "{prefix}"}),
     # Pictures (UI-71): a JPEG canvas decoded on a worker, a sketch backdrop kept as the file has it, a move storing only
     # its fields (<prefix>.canvas.png).
     ("pictures", "empty", {"OPAD_BENCH_PICTURES": "{prefix}"}),

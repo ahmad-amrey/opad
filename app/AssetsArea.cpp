@@ -31,6 +31,8 @@
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "Ribbon.hpp"
+#include "Theme.hpp"
+#include "Viewport.hpp"
 #include "opad/drawing_io.hpp"
 
 OPAD_ICON_TABLE(assets,
@@ -220,6 +222,7 @@ void AssetsArea::ribbon(RibbonLayout& layout) {
 void AssetsArea::ready() {
   m_monitor = new AssetMonitor(services().document(), services().jobs(), this);
   connect(m_monitor, &AssetMonitor::statesChanged, this, [this] {
+    updateLooks();
     services().browser()->refreshDecorations();
     services().properties()->refresh();
     services().updateCommands();
@@ -269,6 +272,7 @@ void AssetsArea::decorate(const browser::Row& row, browser::Decoration& d) {
   if (!m_monitor->isRoot(row.id)) {  // its parts: the file's names and places
     d.readOnly = true;
     d.tooltip = tr("Part of the linked file %1: read-only").arg(name(import));
+    if (m_monitor->stale().count(row.id)) d.tooltip += '\n' + tr("Shown as the file is now, not as last synced (tinted in the view): sync to take it");
     return;
   }
   const AssetMonitor::Asset* a = m_monitor->asset(import);
@@ -409,6 +413,24 @@ void AssetsArea::contextMenu(const SelectionContext& selection, QMenu& menu) {
   menu.addAction(icons::themed("embed", 16), tr("Embed as editable"), this, [this, import] { embed(import); });
   menu.addAction(icons::themed("pack", 16), tr("Pack into project"), this, [this, import] { pack(import); })
       ->setEnabled(a && a->asset.value("storage", "linked") == "linked" && !services().document()->doc.path.empty());
+}
+
+// The view's asset layer (LookSource::Asset, under every other look): the parts shown from a file that is not the version
+// synced (a changed file read where the version synced is not remembered: what the features were computed from is not on
+// screen) are tinted the stale colour, and a file being synced or embedded fades until that is committed.
+void AssetsArea::updateLooks() {
+  constexpr double kBusyFade = 0.45;
+  std::map<std::string, LookDelta> layer;
+  for (const std::string& root : m_monitor->roots())
+    if (m_monitor->syncing(m_monitor->importOf(root))) layer[root].fade = kBusyFade;
+  const QColor& c = theme::current().assetStale;
+  for (const std::string& id : m_monitor->stale())
+    if (const opad::Node* n = services().document()->node(id)) {
+      LookDelta& d = layer[id];  // the nearest entry wins: the fade of its file too
+      d.color = looks::mix(n->color, {c.redF(), c.greenF(), c.blueF()}, 0.6);
+      if (m_monitor->syncing(n->source_op)) d.fade = kBusyFade;
+    }
+  services().viewport()->setLookLayer(LookSource::Asset, std::move(layer));
 }
 
 // ---------------------------------------------------------------- what the commands do

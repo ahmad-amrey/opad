@@ -153,5 +153,6 @@
   "Not found: %1": "غير موجود: %1",
   "Copied %1": "نُسخ %1",
   "Parts of a linked file are read-only: embed the file to edit them.": "أجزاء الملف المرتبط للقراءة فقط: ضمِّن الملف لتحريرها.",
-  "A linked file holds only its own parts.": "لا يضم الملف المرتبط إلا أجزاءه."
+  "A linked file holds only its own parts.": "لا يضم الملف المرتبط إلا أجزاءه.",
+  "Shown as the file is now, not as last synced (tinted in the view): sync to take it": "معروض كما هو الملف الآن لا كما كان في آخر مزامنة (ملوَّن في العرض): زامِنه لاعتماده"
 }

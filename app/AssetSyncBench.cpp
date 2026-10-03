@@ -1,11 +1,13 @@
 // The linked-file UI (UI-68) in the running app: badges, read-only parts, Properties, the context menu, the monitor's toast,
-// Sync all, a badge click, a missing file located, pack (LFS) and embed. Case "asset-sync" in tools/bench_cases/assets.py.
+// Sync all, a badge click, a missing file located, pack (LFS) and embed; the asset look in the view. Cases "asset-sync" and
+// "asset-look" in tools/bench_cases/assets.py.
 #include <QAbstractItemView>
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
@@ -15,17 +17,22 @@
 
 #include <Bnd_Box.hxx>
 
+#include <cmath>
+#include <set>
+
 #include "AssetMonitor.hpp"
 #include "AssetsArea.hpp"
 #include "BenchRegistry.hpp"
 #include "MainWindow.hpp"
+#include "Viewport.hpp"
 #include "opad/geometry.hpp"
 
 namespace {
 struct Checks {
+  QString name = "asset-sync";
   bool all = true;
   void operator()(bool ok, const QString& what) {
-    trace::log(QString("bench: asset-sync: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    trace::log(QString("bench: %1: %2 %3").arg(name, what, ok ? "PASS" : "FAIL"));
     all = all && ok;
   }
 };
@@ -207,10 +214,12 @@ OPAD_BENCH(OPAD_BENCH_ASSET_SYNC, asset_sync) {
         (*require)(monitor->syncing(part) && d.badges.size() == 1 && d.badges[0].spin && d.badges[0].text == "syncing…" && delegate->spinning(),
                    "syncing: the badge turns (" + (d.badges.isEmpty() ? QString("none") : d.badges[0].text) + ")");
       }
-      waitFor(&w, [=] { return doc->doc.ops.size() == ops + 2 && !area->busy() && state(part) == "ok" && state(second) == "ok" && !monitor->checking(); }, 30000,
-              [=, &w](bool synced) {
+      // Painted while the sync runs: the badge keeps turning until it is over, then stops (the frame after the last turn).
+      waitFor(&w, [=, &w] {
         w.m_browser->grab();
-        (*require)(!delegate->spinning() && !decoration(partRoot).badges.value(0).spin, "synced: nothing turns");
+        return doc->doc.ops.size() == ops + 2 && !area->busy() && state(part) == "ok" && state(second) == "ok" && !monitor->checking() && !delegate->spinning();
+      }, 30000, [=, &w](bool synced) {
+        (*require)(synced && !decoration(partRoot).badges.value(0).spin, "synced: nothing turns");
         const opad::Node* p = doc->node(partBody);
         const opad::Node* s = doc->node(secondBody);
         const QStringList undo = doc->undoLabels();
@@ -314,6 +323,79 @@ OPAD_BENCH(OPAD_BENCH_ASSET_SYNC, asset_sync) {
           });
         });
       });
+    });
+  });
+  return true;
+}
+
+// OPAD_BENCH_ASSET_LOOK=<prefix> on a document linking parts/part.step, which changed since its sync, opened with a cache that
+// never saw the version synced: its part is read from the file as it is and shown stale, tinted the stale colour in the view
+// (LookSource::Asset, as composed and as applied) with the Sync badge. Synced: the part fades while it is read again, then
+// shows in its own colour, with the new geometry, the same node. Frames: <prefix>.stale.png, .synced.png.
+OPAD_BENCH(OPAD_BENCH_ASSET_LOOK, asset_look) {
+  auto require = std::make_shared<Checks>();
+  require->name = "asset-look";
+  const QString prefix = value;
+  AssetsArea* area = nullptr;
+  for (AreaController* a : w.m_areas)
+    if (auto* found = qobject_cast<AssetsArea*>(a)) area = found;
+  AssetMonitor* monitor = area ? area->monitor() : nullptr;
+  AppDocument* doc = w.m_doc;
+  Viewport* v = w.m_viewport;
+  std::string part, body;
+  for (const auto& o : doc->doc.ops)
+    if (o.type == "import" && o.data.value("source", "") == "part.step") part = o.id;
+  for (const auto& id : doc->scene.all_bodies())
+    if (doc->node(id)->source_op == part) body = id;
+  (*require)(monitor && !part.empty() && !body.empty(), "a linked file and its part");
+  if (!monitor || body.empty()) {
+    QCoreApplication::exit(2);
+    return true;
+  }
+  auto state = [monitor, part] {
+    const opad::json* s = monitor->state(part);
+    return s ? s->value("state", std::string()) : std::string("none");
+  };
+  auto settled = [&w, v, doc] {
+    return !w.m_displayJob && w.m_meshRemaining == 0 && v->displayedCount() == int(doc->scene.all_bodies().size()) && !v->looksPending();
+  };
+  auto same = [](const std::array<double, 3>& a, const std::array<double, 3>& b) {
+    return std::abs(a[0] - b[0]) + std::abs(a[1] - b[1]) + std::abs(a[2] - b[2]) < 1e-6;
+  };
+  waitFor(&w, [=] { return settled() && state() == "changed" && !monitor->checking(); }, 20000, [=, &w](bool opened) {
+    const opad::Node* n = doc->node(body);
+    const QColor& c = v->tokens().assetStale;
+    const std::array<double, 3> tint = looks::mix(n->color, {c.redF(), c.greenF(), c.blueF()}, 0.6);
+    const BodyLook look = v->bodyLook(body);
+    (*require)(opened && monitor->stale() == std::set<std::string>{body} && monitor->asset(part)->stale == 1,
+               QString("opened: the changed file read as it is, its part stale (%1, %2 stale)").arg(QString::fromStdString(state())).arg(monitor->stale().size()));
+    (*require)(same(look.color, tint) && look.opacity == 1 && v->shownLook(body) == look && !same(look.color, n->color),
+               "the stale part is tinted the stale colour, as composed and as drawn");
+    const opad::json* s = monitor->state(part);
+    (*require)(s && s->value("reason", "") == "1 parts differ from the version synced", "its state says so: " + QString::fromStdString(s ? s->value("reason", "") : ""));
+    int x = 0, y = 0;
+    const bool found = v->benchBodyPoint(body, x, y);
+    const QImage stale = v->grabImage();
+    stale.save(prefix + ".stale.png");
+    const QColor before = found ? stale.pixelColor(x, y) : QColor();
+    const std::string key = n->body_key;
+    area->sync({part});
+    const BodyLook reading = v->bodyLook(body);
+    (*require)(monitor->syncing(part) && std::abs(reading.opacity - 0.45) < 1e-9 && same(reading.color, tint), QString("syncing: the file's part fades (%1)").arg(reading.opacity));
+    waitFor(&w, [=] { return !area->busy() && state() == "ok" && !monitor->checking() && settled() && doc->node(body) && doc->node(body)->body_key != key; }, 30000,
+            [=, &w](bool synced) {
+      const opad::Node* now = doc->node(body);
+      const BodyLook look = v->bodyLook(body);
+      (*require)(synced && now && monitor->stale().empty() && same(look.color, now->color) && look.opacity == 1 && v->shownLook(body) == look,
+                 "synced: the same node, in its own colour, nothing faded");
+      int x2 = 0, y2 = 0;
+      const bool again = v->benchBodyPoint(body, x2, y2);
+      const QImage image = v->grabImage();
+      image.save(prefix + ".synced.png");
+      const QColor after = again ? image.pixelColor(x2, y2) : QColor();
+      const int apart = std::abs(before.red() - after.red()) + std::abs(before.green() - after.green()) + std::abs(before.blue() - after.blue());
+      (*require)(found && again && apart > 40, QString("drawn so: %1 -> %2").arg(before.name(), after.name()));
+      QCoreApplication::exit(require->all ? 0 : 2);
     });
   });
   return true;

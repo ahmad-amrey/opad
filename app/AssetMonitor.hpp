@@ -39,6 +39,7 @@ class AssetMonitor : public QObject {
     std::string name;            // the import's source file name
     std::string root;            // its top node
     int bodies = 0, missing = 0; // body nodes; those without their shape (the file not read, or gone from it)
+    int stale = 0;               // shown from a file that is not the version synced (load_assets marks them)
   };
   const std::map<std::string, Asset>& assets() const { return m_assets; }  // by import op id; linked, project or embedded
   const Asset* asset(const std::string& import) const;
@@ -46,6 +47,8 @@ class AssetMonitor : public QObject {
   // file's top node (else one of its parts: read-only).
   std::string importOf(const std::string& node) const;
   bool isRoot(const std::string& node) const { return m_roots.count(node) > 0; }
+  const std::set<std::string>& roots() const { return m_roots; }  // every linked file's top nodes
+  const std::set<std::string>& stale() const { return m_stale; }  // body nodes shown from a file not the version synced
   const opad::json* state(const std::string& import) const;  // its AppDocument::assetStates entry
   std::vector<std::string> changed() const;                    // the imports whose file changed since their last sync
   QString file(const std::string& import) const;               // where its file is found, else where it was recorded
@@ -77,7 +80,7 @@ class AssetMonitor : public QObject {
   std::map<std::string, Asset> m_assets;
   std::vector<std::string> m_order;  // its imports in the log's order
   std::unordered_map<std::string, std::string> m_nodes;  // node -> its linked import
-  std::set<std::string> m_roots;
+  std::set<std::string> m_roots, m_stale;
   std::vector<opad::json> m_records;   // the log's asset records (imports without nodes, their edits and tombstones)
   std::string m_signature;             // of m_records: a change has the files looked at again
   std::map<std::string, std::string> m_seen;  // import -> the file's hash when it was last looked at

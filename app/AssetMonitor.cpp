@@ -178,6 +178,7 @@ void AssetMonitor::rescan() {
   m_order.clear();
   m_nodes.clear();
   m_roots.clear();
+  m_stale.clear();
   m_records.clear();
   m_signature.clear();
   if (!m_doc->hasDocument || m_doc->browse) return;
@@ -222,12 +223,17 @@ void AssetMonitor::rescan() {
     if (n.kind == opad::Node::Kind::Body) {
       ++it->second.bodies;
       it->second.missing += n.body_missing;
+      if (const opad::BodyEntry* b = n.linked && !n.body_missing ? m_doc->doc.body(n.body_key) : nullptr; b && b->meta.value("stale", false)) {
+        m_stale.insert(id);
+        ++it->second.stale;
+      }
     }
   }
 }
 
 void AssetMonitor::documentChanged(bool replaced) {
   const std::string before = m_signature;
+  const std::set<std::string> staleBefore = m_stale;
   rescan();
   if (replaced) {
     m_seen.clear();
@@ -240,7 +246,10 @@ void AssetMonitor::documentChanged(bool replaced) {
       const opad::json* s = state(import);
       m_seen[import] = s && s->contains("sha256") ? (*s)["sha256"].get<std::string>() : a.asset.value("sha256", std::string());
     }
-  if (!replaced && m_signature == before) return;
+  if (!replaced && m_signature == before) {
+    if (m_stale != staleBefore) emit statesChanged();  // a file read since (loadAssets)
+    return;
+  }
   ++m_version;
   watch();
   emit statesChanged();
