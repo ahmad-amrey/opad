@@ -9,6 +9,7 @@
 #include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
+#include <QStatusBar>
 #include <QToolButton>
 #include <QTreeWidgetItemIterator>
 #include <TopExp.hxx>
@@ -721,6 +722,10 @@ OPAD_BENCH(OPAD_BENCH_HISTORYLIST, historylist) {
           require(look(state->round).dim && !look(state->boss).dim, "Round greyed, Boss not");
           browserShot(".rolledback.png");
           pass("rolled back from Boss's row: \"" + now[2] + "\" between Boss and Round, Round greyed");
+          timelineArea->rowActivated("history:" + state->round);
+          require(!w.m_design->featureActive() && w.statusBar()->currentMessage() == TimelineArea::tr("That step comes after the roll-back marker: roll forward to edit it."),
+                  "a double-click on Round's row, after the marker, says to roll forward");
+          pass("a double-click on Round's row, after the marker, says to roll forward first");
           timelineArea->rowActivated(TimelineArea::kRollRow);
           require(!w.m_doc->rolledBack() && rows().size() == 4, "a double-click on the roll-back row rolls forward");
           pass("a double-click on the roll-back row rolls forward");

@@ -177,7 +177,9 @@ void TimelineArea::rowActivated(const std::string& id) {
   if (id == kRollRow) return services().guarded([this] { rollTo({}); });
   const std::string op = rowOp(id);
   const opad::Op* o = services().document()->doc.find_op(op);
-  if (o && (o->type == "feature" || o->type == "sketch") && !m_tombstoned.count(id)) emit services().timeline()->opActivated(op);  // as on its marker
+  if (!o || (o->type != "feature" && o->type != "sketch") || m_tombstoned.count(id)) return;
+  if (m_beyond.count(id)) return services().showMessage(tr("That step comes after the roll-back marker: roll forward to edit it."), 6000);
+  emit services().timeline()->opActivated(op);  // as on its marker
 }
 
 // A row selected alone points at its step: the marker current and pulsing, what it made in amber (as under the pointer).

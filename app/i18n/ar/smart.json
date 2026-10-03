@@ -181,5 +181,6 @@
   "The model is shown as it was before the steps below it; double-click to roll forward": "يُعرض النموذج كما كان قبل الخطوات التي تحته؛ انقر نقرًا مزدوجًا للتقدّم",
   "After the roll-back marker: not in the model shown": "بعد علامة الرجوع: ليست في النموذج المعروض",
   "fails": "تفشل",
-  "That step is deleted already: Shift+Del on its marker restores it.": "هذه الخطوة محذوفة بالفعل: Shift+Del على علامتها يستعيدها."
+  "That step is deleted already: Shift+Del on its marker restores it.": "هذه الخطوة محذوفة بالفعل: Shift+Del على علامتها يستعيدها.",
+  "That step comes after the roll-back marker: roll forward to edit it.": "تأتي هذه الخطوة بعد علامة الرجوع: تقدّم لتحريرها."
 }
