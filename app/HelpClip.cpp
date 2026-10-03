@@ -88,14 +88,14 @@ const QHash<QString, QStringList>& schema() {
         {"axes", {"len", "at"}},
         {"poly", stroke + QStringList{"points", "closed"}},
         {"rect", stroke + QStringList{"corners"}},
-        {"circle", stroke + QStringList{"center", "r", "plane"}},
-        {"arc", stroke + QStringList{"center", "r", "start", "sweep", "through", "plane"}},
+        {"circle", stroke + QStringList{"center", "r", "r2", "plane"}},
+        {"arc", stroke + QStringList{"center", "r", "r2", "start", "sweep", "through", "plane"}},
         {"slot", stroke + QStringList{"c1", "c2", "r"}},
         {"polygon", stroke + QStringList{"center", "r", "n", "corner"}},
         {"shape", stroke + QStringList{"profile", "holes", "plane", "at"}},
         {"plane", {"center", "size", "plane", "color", "fillOpacity"}},
-        {"solid", {"profile", "holes", "plane", "dir", "at", "height", "tone", "toneAmount", "edges", "capColor", "hatch"}},
-        {"lathe", {"profile", "at", "start", "sweep", "n", "tone", "toneAmount", "edges"}},
+        {"solid", {"profile", "holes", "plane", "dir", "at", "height", "tone", "toneAmount", "edges", "capColor", "hatch", "style"}},
+        {"lathe", {"profile", "at", "start", "sweep", "n", "tone", "toneAmount", "edges", "style"}},
         {"arrow", {"at", "dir", "len", "color"}},
         {"dim", {"kind", "a", "b", "offset", "center", "r", "angle", "start", "sweep", "plane", "value", "color"}},
         {"label", {"at", "screen", "text", "value", "dx", "dy", "color", "size", "bold", "box", "align"}},
@@ -107,7 +107,11 @@ const QHash<QString, QStringList>& schema() {
         {"snap", {"kind", "at", "color"}},
         {"card", {"screen", "w", "title", "rows", "hl", "button", "press"}},
         {"picture", {"corners"}},
-        {"camera", {"az", "elev", "zoom", "center"}},  // "elev": "el" names the element
+        {"band", {"a", "b", "color", "crossing"}},
+        {"veil", {"color"}},
+        {"timeline", {"screen", "markers", "states", "at"}},
+        {"letters", {"at", "value", "height", "plane", "align", "color", "width", "fill", "fillOpacity"}},
+        {"camera", {"az", "elev", "zoom", "center", "roll", "persp"}},  // "elev": "el" names the element
     };
     for (auto it = h.begin(); it != h.end(); ++it) *it << "el" << "from" << "to" << "fade" << "opacity" << "keys" << "offset" << "rot" << "pivot" << "scale" << "note";
     return h;
@@ -122,6 +126,7 @@ const QHash<QString, QStringList> kKinds{
     {"glyph", {"horizontal", "vertical", "parallel", "perpendicular", "coincident", "tangent", "equal", "concentric", "fix", "midpoint", "symmetric", "collinear", "smooth"}},
     {"snap", {"endpoint", "midpoint", "center", "quadrant", "intersection", "tangent", "nearest", "perpendicular"}},
     {"dim", {"linear", "radial", "diameter", "angular"}},
+    {"style", {"shaded", "plain", "wire"}},
 };
 
 QColor token(const Tokens& t, const QString& name) {
@@ -328,6 +333,9 @@ void collectTexts(const QString& el, const QJsonObject& o, QStringList& out) {
 void checkValue(const QString& el, const QString& prop, const QJsonValue& v, const Problem& problem) {
   if (kColorProps.contains(prop) && v.isString() && !kTokens.contains(v.toString())) problem(QString("%1.%2: unknown colour %3").arg(el, prop, v.toString()));
   if (prop == "kind" && kKinds.contains(el) && !kKinds.value(el).contains(v.toString())) problem(QString("%1: unknown kind %2").arg(el, v.toString()));
+  if (prop == "style" && !kKinds.value("style").contains(v.toString())) problem(QString("%1: unknown style %2").arg(el, v.toString()));
+  if (prop == "markers")
+    for (const QJsonValue& m : v.toArray()) if (!icons::has(m.toString())) problem(QString("%1: no icon %2").arg(el, m.toString()));
   if ((prop == "badge" || prop == "icon") && !v.toString().isEmpty() && !icons::has(v.toString())) problem(QString("%1: no icon %2").arg(el, v.toString()));
 }
 
@@ -478,7 +486,7 @@ struct Ctx {
   bool rtl = false, still = false, iso = false;
   V3 R{1, 0, 0}, U{0, 1, 0}, V{0, 0, 1};
   QPointF center;
-  double s = 1;
+  double s = 1, roll = 0, persp = 0;  // the camera's turn about the view axis (degrees) and perspective (0 = none)
   V3 cursor;
   bool hasCursor = false;
   Bounds* record = nullptr;  // measuring: the view-unit bounds of every model point
@@ -494,7 +502,13 @@ struct Ctx {
   QPointF map(const V3& q) const {
     const QPointF v = view(q);
     if (record) record->add(v);
-    return {scene.center().x() + (v.x() - center.x()) * s, scene.center().y() - (v.y() - center.y()) * s};
+    QPointF d = (v - center) * s;
+    if (persp > 0) d /= std::max(0.25, 1 - persp * depth(q) / 60);  // nearer points spread out from the centre
+    if (roll != 0) {
+      const double a = roll * kPi / 180;
+      d = QPointF(d.x() * std::cos(a) - d.y() * std::sin(a), d.x() * std::sin(a) + d.y() * std::cos(a));
+    }
+    return {scene.center().x() + d.x(), scene.center().y() - d.y()};
   }
   double depth(const V3& q) const { return V3::dotProduct(q, V); }
   QColor col(const QJsonValue& v, const char* fallback) const { return token(*tk, v.isString() ? v.toString() : QString(fallback)); }
@@ -615,13 +629,14 @@ void stroke(Ctx& c, QPolygonF pts, bool closed, const QJsonObject& o) {
   }
 }
 
-QVector<V3> circlePoints(const V3& center, double r, double start, double sweep, const QString& plane, int n) {
+// r2: the second radius of an ellipse (along the plane's v axis).
+QVector<V3> circlePoints(const V3& center, double r, double start, double sweep, const QString& plane, int n, double r2 = -1) {
   V3 u, v;
   planeAxes(plane, u, v);
   QVector<V3> out;
   for (int i = 0; i <= n; ++i) {
     const double a = (start + sweep * i / n) * kPi / 180;
-    out << center + u * float(r * std::cos(a)) + v * float(r * std::sin(a));
+    out << center + u * float(r * std::cos(a)) + v * float((r2 < 0 ? r : r2) * std::sin(a));
   }
   return out;
 }
@@ -746,6 +761,28 @@ void drawFaces(Ctx& c, QVector<Face>& faces, const QJsonObject& o) {
   }
   std::stable_sort(faces.begin(), faces.end(), [](const Face& a, const Face& b) { return a.pass != b.pass ? a.pass < b.pass : a.depth < b.depth; });
   const QColor edges = c.col(o.value("edges"), "medge"), tone = c.col(o.value("tone"), "sel");
+  const QString style = o.value("style").toString("shaded");
+  if (style == "wire") {  // edges only: the hidden ones dashed and faint, then the visible ones
+    for (int front = 0; front < 2; ++front)
+      for (const Face& f : faces) {
+        if (f.front != bool(front)) continue;
+        QPolygonF poly;
+        for (const V3& q : f.p) poly << c.map(q);
+        QPen pen(front ? c.col(o.value("edges"), "fg") : alpha(token(*c.tk, "fg3"), 0.8), (front ? 1.3 : 1.0) * c.u, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+        if (!front) pen.setDashPattern({2.4, 2.4});
+        p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        for (qsizetype i = 0; i < f.p.size(); ++i)
+          if (f.edge.value(i)) p.drawLine(poly[i], poly[(i + 1) % poly.size()]);
+        for (const auto& h : f.holes) {
+          QPolygonF hp;
+          for (const V3& q : h) hp << c.map(q);
+          hp << hp.first();
+          p.drawPolyline(hp);
+        }
+      }
+    return;
+  }
   const double toneAmount = o.contains("tone") ? o.value("toneAmount").toDouble(0.45) : 0;
   const double ew = 1.15 * c.u;
   for (const Face& f : faces) {
@@ -780,6 +817,7 @@ void drawFaces(Ctx& c, QVector<Face>& faces, const QJsonObject& o) {
       if (path.isEmpty()) path.addPolygon(poly);
       hatch(c, path, alpha(edges, 0.55));
     }
+    if (style == "plain") continue;  // shaded, without edge lines
     p.setPen(QPen(edges, ew, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     p.setBrush(Qt::NoBrush);
     for (qsizetype i = 0; i < f.p.size(); ++i)
@@ -1385,6 +1423,79 @@ void picture(Ctx& c, const QJsonObject& o, const Xf& x) {
   p.restore();
 }
 
+// The timeline at the foot of a panel: one marker per step (an icon), each in a state: "" plain, "dim" (rolled back),
+// "struck" (deleted), "sel" (selected), "flash" (being computed); "at" puts the rollback bar after that many markers.
+// Left to right in every language like the app's timeline; the strip itself sits on the mirrored side.
+void timeline(Ctx& c, const QJsonObject& o) {
+  QPainter& p = *c.p;
+  const Tokens& t = *c.tk;
+  const double u = c.u, cell = 20 * u, h = 24 * u, pad = 4 * u;
+  const QJsonArray markers = o.value("markers").toArray(), states = o.value("states").toArray();
+  const double w = markers.size() * cell + 2 * pad;
+  const QJsonArray at = o.value("screen").toArray();
+  const QRectF box = c.mirror(QRectF(c.scene.left() + at.at(0).toDouble() * c.scene.width(), c.scene.top() + at.at(1).toDouble() * c.scene.height(), w, h));
+  p.setPen(QPen(t.line, 1 * u));
+  p.setBrush(alpha(t.bg2, 0.97));
+  p.drawRoundedRect(box, 4 * u, 4 * u);
+  const double bar = o.value("at").toDouble(markers.size());
+  for (qsizetype i = 0; i < markers.size(); ++i) {
+    const QString state = states.at(i).toString();
+    const QRectF m(box.left() + pad + i * cell + 2 * u, box.top() + 4 * u, cell - 4 * u, h - 8 * u);
+    const bool later = i >= bar - 1e-9;
+    p.setOpacity(p.opacity() * (state == "dim" || later ? 0.4 : 1));
+    p.setPen(QPen(state == "sel" || state == "flash" ? t.sel : t.line, 1 * u));
+    p.setBrush(state == "flash" ? t.sel : state == "sel" ? t.selbg : t.bg4);
+    p.drawRoundedRect(m, 3 * u, 3 * u);
+    const int size = int(std::lround(12 * u));
+    p.drawPixmap(QRectF(m.center() - QPointF(6, 6) * u, QSizeF(12, 12) * u).toRect(),
+                 icons::pixmap(markers[i].toString(), state == "flash" ? t.onsel : state == "sel" ? t.sel : t.fg2, size, p.device()->devicePixelRatioF()));
+    if (state == "struck") {
+      p.setPen(QPen(t.red, 1.6 * u, Qt::SolidLine, Qt::RoundCap));
+      p.drawLine(m.bottomLeft() + QPointF(2, -2) * u, m.topRight() + QPointF(-2, 2) * u);
+    }
+    p.setOpacity(p.opacity() / (state == "dim" || later ? 0.4 : 1));
+  }
+  if (bar < markers.size() - 1e-9) {  // the rollback bar
+    const double x = box.left() + pad + bar * cell;
+    p.setPen(QPen(t.sel, 2 * u, Qt::SolidLine, Qt::RoundCap));
+    p.drawLine(QPointF(x, box.top() + 2 * u), QPointF(x, box.bottom() - 2 * u));
+    p.setPen(Qt::NoPen);
+    p.setBrush(t.sel);
+    p.drawEllipse(QPointF(x, box.top() + 2 * u), 2.6 * u, 2.6 * u);
+  }
+}
+
+// Text as outlines lying in a plane (sketch text): the literal "value", its capitals "height" mm tall, from "at" (its
+// baseline's start, or centre with "align": "center").
+void letters(Ctx& c, const QJsonObject& o, const Xf& x) {
+  const QString text = o.value("value").toString();
+  if (text.isEmpty()) return;
+  V3 ua, va;
+  planeAxes(o.value("plane").toString(), ua, va);
+  QFont f = theme::ui(13, QFont::Bold);
+  f.setPixelSize(100);
+  QPainterPath path;
+  path.addText(0, 0, f, text);
+  const double k = o.value("height").toDouble(8) / QFontMetricsF(f).capHeight();
+  const double shift = o.value("align").toString() == "center" ? -path.boundingRect().center().x() : 0;
+  const V3 at = vec(o.value("at"));
+  auto P = [&](double gx, double gy) { return x.apply(at + ua * float((gx + shift) * k) - va * float(gy * k)); };
+  const QPointF origin = c.map(P(0, 0)), ex = c.map(P(1, 0)), ey = c.map(P(0, 1));
+  if (c.record) {
+    const QRectF b = path.boundingRect();
+    for (const QPointF& q : {b.topLeft(), b.bottomRight(), b.topRight(), b.bottomLeft()}) c.map(P(q.x(), q.y()));
+    return;
+  }
+  const QTransform tr(ex.x() - origin.x(), ex.y() - origin.y(), ey.x() - origin.x(), ey.y() - origin.y(), origin.x(), origin.y());
+  QPainter& p = *c.p;
+  QColor fill = c.col(o.value("fill"), "selbg");
+  fill.setAlphaF(float(o.contains("fill") ? o.value("fillOpacity").toDouble(0.22) : 0));
+  p.setBrush(fill);
+  const double width = o.value("width").toDouble(1.3);
+  p.setPen(width > 0 ? QPen(c.col(o.value("color"), "fg"), width * c.u, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin) : QPen(Qt::NoPen));
+  p.drawPath(tr.map(path));
+}
+
 // Where the cursor is: a model point ("pos"), or a place on the screen chrome ("screen", mirrored like cards), plus px.
 QPointF cursorAt(const Ctx& c, const QJsonObject& o) {
   const QPointF at = o.contains("screen") ? c.screen(o.value("screen")) : c.map(c.pt(o.value("pos"), xform(o)));
@@ -1496,7 +1607,8 @@ void paintItem(Ctx& c, const Item& it, const QJsonObject& o) {
       stroke(c, mapped(arcThrough(c.pt(k.at(0), x), c.pt(k.at(2), x), c.pt(k.at(1), x))), false, o);
     } else if (r > 1e-6) {
       const bool circle = el == "circle";
-      QVector<V3> pts = circlePoints(ctr, r, circle ? 90 : o.value("start").toDouble(), circle ? 360 : o.value("sweep").toDouble(90), o.value("plane").toString(), 64);
+      QVector<V3> pts = circlePoints(ctr, r, circle ? 90 : o.value("start").toDouble(), circle ? 360 : o.value("sweep").toDouble(90), o.value("plane").toString(), 64,
+                                     o.value("r2").toDouble(-1));
       if (circle) pts.removeLast();
       stroke(c, mapped(pts), circle, o);
     }
@@ -1621,6 +1733,20 @@ void paintItem(Ctx& c, const Item& it, const QJsonObject& o) {
     card(c, o);
   } else if (el == "picture") {
     picture(c, o, x);
+  } else if (el == "band") {  // a selection window, square to the screen between two points (or the cursor)
+    const QRectF r = QRectF(c.map(c.pt(o.value("a"), x)), c.map(c.pt(o.value("b"), x))).normalized();
+    const QColor color = c.col(o.value("color"), "sel");
+    QPen pen(color, 1.2 * c.u);
+    if (o.value("crossing").toBool()) pen.setDashPattern({3, 2.5});  // touching counts, as a right-to-left drag
+    p.setPen(pen);
+    p.setBrush(alpha(color, 0.12));
+    if (!c.record) p.drawRect(r);
+  } else if (el == "veil") {  // the whole scene in one colour: a flash, a fade
+    if (!c.record) p.fillRect(c.scene, c.col(o.value("color"), "white"));
+  } else if (el == "timeline") {
+    if (!c.record) timeline(c, o);
+  } else if (el == "letters") {
+    letters(c, o, x);
   }
 }
 
@@ -1699,6 +1825,8 @@ void prepare(Ctx& c, const Clip& clip, double& zoom, QPointF& pan) {
       az = o.value("az").toDouble(az);
       el = o.value("elev").toDouble(el);
       zoom = o.value("zoom").toDouble(1);
+      c.roll = o.value("roll").toDouble();
+      c.persp = o.value("persp").toDouble();
       // The pan makes room for the screen chrome (cards, chips), which flips sides in right-to-left languages.
       pan = QPointF(vec(o.value("center")).x() * (c.rtl ? -1 : 1), vec(o.value("center")).y());
     } else if (it.el == "cursor" && !c.hasCursor) {

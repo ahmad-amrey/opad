@@ -1,7 +1,8 @@
 #pragma once
 // Procedural animated clips for the command help (UI-107, design notes B §4). app/help/clips.json describes each clip
-// as an ordered list of vector items (grid, curves, extruded and turned solids, dimensions, a cursor with click
-// ripples, value boxes, key caps, constraint glyphs, snap markers, cards, chips) whose properties are keyframed with
+// as an ordered list of vector items (grid, curves, ellipses, extruded and turned solids shaded, plain or wireframe,
+// text outlines, dimensions, a cursor with click ripples, selection windows, value boxes, key caps, constraint glyphs,
+// snap markers, cards, chips, a timeline strip; a camera that turns, rolls, zooms and can show perspective) whose properties are keyframed with
 // easing; templates ("use") share whole families (constraints, picks, handle drags, typed values). Everything is
 // painted with QPainter from the theme tokens on every frame: no media files, all artwork original, sharp at any
 // scale. The scene is model space and never mirrored; the caption bar, cards, chips and key caps follow the layout

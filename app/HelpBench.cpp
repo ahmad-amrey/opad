@@ -220,6 +220,11 @@ bool MainWindow::benchClips() {
       for (const QString& text : clips::texts(id)) if (i18n::t(text) == text) untranslated << id + ": " + text;
   if (rtl) check(untranslated.isEmpty(), "every caption and label translated " + untranslated.join(" | "));
 
+  // OPAD_BENCH_CLIPS_ONLY=<prefix,...>: sheets of those clips only (authoring).
+  const QStringList only = qEnvironmentVariable("OPAD_BENCH_CLIPS_ONLY").split(',', Qt::SkipEmptyParts);
+  QStringList sheetIds;
+  for (const QString& id : clips::ids())
+    if (only.isEmpty() || std::any_of(only.begin(), only.end(), [&](const QString& o) { return id.startsWith(o); })) sheetIds << id;
   struct Step { int delay; std::function<void()> fn; };
   auto steps = std::make_shared<std::vector<Step>>();
   auto add = [steps](int delay, std::function<void()> fn) { steps->push_back({delay, std::move(fn)}); };
@@ -237,7 +242,7 @@ bool MainWindow::benchClips() {
       o.rtl = rtl;
       return o;
     };
-    for (const QString& id : clips::ids())
+    for (const QString& id : sheetIds)
       add(0, [=] {
         const Tokens tokens = theme::tokens(variant != "light");
         const clips::Options o = options(tokens);
