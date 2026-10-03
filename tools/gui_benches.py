@@ -37,6 +37,7 @@ def area_cases():
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # a failing case's log tail can be Arabic (cp1252 consoles)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("app", type=Path)
     parser.add_argument("cli", type=Path)
