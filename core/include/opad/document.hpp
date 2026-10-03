@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -39,9 +40,19 @@ struct BodyEntry {
   json meta;         // name, color, units, source, ...
   std::string brep;  // OCCT ASCII BREP, LF line endings, trailing newline
   // Index mode (Document::parse_index): the entry's lines in the text the document was read from, neither copied nor
-  // verified; `brep` stays empty. text() is the BREP either way.
+  // verified when read; `brep` stays empty. text() is the BREP either way, as stored (sizes, saving, outlines).
   std::string_view indexed;
   std::string_view text() const { return indexed.empty() ? std::string_view(brep) : indexed; }
+  // The BREP for using it (a shape, a copy into another store): an index-mode entry is hashed against its key on the
+  // first call only (any thread) and throws on this and every later call when it does not match. Other entries were
+  // verified when read.
+  std::string_view checked_text() const;
+  struct Check {  // 0 not hashed yet, 1 matches the key, 2 does not
+    mutable std::atomic<unsigned char> state{0};
+    Check() = default;
+    Check(const Check& o) : state(o.state.load()) {}
+    Check& operator=(const Check& o) { state = o.state.load(); return *this; }
+  } check;
 };
 
 struct ShapeCache;  // opaque; defined in geometry.cpp
@@ -58,7 +69,8 @@ class Document {
   static Document parse(const std::string& text, const std::filesystem::path& origin = {}, const BodyFilter& skip_body = {});
   // Index mode, for reading a version rather than editing it (diff, compare, textconv, history): body entries are
   // listed with their meta but their BREP is neither copied nor hashed (git or the session that wrote it verified it).
-  // The document keeps the text; a body's BREP is read from there when it is asked for. Saves byte-identically.
+  // The document keeps the text; a body's BREP is read from there when it is asked for and hashed the first time it is
+  // used (BodyEntry::checked_text: a shape, a move into another store). Saves byte-identically.
   static Document load_index(const std::filesystem::path& path, const BodyFilter& skip_body = {});
   static Document parse_index(std::string text, const std::filesystem::path& origin = {}, const BodyFilter& skip_body = {});
   bool indexed() const { return source_ != nullptr; }
@@ -81,8 +93,8 @@ class Document {
   size_t body_count() const { return bodies_.size(); }
   const std::vector<BodyEntry>& bodies() const { return bodies_; }
   // Rebuilds the body store as `keys` in that order, each kept from this store or moved out of `from` (verified when
-  // that was parsed: nothing is hashed again), then this store's other entries when `keep_others`. Throws when a key
-  // is in neither.
+  // that was parsed; an index-mode entry not checked yet is hashed here), then this store's other entries when
+  // `keep_others`. Throws, changing nothing, when a key is in neither or a moved entry does not match its key.
   void arrange_bodies(const std::vector<std::string>& keys, Document& from, bool keep_others);
 
   // Removes body entries that no live (non-tombstoned) op references. Returns removed keys.

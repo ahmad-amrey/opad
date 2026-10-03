@@ -303,6 +303,58 @@ TEST(metrics_on_request) {
   CHECK(has(diff_text(diff), "volume 6000 -> 8000 mm3"));
 }
 
+TEST(index_mode_checks_a_body_when_it_is_used) {
+  auto box = [](double z) { return brep_from_shape(BRepPrimAPI_MakeBox(10, 20, z).Shape()); };
+  Document d = Document::create();
+  const std::string node = new_uuid(), k1 = d.add_body(box(30), json::object()), k0 = d.add_body(box(5), json::object());
+  const std::string import = import_one(d, node, "Box", k1);
+  import_one(d, new_uuid(), "Plate", k0);
+  const std::string base = d.serialize();
+  const std::string k2 = d.add_body(box(40), json::object());
+  d.append(json{{"op", "edit"}, {"target", import}, {"set", {{"nodes", json::array({body_node(node, "Box", k2)})}}}});
+  // The new body edited behind the store's back, same length and lines: a verifying read refuses the file, index mode
+  // lists it unhashed and refuses it when it is first used, every time after.
+  std::string text = d.serialize();
+  text[text.find("Topology", text.find("#body " + k2)) + 1] = 'u';
+  CHECK_THROWS(Document::parse(text));
+  const Document v = Document::parse_index(text);
+  CHECK_EQ(int(v.body(k2)->check.state), 0);
+  CHECK_EQ(v.serialize(), text);  // saved as read
+  CHECK(has(document_outline(v), "Box  [body " + k2.substr(0, 12) + "]"));
+  for (int i = 0; i < 2; ++i) {
+    try {
+      body_shape(v, k2);
+      CHECK(false);
+    } catch (const Error& e) {
+      CHECK(has(e.what(), "body entry " + k2.substr(0, 12) + ": content does not match its key"));
+    }
+  }
+  CHECK_EQ(int(v.body(k2)->check.state), 2);
+  CHECK(!body_shape(v, k0).IsNull());
+  CHECK_EQ(int(v.body(k0)->check.state), 1);
+  CHECK_EQ(int(v.body(k1)->check.state), 0);  // never used, never hashed
+  // The diff names the change; measuring it says which side could not be read.
+  const Document a = Document::parse_index(base);
+  CHECK_EQ(find(semantic_diff(a, v), "body", "geometry", "Box")["key_after"], k2);
+  DiffOptions opt;
+  opt.metrics = true;
+  const json diff = semantic_diff(a, v, opt);
+  const json m = find(diff, "body", "geometry", "Box")["metrics"];
+  CHECK(std::abs(m["before"]["volume"].get<double>() - 6000) < 1e-6);
+  CHECK(has(m["after"].value("error", ""), "does not match its key"));
+  CHECK(has(diff_text(diff), ", not measured after: body entry " + k2.substr(0, 12)));
+  // Moving it into another store hashes it first and changes nothing when it does not match.
+  Document other = Document::parse(base);
+  Document source = Document::parse_index(text);
+  CHECK_THROWS(other.arrange_bodies({k2, k1}, source, false));
+  CHECK_EQ(other.body_keys(), (std::vector<std::string>{k1, k0}));
+  CHECK_EQ(source.body_count(), 3u);
+  other.arrange_bodies({k1}, source, false);  // already there: nothing moves, nothing is hashed
+  CHECK_EQ(int(source.body(k2)->check.state), 2);
+  CHECK_EQ(int(source.body(k1)->check.state), 0);
+  CHECK_EQ(other.body_keys(), std::vector<std::string>{k1});
+}
+
 TEST(linked_assets) {  // the asset record the asset design writes on its import (an edit when it syncs)
   Document d = Document::create();
   const json asset = {{"v", 1}, {"kind", "step"}, {"path", "../hw/board.step"}, {"sha256", std::string(64, 'a')}, {"storage", "linked"}};

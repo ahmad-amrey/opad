@@ -728,6 +728,9 @@ std::string change_line(const json& c) {
       const json& m = c["metrics"];
       t += ", volume " + num(m["before"]["volume"].get<double>()) + " -> " + num(m["after"]["volume"].get<double>()) + " mm3, area " +
            num(m["before"]["area"].get<double>()) + " -> " + num(m["after"]["area"].get<double>()) + " mm2";
+    } else if (c.contains("metrics")) {
+      for (const char* side : {"before", "after"})
+        if (c["metrics"][side].contains("error")) t += std::string(", not measured ") + side + ": " + str(c["metrics"][side], "error");
     }
   } else if (change == "appearance") {
     std::vector<std::string> parts;

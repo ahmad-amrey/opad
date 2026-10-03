@@ -33,6 +33,15 @@ Header Header::from_json(const json& j) {
   return h;
 }
 
+// ---------------------------------------------------------------- BodyEntry
+std::string_view BodyEntry::checked_text() const {
+  if (indexed.empty()) return brep;
+  unsigned char s = check.state.load(std::memory_order_acquire);
+  if (s == 0) check.state.store(s = sha256_hex(indexed) == key ? 1 : 2, std::memory_order_release);
+  if (s == 2) throw Error("body entry " + key.substr(0, 12) + ": content does not match its key (corrupted or edited)");
+  return indexed;
+}
+
 // ---------------------------------------------------------------- Document
 Document::Document() : shape_cache(make_shape_cache()) {}
 
@@ -281,8 +290,12 @@ const BodyEntry* Document::body(const std::string& key) const {
 }
 
 void Document::arrange_bodies(const std::vector<std::string>& keys, Document& from, bool keep_others) {
-  for (const auto& key : keys)
-    if (!bodies_index_.count(key) && !from.bodies_index_.count(key)) throw Error("body entry missing: " + key);
+  for (const auto& key : keys) {
+    if (bodies_index_.count(key)) continue;
+    const auto it = from.bodies_index_.find(key);
+    if (it == from.bodies_index_.end()) throw Error("body entry missing: " + key);
+    if (from.source_ != source_) from.bodies_[it->second].checked_text();  // it leaves `from`'s text as a verified copy
+  }
   std::vector<BodyEntry> out;
   out.reserve(keys.size() + (keep_others ? bodies_.size() : 0));
   std::vector<bool> taken(bodies_.size());

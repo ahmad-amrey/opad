@@ -573,7 +573,7 @@ Document make_editable(const Document& viewer, EditableKeys* changed, const std:
   for (size_t i = 0; i < bodies.size(); ++i) {
     const BodyEntry& b = bodies[i];
     if (!b.brep.empty()) { rebuilt.add_body(b.brep, b.meta); continue; }
-    if (!b.indexed.empty()) { rebuilt.add_body(std::string(b.indexed), b.meta); continue; }
+    if (!b.indexed.empty()) { rebuilt.add_body(std::string(b.checked_text()), b.meta); continue; }
     if (!work[i].error.empty()) throw Error("body '" + b.meta.value("name", b.key.substr(0, 12)) + "' cannot be saved: " + work[i].error);
     const std::string key = rebuilt.add_body(work[i].brep, b.meta);
     cache_shape(rebuilt, key, work[i].shape);
