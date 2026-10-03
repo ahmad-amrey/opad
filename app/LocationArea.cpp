@@ -1,7 +1,8 @@
 // Where files are (UI-07), as an area of the window (AreaController.hpp): File > Open file location (Shift+Alt+R) and
-// Copy path (Shift+Alt+C) for the open document (its file, or the viewed one), the same and Copy relative path in the status
-// path's menu and the browser's document row, and an import's source file on its timeline marker: its menu (found where the
-// op recorded it, opad::import_source) and its tooltip. FileLocation.hpp does the work; nothing here waits.
+// Copy path (Shift+Alt+C) for the open document (its file, or the viewed one), also in the File group of each workspace's
+// Export tab, the same and Copy relative path in the status path's menu and the browser's document row, and an import's
+// source file on its timeline marker: its menu (found where the op recorded it, opad::import_source) and its tooltip.
+// FileLocation.hpp does the work; nothing here waits.
 #include <QAction>
 #include <QDir>
 #include <QElapsedTimer>
@@ -13,6 +14,7 @@
 #include "AppDocument.hpp"
 #include "Commands.hpp"
 #include "FileLocation.hpp"
+#include "Ribbon.hpp"
 #include "StatusRow.hpp"
 #include "TimelineWidget.hpp"
 #include "Theme.hpp"
@@ -73,6 +75,10 @@ class Locations : public AreaController {
     QAction* before = at >= 0 && at + 1 < items.size() ? items[at + 1] : nullptr;
     file->insertAction(before, services().action("file.reveal"));
     file->insertAction(before, services().action("file.copyPath"));
+  }
+  void ribbon(RibbonLayout& layout) override {  // each workspace's Export tab, its File group (the Share tab to be)
+    for (const char* group : {"review.export.file", "design.export.file"})
+      for (const char* id : {"file.reveal", "file.copyPath"}) layout.addAction(QString::fromLatin1(group), services().action(id));
   }
   void ready() override {
     connect(services().pathChip(), &PathChip::menuRequested, this, [this](QMenu* menu) {

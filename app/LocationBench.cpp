@@ -1,5 +1,6 @@
 // OPAD_BENCH_PATHS=<prefix> (UI-07) on tools/bench_cases/vcs.py's paths/doc/model.opad: a document in a git work tree
-// with an STL imported from paths/parts. Open file location and Copy path from File (their records and keys), the status
+// with an STL imported from paths/parts. Open file location and Copy path from File (their records and keys) and on the
+// ribbon (the File group of Review's and Design's Export tabs), the status
 // path's menu (Copy relative path), the browser's document row (a real right click's menu), the import's timeline marker
 // (its tooltip and menu, and again once the source file is gone: the nearest folder), the start page's and File > Recent's
 // menus (a right click on a Recent entry never opens it; Remove from list). The file manager is never started: a
@@ -18,6 +19,7 @@
 #include <QMenuBar>
 #include <QStatusBar>
 #include <QMouseEvent>
+#include <QToolButton>
 #include <QTimer>
 #include <QTreeWidget>
 #include <memory>
@@ -28,6 +30,7 @@
 #include "BrowserPanel.hpp"
 #include "FileLocation.hpp"
 #include "MainWindow.hpp"
+#include "Ribbon.hpp"
 #include "StatusRow.hpp"
 #include "TimelineWidget.hpp"
 #include "Toast.hpp"
@@ -73,6 +76,25 @@ OPAD_BENCH(OPAD_BENCH_PATHS, paths) {
       const QList<QAction*> items = file ? file->actions() : QList<QAction*>();
       require(items.indexOf(reveal) == items.indexOf(w.action("file.screenshot")) + 1 && items.indexOf(copy) == items.indexOf(reveal) + 1,
               "File: Open file location and Copy path after Save screenshot…");
+      // The ribbon: each workspace's Export tab, its File group, and so both workspaces in the commands' records.
+      for (const QString& tab : {QStringLiteral("review.export"), QStringLiteral("design.export")}) {
+        RibbonPage* page = w.m_ribbon->page(tab);
+        QList<QAction*> tools;
+        for (RibbonGroup* g : page ? page->groups() : QList<RibbonGroup*>())
+          if (g->title() == QCoreApplication::translate("MainWindow", "File"))
+            for (QToolButton* b : g->buttons()) tools << b->defaultAction();
+        require(tools.contains(reveal) && tools.contains(copy) && tools.indexOf(copy) == tools.indexOf(reveal) + 1, tab + ": no Open file location / Copy path in its File group");
+      }
+      require(info->workspaces.contains("review") && info->workspaces.contains("design") && w.m_commands.find("file.copyPath")->workspaces.contains("design"),
+              "the records' workspaces: " + info->workspaces.join(' '));
+      if (const int at = w.m_ribbon->tabIds().indexOf("review.export"); at >= 0 && !prefix.isEmpty()) {
+        const int was = w.m_ribbon->currentTab();
+        w.m_ribbon->setCurrentTab(at);
+        QCoreApplication::processEvents();
+        w.m_ribbon->grab().save(prefix + ".ribbon.png");
+        w.m_ribbon->setCurrentTab(was);
+      }
+      pass("the ribbon: Open file location and Copy path in the File group of Review's and Design's Export tabs");
       reveal->trigger();
       require(!launched->empty() && launched->back().selects && launched->back().arguments.contains(native) &&
                   QFileInfo(launched->back().program).fileName().compare("explorer.exe", Qt::CaseInsensitive) == 0,
