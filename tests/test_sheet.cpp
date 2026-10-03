@@ -202,7 +202,7 @@ TEST(sheet_dimensions_follow_the_model) {
   const json height = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", p.front}, {"type", "vertical"}, {"refs", {p.edge({-30, -20, 5}, {0, 0, 1})}}, {"precision", 1}});
   CHECK_NEAR(height["result"]["value"].get<double>(), 10, 1e-9);
   const json hole = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", top}, {"type", "diameter"}, {"refs", {p.circle(10)}}, {"tolerance", {{"type", "dev"}, {"plus", 0.1}, {"minus", 0}}}});
-  CHECK_EQ(hole["result"]["shown"], "⌀10 +0.1/+0");
+  CHECK_EQ(hole["result"]["shown"], "⌀10 +0.1/0");  // a zero deviation is a plain 0
   const std::string center = p.circle(10);
   const json offset = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", top}, {"type", "horizontal"},
                                                 {"refs", {p.edge({-30, 0, 10}, {0, 1, 0}), center.substr(0, center.find('/')) + "/center/" + center.substr(center.rfind('/') + 1)}}});

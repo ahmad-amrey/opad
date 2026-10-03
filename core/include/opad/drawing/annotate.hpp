@@ -30,6 +30,10 @@ bool known_item(const std::string& kind, const std::string& type);  // kinds and
 // An item's value written the sheet's way: precision decimals; inches under ASME with trailing zeros and no leading zero,
 // otherwise without trailing zeros.
 std::string format_number(double value, int precision, const Sheet* sheet = nullptr);
+// A dimension's tolerance as items keep it ("tol"): {"type": sym | dev | limits | fit, "plus", "minus"} in the sheet's
+// units; a fit is its designation ("fit": "H7", "g6", "H7/g6"), written after the value, with the deviations in brackets
+// when given (the user's: no limits table is built in). Throws Error for one this build would not write.
+void check_tolerance(const json& tol);
 
 // A pick on a view: what the app's snap index found under the pointer, {"node", "edge" | "face" (ordinals of the curve's
 // source), "snap" (end, mid, centre, quadrant, intersection, nearest), "at" [x, y] (sheet paper mm)}, made a reference

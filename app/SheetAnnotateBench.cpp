@@ -443,6 +443,27 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ANNOTATE, sheetAnnotate) {
             "with the typed values: 15 above the edge, " + QString::fromStdString(typed->def["result"].dump()));
     }
     check(!tools->card()->isVisible() && tools->tool() == SheetAnnotator::Tool::Dimension, "the card goes with the placed dimension; the tool stays");
+    // A fit: its designation after the value, its deviations only as typed.
+    tools->plusEdit()->clear();
+    tools->toleranceBox()->setCurrentIndex(tools->toleranceBox()->findData("fit"));
+    check(tools->fitEdit()->isVisible() && tools->fitEdit()->placeholderText() == "H7", "Fit shows the designation's field");
+    tools->fitEdit()->setText("H7");
+    emit tools->fitEdit()->editingFinished();
+    {
+      const Vec2 h1 = paper(top, {-25, 10, 0});
+      const double rr = 3 * canvas->frame(top)->scale;
+      click(plus(h1, {rr * 0.7071, rr * 0.7071}));
+      planned();
+      moveTo(plus(h1, {-16, 16}));
+      check(previewText("H7"), "the preview writes the fit after the value");
+      key(Qt::Key_Tab);
+      key(Qt::Key_Tab);
+      for (int k : {Qt::Key_0, Qt::Key_Period, Qt::Key_0, Qt::Key_1, Qt::Key_2}) key(k);
+      check(tools->inputFocus() == "plus" && tools->toleranceBox()->currentData().toString() == "fit", "its upper deviation typed on the card; still a fit");
+      key(Qt::Key_Return);
+      check(added("dimension", dims + 2) && items("dimension").back()->def["result"]["shown"] == "⌀6 H7 (+0.012/0)",
+            "placed: " + QString::fromStdString(items("dimension").back()->def["result"].dump()));
+    }
     tools->toleranceBox()->setCurrentIndex(0);
     tools->plusEdit()->clear();
     key(Qt::Key_Escape);

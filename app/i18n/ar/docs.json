@@ -372,5 +372,7 @@
   "Centre marks": "علامات المراكز",
   "Centre marks on the circles seen along their axis and centre lines along the holes and shafts seen from the side": "علامات المراكز على الدوائر المرئية على امتداد محورها وخطوط المحاور على امتداد الثقوب والأعمدة المرئية من الجانب",
   "Decimals": "المنازل العشرية",
-  " · Type values, Tab moves between them": " · اكتب القيم، وينتقل Tab بينها"
+  " · Type values, Tab moves between them": " · اكتب القيم، وينتقل Tab بينها",
+  "Fit designation": "تسمية التوافق",
+  "A fit's designation (H7, g6, H7/g6); its deviations, when given beside it, are written in brackets": "تسمية التوافق (H7 أو g6 أو H7/g6)؛ وتُكتب انحرافاته بين قوسين إذا أُدخلت بجانبه"
 }

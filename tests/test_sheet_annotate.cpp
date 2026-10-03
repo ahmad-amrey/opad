@@ -427,8 +427,26 @@ TEST(values_and_compatibility) {
   CHECK_EQ(format_number(0.5, 3), "0.5");
   CHECK_EQ(format_value(10, {{"precision", 1}, {"tol", {{"type", "limits"}, {"plus", 0.1}, {"minus", -0.05}}}}), "10.1\n9.95");
   CHECK_EQ(format_value(10, {{"type", "diameter"}, {"tol", {{"type", "sym"}, {"plus", 0.02}}}}), "⌀10 ±0.02");
+  CHECK_EQ(format_value(10, {{"tol", {{"type", "dev"}, {"plus", 0}, {"minus", -0.1}}}}), "10 0/-0.1");
+  // Fits: the designation after the value, the deviations in brackets when the user gives them.
+  CHECK_EQ(format_value(25, {{"type", "diameter"}, {"tol", {{"type", "fit"}, {"fit", "H7"}}}}), "⌀25 H7");
+  CHECK_EQ(format_value(25, {{"type", "diameter"}, {"tol", {{"type", "fit"}, {"fit", "H7"}, {"plus", 0.021}, {"minus", 0}}}}), "⌀25 H7 (+0.021/0)");
+  CHECK_EQ(format_value(25, {{"type", "diameter"}, {"tol", {{"type", "fit"}, {"fit", "H7/g6"}}}}), "⌀25 H7/g6");
+  CHECK_EQ(format_value(0.5, {{"type", "diameter"}, {"precision", 4}, {"tol", {{"type", "fit"}, {"fit", "g6"}, {"plus", -0.0002}, {"minus", -0.0006}}}}, &asme),
+           "⌀.5000 g6 (-.0002/-.0006)");
+  check_tolerance({{"type", "fit"}, {"fit", "js6"}});
+  check_tolerance(nullptr);
+  CHECK_THROWS(check_tolerance({{"type", "fit"}, {"fit", "7H"}}));
+  CHECK_THROWS(check_tolerance({{"type", "fit"}}));
+  CHECK_THROWS(check_tolerance({{"type", "iso"}, {"plus", 0.1}}));
+  CHECK_THROWS(check_tolerance({{"type", "dev"}, {"plus", "0.1"}}));
   CHECK(known_item("hole_callout", "") && known_item("dimension_set", "chain") && !known_item("dimension_set", "running") && !known_item("weld", ""));
   Plate p;
+  const json fit = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", p.top}, {"type", "diameter"}, {"refs", {p.circle(0, 10)}}, {"tolerance", {{"type", "fit"}, {"fit", "H7"}}}});
+  CHECK_EQ(fit["result"]["shown"], "⌀10 H7");
+  CHECK_EQ(run(p.doc, "sheet_edit", {{"target", fit["id"]}, {"set", {{"tol", {{"type", "fit"}, {"fit", "H7"}, {"plus", 0.015}, {"minus", 0}}}}}})["result"]["shown"], "⌀10 H7 (+0.015/0)");
+  CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", fit["id"]}, {"set", {{"tol", {{"type", "fit"}, {"fit", "H"}}}}}}));
+  CHECK_THROWS(run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", p.top}, {"type", "diameter"}, {"refs", {p.circle(0, 10)}}, {"tolerance", {{"type", "fits"}}}}));
   const std::string later = p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"view", p.top}, {"kind", "weld"}, {"refs", {p.circle(0, 10)}}}).id;
   const std::string typed = p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"view", p.top}, {"kind", "dimension_set"}, {"type", "running"}}).id;
   const Scene s = resolve(p.doc);

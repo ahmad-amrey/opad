@@ -252,7 +252,7 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         {"refs", "array - what it measures or points at"}, {"aspects", "array - per ref: start|end|mid|center"},
         {"place", "[x,y] - text or symbol, paper mm from the view's centre"}, {"text", "string - a note; <> is a dimension's value"},
         {"at", "[x,y] - a note (paper mm), a hole table's top left (sheet mm)"}, {"precision", "int - decimals (2)"},
-        {"tolerance", "object - {type: sym|dev|limits, plus, minus}"}, {"letter", "string - datum A-Z"},
+        {"tolerance", "object - {type: sym|dev|limits|fit, plus, minus, fit: H7}"}, {"letter", "string - datum A-Z"},
         {"characteristic", "string - fcf: position, flatness, perpendicularity, ..."}, {"value", "number|string - fcf tolerance, surface requirement"},
         {"zone", "diameter"}, {"material", "M|L|S"}, {"datums", "array - fcf datum letters, B(M) with a modifier"},
         {"process", "any|removal|no_removal"}, {"axis", "horizontal|vertical - sets"}, {"extend", "number - centre marks and lines, mm"},
@@ -382,6 +382,7 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         } else {
           const std::string kind = after.value("kind", "");
           if (kind != "note" && !drawing::known_item(kind, after.value("type", ""))) throw Error("sheet_edit: a " + kind + " needs a newer OPAD");
+          if (set.contains("tol")) drawing::check_tolerance(set["tol"]);
           const Sheet& sheet = need_sheet(scene, after.at("sheet").get<std::string>());
           if (after.contains("view"))
             if (const SheetView* v = scene.sheet_view(after["view"].get<std::string>()); !v || v->sheet != sheet.id)

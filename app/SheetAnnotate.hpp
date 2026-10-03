@@ -64,6 +64,7 @@ class SheetAnnotator : public QObject, public SheetInteraction {
   QComboBox* toleranceBox() const { return m_tolBox; }
   QLineEdit* plusEdit() const { return m_plus; }
   QLineEdit* minusEdit() const { return m_minus; }
+  QLineEdit* fitEdit() const { return m_fit; }
   QLineEdit* textEdit() const { return m_text; }
   QLineEdit* letterEdit() const { return m_letter; }
   QComboBox* characteristicBox() const { return m_characteristic; }
@@ -139,7 +140,7 @@ class SheetAnnotator : public QObject, public SheetInteraction {
   QLabel* m_title = nullptr;
   QComboBox *m_typeBox = nullptr, *m_precision = nullptr, *m_tolBox = nullptr, *m_characteristic = nullptr, *m_material = nullptr, *m_process = nullptr,
             *m_axis = nullptr;
-  QLineEdit *m_plus = nullptr, *m_minus = nullptr, *m_text = nullptr, *m_letter = nullptr, *m_value = nullptr, *m_datums[3] = {nullptr, nullptr, nullptr};
+  QLineEdit *m_plus = nullptr, *m_minus = nullptr, *m_fit = nullptr, *m_text = nullptr, *m_letter = nullptr, *m_value = nullptr, *m_datums[3] = {nullptr, nullptr, nullptr};
   QCheckBox* m_zone = nullptr;
   QPushButton* m_done = nullptr;
   std::vector<std::pair<QWidget*, std::vector<Tool>>> m_fields;  // a field and the tools it belongs to

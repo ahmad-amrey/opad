@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <map>
 #include <numeric>
+#include <regex>
 
 #include "../design/engine.hpp"
 #include "opad/design/expr.hpp"
@@ -293,12 +294,30 @@ std::string format_value(double value, const json& item, const Sheet* sheet) {
     const double plus = t.value("plus", 0.0), minus = t.value("minus", -plus);
     const int decimals = std::max(precision, 3);
     const std::string kind = t.value("type", "sym");
-    const auto sign = [&](double x) { return (x < 0 ? "-" : "+") + format_number(std::fabs(x), decimals, sheet); };
+    const auto sign = [&](double x) {  // a zero deviation is a plain 0
+      const std::string n = format_number(std::fabs(x), decimals, sheet);
+      return std::all_of(n.begin(), n.end(), [](char c) { return c == '0' || c == '.'; }) ? std::string("0") : (x < 0 ? "-" : "+") + n;
+    };
     if (kind == "limits") out = symbol + format_number(value + plus, decimals, sheet) + degrees + "\n" + symbol + format_number(value + minus, decimals, sheet) + degrees;
     else if (kind == "sym") out += " ±" + format_number(std::fabs(plus), decimals, sheet);
+    else if (kind == "fit") out += " " + t.value("fit", "") + (t.contains("plus") || t.contains("minus") ? " (" + sign(t.value("plus", 0.0)) + "/" + sign(t.value("minus", 0.0)) + ")" : "");
     else out += " " + sign(plus) + "/" + sign(minus);
   }
   return item.value("prefix", "") + out + item.value("suffix", "");
+}
+
+void check_tolerance(const json& t) {
+  if (t.is_null()) return;
+  if (!t.is_object()) throw Error("tolerance: an object {type, plus, minus} or {type: fit, fit}");
+  const std::string type = t.value("type", "sym");
+  if (type != "sym" && type != "dev" && type != "limits" && type != "fit") throw Error("tolerance: type is sym, dev, limits or fit");
+  for (const char* k : {"plus", "minus"})
+    if (t.contains(k) && !t[k].is_number()) throw Error(std::string("tolerance: ") + k + " is a number in the sheet's units");
+  if (type == "fit") {
+    static const std::regex designation("[A-Za-z]{1,2}[0-9]{1,2}(/[A-Za-z]{1,2}[0-9]{1,2})?");
+    if (!t.contains("fit") || !t["fit"].is_string() || !std::regex_match(t["fit"].get<std::string>(), designation))
+      throw Error("tolerance: a fit is a designation such as H7, g6 or H7/g6");
+  }
 }
 
 json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, const SheetItem& item, const ViewFrame& frame) {
@@ -888,7 +907,10 @@ json plan_item(const Document& doc, const Scene& scene, const json& args, json* 
   if (args.contains("place")) op["place"] = {{"text", args["place"]}};
   for (const char* k : {"precision", "text", "prefix", "suffix"})
     if (args.contains(k)) op[k] = args[k];
-  if (args.contains("tolerance")) op["tol"] = args["tolerance"];
+  if (args.contains("tolerance")) {
+    check_tolerance(args["tolerance"]);
+    op["tol"] = args["tolerance"];
+  }
   if (kind == "dimension" || kind == "dimension_set") op["type"] = args.value("type", kind == "dimension" ? "aligned" : "ordinate");
   if (kind == "note") {
     const std::string text = args.value("text", "");

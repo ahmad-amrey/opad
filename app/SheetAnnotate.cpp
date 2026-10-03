@@ -269,9 +269,13 @@ void SheetAnnotator::buildBar() {
     t.insert(t.end(), sets.begin(), sets.end());
     field(m_precision, tr("Precision"), t, {"dimension", "hole_callout", "hole_table", "dimension_set"});
   }
-  m_tolBox = combo({{tr("No tolerance"), "none"}, {QString::fromUtf8("± ") + tr("Symmetric"), "sym"}, {tr("+/− Deviation"), "dev"}, {tr("Limits"), "limits"}});
+  m_tolBox = combo({{tr("No tolerance"), "none"}, {QString::fromUtf8("± ") + tr("Symmetric"), "sym"}, {tr("+/− Deviation"), "dev"}, {tr("Limits"), "limits"}, {tr("Fit designation"), "fit"}});
   m_tolBox->setObjectName("annotate.tolerance");
   field(m_tolBox, tr("Tolerance"), {Tool::Dimension}, {"dimension"});
+  m_fit = edit("H7", 64);
+  m_fit->setObjectName("annotate.fit");
+  m_fit->setToolTip(tr("A fit's designation (H7, g6, H7/g6); its deviations, when given beside it, are written in brackets"));
+  field(m_fit, QString(), {Tool::Dimension}, {"dimension"});
   m_plus = edit("+0.1", 64);
   m_plus->setObjectName("annotate.plus");
   field(m_plus, QString(), {Tool::Dimension}, {"dimension"});
@@ -354,9 +358,9 @@ void SheetAnnotator::buildBar() {
   connect(m_axis, &QComboBox::currentIndexChanged, this, [this] { fieldChanged("axis"); });
   connect(m_zone, &QCheckBox::toggled, this, [this] { fieldChanged("zone"); });
   for (auto [e, key] : std::initializer_list<std::pair<QLineEdit*, const char*>>{
-           {m_plus, "tol"}, {m_minus, "tol"}, {m_text, "text"}, {m_letter, "letter"}, {m_value, "value"}, {m_datums[0], "datums"}, {m_datums[1], "datums"}, {m_datums[2], "datums"}})
+           {m_plus, "tol"}, {m_minus, "tol"}, {m_fit, "tol"}, {m_text, "text"}, {m_letter, "letter"}, {m_value, "value"}, {m_datums[0], "datums"}, {m_datums[1], "datums"}, {m_datums[2], "datums"}})
     connect(e, &QLineEdit::editingFinished, this, [this, key] { fieldChanged(key); });
-  for (QLineEdit* e : {m_plus, m_minus, m_text, m_letter, m_value, m_datums[0], m_datums[1], m_datums[2]})  // Enter in a field places the item
+  for (QLineEdit* e : {m_plus, m_minus, m_fit, m_text, m_letter, m_value, m_datums[0], m_datums[1], m_datums[2]})  // Enter in a field places the item
     connect(e, &QLineEdit::returnPressed, this, [this] {
       if (m_tool != Tool::None && m_canvas) m_canvas->setFocus();
     });
@@ -380,6 +384,7 @@ void SheetAnnotator::showFields() {
     m_tolBox->setCurrentIndex(std::max(0, m_tolBox->findData(QString::fromStdString(tol.is_object() ? tol.value("type", "sym") : "none"))));
     m_plus->setText(tol.is_object() && tol.contains("plus") ? QString::number(tol["plus"].get<double>()) : QString());
     m_minus->setText(tol.is_object() && tol.contains("minus") ? QString::number(tol["minus"].get<double>()) : QString());
+    m_fit->setText(tol.is_object() ? QString::fromStdString(tol.value("fit", "")) : QString());
     m_text->setText(QString::fromStdString(d.value("text", "")));
     m_letter->setText(QString::fromStdString(d.value("letter", "")));
     m_characteristic->setCurrentIndex(std::max(0, m_characteristic->findData(QString::fromStdString(d.value("characteristic", "position")))));
@@ -397,6 +402,7 @@ void SheetAnnotator::showFields() {
   const bool tol = m_tolBox->currentData().toString() != "none";
   m_plus->setEnabled(tol);
   m_minus->setEnabled(tol && m_tolBox->currentData().toString() != "sym");
+  m_fit->setVisible(m_tolBox->isVisibleTo(m_bar) && m_tolBox->currentData().toString() == "fit");
   m_filling = false;
   m_bar->setVisible(any);
 }
@@ -420,6 +426,12 @@ json SheetAnnotator::tolerance() const {
     if (!v) return std::nullopt;
     return std::round(*v / per * 1e6) / 1e6;
   };
+  if (type == "fit") {  // the designation; deviations only as given
+    json t = {{"type", "fit"}, {"fit", m_fit->text().trimmed().isEmpty() ? std::string("H7") : m_fit->text().trimmed().toStdString()}};
+    if (const auto p = value(m_plus)) t["plus"] = *p;
+    if (const auto m = value(m_minus)) t["minus"] = *m;
+    return t;
+  }
   const double plus = value(m_plus).value_or(0.1);
   json t = {{"type", type.toStdString()}, {"plus", plus}};
   if (type != "sym") t["minus"] = value(m_minus).value_or(-plus);
@@ -433,6 +445,7 @@ void SheetAnnotator::fieldChanged(const char* key) {
     const bool tol = m_tolBox->currentData().toString() != "none";
     m_plus->setEnabled(tol);
     m_minus->setEnabled(tol && m_tolBox->currentData().toString() != "sym");
+    m_fit->setVisible(m_tolBox->isVisibleTo(m_bar) && m_tolBox->currentData().toString() == "fit");
   }
   if (m_tool != Tool::None) {
     if (k == "type" || (k == "axis" && m_plan.contains("choices"))) return updatePreview();
@@ -909,8 +922,8 @@ QString SheetAnnotator::inputText(const std::string& key) const {
   const QString tol = m_tolBox->currentData().toString();
   if (key == "offset") return QString::number(std::round(m_liveOffset * 10) / 10, 'f', 1);
   if (key == "decimals") return m_precision->currentData().toString();
-  if (key == "plus") return tol == "none" ? QString() : m_plus->text().isEmpty() ? QString("0.1") : m_plus->text();
-  if (key == "minus") return tol == "dev" || tol == "limits" ? m_minus->text() : QString();
+  if (key == "plus") return tol == "none" ? QString() : m_plus->text().isEmpty() && tol != "fit" ? QString("0.1") : m_plus->text();
+  if (key == "minus") return tol == "dev" || tol == "limits" || tol == "fit" ? m_minus->text() : QString();
   if (key == "spacing") return "7";
   if (key == "value") return m_value->text().isEmpty() ? QString("0.1") : m_value->text();
   return {};
