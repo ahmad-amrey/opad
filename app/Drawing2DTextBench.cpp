@@ -5,6 +5,7 @@
 #include <QImage>
 
 #include <Bnd_Box.hxx>
+#include <TopExp_Explorer.hxx>
 
 #include <algorithm>
 #include <cmath>
@@ -23,7 +24,7 @@ using namespace bench2d;
 // text layers are shown; in the view, three behs written in a row are one joined word (some row of pixels across it is one
 // run of ink: the letters take their joining forms and touch) while "III" stays three strokes in every row; the Arabic
 // word right-aligned on the guide line ends at it; Latin and Arabic in one line lie side by side, not on top of each
-// other. <prefix>.png.
+// other; "III" in a shape font (.shx) beside the drawing is three strokes, lines without fills. <prefix>.png.
 OPAD_BENCH(OPAD_BENCH_TEXT2D, text2d) {
   auto all = std::make_shared<bool>(true);
   Check require = [all](bool ok, const QString& what) {
@@ -39,17 +40,17 @@ OPAD_BENCH(OPAD_BENCH_TEXT2D, text2d) {
   pollUntil(&w, settled, 60000, [&w, v, require, all, value](bool shown) {
     const opad::Scene& scene = w.m_doc->scene;
     const std::string joined = layerNamed(scene, "Joined"), latin = layerNamed(scene, "Latin"), right = layerNamed(scene, "Right"),
-                      guide = layerNamed(scene, "Guide"), mixed = layerNamed(scene, "Mixed");
-    require(shown && !joined.empty() && !latin.empty() && !right.empty() && !guide.empty() && !mixed.empty(),
+                      guide = layerNamed(scene, "Guide"), mixed = layerNamed(scene, "Mixed"), shape = layerNamed(scene, "Shape");
+    require(shown && !joined.empty() && !latin.empty() && !right.empty() && !guide.empty() && !mixed.empty() && !shape.empty(),
             QString("the text layers are shown: %1 bodies").arg(v->displayedCount()));
-    if (!shown || joined.empty() || latin.empty() || right.empty() || guide.empty() || mixed.empty()) return QCoreApplication::exit(2);
+    if (!shown || joined.empty() || latin.empty() || right.empty() || guide.empty() || mixed.empty() || shape.empty()) return QCoreApplication::exit(2);
     auto box = [&w](const std::string& layer) {
       Bnd_Box b;
       for (const auto& body : w.m_doc->scene.bodies_under(layer)) b.Add(opad::node_world_bbox(w.m_doc->doc, w.m_doc->scene, body));
       return b;
     };
     v->fitAll();
-    pollUntil(&w, [] { return true; }, 300, [&w, v, require, all, value, box, joined, latin, right, guide, mixed](bool) {
+    pollUntil(&w, [] { return true; }, 300, [&w, v, require, all, value, box, joined, latin, right, guide, mixed, shape](bool) {
       const QImage image = v->grabImage();
       image.save(value + ".png");
       const QColor background = image.pixelColor(3, 3);
@@ -95,6 +96,15 @@ OPAD_BENCH(OPAD_BENCH_TEXT2D, text2d) {
       // "Room غرفة": one line as wide as both words side by side (two words drawn over each other would be about half).
       const QRect line = pixels(mixed);
       require(line.width() > 3 * line.height(), QString("Latin and Arabic in one line lie side by side (%1 x %2 px)").arg(line.width()).arg(line.height()));
+      // The shape font's 'III': three strokes (lines, no fills) drawn as three runs of ink in every row.
+      int faces = 0, edges = 0;
+      for (const auto& id : w.m_doc->scene.bodies_under(shape)) {
+        const TopoDS_Shape s = opad::node_world_shape(w.m_doc->doc, w.m_doc->scene, id);
+        for (TopExp_Explorer e(s, TopAbs_FACE); e.More(); e.Next()) ++faces;
+        for (TopExp_Explorer e(s, TopAbs_EDGE); e.More(); e.Next()) ++edges;
+      }
+      const int shapeRuns = fewestRuns(pixels(shape));
+      require(faces == 0 && edges == 3 && shapeRuns == 3, QString("'III' in a shape font beside the drawing is its strokes (%1 lines, %2 fills, %3 runs of ink)").arg(edges).arg(faces).arg(shapeRuns));
       QCoreApplication::exit(*all ? 0 : 2);
     });
   });

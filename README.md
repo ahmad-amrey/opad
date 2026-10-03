@@ -228,7 +228,7 @@ Viewing a DXF, DWG or SVG turns 2D mode on, whose grid follows the view without 
 current document. Properties show a body's material as the file named it, its source file and whether it is a
 solid, a mesh or a 2D drawing. DWG opens through LibreDWG's `dwg2dxf`, which the build compiles from the
 `third_party/libredwg` submodule and puts beside OPAD (the free ODA File Converter is used instead when installed); the
-DXF reader shows model space with its blocks, hatches, dimensions, text and colours ([details](docs/drawings.md)); text is shaped with HarfBuzz, so Arabic joins and right-to-left lines read in order (shape fonts, `.shx`, are drawn in a plain sans-serif). `opad-cli probe <file> --viewer --mesh` reports what opening a file costs, phase by phase.
+DXF reader shows model space with its blocks, hatches, dimensions, text and colours ([details](docs/drawings.md)); text is shaped with HarfBuzz, so Arabic joins and right-to-left lines read in order, and AutoCAD shape fonts (`.shx`: txt, romans, isocp ...) are drawn in their own strokes when DWG TrueView's or AutoCAD's are installed or the font lies beside the drawing (else in a plain sans-serif). `opad-cli probe <file> --viewer --mesh` reports what opening a file costs, phase by phase.
 Settings offers six rendering presets (Classic, Technical flat, Studio, Studio fine, ray traced
 shadows and ray traced reflections), four backgrounds and a configurable auto-hide scene browser.
 Unsupported ray tracing falls back to raster rendering. Coplanar faces receive a small display depth

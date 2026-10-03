@@ -3,6 +3,7 @@
 
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRep_Builder.hxx>
@@ -41,6 +42,7 @@
 #include <tuple>
 
 #include "opad/util.hpp"
+#include "shx_font.hpp"
 
 namespace opad::detail {
 namespace {
@@ -227,6 +229,130 @@ std::u32string bidi_visual(const std::u32string& text) {
   for (size_t i : visual_order(levels)) out += text[i];
   return out;
 }
+
+// Text in an AutoCAD shape font (.shx) the user has: its strokes, laid out by each character's pen advance, as AutoCAD
+// does (no shaping: a shape font holds no joining forms). Text with a character the font lacks is left to the outliner.
+namespace {
+struct ShxText {
+  std::vector<std::filesystem::path> folders;
+  std::map<std::string, std::shared_ptr<const ShxFont>> fonts;  // by the name a style gives
+  std::map<std::tuple<const ShxFont*, uint32_t, double, double>, TopoDS_Shape> glyphs;  // strokes per character and size
+
+  std::shared_ptr<const ShxFont> font(const std::string& name) {
+    if (const auto it = fonts.find(name); it != fonts.end()) return it->second;
+    std::shared_ptr<const ShxFont> found;
+    const auto first = name.find_first_not_of(' '), last = name.find_last_not_of(' ');
+    std::string file = first == std::string::npos ? std::string() : name.substr(first, last - first + 1);
+    const auto slash = file.find_last_of("/\\"), dot = file.find_last_of('.');
+    std::string ext = dot == std::string::npos || (slash != std::string::npos && dot < slash) ? "" : file.substr(dot);
+    for (auto& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+    if (ext.empty() && !file.empty()) file += ".shx";
+    if (ext.empty() || ext == ".shx") {
+      std::error_code error;
+      const auto given = path_from_utf8(file);
+      std::vector<std::filesystem::path> candidates{given};
+      for (const auto& folder : folders) candidates.push_back(folder / given.filename());
+      for (const auto& folder : shx_folders()) candidates.push_back(folder / given.filename());
+      for (const auto& path : candidates)
+        if (!found && !path.empty() && std::filesystem::is_regular_file(path, error)) found = ShxFont::load(path);
+    }
+    return fonts[name] = found;
+  }
+
+  const TopoDS_Shape& glyph(const ShxFont& font, uint32_t c, const ShxFont::Glyph& g, double kx, double ky) {
+    auto& shape = glyphs[{&font, c, kx, ky}];
+    if (!shape.IsNull()) return shape;
+    BRep_Builder builder;
+    TopoDS_Compound strokes;
+    builder.MakeCompound(strokes);
+    for (const auto& stroke : g.strokes) {
+      BRepBuilderAPI_MakePolygon polygon;
+      for (const auto& p : stroke) polygon.Add(gp_Pnt(p.X() * kx, p.Y() * ky, 0));
+      if (polygon.IsDone()) builder.Add(strokes, polygon.Wire());
+    }
+    return shape = strokes;
+  }
+
+  // Null when the text is not in a shape font found here or uses a character it lacks.
+  std::optional<TopoDS_Shape> outline(const TextRequest& r, const gp_Ax3& at) {
+    const auto f = font(r.font);
+    if (!f || !(f->above > 0)) return std::nullopt;
+    const std::u32string text = utf32(r.text);
+    const ShxFont::Glyph* spaceGlyph = f->glyph(' ');
+    const double spaceAdvance = spaceGlyph ? spaceGlyph->advance.X() : f->above * 2 / 3;
+    for (char32_t c : text)
+      if (c != U'\n' && !space(c) && !f->glyph(c)) return std::nullopt;
+    const double k = r.cap ? r.size / f->above : r.size / (f->above + f->below), width = r.width > 0 ? r.width : 1;
+    if (!(k > 0) || !std::isfinite(k)) return std::nullopt;
+    auto advance = [&](char32_t c) {
+      const ShxFont::Glyph* g = f->glyph(c);
+      return g ? g->advance.X() : space(c) ? spaceAdvance : 0.0;
+    };
+    // Lines (broken at spaces when wrapped), each its characters and width in vector units.
+    std::vector<std::pair<std::u32string, double>> lines;
+    const double wrap = r.wrap > 0 ? r.wrap / (k * width) : 0;
+    size_t at0 = 0;
+    while (at0 <= text.size()) {
+      const size_t end = std::min(text.find(U'\n', at0), text.size());
+      std::u32string line;
+      double x = 0;
+      for (size_t i = at0; i < end; ++i) {
+        const char32_t c = text[i];
+        if (wrap > 0 && !space(c) && x + advance(c) > wrap) {
+          const size_t cut = line.find_last_of(U" \t");
+          if (cut != std::u32string::npos && cut > 0) {
+            std::u32string rest = line.substr(cut + 1), head = line.substr(0, cut);
+            while (!head.empty() && space(head.back())) head.pop_back();
+            double w = 0, v = 0;
+            for (char32_t h : head) w += advance(h);
+            for (char32_t h : rest) v += advance(h);
+            lines.push_back({head, w});
+            line = rest;
+            x = v;
+          }
+        }
+        line += c;
+        x += advance(c);
+      }
+      lines.push_back({line, x});
+      at0 = end + 1;
+    }
+    double kx = k * width, ky = k;
+    if (r.fit > 0 && lines.size() == 1 && lines[0].second > 0) {
+      kx = r.fit / lines[0].second;
+      if (r.aligned) ky = kx / width;
+    }
+    const double spacing = r.spacing > 0 ? r.spacing * ky / k : 5.0 / 3.0 * f->above * ky;
+    const double cap = f->above * ky, last = double(lines.size() - 1) * spacing;
+    const double dy = r.v == TextRequest::Top ? -cap : r.v == TextRequest::Middle ? (last + cap) / 2 - cap : r.v == TextRequest::Bottom ? last
+                      : r.v == TextRequest::Descent ? last + f->below * ky : 0;
+    gp_Trsf place;
+    place.SetDisplacement(gp_Ax3(gp::XOY()), at);
+    const double qx = std::round(kx * 1e9) / 1e9, qy = std::round(ky * 1e9) / 1e9;
+    BRep_Builder builder;
+    TopoDS_Compound out;
+    builder.MakeCompound(out);
+    for (size_t i = 0; i < lines.size(); ++i) {
+      const double w = lines[i].second * kx;
+      gp_XY pen(r.h == TextRequest::Center ? -w / 2 : r.h == TextRequest::Right ? -w : 0, dy - double(i) * spacing);
+      for (char32_t c : lines[i].first) {
+        if (const ShxFont::Glyph* g = f->glyph(c)) {
+          const TopoDS_Shape& shape = glyph(*f, uint32_t(c), *g, qx, qy);
+          if (shape.NbChildren() > 0) {
+            gp_Trsf move;
+            move.SetTranslation(gp_Vec(pen.X(), pen.Y(), 0));
+            builder.Add(out, shape.Moved(TopLoc_Location(place * move)));
+          }
+          pen += gp_XY(g->advance.X() * kx, g->advance.Y() * ky);
+        } else {
+          pen += gp_XY(spaceAdvance * kx, 0);
+        }
+      }
+    }
+    return TopoDS_Shape(out);
+  }
+};
+}  // namespace
 
 #ifdef OPAD_HAVE_FONT
 namespace {
@@ -497,6 +623,7 @@ TopoDS_Shape glyph_faces(const FontFile& font, unsigned glyph, double kx, double
 
 struct TextOutliner::Impl {
   std::vector<std::filesystem::path> folders;
+  ShxText shx;
   std::map<std::string, const FontFile*> primaries;  // by request font + family
   std::map<std::pair<const FontFile*, uint32_t>, const FontFile*> fallbacks;  // a character the font lacks -> the font that has it
   std::map<std::tuple<const FontFile*, unsigned, double, double>, TopoDS_Shape> glyphs;  // faces per glyph and size
@@ -669,7 +796,10 @@ struct TextOutliner::Impl {
   }
 };
 
-TextOutliner::TextOutliner(std::vector<std::filesystem::path> folders) : m(std::make_unique<Impl>()) { m->folders = std::move(folders); }
+TextOutliner::TextOutliner(std::vector<std::filesystem::path> folders) : m(std::make_unique<Impl>()) {
+  m->shx.folders = folders;
+  m->folders = std::move(folders);
+}
 TextOutliner::~TextOutliner() = default;
 
 std::vector<ShapedLine> TextOutliner::shape(const TextRequest& request) {
@@ -680,6 +810,7 @@ std::vector<ShapedLine> TextOutliner::shape(const TextRequest& request) {
 }
 
 TopoDS_Shape TextOutliner::outline(const TextRequest& r, const gp_Ax3& at) {
+  if (auto strokes = m->shx.outline(r, at)) return *strokes;
   const FontFile* primary = m->primary(r);
   if (!primary) return {};
   const double em = r.cap ? r.size / primary->cap : r.size, width = r.width > 0 ? r.width : 1;
@@ -721,6 +852,7 @@ bool text_shaping() { return true; }
 
 struct TextOutliner::Impl {
   std::vector<std::filesystem::path> folders;
+  ShxText shx;
 #ifdef OPAD_HAVE_FONT
   struct Font {
     Handle(StdPrs_BRepFont) font;
@@ -731,11 +863,15 @@ struct TextOutliner::Impl {
 #endif
 };
 
-TextOutliner::TextOutliner(std::vector<std::filesystem::path> folders) : m(std::make_unique<Impl>()) { m->folders = std::move(folders); }
+TextOutliner::TextOutliner(std::vector<std::filesystem::path> folders) : m(std::make_unique<Impl>()) {
+  m->shx.folders = folders;
+  m->folders = std::move(folders);
+}
 TextOutliner::~TextOutliner() = default;
 std::vector<ShapedLine> TextOutliner::shape(const TextRequest&) { return {}; }
 
 TopoDS_Shape TextOutliner::outline(const TextRequest& r, const gp_Ax3& at) {
+  if (auto strokes = m->shx.outline(r, at)) return *strokes;
 #ifdef OPAD_HAVE_FONT
   std::string file;
   const auto dot = r.font.find_last_of('.');

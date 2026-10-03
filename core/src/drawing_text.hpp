@@ -3,7 +3,9 @@
 // (OPAD_HAVE_SHAPING) it is shaped as a text renderer shapes it: Arabic letters join and carry their marks, lam-alef and
 // other ligatures, Indic clusters, kerning; right-to-left runs and the numbers in them in visual order (the Unicode bidi
 // algorithm without explicit embeddings, mirrored brackets); each character from the style's font, else from the first
-// fallback font that has it (as Qt merges fonts). Without it, OCCT's text (no shaping). Not a public header.
+// fallback font that has it (as Qt merges fonts). Without it, OCCT's text (no shaping). A style's AutoCAD shape font
+// (.shx) that is found (beside the drawing, in DWG TrueView's or AutoCAD's Fonts folder) draws text in its strokes, edges
+// rather than faces, as long as it has every character (shx_font.hpp). Not a public header.
 #include <TopoDS_Shape.hxx>
 #include <gp_Ax3.hxx>
 
@@ -17,9 +19,9 @@ namespace opad::detail {
 
 struct TextRequest {
   std::string text;    // UTF-8; '\n' starts a line
-  std::string font;    // a font file (.ttf, .ttc, .otf: a path, or a name looked up in the outliner's folders), else
-                       // families separated by commas; a shape font (.shx) or one that is not found: the families of
-  std::string family;  // `family`, else the default sans-serif
+  std::string font;    // a font file (.ttf, .ttc, .otf: a path, or a name looked up in the outliner's folders), a shape
+                       // font (.shx, or a name without extension), else families separated by commas; one not found
+  std::string family;  // (or a shape font lacking a character): the families of `family`, else the default sans-serif
   double size = 2.5;   // mm: the em, or with `cap` the height of the capitals (a DXF text height)
   bool cap = false;
   double width = 1;    // width factor

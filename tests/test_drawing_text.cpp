@@ -2,14 +2,22 @@
 // shaped (joining forms, lam-alef), right-to-left runs in visual order, characters the font lacks from a fallback font;
 // outlines filled with their holes, aligned, fitted and wrapped. The shaping cases need a font with Arabic (Windows' Arial).
 #include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
+#include <BRepGProp.hxx>
+#include <BRep_Tool.hxx>
+#include <GProp_GProps.hxx>
+#include <Poly_Triangulation.hxx>
+#include <TopoDS_Face.hxx>
 #include <Bnd_Box.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopoDS.hxx>
 
 #include <algorithm>
-#include <filesystem>
-#include <map>
 #include <array>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -17,7 +25,9 @@
 #include "drawing_text.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
+#include "opad/mesh.hpp"
 #include "opad/util.hpp"
+#include "shx_font.hpp"
 
 using namespace opad::detail;
 
@@ -157,6 +167,127 @@ TEST(svg_text_is_shaped_on_its_baseline) {
   CHECK(result.warnings.empty() && boxes.size() == 2);
   CHECK(std::abs(boxes["Latin"][1] + 40) < 0.05 && boxes["Latin"][3] > -40 + 13);  // the baseline at y = 40 (SVG y down)
   CHECK(boxes["Arabic"][2] <= 90.01 && boxes["Arabic"][2] > 88 && boxes["Arabic"][0] < 80);
+}
+
+// Glyph faces mesh as the view meshes a drawing (its deflection for a 100 mm body) to their own area, letter by letter: a
+// hole drawn across its outline would leave slivers and spikes.
+TEST(glyph_faces_mesh_to_their_area) {
+  if (!text_shaping()) return;
+  TextOutliner t;
+  for (const char* text : {"\xD8\xBA\xD8\xB1\xD9\x81\xD8\xA9 \xD8\xA7\xD9\x84\xD9\x86\xD9\x88\xD9\x85", "HELLO @&%8 \xC3\x98", "\xD8\xA9\xD8\xA9 \xD9\x87\xD9\x87"}) {
+    for (double deflection : {0.005, 0.02, 0.08, 0.3}) {
+    const auto shape = BRepBuilderAPI_Copy(t.outline(request(text), gp_Ax3()), true, false).Shape();  // glyphs are shared
+    opad::mesh_shape(shape, deflection);
+    for (TopExp_Explorer e(shape, TopAbs_FACE); e.More(); e.Next()) {
+      const TopoDS_Face& face = TopoDS::Face(e.Current());
+      GProp_GProps props;
+      BRepGProp::SurfaceProperties(face, props);
+      TopLoc_Location location;
+      const auto mesh = BRep_Tool::Triangulation(face, location);
+      double area = 0;
+      for (int i = 1; mesh && i <= mesh->NbTriangles(); ++i) {
+        int a, b, c;
+        mesh->Triangle(i).Get(a, b, c);
+        area += gp_Vec(mesh->Node(a), mesh->Node(b)).Crossed(gp_Vec(mesh->Node(a), mesh->Node(c))).Magnitude() / 2;
+      }
+      if (!(mesh && std::abs(area - std::abs(props.Mass())) < 0.03 * std::abs(props.Mass()) + 0.05)) std::printf("%s at %g: %g against %g\n", text, deflection, area, props.Mass());
+      CHECK(mesh && std::abs(area - std::abs(props.Mass())) < 0.03 * std::abs(props.Mass()) + 0.05);
+    }
+    }
+  }
+}
+
+namespace {
+// A shape font made here (UI-92): 'A' a stroke 10 up, then 6 on; 'B' a full octant circle of radius 5 beside it; 'C' two
+// A's as subshapes; 'D' a half circle by bulge, below its chord; 'E' a fractional arc of radius 3 from 55 to 96 degrees.
+// Above 10, below 2. As a shapes 1.0 file, or a unifont (numbered by code point, subshapes in two bytes).
+std::vector<uint8_t> shapeFont(bool unifont) {
+  std::vector<std::pair<uint16_t, std::vector<uint8_t>>> shapes = {
+      {0, {'T', 0, 10, 2, 0, 0}},
+      {'A', {0, 0x01, 0xA4, 0x02, 0xAC, 0x60, 0}},  // pen down first: a subshape goes on in its caller's pen
+      {'B', {0, 0x02, 0x08, 10, 5, 0x01, 0x0A, 5, 0x00, 0x02, 0x08, 2, uint8_t(-5), 0}},
+      {'C', unifont ? std::vector<uint8_t>{0, 7, 0, 'A', 7, 0, 'A', 0} : std::vector<uint8_t>{0, 7, 'A', 7, 'A', 0}},
+      {'D', {0, 0x0C, 10, 0, 127, 0}},
+      {'E', {0, 0x0B, 56, 34, 0, 3, 0x12, 0}},
+  };
+  if (unifont) shapes[0].second.insert(shapes[0].second.end(), {0, 0});  // encoding, type
+  shapes[0].second.push_back(0);
+  const std::string signature = unifont ? "AutoCAD-86 unifont 1.0\r\n\x1a" : "AutoCAD-86 shapes 1.0\r\n\x1a";
+  std::vector<uint8_t> out(signature.begin(), signature.end());
+  auto u16 = [&out](size_t v) { out.push_back(uint8_t(v & 255)), out.push_back(uint8_t(v >> 8)); };
+  if (unifont) {
+    u16(shapes.size()), u16(0), u16(shapes[0].second.size());
+    out.insert(out.end(), shapes[0].second.begin(), shapes[0].second.end());
+    for (size_t k = 1; k < shapes.size(); ++k) {
+      u16(shapes[k].first), u16(shapes[k].second.size());
+      out.insert(out.end(), shapes[k].second.begin(), shapes[k].second.end());
+    }
+  } else {
+    u16(0), u16('E'), u16(shapes.size());
+    for (const auto& [number, bytes] : shapes) u16(number), u16(bytes.size());
+    for (const auto& [number, bytes] : shapes) out.insert(out.end(), bytes.begin(), bytes.end());
+  }
+  return out;
+}
+std::array<double, 4> strokeBox(const ShxFont::Glyph& g) {
+  std::array<double, 4> b{1e9, 1e9, -1e9, -1e9};
+  for (const auto& s : g.strokes)
+    for (const auto& p : s) b = {std::min(b[0], p.X()), std::min(b[1], p.Y()), std::max(b[2], p.X()), std::max(b[3], p.Y())};
+  return b;
+}
+bool about(double a, double b, double tol = 1e-6) { return std::abs(a - b) < tol; }
+}  // namespace
+
+TEST(shape_fonts_draw_their_strokes) {
+  for (bool unifont : {false, true}) {
+    const auto font = ShxFont::parse(shapeFont(unifont));
+    CHECK(font && font->unicode == unifont && font->above == 10 && font->below == 2);
+    const auto* a = font->glyph('A');
+    CHECK(a && a->strokes.size() == 1 && a->strokes[0].size() == 2 && about(a->strokes[0][1].Y(), 10) && about(a->advance.X(), 6) && about(a->advance.Y(), 0));
+    const auto b = strokeBox(*font->glyph('B'));
+    CHECK(about(b[0], 0, 0.1) && about(b[1], 0, 0.1) && about(b[2], 10) && about(b[3], 10, 0.1) && about(font->glyph('B')->advance.X(), 12));
+    CHECK(font->glyph('C')->strokes.size() == 2 && about(font->glyph('C')->advance.X(), 12));  // two subshapes, one after the other
+    const auto d = strokeBox(*font->glyph('D'));
+    CHECK(about(d[1], -5, 0.1) && about(d[3], 0) && about(font->glyph('D')->advance.X(), 10));
+    // The fractional arc ends 96 degrees round a centre that puts its start at 55 (offsets in 256ths of an octant).
+    const auto& e = font->glyph('E')->strokes.at(0);
+    const double a0 = 45 + 56 * 45.0 / 256, a1 = 90 + 34 * 45.0 / 256, rad = 3.14159265358979323846 / 180;
+    const gp_XY centre = gp_XY(0, 0) - gp_XY(std::cos(a0 * rad), std::sin(a0 * rad)) * 3;
+    CHECK(about((e.back() - centre - gp_XY(std::cos(a1 * rad), std::sin(a1 * rad)) * 3).Modulus(), 0, 1e-9));
+    CHECK(font->glyph('Z') == nullptr);
+  }
+  CHECK(!ShxFont::parse(std::vector<uint8_t>{'n', 'o', 0x1a, 0, 0}));
+}
+
+TEST(text_in_a_shape_font_is_its_strokes) {
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-shx-" + opad::new_uuid());
+  std::filesystem::create_directory(dir);
+  const auto bytes = shapeFont(true);
+  std::ofstream(dir / "test.shx", std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()), long(bytes.size()));
+  TextOutliner t({dir});
+  TextRequest r = request("AB A");
+  r.font = "test";  // as a style names it, without the extension
+  const auto shape = t.outline(r, gp_Ax3());
+  const auto box = extent(shape);
+  // Height 10: one unit a millimetre; strokes only; 'A' 6 on, 'B' 12, a missing space two thirds of the height.
+  CHECK(count(shape, TopAbs_FACE) == 0 && count(shape, TopAbs_EDGE) > 10 && about(box[0], 0) && about(box[3], 10, 0.1) && about(box[1], 0, 0.1));
+  CHECK(about(box[2], 6 + 12 + 10.0 * 2 / 3, 1e-6));
+  r.h = TextRequest::Right;
+  r.v = TextRequest::Top;
+  r.size = 20;
+  const auto right = extent(t.outline(r, gp_Ax3()));
+  CHECK(about(right[3], 0, 0.2) && about(right[1], -20, 0.2) && right[2] < 0 && right[2] > -40);
+  r = request("AZ");  // a character the font lacks: the whole text in the outline font
+  r.font = "test.shx";
+  if (text_shaping()) CHECK(count(t.outline(r, gp_Ax3()), TopAbs_FACE) > 0);
+  std::error_code error;
+  std::filesystem::remove_all(dir, error);
+  // AutoCAD's own txt.shx, when DWG TrueView or AutoCAD is installed here.
+  for (const auto& folder : shx_folders())
+    if (const auto txt = ShxFont::load(folder / "txt.shx")) {
+      CHECK(txt->above > 0 && txt->glyph('A') && txt->glyph(0xB0) && txt->glyph(0xB1) && txt->glyph(0xD8));
+      break;
+    }
 }
 
 CHECK_MAIN()

@@ -105,19 +105,24 @@ def picture_file(root, document=None):
 
 def text_file(root, document=None):
     """Text as AutoCAD 2013 writes it (UTF-8): three behs (Joined), 'III' (Latin), an Arabic word right-aligned on a guide
-    line at x = 100 (Right, Guide), Latin and Arabic in one line (Mixed), an Arabic paragraph wrapped at 60 (Para)."""
+    line at x = 100 (Right, Guide), Latin and Arabic in one line (Mixed), an Arabic paragraph wrapped at 60 (Para), 'III'
+    in a shape font beside the drawing (Shape: mini.shx, whose 'I' is a stroke 10 up, then 6 on)."""
     def text(layer, x, y, s, extra=()):
         return [(0, "TEXT"), (8, layer), (10, x), (20, y), (40, 10), (1, s)] + list(extra)
     pairs = [(0, "SECTION"), (2, "HEADER"), (9, "$ACADVER"), (1, "AC1027"), (9, "$INSUNITS"), (70, "4"), (0, "ENDSEC"),
              (0, "SECTION"), (2, "TABLES"), (0, "TABLE"), (2, "STYLE"), (0, "STYLE"), (2, "STANDARD"), (70, "0"), (40, "0"), (41, "1"),
-             (3, "arial.ttf"), (0, "ENDTAB"), (0, "ENDSEC"), (0, "SECTION"), (2, "ENTITIES")]
+             (3, "arial.ttf"), (0, "STYLE"), (2, "MINI"), (70, "0"), (40, "0"), (41, "1"), (3, "mini.shx"),
+             (0, "ENDTAB"), (0, "ENDSEC"), (0, "SECTION"), (2, "ENTITIES")]
     pairs += text("Joined", 0, 0, "ببب") + text("Latin", 0, -20, "III")
     pairs += text("Right", 0, -40, "غرفة النوم", [(72, 2), (11, 100), (21, -40)])
     pairs += [(0, "LINE"), (8, "Guide"), (10, 100), (20, -45), (11, 100), (21, -25)]
     pairs += text("Mixed", 0, -60, "Room غرفة")
     pairs += [(0, "MTEXT"), (8, "Para"), (10, 120), (20, 0), (40, 5), (41, 60), (71, 1),
               (1, "هذا نص طويل يلتف على عدة أسطر (مع أقواس) 3.5")]
+    pairs += text("Shape", 0, -80, "III", [(7, "MINI")])
     pairs += [(0, "ENDSEC"), (0, "EOF")]
+    (root / "mini.shx").write_bytes(b"AutoCAD-86 shapes 1.0\r\n\x1a" + bytes([0, 0, 0x49, 0, 2, 0, 0, 0, 6, 0, 0x49, 0, 7, 0]) +
+                                    b"T\x00\x0a\x02\x00\x00" + bytes([0, 1, 0xA4, 2, 0xAC, 0x60, 0]))
     path = root / "text.dxf"
     path.write_text("".join(f"{code}\n{value}\n" for code, value in pairs), encoding="utf-8")
     return path

@@ -247,6 +247,28 @@ TEST(arabic_text_aligns_and_text_fits_between_its_points) {
   CHECK(std::abs((middle[1] + middle[3]) / 2) < 0.05);
 }
 
+// TODO 11 UI-92: a style's shape font (.shx) found beside the drawing (or in DWG TrueView's and AutoCAD's Fonts folders)
+// draws its text in strokes; text with a character it lacks, and a shape font that is nowhere, in the outline font.
+TEST(shape_font_text_is_drawn_in_its_strokes) {
+  Files f;
+  // shapes 1.0: the font's line (above 10, below 2) and 'I', a stroke 10 up, then 6 on.
+  const std::string font = std::string("AutoCAD-86 shapes 1.0\r\n\x1a") + std::string("\x00\x00\x49\x00\x02\x00\x00\x00\x06\x00\x49\x00\x07\x00", 14) +
+                           std::string("T\x00\x0a\x02\x00\x00", 6) + std::string("\x00\x01\xa4\x02\xac\x60\x00", 7);
+  write_text_file(f.dir / "mini.shx", font);
+  write_text_file(f.dir / "shx.dxf",
+                  section("TABLES", {{0, "TABLE"}, {2, "STYLE"}, {0, "STYLE"}, {2, "MINI"}, {70, "0"}, {40, "0"}, {41, "1"}, {3, "mini.shx"},
+                                     {0, "STYLE"}, {2, "GONE"}, {70, "0"}, {40, "0"}, {41, "1"}, {3, "nowhere.shx"}, {0, "ENDTAB"}}) +
+                      section("ENTITIES", {{0, "TEXT"}, {8, "S"}, {7, "MINI"}, {10, "0"}, {20, "0"}, {40, "20"}, {1, "II"},
+                                           {0, "TEXT"}, {8, "Lacks"}, {7, "MINI"}, {10, "0"}, {20, "-50"}, {40, "20"}, {1, "IJ"},
+                                           {0, "TEXT"}, {8, "Gone"}, {7, "GONE"}, {10, "0"}, {20, "-100"}, {40, "20"}, {1, "II"}}) +
+                      kEof);
+  const auto all = bodies(import(f.dir / "shx.dxf"));
+  const auto* strokes = find(all, "S");
+  CHECK(strokes && strokes->faces == 0 && strokes->edges == 2 && near_box(strokes->box, 0, 0, 12, 20));  // two strokes 12 apart, 20 high
+  if (const auto* lacks = find(all, "Lacks")) CHECK(lacks->faces > 0);
+  if (const auto* gone = find(all, "Gone")) CHECK(gone->faces > 0);
+}
+
 // Bodies share no sub-shapes (the view meshes them on several threads at once): the same text, or a block with a fill,
 // on two layers gives each layer's body its own edges, in a viewer (shapes kept as read) and in a document.
 TEST(bodies_share_no_edges) {
