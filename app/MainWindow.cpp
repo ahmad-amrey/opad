@@ -302,6 +302,12 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
   connect(a, &QAction::triggered, this, [this, fn, id, a] {
     if (m_loadJob && !id.startsWith("file.") && !id.startsWith("panel.") && id != "view.dark") return;  // loading: workspace is locked
     m_viewport->resetHoverFade();
+    // A copy of the document is being taken (smart selection's, an agent's) or it is being saved: a change or another
+    // document waits for that instead of failing.
+    if (m_doc->snapshotBusy() && (m_commands.editsDocument(id) || id.startsWith("file.") || id.startsWith("design.") || id == "edit.hide" || id == "edit.showall")) {
+      if (a->isCheckable()) { QSignalBlocker block(a); a->setChecked(!a->isChecked()); }
+      return m_doc->afterCapture([a] { a->trigger(); });
+    }
     if (m_doc->browse && m_commands.editsDocument(id)) {  // viewer mode: offered, and asks to save first
       if (a->isCheckable()) { QSignalBlocker block(a); a->setChecked(!a->isChecked()); }
       requireEditable([a] { a->trigger(); });

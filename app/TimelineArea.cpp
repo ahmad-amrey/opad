@@ -214,6 +214,10 @@ bool TimelineArea::rollTo(const std::string& op) {
   DesignController* design = services().design();
   TimelineWidget* t = services().timeline();
   if (!doc->hasDocument || doc->browse) return false;
+  if (doc->snapshotBusy()) {  // a copy of the document is being taken: the model follows the playhead once it is done
+    doc->afterCapture([this, op] { services().guarded([&] { rollTo(op); }); });
+    return true;
+  }
   if (doc->loading || doc->designBusy || design->sketchActive() || design->featureActive() || design->pickingPlane()) {
     t->update();  // the playhead goes back where the model stops
     services().showMessage(tr("Finish or cancel what is open first: the roll-back marker stays where the edit put it."), 6000);

@@ -1053,7 +1053,7 @@ bool SmartSelect::deleteMarker(const std::string& op) {
 void SmartSelect::deleteFeature(const smart::Candidate& c) {
   if ((!c.feature() && c.kind != "sketch") || c.op.empty() || !services().requireEditable([this, c] { deleteFeature(c); })) return;
   AppDocument* doc = services().document();
-  if (doc->designBusy && !m_capturing) return services().showMessage(tr("The design is still being recomputed; try again in a moment."), 5000);
+  if (doc->designBusy && !doc->snapshotBusy()) return services().showMessage(tr("The design is still being recomputed; try again in a moment."), 5000);
   const auto revision = doc->revision, generation = doc->generation;
   const unsigned token = ++m_deleteToken;
   withSnapshot(Use::Delete, [this, c, token, revision, generation](std::shared_ptr<const opad::Document> document) {

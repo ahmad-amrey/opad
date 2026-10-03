@@ -79,6 +79,9 @@ class AppDocument : public QObject {
   using SnapshotCallback = std::function<void(std::shared_ptr<opad::Document>, const QString&)>;
   bool captureSnapshot(JobRunner* jobs, SnapshotCallback done);
   bool snapshotBusy() const { return m_capturing; }
+  // A writer waits for the copy or the save that reads the document now (a few hundred ms on a big one) instead of
+  // failing: `fn` runs once it is done (at once when none runs), dropped when another document comes.
+  void afterCapture(std::function<void()> fn);
   void recover(opad::Document&& document, opad::Scene&& resolved);
   // Prepared on a worker. Swaps the old values back into the caller for worker disposal.
   void commitSnapshot(opad::Document& document, opad::Scene& resolved,

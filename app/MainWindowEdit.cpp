@@ -159,6 +159,7 @@ QMenu* MainWindow::historyMenu(bool undo) {
 
 void MainWindow::deleteOp(const std::string& requestedId) {
   const std::string opId=requestedId; // Rebuilding cards can destroy the signal sender during this operation.
+  if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, opId] { guarded([&] { deleteOp(opId); }); });  // a copy being taken
   // A feature or a sketch: what depends on it is asked about first, the result previewed (smart selection, UI-96).
   const opad::Op* op = m_doc->doc.find_op(opId);
   const bool live = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) == m_doc->scene.deleted_ops.end();

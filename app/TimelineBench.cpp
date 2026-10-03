@@ -459,33 +459,39 @@ OPAD_BENCH(OPAD_BENCH_TIMELINEPERF, timelineperf) {
 // Shift+Left, a view, does not get it) draws the playhead before Boss at once and rolls back there once the keys rest;
 // Shift+Right twice rolls forward to the end, Shift+Home before everything, Shift+End to the end again. Rolled back before
 // Round, editing Boss takes over the roll-back and Esc gives it back; editing it again to 15 mm high and OK commits the
-// edit and leaves the model rolled back before Round with the taller boss; rolled forward, Round sits on it. Shots:
-// <prefix>.keys.png (the playhead moved by keys, the model not yet), .edited.png (the timeline after the edit).
+// edit and leaves the model rolled back before Round with the taller boss; rolled forward, Round sits on it. While a slow
+// save holds the document (as smart selection's copy does), V and the playhead wait for it and are carried out after.
+// Shots: <prefix>.keys.png (the playhead moved by keys, the model not yet), .edited.png (the timeline after the edit).
 OPAD_BENCH(OPAD_BENCH_ROLLBACK, rollback) {
   struct State {
     int phase = 0, ticks = 0, wait = 0;
     std::string body, base, boss, round;
+    size_t ops = 0;
   };
   auto state = std::make_shared<State>();
   TimelineArea* timelineArea = nullptr;
-  for (AreaController* a : w.m_areas)
+  SmartSelect* area = nullptr;
+  for (AreaController* a : w.m_areas) {
     if (auto* t = dynamic_cast<TimelineArea*>(a)) timelineArea = t;
-  if (!timelineArea) {
+    if (auto* smart = dynamic_cast<SmartSelect*>(a)) area = smart;
+  }
+  if (!timelineArea || !area) {
     trace::log("bench: rollback FAIL: the timeline area is off");
     QCoreApplication::exit(2);
     return true;
   }
   auto* timer = new QTimer(&w);
   timer->setInterval(100);
-  QObject::connect(timer, &QTimer::timeout, &w, [&w, timelineArea, state, timer, prefix = value] {
+  QObject::connect(timer, &QTimer::timeout, &w, [&w, timelineArea, area, state, timer, prefix = value] {
     TimelineWidget* t = w.m_timeline;
     try {
       if (++state->ticks > 1200) throw opad::Error("timed out in phase " + std::to_string(state->phase));
-      if (w.m_doc->loading || w.m_doc->designBusy || w.m_doc->snapshotBusy() || w.m_jobs->busy()) return;
+      if (w.m_doc->loading || w.m_doc->designBusy || w.m_doc->snapshotBusy() || w.m_jobs->busy() || area->busy()) return;
       auto require = [](bool ok, const std::string& why) {
         if (!ok) throw opad::Error(why);
       };
       auto pass = [](const QString& what) { trace::log("bench: rollback: " + what + " PASS"); };
+      auto slowSave = [&] { w.m_doc->saveAsync(w.m_jobs, prefix + ".saved.opad", true, [](bool, const QString&) {}, 600); };
       auto waitFor = [&](bool ok, const std::string& why) {
         if (ok) {
           state->wait = 0;
@@ -596,6 +602,28 @@ OPAD_BENCH(OPAD_BENCH_ROLLBACK, rollback) {
           const opad::Feature* round = w.m_doc->scene.feature(state->round);
           require(round && round->error.empty(), "Round follows the taller boss");
           pass("rolled forward: Round sits on the taller boss");
+          state->ops = w.m_doc->doc.ops.size();
+          w.m_browser->setSelectedIds({state->body});
+          w.onBrowserSelection({state->body});
+          slowSave();
+          require(w.m_doc->snapshotBusy(), "the save holds the document");
+          w.action("edit.hide")->trigger();
+          require(w.m_doc->doc.ops.size() == state->ops && w.m_doc->node(state->body)->visible, "V waits while the document is written");
+          break;
+        }
+        case 8: {
+          if (!waitFor(!w.m_doc->node(state->body)->visible, "V is carried out once the save is done")) return;
+          require(w.m_doc->doc.ops.size() == state->ops + 1, "one appearance op");
+          pass("V during a slow save hid the body once the document was written");
+          w.m_doc->undo();
+          require(w.m_doc->node(state->body)->visible, "undone");
+          slowSave();
+          require(timelineArea->rollTo(state->round) && !w.m_doc->rolledBack(), "the playhead dropped during the save waits");
+          break;
+        }
+        case 9: {
+          if (!waitFor(w.m_doc->rolledBack() && w.m_doc->rollback() == state->round, "the model follows the playhead once the save is done")) return;
+          pass("the playhead dropped during a slow save rolled the model back before Round once the document was written");
           timer->stop();
           QCoreApplication::exit(0);
           return;

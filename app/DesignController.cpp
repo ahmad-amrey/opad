@@ -194,6 +194,7 @@ void DesignController::applyOps(std::vector<opad::json> ops, const QString& labe
     else if (!ok) emit failed(error);
     emit stateChanged();
   };
+  if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, ops = std::move(ops), label, done] { applyOps(ops, label, done); });  // a copy being taken
   if (m_doc->designBusy) return report(false, tr("The design is still being recomputed; try again in a moment."));
   m_doc->designBusy = true;
   const auto generation = m_doc->generation;
@@ -302,6 +303,7 @@ void DesignController::startFeature(const QString& kind) {
 }
 
 void DesignController::editOp(const std::string& opId) {
+  if (m_doc->snapshotBusy()) return m_doc->afterCapture([this, op = opId] { editOp(op); });  // a copy being taken: shortly
   if (!m_doc->hasDocument || m_doc->browse || m_doc->designBusy) return;
   if (m_sketch->active() || m_featureOn) return emit status(tr("Finish what is open first."));
   if (const opad::SketchItem* s = m_doc->scene.sketch(opId)) {
