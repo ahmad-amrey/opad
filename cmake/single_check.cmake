@@ -17,7 +17,7 @@ string(REGEX MATCHALL "DLL Name: [^\r\n]+" _imports "${_dump}")
 set(_system "^(kernel32|user32|gdi32|advapi32|shell32|ole32|oleaut32|uuid|comdlg32|comctl32|ws2_32|wsock32|winmm|imm32|version|"
             "opengl32|glu32|dwmapi|uxtheme|shlwapi|setupapi|netapi32|userenv|mpr|authz|ntdll|d3d9|d3d11|d3d12|dxgi|d2d1|dwrite|"
             "dbghelp|rpcrt4|wtsapi32|winspool|crypt32|bcrypt|ncrypt|secur32|winhttp|iphlpapi|synchronization|runtimeobject|shcore|psapi|"
-            "msvcrt|msvcp[0-9]+|msvcr[0-9]+|api-ms-win-[a-z0-9-]+|ucrtbase|vcruntime[0-9]+|usp10)\\.dll$")
+            "msvcrt|msvcp[0-9]+|msvcr[0-9]+|api-ms-win-[a-z0-9-]+|ucrtbase|vcruntime[0-9]+|usp10)\\.dll$|^winspool\\.drv$")  # the spooler (Qt6::PrintSupport)
 string(REPLACE ";" "" _system "${_system}")
 set(_foreign "")
 set(_all "")
