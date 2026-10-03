@@ -72,6 +72,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setGridSnap(bool on) { m_gridSnap=on; }
   bool gridSnap() const { return m_gridSnap; }
   double gridStep() const { return m_gridStep; }
+  Bnd_Box benchGridBox() const;  // where the grid is drawn (OCCT's structure, world box), for benches
   opad::json circleInfo(const opad::Ref& ref) const;
   void setShadows(bool on);
   void setRenderQuality(int level);
@@ -284,6 +285,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Job* m_boxJob=nullptr;
   CursorWarpGate m_warpGate;
   void updateGridExtent();
+  void placeGrid(double u, double v, double step, double extent);  // centred on (u, v) of the privileged plane
+  // The box Fit All, Home and the load-time fit frame: displayed bodies, sketches, their images and a feature preview
+  // (never the grid, gizmos, overlays or annotations); the default grid square when there is nothing (void if !fallback).
+  Bnd_Box fitBounds(bool fallback = true) const;
   void applySelectionFilter(SelFilter f);  // setSelectionFilter's work, also for the filter already set (re-activates)
   // 2D mode: the grid follows the view (its plane, the visible area, a spacing for the zoom), so it never ends.
   void updateInfiniteGrid(bool force);

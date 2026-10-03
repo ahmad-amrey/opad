@@ -28,6 +28,8 @@
 #include <Aspect_VKeyFlags.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBndLib.hxx>
+#include <Bnd_Box2d.hxx>
+#include <gp_Pnt2d.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
@@ -36,6 +38,8 @@
 #include <Poly_PolygonOnTriangulation.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Bnd_Box.hxx>
+#include <Graphic3d_Structure.hxx>
+#include <Graphic3d_StructureManager.hxx>
 #include <Graphic3d_TransformPers.hxx>
 #include <Image_PixMap.hxx>
 #include <OpenGl_GraphicDriver.hxx>
@@ -169,7 +173,7 @@ void Viewport::benchShot(const QString& path) {
   if (trace::enabled()) trace::log(QStringLiteral("bench: shot with %1 selected, layer of selected style %2").arg(m_ctx->NbSelected()).arg(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->ZLayer()));
   if (const QByteArray view = qgetenv("OPAD_BENCH_VIEW"); !view.isEmpty()) {  // an unanimated camera for the frame dump
     m_view->SetProj(view == "bottom" ? V3d_Zneg : view == "top" ? V3d_Zpos : V3d_XposYnegZpos);
-    m_view->FitAll(0.02, Standard_False);
+    m_view->FitAll(fitBounds(), 0.02, Standard_False);
     m_view->Redraw();
     emit notesMoved();  // the note cards follow the camera through a queued signal; the dump wants them placed now
   }
@@ -206,7 +210,7 @@ std::string Viewport::benchHeaviest() const {
 // A rubber band over the whole view in the current mode: the mass sub-shape selection case.
 void Viewport::benchBand() {
   if (!m_initialised) return;
-  m_view->FitAll(0.02, Standard_False);
+  m_view->FitAll(fitBounds(), 0.02, Standard_False);
   m_view->Redraw();
   Standard_Integer w = 0, h = 0;
   m_view->Window()->Size(w, h);
@@ -225,7 +229,7 @@ void Viewport::benchSubShot(const QString& path) {
   Standard_Real x = 0, y = 0, z = 0;
   m_view->Proj(x, y, z);
   m_view->SetProj(-x, -y, -z);
-  m_view->FitAll(0.02, Standard_False);
+  m_view->FitAll(fitBounds(), 0.02, Standard_False);
   m_view->Redraw();
   grabImage().save(path);
 }
@@ -521,21 +525,55 @@ void Viewport::updateGridExtent() {
   if (!m_initialised) return;
   m_gridSpacing=QSettings().value("view/gridSpacing",0.0).toDouble();
   if (m_twoDimensional) { updateInfiniteGrid(true); return; }
-  Bnd_Box bounds;
-  for (const auto& [id,item]:m_items) { Bnd_Box b; item.ais->BoundingBox(b); bounds.Add(b); }
-  for (const auto& [id,wire]:m_sketchWires) { Bnd_Box b; wire.ais->BoundingBox(b); bounds.Add(b); }
-  double extent=100;
+  // In 3D the grid is a patch under the model, in the grid plane: around the plane's origin while that square would be
+  // at most four times the model's own (most parts), else around the model's footprint. A house 600 m out (an OBJ keeping
+  // its site coordinates) got a 1.4 km sheet around (0,0,0), which also pulled box-less fits to the origin.
+  const gp_Ax3 plane=m_viewer->PrivilegedPlane();
+  const Bnd_Box bounds=fitBounds(false);
+  const double minimum=std::max(100.0,QSettings().value("view/gridExtent",100.0).toDouble());
+  double cx=0,cy=0,half=0;
   if (!bounds.IsVoid()) {
     const auto lo=bounds.CornerMin(), hi=bounds.CornerMax();
-    extent=std::max({extent,std::abs(lo.X()),std::abs(lo.Y()),std::abs(lo.Z()),std::abs(hi.X()),std::abs(hi.Y()),std::abs(hi.Z())})*1.1;
+    Bnd_Box2d footprint;
+    for (int i=0;i<8;++i) {
+      const gp_Vec rel(plane.Location(),gp_Pnt(i&1?hi.X():lo.X(),i&2?hi.Y():lo.Y(),i&4?hi.Z():lo.Z()));
+      footprint.Add(gp_Pnt2d(rel.Dot(gp_Vec(plane.XDirection())),rel.Dot(gp_Vec(plane.YDirection()))));
+    }
+    double u0,v0,u1,v1;
+    footprint.Get(u0,v0,u1,v1);
+    half=std::max(u1-u0,v1-v0)/2*1.1;
+    const double around=std::max({-u0,u1,-v0,v1})*1.1;  // the square around the origin that holds the model
+    if (around>std::max(minimum,4*half)) cx=(u0+u1)/2,cy=(v0+v1)/2;
+    else half=around;
   }
-  extent=std::max(extent,QSettings().value("view/gridExtent",100.0).toDouble());
+  double extent=std::max(half,minimum);
   const double custom=QSettings().value("view/gridSpacing",0.0).toDouble();
   const double step=custom>0?custom:std::pow(10.0,std::floor(std::log10(extent/10.0)));
+  // Every tenth line stays on a world multiple of ten steps (and snapping on multiples of the step).
+  const double major=10*step,ox=std::round(cx/major)*major,oy=std::round(cy/major)*major;
+  extent+=std::max(std::abs(ox-cx),std::abs(oy-cy));
   m_gridStep=step;
   m_gridShownStep=0;
-  m_viewer->SetRectangularGridValues(0,0,step,step,0);
+  placeGrid(ox,oy,step,extent);
+  if (trace::enabled()) trace::log(QStringLiteral("3D grid: spacing %1 around (%2, %3), %4 each way").arg(step).arg(ox).arg(oy).arg(extent));
+}
+
+// The grid centred on (u, v) of the privileged plane. V3d_RectangularGrid draws its lines around (-XOrigin, -YOrigin)
+// (UpdateDisplay translates by minus the origin) while Aspect_RectangularGrid::Compute snaps around (+XOrigin, +YOrigin);
+// OPAD snaps by itself, so the origin is handed over negated and the lines lie where they are meant to.
+void Viewport::placeGrid(double u, double v, double step, double extent) {
+  m_viewer->SetRectangularGridValues(-u,-v,step,step,0);
   m_viewer->SetRectangularGridGraphicValues(extent,extent,0);
+}
+
+Bnd_Box Viewport::benchGridBox() const {
+  Bnd_Box box;
+  if (!m_initialised) return box;
+  Graphic3d_MapOfStructure displayed;
+  m_viewer->StructureManager()->DisplayedStructures(displayed);
+  for (Graphic3d_MapOfStructure::Iterator it(displayed); it.More(); it.Next())
+    if (it.Key()->IsInfinite() && it.Key()->TransformPersistence().IsNull()) box.Add(it.Key()->MinMaxValues(Standard_True));
+  return box;
 }
 
 // OCCT's grid is a finite patch. In 2D mode it is laid out again around what the view shows whenever the view gets
@@ -559,8 +597,7 @@ void Viewport::updateInfiniteGrid(bool force) {
   m_gridShownX = ox;
   m_gridShownY = oy;
   m_gridShownExtent = extent;
-  m_viewer->SetRectangularGridValues(ox, oy, step, step, 0);
-  m_viewer->SetRectangularGridGraphicValues(extent, extent, 0);
+  placeGrid(ox, oy, step, extent);
   if (trace::enabled()) trace::log(QStringLiteral("2D grid: spacing %1 around (%2, %3), %4 each way").arg(step).arg(ox).arg(oy).arg(extent));
 }
 
@@ -1059,9 +1096,36 @@ void Viewport::isolate(const std::vector<std::string>& ids) {
 }
 
 // ---------------------------------------------------------------- camera (F17/F18)
+// What Fit frames: the model as drawn (bodies, sketches and their images, a feature preview), never the grid, overlays,
+// gizmos or annotations. V3d_View::FitAll(margin) boxes every structure in the view, and OCCT 7.9 adds the centre of
+// any *infinite* structure more than 500 m across (Graphic3d_Layer::BoundingBox, centerOfinfiniteBndBox). The grid is one,
+// and it used to reach from the world origin to the farthest coordinate: a house 600 m out (an OBJ keeping its site
+// coordinates) was framed together with (0,0,0), 9x too small, in the corner under the cube.
+Bnd_Box Viewport::fitBounds(bool fallback) const {
+  Bnd_Box bounds;
+  auto add = [&](const Handle(AIS_InteractiveObject)& object) {
+    if (object.IsNull() || !m_ctx->IsDisplayed(object)) return;  // erased under a feature preview: the preview counts
+    Bnd_Box box;
+    object->BoundingBox(box);
+    bounds.Add(box);
+  };
+  for (const auto& [id, item] : m_items) add(item.ais);
+  for (const auto& [id, wire] : m_sketchWires) {
+    add(wire.ais);
+    for (const auto& image : wire.backdrops) add(image);
+  }
+  for (const auto& preview : m_previewBodies) add(preview);
+  if (fallback && bounds.IsVoid()) {  // nothing to frame: the default grid, as Home does
+    const double extent = std::max(1.0, QSettings().value("view/gridExtent", 100.0).toDouble());
+    bounds.Add(gp_Pnt(-extent, -extent, 0));
+    bounds.Add(gp_Pnt(extent, extent, 0));
+  }
+  return bounds;
+}
+
 void Viewport::fitAll() {
   if (!m_initialised) return;
-  m_view->FitAll(0.02, Standard_False);
+  m_view->FitAll(fitBounds(), 0.02, Standard_False);
   // A flat wire can make OCCT put an orthographic eye exactly on its target.
   // Keep a usable picking ray without changing the fitted on-screen scale.
   const auto camera=m_view->Camera();
@@ -1152,13 +1216,7 @@ void Viewport::home() {
   if(!m_initialised) return;
   myViewAnimation->Stop();m_needFit=false;
   if(!m_twoDimensional) m_view->SetProj(V3d_XposYnegZpos);
-  Bnd_Box bounds;
-  for(const auto& [id,item]:m_items) { Bnd_Box b; item.ais->BoundingBox(b); bounds.Add(b); }
-  for(const auto& [id,wire]:m_sketchWires) { Bnd_Box b; wire.ais->BoundingBox(b); bounds.Add(b); }
-  if(bounds.IsVoid()) {
-    const double extent=std::max(1.0,QSettings().value("view/gridExtent",100.0).toDouble());
-    bounds.Add(gp_Pnt(-extent,-extent,0)); bounds.Add(gp_Pnt(extent,extent,0));
-  }
+  const Bnd_Box bounds=fitBounds();
   const gp_Pnt center((bounds.CornerMin().XYZ()+bounds.CornerMax().XYZ())*.5);
   const auto camera=m_view->Camera();const gp_Vec shift(camera->Center(),center);
   camera->SetEyeAndCenter(camera->Eye().Translated(shift),center);
@@ -1780,7 +1838,7 @@ void Viewport::finishSync(int pendingCount, bool added) {
   // every fit, orbit or zoom of theirs clears m_needFit so a later batch never snaps the view back.
   if(m_needFit && !m_fitNodesOnSync.empty()) {
     if(pendingCount==0){auto ids=std::move(m_fitNodesOnSync);m_fitNodesOnSync.clear();fitNodes(ids);}
-  }else if (added && m_needFit) m_view->FitAll(0.02, Standard_False);
+  }else if (added && m_needFit) m_view->FitAll(fitBounds(), 0.02, Standard_False);
   if(!m_needFit)m_fitNodesOnSync.clear();
   if (pendingCount == 0) m_needFit = false;
   if (m_sectionEnabled) updateSectionGizmo();  // the model's extent may have changed

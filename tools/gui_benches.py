@@ -49,7 +49,15 @@ def main():
         overhang = document("overhang", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'),
                             ("feature", "--kind", "box", "--inputs", '{"plane":{"origin":[0,0,10],"normal":[0,0,1]},"length":"30 mm","width":"10 mm","height":"2 mm","operation":"join"}'))
         screw = ROOT / "tests" / "corpus" / "occt-screw.step"
+        # A 30 x 20 x 12 m block 600 m from the origin, Y up, as SketchUp exports a house with its site coordinates.
+        far = root / "far-block.obj"
+        far.write_text("v 24000 0 -601000\nv 54000 0 -601000\nv 54000 0 -621000\nv 24000 0 -621000\n"
+                       "v 24000 12000 -601000\nv 54000 12000 -601000\nv 54000 12000 -621000\nv 24000 12000 -621000\n"
+                       "f 1 2 3 4\nf 5 8 7 6\nf 1 5 6 2\nf 2 6 7 3\nf 3 7 8 4\nf 4 8 5 1\n", encoding="ascii")
         cases = [
+            ("fit-far", far, {"OPAD_BENCH_FIT": "model", "OPAD_BENCH_FITSHOT": "{prefix}"}),
+            ("fit-near", box, {"OPAD_BENCH_FIT": "origin", "OPAD_BENCH_FITSHOT": "{prefix}"}),
+            ("fit-wide", far, {"OPAD_BENCH_FIT": "origin"}),
             ("design", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_UISHOT": "{prefix}.ui.png", "OPAD_BENCH_RULE": "1"}),
             ("extrude-handle", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_EXTRUDE_HANDLE": "1", "OPAD_BENCH_HANDLESHOT": "{prefix}"}),
             ("sketch-handles", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_HANDLES": "{prefix}"}),
@@ -72,8 +80,10 @@ def main():
             (folder / "a-screw.step").write_bytes(screw.read_bytes())
             (folder / "b-layers.svg").write_bytes(drawing.read_bytes())
             cases.append(("viewer", folder / "a-screw.step", {"OPAD_BENCH_VIEWER": str(folder / "a-screw.opad")}))
-        # These open a STEP or a drawing and then edit it: as with viewer mode turned off in the settings.
-        editing = {"drawing-to-sketch", "picking"}
+        # Settings before the start. These open a STEP or a drawing and then edit it: viewer mode off. The fits load with
+        # the grid on; fit-wide's 1 km minimum grid lies around the origin and would pull a box-less FitAll there.
+        editing, grid = "[files]\nviewerMode=false\n", "[view]\ngrid=true\n"
+        settings = {"drawing-to-sketch": editing, "picking": editing, "fit-far": grid, "fit-near": grid, "fit-wide": grid + "gridExtent=1000000\n"}
         failures = []
         for name, doc, switches in cases:
             if args.only and name not in args.only:
@@ -83,10 +93,10 @@ def main():
             env = {key: value for key, value in os.environ.items() if not key.startswith("OPAD_BENCH_")}
             env.update(OPAD_LANG="en", OPAD_BENCH_SETTINGS=str(root / f"{name}-settings"), OPAD_TRACE=str(log))
             env.update({key: value.format(prefix=output / name) for key, value in switches.items()})
-            if name in editing:
+            if name in settings:
                 ini = root / f"{name}-settings" / "opad" / "OPAD.ini"
                 ini.parent.mkdir(parents=True, exist_ok=True)
-                ini.write_text("[files]\nviewerMode=false\n", encoding="utf-8")
+                ini.write_text(settings[name], encoding="utf-8")
             startup = None
             if os.name == "nt":
                 startup = subprocess.STARTUPINFO()

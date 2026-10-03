@@ -355,8 +355,8 @@ bool Viewport::benchPicking() {
       m_prs["bench-drawing"]=drawing; m_items["bench-drawing"].ais=ais; m_items["bench-drawing"].key="bench-drawing";
       m_view->Camera()->SetProjectionType(Graphic3d_Camera::Projection_Orthographic); m_view->Camera()->SetEyeAndCenter(gp_Pnt(0,0,100),gp_Pnt(0,0,0)); m_view->Camera()->SetUp(gp::DY()); m_view->Redraw();
       require(centralOrbitPoint().Distance(gp_Pnt(500,0,0))<pixelSize()*2,"drawing-only orbit missed the drawing");
-      const bool grid=m_grid; setGrid(true); double sx,sy,offset; m_viewer->RectangularGridGraphicValues(sx,sy,offset);
-      require(sx>=550 && sy>=550,"grid did not cover the scene bounds");
+      const bool grid=m_grid; setGrid(true); const Bnd_Box drawn=benchGridBox();
+      require(!drawn.IsVoid() && !drawn.IsOut(gp_Pnt(500,-10,0)) && !drawn.IsOut(gp_Pnt(500,10,0)),"grid did not cover the scene bounds");
       m_items.clear();m_sketchWires["bench-sketch"]={ais,drawing,"bench"};
       require(centralOrbitPoint().Distance(gp_Pnt(500,0,0))<pixelSize()*2,"sketch-only orbit missed the sketch");
       m_ctx->Remove(ais,false);m_prs.erase("bench-drawing");m_items=std::move(items);m_sketchWires=std::move(sketches);setGrid(grid);m_view->SetCamera(camera);m_view->Redraw();

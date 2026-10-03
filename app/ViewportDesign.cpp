@@ -558,7 +558,7 @@ void Viewport::keyPressEvent(QKeyEvent* e) {
 
 void Viewport::benchDesignShot(const QString& path) {
   if (!m_initialised) return;
-  m_view->FitAll(0.1, Standard_False);
+  m_view->FitAll(fitBounds(), 0.1, Standard_False);
   m_view->Redraw();
   grabImage().save(path);
 }

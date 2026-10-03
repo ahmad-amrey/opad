@@ -2523,6 +2523,53 @@ void MainWindow::runBench() {
     return;
   }
   if(qEnvironmentVariableIsSet("OPAD_BENCH_LEAVE")){const bool ok=m_viewport->benchLeave();QCoreApplication::exit(ok?0:2);return;}
+  // OPAD_BENCH_FIT=model|origin [OPAD_BENCH_FITSHOT=<prefix>]: with the grid on, the load's own fit, F (nothing selected)
+  // and Shift+F frame the model as fitting its own bodies does; the grid as drawn holds the model, around its footprint
+  // (model) or the origin, and in 2D mode around the view, which stays on the model. OCCT's box-less FitAll takes the
+  // centre of any infinite structure over 500 m across (the grid): a model 600 m out was framed with (0,0,0), 9x small.
+  if(const QString fit=qEnvironmentVariable("OPAD_BENCH_FIT");!fit.isEmpty()){
+    const bool gridAtLoad=action("view.grid")->isChecked();const auto loaded=m_viewport->cameraJson();
+    action("view.grid")->setChecked(true);
+    QTimer::singleShot(300,this,[this,fit,gridAtLoad,loaded]{
+      m_viewport->fitNodes(m_doc->scene.roots);
+      const auto reference=m_viewport->cameraJson();
+      const double model=reference.value("scale",0.0);
+      bool ok=model>0;
+      auto check=[&](const QString& what,const opad::json& camera){
+        double off=0;
+        for(int i=0;i<3;++i)off+=std::pow(camera["target"][i].get<double>()-reference["target"][i].get<double>(),2);
+        off=std::sqrt(off);
+        const double scale=camera.value("scale",0.0);
+        const bool good=std::abs(scale/model-1)<0.05 && off<0.05*model;
+        ok=ok&&good;
+        trace::log(QString("bench: fit %1: view %2 mm (model %3 mm), centre %4 mm off %5").arg(what).arg(scale,0,'f',0).arg(model,0,'f',0).arg(off,0,'f',0).arg(good?"PASS":"FAIL"));
+      };
+      if(gridAtLoad)check("on load",loaded);
+      for(const char* id:{"view.fit","view.fitall"}){action(id)->trigger();check(id,m_viewport->cameraJson());}
+      Bnd_Box box;for(const auto& body:m_doc->scene.all_bodies())box.Add(opad::node_world_bbox(m_doc->doc,m_doc->scene,body));
+      double x0=0,y0=0,z0=0,x1=0,y1=0,z1=0;if(!box.IsVoid())box.Get(x0,y0,z0,x1,y1,z1);
+      const double size=std::max(x1-x0,y1-y0);
+      const QString shot=qEnvironmentVariable("OPAD_BENCH_FITSHOT");
+      // Where OCCT draws the grid: its structure's box.
+      auto grid=[&](bool flat){
+        if(!shot.isEmpty())m_viewport->grabImage().save(shot+(flat?".2d.png":".3d.png"));
+        const Bnd_Box drawn=m_viewport->benchGridBox();
+        double g0=0,h0=0,gz0=0,g1=0,h1=0,gz1=0;if(!drawn.IsVoid())drawn.Get(g0,h0,gz0,g1,h1,gz1);
+        const double gx=(g0+g1)/2,gy=(h0+h1)/2,half=std::max(g1-g0,h1-h0)/2;
+        const auto target=m_viewport->cameraJson()["target"];const double tx=target[0].get<double>(),ty=target[1].get<double>();
+        bool good=!drawn.IsVoid() && !box.IsVoid();
+        if(flat)good=good && g0<=tx && tx<=g1 && h0<=ty && ty<=h1 && std::hypot(tx-(x0+x1)/2,ty-(y0+y1)/2)<0.05*size;  // still on the model
+        else good=good && x0>=g0 && x1<=g1 && y0>=h0 && y1<=h1 && (fit=="origin"?std::abs(gx)<1 && std::abs(gy)<1:std::abs(gx-(x0+x1)/2)<=size/2 && std::abs(gy-(y0+y1)/2)<=size/2 && half<=size);
+        ok=ok&&good;
+        trace::log(QString("bench: fit grid%1: drawn around (%2, %3), %4 mm each way, model %5 mm wide around (%6, %7), expected around the %8, view at (%9, %10) %11").arg(flat?" in 2D mode":"").arg(gx,0,'f',0).arg(gy,0,'f',0).arg(half,0,'f',0).arg(size,0,'f',0).arg((x0+x1)/2,0,'f',0).arg((y0+y1)/2,0,'f',0).arg(flat?"view":fit).arg(tx,0,'f',0).arg(ty,0,'f',0).arg(good?"PASS":"FAIL"));
+      };
+      grid(false);
+      action("view.2d")->setChecked(true);
+      grid(true);
+      QCoreApplication::exit(ok?0:2);
+    });
+    return;
+  }
   if(benchShortcuts())return;
   if(benchDrawingImport())return;
   if(benchTodo9())return;
