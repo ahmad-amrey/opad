@@ -166,6 +166,16 @@ json append_per_target(Document& doc, const std::string& command, const json& a,
   return j;
 }
 
+// TODO 11 UI-37: a locked node, or one under a locked component, is not moved (a transform, a reparent): refused naming
+// it before anything is appended.
+void refuse_locked(const Document& doc, const std::vector<json>& targets, const char* what) {
+  if (!design::has_locks(doc)) return;
+  const Scene s = resolve(doc);
+  for (const auto& t : targets)
+    if (const Node* n = t.is_string() ? s.node(t.get<std::string>()) : nullptr; n && s.effectively_locked(n->id))
+      throw Error("\"" + n->name + "\" is locked: unlock it before " + what + " it");
+}
+
 void register_builtins() {
   auto& r = raw_registry();
   auto reg = [&](const char* name, const char* desc, json args, bool mutates, Handler h) {
@@ -548,11 +558,7 @@ void register_builtins() {
       [](Document* d, const json& a) {
         json op = op_with_target("transform", a);
         op["matrix"] = Mat4::from_json(a.at("matrix")).to_json();
-        if (design::has_locks(need(d))) {  // TODO 11 UI-37
-          const Scene s = resolve(need(d));
-          const Node* n = s.node(op["target"].is_string() ? op["target"].get<std::string>() : "");
-          if (n && s.effectively_locked(n->id)) throw Error("\"" + n->name + "\" is locked: unlock it before moving it");
-        }
+        refuse_locked(need(d), {op["target"]}, "moving");
         json j;
         j["id"] = need(d).append(op, a.value("by", "")).id;
         return j;
@@ -561,6 +567,7 @@ void register_builtins() {
   reg("reparent", "Move a node, or several (targets, kept in that order), under another component (null = root)",
       {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids - instead of target"}, {"parent", "uuid|null"}, {"index", "int"}}, true,
       [](Document* d, const json& a) {
+        refuse_locked(need(d), targets_of("reparent", a), "moving");
         return append_per_target(need(d), "reparent", a, [&](const json&, size_t i, size_t) {
           json op = {{"parent", a.contains("parent") ? a["parent"] : json(nullptr)}};
           if (a.contains("index")) op["index"] = a["index"].get<int>() < 0 ? a["index"].get<int>() : a["index"].get<int>() + static_cast<int>(i);

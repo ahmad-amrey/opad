@@ -1956,6 +1956,8 @@ TEST(locked_bodies_are_left_alone) {
   CHECK_EQ(refusal("feature_edit", {{"target", plate_op}, {"inputs", {{"height", "6 mm"}}}}), locked(name, "changing"));
   CHECK_EQ(refusal("delete", {{"target", plate_op}}), locked(name, "removing"));
   CHECK_EQ(refusal("transform", {{"target", plate}, {"matrix", Mat4::translation(0, 0, 5).to_json()}}), locked(name, "moving"));
+  const std::string shelf = commands::run("component", {{"name", "Shelf"}}, &doc)["component_id"];
+  CHECK_EQ(refusal("reparent", {{"targets", json::array({block, plate})}, {"parent", shelf}}), locked(name, "moving"));
   // Still a reference and a source; its look and name are not edits.
   commands::run("sketch", {{"plane", {{"face", plate + "/face/0"}}}, {"geometry", rectangle(0, 0, 4, 4).to_json()}}, &doc);
   CHECK_EQ(feature_cmd(doc, "move", {{"bodies", json::array({plate})}, {"dx", "100 mm"}, {"copy", true}})["body_ids"].size(), 1u);
@@ -1977,6 +1979,10 @@ TEST(locked_bodies_are_left_alone) {
   CHECK(s.effectively_locked(pin) && !s.node(pin)->locked);
   CHECK_EQ(refusal("feature", {{"kind", "fillet"}, {"inputs", {{"edges", json::array({pin + "/edge/0"})}, {"radius", "0.5 mm"}}}}), locked(s.node(pin)->name, "changing"));
   CHECK_EQ(refusal("transform", {{"target", inner}, {"matrix", Mat4::translation(0, 0, 5).to_json()}}), locked("Inner", "moving"));
+  CHECK_EQ(refusal("reparent", {{"target", pin}, {"parent", nullptr}}), locked(s.node(pin)->name, "moving"));
+  CHECK_EQ(refusal("reparent", {{"target", inner}, {"parent", shelf}}), locked("Inner", "moving"));
+  commands::run("reparent", {{"target", outer}, {"parent", shelf}}, &doc);  // the component above it may, it along
+  commands::run("reparent", {{"target", outer}, {"parent", nullptr}}, &doc);
   CHECK_EQ(refusal("delete", {{"target", s.node(inner)->source_op}}), locked("Inner", "removing"));
   commands::run("transform", {{"target", outer}, {"matrix", Mat4::translation(0, 0, 10).to_json()}}, &doc);
   CHECK_NEAR(resolve(doc).world(pin).at(2, 3), 10, 1e-12);
