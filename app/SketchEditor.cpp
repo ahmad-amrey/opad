@@ -395,9 +395,9 @@ void SketchEditor::undo() {
   if(m_undo.empty()){rebuild();emit changed();return;}
   ++m_modelRevision;
   invalidatePreview();
-  m_redo.push_back({m_sk,m_plane,m_frame});
   const bool planeChanged=m_plane!=m_undo.back().plane;
-  m_sk = m_undo.back().geometry;
+  m_redo.push_back({std::move(m_sk),m_plane,m_frame});  // moved, not copied: a converted drawing's 30,000 curves
+  m_sk = std::move(m_undo.back().geometry);
   m_plane=m_undo.back().plane;m_frame=m_undo.back().frame;
   if(planeChanged){m_viewport->endSketchInput();m_viewport->beginSketchInput(this,m_frame,m_id);fitSketch();}
   m_undo.pop_back();
@@ -416,9 +416,9 @@ void SketchEditor::redo() {
   if (m_editJob || m_redo.empty()) return;
   ++m_modelRevision;
   invalidatePreview();
-  m_undo.push_back({m_sk,m_plane,m_frame});
   const bool planeChanged=m_plane!=m_redo.back().plane;
-  m_sk = m_redo.back().geometry;
+  m_undo.push_back({std::move(m_sk),m_plane,m_frame});
+  m_sk = std::move(m_redo.back().geometry);
   m_plane=m_redo.back().plane;m_frame=m_redo.back().frame;
   if(planeChanged){m_viewport->endSketchInput();m_viewport->beginSketchInput(this,m_frame,m_id);fitSketch();}
   m_redo.pop_back();
