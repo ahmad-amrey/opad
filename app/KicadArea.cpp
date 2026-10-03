@@ -1,12 +1,21 @@
-// KiCad boards in the window (UI-72 UI; KicadArea.hpp): Insert KiCad PCB and the sync preview.
+// KiCad boards in the window (UI-72 UI, UI-134; KicadArea.hpp): Insert KiCad PCB, the sync preview, projecting a board into a
+// sketch and the board's Properties section.
 #include "KicadArea.hpp"
 
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHeaderView>
+#include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QPushButton>
 #include <QSettings>
 #include <QTimer>
 #include <QTreeWidget>
@@ -21,11 +30,13 @@
 #include "AssetsArea.hpp"
 #include "BrowserPanel.hpp"
 #include "Commands.hpp"
+#include "DesignController.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "PanelFooter.hpp"
 #include "Ribbon.hpp"
+#include "SketchEditor.hpp"
 #include "Theme.hpp"
 #include "ToolPanel.hpp"
 #include "Units.hpp"
@@ -38,6 +49,7 @@ OPAD_ICON_TABLE(kicad,
 
 namespace {
 std::filesystem::path fsPath(const QString& path) { return std::filesystem::path(path.toStdU16String()); }
+QString refOf(const QString& name) { return name.section(' ', 0, 0); }  // "J1 USB_C" -> "J1"
 
 // The node ids of an import's KiCad records, by reference designator (the parts, and the mounting holes apart).
 void nodesByRef(const opad::json& nodes, std::map<std::string, std::string>& parts, std::map<std::string, std::string>& holes) {
@@ -77,6 +89,8 @@ void KicadArea::buildActions() {
         return asset && asset->asset.value("storage", "linked") != "embedded";
       },
       [this] { preview(boardOf(services().selection())); });
+  add("kicad.project", tr("Project KiCad board…"), "project", kicad, {"kicad", "outline", "mounting holes", "connector", "enclosure", "pcb"},
+      [this](const CommandContext& c) { return c.sketching && !m_boards.empty(); }, [this] { project(); });
 }
 
 void KicadArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
@@ -90,7 +104,7 @@ void KicadArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
   if (QMenu* design = menus.value("design")) {
     QMenu* sub = design->addMenu(icons::themed("kicadboard", 16), tr("KiCad"));
     sub->setObjectName("kicad");
-    for (const char* id : {"kicad.insert", "kicad.previewSync"}) sub->addAction(services().action(id));
+    for (const char* id : {"kicad.insert", "kicad.previewSync", "kicad.project"}) sub->addAction(services().action(id));
   }
 }
 
@@ -103,11 +117,13 @@ void KicadArea::ribbon(RibbonLayout& layout) {
     item.action = services().action("kicad.insert");
     g->items.insert(std::min(at, int(g->items.size())), item);
   }
+  layout.addAction("sketch.reference.reference", services().action("kicad.project"));
 }
 
 void KicadArea::ready() {
   buildPanel();
   if (AssetsArea* a = assets()) a->setPreviewer([this](const std::string& import) { preview(import); });
+  services().properties()->addSectionProvider([this](const PropertySubject& s, const opad::json&, QList<PropertySection>& out) { section(s, out); });
   documentChanged(true);
 }
 
@@ -311,7 +327,114 @@ void KicadArea::closePreview() {
   services().viewport()->clearLookLayer(LookSource::Compare);
 }
 
-// ---------------------------------------------------------------- context menu
+// ---------------------------------------------------------------- projecting into a sketch (UI-134)
+QDialog* KicadArea::project() {
+  if (!services().design() || !services().design()->sketchActive() || m_boards.empty()) return nullptr;
+  auto* dialog = new QDialog(services().window());
+  dialog->setObjectName("kicadProject");
+  dialog->setWindowTitle(tr("Project KiCad board"));
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  auto* layout = new QVBoxLayout(dialog);
+  auto* boards = new QComboBox(dialog);
+  boards->setObjectName("kicadBoard");
+  for (const auto& b : m_boards) boards->addItem(board(b).name, QString::fromStdString(b));
+  boards->setVisible(m_boards.size() > 1);
+  layout->addWidget(boards);
+  auto* outline = new QCheckBox(dialog);
+  outline->setObjectName("kicadOutline");
+  auto* holes = new QCheckBox(dialog);
+  holes->setObjectName("kicadHoles");
+  layout->addWidget(outline);
+  layout->addWidget(holes);
+  auto* label = new QLabel(tr("Parts (their outline as this sketch sees them):"), dialog);
+  layout->addWidget(label);
+  auto* filter = new QLineEdit(dialog);
+  filter->setObjectName("kicadPartFilter");
+  filter->setPlaceholderText(tr("Filter by reference or footprint"));
+  filter->setClearButtonEnabled(true);
+  layout->addWidget(filter);
+  auto* list = new QListWidget(dialog);
+  list->setObjectName("kicadParts");
+  layout->addWidget(list, 1);
+  auto* linked = new QCheckBox(tr("Linked: follows the board when it is synced"), dialog);
+  linked->setObjectName("kicadLinked");
+  linked->setChecked(true);
+  layout->addWidget(linked);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, dialog);
+  QPushButton* ok = buttons->addButton(tr("Project"), QDialogButtonBox::AcceptRole);
+  ok->setObjectName("kicadProjectOk");
+  ok->setDefault(true);
+  layout->addWidget(buttons);
+  auto fillBoard = [this, boards, outline, holes, list, filter] {
+    const Board b = board(boards->currentData().toString().toStdString());
+    outline->setText(tr("Board outline"));
+    outline->setEnabled(!b.outline.empty());
+    outline->setChecked(!b.outline.empty());
+    holes->setText(b.holeNodes.empty() ? tr("Mounting holes (none)") : tr("Mounting holes (%1), also ones added later").arg(b.holeNodes.size()));
+    holes->setEnabled(!b.holes.empty());
+    holes->setChecked(!b.holes.empty());
+    list->clear();
+    for (const auto& [id, name] : b.parts) {
+      auto* item = new QListWidgetItem(name, list);
+      item->setData(Qt::UserRole, QString::fromStdString(id));
+      item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+      item->setCheckState(Qt::Unchecked);
+    }
+    filter->clear();
+  };
+  connect(boards, &QComboBox::currentIndexChanged, dialog, fillBoard);
+  connect(filter, &QLineEdit::textChanged, dialog, [list](const QString& text) {
+    for (int i = 0; i < list->count(); ++i) list->item(i)->setHidden(!text.isEmpty() && !list->item(i)->text().contains(text, Qt::CaseInsensitive));
+  });
+  connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+  connect(buttons, &QDialogButtonBox::accepted, dialog, [this, dialog, boards, outline, holes, list, linked] {
+    std::vector<std::string> parts;
+    for (int i = 0; i < list->count(); ++i)
+      if (list->item(i)->checkState() == Qt::Checked) parts.push_back(list->item(i)->data(Qt::UserRole).toString().toStdString());
+    if (!outline->isChecked() && !holes->isChecked() && parts.empty()) return dialog->reject();
+    if (!projectInto(boards->currentData().toString().toStdString(), outline->isChecked(), holes->isChecked(), parts, linked->isChecked()))
+      services().toast(tr("The sketch is busy; try again in a moment."));
+    dialog->accept();
+  });
+  fillBoard();
+  dialog->resize(420, 520);
+  dialog->open();
+  return dialog;
+}
+
+bool KicadArea::projectInto(const std::string& import, bool outline, bool holes, const std::vector<std::string>& parts, bool linked) {
+  SketchEditor* sketch = services().design() ? services().design()->sketch() : nullptr;
+  if (!sketch || !sketch->active()) return false;
+  const Board b = board(import);
+  std::vector<opad::json> sources;
+  auto source = [&](const char* what, const std::string& node, const QString& ref = {}) {
+    opad::json s = {{"asset", import}, {"kicad", what}, {"node", node}};
+    if (!ref.isEmpty()) s["ref"] = ref.toStdString();
+    sources.push_back(s);
+  };
+  if (outline && !b.outline.empty()) source("outline", b.outline);
+  if (holes && !b.holes.empty()) source("holes", b.holes);
+  for (const auto& id : parts)
+    if (const opad::Node* n = services().document()->node(id)) source("part", id, refOf(QString::fromStdString(n->name)));
+  return !sources.empty() && sketch->projectSources(sources, linked);
+}
+
+// ---------------------------------------------------------------- Properties, context menu
+void KicadArea::section(const PropertySubject& subject, QList<PropertySection>& out) {
+  if (subject.refs.empty() || m_boards.empty()) return;
+  const opad::Node* n = services().document()->node(subject.refs.front().body);
+  if (!n || std::find(m_boards.begin(), m_boards.end(), n->source_op) == m_boards.end()) return;
+  const std::string import = n->source_op;
+  const Board b = board(import);
+  if (subject.refs.front().body != b.root) return;  // the board's own node: its parts have the Linked file section's
+  PropertySection sec;
+  sec.title = tr("KiCad board");
+  sec.rows << qMakePair(tr("Footprints placed"), QString::number(b.parts.size())) << qMakePair(tr("Mounting holes"), QString::number(b.holeNodes.size()))
+           << qMakePair(tr("Exploded views"), tr("Kept together"));
+  if (b.linked) sec.actions << qMakePair(tr("Preview sync…"), std::function<void()>([this, import] { QTimer::singleShot(0, this, [this, import] { preview(import); }); }));
+  out << sec;
+}
+
 void KicadArea::contextMenu(const SelectionContext& selection, QMenu& menu) {
   const std::string import = selection.sketching ? std::string() : boardOf(selection);
   if (import.empty() || services().document()->browse) return;

@@ -1,5 +1,5 @@
-"""gui_benches cases of the KiCad area (KicadArea: UI-72 UI): Insert KiCad PCB, the sync preview and an incremental
-sync. The benches are in
+"""gui_benches cases of the KiCad area (KicadArea: UI-72 UI, UI-134): Insert KiCad PCB, the sync preview and an incremental
+sync, projecting a board into a sketch that follows a sync. The benches are in
 app/KicadAreaBench.cpp. Each case writes its own synthetic board (never a user's board) and STEP models through opad-cli,
 with its own cache (OPAD_CACHE_DIR) in the run's folder."""
 import os
@@ -22,6 +22,8 @@ def board_text(outline, holes, parts):
 
 
 RECT = '(gr_rect (start 100 100) (end 160 140) (layer "Edge.Cuts"))\n'
+NOTCHED = ('(gr_poly (pts (xy 100 100) (xy 160 100) (xy 160 140) (xy 140 140) (xy 140 134) (xy 120 134) (xy 120 140) (xy 100 140)) '
+           '(layer "Edge.Cuts"))\n')
 
 
 def models(document, folder):
@@ -48,9 +50,26 @@ def kicad_area(root, document):
     return design, {"OPAD_CACHE_DIR": str(root / "kicad-area-cache")}
 
 
+def kicad_project(root, document):
+    """A document linking a board (J1, H1, H2) beside it, and the board's next version (a notch in the outline, H1 moved, J1
+    turned) in next.kicad_pcb."""
+    folder = root / "kicad-project"
+    folder.mkdir()
+    models(document, folder)
+    (folder / "board.kicad_pcb").write_text(board_text(RECT, [("H1", "104 104"), ("H2", "156 136")], [("J1", "130 125", "conn.step", "F")]), encoding="utf-8")
+    (folder / "next.kicad_pcb").write_text(board_text(NOTCHED, [("H1", "108 106"), ("H2", "156 136")], [("J1", "130 125 90", "conn.step", "F")]), encoding="utf-8")
+    design = document("kicad-project/design")
+    env = {"OPAD_CACHE_DIR": str(root / "kicad-project-cache")}
+    subprocess.run([str(document.cli), "import", str(design), str(folder / "board.kicad_pcb"), "--link", "true"], check=True, capture_output=True, env={**os.environ, **env})
+    return design, env
+
+
 CASES = [
     # Insert KiCad PCB (the board's dialog answered, linked), repeated models meshed once, the changed board's toast opening the
     # sync preview (moved, model changed, added, holes; tinted), Sync from its footer re-meshing only the changed shapes and
     # relocating the moved part (<prefix>.png, .preview.png, .tinted.png).
     ("kicad-area", kicad_area, {"OPAD_BENCH_KICAD_AREA": "{prefix}"}),
+    # UI-134: the board's outline, its mounting holes and J1 projected into a sketch from the dialog, kept by a sync that
+    # notches the outline, moves a hole and turns J1 (<prefix>.png, .dialog.png).
+    ("kicad-project", kicad_project, {"OPAD_BENCH_KICAD_PROJECT": "{prefix}"}),
 ]

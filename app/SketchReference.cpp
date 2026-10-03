@@ -2,6 +2,9 @@
 #include "Jobs.hpp"
 #include "opad/design/sketch_reference.hpp"
 #include "opad/design/feature.hpp"
+#include "opad/scene.hpp"
+#include "AppDocument.hpp"
+#include <QPointer>
 #include <QCoreApplication>
 #include <QCursor>
 using namespace opad::design;
@@ -43,4 +46,16 @@ bool SketchEditor::applyReference() {
     if(!m_previewRequested){m_options.remove("projectionSource");emit workflowChanged();}
   }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
   return true;
+}
+bool SketchEditor::projectSources(const std::vector<opad::json>& sources,bool linked) {
+  if(!m_active||m_editJob||sources.empty())return false;
+  QPointer<SketchEditor> guard(this);const auto frame=m_frame;const int session=m_session;
+  return m_doc->captureSnapshot(m_jobs,[this,guard,frame,session,sources,linked](std::shared_ptr<opad::Document> copy,const QString& error){
+    if(!guard||!m_active||m_session!=session)return;
+    if(!copy)return emit status(error);
+    runSketchEdit(tr("Projecting geometry"),[copy,frame,sources,linked](Sketch& sk){
+      const opad::Scene scene=opad::resolve(*copy);
+      for(const auto& source:sources)append_reference(sk,derive_sketch(*copy,scene,frame,source,"project"),source,"project",linked);
+    });
+  });
 }

@@ -1,8 +1,10 @@
 #pragma once
-// KiCad boards in the window (UI-72 UI): Insert KiCad PCB… links a board (its options asked first, monitored with
+// KiCad boards in the window (UI-72 UI, UI-134): Insert KiCad PCB… links a board (its options asked first, monitored with
 // its 3D models by AssetMonitor); the sync preview reads a changed board on a worker and lists what syncing would do to it,
 // per reference designator (moved, turned, flipped, model or footprint changed, added, removed, the mounting holes and the
-// board itself), the parts it names tinted in the view, Sync in its footer.
+// board itself), the parts it names tinted in the view, Sync in its footer; Project KiCad board puts the board's outline,
+// its mounting holes and chosen parts into the open sketch as references by node, which every sync keeps (opad
+// design::derive_sketch, "asset" sources); a board's Properties say it explodes as one.
 #include <QPointer>
 #include <QString>
 #include <string>
@@ -10,11 +12,13 @@
 #include <vector>
 
 #include "AreaController.hpp"
+#include "PropertiesPanel.hpp"
 #include "opad/util.hpp"
 
 class AssetsArea;
 class Job;
 class PanelFooter;
+class QDialog;
 class QTreeWidget;
 class ToolPanel;
 
@@ -45,6 +49,10 @@ class KicadArea : public AreaController {
   void preview(const std::string& import);  // reads the linked board on a worker, then the panel
   void sync();                              // Sync from the preview's footer
   void closePreview();
+  QDialog* project();  // Project KiCad board…: the dialog (window-modal, not blocking); null when no sketch is open
+  // Board outline, mounting holes (all, as one reference: holes added later come with a sync) and parts (node ids) of
+  // `import` into the open sketch; false when the sketch is busy.
+  bool projectInto(const std::string& import, bool outline, bool holes, const std::vector<std::string>& parts, bool linked);
 
   ToolPanel* previewPanel() const { return m_panel; }
   QTreeWidget* previewList() const { return m_list; }
@@ -58,6 +66,7 @@ class KicadArea : public AreaController {
  private:
   void buildPanel();
   void fill();
+  void section(const PropertySubject& subject, QList<PropertySection>& out);
   AssetsArea* assets() const;
   std::vector<std::string> m_boards;
   ToolPanel* m_panel = nullptr;

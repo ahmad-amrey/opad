@@ -61,6 +61,10 @@ class SketchEditor : public QObject, public SketchInput {
   void setOption(const QString& key, const QString& value) { m_options[key] = value; }
   QString dimensionText(const opad::design::SkConstraint& c) const;  // "R1 in", "fx: 12.5 mm", "(45°)"
   void applyTool();
+  // References from outside the Project tool (a KiCad board's outline, mounting holes and parts by node, UI-134): read from a
+  // copy of the document taken on a worker and derived there into the sketch's frame, all one change of the sketch; linked
+  // ones follow their source when the design regenerates. False when the sketch or the document is busy.
+  bool projectSources(const std::vector<opad::json>& sources, bool linked);
   void previewTool();
   void invalidatePreview(bool keepOverlay = false);  // keepOverlay: the shown one stays until the next replaces it (live drags)
   void scheduleToolPreview();
