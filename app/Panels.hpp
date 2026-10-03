@@ -185,6 +185,7 @@ class PropertiesPanel : public QWidget {
   void clear();
  signals:
   void faceChosen(int index);
+  void partEditRequested();  // the PART section's link (PartProperties.hpp)
  protected:
   bool eventFilter(QObject* o, QEvent* e) override;
  private:

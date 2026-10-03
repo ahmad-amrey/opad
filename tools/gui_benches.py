@@ -64,6 +64,7 @@ def main():
             ("interference", overlapping, {"OPAD_BENCH_CHECK": "interference", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("drawings-browser", empty, {"OPAD_BENCH_DRAWINGS": "{prefix}"}),
+            ("bom", empty, {"OPAD_BENCH_BOM": "{prefix}"}),
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))

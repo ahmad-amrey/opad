@@ -37,6 +37,7 @@
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
+#include "PartProperties.hpp"
 #include "Theme.hpp"
 #include "opad/drawing/sheet.hpp"
 #include "opad/inspect.hpp"
@@ -45,6 +46,7 @@ namespace {
 constexpr int kIdRole = Qt::UserRole + 1;
 constexpr int kNameRole = Qt::UserRole + 2;
 constexpr int kPropKeyRole = Qt::UserRole + 3;  // properties table: the untranslated property name
+constexpr int kActionRole = Qt::UserRole + 4;   // properties table: the PART section's link
 constexpr int kFolderRole = Qt::UserRole + 5;   // a folder row's id: "sketches", "drawings"
 constexpr int kIconRole = Qt::UserRole + 6;     // a drawings row's icon
 constexpr int kErrorRole = Qt::UserRole + 7;    // a drawings row that is not drawn
@@ -1028,12 +1030,13 @@ PropertiesPanel::PropertiesPanel(QWidget* parent) : QWidget(parent) {
       QTreeWidgetItem* row = m_table->topLevelItem(i);
       row->setForeground(0, t.fg2);
       const QString key = row->data(0, kPropKeyRole).toString();
-      row->setForeground(1, key == "key" || key == "source_op" ? t.fg3 : t.fg);
+      row->setForeground(1, row->data(0, kActionRole).isValid() ? t.sel : key == "key" || key == "source_op" ? t.fg3 : t.fg);
     }
   });
   m_table->viewport()->installEventFilter(this);
   connect(m_table, &QTreeWidget::itemClicked, this, [this](QTreeWidgetItem* it, int) {
     if (it->data(0, Qt::UserRole).isValid()) emit faceChosen(it->data(0, Qt::UserRole).toInt());
+    else if (it->data(0, kActionRole).isValid()) emit partEditRequested();
   });
 }
 
@@ -1083,7 +1086,8 @@ void PropertiesPanel::addRow(const QString& key, const opad::json& v) {
     else if (key == "density") unit = QString::fromUtf8(" g/cm³");
     else if (key == "length" || key == "radius" || key == "diameter" || key == "distance" || key == "thickness") unit = " mm";
   }
-  row->setText(1, QChar(0x202A) + fmtValue(v) + unit + QChar(0x202C));  // LRE..PDF: numbers and vectors keep their order in a right-to-left UI
+  const QString value = key == "material" && v.is_string() ? parts::materialName(v.get<std::string>()) : fmtValue(v);  // a library material by its translated name
+  row->setText(1, QChar(0x202A) + value + unit + QChar(0x202C));  // LRE..PDF: numbers and vectors keep their order in a right-to-left UI
   if (v.is_number() || v.is_array() || (v.is_string() && key == "key")) row->setFont(1, theme::mono(12));
   if (key == "key" || key == "source_op") row->setForeground(1, t.fg3);
 }
@@ -1133,7 +1137,7 @@ void PropertiesPanel::fill() {
   for (const char* k : order) addKey(k);
   for (auto it = props.begin(); it != props.end(); ++it) {
     const std::string& k = it.key();
-    if (done.count(k) || k == "id" || k == "ref" || k == "type" || k == "name" || k == "path" || k == "adjacent_faces" || k == "edges" || k == "modified_by" || k == "body" || k == "body_name" || k == "index" || k == "parent" || k == "effectively_visible" || k == "missing")
+    if (done.count(k) || k == "id" || k == "ref" || k == "type" || k == "name" || k == "path" || k == "adjacent_faces" || k == "edges" || k == "modified_by" || k == "body" || k == "body_name" || k == "index" || k == "parent" || k == "effectively_visible" || k == "missing" || k == "part")
       continue;
     addKey(k);
   }
@@ -1154,6 +1158,27 @@ void PropertiesPanel::fill() {
   };
   section(tr("ADJACENT FACES"), props.value("adjacent_faces", opad::json()), "face");
   section(tr("BOUNDING EDGES"), props.value("edges", opad::json()), "edge");
+  // A body's or component's part properties (what it sets itself) and the link to edit them.
+  if (const parts::Section part = parts::section(props); !part.title.isEmpty()) {
+    auto* h = new QTreeWidgetItem(m_table);
+    h->setText(0, part.title.toUpper());
+    h->setFont(0, theme::ui(11, QFont::Medium));
+    h->setForeground(0, t.fg3);
+    h->setFlags(Qt::ItemIsEnabled);
+    h->setFirstColumnSpanned(true);
+    for (const auto& [label, value] : part.rows) {
+      auto* r = new QTreeWidgetItem(m_table);
+      r->setText(0, label);
+      r->setForeground(0, t.fg2);
+      r->setText(1, QChar(0x202A) + value + QChar(0x202C));
+      r->setToolTip(1, value);
+    }
+    auto* link = new QTreeWidgetItem(m_table);
+    link->setText(1, tr("Edit part properties…"));
+    link->setForeground(1, t.sel);
+    link->setData(0, kActionRole, true);
+    link->setToolTip(1, tr("Part number, description, material, vendor, notes and the bill of materials"));
+  }
 }
 
 void PropertiesPanel::clear() {

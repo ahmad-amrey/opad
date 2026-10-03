@@ -199,6 +199,12 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     m_timeline->setCurrentOp(opId);
     if (!body.empty()) { onBrowserSelection({body}); m_browser->setSelectedIds({body}); }
   });
+  connect(m_props, &PropertiesPanel::partEditRequested, this, [this] {  // the PART section's link: the nodes inspected
+    std::vector<std::string> ids;
+    for (const auto& r : m_selRefs)
+      if (r.kind == opad::Ref::Kind::Body && std::find(ids.begin(), ids.end(), r.body) == ids.end()) ids.push_back(r.body);
+    guarded([&] { editPartProperties(ids); });
+  });
   connect(m_props, &PropertiesPanel::faceChosen, this, [this](int index) {
     auto refs = m_viewport->selection();
     if (refs.empty()) return;
@@ -524,6 +530,7 @@ void MainWindow::buildActions() {
     showProperties(m_selRefs);
     openPanel(m_propsPanel);
   });
+  addAction("inspect.partProperties", tr("Part properties…"), "list", QKeySequence(), [this] { editPartProperties(currentNodeIds()); });
   addAction("select.geometry", tr("Select by geometry..."), "edges", QKeySequence(), [this] { selectGeometry(); });
   // Section is an inspection: it looks inside without changing anything.
   QAction* section = addAction("inspect.section", tr("Section"), "section", QKeySequence("X"), [this] {}, true);
@@ -650,7 +657,7 @@ void MainWindow::buildMenus() {
   add(nav, {"nav.fusion", "nav.solidworks", "nav.onshape", "nav.blender"});
   add(view, {"view.dark", "-", "workspace.review", "workspace.design", "-", "panel.browser", "panel.annotations", "panel.section", "panel.timeline", "panel.reset"});
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
-  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.geometry", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip"});
+  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "inspect.partProperties", "select.geometry", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip"});
   QMenu* designMenu = menuBar()->addMenu(tr("&Design"));
   add(designMenu, {"design.sketch", "design.convertDrawing", "design.parameters", "-"});
   for (const char* group : {"create", "modify", "combine", "pattern", "body", "construct"}) {
@@ -681,7 +688,7 @@ void MainWindow::buildRibbon() {
   sketchWs.contextual = true;
   m_sketchWorkspace = m_ribbon->addWorkspace(sketchWs);
   m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho", "view.2d"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"}), acts({"view.isolate", "view.unisolate"})});
-  m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties"}), acts({"inspect.interference", "inspect.printcheck"}), acts({"inspect.section", "inspect.flip"})});
+  m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties", "inspect.partProperties"}), acts({"inspect.interference", "inspect.printcheck"}), acts({"inspect.section", "inspect.flip"})});
   m_ribbon->addTab(review, tr("Annotate"), {acts({"panel.annotations", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
   m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
   m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
@@ -1394,7 +1401,7 @@ bool MainWindow::isEditAction(const QString& id) {
   // Design tools change the model; how it looks (colour, opacity, lock) is a view setting while viewing.
   if (id.startsWith("design.")) return id != "design.colour" && id != "design.opacity" && id != "design.lock";
   static const QStringList edits = {"edit.rename", "edit.delete", "edit.restore", "annotate.add", "annotate.draw", "annotate.resolve",
-                                    "inspect.pin", "view.saveview", "file.import"};
+                                    "inspect.pin", "inspect.partProperties", "view.saveview", "file.import"};
   return edits.contains(id);
 }
 
@@ -1735,6 +1742,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     add("inspect.distance");
     add("inspect.radius");
     add("inspect.properties");
+    add("inspect.partProperties");
     menu.addSeparator();
     QAction* del = menu.addAction(icons::themed("delete", 16), tr("Delete (tombstone import)"));
     connect(del, &QAction::triggered, this, [this, ids] {
@@ -2528,6 +2536,7 @@ void MainWindow::runBench() {
   if(benchShortcuts())return;
   if(benchDrawingImport())return;
   if(benchDrawings())return;
+  if(benchBom())return;
   if(benchTodo9())return;
   if(benchAnnotateLarge())return;
   if(qEnvironmentVariableIsSet("OPAD_BENCH_INSTANCES")) {

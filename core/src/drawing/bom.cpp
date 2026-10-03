@@ -595,6 +595,7 @@ std::string bom_csv(const json& b, char separator, const json& labels) {
     }
     return s;
   };
+  const std::string yes = labels.is_object() && labels.contains("yes") && labels["yes"].is_string() ? labels["yes"].get<std::string>() : "yes";
   std::string out = "\xEF\xBB\xBF";
   const auto line = [&](const std::vector<std::string>& cells) {
     for (size_t i = 0; i < cells.size(); ++i) out += (i ? std::string(1, separator) : std::string()) + cells[i];
@@ -609,7 +610,7 @@ std::string bom_csv(const json& b, char separator, const json& labels) {
       const Column& c = columns[i];
       const json v = i < own ? r.value(c.id, json()) : r.value("properties", json::object()).value(c.id, json());
       std::string s;
-      if (c.id == "purchased") s = v == true ? "yes" : "";
+      if (c.id == "purchased") s = v == true ? yes : "";
       else if (c.id == "mass" || c.id == "total_mass") s = v.is_number() ? number(v.get<double>(), decimals) : "";
       else if (v.is_string()) s = v.get<std::string>();
       else if (!v.is_null()) s = v.dump();
@@ -618,6 +619,43 @@ std::string bom_csv(const json& b, char separator, const json& labels) {
     line(cells);
   }
   return out;
+}
+
+json shared_part_properties(const Scene& scene, const std::vector<std::string>& nodes) {
+  std::set<std::string> keys;
+  std::vector<const Node*> list;
+  for (const auto& id : nodes)
+    if (const Node* n = scene.node(id)) {
+      list.push_back(n);
+      for (auto it = n->properties.begin(); it != n->properties.end(); ++it) keys.insert(it.key());
+    }
+  json values = json::object(), mixed = json::array();
+  for (const auto& k : keys) {
+    const json first = list.front()->properties.value(k, json());
+    if (std::all_of(list.begin(), list.end(), [&](const Node* n) { return n->properties.value(k, json()) == first; })) {
+      if (!first.is_null()) values[k] = first;
+    } else {
+      mixed.push_back(k);
+    }
+  }
+  return {{"values", values}, {"mixed", mixed}};
+}
+
+json part_properties_change(const json& shared, const json& after) {
+  const json values = shared.value("values", json::object()), mixed = shared.value("mixed", json::array());
+  json set = json::object();
+  for (auto it = after.begin(); it != after.end(); ++it) {
+    json now = it.value();
+    if (now.is_string()) {
+      std::string t = now.get<std::string>();
+      t.erase(0, t.find_first_not_of(" \t\r\n"));
+      t.erase(t.find_last_not_of(" \t\r\n") + 1);
+      now = t.empty() ? json() : json(t);
+    }
+    if (now.is_null() && std::find(mixed.begin(), mixed.end(), it.key()) != mixed.end()) continue;  // left as each node has it
+    if (now != values.value(it.key(), json())) set[it.key()] = now;
+  }
+  return set;
 }
 
 }  // namespace opad::drawing

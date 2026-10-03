@@ -448,6 +448,7 @@ QString AppDocument::labelFor(const std::string& command, const opad::json& args
     const opad::json set = args.value("set", opad::json::object());
     return set.size() == 1 && set.contains("name") ? tr("rename") : tr("edit drawing");
   }
+  if (command == "part_properties") return tr("part properties");
   if (command == "section") return tr("named section");
   if (command == "view") return tr("named view");
   if (command == "import") return tr("import");

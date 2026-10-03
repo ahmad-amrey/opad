@@ -37,7 +37,13 @@ struct BomOptions {
 json bom(const Document& doc, const Scene& scene, const BomOptions& options = {});
 // RFC 4180 text: UTF-8 with a byte order mark, CRLF, fields quoted when they need it, text that a spreadsheet would
 // take for a formula (=, +, -, @) prefixed with '. labels: header text by column (item, level, qty, total_qty,
-// part_number, name, description, material, mass, total_mass, vendor, purchased, source, notes).
+// part_number, name, description, material, mass, total_mass, vendor, purchased, source, notes) and "yes" (purchased).
 std::string bom_csv(const json& bom, char separator = ',', const json& labels = json::object());
+
+// For an editor of several nodes' part properties: {"values": {key: the value all of them have}, "mixed": [keys they
+// differ in]} (a key only some of them set is mixed). part_properties_change: the part_properties `set` that turns those
+// into the edited fields `after` (text is trimmed; empty text or null clears; a mixed key left empty stays as each has it).
+json shared_part_properties(const Scene& scene, const std::vector<std::string>& nodes);
+json part_properties_change(const json& shared, const json& after);
 
 }  // namespace opad::drawing

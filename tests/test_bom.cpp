@@ -231,6 +231,30 @@ TEST(part_properties_command) {
   CHECK(commands::run("materials", {{"match", "Default"}})["match"].is_null());
 }
 
+// The app's Part properties dialog edits several nodes at once: shared values shown, mixed ones left alone unless typed.
+TEST(part_properties_editor) {
+  Parts p;
+  const std::string loose = id_of(resolve(p.doc), "Loose"), cover = id_of(resolve(p.doc), "Cover");
+  run(p.doc, "part_properties", {{"targets", {loose, cover}}, {"set", {{"vendor", "Acme"}, {"density", 1.1}}}});
+  run(p.doc, "part_properties", {{"target", loose}, {"set", {{"part_number", "P-1"}, {"material", "brass"}}}});
+  run(p.doc, "part_properties", {{"target", cover}, {"set", {{"part_number", "P-2"}}}});
+  const Scene s = resolve(p.doc);
+  const json shared = drawing::shared_part_properties(s, {loose, cover});
+  CHECK_EQ(shared["values"], json({{"density", 1.1}, {"vendor", "Acme"}}));  // ordered by key
+  CHECK_EQ(shared["mixed"], json({"material", "part_number"}));  // one sets it, the other does not; or both, differently
+  CHECK_EQ(drawing::shared_part_properties(s, {loose})["values"]["material"], "brass");
+  CHECK(drawing::shared_part_properties(s, {"nobody"})["values"].empty());
+  // Unchanged fields, a mixed field left empty and whitespace are no change; cleared shared fields are removed.
+  const json none = drawing::part_properties_change(shared, {{"vendor", " Acme "}, {"density", 1.1}, {"part_number", ""}, {"material", nullptr}, {"notes", "  "}});
+  CHECK(none.empty());
+  const json set = drawing::part_properties_change(shared, {{"vendor", ""}, {"density", 2.5}, {"part_number", "P-9"}, {"description", " Lid "}});
+  CHECK_EQ(set, json({{"vendor", nullptr}, {"density", 2.5}, {"part_number", "P-9"}, {"description", "Lid"}}));
+  run(p.doc, "part_properties", {{"targets", {loose, cover}}, {"set", set}});
+  const Scene after = resolve(p.doc);
+  CHECK_EQ(after.node(cover)->properties, json({{"density", 2.5}, {"part_number", "P-9"}, {"description", "Lid"}}));
+  CHECK_EQ(after.node(loose)->properties["material"], "brass");  // mixed and left alone
+}
+
 namespace {
 
 // A robot as a STEP file would bring it (one root component): a steel base, two identical wheel units (a wheel and an
@@ -438,6 +462,9 @@ TEST(bom_csv) {
   const std::string semicolons = drawing::bom_csv(r.bom("top"), ';', {{"name", "Benennung"}});
   CHECK(semicolons.find("Item;Qty;Part number;Benennung;") != std::string::npos);
   CHECK(semicolons.find(";\"Plate, \"\"flat\"\"\";Steel;628.00;") != std::string::npos);  // quoted for its quotes
+  const std::string translated = drawing::bom_csv(b, ',', {{"item", "Pos."}, {"yes", "ja"}});
+  CHECK(translated.rfind("\xEF\xBB\xBF" "Pos.,Level,", 0) == 0);
+  CHECK(translated.find("\r\n7,1,1,1,M-42,Motor,,,350.00,350.00,,ja,robot.step,,\r\n") != std::string::npos);
 }
 
 TEST(bom_command) {
