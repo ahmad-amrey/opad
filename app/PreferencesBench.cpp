@@ -120,6 +120,13 @@ OPAD_BENCH(OPAD_BENCH_PREFERENCES, preferences) {
       step->setValue(15);
       // The sketch panel's snaps and the status bar are faces of the same settings: each follows the others while open.
       QWidget* snaps = dialog->pageWidget("sketch");
+      auto* gridRow = snaps->findChild<QCheckBox*>("view.gridSnap");
+      const bool gridSnap = w.action("view.gridSnap")->isChecked();
+      w.action("view.gridSnap")->trigger();
+      check(gridRow && !snaps->findChild<QCheckBox*>("sketch/snap/grid") && gridRow->isChecked() != gridSnap &&
+                dialog->pageWidget("grid")->findChild<QCheckBox*>("view.gridSnap")->isChecked() == gridRow->isChecked(),
+            "the sketch page's Grid snapping is F9, as the Grid page's: one switch");
+      w.action("view.gridSnap")->trigger();
       auto* endpoint = snaps->findChild<QCheckBox*>("sketch/snap/endpoint");
       auto* panelEndpoint = w.findChild<QCheckBox*>("snap-endpoint");
       auto* panelAngle = w.findChild<QCheckBox*>("snap-angle");
