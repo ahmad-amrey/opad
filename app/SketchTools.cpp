@@ -71,7 +71,7 @@ void SketchEditor::setTool(const QString& tool) {
   invalidatePreview();
   if (!m_chain.empty()) finishChain();
   cancel_change();
-  m_tracked.clear();m_dwellPoint=0;m_dwellTimer.stop();unlock();m_pointer.onLine=false;  // tracking points, their guides and the lock are the tool's
+  m_tracked.clear();m_dwellPoint=0;m_dwellTimer.stop();unlock();m_pointer.onLine=false;m_snapChoice=0;  // tracking points, their guides and the lock are the tool's
   m_clicks.clear();
   m_chain.clear();
   m_picked.clear();
@@ -160,6 +160,7 @@ void SketchEditor::finishChain() {
 void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
   invalidatePreview();
   unlock();  // a lock lasts until the point it placed
+  m_snapChoice = 0;  // the next point starts from the nearest snap
   if(imageClick(s.u,s.v))return;
   if(m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d")return pickReference();
   if(modifyClick(s.u,s.v))return;
@@ -205,6 +206,8 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     const int line = m_sk.add_line(m_chain.back(), p);
     if (s.horizontal) m_sk.add_constraint(CT::Horizontal, {line});
     if (s.vertical) m_sk.add_constraint(CT::Vertical, {line});
+    for (const auto& h : s.segment)  // square to a line or a circle (through its centre), touching a circle or an arc (UI-23)
+      if (m_sk.point(h.ref) || m_sk.entity(h.ref)) m_sk.add_constraint(h.type, h.type == CT::Coincident ? std::vector<int>{h.ref, line} : std::vector<int>{line, h.ref});
     if (m_tool == "line") {  // a typed length and angle hold the line (the angle along an axis, or against the line before)
       keepTyped(s, "length", CT::Distance, {line});
       int previous = 0;
@@ -327,6 +330,7 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     const int arc = m_sk.add_arc(centre, ccw ? ps : pe, ccw ? pe : ps);
     keepTyped(s, "radius", CT::Radius, {arc});
     if (s.point && s.point != ps && s.point != pe) m_sk.add_constraint(CT::Coincident, {s.point, arc});  // through a point it snapped to
+    keepAligned(m_clicks[1], {ps, pe});
     keepTyped(m_clicks[1], "length", CT::Distance, {ps, pe});  // the chord
     keepDirection(m_clicks[1], "angle", {ps, pe}, std::atan2(by - ay, bx - ax));
     return done(tr("Arc"));
@@ -345,6 +349,8 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     const int arc = m_sk.add_arc(centre, sweep > 0 ? ps : pe, sweep > 0 ? pe : ps);
     const int radius = keepTyped(a, "radius", CT::Radius, {arc});
     keepDirection(a, "angle", {centre, ps}, std::atan2(a.v - c.v, a.u - c.u));  // the start along an axis
+    keepAligned(a, {centre, ps});
+    if (pe != centre) keepAligned(s, {centre, pe});
     // The sweep typed with the radius: held as the arc's length, that radius times the sweep (a radius edited later keeps the
     // sweep, past half a turn too); without it, its end along an axis.
     if (!keepSweep(s, arc, radius, r)) keepDirection(s, "sweep", {centre, pe}, std::atan2(m_sk.point(pe)->y - c.v, m_sk.point(pe)->x - c.u));
@@ -370,6 +376,7 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     for (size_t i = 1; i < lines.size(); ++i) m_sk.add_constraint(CT::Equal, {lines[0], lines[i]});
     keepTyped(s, "diameter", CT::Diameter, {guide});
     keepDirection(s, "angle", {centre, pts[0]}, a0);
+    keepAligned(s, {centre, pts[0]});
     return done(tr("Polygon"));
   }
   if (m_tool == "slot" && n == 3) {
@@ -392,6 +399,7 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     const double px = m_viewport->pixelSize();
     labelOff(keepTyped(c2, "length", CT::Distance, {centres}), centres, c1.u - nx, c1.v - ny, r + 20 * px);  // above it
     keepDirection(c2, "angle", {centres}, std::atan2(dy, dx));
+    keepAligned(c2, {centres});
     if (const int width = keepTyped(s, "width", CT::Distance, {top, bottom})) labelAt(width, c1.u - dx / len * (r + 30 * px), c1.v - dy / len * (r + 30 * px));  // past the first cap
     return done(tr("Slot"));
   }
@@ -410,6 +418,7 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     m_sk.entities.push_back(e);
     keepTyped(m, "radius", CT::Distance, {e.p[0], e.p[1]});  // the major radius (nothing holds the minor one)
     keepDirection(m, "angle", {e.p[0], e.p[1]}, std::atan2(dy, dx));
+    keepAligned(m, {e.p[0], e.p[1]});
     return done(tr("Ellipse"));
   }
   toolPrompt();
@@ -451,6 +460,13 @@ void SketchEditor::labelAt(int id, double u, double v) {
     c->pos[0] = u;
     c->pos[1] = v;
   }
+}
+
+// The pointer's horizontal or vertical from the step's last point (UI-23), on what the click made from there: an arc's
+// chord, a centre to its arc's end or a polygon's corner, a slot's centres, an ellipse's axis.
+void SketchEditor::keepAligned(const Snap& s, std::vector<int> axis) {
+  if (s.horizontal) m_sk.add_constraint(CT::Horizontal, axis);
+  if (s.vertical) m_sk.add_constraint(CT::Vertical, std::move(axis));
 }
 
 void SketchEditor::keepDirection(const Snap& s, const char* key, std::vector<int> axis, double angle, int line, int previous) {

@@ -166,4 +166,18 @@ TEST(a_shift_tap_on_a_lock_that_stays_goes_to_its_next_stop_or_lets_go) {
   CHECK(escape(s) == Esc::Unlock);  // Esc still lets go
 }
 
+TEST(a_shift_tap_over_several_object_snaps_shows_the_next) {
+  // UI-23: an end and a midpoint (or more) in reach of the pointer: a tap shows the next; a lock that stays keeps its stops.
+  State s = tool("line");
+  s.chain = 1;
+  s.snaps = 1;
+  CHECK(shift(s) == Shift::NextSnap);
+  s.snaps = 0;
+  CHECK(shift(s) == Shift::None);  // one snap: nothing to go round
+  s.snaps = 2;
+  s.locked = true;
+  s.stops = 1;
+  CHECK(shift(s) == Shift::NextStop);
+}
+
 CHECK_MAIN()

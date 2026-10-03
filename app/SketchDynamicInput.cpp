@@ -409,10 +409,13 @@ SketchEditor::Snap SketchEditor::typedPoint(const Snap& pointer) const {
     s.point = pointer.point;
     s.entity = pointer.entity;
     s.holds = pointer.holds;
+    s.segment = pointer.segment;
   }
-  if (base) {  // still level with (or above) the last point: still horizontal (vertical)
-    s.horizontal = pointer.horizontal && std::fabs(s.v - bv) < 1e-9;
-    s.vertical = pointer.vertical && std::fabs(s.u - bu) < 1e-9;
+  double fu = 0, fv = 0;
+  int from = 0;
+  if (fromPoint(fu, fv, from)) {  // still level with (or above) the step's last point: still horizontal (vertical)
+    s.horizontal = pointer.horizontal && std::fabs(s.v - fv) < 1e-9;
+    s.vertical = pointer.vertical && std::fabs(s.u - fu) < 1e-9;
   }
   return s;
 }

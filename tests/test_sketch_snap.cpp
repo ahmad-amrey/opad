@@ -296,4 +296,56 @@ TEST(the_stops_along_a_locked_line_are_every_crossing_in_reach_nearest_first) {
   CHECK(p.by == Pick::By::Cross && p.other == held[0].other && p.curve == held[0].curve && p.u == held[0].u && p.v == held[0].v);
 }
 
+TEST(perpendicular_feet_and_tangent_points_from_the_last_point) {
+  // UI-23. A segment: the foot of the perpendicular, only on the segment, none from a point on its line.
+  const Curve seg{0, 0, 20, 0};
+  double x[2], y[2];
+  CHECK(normals(seg, 7, 9, x, y) == 1);
+  CHECK_NEAR(x[0], 7, 1e-12);
+  CHECK_NEAR(y[0], 0, 1e-12);
+  CHECK(normals(seg, 25, 9, x, y) == 0);
+  CHECK(normals(seg, 5, 0, x, y) == 0);
+  // A circle: the near and the far point on the line through its centre; from the centre none.
+  const Curve circle{10, 10, 0, 0, 5, 0, 2 * kPi};
+  CHECK(normals(circle, 10, 30, x, y) == 2);
+  CHECK_NEAR(x[0], 10, 1e-12);
+  CHECK_NEAR(y[0], 15, 1e-12);
+  CHECK_NEAR(y[1], 5, 1e-12);
+  CHECK(normals(circle, 10, 10, x, y) == 0);
+  // An arc (the upper half): only the point on it.
+  const Curve upper{10, 10, 0, 0, 5, 0, kPi};
+  CHECK(normals(upper, 10, 30, x, y) == 1);
+  CHECK_NEAR(y[0], 15, 1e-12);
+  // Tangent points: the radius to each is square to the line from the point; none from inside or on the circle.
+  CHECK(tangents(circle, 10, 30, x, y) == 2);
+  for (int i = 0; i < 2; ++i) {
+    CHECK_NEAR(std::hypot(x[i] - 10, y[i] - 10), 5, 1e-12);
+    CHECK_NEAR((x[i] - 10) * (x[i] - 10) + (y[i] - 10) * (y[i] - 30), 0, 1e-9);
+  }
+  CHECK(tangents(circle, 12, 11, x, y) == 0);
+  CHECK(tangents(circle, 15, 10, x, y) == 0);
+  CHECK(tangents(seg, 5, 5, x, y) == 0);
+  CHECK(tangents(upper, 10, 30, x, y) == 2);  // both on the upper half
+  CHECK(tangents(Curve{10, 10, 0, 0, 5, kPi, kPi}, 10, 30, x, y) == 0);  // the lower half: neither
+}
+
+TEST(apparent_intersections_are_past_the_ends) {
+  // Two segments whose lines cross past the end of one: there; on both: no (a real intersection); parallel: no.
+  double u, v;
+  CHECK(apparent(Curve{0, 0, 10, 0}, Curve{20, 5, 20, 15}, u, v));
+  CHECK_NEAR(u, 20, 1e-12);
+  CHECK_NEAR(v, 0, 1e-12);
+  CHECK(!apparent(Curve{0, 0, 10, 0}, Curve{5, -5, 5, 5}, u, v));
+  CHECK(!apparent(Curve{0, 0, 10, 0}, Curve{0, 3, 10, 3.1}, u, v));
+  // A segment's line past its end meets a circle: both crossings beyond it, none on the segment itself.
+  double x[2], y[2];
+  const Curve circle{30, 0, 0, 0, 5, 0, 2 * kPi};
+  CHECK(apparent(Curve{0, 0, 10, 0}, circle, x, y) == 2);
+  CHECK_NEAR(std::min(x[0], x[1]), 25, 1e-12);
+  CHECK_NEAR(std::max(x[0], x[1]), 35, 1e-12);
+  CHECK(apparent(Curve{0, 0, 30, 0}, circle, x, y) == 1);  // the near crossing is on the segment
+  CHECK_NEAR(x[0], 35, 1e-12);
+  CHECK(apparent(Curve{0, 10, 10, 10}, circle, x, y) == 0);
+}
+
 CHECK_MAIN()

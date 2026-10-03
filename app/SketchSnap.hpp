@@ -7,6 +7,8 @@
 // cross at (A.x, B.y); Shift locks the pointer onto one guide, and along it (along) it stops where another guide, the
 // angle ray or a curve crosses it (stops: every such place in reach, which Shift taps go through on a lock that stays),
 // else where it crosses a grid line (crossGrid: also a slanted lock).
+// UI-23: from the step's last point the feet of perpendiculars (normals) and the points of tangency (tangents) on a curve;
+// apparent intersections, where segments' lines cross past their ends.
 // No Qt and no sketch here: tests/test_sketch_snap.cpp.
 #include <algorithm>
 #include <cstddef>
@@ -76,6 +78,69 @@ inline int meet(const Guide& g, const Curve& c, double* x, double* y) {
     if (onArc(c, g.x + k * g.dx, g.y + k * g.dy)) {
       x[n] = g.x + k * g.dx;
       y[n++] = g.y + k * g.dy;
+    }
+  return n;
+}
+
+// From the point (fx, fy) to c (UI-23), up to two into x, y. normals: where a line from it meets c at a right angle (a
+// segment's foot on it; on a circle or an arc the nearer and the farther point on the line through its centre).
+// tangents: where a line from it touches a circle or an arc (none from inside). Only what lies on c itself.
+inline int normals(const Curve& c, double fx, double fy, double* x, double* y) {
+  if (c.r <= 0) {
+    const double dx = c.ex - c.x, dy = c.ey - c.y, len2 = dx * dx + dy * dy;
+    const double k = len2 < 1e-18 ? -1 : ((fx - c.x) * dx + (fy - c.y) * dy) / len2;
+    if (k < -1e-9 || k > 1 + 1e-9) return 0;
+    x[0] = c.x + k * dx;
+    y[0] = c.y + k * dy;
+    return std::hypot(x[0] - fx, y[0] - fy) > 1e-9 * (1 + std::abs(fx) + std::abs(fy));  // from a point on the line: none
+  }
+  const double d = std::hypot(fx - c.x, fy - c.y);
+  if (d < 1e-12) return 0;  // from the centre every way is normal
+  int n = 0;
+  for (const double s : {1.0, -1.0}) {
+    const double px = c.x + s * (fx - c.x) * c.r / d, py = c.y + s * (fy - c.y) * c.r / d;
+    if (onArc(c, px, py)) {
+      x[n] = px;
+      y[n++] = py;
+    }
+  }
+  return n;
+}
+inline int tangents(const Curve& c, double fx, double fy, double* x, double* y) {
+  const double d = std::hypot(fx - c.x, fy - c.y);
+  if (c.r <= 0 || !(d > c.r * (1 + 1e-9))) return 0;
+  const double base = std::atan2(fy - c.y, fx - c.x), spread = std::acos(c.r / d);
+  int n = 0;
+  for (const double s : {1.0, -1.0}) {
+    const double px = c.x + c.r * std::cos(base + s * spread), py = c.y + c.r * std::sin(base + s * spread);
+    if (onArc(c, px, py)) {
+      x[n] = px;
+      y[n++] = py;
+    }
+  }
+  return n;
+}
+// Apparent intersection (UI-23): where the lines of two segments cross past the end of either (false when they are
+// nearly parallel, or cross on both: that is an intersection), and where a segment's line past its ends crosses a circle
+// or an arc (up to two).
+inline bool apparent(const Curve& a, const Curve& b, double& x, double& y) {
+  const double ax = a.ex - a.x, ay = a.ey - a.y, bx = b.ex - b.x, by = b.ey - b.y, den = ax * by - ay * bx;
+  if (!(std::abs(den) >= 0.1 * std::hypot(ax, ay) * std::hypot(bx, by)) || den == 0) return false;
+  const double s = ((b.x - a.x) * by - (b.y - a.y) * bx) / den, t = ((b.x - a.x) * ay - (b.y - a.y) * ax) / den;
+  x = a.x + s * ax;
+  y = a.y + s * ay;
+  return s < -1e-9 || s > 1 + 1e-9 || t < -1e-9 || t > 1 + 1e-9;
+}
+inline int apparent(const Curve& line, const Curve& round, double* x, double* y) {
+  const double dx = line.ex - line.x, dy = line.ey - line.y, len = std::hypot(dx, dy);
+  if (len < 1e-12 || round.r <= 0) return 0;
+  const Guide g{line.x, line.y, dx / len, dy / len};
+  double mx[2], my[2];
+  int n = 0;
+  for (int i = 0, m = meet(g, round, mx, my); i < m; ++i)
+    if (const double k = ((mx[i] - line.x) * dx + (my[i] - line.y) * dy) / (len * len); k < -1e-9 || k > 1 + 1e-9) {
+      x[n] = mx[i];
+      y[n++] = my[i];
     }
   return n;
 }

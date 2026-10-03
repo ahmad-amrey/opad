@@ -70,18 +70,21 @@ void SketchEditor::finishPrimitive() {
       const double mu=(a->x+c->x)/2,mv=(a->y+c->y)/2;
       labelOff(keepTyped(second,"length",SkConstraint::Type::Distance,{made[0]}),made[0],mu,mv,24*px);keepDirection(second,"angle",{made[0]},direction(base->p[0],base->p[1]));
       labelOff(keepTyped(last,"height",SkConstraint::Type::Distance,{made[1]}),made[1],mu,mv,24*px);
+      keepAligned(second,{made[0]});keepAligned(last,{made[1]});  // its base, its side along an axis (UI-23)
     } else if(m_tool=="circle2" && !made.empty())keepTyped(second,"diameter",SkConstraint::Type::Diameter,{made[0]});
     else if(m_tool=="tangent_arc" && !made.empty())keepTyped(last,"radius",SkConstraint::Type::Radius,{made[0]});
     else if(m_tool=="polygon_outer" && made.size()>=4) {  // across flats: two opposite sides, or (an odd count) the centre to a side
       const size_t sides=made.size()-1;const auto* guide=m_sk.entity(made.back());
       if(sides%2==0)keepTyped(second,"diameter",SkConstraint::Type::Distance,{made[0],made[sides/2]});
       else keepTyped(second,"diameter",SkConstraint::Type::Distance,{guide->p[0],made[0]},0.5);
+      Snap across=second;std::swap(across.horizontal,across.vertical);keepAligned(across,{made[0]});  // the side square to the way to its middle
     } else if(m_tool=="arcslot" && made.size()>=4) {  // its centre line's radius, its start (and end) along an axis
       const bool swapped=sweep!=m_clicks.back().typed.end() && sweep->second.first<0;
       const int centre=m_sk.entity(made[0])->p[0],start=m_sk.entity(made[swapped?2:3])->p[0],end=m_sk.entity(made[swapped?3:2])->p[0];
       keepTyped(second,"radius",SkConstraint::Type::Distance,{centre,start});
       keepDirection(second,"angle",{centre,start},direction(centre,start));
       keepDirection(last,"sweep",{centre,end},direction(centre,end));
+      keepAligned(second,{centre,start});keepAligned(last,{centre,end});
       keepTyped(last,"width",SkConstraint::Type::Diameter,{made[swapped?2:3]});  // its width typed: the start cap's diameter
     } else if(m_tool=="cslot" && made.size()>=4) {
       const int c1=m_sk.entity(made[2])->p[0],c2=m_sk.entity(made[3])->p[0];const auto *p=m_sk.point(c1),*q=m_sk.point(c2);
@@ -89,6 +92,7 @@ void SketchEditor::finishPrimitive() {
       const double ux=(q->x-p->x)/l,uy=(q->y-p->y)/l;
       labelAt(keepTyped(second,"length",SkConstraint::Type::Distance,{c1,c2}),(p->x+q->x)/2-uy*(r+20*px),(p->y+q->y)/2+ux*(r+20*px));  // above it
       keepDirection(second,"angle",{c1,c2},direction(c1,c2));
+      keepAligned(second,{c1,c2});
       labelAt(keepTyped(last,"width",SkConstraint::Type::Distance,{made[0],made[1]}),p->x-ux*(r+30*px),p->y-uy*(r+30*px));  // past the first cap
     }
     if(end_change(tr("Create geometry"))){m_clicks.clear();m_picked.clear();}else if(!m_clicks.empty())m_clicks.pop_back();

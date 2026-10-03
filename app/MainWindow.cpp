@@ -1026,14 +1026,16 @@ void MainWindow::buildStatusBar() {
   struct Toggle { const char* id; const char* label; const char* icon; const char* key; const char* setting; bool defaultOn; };
   for(const auto& spec : {Toggle{"view.extensions","Extensions","extensions","F11","view/extensions",true},
       Toggle{"view.tracking","Tracking","tracking","F12","view/tracking",true},
-      Toggle{"view.gridSnap","Grid snapping","grid","F9","view/gridSnap",false}}) {
+      Toggle{"view.gridSnap","Grid snapping","grid","F9","view/gridSnap",false},
+      Toggle{"view.orthoSnap","Ortho mode","orthoSnap","F8","view/orthoSnap",false}}) {
     auto* a=addAction(spec.id,tr(spec.label),spec.icon,QKeySequence(spec.key),[] {},true);
     a->setChecked(m_settings.value(spec.setting,spec.defaultOn).toBool());
     auto apply=[this,spec](bool on) {
       m_settings.setValue(spec.setting,on);
       if(QString(spec.id)=="view.extensions") m_viewport->setExtensionTracking(on);
       else if(QString(spec.id)=="view.tracking") m_viewport->setTracking(on);
-      else m_viewport->setGridSnap(on);
+      else if(QString(spec.id)=="view.gridSnap") m_viewport->setGridSnap(on);
+      else if(m_design && m_design->sketch()) m_design->sketch()->refreshSnap();  // Ortho (UI-23): the sketch reads it, at once
     };
     connect(a,&QAction::toggled,this,apply); apply(a->isChecked());
     auto* button=new QToolButton(this); button->setDefaultAction(a); button->setToolButtonStyle(Qt::ToolButtonIconOnly);

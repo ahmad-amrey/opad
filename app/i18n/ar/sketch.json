@@ -77,5 +77,10 @@
  "Esc release lock": "Esc فك التثبيت",
  "Locked · Shift goes to the next stop": "مثبت · Shift للانتقال إلى نقطة التوقف التالية",
  "Shift lock": "Shift للتثبيت",
- "Shift next stop": "Shift نقطة التوقف التالية"
+ "Shift next stop": "Shift نقطة التوقف التالية",
+ "Ortho": "تعامد",
+ "Ortho mode": "وضع التعامد",
+ "Apparent intersection": "تقاطع ظاهري",
+ "Apparent intersections": "التقاطعات الظاهرية",
+ "Shift next snap": "Shift الالتقاط التالي"
 }

@@ -106,6 +106,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchShapes();
   void benchCrossLock();
   void benchSnaps();
+  void refreshSnap();  // a snap setting changed (Ortho): the pointer's snap again where it is
   void benchLarge(const QString& output, opad::json metrics);
 
   // SketchInput
@@ -148,15 +149,20 @@ class SketchEditor : public QObject, public SketchInput {
     int point = 0;     // an existing point to reuse
     int entity = 0;    // a curve the new point will lie on
     std::vector<Hold> holds;  // what else holds the new point there (with automatic constraints on)
-    bool horizontal = false, vertical = false;  // relative to the previous click
+    // The segment the click ends (the line tool), with `ref` (UI-23): Perpendicular to a line, Tangent to a circle or an
+    // arc, a circle's centre Coincident on it (square to the circle).
+    std::vector<Hold> segment;
+    bool horizontal = false, vertical = false;  // from the step's last point (fromPoint)
     bool grid = false;  // on a grid node, or whole grid steps along the inference
     // What the pointer was pulled to, for the display: that object is highlighted and named beside the cursor.
-    enum class Kind { None, Point, Midpoint, Quadrant, Intersection, Curve, Extension, Aligned, Cross, Angle, Locked, Grid, Typed } kind = Kind::None;
+    enum class Kind { None, Point, Midpoint, Quadrant, Intersection, Apparent, Perpendicular, Tangent, Curve, Extension, Aligned, Cross, Angle, Locked, Grid, Typed } kind = Kind::None;
     int target = 0, other = 0;  // the point (Point, Aligned, Angle), the crossing guides' points (Cross, Locked) or the curves (the others)
     int curve = 0;  // Cross, Locked: the curve a guide crosses there
     sketchsnap::Guide line;  // the guide or angle ray it lies on (onLine): what Shift locks onto
     bool onLine = false;
     int stops = 0, stop = -1;  // Locked: the stops along the line in reach, the one it is on (-1: none)
+    int choices = 0, choice = 0;  // object snaps in reach of the pointer, the one shown (Shift taps go through them, UI-23)
+    bool ortho = false;  // Locked: by Ortho (F8), not by Shift
     std::map<QString, std::pair<double, QString>> typed;  // the values typed for this click (mm, radians; as typed)
   };
   struct Hit {
@@ -195,6 +201,7 @@ class SketchEditor : public QObject, public SketchInput {
   // A typed angle (`angle` the direction it made, radians from X): horizontal or vertical (`axis`: a line, or two points),
   // else against the line before (`line` after `previous`).
   void keepDirection(const Snap& s, const char* key, std::vector<int> axis, double angle, int line = 0, int previous = 0);
+  void keepAligned(const Snap& s, std::vector<int> axis);  // the click's horizontal or vertical from the step's last point (UI-23)
   int referenceX();                                   // a fixed line along +X to hold an angle from the X axis against
   bool keepSweep(const Snap& s, int arc, int radius, double r);  // a typed sweep as the arc's length, radius dimension times it
   int pointAt(double u, double v) const;              // an existing point exactly there (typed values land on it)
@@ -225,6 +232,10 @@ class SketchEditor : public QObject, public SketchInput {
   std::vector<snapmarkers::Glyph> snapGlyphs(const Snap& s) const;
   bool pointHere() const;    // the click that waits makes a point where it lands (else it sizes or passes a curve through)
   bool curveHere() const;    // the click that waits passes a curve through where it lands (a circle's rim): a point there lies on it
+  bool alignsHere() const;   // the click's horizontal or vertical from the step's last point is kept as a constraint
+  // The point the step's next click is measured from (UI-23): a polyline's or spline's last point, else the shape's last
+  // click (an arc's end: its centre) for the tools whose next point has a direction from it; id: its point (-1: none).
+  bool fromPoint(double& x, double& y, int& id) const;
   std::vector<snapmarkers::Glyph> m_glyphs;  // the pictograms drawn beside the pointer (benches)
   void begin_change();                   // snapshot for undo
   bool end_change(const QString& what);  // solve; false = refused and rolled back
@@ -332,6 +343,9 @@ class SketchEditor : public QObject, public SketchInput {
   struct Lock { sketchsnap::Guide line; bool horizontal = false, vertical = false, sticky = false; int stop = -1; double su = 0, sv = 0; std::vector<Snap::Hold> holds; };
   std::optional<Lock> m_lock;
   bool m_shiftDown = false, m_shiftUsed = false, m_shiftSpent = false, m_unstick = false, m_inView = false;
+  int m_snapChoice = 0;  // the object snap shown when several are in reach (Shift taps, UI-23), counted from (m_choiceU, m_choiceV)
+  double m_choiceU = 0, m_choiceV = 0;
+  bool m_cyclePending = false;  // Shift went down over several object snaps: a tap shows the next, a hold locks
   QElapsedTimer m_shiftClock;
   double m_lastU = 0, m_lastV = 0;
   Qt::KeyboardModifiers m_lastMods;

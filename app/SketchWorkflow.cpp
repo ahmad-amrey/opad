@@ -196,6 +196,7 @@ sketchkeys::State SketchEditor::keyState() const {
   s.typed=m_input && m_input->typed();s.applies=appliesOnEnter();s.locked=m_lock && m_lock->sticky;
   if(s.locked && m_pointer.kind==Snap::Kind::Locked)s.stops=size_t(std::max(0,m_pointer.stops-(m_pointer.stop>=0?1:0)));
   s.guide=!m_lock && m_inView && placing() && m_pointer.onLine;
+  s.snaps=!m_lock && m_inView && placing() && m_pointer.choices>1?size_t(m_pointer.choices-1):0;
   return s;
 }
 
@@ -287,6 +288,7 @@ QString SketchEditor::keyHints() const {
   const Shift shift=sketchkeys::shift(s);  // last: it comes and goes with the guides under the pointer
   if(shift==Shift::Lock)out<<tr("Shift lock");
   else if(shift==Shift::NextStop)out<<tr("Shift next stop");
+  else if(shift==Shift::NextSnap)out<<tr("Shift next snap");
   return out.join(QStringLiteral(" · "));
 }
 

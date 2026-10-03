@@ -12,7 +12,10 @@ using namespace opad::design;
 
 // OPAD_BENCH_SKETCH_SNAPS=<prefix> (TODO 11 UI-23, UI-21): snapping through the tool code as the mouse drives it. Each
 // object snap shows a marker of its own shape where the pointer lands (square endpoint, triangle midpoint, circle centre,
-// diamond quadrant, cross intersection, hourglass on a curve, # grid, plus at a tracked point).
+// diamond quadrant, cross intersection, hourglass on a curve, # grid, plus at a tracked point); a click keeps what it
+// snapped to as constraints (a midpoint, both curves, a quadrant above its centre, level with a tracked point), shown
+// before as pictograms beside the pointer, variant primitives too; perpendicular, tangent and apparent-intersection snaps;
+// Shift taps go through the snaps in reach; slots, polygons and ellipses infer horizontal, vertical and angles; Ortho F8.
 void SketchEditor::benchSnaps() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_SNAPS");
   bool ok = true;
@@ -53,6 +56,9 @@ void SketchEditor::benchSnaps() {
   };
   using M = snapmarkers::Marker;
   auto shows = [&](M marker) { return m_marker && *m_marker == marker; };
+  auto where = [&] {  // what the pointer snapped to, for a failure
+    return QString(" [%1: kind %2 at (%3, %4), %5 of %6, h %7 v %8]").arg(m_tool).arg(int(m_cursor.kind)).arg(m_cursor.u, 0, 'g', 10).arg(m_cursor.v, 0, 'g', 10).arg(m_cursor.choice).arg(m_cursor.choices).arg(m_cursor.horizontal).arg(m_cursor.vertical);
+  };
 
   // L: (-30, -20) -> (10, -20); N: (0, -30) -> (0, -5) crossing it at (0, -20); a circle C about (25, 15), radius 10.
   setTool("line");
@@ -165,6 +171,129 @@ void SketchEditor::benchSnaps() {
   bool corner = false;
   for (size_t i = m_sk.entities.size() - 5; i < m_sk.entities.size(); ++i) corner |= m_sk.entities[i].type == SkEntity::Type::Line && !m_sk.entities[i].construction && std::count(m_sk.entities[i].p.begin(), m_sk.entities[i].p.end(), centre);
   check(corner && solved(), "a centre rectangle's clicked corner is the circle's centre it snapped to");
+
+  // UI-23: perpendicular, tangent and apparent-intersection snaps, Shift taps through the snaps in reach, the horizontal,
+  // vertical and angle inference of every tool, Ortho (F8). A fresh part of the sketch, 100 mm up.
+  const double y0 = 100;
+  const opad::json view = m_viewport->cameraJson();
+  m_viewport->setCameraJson({{"eye", {0, y0, 100}}, {"target", {0, y0, 0}}, {"up", {0, 1, 0}}, {"scale", view.value("scale", 100.0)}, {"projection", "orthographic"}, {"absolute", true}});
+  check(std::abs(m_viewport->pixelSize() - px) < 1e-6 * px, "the view moved up, the same scale");
+  auto key = [&](QEvent::Type type, int code, Qt::KeyboardModifiers mods = Qt::NoModifier) {
+    QKeyEvent e(type, code, mods);
+    QApplication::sendEvent(m_viewport, &e);
+  };
+  auto shift = [&](bool down) { key(down ? QEvent::KeyPress : QEvent::KeyRelease, Qt::Key_Shift, down ? Qt::ShiftModifier : Qt::NoModifier); };
+  auto line = [&](double x0, double y, double x1, double y1) {
+    setTool("line");
+    place(x0, y, Qt::AltModifier);
+    place(x1, y1, Qt::AltModifier);
+    finishChain();
+    return m_sk.entities.back().id;
+  };
+  const int pl = line(-40, y0 - 15, -10, y0 - 15), r1 = line(-45, y0 + 20, -35, y0 + 20), r2 = line(-25, y0 + 10, -25, y0 + 15);
+  setTool("circle");
+  place(20, y0, Qt::AltModifier);
+  place(28, y0, Qt::AltModifier);
+  const int q = m_sk.entities.back().id;
+  // Perpendicular: from (-32, y0 - 5) down onto P.
+  setTool("line");
+  place(-32, y0 - 5, Qt::AltModifier);
+  sketchMove(-32 + 2 * px, y0 - 15 + 2 * px, Qt::NoModifier, false);
+  check(m_cursor.kind == Snap::Kind::Perpendicular && exact(m_cursor.u, -32) && exact(m_cursor.v, y0 - 15) && shows(M::Perpendicular) && (m_glyphs == std::vector<G>{G::OnCurve, G::Perpendicular}),
+        "square onto P from the last point: the perpendicular marker, on P and perpendicular");
+  shot(".perpendicular.png");
+  place(-32 + 2 * px, y0 - 15 + 2 * px);
+  const int foot = m_chain.back(), down = m_sk.entities.back().id;
+  check(has(CT::Perpendicular, {down, pl}) && has(CT::Coincident, {foot, pl}) && solved(), "the segment keeps square to P, its end on P");
+  // Tangent: from that foot onto the circle Q.
+  double tx[2], ty[2];
+  const int touching = sketchsnap::tangents(sketchsnap::Curve{20, y0, 0, 0, 8, 0, 2 * M_PI}, -32, y0 - 15, tx, ty);
+  sketchMove(tx[0] + px, ty[0] - px, Qt::NoModifier, false);
+  check(touching == 2 && m_cursor.kind == Snap::Kind::Tangent && std::abs(m_cursor.u - tx[0]) < 1e-9 && shows(M::Tangent) && (m_glyphs == std::vector<G>{G::OnCurve, G::Tangent}),
+        "touching Q from the last point: the tangent marker, on Q and tangent");
+  shot(".tangent.png");
+  place(tx[0] + px, ty[0] - px);
+  check(has(CT::Tangent, {m_sk.entities.back().id, q}) && has(CT::Coincident, {m_chain.back(), q}) && solved(), "the segment keeps tangent to Q, its end on Q");
+  finishChain();
+  // Apparent intersection: R1 (horizontal) and R2 (vertical) would cross at (-25, y0 + 20).
+  setTool("point");
+  sketchMove(-25 + 2 * px, y0 + 20 + px, Qt::NoModifier, false);
+  check(m_cursor.kind == Snap::Kind::Apparent && exact(m_cursor.u, -25) && exact(m_cursor.v, y0 + 20) && shows(M::Apparent) && (m_glyphs == std::vector<G>{G::OnCurve}),
+        QString("where R1 and R2 would cross: the apparent intersection marker, on both") + where());
+  shot(".apparent.png");
+  place(-25 + 2 * px, y0 + 20 + px);
+  check(has(CT::Coincident, {newPoint(), r1}) && has(CT::Coincident, {newPoint(), r2}) && solved(), "the click keeps the point on both lines");
+  // Shift taps go through the snaps in reach: a 0.6 mm line's two ends and its midpoint.
+  const int tiny = line(5, y0 - 20, 5.6, y0 - 20), ta = m_sk.entity(tiny)->p[0], tb = m_sk.entity(tiny)->p[1];
+  setTool("point");
+  sketchMove(5.25, y0 - 20 + px, Qt::NoModifier, false);
+  check(m_cursor.choices == 3 && m_cursor.choice == 0 && m_cursor.point == ta && keyHints().contains("Shift next snap") && transientTexts().contains(QString::fromUtf8("Point · 1/3")),
+        QString("three snaps in reach: the nearest end shown (1/3), the prompt says Shift goes to the next (%1)").arg(transientTexts().join(" | ")));
+  shift(true);
+  shift(false);
+  check(m_cursor.choice == 1 && m_cursor.point == tb && transientTexts().contains(QString::fromUtf8("Point · 2/3")), "a Shift tap: the other end (2/3)");
+  shift(true);
+  shift(false);
+  check(m_cursor.choice == 2 && m_cursor.kind == Snap::Kind::Midpoint && shows(M::Midpoint) && transientTexts().contains(QString::fromUtf8("Midpoint · 3/3")), "the next: the midpoint (3/3)");
+  shot(".cycle.png");
+  sketchMove(5.25 + 0.3 * tol(), y0 - 20 + px, Qt::NoModifier, false);
+  check(m_cursor.kind == Snap::Kind::Midpoint, "the pointer trembling within the capture keeps it");
+  place(5.25 + 0.3 * tol(), y0 - 20 + px);
+  check(has(CT::Midpoint, {newPoint(), tiny}) && !m_lock, "the click lands on the snap shown, the midpoint");
+  sketchMove(5.25, y0 - 20 + px, Qt::NoModifier, false);
+  check(m_cursor.choice == 0, "after the click the nearest is shown first again");
+  shift(true);
+  rest(350);
+  shift(false);
+  check(m_cursor.choice == 0 && !m_lock, QString("Shift held, not tapped, does not go on") + where());
+  // The horizontal, vertical and angle inference of every tool, kept where the shape has a line or two points for it.
+  setTool("slot");
+  place(-40, y0 - 22, Qt::AltModifier);
+  sketchMove(-28, y0 - 22 + 2 * px, Qt::NoModifier, false);
+  check(m_cursor.horizontal && exact(m_cursor.v, y0 - 22) && (m_glyphs == std::vector<G>{G::Horizontal}) && transientTexts().contains("Horizontal"), QString("a slot's second centre level with its first: horizontal") + where());
+  place(-28, y0 - 22 + 2 * px);
+  place(-30, y0 - 20, Qt::AltModifier);
+  int centres = 0;
+  for (const auto& e : m_sk.entities)
+    if (e.construction && e.type == SkEntity::Type::Line) centres = e.id;
+  check(has(CT::Horizontal, {centres}) && solved(), "the slot keeps its centre line horizontal");
+  setTool("polygon");
+  place(35, y0 + 15, Qt::AltModifier);
+  sketchMove(35 + 2 * px, y0 + 22, Qt::NoModifier, false);
+  check(m_cursor.vertical && exact(m_cursor.u, 35) && (m_glyphs == std::vector<G>{G::Vertical}), QString("a polygon's corner straight above its centre: vertical") + where());
+  place(35 + 2 * px, y0 + 22);
+  int hub = 0, top = 0;
+  for (const auto& p : m_sk.points) {
+    if (exact(p.x, 35) && exact(p.y, y0 + 15)) hub = p.id;
+    if (exact(p.x, 35) && exact(p.y, y0 + 22)) top = p.id;
+  }
+  check(hub && top && has(CT::Vertical, {hub, top}) && solved(), "the polygon keeps that corner above its centre");
+  setTool("ellipse");
+  place(-5, y0 + 15, Qt::AltModifier);
+  sketchMove(-5 + 8 * std::cos(M_PI / 6) - 2 * px, y0 + 15 + 8 * std::sin(M_PI / 6) + 2 * px, Qt::NoModifier, false);
+  check(m_cursor.kind == Snap::Kind::Angle && std::abs(std::atan2(m_cursor.v - y0 - 15, m_cursor.u + 5) - M_PI / 6) < 1e-9 && transientTexts().contains(QString::fromUtf8("30°")),
+        QString("an ellipse's axis: the angle ray from its centre, 30 degrees") + where());
+  key(QEvent::KeyPress, Qt::Key_Escape);
+  // Ortho (F8): the pointer keeps to the horizontal or the vertical from the last point, whichever is nearer.
+  auto* f8 = m_viewport->window()->findChild<QAction*>("view.orthoSnap");
+  check(f8 && f8->shortcut() == QKeySequence("F8") && !f8->isChecked(), QString("Ortho is F8, off by default (%1, %2)").arg(f8 ? f8->shortcut().toString() : "none").arg(f8 && f8->isChecked()));
+  setTool("line");
+  place(-45, y0 - 5, Qt::AltModifier);
+  sketchMove(-37, y0 - 2, Qt::NoModifier, false);
+  check(!exact(m_cursor.v, y0 - 5), "Ortho off: the pointer is free");
+  if (f8) f8->setChecked(true);
+  check(m_cursor.kind == Snap::Kind::Locked && m_cursor.ortho && exact(m_cursor.v, y0 - 5) && exact(m_cursor.u, -37) && m_cursor.horizontal && transientTexts().contains("Ortho") &&
+            (m_glyphs == std::vector<G>{G::Horizontal}),
+        QString("F8: at once on the horizontal from the last point, \"Ortho\", horizontal") + where());
+  shot(".ortho.png");
+  place(-37, y0 - 2);
+  check(has(CT::Horizontal, {m_sk.entities.back().id}) && exact(m_sk.point(m_chain.back())->y, y0 - 5), "the segment is kept horizontal");
+  sketchMove(-35, y0 + 3, Qt::NoModifier, false);
+  check(m_cursor.ortho && m_cursor.vertical && exact(m_cursor.u, -37), QString("further up than across: the vertical") + where());
+  if (f8) f8->setChecked(false);
+  sketchMove(-35, y0 + 3, Qt::NoModifier, false);
+  check(!m_cursor.ortho && m_cursor.kind != Snap::Kind::Locked && !exact(m_cursor.u, -37), QString("F8 again: free of it (the angle ray may hold the pointer)") + where());
+  finishChain();
   setTool("select");
   shot(".png");
   QCoreApplication::exit(ok ? 0 : 2);

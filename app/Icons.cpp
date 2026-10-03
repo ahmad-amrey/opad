@@ -33,6 +33,7 @@ const QHash<QString, QString>& table() {
       {"drawing", R"(<path d="M4 3h12l4 4v14H4zM16 3v5h4"/><path d="M7 17l3-6 6 6z"/>)"},
       {"mesh", R"(<path d="M4 8l8-4 8 4v8l-8 4-8-4zM4 8l8 4 8-4M12 12v8M12 4v8M4 8l8 12 8-12"/>)"},
       {"grid", R"(<rect x="3" y="3" width="18" height="18"/><path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>)"},
+      {"orthoSnap", R"(<path d="M6 3v15h15"/><path d="M6 13h5v5"/><path d="M3 6l3-3 3 3M18 15l3 3-3 3"/>)"},
       {"section", R"(<path d="M4 8l8-4 8 4v8l-8 4-8-4z"/><path d="M2 15L22 5" stroke-dasharray="3 2"/>)"},
       {"isolate", R"(<circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>)"},
       {"showAll", R"(<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>)"},

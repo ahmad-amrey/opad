@@ -123,7 +123,7 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   auto* settings=page(tr("Snaps"));
   auto* section=new QCheckBox(tr("Section at sketch plane"),this);settings->addWidget(section);
   connect(section,&QCheckBox::toggled,this,[this](bool on){auto normal=m_editor->m_frame.normal();for(auto& v:normal)v=-v;if(on)m_editor->m_viewport->setSection(true,m_editor->m_frame.origin,normal,false);else m_editor->m_viewport->restoreSection(m_editor->m_sectionBefore);});
-  for(const auto& [key,title]:QList<QPair<QString,QString>>{{"endpoint",tr("Endpoints")},{"midpoint",tr("Midpoints")},{"center",tr("Centres")},{"quadrant",tr("Quadrants")},{"intersection",tr("Intersections")},{"nearest",tr("Nearest on curve")},{"grid",tr("Grid snapping")},{"angle",tr("Angle increments")},{"inference",tr("Automatic constraints")}}) {
+  for(const auto& [key,title]:QList<QPair<QString,QString>>{{"endpoint",tr("Endpoints")},{"midpoint",tr("Midpoints")},{"center",tr("Centres")},{"quadrant",tr("Quadrants")},{"intersection",tr("Intersections")},{"apparent",tr("Apparent intersections")},{"perpendicular",tr("Perpendicular")},{"tangent",tr("Tangent")},{"nearest",tr("Nearest on curve")},{"grid",tr("Grid snapping")},{"angle",tr("Angle increments")},{"inference",tr("Automatic constraints")}}) {
     auto* check=new QCheckBox(title,this);check->setObjectName("snap-"+key);settings->addWidget(check);
     if(key=="grid") {  // the same switch as F9 (view.gridSnap), not a second one that also had to be on
       Viewport* view=m_editor->m_viewport;check->setChecked(view->gridSnap());
