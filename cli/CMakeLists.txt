@@ -1,6 +1,6 @@
 add_executable(opad-cli main.cpp mcp.cpp live_mcp.cpp)
 target_link_libraries(opad-cli PRIVATE opad::core)
-find_package(Qt6 COMPONENTS Core Network QUIET)
+find_package(Qt6 COMPONENTS Core Gui Network QUIET)  # Gui: its plugin types (platforms) for qt_import_plugins below
 if(Qt6_FOUND)
   target_link_libraries(opad-cli PRIVATE Qt6::Core Qt6::Network)
   target_compile_definitions(opad-cli PRIVATE OPAD_LIVE_MCP=1)
