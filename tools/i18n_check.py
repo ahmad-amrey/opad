@@ -6,7 +6,8 @@
   python tools/i18n_check.py --dump     # print all source strings as a JSON skeleton
 
 Translations are plain JSON (source text -> translation, see app/I18n.hpp); keys starting with "@" are
-metadata. A language is <code>.json plus the area fragments in <code>/, merged in that order as the app does.
+metadata. A language is <code>.json plus the area fragments in <code>/, merged in that order as the app does. Words
+handed straight to a label, tooltip, status or toast as QString("...") instead of tr("...") fail the check too.
 Strings looked up at run time (property names, error messages) are not tr() literals, so this script does not
 know them: keep them in a file by hand. Exit code 1 when something is missing, when a key appears twice (in one
 file or across the files of a language) with different translations, or when a fragment folder has no language.
@@ -34,6 +35,28 @@ def sources():
             s = ''.join(json.loads('"' + re.sub(r'\\(?!["\\ntu])', r'\\\\', p[1:-1]) + '"') for p in parts)
             found.setdefault(s, os.path.basename(path))
     return found
+
+
+SHOWN = re.compile(r'\b(setText|showMessage|setToolTip|setPlaceholderText|setWindowTitle|addItem|addAction|toast|setStatus|status|hoverChanged|'
+                   r'setHeader|setContext|setSummary|setPrompt|QRadioButton|QCheckBox|QPushButton|QLabel)\s*\(\s*(?:QString(?:::fromUtf8)?|QStringLiteral)\s*\(\s*(' + LITERAL + ')')
+
+
+def untranslated():
+    """Words handed to something the user reads without tr(): setText(QString("Section %1")), emit status(QString(...)).
+    File extensions (".step"), markup and %N placeholders are not words; the benches' own texts are left alone."""
+    found = []
+    for path in sorted(glob.glob(os.path.join(ROOT, 'app', '*.cpp'))):
+        if 'Bench' in os.path.basename(path):
+            continue
+        for number, line in enumerate(open(path, encoding='utf-8'), 1):
+            for m in SHOWN.finditer(line):
+                text = re.sub(r'<[^>]*>|%\d|(?<![A-Za-z])\.[A-Za-z0-9]+', '', m.group(2)[1:-1])
+                if re.search(r'[A-Za-z]{3,}', text):
+                    found.append('%s:%d %s' % (os.path.basename(path), number, m.group(2)))
+    print('untranslated literals shown: %d' % len(found))
+    for f in found:
+        print('  ' + f)
+    return len(found)
 
 
 def pairs(path):
@@ -169,6 +192,7 @@ def main():
         bad += len(missing) + len(clashes)
     bad += help_missing()
     bad += clips_missing()
+    bad += untranslated()
     return 1 if bad else 0
 
 

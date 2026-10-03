@@ -458,7 +458,13 @@ QString AppDocument::labelFor(const std::string& command, const opad::json& args
   if (command == "delete") return tr("delete");
     if (command == "annotate") return args.contains("drawing") ? tr("hand drawing") : tr("note");
     if (command == "delete_annotation") return tr("delete annotation");
-  if (command == "append") return tr("pin measurement");
+  if (command == "append") {  // what the appended op is: a pinned measurement, a comment, or an edit of a note's text or tag
+    const std::string type = args.contains("op") && args["op"].is_object() ? args["op"].value("op", "") : "";
+    if (type == "measurement") return tr("pin measurement");
+    if (type == "annotation") return args["op"].contains("reply_to") ? tr("comment") : tr("note");
+    if (type == "edit") return tr("edit note");
+    return tr("change");
+  }
   if (command == "section") return tr("named section");
   if (command == "view") return tr("named view");
   if (command == "import") return tr("import");

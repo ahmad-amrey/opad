@@ -55,6 +55,7 @@ class DesignController : public QObject {
   bool ownsSelection() const { return featureActive() || m_pickPlane; }  // the viewport's picks belong to a design input
   void viewportSelectionChanged();
   bool escape();  // Esc: leaves the plane pick or the feature; false when there was nothing to leave
+  bool undoPick();  // Ctrl+Z in a feature's panel: takes back the last pick; false (and says why) when there is none
   void bench();   // OPAD_BENCH_DESIGN
   opad::json recoveryState() const;
   void restoreRecovery(const opad::json& state);

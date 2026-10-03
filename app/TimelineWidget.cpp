@@ -157,12 +157,12 @@ QString TimelineWidget::describe(const opad::Op& op) const {
   if (op.type == "annotation") {
     try { return tr("Note on %1").arg(m_doc->nodeName(opad::Ref::from_json(d["anchor"]).body)); } catch (...) { return tr("Note"); }
   }
-  if (op.type == "measurement") return tr("%1 measurement").arg(QString::fromStdString(d.value("kind", "")));
+  if (op.type == "measurement") return tr("%1 measurement").arg(i18n::t(QString::fromStdString(d.value("kind", ""))));
   if (op.type == "section") return tr("Section %1").arg(QString::fromStdString(d.value("name", "")));
   if (op.type == "view") return tr("View %1").arg(QString::fromStdString(d.value("name", "")));
   if (op.type == "delete") {
     const opad::Op* t = m_doc->doc.find_op(d.value("target", ""));
-    return tr("Delete %1").arg(t ? QString::fromStdString(t->type) : shortId(d.value("target", "")));
+    return tr("Delete %1").arg(t ? i18n::t(QString::fromStdString(t->type)) : shortId(d.value("target", "")));
   }
   if (op.type == "sketch" || op.type == "feature") {
     // The name an edit may have changed; the scene has it unless the timeline is rolled back past this op.
@@ -176,7 +176,7 @@ QString TimelineWidget::describe(const opad::Op& op) const {
   if (op.type == "appearance") return tr("Appearance %1").arg(target);
   if (op.type == "transform") return tr("Transform %1").arg(target);
   if (op.type == "reparent") return tr("Reparent %1").arg(target);
-  return QString::fromStdString(op.type);
+  return i18n::t(QString::fromStdString(op.type));  // a newer build's op type stays as written
 }
 
 void TimelineWidget::paintEvent(QPaintEvent*) {
@@ -298,7 +298,7 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                            "<div style='color:%6'>%7 · %8</div>%9<div style='color:%3;font-size:11px'>%10</div></div>")
                        .arg(sw.name(), describe(op).toHtmlEscaped(), t.fg3.name(), theme::mono().family(), shortId(op.id), t.fg2.name(),
                             QString::fromStdString(op.data.value("by", "")).toHtmlEscaped(), i18n::localTime(op.data.value("ts", "")),
-                            target.isEmpty() ? QString() : QString("<div>target %1</div>").arg(target.toHtmlEscaped()),
+                            target.isEmpty() ? QString() : "<div>" + tr("Target: %1").arg(target.toHtmlEscaped()) + "</div>",
                             [&] {
                               const opad::Feature* f = op.type == "feature" ? m_doc->scene.feature(op.id) : nullptr;
                               return f && !f->result.value("rehinted", opad::json::array()).empty() ? QString("<div style='color:%1'>%2</div>").arg(t.amber.name(), tr("a reference was re-picked by its nearest match after its body changed; check it")) : QString();

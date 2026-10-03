@@ -5,6 +5,7 @@
 #include <QCoreApplication>
 #include "SketchPanel.hpp"
 #include "opad/design/sketch_create.hpp"
+#include "I18n.hpp"
 #include <QFont>
 #include <QFontMetricsF>
 #include <QPainterPath>
@@ -42,7 +43,7 @@ void SketchEditor::finishPrimitive() {
     std::vector<std::pair<double,double>> picks;for(const auto& p:m_clicks)picks.push_back({p.u,p.v});
     begin_change();create_primitive(m_sk,m_tool.toStdString(),picks,options);
     if(end_change(tr("Create geometry"))){m_clicks.clear();m_picked.clear();}else if(!m_clicks.empty())m_clicks.pop_back();
-  }catch(const std::exception& e){cancel_change();emit status(QString::fromUtf8(e.what()));if(!m_clicks.empty())m_clicks.pop_back();}
+  }catch(const std::exception& e){cancel_change();emit status(i18n::t(QString::fromUtf8(e.what())));if(!m_clicks.empty())m_clicks.pop_back();}
   toolPrompt();rebuild();
 }
 
@@ -99,7 +100,7 @@ void SketchEditor::createText(double u,double v) {
         }
       }
     });
-  }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
+  }catch(const std::exception& e){emit status(i18n::t(QString::fromUtf8(e.what())));}
 }
 
 void SketchEditor::benchPrimitives() {

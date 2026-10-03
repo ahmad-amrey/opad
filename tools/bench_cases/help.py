@@ -1,4 +1,5 @@
-"""gui_benches cases of the help area (UI-106/107); the benches are in app/HelpBench.cpp, the area in app/HelpArea.cpp."""
+"""gui_benches cases of the help area (UI-106/107/108, UI-116); the benches are in app/HelpBench.cpp, HelpMenuBench.cpp and
+PolishBench.cpp, the area in app/HelpArea.cpp."""
 
 
 def guided(root, document):
@@ -45,4 +46,8 @@ CASES = [
     # UI-108: the coach card of an empty document (coach-box.opad beside it: a document with a body has none).
     ("coach", coach, {"OPAD_BENCH_COACH": "{prefix}"}),
     ("coach-ar", coach, {"OPAD_BENCH_COACH": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-116: view names, hover kinds, the section chip and the timeline's target in the UI's language; undo labels; no
+    # repeated summary in the tool panel; Ctrl+Z takes a feature's picks back; the value echo's own row.
+    ("polish", guided, {"OPAD_BENCH_POLISH": "{prefix}"}),
+    ("polish-ar", guided, {"OPAD_BENCH_POLISH": "{prefix}", "OPAD_LANG": "ar"}),
 ]

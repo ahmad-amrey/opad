@@ -364,6 +364,11 @@ void ToolStepsPanel::setSummary(const QString& title, const QString& subtitle, c
   emit contentSizeChanged();
 }
 
+QStringList ToolStepsPanel::summary() const {
+  if (m_title->parentWidget()->isHidden()) return {};
+  return {m_title->text(), m_subtitle->text(), m_state->text()};
+}
+
 void ToolStepsPanel::setResult(const QList<QPair<QString, QString>>& rows) {
   const Tokens& t = theme::current();
   m_grid->clear();

@@ -176,7 +176,7 @@ NoteCard::NoteCard(const NoteInfo& note, QWidget* parent, AppDocument* doc) : QF
             op = {{"op", "annotation"}, {"anchor", anchor}, {"text", value}, {"reply_to", note.id}};
           } else op = {{"op", "edit"}, {"target", note.id}, {"set", {{"text", value}}}};
           doc->run("append", {{"op", op}});
-        } catch (const std::exception& e) { QMessageBox::warning(nullptr, tr("Note"), QString::fromUtf8(e.what())); }
+        } catch (const std::exception& e) { QMessageBox::warning(nullptr, tr("Note"), i18n::t(QString::fromUtf8(e.what()))); }
       });
     });
   }
@@ -205,7 +205,7 @@ NoteCard::NoteCard(const NoteInfo& note, QWidget* parent, AppDocument* doc) : QF
   if(doc && !note.measurement) {
     auto* remove=new QPushButton(tr("Delete"),this);remove->setObjectName("deleteNote");foot->addWidget(remove);
     connect(remove,&QPushButton::clicked,this,[doc,id=note.id] {
-      QTimer::singleShot(0,doc,[doc,id] {try {doc->run("delete_annotation",{{"target",id}});} catch(const std::exception& e){QMessageBox::warning(nullptr,tr("Delete note"),QString::fromUtf8(e.what()));}});
+      QTimer::singleShot(0,doc,[doc,id] {try {doc->run("delete_annotation",{{"target",id}});} catch(const std::exception& e){QMessageBox::warning(nullptr,tr("Delete note"),i18n::t(QString::fromUtf8(e.what())));}});
     });
   }
   v->addLayout(foot);

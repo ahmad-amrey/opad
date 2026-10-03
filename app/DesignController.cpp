@@ -936,6 +936,46 @@ void DesignController::beginPlanePick() {
   m_planePicker->start(m_positionOrigin,m_openPanel);
 }
 
+// Ctrl+Z while a feature's panel is open (UI-116): the last pick goes, from the input being picked or, when that has none
+// (a one-pick input hands over to the next as soon as it is filled), from the last input before it that has picks. The
+// document's own undo waits until the panel is closed. A plane is picked again with its picker, not taken back.
+bool DesignController::undoPick() {
+  if (!m_featureOn || !m_form->spec() || m_doc->designBusy) return false;
+  auto listed = [this](const QString& name) {
+    opad::json picks = m_form->picks(name);
+    if (picks.is_object()) picks = opad::json::array({picks});
+    return picks.is_array() ? picks : opad::json::array();
+  };
+  QString name = m_form->activeInput();
+  const InputSpec* in = m_form->input(name);
+  if (!in || listed(name).empty()) {
+    in = nullptr;
+    const opad::json inputs = m_form->inputs();
+    for (const InputSpec& spec : m_form->spec()->inputs) {
+      if (QString::fromStdString(spec.name) == name) break;
+      if (spec.type != "plane" && FeaturePanel::isPick(spec.type) && opad::design::input_active(spec, inputs) && !listed(QString::fromStdString(spec.name)).empty()) in = &spec;
+    }
+    if (!in) {
+      emit status(tr("No pick to take back · Esc closes the feature"));
+      return false;
+    }
+    name = QString::fromStdString(in->name);
+    m_form->activate(name);  // its picks become the selection again
+  }
+  if (in->type == "plane") {
+    emit status(tr("Pick the plane again to change it"));
+    return false;
+  }
+  opad::json picks = listed(name);
+  picks.erase(picks.end() - 1);
+  m_form->setPicks(name, picks);
+  m_ruleMatches.erase(name);
+  syncSelectionToInput();
+  schedulePreview();
+  emit status(tr("Took back the last pick of %1 · Ctrl+Z again for the one before").arg(i18n::t(QString::fromStdString(in->label))));
+  return true;
+}
+
 bool DesignController::escape() {
   if(m_pickPlane){
     if(m_planePicker->active())m_planePicker->cancel();

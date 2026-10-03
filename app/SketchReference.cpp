@@ -2,6 +2,7 @@
 #include "Jobs.hpp"
 #include "opad/design/sketch_reference.hpp"
 #include "opad/design/feature.hpp"
+#include "I18n.hpp"
 #include <QCoreApplication>
 #include <QCursor>
 using namespace opad::design;
@@ -41,6 +42,6 @@ bool SketchEditor::applyReference() {
     });
     // Done with that source: the tool asks for the next one (it stayed "ready", and Apply again projected it twice).
     if(!m_previewRequested){m_options.remove("projectionSource");emit workflowChanged();}
-  }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
+  }catch(const std::exception& e){emit status(i18n::t(QString::fromUtf8(e.what())));}
   return true;
 }

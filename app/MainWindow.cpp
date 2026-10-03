@@ -459,7 +459,7 @@ bool MainWindow::maybeSave(std::function<void()> resume) {
       if (m_doc->doc.path.empty()) action("file.saveas")->trigger();
       else m_doc->save();
     } catch (const std::exception& e) {
-      QMessageBox::warning(this, tr("OPAD"), QString::fromUtf8(e.what()));
+      QMessageBox::warning(this, tr("OPAD"), i18n::t(QString::fromUtf8(e.what())));
       return false;
     }
     return !m_doc->isDirty();

@@ -16,6 +16,8 @@
 #include <BRepBndLib.hxx>
 #include <Bnd_Box.hxx>
 
+#include "CommandHelp.hpp"
+#include "HelpClip.hpp"
 #include "I18n.hpp"
 #include "Units.hpp"
 #include "opad/checks.hpp"
@@ -259,16 +261,21 @@ void MainWindow::refreshToolUi() {
   const QString kinds = i18n::t(f == Viewport::SelFilter::Face ? "Faces" : f == Viewport::SelFilter::Edge ? "Edges" : f == Viewport::SelFilter::Vertex ? "Vertices" : "Bodies");
   m_toolPanel->setContext(tr("%1 · %2 of %3").arg(kinds.toLower()).arg(picked).arg(m_tool.steps));
   m_toolSteps->setSteps(steps, m_toolHover);
-  const QString waiting = picked < steps.size() ? steps[picked].label : tr("Measuring…");
-  QString explanation = waiting;
-  if (done) {
+  // While picks are asked for, the steps above (and the guide's clip) say what to do: the summary under them is the
+  // tool's one sentence when no guide plays, never the header and the waiting step again (UI-116). Done: the result.
+  QString explanation;
+  if (!done) {
+    const QString command = "inspect." + m_tool.id;
+    const CommandHelp* h = help::find(command);
+    explanation = (ToolGuide::enabled() && clips::has(command)) || !h ? QString() : h->summary;
+  } else {
     if (m_tool.id == "distance" && m_lastMeasure.contains("anchors")) explanation = tr("Click an anchor marker to move that measurement point. Edges stay selected until Esc or Clear. Choose a preset pair below.");
     else if (m_tool.id == "distance") explanation = tr("Shortest distance between the selections. Δ = point 2 − point 1 in world axes.");
     else if (m_tool.id == "angle") explanation = tr("Directions compared at a common origin. Planar faces use their normals; curved faces use their axes.");
     else if (m_tool.id == "radius") explanation = tr("Radius from the center or cylinder axis to the surface.");
     else explanation = tr("Bounding box aligned with the world X, Y and Z axes.");
   }
-  m_toolSteps->setSummary(m_tool.title, explanation, done && !m_doc->browse ? tr("unpinned") : QString());
+  m_toolSteps->setSummary(done ? m_tool.title : QString(), explanation, done && !m_doc->browse ? tr("unpinned") : QString());
   QStringList anchorLabels;
   int anchorIndex = 0;
   if (done && m_lastMeasure.contains("anchors")) {

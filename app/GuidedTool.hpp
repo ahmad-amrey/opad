@@ -54,6 +54,7 @@ class ToolStepsPanel : public QWidget {
   explicit ToolStepsPanel(QWidget* parent = nullptr);
   void setSteps(const QList<ToolStep>& steps, const QString& hover);  // hover: candidate under the mouse, shown in the waiting row
   void setSummary(const QString& title, const QString& subtitle, const QString& state);
+  QStringList summary() const;  // title, subtitle and state as shown (empty while the summary is hidden)
   void setResult(const QList<QPair<QString, QString>>& rows);  // empty: nothing to show yet
   void setFooter(bool visible, bool canPin);
   void setComponentsState(bool visible, bool checked);

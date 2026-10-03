@@ -103,7 +103,9 @@ class FeaturePanel : public QWidget {
   void refreshVisibility();
   void refreshNewBody();
   bool makesCopies() const;
-  static bool isPick(const std::string& type);
+ public:
+  static bool isPick(const std::string& type);  // an input picked in the view (bodies, faces, edges, profiles, ...)
+ private:
   AppDocument* m_doc;
   const opad::design::FeatureSpec* m_spec = nullptr;
   bool m_editingFeature = false;
@@ -115,6 +117,8 @@ class FeaturePanel : public QWidget {
   QPushButton* m_bodyColourReset = nullptr;
   QComboBox* m_bodyParent = nullptr;
   QColor m_colour;  // invalid: automatic
+  class QScrollArea* m_scroll;
+  QWidget* m_form;  // everything above the footer, in m_scroll
   QLineEdit* m_name;
   QLabel* m_hint;
   ToolGuide* m_guide;

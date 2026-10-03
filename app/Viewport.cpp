@@ -3,6 +3,7 @@
 #include <TopExp_Explorer.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
+#include "I18n.hpp"
 #include "Units.hpp"
 #include "opad/mesh.hpp"
 #include <V3d_DirectionalLight.hxx>
@@ -1969,7 +1970,7 @@ void Viewport::paintEvent(QPaintEvent*) {
         const TopoDS_Shape& sub = owner->Shape();
         const char* kind = sub.ShapeType() == TopAbs_FACE ? "face" : sub.ShapeType() == TopAbs_EDGE ? "edge" : "vertex";
         Handle(SubShapeOwner) mine = Handle(SubShapeOwner)::DownCast(owner);
-        hover += QString::fromUtf8(" › %1 %2").arg(kind).arg(mine.IsNull() ? opad::subshape_index(Handle(AIS_Shape)::DownCast(obj)->Shape(), sub) : mine->index());
+        hover += QString::fromUtf8(" › %1 %2").arg(i18n::t(kind)).arg(mine.IsNull() ? opad::subshape_index(Handle(AIS_Shape)::DownCast(obj)->Shape(), sub) : mine->index());
         if(!mine.IsNull()) {
           opad::Ref ref; ref.body=it->second; ref.kind=Handle(CircleOwner)::DownCast(mine).IsNull()?opad::Ref::Kind::Edge:opad::Ref::Kind::Center; ref.index=mine->index();
           if(sub.ShapeType()==TopAbs_EDGE || ref.kind==opad::Ref::Kind::Center) {

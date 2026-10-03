@@ -142,7 +142,7 @@ void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
     m_props->showEntity(title, subtitle, id, j);
     if (r.kind == opad::Ref::Kind::Body && node && !node->body_missing) showNodeGeometry(r.body, title, subtitle, id);
   } catch (const std::exception& e) {
-    m_props->showEntity(tr("Error"), QString::fromUtf8(e.what()), QString(), opad::json::object());
+    m_props->showEntity(tr("Error"), i18n::t(QString::fromUtf8(e.what())), QString(), opad::json::object());
   }
 }
 

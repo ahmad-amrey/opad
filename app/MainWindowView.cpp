@@ -39,8 +39,10 @@ void MainWindow::buildViewActions() {
   });
   addAction("view.rollleft", tr("Turn 90° left"), "rollLeft", QKeySequence("Alt+Left"), [this] { m_viewport->rollView(90); });
   addAction("view.rollright", tr("Turn 90° right"), "rollRight", QKeySequence("Alt+Right"), [this] { m_viewport->rollView(-90); });
-  for (const auto& [name, key] : std::vector<std::pair<QString, QString>>{{"top", "Shift+Up"}, {"front", "Shift+PgUp"}, {"right", "Shift+Right"}, {"iso", "Shift+H"}, {"bottom", "Shift+Down"}, {"back", "Shift+PgDown"}, {"left", "Shift+Left"}})
-    addAction("view." + name, tr("View: %1").arg(name), "home", QKeySequence(key), [this, n = name] { m_viewport->standardView(n); });
+  for (const auto& [name, key, label] : std::vector<std::tuple<QString, QString, QString>>{
+           {"top", "Shift+Up", tr("Top view")}, {"front", "Shift+PgUp", tr("Front view")}, {"right", "Shift+Right", tr("Right view")}, {"iso", "Shift+H", tr("Isometric view")},
+           {"bottom", "Shift+Down", tr("Bottom view")}, {"back", "Shift+PgDown", tr("Back view")}, {"left", "Shift+Left", tr("Left view")}})
+    addAction("view." + name, label, "home", QKeySequence(key), [this, n = name] { m_viewport->standardView(n); });
   auto* flat = addAction("view.2d",tr("2D mode"),"drawing",QKeySequence("Shift+2"),[this]{},true);
   flat->setObjectName("view.2d");
   flat->setCheckable(true);
@@ -239,7 +241,7 @@ void MainWindow::updateChips() {
     opad::Vec3 o = m_section->origin(), n = m_section->normal();
     int axis = std::fabs(n[0]) > 0.9 ? 0 : std::fabs(n[1]) > 0.9 ? 1 : 2;
     const char axes[] = {'X', 'Y', 'Z'};
-    section = QString("Section %1 = %2").arg(axes[axis]).arg(units::format(units::Kind::Length, o[axis]));
+    section = tr("Section %1 = %2").arg(axes[axis]).arg(units::format(units::Kind::Length, o[axis]));
   }
   m_chips->set(mode, proj, section, m_viewport->isIsolated() ? tr("Isolated · %1 bodies").arg(m_viewport->isolatedCount()) : QString(),
                action("view.2d")->isChecked());

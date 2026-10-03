@@ -19,6 +19,7 @@ void MainWindow::buildEditActions() {
   addAction("edit.undo", tr("&Undo"), "rollLeft", QKeySequence::Undo, [this] {
     if (m_annotationEditor) return m_annotationEditor->undo();  // its strokes; the document waits for Save
     if (m_design->sketchActive()) return m_design->sketch()->undo();  // a sketch has its own history until it is finished
+    if (m_design->featureActive()) return (void)m_design->undoPick();  // a feature's panel: its last pick (UI-116)
     if (m_design->ownsSelection() || m_design->busy()) return;
     m_doc->undo();
   });
@@ -167,6 +168,11 @@ void MainWindow::updateUndoActions() {
     const auto* sketch=m_design->sketch();
     u->setEnabled(sketch->canUndo());r->setEnabled(sketch->canRedo());
     u->setText(tr("&Undo"));r->setText(tr("&Redo"));
+  } else if (m_design && m_design->featureActive()) {  // a feature's panel: Undo takes back its last pick (UI-116)
+    u->setEnabled(true);
+    r->setEnabled(false);
+    u->setText(tr("&Undo last pick"));
+    r->setText(tr("&Redo"));
   } else {
     u->setEnabled(m_doc->hasDocument && m_doc->canUndo());
     r->setEnabled(m_doc->hasDocument && m_doc->canRedo());

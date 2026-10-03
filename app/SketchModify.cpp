@@ -8,6 +8,7 @@
 #include "opad/design/sketch_modify.hpp"
 #include "opad/design/sketch_pattern.hpp"
 #include "opad/design/sketch_edit.hpp"
+#include "I18n.hpp"
 #include <cmath>
 #include <set>
 
@@ -120,7 +121,7 @@ bool SketchEditor::applyModify() {
       if(m_tool=="scale")transform.scale=table.number(option("scale","2").toStdString());
       runSketchEdit(tr("Transform geometry"),[ids,transform,copy](Sketch& sk){transform_entities(sk,ids,transform,copy);});
     }
-  }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
+  }catch(const std::exception& e){emit status(i18n::t(QString::fromUtf8(e.what())));}
   return true;
 }
 
