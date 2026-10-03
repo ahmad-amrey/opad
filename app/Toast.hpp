@@ -1,8 +1,8 @@
 #pragma once
 // Toasts (UI-120 d): short results and warnings at the bottom centre of the viewport that go away by themselves, with at
 // most one action ("Undo", "Open folder", "Show") whose callback runs when it is clicked. Each toast is a native child of
-// the viewport (over the OCCT surface like the chips row), not a top-level window: it moves and hides with the view and
-// never takes the focus. The newest is lowest; at most kMax show, the oldest goes first. Hovering one holds its timer.
+// the viewport (over the OCCT surface like the chips row) or of the page an area shows in its place, not a top-level
+// window: it moves and hides with the view and never takes the focus. The newest is lowest; at most kMax show, the oldest goes first. Hovering one holds its timer.
 // Colours come from the theme's stylesheet (QFrame#toast), so a theme switch restyles the ones showing; a right-to-left
 // UI mirrors them (text right, action and close left).
 //   m_toasts->toast(text, undoLabel, [this] { m_doc->undo(); });  // text, undoLabel: translated
@@ -49,6 +49,9 @@ class ToastStack : public QObject {
   QList<Toast*> toasts() const;  // showing, oldest first
   void clear();
   void place();  // bottom centre of the host, newest lowest, 8 px apart
+  // The widget they show over: the viewport, or the page an area shows in its place (the sheet canvas); those showing move.
+  void setHost(QWidget* host);
+  QWidget* host() const { return m_host; }
   static constexpr int kMax = 3, kMargin = 16, kGap = 8, kMaxWidth = 480;
  protected:
   bool eventFilter(QObject* o, QEvent* e) override;

@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMouseEvent>
+#include <QPointer>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QTabBar>
@@ -25,6 +26,7 @@
 #include "SheetDialogs.hpp"
 #include "SheetPage.hpp"
 #include "TemplateFields.hpp"
+#include "Toast.hpp"
 #include "opad/cache.hpp"
 #include "opad/drawing/sheet.hpp"
 
@@ -88,6 +90,14 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
     check(w.workspaceId() == "drawings" && w.m_stack->currentWidget() == page && page->empty(), "Ctrl+3 shows the Drawings workspace's page with its start card");
     check(w.m_ribbon->tabIds().contains("drawings.drawing") && w.action("workspace.drawings")->shortcut() == QKeySequence("Ctrl+3"), "its ribbon tab and Ctrl+3");
     page->grab().save(prefix + ".empty.png");
+    {  // toasts show over the page in the viewport's place (the window's notices, the areas' results)
+      QPointer<Toast> t = w.m_toasts->toast("Bench toast");
+      QCoreApplication::processEvents();
+      check(t && t->parentWidget() == page && t->isVisible() && std::abs(t->geometry().center().x() - page->rect().center().x()) <= 1 &&
+                t->geometry().bottom() < page->rect().bottom(),
+            "a toast shows over the Drawings page, bottom centre");
+      if (t) t->dismiss();
+    }
 
     // New drawing… through its dialog.
     w.action("drawings.new")->trigger();
@@ -412,7 +422,7 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
     // Back to Design: the viewport again.
     w.action("workspace.design")->trigger();
     QCoreApplication::processEvents();
-    check(w.m_stack->currentWidget() == w.m_viewport, "Design brings the viewport back");
+    check(w.m_stack->currentWidget() == w.m_viewport && w.m_toasts->host() == w.m_viewport, "Design brings the viewport back (the toasts with it)");
   } catch (const std::exception& e) {
     check(false, QString("bench: %1").arg(QString::fromUtf8(e.what())));
   }

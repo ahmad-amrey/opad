@@ -299,6 +299,7 @@ void MainWindow::showCentral() {
   QWidget* page = m_loadShown ? m_viewport : !m_doc->hasDocument ? static_cast<QWidget*>(m_empty) : m_centralPage ? m_centralPage : m_viewport;
   m_stack->setCurrentWidget(page);
   if (m_browserOverlay) m_browserOverlay->setScene(page == m_empty ? m_viewport : page);
+  if (m_toasts) m_toasts->setHost(page);  // over whatever is shown (the sheet canvas too)
 }
 
 bool MainWindow::eventFilter(QObject* o, QEvent* e) {
