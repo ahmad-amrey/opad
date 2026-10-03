@@ -236,6 +236,7 @@ void AssetMonitor::rescan() {
 }
 
 void AssetMonitor::documentChanged(bool replaced) {
+  trace::Scope scope("AssetMonitor::documentChanged");
   const std::string before = m_signature;
   const std::set<std::string> staleBefore = m_stale;
   rescan();
