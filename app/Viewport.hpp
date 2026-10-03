@@ -229,6 +229,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // them hands the arrays to the driver. previewSegments() counts what the preview draws.
   void setPreviewCurves(std::shared_ptr<const BodyPrs> curves,std::shared_ptr<const BodyPrs> construction,const std::vector<std::string>& hidden);
   size_t previewSegments() const;
+  size_t previewParts() const { return m_previewBodies.size(); }
   void showBackdrop(const Handle(AIS_InteractiveObject)& obj);
   opad::json sectionState() const;
   void restoreSection(const opad::json& state);

@@ -265,7 +265,21 @@ void MainWindow::drawingToSketch() {
     trace::log("bench: drawing frame taken from the drawing PASS");
     panel->grab().save(shot);m_prompt->grab().save(shot+".prompt.png");
     if(const auto expected=qEnvironmentVariable("OPAD_BENCH_WIZARD_PREVIEW");!expected.isEmpty()) benchPreview(shot+".preview.png",expected.toULongLong());
-    else if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")){removeSource->setChecked(true);convert(true);}else{panel->hide();QCoreApplication::exit(0);}
+    else if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")) {
+      // The last layer as construction only: previewed dashed beside the others (UI-29), then the sketch is created.
+      tree->topLevelItem(tree->topLevelItemCount()-1)->setCheckState(1,Qt::Checked); preview->setChecked(true);
+      auto* wait=new QTimer(dialog); wait->setInterval(50); auto ticks=std::make_shared<int>(0);
+      connect(wait,&QTimer::timeout,dialog,[=,this] {
+        if(!m_viewport->previewSegments() && ++*ticks<200) return;
+        wait->stop();
+        const bool shown=m_viewport->previewSegments()>4 && m_viewport->previewParts()==2;
+        trace::log(QString("bench: drawing preview with a construction layer: %1 segments in %2 parts %3").arg(m_viewport->previewSegments()).arg(m_viewport->previewParts()).arg(shown?"PASS":"FAIL"));
+        m_viewport->grabImage().save(shot+".preview.png");
+        if(!shown){panel->hide();QCoreApplication::exit(2);return;}
+        preview->setChecked(false); removeSource->setChecked(true); convert(true);
+      });
+      wait->start();
+    } else{panel->hide();QCoreApplication::exit(0);}
   });
 }
 
