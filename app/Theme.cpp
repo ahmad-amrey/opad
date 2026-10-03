@@ -160,7 +160,7 @@ QString stylesheet(const Tokens& t) {
   s += QString("QCheckBox { spacing: 8px; } QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid %1; border-radius: 3px; background: %2; }\n"
                "QCheckBox::indicator:checked { background: %3; border-color: %4; }\n"
                "QRadioButton::indicator { width: 14px; height: 14px; border: 1px solid %1; border-radius: 7px; background: %2; }\n"
-               "QRadioButton::indicator:checked { background: %4; border: 3px solid %2; }\n").arg(line, bg2, selbg, sel);
+               "QRadioButton::indicator:checked { width: 10px; height: 10px; background: %4; border: 3px solid %2; }\n").arg(line, bg2, selbg, sel);
   s += QString("QProgressBar { background: %1; border: none; border-radius: 2px; }\n"
                "QProgressBar::chunk { background: %2; border-radius: 2px; }\n").arg(bg4, sel);
   s += QString("QLabel#progressTitle { color: %1; font-weight: 500; }\n"
