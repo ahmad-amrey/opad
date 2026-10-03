@@ -57,6 +57,7 @@ def main():
             ("sketch-grid", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_GRID": "{prefix}"}),
             ("sketch-ladder", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_LADDER": "{prefix}"}),
             ("sketch-keys", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_KEYS": "{prefix}"}),
+            ("sketch-shapes", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_SHAPES": "{prefix}"}),
             ("leave", box, {"OPAD_BENCH_LEAVE": "1"}),
             ("two-d", box, {"OPAD_BENCH_TWOD": "{prefix}.png"}),
             ("instances", box, {"OPAD_BENCH_INSTANCES": "1"}),

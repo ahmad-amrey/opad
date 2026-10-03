@@ -39,5 +39,19 @@
  "Enter apply": "Enter تطبيق",
  "∠ X axis": "∠ المحور X",
  "∠ last line": "∠ الخط الأخير",
- "Typed first: # X and Y · @ ΔX and ΔY from the last point · 30<45 length and angle": "اكتب أولًا: # لـ X وY · @ لـ ΔX وΔY من آخر نقطة · 30<45 للطول والزاوية"
+ "Typed first: # X and Y · @ ΔX and ΔY from the last point · 30<45 length and angle": "اكتب أولًا: # لـ X وY · @ لـ ΔX وΔY من آخر نقطة · 30<45 للطول والزاوية",
+ "Typed first: # X and Y · @ ΔX and ΔY from the last point": "اكتب أولًا: # لـ X وY · @ لـ ΔX وΔY من آخر نقطة",
+ "R": "نق",
+ "Ø": "Ø",
+ "Major radius": "نصف القطر الأكبر",
+ "Minor radius": "نصف القطر الأصغر",
+ "Across flats": "بين الأضلاع المتقابلة",
+ "Start angle": "زاوية البداية",
+ "Sides": "الأضلاع",
+ "Rho": "Rho",
+ "a size must not be zero": "لا يمكن أن يكون المقاس صفرًا",
+ "the radius is less than half the distance between the ends": "نصف القطر أقل من نصف المسافة بين الطرفين",
+ "Typed values become dimensions": "القيم المكتوبة تصبح أبعادًا",
+ "A length, size or angle typed while drawing stays as a driving dimension (an axis angle as horizontal or vertical)": "يبقى الطول أو المقاس أو الزاوية المكتوبة أثناء الرسم بُعدًا حاكمًا (وزاوية المحور قيدَ أفقي أو رأسي)",
+ "Sweep angle": "زاوية القوس"
 }

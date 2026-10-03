@@ -27,13 +27,15 @@ inline int cycle(int current, int count, bool back) {
 enum class Comma { NextBox, Decimal };
 inline Comma comma(int count) { return count > 1 ? Comma::NextBox : Comma::Decimal; }
 
-// How the next point is typed: X and Y in the sketch (absolute), ΔX and ΔY from the last point (relative), or a length and
-// an angle from it (polar, how a polyline goes on). As typed in AutoCAD a prefix or a separator switches: '#' first is
-// absolute, '@' first relative, a comma after a length makes it ΔX (then ΔY), '<' after a number goes on to an angle.
-// What a key does to the entry (`box` the box it is typed into, `empty` that box, `base` a last point to measure from):
+// How the next point is typed: X and Y in the sketch (absolute), ΔX and ΔY from the last point (relative), a length and
+// an angle from it (polar, how a polyline goes on), or the shape's own sizes (UI-17: a rectangle's width and height, a
+// circle's diameter, a slot's width). As typed in AutoCAD a prefix or a separator switches: '#' first is absolute, '@'
+// first relative, a comma after a length makes it ΔX (then ΔY), '<' after a number goes on to an angle (the shape's next
+// size). What a key does to the entry (`box` the box it is typed into, `empty` that box, `base` a last point to measure
+// from):
 //   Type: an ordinary key (a comma: the rule above), Swallow: dropped (never part of a value), Next: the next box,
 //   Switch: to the entry `to` with empty boxes, Carry: to `to` with the first box's text kept; then box `focus` is typed.
-enum class Entry { Absolute, Relative, Polar };
+enum class Entry { Absolute, Relative, Polar, Shape };
 enum class Turn { Type, Swallow, Next, Switch, Carry };
 struct EntryKey { Turn turn = Turn::Type; Entry to = Entry::Absolute; int focus = 0; };
 inline bool entryChar(char32_t c) { return c == U'@' || c == U'#' || c == U'<'; }
@@ -43,7 +45,7 @@ inline EntryKey entryKey(Entry entry, int box, bool empty, char32_t c, bool base
   if (c == U'@') return first && empty && base && entry != Entry::Relative ? EntryKey{Turn::Switch, Entry::Relative, 0} : EntryKey{Turn::Swallow};
   if (c == U'<') {
     if (!first || empty || !base) return {Turn::Swallow};
-    return entry == Entry::Polar ? EntryKey{Turn::Next, Entry::Polar, 1} : EntryKey{Turn::Carry, Entry::Polar, 1};
+    return entry == Entry::Polar || entry == Entry::Shape ? EntryKey{Turn::Next, entry, 1} : EntryKey{Turn::Carry, Entry::Polar, 1};
   }
   if (c == U',' && entry == Entry::Polar && first && !empty) return {Turn::Carry, Entry::Relative, 1};
   return {};

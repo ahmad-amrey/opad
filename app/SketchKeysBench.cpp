@@ -316,7 +316,8 @@ void SketchEditor::benchKeys() {
         check(held(350, 40), "ΔX 50, the pointer's ΔY " + where());
         m_viewport->setFocus();  // the keyboard back on the view: Esc there drops the typed values and the @ with them
         send(Qt::Key_Escape);
-        check(m_input->key(0) == "x" && !m_input->typed() && m_clicks.size() == 1 && m_cursor.kind != Snap::Kind::Typed, "Esc drops ΔX and goes back to X and Y, the corner stays");
+        check(m_input->key(0) == "width" && !m_input->typed() && m_clicks.size() == 1 && m_cursor.kind != Snap::Kind::Typed,
+              "Esc drops ΔX and goes back to the rectangle's width and height (UI-17), the corner stays");
         type("@50");
         send(Qt::Key_Tab);
         type("20");

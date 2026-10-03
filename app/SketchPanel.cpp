@@ -134,6 +134,11 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
     check->setChecked(QSettings().value("sketch/snap/"+key,true).toBool());
     connect(check,&QCheckBox::toggled,this,[key](bool on){QSettings().setValue("sketch/snap/"+key,on);});
   }
+  // A size or an angle typed while drawing holds what it made (UI-17).
+  auto* keep=new QCheckBox(tr("Typed values become dimensions"),this);keep->setObjectName("input-addDimensions");settings->addWidget(keep);
+  keep->setToolTip(tr("A length, size or angle typed while drawing stays as a driving dimension (an axis angle as horizontal or vertical)"));
+  keep->setChecked(QSettings().value("sketch/input/addDimensions",true).toBool());
+  connect(keep,&QCheckBox::toggled,this,[](bool on){QSettings().setValue("sketch/input/addDimensions",on);});
   auto* advanced=new QFormLayout;settings->addLayout(advanced);
   auto* angle=new QDoubleSpinBox(this);angle->setRange(1,90);angle->setValue(QSettings().value("sketch/angleStep",15).toDouble());advanced->addRow(tr("Angle step"),angle);
   connect(angle,&QDoubleSpinBox::valueChanged,this,[](double v){QSettings().setValue("sketch/angleStep",v);});

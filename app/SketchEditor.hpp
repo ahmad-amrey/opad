@@ -100,6 +100,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchGrid();
   void benchLadder();
   void benchKeys();
+  void benchShapes();
   void benchLarge(const QString& output, opad::json metrics);
 
   // SketchInput
@@ -125,7 +126,8 @@ class SketchEditor : public QObject, public SketchInput {
   opad::design::SolveOptions solveOptions() const;
   bool selectable(int id) const;
   void runSketchEdit(const QString& label,std::function<void(opad::design::Sketch&)> work);
-  bool primitiveClick(double u,double v);
+  struct Snap;
+  bool primitiveClick(const Snap& s);
   void finishPrimitive();
   opad::design::Sketch primitivePreview() const;
   opad::json primitiveOptions() const;
@@ -142,6 +144,7 @@ class SketchEditor : public QObject, public SketchInput {
     enum class Kind { None, Point, Midpoint, Quadrant, Intersection, Curve, Extension, Aligned, Cross, Angle, Locked, Grid, Typed } kind = Kind::None;
     int target = 0, other = 0;  // the point (Point, Aligned, Angle), the crossing guides' points (Cross) or the curves (the others)
     int curve = 0;  // Cross: the curve a guide crosses there
+    std::map<QString, std::pair<double, QString>> typed;  // the values typed for this click (mm, radians; as typed)
   };
   struct Hit {
     enum Kind { None, Point, Entity, Dimension } kind = None;
@@ -156,6 +159,7 @@ class SketchEditor : public QObject, public SketchInput {
   bool typingKey(const QKeyEvent* e) const;
   bool appliesOnEnter() const;  // an option tool with what it applies to picked: Enter applies
   bool useTyped(const Snap* at = nullptr);
+  bool pointTyped() const;  // a value typed that places the next point (not only an option of the tool)
   void updateInput();
   inputkeys::Entry entry() const;
   QString inputStep() const;                         // the step that waits: a chosen entry lasts while it does
@@ -165,6 +169,35 @@ class SketchEditor : public QObject, public SketchInput {
   Snap typedPoint(const Snap& pointer) const;        // where the next point goes: the typed values, the pointer the rest
   bool entryKey(int box, QChar c);                   // DynamicInput's key hook
   void forgetTyped();
+  // A shape's own sizes (UI-17): the step's boxes (a rectangle's width and height after its first corner, a slot's width
+  // after its centres), where they put the click, and what the click made keeps them as driving dimensions (setting
+  // sketch/input/addDimensions, on by default) in the shape's own undo step. The rubber band reads them out as it goes.
+  bool shaped() const;                                // the step that waits takes the shape's sizes
+  QList<DynamicInput::Field> shapeFields() const;
+  bool shapePoint(const Snap& pointer, double& u, double& v) const;
+  int keepTyped(const Snap& s, const char* key, opad::design::SkConstraint::Type type, std::vector<int> refs, double scale = 1);  // 0: none
+  void labelOff(int id, int line, double u, double v, double offset);  // its value beside the line, away from (u, v)
+  void labelAt(int id, double u, double v);
+  // A typed angle (`angle` the direction it made, radians from X): horizontal or vertical (`axis`: a line, or two points),
+  // else against the line before (`line` after `previous`).
+  void keepDirection(const Snap& s, const char* key, std::vector<int> axis, double angle, int line = 0, int previous = 0);
+  int pointAt(double u, double v) const;              // an existing point exactly there (typed values land on it)
+  bool tangentStart(double& u, double& v, double& tu, double& tv) const;  // a tangent arc's line end and the way it leaves it
+  std::vector<std::pair<double, double>> filletPreview(int corner) const;  // the fillet's arc at a corner (empty: none fits)
+  double unitLength() const;                          // mm in one unit of the document
+  // A size or an angle the rubber band reads out, at (u, v); an angle's arc about (cu, cv) of radius r > 0 from the direction
+  // `from` through `sweep`, a size's leader from (fu, fv) to (tu, tv) where the rubber band does not draw it already.
+  struct Readout {
+    double u = 0, v = 0;
+    QString text;
+    bool locked = false;  // typed: it holds
+    double ox = 0, oy = 1, ext = 0;  // the way it sits off what it measures, how far it reaches that way (its padlock beyond)
+    double cu = 0, cv = 0, r = 0, from = 0, sweep = 0;
+    bool leader = false;
+    double fu = 0, fv = 0, tu = 0, tv = 0;
+  };
+  std::vector<Readout> readouts() const;
+  QStringList transientTexts() const;                 // what the rubber band reads out (benches)
   Hit hitTest(double u, double v) const;
   double tol() const;  // pick distance in sketch units
   int pointFor(const Snap& s);           // reuse or create (with the on-curve constraint)
@@ -264,6 +297,7 @@ class SketchEditor : public QObject, public SketchInput {
   std::optional<inputkeys::Entry> m_entry;  // switched by a prefix, for the step m_entryStep
   QString m_entryStep;
   bool m_angleRelative = false;  // setting sketch/input/angleRelative: a polyline's typed angles from its last segment
+  bool m_circleRadius = false;   // setting sketch/input/circleRadius: a circle's box takes its radius, not its diameter
   int m_trackingPoint = 0;
   bool m_inferenceLocked = false;
   double m_lockX = 0, m_lockY = 0, m_lockDx = 1, m_lockDy = 0;

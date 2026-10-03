@@ -62,6 +62,15 @@ TEST(prefixes_and_separators_switch_how_a_point_is_typed) {
   CHECK(entryKey(Entry::Absolute, 0, false, U'<', false).turn == Turn::Swallow);
   CHECK(entryKey(Entry::Polar, 0, true, U'<', true).turn == Turn::Swallow);
   CHECK(entryKey(Entry::Absolute, 0, false, U'5', true).turn == Turn::Type);
+  // A shape's sizes (UI-17: a rectangle's width and height): '#' and '@' switch to the point's boxes, '<' after the first
+  // size goes on to the next, a comma is the ordinary one (the next box).
+  k = entryKey(Entry::Shape, 0, true, U'#', true);
+  CHECK(k.turn == Turn::Switch && k.to == Entry::Absolute);
+  k = entryKey(Entry::Shape, 0, true, U'@', true);
+  CHECK(k.turn == Turn::Switch && k.to == Entry::Relative);
+  k = entryKey(Entry::Shape, 0, false, U'<', true);
+  CHECK(k.turn == Turn::Next && k.to == Entry::Shape && k.focus == 1);
+  CHECK(entryKey(Entry::Shape, 0, false, U',', true).turn == Turn::Type);
 }
 
 TEST(esc_undoes_the_edit_then_the_typed_values_then_is_the_tools) {

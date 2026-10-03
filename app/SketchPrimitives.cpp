@@ -14,9 +14,17 @@ using namespace opad::design;
 namespace {
 const QStringList variants={"rect3","circle2","tangent_circle","tangent_arc","cslot","arcslot","polygon_outer","control_spline","conic","text"};
 int picksNeeded(const QString& kind){return kind=="circle2"||kind=="polygon_outer"||kind=="tangent_arc"?2:kind=="text"?1:3;}
+// The clicks as picks; an arc slot runs counter-clockwise from its second pick to its third, so a sweep typed negative
+// (clockwise) swaps them.
+std::vector<std::pair<double,double>> picksOf(const QString& kind,const std::vector<std::pair<double,double>>& clicks,double sweep) {
+  auto picks=clicks;
+  if(kind=="arcslot" && picks.size()==3 && sweep<0)std::swap(picks[1],picks[2]);
+  return picks;
+}
 }
 
-bool SketchEditor::primitiveClick(double u,double v) {
+bool SketchEditor::primitiveClick(const Snap& s) {
+  const double u=s.u,v=s.v;
   if(!variants.contains(m_tool))return false;
   if(m_tool=="text"){createText(u,v);return true;}
   if(m_tool=="tangent_circle" && m_picked.size()<2) {
@@ -30,7 +38,7 @@ bool SketchEditor::primitiveClick(double u,double v) {
     for(const auto& e:m_sk.entities)if(e.type==SkEntity::Type::Line && (h.id==e.id || std::find(e.p.begin(),e.p.end(),h.id)!=e.p.end())){m_picked={e.id};break;}
     if(m_picked.empty()){emit status(tr("Pick the end of a straight line first."));return true;}
   }
-  m_clicks.push_back({u,v});
+  m_clicks.push_back(s);  // with its typed values
   if(m_tool!="control_spline" && int(m_clicks.size())>=(m_tool=="tangent_circle"?1:picksNeeded(m_tool)))finishPrimitive();
   toolPrompt();rebuild();return true;
 }
@@ -40,7 +48,31 @@ void SketchEditor::finishPrimitive() {
   try {
     const auto options=primitiveOptions();
     std::vector<std::pair<double,double>> picks;for(const auto& p:m_clicks)picks.push_back({p.u,p.v});
-    begin_change();create_primitive(m_sk,m_tool.toStdString(),picks,options);
+    const auto sweep=m_clicks.back().typed.find("sweep");
+    begin_change();const auto made=create_primitive(m_sk,m_tool.toStdString(),picksOf(m_tool,picks,sweep==m_clicks.back().typed.end()?0:sweep->second.first),options);
+    // The typed sizes kept as dimensions (UI-17), on what create_primitive made, in its order.
+    const Snap& second=m_clicks[std::min<size_t>(1,m_clicks.size()-1)];const Snap& last=m_clicks.back();
+    auto direction=[&](int a,int b){const auto *p=m_sk.point(a),*q=m_sk.point(b);return std::atan2(q->y-p->y,q->x-p->x);};
+    const double px=m_viewport->pixelSize();
+    if(m_tool=="rect3" && made.size()>=4) {
+      const auto* base=m_sk.entity(made[0]);const auto *a=m_sk.point(base->p[0]),*c=m_sk.point(m_sk.entity(made[1])->p[1]);
+      const double mu=(a->x+c->x)/2,mv=(a->y+c->y)/2;
+      labelOff(keepTyped(second,"length",SkConstraint::Type::Distance,{made[0]}),made[0],mu,mv,24*px);keepDirection(second,"angle",{made[0]},direction(base->p[0],base->p[1]));
+      labelOff(keepTyped(last,"height",SkConstraint::Type::Distance,{made[1]}),made[1],mu,mv,24*px);
+    } else if(m_tool=="circle2" && !made.empty())keepTyped(second,"diameter",SkConstraint::Type::Diameter,{made[0]});
+    else if(m_tool=="tangent_arc" && !made.empty())keepTyped(last,"radius",SkConstraint::Type::Radius,{made[0]});
+    else if(m_tool=="polygon_outer" && made.size()>=4) {  // across flats: two opposite sides, or (an odd count) the centre to a side
+      const size_t sides=made.size()-1;const auto* guide=m_sk.entity(made.back());
+      if(sides%2==0)keepTyped(second,"diameter",SkConstraint::Type::Distance,{made[0],made[sides/2]});
+      else keepTyped(second,"diameter",SkConstraint::Type::Distance,{guide->p[0],made[0]},0.5);
+    } else if(m_tool=="cslot" && made.size()>=4) {
+      const int c1=m_sk.entity(made[2])->p[0],c2=m_sk.entity(made[3])->p[0];const auto *p=m_sk.point(c1),*q=m_sk.point(c2);
+      const double r=std::hypot(m_sk.point(m_sk.entity(made[2])->p[1])->x-p->x,m_sk.point(m_sk.entity(made[2])->p[1])->y-p->y),l=std::max(1e-12,std::hypot(q->x-p->x,q->y-p->y));
+      const double ux=(q->x-p->x)/l,uy=(q->y-p->y)/l;
+      labelAt(keepTyped(second,"length",SkConstraint::Type::Distance,{c1,c2}),(p->x+q->x)/2-uy*(r+20*px),(p->y+q->y)/2+ux*(r+20*px));  // above it
+      keepDirection(second,"angle",{c1,c2},direction(c1,c2));
+      labelAt(keepTyped(last,"width",SkConstraint::Type::Distance,{made[0],made[1]}),p->x-ux*(r+30*px),p->y-uy*(r+30*px));  // past the first cap
+    }
     if(end_change(tr("Create geometry"))){m_clicks.clear();m_picked.clear();}else if(!m_clicks.empty())m_clicks.pop_back();
   }catch(const std::exception& e){cancel_change();emit status(QString::fromUtf8(e.what()));if(!m_clicks.empty())m_clicks.pop_back();}
   toolPrompt();rebuild();
@@ -61,10 +93,14 @@ opad::json SketchEditor::primitiveOptions() const {
 
 Sketch SketchEditor::primitivePreview() const {
   Sketch preview;
-  if(!variants.contains(m_tool) || m_tool=="text" || m_tool.startsWith("tangent") || m_clicks.empty())return preview;
+  if(!variants.contains(m_tool) || m_tool=="text" || m_tool=="tangent_circle" || (m_tool=="tangent_arc" && m_picked.empty()) || m_clicks.empty())return preview;
   std::vector<std::pair<double,double>> picks;for(const auto& p:m_clicks)picks.push_back({p.u,p.v});picks.push_back({m_cursor.u,m_cursor.v});
   if(m_tool!="control_spline" && int(picks.size())<picksNeeded(m_tool))return preview;
-  try {create_primitive(preview,m_tool.toStdString(),picks,primitiveOptions());}catch(...){return Sketch{};}
+  const auto sweep=m_typedValues.find("sweep");
+  const SkEntity* line=m_tool=="tangent_arc"?m_sk.entity(m_picked.front()):nullptr;
+  if(line){for(int id:line->p)if(const auto* p=m_sk.point(id))preview.points.push_back(*p);preview.entities.push_back(*line);}  // what the arc leaves
+  try {create_primitive(preview,m_tool.toStdString(),picksOf(m_tool,picks,sweep==m_typedValues.end()?0:sweep->second),primitiveOptions());}catch(...){return Sketch{};}
+  if(line)preview.entities.erase(preview.entities.begin());  // drawn already
   return preview;
 }
 

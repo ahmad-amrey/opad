@@ -1,0 +1,378 @@
+#include "SketchEditor.hpp"
+#include "Jobs.hpp"
+#include <QAction>
+#include <QApplication>
+#include <QCheckBox>
+#include <QKeyEvent>
+#include <QSettings>
+#include <QToolButton>
+#include <cmath>
+#include <functional>
+
+using namespace opad::design;
+using CT = SkConstraint::Type;
+
+// OPAD_BENCH_SKETCH_SHAPES=<prefix> (TODO 11 UI-17): shapes drawn by the keyboard alone (key events where the keyboard
+// is, the pointer never over the view), checked exactly, the typed sizes kept as driving dimensions. L, 0 Tab 0 Enter
+// starts on the origin; 50 Tab 30 Enter is a line 50 long at 30 degrees, the rubber band held and read out (50 mm, 30°)
+// before Enter; 40 Tab 120 is perpendicular to it; 20 Tab 45 from the last line (the angle box's switch) is held at 45
+// degrees to it. R, 10,10 Enter, 40 Tab 25 Enter: a 40 x 25 rectangle, its sides dimensioned; a negative width goes left;
+// a zero size is refused. The slot: two centres 30 apart, then its width 8. C: diameter 20, then (the box's switch) a
+// radius 5. A pentagon by its diameter, angle and sides; a three-point arc by its chord and radius; a centre arc that
+// sweeps 270 degrees; with the panel's switch off nothing typed becomes a dimension; a tangent arc by its radius and
+// sweep; the fillet's radius typed before its corner is picked, its arc shown on the hovered corner; the text's height and
+// an image's calibration distance.
+void SketchEditor::benchShapes() {
+  const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_SHAPES");
+  QWidget* window = m_viewport->window();
+  auto ok = std::make_shared<bool>(true);
+  auto check = [ok](bool pass, const QString& what) {
+    trace::log(QString("bench: sketch shapes: %1 %2").arg(what, pass ? "PASS" : "FAIL"));
+    *ok = *ok && pass;
+  };
+  auto keyboard = [this]() -> QWidget* { QWidget* w = QApplication::focusWidget(); return w ? w : m_viewport; };
+  auto send = [keyboard](int key, Qt::KeyboardModifiers mods = Qt::NoModifier, const QString& text = {}) {
+    QKeyEvent press(QEvent::KeyPress, key, mods, text);
+    QApplication::sendEvent(keyboard(), &press);
+    QKeyEvent release(QEvent::KeyRelease, key, mods, text);
+    QApplication::sendEvent(keyboard(), &release);
+  };
+  auto type = [send](const QString& chars) {
+    for (const QChar c : chars) {
+      const int key = c.isDigit() ? Qt::Key_0 + c.digitValue() : c == '.' ? Qt::Key_Period : c == ',' ? Qt::Key_Comma : c == '-' ? Qt::Key_Minus : Qt::Key_unknown;
+      send(key, Qt::NoModifier, QString(c));
+    }
+  };
+  auto enter = [send] { send(Qt::Key_Return); };
+  auto tab = [send] { send(Qt::Key_Tab); };
+  // A tool by its key (the window's shortcut); the ones without a default key from their command.
+  auto tool = [this, window, send, check](int key, const QString& text, const QString& name) {
+    if (key) send(key, Qt::NoModifier, text);
+    else if (auto* action = window->findChild<QAction*>("sketch." + name)) action->trigger();
+    check(m_tool == name, QString("%1 starts the %2 tool").arg(key ? text.toUpper() : QStringLiteral("its command"), name));
+  };
+  auto chip = [this]() -> QToolButton* {
+    for (auto* b : m_input->findChildren<QToolButton*>("dynamicInputChip"))
+      if (!b->isHidden()) return b;
+    return nullptr;
+  };
+  auto same = [](double a, double b) { return std::abs(a - b) < 1e-9; };
+  auto at = [this, same](int id, double u, double v) { const SkPoint* p = m_sk.point(id); return p && same(p->x, u) && same(p->y, v); };
+  auto pointAtXY = [this, same](double u, double v) {
+    for (const auto& p : m_sk.points)
+      if (same(p.x, u) && same(p.y, v)) return p.id;
+    return 0;
+  };
+  auto lineBetween = [this, at](double u0, double v0, double u1, double v1) {
+    for (const auto& e : m_sk.entities)
+      if (e.type == SkEntity::Type::Line && e.p.size() == 2 && ((at(e.p[0], u0, v0) && at(e.p[1], u1, v1)) || (at(e.p[0], u1, v1) && at(e.p[1], u0, v0)))) return e.id;
+    return 0;
+  };
+  auto has = [this, same](CT type, std::vector<int> refs, double value = -1) {
+    std::sort(refs.begin(), refs.end());
+    for (const auto& c : m_sk.constraints) {
+      auto r = c.refs;
+      std::sort(r.begin(), r.end());
+      if (c.type == type && r == refs && (value < 0 || same(c.value, value)) && c.expr.empty() && !c.reference) return true;
+    }
+    return false;
+  };
+  auto held = [this, same](double u, double v) { return m_cursor.kind == Snap::Kind::Typed && same(m_cursor.u, u) && same(m_cursor.v, v); };
+  auto where = [this] { return QString("(%1, %2)").arg(m_cursor.u, 0, 'g', 12).arg(m_cursor.v, 0, 'g', 12); };
+  auto reads = [this](const QString& text) { return transientTexts().contains(text); };
+  const double degree = M_PI / 180;
+  // One part per turn of the event loop (the view repaints between them), each checking as it goes.
+  auto steps = std::make_shared<std::vector<std::function<void()>>>();
+  auto step = [steps](std::function<void()> part) { steps->push_back(std::move(part)); };
+
+  QApplication::setActiveWindow(window);
+  m_viewport->setFocus();
+  m_viewport->setGridSnap(false);
+  m_viewport->setCameraJson({{"eye", {50, 30, 100}}, {"target", {50, 30, 0}}, {"up", {0, 1, 0}}, {"scale", 190}, {"projection", "orthographic"}, {"absolute", true}});
+  auto* keep = window->findChild<QCheckBox*>("input-addDimensions");
+  check(keep && keep->isChecked() && QSettings().value("sketch/input/addDimensions", true).toBool(), "typed values become dimensions by default (the sketch panel's switch is on)");
+  check(!m_haveCursor, "the pointer has never been over the view");
+
+  // A line from the keyboard: L, 0 Tab 0 Enter, 50 Tab 30 Enter.
+  step([=] {
+    tool(Qt::Key_L, "l", "line");
+    type("0");
+    tab();
+    type("0");
+    enter();
+    const int origin = pointAtXY(0, 0);
+    check(m_chain.size() == 1 && m_chain[0] == origin && m_sk.point(origin)->fixed, "0 Tab 0 Enter starts the line on the origin point itself");
+    check(m_input->count() == 2 && m_input->key(0) == "length" && m_input->key(1) == "angle", "then the boxes are the length and the angle");
+    type("50");
+    check(held(50, 0) && reads("50 mm"), "50 typed holds the rubber band 50 long (along X: no pointer) and reads it out " + where() + " " + transientTexts().join(" | "));
+    tab();
+    type("30");
+    const double x1 = 50 * std::cos(30 * degree), y1 = 50 * std::sin(30 * degree);
+    check(held(x1, y1) && reads("50 mm") && reads(QString::fromUtf8("30°")), "Tab 30 turns it to 30 degrees, read out by its length and angle " + where());
+    m_viewport->grabImage().save(prefix + ".line.png");
+    m_input->grab().save(prefix + ".line-input.png");
+    enter();
+    const int first = lineBetween(0, 0, x1, y1);
+    check(first && m_chain.size() == 2, "Line 50 Tab 30 Enter: a line from the origin to exactly 50 at 30 degrees");
+    check(has(CT::Distance, {first}, 50), "its typed length is its driving dimension, 50");
+    type("40");
+    tab();
+    type("120");
+    enter();
+    const double x2 = x1 + 40 * std::cos(120 * degree), y2 = y1 + 40 * std::sin(120 * degree);
+    const int second = lineBetween(x1, y1, x2, y2);
+    check(second && has(CT::Distance, {second}, 40) && has(CT::Perpendicular, {first, second}), "40 Tab 120: 40 long and held perpendicular to the line before");
+    QToolButton* angleChip = chip();
+    check(angleChip && angleChip->text() == QString::fromUtf8("∠ X axis"), "the angle box measures from the X axis");
+    if (angleChip) angleChip->click();
+    check(m_angleRelative, "its switch measures from the last line");
+    type("20");
+    tab();
+    type("45");
+    const double x3 = x2 + 20 * std::cos(165 * degree), y3 = y2 + 20 * std::sin(165 * degree);
+    check(held(x3, y3) && reads(QString::fromUtf8("45°")), "20 Tab 45 from the last line (at 120) goes off at 165 " + where());
+    m_viewport->grabImage().save(prefix + ".relative.png");
+    enter();
+    const int third = lineBetween(x2, y2, x3, y3);
+    check(third && has(CT::Distance, {third}, 20) && has(CT::Angle, {second, third}, 45 * degree), "and is held at 45 degrees to it");
+    if (QToolButton* c = chip()) c->click();
+    check(!m_angleRelative, "the switch back: from the X axis");
+    send(Qt::Key_Escape);
+    check(m_chain.empty() && m_tool == "line", "Esc ends the chain");
+    check(third && std::abs(m_sk.point(m_sk.entity(third)->p[1])->x - x3) < 1e-9 && m_solved.converged, "the solver left the typed geometry where it was");
+  });
+
+  // A rectangle: R, 10,10 Enter, 40 Tab 25 Enter.
+  step([=] {
+    tool(Qt::Key_R, "r", "rect");
+    type("10,10");
+    enter();
+    check(m_clicks.size() == 1 && m_input->count() == 2 && m_input->key(0) == "width" && m_input->key(1) == "height", "10,10 Enter puts the first corner; the boxes are now width and height");
+    type("40");
+    tab();
+    type("25");
+    check(held(50, 35) && reads("40 mm") && reads("25 mm"), "40 Tab 25 holds the opposite corner at (50, 35), read out under and beside it " + where());
+    m_viewport->grabImage().save(prefix + ".rect.png");
+    m_input->grab().save(prefix + ".rect-input.png");
+    enter();
+    const int bottom = lineBetween(10, 10, 50, 10), right = lineBetween(50, 10, 50, 35);
+    check(bottom && right && lineBetween(50, 35, 10, 35) && lineBetween(10, 35, 10, 10) && m_clicks.empty(), "a 40 x 25 rectangle from (10, 10), exactly");
+    check(has(CT::Distance, {bottom}, 40) && has(CT::Distance, {right}, 25), "its width and height are its dimensions");
+    type("100,0");
+    enter();
+    type("-20,15");
+    enter();
+    check(lineBetween(80, 0, 100, 0) && lineBetween(100, 0, 100, 15) && has(CT::Distance, {lineBetween(80, 0, 100, 0)}, 20), "a negative width goes left: (80, 0) to (100, 15), its width 20");
+    type("200,0");
+    enter();
+    type("0");
+    check(!m_input->problem("width").isEmpty() && m_input->box(0)->property("invalid").toBool(), "a zero width is refused: " + m_input->problem("width"));
+    enter();
+    check(m_clicks.size() == 1, "Enter with it leaves the corner waiting");
+    send(Qt::Key_Escape);
+    send(Qt::Key_Escape);
+    check(m_clicks.empty() && m_tool == "rect", "Esc drops the value, then the corner");
+  });
+
+  // A slot: its centres, then its width.
+  step([=] {
+    tool(0, {}, "slot");
+    type("0,-40");
+    enter();
+    type("30");
+    tab();
+    type("0");
+    check(held(30, -40), "the second centre 30 along X " + where());
+    enter();
+    check(m_clicks.size() == 2 && m_input->count() == 1 && m_input->key(0) == "width", "then the slot's box is its width");
+    type("8");
+    check(held(30, -36) && reads("8 mm"), "8 holds it 4 off the centre line (on its left: no pointer) " + where());
+    m_viewport->grabImage().save(prefix + ".slot.png");
+    enter();
+    const int top = lineBetween(0, -36, 30, -36), under = lineBetween(30, -44, 0, -44), centres = lineBetween(0, -40, 30, -40);
+    bool caps = true;
+    int arcs = 0;
+    for (const auto& e : m_sk.entities)
+      if (e.type == SkEntity::Type::Arc && (at(e.p[0], 0, -40) || at(e.p[0], 30, -40))) {
+        ++arcs;
+        caps = caps && std::abs(std::hypot(m_sk.point(e.p[1])->x - m_sk.point(e.p[0])->x, m_sk.point(e.p[1])->y - m_sk.point(e.p[0])->y) - 4) < 1e-9;
+      }
+    check(top && under && centres && arcs == 2 && caps, "a slot 30 between centres and 8 wide, exactly");
+    check(has(CT::Distance, {centres}, 30) && has(CT::Distance, {top, under}, 8) && has(CT::Horizontal, {centres}), "its length, its width and its 0 degrees hold it");
+  });
+
+  // A circle by its diameter, then (the box's switch) by its radius.
+  step([=] {
+    tool(Qt::Key_C, "c", "circle");
+    type("0,60");
+    enter();
+    check(m_input->count() == 1 && m_input->key(0) == "diameter", "the circle's box is its diameter");
+    type("20");
+    check(held(10, 60) && reads(QString::fromUtf8("Ø 20 mm")), "20 holds the rim 10 from the centre " + where());
+    enter();
+    int circle = 0;
+    for (const auto& e : m_sk.entities)
+      if (e.type == SkEntity::Type::Circle && at(e.p[0], 0, 60) && same(e.r, 10)) circle = e.id;
+    check(circle && has(CT::Diameter, {circle}, 20), "a circle 20 across, its diameter dimensioned");
+    type("80,60");
+    enter();
+    if (QToolButton* c = chip()) c->click();
+    check(m_circleRadius && m_input->key(0) == "radius", "the box's switch: its radius");
+    type("5");
+    enter();
+    circle = 0;
+    for (const auto& e : m_sk.entities)
+      if (e.type == SkEntity::Type::Circle && at(e.p[0], 80, 60) && same(e.r, 5)) circle = e.id;
+    check(circle && has(CT::Radius, {circle}, 5), "a radius of 5, dimensioned as a radius");
+    type("0,0");
+    enter();
+    if (QToolButton* c = chip()) c->click();
+    check(!m_circleRadius && m_input->key(0) == "diameter", "and the switch back to the diameter");
+    send(Qt::Key_Escape);
+    send(Qt::Key_Escape);
+  });
+
+  // A pentagon by its diameter, its angle and its sides.
+  step([=] {
+    tool(0, {}, "polygon");
+    type("150,60");
+    enter();
+    check(m_input->count() == 3 && m_input->key(0) == "diameter" && m_input->key(2) == "sides", "the polygon's boxes: diameter, angle, sides");
+    send(Qt::Key_Backtab, Qt::ShiftModifier);
+    type("7");
+    enter();
+    check(option("sides") == "7" && m_clicks.size() == 1 && m_input->box(2)->placeholderText() == "7", "Shift+Tab 7 Enter sets the sides only: the corner still waits");
+    type("30");
+    tab();
+    type("90");
+    tab();
+    type("5");
+    check(held(150, 75) && option("sides") == "5", "30 Tab 90 Tab 5: the first corner 15 above the centre, five sides " + where());
+    enter();
+    int sides = 0, guide = 0;
+    for (const auto& e : m_sk.entities) {
+      if (e.type == SkEntity::Type::Circle && e.construction && at(e.p[0], 150, 60)) guide = e.id;
+      if (e.type == SkEntity::Type::Line && (at(e.p[0], 150, 75) || at(e.p[1], 150, 75))) ++sides;
+    }
+    check(guide && sides == 2 && same(m_sk.entity(guide)->r, 15) && has(CT::Diameter, {guide}, 30) && has(CT::Vertical, {pointAtXY(150, 60), pointAtXY(150, 75)}),
+          "a pentagon 30 across its corners, the first straight up, held so");
+    send(Qt::Key_Escape);
+  });
+
+  // A three-point arc by its chord and its radius; a centre arc that sweeps past half a turn.
+  step([=] {
+    tool(Qt::Key_A, "a", "arc3");
+    type("0,100");
+    enter();
+    type("40");
+    tab();
+    type("0");
+    enter();
+    check(m_input->count() == 1 && m_input->key(0) == "radius", "after its ends, the arc's box is its radius");
+    type("19");
+    check(!m_input->problem("radius").isEmpty(), "a radius under half the chord is refused: " + m_input->problem("radius"));
+    send(Qt::Key_Backspace);
+    send(Qt::Key_Backspace);
+    type("25");
+    check(held(20, 110) && reads("R 25 mm"), "25: the shorter arc's middle 10 above the chord " + where());
+    enter();
+    int arc = 0;
+    for (const auto& e : m_sk.entities)
+      if (e.type == SkEntity::Type::Arc && at(e.p[0], 20, 85)) arc = e.id;
+    check(arc && has(CT::Radius, {arc}, 25) && has(CT::Distance, {pointAtXY(0, 100), pointAtXY(40, 100)}, 40), "an arc of radius 25 over a chord of 40, both dimensioned");
+    send(Qt::Key_Escape);
+    tool(0, {}, "arcc");
+    type("150,120");
+    enter();
+    type("10");
+    tab();
+    type("0");
+    enter();
+    check(m_input->key(0) == "sweep", "after its start, the centre arc's box is its sweep");
+    type("270");
+    check(held(150, 110), "270 holds its end straight below the centre " + where());
+    enter();
+    arc = 0;
+    for (const auto& e : m_sk.entities)
+      if (e.type == SkEntity::Type::Arc && at(e.p[0], 150, 120) && at(e.p[1], 160, 120) && at(e.p[2], 150, 110)) arc = e.id;
+    check(arc && has(CT::Radius, {arc}, 10), "a counter-clockwise arc of 270 degrees from (160, 120) to (150, 110), its radius dimensioned");
+    send(Qt::Key_Escape);
+  });
+
+  // The panel's switch off: what is typed places the shape only. Then a tangent arc off that line's end.
+  step([=] {
+    if (keep) keep->setChecked(false);
+    check(!QSettings().value("sketch/input/addDimensions", true).toBool(), "the panel's switch turns it off (saved)");
+    tool(Qt::Key_L, "l", "line");
+    type("0,-80");
+    enter();
+    type("10");
+    tab();
+    type("0");
+    enter();
+    const int plain = lineBetween(0, -80, 10, -80);
+    bool any = false;
+    for (const auto& c : m_sk.constraints) any = any || std::find(c.refs.begin(), c.refs.end(), plain) != c.refs.end();
+    check(plain && !any, "then a typed line is placed exactly and nothing holds it");
+    send(Qt::Key_Escape);
+    if (keep) keep->setChecked(true);
+    tool(0, {}, "tangent_arc");
+    type("10,-80");
+    enter();
+    check(m_picked.size() == 1 && m_picked[0] == plain && m_input->count() == 2 && m_input->key(0) == "radius" && m_input->key(1) == "sweep",
+          "10,-80 Enter picks the line's end; the boxes are the arc's radius and sweep");
+    type("5");
+    tab();
+    type("90");
+    check(held(15, -75) && reads("R 5 mm") && reads(QString::fromUtf8("90°")) && primitivePreview().entities.size() == 1,
+          "5 Tab 90: a quarter turn of radius 5 off the line's end, previewed " + where());
+    enter();
+    int arc = 0;
+    for (const auto& e : m_sk.entities)
+      if (e.type == SkEntity::Type::Arc && at(e.p[0], 10, -75) && at(e.p[1], 10, -80) && at(e.p[2], 15, -75)) arc = e.id;
+    check(arc && has(CT::Radius, {arc}, 5) && has(CT::Tangent, {plain, arc}), "a tangent arc of radius 5 from (10, -80) to (15, -75), its radius dimensioned");
+    send(Qt::Key_Escape);
+  });
+
+  // The sketch fillet's radius from the start: typed before a corner is picked, its arc shown on the hovered corner.
+  step([=] {
+    tool(0, {}, "fillet");
+    check(m_input->count() == 1 && m_input->key(0) == "radius", "the fillet has its radius box before anything is picked");
+    type("3");
+    check(m_input->isVisible(), "a digit shows it (the pointer not over the view: in its middle)");
+    enter();
+    check(option("radius") == "3", "3 Enter sets its radius");
+    const auto preview = filletPreview(pointAtXY(50, 10));
+    check(preview.size() > 2 && std::abs(std::hypot(preview.front().first - preview.back().first, preview.front().second - preview.back().second) - 3 * std::sqrt(2.0)) < 1e-9,
+          "the rectangle's corner hovered shows a quarter arc of radius 3");
+    sketchMove(50, 10, Qt::NoModifier, false);
+    m_viewport->grabImage().save(prefix + ".fillet.png");
+    sketchPress(50, 10, Qt::NoModifier);
+    sketchRelease(50, 10, Qt::NoModifier);
+    int rounded = 0;
+    for (const auto& e : m_sk.entities)
+      if (e.type == SkEntity::Type::Arc && at(e.p[0], 47, 13)) rounded = e.id;
+    check(rounded && has(CT::Radius, {rounded}, 3), "a click rounds it by 3");
+    // The text's height and an image's calibration distance are typed like the others.
+    setTool("text");
+    type("12");
+    enter();
+    check(option("height") == "12", "the text tool takes its height from the keyboard");
+    setTool("image_calibrate");
+    type("25");
+    check(m_input->key(0) == "knownDistance" && option("knownDistance") == "25", "image calibration takes its known distance");
+    send(Qt::Key_Escape);
+    setTool("select");
+    m_viewport->grabImage().save(prefix + ".png");
+  });
+
+  auto next = std::make_shared<size_t>(0);
+  auto* timer = new QTimer(this);
+  timer->setInterval(0);
+  connect(timer, &QTimer::timeout, this, [steps, next, timer, ok] {
+    if (*next < steps->size()) return (*steps)[(*next)++]();
+    timer->stop();
+    QCoreApplication::exit(*ok ? 0 : 2);
+  });
+  timer->start();
+}

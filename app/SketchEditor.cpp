@@ -130,7 +130,7 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   m_dimensionHandle->setLabel(tr("Offset"));m_dimensionHandle->setCapturesKeys(false);  // the keys come through sketchKey
   connect(m_dimensionHandle,&DimensionHandle::accepted,this,[this]{if(m_active && m_tool=="offset" && !m_sel.empty())applyTool();});
   m_input=new DynamicInput(viewport);
-  connect(m_input,&DynamicInput::optionEdited,this,[this](const QString& key,const QString& value){m_options[key]=value;scheduleToolPreview();emit workflowChanged();});
+  connect(m_input,&DynamicInput::optionEdited,this,[this](const QString& key,const QString& value){m_options[key]=value;scheduleToolPreview();updateTransient();emit workflowChanged();});
   connect(m_input,&DynamicInput::typedChanged,this,[this]{if(m_active)emit changed();});  // the prompt says what Enter and Esc do now
   connect(m_input,&DynamicInput::committed,this,[this]{if(!done())m_viewport->setFocus();});
   connect(m_input,&DynamicInput::escaped,this,[this]{escape();});
@@ -138,8 +138,13 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   connect(m_input,&DynamicInput::valueTyped,this,[this]{if(m_active)retype();});  // the rubber band follows what is typed
   connect(m_input,&DynamicInput::dropped,this,[this]{if(!m_active)return;m_entry.reset();retype();updateInput();});
   connect(m_input,&DynamicInput::chipClicked,this,[this](const QString& key) {
-    if(!m_active || key!="angle")return;
-    m_angleRelative=!m_angleRelative;QSettings().setValue("sketch/input/angleRelative",m_angleRelative);
+    if(!m_active)return;
+    if(key=="angle"){m_angleRelative=!m_angleRelative;QSettings().setValue("sketch/input/angleRelative",m_angleRelative);}
+    else if(key=="diameter" || key=="radius") {  // a circle's box: the number typed stays, now the other size
+      const QString carried=m_input->text(key);
+      m_circleRadius=!m_circleRadius;QSettings().setValue("sketch/input/circleRadius",m_circleRadius);
+      updateInput();if(!carried.isEmpty())m_input->setText(0,carried);
+    } else return;
     retype();updateInput();updateTransient();
   });
   m_input->setKeyHook([this](int box,QChar c){return m_active && entryKey(box,c);});
@@ -205,7 +210,7 @@ void SketchEditor::setVisible(bool visible) {
 void SketchEditor::begin(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry) {
   ++m_geometryRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   ++m_session;m_toolPreview.reset();m_previewRequested=false;
-  m_trackingPoint = 0; m_inferenceLocked = false;m_typedValues.clear();m_entry.reset();m_pointer=m_cursor={};m_angleRelative=QSettings().value("sketch/input/angleRelative",false).toBool();m_dragging=false;m_dragMoved=false;m_dragPending=false;m_dragReleased=false;m_inChange=false;m_options.clear();m_conflicts.clear();
+  m_trackingPoint = 0; m_inferenceLocked = false;m_typedValues.clear();m_entry.reset();m_pointer=m_cursor={};m_angleRelative=QSettings().value("sketch/input/angleRelative",false).toBool();m_circleRadius=QSettings().value("sketch/input/circleRadius",false).toBool();m_dragging=false;m_dragMoved=false;m_dragPending=false;m_dragReleased=false;m_inChange=false;m_options.clear();m_conflicts.clear();
   m_id = sketchId;
   m_name = name;
   m_plane = plane;
@@ -631,7 +636,7 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
     return;
   }
   const Snap s = snap(u, v, !mods.testFlag(Qt::AltModifier));
-  if (m_input->typed() && !inputStage().isEmpty() && !inputStage().front().option) { useTyped(&s); return; }  // the typed values win
+  if (pointTyped()) { useTyped(&s); return; }  // the typed values win
   click(s, mods);
 }
 
@@ -1090,6 +1095,13 @@ void SketchEditor::rebuild() {
   updateTransient();
 }
 
+QStringList SketchEditor::transientTexts() const {
+  QStringList out;
+  if (!m_transientPrs.IsNull())
+    for (const auto& text : static_cast<const SketchPrs*>(m_transientPrs.get())->texts) out << text.s;
+  return out;
+}
+
 const std::vector<std::vector<std::pair<double, double>>>& SketchEditor::textPreview() {
   const QString text = option("text", "OPAD"), style = option("textStyle", "outline");
   const QString key = text + '\n' + option("height", "10 mm") + '\n' + style + '\n' + option("font", "Arial");
@@ -1134,6 +1146,10 @@ void SketchEditor::updateTransient() {
   const double px=m_viewport->pixelSize();
   if(m_hover.kind==Hit::Point) {
     if(const auto* p=m_geometry->point(m_sk,m_hover.id))d.bigPoints.push_back({W(p->x,p->y),t.hov});
+    if(m_tool=="fillet") {  // the arc a click there makes, at the radius set (typed before anything is picked too)
+      const auto arc=filletPreview(m_hover.id);
+      for(size_t i=1;i<arc.size();++i)d.solid.push_back({W(arc[i-1].first,arc[i-1].second),W(arc[i].first,arc[i].second),t.hov});
+    }
   } else if(m_hover.kind==Hit::Entity) {
     // Trim lights up the piece the click removes, in red; the whole curve read as "this curve goes".
     const auto piece=m_tool=="trim"&&m_haveCursor?trimPreview(m_hover.id,m_cursor.u,m_cursor.v):std::vector<std::pair<double,double>>{};
@@ -1151,8 +1167,8 @@ void SketchEditor::updateTransient() {
   // A grid node the pointer or a dragged point snapped to: a small ring, apart from the inference's own marks.
   auto gridRing=[&](double x,double y){const double r=6*px;for(int i=0;i<16;++i)d.solid.push_back({W(x+r*std::cos(i*M_PI/8),y+r*std::sin(i*M_PI/8)),W(x+r*std::cos((i+1)*M_PI/8),y+r*std::sin((i+1)*M_PI/8)),t.green});};
   if(m_dragging && m_dragMoved && m_dragGrid)gridRing(m_dragGridU,m_dragGridV);
-  // Rubber band of the running tool.
-  if (m_haveCursor && m_tool != "select") {
+  // Rubber band of the running tool (also from typed values alone: drawing by the keyboard, the pointer not in the view).
+  if ((m_haveCursor || !m_typedValues.empty()) && m_tool != "select") {
     const QColor rb = t.hov;
     const double cu = m_cursor.u, cv = m_cursor.v;
     auto seg = [&](double x0, double y0, double x1, double y1) { d.solid.push_back({W(x0, y0), W(x1, y1), rb}); };
@@ -1212,6 +1228,7 @@ void SketchEditor::updateTransient() {
           double sweep = std::atan2(cv - a.v, cu - a.u) - from;
           while (sweep > M_PI) sweep -= 2 * M_PI;
           while (sweep <= -M_PI) sweep += 2 * M_PI;
+          if (const auto typed = m_typedValues.find("sweep"); typed != m_typedValues.end()) sweep = typed->second;  // past half a turn too
           arc(a.u, a.v, r, from, sweep);
           d.dashed.push_back({W(a.u, a.v), W(b.u, b.v), rb});
         } else if (m_tool == "slot") {
@@ -1247,6 +1264,28 @@ void SketchEditor::updateTransient() {
       if(edge.IsNull())continue;
       const auto pts=curveSamples(edge,px*0.25);
       for(size_t i=1;i<pts.size();++i)seg(pts[i-1].X(),pts[i-1].Y(),pts[i].X(),pts[i].Y());
+    }
+    // The sizes and angles of the step, read out where they are measured; a typed one held, with a padlock (UI-17).
+    for (const auto& r : readouts()) {
+      const QColor color = r.locked ? t.sel : t.fg2;
+      if (r.leader) d.thin.push_back({W(r.fu, r.fv), W(r.tu, r.tv), color});
+      if (r.r > 0) {  // the angle's arc, from the direction it is measured from (drawn a little longer)
+        const int n = std::max(4, int(std::ceil(std::fabs(r.sweep) / (2 * M_PI) * 64)));
+        for (int i = 0; i < n; ++i)
+          d.thin.push_back({W(r.cu + r.r * std::cos(r.from + r.sweep * i / n), r.cv + r.r * std::sin(r.from + r.sweep * i / n)),
+                            W(r.cu + r.r * std::cos(r.from + r.sweep * (i + 1) / n), r.cv + r.r * std::sin(r.from + r.sweep * (i + 1) / n)), color});
+        d.dashed.push_back({W(r.cu, r.cv), W(r.cu + (r.r + 12 * px) * std::cos(r.from), r.cv + (r.r + 12 * px) * std::sin(r.from)), color});
+      }
+      d.texts.push_back({W(r.u, r.v), r.text, color});
+      if (r.locked) {  // a padlock past the value: its body and its shackle
+        const double x = r.u + r.ox * (r.ext + 10 * px), y = r.v + r.oy * (r.ext + 10 * px) - 1.5 * px, w = 4 * px, h = 3 * px;
+        d.thin.push_back({W(x - w, y - h), W(x + w, y - h), color});
+        d.thin.push_back({W(x + w, y - h), W(x + w, y + h), color});
+        d.thin.push_back({W(x + w, y + h), W(x - w, y + h), color});
+        d.thin.push_back({W(x - w, y + h), W(x - w, y - h), color});
+        for (int i = 0; i < 8; ++i)
+          d.thin.push_back({W(x + 2.5 * px * std::cos(i * M_PI / 8), y + h + 2.5 * px * std::sin(i * M_PI / 8)), W(x + 2.5 * px * std::cos((i + 1) * M_PI / 8), y + h + 2.5 * px * std::sin((i + 1) * M_PI / 8)), color});
+      }
     }
     // Snapping only means something to tools that place points; trim, offset, constraints and the like pick curves.
     static const QStringList placing = {"line", "rect", "crect", "circle", "circle2", "circle3", "arc3", "arcc", "polygon", "polygon_outer", "slot", "cslot", "arcslot",
