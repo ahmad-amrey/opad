@@ -41,7 +41,7 @@ bool MainWindow::benchSmart() {
         require(state->four.size()==4,"four through hole walls recognised");
         state->wall=state->four.front();
         state->faces=recognizer.face_count();state->volume=volume(body());state->ops=m_doc->doc.ops.size();
-        setWorkspace(1);action("select.faces")->trigger();
+        setWorkspace("design");action("select.faces")->trigger();
         break;
       }
       case 1:

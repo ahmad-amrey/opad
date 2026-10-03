@@ -364,6 +364,10 @@ merging. After merging design changes, check unresolved references and regenerat
 Large meshes and embedded images can still produce large diffs; Git LFS is optional and gives up normal
 text diffs/merges. The detailed [format guide](docs/format.md#git) explains the record layout.
 
+A record of a type this build does not know (written by a newer OPAD, such as a drawing sheet) is kept as it is: the
+file opens, the record is listed as needing a newer OPAD, is never applied or edited, and is saved back byte for byte.
+Builds older than this tolerant loader refuse such files with "unknown op type"; open them with a current build.
+
 ## Python
 
 ```python

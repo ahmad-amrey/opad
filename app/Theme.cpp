@@ -7,6 +7,10 @@
 #include <QPalette>
 #include <QStyleFactory>
 
+#include <algorithm>
+#include <array>
+#include <cmath>
+
 namespace {
 Tokens g_tokens = theme::tokens(true);
 QString g_uiFamily, g_monoFamily;
@@ -30,6 +34,8 @@ Tokens tokens(bool dark) {
     t.amber = QColor("#e3a63a"); t.green = QColor("#4fbd6f"); t.red = QColor("#e2584c");
     t.mtop = QColor("#a2aab4"); t.mleft = QColor("#7f8791"); t.mright = QColor("#656d77"); t.medge = QColor("#1a1c1f");
     t.cap = QColor("#5d7fa8"); t.onsel = QColor("#ffffff");
+    t.selected3d = QColor("#4d9bff"); t.ghost = QColor(155, 158, 166, 90); t.locked = QColor("#8d96a8");
+    t.diffAdded = QColor("#40c8b0"); t.diffRemoved = QColor("#e0503f"); t.diffModified = QColor("#eec84a"); t.diffMoved = QColor("#6a8cf5");
   } else {
     t.bg = QColor("#ececee"); t.bg2 = QColor("#f8f8f9"); t.bg3 = QColor("#e0e1e4"); t.bg4 = QColor("#d2d4d8");
     t.line = QColor("#cfd1d5"); t.fg = QColor("#1e1f23"); t.fg2 = QColor("#5d616a"); t.fg3 = QColor("#a3a6ad");
@@ -37,7 +43,19 @@ Tokens tokens(bool dark) {
     t.amber = QColor("#b5720c"); t.green = QColor("#2d9550"); t.red = QColor("#cc3d31");
     t.mtop = QColor("#d3d7dc"); t.mleft = QColor("#b3b9c1"); t.mright = QColor("#949ba5"); t.medge = QColor("#4b5058");
     t.cap = QColor("#7fa0c9"); t.onsel = QColor("#ffffff");
+    t.selected3d = QColor("#1f6fe0"); t.ghost = QColor(93, 97, 106, 77); t.locked = QColor("#6b7380");
+    t.diffAdded = QColor("#169c8c"); t.diffRemoved = QColor("#b03024"); t.diffModified = QColor("#d9a51a"); t.diffMoved = QColor("#3b6fe0");
   }
+  // The same in both themes: hover is the white glow the user chose; candidate, warning and error are the amber and red
+  // the app already uses. Diff and asset hues sit on the blue-yellow axis and apart in lightness, so they stay distinct
+  // without the red-green difference (the plain green/red/amber set does not, see the test).
+  t.hover = QColor("#ffffff");
+  t.candidate = t.amber;
+  t.warning = t.amber;
+  t.error = t.red;
+  t.assetLinked = t.diffMoved;
+  t.assetStale = t.diffModified;
+  t.assetMissing = t.diffRemoved;
   return t;
 }
 
@@ -97,11 +115,23 @@ QString stylesheet(const Tokens& t) {
                "QToolButton#ribbonTool:hover { background: %4; }\n"
                "QToolButton#ribbonTool:checked { background: %4; border-color: %2; }\n"
                "QToolButton#ribbonTool:disabled { color: %5; }\n"
+               "QToolButton#ribbonTool[ribbonSize=\"small\"] { min-width: 0px; padding: 0 4px; border-radius: 2px; }\n"
+               "QToolButton#ribbonTool::menu-indicator { image: none; width: 0px; }\n"
+               "QToolButton#ribbonTool::menu-button { border: none; border-top-right-radius: 3px; border-bottom-right-radius: 3px; background: transparent; width: 14px; }\n"
+               "QToolButton#ribbonTool::menu-button:hover { background: %4; }\n"
+               "QToolButton#ribbonGroupTitle { border: none; border-radius: 2px; background: transparent; color: %5; font-size: 10px; padding: 0 4px; }\n"
+               "QToolButton#ribbonGroupTitle:hover { background: %4; color: %6; }\n"
                "QToolButton#ribbonSettings { border: 1px solid transparent; border-radius: 3px; background: transparent; }\n"
                "QToolButton#ribbonSettings:hover, QToolButton#ribbonSettings:pressed { background: %4; }\n"
                "QToolButton#ribbonSettings::menu-indicator { image: none; width: 0px; }\n"
-               "QFrame#ribbonSep { background: %2; max-width: 1px; min-width: 1px; margin: 12px 4px; }\n"
-               "QLabel#ribbonLabel { color: %6; font-size: 12px; }\n").arg(bg2, line, fg, bg3, fg3, fg2);
+               "QToolButton#ribbonQuick { border: 1px solid transparent; border-radius: 3px; background: transparent; padding: 0; }\n"
+               "QToolButton#ribbonQuick:hover, QToolButton#ribbonQuick:pressed { background: %4; }\n"
+               "QToolButton#ribbonQuick::menu-button { border: none; border-top-right-radius: 3px; border-bottom-right-radius: 3px; background: transparent; width: 12px; }\n"
+               "QToolButton#ribbonQuick::menu-button:hover { background: %4; }\n"
+               "QToolButton#ribbonSelect { border: 1px solid transparent; border-radius: 3px; background: transparent; color: %6; font-size: 12px; padding: 0 6px; height: 26px; }\n"
+               "QToolButton#ribbonSelect:hover, QToolButton#ribbonSelect:pressed { background: %4; color: %3; }\n"
+               "QToolButton#ribbonSelect::menu-indicator { image: none; width: 0px; }\n"
+               "QFrame#ribbonSep { background: %2; max-width: 1px; min-width: 1px; margin: 12px 4px; }\n").arg(bg2, line, fg, bg3, fg3, fg2);
   s += QString("QWidget#segmented { border: 1px solid %1; border-radius: 3px; background: %2; }\n"
                "QToolButton#segment { height: 26px; padding: 0 10px; border: none; border-radius: 2px; color: %3; background: transparent; }\n"
                "QToolButton#segment:hover { background: %4; }\n"
@@ -115,6 +145,7 @@ QString stylesheet(const Tokens& t) {
                "QToolButton#dockButton:hover { background: %4; border-radius: 3px; }\n"
                "QWidget#timelineDock { background: %1; }\n").arg(bg2, line, fg2, bg3);
   s += QString("QComboBox::down-arrow { image: url(%1); width: 12px; height: 12px; }\n"
+               "QToolButton#ribbonTool::menu-arrow, QToolButton#ribbonQuick::menu-arrow { image: url(%1); width: 10px; height: 10px; }\n"
                "QCheckBox::indicator:checked { image: url(%2); }\n"
                "QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { image: url(%3); width: 10px; height: 10px; }\n"
                "QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { image: url(%1); width: 10px; height: 10px; }\n"
@@ -134,6 +165,14 @@ QString stylesheet(const Tokens& t) {
                "QPushButton#primary:hover { background: %8; }\n"
                "QPushButton#outline { background: transparent; height: 22px; min-height: 20px; padding: 0 8px; font-size: 12px; }\n"
                "QPushButton:disabled { color: %9; }\n").arg(line, bg2, fg, bg3, bg4, sel, onsel, css(t.sel.lighter(115)), fg3);
+  // Panel footers (PanelFooter): a label and its key in each button, the key in mono and dimmer.
+  s += QString("QPushButton QLabel#footerText { background: transparent; }\n"
+               "QPushButton QLabel[footerRole=\"key\"] { background: transparent; color: %1; font-family: '%2'; font-size: 11px; }\n"
+               "QPushButton#primary QLabel#footerText { color: %3; font-weight: 500; }\n"
+               "QPushButton#primary QLabel[footerRole=\"key\"] { color: %4; }\n"
+               "QPushButton#primary:disabled { background: %5; border-color: %5; }\n"
+               "QPushButton QLabel#footerText:disabled, QPushButton QLabel[footerRole=\"key\"]:disabled { color: %1; }\n")
+           .arg(fg3, monoF, onsel, css(QColor(255, 255, 255, 170)), css(QColor(t.sel.red(), t.sel.green(), t.sel.blue(), 110)));
   s += QString("QTreeWidget, QTreeView, QListWidget { background: transparent; border: none; outline: none; show-decoration-selected: 1; }\n"
                "QTreeWidget::item, QTreeView::item, QListWidget::item { height: 28px; border: none; }\n"
                "QTreeWidget::item:hover, QListWidget::item:hover { background: %2; }\n"
@@ -173,6 +212,12 @@ QString stylesheet(const Tokens& t) {
                "QLabel#chip { background: %3; border: 1px solid %4; border-radius: 3px; padding: 2px 6px; font-size: 11px; color: %5; }\n"
                "QLabel#chipSel { background: %3; border: 1px solid %6; border-radius: 3px; padding: 2px 6px; font-size: 11px; color: %6; }\n"
                "QLabel#badge { background: %7; border-radius: 8px; padding: 1px 5px; font-size: 11px; font-family: '%8'; }\n").arg(fg2, fg3, bg2, line, fg, sel, bg4, monoF);
+  // Toasts (Toast.hpp) over the viewport: bg3 card, the action in the accent.
+  s += QString("QFrame#toast { background: %1; border: 1px solid %2; border-radius: 4px; }\n"
+               "QFrame#toast QLabel#toastText { background: transparent; color: %3; font-size: 12px; }\n"
+               "QToolButton#toastAction { background: transparent; border: none; border-radius: 3px; padding: 2px 8px; color: %4; font-weight: 500; font-size: 12px; }\n"
+               "QToolButton#toastAction:hover, QToolButton#toastClose:hover { background: %5; }\n"
+               "QToolButton#toastClose { background: transparent; border: none; border-radius: 3px; padding: 0; }\n").arg(bg3, line, fg, css(t.dark ? t.sel.lighter(130) : t.sel), bg4);
   s += QString("QToolButton#vpButton { background: %1; border: 1px solid %2; border-radius: 4px; padding: 0; }\n"
                "QToolButton#vpButton:hover { background: %3; }\n").arg(bg2, line, bg3);
   // The button in the viewport's chip row (viewer mode: Save to edit).
@@ -213,6 +258,56 @@ QString stylesheet(const Tokens& t) {
                "QListWidget#paletteList::item { height: 28px; padding-left: 4px; }\n").arg(bg3, line);
   s += QString("QLabel#keycap { background: %1; border: 1px solid %2; border-radius: 3px; padding: 0 4px; font-family: '%3'; font-size: 11px; color: %4; }\n").arg(bg4, line, monoF, fg2);
   return s;
+}
+
+const QList<Cue>& cues() {
+  static const QList<Cue> list = {
+      {"diffAdded", &Tokens::diffAdded, "+", QT_TRANSLATE_NOOP("theme", "Added")},
+      {"diffRemoved", &Tokens::diffRemoved, "−", QT_TRANSLATE_NOOP("theme", "Removed")},
+      {"diffModified", &Tokens::diffModified, "~", QT_TRANSLATE_NOOP("theme", "Modified")},
+      {"diffMoved", &Tokens::diffMoved, "→", QT_TRANSLATE_NOOP("theme", "Moved")},
+      {"assetLinked", &Tokens::assetLinked, "✓", QT_TRANSLATE_NOOP("theme", "Linked")},
+      {"assetStale", &Tokens::assetStale, "↻", QT_TRANSLATE_NOOP("theme", "Out of date")},
+      {"assetMissing", &Tokens::assetMissing, "?", QT_TRANSLATE_NOOP("theme", "Missing")},
+      {"locked", &Tokens::locked, "▣", QT_TRANSLATE_NOOP("theme", "Locked")},
+      {"error", &Tokens::error, "!", QT_TRANSLATE_NOOP("theme", "Error")},
+      {"warning", &Tokens::warning, "▲", QT_TRANSLATE_NOOP("theme", "Warning")},
+  };
+  return list;
+}
+
+const Cue* cue(const QString& state) {
+  for (const Cue& c : cues())
+    if (state == QLatin1String(c.state)) return &c;
+  return nullptr;
+}
+
+namespace {
+double linear(double c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); }
+double encoded(double c) { return c <= 0.0031308 ? 12.92 * c : 1.055 * std::pow(c, 1 / 2.4) - 0.055; }
+std::array<double, 3> lab(const QColor& c) {
+  const double r = linear(c.redF()), g = linear(c.greenF()), b = linear(c.blueF());
+  const double x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047, y = 0.2126 * r + 0.7152 * g + 0.0722 * b,
+               z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883;
+  auto f = [](double t) { return t > 0.008856 ? std::cbrt(t) : 7.787 * t + 16.0 / 116; };
+  return {116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))};
+}
+}  // namespace
+
+QColor simulate(const QColor& c, Vision v) {
+  static const double protan[3][3] = {{0.152286, 1.052583, -0.204868}, {0.114503, 0.786281, 0.099216}, {-0.003882, -0.048116, 1.051998}};
+  static const double deutan[3][3] = {{0.367322, 0.860646, -0.227968}, {0.280085, 0.672501, 0.047413}, {-0.011820, 0.042940, 0.968881}};
+  if (v == Vision::Normal) return c;
+  const auto& m = v == Vision::Protanopia ? protan : deutan;
+  const double in[3] = {linear(c.redF()), linear(c.greenF()), linear(c.blueF())};
+  double out[3];
+  for (int i = 0; i < 3; ++i) out[i] = encoded(std::clamp(m[i][0] * in[0] + m[i][1] * in[1] + m[i][2] * in[2], 0.0, 1.0));
+  return QColor::fromRgbF(float(out[0]), float(out[1]), float(out[2]), c.alphaF());
+}
+
+double deltaE(const QColor& a, const QColor& b) {
+  const auto x = lab(a), y = lab(b);
+  return std::hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
 }
 
 void apply(bool dark) {

@@ -1,6 +1,7 @@
 #include "MainWindow.hpp"
 #include "AppDocument.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 #include "opad/commands.hpp"
 #include <QDialog>
 #include <QVBoxLayout>
@@ -67,10 +68,10 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   v->addLayout(scopeRow);
   auto* form = new QFormLayout();
   auto* tol = new QDoubleSpinBox(&dlg);
-  tol->setRange(0.001, 10);
-  tol->setDecimals(3);
-  tol->setValue(0.010);
-  tol->setSuffix(" mm");
+  tol->setRange(units::toDisplay(units::Kind::Length, 0.001), units::toDisplay(units::Kind::Length, 10));  // in the shown unit (UI-123)
+  tol->setDecimals(units::decimalsFor(0.001));
+  tol->setValue(units::toDisplay(units::Kind::Length, 0.010));
+  tol->setSuffix(' ' + units::symbol(units::Kind::Length));
   tol->setFont(theme::mono(12));
   form->addRow(tr("Tolerance"), tol);
   v->addLayout(form);
@@ -124,7 +125,7 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
     auto* b = group->checkedButton();
     QString fmt = b ? b->property("format").toString() : "step";
     int n = scopeSel->isChecked() ? selBodies : allBodies;
-    summary->setText(tr("%1 · %2 objects · %3 mm").arg(b ? b->text() : fmt).arg(n).arg(tol->value(), 0, 'f', 3));
+    summary->setText(tr("%1 · %2 objects · %3").arg(b ? b->text() : fmt).arg(n).arg(units::format(units::Kind::Length, units::fromDisplay(units::Kind::Length, tol->value()), tol->decimals())));
     if(!available) summary->setText(tr("Select objects of a compatible export category."));
     optionsLabel->setVisible(fmt=="stl" || fmt=="obj");
     perBody->setVisible(fmt=="stl");singleFile->setVisible(fmt=="stl");
@@ -147,7 +148,7 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   if(out.isEmpty()) return;
   if(QFileInfo(out).suffix().isEmpty()) out+="."+fmt;
   m_settings.setValue("ui/lastDir", QFileInfo(out).absolutePath());
-  opad::json args{{"format", fmt.toStdString()}, {"out", out.toStdString()}, {"tolerance", tol->value()}, {"ascii", ascii->isChecked()}, {"per_body", perBody->isChecked()}, {"mtl", mtl->isChecked()}};
+  opad::json args{{"format", fmt.toStdString()}, {"out", out.toStdString()}, {"tolerance", units::fromDisplay(units::Kind::Length, tol->value())}, {"ascii", ascii->isChecked()}, {"per_body", perBody->isChecked()}, {"mtl", mtl->isChecked()}};
   if (!b->property("schema").toString().isEmpty()) args["schema"] = b->property("schema").toString().toStdString();
   if (scopeSel->isChecked()) args["select"] = ids;
   opad::json r = opad::commands::run("export", args, &m_doc->doc);
