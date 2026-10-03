@@ -17,6 +17,8 @@ SelectionContext MainWindow::selectionContext() const {
   std::set<std::string> seen;
   for (const auto& r : m_selRefs)
     if (r.kind != opad::Ref::Kind::Point && seen.insert(r.body).second) s.ids.push_back(r.body);
+  for (const auto& id : m_selRows)
+    if (seen.insert(id).second) s.ids.push_back(id);
   s.sketching = m_design && m_design->sketchActive();
   return s;
 }

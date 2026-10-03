@@ -18,10 +18,12 @@
 
 // ---------------------------------------------------------------- selection plumbing (F22/F25)
 std::vector<std::string> MainWindow::currentNodeIds() const {
+  if (!m_selRows.empty() && m_selRefs.empty()) return {};  // an area's rows alone: the view may still hold the last pick
   std::vector<std::string> ids;
   for (const auto& r : m_viewport->selection())
     if (r.kind != opad::Ref::Kind::Point && std::find(ids.begin(), ids.end(), r.body) == ids.end()) ids.push_back(r.body);
   if (ids.empty()) ids = m_browser->selectedIds();
+  ids.erase(std::remove_if(ids.begin(), ids.end(), [this](const std::string& id) { return m_browser->isProvided(id); }), ids.end());
   return ids;
 }
 
@@ -41,6 +43,7 @@ void MainWindow::onViewportSelection() {
     if (seen.insert(r.body).second) ids.push_back(r.body);
   m_browser->setSelectedIds(ids);
   if (m_section && m_section->picking() && !refs.empty() && refs.front().kind == opad::Ref::Kind::Face) sectionFromFace(refs.front());
+  m_selRows.clear();
   selectionMoved(refs);
   if (!m_tool.id.isEmpty()) toolPicksChanged(refs, true);
   if (refs.empty()) m_statusSel->clear();
@@ -52,13 +55,19 @@ void MainWindow::onViewportSelection() {
 void MainWindow::onBrowserSelection(const std::vector<std::string>& ids) {
   if (m_syncing) return;
   m_syncing = true;
+  // An area's rows (a provided folder's) are no nodes: the view, the edit commands and the tools never see them.
   std::vector<opad::Ref> refs;
-  for (const auto& id : ids) { opad::Ref r; r.body = id; refs.push_back(r); }
+  std::vector<std::string> nodes;
+  m_selRows.clear();
+  for (const auto& id : ids) {
+    if (m_browser->isProvided(id)) { m_selRows.push_back(id); continue; }
+    opad::Ref r; r.body = id; refs.push_back(r); nodes.push_back(id);
+  }
   selectionMoved(refs);
   if (!m_tool.id.isEmpty()) toolPicksChanged(refs, false);
-  m_statusSel->setText(ids.empty() ? QString() : tr("%1 selected · body").arg(ids.size()));
+  m_statusSel->setText(!refs.empty() ? tr("%1 selected · body").arg(refs.size()) : ids.empty() ? QString() : tr("%1 selected").arg(ids.size()));
   m_syncing = false;
-  m_viewport->selectNodes(ids);  // sliced; selectionApplied() writes selection.json when it settles
+  m_viewport->selectNodes(nodes);  // sliced; selectionApplied() writes selection.json when it settles
 }
 
 // The Properties panel belongs to one selection: it is opened from the context menu (or Ctrl+P), and a new
@@ -81,6 +90,15 @@ void MainWindow::selectionMoved(const std::vector<opad::Ref>& refs) {
 
 void MainWindow::showProperties(const std::vector<opad::Ref>& refs) {
   if (m_propsJob) m_propsJob->cancel();  // what is measured for the previous entity must not overwrite this one
+  if (refs.empty() && !m_selRows.empty()) {  // an area's browser row: the areas' sections alone
+    opad::Ref row;
+    row.body = m_selRows.front();
+    m_props->setSubject({{row}, {}});
+    const QString title = m_browser->rowName(row.body);
+    m_propsPanel->setContext(title);
+    m_props->showEntity(title, m_selRows.size() > 1 ? tr("  (+%1 more)").arg(m_selRows.size() - 1).trimmed() : QString(), QString(), opad::json::object());
+    return;
+  }
   if (refs.empty()) {
     m_propsPanel->setContext(QString());
     m_props->clear();

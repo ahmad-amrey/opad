@@ -289,6 +289,30 @@ OPAD_BENCH(OPAD_BENCH_AREAS, areas) {
             QString("decoration: two badges right to left, clear of the name (row %1 px wide, badges at %2 and %3)").arg(r.width()).arg(syncRect.left() - r.left()).arg(markRect.left() - r.left()));
     w.m_browser->selectIds({"probe:b"});
     require(probe->selected.ids == std::vector<std::string>{"probe:b"} && w.m_browser->selectedIds() == std::vector<std::string>{"probe:b"}, "folder: a row selects like a node");
+    {  // ... and is no node: Del does not fall back to the timeline's marker, V does nothing, Properties shows the sections alone
+      std::string marker;
+      for (const auto& op : w.m_doc->doc.ops)
+        if (op.type == "feature") marker = op.id;
+      w.m_timeline->setCurrentOp(marker);  // a marker clicked earlier
+      const size_t ops = w.m_doc->doc.ops.size();
+      bool refused = false;
+      try { w.deleteCurrent(); } catch (const std::exception&) { refused = true; }
+      const size_t afterDelete = w.m_doc->doc.ops.size();
+      w.action("edit.hide")->trigger();
+      w.action("inspect.properties")->trigger();
+      const QTreeWidget* table = w.m_props->table();
+      const bool sections = w.m_propsPanel->isVisible() && table->topLevelItemCount() > 0 && table->topLevelItem(0)->text(0).contains("PROBE SECTION") &&
+                            w.m_props->subject().refs.size() == 1 && w.m_props->subject().refs.front().body == "probe:b";
+      require(!marker.empty() && w.currentNodeIds().empty() && w.m_selRefs.empty() && w.m_statusSel->text() == MainWindow::tr("%1 selected").arg(1),
+              "folder: a row is no node for the view or the edit commands (status " + w.m_statusSel->text() + ")");
+      require(refused && afterDelete == ops && w.m_doc->doc.ops.size() == ops,
+              QString("folder: Del on a row is refused, not the timeline's marker (%1, %2 ops more); V does nothing (%3 more)")
+                  .arg(refused ? "refused" : "ran").arg(afterDelete - ops).arg(w.m_doc->doc.ops.size() - afterDelete));
+      require(sections, QString("folder: Properties shows the areas' sections alone (shown %1, %2 rows, first '%3')")
+                            .arg(w.m_propsPanel->isVisible()).arg(table->topLevelItemCount()).arg(table->topLevelItemCount() ? table->topLevelItem(0)->text(0) : QString()));
+      w.m_propsPanel->hide();
+      w.m_timeline->setCurrentOp({});
+    }
     auto mouse = [tree](QEvent::Type type, const QPoint& at, Qt::MouseButton button) {
       QMouseEvent e(type, QPointF(at), QPointF(tree->viewport()->mapToGlobal(at)), button, type == QEvent::MouseButtonRelease ? Qt::NoButton : button, Qt::NoModifier);
       QCoreApplication::sendEvent(tree->viewport(), &e);

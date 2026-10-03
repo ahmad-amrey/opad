@@ -66,7 +66,8 @@ struct Folder {
   std::function<void(const std::string& id)> activated;                 // double-click on a row
 };
 // Its rows are selected like nodes: BrowserPanel::selectionChanged (and the areas' selectionChanged) carry their ids.
-// They have no eye, colour, rename or drag; the view and the Properties panel do not know them.
+// They have no eye, colour, rename or drag; the view, the edit commands and the tools never see them (the window keeps
+// them out of the node selection), and Properties shows only the areas' sections for one (subject: a ref to its id).
 }  // namespace browser
 
 class BrowserDelegate : public QStyledItemDelegate {

@@ -233,6 +233,7 @@ class MainWindow : public QMainWindow {
   ToolPanel* m_sectionPanel = nullptr;
   QList<ToolPanel*> m_panels;
   std::vector<opad::Ref> m_selRefs;   // the current selection as last reported by the viewport or the browser
+  std::vector<std::string> m_selRows;  // areas' browser rows selected (provided folders): not nodes, so only in SelectionContext::ids
   TimelineWidget* m_timeline = nullptr;
   QMenu* m_viewsMenu = nullptr;
   QMenu* m_recentMenu = nullptr;

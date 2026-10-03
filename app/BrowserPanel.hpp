@@ -39,6 +39,8 @@ class BrowserPanel : public QWidget {
  public:
   explicit BrowserPanel(AppDocument* doc, QWidget* parent = nullptr);
   std::vector<std::string> selectedIds() const;
+  bool isProvided(const std::string& id) const;  // a row of an area's folder (addFolder), not a node or a sketch
+  QString rowName(const std::string& id) const;  // as shown
   void setSelectedIds(const std::vector<std::string>& ids);
   void startRename(const std::string& id);
   void focusFilter();

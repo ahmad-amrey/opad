@@ -169,9 +169,10 @@ void MainWindow::deleteCurrent() {
   std::string id = m_timeline->currentOp();
   if (!id.empty() && m_timeline->hasFocus()) return deleteOp(id);
   std::set<std::string> ops;
-  for (const auto& nid : currentNodeIds()) if (const opad::Node* n = m_doc->node(nid)) ops.insert(n->source_op);
-  if (ops.empty()) {
-    if (id.empty()) throw opad::Error("Select objects, or a marker on the timeline, to tombstone.");
+  const auto selected = currentNodeIds();
+  for (const auto& nid : selected) if (const opad::Node* n = m_doc->node(nid)) ops.insert(n->source_op);
+  if (ops.empty()) {  // the timeline's marker only when nothing is selected (an area's row or a sketch is not that marker)
+    if (id.empty() || !selected.empty() || !m_selRows.empty()) throw opad::Error("Select objects, or a marker on the timeline, to tombstone.");
     return deleteOp(id);
   }
   if (QMessageBox::question(this, tr("Delete"), tr("Tombstone %1 import operation(s)? History is kept; Shift+Del on the timeline restores.").arg(ops.size())) != QMessageBox::Yes) return;

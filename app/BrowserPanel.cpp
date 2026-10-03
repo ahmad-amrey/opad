@@ -425,6 +425,16 @@ QTreeWidgetItem* BrowserPanel::itemFor(const std::string& id) const {
   return it == m_index.end() ? nullptr : it->second;
 }
 
+bool BrowserPanel::isProvided(const std::string& id) const {
+  const QTreeWidgetItem* item = itemFor(id);
+  return item && item->data(0, Qt::UserRole).toString() == "provided";
+}
+
+QString BrowserPanel::rowName(const std::string& id) const {
+  const QTreeWidgetItem* item = itemFor(id);
+  return item ? item->text(0) : QString();
+}
+
 std::vector<std::string> BrowserPanel::selectedIds() const {
   std::vector<std::string> ids;
   for (QTreeWidgetItem* it : m_tree->selectedItems()) {
