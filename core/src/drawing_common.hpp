@@ -21,6 +21,7 @@ struct Drawing {
   static constexpr uint32_t kNoColor = 0xFF000000u;  // drawn in the viewer's own drawing colour
   std::map<std::string, std::map<uint32_t, TopoDS_Compound>> layers;  // layer -> 0xRRGGBB or kNoColor -> geometry
   std::map<std::string, bool> visible;
+  std::map<std::string, json> layer_info;  // DXF: the layer table's entry (Node::layer); "locked" also locks the layer's node
   std::map<std::string, json> images;
   std::vector<std::string> warnings;
   // Where the geometry's own origin lies in the file's coordinates (mm). A drawing far from its origin (survey or

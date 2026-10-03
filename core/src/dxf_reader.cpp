@@ -372,9 +372,11 @@ class Reader {
 
  private:
   struct Layer {
-    std::string name;
+    std::string name, linetype;
     uint32_t color = kNoColor;
-    bool visible = true;
+    bool visible = true, off = false, frozen = false, locked = false, plot = true;
+    int lineweight = -3;  // 1/100 mm; negative: by layer, by block or the default
+    json info() const;    // what an import node keeps of it (Node::layer)
   };
   struct Style {
     std::string font;
@@ -520,6 +522,17 @@ const std::string& Reader::layer_name(std::string_view raw) {
   return m_layerNames.emplace(std::string(raw), name).first->second;
 }
 
+json Reader::Layer::info() const {
+  json j = {{"name", name}};
+  if (off) j["off"] = true;
+  if (frozen) j["frozen"] = true;
+  if (locked) j["locked"] = true;
+  if (!plot) j["plot"] = false;
+  if (!linetype.empty() && upper(linetype) != "CONTINUOUS") j["linetype"] = linetype;
+  if (lineweight >= 0) j["lineweight"] = lineweight / 100.0;  // mm
+  return j;
+}
+
 uint32_t Reader::layer_color(const std::string& name) const {
   const auto it = m_layers.find(upper(name));
   return it == m_layers.end() ? kNoColor : it->second.color;
@@ -540,9 +553,15 @@ void Reader::tables(const std::vector<Entity>& section) {
       Layer layer;
       // Names are decoded once the code page is known, see read().
       layer.name = std::string(trimmed(f.str(2, "0")));
-      const int aci = f.integer(62, 7);
+      const int aci = f.integer(62, 7), flags = f.integer(70);
       layer.color = f.has(420) ? visible_color(uint32_t(int64_t(f.num(420))) & 0xFFFFFFu) : visible_color(aci_rgb(std::abs(aci)));
-      layer.visible = aci >= 0 && !(f.integer(70) & 1);  // negative colour = off; flag 1 = frozen
+      layer.off = aci < 0;  // negative colour = off; flag 1 = frozen, 4 = locked
+      layer.frozen = flags & 1;
+      layer.locked = flags & 4;
+      layer.visible = !layer.off && !layer.frozen;
+      layer.plot = f.integer(290, 1) != 0;
+      layer.linetype = std::string(trimmed(f.str(6)));
+      layer.lineweight = f.integer(370, -3);
       m_layers[upper(layer.name)] = layer;
     } else if (e.type == "STYLE") {
       Style style;
@@ -1402,6 +1421,7 @@ Drawing Reader::read() {
   std::map<std::string, Layer> decoded;  // keyed by the decoded name, which is what entities are looked up by
   for (auto& [key, layer] : m_layers) {
     layer.name = decode(layer.name);
+    layer.linetype = decode(layer.linetype);
     decoded[upper(layer.name)] = layer;
   }
   m_layers = std::move(decoded);
@@ -1441,6 +1461,7 @@ Drawing Reader::read() {
     out.add(layer, shape, rgb);
     const auto it = m_layers.find(upper(layer));
     out.visible[layer] = it == m_layers.end() || it->second.visible;
+    if (it != m_layers.end()) out.layer_info[layer] = it->second.info();
   }
   out.warnings = m_warnings;
   if (!m_unsupported.empty()) {

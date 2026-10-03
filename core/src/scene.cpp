@@ -32,6 +32,12 @@ bool Scene::effectively_visible(const std::string& id) const {
   return false;
 }
 
+bool Scene::effectively_locked(const std::string& id) const {
+  for (const Node* n = node(id); n; n = n->parent.empty() ? nullptr : node(n->parent))
+    if (n->locked) return true;
+  return false;
+}
+
 std::vector<std::string> Scene::bodies_under(const std::string& id) const {
   std::vector<std::string> out;
   std::function<void(const std::string&)> rec = [&](const std::string& nid) {
@@ -133,6 +139,7 @@ json Scene::tree_json(int max_depth) const {
     if (n->opacity != 1.0) j["opacity"] = n->opacity;
     if (!n->visible) j["visible"] = false;
     if (n->locked) j["locked"] = true;
+    if (n->layer.is_object()) j["layer"] = n->layer;
     j["source_op"] = n->source_op;
     if (n->kind == Node::Kind::Component) {
       if (max_depth < 0 || depth < max_depth) {
@@ -215,6 +222,8 @@ struct SceneBuilder::Impl {
       }
       n.opacity = jn.value("opacity", 1.0);
       n.visible = jn.value("visible", true);
+      n.locked = jn.contains("locked") && jn["locked"].is_boolean() && jn["locked"].get<bool>();  // a drawing's locked layer
+      if (jn.contains("layer") && jn["layer"].is_object()) n.layer = jn["layer"];
       n.source_op = op_id;
       const std::string nid = n.id;
       const bool body = n.kind == Node::Kind::Body;
