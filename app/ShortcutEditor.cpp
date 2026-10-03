@@ -147,7 +147,7 @@ ShortcutEditor::ShortcutEditor(const QList<QAction*>& actions,QWidget* parent):Q
     item->setText(2,scopeName(action->objectName()));m_entries.push_back({action,item,action->shortcut(),action->shortcut()});
   }
   auto* reservedGroup=new QTreeWidgetItem(m_tree);reservedGroup->setText(0,tr("Editing controls (reserved)"));reservedGroup->setData(0,Qt::UserRole,-1);
-  for(const auto& pair:QList<QPair<QString,QString>>{{tr("Cancel or step back"),"Esc"},{tr("Complete current input"),"Return"},{tr("Delete sketch selection"),"Del"},{tr("Delete sketch selection"),"Backspace"}}) {
+  for(const auto& pair:QList<QPair<QString,QString>>{{tr("End the current step, then close the tool"),"Esc"},{tr("Complete current input"),"Return"},{tr("Delete sketch selection"),"Del"},{tr("Undo the last sketch point"),"Backspace"}}) {
     auto* item=new QTreeWidgetItem(reservedGroup);item->setText(0,pair.first);item->setText(1,pair.second);item->setText(2,tr("In sketch"));item->setData(0,Qt::UserRole,-1);
   }
   m_tree->sortItems(0,Qt::AscendingOrder);m_tree->expandAll();

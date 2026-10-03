@@ -15,6 +15,7 @@
 #include "AppDocument.hpp"
 #include "Viewport.hpp"
 #include "GuidedTool.hpp"
+#include "SketchKeys.hpp"
 #include "opad/design/sketch.hpp"
 
 class JobRunner;
@@ -59,7 +60,14 @@ class SketchEditor : public QObject, public SketchInput {
   void invalidatePreview(bool keepOverlay = false);  // keepOverlay: the shown one stays until the next replaces it (live drags)
   void scheduleToolPreview();
   void placePrecise(const QString& u, const QString& v, int mode);
-  void stepBack();
+  // The editing keys and the panel's buttons (SketchKeys.hpp): Backspace / Undo point, Enter / Done, Esc (one rung of
+  // the ladder) and Close tool (Esc until the tool is closed). Each returns whether it did something.
+  sketchkeys::State keyState() const;
+  bool undoPoint();
+  bool done();
+  bool escape();
+  void closeTool();
+  QString keyHints() const;  // what Backspace, Enter and Esc do now, for the prompt
   void toggleReference();
   void selectConnected();
   void selectType();
@@ -86,6 +94,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchHandles();
   void benchDrag();
   void benchGrid();
+  void benchLadder();
   void benchLarge(const QString& output, opad::json metrics);
 
   // SketchInput

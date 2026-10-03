@@ -103,7 +103,7 @@ void SketchEditor::toolPrompt() {
   QString t;
   const int n = static_cast<int>(m_clicks.size());
   if (m_tool == "select") t = tr("Select or drag geometry · double-click a dimension to change it · Del deletes · X construction");
-  else if (m_tool == "line") t = m_chain.empty() ? tr("Line: click the start point") : tr("Line: click the next point · Enter or double-click ends the chain · Esc");
+  else if (m_tool == "line") t = m_chain.empty() ? tr("Line: click the start point") : tr("Line: click the next point · a double-click, Enter or Esc ends the chain · Backspace takes the last point back");
   else if (m_tool == "rect") t = n == 0 ? tr("Rectangle: click the first corner") : tr("Rectangle: click the opposite corner");
   else if (m_tool == "crect") t = n == 0 ? tr("Centre rectangle: click the centre") : tr("Centre rectangle: click a corner");
   else if (m_tool == "circle") t = n == 0 ? tr("Circle: click the centre") : tr("Circle: click a point on the circle");
@@ -1086,6 +1086,7 @@ void SketchEditor::bench(const QString&) {
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_REFERENCE"))return benchWorkflow();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_DRAG"))return benchDrag();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_GRID"))return benchGrid();
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_LADDER"))return benchLadder();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY"))return benchModify();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES"))return benchPrimitives();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW"))return benchWorkflow();

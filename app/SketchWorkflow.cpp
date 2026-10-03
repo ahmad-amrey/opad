@@ -44,7 +44,7 @@ QList<ToolStep> SketchEditor::toolSteps() const {
   else if(m_tool=="rect3")labels={tr("Pick first corner"),tr("Pick base direction"),tr("Set rectangle height")};
   else if(m_tool=="arcslot")labels={tr("Pick arc centre"),tr("Pick start point"),tr("Pick end point")};
   else if(m_tool=="cslot")labels={tr("Pick slot centre"),tr("Pick cap centre"),tr("Set slot width")};
-  else if(m_tool=="control_spline")labels={tr("Pick control points"),tr("Apply to finish the chain")};
+  else if(m_tool=="control_spline")labels={tr("Pick control points"),tr("Done (Enter) finishes the chain")};
   else if(m_tool=="select")labels={tr("Select geometry"),tr("Drag, constrain or modify")};
   else if(m_tool=="dimension")labels={tr("Pick geometry to measure"),tr("Place the label"),tr("Set expression and apply")};
   else if(m_tool.startsWith("c:"))labels={tr("Pick first geometry"),tr("Pick related geometry")};
@@ -58,7 +58,7 @@ QList<ToolStep> SketchEditor::toolSteps() const {
   else if(m_tool=="image_calibrate")labels={tr("Pick first calibration point"),tr("Pick second calibration point"),tr("Enter known distance and apply")};
   else if(m_tool=="image_trace")labels={tr("Choose the backdrop image"),tr("Adjust tracing parameters"),tr("Apply to create editable curves")};
   else if(m_tool.startsWith("image_")||m_tool=="vector_import"||m_tool=="vector_export"||m_tool=="simplify")labels={tr("Choose source and parameters"),tr("Apply")};
-  else if(m_tool=="line" || m_tool=="spline")labels={tr("Pick start point"),tr("Add points"),tr("Apply to finish the chain")};
+  else if(m_tool=="line" || m_tool=="spline")labels={tr("Pick start point"),tr("Add points"),tr("Done (Enter) finishes the chain")};
   else if(m_tool=="point")labels={tr("Place point")};
   else if(m_tool=="circle3" || m_tool=="arc3" || m_tool=="arcc" || m_tool=="ellipse" || m_tool=="slot")labels={tr("Pick first point"),tr("Pick second point"),tr("Pick third point")};
   else labels={tr("Pick first point"),tr("Pick second point")};
@@ -182,13 +182,94 @@ void SketchEditor::placePrecise(const QString& u,const QString& v,int mode) {
   }catch(const std::exception& e){emit status(i18n::t(QString::fromUtf8(e.what())));}
 }
 
-void SketchEditor::stepBack() {
+// ---------------------------------------------------------------- Undo point, Done, Esc (UI-20)
+// "Back" used to undo a whole step and leave the tool (undo() ends it), "Cancel tool" kept everything and the prompt
+// promised that Esc steps back: three meanings. Now one model (SketchKeys.hpp) for the keys, the panel and the prompt.
+sketchkeys::State SketchEditor::keyState() const {
+  sketchkeys::State s;
+  s.tool=m_tool.toStdString();s.chain=m_chain.size();s.clicks=m_clicks.size();s.picks=m_picked.size();
+  s.boxSelecting=m_boxSelecting;s.selection=!m_sel.empty();
+  s.mirrorAxis=m_tool=="mirror" && option("mirrorStage","seed")=="axis";
+  s.mirrorSeeds=m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && !s.mirrorAxis;
+  return s;
+}
+
+bool SketchEditor::undoPoint() {
+  if(!m_active || m_editJob)return false;
+  using sketchkeys::Back;
+  const Back back=sketchkeys::backspace(keyState());
+  if(back==Back::None)return false;
+  if(back==Back::Delete){deleteSelection();return true;}
   invalidatePreview();
-  if(!m_clicks.empty())m_clicks.pop_back();
-  else if(!m_picked.empty()){m_picked.pop_back();m_placingDim=false;}
-  else if(!m_chain.empty()){undo();}
-  else setTool("select");
-  toolPrompt();rebuild();emit changed();
+  if(!m_chain.empty()) {
+    // Chain-local: back to before the last point, drawing goes on from the one before. Each point of a chain is one
+    // undo step until the chain ends (finishChain folds them into one), so the newest step holds the sketch to go back
+    // to. undo() would also have ended the chain and the tool.
+    if(m_undo.size()<=m_chainUndoStart){emit status(tr("That point is older than the undo history."));return false;}
+    m_chain.pop_back();
+    m_sk=m_undo.back().geometry;m_undo.pop_back();
+    if(!m_sk.point(m_trackingPoint))m_trackingPoint=0;
+    m_conflicts.clear();m_inferenceLocked=false;analyseSketch();scheduleFill();
+  } else if(!m_clicks.empty()) {
+    m_clicks.pop_back();
+    if(m_clicks.empty() && (m_tool=="tangent_arc" || m_tool=="extend"))m_picked.clear();  // picked with that click
+  } else {
+    m_picked.pop_back();m_placingDim=false;
+    if(m_tool=="dimension" && !m_picked.empty()) {  // what the pick left measures alone (a line) waits to be placed again
+      const int keep=m_picked.front();m_picked.clear();dimensionClick({m_sk.point(keep)?Hit::Point:Hit::Entity,keep},0,0);
+    }
+  }
+  toolPrompt();rebuild();emit changed();scheduleToolPreview();
+  return true;
+}
+
+bool SketchEditor::done() {
+  if(!m_active || m_editJob)return false;
+  switch(sketchkeys::enter(keyState())) {
+    case sketchkeys::Enter::None:return false;
+    case sketchkeys::Enter::EndChain:if(m_tool=="control_spline")finishPrimitive();else finishChain();break;
+    case sketchkeys::Enter::PickMirrorLine:m_options["mirrorStage"]="axis";toolPrompt();break;  // the curves are chosen: now the line
+  }
+  rebuild();emit changed();return true;
+}
+
+bool SketchEditor::escape() {
+  if(!m_active || m_editJob)return false;
+  using sketchkeys::Esc;
+  switch(sketchkeys::escape(keyState())) {
+    case Esc::None:return false;
+    case Esc::CancelBox:m_boxSelecting=false;break;
+    case Esc::BackToCurves:m_options["mirrorStage"]="seed";toolPrompt();break;
+    case Esc::EndChain:  // as Enter, and over for sure (a control-point spline with too few points is dropped)
+      if(m_tool=="control_spline"){finishPrimitive();m_clicks.clear();toolPrompt();}else finishChain();
+      break;
+    case Esc::CancelStep:cancel_change();m_clicks.clear();m_picked.clear();m_placingDim=false;scheduleToolPreview();toolPrompt();break;
+    case Esc::CloseTool:setTool("select");break;
+    case Esc::ClearSelection:m_sel.clear();break;
+  }
+  rebuild();emit changed();return true;
+}
+
+void SketchEditor::closeTool() {
+  for(int rung=0;rung<4 && m_tool!="select" && escape();++rung){}
+}
+
+QString SketchEditor::keyHints() const {
+  using namespace sketchkeys;
+  const State s=keyState();QStringList out;
+  const Back back=sketchkeys::backspace(s);
+  if(back==Back::UndoPoint)out<<tr("⌫ undo point");
+  else if(back==Back::UndoPick)out<<tr("⌫ undo pick");
+  else if(back==Back::Delete)out<<tr("Del/⌫ delete");
+  const Esc esc=sketchkeys::escape(s);
+  if(esc==Esc::EndChain)  // Enter does the same; only a second Esc goes on to close the tool
+    out<<(m_tool!="line" && std::max(s.chain,s.clicks)>1?tr("Enter/Esc finish spline"):tr("Enter/Esc end chain"));
+  else if(sketchkeys::enter(s)==Enter::PickMirrorLine)out<<tr("Enter pick mirror line");
+  if(esc==Esc::BackToCurves)out<<tr("Esc back to curves");
+  else if(esc==Esc::CancelStep)out<<(back==Back::UndoPick?tr("Esc clear picks"):tr("Esc cancel shape"));
+  else if(esc==Esc::CloseTool)out<<tr("Esc close tool");
+  else if(esc==Esc::ClearSelection)out<<tr("Esc clear selection");
+  return out.join(QStringLiteral(" · "));
 }
 
 void SketchEditor::toggleReference() {

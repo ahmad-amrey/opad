@@ -13,6 +13,9 @@
 #include <QTabBar>
 #include <QFontComboBox>
 #include <QFileDialog>
+#include <QApplication>
+#include <QAbstractItemView>
+#include <QKeyEvent>
 
 QList<SketchPanel::Tool> SketchPanel::tools() {
   return {
@@ -78,12 +81,13 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   m_group->hide();m_tools->hide();
   m_steps=new ToolStepsPanel(this);m_steps->setSummary({},{},{});tool->addWidget(m_steps);
   m_fields=new QFormLayout; tool->addLayout(m_fields);
-  auto* apply=new QPushButton(tr("Apply"),this); apply->setObjectName("primary"); layout->addWidget(apply);
+  // The chain tools' Apply is Done (Enter): it ends the chain and keeps the tool.
+  auto* apply=new QPushButton(tr("Apply"),this); apply->setObjectName("primary"); apply->setProperty("sketchApply",true); layout->addWidget(apply);m_apply=apply;
   connect(tabs,&QTabWidget::currentChanged,apply,[apply](int index){apply->setVisible(index==0);});
-  connect(apply,&QPushButton::clicked,editor,&SketchEditor::applyTool);
+  connect(apply,&QPushButton::clicked,this,[this]{m_editor->applyTool();keysToView();});
   m_precise=new QWidget(this);auto* precise=new QFormLayout(m_precise);tool->addWidget(m_precise);
   m_coordinates=new QComboBox(this); m_coordinates->addItems({tr("Absolute coordinates"),tr("Relative coordinates"),tr("Polar: length and angle")});
-  m_u=new QLineEdit("0",this); m_v=new QLineEdit("0",this);
+  m_u=new QLineEdit("0",this); m_v=new QLineEdit("0",this); m_u->setObjectName("sketchPreciseU");
   precise->addRow(tr("Input"),m_coordinates); precise->addRow(tr("X / length"),m_u); precise->addRow(tr("Y / angle"),m_v);
   auto* place=new QPushButton(tr("Place point"),this); precise->addRow(place);
   auto submit=[this] { m_editor->placePrecise(m_u->text(),m_v->text(),m_coordinates->currentIndex()); };
@@ -139,11 +143,17 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   connect(iterations,&QSpinBox::valueChanged,this,[](int v){QSettings().setValue("sketch/iterations",v);});settings->addStretch();
   m_status=new QLabel(this);m_status->setWordWrap(true);layout->addWidget(m_status);
   auto* footer=new QHBoxLayout;layout->addLayout(footer);
-  // Finish sketch lives in the ribbon, next to Cancel sketch; the tool panel only steps back or leaves the tool.
-  auto* back=new QPushButton(tr("Back"),this);auto* cancel=new QPushButton(tr("Cancel tool"),this);
-  footer->addWidget(back);footer->addWidget(cancel);
-  connect(back,&QPushButton::clicked,editor,&SketchEditor::stepBack);
-  connect(cancel,&QPushButton::clicked,this,[this]{m_editor->setTool("select");});
+  // Finish sketch lives in the ribbon, next to Cancel sketch. The footer is Backspace and Esc as buttons (UI-20): Undo
+  // point takes the last point of the step in progress back and never leaves the tool, Close tool is Esc until the tool
+  // is closed (a chain keeps its segments, a shape not made yet is dropped). They hand the keyboard back to the view.
+  m_undoPoint=new QPushButton(this);m_undoPoint->setObjectName("sketchUndoPoint");
+  m_closeTool=new QPushButton(tr("Close tool   Esc"),this);m_closeTool->setObjectName("sketchCloseTool");
+  m_undoPoint->setToolTip(tr("Takes the last point or pick back; the tool stays (Backspace)"));
+  m_closeTool->setToolTip(tr("Leaves the tool. Esc ends the current chain or step first, a second Esc leaves the tool"));
+  for(auto* b:{m_undoPoint,m_closeTool})b->setFocusPolicy(Qt::NoFocus);
+  footer->addWidget(m_undoPoint);footer->addStretch();footer->addWidget(m_closeTool);
+  connect(m_undoPoint,&QPushButton::clicked,this,[this]{m_editor->undoPoint();keysToView();});
+  connect(m_closeTool,&QPushButton::clicked,this,[this]{m_editor->closeTool();keysToView();});
   connect(editor,&SketchEditor::status,m_status,&QLabel::setText);
   connect(editor,&SketchEditor::changed,this,&SketchPanel::refresh);
   connect(editor,&SketchEditor::toolChanged,this,[this]{m_pages->setCurrentIndex(0);refresh();});
@@ -265,6 +275,14 @@ void SketchPanel::refresh() {
   for(auto* edit:findChildren<QLineEdit*>())if(edit->objectName().startsWith("sketchOption-") && !edit->hasFocus()) {
     const auto key=edit->objectName().mid(13);if(m_editor->m_options.contains(key)){QSignalBlocker block(edit);edit->setText(m_editor->option(key));}
   }
+  {
+    using namespace sketchkeys;
+    const State keys=m_editor->keyState();const Back back=backspace(keys);const bool chain=chainTool(keys.tool);
+    m_apply->setText(chain?tr("Done   Enter"):tr("Apply"));m_apply->setEnabled(!chain || enter(keys)!=Enter::None);
+    m_undoPoint->setText(back==Back::UndoPick?tr("Undo pick   ⌫"):tr("Undo point   ⌫"));
+    m_undoPoint->setEnabled(back==Back::UndoPoint || back==Back::UndoPick);
+    m_undoPoint->setVisible(tool!="select");m_closeTool->setVisible(tool!="select");
+  }
   m_steps->setSteps(steps(),{});
   // The measurement widget owns an inner scroll area: give its numbered rows room before Qt's deferred
   // show/layout pass (minimumSizeHint otherwise sees newly created rows as hidden and collapses them).
@@ -293,6 +311,20 @@ void SketchPanel::refresh() {
   QTimer::singleShot(0,this,[this]{emit contentChanged();});
 }
 void SketchPanel::showPage(int page){m_pages->setCurrentIndex(page);refresh();}
+void SketchPanel::keysToView() {
+  QWidget* view=m_editor->m_viewport;
+  if(!view->isVisible())return;
+  view->activateWindow();view->setFocus(Qt::OtherFocusReason);
+}
+void SketchPanel::keyPressEvent(QKeyEvent* e) {
+  // Backspace and Enter that no field took (a button or a check box had the keyboard): the sketch's keys, as in the
+  // view. A text field keeps them (Backspace edits it, Enter there places the typed point).
+  QWidget* focus=QApplication::focusWidget();
+  const bool typing=qobject_cast<QLineEdit*>(focus) || qobject_cast<QAbstractSpinBox*>(focus) || qobject_cast<QComboBox*>(focus) || qobject_cast<QAbstractItemView*>(focus);
+  const int key=e->key();
+  if(!typing && (key==Qt::Key_Backspace || key==Qt::Key_Return || key==Qt::Key_Enter) && m_editor->sketchKey(e))return e->accept();
+  QWidget::keyPressEvent(e);
+}
 QSize SketchPanel::toolSizeHint(int width) const {
   if(m_pages->currentIndex()!=0)return {width,440};
   // The panel as laid out at this width, with the scrolled tool page at its full height. A fixed allowance for the

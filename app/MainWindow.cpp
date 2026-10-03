@@ -1207,7 +1207,7 @@ void MainWindow::buildDesign() {
   connect(m_design->sketch(),&SketchEditor::status,sketchPanel,&ToolPanel::requestContentFit);
   connect(sketchContent,&SketchPanel::contentChanged,sketchPanel,&ToolPanel::requestContentFit);
   m_design->setSketchPanel(sketchPanel);
-  sketchPanel->setEscapeHandler([this]{m_design->sketch()->stepBack();});
+  sketchPanel->setEscapeHandler([this]{m_design->sketch()->escape();});  // the same Esc ladder as in the view
   connect(sketchContent,&SketchPanel::finishRequested,this,[this]{m_design->finishSketch();});
   m_panels<<m_design->planePanel();
   m_drawingPlacer = new DrawingPlacer(m_doc, m_viewport, m_jobs, this);
@@ -1249,7 +1249,10 @@ void MainWindow::updateDesignState() {
   if(m_design->pickingPlane()) {
     m_prompt->hide(); // The side panel guides this flow; leave the corner selector unobstructed.
   } else if(sketching) {
-    m_prompt->set("sketch",tr("Sketch"),m_design->sketch()->toolSteps(),m_design->sketch()->visible()?tr("Esc steps back"):tr("This sketch is hidden. Show it in the browser to see your edits."));
+    // The keys say what they do now (UI-20); with nothing to undo, end or close: how to finish the sketch.
+    QString hints=m_design->sketch()->keyHints();
+    if(hints.isEmpty())hints=tr("%1 finish sketch").arg(action("sketch.finish")->shortcut().toString(QKeySequence::NativeText));
+    m_prompt->set("sketch",tr("Sketch"),m_design->sketch()->toolSteps(),m_design->sketch()->visible()?hints:tr("This sketch is hidden. Show it in the browser to see your edits."));
     m_prompt->show();positionOverlays();
   } else if(m_tool.id.isEmpty()) m_prompt->hide();
   m_browser->setEnabled(true);

@@ -27,6 +27,7 @@ class PromptBar : public QWidget {
  public:
   explicit PromptBar(QWidget* parent = nullptr);
   void set(const QString& icon, const QString& title, const QList<ToolStep>& steps, const QString& hints);
+  QString hints() const { return m_hints; }
   QSize sizeHint() const override;
  protected:
   void paintEvent(QPaintEvent*) override;

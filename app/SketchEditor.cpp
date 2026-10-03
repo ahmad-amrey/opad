@@ -312,7 +312,7 @@ bool SketchEditor::end_change(const QString& what) {
   }
   m_solved = r;
   m_undo.push_back({m_before,m_beforePlane,m_beforeFrame});
-  if (m_undo.size() > 200) m_undo.erase(m_undo.begin());
+  if (m_undo.size() > 200) {m_undo.erase(m_undo.begin());if(m_chainUndoStart)--m_chainUndoStart;}
   m_redo.clear();
   m_modified = true;
   rebuild();
@@ -770,39 +770,18 @@ void SketchEditor::sketchDoubleClick(double u, double v) {
 bool SketchEditor::sketchKey(QKeyEvent* e) {
   if(m_editJob)return false;
   if (!m_active) return false;
-  if(e->modifiers()!=Qt::NoModifier)return false;
+  if((e->modifiers()&~Qt::KeypadModifier)!=Qt::NoModifier)return false;  // the keypad's Enter is Enter
   switch (e->key()) {
     case Qt::Key_Escape:
-      if(m_boxSelecting){m_boxSelecting=false;rebuild();return true;}
-      if(m_tool=="mirror" && option("mirrorStage","seed")=="axis" && m_picked.empty()){m_options["mirrorStage"]="seed";toolPrompt();rebuild();emit changed();return true;}  // back to choosing curves
-      if (m_placingDim || !m_clicks.empty() || !m_chain.empty() || !m_picked.empty()) {
-        if (!m_chain.empty()) finishChain();  // one point alone is taken back too (it used to stay behind)
-        else {
-          cancel_change();
-          m_clicks.clear();
-          m_chain.clear();
-          m_picked.clear();
-          m_placingDim = false;
-        }
-        toolPrompt();
-      } else if (m_tool != "select") {
-        setTool("select");
-      } else {
-        m_sel.clear();
-      }
-      rebuild();
-      emit changed();
+      escape();
       return true;
     case Qt::Key_Return:
     case Qt::Key_Enter:
-      if(m_tool=="control_spline"){finishPrimitive();return true;}
-      if(m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && option("mirrorStage","seed")!="axis" && !m_sel.empty()){
-        m_options["mirrorStage"]="axis";toolPrompt();rebuild();emit changed();return true;  // the curves are chosen: now the line
-      }
-      if (!m_chain.empty()) { finishChain(); return true; }
-      return false;
-    case Qt::Key_Delete:
+      return done();
     case Qt::Key_Backspace:
+      undoPoint();  // never deletes curves while a tool runs, never leaves the tool
+      return true;
+    case Qt::Key_Delete:
       deleteSelection();
       return true;
     default:
