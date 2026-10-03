@@ -22,7 +22,7 @@ CASES = [
     # out on a worker, drawn and dragged with no event-loop gap over 250 ms. <prefix>.png.
     ("sheet-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_SHEET_LOADED": "{prefix}"}),
     # Annotating a sheet (UI-79, UI-80, UI-81) with mouse and key events on the canvas: smart dimensions (an edge, a hole's
-    # diameter with a tolerance from the options bar, a corner to a centre), hole callouts from hole features, a centre mark
+    # diameter with a tolerance from the options bar, a corner to a centre), hole callouts from hole features (also from the side), a centre mark
     # and line, a note with a leader, datums, a feature control frame, surface texture, a chain set, dimensions from datums,
     # a hole table, Esc stepping back, select / edit in the bar / drag / Del / Ctrl+Z, a dangling dimension re-attached from
     # the sheet bar, the views' own centre marks. <prefix>.annotate.png, .bar.png, .marks.png.

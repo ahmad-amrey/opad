@@ -40,7 +40,8 @@ json pick_reference(const Document& doc, const Scene& scene, const ViewFrame& fr
 
 // What an item draws from, measured from its references now, in paper mm from its view's centre (a hole table's rows in
 // sheet paper mm): a dimension's evaluate_item, a centre mark's {centre, r}, a centre line's {from, to}, a leader's {tip}, a
-// hole callout's {shown, hole, count, tip, centre, r}, a datum's or surface symbol's {foot, out}, a set's {origin, points,
+// hole callout's {shown, hole, count, centre, r (seen along its axis), ends (seen from the side: its opening's two ends,
+// the leader takes the nearer)}, a datum's or surface symbol's {foot, out}, a set's {origin, points,
 // values, shown}, a hole table's {rows, origin}. Throws Error when a reference is gone or the view shows it foreshortened.
 // Workers: resolves references (a hole table walks the view's bodies).
 json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, const SheetItem& item, const ViewFrame* frame);

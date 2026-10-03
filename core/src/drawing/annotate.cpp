@@ -542,8 +542,14 @@ json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, c
     feature_values(R, rr.node, h);
     const int precision = d.value("precision", 2);
     const std::string shown = hole_callout(h, count, sheet.standard, units, [&](double v) { return format_number(v, precision, &sheet); });
-    json m = {{"shown", shown}, {"hole", h.to_json()}, {"count", count}, {"centre", js(paper(h.entry))}, {"r", 0}};
-    if (paper.along(h.dir)) m["r"] = h.outer() / 2 * frame->scale;
+    const Vec2 c = paper(h.entry);
+    json m = {{"shown", shown}, {"hole", h.to_json()}, {"count", count}, {"centre", js(c)}, {"r", 0}};
+    if (paper.along(h.dir)) {
+      m["r"] = h.outer() / 2 * frame->scale;
+    } else if (paper.across(h.dir)) {  // seen from the side: the ends of its opening, where the wall's outlines meet the surface
+      const Vec2 n = mul(left(unit(frame->view(h.dir))), h.outer() / 2 * frame->scale);
+      m["ends"] = {js(sub(c, n)), js(add(c, n))};
+    }
     if (R.notes.contains("rehinted")) m["rehinted"] = R.notes["rehinted"];
     return m;
   }
@@ -774,7 +780,12 @@ void draw_item(Display& d, const Sheet& sheet, const json& def, const json& m, V
   } else if (kind == "hole_callout") {
     const Vec2 c = P(m["centre"]);
     const double r = m.value("r", 0.0);
-    leader(d, dims, r > 0 ? add(c, mul(unit(sub(place, c), {1, 1}), r)) : c, place, m.value("shown", ""), s);
+    Vec2 tip = r > 0 ? add(c, mul(unit(sub(place, c), {1, 1}), r)) : c;
+    if (const json ends = m.value("ends", json()); ends.is_array() && ends.size() == 2) {  // the end of the opening nearer the text
+      const Vec2 a = P(ends[0]), b = P(ends[1]);
+      tip = len(sub(place, a)) <= len(sub(place, b)) ? a : b;
+    }
+    leader(d, dims, tip, place, m.value("shown", ""), s);
   } else if (kind == "hole_table") {
     const double h = 2.5 * s.scale;
     for (const auto& row : m.value("rows", json::array())) {

@@ -25,7 +25,8 @@
 // OPAD_BENCH_SHEET_ANNOTATE=<prefix> (UI-79, UI-80, UI-81): a drawing of an 80 x 50 x 12 plate with two 6 mm holes and a
 // counterbored one (hole features) and a pin beside it, annotated through the sheet's tools with mouse and key events on
 // the canvas: the smart dimension (an edge read horizontally by where the pointer is, a hole's diameter with a tolerance
-// from the options bar, a corner to a hole's centre), hole callouts from the hole features, a centre mark, a centre line,
+// from the options bar, a corner to a hole's centre), hole callouts from the hole features (one in a side view, its leader
+// on the opening's end), a centre mark, a centre line,
 // a note with a leader, datums A and B, a feature control frame, surface texture, a chain set, dimensions from the datums,
 // a hole table; Esc steps back; a dimension selected, edited in the bar, dragged and deleted (Ctrl+Z); a dimension of the
 // pin dangles once the pin is gone and is re-attached from the sheet bar's menu. <prefix>.annotate.png, .bar.png.
@@ -181,6 +182,28 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ANNOTATE, sheetAnnotate) {
     click(plus(bore, {16, -12}));
     check(added("hole_callout", 2) && items("hole_callout")[1]->def["result"]["shown"] == "⌀5 ↧8\n⌴ ⌀9 ↧3", "the counterbored hole's callout from its feature");
     key(Qt::Key_Escape);
+    // Seen from the side (the front view with hidden lines): the leader ends where the hole's wall meets the surface.
+    w.m_doc->run("sheet_edit", {{"target", front}, {"set", {{"style", {{"hidden", true}}}}}});
+    waitFor(settled, 30000);
+    w.action("drawings.holeCallout")->trigger();
+    click(paper(front, {28, 10, -6}));
+    check(planned() && tools->plan().contains("measured") && tools->plan()["measured"].contains("ends"), "a hole's hidden wall in the front view picks the hole");
+    {
+      const double z = tools->plan().value("measured", opad::json::object()).value("hole", opad::json::object()).value("entry", opad::json::array({0, 0, 0}))[2].get<double>();
+      const Vec2 opening = paper(front, {28, 10, z});
+      moveTo(plus(opening, {10, z < -6 ? -12 : 12}));
+      bool tip = false;
+      if (canvas->preview())
+        for (const auto& p : canvas->preview()->prims)
+          if (p.kind == opad::drawing::Prim::Kind::Curve && p.curve.type == opad::drawing::Curve::Type::Line && !p.curve.pts.empty())
+            for (const Vec2 q : {p.curve.pts.front(), p.curve.pts.back()}) tip = tip || std::hypot(q[0] - opening[0], q[1] - opening[1]) < 0.05;
+      check(tip, "the preview's leader ends at the opening's end nearer the pointer, not at its centre");
+      click(plus(opening, {10, z < -6 ? -12 : 12}));
+      check(added("hole_callout", 3) && items("hole_callout")[2]->def["result"]["shown"] == "2× ⌀6 THRU", "placed: the same callout as from above");
+    }
+    key(Qt::Key_Escape);
+    w.m_doc->run("sheet_edit", {{"target", front}, {"set", {{"style", {{"hidden", false}}}}}});
+    waitFor(settled, 30000);
     // A centre mark, a centre line through both holes, a note with a leader.
     w.action("drawings.centerMark")->trigger();
     click(plus(hole1, {r6 * 0.7071, -r6 * 0.7071}));

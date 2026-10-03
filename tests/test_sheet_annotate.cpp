@@ -214,7 +214,7 @@ TEST(hole_callouts_and_the_hole_table) {
   CHECK_EQ(c1["result"]["shown"], "3× ⌀6 THRU");
   const json c2 = run(doc, "sheet_item", {{"sheet", sheet}, {"view", top}, {"kind", "hole_callout"}, {"refs", {circle(0, 12, 4.5)}}});
   CHECK_EQ(c2["result"]["shown"], "⌀5 ↧6\n⌴ ⌀9 ↧3");
-  const json side = run(doc, "sheet_item", {{"sheet", sheet}, {"view", front}, {"kind", "hole_callout"}, {"refs", {circle(20, 0, 3)}}, {"place", {40, 20}}});
+  const json side = run(doc, "sheet_item", {{"sheet", sheet}, {"view", front}, {"kind", "hole_callout"}, {"refs", {circle(20, 0, 3)}}, {"place", {60, 20}}});
   CHECK_EQ(side["result"]["shown"], "3× ⌀6 THRU");
   CHECK_THROWS(run(doc, "sheet_item", {{"sheet", sheet}, {"view", top}, {"kind", "hole_callout"}, {"refs", {Ref{body, Ref::Kind::Face, 0}.str()}}}));
   s = resolve(doc);
@@ -225,6 +225,23 @@ TEST(hole_callouts_and_the_hole_table) {
   CHECK_EQ(m1["hole"].value("feature", ""), simple);
   CHECK_NEAR(m1["r"].get<double>(), 6, 1e-9);  // 3 mm at 2:1, seen along its axis
   CHECK_EQ(measure_item(doc, s, sh, *s.sheet_item(c2["id"]), &frameOf(top))["hole"].value("feature", ""), bored);
+  {  // seen from the side: the leader ends where the hole's wall meets the top, at the end of the opening nearer the text
+    const ViewFrame& f = frameOf(front);
+    const json m = measure_item(doc, s, sh, *s.sheet_item(side["id"]), &f);
+    const auto rel = [&](const Vec3& p) { const Vec2 q = f.paper(p); return Vec2{q[0] - f.at[0], q[1] - f.at[1]}; };
+    CHECK(m.contains("ends") && m["r"].get<double>() == 0);
+    const Vec2 e0{m["ends"][0][0].get<double>(), m["ends"][0][1].get<double>()}, e1{m["ends"][1][0].get<double>(), m["ends"][1][1].get<double>()};
+    const double z = m["hole"]["entry"][2].get<double>();  // a through hole opens at either face
+    const Vec2 lo = rel({17, 0, z}), hi = rel({23, 0, z});
+    CHECK(std::hypot(std::min(e0[0], e1[0]) - lo[0], e0[1] - lo[1]) < 1e-6 && std::fabs(std::max(e0[0], e1[0]) - hi[0]) < 1e-6 && std::fabs(e1[1] - hi[1]) < 1e-6);
+    Display d;
+    draw_item(d, sh, s.sheet_item(side["id"])->def, m, f.at);
+    bool tip = false;  // a leader line ends at the right end of the opening (the text is up and right of it)
+    for (const auto& p : d.prims)
+      if (p.kind == Prim::Kind::Curve && p.curve.type == Curve::Type::Line)
+        for (const Vec2 q : {p.curve.pts.front(), p.curve.pts.back()}) tip = tip || std::hypot(q[0] - f.at[0] - hi[0], q[1] - f.at[1] - hi[1]) < 1e-6;
+    CHECK(tip);
+  }
   // The hole table: the 6 mm holes A1-A3 left to right, the counterbored one B1; from the view's lower left (-30, -20).
   const json table = run(doc, "sheet_item", {{"sheet", sheet}, {"view", top}, {"kind", "hole_table"}, {"at", {300, 280}}});
   const json rows = table["result"]["rows"];
