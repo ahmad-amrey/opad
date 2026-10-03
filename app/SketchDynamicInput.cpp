@@ -97,7 +97,8 @@ QList<DynamicInput::Field> SketchEditor::shapeFields() const {
     if (m_tool == "circle2") out << field("diameter", tr("Diameter"), number(reach));
     else if (m_tool == "arcc" || m_tool == "arcslot") out << field("radius", tr("Radius"), number(reach));
     else if (m_tool == "ellipse") out << field("radius", tr("Major radius"), number(reach));
-    else if (m_tool == "polygon" || m_tool == "polygon_outer") out << field("diameter", m_tool == "polygon" ? tr("Diameter") : tr("Across flats"), number(2 * reach));
+    else if (m_tool == "polygon" || m_tool == "polygon_outer")  // the switch: corners on the circle, or sides touching it
+      out << field("diameter", m_tool == "polygon" ? tr("Diameter") : tr("Across flats"), number(2 * reach), m_tool == "polygon" ? tr("Inscribed") : tr("Circumscribed"));
     else out << field("length", tr("Length"), number(m_tool == "cslot" ? 2 * reach : reach));
     out << field("angle", m_tool == "arcc" || m_tool == "arcslot" ? tr("Start angle") : tr("Angle"), liveAngle(std::atan2(dv, du)));
     if (m_tool == "polygon" || m_tool == "polygon_outer") out << Field{"sides", tr("Sides"), option("sides", "6"), true};

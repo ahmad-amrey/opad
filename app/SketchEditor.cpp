@@ -140,7 +140,11 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   connect(m_input,&DynamicInput::chipClicked,this,[this](const QString& key) {
     if(!m_active)return;
     if(key=="angle"){m_angleRelative=!m_angleRelative;QSettings().setValue("sketch/input/angleRelative",m_angleRelative);}
-    else if(key=="diameter" || key=="radius") {  // a circle's box: the number typed stays, now the other size
+    else if(key=="diameter" && (m_tool=="polygon" || m_tool=="polygon_outer")) {  // inscribed or circumscribed: the same centre, what is typed stays
+      const auto clicks=m_clicks;
+      setTool(m_tool=="polygon"?"polygon_outer":"polygon");
+      m_clicks=clicks;toolPrompt();
+    } else if(key=="diameter" || key=="radius") {  // a circle's box: the number typed stays, now the other size
       const QString carried=m_input->text(key);
       m_circleRadius=!m_circleRadius;QSettings().setValue("sketch/input/circleRadius",m_circleRadius);
       updateInput();if(!carried.isEmpty())m_input->setText(0,carried);

@@ -258,6 +258,24 @@ void SketchEditor::benchShapes() {
     }
     check(guide && sides == 2 && same(m_sk.entity(guide)->r, 15) && has(CT::Diameter, {guide}, 30) && has(CT::Vertical, {pointAtXY(150, 60), pointAtXY(150, 75)}),
           "a pentagon 30 across its corners, the first straight up, held so");
+    // The diameter box's switch: the same tool draws it circumscribed (sides touching the circle), centre kept.
+    type("150,0");
+    enter();
+    QToolButton* kind = chip();
+    check(kind && kind->text() == "Inscribed", "the diameter box's switch says inscribed");
+    if (kind) kind->click();
+    check(m_tool == "polygon_outer" && m_clicks.size() == 1 && chip() && chip()->text() == "Circumscribed" && m_input->key(0) == "diameter",
+          "its click makes it circumscribed, the centre still placed");
+    type("20");
+    tab();
+    type("0");
+    enter();
+    const double half = 10 * std::tan(36 * degree);
+    bool across = false;
+    for (const auto& c : m_sk.constraints)
+      across = across || (c.type == CT::Distance && same(c.value, 10) && std::find(c.refs.begin(), c.refs.end(), pointAtXY(150, 0)) != c.refs.end());
+    check(lineBetween(160, -half, 160, half) && across, "20 Tab 0: a pentagon 20 across its flats, one side upright at x 160, the size held");
+    if (QToolButton* c = chip()) c->click();
     send(Qt::Key_Escape);
   });
 
