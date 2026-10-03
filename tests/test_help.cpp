@@ -78,13 +78,27 @@ TEST(arabic_covers_every_record) {
   for (auto it = labels.begin(); it != labels.end(); ++it) label.insert(clean(it.key()), clean(it.value().toString()));
   help::load("en");
   QHash<QString, QString> english;
-  for (const CommandHelp& h : help::all()) english.insert(h.id, h.title);
+  QHash<QString, QStringList> texts;  // summary, details, requires
+  for (const CommandHelp& h : help::all()) {
+    english.insert(h.id, h.title);
+    texts.insert(h.id, {h.summary, h.details, h.requirement});
+  }
+  // {name} placeholders (filled by help::requirement, or meant literally) survive the translation.
+  auto placeholders = [](const QString& text) {
+    QStringList out;
+    for (const auto& m : QRegularExpression(R"(\{[A-Za-z_]+\})").globalMatch(text)) out << m.captured(0);
+    out.sort();
+    return out;
+  };
   help::load("ar");
   for (const CommandHelp& h : help::all()) {
     const std::string id = h.id.toStdString();
     if (!h.translated) throw check::Failure(id + ": not translated in app/help/commands.ar.json");
     if (!h.title.contains(QRegularExpression("[\\x{0600}-\\x{06FF}]"))) throw check::Failure(id + ": the Arabic title has no Arabic");
     if (label.contains(english.value(h.id)) && !label.values(english.value(h.id)).contains(h.title)) throw check::Failure(id + ": title differs from ar.json");
+    const QStringList original = texts.value(h.id), translated{h.summary, h.details, h.requirement};
+    for (int i = 0; i < 3; ++i)
+      if (placeholders(original[i]) != placeholders(translated[i])) throw check::Failure(id + ": the translation changes the {placeholders}");
   }
   help::load("en");
 }
