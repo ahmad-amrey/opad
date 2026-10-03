@@ -6,7 +6,8 @@
 // trust-checked and hashed by opad::asset_status (the hash is remembered per path, size and time), with the file's size,
 // time and whether git LFS stores it. The states go into AppDocument::assetStates, which the browser badges and Properties
 // read; a file that changed on disk since it was last looked at is reported once (filesChanged). A KiCad board's 3D models
-// are watched with it (its look changes with them); a file not trusted yet is not (nor is a share for a missing one).
+// are watched with it (its look changes with them) and counted (models_found, models_missing, models_downloadable: missing
+// ones of KiCad's library); a file not trusted yet is not watched (nor is a share for a missing one).
 #include <QFileSystemWatcher>
 #include <QObject>
 #include <QStringList>

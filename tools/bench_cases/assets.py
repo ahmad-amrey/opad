@@ -138,6 +138,25 @@ def asset_drawing(root, document):
     return design, {"OPAD_CACHE_DIR": str(root / "asset-drawing-cache")}
 
 
+def asset_kicad(root, document):
+    """A document beside a board it links: D1's model is in KiCad's library, missing here, downloadable from a local copy of
+    the library (its own cache, so nothing reaches the user's)."""
+    folder, none = root / "asset-kicad", root / "asset-kicad-none"
+    library = root / "asset-kicad-library" / "9.0.0" / "Bench.3dshapes"
+    for f in (folder, none, library):
+        f.mkdir(parents=True)
+    step(document, "asset-kicad-model", library / "library.step", "cylinder", '{"diameter":"3 mm","height":"4 mm"}')
+    board = folder / "board.kicad_pcb"
+    board.write_text('(kicad_pcb (version 20241229) (general (thickness 1.6))\n(gr_rect (start 100 100) (end 130 120) (layer "Edge.Cuts"))\n'
+                     '(footprint "Bench:Part" (layer "F.Cu") (at 110 110) (property "Reference" "D1")\n'
+                     '  (model "${KICAD9_3DMODEL_DIR}/Bench.3dshapes/library.step" (offset (xyz 0 0 0)) (scale (xyz 1 1 1)) (rotate (xyz 0 0 0))))\n)\n',
+                     encoding="utf-8")
+    env = {"OPAD_KICAD_MODELS_URL": (root / "asset-kicad-library").as_uri(), "OPAD_CACHE_DIR": str(root / "asset-kicad-cache"), "KICAD9_3DMODEL_DIR": str(none)}
+    design = document("asset-kicad/design")
+    subprocess.run([str(document.cli), "import", str(design), str(board), "--link", "true"], check=True, capture_output=True, env={**os.environ, **env})
+    return design, env
+
+
 def colors_obj(root, document):
     """An OBJ cube, Y up: its top in a gold material of its own, the rest grey (Kd 0.439, which OCCT reads as sRGB)."""
     colors = root / "colors-obj"
@@ -201,6 +220,9 @@ CASES = [
     # A drawing linked where it was placed (picked plane, offset), synced after it changed: same node, same place
     # (<prefix>.browser.png).
     ("asset-drawing", asset_drawing, {"OPAD_BENCH_ASSET_DRAWING": "{prefix}"}),
+    # A linked board's missing models of KiCad's library: counted, offered, shown in Properties, downloaded, synced in
+    # (<prefix>.properties.png).
+    ("asset-kicad", asset_kicad, {"OPAD_BENCH_ASSET_KICAD": "{prefix}"}),
     # Pictures (UI-71): a JPEG canvas decoded on a worker, a sketch backdrop kept as the file has it, a move storing only
     # its fields (<prefix>.canvas.png).
     ("pictures", "empty", {"OPAD_BENCH_PICTURES": "{prefix}"}),

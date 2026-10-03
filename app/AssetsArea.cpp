@@ -30,10 +30,12 @@
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
+#include "KicadBoards.hpp"
 #include "Ribbon.hpp"
 #include "Theme.hpp"
 #include "Viewport.hpp"
 #include "opad/drawing_io.hpp"
+#include "opad/kicad_pcb.hpp"
 
 OPAD_ICON_TABLE(assets,
                 {"link", R"(<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>)"},
@@ -144,6 +146,30 @@ bool assets::askTrust(QWidget* parent, AppDocument* doc, JobRunner* jobs, std::f
   return true;
 }
 
+// The models are KiCad's (CC-BY-SA 4.0 with its design exception): never bundled, fetched per user on consent into the user
+// cache, where the reader looks for them (opad::kicad_download_models).
+bool assets::askModelDownload(QWidget* parent, int count, bool requested) {
+  QSettings settings;
+  const QString mode = settings.value("kicad/download", "ask").toString();
+  if (mode == "always") return true;
+  if (mode == "never" && !requested) return false;
+  QMessageBox box(QMessageBox::Question, AssetsArea::tr("KiCad 3D models"),
+                  AssetsArea::tr("%1 3D models of this board come from KiCad's library, which is not installed here. Download them from the KiCad library "
+                                 "(gitlab.com/kicad/libraries/kicad-packages3D)?").arg(count),
+                  QMessageBox::NoButton, parent);
+  box.setInformativeText(AssetsArea::tr("They are licensed CC-BY-SA 4.0 with KiCad's design exception: free to use in your own designs. They are saved in "
+                                        "OPAD's cache for you alone and are not part of OPAD."));
+  QPushButton* once = box.addButton(AssetsArea::tr("Download"), QMessageBox::AcceptRole);
+  QPushButton* always = box.addButton(AssetsArea::tr("Always download"), QMessageBox::AcceptRole);
+  QPushButton* never = box.addButton(AssetsArea::tr("Never"), QMessageBox::DestructiveRole);
+  box.addButton(AssetsArea::tr("Not now"), QMessageBox::RejectRole);
+  box.setDefaultButton(once);
+  box.exec();
+  if (box.clickedButton() == never) settings.setValue("kicad/download", "never");
+  if (box.clickedButton() == always) settings.setValue("kicad/download", "always");
+  return box.clickedButton() == once || box.clickedButton() == always;
+}
+
 std::pair<QString, QStringList> assets::revealCommand(const QString& file) {
 #if defined(_WIN32)
   return {"explorer.exe", {"/select,", QDir::toNativeSeparators(file)}};
@@ -222,6 +248,7 @@ void AssetsArea::ready() {
   m_monitor = new AssetMonitor(services().document(), services().jobs(), this);
   connect(m_monitor, &AssetMonitor::statesChanged, this, [this] {
     updateLooks();
+    offerModels();
     services().browser()->refreshDecorations();
     services().properties()->refresh();
     services().updateCommands();
@@ -372,6 +399,12 @@ void AssetsArea::section(const PropertySubject& subject, const opad::json&, QLis
   sec.rows << qMakePair(tr("Read by"), builderText(asset));
   sec.rows << qMakePair(tr("Parts"), a->missing ? tr("%1, %2 missing").arg(a->bodies).arg(a->missing) : QString::number(a->bodies));
   if (const std::string sha = asset.value("sha256", ""); !sha.empty()) sec.rows << qMakePair(QString("SHA-256"), QString::fromStdString(sha.substr(0, 12)));
+  const int modelsMissing = s ? s->value("models_missing", 0) : 0;
+  if (s && s->contains("models_found") && !embedded) {
+    QString models = tr("%1 found, %2 missing").arg(s->value("models_found", 0)).arg(modelsMissing);
+    if (const int library = s->value("models_downloadable", 0)) models += tr(" (%1 from KiCad's library)").arg(library);
+    sec.rows << qMakePair(tr("3D models"), models);
+  }
   if (!embedded) {
     const std::string state = s ? s->value("state", "") : "";
     // After the click: the panel is filled again by what they change.
@@ -385,6 +418,8 @@ void AssetsArea::section(const PropertySubject& subject, const opad::json&, QLis
       act(tr("Show in folder"), &AssetsArea::reveal);
       act(tr("Copy path"), &AssetsArea::copyPath);
     }
+    if (downloadable(import)) act(tr("Download models…"), [](AssetsArea* a, const std::string& i) { a->downloadModels(i); });
+    if (modelsMissing > 0 && !asset.contains("derived")) act(tr("Model folders…"), [](AssetsArea* a, const std::string&) { a->modelFolders(); });
     act(tr("Replace…"), &AssetsArea::replace);
     act(tr("Embed as editable"), &AssetsArea::embed);
     if (storage == "linked" && !services().document()->doc.path.empty()) act(copy ? tr("Use project copy") : tr("Pack into project"), &AssetsArea::pack);
@@ -410,6 +445,7 @@ void AssetsArea::contextMenu(const SelectionContext& selection, QMenu& menu) {
   const bool found = s && s->contains("file");
   menu.addAction(icons::themed("open", 16), tr("Show in folder"), this, [this, import] { reveal(import); })->setEnabled(found);
   menu.addAction(icons::themed("copy", 16), tr("Copy path"), this, [this, import] { copyPath(import); });
+  if (downloadable(import)) menu.addAction(icons::themed("import", 16), tr("Download KiCad models…"), this, [this, import] { downloadModels(import); });
   menu.addAction(icons::themed("import", 16), tr("Replace linked file…"), this, [this, import] { replace(import); });
   menu.addAction(icons::themed("embed", 16), tr("Embed as editable"), this, [this, import] { embed(import); });
   menu.addAction(icons::themed("pack", 16), fromProjectCopy(import) ? tr("Use project copy") : tr("Pack into project"), this, [this, import] { pack(import); })
@@ -630,6 +666,63 @@ void AssetsArea::copyPath(const std::string& import) {
 
 void AssetsArea::trust(const std::string& import) {
   assets::askTrust(services().window(), services().document(), services().jobs(), [this](const QString& error) { notify(i18n::t(error), false, 8000); }, {import});
+}
+
+// A board read by OPAD's reader (kicad-cli finds its models itself) with missing models of KiCad's library.
+bool AssetsArea::downloadable(const std::string& import) const {
+  const AssetMonitor::Asset* a = m_monitor ? m_monitor->asset(import) : nullptr;
+  const opad::json* s = a ? m_monitor->state(import) : nullptr;
+  return s && s->value("models_downloadable", 0) > 0 && s->contains("file") && !a->asset.contains("derived") && a->asset.value("storage", "linked") != "embedded";
+}
+
+void AssetsArea::offerModels() {
+  if (!m_monitor || m_download) return;
+  for (const auto& [import, a] : m_monitor->assets()) {
+    if (!downloadable(import)) continue;
+    const QString file = QFileInfo(m_monitor->file(import)).absoluteFilePath();
+    if (m_offered.contains(file)) continue;
+    m_offered << file;
+    const QString mode = QSettings().value("kicad/download", "ask").toString();
+    if (mode == "never") continue;
+    if (mode == "always") return downloadModels(import, false);
+    const int count = m_monitor->state(import)->value("models_downloadable", 0);
+    if (m_toast) m_toast->dismiss();
+    m_toast = services().toast(tr("%1 3D models of %2 come from KiCad's library, which is not installed here").arg(count).arg(name(import)), tr("Download…"),
+                               [this, import] { downloadModels(import, false); }, 15000);
+    return;
+  }
+}
+
+void AssetsArea::downloadModels(const std::string& import, bool requested) {
+  const opad::json* s = m_monitor->state(import);
+  if (m_download || !s || !assets::askModelDownload(services().window(), s->value("models_downloadable", 0), requested)) return;
+  const QString board = m_monitor->file(import), title = name(import);
+  const opad::KicadOptions options = AppDocument::kicadOptions();
+  auto result = std::make_shared<opad::json>();
+  const QString phase = tr("Downloading KiCad 3D models");
+  m_download = services().jobs()->async(phase, [board, options, result, phase](Progress p) {
+    *result = opad::kicad_download_models(fsPath(board), options, [p, phase](double fraction, const std::string&) {
+      p.setPhase(phase, static_cast<int>(fraction * 100));
+      return !p.cancelled();
+    });
+  }, [this, import, title, result](bool ok, const QString& error) {
+    m_download = nullptr;
+    const int got = ok ? static_cast<int>((*result)["downloaded"].size()) : 0, failed = ok ? static_cast<int>((*result)["failed"].size()) : 0;
+    if (trace::enabled()) trace::log(QString("assets: %1: downloaded %2 models, %3 failed%4").arg(title).arg(got).arg(failed).arg(ok ? QString() : ": " + error));
+    if (m_toast) m_toast->dismiss();
+    if (!ok) {
+      if (!error.contains("cancel", Qt::CaseInsensitive)) notify(tr("The KiCad 3D models could not be downloaded: %1").arg(error), false, 10000);
+    } else {
+      // The board shows them once synced (its models changed): offered here, the badge says so after the look below.
+      const QString text = failed ? tr("%1 KiCad 3D models downloaded, %2 not found in the library").arg(got).arg(failed) : tr("%1 KiCad 3D models downloaded").arg(got);
+      m_toast = got ? services().toast(text, tr("Sync"), [this, import] { sync({import}); }, 15000) : services().toast(text, {}, {}, 8000);
+    }
+    m_monitor->check(0);
+  });
+}
+
+void AssetsArea::modelFolders() {
+  if (KicadDialog(services().window(), false).exec() == QDialog::Accepted) m_monitor->check(0);
 }
 
 void AssetsArea::link() {

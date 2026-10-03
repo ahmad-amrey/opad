@@ -81,10 +81,14 @@ AssetMonitor::AssetMonitor(AppDocument* doc, JobRunner* jobs, QObject* parent) :
           j["lfs"] = lfsStored(s.file);
           j["models"] = s.models;
           if (s.kind == "kicad_pcb") try {  // a board also changes with its 3D models: watched too
+            const opad::json models = opad::kicad_models(s.file, options.kicad);
             opad::json files = opad::json::array();
-            for (const auto& m : opad::kicad_models(s.file, options.kicad).value("models", opad::json::array()))
+            for (const auto& m : models.value("models", opad::json::array()))
               if (std::error_code ec; m.contains("file") && std::filesystem::is_regular_file(opad::path_from_utf8(m["file"].get<std::string>()), ec)) files.push_back(m["file"]);
             j["model_files"] = files;
+            j["models_found"] = models.value("found", 0);
+            j["models_missing"] = models.value("missing", 0);
+            j["models_downloadable"] = models.value("downloadable", 0);
           } catch (const std::exception&) {
           }
         }

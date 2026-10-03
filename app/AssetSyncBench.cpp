@@ -12,12 +12,14 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QSettings>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidgetItemIterator>
 
 #include <Bnd_Box.hxx>
 
+#include <algorithm>
 #include <cmath>
 #include <set>
 
@@ -526,6 +528,93 @@ OPAD_BENCH(OPAD_BENCH_ASSET_DRAWING, asset_drawing) {
             QCoreApplication::exit(require->all ? 0 : 2);
           });
         });
+      });
+    });
+  });
+  return true;
+}
+
+// OPAD_BENCH_ASSET_KICAD=<prefix> on a document beside a board it links, whose one model (D1's) comes from KiCad's library,
+// missing here and downloadable from a local copy of the library: the first look counts it and a toast offers the download;
+// Properties shows the board's 3D models (none found, one missing, from KiCad's library) with Download models… and Model
+// folders…, the context menu Download KiCad models…. Downloaded (setting always: not asked): the board's models changed, a
+// toast offers Sync, which shows the model (4 mm tall where nothing stood). Frame: <prefix>.properties.png.
+OPAD_BENCH(OPAD_BENCH_ASSET_KICAD, asset_kicad) {
+  auto require = std::make_shared<Checks>();
+  require->name = "asset-kicad";
+  const QString prefix = value;
+  AssetsArea* area = nullptr;
+  for (AreaController* a : w.m_areas)
+    if (auto* found = qobject_cast<AssetsArea*>(a)) area = found;
+  AssetMonitor* monitor = area ? area->monitor() : nullptr;
+  AppDocument* doc = w.m_doc;
+  std::string import;
+  for (const auto& o : doc->doc.ops)
+    if (o.type == "import" && o.data.value("source", "") == "board.kicad_pcb") import = o.id;
+  (*require)(monitor && !import.empty(), "a linked board");
+  if (!monitor || import.empty()) {
+    QCoreApplication::exit(2);
+    return true;
+  }
+  auto state = [monitor, import] {
+    const opad::json* s = monitor->state(import);
+    return s ? *s : opad::json::object();
+  };
+  auto toastWith = [&w](const QString& text, const QString& action) -> Toast* {
+    const QList<Toast*> toasts = w.m_toasts->toasts();
+    Toast* t = toasts.isEmpty() ? nullptr : toasts.back();
+    return t && t->text().contains(text) && t->actionButton() && t->actionButton()->text() == action ? t : nullptr;
+  };
+  auto tallest = [doc, import] {  // the highest body of the board's: the board itself (1.6 mm) until D1's model shows
+    double most = 0;
+    for (const auto& id : doc->scene.all_bodies())
+      if (const opad::Node* n = doc->node(id); n->source_op == import && !n->body_missing) {
+        const Bnd_Box b = opad::node_world_bbox(doc->doc, doc->scene, id);
+        double x0, y0, z0, x1, y1, z1;
+        if (!b.IsVoid()) b.Get(x0, y0, z0, x1, y1, z1), most = std::max(most, z1 - z0);
+      }
+    return most;
+  };
+  waitFor(&w, [=] { return state().value("models_downloadable", 0) == 1 && !monitor->checking() && toastWith("come from KiCad's library", "Download…"); }, 15000,
+          [=, &w](bool offered) {
+    const opad::json s = state();
+    (*require)(offered && s.value("state", "") == "ok" && s.value("models_missing", 0) == 1 && s.value("models_found", 0) == 0,
+               "opened: its library model counted missing, the download offered: " + QString::fromStdString(s.dump()));
+    std::string body;
+    for (const auto& id : doc->scene.all_bodies())
+      if (doc->node(id)->source_op == import) body = id;
+    w.m_browser->selectIds({body});
+    w.action("inspect.properties")->trigger();
+    QTreeWidget* table = w.m_props->table();
+    bool models = false, download = false, folders = false;
+    for (int i = 0; i < table->topLevelItemCount(); ++i) {
+      const QTreeWidgetItem* row = table->topLevelItem(i);
+      models = models || (row->text(0) == "3D models" && row->text(1).contains("0 found, 1 missing (1 from KiCad's library)"));
+      download = download || row->text(1) == "Download models…";
+      folders = folders || row->text(1) == "Model folders…";
+      if (row->text(0) == "LINKED FILE") table->scrollToItem(row, QAbstractItemView::PositionAtTop);
+    }
+    w.m_propsPanel->grab().save(prefix + ".properties.png");
+    w.m_propsPanel->hide();
+    QMenu menu;
+    SelectionContext selection;
+    selection.ids = {body};
+    area->contextMenu(selection, menu);
+    bool entry = false;
+    for (QAction* a : menu.actions()) entry = entry || a->text() == "Download KiCad models…";
+    (*require)(models && download && folders && entry, "Properties: the board's 3D models, Download models… and Model folders…; the context menu's entry");
+    const double before = tallest();
+    QSettings().setValue("kicad/download", "always");  // the question is not asked then (a bench answers none)
+    toastWith("come from KiCad's library", "Download…")->actionButton()->click();
+    waitFor(&w, [=] { return state().value("state", "") == "changed" && !monitor->checking() && toastWith("1 KiCad 3D models downloaded", "Sync"); }, 30000,
+            [=, &w](bool downloaded) {
+      (*require)(downloaded && state().value("models_found", 0) == 1 && state().value("models_downloadable", 0) == 0,
+                 "downloaded: the board's models changed, Sync offered: " + QString::fromStdString(state().dump()));
+      if (Toast* t = toastWith("1 KiCad 3D models downloaded", "Sync")) t->actionButton()->click();
+      waitFor(&w, [=] { return !area->busy() && state().value("state", "") == "ok" && !monitor->checking(); }, 30000, [=, &w](bool synced) {
+        const double after = tallest();
+        (*require)(synced && before < 2 && after > 3.9, QString("synced: D1's model shows (tallest part %1 mm, was %2)").arg(after, 0, 'f', 2).arg(before, 0, 'f', 2));
+        QCoreApplication::exit(require->all ? 0 : 2);
       });
     });
   });

@@ -158,5 +158,13 @@
   "In sync with the project's copy %1 (not found where it was linked)": "متزامن مع نسخة المشروع %1 (لم يُعثر عليه حيث رُبط)",
   "Not found where it was linked: the project's copy is read": "لم يُعثر عليه حيث رُبط: تُقرأ نسخة المشروع",
   "Use project copy": "استخدام نسخة المشروع",
-  "%1 now links the project's copy: %2": "صار %1 مرتبطًا بنسخة المشروع: %2"
+  "%1 now links the project's copy: %2": "صار %1 مرتبطًا بنسخة المشروع: %2",
+  "%1 found, %2 missing": "%1 موجود، %2 مفقود",
+  " (%1 from KiCad's library)": " (%1 من مكتبة KiCad)",
+  "3D models": "النماذج ثلاثية الأبعاد",
+  "Download models…": "تنزيل النماذج…",
+  "Model folders…": "مجلدات النماذج…",
+  "Download KiCad models…": "تنزيل نماذج KiCad…",
+  "%1 3D models of %2 come from KiCad's library, which is not installed here": "%1 من النماذج ثلاثية الأبعاد في %2 من مكتبة KiCad، وهي غير مثبتة هنا",
+  "Download…": "تنزيل…"
 }

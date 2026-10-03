@@ -20,6 +20,7 @@
 
 class AssetMonitor;
 class AppDocument;
+class Job;
 class JobRunner;
 class Progress;
 class QWidget;
@@ -35,6 +36,10 @@ Mode askImport(QWidget* parent, const QString& path);
 // The question before reading linked files outside the document's project (read them once, trust their folders for good:
 // setting assets/trusted, or not now), for `imports` or every untrusted one; false when there was nothing to ask about.
 bool askTrust(QWidget* parent, AppDocument* doc, JobRunner* jobs, std::function<void(const QString&)> failed, const std::vector<std::string>& imports = {});
+// The question before models of KiCad's library are downloaded (`count`; their licence; setting kicad/download: ask, always or
+// never, which the answer may set): true to download. Not asked when the setting says always; refused when it says never,
+// unless the user asked for the download himself (`requested`).
+bool askModelDownload(QWidget* parent, int count, bool requested);
 // The program and arguments that show `file` selected in the system's file manager.
 std::pair<QString, QStringList> revealCommand(const QString& file);
 }  // namespace assets
@@ -63,6 +68,11 @@ class AssetsArea : public AreaController {
   void reveal(const std::string& import);
   void copyPath(const std::string& import);
   void trust(const std::string& import);
+  // A linked KiCad board's missing models of KiCad's library (AssetMonitor's models_downloadable): downloaded on a worker
+  // into OPAD's cache once the user agrees, then the board is looked at again and its sync offered (the models changed).
+  // `requested`: from the user's click (asked even when the setting says never).
+  void downloadModels(const std::string& import, bool requested = true);
+  void modelFolders();  // the KiCad settings (model folders), then the boards looked at again
   void link();                                // Link as asset…: a file dialog, then the file imported linked
   bool busy() const { return m_busy; }
   void decorate(const browser::Row& row, browser::Decoration& d);
@@ -82,6 +92,8 @@ class AssetsArea : public AreaController {
   void filesChanged(const std::vector<std::string>& imports);
   void notify(const QString& text, bool undo = false, int ms = 6000);  // a toast (with Undo), replacing the last one
   void updateLooks();
+  void offerModels();  // once per board and session: its downloadable models, as a toast (or at once: setting always)
+  bool downloadable(const std::string& import) const;
   QString name(const std::string& import) const;
   QString stateText(const std::string& import) const;
   // Read from the project's copy (assets/ beside the document) while the link names another place, where the file is gone:
@@ -92,4 +104,6 @@ class AssetsArea : public AreaController {
   int m_synced = 0, m_syncFailed = 0;  // of the queue so far (its toast)
   bool m_busy = false;
   QPointer<Toast> m_toast;
+  QStringList m_offered;  // boards whose models were offered for download this session
+  QPointer<Job> m_download;
 };
