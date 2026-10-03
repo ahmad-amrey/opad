@@ -1,6 +1,7 @@
 // OPAD_BENCH_EXPLODE: exploded views (UI-36, app/ExplodeArea.cpp) in the running app. Cases in
 // tools/bench_cases/assembly.py; the layout itself is core's (tests/test_explode).
 #include <QCoreApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QKeyEvent>
@@ -341,6 +342,14 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                       for (size_t k = 0; k < 3; ++k) worst = std::max({worst, std::abs(cli[i].dir[k] - app[i].dir[k]), std::abs(cli[i].centre[k] - app[i].centre[k])});
                     }
                     require(exact && worst < 1e-9, QString("laid out again from the measured tight boxes: %1 units as opad-cli explode lays them out (worst difference %2)").arg(app.size()).arg(worst));
+                    // Screws along their axis (on for a new explode): the Screws leave down, the short way out of the enclosure.
+                    QCheckBox* fasteners = form->findChild<QCheckBox*>("explodeFasteners");
+                    const int screws = area->unitOf(s->screws);
+                    const opad::Vec3 down = screws >= 0 ? area->units()[static_cast<size_t>(screws)].dir : opad::Vec3{0, 0, 0};
+                    require(fasteners && fasteners->isChecked() && area->spec().fasteners && same(down, {0, 0, -1}) && offset(s->screw[0])[2] < 0,
+                            QString("screws and pins along their axis: the Screws leave %1, down out of the enclosure (z %2)").arg(vec(down)).arg(offset(s->screw[0])[2], 0, 'f', 1));
+                    v->grabImage().save(prefix + ".fasteners.png");
+                    if (fasteners) fasteners->click();  // the rest of the bench spreads them sideways
                     doc->setActiveComponent(s->pcb);  // the explode follows the active component
                   }});
   list.push_back({[=] { return laidOut() && area->spec().root == s->pcb; }, [=, &w](bool followed) {

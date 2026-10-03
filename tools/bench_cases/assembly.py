@@ -35,18 +35,18 @@ CASES = [
     # again, no event-loop gap over 250 ms; a ghost's hover pick under 50 ms.
     ("activate-engine", engine(), {"OPAD_BENCH_ACTIVATE": "{prefix}"}),
     # Exploded view (UI-36) on an enclosure made by the bench (shell, lid, a PCB subassembly with a board, a chip and a
-    # capacitor, four screws in a Screws component): the command plays the parts out frame by frame and the camera glides
-    # to frame them, the first-use hint at the top centre goes for good once a badge is used, the units laid out again from
-    # the measured tight boxes are opad-cli explode's, level 1 moves the PCB
-    # whole, the PCB activated explodes alone, level 2 splits it (the capacitor rides on the board), the PCB's browser badge
-    # keeps it whole, Explode its parts on the Screws, the slider at 50 %, a click on the board selects the PCB's unit, the
-    # lid's handle dragged and a value typed over the view, One after another staged again without a layout when the
-    # shell is typed out of its place and back, the lid's triad (X and Y square to its way up: the X arrow dragged, the
-    # square moving it under the mouse in the view's plane, the lid itself dragged, a click on it still a click; .triad.png),
-    # a hand drawing on the moved lid stored where the lid is in the
-    # model, the distance tool measuring where the parts are drawn (not pinned), group and ungroup, Save as view / Collapse
-    # / View > Named views / Update view, a feature edit collapsing the view. <prefix>.view.png, .panel.png, .browser.png,
-    # .chips.png, .ribbon.png.
+    # capacitor, four screws in a Screws component): the command plays the parts out frame by frame and the camera
+    # glides to frame them, the first-use hint at the top centre goes for good once a badge is used, the units laid out
+    # again from the measured tight boxes are opad-cli explode's, the screws leave down along their axis
+    # (.fasteners.png), level 1 moves the PCB whole, the PCB activated explodes alone, level 2 splits it (the capacitor
+    # rides on the board), the PCB's browser badge keeps it whole, Explode its parts on the Screws, the slider at 50 %,
+    # a click on the board selects the PCB's unit, the lid's handle dragged and a value typed over the view, One after
+    # another staged again without a layout when the shell is typed out of its place and back, the lid's triad (X and Y
+    # square to its way up: the X arrow dragged, the square moving it under the mouse in the view's plane, the lid
+    # itself dragged, a click on it still a click; .triad.png), a hand drawing on the moved lid stored where the lid is
+    # in the model, the distance tool measuring where the parts are drawn (not pinned), group and ungroup, Save as view
+    # / Collapse / View > Named views / Update view, a feature edit collapsing the view. <prefix>.view.png, .panel.png,
+    # .browser.png, .chips.png, .ribbon.png.
     ("explode", lambda root, document: document("explode"), {"OPAD_BENCH_EXPLODE": "{prefix}"}),
     ("explode-rtl", lambda root, document: document("explode-rtl"), {"OPAD_BENCH_EXPLODE": "{prefix}", "OPAD_LANG": "ar"}),
     # A STEP file (two boxes exported by opad-cli) in viewer mode: exploded and collapsed; Save as view writes nothing.

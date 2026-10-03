@@ -3,9 +3,13 @@
 // over the resolved scene. How deep components split (levels) and how far they have moved (t) are separate inputs, so a
 // UI shows them as separate controls, never as one slider cut into a segment per level.
 #include <Bnd_Box.hxx>
+#include <TopoDS_Shape.hxx>
 
 #include <functional>
 #include <map>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -26,6 +30,9 @@ struct ExplodeSpec {
   Vec3 axis{0, 0, 1};
   double spacing = 1;           // times the automatic distance (stack: the gap)
   bool attach_small = true;     // a small part moves with the larger part it touches (PCB passives, solder joints)
+  // radial: a part shaped like a screw, pin or bolt (or a unit of parallel ones) leaves along its own axis, the short way
+  // out of its parent (a tie: the way its parent goes)
+  bool fasteners = false;
   double small_ratio = 0.05;    // small: its box diagonal under this share of its parent's
   double small_size = 0;        // ... or under this many mm when > 0
   double touch = 0.05;          // boxes this close (mm) touch
@@ -52,14 +59,28 @@ struct ExplodeUnit {
 };
 
 using ExplodeBoxFn = std::function<Bnd_Box(const std::string& body)>;
+using ExplodeAxisFn = std::function<std::optional<Vec3>(const std::string& body)>;  // a body's fastener axis, world
 
 // The component the explode starts from: spec.root (or the roots), past components that are the only visible child.
 std::string explode_root(const Scene& scene, const ExplodeSpec& spec);
 // The levels the root offers (a level control's range): the deepest nesting under it, a body counting one.
 int explode_depth(const Scene& scene, const ExplodeSpec& spec);
 // The units, parents before children. box_of: a body node's world box; by default its tight box (node_tight_bbox from
-// the cached corners), which walks each shape once: workers only.
-std::vector<ExplodeUnit> explode_units(const Document& doc, const Scene& scene, const ExplodeSpec& spec, const ExplodeBoxFn& box_of = {});
+// the cached corners), which walks each shape once: workers only. axis_of (spec.fasteners): a body's fastener axis in
+// world coordinates; by default fastener_axis of its shape (once per shape), turned with the node.
+std::vector<ExplodeUnit> explode_units(const Document& doc, const Scene& scene, const ExplodeSpec& spec, const ExplodeBoxFn& box_of = {},
+                                       const ExplodeAxisFn& axis_of = {});
+// The axis a screw, pin, bolt or rod leaves along, in the shape's frame (sign: its largest component positive): its
+// largest group of coaxial cylindrical faces, when they are about as wide as the whole part around that axis and the
+// part is at least one and a half diameters long. None for anything else (a plate with a hole, a disc, a mesh).
+std::optional<Vec3> fastener_axis(const TopoDS_Shape& shape);
+// fastener_axis of body nodes' shapes (cached shapes: workers), turned with the node, kept by shape key in `cache` (a
+// caller's across layouts; thread-safe). doc and scene must outlive the function.
+struct FastenerAxes {
+  std::mutex mu;
+  std::unordered_map<std::string, std::optional<Vec3>> by_key;
+};
+ExplodeAxisFn fastener_axes(const Document& doc, const Scene& scene, std::shared_ptr<FastenerAxes> cache = {});
 // The stretch of t each unit moves over (t0, t1) for spec.stages; explode_units ends with it. Again after manual offsets
 // change: one after another, a unit dragged out of its place takes a turn of its own.
 void explode_stage(std::vector<ExplodeUnit>& units, const ExplodeSpec& spec);

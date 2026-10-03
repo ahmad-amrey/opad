@@ -85,10 +85,11 @@ opad::ExplodeRule nextRule(opad::ExplodeRule r) {
 
 namespace {
 // What a new explode starts from: every level moving with the distance at once (the core's default moves the levels in
-// turn, one stretch of the slider each: not offered here, TODO 11 D4).
+// turn, one stretch of the slider each: not offered here, TODO 11 D4), screws and pins out along their axis.
 opad::ExplodeSpec fresh() {
   opad::ExplodeSpec spec;
   spec.stages = "together";
+  spec.fasteners = true;
   return spec;
 }
 }  // namespace
@@ -265,6 +266,7 @@ void Explode::ready() {
   connect(m_form, &ExplodePanel::spacingChosen, this, [this](double spacing) { edit([&](opad::ExplodeSpec& s) { s.spacing = spacing; }); });
   connect(m_form, &ExplodePanel::stagesChosen, this, [this](const QString& stages) { edit([&](opad::ExplodeSpec& s) { s.stages = stages.toStdString(); }, false); });
   connect(m_form, &ExplodePanel::attachSmallToggled, this, [this](bool on) { edit([&](opad::ExplodeSpec& s) { s.attach_small = on; }); });
+  connect(m_form, &ExplodePanel::fastenersToggled, this, [this](bool on) { edit([&](opad::ExplodeSpec& s) { s.fasteners = on; }); });
   connect(m_form, &ExplodePanel::linesToggled, this, [this](bool on) {
     m_lines = on;
     QSettings().setValue("view/explodeLines", on);
@@ -571,12 +573,13 @@ void Explode::layout() {
     std::string root;
   };
   auto out = std::make_shared<Out>();
-  m_job = services().jobs()->async(tr("Laying out the exploded view"), [scene, boxes, spec, out, measured, exact](Progress) {
-    out->units = exact ? opad::explode_units(*measured, *scene, spec)
+  m_job = services().jobs()->async(tr("Laying out the exploded view"), [scene, boxes, spec, out, measured, exact, axes = m_axes](Progress) {
+    const opad::ExplodeAxisFn axis = opad::fastener_axes(*measured, *scene, axes);  // each shape once per document
+    out->units = exact ? opad::explode_units(*measured, *scene, spec, {}, axis)
                        : opad::explode_units(*measured, *scene, spec, [boxes](const std::string& id) {
                            const auto it = boxes->find(id);
                            return it == boxes->end() ? Bnd_Box() : it->second;
-                         });
+                         }, axis);
     out->depth = opad::explode_depth(*scene, spec);
     out->root = opad::explode_root(*scene, spec);
   }, [this, serial, out, exact](bool ok, const QString& error) {
@@ -844,6 +847,7 @@ void Explode::documentChanged(bool replaced) {
     if (m_measure) m_measure->cancel();
     m_measure = nullptr;
     m_measureRefused = m_exact = false;
+    m_axes = std::make_shared<opad::FastenerAxes>();
     ++m_serial;
     m_on = m_offAfter = m_relayout = false;
     m_rootFollows = true;

@@ -604,7 +604,8 @@ void register_builtins() {
        {"mode", "radial|axis|stack"}, {"axis", "[x,y,z] - for axis and stack (default +Z)"}, {"spacing", "number - distance factor"},
        {"keep", "array|csv - components moving as one unit"}, {"split", "array|csv - components whose parts split beyond levels"},
        {"groups", "array - node id lists, each moving as one unit"}, {"offsets", "object - manual moves {unit id: [x,y,z]}"},
-       {"attach_small", "bool - small parts ride on what they touch"}, {"small_ratio", "number - small: diagonal share of the parent (0.05)"},
+       {"attach_small", "bool - small parts ride on what they touch"}, {"fasteners", "bool - radial: screws, pins and bolts leave along their axis"},
+       {"small_ratio", "number - small: diagonal share of the parent (0.05)"},
        {"small_size", "number - small: diagonal in mm"}, {"stages", "levels|together|units"}, {"t", "number - 0 assembled .. 1 exploded"},
        {"name", "string - save as a new view"}, {"camera", "object - the new view's camera"}, {"update", "bool - save into view"}, {"by", "string"}},
       true, [](Document* d, const json& a) {
@@ -612,7 +613,7 @@ void register_builtins() {
         const Scene s = resolve(doc);
         const std::string view = a.value("view", "");
         json spec_json = view.empty() ? ExplodeSpec{}.to_json() : view_explode(s, view).to_json();
-        for (const char* k : {"root", "levels", "mode", "axis", "spacing", "groups", "offsets", "attach_small", "small_ratio", "small_size", "stages", "t"})
+        for (const char* k : {"root", "levels", "mode", "axis", "spacing", "groups", "offsets", "attach_small", "fasteners", "small_ratio", "small_size", "stages", "t"})
           if (a.contains(k)) spec_json[k] = a[k];
         for (const char* k : {"keep", "split"})
           if (a.contains(k)) spec_json[k] = str_list(a[k]);

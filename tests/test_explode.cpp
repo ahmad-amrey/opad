@@ -1,5 +1,6 @@
 // Exploded views (TODO 11 UI-35): units by level, keep/split/groups, small parts riding on what they touch, the three
 // modes, staging, manual offsets, the scene for measuring, and the optional `explode` object on view ops.
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <gp_Ax2.hxx>
@@ -432,6 +433,53 @@ TEST(flat_import_parts_ride_on_the_board) {
   const double per = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - p0).count() / 20;
   std::printf("explode_offsets, 5000 units: %.3f ms per frame\n", per);
   CHECK(per < 8);
+}
+
+// Screws leave along their own axis (fasteners): out the short way, a folder of parallel ones as one, never sideways.
+TEST(fasteners_leave_along_their_axis) {
+  CHECK(fastener_axis(BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, -1)), 1.5, 12).Shape()) == (Vec3{0, 0, 1}));
+  CHECK(fastener_axis(BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(5, 5, 5), gp_Dir(1, 0, 0)), 2, 20).Shape()) == (Vec3{1, 0, 0}));
+  CHECK(!fastener_axis(BRepPrimAPI_MakeBox(10, 10, 10).Shape()));
+  CHECK(!fastener_axis(BRepPrimAPI_MakeCylinder(10, 2).Shape()));  // a disc
+  const TopoDS_Shape plate = BRepAlgoAPI_Cut(BRepPrimAPI_MakeBox(100, 60, 5).Shape(), BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(50, 30, -1), gp_Dir(0, 0, 1)), 1.5, 7).Shape()).Shape();
+  CHECK(!fastener_axis(plate));  // a hole in a plate
+  Device d = device();
+  const Scene s = resolve(d.doc);
+  const json base = {{"levels", 1}, {"keep", {d.pcb}}, {"split", {d.screws}}};
+  json on = base;
+  on["fasteners"] = true;
+  const auto plain = explode_units(d.doc, s, spec_of(base));
+  const auto units = explode_units(d.doc, s, spec_of(on));
+  // The folder of four screws driven up through the floor leaves down (the short way out of the device), each screw on
+  // along its axis (a tie inside the folder: the folder's way); the rest as without.
+  CHECK_NEAR(unit_of(units, d.screws).dir[2], -1, 1e-12);
+  CHECK(unit_of(units, d.screws).distance > 0);
+  for (const auto& id : d.screw) {
+    CHECK_NEAR(unit_of(units, id).dir[2], -1, 1e-12);
+    CHECK(unit_of(units, id).distance > 0);
+  }
+  for (const auto& id : {d.lid, d.pcb, d.shell}) CHECK(unit_of(units, id).dir == unit_of(plain, id).dir);  // only as far as the rest needs
+  const ExplodeSpec spec = spec_of(on);
+  const auto at1 = explode_unit_offsets(units, spec, 1);
+  auto index = [&](const std::string& id) { return static_cast<size_t>(&unit_of(units, id) - units.data()); };
+  CHECK(unit_of(units, d.screws).hi[2] + at1[index(d.screws)][2] < unit_of(units, d.shell).lo[2]);  // out of the floor
+  for (size_t i = 0; i < units.size(); ++i)  // and nothing ends buried in a sibling
+    for (size_t j = i + 1; j < units.size(); ++j) {
+      if (units[i].parent != units[j].parent) continue;
+      bool overlap = true;
+      for (size_t k = 0; k < 3; ++k)
+        overlap = overlap && std::min(units[i].hi[k] + at1[i][k], units[j].hi[k] + at1[j][k]) - std::max(units[i].lo[k] + at1[i][k], units[j].lo[k] + at1[j][k]) > 0.05;
+      CHECK(!overlap || units[i].parent == index(d.screws));  // the screws stay side by side, not apart
+    }
+  // The same from the caller's axes (the app's worker), and the spec keeps the switch.
+  const auto given = explode_units(d.doc, s, spec, {}, [&](const std::string& id) -> std::optional<Vec3> {
+    return std::find(d.screw.begin(), d.screw.end(), id) != d.screw.end() ? std::optional<Vec3>(Vec3{0, 0, 1}) : std::nullopt;
+  });
+  CHECK_EQ(dump(given), dump(units));
+  CHECK_EQ(ExplodeSpec::from_json(spec.to_json()).fasteners, true);
+  CHECK(!ExplodeSpec{}.to_json().contains("fasteners"));
+  CHECK_THROWS(ExplodeSpec::from_json({{"fasteners", "yes"}}));
+  CHECK_EQ(commands::run("explode", {{"levels", 1}, {"split", json::array({d.screws})}, {"fasteners", true}}, &d.doc)["explode"].value("fasteners", false), true);
 }
 
 TEST(spec_json) {

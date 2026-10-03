@@ -53,6 +53,7 @@ class ExplodePanel : public QWidget {
   void spacingChosen(double spacing);
   void stagesChosen(const QString& stages);  // levels | together | units
   void attachSmallToggled(bool on);
+  void fastenersToggled(bool on);
   void linesToggled(bool on);
   void dragAxisChosen(int axis);
   void resetRequested();
@@ -79,6 +80,7 @@ class ExplodePanel : public QWidget {
   QDoubleSpinBox* m_spacing;
   QComboBox* m_stages;
   QCheckBox* m_attach;
+  QCheckBox* m_fasteners;
   QCheckBox* m_lines;
   QList<QToolButton*> m_dragButtons;
   int m_dragAxis = 0;

@@ -138,6 +138,7 @@ class Explode : public AreaController {
   QPointer<Job> m_job;
   QPointer<Job> m_measure;
   bool m_measureRefused = false, m_exact = false;
+  std::shared_ptr<opad::FastenerAxes> m_axes = std::make_shared<opad::FastenerAxes>();  // by shape key, this document's
   int m_serial = 0;
   QTimer m_tick;
   QElapsedTimer m_clock;
