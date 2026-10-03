@@ -1,0 +1,122 @@
+#include "AnnotationsPanel.hpp"
+
+#include <QFrame>
+#include <QHBoxLayout>
+#include <QPushButton>
+#include <QScrollArea>
+#include <QVBoxLayout>
+
+#include <set>
+
+#include "I18n.hpp"
+#include "Notes.hpp"
+#include "Theme.hpp"
+
+// ---------------------------------------------------------------- AnnotationsPanel
+AnnotationsPanel::AnnotationsPanel(AppDocument* doc, QWidget* parent) : QWidget(parent), m_doc(doc) {
+  auto* layout = new QVBoxLayout(this);
+  layout->setContentsMargins(12, 8, 12, 8);
+  layout->setSpacing(8);
+  auto* bar = new QHBoxLayout();
+  bar->setSpacing(8);
+  m_author = new QComboBox(this);
+  m_type = new QComboBox(this);m_type->setObjectName("annotationTypeFilter");
+  m_type->addItem(tr("All types"),QString());
+  for(const auto& s:notes::styles()) m_type->addItem(i18n::t(s.label),QString::fromLatin1(s.id));
+  m_status = new QComboBox(this);
+  m_status->addItems({tr("All"), tr("Open"), tr("Unresolved"), tr("Resolved")});
+  m_count = new QLabel(this);
+  m_count->setObjectName("secondary");
+  bar->addWidget(m_author, 1);
+  bar->addWidget(m_type);
+  bar->addWidget(m_status);
+  bar->addWidget(m_count);
+  layout->addLayout(bar);
+  auto* scroll = new QScrollArea(this);
+  scroll->setWidgetResizable(true);
+  scroll->setFrameShape(QFrame::NoFrame);
+  m_cards = new QWidget(scroll);
+  auto* cl = new QVBoxLayout(m_cards);
+  cl->setContentsMargins(0, 0, 0, 0);
+  cl->setSpacing(8);
+  cl->addStretch();
+  scroll->setWidget(m_cards);
+  layout->addWidget(scroll, 1);
+  auto* add = new QPushButton(tr("Add note   N"), this);
+  add->setObjectName("primary");
+  layout->addWidget(add);
+  connect(add, &QPushButton::clicked, this, &AnnotationsPanel::addRequested);
+  connect(m_type,&QComboBox::currentIndexChanged,this,[this]{rebuild();emit typeFilterChanged(m_type->currentData().toString().toStdString());});
+  connect(m_author, &QComboBox::currentIndexChanged, this, [this](int) { rebuild(); });
+  connect(m_status, &QComboBox::currentIndexChanged, this, [this](int) { rebuild(); });
+  connect(doc, &AppDocument::changed, this, &AnnotationsPanel::rebuild);
+  connect(theme::notifier(), &theme::Notifier::changed, this, &AnnotationsPanel::rebuild);
+}
+
+void AnnotationsPanel::rebuild() {
+  QString currentAuthor = m_author->currentText();
+  std::set<std::string> authors;
+  std::set<std::string> deleted(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end());
+  std::set<std::string> removed;
+  for(const auto& op:m_doc->doc.ops) if(op.type=="delete" && !deleted.count(op.id) && op.data.value("reason","")=="annotation_deleted") removed.insert(op.data.value("target",""));
+  std::set<std::string> unresolved;
+  for (const auto& a : m_doc->scene.annotations) if (a.unresolved) unresolved.insert(a.id);
+  for (const auto& m : m_doc->scene.measurements) if(m.unresolved) unresolved.insert(m.id);
+  for (const auto& op : m_doc->doc.ops) if (op.type == "annotation" || op.type == "measurement") authors.insert(op.data.value("by", ""));
+  m_author->blockSignals(true);
+  m_author->clear();
+  m_author->addItem(tr("All authors"));
+  for (const auto& a : authors) m_author->addItem(QString::fromStdString(a));
+  int idx = m_author->findText(currentAuthor);
+  m_author->setCurrentIndex(idx < 0 ? 0 : idx);
+  m_author->blockSignals(false);
+  std::string filterAuthor = m_author->currentIndex() > 0 ? m_author->currentText().toStdString() : std::string();
+  int status = m_status->currentIndex();
+
+  auto* cl = static_cast<QVBoxLayout*>(m_cards->layout());
+  while (cl->count() > 1) {
+    QLayoutItem* it = cl->takeAt(0);
+    delete it->widget();
+    delete it;
+  }
+  int total = 0, shown = 0;
+  for (const auto& op : m_doc->doc.ops) {
+    if ((op.type != "annotation" && op.type != "measurement") || op.data.contains("reply_to")) continue;
+    if(removed.count(op.id)) continue;
+    ++total;
+    std::string by = op.data.value("by", "");
+    bool resolved = deleted.count(op.id) > 0, unres = unresolved.count(op.id) > 0;
+    QString state = resolved ? "resolved" : unres ? "unresolved" : "open";
+    if (!filterAuthor.empty() && by != filterAuthor) continue;
+    if ((status == 1 && state != "open") || (status == 2 && state != "unresolved") || (status == 3 && state != "resolved")) continue;
+    opad::Ref anchor;
+    try { anchor = opad::Ref::from_json(op.type=="measurement"?op.data.at("refs").at(0):op.data.at("anchor")); } catch (...) {}
+    NoteInfo n;
+    n.id = op.id; n.by = by; n.ts = op.data.value("ts", ""); n.text = op.data.value("text", ""); n.body = anchor.body;
+    n.style = op.data.value("style", "note");
+    for (const auto& a : m_doc->scene.annotations) if (a.id == op.id) { n.style = a.style; n.text = a.text; n.comments = a.comments; }  // after edits
+    if(op.type=="measurement") {
+      n.measurement=true;
+      const auto result=op.data.value("result",opad::json::object());
+      n.value=tr("%1 measurement").arg(i18n::t(QString::fromStdString(op.data.value("kind",""))));
+      if(result.contains("value") && result["value"].is_number()) n.value+=QString(" - %1 %2").arg(result["value"].get<double>(),0,'g',9).arg(QString::fromStdString(result.value("unit","mm")));
+      else if(result.contains("size")) n.value+=QString(" - %1 mm").arg(QString::fromStdString(result["size"].dump()));
+      for(const auto& m:m_doc->scene.measurements) if(m.id==op.id) {n.text=m.text;n.style=m.style;n.comments=m.comments;}
+    }
+    n.state = state;
+    if(!m_type->currentData().toString().isEmpty() && n.style!=m_type->currentData().toString().toStdString()) continue;
+    ++shown;
+    n.target = anchor.kind == opad::Ref::Kind::Point ? tr("point") : m_doc->nodeName(anchor.body);
+    if (anchor.kind != opad::Ref::Kind::Body && anchor.kind != opad::Ref::Kind::Point) n.target += QString(" › %1 %2").arg(i18n::t(opad::Ref::kind_name(anchor.kind))).arg(anchor.index);
+    auto* card = new NoteCard(n, m_cards, m_doc);
+    connect(card, &NoteCard::resolveRequested, this, &AnnotationsPanel::resolveRequested);
+    connect(card, &NoteCard::restoreRequested, this, &AnnotationsPanel::restoreRequested);
+    connect(card, &NoteCard::styleRequested, this, &AnnotationsPanel::styleRequested);
+    connect(card, &NoteCard::pressed, this, [this, card] {
+      m_current = card->note().id;
+      if (!card->note().body.empty()) emit selectNode(card->note().body);
+    });
+    cl->insertWidget(cl->count() - 1, card);
+  }
+  m_count->setText(tr("%1 of %2").arg(shown).arg(total));
+}
