@@ -76,7 +76,7 @@
  },
  "clips": [
   {
-   "id": "sketch.line", "duration": 4.8, "extent": [-30, -14, 30, 14],
+   "id": "sketch.line", "duration": 4.8, "extent": [-30, -14, 30, 14], "guide": [0, [1, 2], 3],
    "items": [
     {"use": "sketchScene"},
     {"el": "poly", "points": [[-20, -9], [10, -9], [10, 8]], "closed": true, "fill": "sel", "fillOpacity": 0.16, "width": 0, "from": 3.85, "fade": 0.3},
@@ -185,7 +185,7 @@
    ]
   },
   {
-   "id": "sketch.polygon", "duration": 4.6, "extent": [-30, -14, 30, 14],
+   "id": "sketch.polygon", "duration": 4.6, "extent": [-30, -14, 30, 14], "guide": [[0, 1], 2],
    "items": [
     {"use": "sketchScene"},
     {"el": "polygon", "center": [4, 0], "n": 6, "corner": [15, 4], "width": 0, "fill": "sel", "fillOpacity": 0.16, "from": 3.0, "fade": 0.3},
@@ -508,7 +508,7 @@
    ]
   },
   {
-   "id": "inspect.distance", "duration": 5.4, "view": "iso",
+   "id": "inspect.distance", "duration": 5.4, "view": "iso", "guide": [0, 1],
    "items": [
     {"use": "isoScene", "args": {"area": [-26, -16, 24, 18]}},
     {"el": "camera", "center": [-10, 0], "zoom": 0.8},
@@ -530,7 +530,7 @@
    ]
   },
   {
-   "id": "inspect.angle", "duration": 4.8, "view": "iso",
+   "id": "inspect.angle", "duration": 4.8, "view": "iso", "guide": [0, 1],
    "items": [
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
     {"el": "camera", "center": [-9, 0], "zoom": 0.92},
@@ -548,7 +548,7 @@
    ]
   },
   {
-   "id": "inspect.radius", "duration": 4.4, "view": "iso",
+   "id": "inspect.radius", "duration": 4.4, "view": "iso", "guide": [0],
    "items": [
     {"use": "isoScene", "args": {"area": [-18, -18, 18, 18]}},
     {"el": "camera", "center": [-10, 0], "zoom": 0.9},

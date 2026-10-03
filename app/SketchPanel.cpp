@@ -1,5 +1,6 @@
 #include "SketchPanel.hpp"
 #include "SketchEditor.hpp"
+#include "HelpClip.hpp"
 #include "I18n.hpp"
 #include <QCheckBox>
 #include <QDoubleSpinBox>
@@ -76,6 +77,7 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   m_group=new QComboBox(this); m_tools=new QComboBox(this);
   for(const auto& t:tools()) if(m_group->findText(t.group)<0) m_group->addItem(t.group);
   m_group->hide();m_tools->hide();
+  m_guide=new ToolGuide(this);tool->addWidget(m_guide);connect(m_guide,&ToolGuide::resized,this,&SketchPanel::contentChanged);
   m_steps=new ToolStepsPanel(this);m_steps->setSummary({},{},{});tool->addWidget(m_steps);
   m_fields=new QFormLayout; tool->addLayout(m_fields);
   auto* apply=new QPushButton(tr("Apply"),this); apply->setObjectName("primary"); layout->addWidget(apply);
@@ -254,11 +256,14 @@ void SketchPanel::refresh() {
     {QSignalBlocker block(m_group);m_group->setCurrentText(t.group);}chooseGroup();
     QSignalBlocker block(m_tools);m_tools->setCurrentIndex(m_tools->findData(tool));break;
   }
+  if(m_shown!=tool)m_guide->setCommand("sketch."+QString(tool).replace(':','.'));
   if(m_shown!=tool || m_editor->m_panelFieldsDirty) {m_shown=tool;m_editor->m_panelFieldsDirty=false;buildFields();}
   for(auto* edit:findChildren<QLineEdit*>())if(edit->objectName().startsWith("sketchOption-") && !edit->hasFocus()) {
     const auto key=edit->objectName().mid(13);if(m_editor->m_options.contains(key)){QSignalBlocker block(edit);edit->setText(m_editor->option(key));}
   }
-  m_steps->setSteps(steps(),{});
+  const QList<ToolStep> now=steps();
+  m_steps->setSteps(now,{});
+  m_guide->setWaiting(int(std::find_if(now.begin(),now.end(),[](const ToolStep& s){return s.picked.isEmpty();})-now.begin()),int(now.size()));
   // The measurement widget owns an inner scroll area: give its numbered rows room before Qt's deferred
   // show/layout pass (minimumSizeHint otherwise sees newly created rows as hidden and collapses them).
   int stepsHeight=20;

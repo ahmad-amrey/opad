@@ -168,5 +168,7 @@
  "Press X: they become construction": "اضغط X: تصبح خطوط إنشاء",
  "Select the curves, press Enter": "حدّد المنحنيات ثم اضغط Enter",
  "Click the mirror line": "انقر خط الانعكاس",
- "A mirrored copy appears": "تظهر نسخة معكوسة"
+ "A mirrored copy appears": "تظهر نسخة معكوسة",
+ "Guide": "الدليل",
+ "Show or hide the animated guide for this tool": "أظهر الدليل المتحرك لهذه الأداة أو أخفه"
 }

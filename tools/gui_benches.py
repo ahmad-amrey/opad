@@ -49,6 +49,9 @@ def main():
                                ("feature", "--kind", "cylinder", "--inputs", '{"x":"8 mm","diameter":"10 mm","height":"20 mm"}'))
         overhang = document("overhang", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'),
                             ("feature", "--kind", "box", "--inputs", '{"plane":{"origin":[0,0,10],"normal":[0,0,1]},"length":"30 mm","width":"10 mm","height":"2 mm","operation":"join"}'))
+        # A box and a sketch beside it (rectangle 20 x 10 at x 20..40): pick targets for the guide bench.
+        guided = document("guided", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'),
+                          ("sketch", "--name", "Plate", "--plane", '{"base":"xy"}', "--geometry", '{"shapes":[{"kind":"rect2","picks":[[20,0],[40,10]]}]}'))
         screw = ROOT / "tests" / "corpus" / "occt-screw.step"
         cases = [
             ("design", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_UISHOT": "{prefix}.ui.png", "OPAD_BENCH_RULE": "1"}),
@@ -71,6 +74,9 @@ def main():
             # player runs only while visible, holds still with reduced motion and plays in the rich card; Arabic mirrored.
             ("clips", empty, {"OPAD_BENCH_CLIPS": "{prefix}"}),
             ("clips-ar", empty, {"OPAD_BENCH_CLIPS": "{prefix}", "OPAD_LANG": "ar"}),
+            # UI-107: the tool, feature and sketch panels play the running command's clip at the step it waits for.
+            ("tool-guide", guided, {"OPAD_BENCH_GUIDE": "{prefix}"}),
+            ("tool-guide-ar", guided, {"OPAD_BENCH_GUIDE": "{prefix}", "OPAD_LANG": "ar"}),
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))

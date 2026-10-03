@@ -15,7 +15,9 @@
 #include <QPainterPath>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QToolButton>
 #include <QTransform>
+#include <QVBoxLayout>
 #include <QVector3D>
 #include <algorithm>
 #include <cmath>
@@ -61,6 +63,7 @@ struct Clip {
   bool fitted = false;
   QList<Item> items;
   QList<clips::Step> steps;
+  QList<QPair<int, int>> guide;  // per tool step, the clip steps a tool panel loops
   QStringList texts;
 };
 struct Library {
@@ -401,7 +404,7 @@ void parseClip(QJsonObject raw, const QJsonObject& templates, Library& l) {
     base.remove("params");
     raw = base;
   }
-  static const QStringList fields{"id", "duration", "still", "view", "camera", "extent", "pad", "items", "steps", "note"};
+  static const QStringList fields{"id", "duration", "still", "view", "camera", "extent", "pad", "items", "steps", "guide", "note"};
   for (auto it = raw.begin(); it != raw.end(); ++it) if (!fields.contains(it.key())) problem("unknown field " + it.key());
   Clip c;
   c.id = id;
@@ -425,6 +428,11 @@ void parseClip(QJsonObject raw, const QJsonObject& templates, Library& l) {
     from = step.to;
   }
   if (c.steps.isEmpty()) problem("no steps");
+  for (const QJsonValue& g : raw.value("guide").toArray()) {  // a step index, or [first, last]
+    const int first = g.isArray() ? g.toArray().at(0).toInt(-1) : g.toInt(-1), last = g.isArray() ? g.toArray().at(1).toInt(-1) : first;
+    if (first < 0 || last < first || last >= c.steps.size()) problem("guide entries are clip steps, [first, last] in order");
+    else c.guide << qMakePair(first, last);
+  }
   l.clips.insert(id, c);
   if (!l.order.contains(id)) l.order << id;
 }
@@ -1784,6 +1792,19 @@ QStringList texts(const QString& id) {
   return lib().clips.value(id).texts;
 }
 
+QPair<int, int> guideRange(const QString& id, int step, int count) {
+  ensureLoaded();
+  const auto it = lib().clips.constFind(id);
+  if (it == lib().clips.constEnd() || it->steps.isEmpty()) return {-1, -1};
+  const int n = int(it->steps.size());
+  if (count <= 0) return {0, n - 1};
+  if (step >= count) return {n - 1, n - 1};
+  step = std::max(0, step);
+  if (!it->guide.isEmpty()) return it->guide.value(step, it->guide.last());
+  const int first = step * n / count;
+  return {first, std::max(first, (step + 1) * n / count - 1)};
+}
+
 void paint(QPainter& p, const QRectF& r, const QString& id, double t, const Options& o) {
   ensureLoaded();
   const Tokens& tokens = o.tokens ? *o.tokens : theme::current();
@@ -1854,15 +1875,16 @@ ClipView::ClipView(const QString& clip, QWidget* parent) : QWidget(parent) {
 
 void ClipView::setClip(const QString& id) {
   m_clip = id;
-  m_step = -1;
+  m_first = m_last = -1;
   m_clock.restart();
   sync();
   update();
 }
 
-void ClipView::setStep(int step) {
-  if (step == m_step) return;
-  m_step = step;
+void ClipView::setRange(int first, int last) {
+  if (first == m_first && last == m_last) return;
+  m_first = first;
+  m_last = std::max(first, last);
   m_clock.restart();
   update();
 }
@@ -1890,11 +1912,11 @@ void ClipView::hideEvent(QHideEvent* e) {
 // The frame shown now: the segment plays, holds its last frame, then fades (`fade` 0..1) back to its first.
 double ClipView::phase(double& first, double& fade) const {
   const QList<clips::Step> steps = clips::steps(m_clip);
-  const bool one = m_step >= 0 && m_step < steps.size();
-  const double from = one ? steps[m_step].from : 0, to = one ? steps[m_step].to : clips::duration(m_clip), len = std::max(0.01, to - from);
+  const bool part = m_first >= 0 && m_last < steps.size();
+  const double from = part ? steps[m_first].from : 0, to = part ? steps[m_last].to : clips::duration(m_clip), len = std::max(0.01, to - from);
   first = from;
   fade = 0;
-  if (still()) return clips::stillTime(m_clip);
+  if (still()) return part ? to : clips::stillTime(m_clip);
   const double e = std::fmod(m_clock.isValid() ? m_clock.elapsed() / 1000.0 : 0, len + kHold + kFade);
   if (e < len) return from + e;
   if (e >= len + kHold) fade = std::clamp((e - len - kHold) / kFade, 0.0, 1.0);
@@ -1916,4 +1938,72 @@ void ClipView::paintEvent(QPaintEvent*) {
   if (fade <= 0) return;
   p.setOpacity(fade);
   p.drawImage(rect(), clips::frame(m_clip, first, size(), devicePixelRatioF(), o));
+}
+
+ToolGuide::ToolGuide(QWidget* parent) : QWidget(parent) {
+  setObjectName("toolGuide");
+  help::language();  // the help area's translations, before the first tr()
+  auto* v = new QVBoxLayout(this);
+  v->setContentsMargins(0, 0, 0, 6);
+  v->setSpacing(2);
+  m_head = new QToolButton(this);
+  m_head->setObjectName("guideHead");
+  m_head->setText(tr("Guide"));
+  m_head->setToolTip(tr("Show or hide the animated guide for this tool"));
+  m_head->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  m_head->setAutoRaise(true);
+  m_head->setFocusPolicy(Qt::NoFocus);
+  m_head->setIconSize(QSize(14, 14));
+  m_head->setFont(theme::ui(11));
+  v->addWidget(m_head, 0, Qt::AlignLeading);
+  m_view = new ClipView(QString(), this);
+  m_view->setFixedHeight(kHeight);
+  m_view->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  v->addWidget(m_view);
+  connect(m_head, &QToolButton::clicked, this, [this] { setExpanded(!expanded()); });
+  connect(theme::notifier(), &theme::Notifier::changed, this, &ToolGuide::sync);
+  hide();
+}
+
+bool ToolGuide::enabled() { return QSettings().value("ui/toolGuide", true).toBool(); }
+
+bool ToolGuide::expanded() const {
+  const QSettings s;
+  return s.value("help/guide/" + m_id, s.value("help/uses/" + m_id, 0).toInt() <= kUses).toBool();
+}
+
+void ToolGuide::setExpanded(bool on) {
+  if (m_id.isEmpty()) return;
+  QSettings().setValue("help/guide/" + m_id, on);
+  sync();
+}
+
+void ToolGuide::setCommand(const QString& id) {
+  m_id = id;
+  m_step = m_count = 0;
+  if (!id.isEmpty() && clips::has(id)) {
+    QSettings s;
+    s.setValue("help/uses/" + id, s.value("help/uses/" + id, 0).toInt() + 1);
+  }
+  m_view->setClip(clips::has(id) ? id : QString());
+  sync();
+}
+
+void ToolGuide::setWaiting(int step, int count) {
+  m_step = step;
+  m_count = count;
+  const auto [first, last] = clips::guideRange(m_id, step, count);
+  m_view->setRange(first, last);
+}
+
+void ToolGuide::sync() {
+  const bool on = enabled() && clips::has(m_id), open = on && expanded();
+  const Tokens& t = theme::current();
+  m_head->setIcon(icons::icon(open ? "chevronDown" : "chevronRight", t.fg2));
+  m_head->setStyleSheet(QString("QToolButton#guideHead { color: %1; border: none; padding: 1px 2px; }").arg(theme::css(t.fg2)));
+  const bool changed = isHidden() == on || m_view->isHidden() == open;
+  setVisible(on);
+  m_view->setVisible(open);
+  setWaiting(m_step, m_count);
+  if (changed) emit resized();
 }

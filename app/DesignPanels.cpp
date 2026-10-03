@@ -10,6 +10,7 @@
 #include <QSettings>
 #include <QStringListModel>
 
+#include "HelpClip.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
@@ -132,6 +133,9 @@ FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   m_hint->setWordWrap(true);
   v->addWidget(m_name);
   v->addWidget(m_hint);
+  m_guide = new ToolGuide(this);
+  v->addWidget(m_guide);
+  connect(m_guide, &ToolGuide::resized, this, &FeaturePanel::contentResized);
   m_hiddenWarning=new QLabel(tr("The object being edited is hidden. Show it in the browser to see the result."),this);m_hiddenWarning->setWordWrap(true);m_hiddenWarning->setStyleSheet("color: #b07820");m_hiddenWarning->hide();v->addWidget(m_hiddenWarning);
   auto* body = new QWidget(this);
   m_rows = new QVBoxLayout(body);
@@ -245,6 +249,7 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
     m_bodyParent->setCurrentIndex(0);
   }
   m_hint->setText(i18n::t(QString::fromStdString(spec.hint)));
+  m_guide->setCommand(editing ? QString() : "design." + QString::fromStdString(spec.kind));
   m_ok->setText(tr("OK   Enter"));setEditHidden(false);
   setStatus(QString(), false);
   for (const auto& in : spec.inputs) {
@@ -358,6 +363,16 @@ void FeaturePanel::refreshVisibility() {
       it->second.pick->set(n, what, m_active == it->first, in.optional || n >= std::max(1, in.min_count) || in.min_count == 0);
     }
   }
+  // The guide's steps: the shown picks the feature needs, in order, then its values; it waits at the first one missing.
+  int needed = 0, waiting = -1;
+  for (const auto& in : m_spec->inputs) {
+    auto it = m_widgets.find(QString::fromStdString(in.name));
+    if (it == m_widgets.end() || !it->second.pick || it->second.row->isHidden() || in.optional || (in.min_count < 1 && !singlePick(in.type))) continue;
+    const opad::json p = picks(it->first);
+    if (waiting < 0 && (p.is_array() ? static_cast<int>(p.size()) : p.is_null() ? 0 : 1) < std::max(1, in.min_count)) waiting = needed;
+    ++needed;
+  }
+  m_guide->setWaiting(waiting < 0 ? needed : waiting, needed + 1);
   refreshNewBody();
 }
 

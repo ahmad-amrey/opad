@@ -2,6 +2,7 @@
 // registry's lookups, search and tooltips, and the rich card's states, timing and layout (offscreen). The animated
 // clips (UI-107): the library, rendering, translations, the loader's checks and templates, the player.
 #include "CommandHelp.hpp"
+#include "GuidedTool.hpp"
 #include "HelpClip.hpp"
 #include "I18n.hpp"
 #include "RichTip.hpp"
@@ -324,6 +325,106 @@ TEST(clip_view_plays_only_when_visible) {
   CHECK(!view.grab().toImage().isNull());
   view.setClip("no.such.clip");
   CHECK(!view.playing());
+}
+
+// A tool panel's guide loops the clip steps of the step its tool waits for: the clip's "guide" list, else the clip's
+// steps shared out over the tool's; the last one once every step is done. Bad entries are named.
+TEST(clip_guide_ranges) {
+  QTemporaryDir dir;
+  QFile f(dir.filePath("clips.json"));
+  CHECK(f.open(QIODevice::WriteOnly));
+  f.write(R"({"clips": [
+    {"id": "four", "duration": 4, "items": [{"el": "grid"}], "steps": [{"to": 1, "caption": "A"}, {"to": 2, "caption": "B"}, {"to": 3, "caption": "C"}, {"to": 4, "caption": "D"}]},
+    {"id": "guided", "duration": 3, "items": [{"el": "grid"}], "guide": [0, [1, 2]], "steps": [{"to": 1, "caption": "A"}, {"to": 2, "caption": "B"}, {"to": 3, "caption": "C"}]},
+    {"id": "wrong", "duration": 2, "items": [{"el": "grid"}], "guide": [[1, 0], 5], "steps": [{"to": 2, "caption": "A"}]}]})");
+  f.close();
+  clips::load(f.fileName());
+  using R = QPair<int, int>;
+  CHECK(clips::guideRange("four", 0, 2) == R(0, 1) && clips::guideRange("four", 1, 2) == R(2, 3) && clips::guideRange("four", 2, 2) == R(3, 3));
+  CHECK(clips::guideRange("four", 0, 3) == R(0, 0) && clips::guideRange("four", 1, 3) == R(1, 1) && clips::guideRange("four", 2, 3) == R(2, 3));
+  CHECK(clips::guideRange("four", 0, 6) == R(0, 0) && clips::guideRange("four", 5, 6) == R(3, 3) && clips::guideRange("four", -1, 2) == R(0, 1));
+  CHECK(clips::guideRange("four", 0, 0) == R(0, 3) && clips::guideRange("none", 0, 2) == R(-1, -1));
+  CHECK(clips::guideRange("guided", 0, 3) == R(0, 0) && clips::guideRange("guided", 1, 3) == R(1, 2) && clips::guideRange("guided", 2, 3) == R(1, 2));
+  CHECK(clips::guideRange("guided", 3, 3) == R(2, 2));
+  CHECK(clips::problems().join("\n").contains("wrong: guide entries are clip steps"));
+  clips::load();
+  CHECK(clips::guideRange("sketch.line", 0, 3) == R(0, 0) && clips::guideRange("design.extrude", 1, 2) == R(1, 2));
+}
+
+// The player loops a range of steps as one segment; reduced motion shows the range's last frame.
+TEST(clip_view_loops_a_range) {
+  clips::load();
+  QSettings().setValue("ui/tipAnimate", true);
+  ClipView view("design.extrude");
+  view.resize(288, 162);
+  view.show();
+  const auto steps = clips::steps("design.extrude");
+  view.setRange(1, 2);
+  CHECK(view.range() == qMakePair(1, 2) && view.step() == 1);
+  for (int i = 0; i < 4; ++i) {
+    QTest::qWait(150);
+    CHECK(view.time() >= steps[1].from - 1e-9 && view.time() <= steps[2].to + 1e-9);
+  }
+  QSettings().setValue("ui/tipAnimate", false);
+  view.hide();
+  view.show();
+  CHECK(view.still() && !view.playing() && std::abs(view.time() - steps[2].to) < 1e-9);
+}
+
+// The guide slot: shown for a command with a clip, unfolded for its first kUses runs and folded after, a fold or unfold
+// by hand remembered for that command; no slot without a clip or with ui/toolGuide off. In a tool's step panel it
+// follows the waiting step.
+TEST(tool_guide_follows_the_command) {
+  clips::load();
+  QSettings().remove("help");
+  QSettings().remove("ui/toolGuide");
+  QWidget window;
+  auto* box = new QVBoxLayout(&window);
+  auto* guide = new ToolGuide(&window);
+  box->addWidget(guide);
+  window.resize(360, 300);
+  window.show();
+  int resized = 0;
+  QObject::connect(guide, &ToolGuide::resized, [&] { ++resized; });
+  CHECK(!guide->shown());
+  guide->setCommand("design.extrude");
+  CHECK(guide->shown() && guide->expanded() && guide->view()->isVisible() && guide->view()->clip() == "design.extrude" && resized == 1);
+  CHECK(QSettings().value("help/uses/design.extrude").toInt() == 1);
+  guide->setWaiting(1, 2);
+  CHECK(guide->view()->range() == qMakePair(1, 2));
+  for (int i = 2; i <= ToolGuide::kUses; ++i) guide->setCommand("design.extrude");
+  CHECK(guide->expanded());
+  guide->setCommand("design.extrude");
+  CHECK(guide->shown() && !guide->expanded() && !guide->view()->isVisible());
+  auto* head = guide->findChild<QToolButton*>("guideHead");
+  CHECK(head);
+  head->click();
+  CHECK(guide->expanded() && guide->view()->isVisible() && QSettings().value("help/guide/design.extrude").toBool());
+  guide->setCommand("design.extrude");
+  CHECK(guide->expanded());
+  head->click();
+  CHECK(!guide->expanded());
+  guide->setCommand("file.quit");
+  CHECK(!guide->shown() && QSettings().value("help/uses/file.quit", 0).toInt() == 0);
+  QSettings().setValue("ui/toolGuide", false);
+  guide->setCommand("sketch.line");
+  CHECK(!guide->shown());
+  QSettings().remove("ui/toolGuide");
+  // In the measure tools' step panel: first pick, second pick, then the result.
+  ToolStepsPanel steps;
+  steps.resize(380, 400);
+  steps.show();
+  CHECK(!steps.guide());
+  steps.setGuide("inspect.distance");
+  CHECK(steps.guide() && steps.guide()->shown() && steps.guide()->view()->isVisible());
+  steps.setSteps({{"Select first face", {}}, {"Select second face", {}}}, {});
+  CHECK(steps.guide()->view()->range() == qMakePair(0, 0));
+  steps.setSteps({{"Select first face", "Box › face 1"}, {"Select second face", {}}}, {});
+  CHECK(steps.guide()->view()->range() == qMakePair(1, 1));
+  steps.setSteps({{"Select first face", "Box › face 1"}, {"Select second face", "Box › face 2"}}, {});
+  const int last = int(clips::steps("inspect.distance").size()) - 1;
+  CHECK(steps.guide()->view()->range() == qMakePair(last, last));
+  QSettings().remove("help");
 }
 
 // The rich card's clip slot only for commands whose clip exists, when the factory says which do.

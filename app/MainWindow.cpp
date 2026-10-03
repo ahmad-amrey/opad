@@ -1911,6 +1911,7 @@ void MainWindow::startTool(const QString& id) {
     action(a)->setChecked(id == QString(a).section('.', 1));
   if (toolMeasures()) {
     m_toolPanel->setHeader(m_tool.icon, m_tool.title);
+    m_toolSteps->setGuide("inspect." + id);  // UI-107
     openPanel(m_toolPanel);
   }
   if (wantFaces) {
@@ -2529,6 +2530,7 @@ void MainWindow::runBench() {
   if(benchShortcuts())return;
   if(benchRichTip())return;
   if(benchClips())return;
+  if(benchGuide())return;
   if(benchDrawingImport())return;
   if(benchTodo9())return;
   if(benchAnnotateLarge())return;

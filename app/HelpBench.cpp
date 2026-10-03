@@ -1,5 +1,7 @@
 #include "MainWindow.hpp"
 #include "CommandHelp.hpp"
+#include "DesignController.hpp"
+#include "GuidedTool.hpp"
 #include "HelpClip.hpp"
 #include "I18n.hpp"
 #include "RichTip.hpp"
@@ -336,6 +338,104 @@ bool MainWindow::benchClips() {
     if (i >= steps->size()) return;
     QTimer::singleShot((*steps)[i].delay, this, [steps, next, i] {
       (*steps)[i].fn();
+      (*next)(i + 1);
+    });
+  };
+  (*next)(0);
+  return true;
+}
+
+// OPAD_BENCH_GUIDE=<prefix> (a document with a box and a sketch): the guide slot of the tool panels (UI-107). The
+// Distance tool's panel plays inspect.distance at its first step and moves on with the first pick; a command run more
+// than ToolGuide::kUses times starts folded and unfolding it is remembered; a new extrude plays design.extrude at its
+// profile pick and moves on to the distance once a profile is picked; the sketch panel plays the line tool's clip and
+// follows its clicks; ui/toolGuide off removes the slot. Panels saved as <prefix>.tool/.tool-picked/.feature/.sketch.png.
+bool MainWindow::benchGuide() {
+  const QString prefix = qEnvironmentVariable("OPAD_BENCH_GUIDE");
+  if (prefix.isEmpty()) return false;
+  QSettings().setValue("ui/tipAnimate", true);
+  auto failed = std::make_shared<QStringList>();
+  auto check = [failed](bool ok, const QString& what) {
+    trace::log(QString("bench: guide: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    if (!ok) *failed << what;
+  };
+  auto range = [](ToolGuide* g) { return g ? QString("%1-%2").arg(g->view()->range().first).arg(g->view()->range().second) : QString("none"); };
+  auto plays = [](ToolGuide* g, const QString& id) { return g && g->shown() && g->command() == id && g->view()->isVisible() && g->view()->playing(); };
+  struct Step { int delay; std::function<void()> fn; };
+  auto steps = std::make_shared<std::vector<Step>>();
+  auto add = [steps](int delay, std::function<void()> fn) { steps->push_back({delay, std::move(fn)}); };
+  const std::string sketch = m_doc->scene.sketches.empty() ? std::string() : m_doc->scene.sketches.front().id;
+  check(!sketch.empty() && !m_doc->scene.all_bodies().empty(), "the document has a body and a sketch");
+  auto unfoldedHeight = std::make_shared<int>(0);
+  add(1500, [=, this] {
+    startTool("distance");
+    ToolGuide* g = m_toolSteps->guide();
+    check(plays(g, "inspect.distance"), "the Distance panel plays its clip");
+    check(g && g->view()->range() == qMakePair(0, 0), "at the first pick's step (" + range(g) + ")");
+    *unfoldedHeight = m_toolPanel->height();
+    m_toolPanel->grab().save(prefix + ".tool.png");
+  });
+  add(300, [=, this] {  // a face of the box picked, as the viewport reports a click (a hidden window paints no frame to click in)
+    opad::Ref face;
+    face.body = m_doc->scene.all_bodies().front();
+    face.kind = opad::Ref::Kind::Face;
+    face.index = 1;
+    toolPicksChanged({face}, false);
+  });
+  add(300, [=, this] {
+    ToolGuide* g = m_toolSteps->guide();
+    check(m_toolPicks.size() == 1 && g && g->view()->range() == qMakePair(1, 1), QString("a pick moves it to the second pick's step (%1 picks, %2)").arg(m_toolPicks.size()).arg(range(g)));
+    m_toolPanel->grab().save(prefix + ".tool-picked.png");
+    cancelTool();
+    for (int i = 1; i < ToolGuide::kUses; ++i) { startTool("distance"); cancelTool(); }
+    startTool("distance");
+    check(g && g->shown() && !g->expanded() && !g->view()->isVisible(), QString("folded after %1 runs").arg(ToolGuide::kUses));
+  });
+  add(300, [=, this] {
+    ToolGuide* g = m_toolSteps->guide();
+    check(m_toolPanel->height() < *unfoldedHeight, QString("the folded panel is shorter (%1 < %2 px)").arg(m_toolPanel->height()).arg(*unfoldedHeight));
+    if (auto* head = g ? g->findChild<QToolButton*>("guideHead") : nullptr) head->click();
+    check(g && g->expanded() && g->view()->isVisible(), "the header unfolds it");
+    cancelTool();
+    startTool("distance");
+    check(g && g->expanded(), "unfolded by hand stays unfolded");
+    cancelTool();
+    m_design->startFeature("extrude");
+    ToolGuide* f = m_design->featurePanel()->guide();
+    check(plays(f, "design.extrude") && f->view()->range() == qMakePair(0, 0), "a new extrude plays its clip at the profile pick (" + range(f) + ")");
+    m_design->featurePanel()->setPicks("profiles", opad::json::array({opad::json{{"sketch", sketch}, {"at", {30.0, 5.0}}}}));
+    check(f && f->view()->range() == qMakePair(1, 2), "a picked profile moves it on to the distance (" + range(f) + ")");
+  });
+  add(600, [=, this] {
+    m_design->featurePanel()->grab().save(prefix + ".feature.png");
+    m_design->escape();
+    m_design->editOp(sketch);
+  });
+  add(900, [=, this] {
+    m_design->sketch()->setTool("line");
+    auto panels = findChildren<SketchPanel*>();
+    ToolGuide* s = panels.isEmpty() ? nullptr : panels.front()->findChild<ToolGuide*>();
+    check(m_design->sketchActive() && plays(s, "sketch.line") && s->view()->range() == qMakePair(0, 0), "the sketch panel plays the line tool at its first point (" + range(s) + ")");
+    m_design->sketch()->placePrecise("0", "0", 0);
+    check(s && s->view()->range() == qMakePair(1, 2), "a placed point moves it on (" + range(s) + ")");
+  });
+  add(400, [=, this] {
+    auto panels = findChildren<SketchPanel*>();
+    if (!panels.isEmpty()) panels.front()->grab().save(prefix + ".sketch.png");
+    QSettings().setValue("ui/toolGuide", false);
+    m_design->sketch()->setTool("rect");
+    ToolGuide* s = panels.isEmpty() ? nullptr : panels.front()->findChild<ToolGuide*>();
+    check(s && !s->shown(), "ui/toolGuide off: no slot");
+    QSettings().remove("ui/toolGuide");
+    if (i18n::current() != "en") check(s && s->findChild<QToolButton*>("guideHead")->text() != "Guide", "the header in the UI language");
+    trace::log(QString("bench: guide: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
+    QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
+  });
+  auto next = std::make_shared<std::function<void(size_t)>>();
+  *next = [this, steps, next, check](size_t i) {
+    if (i >= steps->size()) return;
+    QTimer::singleShot((*steps)[i].delay, this, [steps, next, check, i] {
+      try { (*steps)[i].fn(); } catch (const std::exception& e) { check(false, QString::fromUtf8(e.what())); }
       (*next)(i + 1);
     });
   };
