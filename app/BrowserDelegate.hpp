@@ -46,6 +46,7 @@ struct Decoration {
   QString typeIcon;  // in place of the row's type icon
   QString tooltip;   // a line under the row's own tooltip
   bool italic = false, bold = false, dim = false;  // the name's style; dim greys the name and the icons (fg3)
+  bool readOnly = false;  // its name and place are not the user's (a linked file's part): no rename, no drag; eye and colour stay
 };
 
 // Asked for every row each time it is painted, hovered or clicked: O(1) per row, from what the area already knows (never

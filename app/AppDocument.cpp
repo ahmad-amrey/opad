@@ -35,6 +35,23 @@ QString phaseLabel(const std::string& what, const QString& file) {
   }
   return QString::fromStdString(what);
 }
+// A linked file's parts are the file's (opad/assets.hpp): renamed, moved or regrouped they would no longer say what the file
+// says. Its top node may be (a name, a placement) and holds nothing else; hide, colour and lock are views.
+void refuseLinkedParts(const opad::Scene& scene, const std::string& command, const opad::json& args) {
+  auto part = [&](const std::string& id) {
+    const opad::Node* n = scene.node(id);
+    const opad::Node* p = n && n->linked && !n->parent.empty() ? scene.node(n->parent) : nullptr;
+    return p && p->linked && p->source_op == n->source_op;
+  };
+  std::vector<std::string> targets;
+  if (args.contains("target") && args["target"].is_string()) targets.push_back(args["target"].get<std::string>());
+  if (args.contains("targets") && args["targets"].is_array())
+    for (const auto& t : args["targets"]) if (t.is_string()) targets.push_back(t.get<std::string>());
+  for (const auto& id : targets)
+    if (part(id)) throw opad::Error("Parts of a linked file are read-only: embed the file to edit them.");
+  if (command == "reparent" && args.contains("parent") && args["parent"].is_string())
+    if (const opad::Node* p = scene.node(args["parent"].get<std::string>()); p && p->linked) throw opad::Error("A linked file holds only its own parts.");
+}
 }  // namespace
 
 AppDocument::AppDocument(QObject* parent) : QObject(parent), m_storage(std::make_shared<opad::Document>()), doc(*m_storage), m_alive(std::make_shared<std::atomic<bool>>(true)) {}
@@ -395,6 +412,7 @@ opad::json AppDocument::run(const std::string& command, opad::json args) {
   if (designBusy) throw opad::Error("The design is being recomputed; try again in a moment.");
   // Viewer mode changes how things look (shown, colour, opacity), never the model.
   if (browse && command != "appearance") throw opad::Error("Viewer mode: save the file as an OPAD document to edit it.");
+  if (command == "rename" || command == "reparent" || command == "transform") refuseLinkedParts(scene, command, args);
   const size_t before = doc.ops.size();
   if (!args.contains("by")) args["by"] = QSettings().value("user/name").toString().trimmed().toStdString();
   opad::json out = opad::commands::run(command, args, &doc);

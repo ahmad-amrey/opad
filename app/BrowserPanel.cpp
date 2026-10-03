@@ -95,6 +95,13 @@ void BrowserTree::mouseDoubleClickEvent(QMouseEvent* e) {
   QTreeWidget::mouseDoubleClickEvent(e);
 }
 
+void BrowserTree::startDrag(Qt::DropActions actions) {
+  if (auto* delegate = qobject_cast<BrowserDelegate*>(itemDelegate()))
+    for (const QModelIndex& index : selectedIndexes())
+      if (delegate->decoration(index).readOnly) return;
+  QTreeWidget::startDrag(actions);
+}
+
 std::function<void()> BrowserTree::badgeClick(const QPoint& pos) const {
   const QModelIndex idx = indexAt(pos);
   auto* delegate = qobject_cast<BrowserDelegate*>(itemDelegate());

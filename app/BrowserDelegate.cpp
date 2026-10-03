@@ -252,7 +252,8 @@ bool BrowserDelegate::helpEvent(QHelpEvent* e, QAbstractItemView* view, const QS
   return QStyledItemDelegate::helpEvent(e, view, opt, index);
 }
 
-QWidget* BrowserDelegate::createEditor(QWidget* parent, const QStyleOptionViewItem&, const QModelIndex&) const {
+QWidget* BrowserDelegate::createEditor(QWidget* parent, const QStyleOptionViewItem&, const QModelIndex& index) const {
+  if (decoration(index).readOnly) return nullptr;  // no rename (F2, double-click)
   auto* e = new QLineEdit(parent);
   e->setFrame(true);
   return e;

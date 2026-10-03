@@ -167,6 +167,9 @@ class MainWindow : public QMainWindow {
   // Viewer mode (a file other than .opad shown read-only): edits ask to save it as an OPAD document first.
   static bool isEditAction(const QString& id);
   static QString fileFilter(bool withOpad);                 // "*.step *.stl ..." for the file dialogs
+  // Import…'s file: mode -1 asks whether it comes in linked or as a copy when linking suits it (assets::askImport), 0 a
+  // copy, 1 linked (a drawing is placed and copied, DrawingPlacer); under the selected component if the user says so.
+  void importPath(const QString& path, int mode);
   bool requireEditable(std::function<void()> resume = {});  // true when the document can be edited
   void saveViewerAs(std::function<void()> then = {});       // Save as OPAD: made editable in place, then written
   void makeEditable(const QString& savePath, std::function<void()> then = {});

@@ -1,6 +1,7 @@
 """gui_benches cases of the assets area (T4): KiCad boards, linked files, pictures, import colours, the viewer cache. The
 benches are in app/KicadBench.cpp, app/AssetLinks.cpp and app/PictureBench.cpp. Each case makes its own files and points
 its own cache (OPAD_CACHE_DIR) into the run's folder, so nothing reaches the user's."""
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -77,6 +78,42 @@ def linked_files(root, document):
     return linked, env
 
 
+def assembly_step(document, name, out, inputs):
+    """A STEP of one box inside a component "Bracket": linked, its top node with a part under it."""
+    path = document(name, ("feature", "--kind", "box", "--inputs", inputs))
+
+    def cli(*args):
+        return json.loads(subprocess.run([str(document.cli), args[0], str(path), *args[1:]], check=True, capture_output=True, text=True).stdout)
+    component = cli("component", "--name", "Bracket")["id"]
+    body = next(n["id"] for n in cli("tree")["roots"] if n["type"] == "body")
+    cli("reparent", "--target", body, "--parent", component)
+    cli("export", "--format", "step", "--out", str(out))
+    return out
+
+
+def asset_sync(root, document):
+    """A document in a git work tree whose .gitattributes stores assets/** with LFS, linking parts/part.step and
+    parts/second.step (in sync, each a component holding a box), with the next version of both and a third of the part in
+    next/."""
+    project = root / "asset-sync"
+    parts, later = project / "parts", project / "next"
+    parts.mkdir(parents=True)
+    later.mkdir()
+    (project / ".git").mkdir()  # a work tree as far as finding its root goes
+    (project / ".gitattributes").write_text("*.opad text eol=lf\nassets/** filter=lfs diff=lfs merge=lfs -text\n", encoding="utf-8")
+    env = {"OPAD_CACHE_DIR": str(root / "asset-sync-cache")}
+    second = '{{"y":"30 mm","length":"8 mm","width":"8 mm","height":"{}"}}'
+    assembly_step(document, "sync-part", parts / "part.step", '{"length":"10 mm","width":"10 mm","height":"10 mm"}')
+    assembly_step(document, "sync-second", parts / "second.step", second.format("8 mm"))
+    assembly_step(document, "sync-part-2", later / "part.step", '{"length":"12 mm","width":"10 mm","height":"10 mm"}')
+    assembly_step(document, "sync-second-2", later / "second.step", second.format("12 mm"))
+    assembly_step(document, "sync-part-3", later / "part-3.step", '{"length":"14 mm","width":"10 mm","height":"10 mm"}')
+    design = document("asset-sync/design")
+    for target in (parts / "part.step", parts / "second.step"):
+        subprocess.run([str(document.cli), "import", str(design), str(target), "--link", "true"], check=True, capture_output=True, env={**os.environ, **env})
+    return design, env
+
+
 def colors_obj(root, document):
     """An OBJ cube, Y up: its top in a gold material of its own, the rest grey (Kd 0.439, which OCCT reads as sRGB)."""
     colors = root / "colors-obj"
@@ -131,6 +168,9 @@ CASES = [
     # Linked files: changed, outside the project (asked about), saved without their bodies, synced, a linked import and a
     # linked picture (<prefix>.png, .picture.png).
     ("assets", linked_files, {"OPAD_BENCH_ASSETS": "{prefix}.png"}),
+    # The linked-file UI (UI-68): badges, read-only parts, Properties, the monitor's toast and Sync all, a badge's sync, a
+    # missing file located, pack (LFS badge) and embed (<prefix>.browser.png, .changed.png, .properties.png, .final.png).
+    ("asset-sync", asset_sync, {"OPAD_BENCH_ASSET_SYNC": "{prefix}"}),
     # Pictures (UI-71): a JPEG canvas decoded on a worker, a sketch backdrop kept as the file has it, a move storing only
     # its fields (<prefix>.canvas.png).
     ("pictures", "empty", {"OPAD_BENCH_PICTURES": "{prefix}"}),

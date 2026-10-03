@@ -1,5 +1,5 @@
-// Linked files (opad/assets.hpp) in the window: the question before reading files outside the document's project, and the
-// bench that opens, trusts, saves, syncs and links them.
+// Linked files (opad/assets.hpp) in the window: the question after a load before reading files outside the document's project
+// (AssetsArea.cpp asks it), and the bench that opens, trusts, saves, syncs and links them.
 #include "MainWindow.hpp"
 #include "BenchRegistry.hpp"
 
@@ -16,40 +16,14 @@
 #include <functional>
 
 #include "AppDocument.hpp"
+#include "AssetsArea.hpp"
 #include "Jobs.hpp"
 #include "Viewport.hpp"
 #include "opad/assets.hpp"
 
-// A document from elsewhere must not make OPAD open files of its choosing (a network share hands over the user's
-// credentials): the linked files outside its project are read only once the user says so, here or for good (settings).
+// The question about the linked files outside the document's project after a load (assets::askTrust, AssetsArea.cpp).
 bool MainWindow::offerAssetTrust() {
-  QStringList files, folders;
-  for (const auto& s : m_doc->assetStates) {
-    if (s.value("state", "") != "untrusted") continue;
-    const QString file = QString::fromStdString(s.value("file", s.value("path", std::string())));
-    files << QDir::toNativeSeparators(file);
-    if (const QString folder = QFileInfo(file).absolutePath(); !folders.contains(folder)) folders << folder;
-  }
-  if (files.isEmpty()) return false;
-  QMessageBox box(QMessageBox::Question, tr("Linked files"),
-                  tr("This document links files outside its project folder:\n\n%1\n\nRead them?").arg(files.mid(0, 6).join('\n') + (files.size() > 6 ? "\n…" : "")),
-                  QMessageBox::NoButton, this);
-  auto* once = box.addButton(tr("Read them"), QMessageBox::AcceptRole);
-  auto* always = box.addButton(folders.size() == 1 ? tr("Always trust this folder") : tr("Always trust these folders"), QMessageBox::AcceptRole);
-  box.addButton(tr("Not now"), QMessageBox::RejectRole);
-  box.exec();
-  if (box.clickedButton() == always) {
-    QStringList trusted = m_settings.value("assets/trusted").toStringList();
-    for (const QString& f : folders)
-      if (!trusted.contains(f)) trusted << f;
-    m_settings.setValue("assets/trusted", trusted);
-  } else if (box.clickedButton() != once) {
-    return true;
-  }
-  m_doc->loadAssets(m_jobs, box.clickedButton() == once, [this](bool ok, const QString& error) {
-    if (!ok) statusBar()->showMessage(error, 6000);
-  });
-  return true;
+  return assets::askTrust(this, m_doc, m_jobs, [this](const QString& error) { statusBar()->showMessage(error, 6000); });
 }
 
 // OPAD_BENCH_ASSETS=<png>: tools/gui_benches.py writes a document beside parts/part.step (changed since it was linked) that

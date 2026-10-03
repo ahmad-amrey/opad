@@ -29,6 +29,7 @@ class DesignController;
 class JobRunner;
 class MainWindow;
 class PropertiesPanel;
+class Toast;
 class QAction;
 class QKeySequence;
 class QMainWindow;
@@ -80,11 +81,14 @@ class AreaServices {
   void addPanel(ToolPanel* panel);   // a floating panel of the window: anchored to the viewport, closed by openPanel and Esc
   void openPanel(ToolPanel* panel);  // shows it over the viewport; the other unpinned panels close
   bool requireEditable(std::function<void()> resume = {});  // viewer mode: offers to save as OPAD first; false until then
+  // Imports a file as Import… does (load progress, the view fitted, recent files, a KiCad board's options asked first):
+  // `link` a linked asset (opad/assets.hpp) rather than a copy.
+  void importFile(const QString& path, bool link);
   void guarded(const std::function<void()>& fn);           // runs fn; an exception becomes a message box
   void showMessage(const QString& text, int ms = 4000);    // status bar
   // A toast at the bottom centre of the viewport (Toast.hpp): a result or a warning, with an optional action ("Undo")
-  // whose callback runs when it is clicked; ms 0 keeps it until it is closed. From ribbon on.
-  void toast(const QString& text, const QString& actionText = QString(), std::function<void()> callback = {}, int ms = 4000);
+  // whose callback runs when it is clicked; ms 0 keeps it until it is closed. From ribbon on. Returns it (to dismiss it early).
+  Toast* toast(const QString& text, const QString& actionText = QString(), std::function<void()> callback = {}, int ms = 4000);
   SelectionContext selection() const;                       // the current one
   void positionOverlays();  // lay the overlays out again (the areas' positionOverlays too)
   // The workspace shown, by RibbonLayout id: "review", "design", "sketch" (contextual, while a sketch is open) or an

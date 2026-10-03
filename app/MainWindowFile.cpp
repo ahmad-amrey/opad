@@ -14,6 +14,7 @@
 
 #include <memory>
 
+#include "AssetsArea.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "KicadBoards.hpp"
@@ -31,18 +32,7 @@ void MainWindow::buildFileActions() {
   });
   addAction("file.import", tr("&Import…"), "import", QKeySequence("Ctrl+I"), [this] {
     QString p = QFileDialog::getOpenFileName(this, tr("Import design"), m_settings.value("ui/lastDir").toString(), tr("Design files (%1)").arg(fileFilter(false)));
-    if (p.isEmpty()) return;
-    m_settings.setValue("ui/lastDir", QFileInfo(p).absolutePath());
-    auto ids = currentNodeIds();
-    QString parent;
-    if (ids.size() == 1 && m_doc->node(ids[0]) && m_doc->node(ids[0])->kind == opad::Node::Kind::Component &&
-        QMessageBox::question(this, tr("Import"), tr("Import under the selected component “%1”?").arg(m_doc->nodeName(ids[0]))) == QMessageBox::Yes)
-      parent = QString::fromStdString(ids[0]);
-    const QString suffix = QFileInfo(p).suffix().toLower();
-    if (suffix == "dxf" || suffix == "svg" || suffix == "dwg") return importDrawing(p, parent);
-    if (suffix == "kicad_pcb" && KicadDialog(this, true).exec() != QDialog::Accepted) return;
-    beginLoad([this, p] { addRecent(p); m_viewport->fitWhenReady(); });
-    m_doc->startImport(p, parent, {}, {}, suffix == "kicad_pcb" && KicadDialog::linked());  // KiCad's export: linked to its board
+    if (!p.isEmpty()) importPath(p, -1);
   });
   addAction("file.importdoc", tr("Save as OPAD document…"), "save", QKeySequence("Ctrl+Shift+E"), [this] { if (m_doc->browse) saveViewerAs(); });
   addAction("file.save", tr("&Save"), "save", QKeySequence("Ctrl+S"), [this] {
@@ -68,6 +58,26 @@ void MainWindow::buildFileActions() {
     statusBar()->showMessage(tr("Document closed"), 4000);
   });
   addAction("file.quit", tr("&Quit"), "", QKeySequence::Quit, [this] { close(); })->setMenuRole(QAction::QuitRole);
+}
+
+void MainWindow::importPath(const QString& p, int mode) {
+  m_settings.setValue("ui/lastDir", QFileInfo(p).absolutePath());
+  auto ids = currentNodeIds();
+  QString parent;
+  if (ids.size() == 1 && m_doc->node(ids[0]) && m_doc->node(ids[0])->kind == opad::Node::Kind::Component && !m_doc->node(ids[0])->linked &&
+      QMessageBox::question(this, tr("Import"), tr("Import under the selected component “%1”?").arg(m_doc->nodeName(ids[0]))) == QMessageBox::Yes)
+    parent = QString::fromStdString(ids[0]);
+  const QString suffix = QFileInfo(p).suffix().toLower();
+  if (suffix == "dxf" || suffix == "svg" || suffix == "dwg") return importDrawing(p, parent);
+  if (suffix == "kicad_pcb" && KicadDialog(this, true).exec() != QDialog::Accepted) return;
+  bool link = mode == 1 || (suffix == "kicad_pcb" && KicadDialog::linked());  // KiCad's export: linked to its board
+  if (!link && mode < 0) {
+    const assets::Mode chosen = assets::askImport(this, p);
+    if (chosen == assets::Mode::Cancel) return;
+    link = chosen == assets::Mode::Link;
+  }
+  beginLoad([this, p] { addRecent(p); m_viewport->fitWhenReady(); });
+  m_doc->startImport(p, parent, {}, {}, link);
 }
 
 bool MainWindow::isEditAction(const QString& id) {

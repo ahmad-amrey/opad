@@ -7,6 +7,7 @@
 #include <QSaveFile>
 #include <QTemporaryFile>
 #include <QThread>
+#include <algorithm>
 #include <set>
 
 Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwrite,
@@ -144,7 +145,7 @@ void AppDocument::startEditable(JobRunner* jobs, std::function<void(bool, const 
   });
 }
 
-void AppDocument::loadAssets(JobRunner* jobs, bool trustAll, std::function<void(bool, const QString&)> done) {
+void AppDocument::loadAssets(JobRunner* jobs, bool trustAll, std::function<void(bool, const QString&)> done, const std::vector<std::string>& only) {
   if (!hasDocument || browse || loading || designBusy) {
     if (done) done(false, tr("The document is busy; try again in a moment."));
     return;
@@ -157,6 +158,7 @@ void AppDocument::loadAssets(JobRunner* jobs, bool trustAll, std::function<void(
   std::set<std::string> wanted;
   for (const auto& e : opad::effective_ops(doc)) {
     if (e.op->type != "import" || !e.data().contains("asset")) continue;
+    if (!only.empty() && std::find(only.begin(), only.end(), e.op->id) == only.end()) continue;
     bool loaded = true;
     std::function<void(const opad::json&)> walk = [&](const opad::json& nodes) {
       for (const auto& n : nodes) {

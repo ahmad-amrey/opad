@@ -74,8 +74,8 @@ class AppDocument : public QObject {
   // `link`: a linked asset (opad::link_file) rather than a copy.
   void startImport(const QString& path, const QString& parent = {}, const opad::Mat4& placement = {}, const opad::json& plane = {}, bool link = false);
   // Reads the linked files whose bodies are not loaded (missing then, or not trusted) on a worker; `trustAll` for files the
-  // user has just agreed to. The bodies join the document on the UI thread; assetStates is updated.
-  void loadAssets(JobRunner* jobs, bool trustAll, std::function<void(bool, const QString&)> done = {});
+  // user has just agreed to. The bodies join the document on the UI thread; assetStates is updated. `only`: those imports.
+  void loadAssets(JobRunner* jobs, bool trustAll, std::function<void(bool, const QString&)> done = {}, const std::vector<std::string>& only = {});
   // Linked files: the folders trusted in the settings (assets/trusted) and this machine's KiCad options.
   static opad::AssetOptions assetOptions();
   static QString assetSummary(const opad::json& states);  // "Linked files: 1 changed since the last sync, ..." or empty
