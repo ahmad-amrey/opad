@@ -107,7 +107,7 @@ const QHash<QString, QStringList>& schema() {
         {"veil", {"color"}},
         {"timeline", {"screen", "markers", "states", "at"}},
         {"letters", {"at", "value", "height", "plane", "align", "color", "width", "fill", "fillOpacity"}},
-        {"camera", {"az", "elev", "zoom", "center", "roll", "persp"}},  // "elev": "el" names the element
+        {"camera", {"az", "elev", "zoom", "center", "roll", "persp", "dragged"}},  // "elev": "el" names the element
     };
     for (auto it = h.begin(); it != h.end(); ++it) *it << "el" << "from" << "to" << "fade" << "opacity" << "keys" << "offset" << "rot" << "pivot" << "scale" << "note";
     return h;
@@ -1870,6 +1870,9 @@ void prepare(Ctx& c, const Clip& clip, double& zoom, QPointF& pan) {
     if (it.el == "camera") {
       const QJsonObject o = evaluate(it, c.t);
       az = o.value("az").toDouble(az);
+      // A turn that follows a cursor drag in screen places, which right to left mirrors, turns the other way there: the
+      // way the mirrored drag turns the model in the app (orbit follows the hand, not the language).
+      if (c.rtl && o.value("dragged").toBool()) az = 2 * evaluate(it, 0).value("az").toDouble(clip.az) - az;
       el = o.value("elev").toDouble(el);
       zoom = o.value("zoom").toDouble(1);
       c.roll = o.value("roll").toDouble();

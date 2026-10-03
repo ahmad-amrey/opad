@@ -455,6 +455,33 @@ TEST(clip_loader_checks_and_templates) {
   clips::load();
 }
 
+// A camera turn that follows a drag in screen places ("dragged": the navigation presets' orbit) turns the other way right to
+// left, where the drag is mirrored; the model itself is never mirrored.
+TEST(clip_dragged_turn_follows_the_mirrored_drag) {
+  QTemporaryDir dir;
+  QFile f(dir.filePath("clips.json"));
+  CHECK(f.open(QIODevice::WriteOnly));
+  f.write(R"({"clips": [
+    {"id": "drag", "duration": 1, "view": "iso", "extent": [-12, -12, 12, 12], "steps": [{"to": 1, "caption": "One"}],
+     "items": [{"el": "camera", "dragged": true, "keys": [[0, {"az": -45}], [1, {"az": -95}]]}, {"el": "poly", "points": [[0, 0, 0], [10, 0, 0], [10, 4, 0]]}]},
+    {"id": "turn", "duration": 1, "view": "iso", "extent": [-12, -12, 12, 12], "steps": [{"to": 1, "caption": "One"}],
+     "items": [{"el": "camera", "keys": [[0, {"az": -45}], [1, {"az": -95}]]}, {"el": "poly", "points": [[0, 0, 0], [10, 0, 0], [10, 4, 0]]}]},
+    {"id": "back", "duration": 1, "view": "iso", "extent": [-12, -12, 12, 12], "steps": [{"to": 1, "caption": "One"}],
+     "items": [{"el": "camera", "keys": [[0, {"az": 5}]]}, {"el": "poly", "points": [[0, 0, 0], [10, 0, 0], [10, 4, 0]]}]}]})");
+  f.close();
+  clips::load(f.fileName());
+  CHECK(clips::problems().isEmpty());
+  clips::Options ltr, rtl;
+  ltr.caption = rtl.caption = false;
+  rtl.rtl = true;
+  const QSize size(288, 162);
+  CHECK(clips::frame("turn", 1, size, 1, rtl) == clips::frame("turn", 1, size, 1, ltr));  // a turn of its own: as written
+  CHECK(clips::frame("drag", 1, size, 1, ltr) == clips::frame("turn", 1, size, 1, ltr));
+  CHECK(clips::frame("drag", 1, size, 1, rtl) == clips::frame("back", 1, size, 1, ltr));  // -45 - 50 mirrored: -45 + 50
+  CHECK(clips::frame("drag", 0, size, 1, rtl) == clips::frame("drag", 0, size, 1, ltr));
+  clips::load();
+}
+
 // UI-124: reduced motion (ui/reduceMotion, by default the system's) holds the clips still whatever their own switch says,
 // and makes the camera's turns a moment (never zero: an OCCT animation of no length stays where it started).
 TEST(reduced_motion_holds_clips_still) {

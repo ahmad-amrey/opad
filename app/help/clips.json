@@ -127,7 +127,7 @@
   "navPreset": {"params": {"name": null, "orbit": null, "pan": null, "zoom": null, "caps1": [], "caps2": [], "caps3": []},
    "duration": 5.4, "view": "iso", "extent": [-26, -11, 26, 22],
    "items": [
-    {"el": "camera", "keys": [[0, {"az": -45, "elev": 35.264, "center": [-10, 0], "zoom": 1}], [0.4, {"az": -45}], [1.6, {"az": -95}], [2.0, {"center": [-10, 0]}], [3.2, {"center": [-14, -2]}],
+    {"el": "camera", "dragged": true, "keys": [[0, {"az": -45, "elev": 35.264, "center": [-10, 0], "zoom": 1}], [0.4, {"az": -45}], [1.6, {"az": -95}], [2.0, {"center": [-10, 0]}], [3.2, {"center": [-14, -2]}],
                               [3.6, {"zoom": 1}], [4.8, {"zoom": 1.25}]]},
     {"use": "isoScene", "args": {"area": [-18, -14, 18, 14]}},
     {"use": "bracket"},
