@@ -8,6 +8,7 @@ namespace opad {
 // unplated drills as holes, its thickness and solder-mask colour; every footprint with a 3D model as a component placed
 // the way KiCad places models (position, rotation, bottom-side flip, then the model's offset, rotation and scale); each
 // model is read once and shared by every footprint using it; a translucent box stands in for a model that is not found.
+// Models embedded in the footprint or the board (kicad-embed://, zstd + base64) are written once to the user cache and read.
 // Hidden 2D layers (Edge.Cuts with the drills, courtyards) are there for sketches. `opt.viewer` keeps the shapes live.
 ImportResult import_kicad_pcb(Document& doc, const std::filesystem::path& file, const ImportOptions& opt = {});
 

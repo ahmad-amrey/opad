@@ -30,6 +30,9 @@
 #include "opad/geometry.hpp"
 #include "opad/kicad_pcb.hpp"
 #include "opad/mesh.hpp"
+#ifdef OPAD_HAVE_ZSTD
+#include <zstd.h>
+#endif
 
 using namespace opad;
 
@@ -406,6 +409,56 @@ TEST(library_models_download) {
   CHECK_THROWS(kicad_download_models(board, {}, [](double, const std::string&) { return false; }));  // cancelled
   set_env("OPAD_KICAD_MODELS_URL", "");
 }
+
+#ifdef OPAD_HAVE_ZSTD
+// KiCad 9 embeds models in the board or in a footprint (kicad-embed://name): zstd-compressed, base64 between bars, in
+// lines. The footprint's own file comes before the board's of the same name; one named nowhere is a box and a warning.
+std::string embedded_record(const std::string& name, const std::string& content) {
+  std::string packed(ZSTD_compressBound(content.size()), '\0');
+  packed.resize(ZSTD_compress(packed.data(), packed.size(), content.data(), content.size(), 9));
+  static const char* digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string text;
+  for (size_t i = 0; i < packed.size(); i += 3) {
+    const unsigned v = (static_cast<unsigned char>(packed[i]) << 16) | (i + 1 < packed.size() ? static_cast<unsigned char>(packed[i + 1]) << 8 : 0) |
+                       (i + 2 < packed.size() ? static_cast<unsigned char>(packed[i + 2]) : 0);
+    text += digits[(v >> 18) & 63];
+    text += digits[(v >> 12) & 63];
+    text += i + 1 < packed.size() ? digits[(v >> 6) & 63] : '=';
+    text += i + 2 < packed.size() ? digits[v & 63] : '=';
+  }
+  std::string lines;
+  for (size_t i = 0; i < text.size(); i += 76) lines += "\n        " + std::string(i ? "" : "|") + text.substr(i, 76);
+  return "(embedded_files (file (name \"" + name + "\") (type model) (data" + lines + "|) (checksum \"0\")))\n";
+}
+
+TEST(embedded_models) {
+  Files files;
+  auto step_text = [&](const char* leaf, double dz) {
+    step_box(files.dir / leaf, -1, -1, 0, 2, 2, dz);
+    return read_text_file(files.dir / leaf);
+  };
+  const std::string board_model = step_text("a.step", 1), own_model = step_text("b.step", 3);
+  const auto board = files.dir / "embed.kicad_pcb";
+  write(board, "(kicad_pcb (version 20241229) (general (thickness 1.6))\n  (gr_rect (start 0 0) (end 40 20) (layer \"Edge.Cuts\"))\n" +
+                   embedded_record("part.step", board_model) +
+                   footprint("Emb:Board", "U1", "10 10", model("kicad-embed://part.step")) +
+                   footprint("Emb:Board", "U2", "20 10", model("kicad-embed://part.step")) +
+                   footprint("Emb:Own", "U3", "30 10", model("kicad-embed://part.step") + "    " + embedded_record("part.step", own_model)) +
+                   footprint("Emb:None", "U4", "35 10", model("kicad-embed://none.step")) + ")\n");
+  Document d = Document::create();
+  ImportOptions o;
+  o.kicad.origin = "page";
+  const ImportResult r = import_file(d, board, o);
+  const Scene s = resolve(d);
+  CHECK(r.info["models"] == 2 && r.info["placeholders"] == 1 && r.info["downloadable"] == 0);
+  CHECK(r.warnings.size() == 2 && r.warnings[0].find("none.step") != std::string::npos);
+  CHECK(box_is(world_box(d, s, named(s, "U1 Board")), 9, -11, 1.6, 11, -9, 2.6));
+  CHECK(box_is(world_box(d, s, named(s, "U3 Own")), 29, -11, 1.6, 31, -9, 4.6));
+  CHECK(s.node(named(s, "U1 Board")->children[0])->body_key == s.node(named(s, "U2 Board")->children[0])->body_key);
+  const json list = kicad_models(board);
+  CHECK(list["models"].size() == 2 && list["found"] == 1 && list["missing"] == 1);  // by name
+}
+#endif
 
 // A through-hole part's pins must go down its own drills, whichever side and turn: a 2x3 header model (pins only, pin 1
 // at its origin, KiCad's 3D frame: +y is up the page) on footprints turned 0/90/180/270 on top, and the same footprints

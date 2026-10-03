@@ -73,6 +73,13 @@ add_test(NAME formats COMMAND opad-test-formats)
 
 add_executable(opad-test-kicad test_kicad.cpp)
 target_link_libraries(opad-test-kicad PRIVATE opad::core)
+if(TARGET zstd::libzstd_static AND OPAD_STATIC)  # writes boards with embedded (compressed) models
+  target_link_libraries(opad-test-kicad PRIVATE zstd::libzstd_static)
+  target_compile_definitions(opad-test-kicad PRIVATE OPAD_HAVE_ZSTD=1)
+elseif(TARGET zstd::libzstd_shared)
+  target_link_libraries(opad-test-kicad PRIVATE zstd::libzstd_shared)
+  target_compile_definitions(opad-test-kicad PRIVATE OPAD_HAVE_ZSTD=1)
+endif()
 add_test(NAME kicad COMMAND opad-test-kicad)
 
 add_executable(opad-test-dxf test_dxf.cpp)

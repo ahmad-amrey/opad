@@ -43,6 +43,10 @@
 #include <set>
 #include <string_view>
 
+#ifdef OPAD_HAVE_ZSTD
+#include <zstd.h>
+#endif
+
 #include "import_common.hpp"
 #include "opad/cache.hpp"
 #include "opad/drawing_io.hpp"
@@ -100,12 +104,17 @@ const std::set<std::string, std::less<>> kSkipped = {"net",      "segment",     
 class Parser {
  public:
   explicit Parser(std::string_view text) : s(text) {}
+  size_t embedded = std::string::npos;  // where the board's (skipped) embedded files start
   Sx board() {
     space();
     if (at >= s.size() || s[at] != '(') throw Error("not a KiCad board (no s-expression)");
     Sx root = list(0);
     if (root.name() != "kicad_pcb") throw Error("not a KiCad board: the file holds a '" + root.name() + "'");
     return root;
+  }
+  Sx record(size_t from) {  // one list, read in full
+    at = from;
+    return list(1);
   }
 
  private:
@@ -165,9 +174,13 @@ class Parser {
       if (depth == 0) {  // a record of the board: read its name first, skip what is not needed
         const size_t mark = at++;
         space();
-        if (at < s.size() && s[at] != '(' && s[at] != ')' && kSkipped.count(atom())) {
-          skip();
-          continue;
+        if (at < s.size() && s[at] != '(' && s[at] != ')') {
+          const std::string name = atom();
+          if (name == "embedded_files" && embedded == std::string::npos) embedded = mark;
+          if (kSkipped.count(name)) {
+            skip();
+            continue;
+          }
         }
         at = mark;
       }
@@ -722,6 +735,82 @@ std::filesystem::path kicad_model_file(const std::string& name, const std::files
 
 namespace {
 
+// ---------------------------------------------------------------- embedded files (kicad-embed://)
+// An (embedded_files (file (name ..) (type ..) (data |base64...|) (checksum ..)) ..) record: name -> its data as written.
+void embedded_files(const Sx& n, std::map<std::string, std::string>& out) {
+  n.each("file", [&](const Sx& f) {
+    const Sx* name = f.child("name");
+    const Sx* data = f.child("data");
+    if (!name || !data) return;
+    std::string text;
+    for (size_t k = 1; k < data->items.size(); ++k)
+      if (!data->items[k].list)
+        for (const char c : data->items[k].atom)
+          if (c != '|') text += c;
+    out[name->text(1)] = std::move(text);
+  });
+}
+
+std::string base64(const std::string& text) {
+  std::string out;
+  out.reserve(text.size() * 3 / 4);
+  unsigned bits = 0;
+  int count = 0;
+  for (const unsigned char c : text) {
+    int v = c >= 'A' && c <= 'Z' ? c - 'A' : c >= 'a' && c <= 'z' ? c - 'a' + 26 : c >= '0' && c <= '9' ? c - '0' + 52 : c == '+' ? 62 : c == '/' ? 63 : -1;
+    if (v < 0) continue;  // padding, line breaks
+    bits = (bits << 6) | static_cast<unsigned>(v);
+    if ((count += 6) >= 8) out += static_cast<char>((bits >> (count -= 8)) & 0xFF);
+  }
+  return out;
+}
+
+// KiCad stores embedded files zstd-compressed, then base64: the file, written once into the user cache under its content
+// hash (its own name kept, which says its format); empty with `error` set when it cannot be.
+std::filesystem::path extract_embedded(const std::string& name, const std::string& data, const std::string& hash, std::string& error) {
+  std::string leaf = utf8(path_from_utf8(name).filename());
+  for (char& c : leaf)
+    if (!std::isalnum(static_cast<unsigned char>(c)) && !std::strchr("._-+(),", c)) c = '_';
+  if (leaf.empty() || leaf[0] == '.') leaf = "model" + leaf;
+  const auto target = cache_dir() / "kicad-embed" / hash.substr(0, 24) / path_from_utf8(leaf);
+  std::error_code e;
+  if (std::filesystem::is_regular_file(target, e)) return target;
+  std::string raw = base64(data);
+  if (raw.size() >= 4 && static_cast<unsigned char>(raw[0]) == 0x28 && static_cast<unsigned char>(raw[1]) == 0xB5 && static_cast<unsigned char>(raw[2]) == 0x2F &&
+      static_cast<unsigned char>(raw[3]) == 0xFD) {
+#ifdef OPAD_HAVE_ZSTD
+    ZSTD_DStream* stream = ZSTD_createDStream();
+    ZSTD_initDStream(stream);
+    ZSTD_inBuffer in{raw.data(), raw.size(), 0};
+    std::string out;
+    std::vector<char> buffer(ZSTD_DStreamOutSize());
+    for (;;) {
+      ZSTD_outBuffer o{buffer.data(), buffer.size(), 0};
+      const size_t r = ZSTD_decompressStream(stream, &o, &in);
+      if (ZSTD_isError(r)) {
+        error = std::string("damaged (") + ZSTD_getErrorName(r) + ")";
+        break;
+      }
+      out.append(buffer.data(), o.pos);
+      if (out.size() > (size_t(1) << 30)) error = "larger than 1 GB";
+      if (!error.empty() || (in.pos >= in.size && o.pos < o.size)) break;
+    }
+    ZSTD_freeDStream(stream);
+    if (!error.empty()) return {};
+    raw = std::move(out);
+#else
+    error = "this build reads no zstd-compressed data";
+    return {};
+#endif
+  }
+  if (raw.empty()) {
+    error = "empty";
+    return {};
+  }
+  write_text_file(target, raw);
+  return target;
+}
+
 // ---------------------------------------------------------------- the board
 struct Model {
   std::string name;
@@ -735,6 +824,7 @@ struct Footprint {
   bool bottom = false, dnp = false;
   double height = 0;  // the footprint's "Height" property (mm), 0 when it has none
   std::vector<Model> models;
+  std::map<std::string, std::string> embedded;  // its own embedded files (kicad-embed://name)
   std::array<std::vector<P2>, 3> outline;  // own coordinates: courtyard, fabrication outline, pads
   std::vector<Seg> courtyard;              // on the page
 };
@@ -779,8 +869,7 @@ class Builder {
 
   ImportResult run() {
     report(-1, "reading");
-    const Sx root = Parser(read_text_file(file)).board();
-    read(root);
+    read(parse());
     report(0, "building");
     const std::string op_id = new_uuid();
     json children = json::array();
@@ -810,20 +899,19 @@ class Builder {
   // The models the footprints that would be placed show: where each was found, which footprints use it, and for one of
   // KiCad's library, its place there.
   json model_list() {
-    read(Parser(read_text_file(file)).board());
+    read(parse());
     std::map<std::string, std::vector<std::string>> refs;
-    std::vector<std::string> order;
+    std::vector<std::pair<std::string, Resolver::Found>> order;
     for (const auto& f : footprints)
       if (opt.kicad.dnp || !f.dnp)
         for (const auto& m : f.models) {
           auto& r = refs[m.name];
-          if (r.empty()) order.push_back(m.name);
+          if (r.empty()) order.push_back({m.name, locate(f, m)});
           r.push_back(f.ref);
         }
     json list = json::array();
     int present = 0, absent = 0, library = 0;
-    for (const auto& name : order) {
-      const Resolver::Found f = resolver.find(name);
+    for (const auto& [name, f] : order) {
       json m = {{"name", name}, {"refs", refs[name]}};
       if (!f.file.empty()) m["file"] = utf8(f.file);
       if (!f.library.empty()) m["library"] = f.library, m["tag"] = library_tag(f.version);
@@ -850,7 +938,11 @@ class Builder {
   std::vector<Footprint> footprints;
   std::map<std::string, std::vector<Part>> models;  // model file + scale -> its bodies (empty: could not be read)
   Resolver resolver;
-  std::map<std::string, Resolver::Found> found;        // model name -> its file (empty: not found)
+  std::map<std::string, Resolver::Found> found;        // model name (or embedded content) -> its file (empty: not found)
+  std::string text;                                    // the board file
+  size_t embedded_at = std::string::npos;              // its embedded files, read when a model names one
+  std::optional<std::map<std::string, std::string>> board_files;
+  std::map<const std::string*, std::string> hashes;    // embedded data -> its hash
   std::map<std::string, std::string> boxes;            // placeholder size -> body key
   std::vector<std::string> missing;
   std::set<std::string> downloadable;  // missing models of KiCad's library
@@ -858,6 +950,44 @@ class Builder {
 
   void report(double fraction, const std::string& what) {
     if (opt.progress && !opt.progress(fraction, what)) throw Error("import cancelled");
+  }
+  Sx parse() {
+    text = read_text_file(file);
+    Parser p(text);
+    Sx root = p.board();
+    embedded_at = p.embedded;
+    return root;
+  }
+
+  // Where a footprint's model is: a file found as KiCad finds it, or an embedded one (the footprint's own, else the
+  // board's) written out to the cache.
+  const Resolver::Found& locate(const Footprint& f, const Model& m) {
+    static const std::string scheme = "kicad-embed://";
+    if (m.name.rfind(scheme, 0) != 0) {
+      auto it = found.find(m.name);
+      if (it == found.end()) it = found.emplace(m.name, resolver.find(m.name)).first;
+      return it->second;
+    }
+    const std::string name = m.name.substr(scheme.size());
+    const std::string* data = nullptr;
+    if (const auto it = f.embedded.find(name); it != f.embedded.end()) data = &it->second;
+    if (!data) {
+      if (!board_files) {
+        board_files.emplace();
+        if (embedded_at != std::string::npos) embedded_files(Parser(text).record(embedded_at), *board_files);
+      }
+      if (const auto it = board_files->find(name); it != board_files->end()) data = &it->second;
+    }
+    std::string& hash = hashes[data];
+    if (data && hash.empty()) hash = sha256_hex(*data);
+    const std::string key = data ? "kicad-embed|" + hash + "|" + name : m.name;
+    auto it = found.find(key);
+    if (it != found.end()) return it->second;
+    Resolver::Found where;
+    std::string error = data ? "" : "not in the board";
+    if (data) where.file = extract_embedded(name, *data, hash, error);
+    if (!error.empty()) res.warnings.push_back("embedded 3D model " + name + ": " + error);
+    return found.emplace(key, where).first->second;
   }
   P2 board_xy(P2 p) const { return {p[0] - origin[0], origin[1] - p[1]}; }
   void to_board(Seg& s) const {
@@ -943,6 +1073,8 @@ class Builder {
         m.rotate = xyz(c.child("rotate"), m.rotate);
         if (const Sx* o = c.child("opacity")) m.opacity = std::clamp(o->num(1, 1), 0.05, 1.0);
         f.models.push_back(m);
+      } else if (kind == "embedded_files") {
+        embedded_files(c, f.embedded);
       } else if (kind == "pad") {
         pad(c, f, page_holes);
       } else if (kind.rfind("fp_", 0) == 0 && kind != "fp_text") {
@@ -1170,9 +1302,7 @@ class Builder {
     std::set<std::string> files;
     for (const Footprint* f : order)
       for (const auto& m : f->models) {
-        auto it = found.find(m.name);
-        if (it == found.end()) it = found.emplace(m.name, resolver.find(m.name)).first;
-        if (!it->second.file.empty()) files.insert(utf8(it->second.file) + "|" + json(m.scale).dump());
+        if (const auto& where = locate(*f, m); !where.file.empty()) files.insert(utf8(where.file) + "|" + json(m.scale).dump());
       }
     std::set<std::string> ids;
     auto unique_id = [&](const std::string& what) {
@@ -1187,10 +1317,11 @@ class Builder {
       std::vector<std::string> absent;
       for (size_t mi = 0; mi < f->models.size(); ++mi) {
         const Model& m = f->models[mi];
-        const auto& path = found[m.name].file;
+        const auto& where = locate(*f, m);
+        const auto& path = where.file;
         if (path.empty()) {
           absent.push_back(m.name);
-          if (!found[m.name].library.empty()) downloadable.insert(found[m.name].library);
+          if (!where.library.empty()) downloadable.insert(where.library);
           continue;
         }
         const size_t done = std::min(models.size(), files.size());
