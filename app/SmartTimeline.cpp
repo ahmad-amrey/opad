@@ -111,6 +111,9 @@ void SmartSelect::showMarker() {
   // A feature's own faces in the last state; rolled back, or anything else, the bodies as shown.
   if (!doc->rollback().empty() || !doc->scene.feature(op)) return show(markerBodies(op));
   withMade([this, op, show](const std::map<std::string, smart::Made>& made) {
+    const AppDocument* d = services().document();
+    if (services().design()->sketchActive() || services().design()->ownsSelection()) return;
+    if (!d->rollback().empty()) return show(markerBodies(op));  // rolled back meanwhile: other faces are shown
     const auto it = made.find(op);
     if (it == made.end() || it->second.faces.empty()) return show(markerBodies(op));
     show(it->second.faces);
