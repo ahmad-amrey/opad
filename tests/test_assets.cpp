@@ -37,13 +37,14 @@ struct Files {
 
 // Two boxes in one STEP: A (10 mm, its corner at (x, 5, z)) and B (5 mm, far off), two roots named by the writer's counter
 // (another name in every file written: the nodes are known by their place).
-void two_boxes(const fs::path& p, double x, double z = 30) {
+void two_boxes(const fs::path& p, double x, double z = 30, bool swapped = false) {
   fs::create_directories(p.parent_path());
   BRep_Builder b;
   TopoDS_Compound c;
   b.MakeCompound(c);
-  b.Add(c, BRepPrimAPI_MakeBox(gp_Pnt(x, 5, z), 10, 10, 10).Shape());
-  b.Add(c, BRepPrimAPI_MakeBox(gp_Pnt(100, 100, 0), 5, 5, 5).Shape());
+  const TopoDS_Shape a = BRepPrimAPI_MakeBox(gp_Pnt(x, 5, z), 10, 10, 10).Shape(), small = BRepPrimAPI_MakeBox(gp_Pnt(100, 100, 0), 5, 5, 5).Shape();
+  b.Add(c, swapped ? small : a);
+  b.Add(c, swapped ? a : small);
   STEPControl_Writer w;
   w.Transfer(c, STEPControl_AsIs);
   const auto u8 = p.u8string();
@@ -284,6 +285,37 @@ TEST(sync_keeps_ids_and_regenerates_what_depends) {
   CHECK(relocate.report["up_to_date"].get<bool>() && relocate.ops.size() == 1);
   design::commit(third, std::move(relocate));
   CHECK_EQ(asset_of(third, import_id)["path"], "moved/model.step");
+}
+
+// The same parts written the other way round (roots are known by position): each is found again by its geometry, so ids,
+// keys and what was made from them stay as they were.
+TEST(reordered_parts_found_by_geometry) {
+  Files f;
+  const fs::path step = f.dir / "model.step";
+  two_boxes(step, 5);
+  Document d = Document::create();
+  d.save_as(f.dir / "design.opad");
+  link_file(d, step);
+  const std::string import_id = last_import(d).id;
+  Scene s = resolve(d);
+  const std::string a = linked(s, 0), b = linked(s, 1);
+  const std::string key_a = s.node(a)->body_key, key_b = s.node(b)->body_key;
+  d.append({{"op", "rename"}, {"target", a}, {"name", "Big box"}});
+  d.save();
+  two_boxes(step, 5, 30, true);
+  AssetOptions uncached;
+  uncached.cache = false;
+  Document reopened = Document::load(f.dir / "design.opad");
+  CHECK_EQ(load_assets(reopened, uncached)[0].state, "changed");
+  s = resolve(reopened);
+  CHECK(about(volume(reopened, s, a), 1000) && about(volume(reopened, s, b), 125));
+  for (const auto& entry : reopened.bodies()) CHECK(!entry.meta.value("stale", false));
+  design::Plan plan = plan_asset_sync(reopened, import_id, uncached);
+  CHECK_EQ(plan.report["kept"], 2);
+  CHECK(plan.report["changed"].empty() && plan.report["added"].empty() && plan.report["removed"].empty());
+  design::commit(reopened, std::move(plan));
+  s = resolve(reopened);
+  CHECK(s.node(a)->body_key == key_a && s.node(b)->body_key == key_b && s.node(a)->name == "Big box");
 }
 
 TEST(linked_parts_are_read_only) {

@@ -239,19 +239,31 @@ std::vector<std::string> places(const json& nodes, bool roots) {
 // Node ids for a read of the file, from the import op and each node's place, so a part keeps its id (and every rename,
 // colour, placement and reference made to it) when the file is read again. With `was`, the import's nodes as last synced,
 // a node takes the id of the one at its place; siblings whose names all changed (a writer numbering its parts anew) pair
-// up in order when as many of a type are left on both sides.
-void relabel(json& nodes, const std::string& op, const std::string& parent, const json* was = nullptr) {
+// up in order when as many of a type are left on both sides. With `keys` (body in the read -> the key of its geometry), a
+// body whose geometry is that of exactly one sibling as synced is that part first, wherever it now is and whatever its name.
+void relabel(json& nodes, const std::string& op, const std::string& parent, const json* was = nullptr, const std::map<std::string, std::string>* keys = nullptr) {
   const bool roots = parent.empty();
   const std::vector<std::string> now = places(nodes, roots);
   std::vector<int> match(nodes.size(), -1);
   if (was && was->is_array()) {
     const std::vector<std::string> then = places(*was, roots);
     std::vector<bool> taken(then.size());
+    auto take = [&](size_t i, size_t j) {
+      match[i] = static_cast<int>(j);
+      taken[j] = true;
+    };
+    if (keys) {
+      std::map<std::string, std::vector<size_t>> mine, theirs;
+      for (size_t i = 0; i < nodes.size(); ++i)
+        if (const auto it = keys->find(nodes[i].value("key", "")); nodes[i].value("type", "") == "body" && it != keys->end()) mine[it->second].push_back(i);
+      for (size_t j = 0; j < was->size(); ++j)
+        if ((*was)[j].value("type", "") == "body") theirs[(*was)[j].value("key", "")].push_back(j);
+      for (const auto& [key, here] : mine)
+        if (const auto it = theirs.find(key); here.size() == 1 && it != theirs.end() && it->second.size() == 1) take(here[0], it->second[0]);
+    }
     for (size_t i = 0; i < now.size(); ++i)
-      if (const auto it = std::find(then.begin(), then.end(), now[i]); it != then.end()) {
-        match[i] = static_cast<int>(it - then.begin());
-        taken[size_t(match[i])] = true;
-      }
+      if (const auto it = std::find(then.begin(), then.end(), now[i]); match[i] < 0 && it != then.end() && !taken[size_t(it - then.begin())])
+        take(i, size_t(it - then.begin()));
     // Only parts known by name: a KiCad footprint gone and another come are two footprints.
     auto named = [](const std::string& place) { return place.rfind("fp:", 0) != 0 && place.rfind("ref:", 0) != 0; };
     for (const char* type : {"body", "component"}) {
@@ -268,7 +280,7 @@ void relabel(json& nodes, const std::string& op, const std::string& parent, cons
     json& n = nodes[i];
     const json* before = match[i] >= 0 ? &(*was)[size_t(match[i])] : nullptr;
     n["id"] = before && before->contains("id") ? (*before)["id"] : json(place_id(op, parent + "/" + now[i]));
-    if (n.contains("children")) relabel(n["children"], op, n["id"].get<std::string>(), before && before->contains("children") ? &(*before)["children"] : nullptr);
+    if (n.contains("children")) relabel(n["children"], op, n["id"].get<std::string>(), before && before->contains("children") ? &(*before)["children"] : nullptr, keys);
   }
 }
 
@@ -650,13 +662,13 @@ std::vector<AssetState> load_assets(Document& doc, const AssetOptions& opt) {
         }
         json nodes = read_op(scratch)["nodes"];
         const std::map<std::string, json> pictures = take_pictures(nodes);
-        relabel(nodes, e.op->id, "", &nodes_of(e.data()));
-        std::map<std::string, std::string> from;  // node id -> body in the read
-        each_body(nodes, [&](const json& n) { from[n.value("id", "")] = n.value("key", ""); });
         // In a changed file, a part whose geometry gives the key it had is the part synced, not stale.
         std::vector<std::string> order;
         std::map<std::string, std::string> derived;  // body in the read -> its key
         if (stale) derived = derived_keys(scratch, nodes, order, pictures);
+        relabel(nodes, e.op->id, "", &nodes_of(e.data()), stale ? &derived : nullptr);
+        std::map<std::string, std::string> from;  // node id -> body in the read
+        each_body(nodes, [&](const json& n) { from[n.value("id", "")] = n.value("key", ""); });
         st.unbound = 0;
         int changed = 0;
         // Bound by place, under the keys the import names.
@@ -796,7 +808,9 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
   }
   json fresh = read_op(scratch);
   const std::map<std::string, json> pictures = take_pictures(fresh["nodes"]);
-  relabel(fresh["nodes"], id, "", &nodes_of(data));
+  std::vector<std::string> order;
+  std::map<std::string, std::string> keys = derived_keys(scratch, fresh["nodes"], order, pictures);
+  relabel(fresh["nodes"], id, "", &nodes_of(data), &keys);
   // A body whose geometry did not change keeps its key (no needless regeneration downstream): the key of its geometry is
   // the one its place had, or the shape its place had is loaded, not stale and the same to the kernel's noise.
   std::map<std::string, std::string> was;  // node id -> key
@@ -806,8 +820,6 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
   each_body(fresh["nodes"], [&](const json& n) {
     if (const auto it = was.find(n.value("id", "")); it != was.end()) before[n.value("key", "")].insert(it->second);
   });
-  std::vector<std::string> order;
-  std::map<std::string, std::string> keys = derived_keys(scratch, fresh["nodes"], order, pictures);
   int kept = 0;
   for (size_t i = 0; i < order.size(); ++i) {
     if (opt.progress && !opt.progress(double(i + 1) / double(order.size()), "comparing")) throw Error("cancelled");
