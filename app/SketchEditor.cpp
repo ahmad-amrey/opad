@@ -1,5 +1,6 @@
 #include "CurveSamples.hpp"
 #include "opad/design/sketch_edit.hpp"
+#include "opad/design/sketch_modify.hpp"
 #include "SketchEditor.hpp"
 #include "SketchGeometryCache.hpp"
 #include "SketchSnap.hpp"
@@ -833,6 +834,14 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
   }
   if ((m_tool=="select" || (m_tool=="spline" && m_chain.empty())) && mods.testFlag(Qt::AltModifier)) return insertSplineNode(u,v);
   if (m_dimEdit && m_dimEdit->isVisible()) commitDimensionEdit();
+  if (m_tool == "trim") {  // a click trims at its release; a drag first is a fence (UI-28)
+    m_fencing = true;
+    m_fenceMoved = false;
+    m_fenceU = m_fenceToU = u;
+    m_fenceV = m_fenceToV = v;
+    m_fenceMods = mods;
+    return;
+  }
   if (m_tool == "select") {
     const Hit h = hitTest(u, v);
     const bool add = mods & (Qt::ShiftModifier | Qt::ControlModifier);
@@ -876,6 +885,11 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
 void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bool dragging) {
   if (!m_active) return;
   if(m_boxSelecting && dragging) {m_boxU=u;m_boxV=v;updateTransient();return;}
+  if(m_fencing && dragging) {
+    m_fenceToU=u;m_fenceToV=v;
+    m_fenceMoved=m_fenceMoved || std::hypot(u-m_fenceU,v-m_fenceV)>tol();
+    updateTransient();return;
+  }
   if (m_tool == "select" && dragging && m_dragging) {
     if(m_editJob){m_dragPending=true;m_dragNextU=u;m_dragNextV=v;return;}
     if (!m_dragMoved && std::hypot(u - m_dragU, v - m_dragV) < 0.5 * tol()) return;
@@ -910,7 +924,12 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
       }
     } else {
       double su=du,sv=dv;
-      if(step>0 && !m_dragStart.empty()) {
+      // A dragged point is held to the point or curve it comes near (UI-28), before the grid: merged or put on it on drop.
+      m_dropPoint=m_dropCurve=0;
+      if(m_dragHit.kind==Hit::Point && !m_dragStart.empty() && !mods.testFlag(Qt::AltModifier) && dropTarget(m_dragHit.id,u,v,m_dropU,m_dropV)) {
+        const auto& at=m_dragStart.front().second;
+        su=m_dropU-at.first;sv=m_dropV-at.second;m_dragGrid=false;
+      } else if(step>0 && !m_dragStart.empty()) {
         const auto& at=m_dragStart.front().second;
         m_dragGridU=sketchsnap::onGrid(at.first+du,step);m_dragGridV=sketchsnap::onGrid(at.second+dv,step);
         su=m_dragGridU-at.first;sv=m_dragGridV-at.second;
@@ -1071,6 +1090,12 @@ void SketchEditor::resnap() {
 }
 
 void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
+  if(m_active && m_fencing) {
+    m_fencing=false;
+    if(m_fenceMoved)fenceTrim(m_fenceU,m_fenceV,u,v);
+    else {const Snap s=snap(m_fenceU,m_fenceV,!m_fenceMods.testFlag(Qt::AltModifier));click(s,m_fenceMods);}
+    updateTransient();emit changed();return;
+  }
   if(m_active && m_boxSelecting) {
     m_boxSelecting=false;
     if(m_geometry && !m_geometryJob && std::hypot(u-m_dragU,v-m_dragV)>tol()) {
@@ -1101,6 +1126,27 @@ void SketchEditor::sketchRelease(double u, double v, Qt::KeyboardModifiers) {
   m_dragging = false;
   if (!m_dragMoved) return;
   m_dragMoved = false;
+  // Dropped on a point: merged into it; on a curve: kept on it (UI-28), when the sketch still solves so (else it stays
+  // where the drag left it).
+  if (m_dropPoint || m_dropCurve) {
+    Sketch attempt = m_sk;
+    try {
+      if (m_dropPoint) merge_points(attempt, m_dragHit.id, m_dropPoint);
+      else attempt.add_constraint(SkConstraint::Type::Coincident, {m_dragHit.id, m_dropCurve});
+      std::vector<ParamDef> defs;
+      for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
+      evaluate_dimensions(attempt, ParamTable(defs));
+      const SolveResult r = solve(attempt, solveOptions());
+      if (!r.converged) throw opad::Error("the sketch would not solve so");
+      m_sk = std::move(attempt);
+      m_solved = r;
+      m_sel.clear();
+      emit status(m_dropPoint ? tr("Merged with point %1").arg(m_dropPoint) : tr("Put on curve %1").arg(m_dropCurve));
+    } catch (const std::exception& e) {
+      emit status(tr("Not joined: %1").arg(i18n::t(QString::fromUtf8(e.what()))));
+    }
+    m_dropPoint = m_dropCurve = 0;
+  }
   // The drag already solved every step; record it as one undo step.
   m_inChange = false;
   m_undo.push_back({m_before,m_beforePlane,m_beforeFrame});
@@ -1600,6 +1646,10 @@ void SketchEditor::updateTransient() {
     const auto piece=m_tool=="trim"&&m_haveCursor?trimPreview(m_hover.id,m_cursor.u,m_cursor.v):std::vector<std::pair<double,double>>{};
     if(!piece.empty())for(size_t i=1;i<piece.size();++i)d.solid.push_back({W(piece[i-1].first,piece[i-1].second),W(piece[i].first,piece[i].second),t.red});
     else if(const auto* e=m_sk.entity(m_hover.id)){const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i)d.solid.push_back({W(pts[i-1].first,pts[i-1].second),W(pts[i].first,pts[i].second),t.hov.lighter(115)});}
+    if(m_tool=="extend" && m_haveCursor) {  // where a click there runs the end to (UI-28)
+      const auto run=extendPreview(m_hover.id,m_pointer.u,m_pointer.v);
+      for(size_t i=1;i<run.size();++i)d.dashed.push_back({W(run[i-1].first,run[i-1].second),W(run[i].first,run[i].second),t.green});
+    }
   }
   if(m_boxSelecting) {
     const QColor color=m_boxU<m_dragU?t.green:t.sel;
@@ -1611,6 +1661,21 @@ void SketchEditor::updateTransient() {
   }
   // A grid node a dragged point snapped to: the grid marker.
   if(m_dragging && m_dragMoved && m_dragGrid)mark(m_dragGridU,m_dragGridV,snapmarkers::marker(snapmarkers::Marker::Grid),0,0,t.green);
+  // The point or curve a dragged point is held to (UI-28): its marker and what the drop does.
+  if(m_dragging && m_dragMoved && (m_dropPoint || m_dropCurve)) {
+    mark(m_dropU,m_dropV,snapmarkers::marker(m_dropPoint?snapmarkers::Marker::Endpoint:snapmarkers::Marker::Nearest),0,0,t.green);
+    d.texts.push_back({W(m_dropU+14*px,m_dropV+14*px),m_dropPoint?tr("Merge"):tr("On curve"),t.green,true});
+  }
+  // A trim fence (UI-28): its line, and in red what it takes.
+  if(m_fencing && m_fenceMoved) {
+    d.dashed.push_back({W(m_fenceU,m_fenceV),W(m_fenceToU,m_fenceToV),t.red});
+    int shown=0;
+    for(const auto& [id,x,y]:fenceHits(m_fenceU,m_fenceV,m_fenceToU,m_fenceToV)) {
+      if(++shown>64)break;
+      const auto piece=trimPreview(id,x,y);
+      for(size_t i=1;i<piece.size();++i)d.solid.push_back({W(piece[i-1].first,piece[i-1].second),W(piece[i].first,piece[i].second),t.red});
+    }
+  }
   // Rubber band of the running tool (also from typed values alone: drawing by the keyboard, the pointer not in the view).
   if ((m_haveCursor || !m_typedValues.empty()) && m_tool != "select") {
     const QColor rb = t.hov;

@@ -220,7 +220,7 @@ bool SketchEditor::placePrecise(const QString& u,const QString& v,int mode) {
 sketchkeys::State SketchEditor::keyState() const {
   sketchkeys::State s;
   s.tool=m_tool.toStdString();s.chain=m_chain.size();s.clicks=m_clicks.size();s.picks=m_picked.size();
-  s.boxSelecting=m_boxSelecting;s.selection=!m_sel.empty();
+  s.boxSelecting=m_boxSelecting || m_fencing;s.selection=!m_sel.empty();
   s.mirrorAxis=m_tool=="mirror" && option("mirrorStage","seed")=="axis";
   s.mirrorSeeds=m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && !s.mirrorAxis;
   s.typed=m_input && m_input->typed();s.applies=appliesOnEnter();s.locked=m_lock && m_lock->sticky;
@@ -277,7 +277,7 @@ bool SketchEditor::escape() {
   using sketchkeys::Esc;
   switch(sketchkeys::escape(keyState())) {
     case Esc::None:return false;
-    case Esc::CancelBox:m_boxSelecting=false;break;
+    case Esc::CancelBox:m_boxSelecting=m_fencing=false;break;
     case Esc::DropTyped:m_input->dropTyped();break;  // option values go back to what they were
     case Esc::Unlock:unlock();resnap();break;  // the step goes on
     case Esc::BackToCurves:m_options["mirrorStage"]="seed";toolPrompt();break;

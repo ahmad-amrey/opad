@@ -122,3 +122,65 @@ TEST(signed_distances_follow_transforms_and_coordinates_pin_points) {
   sk.add_constraint(SkConstraint::Type::HDistance, {a}, 1);
   CHECK_THROWS(transform_entities(sk, {line}, t, false));
 }
+
+// UI-28: a fillet where a line meets a line, a line meets an arc, an arc meets an arc; the nearest one that fits, tangent
+// to both, the curves ending where it touches them; refused (the sketch as it was) where none fits.
+TEST(fillets_round_line_and_arc_corners) {
+  using T=SkConstraint::Type;
+  Sketch box;const int o=box.add_point(0,0),b=box.add_point(40,0),c=box.add_point(40,20);
+  const int bottom=box.add_line(o,b),right=box.add_line(b,c);box.add_constraint(T::Horizontal,{bottom});box.add_constraint(T::Vertical,{right});
+  FilletCorner f;CHECK(fillet_geometry(box,b,3,f));
+  CHECK_NEAR(f.cx,37,1e-9);CHECK_NEAR(f.cy,3,1e-9);CHECK_NEAR(f.ax,37,1e-9);CHECK_NEAR(f.ay,0,1e-9);CHECK_NEAR(f.bx,40,1e-9);CHECK_NEAR(f.by,3,1e-9);
+  const int round=fillet_corner(box,b,3);CHECK(!box.point(b));CHECK(solve(box).converged);
+  CHECK_NEAR(box.point(box.entity(bottom)->p[1])->x,37,1e-7);CHECK_NEAR(box.point(box.entity(right)->p[0])->y,3,1e-7);
+  CHECK_EQ(std::count_if(box.constraints.begin(),box.constraints.end(),[&](const SkConstraint& k){return k.type==T::Tangent && k.refs[1]==round;}),2);
+  // A line along +X and a quarter arc about (-10, 0) leaving the corner upwards: the fillet outside the arc's circle.
+  Sketch mixed;const int corner=mixed.add_point(0,0);
+  const int line=mixed.add_line(corner,mixed.add_point(20,0)),arc=mixed.add_arc(mixed.add_point(-10,0),corner,mixed.add_point(-10,10));
+  CHECK(fillet_geometry(mixed,corner,2,f));
+  CHECK_NEAR(f.cx,-10+std::sqrt(140.0),1e-9);CHECK_NEAR(f.cy,2,1e-9);CHECK_NEAR(std::hypot(f.bx+10,f.by),10,1e-9);
+  CHECK((f.first==line && f.second==arc) || (f.first==arc && f.second==line));
+  const int fillet=fillet_corner(mixed,corner,2,"r");
+  CHECK(solve(mixed).converged);mixed.validate();
+  const SkEntity* made=mixed.entity(fillet);
+  CHECK_NEAR(std::hypot(mixed.point(made->p[1])->x-mixed.point(made->p[0])->x,mixed.point(made->p[1])->y-mixed.point(made->p[0])->y),2,1e-7);
+  CHECK(mixed.constraints.back().expr=="r" || std::any_of(mixed.constraints.begin(),mixed.constraints.end(),[](const SkConstraint& k){return k.type==T::Radius && k.expr=="r";}));
+  CHECK_NEAR(mixed.point(mixed.entity(arc)->p[1])->x,f.bx,1e-7);  // the arc starts where the fillet touches it
+  // Two arcs: the quarter about (-10, 0) up from the corner, a quarter about (0, 10) out along +X.
+  Sketch arcs;const int k=arcs.add_point(0,0);
+  arcs.add_arc(arcs.add_point(-10,0),k,arcs.add_point(-10,10));arcs.add_arc(arcs.add_point(0,10),k,arcs.add_point(10,10));
+  CHECK(fillet_geometry(arcs,k,1,f));fillet_corner(arcs,k,1);CHECK(solve(arcs).converged);arcs.validate();
+  // Too large, three curves, nothing there: refused, nothing changed.
+  Sketch small;const int s0=small.add_point(0,0),s1=small.add_point(2,0);small.add_line(s0,s1);small.add_line(s1,small.add_point(2,2));
+  const auto before=small.to_json();
+  CHECK(!fillet_geometry(small,s1,5,f));CHECK_THROWS(fillet_corner(small,s1,5));CHECK(small.to_json()==before);
+  small.add_line(s1,small.add_point(5,5));CHECK(!fillet_geometry(small,s1,0.1,f));
+  CHECK(!fillet_geometry(small,s0,0.1,f));
+}
+
+TEST(one_click_extend_reaches_the_nearest_curve) {
+  Sketch sk;const int a=sk.add_line(sk.add_point(0,0),sk.add_point(5,0));
+  sk.add_line(sk.add_point(20,-5),sk.add_point(20,5));const int near=sk.add_line(sk.add_point(10,-5),sk.add_point(10,5));
+  CHECK_EQ(extend_entity(sk,a,4.0,0.0),near);CHECK_NEAR(sk.point(sk.entity(a)->p[1])->x,10,1e-8);
+  extend_entity(sk,a,9.0,0.0);CHECK_NEAR(sk.point(sk.entity(a)->p[1])->x,20,1e-8);
+  CHECK_THROWS(extend_entity(sk,a,19.0,0.0));CHECK_NEAR(sk.point(sk.entity(a)->p[1])->x,20,1e-8);  // nothing further
+  // An arc runs on round its circle to the line it meets.
+  Sketch round;const int arc=round.add_arc(round.add_point(0,0),round.add_point(10,0),round.add_point(0,10));
+  round.add_line(round.add_point(-20,5),round.add_point(0,5));
+  extend_entity(round,arc,1.0,9.0);
+  const SkPoint* end=round.point(round.entity(arc)->p[2]);CHECK_NEAR(end->y,5,1e-8);CHECK_NEAR(end->x,-std::sqrt(75.0),1e-8);
+}
+
+TEST(merging_points_shares_one_point) {
+  using T=SkConstraint::Type;
+  Sketch sk;const int a=sk.add_point(0,0),b=sk.add_point(10,0),c=sk.add_point(10.5,0.5),d=sk.add_point(20,5);
+  const int first=sk.add_line(a,b),second=sk.add_line(c,d);sk.add_constraint(T::Coincident,{c,first});sk.add_constraint(T::Horizontal,{b,c});
+  merge_points(sk,c,b);
+  CHECK(!sk.point(c));CHECK(sk.entity(second)->p[0]==b);
+  CHECK(std::none_of(sk.constraints.begin(),sk.constraints.end(),[](const SkConstraint& k){return k.type==T::Horizontal;}));  // on one point twice
+  CHECK(solve(sk).converged);sk.validate();
+  CHECK_THROWS(merge_points(sk,a,b));  // the first line would collapse
+  const int e=sk.add_point(30,0);sk.add_constraint(T::Distance,{d,e},10);
+  CHECK_THROWS(merge_points(sk,e,d));  // a dimension keeps them apart
+  CHECK_THROWS(merge_points(sk,d,d));
+}

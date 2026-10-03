@@ -12,6 +12,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 
 #include "AppDocument.hpp"
 #include "DynamicInput.hpp"
@@ -126,6 +127,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchSteps();
   void benchCommandLine();
   void benchClipboard();
+  void benchEdits();
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
   // Show constraints (UI-24, setting sketch/showConstraints): their badges and coincidence dots; off, only those in conflict
   // or selected show.
@@ -300,7 +302,25 @@ class SketchEditor : public QObject, public SketchInput {
   void commitDimensionEdit();
   void filletAt(const Hit& h, double u, double v);
   void trimAt(const Hit& h, double u, double v);
+  bool trimPiece(int id, double u, double v, QString& why);  // inside a change; false: nothing changed, why
   std::vector<std::pair<double, double>> trimPreview(int id, double u, double v) const;  // the piece trimAt would remove
+  // Fence trim (UI-28): a drag with the trim tool; every piece the fence crosses goes, in one undo step.
+  std::vector<std::tuple<int, double, double>> fenceHits(double au, double av, double bu, double bv) const;  // curve, where, in order
+  int curveThrough(double u, double v) const;
+  void fenceTrim(double au, double av, double bu, double bv);
+  bool m_fencing = false, m_fenceMoved = false;
+  double m_fenceU = 0, m_fenceV = 0, m_fenceToU = 0, m_fenceToV = 0;
+  Qt::KeyboardModifiers m_fenceMods;
+  // One-click extend (UI-28): where the end nearer (u, v) of the hovered line or arc would run to, as a polyline (empty:
+  // nowhere); cached for the hovered curve and end while the sketch stays as it is.
+  std::vector<std::pair<double, double>> extendPreview(int id, double u, double v);
+  std::tuple<int, bool, int> m_extendKey{0, false, -1};
+  std::vector<std::pair<double, double>> m_extendShown;
+  // Dragged points snap and merge on drop (UI-28): the point or curve the dragged point is held to, kept on release (the
+  // point merged into it, or the point put on the curve) when the sketch still solves.
+  int m_dropPoint = 0, m_dropCurve = 0;
+  double m_dropU = 0, m_dropV = 0;
+  bool dropTarget(int dragged, double u, double v, double& x, double& y);  // sets m_dropPoint / m_dropCurve
   void mirrorSelection(int axisLine);
   void offsetSelection();
   void updateDimensionHandle();

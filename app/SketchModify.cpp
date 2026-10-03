@@ -76,10 +76,9 @@ bool SketchEditor::modifyClick(double u,double v) {
     if(hit.kind!=Hit::Entity){emit status(tr("Pick inside a curve to split it."));return true;}
     const int id=hit.id;runSketchEdit(tr("Split curve"),[id,u,v](Sketch& sk){split_entity(sk,id,u,v);});return true;
   }
-  if(m_tool=="extend") {
-    if(hit.kind!=Hit::Entity){emit status(tr("Pick a curve, then its extension boundary."));return true;}
-    if(m_picked.empty()){m_picked.push_back(hit.id);m_clicks={{u,v}};}
-    else if(hit.id!=m_picked.front()){const int id=m_picked.front(),boundary=hit.id;const auto at=m_clicks.front();runSketchEdit(tr("Extend curve"),[id,boundary,at](Sketch& sk){extend_entity(sk,id,boundary,at.u,at.v);});}
+  if(m_tool=="extend") {  // one click (UI-28): the end nearer it runs on to the nearest curve it meets
+    if(hit.kind!=Hit::Entity){emit status(tr("Pick a line or an arc near the end to extend."));return true;}
+    const int id=hit.id;runSketchEdit(tr("Extend curve"),[id,u,v](Sketch& sk){extend_entity(sk,id,u,v);});
   } else if(m_tool=="union" || m_tool=="subtract" || m_tool=="intersect") {
     m_clicks.push_back({u,v});if(m_clicks.size()>2)m_clicks.erase(m_clicks.begin());
   } else if(hit.kind!=Hit::None) {
