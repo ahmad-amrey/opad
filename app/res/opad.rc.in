@@ -16,6 +16,7 @@ BEGIN
       VALUE "FileDescription", "OPAD"
       VALUE "FileVersion", "@PROJECT_VERSION@"
       VALUE "InternalName", "opad"
+      VALUE "LegalCopyright", "Copyright (c) 2026 Ahmad Amrey. MIT licence; third-party notices: Help > Third-party licences."
       VALUE "OriginalFilename", "opad.exe"
       VALUE "ProductName", "OPAD"
       VALUE "ProductVersion", "@PROJECT_VERSION@"

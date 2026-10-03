@@ -3,8 +3,8 @@
 OPAD views CAD models, meshes and drawings: STEP (AP203/AP214/AP242, assemblies included), IGES, BREP, STL, 3MF,
 OBJ, PLY, glTF/GLB, VRML, DXF, DWG (through the bundled LibreDWG converter) and SVG. It saves what you do with them in a single
 plain-text `.opad` file that diffs and merges cleanly in git, and exposes everything it can do to scripts and
-AI agents through a headless CLI, a Python module and a [stdio MCP server](docs/mcp.md). The desktop app follows Autodesk Fusion's navigation
-and screen layout so Fusion users feel at home.
+AI agents through a headless CLI, a Python module and a [stdio MCP server](docs/mcp.md). The desktop app offers mouse
+navigation presets familiar to users of other CAD tools (Fusion-style, SOLIDWORKS-style, Onshape-style, Blender-style).
 
 Both MCP servers ship an agent guide (source: `core/res/agent_guide.md`, compiled into the binaries) as the
 resource `opad://guide/agent`; live `live_diagnostics` returns it with `include_guide: true`. It covers units and
@@ -210,7 +210,8 @@ wheel continues to zoom.
 Orbiting over geometry uses the surface under the pointer. Over empty space, OPAD pivots on the
 visible geometry nearest the pointer (a surface, or a drawing's or sketch's curve), never on empty
 air. Navigation-cube dragging and orientation clicks use the visible surface nearest the viewport
-center. Hidden and clipped geometry is excluded; an empty view retains its current camera focus.
+center. Hidden and clipped geometry is excluded; an empty view retains its current camera focus. Settings > View cube
+edges and corners turn the view (on by default) can make only the cube's six faces views.
 
 ## Desktop viewing and review
 
@@ -227,7 +228,8 @@ drawing in Explorer and the Open dialog (`opad-thumbnails.dll`, which runs `opad
 Viewing a DXF, DWG or SVG turns 2D mode on, whose grid follows the view without end. Import adds a file to the
 current document. Properties show a body's material as the file named it, its source file and whether it is a
 solid, a mesh or a 2D drawing. DWG opens through LibreDWG's `dwg2dxf`, which the build compiles from the
-`third_party/libredwg` submodule and puts beside OPAD (the free ODA File Converter is used instead when installed); the
+`third_party/libredwg` submodule and puts beside OPAD (an installed ODA File Converter is used instead only when
+Settings > Use the ODA File Converter for DWG is on, or `OPAD_USE_ODA=1`: ODA allows non-members non-commercial use only); the
 DXF reader shows model space with its blocks, hatches, dimensions, text and colours ([details](docs/drawings.md)). `opad-cli probe <file> --viewer --mesh` reports what opening a file costs, phase by phase.
 Settings offers six rendering presets (Classic, Technical flat, Studio, Studio fine, ray traced
 shadows and ray traced reflections), four backgrounds and a configurable auto-hide scene browser.
@@ -304,7 +306,9 @@ pybind11 (optional), Qt 6 Widgets (optional, app only).
   settings and cache in an `opad-data` folder beside itself. The build needs `pacman -S mingw-w64-x86_64-{qt6-static,rapidjson,pkgconf}`
   on top of the packages above; the first configure downloads the OCCT source and builds its toolkits statically
   into `build/windows-static/occt` (once, about 15 minutes; the OS packages ship OCCT as DLLs only). The target
-  fails if the exe imports anything but Windows' own DLLs.
+  fails if the exe imports anything but Windows' own DLLs. `THIRD-PARTY-NOTICES.txt` goes beside the exes (they also
+  carry it compiled in). The exes link Qt, OCCT and other LGPL libraries statically: read [Licence](#licence) before
+  handing them out.
 - **Single file on Linux and macOS:** `cmake --workflow --preset linux-single` builds
   `build/linux/single/OPAD-<version>-linux-x86_64.AppImage` with [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy)
   and its Qt plugin (both on PATH); `cmake --workflow --preset macos-single` builds
@@ -314,7 +318,10 @@ pybind11 (optional), Qt 6 Widgets (optional, app only).
   windows-portable` for configure, build, test and package) writes `build/windows/portable/OPAD-<version>-windows-x64`
   and the same folder zipped. It holds `opad.exe`, `opad-cli.exe` and every DLL and Qt plugin they load, so it runs
   on a machine with no MSYS2, Qt or OCCT. The `opad.portable` file beside the exe makes the app keep settings and
-  cache in the folder's `data` directory instead of the registry and `%LOCALAPPDATA%`. The exe icon is the logo's
+  cache in the folder's `data` directory instead of the registry and `%LOCALAPPDATA%`. `THIRD-PARTY-NOTICES.txt` lists
+  every DLL's package, version, licence and source, with the licence files in `licenses/`. With MSYS2's own OCCT the
+  target stops, because that OCCT pulls in GPL FFmpeg (with the x264/x265/xvid encoders) and FreeImage; see
+  [Licence](#licence) (`-DOPAD_ALLOW_GPL_DLLS=ON` stages them anyway, for local use only). The exe icon is the logo's
   cube mark; `python tools/make_icon.py <opad_logo.png>` (Pillow, numpy) regenerates `app/res` when the logo changes.
 - **Linux:** other distros need the same packages under their own names. On Wayland the app runs through
   XWayland, since OCCT's viewer needs an X11 window.
@@ -395,4 +402,27 @@ shadows are best-effort, interactive drag of the section plane (slider today), c
 
 ## Licence
 
-MIT. OCCT (LGPL 2.1 with exception) and Qt 6 (LGPL 3) are linked dynamically.
+OPAD's own code is MIT ([LICENSE](LICENSE)). It is built on Open CASCADE Technology (LGPL 2.1 with the OCCT
+exception), Qt 6 (LGPL 3) and other libraries under their own licences. Every build lists them with versions, licences
+and where their source is: Help > Third-party licences, `opad-cli licenses`, and `THIRD-PARTY-NOTICES.txt` in each
+package (generated by `cmake/notices.cmake` from the link libraries or the shipped DLLs).
+
+- The `windows` build and the portable package link Qt, OCCT and the rest **dynamically**: each is a separate DLL that
+  can be replaced. MSYS2's OCCT pulls in FFmpeg (GPL 3, with the x264/x265/xvid encoders), FreeImage and OpenVR, which
+  OPAD never uses; the portable target refuses to stage them unless `-DOPAD_ALLOW_GPL_DLLS=ON`, and such a package must
+  not be distributed. An OCCT built without them (as the single-file build does) is needed before the portable zip can
+  be handed out.
+- The single-file build (`windows-static`, `opad-single`) links Qt, OCCT, FreeType, HarfBuzz, glib, libintl, graphite2
+  and the other libraries in its notices **statically**. The LGPL requires that recipients can relink such an
+  executable with modified versions of those libraries; how that is offered (OPAD's source, or its object files and
+  link command, with each release) is not decided yet, so do not distribute the single-file exes until it is.
+- LibreDWG's `dwg2dxf` / `dxf2dwg` (GPL 3 or later) are separate programs that OPAD runs and never links; the portable
+  package carries their licence, notice, source archive and build scripts in `licenses/LibreDWG/`.
+- The ODA File Converter is third-party software that OPAD runs for DWG only when switched on (see above); OPAD never
+  bundles or downloads it.
+
+Trademarks: Autodesk, AutoCAD, DWG, DWG TrueView, Fusion and ViewCube are trademarks of Autodesk, Inc.; SOLIDWORKS of
+Dassault Systèmes; Onshape of PTC Inc.; Blender of the Blender Foundation; KiCad of the Linux Foundation; Git of the
+Software Freedom Conservancy; Qt of The Qt Company; Open CASCADE of Open Cascade SAS; ODA and ODA File Converter of the
+Open Design Alliance; Codex and ChatGPT of OpenAI. They are named only to describe compatibility; OPAD is not
+affiliated with or endorsed by any of them.
