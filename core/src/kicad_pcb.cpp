@@ -36,12 +36,14 @@
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <optional>
 #include <set>
 #include <string_view>
 
 #include "import_common.hpp"
+#include "opad/cache.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/scene.hpp"
@@ -565,10 +567,18 @@ std::vector<std::filesystem::path> install_dirs(int major) {
   return out;
 }
 
-// Where a path variable may point, in the order KiCad itself would take them.
-std::vector<std::filesystem::path> variable_dirs(const std::string& var, const std::filesystem::path& board_dir) {
-  if (var == "KIPRJMOD") return {board_dir};
+// The KiCad version a 3D model variable belongs to (KICAD9_3DMODEL_DIR: 9, KISYS3DMOD: 5), else 0.
+int variable_version(const std::string& var) {
+  if (var == "KISYS3DMOD") return 5;
+  if (var.rfind("KICAD", 0) == 0 && var.size() > 17 && var.compare(var.size() - 12, 12, "_3DMODEL_DIR") == 0) return std::atoi(var.c_str() + 5);
+  return 0;
+}
+
+// Where a path variable may point, in the order KiCad itself takes them: the project's text variables, the environment,
+// KiCad's configuration, then (3D model variables) its install folders.
+std::vector<std::filesystem::path> variable_dirs(const std::string& var, const std::map<std::string, std::string>& project) {
   std::vector<std::filesystem::path> out;
+  if (const auto it = project.find(var); it != project.end()) out.push_back(path_from_utf8(it->second));
   if (const auto v = env(var); !v.empty()) out.push_back(path_from_utf8(v));
   for (const auto& dir : config_dirs()) {
     std::error_code e;
@@ -583,9 +593,7 @@ std::vector<std::filesystem::path> variable_dirs(const std::string& var, const s
     } catch (const std::exception&) {
     }
   }
-  int major = 0;
-  if (var.rfind("KICAD", 0) == 0 && var.size() > 17 && var.compare(var.size() - 12, 12, "_3DMODEL_DIR") == 0) major = std::atoi(var.c_str() + 5);
-  if (major > 0 || var == "KISYS3DMOD")
+  if (const int major = variable_version(var))
     for (const auto& d : install_dirs(major)) out.push_back(d);
   return out;
 }
@@ -600,43 +608,115 @@ std::string leading_variable(const std::string& name, std::string& rest) {
   return name.substr(2, close - 2);
 }
 
-// The existing file for a candidate; a VRML name finds the STEP beside it (KiCad's VRML models are in their own units).
-std::filesystem::path existing(std::filesystem::path p) {
-  std::error_code e;
+bool is_vrml(const std::filesystem::path& p) {
   const std::string ext = lower(p.extension().string());
-  if (ext == ".wrl" || ext == ".vrml") {
-    for (const char* alt : {".step", ".stp", ".STEP", ".STP"}) {
-      p.replace_extension(alt);
-      if (std::filesystem::is_regular_file(p, e)) return p;
-    }
-    return {};
-  }
-  return std::filesystem::is_regular_file(p, e) ? p : std::filesystem::path();
+  return ext == ".wrl" || ext == ".vrml";
 }
+
+// The STEP file for a candidate (a VRML name finds the STEP beside it), or with `vrml` the VRML file itself.
+std::filesystem::path existing(std::filesystem::path p, bool vrml) {
+  std::error_code e;
+  if (vrml || !is_vrml(p)) return (vrml == is_vrml(p)) && std::filesystem::is_regular_file(p, e) ? p : std::filesystem::path();
+  for (const char* alt : {".step", ".stp", ".STEP", ".STP"}) {
+    p.replace_extension(alt);
+    if (std::filesystem::is_regular_file(p, e)) return p;
+  }
+  return {};
+}
+
+// A model of KiCad's own library: "<library>.3dshapes/<file>" right below a 3D model variable, plain names only, as the
+// library publishes it (STEP).
+std::string library_path(const std::string& var, const std::string& rest) {
+  const size_t slash = rest.find('/');
+  if (!variable_version(var) || slash == std::string::npos || rest.find('/', slash + 1) != std::string::npos) return {};
+  const std::string lib = rest.substr(0, slash);
+  std::string file = rest.substr(slash + 1);
+  auto plain = [](const std::string& s, const char* extra) {
+    return !s.empty() && s[0] != '.' && std::all_of(s.begin(), s.end(), [&](unsigned char c) { return std::isalnum(c) || (c && std::strchr(extra, c)); });
+  };
+  if (lib.size() <= 9 || lib.compare(lib.size() - 9, 9, ".3dshapes") != 0 || !plain(lib, "_.+-") || !plain(file, "_.+-,()")) return {};
+  const std::string ext = lower(path_from_utf8(file).extension().string());
+  if (ext == ".wrl" || ext == ".vrml") file = file.substr(0, file.size() - ext.size()) + ".step";
+  else if (ext != ".step" && ext != ".stp") return {};
+  return lib + "/" + file;
+}
+
+// The library's release for a KiCad version (its models move and get renamed between them).
+std::string library_tag(int version) { return version <= 0 ? "master" : version == 5 ? "5.1.12" : std::to_string(version) + ".0.0"; }
+
+// Footprints' 3D model files for one board (kicad_model_file).
+class Resolver {
+ public:
+  struct Found {
+    std::filesystem::path file;  // empty: not found
+    std::string library;         // a model of KiCad's library: "<library>.3dshapes/<file>.step"
+    int version = 0;             // the KiCad version its variable names
+  };
+  Resolver(const std::filesystem::path& board, std::vector<std::filesystem::path> dirs) : dir(board.parent_path()), user(std::move(dirs)) {
+    std::filesystem::path pro = board;
+    pro.replace_extension(".kicad_pro");
+    std::error_code e;
+    if (!std::filesystem::is_regular_file(pro, e)) return;
+    try {  // the project's text variables, which may name ${KIPRJMOD}
+      const json j = json::parse(read_text_file(pro), nullptr, false);
+      if (!j.is_object() || !j.contains("text_variables") || !j["text_variables"].is_object()) return;
+      for (const auto& [k, v] : j["text_variables"].items()) {
+        if (!v.is_string() || v.get<std::string>().empty()) continue;
+        std::string value = v.get<std::string>();
+        for (size_t at; (at = value.find("${KIPRJMOD}")) != std::string::npos;) value.replace(at, 11, utf8(dir));
+        project[k] = value;
+      }
+    } catch (const std::exception&) {
+    }
+  }
+  Found find(const std::string& name) {
+    Found out;
+    std::string text = name;
+    std::replace(text.begin(), text.end(), '\\', '/');
+    if (text.empty() || text.rfind("kicad-embed://", 0) == 0) return out;
+    std::vector<std::filesystem::path> candidates;
+    std::string rest;
+    const std::string var = leading_variable(text, rest);
+    if (var == "KIPRJMOD") {
+      candidates.push_back(dir / path_from_utf8(rest));
+    } else if (!var.empty()) {
+      auto it = vars.find(var);
+      if (it == vars.end()) it = vars.emplace(var, variable_dirs(var, project)).first;
+      for (const auto& d : it->second) candidates.push_back(d / path_from_utf8(rest));
+      out.library = library_path(var, rest);
+      out.version = variable_version(var);
+    } else {
+      rest = text;
+      const auto p = path_from_utf8(text);
+      candidates.push_back(p.is_absolute() ? p : dir / p);
+    }
+    for (const auto& d : user) {
+      candidates.push_back(d / path_from_utf8(rest));
+      candidates.push_back(d / path_from_utf8(rest).filename());
+    }
+    if (!out.library.empty()) candidates.push_back(kicad_download_dir() / path_from_utf8(out.library));
+    for (const bool vrml : {false, true})  // a STEP anywhere before a VRML
+      for (const auto& c : candidates)
+        if (auto f = existing(c.lexically_normal(), vrml); !f.empty()) {
+          out.file = f;
+          return out;
+        }
+    return out;
+  }
+
+ private:
+  std::filesystem::path dir;
+  std::vector<std::filesystem::path> user;
+  std::map<std::string, std::string> project;
+  std::map<std::string, std::vector<std::filesystem::path>> vars;
+};
 
 }  // namespace
 
-std::filesystem::path kicad_model_file(const std::string& name, const std::filesystem::path& board_dir, const std::vector<std::filesystem::path>& model_dirs) {
-  std::string text = name;
-  std::replace(text.begin(), text.end(), '\\', '/');
-  if (text.empty() || text.rfind("kicad-embed://", 0) == 0) return {};
-  std::vector<std::filesystem::path> candidates;
-  std::string rest;
-  const std::string var = leading_variable(text, rest);
-  if (!var.empty()) {
-    for (const auto& dir : variable_dirs(var, board_dir)) candidates.push_back(dir / path_from_utf8(rest));
-  } else {
-    rest = text;
-    const auto p = path_from_utf8(text);
-    candidates.push_back(p.is_absolute() ? p : board_dir / p);
-  }
-  for (const auto& dir : model_dirs) {
-    candidates.push_back(dir / path_from_utf8(rest));
-    candidates.push_back(dir / path_from_utf8(rest).filename());
-  }
-  for (const auto& c : candidates)
-    if (auto found = existing(c.lexically_normal()); !found.empty()) return found;
-  return {};
+std::filesystem::path kicad_download_dir() { return cache_dir() / "kicad-models"; }
+
+std::filesystem::path kicad_model_file(const std::string& name, const std::filesystem::path& board, const std::vector<std::filesystem::path>& model_dirs) {
+  return Resolver(board, model_dirs).find(name).file;
 }
 
 namespace {
@@ -694,7 +774,7 @@ struct Part {
 
 class Builder {
  public:
-  Builder(Document& d, const std::filesystem::path& f, const ImportOptions& o) : doc(d), file(f), opt(o), made(o) { made.heal = false; }
+  Builder(Document& d, const std::filesystem::path& f, const ImportOptions& o) : doc(d), file(f), opt(o), made(o), resolver(f, o.kicad.model_dirs) { made.heal = false; }
 
   ImportResult run() {
     report(-1, "reading");
@@ -739,7 +819,8 @@ class Builder {
   std::vector<Hole> holes;   // board coordinates
   std::vector<Footprint> footprints;
   std::map<std::string, std::vector<Part>> models;  // model file + scale -> its bodies (empty: could not be read)
-  std::map<std::string, std::filesystem::path> found;  // model name -> file (empty: not found)
+  Resolver resolver;
+  std::map<std::string, Resolver::Found> found;        // model name -> its file (empty: not found)
   std::map<std::string, std::string> boxes;            // placeholder size -> body key
   std::vector<std::string> missing;
   int placed = 0, placeholders = 0;
@@ -1005,7 +1086,8 @@ class Builder {
     o.heal = opt.heal;
     o.progress = [this, phase](double, const std::string&) { return !opt.progress || opt.progress(-1, phase); };
     try {
-      import_file(part_doc, path, o);
+      if (is_vrml(path)) detail::import_mesh_scene(part_doc, path, o, true);  // KiCad's own VRML: 0.1 inch units, Z up
+      else import_file(part_doc, path, o);
     } catch (const std::exception& e) {
       if (std::string(e.what()) == "import cancelled") throw;
       res.warnings.push_back("3D model " + utf8(path.filename()) + " could not be read: " + e.what());
@@ -1058,8 +1140,8 @@ class Builder {
     for (const Footprint* f : order)
       for (const auto& m : f->models) {
         auto it = found.find(m.name);
-        if (it == found.end()) it = found.emplace(m.name, kicad_model_file(m.name, file.parent_path(), opt.kicad.model_dirs)).first;
-        if (!it->second.empty()) files.insert(utf8(it->second) + "|" + json(m.scale).dump());
+        if (it == found.end()) it = found.emplace(m.name, resolver.find(m.name)).first;
+        if (!it->second.file.empty()) files.insert(utf8(it->second.file) + "|" + json(m.scale).dump());
       }
     std::set<std::string> ids;
     auto unique_id = [&](const std::string& what) {
@@ -1074,7 +1156,7 @@ class Builder {
       std::vector<std::string> absent;
       for (size_t mi = 0; mi < f->models.size(); ++mi) {
         const Model& m = f->models[mi];
-        const auto& path = found[m.name];
+        const auto& path = found[m.name].file;
         if (path.empty()) {
           absent.push_back(m.name);
           continue;

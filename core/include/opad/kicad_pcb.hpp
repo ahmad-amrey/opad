@@ -11,11 +11,15 @@ namespace opad {
 // Hidden 2D layers (Edge.Cuts with the drills, courtyards) are there for sketches. `opt.viewer` keeps the shapes live.
 ImportResult import_kicad_pcb(Document& doc, const std::filesystem::path& file, const ImportOptions& opt = {});
 
-// The file a footprint's 3D model names, or empty: ${KIPRJMOD} is the board's folder; KICAD<n>_3DMODEL_DIR, KISYS3DMOD
-// and other variables come from the environment, then KiCad's configuration (kicad_common.json), then its install
-// folders; then `model_dirs` (by the path below the variable, then by the file name). A VRML name finds the STEP beside
-// it first (KiCad's VRML models are in their own units).
-std::filesystem::path kicad_model_file(const std::string& name, const std::filesystem::path& board_dir,
+// The file a footprint's 3D model names on `board` (the .kicad_pcb), or empty: ${KIPRJMOD} is the board's folder;
+// KICAD<n>_3DMODEL_DIR, KISYS3DMOD and other variables come from the project's text variables (<board>.kicad_pro), the
+// environment, KiCad's configuration (kicad_common.json), then its install folders; then `model_dirs` (by the path below
+// the variable, then by the file name), then kicad_download_dir(). A STEP is preferred anywhere (a VRML name finds the
+// STEP beside it) before a VRML file itself, which is read in KiCad's units.
+std::filesystem::path kicad_model_file(const std::string& name, const std::filesystem::path& board,
                                        const std::vector<std::filesystem::path>& model_dirs = {});
+
+// Where models of KiCad's library are downloaded to (<user cache>/kicad-models, laid out as the library is).
+std::filesystem::path kicad_download_dir();
 
 }  // namespace opad

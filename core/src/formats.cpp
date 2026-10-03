@@ -797,7 +797,7 @@ ImportResult import_iges(Document& doc, const std::filesystem::path& file, const
   return import_xcaf(doc, xdoc, file, opt, false);
 }
 
-ImportResult import_mesh_scene(Document& doc, const std::filesystem::path& file, const ImportOptions& opt) {
+ImportResult import_mesh_scene(Document& doc, const std::filesystem::path& file, const ImportOptions& opt, bool kicad_vrml) {
   report(opt, -1, "reading");
   const std::string ext = lower_extension(file);
   Handle(RWMesh_CafReader) reader;
@@ -834,6 +834,7 @@ ImportResult import_mesh_scene(Document& doc, const std::filesystem::path& file,
   }
   if (progress->cancelled) throw Error("import cancelled");
   if (!ok) throw Error("cannot read " + file.filename().string() + " (damaged, or a variant OPAD does not read)");
+  if (kicad_vrml) return import_xcaf(doc, xdoc, file, opt, true, 2.54);
   if (ext == ".wrl" || ext == ".vrml") {
     Mat4 yUp;  // file Y -> Z, file Z -> -Y
     yUp.at(1, 1) = 0; yUp.at(1, 2) = -1; yUp.at(2, 1) = 1; yUp.at(2, 2) = 0;

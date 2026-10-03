@@ -282,14 +282,49 @@ TEST(saved_and_viewed) {
 TEST(model_lookup) {
   Fixture f;
   const auto proj = f.board.parent_path();
-  CHECK(kicad_model_file("${KIPRJMOD}/models/conn.wrl", proj) == (proj / "models" / "conn.step").lexically_normal());
-  CHECK(kicad_model_file("models/conn.step", proj) == (proj / "models" / "conn.step").lexically_normal());
-  CHECK(kicad_model_file("$(KICAD9_3DMODEL_DIR)\\Test.3dshapes\\box.step", proj) == (f.files.dir / "lib3d" / "Test.3dshapes" / "box.step").lexically_normal());
-  CHECK(kicad_model_file("${OPAD_TEST_NOT_SET}/Other.3dshapes/other.step", proj).empty());
-  CHECK(kicad_model_file("${OPAD_TEST_NOT_SET}/Other.3dshapes/other.step", proj, {f.mine}) == (f.mine / "other.step").lexically_normal());
-  CHECK(kicad_model_file((f.mine / "other.step").string(), proj) == (f.mine / "other.step").lexically_normal());
-  CHECK(kicad_model_file("kicad-embed://other.step", proj, {f.mine}).empty());
-  CHECK(kicad_model_file("${KIPRJMOD}/models/none.wrl", proj).empty());
+  const auto& b = f.board;
+  CHECK(kicad_model_file("${KIPRJMOD}/models/conn.wrl", b) == (proj / "models" / "conn.step").lexically_normal());
+  CHECK(kicad_model_file("models/conn.step", b) == (proj / "models" / "conn.step").lexically_normal());
+  CHECK(kicad_model_file("$(KICAD9_3DMODEL_DIR)\\Test.3dshapes\\box.step", b) == (f.files.dir / "lib3d" / "Test.3dshapes" / "box.step").lexically_normal());
+  CHECK(kicad_model_file("${OPAD_TEST_NOT_SET}/Other.3dshapes/other.step", b).empty());
+  CHECK(kicad_model_file("${OPAD_TEST_NOT_SET}/Other.3dshapes/other.step", b, {f.mine}) == (f.mine / "other.step").lexically_normal());
+  CHECK(kicad_model_file((f.mine / "other.step").string(), b) == (f.mine / "other.step").lexically_normal());
+  CHECK(kicad_model_file("kicad-embed://other.step", b, {f.mine}).empty());
+  CHECK(kicad_model_file("${KIPRJMOD}/models/none.wrl", b).empty());
+  // A VRML file alone is taken, but a STEP anywhere comes first; the download folder is searched last for library models.
+  write(f.mine / "alone.wrl", "#VRML V2.0 utf8\n");
+  write(f.mine / "both.wrl", "#VRML V2.0 utf8\n");
+  step_box(kicad_download_dir() / "Test.3dshapes" / "both.step", 0, 0, 0, 1, 1, 1);
+  CHECK(kicad_model_file("${KICAD9_3DMODEL_DIR}/Test.3dshapes/alone.wrl", b, {f.mine}) == (f.mine / "alone.wrl").lexically_normal());
+  CHECK(kicad_model_file("${KICAD9_3DMODEL_DIR}/Test.3dshapes/both.wrl", b, {f.mine}) == (kicad_download_dir() / "Test.3dshapes" / "both.step").lexically_normal());
+  CHECK(kicad_model_file("${OPAD_TEST_NOT_SET}/Test.3dshapes/both.step", b).empty());  // not a library variable
+}
+
+// The project's text variables (<board>.kicad_pro) name model folders, ${KIPRJMOD} inside them too; a footprint whose only
+// model is KiCad's own VRML is read in KiCad's units (2.54 mm, Z up) instead of a box.
+TEST(project_variables_and_vrml) {
+  Files files;
+  const auto board = files.dir / "proj" / "vars.kicad_pcb";
+  write(files.dir / "proj" / "vars.kicad_pro", R"({"meta": {"version": 3}, "text_variables": {"VENDOR": "${KIPRJMOD}/vendor", "EMPTY": ""}})");
+  step_box(files.dir / "proj" / "vendor" / "part.step", -1, -1, 0, 2, 2, 1);
+  write(files.dir / "proj" / "models" / "only.wrl",
+        "#VRML V2.0 utf8\nShape {\n appearance Appearance { material Material { diffuseColor 0.8 0.7 0.5 } }\n geometry IndexedFaceSet {\n"
+        "  coord Coordinate { point [0 0 0, 1 0 0, 1 1 0, 0 1 0, 0 0 1, 1 0 1, 1 1 1, 0 1 1] }\n"
+        "  coordIndex [0,2,1,-1, 0,3,2,-1, 4,5,6,-1, 4,6,7,-1, 0,1,5,-1, 0,5,4,-1, 1,2,6,-1, 1,6,5,-1, 2,3,7,-1, 2,7,6,-1, 3,0,4,-1, 3,4,7,-1]\n }\n}\n");
+  write(board, "(kicad_pcb (version 20241229) (general (thickness 1.6))\n  (gr_rect (start 100 100) (end 140 120) (layer \"Edge.Cuts\"))\n" +
+                   footprint("Test:Part", "P1", "110 110", model("${VENDOR}/part.step")) + footprint("Test:Vrml", "V1", "120 112", model("${KIPRJMOD}/models/only.wrl")) +
+                   footprint("Test:Empty", "E1", "130 110", model("${EMPTY}/part.step")) + ")\n");
+  Document d = Document::create();
+  ImportOptions o;
+  o.kicad.origin = "page";
+  const ImportResult r = import_file(d, board, o);
+  const Scene s = resolve(d);
+  CHECK(r.info["placeholders"] == 1 && r.info["models"] == 2);
+  CHECK(box_is(world_box(d, s, named(s, "P1 Part")), 109, -111, 1.6, 111, -109, 2.6));
+  const Node* v1 = named(s, "V1 Vrml");
+  CHECK(v1 && s.node(v1->children[0])->representation == "mesh" && s.node(v1->children[0])->opacity >= 1);
+  CHECK(box_is(world_box(d, s, v1), 120, -112, 1.6, 122.54, -109.46, 4.14));
+  CHECK(named(s, "E1 Empty") && s.node(named(s, "E1 Empty")->children[0])->name == "part");
 }
 
 TEST(panels_open_outlines_and_errors) {
@@ -354,4 +389,8 @@ TEST(many_drills_mesh) {
   CHECK(std::abs(std::abs(volume) - exact) < exact * 1e-3);
 }
 
-int main(int argc, char** argv) { return check::run_all(argc, argv); }
+int main(int argc, char** argv) {
+  const Files cache;  // downloads and the user cache stay in here
+  set_env("OPAD_CACHE_DIR", cache.dir);
+  return check::run_all(argc, argv);
+}
