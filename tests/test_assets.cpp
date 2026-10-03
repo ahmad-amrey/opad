@@ -402,6 +402,73 @@ TEST(kicad_board_remembered_with_its_models) {
   CHECK_EQ(asset_status(reopened)[0].state, "changed");
 }
 
+// A file read through a converter (as kicad-cli's STEP of a board): the source is watched and synced, the derived file
+// read; the converter (AssetOptions::derive) makes it again when it is missing or the source changed.
+TEST(derived_file_read_in_the_sources_place) {
+  Files f;
+  const fs::path source = f.dir / "part.src";
+  write(source, "30");
+  int runs = 0;
+  AssetOptions converter;
+  converter.derive = [&](const json& asset, const fs::path& from) {
+    CHECK_EQ(asset["derived"]["builder"]["name"], "test-converter");
+    ++runs;
+    const fs::path out = f.dir / "made" / "part.step";
+    two_boxes(out, 5, std::stod(read_text_file(from)));
+    return out;
+  };
+  Document d = Document::create();
+  d.save_as(f.dir / "design.opad");
+  link_derived(d, source, converter.derive(json{{"derived", {{"builder", {{"name", "test-converter"}}}}}}, source), {{"name", "test-converter"}, {"version", 1}});
+  const std::string import_id = last_import(d).id;
+  const json asset = last_import(d).data["asset"];
+  CHECK_EQ(asset["path"], "part.src");
+  CHECK_EQ(asset["derived"]["path"], "made/part.step");
+  CHECK_EQ(asset["derived"]["kind"], "step");
+  CHECK_EQ(asset["derived"]["sha256"], sha256_file(f.dir / "made" / "part.step"));
+  Scene s = resolve(d);
+  CHECK_EQ(s.all_bodies().size(), 2u);
+  const std::string key_b = s.node(linked(s, 1))->body_key;
+  d.save();
+  AssetOptions uncached;
+  uncached.cache = false;
+  Document reopened = Document::load(f.dir / "design.opad");
+  AssetState st = load_assets(reopened, uncached)[0];
+  CHECK_EQ(st.state, "ok");
+  CHECK(st.derived == fs::absolute(f.dir / "made" / "part.step").lexically_normal());
+  CHECK(about(volume(reopened, resolve(reopened), linked(resolve(reopened), 0)), 1000));
+  // The source changes: changed; the derived file is still the one synced, so the model is shown as synced.
+  write(source, "38");
+  reopened = Document::load(f.dir / "design.opad");
+  st = load_assets(reopened, uncached)[0];
+  CHECK_EQ(st.state, "changed");
+  for (const auto& b : reopened.bodies()) CHECK(!b.meta.value("stale", false));
+  CHECK_THROWS(plan_asset_sync(reopened, import_id, uncached));  // no converter here
+  design::Plan plan = plan_asset_sync(reopened, import_id, converter);
+  CHECK_EQ(runs, 2);
+  CHECK_EQ(plan.report["kept"], 1);
+  CHECK_EQ(plan.report["changed"].size(), 1u);
+  design::commit(reopened, std::move(plan));
+  CHECK_EQ(asset_of(reopened, import_id)["derived"]["sha256"], sha256_file(f.dir / "made" / "part.step"));
+  CHECK_EQ(asset_of(reopened, import_id)["sha256"], sha256_file(source));
+  CHECK_EQ(asset_status(reopened)[0].state, "ok");
+  CHECK_EQ(resolve(reopened).node(linked(resolve(reopened), 1))->body_key, key_b);
+  reopened.save();
+  // The derived file gone (a clone): missing without the converter, made again with it.
+  fs::remove_all(f.dir / "made");
+  Document clone = Document::load(f.dir / "design.opad");
+  st = load_assets(clone, uncached)[0];
+  CHECK_EQ(st.state, "missing");
+  CHECK(st.reason.find("test-converter") != std::string::npos);
+  st = load_assets(clone, [&] { AssetOptions o = converter; o.cache = false; return o; }())[0];
+  CHECK_EQ(runs, 3);
+  CHECK(st.unbound == 0 && resolve(clone).unresolved.empty());
+  // Pack takes the derived file along.
+  const json packed = pack_asset(clone, import_id);
+  CHECK_EQ(asset_of(clone, import_id)["derived"]["path"], "assets/.opad/part.step");
+  CHECK(fs::exists(f.dir / "assets" / ".opad" / "part.step") && packed["copied"] == 2);
+}
+
 TEST(embed_and_pack) {
   Files f;
   const fs::path step = f.dir / "outside" / "model.step";

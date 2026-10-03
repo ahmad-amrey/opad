@@ -380,8 +380,7 @@ std::string content_of(const json& asset, const std::string& sha, const std::str
 
 // The file read into a document of its own (one import op, live bodies). Every read is remembered by its content (the
 // viewer cache, LRU): reopening is fast, a clone, a branch or a moved folder finds it again, and a file changed since
-// still shows the version synced, as the document's features were computed from it.
-// Whether the file itself was read (not its remembered version).
+// still shows the version synced, as the document's features were computed from it. True when the file itself was read.
 bool read_file(Document& scratch, const fs::path& file, const json& asset, const std::string& content, const AssetOptions& opt, bool store = true) {
   const ImportOptions o = read_options(asset, opt);
   if (opt.cache && detail::asset_cache_load(scratch, content, o)) return false;
@@ -431,6 +430,36 @@ std::vector<fs::path> candidates(const Document& doc, const json& asset) {
   return out;
 }
 
+// An asset read through another file (asset.derived): a board exported to STEP by kicad-cli, a file a converter turns into
+// one OPAD reads. The source is what is watched and synced; the shapes come from the derived file.
+const json* derived_of(const json& asset) { return asset.contains("derived") && asset["derived"].is_object() ? &asset["derived"] : nullptr; }
+
+std::string builder_name(const json& derived) { return derived.value("builder", json::object()).value("name", std::string("a converter")); }
+
+// The derived file as this machine finds it: where recorded, if in the project or OPAD's own cache.
+fs::path locate_derived(const Document& doc, const json& derived, const AssetOptions& opt) {
+  const fs::path f = locate_asset(doc, derived, opt);
+  return f.empty() || asset_trusted(doc, f, opt) || inside(f, cache_dir(), false) ? f : fs::path();
+}
+
+// A derived file made anew from the source (missing here, or the source changed): the hook runs the converter.
+fs::path derive_again(const json& asset, const fs::path& source, const AssetOptions& opt) {
+  const json& dv = *derived_of(asset);
+  if (!opt.derive) throw Error("the file is read through " + builder_name(dv) + ", which is not available here: " + dv.value("path", dv.value("abs", std::string())));
+  if (opt.progress && !opt.progress(-1, "converting")) throw Error("cancelled");
+  fs::path made = opt.derive(asset, source);
+  std::error_code ec;
+  if (made.empty() || !fs::is_regular_file(made, ec)) throw Error(builder_name(dv) + " made nothing from " + utf8(source.filename()));
+  return fs::absolute(made).lexically_normal();
+}
+
+void place_derived(json& dv, const fs::path& file, const std::string& sha, const fs::path& dir) {
+  dv["abs"] = utf8(file);
+  if (const std::string rel = relative_to(file, dir); !rel.empty()) dv["path"] = rel;
+  else dv.erase("path");
+  dv["sha256"] = sha;
+}
+
 AssetState status_of(const Document& doc, const EffectiveOp& e, const AssetOptions& opt) {
   const json& d = e.data();
   const json& a = d["asset"];
@@ -471,6 +500,17 @@ AssetState status_of(const Document& doc, const EffectiveOp& e, const AssetOptio
         st.state = "changed";
         st.reason = "its 3D models changed";
       }
+      if (const json* dv = derived_of(a)) {
+        st.derived = locate_derived(doc, *dv, opt);
+        if (!st.derived.empty()) st.derived_sha256 = file_sha256(st.derived);
+        if (st.derived.empty() && !opt.derive) {
+          st.state = "missing";
+          st.reason = "the file read in its place is missing and " + builder_name(*dv) + " is not available here: " + dv->value("path", dv->value("abs", std::string()));
+        } else if (st.state == "ok" && st.derived_sha256 != dv->value("sha256", "")) {
+          st.state = "changed";
+          st.reason = st.derived.empty() ? "the file read in its place is missing: it is made again" : "the file read in its place changed";
+        }
+      }
     } catch (const Standard_Failure& ex) {
       st.state = "error";
       st.reason = ex.GetMessageString();
@@ -489,6 +529,7 @@ json AssetState::to_json() const {
   if (!file.empty()) j["file"] = utf8(file);
   if (!reason.empty()) j["reason"] = reason;
   if (!sha256.empty()) j["sha256"] = sha256;
+  if (!derived.empty()) j["derived"] = utf8(derived);
   if (unbound) j["unbound"] = unbound;
   return j;
 }
@@ -565,14 +606,24 @@ std::vector<AssetState> load_assets(Document& doc, const AssetOptions& opt) {
     if ((st.state == "ok" || st.state == "changed") && st.unbound > 0) {
       try {
         // A changed file: the version synced when it is remembered, so the model stays as its features were computed;
-        // else the file as it is now, its shapes marked stale.
+        // else the file as it is now, its shapes marked stale. An asset read through a derived file reads that one: as
+        // long as it is the one synced, it is the version synced whatever the source became.
         const json& asset = e.data()["asset"];
+        const json* dv = derived_of(asset);
+        const json& view = dv ? *dv : asset;
         Document scratch = Document::create();
-        bool stale = st.state == "changed";
-        const std::string synced = content_of(asset, asset.value("sha256", ""), asset.value("models_sha256", ""));
-        if (stale && opt.cache && detail::asset_cache_load(scratch, synced, read_options(asset, opt))) {
+        bool stale = dv ? st.derived_sha256 != dv->value("sha256", "") : st.state == "changed";
+        const std::string synced = dv ? content_of(view, dv->value("sha256", ""), "") : content_of(asset, asset.value("sha256", ""), asset.value("models_sha256", ""));
+        if (stale && opt.cache && detail::asset_cache_load(scratch, synced, read_options(view, opt))) {
           stale = false;
           st.reason = "the version synced is shown (remembered); sync to take the file as it is now";
+        } else if (dv) {
+          if (st.derived.empty()) {
+            st.derived = derive_again(asset, st.file, opt);
+            st.derived_sha256 = file_sha256(st.derived);
+          }
+          stale = st.derived_sha256 != dv->value("sha256", "");
+          read_file(scratch, st.derived, view, content_of(view, st.derived_sha256, ""), opt);
         } else {
           read_file(scratch, st.file, asset, content_of(asset, st.sha256, st.models), opt);
         }
@@ -612,9 +663,13 @@ std::vector<AssetState> load_assets(Document& doc, const AssetOptions& opt) {
   return out;
 }
 
-ImportResult link_file(Document& doc, const fs::path& file, const ImportOptions& opt) {
+namespace {
+
+// link_file and link_derived: `derived` (with its `builder`) is the file read in the source's place, or empty.
+ImportResult link(Document& doc, const fs::path& file, const fs::path& derived, const json& builder, const ImportOptions& opt) {
   std::error_code ec;
   if (!fs::is_regular_file(file, ec)) throw Error("file not found: " + utf8(file.filename()));
+  if (!derived.empty() && !fs::is_regular_file(derived, ec)) throw Error("file not found: " + utf8(derived.filename()));
   const fs::path abs = fs::absolute(file).lexically_normal();
   if (opt.progress && !opt.progress(-1, "reading")) throw Error("import cancelled");
   const std::string sha = file_sha256(abs);
@@ -632,12 +687,22 @@ ImportResult link_file(Document& doc, const fs::path& file, const ImportOptions&
   Document scratch = Document::create();
   const std::string models = models_of(abs, asset, read);
   if (!models.empty()) asset["models_sha256"] = models;
-  const std::string first = content_of(asset, sha, models);
-  const bool fresh = read_file(scratch, abs, asset, first, read, false);
-  json data = read_op(scratch);
-  if (kind == "kicad_pcb" && data.contains("kicad") && data["kicad"].contains("origin"))
-    asset["builder"]["options"]["origin_at"] = data["kicad"]["origin"];  // every later read keeps this frame
-  if (const std::string content = content_of(asset, sha, models); fresh || content != first) detail::asset_cache_store(scratch, content);
+  json data;
+  if (!derived.empty()) {
+    const fs::path made = fs::absolute(derived).lexically_normal();
+    json dv = {{"kind", kind_of(made)}, {"builder", builder.is_object() ? builder : json{{"name", "a converter"}}}};
+    place_derived(dv, made, file_sha256(made), doc_dir(doc));
+    read_file(scratch, made, dv, content_of(dv, dv["sha256"], ""), read);
+    asset["derived"] = dv;
+    data = read_op(scratch);
+  } else {
+    const std::string first = content_of(asset, sha, models);
+    const bool fresh = read_file(scratch, abs, asset, first, read, false);
+    data = read_op(scratch);
+    if (kind == "kicad_pcb" && data.contains("kicad") && data["kicad"].contains("origin"))
+      asset["builder"]["options"]["origin_at"] = data["kicad"]["origin"];  // every later read keeps this frame
+    if (const std::string content = content_of(asset, sha, models); fresh || content != first) detail::asset_cache_store(scratch, content);
+  }
   asset["synced"] = now_iso8601();
   const std::string id = new_uuid();
   relabel(data["nodes"], id, "");
@@ -659,6 +724,14 @@ ImportResult link_file(Document& doc, const fs::path& file, const ImportOptions&
   return res;
 }
 
+}  // namespace
+
+ImportResult link_file(Document& doc, const fs::path& file, const ImportOptions& opt) { return link(doc, file, {}, json(), opt); }
+
+ImportResult link_derived(Document& doc, const fs::path& file, const fs::path& derived, const json& builder, const ImportOptions& opt) {
+  return link(doc, file, derived, builder, opt);
+}
+
 design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, const AssetOptions& opt, const fs::path& file) {
   const EffectiveOp e = find_asset(doc, import_id);
   const std::string id = e.op->id;
@@ -675,8 +748,11 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
     else a.erase("path");
   };
   const std::string models = models_of(where, asset, opt);
+  const bool same = sha == asset.value("sha256", "") && (!asset.contains("models_sha256") || models == asset.value("models_sha256", ""));
+  const json* dv = derived_of(asset);
+  fs::path made = dv ? locate_derived(doc, *dv, opt) : fs::path();
   design::Plan plan;
-  if (sha == asset.value("sha256", "") && (!asset.contains("models_sha256") || models == asset.value("models_sha256", ""))) {
+  if (same && (!dv || (!made.empty() && file_sha256(made) == dv->value("sha256", "")))) {
     plan.report = {{"import", id}, {"sha256", sha}, {"up_to_date", true}};  // the file synced last: at most it moved
     if (!file.empty() && utf8(where) != asset.value("abs", "")) {
       place(asset);
@@ -685,7 +761,16 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
     return plan;
   }
   Document scratch = Document::create();
-  read_file(scratch, where, asset, content_of(asset, sha, models), opt);
+  if (dv) {
+    // Made again from the source by the converter when it is here; without it only a derived file changed by hand is read.
+    const json view = *dv;
+    if (opt.derive || made.empty() || !same) made = derive_again(asset, where, opt);
+    const std::string derived_sha = file_sha256(made);
+    read_file(scratch, made, view, content_of(view, derived_sha, ""), opt);
+    place_derived(asset["derived"], made, derived_sha, doc_dir(doc));
+  } else {
+    read_file(scratch, where, asset, content_of(asset, sha, models), opt);
+  }
   json fresh = read_op(scratch);
   relabel(fresh["nodes"], id, "", &nodes_of(data));
   // A body whose geometry did not change keeps its key (no needless regeneration downstream): the key of its geometry is
@@ -701,6 +786,7 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
   std::map<std::string, std::string> keys = derived_keys(scratch, fresh["nodes"], order);
   int kept = 0;
   for (size_t i = 0; i < order.size(); ++i) {
+    if (opt.progress && !opt.progress(double(i + 1) / double(order.size()), "comparing")) throw Error("cancelled");
     const std::string& from = order[i];
     std::string& key = keys[from];
     const auto it = before.find(from);
@@ -717,7 +803,6 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
       } catch (const std::exception&) {
       }
     }
-    if (opt.progress && !opt.progress(double(i + 1) / double(order.size()), "comparing")) throw Error("cancelled");
   }
   json added = json::array(), removed = json::array(), changed = json::array();
   std::set<std::string> now;
@@ -863,6 +948,13 @@ json pack_asset(Document& doc, const std::string& import_id, const std::string& 
   if (target != source) asset["from"] = utf8(source);
   asset["abs"] = utf8(target);
   asset["path"] = relative_to(target, dir);
+  if (const json* dv = derived_of(asset)) {  // the file read in its place too: a clone opens without the converter
+    const fs::path made = locate_asset(doc, *dv, any);
+    if (made.empty()) throw Error("the file read in its place is missing: sync it first");
+    const fs::path to = inside(made, folder, false) ? made : folder / ".opad" / made.filename();
+    copy(made, to);
+    place_derived(asset["derived"], to, dv->value("sha256", ""), dir);
+  }
   doc.append(design::make_edit_op(e.op->id, {{"asset", asset}}), author);
   return {{"import", e.op->id}, {"path", asset["path"]}, {"copied", copied}};
 }

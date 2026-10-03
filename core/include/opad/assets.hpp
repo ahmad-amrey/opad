@@ -4,7 +4,10 @@
 //   {"v":1, "kind":"step|iges|brep|mesh|drawing|kicad_pcb", "path":"<relative to the document, forward slashes>",
 //    "abs":"<absolute fallback>", "sha256":"<the file's>", "size":N, "storage":"linked|project|embedded",
 //    "builder":{"name":"opad","version":1,"options":{...how it was read}}, "synced":"<time>",
-//    "models_sha256":"<a KiCad board: its 3D models' names and contents as found>"}
+//    "models_sha256":"<a KiCad board: its 3D models' names and contents as found>",
+//    "derived":{"kind":"step","path","abs","sha256","builder":{"name":"kicad-cli",...}}}
+// `derived`: the shapes come from another file made from the source by a converter (a board exported by kicad-cli); the
+// source is what is watched and synced, the derived file what is read; AssetOptions::derive makes it again.
 // and its bodies never enter the body store: they are read from the file whenever the document opens (load_assets, on the
 // load worker), as the viewer reads files, under keys derived from each body's geometry ("opad-asset/2|<digest>": topology
 // counts, vertices, edge and face types and middle points), so a part a new version of the file leaves alone keeps its key.
@@ -29,6 +32,10 @@ struct AssetOptions {
                                                // and a file changed since still shows the version synced
   KicadOptions kicad;                          // this machine's KiCad model folders (a board's own options come from its op)
   std::function<bool(double, const std::string&)> progress;  // as ImportOptions::progress; false cancels
+  // Makes an asset's derived file again from its source (the asset object says how: derived.builder) and returns where it
+  // is: when it is missing here, and on sync. Runs on the worker that reads the assets. Without it such an asset reads the
+  // derived file it finds, else it is missing.
+  std::function<std::filesystem::path(const json& asset, const std::filesystem::path& source)> derive;
 };
 
 // One linked asset as this machine finds it.
@@ -42,6 +49,8 @@ struct AssetState {
   std::string reason;
   std::string sha256;          // of the file found
   std::string models;          // a KiCad board: the digest of its 3D models as found (names and contents)
+  std::filesystem::path derived;  // an asset read through a derived file: where that is (empty: missing)
+  std::string derived_sha256;
   int bodies = 0, unbound = 0; // body nodes; those the file did not give (gone since the sync, or the file was not read)
   json to_json() const;
 };
@@ -49,6 +58,10 @@ struct AssetState {
 // Imports `file` linked: read as the viewer reads it (no healing, BREP text or shape hashing), its bodies registered as
 // external, its op given the asset object. `opt` as import_file takes it (KiCad options, placement, parent).
 ImportResult link_file(Document& doc, const std::filesystem::path& file, const ImportOptions& opt = {});
+// Links `file` read through `derived`, a file a converter made from it (`builder`: {"name","version","options"}, how to make
+// it again): the source is watched and synced, the derived file read (kicad-cli's STEP of a board, UI-73).
+ImportResult link_derived(Document& doc, const std::filesystem::path& file, const std::filesystem::path& derived, const json& builder,
+                          const ImportOptions& opt = {});
 
 // Whether the document links any file (an import op with a linked or project asset).
 bool has_assets(const Document& doc);
@@ -79,7 +92,8 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
 // asset object stays with storage "embedded" (where it came from) and the file is no longer read.
 design::Plan plan_asset_embed(const Document& doc, const std::string& import_id, const std::function<bool()>& cancel = {});
 // Pack: copies the file into the assets/ folder beside the document (a KiCad board with its project file and the models in
-// its folder, as assets/<board>/) and appends the edit pointing the asset there (storage "project").
+// its folder, as assets/<board>/; a derived file into assets/.opad/) and appends the edit pointing the asset there (storage
+// "project").
 // {"import","path","copied"}.
 json pack_asset(Document& doc, const std::string& import_id, const std::string& author = {});
 
