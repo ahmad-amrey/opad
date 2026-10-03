@@ -170,5 +170,10 @@
  "Click the mirror line": "انقر خط الانعكاس",
  "A mirrored copy appears": "تظهر نسخة معكوسة",
  "Guide": "الدليل",
- "Show or hide the animated guide for this tool": "أظهر الدليل المتحرك لهذه الأداة أو أخفه"
+ "Show or hide the animated guide for this tool": "أظهر الدليل المتحرك لهذه الأداة أو أخفه",
+ "Command reference": "مرجع الأوامر",
+ "All steps": "كل الخطوات",
+ "Sketch constraints": "قيود الرسم التخطيطي",
+ "Tools and help": "الأدوات والمساعدة",
+ "Other": "أخرى"
 }

@@ -77,6 +77,9 @@ def main():
             # UI-107: the tool, feature and sketch panels play the running command's clip at the step it waits for.
             ("tool-guide", guided, {"OPAD_BENCH_GUIDE": "{prefix}"}),
             ("tool-guide-ar", guided, {"OPAD_BENCH_GUIDE": "{prefix}", "OPAD_LANG": "ar"}),
+            # UI-107: Help > Command reference (F1 at the running tool, search, steps) and the palette's preview pane.
+            ("reference", box, {"OPAD_BENCH_REFERENCE": "{prefix}"}),
+            ("reference-ar", box, {"OPAD_BENCH_REFERENCE": "{prefix}", "OPAD_LANG": "ar"}),
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))

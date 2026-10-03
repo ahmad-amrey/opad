@@ -40,7 +40,7 @@ if(TARGET opad)
   add_test(NAME associations COMMAND opad-test-associations)
   # UI-106/107: command help records (English + Arabic) for every registered command, the rich hover card, the clips.
   add_executable(opad-test-help test_help.cpp ../app/CommandHelp.cpp ../app/RichTip.cpp ../app/RichTip.hpp ../app/Theme.cpp ../app/Theme.hpp
-                 ../app/HelpClip.cpp ../app/HelpClip.hpp ../app/GuidedTool.cpp ../app/GuidedTool.hpp ../app/Icons.cpp ../app/I18n.cpp ../app/help.qrc)
+                 ../app/HelpClip.cpp ../app/HelpClip.hpp ../app/GuidedTool.cpp ../app/GuidedTool.hpp ../app/HelpReference.cpp ../app/HelpReference.hpp ../app/Icons.cpp ../app/I18n.cpp ../app/help.qrc)
   set_target_properties(opad-test-help PROPERTIES AUTOMOC ON AUTORCC ON)
   target_include_directories(opad-test-help PRIVATE ../app)
   target_compile_definitions(opad-test-help PRIVATE OPAD_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

@@ -32,6 +32,8 @@
 #include <algorithm>
 #include <functional>
 
+#include "CommandHelp.hpp"
+#include "HelpReference.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
@@ -107,17 +109,7 @@ QString opTypeIcon(const std::string& type) {
   return "dot";
 }
 
-QString opGroup(const QAction* a) {
-  QString id = a->objectName();
-  if (id.startsWith("file.")) return "File";
-  if (id.startsWith("view.")) return "View";
-  if (id.startsWith("nav.")) return "Navigation";
-  if (id.startsWith("select.")) return "Select";
-  if (id.startsWith("inspect.")) return "Inspect";
-  if (id.startsWith("annotate.") || id.startsWith("edit.")) return "Edit";
-  if (id.startsWith("tools.")) return "Tools";
-  return "Help";
-}
+QString opGroup(const QAction* a) { return help::group(a->objectName()); }
 
 // ---------------------------------------------------------------- DockHeader
 DockHeader::DockHeader(const QString& title, QDockWidget* dock) : QWidget(dock) {
@@ -1869,9 +1861,22 @@ class PaletteDelegate : public QStyledItemDelegate {
 CommandPalette::CommandPalette(const QList<QAction*>& actions, QWidget* parent) : QDialog(parent, Qt::Popup | Qt::FramelessWindowHint), m_actions(actions) {
   setObjectName("overlay");
   setAttribute(Qt::WA_StyledBackground);
-  setFixedWidth(560);
-  auto* layout = new QVBoxLayout(this);
-  layout->setContentsMargins(1, 1, 1, 1);
+  // The list, and beside it the current command's card (UI-107): summary, keys, its clip, what it needs.
+  auto* row = new QHBoxLayout(this);
+  row->setContentsMargins(1, 1, 1, 1);
+  row->setSpacing(0);
+  auto* column = new QWidget(this);
+  column->setFixedWidth(560);
+  row->addWidget(column);
+  auto* rule = new QFrame(this);
+  rule->setFixedWidth(1);
+  rule->setStyleSheet(QString("background: %1;").arg(theme::css(theme::current().line)));
+  row->addWidget(rule);
+  m_preview = new CommandPreview(CommandPreview::Size::Compact, this);
+  m_preview->setFixedWidth(312);
+  row->addWidget(m_preview);
+  auto* layout = new QVBoxLayout(column);
+  layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
   m_edit = new QLineEdit(this);
   m_edit->setObjectName("paletteInput");
@@ -1891,6 +1896,10 @@ CommandPalette::CommandPalette(const QList<QAction*>& actions, QWidget* parent) 
   connect(m_edit, &QLineEdit::textChanged, this, &CommandPalette::refill);
   connect(m_edit, &QLineEdit::returnPressed, this, &CommandPalette::runCurrent);
   connect(m_list, &QListWidget::itemClicked, this, [this](QListWidgetItem*) { runCurrent(); });
+  connect(m_list, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* it) {
+    auto* a = it ? static_cast<QAction*>(it->data(Qt::UserRole).value<void*>()) : nullptr;
+    m_preview->setCommand(a ? a->objectName() : QString(), a);
+  });
   m_edit->installEventFilter(this);
   refill(QString());
   m_edit->setFocus();
@@ -1915,6 +1924,7 @@ void CommandPalette::refill(const QString& filter) {
   for (QAction* a : m_actions) {
     if (a->text().isEmpty() || a->isSeparator()) continue;
     int s = fuzzyScore(a->text().remove('&'), filter, nullptr);
+    if (const CommandHelp* h = s ? nullptr : help::find(a->objectName()); h && help::matches(*h, filter)) s = 1;  // keywords, summary
     if (s > 0) scored << qMakePair(s, a);
   }
   std::stable_sort(scored.begin(), scored.end(), [](const auto& x, const auto& y) { return x.first > y.first; });

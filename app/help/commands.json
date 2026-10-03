@@ -658,6 +658,13 @@
    "keywords": ["preferences", "options", "configuration", "gear"]
   },
   {
+   "id": "help.reference",
+   "title": "Command reference",
+   "summary": "Every command with what it does, its keys and an animated guide; F1 opens it at the tool you are using.",
+   "details": "Search by name or by what you want to do; pick a command to see its card and its clip, and click a step to loop it. Over a ribbon button, F1 expands that button's card instead.",
+   "keywords": ["help", "manual", "documentation", "how to", "guide", "tutorial", "F1"]
+  },
+  {
    "id": "help.about",
    "title": "About OPAD",
    "summary": "Shows the OPAD version and the libraries it is built on.",

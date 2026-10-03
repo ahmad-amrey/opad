@@ -339,6 +339,7 @@ class TimelineWidget : public QWidget {
 };
 
 // ---------------------------------------------------------------- command search (F30)
+class CommandPreview;
 class CommandPalette : public QDialog {
   Q_OBJECT
  public:
@@ -351,6 +352,7 @@ class CommandPalette : public QDialog {
   QList<QAction*> m_actions;
   QLineEdit* m_edit;
   QListWidget* m_list;
+  CommandPreview* m_preview;  // the current command's card (UI-107)
 };
 
 // ---------------------------------------------------------------- loading shade

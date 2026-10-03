@@ -55,12 +55,14 @@ void addEnglish(Registry& r, const QJsonObject& file) {
   }
 }
 
-// Translations: {"<id>": {"title": ..., "summary": ..., "details": ..., "requires": ..., "keywords": [...]}}.
+// Translations: {"<id>": {"title": ..., "summary": ..., "details": ..., "requires": ..., "keywords": [...]}}. The English
+// title joins the keywords: search finds a command by either name.
 void addTranslation(Registry& r, const QJsonObject& file) {
   for (auto it = file.begin(); it != file.end(); ++it) {
     if (it.key().startsWith('@') || !r.index.contains(it.key())) continue;
     const QJsonObject o = it.value().toObject();
     CommandHelp& h = r.records[r.index.value(it.key())];
+    if (!o.value("title").toString().isEmpty() && !h.keywords.contains(h.title)) h.keywords << h.title;  // the English name finds it too
     auto set = [&](const char* key, QString& field) { if (!o.value(key).toString().isEmpty()) field = o.value(key).toString(); };
     set("title", h.title); set("summary", h.summary); set("details", h.details); set("requires", h.requirement);
     for (const QString& k : strings(o.value("keywords"))) if (!h.keywords.contains(k)) h.keywords.prepend(k);
@@ -165,6 +167,28 @@ bool matches(const CommandHelp& h, const QString& query) {
   for (const QString& word : query.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts))
     if (!haystack.contains(word, Qt::CaseInsensitive)) return false;
   return true;
+}
+
+QString group(const QString& id) {
+  const QString area = id.section('.', 0, 0);
+  if (area == "file") return QCoreApplication::translate("help", "File");
+  if (area == "edit") return QCoreApplication::translate("help", "Edit");
+  if (area == "select") return QCoreApplication::translate("help", "Select");
+  if (area == "view" || area == "nav" || area == "panel" || area == "workspace") return QCoreApplication::translate("help", "View");
+  if (area == "inspect") return QCoreApplication::translate("help", "Inspect");
+  if (area == "annotate") return QCoreApplication::translate("help", "Annotate");
+  if (area == "design") return QCoreApplication::translate("help", "Design");
+  if (id.startsWith("sketch.c.") || id == "sketch.dimension" || id == "sketch.constraints" || id == "sketch.moreConstrain")
+    return QCoreApplication::translate("help", "Sketch constraints");
+  if (area == "sketch") return QCoreApplication::translate("help", "Sketch");
+  if (area == "tools" || area == "help") return QCoreApplication::translate("help", "Tools and help");
+  return QCoreApplication::translate("help", "Other");
+}
+
+QStringList areas() {
+  QStringList out;
+  for (const char* id : {"file.", "edit.", "select.", "view.", "inspect.", "annotate.", "design.", "sketch.", "sketch.c.", "tools.", "x."}) out << group(id);
+  return out;
 }
 
 QString tooltip(const QAction* a) {

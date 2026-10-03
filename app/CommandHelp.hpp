@@ -35,4 +35,8 @@ bool matches(const CommandHelp& h, const QString& query);
 QString tooltip(const QAction* a);
 // The raw JSON field names a record is checked on (title, summary, details, requires, keywords).
 QStringList textFields();
+// The area a command is listed under (the palette's group column, the reference's headings), translated; areas() lists
+// them in the reference's order.
+QString group(const QString& id);
+QStringList areas();
 }  // namespace help

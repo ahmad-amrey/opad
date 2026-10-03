@@ -3,6 +3,7 @@
 #include "DesignController.hpp"
 #include "GuidedTool.hpp"
 #include "HelpClip.hpp"
+#include "HelpReference.hpp"
 #include "I18n.hpp"
 #include "RichTip.hpp"
 #include "SketchPanel.hpp"
@@ -15,6 +16,8 @@
 #include <QSettings>
 #include <QHelpEvent>
 #include <QKeyEvent>
+#include <QLineEdit>
+#include <QListWidget>
 #include <QMouseEvent>
 #include <QStatusBar>
 #include <QToolButton>
@@ -448,6 +451,93 @@ bool MainWindow::benchGuide() {
     QSettings().remove("ui/toolGuide");
     if (i18n::current() != "en") check(s && s->findChild<QToolButton*>("guideHead")->text() != "Guide", "the header in the UI language");
     trace::log(QString("bench: guide: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
+    QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
+  });
+  auto next = std::make_shared<std::function<void(size_t)>>();
+  *next = [this, steps, next, check](size_t i) {
+    if (i >= steps->size()) return;
+    QTimer::singleShot((*steps)[i].delay, this, [steps, next, check, i] {
+      try { (*steps)[i].fn(); } catch (const std::exception& e) { check(false, QString::fromUtf8(e.what())); }
+      (*next)(i + 1);
+    });
+  };
+  (*next)(0);
+  return true;
+}
+
+// OPAD_BENCH_REFERENCE=<prefix> (a document with a box): Help > Command reference and the command palette's preview
+// (UI-107). F1 opens the reference listing every command by area; with the Distance tool running it opens at Distance,
+// whose clip plays and whose steps loop one by one; the search finds commands by their keywords; a command not
+// available now says what it needs. The palette shows the current command's card and clip beside its list and finds
+// commands by keyword; its group column names the area. Saved as <prefix>.reference/.reference-search/.palette.png.
+bool MainWindow::benchReference() {
+  const QString prefix = qEnvironmentVariable("OPAD_BENCH_REFERENCE");
+  if (prefix.isEmpty()) return false;
+  QSettings().setValue("ui/tipAnimate", true);
+  auto failed = std::make_shared<QStringList>();
+  auto check = [failed](bool ok, const QString& what) {
+    trace::log(QString("bench: reference: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    if (!ok) *failed << what;
+  };
+  struct Step { int delay; std::function<void()> fn; };
+  auto steps = std::make_shared<std::vector<Step>>();
+  auto add = [steps](int delay, std::function<void()> fn) { steps->push_back({delay, std::move(fn)}); };
+  int listed = 0;
+  for (const CommandHelp& h : help::all()) listed += !h.id.section('.', -1).startsWith("more");
+  add(1000, [=, this] {
+    action("help.reference")->trigger();
+    auto* reference = findChild<CommandReference*>();
+    check(reference && reference->isVisible() && reference->shown().size() == listed && !reference->current().isEmpty(),
+          QString("F1 opens the reference with every command (%1 of %2)").arg(reference ? reference->shown().size() : 0).arg(listed));
+    if (reference) reference->hide();
+    startTool("distance");
+    action("help.reference")->trigger();
+    check(reference && reference->isVisible() && reference->current() == "inspect.distance", "F1 while measuring opens it at Distance (" + (reference ? reference->current() : QString()) + ")");
+    ClipView* clip = reference ? reference->preview()->clip() : nullptr;
+    check(clip && clip->isVisible() && clip->playing() && clip->clip() == "inspect.distance", "its clip plays");
+    QListWidget* list = reference ? reference->preview()->steps() : nullptr;
+    check(list && list->count() == clips::steps("inspect.distance").size() + 1, "its steps are listed after All steps");
+    if (list) list->setCurrentRow(2);
+    check(clip && clip->range() == qMakePair(1, 1), "a click on a step loops it");
+  });
+  add(400, [=, this] {
+    auto* reference = findChild<CommandReference*>();
+    reference->grab().save(prefix + ".reference.png");
+    cancelTool();
+    reference->setFilter("push pull");
+    const QStringList found = reference->shown();
+    bool all = !found.isEmpty();
+    for (const QString& id : found) all = all && help::matches(*help::find(id), "push pull");
+    check(found.contains("design.offset_face") && all, QString("the search finds Press pull by its keywords (%1)").arg(found.join(' ')));
+    reference->setFilter("fillet");
+    check(reference->shown().contains("design.fillet") && reference->shown().contains("sketch.fillet") && reference->preview()->command() == reference->current(), "both fillets found, the first one shown");
+    reference->grab().save(prefix + ".reference-search.png");
+    reference->open("view.unisolate");
+    check(reference->current() == "view.unisolate" && reference->shown().size() == listed && reference->preview()->showsRequirement(), "a command not available now says what it needs");
+    if (i18n::current() != "en") check(reference->layoutDirection() == Qt::RightToLeft && reference->windowTitle() != "Command reference", "the reference in the UI language and direction");
+    reference->close();
+    check(help::group("design.extrude") == opGroup(action("design.extrude")) && opGroup(action("sketch.line")) != opGroup(action("help.about")), "the palette groups commands by area");
+    auto* palette = new CommandPalette(m_actions, this);
+    palette->setAttribute(Qt::WA_DeleteOnClose);
+    palette->show();
+    auto* edit = palette->findChild<QLineEdit*>("paletteInput");
+    auto* preview = palette->findChild<CommandPreview*>();
+    auto* items = palette->findChild<QListWidget*>("paletteList");
+    edit->setText("extrude");
+    check(preview && preview->command() == "design.extrude" && preview->clip()->isVisible() && preview->clip()->playing(), "the palette previews the current command with its clip (" + (preview ? preview->command() : QString()) + ")");
+    edit->setText("push pull");
+    QStringList ids;
+    for (int i = 0; i < items->count(); ++i) ids << static_cast<QAction*>(items->item(i)->data(Qt::UserRole).value<void*>())->objectName();
+    check(ids.contains("design.offset_face"), "the palette finds commands by keyword (" + ids.join(' ') + ")");
+    edit->setText("fit");
+  });
+  add(400, [=, this] {
+    auto* palette = findChild<CommandPalette*>();
+    if (palette) {
+      palette->grab().save(prefix + ".palette.png");
+      palette->close();
+    }
+    trace::log(QString("bench: reference: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
     QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
   });
   auto next = std::make_shared<std::function<void(size_t)>>();

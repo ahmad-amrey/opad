@@ -4,6 +4,7 @@
 #include "CommandHelp.hpp"
 #include "GuidedTool.hpp"
 #include "HelpClip.hpp"
+#include "HelpReference.hpp"
 #include "I18n.hpp"
 #include "RichTip.hpp"
 #include "Theme.hpp"
@@ -14,6 +15,7 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QListWidget>
 #include <QMouseEvent>
 #include <QRegularExpression>
 #include <QSettings>
@@ -115,13 +117,14 @@ TEST(help_area_strings_are_translated) {
   const QJsonObject fragment = QJsonDocument::fromJson(source("app/i18n/ar/help.json").toUtf8()).object();
   for (auto it = fragment.begin(); it != fragment.end(); ++it) arabic.insert(it.key(), it.value());
   QStringList strings;
-  for (const char* file : {"app/RichTip.cpp", "app/RichTip.hpp", "app/CommandHelp.cpp", "app/HelpBench.cpp", "app/HelpClip.cpp", "app/HelpClip.hpp"})
-    for (const auto& m : QRegularExpression(R"re(\btr\("((?:[^"\\]|\\.)*)"\))re").globalMatch(source(file))) strings << m.captured(1);
+  for (const char* file : {"app/RichTip.cpp", "app/RichTip.hpp", "app/CommandHelp.cpp", "app/HelpBench.cpp", "app/HelpClip.cpp", "app/HelpClip.hpp", "app/HelpReference.cpp"})
+    for (const auto& m : QRegularExpression(R"re(\b(?:tr\(|translate\("help", )"((?:[^"\\]|\\.)*)"\))re").globalMatch(source(file))) strings << m.captured(1);
   CHECK(strings.size() >= 2);
   for (const QString& s : strings)
     if (arabic.value(s).toString().isEmpty()) throw check::Failure("no Arabic for \"" + s.toStdString() + "\" in app/i18n/ar/help.json");
   help::load("ar");
-  for (const QString& s : strings) CHECK_EQ(RichTip::tr(s.toUtf8().constData()), arabic.value(s).toString());
+  for (const QString& s : strings)  // the fragment's at run time (the main file's come with the app's translator)
+    if (fragment.contains(s)) CHECK_EQ(RichTip::tr(s.toUtf8().constData()), arabic.value(s).toString());
   help::load("en");
   for (const QString& s : strings) CHECK_EQ(RichTip::tr(s.toUtf8().constData()), s);
 }
@@ -144,6 +147,7 @@ TEST(lookups_search_and_tooltips) {
   help::load("ar");
   CHECK(help::matches(*help::find("design.extrude"), QString::fromUtf8("بثق")));
   CHECK(help::matches(*help::find("design.extrude"), "pull"));  // English keywords still find it
+  CHECK(help::matches(*help::find("sketch.fillet"), "sketch fillet"));  // and the English name
   help::load("en");
 }
 
@@ -425,6 +429,51 @@ TEST(tool_guide_follows_the_command) {
   const int last = int(clips::steps("inspect.distance").size()) - 1;
   CHECK(steps.guide()->view()->range() == qMakePair(last, last));
   QSettings().remove("help");
+}
+
+// Commands are listed by area (the palette's group column, the reference's headings), every area named once.
+TEST(command_areas) {
+  help::load("en");
+  CHECK_EQ(help::group("design.extrude"), QString("Design"));
+  CHECK_EQ(help::group("sketch.line"), QString("Sketch"));
+  CHECK(help::group("sketch.c.horizontal") == "Sketch constraints" && help::group("sketch.dimension") == "Sketch constraints");
+  CHECK(help::group("view.fit") == "View" && help::group("nav.fusion") == "View" && help::group("help.about") == "Tools and help");
+  QStringList areas = help::areas();
+  CHECK(areas.size() == 11 && areas.removeDuplicates() == 0);
+  for (const CommandHelp& h : help::all()) CHECK(help::areas().contains(help::group(h.id)) && help::group(h.id) != "Other");
+}
+
+// The reference lists every command but the ribbon's "more" menus by area, searches by name, keyword or summary, opens
+// at a command (clearing a filter that hides it) and shows its card: the clip, "All steps" and its steps (a click loops
+// one), and what it needs when its action is disabled.
+TEST(command_reference_lists_searches_and_opens) {
+  help::load("en");
+  clips::load();
+  QAction extrude("Extrude");
+  extrude.setObjectName("design.extrude");
+  extrude.setShortcut(QKeySequence("E"));
+  extrude.setEnabled(false);
+  CommandReference reference([&](const QString& id) { return id == "design.extrude" ? &extrude : nullptr; });
+  int listed = 0;
+  for (const CommandHelp& h : help::all()) listed += !h.id.section('.', -1).startsWith("more");
+  CHECK(reference.shown().size() == listed && !reference.shown().contains("sketch.moreCreate") && reference.current() == reference.shown().first());
+  reference.setFilter("push pull");
+  CHECK(reference.shown().contains("design.offset_face") && !reference.shown().contains("design.fillet"));
+  reference.open("design.extrude");  // listed: the filter stays
+  CHECK(reference.current() == "design.extrude" && reference.shown().size() < listed);
+  reference.open("design.fillet");  // hidden by it: the filter goes
+  CHECK(reference.current() == "design.fillet" && reference.shown().size() == listed);
+  reference.open("design.extrude");
+  CommandPreview* card = reference.preview();
+  CHECK(card->command() == "design.extrude" && card->clip()->clip() == "design.extrude" && card->showsRequirement());
+  CHECK(card->steps()->count() == clips::steps("design.extrude").size() + 1 && card->clip()->range() == qMakePair(-1, -1));
+  card->steps()->setCurrentRow(2);
+  CHECK(card->clip()->range() == qMakePair(1, 1));
+  extrude.setEnabled(true);
+  CHECK(!card->showsRequirement());
+  reference.open("file.quit");
+  CHECK(card->command() == "file.quit" && card->clip()->isHidden() && card->steps()->isHidden());
+  reference.close();
 }
 
 // The rich card's clip slot only for commands whose clip exists, when the factory says which do.
