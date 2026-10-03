@@ -216,7 +216,10 @@ void CommandPalette::refill(const QString& filter) {
     if (a->text().isEmpty() || a->isSeparator()) continue;
     int s = fuzzyScore(a->text().remove('&'), query, nullptr);
     for (const QString& keyword : a->property("commandKeywords").toStringList()) s = std::max(s, (fuzzyScore(keyword, query, nullptr) + 1) / 2);  // below a label match
-    if (const CommandHelp* h = s ? nullptr : help::find(a->objectName()); h && help::matches(*h, query)) s = 1;  // its help's keywords, summary
+    if (const CommandHelp* h = help::find(a->objectName())) {  // its help's keywords (the English name too), then its summary
+      for (const QString& keyword : h->keywords) s = std::max(s, (fuzzyScore(keyword, query, nullptr) + 1) / 2);
+      if (!s && help::matches(*h, query)) s = 1;
+    }
     if (s > 0) scored << qMakePair(s, a);
   }
   // Best match first; among equals (all of them with nothing typed) the recent commands, newest first.
