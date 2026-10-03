@@ -127,6 +127,17 @@ def asset_look(root, document):
     return design, {"OPAD_CACHE_DIR": str(root / "asset-look-cache")}
 
 
+def asset_drawing(root, document):
+    """A document holding a box, with plan.dxf beside it (a 40 mm line on layer Cut) and its next version (60 mm) in next/."""
+    folder = root / "asset-drawing"
+    (folder / "next").mkdir(parents=True)
+    line = "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nCut\n10\n0\n20\n0\n11\n{}\n21\n0\n0\nENDSEC\n0\nEOF\n"
+    (folder / "plan.dxf").write_text(line.format(40), encoding="ascii")
+    (folder / "next" / "plan.dxf").write_text(line.format(60), encoding="ascii")
+    design = document("asset-drawing/design", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'))
+    return design, {"OPAD_CACHE_DIR": str(root / "asset-drawing-cache")}
+
+
 def colors_obj(root, document):
     """An OBJ cube, Y up: its top in a gold material of its own, the rest grey (Kd 0.439, which OCCT reads as sRGB)."""
     colors = root / "colors-obj"
@@ -187,6 +198,9 @@ CASES = [
     # The asset look in the view (UI-68 / UI-121): a part read from a file not the version synced is tinted stale, fades while
     # it syncs, then shows in its own colour (<prefix>.stale.png, .synced.png).
     ("asset-look", asset_look, {"OPAD_BENCH_ASSET_LOOK": "{prefix}"}),
+    # A drawing linked where it was placed (picked plane, offset), synced after it changed: same node, same place
+    # (<prefix>.browser.png).
+    ("asset-drawing", asset_drawing, {"OPAD_BENCH_ASSET_DRAWING": "{prefix}"}),
     # Pictures (UI-71): a JPEG canvas decoded on a worker, a sketch backdrop kept as the file has it, a move storing only
     # its fields (<prefix>.canvas.png).
     ("pictures", "empty", {"OPAD_BENCH_PICTURES": "{prefix}"}),

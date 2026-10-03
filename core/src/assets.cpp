@@ -803,6 +803,11 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
   if (where.empty()) throw Error("the linked file is not found: " + asset.value("path", asset.value("abs", std::string())));
   if (file.empty() && !asset_trusted(doc, where, opt)) throw Error("the linked file is outside the document's project; trust it first: " + utf8(where));
   const std::string sha = file_sha256(where);
+  if (!file.empty() && !derived_of(asset))  // Replace may bring another kind of file (a drawing for a STEP): read as that
+    if (const std::string kind = kind_of(where); kind != asset.value("kind", "")) {
+      asset["kind"] = kind;
+      asset.erase("models_sha256");
+    }
   auto place = [&](json& a) {
     a["abs"] = utf8(where);
     if (const std::string rel = relative_to(where, doc_dir(doc)); !rel.empty()) a["path"] = rel;

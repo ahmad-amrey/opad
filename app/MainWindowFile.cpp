@@ -68,7 +68,7 @@ void MainWindow::importPath(const QString& p, int mode) {
       QMessageBox::question(this, tr("Import"), tr("Import under the selected component “%1”?").arg(m_doc->nodeName(ids[0]))) == QMessageBox::Yes)
     parent = QString::fromStdString(ids[0]);
   const QString suffix = QFileInfo(p).suffix().toLower();
-  if (suffix == "dxf" || suffix == "svg" || suffix == "dwg") return importDrawing(p, parent);
+  const bool drawing = suffix == "dxf" || suffix == "svg" || suffix == "dwg";
   if (suffix == "kicad_pcb" && KicadDialog(this, true).exec() != QDialog::Accepted) return;
   bool link = mode == 1 || (suffix == "kicad_pcb" && KicadDialog::linked());  // KiCad's export: linked to its board
   if (!link && mode < 0) {
@@ -76,6 +76,7 @@ void MainWindow::importPath(const QString& p, int mode) {
     if (chosen == assets::Mode::Cancel) return;
     link = chosen == assets::Mode::Link;
   }
+  if (drawing) return importDrawing(p, parent, link);
   beginLoad([this, p] { addRecent(p); m_viewport->fitWhenReady(); });
   m_doc->startImport(p, parent, {}, {}, link);
 }

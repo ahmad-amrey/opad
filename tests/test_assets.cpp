@@ -589,6 +589,50 @@ TEST(pictures_import_and_link) {
   CHECK(s.node(canvas)->raster["href"] == resolve(reopened).node(canvas)->raster["href"] && !s.node(canvas)->body_missing);
 }
 
+// A drawing linked where it was placed (UI-68): the placement goes with the asset, so a sync of the changed drawing keeps it,
+// node and id; Replace with another kind of file reads it as that kind.
+TEST(drawing_linked_with_its_placement) {
+  Files f;
+  const fs::path plan = f.dir / "plan.dxf";
+  auto line = [&](int to) {
+    write(plan, "0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nCut\n10\n0\n20\n0\n11\n" + std::to_string(to) + "\n21\n0\n0\nENDSEC\n0\nEOF\n");
+  };
+  line(40);
+  Document d = Document::create();
+  d.save_as(f.dir / "design.opad");
+  ImportOptions o;
+  o.placement = Mat4::translation(10, 20, 5);
+  link_file(d, plan, o);
+  const Op& op = last_import(d);
+  const std::string import_id = op.id;
+  CHECK_EQ(op.data["asset"]["kind"], "drawing");
+  CHECK(op.data["asset"]["builder"]["options"].contains("placement"));
+  Scene s = resolve(d);
+  const std::string body = linked(s, 0);
+  CHECK_EQ(s.node(body)->representation, "drawing2d");
+  auto span = [&](const Scene& sc) {
+    double x0, y0, z0, x1, y1, z1;
+    node_world_bbox(d, sc, body).Get(x0, y0, z0, x1, y1, z1);
+    return std::array<double, 3>{x0, x1, (z0 + z1) / 2};
+  };
+  auto at = span(s);
+  CHECK(about(at[0], 10, 0.01) && about(at[1], 50, 0.01) && about(at[2], 5, 0.01));
+  line(60);
+  CHECK_EQ(asset_status(d)[0].state, "changed");
+  design::Plan synced = plan_asset_sync(d, import_id);
+  CHECK_EQ(synced.report["changed"].size(), 1u);
+  design::commit(d, std::move(synced));
+  s = resolve(d);
+  at = span(s);
+  CHECK(s.node(body) && about(at[0], 10, 0.01) && about(at[1], 70, 0.01) && about(at[2], 5, 0.01));
+  CHECK_EQ(asset_status(d)[0].state, "ok");
+  // Replaced by a STEP: read as one.
+  two_boxes(f.dir / "model.step", 5);
+  design::commit(d, plan_asset_sync(d, import_id, {}, f.dir / "model.step"));
+  CHECK_EQ(asset_of(d, import_id)["kind"], "step");
+  CHECK_EQ(asset_status(d)[0].state, "ok");
+}
+
 TEST(embed_and_pack) {
   Files f;
   const fs::path step = f.dir / "outside" / "model.step";

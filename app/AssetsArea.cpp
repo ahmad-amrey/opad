@@ -79,8 +79,7 @@ void afterWorker(QObject* ctx, std::shared_ptr<std::atomic<bool>> reading, std::
 bool assets::suggestLink(const QString& path) {
   const QFileInfo info(path);
   const QString suffix = info.suffix().toLower();
-  if (suffix == "dxf" || suffix == "dwg" || suffix == "svg") return false;  // placed and copied (DrawingPlacer)
-  return suffix == "step" || suffix == "stp" || suffix == "iges" || suffix == "igs" || suffix == "kicad_pcb" || info.size() > kSuggestBytes;
+  return suffix == "step" || suffix == "stp" || suffix == "iges" || suffix == "igs" || suffix == "kicad_pcb" || info.size() > kSuggestBytes;  // a drawing: when big
 }
 
 assets::Mode assets::askImport(QWidget* parent, const QString& path) {
@@ -570,8 +569,7 @@ void AssetsArea::locate(const std::string& import) {
 
 void AssetsArea::replace(const std::string& import) {
   QStringList patterns;
-  for (const auto& ext : opad::importable_extensions())
-    if (ext != ".dxf" && ext != ".dwg" && ext != ".svg") patterns << "*" + QString::fromStdString(ext);
+  for (const auto& ext : opad::importable_extensions()) patterns << "*" + QString::fromStdString(ext);
   const QString path = QFileDialog::getOpenFileName(services().window(), tr("Replace %1").arg(name(import)), QFileInfo(m_monitor->file(import)).absolutePath(),
                                                     tr("Design files (%1)").arg(patterns.join(' ')));
   if (!path.isEmpty()) sync({import}, path);
@@ -624,9 +622,8 @@ void AssetsArea::trust(const std::string& import) {
 
 void AssetsArea::link() {
   if (!services().requireEditable([this] { link(); })) return;
-  QStringList patterns;
-  for (const auto& ext : opad::importable_extensions())
-    if (ext != ".dxf" && ext != ".dwg" && ext != ".svg") patterns << "*" + QString::fromStdString(ext);
+  QStringList patterns;  // a drawing is placed first (on the selected face, else on a plane picked), as Import… does
+  for (const auto& ext : opad::importable_extensions()) patterns << "*" + QString::fromStdString(ext);
   const QString path = QFileDialog::getOpenFileName(services().window(), tr("Link as asset"), QSettings().value("ui/lastDir").toString(), tr("Design files (%1)").arg(patterns.join(' ')));
   if (!path.isEmpty()) services().importFile(path, true);
 }

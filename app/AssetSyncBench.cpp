@@ -11,6 +11,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QPushButton>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidgetItemIterator>
@@ -23,7 +24,10 @@
 #include "AssetMonitor.hpp"
 #include "AssetsArea.hpp"
 #include "BenchRegistry.hpp"
+#include "DesignController.hpp"
+#include "DrawingPlacer.hpp"
 #include "MainWindow.hpp"
+#include "PlanePicker.hpp"
 #include "Viewport.hpp"
 #include "opad/geometry.hpp"
 
@@ -396,6 +400,92 @@ OPAD_BENCH(OPAD_BENCH_ASSET_LOOK, asset_look) {
       const int apart = std::abs(before.red() - after.red()) + std::abs(before.green() - after.green()) + std::abs(before.blue() - after.blue());
       (*require)(found && again && apart > 40, QString("drawn so: %1 -> %2").arg(before.name(), after.name()));
       QCoreApplication::exit(require->all ? 0 : 2);
+    });
+  });
+  return true;
+}
+
+// OPAD_BENCH_ASSET_DRAWING=<prefix> on a document holding a box, with plan.dxf (a 40 mm line) beside it and its next version
+// (60 mm) in next/: plan.dxf linked as Import… does with "Link as asset" chosen (MainWindow::importDrawing with link): the
+// XY plane picked, the drawing moved there by an offset in the placer, Place. The import is a linked drawing whose asset
+// records that placement, its top node marked linked in the browser, in sync; the file changes: marked changed, synced,
+// the same node now 60 mm long where it was placed. Frame: <prefix>.browser.png.
+OPAD_BENCH(OPAD_BENCH_ASSET_DRAWING, asset_drawing) {
+  static bool started = false;
+  if (std::exchange(started, true)) return true;  // the import's load comes back here: the timers below go on
+  auto require = std::make_shared<Checks>();
+  require->name = "asset-drawing";
+  const QString prefix = value;
+  AssetsArea* area = nullptr;
+  for (AreaController* a : w.m_areas)
+    if (auto* found = qobject_cast<AssetsArea*>(a)) area = found;
+  AssetMonitor* monitor = area ? area->monitor() : nullptr;
+  AppDocument* doc = w.m_doc;
+  const QString dir = QFileInfo(doc->path()).absolutePath();
+  auto importOf = [doc] {
+    for (const auto& o : doc->doc.ops)
+      if (o.type == "import" && o.data.value("source", "") == "plan.dxf") return o.id;
+    return std::string();
+  };
+  auto state = [monitor, importOf] {
+    const opad::json* s = monitor->state(importOf());
+    return s ? s->value("state", std::string()) : std::string("none");
+  };
+  (*require)(monitor && !doc->scene.all_bodies().empty() && importOf().empty(), "a document with a box, nothing linked yet");
+  if (!monitor) {
+    QCoreApplication::exit(2);
+    return true;
+  }
+  w.importDrawing(dir + "/plan.dxf", {}, true);
+  waitFor(&w, [&w] { return w.m_design->pickingPlane(); }, 10000, [=, &w](bool picking) {
+    (*require)(picking, "no face selected: the plane is picked first");
+    w.m_design->planePicker()->choose({{"base", "xy"}});
+    waitFor(&w, [&w] { return w.m_drawingPlacer->active() && w.m_drawingPlacer->panel()->findChild<QPushButton*>("primary")->isEnabled(); }, 15000, [=, &w](bool placing) {
+      (*require)(placing, "the placer shows the drawing on the plane");
+      w.m_drawingPlacer->setOffset(15, 25);
+      const opad::Mat4 placement = w.m_drawingPlacer->placement();
+      w.m_drawingPlacer->panel()->findChild<QPushButton*>("primary")->click();  // Place
+      waitFor(&w, [=, &w] { return !importOf().empty() && !doc->loading && !w.m_loadJob && state() == "ok" && !monitor->checking(); }, 20000, [=, &w](bool linked) {
+        const std::string import = importOf();
+        const opad::json asset = monitor->asset(import) ? monitor->asset(import)->asset : opad::json();
+        const opad::json recorded = asset.value("builder", opad::json::object()).value("options", opad::json::object()).value("placement", opad::json());
+        const bool same = !recorded.is_null() && opad::Mat4::from_json(recorded).apply({0, 0, 0}) == placement.apply({0, 0, 0});
+        (*require)(linked && asset.value("kind", "") == "drawing" && asset.value("storage", "") == "linked" && same,
+                   "linked where it was placed: a drawing asset recording the placement (" + QString::fromStdString(recorded.dump()) + ")");
+        std::string body;
+        for (const auto& id : doc->scene.all_bodies())
+          if (doc->node(id)->source_op == import) body = id;
+        const std::string root = monitor->asset(import) ? monitor->asset(import)->root : std::string();
+        const opad::Node* n = body.empty() ? nullptr : doc->node(body);
+        auto span = [doc, body] {
+          const Bnd_Box b = opad::node_world_bbox(doc->doc, doc->scene, body);
+          double x0 = 0, y0 = 0, z0 = 0, x1 = 0, y1 = 0, z1 = 0;
+          if (!b.IsVoid()) b.Get(x0, y0, z0, x1, y1, z1);
+          return std::array<double, 3>{x0, x1, (y0 + y1) / 2};
+        };
+        const auto at = span();
+        (*require)(n && n->linked && n->representation == "drawing2d" && monitor->isRoot(root) && std::abs(at[0] - 15) < 0.5 && std::abs(at[1] - 55) < 0.5 &&
+                       std::abs(at[2] - 25) < 0.5,
+                   QString("its part is linked, from x %1 to %2 at y %3").arg(at[0]).arg(at[1]).arg(at[2]));
+        browser::Decoration d;
+        area->decorate({root, "component", {}, doc->node(root)}, d);
+        (*require)(d.italic && d.typeIcon == "link" && d.badges.size() == 1 && d.badges[0].icon == "check", "the browser marks it linked and in sync");
+        w.m_browserOverlay->setAutoHide(false);
+        w.m_browserOverlay->reveal();
+        const bool written = rewrite(dir + "/next/plan.dxf", dir + "/plan.dxf");
+        waitFor(&w, [=] { return state() == "changed" && !monitor->checking(); }, 15000, [=, &w](bool changed) {
+          (*require)(written && changed, "the drawing changed on disk: marked changed");
+          area->sync({import});
+          waitFor(&w, [=] { return !area->busy() && state() == "ok" && !monitor->checking(); }, 30000, [=, &w](bool synced) {
+            const auto now = span();
+            const opad::json after = monitor->asset(import)->asset.value("builder", opad::json::object()).value("options", opad::json::object()).value("placement", opad::json());
+            (*require)(synced && doc->node(body) && after == recorded && std::abs(now[0] - 15) < 0.5 && std::abs(now[1] - 75) < 0.5 && std::abs(now[2] - 25) < 0.5,
+                       QString("synced where it was placed: the same node from x %1 to %2 at y %3").arg(now[0]).arg(now[1]).arg(now[2]));
+            w.m_browser->grab().save(prefix + ".browser.png");
+            QCoreApplication::exit(require->all ? 0 : 2);
+          });
+        });
+      });
     });
   });
   return true;
