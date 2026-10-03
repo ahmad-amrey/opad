@@ -44,10 +44,12 @@ OPAD_BENCH(OPAD_BENCH_IP, ip) {
 
   QAction* oda = w.action("files.useOda");
   // Answered on the first turn of the box's loop, before the bench's own dismissal (BenchQuiet: Cancel).
-  auto answer = [&w, prefix](bool accept) {
-    QTimer::singleShot(0, &w, [&w, accept, prefix] {
+  int cancelDefault = 0;  // boxes whose default button (Enter) is Cancel: the terms take a deliberate click
+  auto answer = [&w, prefix, &cancelDefault](bool accept) {
+    QTimer::singleShot(0, &w, [&w, accept, prefix, &cancelDefault] {
       auto* box = w.findChild<QMessageBox*>("odaTerms");
       if (!box) return;
+      if (box->defaultButton() && box->defaultButton() == box->button(QMessageBox::Cancel)) ++cancelDefault;
       if (accept) box->grab().save(prefix + ".oda-terms.png");
       for (auto* b : box->buttons())
         if (box->buttonRole(b) == (accept ? QMessageBox::AcceptRole : QMessageBox::RejectRole)) return b->click();
@@ -62,6 +64,7 @@ OPAD_BENCH(OPAD_BENCH_IP, ip) {
     answer(true);
     oda->trigger();
     report("ODA terms accepted: on", oda->isChecked() && opad::use_oda() && odaSetting());
+    report(QString("ODA terms box: Enter means Cancel (%1 of 2 boxes)").arg(cancelDefault), cancelDefault == 2);
     oda->trigger();
     report("ODA off again without asking", !oda->isChecked() && !opad::use_oda() && !odaSetting());
   }

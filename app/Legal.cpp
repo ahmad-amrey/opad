@@ -66,9 +66,11 @@ void setUseOda(QWidget* parent, QAction* action, bool on) {
         QObject::tr("The ODA File Converter is third-party software from the Open Design Alliance, not part of OPAD. Its "
                     "licence lets non-members use it for non-commercial purposes only: turn this on only if your use is "
                     "covered.\n\nWhen on, OPAD reads and writes DWG through an installed ODA File Converter; otherwise "
-                    "through LibreDWG, which comes with OPAD."), QMessageBox::Cancel, parent);
+                    "through LibreDWG's dwg2dxf and dxf2dwg, beside OPAD or on PATH (the portable package includes them)."),
+        QMessageBox::Cancel, parent);
     if (!installed) box.setInformativeText(QObject::tr("No ODA File Converter is installed on this computer (OPAD looks in the ODA folder under Program Files)."));
     QPushButton* use = box.addButton(QObject::tr("Use it"), QMessageBox::AcceptRole);
+    box.setDefaultButton(QMessageBox::Cancel);  // accepting the terms takes a deliberate click, not Enter
     box.setObjectName("odaTerms");
     box.exec();
     if (box.clickedButton() != use) {

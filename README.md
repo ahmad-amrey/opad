@@ -1,7 +1,7 @@
 # OPAD - git-native CAD and review
 
 OPAD views CAD models, meshes and drawings: STEP (AP203/AP214/AP242, assemblies included), IGES, BREP, STL, 3MF,
-OBJ, PLY, glTF/GLB, VRML, DXF, DWG (through the bundled LibreDWG converter) and SVG. It saves what you do with them in a single
+OBJ, PLY, glTF/GLB, VRML, DXF, DWG (through LibreDWG's converter, which the portable package includes) and SVG. It saves what you do with them in a single
 plain-text `.opad` file that diffs and merges cleanly in git, and exposes everything it can do to scripts and
 AI agents through a headless CLI, a Python module and a [stdio MCP server](docs/mcp.md). The desktop app offers mouse
 navigation presets familiar to users of other CAD tools (Fusion-style, SOLIDWORKS-style, Onshape-style, Blender-style).
