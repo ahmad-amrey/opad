@@ -162,3 +162,8 @@ if(OPAD_BUILD_PYTHON AND Python3_Interpreter_FOUND)
     ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:opad_python>;OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache")
 endif()
 
+
+add_executable(opad-test-drawing-export test_drawing_export.cpp)
+target_link_libraries(opad-test-drawing-export PRIVATE opad::core)
+add_test(NAME drawing-export COMMAND opad-test-drawing-export)
+set_tests_properties(drawing-export PROPERTIES ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache" TIMEOUT 120)

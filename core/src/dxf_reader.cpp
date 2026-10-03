@@ -222,6 +222,8 @@ std::string mtext_plain(std::string_view s) {
 
 bool blank(const std::string& s) { return s.find_first_not_of(" \t\n") == std::string::npos; }
 
+}  // namespace
+
 // AutoCAD Color Index -> RGB: 1-9 fixed, 10-249 24 hues x 5 shades x full/half saturation, 250-255 greys.
 uint32_t aci_rgb(int i) {
   static const uint32_t fixed[10] = {0x000000, 0xFF0000, 0xFFFF00, 0x00FF00, 0x00FFFF, 0x0000FF, 0xFF00FF, 0xFFFFFF, 0x414141, 0x808080};
@@ -245,6 +247,8 @@ uint32_t aci_rgb(int i) {
   auto byte = [](double t) { return uint32_t(std::floor(t * 255 + 1e-9)); };
   return byte(r + m) << 16 | byte(g + m) << 8 | byte(b + m);
 }
+
+namespace {
 
 // White and black are the drawing's foreground (ACI 7 swaps with the background): the viewer's own colour.
 uint32_t visible_color(uint32_t rgb) { return rgb == 0xFFFFFF || rgb == 0 ? kNoColor : rgb; }
