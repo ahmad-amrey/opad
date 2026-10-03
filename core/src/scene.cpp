@@ -4,6 +4,7 @@
 #include <functional>
 #include <cmath>
 #include <set>
+#include <unordered_set>
 
 #include "opad/design/expr.hpp"
 #include "opad/design/sketch.hpp"
@@ -667,29 +668,41 @@ Scene resolve(const Document& doc, const std::string& until) {
 
 std::set<std::string> ops_in_component(const Document& doc, const Scene& scene, const std::string& component) {
   std::set<std::string> out;
-  auto under = [&](const json& id) {
-    if (!id.is_string()) return false;
-    for (const Node* n = scene.node(id.get<std::string>()); n; n = n->parent.empty() ? nullptr : scene.node(n->parent))
-      if (n->id == component) return true;
-    return false;
+  std::unordered_set<std::string> inside;  // the component and what is under it, walked down once (the UI asks per change)
+  std::function<void(const std::string&)> walk = [&](const std::string& id) {
+    if (const Node* n = scene.node(id); n && inside.insert(id).second) {
+      out.insert(n->source_op);  // what made the nodes in it (the component itself, imports, features)
+      for (const auto& c : n->children) walk(c);
+    }
   };
-  for (const auto& [id, n] : scene.nodes)  // what made the nodes in it (the component itself, imports, features)
-    if (component.empty() || under(id)) out.insert(n.source_op);
-  std::vector<std::string> deleted;
-  const std::vector<EffectiveOp> effective = effective_ops(doc, &deleted);
-  std::vector<std::pair<const Op*, const json*>> ops;  // the effective log, then tombstoned ops as written
-  for (const auto& e : effective) ops.push_back({e.op, &e.data()});
-  for (const auto& op : doc.ops)
-    if (std::binary_search(deleted.begin(), deleted.end(), op.id)) ops.push_back({&op, &op.data});
-  for (const auto& [op, data] : ops) {
-    const json& d = *data;
-    const std::string& type = op->type;
-    bool in = component.empty() || out.count(op->id);
-    if (!in && (type == "sketch" || type == "feature")) in = under(d.value("component", json()));
-    if (!in && type == "feature")
-      if (const auto r = d.find("result"); r != d.end() && r->is_object())
-        if (const auto bodies = r->find("bodies"); bodies != r->end() && bodies->is_array())
+  if (component.empty())
+    for (const auto& [id, n] : scene.nodes) out.insert(n.source_op);
+  else
+    walk(component);
+  auto under = [&](const json& id) { return id.is_string() && inside.count(id.get<std::string>()) > 0; };
+  // Ops as written, tombstoned ones too; what an edit or a regeneration changed of a sketch or a feature (its component,
+  // its bodies) from the scene. No effective_ops: its copies of edited ops cost more than all of this (12 ms on the Engine).
+  std::unordered_map<std::string, const Feature*> features;
+  std::unordered_map<std::string, const SketchItem*> sketches;
+  for (const auto& f : scene.features) features[f.id] = &f;
+  for (const auto& s : scene.sketches) sketches[s.id] = &s;
+  for (const Op& op : doc.ops) {
+    const json& d = op.data;
+    const std::string& type = op.type;
+    if (type == "edit" || type == "regen" || type == "delete") continue;
+    bool in = component.empty() || out.count(op.id);
+    const auto feature = type == "feature" ? features.find(op.id) : features.end();
+    const auto sketch = type == "sketch" ? sketches.find(op.id) : sketches.end();
+    if (!in && feature != features.end()) in = under(json(feature->second->component));
+    else if (!in && sketch != sketches.end()) in = under(json(sketch->second->component));
+    else if (!in && (type == "sketch" || type == "feature")) in = under(d.value("component", json()));
+    if (!in && type == "feature") {
+      const json* result = feature != features.end() ? &feature->second->result : nullptr;
+      if (const auto r = d.find("result"); !result && r != d.end()) result = &*r;
+      if (result && result->is_object())
+        if (const auto bodies = result->find("bodies"); bodies != result->end() && bodies->is_array())
           for (const auto& b : *bodies) in = in || under(b.value("id", json()));
+    }
     if (!in && (type == "reparent" || type == "transform" || type == "appearance" || type == "rename")) in = under(d.value("target", json()));
     if (!in && type == "reparent") in = under(d.value("parent", json()));
     if (!in && type == "import") in = under(d.value("parent", json()));
@@ -703,7 +716,7 @@ std::set<std::string> ops_in_component(const Document& doc, const Scene& scene, 
     if (!in && type == "annotation" && d.contains("anchor")) in = ref_under(d["anchor"]);
     if (!in && type == "measurement")
       for (const auto& r : d.value("refs", json::array())) in = in || ref_under(r);
-    if (in) out.insert(op->id);
+    if (in) out.insert(op.id);
   }
   for (const auto& op : doc.ops)  // the tombstone (or the restore) of one that touches it, in log order
     if (op.type == "delete" && out.count(op.data.value("target", ""))) out.insert(op.id);
