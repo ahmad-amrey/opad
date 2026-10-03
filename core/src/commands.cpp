@@ -548,6 +548,11 @@ void register_builtins() {
       [](Document* d, const json& a) {
         json op = op_with_target("transform", a);
         op["matrix"] = Mat4::from_json(a.at("matrix")).to_json();
+        if (design::has_locks(need(d))) {  // TODO 11 UI-37
+          const Scene s = resolve(need(d));
+          const Node* n = s.node(op["target"].is_string() ? op["target"].get<std::string>() : "");
+          if (n && s.effectively_locked(n->id)) throw Error("\"" + n->name + "\" is locked: unlock it before moving it");
+        }
         json j;
         j["id"] = need(d).append(op, a.value("by", "")).id;
         return j;

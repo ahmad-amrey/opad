@@ -192,6 +192,9 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - `feature` and `feature_edit` take `suppress_if`, an expression over the parameters: while it is true (nonzero) the
   feature is suppressed, and a parameter change that flips it regenerates (`"joint_type == 1"`, `"joints < 3"`);
   `feature_edit` with `suppress_if: ""` removes it. What it last made is kept for when it comes back.
+- Locked bodies (`appearance` `locked: true`, everything under a locked component, a drawing layer locked in its
+  file; `context` nodes report `locked`) are not changed, moved or removed: such a command is refused naming the body.
+  They still serve as references and sources of copies, and automatic join/cut targets leave them out.
 
 ## New bodies: names, colours, components
 

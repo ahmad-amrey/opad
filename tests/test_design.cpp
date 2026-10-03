@@ -1799,3 +1799,85 @@ TEST(features_and_sketches_made_in_a_component) {
   s = resolve(doc);
   CHECK(s.sketch(sketch)->component.empty() && s.feature(plane["feature_id"])->component.empty());
 }
+
+// TODO 11 UI-37: a locked body, or one under a locked component, is not changed, moved or removed: the change is
+// refused naming it and the document stays as it was. It is still a reference (a sketch on its face) and a source (a
+// copy of it), automatic join / cut targets leave it out, its colour and name still change, a component above it still
+// moves (it with it), and an unlocked component that goes with it (a drawing deleted with a locked layer) still goes.
+TEST(locked_bodies_are_left_alone) {
+  Document doc = Document::create();
+  const json made = feature_cmd(doc, "box", {{"length", "40 mm"}, {"width", "40 mm"}, {"height", "5 mm"}});
+  const std::string plate = made["body_ids"][0], plate_op = made["feature_id"];
+  const std::string block = feature_cmd(doc, "box", {{"x", "60 mm"}, {"length", "10 mm"}, {"width", "10 mm"}, {"height", "10 mm"}})["body_ids"][0];
+  CHECK(!has_locks(doc));
+  commands::run("appearance", {{"target", plate}, {"locked", true}}, &doc);
+  Scene s = resolve(doc);
+  CHECK(has_locks(doc) && s.effectively_locked(plate) && !s.effectively_locked(block));
+  const std::string plate_key = s.node(plate)->body_key, block_key = s.node(block)->body_key;
+  auto refusal = [&](const std::string& command, const json& args) {
+    const size_t ops = doc.ops.size();
+    std::string why;
+    try {
+      commands::run(command, args, &doc);
+    } catch (const Error& e) {
+      why = e.what();
+    }
+    CHECK_EQ(doc.ops.size(), ops);
+    return why;
+  };
+  auto locked = [&](const std::string& name, const char* verb) { return "\"" + name + "\" is locked: unlock it before " + verb + " it"; };
+  const std::string name = s.node(plate)->name;
+  CHECK_EQ(refusal("feature", {{"kind", "fillet"}, {"inputs", {{"edges", json::array({plate + "/edge/0"})}, {"radius", "1 mm"}}}}), locked(name, "changing"));
+  CHECK_EQ(refusal("feature", {{"kind", "box"}, {"inputs", {{"length", "4 mm"}, {"width", "4 mm"}, {"height", "20 mm"}, {"operation", "cut"}, {"targets", json::array({body_ref(plate)})}}}}),
+           locked(name, "changing"));
+  CHECK_EQ(refusal("feature", {{"kind", "move"}, {"inputs", {{"bodies", json::array({plate})}, {"dz", "5 mm"}}}}), locked(name, "changing"));
+  CHECK_EQ(refusal("feature", {{"kind", "remove"}, {"inputs", {{"bodies", json::array({plate})}}}}), locked(name, "removing"));
+  CHECK_EQ(refusal("feature_edit", {{"target", plate_op}, {"inputs", {{"height", "6 mm"}}}}), locked(name, "changing"));
+  CHECK_EQ(refusal("delete", {{"target", plate_op}}), locked(name, "removing"));
+  CHECK_EQ(refusal("transform", {{"target", plate}, {"matrix", Mat4::translation(0, 0, 5).to_json()}}), locked(name, "moving"));
+  // Still a reference and a source; its look and name are not edits.
+  commands::run("sketch", {{"plane", {{"face", plate + "/face/0"}}}, {"geometry", rectangle(0, 0, 4, 4).to_json()}}, &doc);
+  CHECK_EQ(feature_cmd(doc, "move", {{"bodies", json::array({plate})}, {"dx", "100 mm"}, {"copy", true}})["body_ids"].size(), 1u);
+  commands::run("appearance", {{"target", plate}, {"color", json::array({0.2, 0.2, 0.2})}}, &doc);
+  commands::run("rename", {{"target", plate}, {"name", "Base plate"}}, &doc);
+  // An automatic cut through the plate and the block cuts the block alone, and says so in its targets.
+  const json cut = feature_cmd(doc, "box", {{"x", "37.5 mm"}, {"length", "40 mm"}, {"width", "4 mm"}, {"height", "20 mm"}, {"operation", "cut"}});
+  s = resolve(doc);
+  CHECK_EQ(s.node(plate)->body_key, plate_key);
+  CHECK(s.node(block)->body_key != block_key);
+  CHECK_EQ(s.feature(cut["feature_id"])->inputs["targets"].size(), 1u);
+  CHECK_EQ(s.feature(cut["feature_id"])->inputs["targets"][0]["body"], block);
+  // A locked component locks what is in it; the component above it still moves, and it moves along.
+  const std::string outer = commands::run("component", {{"name", "Outer"}}, &doc)["component_id"];
+  const std::string inner = commands::run("component", {{"name", "Inner"}, {"parent", outer}}, &doc)["component_id"];
+  const std::string pin = commands::run("feature", {{"kind", "box"}, {"inputs", {{"x", "200 mm"}, {"length", "4 mm"}, {"width", "4 mm"}, {"height", "10 mm"}}}, {"component", inner}}, &doc)["body_ids"][0];
+  commands::run("appearance", {{"target", inner}, {"locked", true}}, &doc);
+  s = resolve(doc);
+  CHECK(s.effectively_locked(pin) && !s.node(pin)->locked);
+  CHECK_EQ(refusal("feature", {{"kind", "fillet"}, {"inputs", {{"edges", json::array({pin + "/edge/0"})}, {"radius", "0.5 mm"}}}}), locked(s.node(pin)->name, "changing"));
+  CHECK_EQ(refusal("transform", {{"target", inner}, {"matrix", Mat4::translation(0, 0, 5).to_json()}}), locked("Inner", "moving"));
+  commands::run("transform", {{"target", outer}, {"matrix", Mat4::translation(0, 0, 10).to_json()}}, &doc);
+  CHECK_NEAR(resolve(doc).world(pin).at(2, 3), 10, 1e-12);
+  // Several at once: the first is named and the rest counted.
+  s = resolve(doc);
+  Scene gone = s;
+  gone.nodes.erase(plate);
+  gone.nodes.erase(pin);
+  CHECK(locked_change(s, gone).find(" is locked: unlock it before removing it (and 1 more locked)") != std::string::npos);
+  CHECK(locked_change(s, s).empty());
+  // A drawing whose layer is locked (an import node's "locked"): the layer's body alone is not removed, the drawing is.
+  const json line = {{"type", "body"}, {"id", new_uuid()}, {"name", "Walls"}, {"key", block_key}};
+  const json walls = {{"type", "component"}, {"id", new_uuid()}, {"name", "Walls"}, {"locked", true}, {"layer", {{"name", "Walls"}, {"locked", true}}}, {"children", json::array({line})}};
+  const json drawing = {{"op", "import"}, {"source", "walls.dxf"}, {"nodes", json::array({{{"type", "component"}, {"id", new_uuid()}, {"name", "walls"}, {"children", json::array({walls})}}})}};
+  const std::string drawing_op = commands::run("append", {{"op", drawing}}, &doc)["appended"][0];
+  s = resolve(doc);
+  CHECK(s.effectively_locked(line["id"]) && s.node(walls["id"])->layer["locked"] == true);
+  CHECK_EQ(refusal("feature", {{"kind", "remove"}, {"inputs", {{"bodies", json::array({line["id"]})}}}}), locked("Walls", "removing"));
+  commands::run("delete", {{"target", drawing_op}}, &doc);
+  CHECK(!resolve(doc).node(line["id"]));
+  // A regeneration is a repair, never refused; unlocked, the plate changes again.
+  commands::run("regenerate", {{"force", true}}, &doc);
+  commands::run("appearance", {{"target", plate}, {"locked", false}}, &doc);
+  feature_cmd(doc, "fillet", {{"edges", json::array({plate + "/edge/0"})}, {"radius", "1 mm"}});
+  CHECK(resolve(doc).node(plate)->body_key != plate_key);
+}

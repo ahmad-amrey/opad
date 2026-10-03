@@ -772,6 +772,9 @@ struct Walk {
       if (e.op->type == "param") defs.push_back({e.op->id, e.data().value("name", ""), e.data().value("expr", ""), e.data().value("comment", "")});
     const ParamTable params(defs);
     if (strict) check_params(params, ops);
+    // What is locked now stays as it is (TODO 11 UI-37); the replay to compare with only when something is locked.
+    std::optional<Scene> locked_before;
+    if (strict && has_locks(doc)) locked_before = resolve(doc);
 
     json errors = json::array();
     // Parameters this change stops from evaluating (a check such as sqrt(margin / 1 mm) on a negative margin),
@@ -915,6 +918,8 @@ struct Walk {
       }
       for (const auto& err : errors)
         if (direct.count(err["op"].get<std::string>())) throw Error(err["error"].get<std::string>());
+      if (locked_before)
+        if (const std::string why = locked_change(*locked_before, builder.scene()); !why.empty()) throw Error(why);
     }
 
     plan.ops = new_ops;
@@ -982,6 +987,36 @@ json commit(Document& doc, Plan&& plan, const std::string& author) {
 }
 
 json apply_ops(Document& doc, std::vector<json> new_ops, const std::string& author) { return commit(doc, plan_ops(doc, std::move(new_ops)), author); }
+
+bool has_locks(const Document& doc) {
+  auto locks = [](const std::string& t) { return t.find("\"locked\":true") != std::string::npos || t.find("\"locked\": true") != std::string::npos; };
+  for (const auto& o : doc.ops)
+    if (o.raw.empty() ? locks(o.data.dump()) : locks(o.raw)) return true;
+  return false;
+}
+
+std::string locked_change(const Scene& before, const Scene& after) {
+  std::string first;
+  size_t count = 0;
+  for (const auto& [id, n] : before.nodes) {
+    if (!before.effectively_locked(id)) continue;
+    const Node* now = after.node(id);
+    const char* what = nullptr;
+    if (!now) {
+      std::string top = id;  // the outermost component that goes with it
+      for (const Node* p = before.node(n.parent); p && !after.node(p->id); p = p->parent.empty() ? nullptr : before.node(p->parent)) top = p->id;
+      if (before.effectively_locked(top)) what = "removing";
+    } else if (now->body_key != n.body_key) {
+      what = "changing";
+    } else if (now->local.m != n.local.m) {
+      what = "moving";
+    }
+    if (!what) continue;
+    if (++count == 1) first = "\"" + n.name + "\" is locked: unlock it before " + what + " it";
+  }
+  if (count > 1) first += " (and " + std::to_string(count - 1) + " more locked)";
+  return first;
+}
 
 // ---------------------------------------------------------------- helpers
 json make_param_op(const std::string& name, const std::string& expr, const std::string& comment) {

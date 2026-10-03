@@ -498,6 +498,7 @@ void apply_operation(const Ctx& ctx, const json& inputs, const TopoDS_Shape& too
     for (const auto& id : ctx.scene.all_bodies()) {
       const Node* n = ctx.scene.node(id);
       if (!n || n->representation != "solid" || (n->body_missing && !ctx.fresh.count(n->body_key))) continue;
+      if (ctx.scene.effectively_locked(id)) continue;  // left alone, as when it is named (UI-37)
       if (!box_of(ctx.node_shape(id)).IsOut(tb)) targets.push_back(id);
     }
   }

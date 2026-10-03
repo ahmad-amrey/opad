@@ -75,7 +75,7 @@ using Cancel = std::function<bool()>;
 
 // Appends new ops (param / sketch / feature / edit / delete ...), given without results: results of new and of
 // every affected later op are computed. `strict`: an error in one of the *new* ops throws instead of being
-// recorded, so a wrong input never reaches the document.
+// recorded, so a wrong input never reaches the document; so does a plan that changes a locked body (locked_change).
 Plan plan_ops(const Document& doc, std::vector<json> new_ops, bool strict = true, const Cancel& cancel = {});
 // Recomputes whatever is out of date (after a merge, a hand edit, a tombstone). An empty plan = up to date.
 Plan plan_regenerate(const Document& doc, bool force = false, const Cancel& cancel = {});
@@ -83,6 +83,13 @@ json commit(Document& doc, Plan&& plan, const std::string& author = {});
 
 // Convenience for the command layer and tests: plan + commit.
 json apply_ops(Document& doc, std::vector<json> new_ops, const std::string& author = {});
+
+// Locks (TODO 11 UI-37): whether an op of the document locks anything (a scan of the log, no replay), and why going
+// from `before` to `after` is refused: it removes, changes or moves a body or component that is locked in `before`
+// (empty: it does not). A locked one that goes with an unlocked component above it (a drawing deleted with a locked
+// layer) may go; one inside a component that moves stays where it is in it.
+bool has_locks(const Document& doc);
+std::string locked_change(const Scene& before, const Scene& after);
 
 // ---------------------------------------------------------------- helpers shared with the app
 // Op builders (no results; feed them to plan_ops).

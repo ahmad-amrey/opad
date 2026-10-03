@@ -26,7 +26,8 @@ struct Node {
   std::array<double, 3> color{0.75, 0.75, 0.78};
   double opacity = 1.0;
   bool visible = true;
-  bool locked = false;
+  bool locked = false;  // not picked and not changed, moved or removed (Scene::effectively_locked: or under a locked component)
+  json layer;  // a drawing layer as its file had it: {name, off, frozen, locked, plot, linetype, lineweight}; null otherwise
   std::string source_op;  // the import op that created it
   std::vector<std::string> modified_by;  // ops that touched this node after import
 };
@@ -132,6 +133,7 @@ struct Scene {
   const Node* node(const std::string& id) const;
   Mat4 world(const std::string& id) const;
   bool effectively_visible(const std::string& id) const;
+  bool effectively_locked(const std::string& id) const;  // it or a component above it is locked
   std::vector<std::string> bodies_under(const std::string& id) const;  // depth-first
   std::vector<std::string> all_bodies() const;
   std::vector<std::string> path_to(const std::string& id) const;  // root..id
