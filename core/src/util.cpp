@@ -210,9 +210,16 @@ std::filesystem::path path_from_utf8(std::string_view utf8) {
 std::string read_text_file(const std::filesystem::path& p) {
   std::ifstream in(p, std::ios::binary);
   if (!in) throw Error("cannot open file: " + p.string());
-  std::ostringstream ss;
-  ss << in.rdbuf();
-  return ss.str();
+  // In one read at its size (a stream copied through a string stream took 0.6 s for the 334 MB Engine), then whatever
+  // it grew by meanwhile.
+  std::error_code ec;
+  const auto size = std::filesystem::file_size(p, ec);
+  std::string text(ec ? 0 : size_t(size), '\0');
+  in.read(text.data(), std::streamsize(text.size()));
+  text.resize(size_t(in.gcount()));
+  char buf[1 << 16];
+  while (in && (in.read(buf, sizeof buf) || in.gcount() > 0)) text.append(buf, size_t(in.gcount()));
+  return text;
 }
 
 void write_text_file(const std::filesystem::path& p, std::string_view text) {

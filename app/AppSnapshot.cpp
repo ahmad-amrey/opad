@@ -17,19 +17,25 @@ Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwr
   if(!QDir::isAbsolutePath(destination) || QFileInfo(destination).suffix().compare("opad",Qt::CaseInsensitive)!=0)
     throw opad::Error("Save requires an absolute path ending in .opad.");
   struct Save {
-    std::atomic<bool> finished{false};bool written=false;QString error;
+    std::atomic<bool> finished{false};bool written=false,blocked=false;QString error;
     std::vector<std::string> ids;size_t bodies=0;
+    DiskStat stat;std::shared_ptr<const opad::Manifest> manifest;
   };
   auto result=std::make_shared<Save>();const auto source=m_storage;const auto current=path();
+  const auto diskFile=m_diskFile;const auto diskStat=m_diskStat;  // the save guard (UI-56)
   const auto identity=generation;const auto savedRevision=revision;
   m_capturing=true;designBusy=true;emit undoChanged();
-  auto* job=jobs->async(tr("Saving document"),[source,result,destination,current,overwrite,testDelayMs](Progress progress){
+  auto* job=jobs->async(tr("Saving document"),[source,result,destination,current,overwrite,testDelayMs,diskFile,diskStat](Progress progress){
     try {
       const QFileInfo target(destination),original(current);
       const bool same=!current.isEmpty() && (QDir::cleanPath(destination)==QDir::cleanPath(current) ||
           (!original.canonicalFilePath().isEmpty() && original.canonicalFilePath()==target.canonicalFilePath()));
       const bool replace=overwrite || same;
       if(target.exists() && !replace)throw opad::Error("Destination already exists. Choose a new path or explicitly set overwrite=true.");
+      if(!diskFile.isEmpty() && target==QFileInfo(diskFile)){
+        const auto now=statFile(destination);
+        if(now.exists && now!=diskStat){result->blocked=true;throw opad::Error("changed_on_disk: the file changed on disk since this session read or wrote it (a git pull, another OPAD or opad-cli); merge or reload it, or save to another path");}
+      }
       if(progress.cancelled())throw opad::Error("cancelled");
       const auto text=source->serialize();
       result->ids.reserve(source->ops.size());for(const auto& op:source->ops)result->ids.push_back(op.id);result->bodies=source->body_count();
@@ -53,6 +59,7 @@ Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwr
         if(!fresh.rename(destination))throw opad::Error(fresh.errorString().toStdString());fresh.setAutoRemove(false);
       }
       result->written=true;
+      result->stat=statFile(destination);result->manifest=std::make_shared<opad::Manifest>(opad::Manifest::of(*source));
     }catch(const std::exception& e){result->error=QString::fromUtf8(e.what());}
     catch(...){result->error=QStringLiteral("Unexpected error while saving the document.");}
     result->finished.store(true,std::memory_order_release);
@@ -63,6 +70,10 @@ Job* AppDocument::saveAsync(JobRunner* jobs,const QString& requested,bool overwr
   connect(timer,&QTimer::timeout,this,[this,timer,result,done,destination,identity,savedRevision]{
     if(!result->finished.load(std::memory_order_acquire))return;
     timer->stop();timer->deleteLater();m_capturing=false;designBusy=false;
+    // The file holds what was written; it is this document's file when the path moved there or was already it.
+    if(result->written && generation==identity && (revision==savedRevision || QFileInfo(destination)==QFileInfo(m_diskFile)))
+      setDisk(QFileInfo(destination).absoluteFilePath(),result->stat,result->manifest);
+    if(result->blocked)emit saveBlocked();
     if(result->written && generation==identity && revision==savedRevision){
       doc.path=std::filesystem::path(destination.toStdU16String());doc.header.format=opad::kFormatVersion;
       m_savedIds=std::move(result->ids);m_savedBodies=result->bodies;doc.dirty=false;

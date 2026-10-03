@@ -1,5 +1,7 @@
 #pragma once
+#include <atomic>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -37,6 +39,20 @@ struct BodyEntry {
   std::string key;
   json meta;         // name, color, units, source, ...
   std::string brep;  // OCCT ASCII BREP, LF line endings, trailing newline
+  // Index mode (Document::parse_index): the entry's lines in the text the document was read from, neither copied nor
+  // verified when read; `brep` stays empty. text() is the BREP either way, as stored (sizes, saving, outlines).
+  std::string_view indexed;
+  std::string_view text() const { return indexed.empty() ? std::string_view(brep) : indexed; }
+  // The BREP for using it (a shape, a copy into another store): an index-mode entry is hashed against its key on the
+  // first call only (any thread) and throws on this and every later call when it does not match. Other entries were
+  // verified when read.
+  std::string_view checked_text() const;
+  struct Check {  // 0 not hashed yet, 1 matches the key, 2 does not
+    mutable std::atomic<unsigned char> state{0};
+    Check() = default;
+    Check(const Check& o) : state(o.state.load()) {}
+    Check& operator=(const Check& o) { state = o.state.load(); return *this; }
+  } check;
 };
 
 struct ShapeCache;  // opaque; defined in geometry.cpp
@@ -46,8 +62,18 @@ class Document {
  public:
   Document();
   static Document create(const std::string& units = "mm");
-  static Document load(const std::filesystem::path& path);
-  static Document parse(const std::string& text, const std::filesystem::path& origin = {});
+  // `skip_body(key)` true leaves that body entry out, unread and unverified (a version compared with one already
+  // in memory needs only the bodies it does not have).
+  using BodyFilter = std::function<bool(const std::string& key)>;
+  static Document load(const std::filesystem::path& path, const BodyFilter& skip_body = {});
+  static Document parse(const std::string& text, const std::filesystem::path& origin = {}, const BodyFilter& skip_body = {});
+  // Index mode, for reading a version rather than editing it (diff, compare, textconv, history): body entries are
+  // listed with their meta but their BREP is neither copied nor hashed (git or the session that wrote it verified it).
+  // The document keeps the text; a body's BREP is read from there when it is asked for and hashed the first time it is
+  // used (BodyEntry::checked_text: a shape, a move into another store). Saves byte-identically.
+  static Document load_index(const std::filesystem::path& path, const BodyFilter& skip_body = {});
+  static Document parse_index(std::string text, const std::filesystem::path& origin = {}, const BodyFilter& skip_body = {});
+  bool indexed() const { return source_ != nullptr; }
 
   std::string serialize() const;
   void save();                                     // to `path`
@@ -66,6 +92,10 @@ class Document {
   std::vector<std::string> body_keys() const;
   size_t body_count() const { return bodies_.size(); }
   const std::vector<BodyEntry>& bodies() const { return bodies_; }
+  // Rebuilds the body store as `keys` in that order, each kept from this store or moved out of `from` (verified when
+  // that was parsed; an index-mode entry not checked yet is hashed here), then this store's other entries when
+  // `keep_others`. Throws, changing nothing, when a key is in neither or a moved entry does not match its key.
+  void arrange_bodies(const std::vector<std::string>& keys, Document& from, bool keep_others);
 
   // Removes body entries that no live (non-tombstoned) op references. Returns removed keys.
   std::vector<std::string> gc();
@@ -91,9 +121,11 @@ class Document {
   static bool known_type(const std::string& type);
 
  private:
+  static Document parse_text(std::string_view text, const std::filesystem::path& origin, const BodyFilter& skip_body, bool index);
   std::vector<BodyEntry> bodies_;
   std::unordered_map<std::string, size_t> bodies_index_;
   size_t persisted_ops_ = 0;
+  std::shared_ptr<const std::string> source_;  // index mode: the text the entries' views point into
 };
 
 }  // namespace opad

@@ -230,7 +230,7 @@ json document_info(const Document& doc, const Scene& scene) {
     j["bbox"] = bbox_json(b);
   }
   size_t brep_bytes = 0;
-  for (const auto& b : doc.bodies()) brep_bytes += b.brep.size();
+  for (const auto& b : doc.bodies()) brep_bytes += b.text().size();
   j["body_store_bytes"] = brep_bytes;
   if (!doc.path.empty()) {
     std::error_code ec;

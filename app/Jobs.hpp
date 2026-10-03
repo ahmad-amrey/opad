@@ -87,6 +87,8 @@ class JobRunner : public QObject {
   Job* begin(const QString& title, bool twoBars = false);
   // Runs `work` on a worker thread. Exceptions become a failed finish; `done` runs on the UI thread.
   Job* async(const QString& title, std::function<void(Progress)> work, std::function<void(bool ok, const QString& error)> done = {});
+  // The same, never shown in the strip nor counted by busy(): short reads in the background (git status).
+  Job* quiet(const QString& title, std::function<void(Progress)> work, std::function<void(bool ok, const QString& error)> done = {});
   // `step` does one small unit of UI-thread work and returns true while more remains. It runs in slices of
   // about 10 ms between events, starting on the next event-loop turn (never inside this call). `done(completed)`
   // runs once, before finished(); completed is false when the job was cancelled.
@@ -97,6 +99,7 @@ class JobRunner : public QObject {
   void stripShown(bool shown);  // the owner may hide status-bar widgets that compete for the space
  private:
   void slice(Job* j);
+  static void launch(Job* j, std::function<void(Progress)> work, std::function<void(bool, const QString&)> done);
   void onFinished(Job* j);
   void refreshStrip();
   ProgressStrip* m_strip;

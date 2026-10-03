@@ -4,6 +4,7 @@
 #include "diff.hpp"
 #include "document.hpp"
 #include "inspect.hpp"
+#include "merge.hpp"
 #include "mesh.hpp"
 #include "plugin_host.hpp"
 #include "render.hpp"

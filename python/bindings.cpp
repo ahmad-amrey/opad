@@ -134,7 +134,7 @@ PYBIND11_MODULE(opad, m) {
       .def("body_brep", [](opad::Document& d, const std::string& key) {
              const opad::BodyEntry* e = d.body(key);
              if (!e) throw opad::Error("unknown body key: " + key);
-             return e->brep;
+             return std::string(e->checked_text());
            }, "key"_a, "ASCII BREP text of a body-store entry (feed to OCP's BRepTools.Read_s).")
       .def("node_brep", [](opad::Document& d, const std::string& node) {
              opad::Scene s = opad::resolve(d);

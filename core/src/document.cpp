@@ -35,6 +35,15 @@ Header Header::from_json(const json& j) {
   return h;
 }
 
+// ---------------------------------------------------------------- BodyEntry
+std::string_view BodyEntry::checked_text() const {
+  if (indexed.empty()) return brep;
+  unsigned char s = check.state.load(std::memory_order_acquire);
+  if (s == 0) check.state.store(s = sha256_hex(indexed) == key ? 1 : 2, std::memory_order_release);
+  if (s == 2) throw Error("body entry " + key.substr(0, 12) + ": content does not match its key (corrupted or edited)");
+  return indexed;
+}
+
 // ---------------------------------------------------------------- Document
 Document::Document() : shape_cache(make_shape_cache()) {}
 
@@ -275,7 +284,7 @@ std::string Document::add_live_body(const std::string& key, json meta) {
 
 bool Document::has_live_bodies() const {
   for (const auto& b : bodies_)
-    if (b.brep.empty()) return true;
+    if (b.brep.empty() && b.indexed.empty()) return true;
   return false;
 }
 
@@ -298,6 +307,42 @@ void Document::restore_ops(std::vector<Op> removed) {
 const BodyEntry* Document::body(const std::string& key) const {
   auto it = bodies_index_.find(key);
   return it == bodies_index_.end() ? nullptr : &bodies_[it->second];
+}
+
+void Document::arrange_bodies(const std::vector<std::string>& keys, Document& from, bool keep_others) {
+  for (const auto& key : keys) {
+    if (bodies_index_.count(key)) continue;
+    const auto it = from.bodies_index_.find(key);
+    if (it == from.bodies_index_.end()) throw Error("body entry missing: " + key);
+    if (from.source_ != source_) from.bodies_[it->second].checked_text();  // it leaves `from`'s text as a verified copy
+  }
+  std::vector<BodyEntry> out;
+  out.reserve(keys.size() + (keep_others ? bodies_.size() : 0));
+  std::vector<bool> taken(bodies_.size());
+  std::set<std::string> placed;
+  for (const auto& key : keys) {
+    if (!placed.insert(key).second) continue;
+    if (auto it = bodies_index_.find(key); it != bodies_index_.end()) {
+      out.push_back(std::move(bodies_[it->second]));
+      taken[it->second] = true;
+    } else {
+      auto& entry = from.bodies_[from.bodies_index_.at(key)];
+      if (!entry.indexed.empty() && from.source_ != source_) entry.brep.assign(entry.indexed), entry.indexed = {};  // `from`'s text goes with it
+      out.push_back(std::move(entry));
+      entry.key.clear();
+    }
+  }
+  if (keep_others)
+    for (size_t i = 0; i < bodies_.size(); ++i)
+      if (!taken[i]) out.push_back(std::move(bodies_[i]));
+  bodies_ = std::move(out);
+  bodies_index_.clear();
+  for (size_t i = 0; i < bodies_.size(); ++i) bodies_index_[bodies_[i].key] = i;
+  // `from` keeps what was not moved out
+  from.bodies_.erase(std::remove_if(from.bodies_.begin(), from.bodies_.end(), [](const BodyEntry& b) { return b.key.empty(); }), from.bodies_.end());
+  from.bodies_index_.clear();
+  for (size_t i = 0; i < from.bodies_.size(); ++i) from.bodies_index_[from.bodies_[i].key] = i;
+  dirty = true;
 }
 
 std::vector<std::string> Document::body_keys() const {
@@ -411,7 +456,7 @@ std::string Document::serialize() const {
   if (has_live_bodies()) throw Error("viewer-mode document: its bodies have no BREP text; export it to an .opad document first");
   std::string out;
   size_t reserve = 256;
-  for (const auto& b : bodies_) reserve += b.brep.size() + 128;
+  for (const auto& b : bodies_) reserve += b.text().size() + 128;
   for (const auto& o : ops) reserve += o.raw.size() + 1;
   out.reserve(reserve);
   out += "#opad ";
@@ -426,7 +471,8 @@ std::string Document::serialize() const {
   }
   out += "#bodies\n";
   for (const auto& b : bodies_) {
-    size_t lines = static_cast<size_t>(std::count(b.brep.begin(), b.brep.end(), '\n'));
+    const std::string_view brep = b.text();
+    size_t lines = static_cast<size_t>(std::count(brep.begin(), brep.end(), '\n'));
     out += "#body ";
     out += b.key;
     out += ' ';
@@ -434,12 +480,32 @@ std::string Document::serialize() const {
     out += ' ';
     out += b.meta.dump();
     out += '\n';
-    out += b.brep;
+    out += brep;
   }
   return out;
 }
 
-Document Document::parse(const std::string& text, const std::filesystem::path& origin) {
+Document Document::parse(const std::string& text, const std::filesystem::path& origin, const BodyFilter& skip_body) {
+  return parse_text(text, origin, skip_body, false);
+}
+
+Document Document::parse_index(std::string text, const std::filesystem::path& origin, const BodyFilter& skip_body) {
+  // The entries point into the text, which therefore is what a verifying read would make of it: LF only, and a last line
+  // that ends.
+  if (text.find('\r') != std::string::npos) {
+    size_t w = 0;
+    for (size_t r = 0; r < text.size(); ++r)
+      if (text[r] != '\r' || r + 1 >= text.size() || text[r + 1] != '\n') text[w++] = text[r];
+    text.resize(w);
+  }
+  if (!text.empty() && text.back() != '\n') text += '\n';
+  auto source = std::make_shared<const std::string>(std::move(text));
+  Document d = parse_text(*source, origin, skip_body, true);
+  d.source_ = std::move(source);
+  return d;
+}
+
+Document Document::parse_text(std::string_view text, const std::filesystem::path& origin, const BodyFilter& skip_body, bool index) {
   Document d;
   d.path = origin;
   std::string where = origin.empty() ? std::string("<memory>") : origin.string();
@@ -447,39 +513,37 @@ Document Document::parse(const std::string& text, const std::filesystem::path& o
     throw Error(where + ":" + std::to_string(line + 1) + ": " + msg);
   };
 
-  // Split into lines without copying the body text more than once.
-  std::vector<std::string_view> lines;
-  {
-    size_t start = 0;
-    while (start <= text.size()) {
-      size_t nl = text.find('\n', start);
-      if (nl == std::string::npos) {
-        if (start < text.size()) lines.emplace_back(text.data() + start, text.size() - start);
-        break;
-      }
-      size_t len = nl - start;
-      if (len > 0 && text[nl - 1] == '\r') --len;
-      lines.emplace_back(text.data() + start, len);
-      start = nl + 1;
-    }
-  }
-  if (lines.size() < 2 || lines[0].rfind("#opad ", 0) != 0) fail(0, "not an OPAD document (expected '#opad <version>')");
-  int fmt = std::atoi(std::string(lines[0].substr(6)).c_str());
+  // Line by line from `pos`; `i` is the number of the line next() returned last. Body text is only scanned for its
+  // line ends, then copied (or, in index mode, pointed at) in one piece.
+  size_t pos = 0, i = size_t(-1);
+  std::string_view l;
+  auto next = [&]() {
+    if (pos >= text.size()) return false;
+    ++i;
+    const size_t nl = text.find('\n', pos);
+    size_t len = (nl == std::string_view::npos ? text.size() : nl) - pos;
+    if (nl != std::string_view::npos && len > 0 && text[nl - 1] == '\r') --len;
+    l = text.substr(pos, len);
+    pos = nl == std::string_view::npos ? text.size() : nl + 1;
+    return true;
+  };
+  if (!next() || l.rfind("#opad ", 0) != 0 || pos >= text.size()) fail(0, "not an OPAD document (expected '#opad <version>')");
+  int fmt = std::atoi(std::string(l.substr(6)).c_str());
   if (fmt < 1 || fmt > kFormatVersion)
     fail(0, "unsupported format version " + std::to_string(fmt) + " (this build reads up to " +
                 std::to_string(kFormatVersion) + ")");
+  next();
   try {
-    d.header = Header::from_json(json::parse(lines[1]));
+    d.header = Header::from_json(json::parse(l));
   } catch (const json::exception& e) {
     fail(1, std::string("bad header: ") + e.what());
   }
   d.header.format = fmt;
 
-  size_t i = 2;
-  if (i >= lines.size() || lines[i] != "#ops") fail(i, "expected '#ops'");
-  ++i;
-  for (; i < lines.size() && lines[i] != "#bodies"; ++i) {
-    std::string_view l = lines[i];
+  if (!next() || l != "#ops") fail(2, "expected '#ops'");
+  bool bodies = false;
+  while (next()) {
+    if (l == "#bodies") { bodies = true; break; }
     if (l.empty()) continue;
     if (l.rfind("<<<<<<<", 0) == 0 || l.rfind("=======", 0) == 0 || l.rfind(">>>>>>>", 0) == 0)
       fail(i, "unresolved git conflict marker");
@@ -502,9 +566,9 @@ Document Document::parse(const std::string& text, const std::filesystem::path& o
     };
     scan(l);
     while (depth > 0) {
-      if (++i >= lines.size() || lines[i] == "#bodies") fail(i, "truncated op record");
-      scan(lines[i]);
-      record += '\n'; record += lines[i];
+      if (!next() || l == "#bodies") fail(i, "truncated op record");
+      scan(l);
+      record += '\n'; record += l;
     }
     try {
       o.data = json::parse(record);
@@ -526,41 +590,49 @@ Document Document::parse(const std::string& text, const std::filesystem::path& o
     o.raw = std::move(record);
     d.ops.push_back(std::move(o));
   }
-  if (i < lines.size() && lines[i] == "#bodies") {
-    ++i;
-    while (i < lines.size()) {
-      std::string_view l = lines[i];
-      if (l.empty()) { ++i; continue; }
-      if (l.rfind("#body ", 0) != 0) fail(i, "expected '#body <key> <lines> <meta>'");
-      std::istringstream hs{std::string(l.substr(6))};
-      std::string key;
-      size_t n = 0;
-      hs >> key >> n;
-      std::string meta_text;
-      std::getline(hs, meta_text);
-      if (!hs || key.size() != 64 || n == 0 || key.find_first_not_of("0123456789abcdef") != std::string::npos)
-        fail(i, "bad body header");
-      // Subtract before comparing: hostile counts must not overflow or trigger huge allocations.
-      if (n > lines.size() - i - 1) fail(i, "truncated body entry");
-      BodyEntry e;
-      e.key = key;
-      try {
-        e.meta = meta_text.empty() ? json::object() : json::parse(meta_text);
-      } catch (const json::exception& ex) {
-        fail(i, std::string("bad body meta: ") + ex.what());
-      }
-      if (!e.meta.is_object()) fail(i, "body metadata must be an object");
-      for (size_t k = 1; k <= n; ++k) {
-        if (i + k >= lines.size()) fail(i, "truncated body entry");
-        e.brep.append(lines[i + k]);
-        e.brep.push_back('\n');
-      }
-      if (sha256_hex(e.brep) != key) fail(i, "body entry content does not match its key (corrupted or edited)");
-      if (!d.bodies_index_.count(key)) {
-        d.bodies_index_[key] = d.bodies_.size();
-        d.bodies_.push_back(std::move(e));
-      }
-      i += n + 1;
+  while (bodies && next()) {
+    if (l.empty()) continue;
+    if (l.rfind("#body ", 0) != 0) fail(i, "expected '#body <key> <lines> <meta>'");
+    std::istringstream hs{std::string(l.substr(6))};
+    std::string key;
+    size_t n = 0;
+    hs >> key >> n;
+    std::string meta_text;
+    std::getline(hs, meta_text);
+    const size_t at = i;
+    if (!hs || key.size() != 64 || n == 0 || key.find_first_not_of("0123456789abcdef") != std::string::npos)
+      fail(at, "bad body header");
+    // Its lines are only counted here (a hostile count runs into the end of the text, it allocates nothing).
+    const size_t start = pos;
+    for (size_t k = 0; k < n; ++k) {
+      if (pos >= text.size()) fail(at, "truncated body entry");
+      const size_t nl = text.find('\n', pos);
+      pos = nl == std::string_view::npos ? text.size() : nl + 1;
+    }
+    i += n;
+    if (skip_body && skip_body(key)) continue;
+    BodyEntry e;
+    e.key = key;
+    try {
+      e.meta = meta_text.empty() ? json::object() : json::parse(meta_text);
+    } catch (const json::exception& ex) {
+      fail(at, std::string("bad body meta: ") + ex.what());
+    }
+    if (!e.meta.is_object()) fail(at, "body metadata must be an object");
+    const std::string_view brep = text.substr(start, pos - start);
+    if (index) {
+      e.indexed = brep;
+    } else {
+      if (brep.find('\r') == std::string_view::npos) e.brep.assign(brep);
+      else
+        for (size_t k = 0; k < brep.size(); ++k)
+          if (brep[k] != '\r' || k + 1 >= brep.size() || brep[k + 1] != '\n') e.brep.push_back(brep[k]);
+      if (e.brep.back() != '\n') e.brep.push_back('\n');
+      if (sha256_hex(e.brep) != key) fail(at, "body entry content does not match its key (corrupted or edited)");
+    }
+    if (!d.bodies_index_.count(key)) {
+      d.bodies_index_[key] = d.bodies_.size();
+      d.bodies_.push_back(std::move(e));
     }
   }
   d.persisted_ops_ = d.ops.size();
@@ -568,8 +640,14 @@ Document Document::parse(const std::string& text, const std::filesystem::path& o
   return d;
 }
 
-Document Document::load(const std::filesystem::path& p) {
-  Document d = parse(read_text_file(p), p);
+Document Document::load(const std::filesystem::path& p, const BodyFilter& skip_body) {
+  Document d = parse(read_text_file(p), p, skip_body);
+  d.path = p;
+  return d;
+}
+
+Document Document::load_index(const std::filesystem::path& p, const BodyFilter& skip_body) {
+  Document d = parse_index(read_text_file(p), p, skip_body);
   d.path = p;
   return d;
 }

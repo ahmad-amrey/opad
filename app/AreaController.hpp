@@ -66,7 +66,7 @@ class AreaServices {
   BrowserPanel* browser() const;        // row decorations and folders
   PropertiesPanel* properties() const;  // property sections
   ViewportChips* chips() const;         // the chips row over the viewport (addChip)
-  TimelineWidget* timeline() const;     // the history strip (dimmed markers); from statusWidgets on
+  TimelineWidget* timeline() const;     // the history strip (dimmed markers, setMarkedOps); from statusWidgets on
   // A widget in the ribbon's tab row (a branch chip): in the cluster after search, before settings; from ribbon on.
   void addTabRowWidget(QWidget* widget);
   QAction* action(const QString& id) const;  // any command by id: "file.open", "view.fit", an area's own; null if none
@@ -84,6 +84,7 @@ class AreaServices {
   bool requireEditable(std::function<void()> resume = {});  // viewer mode: offers to save as OPAD first; false until then
   void guarded(const std::function<void()>& fn);           // runs fn; an exception becomes a message box
   void showMessage(const QString& text, int ms = 4000);    // status bar
+  void open(const QString& path);  // opens a file as File > Open… does (unsaved changes are asked about first)
   // A toast at the bottom centre of the viewport (Toast.hpp): a result or a warning, with an optional action ("Undo")
   // whose callback runs when it is clicked; ms 0 keeps it until it is closed. From ribbon on.
   void toast(const QString& text, const QString& actionText = QString(), std::function<void()> callback = {}, int ms = 4000);

@@ -103,7 +103,12 @@ set_tests_properties(step PROPERTIES FIXTURES_REQUIRED step_fixtures ENVIRONMENT
 
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND AND OPAD_BUILD_CLI)
-  add_test(NAME git-merge COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_git_merge.py $<TARGET_FILE:opad-cli>)
+  # The Python reference driver against opad-cli merge-driver and opad --merge-driver (UI-60).
+  set(opad_merge_drivers $<TARGET_FILE:opad-cli>)
+  if(TARGET opad)
+    list(APPEND opad_merge_drivers $<TARGET_FILE:opad>)
+  endif()
+  add_test(NAME git-merge COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_git_merge.py ${opad_merge_drivers})
   add_test(NAME mcp COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_mcp.py $<TARGET_FILE:opad-cli>)
   set_tests_properties(mcp PROPERTIES TIMEOUT 45 ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache")
   add_test(NAME cli COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_cli.py $<TARGET_FILE:opad-cli> ${OPAD_FIXTURE_DIR})

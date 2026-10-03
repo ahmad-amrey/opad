@@ -153,7 +153,6 @@ void MainWindow::refreshIcons() {
     QString icon = a->data().toString();
     if (!icon.isEmpty()) a->setIcon(icons::themed(icon));
   }
-  if (m_statusGitIcon) m_statusGitIcon->setPixmap(icons::pixmap("git", theme::current().fg2, 14, devicePixelRatioF()));
   m_doc->refresh();
 }
 

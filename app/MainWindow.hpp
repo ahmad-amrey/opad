@@ -24,6 +24,7 @@
 #include "BrowserOverlay.hpp"
 class RecoveryManager;
 class AgentBridge;
+class QMessageBox;
 class QToolButton;
 template <class Tag>
 struct MainWindowBench;
@@ -94,12 +95,14 @@ class MainWindow : public QMainWindow {
   void updateTitle();
   QString newerRecords() const;  // what of the file only a newer build reads (UI-65): one sentence, empty when nothing
   void updateChips();
-  void refreshGit();
   void showOpGitLog(const std::string& opId,const QString& path);
   void saveLastView();
   QString m_viewPath;
   void guarded(const std::function<void()>& fn);
   bool maybeSave();
+  // The unsaved-changes question, built but not shown (maybeSave runs it; a bench presses its buttons): Save, Discard,
+  // Cancel and, while the file is on disk, Review changes… (UI-59: Compare, the saved file against this session).
+  QMessageBox* unsavedPrompt();
   void showDocument(bool has);
   void showCentral();  // the start page, the viewport (also while loading) or an area's page; the browser floats over it
   void beginLoad(std::function<void()> after);
@@ -245,8 +248,6 @@ class MainWindow : public QMainWindow {
   QMenu* m_viewsMenu = nullptr;
   QMenu* m_recentMenu = nullptr;
   QLabel* m_statusPath = nullptr;
-  QLabel* m_statusGitIcon = nullptr;
-  QLabel* m_statusGit = nullptr;
   QLabel* m_statusHover = nullptr;
   QLabel* m_statusSel = nullptr;
   QToolButton* m_statusUnits = nullptr;  // the shown length unit (UI-123): a click offers the document's
@@ -275,6 +276,5 @@ class MainWindow : public QMainWindow {
   opad::json m_lastMeasure;
   opad::json m_lastExport;  // the last export's result, or {"error"}
   QSettings m_settings;
-  QTimer m_gitTimer;
   bool m_syncing = false;
 };

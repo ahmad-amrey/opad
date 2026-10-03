@@ -1,3 +1,13 @@
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
@@ -7,7 +17,9 @@
 #include <QTimer>
 #include <QSurfaceFormat>
 
+#include "CompareMode.hpp"
 #include "CrashLog.hpp"
+#include "GitWatch.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
@@ -31,9 +43,55 @@ class FileOpenEvents : public QObject {
  private:
   MainWindow* m_window;
 };
+
+// git's merge driver (merge.opad.driver "opad.exe --merge-driver %O %A %B %P"): before Qt and without a window, so a
+// portable or single-file install merges .opad files without Python or opad-cli.
+int mergeDriver(int argc, char** argv) {
+  std::vector<std::filesystem::path> files;
+#ifdef _WIN32
+  int n = 0;  // the paths as UTF-16: the narrow argv is in the ANSI code page
+  if (LPWSTR* wide = CommandLineToArgvW(GetCommandLineW(), &n)) {
+    for (int i = 2; i < n; ++i) files.emplace_back(wide[i]);
+    LocalFree(wide);
+    return opad::merge_driver(files);
+  }
+#endif
+  for (int i = 2; i < argc; ++i) files.push_back(opad::path_from_utf8(argv[i]));
+  return opad::merge_driver(files);
+}
+
+// git's diff driver (diff.opad.textconv "opad.exe --textconv"): the document as readable lines, like opad-cli textconv.
+int textconv(int argc, char** argv) {
+  if (argc < 3) return 2;
+  std::filesystem::path path = opad::path_from_utf8(argv[2]);
+#ifdef _WIN32
+  int n = 0;
+  if (LPWSTR* wide = CommandLineToArgvW(GetCommandLineW(), &n)) {
+    if (n > 2) path = wide[2];
+    LocalFree(wide);
+  }
+  _setmode(_fileno(stdout), _O_BINARY);  // LF, as git compares it
+#endif
+  std::string out;
+  try {
+    out = opad::document_outline(opad::Document::parse_index(opad::read_text_file(path), path));
+  } catch (const std::exception& e) {
+    try {
+      out = opad::text_outline(opad::read_text_file(path), e.what());
+    } catch (const std::exception&) {
+      return 1;
+    }
+  }
+  std::fwrite(out.data(), 1, out.size(), stdout);
+  std::fflush(stdout);
+  return 0;
+}
 }  // namespace
 
 int main(int argc, char** argv) {
+  if (argc >= 2 && std::string_view(argv[1]) == "--merge-driver") return mergeDriver(argc, argv);
+  if (argc >= 2 && std::string_view(argv[1]) == "--textconv") return textconv(argc, argv);
+  const bool askpass = GitWatch::isAskpass(argc, argv);  // git's GIT_ASKPASS: one dialog, no window, no file
   trace::log("startup: main");
   installCrashHandler();
   // Derived ids are for scripted builds (gap log #15): a desktop session restarted on the same document would derive
@@ -70,6 +128,7 @@ int main(int argc, char** argv) {
       qputenv("OPAD_CACHE_DIR", QDir::toNativeSeparators(dataDir + "/cache").toLocal8Bit());
   }
   i18n::install(app);  // before any widget exists: translator and layout direction (needs the names above for QSettings)
+  if (askpass) return GitWatch::askpassDialog(argc, argv);
   trace::log("startup: application");
 
   QCommandLineParser parser;
@@ -80,7 +139,10 @@ int main(int argc, char** argv) {
   QCommandLineOption bench("bench-select", "Select every root once the file has loaded, log the timing (OPAD_TRACE) and quit");
   bench.setFlags(QCommandLineOption::HiddenFromHelp);
   parser.addOption(bench);
+  QCommandLineOption compare("compare", "Compare a version (an .opad file, or git:REV of the file) with the file opened: opad --compare a b", "version");
+  parser.addOption(compare);
   parser.process(app);
+  if (parser.isSet(compare)) CompareMode::setStartup(parser.value(compare));  // once the file is open (CompareMode.hpp)
 
   MainWindow win;
   app.installEventFilter(new FileOpenEvents(&win));

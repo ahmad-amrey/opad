@@ -2,6 +2,7 @@
 #include "check.hpp"
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <cmath>
@@ -128,6 +129,64 @@ int main(int argc, char** argv) {
     CHECK_EQ(resets,1); CHECK_EQ(doc.generation,generation+1);
     CHECK(doc.scene.all_bodies().empty());
     doc.closeDocument(); CHECK_EQ(resets,2);
+
+    // UI-56: the file changes on disk while it is open; Save never overwrites that silently.
+    const QString file = tmp.path() + "/opened.opad";
+    const std::filesystem::path fs(file.toStdU16String());
+    AppDocument live;
+    live.open(file);
+    CHECK(!live.isDirty() && QFileInfo(live.diskFile()) == QFileInfo(file) && !live.diskChanged());
+    const std::string body = live.scene.all_bodies().front();
+    auto external = [&](opad::json op) {  // another program appends to the file
+      opad::Document d = opad::Document::load(fs);
+      op["target"] = body;
+      d.append(op);
+      d.save();
+    };
+    auto fileIds = [&] { std::vector<std::string> ids; for (const auto& o : opad::Document::load(fs).ops) ids.push_back(o.id); return ids; };
+    auto liveIds = [&] { std::vector<std::string> ids; for (const auto& o : live.doc.ops) ids.push_back(o.id); return ids; };
+    external({{"op", "rename"}, {"name", "Theirs"}});
+    CHECK(live.diskChanged());
+    const std::string before = opad::read_text_file(fs);
+    int blocked = 0;
+    QObject::connect(&live, &AppDocument::saveBlocked, &live, [&] { ++blocked; });
+    CHECK(!live.save() && blocked == 1);
+    CHECK(!live.saveAs(file) && blocked == 2);  // the open file chosen again
+    CHECK(opad::read_text_file(fs) == before);
+    auto read = AppDocument::readDisk(file, live.diskBase(), live.doc.shape_cache);
+    CHECK(read.relation == opad::Relation::extends && read.doc && read.doc->body_count() == 0 && !read.bodies.empty());
+    CHECK(live.planDisk(read).mine.empty());
+    live.mergeDisk(std::move(read), "from disk");  // nothing unsaved: a fast-forward
+    CHECK(!live.isDirty() && live.nodeName(body) == "Theirs" && live.undoLabel() == "from disk" && !live.diskChanged() && liveIds() == fileIds());
+    live.run("rename", opad::json{{"target", body}, {"name", "Mine"}});
+    external({{"op", "appearance"}, {"visible", false}});
+    read = AppDocument::readDisk(file, live.diskBase(), live.doc.shape_cache);
+    const auto plan = live.planDisk(read);
+    CHECK(plan.error.empty() && plan.mine.size() == 1 && plan.incoming == 1 && plan.conflicts.empty());
+    live.mergeDisk(std::move(read), "from disk 2");
+    CHECK(live.isDirty() && live.nodeName(body) == "Mine" && !live.scene.node(body)->visible && live.doc.ops.back().type == "rename");
+    CHECK(live.save() && !live.isDirty() && liveIds() == fileIds());
+    live.undo();  // the unsaved rename, then the merge
+    CHECK(live.nodeName(body) == "Theirs" && !live.scene.node(body)->visible);
+    live.undo();
+    CHECK(live.scene.node(body)->visible && live.undoLabel() == "from disk");
+    {  // a reset: the history no longer continues the session's
+      opad::Document d = opad::Document::load(fs);
+      d.truncate_ops(d.ops.size() - 1);
+      opad::write_text_file(fs, d.serialize());
+    }
+    read = AppDocument::readDisk(file, live.diskBase(), live.doc.shape_cache);
+    CHECK(read.relation == opad::Relation::rewritten && !live.planDisk(read).error.empty());
+    CHECK_THROWS(live.mergeDisk(std::move(read), "x"));
+    read = AppDocument::readDisk(file, live.diskBase(), live.doc.shape_cache);
+    live.reloadDisk(std::move(read));
+    CHECK(!live.isDirty() && !live.canUndo() && liveIds() == fileIds() && !live.diskChanged());
+    live.run("rename", opad::json{{"target", body}, {"name", "Mine again"}});
+    external({{"op", "rename"}, {"name", "Theirs again"}});
+    CHECK(!live.save() && live.save(true));  // Overwrite, once asked
+    CHECK(liveIds() == fileIds() && opad::resolve(opad::Document::load(fs)).node(body)->name == "Mine again");
+    std::filesystem::remove(fs);  // deleted: nothing to lose, Save writes it again
+    CHECK(!live.diskChanged() && live.save() && std::filesystem::exists(fs));
     return 0;
   } catch (const std::exception& e) {
     std::fprintf(stderr, "%s\n", e.what());

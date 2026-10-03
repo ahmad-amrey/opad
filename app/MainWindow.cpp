@@ -7,11 +7,14 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QPointer>
+#include <QPushButton>
 #include <QStatusBar>
+#include <QTimer>
 #include <QToolButton>
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 #include "I18n.hpp"
 #include "Icons.hpp"
@@ -88,7 +91,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   // Viewer mode -> editable: the same shapes under content keys, so what is on screen stays (no second tessellation).
   connect(m_doc, &AppDocument::bodyKeysRenamed, m_viewport, &Viewport::renameBodyKeys);
   connect(m_chips, &ViewportChips::saveToEditRequested, this, [this] { guarded([this] { saveViewerAs(); }); });
-  connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); refreshGit(); });
+  connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); });
   connect(m_doc, &AppDocument::message, this, [this](const QString& t) { statusBar()->showMessage(t, 6000); });
   connect(m_viewport, &Viewport::selectionChanged, this, &MainWindow::onViewportSelection);
   connect(m_viewport, &Viewport::hoverChanged, m_statusHover, &QLabel::setText);
@@ -237,10 +240,6 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_empty, &EmptyState::recentChosen, this, &MainWindow::openPath);
   connect(m_empty, &EmptyState::filesDropped, this, [this](const QStringList& paths) { openPath(paths.first()); });
 
-  m_gitTimer.setInterval(5000);
-  connect(&m_gitTimer, &QTimer::timeout, this, &MainWindow::refreshGit);
-  m_gitTimer.start();
-
   restoreGeometry(m_settings.value("ui/geometry").toByteArray());
   if (m_settings.value("ui/layoutVersion").toInt() == 3) restoreState(m_settings.value("ui/state").toByteArray());
   // restoreState carries the corner layout of older sessions; the design fixes it, so re-apply.
@@ -387,8 +386,11 @@ bool MainWindow::maybeSave() {
     m_design->sketch()->end();m_doc->setRollback({});
   }
   if (!m_doc->isDirty()) return true;
-  auto r = QMessageBox::question(this, tr("Unsaved changes"), tr("Save changes to %1?").arg(m_doc->path().isEmpty() ? tr("the document") : m_doc->path()),
-                                 QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+  std::unique_ptr<QMessageBox> box(unsavedPrompt());
+  box->exec();
+  QAbstractButton* clicked = box->clickedButton();
+  if (!clicked || clicked->objectName() == "reviewChanges") return false;  // Compare opens; the question waits for later
+  const auto r = box->standardButton(clicked);
   if (r == QMessageBox::Cancel) return false;
   if (r == QMessageBox::Save) {
     try {
@@ -401,6 +403,19 @@ bool MainWindow::maybeSave() {
     return !m_doc->isDirty();
   }
   return true;
+}
+
+QMessageBox* MainWindow::unsavedPrompt() {
+  auto* box = new QMessageBox(QMessageBox::Question, tr("Unsaved changes"), tr("Save changes to %1?").arg(m_doc->path().isEmpty() ? tr("the document") : m_doc->path()),
+                              QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
+  box->setDefaultButton(QMessageBox::Save);
+  if (QAction* review = action("vcs.unsavedChanges"); review && review->isEnabled()) {
+    QPushButton* button = box->addButton(tr("Review changes…"), QMessageBox::ActionRole);
+    button->setObjectName("reviewChanges");
+    button->setToolTip(tr("Compare the saved file with this session before deciding"));
+    connect(button, &QPushButton::clicked, review, [review] { QTimer::singleShot(0, review, &QAction::trigger); });  // once the question has closed
+  }
+  return box;
 }
 
 void MainWindow::closeEvent(QCloseEvent* e) {

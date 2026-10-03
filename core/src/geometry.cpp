@@ -117,7 +117,7 @@ TopoDS_Shape body_shape(const Document& doc, const std::string& key) {
   }
   const BodyEntry* e = doc.body(key);
   if (!e) throw Error("body entry not found: " + key);
-  TopoDS_Shape s = shape_from_brep(e->brep);
+  TopoDS_Shape s = e->indexed.empty() ? shape_from_brep(e->brep) : shape_from_brep(std::string(e->checked_text()));
   std::lock_guard<std::mutex> lock(cache.mu);
   cache.shapes[key] = s;
   return s;

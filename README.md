@@ -435,22 +435,64 @@ geometry. Existing operation text is preserved on save. New sketches and hand dr
 multiline records, so use the record-aware merge driver rather than Git's union driver:
 
 ```
-*.opad text eol=lf merge=opad
+*.opad text eol=lf merge=opad diff=opad
 ```
 
-Configure the driver in each clone (use the absolute path for your machine):
+Configure the driver in each clone (git never copies it; use the absolute path for your machine). It is built into
+`opad-cli` and into the desktop program, so the portable and single-file builds need neither Python nor the CLI:
 
 ```sh
 git config merge.opad.name "OPAD append-only records"
-git config merge.opad.driver 'python "C:/path/to/opad/tools/opad_merge.py" %O %A %B'
+git config merge.opad.driver '"C:/path/to/opad-cli" merge-driver %O %A %B %P'
+# with the desktop program only:
+git config merge.opad.driver '"C:/path/to/OPAD/opad.exe" --merge-driver %O %A %B %P'
 ```
 
-The driver runs on Windows, Linux and macOS with Python 3. It merges independent records and reports
-overlapping edits, rewritten history or pruned body stores for review. A conflict leaves the ours file
-intact; inspect both branches before resolving it. Without configuration Git falls back to normal text
-merging. After merging design changes, check unresolved references and regenerate/validate dependencies.
+`tools/opad_merge.py` (Python 3: `python "C:/path/to/opad/tools/opad_merge.py" %O %A %B`) is the reference the
+built-in driver is tested against (`tests/test_git_merge.py` runs both on the same branches, cases and damaged
+files); either works the same. The driver merges independent records and reports overlapping edits, rewritten
+history or pruned body stores for review. A conflict leaves the ours file intact and prints the reason; inspect both
+branches before resolving it. Without configuration Git falls back to normal text merging. After merging design
+changes, check unresolved references and regenerate/validate dependencies.
 Large meshes and embedded images can still produce large diffs; Git LFS is optional and gives up normal
 text diffs/merges. The detailed [format guide](docs/format.md#git) explains the record layout.
+
+`diff=opad` makes `git diff`, `git log -p` and `git show` print a readable outline of each version (history,
+parameters, sketches, features, the tree, notes, one line per body) instead of BREP text:
+
+```sh
+git config diff.opad.textconv '"C:/path/to/opad-cli" textconv'   # or '"C:/path/to/OPAD/opad.exe" --textconv'
+git config diff.opad.cachetextconv true
+```
+
+The desktop program does all of this for you: the git chip in the status bar (branch, untracked / uncommitted /
+conflict, ahead and behind its upstream, "not in git", "git not found") has **Set up repository…**, which runs
+`git init -b main` when needed, writes the `.gitattributes` line above (plus `assets/**` in Git LFS when git-lfs is
+installed, with `.opad` files kept out of LFS), a `.gitignore` for temporary saves, portable data, caches and recovery
+snapshots, runs `git lfs install --local`, and points this clone's `merge.opad.driver` and `diff.opad.textconv` at the
+running installation (`opad.managed=true`; OPAD rewrites them when that installation has moved). A clone whose
+`.gitattributes` asks for `merge=opad` but has no driver configured shows "set up merging" on the chip and a banner
+over the view with **Set up merging**. **File > Clone repository…** (also on the chip) clones an address or a folder,
+sets the copy up the same way (driver config, `git lfs install --local` and `git lfs pull` when it uses LFS) and opens
+its document, or asks which one when it holds several. The chip follows git by file events (HEAD, index, config,
+refs, the document's folder), not by polling.
+
+OPAD runs the git command line (Git for Windows, or the `git` on PATH; a portable `git/` or `PortableGit/` folder
+beside OPAD is found too, and **Locate git…** on the chip points it at any other). git never waits on a terminal:
+sign-in goes through your credential helper (Git Credential Manager) or, without one, through a small OPAD dialog
+(`opad.exe` is git's `GIT_ASKPASS`, nothing is stored); SSH runs in BatchMode unless you set `core.sshCommand`, so a
+key that needs a passphrase must be loaded into ssh-agent or Pageant. OPAD asks for your name and email before the
+first commit when git has none, offers **Trust this folder** when git refuses a repository owned by another account
+(`safe.directory`), and explains git's errors in plain words.
+
+`opad-cli diff` compares two versions semantically: parameters, sketch entities and dimensions, feature inputs
+before -> after, bodies added, removed, moved, renamed, restyled, reparented or with new geometry, notes resolved or
+answered, and how the histories relate. A side is a file or `git:REV[:path]`; one file alone is compared with `HEAD`.
+
+```sh
+opad-cli diff model.opad --text                  # what changed since the last commit
+opad-cli diff --a git:main~3 model.opad          # JSON; --metrics adds volume and area of changed bodies
+```
 
 A record of a type this build does not know (written by a newer OPAD, such as a drawing sheet) is kept as it is: the
 file opens, the record is listed as needing a newer OPAD, is never applied or edited, and is saved back byte for byte.

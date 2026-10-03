@@ -11,6 +11,7 @@
 
 #include "opad/core.hpp"
 #include "opad/design/feature.hpp"
+#include "opad/merge.hpp"
 #include "opad/step_io.hpp"
 
 class JobRunner;
@@ -40,8 +41,10 @@ class AppDocument : public QObject {
   void closeDocument();  // back to the start screen; nothing is saved here (ask first)
   void open(const QString& path);  // .opad -> load; .step/.stp -> import into a new document
   void importStep(const QString& path, const QString& parent = {});
-  void save();
-  void saveAs(const QString& path);
+  // Save refuses (false, saveBlocked) while the file differs from what this session last read or wrote, unless
+  // `overwriteDisk` (asked first): changes made outside are merged or reported, never overwritten silently (UI-56).
+  bool save(bool overwriteDisk = false);
+  bool saveAs(const QString& path);
   // Atomic background save; holds the document write guard until the worker really exits.
   Job* saveAsync(JobRunner*, const QString& path, bool overwrite,
                  std::function<void(bool,const QString&)> done, int testDelayMs=0);
@@ -79,7 +82,7 @@ class AppDocument : public QObject {
   // UI thread. `work` gets the document and a copy of the scene. Null when the document is busy or there is none.
   Job* readAsync(JobRunner* jobs, const QString& title, std::function<void(const opad::Document&, const opad::Scene&, Progress)> work,
                  std::function<void(bool ok, const QString& error)> done);
-  void recover(opad::Document&& document, opad::Scene&& resolved);
+  void recover(opad::Document&& document, opad::Scene&& resolved);  // an unsaved copy, no path (see Recovered)
   // Prepared on a worker. Swaps the old values back into the caller for worker disposal.
   void commitSnapshot(opad::Document& document, opad::Scene& resolved,
                       unsigned long long expectedRevision, const QString& label);
@@ -110,6 +113,50 @@ class AppDocument : public QObject {
   // undone; not while the scene is rolled back to an earlier op) or another document comes in. Also in viewer mode.
   const std::string& activeComponent() const { return m_active; }
   void setActiveComponent(const std::string& id);  // a component of the scene, or empty; throws for anything else
+  // ---- The file on disk (UI-56): what this session last read or wrote there, so that a change made outside (a git
+  // pull or checkout, another OPAD, opad-cli) is noticed (DiskSync), merged or reported, and never overwritten.
+  struct DiskStat {
+    bool exists = false;
+    qint64 size = -1, mtime = -1;
+    bool operator==(const DiskStat& o) const { return exists == o.exists && size == o.size && mtime == o.mtime; }
+    bool operator!=(const DiskStat& o) const { return !(*this == o); }
+  };
+  // The file as read now, on a worker: its ops, and only the bodies the base does not list (the session has those).
+  struct DiskRead {
+    QString file;
+    DiskStat stat;                                   // taken before reading: a later change is never missed
+    std::shared_ptr<const opad::Manifest> base;      // what it was compared with
+    std::shared_ptr<opad::Document> doc;
+    std::vector<std::string> bodies;                 // every body key the file lists, in its order
+    std::shared_ptr<const opad::Manifest> manifest;  // the file's
+    opad::Relation relation = opad::Relation::same;
+    QString error;                                   // unreadable (git conflict markers, not an OPAD document)
+  };
+  static DiskStat statFile(const QString& file);
+  // `cache`: the session's shapes, filled with the bodies read (keys are content hashes). `skipKnown` false reads every
+  // body (a reload of a session that lost some).
+  static DiskRead readDisk(const QString& file, std::shared_ptr<const opad::Manifest> base, std::shared_ptr<opad::ShapeCache> cache, bool skipKnown = true);
+  const QString& diskFile() const { return m_diskFile; }  // empty: no file behind the document
+  const DiskStat& diskStat() const { return m_diskStat; }
+  std::shared_ptr<const opad::Manifest> diskBase() const { return m_diskBase; }
+  bool diskChanged() const;  // one stat: the file exists and is not what this session last read or wrote
+  opad::MergePlan planDisk(const DiskRead& read) const;
+  // The file's new ops come in before this session's unsaved ones (one undo step `label`); the file is then the saved
+  // state. Throws when the plan has an error or a body is missing.
+  opad::MergePlan mergeDisk(DiskRead&& read, const QString& label);
+  // Replaces the document with the file as read (unsaved changes are dropped; ask first). Throws when a body is missing.
+  void reloadDisk(DiskRead&& read);
+  void acceptDisk(const DiskRead& read);  // the same op log: only the file's stamp moved on (touched, rewritten alike)
+  // Recovery into its file (UI-59): the document is that file's again (Save writes there). Its first `saved` ops are what
+  // the file holds (`stat` and `base` as last read), the rest unsaved. DiskSync compares the file with that: a stat that
+  // differs makes it read the file and merge or report what changed there.
+  struct Recovered {
+    QString file;
+    size_t saved = 0;
+    DiskStat stat;
+    std::shared_ptr<const opad::Manifest> base;
+  };
+  void recover(opad::Document&& document, opad::Scene&& resolved, const Recovered& into);
 
  signals:
   void activeComponentChanged();
@@ -121,6 +168,7 @@ class AppDocument : public QObject {
   void changed();
   void pathChanged();
   void saved();  // successful explicit Save / Save As, not an open or title change
+  void saveBlocked();  // Save found the file changed on disk and wrote nothing
   void message(const QString& text);
   void loadProgress(const QString& phase, int percent);  // percent < 0: unknown
   void loadFinished(bool ok, const QString& error);
@@ -144,6 +192,11 @@ class AppDocument : public QObject {
   int m_undoLimit = 50;
   std::vector<std::string> m_savedIds;
   size_t m_savedBodies = 0;
+  void setDisk(const QString& file, const DiskStat& stat, std::shared_ptr<const opad::Manifest> base);
+  void wroteDisk();  // after a save on the UI thread: the file holds the document
+  QString m_diskFile;
+  DiskStat m_diskStat;
+  std::shared_ptr<const opad::Manifest> m_diskBase;
   std::shared_ptr<std::atomic<bool>> m_cancel;
   std::shared_ptr<std::atomic<bool>> m_alive;
   std::shared_ptr<std::atomic<unsigned>> m_loadToken = std::make_shared<std::atomic<unsigned>>(0);  // the load whose result counts

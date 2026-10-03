@@ -12,7 +12,8 @@ Besides the cases below, every tools/bench_cases/<area>.py module adds its CASES
 (name, document, switches[, settings]) as here, where document is a fixture name ("empty", "box", "cylinder",
 "drawing", "overlap", "overhang", "screw", "far"), a path (relative to the repository) or a callable (root, document)
 -> path that makes its own file (document(name, *cli commands) runs opad-cli as below); switches are the environment
-("{prefix}" = the output prefix of the case, OPAD_LANG may be overridden); settings is the OPAD.ini text to start with.
+("{prefix}" = the output prefix of the case, "{root}" the run's scratch folder, "{cli}" opad-cli; OPAD_LANG may be
+overridden); settings is the OPAD.ini text to start with.
 """
 import argparse
 import importlib.util
@@ -135,7 +136,7 @@ def main():
             log.write_text("", encoding="utf-8")
             env = {key: value for key, value in os.environ.items() if not key.startswith("OPAD_BENCH_")}
             env.update(OPAD_LANG="en", OPAD_BENCH_SETTINGS=str(root / f"{name}-settings"), OPAD_TRACE=str(log))
-            env.update({key: value.format(prefix=output / name) for key, value in switches.items()})
+            env.update({key: value.format(prefix=output / name, root=root, cli=cli) for key, value in switches.items()})
             if name in settings:
                 ini = root / f"{name}-settings" / "opad" / "OPAD.ini"
                 ini.parent.mkdir(parents=True, exist_ok=True)
