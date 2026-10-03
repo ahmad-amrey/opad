@@ -319,7 +319,7 @@ void AssetsArea::decorate(const browser::Row& row, browser::Decoration& d) {
   } else if (state != "embedded") {
     badge.icon = "check";
     badge.color = &Tokens::assetLinked;
-    badge.tooltip = tr("In sync with %1").arg(file);
+    badge.tooltip = fromProjectCopy(import) ? tr("In sync with the project's copy %1 (not found where it was linked)").arg(file) : tr("In sync with %1").arg(file);
   }
   if (!badge.icon.isEmpty()) d.badges << badge;
   if (s && s->value("lfs", false)) {
@@ -354,7 +354,9 @@ void AssetsArea::section(const PropertySubject& subject, const opad::json&, QLis
   PropertySection sec;
   sec.title = tr("Linked file");
   sec.rows << qMakePair(tr("File"), name(import)) << qMakePair(tr("Status"), embedded ? tr("Embedded in the document") : stateText(import));
+  const bool copy = !embedded && fromProjectCopy(import);
   if (s && s->contains("reason") && !embedded) sec.rows << qMakePair(tr("Note"), i18n::t(QString::fromStdString((*s)["reason"].get<std::string>())));
+  else if (copy) sec.rows << qMakePair(tr("Note"), tr("Not found where it was linked: the project's copy is read"));
   const QString recorded = QString::fromStdString(asset.value("path", asset.value("abs", std::string())));
   sec.rows << qMakePair(embedded ? tr("Embedded from") : tr("Path"), native(recorded));
   const QString docDir = QFileInfo(services().document()->path()).absolutePath();
@@ -385,7 +387,7 @@ void AssetsArea::section(const PropertySubject& subject, const opad::json&, QLis
     }
     act(tr("Replace…"), &AssetsArea::replace);
     act(tr("Embed as editable"), &AssetsArea::embed);
-    if (storage == "linked" && !services().document()->doc.path.empty()) act(tr("Pack into project"), &AssetsArea::pack);
+    if (storage == "linked" && !services().document()->doc.path.empty()) act(copy ? tr("Use project copy") : tr("Pack into project"), &AssetsArea::pack);
   }
   out << sec;
 }
@@ -410,7 +412,7 @@ void AssetsArea::contextMenu(const SelectionContext& selection, QMenu& menu) {
   menu.addAction(icons::themed("copy", 16), tr("Copy path"), this, [this, import] { copyPath(import); });
   menu.addAction(icons::themed("import", 16), tr("Replace linked file…"), this, [this, import] { replace(import); });
   menu.addAction(icons::themed("embed", 16), tr("Embed as editable"), this, [this, import] { embed(import); });
-  menu.addAction(icons::themed("pack", 16), tr("Pack into project"), this, [this, import] { pack(import); })
+  menu.addAction(icons::themed("pack", 16), fromProjectCopy(import) ? tr("Use project copy") : tr("Pack into project"), this, [this, import] { pack(import); })
       ->setEnabled(a && a->asset.value("storage", "linked") == "linked" && !services().document()->doc.path.empty());
 }
 
@@ -586,8 +588,17 @@ void AssetsArea::embed(const std::string& import) {
           });
 }
 
+bool AssetsArea::fromProjectCopy(const std::string& import) const {
+  const AssetMonitor::Asset* a = m_monitor ? m_monitor->asset(import) : nullptr;
+  const opad::json* s = a ? m_monitor->state(import) : nullptr;
+  if (!s || !s->contains("file") || a->asset.value("storage", "linked") != "linked" || services().document()->doc.path.empty()) return false;
+  const QString folder = QDir::cleanPath(QFileInfo(services().document()->path()).absolutePath() + "/assets") + "/";
+  return QDir::cleanPath(m_monitor->file(import)).startsWith(folder, Qt::CaseInsensitive);
+}
+
 void AssetsArea::pack(const std::string& import) {
   const QString title = name(import);
+  const bool copy = fromProjectCopy(import);
   const std::string author = QSettings().value("user/name").toString().trimmed().toStdString();
   planned(tr("Packing %1").arg(title), tr("pack %1").arg(title), import,
           [import, author](opad::Document& doc, const Progress&) {
@@ -596,8 +607,9 @@ void AssetsArea::pack(const std::string& import) {
             plan.ops.push_back(opad::design::make_edit_op(import, doc.ops.back().data["set"]));
             return plan;
           },
-          [this, import, title](bool ok, const QString& error, const opad::json& report) {
-            if (ok) notify(tr("%1 is packed into the project: %2").arg(title, native(QString::fromStdString(report.value("path", std::string())))), true, 8000);
+          [this, import, title, copy](bool ok, const QString& error, const opad::json& report) {
+            const QString path = native(QString::fromStdString(report.value("path", std::string())));
+            if (ok) notify(copy ? tr("%1 now links the project's copy: %2").arg(title, path) : tr("%1 is packed into the project: %2").arg(title, path), true, 8000);
             else notify(tr("%1 could not be packed: %2").arg(title, i18n::t(error)), false, 10000);
             emit done("pack", import, ok, error, report);
           });

@@ -737,6 +737,19 @@ TEST(kicad_board_linked_and_synced) {
   CHECK_EQ(s.node(board_body)->body_key, board_key);
   CHECK(!kicad_sync_preview(d)["changed"].get<bool>());  // the preview reads the synced import
   for (const auto& id : s.all_bodies()) CHECK(!s.node(id)->body_missing);
+  // Gone from where it was linked, its project copy (laid out as pack does) is read; packing then only points the link at it.
+  const fs::path copy = f.dir / "mech" / "assets" / "board";
+  fs::create_directories(copy);
+  fs::copy_file(board, copy / "board.kicad_pcb");
+  fs::copy_file(f.dir / "hw" / "m1.step", copy / "m1.step");
+  fs::rename(board, f.dir / "hw" / "board.old");
+  const AssetState found = asset_status(d)[0];
+  CHECK_EQ(found.state, "ok");
+  CHECK(fs::equivalent(found.file, copy / "board.kicad_pcb"));
+  const json packed = pack_asset(d, import_id);
+  CHECK_EQ(packed["path"], "assets/board/board.kicad_pcb");
+  CHECK_EQ(packed["copied"], 0);
+  CHECK_EQ(asset_of(d, import_id)["storage"], "project");
 }
 
 TEST(command_layer) {

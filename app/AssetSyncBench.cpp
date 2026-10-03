@@ -335,7 +335,9 @@ OPAD_BENCH(OPAD_BENCH_ASSET_SYNC, asset_sync) {
 // OPAD_BENCH_ASSET_LOOK=<prefix> on a document linking parts/part.step, which changed since its sync, opened with a cache that
 // never saw the version synced: its part is read from the file as it is and shown stale, tinted the stale colour in the view
 // (LookSource::Asset, as composed and as applied) with the Sync badge. Synced: the part fades while it is read again, then
-// shows in its own colour, with the new geometry, the same node. Frames: <prefix>.stale.png, .synced.png.
+// shows in its own colour, with the new geometry, the same node. Then the file moves away while the project has a copy of it
+// (assets/part.step): the copy is read, Properties and the context menu say so and offer Use project copy, which links it.
+// Frames: <prefix>.stale.png, .synced.png.
 OPAD_BENCH(OPAD_BENCH_ASSET_LOOK, asset_look) {
   auto require = std::make_shared<Checks>();
   require->name = "asset-look";
@@ -399,7 +401,46 @@ OPAD_BENCH(OPAD_BENCH_ASSET_LOOK, asset_look) {
       const QColor after = again ? image.pixelColor(x2, y2) : QColor();
       const int apart = std::abs(before.red() - after.red()) + std::abs(before.green() - after.green()) + std::abs(before.blue() - after.blue());
       (*require)(found && again && apart > 40, QString("drawn so: %1 -> %2").arg(before.name(), after.name()));
-      QCoreApplication::exit(require->all ? 0 : 2);
+
+      // Gone from where it was linked while the project has a copy: the copy is read, and Use project copy links it.
+      const QString dir = QFileInfo(doc->path()).absolutePath();
+      QDir().mkpath(dir + "/assets");
+      const bool moved = QFile::copy(dir + "/parts/part.step", dir + "/assets/part.step") && QFile::rename(dir + "/parts/part.step", dir + "/parts/part.old");
+      auto onCopy = [=] {
+        const opad::json* s = monitor->state(part);
+        return s && s->contains("file") && QString::fromStdString((*s)["file"].get<std::string>()).endsWith("assets/part.step", Qt::CaseInsensitive);
+      };
+      waitFor(&w, [=] { return onCopy() && state() == "ok" && !monitor->checking(); }, 15000, [=, &w](bool copied) {
+        QMenu menu;
+        SelectionContext selection;
+        selection.ids = {body};
+        area->contextMenu(selection, menu);
+        QStringList texts;
+        for (QAction* a : menu.actions())
+          if (!a->isSeparator()) texts << a->text();
+        w.m_browser->selectIds({body});
+        w.action("inspect.properties")->trigger();
+        QTreeWidget* table = w.m_props->table();
+        bool note = false, use = false;
+        QStringList rows;
+        for (int i = 0; i < table->topLevelItemCount(); ++i) {
+          note = note || table->topLevelItem(i)->text(1).contains("Not found where it was linked: the project's copy is read");  // values come wrapped LRE..PDF
+          use = use || table->topLevelItem(i)->text(1) == "Use project copy";
+          rows << table->topLevelItem(i)->text(0) + "=" + table->topLevelItem(i)->text(1);
+        }
+        w.m_propsPanel->hide();
+        (*require)(moved && copied && texts.contains("Use project copy") && note && use,
+                   "read from the project's copy: said so, Use project copy offered (" + texts.join(", ") + (note && use ? QString() : "; " + rows.join("; ")) + ")");
+        area->pack(part);
+        waitFor(&w, [=] { return !area->busy() && monitor->asset(part)->asset.value("storage", "") == "project" && !monitor->checking(); }, 20000, [=, &w](bool linked) {
+          const opad::json asset = monitor->asset(part)->asset;
+          QList<Toast*> toasts = w.m_toasts->toasts();
+          const QString text = toasts.isEmpty() ? QString() : toasts.back()->text();
+          (*require)(linked && asset.value("path", "") == "assets/part.step" && state() == "ok" && text.startsWith("part.step now links the project's copy"),
+                     "the link points at the project's copy: " + QString::fromStdString(asset.value("path", "")) + ", " + text);
+          QCoreApplication::exit(require->all ? 0 : 2);
+        });
+      });
     });
   });
   return true;

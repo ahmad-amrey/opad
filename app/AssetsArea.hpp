@@ -84,6 +84,9 @@ class AssetsArea : public AreaController {
   void updateLooks();
   QString name(const std::string& import) const;
   QString stateText(const std::string& import) const;
+  // Read from the project's copy (assets/ beside the document) while the link names another place, where the file is gone:
+  // Use project copy (pack, which then copies nothing) points the link there.
+  bool fromProjectCopy(const std::string& import) const;
   AssetMonitor* m_monitor = nullptr;
   std::vector<std::pair<std::string, QString>> m_queue;  // syncs waiting their turn, each with where it reads from (Locate, Replace)
   int m_synced = 0, m_syncFailed = 0;  // of the queue so far (its toast)

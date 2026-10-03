@@ -154,5 +154,9 @@
   "Copied %1": "نُسخ %1",
   "Parts of a linked file are read-only: embed the file to edit them.": "أجزاء الملف المرتبط للقراءة فقط: ضمِّن الملف لتحريرها.",
   "A linked file holds only its own parts.": "لا يضم الملف المرتبط إلا أجزاءه.",
-  "Shown as the file is now, not as last synced (tinted in the view): sync to take it": "معروض كما هو الملف الآن لا كما كان في آخر مزامنة (ملوَّن في العرض): زامِنه لاعتماده"
+  "Shown as the file is now, not as last synced (tinted in the view): sync to take it": "معروض كما هو الملف الآن لا كما كان في آخر مزامنة (ملوَّن في العرض): زامِنه لاعتماده",
+  "In sync with the project's copy %1 (not found where it was linked)": "متزامن مع نسخة المشروع %1 (لم يُعثر عليه حيث رُبط)",
+  "Not found where it was linked: the project's copy is read": "لم يُعثر عليه حيث رُبط: تُقرأ نسخة المشروع",
+  "Use project copy": "استخدام نسخة المشروع",
+  "%1 now links the project's copy: %2": "صار %1 مرتبطًا بنسخة المشروع: %2"
 }

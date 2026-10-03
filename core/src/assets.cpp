@@ -454,14 +454,18 @@ void bind_body(Document& doc, const Document& scratch, const std::string& from, 
 
 bool cancelled_error(const std::exception& e) { return std::string(e.what()).find("cancelled") != std::string::npos; }
 
-// Where an asset may be: beside the document as recorded, the project's copy, the absolute path.
+// Where an asset may be: beside the document as recorded, the project's copy (assets/<name>, a KiCad board's in
+// assets/<board>/ as pack lays it out), the absolute path.
 std::vector<fs::path> candidates(const Document& doc, const json& asset) {
   std::vector<fs::path> out;
   if (!asset.is_object()) return out;
   const std::string rel = asset.value("path", ""), abs = asset.value("abs", "");
   if (const fs::path dir = doc_dir(doc); !dir.empty()) {
     if (!rel.empty()) out.push_back((dir / path_from_utf8(rel)).lexically_normal());
-    if (const fs::path name = path_from_utf8(rel.empty() ? abs : rel).filename(); !name.empty()) out.push_back(dir / "assets" / name);
+    if (const fs::path name = path_from_utf8(rel.empty() ? abs : rel).filename(); !name.empty()) {
+      out.push_back(dir / "assets" / name);
+      if (asset.value("kind", "") == "kicad_pcb") out.push_back(dir / "assets" / name.stem() / name);
+    }
   }
   if (!abs.empty()) out.push_back(path_from_utf8(abs));
   return out;
