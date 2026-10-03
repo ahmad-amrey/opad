@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <list>
 #include <mutex>
 #include <set>
@@ -182,6 +183,20 @@ int numbers_max(const json& numbers) {
   for (const auto& e : numbers)
     if (e.is_object()) top = std::max(top, e.value("n", 0));
   return top;
+}
+
+// Today in the local calendar, YYYY-MM-DD (a date of issue is the issuer's day, not UTC's).
+std::string today() {
+  const std::time_t now = std::time(nullptr);
+  std::tm local{};
+#ifdef _WIN32
+  localtime_s(&local, &now);
+#else
+  localtime_r(&now, &local);
+#endif
+  char buf[16];
+  std::strftime(buf, sizeof buf, "%Y-%m-%d", &local);
+  return buf;
 }
 
 // A revision after `r`: digits count up, letters skip I, O, Q, S, X and Z (they read as digits or each other).
@@ -544,7 +559,7 @@ json plan_issue(const Document& doc, const Scene& scene, const json& args, std::
   for (const SheetItem* t : drawing_issues(scene, sheet))
     if (t->def.value("rev", "") == rev) throw Error("revision " + rev + " was issued already");
   json op = {{"op", "sheet_item"}, {"sheet", sheets.front()->id}, {"kind", "issue"}, {"rev", rev}};
-  op["date"] = args.value("date", now_iso8601().substr(0, 10));
+  op["date"] = args.value("date", today());
   op["by"] = args.value("by", default_author());
   for (const char* k : {"description", "approved", "tag"})
     if (args.contains(k) && args[k].is_string() && !args[k].get<std::string>().empty()) op[k] = args[k];
