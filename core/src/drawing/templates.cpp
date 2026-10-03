@@ -131,15 +131,24 @@ std::string number(double v, int decimals) {
 }
 
 // The part a sheet draws, for the title block: the one node of its first base view's source, or the document's one root.
-std::string part_node(const Scene& scene, const Sheet& sheet) {
+// whole: the sheet draws the whole document (no part chosen), so the document's own properties name it.
+std::string part_node(const Scene& scene, const Sheet& sheet, bool& whole) {
+  whole = true;
   for (const auto& id : sheet.views) {
     const SheetView* v = scene.sheet_view(id);
     if (!v || v->kind != "base") continue;
     const json nodes = v->def.value("source", json::object()).value("nodes", json::array());
+    whole = nodes.empty();
     if (nodes.size() == 1 && nodes[0].is_string() && scene.node(nodes[0].get<std::string>())) return nodes[0].get<std::string>();
     if (nodes.empty() && scene.roots.size() == 1) return scene.roots[0];
     return "";
   }
+  return "";
+}
+
+std::string text_of(const json& v) {
+  if (v.is_string()) return v.get<std::string>();
+  if (v.is_number()) return number(v.get<double>(), 4);
   return "";
 }
 
@@ -202,19 +211,26 @@ std::array<double, 4> drawing_room(const json& sheet) {
 json title_values(const Document& doc, const Scene& scene, const Sheet& sheet, bool measure) {
   const json values = sheet.def.value("values", json::object());
   const json t = sheet.def.value("template", json::object());
-  const std::string node = part_node(scene, sheet);
+  bool whole = true;
+  const std::string node = part_node(scene, sheet, whole);
   const Node* part = node.empty() ? nullptr : scene.node(node);
   const json props = part ? part->properties : json::object();
   const bool inches = sheet.def.value("units", "mm") == "in";
+  // The document's own properties: what every drawing of it says (owner, project, approvals); for a drawing of the whole
+  // document also its title, number and description, before the one root part's.
+  const auto own = [&](const std::string& k) { return text_of(scene.properties.value(k == "owner" && !scene.properties.contains("owner") ? "company" : k, json())); };
   const auto lookup = [&](const std::string& what) -> std::string {
     if (what == "title") {
+      if (whole && !own("title").empty()) return own("title");
       if (part) return part->name;
       if (!doc.path.empty()) return utf8(doc.path.stem());
       return sheet.drawing;
     }
-    if (what == "number") return props.value("part_number", "");
-    if (what == "description") return props.value("description", "");
-    if (what == "author") return sheet.def.value("by", "");
+    if (what == "number" || what == "description") {
+      const std::string mine = text_of(props.value(what == "number" ? "part_number" : what, json()));
+      return !mine.empty() || !whole ? mine : own(what);
+    }
+    if (what == "author") return !own("author").empty() ? own("author") : sheet.def.value("by", "");
     if (what == "date") return sheet.def.value("ts", "").substr(0, 10);
     if (what == "scale") return scale_text(sheet.scale);
     if (what == "units") return inches ? "in" : "mm";
@@ -253,11 +269,12 @@ json title_values(const Document& doc, const Scene& scene, const Sheet& sheet, b
     if (what == "tolerance")  // a general note, in our own words
       return inches ? "DIMENSIONS IN INCHES\nTOLERANCES:\n.XX ±.01   .XXX ±.005\nANGLES ±0.5°\nBREAK SHARP EDGES\nDO NOT SCALE DRAWING"
                     : "DIMENSIONS IN MM\nTOLERANCES:\nX.X ±0.2   X.XX ±0.1\nANGLES ±0.5°\nBREAK SHARP EDGES\nDO NOT SCALE DRAWING";
-    if (what.rfind("prop:", 0) == 0) {
-      const json v = props.value(what.substr(5), json());
-      return v.is_string() ? v.get<std::string>() : v.is_number() ? number(v.get<double>(), 4) : "";
+    if (what.rfind("prop:", 0) == 0) {  // the part's, else the document's
+      const std::string mine = text_of(props.value(what.substr(5), json()));
+      return !mine.empty() ? mine : own(what.substr(5));
     }
-    return "";
+    if (what.rfind("doc:", 0) == 0) return own(what.substr(4));
+    return own(what);  // owner, project, checked, approved, status, revision, ...: the document's
   };
   std::set<std::string> keys;
   if (t.contains("title_block") && t["title_block"].is_object())

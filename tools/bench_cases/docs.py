@@ -14,7 +14,7 @@ CASES = [
     ("export-view", "empty", {"OPAD_BENCH_EXPORT": "{prefix}"}),
     # The Drawings workspace and the sheet canvas (UI-78): Ctrl+3, New drawing from an ISO A3 template with front, top,
     # side and iso views, drafts before the final linework, dragging a base view (its projected views stay aligned) and a
-    # projected one (its gap), placing a base and a projected view, hidden lines, sheet properties, a DXF template, a new
+    # projected one (its gap), placing a base and a projected view, hidden lines, sheet and document properties, a DXF template, a new
     # sheet, PDF export, Del and Esc. <prefix>.empty.png, .sheet.png, .final.png, .window.png.
     ("sheet", "empty", {"OPAD_BENCH_SHEET": "{prefix}"}),
     # The same workspace on the Engine (beside the repository; skipped where it is not): an A2 drawing of four views laid

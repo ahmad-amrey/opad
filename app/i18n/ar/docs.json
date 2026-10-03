@@ -223,7 +223,6 @@
   "First angle": "الزاوية الأولى",
   "Third angle": "الزاوية الثالثة",
   "Dimension units": "وحدات الأبعاد",
-  "Empty fields are filled in from the sheet and the part; =key looks a value up (=scale, =prop:finish).": "تُملأ الحقول الفارغة من اللوحة والقطعة؛ و=مفتاح يبحث عن قيمة (=scale، ‏=prop:finish).",
   "No drawing yet": "لا رسم بعد",
   "A drawing shows the model in standard views on sheets with a frame and a title block, ready to print or export as PDF, DXF, DWG or SVG.": "يعرض الرسم النموذج في مساقط قياسية على لوحات بإطار وجدول عنوان، جاهزًا للطباعة أو التصدير بصيغة PDF أو DXF أو DWG أو SVG.",
   "New sheet in this drawing": "لوحة جديدة في هذا الرسم",
@@ -250,5 +249,15 @@
   "Open a sheet first.": "افتح لوحة أولًا.",
   "Select the view to project from first.": "حدّد أولًا المسقط الذي يُسقَط منه.",
   "The scale is a ratio such as 1:2 or 2:1.": "المقياس نسبة مثل 1:2 أو 2:1.",
-  "Side view": "المسقط الجانبي"
+  "Side view": "المسقط الجانبي",
+  "document properties": "خصائص المستند",
+  "Document properties…": "خصائص المستند…",
+  "Document properties": "خصائص المستند",
+  "What every drawing of this document says in its title block, unless a sheet says otherwise.": "ما تذكره كل رسومات هذا المستند في جدول العنوان، ما لم تذكر اللوحة غير ذلك.",
+  "Status": "الحالة",
+  "Designed by": "صمّمه",
+  "Checked by": "دققه",
+  "More properties (=doc:name in a title block field)": "خصائص أخرى (‎=doc:name في حقل من جدول العنوان)",
+  "Add property": "إضافة خاصية",
+  "Empty fields are filled in from the sheet, the part and the document properties; =key looks a value up (=scale, =prop:finish, =doc:project).": "تُملأ الحقول الفارغة من اللوحة والقطعة وخصائص المستند؛ ‎=key يبحث عن قيمة (‎=scale، ‎=prop:finish، ‎=doc:project)."
 }

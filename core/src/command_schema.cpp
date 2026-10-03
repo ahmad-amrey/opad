@@ -167,6 +167,7 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(name=="rename" || name=="appearance" || name=="reparent" || name=="part_properties"){
     auto targets=array(type("string"),1,1000);targets["description"]=command.args.at("targets");
     out["properties"]["targets"]=targets;out["anyOf"]={{{"required",{"target"}}},{{"required",{"targets"}}}};
+    if(name=="part_properties")out["anyOf"].push_back({{"required",{"document"}}});
   }
   if(name=="inspect" || name=="append" || name=="import_brep"){
     const auto keys=name=="inspect"?std::vector<std::string>{"ref","refs"}:name=="append"?std::vector<std::string>{"op","ops"}:std::vector<std::string>{"brep","file"};

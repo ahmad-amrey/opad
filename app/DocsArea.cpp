@@ -21,6 +21,7 @@
 #include "PartProperties.hpp"
 #include "PropertiesPanel.hpp"
 #include "Ribbon.hpp"
+#include "SheetDialogs.hpp"
 
 OPAD_ICON_TABLE(docs,
                 {"drawingSheet", R"(<rect x="3" y="5" width="18" height="14" rx="1"/><path d="M13 19v-4h8"/><path d="M6 8h4" opacity=".55"/>)"},
@@ -67,11 +68,22 @@ void DocsArea::buildActions() {
   part.keywords = {"part number", "material", "vendor", "density"};
   part.editsDocument = true;
   services().addCommand(part, [this] { editPartProperties(services().selection().ids); });
+  CommandInfo props;
+  props.id = "file.documentProperties";
+  props.label = tr("Document properties…");
+  props.icon = "sheetProperties";
+  props.keywords = {"title block", "company", "owner", "project", "approved", "revision"};
+  props.editsDocument = true;
+  props.enabledWhen = [](const CommandContext& c) { return c.document; };
+  services().addCommand(props, [this] { services().guarded([&] { documentProperties(); }); });
   buildDrawingCommands();
 }
 
 void DocsArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
-  if (QMenu* file = menus.value("file")) insertAfter(file, services().action("file.export"), services().action("file.exportBom"));
+  if (QMenu* file = menus.value("file")) {
+    insertAfter(file, services().action("file.export"), services().action("file.exportBom"));
+    insertAfter(file, services().action("file.exportBom"), services().action("file.documentProperties"));
+  }
   if (QMenu* inspect = menus.value("inspect")) insertAfter(inspect, services().action("inspect.properties"), services().action("inspect.partProperties"));
 }
 
@@ -151,6 +163,19 @@ void DocsArea::editPartProperties(std::vector<std::string> ids) {
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   connect(dialog, &PartPropertiesDialog::applied, this, [this] {  // the panel shows the new fields
     if (services().properties()->isVisible()) services().action("inspect.properties")->trigger();
+  });
+  dialog->open();
+}
+
+void DocsArea::documentProperties() {
+  AppDocument* doc = services().document();
+  if (!doc->hasDocument) throw opad::Error("Open or create a document first.");
+  if (!services().requireEditable([this] { services().guarded([&] { documentProperties(); }); })) return;
+  auto* dialog = new DocumentPropertiesDialog(doc, services().window());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &QDialog::accepted, this, [this, dialog] {
+    const opad::json set = dialog->change();
+    if (!set.is_null()) run("part_properties", {{"document", true}, {"set", set}});
   });
   dialog->open();
 }

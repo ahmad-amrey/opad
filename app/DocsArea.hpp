@@ -32,6 +32,8 @@ class DocsArea : public AreaController {
   // From the PART section's link, the context menu or Inspect > Part properties: the bodies and components of `ids`.
   void editPartProperties(std::vector<std::string> ids);
   void exportBom(std::vector<std::string> ids = {});  // File > Export bill of materials: the dialog, then where to
+  // File > Document properties… (and the Drawing tab): the document's own title block fields, one part_properties step.
+  void documentProperties();
   // A sheet as PDF, SVG, DXF, DWG or PNG, a drawing ("drawing:<name>") as the PDF pages of its sheets (UI-86): the file's
   // type is the format, the views projected on a worker (ExportJob.hpp); OPAD_BENCH_EXPORT_OUT skips the file dialog.
   void exportSheet(const std::string& id);

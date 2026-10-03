@@ -157,6 +157,8 @@ struct Scene {
   std::vector<SheetItem> sheet_items;
   std::vector<std::string> deleted_ops;  // ids of tombstoned ops
   std::unordered_map<std::string, int> instance_count;  // body key -> number of body nodes
+  // The document's own properties (title, number, owner, project, ...): `properties` ops whose target is the header's uuid.
+  json properties = json::object();
 
   const Node* node(const std::string& id) const;
   Mat4 world(const std::string& id) const;

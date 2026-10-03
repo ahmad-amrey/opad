@@ -221,6 +221,7 @@ json document_info(const Document& doc, const Scene& scene) {
   j["sections"] = scene.sections.size();
   j["views"] = scene.views.size();
   if (!scene.sheets.empty()) j["sheets"] = scene.sheets.size();
+  if (!scene.properties.empty()) j["properties"] = scene.properties;
   j["unresolved"] = scene.unresolved.size();
   Vec3 lo, hi;
   if (scene_tight_bbox(doc, scene, {}, lo, hi)) {

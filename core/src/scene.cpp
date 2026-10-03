@@ -497,6 +497,13 @@ struct SceneBuilder::Impl {
       t.def = d;
       scene.sheet_items.push_back(std::move(t));
     } else if (type == "properties") {
+      if (!doc.header.uuid.empty() && d.value("target", "") == doc.header.uuid) {  // the document's own
+        for (const auto& [k, v] : d["set"].items()) {
+          if (v.is_null()) scene.properties.erase(k);
+          else scene.properties[k] = v;
+        }
+        return;
+      }
       Node* n = target_of(id, type, d);
       if (!n) return;
       for (const auto& [k, v] : d["set"].items()) {

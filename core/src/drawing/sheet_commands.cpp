@@ -456,12 +456,20 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
       });
 
   add({"part_properties", "Part properties of nodes: part_number, description, material, density g/cm3, mass g, vendor, notes, bom include|exclude|purchased; null removes",
-       {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids"}, {"set", "object"}, {"appearance", "bool - colour as the material"}, {"by", "string"}}, true},
+       {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids"}, {"set", "object"}, {"appearance", "bool - colour as the material"},
+        {"document", "bool - the document's own"}, {"by", "string"}},
+       true},
       [](Document* d, const json& a) {
         Document& doc = need_doc(d);
         const Scene scene = resolve(doc);
         const json set = a.at("set");
         if (!set.is_object() || set.empty()) throw Error("part_properties: set is an object of properties");
+        if (a.value("document", false)) {  // title block fields every drawing of the document fills in
+          if (!is_uuid(doc.header.uuid)) throw Error("part_properties: this document has no id to hold its properties");
+          for (const auto& [k, v] : set.items())
+            if (k.empty() || !(v.is_string() || v.is_number() || v.is_null())) throw Error("part_properties: '" + k + "' is text, a number or null");
+          return json{{"id", doc.append({{"op", "properties"}, {"target", doc.header.uuid}, {"set", set}}, a.value("by", "")).id}};
+        }
         if (set.contains("bom") && !set["bom"].is_null()) {
           static const std::set<std::string> bom = {"include", "exclude", "purchased"};
           if (!set["bom"].is_string() || !bom.count(set["bom"].get<std::string>())) throw Error("part_properties: bom is include, exclude or purchased");

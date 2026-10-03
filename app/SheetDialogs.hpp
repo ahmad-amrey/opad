@@ -19,6 +19,7 @@ class QComboBox;
 class QLineEdit;
 class QListWidget;
 class QRadioButton;
+class QTableWidget;
 
 class NewDrawingDialog : public QDialog {
   Q_OBJECT
@@ -37,6 +38,23 @@ class NewDrawingDialog : public QDialog {
   QCheckBox *m_top, *m_side, *m_iso, *m_hidden;
   QLineEdit *m_name, *m_title, *m_number, *m_owner, *m_author, *m_revision;
   bool m_projectionTouched = false;
+};
+
+// Document properties: what every drawing of the document says in its title block (title, number, revision, status,
+// owner, project, who designed, checked and approved it, a description) and any property of the user's own; empty fields
+// remove theirs. The result is part_properties' `set` with document: true.
+class DocumentPropertiesDialog : public QDialog {
+  Q_OBJECT
+ public:
+  DocumentPropertiesDialog(AppDocument* doc, QWidget* parent);
+  opad::json change() const;  // null when nothing changes
+  QLineEdit* field(const std::string& key) const { return m_fields.count(key) ? m_fields.at(key) : nullptr; }
+  QTableWidget* custom() const { return m_custom; }
+
+ private:
+  opad::json m_before;
+  std::map<std::string, QLineEdit*> m_fields;
+  QTableWidget* m_custom;
 };
 
 class SheetPropertiesDialog : public QDialog {

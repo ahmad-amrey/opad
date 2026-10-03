@@ -29,8 +29,9 @@
 // view's draft before its final linework once the projections are not cached, the base view dragged on the canvas
 // takes its projected views along (alignment kept) and a projected view drags only along its axis (its gap), Ctrl+Z, a
 // base and a projected view placed with the mouse path, hidden lines from the ribbon, the sheet's properties (A2: the
-// template follows), a template from a DXF file, a new sheet in the drawing, the browser's row opening its sheet, PDF
-// export, Del and Esc on the canvas, and back to Design. <prefix>.empty.png, .sheet.png, .final.png, .window.png.
+// template follows), Document properties (Approved by in the title block), a template from a DXF file, a new sheet in the
+// drawing, the browser's row opening its sheet, PDF export, Del and Esc on the canvas, and back to Design.
+// <prefix>.empty.png, .sheet.png, .final.png, .window.png.
 OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
   const QString& prefix = value;
   DocsArea* docs = DocsArea::of(w.m_areas);
@@ -235,6 +236,28 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
     check(waitFor([&] { return w.m_doc->scene.sheet(sheetId)->width == 594; }, 5000) && w.m_doc->scene.sheet(sheetId)->def["template"]["zones"]["x"] == 12 &&
               w.m_doc->scene.sheet(sheetId)->def["values"]["owner"] == "OPAD Bench Works",
           "A2 with its zones, the owner in the title block");
+    // Document properties: what every drawing of the document says (the ISO block's Approved by), one step.
+    w.action("file.documentProperties")->trigger();
+    DocumentPropertiesDialog* docProps = nullptr;
+    waitFor([&] {
+      for (QWidget* t : QApplication::topLevelWidgets())
+        if (auto* d = qobject_cast<DocumentPropertiesDialog*>(t); d && d->isVisible()) docProps = d;
+      return docProps != nullptr;
+    }, 3000);
+    check(docProps && docProps->field("approved") && docProps->field("owner") && docProps->field("owner")->text().isEmpty(), "Document properties… opens its dialog");
+    if (docProps) {
+      docProps->field("approved")->setText("J. Doe");
+      docProps->field("project")->setText("Bench pump");
+      const size_t before = w.m_doc->doc.ops.size();
+      docProps->accept();
+      check(waitFor([&] { return w.m_doc->doc.ops.size() == before + 1; }, 5000) && w.m_doc->scene.properties.value("approved", "") == "J. Doe" &&
+                w.m_doc->scene.properties.value("project", "") == "Bench pump",
+            "Apply sets them in one step");
+    }
+    {
+      const opad::json filled = opad::drawing::title_values(w.m_doc->doc, w.m_doc->scene, *w.m_doc->scene.sheet(sheetId), false);
+      check(filled.value("approved", "") == "J. Doe" && filled.value("owner", "") == "OPAD Bench Works", "the title block's Approved by comes from the document, the sheet's own owner stays");
+    }
     waitFor(settled, 10000);
     canvas->fitSheet();
     check(waitFor(settled, 10000), "fitted again, every part drawn for the new zoom");

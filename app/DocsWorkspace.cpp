@@ -114,7 +114,7 @@ void DocsArea::drawingsRibbon(RibbonLayout& layout) {
     layout.addGroup("drawings.drawing", id, title);
     for (const char* a : ids) layout.addAction(id, services().action(a));
   };
-  group("sheet", tr("Sheet"), {"drawings.new", "drawings.newSheet", "drawings.sheetProperties", "drawings.templateFile"});
+  group("sheet", tr("Sheet"), {"drawings.new", "drawings.newSheet", "drawings.sheetProperties", "file.documentProperties", "drawings.templateFile"});
   layout.addGroup("drawings.drawing", "drawings.drawing.views", tr("Views"));
   QList<QAction*> bases;
   for (const auto& [orient, label] : baseViews()) bases << services().action(QString::fromStdString("drawings.baseView." + orient));

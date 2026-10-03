@@ -125,4 +125,11 @@ with tempfile.TemporaryDirectory(prefix="opad-merge-") as folder:
     assert merges(lambda p: opad("sheet_edit", p, target=front, set={"at": [90, 150]}),
                   lambda p: opad("sheet_edit", p, target=front, set={"style": {"hidden": True}}))
     assert not merges(lambda p: opad("delete", p, target=front), lambda p: opad("sheet_edit", p, target=front, set={"at": [90, 150]}))
+    # Document properties (UI-78, the title block's owner, project, approvals) merge key by key like part properties.
+    assert merges(lambda p: opad("part_properties", p, document=True, set={"owner": "ACME"}),
+                  lambda p: opad("part_properties", p, document=True, set={"project": "Pump"}))
+    merged = opad("info", ours)
+    assert merged["properties"] == {"owner": "ACME", "project": "Pump"} and merged["unresolved"] == 0, merged
+    assert not merges(lambda p: opad("part_properties", p, document=True, set={"approved": "A. B."}),
+                      lambda p: opad("part_properties", p, document=True, set={"approved": "C. D."}))
 print("Git merge: multiline drawings/sketches/comments and drawing sheets retained; overlapping edits rejected")

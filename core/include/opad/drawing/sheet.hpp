@@ -126,7 +126,10 @@ std::array<double, 4> drawing_room(const json& sheet);
 // key), else filled in: title (the drawn part's name, else the file's), number (its part number), author (who made the
 // sheet), date (when), scale, size, units, sheet ("2 / 3" of its drawing), doctype (part or assembly drawing), material,
 // mass (measured: workers only), tolerance (a general note), description, drawing, name, file, prop:<key> (a part
-// property). The drawn part: the one node of the first base view, or the document's one root.
+// property, else the document's), doc:<key> (a document property). The drawn part: the one node of the first base view,
+// or the document's one root. The document's own properties (Scene::properties) come first for author, and for title,
+// number and description when the sheet draws the whole document; any other key (owner or company, project, checked,
+// approved, status, revision, ...) is the document property of that name.
 json title_values(const Document& doc, const Scene& scene, const Sheet& sheet, bool measure = true);  // measure=false: no mass (the UI thread)
 // A company's frame and title block from a DXF or DWG file: its 2D geometry goes into the body store (gc keeps it for the
 // sheet) and the returned template draws it, on the smallest standard paper that holds it ("size"), moved onto it when it

@@ -5,6 +5,7 @@
 #include <QComboBox>
 #include <QFormLayout>
 #include <QGridLayout>
+#include <QHeaderView>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -13,6 +14,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSettings>
+#include <QTableWidget>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -266,6 +268,93 @@ opad::json NewDrawingDialog::args() const {
   return a;
 }
 
+// ---------------------------------------------------------------- document properties
+namespace {
+QString shown(const opad::json& v) { return v.is_string() ? QString::fromStdString(v.get<std::string>()) : v.is_number() ? QString::number(v.get<double>()) : QString(); }
+}  // namespace
+
+DocumentPropertiesDialog::DocumentPropertiesDialog(AppDocument* doc, QWidget* parent) : QDialog(parent), m_before(doc->scene.properties) {
+  setObjectName("documentPropertiesDialog");
+  setWindowTitle(tr("Document properties"));
+  auto* v = new QVBoxLayout(this);
+  v->setContentsMargins(16, 16, 16, 16);
+  v->setSpacing(10);
+  auto* intro = new QLabel(tr("What every drawing of this document says in its title block, unless a sheet says otherwise."), this);
+  intro->setObjectName("secondary");
+  intro->setWordWrap(true);
+  v->addWidget(intro);
+  auto* form = new QFormLayout();
+  for (const auto& [key, label] : std::initializer_list<std::pair<const char*, QString>>{
+           {"title", tr("Title")}, {"number", tr("Number")}, {"revision", tr("Revision")}, {"status", tr("Status")}, {"owner", tr("Owner")},
+           {"project", tr("Project")}, {"author", tr("Designed by")}, {"checked", tr("Checked by")}, {"approved", tr("Approved by")},
+           {"description", tr("Description")}}) {
+    auto* edit = new QLineEdit(shown(m_before.value(key, std::string(key) == "owner" ? m_before.value("company", opad::json()) : opad::json())), this);
+    edit->setObjectName(QString("document.") + key);
+    m_fields[key] = edit;
+    form->addRow(label, edit);
+  }
+  v->addLayout(form);
+  auto* more = new QLabel(tr("More properties (=doc:name in a title block field)"), this);
+  more->setFont(theme::ui(12, QFont::DemiBold));
+  v->addWidget(more);
+  m_custom = new QTableWidget(0, 2, this);
+  m_custom->setObjectName("document.custom");
+  m_custom->setHorizontalHeaderLabels({tr("Name"), tr("Value")});
+  m_custom->horizontalHeader()->setStretchLastSection(true);
+  m_custom->verticalHeader()->hide();
+  m_custom->setMinimumHeight(120);
+  for (const auto& [k, value] : m_before.items()) {
+    if (m_fields.count(k) || (k == "company" && !m_before.contains("owner"))) continue;
+    const int row = m_custom->rowCount();
+    m_custom->insertRow(row);
+    m_custom->setItem(row, 0, new QTableWidgetItem(QString::fromStdString(k)));
+    m_custom->setItem(row, 1, new QTableWidgetItem(shown(value)));
+  }
+  v->addWidget(m_custom);
+  auto* footer = new QHBoxLayout();
+  auto* add = new QPushButton(tr("Add property"), this);
+  footer->addWidget(add);
+  footer->addStretch();
+  auto* cancel = new QPushButton(tr("Cancel   Esc"), this);
+  auto* apply = new QPushButton(tr("Apply"), this);
+  apply->setObjectName("primary");
+  apply->setDefault(true);
+  footer->addWidget(cancel);
+  footer->addWidget(apply);
+  v->addLayout(footer);
+  connect(add, &QPushButton::clicked, this, [this] {
+    const int row = m_custom->rowCount();
+    m_custom->insertRow(row);
+    m_custom->setItem(row, 0, new QTableWidgetItem());
+    m_custom->setItem(row, 1, new QTableWidgetItem());
+    m_custom->editItem(m_custom->item(row, 0));
+  });
+  connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
+  connect(apply, &QPushButton::clicked, this, &QDialog::accept);
+  resize(460, sizeHint().height());
+}
+
+opad::json DocumentPropertiesDialog::change() const {
+  opad::json after = opad::json::object();
+  for (const auto& [key, edit] : m_fields)
+    if (!edit->text().trimmed().isEmpty()) after[key] = edit->text().trimmed().toStdString();
+  for (int row = 0; row < m_custom->rowCount(); ++row) {
+    const QTableWidgetItem *name = m_custom->item(row, 0), *value = m_custom->item(row, 1);
+    const QString k = name ? name->text().trimmed() : QString();
+    if (!k.isEmpty() && value && !value->text().trimmed().isEmpty() && !m_fields.count(k.toStdString())) after[k.toStdString()] = value->text().trimmed().toStdString();
+  }
+  if (m_before.contains("company") && !m_before.contains("owner") && after.contains("owner") && shown(m_before["company"]).toStdString() == after["owner"].get<std::string>()) {
+    after["company"] = after["owner"];  // shown as the owner, kept as it was written
+    after.erase("owner");
+  }
+  opad::json set = opad::json::object();
+  for (const auto& [k, value] : after.items())
+    if (!value.is_null() && (!m_before.contains(k) || shown(m_before[k]).toStdString() != value.get<std::string>())) set[k] = value;
+  for (const auto& [k, value] : m_before.items())
+    if (!after.contains(k) || after[k].is_null()) set[k] = nullptr;
+  return set.empty() ? opad::json(nullptr) : set;
+}
+
 // ---------------------------------------------------------------- sheet properties
 SheetPropertiesDialog::SheetPropertiesDialog(AppDocument* doc, const std::string& sheet, QWidget* parent) : QDialog(parent), m_doc(doc), m_sheet(sheet) {
   setObjectName("sheetPropertiesDialog");
@@ -354,7 +443,7 @@ SheetPropertiesDialog::SheetPropertiesDialog(AppDocument* doc, const std::string
     m_fields[key] = edit;
     right->addRow(i18n::t(QString::fromStdString(label)), edit);
   }
-  auto* hint = new QLabel(tr("Empty fields are filled in from the sheet and the part; =key looks a value up (=scale, =prop:finish)."), this);
+  auto* hint = new QLabel(tr("Empty fields are filled in from the sheet, the part and the document properties; =key looks a value up (=scale, =prop:finish, =doc:project)."), this);
   hint->setObjectName("tertiary");
   hint->setWordWrap(true);
   right->addRow(hint);

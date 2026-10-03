@@ -140,6 +140,49 @@ TEST(title_block_filled_in) {
   CHECK(circles.size() == 2u && cone.size() == 1u && circles[0] < cone[0]);  // third angle: the end view left of the cone
 }
 
+TEST(title_block_from_document_properties) {
+  Document doc = Document::create();
+  const std::string body = box(doc, 60, 40, 10);
+  run(doc, "rename", {{"target", body}, {"name", "Bracket"}});
+  run(doc, "part_properties", {{"document", true}, {"set", {{"title", "Pump housing"}, {"number", "PH-100"}, {"company", "ACME"}, {"project", "Pump"},
+                                                           {"approved", "J. Doe"}, {"author", "Ada"}, {"finish", "anodised"}}}});
+  Scene s = resolve(doc);
+  CHECK(s.unresolved.empty());
+  CHECK(!s.properties.contains("owner"));
+  CHECK_EQ(s.properties["company"], "ACME");
+  CHECK(!s.node(body)->properties.contains("company"));
+  // A drawing of the whole document: its title and number are the document's.
+  const json whole = run(doc, "sheet", {{"size", "A3"}, {"views", "front"}, {"values", {{"project", "=project"}, {"finish", "=prop:finish"}}}});
+  // A drawing of the part: the part's name; what the part does not say comes from the document.
+  run(doc, "part_properties", {{"target", body}, {"set", {{"part_number", "OP-1002"}}}});
+  const json part = run(doc, "sheet", {{"size", "A3"}, {"views", "front"}, {"select", {body}}, {"by", "Bob"}, {"values", {{"stamp", "=doc:project"}}}});
+  s = resolve(doc);
+  const json a = title_values(doc, s, *s.sheet(whole["id"].get<std::string>()), false);
+  CHECK_EQ(a["title"], "Pump housing");
+  CHECK_EQ(a["number"], "OP-1002");  // the one root part's own number first
+  CHECK_EQ(a["owner"], "ACME");      // "company" stands for the owner
+  CHECK_EQ(a["approved"], "J. Doe");
+  CHECK_EQ(a["author"], "Ada");      // the document's author before whoever made the sheet
+  CHECK_EQ(a["project"], "Pump");
+  CHECK_EQ(a["finish"], "anodised");  // prop: falls back to the document
+  const json b = title_values(doc, s, *s.sheet(part["id"].get<std::string>()), false);
+  CHECK_EQ(b["title"], "Bracket");
+  CHECK_EQ(b["number"], "OP-1002");
+  CHECK_EQ(b["owner"], "ACME");
+  CHECK_EQ(b["stamp"], "Pump");
+  // Removed again (null): the part number of the part, the file's name for the title.
+  run(doc, "part_properties", {{"document", true}, {"set", {{"title", nullptr}, {"number", nullptr}}}});
+  s = resolve(doc);
+  CHECK_EQ(title_values(doc, s, *s.sheet(whole["id"].get<std::string>()), false)["title"], "Bracket");
+  // On paper: the ISO block's Approved by and Legal owner.
+  const auto shown = texts(sheet_display(doc, s, *s.sheet(whole["id"].get<std::string>())), "Title block");
+  CHECK(shown.count("J. Doe") && shown.count("ACME"));
+  CHECK_THROWS(run(doc, "part_properties", {{"document", true}, {"set", {{"owner", json::array({1})}}}}));
+  // Kept through a save; an op on the header's uuid, so the merge driver sets them key by key.
+  const Document again = Document::parse(doc.serialize());
+  CHECK_EQ(resolve(again).properties["project"], "Pump");
+}
+
 TEST(new_drawing_views_laid_out) {
   Document doc = Document::create();
   const std::string body = box(doc, 60, 40, 10);
