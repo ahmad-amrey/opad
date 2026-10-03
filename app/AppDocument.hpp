@@ -76,7 +76,7 @@ class AppDocument : public QObject {
   using SnapshotCallback = std::function<void(std::shared_ptr<opad::Document>, const QString&)>;
   bool captureSnapshot(JobRunner* jobs, SnapshotCallback done);
   bool snapshotBusy() const { return m_capturing; }
-  void recover(opad::Document&& document, opad::Scene&& resolved);
+  void recover(opad::Document&& document, opad::Scene&& resolved);  // an unsaved copy, no path (see Recovered)
   // Prepared on a worker. Swaps the old values back into the caller for worker disposal.
   void commitSnapshot(opad::Document& document, opad::Scene& resolved,
                       unsigned long long expectedRevision, const QString& label);
@@ -136,6 +136,16 @@ class AppDocument : public QObject {
   // Replaces the document with the file as read (unsaved changes are dropped; ask first). Throws when a body is missing.
   void reloadDisk(DiskRead&& read);
   void acceptDisk(const DiskRead& read);  // the same op log: only the file's stamp moved on (touched, rewritten alike)
+  // Recovery into its file (UI-59): the document is that file's again (Save writes there). Its first `saved` ops are what
+  // the file holds (`stat` and `base` as last read), the rest unsaved. DiskSync compares the file with that: a stat that
+  // differs makes it read the file and merge or report what changed there.
+  struct Recovered {
+    QString file;
+    size_t saved = 0;
+    DiskStat stat;
+    std::shared_ptr<const opad::Manifest> base;
+  };
+  void recover(opad::Document&& document, opad::Scene&& resolved, const Recovered& into);
 
  signals:
   // A viewer document became editable: the same shapes, now under content keys (live key -> content key). Emitted just

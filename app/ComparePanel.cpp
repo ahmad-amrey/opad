@@ -227,32 +227,12 @@ ComparePanel::ComparePanel(QWidget* parent) : QWidget(parent) {
   m_status->setWordWrap(true);
   m_status->hide();
   b->addWidget(m_status);
-  m_list = new QTreeWidget(this);
+  m_list = makeList(this);
   m_list->setObjectName("compareChanges");
-  m_list->setColumnCount(2);
-  m_list->setHeaderHidden(true);
-  m_list->setRootIsDecorated(false);
-  m_list->setIndentation(10);
-  m_list->setUniformRowHeights(true);
   m_list->setFocusPolicy(Qt::NoFocus);  // ] and [ stay with the window
-  m_list->header()->setStretchLastSection(true);
-  m_list->header()->setSectionResizeMode(0, QHeaderView::Fixed);
-  m_list->header()->resizeSection(0, 26);
-  m_list->setAccessibleName(tr("Changes"));
   b->addWidget(m_list, 1);
-  m_details = new QTableWidget(this);
+  m_details = makeDetails(this);
   m_details->setObjectName("compareDetails");
-  m_details->setColumnCount(3);
-  m_details->setHorizontalHeaderLabels({tr("What"), tr("A (before)"), tr("B (after)")});
-  m_details->verticalHeader()->hide();
-  m_details->horizontalHeader()->setStretchLastSection(true);
-  m_details->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
-  m_details->setEditTriggers(QAbstractItemView::NoEditTriggers);
-  m_details->setSelectionMode(QAbstractItemView::NoSelection);
-  m_details->setFocusPolicy(Qt::NoFocus);
-  m_details->setWordWrap(true);
-  m_details->setAccessibleName(tr("What the change changed"));
-  m_details->hide();
   b->addWidget(m_details);
   v->addWidget(body, 1);
   m_footer = new PanelFooter(this);
@@ -361,69 +341,42 @@ bool ComparePanel::sideBySide() const { return m_sideBySide->isChecked(); }
 bool ComparePanel::shown(Category c) const { return m_chips[c]->isChecked(); }
 int ComparePanel::emphasis() const { return m_slider->value(); }
 
+QTreeWidget* ComparePanel::makeList(QWidget* parent) {
+  auto* list = new QTreeWidget(parent);
+  list->setColumnCount(2);
+  list->setHeaderHidden(true);
+  list->setRootIsDecorated(false);
+  list->setIndentation(10);
+  list->setUniformRowHeights(true);
+  list->header()->setStretchLastSection(true);
+  list->header()->setSectionResizeMode(0, QHeaderView::Fixed);
+  list->header()->resizeSection(0, 26);
+  list->setAccessibleName(tr("Changes"));
+  return list;
+}
+
+QTableWidget* ComparePanel::makeDetails(QWidget* parent) {
+  auto* table = new QTableWidget(parent);
+  table->setColumnCount(3);
+  table->setHorizontalHeaderLabels({tr("What"), tr("A (before)"), tr("B (after)")});
+  table->verticalHeader()->hide();
+  table->horizontalHeader()->setStretchLastSection(true);
+  table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+  table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  table->setSelectionMode(QAbstractItemView::NoSelection);
+  table->setFocusPolicy(Qt::NoFocus);
+  table->setWordWrap(true);
+  table->setAccessibleName(tr("What the change changed"));
+  table->hide();
+  return table;
+}
+
 void ComparePanel::setResult(const opad::json& diff, const std::array<int, Categories>& counts) {
-  const Tokens& t = theme::current();
   m_changes = diff.value("changes", opad::json::array());
-  m_order.clear();
-  m_rows.assign(m_changes.size(), nullptr);
   m_current = -1;
   {
     QSignalBlocker block(m_list);
-    m_list->clear();
-    for (const Group& g : groups()) {
-      std::vector<int> members;
-      for (size_t i = 0; i < m_changes.size(); ++i)
-        if (std::find(g.kinds.begin(), g.kinds.end(), m_changes[i].value("kind", "")) != g.kinds.end()) members.push_back(int(i));
-      if (members.empty()) continue;
-      auto* head = new QTreeWidgetItem(m_list);
-      head->setFirstColumnSpanned(true);
-      head->setText(0, tr("%1 (%2)").arg(i18n::t(g.title)).arg(members.size()));
-      head->setFont(0, theme::ui(11, QFont::DemiBold));
-      head->setForeground(0, t.fg3);
-      head->setFlags(Qt::ItemIsEnabled);
-      head->setData(0, Qt::UserRole, -1);
-      for (int i : members) {
-        const opad::json& c = m_changes[size_t(i)];
-        const Category cat = categoryOf(c);
-        const theme::Cue* cue = theme::cue(stateOf(cat));
-        auto* row = new QTreeWidgetItem(m_list);
-        row->setText(0, QString::fromUtf8(cue->mark));
-        row->setTextAlignment(0, Qt::AlignCenter);
-        row->setForeground(0, t.*cue->colour);
-        row->setFont(0, theme::ui(13, QFont::Bold));
-        row->setToolTip(0, i18n::t(cue->label));
-        const QString name = c.value("kind", "") == "annotation" ? "“" + text(c, "text").left(60) + "”" : text(c, "name");
-        QString what;
-        const std::string change = c.value("change", ""), kind = c.value("kind", "");
-        if (change == "added") what = tr("added");
-        else if (change == "removed") what = tr("removed");
-        else if (change == "renamed") what = tr("renamed from %1").arg(text(c, "before"));
-        else if (change == "moved") what = tr("moved");
-        else if (change == "reparented") what = tr("moved into %1").arg(text(c, "after").isEmpty() ? tr("the root") : text(c, "after"));
-        else if (change == "geometry") what = tr("geometry changed");
-        else if (change == "appearance") what = tr("appearance changed");
-        else if (change == "regenerated") what = tr("regenerated");
-        else if (change == "suppressed") what = tr("suppressed");
-        else if (change == "unsuppressed") what = tr("unsuppressed");
-        else if (change == "failed") what = tr("fails");
-        else if (change == "fixed") what = tr("no longer fails");
-        else if (change == "resolved") what = tr("resolved");
-        else if (change == "reopened") what = tr("reopened");
-        else if (change == "commented") what = tr("replied to");
-        else if (change == "synced") what = tr("synced");
-        else if (change == "edited" && kind == "feature") {
-          QStringList labels;
-          for (const auto& d : c.value("details", opad::json::array())) labels << i18n::t(text(d, "label"));
-          what = labels.join(", ");
-        } else if (change == "edited" && (kind == "param" || kind == "units")) what = text(c, "before") + QString::fromUtf8(" → ") + text(c, "after");
-        else what = tr("changed");
-        row->setText(1, kind == "units" ? tr("Units: %1").arg(what) : name.isEmpty() ? what : tr("%1 · %2").arg(name, what));
-        row->setToolTip(1, row->text(1));
-        row->setData(0, Qt::UserRole, i);
-        m_rows[size_t(i)] = row;
-        m_order.push_back(i);
-      }
-    }
+    listChanges(m_list, m_changes, m_rows, m_order);
   }
   for (int c = 0; c < Categories; ++c) m_chips[c]->setCount(counts[c]);
   const std::string relation = diff.value("relation", "");
@@ -441,6 +394,67 @@ void ComparePanel::setResult(const opad::json& diff, const std::array<int, Categ
   emit contentResized();
 }
 
+void ComparePanel::listChanges(QTreeWidget* list, const opad::json& changes, std::vector<QTreeWidgetItem*>& rows, std::vector<int>& order) {
+  const Tokens& t = theme::current();
+  order.clear();
+  rows.assign(changes.size(), nullptr);
+  list->clear();
+  for (const Group& g : groups()) {
+    std::vector<int> members;
+    for (size_t i = 0; i < changes.size(); ++i)
+      if (std::find(g.kinds.begin(), g.kinds.end(), changes[i].value("kind", "")) != g.kinds.end()) members.push_back(int(i));
+    if (members.empty()) continue;
+    auto* head = new QTreeWidgetItem(list);
+    head->setFirstColumnSpanned(true);
+    head->setText(0, tr("%1 (%2)").arg(i18n::t(g.title)).arg(members.size()));
+    head->setFont(0, theme::ui(11, QFont::DemiBold));
+    head->setForeground(0, t.fg3);
+    head->setFlags(Qt::ItemIsEnabled);
+    head->setData(0, Qt::UserRole, -1);
+    for (int i : members) {
+      const opad::json& c = changes[size_t(i)];
+      const Category cat = categoryOf(c);
+      const theme::Cue* cue = theme::cue(stateOf(cat));
+      auto* row = new QTreeWidgetItem(list);
+      row->setText(0, QString::fromUtf8(cue->mark));
+      row->setTextAlignment(0, Qt::AlignCenter);
+      row->setForeground(0, t.*cue->colour);
+      row->setFont(0, theme::ui(13, QFont::Bold));
+      row->setToolTip(0, i18n::t(cue->label));
+      const QString name = c.value("kind", "") == "annotation" ? "“" + text(c, "text").left(60) + "”" : text(c, "name");
+      QString what;
+      const std::string change = c.value("change", ""), kind = c.value("kind", "");
+      if (change == "added") what = tr("added");
+      else if (change == "removed") what = tr("removed");
+      else if (change == "renamed") what = tr("renamed from %1").arg(text(c, "before"));
+      else if (change == "moved") what = tr("moved");
+      else if (change == "reparented") what = tr("moved into %1").arg(text(c, "after").isEmpty() ? tr("the root") : text(c, "after"));
+      else if (change == "geometry") what = tr("geometry changed");
+      else if (change == "appearance") what = tr("appearance changed");
+      else if (change == "regenerated") what = tr("regenerated");
+      else if (change == "suppressed") what = tr("suppressed");
+      else if (change == "unsuppressed") what = tr("unsuppressed");
+      else if (change == "failed") what = tr("fails");
+      else if (change == "fixed") what = tr("no longer fails");
+      else if (change == "resolved") what = tr("resolved");
+      else if (change == "reopened") what = tr("reopened");
+      else if (change == "commented") what = tr("replied to");
+      else if (change == "synced") what = tr("synced");
+      else if (change == "edited" && kind == "feature") {
+        QStringList labels;
+        for (const auto& d : c.value("details", opad::json::array())) labels << i18n::t(text(d, "label"));
+        what = labels.join(", ");
+      } else if (change == "edited" && (kind == "param" || kind == "units")) what = text(c, "before") + QString::fromUtf8(" → ") + text(c, "after");
+      else what = tr("changed");
+      row->setText(1, kind == "units" ? tr("Units: %1").arg(what) : name.isEmpty() ? what : tr("%1 · %2").arg(name, what));
+      row->setToolTip(1, row->text(1));
+      row->setData(0, Qt::UserRole, i);
+      rows[size_t(i)] = row;
+      order.push_back(i);
+    }
+  }
+}
+
 void ComparePanel::setCurrent(int change) {
   if (change < 0 || size_t(change) >= m_rows.size() || !m_rows[size_t(change)]) return;
   m_current = change;
@@ -449,10 +463,10 @@ void ComparePanel::setCurrent(int change) {
     m_list->setCurrentItem(m_rows[size_t(change)]);
   }
   m_list->scrollToItem(m_rows[size_t(change)]);
-  showDetails(m_changes[size_t(change)]);
+  fillDetails(m_details, m_changes[size_t(change)]);
 }
 
-void ComparePanel::showDetails(const opad::json& c) {
+void ComparePanel::fillDetails(QTableWidget* table, const opad::json& c) {
   std::vector<std::array<QString, 3>> rows;
   auto add = [&](const QString& what, const QString& before, const QString& after) { rows.push_back({what, before, after}); };
   const std::string change = c.value("change", ""), kind = c.value("kind", "");
@@ -528,18 +542,18 @@ void ComparePanel::showDetails(const opad::json& c) {
     };
     add(what, side("before"), side("after"));
   }
-  m_details->setRowCount(int(rows.size()));
+  table->setRowCount(int(rows.size()));
   for (size_t i = 0; i < rows.size(); ++i)
     for (int col = 0; col < 3; ++col) {
       auto* item = new QTableWidgetItem(rows[i][size_t(col)]);
       item->setToolTip(rows[i][size_t(col)]);
-      m_details->setItem(int(i), col, item);
+      table->setItem(int(i), col, item);
     }
-  m_details->resizeRowsToContents();
-  int height = m_details->horizontalHeader()->sizeHint().height() + 2 * m_details->frameWidth() + 2;  // its rows, up to six: the list keeps the rest
-  for (int i = 0; i < std::min(int(rows.size()), 6); ++i) height += m_details->rowHeight(i);
-  m_details->setFixedHeight(height);
-  m_details->setVisible(!rows.empty());
+  table->resizeRowsToContents();
+  int height = table->horizontalHeader()->sizeHint().height() + 2 * table->frameWidth() + 2;  // its rows, up to six: the list keeps the rest
+  for (int i = 0; i < std::min(int(rows.size()), 6); ++i) height += table->rowHeight(i);
+  table->setFixedHeight(height);
+  table->setVisible(!rows.empty());
 }
 
 QSize ComparePanel::preferredSize(int width) const { return QSize(width, 660); }

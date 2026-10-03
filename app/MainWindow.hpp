@@ -24,6 +24,7 @@
 #include "BrowserOverlay.hpp"
 class RecoveryManager;
 class AgentBridge;
+class QMessageBox;
 class QToolButton;
 template <class Tag>
 struct MainWindowBench;
@@ -98,6 +99,9 @@ class MainWindow : public QMainWindow {
   QString m_viewPath;
   void guarded(const std::function<void()>& fn);
   bool maybeSave();
+  // The unsaved-changes question, built but not shown (maybeSave runs it; a bench presses its buttons): Save, Discard,
+  // Cancel and, while the file is on disk, Review changes… (UI-59: Compare, the saved file against this session).
+  QMessageBox* unsavedPrompt();
   void showDocument(bool has);
   void beginLoad(std::function<void()> after);
   void setLoadPhase(const QString& phase, int pct);

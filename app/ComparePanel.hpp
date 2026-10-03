@@ -69,6 +69,13 @@ class ComparePanel : public QWidget {
   bool sideBySide() const;
   QString status() const;
   QSize preferredSize(int width) const;
+  // The list and the table as the panel has them, for other lists of changes (the Recovery offer, UI-59): makeList and
+  // makeDetails set them up; listChanges fills the list with a diff's changes grouped by what changed, a row each (its
+  // mark, colour and words; rows by change index, order the rows' order); fillDetails shows what one change changed.
+  static QTreeWidget* makeList(QWidget* parent);
+  static QTableWidget* makeDetails(QWidget* parent);
+  static void listChanges(QTreeWidget* list, const opad::json& changes, std::vector<QTreeWidgetItem*>& rows, std::vector<int>& order);
+  static void fillDetails(QTableWidget* table, const opad::json& change);
   // benches
   LegendChip* chip(Category c) const { return m_chips[c]; }
   QSlider* slider() const { return m_slider; }
@@ -89,7 +96,6 @@ class ComparePanel : public QWidget {
   void doneRequested();
   void contentResized();
  private:
-  void showDetails(const opad::json& change);
   void picked(int side);
   QComboBox *m_pickA, *m_pickB;
   QToolButton* m_swap;

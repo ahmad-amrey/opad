@@ -7,11 +7,14 @@
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QPointer>
+#include <QPushButton>
 #include <QStatusBar>
+#include <QTimer>
 #include <QToolButton>
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 
 #include "I18n.hpp"
 #include "Icons.hpp"
@@ -382,8 +385,11 @@ bool MainWindow::maybeSave() {
     m_design->sketch()->end();m_doc->setRollback({});
   }
   if (!m_doc->isDirty()) return true;
-  auto r = QMessageBox::question(this, tr("Unsaved changes"), tr("Save changes to %1?").arg(m_doc->path().isEmpty() ? tr("the document") : m_doc->path()),
-                                 QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+  std::unique_ptr<QMessageBox> box(unsavedPrompt());
+  box->exec();
+  QAbstractButton* clicked = box->clickedButton();
+  if (!clicked || clicked->objectName() == "reviewChanges") return false;  // Compare opens; the question waits for later
+  const auto r = box->standardButton(clicked);
   if (r == QMessageBox::Cancel) return false;
   if (r == QMessageBox::Save) {
     try {
@@ -396,6 +402,19 @@ bool MainWindow::maybeSave() {
     return !m_doc->isDirty();
   }
   return true;
+}
+
+QMessageBox* MainWindow::unsavedPrompt() {
+  auto* box = new QMessageBox(QMessageBox::Question, tr("Unsaved changes"), tr("Save changes to %1?").arg(m_doc->path().isEmpty() ? tr("the document") : m_doc->path()),
+                              QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, this);
+  box->setDefaultButton(QMessageBox::Save);
+  if (QAction* review = action("vcs.unsavedChanges"); review && review->isEnabled()) {
+    QPushButton* button = box->addButton(tr("Review changes…"), QMessageBox::ActionRole);
+    button->setObjectName("reviewChanges");
+    button->setToolTip(tr("Compare the saved file with this session before deciding"));
+    connect(button, &QPushButton::clicked, review, [review] { QTimer::singleShot(0, review, &QAction::trigger); });  // once the question has closed
+  }
+  return box;
 }
 
 void MainWindow::closeEvent(QCloseEvent* e) {

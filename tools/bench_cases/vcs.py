@@ -1,5 +1,5 @@
 """gui_benches cases of version control (T3); the benches are in app/VcsBench.cpp (DiskSync::bench, GitWatch::bench,
-CompareMode::bench)."""
+CompareMode::bench) and app/RecoveryBench.cpp."""
 import json
 import shutil
 import subprocess
@@ -34,6 +34,14 @@ def compared(root, document, name="compare"):
     return doc
 
 
+def recovered(root, document, name="recovery"):
+    """Recovery with diff (UI-59): <name>/model.opad with three boxes, saved; the bench changes, snapshots, restores and saves
+    it."""
+    (root / name).mkdir(exist_ok=True)
+    box = lambda x, size: ("feature", "--kind", "box", "--inputs", json.dumps({"x": f"{x} mm", "length": f"{size} mm", "width": "20 mm", "height": "10 mm"}))
+    return document(f"{name}/model", box(0, 30), box(50, 20), box(100, 10))
+
+
 CASES = [
     ("external-change", external, {"OPAD_BENCH_EXTERNAL_CHANGE": "{prefix}", "OPAD_BENCH_CLI": "{cli}"}),
     # git without this machine's settings: a global config of the run's own (the bench sets the author there), no system one.
@@ -46,4 +54,7 @@ CASES = [
     ("compare-ar", lambda root, document: compared(root, document, "compare-ar"),
      {"OPAD_BENCH_COMPARE": "{prefix}", "OPAD_BENCH_COMPARE_GIT": "1" if shutil.which("git") else "0", "GIT_CONFIG_GLOBAL": "{root}/git-global",
       "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
+    # Recovery with diff: the offer's detail pane, Restore into file, Merge into current, Review changes…, Discard; also in Arabic.
+    ("recovery-diff", recovered, {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}"}),
+    ("recovery-diff-ar", lambda root, document: recovered(root, document, "recovery-ar"), {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}", "OPAD_LANG": "ar"}),
 ]

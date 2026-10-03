@@ -1,7 +1,7 @@
 // Version control as an area of the window (AreaController.hpp): the open file kept in step with the disk (DiskSync,
 // UI-56) and its repository (GitWatch, UI-61 / UI-136): the status chip beside the path, File > Clone repository…;
 // Compare (CompareMode, UI-58): File > Compare versions…, Inspect > Versions, the git chip's Compare with the last commit,
-// the Recovery offer's Compare….
+// the Recovery offer's Compare…; Show unsaved changes (UI-59), also the unsaved-changes question's Review changes….
 #include <QAction>
 #include <QMainWindow>
 #include <QMenu>
@@ -37,6 +37,17 @@ class Vcs : public AreaController {
     compare.keywords = {"diff", "changes", "git", "history", "version", "revision"};
     compare.enabledWhen = [](const CommandContext& c) { return c.document && !c.viewer && !c.sketching; };
     services().addCommand(compare, [this] { if (m_compare) m_compare->open(); });
+    CommandInfo unsaved;  // UI-59: also the unsaved-changes question's Review changes…
+    unsaved.id = "vcs.unsavedChanges";
+    unsaved.label = tr("Show unsaved changes");
+    unsaved.icon = "compare";
+    unsaved.group = group;
+    unsaved.keywords = {"diff", "changes", "unsaved", "modified", "review"};
+    unsaved.enabledWhen = [this](const CommandContext& c) {
+      const AppDocument* d = services().document();
+      return c.document && !c.viewer && !c.sketching && d && d->isDirty() && !d->doc.path.empty();
+    };
+    services().addCommand(unsaved, [this] { if (m_compare) m_compare->showUnsaved(); });
     // ] and [ step through the changes while Compare is open; elsewhere they do nothing.
     for (const auto& [id, label, key, delta] : {std::tuple{"vcs.nextChange", tr("Next change"), "]", 1}, std::tuple{"vcs.previousChange", tr("Previous change"), "[", -1}}) {
       CommandInfo step;
@@ -50,7 +61,7 @@ class Vcs : public AreaController {
       services().addCommand(step, [this, delta = delta] { if (m_compare) m_compare->step(delta); });
     }
   }
-  void menus(QMenuBar*, const QMap<QString, QMenu*>& menus) override {  // File: after Open…, Clone repository… then Compare versions…
+  void menus(QMenuBar*, const QMap<QString, QMenu*>& menus) override {  // File: after Open…, Clone repository…, Compare versions…, Show unsaved changes
     QMenu* file = menus.value("file");
     if (!file) return;
     const QList<QAction*> items = file->actions();
@@ -58,6 +69,7 @@ class Vcs : public AreaController {
     QAction* before = open >= 0 && open + 1 < items.size() ? items[open + 1] : nullptr;
     file->insertAction(before, services().action("file.clone"));
     file->insertAction(before, services().action("vcs.compare"));
+    file->insertAction(before, services().action("vcs.unsavedChanges"));
   }
   void ribbon(RibbonLayout& layout) override {
     layout.addGroup("review.inspect", "review.inspect.versions", tr("Versions"));

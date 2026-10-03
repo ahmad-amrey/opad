@@ -119,7 +119,7 @@ std::shared_ptr<opad::Document> readVersion(const CompareVersion& v, const std::
       if (!r.ok()) throw opad::Error(CompareMode::tr("%1 does not have this file: %2").arg(v.label, r.error()).toStdString());
       return std::make_shared<opad::Document>(opad::Document::parse_index(r.out.toStdString(), fsPath(file)));
     }
-    case Kind::Recovery: return std::make_shared<opad::Document>(opad::Document::parse_index(RecoveryManager::snapshotText(v.ref)));
+    case Kind::Recovery: return std::make_shared<opad::Document>(RecoveryManager::snapshotDocument(v.ref));
     case Kind::None: break;
   }
   throw opad::Error(CompareMode::tr("Choose the version to compare with.").toStdString());
@@ -298,6 +298,20 @@ void CompareMode::open() {
   if (!file.isEmpty() && (state == D::Clean || state == D::Modified || state == D::Conflict)) a = parseVersion("git:HEAD");
   else if (!file.isEmpty() && QFileInfo::exists(file)) a = savedVersion(file);
   compare(a, {Kind::Session, QString(), tr("This session"), QString()});
+}
+
+void CompareMode::showUnsaved() {
+  AppDocument* doc = m_services.document();
+  const QString file = doc->hasDocument && !doc->browse && !doc->doc.path.empty() ? doc->path() : QString();
+  if (file.isEmpty() || !QFileInfo::exists(file)) {
+    m_services.showMessage(tr("Not saved yet: everything in it is unsaved."));
+    return;
+  }
+  if (DesignController* d = m_services.design(); d && (d->sketchActive() || d->featureActive())) {
+    m_services.showMessage(tr("Finish the sketch or the feature first."));
+    return;
+  }
+  compare(savedVersion(file), {Kind::Session, QString(), tr("This session"), QString()});
 }
 
 void CompareMode::compare(const CompareVersion& a, const CompareVersion& b) {

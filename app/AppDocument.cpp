@@ -7,6 +7,7 @@
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QSettings>
+#include <QThread>
 #include <Standard_Failure.hxx>
 #include <algorithm>
 #include <set>
@@ -22,6 +23,13 @@ bool isExternalPath(const QString& path) {
 // A file name as the core's std::filesystem wants it: from UTF-16, since a narrow string is read in the ANSI code page on
 // Windows and a file named in Arabic or Chinese did not open.
 std::filesystem::path fsPath(const QString& path) { return std::filesystem::path(path.toStdU16String()); }
+// A replaced document (its body text, its shapes) is let go on a thread of its own: freeing it scales with the model. Reset
+// there: QThread::create's callable is destroyed with the thread object, on the UI thread.
+void dispose(std::shared_ptr<opad::Document> old) {
+  auto* thread = QThread::create([old = std::move(old)]() mutable { old.reset(); });
+  QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+  thread->start(QThread::LowPriority);
+}
 QString phaseLabel(const std::string& what, const QString& file) {
   if (what == "reading") return AppDocument::tr("Reading %1").arg(file);
   if (what == "building") return AppDocument::tr("Building document");
@@ -380,11 +388,21 @@ void AppDocument::refresh() {
   emit changed();
 }
 
-void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved) {
+void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved) {recover(std::move(document),std::move(resolved),Recovered{});}
+
+void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved,const Recovered& into) {
   if(loading || designBusy)throw opad::Error("Document is busy; try recovery again shortly.");
   emit aboutToReplace();++generation;++revision;m_rollback.clear();
-  doc=std::move(document);doc.path.clear();doc.dirty=true;scene=std::move(resolved);
-  browse=false;hasDocument=true;clearHistory();m_savedIds.clear();m_savedBodies=0;setDisk({},{},{});
+  dispose(std::make_shared<opad::Document>(std::move(doc)));
+  doc=std::move(document);scene=std::move(resolved);
+  browse=false;hasDocument=true;clearHistory();m_savedIds.clear();m_savedBodies=0;
+  if(into.file.isEmpty()){doc.path.clear();doc.dirty=true;setDisk({},{},{});}
+  else {
+    const QString file=QFileInfo(into.file).absoluteFilePath();
+    doc.path=fsPath(file);
+    for(size_t i=0;i<std::min(into.saved,doc.ops.size());++i)m_savedIds.push_back(doc.ops[i].id);
+    updateDirty();setDisk(file,into.stat,into.base);
+  }
   emit changed();emit pathChanged();
 }
 
