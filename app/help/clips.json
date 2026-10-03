@@ -3089,10 +3089,10 @@
     {"to": 4.6, "caption": "Click a card: its target lights up"}
    ]
   },
-  {"id": "nav.fusion", "template": "navPreset", "args": {"name": "Fusion buttons", "orbit": "Shift + middle", "pan": "Middle", "zoom": "Wheel", "caps1": ["Shift"]}},
-  {"id": "nav.solidworks", "template": "navPreset", "args": {"name": "SolidWorks buttons", "orbit": "Middle", "pan": "Ctrl + middle", "zoom": "Wheel", "caps2": ["Ctrl"]}},
-  {"id": "nav.onshape", "template": "navPreset", "args": {"name": "Onshape buttons", "orbit": "Right", "pan": "Middle", "zoom": "Wheel"}},
-  {"id": "nav.blender", "template": "navPreset", "args": {"name": "Blender buttons", "orbit": "Middle", "pan": "Shift + middle", "zoom": "Wheel", "caps2": ["Shift"]}},
+  {"id": "nav.fusion", "template": "navPreset", "args": {"name": "Fusion-style", "orbit": "Shift + middle", "pan": "Middle", "zoom": "Wheel", "caps1": ["Shift"]}},
+  {"id": "nav.solidworks", "template": "navPreset", "args": {"name": "SOLIDWORKS-style", "orbit": "Middle", "pan": "Ctrl + middle", "zoom": "Wheel", "caps2": ["Ctrl"]}},
+  {"id": "nav.onshape", "template": "navPreset", "args": {"name": "Onshape-style", "orbit": "Right", "pan": "Middle", "zoom": "Wheel"}},
+  {"id": "nav.blender", "template": "navPreset", "args": {"name": "Blender-style", "orbit": "Middle", "pan": "Shift + middle", "zoom": "Wheel", "caps2": ["Shift"]}},
   {
    "id": "tools.commands", "duration": 4.6, "view": "iso", "extent": [-26, -11, 26, 16],
    "items": [

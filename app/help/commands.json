@@ -351,29 +351,29 @@
   },
   {
    "id": "nav.fusion",
-   "title": "Navigation: Fusion",
-   "summary": "Uses the Fusion mouse buttons for orbit, pan and zoom.",
+   "title": "Navigation: Fusion-style",
+   "summary": "Uses Fusion-style mouse buttons for orbit, pan and zoom.",
    "details": "Pick the preset your hands already know; it changes only the mouse, not the keyboard shortcuts. The choice is kept for the next start.",
    "keywords": ["mouse", "orbit", "pan", "zoom", "navigation", "fusion"]
   },
   {
    "id": "nav.solidworks",
-   "title": "Navigation: SolidWorks",
-   "summary": "Uses the SolidWorks mouse buttons for orbit, pan and zoom.",
+   "title": "Navigation: SOLIDWORKS-style",
+   "summary": "Uses SOLIDWORKS-style mouse buttons for orbit, pan and zoom.",
    "details": "Pick the preset your hands already know; it changes only the mouse, not the keyboard shortcuts. The choice is kept for the next start.",
    "keywords": ["mouse", "orbit", "pan", "zoom", "navigation", "solidworks"]
   },
   {
    "id": "nav.onshape",
-   "title": "Navigation: Onshape",
-   "summary": "Uses the Onshape mouse buttons for orbit, pan and zoom.",
+   "title": "Navigation: Onshape-style",
+   "summary": "Uses Onshape-style mouse buttons for orbit, pan and zoom.",
    "details": "Pick the preset your hands already know; it changes only the mouse, not the keyboard shortcuts. The choice is kept for the next start.",
    "keywords": ["mouse", "orbit", "pan", "zoom", "navigation", "onshape"]
   },
   {
    "id": "nav.blender",
-   "title": "Navigation: Blender",
-   "summary": "Uses the Blender mouse buttons for orbit, pan and zoom.",
+   "title": "Navigation: Blender-style",
+   "summary": "Uses Blender-style mouse buttons for orbit, pan and zoom.",
    "details": "Pick the preset your hands already know; it changes only the mouse, not the keyboard shortcuts. The choice is kept for the next start.",
    "keywords": ["mouse", "orbit", "pan", "zoom", "navigation", "blender"]
   },
