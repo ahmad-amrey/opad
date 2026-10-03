@@ -151,13 +151,25 @@ void MainWindow::drawingToSketch() {
     if(state->plane.is_null() || layers().empty() || state->applying) return;
     const int serial=++state->serial; if(state->job) state->job->cancel();
     auto snapshot=std::make_shared<opad::Document>(m_doc->doc); auto geometry=std::make_shared<opad::design::Sketch>(); auto drawn=std::make_shared<CurvePreview>();
-    const auto chosen=layers(); const auto plane=state->plane; const auto frame=state->frame; const double tol=tolerance->value(); const auto title=name->text().trimmed().toStdString();
+    const auto chosen=layers(); const auto frame=state->frame; const double tol=tolerance->value(); const auto title=name->text().trimmed().toStdString();
+    // Conversion copies geometry. Its placement must not retain a snap reference to
+    // the drawing that can be removed now or later. Keep independent model supports.
+    auto placement=state->plane;
+    std::set<std::string> sources;for(const auto& layer:chosen)if(const auto* n=m_doc->scene.node(layer.id))sources.insert(n->source_op);
+    std::function<bool(const opad::json&)> fromSource=[&](const opad::json& value){
+      if(value.is_object() && value.contains("body") && value["body"].is_string()){const auto* n=m_doc->scene.node(value["body"].get<std::string>());if(n && sources.count(n->source_op))return true;}
+      if(value.is_structured())for(const auto& child:value)if(fromSource(child))return true;return false;
+    };
+    if(fromSource(placement))placement={{"frame",frame.to_json()}};
+    // The op is made on the worker as well: the curves' JSON and its copies held the window half a second for 30,000.
+    auto op=std::make_shared<opad::json>();
     if(commit) { state->applying=true; update(); }
     state->job=m_jobs->async(commit?tr("Converting drawing layers"):tr("Previewing curves"),[=](Progress p) {
       ++runningConversions; struct Running { ~Running() { --runningConversions; } } running;
       // A preview the next change made stale stops at once (UI-29: they ran on for 45 s each, stacking up).
       *geometry=opad::design::drawing_sketch(*snapshot,opad::resolve(*snapshot),chosen,frame,tol,[p]{return p.cancelled();}); if(p.cancelled()) return;
       if(!commit) *drawn=curvePreview(*geometry,frame,p);
+      else *op=opad::design::make_sketch_op(title,placement,geometry->to_json());
     },[=,this](bool ok,const QString& error) {
       if(!guard || state->closed || serial!=state->serial || generation!=m_doc->generation) return;
       state->job=nullptr;
@@ -170,22 +182,9 @@ void MainWindow::drawingToSketch() {
         summary->show(); return;
       }
       if(snapshot->ops.size()!=m_doc->doc.ops.size()) { state->applying=false; note->setText(tr("Document changed. Please retry.")); update(); return; }
-      // Conversion copies geometry. Its placement must not retain a snap reference to
-      // the drawing that can be removed now or later. Keep independent model supports.
-      auto placement=plane;
-      std::set<std::string> sources;for(const auto& layer:chosen)sources.insert(m_doc->scene.node(layer.id)->source_op);
-      std::function<bool(const opad::json&)> fromSource=[&](const opad::json& value){
-        if(value.is_object() && value.contains("body") && value["body"].is_string()){const auto* n=m_doc->scene.node(value["body"].get<std::string>());if(n && sources.count(n->source_op))return true;}
-        if(value.is_structured())for(const auto& child:value)if(fromSource(child))return true;return false;
-      };
-      if(fromSource(placement))placement={{"frame",frame.to_json()}};
-      auto op=opad::design::make_sketch_op(title,placement,geometry->to_json());
-      std::vector<opad::json> ops{op};
-      if(removeSource->isChecked()) {
-        std::set<std::string> sources;for(const auto& layer:chosen)sources.insert(m_doc->scene.node(layer.id)->source_op);
-        for(const auto& source:sources)ops.push_back({{"op","delete"},{"target",source}});
-      }
-      m_design->applyOps(ops,tr("Convert drawing to sketch"),[=,this](bool applied,const QString& failure) {
+      std::vector<opad::json> ops; ops.push_back(std::move(*op));
+      if(removeSource->isChecked()) for(const auto& source:sources) ops.push_back({{"op","delete"},{"target",source}});
+      m_design->applyOps(std::move(ops),tr("Convert drawing to sketch"),[=,this](bool applied,const QString& failure) {
         if(!guard || state->closed) return;
         state->applying=false;
         if(applied) { panel->hide(); if(qEnvironmentVariableIsSet("OPAD_BENCH_WIZARD_CREATE")) QTimer::singleShot(500,this,[this,title,state] {

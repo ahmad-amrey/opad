@@ -190,8 +190,16 @@ void check_constraint(const Sketch& sk, const SkConstraint& c, const Index* inde
   if (c.is_dimension() && !std::isfinite(c.value)) throw Error(who + ": value is not a number");
 }
 
+// Ids are handed out in increasing order, so a list is nearly always sorted by them: a binary search finds the item, a scan
+// only what it misses (a list edited out of order). Scanning per lookup made a converted drawing's edges n² (UI-29).
 template <class V>
 auto find_id(V& v, int id) -> decltype(v.data()) {
+  size_t lo = 0, hi = v.size();
+  while (lo < hi) {
+    const size_t mid = lo + (hi - lo) / 2;
+    if (v[mid].id < id) lo = mid + 1; else hi = mid;
+  }
+  if (lo < v.size() && v[lo].id == id) return &v[lo];
   for (auto& it : v)
     if (it.id == id) return &it;
   return nullptr;

@@ -327,6 +327,10 @@ TEST(drawing_conversion_scales_fails_fast_and_cancels) {
   CHECK_EQ(sk.points.size(), size_t(80000));
   CHECK_EQ(sk.next_id(), 120001);
   CHECK(took < 20);  // was minutes (each id and point lookup scanned the whole sketch)
+  start = std::chrono::steady_clock::now();  // the sketch's curves in the view: each looked its points up by scanning
+  CHECK_EQ(design::sketch_edges(sk, Frame{}, true).size(), size_t(40000));
+  std::cerr << "its 40000 edges made in " << seconds(start) << " s" << std::endl;
+  CHECK(seconds(start) < 5);
   int polls = 0;
   try {
     design::drawing_sketch(big, scene, layers, Frame{}, .01, [&] { return ++polls > 3; });

@@ -201,9 +201,10 @@ void DesignController::applyOps(std::vector<opad::json> ops, const QString& labe
   const auto generation = m_doc->generation;
   auto plan = std::make_shared<Plan>();
   auto doc = std::make_shared<opad::Document>(m_doc->doc);
-  m_jobs->async(tr("Updating the design"), [doc, ops, plan](Progress p) {
+  auto list = std::make_shared<std::vector<opad::json>>(std::move(ops));  // not copied with the job (a converted drawing's curves)
+  m_jobs->async(tr("Updating the design"), [doc, list, plan](Progress p) {
     Reading reading;
-    *plan = plan_ops(*doc, ops, true, [p] { return p.cancelled(); });
+    *plan = plan_ops(*doc, std::move(*list), true, [p] { return p.cancelled(); });
   }, [this, plan, label, report, generation](bool ok, const QString& error) {
     whenNobodyReads(this, [this, plan, label, report, ok, error, generation] {
       if (generation != m_doc->generation) return;

@@ -167,6 +167,7 @@ TEST(sketch_builders_and_remove) {
 
 // UI-29: next_id reads only what was appended since its last call, yet always answers as a scan of every list would, whatever
 // the callers did in between (builders, direct pushes, removals, lists cut, reordered or replaced, a renumbered last item).
+// Point and curve lookups (a binary search first) find what a scan finds, in sorted lists and in lists out of order.
 TEST(next_id_running_maximum_matches_a_full_scan) {
   Sketch sk;
   auto scan = [&] {
@@ -199,6 +200,14 @@ TEST(next_id_running_maximum_matches_a_full_scan) {
       default: sk.images.push_back({{"id", sk.next_id()}}); if (next(3) == 0) sk.images.erase(sk.images.begin()); break;
     }
     CHECK_EQ(sk.next_id(), scan());
+    for (int k = 0; k < 4; ++k) {
+      const int id = int(next(unsigned(sk.next_id() + 2))) - 1;
+      const SkPoint* point = nullptr;
+      for (const auto& p : sk.points) if (!point && p.id == id) point = &p;
+      const SkEntity* entity = nullptr;
+      for (const auto& e : sk.entities) if (!entity && e.id == id) entity = &e;
+      CHECK(std::as_const(sk).point(id) == point && std::as_const(sk).entity(id) == entity);
+    }
   }
 }
 

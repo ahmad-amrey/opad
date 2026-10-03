@@ -202,7 +202,7 @@ const Op& Document::append(json op, const std::string& author) {
   out["by"] = op.contains("by") ? op["by"] : json(author.empty() ? default_author() : author);
   for (auto it = op.begin(); it != op.end(); ++it) {
     if (it.key() == "op" || it.key() == "id" || it.key() == "ts" || it.key() == "by") continue;
-    out[it.key()] = it.value();
+    out[it.key()] = std::move(it.value());
   }
   std::string id = out["id"].get<std::string>();
   if (find_op(id)) throw Error("duplicate op id: " + id);
