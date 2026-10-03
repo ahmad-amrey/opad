@@ -67,6 +67,7 @@ void DocsArea::buildActions() {
   part.keywords = {"part number", "material", "vendor", "density"};
   part.editsDocument = true;
   services().addCommand(part, [this] { editPartProperties(services().selection().ids); });
+  buildDrawingCommands();
 }
 
 void DocsArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
@@ -88,6 +89,7 @@ void DocsArea::ribbon(RibbonLayout& layout) {
   after("review.inspect.results", "inspect.properties", "inspect.partProperties");
   after("review.export.export", "file.export", "file.exportBom");
   after("design.export.export", "file.export", "file.exportBom");
+  drawingsRibbon(layout);
 }
 
 void DocsArea::ready() {
@@ -99,8 +101,15 @@ void DocsArea::ready() {
   folder.contextMenu = [this](const std::string& id, QMenu& menu) {
     if (!id.empty()) rowMenu(id, menu);
   };
-  folder.rename = [doc](const std::string& id, const QString& name) { drawings::rename(doc, id, name); };
-  folder.remove = [doc](const std::vector<std::string>& ids) { return drawings::remove(doc, ids) > 0; };
+  // While the sheet canvas reads the document, renames and deletes wait for it (whenFree stops it).
+  folder.rename = [this, doc](const std::string& id, const QString& name) {
+    whenFree([this, doc, id, name] { services().guarded([&] { drawings::rename(doc, id, name); }); });
+  };
+  folder.remove = [this, doc](const std::vector<std::string>& ids) {
+    whenFree([this, doc, ids] { services().guarded([&] { drawings::remove(doc, ids); }); });
+    return true;
+  };
+  folder.activated = [this](const std::string& id) { services().guarded([&] { openSheet(id); }); };
   services().browser()->addFolder(folder);
   // A body's or component's part properties (what it sets itself) and the link to edit them.
   services().properties()->addSectionProvider([this](const PropertySubject& subject, const opad::json& props, QList<PropertySection>& out) {
@@ -113,11 +122,19 @@ void DocsArea::ready() {
     section.actions.append({tr("Edit part properties…"), [this, ids] { services().guarded([&] { editPartProperties(ids); }); }});
     out << section;
   });
+  readyDrawings();
 }
 
-void DocsArea::contextMenu(const SelectionContext&, QMenu& menu) {
+void DocsArea::contextMenu(const SelectionContext& selection, QMenu& menu) {
   QAction* properties = services().action("inspect.properties");
   if (menu.actions().contains(properties)) insertAfter(&menu, properties, services().action("inspect.partProperties"));
+  const std::vector<std::string> nodes = nodesOf(services().document(), selection.ids);
+  if (!selection.sketching && !nodes.empty()) {  // bodies or components: a drawing of them
+    QAction* draw = menu.addAction(icons::themed("drawingSheet", 16), tr("Create drawing…"), this, [this, nodes] {
+      services().guarded([&] { newDrawing(nodes); });
+    });
+    draw->setObjectName("drawings.createFrom");
+  }
 }
 
 void DocsArea::rowMenu(const std::string& id, QMenu& menu) {
@@ -195,10 +212,14 @@ void DocsArea::exportSheet(const std::string& id) {
   settings.setValue("ui/lastDir", QFileInfo(out).absolutePath());
   if (sheets == 1) settings.setValue("export/sheetFormat", format);
   QPointer<DocsArea> self(this);
-  exportJob(doc, services().jobs(), services().window(), {{"format", format.toStdString()}, {"out", out.toStdString()}, {"sheet", id}}, out,
-            [self](const opad::json& result) {
-              if (self) self->lastExport = result;
-            });
+  whenFree([this, self, doc, format, out, id] {  // after the sheet canvas's worker
+    services().guarded([&] {
+      exportJob(doc, services().jobs(), services().window(), {{"format", format.toStdString()}, {"out", out.toStdString()}, {"sheet", id}}, out,
+                [self](const opad::json& result) {
+                  if (self) self->lastExport = result;
+                });
+    });
+  });
 }
 
 DocsArea* DocsArea::of(const std::vector<AreaController*>& areas) {

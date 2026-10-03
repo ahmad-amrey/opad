@@ -348,7 +348,7 @@ void MainWindow::buildActions() {
 }
 
 void MainWindow::showDocument(bool has) {
-  m_stack->setCurrentIndex(has ? 1 : 0);
+  showCentral();
   m_browserOverlay->setVisible(has && action("panel.browser")->isChecked());
   for (QAction* a : m_actions) {
     QString id = a->objectName();

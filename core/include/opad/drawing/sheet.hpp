@@ -127,11 +127,15 @@ std::array<double, 4> drawing_room(const json& sheet);
 // sheet), date (when), scale, size, units, sheet ("2 / 3" of its drawing), doctype (part or assembly drawing), material,
 // mass (measured: workers only), tolerance (a general note), description, drawing, name, file, prop:<key> (a part
 // property). The drawn part: the one node of the first base view, or the document's one root.
-json title_values(const Document& doc, const Scene& scene, const Sheet& sheet);
+json title_values(const Document& doc, const Scene& scene, const Sheet& sheet, bool measure = true);  // measure=false: no mass (the UI thread)
 // A company's frame and title block from a DXF or DWG file: its 2D geometry goes into the body store (gc keeps it for the
 // sheet) and the returned template draws it, on the smallest standard paper that holds it ("size"), moved onto it when it
 // was drawn elsewhere ("at"). Throws Error when the file has no 2D geometry.
 json template_from_file(Document& doc, const std::filesystem::path& file);
+// The same in two steps, for an app that reads the file on a worker: the template without its geometry and the geometry
+// as BREP text; then the commands take both (sheet / sheet_edit: template + template_brep) and store the geometry.
+json read_template_file(const std::filesystem::path& file, std::string& brep);
+std::string store_template_geometry(Document& doc, const json& tmpl, const std::string& brep);  // its body key; throws for bad BREP
 
 // A new drawing's views (UI-78): `views` names standard views (front, back, top, bottom, left, right, iso, iso-back; "side"
 // the one the projection puts right of the first). The first is the base view; the next ones are projected from it where

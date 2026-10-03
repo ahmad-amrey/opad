@@ -100,6 +100,7 @@ class MainWindow : public QMainWindow {
   void guarded(const std::function<void()>& fn);
   bool maybeSave();
   void showDocument(bool has);
+  void showCentral();  // the start page, the viewport (also while loading) or an area's page; the browser floats over it
   void beginLoad(std::function<void()> after);
   void setLoadPhase(const QString& phase, int pct);
   QString meshPhase() const;
@@ -190,6 +191,8 @@ class MainWindow : public QMainWindow {
   class QActionGroup* m_workspaceGroup = nullptr;  // the workspace.* commands: one checked
   QMenu* m_viewMenu = nullptr;
   QStackedWidget* m_stack = nullptr;
+  QWidget* m_centralPage = nullptr;  // an area's page in the viewport's place (AreaServices::setCentralPage)
+  bool m_loadShown = false;
   EmptyState* m_empty = nullptr;
   Viewport* m_viewport = nullptr;
   ViewportChips* m_chips = nullptr;

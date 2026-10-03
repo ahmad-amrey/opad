@@ -44,8 +44,8 @@ void add_curve(QPainterPath& path, const Curve& c, double tol) {
 }
 
 // The layer's pen in drawing units; Qt counts dashes in pen widths (a dot: a dash too short to see, round capped).
-QPen pen_of(const Layer& l, double pen_scale, const QColor& c) {
-  const double w = std::max(l.width, 0.05) * pen_scale;
+QPen pen_of(const Layer& l, double pen_scale, const QColor& c, double least = 0) {
+  const double w = std::max(std::max(l.width, 0.05) * pen_scale, least);
   QPen pen(c, w, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
   const auto& dashes = line_type_dashes(l.line);
   if (!dashes.empty()) {
@@ -125,12 +125,13 @@ void paint_image(QPainter& p, const Prim& prim, const QTransform& fit, const QTr
 
 }  // namespace
 
-void paint(QPainter& p, const Display& d, const std::array<double, 4>& window, const QRectF& target) {
+void paint(QPainter& p, const Display& d, const std::array<double, 4>& window, const QRectF& target, double min_px) {
   const double ww = std::max(window[2] - window[0], 1e-9), wh = std::max(window[3] - window[1], 1e-9);
   const double s = std::min(target.width() / ww, target.height() / wh);
   const double ox = target.center().x() - s * (window[0] + window[2]) / 2, oy = target.center().y() + s * (window[1] + window[3]) / 2;
   const QTransform fit(s, 0, 0, -s, ox, oy), base = p.transform();
   const double ps = d.pen_scale > 0 ? d.pen_scale : 1, tol = 1e-3 * ps;
+  const double device = s * std::hypot(base.m11(), base.m12()), least = min_px > 0 && device > 0 ? min_px / device : 0;  // drawing units
   p.save();
   p.setLayoutDirection(Qt::LayoutDirectionAuto);
   for (size_t li = 0; li < d.layers.size(); ++li) {
@@ -170,7 +171,7 @@ void paint(QPainter& p, const Display& d, const std::array<double, 4>& window, c
     }
     p.setBrush(Qt::NoBrush);
     for (const auto& [rgb, list] : curves) {
-      p.setPen(pen_of(layer, ps, colour(rgb)));
+      p.setPen(pen_of(layer, ps, colour(rgb), least));
       for (const Curve* c : list) {
         QPainterPath path;
         add_curve(path, *c, tol);

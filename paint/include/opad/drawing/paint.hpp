@@ -13,8 +13,8 @@
 namespace opad::drawing {
 
 // Paints `d` with `window` (xmin, ymin, xmax, ymax in drawing units) fitted into `target` (device units), y up, one
-// scale for both axes, centred.
-void paint(QPainter& p, const Display& d, const std::array<double, 4>& window, const QRectF& target);
+// scale for both axes, centred. min_px > 0: no line thinner than that many device pixels (a sheet seen from afar on screen).
+void paint(QPainter& p, const Display& d, const std::array<double, 4>& window, const QRectF& target, double min_px = 0);
 
 // The paper a drawing is printed on, in mm: its own (Display::paper) when it has one, else the smallest ISO sheet (A4 to
 // A0, landscape when wider than tall) that holds it at 1 : pen_scale with `margin` around it, else the drawing and its

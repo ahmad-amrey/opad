@@ -199,7 +199,7 @@ std::array<double, 4> drawing_room(const json& sheet) {
   return r;
 }
 
-json title_values(const Document& doc, const Scene& scene, const Sheet& sheet) {
+json title_values(const Document& doc, const Scene& scene, const Sheet& sheet, bool measure) {
   const json values = sheet.def.value("values", json::object());
   const json t = sheet.def.value("template", json::object());
   const std::string node = part_node(scene, sheet);
@@ -239,7 +239,7 @@ json title_values(const Document& doc, const Scene& scene, const Sheet& sheet) {
     if (what == "doctype") return !part ? "Drawing" : part->kind == Node::Kind::Body ? "Part drawing" : "Assembly drawing";
     if (what == "material") return part ? material_of(doc, scene, node).shown() : "";
     if (what == "mass") {
-      if (!part) return "";
+      if (!part || !measure) return "";
       try {
         const json p = node_properties(doc, scene, node, true);
         if (!p.contains("mass") || !p["mass"].is_number()) return "";
@@ -295,9 +295,13 @@ void draw_paper(Display& d, const Document& doc, const Scene& scene, const Sheet
   const int thin = d.layer({"Title block", kInk, LineType::Continuous, 0.35});
   if (t.contains("geometry") && t["geometry"].is_string() && doc.has_body(t["geometry"].get<std::string>())) {
     const int own = d.layer({"Template", kInk, LineType::Continuous, 0.35});
-    TopoDS_Shape shape = body_shape(doc, t["geometry"].get<std::string>());
+    TopoDS_Shape shape;
+    try {
+      shape = body_shape(doc, t["geometry"].get<std::string>());
+    } catch (const std::exception&) {  // unreadable: the frame and the block are still drawn
+    }
     const json at = t.value("at", json::array({0, 0}));
-    if (at.is_array() && at.size() == 2 && (at[0] != 0 || at[1] != 0)) {
+    if (!shape.IsNull() && at.is_array() && at.size() == 2 && at[0].is_number() && at[1].is_number() && (at[0] != 0 || at[1] != 0)) {
       gp_Trsf move;
       move.SetTranslation(gp_Vec(at[0].get<double>(), at[1].get<double>(), 0));
       shape = shape.Moved(TopLoc_Location(move));
@@ -379,7 +383,7 @@ void draw_paper(Display& d, const Document& doc, const Scene& scene, const Sheet
   }
 }
 
-json template_from_file(Document& doc, const std::filesystem::path& file) {
+json read_template_file(const std::filesystem::path& file, std::string& brep) {
   Document scratch = Document::create();
   import_file(scratch, file);
   const Scene s = resolve(scratch);
@@ -398,7 +402,7 @@ json template_from_file(Document& doc, const std::filesystem::path& file) {
   BRepBndLib::Add(all, box);
   double x0, y0, z0, x1, y1, z1;
   box.Get(x0, y0, z0, x1, y1, z1);
-  const std::string key = doc.add_body(brep_from_shape(all), {{"name", utf8(file.stem())}, {"representation", "drawing2d"}, {"source", utf8(file.filename())}, {"template", true}});
+  brep = brep_from_shape(all);
   // The paper: the smallest standard sheet that holds it, upright or lying as it is drawn; else its own size.
   const double w = x1 - x0, h = y1 - y0;
   json size = {{"w", rounded(w)}, {"h", rounded(h)}};
@@ -413,8 +417,25 @@ json template_from_file(Document& doc, const std::filesystem::path& file) {
   const double pw = size["w"].get<double>(), ph = size["h"].get<double>();
   // Drawn where the sheet is (its corner at the origin): kept; elsewhere: moved onto the paper.
   const bool onPaper = x0 > -1 && y0 > -1 && x1 < pw + 1 && y1 < ph + 1;
-  json t = {{"id", "file"}, {"name", utf8(file.stem())}, {"geometry", key}, {"size", size}};
+  json t = {{"id", "file"}, {"name", utf8(file.stem())}, {"source", utf8(file.filename())}, {"size", size}};
   if (!onPaper) t["at"] = {rounded(-x0 + std::max(0.0, (pw - w) / 2)), rounded(-y0 + std::max(0.0, (ph - h) / 2))};
+  return t;
+}
+
+std::string store_template_geometry(Document& doc, const json& tmpl, const std::string& brep) {
+  TopoDS_Shape shape;
+  try {
+    shape = shape_from_brep(brep);
+  } catch (const std::exception&) {
+  }
+  if (shape.IsNull()) throw Error("a template's geometry is BREP text of a 2D drawing");
+  return doc.add_body(brep, {{"name", tmpl.value("name", "Template")}, {"representation", "drawing2d"}, {"source", tmpl.value("source", "")}, {"template", true}});
+}
+
+json template_from_file(Document& doc, const std::filesystem::path& file) {
+  std::string brep;
+  json t = read_template_file(file, brep);
+  t["geometry"] = store_template_geometry(doc, t, brep);
   return t;
 }
 

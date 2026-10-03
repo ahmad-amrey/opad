@@ -233,8 +233,9 @@ OPAD_BENCH(OPAD_BENCH_AREAS, areas) {
   const QList<QAction*> viewMenu = w.m_viewMenu->actions();
   const int at = viewMenu.indexOf(space);
   require(space && space->isCheckable() && space->shortcut() == QKeySequence("Ctrl+Shift+9") && space->actionGroup() == review->actionGroup() &&
-              review->actionGroup()->isExclusive() && at > 0 && viewMenu[at - 1] == w.action("workspace.design") && w.m_actions.contains(space),
-          "workspace: its command, shortcut, in the View menu after Design, one of the switcher's group");
+              review->actionGroup()->isExclusive() && at > 0 && viewMenu[at - 1]->objectName().startsWith("workspace.") &&
+              viewMenu.indexOf(w.action("workspace.design")) < at && w.m_actions.contains(space),
+          "workspace: its command, shortcut, in the View menu after Design (and other areas' workspaces), one of the switcher's group");
   if (!space) {
     QCoreApplication::exit(2);
     return true;
@@ -247,7 +248,7 @@ OPAD_BENCH(OPAD_BENCH_AREAS, areas) {
   require(w.workspaceId() == "probe" && probe->services().workspace() == "probe" && probe->workspaces.size() == reported + 1 && probe->workspaces.back() == "probe" &&
               space->isChecked() && !review->isChecked() && w.m_settings.value("ui/workspaceId").toString() == "probe" &&
               w.m_settings.value("ui/workspace").toInt() == 0 && tools &&
-              w.statusBar()->currentMessage().contains("Ctrl+1 / 2 / Ctrl+Shift+9"),
+              w.statusBar()->currentMessage().contains("Ctrl+1 / 2") && w.statusBar()->currentMessage().contains("Ctrl+Shift+9"),
           "workspace: the command shows its tabs, checks it, saves it by id and tells the areas (" + w.statusBar()->currentMessage() + ")");
   probe->services().setWorkspace("design");
   require(w.workspaceId() == "design" && probe->workspaces.back() == "design" && w.action("workspace.design")->isChecked() && !space->isChecked() &&

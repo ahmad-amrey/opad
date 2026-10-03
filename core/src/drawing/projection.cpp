@@ -1238,6 +1238,31 @@ void view_axes(const ViewSpec& spec, Vec3& x, Vec3& y, Vec3& dir) {
   dir = {v.z.X(), v.z.Y(), v.z.Z()};
 }
 
+namespace {
+// A projection made before: from memory, else from the user cache (then remembered in memory too).
+std::shared_ptr<const ViewGeometry> cached(const std::string& fp) {
+  if (auto hit = memo_get(fp)) return hit;
+  if (auto blob = cache_get("projection", fp)) {
+    try {
+      auto g = std::make_shared<const ViewGeometry>(ViewGeometry::deserialize(*blob));
+      if (g->fingerprint == fp) {
+        memo_put(g);
+        std::error_code error;
+        std::filesystem::last_write_time(cache_dir() / "projection" / (fp + ".bin"), std::filesystem::file_time_type::clock::now(), error);
+        return g;
+      }
+    } catch (const std::exception&) {
+    }
+  }
+  return nullptr;
+}
+}  // namespace
+
+std::shared_ptr<const ViewGeometry> cached_projection(const Document& doc, const Scene& scene, const ViewSpec& spec) {
+  auto sources = gather(scene, spec);
+  return cached(fingerprint_of(sources, spec, auto_tier(doc, sources, spec)));
+}
+
 std::vector<std::pair<std::string, Mat4>> view_bodies(const Scene& scene, const ViewSpec& spec) {
   std::vector<std::pair<std::string, Mat4>> out;
   for (auto& s : gather(scene, spec)) out.emplace_back(std::move(s.node), s.world);
@@ -1261,21 +1286,8 @@ std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& sc
   const Quality tier = auto_tier(doc, sources, spec);
   const View v = view_of(spec);
   const std::string fp = fingerprint_of(sources, spec, tier);
-  if (use_cache) {
-    if (auto hit = memo_get(fp)) return hit;
-    if (auto blob = cache_get("projection", fp)) {
-      try {
-        auto g = std::make_shared<const ViewGeometry>(ViewGeometry::deserialize(*blob));
-        if (g->fingerprint == fp) {
-          memo_put(g);
-          std::error_code error;
-          std::filesystem::last_write_time(cache_dir() / "projection" / (fp + ".bin"), std::filesystem::file_time_type::clock::now(), error);
-          return g;
-        }
-      } catch (const std::exception&) {
-      }
-    }
-  }
+  if (use_cache)
+    if (auto hit = cached(fp)) return hit;
   load(doc, sources, true);
   auto g = std::make_shared<ViewGeometry>();
   g->stats["gather_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();

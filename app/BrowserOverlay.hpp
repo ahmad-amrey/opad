@@ -41,6 +41,12 @@ class BrowserOverlay : public QFrame {
     m_poll.start(); place(); snapshot(); m_browser->setVisible(m_expanded);
   }
   void setVisible(bool on) override { m_requested=on; QFrame::setVisible(on && m_scene->isVisible()); }
+  // Floats over another page of the central area (an area's page shown in the viewport's place).
+  void setScene(QWidget* scene) {
+    if(scene==m_scene) return;
+    m_scene->removeEventFilter(this); m_scene=scene; m_scene->installEventFilter(this);
+    place(); QFrame::setVisible(m_requested && m_scene->isVisible());
+  }
   void setAutoHide(bool on) { m_auto=on; QSettings().setValue("ui/browserAutoHide",on); expand(!on); }
   void place() {
     const int h=std::max(60,std::min(520,m_scene->height()-64));

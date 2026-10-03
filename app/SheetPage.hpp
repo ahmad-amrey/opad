@@ -1,0 +1,44 @@
+#pragma once
+// The Drawings workspace's page in the viewport's place (UI-78): the sheet canvas over a bar with the document's sheets as
+// tabs (a drawing's sheets side by side, "+" adds one to the shown sheet's drawing), what a placement asks for, the
+// cursor on paper in mm and the sheet's size, scale and projection. With no sheet in the document it shows how to start
+// one instead (New drawing…).
+#include <QWidget>
+#include <string>
+#include <vector>
+
+class AppDocument;
+class JobRunner;
+class QLabel;
+class QStackedWidget;
+class QTabBar;
+class QToolButton;
+class SheetCanvas;
+
+class SheetPage : public QWidget {
+  Q_OBJECT
+ public:
+  SheetPage(AppDocument* doc, JobRunner* jobs, QWidget* parent = nullptr);
+  SheetCanvas* canvas() const { return m_canvas; }
+  void documentChanged();  // tabs again; the sheet shown stays while it exists, else the first
+  void showSheet(const std::string& id);
+  const std::string& sheet() const;
+  QTabBar* tabs() const { return m_tabs; }  // benches
+  bool empty() const;                       // the "no drawing yet" card is shown
+
+ signals:
+  void newDrawingRequested();
+  void newSheetRequested();
+  void sheetShown(const std::string& id);
+
+ private:
+  void rebuildTabs();
+  void updateInfo();
+  AppDocument* m_doc;
+  SheetCanvas* m_canvas;
+  QStackedWidget* m_stack;
+  QTabBar* m_tabs;
+  QToolButton* m_add;
+  QLabel *m_prompt, *m_cursor, *m_info;
+  bool m_filling = false;
+};

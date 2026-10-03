@@ -108,6 +108,9 @@ std::string projection_fingerprint(const Document& doc, const Scene& scene, cons
 // Cached by fingerprint (memory, then the user cache's "projection" bucket); use_cache=false always computes.
 std::shared_ptr<const ViewGeometry> project(const Document& doc, const Scene& scene, const ViewSpec& spec,
                                             const ProjectionProgress& progress = {}, bool use_cache = true);
+// What project() would return from its caches, without computing: null when the view was never projected as it is now (an
+// editor then shows a draft first). Counts the bodies' faces for the tier the first time: workers only.
+std::shared_ptr<const ViewGeometry> cached_projection(const Document& doc, const Scene& scene, const ViewSpec& spec);
 void clear_projection_memory();
 
 // A quick look at a projection: visible lines black, tangent ones grey, hidden ones dashed light grey; the view is fitted.

@@ -1,5 +1,6 @@
 """gui_benches cases of the documentation area (TODO 11 track t5a: drawings, part properties, bills of materials, 2D
-export); the benches are in app/DrawingsBench.cpp, app/BomBench.cpp and app/ExportBench.cpp, the area in app/DocsArea.cpp."""
+export); the benches are in app/DrawingsBench.cpp, app/BomBench.cpp, app/ExportBench.cpp and app/SheetBench.cpp, the area
+in app/DocsArea.cpp and app/DocsWorkspace.cpp."""
 
 CASES = [
     # The browser's Drawings folder (UI-76): nested and worded rows, F2 and Del through the folder, Ctrl+Z, the rows' menu;
@@ -11,4 +12,9 @@ CASES = [
     ("bom-viewer", "screw", {"OPAD_BENCH_BOM_OPEN": "{prefix}.png", "OPAD_BENCH_BOM_VIEWER": "1"}),
     # 2D views of solids from the Export dialog (DXF, SVG, PDF, PNG; UI-87), a sheet and a drawing from their rows (UI-86).
     ("export-view", "empty", {"OPAD_BENCH_EXPORT": "{prefix}"}),
+    # The Drawings workspace and the sheet canvas (UI-78): Ctrl+3, New drawing from an ISO A3 template with front, top,
+    # side and iso views, drafts before the final linework, dragging a base view (its projected views stay aligned) and a
+    # projected one (its gap), placing a base and a projected view, hidden lines, sheet properties, a DXF template, a new
+    # sheet, PDF export, Del and Esc. <prefix>.empty.png, .sheet.png, .final.png, .window.png.
+    ("sheet", "empty", {"OPAD_BENCH_SHEET": "{prefix}"}),
 ]

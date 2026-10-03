@@ -126,15 +126,14 @@ json default_place(const json& result, const std::string& type) {
 }  // namespace
 
 void register_sheet_commands(const std::function<void(const CommandInfo&, Handler)>& add) {
-  add({"sheet", "Add a drawing sheet, with a template's frame and title block and, given views, its standard views laid out at a scale that fits",
+  add({"sheet", "Add a drawing sheet with a template; views: laid out at a scale that fits",
        {{"doc", "path"}, {"name", "string"}, {"drawing", "string - the drawing it belongs to"},
         {"size", "A4|A3|A2|A1|A0|ANSI-A|ANSI-B|ANSI-C|ANSI-D|ANSI-E - default A3"}, {"orientation", "landscape|portrait"},
         {"width", "number - mm, a custom size with height"}, {"height", "number"}, {"standard", "iso|asme"},
-        {"projection", "first|third - angle; default by standard"}, {"scale", "string - the views' scale, 1:2 (default 1:1), auto with views"},
-        {"template", "iso|ansi|none|object - frame and title block; default by standard"}, {"template_file", "path - a DXF or DWG frame and title block"},
-        {"values", "object - title block fields (=key looks one up)"}, {"views", "array|csv - front,top,side,iso: base first, then projected"},
-        {"select", "array|csv - nodes the views draw (default all)"}, {"hide", "array|csv"}, {"hidden", "bool - hidden lines"},
-        {"tangent", "show|thin|hide - edges between tangent faces"}, {"by", "string"}},
+        {"projection", "first|third - angle; default by standard"}, {"scale", "string - 1:2 (default 1:1; auto with views)"},
+        {"template", "iso|ansi|none|object"}, {"template_file", "path - DXF|DWG"}, {"template_brep", "string"},
+        {"values", "object - title block fields"}, {"views", "array|csv - front,top,side,iso"}, {"select", "array|csv"}, {"hide", "array|csv"},
+        {"hidden", "bool"}, {"tangent", "show|thin|hide"}, {"by", "string"}},
        true},
       [](Document* d, const json& a) {
         Document& doc = need_doc(d);
@@ -146,6 +145,11 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         if (standard != "iso" && standard != "asme") throw Error("sheet: standard is iso or asme");
         json tmpl;
         if (a.contains("template_file")) tmpl = drawing::template_from_file(doc, path_from_utf8(a["template_file"].get<std::string>()));
+        if (a.contains("template_brep")) {  // a template file read beforehand (read_template_file): its geometry is stored here
+          if (!a.value("template", json()).is_object()) throw Error("sheet: template_brep goes with a template object");
+          tmpl = a["template"];
+          tmpl["geometry"] = drawing::store_template_geometry(doc, tmpl, a["template_brep"].get<std::string>());
+        }
         if (a.contains("width") || a.contains("height")) {
           const double w = a.value("width", 0.0), h = a.value("height", 0.0);
           if (!(w > 0 && h > 0 && w < 1e5 && h < 1e5)) throw Error("sheet: width and height are the paper's size in mm");
@@ -315,7 +319,7 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         return out;
       });
 
-  add({"sheet_edit", "Change a sheet, view or item: set fields as sheet_info shows them (null removes); a dimension is measured again; a sheet takes size A3 (its template follows), template iso|ansi|none, template_file",
+  add({"sheet_edit", "Change a sheet, view or item: set fields as sheet_info shows them (null removes); a dimension is measured again; sheets also take template, template_file",
        {{"doc", "path"}, {"target", "uuid"}, {"set", "object"}, {"by", "string"}}, true},
       [](Document* d, const json& a) {
         Document& doc = need_doc(d);
@@ -340,6 +344,12 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
             t.erase("size");
             set["template"] = t;
             set.erase("template_file");
+          }
+          if (set.contains("template_brep")) {
+            if (!set.value("template", json()).is_object()) throw Error("sheet_edit: template_brep goes with a template object");
+            set["template"]["geometry"] = drawing::store_template_geometry(doc, set["template"], set["template_brep"].get<std::string>());
+            set["template"].erase("size");
+            set.erase("template_brep");
           }
           const json size = set.value("size", def.value("size", json::object()));
           const json was = def.value("template", json());

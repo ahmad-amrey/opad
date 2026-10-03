@@ -269,6 +269,15 @@ TEST(template_from_a_dxf_file) {
   run(doc, "sheet_edit", {{"target", plainSheet}, {"set", {{"template_file", (dir / "company.dxf").string()}}}});
   CHECK_EQ(resolve(doc).sheet(plainSheet)->def["template"]["id"], "file");
   CHECK_THROWS(run(doc, "sheet", {{"template_file", (dir / "missing.dxf").string()}}));
+  // Read beforehand (the app reads on a worker), stored by the command.
+  std::string brep;
+  const json read = read_template_file(dir / "company.dxf", brep);
+  CHECK(!read.contains("geometry") && !brep.empty());
+  const json given = run(doc, "sheet", {{"template", read}, {"template_brep", brep}});
+  CHECK_EQ(resolve(doc).sheet(given["id"].get<std::string>())->def["template"]["geometry"], key);  // the same content, the same key
+  CHECK_EQ(given["size"]["preset"], "A4");
+  CHECK_THROWS(run(doc, "sheet", {{"template", read}, {"template_brep", "not a shape"}}));
+  CHECK_THROWS(run(doc, "sheet", {{"template_brep", brep}}));
   std::error_code e;
   std::filesystem::remove_all(dir, e);
 }

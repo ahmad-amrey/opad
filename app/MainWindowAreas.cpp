@@ -64,3 +64,9 @@ QString AreaServices::workspace() const { return m_window->workspaceId(); }
 void AreaServices::setWorkspace(const QString& id) { m_window->setWorkspace(id); }
 bool AreaServices::setContextualTab(const QString& id, bool shown) { return m_window->setContextualTab(id, shown); }
 void AreaServices::addTabRowWidget(QWidget* widget) { m_window->m_ribbon->addTabRowWidget(widget); }
+void AreaServices::setCentralPage(QWidget* page) {
+  if (page && m_window->m_stack->indexOf(page) < 0) m_window->m_stack->addWidget(page);
+  m_window->m_centralPage = page;
+  m_window->showCentral();
+}
+QWidget* AreaServices::centralPage() const { return m_window->m_centralPage; }
