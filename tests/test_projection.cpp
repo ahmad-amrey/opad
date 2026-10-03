@@ -348,6 +348,18 @@ TEST(projection_coincident_pieces) {
       check_sources(doc, scene, *g);
     }
   }
+  // Coaxial cylinders seen along their axis: four rims on one circle, one full circle left. The near one is turned a
+  // quarter, so its circles start elsewhere (arcs are compared by angle, across 2 pi).
+  const Document coax = doc_of({BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), 5, 10).Shape(),
+                                BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0, 0, 20), gp_Dir(1, 0, 0) ^ gp_Dir(0, 1, 0), gp_Dir(0, 1, 0)), 5, 10).Shape()});
+  for (Quality q : {Quality::Exact, Quality::Hybrid}) {
+    const auto g = project(coax, resolve(coax), spec_of("top", q), {}, false);
+    CHECK_NEAR(total(*g, false), 2 * M_PI * 5, 1e-6);
+    CHECK_EQ(total(*g, true), 0.0);
+    double span = 0;
+    for (const auto& c : g->curves) span += c.type == Curve::Type::Arc ? c.a1 - c.a0 : 100;
+    CHECK_NEAR(span, 2 * M_PI, 1e-9);
+  }
   // Partly covered: a wider, lower box behind a box. Its bottom edges run along the front box's bottom edge, so only
   // their ends are left; its top edges show at the ends and are hidden (once) in the middle.
   const Document l = doc_of({BRepPrimAPI_MakeBox(gp_Pnt(0, 0, 0), 20, 10, 10).Shape(), BRepPrimAPI_MakeBox(gp_Pnt(-5, 20, 0), 30, 10, 4).Shape()});
