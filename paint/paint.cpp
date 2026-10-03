@@ -1,6 +1,7 @@
 // Qt painting of 2D drawings (TODO 11 UI-86, UI-87): PDF and PNG of a drawing::Display through one QPainter backend.
 #include "opad/drawing/paint.hpp"
 
+#include <QDir>
 #include <QFile>
 #include <QFontMetricsF>
 #include <QGuiApplication>
@@ -295,6 +296,9 @@ void install_painter() {
         // Offscreen: no display needed; Windows falls back to its own plugin where only that one is deployed.
 #ifdef _WIN32
         if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen;windows");
+        // A static Qt's offscreen platform reads its fonts from a folder (FreeType), or has none and writes no text.
+        if (!qEnvironmentVariableIsSet("QT_QPA_FONTDIR"))
+          qputenv("QT_QPA_FONTDIR", QDir::toNativeSeparators(QDir(qEnvironmentVariable("WINDIR", "C:/Windows")).filePath("Fonts")).toLocal8Bit());
 #else
         if (!qEnvironmentVariableIsSet("QT_QPA_PLATFORM")) qputenv("QT_QPA_PLATFORM", "offscreen");
 #endif
