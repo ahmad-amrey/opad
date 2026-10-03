@@ -262,5 +262,9 @@
   "Typed alone, width or height keeps its proportions; typed together, both apply (stretched)": "إن كُتب العرض أو الارتفاع وحده بقيت النسب؛ وإن كُتبا معًا طُبّق كلاهما (فتُشدّ الصورة)",
   "Picture proportions": "نسب الصورة",
   "Its height from its width as the picture has them: no longer stretched": "ارتفاعها من عرضها بنسب الصورة نفسها: لم تعد مشدودة",
-  "Drag it, a corner (Shift: free proportions) or the knob": "اسحبها أو اسحب زاوية (Shift: نسب حرة) أو المقبض"
+  "Drag it, a corner (Shift: free proportions) or the knob": "اسحبها أو اسحب زاوية (Shift: نسب حرة) أو المقبض",
+  "Step %1 of %2": "الخطوة %1 من %2",
+  "Apart now": "المسافة الآن",
+  "Scaled by": "معامل التحجيم",
+  "First pair apart": "بُعد الزوج الأول"
 }

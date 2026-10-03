@@ -194,7 +194,10 @@ void CanvasArea::section(const PropertySubject& subject, QList<PropertySection>&
 
 void CanvasArea::buildPanel() {
   auto* body = new QWidget;
-  auto* layout = new QVBoxLayout(body);
+  auto* outer = new QVBoxLayout(body);
+  m_main = new QWidget(body);  // the canvas's place and flags; Calibrate and Align swap it for their steps
+  auto* layout = new QVBoxLayout(m_main);
+  layout->setContentsMargins(0, 0, 0, 0);
   m_hint = new QLabel(body);
   m_hint->setObjectName("secondary");
   m_hint->setWordWrap(true);
@@ -266,35 +269,42 @@ void CanvasArea::buildPanel() {
   more->addWidget(button(tr("Trace to sketch"), "trace", "canvasTrace", tr("A new sketch on the canvas's plane with the picture's dark shapes as curves"), [this] { trace(); }));
   more->addWidget(button(tr("Replace picture…"), "image", "canvasReplace", tr("Another picture in this place, as wide as this one"), [this] { replace(); }));
   layout->addLayout(more);
-  m_flowText = new QLabel(body);
-  m_flowText->setWordWrap(true);
-  m_flowText->hide();
-  layout->addWidget(m_flowText);
-  m_distanceRow = new QWidget(body);
+  outer->addWidget(m_main);
+  // Calibrate and Align as guided tools (GuidedTool.hpp): the steps with what was picked, then the real distance; the
+  // footer's Back takes the last pick back (as Esc does), Cancel leaves, Apply calibrates.
+  m_flowPage = new QWidget(body);
+  auto* flowLayout = new QVBoxLayout(m_flowPage);
+  flowLayout->setContentsMargins(0, 0, 0, 0);
+  m_steps = new ToolStepsPanel(m_flowPage);
+  m_steps->setObjectName("canvasSteps");
+  m_steps->setFooter(false, false);
+  flowLayout->addWidget(m_steps, 1);
+  m_distanceRow = new QWidget(m_flowPage);
   auto* row = new QHBoxLayout(m_distanceRow);
-  row->setContentsMargins(0, 0, 0, 0);
+  row->setContentsMargins(12, 0, 12, 0);
   row->addWidget(new QLabel(tr("Real distance"), m_distanceRow));
   m_distance = new QLineEdit(m_distanceRow);
   m_distance->setObjectName("canvasDistance");
   m_distance->installEventFilter(this);
   row->addWidget(m_distance);
-  connect(m_distance, &QLineEdit::returnPressed, this, [this] {
-    const auto value = units::parse(units::Kind::Length, m_distance->text());
-    if (!value || !(*value > 0) || m_points.size() != 2) return toast(tr("Type the real distance between the two points"));
-    const auto a = m_points[0], b = m_points[1];
-    const bool ok = run({{"action", "calibrate"}, {"points", {a, b}}, {"distance", *value}});
-    if (ok) toast(tr("Calibrated: the two points are %1 apart").arg(units::format(units::Kind::Length, *value)));
-    endFlow(ok);
-  });
+  connect(m_distance, &QLineEdit::returnPressed, this, &CanvasArea::applyCalibration);
+  connect(m_distance, &QLineEdit::textEdited, this, [this] { refreshPrompt(); });
   m_distanceRow->hide();
-  layout->addWidget(m_distanceRow);
-  layout->addStretch();
+  flowLayout->addWidget(m_distanceRow);
+  m_flowPage->hide();
+  outer->addWidget(m_flowPage, 1);
+  outer->addStretch();
   m_footer = new PanelFooter(body);
-  m_footer->setPrimary(PanelFooter::Primary::Close);
-  m_footer->setCancelVisible(false);
-  m_footer->setHint(tr("Drag it, a corner (Shift: free proportions) or the knob"));
-  connect(m_footer, &PanelFooter::accepted, this, &CanvasArea::finish);
-  layout->addWidget(m_footer);
+  m_footer->setBack(tr("Back"), "Esc");
+  m_footer->setCancel(tr("Cancel"), QString());
+  connect(m_footer, &PanelFooter::accepted, this, [this] {
+    if (m_flow == Flow::Calibrate) applyCalibration();
+    else if (m_flow == Flow::None) finish();
+  });
+  connect(m_footer, &PanelFooter::cancelled, this, [this] { endFlow(); });
+  connect(m_footer, &PanelFooter::backRequested, this, &CanvasArea::flowBack);
+  outer->addWidget(m_footer);
+  footerForFlow();
   m_panel = new ToolPanel("canvas", "canvas", &Tokens::sel, tr("Canvas"), body, 520, services().window());
   m_panel->setObjectName("canvasPanel");
   m_panel->setEscapeHandler([this] {
@@ -637,6 +647,29 @@ void CanvasArea::startFlow(Flow flow) {
   nextPick();
 }
 
+void CanvasArea::applyCalibration() {
+  const auto value = units::parse(units::Kind::Length, m_distance->text());
+  if (m_flow != Flow::Calibrate || !value || !(*value > 0) || m_points.size() != 2) return toast(tr("Type the real distance between the two points"));
+  const auto a = m_points[0], b = m_points[1];
+  const bool ok = run({{"action", "calibrate"}, {"points", {a, b}}, {"distance", *value}});
+  if (ok) toast(tr("Calibrated: the two points are %1 apart").arg(units::format(units::Kind::Length, *value)));
+  endFlow(ok);
+}
+
+void CanvasArea::footerForFlow() {
+  const bool flow = m_flow != Flow::None, waits = m_flow == Flow::Calibrate && m_points.size() == 2;
+  m_main->setVisible(!flow);
+  m_flowPage->setVisible(flow);
+  m_footer->setBackVisible(flow && !m_points.empty());
+  m_footer->setCancelVisible(flow);
+  m_footer->setHint(flow ? QString() : tr("Drag it, a corner (Shift: free proportions) or the knob"));
+  if (flow) m_footer->setPrimary(PanelFooter::Primary::Stay);
+  else m_footer->setPrimary(PanelFooter::Primary::Close);
+  m_footer->setPrimaryVisible(!flow || waits);
+  const auto value = waits ? units::parse(units::Kind::Length, m_distance->text()) : std::nullopt;
+  m_footer->setPrimaryEnabled(!flow || (value && *value > 0));
+}
+
 void CanvasArea::nextPick() {
   const size_t n = m_points.size();
   const bool waitsDistance = m_flow == Flow::Calibrate && n == 2;
@@ -689,8 +722,8 @@ void CanvasArea::endFlow(bool done) {
   if (m_editor) m_editor->pick(CanvasEditor::Pick::None);
   if (was) services().viewport()->showPickMarkers({});
   if (m_distanceRow) m_distanceRow->hide();
-  if (m_flowText) m_flowText->hide();
   if (m_prompt) m_prompt->hide();
+  if (m_footer) footerForFlow();
   if (was) {
     services().viewport()->setFocus();
     fillPanel(true);
@@ -705,14 +738,29 @@ void CanvasArea::refreshPrompt() {
   QStringList labels = m_flow == Flow::Calibrate ? QStringList{tr("Pick a point on the picture"), tr("Pick a second point"), tr("Type the real distance")}
                                                  : QStringList{tr("Pick a point on the picture"), tr("Pick where it belongs on the model"),
                                                                tr("Pick a second point on the picture"), tr("Pick where that one belongs")};
-  for (int i = 0; i < labels.size(); ++i) steps << ToolStep{labels[i], size_t(i) < n ? tr("picked") : QString()};
+  auto point = [](const opad::Vec3& p) {
+    return QString("%1, %2, %3").arg(units::format(units::Kind::Length, p[0]), units::format(units::Kind::Length, p[1]), units::format(units::Kind::Length, p[2]));
+  };
+  for (int i = 0; i < labels.size(); ++i) steps << ToolStep{labels[i], size_t(i) < n ? point(m_points[size_t(i)]) : QString()};
   const QString title = m_flow == Flow::Calibrate ? tr("Calibrate canvas") : tr("Align canvas to model");
   m_prompt->set(m_flow == Flow::Calibrate ? "calibrate" : "alignto", title, steps,
                 m_flow == Flow::Align && n % 2 == 1 ? tr("A vertex or a circle's centre · Esc steps back") : tr("Esc steps back"));
   m_prompt->adjustSize();
   m_prompt->show();
-  m_flowText->setText(steps.value(int(std::min(n, size_t(labels.size() - 1)))).label);
-  m_flowText->show();
+  // The panel lists the same steps, what each picked, and what it comes to.
+  m_steps->setSteps(steps, QString());
+  const opad::Node* canvas = services().document()->node(target());
+  m_steps->setSummary(title, canvas ? QString::fromStdString(canvas->name) : QString(), tr("Step %1 of %2").arg(std::min<qsizetype>(qsizetype(n) + 1, labels.size())).arg(labels.size()));
+  QList<QPair<QString, QString>> rows;
+  if (m_flow == Flow::Calibrate && n == 2) {
+    const double shown = distance(m_points[0], m_points[1]);
+    rows << qMakePair(tr("Apart now"), units::format(units::Kind::Length, shown));
+    if (const auto typed = units::parse(units::Kind::Length, m_distance->text()); typed && *typed > 0 && shown > 0)
+      rows << qMakePair(tr("Scaled by"), QString::number(*typed / shown, 'g', 6));
+  }
+  if (m_flow == Flow::Align && n >= 2) rows << qMakePair(tr("First pair apart"), units::format(units::Kind::Length, distance(m_points[0], m_points[1])));
+  m_steps->setResult(rows);
+  footerForFlow();
   positionOverlays({});
 }
 

@@ -3,8 +3,9 @@
 // plane, placed by DrawingPlacer with an offset and a width; the canvas panel gives its centre (X, Y), width, height (one
 // typed keeps its proportions, both stretch it) and angle (Tab goes round them, Enter applies; digits typed in the view
 // while it is open land in them), Picture proportions while it is stretched, its opacity, flips,
-// show-through, selectable and lock, and runs Calibrate (two points on the picture, then their real distance), Align to model
-// (two points on the picture onto two vertices or circle centres of the model), Trace to sketch and Replace picture; the
+// show-through, selectable and lock, and runs Calibrate (two points on the picture, then their real distance) and Align to
+// model (two points on the picture onto two vertices or circle centres of the model) as guided tools (a prompt bar, their
+// steps in the panel, Back and Esc stepping back), Trace to sketch and Replace picture; the
 // on-canvas handles are CanvasEditor's, a double click on a canvas opens it, its context menu has the same; a sketch's
 // backdrop images become canvases. Moving, sizing, turning, calibrating, aligning and the flags are one op each through the
 // canvas command; replace, backdrops and trace are planned on a worker; each is one undo step.
@@ -20,6 +21,7 @@
 
 class CanvasEditor;
 class DrawingPlacer;
+class ToolStepsPanel;
 class PanelFooter;
 class PromptBar;
 class QCheckBox;
@@ -59,6 +61,8 @@ class CanvasArea : public AreaController {
   DrawingPlacer* placer() const { return m_placer; }
   ToolPanel* panel() const { return m_panel; }
   QLineEdit* field(int i) const;  // 0-4: X, Y, width, height, angle; 5: the real distance of Calibrate
+  ToolStepsPanel* stepsPanel() const { return m_steps; }  // Calibrate's and Align's steps (shown while one runs)
+  PanelFooter* footer() const { return m_footer; }
   Flow flow() const { return m_flow; }
   const std::vector<opad::Vec3>& flowPoints() const { return m_points; }
 
@@ -82,6 +86,8 @@ class CanvasArea : public AreaController {
   void flowBack();
   void nextPick();
   void refreshPrompt();
+  void applyCalibration();  // the real distance typed: one transform op, the flow ends
+  void footerForFlow();     // the panel's page and footer for the flow (Back, Cancel, Apply) or the canvas (Close)
   void afterInsert();  // a linked picture loaded: its canvas edited
   void commitInsert(std::shared_ptr<opad::design::Plan> plan, int waited = 0);  // a copy read on a worker: committed, then edited
   void toast(const QString& text, int ms = 5000);
@@ -94,7 +100,9 @@ class CanvasArea : public AreaController {
   DrawingPlacer* m_placer = nullptr;
   ToolPanel* m_panel = nullptr;
   QPointer<PromptBar> m_prompt;
-  QLabel *m_hint = nullptr, *m_flowText = nullptr;
+  QLabel* m_hint = nullptr;
+  QWidget *m_main = nullptr, *m_flowPage = nullptr;
+  ToolStepsPanel* m_steps = nullptr;
   std::array<QLineEdit*, 5> m_fields{};
   QLineEdit* m_distance = nullptr;
   QWidget* m_distanceRow = nullptr;

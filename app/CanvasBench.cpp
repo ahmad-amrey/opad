@@ -11,6 +11,7 @@
 #include <QCheckBox>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFrame>
 #include <QImage>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -34,6 +35,7 @@
 #include "DrawingPlacer.hpp"
 #include "BrowserPanel.hpp"
 #include "MainWindow.hpp"
+#include "PanelFooter.hpp"
 #include "PropertiesPanel.hpp"
 #include "ToolPanel.hpp"
 #include "Viewport.hpp"
@@ -355,27 +357,44 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
     view->setFocus();
     next();
   });
-  // 4. Calibrate: two clicks on the picture, then the real distance typed.
+  // 4. Calibrate as a guided tool: its steps in the panel, a click on the picture, Back takes it back, two clicks, the real
+  // distance typed, Apply.
   steps.push_back([=](std::function<void()> next) {
     view->benchDesignShot(prefix + ".fit2.png");
     area->calibrate();
     const opad::CanvasPlace p = editor->place();
     const opad::Mat4 world = canvasWorld();
     st->world = world;
-    for (const double dx : {-p.width / 4, p.width / 5}) {
+    PanelFooter* footer = area->footer();
+    check(area->stepsPanel()->isVisible() && !area->field(0)->isVisible() && footer->cancel()->isVisible() && !footer->back()->isVisible() &&
+              !footer->primary()->isVisible(),
+          "Calibrate: the panel shows its steps (the canvas's fields away), Cancel, no Back before a pick");
+    auto click = [&](double dx) {
       const QPoint at = view->widgetPoint(p.plane.to_world(p.x + dx, p.y));
       mouse(view, QEvent::MouseButtonPress, at, Qt::LeftButton);
       mouse(view, QEvent::MouseButtonRelease, at, Qt::NoButton);
-    }
+    };
+    click(-p.width / 4);
+    const bool backShown = footer->back()->isVisible() && area->flowPoints().size() == 1;
+    footer->back()->click();
+    check(backShown && area->flowPoints().empty() && area->flow() == CanvasArea::Flow::Calibrate && !footer->back()->isVisible(), "a pick, then Back takes it back");
+    for (const double dx : {-p.width / 4, p.width / 5}) click(dx);
     st->picks = area->flowPoints();
-    if (!check(st->picks.size() == 2 && area->field(5)->isVisible(), "two clicks on the picture, then the distance is asked")) return next();
+    QCoreApplication::processEvents();  // the step rows are shown from the event loop
+    area->panel()->grab().save(prefix + ".calibrate.png");
+    int done = 0;
+    for (QFrame* row : area->stepsPanel()->findChildren<QFrame*>("stepRow")) done += row->isVisible();
+    if (!check(st->picks.size() == 2 && done == 3 && area->field(5)->isVisible() && footer->primary()->isVisible() && footer->primary()->isEnabled(),
+               "two clicks on the picture: its three steps listed, the distance asked, Apply offered"))
+      return next();
     const opad::Mat4 inverse = opad::affine_inverse(world);
     const opad::Vec3 a = inverse.apply(st->picks[0]), b = inverse.apply(st->picks[1]);
     area->field(5)->setText("100");
-    emit area->field(5)->returnPressed();
+    footer->primary()->click();
     const opad::Mat4 now = canvasWorld();
     check(std::fabs(gap(now.apply(a), now.apply(b)) - 100) < 1e-6 && gap(now.apply(a), st->picks[0]) < 1e-6 && area->flow() == CanvasArea::Flow::None,
           QString("calibrated: the two points are 100 mm apart, the first stays (was %1 mm)").arg(gap(st->picks[0], st->picks[1])));
+    check(!area->stepsPanel()->isVisible() && area->field(0)->isVisible() && !footer->cancel()->isVisible(), "the panel shows the canvas again");
     next();
   });
   // 5. Align to model: a point of the picture onto a vertex of the box, another onto another.
@@ -395,12 +414,13 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
         };
         click(p.plane.to_world(p.x - p.width / 4, p.y - p.height / 4));
         const auto first = area->flowPoints();
+        const bool guided = area->stepsPanel()->isVisible() && area->footer()->back()->isVisible();
         click(to1);
         click(p.plane.to_world(p.x + p.width / 4, p.y + p.height / 4));
         const auto second = area->flowPoints();
         click(to2);
         trace::log(QString("bench: canvas: align picks %1, %2, flow %3").arg(first.size()).arg(second.size()).arg(int(area->flow())));
-        if (!check(first.size() == 1 && second.size() == 3 && area->flow() == CanvasArea::Flow::None, "picture, vertex, picture, vertex: aligned")) return next();
+        if (!check(guided && first.size() == 1 && second.size() == 3 && area->flow() == CanvasArea::Flow::None, "picture, vertex, picture, vertex (its steps in the panel): aligned")) return next();
         const opad::Mat4 was = opad::affine_inverse(st->world), now = canvasWorld();
         check(gap(second[1], to1) < 1e-6 && gap(now.apply(was.apply(second[0])), to1) < 1e-6 && gap(now.apply(was.apply(second[2])), to2) < 1e-6,
               "the picture's two points lie on the box's two vertices");
