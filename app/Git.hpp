@@ -45,6 +45,12 @@ struct RunOptions {
   QByteArray input;       // written to stdin, which is closed either way
   std::function<bool()> cancelled;                                  // asked every 50 ms
   std::function<void(const QString& phase, int percent)> progress;  // from git's --progress lines, translated
+  static RunOptions network() {  // fetch, pull, push, clone: no overall limit, but 2 min without a word is a stall
+    RunOptions o;
+    o.timeoutMs = 0;
+    o.idleMs = 120000;
+    return o;
+  }
 };
 
 struct Result {

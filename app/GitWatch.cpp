@@ -95,7 +95,10 @@ GitWatch::GitWatch(JobRunner* jobs, QWidget* window) : QObject(window), m_jobs(j
   // A terminal, another tool or the user's own git may have changed what the watched files do not show (a new parent
   // repository, the global config): look again when OPAD comes back to the front.
   connect(qApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState s) {
-    if (s == Qt::ApplicationActive) schedule(true, 0);
+    if (s != Qt::ApplicationActive) return;
+    const bool again = !m_activated.isValid() || m_activated.hasExpired(10000);  // a probe at most every 10 s of switching
+    if (again) m_activated.start();
+    schedule(again, 0);
   });
   connect(theme::notifier(), &theme::Notifier::changed, this, &GitWatch::render);
 }
@@ -193,8 +196,9 @@ void GitWatch::refresh(bool probe) {
       if (r.driverStale() && !self->m_repaired.contains(r.top)) {  // OPAD moved or was updated somewhere else: point git at this one
         self->m_repaired.insert(r.top);
         const git::Context here = self->context();
+        const git::Install install = git::Install::here();  // on the UI thread: it caches the program's path
         ++self->m_busy;
-        self->m_jobs->quiet(tr("Repairing the OPAD merge driver"), [here](Progress) { git::configureDriver(here, git::Install::here()); },
+        self->m_jobs->quiet(tr("Repairing the OPAD merge driver"), [here, install](Progress) { git::configureDriver(here, install); },
                             [self](bool ok, const QString& error) {
                               if (!self) return;
                               --self->m_busy;
@@ -464,9 +468,10 @@ void GitWatch::setUpDriver() {
   const git::Context c = context();
   const bool lfs = !m_repo.lfsVersion.isEmpty() && !m_repo.lfsHooks;
   const QString top = m_repo.top;
+  const git::Install install = git::Install::here();
   ++m_busy;
-  m_jobs->async(tr("Setting up the OPAD merge driver"), [c, lfs, top](Progress) {
-    git::configureDriver(c, git::Install::here());
+  m_jobs->async(tr("Setting up the OPAD merge driver"), [c, lfs, top, install](Progress) {
+    git::configureDriver(c, install);
     QFile attributes(top + "/.gitattributes");
     if (lfs && attributes.open(QIODevice::ReadOnly) && attributes.readAll().contains("filter=lfs")) git::check(c, {"lfs", "install", "--local"});
   }, [self = QPointer<GitWatch>(this)](bool ok, const QString& error) {

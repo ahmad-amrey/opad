@@ -35,7 +35,7 @@
  "Overwrite": "الكتابة فوقه",
  "%1 is not git.": "%1 ليس git.",
  "Could not write %1: %2": "تعذّرت كتابة %1: %2",
- "git could not be started.": "تعذّر تشغيل git.",
+ "git was not found.": "لم يُعثر على git.",
  "git could not be started: %1": "تعذّر تشغيل git: %1",
  "git did not finish in time and was stopped.": "لم ينتهِ git في الوقت المحدد فأُوقف.",
  "git failed (exit code %1).": "فشل git (رمز الخروج %1).",

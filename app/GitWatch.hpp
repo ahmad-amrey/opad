@@ -13,6 +13,7 @@
 // and by ensureIdentity before anything commits; commands get this opad.exe as GIT_ASKPASS when no credential helper
 // is configured (askpassDialog, in its own process) and ssh in BatchMode, and their errors as sentences.
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QFileSystemWatcher>
 #include <QObject>
 #include <QSet>
@@ -36,7 +37,8 @@ class GitWatch : public QObject {
   void refresh(bool probe = false);   // the status now (probe: the repository, its config and the tools again)
   const git::Repo& repo() const { return m_repo; }
   git::Context context() const;
-  // A git command as a job (the strip after 0.5 s, Cancel), then `done` on the UI thread and a refresh.
+  // A git command as a job (the strip after 0.5 s, Cancel), then `done` on the UI thread and a refresh. The default
+  // options stop git after 60 s: network commands pass git::RunOptions::network().
   Job* command(const QString& title, const QStringList& args, std::function<void(const git::Result&)> done = {}, git::RunOptions o = {});
   // The chip's actions by object name: git.setup, git.driver, git.identity, git.trust, git.locate, git.refresh.
   QMenu* menu(QWidget* parent);
@@ -76,6 +78,7 @@ class GitWatch : public QObject {
   unsigned m_generation = 0;
   int m_runs = 0;  // reads started: benches check nothing polls
   QDateTime m_configStamp, m_attributesStamp;
+  QElapsedTimer m_activated;  // the last probe because OPAD came to the front
   QSet<QString> m_repaired;  // tops whose stale driver config was rewritten this session
   QString m_lastFailure;     // the last error shown (benches)
 };

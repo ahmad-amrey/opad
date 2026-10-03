@@ -226,7 +226,7 @@ QProcessEnvironment Context::environment(bool optionalLocks) const {
 }
 
 QString Result::error() const {
-  if (!started) return err.isEmpty() ? tr("git could not be started.") : tr("git could not be started: %1").arg(QString::fromUtf8(err));
+  if (!started) return err.isEmpty() ? tr("git was not found.") : tr("git could not be started: %1").arg(QString::fromUtf8(err));
   if (cancelled) return tr("Cancelled.");
   if (timedOut) return tr("git did not finish in time and was stopped.");
   if (code == 0) return {};
@@ -238,10 +238,7 @@ Result run(const Context& c, const QStringList& args, const RunOptions& o) {
   Result r;
   QElapsedTimer clock;
   clock.start();
-  if (c.program.isEmpty()) {
-    r.err = "git was not found";
-    return r;
-  }
+  if (c.program.isEmpty()) return r;
   QProcess p;
   p.setProgram(c.program);
   p.setArguments(QStringList{"-c", "core.quotepath=off"} + args);
@@ -593,7 +590,7 @@ QStringList setUp(const Context& base, const QString& folder, const Install& in,
 Result clone(const Context& base, const QString& url, const QString& folder, const RunOptions& given) {
   RunOptions o = given;
   o.timeoutMs = 0;
-  if (o.idleMs <= 0) o.idleMs = 120000;
+  if (o.idleMs <= 0) o.idleMs = RunOptions::network().idleMs;
   Context c = base;
   c.dir = QFileInfo(folder).absolutePath();
   QDir().mkpath(c.dir);
