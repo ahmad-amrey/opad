@@ -1,17 +1,18 @@
 // Components without dialogs (UI-34). New component makes "Component N" in the active component (or the one selected),
 // activates it (Activate new components, setting assembly/activateNew, on by default) and starts its rename in the
-// browser; Component from selection (Ctrl+G) puts the selected bodies and components into a new component where they are
-// (their nearest common component) in one step and starts its rename; Move to component… is a list over the view that
-// narrows as one types (ComponentPicker), the move one step. Both keep what moves where it is: a transform goes with it
-// where the new parent is placed elsewhere than the old. Opacity is a slider in the right-click menu and in the Opacity
-// command's popup (OpacitySlider), drawn live through the Edit layer of looks and written for the bodies under the
-// selection, as one step, when it is let go.
+// browser, an Activate box under the name to change that there (ActivateToggle); Component from selection (Ctrl+G) puts
+// the selected bodies and components into a new component where they are (their nearest common component) in one step
+// and starts its rename; Move to component… is a list over the view that narrows as one types (ComponentPicker), the move
+// one step. Both, and the browser's drop, keep what moves where it is (the reparent command's keep_place). Opacity is a
+// slider in the right-click menu and in the Opacity command's popup (OpacitySlider), drawn live through the Edit layer of
+// looks and written for the bodies under the selection, as one step, when it is let go.
 #include <QAction>
 #include <QCursor>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
 #include <QSettings>
+#include <QTreeWidgetItemIterator>
 #include <QWidgetAction>
 
 #include <algorithm>
@@ -151,7 +152,35 @@ class Components : public AreaController {
     if (parent.empty() && ids.size() == 1 && doc->scene.node(ids.front())->kind == opad::Node::Kind::Component) parent = ids.front();
     opad::json args{{"name", freeName().toStdString()}};
     if (!parent.empty()) args["parent"] = parent;
-    settle(doc->run("component", args).value("id", ""), m_activateNew->isChecked());
+    const std::string before = doc->activeComponent();
+    const std::string id = doc->run("component", args).value("id", "");
+    settle(id, m_activateNew->isChecked());
+    offerActivate(id, before);
+  }
+
+  // Activate under the name being typed: ticked or not, it is so at once (back to what was active before), and the next
+  // new component starts the same way.
+  void offerActivate(const std::string& id, const std::string& before) {
+    BrowserTree* tree = services().browser()->tree();
+    QWidget* editor = nullptr;
+    for (QTreeWidgetItemIterator it(tree); *it && !editor; ++it)
+      if ((*it)->data(0, Qt::UserRole).toString() == "component" && (*it)->data(0, browser::kIdRole).toString().toStdString() == id) editor = tree->indexWidget(tree->indexFromItem(*it));
+    if (!editor) return;
+    if (!m_toggle) {
+      m_toggle = new ActivateToggle(tree->viewport());
+      connect(m_toggle, &ActivateToggle::toggled, this, [this](bool on) {
+        m_activateNew->setChecked(on);
+        QSettings().setValue("assembly/activateNew", on);
+        services().guarded([&] {
+          AppDocument* doc = services().document();
+          if (!doc->scene.node(m_made)) return;
+          doc->setActiveComponent(on ? m_made : doc->scene.node(m_before) ? m_before : std::string(), true);
+        });
+      });
+    }
+    m_made = id;
+    m_before = before;
+    m_toggle->showFor(editor, m_activateNew->isChecked());
   }
 
   void fromSelection() {
@@ -264,6 +293,8 @@ class Components : public AreaController {
 
   QAction *m_new = nullptr, *m_group = nullptr, *m_move = nullptr, *m_opacity = nullptr, *m_activateNew = nullptr;
   ComponentPicker* m_picker = nullptr;
+  ActivateToggle* m_toggle = nullptr;
+  std::string m_made, m_before;  // the new component the toggle is for, and what was active before it
   std::vector<std::string> m_moving;  // what the picker moves
 };
 

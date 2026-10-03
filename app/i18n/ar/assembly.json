@@ -125,5 +125,7 @@
  "Select the bodies or components to put into a new component first.": "حدّد أولًا الأجسام أو المكوّنات المراد وضعها في مكوّن جديد.",
  "Select the objects to move under another component first.": "حدّد أولًا العناصر المراد نقلها إلى مكوّن آخر.",
  "Select the objects to make see-through first.": "حدّد أولًا العناصر المراد جعلها شفافة.",
- "Move to": "نقل إلى"
+ "Move to": "نقل إلى",
+ "Activate": "تنشيط",
+ "Make it the active component: what is made next goes into it. The next new component starts the same way.": "اجعله المكوّن النشط: يذهب إليه ما يُنشأ بعده. ويبدأ المكوّن الجديد التالي بالطريقة نفسها."
 }

@@ -508,12 +508,26 @@ QString AppDocument::nodeName(const std::string& id) const {
   return n ? QString::fromStdString(n->name) : QString::fromStdString(id.substr(0, 8));
 }
 
-void AppDocument::setActiveComponent(const std::string& id) {
+static QString rememberKey(const opad::Document& doc) { return "view/active/" + QString::fromStdString(doc.header.uuid); }
+
+void AppDocument::setActiveComponent(const std::string& id, bool remember) {
   const opad::Node* n = id.empty() ? nullptr : scene.node(id);
   if (!id.empty() && (!n || n->kind != opad::Node::Kind::Component)) throw opad::Error("Only a component can be activated.");
+  if (remember && !browse && !doc.header.uuid.empty()) {
+    QSettings settings;
+    if (id.empty()) settings.remove(rememberKey(doc));
+    else settings.setValue(rememberKey(doc), QString::fromStdString(id));
+  }
   if (m_active == id) return;
   m_active = id;
   emit activeComponentChanged();
+}
+
+std::string AppDocument::rememberedComponent() const {
+  if (browse || doc.header.uuid.empty()) return {};
+  const std::string id = QSettings().value(rememberKey(doc)).toString().toStdString();
+  const opad::Node* n = id.empty() ? nullptr : scene.node(id);
+  return n && n->kind == opad::Node::Kind::Component ? id : std::string();
 }
 
 void AppDocument::checkActive() {

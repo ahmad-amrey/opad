@@ -1,12 +1,14 @@
 #pragma once
 // Widgets of the components area (UI-34, ComponentsArea.cpp): the Move to component list and the opacity slider, both
-// over the view instead of a dialog.
+// over the view instead of a dialog, and the Activate box under a new component's name.
 #include <QFrame>
+#include <QPointer>
 #include <QTimer>
 #include <QWidget>
 #include <string>
 #include <vector>
 
+class QCheckBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
@@ -76,4 +78,24 @@ class OpacityPopup : public QFrame {
   void hideEvent(QHideEvent* event) override;
  private:
   OpacitySlider* m_slider;
+};
+
+// Under a new component's name while it is typed in the browser: Activate, ticked as Activate new components is. A child of
+// the browser's rows that takes no focus, so a click on it leaves the name being edited; it follows the editor (a scroll)
+// and goes with it.
+class ActivateToggle : public QFrame {
+  Q_OBJECT
+ public:
+  explicit ActivateToggle(QWidget* parent);
+  void showFor(QWidget* editor, bool on);  // below the editor, at its end (above it where there is no room)
+  QCheckBox* box() const { return m_box; }
+ signals:
+  void toggled(bool on);
+ protected:
+  bool eventFilter(QObject* object, QEvent* event) override;
+  void paintEvent(QPaintEvent* event) override;
+ private:
+  void place();
+  QPointer<QWidget> m_editor;
+  QCheckBox* m_box;
 };

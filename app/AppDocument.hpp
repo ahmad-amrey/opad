@@ -106,7 +106,10 @@ class AppDocument : public QObject {
   // go into it, and the view ghosts everything else. Empty = the document root. Back to the root when it goes (deleted,
   // undone; not while the scene is rolled back to an earlier op) or another document comes in. Also in viewer mode.
   const std::string& activeComponent() const { return m_active; }
-  void setActiveComponent(const std::string& id);  // a component of the scene, or empty; throws for anything else
+  // A component of the scene, or empty; throws for anything else. remember: it comes back when this document is opened
+  // again (setting view/active/<uuid>; not for a viewed file, read afresh each time).
+  void setActiveComponent(const std::string& id, bool remember = false);
+  std::string rememberedComponent() const;  // what setActiveComponent(.., true) last left for this document, if still a component
 
  signals:
   void activeComponentChanged();

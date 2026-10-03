@@ -6,8 +6,11 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
+#include <QCheckBox>
 #include <QMenuBar>
+#include <QMouseEvent>
 #include <QPointer>
+#include <QSettings>
 #include <QSlider>
 #include <QTimer>
 #include <QToolButton>
@@ -56,6 +59,14 @@ void key(QWidget* widget, int code, const QString& text = QString()) {
   }
 }
 
+void click(QWidget* widget) {
+  const QPointF at = QRectF(widget->rect()).center();
+  for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+    QMouseEvent e(type, at, widget->mapToGlobal(at), Qt::LeftButton, type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(widget, &e);
+  }
+}
+
 void type(QWidget* widget, const QString& text) {
   for (const QChar c : text) key(widget, c.toUpper().unicode(), QString(c));
 }
@@ -92,8 +103,10 @@ bool samePlace(const opad::Mat4& a, const opad::Mat4& b) {
 }  // namespace
 
 // OPAD_BENCH_COMPONENTS=<prefix>. On a Housing component placed 30 mm up (a box in it), an empty Lid and two boxes at the
-// root: New component makes "Component 1", activates it and opens its rename in the browser, the typed name is one step
-// more; with Activate new components off the next one goes into the active one and nothing else is activated. Component
+// root: New component makes "Component 1", activates it and opens its rename in the browser with a ticked Activate box
+// under the name (taking no focus): a click on it activates the root again and turns Activate new components off, another
+// turns both back (remembered for the document), the typed name is one step more and the box goes with the editor; with
+// Activate new components off the next one goes into the active one, nothing else is activated, its box unticked. Component
 // from selection (Ctrl+G) on the two root boxes is one undo step, puts them into a new component at the root where they
 // were, opens its rename; on a box of the Housing and a root box it adds a transform for the Housing's box only (both stay
 // put); a locked box makes it refuse and take everything back. Move to component… lists the root (current, not chosen)
@@ -135,6 +148,7 @@ OPAD_BENCH(OPAD_BENCH_COMPONENTS, components) {
     return std::string();
   };
   auto picker = [&w] { return w.findChild<ComponentPicker*>(); };
+  auto toggle = [&w] { return w.findChild<ActivateToggle*>(); };
   auto steps = std::make_shared<std::vector<Step>>();
   auto& list = *steps;
   if (doc->scene.all_bodies().size() > 16) {
@@ -239,24 +253,37 @@ OPAD_BENCH(OPAD_BENCH_COMPONENTS, components) {
                     QLineEdit* editor = renaming(tree, s->made);
                     require(made && made->kind == opad::Node::Kind::Component && made->parent.empty() && oneStep() && doc->activeComponent() == s->made && editor,
                             "New component: 'Component 1' at the root, one step, active, its name being edited in the browser");
+                    ActivateToggle* box = toggle();
+                    const QRect under = box && editor ? box->geometry() : QRect(), name = editor ? editor->geometry() : QRect();
+                    require(box && box->isVisibleTo(tree) && box->parentWidget() == tree->viewport() && box->box()->isChecked() && box->box()->focusPolicy() == Qt::NoFocus &&
+                                under.top() > name.bottom() && std::abs(under.right() - name.right()) <= 1,
+                            QString("an Activate box, ticked, under the name's end (%1,%2 under %3,%4), taking no focus").arg(under.right()).arg(under.top()).arg(name.right()).arg(name.bottom()));
                     w.m_browser->grab().save(prefix + ".rename.png");
+                    if (box) click(box->box());
+                    require(box && !box->box()->isChecked() && doc->activeComponent().empty() && !w.action("assembly.activateNew")->isChecked() &&
+                                !QSettings().value("assembly/activateNew", true).toBool() && doc->rememberedComponent().empty() && renaming(tree, s->made) == editor && box->isVisibleTo(tree),
+                            "a click on it: the root active again, Activate new components off (and its setting), the name still being edited");
+                    if (box) click(box->box());
+                    require(box && box->box()->isChecked() && doc->activeComponent() == s->made && w.action("assembly.activateNew")->isChecked() &&
+                                QSettings().value("assembly/activateNew", false).toBool() && doc->rememberedComponent() == s->made && renaming(tree, s->made) == editor && doc->undoLabels().size() == s->steps + 1,
+                            "another click: active again (remembered for the document), Activate new components on; no step for either");
                     if (editor) {
                       editor->setText("Bracket");
                       key(editor, Qt::Key_Return);  // the delegate writes it a moment later
                     }
                   }});
   list.push_back({[=] { return doc->nodeName(s->made) == "Bracket"; }, [=, &w](bool named) {
-                    require(named && doc->undoLabels().size() == s->steps + 2 && !renaming(tree, s->made), "the typed name is written (one step more) and the editor closes");
+                    require(named && doc->undoLabels().size() == s->steps + 2 && !renaming(tree, s->made) && toggle() && !toggle()->isVisibleTo(tree), "the typed name is written (one step more), the editor closes and the Activate box with it");
                     w.action("assembly.activateNew")->trigger();  // off
                     mark();
                     w.action("design.newcomponent")->trigger();
                     const std::string inner = byName(componentNamed(1));
                     const opad::Node* n = doc->scene.node(inner);
                     QLineEdit* second = renaming(tree, inner);
-                    require(n && n->parent == s->made && doc->activeComponent() == s->made && oneStep() && second,
-                            "Activate new components off: the next one goes into the active Bracket, which stays active; its rename opens");
+                    require(n && n->parent == s->made && doc->activeComponent() == s->made && oneStep() && second && toggle()->isVisibleTo(tree) && !toggle()->box()->isChecked(),
+                            "Activate new components off: the next one goes into the active Bracket, which stays active; its rename opens, Activate unticked");
                     if (second) key(second, Qt::Key_Escape);
-                    require(doc->nodeName(inner) == componentNamed(1) && !renaming(tree, inner), "Esc keeps the name");
+                    require(doc->nodeName(inner) == componentNamed(1) && !renaming(tree, inner) && !toggle()->isVisibleTo(tree), "Esc keeps the name; the Activate box goes");
                     w.action("assembly.activateNew")->trigger();  // on again
                     w.action("assembly.activateRoot")->trigger();
                     w.m_browser->selectIds({});

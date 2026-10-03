@@ -189,11 +189,8 @@ class Activation : public AreaController {
   void documentChanged(bool replaced) override {
     // A document opened again: the component last activated in it comes back (setting view/active/<uuid>).
     AppDocument* doc = services().document();
-    if (replaced && doc->hasDocument && !doc->browse && doc->activeComponent().empty()) {
-      const std::string id = QSettings().value(rememberKey(*doc)).toString().toStdString();
-      const opad::Node* n = id.empty() ? nullptr : doc->scene.node(id);
-      if (n && n->kind == opad::Node::Kind::Component) return doc->setActiveComponent(id);  // its signal refreshes
-    }
+    if (replaced && doc->hasDocument && doc->activeComponent().empty())
+      if (const std::string id = doc->rememberedComponent(); !id.empty()) return doc->setActiveComponent(id);  // its signal refreshes
     refresh();
   }
 
@@ -290,17 +287,8 @@ class Activation : public AreaController {
     emit view->hoverChanged(text.isEmpty() ? view->hoverText() : text);
   }
 
-  static QString rememberKey(const AppDocument& doc) { return "view/active/" + QString::fromStdString(doc.doc.header.uuid); }
-
   void setActive(const std::string& id) const {
-    services().guarded([&] {
-      AppDocument* doc = services().document();
-      doc->setActiveComponent(id);
-      if (doc->browse || doc->doc.header.uuid.empty()) return;  // a viewed file is read afresh each time
-      QSettings settings;
-      if (id.empty()) settings.remove(rememberKey(*doc));
-      else settings.setValue(rememberKey(*doc), QString::fromStdString(id));
-    });
+    services().guarded([&] { services().document()->setActiveComponent(id, true); });
   }
 
   void decorate(const browser::Row& row, browser::Decoration& d) const {

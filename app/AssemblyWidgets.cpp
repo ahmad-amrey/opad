@@ -1,5 +1,6 @@
 #include "AssemblyWidgets.hpp"
 
+#include <QCheckBox>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QKeyEvent>
@@ -270,4 +271,62 @@ void OpacityPopup::keyPressEvent(QKeyEvent* event) {
 void OpacityPopup::hideEvent(QHideEvent* event) {
   m_slider->finish(true);
   QFrame::hideEvent(event);
+}
+
+// ---------------------------------------------------------------- ActivateToggle
+ActivateToggle::ActivateToggle(QWidget* parent) : QFrame(parent) {
+  setObjectName("activateToggle");
+  setLayoutDirection(QGuiApplication::layoutDirection());  // the browser's rows are left to right; this reads as the UI does
+  auto* row = new QHBoxLayout(this);
+  row->setContentsMargins(8, 4, 10, 4);
+  m_box = new QCheckBox(tr("Activate"), this);
+  m_box->setFocusPolicy(Qt::NoFocus);  // the name being typed keeps the keys
+  m_box->setToolTip(tr("Make it the active component: what is made next goes into it. The next new component starts the same way."));
+  row->addWidget(m_box);
+  connect(m_box, &QCheckBox::toggled, this, &ActivateToggle::toggled);
+  hide();
+}
+
+void ActivateToggle::showFor(QWidget* editor, bool on) {
+  if (m_editor) m_editor->removeEventFilter(this);
+  m_editor = editor;
+  if (!editor) return hide();
+  {
+    const QSignalBlocker quiet(m_box);
+    m_box->setChecked(on);
+  }
+  editor->installEventFilter(this);
+  connect(editor, &QObject::destroyed, this, [this](QObject* gone) {
+    if (!m_editor || m_editor.data() == gone) hide();
+  });
+  place();
+  show();
+  raise();
+}
+
+void ActivateToggle::place() {
+  if (!m_editor || !parentWidget()) return;
+  adjustSize();
+  const QRect e = m_editor->geometry();  // in the rows' coordinates, as this
+  const int room = parentWidget()->height();
+  const int y = e.bottom() + 3 + height() <= room ? e.bottom() + 3 : e.top() - 3 - height();
+  move(std::clamp(e.right() + 1 - width(), 0, std::max(0, parentWidget()->width() - width())), y);
+}
+
+void ActivateToggle::paintEvent(QPaintEvent*) {  // over the rows: an overlay's look, painted (a style sheet's background is not, here)
+  const Tokens& t = theme::current();
+  QPainter p(this);
+  p.setRenderHint(QPainter::Antialiasing);
+  p.setPen(t.line);
+  p.setBrush(t.bg3);
+  p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 3, 3);
+}
+
+bool ActivateToggle::eventFilter(QObject* object, QEvent* event) {
+  if (object == m_editor) {
+    if (event->type() == QEvent::Move || event->type() == QEvent::Resize) place();
+    else if (event->type() == QEvent::HideToParent) hide();  // closed (hidden, then deleted later), or its row out of view
+    else if (event->type() == QEvent::ShowToParent) place(), show();
+  }
+  return QFrame::eventFilter(object, event);
 }
