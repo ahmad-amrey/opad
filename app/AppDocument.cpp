@@ -326,9 +326,27 @@ opad::json AppDocument::run(const std::string& command, opad::json args) {
   const size_t before = doc.ops.size();
   if (!args.contains("by")) args["by"] = QSettings().value("user/name").toString().trimmed().toStdString();
   opad::json out = opad::commands::run(command, args, &doc);
+  if (m_batching) return out;
   recordStep(labelFor(command, args), before);
   refresh();
   return out;
+}
+
+void AppDocument::batch(const QString& label, const std::function<void()>& commands) {
+  if (m_batching) return commands();
+  const size_t before = doc.ops.size();
+  m_batching = true;
+  try {
+    commands();
+  } catch (...) {
+    m_batching = false;
+    if (doc.ops.size() > before) doc.truncate_ops(before);
+    refresh();
+    throw;
+  }
+  m_batching = false;
+  recordStep(label, before);
+  refresh();
 }
 
 opad::json AppDocument::commitPlan(opad::design::Plan&& plan, const QString& label) {

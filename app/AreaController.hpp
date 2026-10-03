@@ -64,6 +64,7 @@ class AreaServices {
   JobRunner* jobs() const;              // every long operation (see Jobs.hpp)
   DesignController* design() const;
   BrowserPanel* browser() const;        // row decorations and folders
+  void revealBrowser();                 // shows the browser, also where it hides itself (before a row's rename)
   PropertiesPanel* properties() const;  // property sections
   ViewportChips* chips() const;         // the chips row over the viewport (addChip)
   TimelineWidget* timeline() const;     // the history strip (dimmed markers); from statusWidgets on

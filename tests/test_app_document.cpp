@@ -82,6 +82,34 @@ int main(int argc, char** argv) {
       QObject::disconnect(counted);
       doc.undo(3);
       CHECK_EQ(doc.doc.ops.size(), ops);
+      // Several commands as one step (UI-34, Component from selection): one undo, one refresh; a refused one takes the
+      // others back.
+      const size_t steps = doc.undoLabels().size(), roots = doc.scene.roots.size();
+      const std::string home = doc.scene.node(body)->parent;
+      std::string group;
+      int refreshes = 0;
+      counted = QObject::connect(&doc, &AppDocument::changed, &doc, [&refreshes] { ++refreshes; });
+      doc.batch("group", [&] {
+        group = doc.run("component", opad::json{{"name", "Group"}}).value("id", "");
+        doc.run("reparent", opad::json{{"targets", {body}}, {"parent", group}});
+        CHECK(!doc.scene.node(group));  // not resolved in between
+      });
+      QObject::disconnect(counted);
+      CHECK(refreshes == 1 && doc.undoLabels().size() == steps + 1 && doc.undoLabel() == "group" && doc.scene.node(body)->parent == group);
+      doc.undo();
+      CHECK(doc.doc.ops.size() == ops && !doc.scene.node(group) && doc.scene.node(body)->parent == home);
+      doc.redo();
+      CHECK(doc.scene.node(body)->parent == group);
+      doc.undo();
+      doc.run("appearance", opad::json{{"target", body}, {"locked", true}});
+      const size_t locked = doc.doc.ops.size();
+      CHECK_THROWS(doc.batch("refused", [&] {
+        doc.run("component", opad::json{{"name", "Group"}});
+        doc.run("reparent", opad::json{{"targets", {body}}, {"parent", nullptr}});  // locked: refused
+      }));
+      CHECK(doc.doc.ops.size() == locked && doc.undoLabels().size() == steps + 1 && doc.scene.roots.size() == roots);
+      doc.undo();
+      CHECK_EQ(doc.doc.ops.size(), ops);
     }
     // The active component (UI-33): session state, checked after every change; imports go into it.
     {

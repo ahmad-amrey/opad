@@ -72,6 +72,14 @@ TEST(lock_fade_explode_and_candidate) {
   CHECK(moved.offset == (std::array<double, 3>{11, 2, -2}));  // offsets add up
 }
 
+TEST(an_edited_opacity_is_the_documents_until_written) {
+  LookDelta edit, lock;
+  edit.opacity = 0.4;  // the opacity slider being dragged (UI-34)
+  lock.fade = 0.5;
+  CHECK_NEAR(looks::compose(base(), with({{LookSource::Edit, &edit}}), false).opacity, 0.4, 1e-12);
+  CHECK_NEAR(looks::compose(base(), with({{LookSource::Edit, &edit}, {LookSource::Lock, &lock}}), false).opacity, 0.2, 1e-12);  // then faded
+}
+
 TEST(locked_is_a_reference_only) {
   LookDelta lock, ghost, inside;
   lock.fade = 0.5;

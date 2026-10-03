@@ -1,9 +1,9 @@
 #pragma once
-// Per-body display state (UI-121). Features that change how bodies look for a while (activation ghosts, lock fade,
-// compare tints, explode offsets, smart-select candidates, asset styling) each own one layer of LookDeltas on the
-// viewport (Viewport::setLookLayer) instead of writing AIS state themselves; the viewport composes the layers over the
-// document's appearance in one fixed order and applies the result per body. Hover and selection come after all of
-// them: a selected body moves to the Topmost layer (X-ray) whatever its look, and is highlighted there.
+// Per-body display state (UI-121). Features that change how bodies look for a while (an appearance being edited,
+// activation ghosts, lock fade, compare tints, explode offsets, smart-select candidates, asset styling) each own one layer
+// of LookDeltas on the viewport (Viewport::setLookLayer) instead of writing AIS state themselves; the viewport composes
+// the layers over the document's appearance in one fixed order and applies the result per body. Hover and selection come
+// after all of them: a selected body moves to the Topmost layer (X-ray) whatever its look, and is highlighted there.
 //
 // Composition, in LookSource order, each layer over what the earlier ones made:
 //   visible, color, opacity, pickable, layer   replaced when the delta has them
@@ -23,7 +23,8 @@
 #include <cstddef>
 #include <optional>
 
-enum class LookSource { Asset, Lock, Activation, Compare, Explode, Candidate, Count };
+// Edit: an appearance being edited and not written yet (the opacity slider while it is dragged), over the document's.
+enum class LookSource { Edit, Asset, Lock, Activation, Compare, Explode, Candidate, Count };
 constexpr std::size_t kLookSources = static_cast<std::size_t>(LookSource::Count);
 
 struct LookDelta {

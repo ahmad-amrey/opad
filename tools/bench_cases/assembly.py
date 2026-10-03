@@ -37,6 +37,19 @@ def locked_drawing(root, document):
 
 
 CASES = [
+    # Components without dialogs (UI-34) on a Housing placed 30 mm up (a box in it), an empty Lid and two root boxes:
+    # New component named, activated and renamed in the browser (Activate new components off: into the active one);
+    # Component from selection (Ctrl+G) in one undo step where the parts are (a transform for the Housing's box only),
+    # refused with a locked box; Move to component… narrowed by typing, Enter moves (keeping the place), a component is
+    # not offered to itself, Esc closes; the opacity slider live while dragged and written once let go, the Opacity
+    # popup written when the keys rest, Esc dropping what is pending; menu and ribbon entries. <prefix>.rename.png,
+    # .picker.png, .menu.png, .popup.png, .ribbon.png.
+    ("components", lambda root, document: document("components"), {"OPAD_BENCH_COMPONENTS": "{prefix}"}),
+    ("components-rtl", lambda root, document: document("components-rtl"), {"OPAD_BENCH_COMPONENTS": "{prefix}", "OPAD_LANG": "ar"}),
+    # The Engine (skipped where it is not): Move to component… over its components opened and narrowed letter by letter,
+    # timed; the opacity slider on a component with about half of the bodies live with no event-loop gap over 250 ms,
+    # then written (timed beside one appearance op).
+    ("components-engine", engine(), {"OPAD_BENCH_COMPONENTS": "{prefix}"}),
     # Lock (UI-37) on a box in a Housing component and a box at the root made by the bench: Lock is one step and the
     # command says Unlock; the locked box faded to half and not picked (a click passes it), its browser row's lock
     # badge, its name in the status bar when resting on it, Unlock in the right-click menu there, picked as a reference
