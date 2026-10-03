@@ -86,4 +86,11 @@ inline Hold angleHold(double absolute, bool previous, double between, bool relat
 }
 // The size of the angle between two directions, 0..pi (what an angle dimension between two lines holds).
 inline double between(double angle) { return std::fabs(std::remainder(angle, 2 * std::acos(-1.0))); }
+
+// A chamfer given by its distance along the corner's first line and its angle to that line (radians): its distance along
+// the second line, the corner's lines `corner` apart (0..pi). Negative: the cut never meets the second line.
+inline double chamferSecond(double first, double angle, double corner) {
+  if (angle <= 1e-12 || angle + corner >= std::acos(-1.0) - 1e-9) return -1;
+  return first * std::sin(angle) / std::sin(angle + corner);
+}
 }  // namespace shapeinput

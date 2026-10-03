@@ -86,4 +86,12 @@ TEST(a_typed_angle_holds_the_line_along_an_axis_or_against_the_line_before) {
   CHECK(std::fabs(between(-pi / 4) - pi / 4) < 1e-12 && std::fabs(between(3 * pi / 2) - pi / 2) < 1e-12);
 }
 
+TEST(a_chamfer_by_a_distance_and_an_angle_cuts_the_second_line_where_the_triangle_closes) {
+  CHECK(std::fabs(chamferSecond(4, pi / 4, pi / 2) - 4) < 1e-12);                           // 45 degrees on a square corner
+  CHECK(std::fabs(chamferSecond(4, pi / 6, pi / 2) - 4 * 0.5 / std::sin(2 * pi / 3)) < 1e-12);  // 30: shorter on the second
+  CHECK(std::fabs(chamferSecond(2, pi / 3, pi / 3) - 2) < 1e-12);                           // equilateral
+  CHECK(chamferSecond(4, pi / 2, pi / 2) < 0);  // parallel to the second line: it never meets it
+  CHECK(chamferSecond(4, 0, pi / 2) < 0);
+}
+
 CHECK_MAIN()

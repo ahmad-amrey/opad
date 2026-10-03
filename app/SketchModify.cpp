@@ -1,5 +1,6 @@
 #include "SketchEditor.hpp"
 #include "DimensionHandle.hpp"
+#include "ShapeInput.hpp"
 #include <QApplication>
 #include <QMouseEvent>
 #include <QKeyEvent>
@@ -50,6 +51,17 @@ void SketchEditor::benchHandles() {
   }catch(const std::exception& e){timer->stop();trace::log(QString("bench: handles FAIL: %1").arg(e.what()));QCoreApplication::exit(2);}});timer->start();
 }
 namespace {
+// The distance along the corner's second line (chamfer_corner's order) of a cut `first` along its first line at `angle` to it.
+double chamferAt(const Sketch& sk,int point,double first,double angle) {
+  std::vector<double> directions;const SkPoint* corner=sk.point(point);
+  for(const auto& e:sk.entities)if(corner && e.type==SkEntity::Type::Line && std::find(e.p.begin(),e.p.end(),point)!=e.p.end()) {
+    const SkPoint* end=sk.point(e.p[e.p[0]==point?1:0]);directions.push_back(std::atan2(end->y-corner->y,end->x-corner->x));
+  }
+  if(directions.size()!=2)throw opad::Error("pick a corner joining exactly two lines");
+  const double second=shapeinput::chamferSecond(first,angle,shapeinput::between(directions[1]-directions[0]));
+  if(second<=0)throw opad::Error("at that angle the chamfer never meets the other line");
+  return second;
+}
 const QStringList tools={"move","rotate","scale","copy","mirror","rect_pattern","polar_pattern","split","extend","break","chamfer","union","subtract","intersect","heal","explode"};
 }
 bool SketchEditor::modifyClick(double u,double v) {
@@ -106,8 +118,10 @@ bool SketchEditor::applyModify() {
       runSketchEdit(tr("Explode pattern"),[patterns](Sketch& sk){for(int id:patterns)remove_pattern(sk,id,true);});
     } else if(m_tool=="chamfer") {
       if(m_sel.size()!=1 || !m_sk.point(m_sel.front()))throw opad::Error("pick a corner point");
-      const int id=m_sel.front();const double a=length("first","2 mm"),b=length("second","2 mm");
-      runSketchEdit(tr("Chamfer"),[id,a,b](Sketch& sk){chamfer_corner(sk,id,a,b);});
+      // By two distances, or by the first and its angle to the first line (the second distance where the cut meets the other).
+      const int id=m_sel.front();const double a=length("first","2 mm");const bool angled=option("chamferMode","distance")=="angle";
+      const double b=angled?table.angle(option("chamferAngle","45 deg").toStdString()):length("second","2 mm");
+      runSketchEdit(tr("Chamfer"),[id,a,b,angled](Sketch& sk){chamfer_corner(sk,id,a,angled?chamferAt(sk,id,a,b):b);});
     } else if(m_tool=="union" || m_tool=="subtract" || m_tool=="intersect") {
       if(m_clicks.size()!=2)throw opad::Error("pick inside two closed loops first");
       const auto a=m_clicks[0],b=m_clicks[1];const auto operation=m_tool.toStdString();

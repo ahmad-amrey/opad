@@ -248,7 +248,13 @@ void SketchPanel::buildFields() {
   if(m_shown=="scale")field("scale",tr("Scale factor"),"2");
   if(m_shown=="rect_pattern"||m_shown=="polar_pattern")field("count",tr("Count"),"3");
   if(m_shown=="rect_pattern")field("rows",tr("Rows"),"1");
-  if(m_shown=="chamfer") {field("first",tr("First distance"),"2 mm");field("second",tr("Second distance"),"2 mm");}
+  if(m_shown=="chamfer") {
+    auto* mode=new QComboBox(this);mode->setObjectName("sketchOption-chamferMode");mode->addItem(tr("Two distances"),"distance");mode->addItem(tr("Distance and angle"),"angle");
+    mode->setCurrentIndex(std::max(0,mode->findData(m_editor->option("chamferMode","distance"))));m_fields->addRow(tr("Chamfer by"),mode);
+    connect(mode,&QComboBox::currentIndexChanged,this,[this,mode]{QTimer::singleShot(0,this,[this,angled=mode->currentData().toString()=="angle"]{m_editor->setChamferAngle(angled);});});
+    field("first",tr("First distance"),"2 mm");
+    if(m_editor->option("chamferMode","distance")=="angle")field("chamferAngle",tr("Angle to the first line"),"45 deg");else field("second",tr("Second distance"),"2 mm");
+  }
   if(m_shown=="heal")field("healTolerance",tr("Gap tolerance"),"0.05 mm");
   if(m_shown=="mirror") {
     choice("mirrorAxis",tr("Mirror axis"),{{"picked",tr("Picked line")},{"x",tr("X axis")},{"y",tr("Y axis")}});

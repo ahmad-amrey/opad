@@ -155,7 +155,7 @@ void SketchEditor::runSketchEdit(const QString& label,std::function<void(Sketch&
     // never kept for Apply. Otherwise the newer run replaces it.
     const bool stale=preview && previewRevision!=m_previewRevision;
     if(stale && !m_dimensionHandle->dragging())return;
-    if(!ok){if(!stale){if(preview){m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();}emit status(error);}return;}
+    if(!ok){if(!stale){if(preview){m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();}emit status(i18n::t(error));}return;}
     if(m_modelRevision!=modelRevision)return;
     if(preview){
       if(!stale){m_toolPreview=after;m_previewSolved=*solved;}

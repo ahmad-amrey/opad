@@ -156,7 +156,10 @@ QList<DynamicInput::Field> SketchEditor::inputStage() const {
   auto value = [this](const char* key, const QString& label, const char* fallback) { return Field{key, label, option(key, fallback), true}; };
   if (m_tool == "offset") return {value("distance", tr("Distance"), "5 mm")};
   if (m_tool == "fillet" || m_tool == "tangent_circle") return {value("radius", tr("Radius"), "2 mm")};
-  if (m_tool == "chamfer") return {value("first", tr("Distance 1"), "2 mm"), value("second", tr("Distance 2"), "2 mm")};
+  if (m_tool == "chamfer") {  // its second distance, or (the box's switch, or '<' as in 4<30) its angle to the first line
+    if (option("chamferMode", "distance") == "angle") return {value("first", tr("Distance"), "2 mm"), Field{"chamferAngle", tr("Angle"), option("chamferAngle", "45 deg"), true, tr("or distance")}};
+    return {value("first", tr("Distance 1"), "2 mm"), Field{"second", tr("Distance 2"), option("second", "2 mm"), true, tr("or angle")}};
+  }
   if (m_tool == "move" || m_tool == "copy") return {value("dx", tr("ΔX"), "10 mm"), value("dy", tr("ΔY"), "0 mm")};
   if (m_tool == "rotate") return {value("angle", tr("Angle"), "45 deg"), value("cx", tr("Centre X"), "0 mm"), value("cy", tr("Centre Y"), "0 mm")};
   if (m_tool == "scale") return {value("scale", tr("Factor"), "2"), value("cx", tr("Centre X"), "0 mm"), value("cy", tr("Centre Y"), "0 mm")};
@@ -200,7 +203,7 @@ bool SketchEditor::typingKey(const QKeyEvent* e) const {
   const QString text = e->text();
   if (text.size() != 1 || m_tool == "select") return false;
   if (m_tool == "text" && text.front().isPrint()) return true;  // the text box takes every printable key
-  return inputkeys::valueChar(text.front().unicode()) || (inputkeys::entryChar(text.front().unicode()) && kPointTools.contains(m_tool));
+  return inputkeys::valueChar(text.front().unicode()) || (inputkeys::entryChar(text.front().unicode()) && (kPointTools.contains(m_tool) || (m_tool == "chamfer" && text == "<")));
 }
 
 bool SketchEditor::sketchType(QKeyEvent* e) {
@@ -223,6 +226,13 @@ bool SketchEditor::sketchType(QKeyEvent* e) {
 // A prefix or a separator that switches how the point is typed (InputKeys.hpp): the boxes of the other entry, the number
 // typed so far carried over to the first one where it is the same distance.
 bool SketchEditor::entryKey(int box, QChar c) {
+  if (m_input && m_tool == "chamfer" && inputkeys::entryChar(c.unicode())) {  // 4<30: the distance, then the angle; '@' and '#' are nothing here
+    if (c == '<') {
+      setChamferAngle(true);
+      m_input->select(1);
+    }
+    return true;
+  }
   if (!m_input || !kPointTools.contains(m_tool)) return false;
   double bu = 0, bv = 0;
   const bool base = inputBase(bu, bv);
@@ -248,6 +258,15 @@ bool SketchEditor::entryKey(int box, QChar c) {
     }
   }
   return false;
+}
+
+void SketchEditor::setChamferAngle(bool angled) {
+  if ((option("chamferMode", "distance") == "angle") == angled) return;
+  m_options["chamferMode"] = angled ? "angle" : "distance";
+  m_panelFieldsDirty = true;
+  updateInput();
+  scheduleToolPreview();
+  emit changed();
 }
 
 void SketchEditor::updateInput() {

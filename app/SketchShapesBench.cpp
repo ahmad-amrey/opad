@@ -3,6 +3,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QElapsedTimer>
 #include <QKeyEvent>
 #include <QSettings>
@@ -373,6 +374,32 @@ void SketchEditor::benchShapes() {
     for (const auto& e : m_sk.entities)
       if (e.type == SkEntity::Type::Arc && at(e.p[0], 47, 13)) rounded = e.id;
     check(rounded && has(CT::Radius, {rounded}, 3), "a click rounds it by 3");
+  });
+
+  // A chamfer by a distance and an angle from the keyboard: the rectangle's top left corner picked, 4<30 Enter.
+  step([=] {
+    tool(0, {}, "chamfer");
+    sketchPress(10, 35, Qt::NoModifier);
+    sketchRelease(10, 35, Qt::NoModifier);
+    check(m_sel.size() == 1 && m_sel[0] == pointAtXY(10, 35), "a click picks the rectangle's top left corner");
+    check(m_input->key(1) == "second" && chip() && chip()->text() == "or angle", "the chamfer's boxes: two distances, the second's switch offers an angle");
+    type("4");
+    send(Qt::Key_Less, Qt::ShiftModifier, "<");
+    type("30");
+    check(option("chamferMode") == "angle" && m_input->key(1) == "chamferAngle" && option("first") == "4" && option("chamferAngle") == "30",
+          "4<30: the distance 4, then ('<') the angle 30 to the first line");
+    m_input->grab().save(prefix + ".chamfer-input.png");
+    enter();
+  });
+  step([=] {
+    const double b = 4 * std::sin(30 * degree) / std::sin(120 * degree);
+    check(lineBetween(14, 35, 10, 35 - b) && !pointAtXY(10, 35), QString("Enter cuts it 4 along the top and at 30 degrees to it, %1 down the side").arg(b));
+    const auto modes = window->findChildren<QComboBox*>("sketchOption-chamferMode");  // the newest: the panel's fields now
+    QComboBox* mode = modes.isEmpty() ? nullptr : modes.last();
+    check(mode && mode->currentData().toString() == "angle", "the sketch panel shows it chamfers by a distance and an angle");
+    if (QToolButton* c = chip()) c->click();
+    check(option("chamferMode") == "distance" && m_input->key(1) == "second", "the switch back: two distances");
+    send(Qt::Key_Escape);
   });
 
   // Text from the keyboard alone: every printable key goes into its words (L, the line's key, a comma and '@' too), Tab

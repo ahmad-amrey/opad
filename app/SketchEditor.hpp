@@ -169,6 +169,7 @@ class SketchEditor : public QObject, public SketchInput {
   Snap typedPoint(const Snap& pointer) const;        // where the next point goes: the typed values, the pointer the rest
   bool entryKey(int box, QChar c);                   // DynamicInput's key hook
   void forgetTyped();
+  void setChamferAngle(bool angled);  // the chamfer's second box: its angle to the first line, or its second distance
   // A shape's own sizes (UI-17): the step's boxes (a rectangle's width and height after its first corner, a slot's width
   // after its centres), where they put the click, and what the click made keeps them as driving dimensions (setting
   // sketch/input/addDimensions, on by default) in the shape's own undo step. The rubber band reads them out as it goes.
