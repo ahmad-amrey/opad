@@ -19,6 +19,7 @@
 #include "AreaController.hpp"
 #include "BenchRegistry.hpp"
 #include "MainWindow.hpp"
+#include "ViewportChips.hpp"
 
 namespace {
 class ProbeArea : public AreaController {
@@ -27,6 +28,7 @@ class ProbeArea : public AreaController {
   QStringList hooks;  // construction hooks, in call order
   QAction* command = nullptr;
   QLabel* label = nullptr;
+  QLabel* chip = nullptr;
   int ran = 0, asked = 0, menuCalls = 0, badgeClicks = 0, leadClicks = 0, propertyActions = 0, sectionRows = 1;
   bool veto = false;
   SelectionContext selected, menuSelection;
@@ -61,6 +63,10 @@ class ProbeArea : public AreaController {
   void ready() override {
     hooks << "ready";
     startWorkspace = services().workspace();
+    chip = new QLabel("Probe chip");
+    chip->setObjectName("chipSel");
+    chip->hide();
+    services().chips()->addChip(chip);
     // Bodies get a clickable text badge (Arabic in a right-to-left UI) and an icon badge, an italic name and a tooltip line.
     const bool rtl = QGuiApplication::layoutDirection() == Qt::RightToLeft;
     services().browser()->addDecorator([this, rtl](const browser::Row& row, browser::Decoration& d) {
@@ -143,10 +149,12 @@ QTreeWidgetItem* rowOf(QTreeWidget* tree, const QString& id) {
 }
 }  // namespace
 
-// OPAD_BENCH_AREAS=<prefix> on a document with one body: the hooks in order, the command in the Tools menu, the ribbon
-// and the status bar, documentChanged on edits and loads, selectionChanged from the browser, the context menu's entry
-// and selection, positionOverlays with the viewport; the browser's decorations (badges right of the name and left of the
-// built-in ones, a badge click that runs its callback and selects nothing, tooltips) and the probe's folder (rows after
+// OPAD_BENCH_AREAS=<prefix> on a document with one body: the hooks in order, the workspace the settings start in
+// (OPAD_BENCH_AREAS_WORKSPACE), the command in the Tools menu, the ribbon and the status bar, documentChanged on edits and
+// loads, selectionChanged from the browser, the context menu's entry and selection, positionOverlays with the viewport; the
+// probe's workspace (its command, switching by id, workspaceChanged); its chip in the chips row (saved as
+// <prefix>.chips.png); the browser's decorations (badges right of the name and left of the built-in ones, a badge click
+// that runs its callback and selects nothing, tooltips, a lead in the swatch's column) and the probe's folder (rows after
 // Sketches, selection, double-click, its own context menu, no eye, open or closed across rebuilds, breadcrumb), the
 // browser saved as <prefix>.browser.png; the probe's Properties section (after the built-in rows, its link, refresh, an
 // op as the subject; the panel saved as <prefix>.properties.png); last maybeClose keeping the document, then letting New replace it.
@@ -195,6 +203,29 @@ OPAD_BENCH(OPAD_BENCH_AREAS, areas) {
   require(probe->overlays == QRect(w.m_viewport->mapToGlobal(QPoint(0, 0)), w.m_viewport->size()) && !probe->overlays.isEmpty(), "positionOverlays: the viewport, global");
   probe->command->trigger();
   require(probe->ran == 1, "the command runs");
+
+  // The probe's chip: after the built-in ones; the row follows it as it shows, grows and hides.
+  ViewportChips* chips = w.m_chips;
+  auto fit = [chips] { QCoreApplication::sendPostedEvents(chips, QEvent::LayoutRequest); };
+  fit();
+  const int narrow = chips->width();
+  probe->chip->show();
+  fit();
+  const int wide = chips->width();
+  const bool rtl = chips->layoutDirection() == Qt::RightToLeft;
+  bool after = true;
+  for (QWidget* other : chips->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly))
+    if (other != probe->chip && other->isVisibleTo(chips))
+      after = after && (rtl ? probe->chip->geometry().right() < other->geometry().left() : probe->chip->geometry().left() > other->geometry().right());
+  chips->grab().save(value + ".chips.png");
+  probe->chip->setText("Probe chip with a longer text");
+  fit();
+  const int longer = chips->width();
+  const bool inside = chips->rect().contains(probe->chip->geometry());
+  probe->chip->hide();
+  fit();
+  require(probe->chip->parentWidget() == chips && after && wide > narrow + 20 && longer > wide && chips->width() == narrow && inside,
+          QString("chips: an area's chip after the built-in ones, the row fits it (%1, %2, %3, %4 px)").arg(narrow).arg(wide).arg(longer).arg(chips->width()));
 
   // The probe's workspace: a switcher command made by the window, remembered by id, reported to the areas.
   QAction* space = w.action("workspace.probe");

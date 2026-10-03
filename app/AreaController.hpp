@@ -35,6 +35,7 @@ class QMenuBar;
 class QStatusBar;
 class ToolPanel;
 class Viewport;
+class ViewportChips;
 struct RibbonLayout;
 
 // The selection as the hooks see it: what the viewport or the browser reported last.
@@ -46,8 +47,8 @@ struct SelectionContext {
 };
 
 // The window's services for areas. The window is built around the construction hooks, so a pointer can still be null
-// there (buildActions and menus come first; the viewport is there from ribbon on, the browser, the Properties panel and
-// jobs from statusWidgets on, the design controller only in ready); from ready() on everything is there.
+// there (buildActions and menus come first; the viewport and its chips are there from ribbon on, the browser, the
+// Properties panel and jobs from statusWidgets on, the design controller only in ready); from ready() on everything is there.
 class AreaServices {
  public:
   explicit AreaServices(MainWindow* window) : m_window(window) {}
@@ -58,6 +59,7 @@ class AreaServices {
   DesignController* design() const;
   BrowserPanel* browser() const;        // row decorations and folders
   PropertiesPanel* properties() const;  // property sections
+  ViewportChips* chips() const;         // the chips row over the viewport (addChip)
   QAction* action(const QString& id) const;  // any command by id: "file.open", "view.fit", an area's own; null if none
   // A command like the built-in ones: its shortcut from the user's settings, locked while a file loads, errors shown as
   // a message box; in viewer mode it asks to save as OPAD first when MainWindow::isEditAction(id) says it edits.

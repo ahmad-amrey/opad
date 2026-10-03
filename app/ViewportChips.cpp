@@ -86,3 +86,19 @@ void ViewportChips::set(const QString& mode, const QString& projection, const QS
   m_isolate->setVisible(!isolate.isEmpty());
   adjustSize();
 }
+
+void ViewportChips::addChip(QWidget* chip) {
+  chip->setParent(this);
+  auto* row = static_cast<QHBoxLayout*>(layout());
+  row->insertWidget(row->count() - 1, chip);  // before the stretch
+  m_areaChips = true;
+  adjustSize();
+}
+
+// set() and setViewer() fit the row to the built-in chips. An area's chip changes on its own (text, shown, hidden), and
+// each change posts a layout request to the row.
+bool ViewportChips::event(QEvent* event) {
+  const bool done = QWidget::event(event);
+  if (event->type() == QEvent::LayoutRequest && m_areaChips) adjustSize();
+  return done;
+}
