@@ -130,19 +130,18 @@ class HelpArea : public AreaController {
  private:
   // The coach card: an editable document with no body and no sketch, no tool running, not hidden for this document (its
   // ×) nor for good (help/coach).
-  bool coachWanted() const {
+  bool emptyDocument() const {
     const AppDocument* d = services().document();
-    if (!d || !d->hasDocument || d->browse || d->loading || !d->scene.sketches.empty() || d->generation == m_coachDismissed) return false;
-    if (std::any_of(d->scene.nodes.begin(), d->scene.nodes.end(), [](const auto& n) { return n.second.kind == opad::Node::Kind::Body; })) return false;
-    return services().activeCommand().isEmpty() && services().workspace() != "sketch" && QSettings().value("help/coach", true).toBool();
+    return d && d->hasDocument && !d->browse && !d->loading && d->scene.sketches.empty() &&
+           std::none_of(d->scene.nodes.begin(), d->scene.nodes.end(), [](const auto& n) { return n.second.kind == opad::Node::Kind::Body; });
   }
 
   void updateCoach() {
     if (!m_coach) return;
-    const AppDocument* d = services().document();
-    const bool open = d && d->hasDocument && !d->browse && d->scene.sketches.empty();
-    if (open != m_coachPoll.isActive()) open ? m_coachPoll.start() : m_coachPoll.stop();
-    const bool show = coachWanted();
+    const bool empty = emptyDocument();
+    if (empty != m_coachPoll.isActive()) empty ? m_coachPoll.start() : m_coachPoll.stop();
+    const bool show = empty && services().document()->generation != m_coachDismissed && services().activeCommand().isEmpty() &&
+                      services().workspace() != "sketch" && QSettings().value("help/coach", true).toBool();
     if (show == m_coach->isVisible()) return;
     m_coach->setVisible(show);
     if (show) placeCoach();
