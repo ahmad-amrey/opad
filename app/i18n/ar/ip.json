@@ -10,5 +10,11 @@
  "OPAD is free software under the MIT licence. It is built on the libraries below, each under its own licence; their versions, sources and licence texts follow.": "OPAD برنامج حر برخصة MIT. وهو مبني على المكتبات أدناه، ولكل منها رخصتها؛ وتليها إصداراتها ومصادرها ونصوص تراخيصها.",
  "About Qt": "حول Qt",
  "No ODA File Converter is installed on this computer (OPAD looks in the ODA folder under Program Files).": "لا يوجد ODA File Converter مثبّت على هذا الحاسوب (يبحث OPAD في مجلد ODA داخل Program Files).",
- "Third-party licences…": "تراخيص الأطراف الثالثة…"
+ "Third-party licences…": "تراخيص الأطراف الثالثة…",
+ "Reading DWG failed: the converter could not handle this drawing (it may be damaged, or saved by a newer AutoCAD).": "تعذّرت قراءة ملف DWG: لم يتمكّن المحوِّل من معالجة هذا المخطط (قد يكون تالفًا، أو محفوظًا بإصدار أحدث من AutoCAD).",
+ "Writing DWG failed: the converter could not handle this drawing (it may be damaged, or saved by a newer AutoCAD).": "تعذّرت كتابة ملف DWG: لم يتمكّن المحوِّل من معالجة هذا المخطط (قد يكون تالفًا، أو محفوظًا بإصدار أحدث من AutoCAD).",
+ "Reading DWG needs a converter: put LibreDWG's dwg2dxf beside OPAD or on PATH (or set OPAD_DWG2DXF to it).": "قراءة ملفات DWG تحتاج إلى محوِّل: ضع البرنامج dwg2dxf من LibreDWG بجانب OPAD أو في PATH (أو اجعل OPAD_DWG2DXF يشير إليه).",
+ "Writing DWG needs a converter: put LibreDWG's dxf2dwg beside OPAD or on PATH (or set OPAD_DXF2DWG to it).": "كتابة ملفات DWG تحتاج إلى محوِّل: ضع البرنامج dxf2dwg من LibreDWG بجانب OPAD أو في PATH (أو اجعل OPAD_DXF2DWG يشير إليه).",
+ "Saving the drawing as DXF works without one.": "أما حفظ المخطط بصيغة DXF فلا يحتاج إليه.",
+ "The ODA File Converter is installed but not switched on (Settings > Use the ODA File Converter for DWG, if its licence covers your use).": "ODA File Converter مثبّت لكنه غير مفعّل (الإعدادات > استخدام ODA File Converter لملفات DWG، إن كان ترخيصه يشمل استخدامك)."
 }

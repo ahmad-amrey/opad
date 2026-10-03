@@ -1,6 +1,8 @@
 // Benches of the IP area (TODO 11 UI-13/14/54), registered through BenchRegistry; cases in tools/bench_cases/ip.py.
 #include <QApplication>
 #include <QDialog>
+#include <QDir>
+#include <QEventLoop>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -9,6 +11,7 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QTemporaryDir>
 #include <QTimer>
 
 #include "BenchRegistry.hpp"
@@ -21,7 +24,8 @@
 // is a corner view with view/cubeEdgesCorners on, the face it lies on with it off (UI-54), and back. The ODA File
 // Converter is off by default and turns on only through its terms box (UI-14; <prefix>.oda-terms.png). Help shows the
 // third-party notices (UI-13; <prefix>.notices.png), About Qt and an About box that names the licences. The commands are
-// registered with their groups and keywords; in Arabic every string of the area comes from app/i18n/ar/ip.json.
+// registered with their groups and keywords; in Arabic every string of the area comes from app/i18n/ar/ip.json. Last, a
+// DWG that no converter reads opens to an error that points to the ODA switch, in the UI's language.
 OPAD_BENCH(OPAD_BENCH_IP, ip) {
   const QString prefix = value;
   const bool english = i18n::current() == "en";
@@ -115,6 +119,36 @@ OPAD_BENCH(OPAD_BENCH_IP, ip) {
   }
   w.action("help.about")->trigger();  // message boxes: dismissed by the bench (BenchQuiet), logged
   w.action("help.aboutqt")->trigger();
+
+  // Opening a DWG that no converter reads, with an ODA File Converter installed (a stand-in, found but never run) and
+  // switched off: the error box points to the switch, in the UI's language (each sentence of the core's message is a key).
+  QTemporaryDir scratch;
+  QDir(scratch.path()).mkpath("ODA/ODAFileConverter 1.0");
+  QFile stand(scratch.filePath("ODA/ODAFileConverter 1.0/ODAFileConverter.exe")), plan(scratch.filePath("plan.dwg"));
+  if (stand.open(QIODevice::WriteOnly)) stand.close();
+  if (plan.open(QIODevice::WriteOnly)) plan.write("not a drawing");
+  plan.close();
+  const QByteArray programFiles = qgetenv("ProgramFiles"), override = qgetenv("OPAD_DWG2DXF");
+  qputenv("ProgramFiles", QDir::toNativeSeparators(scratch.path()).toLocal8Bit());
+  qunsetenv("OPAD_DWG2DXF");
+  struct Catch : QObject {
+    QString text;
+    QEventLoop loop;
+    bool eventFilter(QObject* o, QEvent* e) override {
+      if (auto* box = e->type() == QEvent::Show ? qobject_cast<QMessageBox*>(o) : nullptr) { text = box->text(); loop.quit(); }
+      return false;
+    }
+  } shown;
+  qApp->installEventFilter(&shown);
+  QTimer::singleShot(30000, &shown.loop, &QEventLoop::quit);
+  w.openPath(plan.fileName());
+  shown.loop.exec();
+  qApp->removeEventFilter(&shown);
+  qputenv("ProgramFiles", programFiles);
+  if (!override.isEmpty()) qputenv("OPAD_DWG2DXF", override);
+  const QString hint = i18n::t("The ODA File Converter is installed but not switched on (Settings > Use the ODA File Converter for DWG, if its licence covers your use).");
+  report(QString("DWG error points to the ODA switch: %1").arg(QString(shown.text).replace('\n', ' ')),
+         shown.text.contains(hint) && shown.text.contains("DWG") && (english || (!shown.text.contains("Settings >") && !shown.text.contains("Reading DWG"))));
   QCoreApplication::exit(all ? 0 : 2);
   return true;
 }

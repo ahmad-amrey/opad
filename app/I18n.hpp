@@ -33,6 +33,9 @@ void setLanguage(const QString& code);  // saved; applies at the next start
 // Run-time lookup for text that is data rather than a tr() literal: property names, core error messages.
 QString t(const QString& source);
 QString t(const char* source);
+// An error message: whole, else sentence by sentence (". "), since core errors join fixed sentences ("Reading DWG failed:
+// ... The ODA File Converter is installed but not switched on ..."); an unknown sentence stays as it is.
+QString message(const QString& text);
 // An op's ISO 8601 UTC time stamp ("2026-10-01T01:32:05Z") as local "yyyy-MM-dd HH:mm" (shown raw, it was UTC).
 QString localTime(const std::string& iso);
 }  // namespace i18n

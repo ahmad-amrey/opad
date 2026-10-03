@@ -81,6 +81,18 @@ void setLanguage(const QString& code) { QSettings().setValue("ui/language", code
 QString t(const char* source) { return QCoreApplication::translate("i18n", source); }
 QString t(const QString& source) { return t(source.toUtf8().constData()); }
 
+QString message(const QString& text) {
+  if (const QString whole = t(text); whole != text) return whole;
+  QStringList out;
+  qsizetype start = 0;
+  for (qsizetype at = text.indexOf(". "); at >= 0; at = text.indexOf(". ", start)) {
+    out << t(text.mid(start, at + 1 - start));
+    start = at + 2;
+  }
+  out << t(text.mid(start));
+  return out.join(' ');
+}
+
 QString localTime(const std::string& iso) {
   const QString text = QString::fromStdString(iso);
   const QDateTime at = QDateTime::fromString(text, Qt::ISODate);

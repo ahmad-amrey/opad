@@ -331,7 +331,7 @@ void MainWindow::guarded(const std::function<void()>& fn) {
   try {
     fn();
   } catch (const std::exception& e) {
-    QMessageBox::warning(this, tr("OPAD"), i18n::t(QString::fromUtf8(e.what())));
+    QMessageBox::warning(this, tr("OPAD"), i18n::message(QString::fromUtf8(e.what())));
   }
 }
 

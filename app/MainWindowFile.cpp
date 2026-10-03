@@ -227,7 +227,7 @@ void MainWindow::beginLoad(std::function<void()> after) {
     setLoading(false);
     if (!ok) {
       if (err.contains("cancel", Qt::CaseInsensitive)) statusBar()->showMessage(tr("Load cancelled"), 4000);
-      else QMessageBox::warning(this, tr("OPAD"), err);
+      else QMessageBox::warning(this, tr("OPAD"), i18n::message(err));
     }
     if(ok) {
       m_doc->storeViewerCache(m_jobs);  // a slow viewer read, now meshed: the next open of the file skips it
