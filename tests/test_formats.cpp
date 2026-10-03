@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 
+#include "../core/src/import_common.hpp"  // the DWG conversion's keep rule
 #include "check.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
@@ -559,6 +560,15 @@ TEST(dwg_keeps_its_converted_dxf_by_content) {
   CHECK_EQ(converted(), 2);
   for (const char* name : {"OPAD_DWG2DXF", "OPAD_FAKE_DWG_LOG", "OPAD_FAKE_DWG_SLEEP"}) set(name, "");
 #endif
+  // Kept only when it opens the drawing at least twice as fast: converting took at least as long as reading the DXF.
+  Files g;
+  write_text_file(g.dir / "rule.dwg", "a drawing of its own content");
+  write_text_file(g.dir / "rule.dxf", "0\nEOF\n");
+  CHECK(!detail::dwg_cache_keep(g.dir / "rule.dwg", "rule", g.dir / "rule.dxf", 1700, 2400));  // 1.7x: the drawing of UI-75
+  CHECK(!detail::dwg_cache_keep(g.dir / "rule.dwg", "rule", g.dir / "rule.dxf", 200, 10));     // too quick to matter
+  CHECK(detail::dwg_cache_find(g.dir / "rule.dwg", "rule").empty());
+  CHECK(detail::dwg_cache_keep(g.dir / "rule.dwg", "rule", g.dir / "rule.dxf", 1700, 850));
+  CHECK(!detail::dwg_cache_find(g.dir / "rule.dwg", "rule").empty());
 }
 
 TEST(unsupported_and_missing_files_fail_cleanly) {

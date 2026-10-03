@@ -3,7 +3,7 @@
 // wherever it now is (a copy, a clone, a checkout that touched it), reads them back instead of translating it again (the
 // Engine: 71 s of translation). An entry is kept only when reading it back is at least twice as fast as reading the file
 // (UI-75: a drawing's entry was 134 MB for a 3 MB DWG and no faster): drawings are never kept that way, and a DWG keeps
-// the DXF text its conversion made instead (24 MB for that drawing, whose open went from 4.0-4.5 s to 2.4 s).
+// the DXF text its conversion made instead, by the same rule (24 MB for that drawing, whose open went from 2.2 s to 0.8 s).
 #include <BRep_Builder.hxx>
 #include <BinTools.hxx>
 #include <Standard_Failure.hxx>
@@ -270,9 +270,9 @@ std::filesystem::path dwg_cache_find(const std::filesystem::path& dwg, const std
 }
 
 bool dwg_cache_keep(const std::filesystem::path& dwg, const std::string& converter, const std::filesystem::path& dxf, double convert_ms, double read_ms) {
-  // Reading the DXF is itself most of a DWG's open (a 3 MB, 176-layer drawing: 1.2-1.7 s to convert, 2.4 s to read its 24 MB
-  // DXF), so the DXF is kept when it opens the drawing at least 1.5 times as fast: twice would never keep that drawing's.
-  if (convert_ms < 250 || convert_ms * 2 < read_ms) return false;
+  // Kept when it opens the drawing at least twice as fast: converting took at least as long as reading the DXF (a 3 MB,
+  // 176-layer drawing: 1.2-2 s to convert, 0.9 s to read its 24 MB DXF).
+  if (convert_ms < 250 || convert_ms < read_ms) return false;
   const auto entry = dwg_entry(dwg, converter);
   std::error_code error;
   if (entry.empty()) return false;
