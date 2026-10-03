@@ -43,9 +43,7 @@ void MainWindow::buildEditActions() {
     if (ids.size() == 1) return m_browser->startRename(ids.front());
     if (ids.empty()) return;
     // Several at once: one name, numbered in selection order (TODO 10 B15).
-    QString base = m_doc->nodeName(ids.front());
-    static const QRegularExpression number(" \d+$");
-    base.remove(number);
+    const QString base = renameBase(m_doc->nodeName(ids.front()));
     bool ok = false;
     const QString name = QInputDialog::getText(this, tr("Rename %1 objects").arg(ids.size()), tr("Name ({n} is replaced by 1, 2, 3, ...):"), QLineEdit::Normal, base + " {n}", &ok).trimmed();
     if (!ok || name.isEmpty()) return;
@@ -72,6 +70,12 @@ void MainWindow::buildEditActions() {
   addAction("edit.selecttouched", tr("Select what it touches"), "isolate", QKeySequence("T"), [this] {
     if (!m_timeline->currentOp().empty()) selectOpTargets(m_timeline->currentOp());
   });
+}
+
+// The name a numbered rename starts from: "Bolt 3" -> "Bolt" (the number was lost to an unknown escape, \d, until UI-116).
+QString MainWindow::renameBase(QString name) {
+  static const QRegularExpression number(R"( \d+$)");
+  return name.remove(number);
 }
 
 std::vector<std::string> MainWindow::shownBodies() const {

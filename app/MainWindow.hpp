@@ -76,6 +76,7 @@ class MainWindow : public QMainWindow {
   std::vector<std::string> shownBodies() const;  // visible bodies (and their components), inside the isolation
   void selectShown(bool invert);                 // Select all / Invert selection (UI-111)
   static bool repeatable(const QString& id);
+  static QString renameBase(QString name);  // "Bolt 3" -> "Bolt": what renaming several objects numbers
   void noteCommand(const QString& id);  // a command ran: Repeat runs it again
   bool repeatOnEnter(const QKeyEvent* key);  // Enter in the view with nothing running: Repeat
   QString m_lastCommand;

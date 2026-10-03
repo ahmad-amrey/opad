@@ -19,7 +19,8 @@
 // Distance tool's panel does not repeat its header and the step it waits for under the steps (its guide plays, or the
 // tool's one sentence); Ctrl+Z in a feature's panel takes back its last pick, one at a time, then says there is none,
 // the document's history untouched; the value echo under an expression box has a row of its own and stays empty for a
-// plain number; the hidden-object warning takes the theme's warning colour. Saved as <prefix>.feature.png.
+// plain number; the hidden-object warning takes the theme's warning colour; renaming several objects starts from the
+// first one's name without its number. Saved as <prefix>.feature.png.
 OPAD_BENCH(OPAD_BENCH_POLISH, polish) {
   const QString prefix = value;
   auto failed = std::make_shared<QStringList>();
@@ -141,6 +142,8 @@ OPAD_BENCH(OPAD_BENCH_POLISH, polish) {
     w.m_design->escape();
   });
   add(0, [=] {
+    check(MainWindow::renameBase("Bolt 3") == "Bolt" && MainWindow::renameBase("Bolt") == "Bolt" && MainWindow::renameBase("M3 nut") == "M3 nut",
+          "renaming several objects starts from the name without its number (Bolt 3 -> Bolt {n})");
     trace::log(QString("bench: polish: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
     QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
   });
