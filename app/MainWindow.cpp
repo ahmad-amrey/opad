@@ -63,9 +63,10 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_doc, &AppDocument::changed, this, [this] {
     trace::Scope scope("MainWindow: document changed");
     const bool replaced = std::exchange(m_areaGeneration, m_doc->generation) != m_doc->generation;
-    // Nothing of the last document stays (UI-09): the viewer card, the 2D mode a viewed drawing turned on (Ctrl+N or a
-    // close after a DXF), what the status said was under the pointer (the next frame says it again).
-    if (replaced && m_autoTwoD && !viewingDrawing()) setAutoTwoD(false);
+    // Nothing of the last document stays (UI-09): the viewer card, 2D mode (a viewed drawing's or one set by hand: a
+    // view of that document; a drawing viewed next keeps it, loadFinished turns it on for one), what the status said was
+    // under the pointer (the next frame says it again).
+    if (replaced && action("view.2d")->isChecked() && !viewingDrawing()) setAutoTwoD(false);
     if (replaced && m_autoEdges && !m_loadJob) {  // Ctrl+N or a close (a file opened sets its own in openPath)
       m_autoEdges = false;
       m_viewport->setSelectionFilter(Viewport::SelFilter::Body);
@@ -83,15 +84,15 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     if (const QString newer = newerRecords(); !newer.isEmpty()) m_toasts->toast(newer, QString(), {}, 10000);  // UI-65
     const auto bodies = m_doc->scene.all_bodies();
     const bool drawing = !bodies.empty() && std::all_of(bodies.begin(), bodies.end(), [this](const auto& id) { return m_doc->scene.node(id)->representation == "drawing2d"; });
-    // Drawing files get a useful initial view. Viewing one (DXF, DWG, SVG) also turns 2D mode on; the next file that
-    // is not a drawing turns it off again, unless the toggle was changed by hand meanwhile.
+    // Drawing files get a useful initial view. Viewing one (DXF, DWG, SVG) also turns 2D mode on; any other document
+    // starts without it (the changed handler above).
     if (drawing) {
       m_viewport->standardView("top");
       if (m_viewport->selectionFilter() != Viewport::SelFilter::Edge) m_autoEdges = true;
       m_viewport->setSelectionFilter(Viewport::SelFilter::Edge);
     }
     const bool viewing = drawing && m_doc->browse;
-    if (viewing != action("view.2d")->isChecked() && (viewing || m_autoTwoD)) setAutoTwoD(viewing);
+    if (viewing && !action("view.2d")->isChecked()) setAutoTwoD(true);
   });
   connect(m_doc, &AppDocument::newDocumentCreated, m_viewport, &Viewport::home);
   // Viewer mode -> editable: the same shapes under content keys, so what is on screen stays (no second tessellation).

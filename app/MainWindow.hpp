@@ -222,7 +222,7 @@ class MainWindow : public QMainWindow {
   void endCheck();
   LoadShade* m_loadShade = nullptr;
   bool m_timelineHiddenByViewer = false;
-  bool m_autoTwoD = false, m_settingTwoD = false;  // 2D mode turned on for a viewed drawing (and turned off after it)
+  bool m_autoTwoD = false, m_settingTwoD = false;  // 2D mode turned on for a viewed drawing (any 2D mode ends with its document)
   bool m_autoEdges = false;      // the Edge filter set for a drawing (and set back to Bodies after it)
   bool viewingDrawing() const;   // a drawing (DXF, DWG, SVG) in viewer mode: every body is 2D
   void setAutoTwoD(bool on);     // 2D mode on or off for that, not by hand

@@ -1,8 +1,9 @@
 // OPAD_BENCH_STATE=<prefix> (UI-09): state and selection bugs found by hand. Case in tools/bench_cases/viewer.py, on a
 // drawing opened in viewer mode. (1) "Edit unsaved copy" then Rename: once the copy is made the row's editor is open in
-// the expanded browser with the name, and a name typed while the keyboard is elsewhere goes into it (no one-key command
-// runs), Return renames. (2) The drawing viewed again (2D mode on, the viewer card), then Ctrl+N: 2D mode off, the card
-// gone, and a click on a stale "Save to edit" changes nothing. (3) Three boxes: Ctrl+click adds a body to the selection
+// the expanded browser with the name, and a name typed goes into it (no one-key command runs), Return renames; again with
+// an editor that did not get the keyboard (the keys are handed over). (2) The drawing viewed again (2D mode on, the
+// viewer card), 2D mode set again by hand, then Ctrl+N: 2D mode off, the card gone, and a click on a stale "Save to edit"
+// changes nothing; 2D mode turned on in the new document ends with Ctrl+N too. (3) Three boxes: Ctrl+click adds a body to the selection
 // and takes a picked one out; the status's hover text is cleared by a document change and says the new name on the next
 // frame. (4) Ctrl+Shift+Z redoes. (5) V right after a modal dialog closed hides nothing; 300 ms later it hides.
 // <prefix>.png is the window with the selection.
@@ -93,17 +94,48 @@ OPAD_BENCH(OPAD_BENCH_STATE, state) {
   QApplication::sendEvent(editor, &enter);
   const bool renamed = waitUntil([&] { return doc->nodeName(body) == "Part"; }, 5000);
   require(renamed && !w.m_browser->renameEditor(), QString("Return renames: \"%1\"").arg(doc->nodeName(body)));
+  // (1b) The editor open without the keyboard (here its window is activated at once; the OS may refuse or delay that):
+  // the keys still reach the view, and KeyGuard hands them to the editor.
+  w.m_browser->setSelectedIds({body});
+  w.onBrowserSelection({body});
+  QApplication::setActiveWindow(&w);
+  v->setFocus();
+  waitUntil([&] { return QApplication::focusWidget() == v && w.currentNodeIds() == std::vector<std::string>{body}; }, 5000);
+  *commands = 0;
+  const auto rows = w.m_browser->tree()->selectedItems();
+  w.m_browserOverlay->reveal(true);
+  if (!rows.isEmpty()) w.m_browser->tree()->editItem(rows.front(), 0);  // startRename less its activation
+  auto* early = qobject_cast<QLineEdit*>(w.m_browser->renameEditor());
+  const bool elsewhere = early && QApplication::focusWidget() != early;
+  for (const QChar c : QString("Bolt")) key(Qt::Key_A + (c.toLower().unicode() - 'a'), c.isUpper() ? Qt::ShiftModifier : Qt::NoModifier, QString(c));
+  const QString handed = early ? early->text() : QString();
+  require(elsewhere && handed == "Bolt" && *commands == 0 && !w.m_annotationEditor,
+          QString("typed while the editor had no keyboard (%1): handed over \"%2\", %3 one-key commands run")
+              .arg(early ? (elsewhere ? "keys in the view" : "it had it already") : "no editor").arg(handed).arg(*commands));
+  if (early) {
+    QKeyEvent done(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(early, &done);
+  }
+  const bool renamedEarly = waitUntil([&] { return doc->nodeName(body) == "Bolt"; }, 5000);
+  require(renamedEarly && !w.m_browser->renameEditor(), QString("Return renames: \"%1\"").arg(doc->nodeName(body)));
 
-  // (2) Viewed again, then Ctrl+N.
+  // (2) Viewed again, then Ctrl+N. 2D mode is the document's: one turned on by hand ends with it too.
   w.openPath(drawing);
   const bool reopened = waitUntil([&] { return doc->browse && settled() && doc->scene.all_bodies().size() > 0; }, 60000);
   require(reopened && w.action("view.2d")->isChecked() && cardShown(), "viewed again: 2D mode on, the viewer card");
+  w.action("view.2d")->trigger();
+  w.action("view.2d")->trigger();  // off and on again by hand
+  const bool byHand = w.action("view.2d")->isChecked() && !w.m_autoTwoD;
   w.action("file.new")->trigger();
-  require(!doc->browse && !w.action("view.2d")->isChecked() && !w.m_autoTwoD && !cardShown() && !v->twoDimensional() &&
+  require(byHand && !doc->browse && !w.action("view.2d")->isChecked() && !w.m_autoTwoD && !cardShown() && !v->twoDimensional() &&
               v->selectionFilter() == Viewport::SelFilter::Body && w.action("select.bodies")->isChecked(),
-          "Ctrl+N: 2D mode off, the viewer card gone, bodies picked again (not the drawing's edges)");
+          "Ctrl+N: 2D mode (set again by hand) off, the viewer card gone, bodies picked again (not the drawing's edges)");
   emit w.m_chips->saveToEditRequested();  // a stale card's click
   require(!doc->browse && !cardShown() && doc->hasDocument && doc->doc.ops.empty(), "a stale Save to edit changes nothing");
+  w.action("view.2d")->trigger();
+  const bool flat = v->twoDimensional();
+  w.action("file.new")->trigger();
+  require(flat && !w.action("view.2d")->isChecked() && !v->twoDimensional(), "2D mode turned on by hand in a new document: off after Ctrl+N");
 
   // (3) Ctrl+click on three boxes; the hover text after a change.
   for (int i = 0; i < 3; ++i)

@@ -43,7 +43,7 @@ void MainWindow::buildViewActions() {
   flat->setObjectName("view.2d");
   flat->setCheckable(true);
   connect(flat, &QAction::toggled, this, [this](bool on) {
-    if (!m_settingTwoD) m_autoTwoD = false;  // set by hand: stays as the user left it
+    if (!m_settingTwoD) m_autoTwoD = false;  // set by hand: stays as the user left it until the document is replaced
     m_viewport->setTwoDimensional(on);
 
     if (m_browserOverlay && action("panel.browser")->isChecked()) { m_browserOverlay->setVisible(m_doc->hasDocument); m_browserOverlay->raise(); }
