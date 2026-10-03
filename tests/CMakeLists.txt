@@ -87,6 +87,10 @@ if(WIN32)  # a stand-in ODA File Converter: the converter is used only when swit
 endif()
 add_test(NAME dxf COMMAND opad-test-dxf)
 
+# Third-party notices and the GPL guard (cmake/notices.cmake, gpl_guard.cmake) over a stand-in link line with zlib.
+add_test(NAME notices-script COMMAND ${CMAKE_COMMAND} -DSOURCE=${PROJECT_SOURCE_DIR} -DWORK=${CMAKE_CURRENT_BINARY_DIR}/notices-test
+         -DLIB=$<TARGET_FILE:ZLIB::ZLIB> -DPACMAN=${OPAD_PACMAN} -P ${CMAKE_CURRENT_SOURCE_DIR}/notices_test.cmake)
+
 if(TARGET opad-thumbnails)
   add_executable(opad-test-thumbnails test_thumbnails.cpp)
   target_link_libraries(opad-test-thumbnails PRIVATE opad::core ole32 shlwapi uuid)

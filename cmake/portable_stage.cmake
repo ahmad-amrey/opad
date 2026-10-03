@@ -51,39 +51,10 @@ foreach(_name IN LISTS _conflict_FILENAMES)  # same DLL in two search dirs: take
   list(APPEND _resolved "${_first}")
 endforeach()
 
-# GPL guard (TODO 11 UI-14, decision D1). MSYS2's Open CASCADE links TKService against FFmpeg, FreeImage and OpenVR,
-# which OPAD never uses. That FFmpeg is GPLv3, built with the GPL x264/x265/xvid encoders, and FreeImage is GPLv2:
-# shipping them makes the whole folder a GPLv3 work whose every recipient is owed its complete source, and hands out
-# codecs under patent pools. So no package carries them unless OPAD_ALLOW_GPL_DLLS says it stays on this machine.
-set(_gpl "")
+# GPL guard (TODO 11 UI-14, decision D1): MSYS2's Open CASCADE drags GPL FFmpeg, codecs, FreeImage and OpenVR in.
+include("${OPAD_SOURCE_DIR}/cmake/gpl_guard.cmake")
 file(GLOB_RECURSE _staged_dlls "${OPAD_STAGE}/*.dll")
-foreach(_dll IN LISTS _resolved _staged_dlls)
-  get_filename_component(_name "${_dll}" NAME)
-  string(TOLOWER "${_name}" _lower)
-  if(_lower MATCHES "^(avcodec|avformat|avutil|avfilter|avdevice|swscale|swresample|postproc|libx264|libx265|xvidcore|libfreeimage|libopenvr_api|openvr_api)")
-    list(APPEND _gpl "${_name}")
-  endif()
-endforeach()
-list(REMOVE_DUPLICATES _gpl)
-if(_gpl)
-  list(JOIN _gpl ", " _gpl_names)
-  string(CONCAT _gpl_why
-    "These come in only because MSYS2's Open CASCADE (TKService) is built against FFmpeg, FreeImage and OpenVR, and OPAD "
-    "uses none of them. FFmpeg there is GPLv3 with the GPL x264, x265 and xvid encoders, FreeImage is GPLv2: handing "
-    "this folder to anyone makes OPAD a GPLv3 work whose every recipient is owed its complete source, and distributes "
-    "codecs under patent pools. Build Open CASCADE without them (USE_FFMPEG=OFF USE_FREEIMAGE=OFF USE_OPENVR=OFF, as "
-    "cmake/occt_static.cmake does) or ship the single-file build (preset windows-static).")
-  if(NOT OPAD_ALLOW_GPL_DLLS)
-    file(REMOVE_RECURSE "${OPAD_STAGE}")
-    file(REMOVE "${OPAD_STAGE}.zip")
-    message(FATAL_ERROR "portable package: refusing to stage ${_gpl_names}.\n${_gpl_why}\n"
-                        "For local use that is never distributed: cmake --preset windows -DOPAD_ALLOW_GPL_DLLS=ON")
-  endif()
-  message(WARNING "portable package: ${_gpl_names} staged because OPAD_ALLOW_GPL_DLLS is on; NOT FOR DISTRIBUTION.")
-  file(WRITE "${OPAD_STAGE}/NOT-FOR-DISTRIBUTION.txt"
-    "This folder was staged with OPAD_ALLOW_GPL_DLLS=ON and contains ${_gpl_names}.\n\n${_gpl_why}\n\n"
-    "Do not give this folder or its zip to anyone.\n")
-endif()
+opad_gpl_guard("portable package" "${OPAD_STAGE}" ${_resolved} ${_staged_dlls})
 
 set(_copied 0)
 foreach(_dll IN LISTS _resolved)
