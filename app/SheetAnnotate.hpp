@@ -9,6 +9,8 @@
 // Enter places at the pointer, or ends a set's features; Tab goes to the options bar. The bar under the sheet holds what a
 // tool adds (type, precision and tolerance through the units service, letter, characteristic, process, ...); with one
 // annotation selected and no tool, it edits that one (a sheet_edit per change). Nothing measures on the UI thread.
+// Parts lists and revision tables (UI-84) are planned as the tool starts and follow the pointer (their corner); a balloon's
+// number comes with its plan, and placing one on a row whose number was not settled settles the list in the same step.
 // Typed values (the UI-122 contract on the sheet): while an item follows the pointer, a value card beside it lists what
 // can be typed (a dimension's offset from what it measures, decimals and tolerance; a set's offset and spacing; a frame's
 // tolerance). Digits, '.', '-' and the keypad's go to the focused field, Tab and Shift+Tab move between fields, Enter places
@@ -39,7 +41,10 @@ class QWidget;
 class SheetAnnotator : public QObject, public SheetInteraction {
   Q_OBJECT
  public:
-  enum class Tool { None, Dimension, HoleCallout, CentreMark, CentreLine, Note, Datum, Frame, Surface, Ordinate, Baseline, Chain, HoleTable, Reattach };
+  enum class Tool {
+    None, Dimension, HoleCallout, CentreMark, CentreLine, Note, Datum, Frame, Surface, Ordinate, Baseline, Chain, HoleTable, Reattach,
+    PartsList, Balloon, RevisionTable  // UI-84: the tables follow the pointer from the start; a balloon after its part is picked
+  };
   SheetAnnotator(AppDocument* doc, SheetCanvas* canvas, QWidget* parent);
   ~SheetAnnotator() override;
   // Commands go through this (the window's path, waiting while the document is read); then gets the result or null.
@@ -71,6 +76,8 @@ class SheetAnnotator : public QObject, public SheetInteraction {
   QLineEdit* valueEdit() const { return m_value; }
   QComboBox* processBox() const { return m_process; }
   QComboBox* axisBox() const { return m_axis; }
+  QComboBox* listModeBox() const { return m_listMode; }
+  QCheckBox* qtyBox() const { return m_qty; }
   QWidget* card() const;                              // the value card (shown while it has fields)
   std::vector<std::string> inputKeys() const;         // its fields now: offset, decimals, plus, minus, spacing, value
   QString inputText(const std::string& key) const;    // typed, else what the pointer or the bar gives
@@ -139,9 +146,9 @@ class SheetAnnotator : public QObject, public SheetInteraction {
   QWidget* m_bar = nullptr;
   QLabel* m_title = nullptr;
   QComboBox *m_typeBox = nullptr, *m_precision = nullptr, *m_tolBox = nullptr, *m_characteristic = nullptr, *m_material = nullptr, *m_process = nullptr,
-            *m_axis = nullptr;
+            *m_axis = nullptr, *m_listMode = nullptr;
   QLineEdit *m_plus = nullptr, *m_minus = nullptr, *m_fit = nullptr, *m_text = nullptr, *m_letter = nullptr, *m_value = nullptr, *m_datums[3] = {nullptr, nullptr, nullptr};
-  QCheckBox* m_zone = nullptr;
+  QCheckBox *m_zone = nullptr, *m_qty = nullptr;
   QPushButton* m_done = nullptr;
   std::vector<std::pair<QWidget*, std::vector<Tool>>> m_fields;  // a field and the tools it belongs to
   std::vector<std::pair<QWidget*, std::vector<std::string>>> m_itemFields;  // a field and the annotation kinds it edits

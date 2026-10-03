@@ -7,7 +7,8 @@
 // the sheet page in the viewport's place (SheetPage, SheetCanvas), New drawing from a template, new sheets, sheet
 // properties, a template from a DXF or DWG file, base, projected and isometric views placed with the mouse, view styles.
 // Its Annotate tab (DocsAnnotate.cpp, UI-79 to UI-81): dimensions, hole callouts and tables, centre marks and lines, notes,
-// datums, feature control frames, surface texture, ordinate/baseline/chain sets and dimensions from datums, re-attach.
+// datums, feature control frames, surface texture, ordinate/baseline/chain sets and dimensions from datums, re-attach;
+// parts lists, balloons (auto-balloon), revision tables and renumbering (UI-84).
 #include <functional>
 #include <string>
 #include <vector>
@@ -61,6 +62,10 @@ class DocsArea : public AreaController {
   void reattachSelected();                          // the selected annotation's references picked again
   void dimensionFromDatums(const std::string& type);  // ordinate | baseline | chain sets from the view's datums, planned on a worker
   void itemMenu(const std::vector<std::string>& items, QMenu& menu);  // right-click on annotations
+  // A balloon on every parts-list row the selected view (else the sheet's pictorial view, else its first) shows, planned on
+  // a worker; one step (a parts list comes with it when the drawing has none).
+  void autoBalloon();
+  void renumberList(const std::string& list);  // 1, 2, ... again in the BoM's order, worked out on a worker; one sheet_edit
   // A command once nothing reads the document (the sheet's own worker is stopped for it); `then` gets the result, or null
   // when it was refused (a message box said why).
   void run(const std::string& command, opad::json args, std::function<void(const opad::json&)> then = {});

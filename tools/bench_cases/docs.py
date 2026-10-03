@@ -29,4 +29,9 @@ CASES = [
     # spacing; Tab, Shift+Tab, Esc, Enter; digits never the window's shortcuts). <prefix>.annotate.png, .bar.png,
     # .marks.png, .card.png.
     ("sheet-annotate", "empty", {"OPAD_BENCH_SHEET_ANNOTATE": "{prefix}"}),
+    # Parts list, balloons and auto-balloon (UI-84): the parts list planned as its tool starts and placed with the pointer
+    # (numbers settled), a balloon on a pin numbered as the pins' row, auto-balloon around the iso view in one step (undo,
+    # redo), Quantity from the bar, the list dragged, a part added later numbered after the highest, renumbering from the
+    # list's menu. <prefix>.tables.png.
+    ("sheet-tables", "empty", {"OPAD_BENCH_SHEET_TABLES": "{prefix}"}),
 ]

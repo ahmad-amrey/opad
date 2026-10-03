@@ -50,6 +50,10 @@ QString itemType(const opad::SheetItem& t) {
   if (t.kind == "datum") return tr("Datum");
   if (t.kind == "fcf") return tr("Feature control frame");
   if (t.kind == "surface") return tr("Surface texture");
+  if (t.kind == "parts_list") return tr("Parts list");
+  if (t.kind == "balloon") return tr("Balloon");
+  if (t.kind == "revision_table") return tr("Revision table");
+  if (t.kind == "issue") return tr("Issued revision");
   if (t.kind == "dimension_set")
     return t.type == "ordinate" ? tr("Ordinate dimensions") : t.type == "baseline" ? tr("Baseline dimensions") : t.type == "chain" ? tr("Chain dimensions") : qs(t.type);
   if (t.kind != "dimension") return qs(t.kind);
@@ -111,17 +115,19 @@ Row make(const opad::Scene& s, const Index& ix, const opad::drawing::OutlineRow&
       tip << tr("Projected from %1").arg(viewName(s, *parent));
     }
   } else if (const opad::SheetItem* item = o.kind == "item" ? Index::get(ix.items, o.id) : nullptr) {
-    r.name = o.name.empty() ? itemType(*item) : qs(o.name);
+    r.name = o.name.empty() ? itemType(*item) : item->kind == "balloon" ? tr("Balloon %1").arg(qs(o.name)) : item->kind == "issue" ? tr("Revision %1").arg(qs(o.name)) : qs(o.name);
     static const std::map<std::string, const char*> kindIcons = {
         {"dimension", "dimension"},   {"note", "text"},          {"centermark", "centerMark"}, {"centerline", "centerLine"},
         {"hole_callout", "holeCallout"}, {"hole_table", "holeTable"}, {"datum", "datumSymbol"},  {"fcf", "featureFrame"},
-        {"surface", "surfaceTexture"}};
+        {"surface", "surfaceTexture"}, {"parts_list", "partsList"}, {"balloon", "balloon"}, {"revision_table", "revisionTable"}, {"issue", "issueRevision"}};
     const auto icon = kindIcons.find(item->kind);
     r.icon = item->kind == "dimension_set" ? (item->type == "baseline" ? "dimBaseline" : item->type == "chain" ? "dimChain" : "dimOrdinate")
              : icon != kindIcons.end() ? icon->second : "dot";
     tip << itemType(*item);
     if ((item->kind == "dimension" || item->kind == "hole_callout" || item->kind == "dimension_set") && !o.name.empty()) tip << tr("%1 when it was made").arg(r.name);
     else if (item->kind == "note") tip << qs(item->def.value("text", ""));
+    else if (item->kind == "issue")
+      tip << QString::fromUtf8("%1 · %2").arg(qs(item->def.value("date", "")), qs(item->def.value("description", ""))) << qs(item->def.value("pdf", ""));
   }
   if (r.error) {
     r.icon = "warning";

@@ -18,6 +18,7 @@
 #include "SheetCanvas.hpp"
 #include "SheetPage.hpp"
 #include "opad/drawing/annotate.hpp"
+#include "opad/drawing/tables.hpp"
 
 OPAD_ICON_TABLE(annotate,
                 {"dimOrdinate", R"(<path d="M4 19h16M5 5v14M11 9v10M17 13v6"/><path d="M3 5h4M9 9h4M15 13h4" opacity=".55"/>)"},
@@ -33,7 +34,12 @@ OPAD_ICON_TABLE(annotate,
                 {"datumSymbol", R"(<rect x="8" y="3" width="8" height="8"/><path d="M12 11v5M8.5 21h7L12 16z"/>)"},
                 {"featureFrame", R"(<rect x="2" y="7" width="20" height="10"/><path d="M8 7v10M15 7v10"/><circle cx="5" cy="12" r="1.6"/>)"},
                 {"surfaceTexture", R"(<path d="M3 20h18"/><path d="M6 13l3 7 7-14h5"/><path d="M7.5 15.5h4"/>)"},
-                {"reattach", R"(<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>)"});
+                {"reattach", R"(<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>)"},
+                {"partsList", R"(<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 15.5h18M3 11h18M8 4v16"/><path d="M11 7.5h7" opacity=".55"/>)"},
+                {"balloon", R"(<circle cx="15" cy="9" r="6"/><path d="M10.8 13.2L4 20"/><path d="M14 7.5l1.5-1v5"/>)"},
+                {"autoBalloon", R"(<circle cx="6.5" cy="7" r="3.5"/><circle cx="17.5" cy="7" r="3.5"/><path d="M8.2 10l3.3 8M15.8 10l-3.3 8"/><rect x="8" y="18" width="8" height="3" opacity=".55"/>)"},
+                {"revisionTable", R"(<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 9h18M8 4v16"/><path d="M11 13h7M11 16.5h5" opacity=".55"/>)"},
+                {"issueRevision", R"(<path d="M6 21V3.5h11.5l-2.5 4 2.5 4H6"/><path d="M9 7.5h3" opacity=".55"/>)"});
 
 using Tool = SheetAnnotator::Tool;
 
@@ -84,6 +90,10 @@ void DocsArea::buildAnnotateCommands() {
   add("drawings.fcf", tr("Feature control frame"), "featureFrame", tool(Tool::Frame), sheetShown,
       {"GD&T", "geometric tolerance", "position", "flatness", "perpendicularity"});
   add("drawings.surface", tr("Surface texture"), "surfaceTexture", tool(Tool::Surface), sheetShown, {"roughness", "Ra", "finish"});
+  add("drawings.partsList", tr("Parts list"), "partsList", tool(Tool::PartsList), sheetShown, {"bill of materials", "BoM table", "item list"});
+  add("drawings.balloon", tr("Balloon"), "balloon", tool(Tool::Balloon), sheetShown, {"item number", "callout", "part number"});
+  add("drawings.autoBalloon", tr("Auto-balloon"), "autoBalloon", [this] { autoBalloon(); }, sheetShown, {"balloons", "item numbers", "parts list"});
+  add("drawings.revisionTable", tr("Revision table"), "revisionTable", tool(Tool::RevisionTable), sheetShown, {"revisions", "change history", "issue"});
   add("drawings.reattach", tr("Re-attach"), "reattach", [this] { reattachSelected(); },
       [self, sheetShown](const CommandContext& c) { return sheetShown(c) && self->m_page->canvas()->selectedItems().size() == 1; },
       {"dangling", "lost reference", "repair"});
@@ -109,6 +119,11 @@ void DocsArea::annotateRibbon(RibbonLayout& layout) {
   for (const char* id : {"drawings.centerMark", "drawings.centerLine", "drawings.centerMarks"}) layout.addAction(centres, services().action(id), RibbonLayout::Size::Small);
   const QString symbols = group("symbols", tr("Notes and symbols"));
   for (const char* id : {"drawings.note", "drawings.datum", "drawings.fcf", "drawings.surface"}) layout.addAction(symbols, services().action(id));
+  const QString tables = group("tables", tr("Tables and balloons"));
+  layout.addAction(tables, services().action("drawings.partsList"));
+  layout.addAction(tables, services().action("drawings.balloon"));
+  layout.addAction(tables, services().action("drawings.autoBalloon"));
+  layout.addAction(tables, services().action("drawings.revisionTable"));
   layout.addAction(group("check", tr("Check")), services().action("drawings.reattach"));
 }
 
@@ -169,10 +184,65 @@ void DocsArea::dimensionFromDatums(const std::string& type) {
       });
 }
 
+void DocsArea::autoBalloon() {
+  if (!m_page || m_page->sheet().empty()) return newDrawing();
+  const opad::Scene& s = services().document()->scene;
+  const opad::Sheet* sheet = s.sheet(m_page->sheet());
+  if (!sheet) return;
+  std::string view;
+  if (const auto selected = m_page->canvas()->selectedViews(); selected.size() == 1) view = selected[0];
+  for (const char* want : {"iso", "iso-back", ""})  // a pictorial view shows every part, else the first base view
+    for (const auto& id : sheet->views)
+      if (const opad::SheetView* v = s.sheet_view(id); view.empty() && v && v->error.empty() && v->kind == "base" &&
+                                                       (!*want || opad::drawing::view_orientation(s, *v) == want))
+        view = id;
+  if (view.empty()) throw opad::Error("Place a view first, then balloon its parts.");
+  const opad::json args = {{"sheet", sheet->id}, {"view", view}};
+  auto plan = std::make_shared<opad::json>();
+  QPointer<DocsArea> self(this);
+  m_page->canvas()->read(
+      tr("Ballooning the view"), [args, plan](const opad::Document& doc, const opad::Scene& scene, Progress) { *plan = opad::drawing::plan_balloons(doc, scene, args); },
+      [self, plan](bool ok, const QString& error) {
+        if (!self) return;
+        if (!ok) return self->services().guarded([&] { throw opad::Error(error.toStdString()); });
+        if ((*plan)["ops"].empty()) return self->services().toast(tr("Every part the view shows has its balloon"));
+        self->run("sheet_balloons", {{"plan", *plan}}, [self](const opad::json& out) {
+          if (!self || out.is_null()) return;
+          const int n = static_cast<int>(out.value("ids", opad::json::array()).size());
+          self->services().toast(out.value("created", false) ? tr("%n balloons and a parts list", nullptr, n) : tr("%n balloons", nullptr, n));
+        });
+      });
+}
+
+void DocsArea::renumberList(const std::string& list) {
+  const opad::SheetItem* t = services().document()->scene.sheet_item(list);
+  if (!t || t->kind != "parts_list" || !m_page) return;
+  auto numbers = std::make_shared<opad::json>();
+  QPointer<DocsArea> self(this);
+  m_page->canvas()->read(
+      tr("Numbering the parts list"),
+      [list, numbers](const opad::Document& doc, const opad::Scene& scene, Progress) {
+        const opad::SheetItem* item = scene.sheet_item(list);
+        const opad::Sheet* sheet = item ? scene.sheet(item->sheet) : nullptr;
+        if (!sheet) throw opad::Error("the parts list is gone");
+        *numbers = opad::drawing::parts_rows(doc, scene, *sheet, item->def, true)["numbers"];
+      },
+      [self, list, numbers](bool ok, const QString& error) {
+        if (!self) return;
+        if (!ok) return self->services().guarded([&] { throw opad::Error(error.toStdString()); });
+        self->run("sheet_edit", {{"target", list}, {"set", {{"numbers", *numbers}}}});
+      });
+}
+
 void DocsArea::itemMenu(const std::vector<std::string>& items, QMenu& menu) {
   const opad::Scene& s = services().document()->scene;
   if (items.size() == 1) {
     const opad::SheetItem* t = s.sheet_item(items[0]);
+    if (t && t->kind == "parts_list") {
+      QAction* renumber = menu.addAction(icons::themed("partsList", 16), tr("Renumber items"), this, [this, id = items[0]] { services().guarded([&] { renumberList(id); }); });
+      renumber->setObjectName("drawings.menu.renumber");
+      renumber->setToolTip(tr("Numbers the rows 1, 2, 3… again in the bill of materials' order; balloons follow"));
+    }
     const bool dangling = m_page->canvas()->dangling().count(items[0]) > 0;
     if (t && t->def.contains("refs")) {
       QAction* re = menu.addAction(icons::themed("reattach", 16), dangling ? tr("Re-attach (it lost what it measures)") : tr("Re-attach"), this,

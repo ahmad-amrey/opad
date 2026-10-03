@@ -36,6 +36,7 @@ Vec2 vec2(const json& j, Vec2 fallback = {0, 0}) {
 json js(Vec2 v) { return json::array({std::round(v[0] * 100) / 100, std::round(v[1] * 100) / 100}); }
 
 bool isSet(Tool t) { return t == Tool::Ordinate || t == Tool::Baseline || t == Tool::Chain; }
+bool isTable(Tool t) { return t == Tool::PartsList || t == Tool::RevisionTable; }  // planned at once, no picks
 
 const char* kindOf(Tool t) {
   switch (t) {
@@ -51,6 +52,9 @@ const char* kindOf(Tool t) {
     case Tool::Baseline:
     case Tool::Chain: return "dimension_set";
     case Tool::HoleTable: return "hole_table";
+    case Tool::PartsList: return "parts_list";
+    case Tool::Balloon: return "balloon";
+    case Tool::RevisionTable: return "revision_table";
     default: return "";
   }
 }
@@ -70,6 +74,9 @@ QString toolName(Tool t) {
     case Tool::Chain: return SheetAnnotator::tr("Chain dimensions");
     case Tool::HoleTable: return SheetAnnotator::tr("Hole table");
     case Tool::Reattach: return SheetAnnotator::tr("Re-attach");
+    case Tool::PartsList: return SheetAnnotator::tr("Parts list");
+    case Tool::Balloon: return SheetAnnotator::tr("Balloon");
+    case Tool::RevisionTable: return SheetAnnotator::tr("Revision table");
     default: return {};
   }
 }
@@ -202,7 +209,7 @@ SheetAnnotator::SheetAnnotator(AppDocument* doc, SheetCanvas* canvas, QWidget* p
   m_debounce.setSingleShot(true);
   m_debounce.setInterval(150);
   connect(&m_debounce, &QTimer::timeout, this, [this] {
-    if (m_tool != Tool::None && !m_picks.empty()) replan();
+    if (m_tool != Tool::None && (!m_picks.empty() || isTable(m_tool))) replan();
   });
   canvas->setInteraction(this);
   m_card = new SheetValueCard(canvas->viewport());
@@ -336,6 +343,14 @@ void SheetAnnotator::buildBar() {
   m_axis = combo({{tr("Automatic"), "auto"}, {tr("Horizontal"), "horizontal"}, {tr("Vertical"), "vertical"}});
   m_axis->setObjectName("annotate.axis");
   field(m_axis, tr("Direction"), sets, {"dimension_set"});
+  m_listMode = combo({{tr("Top level"), "top"}, {tr("Parts only"), "parts"}});
+  m_listMode->setObjectName("annotate.listMode");
+  m_listMode->setToolTip(tr("The assembly's own items, or every part once with its quantity in the whole product"));
+  field(m_listMode, tr("Lists"), {Tool::PartsList}, {"parts_list"});
+  m_qty = new QCheckBox(tr("Quantity"), m_bar);
+  m_qty->setObjectName("annotate.qty");
+  m_qty->setToolTip(tr("Writes how many of the part there are beside the balloon (4×)"));
+  field(m_qty, QString(), {Tool::Balloon}, {"balloon"});
   m_done = new QPushButton(tr("Done"), m_bar);
   m_done->setToolTip(tr("Ends picking features (Enter)"));
   connect(m_done, &QPushButton::clicked, this, [this] { finish(); });
@@ -356,6 +371,8 @@ void SheetAnnotator::buildBar() {
   connect(m_material, &QComboBox::currentIndexChanged, this, [this] { fieldChanged("material"); });
   connect(m_process, &QComboBox::currentIndexChanged, this, [this] { fieldChanged("process"); });
   connect(m_axis, &QComboBox::currentIndexChanged, this, [this] { fieldChanged("axis"); });
+  connect(m_listMode, &QComboBox::currentIndexChanged, this, [this] { fieldChanged("listMode"); });
+  connect(m_qty, &QCheckBox::toggled, this, [this] { fieldChanged("qty"); });
   connect(m_zone, &QCheckBox::toggled, this, [this] { fieldChanged("zone"); });
   for (auto [e, key] : std::initializer_list<std::pair<QLineEdit*, const char*>>{
            {m_plus, "tol"}, {m_minus, "tol"}, {m_fit, "tol"}, {m_text, "text"}, {m_letter, "letter"}, {m_value, "value"}, {m_datums[0], "datums"}, {m_datums[1], "datums"}, {m_datums[2], "datums"}})
@@ -396,6 +413,9 @@ void SheetAnnotator::showFields() {
     for (int i = 0; i < 3; ++i) m_datums[i]->setText(i < static_cast<int>(ds.size()) && ds[size_t(i)].is_string() ? QString::fromStdString(ds[size_t(i)].get<std::string>()) : QString());
     m_process->setCurrentIndex(std::max(0, m_process->findData(QString::fromStdString(d.value("process", "removal")))));
     m_axis->setCurrentIndex(std::max(0, m_axis->findData(QString::fromStdString(d.value("axis", "horizontal")))));
+    const json bom = d.value("bom", json::object());
+    m_listMode->setCurrentIndex(std::max(0, m_listMode->findData(QString::fromStdString(bom.is_object() ? bom.value("mode", "top") : "top"))));
+    m_qty->setChecked(d.value("qty", false));
   } else {
     m_title->setText(toolName(m_tool));
   }
@@ -449,6 +469,7 @@ void SheetAnnotator::fieldChanged(const char* key) {
   }
   if (m_tool != Tool::None) {
     if (k == "type" || (k == "axis" && m_plan.contains("choices"))) return updatePreview();
+    if (k == "qty" && m_tool == Tool::Balloon) return updatePreview();
     if (k == "text" && m_tool == Tool::Note) return updatePreview();
     m_debounce.start();
     return;
@@ -465,6 +486,13 @@ void SheetAnnotator::fieldChanged(const char* key) {
   else if (k == "process") set["process"] = m_process->currentData().toString().toStdString();
   else if (k == "axis") set["axis"] = m_axis->currentData().toString() == "auto" ? "horizontal" : m_axis->currentData().toString().toStdString();
   else if (k == "zone") set["zone"] = m_zone->isChecked() ? json("diameter") : json(nullptr);
+  else if (k == "qty") set["qty"] = m_qty->isChecked() ? json(true) : json(nullptr);
+  else if (k == "listMode") {
+    json bom = item->def.value("bom", json::object());
+    if (!bom.is_object()) bom = json::object();
+    bom["mode"] = m_listMode->currentData().toString().toStdString();
+    set["bom"] = bom;
+  }
   else if (k == "value") {
     bool number = false;
     const double v = m_value->text().toDouble(&number);
@@ -504,6 +532,7 @@ void SheetAnnotator::start(Tool tool) {
   promptForStep();
   m_canvas->setFocus();
   emit toolChanged();
+  if (isTable(tool)) replan();
 }
 
 void SheetAnnotator::reattach(const std::string& item) {
@@ -551,7 +580,10 @@ bool SheetAnnotator::placing() const {
     case Tool::HoleCallout:
     case Tool::Datum:
     case Tool::Surface:
-    case Tool::HoleTable: return true;
+    case Tool::HoleTable:
+    case Tool::PartsList:
+    case Tool::RevisionTable:
+    case Tool::Balloon: return true;
     case Tool::Note:
     case Tool::Frame: return !m_picks.empty();
     case Tool::Ordinate:
@@ -568,6 +600,7 @@ bool SheetAnnotator::wantsPick() const {
     case Tool::CentreLine: return n < 2;
     case Tool::HoleCallout:
     case Tool::CentreMark:
+    case Tool::Balloon:
     case Tool::Note:
     case Tool::Datum:
     case Tool::Frame:
@@ -606,6 +639,9 @@ void SheetAnnotator::promptForStep() {
       break;
     case Tool::HoleTable: text = m_view.empty() ? tr("Click the view whose holes go into the table") : tr("Click where the table's top left corner goes"); break;
     case Tool::Reattach: text = tr("Pick reference %1 of %2 for the annotation").arg(n + 1).arg(m_needed); break;
+    case Tool::PartsList: text = tr("Click where the parts list's bottom right corner goes"); break;
+    case Tool::RevisionTable: text = tr("Click where the revision table's top right corner goes"); break;
+    case Tool::Balloon: text = n == 0 ? tr("Pick an edge of the part to balloon") : tr("Click where the balloon goes"); break;
     default: break;
   }
   setPrompt(text + (inputKeys().empty() ? QString() : tr(" · Type values, Tab moves between them")) + esc);
@@ -623,6 +659,10 @@ json SheetAnnotator::args() const {
       break;
     case Tool::HoleCallout:
     case Tool::HoleTable: a["precision"] = precision; break;
+    case Tool::PartsList: a["bom"] = {{"mode", m_listMode->currentData().toString().toStdString()}}; break;
+    case Tool::Balloon:
+      if (m_qty->isChecked()) a["qty"] = true;
+      break;
     case Tool::Note: a["text"] = m_text->text().isEmpty() ? tr("NOTE").toStdString() : m_text->text().toStdString(); break;
     case Tool::Datum: a["letter"] = (m_letter->text().isEmpty() ? nextLetter() : m_letter->text()).toUpper().toStdString(); break;
     case Tool::Frame: {
@@ -765,6 +805,7 @@ void SheetAnnotator::replan() {
 void SheetAnnotator::planned(const json& plan) {
   if (plan.contains("error")) {  // the last pick makes nothing: taken back
     emit message(QString::fromStdString(plan["error"].get<std::string>()));
+    if (isTable(m_tool)) return cancel();  // nothing to list
     if (m_tool == Tool::HoleTable) m_view.clear();
     if (isSet(m_tool) && m_ending) m_ending = false;
     else if (!m_picks.empty()) m_picks.pop_back();
@@ -823,7 +864,7 @@ std::pair<json, json> SheetAnnotator::current() {
   }
   const std::string kind = def.value("kind", "");
   if (kind == "note") def["at"] = js(rel);
-  else if (kind == "hole_table") def["at"] = js(paper);
+  else if (kind == "hole_table" || kind == "parts_list" || kind == "revision_table") def["at"] = js(paper);
   else def["place"] = {{"text", js(offsetPlace(def, measured, rel, typedNumber("offset", -1), &m_liveOffset))}};
   // The bar's and the card's options as they are now: writing a value needs no worker.
   const opad::Sheet* sheet = m_doc->scene.sheet(sheetId());
@@ -842,6 +883,9 @@ std::pair<json, json> SheetAnnotator::current() {
     if (const json r = opad::drawing::item_result(def, measured); !r.is_null()) def["result"] = r;
   } else if (kind == "fcf") {
     def["value"] = frameValue();
+  } else if (kind == "balloon") {
+    if (m_qty->isChecked()) def["qty"] = true;
+    else def.erase("qty");
   }
   if ((kind == "datum" || kind == "surface") && measured.contains("line")) {  // the foot follows the pointer along the edge
     const Vec2 a = vec2(measured["line"][0]), b = vec2(measured["line"][1]);
@@ -1028,6 +1072,8 @@ void SheetAnnotator::commit() {
   if (op.is_null() && m_plan.contains("op")) op = m_plan["op"];  // placed where the plan put it (centre marks and lines)
   if (op.is_null() || !m_runner) return;
   const Tool tool = m_tool;
+  json args = {{"op", op}};
+  if (measured.is_object() && measured.contains("settle")) args["settle"] = measured["settle"];  // the balloon's new row numbered for good
   auto alive = m_alive;
   m_picks.clear();
   m_plan = nullptr;
@@ -1036,7 +1082,7 @@ void SheetAnnotator::commit() {
   clearInputs();
   updatePreview();
   promptForStep();
-  m_runner("sheet_item", {{"op", op}}, [this, alive, tool](const json& out) {
+  m_runner("sheet_item", args, [this, alive, tool](const json& out) {
     if (!*alive || out.is_null()) return;
     if (tool == Tool::Datum && m_tool == Tool::Datum) m_letter->setText(nextLetter());
     emit added(out.value("id", ""));
