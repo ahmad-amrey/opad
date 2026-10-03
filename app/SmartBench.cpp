@@ -11,6 +11,7 @@
 // similar from one hole wall selects the four walls, again the next rule (every inside R3 face, the blind one too);
 // Remove faces started on the four shows its preview and commits through the panel path (Enter in the view) as one
 // feature op that takes the holes away; Undo brings them back. Shots at <prefix>.similar.png / .preview.png / .panel.png.
+// On the STEP opened in viewer mode only Select similar runs (editing asks to save first).
 bool MainWindow::benchSmart() {
   const auto prefix=qEnvironmentVariable("OPAD_BENCH_SMART");if(prefix.isEmpty())return false;
   struct State {int phase=0,ticks=0,wait=0;std::string body;opad::Ref wall;std::vector<opad::Ref> four;int faces=0;size_t ops=0;double volume=0;};
@@ -60,6 +61,7 @@ bool MainWindow::benchSmart() {
       case 4:
         require(m_viewport->selection().size()==5 && m_similar.current==1,"again: every inside R3 face, the blind hole too");
         trace::log("bench: smart: Select similar again selected the next rule (5 faces) PASS");
+        if(m_doc->browse){trace::log("bench: smart: Select similar works on a file opened in viewer mode PASS");timer->stop();QCoreApplication::exit(0);return;}
         m_viewport->selectRefs(state->four);
         break;
       case 5:

@@ -72,6 +72,7 @@ def main():
             ("interference", overlapping, {"OPAD_BENCH_CHECK": "interference", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("smart", smart, {"OPAD_BENCH_SMART": "{prefix}"}),
+            ("smart-viewer", root / "smart-plate.step", {"OPAD_BENCH_SMART": "{prefix}"}),  # the STEP itself, read-only
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))
