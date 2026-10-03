@@ -28,6 +28,7 @@ class BrowserPanel;
 class DesignController;
 class JobRunner;
 class MainWindow;
+class PathChip;
 class PropertiesPanel;
 class QAction;
 class QKeySequence;
@@ -69,6 +70,10 @@ class AreaServices {
   TimelineWidget* timeline() const;     // the op markers under the viewport (setMarkedOps)
   // A widget in the ribbon's tab row (a branch chip): in the cluster after search, before settings; from ribbon on.
   void addTabRowWidget(QWidget* widget);
+  // A chip in the status bar's row beside the document's path (the git chip): kept while messages show and never squeezed
+  // below its size hint (UI-08, StatusRow.hpp). From statusWidgets on.
+  void addStatusChip(QWidget* chip);
+  PathChip* pathChip() const;  // the path in the status bar: its menu takes entries (PathChip::menuRequested); from statusWidgets on
   QAction* action(const QString& id) const;  // any command by id: "file.open", "view.fit", an area's own; null if none
   // A command like the built-in ones: its shortcut from the user's settings, locked while a file loads, errors shown as
   // a message box; in viewer mode it asks to save as OPAD first when its record says it edits the document. addCommand

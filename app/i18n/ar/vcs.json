@@ -579,5 +579,6 @@
  "%1 is open read-only. Save a copy to commit, branch or restore versions of it.": "%1 مفتوح للقراءة فقط. احفظ نسخة منه لتودع إصداراتها أو تفرّعها أو تستعيدها.",
  "%1 is open read-only: measure, section, hide and colour freely; the file is not changed. Editing needs a copy.": "%1 مفتوح للقراءة فقط: قِس واقطع وأخفِ ولوّن بحرية؛ لا يتغيّر الملف. يحتاج التحرير إلى نسخة.",
  "Save a copy of the document, which can be edited (Ctrl+S). The file you opened is not changed.": "احفظ نسخة من المستند يمكن تحريرها (Ctrl+S). لا يتغيّر الملف الذي فتحته.",
- "This document is open read-only: save a copy to edit it.": "هذا المستند مفتوح للقراءة فقط: احفظ نسخة منه لتحريره."
+ "This document is open read-only: save a copy to edit it.": "هذا المستند مفتوح للقراءة فقط: احفظ نسخة منه لتحريره.",
+ "Click for Open file location and Copy path.": "انقر لفتح موقع الملف أو نسخ مساره."
 }

@@ -12,6 +12,7 @@
 #include "GitWatch.hpp"
 #include "Jobs.hpp"
 #include "MainWindow.hpp"
+#include "StatusRow.hpp"
 
 // OPAD_BENCH_EXTERNAL_CHANGE=<prefix> on a saved document with bodies (DiskSync::bench).
 OPAD_BENCH(OPAD_BENCH_EXTERNAL_CHANGE, external_change) {
@@ -38,9 +39,9 @@ OPAD_BENCH(OPAD_BENCH_GIT, git) {
     if (items.indexOf(w.action("file.clone")) != items.indexOf(w.action("file.open")) + 1) wrong << "Clone repository… right after Open…";
     QWidget* chip = git->chip();
     if (QLayout* layout = w.statusBar()->layout()) layout->activate();  // the chip was shown with the document just now
-    // Both are the status bar's normal widgets: a message hides them together.
-    if (chip->parentWidget() != w.statusBar() || chip->isHidden() != w.m_statusPath->isHidden() || (chip->x() > w.m_statusPath->x()) == w.isRightToLeft())
-      wrong << QStringLiteral("the chip beside the path: %1, %2, x %3 after %4").arg(chip->parentWidget() == w.statusBar() ? "in the status bar" : "elsewhere",
+    // Both in the status row (UI-08): shown together, the chip after the path.
+    if (chip->parentWidget() != w.m_statusRow || chip->isHidden() != w.m_statusPath->isHidden() || (chip->x() > w.m_statusPath->x()) == w.isRightToLeft())
+      wrong << QStringLiteral("the chip beside the path: %1, %2, x %3 after %4").arg(chip->parentWidget() == w.m_statusRow ? "in the status row" : "elsewhere",
                                                                                      chip->isHidden() ? "hidden" : "shown").arg(chip->x()).arg(w.m_statusPath->x());
     trace::log(QStringLiteral("bench: git: area: Clone repository… in File after Open…, the chip beside the path %1")
                    .arg(wrong.isEmpty() ? "PASS" : "FAIL (" + wrong.join(", ") + ")"));

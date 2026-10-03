@@ -3,6 +3,8 @@
 
 #include <QStatusBar>
 
+#include "StatusRow.hpp"
+
 #include <set>
 
 void MainWindow::createAreas() {
@@ -65,3 +67,5 @@ QString AreaServices::workspace() const { return m_window->workspaceId(); }
 void AreaServices::setWorkspace(const QString& id) { m_window->setWorkspace(id); }
 bool AreaServices::setContextualTab(const QString& id, bool shown) { return m_window->setContextualTab(id, shown); }
 void AreaServices::addTabRowWidget(QWidget* widget) { m_window->m_ribbon->addTabRowWidget(widget); }
+void AreaServices::addStatusChip(QWidget* chip) { m_window->m_statusRow->addChip(chip); }
+PathChip* AreaServices::pathChip() const { return m_window->m_statusPath; }

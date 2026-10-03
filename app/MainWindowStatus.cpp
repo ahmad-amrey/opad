@@ -14,25 +14,34 @@
 #include <QVBoxLayout>
 
 #include "I18n.hpp"
+#include "StatusRow.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
 
 void MainWindow::buildStatusBar() {
-  m_statusPath = new QLabel(this);
-  m_statusPath->setFont(theme::mono(12));
-  m_statusPath->setContentsMargins(12, 2, 4, 2);
+  setStatusBar(new StatusBar(this));  // made before anything asks for statusBar(): it paints no message (m_statusMessage does)
+  m_statusRow = new StatusRow(this);
+  m_statusPath = m_statusRow->path();
+  m_statusMessage = new ElidedLabel(this);
+  m_statusMessage->setObjectName("statusMessage");
+  m_statusMessage->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);  // takes what is left, never pushes the row
+  m_statusMessage->hide();
   m_statusHover = new QLabel(this);
   m_statusHover->setAlignment(Qt::AlignCenter);
   m_statusHover->setObjectName("tertiary");
+  m_statusHover->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
   m_statusSel = new QLabel(this);
   buildUnitsButton();
   m_progress = new ProgressStrip(this);
   m_jobs = new JobRunner(m_progress, this);
   m_viewport->setJobs(m_jobs);
-  statusBar()->addWidget(m_statusPath);  // the git chip follows it (VcsArea.cpp)
-  // Permanent: QStatusBar hides normal widgets while a temporary message shows and re-shows them after,
-  // which fought with the strip's own show/hide and drew the message across the bars.
+  // All permanent: QStatusBar hides normal widgets while a temporary message shows (the path and the git chip went with
+  // every message), and its message fought with the strip's own show/hide and drew across the bars. The row comes first,
+  // at its size (the git chip follows the path: AreaServices::addStatusChip); the message and the hover text share what
+  // is left.
+  statusBar()->addPermanentWidget(m_statusRow);
+  statusBar()->addPermanentWidget(m_statusMessage, 1);
   statusBar()->addPermanentWidget(m_statusHover, 1);
   statusBar()->addPermanentWidget(m_progress, 1);
   struct Toggle { const char* id; const char* label; const char* icon; const char* key; const char* setting; bool defaultOn; };
@@ -61,8 +70,22 @@ void MainWindow::buildStatusBar() {
   statusBar()->addPermanentWidget(m_statusSel);
   statusBar()->addPermanentWidget(m_statusUnits);
   statusBar()->setSizeGripEnabled(false);
-  connect(m_jobs, &JobRunner::stripShown, this, [this](bool shown) { m_statusHover->setVisible(!shown); });  // free room for the bars
+  connect(m_jobs, &JobRunner::stripShown, this, [this](bool shown) {  // free room for the bars
+    m_stripShown = shown;
+    updateStatusMiddle();
+  });
+  connect(statusBar(), &QStatusBar::messageChanged, this, [this](const QString& text) {
+    m_statusMessage->setText(text);
+    m_statusMessage->setToolTip(text);
+    updateStatusMiddle();
+  });
   for (AreaController* area : m_areas) area->statusWidgets(statusBar());
+}
+
+void MainWindow::updateStatusMiddle() {
+  const bool message = !statusBar()->currentMessage().isEmpty();
+  m_statusMessage->setVisible(message);
+  m_statusHover->setVisible(!message && !m_stripShown);
 }
 
 // The shown length unit (UI-123), live: the document's units op, or the session's in viewer mode. A click offers the
@@ -153,6 +176,7 @@ void MainWindow::updateTitle() {
                                        : (m_doc->path().isEmpty() ? tr("unsaved document") : m_doc->path())) : tr("No document");
   if (!m_doc->scene.unresolved.empty()) path += tr("   ·   %1 unresolved").arg(m_doc->scene.unresolved.size());
   m_statusPath->setText(path);
+  m_statusPath->setFile(!m_doc->hasDocument ? QString() : m_doc->browse ? m_doc->viewing : m_doc->path());
   // What is unresolved and why: a newer build's records in one sentence, the others by op type and reason.
   QStringList tip;
   if (const QString newer = newerRecords(); !newer.isEmpty()) tip << newer;

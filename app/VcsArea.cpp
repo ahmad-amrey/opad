@@ -115,11 +115,11 @@ class Vcs : public AreaController {
       layout.addAction(QString::fromLatin1(group), services().action("vcs.commit"));
     }
   }
-  void statusWidgets(QStatusBar* bar) override {  // the chip beside the document's path
+  void statusWidgets(QStatusBar*) override {  // the chip beside the document's path, in the row that never collapses (UI-08)
     m_git = new GitWatch(services().jobs(), services().window(), services().viewport());
     connect(m_git, &GitWatch::openRequested, this, [this](const QString& file) { services().open(file); });
     connect(m_git, &GitWatch::compareRequested, this, [this] { if (m_compare) m_compare->open(); });
-    bar->addWidget(m_git->chip());
+    services().addStatusChip(m_git->chip());
   }
   void ready() override {
     AppDocument* doc = services().document();

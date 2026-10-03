@@ -75,6 +75,21 @@ def read_only(root, document, name="read-only"):
     return doc
 
 
+def long_path(root, document, name="status-row"):
+    """The status row (UI-08): a document two long folder names down, committed when git is there (the chip shows its branch)."""
+    deep = f"{name}/a folder with a rather long name for the path/and another level below that one"
+    (root / deep).mkdir(parents=True, exist_ok=True)
+    doc = document(f"{deep}/model with a long name", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+    git = shutil.which("git")
+    if not git:
+        return root / name / "no-git.opad"  # skipped: the chip needs git
+    quiet = dict(cwd=root / name, check=True, capture_output=True)
+    subprocess.run([git, "init", "-q", "-b", "main"], **quiet)
+    subprocess.run([git, "add", "-A"], **quiet)
+    subprocess.run([git, "-c", "user.name=bench", "-c", "user.email=bench@example.com", "commit", "-q", "-m", "first"], **quiet)
+    return doc
+
+
 CASES = [
     ("external-change", external, {"OPAD_BENCH_EXTERNAL_CHANGE": "{prefix}", "OPAD_BENCH_CLI": "{cli}"}),
     # git without this machine's settings: a global config of the run's own (the bench sets the author there), no system one.
@@ -101,5 +116,10 @@ CASES = [
     # The toasts commands end with, on the Engine with its bodies on screen (skipped where the Engine is not beside the tree).
     ("toast-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_TOASTPERF": "6"}),
     ("recovery-diff", recovered, {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}"}),
+    # The status row: the path and the git chip at 1600 and 1280 px, under a long hover text, a message and the strip; also
+    # right to left (the row at the right end).
+    ("status-row", long_path, {"OPAD_BENCH_STATUSROW": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),
+    ("status-row-ar", lambda root, document: long_path(root, document, "status-row-ar"),
+     {"OPAD_BENCH_STATUSROW": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
     ("recovery-diff-ar", lambda root, document: recovered(root, document, "recovery-ar"), {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}", "OPAD_LANG": "ar"}),
 ]

@@ -22,7 +22,9 @@
 #include "Toast.hpp"
 #include "Viewport.hpp"
 #include "BrowserOverlay.hpp"
+class PathChip;
 class RecoveryManager;
+class StatusRow;
 class AgentBridge;
 class QMessageBox;
 class QToolButton;
@@ -243,8 +245,12 @@ class MainWindow : public QMainWindow {
   TimelineWidget* m_timeline = nullptr;
   QMenu* m_viewsMenu = nullptr;
   QMenu* m_recentMenu = nullptr;
-  QLabel* m_statusPath = nullptr;
+  StatusRow* m_statusRow = nullptr;  // the path and its chips at the leading end, never collapsed (UI-08)
+  PathChip* m_statusPath = nullptr;
+  QLabel* m_statusMessage = nullptr;  // statusBar()->showMessage's text (StatusBar paints none)
   QLabel* m_statusHover = nullptr;
+  bool m_stripShown = false;
+  void updateStatusMiddle();  // the message, else the hover text (hidden while the progress strip shows)
   QLabel* m_statusSel = nullptr;
   QToolButton* m_statusUnits = nullptr;  // the shown length unit (UI-123): a click offers the document's
   QList<QAction*> m_actions;
