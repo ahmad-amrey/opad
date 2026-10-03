@@ -142,6 +142,31 @@ def basic_workflow():
     assert any(c["name"] == "render" for c in cmds)
 
 
+def bill_of_materials():
+    doc = os.path.join(tmp, "bom.opad")
+    run("new", doc)
+    run("import", doc, os.path.join(FIXTURES, "assembly.step"))
+    parts = run("bom", doc)
+    assert parts["mode"] == "parts" and parts["assembly"]["name"] == "Fixture"
+    assert [(r["name"], r["qty"]) for r in parts["rows"]] == [("Plate", 1), ("Lid", 1), ("Bolt", 4), ("Bolt", 4)]
+    assert [(r["item"], r["qty"], r["total_qty"]) for r in run("bom", doc, "--mode", "indented")["rows"]][2:4] == [("3", 1, 1), ("3.1", 4, 4)]
+    plate = find_node(run("tree", doc), "Plate")["id"]
+    p = run("part_properties", doc, "--target", plate, "--set", '{"material": "Aluminum 6061-T6", "part_number": "OP-7"}')
+    assert p["material"]["id"] == "aluminium-6061"
+    assert abs(run("properties", doc, "--node", plate)["mass"] - 100 * 60 * 5 * 2.7 / 1000) < 1e-6
+    row = run("bom", doc, "--mode", "top", "--mass-unit", "kg")["rows"][0]
+    assert row["part_number"] == "OP-7" and abs(row["mass"] - 0.081) < 1e-9
+    # CSV: on stdout byte for byte (byte order mark, CRLF), or into a file
+    raw = subprocess.run([CLI, "bom", doc, "--format", "csv"], capture_output=True).stdout
+    assert raw.startswith(b"\xef\xbb\xbfItem,Qty,Part number,Name,") and raw.count(b"\r\n") == 5 and b"\r\r" not in raw
+    assert b"\r\n1,1,OP-7,Plate,,Aluminum 6061-T6,81.00,81.00," in raw
+    out = os.path.join(tmp, "bom.csv")
+    assert run("bom", doc, "--format", "csv", "--out", out)["rows"] == 4
+    with open(out, "rb") as f:
+        assert f.read() == raw
+    assert run("materials", "--match", "SS304")["match"]["id"] == "stainless"
+
+
 def git_merge_story():
     repo = os.path.join(tmp, "repo")
     os.makedirs(repo)
@@ -232,6 +257,7 @@ def deterministic_builds():
 
 test(basic_workflow)
 test(git_merge_story)
+test(bill_of_materials)
 test(deterministic_builds)
 shutil.rmtree(tmp, ignore_errors=True)
 sys.exit(1 if FAILED else 0)

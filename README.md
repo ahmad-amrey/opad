@@ -389,6 +389,35 @@ is the enclosed volume times the density; a `density` property (g/cm3) overrides
 opad-cli part_properties housing.opad --target <body> --set '{"material": "PETG", "part_number": "OP-1002"}'
 ```
 
+### Bill of materials
+
+`opad-cli bom` lists the parts of a document (or of one component, `--root`) with their quantities, part properties
+and masses. A part is a body, or a component marked `bom: purchased` (bought as one; what is in it is not listed).
+Parts are the same when they share a part number, or else the same shape and material: instances of one body entry,
+and also copies stored as their own geometry (design patterns, mirrors of symmetric parts, STEP files that write each
+occurrence out) when they are the same solid moved and turned. A mirror image of an asymmetric part is a part of its
+own. Assemblies are the same when they hold the same items in the same places. `bom: exclude` leaves a node out with
+everything under it; mesh and drawing bodies are left out unless `--references true`. Occurrence numbers from CAD
+exports ("Bracket:2", "Bolt<3>") and instance numbers shared by a row ("Screw 1" to "Screw 4") are dropped from the
+names.
+
+* `--mode parts` (default): every part once, its quantity in the whole product.
+* `--mode top`: the items of the assembly itself (a document with one root component is that assembly).
+* `--mode indented`: assemblies with their items below them, numbered 1, 1.2, 1.2.1, with the quantity per assembly
+  and in total.
+
+Masses are in g (`--mass_unit kg|lb`); a row whose material has no density says why (`mass_error`), and the totals say
+whether the mass is complete. `--format csv` writes RFC 4180 text in UTF-8 with a byte order mark (Excel opens it as
+such) and CRLF line ends, to `--out` or to stdout; text a spreadsheet would run as a formula (`=`, `+`, `-`, `@`) gets a
+leading `'`; `--separator ";"` for locales that use the comma as decimal point. Columns: Item, (Level,) Qty, (Total
+qty,) Part number, Name, Description, Material, Mass, Total mass, Vendor, Purchased, Source, Notes and one per custom
+property.
+
+```sh
+opad-cli bom robot.opad --mode indented --format csv --out robot-bom.csv
+opad-cli bom robot.opad --mode top --mass_unit kg
+```
+
 ## Using it in a git repository
 
 OPAD documents remain readable UTF-8 text with LF endings, append-only operations and immutable

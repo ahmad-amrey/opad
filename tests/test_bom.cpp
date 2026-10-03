@@ -1,14 +1,22 @@
 // Materials and mass (TODO 11 UI-140): the library, the names it maps, which node's material decides, masses through
-// placements and overrides, and the properties command.
+// placements and overrides, and the properties command. Bills of materials (UI-83): top, parts and indented modes,
+// quantities from instances and from copies of one solid (never its mirror image), part numbers, exclusions, purchased
+// assemblies, masses, CSV and the bom command.
+#include <BRepAlgoAPI_Cut.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <gp_Ax2.hxx>
 #include <gp_Pln.hxx>
 
 #include <cmath>
+#include <filesystem>
 #include <set>
 
 #include "check.hpp"
 #include "opad/commands.hpp"
+#include "opad/drawing/bom.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 #include "opad/materials.hpp"
@@ -221,6 +229,235 @@ TEST(part_properties_command) {
   CHECK_EQ(list["materials"].size(), materials().size());
   CHECK_EQ(commands::run("materials", {{"match", "Aluminum 6061-T6"}})["match"]["id"], "aluminium-6061");
   CHECK(commands::run("materials", {{"match", "Default"}})["match"].is_null());
+}
+
+namespace {
+
+// A robot as a STEP file would bring it (one root component): a steel base, two identical wheel units (a wheel and an
+// axle each), four screws (instances) in a component of A2 stainless, a bracket with a corner notch (a chiral solid), a
+// copy of it turned and moved (its own key, as design copies are stored) and its mirror image, two spacers that share a
+// part number, a mesh guard, an excluded template, a purchased motor with a given mass and a component left empty.
+struct Robot {
+  Document doc = Document::create();
+  std::string root;
+  Robot() {
+    const TopoDS_Shape bracket = BRepAlgoAPI_Cut(BRepPrimAPI_MakeBox(30, 20, 10).Shape(), BRepPrimAPI_MakeBox(5, 5, 5).Shape()).Shape();
+    gp_Trsf turn, mirror;
+    turn.SetRotation(gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(0, 0, 1)), M_PI / 2);
+    turn.SetTranslationPart(gp_Vec(100, 40, 0));
+    mirror.SetMirror(gp_Ax2(gp_Pnt(15, 0, 0), gp_Dir(1, 0, 0)));
+    const std::string base = add_shape(doc, BRepPrimAPI_MakeBox(100, 80, 10).Shape(), "Base");
+    const std::string wheel = add_shape(doc, BRepPrimAPI_MakeCylinder(20, 10).Shape(), "Wheel");
+    const std::string axle = add_shape(doc, BRepPrimAPI_MakeCylinder(3, 30).Shape(), "Axle");
+    const std::string screw = add_shape(doc, BRepPrimAPI_MakeCylinder(2, 12).Shape(), "Screw");
+    const std::string b1 = add_shape(doc, bracket, "Bracket");
+    const std::string b2 = add_shape(doc, BRepBuilderAPI_Transform(bracket, turn, true).Shape(), "Bracket copy");
+    const std::string b3 = add_shape(doc, BRepBuilderAPI_Transform(bracket, mirror, true).Shape(), "Bracket mirror");
+    const std::string spacer = add_shape(doc, BRepPrimAPI_MakeBox(10, 10, 5).Shape(), "Spacer");
+    const std::string spacer6 = add_shape(doc, BRepPrimAPI_MakeBox(10, 10, 6).Shape(), "Spacer");
+    const auto at = [](double x, double y, double z) { return Mat4::translation(x, y, z).to_json(); };
+    json guard = body("Guard", base);
+    guard["representation"] = "mesh";
+    json fasteners = json::array();
+    for (int i = 0; i < 4; ++i) fasteners.push_back(body("Screw " + std::to_string(i + 1), screw, at(10 + 80 * (i % 2), 10 + 60 * (i / 2), 10)));
+    const json unit = json::array({body("Wheel", wheel), body("Axle", axle, at(0, 0, -10))});
+    json robot = component("Robot", {body("Base", base), component("Wheel unit:1", unit), component("Wheel unit:2", unit), component("Fasteners", fasteners),
+                                     body("Bracket", b1), body("Bracket copy", b2), body("Bracket mirror", b3), body("Spacer", spacer), body("Spacer alt", spacer6),
+                                     guard, body("Template", base), component("Motor", {body("Motor can", wheel), body("Motor shaft", axle)}),
+                                     component("Empty", json::array({body("Excluded too", base)}))});
+    // The two wheel units' children must keep their own ids.
+    for (auto& c : robot["children"])
+      if (c["name"].get<std::string>().rfind("Wheel unit", 0) == 0)
+        for (auto& k : c["children"]) k["id"] = new_uuid();
+    root = robot["id"];
+    doc.append({{"op", "import"}, {"source", "robot.step"}, {"nodes", json::array({robot})}});
+    set(doc, "Base", {{"material", "Steel"}, {"description", "Plate, \"flat\""}, {"notes", "=1+2"}, {"finish", "painted"}});
+    set(doc, "Fasteners", {{"material", "A2-70"}});
+    set(doc, "Spacer", {{"part_number", "SP-10"}, {"vendor", "Acme"}});
+    set(doc, "Spacer alt", {{"part_number", "SP-10"}});
+    set(doc, "Template", {{"bom", "exclude"}});
+    set(doc, "Excluded too", {{"bom", "exclude"}});
+    set(doc, "Motor", {{"bom", "purchased"}, {"mass", 350}, {"part_number", "M-42"}});
+    const Scene s = resolve(doc);
+    for (const auto& id : s.node(root)->children)
+      if (s.node(id)->name.rfind("Wheel unit", 0) == 0)
+        for (const auto& k : s.node(id)->children)
+          if (s.node(k)->name == "Wheel") run(doc, "part_properties", {{"target", k}, {"set", {{"material", "PA12"}}}});
+  }
+  json bom(const std::string& mode, drawing::BomOptions o = {}) const {
+    o.mode = mode;
+    return drawing::bom(doc, resolve(doc), o);
+  }
+};
+
+std::string table(const json& b) {
+  std::string out;
+  for (const auto& r : b["rows"]) {
+    out += r["item"].get<std::string>() + " " + r["name"].get<std::string>() + " x" + std::to_string(r["qty"].get<long long>());
+    if (r.contains("total_qty")) out += "/" + std::to_string(r["total_qty"].get<long long>());
+    out += "; ";
+  }
+  return out;
+}
+
+const json& row(const json& b, const std::string& name) {
+  for (const auto& r : b["rows"])
+    if (r["name"] == name) return r;
+  throw check::Failure("no row " + name + " in " + table(b));
+}
+
+void same(const std::string& got, const std::string& want) {
+  if (got != want) throw check::Failure("\n got: " + got + "\nwant: " + want);
+}
+
+}  // namespace
+
+TEST(bom_modes) {
+  Robot r;
+  const json top = r.bom("top");
+  CHECK_EQ(top["assembly"]["name"], "Robot");
+  same(table(top), "1 Base x1; 2 Wheel unit x2; 3 Fasteners x1; 4 Bracket x2; 5 Bracket mirror x1; 6 Spacer x2; 7 Motor x1; ");
+  CHECK_EQ(row(top, "Wheel unit")["kind"], "assembly");
+  CHECK_EQ(row(top, "Wheel unit")["nodes"].size(), 2u);
+  CHECK_EQ(row(top, "Motor")["kind"], "part");
+  CHECK_EQ(row(top, "Motor")["purchased"], true);
+  CHECK_EQ(row(top, "Spacer")["part_number"], "SP-10");
+  CHECK_EQ(row(top, "Spacer")["identity"], "pn:SP-10");
+  CHECK_EQ(row(top, "Spacer")["vendor"], "Acme");
+  CHECK_EQ(row(top, "Base")["source"], "robot.step");
+  const json parts = r.bom("parts");
+  same(table(parts), "1 Base x1; 2 Wheel x2; 3 Axle x2; 4 Screw x4; 5 Bracket x2; 6 Bracket mirror x1; 7 Spacer x2; 8 Motor x1; ");
+  CHECK_EQ(parts["totals"]["parts"], 15);
+  CHECK_EQ(parts["totals"]["rows"], 8);
+  const json indented = r.bom("indented");
+  same(table(indented),
+       "1 Base x1/1; 2 Wheel unit x2/2; 2.1 Wheel x1/2; 2.2 Axle x1/2; 3 Fasteners x1/1; 3.1 Screw x4/4; 4 Bracket x2/2; 5 Bracket mirror x1/1; "
+       "6 Spacer x2/2; 7 Motor x1/1; ");
+  CHECK_EQ(row(indented, "Wheel")["level"], 2);
+  CHECK_EQ(row(indented, "Wheel")["nodes"].size(), 2u);  // both units' wheels: balloons find their row by node
+  CHECK_THROWS(r.bom("flat"));
+}
+
+TEST(bom_identity_options) {
+  Robot r;
+  drawing::BomOptions o;
+  o.match_shapes = false;
+  same(table(r.bom("parts", o)), "1 Base x1; 2 Wheel x2; 3 Axle x2; 4 Screw x4; 5 Bracket x1; 6 Bracket copy x1; 7 Bracket mirror x1; 8 Spacer x2; 9 Motor x1; ");
+  o = {};
+  o.references = true;
+  same(table(r.bom("parts", o)), "1 Base x1; 2 Wheel x2; 3 Axle x2; 4 Screw x4; 5 Bracket x2; 6 Bracket mirror x1; 7 Spacer x2; 8 Guard x1; 9 Motor x1; ");
+  // Another material makes another part; one component's BoM.
+  const Scene s = resolve(r.doc);
+  set(r.doc, "Bracket copy", {{"material", "PLA"}});
+  same(table(r.bom("parts")), "1 Base x1; 2 Wheel x2; 3 Axle x2; 4 Screw x4; 5 Bracket x1; 6 Bracket copy x1; 7 Bracket mirror x1; 8 Spacer x2; 9 Motor x1; ");
+  o = {};
+  o.root = id_of(s, "Fasteners");
+  const json fasteners = r.bom("top", o);
+  CHECK_EQ(fasteners["assembly"]["name"], "Fasteners");
+  same(table(fasteners), "1 Screw x4; ");
+  o.root = id_of(s, "Base");
+  same(table(r.bom("top", o)), "1 Base x1; ");
+  o.root = new_uuid();
+  CHECK_THROWS(r.bom("top", o));
+}
+
+// Design copies: a circular pattern stores each copy's geometry under its own key, turned; a mirrored notched block
+// is another part.
+TEST(bom_design_copies) {
+  Document doc = Document::create();
+  const std::string block = run(doc, "feature", {{"kind", "box"}, {"inputs", {{"x", "40 mm"}, {"length", "20 mm"}, {"width", "10 mm"}, {"height", "6 mm"}}}})["body_ids"][0];
+  run(doc, "feature", {{"kind", "box"},
+                       {"inputs", {{"plane", {{"origin", {0, 0, 3}}, {"normal", {0, 0, 1}}}}, {"x", "47 mm"}, {"y", "2 mm"}, {"length", "8 mm"}, {"width", "8 mm"}, {"height", "8 mm"}, {"operation", "cut"},
+                                   {"targets", {block}}}}});
+  run(doc, "feature", {{"kind", "pattern_circ"}, {"inputs", {{"bodies", json::array({{{"body", block}, {"kind", "body"}}})}, {"count", "4"}}}});
+  run(doc, "feature", {{"kind", "mirror"}, {"inputs", {{"bodies", json::array({{{"body", block}, {"kind", "body"}}})}, {"plane", {{"base", "yz"}}}}}});
+  const Scene s = resolve(doc);
+  std::set<std::string> keys;
+  for (const auto& id : s.all_bodies()) keys.insert(s.node(id)->body_key);
+  CHECK_EQ(s.all_bodies().size(), 5u);
+  CHECK_EQ(keys.size(), 5u);
+  same(table(drawing::bom(doc, s)), "1 Box1 x4; 2 Box1 5 x1; ");
+  CHECK_EQ(drawing::bom(doc, s)["rows"][0]["source"], "design");
+  // The mirror image of a symmetric part is the part turned.
+  Document pin = Document::create();
+  const std::string body = run(pin, "feature", {{"kind", "cylinder"}, {"inputs", {{"x", "30 mm"}, {"diameter", "6 mm"}, {"height", "20 mm"}}}})["body_ids"][0];
+  run(pin, "feature", {{"kind", "mirror"}, {"inputs", {{"bodies", json::array({{{"body", body}, {"kind", "body"}}})}, {"plane", {{"base", "yz"}}}}}});
+  same(table(drawing::bom(pin, resolve(pin))), "1 Cylinder1 x2; ");
+}
+
+TEST(bom_masses) {
+  Robot r;
+  const json parts = r.bom("parts");
+  CHECK_NEAR(row(parts, "Base")["mass"].get<double>(), 80000 * 7.85 / 1000, 1e-6);
+  CHECK_EQ(row(parts, "Base")["material"], "Steel");
+  CHECK_EQ(row(parts, "Base")["material_id"], "steel");
+  CHECK_NEAR(row(parts, "Wheel")["mass"].get<double>(), M_PI * 400 * 10 * 1.01 / 1000, 1e-6);
+  CHECK_NEAR(row(parts, "Wheel")["total_mass"].get<double>(), 2 * M_PI * 400 * 10 * 1.01 / 1000, 1e-6);
+  CHECK_EQ(row(parts, "Wheel")["material"], "PA12");
+  CHECK_NEAR(row(parts, "Screw")["mass"].get<double>(), M_PI * 4 * 12 * 8.0 / 1000, 1e-6);
+  CHECK_EQ(row(parts, "Axle")["mass_error"], "no material");
+  CHECK_EQ(row(parts, "Motor")["mass"], 350);
+  CHECK_EQ(parts["totals"]["mass_complete"], false);
+  CHECK_EQ(row(r.bom("top"), "Wheel unit")["mass_error"], "a part in it has no mass");
+  // Everything with a material: the totals add up, in kg.
+  for (const char* name : {"Bracket", "Bracket copy", "Bracket mirror", "Spacer", "Spacer alt"}) set(r.doc, name, {{"material", "POM"}});
+  const Scene s = resolve(r.doc);
+  for (const auto& [id, n] : s.nodes)
+    if (n.name == "Axle" && s.node(n.parent)->name != "Motor") run(r.doc, "part_properties", {{"target", id}, {"set", {{"material", "steel"}}}});
+  drawing::BomOptions kg;
+  kg.mass_unit = "kg";
+  const json done = r.bom("top", kg);
+  CHECK_EQ(done["totals"]["mass_complete"], true);
+  const double bracket = 30 * 20 * 10 - 125, wheel = M_PI * 400 * 10 * 1.01, axle = M_PI * 9 * 30 * 7.85, screw = M_PI * 4 * 12 * 8.0;
+  const double total = 80000 * 7.85 + 2 * (wheel + axle) + 4 * screw + 3 * bracket * 1.41 + (500 + 600) * 1.41 + 350 * 1000;
+  CHECK_NEAR(done["totals"]["mass"].get<double>(), total / 1e6, 1e-9);
+  CHECK_NEAR(row(done, "Wheel unit")["mass"].get<double>(), (wheel + axle) / 1e6, 1e-9);
+  CHECK_NEAR(row(done, "Wheel unit")["total_mass"].get<double>(), 2 * (wheel + axle) / 1e6, 1e-9);
+  CHECK_EQ(done["mass_unit"], "kg");
+  set(r.doc, "Fasteners", {{"mass", 100}});  // a mass property stands for the whole assembly
+  const json given = r.bom("top", kg);
+  CHECK_NEAR(row(given, "Fasteners")["mass"].get<double>(), 0.1, 1e-12);
+  CHECK_NEAR(given["totals"]["mass"].get<double>(), (total - 4 * screw + 100 * 1000) / 1e6, 1e-9);
+  drawing::BomOptions none;
+  none.mass = false;
+  CHECK(!r.bom("parts", none)["totals"].contains("mass"));
+  CHECK(!row(r.bom("parts", none), "Base").contains("mass_error"));
+}
+
+TEST(bom_csv) {
+  Robot r;
+  const json b = r.bom("indented");
+  const std::string csv = drawing::bom_csv(b);
+  CHECK(csv.rfind("\xEF\xBB\xBF" "Item,Level,Qty,Total qty,Part number,Name,Description,Material,Mass (g),Total mass (g),Vendor,Purchased,Source,Notes,finish\r\n", 0) == 0);
+  size_t lines = 0;
+  for (size_t at = csv.find("\r\n"); at != std::string::npos; at = csv.find("\r\n", at + 2)) ++lines;
+  CHECK_EQ(lines, b["rows"].size() + 1);
+  CHECK(csv.find("\r\n1,1,1,1,,Base,\"Plate, \"\"flat\"\"\",Steel,628.00,628.00,,,robot.step,'=1+2,painted\r\n") != std::string::npos);
+  CHECK(csv.find("\r\n7,1,1,1,M-42,Motor,,,350.00,350.00,,yes,robot.step,,\r\n") != std::string::npos);
+  CHECK(csv.find("\r\n2.2,2,1,2,,Axle,,,,,,,robot.step,,\r\n") != std::string::npos);
+  const std::string semicolons = drawing::bom_csv(r.bom("top"), ';', {{"name", "Benennung"}});
+  CHECK(semicolons.find("Item;Qty;Part number;Benennung;") != std::string::npos);
+  CHECK(semicolons.find(";\"Plate, \"\"flat\"\"\";Steel;628.00;") != std::string::npos);  // quoted for its quotes
+}
+
+TEST(bom_command) {
+  Robot r;
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-bom-" + new_uuid());
+  const std::string csv = (dir / "robot.csv").string(), js = (dir / "robot.json").string();
+  const json wrote = run(r.doc, "bom", {{"format", "csv"}, {"out", csv}, {"mode", "parts"}});
+  CHECK_EQ(wrote["rows"], 8);
+  const std::string text = read_text_file(csv);
+  CHECK(text.rfind("\xEF\xBB\xBF" "Item,Qty,", 0) == 0);
+  CHECK_EQ(run(r.doc, "bom", {{"format", "csv"}})["csv"].get<std::string>(), drawing::bom_csv(r.bom("parts")));
+  run(r.doc, "bom", {{"mode", "indented"}, {"out", js}, {"mass_unit", "kg"}});
+  const json back = json::parse(read_text_file(js));
+  CHECK_EQ(back["mode"], "indented");
+  CHECK_EQ(back["rows"].size(), 10u);
+  CHECK_EQ(run(r.doc, "bom", {{"mode", "top"}})["rows"].size(), 7u);
+  CHECK_THROWS(run(r.doc, "bom", {{"format", "xlsx"}}));
+  CHECK_THROWS(run(r.doc, "bom", {{"separator", "|"}}));
+  CHECK_THROWS(run(r.doc, "bom", {{"mass_unit", "oz"}}));
+  std::filesystem::remove_all(dir);
 }
 
 CHECK_MAIN()

@@ -284,3 +284,6 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   g/cm3, `mass` g, `vendor`, `notes`, `bom` include|exclude|purchased, any other field); `properties` reports them as
   `part`, plus the `material` in force (the nearest one set upwards, else the file's), `density` and `mass` (g).
   `materials` lists the library ids; `materials --match <name>` maps a name; `appearance: true` colours as the material.
+- `bom` lists parts with quantities (`mode` parts, top or indented; `root` a component), part properties and masses
+  (`mass_error` says what is missing); identical parts are one row (same part number, or same solid and material).
+  `format` csv gives spreadsheet text (`out` a file).

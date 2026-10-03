@@ -7,6 +7,7 @@
 
 #include "opad/commands.hpp"
 #include "opad/design/feature.hpp"
+#include "opad/drawing/bom.hpp"
 #include "opad/drawing/sheet.hpp"
 #include "opad/materials.hpp"
 #include "opad/render.hpp"
@@ -422,6 +423,29 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
         json list = json::array();
         for (const auto& m : materials()) list.push_back(m.to_json());
         return json{{"materials", list}};
+      });
+
+  add({"bom", "Bill of materials: parts with quantities, properties and masses; json or csv",
+       {{"doc", "path"}, {"mode", "parts|top|indented"}, {"root", "uuid"}, {"format", "json|csv"}, {"out", "path"}, {"mass", "bool"},
+        {"mass_unit", "g|kg|lb"}, {"match_shapes", "bool"}, {"references", "bool - mesh/drawing bodies"}, {"separator", "string"}},
+       false},
+      [](Document* d, const json& a) {
+        Document& doc = need_doc(d);
+        drawing::BomOptions o;
+        o.mode = a.value("mode", "parts");
+        o.root = a.value("root", "");
+        o.mass = a.value("mass", true);
+        o.mass_unit = a.value("mass_unit", "g");
+        o.match_shapes = a.value("match_shapes", true);
+        o.references = a.value("references", false);
+        const std::string format = a.value("format", "json"), out = a.value("out", ""), separator = a.value("separator", ",");
+        if (format != "json" && format != "csv") throw Error("bom: format is json or csv");
+        if (separator != "," && separator != ";" && separator != "\t") throw Error("bom: separator is a comma, a semicolon or a tab");
+        const json b = drawing::bom(doc, resolve(doc), o);
+        const std::string text = format == "csv" ? drawing::bom_csv(b, separator[0]) : b.dump(2) + "\n";
+        if (out.empty()) return format == "csv" ? json{{"csv", text}, {"totals", b["totals"]}} : b;
+        write_text_file(path_from_utf8(out), text);
+        return json{{"out", out}, {"rows", b["rows"].size()}, {"totals", b["totals"]}};
       });
 }
 
