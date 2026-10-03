@@ -118,6 +118,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void benchBand();                        // OPAD_BENCH_BAND: rubber band over the whole view in the current mode
   void benchSubShot(const QString& path);  // OPAD_BENCH_SUBSHOT: frame from behind the picked sub-shape (X-ray check)
   void benchClick(double fx, double fy);  // OPAD_BENCH_TOOL: a left click at this fraction of the view, as the mouse handlers deliver it
+  void benchFlush();  // what the next frame does with the input the mouse handlers queued (picks, hover): a hidden window never paints
   bool benchPicking();  // OPAD_BENCH_PICKING: circle discovery, locking, exact picks and orbit regression
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
   void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner

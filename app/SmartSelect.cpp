@@ -100,11 +100,15 @@ double pointerSide(const TopoDS_Face& face, const gp_Pnt& middle, const gp_Vec& 
     for (double s : {step, -step})
       if (inside == 0 && BRepClass_FaceClassifier(face, middle.Translated(across * s), tol).State() == TopAbs_IN) inside = s;
   if (inside == 0) return facing;
-  const QPointF from = project({middle.X(), middle.Y(), middle.Z()});
-  const gp_Pnt in = middle.Translated(across * inside);
-  const QPointF into = project({in.X(), in.Y(), in.Z()}) - from, off = pointer - from;
+  // On screen, across the edge only: which side of it the face lies on, and the pointer.
+  auto screen = [&](const gp_Pnt& p) { return project({p.X(), p.Y(), p.Z()}); };
+  const QPointF from = screen(middle);
+  QPointF edge = screen(middle.Translated(along.Normalized() * std::abs(inside))) - from;
+  if (const double l = std::hypot(edge.x(), edge.y()); l > 1e-9) edge /= l;
+  auto acrossEdge = [&](const QPointF& v) { return v - edge * QPointF::dotProduct(v, edge); };
+  const QPointF into = acrossEdge(screen(middle.Translated(across * inside)) - from), off = acrossEdge(pointer - from);
   const double li = std::hypot(into.x(), into.y()), lo = std::hypot(off.x(), off.y());
-  if (li < 1e-6 || lo < 1) return facing;
+  if (li < 1e-6 || lo < 0.5) return facing;
   return 2 + QPointF::dotProduct(into, off) / (li * lo);
 }
 }  // namespace
@@ -863,14 +867,22 @@ void SmartSelect::chain(const opad::Ref& edge, bool tangent, const QPoint& at) {
       BRepAdaptor_Curve curve(TopoDS::Edge(edges(edge.index + 1)));
       const double t0 = curve.FirstParameter(), t1 = curve.LastParameter();
       double t = (t0 + t1) / 2;
-      if (project) {  // the edge's point nearest the pointer on screen
-        double nearest = 1e300;
-        for (int i = 0; i <= 32; ++i) {
-          const double s = t0 + (t1 - t0) * i / 32;
+      if (project) {  // the edge's point nearest the pointer on screen: the nearest of 33, then closer in around it
+        auto distance = [&](double s) {
           const gp_Pnt p = curve.Value(s);
           const QPointF d = project({p.X(), p.Y(), p.Z()}) - pointer;
-          if (const double l = QPointF::dotProduct(d, d); l < nearest) nearest = l, t = s;
+          return QPointF::dotProduct(d, d);
+        };
+        double nearest = 1e300;
+        for (int i = 0; i <= 32; ++i)
+          if (const double s = t0 + (t1 - t0) * i / 32, l = distance(s); l < nearest) nearest = l, t = s;
+        double a = std::max(t0, t - (t1 - t0) / 32), b = std::min(t1, t + (t1 - t0) / 32);
+        for (int i = 0; i < 30; ++i) {
+          const double m1 = a + (b - a) / 3, m2 = b - (b - a) / 3;
+          if (distance(m1) < distance(m2)) b = m2;
+          else a = m1;
         }
+        t = (a + b) / 2;
       }
       gp_Pnt middle;
       gp_Vec along;

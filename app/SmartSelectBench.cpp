@@ -25,10 +25,11 @@
 // chip names the boss with its five faces and Ctrl+Up as the way there, beside the picks and clear of the view cube;
 // hovering it draws the five in amber and pulses the boss's timeline marker. Ctrl+Up selects them (the chip turns into
 // the boss's actions), again the body; Ctrl+Down twice climbs back to the two faces. Shift+Space lists the candidates; its
-// Select what depends on the boss selects Round's faces. A
-// double-click on the boss's top (real mouse events) selects the boss, another one opens it for editing. An edge between
-// two faces seen from the view, double-clicked: the loop of the face on the pointer's side of it (the top's, then the
-// front's); Alt on a straight edge says nothing continues it. The chip's
+// Select what depends on the boss selects Round's faces. Double-clicks are mouse events through the view's own handlers,
+// OCCT picking under the pointer (Viewport::benchFlush stands in for the frames a hidden window never paints): on the
+// boss's top one selects the boss, another one opens it for editing. An edge between two faces seen from the view,
+// double-clicked 2 px off it: the loop of the face on the pointer's side (the top's, then the front's); Alt on a straight
+// edge says nothing continues it, on the boss's top selects its tangent chain. The chip's
 // Delete on the boss: the question names Round, which uses it, with the result previewed; deleting both leaves the base
 // alone, the toast's Undo brings them back. Deleting Round, which nothing uses, asks nothing. The chip's Find in timeline,
 // Isolate and Suppress (undone from its toast) on the boss. Suggestions off: no chip by itself, Ctrl+Up still asks; on
@@ -81,19 +82,24 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
         require(++state->wait < 80, why);
         return false;
       };
-      // A double-click as the view reports it: the first click's pick, the double-click itself through the view's event
-      // path (the view's own handling held back: a hidden window never paints, so OCCT would keep the clicks queued), the
-      // second click's pick.
-      auto doubleClick = [&](const opad::Ref& face, QPoint at = {}) {
-        pick({face});
-        if (at.isNull()) at = w.m_viewport->rect().center();
-        w.m_viewport->setBlocked(true);
-        QMouseEvent press(QEvent::MouseButtonDblClick, QPointF(at), QPointF(w.m_viewport->mapToGlobal(at)), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
-        QApplication::sendEvent(w.m_viewport, &press);
-        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(at), QPointF(w.m_viewport->mapToGlobal(at)), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
-        QApplication::sendEvent(w.m_viewport, &release);
-        w.m_viewport->setBlocked(false);
-        pick({face});
+      // A double-click as the mouse delivers it, through the view's own handlers (move, press, release, double-click,
+      // release), each followed by what the next frame does with it (a hidden window never paints): OCCT picks what is
+      // under the pointer, as for a user.
+      auto doubleClick = [&](const QPointF& at, Qt::KeyboardModifiers modifiers = Qt::NoModifier) {
+        using Step = std::tuple<QEvent::Type, Qt::MouseButton, Qt::MouseButtons>;
+        for (const auto& [type, button, buttons] : {Step{QEvent::MouseMove, Qt::NoButton, Qt::NoButton}, Step{QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton},
+                                                    Step{QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton}, Step{QEvent::MouseButtonDblClick, Qt::LeftButton, Qt::LeftButton},
+                                                    Step{QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton}}) {
+          QMouseEvent e(type, at, w.m_viewport->mapToGlobal(at), button, buttons, modifiers);
+          QApplication::sendEvent(w.m_viewport, &e);
+          w.m_viewport->benchFlush();
+        }
+      };
+      auto topPoint = [&] { return QPointF(w.m_viewport->widgetPoint({20, 20, 20})); };  // the middle of the boss's top
+      auto beside = [&](const opad::Vec3& onEdge, const opad::Vec3& inFace) {  // 2 px off an edge, towards a point of a face
+        const auto project = w.m_viewport->projector();
+        const QPointF a = project(onEdge), d = project(inFace) - a;
+        return a + d * (2 / std::hypot(d.x(), d.y()));
       };
       switch (state->phase) {
         case 0: {
@@ -256,12 +262,12 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
             return;
           }
           if (!waitFor(w.m_viewport->selection().empty(), "the selection cleared")) return;
-          doubleClick(state->top);
+          doubleClick(topPoint());
           break;
         case 10: {
           if (!waitFor(selected(state->bossFaces), "a double-click on the boss's top selects the boss")) return;
-          pass("a double-click on the boss's top selected the boss's five faces");
-          doubleClick(state->top);  // again: edit it
+          pass("a double-click on the boss's top (mouse events, OCCT's own picks) selected the boss's five faces");
+          doubleClick(topPoint());  // again: edit it
           break;
         }
         case 11: {
@@ -290,7 +296,7 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
           const auto project = w.m_viewport->projector();
           const QPointF p = project ? project({20, 0, 10}) : QPointF(-1e9, -1e9), q = w.m_viewport->widgetPoint({20, 0, 10});
           require(std::hypot(p.x() - q.x(), p.y() - q.y()) < 1.5, "the worker's projection agrees with the view's");
-          doubleClick(state->front, w.m_viewport->widgetPoint({20, 3, 10}));
+          doubleClick(beside({20, 0, 10}, {20, 3, 10}));
           break;
         }
         case 14: {
@@ -309,15 +315,14 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
           };
           if (!state->frontSide) {
             require(all(3, 10), "with the pointer on the top's side of the edge, the top face's outer loop (z = 10)");
-            pass("a double-click on the front top edge with the pointer over the top face selected the top's outer loop (4 edges)");
+            pass("a double-click 2 px off the front top edge, over the top face, selected the top's outer loop (4 edges)");
             state->frontSide = true;
-            doubleClick(state->front, w.m_viewport->widgetPoint({20, 0, 7}));
+            doubleClick(beside({20, 0, 10}, {20, 0, 7}));
             return;
           }
           require(all(2, 0), "with the pointer on the front's side of the edge, the front face's loop (y = 0)");
-          pass("the same edge double-clicked with the pointer over the front face selected the front face's loop (4 edges)");
-          pick({picks.front()});
-          area->doubleClicked(true);  // Alt: the tangent chain of a straight edge between square corners is itself
+          pass("the same edge double-clicked 2 px off it over the front face selected the front face's loop (4 edges)");
+          doubleClick(beside({20, 0, 10}, {20, 3, 10}), Qt::AltModifier);  // the tangent chain of a straight edge between square corners is itself
           break;
         }
         case 15: {
@@ -330,8 +335,7 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
           if (w.m_viewport->selectionFilter() != Viewport::SelFilter::Face) return;
           if (!state->tangent) {  // Alt+double-click on the boss's top: the faces smooth edges join to it
             if (!std::exchange(state->tangentAsked, true)) {
-              pick({state->top});
-              area->doubleClicked(true);
+              doubleClick(topPoint(), Qt::AltModifier);
               return;
             }
             const auto& f = area->found();
