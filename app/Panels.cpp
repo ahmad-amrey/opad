@@ -710,7 +710,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     if (QTreeWidgetItem* it = m_tree->itemAt(p); it && it->data(0, Qt::UserRole).toString() == "drawing") {  // the Drawings folder's own
       const std::string id = it->data(0, kIdRole).toString().toStdString();
       QMenu menu(this);
-      drawings::contextMenu(m_doc, id, menu, [this, id] { startRename(id); });
+      drawings::contextMenu(m_doc, id, menu, [this, id] { startRename(id); }, [this, id] { emit sheetExportRequested(id); });
       menu.exec(m_tree->viewport()->mapToGlobal(p));
       return;
     }

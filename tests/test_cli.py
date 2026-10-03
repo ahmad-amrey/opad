@@ -140,10 +140,19 @@ def basic_workflow():
     pdf = os.path.join(tmp, "front.pdf")
     v = run("export", DOC, "--format", "pdf", "--view", "front", "--hidden", "true", "--out", pdf)
     data = open(pdf, "rb").read()
-    assert data.startswith(b"%PDF-") and len(re.findall(rb"/Type /Page\b(?!s)", data)) == 1 and v["sheet"].startswith("A"), v
+    assert data.startswith(b"%PDF-") and len(re.findall(rb"/Type /Page\b(?!s)", data)) == 1 and v["paper"].startswith("A"), v
     png = os.path.join(tmp, "front.png")
     v = run("export", DOC, "--format", "png", "--view", "front", "--dpi", "100", "--out", png)
     assert open(png, "rb").read(4) == b"\x89PNG" and v["dpi"] == 100 and v["pixels"][0] > 100, v
+    # a drawing sheet (on a copy) as a PDF page of its own paper, named by its name
+    sheet_doc = os.path.join(tmp, "sheet.opad")
+    shutil.copy(DOC, sheet_doc)
+    s = run("sheet", sheet_doc, "--size", "A3", "--name", "Assembly")
+    run("sheet_view", sheet_doc, "--sheet", s["id"], "--orient", "iso", "--scale", "auto")
+    pdf = os.path.join(tmp, "sheet.pdf")
+    v = run("export", sheet_doc, "--sheet", "Assembly", "--format", "pdf", "--out", pdf)
+    assert v["paper"] == "A3" and v["page"] == [420, 297] and v["sheet"]["views"] == 1 and v["layers"]["Visible"] > 0, v
+    assert open(pdf, "rb").read(5) == b"%PDF-"
     # delete (tombstone) the annotation: it disappears from the resolved list but stays in the log
     run("delete", DOC, "--target", a["id"])
     assert len(run("annotations", DOC)["annotations"]) == 0

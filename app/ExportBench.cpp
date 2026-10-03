@@ -11,6 +11,7 @@
 #include <QFile>
 #include <QImage>
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QTimer>
@@ -19,10 +20,13 @@
 #include <map>
 
 #include "AppDocument.hpp"
+#include "DrawingsFolder.hpp"
+#include "Panels.hpp"
 #include "Jobs.hpp"
 #include "Viewport.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
+#include "opad/inspect.hpp"
 #include "opad/render.hpp"
 
 // OPAD_BENCH_EXPORT=<prefix>: a 60 x 40 x 10 plate with a 10 mm hole through it. The Export dialog offers DXF, SVG and
@@ -32,7 +36,8 @@
 // hole's rims come out as arcs, no hidden layer. The dialog opens again with those choices. <prefix>.dialog.png is the
 // dialog, <prefix>.front.dxf and <prefix>.iso.svg the files. Then PDF (UI-87: one vector page on A4, the hidden lines
 // in it) and PNG (300 dpi, the outline where the drawing puts it) of the front view: <prefix>.front.pdf/.png, and the
-// dialog with PDF chosen, <prefix>.pdf-dialog.png.
+// dialog with PDF chosen, <prefix>.pdf-dialog.png. Last a drawing sheet (two views, a dimension, a note) exported from
+// its row's Export sheet… as a PDF of its A4 paper: <prefix>.sheet.pdf.
 // OPAD_BENCH_EXPORT_OPEN=<prefix>: the loaded file's roots (hidden or not) as a front view with hidden lines through the
 // dialog, as DXF or as OPAD_BENCH_EXPORT_FORMAT says (pdf, png, ...), timed (the Engine: the stall watchdog stays quiet
 // while the worker projects and writes); <prefix>.<format>.
@@ -197,7 +202,7 @@ bool MainWindow::benchExport() {
     settle([&] { return !m_lastExport.is_null(); }, 60000);
     QFile pdfFile(pdf);
     const bool pdfOpen = pdfFile.open(QIODevice::ReadOnly);
-    check(m_lastExport.value("sheet", "") == "A4" && m_lastExport.value("layers", opad::json::object()).value("Hidden", 0) == 2 && pdfOpen &&
+    check(m_lastExport.value("paper", "") == "A4" && m_lastExport.value("layers", opad::json::object()).value("Hidden", 0) == 2 && pdfOpen &&
               pdfFile.read(5) == "%PDF-",
           "the front view as a PDF page on A4 with its hidden lines " + QString::fromStdString(m_lastExport.dump()).left(300));
 
@@ -217,6 +222,40 @@ bool MainWindow::benchExport() {
     check(pixels.size() == 2 && pixels[0] == 756 && pixels[1] == 165 && picture.width() == 756 && qGray(picture.pixel(24, 83)) < 110 &&
               qGray(picture.pixel(378, 83)) > 240,
           "the front view as a 300 dpi picture: 64 x 14 mm, its left side dark, no hidden lines " + QString::fromStdString(m_lastExport.dump()).left(300));
+
+    // A drawing sheet from the Drawings folder's Export sheet… (UI-86): A4 with a front view, the top view below it, the
+    // plate's width dimensioned and a note; a PDF page of the sheet's own size written by a job.
+    std::string width;  // the top front edge along x
+    const TopoDS_Shape shape = opad::node_world_shape(m_doc->doc, m_doc->scene, plate);
+    for (int i = 0; width.empty() && i < opad::subshape_count(shape, opad::Ref::Kind::Edge); ++i) {
+      const opad::Ref r{plate, opad::Ref::Kind::Edge, i};
+      const opad::json e = opad::inspect_ref(m_doc->doc, m_doc->scene, r);
+      if (e.contains("direction") && std::abs(std::abs(e["direction"][0].get<double>()) - 1) < 1e-9 && std::abs(e["bbox"]["center"][1].get<double>() - y0) < 1e-6 &&
+          std::abs(e["bbox"]["center"][2].get<double>() - z1) < 1e-6)
+        width = r.str();
+    }
+    const std::string sheet = m_doc->run("sheet", {{"size", "A4"}, {"name", "Plate"}})["id"];
+    const std::string base = m_doc->run("sheet_view", {{"sheet", sheet}, {"orient", "front"}, {"at", {90, 160}}})["id"];
+    m_doc->run("sheet_view", {{"sheet", sheet}, {"parent", base}, {"side", "bottom"}});
+    m_doc->run("sheet_item", {{"sheet", sheet}, {"view", base}, {"type", "horizontal"}, {"refs", {width}}});
+    m_doc->run("sheet_item", {{"sheet", sheet}, {"text", "ALL EDGES 0.5 x 45°"}, {"at", {30, 30}}});
+    QMenu menu;
+    drawings::contextMenu(m_doc, sheet, menu, [] {}, [this, sheet] { emit m_browser->sheetExportRequested(sheet); });
+    QAction* exportSheet = menu.findChild<QAction*>("drawings.export");
+    check(exportSheet != nullptr, "a sheet row offers Export sheet…");
+    const QString sheetPdf = prefix + ".sheet.pdf";
+    QFile::remove(sheetPdf);
+    qputenv("OPAD_BENCH_EXPORT_OUT", sheetPdf.toUtf8());
+    m_lastExport = opad::json();
+    if (exportSheet) exportSheet->trigger();
+    check(m_jobs->busy() && m_lastExport.is_null(), "the sheet is projected and written by a job");
+    settle([&] { return !m_lastExport.is_null(); }, 60000);
+    QFile sheetFile(sheetPdf);
+    const bool sheetOpen = sheetFile.open(QIODevice::ReadOnly);
+    const auto drawn = m_lastExport.value("sheet", opad::json::object());
+    check(drawn.value("views", 0) == 2 && drawn.value("items", 0) == 2 && m_lastExport.value("paper", "") == "A4" &&
+              m_lastExport.value("layers", opad::json::object()).value("Dimensions", 0) > 0 && sheetOpen && sheetFile.read(5) == "%PDF-",
+          "the sheet as an A4 PDF page: 2 views, the dimension and the note " + QString::fromStdString(m_lastExport.dump()).left(400));
   } catch (const std::exception& e) {
     check(false, QString("error: ") + e.what());
   }

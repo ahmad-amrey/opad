@@ -115,6 +115,7 @@ class MainWindow : public QMainWindow {
   void restyleAnnotation(const std::string& opId, const std::string& style);  // an edit op on the note
   void exportDialog(std::vector<std::string> ids = {});
   void runExport(const opad::json& args, const QString& out);  // ExportDialog.cpp: on a worker, the result in m_lastExport
+  void exportSheet(const std::string& id);  // ExportDialog.cpp: a drawing sheet as PDF, SVG, DXF, DWG or PNG (UI-86)
   void editPartProperties(std::vector<std::string> ids);  // PartProperties.cpp: the nodes' part properties dialog
   void exportBom(std::vector<std::string> ids = {});      // BomExport.cpp: File > Export bill of materials
   void drawingToSketch();

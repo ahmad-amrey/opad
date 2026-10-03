@@ -16,18 +16,20 @@ namespace opad::drawing {
 // scale for both axes, centred.
 void paint(QPainter& p, const Display& d, const std::array<double, 4>& window, const QRectF& target);
 
-// The paper a drawing is printed on, in mm: the smallest ISO sheet (A4 to A0, landscape when wider than tall) that holds
-// it at 1 : pen_scale with `margin` around it, else the drawing and its margins. window: the drawing units shown.
+// The paper a drawing is printed on, in mm: its own (Display::paper) when it has one, else the smallest ISO sheet (A4 to
+// A0, landscape when wider than tall) that holds it at 1 : pen_scale with `margin` around it, else the drawing and its
+// margins. window: the drawing units shown.
 struct Page {
   double w = 0, h = 0;
-  std::string sheet;  // A4..A0, empty when fitted to the drawing
+  std::string paper;  // A4..A0 or ANSI-A..E, empty when not a standard size
   std::array<double, 4> window{0, 0, 0, 0};
 };
 Page page_for(const Display& d, double margin = 10, bool standard = true);
 
 // PDF: one vector page as page_for chooses (title, creator OPAD <version>), fonts embedded; returns {"page": [w, h] mm,
-// "sheet", "scale": "1:5"}. PNG: the drawing with 2 mm of paper around it on white at `dpi` (lowered so that neither side
-// passes 16384 pixels); returns {"pixels": [w, h], "dpi"}. Throw Error when the file cannot be written.
+// "paper", "scale": "1:5"}. PNG: its paper, else the drawing with 2 mm of paper around it, on white at `dpi` (lowered so
+// that no side passes 16384 pixels nor the picture 50 million); returns {"pixels": [w, h], "dpi"}. Throw Error when the
+// file cannot be written.
 json write_pdf(const Display& d, const std::filesystem::path& file);
 QImage paint_image(const Display& d, double dpi);
 json write_png(const Display& d, const std::filesystem::path& file, double dpi = 300);

@@ -52,6 +52,10 @@ struct Display {
   // Drawing units per paper mm for the pens: line widths and dash lengths are paper sizes times this (a model drawn 1:1
   // that plots at 1:5 has 5), so dashes stay dashes at the scale it is meant for. DXF writes it as $LTSCALE.
   double pen_scale = 1;
+  // The sheet it is drawn on (xmin, ymin, xmax, ymax in drawing units): SVG's view box, PDF's page, PNG's picture. Empty:
+  // fitted around the drawing.
+  std::array<double, 4> paper{0, 0, 0, 0};
+  bool has_paper() const { return paper[2] > paper[0] && paper[3] > paper[1]; }
   std::vector<Layer> layers;
   std::vector<Prim> prims;
   int layer(const Layer& l);  // the index of the layer of that name, added as given when new
@@ -96,6 +100,9 @@ struct DimStyle {
 void linear_dimension(Display& d, int layer, Vec2 a, Vec2 b, Vec2 axis, Vec2 place, const std::string& text, const DimStyle& s = {});
 // A radius (from the centre) or a diameter (across) of a circle, its leader towards `place`, where the text goes.
 void radial_dimension(Display& d, int layer, Vec2 centre, double r, Vec2 place, const std::string& text, bool diameter, const DimStyle& s = {});
+// The angle between two lines (each by two points), its arc through `place` in the corner between them that holds it;
+// extension lines out to the arc where it lies beyond a line's ends. Parallel lines draw only the text.
+void angular_dimension(Display& d, int layer, std::array<Vec2, 2> a, std::array<Vec2, 2> b, Vec2 place, const std::string& text, const DimStyle& s = {});
 
 // The writers. Coordinates in mm with at most `decimals` decimals (trailing zeros dropped), independent of the locale.
 // DXF: R2000 (AC1015) with handles; HEADER ($INSUNITS mm, $MEASUREMENT metric, $LTSCALE = pen_scale, extents), TABLES

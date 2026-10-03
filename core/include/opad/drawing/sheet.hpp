@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "opad/document.hpp"
+#include "opad/drawing/display.hpp"
 #include "opad/drawing/projection.hpp"
 #include "opad/scene.hpp"
 
@@ -82,10 +83,20 @@ std::vector<ViewFrame> layout(const Document& doc, const Scene& scene, const She
 // The bodies' extent in a view: xmin, ymin, xmax, ymax in view coordinates (model mm); zeros when it draws nothing.
 std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const ViewSpec& spec);
 
-// A dimension's value from its references now (hint-aware, as features resolve theirs): {"value", "shown", "anchor"}
-// in the sheet's units, angles in degrees; anchor is where it measures, paper mm from the view's centre. Throws Error
-// when a reference is gone or the view shows it foreshortened.
+// A dimension's value from its references now (hint-aware, as features resolve theirs): {"value", "shown", "anchor",
+// "geometry"} in the sheet's units, angles in degrees; anchor is where it measures, paper mm from the view's centre, and
+// geometry what it measures there, in the same paper mm: {"from", "to"} for lengths (and a cylinder seen from the side),
+// {"centre", "r"} for a circle seen along its axis, {"lines": [[a, b], [a, b]]} for an angle. Throws Error when a
+// reference is gone or the view shows it foreshortened.
 json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, const SheetItem& item, const ViewFrame& frame);
+
+// A sheet as a drawing (UI-86), in paper mm with the sheet as its paper: a frame 20 mm in from the left edge and 10 mm
+// from the others (ISO 5457) with centring marks, each view projected and placed as layout() places it (visible lines
+// 0.5 mm, tangent edges 0.25 mm or with the visible ones as the view's style says, hidden lines 0.25 mm dashed when it
+// shows them), dimensions as geometry with their values now, notes. A dimension that cannot be measured any more shows
+// the value it was made with in magenta; a view or item of a newer OPAD is left out. report (optional): {"views",
+// "items", "bodies", "skipped": [{"id", "error"}]}. Projects every view: workers only; progress as project() takes it.
+Display sheet_display(const Document& doc, const Scene& scene, const Sheet& sheet, const ProjectionProgress& progress = {}, json* report = nullptr);
 std::string format_value(double value, const json& item);  // precision, prefix, tolerance and suffix of an item
 
 }  // namespace opad::drawing

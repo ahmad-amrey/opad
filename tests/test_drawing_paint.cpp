@@ -165,7 +165,7 @@ TEST(a_pdf_is_one_vector_page_on_the_smallest_iso_sheet_that_holds_it) {
   install_painter();
   Files f;
   const json r = write_drawing(sample(), f.dir / "sample.pdf", "pdf");
-  CHECK_EQ(r["sheet"], "A4");
+  CHECK_EQ(r["paper"], "A4");
   CHECK_NEAR(r["page"][0].get<double>(), 297, 1e-9);
   CHECK_NEAR(r["page"][1].get<double>(), 210, 1e-9);
   CHECK_EQ(r["scale"], "1:1");
@@ -182,12 +182,12 @@ TEST(a_pdf_is_one_vector_page_on_the_smallest_iso_sheet_that_holds_it) {
   big.pen_scale = 5;
   big.line(0, {0, 0}, {1500, 0});
   Page page = page_for(big);
-  CHECK_EQ(page.sheet, "A3");
+  CHECK_EQ(page.paper, "A3");
   CHECK_NEAR(page.window[2] - page.window[0], 420 * 5, 1e-6);
   CHECK_EQ(write_drawing(big, f.dir / "big.pdf", "pdf")["scale"], "1:5");
   big.pen_scale = 1;
   page = page_for(big);
-  CHECK(page.sheet.empty());
+  CHECK(page.paper.empty());
   CHECK_NEAR(page.w, big.bounds()[2] - big.bounds()[0] + 20, 1e-6);
   std::filesystem::create_directory(f.dir / "taken.pdf");  // a folder of that name: the file cannot be written
   CHECK_THROWS(write_drawing(sample(), f.dir / "taken.pdf", "pdf"));
@@ -204,7 +204,7 @@ TEST(export_writes_a_view_of_a_part_as_pdf_and_png) {
   json r = commands::run("export", {{"format", "pdf"}, {"out", pdf.string()}, {"view", "front"}, {"hidden", true}}, &doc);
   CHECK_EQ(r["layers"]["Visible"], 4);
   CHECK_EQ(r["layers"]["Hidden"], 2);
-  CHECK_EQ(r["sheet"], "A4");
+  CHECK_EQ(r["paper"], "A4");
   CHECK(read_text_file(pdf).rfind("%PDF-", 0) == 0);
   const auto png = f.dir / "front.png";
   r = commands::run("export", {{"format", "png"}, {"out", png.string()}, {"view", "front"}, {"hidden", true}, {"dpi", 254}}, &doc);
@@ -227,7 +227,29 @@ TEST(export_writes_a_view_of_a_part_as_pdf_and_png) {
   CHECK(red(arc.pixelColor(161, 79)));  // at 45 degrees: (19.14, 19.14), 2 mm of paper around the arc's box
   CHECK(qGray(arc.pixel(60, 180)) > 240);
   r = commands::run("export", {{"format", "pdf"}, {"out", (f.dir / "drawing.pdf").string()}}, &drawing);
-  CHECK_EQ(r["sheet"], "A4");
+  CHECK_EQ(r["paper"], "A4");
+}
+
+TEST(a_sheet_prints_on_its_own_paper) {
+  install_painter();
+  Files f;
+  auto doc = Document::create();
+  commands::run("feature", {{"kind", "box"}, {"inputs", {{"length", "40 mm"}, {"width", "20 mm"}, {"height", "10 mm"}}}}, &doc);
+  const std::string custom = commands::run("sheet", {{"width", 200}, {"height", 100}, {"name", "Strip"}}, &doc)["id"];
+  commands::run("sheet_view", {{"sheet", custom}, {"orient", "top"}, {"at", {100, 50}}}, &doc);
+  json r = commands::run("export", {{"format", "png"}, {"sheet", custom}, {"dpi", 254}, {"out", (f.dir / "strip.png").string()}}, &doc);
+  CHECK_EQ(r["pixels"][0], 2000);  // the paper, no margin around it
+  CHECK_EQ(r["pixels"][1], 1000);
+  const QImage img(QString::fromStdU16String((f.dir / "strip.png").u16string()));
+  CHECK(qGray(img.pixel(200, 300)) < 110 && qGray(img.pixel(1900, 300)) < 110);  // the frame 20 mm from the left, 10 from the right
+  CHECK(qGray(img.pixel(800, 400)) < 110 && qGray(img.pixel(1000, 500)) > 240);  // the plate's outline at x = 80 mm; inside it
+  CHECK(qGray(img.pixel(100, 300)) > 240);                                        // the filing margin
+  r = commands::run("export", {{"format", "pdf"}, {"sheet", custom}, {"out", (f.dir / "strip.pdf").string()}}, &doc);
+  CHECK(r["paper"] == "" && r["page"] == json::array({200.0, 100.0}));
+  const std::string a2 = commands::run("sheet", {{"size", "A2"}, {"orientation", "portrait"}}, &doc)["id"];
+  r = commands::run("export", {{"format", "pdf"}, {"sheet", a2}, {"out", (f.dir / "a2.pdf").string()}}, &doc);
+  CHECK(r["paper"] == "A2" && r["page"] == json::array({420.0, 594.0}) && r["sheet"]["views"] == 0);
+  CHECK(read_text_file(f.dir / "a2.pdf").find("/MediaBox [0 0 1191") != std::string::npos);
 }
 
 int main(int argc, char** argv) { return check::run_all(argc, argv); }

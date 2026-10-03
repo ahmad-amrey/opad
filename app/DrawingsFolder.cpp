@@ -199,12 +199,13 @@ int remove(AppDocument* doc, const std::vector<std::string>& ids) {
   return int(ops.size());
 }
 
-void contextMenu(AppDocument* doc, const std::string& id, QMenu& menu, const std::function<void()>& startRename) {
+void contextMenu(AppDocument* doc, const std::string& id, QMenu& menu, const std::function<void()>& startRename, const std::function<void()>& exportSheet) {
   const opad::Scene& s = doc->scene;
   if (!s.sheet_item(id)) menu.addAction(icons::themed("rename", 16), tr("Rename"), startRename)->setObjectName("drawings.rename");
   if (!isDrawing(id)) {
     menu.addAction(icons::themed("commit", 16), tr("Copy id"), [id] { QGuiApplication::clipboard()->setText(qs(id)); })->setObjectName("drawings.copyId");
   }
+  if (s.sheet(id) && exportSheet) menu.addAction(icons::themed("export", 16), tr("Export sheet…"), exportSheet)->setObjectName("drawings.export");
   menu.addSeparator();
   const QString what = isDrawing(id) ? tr("Delete drawing") : s.sheet(id) ? tr("Delete sheet") : s.sheet_view(id) ? tr("Delete view") : tr("Delete");
   menu.addAction(icons::themed("delete", 16), what + "\tDel", [doc, id] {

@@ -213,16 +213,44 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   runExport(args, out);
 }
 
+// A drawing sheet (the Drawings folder's Export sheet…): the file's type is the format, the views projected on the worker.
+void MainWindow::exportSheet(const std::string& id) {
+  const opad::Sheet* sheet = m_doc->scene.sheet(id);
+  if (!sheet) throw opad::Error("That sheet is gone.");
+  QString stem = QString::fromStdString(sheet->name);
+  for (const QChar c : QString("<>:\"/\\|?*")) stem.replace(c, '_');
+  const QString last = m_settings.value("export/sheetFormat", "pdf").toString();
+  QString out = qEnvironmentVariable("OPAD_BENCH_EXPORT_OUT");  // benches: no file dialog
+  if (out.isEmpty()) {
+    QStringList filters;
+    QString chosen;
+    for (const auto& [f, label] : std::initializer_list<std::pair<QString, QString>>{
+             {"pdf", tr("PDF files (*.pdf)")}, {"svg", tr("SVG files (*.svg)")}, {"dxf", tr("DXF files (*.dxf)")}, {"dwg", tr("DWG files (*.dwg)")}, {"png", tr("PNG pictures (*.png)")}}) {
+      filters << label;
+      if (f == last) chosen = label;
+    }
+    out = QFileDialog::getSaveFileName(this, tr("Export sheet"), QDir(m_settings.value("ui/lastDir", QDir::homePath()).toString()).filePath(stem + "." + last),
+                                       filters.join(";;"), &chosen);
+    if (out.isEmpty()) return;
+  }
+  QString format = QFileInfo(out).suffix().toLower();
+  if (format != "pdf" && format != "svg" && format != "dxf" && format != "dwg" && format != "png") out += "." + (format = last);
+  m_settings.setValue("ui/lastDir", QFileInfo(out).absolutePath());
+  m_settings.setValue("export/sheetFormat", format);
+  runExport({{"format", format.toStdString()}, {"out", out.toStdString()}, {"sheet", id}}, out);
+}
+
 // Exports on a worker that reads the document in place (nothing edits it meanwhile): a view's hidden lines can take
 // seconds on a big model, a STEP file too. Progress and Cancel in the status bar; a cancelled view stops.
 void MainWindow::runExport(const opad::json& args, const QString& out) {
-  const bool view = args.contains("view") || args.contains("dir");
+  const bool sheet = args.contains("sheet"), view = sheet || args.contains("view") || args.contains("dir");
+  const QString phase = sheet ? tr("Projecting the views") : tr("Projecting the view");
   auto result = std::make_shared<opad::json>();
   QPointer<MainWindow> self(this);
-  Job* job = m_doc->readAsync(m_jobs, view ? tr("Exporting a 2D view") : tr("Exporting"), [args, result, view](const opad::Document& doc, const opad::Scene& scene, Progress p) {
-    if (view) p.setPhase(tr("Projecting the view"), -1);
-    *result = opad::commands::export_document(doc, scene, args, [p](double f, const std::string&) {
-      p.setPhase(tr("Projecting the view"), f < 0 ? -1 : static_cast<int>(f * 100));
+  Job* job = m_doc->readAsync(m_jobs, sheet ? tr("Exporting a sheet") : view ? tr("Exporting a 2D view") : tr("Exporting"), [args, result, view, phase](const opad::Document& doc, const opad::Scene& scene, Progress p) {
+    if (view) p.setPhase(phase, -1);
+    *result = opad::commands::export_document(doc, scene, args, [p, phase](double f, const std::string&) {
+      p.setPhase(phase, f < 0 ? -1 : static_cast<int>(f * 100));
       return !p.cancelled();
     });
   }, [self, result, out](bool ok, const QString& error) {

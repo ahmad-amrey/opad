@@ -351,6 +351,35 @@ void radial_dimension(Display& d, int layer, Vec2 centre, double r, Vec2 place, 
   d.text(layer, text, add(at, mul(up, s.gap * s.scale)), s.text * s.scale, angle, 1, 0);
 }
 
+void angular_dimension(Display& d, int layer, std::array<Vec2, 2> a, std::array<Vec2, 2> b, Vec2 place, const std::string& text, const DimStyle& s) {
+  const auto cross = [](Vec2 p, Vec2 q) { return p[0] * q[1] - p[1] * q[0]; };
+  const Vec2 da = sub(a[1], a[0]), db = sub(b[1], b[0]);
+  const double c = cross(da, db), h = s.text * s.scale, gap = s.gap * s.scale;
+  if (std::abs(c) <= 1e-9 * len(da) * len(db)) {
+    d.text(layer, text, place, h, 0, 1, 0);
+    return;
+  }
+  const Vec2 v = add(a[0], mul(da, cross(sub(b[0], a[0]), db) / c));  // where the lines meet
+  const Vec2 q = sub(place, v);
+  const double r = std::max(len(q), 4 * s.arrow * s.scale);
+  // The rays bounding the corner that holds `place`: it is a sum of them with both weights positive.
+  Vec2 ua = unit(da), ub = unit(db);
+  if (cross(q, ub) / cross(ua, ub) < 0) ua = mul(ua, -1);
+  if (cross(ua, q) / cross(ua, ub) < 0) ub = mul(ub, -1);
+  if (cross(ua, ub) < 0) std::swap(ua, ub), std::swap(a, b);  // counter-clockwise from ua to ub
+  const double t0 = std::atan2(ua[1], ua[0]), t1 = std::atan2(ub[1], ub[0]);
+  d.arc(layer, v, r, t0, t1);
+  arrowhead(d, layer, add(v, mul(ua, r)), {ua[1], -ua[0]}, s);
+  arrowhead(d, layer, add(v, mul(ub, r)), {-ub[1], ub[0]}, s);
+  for (const auto& [u, ends] : {std::pair{ua, a}, std::pair{ub, b}}) {
+    const double reach = std::max(dot(sub(ends[0], v), u), dot(sub(ends[1], v), u));
+    if (r > reach + gap) d.line(layer, add(v, mul(u, std::max(reach, 0.0) + gap)), add(v, mul(u, r + s.overshoot * s.scale)));
+  }
+  const double mid = t0 + std::remainder(t1 - t0, 2 * M_PI) / 2;  // the sweep is under a half turn
+  const double along = mid - M_PI / 2, angle = readable(along);
+  d.text(layer, text, add(v, mul({std::cos(mid), std::sin(mid)}, r + gap)), h, angle, 1, std::abs(std::remainder(angle - along, 2 * M_PI)) > 1e-9 ? 3 : 0);
+}
+
 // ---------------------------------------------------------------- files
 
 namespace {

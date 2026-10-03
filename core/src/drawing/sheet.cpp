@@ -480,6 +480,9 @@ json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, 
   const double units = sheet.def.value("units", "mm") == "in" ? 1 / 25.4 : 1;
   double value = 0;
   Vec3 anchor{0, 0, 0};
+  // What it measures on paper, for drawing it (paper mm from the view's centre, as the anchor).
+  json geometry = json::object();
+  const auto paper_of = [&](const Vec2& v) { return json::array({frame.scale * (v[0] - frame.centre[0]), frame.scale * (v[1] - frame.centre[1])}); };
   if (type == "horizontal" || type == "vertical" || type == "aligned") {
     Vec2 a, b;
     if (picks.size() == 1 && picks[0].edge) {
@@ -492,12 +495,18 @@ json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, 
       throw Error("a " + type + " dimension takes two references or one edge");
     }
     value = type == "horizontal" ? std::fabs(b[0] - a[0]) : type == "vertical" ? std::fabs(b[1] - a[1]) : std::hypot(b[0] - a[0], b[1] - a[1]);
+    geometry = {{"from", paper_of(a)}, {"to", paper_of(b)}};
     if (type == "aligned" && picks.size() == 2 && picks[0].line && picks[1].line) {  // two parallel lines: across them
       const Vec2 a0 = frame.view(picks[0].a), a1 = frame.view(picks[0].b), b0 = frame.view(picks[1].a), b1 = frame.view(picks[1].b);
       const double la = std::hypot(a1[0] - a0[0], a1[1] - a0[1]), lb = std::hypot(b1[0] - b0[0], b1[1] - b0[1]);
       if (la > 1e-9 && lb > 1e-9) {
         const Vec2 u{(a1[0] - a0[0]) / la, (a1[1] - a0[1]) / la}, w{(b1[0] - b0[0]) / lb, (b1[1] - b0[1]) / lb};
-        if (std::fabs(u[0] * w[1] - u[1] * w[0]) < 1e-6) value = std::fabs(u[0] * (b0[1] - a0[1]) - u[1] * (b0[0] - a0[0]));
+        if (std::fabs(u[0] * w[1] - u[1] * w[0]) < 1e-6) {
+          value = std::fabs(u[0] * (b0[1] - a0[1]) - u[1] * (b0[0] - a0[0]));
+          const Vec2 m{(a0[0] + a1[0]) / 2, (a0[1] + a1[1]) / 2};  // from the middle of the first line straight across
+          const double t = (m[0] - b0[0]) * w[0] + (m[1] - b0[1]) * w[1];
+          geometry = {{"from", paper_of(m)}, {"to", paper_of({b0[0] + w[0] * t, b0[1] + w[1] * t})}};
+        }
       }
     }
   } else if (type == "radius" || type == "diameter") {
@@ -507,6 +516,16 @@ json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, 
     if (picks[0].cylinder && along < 0.9999 && along > 1e-4) throw Error("the cylinder is seen at a slant: dimension it in a view along or across its axis");
     value = type == "radius" ? picks[0].r : 2 * picks[0].r;
     anchor = picks[0].centre;
+    const Vec2 c = frame.view(picks[0].centre);
+    if (along >= 0.9999) {
+      geometry = {{"centre", paper_of(c)}, {"r", picks[0].r * frame.scale}};
+    } else {  // a cylinder seen from the side: across it, square to its axis
+      Vec2 n = frame.view(picks[0].axis);
+      const double l = std::hypot(n[0], n[1]);
+      n = {-n[1] / l, n[0] / l};
+      const double r = picks[0].r;
+      geometry = {{"from", paper_of(type == "radius" ? c : Vec2{c[0] - n[0] * r, c[1] - n[1] * r})}, {"to", paper_of({c[0] + n[0] * r, c[1] + n[1] * r})}};
+    }
   } else if (type == "angle") {
     if (picks.size() != 2 || !picks[0].line || !picks[1].line) throw Error("an angle takes two straight edges");
     Vec2 d[2];
@@ -520,12 +539,13 @@ json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, 
     value = std::acos(std::clamp(std::fabs(d[0][0] * d[1][0] + d[0][1] * d[1][1]), 0.0, 1.0)) * 180 / M_PI;
     if (item.def.value("obtuse", false)) value = 180 - value;
     anchor = scaled(plus3(plus3(picks[0].a, picks[0].b), plus3(picks[1].a, picks[1].b)), 0.25);
+    geometry = {{"lines", {{paper_of(frame.view(picks[0].a)), paper_of(frame.view(picks[0].b))}, {paper_of(frame.view(picks[1].a)), paper_of(frame.view(picks[1].b))}}}};
   } else {
     throw Error("needs a newer OPAD (dimension type '" + type + "')");
   }
   if (type != "angle") value *= units;
   const Vec2 at = frame.paper(anchor);
-  json out = {{"value", value}, {"shown", format_value(value, item.def)}, {"anchor", {at[0] - frame.at[0], at[1] - frame.at[1]}}};
+  json out = {{"value", value}, {"shown", format_value(value, item.def)}, {"anchor", {at[0] - frame.at[0], at[1] - frame.at[1]}}, {"geometry", geometry}};
   if (notes.contains("rehinted")) out["rehinted"] = notes["rehinted"];
   return out;
 }

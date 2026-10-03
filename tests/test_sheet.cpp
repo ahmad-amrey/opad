@@ -1,13 +1,18 @@
 // Drawing sheets (TODO 11 UI-76): the sheet, sheet_view, sheet_item and properties ops, replay, layout with first and
-// third angle projection, dimension values that follow the model, deletes, gc and forward compatibility.
+// third angle projection, dimension values that follow the model, deletes, gc, forward compatibility and the sheet drawn
+// for the writers.
 #include <BRepPrimAPI_MakeBox.hxx>
 
+#include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <map>
+#include <set>
 
 #include "check.hpp"
 #include "opad/commands.hpp"
 #include "opad/drawing/sheet.hpp"
+#include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 
@@ -337,6 +342,67 @@ TEST(sheet_edits_and_auto_scale) {
 // The browser's Drawings folder: drawings > sheets > views with their items > the sheet's own items; unnamed views by the
 // standard view they show (first angle: the view right of the front is the left side). Drawing records are deleted and
 // restored without walking the design history.
+// A sheet as a drawing (UI-86): the frame, the views where layout() puts them, dimensions as geometry with their values
+// now, one that lost its body in magenta with the value it was made with, a note; written as SVG on the sheet's paper and
+// as DXF by the export command, the sheet named by id or by name.
+TEST(sheet_draws_as_a_drawing) {
+  Plate p;
+  const std::string top = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"parent", p.front}, {"side", "bottom"}})["id"];
+  run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"parent", p.front}, {"side", "right"}});
+  run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", p.front}, {"type", "horizontal"}, {"refs", {p.edge({0, -20, 10}, {1, 0, 0})}}, {"place", {0, 15}}});
+  run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", top}, {"type", "diameter"}, {"refs", {p.circle(10)}}, {"place", {15, 12}}});
+  run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", top}, {"type", "angle"}, {"refs", {p.edge({-30, 0, 10}, {0, 1, 0}), p.edge({0, 20, 10}, {1, 0, 0})}},
+                            {"place", {-24, 14}}});
+  run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"text", "BREAK SHARP EDGES"}, {"at", {30, 30}}});
+  p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"view", p.front}, {"kind", "dimension"}, {"type", "vertical"},
+                {"refs", {new_uuid() + "/edge/0"}}, {"place", {{"text", {-45, 0}}}}, {"result", {{"value", 7}, {"shown", "7"}}}});
+  const Scene scene = resolve(p.doc);
+  json report;
+  const Display d = sheet_display(p.doc, scene, *scene.sheet(p.sheet), {}, &report);
+  CHECK_EQ(report["views"], 3);
+  CHECK_EQ(report["items"], 4);
+  CHECK_EQ(report["skipped"].size(), 1u);
+  CHECK(d.paper == (std::array<double, 4>{0, 0, 297, 210}));
+  const json counts = d.counts();
+  CHECK_EQ(counts["layers"]["Frame"], 5);  // the frame and four centring marks
+  CHECK(counts["layers"]["Visible"].get<int>() >= 12 && counts["layers"].value("Hidden", 0) == 0);
+  std::map<std::string, const Prim*> texts;
+  for (const auto& prim : d.prims)
+    if (prim.kind == Prim::Kind::Text) texts[prim.text] = &prim;
+  CHECK(texts.count("60") && texts.count("⌀10") && texts.count("90°") && texts.count("BREAK SHARP EDGES") && texts.count("7"));
+  CHECK_NEAR(texts["60"]->at[0], 80, 1e-6);  // over the middle of the front view's top edge (50..110 on paper)
+  CHECK(texts["60"]->at[1] > 180);
+  CHECK_EQ(texts["7"]->rgb, 0xFF00FFu);
+  CHECK_NEAR(texts["BREAK SHARP EDGES"]->at[0], 30, 1e-9);
+  const auto frames = layout(p.doc, scene, *scene.sheet(p.sheet));
+  for (const auto& prim : d.prims) {  // every visible line inside a view's frame
+    if (d.layers[size_t(prim.layer)].name != "Visible") continue;
+    bool inside = false;
+    for (const auto& f : frames)
+      inside = inside || std::all_of(prim.curve.pts.begin(), prim.curve.pts.end(), [&](const Vec2& q) {
+        return q[0] > f.box[0] - 1e-6 && q[0] < f.box[2] + 1e-6 && q[1] > f.box[1] - 1e-6 && q[1] < f.box[3] + 1e-6;
+      });
+    CHECK(inside);
+  }
+  const auto dir = std::filesystem::temp_directory_path() / new_uuid();
+  const json svg = run(p.doc, "export", {{"format", "svg"}, {"sheet", p.sheet}, {"out", (dir / "sheet.svg").string()}});
+  CHECK_EQ(svg["sheet"]["views"], 3);
+  CHECK_EQ(svg["skipped"].size(), 1u);
+  const std::string text = read_text_file(dir / "sheet.svg");
+  CHECK(text.find("width=\"297mm\" height=\"210mm\" viewBox=\"0 -210 297 210\"") != std::string::npos);
+  const json dxf = run(p.doc, "export", {{"format", "dxf"}, {"sheet", "Sheet 1"}, {"out", (dir / "sheet.dxf").string()}});
+  CHECK_EQ(dxf["sheet"]["id"], p.sheet);
+  Document back = Document::create();
+  import_file(back, dir / "sheet.dxf");
+  std::set<std::string> layers;
+  const Scene round = resolve(back);
+  for (const auto& id : round.all_bodies()) layers.insert(round.node(id)->name);
+  CHECK(layers.count("Frame") && layers.count("Visible") && layers.count("Dimensions") && layers.count("Text"));
+  CHECK_THROWS(run(p.doc, "export", {{"format", "dxf"}, {"sheet", "Sheet 9"}, {"out", (dir / "none.dxf").string()}}));
+  std::error_code e;
+  std::filesystem::remove_all(dir, e);
+}
+
 TEST(sheet_outline_for_the_browser) {
   Plate p;
   const std::string right = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"parent", p.front}, {"side", "right"}})["id"];

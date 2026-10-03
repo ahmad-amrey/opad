@@ -74,6 +74,7 @@ struct ExportOptions {
   json view;
   int decimals = 6;                   // 2D coordinates
   int dpi = 300;                      // PNG
+  std::string sheet;                  // 2D: a drawing sheet (id or name) as drawn, instead of objects or a view
   std::function<bool(double, const std::string&)> progress;  // 2D views: return false to cancel
 };
 

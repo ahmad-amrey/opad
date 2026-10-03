@@ -107,8 +107,9 @@ void Writer::text(const Prim& p) {
 }
 
 std::string Writer::run() {
-  const auto b = m_d.bounds();
-  const double margin = 2 * m_d.pen_scale;
+  // The paper, else the drawing with 2 mm of paper around it.
+  const double margin = m_d.has_paper() ? 0 : 2 * m_d.pen_scale;
+  const auto b = m_d.has_paper() ? m_d.paper : m_d.bounds();
   const double w = std::max(b[2] - b[0], 1e-3) + 2 * margin, h = std::max(b[3] - b[1], 1e-3) + 2 * margin;
   m_out = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
   m_out += "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:inkscape=\"http://www.inkscape.org/namespaces/inkscape\" version=\"1.1\" width=\"" + n(w) +

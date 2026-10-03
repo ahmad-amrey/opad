@@ -67,6 +67,7 @@ add_library(opad_core STATIC
   src/drawing/hybrid.cpp
   src/drawing/sheet.cpp
   src/drawing/sheet_commands.cpp
+  src/drawing/sheet_display.cpp
   src/drawing/bom.cpp
   src/drawing/display.cpp
   src/drawing/dxf_writer.cpp

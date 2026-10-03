@@ -138,5 +138,15 @@
   "No drawing objects selected for export": "لم تُحدَّد عناصر رسم للتصدير",
   "A vector page on the smallest ISO sheet that holds the view; hidden lines dashed.": "صفحة متجهية على أصغر ورقة ISO تتسع للمسقط؛ والخطوط المخفية متقطعة.",
   "A picture of the view at 300 dpi on white; hidden lines dashed.": "صورة للمسقط بدقة 300 نقطة في البوصة على خلفية بيضاء؛ والخطوط المخفية متقطعة.",
-  "PDF and PNG drawings are written by the OPAD app and opad-cli, not by this build": "رسومات PDF وPNG يكتبها تطبيق OPAD وopad-cli، لا هذا الإصدار"
+  "PDF and PNG drawings are written by the OPAD app and opad-cli, not by this build": "رسومات PDF وPNG يكتبها تطبيق OPAD وopad-cli، لا هذا الإصدار",
+  "Export sheet…": "تصدير اللوحة…",
+  "Export sheet": "تصدير اللوحة",
+  "PDF files (*.pdf)": "ملفات PDF (*.pdf)",
+  "SVG files (*.svg)": "ملفات SVG (*.svg)",
+  "DXF files (*.dxf)": "ملفات DXF (*.dxf)",
+  "DWG files (*.dwg)": "ملفات DWG (*.dwg)",
+  "PNG pictures (*.png)": "صور PNG (*.png)",
+  "Exporting a sheet": "جارٍ تصدير اللوحة",
+  "Projecting the views": "جارٍ إسقاط المساقط",
+  "That sheet is gone.": "لم تعد هذه اللوحة موجودة."
 }

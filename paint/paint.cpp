@@ -184,18 +184,25 @@ void paint(QPainter& p, const Display& d, const std::array<double, 4>& window, c
 }
 
 Page page_for(const Display& d, double margin, bool standard) {
-  const auto b = d.bounds();
   const double ps = d.pen_scale > 0 ? d.pen_scale : 1;
   Page page;
+  if (d.has_paper()) {  // its own sheet, named when it is a standard one
+    page.w = (d.paper[2] - d.paper[0]) / ps, page.h = (d.paper[3] - d.paper[1]) / ps;
+    page.window = d.paper;
+    for (const auto& paper : paper_sizes())
+      if (std::abs(std::min(page.w, page.h) - paper.w) < 0.5 && std::abs(std::max(page.w, page.h) - paper.h) < 0.5) page.paper = paper.name;
+    return page;
+  }
+  const auto b = d.bounds();
   page.w = (b[2] - b[0]) / ps + 2 * margin;
   page.h = (b[3] - b[1]) / ps + 2 * margin;
   if (standard)
     for (const auto& paper : paper_sizes()) {
-      if (paper.name[0] != 'A') continue;  // ISO, smallest first
+      if (std::string(paper.name).rfind("ANSI", 0) == 0) continue;  // ISO, smallest first
       const bool landscape = page.w > page.h;
       const double w = landscape ? paper.h : paper.w, h = landscape ? paper.w : paper.h;
       if (page.w <= w + 1e-9 && page.h <= h + 1e-9) {
-        page.w = w, page.h = h, page.sheet = paper.name;
+        page.w = w, page.h = h, page.paper = paper.name;
         break;
       }
     }
@@ -211,8 +218,10 @@ json write_pdf(const Display& d, const std::filesystem::path& file) {
   {
     QPdfWriter pdf(&out);
     static const std::map<std::string, QPageSize::PageSizeId> ids = {
-        {"A4", QPageSize::A4}, {"A3", QPageSize::A3}, {"A2", QPageSize::A2}, {"A1", QPageSize::A1}, {"A0", QPageSize::A0}};
-    const auto id = ids.find(page.sheet);
+        {"A4", QPageSize::A4},         {"A3", QPageSize::A3},         {"A2", QPageSize::A2},         {"A1", QPageSize::A1},
+        {"A0", QPageSize::A0},         {"ANSI-A", QPageSize::AnsiA}, {"ANSI-B", QPageSize::AnsiB}, {"ANSI-C", QPageSize::AnsiC},
+        {"ANSI-D", QPageSize::AnsiD}, {"ANSI-E", QPageSize::AnsiE}};
+    const auto id = ids.find(page.paper);
     const QPageSize size = id != ids.end() ? QPageSize(id->second)
                                            : QPageSize(QSizeF(std::min(page.w, page.h), std::max(page.w, page.h)), QPageSize::Millimeter, QString(), QPageSize::ExactMatch);
     pdf.setPageLayout(QPageLayout(size, page.w > page.h ? QPageLayout::Landscape : QPageLayout::Portrait, QMarginsF(0, 0, 0, 0), QPageLayout::Millimeter));
@@ -229,7 +238,7 @@ json write_pdf(const Display& d, const std::filesystem::path& file) {
   out.close();
   if (out.error() != QFileDevice::NoError) throw Error("cannot write " + name_of(file));
   const double ps = d.pen_scale > 0 ? d.pen_scale : 1;
-  return {{"page", {page.w, page.h}}, {"sheet", page.sheet}, {"scale", scale_text(1 / ps)}};
+  return {{"page", {page.w, page.h}}, {"paper", page.paper}, {"scale", scale_text(1 / ps)}};
 }
 
 QImage paint_image(const Display& d, double dpi) {

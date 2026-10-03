@@ -1,5 +1,6 @@
 #include "opad/drawing_io.hpp"
 #include "opad/drawing/display.hpp"
+#include "opad/drawing/sheet.hpp"
 #include <set>
 #include "opad/design/sketch_geom.hpp"
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -547,12 +548,10 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
   } catch(const Standard_Failure& e) { throw Error(std::string("cannot import geometry: ")+e.GetMessageString()); }
 }
 
-ExportResult export_drawing(const Document& doc,const Scene& scene,const std::filesystem::path& file,const ExportOptions& options) {
+namespace {
+// The selection (or the document) as drawn: solids and meshes as a view, drawings and sketches as they lie.
+drawing::Display objects_display(const Document& doc,const Scene& scene,const ExportOptions& options,const std::string& title,json& details,int& bodies) {
   const bool painted=options.format=="pdf" || options.format=="png";
-  if(options.format!="dxf" && options.format!="svg" && options.format!="dwg" && !painted) throw Error("2D formats are dxf, svg, dwg, pdf and png, not "+options.format);
-  if(painted && !drawing::can_paint()) throw Error("PDF and PNG drawings are written by the OPAD app and opad-cli, not by this build");
-  const auto stem=doc.path.stem().u8string();
-  const std::string title=doc.path.empty()?std::string("OPAD drawing"):std::string(stem.begin(),stem.end());
   std::vector<std::string> nodes, sketches;
   for(const auto& id:options.select) { if(scene.sketch(id)) sketches.push_back(id); else nodes.push_back(id); }
   std::vector<std::string> objects;
@@ -567,7 +566,7 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
     (n->representation=="drawing2d" || !n->raster.is_null()?drawn:modelled).push_back(id);
   }
   for(const auto& id:sketches) if(seen.insert(id).second) drawn.push_back(id);
-  drawing::Display d; d.title=title; json details=json::object(); int bodies=0;
+  drawing::Display d; d.title=title;
   // Solids and meshes: a hidden-line view; solids without one asked for as seen from the top, in XY with the drawings.
   if(options.view.is_null())
     for(const auto& id:modelled) if(scene.node(id)->representation=="mesh") throw Error("mesh reference objects require STL, OBJ or GLB export, or a 2D view");
@@ -612,6 +611,28 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
     ++bodies;
   }
   if(!bodies) throw Error("No drawing objects selected for export");
+  return d;
+}
+}
+
+ExportResult export_drawing(const Document& doc,const Scene& scene,const std::filesystem::path& file,const ExportOptions& options) {
+  const bool painted=options.format=="pdf" || options.format=="png";
+  if(options.format!="dxf" && options.format!="svg" && options.format!="dwg" && !painted) throw Error("2D formats are dxf, svg, dwg, pdf and png, not "+options.format);
+  if(painted && !drawing::can_paint()) throw Error("PDF and PNG drawings are written by the OPAD app and opad-cli, not by this build");
+  const auto stem=doc.path.stem().u8string();
+  const std::string title=doc.path.empty()?std::string("OPAD drawing"):std::string(stem.begin(),stem.end());
+  drawing::Display d; json details=json::object(); int bodies=0;
+  if(options.sheet.empty()) d=objects_display(doc,scene,options,title,details,bodies);
+  else {  // a drawing sheet as drawn (UI-86), by id or name
+    const Sheet* sheet=scene.sheet(options.sheet);
+    for(const auto& s:scene.sheets) if(!sheet && s.name==options.sheet) sheet=&s;
+    if(!sheet) throw Error("sheet "+options.sheet+" does not exist (sheet_info lists the sheets)");
+    json report;
+    d=drawing::sheet_display(doc,scene,*sheet,options.progress,&report);
+    details["sheet"]={{"id",sheet->id},{"name",sheet->name},{"views",report["views"]},{"items",report["items"]}};
+    if(!report["skipped"].empty()) details["skipped"]=report["skipped"];
+    bodies=report["bodies"].get<int>();
+  }
   if(options.format=="dwg") {  // DXF R2000 through the converter; text of several lines as one TEXT a line
     Conversion work; const auto intermediate=work.directory/"drawing.dxf", converted=work.directory/"drawing.dwg";
     write_text_file(intermediate,drawing::dxf_text(d,options.decimals,false));

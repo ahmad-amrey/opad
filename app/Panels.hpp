@@ -151,6 +151,7 @@ class BrowserPanel : public QWidget {
   void fitRequested(const std::vector<std::string>& ids);
   void autoHideChanged(bool on);
   void sketchActivated(const std::string& sketchId);  // double-click on a sketch row: edit it
+  void sheetExportRequested(const std::string& sheetId);  // a sheet row's Export sheet…
   void editedSketchVisibilityRequested();
 
  public slots:
