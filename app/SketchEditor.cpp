@@ -530,7 +530,7 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   const bool lineLike = m_tool == "line" && !m_chain.empty();
   // Ortho (F8, UI-112): the next point is level with the last one or plumb above it, whichever is nearer; the snaps to
   // points and curves above still win.
-  if (const SkPoint* from = lineLike && QSettings().value("sketch/ortho", false).toBool() ? m_sk.point(m_chain.back()) : nullptr) {
+  if (const SkPoint* from = lineLike && QSettings().value("view/orthoSnap", false).toBool() ? m_sk.point(m_chain.back()) : nullptr) {
     if (std::fabs(u - from->x) >= std::fabs(v - from->y)) { s.v = from->y; s.horizontal = automatic; }  // a constraint too, as inferred ones
     else { s.u = from->x; s.vertical = automatic; }
     return s;

@@ -98,11 +98,11 @@ OPAD_BENCH(OPAD_BENCH_STATUSBAR, statusbar) {
     }
     check(inOrder, "Ortho, Polar, Extensions, Tracking, Grid snapping, the readout, the selection, the units, in reading order");
     check(w.action("view.orthoSnap")->shortcut() == QKeySequence("F8") && w.action("view.polarSnap")->shortcut() == QKeySequence("F10"), "Ortho on F8, Polar on F10");
-    const bool ortho = QSettings().value("sketch/ortho", false).toBool();
+    const bool ortho = QSettings().value("view/orthoSnap", false).toBool();
     w.action("view.orthoSnap")->trigger();
     const bool polar = QSettings().value("sketch/snap/angle", true).toBool();
     w.action("view.polarSnap")->trigger();
-    check(QSettings().value("sketch/ortho").toBool() != ortho && QSettings().value("sketch/snap/angle").toBool() != polar, "they switch their settings");
+    check(QSettings().value("view/orthoSnap").toBool() != ortho && QSettings().value("sketch/snap/angle").toBool() != polar, "they switch their settings");
     w.action("view.orthoSnap")->trigger();
     w.action("view.polarSnap")->trigger();
     // Right-click: Grid snapping.

@@ -113,7 +113,7 @@ void MainWindow::buildStatusBar() {
   // The drafting toggles (UI-112 adds Ortho and Polar, the sketch's line directions): each a command with its key, its
   // setting, and a right-click menu of its quick settings (toggleMenu).
   struct Toggle { const char* id; const char* label; const char* icon; const char* key; const char* setting; bool defaultOn; };
-  for(const auto& spec : {Toggle{"view.orthoSnap","Ortho","orthoLines","F8","sketch/ortho",false},
+  for(const auto& spec : {Toggle{"view.orthoSnap","Ortho","orthoLines","F8","view/orthoSnap",false},
       Toggle{"view.polarSnap","Polar","polar","F10","sketch/snap/angle",true},
       Toggle{"view.extensions","Extensions","extensions","F11","view/extensions",true},
       Toggle{"view.tracking","Tracking","tracking","F12","view/tracking",true},
