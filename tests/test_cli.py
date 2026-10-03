@@ -148,7 +148,7 @@ def bill_of_materials():
     run("import", doc, os.path.join(FIXTURES, "assembly.step"))
     parts = run("bom", doc)
     assert parts["mode"] == "parts" and parts["assembly"]["name"] == "Fixture"
-    assert [(r["name"], r["qty"]) for r in parts["rows"]] == [("Plate", 1), ("Lid", 1), ("Bolt", 4), ("Bolt", 4)]
+    assert [(r["name"], r["qty"]) for r in parts["rows"]] == [("Plate", 1), ("Lid", 1), ("Bolt[1]", 4), ("Bolt[2]", 4)]
     assert [(r["item"], r["qty"], r["total_qty"]) for r in run("bom", doc, "--mode", "indented")["rows"]][2:4] == [("3", 1, 1), ("3.1", 4, 4)]
     plate = find_node(run("tree", doc), "Plate")["id"]
     p = run("part_properties", doc, "--target", plate, "--set", '{"material": "Aluminum 6061-T6", "part_number": "OP-7"}')

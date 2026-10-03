@@ -83,9 +83,48 @@ std::string without_occurrence(const std::string& name) {
   return head.empty() ? name : head + tail;
 }
 
-// The name a group of nodes shares once instance numbers are taken off, else the first one's.
+// The name a group of nodes shares once instance numbers are taken off, else the first one's. Names that differ only in
+// some numbers lose those ("Bolt 1[2]", "Bolt 3[2]" -> "Bolt[2]"); else numbers come off their ends.
 std::string common_name(std::vector<std::string> names) {
   const std::string first = names.front();
+  if (std::all_of(names.begin(), names.end(), [&](const std::string& n) { return n == first; })) return first;
+  const auto runs = [](const std::string& s) {  // text, number, text, number, ...: even entries are text
+    std::vector<std::string> out{""};
+    for (char c : s) {
+      const bool digit = std::isdigit(static_cast<unsigned char>(c)) != 0;
+      if (digit != (out.size() % 2 == 0)) out.emplace_back();
+      out.back() += c;
+    }
+    return out;
+  };
+  std::vector<std::string> shape = runs(first);
+  bool same_text = true;
+  std::vector<bool> differs(shape.size(), false);
+  for (const auto& n : names) {
+    const auto r = runs(n);
+    same_text = same_text && r.size() == shape.size();
+    for (size_t i = 0; same_text && i < r.size(); ++i) {
+      if (i % 2 == 0) same_text = r[i] == shape[i];
+      else differs[i] = differs[i] || r[i] != shape[i];
+    }
+  }
+  if (same_text) {
+    for (size_t i = shape.size(); i-- > 1;) {
+      if (!differs[i]) continue;
+      std::string &before = shape[i - 1], &after = i + 1 < shape.size() ? shape[i + 1] : shape[i];
+      shape[i].clear();
+      static const std::string open = "([<", close = ")]>";
+      if (!before.empty() && &after != &shape[i] && !after.empty() && open.find(before.back()) != std::string::npos &&
+          close.find(after.front()) == open.find(before.back())) {
+        before.pop_back();
+        after.erase(0, 1);
+      }
+      while (!before.empty() && std::string(" _:#-").find(before.back()) != std::string::npos) before.pop_back();
+    }
+    std::string joined;
+    for (const auto& r : shape) joined += r;
+    if (!joined.empty()) return joined;
+  }
   for (int round = 0; round < 4; ++round) {
     if (std::all_of(names.begin(), names.end(), [&](const std::string& n) { return n == names.front(); })) return names.front();
     bool changed = false;
