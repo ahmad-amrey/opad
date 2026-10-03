@@ -115,6 +115,31 @@ bool MainWindow::benchColors() {
   };
   trace::log(QString("bench: colors: body colour %1 %2 %3, %4 face colours on %5 faces, drawn in %6 groups")
                  .arg(n->color[0]).arg(n->color[1]).arg(n->color[2]).arg(faces.colors.size()).arg(painted).arg(m_viewport->drawnColors(id).size()));
+  // OPAD_BENCH_COLORS_PAINTED=1: the file is instead a Bambu Studio 3MF cube printed in filament 1 (#3060FF) with its top
+  // painted in filament 2 (#FF2020): the body takes the first, the painted top is a face of its own drawn in the second.
+  if (qEnvironmentVariableIsSet("OPAD_BENCH_COLORS_PAINTED")) {
+    const std::array<double, 3> blue{0x30 / 255.0, 0x60 / 255.0, 1.0}, paint{1.0, 0x20 / 255.0, 0x20 / 255.0};
+    if (!n->has_color || !alike(n->color, blue)) return fail("the body is not in its filament's colour");
+    if (faces.colors.size() != 1 || painted != 1 || !alike(faces.colors[0], paint)) return fail("the painted top is not a face colour");
+    if (m_viewport->drawnColors(id).size() != 2 || !drawn(blue) || !drawn(paint)) return fail("not drawn as a filament and a painted group");
+    m_viewport->standardView("iso");
+    m_viewport->fitAll();
+    QTimer::singleShot(800, this, [this, shot, fail, pixels] {
+      const QImage frame = m_viewport->grabImage();
+      int bluish = 0;
+      for (int y = 0; y < frame.height(); ++y)
+        for (int x = 0; x < frame.width(); ++x) {
+          const QColor c = frame.pixelColor(x, y);
+          bluish += c.blueF() > 0.35 && c.blueF() - c.redF() > 0.25;
+        }
+      const int reddish = pixels(frame, false);
+      trace::log(QString("bench: colors: painted 3MF: %1 painted pixels, %2 filament pixels").arg(reddish).arg(bluish));
+      if (!frame.save(shot) || reddish < 300 || bluish < 300) return (void)fail("the painted top or the filament body does not show");
+      trace::log("bench: colors 3MF painting drawn as a face group over the filament colour PASS");
+      QCoreApplication::exit(0);
+    });
+    return true;
+  }
   if (!n->has_color || !alike(n->color, grey)) return fail("the grey material was not kept as the file shows it");
   if (faces.colors.size() != 1 || painted != 1 || !alike(faces.colors[0], gold)) return fail("the gold top is not a face colour");
   if (m_viewport->drawnColors(id).size() != 2 || !drawn(grey) || !drawn(gold)) return fail("not drawn as a grey and a gold group");

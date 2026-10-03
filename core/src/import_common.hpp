@@ -4,6 +4,7 @@
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -32,6 +33,11 @@ ImportResult import_xcaf(Document& doc, const Handle(TDocStd_Document)& xdoc, co
 // the same position are merged first when `weld` is set (STL repeats them per facet). Normals are smoothed across edges
 // flatter than 30 degrees and kept sharp across steeper ones, so curved parts look round and machined edges stay crisp.
 TopoDS_Face mesh_face(const std::vector<float>& xyz, const std::vector<uint32_t>& triangles, bool weld);
+// The same mesh coloured triangle by triangle (3MF materials and painting, PLY colours): `colour[t]` indexes `colours`, -1
+// the body's own colour. One face per colour, the body's first (a compound when there are several, its "face_colors" put
+// into `meta`), shaded as one mesh.
+TopoDS_Shape mesh_faces(const std::vector<float>& xyz, const std::vector<uint32_t>& triangles, bool weld, const std::vector<int>& colour,
+                        const std::vector<std::array<double, 3>>& colours, json* meta = nullptr);
 
 // Runs a program and waits for it (two minutes at most); its exit status, or -1 when it did not start. Arguments go as
 // wide strings on Windows, so a file named in Arabic reaches the program intact; its output is dropped (drawing_io.cpp).

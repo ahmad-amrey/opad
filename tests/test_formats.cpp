@@ -266,6 +266,142 @@ TEST(three_mf_instances_colours_units_and_components) {
   CHECK_THROWS(open(f.dir / "bad.3mf", true));
 }
 
+// A body's colour and the colours of its faces (in face order, the body's own as -1), with every face's triangle count.
+struct Look {
+  std::array<double, 3> color{};
+  bool has_color = false;
+  std::vector<std::array<double, 3>> faces;
+  std::vector<int> triangles;
+};
+std::vector<Look> looks(const Document& d) {
+  std::vector<Look> out;
+  const Scene s = resolve(d);
+  for (const auto& id : s.all_bodies()) {
+    const Node* n = s.node(id);
+    Look l{n->color, n->has_color, {}, {}};
+    const FaceColors fc = face_colors(d, n->body_key);
+    const TopoDS_Shape shape = body_shape(d, n->body_key);
+    int i = 0;
+    for (TopExp_Explorer f(shape, TopAbs_FACE); f.More(); f.Next(), ++i) {
+      TopLoc_Location loc;
+      const auto t = BRep_Tool::Triangulation(TopoDS::Face(f.Current()), loc);
+      l.triangles.push_back(t.IsNull() ? 0 : t->NbTriangles());
+      l.faces.push_back(fc.at(i) < 0 ? std::array<double, 3>{-1, -1, -1} : fc.colors[size_t(fc.at(i))]);
+    }
+    out.push_back(l);
+  }
+  return out;
+}
+bool same(const std::array<double, 3>& a, const std::array<double, 3>& b) {
+  return std::abs(a[0] - b[0]) < 0.003 && std::abs(a[1] - b[1]) < 0.003 && std::abs(a[2] - b[2]) < 0.003;
+}
+const std::array<double, 3> kOwn{-1, -1, -1}, kRed{1, 0, 0}, kGreen{0, 1, 0}, kBlue{0, 0, 1}, kWhite{1, 1, 1};
+
+// Triangles coloured one by one keep their colours as faces of the body: 3MF materials per triangle, a slicer's painting and
+// its parts' and volumes' filaments (Bambu Studio, PrusaSlicer).
+TEST(three_mf_colours_per_triangle_painting_and_filaments) {
+  Files f;
+  const std::string square4 =
+      "<mesh><vertices><vertex x=\"0\" y=\"0\" z=\"0\"/><vertex x=\"10\" y=\"0\" z=\"0\"/><vertex x=\"10\" y=\"10\" z=\"0\"/>"
+      "<vertex x=\"0\" y=\"10\" z=\"0\"/><vertex x=\"5\" y=\"5\" z=\"0\"/></vertices><triangles>";
+  auto tri = [](int a, int b, const std::string& extra) {
+    return "<triangle v1=\"" + std::to_string(a) + "\" v2=\"" + std::to_string(b) + "\" v3=\"4\" " + extra + "/>";
+  };
+  const std::string rels =
+      "<Relationships><Relationship Target=\"/3D/3dmodel.model\" Id=\"rel0\" Type=\"http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel\"/></Relationships>";
+  // The core spec: a colour group, three triangles red and one green; no colour of the object's own.
+  const std::string plain =
+      "<model unit=\"millimeter\"><resources><colorgroup id=\"5\"><color color=\"#FF0000\"/><color color=\"#00FF00\"/></colorgroup>"
+      "<object id=\"1\" name=\"Tile\">" + square4 + tri(0, 1, "pid=\"5\" p1=\"0\"") + tri(1, 2, "pid=\"5\" p1=\"1\"") +
+      tri(2, 3, "pid=\"5\" p1=\"0\"") + tri(3, 0, "pid=\"5\" p1=\"0\"") + "</triangles></mesh></object></resources>"
+      "<build><item objectid=\"1\"/></build></model>";
+  write_binary(f.dir / "plain.3mf", zip({{"_rels/.rels", rels}, {"3D/3dmodel.model", plain}}, true));
+  for (bool viewer : {true, false}) {
+    const auto all = looks(open(f.dir / "plain.3mf", viewer));
+    CHECK_EQ(all.size(), 1u);
+    CHECK(all[0].has_color && same(all[0].color, kRed));
+    CHECK_EQ(all[0].faces.size(), 2u);
+    CHECK(same(all[0].faces[0], kOwn) && all[0].triangles[0] == 3 && same(all[0].faces[1], kGreen) && all[0].triangles[1] == 1);
+  }
+  // Bambu Studio: an object of two parts, one printed in filament 2, the other in the object's filament 1 with one triangle
+  // painted mostly in filament 2 (split in four, three of them) and one in filament 4 (an extended state).
+  const std::string bambuRoot =
+      "<model unit=\"millimeter\" xmlns:p=\"http://schemas.microsoft.com/3dmanufacturing/production/2015/06\"><resources>"
+      "<object id=\"2\" type=\"model\"><components><component p:path=\"/3D/Objects/object_1.model\" objectid=\"1\"/>"
+      "<component p:path=\"/3D/Objects/object_1.model\" objectid=\"3\"/></components></object></resources>"
+      "<build><item objectid=\"2\"/></build></model>";
+  const std::string bambuParts =
+      "<model unit=\"millimeter\"><resources><object id=\"1\" type=\"model\">" + square4 + tri(0, 1, "") + tri(1, 2, "") + tri(2, 3, "") +
+      tri(3, 0, "") + "</triangles></mesh></object><object id=\"3\" type=\"model\">" + square4 + tri(0, 1, "") + tri(1, 2, "paint_color=\"08883\"") +
+      tri(2, 3, "paint_color=\"1C\"") + tri(3, 0, "paint_color=\"0\"") + "</triangles></mesh></object></resources><build/></model>";
+  const std::string bambuSettings =
+      "<config><object id=\"2\"><metadata key=\"name\" value=\"Painted\"/><metadata key=\"extruder\" value=\"1\"/>"
+      "<part id=\"1\" subtype=\"normal_part\"><metadata key=\"name\" value=\"Red part\"/><metadata key=\"extruder\" value=\"2\"/></part>"
+      "<part id=\"3\" subtype=\"normal_part\"><metadata key=\"name\" value=\"White part\"/></part></object></config>";
+  write_binary(f.dir / "bambu.3mf", zip({{"_rels/.rels", rels}, {"3D/3dmodel.model", bambuRoot}, {"3D/Objects/object_1.model", bambuParts},
+                                         {"Metadata/model_settings.config", bambuSettings},
+                                         {"Metadata/project_settings.config", "{\"filament_colour\": [\"#FFFFFF\", \"#FF0000\", \"#00FF00\", \"#0000FF\"]}"}},
+                                        true));
+  for (bool viewer : {true, false}) {
+    const Document d = open(f.dir / "bambu.3mf", viewer);
+    const auto all = looks(d);
+    CHECK_EQ(all.size(), 2u);
+    CHECK(same(all[0].color, kRed) && all[0].faces.size() == 1 && same(all[0].faces[0], kOwn));
+    CHECK(same(all[1].color, kWhite) && all[1].faces.size() == 3);
+    CHECK(same(all[1].faces[0], kOwn) && all[1].triangles[0] == 2);
+    CHECK(same(all[1].faces[1], kRed) && all[1].triangles[1] == 1);
+    CHECK(same(all[1].faces[2], kBlue) && all[1].triangles[2] == 1);
+    CHECK_EQ(resolve(d).node(resolve(d).roots.front())->children.size(), 1u);
+  }
+  // PrusaSlicer: one mesh, a volume in extruder 2 and a painted triangle; the first extruder's own colour, the second the
+  // filament's (its extruder colour is empty).
+  const std::string prusa =
+      "<model unit=\"millimeter\" xmlns:slic3rpe=\"http://schemas.slic3r.org/3mf/2017/06\"><resources><object id=\"1\" type=\"model\">" + square4 +
+      tri(0, 1, "slic3rpe:mmu_segmentation=\"8\"") + tri(1, 2, "") + tri(2, 3, "") + tri(3, 0, "") +
+      "</triangles></mesh></object></resources><build><item objectid=\"1\"/></build></model>";
+  const std::string prusaModel =
+      "<config><object id=\"1\" instances_count=\"1\"><metadata type=\"object\" key=\"name\" value=\"Box\"/>"
+      "<volume firstid=\"0\" lastid=\"1\"><metadata type=\"volume\" key=\"extruder\" value=\"0\"/></volume>"
+      "<volume firstid=\"2\" lastid=\"3\"><metadata type=\"volume\" key=\"extruder\" value=\"2\"/></volume></object></config>";
+  write_binary(f.dir / "prusa.3mf", zip({{"_rels/.rels", rels}, {"3D/3dmodel.model", prusa}, {"Metadata/Slic3r_PE_model.config", prusaModel},
+                                         {"Metadata/Slic3r_PE.config", "; extruder_colour = \"#FF0000\";\"\"\n; filament_colour = #00FF00;#0000FF\n"}},
+                                        false));
+  const auto all = looks(open(f.dir / "prusa.3mf", true));
+  CHECK_EQ(all.size(), 1u);
+  CHECK(same(all[0].color, kRed) && all[0].faces.size() == 2);
+  CHECK(same(all[0].faces[0], kOwn) && all[0].triangles[0] == 1 && same(all[0].faces[1], kBlue) && all[0].triangles[1] == 3);
+}
+
+// PLY colours by face or by vertex: a few become the body's and faces of their own, a scan's many their average.
+TEST(ply_face_and_vertex_colours) {
+  Files f;
+  const std::string head = "ply\nformat ascii 1.0\nelement vertex 5\nproperty float x\nproperty float y\nproperty float z\n";
+  const std::string points = "0 0 0\n10 0 0\n10 10 0\n0 10 0\n5 5 0\n";
+  write_text_file(f.dir / "faces.ply", head + "element face 3\nproperty list uchar int vertex_indices\nproperty uchar red\nproperty uchar green\n"
+                                              "property uchar blue\nend_header\n" + points + "4 0 1 2 3 255 0 0\n3 0 1 4 255 0 0\n3 1 2 4 0 0 255\n");
+  for (bool viewer : {true, false}) {
+    const auto all = looks(open(f.dir / "faces.ply", viewer));
+    CHECK(all.size() == 1 && same(all[0].color, kRed) && all[0].faces.size() == 2);
+    CHECK(same(all[0].faces[0], kOwn) && all[0].triangles[0] == 3 && same(all[0].faces[1], kBlue) && all[0].triangles[1] == 1);
+  }
+  write_text_file(f.dir / "vertices.ply", head + "property uchar red\nproperty uchar green\nproperty uchar blue\nelement face 4\n"
+                                                 "property list uchar int vertex_indices\nend_header\n"
+                                                 "0 0 0 0 255 0\n10 0 0 0 255 0\n10 10 0 0 0 255\n0 10 0 0 0 255\n5 5 0 0 255 0\n"
+                                                 "3 0 1 4\n3 1 2 4\n3 2 3 4\n3 3 0 4\n");
+  const auto byVertex = looks(open(f.dir / "vertices.ply", true));
+  CHECK(byVertex.size() == 1 && byVertex[0].faces.size() == 2);  // green where two corners are, blue on the far side
+  CHECK(same(byVertex[0].faces[1], kBlue) && byVertex[0].triangles[1] == 1);
+  std::string scan = "ply\nformat ascii 1.0\nelement vertex 300\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\n"
+                     "property uchar green\nproperty uchar blue\nelement face 100\nproperty list uchar int vertex_indices\nend_header\n";
+  for (int i = 0; i < 100; ++i)
+    for (int k = 0; k < 3; ++k) scan += std::to_string(i * 3 + (k == 1)) + " " + std::to_string(k == 2) + " 0 " + std::to_string(i + 50) + " 100 100\n";
+  for (int i = 0; i < 100; ++i) scan += "3 " + std::to_string(i * 3) + " " + std::to_string(i * 3 + 1) + " " + std::to_string(i * 3 + 2) + "\n";
+  write_text_file(f.dir / "scan.ply", scan);
+  const auto many = looks(open(f.dir / "scan.ply", true));
+  CHECK(many.size() == 1 && many[0].faces.size() == 1 && many[0].has_color);
+  CHECK_NEAR(many[0].color[0], 99.5 / 255, 0.003);
+}
+
 TEST(obj_polygons_groups_and_material_colours) {
   Files f;
   write_text_file(f.dir / "parts.mtl", "newmtl green\nKd 0 1 0\n");
@@ -334,19 +470,10 @@ TEST(obj_materials_keep_their_shown_colour_as_face_groups) {
   CHECK(mtl.find("newmtl m0\nKd 0.4390 0.4390 0.4390") != std::string::npos);
   CHECK(mtl.find("newmtl m0_0\nKd 1.0000 0.0000 0.0000") != std::string::npos);
   expect(open(f.dir / "out.obj", false), "OBJ written and read again");
-  // glTF stores colours linear and OPAD reads them back as shown; its writer makes a mesh's pieces nodes of their own.
+  // glTF stores colours linear and OPAD reads them back as shown; a body of several faces stays one node, its faces primitives.
   eo.format = "glb";
   export_selection(d, resolve(d), f.dir / "out.glb", eo);
-  const Document gltf = open(f.dir / "out.glb", true);
-  const Scene s = resolve(gltf);
-  bool grey = false, red = false;
-  for (const auto& id : s.all_bodies()) {
-    const Node* n = s.node(id);
-    grey = grey || (std::abs(n->color[0] - 0.439) < 0.003 && std::abs(n->color[2] - 0.439) < 0.003);
-    red = red || (std::abs(n->color[0] - 1.0) < 0.003 && n->color[1] < 0.003);
-  }
-  CHECK(grey);
-  CHECK(red);
+  expect(open(f.dir / "out.glb", true), "glTF written and read again");
 }
 
 // A STEP that styles single faces (KiCad's models: a black body, gold pins) keeps them: the body takes the common colour,

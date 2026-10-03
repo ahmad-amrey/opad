@@ -27,6 +27,7 @@
 #include <TopTools_IndexedMapOfShape.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
+#include <TopoDS_Shell.hxx>
 #include <XCAFApp_Application.hxx>
 #include <XCAFDoc_ColorTool.hxx>
 #include <XCAFDoc_DocumentTool.hxx>
@@ -894,6 +895,7 @@ Handle(TDocStd_Document) build_xcaf(const Document& doc, const Scene& scene, con
   struct Built { TopoDS_Shape placed; TopoDS_Shape proto; const Node* node; };
   std::vector<Built> built;
   BRep_Builder bb;
+  std::map<std::string, TopoDS_Shape> shells;  // a mesh body of several faces (one per colour) as one part: a shell, per body key
 
   std::function<TopoDS_Shape(const std::string&)> build = [&](const std::string& id) -> TopoDS_Shape {
     const Node* n = scene.node(id);
@@ -903,6 +905,17 @@ Handle(TDocStd_Document) build_xcaf(const Document& doc, const Scene& scene, con
       if (n->body_missing) return TopoDS_Shape();
       proto = body_shape(doc, n->body_key);
       if (with_mesh) mesh_shape(proto, tol);
+      // A compound would become an assembly, each face a node of its own (glTF): its faces go into a shell, one part.
+      if (with_mesh && n->representation == "mesh" && proto.ShapeType() == TopAbs_COMPOUND) {
+        auto& shell = shells[n->body_key];
+        if (shell.IsNull()) {
+          TopoDS_Shell faces;
+          bb.MakeShell(faces);
+          for (TopExp_Explorer f(proto, TopAbs_FACE); f.More(); f.Next()) bb.Add(faces, f.Current());
+          shell = faces;
+        }
+        proto = shell;
+      }
     } else {
       TopoDS_Compound comp;
       bb.MakeCompound(comp);
@@ -940,7 +953,7 @@ Handle(TDocStd_Document) build_xcaf(const Document& doc, const Scene& scene, con
         TopExp::MapShapes(b.proto, TopAbs_FACE, map);
         for (int i = 1; i <= map.Extent(); ++i) {
           if (faces.at(i - 1) < 0) continue;
-          // A mesh's faces are parts of their own (its compound became an assembly), a solid's are sub-shapes.
+          // A face is a sub-shape of its part (a solid, a mesh body's shell), or a part of its own.
           TDF_Label at;
           if (!st->FindShape(map(i), at, Standard_False) || at.IsNull()) at = st->AddSubShape(proto_label, map(i));
           if (!at.IsNull()) ct->SetColor(at, color(faces.colors[static_cast<size_t>(faces.at(i - 1))]), XCAFDoc_ColorSurf);
