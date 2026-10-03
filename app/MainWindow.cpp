@@ -394,6 +394,7 @@ void MainWindow::buildActions() {
     addRecent(p);
   });
   addAction("file.export", tr("&Export…"), "export", QKeySequence("Ctrl+E"), [this] { exportDialog(); });
+  addAction("file.exportBom", tr("Export &bill of materials…"), "list", QKeySequence(), [this] { exportBom(); });
   addAction("file.screenshot", tr("Save screens&hot…"), "export", QKeySequence("Ctrl+Shift+P"), [this] { screenshot(); });
   addAction("file.close", tr("&Close document"), "close", QKeySequence("Ctrl+W"), [this] {
     if (!m_doc->hasDocument || m_doc->loading || !maybeSave()) return;
@@ -646,7 +647,7 @@ void MainWindow::buildMenus() {
   QMenu* file = menuBar()->addMenu(tr("&File"));
   add(file, {"file.new", "file.open", "file.import", "file.importdoc"});
   m_recentMenu = file->addMenu(tr("Recent"));
-  add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
+  add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.exportBom", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
   add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = menuBar()->addMenu(tr("&View"));
@@ -690,7 +691,7 @@ void MainWindow::buildRibbon() {
   m_ribbon->addTab(review, tr("View"), {acts({"view.fit", "view.home", "view.ortho", "view.2d"}), acts({"view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through"}), acts({"view.isolate", "view.unisolate"})});
   m_ribbon->addTab(review, tr("Inspect"), {acts({"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox"}), acts({"inspect.pin", "inspect.properties", "inspect.partProperties"}), acts({"inspect.interference", "inspect.printcheck"}), acts({"inspect.section", "inspect.flip"})});
   m_ribbon->addTab(review, tr("Annotate"), {acts({"panel.annotations", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show"}), acts({"edit.rename", "edit.hide", "edit.showall", "view.saveview"})});
-  m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
+  m_ribbon->addTab(review, tr("Export"), {acts({"file.export", "file.exportBom", "file.screenshot"}), acts({"file.import", "file.save"})});
   m_ribbon->addTab(design, tr("Solid"), {acts({"design.sketch", "design.extrude", "design.revolve", "design.sweep", "design.loft", "design.hole", "design.pipe", "design.coil"}),
                                          acts({"design.box", "design.cylinder", "design.sphere", "design.cone", "design.torus"}), acts({"design.parameters"})});
   m_ribbon->addTab(design, tr("Modify"), {acts({"design.offset_face", "design.thicken", "design.fillet", "design.chamfer", "design.shell", "design.draft", "design.scale"}),
@@ -700,7 +701,7 @@ void MainWindow::buildRibbon() {
   m_ribbon->addTab(design, tr("Assemble"), {acts({"file.import", "design.newcomponent", "design.reparent"}), acts({"edit.rename", "edit.delete", "edit.restore"}),
                                             acts({"design.colour", "design.opacity", "design.lock", "edit.hide", "view.isolate"})});
   m_ribbon->addTab(design,tr("View"),{acts({"view.fit","view.home","view.2d","view.ortho"}),acts({"view.shaded","view.edges","view.wire","view.grid","view.gridSettings","select.through"})});
-  m_ribbon->addTab(design, tr("Export"), {acts({"file.export", "file.screenshot"}), acts({"file.import", "file.save"})});
+  m_ribbon->addTab(design, tr("Export"), {acts({"file.export", "file.exportBom", "file.screenshot"}), acts({"file.import", "file.save"})});
   m_ribbon->addTab(m_sketchWorkspace, tr("Create"), {acts({"sketch.finish", "sketch.cancel", "view.2d", "view.alignPlane"}),
       acts({"sketch.line", "sketch.rect", "sketch.circle", "sketch.arc3", "sketch.spline", "sketch.ellipse", "sketch.slot", "sketch.polygon", "sketch.point", "sketch.moreCreate"})});
   m_ribbon->addTab(m_sketchWorkspace, tr("Modify"), {acts({"sketch.finish", "view.2d"}),
@@ -1280,7 +1281,7 @@ void MainWindow::showDocument(bool has) {
   for (QAction* a : m_actions) {
     QString id = a->objectName();
     if (id.startsWith("view.") && id != "view.dark") a->setEnabled(has && (id != "view.unisolate" || m_viewport->isIsolated()));
-    if (id.startsWith("inspect.") || id.startsWith("annotate.") || id.startsWith("select.") || id == "file.export" || id == "file.screenshot" || id == "file.save" || id == "file.saveas" || id == "file.close")
+    if (id.startsWith("inspect.") || id.startsWith("annotate.") || id.startsWith("select.") || id == "file.export" || id == "file.exportBom" || id == "file.screenshot" || id == "file.save" || id == "file.saveas" || id == "file.close")
       a->setEnabled(has);
     if (id == "file.importdoc") a->setEnabled(m_doc->browse);
     // Viewer mode keeps the editing commands: they say that the file has to be saved first (isEditAction).

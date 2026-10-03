@@ -4,15 +4,20 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QRadioButton>
+#include <QStatusBar>
 #include <QTreeWidget>
 
 #include <cmath>
+#include <functional>
 
+#include "BomExport.hpp"
 #include "PartProperties.hpp"
 #include "opad/materials.hpp"
 
@@ -21,8 +26,43 @@
 // library material (its density shown, colour as the material offered) and a vendor and applies them as one step, after
 // which the panel shows them and the plate's mass. Both pins get a part number and "purchased" in one step; the plate and
 // a pin together show their differing fields as several values and change only what is typed; a density that is not a
-// number is refused; a cleared field is removed. <prefix>.part.png is the dialog, <prefix>.properties.png the panel.
+// number is refused; a cleared field is removed. Then the pins go into a component and File > Export bill of materials
+// previews the parts (the pins one row of two by their part number, the plate's mass, the pins' missing one marked) while
+// the document is held, indented (the component with its row below it) and of the selected component, and writes the
+// CSV with the separator chosen. <prefix>.part.png is the dialog, <prefix>.properties.png the panel, <prefix>.bom.png and
+// <prefix>.bom.csv the export.
+// OPAD_BENCH_BOM_OPEN=<png>: the loaded file's BoM in parts, indented and top mode, timed (the Engine: no stall, the
+// worker's time); OPAD_BENCH_BOM_MATERIAL=<material> sets one on the roots first (masses, never saved);
+// OPAD_BENCH_BOM_VIEWER=1 requires the file to be open in viewer mode.
 bool MainWindow::benchBom() {
+  if (const QString shot = qEnvironmentVariable("OPAD_BENCH_BOM_OPEN"); !shot.isEmpty()) {  // the loaded file's (the Engine: timings, stalls)
+    QElapsedTimer clock;
+    bool ok = true;
+    const auto listed = [&](BomDialog* bom, const char* mode) {
+      if (auto* box = bom->findChild<QComboBox*>("bom.mode")) box->setCurrentIndex(box->findData(mode));
+      clock.start();
+      while (!bom->ready() && clock.elapsed() < 600000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+      const opad::json& totals = bom->bom().value("totals", opad::json::object());
+      trace::log(QString("bench: bom-open: %1: %2 rows, %3 parts in %4 ms %5").arg(mode).arg(totals.value("rows", 0)).arg(totals.value("parts", 0))
+                     .arg(clock.elapsed()).arg(bom->ready() ? "PASS" : "FAIL"));
+      ok = ok && bom->ready();
+    };
+    if (const QString material = qEnvironmentVariable("OPAD_BENCH_BOM_MATERIAL"); !material.isEmpty())  // masses of every body (never saved)
+      m_doc->run("part_properties", {{"targets", m_doc->scene.roots}, {"set", {{"material", material.toStdString()}}}});
+    if (qEnvironmentVariableIsSet("OPAD_BENCH_BOM_VIEWER")) {  // a file other than .opad: listed as it is viewed, nothing saved first
+      trace::log(QString("bench: bom-open: in viewer mode %1").arg(m_doc->browse ? "PASS" : "FAIL"));
+      ok = m_doc->browse;
+    }
+    exportBom({});
+    if (auto* bom = findChild<BomDialog*>()) {
+      listed(bom, "parts");
+      bom->grab().save(shot);
+      listed(bom, "indented");
+      listed(bom, "top");
+    }
+    QCoreApplication::exit(ok ? 0 : 2);
+    return true;
+  }
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_BOM");
   if (prefix.isEmpty()) return false;
   bool ok = true;
@@ -116,8 +156,8 @@ bool MainWindow::benchBom() {
     editPartProperties({pin1, pin2});
     d = dialog();
     field(d, "part_number")->setText("ISO 8734 6x20");
-    auto* bom = d->findChild<QComboBox*>("part.bom");
-    bom->setCurrentIndex(bom->findData("purchased"));
+    auto* listed = d->findChild<QComboBox*>("part.bom");
+    listed->setCurrentIndex(listed->findData("purchased"));
     apply(d)->click();
     check(m_doc->doc.ops.size() == ops + 4 && m_doc->undoLabel() == "part properties" && props(pin1).value("part_number", "") == "ISO 8734 6x20" &&
               props(pin2).value("bom", "") == "purchased",
@@ -151,6 +191,80 @@ bool MainWindow::benchBom() {
     check(m_doc->doc.ops.size() == kept + 1 && !props(plate).contains("part_number") && !shown().contains("Part number="), "Cancel changes nothing; a cleared field is removed");
     action("edit.undo")->trigger();
     check(props(plate).value("part_number", "") == "OP-2001", "Ctrl+Z brings it back");
+
+    m_doc->run("component", {{"name", "Pins"}});
+    std::string pins;
+    for (const auto& [id, node] : m_doc->scene.nodes)
+      if (node.name == "Pins") pins = id;
+    m_doc->run("reparent", {{"targets", {pin1, pin2}}, {"parent", pins}});
+    action("file.exportBom")->trigger();
+    auto* bom = findChild<BomDialog*>();
+    if (!bom) throw opad::Error("no BoM dialog");
+    const bool held = m_doc->designBusy;
+    QElapsedTimer waited;
+    const auto ready = [&] {
+      waited.start();
+      while (!bom->ready() && waited.elapsed() < 30000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+      return bom->ready();
+    };
+    auto* preview = bom->findChild<QTreeWidget*>("bom.preview");
+    const auto rows = [&] {  // "item qty part number name material mass" per row, children in brackets
+      std::function<QString(QTreeWidgetItem*)> row = [&](QTreeWidgetItem* it) {
+        QStringList cells;
+        for (int c = 0; c < 6; ++c) cells << it->text(c);
+        QStringList kids;
+        for (int i = 0; i < it->childCount(); ++i) kids << row(it->child(i));
+        return cells.join('|') + (kids.isEmpty() ? QString() : "[" + kids.join("; ") + "]");
+      };
+      QStringList out;
+      for (int i = 0; i < preview->topLevelItemCount(); ++i) out << row(preview->topLevelItem(i));
+      return out.join("; ");
+    };
+    const auto statusText = [&] {
+      for (auto* l : bom->findChildren<QLabel*>())
+        if (l->objectName() == "secondary") return l->text();
+      return QString();
+    };
+    const auto previews = [&](const QString& want) { return ready() && rows() == want; };  // waits first: the message reads after
+    bool pass = held && previews(QString::fromUtf8("1|1|OP-2001|Box1|Aluminium 6061|0.065; 2|2|ISO 8734 6x20|Cylinder||—")) && !m_doc->designBusy &&
+                statusText().contains(QString::fromUtf8("2 rows · 3 parts")) && statusText().contains("1 without a mass");
+    check(pass, "Export bill of materials previews the parts while the document is held, then lets it go: " + rows() + " / " + statusText());
+    auto* mode = bom->findChild<QComboBox*>("bom.mode");
+    mode->setCurrentIndex(mode->findData("indented"));
+    pass = previews(QString::fromUtf8("1|1|OP-2001|Box1|Aluminium 6061|0.065; 2|1||Pins||—[2.1|2|ISO 8734 6x20|Cylinder||—]"));
+    check(pass, "indented: the component with its pins below it: " + rows());
+    const bool whole = !bom->findChild<QRadioButton*>("bom.selected")->isEnabled();
+    bom->reject();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    exportBom({pins});  // with the component selected
+    bom = findChild<BomDialog*>();
+    preview = bom->findChild<QTreeWidget*>("bom.preview");
+    mode = bom->findChild<QComboBox*>("bom.mode");
+    pass = whole && bom->findChild<QRadioButton*>("bom.selected")->isChecked() && mode->currentData() == "indented" &&
+           previews(QString::fromUtf8("1|2|ISO 8734 6x20|Cylinder||—"));
+    check(pass, "nothing selected, the document's; a component selected, its own (the list kept as it was set): " + rows());
+    bom->findChild<QRadioButton*>("bom.whole")->setChecked(true);
+    mode->setCurrentIndex(mode->findData("parts"));
+    auto* unit = bom->findChild<QComboBox*>("bom.unit");
+    unit->setCurrentIndex(unit->findData("g"));
+    auto* separator = bom->findChild<QComboBox*>("bom.separator");
+    separator->setCurrentIndex(separator->findData(";"));
+    ready();
+    bom->grab().save(prefix + ".bom.png");
+    const QString out = prefix + ".bom.csv";
+    QFile::remove(out);
+    bool written = false;
+    connect(bom, &BomDialog::exported, this, [&](const QString&, const QString& error) { written = error.isEmpty(); });
+    m_doc->run("part_properties", {{"target", plate}, {"set", {{"description", "Base plate (anodised)"}}}});  // as an agent might, meanwhile
+    bom->exportTo(out);
+    waited.start();
+    while (!written && waited.elapsed() < 10000) QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    QFile file(out);
+    const QByteArray csv = file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    pass = written && csv.startsWith("\xEF\xBB\xBF" "Item;Qty;Part number;Name;Description;Material;Mass (g);Total mass (g);Vendor;Purchased;Source;Notes\r\n") &&
+           csv.contains("\r\n1;1;OP-2001;Box1;Base plate (anodised);Aluminium 6061;64.80;64.80;Acme;;design;Deburr\r\n") &&
+           csv.contains("\r\n2;2;ISO 8734 6x20;Cylinder;;;;;;yes;design;Deburr\r\n") && statusBar()->currentMessage().contains("Bill of materials written to");
+    check(pass, "Export CSV lists again what changed since and writes it in grams with semicolons, UTF-8 with a byte order mark: " + QString::fromUtf8(csv).replace("\r\n", " | "));
   } catch (const std::exception& e) {
     check(false, QString("unexpected error: %1").arg(QString::fromUtf8(e.what())));
   }

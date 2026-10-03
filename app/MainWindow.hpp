@@ -78,7 +78,7 @@ class MainWindow : public QMainWindow {
   bool benchTodo9();
   bool benchDrawingImport();
   bool benchDrawings();  // OPAD_BENCH_DRAWINGS: the browser's Drawings folder and the timeline without drawing ops
-  bool benchBom();       // OPAD_BENCH_BOM: the Properties panel's PART section and its dialog
+  bool benchBom();       // OPAD_BENCH_BOM: the Properties panel's PART section, its dialog and Export bill of materials
   bool benchAnnotateLarge();  // OPAD_BENCH_ANNOTATE: the note / drawing editors on the loaded file's heaviest body
   bool benchLargeSketch();
   bool benchShortcuts();
@@ -114,6 +114,7 @@ class MainWindow : public QMainWindow {
   void restyleAnnotation(const std::string& opId, const std::string& style);  // an edit op on the note
   void exportDialog(std::vector<std::string> ids = {});
   void editPartProperties(std::vector<std::string> ids);  // PartProperties.cpp: the nodes' part properties dialog
+  void exportBom(std::vector<std::string> ids = {});      // BomExport.cpp: File > Export bill of materials
   void drawingToSketch();
   void browseInstances(const std::string& id);
   void screenshot();

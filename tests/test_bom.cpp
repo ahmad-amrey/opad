@@ -20,6 +20,7 @@
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 #include "opad/materials.hpp"
+#include "opad/step_io.hpp"
 
 using namespace opad;
 
@@ -465,6 +466,40 @@ TEST(bom_csv) {
   const std::string translated = drawing::bom_csv(b, ',', {{"item", "Pos."}, {"yes", "ja"}});
   CHECK(translated.rfind("\xEF\xBB\xBF" "Pos.,Level,", 0) == 0);
   CHECK(translated.find("\r\n7,1,1,1,M-42,Motor,,,350.00,350.00,,ja,robot.step,,\r\n") != std::string::npos);
+}
+
+// File > Export bill of materials works on a STEP file opened in viewer mode (live shapes, no BREP text, random keys): the
+// same rows and quantities as the file imported for editing, the masses from the file's own material names.
+TEST(bom_viewer_mode) {
+  Robot r;
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-bom-" + new_uuid());
+  std::filesystem::create_directories(dir);
+  const auto step = dir / "robot.step";
+  json solids = json::array();  // the mesh guard stays out of a STEP file
+  const Scene s = resolve(r.doc);
+  for (const auto& id : s.node(r.root)->children)
+    if (s.node(id)->representation != "mesh") solids.push_back(id);
+  run(r.doc, "export", {{"format", "step"}, {"out", step.string()}, {"select", solids}});
+  ImportOptions viewer;
+  viewer.viewer = true;
+  Document viewed = browse_step(step, viewer);
+  CHECK(viewed.has_live_bodies());
+  Document edited = Document::create();
+  import_step(edited, step);
+  drawing::BomOptions o;
+  o.mass = false;
+  for (const char* mode : {"parts", "indented"}) {
+    o.mode = mode;
+    same(table(drawing::bom(viewed, resolve(viewed), o)), table(drawing::bom(edited, resolve(edited), o)));
+  }
+  // Masses: a material on the top component reaches every body, live ones too.
+  for (const auto& root : resolve(viewed).roots) run(viewed, "part_properties", {{"target", root}, {"set", {{"material", "S235JR"}}}});
+  o.mass = true;
+  o.mode = "parts";
+  const json masses = drawing::bom(viewed, resolve(viewed), o);
+  CHECK(masses["totals"]["mass_complete"].get<bool>());
+  CHECK_NEAR(row(masses, "Spacer")["mass"].get<double>(), 10 * 10 * 5 * 7.85 / 1000, 1e-6);
+  std::filesystem::remove_all(dir);
 }
 
 TEST(bom_command) {

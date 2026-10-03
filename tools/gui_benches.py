@@ -74,6 +74,7 @@ def main():
             (folder / "a-screw.step").write_bytes(screw.read_bytes())
             (folder / "b-layers.svg").write_bytes(drawing.read_bytes())
             cases.append(("viewer", folder / "a-screw.step", {"OPAD_BENCH_VIEWER": str(folder / "a-screw.opad")}))
+            cases.append(("bom-viewer", screw, {"OPAD_BENCH_BOM_OPEN": "{prefix}.png", "OPAD_BENCH_BOM_VIEWER": "1"}))  # a STEP's BoM in viewer mode
         # These open a STEP or a drawing and then edit it: as with viewer mode turned off in the settings.
         editing = {"drawing-to-sketch", "picking"}
         failures = []
