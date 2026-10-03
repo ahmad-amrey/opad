@@ -317,6 +317,13 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
           QString("let go: one transform op, %1 x %2 mm -> %3 x %4 mm about the fixed corner, drawn as the document has it")
               .arg(before.width).arg(before.height).arg(after.width).arg(after.height));
     view->grabImage().save(prefix + ".stretched.png");
+    opad::Ref whole;
+    whole.body = st->canvas;
+    whole.kind = opad::Ref::Kind::Body;
+    opad::Vec3 centre{};
+    const bool marked = view->showAnnotationTarget(whole, &centre);
+    view->clearAnnotationTarget();
+    check(marked && gap(centre, moved[4]) < 1e-6, QString("a note's target highlight sits on the stretched canvas (%1, %2, %3)").arg(centre[0]).arg(centre[1]).arg(centre[2]));
     QPushButton* proportions = area->panel()->findChild<QPushButton*>("canvasProportions");
     check(proportions && proportions->isVisible(), "the panel offers Picture proportions while it is stretched");
     // Width typed alone keeps the stretch; then the picture's proportions back.

@@ -274,7 +274,7 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
   const auto item = m_items.find(target.body);
   if (item == m_items.end() || !m_ctx->IsDisplayed(item->second.ais)) return false;
   const Handle(AIS_Shape)& ais = item->second.ais;
-  const bool rigid = item->second.world.is_identity() || opad::mat_is_rigid(item->second.world);  // see displayBody
+  const bool rigid = item->second.rigid, shared = rigid && item->second.stretch == 1;  // see displayBody: a stretched canvas is its own rectangle
   Handle(TargetHighlight) mark = new TargetHighlight(m_tokens.sel);
   Bnd_Box box;  // in the body's own frame, like the arrays
   try {
@@ -284,7 +284,7 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
         std::lock_guard<std::mutex> lock(m_meshMu);
         if (auto p = m_prs.find(item->second.key); p != m_prs.end()) prs = p->second;
       }
-      if (rigid && prs && !prs->triangles.IsNull()) {
+      if (shared && prs && !prs->triangles.IsNull()) {
         mark->fills.push_back(prs->triangles);
       } else if (rigid) {  // drawn without the worker's arrays: build them there too, the tint follows
         auto shape = std::make_shared<TopoDS_Shape>(ais->Shape());
@@ -301,7 +301,9 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
           redrawScene();
         });
       }
-      box = rigid ? opad::body_bbox(m_doc->doc, item->second.key) : opad::node_world_bbox(m_doc->doc, m_doc->scene, target.body);
+      if (shared) box = opad::body_bbox(m_doc->doc, item->second.key);
+      else if (rigid) BRepBndLib::Add(ais->Shape(), box, Standard_True);  // one rectangle
+      else box = opad::node_world_bbox(m_doc->doc, m_doc->scene, target.body);
       boxSegments(box, mark->outline);
     } else {
       const TopoDS_Shape sub = opad::subshape(ais->Shape(), target.kind, target.index);
