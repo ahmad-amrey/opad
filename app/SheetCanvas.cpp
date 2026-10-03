@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <utility>
 
 #include "AppDocument.hpp"
 #include "Jobs.hpp"
@@ -992,3 +993,10 @@ std::vector<SheetCanvas::ViewState> SheetCanvas::viewStates() const {
 
 int SheetCanvas::paperPrims() const { return m_paper->display ? static_cast<int>(m_paper->display->prims.size()) : 0; }
 bool SheetCanvas::paperPictured() const { return m_paper->current(); }
+
+void SheetCanvas::leaveEvent(QEvent* e) {
+  for (auto& [id, item] : m_views)
+    if (std::exchange(item->hovered, false)) item->update();
+  emit cursorMoved(0, 0, false);
+  QGraphicsView::leaveEvent(e);
+}

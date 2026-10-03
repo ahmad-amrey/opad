@@ -106,6 +106,7 @@ class SheetCanvas : public QGraphicsView {
   void keyPressEvent(QKeyEvent* e) override;
   void keyReleaseEvent(QKeyEvent* e) override;
   void contextMenuEvent(QContextMenuEvent* e) override;
+  void leaveEvent(QEvent* e) override;
   void drawBackground(QPainter* p, const QRectF& rect) override;
   void showEvent(QShowEvent* e) override;
   void resizeEvent(QResizeEvent* e) override;
