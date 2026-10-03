@@ -243,6 +243,7 @@ class SketchEditor : public QObject, public SketchInput {
   QLineEdit* m_dimEdit = nullptr;
   int m_dimEditing = 0;
   bool m_dimFresh = false;
+  QString m_dimShown;  // what the value box started from: committed as it is, it changes nothing (a unit's rounding)
   double m_samplePixelSize=0;
   QTimer m_fillTimer;
   Job* m_fillJob = nullptr;

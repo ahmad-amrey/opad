@@ -81,12 +81,16 @@ DrawingPlacer::DrawingPlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, 
     else cancel();
   });
   connect(m_panel, &ToolPanel::visibilityChanged, this, [this](bool on) { if (!on && m_active) cancel(); });
-  auto typed = [this] {
+  auto typed = [this] {  // a box left as shown keeps its value: "0.275591 in" would move a snapped drawing by 1e-5 mm
+    if (!m_u->isModified() && !m_v->isModified()) return;
     try {
       std::vector<opad::design::ParamDef> defs;
       for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
       const opad::design::ParamTable params(defs, units::current().length);
-      setOffset(params.length(m_u->text().toStdString()), params.length(m_v->text().toStdString()));
+      const double u = m_u->isModified() ? params.length(m_u->text().toStdString()) : m_du, v = m_v->isModified() ? params.length(m_v->text().toStdString()) : m_dv;
+      m_u->setModified(false);
+      m_v->setModified(false);
+      setOffset(u, v);
     } catch (const std::exception& e) {
       m_status->setText(QString::fromUtf8(e.what()));
     }

@@ -603,6 +603,7 @@ void SketchEditor::editDimension(int id, bool fresh) {
   m_dimFresh = fresh;
   const QString shown = !c->expr.empty() ? QString::fromStdString(c->expr) : c->type == CT::Angle ? units::editable(units::Kind::Angle, c->value * 180 / M_PI) : units::editable(units::Kind::Length, c->value);
   m_dimEdit->setText(shown);
+  m_dimShown = shown;
   m_options["expression"] = shown;
   m_options["reference"] = c->reference ? "1" : "0";
   m_panelFieldsDirty = true;
@@ -634,6 +635,8 @@ void SketchEditor::commitDimensionEdit() {
   m_viewport->setFocus();
   SkConstraint* c = m_sk.constraint(m_dimEditing);
   if (!c || text.isEmpty()) return rebuild();
+  // "1.181102 in" as shown for 30 mm reads back as 29.99999 mm: Enter on the box as it opened keeps the value.
+  if (text == m_dimShown.trimmed() && c->expr.empty() && c->reference == (option("reference", "0") == "1")) return rebuild();
   double value = 0;
   try {
     value = sketch_parameters(m_sk, paramTable(m_doc->scene)).as(c->type == CT::Angle ? Dim::Angle : Dim::Length, text.toStdString());
@@ -1136,6 +1139,20 @@ void SketchEditor::bench(const QString&) {
   if (!m_placingDim) press(20 + 6, 12);
   press(32, 20);
   type("12");
+  // Enter on the value box as it opened changes nothing, also where the shown unit rounds (12 mm reads 0.472441 in).
+  for (auto it = m_sk.constraints.rbegin(); it != m_sk.constraints.rend(); ++it) {
+    if (!it->is_dimension()) continue;
+    const int id = it->id;
+    const double before = it->value;
+    const size_t steps = m_undo.size();
+    units::setSessionUnit("in");
+    editDimension(id, false);
+    commitDimensionEdit();
+    units::setSessionUnit({});
+    const bool kept = m_sk.constraint(id)->value == before && m_undo.size() == steps;
+    trace::log(QStringLiteral("bench: sketch: Enter on a dimension as shown in inches keeps %1 mm %2").arg(m_sk.constraint(id)->value, 0, 'g', 17).arg(kept ? "PASS" : "FAIL"));
+    break;
+  }
   setTool("select");
   trace::log(QStringLiteral("bench: sketch: %1 entities, %2 constraints, dof %3").arg(m_sk.entities.size()).arg(m_sk.constraints.size()).arg(m_solved.dof));
 }

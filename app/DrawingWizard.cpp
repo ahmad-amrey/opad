@@ -258,8 +258,13 @@ bool MainWindow::benchDrawingImport() {
         if (!m_drawingPlacer->active() || !m_drawingPlacer->panel()->findChild<QPushButton*>("primary")->isEnabled()) return;
         auto* offsetX = m_drawingPlacer->panel()->findChild<QLineEdit*>("placeOffsetX");
         offsetX->setText("1 in");  // typed with a unit, read back in the shown one (UI-123)
+        offsetX->setModified(true);
         emit offsetX->editingFinished();
         if (offsetX->text() != "25.4 mm") return fail("the offset box read 1 in as " + offsetX->text());
+        m_drawingPlacer->setOffset(7.123456789, 3);  // shown rounded; Enter on the box as shown keeps the value
+        const opad::Mat4 shown = m_drawingPlacer->placement();
+        emit offsetX->editingFinished();
+        if (!close(m_drawingPlacer->placement(), shown)) return fail("Enter on the offset box as shown moved the drawing");
         m_drawingPlacer->setOffset(7, 3);
         if (offsetX->text() != "7 mm") return fail("the offset box shows " + offsetX->text());
         const opad::Vec3 from = m_drawingPlacer->placement().apply({0, 0, 0}), to{100, -20, 50};
