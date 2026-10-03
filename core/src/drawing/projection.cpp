@@ -751,8 +751,9 @@ size_t drop_overlaps(std::vector<Curve>& curves, double eps) {
         const auto wrap = uncovered(0, hi - kTwoPi, covered, peps);
         cover(covered, {lo, kTwoPi});
         cover(covered, {0, hi - kTwoPi});
-        if (!left.empty() && !wrap.empty() && left.back().second >= kTwoPi - 1e-12 && wrap.front().first <= 1e-12) left.back().second = kTwoPi + wrap.front().second, left.insert(left.end(), wrap.begin() + 1, wrap.end());
-        else left.insert(left.end(), wrap.begin(), wrap.end());
+        const bool joined = !left.empty() && !wrap.empty() && left.back().second >= kTwoPi - 1e-12 && wrap.front().first <= 1e-12;
+        if (joined) left.back().second = kTwoPi + wrap.front().second;
+        left.insert(left.end(), wrap.begin() + (joined ? 1 : 0), wrap.end());
       }
       if (left.size() == 1 && std::fabs(left[0].first - lo) <= 1e-12 && std::fabs(left[0].second - hi) <= 1e-12) continue;  // untouched
       auto& out = replaced[m];
