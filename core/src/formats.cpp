@@ -818,6 +818,7 @@ ImportResult import_mesh_scene(Document& doc, const std::filesystem::path& file,
     reader = obj;
   } else {
     reader = new VrmlAPI_CafReader();  // VRML is in metres, Y up; this reader converts neither (see below)
+    reader->SetFileLengthUnit(1.0);    // it scales points by this, which is -1 (unknown) unless set: everything came mirrored
   }
   reader->SetSystemLengthUnit(0.001);
   reader->SetSystemCoordinateSystem(RWMesh_CoordinateSystem_Zup);

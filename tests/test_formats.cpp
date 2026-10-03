@@ -321,6 +321,8 @@ TEST(iges_brep_and_vrml) {
   b = scene_box(open(f.dir / "square.wrl", true));
   CHECK_NEAR(b.CornerMax().X() - b.CornerMin().X(), 1000.0, 0.5);  // metres, Y up
   CHECK_NEAR(b.CornerMax().Z() - b.CornerMin().Z(), 1000.0, 0.5);
+  CHECK_NEAR(b.CornerMax().X(), 1000.0, 0.5);  // not mirrored (OCCT's reader scales by -1 unless told the file's unit)
+  CHECK_NEAR(b.CornerMax().Z(), 1000.0, 0.5);
 }
 
 TEST(viewer_cache_round_trip_and_invalidation) {
