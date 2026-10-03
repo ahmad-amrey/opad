@@ -35,7 +35,8 @@ class ToolValues : public QObject {
  private:
   void type(const QKeyEvent* key);
   void show();
-  QWidget* m_view;
-  DynamicInput* m_input;
+  // The boxes are the view's children: gone with it while the tool lives on (a panel hidden as the window closes).
+  QPointer<QWidget> m_view;
+  QPointer<DynamicInput> m_input;
   QPointer<DimensionHandle> m_handle;
 };

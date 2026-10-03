@@ -47,7 +47,7 @@ bool ToolValues::takes(const QKeyEvent* key) const {
 bool ToolValues::eventFilter(QObject* target, QEvent* event) {
   if (event->type() != QEvent::ShortcutOverride && event->type() != QEvent::KeyPress) return false;
   auto* key = static_cast<QKeyEvent*>(event);
-  if (!takes(key) || !DynamicInput::takesKeysFrom(m_view, target)) return false;
+  if (!m_input || !takes(key) || !DynamicInput::takesKeysFrom(m_view, target)) return false;
   key->accept();
   if (event->type() == QEvent::KeyPress) type(key);
   return true;
@@ -62,7 +62,7 @@ void ToolValues::type(const QKeyEvent* key) {
     return;
   }
   refresh();
-  if (!m_input->count()) return;
+  if (!m_input || !m_input->count()) return;
   show();
   if (tab) m_input->cycle(back);
   else m_input->type(key->text());
@@ -70,7 +70,7 @@ void ToolValues::type(const QKeyEvent* key) {
 
 // Beside the pointer when it is over the view, else in the middle of it (typed while the pointer is over a panel).
 void ToolValues::show() {
-  if (m_input->isVisible()) return;
+  if (!m_input || m_input->isVisible()) return;
   const QPoint pointer = m_view->mapFromGlobal(QCursor::pos());
   m_input->placeNear(m_view->rect().contains(pointer) ? pointer : m_view->rect().center());
   m_input->show();
@@ -78,11 +78,13 @@ void ToolValues::show() {
 }
 
 void ToolValues::refresh() {
+  if (!m_input) return;
   m_input->setFields(fields ? fields() : QList<DynamicInput::Field>{});
   if (!m_input->count()) m_input->hide();
 }
 
 void ToolValues::reset() {
+  if (!m_input) return;
   m_input->used();
   m_input->setFields({});
   m_input->hide();
