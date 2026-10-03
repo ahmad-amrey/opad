@@ -148,6 +148,39 @@ QString unsafeDirectory(const QString& gitStderr);  // the folder a "dubious own
 void trust(const Context& c, const QString& folder);  // git config --global --add safe.directory
 void setIdentity(const Context& c, const QString& name, const QString& email, bool global);
 
+// History and branches (UI-62).
+struct Commit {
+  QString hash, shortHash, author, email, date, subject;  // date: the author date, ISO 8601
+  QStringList parents;
+  QStringList refs;  // what points at it: "HEAD -> main", "origin/main", "tag: v1"
+};
+extern const char* const kLogFormat;  // git log -z --format=<this>: what parseLog reads
+std::vector<Commit> parseLog(const QByteArray& z);
+// The commits of `range` ("": HEAD; "HEAD..@{u}") that changed `path` (relative to c.dir; "": any), newest first,
+// `count` from `skip`. None before the first commit.
+std::vector<Commit> log(const Context& c, const QString& range, const QString& path, int count, int skip = 0);
+struct Branch {
+  QString name;  // "main", "origin/main"
+  QString ref;   // "refs/heads/main"
+  QString oid, upstream, subject, date;
+  int ahead = 0, behind = 0;
+  bool head = false, remote = false, gone = false;  // gone: its upstream was deleted
+};
+extern const char* const kBranchFormat;  // git for-each-ref --format=<this>: what parseBranches reads
+std::vector<Branch> parseBranches(const QByteArray& out);
+std::vector<Branch> branches(const Context& c);  // local ones, then remote-tracking ones (no remote HEAD), each by name
+QStringList remotes(const Context& c);
+// A file at a revision (git cat-file blob <rev>:<path>, `path` relative to the repository's top). Throws when it has none.
+QByteArray show(const Context& c, const QString& rev, const QString& path);
+QString revParse(const Context& c, const QString& rev);  // the commit's hash; empty when there is none
+// Loose objects and packs (git count-objects -v), in KiB.
+struct Objects {
+  qint64 loose = 0, looseKiB = 0, packs = 0, packKiB = 0;
+};
+Objects countObjects(const Context& c);
+// Whether git takes `name` for a new branch (the rules of check-ref-format --branch, checked here without git).
+bool validBranchName(const QString& name);
+
 // Before a push: what goes up that is big. Files over `fileLimit` stored in the history itself (hosting services refuse
 // 100 MB), and the Git LFS files going up when they come to more than `lfsLimit` (they count against the remote's
 // quota). Commits not on any remote-tracking branch; local reads only. Sentences, empty when nothing is big.

@@ -230,7 +230,7 @@ QString Result::error() const {
   if (cancelled) return tr("Cancelled.");
   if (timedOut) return tr("git did not finish in time and was stopped.");
   if (code == 0) return {};
-  const QString m = explain(QString::fromUtf8(err));
+  const QString m = explain(QString::fromUtf8(err.trimmed().isEmpty() ? out.left(4096) : err));  // git commit says "nothing to commit" on stdout
   return m.isEmpty() ? tr("git failed (exit code %1).").arg(code) : m;
 }
 
@@ -752,6 +752,23 @@ QString explain(const QString& text) {
     return tr("The remote's Git LFS quota is used up: big files cannot go up or come down until it is raised.");
   if (has("'lfs' is not a git command") || has("git-lfs: command not found") || has("git-lfs was not found"))
     return tr("Git LFS is not installed: install it (git-lfs.com) to work with files kept in LFS.");
+  // UI-62: branches, merges and commits
+  if (has("would be overwritten by") || has("Please commit your changes or stash them"))
+    return tr("Files with uncommitted changes would be overwritten: commit them first.");
+  if (has("not fully merged")) return tr("The branch has commits that no other branch holds: deleting it loses them.");
+  if (has("cannot delete branch") && (has("checked out at") || has("used by worktree")))
+    return tr("That branch is checked out: switch to another one first.");
+  if (has("a branch named") && has("already exists")) return tr("A branch of that name exists already.");
+  if (has("is not a valid branch name")) return tr("That is not a name git takes for a branch: no spaces, no backslash, none of ~ ^ : ? * [ and no two dots.");
+  if (has("refusing to merge unrelated histories")) return tr("The two branches have no commit in common.");
+  if (has("Automatic merge failed") || has("CONFLICT (") || has("OPAD merge conflict"))
+    return tr("The merge stopped on changes both sides made to the same things: abort it, or resolve them and commit.");
+  if (has("You have not concluded your merge") || has("MERGE_HEAD exists") || has("merging is not possible"))
+    return tr("A merge is under way: commit it or abort it first.");
+  if (has("cannot do a partial commit during a merge")) return tr("A merge is under way: it is committed as a whole.");
+  if (has("has no upstream branch") || has("no tracking information")) return tr("This branch follows no remote branch yet: push it first.");
+  if (has("No configured push destination") || has("No such remote")) return tr("This repository has no remote to push to yet.");
+  if (has("nothing to commit") || has("no changes added to commit")) return tr("Nothing to commit: the files are as committed.");
   if (has("not a git repository")) return tr("This folder is not in a git repository.");
   return message(text.toUtf8());
 }
@@ -769,6 +786,138 @@ void setIdentity(const Context& c, const QString& name, const QString& email, bo
   const QString scope = global ? QStringLiteral("--global") : QStringLiteral("--local");
   check(c, {"config", scope, "user.name", name.trimmed()});
   check(c, {"config", scope, "user.email", email.trimmed()});
+}
+
+const char* const kLogFormat = "%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%D%x1f%s";
+
+std::vector<Commit> parseLog(const QByteArray& z) {
+  std::vector<Commit> out;
+  for (const QByteArray& record : z.split('\0')) {
+    const QList<QByteArray> f = record.trimmed().split('\x1f');
+    if (f.size() < 8 || f[0].isEmpty()) continue;
+    Commit c;
+    c.hash = QString::fromLatin1(f[0]);
+    c.shortHash = QString::fromLatin1(f[1]);
+    c.author = QString::fromUtf8(f[2]);
+    c.email = QString::fromUtf8(f[3]);
+    c.date = QString::fromLatin1(f[4]);
+    c.parents = QString::fromLatin1(f[5]).split(' ', Qt::SkipEmptyParts);
+    for (const QString& r : QString::fromUtf8(f[6]).split(QStringLiteral(", "), Qt::SkipEmptyParts)) c.refs << r.trimmed();
+    c.subject = QString::fromUtf8(f.mid(7).join('\x1f'));
+    out.push_back(std::move(c));
+  }
+  return out;
+}
+
+std::vector<Commit> log(const Context& c, const QString& range, const QString& path, int count, int skip) {
+  QStringList args{"log", "-z", QStringLiteral("--format=") + QString::fromLatin1(kLogFormat), "-n", QString::number(count)};
+  if (skip > 0) args << "--skip" << QString::number(skip);
+  if (!range.isEmpty()) args << range;
+  args << "--";
+  if (!path.isEmpty()) args << path;
+  RunOptions o;
+  o.timeoutMs = 60000;
+  o.optionalLocks = false;
+  const Result r = run(c, args, o);
+  if (!r.ok()) {
+    const QString err = QString::fromUtf8(r.err);
+    if (err.contains("does not have any commits") || err.contains("bad default revision")) return {};
+    fail(r.error());
+  }
+  return parseLog(r.out);
+}
+
+const char* const kBranchFormat =
+    "%(refname)%1f%(refname:short)%1f%(objectname)%1f%(upstream:short)%1f%(upstream:track,nobracket)%1f%(committerdate:iso-strict)%1f%(HEAD)%1f%(subject)";
+
+std::vector<Branch> parseBranches(const QByteArray& out) {
+  std::vector<Branch> local, remote;
+  static const QRegularExpression ahead(QStringLiteral("ahead (\\d+)")), behind(QStringLiteral("behind (\\d+)"));
+  for (const QByteArray& line : out.split('\n')) {
+    const QList<QByteArray> f = line.split('\x1f');
+    if (f.size() < 8) continue;
+    Branch b;
+    b.ref = QString::fromUtf8(f[0]);
+    if (b.ref.endsWith("/HEAD") && b.ref.startsWith("refs/remotes/")) continue;  // origin/HEAD: an alias
+    b.remote = b.ref.startsWith("refs/remotes/");
+    if (!b.remote && !b.ref.startsWith("refs/heads/")) continue;
+    b.name = b.remote ? b.ref.mid(13) : b.ref.mid(11);  // refname:short drops "heads/" only when it is not ambiguous
+    b.oid = QString::fromLatin1(f[2]);
+    b.upstream = QString::fromUtf8(f[3]);
+    const QString track = QString::fromUtf8(f[4]);
+    b.gone = track == "gone";
+    if (const auto m = ahead.match(track); m.hasMatch()) b.ahead = m.captured(1).toInt();
+    if (const auto m = behind.match(track); m.hasMatch()) b.behind = m.captured(1).toInt();
+    b.date = QString::fromLatin1(f[5]);
+    b.head = f[6].trimmed() == "*";
+    b.subject = QString::fromUtf8(f.mid(7).join('\x1f')).trimmed();
+    (b.remote ? remote : local).push_back(std::move(b));
+  }
+  auto byName = [](const Branch& a, const Branch& b) { return a.name.compare(b.name, Qt::CaseInsensitive) < 0; };
+  std::sort(local.begin(), local.end(), byName);
+  std::sort(remote.begin(), remote.end(), byName);
+  local.insert(local.end(), std::make_move_iterator(remote.begin()), std::make_move_iterator(remote.end()));
+  return local;
+}
+
+std::vector<Branch> branches(const Context& c) {
+  RunOptions o;
+  o.timeoutMs = 30000;
+  o.optionalLocks = false;
+  return parseBranches(check(c, {"for-each-ref", QStringLiteral("--format=") + QString::fromLatin1(kBranchFormat), "refs/heads", "refs/remotes"}, o).out);
+}
+
+QStringList remotes(const Context& c) {
+  RunOptions o;
+  o.timeoutMs = 20000;
+  o.optionalLocks = false;
+  return QString::fromUtf8(check(c, {"remote"}, o).out).split('\n', Qt::SkipEmptyParts);
+}
+
+QByteArray show(const Context& c, const QString& rev, const QString& path) {
+  RunOptions o;
+  o.timeoutMs = 300000;  // a big document
+  o.optionalLocks = false;
+  const Result r = run(c, {"cat-file", "blob", rev + ':' + path}, o);
+  if (!r.ok()) fail(tr("%1 has no %2.").arg(rev.left(12), path));
+  return r.out;
+}
+
+QString revParse(const Context& c, const QString& rev) {
+  RunOptions o;
+  o.timeoutMs = 20000;
+  o.optionalLocks = false;
+  const Result r = run(c, {"rev-parse", "-q", "--verify", rev + "^{commit}"}, o);
+  return r.ok() ? QString::fromLatin1(r.out).trimmed() : QString();
+}
+
+Objects countObjects(const Context& c) {
+  RunOptions o;
+  o.timeoutMs = 60000;
+  o.optionalLocks = false;
+  Objects out;
+  for (const QByteArray& line : check(c, {"count-objects", "-v"}, o).out.split('\n')) {
+    const qsizetype colon = line.indexOf(':');
+    if (colon < 0) continue;
+    const QByteArray key = line.left(colon).trimmed();
+    const qint64 value = line.mid(colon + 1).trimmed().toLongLong();
+    if (key == "count") out.loose = value;
+    else if (key == "size") out.looseKiB = value;
+    else if (key == "packs") out.packs = value;
+    else if (key == "size-pack") out.packKiB = value;
+  }
+  return out;
+}
+
+bool validBranchName(const QString& name) {
+  if (name.isEmpty() || name.startsWith('-') || name.startsWith('/') || name.endsWith('/') || name.endsWith('.') || name.endsWith(".lock") ||
+      name == "@" || name == "HEAD" || name.contains("..") || name.contains("@{") || name.contains("//"))
+    return false;
+  for (const QChar ch : name)
+    if (ch.unicode() < 0x20 || ch.unicode() == 0x7f || QStringLiteral(" ~^:?*[\\").contains(ch)) return false;
+  for (const QString& part : name.split('/'))
+    if (part.startsWith('.') || part.endsWith(".lock")) return false;
+  return true;
 }
 
 QStringList pushWarnings(const Context& c, qint64 fileLimit, qint64 lfsLimit) {

@@ -6,6 +6,7 @@
 // prompts as GIT_ASKPASS, the author, Locate git, warnings before a push. Temporary repositories only; git's global
 // and system config are left out.
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -498,6 +499,77 @@ TEST(push_warnings) {
   git_(dir, {"remote", "add", "origin", tmp.path() + "/remote.git"});
   git_(dir, {"push", "-q", "--no-verify", "-u", "origin", "main"});  // no LFS server here: the pre-push hook would want one
   CHECK(git::pushWarnings(in(dir), 4096, 1024).isEmpty());
+}
+
+// UI-62: the history of a document, branches with their upstreams, a file at a revision, the object store, branch names.
+TEST(history_and_branches) {
+  const auto commits = git::parseLog(QByteArrayLiteral("aaaa\x1f" "aa\x1f" "Ann\x1f" "ann@x.org\x1f" "2026-10-01T10:00:00+02:00\x1f" "p1 p2\x1f"
+                                                       "HEAD -> main, origin/main, tag: v1\x1f" "Merge \x1f odd\0\n"
+                                                       "bbbb\x1f" "bb\x1f" "Bob\x1f" "b@x.org\x1f" "2026-09-30T10:00:00Z\x1f\x1f\x1f" "first\0"));
+  CHECK_EQ(commits.size(), size_t(2));
+  CHECK(commits[0].hash == "aaaa" && commits[0].shortHash == "aa" && commits[0].author == "Ann" && commits[0].parents.size() == 2);
+  CHECK(commits[0].refs == (QStringList{"HEAD -> main", "origin/main", "tag: v1"}) && commits[0].subject == "Merge \x1f odd");
+  CHECK(commits[1].parents.isEmpty() && commits[1].refs.isEmpty() && commits[1].subject == "first");
+  const auto parsed = git::parseBranches(QByteArrayLiteral(
+      "refs/remotes/origin/HEAD\x1forigin\x1f" "cccc\x1f\x1f\x1f" "2026\x1f \x1fx\n"
+      "refs/remotes/origin/main\x1forigin/main\x1f" "cccc\x1f\x1f\x1f" "2026\x1f \x1fsubject\n"
+      "refs/heads/zeta\x1fzeta\x1f" "dddd\x1forigin/zeta\x1fgone\x1f" "2026\x1f \x1fz\n"
+      "refs/heads/main\x1fmain\x1f" "cccc\x1forigin/main\x1f" "ahead 2, behind 3\x1f" "2026\x1f*\x1fsubject\n"));
+  CHECK_EQ(parsed.size(), size_t(3));
+  CHECK(parsed[0].name == "main" && parsed[0].head && parsed[0].ahead == 2 && parsed[0].behind == 3 && parsed[0].upstream == "origin/main");
+  CHECK(parsed[1].name == "zeta" && parsed[1].gone && !parsed[1].head);
+  CHECK(parsed[2].name == "origin/main" && parsed[2].remote);
+  for (const char* good : {"main", "feature/x", "fix-1.2", "José"}) CHECK(git::validBranchName(QString::fromUtf8(good)));
+  for (const char* bad : {"", "-x", "a b", "a..b", "x.lock", "a/.b", "x/", "a~1", "a:b", "@", "HEAD", "a@{1}", "q?"}) CHECK(!git::validBranchName(QString::fromUtf8(bad)));
+  CHECK_EQ(git::explain("error: Your local changes to the following files would be overwritten by checkout:"),
+           git::explain("error: Your local changes to the following files would be overwritten by merge:"));
+  CHECK(git::explain("error: the branch 'x' is not fully merged.").contains("loses"));
+
+  QTemporaryDir tmp;
+  const QString dir = tmp.path() + "/project";
+  QDir().mkpath(dir);
+  const QString doc = setUpRepository(dir, fromBuild(true));
+  CHECK(git::log(in(dir), {}, "model.opad", 10).empty());  // no commit yet
+  CHECK(git::revParse(in(dir), "HEAD").isEmpty());
+  git_(dir, {"add", "-A"});
+  git_(dir, {"commit", "-q", "-m", "first"});
+  box(doc, 0);
+  git_(dir, {"commit", "-q", "-am", "a box"});
+  QFile other(dir + "/notes.txt");
+  CHECK(other.open(QIODevice::WriteOnly) && other.write("n\n") > 0);
+  other.close();
+  git_(dir, {"add", "notes.txt"});
+  git_(dir, {"commit", "-q", "-m", "notes, not the document"});
+  const auto history = git::log(in(dir), {}, "model.opad", 10);
+  CHECK_EQ(history.size(), size_t(2));
+  CHECK(history[0].subject == "a box" && history[1].subject == "first" && history[0].parents == QStringList{history[1].hash});
+  CHECK(history[0].author == "OPAD Test" && QDateTime::fromString(history[0].date, Qt::ISODate).isValid());
+  CHECK_EQ(git::log(in(dir), {}, {}, 10).size(), size_t(3));
+  CHECK(git::log(in(dir), {}, {}, 1, 2)[0].subject == "first");  // paged
+  CHECK(git::log(in(dir), {}, {}, 10)[0].refs.contains("HEAD -> main"));
+  CHECK_EQ(git::revParse(in(dir), "HEAD~1"), history[0].hash);
+  // The document as each commit has it.
+  const QByteArray first = git::show(in(dir), history[1].hash, "model.opad"), now = git::show(in(dir), "HEAD", "model.opad");
+  CHECK(opad::Document::parse(first.toStdString()).ops.size() + 1 == opad::Document::parse(now.toStdString()).ops.size());
+  CHECK_THROWS(git::show(in(dir), history[1].hash, "notes.txt"));
+  // Branches, an upstream ahead and behind, a remote's branch.
+  git_(tmp.path(), {"init", "-q", "--bare", "-b", "main", tmp.path() + "/remote.git"});
+  git_(dir, {"remote", "add", "origin", tmp.path() + "/remote.git"});
+  CHECK(git::remotes(in(dir)) == QStringList{"origin"});
+  git_(dir, {"push", "-q", "--no-verify", "-u", "origin", "main"});
+  git_(dir, {"branch", "feature/x"});
+  box(doc, 10);
+  git_(dir, {"commit", "-q", "-am", "ahead"});
+  auto list = git::branches(in(dir));
+  CHECK_EQ(list.size(), size_t(3));
+  CHECK(list[0].name == "feature/x" && !list[0].head && list[0].upstream.isEmpty());
+  CHECK(list[1].name == "main" && list[1].head && list[1].upstream == "origin/main" && list[1].ahead == 1 && list[1].behind == 0 && list[1].subject == "ahead");
+  CHECK(list[2].name == "origin/main" && list[2].remote && list[2].oid == git::revParse(in(dir), "HEAD~1"));
+  const git::Objects objects = git::countObjects(in(dir));
+  CHECK(objects.loose > 0 && objects.looseKiB >= 0);
+  git_(dir, {"gc", "-q"});
+  const git::Objects packed = git::countObjects(in(dir));
+  CHECK(packed.loose < objects.loose && packed.packs >= 1);
 }
 
 int main(int argc, char** argv) {

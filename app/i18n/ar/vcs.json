@@ -358,5 +358,18 @@
  "The open document has unsaved changes: merge the snapshot into it, or save or close it first.": "في المستند المفتوح تغييرات غير محفوظة: ادمج اللقطة فيه، أو احفظه أو أغلقه أولًا.",
  "Show unsaved changes": "إظهار التغييرات غير المحفوظة",
  "Hashing %1": "جارٍ حساب بصمة %1",
- "Listing the snapshot's changes": "جارٍ سرد تغييرات اللقطة"
+ "Listing the snapshot's changes": "جارٍ سرد تغييرات اللقطة",
+ "Files with uncommitted changes would be overwritten: commit them first.": "ستُكتب فوق ملفات فيها تغييرات غير مودَعة: أودِعها أولًا.",
+ "The branch has commits that no other branch holds: deleting it loses them.": "في هذا الفرع إيداعات لا يحملها أي فرع آخر: حذفه يُضيّعها.",
+ "That branch is checked out: switch to another one first.": "هذا الفرع هو الحالي: انتقل إلى فرع آخر أولًا.",
+ "A branch of that name exists already.": "يوجد فرع بهذا الاسم من قبل.",
+ "That is not a name git takes for a branch: no spaces, no backslash, none of ~ ^ : ? * [ and no two dots.": "لا يقبل git هذا اسمًا لفرع: بلا مسافات ولا شرطة مائلة عكسية، ولا أيٍّ من ~ ^ : ? * [ ولا نقطتين متتاليتين.",
+ "The two branches have no commit in common.": "لا يشترك الفرعان في أي إيداع.",
+ "The merge stopped on changes both sides made to the same things: abort it, or resolve them and commit.": "توقّف الدمج عند تغييرات أجراها الطرفان على الأشياء نفسها: ألغِه، أو حُلّها ثم أودِع.",
+ "A merge is under way: commit it or abort it first.": "هناك دمج جارٍ: أودِعه أو ألغِه أولًا.",
+ "A merge is under way: it is committed as a whole.": "هناك دمج جارٍ: يُودَع كاملًا.",
+ "This branch follows no remote branch yet: push it first.": "لا يتبع هذا الفرع أي فرع بعيد بعد: ادفعه أولًا.",
+ "This repository has no remote to push to yet.": "ليس لهذا المستودع مستودع بعيد يُدفع إليه بعد.",
+ "Nothing to commit: the files are as committed.": "لا شيء لإيداعه: الملفات كما أُودعت.",
+ "%1 has no %2.": "لا يحتوي %1 على %2."
 }
