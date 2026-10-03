@@ -405,14 +405,15 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                       QMouseEvent e(type, QPointF(at), QPointF(v->mapToGlobal(at)), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
                       QCoreApplication::sendEvent(v, &e);
                     };
-                    mouse(QEvent::MouseButtonPress, tip, Qt::LeftButton);
-                    const bool dragging = area->handle()->dragging();
+                    const QPoint grip = tip - QPoint(0, 25);  // on the arrow past the triad's square (which moves the part freely)
+                    mouse(QEvent::MouseButtonPress, grip, Qt::LeftButton);
+                    const bool dragging = area->handle()->dragging() && !area->dragging();
                     std::vector<double> travel;
                     for (int step = 1; step <= 3; ++step) {
-                      mouse(QEvent::MouseMove, tip - QPoint(0, 20 * step), Qt::LeftButton);
+                      mouse(QEvent::MouseMove, grip - QPoint(0, 20 * step), Qt::LeftButton);
                       travel.push_back(opad::explode_travel(area->units()[static_cast<size_t>(area->dragUnit())], area->spec(), u.dir));
                     }
-                    mouse(QEvent::MouseButtonRelease, tip - QPoint(0, 60), Qt::NoButton);
+                    mouse(QEvent::MouseButtonRelease, grip - QPoint(0, 60), Qt::NoButton);
                     require(shown && dragging && travel.size() == 3 && travel[0] > before && travel[1] > travel[0] && travel[2] > travel[1] && area->spec().offsets.count(s->lid),
                             QString("dragging the lid's arrow up: its travel %1 -> %2, %3, %4 mm while the mouse moves (z %5)")
                                 .arg(before, 0, 'f', 1).arg(travel.empty() ? 0 : travel[0], 0, 'f', 1).arg(travel.size() > 1 ? travel[1] : 0, 0, 'f', 1).arg(travel.size() > 2 ? travel[2] : 0, 0, 'f', 1).arg(z0, 0, 'f', 1));
@@ -462,6 +463,98 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     QComboBox* order = form->findChild<QComboBox*>("explodeStages");
                     order->setCurrentIndex(order->findData("together"));
                     emit order->activated(order->currentIndex());
+                    w.m_browser->selectIds({s->lid});
+                  }});
+  // The triad on the selected lid: X and Y square to its way up, dragged along X, the square moving it in the view's plane
+  // under the mouse, the lid itself dragged, a click on it still a click.
+  auto lidUnit = [=] { return static_cast<size_t>(area->unitOf(s->lid)); };
+  auto drawn = [=] {  // the lid's middle where it is drawn, from the spec (the look layer follows a frame later)
+    const auto moves = opad::explode_unit_offsets(area->units(), area->spec(), area->t());
+    const auto& u = area->units()[lidUnit()];
+    return opad::Vec3{u.centre[0] + moves[lidUnit()][0], u.centre[1] + moves[lidUnit()][1], u.centre[2] + moves[lidUnit()][2]};
+  };
+  auto send = [v](QEvent::Type type, QPointF at, Qt::MouseButtons buttons) {
+    QMouseEvent e(type, at, v->mapToGlobal(at), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, buttons, Qt::NoModifier);
+    QCoreApplication::sendEvent(v, &e);
+  };
+  list.push_back({[=] { return area->triadShown() && area->dragUnit() >= 0 && area->units()[static_cast<size_t>(area->dragUnit())].id == s->lid && !v->looksPending(); },
+                  [=, &w](bool shown) {
+                    const auto axes = area->triadAxes();
+                    require(shown && same(axes[0], {1, 0, 0}) && same(axes[1], {0, 1, 0}), QString("the lid's triad: its arrow up and X %1, Y %2 square to it").arg(vec(axes[0]), vec(axes[1])));
+                    v->grabImage().save(prefix + ".triad.png");
+                    const opad::Vec3 before = drawn();
+                    const double up = opad::explode_travel(area->units()[lidUnit()], area->spec(), {0, 0, 1});
+                    const QPointF at = area->triadPoint(1);
+                    const QPointF way = at - area->triadPoint(0);
+                    const QPointF step = way / std::hypot(way.x(), way.y()) * 15;
+                    send(QEvent::MouseButtonPress, at, Qt::LeftButton);
+                    const bool dragging = area->dragging() && !area->handle()->dragging();
+                    std::vector<double> xs;
+                    for (int i = 1; i <= 3; ++i) {
+                      send(QEvent::MouseMove, at + step * i, Qt::LeftButton);
+                      xs.push_back(drawn()[0] - before[0]);
+                    }
+                    send(QEvent::MouseButtonRelease, at + step * 3, Qt::NoButton);
+                    const opad::Vec3 after = drawn();
+                    require(dragging && !area->dragging() && xs[0] > 0 && xs[1] > xs[0] && xs[2] > xs[1] && std::abs(after[1] - before[1]) < 1e-6 && std::abs(after[2] - before[2]) < 1e-6 &&
+                                std::abs(opad::explode_travel(area->units()[lidUnit()], area->spec(), {0, 0, 1}) - up) < 1e-6,
+                            QString("the X arrow dragged: the lid along X by %1, %2, %3 mm while the mouse moves, Y and Z kept, its travel up kept").arg(xs[0], 0, 'f', 1).arg(xs[1], 0, 'f', 1).arg(xs[2], 0, 'f', 1));
+                  }});
+  list.push_back({[=] { return area->triadShown() && !v->looksPending(); }, [=, &w](bool) {
+                    const QPointF at = area->triadPoint(0);
+                    const QPoint was = v->widgetPoint(drawn());
+                    send(QEvent::MouseButtonPress, at, Qt::LeftButton);
+                    const bool dragging = area->dragging();
+                    send(QEvent::MouseMove, at + QPointF(10, 10), Qt::LeftButton);
+                    send(QEvent::MouseMove, at + QPointF(30, 20), Qt::LeftButton);
+                    const QPoint moved = v->widgetPoint(drawn()) - was;
+                    send(QEvent::MouseButtonRelease, at + QPointF(30, 20), Qt::NoButton);
+                    require(dragging && std::abs(moved.x() - 30) <= 2 && std::abs(moved.y() - 20) <= 2,
+                            QString("the square dragged by (30, 20) px: the lid moved (%1, %2) px on screen, in the view's plane").arg(moved.x()).arg(moved.y()));
+                  }});
+  // The lid itself: a point of it clear of the triad and the handle's box.
+  auto grab = std::make_shared<QPointF>();
+  list.push_back({[=] { return area->triadShown() && !v->looksPending(); }, [=, &w](bool) {
+                    v->benchBodyPoint(s->lid, s->x, s->y);  // a frame for the picker's depth range
+                    const double scale = v->displayScale();
+                    const QPointF centre = area->triadPoint(0);
+                    const QRect box = area->handle()->geometry().adjusted(-8, -8, 8, 8);
+                    double best = 0;
+                    for (int j = 1; j < 40; ++j)
+                      for (int i = 1; i < 40; ++i) {
+                        const QPointF p(v->width() * i / 40.0, v->height() * j / 40.0);
+                        const double away = std::hypot(p.x() - centre.x(), p.y() - centre.y());
+                        if (away < 70 || away > 400 || box.contains(p.toPoint()) || (best > 0 && away >= best)) continue;
+                        if (v->benchPickAt(qRound(p.x() * scale), qRound(p.y() * scale)) == s->lid) {
+                          best = away;
+                          *grab = p;
+                        }
+                      }
+                    const opad::Vec3 before = drawn();
+                    const QPoint was = v->widgetPoint(before);
+                    send(QEvent::MouseMove, *grab, Qt::NoButton);
+                    send(QEvent::MouseButtonPress, *grab, Qt::LeftButton);
+                    send(QEvent::MouseMove, *grab + QPointF(2, 1), Qt::LeftButton);
+                    const bool still = !area->dragging() && same(drawn(), before);
+                    send(QEvent::MouseMove, *grab + QPointF(-25, 15), Qt::LeftButton);
+                    const bool dragging = area->dragging();
+                    const QPoint moved = v->widgetPoint(drawn()) - was;
+                    send(QEvent::MouseButtonRelease, *grab + QPointF(-25, 15), Qt::NoButton);
+                    require(best > 0 && still && dragging && !area->dragging() && std::abs(moved.x() + 25) <= 2 && std::abs(moved.y() - 15) <= 2,
+                            QString("the lid itself pressed %1 px from the triad: a jiggle does not move it, a drag of (-25, 15) px moves it (%2, %3) px").arg(best, 0, 'f', 0).arg(moved.x()).arg(moved.y()));
+                  }});
+  list.push_back({[=] { return !v->looksPending(); }, [=, &w](bool) {
+                    // A click on the selected lid (no move) still reaches the view, which reports the click.
+                    v->benchBodyPoint(s->lid, s->x, s->y);
+                    auto clicks = std::make_shared<int>(0);
+                    const auto c = QObject::connect(v, &Viewport::selectionChanged, v, [clicks] { ++*clicks; });
+                    const opad::Vec3 before = drawn();
+                    send(QEvent::MouseMove, *grab + QPointF(-25, 15), Qt::NoButton);
+                    send(QEvent::MouseButtonPress, *grab + QPointF(-25, 15), Qt::LeftButton);
+                    send(QEvent::MouseButtonRelease, *grab + QPointF(-25, 15), Qt::NoButton);
+                    v->benchFlush();
+                    QObject::disconnect(c);
+                    require(*clicks > 0 && same(drawn(), before) && !area->dragging(), QString("a click on the lid without moving is a click for the view (%1 selection reports), the lid stays").arg(*clicks));
                     w.m_browser->selectIds({});
                     v->clearSelection();
                   }});

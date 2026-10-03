@@ -40,7 +40,9 @@ CASES = [
     # whole, the PCB activated explodes alone, level 2 splits it (the capacitor rides on the board), the PCB's browser badge
     # keeps it whole, Explode its parts on the Screws, the slider at 50 %, a click on the board selects the PCB's unit, the
     # lid's handle dragged and a value typed over the view, One after another staged again without a layout when the
-    # shell is typed out of its place and back, a hand drawing on the moved lid stored where the lid is in the
+    # shell is typed out of its place and back, the lid's triad (X and Y square to its way up: the X arrow dragged, the
+    # square moving it under the mouse in the view's plane, the lid itself dragged, a click on it still a click; .triad.png),
+    # a hand drawing on the moved lid stored where the lid is in the
     # model, the distance tool measuring where the parts are drawn (not pinned), group and ungroup, Save as view / Collapse
     # / View > Named views / Update view, a feature edit collapsing the view. <prefix>.view.png, .panel.png, .browser.png,
     # .chips.png, .ribbon.png.

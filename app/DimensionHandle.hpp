@@ -20,6 +20,8 @@ class DimensionHandle : public QWidget {
   using Segment=std::array<opad::Vec3,2>;
   void setAnchorSegments(std::vector<Segment> segments);
   bool interacting() const {return m_dragging || m_edit->hasFocus();}
+  bool grips(const QPointF& at) const;  // a press there (viewport widget pixels) pulls the arrow
+  void drawOnTop() {m_onTop=true;}  // the arrow over everything (TopOSD), also over a selected body (Topmost)
   bool dragging() const {return m_dragging;}
   double value() const {return m_value;}  // what the drag or the arrows made of it (the box shows it rounded)
   // How far the arrow sits along the axis per unit of value: 0.5 for a symmetric extrusion, whose end moves half the
@@ -57,7 +59,7 @@ class DimensionHandle : public QWidget {
   opad::Vec3 m_origin{},m_axis{1,0,0};
   QPointF m_start,m_screenAxis;
   double m_value=0,m_startValue=0,m_scale=1;
-  bool m_dragging=false,m_drawn=false;
+  bool m_dragging=false,m_drawn=false,m_onTop=false;
   QPointF m_arrowStart,m_arrowEnd;
   Handle(AIS_InteractiveObject) m_arrow;
   std::vector<Segment> m_segments;

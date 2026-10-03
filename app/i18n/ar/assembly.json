@@ -80,7 +80,7 @@
  "A dashed line from where each part was to where it is": "خط متقطع من حيث كان كل جزء إلى حيث هو",
  "DRAG A PART ALONG": "سحب جزء على",
  "Its direction": "اتجاهه",
- "Select a part, then drag its arrow or type a distance": "حدّد جزءًا، ثم اسحب سهمه أو اكتب مسافة",
+ "Select a part, then drag it or its arrows, or type a distance along the first arrow": "حدّد جزءًا، ثم اسحبه أو اسحب أسهمه، أو اكتب مسافة على السهم الأول",
  "Reset drags": "إلغاء السحب",
  "Every part back to its automatic place": "كل جزء يعود إلى مكانه التلقائي",
  "VIEW": "العرض",

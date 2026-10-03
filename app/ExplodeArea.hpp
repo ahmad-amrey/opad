@@ -3,16 +3,19 @@
 // it changes: the spec (root, levels, mode, spacing, keep/split, groups, manual drags), the distance t and whether it is
 // on. Its units are laid out on a worker from the boxes the view already holds; every change of t moves the bodies
 // through the Explode layer of looks (Viewport::setLookLayer: a translation per body, picking follows), draws the trail
-// lines and places the drag handle, all O(units). The Explode panel edits it; the browser marks what moves together
-// while the panel is open; the chips row says how exploded the view is; Save as view writes a `view` op with the
-// explode object, Update view an `edit` of it, and choosing such a view (the panel, View > Named views) shows it again.
+// lines and places the drag handle and triad (ExplodeDrag.cpp), all O(units). The Explode panel edits it; the browser
+// marks what moves together while the panel is open; the chips row says how exploded the view is; Save as view writes
+// a `view` op with the explode object, Update view an `edit` of it, and choosing such a view (the panel, View > Named
+// views) shows it again.
 // A sketch or feature edit collapses the view and opens it again afterwards. Guided tools measure where the parts are
 // drawn (MainWindow::runToolMeasure through Viewport::shownOffsets).
 #include <AIS_InteractiveObject.hxx>
 #include <QElapsedTimer>
+#include <QPointF>
 #include <QPointer>
 #include <QTimer>
 
+#include <array>
 #include <functional>
 #include <unordered_map>
 #include <string>
@@ -31,6 +34,7 @@ class Job;
 class PromptBar;
 class QLabel;
 class QMenu;
+class Viewport;
 class ToolPanel;
 
 class Explode : public AreaController {
@@ -79,6 +83,13 @@ class Explode : public AreaController {
   int dragUnit() const { return m_dragUnit; }
   size_t trailCount() const { return m_trailCount; }
   const std::string& viewId() const { return m_viewId; }
+  // The drag triad on the selected part (ExplodeDrag.cpp): the DimensionHandle's arrow is its first axis, two arrows the
+  // axes square to it, a square in the middle moves the part in the view's plane; a press on the part drags it too.
+  bool triadShown() const { return m_triadShown; }
+  QPointF triadPoint(int part) const;  // a widget point on a part: 0 the square, 1-2 an arrow (benches)
+  const std::array<opad::Vec3, 2>& triadAxes() const { return m_triadAxes; }
+  bool dragging() const { return m_drag.part >= 0; }
+  static std::array<opad::Vec3, 2> crossAxes(const opad::Vec3& axis);  // the world axes least along it, made square
 
  signals:
   void laidOut();  // new units are on screen (benches)
@@ -102,6 +113,12 @@ class Explode : public AreaController {
   void hideHint(bool seen);  // seen: the user did what it says, it is not shown again (setting hints/explode)
   opad::Vec3 dragAxis(const opad::ExplodeUnit& unit) const;
   std::vector<std::string> members(int unit) const;  // what selecting a unit selects
+  void placeTriad(bool shown, const opad::Vec3& at, const opad::Vec3& axis);
+  int triadPart(const QPointF& at) const;  // -1 none, 0 the square, 1-2 an arrow
+  void beginDrag(int part, const QPointF& at);
+  void dragTo(const QPointF& at);
+  void endDrag();
+  bool dragEvent(QEvent* event);  // the viewport's mouse events; true: taken
   void decorate(const browser::Row& row, browser::Decoration& d);  // what moves together, while the panel is open
   bool belowRoot(const std::string& id) const;
 
@@ -126,6 +143,22 @@ class Explode : public AreaController {
   size_t m_trailCount = 0;
   DimensionHandle* m_handle = nullptr;
   int m_dragUnit = -1;
+  Viewport* m_view = nullptr;
+  Handle(AIS_InteractiveObject) m_triad;
+  bool m_triadShown = false, m_bodyArmed = false, m_replaying = false;
+  int m_triadHover = -1;
+  opad::Vec3 m_triadAt{0, 0, 0};
+  std::array<opad::Vec3, 2> m_triadAxes{};
+  QPointF m_triadCentre, m_pressAt, m_pressGlobal;
+  std::array<std::pair<QPointF, QPointF>, 2> m_triadArrows{};
+  struct Drag {
+    int part = -1;  // -1 none, 0 in the view's plane, 1-2 along an arrow
+    std::string unit;
+    QPointF start, screenAxis;
+    opad::Vec3 manual{0, 0, 0}, axis{0, 0, 0};
+    double scale = 1;  // the part's progress at t: a drag of d moves its offset by d / scale
+    opad::Frame plane;
+  } m_drag;
   QLabel* m_chip = nullptr;
   PromptBar* m_hint = nullptr;
   QMenu* m_chipMenu = nullptr;

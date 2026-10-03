@@ -306,6 +306,12 @@ void Viewport::benchClickAt(int x, int y) {
   FlushViewEvents(m_ctx, m_view, Standard_True);  // what the next frame does (a hidden window has none)
 }
 
+void Viewport::benchFlush() {
+  if (!m_initialised) return;
+  QScopedValueRollback<bool> flushing(m_flushingViewEvents, true);
+  FlushViewEvents(m_ctx, m_view, Standard_True);
+}
+
 bool Viewport::benchBodyPoint(const std::string& body, int& x, int& y) {
   if (!m_initialised) return false;
   m_view->Redraw();  // the picker clips to the z range of the last frame

@@ -157,7 +157,7 @@ ExplodePanel::ExplodePanel(QWidget* parent) : QWidget(parent) {
   }
   layout->addWidget(drag);
   auto* dragHint = new QHBoxLayout;
-  auto* hint = new QLabel(tr("Select a part, then drag its arrow or type a distance"), body);
+  auto* hint = new QLabel(tr("Select a part, then drag it or its arrows, or type a distance along the first arrow"), body);
   hint->setObjectName("tertiary");
   hint->setWordWrap(true);
   auto* reset = new QPushButton(tr("Reset drags"), body);

@@ -8,6 +8,7 @@
 #include <PrsMgr_PresentationManager.hxx>
 #include <SelectMgr_Selection.hxx>
 #include <QAction>
+#include <QApplication>
 #include <QContextMenuEvent>
 #include <QInputDialog>
 #include <QLabel>
@@ -277,6 +278,10 @@ void Explode::ready() {
   // The drag handle: the selected unit's arrow along its direction (or X, Y, Z) and its travel typed or dragged.
   m_handle = new DimensionHandle(view, services().jobs());
   m_handle->setObjectName("explodeHandle");
+  m_handle->drawOnTop();  // the part it moves is selected: drawn in Topmost, it would hide the arrow's foot
+  m_view = view;
+  qApp->installEventFilter(this);  // after the handle's: the triad and a press on the part come first (dragEvent), the chip
+  connect(view, &Viewport::notesMoved, this, [this] { if (m_triadShown) placeHandle(); });  // every camera move
   connect(m_handle, &DimensionHandle::valueChanged, this, [this](const QString& text) {
     if (m_dragUnit < 0 || m_dragUnit >= static_cast<int>(m_units.size())) return;
     const std::optional<double> travel = units::parse(units::Kind::Length, text);
@@ -299,7 +304,6 @@ void Explode::ready() {
   m_chip = new QLabel;
   m_chip->setObjectName("chipSel");
   m_chip->setCursor(Qt::PointingHandCursor);
-  m_chip->installEventFilter(this);
   m_chip->hide();
   services().chips()->addChip(m_chip);
   services().browser()->addDecorator([this](const browser::Row& row, browser::Decoration& d) { decorate(row, d); });
@@ -641,11 +645,13 @@ opad::Vec3 Explode::dragAxis(const opad::ExplodeUnit& unit) const {
 void Explode::placeHandle() {
   if (!m_handle) return;
   DesignController* design = services().design();
-  const bool shown = m_on && m_panel->isVisible() && m_dragUnit >= 0 && m_dragUnit < static_cast<int>(m_units.size()) && !design->sketchActive() && !design->featureActive();
+  const bool shown = m_on && m_panel->isVisible() && m_dragUnit >= 0 && m_dragUnit < static_cast<int>(m_units.size()) && !design->sketchActive() &&
+                     !design->featureActive() && !services().viewport()->ghostsPickable();
   const opad::ExplodeUnit* u = shown ? &m_units[static_cast<size_t>(m_dragUnit)] : nullptr;
   const double s = u ? opad::explode_progress(*u, m_t) : 0;
   if (!u || s < 0.2) {  // nothing to drag, or the part has hardly started to move
     if (m_handle->isVisible() && !m_handle->interacting()) m_handle->hide();
+    placeTriad(false, {}, {});
     return;
   }
   const std::vector<opad::Vec3> moves = opad::explode_unit_offsets(m_units, m_spec, m_t);
@@ -664,6 +670,8 @@ void Explode::placeHandle() {
   m_handle->setScale(s);
   m_handle->setLabel(QString::fromStdString(u->name));
   m_handle->configure(origin, unitAxis, value, units::editable(units::Kind::Length, value));
+  const opad::Vec3& moved = moves[static_cast<size_t>(m_dragUnit)];
+  placeTriad(true, {u->centre[0] + moved[0], u->centre[1] + moved[1], u->centre[2] + moved[2]}, unitAxis);
 }
 
 std::vector<std::string> Explode::members(int unit) const {
@@ -841,6 +849,8 @@ void Explode::designState() {
 }
 
 bool Explode::eventFilter(QObject* object, QEvent* event) {
+  if (object == m_view && (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseMove || event->type() == QEvent::MouseButtonRelease))
+    return dragEvent(event);
   if (object == m_chip && event->type() == QEvent::MouseButtonRelease && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
     open();
     return true;
