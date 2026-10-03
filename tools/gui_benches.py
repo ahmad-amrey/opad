@@ -65,6 +65,7 @@ def main():
             ("sketch-crosslock", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_CROSSLOCK": "{prefix}"}),
             ("sketch-snaps", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_SNAPS": "{prefix}"}),
             ("sketch-steps", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_STEPS": "{prefix}"}),
+            ("sketch-constraints", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_SKETCH_CONSTRAINTS": "{prefix}"}),
             ("leave", box, {"OPAD_BENCH_LEAVE": "1"}),
             ("two-d", box, {"OPAD_BENCH_TWOD": "{prefix}.png"}),
             ("instances", box, {"OPAD_BENCH_INSTANCES": "1"}),

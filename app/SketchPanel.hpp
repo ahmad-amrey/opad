@@ -9,6 +9,7 @@
 
 class SketchEditor;
 class QPushButton;
+class QCheckBox;
 class QTabWidget;
 class SketchPanel : public QWidget {
   Q_OBJECT
@@ -44,4 +45,5 @@ class SketchPanel : public QWidget {
   QTabWidget* m_pages;
   QWidget* m_precise;
   QPushButton *m_apply, *m_undoPoint, *m_closeTool;
+  QCheckBox* m_showConstraints;
 };

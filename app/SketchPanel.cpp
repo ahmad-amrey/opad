@@ -108,6 +108,10 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   button(selection,tr("Delete"),[this]{m_editor->deleteSelection();});
   selection->addStretch();
   auto* constraints=page(tr("Constraints"));
+  // Their badges in the view (UI-24): off, only those in conflict or selected show.
+  m_showConstraints=new QCheckBox(tr("Show constraints"),this);m_showConstraints->setObjectName("sketch-showConstraints");constraints->addWidget(m_showConstraints);
+  m_showConstraints->setToolTip(tr("Constraint badges and coincidence dots in the view; off, only those in conflict or selected show"));
+  connect(m_showConstraints,&QCheckBox::toggled,this,[this](bool on){m_editor->setShowConstraints(on);});
   auto* constraintFilter=new QLineEdit(this);constraintFilter->setPlaceholderText(tr("Filter constraints"));constraints->addWidget(constraintFilter);
   m_constraints=new QTreeWidget(this);m_constraints->setRootIsDecorated(false);m_constraints->setColumnCount(3);
   m_constraints->setHeaderLabels({tr("ID"),tr("Type"),tr("Value")}); m_constraints->setColumnWidth(0,45);m_constraints->setColumnWidth(1,105);
@@ -304,6 +308,7 @@ void SketchPanel::refresh() {
   }
   m_steps->setSteps(steps(),{});
   fitSteps();
+  {QSignalBlocker block(m_showConstraints);m_showConstraints->setChecked(m_editor->showConstraints());}
   m_state->setText((m_editor->visible()?QString():tr("This sketch is hidden. Show it in the browser to see your edits.")+"\n")+(m_editor->modified()?tr("Modified sketch"):tr("Sketch"))+tr(" · %1 degrees of freedom").arg(m_editor->dof()));
   const int selected=m_constraints->currentItem()?m_constraints->currentItem()->data(0,Qt::UserRole).toInt():0;
   m_constraints->clear();

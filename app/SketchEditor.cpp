@@ -55,7 +55,8 @@ class SketchPrs : public AIS_InteractiveObject {
   std::vector<Pt> points, bigPoints;
   std::vector<Txt> texts;
   std::vector<opad::Vec3> fill;
-  QColor fillColor, textBack;
+  std::vector<opad::Vec3> badges;  // the constraint badges' backs (UI-24): opaque triangles, over the curves, under the marks
+  QColor fillColor, textBack, badgeColor;
   float fillAlpha = 0.18f;
   // Line widths, marker sizes and text heights are device pixels: times the display scale they read the same at
   // 100 % and 150 % (at 1.0 they were tiny on a 4K screen).
@@ -91,6 +92,18 @@ class SketchPrs : public AIS_InteractiveObject {
     lines(thin, Aspect_TOL_SOLID, 1.0 * scale);
     lines(dashed, Aspect_TOL_DASH, 1.5 * scale);
     lines(solid, Aspect_TOL_SOLID, 2.0 * scale);
+    if (!badges.empty()) {
+      Handle(Graphic3d_ArrayOfTriangles) tri = new Graphic3d_ArrayOfTriangles(static_cast<int>(badges.size()));
+      for (const auto& p : badges) tri->AddVertex(gp_Pnt(p[0], p[1], p[2]));
+      Handle(Graphic3d_AspectFillArea3d) a = new Graphic3d_AspectFillArea3d();
+      a->SetInteriorStyle(Aspect_IS_SOLID);
+      a->SetInteriorColor(occ(badgeColor));
+      a->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+      a->SetSuppressBackFaces(false);
+      Handle(Graphic3d_Group) g = prs->NewGroup();
+      g->SetGroupPrimitivesAspect(a);
+      g->AddPrimitiveArray(tri);
+    }
     lines(marks, Aspect_TOL_SOLID, 1.5 * scale);
     lines(locked, Aspect_TOL_DASH, 3.0 * scale);
     auto markers = [&](const std::vector<Pt>& pts, double scale) {
@@ -228,6 +241,7 @@ void SketchEditor::setVisible(bool visible) {
 void SketchEditor::begin(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry) {
   ++m_geometryRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   ++m_session;m_toolPreview.reset();m_previewRequested=false;
+  m_showConstraints=QSettings().value("sketch/showConstraints",true).toBool();
   m_tracked.clear();m_dwellPoint=0;m_lock.reset();m_shiftDown=m_shiftSpent=m_inView=false;m_typedValues.clear();m_entry.reset();m_pointer=m_cursor={};m_angleRelative=QSettings().value("sketch/input/angleRelative",false).toBool();m_circleRadius=QSettings().value("sketch/input/circleRadius",false).toBool();m_dragging=false;m_dragMoved=false;m_dragPending=false;m_dragReleased=false;m_inChange=false;m_options.clear();m_conflicts.clear();
   readSettings();
   m_id = sketchId;
@@ -1189,6 +1203,8 @@ void SketchEditor::rebuild() {
   d.solid.clear();
   d.dashed.clear();
   d.thin.clear();
+  d.marks.clear();
+  d.badges.clear();
   d.points.clear();
   d.bigPoints.clear();
   d.texts.clear();
@@ -1241,32 +1257,59 @@ void SketchEditor::rebuild() {
     if(m_dangling.count(p.id)) d.bigPoints.push_back({W(p.x,p.y),t.red});
   }
 
-  // Constraint glyphs next to what they hold.
-  std::map<int, int> stacked;  // several glyphs on one entity sit side by side
-  // One glyph of a kind per curve: a hexagon's first side holds five "equal"s and a slot's caps two tangents each,
-  // which drew rows of identical glyphs. The others stay reachable through the glyph on the other curve.
-  std::set<std::pair<int, std::string>> shownGlyphs;
+  // Constraint badges next to what they hold (UI-24): a pictogram in a badge, green (red in conflict, the hover colour when
+  // selected or hovered), laid out so that none covers another; an explicit coincidence is a dot on its point. With Show
+  // constraints off only the conflicting and selected ones show.
+  // One badge of a kind per curve: a hexagon's first side holds five "equal"s and a slot's caps two tangents each, which drew
+  // rows of identical badges. The others stay reachable through the badge on the other curve.
+  using G = snapmarkers::Glyph;
+  double rx = px, ry = 0, ux = 0, uy = px;  // one pixel right and up on the screen, in sketch coordinates
+  pixelAxes(rx, ry, ux, uy);
+  const double det = rx * uy - ux * ry;
+  const opad::Vec3 normal = m_frame.normal(), look = m_viewport->viewDirection();
+  const double toward = normal[0] * look[0] + normal[1] * look[1] + normal[2] * look[2] > 0 ? -1 : 1;
+  auto lifted = [&](double u, double v, double pixels) {  // off the plane towards the viewer: badges cover the curves under them
+    opad::Vec3 w = W(u, v);
+    for (int i = 0; i < 3; ++i) w[i] += normal[i] * toward * pixels * px;
+    return w;
+  };
+  auto glyphOf = [](SkConstraint::Type type) -> std::optional<G> {
+    switch (type) {
+      case SkConstraint::Type::Horizontal: return G::Horizontal;
+      case SkConstraint::Type::Vertical: return G::Vertical;
+      case SkConstraint::Type::Parallel: return G::Parallel;
+      case SkConstraint::Type::Perpendicular: return G::Perpendicular;
+      case SkConstraint::Type::Tangent: return G::Tangent;
+      case SkConstraint::Type::Smooth: return G::Smooth;
+      case SkConstraint::Type::Curvature: return G::Curvature;
+      case SkConstraint::Type::Equal: return G::Equal;
+      case SkConstraint::Type::Concentric: return G::Concentric;
+      case SkConstraint::Type::Midpoint: return G::Midpoint;
+      case SkConstraint::Type::Symmetric: return G::Symmetric;
+      case SkConstraint::Type::Collinear: return G::Collinear;
+      case SkConstraint::Type::Fix: return G::Fix;
+      default: return std::nullopt;  // coincident: a dot on its point; dimensions draw themselves
+    }
+  };
+  struct Badge { int id; G glyph; snapmarkers::Place at; QColor color; };
+  std::vector<Badge> badges;
+  std::set<std::pair<int, int>> shownGlyphs;
+  m_coincidentDots.clear();
+  auto colourOf = [&](const SkConstraint& c) { return m_conflicts.count(c.id) ? t.red : selected.count(c.id) || (m_hover.kind == Hit::Dimension && m_hover.id == c.id) ? t.hov : t.green; };
   for (const auto& c : m_sk.constraints) {
     if (c.is_dimension() || c.refs.empty()) continue;
-    if(!i18n::t(QString::fromLatin1(SkConstraint::type_name(c.type))).contains(m_constraintFilter,Qt::CaseInsensitive))continue;
-    const char* glyph = nullptr;
-    switch (c.type) {
-      case SkConstraint::Type::Horizontal: glyph = "H"; break;
-      case SkConstraint::Type::Vertical: glyph = "V"; break;
-      case SkConstraint::Type::Parallel: glyph = "//"; break;
-      case SkConstraint::Type::Perpendicular: glyph = "_|_"; break;
-      case SkConstraint::Type::Tangent: glyph = "T"; break;
-      case SkConstraint::Type::Smooth: glyph = "G2"; break;
-      case SkConstraint::Type::Curvature: glyph = "K"; break;
-      case SkConstraint::Type::Equal: glyph = "="; break;
-      case SkConstraint::Type::Concentric: glyph = "(o)"; break;
-      case SkConstraint::Type::Midpoint: glyph = "M"; break;
-      case SkConstraint::Type::Symmetric: glyph = "S"; break;
-      case SkConstraint::Type::Collinear: glyph = "C"; break;
-      case SkConstraint::Type::Fix: glyph = "F"; break;
-      default: break;  // coincident shows as the points meeting
+    if (!m_showConstraints && !m_conflicts.count(c.id) && !selected.count(c.id)) continue;
+    if (!i18n::t(QString::fromLatin1(SkConstraint::type_name(c.type))).contains(m_constraintFilter, Qt::CaseInsensitive)) continue;
+    if (c.type == SkConstraint::Type::Coincident) {  // a dot on the point it holds
+      if (const SkPoint* p = m_geometry->point(m_sk, c.refs[0])) {
+        for (const auto& s : snapmarkers::glyph(G::Coincident, 7))
+          d.marks.push_back({lifted(p->x + s.x0 * rx + s.y0 * ux, p->y + s.x0 * ry + s.y0 * uy, 2), lifted(p->x + s.x1 * rx + s.y1 * ux, p->y + s.x1 * ry + s.y1 * uy, 2), colourOf(c)});
+        m_coincidentDots.push_back({c.id, p->x, p->y});
+      }
+      continue;
     }
-    if (!glyph) continue;
+    const auto glyph = glyphOf(c.type);
+    if (!glyph || !(std::fabs(det) > 0)) continue;
     for (int ref : c.refs) {
       double gu = 0, gv = 0;
       if (const SkEntity* e = m_sk.entity(ref)) {
@@ -1275,19 +1318,30 @@ void SketchEditor::rebuild() {
         gu = pts[pts.size() / 2].first;
         gv = pts[pts.size() / 2].second;
         if (e->type == SkEntity::Type::Line) { gu = (pts[0].first + pts[1].first) / 2; gv = (pts[0].second + pts[1].second) / 2; }
-      } else if (const SkPoint* p = m_geometry->point(m_sk,ref)) {
+      } else if (const SkPoint* p = m_geometry->point(m_sk, ref)) {
         gu = p->x;
         gv = p->y;
       } else {
         continue;
       }
-      if (!shownGlyphs.insert({ref, glyph}).second && !selected.count(c.id) && !m_conflicts.count(c.id)) continue;
-      const int k = stacked[ref]++;
-      d.texts.push_back({W(gu + (14 + 16 * k) * px, gv + 12 * px), QString::fromLatin1(glyph), m_conflicts.count(c.id)?t.red:selected.count(c.id) ? t.hov : t.green});
-      m_glyphHits.push_back({c.id,gu+(14+16*k)*px,gv+12*px});
-      if (c.type == SkConstraint::Type::Midpoint || c.type == SkConstraint::Type::Symmetric || c.type == SkConstraint::Type::Fix) break;  // one glyph is enough
+      if (!shownGlyphs.insert({ref, int(*glyph)}).second && !selected.count(c.id) && !m_conflicts.count(c.id)) continue;
+      badges.push_back({c.id, *glyph, {(gu * uy - ux * gv) / det, (rx * gv - gu * ry) / det}, colourOf(c)});  // in pixels
+      if (c.type == SkConstraint::Type::Midpoint || c.type == SkConstraint::Type::Symmetric || c.type == SkConstraint::Type::Fix) break;  // one badge is enough
     }
   }
+  std::vector<snapmarkers::Place> anchors;
+  for (const auto& b : badges) anchors.push_back(b.at);
+  const auto placed = snapmarkers::layoutBadges(anchors, 16, 2);
+  for (size_t i = 0; i < badges.size(); ++i) {
+    const double cu = placed[i].x * rx + placed[i].y * ux, cv = placed[i].x * ry + placed[i].y * uy;  // back in sketch coordinates
+    auto at = [&](double x, double y, double lift) { return lifted(cu + x * rx + y * ux, cv + x * ry + y * uy, lift); };
+    for (const auto& corner : {std::array<double, 6>{-8, -8, 8, -8, 8, 8}, std::array<double, 6>{-8, -8, 8, 8, -8, 8}})
+      for (int k = 0; k < 3; ++k) d.badges.push_back(at(corner[size_t(2 * k)], corner[size_t(2 * k + 1)], 1));
+    for (const auto& s : snapmarkers::badge(16, 16, 4)) d.marks.push_back({at(s.x0, s.y0, 2), at(s.x1, s.y1, 2), badges[i].color == t.green ? t.line : badges[i].color});
+    for (const auto& s : snapmarkers::glyph(badges[i].glyph, 11)) d.marks.push_back({at(s.x0, s.y0, 2), at(s.x1, s.y1, 2), badges[i].color});
+    m_glyphHits.push_back({badges[i].id, cu, cv});
+  }
+  d.badgeColor = t.bg2;
 
   // Dimensions.
   auto dimension = [&](const SkConstraint& c, bool pending) {
@@ -1404,6 +1458,22 @@ QStringList SketchEditor::transientTexts() const {
   return out;
 }
 
+QStringList SketchEditor::overlayTexts() const {
+  QStringList out;
+  if (!m_prs.IsNull())
+    for (const auto& text : static_cast<const SketchPrs*>(m_prs.get())->texts) out << text.s;
+  return out;
+}
+
+size_t SketchEditor::badgeTriangles() const { return m_prs.IsNull() ? 0 : static_cast<const SketchPrs*>(m_prs.get())->badges.size() / 3; }
+
+size_t SketchEditor::transientSolid(const QColor& c) const {
+  size_t n = 0;
+  if (!m_transientPrs.IsNull())
+    for (const auto& s : static_cast<const SketchPrs*>(m_transientPrs.get())->solid) n += s.c == c;
+  return n;
+}
+
 size_t SketchEditor::transientLocked() const { return m_transientPrs.IsNull() ? 0 : static_cast<const SketchPrs*>(m_transientPrs.get())->locked.size(); }
 
 const std::vector<std::vector<std::pair<double, double>>>& SketchEditor::textPreview() {
@@ -1441,6 +1511,21 @@ const std::vector<std::vector<std::pair<double, double>>>& SketchEditor::textPre
   return m_textPreview;
 }
 
+void SketchEditor::pixelAxes(double& rx, double& ry, double& ux, double& uy) const {
+  const QPointF c(m_viewport->width() / 2.0, m_viewport->height() / 2.0);
+  double u0, v0, u1, v1, u2, v2;
+  if (m_viewport->planePoint(c, m_frame, u0, v0) && m_viewport->planePoint(c + QPointF(100, 0), m_frame, u1, v1) && m_viewport->planePoint(c + QPointF(0, -100), m_frame, u2, v2))
+    rx = (u1 - u0) / 100, ry = (v1 - v0) / 100, ux = (u2 - u0) / 100, uy = (v2 - v0) / 100;  // 100 px apart: planePoint takes whole device pixels
+}
+
+void SketchEditor::setShowConstraints(bool on) {
+  if (m_showConstraints == on) return;
+  m_showConstraints = on;
+  QSettings().setValue("sketch/showConstraints", on);
+  if (m_active) rebuild();
+  emit changed();
+}
+
 void SketchEditor::updateTransient() {
   if(m_transientPrs.IsNull() || !m_geometry || m_geometryJob)return;
   auto& d=*static_cast<SketchPrs*>(m_transientPrs.get());
@@ -1451,12 +1536,7 @@ void SketchEditor::updateTransient() {
   // Snap markers and pictograms face the viewer (SnapMarkers.hpp): one pixel right (rx, ry) and up (ux, uy) on the screen,
   // in sketch coordinates.
   double rx=px,ry=0,ux=0,uy=px;
-  {
-    const QPointF c(m_viewport->width()/2.0,m_viewport->height()/2.0);
-    double u0,v0,u1,v1,u2,v2;
-    if(m_viewport->planePoint(c,m_frame,u0,v0) && m_viewport->planePoint(c+QPointF(100,0),m_frame,u1,v1) && m_viewport->planePoint(c+QPointF(0,-100),m_frame,u2,v2))
-      rx=(u1-u0)/100,ry=(v1-v0)/100,ux=(u2-u0)/100,uy=(v2-v0)/100;  // 100 px apart: planePoint takes whole device pixels
-  }
+  pixelAxes(rx,ry,ux,uy);
   auto mark=[&](double x,double y,const std::vector<snapmarkers::Seg>& segs,double ox,double oy,const QColor& c) {  // (ox, oy): px off (x, y)
     auto at=[&](double sx,double sy){return W(x+(sx+ox)*rx+(sy+oy)*ux,y+(sx+ox)*ry+(sy+oy)*uy);};
     for(const auto& s:segs)d.marks.push_back({at(s.x0,s.y0),at(s.x1,s.y1),c});
@@ -1464,7 +1544,16 @@ void SketchEditor::updateTransient() {
   m_marker.reset();
   m_markerTurn=0;
   m_glyphs.clear();
-  if(m_hover.kind==Hit::Point) {
+  if(m_hover.kind==Hit::Dimension) {  // a constraint's badge or a dimension's value: what it holds lights up (UI-24)
+    const auto c=std::find_if(m_sk.constraints.begin(),m_sk.constraints.end(),[&](const SkConstraint& k){return k.id==m_hover.id;});
+    if(c!=m_sk.constraints.end())for(int ref:c->refs) {
+      if(const auto* e=m_sk.entity(ref)) {
+        const auto pts=sampled(*e);
+        for(size_t i=1;i<pts.size();++i)d.solid.push_back({W(pts[i-1].first,pts[i-1].second),W(pts[i].first,pts[i].second),t.hov});
+        if(e->type==SkEntity::Type::Point)if(const auto* p=e->p.empty()?nullptr:m_geometry->point(m_sk,e->p[0]))d.bigPoints.push_back({W(p->x,p->y),t.hov});
+      } else if(const auto* p=m_geometry->point(m_sk,ref))d.bigPoints.push_back({W(p->x,p->y),t.hov});
+    }
+  } else if(m_hover.kind==Hit::Point) {
     if(const auto* p=m_geometry->point(m_sk,m_hover.id))d.bigPoints.push_back({W(p->x,p->y),t.hov});
     if(m_tool=="fillet") {  // the arc a click there makes, at the radius set (typed before anything is picked too)
       const auto arc=filletPreview(m_hover.id);

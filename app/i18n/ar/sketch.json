@@ -223,5 +223,8 @@
  "1 more point": "نقطة أخرى واحدة",
  "%1 more points": "%1 نقاط أخرى",
  "%1 points": "%1 نقاط",
- "chosen": "تم الاختيار"
+ "chosen": "تم الاختيار",
+ "Show constraints": "إظهار القيود",
+ "Constraint badges and coincidence dots in the view; off, only those in conflict or selected show": "شارات القيود ونقاط التطابق في العرض؛ عند الإيقاف تظهر المتعارضة أو المحددة فقط",
+ "Show or hide constraints": "إظهار القيود أو إخفاؤها"
 }

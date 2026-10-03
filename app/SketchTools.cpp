@@ -1311,6 +1311,7 @@ void SketchEditor::bench(const QString&) {
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_CROSSLOCK"))return benchCrossLock();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SNAPS"))return benchSnaps();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_STEPS"))return benchSteps();
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_CONSTRAINTS"))return benchConstraints();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY"))return benchModify();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES"))return benchPrimitives();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW"))return benchWorkflow();

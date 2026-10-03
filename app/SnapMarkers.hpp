@@ -7,17 +7,20 @@
 //   (on a curve) ⧗, perpendicular ⟂, tangent ○ under a line, extension ⊢ (turned() along its dashed line, out of the
 //   line's end), tracking ✛, locked: a padlock (by its line, which is drawn thick dashed), grid #.
 //   Pictograms (constraints): coincident ●, on a curve (a dot on a line), midpoint, horizontal, vertical, perpendicular,
-//   tangent, parallel, equal, concentric, collinear, symmetric, fix; badge(): the frame they sit in.
+//   tangent, parallel, equal, concentric, collinear, symmetric, fix, smooth (G2), equal curvature; badge(): the frame they
+//   sit in; layoutBadges(): where a sketch's constraint badges go so that none covers another (UI-24).
 // No Qt and no OCCT: tests/test_snap_markers.cpp.
 #include <cmath>
+#include <cstdint>
 #include <initializer_list>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 namespace snapmarkers {
 struct Seg { double x0 = 0, y0 = 0, x1 = 0, y1 = 0; };
 enum class Marker { Endpoint, Midpoint, Centre, Quadrant, Intersection, Apparent, Nearest, Perpendicular, Tangent, Extension, Tracking, Locked, Grid };
-enum class Glyph { Coincident, OnCurve, Midpoint, Horizontal, Vertical, Perpendicular, Tangent, Parallel, Equal, Concentric, Collinear, Symmetric, Fix };
+enum class Glyph { Coincident, OnCurve, Midpoint, Horizontal, Vertical, Perpendicular, Tangent, Parallel, Equal, Concentric, Collinear, Symmetric, Fix, Smooth, Curvature };
 
 namespace detail {
 inline void poly(std::vector<Seg>& out, std::initializer_list<std::pair<double, double>> pts, bool closed, double k, double dx = 0, double dy = 0) {
@@ -149,6 +152,19 @@ inline std::vector<Seg> glyph(Glyph g, double size = 10) {
       poly(out, {{-0.9, -0.3}, {0.9, -0.3}}, false, h);
       for (const double x : {-0.6, 0.0, 0.6}) poly(out, {{x, -0.3}, {x - 0.35, -0.95}}, false, h);
       break;
+    case Glyph::Smooth: {  // an S: two curves running on into each other (G2)
+      const double pi = std::acos(-1.0);
+      detail::arc(out, -0.45 * h, 0, 0.45 * h, 0, pi, 8);
+      detail::arc(out, 0.45 * h, 0, 0.45 * h, pi, pi, 8);
+      break;
+    }
+    case Glyph::Curvature: {  // an arc and its radius
+      const double pi = std::acos(-1.0);
+      detail::arc(out, 0, -0.9 * h, 1.6 * h, pi / 3, pi / 3, 8);
+      poly(out, {{0, -0.9}, {0, 0.7}}, false, h);
+      poly(out, {{-0.25, 0.4}, {0, 0.7}, {0.25, 0.4}}, false, h);
+      break;
+    }
   }
   return out;
 }
@@ -159,6 +175,39 @@ inline std::vector<Seg> turned(std::vector<Seg> segs, double a) {
   const double c = std::cos(a), s = std::sin(a);
   for (auto& g : segs) g = {c * g.x0 - s * g.y0, s * g.x0 + c * g.y0, c * g.x1 - s * g.y1, s * g.x1 + c * g.y1};
   return segs;
+}
+
+// Where a sketch's constraint badges go (UI-24), each `size` px square, given the place each belongs to (px, x right, y up):
+// the first free place of a fixed list round it (above right first, where the letters were), then rows running on to the
+// right and to the left, so that no badge covers another (they used to stack on one spot and overlap). The badges' centres,
+// in order; a place found nowhere free keeps the first choice.
+struct Place { double x = 0, y = 0; };
+inline std::vector<Place> layoutBadges(const std::vector<Place>& anchors, double size = 16, double gap = 2) {
+  const double step = size + gap, s = size;
+  std::vector<Place> offsets = {{s, 0.9 * s}, {s, -0.9 * s}, {-s, 0.9 * s}, {-s, -0.9 * s}, {0, 1.4 * s}, {0, -1.4 * s}};
+  for (int k = 1; k <= 16; ++k)
+    for (const Place& o : {Place{s, 0.9 * s}, Place{s, -0.9 * s}, Place{-s, 0.9 * s}, Place{-s, -0.9 * s}}) offsets.push_back({o.x + (o.x > 0 ? 1 : -1) * k * step, o.y});
+  std::unordered_map<std::uint64_t, std::vector<Place>> cells;  // placed centres by `step` cell: a badge meets only its neighbours'
+  auto cell = [&](long long cx, long long cy) { return (std::uint64_t(std::uint32_t(cx)) << 32) | std::uint32_t(cy); };
+  auto free = [&](const Place& c) {
+    const long long cx = (long long)std::floor(c.x / step), cy = (long long)std::floor(c.y / step);
+    for (long long dx = -1; dx <= 1; ++dx)
+      for (long long dy = -1; dy <= 1; ++dy)
+        if (const auto it = cells.find(cell(cx + dx, cy + dy)); it != cells.end())
+          for (const Place& p : it->second)
+            if (std::fabs(p.x - c.x) < step - 1e-9 && std::fabs(p.y - c.y) < step - 1e-9) return false;
+    return true;
+  };
+  std::vector<Place> out;
+  out.reserve(anchors.size());
+  for (const Place& a : anchors) {
+    Place at{a.x + offsets[0].x, a.y + offsets[0].y};
+    for (const Place& o : offsets)
+      if (free({a.x + o.x, a.y + o.y})) { at = {a.x + o.x, a.y + o.y}; break; }
+    cells[cell((long long)std::floor(at.x / step), (long long)std::floor(at.y / step))].push_back(at);
+    out.push_back(at);
+  }
+  return out;
 }
 
 // The frame a pictogram sits in, w x h px about (0, 0), its corners cut by r (a rounded badge drawn in segments).

@@ -108,6 +108,11 @@ class SketchEditor : public QObject, public SketchInput {
   void benchSnaps();
   void benchSteps();
   void refreshSnap();  // a snap setting changed (Ortho, a snap kind): read again, the pointer's snap again where it is
+  // Show constraints (UI-24, setting sketch/showConstraints): their badges and coincidence dots; off, only those in conflict
+  // or selected show.
+  bool showConstraints() const { return m_showConstraints; }
+  void setShowConstraints(bool on);
+  void benchConstraints();
   void benchLarge(const QString& output, opad::json metrics);
 
   // SketchInput
@@ -226,6 +231,9 @@ class SketchEditor : public QObject, public SketchInput {
   bool boxed(const QString& key) const;               // a box of the step takes that readout's value (and sits on it)
   QStringList transientTexts() const;                 // what the rubber band reads out (benches)
   size_t transientLocked() const;                     // segments drawn thick dashed: a Shift lock's line (benches)
+  QStringList overlayTexts() const;                   // the texts the sketch's overlay draws (benches)
+  size_t badgeTriangles() const;                      // the constraint badges' backs, two triangles each (benches)
+  size_t transientSolid(const QColor& c) const;       // rubber band and highlight segments in that colour (benches)
   std::optional<snapmarkers::Marker> m_marker;        // the marker drawn where the pointer snapped (none: a dot)
   double m_markerTurn = 0;                            // its turn on the screen (radians): an extension's follows its line
   Hit hitTest(double u, double v) const;
@@ -306,7 +314,10 @@ class SketchEditor : public QObject, public SketchInput {
   opad::design::SolveResult m_previewSolved;
   QString m_selectionFilter = "all",m_constraintFilter;
   std::set<int> m_conflicts;
-  std::vector<std::tuple<int,double,double>> m_glyphHits;
+  std::vector<std::tuple<int,double,double>> m_glyphHits;  // each constraint badge: its constraint and centre (picking, hover)
+  std::vector<std::tuple<int,double,double>> m_coincidentDots;  // each coincidence drawn: its constraint and point
+  bool m_showConstraints = true;
+  void pixelAxes(double& rx, double& ry, double& ux, double& uy) const;  // one screen pixel right and up, in sketch coordinates
   bool m_boxSelecting = false;
   bool m_undoPending=false;
   double m_boxU=0,m_boxV=0;

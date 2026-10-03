@@ -1154,6 +1154,7 @@ void MainWindow::buildDesignActions() {
     tools->addAction(a);
   }
   addAction("sketch.construction", tr("Construction"), "construction", QKeySequence("X"), [this] { m_design->sketch()->toggleConstruction(); });
+  addAction("sketch.showConstraints", tr("Show or hide constraints"), "cHorizontal", QKeySequence(), [this] { m_design->sketch()->setShowConstraints(!m_design->sketch()->showConstraints()); });
   const auto registry=SketchPanel::tools();
   // Each tool its own icon (they all showed the generic sketch one): its own name where the table has it.
   const QMap<QString,QString> toolIcons{{"tangent_circle","tangentCircle"},{"tangent_arc","tangentArc"},{"polygon_outer","polygonOuter"},{"control_spline","controlSpline"},
@@ -2767,7 +2768,7 @@ void MainWindow::runBench() {
     setWorkspace(1);
     m_design->bench();
     // The keyboard shapes and cross-lock benches end themselves; this is their fallback (they wait for timers past 9 s).
-    QTimer::singleShot(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SHAPES") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_CROSSLOCK") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SNAPS") ? 60000 : qEnvironmentVariableIsSet("OPAD_BENCH_RULE") ? 13000 : 9000, this, [this, shot] {
+    QTimer::singleShot(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SHAPES") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_CROSSLOCK") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SNAPS") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_STEPS") || qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_CONSTRAINTS") ? 60000 : qEnvironmentVariableIsSet("OPAD_BENCH_RULE") ? 13000 : 9000, this, [this, shot] {
       trace::log(QStringLiteral("bench: design: %1 bodies, %2 features, %3 unresolved").arg(m_doc->scene.all_bodies().size()).arg(m_doc->scene.features.size()).arg(m_doc->scene.unresolved.size()));
       m_viewport->benchDesignShot(shot);
       if (const QByteArray ui = qgetenv("OPAD_BENCH_UISHOT"); !ui.isEmpty()) grab().save(QString::fromLocal8Bit(ui));

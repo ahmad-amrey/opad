@@ -37,7 +37,7 @@ int ends(const std::vector<Seg>& segs) {
 const Marker kMarkers[] = {Marker::Endpoint, Marker::Midpoint, Marker::Centre, Marker::Quadrant, Marker::Intersection, Marker::Apparent, Marker::Nearest,
                            Marker::Perpendicular, Marker::Tangent, Marker::Extension, Marker::Tracking, Marker::Locked, Marker::Grid};
 const Glyph kGlyphs[] = {Glyph::Coincident, Glyph::OnCurve, Glyph::Midpoint, Glyph::Horizontal, Glyph::Vertical, Glyph::Perpendicular, Glyph::Tangent,
-                         Glyph::Parallel, Glyph::Equal, Glyph::Concentric, Glyph::Collinear, Glyph::Symmetric, Glyph::Fix};
+                         Glyph::Parallel, Glyph::Equal, Glyph::Concentric, Glyph::Collinear, Glyph::Symmetric, Glyph::Fix, Glyph::Smooth, Glyph::Curvature};
 }  // namespace
 
 TEST(every_marker_fits_its_size_and_has_a_shape_of_its_own) {
@@ -82,6 +82,21 @@ TEST(every_pictogram_fits_and_differs) {
   const auto h = glyph(Glyph::Horizontal), v = glyph(Glyph::Vertical);
   CHECK(h.size() == v.size());
   for (size_t i = 0; i < h.size(); ++i) CHECK(std::abs(h[i].x0 - v[i].y0) < 1e-12 && std::abs(h[i].y0 - v[i].x0) < 1e-12);
+}
+
+// UI-24: a sketch's constraint badges never cover each other: the first sits above right of its place, more on one place
+// run on in a row, crowded places push theirs aside; the order of the places decides who gets the first choice.
+TEST(constraint_badges_never_overlap) {
+  std::vector<Place> anchors(5, Place{100, 100});  // five constraints on one line
+  for (int i = 0; i < 40; ++i) anchors.push_back({double(i % 7) * 9, double(i / 7) * 7});  // a crowded corner
+  const auto at = layoutBadges(anchors, 16, 2);
+  CHECK(at.size() == anchors.size());
+  CHECK_NEAR(at[0].x, 116, 1e-12);
+  CHECK_NEAR(at[0].y, 114.4, 1e-12);
+  for (size_t i = 0; i < at.size(); ++i)
+    for (size_t j = i + 1; j < at.size(); ++j) CHECK(std::abs(at[i].x - at[j].x) >= 18 - 1e-9 || std::abs(at[i].y - at[j].y) >= 18 - 1e-9);
+  for (size_t i = 0; i < 5; ++i) CHECK(std::hypot(at[i].x - 100, at[i].y - 100) < 120);  // still beside their line
+  CHECK(layoutBadges({}).empty());
 }
 
 TEST(a_turned_marker_follows_its_line) {
