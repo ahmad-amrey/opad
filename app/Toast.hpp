@@ -5,7 +5,7 @@
 // never takes the focus. The newest is lowest; at most kMax show, the oldest goes first. Hovering one holds its timer.
 // Colours come from the theme's stylesheet (QFrame#toast), so a theme switch restyles the ones showing; a right-to-left
 // UI mirrors them (text right, action and close left).
-//   m_toasts->toast(tr("3 bodies deleted"), tr("Undo"), [this] { m_doc->undo(); });
+//   m_toasts->toast(text, undoLabel, [this] { m_doc->undo(); });  // text, undoLabel: translated
 #include <QFrame>
 #include <QList>
 #include <QPointer>
