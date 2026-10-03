@@ -253,7 +253,7 @@ void RecoveryManager::restore(const Entry& entry,std::function<void(bool,QString
     if(edit.is_object() && edit.value("type","")=="sketch"){
       const auto id=edit.value("id",std::string());
       const auto op=id.empty()?opad::design::make_sketch_op(edit.value("name","Recovered sketch"),edit.at("plane"),edit.at("geometry")):
-        opad::json{{"op","edit"},{"target",id},{"set",{{"plane",edit.at("plane")},{"geometry",edit.at("geometry")}}}};
+        opad::json{{"op","edit"},{"target",id},{"set",{{"plane",[&]{const auto* sketch=result->scene.sketch(id);const auto& plane=edit.at("plane");return sketch&&plane!=sketch->plane?opad::design::plane_as_made(*sketch,plane):plane;}()},{"geometry",edit.at("geometry")}}}};
       result->draft=opad::design::plan_ops(result->document,{op});
     }
   },[=,this](bool ok,const QString& error){

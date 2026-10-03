@@ -1,6 +1,7 @@
 #pragma once
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -26,7 +27,8 @@ struct Node {
   std::array<double, 3> color{0.75, 0.75, 0.78};
   double opacity = 1.0;
   bool visible = true;
-  bool locked = false;
+  bool locked = false;  // not picked and not changed, moved or removed (Scene::effectively_locked: or under a locked component)
+  json layer;  // a drawing layer as its file had it: {name, off, frozen, locked, plot, linetype, lineweight}; null otherwise
   std::string source_op;  // the import op that created it
   std::vector<std::string> modified_by;  // ops that touched this node after import
   json properties = json::object();  // part properties (properties ops): part_number, description, material, bom, ...
@@ -65,6 +67,7 @@ struct SectionPlane {
 struct ViewBookmark {
   std::string id, name;
   json camera;
+  json explode;  // optional exploded view (explode.hpp ExplodeSpec); null for a plain camera bookmark
 };
 
 struct Unresolved {
@@ -88,14 +91,18 @@ struct Frame {
   Vec3 normal() const;
   Vec3 to_world(double u, double v) const;
   void to_local(const Vec3& p, double& u, double& v) const;
+  Frame transformed(const Mat4& m) const;  // moved by m (its rigid part: axes stay unit and square)
   json to_json() const;
   static Frame from_json(const json& j);
 };
 
 struct SketchItem {
   std::string id, name;
+  std::string component;  // the component it was made in (the op's optional "component"); empty = the document root
+  Mat4 placed;            // that component's world placement when the sketch was made
+  Mat4 moved;             // how far the component moved since (world now * inverse(placed)); frame includes it
   json plane;     // how the plane was chosen: {"base":"xy"} | {"face":ref} | {"feature":id}
-  Frame frame;
+  Frame frame;    // where it is now; the op keeps it as made (frame.transformed(moved.inverse()))
   json geometry;  // solved: {"points":[..],"entities":[..],"constraints":[..]} (design/sketch.hpp)
   bool visible = true;
   bool consumed = false;  // some feature uses it: hidden unless shown explicitly
@@ -105,6 +112,7 @@ struct SketchItem {
 
 struct Feature {
   std::string id, kind, name;
+  std::string component;  // where its new bodies (or its plane / axis) went; empty = the document root
   json inputs, result;
   bool suppressed = false;
   std::string suppress_if;  // an expression that suppresses it while true (gap log #9)
@@ -163,6 +171,7 @@ struct Scene {
   const Node* node(const std::string& id) const;
   Mat4 world(const std::string& id) const;
   bool effectively_visible(const std::string& id) const;
+  bool effectively_locked(const std::string& id) const;  // it or a component above it is locked
   std::vector<std::string> bodies_under(const std::string& id) const;  // depth-first
   std::vector<std::string> all_bodies() const;
   std::vector<std::string> path_to(const std::string& id) const;  // root..id
@@ -209,5 +218,11 @@ class SceneBuilder {
 
 // `until`: stop before this op (the state an earlier feature was computed in; timeline roll-back).
 Scene resolve(const Document& doc, const std::string& until = {});
+
+// The ops (of the effective log) that touch a component and what is under it, for a timeline that dims the others
+// while it is active (TODO 11 UI-33): what made its nodes, sketches and features made in it, features that change a
+// body in it, reparent / transform / appearance / rename ops on something in it or putting something into it, and notes
+// and measurements on it. An empty component is the document root: every op.
+std::set<std::string> ops_in_component(const Document& doc, const Scene& scene, const std::string& component);
 
 }  // namespace opad

@@ -144,6 +144,11 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   m_timer.setInterval(16);
   connect(&m_timer, &QTimer::timeout, this, [this] {
     if (!m_initialised) return;
+    if (m_glide && !myViewAnimation.IsNull() && !myViewAnimation->IsStopped()) {  // on time also where no frame is drawn
+      myViewAnimation->UpdateTimer();
+      m_view->Invalidate();
+    }
+    m_glide = m_glide && !myViewAnimation.IsNull() && !myViewAnimation->IsStopped();
     if (!myViewAnimation.IsNull() && !myViewAnimation->IsStopped()) requestRedraw();
     else if (toAskNextFrame()) requestRedraw();
   });
@@ -1195,6 +1200,35 @@ void Viewport::fitAll() {
   requestRedraw();
 }
 
+void Viewport::animateFitAll(double seconds) {
+  if (!m_initialised) return;
+  myViewAnimation->Stop();
+  m_needFit = false;
+  Handle(Graphic3d_Camera) start = new Graphic3d_Camera(*m_view->Camera());
+  fitAll();
+  Handle(Graphic3d_Camera) end = new Graphic3d_Camera(*m_view->Camera());
+  m_view->Camera()->Copy(start);
+  myViewAnimation->SetView(m_view);
+  myViewAnimation->SetCameraStart(start);
+  myViewAnimation->SetCameraEnd(end);
+  myViewAnimation->SetOwnDuration(seconds);
+  myViewAnimation->StartTimer(0.0, 1.0, Standard_True);
+  m_glide = true;  // the 16 ms timer moves the camera
+  requestRedraw();
+}
+
+bool Viewport::cameraMoving() const { return !myViewAnimation.IsNull() && !myViewAnimation->IsStopped(); }
+
+bool Viewport::showsAll() const {
+  const Bnd_Box box = fitBounds(false);
+  if (!m_initialised || box.IsVoid()) return true;
+  double x0, y0, z0, x1, y1, z1;
+  box.Get(x0, y0, z0, x1, y1, z1);
+  for (int c = 0; c < 8; ++c)
+    if (!rect().contains(widgetPoint({(c & 1) ? x1 : x0, (c & 2) ? y1 : y0, (c & 4) ? z1 : z0}))) return false;
+  return true;
+}
+
 void Viewport::fitWhenReady() {
   m_fitNodesOnSync.clear();
   m_needFit = true;
@@ -1400,7 +1434,9 @@ void Viewport::updateClipPlanes() {
 // ---------------------------------------------------------------- guided-tool picking
 void Viewport::setPickAccumulate(bool on, bool retainPicks) {
   if(m_pickAccumulate!=on || m_retainToolPicks!=(on && retainPicks))resetHoverFade();
+  const bool references = ghostsPickable();
   m_pickAccumulate = on;
+  referencesChanged(references);  // a tool's or a feature input's picks may be on ghosts (UI-33)
   m_retainToolPicks = on && retainPicks;
   ChangeMouseSelectionSchemes().Bind(Aspect_VKeyMouse_LeftButton, on ? AIS_SelectionScheme_XOR : AIS_SelectionScheme_Replace);
   if (!on) {

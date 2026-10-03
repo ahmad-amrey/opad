@@ -132,4 +132,43 @@ with tempfile.TemporaryDirectory(prefix="opad-merge-") as folder:
     assert merged["properties"] == {"owner": "ACME", "project": "Pump"} and merged["unresolved"] == 0, merged
     assert not merges(lambda p: opad("part_properties", p, document=True, set={"approved": "A. B."}),
                       lambda p: opad("part_properties", p, document=True, set={"approved": "C. D."}))
-print("Git merge: multiline drawings/sketches/comments and drawing sheets retained; overlapping edits rejected")
+    # TODO 11 UI-35: an exploded view is an optional field of a view op. Saving into one view (an edit) merges with a new
+    # exploded view from another branch; two edits of the same view's explode are a conflict.
+    view = opad("explode", doc, levels=0, name="Exploded")["id"]
+    run("git", "commit", "-qam", "exploded view", cwd=root)
+    run("git", "checkout", "-qb", "explode-edit", cwd=root)
+    opad("explode", doc, view=view, mode="stack", update=True)
+    run("git", "commit", "-qam", "stack it", cwd=root)
+    run("git", "checkout", "-qb", "explode-new", "main", cwd=root)
+    other = opad("explode", doc, levels=1, name="Exploded 2")["id"]
+    run("git", "commit", "-qam", "another exploded view", cwd=root)
+    run("git", "checkout", "-q", "main", cwd=root)
+    run("git", "merge", "-q", "--no-edit", "explode-edit", cwd=root)
+    run("git", "merge", "-q", "--no-edit", "explode-new", cwd=root)
+    views = {v["id"]: v for v in opad("annotations", doc)["views"]}
+    assert views[view]["explode"]["mode"] == "stack" and views[other]["explode"]["levels"] == 1, views
+    shutil.copyfile(doc, base)
+    for path, spacing in ((ours, 2), (theirs, 3)):
+        shutil.copyfile(base, path)
+        opad("explode", path, view=view, spacing=spacing, update=True)
+    before = ours.read_bytes()
+    result = subprocess.run([sys.executable, str(driver), str(base), str(ours), str(theirs)], capture_output=True)
+    assert result.returncode == 1 and ours.read_bytes() == before and b"explode" in result.stderr
+    # TODO 11 UI-33: features and sketches made in a component on two branches merge; their bodies stay in it.
+    lid = opad("component", doc, name="Lid")["component_id"]
+    run("git", "commit", "-qam", "lid", cwd=root)
+    made = {}
+    for branch, x in (("lid-a", 0), ("lid-b", 40)):
+        run("git", "checkout", "-qb", branch, "main", cwd=root)
+        sketch = opad("sketch", doc, component=lid, geometry={"shapes": [{"kind": "rect2", "picks": [[x, 50], [x + 10, 60]]}]})["sketch_id"]
+        made[branch] = opad("feature", doc, kind="extrude", component=lid, inputs={"profiles": [{"sketch": sketch, "at": [x + 5, 55]}], "distance": 3})["body_ids"][0]
+        run("git", "commit", "-qam", "pad in the lid", cwd=root)
+    run("git", "checkout", "-q", "main", cwd=root)
+    run("git", "merge", "-q", "--no-edit", "lid-a", cwd=root)
+    run("git", "merge", "-q", "--no-edit", "lid-b", cwd=root)
+    tree = opad("tree", doc)
+    assert not tree["unresolved"], tree["unresolved"]
+    lid_node = next(n for n in tree["roots"] if n["id"] == lid)
+    assert {c["id"] for c in lid_node["children"]} == set(made.values()), lid_node
+    assert sum(f.get("component") == lid for f in opad("features", doc)) == 4
+print("Git merge: multiline drawings/sketches/comments, drawing sheets, exploded views and component work retained; overlapping edits rejected")

@@ -141,6 +141,7 @@ class MainWindow : public QMainWindow {
   QMenu* historyMenu(bool undo);  // the steps under the quick-access Undo ▾ / Redo ▾
   void sectionFromFace(const opad::Ref& face);  // "Pick face": a planar face sets the section plane
   void pinMeasurement();
+  bool measuredExploded() const;  // the last measurement was taken in an exploded view: it is not pinned
   void clearMeasurement();
   void startAnnotation(bool drawing);  // Note (false) or Hand drawing (true); the same command again closes it
   void syncAnnotationActions();

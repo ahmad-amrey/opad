@@ -8,6 +8,7 @@
 #include <TopExp_Explorer.hxx>
 
 #include <filesystem>
+#include <map>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -266,6 +267,39 @@ TEST(unknown_entities_are_listed_and_broken_ones_skipped) {
   CHECK(warnings.find("paper-space") != std::string::npos);
   write_text_file(f.dir / "nothing.dxf", section("ENTITIES", {{0, "REGION"}, {8, "0"}}) + kEof);
   CHECK_THROWS(import(f.dir / "nothing.dxf"));
+}
+
+// TODO 11 UI-37: the layer table's state reaches the layer's node. Off and frozen layers are hidden, a locked layer is
+// locked (its bodies are not picked or changed), and plot, linetype and lineweight are kept for a layer manager.
+TEST(layer_table_state_reaches_the_layer_nodes) {
+  Files f;
+  Groups lines;
+  for (const char* layer : {"Walls", "Notes", "Old", "Plain"})
+    lines.insert(lines.end(), {{0, "LINE"}, {8, layer}, {10, "0"}, {20, "0"}, {11, "10"}, {21, "0"}});
+  write_text_file(f.dir / "layers.dxf",
+                  section("TABLES", {{0, "TABLE"}, {2, "LAYER"},
+                                     {0, "LAYER"}, {2, "Walls"}, {62, "1"}, {70, "4"}, {6, "DASHED"}, {370, "50"},
+                                     {0, "LAYER"}, {2, "Notes"}, {62, "-3"}, {70, "0"}, {290, "0"},
+                                     {0, "LAYER"}, {2, "Old"}, {62, "2"}, {70, "1"}, {6, "Continuous"},
+                                     {0, "LAYER"}, {2, "Plain"}, {62, "5"}, {70, "0"}, {370, "-3"},
+                                     {0, "ENDTAB"}}) +
+                      section("ENTITIES", lines) + kEof);
+  for (bool viewer : {true, false}) {
+    const Document d = import(f.dir / "layers.dxf", viewer);
+    const Scene s = resolve(d);
+    std::map<std::string, const Node*> layers;
+    for (const auto& [id, n] : s.nodes)
+      if (n.layer.is_object()) layers[n.name] = &n;
+    CHECK_EQ(layers.size(), 4u);
+    CHECK(layers["Walls"]->locked && layers["Walls"]->visible);
+    CHECK(layers["Walls"]->layer == json({{"name", "Walls"}, {"locked", true}, {"linetype", "DASHED"}, {"lineweight", 0.5}}));
+    CHECK(!layers["Notes"]->visible && !layers["Notes"]->locked && layers["Notes"]->layer == json({{"name", "Notes"}, {"off", true}, {"plot", false}}));
+    CHECK(!layers["Old"]->visible && layers["Old"]->layer == json({{"name", "Old"}, {"frozen", true}}));
+    CHECK(layers["Plain"]->visible && !layers["Plain"]->locked && layers["Plain"]->layer == json({{"name", "Plain"}}));
+    CHECK(s.effectively_locked(s.bodies_under(layers["Walls"]->id).at(0)));
+    CHECK(!s.effectively_locked(s.bodies_under(layers["Plain"]->id).at(0)));
+    CHECK(s.unresolved.empty());
+  }
 }
 
 #ifdef _WIN32

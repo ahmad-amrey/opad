@@ -84,6 +84,18 @@ json body_style(const Scene& scene, const json& a) {
   return style;
 }
 
+// A sketch's or feature's component argument (TODO 11 UI-33): an existing component, or "" for the document root.
+std::string component_arg(const Scene& scene, const json& a) {
+  if (!a.contains("component") || a["component"].is_null()) return {};
+  if (!a["component"].is_string()) throw Error("component must be a component id, or null for the document root");
+  const std::string id = a["component"].get<std::string>();
+  if (id.empty() || id == "null") return {};
+  const Node* n = scene.node(id);
+  if (!n) throw Error("component " + id + " does not exist; create it with the component command first");
+  if (n->kind != Node::Kind::Component) throw Error("component " + id + " is a body, not a component");
+  return id;
+}
+
 // The frame a feature's "plane" input resolves to in `scene` (TODO 10 B3), or null when it takes none or does not use it.
 json plane_frame(const Document& doc, const Scene& scene, const design::FeatureSpec& spec, const json& inputs) {
   for (const auto& in : spec.inputs)
@@ -173,11 +185,13 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         json j = {{"id", e.op->id}, {"type", "sketch"}, {"name", k->name}, {"plane", k->plane}, {"dof", k->dof}, {"visible", k->visible}};
         j["entities"] = k->geometry.value("entities", json::array()).size();
         j["constraints"] = k->geometry.value("constraints", json::array()).size();
+        if (!k->component.empty()) j["component"] = k->component;
         if (!k->error.empty()) j["error"] = k->error;
         out.push_back(j);
       } else if (e.op->type == "feature") {
         const Feature* f = s.feature(e.op->id);
         json j = {{"id", f->id}, {"type", "feature"}, {"kind", f->kind}, {"name", f->name}, {"inputs", f->inputs}};
+        if (!f->component.empty()) j["component"] = f->component;
         if (f->suppressed) j["suppressed"] = true;
         if (!f->error.empty()) j["error"] = f->error;
         json bodies = json::array();
@@ -191,17 +205,21 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
   });
 
   reg("sketch", "Create a sketch on a plane from its geometry: points, entities, constraints and high-level shapes (rectangles, rounded rectangles, arcs by three points or a radius, paths with fillets and tangent arcs, slots, offsets, text), which become ordinary curves; the result's id_map lists what each shape made. The agent guide (MCP resource opad://guide/agent) describes the format",
-      {{"doc", "path"}, {"name", "string"}, {"plane", "object - {\"base\":\"xy|xz|yz\"} | {\"face\":ref} | {\"feature\":plane id}"}, {"geometry", "object"}, {"by", "string"}}, true,
+      {{"doc", "path"}, {"name", "string"}, {"plane", "object - {\"base\":\"xy|xz|yz\"} | {\"face\":ref} | {\"feature\":plane id}"}, {"geometry", "object"},
+       {"component", "uuid|null - component it is made in"}, {"by", "string"}}, true,
       [](Document* d, const json& a) {
         Document& doc = need(d);
         const Scene s = resolve(doc);
+        const std::string component = component_arg(s, a);
         json plane = a.contains("plane") ? parse_if_text(a["plane"]) : json{{"base", "xy"}};
         const Frame frame = design::resolve_plane(doc, s, plane);
         plane["frame"] = frame.to_json();
         json id_map;
         const json geometry = design::expand_sketch_shapes(parse_if_text(a.value("geometry", json::object())), &id_map);
         const std::string name = a.contains("name") ? a["name"].get<std::string>() : design::next_name(s, "Sketch");
-        json out = design::apply_ops(doc, {design::make_sketch_op(name, plane, geometry)}, a.value("by", ""));
+        json op = design::make_sketch_op(name, plane, geometry);
+        if (!component.empty()) op["component"] = component;
+        json out = design::apply_ops(doc, {op}, a.value("by", ""));
         out["sketch_id"] = out["ids"][0];
         out["frame"] = design::frame_result(frame);
         if (!id_map.empty()) out["id_map"] = id_map;
@@ -227,7 +245,15 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         if (a.contains("geometry")) set["geometry"] = design::expand_sketch_shapes(parse_if_text(a["geometry"]), &id_map);
         if (a.contains("name")) set["name"] = a["name"];
         json frame;
-        if (a.contains("plane")) {auto plane=parse_if_text(a["plane"]);const auto resolved=design::resolve_plane(doc,resolve(doc),plane);plane["frame"]=resolved.to_json();frame=design::frame_result(resolved);set["plane"]=std::move(plane);}
+        if (a.contains("plane")) {
+          auto plane = parse_if_text(a["plane"]);
+          const Scene s = resolve(doc);
+          const auto resolved = design::resolve_plane(doc, s, plane);
+          plane["frame"] = resolved.to_json();
+          frame = design::frame_result(resolved);
+          const SketchItem* sketch = s.sketch(a.at("target").get<std::string>());
+          set["plane"] = sketch ? design::plane_as_made(*sketch, std::move(plane)) : std::move(plane);  // its component moved since (UI-33)
+        }
         if (set.empty()) throw Error("sketch_edit: nothing to change");
         json out = design::apply_ops(doc, {design::make_edit_op(a.at("target").get<std::string>(), set)}, a.value("by", ""));
         out["sketch_id"] = a.at("target");
@@ -242,6 +268,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
       {{"doc", "path"}, {"kind", "string"}, {"inputs", "object - values are numbers, expressions (\"width/2\"), choices or references"}, {"name", "string"},
        {"body_name", "string - name for the new bodies (default: the feature's name); several are numbered \"<name> 1\", \"<name> 2\", or \"{n}\" marks where the number goes"},
        {"color", "[r,g,b] - colour of the new bodies, each 0..1"}, {"parent", "uuid|null - component the new bodies go into (null: the document root)"},
+       {"component", "uuid|null - component it is made in (its new bodies go there)"},
        {"suppress_if", "string - expression over the parameters; while it is true (nonzero) the feature is suppressed"}, {"by", "string"}}, true,
       [](Document* d, const json& a) {
         Document& doc = need(d);
@@ -255,8 +282,10 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         const Scene* scene = &scene_before;
         const json frame = plane_frame(doc, *scene, spec, inputs);
         const json style = styled ? body_style(*scene, a) : json::object();
+        const std::string component = component_arg(*scene, a);
         const std::string name = a.contains("name") ? a["name"].get<std::string>() : design::next_name(*scene, title_case(spec.label.substr(0, spec.label.find(' '))));
         json feature_op = design::make_feature_op(kind, name, inputs);
+        if (!component.empty()) feature_op["component"] = component;
         if (a.contains("suppress_if") && a["suppress_if"].is_string() && !a["suppress_if"].get<std::string>().empty()) feature_op["suppress_if"] = a["suppress_if"];  // gap log #9
         design::Plan plan = design::plan_ops(doc, {feature_op});
         const std::string op = plan.ops.front()["id"].get<std::string>();

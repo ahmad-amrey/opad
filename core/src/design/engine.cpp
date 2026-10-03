@@ -597,9 +597,10 @@ struct Walk {
 
   // New bodies are named, placed and coloured when they are first made, and the entry keeps it: a regeneration never
   // renames or moves them, and replay only reads what is stored (TODO 10 B14, C2). A body made from scratch takes
-  // the feature's name (numbered when the feature makes several); a copy or a piece takes its source's name, the
-  // component its source is in and its source's colour.
-  json materialize(const Ctx& ctx, const Out& out, const json& previous, const std::string& op_id, const std::string& feature_name) {
+  // the feature's name (numbered when the feature makes several) and goes into the feature's component (UI-33); a copy
+  // or a piece takes its source's name, the component its source is in and its source's colour.
+  json materialize(const Ctx& ctx, const Out& out, const json& previous, const std::string& op_id, const std::string& feature_name,
+                   const std::string& component) {
     json result = json::object();
     json bodies = json::array();
     std::vector<json> prev_new;
@@ -626,9 +627,12 @@ struct Walk {
         if (prev) {
           for (const char* k : {"parent", "color"})
             if (prev->contains(k)) entry[k] = (*prev)[k];
+          if (!prev->contains("parent") && b.source.empty() && !component.empty()) entry["parent"] = component;  // back in it
         } else if (const Node* s = b.source.empty() ? nullptr : ctx.scene.node(b.source)) {
           if (!s->parent.empty()) entry["parent"] = s->parent;
           if (s->has_color) entry["color"] = s->color;
+        } else if (b.source.empty() && !component.empty()) {
+          entry["parent"] = component;
         }
         // The body is kept in its component's frame, as replay places it there.
         const std::string parent = entry.value("parent", "");
@@ -769,6 +773,9 @@ struct Walk {
       if (e.op->type == "param") defs.push_back({e.op->id, e.data().value("name", ""), e.data().value("expr", ""), e.data().value("comment", "")});
     const ParamTable params(defs);
     if (strict) check_params(params, ops);
+    // What is locked now stays as it is (TODO 11 UI-37); the replay to compare with only when something is locked.
+    std::optional<Scene> locked_before;
+    if (strict && has_locks(doc)) locked_before = resolve(doc);
 
     json errors = json::array();
     // Parameters this change stops from evaluating (a check such as sqrt(margin / 1 mm) on a negative margin),
@@ -853,7 +860,16 @@ struct Walk {
       } else {
         const std::string kind = data.value("kind", "");
         json inputs = data.value("inputs", json::object());
-        std::string fp = feature_fingerprint(builder.scene(), params, kind, inputs);
+        // Made in a component (UI-33): whether it is there counts too, so a body made from scratch is put back in world
+        // coordinates when the component goes and into it again when it comes back. Others keep their fingerprints.
+        const std::string named = data.contains("component") && data["component"].is_string() ? data["component"].get<std::string>() : "";
+        const Node* in_component = named.empty() ? nullptr : builder.scene().node(named);
+        const std::string component = in_component && in_component->kind == Node::Kind::Component ? named : "";
+        auto fingerprint = [&] {
+          const std::string f = feature_fingerprint(builder.scene(), params, kind, inputs);
+          return named.empty() ? f : sha256_hex(f + "|component:" + (component.empty() ? "gone" : component)).substr(0, 24);
+        };
+        std::string fp = fingerprint();
         if (!force && stored.value("in", "") == fp) {
           result = stored;
           note_fresh(result);
@@ -868,10 +884,10 @@ struct Walk {
                 inputs["targets"] = targets;
                 (*patch)["targets"] = targets;
                 data["inputs"] = inputs;
-                fp = feature_fingerprint(builder.scene(), params, kind, inputs);
+                fp = fingerprint();
               }
             }
-            result = materialize(ctx, out, stored, id, data.value("name", ""));
+            result = materialize(ctx, out, stored, id, data.value("name", ""), component);
           } catch (const Standard_Failure& ex) {
             result = {{"error", std::string("the modelling kernel failed: ") + ex.GetMessageString()}};
           } catch (const std::exception& ex) {
@@ -910,6 +926,8 @@ struct Walk {
       }
       for (const auto& err : errors)
         if (direct.count(err["op"].get<std::string>())) throw Error(err["error"].get<std::string>());
+      if (locked_before)
+        if (const std::string why = locked_change(*locked_before, builder.scene()); !why.empty()) throw Error(why);
     }
 
     plan.ops = new_ops;
@@ -977,6 +995,39 @@ json commit(Document& doc, Plan&& plan, const std::string& author) {
 }
 
 json apply_ops(Document& doc, std::vector<json> new_ops, const std::string& author) { return commit(doc, plan_ops(doc, std::move(new_ops)), author); }
+
+bool has_locks(const Document& doc) {
+  auto locks = [](const std::string& t) { return t.find("\"locked\":true") != std::string::npos || t.find("\"locked\": true") != std::string::npos; };
+  for (const auto& o : doc.ops)
+    if (o.raw.empty() ? locks(o.data.dump()) : locks(o.raw)) return true;
+  return false;
+}
+
+std::string locked_change(const Scene& before, const Scene& after) {
+  std::string first;
+  size_t count = 0;
+  std::function<void(const std::string&)> visit = [&](const std::string& id) {  // in tree order: the outermost is named
+    const Node* n = before.node(id);
+    if (!n) return;
+    const Node* now = after.node(id);
+    const char* what = nullptr;
+    if (!before.effectively_locked(id)) {
+    } else if (!now) {
+      // Only the outermost node that goes is weighed: with an unlocked component above it, it may go.
+      const Node* parent = n->parent.empty() ? nullptr : before.node(n->parent);
+      if (!parent || after.node(parent->id)) what = "removing";
+    } else if (now->body_key != n->body_key) {
+      what = "changing";
+    } else if (now->local.m != n->local.m) {
+      what = "moving";
+    }
+    if (what && ++count == 1) first = "\"" + n->name + "\" is locked: unlock it before " + what + " it";
+    for (const auto& c : n->children) visit(c);
+  };
+  for (const auto& r : before.roots) visit(r);
+  if (count > 1) first += " (and " + std::to_string(count - 1) + " more locked)";
+  return first;
+}
 
 // ---------------------------------------------------------------- helpers
 json make_param_op(const std::string& name, const std::string& expr, const std::string& comment) {
@@ -1100,6 +1151,31 @@ Frame resolve_plane(const Document& doc, const Scene& scene, const json& plane) 
   const std::map<std::string, TopoDS_Shape> fresh;
   const Ctx ctx{doc, params, scene, fresh, {}};
   return ctx.plane(plane);
+}
+
+json plane_as_made(const SketchItem& sketch, json plane) {
+  if (sketch.moved.is_identity(1e-12) || !plane.is_object()) return plane;
+  const Mat4 back = sketch.moved.inverse();
+  auto point = [&](json& p) { if (p.is_array() && p.size() == 3) p = back.apply(p.get<Vec3>()); };
+  auto dir = [&](json& d) { if (d.is_array() && d.size() == 3) d = back.apply_dir(d.get<Vec3>()); };
+  std::function<void(json&)> place = [&](json& p) {
+    if (!p.is_object()) return;
+    if (p.contains("frame")) p["frame"] = Frame::from_json(p["frame"]).transformed(back).to_json();
+    if (p.contains("normal")) {
+      dir(p["normal"]);
+      if (p.contains("origin")) point(p["origin"]);
+      if (p.contains("x")) dir(p["x"]);
+    }
+    if (p.contains("origin") && p["origin"].is_object() && p["origin"].contains("world")) point(p["origin"]["world"]);
+    if (!p.contains("support")) return;
+    json& support = p["support"];  // resolved again where the sketch is made: a world plane goes in as the frame picked
+    if (support.is_object() && support.contains("base") && support["base"].is_string())
+      support = {{"frame", base_frame(support["base"].get<std::string>()).transformed(back).to_json()}};
+    else
+      place(support);
+  };
+  place(plane);
+  return plane;
 }
 
 json make_ref(const Document& doc, const Scene& scene, const Ref& ref) {

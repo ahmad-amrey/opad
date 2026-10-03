@@ -40,6 +40,15 @@ TEST(activation_ghost_under_a_compare_tint) {
   const BodyLook light = looks::compose(base(), with({{LookSource::Activation, &ghost}}), false, themed);
   CHECK(light.color == looks::mix(base().color, themed.color, 0.5));
   CHECK_NEAR(light.opacity, 0.3, 1e-12);
+  // The user's inactive opacity replaces the theme's alpha, above or below it; never above the body's own opacity.
+  ghost.ghostOpacity = 0.1;
+  CHECK_NEAR(looks::compose(base(), with({{LookSource::Activation, &ghost}}), false, themed).opacity, 0.1, 1e-12);
+  ghost.ghostOpacity = 0.6;
+  const BodyLook faint = looks::compose(base(), with({{LookSource::Activation, &ghost}}), false, themed);
+  CHECK(faint.ghost && !faint.pickable && faint.color == looks::mix(base().color, themed.color, 0.5));
+  CHECK_NEAR(faint.opacity, 0.6, 1e-12);
+  ghost.ghostOpacity = 0.95;
+  CHECK_NEAR(looks::compose(base(), with({{LookSource::Activation, &ghost}}), false, themed).opacity, base().opacity, 1e-12);
 }
 
 TEST(lock_fade_explode_and_candidate) {

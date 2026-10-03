@@ -80,8 +80,8 @@ int main(){try {
   const size_t live=agent::live_tools().dump().size();
   size_t headless=0;for(const auto& c:commands::list())headless+=agent::command_schema(c).dump().size()+c.description.size();
   std::printf("tools/list: live %zu bytes, headless schemas %zu bytes\n",live,headless);
-  CHECK(live<105000);
-  CHECK(headless<58400);  // +500 for project (hidden-line drawing views, TODO 11 UI-77), +5.5 KB for the drawing sheet commands (UI-76), +500 for materials (UI-140), +500 for bom (UI-83), +500 for export views (UI-87), +800 for sheet templates and laid-out views (UI-78), +100 for document properties (UI-78)
+  CHECK(live<108000);  // +2.5 KB: explode (TODO 11 UI-35); +0.5 KB: component on feature, sketch and batches (UI-33)
+  CHECK(headless<60400);  // +500 for project (hidden-line drawing views, TODO 11 UI-77), +5.5 KB for the drawing sheet commands (UI-76), +500 for materials (UI-140), +500 for bom (UI-83), +500 for export views (UI-87), +800 for sheet templates and laid-out views (UI-78), +100 for document properties (UI-78); +2 KB explode and component (UI-35, UI-33)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});
@@ -94,6 +94,11 @@ int main(){try {
   CHECK(agent::live_mutation("save"));
   // Gap log #4: measure is a read unless pinned; then it needs the revision and a request id like any write.
   CHECK(!agent::live_mutation("measure",{{"kind","bbox"}}) && agent::live_mutation("measure",{{"pin",true}}));
+  // An exploded view is a read unless it is saved (TODO 11 UI-35).
+  CHECK(!agent::live_mutation("explode",{{"levels",2}}) && agent::live_mutation("explode",{{"name","Exploded"}}) && agent::live_mutation("explode",{{"update",true}}));
+  agent::validate_input(agent::live_schema("explode"),{{"levels",2},{"groups",json::array({json::array({"a","b"})})},{"offsets",{{"a",{0,0,5}}}}});
+  CHECK_THROWS(agent::validate_input(agent::live_schema("explode"),{{"offsets",{{"a",{0,5}}}}}));
+  CHECK_THROWS(agent::validate_input(agent::live_schema("explode"),{{"t",2}}));
   agent::validate_input(agent::live_schema("measure"),{{"kind","bbox"},{"refs",{"a"}}});
   agent::validate_input(agent::live_schema("measure"),{{"queries",{{{"kind","distance"},{"refs",{"a","b"}}}}}});
   agent::validate_input(agent::live_schema("save"),{{"expected_revision",3},{"request_id","save-1"}});

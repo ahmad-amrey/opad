@@ -33,7 +33,9 @@ QString phaseLabel(const std::string& what, const QString& file) {
 }
 }  // namespace
 
-AppDocument::AppDocument(QObject* parent) : QObject(parent), m_storage(std::make_shared<opad::Document>()), doc(*m_storage), m_alive(std::make_shared<std::atomic<bool>>(true)) {}
+AppDocument::AppDocument(QObject* parent) : QObject(parent), m_storage(std::make_shared<opad::Document>()), doc(*m_storage), m_alive(std::make_shared<std::atomic<bool>>(true)) {
+  connect(this, &AppDocument::aboutToReplace, this, [this] { setActiveComponent({}); });  // another document: its root
+}
 
 AppDocument::~AppDocument() { *m_alive = false; }
 
@@ -151,6 +153,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
     hasDocument = true;
     clearHistory();
     markSaved();  // an empty, unsaved document: anything imported makes it dirty
+    setActiveComponent({});
     emit pathChanged();
   }
   loading = true;
@@ -158,8 +161,11 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
   m_cancel = cancel;
   const QString file = QFileInfo(path).fileName();
   opad::ImportOptions o = loadOptions(cancel, file);
-  o.parent = parent.toStdString();
+  o.parent = parent.isEmpty() ? m_active : parent.toStdString();  // into the active component unless told otherwise (UI-33)
   o.placement = placement;
+  // A drawing placed in world coordinates (on a face, a picked plane) keeps its place under a moved component: its
+  // placement is relative to the component it goes into.
+  const opad::Mat4 into = !o.parent.empty() && scene.node(o.parent) && (!placement.is_identity() || plane.is_object()) ? scene.world(o.parent).inverse() : opad::Mat4();
   // Import into a snapshot: selection/render callbacks retain a valid live document.
   auto work = std::make_shared<opad::Document>(doc);
   const size_t opsBefore = work->ops.size();
@@ -168,7 +174,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
   const unsigned token = ++*m_loadToken;
   auto current = m_loadToken;
   emit loadProgress(tr("Reading %1").arg(file), -1);
-  std::thread([this, alive, cancel, path, o, work, opsBefore, dirtyBefore, plane, token, current]() mutable {
+  std::thread([this, alive, cancel, path, o, work, opsBefore, dirtyBefore, plane, token, current, into]() mutable {
     QString error;
     opad::json r;
     try {
@@ -179,6 +185,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
         for (int r = 0; r < 3; ++r) { m.at(r, 0) = f.x[r]; m.at(r, 1) = f.y[r]; m.at(r, 2) = n[r]; m.at(r, 3) = f.origin[r]; }
         o.placement = m * o.placement;
       }
+      if (!into.is_identity()) o.placement = into * o.placement;
       r = opad::import_file(*work, fsPath(path), o).to_json();
       if (!*cancel) opad::warm_shape_cache(*work, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
       if (*cancel) error = QStringLiteral("cancelled");
@@ -348,6 +355,7 @@ void AppDocument::refresh() {
       if (e.op->type == "units" && e.data().contains("length")) scene.units = e.data()["length"].get<std::string>();
   updateDirty();
   ++revision;
+  checkActive();
   emit changed();
 }
 
@@ -368,7 +376,7 @@ void AppDocument::commitSnapshot(opad::Document& document,opad::Scene& resolved,
   const auto before=doc.ops.size();
   document.path=doc.path; // Save As may have changed the path without changing geometry.
   std::swap(doc,document);std::swap(scene,resolved);m_rollback.clear();
-  recordStep(label,before);updateDirty();++revision;emit changed();emit undoChanged();
+  recordStep(label,before);updateDirty();++revision;checkActive();emit changed();emit undoChanged();
 }
 
 void AppDocument::recordStep(const QString& label, size_t opsBefore) {
@@ -489,4 +497,20 @@ QString AppDocument::path() const { return QString::fromStdU16String(doc.path.u1
 QString AppDocument::nodeName(const std::string& id) const {
   const opad::Node* n = scene.node(id);
   return n ? QString::fromStdString(n->name) : QString::fromStdString(id.substr(0, 8));
+}
+
+void AppDocument::setActiveComponent(const std::string& id) {
+  const opad::Node* n = id.empty() ? nullptr : scene.node(id);
+  if (!id.empty() && (!n || n->kind != opad::Node::Kind::Component)) throw opad::Error("Only a component can be activated.");
+  if (m_active == id) return;
+  m_active = id;
+  emit activeComponentChanged();
+}
+
+void AppDocument::checkActive() {
+  if (m_active.empty() || !m_rollback.empty()) return;  // rolled back: the component may come later in the log
+  const opad::Node* n = scene.node(m_active);
+  if (n && n->kind == opad::Node::Kind::Component) return;
+  m_active.clear();
+  emit activeComponentChanged();
 }

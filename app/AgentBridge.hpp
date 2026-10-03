@@ -29,6 +29,7 @@ class AgentBridge : public QObject {
   bool busy() const {return m_busy;}
   QString statusSummary() const {return stateText();}
   opad::json descriptor() const;
+  opad::json liveState() const;  // what live_state answers (benches read it too)
   // Used only by the isolated application acceptance harness.
   void bench();
  signals:
@@ -65,7 +66,6 @@ class AgentBridge : public QObject {
   void activity(const QString&);
   QString target() const;
   QString stateText() const;
-  json liveState() const;
   bool editorBusy() const;
   json editingState() const;
   void waitForIdle(const std::shared_ptr<Session>&,int,unsigned long long,std::shared_ptr<QElapsedTimer>);

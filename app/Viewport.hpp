@@ -105,6 +105,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   SelFilter selectionFilter() const { return m_filter; }
 
   void fitAll();
+  void animateFitAll(double seconds = 0.35);  // the camera glides to what fitAll frames, also in a view that draws no frames
+  bool cameraMoving() const;  // a camera animation (fit, cube, roll) is under way
+  bool showsAll() const;  // every corner of what Fit All frames is inside the view
   void requestRefinement() { m_refineTimer.start(); }  // zoom refinement without waiting for a frame (benches)
   bool benchLeave();  // OPAD_BENCH_LEAVE: hover a body, leave the view, nothing may stay highlighted
   void fitWhenReady();   // fit now if bodies are displayed, otherwise once the first meshes arrive
@@ -154,15 +157,27 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // A sketch (no component) takes the entries under its own id: visible, colour, opacity or ghost (faded lines), pickable.
   void setLookLayer(LookSource source, std::map<std::string, LookDelta> deltas);
   void clearLookLayer(LookSource source) { setLookLayer(source, {}); }
-  void setGhostsPickable(bool on);  // feature inputs, sketch Project, measuring: ghosts can be picked as references
-  bool ghostsPickable() const { return m_ghostsPickable; }
+  // Ghosts can be picked as references, never selected (UI-33): on request (a sketch plane being chosen), and by
+  // themselves while picks accumulate (guided tools, feature inputs) or sketch Project hovers body edges.
+  void setGhostsPickable(bool on);
+  bool ghostsPickable() const { return m_ghostsPickable || m_pickAccumulate || m_edgeHover; }
   BodyLook bodyLook(const std::string& body) const;  // as composed now (whether displayed yet or not); a sketch's too
   BodyLook shownLook(const std::string& body) const;  // as applied to the displayed body or sketch (the default look if none)
   QString hoverName(const std::string& node) const;   // the status text of a hovered node: "Lid (inactive)" for a ghost
+  const QString& hoverText() const { return m_hover; }  // the status text of what picking finds under the mouse now
+  // The ghost drawn nearest under a point of the view (widget px), found as the orbit pivot is (ghosts are not picked):
+  // "" when there is none or a body that is no ghost is in front of it. One pick of the navigation selector.
+  std::string ghostAt(const QPointF& point);
   bool looksPending() const { return m_lookJob != nullptr || !m_lookQueue.empty(); }
+  // How far looks moved what is drawn (an exploded view): the displayed bodies off their place, and one node's offset
+  // (a component's by its own entry). Measuring and annotating take the parts where they are drawn.
+  std::unordered_map<std::string, opad::Vec3> shownOffsets() const;
+  opad::Vec3 shownOffset(const std::string& node) const;
   opad::json benchLookState(const std::string& body) const;  // OPAD_BENCH_LOOKS: what AIS holds for a displayed body or sketch
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
   bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
+  void benchClickAt(int x, int y);  // a left click at this device pixel through the mouse handlers, then the frame's flush
+  void benchFlush();                // what the next frame does with the mouse events so far (a hidden window draws none)
 
   // Section: the clip plane, and its gizmo (ViewportSection.cpp): the plane's outline over the model, edges only,
   // sized to the model's extent in the plane. A strip inside each side is a drag handle: hovering it shows a
@@ -399,7 +414,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   };
   // looks (ViewportLooks.cpp)
   std::array<std::unordered_map<std::string, LookDelta>, kLookSources> m_lookLayers;
-  bool m_ghostsPickable = false;
+  bool m_ghostsPickable = false, m_edgeHover = false;
+  void referencesChanged(bool wasPickable);  // ghostsPickable() may have changed: ghosts (de)activated by the look job
   Job* m_lookJob = nullptr;
   std::deque<std::string> m_lookQueue;  // displayed bodies whose look may have changed, applied in this order
   std::unordered_set<std::string> m_lookQueued;
@@ -580,6 +596,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool m_sketchDrag = false;
 
   QTimer m_timer;
+  bool m_glide = false;  // animateFitAll: the timer advances the camera animation itself
   QTimer m_trackpadEndTimer;
   enum class TrackpadMode { None, Pan, Orbit };
   TrackpadMode m_trackpadMode = TrackpadMode::None;

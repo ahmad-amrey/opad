@@ -46,7 +46,8 @@ void MainWindow::buildDesignActions() {
     if (!ok || name.trimmed().isEmpty()) return;
     opad::json args{{"name", name.trimmed().toStdString()}};
     const auto ids = currentNodeIds();
-    if (ids.size() == 1 && m_doc->node(ids[0]) && m_doc->node(ids[0])->kind == opad::Node::Kind::Component) args["parent"] = ids[0];
+    if (!m_doc->activeComponent().empty()) args["parent"] = m_doc->activeComponent();  // under the active component (UI-33)
+    else if (ids.size() == 1 && m_doc->node(ids[0]) && m_doc->node(ids[0])->kind == opad::Node::Kind::Component) args["parent"] = ids[0];
     m_doc->run("component", args);
   });
   addAction("design.reparent", tr("Reparent"), "reparent", QKeySequence(), [this] {
@@ -157,6 +158,7 @@ void MainWindow::buildDesign() {
   }
   m_design->setPanel(m_featurePanel, [this](ToolPanel* p) { openPanel(p); });
   m_design->setCurrentComponent([this] {
+    if (!m_doc->activeComponent().empty()) return m_doc->activeComponent();  // UI-33
     const auto ids = m_browser->selectedIds();
     const opad::Node* n = ids.size() == 1 ? m_doc->node(ids.front()) : nullptr;
     return n && n->kind == opad::Node::Kind::Component ? n->id : std::string();

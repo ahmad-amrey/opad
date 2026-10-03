@@ -157,6 +157,13 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(name=="param")properties["expr"]={{"type","string"},{"description","A dimension expression such as 20 mm or width/2. Explicit units are recommended."}};
   if(name=="render" || name=="view")properties["camera"]=object({{"eye",vector(3)},{"target",vector(3)},{"up",vector(3)},
     {"projection",choice({"orthographic","perspective"})},{"scale",type("number")},{"fov_deg",type("number")},{"view",type("string")},{"absolute",type("boolean")}},{});
+  if((name=="measure" || name=="render") && properties.contains("explode"))
+    properties["explode"]={{"anyOf",{type("string"),type("object")}},{"description",command.args.at("explode")}};
+  if(name=="explode"){
+    properties["groups"]=array(array(type("string"),1));properties["groups"]["description"]=command.args.at("groups");
+    properties["offsets"]={{"type","object"},{"additionalProperties",vector(3)},{"description",command.args.at("offsets")}};
+    properties["levels"]["minimum"]=0;properties["t"]["minimum"]=0;properties["t"]["maximum"]=1;
+  }
   if(name=="render"){
     properties["fit"]=type("boolean");properties["ignore_visibility"]=type("boolean");properties["supersample"]={{"type","integer"},{"minimum",1},{"maximum",4}};
     for(const char* key:{"width","height"})properties[key]={{"type","integer"},{"minimum",16},{"maximum",4096}};
@@ -212,6 +219,7 @@ void validate_input(const json& schema,const json& value,const std::string& path
     for(const auto& [key,item]:value.items()){
       if(properties.contains(key))validate_input(properties.at(key),item,path+"."+key);
       else if(schema.contains("additionalProperties")&&schema["additionalProperties"]==false)fail("unknown field "+key);
+      else if(schema.contains("additionalProperties")&&schema["additionalProperties"].is_object())validate_input(schema["additionalProperties"],item,path+"."+key);
     }
   }
 }

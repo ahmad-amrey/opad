@@ -49,6 +49,7 @@ struct Mat4 {
   static Mat4 translation(double x, double y, double z);
   bool is_identity(double eps = 1e-12) const;
   Mat4 operator*(const Mat4& o) const;
+  Mat4 inverse() const;  // of the affine part (the last row is taken as 0 0 0 1)
   Vec3 apply(const Vec3& p) const;
   Vec3 apply_dir(const Vec3& d) const;
   json to_json() const;

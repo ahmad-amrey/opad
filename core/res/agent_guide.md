@@ -192,6 +192,10 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - `feature` and `feature_edit` take `suppress_if`, an expression over the parameters: while it is true (nonzero) the
   feature is suppressed, and a parameter change that flips it regenerates (`"joint_type == 1"`, `"joints < 3"`);
   `feature_edit` with `suppress_if: ""` removes it. What it last made is kept for when it comes back.
+- Locked bodies (`appearance` `locked: true`, everything under a locked component, a drawing layer locked in its
+  file; `context` nodes report `locked`) are not changed, moved (`transform`, `reparent`) or removed: such a command is
+  refused naming the body.
+  They still serve as references and sources of copies, and automatic join/cut targets leave them out.
 
 ## New bodies: names, colours, components
 
@@ -201,6 +205,10 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
 - `feature` takes `body_name` (several bodies are numbered; `{n}` marks where the number goes), `color` `[r, g, b]` in
   0..1 and `parent` (a component id) for the bodies it makes, applied in the same step. A feature that makes no new
   body says so in `warnings`.
+- `feature` and `sketch` take `component`: the component they are made in. New bodies (and a construction plane or
+  axis) go into it and stay there when the feature regenerates; `parent` still moves the bodies afterwards. A sketch,
+  plane or axis made in a component moves with it when the component moves later (`transform`, `reparent`), as its
+  bodies do, and features made afterwards read it where it is now.
 - `rename`, `appearance` and `reparent` take `targets` (a list) instead of `target`; `rename` then numbers the names.
 
 ## Batches
@@ -211,7 +219,8 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   "@{row#/body_ids/*}"`) or spliced into one (`"targets": ["@{cabin#/body_ids/0}", "@{row#/body_ids/*}"]`).
 - A reference may name a step of an earlier batch on the same connection, when this batch has no step with that id
   (an id this batch defines is always its own step, so a reference to a later one is an error).
-- The batch's `parent` is the default component for every body its feature steps make.
+- The batch's `parent` is the default component for every body its feature steps make; its `component` the default
+  component its feature and sketch steps are made in.
 - A failing step discards the whole batch and names the step; inputs and backward references are checked before
   anything runs.
 
@@ -224,6 +233,11 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   need `expected_revision` and `request_id`, and not during a transaction.
 - `export` inside a transaction writes its staged state; outside, the document. STEP files are reproducible: the
   header carries the document's last change time and the file's name, so the same document exports the same bytes.
+- Exploded views: `explode` lists the units (what moves together) and their moves at `t` (0 assembled, 1 exploded).
+  `levels` is how deep components split (0 = all); `keep` holds a component together (a PCB), `split` spreads its
+  parts beyond the level (screws), `groups` move node lists as one, small parts ride on what they touch; `mode`
+  radial, axis or stack (along `axis`). `name` saves it as a view op, `view` + `update` saves into that view (an
+  `edit`). `measure` and `render` take `explode` (a view id or the spec) and see the parts where they are drawn.
 
 ## Checking the result
 

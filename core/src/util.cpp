@@ -260,6 +260,19 @@ Mat4 Mat4::operator*(const Mat4& o) const {
   return r;
 }
 
+Mat4 Mat4::inverse() const {
+  const double a = at(0, 0), b = at(0, 1), c = at(0, 2), d = at(1, 0), e = at(1, 1), f = at(1, 2), g = at(2, 0), h = at(2, 1), k = at(2, 2);
+  const double det = a * (e * k - f * h) - b * (d * k - f * g) + c * (d * h - e * g);
+  if (std::fabs(det) < 1e-300) throw Error("the transform cannot be inverted");
+  Mat4 r;
+  const double l[3][3] = {{e * k - f * h, c * h - b * k, b * f - c * e}, {f * g - d * k, a * k - c * g, c * d - a * f}, {d * h - e * g, b * g - a * h, a * e - b * d}};
+  for (int i = 0; i < 3; ++i) {
+    for (int j = 0; j < 3; ++j) r.at(i, j) = l[i][j] / det;
+    r.at(i, 3) = -(r.at(i, 0) * at(0, 3) + r.at(i, 1) * at(1, 3) + r.at(i, 2) * at(2, 3));
+  }
+  return r;
+}
+
 Vec3 Mat4::apply(const Vec3& p) const {
   return {at(0, 0) * p[0] + at(0, 1) * p[1] + at(0, 2) * p[2] + at(0, 3),
           at(1, 0) * p[0] + at(1, 1) * p[1] + at(1, 2) * p[2] + at(1, 3),

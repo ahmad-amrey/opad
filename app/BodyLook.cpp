@@ -17,7 +17,7 @@ BodyLook compose(BodyLook look, const std::array<const LookDelta*, kLookSources>
     if (d->ghost) {
       look.ghost = true;
       look.color = mix(look.color, ghost.color, 0.5);
-      look.opacity = std::min(look.opacity, ghost.opacity);
+      look.opacity = std::min(look.opacity, d->ghostOpacity.value_or(ghost.opacity));
       look.pickable = ghostsPickable;
     }
     if (d->pickable) look.pickable = *d->pickable;

@@ -192,12 +192,13 @@ void DimensionHandle::reposition() {
   const gp_Vec along=gp_Vec(arrow->axis)-gp_Vec(viewDir)*gp_Vec(arrow->axis).Dot(gp_Vec(viewDir));
   const auto end=along.Magnitude()>0.25?arrow->origin.Translated(along.Normalized()*ScalarArrow::kLength*pixel):arrow->origin;
   m_arrowStart=m_view->widgetPoint(tip);m_arrowEnd=m_view->widgetPoint({end.X(),end.Y(),end.Z()});
-  if(changed){arrow->SetToUpdate();if(!m_drawn)m_view->showOverlay(m_arrow);else m_view->updateOverlay(m_arrow);m_drawn=true;}
+  if(changed){arrow->SetToUpdate();if(!m_drawn){m_view->showOverlay(m_arrow);if(m_onTop)m_arrow->SetZLayer(Graphic3d_ZLayerId_TopOSD);}else m_view->updateOverlay(m_arrow);m_drawn=true;}
   const QPointF out=m_arrowEnd-m_arrowStart;const double len=std::hypot(out.x(),out.y());
   const QPointF gap=len>1?out/len*16:QPointF(16,0);
   QPoint at=(m_arrowEnd+gap).toPoint();if(gap.x()<0)at.rx()-=width();at.ry()-=height()/2;
   move(std::clamp(at.x(),0,std::max(0,m_view->width()-width())),std::clamp(at.y(),0,std::max(0,m_view->height()-height())));
 }
+bool DimensionHandle::grips(const QPointF& at) const {double t;return isVisible() && m_drawn && nearest(at,m_arrowStart,m_arrowEnd,t)<144;}
 void DimensionHandle::mousePressEvent(QMouseEvent* e) {
   if(e->button()!=Qt::LeftButton)return;
   m_dragging=true;m_start=e->globalPosition();m_startValue=m_value;box()->clearFocus();restyle();e->accept();
@@ -210,7 +211,7 @@ void DimensionHandle::mouseMoveEvent(QMouseEvent* e) {
   m_value=std::round(raw/step)*step;  // round values at this zoom, not 12.3456789 mm
   setText(lengthText(m_value,step),false);reposition();emit valueChanged(text());e->accept();
 }
-void DimensionHandle::mouseReleaseEvent(QMouseEvent* e) {if(e->button()==Qt::LeftButton){m_dragging=false;restyle();reposition();e->accept();}}
+void DimensionHandle::mouseReleaseEvent(QMouseEvent* e) {if(e->button()==Qt::LeftButton){const bool was=m_dragging;m_dragging=false;restyle();reposition();e->accept();if(was)emit dragFinished();}}
 void DimensionHandle::wheelEvent(QWheelEvent* e) {nudge(e->angleDelta().y()>0?1:-1,e->modifiers());e->accept();}
 void DimensionHandle::nudge(double steps,Qt::KeyboardModifiers modifiers) {
   const double step=units::fromDisplay(units::Kind::Length,inputkeys::step(modifiers.testFlag(Qt::ShiftModifier),modifiers.testFlag(Qt::ControlModifier)));  // in the shown unit
@@ -229,7 +230,7 @@ bool DimensionHandle::eventFilter(QObject* target,QEvent* event) {
   }
   if(target==m_view && (event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove || event->type()==QEvent::MouseButtonRelease)) {
     auto* mouse=static_cast<QMouseEvent*>(event);double t;
-    if(event->type()==QEvent::MouseButtonPress && mouse->button()==Qt::LeftButton && nearest(mouse->position(),m_arrowStart,m_arrowEnd,t)<144){mousePressEvent(mouse);return true;}
+    if(event->type()==QEvent::MouseButtonPress && mouse->button()==Qt::LeftButton && grips(mouse->position())){mousePressEvent(mouse);return true;}
     if(m_dragging){if(event->type()==QEvent::MouseMove)mouseMoveEvent(mouse);else if(event->type()==QEvent::MouseButtonRelease)mouseReleaseEvent(mouse);return true;}
     if(event->type()==QEvent::MouseMove && mouse->buttons()==Qt::NoButton && !m_input->editing() && m_indexReady) {
       double best=144;opad::Vec3 closest;bool found=false;

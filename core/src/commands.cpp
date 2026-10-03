@@ -9,6 +9,7 @@
 
 #include "opad/cache.hpp"
 #include "opad/diff.hpp"
+#include "opad/explode.hpp"
 #include "opad/inspect.hpp"
 #include "opad/mesh.hpp"
 #include "opad/render.hpp"
@@ -169,6 +170,16 @@ json append_per_target(Document& doc, const std::string& command, const json& a,
   return j;
 }
 
+// TODO 11 UI-37: a locked node, or one under a locked component, is not moved (a transform, a reparent): refused naming
+// it before anything is appended.
+void refuse_locked(const Document& doc, const std::vector<json>& targets, const char* what) {
+  if (!design::has_locks(doc)) return;
+  const Scene s = resolve(doc);
+  for (const auto& t : targets)
+    if (const Node* n = t.is_string() ? s.node(t.get<std::string>()) : nullptr; n && s.effectively_locked(n->id))
+      throw Error("\"" + n->name + "\" is locked: unlock it before " + what + " it");
+}
+
 void register_builtins() {
   auto& r = raw_registry();
   auto reg = [&](const char* name, const char* desc, json args, bool mutates, Handler h) {
@@ -284,7 +295,10 @@ void register_builtins() {
         }
         for (const auto& p : s.sections)
           sec.push_back({{"id", p.id}, {"name", p.name}, {"origin", {p.origin[0], p.origin[1], p.origin[2]}}, {"normal", {p.normal[0], p.normal[1], p.normal[2]}}, {"enabled", p.enabled}});
-        for (const auto& v : s.views) views.push_back({{"id", v.id}, {"name", v.name}, {"camera", v.camera}});
+        for (const auto& v : s.views) {
+          views.push_back({{"id", v.id}, {"name", v.name}, {"camera", v.camera}});
+          if (!v.explode.is_null()) views.back()["explode"] = v.explode;
+        }
         json j;
         j["annotations"] = ann;
         j["total"]=total;
@@ -298,10 +312,14 @@ void register_builtins() {
   reg("measure", "Distance, angle, radius or bbox between references; optionally pinned as a measurement op. A read unless pinned; queries measures several at once",
       {{"doc", "path"}, {"kind", "distance|angle|radius|bbox"}, {"refs", "array - references"},
        {"queries", "array - several measurements [{kind, refs}], answered in order as results (a failed one carries error)"},
-       {"pin", "bool - append a measurement op (each, with queries)"}, {"by", "string"}},
+       {"pin", "bool - append a measurement op (each, with queries)"}, {"explode", "uuid|object - measure in an exploded view: a view op id or an explode spec"}, {"by", "string"}},
       true, [](Document* d, const json& a) {
         Document& doc = need(d);
         Scene s = resolve(doc);  // once for every query (gap log #4)
+        if (a.contains("explode")) {
+          if (a.value("pin", false)) throw Error("measure: pinned measurements use the assembled model; pin without explode");
+          s = exploded_scene(doc, s, a["explode"]);
+        }
         auto one = [&](const std::string& kind, const json& refArgs) {
           std::vector<Ref> refs;
           for (const auto& r : str_list(refArgs)) refs.push_back(Ref::parse(r));
@@ -409,11 +427,11 @@ void register_builtins() {
       {{"doc", "path"}, {"out", "path - .png"}, {"view", "iso|top|bottom|front|back|left|right"}, {"camera", "object - {eye,target,up,projection,scale}"},
        {"width", "int"}, {"height", "int"}, {"select", "array|csv - node uuids"}, {"edges", "bool - silhouette outlines (default true)"}, {"background", "[r,g,b] 0..1"}, {"tolerance", "number"},
        {"views", "array|csv - e.g. iso,front,top,right: one labelled grid"}, {"edge_lines", "bool - the model's edges as lines"}, {"highlight", "array - face/edge references to tint"},
-       {"shading", "flat|smooth"}},
+       {"shading", "flat|smooth"}, {"explode", "uuid|object - an exploded view: a view op id or an explode spec"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
         RenderOptions o = render_options(a);
-        Image img = render_scene(doc, resolve(doc), o);
+        Image img = render_scene(doc, a.contains("explode") ? exploded_scene(doc, resolve(doc), a["explode"]) : resolve(doc), o);
         std::string out = a.value("out", "");
         if (out.empty()) throw Error("render: \"out\" path required");
         write_png(path_from_utf8(out), img);
@@ -564,6 +582,7 @@ void register_builtins() {
       [](Document* d, const json& a) {
         json op = op_with_target("transform", a);
         op["matrix"] = Mat4::from_json(a.at("matrix")).to_json();
+        refuse_locked(need(d), {op["target"]}, "moving");
         json j;
         j["id"] = need(d).append(op, a.value("by", "")).id;
         return j;
@@ -572,6 +591,7 @@ void register_builtins() {
   reg("reparent", "Move a node, or several (targets, kept in that order), under another component (null = root)",
       {{"doc", "path"}, {"target", "uuid"}, {"targets", "array of uuids - instead of target"}, {"parent", "uuid|null"}, {"index", "int"}}, true,
       [](Document* d, const json& a) {
+        refuse_locked(need(d), targets_of("reparent", a), "moving");
         return append_per_target(need(d), "reparent", a, [&](const json&, size_t i, size_t) {
           json op = {{"parent", a.contains("parent") ? a["parent"] : json(nullptr)}};
           if (a.contains("index")) op["index"] = a["index"].get<int>() < 0 ? a["index"].get<int>() : a["index"].get<int>() + static_cast<int>(i);
@@ -591,15 +611,79 @@ void register_builtins() {
         return j;
       });
 
-  reg("view", "Add a named camera bookmark", {{"doc", "path"}, {"name", "string"}, {"camera", "object"}}, true, [](Document* d, const json& a) {
+  reg("view", "Add a named camera bookmark", {{"doc", "path"}, {"name", "string"}, {"camera", "object"}, {"explode", "object - an exploded view (see the explode command)"}}, true,
+      [](Document* d, const json& a) {
     json op;
     op["op"] = "view";
     op["name"] = a.at("name");
     op["camera"] = a.contains("camera") ? a["camera"] : Camera::preset(a.value("preset", "iso")).to_json();
+    if (a.contains("explode")) op["explode"] = ExplodeSpec::from_json(a["explode"]).to_json();
     json j;
     j["id"] = need(d).append(op, a.value("by", "")).id;
     return j;
   });
+
+  reg("explode", "Exploded view: what moves together (units, by level) and where, at t. view: start from a view's explode; name: save as a new view; update: save into view",
+      {{"doc", "path"}, {"view", "uuid - a view op"}, {"root", "uuid - component (default all)"}, {"levels", "int - split depth: 1 = the root's children whole, 0 = all"},
+       {"mode", "radial|axis|stack"}, {"axis", "[x,y,z] - for axis and stack (default +Z)"}, {"spacing", "number - distance factor"},
+       {"keep", "array|csv - components moving as one unit"}, {"split", "array|csv - components whose parts split beyond levels"},
+       {"groups", "array - node id lists, each moving as one unit"}, {"offsets", "object - manual moves {unit id: [x,y,z]}"},
+       {"attach_small", "bool - small parts ride on what they touch"}, {"small_ratio", "number - small: diagonal share of the parent (0.05)"},
+       {"small_size", "number - small: diagonal in mm"}, {"stages", "levels|together|units"}, {"t", "number - 0 assembled .. 1 exploded"},
+       {"name", "string - save as a new view"}, {"camera", "object - the new view's camera"}, {"update", "bool - save into view"}, {"by", "string"}},
+      true, [](Document* d, const json& a) {
+        Document& doc = need(d);
+        const Scene s = resolve(doc);
+        const std::string view = a.value("view", "");
+        json spec_json = view.empty() ? ExplodeSpec{}.to_json() : view_explode(s, view).to_json();
+        for (const char* k : {"root", "levels", "mode", "axis", "spacing", "groups", "offsets", "attach_small", "small_ratio", "small_size", "stages", "t"})
+          if (a.contains(k)) spec_json[k] = a[k];
+        for (const char* k : {"keep", "split"})
+          if (a.contains(k)) spec_json[k] = str_list(a[k]);
+        const ExplodeSpec spec = ExplodeSpec::from_json(spec_json);
+        if (const Node* r = s.node(spec.root); !spec.root.empty() && (!r || r->kind != Node::Kind::Component))
+          throw Error("explode: root " + spec.root + " is not a component of the document");
+        if (a.contains("name") && a.value("update", false)) throw Error("explode: name saves a new view, update saves into view: give one");
+        json warnings = json::array();
+        auto known = [&](const std::string& id, const std::string& what) {
+          if (!s.node(id)) warnings.push_back(what + " " + id + " is not in the document");
+        };
+        for (const auto& id : spec.keep) known(id, "keep");
+        for (const auto& id : spec.split) known(id, "split");
+        for (const auto& g : spec.groups)
+          for (const auto& id : g) known(id, "group member");
+        const std::vector<ExplodeUnit> units = explode_units(doc, s, spec);
+        const std::vector<Vec3> moves = explode_unit_offsets(units, spec, spec.t);
+        json list = json::array(), offsets = json::object();
+        int stages = 0;
+        for (size_t i = 0; i < units.size(); ++i) {
+          const ExplodeUnit& u = units[i];
+          stages = std::max(stages, u.level);
+          list.push_back({{"id", u.id}, {"name", u.name}, {"level", u.level}, {"parent", u.parent < 0 ? json(nullptr) : json(units[static_cast<size_t>(u.parent)].id)},
+                          {"bodies", u.bodies}, {"centre", u.centre}, {"dir", u.dir}, {"distance", u.distance}, {"t0", u.t0}, {"t1", u.t1}, {"offset", moves[i]}});
+          if (moves[i] != Vec3{0, 0, 0})
+            for (const auto& b : u.bodies) offsets[b] = moves[i];
+        }
+        for (const auto& [id, v] : spec.offsets)
+          if (std::none_of(units.begin(), units.end(), [&](const ExplodeUnit& u) { return u.id == id; })) warnings.push_back("offset " + id + " moves no unit");
+        const std::string root = explode_root(s, spec);
+        json j;
+        j["root"] = root.empty() ? json(nullptr) : json(root);
+        j["depth"] = explode_depth(s, spec);
+        j["stages"] = stages;
+        j["explode"] = spec.to_json();
+        j["units"] = list;
+        j["offsets"] = offsets;
+        if (!warnings.empty()) j["warnings"] = warnings;
+        if (a.contains("name")) {
+          const json op = {{"op", "view"}, {"name", a["name"]}, {"camera", a.contains("camera") ? a["camera"] : Camera::preset("iso").to_json()}, {"explode", spec.to_json()}};
+          j["id"] = doc.append(op, a.value("by", "")).id;
+        } else if (a.value("update", false)) {
+          if (view.empty()) throw Error("explode: update saves into view: pass view");
+          j["id"] = doc.append({{"op", "edit"}, {"target", view}, {"set", {{"explode", spec.to_json()}}}}, a.value("by", "")).id;
+        }
+        return j;
+      });
 
   reg("cache", "Inspect or clear the user cache", {{"action", "info|clear"}}, false, [](Document*, const json& a) {
     json j;

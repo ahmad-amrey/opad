@@ -22,6 +22,9 @@ namespace {
 
 constexpr const char* kMagic = "OPADVC1";
 constexpr std::uintmax_t kBudget = 2ull << 30;  // all viewer entries together; the oldest go first
+// Bumped when a reader writes something new into its import op, so entries cached before it are read again (2: the
+// DXF layer table's off / frozen / locked / plot / linetype / lineweight, TODO 11 UI-37).
+constexpr const char* kReaders = "2";
 
 std::filesystem::path folder() { return cache_dir() / "viewer"; }
 
@@ -38,7 +41,7 @@ std::filesystem::path entry_for(const std::filesystem::path& file, const ImportO
 #ifdef _WIN32
   std::transform(identity.begin(), identity.end(), identity.begin(), [](char c) { return c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c; });
 #endif
-  identity += "|" + std::to_string(size) + "|" + std::to_string(time.time_since_epoch().count()) + "|" + version_string() +
+  identity += "|" + std::to_string(size) + "|" + std::to_string(time.time_since_epoch().count()) + "|" + version_string() + "|" + kReaders +
               "|" + (opt.center_drawing ? "c" : "") + "|" + opt.placement.to_json().dump();
   auto ext = file.extension().string();
   std::transform(ext.begin(), ext.end(), ext.begin(), [](char c) { return c >= 'A' && c <= 'Z' ? char(c - 'A' + 'a') : c; });

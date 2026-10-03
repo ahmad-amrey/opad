@@ -21,6 +21,7 @@ bool live_mutation(const std::string& name) {
 bool live_mutation(const std::string& name,const json& args) {
   // A measurement only writes when pinned; otherwise it is a read and leaves the revision alone (gap log #4).
   if(name=="measure")return args.value("pin",false);
+  if(name=="explode")return args.contains("name") || args.value("update",false);  // otherwise a read, like measure
   return live_mutation(name);
 }
 json transaction_policy() {
@@ -125,7 +126,8 @@ const json& live_tools() {
   add("model_batch","Execute 1-100 typed modeling steps atomically with per-step receipts. An identifier string may refer to an earlier step's result as @{<step id>#/<path in that step's result>}: with a step {\"id\":\"cabin\",\"command\":\"feature\",...}, @{cabin#/body_ids/0} is its first body and @{cabin/body_ids/0} is the same. Paths start at the step's result, without /result/: feature steps have feature_id and body_ids (mirror and patterns also all_body_ids), sketch steps sketch_id, component steps component_id. @{pat#/body_ids/*} is the whole list wherever a list is accepted, e.g. targets:[\"@{pat#/body_ids/*}\"]. A reference may also name a step of an earlier batch on the same connection when this batch has no step with that id. Feature steps take body_name, color and parent for the bodies they make; parent here is the default component for all of them. Validates all inputs/dependencies first. Failure discards this whole batch, retaining previous staged work. Uses normal transaction/preview, revision, Stop and Undo semantics. Commit and save remain explicit separate checkpoints; computed receipts do not imply persistence. No file operations or nested batches.",object({
     {"steps",{{"type","array"},{"items",{{"anyOf",batchSteps}}},{"minItems",1},{"maxItems",100}}},
     {"transaction",str()},{"preview",{{"type","boolean"},{"default",false}}},{"expected_revision",revision()},{"request_id",str()},{"verbosity",verbosity()},
-    {"parent",{{"type",{"string","null"}},{"description","Default component for every body the feature steps make (a step's own parent wins); a component id or @{step#/component_id} of an earlier component step."}}}
+    {"parent",{{"type",{"string","null"}},{"description","Default component for every body the feature steps make (a step's own parent wins); a component id or @{step#/component_id} of an earlier component step."}}},
+    {"component",{{"type",{"string","null"}},{"description","Default component for feature and sketch steps (a step's own wins)."}}}
   },{"steps","expected_revision","request_id"}));
   for(const auto& c:commands::list())if(!excluded.count(c.name)) {
     auto schema=command_schema(c,true);
@@ -136,9 +138,10 @@ const json& live_tools() {
       schema["properties"]["preview"]={{"type","boolean"},{"default",false}};
       schema["properties"]["references"]={{"type","array"},{"items",{{"type","object"}}},{"maxItems",100}};
       schema["properties"]["verbosity"]=verbosity();
-      // measure writes only with pin: then (and only then) it needs the revision and a request id.
+      // measure writes only with pin, explode only with name or update: then (and only then) they need the revision
+      // and a request id.
       if(c.name=="measure")schema["properties"]["pin"]={{"type","boolean"},{"default",false},{"description","Append a measurement op; then expected_revision and request_id are required. Without pin, measure is a read."}};
-      else{schema["required"].push_back("expected_revision");schema["required"].push_back("request_id");}
+      else if(c.name!="explode"){schema["required"].push_back("expected_revision");schema["required"].push_back("request_id");}
     }
     add(c.name,c.description,schema);
   }

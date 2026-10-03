@@ -737,8 +737,22 @@ void AnnotationEditor::eraseAt(const QPointF& point) {
 void AnnotationEditor::finish() {
   if (!m_active || m_dragging || !m_save->isEnabled()) return;
   const QString text = m_text->toPlainText().trimmed();
-  opad::json args = {{"anchor", m_anchor.to_json()}, {"text", (text.isEmpty() ? tr("Hand drawing") : text).toStdString()}, {"style", m_type}};
-  if (m_drawingMode) args["drawing"] = m_drawing;
+  // Drawn on a part an exploded view has moved: stored where the part is in the model (the view adds its offset back).
+  const opad::Vec3 moved = m_anchor.body.empty() ? opad::Vec3{0, 0, 0} : m_viewport->shownOffset(m_anchor.body);
+  auto back = [&moved](opad::Vec3 p) { return opad::Vec3{p[0] - moved[0], p[1] - moved[1], p[2] - moved[2]}; };
+  opad::Ref anchor = m_anchor;
+  opad::json drawing = m_drawing;
+  if (moved != opad::Vec3{0, 0, 0}) {
+    anchor.point = back(anchor.point);
+    if (m_drawingMode && drawing.is_object()) {
+      if (drawing.contains("plane") && drawing["plane"].contains("origin")) drawing["plane"]["origin"] = back(drawing["plane"]["origin"].get<opad::Vec3>());
+      if (drawing.contains("strokes"))
+        for (auto& stroke : drawing["strokes"])
+          if (stroke.contains("plane") && stroke["plane"].contains("origin")) stroke["plane"]["origin"] = back(stroke["plane"]["origin"].get<opad::Vec3>());
+    }
+  }
+  opad::json args = {{"anchor", anchor.to_json()}, {"text", (text.isEmpty() ? tr("Hand drawing") : text).toStdString()}, {"style", m_type}};
+  if (m_drawingMode) args["drawing"] = drawing;
   try {
     m_doc->run("annotate", args);  // one op, one Undo step; the document's change ends this editor
     cancel();

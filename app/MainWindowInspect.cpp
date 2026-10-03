@@ -19,6 +19,7 @@
 #include "I18n.hpp"
 #include "Units.hpp"
 #include "opad/checks.hpp"
+#include "opad/explode.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 
@@ -215,7 +216,9 @@ void MainWindow::runToolMeasure() {
   if (Job* old = std::exchange(m_measureJob, nullptr)) old->cancel();
   auto document = std::make_shared<opad::Document>(m_doc->doc);
   auto scene = std::make_shared<opad::Scene>(m_doc->scene);
-  m_measureJob = m_jobs->async(tr("Measuring %1").arg(m_tool.title), [document, scene, refs, pickedPoints, snapTolerance, kind, result](Progress progress) {
+  const auto moved = m_viewport->shownOffsets();  // an exploded view: measured where the parts are drawn
+  m_measureJob = m_jobs->async(tr("Measuring %1").arg(m_tool.title), [document, scene, moved, refs, pickedPoints, snapTolerance, kind, result](Progress progress) {
+    if (!moved.empty()) *scene = opad::exploded_scene(*scene, moved);
     if (kind == "distance" && refs.at(0).kind == opad::Ref::Kind::Edge && refs.at(1).kind == opad::Ref::Kind::Edge) {
       const bool clicked = pickedPoints.size() >= 2 && pickedPoints[0].first && pickedPoints[1].first;
       opad::json closest;
@@ -229,6 +232,7 @@ void MainWindow::runToolMeasure() {
     else if (kind == "angle") *result = opad::measure_angle(*document, *scene, refs.at(0), refs.at(1));
     else if (kind == "radius") *result = opad::measure_radius(*document, *scene, refs.at(0));
     else *result = opad::measure_bbox(*document, *scene, refs);
+    if (!moved.empty()) (*result)["exploded"] = true;  // not pinned: a pinned measurement is the assembled model's
   }, [this, run, result](bool ok, const QString& error) {
     if (run == m_toolRun) m_measureJob = nullptr;
     if (run != m_toolRun || m_tool.id.isEmpty()) return;  // the picks moved on
@@ -237,7 +241,7 @@ void MainWindow::runToolMeasure() {
       return m_viewport->deselectLast();  // that pick does not work for this tool: ask for it again
     }
     m_lastMeasure = *result;
-    m_pinAction->setEnabled(!m_doc->browse);
+    m_pinAction->setEnabled(!m_doc->browse && !measuredExploded());
     m_viewport->showMeasurement(m_lastMeasure);
     refreshToolUi();
   });
@@ -317,11 +321,12 @@ void MainWindow::refreshToolUi() {
     if(info.contains("segments")) rows << qMakePair(tr("Circle %1 mesh segments (approximate)").arg(i+1),QString::number(info["segments"].get<int>()));
   }
   m_toolSteps->setResult(rows);
-  m_toolSteps->setFooter(done, !m_doc->browse);
+  m_toolSteps->setFooter(done, !m_doc->browse && !measuredExploded());
 }
 
 void MainWindow::pinMeasurement() {
   if (m_lastMeasure.is_null()) return;
+  if (measuredExploded()) return statusBar()->showMessage(tr("Pinned measurements are taken on the assembled model: collapse the exploded view, then measure again."), 6000);
   if (!requireEditable([this] { pinMeasurement(); })) return;  // a pinned measurement is part of the document
   opad::json op;
   op["op"] = "measurement";
@@ -335,6 +340,8 @@ void MainWindow::pinMeasurement() {
   statusBar()->showMessage(tr("Measurement pinned. Manage it in Annotations (Alt+2)."), 4000);
   if (!m_tool.id.isEmpty()) m_viewport->clearSelection();  // the tool stays on for the next measurement
 }
+
+bool MainWindow::measuredExploded() const { return m_lastMeasure.is_object() && m_lastMeasure.value("exploded", false); }
 
 void MainWindow::clearMeasurement() {
   m_lastMeasure = opad::json();

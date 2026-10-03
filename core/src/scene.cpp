@@ -33,6 +33,12 @@ bool Scene::effectively_visible(const std::string& id) const {
   return false;
 }
 
+bool Scene::effectively_locked(const std::string& id) const {
+  for (const Node* n = node(id); n; n = n->parent.empty() ? nullptr : node(n->parent))
+    if (n->locked) return true;
+  return false;
+}
+
 std::vector<std::string> Scene::bodies_under(const std::string& id) const {
   std::vector<std::string> out;
   std::function<void(const std::string&)> rec = [&](const std::string& nid) {
@@ -120,6 +126,20 @@ void Frame::to_local(const Vec3& p, double& u, double& v) const {
   v = d[0] * y[0] + d[1] * y[1] + d[2] * y[2];
 }
 
+Frame Frame::transformed(const Mat4& m) const {
+  auto unit = [](Vec3 v) {
+    const double l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    return l < 1e-300 ? v : Vec3{v[0] / l, v[1] / l, v[2] / l};
+  };
+  Frame f;
+  f.origin = m.apply(origin);
+  f.x = unit(m.apply_dir(x));
+  const Vec3 y1 = m.apply_dir(y);
+  const double along = y1[0] * f.x[0] + y1[1] * f.x[1] + y1[2] * f.x[2];
+  f.y = unit({y1[0] - along * f.x[0], y1[1] - along * f.x[1], y1[2] - along * f.x[2]});
+  return f;
+}
+
 json Frame::to_json() const { return {{"origin", origin}, {"x", x}, {"y", y}}; }
 
 Frame Frame::from_json(const json& j) {
@@ -153,6 +173,7 @@ json Scene::tree_json(int max_depth) const {
     if (!n->visible) j["visible"] = false;
     if (n->locked) j["locked"] = true;
     if (!n->properties.empty()) j["properties"] = n->properties;
+    if (n->layer.is_object()) j["layer"] = n->layer;
     j["source_op"] = n->source_op;
     if (n->kind == Node::Kind::Component) {
       if (max_depth < 0 || depth < max_depth) {
@@ -175,8 +196,46 @@ struct SceneBuilder::Impl {
   const Document& doc;
   Scene scene;
   std::set<std::string> shown_sketches, hidden_sketches;  // explicit appearance ops on sketches
+  // Sketches and construction planes / axes made in a component follow its later moves (TODO 11 UI-33 phase 2). The op
+  // keeps where they were made; the scene has them where the component is now, so later features read them there.
+  struct Follower {
+    bool sketch;
+    size_t index;  // into scene.sketches or scene.features
+    std::string component;
+    Mat4 placed;   // the component's world placement when made
+    json made;     // the frame, or the feature's result, as made
+  };
+  std::vector<Follower> followers;
 
   explicit Impl(const Document& d) : doc(d) {scene.units=d.header.units;}
+
+  void follow() {
+    for (const auto& f : followers) {
+      if (!scene.node(f.component)) continue;  // removed: stays where it was last
+      Mat4 moved;
+      try {
+        moved = scene.world(f.component) * f.placed.inverse();
+      } catch (const Error&) {  // made while the component was squashed flat: nothing to follow
+        continue;
+      }
+      if (f.sketch) {
+        SketchItem& s = scene.sketches[f.index];
+        s.moved = moved;
+        s.frame = Frame::from_json(f.made).transformed(moved);
+        continue;
+      }
+      json& result = scene.features[f.index].result;
+      if (f.made.contains("plane")) result["plane"] = Frame::from_json(f.made["plane"]).transformed(moved).to_json();
+      if (f.made.contains("axis")) {  // as a frame: its origin and x moved the same way
+        Frame axis;
+        axis.origin = vec3_from(f.made["axis"].value("origin", json()), axis.origin);
+        axis.x = vec3_from(f.made["axis"].value("dir", json()), {0, 0, 1});
+        axis.y = std::fabs(axis.x[0]) < 0.9 ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+        axis = axis.transformed(moved);
+        result["axis"] = {{"origin", axis.origin}, {"dir", axis.x}};
+      }
+    }
+  }
 
   void unresolved(const std::string& id, const std::string& type, const std::string& reason) { scene.unresolved.push_back({id, type, reason}); }
 
@@ -235,6 +294,8 @@ struct SceneBuilder::Impl {
       }
       n.opacity = jn.value("opacity", 1.0);
       n.visible = jn.value("visible", true);
+      n.locked = jn.contains("locked") && jn["locked"].is_boolean() && jn["locked"].get<bool>();  // a drawing's locked layer
+      if (jn.contains("layer") && jn["layer"].is_object()) n.layer = jn["layer"];
       n.source_op = op_id;
       const std::string nid = n.id;
       const bool body = n.kind == Node::Kind::Body;
@@ -284,6 +345,14 @@ struct SceneBuilder::Impl {
 
   bool ref_ok(const Ref& r) { return r.kind == Ref::Kind::Point || scene.nodes.count(r.body) > 0; }
 
+  // A sketch's or feature's optional "component" (TODO 11 UI-33), while that component exists; else the root, as a
+  // feature's new body whose parent is gone.
+  std::string component_of(const json& d) {
+    if (!d.contains("component") || !d["component"].is_string()) return {};
+    const Node* n = scene.node(d["component"].get<std::string>());
+    return n && n->kind == Node::Kind::Component ? n->id : std::string();
+  }
+
   // Marks every sketch a feature's inputs mention ({"sketch": id} anywhere in them) as consumed.
   void mark_consumed(const json& j) {
     if (j.is_object()) {
@@ -300,6 +369,7 @@ struct SceneBuilder::Impl {
     f.id = id;
     f.kind = d.value("kind", "");
     f.name = d.value("name", f.kind);
+    f.component = component_of(d);
     f.inputs = d.value("inputs", json::object());
     f.result = d.value("result", json::object());
     // suppress_if (gap log #9): the walk evaluated it and kept the answer in the result; replay only reads that.
@@ -341,6 +411,12 @@ struct SceneBuilder::Impl {
         attach(nid, parent, -1);
       }
     }
+    if (!f.component.empty() && (f.result.contains("plane") || f.result.contains("axis"))) {
+      json made = json::object();
+      for (const char* k : {"plane", "axis"})
+        if (f.result.contains(k)) made[k] = f.result[k];
+      followers.push_back({false, scene.features.size(), f.component, scene.world(f.component), made});
+    }
     scene.features.push_back(std::move(f));
   }
 
@@ -369,8 +445,10 @@ struct SceneBuilder::Impl {
       std::string nid = n->id;
       detach(nid);
       attach(nid, parent, d.value("index", -1));
+      follow();
     } else if (type == "transform") {
       if (Node* n = target_of(id, type, d)) n->local = Mat4::from_json(d["matrix"]);
+      follow();
     } else if (type == "appearance") {
       if (SketchItem* s = sketch_of(d.value("target", ""))) {  // a sketch only has a visibility
         if (d.contains("visible")) {
@@ -438,6 +516,7 @@ struct SceneBuilder::Impl {
       v.id = id;
       v.name = d["name"].get<std::string>();
       v.camera = d["camera"];
+      if (d.contains("explode") && d["explode"].is_object()) v.explode = d["explode"];
       scene.views.push_back(v);
     } else if (type == "param") {
       Param p;
@@ -450,6 +529,8 @@ struct SceneBuilder::Impl {
       SketchItem s;
       s.id = id;
       s.name = d.value("name", "Sketch");
+      s.component = component_of(d);
+      if (!s.component.empty()) s.placed = scene.world(s.component);
       s.plane = d.value("plane", json::object());
       s.geometry = d.value("geometry", json::object());
       s.frame = Frame::from_json(s.plane.value("frame", json()));
@@ -460,6 +541,7 @@ struct SceneBuilder::Impl {
       s.dof = res.value("dof", d.value("dof", -1));
       s.error = res.value("error", "");
       if (!s.error.empty()) unresolved(id, type, s.name + ": " + s.error);
+      if (!s.component.empty()) followers.push_back({true, scene.sketches.size(), s.component, s.placed, s.frame.to_json()});
       scene.sketches.push_back(std::move(s));
     } else if (type == "feature") {
       apply_feature(id, d);
@@ -728,6 +810,41 @@ Scene resolve(const Document& doc, const std::string& until) {
   }
   b.finish();
   return b.take();
+}
+
+std::set<std::string> ops_in_component(const Document& doc, const Scene& scene, const std::string& component) {
+  std::set<std::string> out;
+  auto under = [&](const json& id) {
+    if (!id.is_string()) return false;
+    for (const Node* n = scene.node(id.get<std::string>()); n; n = n->parent.empty() ? nullptr : scene.node(n->parent))
+      if (n->id == component) return true;
+    return false;
+  };
+  for (const auto& [id, n] : scene.nodes)  // what made the nodes in it (the component itself, imports, features)
+    if (component.empty() || under(id)) out.insert(n.source_op);
+  for (const auto& e : effective_ops(doc)) {
+    const json& d = e.data();
+    const std::string& type = e.op->type;
+    bool in = component.empty() || out.count(e.op->id);
+    if (!in && (type == "sketch" || type == "feature")) in = under(d.value("component", json()));
+    if (!in && type == "feature")
+      for (const auto& b : d.value("result", json::object()).value("bodies", json::array())) in = in || under(b.value("id", json()));
+    if (!in && (type == "reparent" || type == "transform" || type == "appearance" || type == "rename")) in = under(d.value("target", json()));
+    if (!in && type == "reparent") in = under(d.value("parent", json()));
+    if (!in && type == "import") in = under(d.value("parent", json()));
+    auto ref_under = [&](const json& r) {
+      try {
+        return under(json(Ref::from_json(r).body));
+      } catch (const std::exception&) {
+        return false;
+      }
+    };
+    if (!in && type == "annotation" && d.contains("anchor")) in = ref_under(d["anchor"]);
+    if (!in && type == "measurement")
+      for (const auto& r : d.value("refs", json::array())) in = in || ref_under(r);
+    if (in) out.insert(e.op->id);
+  }
+  return out;
 }
 
 }  // namespace opad

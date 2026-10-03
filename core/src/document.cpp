@@ -186,11 +186,13 @@ void Document::validate_op(const json& op) {
     require(op, "name", "string");
     if (!op.contains("plane") || !op["plane"].is_object()) throw Error("sketch: 'plane' must be an object");
     if (!op.contains("geometry") || !op["geometry"].is_object()) throw Error("sketch: 'geometry' must be an object");
+    if (op.contains("component")) require(op, "component", "uuid?");
   } else if (type == "feature") {
     require(op, "kind", "string");
     require(op, "name", "string");
     if (!op.contains("inputs") || !op["inputs"].is_object()) throw Error("feature: 'inputs' must be an object");
     if (op.contains("result") && !op["result"].is_object()) throw Error("feature: 'result' must be an object");
+    if (op.contains("component")) require(op, "component", "uuid?");
   } else if (type == "edit") {
     require(op, "target", "uuid");
     if (!op.contains("set") || !op["set"].is_object()) throw Error("edit: 'set' must be an object");

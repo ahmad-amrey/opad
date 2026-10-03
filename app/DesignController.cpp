@@ -687,12 +687,16 @@ void DesignController::runPreview(bool commit) {
   }
   const opad::json inputs = m_form->inputs();
   const std::string name = m_form->name().toStdString();
-  const std::string stamp = inputs.dump() + "|" + name;
-  auto commitReady = [this] {
+  // A new feature is made in the active component (UI-33): its new bodies, plane or axis go there, in its frame.
+  const std::string component = m_editing.empty() ? m_doc->activeComponent() : std::string();
+  const std::string stamp = inputs.dump() + "|" + name + "|" + component;
+  auto commitReady = [this, component] {
     auto plan = m_readyPlan;
     const QString label = m_form->spec() ? i18n::t(QString::fromStdString(m_form->spec()->label)).toLower() : tr("feature");
-    // The new bodies' name, colour and component: the rename / appearance / reparent ops of the same step (B14).
-    const opad::json style = m_editing.empty() ? m_form->bodyStyle() : opad::json::object();
+    // The new bodies' name, colour and component: the rename / appearance / reparent ops of the same step (B14). No
+    // reparent into the component the feature is made in: its bodies are there already.
+    opad::json style = m_editing.empty() ? m_form->bodyStyle() : opad::json::object();
+    if (!component.empty() && style.value("parent", opad::json()) == opad::json(component)) style.erase("parent");
     const std::string op = m_newId;
     whenNobodyReads(this, [this, plan, label, style, op] {
       try {
@@ -734,11 +738,12 @@ void DesignController::runPreview(bool commit) {
   const double reach = kind == "plane" || kind == "axis" ? modelReach() : 0.0;
   auto construction = std::make_shared<std::vector<Viewport::PreviewPart>>();
   m_form->setStatus(tr("Computing…"), false);
-  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult, reach, construction](Progress p) {
+  m_planJob = m_jobs->async(tr("Computing %1").arg(m_form->name()), [doc, scene, inputs, name, target, kind, editing, plan, anchors, meshes, symmetric, editResult, reach, construction, component](Progress p) {
     Reading reading;
     const opad::json hinted = hint_refs(*doc, *scene, inputs);
     opad::json op = editing ? make_edit_op(target, opad::json{{"inputs", hinted}, {"name", name}}) : make_feature_op(kind, name, hinted);
     if (!editing) op["id"] = target;
+    if (!component.empty()) op["component"] = component;
     *plan = plan_ops(*doc, {op}, true, [p] { return p.cancelled(); });
     // An edit that changes nothing is not recomputed (its fingerprint matches), so the plan has nothing to show and the
     // rolled-back view was empty while the feature was open: show what it makes now. Copies are meshed, not the cached
@@ -978,8 +983,14 @@ void DesignController::finishSketch(std::function<void()> then) {
   if (m_sketch->sketchId().empty() && m_sketch->empty()) return leave();  // nothing was drawn: no op
   if (!m_sketch->sketchId().empty() && !m_sketch->modified()) return leave();
   opad::json op;
-  if (m_sketch->sketchId().empty()) op = make_sketch_op(m_sketch->name().toStdString(), m_sketch->plane(), m_sketch->geometry());
-  else op = make_edit_op(m_sketch->sketchId(), opad::json{{"geometry_delta", m_sketch->geometryDelta()}, {"plane", m_sketch->plane()}});
+  if (m_sketch->sketchId().empty()) {
+    op = make_sketch_op(m_sketch->name().toStdString(), m_sketch->plane(), m_sketch->geometry());
+    if (!m_doc->activeComponent().empty()) op["component"] = m_doc->activeComponent();  // made in the active component (UI-33)
+  } else {
+    opad::json plane = m_sketch->plane();  // a plane picked now goes in where the sketch's component was when it was made
+    if (const opad::SketchItem* s = m_doc->scene.sketch(m_sketch->sketchId()); s && plane != s->plane) plane = plane_as_made(*s, std::move(plane));
+    op = make_edit_op(m_sketch->sketchId(), opad::json{{"geometry_delta", m_sketch->geometryDelta()}, {"plane", plane}});
+  }
   applyOps({op}, m_sketch->sketchId().empty() ? tr("sketch") : tr("edit sketch"), [this, leave](bool ok, const QString& error) {
     if (!ok) return emit failed(error);  // stay in the sketch so nothing drawn is lost
     leave();

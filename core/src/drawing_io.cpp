@@ -552,7 +552,12 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
         bodies.push_back(std::move(body));
         ++result.bodies;
       }
-      children.push_back({{"type","component"},{"id",new_uuid()},{"name",name},{"visible",!drawing.visible.count(name)||drawing.visible.at(name)},{"children",bodies}});
+      json layer={{"type","component"},{"id",new_uuid()},{"name",name},{"visible",!drawing.visible.count(name)||drawing.visible.at(name)},{"children",bodies}};
+      if(const auto info=drawing.layer_info.find(name);info!=drawing.layer_info.end()) {  // older builds ignore both (UI-37)
+        layer["layer"]=info->second;
+        if(info->second.value("locked",false)) layer["locked"]=true;
+      }
+      children.push_back(std::move(layer));
     }
     json root={{"type","component"},{"id",new_uuid()},{"name",file.stem().string()},{"children",children}};
     Mat4 placement=options.placement;
