@@ -14,7 +14,7 @@ CoordinateReadout::CoordinateReadout(Viewport* view, std::function<bool(opad::Fr
   setObjectName("coordinateReadout");
   setFont(theme::mono(11));
   setLayoutDirection(Qt::LeftToRight);
-  setMinimumWidth(fontMetrics().horizontalAdvance("Sketch  X -00000.000  Y -00000.000  Z -00000.000"));
+  setMinimumWidth(fontMetrics().horizontalAdvance("3D  X -0000.000  Y -0000.000  Z -0000.000"));  // the usual widest; longer values grow it
   setAccessibleName(tr("Cursor coordinates"));
   m_timer.setSingleShot(true);
   m_timer.setInterval(30);  // after the frame that ran the detection under the mouse

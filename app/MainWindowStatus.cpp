@@ -38,7 +38,7 @@ class StatusText : public QLabel {
     QPainter p(this);
     const QRect r = contentsRect();
     const QString shown = fontMetrics().elidedText(text(), m_mode, r.width());
-    if (m_tip) setToolTip(shown == text() ? QString() : text());
+    if (const QString tip = shown == text() ? QString() : text(); m_tip && toolTip() != tip) setToolTip(tip);
     style()->drawItemText(&p, r, int(QStyle::visualAlignment(layoutDirection(), alignment())) | Qt::TextSingleLine, palette(), isEnabled(), shown, foregroundRole());
   }
  private:
@@ -83,7 +83,7 @@ class StatusBar : public QStatusBar {
 void MainWindow::buildStatusBar() {
   setStatusBar(new StatusBar(this));
   const Tokens& t = theme::current();
-  m_statusPath = new StatusText(Qt::ElideMiddle, 120, false, this);  // the folder gives way first, the file name stays
+  m_statusPath = new StatusText(Qt::ElideMiddle, 100, false, this);  // the folder gives way first, the file name stays
   m_statusPath->setFont(theme::mono(12));
   m_statusPath->setContentsMargins(12, 2, 4, 2);
   m_statusGitIcon = new QLabel(this);
@@ -94,7 +94,7 @@ void MainWindow::buildStatusBar() {
   m_statusPrompt->setObjectName("statusPrompt");
   m_statusPrompt->setAlignment(Qt::AlignLeading | Qt::AlignVCenter);
   m_statusPrompt->setContentsMargins(8, 0, 4, 0);
-  m_statusHover = new StatusText(Qt::ElideRight, 100, true, this);
+  m_statusHover = new StatusText(Qt::ElideRight, 60, true, this);
   m_statusHover->setAlignment(Qt::AlignCenter);
   m_statusHover->setObjectName("tertiary");
   m_statusSel = new QLabel(this);
