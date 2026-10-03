@@ -106,6 +106,7 @@ void DocsArea::buildDrawingCommands() {
   add("drawings.update", tr("Update views"), "viewsUpdate", [this] { m_page->canvas()->refresh(); }, sheetShown, {"refresh", "regenerate", "rebuild"});
   add("drawings.fit", tr("Fit sheet"), "fit", [this] { m_page->canvas()->fitSheet(); }, sheetShown, {"zoom"});
   add("drawings.exportSheet", tr("Export sheet…"), "export", [this] { exportSheet(m_page->sheet()); }, sheetShown, {"PDF", "DXF", "DWG", "SVG", "PNG", "print"});
+  add("drawings.issue", tr("Issue revision…"), "issueRevision", [this] { issueRevision(); }, sheetShown, {"release", "revision", "freeze", "git tag", "approve"});
   buildAnnotateCommands();
 }
 
@@ -126,7 +127,7 @@ void DocsArea::drawingsRibbon(RibbonLayout& layout) {
   layout.addAction("drawings.drawing.views", services().action("drawings.projectedView"));
   layout.addAction("drawings.drawing.views", services().action("drawings.isoView"));
   group("style", tr("Style"), {"drawings.hiddenLines", "drawings.tangentEdges", "drawings.update"});
-  group("output", tr("Output"), {"drawings.exportSheet", "file.export", "file.exportBom", "drawings.fit"});
+  group("output", tr("Output"), {"drawings.exportSheet", "drawings.issue", "file.export", "file.exportBom", "drawings.fit"});
   annotateRibbon(layout);
 }
 
@@ -141,6 +142,7 @@ void DocsArea::readyDrawings() {
   connect(m_page, &SheetPage::newDrawingRequested, this, [this] { services().guarded([&] { newDrawing(); }); });
   connect(m_page, &SheetPage::newSheetRequested, this, [this] { services().guarded([&] { newSheet(); }); });
   connect(m_page, &SheetPage::sheetShown, this, [this] { services().updateCommands(); });
+  connect(m_page, &SheetPage::issueRequested, this, [this] { services().guarded([&] { issueRevision(); }); });
   connect(canvas, &SheetCanvas::selectionChanged, this, [this](const std::vector<std::string>& views) {
     services().browser()->selectIds(views);  // the window's selection follows: Properties, the status bar, the commands
     syncStyleActions();
@@ -427,7 +429,8 @@ void DocsArea::openSheet(const std::string& row) {
 void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
   const opad::Scene& s = services().document()->scene;
   if (views.empty()) {  // on the paper: what goes onto it
-    for (const char* id : {"drawings.baseView", "drawings.isoView", "drawings.sheetProperties", "drawings.templateFields", "drawings.newSheet", "drawings.exportSheet"})
+    for (const char* id : {"drawings.baseView", "drawings.isoView", "drawings.sheetProperties", "drawings.templateFields", "drawings.newSheet", "drawings.exportSheet",
+                            "drawings.issue"})
       if (QAction* a = services().action(id)) menu.addAction(a);
     return;
   }

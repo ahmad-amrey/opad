@@ -21,6 +21,7 @@
 #include "Jobs.hpp"
 #include "Theme.hpp"
 #include "opad/drawing/paint.hpp"
+#include "opad/drawing/tables.hpp"
 
 using opad::drawing::Display;
 using opad::drawing::Vec2;
@@ -316,6 +317,7 @@ void SheetCanvas::setSheet(const std::string& id) {
   m_selItems.clear();
   m_frames.clear();
   emit danglingChanged();
+  if (!std::exchange(m_sinceIssue, opad::json()).is_null()) emit issueChanged();
   dropViews({});
   m_paper->setDisplay(nullptr, 0, 0);
   m_outbox.reset();
@@ -527,6 +529,17 @@ void SheetCanvas::start() {
           }
           part(g, false);
         }
+        // What changed since the drawing was last issued (its views' fingerprints, its values): the sheet bar warns.
+        Part since;
+        since.kind = Part::Issue;
+        if (const auto issues = drawing_issues(scene, *sheet); !issues.empty() && !p.cancelled()) {
+          const opad::SheetItem& last = *issues.back();
+          since.since = issue_changes(doc, scene, last);
+          since.since["id"] = last.id;
+          since.since["rev"] = last.def.value("rev", "");
+          since.since["date"] = last.def.value("date", "");
+        }
+        send(std::move(since));
       },
       [self, box](bool ok, const QString& error) {
         if (!self) return;
@@ -574,6 +587,8 @@ void SheetCanvas::apply(Part& part) {
     }
     if (m_drag.active)  // the user is dragging: keep what they see
       for (const auto& [it, o] : m_drag.origins) it->setPos(o + m_drag.delta);
+  } else if (part.kind == Part::Issue) {
+    if (std::exchange(m_sinceIssue, part.since) != m_sinceIssue) emit issueChanged();
   } else if (part.kind == Part::Paper) {
     m_paper->setDisplay(part.display, m_paperW, m_paperH, part.bounds);
     m_paper->snaps = part.snaps;

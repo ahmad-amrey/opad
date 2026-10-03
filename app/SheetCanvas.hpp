@@ -17,7 +17,8 @@
 // Annotations (UI-79): a click on an item (its box, worked out on the worker) selects it, a drag moves its text or symbol
 // (one edit), Del deletes it; items that cannot be measured any more are reported (dangling). A tool (SheetInteraction)
 // gets the mouse and keys first; it picks model edges through pickAt (the snap under the pointer traced back to the
-// projection's body and edge) and shows what it would add through setPreview.
+// projection's body and edge) and shows what it would add through setPreview. Each pass ends with what changed since the
+// drawing's latest issue (UI-84: drawing::issue_changes), for the sheet bar.
 #include <QGraphicsView>
 #include <QPointer>
 #include <QTimer>
@@ -112,6 +113,9 @@ class SheetCanvas : public QGraphicsView {
   std::string itemAt(const QPointF& scene) const;         // the smallest annotation whose box holds the point
   std::optional<QRectF> itemBox(const std::string& id) const;  // scene
   std::map<std::string, QString> dangling() const;        // items of the shown sheet that cannot be measured: why
+  // The drawing's latest issue and what changed since: {"id", "rev", "date", "views", "values", "gone"}; null when it was never
+  // issued (or the worker has not got that far).
+  const opad::json& sinceIssue() const { return m_sinceIssue; }
   void benchDragItem(const std::string& id, opad::drawing::Vec2 delta);  // as a drag on the item (one edit)
 
   // State for benches and the status bar.
@@ -153,6 +157,7 @@ class SheetCanvas : public QGraphicsView {
   void deleteRequested(const std::vector<std::string>& views);  // views and items
   void itemSelectionChanged(const std::vector<std::string>& items);
   void danglingChanged();
+  void issueChanged();  // sinceIssue() is new
 
  protected:
   bool event(QEvent* e) override;
@@ -179,7 +184,7 @@ class SheetCanvas : public QGraphicsView {
     std::vector<std::array<opad::drawing::Vec2, 2>> lines;
   };
   struct Part {
-    enum Kind { Frames, Paper, View } kind = Frames;
+    enum Kind { Frames, Paper, View, Issue } kind = Frames;
     std::vector<opad::drawing::ViewFrame> frames;
     std::string id;
     std::shared_ptr<const opad::drawing::Display> display;
@@ -190,6 +195,7 @@ class SheetCanvas : public QGraphicsView {
     std::shared_ptr<const opad::drawing::ViewGeometry> geometry;  // a view's projection (its curves come first)
     std::vector<ItemHit> items;  // annotations drawn in it, to pick them
     std::vector<std::pair<std::string, std::string>> dangling;         // items it could not measure: why
+    opad::json since;  // Issue: sinceIssue()
     bool draft = false;
   };
   struct Outbox {
@@ -262,4 +268,5 @@ class SheetCanvas : public QGraphicsView {
   ItemDrag m_itemDrag;
   std::map<std::string, std::vector<ItemHit>> m_items;  // part ("" the paper) -> items
   std::map<std::string, std::vector<std::pair<std::string, std::string>>> m_dangling;          // part -> dangling items
+  opad::json m_sinceIssue;
 };

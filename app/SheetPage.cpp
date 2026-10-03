@@ -133,6 +133,15 @@ SheetPage::SheetPage(AppDocument* doc, JobRunner* jobs, QWidget* parent) : QWidg
   m_dangling->hide();
   connect(m_canvas, &SheetCanvas::danglingChanged, this, &SheetPage::updateDangling);
   h->addWidget(m_dangling);
+  // The drawing's revision, and whether it changed since it was issued.
+  m_issue = new QToolButton(bar);
+  m_issue->setObjectName("sheetIssue");
+  m_issue->setAutoRaise(true);
+  m_issue->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  m_issue->hide();
+  connect(m_issue, &QToolButton::clicked, this, &SheetPage::issueRequested);
+  connect(m_canvas, &SheetCanvas::issueChanged, this, &SheetPage::updateIssue);
+  h->addWidget(m_issue);
   h->addWidget(m_cursor);
   h->addWidget(m_info);
   bar->setFixedHeight(30);
@@ -220,6 +229,24 @@ void SheetPage::updateDangling() {
     QAction* a = menu->addAction(tr("Re-attach %1").arg(name), this, [this, id = id] { emit reattachRequested(id); });
     a->setToolTip(why);
   }
+}
+
+void SheetPage::updateIssue() {
+  const opad::json& since = m_canvas->sinceIssue();
+  m_issue->setVisible(since.is_object());
+  if (!since.is_object()) return;
+  const QString rev = QString::fromStdString(since.value("rev", "")), date = QString::fromStdString(since.value("date", ""));
+  const int views = static_cast<int>(since.value("views", opad::json::array()).size()), values = static_cast<int>(since.value("values", opad::json::array()).size()),
+            gone = static_cast<int>(since.value("gone", opad::json::array()).size());
+  const bool changed = views || values || gone;
+  m_issue->setIcon(icons::themed(changed ? "warning" : "issueRevision"));
+  m_issue->setText(changed ? tr("Changed since rev %1").arg(rev) : tr("Rev %1").arg(rev));
+  QStringList tip{changed ? tr("Revision %1 was issued on %2; since then:").arg(rev, date) : tr("Revision %1, issued on %2, is what the sheet shows.").arg(rev, date)};
+  if (views) tip << tr("%n views draw differently", nullptr, views);
+  if (values) tip << tr("%n annotations show other values", nullptr, values);
+  if (gone) tip << tr("%n views or annotations are gone", nullptr, gone);
+  tip << tr("Click to issue the next revision.");
+  m_issue->setToolTip(tip.join('\n'));
 }
 
 void SheetPage::updateInfo() {

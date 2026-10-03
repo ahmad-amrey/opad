@@ -66,6 +66,12 @@ class DocsArea : public AreaController {
   // a worker; one step (a parts list comes with it when the drawing has none).
   void autoBalloon();
   void renumberList(const std::string& list);  // 1, 2, ... again in the BoM's order, worked out on a worker; one sheet_edit
+  // Issue revision (IssueRevision.cpp): the dialog; then the plan, the PDF (as the drawing will show the revision) and its
+  // hash on a worker and one sheet_issue step; tagged: the document saved, committed and tagged in git in the background.
+  // done gets sheet_issue's result with "git" ("tagged <tag>" or why not), or {"error"} / null (benches).
+  void issueRevision();
+  void issue(const opad::json& args, const QString& pdf, bool tagged, std::function<void(const opad::json&)> done = {});
+  opad::json lastIssue;
   // A command once nothing reads the document (the sheet's own worker is stopped for it); `then` gets the result, or null
   // when it was refused (a message box said why).
   void run(const std::string& command, opad::json args, std::function<void(const opad::json&)> then = {});
@@ -80,5 +86,6 @@ class DocsArea : public AreaController {
   void annotateRibbon(RibbonLayout& layout);
   void readyAnnotate();
   void syncStyleActions();  // Hidden lines / Tangent edges checked as the selected views show them
+  void commitAndTag(const QString& rev, const QString& tag, const QString& pdf, std::function<void(const opad::json&)> done);
   SheetPage* m_page = nullptr;
 };

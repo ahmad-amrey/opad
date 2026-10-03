@@ -34,4 +34,9 @@ CASES = [
     # redo), Quantity from the bar, the list dragged, a part added later numbered after the highest, renumbering from the
     # list's menu. <prefix>.tables.png.
     ("sheet-tables", "empty", {"OPAD_BENCH_SHEET_TABLES": "{prefix}"}),
+    # Revision table and Issue revision (UI-84) in a fresh git repository: the table placed with the pointer, the dialog
+    # (next revision, PDF beside the document, git found), the issue planned and its PDF written and hashed on a worker,
+    # linework frozen, the document saved, committed and tagged; the sheet bar names the revision and warns once the model
+    # changed; a second revision without PDF or git. <prefix>.dialog.png, <prefix>.issue.png.
+    ("sheet-issue", "empty", {"OPAD_BENCH_SHEET_ISSUE": "{prefix}"}),
 ]
