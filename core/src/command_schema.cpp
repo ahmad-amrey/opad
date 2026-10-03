@@ -118,7 +118,8 @@ json command_schema(const commands::CommandInfo& command,bool live) {
     {"properties",{"node"}},{"import",{"file"}},{"export",{"format","out"}},{"render",{"out"}},{"diff",{"a","b"}},
     {"annotate",{"anchor","text"}},{"delete_annotation",{"target"}},{"delete",{"target"}},{"rename",{"name"}},{"transform",{"target","matrix"}},{"section",{"origin","normal"}},{"view",{"camera"}},{"param",{"name"}},{"param_delete",{"name"}},
     {"sketch_edit",{"target"}},{"feature",{"kind"}},{"feature_edit",{"target"}},{"drawing_to_sketch",{"layers"}},
-    {"query_entities",{"body"}},{"feature_schema",{"kind"}},{"sketch_details",{"sketch"}},{"resolve_reference",{"reference"}},{"sketch_tool",{"target","tool"}}
+    {"query_entities",{"body"}},{"feature_schema",{"kind"}},{"sketch_details",{"sketch"}},{"resolve_reference",{"reference"}},{"sketch_tool",{"target","tool"}},
+    {"sheet_view",{"sheet"}},{"sheet_item",{"sheet"}},{"sheet_edit",{"target","set"}},{"part_properties",{"set"}}
   };
   if(auto it=needed.find(name);it!=needed.end())for(const auto& key:it->second)required.push_back(key);
   if(properties.contains("ref"))properties["ref"]=ref();
@@ -148,6 +149,9 @@ json command_schema(const commands::CommandInfo& command,bool live) {
     properties["kind"]=choice(kinds);properties["inputs"]={{"type","object"},{"description","Request feature_schema for this kind before supplying inputs. Unknown input names are rejected."}};
   }
   if(name=="export")properties["format"]=choice(commands::exporter_formats());
+  if(name.starts_with("sheet")){for(const char* key:{"at","place"})if(properties.contains(key)){auto d=properties[key]["description"];properties[key]=vector(2);properties[key]["description"]=d;}
+    if(properties.contains("aspects"))properties["aspects"]=array(choice({"start","end","mid","center"}));
+    if(name=="sheet_item")properties["refs"]={{"type","array"},{"items",{{"type",{"string","object"}}}},{"maxItems",2},{"description",command.args.at("refs")}};}
   if(name=="import_brep")properties["brep"]=type("string");
   if(name=="drawing_to_sketch")properties["layers"]=array(object({{"id",type("string")},{"construction",{{"type","boolean"},{"default",false}}}},{"id"}),1);
   if(name=="param")properties["expr"]={{"type","string"},{"description","A dimension expression such as 20 mm or width/2. Explicit units are recommended."}};
@@ -160,7 +164,7 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(live)properties.erase("save");
   auto out=object(properties,required);
   if(name=="entity_details")out["anyOf"]={{{"required",{"ref"}}},{{"required",{"feature"}}}};
-  if(name=="rename" || name=="appearance" || name=="reparent"){
+  if(name=="rename" || name=="appearance" || name=="reparent" || name=="part_properties"){
     auto targets=array(type("string"),1,1000);targets["description"]=command.args.at("targets");
     out["properties"]["targets"]=targets;out["anyOf"]={{{"required",{"target"}}},{{"required",{"targets"}}}};
   }

@@ -72,6 +72,11 @@ target_link_libraries(opad-test-projection PRIVATE opad::core)
 add_test(NAME projection COMMAND opad-test-projection)
 set_tests_properties(projection PROPERTIES TIMEOUT 120)
 
+add_executable(opad-test-sheet test_sheet.cpp)
+target_link_libraries(opad-test-sheet PRIVATE opad::core)
+add_test(NAME sheet COMMAND opad-test-sheet)
+set_tests_properties(sheet PROPERTIES ENVIRONMENT "OPAD_CACHE_DIR=${CMAKE_BINARY_DIR}/test-cache")
+
 add_executable(opad-test-formats test_formats.cpp)
 target_link_libraries(opad-test-formats PRIVATE opad::core ZLIB::ZLIB)
 add_test(NAME formats COMMAND opad-test-formats)

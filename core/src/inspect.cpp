@@ -219,6 +219,7 @@ json document_info(const Document& doc, const Scene& scene) {
   j["measurements"] = scene.measurements.size();
   j["sections"] = scene.sections.size();
   j["views"] = scene.views.size();
+  if (!scene.sheets.empty()) j["sheets"] = scene.sheets.size();
   j["unresolved"] = scene.unresolved.size();
   Vec3 lo, hi;
   if (scene_tight_bbox(doc, scene, {}, lo, hi)) {
@@ -359,6 +360,7 @@ json node_properties(const Document& doc, const Scene& scene, const std::string&
   j["visible"] = n->visible;
   j["effectively_visible"] = scene.effectively_visible(node_id);
   j["locked"] = n->locked;
+  if (!n->properties.empty()) j["part"] = n->properties;  // part properties (properties ops)
   if (n->kind == Node::Kind::Body) {
     j["key"] = n->body_key;
     auto it = scene.instance_count.find(n->body_key);

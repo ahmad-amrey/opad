@@ -1231,6 +1231,19 @@ void detail::emit(const Adaptor3d_Curve& c, double t0, double t1, const View& v,
   out.push_back(std::move(k));
 }
 
+void view_axes(const ViewSpec& spec, Vec3& x, Vec3& y, Vec3& dir) {
+  const View v = view_of(spec);
+  x = {v.x.X(), v.x.Y(), v.x.Z()};
+  y = {v.y.X(), v.y.Y(), v.y.Z()};
+  dir = {v.z.X(), v.z.Y(), v.z.Z()};
+}
+
+std::vector<std::pair<std::string, Mat4>> view_bodies(const Scene& scene, const ViewSpec& spec) {
+  std::vector<std::pair<std::string, Mat4>> out;
+  for (auto& s : gather(scene, spec)) out.emplace_back(std::move(s.node), s.world);
+  return out;
+}
+
 Quality choose_tier(const Document& doc, const Scene& scene, const ViewSpec& spec) {
   auto sources = gather(scene, spec);
   return auto_tier(doc, sources, spec);

@@ -64,6 +64,8 @@ add_library(opad_core STATIC
   src/design/commands_design.cpp
   src/drawing/projection.cpp
   src/drawing/hybrid.cpp
+  src/drawing/sheet.cpp
+  src/drawing/sheet_commands.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/agent_guide.cpp)
 add_library(opad::core ALIAS opad_core)
 

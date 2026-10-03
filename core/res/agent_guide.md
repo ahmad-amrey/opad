@@ -261,3 +261,24 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   lists every cell's camera); `edges: true` (viewport_image) or `edge_lines: true` (render; there `edges` is the
   silhouette outline, on by default) draws the model's edges; `highlight: [refs]` tints faces and edges orange;
   `shading: "smooth"` shades curved surfaces smoothly. All are off by default.
+
+## Drawings
+
+- `sheet` adds a drawing sheet: paper `size` (A4 to A0, ANSI-A to ANSI-E; or `width` and `height` in mm),
+  `orientation`, `standard` iso|asme, `projection` first|third angle (default by standard), the views' `scale`
+  ("1:2") and title block `values`. Paper coordinates are mm from the sheet's bottom-left corner, y up.
+- `sheet_view` adds a base view (`orient` front, top, right, iso, ... or `dir`/`up`; `select` nodes, default all;
+  `at` its centre on the paper; `scale` "sheet", "1:5" or "auto") or one projected from `parent` (`side` left, right,
+  top, bottom or a corner such as top-right; `gap` mm between the frames, default 20). First angle: the view right of
+  the front view shows the left side and the one below it the top; third angle the other way round. Projected views
+  stay aligned with their parent and take its scale. The result's `frame` is the view on the paper: `box`, `at`,
+  `scale`, and its `x`, `y` and `dir` in world coordinates.
+- `sheet_item` adds a dimension measured in its `view` (`type` horizontal, vertical, aligned, radius, diameter or
+  angle; `refs` two vertices or edges, one edge for its length, or one circle or cylinder; `aspects` start, end, mid
+  or center per reference) or a note (`text`, `at`). A circle seen at a slant, or an angle between edges not parallel
+  to the view, is refused: dimension it in a view along its axis. A dimension keeps the value it was made with
+  (`result`); `sheet_info` gives the value now (`current`, `changed`), so model edits show as changed dimensions.
+- `sheet_edit` changes a sheet, view or item (`set`; null removes a field); moving a base view moves the views
+  projected from it. `delete` removes one; a deleted sheet takes its views and items with it.
+- `part_properties` sets part properties on bodies or components (`part_number`, `description`, `material`, `bom`
+  include|exclude|purchased, any other field); `properties` reports them as `part`.

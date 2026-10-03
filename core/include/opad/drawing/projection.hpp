@@ -98,6 +98,10 @@ struct ViewGeometry {
 // the calling thread or from its parallel workers, never two at a time.
 using ProjectionProgress = std::function<bool(double, const std::string&)>;
 
+// The view's axes in world coordinates (x right, y up, dir towards the viewer), as every tier projects with them.
+void view_axes(const ViewSpec& spec, Vec3& x, Vec3& y, Vec3& dir);
+// The body nodes a view draws, with their world placements (the explode offsets added). Throws for an unknown node.
+std::vector<std::pair<std::string, Mat4>> view_bodies(const Scene& scene, const ViewSpec& spec);
 // The tier Auto takes for this view (counts faces: workers only).
 Quality choose_tier(const Document& doc, const Scene& scene, const ViewSpec& spec);
 std::string projection_fingerprint(const Document& doc, const Scene& scene, const ViewSpec& spec, Quality tier);

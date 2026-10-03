@@ -93,6 +93,22 @@ with tempfile.TemporaryDirectory(prefix="opad-mcp-") as folder:
         output = str(pathlib.Path(folder) / "plate.step")
         call("export", doc=doc, format="step", out=output)
         assert pathlib.Path(output).stat().st_size > 100
+        # TODO 11 UI-76: an A4 first-angle sheet of the plate, the top view below the front one, the hole dimensioned
+        # there; in the front view, where it is foreshortened, the same pick is refused.
+        sheet = call("sheet", doc=doc, size="A4", values={"title": "Drilled plate"})["id"]
+        front = call("sheet_view", doc=doc, sheet=sheet, orient="front", at=[100, 150])["id"]
+        top = call("sheet_view", doc=doc, sheet=sheet, parent=front, side="bottom")
+        assert top["frame"]["dir"] == [0, 0, 1], top
+        circles = call("query_entities", doc=doc, body=ids[0], kind="edge", filters={"curve": "circle"})["items"]
+        rim = max(circles, key=lambda e: e["bbox"]["center"][2])["index"]
+        hole = call("sheet_item", doc=doc, sheet=sheet, view=top["id"], type="diameter", refs=[f"{ids[0]}/edge/{rim}"])
+        assert hole["result"]["shown"] == "⌀10", hole
+        foreshortened = request("tools/call", {"name": "sheet_item", "arguments": {"doc": doc, "sheet": sheet, "view": front, "type": "diameter", "refs": [f"{ids[0]}/edge/{rim}"]}})
+        assert foreshortened["isError"] and "foreshortened" in foreshortened["structuredContent"]["error"]["message"], foreshortened
+        call("part_properties", doc=doc, target=ids[0], set={"part_number": "OP-0012", "material": "PA12"})
+        info = call("sheet_info", doc=doc, sheet=sheet)
+        assert [v["kind"] for v in info["views"]] == ["base", "projected"] and info["items"][0]["current"]["value"] == 10, info
+        assert call("properties", doc=doc, node=ids[0])["part"]["part_number"] == "OP-0012"
         # TODO 10 B4: a phone frame outline (a rounded rectangle and its inner offset) and a text label, as shapes.
         framed = call("sketch", doc=doc, name="Frame", plane={"base": "xy"}, geometry={"shapes": [
             {"kind": "rounded_rect", "picks": [[100, 0], [170, 150]], "options": {"radius": 8}},

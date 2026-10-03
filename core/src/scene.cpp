@@ -7,6 +7,7 @@
 
 #include "opad/design/expr.hpp"
 #include "opad/design/sketch.hpp"
+#include "opad/drawing/sheet.hpp"
 
 namespace opad {
 
@@ -83,6 +84,24 @@ const Param* Scene::param(const std::string& name) const {
   return nullptr;
 }
 
+const Sheet* Scene::sheet(const std::string& id) const {
+  for (const auto& s : sheets)
+    if (s.id == id) return &s;
+  return nullptr;
+}
+
+const SheetView* Scene::sheet_view(const std::string& id) const {
+  for (const auto& v : sheet_views)
+    if (v.id == id) return &v;
+  return nullptr;
+}
+
+const SheetItem* Scene::sheet_item(const std::string& id) const {
+  for (const auto& t : sheet_items)
+    if (t.id == id) return &t;
+  return nullptr;
+}
+
 // ---------------------------------------------------------------- Frame
 static Vec3 vec3_from(const json& j, const Vec3& fallback) {
   if (!j.is_array() || j.size() != 3) return fallback;
@@ -133,6 +152,7 @@ json Scene::tree_json(int max_depth) const {
     if (n->opacity != 1.0) j["opacity"] = n->opacity;
     if (!n->visible) j["visible"] = false;
     if (n->locked) j["locked"] = true;
+    if (!n->properties.empty()) j["properties"] = n->properties;
     j["source_op"] = n->source_op;
     if (n->kind == Node::Kind::Component) {
       if (max_depth < 0 || depth < max_depth) {
@@ -443,6 +463,139 @@ struct SceneBuilder::Impl {
       scene.sketches.push_back(std::move(s));
     } else if (type == "feature") {
       apply_feature(id, d);
+    } else if (type == "sheet") {
+      drawing::validate_record(d);  // edits loaded from disk meet the same checks
+      Sheet s;
+      s.id = id;
+      s.name = d.value("name", "Sheet");
+      s.drawing = d.value("drawing", "");
+      s.width = d["size"]["w"].get<double>();
+      s.height = d["size"]["h"].get<double>();
+      s.standard = d.value("standard", "iso");
+      s.projection = d.value("projection", s.standard == "asme" ? "third" : "first");
+      s.def = d;
+      scene.sheets.push_back(std::move(s));
+    } else if (type == "sheet_view") {
+      drawing::validate_record(d);
+      SheetView v;
+      v.id = id;
+      v.sheet = d["sheet"].get<std::string>();
+      v.parent = d.value("parent", "");
+      v.name = d.value("name", "");
+      v.kind = d["kind"].get<std::string>();
+      v.def = d;
+      scene.sheet_views.push_back(std::move(v));
+    } else if (type == "sheet_item") {
+      drawing::validate_record(d);
+      SheetItem t;
+      t.id = id;
+      t.sheet = d["sheet"].get<std::string>();
+      t.view = d.value("view", "");
+      t.kind = d["kind"].get<std::string>();
+      t.type = d.value("type", "");
+      for (const auto& r : d.value("refs", json::array())) t.refs.push_back(Ref::from_json(r));
+      t.def = d;
+      scene.sheet_items.push_back(std::move(t));
+    } else if (type == "properties") {
+      Node* n = target_of(id, type, d);
+      if (!n) return;
+      for (const auto& [k, v] : d["set"].items()) {
+        if (v.is_null()) n->properties.erase(k);
+        else n->properties[k] = v;
+      }
+    }
+  }
+
+  // Sheets, their views and items, linked once the whole log is read (a view may name a parent written after it). A view
+  // or item whose sheet, parent view or view was deleted goes with it; one naming something that never existed, or a
+  // kind this build does not know, is kept and reported.
+  void link_sheets() {
+    if (scene.sheets.empty() && scene.sheet_views.empty() && scene.sheet_items.empty()) return;
+    std::set<std::string> gone(scene.deleted_ops.begin(), scene.deleted_ops.end());
+    std::unordered_map<std::string, size_t> sheet_at, view_at;
+    for (size_t i = 0; i < scene.sheets.size(); ++i) sheet_at[scene.sheets[i].id] = i;
+    for (bool dropped = true; dropped;) {
+      dropped = false;
+      std::set<std::string> present;
+      for (const auto& v : scene.sheet_views) present.insert(v.id);
+      std::erase_if(scene.sheet_views, [&](const SheetView& v) {
+        const bool goes = (!sheet_at.count(v.sheet) && gone.count(v.sheet)) || (!v.parent.empty() && !present.count(v.parent) && gone.count(v.parent));
+        if (goes) gone.insert(v.id), dropped = true;
+        return goes;
+      });
+    }
+    for (size_t i = 0; i < scene.sheet_views.size(); ++i) view_at[scene.sheet_views[i].id] = i;
+    std::erase_if(scene.sheet_items, [&](const SheetItem& t) {
+      return (!sheet_at.count(t.sheet) && gone.count(t.sheet)) || (!t.view.empty() && !view_at.count(t.view) && gone.count(t.view));
+    });
+    const auto missing_keys = [&](const json& def) {
+      std::vector<std::string> keys;
+      drawing::record_body_keys(def, keys);
+      for (const auto& k : keys)
+        if (!doc.has_body(k)) return "body entry " + k.substr(0, 12) + "... is missing from the body store";
+      return std::string();
+    };
+    for (auto& s : scene.sheets) {
+      std::string why;
+      try {
+        s.scale = drawing::parse_scale(s.def.value("scale", "1:1"));
+      } catch (const std::exception& e) {
+        why = e.what();
+      }
+      const std::string units = s.def.value("units", "mm");
+      if (s.standard != "iso" && s.standard != "asme") why = "needs a newer OPAD (standard '" + s.standard + "')";
+      else if (s.projection != "first" && s.projection != "third") why = "needs a newer OPAD (projection '" + s.projection + "')";
+      else if (units != "mm" && units != "in") why = "needs a newer OPAD (units '" + units + "')";
+      if (why.empty()) why = missing_keys(s.def);
+      if (!why.empty()) unresolved(s.id, "sheet", s.name + ": " + why);
+    }
+    for (auto& v : scene.sheet_views) {
+      const auto fail = [&](const std::string& why) {
+        if (!v.error.empty()) return;
+        v.error = why;
+        unresolved(v.id, "sheet_view", (v.name.empty() ? std::string("view") : v.name) + ": " + why);
+      };
+      const auto parent = v.parent.empty() ? view_at.end() : view_at.find(v.parent);
+      if (!sheet_at.count(v.sheet)) fail("sheet " + v.sheet + " does not exist");
+      else if (!v.parent.empty() && parent == view_at.end()) fail("parent view " + v.parent + " does not exist");
+      else if (!v.parent.empty() && scene.sheet_views[parent->second].sheet != v.sheet) fail("its parent view is on another sheet");
+      if (sheet_at.count(v.sheet)) scene.sheets[sheet_at[v.sheet]].views.push_back(v.id);
+      if (!v.parent.empty() && parent != view_at.end()) scene.sheet_views[parent->second].children.push_back(v.id);
+    }
+    for (auto& v : scene.sheet_views) {  // orientation through the parents, sides, sources: no geometry walked
+      if (!v.error.empty()) continue;
+      std::string why;
+      try {
+        drawing::view_spec(scene, v);
+        why = missing_keys(v.def);
+      } catch (const std::exception& e) {
+        why = e.what();
+      }
+      if (!why.empty()) {
+        v.error = why;
+        unresolved(v.id, "sheet_view", (v.name.empty() ? std::string("view") : v.name) + ": " + why);
+      }
+    }
+    static const std::set<std::string> kinds = {"dimension", "note"};
+    static const std::set<std::string> dimensions = {"horizontal", "vertical", "aligned", "radius", "diameter", "angle"};
+    for (auto& t : scene.sheet_items) {
+      const auto fail = [&](const std::string& why) {
+        if (t.error.empty()) t.error = why;
+        unresolved(t.id, "sheet_item", t.kind + ": " + why);
+      };
+      const auto view = t.view.empty() ? view_at.end() : view_at.find(t.view);
+      if (!sheet_at.count(t.sheet)) fail("sheet " + t.sheet + " does not exist");
+      else if (!t.view.empty() && view == view_at.end()) fail("view " + t.view + " does not exist");
+      else if (!t.view.empty() && scene.sheet_views[view->second].sheet != t.sheet) fail("its view is on another sheet");
+      if (!kinds.count(t.kind)) fail("needs a newer OPAD (sheet_item kind '" + t.kind + "')");
+      else if (t.kind == "dimension" && !dimensions.count(t.type)) fail("needs a newer OPAD (dimension type '" + t.type + "')");
+      for (const auto& r : t.refs)
+        if (!ref_ok(r)) {
+          t.unresolved = true;
+          fail("reference body " + r.body + " does not exist");
+        }
+      if (const std::string why = missing_keys(t.def); !why.empty()) fail(why);
+      if (sheet_at.count(t.sheet)) scene.sheets[sheet_at[t.sheet]].items.push_back(t.id);
     }
   }
 
@@ -475,6 +628,7 @@ struct SceneBuilder::Impl {
       }
     }
     for (auto& s : scene.sketches) s.visible = shown_sketches.count(s.id) ? true : hidden_sketches.count(s.id) ? false : !s.consumed;
+    link_sheets();
   }
 };
 

@@ -29,6 +29,7 @@ struct Node {
   bool locked = false;
   std::string source_op;  // the import op that created it
   std::vector<std::string> modified_by;  // ops that touched this node after import
+  json properties = json::object();  // part properties (properties ops): part_number, description, material, bom, ...
 };
 
 struct Annotation {
@@ -110,6 +111,35 @@ struct Feature {
   std::string error;
 };
 
+// ---- technical drawings (sheet / sheet_view / sheet_item ops, TODO 11 UI-76). Replay records definitions only: views
+// are projected from the final scene when a sheet is shown or exported (drawing/projection.hpp caches them by
+// fingerprint), and a dimension carries the value it had when it was made (`result`), like a pinned measurement.
+struct Sheet {
+  std::string id, name, drawing;  // drawing: the sheets of one drawing share it
+  double width = 0, height = 0;   // paper mm
+  std::string standard = "iso", projection = "first";  // iso | asme; first | third angle
+  double scale = 1;               // paper / model, the views' default
+  json def;                       // the effective record
+  std::vector<std::string> views, items;  // ids, log order
+};
+
+struct SheetView {
+  std::string id, sheet, parent, name;
+  std::string kind;               // base | projected (later builds add more; unknown ones are kept, not drawn)
+  json def;
+  std::vector<std::string> children;  // views projected from this one
+  std::string error;              // why it cannot be drawn
+};
+
+struct SheetItem {
+  std::string id, sheet, view;    // view: empty for items placed on the sheet itself
+  std::string kind, type;         // dimension (horizontal | vertical | aligned | radius | diameter | angle) | note
+  std::vector<Ref> refs;
+  json def;
+  std::string error;
+  bool unresolved = false;        // a reference names a body that is gone
+};
+
 struct Scene {
   std::string units="mm"; // document input/display unit; stored geometry remains millimetres
   std::vector<std::string> roots;
@@ -122,6 +152,9 @@ struct Scene {
   std::vector<Param> params;
   std::vector<SketchItem> sketches;
   std::vector<Feature> features;
+  std::vector<Sheet> sheets;
+  std::vector<SheetView> sheet_views;
+  std::vector<SheetItem> sheet_items;
   std::vector<std::string> deleted_ops;  // ids of tombstoned ops
   std::unordered_map<std::string, int> instance_count;  // body key -> number of body nodes
 
@@ -135,6 +168,9 @@ struct Scene {
   const SketchItem* sketch(const std::string& id) const;
   const Feature* feature(const std::string& id) const;
   const Param* param(const std::string& name) const;
+  const Sheet* sheet(const std::string& id) const;
+  const SheetView* sheet_view(const std::string& id) const;
+  const SheetItem* sheet_item(const std::string& id) const;
 };
 
 // The log as replay sees it: tombstoned ops dropped, `edit` ops merged into their targets (later edits win,

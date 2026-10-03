@@ -22,6 +22,7 @@ namespace opad::commands {
 
 void register_design_commands(const std::function<void(const CommandInfo&, Handler)>& add);  // design/commands_design.cpp
 void register_agent_commands(const std::function<void(const CommandInfo&, Handler)>& add);
+void register_sheet_commands(const std::function<void(const CommandInfo&, Handler)>& add);  // drawing/sheet_commands.cpp
 
 namespace {
 
@@ -635,6 +636,10 @@ void register_builtins() {
     r.handlers[info.name] = std::move(h);
   });
   register_agent_commands([&](const CommandInfo& info,Handler h){r.infos.push_back(info);r.handlers[info.name]=std::move(h);});
+  register_sheet_commands([&](const CommandInfo& info, Handler h) {
+    r.infos.push_back(info);
+    r.handlers[info.name] = std::move(h);
+  });
 }
 
 }  // namespace

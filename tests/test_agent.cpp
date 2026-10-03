@@ -81,7 +81,7 @@ int main(){try {
   size_t headless=0;for(const auto& c:commands::list())headless+=agent::command_schema(c).dump().size()+c.description.size();
   std::printf("tools/list: live %zu bytes, headless schemas %zu bytes\n",live,headless);
   CHECK(live<105000);
-  CHECK(headless<50500);  // +500 for project (hidden-line drawing views, TODO 11 UI-77)
+  CHECK(headless<56000);  // +500 for project (hidden-line drawing views, TODO 11 UI-77), +5.5 KB for the drawing sheet commands (UI-76)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});

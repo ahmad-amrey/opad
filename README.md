@@ -336,6 +336,37 @@ language's own name) and `"@rtl"`. To add a language, copy `ar.json`, translate 
 cover yet. A file `i18n/<code>.json` next to `opad.exe` overrides the built-in one, so a translation can be tried
 without rebuilding.
 
+## Technical drawings (sheets)
+
+A drawing is a set of sheets in the document itself. `sheet`, `sheet_view` and `sheet_item` operations hold the
+definitions: paper size and standard (ISO or ASME, first or third angle projection, scale, title block values),
+views (a base view of the model or of chosen components, and views projected from it, which stay aligned with their
+parent and follow it when it moves), dimensions and notes. A `properties` operation gives bodies and components part
+properties (part number, description, material, BoM flag) for parts lists. The commands are `sheet`, `sheet_view`,
+`sheet_item`, `sheet_edit`, `sheet_info` and `part_properties` (CLI, MCP and Python):
+
+```sh
+opad-cli sheet plate.opad --size A4 --values '{"title": "Plate"}'
+opad-cli sheet_view plate.opad --sheet <sheet> --orient front --at '[100,150]'
+opad-cli sheet_view plate.opad --sheet <sheet> --parent <front view> --side bottom
+opad-cli sheet_item plate.opad --sheet <sheet> --view <top view> --type diameter --refs '["<body>/edge/9"]'
+opad-cli sheet_info plate.opad --sheet <sheet>
+```
+
+The hidden-line linework of a view is never stored: it is a pure function of the bodies' content keys, their
+placements and the view's definition, so it is projected when a sheet is shown or exported and cached under that
+fingerprint (`opad-cli project`). Opening a document with sheets costs nothing, and a model edit adds no drawing lines
+to a diff. A dimension keeps the value it was made with, as a pinned measurement does; `sheet_info` measures it again
+and marks the ones the model has changed. Sheets, views and dimensions carry no `target`, so two people adding views and
+dimensions to one sheet merge without a conflict; part properties merge field by field.
+
+Compatibility: these are new operation types and the format version is unchanged, so a document without drawings is
+exactly what it was and opens everywhere. A document with sheets or part properties opens in builds that keep
+operation types they do not know (the tolerant loader); older builds refuse it with "unknown op type: sheet".
+Within the drawing records the same rule holds one level down: a view kind, dimension type, standard or orientation
+this build does not know is kept, written back unchanged and listed among the unresolved operations as needing a
+newer OPAD.
+
 ## Using it in a git repository
 
 OPAD documents remain readable UTF-8 text with LF endings, append-only operations and immutable
