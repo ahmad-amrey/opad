@@ -762,5 +762,15 @@
  "Saving the template %1": "حفظ القالب %1",
  "Saved as the template %1; New from template offers it": "حُفظ كالقالب %1؛ يعرضه «جديد من قالب»",
  "Open templates folder": "فتح مجلد القوالب",
- "New from template": "جديد من قالب"
+ "New from template": "جديد من قالب",
+ "Next region": "المنطقة التالية",
+ "Previous region": "المنطقة السابقة",
+ "Model view": "عرض النموذج",
+ "The view cube at the top right turns the view: click a face, an edge or a corner. H goes home, F fits.": "مكعب العرض في أعلى اليمين يدير العرض: انقر وجهًا أو حافة أو ركنًا. H يعيد إلى العرض الرئيسي، وF يلائم.",
+ "The document's history. Left and Right step through it, Home and End go to its ends.": "سجل المستند. اليسار واليمين يتنقلان فيه، وHome وEnd يذهبان إلى طرفيه.",
+ "shown": "ظاهر",
+ "hidden": "مخفي",
+ "Motion": "الحركة",
+ "Reduce motion": "تقليل الحركة",
+ "The view jumps instead of turning, help clips hold still and panels open at once. By default as the system's animation setting.": "يقفز العرض بدل أن يدور، وتثبت مقاطع المساعدة، وتُفتح اللوحات فورًا. افتراضيًا كإعداد الحركة في النظام."
 }

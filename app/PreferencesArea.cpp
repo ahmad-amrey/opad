@@ -31,6 +31,7 @@
 #include "DesignController.hpp"
 #include "FileAssociations.hpp"
 #include "I18n.hpp"
+#include "Motion.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "Preferences.hpp"
@@ -136,6 +137,9 @@ class PreferencesArea : public AreaController {
     form.check("ui/browserAutoHide", tr("Auto-hide scene browser"), true, [this](bool on) {
       if (auto* overlay = static_cast<BrowserOverlay*>(services().window()->findChild<QFrame*>("browserOverlay"))) overlay->setAutoHide(on);
     });
+    form.section(tr("Motion"));  // UI-124
+    form.check("ui/reduceMotion", tr("Reduce motion"), !motion::system());
+    form.note(tr("The view jumps instead of turning, help clips hold still and panels open at once. By default as the system's animation setting."));
     form.finish();
     return page;
   }

@@ -165,6 +165,14 @@ QString stylesheet(const Tokens& t) {
                "QPushButton#primary:hover { background: %8; }\n"
                "QPushButton#outline { background: transparent; height: 22px; min-height: 20px; padding: 0 8px; font-size: 12px; }\n"
                "QPushButton:disabled { color: %9; }\n").arg(line, bg2, fg, bg3, bg4, sel, onsel, css(t.sel.lighter(115)), fg3);
+  // Focus rings (UI-124) on whatever took the focus from the keyboard (Tab, Shift+Tab, F6): the keyFocus property the
+  // accessibility area sets, so a click never leaves a ring behind.
+  s += QString("QPushButton[keyFocus=\"true\"], QToolButton[keyFocus=\"true\"] { border: 1px solid %1; background: %2; }\n"
+               "QPushButton#primary[keyFocus=\"true\"] { border-color: %3; }\n"
+               "QCheckBox[keyFocus=\"true\"], QRadioButton[keyFocus=\"true\"] { background: %2; border-radius: 3px; }\n"
+               "QTreeView[keyFocus=\"true\"], QTreeWidget[keyFocus=\"true\"], QListView[keyFocus=\"true\"], QListWidget[keyFocus=\"true\"] { border: 1px solid %1; border-radius: 3px; }\n"
+               "QTabBar[keyFocus=\"true\"]::tab:selected, QTabBar#ribbonTabs[keyFocus=\"true\"]::tab:selected { border-color: %1; color: %1; }\n"
+               "QSlider[keyFocus=\"true\"]::handle:horizontal { border-color: %3; }\n").arg(sel, selbg, fg);
   // Panel footers (PanelFooter): a label and its key in each button, the key in mono and dimmer.
   s += QString("QPushButton QLabel#footerText { background: transparent; }\n"
                "QPushButton QLabel[footerRole=\"key\"] { background: transparent; color: %1; font-family: '%2'; font-size: 11px; }\n"

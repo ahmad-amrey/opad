@@ -282,6 +282,10 @@ QTreeWidgetItem* BrowserPanel::build(const std::string& id, QTreeWidgetItem* par
   item->setData(0, Qt::UserRole, n->kind == opad::Node::Kind::Body ? "body" : "component");
   item->setFlags(item->flags() | Qt::ItemIsEditable | Qt::ItemIsDragEnabled | (n->kind == opad::Node::Kind::Component ? Qt::ItemIsDropEnabled : Qt::NoItemFlags));
   item->setToolTip(0, QString("%1\n%2").arg(name, QString::fromStdString(id)));
+  // What the eye, the lock and the swatch show, for screen readers (UI-124): the row is painted, its state is not text.
+  QStringList state{n->kind == opad::Node::Kind::Body ? tr("Body") : tr("Component"), n->visible ? tr("shown") : tr("hidden")};
+  if (n->locked) state << tr("locked");
+  item->setData(0, Qt::AccessibleDescriptionRole, state.join(", "));
   for (const auto& c : n->children) build(c, item, expanded);
   QString category=QString::fromStdString(n->representation);
   if(n->kind!=opad::Node::Kind::Body) {

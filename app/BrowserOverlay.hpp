@@ -6,6 +6,7 @@
 #include <QTimer>
 #include <QVariantAnimation>
 #include <QCursor>
+#include "Motion.hpp"
 #include "Theme.hpp"
 
 // Attached to the scene but composited by the OS, just like the measurement
@@ -85,7 +86,7 @@ class BrowserOverlay : public QFrame {
   void expand(bool on) {
     if(on==m_expanded) return;
     snapshot(); m_browser->hide(); m_expanded=on;
-    m_animation.stop(); m_animation.setStartValue(m_progress); m_animation.setEndValue(on?1.0:0.0); m_animation.start();
+    m_animation.stop(); m_animation.setDuration(motion::milliseconds(180)); m_animation.setStartValue(m_progress); m_animation.setEndValue(on?1.0:0.0); m_animation.start();
   }
   QWidget *m_browser, *m_scene;
   QPixmap m_snapshot;

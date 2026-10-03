@@ -24,7 +24,7 @@ Quantity_Color occ(const QColor& c) { return Quantity_Color(c.redF(), c.greenF()
 gp_Pnt pnt(const opad::Vec3& v) { return gp_Pnt(v[0], v[1], v[2]); }
 
 constexpr double kBandIn = 14.0;   // px: the handle strip reaches this far inside the outline
-constexpr double kBandOut = 4.0;   // px: and this far outside, so the line itself is hit too
+constexpr double kBandOut = 10.0;  // px: and this far outside, so the line itself is hit too (24 px in all, UI-124)
 constexpr double kArrowPx = 34.0;  // px: each head of the drag arrow reaches this far from the side
 
 class SectionGizmo : public AIS_InteractiveObject {

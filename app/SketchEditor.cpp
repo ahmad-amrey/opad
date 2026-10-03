@@ -400,10 +400,10 @@ double SketchEditor::distanceTo(const SkEntity& e, double u, double v) const {
 
 SketchEditor::Hit SketchEditor::hitTest(double u, double v) const {
   if(!m_geometry || m_geometryJob)return {};
-  const double t = tol();
-  const auto localCandidates=m_geometry->query(u-t*1.1,v-t*1.1,u+t*1.1,v+t*1.1);
+  const double t = tol(), grip = kHandlePixels * m_viewport->pixelSize();
+  const auto localCandidates=m_geometry->query(u-grip*1.1,v-grip*1.1,u+grip*1.1,v+grip*1.1);
   Hit hit;
-  double best = t;
+  double best = grip;
   for (size_t index : localCandidates.points) {
     const auto& p=m_sk.points[index];
     if (!selectable(p.id)) continue;
@@ -418,7 +418,7 @@ SketchEditor::Hit SketchEditor::hitTest(double u, double v) const {
     if (std::fabs(lu - u) < 3.5 * t && std::fabs(lv - v) < 1.4 * t) return {Hit::Dimension, c.id};
   }
   best = t;
-  for(const auto& [id,x,y]:m_glyphHits)if(selectable(id) && std::fabs(x-u)<t && std::fabs(y-v)<t)return {Hit::Dimension,id};
+  for(const auto& [id,x,y]:m_glyphHits)if(selectable(id) && std::fabs(x-u)<grip && std::fabs(y-v)<grip)return {Hit::Dimension,id};
   for (size_t index : localCandidates.entities) {
     const auto& e=m_sk.entities[index];
     if (!selectable(e.id)) continue;

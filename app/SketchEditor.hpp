@@ -25,6 +25,9 @@ class DimensionHandle;
 class SketchEditor : public QObject, public SketchInput {
   Q_OBJECT
  public:
+  // Widget px around a point or a constraint glyph that take a click or a drag: a 24 px target at any scale (UI-124);
+  // curves keep the narrower tol() so the ones close together stay apart.
+  static constexpr double kHandlePixels = 12;
   SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs, QObject* parent = nullptr);
   ~SketchEditor() override;
 

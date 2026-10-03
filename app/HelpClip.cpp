@@ -22,12 +22,8 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
-#ifdef Q_OS_WIN
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#endif
+
+#include "Motion.hpp"
 
 namespace {
 using V3 = QVector3D;
@@ -2033,14 +2029,8 @@ QImage frame(const QString& id, double t, QSize size, qreal dpr, const Options& 
   return img;
 }
 
-bool animations() {
-  bool on = true;
-#ifdef Q_OS_WIN
-  BOOL enabled = TRUE;
-  if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0)) on = enabled;
-#endif
-  return QSettings().value("ui/tipAnimate", on).toBool();
-}
+// Reduced motion (Motion.hpp) holds every clip still, whatever the clips' own switch says.
+bool animations() { return !motion::reduced() && QSettings().value("ui/tipAnimate", true).toBool(); }
 
 }  // namespace clips
 

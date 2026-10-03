@@ -198,6 +198,10 @@ void DimensionHandle::reposition() {
   QPoint at=(m_arrowEnd+gap).toPoint();if(gap.x()<0)at.rx()-=width();at.ry()-=height()/2;
   move(std::clamp(at.x(),0,std::max(0,m_view->width()-width())),std::clamp(at.y(),0,std::max(0,m_view->height()-height())));
 }
+bool DimensionHandle::overArrow(const QPointF& p) const {
+  double t;
+  return isVisible() && nearest(p,m_arrowStart,m_arrowEnd,t)<kHitRadius*kHitRadius;
+}
 void DimensionHandle::mousePressEvent(QMouseEvent* e) {
   if(e->button()!=Qt::LeftButton)return;
   m_dragging=true;m_start=e->globalPosition();m_startValue=m_value;m_edit->clearFocus();restyle();e->accept();
@@ -236,8 +240,8 @@ bool DimensionHandle::eventFilter(QObject* target,QEvent* event) {
     return false;
   }
   if(target==m_view && (event->type()==QEvent::MouseButtonPress || event->type()==QEvent::MouseMove || event->type()==QEvent::MouseButtonRelease)) {
-    auto* mouse=static_cast<QMouseEvent*>(event);double t;
-    if(event->type()==QEvent::MouseButtonPress && mouse->button()==Qt::LeftButton && nearest(mouse->position(),m_arrowStart,m_arrowEnd,t)<144){mousePressEvent(mouse);return true;}
+    auto* mouse=static_cast<QMouseEvent*>(event);
+    if(event->type()==QEvent::MouseButtonPress && mouse->button()==Qt::LeftButton && overArrow(mouse->position())){mousePressEvent(mouse);return true;}
     if(m_dragging){if(event->type()==QEvent::MouseMove)mouseMoveEvent(mouse);else if(event->type()==QEvent::MouseButtonRelease)mouseReleaseEvent(mouse);return true;}
     if(event->type()==QEvent::MouseMove && mouse->buttons()==Qt::NoButton && !m_edit->hasFocus() && m_indexReady) {
       double best=144;opad::Vec3 closest;bool found=false;

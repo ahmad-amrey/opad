@@ -1,5 +1,6 @@
 #pragma once
 #include "Viewport.hpp"
+#include <QLine>
 #include <QLineEdit>
 #include <QHash>
 #include <QPointer>
@@ -21,6 +22,9 @@ class DimensionHandle : public QWidget {
   void setAnchorSegments(std::vector<Segment> segments);
   bool interacting() const {return m_dragging || m_edit->hasFocus();}
   bool dragging() const {return m_dragging;}
+  static constexpr double kHitRadius=12;  // widget px around the arrow that take a press: a 24 px wide target (UI-124)
+  QLineF arrowLine() const {return {m_arrowStart,m_arrowEnd};}  // on screen, tip to head
+  bool overArrow(const QPointF& widgetPoint) const;
   double value() const {return m_value;}  // what the drag or the arrows made of it (the box shows it rounded)
   // How far the arrow sits along the axis per unit of value: 0.5 for a symmetric extrusion, whose end moves half the
   // distance. Kept while a drag runs.

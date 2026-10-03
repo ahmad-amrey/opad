@@ -273,7 +273,7 @@ void RecentCard::keyPressEvent(QKeyEvent* e) {
 }
 
 void RecentCard::focusInEvent(QFocusEvent* e) {
-  m_keyFocus = e->reason() == Qt::TabFocusReason || e->reason() == Qt::BacktabFocusReason || e->reason() == Qt::OtherFocusReason || e->reason() == Qt::ShortcutFocusReason;
+  m_keyFocus = e->reason() == Qt::TabFocusReason || e->reason() == Qt::BacktabFocusReason || e->reason() == Qt::ShortcutFocusReason;
   QAbstractButton::focusInEvent(e);
   update();
 }
@@ -451,7 +451,7 @@ void EmptyState::restyle() {
                         "QPushButton#startLink, QPushButton#startLinkSmall { text-align: left; border: 1px solid transparent; background: transparent; padding: 0 8px; color: %2; }\n"
                         "QPushButton#startLinkSmall { color: %3; font-size: 12px; height: 24px; min-height: 22px; }\n"
                         "QPushButton#startLink:hover, QPushButton#startLinkSmall:hover { background: %4; }\n"
-                        "QPushButton#startLink:focus, QPushButton#startLinkSmall:focus, QPushButton[startButton=\"true\"]:focus { border-color: %5; }\n"
+                        "QPushButton#startLink[keyFocus=\"true\"], QPushButton#startLinkSmall[keyFocus=\"true\"] { border-color: %5; }\n"
                         "QPushButton[startButton=\"true\"] { text-align: left; padding: 0 12px; }\n")
                     .arg(theme::css(t.bg), theme::css(t.fg), theme::css(t.fg2), theme::css(t.bg3), theme::css(t.sel)));
   for (QPushButton* b : findChildren<QPushButton*>())

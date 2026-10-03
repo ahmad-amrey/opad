@@ -1,5 +1,5 @@
-"""gui_benches cases of the help area (UI-106/107/108, UI-113, UI-116); the benches are in app/HelpBench.cpp,
-HelpMenuBench.cpp, StartPageBench.cpp and PolishBench.cpp, the area in app/HelpArea.cpp."""
+"""gui_benches cases of the help area (UI-106/107/108, UI-113, UI-116, UI-124); the benches are in app/HelpBench.cpp,
+HelpMenuBench.cpp, StartPageBench.cpp, PolishBench.cpp and AccessibilityArea.cpp, the area in app/HelpArea.cpp."""
 
 
 def guided(root, document):
@@ -54,4 +54,8 @@ CASES = [
     # file location, copy path, remove), missing files, templates (built in, saved, new from one), Learn, a dropped file.
     ("start-page", "box", {"OPAD_BENCH_STARTPAGE": "{prefix}"}),
     ("start-page-ar", "box", {"OPAD_BENCH_STARTPAGE": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-124: no button without a name, F6 / Shift+F6 round the regions (also from a panel), focus rings from the keyboard
+    # only, reduced motion, 24 px hit targets.
+    ("accessibility", guided, {"OPAD_BENCH_A11Y": "{prefix}"}),
+    ("accessibility-ar", guided, {"OPAD_BENCH_A11Y": "{prefix}", "OPAD_LANG": "ar"}),
 ]

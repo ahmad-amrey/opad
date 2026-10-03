@@ -8,6 +8,7 @@
 #include "HelpReference.hpp"
 #include "HelpWindows.hpp"
 #include "I18n.hpp"
+#include "Motion.hpp"
 #include "RichTip.hpp"
 #include "Theme.hpp"
 #include "check.hpp"
@@ -443,10 +444,29 @@ TEST(clip_loader_checks_and_templates) {
   clips::load();
 }
 
+// UI-124: reduced motion (ui/reduceMotion, by default the system's) holds the clips still whatever their own switch says,
+// and makes the camera's turns a moment (never zero: an OCCT animation of no length stays where it started).
+TEST(reduced_motion_holds_clips_still) {
+  clips::load();
+  QSettings().setValue("ui/tipAnimate", true);
+  QSettings().setValue("ui/reduceMotion", true);
+  CHECK(motion::reduced() && !clips::animations() && motion::seconds(0.5) > 0 && motion::seconds(0.5) < 0.01 && motion::milliseconds(180) == 0);
+  ClipView view("design.extrude");
+  view.resize(288, 162);
+  view.show();
+  CHECK(!view.playing() && view.still());
+  view.hide();
+  QSettings().setValue("ui/reduceMotion", false);
+  CHECK(!motion::reduced() && clips::animations() && motion::seconds(0.5) == 0.5 && motion::milliseconds(180) == 180);
+  QSettings().remove("ui/reduceMotion");
+  CHECK(motion::reduced() == !motion::system());
+}
+
 // The player runs a timer only while visible and not reduced to its still frame; a step loops inside its segment.
 TEST(clip_view_plays_only_when_visible) {
   clips::load();
   QSettings().setValue("ui/tipAnimate", true);
+  QSettings().setValue("ui/reduceMotion", false);  // whatever the system says
   ClipView view("design.extrude");
   CHECK(!view.playing() && view.sizeHint() == QSize(288, 162));
   view.resize(288, 162);
@@ -496,6 +516,7 @@ TEST(clip_guide_ranges) {
 TEST(clip_view_loops_a_range) {
   clips::load();
   QSettings().setValue("ui/tipAnimate", true);
+  QSettings().setValue("ui/reduceMotion", false);  // whatever the system says
   ClipView view("design.extrude");
   view.resize(288, 162);
   view.show();

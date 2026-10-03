@@ -424,6 +424,7 @@ OPAD_BENCH(OPAD_BENCH_CLIPS, clips) {
 OPAD_BENCH(OPAD_BENCH_GUIDE, guide) {
   const QString prefix = value;
   QSettings().setValue("ui/tipAnimate", true);
+  QSettings().setValue("ui/reduceMotion", false);  // whatever the system says
   auto failed = std::make_shared<QStringList>();
   auto check = [failed](bool ok, const QString& what) {
     trace::log(QString("bench: guide: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
@@ -522,6 +523,7 @@ OPAD_BENCH(OPAD_BENCH_GUIDE, guide) {
 OPAD_BENCH(OPAD_BENCH_REFERENCE, reference) {
   const QString prefix = value;
   QSettings().setValue("ui/tipAnimate", true);
+  QSettings().setValue("ui/reduceMotion", false);  // whatever the system says
   auto failed = std::make_shared<QStringList>();
   auto check = [failed](bool ok, const QString& what) {
     trace::log(QString("bench: reference: %1 %2").arg(what, ok ? "PASS" : "FAIL"));

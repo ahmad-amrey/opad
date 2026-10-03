@@ -198,6 +198,20 @@
    "requires": "Open or create a document first."
   },
   {
+   "id": "view.nextRegion",
+   "title": "Next region",
+   "summary": "Moves the keyboard to the next part of the window: ribbon, browser, view, timeline, then each open panel.",
+   "details": "The part reached is ringed, and its controls take the keys: arrows in the ribbon's tabs, the browser and the timeline, Tab in a panel. After the last panel it starts again at the ribbon; a click anywhere takes the ring away.",
+   "keywords": ["F6", "keyboard", "focus", "accessibility", "panes"]
+  },
+  {
+   "id": "view.previousRegion",
+   "title": "Previous region",
+   "summary": "Moves the keyboard back to the part of the window before this one.",
+   "details": "The same round as Next region, the other way: from a panel back to the timeline, the view, the browser and the ribbon. It works from a floating panel too.",
+   "keywords": ["Shift+F6", "keyboard", "focus", "accessibility", "panes"]
+  },
+  {
    "id": "view.2d",
    "title": "2D mode",
    "summary": "Locks the view to a plane for drawings: pan and zoom only.",
