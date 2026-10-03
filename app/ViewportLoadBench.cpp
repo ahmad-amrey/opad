@@ -6,13 +6,15 @@
 // with a toast and runs when every body is shown; the load costs a few full syncs, not one per batch of meshes, and makes
 // no empty selection-layer jobs. Then once more, cancelled from the strip as soon as the bodies stream in: the load job
 // and its pump stop at once and the bodies not shown stay out. A big file (the Engine) also reports the reading and
-// parsing of the .opad in per cent.
+// parsing of the .opad in per cent. <prefix>.streaming.png: the status bar while the bodies stream in.
 #include <QApplication>
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QScopeGuard>
+#include <QStatusBar>
+#include <QTimer>
 #include <QUuid>
 
 #include <algorithm>
@@ -123,6 +125,7 @@ OPAD_BENCH(OPAD_BENCH_LOADING, loading) {
     edit->trigger();
     const auto toasts = w.m_toasts->toasts();
     deferred = w.m_afterStream == edit && std::any_of(toasts.begin(), toasts.end(), [](Toast* t) { return t->text().contains(QStringLiteral("Still loading")); });
+    QTimer::singleShot(700, &w, [&w, shot = value + ".streaming.png"] { w.statusBar()->grab().save(shot); });  // the strip as the bodies stream in
   });
   waitUntil([&] { return !w.m_jobs->busy(); }, 60000);
   QCoreApplication::processEvents();
