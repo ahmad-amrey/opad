@@ -10,6 +10,7 @@
 #include <QMimeData>
 #include <QVBoxLayout>
 
+#include "FileLocation.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
 
@@ -110,12 +111,21 @@ EmptyState::EmptyState(QWidget* parent) : QWidget(parent) {
   connect(open, &QPushButton::clicked, this, &EmptyState::openRequested);
   connect(import, &QPushButton::clicked, this, &EmptyState::importRequested);
   connect(m_recent, &QListWidget::itemActivated, this, [this](QListWidgetItem* it) { emit recentChosen(it->data(Qt::UserRole).toString()); });
+  m_recent->setContextMenuPolicy(Qt::CustomContextMenu);
+  connect(m_recent, &QListWidget::customContextMenuRequested, this, [this](const QPoint& p) {
+    QListWidgetItem* it = m_recent->itemAt(p);
+    if (!it || !m_menu) return;
+    QMenu* menu = m_menu(it->data(Qt::UserRole).toString(), this);
+    menu->setAttribute(Qt::WA_DeleteOnClose);
+    menu->popup(m_recent->viewport()->mapToGlobal(p));
+  });
   connect(m_recentButton, &QPushButton::clicked, this, [this] {
     QMenu menu(this);
     for (int i = 0; i < m_recent->count(); ++i) {
       QString path = m_recent->item(i)->data(Qt::UserRole).toString();
-      menu.addAction(path, this, [this, path] { emit recentChosen(path); });
+      menu.addAction(path, this, [this, path] { emit recentChosen(path); })->setData(path);
     }
+    if (m_menu) location::addContextMenus(&menu, m_menu);
     if (menu.isEmpty()) menu.addAction(tr("No recent files"))->setEnabled(false);
     menu.exec(m_recentButton->mapToGlobal(QPoint(0, m_recentButton->height())));
   });

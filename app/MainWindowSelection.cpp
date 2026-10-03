@@ -202,9 +202,10 @@ void MainWindow::writeSelectionFile() {
   });
 }
 
-void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids) {
+void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::string> ids, bool documentRow) {
   SelectionContext context = selectionContext();  // for the areas' entries: the objects the menu is about
   context.ids = ids;
+  context.document = documentRow;
   if(auto* instances=findChild<ToolPanel*>("instanceBrowser"))instances->hide();
   if(m_design->sketchActive()) {
     QMenu menu(this);

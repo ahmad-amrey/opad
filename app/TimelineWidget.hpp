@@ -1,6 +1,7 @@
 #pragma once
 #include <QRect>
 #include <QWidget>
+#include <functional>
 #include <map>
 #include <set>
 #include <string>
@@ -29,6 +30,11 @@ class TimelineWidget : public QWidget {
   const std::map<std::string, QColor Tokens::*>& markedOps() const { return m_marks; }
   void step(int delta);
   QString describe(const opad::Op& op) const;
+  // More lines for a marker's tooltip, from feature areas (an import's source file, who committed it): HTML, appended in
+  // the order added; asked on every hover move, so O(1) from what the area knows. tooltip() is the whole of it (benches).
+  using TipProvider = std::function<QString(const opad::Op& op)>;
+  void addTipProvider(TipProvider provider) { m_tips.push_back(std::move(provider)); }
+  QString tooltip(const std::string& opId) const;
 
  signals:
   void opClicked(const std::string& opId);
@@ -64,6 +70,7 @@ class TimelineWidget : public QWidget {
   std::map<std::string, QColor Tokens::*> m_marks;
   QString m_markLegend;
   QRect m_prevBtn, m_nextBtn;
+  std::vector<TipProvider> m_tips;
 };
 
 QString opTypeIcon(const std::string& type);

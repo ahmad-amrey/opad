@@ -50,6 +50,7 @@ struct SelectionContext {
   std::vector<std::string> ids;  // nodes (bodies, components), sketches or browser folder rows, each once, in order
   std::vector<opad::Ref> refs;   // as picked in the view (faces, edges, ...); from the browser one body ref per id
   bool sketching = false;        // a sketch is open: the context menu is the sketch's
+  bool document = false;         // the browser's document row was right-clicked: the menu is about the document itself
   bool empty() const { return ids.empty() && refs.empty(); }
 };
 
@@ -124,6 +125,7 @@ class AreaController : public QObject {
 
   // From ready() on.
   virtual void contextMenu(const SelectionContext& selection, QMenu& menu) {}  // right-click in the view or browser: add at the end
+  virtual void timelineMenu(const std::string& opId, QMenu& menu) {}  // right-click on a timeline marker: add at the end
   virtual void selectionChanged(const SelectionContext& selection) {}  // the picks of a feature input are no selection
   virtual void positionOverlays(const QRect& viewport) {}  // the viewport (global) moved or resized: place what floats over it
   // After every change of the document (edit, undo, load, close); replaced: it is another document, or none.

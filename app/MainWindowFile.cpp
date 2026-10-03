@@ -15,6 +15,7 @@
 
 #include <memory>
 
+#include "FileLocation.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Units.hpp"
@@ -223,11 +224,30 @@ void MainWindow::addRecent(const QString& path) {
   rebuildRecentMenu();
 }
 
+void MainWindow::removeRecent(const QString& path) {
+  QStringList list = recent();
+  list.removeAll(path);
+  m_settings.setValue("ui/recent", list);
+  m_empty->setRecent(list);
+  rebuildRecentMenu();
+}
+
+QMenu* MainWindow::recentMenu(const QString& path, QWidget* parent) {
+  return location::recentMenu(path, parent, [this](const QString& text) { tell(text); }, [this, path] { openPath(path); },
+                              [this, path] { removeRecent(path); });
+}
+
+void MainWindow::tell(const QString& text) {
+  if (m_stack->currentWidget() == m_empty) statusBar()->showMessage(text, 6000);  // the start page: no view to show a toast over
+  else m_toasts->toast(text);
+}
+
 void MainWindow::rebuildRecentMenu() {
   if (!m_recentMenu) return;
   m_recentMenu->clear();
   for (const QString& p : recent()) {
     QAction* a = m_recentMenu->addAction(icons::themed("recent", 16), p);
+    a->setData(p);  // a right click: its own menu (Open file location, Copy path, Remove from list)
     connect(a, &QAction::triggered, this, [this, p] { openPath(p); });
   }
   if (m_recentMenu->isEmpty()) m_recentMenu->addAction(tr("No recent files"))->setEnabled(false);

@@ -128,7 +128,7 @@ class MainWindow : public QMainWindow {
   void openPanel(ToolPanel* panel);  // places it over the viewport; replaces the other unpinned panels
   bool closeTopPanel();              // Esc: hides one unpinned panel
   void bindPanel(QAction* a, ToolPanel* panel);
-  void showContextMenu(const QPoint& globalPos, std::vector<std::string> ids);
+  void showContextMenu(const QPoint& globalPos, std::vector<std::string> ids, bool documentRow = false);
   void timelineMenu(const std::string& opId, const QPoint& globalPos);
   // Guided tools: the tool is started first and asks for its picks one step at a time (see GuidedTool.hpp).
   void toggleTool(const QString& id);  // distance, angle, radius, bbox, note, sectionface
@@ -165,6 +165,9 @@ class MainWindow : public QMainWindow {
   void positionOverlays();
   void setLoading(bool on);  // shade + spinner over the workspace, input blocked, until the load job ends
   void addRecent(const QString& path);
+  void removeRecent(const QString& path);
+  QMenu* recentMenu(const QString& path, QWidget* parent);  // a recent file's context menu (File > Recent, the start page)
+  void tell(const QString& text);  // a result: a toast over the view, the status bar while no document shows
   QStringList recent() const;
   void rebuildRecentMenu();
   std::vector<std::string> currentNodeIds() const;

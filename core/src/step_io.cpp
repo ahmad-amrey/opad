@@ -459,6 +459,7 @@ ImportResult import_xcaf(Document& doc, const Handle(TDocStd_Document)& xdoc, co
   op["op"] = "import";
   op["source"] = step.filename().string();
   op["units"] = "mm";
+  stamp_source(op, step, opt);
   if (!opt.parent.empty()) op["parent"] = opt.parent;
   op["nodes"] = nodes;
   const Op& o = doc.append(op, opt.author);
@@ -502,6 +503,7 @@ ImportResult import_brep(Document& doc, const std::string& brep, const std::stri
   op["op"] = "import";
   op["source"] = name + ".brep";
   op["units"] = "mm";
+  if (!opt.source_file.empty()) detail::stamp_source(op, {}, opt);  // the text came from a file (import_brep_file)
   if (!opt.parent.empty()) op["parent"] = opt.parent;
   op["nodes"] = nodes;
   imp.res.op_id = doc.append(op, opt.author).id;

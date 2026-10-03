@@ -28,6 +28,10 @@ ImportResult import_xcaf(Document& doc, const Handle(TDocStd_Document)& xdoc, co
 // flatter than 30 degrees and kept sharp across steeper ones, so curved parts look round and machined edges stay crisp.
 TopoDS_Face mesh_face(const std::vector<float>& xyz, const std::vector<uint32_t>& triangles, bool weld);
 
+// Where the source file is, on its import op (UI-07): "source_path" (absolute) and "source_repo" (relative to the git
+// work tree it lies in; none outside one), both UTF-8 with '/'; of opt.source_file when set, else of `file`.
+void stamp_source(json& op, const std::filesystem::path& file, const ImportOptions& opt);
+
 // The readers behind import_file (formats.cpp).
 ImportResult import_iges(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);
 ImportResult import_mesh_scene(Document& doc, const std::filesystem::path& file, const ImportOptions& opt);  // glTF, GLB, OBJ, VRML

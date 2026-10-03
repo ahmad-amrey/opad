@@ -212,6 +212,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
       if (!menu.isEmpty()) menu.exec(m_tree->viewport()->mapToGlobal(p));
       return;
     }
+    if (it && it->data(0, Qt::UserRole).toString() == "document") return emit documentMenuRequested(m_tree->viewport()->mapToGlobal(p));
     emit contextMenuRequested(m_tree->viewport()->mapToGlobal(p), selectedIds());
   });
   connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int) {

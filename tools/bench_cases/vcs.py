@@ -90,6 +90,24 @@ def long_path(root, document, name="status-row"):
     return doc
 
 
+def located(root, document, name="paths"):
+    """Open file location and Copy path (UI-07): <name>/doc/model.opad in a git work tree (a real repository when git is
+    there) with <name>/parts/bracket.stl imported, so the op records its source absolute and inside the tree."""
+    folder = root / name
+    (folder / "parts").mkdir(parents=True, exist_ok=True)
+    (folder / "doc").mkdir(exist_ok=True)
+    git = shutil.which("git")
+    if git:
+        subprocess.run([git, "init", "-q", "-b", "main"], cwd=folder, check=True, capture_output=True)
+    else:
+        (folder / ".git").mkdir(exist_ok=True)
+    stl = folder / "parts" / "bracket.stl"
+    corners = ((0, 0, 0), (0, 10, 0), (10, 0, 0)), ((0, 0, 0), (10, 0, 0), (0, 0, 10)), ((0, 0, 0), (0, 0, 10), (0, 10, 0)), ((10, 0, 0), (0, 10, 0), (0, 0, 10))
+    facets = "".join("facet normal 0 0 0\nouter loop\n" + "".join("vertex %d %d %d\n" % v for v in f) + "endloop\nendfacet\n" for f in corners)
+    stl.write_text("solid t\n" + facets + "endsolid t\n", encoding="ascii")
+    return document(f"{name}/doc/model", ("import", "--file", str(stl)))
+
+
 CASES = [
     ("external-change", external, {"OPAD_BENCH_EXTERNAL_CHANGE": "{prefix}", "OPAD_BENCH_CLI": "{cli}"}),
     # git without this machine's settings: a global config of the run's own (the bench sets the author there), no system one.
@@ -116,6 +134,11 @@ CASES = [
     # The toasts commands end with, on the Engine with its bodies on screen (skipped where the Engine is not beside the tree).
     ("toast-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_TOASTPERF": "6"}),
     ("recovery-diff", recovered, {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}"}),
+    # Open file location and Copy path from File, the status path, the browser's document row, an import's marker and the
+    # recent files' menus (the file manager never starts: the bench records what would run); also right to left.
+    ("paths", located, {"OPAD_BENCH_PATHS": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),
+    ("paths-ar", lambda root, document: located(root, document, "paths-ar"),
+     {"OPAD_BENCH_PATHS": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
     # The status row: the path and the git chip at 1600 and 1280 px, under a long hover text, a message and the strip; also
     # right to left (the row at the right end).
     ("status-row", long_path, {"OPAD_BENCH_STATUSROW": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),

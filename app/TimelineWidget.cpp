@@ -295,9 +295,17 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
 void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
   int i = indexAt(e->pos());
   if (i != m_hover) { m_hover = i; update(); }
-  if (i >= 0) {
+  if (i >= 0) QToolTip::showText(e->globalPosition().toPoint() + QPoint(0, 8), tooltip(m_doc->doc.ops[m_shown[static_cast<size_t>(i)]].id), this);
+  else QToolTip::hideText();
+  update();
+}
+
+QString TimelineWidget::tooltip(const std::string& opId) const {
+  const opad::Op* found = m_doc->doc.find_op(opId);
+  if (!found) return {};
+  {
     const Tokens& t = theme::current();
-    const opad::Op& op = m_doc->doc.ops[m_shown[static_cast<size_t>(i)]];
+    const opad::Op& op = *found;
     QColor sw = op.type == "annotation" ? t.amber : m_deleted.count(op.id) ? t.fg2 : t.bg4;
     QString target;
     if (op.data.contains("target") && op.data["target"].is_string()) target = m_doc->nodeName(op.data["target"].get<std::string>());
@@ -321,11 +329,10 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                                   return QString("<div style='color:%1'>%2 %3</div>").arg((t.*c.colour).name(), QString::fromUtf8(c.mark), m_markLegend.arg(i18n::t(c.label)).toHtmlEscaped());
                               return QString();
                             }());
-    QToolTip::showText(e->globalPosition().toPoint() + QPoint(0, 8), html, this);
-  } else {
-    QToolTip::hideText();
+    QString more;
+    for (const TipProvider& tip : m_tips) more += tip(op);
+    return more.isEmpty() ? html : html.insert(html.size() - 6, more);  // inside the outer div
   }
-  update();
 }
 
 QString TimelineWidget::iconFor(const opad::Op& op) const {
