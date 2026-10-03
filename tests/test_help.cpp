@@ -2,6 +2,7 @@
 // registry's lookups, search and tooltips, and the rich card's states, timing and layout (offscreen). The animated
 // clips (UI-107): the library, rendering, translations, the loader's checks and templates, the player.
 #include "CommandHelp.hpp"
+#include "CommandPalette.hpp"
 #include "GuidedTool.hpp"
 #include "HelpClip.hpp"
 #include "HelpReference.hpp"
@@ -220,6 +221,22 @@ TEST(rich_tip_states_and_layout) {
   QApplication::setLayoutDirection(Qt::LeftToRight);
   tip->hideTip();
   RichTip::detach(button);
+}
+
+// The palette's recent commands (UI-106): newest first, each once, at most kRecent; the palette itself and undo/redo are
+// not remembered.
+TEST(palette_recent_commands) {
+  CHECK_EQ(palette::remember({}, "view.fit"), QStringList({"view.fit"}));
+  CHECK_EQ(palette::remember({"view.fit", "view.home"}, "view.home"), QStringList({"view.home", "view.fit"}));
+  CHECK_EQ(palette::remember({"a", "b", "c"}, "d", 3), QStringList({"d", "a", "b"}));
+  CHECK_EQ(palette::remember({"a"}, QString()), QStringList({"a"}));
+  QSettings().remove("palette/recent");
+  for (const char* id : {"design.extrude", "tools.commands", "edit.undo", "edit.redo", "view.fit"}) palette::noteRun(id);
+  CHECK_EQ(palette::recent(), QStringList({"view.fit", "design.extrude"}));
+  for (int i = 0; i < 20; ++i) palette::noteRun(QString("x.%1").arg(i));
+  CHECK_EQ(palette::recent().size(), palette::kRecent);
+  CHECK_EQ(palette::recent().first(), QString("x.19"));
+  QSettings().remove("palette/recent");
 }
 
 // Menu entries that are commands with help show their card beside the menu; other entries (no id, a submenu) none.

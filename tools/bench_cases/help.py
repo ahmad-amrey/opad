@@ -24,4 +24,7 @@ CASES = [
     # UI-107: Help > Command reference (F1 at the running tool, search, steps) and the palette's preview pane.
     ("reference", "box", {"OPAD_BENCH_REFERENCE": "{prefix}"}),
     ("reference-ar", "box", {"OPAD_BENCH_REFERENCE": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-106: the command palette's recent commands, summaries and what a command not available now needs.
+    ("palette", "box", {"OPAD_BENCH_PALETTE": "{prefix}"}),
+    ("palette-ar", "box", {"OPAD_BENCH_PALETTE": "{prefix}", "OPAD_LANG": "ar"}),
 ]

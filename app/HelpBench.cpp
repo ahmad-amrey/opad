@@ -598,3 +598,82 @@ OPAD_BENCH(OPAD_BENCH_REFERENCE, reference) {
   (*next)(0);
   return true;
 }
+
+// OPAD_BENCH_PALETTE=<prefix> (a document with a box): the command palette (UI-106). Commands run from buttons or keys
+// become its recent ones, first when nothing is typed and marked so; each row has its help's summary; a command not
+// available now shows what it needs in its row and the card, and Enter on it keeps the palette open and says why; Enter
+// on another runs it, closes the palette and makes it the newest recent one. Saved as <prefix>.recent/.search/.needs.png.
+OPAD_BENCH(OPAD_BENCH_PALETTE, palette) {
+  const QString prefix = value;
+  auto failed = std::make_shared<QStringList>();
+  auto check = [failed](bool ok, const QString& what) {
+    trace::log(QString("bench: palette: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    if (!ok) *failed << what;
+  };
+  struct Step { int delay; std::function<void()> fn; };
+  auto steps = std::make_shared<std::vector<Step>>();
+  auto add = [steps](int delay, std::function<void()> fn) { steps->push_back({delay, std::move(fn)}); };
+  auto rows = [](CommandPalette* palette) {
+    QStringList ids;
+    auto* list = palette->findChild<QListWidget*>("paletteList");
+    for (int i = 0; list && i < list->count(); ++i) ids << static_cast<QAction*>(list->item(i)->data(Qt::UserRole).value<void*>())->objectName();
+    return ids;
+  };
+  auto open = [&w] {
+    auto* palette = new CommandPalette(w.m_actions, &w);
+    palette->setAttribute(Qt::WA_DeleteOnClose);
+    palette->adjustSize();
+    palette->show();
+    return palette;
+  };
+  auto enter = [](CommandPalette* palette) {
+    QKeyEvent e(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(palette->findChild<QLineEdit*>("paletteInput"), &e);
+  };
+  add(800, [=, &w] {
+    QSettings().remove("palette/recent");
+    w.action("view.home")->trigger();  // as a button, a menu or a key runs them
+    w.action("view.fit")->trigger();
+    check(palette::recent().mid(0, 2) == QStringList({"view.fit", "view.home"}), "commands run from anywhere become recent, newest first (" + palette::recent().join(' ') + ")");
+    CommandPalette* palette = open();
+    const QStringList ids = rows(palette);
+    auto* list = palette->findChild<QListWidget*>("paletteList");
+    check(ids.mid(0, 2) == QStringList({"view.fit", "view.home"}) && list->item(0)->data(Qt::UserRole + 1).toBool() && !list->item(2)->data(Qt::UserRole + 1).toBool(),
+          "with nothing typed the recent commands come first, marked Recent (" + ids.mid(0, 3).join(' ') + ")");
+    int summaries = 0;
+    for (const QString& id : ids) summaries += help::find(id) && !help::find(id)->summary.isEmpty();
+    check(summaries == ids.size(), QString("every row has its help's summary (%1 of %2)").arg(summaries).arg(ids.size()));
+    check(palette->layoutDirection() == QApplication::layoutDirection(), "the palette in the UI's direction");
+    palette->grab().save(prefix + ".recent.png");
+    palette->findChild<QLineEdit*>("paletteInput")->setText("fit");
+    const QStringList found = rows(palette);
+    check(!found.isEmpty() && found.first() == "view.fit", "the best match first, the recent one among equals (" + found.mid(0, 3).join(' ') + ")");
+    palette->grab().save(prefix + ".search.png");
+    palette->findChild<QLineEdit*>("paletteInput")->setText(help::find("view.unisolate")->title);
+    const QStringList needs = rows(palette);
+    check(!needs.isEmpty() && needs.first() == "view.unisolate" && !w.action("view.unisolate")->isEnabled() && palette->findChild<CommandPreview*>()->showsRequirement(),
+          "a command not available now: its card says what it needs");
+    enter(palette);
+    auto* foot = palette->findChild<QLabel*>("paletteFoot");
+    check(palette->isVisible() && foot && foot->text().contains(help::requirement(*help::find("view.unisolate"))), "Enter on it keeps the palette open and says why (" + (foot ? foot->text() : QString()) + ")");
+    palette->grab().save(prefix + ".needs.png");
+    palette->findChild<QLineEdit*>("paletteInput")->setText(help::find("view.home")->title);
+    check(!foot->text().contains(help::requirement(*help::find("view.unisolate"))), "moving on clears the reason");
+    enter(palette);
+  });
+  add(300, [=, &w] {
+    check(!w.findChild<CommandPalette*>() && palette::recent().value(0) == "view.home", "Enter runs the command, closes the palette, and it is the newest recent one (" + palette::recent().join(' ') + ")");
+    trace::log(QString("bench: palette: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
+    QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
+  });
+  auto next = std::make_shared<std::function<void(size_t)>>();
+  *next = [&w, steps, next, check](size_t i) {
+    if (i >= steps->size()) return;
+    QTimer::singleShot((*steps)[i].delay, &w, [steps, next, check, i] {
+      try { (*steps)[i].fn(); } catch (const std::exception& e) { check(false, QString::fromUtf8(e.what())); }
+      (*next)(i + 1);
+    });
+  };
+  (*next)(0);
+  return true;
+}

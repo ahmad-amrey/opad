@@ -8,6 +8,7 @@
 
 #include "AreaController.hpp"
 #include "CommandHelp.hpp"
+#include "CommandPalette.hpp"
 #include "Commands.hpp"
 #include "HelpClip.hpp"
 #include "HelpReference.hpp"
@@ -43,9 +44,11 @@ class HelpArea : public AreaController {
     if (QMenu* help = menus.value("help")) help->insertAction(help->actions().value(0), services().action("help.reference"));
   }
 
-  void ready() override {  // the status bar's toggles (extensions, tracking, grid snapping)
-    for (auto* b : services().window()->statusBar()->findChildren<QToolButton*>())
+  void ready() override {
+    for (auto* b : services().window()->statusBar()->findChildren<QToolButton*>())  // the status bar's toggles (extensions, tracking, grid snapping)
       if (b->defaultAction() && help::find(b->defaultAction()->objectName())) RichTip::attach(b, b->defaultAction()->objectName());
+    for (QAction* a : services().commands().actions())  // the palette's recent commands: whatever ran them (button, menu, key, palette)
+      if (a) connect(a, &QAction::triggered, this, [id = a->objectName()] { palette::noteRun(id); });
   }
 
  private:
