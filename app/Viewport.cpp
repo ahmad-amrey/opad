@@ -1154,6 +1154,16 @@ void Viewport::fitAll() {
   requestRedraw();
 }
 
+bool Viewport::showsAll() const {
+  const Bnd_Box box = fitBounds(false);
+  if (!m_initialised || box.IsVoid()) return true;
+  double x0, y0, z0, x1, y1, z1;
+  box.Get(x0, y0, z0, x1, y1, z1);
+  for (int c = 0; c < 8; ++c)
+    if (!rect().contains(widgetPoint({(c & 1) ? x1 : x0, (c & 2) ? y1 : y0, (c & 4) ? z1 : z0}))) return false;
+  return true;
+}
+
 void Viewport::fitWhenReady() {
   m_fitNodesOnSync.clear();
   m_needFit = true;

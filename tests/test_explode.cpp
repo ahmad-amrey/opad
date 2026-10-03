@@ -472,6 +472,9 @@ TEST(editor_helpers) {
       }
   // A drag along +Z sets the lid's own move there and keeps the rest of it; back to the automatic move drops the offset.
   const ExplodeUnit& lid = units[static_cast<size_t>(index(d.lid))];
+  CHECK_NEAR(explode_progress(lid, 0.25), 0.5, 1e-12);  // half way through its stage (level 1 of 2), eased
+  CHECK_NEAR(explode_progress(lid, 0.6), 1, 1e-12);
+  CHECK_NEAR(explode_progress(units[s1], 0.25), 0, 1e-12);
   const double automatic = explode_travel(lid, spec, {0, 0, 1});
   CHECK_NEAR(automatic, lid.distance * lid.dir[2], 1e-9);
   set_explode_travel(spec, lid, {0, 0, 2}, automatic + 15);

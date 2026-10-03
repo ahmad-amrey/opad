@@ -60,6 +60,8 @@ int explode_depth(const Scene& scene, const ExplodeSpec& spec);
 // The units, parents before children. box_of: a body node's world box; by default its tight box (node_tight_bbox from
 // the cached corners), which walks each shape once: workers only.
 std::vector<ExplodeUnit> explode_units(const Document& doc, const Scene& scene, const ExplodeSpec& spec, const ExplodeBoxFn& box_of = {});
+// How far along its own move a unit is at t: 0 before its stretch [t0, t1], 1 after it, eased in between.
+double explode_progress(const ExplodeUnit& unit, double t);
 // Each unit's move at t: its parent's plus its own dir * distance + offsets[id], eased over [t0, t1].
 std::vector<Vec3> explode_unit_offsets(const std::vector<ExplodeUnit>& units, const ExplodeSpec& spec, double t);
 // The same per body node (world translation). Microseconds per unit: a UI calls it every frame.
@@ -76,9 +78,11 @@ struct ExplodeTrail {
   Vec3 from{0, 0, 0}, to{0, 0, 0};
 };
 std::vector<ExplodeTrail> explode_trails(const std::vector<ExplodeUnit>& units, const ExplodeSpec& spec, double t);
-// The unit that moves a node: the unit with that id (a group's is its first member's), the unit holding a body, or for
-// a component the one unit holding all of its shown bodies. -1 when none (hidden, outside the root, split among units).
-int explode_unit_of(const Scene& scene, const std::vector<ExplodeUnit>& units, const std::string& id);
+// The unit that moves a node: the unit holding a body, the unit with a component's id (a group's is its first member's),
+// or for another component the one unit holding all of its shown bodies. -1 when none (hidden, outside the root, split
+// among units). body_units: explode_body_units, kept by a caller asking for many nodes.
+std::unordered_map<std::string, int> explode_body_units(const std::vector<ExplodeUnit>& units);
+int explode_unit_of(const Scene& scene, const std::vector<ExplodeUnit>& units, const std::string& id, const std::unordered_map<std::string, int>* body_units = nullptr);
 // A unit's own move at t = 1 (automatic plus manual) along a unit axis, and the manual offset that makes it `travel`
 // there, keeping the move across the axis. A manual offset that comes out zero is dropped.
 double explode_travel(const ExplodeUnit& unit, const ExplodeSpec& spec, const Vec3& axis);

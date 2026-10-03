@@ -358,7 +358,7 @@ void MainWindow::showDocument(bool has) {
     if (id == "file.importdoc") a->setEnabled(m_doc->browse);
     // Viewer mode keeps the editing commands: they say that the file has to be saved first (isEditAction).
   }
-  if (m_pinAction) m_pinAction->setEnabled(has && !m_lastMeasure.is_null());
+  if (m_pinAction) m_pinAction->setEnabled(has && !m_lastMeasure.is_null() && !measuredExploded());
   if (m_design) updateDesignState();
   m_browser->setViewerMode(m_doc->browse);
   updateUndoActions();

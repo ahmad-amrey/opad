@@ -98,6 +98,18 @@ gp_Vec Viewport::lookOffset(const std::string& node) const {
   return gp_Vec(o[0], o[1], o[2]);
 }
 
+std::unordered_map<std::string, opad::Vec3> Viewport::shownOffsets() const {
+  std::unordered_map<std::string, opad::Vec3> out;
+  for (const auto& [id, item] : m_items)
+    if (item.look.offset != std::array<double, 3>{0, 0, 0}) out[id] = {item.look.offset[0], item.look.offset[1], item.look.offset[2]};
+  return out;
+}
+
+opad::Vec3 Viewport::shownOffset(const std::string& node) const {
+  const gp_Vec o = lookOffset(node);
+  return {o.X(), o.Y(), o.Z()};
+}
+
 void Viewport::setLookLayer(LookSource source, std::map<std::string, LookDelta> deltas) {
   auto& layer = m_lookLayers[static_cast<size_t>(source)];
   std::unordered_map<std::string, LookDelta> next(std::make_move_iterator(deltas.begin()), std::make_move_iterator(deltas.end()));

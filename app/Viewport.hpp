@@ -96,6 +96,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   SelFilter selectionFilter() const { return m_filter; }
 
   void fitAll();
+  bool showsAll() const;  // every corner of what Fit All frames is inside the view
   void requestRefinement() { m_refineTimer.start(); }  // zoom refinement without waiting for a frame (benches)
   bool benchLeave();  // OPAD_BENCH_LEAVE: hover a body, leave the view, nothing may stay highlighted
   void fitWhenReady();   // fit now if bodies are displayed, otherwise once the first meshes arrive
@@ -152,6 +153,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // "" when there is none or a body that is no ghost is in front of it. One pick of the navigation selector.
   std::string ghostAt(const QPointF& point);
   bool looksPending() const { return m_lookJob != nullptr || !m_lookQueue.empty(); }
+  // How far looks moved what is drawn (an exploded view): the displayed bodies off their place, and one node's offset
+  // (a component's by its own entry). Measuring and annotating take the parts where they are drawn.
+  std::unordered_map<std::string, opad::Vec3> shownOffsets() const;
+  opad::Vec3 shownOffset(const std::string& node) const;
   opad::json benchLookState(const std::string& body) const;  // OPAD_BENCH_LOOKS: what AIS holds for a displayed body or sketch
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
   bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body

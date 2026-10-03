@@ -657,15 +657,18 @@ std::vector<ExplodeUnit> explode_units(const Document& doc, const Scene& scene, 
   return units;
 }
 
+double explode_progress(const ExplodeUnit& u, double t) {
+  const double x = std::clamp(u.t1 > u.t0 ? (t - u.t0) / (u.t1 - u.t0) : (t >= u.t1 ? 1 : 0), 0.0, 1.0);
+  return x * x * (3 - 2 * x);
+}
+
 std::vector<Vec3> explode_unit_offsets(const std::vector<ExplodeUnit>& units, const ExplodeSpec& spec, double t) {
   std::vector<Vec3> out(units.size(), Vec3{0, 0, 0});
   for (size_t i = 0; i < units.size(); ++i) {
     const ExplodeUnit& u = units[i];
-    double x = u.t1 > u.t0 ? (t - u.t0) / (u.t1 - u.t0) : (t >= u.t1 ? 1 : 0);
-    x = std::clamp(x, 0.0, 1.0);
     Vec3 own = mul(u.dir, u.distance);
     if (auto m = spec.offsets.find(u.id); m != spec.offsets.end()) own = add(own, m->second);
-    out[i] = add(u.parent >= 0 ? out[static_cast<size_t>(u.parent)] : Vec3{0, 0, 0}, mul(own, x * x * (3 - 2 * x)));
+    out[i] = add(u.parent >= 0 ? out[static_cast<size_t>(u.parent)] : Vec3{0, 0, 0}, mul(own, explode_progress(u, t)));
   }
   return out;
 }
@@ -711,22 +714,28 @@ std::vector<ExplodeTrail> explode_trails(const std::vector<ExplodeUnit>& units, 
   return out;
 }
 
-int explode_unit_of(const Scene& scene, const std::vector<ExplodeUnit>& units, const std::string& id) {
-  for (size_t i = 0; i < units.size(); ++i)
-    if (units[i].id == id) return static_cast<int>(i);
-  const Node* n = scene.node(id);
-  if (!n) return -1;
+std::unordered_map<std::string, int> explode_body_units(const std::vector<ExplodeUnit>& units) {
   std::unordered_map<std::string, int> of;
   for (size_t i = 0; i < units.size(); ++i)
     for (const auto& b : units[i].bodies) of.emplace(b, static_cast<int>(i));
-  if (n->kind == Node::Kind::Body) {
-    const auto it = of.find(id);
-    return it == of.end() ? -1 : it->second;
+  return of;
+}
+
+int explode_unit_of(const Scene& scene, const std::vector<ExplodeUnit>& units, const std::string& id, const std::unordered_map<std::string, int>* body_units) {
+  std::unordered_map<std::string, int> local;
+  if (!body_units) body_units = &(local = explode_body_units(units));
+  const Node* n = scene.node(id);
+  if (n && n->kind == Node::Kind::Body) {
+    const auto it = body_units->find(id);
+    return it == body_units->end() ? -1 : it->second;
   }
+  for (size_t i = 0; i < units.size(); ++i)
+    if (units[i].id == id) return static_cast<int>(i);
+  if (!n) return -1;
   int found = -1;
   for (const auto& b : scene.bodies_under(id)) {
-    const auto it = of.find(b);
-    if (it == of.end()) continue;  // hidden
+    const auto it = body_units->find(b);
+    if (it == body_units->end()) continue;  // hidden
     if (found >= 0 && it->second != found) return -1;
     found = it->second;
   }
