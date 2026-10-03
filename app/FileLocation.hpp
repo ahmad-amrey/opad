@@ -15,12 +15,25 @@ class QWidget;
 namespace location {
 
 struct Command {
-  QString program;      // started detached with the arguments; empty: open `folder` with the desktop's opener
+  QString program;      // started detached with the arguments
   QStringList arguments;
   QString folder;       // the folder shown (the file's, or the nearest one there when the file is gone)
   bool selects = false;  // the file manager shows the file itself selected
 };
-Command revealCommand(const QString& path);  // what reveal() runs (benches check it)
+// The desktop a reveal is for: this one, or another OS's built here (test_file_location checks all three on any OS).
+struct Desktop {
+  enum Os { Windows, MacOS, Linux } os = Linux;
+  bool dbusSend = false;            // Linux: dbus-send is there (FileManager1's ShowItems), else the folder through xdg-open
+  QString xdgOpen = "xdg-open";     // Linux: the opener as found on PATH
+  QString systemRoot = "C:\\Windows";  // Windows: where explorer.exe is
+  static Desktop host();
+};
+Command revealCommand(const QString& path, const Desktop& desktop = Desktop::host());  // what reveal() runs
+// Explorer's command line after the program: it reads "/select,<path>" itself and splits an unquoted path at commas, so
+// the path is quoted whatever it holds (QProcess::setNativeArguments on Windows).
+QString windowsArguments(const Command& command);
+// FileManager1's ShowItems takes file URIs as a dbus-send array, which splits at commas: those are percent-encoded too.
+QString fileUri(const QString& path);
 using Launcher = std::function<bool(const Command&)>;
 void setLauncher(Launcher launcher);  // benches: record instead of opening a window on the desktop; null: the real one
 using Copier = std::function<void(const QString& text)>;

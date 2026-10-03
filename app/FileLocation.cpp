@@ -40,9 +40,7 @@ bool launch(const Command& c) {
   QProcess p;
   p.setProgram(c.program);
 #ifdef Q_OS_WIN
-  // Explorer reads "/select,<path>" itself and splits an unquoted path at commas: quoted here, whatever it holds.
-  if (c.selects) p.setNativeArguments(c.arguments.value(0) + '"' + c.arguments.value(1) + '"');
-  else p.setNativeArguments('"' + c.arguments.value(0) + '"');
+  p.setNativeArguments(windowsArguments(c));
 #else
   p.setArguments(c.arguments);
 #endif
@@ -95,33 +93,58 @@ QString relativePath(const QString& path) {
   return top.empty() ? QString() : QDir(QString::fromStdU16String(top.u16string())).relativeFilePath(QFileInfo(path).absoluteFilePath());
 }
 
-Command revealCommand(const QString& path) {
+Desktop Desktop::host() {
+  Desktop d;
+#if defined(Q_OS_WIN)
+  d.os = Windows;
+  d.systemRoot = qEnvironmentVariable("SystemRoot", d.systemRoot);
+#elif defined(Q_OS_MACOS)
+  d.os = MacOS;
+#else
+  d.dbusSend = !QStandardPaths::findExecutable("dbus-send").isEmpty();
+  if (const QString opener = QStandardPaths::findExecutable("xdg-open"); !opener.isEmpty()) d.xdgOpen = opener;
+#endif
+  return d;
+}
+
+QString windowsArguments(const Command& c) {
+  return c.selects ? c.arguments.value(0) + '"' + c.arguments.value(1) + '"' : '"' + c.arguments.value(0) + '"';
+}
+
+QString fileUri(const QString& path) { return QUrl::fromLocalFile(path).toString(QUrl::FullyEncoded).replace(',', "%2C"); }
+
+Command revealCommand(const QString& path, const Desktop& desktop) {
   Command c;
   const QFileInfo fi(path);
   const bool file = !path.isEmpty() && fi.exists() && !fi.isDir();
   c.folder = file ? fi.absolutePath() : nearestFolder(path);
   c.selects = file;
   const QString target = file ? fi.absoluteFilePath() : c.folder;
-#if defined(Q_OS_WIN)
-  c.program = QDir(qEnvironmentVariable("SystemRoot", "C:\\Windows")).filePath("explorer.exe");
-  c.arguments = file ? QStringList{"/select,", QDir::toNativeSeparators(target)} : QStringList{QDir::toNativeSeparators(target)};
-#elif defined(Q_OS_MACOS)
-  c.program = "/usr/bin/open";
-  c.arguments = file ? QStringList{"-R", target} : QStringList{target};
-#else
-  // The file manager's own "show this file" (FileManager1: Nautilus, Dolphin, Nemo, Caja, Thunar), else the folder.
-  const QString opener = QStandardPaths::findExecutable("xdg-open");
-  if (file && !QStandardPaths::findExecutable("dbus-send").isEmpty()) {
-    c.program = "/bin/sh";
-    c.arguments = {"-c", "dbus-send --session --print-reply --dest=org.freedesktop.FileManager1 --type=method_call /org/freedesktop/FileManager1 "
-                         "org.freedesktop.FileManager1.ShowItems \"array:string:$1\" string: >/dev/null 2>&1 || xdg-open \"$2\"",
-                   "sh", QUrl::fromLocalFile(target).toString(QUrl::FullyEncoded), c.folder};
-  } else {
-    c.selects = false;
-    c.program = opener.isEmpty() ? QStringLiteral("xdg-open") : opener;
-    c.arguments = {c.folder};
+  switch (desktop.os) {
+    case Desktop::Windows: {
+      const QString native = QString(target).replace('/', '\\');
+      c.program = QString(desktop.systemRoot).replace('/', '\\') + "\\explorer.exe";
+      c.arguments = file ? QStringList{"/select,", native} : QStringList{native};
+      break;
+    }
+    case Desktop::MacOS:
+      c.program = "/usr/bin/open";
+      c.arguments = file ? QStringList{"-R", target} : QStringList{target};
+      break;
+    case Desktop::Linux:
+      // The file manager's own "show this file" (FileManager1: Nautilus, Dolphin, Nemo, Caja, Thunar), else the folder.
+      if (file && desktop.dbusSend) {
+        c.program = "/bin/sh";
+        c.arguments = {"-c", "dbus-send --session --print-reply --dest=org.freedesktop.FileManager1 --type=method_call /org/freedesktop/FileManager1 "
+                             "org.freedesktop.FileManager1.ShowItems \"array:string:$1\" string: >/dev/null 2>&1 || xdg-open \"$2\"",
+                       "sh", fileUri(target), c.folder};
+      } else {
+        c.selects = false;
+        c.program = desktop.xdgOpen;
+        c.arguments = {c.folder};
+      }
+      break;
   }
-#endif
   return c;
 }
 
