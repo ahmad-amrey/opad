@@ -282,7 +282,9 @@ void SketchEditor::setAngled(bool angled) {
     m_options["moveMode"] = angled ? "polar" : "xy";
     try {
       const ParamTable table({}, m_doc->scene.units);
-      const auto mm = [](double value) { return QString::number(std::fabs(value) < 1e-12 ? 0 : value, 'g', 12) + " mm"; };
+      // In the document's unit (UI-26: an inch sketch's boxes read "254 mm" after the switch).
+      const double unit = unitLength();
+      const auto mm = [&](double value) { return QString::number(std::fabs(value) < 1e-12 ? 0 : value / unit, 'g', 12) + " " + QString::fromStdString(m_doc->scene.units); };
       if (angled) {
         const double dx = table.length(option("dx", "10 mm").toStdString()), dy = table.length(option("dy", "0 mm").toStdString());
         m_options["moveDistance"] = mm(std::hypot(dx, dy));

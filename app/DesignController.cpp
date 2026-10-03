@@ -1044,6 +1044,9 @@ void DesignController::bench() {
           auto* box=m_distanceHandle->findChild<QLineEdit*>();
           auto distance=[this]{return m_form->inputs().at("distance").dump();};
           if(!box || box->text()!="25" || distance().find("25")==std::string::npos)throw opad::Error("digits typed over the view did not replace the extrude distance: "+distance());
+          // UI-26: a plain number typed is stored with its unit as a word (it was "(25) * 1 mm", shown so when edited again).
+          if(m_form->inputs().at("distance")!="25 mm")throw opad::Error("a typed 25 is stored as "+distance()+", not \"25 mm\"");
+          trace::log("bench: extrude box: a typed 25 is stored as \"25 mm\" PASS");
           if(QApplication::focusWidget()!=box)throw opad::Error("the extrude box did not take the keyboard");
           key(Qt::Key_Up,Qt::NoModifier,{});
           if(box->text()!="26 mm" || distance().find("26")==std::string::npos)throw opad::Error("Up did not step the extrude distance: "+distance());
