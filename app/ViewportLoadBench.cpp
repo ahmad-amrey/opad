@@ -75,6 +75,7 @@ OPAD_BENCH(OPAD_BENCH_LOADING, loading) {
   struct Seen {
     bool foreignStrip = false, lockedWhileBuilding = true, unlocked = false, streamed = false, childPump = true, backwards = false;
     int lastOverall = -1, openingSteps = 0, finishedAt = -1, pumpRuns = -1;
+    qint64 syncMs = 0, syncCpuMs = 0;  // the view's syncs over the load
     QStringList phases;
   };
   auto watch = [&](const std::function<void(Seen&)>& streaming) {
@@ -86,6 +87,7 @@ OPAD_BENCH(OPAD_BENCH_LOADING, loading) {
     doc->newDocument();  // the same file again would keep what is on screen (same bodies, same places): nothing would stream
     waitUntil([&] { return v->displayedCount() == 0 && !w.m_jobs->busy(); }, 30000);  // nothing older than the load runs
     const int syncs = v->syncCount(), begun = w.m_jobs->begun(), pumps = v->pumpRuns();
+    const qint64 syncMs = v->syncMs(), syncCpuMs = v->syncCpuMs();
     w.openPath(path);
     Job* load = w.m_loadJob;
     QObject::connect(load, &Job::overallChanged, &context, [&seen](int overall) {
@@ -110,6 +112,8 @@ OPAD_BENCH(OPAD_BENCH_LOADING, loading) {
     }, 300000);
     seen.finishedAt = ended ? v->syncCount() - syncs : -1;
     seen.pumpRuns = v->pumpRuns() - pumps;
+    seen.syncMs = v->syncMs() - syncMs;
+    seen.syncCpuMs = v->syncCpuMs() - syncCpuMs;
     trace::log(QString("bench: loading: %1 full syncs, %2 jobs begun, %3 display pump jobs, overall progress up to %4%, %5 opening steps")
                    .arg(v->syncCount() - syncs).arg(w.m_jobs->begun() - begun).arg(seen.pumpRuns).arg(seen.lastOverall).arg(seen.openingSteps));
     return seen;
@@ -140,6 +144,8 @@ OPAD_BENCH(OPAD_BENCH_LOADING, loading) {
   require(viewRan, "a view command (Top) runs while the bodies stream in");
   require(deferred && pins >= 2 && !w.m_afterStream, QString("an edit asked for meanwhile waits with a toast and runs after (%1 runs)").arg(pins));
   require(first.childPump, "the display pump runs as a child of the load");
+  // Design note E: the syncs of a 1,000-body load cost under 150 ms (of UI-thread CPU; 4x that in wall time on a busy machine).
+  require(first.syncCpuMs < 150 && first.syncMs < 600, QString("the view's syncs over the load: %1 ms of CPU, %2 ms in all (under 150)").arg(first.syncCpuMs).arg(first.syncMs));
   require(first.pumpRuns == 1, QString("the display pump is one job for the whole stream, paused while meshes are on their way (%1 jobs)").arg(first.pumpRuns));
   require(first.finishedAt >= 0 && first.finishedAt <= 2, QString("%1 full syncs for the load (one per document change, none per batch of meshes)").arg(first.finishedAt));
   if (big) require(first.openingSteps >= 3, QString("the .opad read and parse report per cent (%1 steps)").arg(first.openingSteps));

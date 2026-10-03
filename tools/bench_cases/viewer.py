@@ -41,9 +41,10 @@ def strokes(root, document):
     return path
 
 
-def boxes(root, document):
+def boxes(root, document, notes=0):
     """1,000 boxes in ten components of 100, an editable .opad as an import of one box entry (instances): the evaluation's
-    large document without the 322 MB Engine. The box comes from opad-cli; the import op is written here."""
+    large document without the 322 MB Engine. The box comes from opad-cli; the import op is written here, and `notes`
+    notes pinned to boxes of different components."""
     one = document("perf-box", ("feature", "--kind", "box", "--inputs", '{"length":"8 mm","width":"8 mm","height":"8 mm"}'))
     lines = one.read_text(encoding="utf-8").split("\n")
     at = lines.index("#bodies") + 1
@@ -57,9 +58,17 @@ def boxes(root, document):
                      "transform": [1, 0, 0, (i % 10) * 12, 0, 1, 0, (i // 10) * 12, 0, 0, 1, layer * 12, 0, 0, 0, 1]} for i in range(100)]
         layers.append({"type": "component", "id": str(uuid.uuid4()), "name": f"Layer {layer + 1}", "children": children})
     op = {"op": "import", "id": str(uuid.uuid4()), "ts": "2026-10-03T00:00:00Z", "by": "bench", "source": "boxes.step", "units": "mm", "nodes": layers}
-    path = root / "boxes-1000.opad"
-    path.write_text("\n".join([lines[0], json.dumps(header), "#ops", json.dumps(op), "#bodies"] + entry) + "\n", encoding="utf-8")
+    ops = [json.dumps(op)] + [json.dumps({"op": "annotation", "id": str(uuid.uuid4()), "ts": "2026-10-03T00:00:00Z", "by": "bench",
+                                          "anchor": {"body": layers[i * 2]["children"][55]["id"], "kind": "body"}, "text": f"Check box {i + 1}"})
+                              for i in range(notes)]
+    path = root / (f"boxes-1000-{notes}-notes.opad" if notes else "boxes-1000.opad")
+    path.write_text("\n".join([lines[0], json.dumps(header), "#ops"] + ops + ["#bodies"] + entry) + "\n", encoding="utf-8")
     return path
+
+
+def boxes_with_notes(root, document):
+    """The 1,000 boxes with five notes pinned to boxes (design note E's synthetic document; anchors measured on a worker)."""
+    return boxes(root, document, notes=5)
 
 
 CASES = [
@@ -93,16 +102,17 @@ CASES = [
     # typed name; Ctrl+N after viewing it leaves no 2D mode or viewer card; Ctrl+click adds and takes out; the hover text
     # follows a change; Ctrl+Shift+Z redoes; V right after a dialog closed is held back. <prefix>.png.
     ("state", strokes, {"OPAD_BENCH_STATE": "{prefix}"}),
-    # Latency budgets (UI-11): hide, undo, redo, Hide others and its undo, select all, the Face filter and back and a new
-    # document each keep every UI stall under 150 ms (OPAD_BENCH_PERF_BUDGET), from the command until it has settled. On
-    # 1,000 boxes and on the Engine.
-    ("perf", boxes, {"OPAD_BENCH_PERF": "{prefix}"}),
+    # Latency budgets (UI-11): hide, undo, redo (each a sync of the hidden body alone), Hide others and its undo, everything
+    # hidden and shown again, select all, the Face filter and back, Properties on a face and a new document each keep every
+    # UI stall under 150 ms (OPAD_BENCH_PERF_BUDGET), from the command until it has settled. On 1,000 boxes with five notes
+    # and on the Engine.
+    ("perf", boxes_with_notes, {"OPAD_BENCH_PERF": "{prefix}"}),
     ("perf-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_PERF": "{prefix}"}),
     # Load responsiveness (UI-40): the file opened again is watched; the strip shows the load job throughout and its
     # progress only rises (per cent while a big .opad is read), the workspace is unlocked once the document is built while
     # the bodies stream in (a view command runs, an edit waits with a toast and runs after), the display pump is the
-    # load's child, a few full syncs and no empty highlight jobs; then Cancel on the strip as the bodies stream in stops the
-    # load and its pump at once.
+    # load's child and one job for the stream, a few full syncs costing under 150 ms in all, no empty highlight jobs; then
+    # Cancel on the strip as the bodies stream in stops the load and its pump at once.
     ("loading", boxes, {"OPAD_BENCH_LOADING": "{prefix}"}),
     ("loading-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_LOADING": "{prefix}"}),
     # Selection publishing (UI-06): nothing with agent access off; on, the selection at once with O(1) fields per ref,

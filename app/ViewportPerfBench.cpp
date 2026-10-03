@@ -1,7 +1,8 @@
 // OPAD_BENCH_PERF=<prefix> (UI-11): the evaluation's latency budgets on a large document. Cases in
-// tools/bench_cases/viewer.py: 1,000 boxes made for the run (CI) and the Engine beside the repository (its hidden root
-// shown in memory). Each step (a hide, its undo and redo, Hide others and its undo, everything hidden and shown again,
-// select all, a filter switch there and back, a new document) is timed from the command until everything it started has
+// tools/bench_cases/viewer.py: 1,000 boxes with five notes pinned to them, made for the run (CI), and the Engine beside the
+// repository (its hidden root shown in memory). Each step (a hide, its undo and redo, Hide others and its undo, everything
+// hidden and shown again, select all, a filter switch there and back, Properties on a face of the body with the most
+// faces, a new document) is timed from the command until everything it started has
 // settled, through the watchdog (OPAD_TRACE_STALL_MS, default 50): neither the command itself nor any stall after it may
 // take longer than OPAD_BENCH_PERF_BUDGET ms (default 150) of UI-thread CPU time, nor 4x that in wall time: other builds
 // and benches share the machine, and a step waiting for a core is not the step's work, while a wait of 600 ms still
@@ -63,6 +64,10 @@ OPAD_BENCH(OPAD_BENCH_PERF, perf) {
   const auto bodies = doc->scene.all_bodies();
   const int shown = v->displayedCount();
   if (!require(bodies.size() >= 100 && !doc->browse, QString("%1 bodies, editable (100 wanted)").arg(bodies.size()))) return finish();
+  // Notes pinned to bodies ride along every step (their anchors measured once, on a worker: UI-03).
+  if (const int notes = static_cast<int>(doc->scene.annotations.size()); notes > 0)
+    require(waitUntil([v] { return !v->notesPending(); }, 60000) && v->anchorsMeasured() >= notes,
+            QString("%1 notes pinned to bodies, %2 anchors measured").arg(notes).arg(v->anchorsMeasured()));
   // One step: `fn`, then everything it started until `done` holds and no job runs. The command and the longest stall after
   // it are both within the budget.
   QStringList results;
@@ -110,6 +115,16 @@ OPAD_BENCH(OPAD_BENCH_PERF, perf) {
   filtered = false;
   step("Body filter", [&] { w.action("select.bodies")->trigger(); }, [&] { return filtered; });
   QObject::disconnect(filter);
+  // Properties on a face of the body with the most faces: opened at once, what walks the geometry measured after.
+  opad::Ref face;
+  face.body = v->benchHeaviest();
+  face.kind = opad::Ref::Kind::Face;
+  face.index = 0;
+  step("Properties on a face", [&] {
+    w.selectionMoved({face});
+    w.action("inspect.properties")->trigger();
+  }, [&] { return w.m_propsPanel->isVisible() && !w.m_propsJob; });
+  w.m_propsPanel->hide();
   step("new document", [&] { doc->newDocument(); }, [&] { return v->displayedCount() == 0; });
   if (!over.isEmpty() && round == 1 && !path.isEmpty()) {
     for (const auto& line : over) trace::log("bench: perf: round 1 over budget: " + line);

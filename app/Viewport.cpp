@@ -1755,6 +1755,7 @@ void Viewport::sync() {
   trace::Scope scope("Viewport::sync");
   QElapsedTimer clock;
   clock.start();
+  const qint64 cpu = trace::threadCpuMs();
   const opad::Scene& scene = m_doc->scene;
   bool fresh = false;
   {
@@ -1877,6 +1878,7 @@ void Viewport::sync() {
   updateClipPlanes();
   ++(partial ? m_partialSyncs : m_syncs);
   m_syncMs += clock.elapsed();
+  m_syncCpuMs += trace::threadCpuMs() - cpu;
   if (!m_displayQueue.empty()) emit meshingProgress(remainingBodies());  // first: the window may make a job to report the stream (the pump's parent)
   runPump();
 }

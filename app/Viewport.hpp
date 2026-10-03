@@ -114,7 +114,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setStreamJob(Job* job);
   int syncCount() const { return m_syncs; }  // full syncs so far (benches: one per document change, none per batch of meshes)
   int partialSyncCount() const { return m_partialSyncs; }  // syncs of the bodies under the nodes a change touched (UI-40)
-  qint64 syncMs() const { return m_syncMs; }  // the time of both
+  qint64 syncMs() const { return m_syncMs; }  // the time of both, and the UI thread's CPU time in them
+  qint64 syncCpuMs() const { return m_syncCpuMs; }
   void fitSelection();
   void fitNodes(const std::vector<std::string>& ids);
   void standardView(const QString& name);
@@ -576,7 +577,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QElapsedTimer m_streamFit;   // the last fit while streaming
   QPointer<Job> m_streamJob;
   int m_syncs = 0, m_partialSyncs = 0;
-  qint64 m_syncMs = 0;
+  qint64 m_syncMs = 0, m_syncCpuMs = 0;
   unsigned long long m_syncedRevision = 0;  // the document revision the last sync saw: the next one may take its change set
   Job* m_displayJob = nullptr;                    // the display pump's job while it runs
   QTimer m_syncTimer;
