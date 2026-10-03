@@ -113,8 +113,17 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     if (!ok) return;
     const auto bodies = m_doc->scene.all_bodies();
     const bool drawing = !bodies.empty() && std::all_of(bodies.begin(), bodies.end(), [this](const auto& id) { return m_doc->scene.node(id)->representation == "drawing2d"; });
-    // Drawing files get a useful initial view without changing the user's 2D-mode toggle.
+    // Drawing files get a useful initial view. Viewing one (DXF, DWG, SVG) also turns 2D mode on; the next file that
+    // is not a drawing turns it off again, unless the toggle was changed by hand meanwhile.
     if (drawing) { m_viewport->standardView("top"); m_viewport->setSelectionFilter(Viewport::SelFilter::Edge); }
+    QAction* flat = action("view.2d");
+    const bool viewingDrawing = drawing && m_doc->browse;
+    if (viewingDrawing != flat->isChecked() && (viewingDrawing || m_autoTwoD)) {
+      m_settingTwoD = true;
+      flat->setChecked(viewingDrawing);
+      m_settingTwoD = false;
+      m_autoTwoD = viewingDrawing;
+    }
   });
   connect(m_doc, &AppDocument::newDocumentCreated, m_viewport, &Viewport::home);
   // Viewer mode -> editable: the same shapes under content keys, so what is on screen stays (no second tessellation).
@@ -404,6 +413,7 @@ void MainWindow::buildActions() {
   flat->setObjectName("view.2d");
   flat->setCheckable(true);
   connect(flat, &QAction::toggled, this, [this](bool on) {
+    if (!m_settingTwoD) m_autoTwoD = false;  // set by hand: stays as the user left it
     m_viewport->setTwoDimensional(on);
 
     if (m_browserOverlay && action("panel.browser")->isChecked()) { m_browserOverlay->setVisible(m_doc->hasDocument); m_browserOverlay->raise(); }

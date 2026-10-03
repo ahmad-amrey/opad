@@ -176,6 +176,7 @@ class MainWindow : public QMainWindow {
   void endCheck();
   LoadShade* m_loadShade = nullptr;
   bool m_timelineHiddenByViewer = false;
+  bool m_autoTwoD = false, m_settingTwoD = false;  // 2D mode turned on for a viewed drawing (and turned off after it)
   RibbonBar* m_ribbon = nullptr;
   BrowserPanel* m_browser = nullptr;
   PropertiesPanel* m_props = nullptr;

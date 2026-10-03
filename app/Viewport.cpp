@@ -519,6 +519,8 @@ void Viewport::setGrid(bool on) {
 
 void Viewport::updateGridExtent() {
   if (!m_initialised) return;
+  m_gridSpacing=QSettings().value("view/gridSpacing",0.0).toDouble();
+  if (m_twoDimensional) { updateInfiniteGrid(true); return; }
   Bnd_Box bounds;
   for (const auto& [id,item]:m_items) { Bnd_Box b; item.ais->BoundingBox(b); bounds.Add(b); }
   for (const auto& [id,wire]:m_sketchWires) { Bnd_Box b; wire.ais->BoundingBox(b); bounds.Add(b); }
@@ -531,8 +533,35 @@ void Viewport::updateGridExtent() {
   const double custom=QSettings().value("view/gridSpacing",0.0).toDouble();
   const double step=custom>0?custom:std::pow(10.0,std::floor(std::log10(extent/10.0)));
   m_gridStep=step;
+  m_gridShownStep=0;
   m_viewer->SetRectangularGridValues(0,0,step,step,0);
   m_viewer->SetRectangularGridGraphicValues(extent,extent,0);
+}
+
+// OCCT's grid is a finite patch. In 2D mode it is laid out again around what the view shows whenever the view gets
+// near its edge or the zoom asks for another spacing (lines a tenth of the view apart, or the set spacing while that
+// gives at most 400 lines); its lines stay on world multiples of the spacing. Called from every redraw, so the test
+// whether anything changed comes first and is cheap.
+void Viewport::updateInfiniteGrid(bool force) {
+  if (!m_initialised || !m_grid) return;
+  const auto camera = m_view->Camera();
+  const gp_XYZ size = camera->ViewDimensions();
+  const double span = std::max(size.X(), size.Y());
+  if (!(span > 1e-9) || !std::isfinite(span)) return;
+  const gp_Ax3 plane = m_viewer->PrivilegedPlane();
+  const gp_Vec rel(plane.Location(), camera->Center());
+  const double cx = rel.Dot(gp_Vec(plane.XDirection())), cy = rel.Dot(gp_Vec(plane.YDirection()));
+  const double step = m_gridSpacing > 0 && span / m_gridSpacing <= 400 ? m_gridSpacing : std::pow(10.0, std::floor(std::log10(span / 10.0)));
+  const double off = std::hypot(cx - m_gridShownX, cy - m_gridShownY);
+  if (!force && step == m_gridShownStep && off + span / 2 <= m_gridShownExtent * 0.9 && m_gridShownExtent <= span * 3) return;
+  const double ox = std::round(cx / step) * step, oy = std::round(cy / step) * step, extent = std::ceil(span * 1.5 / step) * step;
+  m_gridStep = m_gridShownStep = step;
+  m_gridShownX = ox;
+  m_gridShownY = oy;
+  m_gridShownExtent = extent;
+  m_viewer->SetRectangularGridValues(ox, oy, step, step, 0);
+  m_viewer->SetRectangularGridGraphicValues(extent, extent, 0);
+  if (trace::enabled()) trace::log(QStringLiteral("2D grid: spacing %1 around (%2, %3), %4 each way").arg(step).arg(ox).arg(oy).arg(extent));
 }
 
 void Viewport::setShadows(bool on) {
@@ -948,6 +977,7 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   noteCameraMoved();
   scheduleRefinement();
   trackHoverFade();
+  if (m_twoDimensional) updateInfiniteGrid(false);
   AIS_ViewController::handleViewRedraw(ctx, view);
   if (trace::enabled() && clock.elapsed() > 50) trace::log(QStringLiteral("slow frame part: redraw %1 ms").arg(clock.elapsed()));
 }

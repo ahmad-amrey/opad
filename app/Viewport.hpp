@@ -284,6 +284,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Job* m_boxJob=nullptr;
   CursorWarpGate m_warpGate;
   void updateGridExtent();
+  // 2D mode: the grid follows the view (its plane, the visible area, a spacing for the zoom), so it never ends.
+  void updateInfiniteGrid(bool force);
   gp_Pnt drawingOrbitPoint(const QPointF* cursor=nullptr,bool* found=nullptr);
   gp_Pnt drawingPlanePoint(const QPointF& cursor,bool& found);
   gp_Pnt nearestCurvePoint(const QPointF& cursor,bool& found,double& distance);
@@ -417,6 +419,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   SelFilter m_filter = SelFilter::Body;
   bool m_gridSnap=false;
   double m_gridStep=10;
+  double m_gridSpacing=0;  // view/gridSpacing (0 = automatic), read when the grid settings change
+  double m_gridShownStep=0, m_gridShownExtent=0, m_gridShownX=0, m_gridShownY=0;  // the infinite grid as last laid out
   bool m_grid = false, m_sectionEnabled = false, m_sectionCaps = true, m_initialised = false, m_needFit = false;
   std::vector<std::string> m_fitNodesOnSync;
   bool m_flushingViewEvents = false, m_repaintAfterFlush = false;
