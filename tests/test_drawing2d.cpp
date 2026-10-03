@@ -401,6 +401,18 @@ TEST(a_plot_draws_the_visible_plotted_layers) {
   opad::commands::run("appearance", setPlot(byName(scene)["Notes"], true), &doc);
   scene = opad::resolve(doc);
   CHECK_EQ(plot::collect(doc, scene, plane).bodies, 4);
+  // The view isolated (Isolate layer, a layer walk): only what it shows, a frozen layer too, never one left out of plots.
+  auto isolated = [&](std::initializer_list<const char*> names) {
+    std::set<std::string> out;
+    for (const char* name : names)
+      for (const auto& b : byName(scene)[name].bodies) out.insert(b);
+    return out;
+  };
+  CHECK_EQ(plot::collect(doc, scene, plane, {}, isolated({"Walls"})).bodies, 1);
+  CHECK_EQ(plot::collect(doc, scene, plane, {}, isolated({"Old"})).bodies, 1);
+  opad::commands::run("appearance", setPlot(byName(scene)["Notes"], false), &doc);
+  scene = opad::resolve(doc);
+  CHECK_EQ(plot::collect(doc, scene, plane, {}, isolated({"Notes", "Walls"})).bodies, 1);
   // Paper: black for the ink and in monochrome, the layer's lineweight (0.25 mm by default), the thinnest without lineweights.
   plot::Settings settings;
   const plot::Style& walls = *std::find_if(sheet.styles.begin(), sheet.styles.end(), [](const plot::Style& s) { return !s.dashes.empty(); });

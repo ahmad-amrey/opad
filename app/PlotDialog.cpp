@@ -410,10 +410,12 @@ void PlotDialog::collect() {
   auto document = std::make_shared<opad::Document>(doc->doc);
   auto scene = std::make_shared<opad::Scene>(doc->scene);
   const opad::Frame plane = plot::plane(*document, *scene, m_services.viewport()->cameraPlane());
+  const std::vector<std::string> shown = m_services.viewport()->isolatedNodes();  // what the view shows of an isolated drawing
+  const std::set<std::string> isolated(shown.begin(), shown.end());
   auto result = std::make_shared<std::shared_ptr<const PlotPicture>>();
   m_info->setText(tr("Gathering the drawing…"));
-  m_collectJob = m_services.jobs()->async(tr("Preparing the plot"), [document, scene, plane, result](Progress p) {
-    *result = PlotPicture::build(plot::collect(*document, *scene, plane, [p] { return p.cancelled(); }));
+  m_collectJob = m_services.jobs()->async(tr("Preparing the plot"), [document, scene, plane, isolated, result](Progress p) {
+    *result = PlotPicture::build(plot::collect(*document, *scene, plane, [p] { return p.cancelled(); }, isolated));
   }, [this, result](bool ok, const QString& error) {
     m_collectJob = nullptr;
     if (!ok) return m_info->setText(error == "cancelled" ? QString() : i18n::t(error));

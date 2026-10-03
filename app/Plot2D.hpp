@@ -5,6 +5,7 @@
 // a printer, so all three are the same picture.
 #include <array>
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -46,8 +47,10 @@ struct Sheet {
 
 // The drawings' own plane when they all lie in one (the first drawing's), else `fallback` (the view's).
 opad::Frame plane(const opad::Document& doc, const opad::Scene& scene, const opad::Frame& fallback);
-// Every visible drawing body on a plotted layer, its curves sampled finely enough for paper (worker thread).
-Sheet collect(const opad::Document& doc, const opad::Scene& scene, const opad::Frame& plane, const std::function<bool()>& cancelled = {});
+// Every visible drawing body on a plotted layer, its curves sampled finely enough for paper (worker thread). `isolated`: the
+// view's isolation (Isolate layer, a layer walk): only those bodies, shown or not, as the view draws them.
+Sheet collect(const opad::Document& doc, const opad::Scene& scene, const opad::Frame& plane, const std::function<bool()>& cancelled = {},
+              const std::set<std::string>& isolated = {});
 
 struct Area {
   double x0 = 0, y0 = 0, x1 = 0, y1 = 0;

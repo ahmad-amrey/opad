@@ -57,14 +57,15 @@ void sample(const TopoDS_Edge& e, const opad::Frame& plane, double tolerance, st
 }
 }  // namespace
 
-Sheet collect(const opad::Document& doc, const opad::Scene& scene, const opad::Frame& plane, const std::function<bool()>& cancelled) {
+Sheet collect(const opad::Document& doc, const opad::Scene& scene, const opad::Frame& plane, const std::function<bool()>& cancelled,
+              const std::set<std::string>& isolated) {
   Sheet sheet;
   sheet.plane = plane;
   std::vector<std::pair<TopoDS_Shape, int>> shapes;
   Bnd_Box box;
   for (const auto& id : scene.all_bodies()) {
     const opad::Node* node = scene.node(id);
-    if (!node || node->representation != "drawing2d" || node->body_missing || !scene.effectively_visible(id)) continue;
+    if (!node || node->representation != "drawing2d" || node->body_missing || (isolated.empty() ? !scene.effectively_visible(id) : !isolated.count(id))) continue;
     const auto layer = drawing2d::layerAt(scene, id);
     if (layer && !layer->plot) continue;
     if (!node->raster.is_null()) {  // an image: its corners where the body is placed

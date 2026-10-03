@@ -20,6 +20,7 @@
 #include "BenchRegistry.hpp"
 #include "Drawing2DBench.hpp"
 #include "GuidedTool.hpp"
+#include "LayersPanel.hpp"
 #include "MainWindow.hpp"
 #include "PanelFooter.hpp"
 #include "PlotDialog.hpp"
@@ -305,6 +306,19 @@ OPAD_BENCH(OPAD_BENCH_PLOT, plot) {
               "another document's plot starts from its extents, not from the window picked in the last one");
       d->reject();
     }, [dialog] { return !dialog()->isVisible(); });
+    // Isolate layer (view-only): the plot takes what the view shows, the red line alone.
+    script->add("isolate a layer", [&w, doc, plotAction] {
+      w.findChild<LayersPanel*>()->isolate({layerNamed(doc->scene, "Red")});
+      plotAction->trigger();
+    }, ready);
+    script->add("isolated", [v, dialog, require] {
+      PlotDialog* d = dialog();
+      const plot::Sheet& sheet = d->picture()->sheet;
+      require(sheet.bodies == 1 && sheet.styles.size() == 1 && sheet.styles[0].color == drawing2d::Rgb{1, 0, 0} && !sheet.styles[0].ink && grey(d->previewImage(), true) > 20,
+              QString("with a layer isolated only it is plotted: %1 body, the red line (monochrome: black)").arg(sheet.bodies));
+      d->reject();
+      v->isolate({});
+    }, [v, dialog] { return !dialog()->isVisible() && !v->isIsolated(); });
     Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
   });
   return true;
