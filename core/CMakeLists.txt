@@ -35,6 +35,7 @@ foreach(_dir IN LISTS _opad_json_dirs)
   endif()
 endforeach()
 set(_opad_notices_occt "")
+set(_opad_notices_targets programs)
 set(_opad_notices_scope "This list covers the libraries opad and opad-cli are linked against in this build (the portable package lists every DLL it ships instead).")
 if(OPAD_STATIC)
   if(EXISTS "${OPAD_STATIC_PREFIX}/include/rapidjson/rapidjson.h")  # header-only, compiled into the static OCCT
@@ -44,6 +45,7 @@ if(OPAD_STATIC)
   set(_opad_notices_scope "The single-file programs contain the libraries below, linked in statically.")
 elseif(NOT OPAD_BUILD_APP AND NOT OPAD_BUILD_CLI)  # the Python wheel (python/pyproject.toml)
   set(_opad_notices_scope "This list covers the libraries the opad Python module is linked against. A wheel repaired with delvewheel, auditwheel or delocate also carries copies of the shared libraries among them (Open CASCADE and what it loads).")
+  set(_opad_notices_targets python)
 endif()
 string(REPLACE ";" "|" _opad_notices_files "${_opad_notices_files}")
 string(REPLACE ";" "|" _opad_notices_libdirs "${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES}")
@@ -55,7 +57,7 @@ endif()
 add_custom_command(OUTPUT ${opad_notices_stamp}
   BYPRODUCTS ${opad_notices_cpp} ${CMAKE_BINARY_DIR}/THIRD-PARTY-NOTICES.txt
   COMMAND ${CMAKE_COMMAND} "-DNOTICES_OUT=${CMAKE_BINARY_DIR}/THIRD-PARTY-NOTICES.txt" "-DNOTICES_CPP=${opad_notices_cpp}"
-          "-DNOTICES_NINJA=${_opad_notices_ninja}" "-DNOTICES_TARGETS=^bin/opad(-cli)?([.](exe|cp[^/]*|so))?$"
+          "-DNOTICES_NINJA=${_opad_notices_ninja}" "-DNOTICES_TARGETS=${_opad_notices_targets}"
           "-DNOTICES_LIBDIRS=${_opad_notices_libdirs}" "-DNOTICES_LIBS=${_opad_notices_libs}" "-DNOTICES_STATIC=${OPAD_STATIC}" "-DNOTICES_OWN=${CMAKE_BINARY_DIR}" "-DNOTICES_OCCT=${_opad_notices_occt}"
           "-DNOTICES_FILES=${_opad_notices_files}" "-DNOTICES_PACMAN=${OPAD_PACMAN}" "-DNOTICES_VERSION=${PROJECT_VERSION}"
           "-DNOTICES_SCOPE=${_opad_notices_scope}" "-DNOTICES_EXTRA=${PROJECT_SOURCE_DIR}/cmake/notices_extra.txt"

@@ -13,21 +13,26 @@ macro(check message)  # the rest of the arguments: the condition
   endif()
 endmacro()
 
-file(REMOVE_RECURSE "${WORK}")
+file(REMOVE_RECURSE "${WORK}" "${WORK}-stubs")
 file(MAKE_DIRECTORY "${WORK}")
-# A program of OPAD (read) and a test program (not read), which names a library nobody ships.
+# A program of OPAD (read), a test program and the Python module built beside them (not read), which name libraries
+# nobody ships (outside the build folder, whose files are skipped as OPAD's own).
+set(stubs "${WORK}-stubs")
 file(WRITE "${WORK}/build.ninja"
   "build bin/opad.exe: CXX_EXECUTABLE_LINKER__opad_Release core/x.obj\n"
   "  LINK_LIBRARIES = lib/libopad_core.a ${LIB}\n"
   "build bin/opad-test-core.exe: CXX_EXECUTABLE_LINKER__opad-test-core_Release core/y.obj\n"
-  "  LINK_LIBRARIES = ${WORK}/libnotshipped.a\n")
-file(WRITE "${WORK}/libnotshipped.a" "")
+  "  LINK_LIBRARIES = ${stubs}/libnotshipped.a\n"
+  "build bin/opad.cp312-mingw_x86_64_msvcrt_gnu.pyd: CXX_MODULE_LIBRARY_LINKER__opad_python_Release python/z.obj\n"
+  "  LINK_LIBRARIES = lib/libopad_core.a ${stubs}/libpythonstub.a\n")
+file(WRITE "${stubs}/libnotshipped.a" "")
+file(WRITE "${stubs}/libpythonstub.a" "")
 file(WRITE "${WORK}/extra.txt" "* Extra notice appended.\n")
 
 set(NOTICES_OUT "${WORK}/THIRD-PARTY-NOTICES.txt")
 set(NOTICES_CPP "${WORK}/notices.cpp")
 set(NOTICES_NINJA "${WORK}/build.ninja")
-set(NOTICES_TARGETS "^bin/opad(-cli)?([.](exe|cp[^/]*|so))?$")
+set(NOTICES_TARGETS programs)
 set(NOTICES_OWN "${WORK}")
 set(NOTICES_PACMAN "${PACMAN}")
 set(NOTICES_VERSION "9.8.7")
@@ -45,6 +50,8 @@ string(FIND "${text}" "* Extra notice appended." at)
 check("the extra file is appended" NOT at EQUAL -1)
 string(FIND "${text}" "libnotshipped" at)
 check("a program that is not OPAD's is not read" at EQUAL -1)
+string(FIND "${text}" "libpythonstub" at)
+check("the Python module built beside the programs is not read for them" at EQUAL -1)
 string(FIND "${text}" "libopad_core" at)
 check("OPAD's own build output is not listed" at EQUAL -1)
 string(FIND "${cpp}" "R\"opad_notices(OPAD 9.8.7" at)
@@ -80,6 +87,17 @@ else()
   string(FIND "${text}" "${lib_name}" at)
   check("without package information the library is listed by name" NOT at EQUAL -1)
 endif()
+
+# The wheel's notices read the Python module's link line alone.
+set(NOTICES_TARGETS python)
+set(NOTICES_CPP "")
+set(NOTICES_LICENSES_DIR "")
+set(NOTICES_OUT "${WORK}/python/THIRD-PARTY-NOTICES.txt")
+include("${SOURCE}/cmake/notices.cmake")
+file(READ "${NOTICES_OUT}" text)
+string(FIND "${text}" "libpythonstub" stub_at)
+string(FIND "${text}" "${lib_name}" lib_at)
+check("the wheel's notices read the module, not the programs" NOT stub_at EQUAL -1 AND lib_at EQUAL -1)
 
 # GPL guard: what MSYS2, Debian and Homebrew name the FFmpeg, codec, FreeImage and OpenVR libraries, and look-alikes.
 include("${SOURCE}/cmake/gpl_guard.cmake")

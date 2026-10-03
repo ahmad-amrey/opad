@@ -13,7 +13,8 @@
 # is /usr/share/doc/<package>/copyright); without any of them the files are listed without packages.
 #
 # In: NOTICES_OUT (the text), NOTICES_FILES (binaries or headers, '|'-separated), NOTICES_NINJA + NOTICES_TARGETS
-# (build.ninja and a regex of the outputs whose LINK_LIBRARIES to read), NOTICES_LIBDIRS (-l search path), NOTICES_LIBS
+# (build.ninja and whose LINK_LIBRARIES to read: "programs" = opad and opad-cli, "python" = the opad module of the wheel,
+# else a regex of the outputs; never both, as the module built beside the programs links Python), NOTICES_LIBDIRS (-l search path), NOTICES_LIBS
 # (more -l names), NOTICES_STATIC, NOTICES_OWN (OPAD's build folder: its files are skipped), NOTICES_OCCT ("<install dir>|<version>|
 # <source url>|<source dir>" of an OCCT built here), NOTICES_PACMAN, NOTICES_DPKG (dpkg-query; looked up on a Linux host
 # without pacman), NOTICES_LICENSES_DIR (copy the licence files there instead of inlining them), NOTICES_SCOPE (what the
@@ -49,6 +50,12 @@ function(_opad_notices)
     _opad_notice_lib("${name}" libdirs)
   endforeach()
   # Link lines: every absolute library or object, every -lname resolved over -L and NOTICES_LIBDIRS.
+  set(targets "${NOTICES_TARGETS}")
+  if(targets STREQUAL "programs")
+    set(targets "^bin/opad(-cli)?([.]exe|[.]app/Contents/MacOS/opad)?$")
+  elseif(targets STREQUAL "python")
+    set(targets "^bin/opad[.](cp[^/]*|so|pyd)$")
+  endif()
   if(NOTICES_NINJA AND EXISTS "${NOTICES_NINJA}")
     get_filename_component(root "${NOTICES_NINJA}" DIRECTORY)
     file(STRINGS "${NOTICES_NINJA}" lines REGEX "^build [^:]+:|^  LINK_LIBRARIES = ")
@@ -58,7 +65,7 @@ function(_opad_notices)
         set(current "${CMAKE_MATCH_1}")
         continue()
       endif()
-      if(NOT NOTICES_TARGETS OR NOT current MATCHES "${NOTICES_TARGETS}")
+      if(NOT targets OR NOT current MATCHES "${targets}")
         continue()
       endif()
       string(REPLACE "  LINK_LIBRARIES = " "" line "${line}")
