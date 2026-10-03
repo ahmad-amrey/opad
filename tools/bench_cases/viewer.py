@@ -41,6 +41,15 @@ def strokes(root, document):
     return path
 
 
+def colour_boxes(root, document):
+    """Three 20 x 20 x 10 mm boxes along X: grey, and two blues close to the dark and the light theme's selection colour."""
+    return document("colour-boxes", ("feature", "--kind", "box", "--inputs", '{"length":"20 mm","width":"20 mm","height":"10 mm"}'),
+                    ("feature", "--kind", "box", "--inputs", '{"x":"40 mm","length":"20 mm","width":"20 mm","height":"10 mm"}',
+                     "--color", "[0.30,0.60,1.0]"),
+                    ("feature", "--kind", "box", "--inputs", '{"x":"80 mm","length":"20 mm","width":"20 mm","height":"10 mm"}',
+                     "--color", "[0.12,0.44,0.88]"))
+
+
 def boxes(root, document, notes=0):
     """1,000 boxes in ten components of 100, an editable .opad as an import of one box entry (instances): the evaluation's
     large document without the 322 MB Engine. The box comes from opad-cli; the import op is written here, and `notes`
@@ -140,4 +149,9 @@ CASES = [
     # Order-independent transparency (UI-39): two translucent boxes overlap in the same colour whichever is displayed last,
     # in the Draft and Studio qualities, while unordered blending (the control) depends on the order. <prefix>.oit.png.
     ("transparency", "box", {"OPAD_BENCH_TRANSPARENCY": "{prefix}"}),
+    # Hover and selection roles (UI-38), in both themes: a hovered body glows white, a selected one is hued (pixels), a
+    # body in the selection's own colour is outlined, a selected edge is thicker than its hover in a halo, a face and a
+    # vertex are hued, the cube's side in a top view is drawn as selected and its hover is white; in a sketch a selected
+    # line is hued over a halo and a hovered one glows white. <prefix>.<theme>.{hover,body,outline,edge,cube,sketch}.png.
+    ("highlight", colour_boxes, {"OPAD_BENCH_HIGHLIGHT": "{prefix}"}),
 ]

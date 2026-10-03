@@ -17,7 +17,12 @@
 #include <map>
 #include <vector>
 
-inline Quantity_Color selectionTint() { return Quantity_Color(0.70,0.70,0.70,Quantity_TOC_sRGB); }
+// How SubHighlight draws a selection (UI-38, app/Highlight.hpp in OCCT terms): a tint over the faces, the edges' core
+// line over a wider halo, vertex markers over a halo marker. Widths in device pixels.
+struct GlowStyle {
+  Quantity_Color fill{0.30, 0.61, 1.0, Quantity_TOC_sRGB}, edge{0.30, 0.61, 1.0, Quantity_TOC_sRGB}, halo{0.19, 0.38, 0.62, Quantity_TOC_sRGB};
+  float fillAlpha = 0.4f, edgeWidth = 3, haloAlpha = 1, haloWidth = 7, point = 3, pointHalo = 7;
+};
 
 // Per body-store key; shared by every instance of that body. Built off the UI thread.
 struct BodyPrs {
@@ -204,15 +209,16 @@ class NavigationShape : public AIS_InteractiveObject {
 class SubHighlight : public AIS_InteractiveObject {
   DEFINE_STANDARD_RTTI_INLINE(SubHighlight, AIS_InteractiveObject)
  public:
-  explicit SubHighlight(const Quantity_Color& color) : m_color(color) {}
+  explicit SubHighlight(const GlowStyle& style) : m_style(style) {}
   std::vector<Handle(Graphic3d_ArrayOfTriangles)> m_triangles;
   std::vector<Handle(Graphic3d_ArrayOfSegments)> m_segments;
   std::vector<Handle(Graphic3d_ArrayOfPoints)> m_points;
+  const GlowStyle& style() const { return m_style; }
 
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
   void ComputeSelection(const Handle(SelectMgr_Selection)&, const Standard_Integer) override {}
 
  private:
-  Quantity_Color m_color;
+  GlowStyle m_style;
 };

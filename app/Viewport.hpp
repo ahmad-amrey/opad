@@ -143,6 +143,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // OPAD_BENCH_TRANSPARENCY (ViewportViewBench.cpp): two translucent boxes overlap in the same colour whichever is
   // displayed last, in the rasterised qualities (UI-39)
   bool benchTransparency(const QString& prefix);
+  // OPAD_BENCH_HIGHLIGHT (ViewportViewBench.cpp): hover and selection roles in the current theme (UI-38): a body, its
+  // face, edge and vertex hovered (white) and selected (hued, edges thicker in a halo), a body in the selection's own
+  // colour outlined, the view cube's side in a standard view and its hover
+  bool benchHighlight(const QString& prefix);
+  QPointF cubeCentre() const;  // the view cube's centre, widget coordinates
   // The longest displayBody so far, in wall and UI-thread CPU time (benches: no display step over 50 ms, UI-42).
   qint64 longestDisplay() const { return m_longestDisplay; }
   qint64 longestDisplayCpu() const { return m_longestDisplayCpu; }
@@ -438,6 +443,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool nearestSurface(int x, int y, gp_Pnt& point);
   gp_Pnt orbitPoint(const Graphic3d_Vec2i& cursor);
   void focusCube();
+  void updateCubeSide();  // the side the view looks straight at, drawn as selected (UI-38)
   void syncWindowSize();
   void applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look = nullptr);  // look: a ghost's edges fade with it
   void activateSelection(const Handle(AIS_Shape)& ais);
@@ -454,6 +460,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void showShade(const std::vector<std::string>& ids);
   void refreshSubHighlight();   // rebuilds m_subHl from the context's selected faces/edges/vertices (sliced)
   void applySelectionLayers();  // selected bodies live in the Topmost layer (own depth buffer): X-ray through occluders
+  QColor shownColor(const std::string& node) const;  // a displayed body's or sketch's colour as drawn; invalid if not shown
+  GlowStyle glowStyle(const QColor& body, bool wholeBody) const;  // the selection over it (Highlight.hpp, UI-38)
   void markPickedPoints();      // a filled dot on each picked point candidate
   void clearShade();
   double deflectionFor(const std::string& key);

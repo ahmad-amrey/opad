@@ -1,6 +1,7 @@
 #include "NavCube.hpp"
 
 #include <Graphic3d_ArrayOfTriangles.hxx>
+#include <Graphic3d_AspectFillArea3d.hxx>
 #include <Graphic3d_Group.hxx>
 #include <Prs3d_Drawer.hxx>
 #include <Prs3d_Presentation.hxx>
@@ -31,6 +32,26 @@ void OrbitCameraAnimation::update(const AIS_AnimationProgress& progress) {
 void NavCube::viewFitAll(const Handle(V3d_View)&, const Handle(Graphic3d_Camera)&) {
   auto animation = Handle(OrbitCameraAnimation)::DownCast(myViewAnimation);
   if (!animation.IsNull()) animation->setOrbitPoint(myStartState, m_orbitPoint);
+}
+
+void NavCube::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) {
+  AIS_ViewCube::Compute(mgr, prs, mode);
+  if (mode != 0 || m_side < 0 || !IsBoxSide(V3d_TypeOfOrientation(m_side))) return;
+  Standard_Integer nbNodes = 0, nbTris = 0;
+  partTriangles(Handle(Graphic3d_ArrayOfTriangles)(), nbNodes, nbTris, V3d_TypeOfOrientation(m_side));
+  if (nbNodes <= 0) return;
+  Handle(Graphic3d_ArrayOfTriangles) tris = new Graphic3d_ArrayOfTriangles(nbNodes, nbTris * 3, Graphic3d_ArrayFlags_None);
+  nbNodes = nbTris = 0;
+  partTriangles(tris, nbNodes, nbTris, V3d_TypeOfOrientation(m_side));
+  Handle(Graphic3d_AspectFillArea3d) fill = new Graphic3d_AspectFillArea3d();
+  fill->SetInteriorStyle(Aspect_IS_SOLID);
+  fill->SetInteriorColor(Quantity_ColorRGBA(m_sideColor, 0.45f));
+  fill->SetAlphaMode(Graphic3d_AlphaMode_Blend);
+  fill->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
+  fill->SetPolygonOffsets(Aspect_POM_Fill, -1.0f, -1.0f);  // in the face's plane: a hair towards the eye, as the hover fill
+  Handle(Graphic3d_Group) group = prs->NewGroup();
+  group->SetGroupPrimitivesAspect(fill);
+  group->AddPrimitiveArray(tris);
 }
 
 // One quad on the face whose outward normal is `axis` with `sign`, spanning lo..hi on the other two axes.

@@ -149,8 +149,8 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
     const bool point = !surface && c.shape.ShapeType() == TopAbs_VERTEX;
     const Graphic3d_ZLayerId layer = point ? Graphic3d_ZLayerId_Topmost : Graphic3d_ZLayerId_Top;
     ais->SetZLayer(layer);
-    // A quiet tint for hovering and picking these, not the bodies' white hover and grey X-ray selection: on a large
-    // sketch region those flooded the view, and the X-ray layer showed the picked profile through the preview.
+    // The bodies' roles (UI-38: white hover, hued selection) as quieter tints and without the X-ray: on a large sketch
+    // region the bodies' own flooded the view, and the X-ray layer showed the picked profile through the preview.
     auto style = [&](Prs3d_TypeOfHighlight kind, const QColor& colour, float transparency) {
       Handle(Prs3d_Drawer) d = new Prs3d_Drawer();
       d->SetLink(m_ctx->HighlightStyle(kind));
@@ -160,8 +160,8 @@ void Viewport::showCandidates(const std::vector<Candidate>& candidates) {
       d->SetZLayer(layer);
       return d;
     };
-    ais->SetDynamicHilightAttributes(style(Prs3d_TypeOfHighlight_Dynamic, m_tokens.hov, 0.72f));
-    ais->SetHilightAttributes(style(Prs3d_TypeOfHighlight_Selected, m_tokens.sel, 0.55f));
+    ais->SetDynamicHilightAttributes(style(Prs3d_TypeOfHighlight_Dynamic, m_tokens.hover, 0.65f));
+    ais->SetHilightAttributes(style(Prs3d_TypeOfHighlight_Selected, m_tokens.selected3d, 0.55f));
     m_ctx->Display(ais, surface ? AIS_Shaded : AIS_WireFrame, -1, Standard_False);
     m_ctx->Load(ais, -1);
     m_ctx->Activate(ais, 0);
@@ -189,7 +189,7 @@ void Viewport::markPickedPoints() {
   for (const auto& [id, ais] : m_candidates) {
     if (ais->Shape().IsNull() || ais->Shape().ShapeType() != TopAbs_VERTEX || !m_ctx->IsSelected(ais)) continue;
     Handle(AIS_Shape) mark = new AIS_Shape(ais->Shape());
-    mark->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL, occ(m_tokens.sel), 3.0 * displayScale()));
+    mark->Attributes()->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL, occ(m_tokens.selected3d), 3.0 * displayScale()));
     mark->SetZLayer(Graphic3d_ZLayerId_Topmost);
     m_ctx->Display(mark, AIS_WireFrame, -1, Standard_False);  // -1: never picked
     m_pointMarks.push_back(mark);

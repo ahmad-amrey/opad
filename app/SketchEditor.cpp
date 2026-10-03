@@ -1,5 +1,6 @@
 #include "CurveSamples.hpp"
 #include "opad/design/sketch_edit.hpp"
+#include "Highlight.hpp"
 #include "SketchEditor.hpp"
 #include "SketchGeometryCache.hpp"
 #include "DimensionHandle.hpp"
@@ -52,6 +53,12 @@ class SketchPrs : public AIS_InteractiveObject {
   struct Txt { opad::Vec3 p; QString s; QColor c; bool left = false; };  // left: starts at p (labels beside the cursor)
   std::vector<Seg> solid, dashed, thin;
   std::vector<Pt> points, bigPoints;
+  // A role's halo under the lines and points it marks (UI-38): the selection's (dimmed selected3d) in the sketch's own
+  // presentation, the hover's white glow in the transient one. One colour each.
+  std::vector<Seg> glow;
+  std::vector<Pt> glowPoints;
+  QColor glowColor;
+  float glowAlpha = 1;  // opaque: drawn first, under the lines
   std::vector<Txt> texts;
   std::vector<opad::Vec3> fill;
   QColor fillColor, textBack;
@@ -86,6 +93,26 @@ class SketchPrs : public AIS_InteractiveObject {
       g->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(occ(segs.front().c), type, width));
       g->AddPrimitiveArray(arr);
     };
+    auto halo = [&](const Handle(Graphic3d_Aspects)& aspect, const Handle(Graphic3d_ArrayOfPrimitives)& array) {
+      aspect->SetInteriorColor(Quantity_ColorRGBA(occ(glowColor), glowAlpha));
+      if (glowAlpha < 1) aspect->SetAlphaMode(Graphic3d_AlphaMode_Blend);
+      Handle(Graphic3d_Group) g = prs->NewGroup();
+      g->SetGroupPrimitivesAspect(aspect);
+      g->AddPrimitiveArray(array);
+    };
+    if (!glow.empty()) {
+      Handle(Graphic3d_ArrayOfSegments) arr = new Graphic3d_ArrayOfSegments(static_cast<int>(glow.size()) * 2);
+      for (const auto& s : glow) {
+        arr->AddVertex(gp_Pnt(s.a[0], s.a[1], s.a[2]));
+        arr->AddVertex(gp_Pnt(s.b[0], s.b[1], s.b[2]));
+      }
+      halo(new Graphic3d_AspectLine3d(occ(glowColor), Aspect_TOL_SOLID, 8.0 * scale), arr);
+    }
+    if (!glowPoints.empty()) {
+      Handle(Graphic3d_ArrayOfPoints) arr = new Graphic3d_ArrayOfPoints(static_cast<int>(glowPoints.size()));
+      for (const auto& p : glowPoints) arr->AddVertex(gp_Pnt(p.p[0], p.p[1], p.p[2]));
+      halo(new Graphic3d_AspectMarker3d(Aspect_TOM_BALL, occ(glowColor), 6.0 * scale), arr);
+    }
     lines(thin, Aspect_TOL_SOLID, 1.0 * scale);
     lines(dashed, Aspect_TOL_DASH, 1.5 * scale);
     lines(solid, Aspect_TOL_SOLID, 2.0 * scale);
@@ -850,6 +877,11 @@ void SketchEditor::rebuild() {
   d.points.clear();
   d.bigPoints.clear();
   d.texts.clear();
+  d.glow.clear();
+  d.glowPoints.clear();
+  const highlight::Selection role = highlight::selection(t, QColor(), false);  // the sketch's lines lie on the background
+  d.glowColor = role.halo;
+  d.glowAlpha = float(role.haloAlpha);
   d.fill = m_fill;
   d.fillColor = t.sel;
   m_glyphHits.clear();
@@ -863,7 +895,7 @@ void SketchEditor::rebuild() {
   const std::set<int> selected(m_sel.begin(), m_sel.end());
   const std::set<int> picked(m_picked.begin(), m_picked.end());
   auto entityColor = [&](const SkEntity& e) {
-    if (selected.count(e.id) || picked.count(e.id)) return t.hov;
+    if (selected.count(e.id) || picked.count(e.id)) return t.selected3d;
     if (!e.source.is_null())return t.amber;
     if (e.fixed) return t.green;
     bool free = false;
@@ -891,11 +923,14 @@ void SketchEditor::rebuild() {
     const auto pts = sampled(e);
     auto& into = e.construction ? d.dashed : d.solid;
     for (size_t i = 0; i + 1 < pts.size(); ++i) into.push_back({W(pts[i].first, pts[i].second), W(pts[i + 1].first, pts[i + 1].second), c});
+    if (selected.count(e.id) || picked.count(e.id))
+      for (size_t i = 0; i + 1 < pts.size(); ++i) d.glow.push_back({W(pts[i].first, pts[i].second), W(pts[i + 1].first, pts[i + 1].second), c});
   }
   for (const auto& p : m_sk.points) {
     const bool hot = selected.count(p.id) || picked.count(p.id);
-    const QColor c = hot ? t.hov : p.fixed ? t.green : freePts.count(p.id) ? t.sel : t.fg;
+    const QColor c = hot ? t.selected3d : p.fixed ? t.green : freePts.count(p.id) ? t.sel : t.fg;
     (hot ? d.bigPoints : d.points).push_back({W(p.x, p.y), c});
+    if (hot) d.glowPoints.push_back({W(p.x, p.y), c});
     if(m_dangling.count(p.id)) d.bigPoints.push_back({W(p.x,p.y),t.red});
   }
 
@@ -941,7 +976,7 @@ void SketchEditor::rebuild() {
       }
       if (!shownGlyphs.insert({ref, glyph}).second && !selected.count(c.id) && !m_conflicts.count(c.id)) continue;
       const int k = stacked[ref]++;
-      d.texts.push_back({W(gu + (14 + 16 * k) * px, gv + 12 * px), QString::fromLatin1(glyph), m_conflicts.count(c.id)?t.red:selected.count(c.id) ? t.hov : t.green});
+      d.texts.push_back({W(gu + (14 + 16 * k) * px, gv + 12 * px), QString::fromLatin1(glyph), m_conflicts.count(c.id)?t.red:selected.count(c.id) ? t.selected3d : t.green});
       m_glyphHits.push_back({c.id,gu+(14+16*k)*px,gv+12*px});
       if (c.type == SkConstraint::Type::Midpoint || c.type == SkConstraint::Type::Symmetric || c.type == SkConstraint::Type::Fix) break;  // one glyph is enough
     }
@@ -949,7 +984,9 @@ void SketchEditor::rebuild() {
 
   // Dimensions.
   auto dimension = [&](const SkConstraint& c, bool pending) {
-    const QColor col = selected.count(c.id) || (m_hover.kind == Hit::Dimension && m_hover.id == c.id) ? t.hov : pending ? t.hov : t.fg2;
+    // Selected: the selection colour; under the pointer: full-strength ink (white text would vanish on the light theme's
+    // label boxes); being placed: the tool's rubber-band colour.
+    const QColor col = selected.count(c.id) ? t.selected3d : m_hover.kind == Hit::Dimension && m_hover.id == c.id ? t.fg : pending ? t.hov : t.fg2;
     double lu, lv;
     labelPosition(c, lu, lv);
     auto P = [&](int id, double& x, double& y) {
@@ -1093,17 +1130,17 @@ const std::vector<std::vector<std::pair<double, double>>>& SketchEditor::textPre
 void SketchEditor::updateTransient() {
   if(m_transientPrs.IsNull() || !m_geometry || m_geometryJob)return;
   auto& d=*static_cast<SketchPrs*>(m_transientPrs.get());
-  d.solid.clear();d.thin.clear();d.dashed.clear();d.points.clear();d.bigPoints.clear();d.texts.clear();
-  const auto& t=m_viewport->tokens();d.textBack=t.bg2;d.scale=m_viewport->displayScale();d.font=theme::ui().family().toStdString();
+  d.solid.clear();d.thin.clear();d.dashed.clear();d.points.clear();d.bigPoints.clear();d.texts.clear();d.glow.clear();d.glowPoints.clear();
+  const auto& t=m_viewport->tokens();d.glowColor=highlight::hoverHalo(t);d.glowAlpha=1;d.textBack=t.bg2;d.scale=m_viewport->displayScale();d.font=theme::ui().family().toStdString();
   auto W=[&](double u,double v){return m_frame.to_world(u,v);};
   const double px=m_viewport->pixelSize();
   if(m_hover.kind==Hit::Point) {
-    if(const auto* p=m_geometry->point(m_sk,m_hover.id))d.bigPoints.push_back({W(p->x,p->y),t.hov});
+    if(const auto* p=m_geometry->point(m_sk,m_hover.id)){d.glowPoints.push_back({W(p->x,p->y),t.hover});d.bigPoints.push_back({W(p->x,p->y),t.fg});}
   } else if(m_hover.kind==Hit::Entity) {
     // Trim lights up the piece the click removes, in red; the whole curve read as "this curve goes".
     const auto piece=m_tool=="trim"&&m_haveCursor?trimPreview(m_hover.id,m_cursor.u,m_cursor.v):std::vector<std::pair<double,double>>{};
     if(!piece.empty())for(size_t i=1;i<piece.size();++i)d.solid.push_back({W(piece[i-1].first,piece[i-1].second),W(piece[i].first,piece[i].second),t.red});
-    else if(const auto* e=m_sk.entity(m_hover.id)){const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i)d.solid.push_back({W(pts[i-1].first,pts[i-1].second),W(pts[i].first,pts[i].second),t.hov.lighter(115)});}
+    else if(const auto* e=m_sk.entity(m_hover.id)){const auto pts=sampled(*e);for(size_t i=1;i<pts.size();++i){d.glow.push_back({W(pts[i-1].first,pts[i-1].second),W(pts[i].first,pts[i].second),t.hover});d.solid.push_back({W(pts[i-1].first,pts[i-1].second),W(pts[i].first,pts[i].second),t.fg});}}
   }
   if(m_boxSelecting) {
     const QColor color=m_boxU<m_dragU?t.green:t.sel;

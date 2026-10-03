@@ -3,8 +3,10 @@
 #include <TopExp_Explorer.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
+#include "Highlight.hpp"
 #include "Units.hpp"
 #include "opad/mesh.hpp"
+#include <V3d.hxx>
 #include <V3d_DirectionalLight.hxx>
 #include "DepthBias.hpp"
 #include "CurveSamples.hpp"
@@ -365,37 +367,43 @@ void Viewport::applyTokens() {
   m_view->SetBackgroundColor(occ(t.vp));
   m_view->SetBgGradientStyle(Aspect_GradientFillMethod_None);
   setSceneBackground(m_sceneBackground);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetColor(Quantity_NOC_WHITE);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetColor(Quantity_NOC_WHITE);
+  // The roles (UI-38, Highlight.hpp): the hover glows white, the selection is hued. OCCT's selected styles draw only
+  // what has no glow of ours (a body shown through the stock path, a drawing layer's lines); ours are SubHighlights.
+  const Quantity_Color hover = occ(t.hover), selected = occ(t.selected3d);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetColor(hover);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetColor(hover);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic)->SetTransparency(0.35f);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetTransparency(0.35f);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetDisplayMode(AIS_Shaded);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalDynamic)->SetFaceBoundaryDraw(false);
   m_ctx->SetToHilightSelected(true);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetColor(selectionTint());
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(selectionTint());
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetTransparency(0.82f);
-  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetTransparency(0.82f);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetColor(selected);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetColor(selected);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetTransparency(0.6f);
+  m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetTransparency(0.6f);
   // X-ray selection: the highlight is drawn in the Topmost layer, which has its own depth buffer,
   // so a selected object shows through whatever is in front of it.
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->SetZLayer(Graphic3d_ZLayerId_Topmost);
   m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_LocalSelected)->SetZLayer(Graphic3d_ZLayerId_Topmost);
+  const double edge = highlight::kHoverEdgeWidth;
   for(auto kind:{Prs3d_TypeOfHighlight_Dynamic,Prs3d_TypeOfHighlight_LocalDynamic}) {
     auto drawer=m_ctx->HighlightStyle(kind);
     drawer->SetZLayer(Graphic3d_ZLayerId_Topmost);
     drawer->SetShadingAspect(new Prs3d_ShadingAspect());
-    drawer->ShadingAspect()->SetColor(Quantity_NOC_WHITE);
+    drawer->ShadingAspect()->SetColor(hover);
     drawer->ShadingAspect()->SetTransparency(0.55f);
     drawer->ShadingAspect()->Aspect()->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);
     drawer->SetFaceBoundaryDraw(true);
-    drawer->SetFaceBoundaryAspect(new Prs3d_LineAspect(Quantity_NOC_WHITE,Aspect_TOL_SOLID,3));
-    drawer->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL,Quantity_NOC_WHITE,5));
-    drawer->PointAspect()->Aspect()->SetInteriorColor(Quantity_ColorRGBA(Quantity_NOC_WHITE,0.65f));
+    drawer->SetFaceBoundaryAspect(new Prs3d_LineAspect(hover,Aspect_TOL_SOLID,edge));
+    drawer->SetPointAspect(new Prs3d_PointAspect(Aspect_TOM_BALL,hover,5));
+    drawer->PointAspect()->Aspect()->SetInteriorColor(Quantity_ColorRGBA(hover,0.65f));
     drawer->PointAspect()->Aspect()->SetAlphaMode(Graphic3d_AlphaMode_Blend);
-    drawer->SetLineAspect(new Prs3d_LineAspect(Quantity_NOC_WHITE,Aspect_TOL_SOLID,3));
-    drawer->SetWireAspect(new Prs3d_LineAspect(Quantity_NOC_WHITE,Aspect_TOL_SOLID,3));
+    drawer->SetLineAspect(new Prs3d_LineAspect(hover,Aspect_TOL_SOLID,edge));
+    drawer->SetWireAspect(new Prs3d_LineAspect(hover,Aspect_TOL_SOLID,edge));
   }
   if (!m_subHl.IsNull()) refreshSubHighlight();  // drawn by us in the selection colour
+  for (const auto& [ais, glow] : m_bodyGlows) m_ctx->Remove(glow, Standard_False);  // made again in the new colours
+  if (!m_bodyGlows.empty()) { m_bodyGlows.clear(); applySelectionLayers(); }
   // View cube per the design: flat three-tone box with dark labels, thin X/Y/Z axes in red/green/blue along
   // the lower edges, and the hovered face/edge/corner filled with the hover accent to show where a click goes.
   m_cube->SetBoxColor(occ(t.mtop));
@@ -429,8 +437,9 @@ void Viewport::applyTokens() {
   }
   // The cube draws its hover fill with the dynamic-highlight drawer's shading aspect (not its colour), so
   // recolour the aspect OCCT set up rather than replacing the drawer.
-  m_cube->DynamicHilightAttributes()->ShadingAspect()->SetColor(occ(t.hov));
-  m_cube->DynamicHilightAttributes()->ShadingAspect()->SetTransparency(0.3f);
+  m_cube->DynamicHilightAttributes()->ShadingAspect()->SetColor(occ(t.hover));  // the hover's white glow (UI-38)
+  m_cube->DynamicHilightAttributes()->ShadingAspect()->SetTransparency(0.25f);
+  Handle(NavCube)::DownCast(m_cube)->setCurrentColor(occ(t.selected3d));  // the side looked at: the selection's role
   // Edge and corner fills lie in the face planes (NavCube); pull the fill a hair towards the eye so it wins
   // the depth test instead of fighting the face.
   m_cube->DynamicHilightAttributes()->ShadingAspect()->Aspect()->SetPolygonOffsets(Aspect_POM_Fill, -1.0f, -1.0f);
@@ -846,7 +855,14 @@ void Viewport::refreshSubHighlight() {
     if (!o.IsNull() && Handle(CircleOwner)::DownCast(o).IsNull()) st->owners.push_back(o);
   }
   if (st->owners.empty()) return;
-  st->hl = new SubHighlight(selectionTint());
+  QColor body;  // the selection's look over the first body close to its colour, else any (UI-38: an outline on a blue part)
+  for (const auto& o : st->owners)
+    if (const auto node = m_nodeOf.find(Handle(AIS_InteractiveObject)::DownCast(o->Selectable()).get()); node != m_nodeOf.end()) {
+      const QColor colour = shownColor(node->second);
+      if (!body.isValid() || highlight::closeToSelection(m_tokens, colour)) body = colour;
+      if (highlight::closeToSelection(m_tokens, body)) break;
+    }
+  st->hl = new SubHighlight(glowStyle(body, false));
   constexpr size_t kChunk = 200000;  // nodes per primitive array: turning a chunk into an array stays a small step
   auto flush = [st](bool all) {
     if (!st->tv.empty() && (all || st->tv.size() >= kChunk)) {
@@ -928,8 +944,32 @@ void Viewport::refreshSubHighlight() {
   m_subJob = m_jobs->sliced(tr("Highlighting %1 selected").arg(st->owners.size()), [step](Job&) { return step(); }, done);
 }
 
-// Retain original materials under a translucent tint, with white surface and
-// boundary glow. Share worker-built arrays and slice large selections.
+QColor Viewport::shownColor(const std::string& node) const {
+  std::array<double, 3> c;
+  if (const auto item = m_items.find(node); item != m_items.end()) c = item->second.look.color;
+  else if (const auto wire = m_sketchWires.find(node); wire != m_sketchWires.end()) c = wire->second.look.color;
+  else return {};
+  return QColor::fromRgbF(std::clamp(c[0], 0.0, 1.0), std::clamp(c[1], 0.0, 1.0), std::clamp(c[2], 0.0, 1.0));
+}
+
+GlowStyle Viewport::glowStyle(const QColor& body, bool wholeBody) const {
+  const highlight::Selection s = highlight::selection(m_tokens, body, wholeBody);
+  const float scale = float(viewScale().x());  // device pixels: the same width at 100 % and 150 %
+  GlowStyle g;
+  g.fill = occ(s.fill);
+  g.edge = occ(s.edge);
+  g.halo = occ(s.halo);
+  g.fillAlpha = float(s.fillAlpha);
+  g.haloAlpha = float(s.haloAlpha);
+  g.edgeWidth = float(s.edgeWidth) * scale;
+  g.haloWidth = float(s.haloWidth) * scale;
+  g.point = float(s.point) * scale;
+  g.pointHalo = float(s.pointHalo) * scale;
+  return g;
+}
+
+// Selected bodies over their own materials: a tint of the selection colour and its edges in a halo (UI-38), from the
+// worker-built arrays, large selections sliced.
 void Viewport::applySelectionLayers() {
   if(m_bodyGlowJob) m_bodyGlowJob->cancel();
   markPickedPoints();
@@ -967,7 +1007,7 @@ void Viewport::applySelectionLayers() {
       // on curved faces (dark blotches all over a selected loft).
       std::shared_ptr<const BodyPrs> shown=prs;
       if(const auto body=Handle(BodyShape)::DownCast(ais);!body.IsNull() && body->displayPrs() && !body->displayPrs()->triangles.IsNull()) shown=body->displayPrs();
-      glow=new SubHighlight(selectionTint());
+      glow=new SubHighlight(glowStyle(shownColor(m_nodeOf.count(ais.get())?m_nodeOf.at(ais.get()):std::string()),true));
       if(!shown->triangles.IsNull()) glow->m_triangles.push_back(shown->triangles);
       if(!shown->boundaries.IsNull()) glow->m_segments.push_back(shown->boundaries);
       if(!shown->loosePoints.IsNull()) glow->m_points.push_back(shown->loosePoints);
@@ -1009,11 +1049,11 @@ void Viewport::showShade(const std::vector<std::string>& ids) {
     const double diag = std::sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0) + (z1 - z0) * (z1 - z0));
     const double pad = std::max(1e-3, diag * 0.002);
     Handle(AIS_Shape) s = new AIS_Shape(BRepPrimAPI_MakeBox(gp_Pnt(x0 - pad, y0 - pad, z0 - pad), gp_Pnt(x1 + pad, y1 + pad, z1 + pad)).Shape());
-    s->SetColor(selectionTint());
+    s->SetColor(occ(m_tokens.selected3d));
     s->SetTransparency(0.7f);
     s->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
     s->Attributes()->SetFaceBoundaryDraw(Standard_True);
-    s->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(Quantity_NOC_WHITE, Aspect_TOL_SOLID, 2.5));
+    s->Attributes()->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.selected3d), Aspect_TOL_SOLID, 2.5));
     s->SetZLayer(Graphic3d_ZLayerId_Topmost);  // same X-ray treatment as per-object highlights
     m_ctx->Display(s, AIS_Shaded, -1, Standard_False);  // selection mode -1: never pickable
     m_shade.push_back(s);
@@ -1050,8 +1090,19 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   scheduleRefinement();
   trackHoverFade();
   if (m_twoDimensional) updateInfiniteGrid(false);
+  updateCubeSide();
   AIS_ViewController::handleViewRedraw(ctx, view);
   if (trace::enabled() && clock.elapsed() > 50) trace::log(QStringLiteral("slow frame part: redraw %1 ms").arg(clock.elapsed()));
+}
+
+// The cube side the view looks straight at, drawn as selected (UI-38): only when it changes, a recompute of the cube alone.
+void Viewport::updateCubeSide() {
+  if (m_twoDimensional) return;
+  const gp_Dir toEye = m_view->Camera()->Direction().Reversed();
+  int side = -1;
+  for (const V3d_TypeOfOrientation o : {V3d_Xpos, V3d_Ypos, V3d_Zpos, V3d_Xneg, V3d_Yneg, V3d_Zneg})
+    if (V3d::GetProjAxis(o).IsEqual(toEye, 1e-4)) side = o;
+  if (Handle(NavCube)::DownCast(m_cube)->setCurrentSide(side)) m_ctx->RecomputePrsOnly(m_cube, Standard_False);
 }
 
 void Viewport::OnSelectionChanged(const Handle(AIS_InteractiveContext)&, const Handle(V3d_View)&) {
@@ -2002,12 +2053,12 @@ void Viewport::displayBody(const std::string& id) {
   applyStyle(ais, &look);
   if(n->representation=="drawing2d" && n->raster.is_null()) {
     Handle(Prs3d_Drawer) selected=new Prs3d_Drawer();selected->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected));
-    selected->SetDisplayMode(AIS_WireFrame);selected->SetColor(selectionTint());
+    selected->SetDisplayMode(AIS_WireFrame);selected->SetColor(occ(m_tokens.selected3d));
     selected->SetLineAspect(new Prs3d_LineAspect(selected->Color(),Aspect_TOL_SOLID,3));
     selected->SetWireAspect(new Prs3d_LineAspect(selected->Color(),Aspect_TOL_SOLID,3));
     ais->SetHilightAttributes(selected);
     Handle(Prs3d_Drawer) hover=new Prs3d_Drawer();hover->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Dynamic));
-    hover->SetDisplayMode(AIS_WireFrame);hover->SetColor(Quantity_NOC_WHITE);ais->SetDynamicHilightAttributes(hover);
+    hover->SetDisplayMode(AIS_WireFrame);hover->SetColor(occ(m_tokens.hover));ais->SetDynamicHilightAttributes(hover);
   }
   m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, -1, Standard_False);  // selection activated below, once
   if (!look.visible) m_ctx->Erase(ais, Standard_False);
@@ -2208,6 +2259,8 @@ void Viewport::resizeEvent(QResizeEvent*) {
   m_view->Invalidate();
   requestRedraw();
 }
+
+QPointF Viewport::cubeCentre() const { return QPointF(width() - kCubeOffsetX, kCubeOffsetY); }
 
 // Same test as a press below: the hover is refreshed near the cube only, so a click on the model costs no extra pick.
 bool Viewport::cubeAt(const QPointF& point) {

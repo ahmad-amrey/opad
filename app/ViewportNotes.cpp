@@ -365,7 +365,7 @@ bool Viewport::showAnnotationTarget(const opad::Ref& target, opad::Vec3* centre)
   if (item == m_items.end() || !m_ctx->IsDisplayed(item->second.ais)) return false;
   const Handle(AIS_Shape)& ais = item->second.ais;
   const bool rigid = item->second.world.is_identity() || opad::mat_is_rigid(item->second.world);  // see displayBody
-  Handle(TargetHighlight) mark = new TargetHighlight(m_tokens.sel);
+  Handle(TargetHighlight) mark = new TargetHighlight(m_tokens.selected3d);
   Bnd_Box box;  // in the body's own frame, like the arrays
   try {
     if (target.kind == opad::Ref::Kind::Body) {

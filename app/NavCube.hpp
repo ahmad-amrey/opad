@@ -8,6 +8,8 @@
 #include <AIS_ViewCube.hxx>
 #include <AIS_AnimationCamera.hxx>
 
+#include <utility>
+
 // Keep the picked surface fixed throughout cube orientation animation, including
 // when it projects away from the viewport center. Other camera animations are unchanged.
 class OrbitCameraAnimation : public AIS_AnimationCamera {
@@ -28,6 +30,12 @@ class NavCube : public AIS_ViewCube {
   NavCube();
   void setOrbitPoint(const gp_Pnt& point) { m_orbitPoint = point; }
   const gp_Pnt& orbitPoint() const { return m_orbitPoint; }
+  // The side the view looks straight at (a V3d side orientation, -1: none) is drawn in the selection's role (UI-38), so a
+  // standard view is told from one a little off it. True when that changed: recompute the presentation.
+  bool setCurrentSide(int side) { return std::exchange(m_side, side) != side; }
+  int currentSide() const { return m_side; }
+  void setCurrentColor(const Quantity_Color& color) { m_sideColor = color; }
+  void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
 
  protected:
   // A cube click changes orientation about the visible focus, preserving the user's zoom.
@@ -38,6 +46,8 @@ class NavCube : public AIS_ViewCube {
 
  private:
   gp_Pnt m_orbitPoint;
+  int m_side = -1;
+  Quantity_Color m_sideColor{0.30, 0.61, 1.0, Quantity_TOC_sRGB};
   // Sides from the base geometry; edges and corners as bands/squares in the face planes. Picking gives them
   // priority corner > edge > side, since coplanar entities tie on depth.
   void partTriangles(const Handle(Graphic3d_ArrayOfTriangles)& tris, Standard_Integer& nbNodes, Standard_Integer& nbTris, V3d_TypeOfOrientation dir) const;
