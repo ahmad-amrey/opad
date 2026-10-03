@@ -886,6 +886,7 @@ void SmartSelect::doubleClicked(bool alt, const QPoint& at) {
   if (picks.size() != 1) return;
   const opad::Ref r = picks.front();
   if (r.kind == opad::Ref::Kind::Edge) return chain(r, alt, at);
+  if (r.kind == opad::Ref::Kind::Body && at.x() >= 0) return faceUnder(alt, at);
   if (r.kind != opad::Ref::Kind::Face) return;
   // Again on a face of the feature chosen before: edit that feature. Before the double-click: what was selected before its
   // first click, whether that click had reached the selection when the second came or not.
@@ -900,6 +901,26 @@ void SmartSelect::doubleClicked(bool alt, const QPoint& at) {
   }
   if (!smart::sameRefs(m_current, picks)) m_current = picks;
   alt ? tangentFaces() : grow();
+}
+
+// The Bodies filter picks bodies: the view switches to faces, picks the face under the pointer, and goes on from it as
+// from a double-click on that face (its feature or detail, Alt its tangent chain).
+void SmartSelect::faceUnder(bool alt, const QPoint& at) {
+  Viewport* v = services().viewport();
+  const unsigned token = ++m_switchToken;
+  m_switching = true;
+  connect(v, &Viewport::filterApplied, this, [this, v, alt, at, token] {
+    if (token != m_switchToken) return;
+    m_switching = false;
+    opad::Ref face;
+    if (!idle() || !v->referenceAt(QPointF(at), face) || face.kind != opad::Ref::Kind::Face) return;
+    trace::log("smart select: double-click on a body picked " + QString::fromStdString(face.str()));
+    m_expect = {face};
+    services().select({face});
+    m_current = {face};
+    alt ? tangentFaces() : grow();
+  }, Qt::SingleShotConnection);
+  v->setSelectionFilter(Viewport::SelFilter::Face);
 }
 
 void SmartSelect::tangentFaces() {

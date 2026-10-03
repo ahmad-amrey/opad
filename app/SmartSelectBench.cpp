@@ -27,7 +27,7 @@
 // the boss's actions), again the body; Ctrl+Down twice climbs back to the two faces. Shift+Space lists the candidates; its
 // Select what depends on the boss selects Round's faces. Double-clicks are mouse events through the view's own handlers,
 // OCCT picking under the pointer (Viewport::benchFlush stands in for the frames a hidden window never paints): on the
-// boss's top one selects the boss, another one opens it for editing. An edge between two faces seen from the view,
+// boss's top one selects the boss (first in the Bodies filter, which turns to faces), another one opens it for editing. An edge between two faces seen from the view,
 // double-clicked 2 px off it: the loop of the face on the pointer's side (the top's, then the front's); Alt on a straight
 // edge says nothing continues it, on the boss's top selects its tangent chain. The chip's
 // Delete on the boss: the question names Round, which uses it, with the result previewed; deleting both leaves the base
@@ -45,6 +45,7 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
     opad::Ref top;    // the boss's top face
     opad::Ref front;  // the base's front top edge
     bool usersSeen = false, frontSide = false, tangentAsked = false, tangent = false, quietAsked = false, dropped = false, regrown = false, held = false;
+    bool bodyAsked = false, bodyDone = false;
     size_t ops = 0;
     int faces = 0;
     QElapsedTimer clock;
@@ -149,11 +150,20 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
           state->ops = w.m_doc->doc.ops.size();
           w.setWorkspace("design");
           w.m_viewport->standardView("iso");
-          w.action("select.faces")->trigger();
           break;
         }
         case 2:
-          if (w.m_viewport->selectionFilter() != Viewport::SelFilter::Face) return;
+          if (!state->bodyDone) {  // the Bodies filter, the app's own at first: a double-click on the boss's top
+            if (!std::exchange(state->bodyAsked, true)) {
+              require(w.m_viewport->selectionFilter() == Viewport::SelFilter::Body, "the Bodies filter at first");
+              doubleClick(topPoint());
+              return;
+            }
+            if (!waitFor(selected(state->bossFaces) && w.m_viewport->selectionFilter() == Viewport::SelFilter::Face, "a double-click on the boss in the Bodies filter selects its faces")) return;
+            pass("a double-click on the boss's top in the Bodies filter switched the view to faces and selected the boss's five faces");
+            state->bodyDone = true;
+            return;
+          }
           pick(state->two);
           break;
         case 3: {

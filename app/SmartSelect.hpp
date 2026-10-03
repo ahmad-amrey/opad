@@ -146,6 +146,7 @@ class SmartSelect : public AreaController {
   void commitDelete(const smart::Candidate& c, std::vector<std::string> ops, std::shared_ptr<opad::design::Plan> planned = {});
   void deletePicks();
   void tangentFaces();  // Alt+double-click on a face: the faces joined to it by smooth edges
+  void faceUnder(bool alt, const QPoint& at);  // a double-click on a body (Bodies filter): the face at `at`, then as on it
   int owner() const;    // the candidate of the feature or import that made every pick, -1 if none
   void editOwner();     // the context menu's Edit (UI-100): that feature, once the answer is there
   void findOwner();     // its Find in timeline
