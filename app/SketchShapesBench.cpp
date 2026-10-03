@@ -20,14 +20,16 @@ using CT = SkConstraint::Type;
 
 // OPAD_BENCH_SKETCH_SHAPES=<prefix> (TODO 11 UI-17): shapes drawn by the keyboard alone (key events where the keyboard
 // is, the pointer never over the view), checked exactly, the typed sizes kept as driving dimensions. L, 0 Tab 0 Enter
-// starts on the origin; 50 Tab 30 Enter is a line 50 long at 30 degrees, the rubber band held and read out (50 mm, 30°)
-// before Enter; 40 Tab 120 is perpendicular to it; 20 Tab 45 from the last line (the angle box's switch) is held at 45
-// degrees to it. R, 10,10 Enter, 40 Tab 25 Enter: a 40 x 25 rectangle, its sides dimensioned; a negative width goes left;
-// a zero size is refused. U, the slot: two centres 30 apart, then its width 8. C: diameter 20, then (the box's switch) a
-// radius 5. N, a pentagon by its diameter, angle and sides; a three-point arc by its chord and radius; a centre arc that
-// sweeps 270 degrees; with the panel's switch off nothing typed becomes a dimension; a tangent arc by its radius and
-// sweep; the fillet's radius typed before its corner is picked, its arc shown on the hovered corner; the text's height and
-// an image's calibration distance.
+// starts on the origin; 50 Tab 30 Enter is a line 50 long at 30 degrees (held against an X axis line), its boxes sitting
+// on the rubber band where they measure, never on each other or on the line; 40 Tab 120 is perpendicular to it; 20 Tab 45
+// from the last line (the angle box's switch) is held at 45 degrees to it; @-10,5 by its signed ΔX and ΔY. R, 10,10
+// Enter, 40 Tab 25 Enter: a 40 x 25 rectangle, its sides dimensioned; a negative width goes left; a zero size is refused.
+// U, the slot: two centres 30 apart, then its width 8. C: diameter 20, then (the box's switch) a radius 5. N, a pentagon
+// by its diameter, angle and sides, then circumscribed by the box's switch; a three-point arc by its chord and radius; a
+// centre arc that sweeps 270 degrees, held as its length so an edited radius keeps the sweep; an arc slot; with the
+// panel's switch off nothing typed becomes a dimension; tangent arcs by radius and sweep, one past half a turn; the
+// fillet's radius typed before its corner is picked, its arc shown on the hovered corner; a chamfer by 4<30; three copies
+// by Shift+C 15<90 Tab 3; a text typed and placed by keys; an image's calibration distance.
 void SketchEditor::benchShapes() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_SHAPES");
   QWidget* window = m_viewport->window();
