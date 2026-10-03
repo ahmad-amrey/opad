@@ -122,7 +122,7 @@ void AppDocument::startOpen(const QString& path) {
       }
       emit aboutToReplace();
       ++generation;
-      m_rollback.clear();
+      dropRollback();
       doc = std::move(*result);
       browse = viewer;
       viewing = viewer ? QFileInfo(path).absoluteFilePath() : QString();
@@ -219,7 +219,7 @@ void AppDocument::newDocument() {
   if (loading || designBusy) return;
   emit aboutToReplace();
   ++generation;
-  m_rollback.clear();
+  dropRollback();
   doc = opad::Document::create();
   browse = false;
   hasDocument = true;
@@ -234,7 +234,7 @@ void AppDocument::closeDocument() {
   if (loading || designBusy) return;
   emit aboutToReplace();
   ++generation;
-  m_rollback.clear();
+  dropRollback();
   doc = opad::Document();
   browse = false;
   hasDocument = false;
@@ -260,7 +260,7 @@ void AppDocument::open(const QString& path) {
   }
   emit aboutToReplace();
   ++generation;
-  m_rollback.clear();
+  dropRollback();
   doc = std::move(next);
   browse = false;
   hasDocument = true;
@@ -334,6 +334,12 @@ opad::json AppDocument::commitPlan(opad::design::Plan&& plan, const QString& lab
   return report;
 }
 
+void AppDocument::dropRollback() {  // another document: no roll-back of the user's or an editor's
+  m_rollback.clear();
+  m_userRollback = false;
+  m_resume.clear();
+}
+
 void AppDocument::setRollback(const std::string& opId) {
   if (opId.empty() && rolledBack()) return;  // the user's roll-back: no editor's to end
   if (!opId.empty() && rolledBack()) m_resume = m_rollback;  // an editor takes it over: back there when it is done
@@ -367,7 +373,7 @@ void AppDocument::refresh() {
 
 void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved) {
   if(loading || designBusy)throw opad::Error("Document is busy; try recovery again shortly.");
-  emit aboutToReplace();++generation;++revision;m_rollback.clear();
+  emit aboutToReplace();++generation;++revision;m_rollback.clear();m_userRollback=false;m_resume.clear();
   doc=std::move(document);doc.path.clear();doc.dirty=true;scene=std::move(resolved);
   browse=false;hasDocument=true;clearHistory();m_savedIds.clear();m_savedBodies=0;
   emit changed();emit pathChanged();
@@ -381,7 +387,7 @@ void AppDocument::commitSnapshot(opad::Document& document,opad::Scene& resolved,
     throw opad::Error("stale_revision: the document changed while the agent was working");
   const auto before=doc.ops.size();
   document.path=doc.path; // Save As may have changed the path without changing geometry.
-  std::swap(doc,document);std::swap(scene,resolved);m_rollback.clear();
+  std::swap(doc,document);std::swap(scene,resolved);m_rollback.clear();m_userRollback=false;m_resume.clear();
   recordStep(label,before);updateDirty();++revision;emit changed();emit undoChanged();
 }
 

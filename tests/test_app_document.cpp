@@ -117,6 +117,12 @@ int main(int argc, char** argv) {
       doc.commitPlan(opad::design::plan_ops(doc.doc, {opad::design::make_feature_op("box", "D", {{"length", "4 mm"}, {"width", "4 mm"}, {"height", "4 mm"}})}), "box");
       doc.setRollback({});  // the editor committed a new step: it ends at the end
       CHECK(!doc.rolledBack() && doc.rollback().empty() && doc.scene.feature(c));
+      doc.rollBackTo(c);
+      doc.setRollback(a);
+      doc.newDocument();  // another document: neither roll-back is kept
+      CHECK(!doc.rolledBack() && doc.rollback().empty());
+      doc.setRollback({});
+      CHECK(!doc.rolledBack() && doc.rollback().empty());
     }
     int resets=0;
     QObject::connect(&doc,&AppDocument::aboutToReplace,&doc,[&]{++resets;});

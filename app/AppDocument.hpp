@@ -135,6 +135,7 @@ class AppDocument : public QObject {
   bool m_userRollback = false;  // m_rollback is the user's (rollBackTo), not an editor's
   std::string m_resume;         // the user's roll-back an editor took over (setRollback): back to it when the editor ends
   bool changesBefore(const std::string& point, size_t from) const;
+  void dropRollback();
   std::vector<Step> m_undo, m_redo;
   int m_undoLimit = 50;
   std::vector<std::string> m_savedIds;
