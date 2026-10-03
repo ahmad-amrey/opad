@@ -90,6 +90,8 @@ void SketchEditor::benchLarge(const QString& output,opad::json metrics) {
       sketchPress(x0-margin,y0-margin,Qt::NoModifier);sketchMove(x1+margin,y1+margin,Qt::NoModifier,true);sketchRelease(x1+margin,y1+margin,Qt::NoModifier);
       run->metrics["select_all_box_ms"]=time.nsecsElapsed()/1e6;
       if(m_sel.size()<m_sk.entities.size())throw opad::Error("window selection missed sketch entities");
+      // The prompt and the panel count what the box selected (UI-25): by index, not a scan per item (it took 5.7 s).
+      if(run->metrics["select_all_box_ms"].get<double>()>2000)throw opad::Error("selecting everything took "+run->metrics["select_all_box_ms"].dump()+" ms");
     } else if(step==39) {  // UI-27: the line tool from a point, so every snap kind is looked for on each move
       m_sel.clear();setTool("line");
       const auto& p=m_sk.points[m_sk.points.size()/2];sketchPress(p.x,p.y,Qt::NoModifier);

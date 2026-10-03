@@ -32,7 +32,7 @@ TEST(centres_curves_at_a_point_and_ids) {
   CHECK_EQ(cache.curvesAt(a).size(),2u);  // the arc about it and the line from it
   CHECK(sk.entities[cache.curvesAt(e)[0]].id==line && sk.entities[cache.curvesAt(e)[1]].id==other);
   CHECK(cache.curvesAt(12345).empty());
-  CHECK(cache.entity(sk,arc)==sk.entity(arc) && cache.entity(sk,circle)->r==5 && cache.point(sk,b)==sk.point(b));
+  CHECK(cache.entity(sk,arc)==sk.entity(arc) && cache.entity(sk,circle)->r==5 && cache.point(sk,b)==sk.point(b) && cache.entity(sk,b)==nullptr);
   sk.remove(line);  // stale until updated: ids are still found (by the sketch), indices are checked
   CHECK(cache.entity(sk,other)==sk.entity(other) && cache.entity(sk,line)==nullptr);
   cache.update(sk,.01);

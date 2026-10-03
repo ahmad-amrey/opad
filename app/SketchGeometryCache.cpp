@@ -21,6 +21,8 @@ const SkPoint* SketchGeometryCache::point(const Sketch& sk,int id) const {
 const SkEntity* SketchGeometryCache::entity(const Sketch& sk,int id) const {
   auto found=m_entityIndex.find(id);
   if(found!=m_entityIndex.end()&&found->second<sk.entities.size()&&sk.entities[found->second].id==id)return &sk.entities[found->second];
+  // A point's id is no entity's (one id space): no scan for it (counting a box selection of 60,000 points took seconds).
+  if(auto point=m_pointIndex.find(id);point!=m_pointIndex.end()&&point->second<sk.points.size()&&sk.points[point->second].id==id)return nullptr;
   return sk.entity(id);
 }
 const std::vector<size_t>& SketchGeometryCache::curvesAt(int point) const {

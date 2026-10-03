@@ -62,7 +62,7 @@ QList<ToolStep> SketchEditor::toolSteps() const {
   auto names = [&](const std::vector<int>& ids) { QStringList n; for (int id : ids) n << name(id); return n.join(", "); };
   auto selection = [&] {
     int curves = 0;
-    for (int id : m_sel) curves += m_sk.entity(id) != nullptr;
+    for (int id : m_sel) curves += (m_geometry ? m_geometry->entity(m_sk, id) : m_sk.entity(id)) != nullptr;  // indexed: a box may select 30,000
     if (curves != int(m_sel.size())) return tr("%1 selected").arg(m_sel.size());
     return curves == 1 ? tr("1 curve") : tr("%1 curves").arg(curves);
   };
