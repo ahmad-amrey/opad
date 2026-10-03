@@ -206,6 +206,40 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                     }
                     require(doc->activeComponent() == s->lid && w.m_browser->selectedIds().empty(), "the radio's click activates the Lid and selects nothing");
                   }});
+  // Alt+click on a component row activates it too, the document row the root, and selects nothing; the breadcrumb leads
+  // to the active component and marks it where a selection's path passes it.
+  list.push_back({{}, [=, &w](bool) {
+                    BrowserTree* tree = w.m_browser->tree();
+                    auto altClick = [tree](const std::string& id) {
+                      for (QTreeWidgetItemIterator it(tree); *it; ++it)
+                        if ((*it)->data(0, browser::kIdRole).toString().toStdString() == id && ((*it)->data(0, Qt::UserRole).toString() == "document") == id.empty()) {
+                          const QRect rect = tree->visualRect(tree->indexFromItem(*it));
+                          const QPoint at(rect.left() + browser::kNameX + 8, rect.center().y());
+                          for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
+                            QMouseEvent e(type, QPointF(at), QPointF(tree->viewport()->mapToGlobal(at)), Qt::LeftButton, type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::AltModifier);
+                            QCoreApplication::sendEvent(tree->viewport(), &e);
+                          }
+                          return true;
+                        }
+                      return false;
+                    };
+                    auto crumb = [&w] {
+                      for (QLabel* label : w.m_browser->findChildren<QLabel*>())
+                        if (label->textFormat() == Qt::RichText) return label->text();
+                      return QString();
+                    };
+                    const QString idle = crumb();
+                    require(idle.contains(BrowserPanel::tr("Active:")) && idle.contains("Lid"), "the breadcrumb with nothing selected: " + idle);
+                    w.m_browser->selectIds({s->boxB});
+                    const QString through = crumb();
+                    w.m_browser->selectIds({});
+                    v->clearSelection();
+                    require(through.contains(QString("Lid<span")) && through.contains(BrowserPanel::tr("(active)")) && !through.contains(BrowserPanel::tr("Active:")), "a body of the Lid selected, its path marks the Lid: " + through);
+                    const bool housing = altClick(s->housing) && doc->activeComponent() == s->housing && tree->selectedItems().isEmpty();
+                    const bool root = altClick({}) && doc->activeComponent().empty();
+                    require(housing && root && altClick(s->lid) && doc->activeComponent() == s->lid && tree->selectedItems().isEmpty(),
+                            "Alt+click activates the Housing, the document row the root, the Lid again; nothing selected");
+                  }});
   // Ghosts: drawn, not picked, the rest of the window following.
   list.push_back({idle, [=, &w](bool) {
                     const double alpha = v->tokens().ghost.alphaF();
@@ -230,8 +264,9 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                       else if (id == s->housing) housingRow = d;
                       else if ((*it)->data(0, Qt::UserRole).toString() == "document") documentRow = d;
                     }
-                    require(lidRow.lead.icon == "radioOn" && lidRow.bold && !lidRow.dim && housingRow.lead.icon == "radioOff" && housingRow.dim && documentRow.lead.icon == "radioOff" && !documentRow.dim,
-                            "browser: the Lid's radio on and its name bold, the Housing dimmed, the document's radio off");
+                    const bool pill = lidRow.badges.size() == 1 && lidRow.badges.front().color == &Tokens::sel && housingRow.badges.isEmpty();
+                    require(lidRow.lead.icon == "radioOn" && lidRow.bold && pill && !lidRow.dim && housingRow.lead.icon == "radioOff" && housingRow.dim && documentRow.lead.icon == "radioOff" && !documentRow.dim,
+                            "browser: the Lid's radio on, its name bold with an 'active' pill, the Housing dimmed, the document's radio off");
                     const auto& dimmed = w.m_timeline->dimmedOps();
                     const opad::Node* na = doc->scene.node(s->boxA);
                     const opad::Node* nb = doc->scene.node(s->boxB);

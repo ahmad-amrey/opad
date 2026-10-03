@@ -5,10 +5,13 @@
  "Activate root": "تنشيط الجذر",
  "Active: new sketches, features, bodies and imports go here": "نشط: تذهب إلى هنا الرسوم التخطيطية والميزات والأجسام والملفات المستوردة الجديدة",
  "Activate the root (the whole model)": "تنشيط الجذر (النموذج كله)",
- "Activate this component": "تنشيط هذا المكوّن",
+ "Activate this component (or Alt+click its row)": "تنشيط هذا المكوّن (أو Alt+نقرة على صفّه)",
  "Active: %1  ×": "النشط: %1  ×",
  "%1 is the active component: new sketches, features, bodies and imports go into it, the rest of the model is ghosted. Click to activate the root.": "‏%1 هو المكوّن النشط: تذهب إليه الرسوم التخطيطية والميزات والأجسام والملفات المستوردة الجديدة، ويظهر باقي النموذج شفافًا باهتًا. انقر لتنشيط الجذر.",
  "does not touch the active component": "لا تمسّ المكوّن النشط",
  "Only a component can be activated.": "لا يمكن تنشيط إلا مكوّن.",
- "Select a component (or a body in it) to activate.": "حدّد مكوّنًا (أو جسمًا فيه) لتنشيطه."
+ "Select a component (or a body in it) to activate.": "حدّد مكوّنًا (أو جسمًا فيه) لتنشيطه.",
+ "active": "نشط",
+ "Active:": "النشط:",
+ "(active)": "(نشط)"
 }

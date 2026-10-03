@@ -257,6 +257,7 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     try { m_doc->run("reparent", op); } catch (const std::exception& e) { emit m_doc->message(QString::fromUtf8(e.what())); }
   });
   connect(doc, &AppDocument::changed, this, &BrowserPanel::rebuild);
+  connect(doc, &AppDocument::activeComponentChanged, this, &BrowserPanel::updateBreadcrumb);
   rebuild();
 }
 
@@ -507,18 +508,33 @@ void BrowserPanel::startRename(const std::string& id) {
 void BrowserPanel::updateBreadcrumb() {
   const Tokens& t = theme::current();
   auto ids = selectedIds();
+  // The active component (UI-33) is marked where a selection's path passes it; with nothing selected the path leads to it.
+  const std::string& active = m_doc->activeComponent();
+  const bool activated = !active.empty() && m_doc->node(active);
+  auto crumbs = [&](const std::vector<std::string>& path, bool selected) {  // selected: the last one is, not a link
+    QStringList parts;
+    for (size_t i = 0; i < path.size(); ++i) {
+      const bool last = selected && i + 1 == path.size();
+      QString name = m_doc->nodeName(path[i]).toHtmlEscaped();
+      if (path[i] == active && !ids.empty()) name += QString("<span style='color:%1'> %2</span>").arg(t.sel.name(), tr("(active)"));
+      if (last) parts << QString("<span style='color:%1'>%2</span>").arg(t.fg.name(), name);
+      else parts << QString("<a href='%1' style='color:%2;text-decoration:none'>%3</a>").arg(QString::fromStdString(path[i]).toHtmlEscaped(), t.fg2.name(), name);
+    }
+    return parts;
+  };
   if (ids.empty()) {
-    m_breadcrumb->setText(m_doc->hasDocument ? QString("<span style='color:%1'>%2</span>").arg(t.fg2.name(), tr("Document")) : QString());
+    const QString arrow = QString("<span style='color:%1'> › </span>").arg(t.fg3.name());
+    m_breadcrumb->setText(!m_doc->hasDocument ? QString()
+                          : activated ? QString("<span style='color:%1'>%2 </span>").arg(t.fg2.name(), tr("Active:")) + crumbs(m_doc->scene.path_to(active), false).join(arrow)
+                                      : QString("<span style='color:%1'>%2</span>").arg(t.fg2.name(), tr("Document")));
     return;
   }
-  QStringList parts;
-  auto path = m_doc->scene.path_to(ids.front());
-  for (size_t i = 0; i < path.size(); ++i) {
-    bool last = i + 1 == path.size();
-    const QString name = m_doc->nodeName(path[i]).toHtmlEscaped();
-    if (last) parts << QString("<span style='color:%1'>%2</span>").arg(t.fg.name(), name);
-    else parts << QString("<a href='%1' style='color:%2;text-decoration:none'>%3</a>").arg(QString::fromStdString(path[i]).toHtmlEscaped(), t.fg2.name(), name);
-  }
+  const opad::SketchItem* sketch = m_doc->scene.sketch(ids.front());
+  const bool inComponent = sketch && !sketch->component.empty() && m_doc->node(sketch->component);
+  auto path = m_doc->scene.path_to(inComponent ? sketch->component : ids.front());
+  QStringList parts = crumbs(path, !inComponent);
+  if (sketch)  // a sketch: its component's path (a link each), then the sketch
+    parts << QString("<span style='color:%1'>%2</span>").arg(t.fg.name(), QString::fromStdString(sketch->name).toHtmlEscaped());
   QTreeWidgetItem* it = path.empty() ? itemFor(ids.front()) : nullptr;
   if (it && it->data(0, Qt::UserRole).toString() == "provided")  // a provided folder's row: the folder, then the rows above it
     for (bool last = true; it && it->data(0, Qt::UserRole).toString() != "document"; it = it->parent(), last = false) {

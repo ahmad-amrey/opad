@@ -1,8 +1,9 @@
 // Activate component (UI-33): one component is active, the document root by default (AppDocument::activeComponent,
 // session state). The view ghosts everything outside it (the Activation layer of looks), pickable only as references
 // (Viewport::ghostsPickable: guided tools, feature inputs, sketch Project, a sketch plane being chosen); the browser has
-// a radio on the document and component rows and dims what is outside; the chips row names it with the way back to the
-// root; the timeline dims the ops that do not touch it. New sketches, features, bodies, imports and components go into
+// a radio on the document and component rows (Alt+click on the row does the same), an 'active' pill on the active one,
+// dims what is outside, and its breadcrumb leads to it; the chips row names it with the way back to the root; the
+// timeline dims the ops that do not touch it. New sketches, features, bodies, imports and components go into
 // it (DesignController, AppDocument::startImport, design.newcomponent) and F frames it (view.fit). The one activated last
 // in a document is remembered (setting view/active/<uuid>) and active again when the document is opened again.
 #include <QElapsedTimer>
@@ -10,6 +11,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMouseEvent>
 #include <QSettings>
 
 #include <algorithm>
@@ -91,6 +93,7 @@ class Activation : public AreaController {
     m_chip->hide();
     services().chips()->addChip(m_chip);
     services().browser()->addDecorator([this](const browser::Row& row, browser::Decoration& d) { decorate(row, d); });
+    services().browser()->tree()->viewport()->installEventFilter(this);  // Alt+click on a component row activates it
     connect(doc, &AppDocument::activeComponentChanged, this, &Activation::refresh);
     // Choosing a sketch plane takes a face of another component too (a reference, as a guided tool's picks are).
     DesignController* design = services().design();
@@ -123,6 +126,16 @@ class Activation : public AreaController {
     if (object == m_chip && event->type() == QEvent::MouseButtonRelease) {  // the chip's way back to the root
       setActive({});
       return true;
+    }
+    BrowserTree* tree = services().browser()->tree();
+    if (object == tree->viewport() && (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick)) {
+      const auto* e = static_cast<QMouseEvent*>(event);
+      const QModelIndex index = tree->indexAt(e->position().toPoint());
+      const QString kind = index.data(Qt::UserRole).toString();
+      if (e->button() == Qt::LeftButton && e->modifiers() == Qt::AltModifier && (kind == "document" || kind == "component")) {
+        if (event->type() == QEvent::MouseButtonPress) setActive(kind == "document" ? std::string() : index.data(browser::kIdRole).toString().toStdString());
+        return true;  // neither selected nor dragged, the second click of a double click no fit
+      }
     }
     return AreaController::eventFilter(object, event);
   }
@@ -158,9 +171,16 @@ class Activation : public AreaController {
       const bool on = id == active;
       d.lead.icon = on ? "radioOn" : "radioOff";
       d.lead.color = on ? &Tokens::sel : &Tokens::fg3;
-      d.lead.tooltip = on ? tr("Active: new sketches, features, bodies and imports go here") : id.empty() ? tr("Activate the root (the whole model)") : tr("Activate this component");
+      d.lead.tooltip = on ? tr("Active: new sketches, features, bodies and imports go here") : id.empty() ? tr("Activate the root (the whole model)") : tr("Activate this component (or Alt+click its row)");
       d.lead.clicked = [this, id, on] { if (!on) setActive(id); };  // the active one's click is no colour pick either
-      d.bold = d.bold || (on && !id.empty());
+      if (on && !id.empty()) {
+        d.bold = true;
+        browser::Badge pill;
+        pill.text = tr("active");
+        pill.color = &Tokens::sel;
+        pill.tooltip = d.lead.tooltip;
+        d.badges.push_back(pill);
+      }
     }
     if (active.empty()) return;
     const opad::Scene& scene = doc->scene;
