@@ -158,6 +158,8 @@ OPAD_BENCH(OPAD_BENCH_UNITS, units) {
   }
   QMenu* menu = w.m_statusUnits->menu();
   emit menu->aboutToShow();
+  emit menu->aboutToShow();  // opened again: rebuilt, not piled up
+  require(menu->findChildren<QMenu*>(Qt::FindDirectChildrenOnly).size() == 1, "the menu reopened holds one Decimal places submenu");
   QAction* inches = menu->findChild<QAction*>("unit.in");
   require(ends.size() == 2 && inches && inches->isEnabled() && !inches->isChecked(), "the menu offers inches");
   if (ends.size() != 2 || !inches) return finish(), true;

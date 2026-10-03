@@ -92,6 +92,7 @@ void MainWindow::buildUnitsButton() {
     m_statusUnits->setAccessibleName(tr("Units: %1").arg(units::unitName(d.length)));
   };
   connect(menu, &QMenu::aboutToShow, this, [this, menu] {
+    qDeleteAll(menu->findChildren<QMenu*>(Qt::FindDirectChildrenOnly));  // clear() keeps submenus: they own their action
     menu->clear();
     const auto& d = units::current();
     menu->addSection(m_doc->browse ? tr("Show lengths in") : tr("Document unit"));
