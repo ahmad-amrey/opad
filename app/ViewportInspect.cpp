@@ -165,6 +165,7 @@ void Viewport::refreshMeasurement(bool force) {
   m_measureSize = pixels;
   for (const auto& o : m_dimension) m_ctx->Remove(o, Standard_False);
   m_dimension.clear();
+  m_measureCaptions.clear();
 
   Handle(Graphic3d_SequenceOfHClipPlane) noClip = new Graphic3d_SequenceOfHClipPlane();
   noClip->SetOverrideGlobal(Standard_True);
