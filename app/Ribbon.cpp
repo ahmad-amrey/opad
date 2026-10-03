@@ -113,10 +113,16 @@ SegmentButton::SegmentButton(QAction* action, const QString& hint, bool primary,
   setFont(theme::ui(12));
 }
 
+void SegmentButton::setIconOnly(bool on) {
+  m_iconOnly = on;
+  updateGeometry();
+  update();
+}
+
 QSize SegmentButton::sizeHint() const {
   QFontMetrics fm(theme::ui(12)), mm(theme::mono(11));
-  int w = 20 + fm.horizontalAdvance(text());
-  if (!m_hint.isEmpty()) w += 6 + mm.horizontalAdvance(m_hint);
+  int w = 20 + (m_iconOnly ? 16 : fm.horizontalAdvance(text()));
+  if (!m_hint.isEmpty()) w += (m_iconOnly ? 4 : 6) + mm.horizontalAdvance(m_hint);
   return QSize(w, 26);
 }
 
@@ -131,27 +137,44 @@ void SegmentButton::paintEvent(QPaintEvent*) {
   if (!isEnabled()) textColor = t.fg3;
   p.setFont(theme::ui(12));
   p.setPen(textColor);
-  // Label then key hint in reading order (mirrored in a right-to-left UI), both on one baseline: centring each
+  // Label (or icon) then key hint in reading order (mirrored in a right-to-left UI), both on one baseline: centring each
   // in its own rect put Arabic labels, drawn with a fallback font, off the digits' line.
   QFontMetrics fm(theme::ui(12)), mm(theme::mono(11));
   const bool rtl = layoutDirection() == Qt::RightToLeft;
   p.setLayoutDirection(Qt::LeftToRight);  // positions below are absolute
   const int baseline = (height() + fm.ascent() - fm.descent()) / 2;
-  const int textW = fm.horizontalAdvance(text());
+  const int textW = m_iconOnly ? 16 : fm.horizontalAdvance(text());
   const int hintW = m_hint.isEmpty() ? 0 : mm.horizontalAdvance(m_hint);
-  p.drawText(rtl ? width() - 10 - textW : 10, baseline, text());
+  const int gap = m_iconOnly ? 4 : 6;
+  const int at = rtl ? width() - 10 - textW : 10;
+  if (m_iconOnly) {
+    const QString name = defaultAction() ? defaultAction()->data().toString() : QString();
+    const QPixmap pix = name.isEmpty() ? icon().pixmap(QSize(16, 16), devicePixelRatioF(), isEnabled() ? QIcon::Normal : QIcon::Disabled)
+                                       : icons::pixmap(name, textColor, 16, devicePixelRatioF());
+    p.drawPixmap(at, (height() - 16) / 2, pix);
+  } else {
+    p.drawText(at, baseline, text());
+  }
   if (!m_hint.isEmpty()) {
     p.setFont(theme::mono(11));
     p.setPen(isChecked() && primary ? t.onsel : t.fg3);
-    p.drawText(rtl ? width() - 10 - textW - 6 - hintW : 10 + textW + 6, baseline, m_hint);
+    p.drawText(rtl ? width() - 10 - textW - gap - hintW : 10 + textW + gap, baseline, m_hint);
   }
 }
 
 // ---------------------------------------------------------------- SearchField
 SearchField::SearchField(QWidget* parent) : QAbstractButton(parent) {
-  setFixedSize(200, 28);
+  setFixedSize(sizeHint());
   setCursor(Qt::PointingHandCursor);
+  setFocusPolicy(Qt::NoFocus);
   setToolTip(tr("Search commands (S)"));
+}
+
+void SearchField::setCompact(bool on) {
+  if (on == m_compact) return;
+  m_compact = on;
+  setFixedSize(sizeHint());
+  update();
 }
 
 void SearchField::paintEvent(QPaintEvent*) {
@@ -161,14 +184,16 @@ void SearchField::paintEvent(QPaintEvent*) {
   p.setPen(QPen(underMouse() ? t.fg3 : t.line, 1));
   p.setBrush(t.bg);
   p.drawRoundedRect(QRectF(0.5, 0.5, width() - 1, height() - 1), 3, 3);
+  const int y = (height() - 16) / 2;
+  if (m_compact) return p.drawPixmap((width() - 16) / 2, y, icons::pixmap("search", t.fg3, 16, devicePixelRatioF()));
   // Icon, placeholder, key badge in reading order; positions are absolute, so mirror them by hand.
   const bool rtl = layoutDirection() == Qt::RightToLeft;
   p.setLayoutDirection(Qt::LeftToRight);
-  p.drawPixmap(rtl ? width() - 24 : 8, 6, icons::pixmap("search", t.fg3, 16, devicePixelRatioF()));
+  p.drawPixmap(rtl ? width() - 24 : 8, y, icons::pixmap("search", t.fg3, 16, devicePixelRatioF()));
   p.setFont(theme::ui(12));
   p.setPen(t.fg3);
   p.drawText(QRect(rtl ? width() - 160 : 30, 0, 130, height()), Qt::AlignVCenter | (rtl ? Qt::AlignRight : Qt::AlignLeft), tr("Search commands"));
-  QRect key(rtl ? 8 : width() - 26, 6, 18, 16);
+  QRect key(rtl ? 6 : width() - 24, y, 18, 16);
   p.setPen(QPen(t.line, 1));
   p.setBrush(t.bg4);
   p.drawRoundedRect(key, 3, 3);
@@ -575,18 +600,32 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
   m_tabs->setFixedHeight(28);
   m_tabs->setFocusPolicy(Qt::NoFocus);
   m_tabs->setIconSize(QSize(8, 8));
-  auto* tabRow = new QWidget(this);
-  auto* tabLayout = new QHBoxLayout(tabRow);
-  tabLayout->setContentsMargins(8, 0, 8, 0);
+  m_tabRow = new QWidget(this);
+  m_tabRow->setObjectName("ribbonTabRow");
+  auto* tabLayout = new QHBoxLayout(m_tabRow);
+  tabLayout->setContentsMargins(kRowMargin, 0, kRowMargin, 0);
   tabLayout->setSpacing(0);
-  m_chip = new WorkspaceChip(tabRow);
+  m_chip = new WorkspaceChip(m_tabRow);
   m_chip->hide();  // until a workspace is added
   connect(m_chip, &QAbstractButton::clicked, this, &RibbonBar::showWorkspaceMenu);
   tabLayout->addWidget(m_chip);
-  tabLayout->addSpacing(12);
+  tabLayout->addSpacing(kChipGap);
   tabLayout->addWidget(m_tabs);
   tabLayout->addStretch();
-  layout->addWidget(tabRow);
+  tabLayout->addSpacing(kClusterGap);
+  m_cluster = new QWidget(m_tabRow);
+  m_cluster->setObjectName("ribbonCluster");
+  auto* cluster = new QHBoxLayout(m_cluster);
+  cluster->setContentsMargins(0, 0, 0, 0);
+  cluster->setSpacing(8);
+  for (QHBoxLayout** part : {&m_quick, &m_searchSlot, &m_corner, &m_settingsSlot}) {
+    *part = new QHBoxLayout();
+    (*part)->setContentsMargins(0, 0, 0, 0);
+    (*part)->setSpacing(part == &m_quick ? 2 : 8);
+    cluster->addLayout(*part);
+  }
+  tabLayout->addWidget(m_cluster);
+  layout->addWidget(m_tabRow);
 
   m_strip = new QWidget(this);
   m_strip->setObjectName("ribbonStrip");
@@ -598,7 +637,7 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
   m_stripLayout->addWidget(m_stack, 1);
   m_right = new QHBoxLayout();
   m_right->setContentsMargins(0, 0, 0, 0);
-  m_right->setSpacing(8);
+  m_right->setSpacing(4);
   m_stripLayout->addLayout(m_right);
   layout->addWidget(m_strip);
   connect(m_tabs, &QTabBar::currentChanged, this, [this](int i) {
@@ -609,6 +648,22 @@ RibbonBar::RibbonBar(QWidget* parent) : QWidget(parent) {
     m_stack->setCurrentWidget(e.page);
   });
   connect(theme::notifier(), &theme::Notifier::changed, this, &RibbonBar::refillTabs);  // the contextual tabs' accent
+}
+
+void RibbonBar::resizeEvent(QResizeEvent* e) {
+  QWidget::resizeEvent(e);
+  fitTabRow();
+}
+
+// The cluster keeps its size and the tabs theirs (never elided): search gives up its field first.
+void RibbonBar::fitTabRow() {
+  if (!m_search) return;
+  const int tabs = 2 * kRowMargin + (m_chip->isVisibleTo(this) ? m_chip->sizeHint().width() + kChipGap : 0) + m_tabs->sizeHint().width() + kClusterGap;
+  const int cluster = m_cluster->sizeHint().width() - m_search->sizeHint().width() + SearchField::kFull;
+  if (m_search->compact() == tabs + cluster > width()) return;
+  m_search->setCompact(!m_search->compact());
+  m_cluster->layout()->activate();  // now, not a frame later with the tabs under the cluster
+  m_tabRow->layout()->activate();
 }
 
 int RibbonBar::addWorkspace(const Workspace& w) {
@@ -624,6 +679,7 @@ void RibbonBar::setWorkspace(int index) {
   m_chip->setWorkspace(m_workspaces[index]);
   m_chip->setToolTip(m_workspaces[index].description);
   m_chip->show();
+  fitTabRow();
   emit workspaceChanged(index);
 }
 
@@ -673,6 +729,8 @@ void RibbonBar::refillTabs() {
     m_stack->setCurrentWidget(set.entries[set.row[current]].page);
   }
   m_filling = false;
+  m_tabs->updateGeometry();  // QTabBar does not while hidden, and the row would keep its old width
+  fitTabRow();
 }
 
 bool RibbonBar::setContextualTab(const QString& id, bool shown) {
@@ -720,47 +778,75 @@ RibbonPage* RibbonBar::page(const QString& tabId) const {
 
 RibbonPage* RibbonBar::currentPage() const { return qobject_cast<RibbonPage*>(m_stack->currentWidget()); }
 
-void RibbonBar::setSelectFilters(const QList<QAction*>& filters, const QStringList& hints) {
-  auto* label = new QLabel(tr("Select"), m_strip);
-  label->setObjectName("ribbonLabel");
-  m_right->addWidget(label);
+void RibbonBar::setSelectFilters(const QList<QAction*>& filters, const QStringList& hints, QMenu* more) {
+  m_selectButton = new QToolButton(m_strip);
+  m_selectButton->setObjectName("ribbonSelect");
+  m_selectButton->setText(tr("Select") + kDrop);
+  m_selectButton->setFocusPolicy(Qt::NoFocus);
+  m_selectButton->setCursor(Qt::PointingHandCursor);
+  if (more) {
+    m_selectButton->setMenu(more);
+    m_selectButton->setPopupMode(QToolButton::InstantPopup);
+  }
+  m_right->addWidget(m_selectButton);
   auto* seg = new QWidget(m_strip);
   seg->setObjectName("segmented");
   seg->setFixedHeight(28);
   auto* l = new QHBoxLayout(seg);
   l->setContentsMargins(1, 1, 1, 1);
   l->setSpacing(0);
-  for (int i = 0; i < filters.size(); ++i) l->addWidget(new SegmentButton(filters[i], i < hints.size() ? hints[i] : QString(), false, seg));
+  for (int i = 0; i < filters.size(); ++i) {
+    auto* b = new SegmentButton(filters[i], i < hints.size() ? hints[i] : QString(), false, seg);
+    b->setIconOnly(true);
+    l->addWidget(b);
+  }
   m_right->addWidget(seg);
 }
 
+QToolButton* RibbonBar::addQuickAction(QAction* a, QMenu* steps) {
+  auto* b = new QToolButton(m_cluster);
+  b->setObjectName("ribbonQuick");
+  b->setDefaultAction(a);
+  b->setToolButtonStyle(Qt::ToolButtonIconOnly);
+  b->setIconSize(QSize(16, 16));
+  b->setAutoRaise(true);
+  b->setFocusPolicy(Qt::NoFocus);
+  if (steps) {
+    b->setMenu(steps);
+    b->setPopupMode(QToolButton::MenuButtonPopup);
+  }
+  b->setFixedSize(steps ? 38 : 24, 24);
+  m_quick->addWidget(b);
+  fitTabRow();
+  return b;
+}
+
+void RibbonBar::addTabRowWidget(QWidget* w) {
+  w->setParent(m_cluster);
+  m_corner->addWidget(w);
+  fitTabRow();
+}
+
 void RibbonBar::setSearchAction(QAction* a) {
-  auto* field = new SearchField(m_strip);
-  connect(field, &QAbstractButton::clicked, a, &QAction::trigger);
-  m_right->addWidget(field);
+  m_search = new SearchField(m_cluster);
+  connect(m_search, &QAbstractButton::clicked, a, &QAction::trigger);
+  m_searchSlot->addWidget(m_search);
+  fitTabRow();
 }
 
 void RibbonBar::setSettingsMenu(QAction* a, QMenu* menu) {
-  auto* b = new QToolButton(m_strip);
+  auto* b = new QToolButton(m_cluster);
   b->setObjectName("ribbonSettings");
   b->setDefaultAction(a);
   b->setToolButtonStyle(Qt::ToolButtonIconOnly);
-  b->setIconSize(QSize(20, 20));
+  b->setIconSize(QSize(18, 18));
   b->setAutoRaise(true);
-  b->setFixedSize(28, 28);
+  b->setFixedSize(24, 24);
   b->setFocusPolicy(Qt::NoFocus);
-  b->setPopupMode(QToolButton::InstantPopup);
-  b->setMenu(menu);
-  m_right->addWidget(b);
-}
-
-void RibbonBar::setSettingsAction(QAction* a) {
-  auto* b = new QToolButton(m_strip);
-  b->setDefaultAction(a);
-  b->setToolButtonStyle(Qt::ToolButtonIconOnly);
-  b->setIconSize(QSize(20, 20));
-  b->setAutoRaise(true);
-  b->setFixedSize(28, 28);
-  b->setFocusPolicy(Qt::NoFocus);
-  m_right->addWidget(b);
+  if (menu) {
+    b->setPopupMode(QToolButton::InstantPopup);
+    b->setMenu(menu);
+  }
+  m_settingsSlot->addWidget(b);
+  fitTabRow();
 }

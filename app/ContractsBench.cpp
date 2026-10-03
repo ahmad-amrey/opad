@@ -9,6 +9,7 @@
 #include <QPainter>
 #include <QTimer>
 
+#include <algorithm>
 #include <memory>
 
 #include "BenchRegistry.hpp"
@@ -246,11 +247,15 @@ OPAD_BENCH(OPAD_BENCH_TOAST, toast) {
   return true;
 }
 
-// OPAD_BENCH_RIBBON=<widths> (default 1280,1600) [OPAD_BENCH_UISHOT=<prefix>] [OPAD_LANG=ar]: at each window width every
-// tab of every workspace (Sketch's too) fits without shortening a label: each tool is as wide as it asks, every group lies
-// inside the row, groups stepped down are the rightmost and at most one level apart, tabs never elide, and a right-to-left
-// UI starts at the right. <prefix>.<width>.<workspace>.png stacks the tabs of a workspace. Then a contextual tab with a
-// split button: hidden until shown, then first and current; hidden again, the tab before comes back.
+// OPAD_BENCH_RIBBON=<widths> (default 1280,1600) [OPAD_BENCH_UISHOT=<prefix>] [OPAD_LANG=ar] on an editable document: at
+// each window width every tab of every workspace (Sketch's too) fits without shortening a label: each tool is as wide as it
+// asks, every group lies inside the row, groups stepped down are the rightmost and at most one level apart, tabs never
+// elide, and a right-to-left UI starts at the right; from 1600 px Review and Design show every group large. The tab row
+// shows every tab whole and then its cluster in reading order (quick access Save, Undo ▾, Redo ▾, search, settings); the
+// strip ends in the compact Select control. Narrower, with an area's widget in the cluster, search gives up its field
+// before a tab is cut. Undo ▾ / Redo ▾ list the steps and take several at once. <prefix>.<width>.<workspace>.png stacks
+// the tabs of a workspace, <prefix>.narrow.png shows the compact tab row. Then a contextual tab with a split button: hidden
+// until shown, then first and current; hidden again, the tab before comes back.
 OPAD_BENCH(OPAD_BENCH_RIBBON, ribbon) {
   Checks require{"ribbon"};
   const QString shot = qEnvironmentVariable("OPAD_BENCH_UISHOT");
@@ -261,13 +266,59 @@ OPAD_BENCH(OPAD_BENCH_RIBBON, ribbon) {
   const QString start = w.workspaceId();
   RibbonBar* ribbon = w.m_ribbon;
   require(ribbon->tabBar()->elideMode() == Qt::ElideNone, "tab titles never elide");
+  auto quickButton = [ribbon](QAction* a) -> QToolButton* {
+    for (QToolButton* b : ribbon->cluster()->findChildren<QToolButton*>("ribbonQuick"))
+      if (b->defaultAction() == a) return b;
+    return nullptr;
+  };
+  QToolButton* save = quickButton(w.action("file.save"));
+  QToolButton* undo = quickButton(w.action("edit.undo"));
+  QToolButton* redo = quickButton(w.action("edit.redo"));
+  QToolButton* gear = ribbon->cluster()->findChild<QToolButton*>("ribbonSettings");
+  SearchField* search = ribbon->searchField();
+  QWidget* segments = ribbon->strip()->findChild<QWidget*>("segmented");
+  QToolButton* select = ribbon->selectButton();
+  if (!save || !undo || !redo || !gear || !search || !segments || !select) {
+    require(false, "tab row: quick access, search and settings; strip: the Select control");
+    QCoreApplication::exit(2);
+    return true;
+  }
+  require(!save->menu() && undo->menu() && redo->menu() && undo->popupMode() == QToolButton::MenuButtonPopup && ribbon->tabRow()->isAncestorOf(search) &&
+              ribbon->tabRow()->isAncestorOf(gear) && !ribbon->strip()->isAncestorOf(search) && ribbon->strip()->isAncestorOf(select),
+          "tab row: Save, Undo ▾, Redo ▾, search and settings; the strip keeps only the tools and the Select control");
+  const QList<SegmentButton*> filters = segments->findChildren<SegmentButton*>();
+  bool iconSegments = filters.size() == 4;
+  for (int i = 0; i < filters.size(); ++i)
+    iconSegments = iconSegments && filters[i]->iconOnly() && filters[i]->width() >= filters[i]->sizeHint().width() &&
+                   filters[i]->toolTip().contains(QString::number(i + 1)) && filters[i]->defaultAction() == w.action(QStringList({"select.bodies", "select.faces", "select.edges", "select.vertices"})[i]);
+  require(iconSegments && select->menu() &&
+              select->menu()->actions() == QList<QAction*>({w.action("select.through"), w.action("select.geometry"), w.action("edit.selectparent")}) &&
+              select->text().startsWith(QObject::tr("Select")),
+          "Select control: the four filters as icons with their keys (the name in the tooltip), the rest under Select ▾");
+  // What is wrong with the tab row as it shows: tabs cut, the cluster over them or outside the row, or out of reading order.
+  auto tabRow = [&](QWidget* extra) {
+    QStringList wrong;
+    QTabBar* bar = ribbon->tabBar();
+    if (bar->width() < bar->sizeHint().width() || bar->tabRect(bar->count() - 1).right() >= bar->width()) wrong << "tabs cut";
+    const QRect cluster = ribbon->cluster()->geometry();
+    if (rtl ? cluster.right() >= bar->x() : cluster.x() <= bar->geometry().right()) wrong << "cluster over the tabs";
+    if (!ribbon->tabRow()->rect().contains(cluster)) wrong << "cluster outside the row";
+    QList<QWidget*> order{save, undo, redo, search};
+    if (extra) order << extra;
+    order << gear;
+    for (int i = 1; i < order.size(); ++i)
+      if (rtl ? order[i]->geometry().right() >= order[i - 1]->x() : order[i]->x() <= order[i - 1]->geometry().right()) wrong << "cluster out of order";
+    return wrong.join(", ");
+  };
   for (const int width : widths) {
     w.resize(width, 1000);
     QCoreApplication::processEvents();
     int tabs = 0, collapsed = 0;
-    QStringList narrow, outside, unordered, rows;
+    QStringList narrow, outside, unordered, rows, row, small;
     for (int ws = 0; ws < w.m_workspaceIds.size(); ++ws) {
       ribbon->setWorkspace(ws);
+      QCoreApplication::processEvents();
+      if (const QString wrong = tabRow(nullptr); !wrong.isEmpty() || search->compact()) row << w.m_workspaceIds[ws] + ": " + (wrong.isEmpty() ? QString("search compact") : wrong);
       QList<QImage> strips;
       for (int t = 0; t < ribbon->tabBar()->count(); ++t) {
         ribbon->setCurrentTab(t);
@@ -307,6 +358,12 @@ OPAD_BENCH(OPAD_BENCH_RIBBON, ribbon) {
             if (b->isVisibleTo(page) && b->width() < b->sizeHint().width()) narrow << page->id() + ":" + b->text();
         }
         if (page->groups().size() > 1 && rtl != (page->groups().first()->x() > page->groups().last()->x())) outside << page->id() + " (direction)";
+        // The Select control at the strip's end, after the tools in reading order.
+        const QRect tools = page->parentWidget()->geometry(), control = select->geometry() | segments->geometry();
+        if (tools.intersects(control) || (rtl ? segments->x() >= select->x() || control.right() >= tools.x() : segments->x() <= select->x() || control.x() <= tools.right()))
+          outside << page->id() + " (Select control)";
+        if (width >= 1600 && (w.m_workspaceIds[ws] == "review" || w.m_workspaceIds[ws] == "design") && std::any_of(levels.begin(), levels.end(), [](int l) { return l > 0; }))
+          small << page->id() + " " + levelText;
         strips << ribbon->grab().toImage();
       }
       if (!shot.isEmpty() && !strips.isEmpty()) {
@@ -328,8 +385,73 @@ OPAD_BENCH(OPAD_BENCH_RIBBON, ribbon) {
     require(outside.isEmpty(), QString("%1 px: every group inside its row, the row from the %2%3").arg(width).arg(rtl ? "right" : "left").arg(outside.isEmpty() ? QString() : ": " + outside.join(", ")));
     unordered.removeDuplicates();
     require(unordered.isEmpty(), QString("%1 px: the end of the row steps down first, one level at a time%2").arg(width).arg(unordered.isEmpty() ? QString() : ": " + unordered.join(", ")));
+    require(row.isEmpty(), QString("%1 px: every tab whole, then quick access, search and settings in reading order%2").arg(width).arg(row.isEmpty() ? QString() : ": " + row.join("; ")));
+    if (width >= 1600) require(small.isEmpty(), QString("%1 px: every group of Review and Design large%2").arg(width).arg(small.isEmpty() ? QString() : ": " + small.join(", ")));
   }
+  // Narrower, with an area's widget in the cluster (after search, before settings): search shows as its icon before any
+  // tab is cut, and the row stays whole down to there and beyond. The window keeps 1280 px at least, where more tabs or
+  // area widgets get there: the sweep lifts that limit to reach it with these.
+  auto* branch = new QLabel("Bench branch: main");
+  w.m_areaServices.addTabRowWidget(branch);
+  w.setWorkspace("design");
+  const QSize least = w.minimumSize();
+  w.setMinimumSize(0, 0);
+  int compactAt = 0, reached = 0;
+  QStringList shrinking;
+  for (int width = 1280; width >= 760 && (!compactAt || width >= compactAt - 100); width -= 20) {
+    w.resize(width, 1000);
+    QCoreApplication::processEvents();
+    if (w.width() != width) break;  // the window's least width (reported below)
+    reached = width;
+    if (const QString wrong = tabRow(branch); !wrong.isEmpty()) shrinking << QString("%1 px: %2").arg(width).arg(wrong);
+    if (search->compact() && !compactAt) compactAt = width;
+    if (!search->compact() && compactAt) shrinking << QString("%1 px: search whole again").arg(width);
+  }
+  require(compactAt && shrinking.isEmpty() && search->width() == SearchField::kCompact && branch->parentWidget() == ribbon->cluster(),
+          QString("narrower: search shows as its icon from %1 px (down to %2, the window's least %3), every tab whole all the way, the area's widget before settings%4")
+              .arg(compactAt).arg(reached).arg(w.minimumSizeHint().width()).arg(shrinking.isEmpty() ? QString() : ": " + shrinking.join("; ")));
+  if (!shot.isEmpty()) ribbon->grab().save(shot + ".narrow.png");
+  delete branch;
+  w.setMinimumSize(least);
   w.resize(size);
+  QCoreApplication::processEvents();
+  require(!search->compact() && tabRow(nullptr).isEmpty(), "wide again: search whole");
+  // Undo ▾ / Redo ▾: the document's steps, the next one first; a click on one takes it and every step before it in one go.
+  const std::string body = w.m_doc->scene.all_bodies().empty() ? std::string() : w.m_doc->scene.all_bodies().front();
+  require(!body.empty() && !w.m_doc->browse, "an editable document with a body");
+  const size_t ops = w.m_doc->doc.ops.size();
+  const QString name = w.m_doc->nodeName(body);
+  w.m_doc->run("rename", opad::json{{"target", body}, {"name", "Ribbon one"}});
+  w.m_doc->run("rename", opad::json{{"target", body}, {"name", "Ribbon two"}});
+  w.m_doc->run("appearance", opad::json{{"target", body}, {"visible", false}});
+  std::vector<std::string> ids;
+  for (const opad::Op& op : w.m_doc->doc.ops) ids.push_back(op.id);
+  auto shown = [](QToolButton* b) {
+    emit b->menu()->aboutToShow();
+    QStringList out;
+    for (QAction* a : b->menu()->actions()) out << a->text();
+    return out;
+  };
+  const QString hide = AppDocument::tr("hide"), rename = AppDocument::tr("rename");
+  const QStringList undoSteps = shown(undo);
+  require(w.m_doc->undoLabels().mid(0, 3) == QStringList({hide, rename, rename}) && undoSteps.mid(0, 3) == QStringList({MainWindow::tr("&Undo %1").arg(hide), MainWindow::tr("&Undo %1").arg(rename), MainWindow::tr("&Undo %1").arg(rename)}) &&
+              undo->toolTip().startsWith(MainWindow::tr("&Undo %1").arg(hide).remove('&')),
+          "Undo ▾ lists the steps, the next one first; the button's tooltip names it: " + undoSteps.mid(0, 3).join(" | "));
+  const auto revision = w.m_doc->revision;
+  undo->menu()->actions().value(1)->trigger();  // the second: hide and the last rename
+  require(w.m_doc->doc.ops.size() == ops + 1 && w.m_doc->nodeName(body) == "Ribbon one" && w.m_doc->scene.node(body)->visible && w.m_doc->revision == revision + 1,
+          QString("a click on the second step undoes two in one refresh (%1 ops, was %2)").arg(w.m_doc->doc.ops.size()).arg(ids.size()));
+  const QStringList redoSteps = shown(redo);
+  require(redoSteps == QStringList({MainWindow::tr("&Redo %1").arg(rename), MainWindow::tr("&Redo %1").arg(hide)}), "Redo ▾ lists them back: " + redoSteps.join(" | "));
+  redo->menu()->actions().value(1)->trigger();
+  std::vector<std::string> again;
+  for (const opad::Op& op : w.m_doc->doc.ops) again.push_back(op.id);
+  require(again == ids && w.m_doc->nodeName(body) == "Ribbon two" && !w.m_doc->scene.node(body)->visible, "redoing both brings the same ops back");
+  undo->click();
+  require(w.m_doc->doc.ops.size() == ids.size() - 1 && w.m_doc->scene.node(body)->visible && undo->toolTip().startsWith(MainWindow::tr("&Undo %1").arg(rename).remove('&')),
+          "the quick-access Undo undoes one step: " + undo->toolTip());
+  w.m_doc->undo(2);
+  require(w.m_doc->doc.ops.size() == ops && w.m_doc->nodeName(body) == name, "back to the document as it was");
   w.setWorkspace("design");
   QCoreApplication::processEvents();
   // A contextual tab with a split button, as an area adds one (RibbonLayout::addContextualTab).

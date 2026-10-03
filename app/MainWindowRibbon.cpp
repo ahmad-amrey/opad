@@ -227,7 +227,14 @@ void MainWindow::buildRibbon() {
     if (id == "design" && m_doc->hasDocument && m_viewport->selectionFilter() != Viewport::SelFilter::Body) action("select.bodies")->trigger();  // Design works on bodies
     statusBar()->showMessage(tr("%1 workspace · %2 switch workspace").arg(m_ribbon->workspaceAt(i).name, m_workspaceKeys), 4000);
   });
-  m_ribbon->setSelectFilters(acts({"select.bodies", "select.faces", "select.edges", "select.vertices"}), {"1", "2", "3", "4"});
+  // The compact Select control: the filters as icons with their keys, the rest of selecting under "Select ▾".
+  auto* selectMore = new QMenu(this);
+  selectMore->addActions(acts({"select.through", "select.geometry", "edit.selectparent"}));
+  m_ribbon->setSelectFilters(acts({"select.bodies", "select.faces", "select.edges", "select.vertices"}), {"1", "2", "3", "4"}, selectMore);
+  // The tab row's cluster: quick access (Save, Undo ▾, Redo ▾), search, the areas' widgets, settings.
+  m_ribbon->addQuickAction(action("file.save"));
+  m_ribbon->addQuickAction(action("edit.undo"), historyMenu(true));
+  m_ribbon->addQuickAction(action("edit.redo"), historyMenu(false));
   m_ribbon->setSearchAction(action("tools.commands"));
   QAction* settingsAction = addAction("tools.settings", tr("Settings"), "settings", QKeySequence(), [] {});
   auto* settings = new QMenu(this);

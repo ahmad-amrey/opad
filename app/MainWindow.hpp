@@ -133,6 +133,7 @@ class MainWindow : public QMainWindow {
   QString refLabel(const opad::Ref& r) const;
   bool toolMeasures() const { return m_tool.id == "distance" || m_tool.id == "angle" || m_tool.id == "radius" || m_tool.id == "bbox"; }
   void updateUndoActions();
+  QMenu* historyMenu(bool undo);  // the steps under the quick-access Undo ▾ / Redo ▾
   void sectionFromFace(const opad::Ref& face);  // "Pick face": a planar face sets the section plane
   void pinMeasurement();
   void clearMeasurement();

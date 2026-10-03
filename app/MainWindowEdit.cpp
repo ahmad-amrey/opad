@@ -109,12 +109,34 @@ void MainWindow::updateUndoActions() {
   if(m_design && m_design->sketchActive()) {
     const auto* sketch=m_design->sketch();
     u->setEnabled(sketch->canUndo());r->setEnabled(sketch->canRedo());
-    u->setText(tr("&Undo"));r->setText(tr("&Redo"));return;
+    u->setText(tr("&Undo"));r->setText(tr("&Redo"));
+  } else {
+    u->setEnabled(m_doc->hasDocument && m_doc->canUndo());
+    r->setEnabled(m_doc->hasDocument && m_doc->canRedo());
+    u->setText(m_doc->canUndo() ? tr("&Undo %1").arg(m_doc->undoLabel()) : tr("&Undo"));
+    r->setText(m_doc->canRedo() ? tr("&Redo %1").arg(m_doc->redoLabel()) : tr("&Redo"));
   }
-  u->setEnabled(m_doc->hasDocument && m_doc->canUndo());
-  r->setEnabled(m_doc->hasDocument && m_doc->canRedo());
-  u->setText(m_doc->canUndo() ? tr("&Undo %1").arg(m_doc->undoLabel()) : tr("&Undo"));
-  r->setText(m_doc->canRedo() ? tr("&Redo %1").arg(m_doc->redoLabel()) : tr("&Redo"));
+  shortcuts::updateTooltip(u);  // the quick-access buttons say what they undo
+  shortcuts::updateTooltip(r);
+}
+
+// Undo ▾ / Redo ▾ in the tab row: the document's steps, the next one first; a click on one takes it and every step before
+// it at once. A sketch or a drawing note keeps its own history: then the list is Undo (Redo) itself.
+QMenu* MainWindow::historyMenu(bool undo) {
+  auto* menu = new QMenu(this);
+  menu->setObjectName(undo ? "undoSteps" : "redoSteps");
+  connect(menu, &QMenu::aboutToShow, this, [this, menu, undo] {
+    menu->clear();
+    const bool document = m_doc->hasDocument && !m_annotationEditor && !m_design->sketchActive() && !m_design->ownsSelection() && !m_design->busy();
+    const QStringList steps = document ? (undo ? m_doc->undoLabels() : m_doc->redoLabels()) : QStringList();
+    if (steps.isEmpty()) {
+      menu->addAction(action(undo ? "edit.undo" : "edit.redo"));
+      return;
+    }
+    for (int i = 0; i < std::min<int>(steps.size(), 20); ++i)
+      menu->addAction((undo ? tr("&Undo %1") : tr("&Redo %1")).arg(steps[i]), this, [this, undo, n = i + 1] { undo ? m_doc->undo(n) : m_doc->redo(n); });
+  });
+  return menu;
 }
 
 void MainWindow::deleteOp(const std::string& requestedId) {

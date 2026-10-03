@@ -10,7 +10,8 @@
 // What an area needs of the window comes through services(); its own state stays in the area. Browser rows and the
 // Properties panel take providers (BrowserPanel::addDecorator / addFolder, PropertiesPanel::addSectionProvider), the
 // chips row takes chips (ViewportChips::addChip), all registered in ready(); a workspace of its own is a RibbonLayout
-// entry in ribbon(). Hooks run on the UI thread: anything that scales with the model goes through jobs().
+// entry in ribbon(), and the ribbon's tab row takes widgets (AreaServices::addTabRowWidget, e.g. a branch chip). Hooks
+// run on the UI thread: anything that scales with the model goes through jobs().
 #include <QMap>
 #include <QObject>
 #include <QRect>
@@ -34,6 +35,7 @@ class QMainWindow;
 class QMenu;
 class QMenuBar;
 class QStatusBar;
+class QWidget;
 class ToolPanel;
 class Viewport;
 class ViewportChips;
@@ -63,6 +65,8 @@ class AreaServices {
   BrowserPanel* browser() const;        // row decorations and folders
   PropertiesPanel* properties() const;  // property sections
   ViewportChips* chips() const;         // the chips row over the viewport (addChip)
+  // A widget in the ribbon's tab row (a branch chip): in the cluster after search, before settings; from ribbon on.
+  void addTabRowWidget(QWidget* widget);
   QAction* action(const QString& id) const;  // any command by id: "file.open", "view.fit", an area's own; null if none
   // A command like the built-in ones: its shortcut from the user's settings, locked while a file loads, errors shown as
   // a message box; in viewer mode it asks to save as OPAD first when its record says it edits the document. addCommand

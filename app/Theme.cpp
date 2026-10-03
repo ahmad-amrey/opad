@@ -124,8 +124,14 @@ QString stylesheet(const Tokens& t) {
                "QToolButton#ribbonSettings { border: 1px solid transparent; border-radius: 3px; background: transparent; }\n"
                "QToolButton#ribbonSettings:hover, QToolButton#ribbonSettings:pressed { background: %4; }\n"
                "QToolButton#ribbonSettings::menu-indicator { image: none; width: 0px; }\n"
-               "QFrame#ribbonSep { background: %2; max-width: 1px; min-width: 1px; margin: 12px 4px; }\n"
-               "QLabel#ribbonLabel { color: %6; font-size: 12px; }\n").arg(bg2, line, fg, bg3, fg3, fg2);
+               "QToolButton#ribbonQuick { border: 1px solid transparent; border-radius: 3px; background: transparent; padding: 0; }\n"
+               "QToolButton#ribbonQuick:hover, QToolButton#ribbonQuick:pressed { background: %4; }\n"
+               "QToolButton#ribbonQuick::menu-button { border: none; border-top-right-radius: 3px; border-bottom-right-radius: 3px; background: transparent; width: 12px; }\n"
+               "QToolButton#ribbonQuick::menu-button:hover { background: %4; }\n"
+               "QToolButton#ribbonSelect { border: 1px solid transparent; border-radius: 3px; background: transparent; color: %6; font-size: 12px; padding: 0 6px; height: 26px; }\n"
+               "QToolButton#ribbonSelect:hover, QToolButton#ribbonSelect:pressed { background: %4; color: %3; }\n"
+               "QToolButton#ribbonSelect::menu-indicator { image: none; width: 0px; }\n"
+               "QFrame#ribbonSep { background: %2; max-width: 1px; min-width: 1px; margin: 12px 4px; }\n").arg(bg2, line, fg, bg3, fg3, fg2);
   s += QString("QWidget#segmented { border: 1px solid %1; border-radius: 3px; background: %2; }\n"
                "QToolButton#segment { height: 26px; padding: 0 10px; border: none; border-radius: 2px; color: %3; background: transparent; }\n"
                "QToolButton#segment:hover { background: %4; }\n"
@@ -139,7 +145,7 @@ QString stylesheet(const Tokens& t) {
                "QToolButton#dockButton:hover { background: %4; border-radius: 3px; }\n"
                "QWidget#timelineDock { background: %1; }\n").arg(bg2, line, fg2, bg3);
   s += QString("QComboBox::down-arrow { image: url(%1); width: 12px; height: 12px; }\n"
-               "QToolButton#ribbonTool::menu-arrow { image: url(%1); width: 10px; height: 10px; }\n"
+               "QToolButton#ribbonTool::menu-arrow, QToolButton#ribbonQuick::menu-arrow { image: url(%1); width: 10px; height: 10px; }\n"
                "QCheckBox::indicator:checked { image: url(%2); }\n"
                "QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { image: url(%3); width: 10px; height: 10px; }\n"
                "QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { image: url(%1); width: 10px; height: 10px; }\n"

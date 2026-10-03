@@ -1,8 +1,9 @@
 #pragma once
-// Tabbed ribbon (28 px tab row + 80 px tool strip) with the right-hand cluster: Select segmented control,
-// "Search commands" field and settings, per the design handoff. The tab set belongs to a workspace (Review,
-// Design, ...): one document and one timeline, a workspace only changes which tabs and tools the ribbon shows.
-// The switcher chip sits left of the tabs and opens the workspace list.
+// Tabbed ribbon (28 px tab row + 80 px tool strip). The tab set belongs to a workspace (Review, Design, ...): one
+// document and one timeline, a workspace only changes which tabs and tools the ribbon shows. The switcher chip sits left
+// of the tabs and opens the workspace list; the tab row ends in one cluster (quick access Save, Undo ▾, Redo ▾, "Search
+// commands", the areas' widgets such as a branch chip, settings), and the strip ends in the compact Select control
+// ("Select ▾" and the filters as icons with their keys), so the tools get the rest of the strip (UI-103).
 // A tab is a row of titled groups (UI-120 b). A label is never shortened: when a tab is narrower than its tools, groups
 // step down, the rightmost first and all of them one step before any takes the next: large tools become small ones
 // (icon beside the label, three to a column), then icons only (the label in the tooltip), then the whole group one
@@ -25,6 +26,8 @@ class SegmentButton : public QToolButton {
   Q_OBJECT
  public:
   SegmentButton(QAction* action, const QString& hint, bool primary, QWidget* parent = nullptr);
+  void setIconOnly(bool on);  // the action's icon (its name in QAction::data) and the key, the label in the tooltip
+  bool iconOnly() const { return m_iconOnly; }
   QSize sizeHint() const override;
 
  protected:
@@ -32,16 +35,23 @@ class SegmentButton : public QToolButton {
 
  private:
   QString m_hint;
+  bool m_iconOnly = false;
 };
 
 class SearchField : public QAbstractButton {
   Q_OBJECT
  public:
   explicit SearchField(QWidget* parent = nullptr);
-  QSize sizeHint() const override { return QSize(200, 28); }
+  void setCompact(bool on);  // the icon alone: the tab row is short of room
+  bool compact() const { return m_compact; }
+  QSize sizeHint() const override { return QSize(m_compact ? kCompact : kFull, kHeight); }
+  static constexpr int kFull = 200, kCompact = 28, kHeight = 24;
 
  protected:
   void paintEvent(QPaintEvent*) override;
+
+ private:
+  bool m_compact = false;
 };
 
 struct Workspace {
@@ -185,10 +195,20 @@ class RibbonBar : public QWidget {
   // current before comes back). False: no such contextual tab.
   bool setContextualTab(const QString& id, bool shown);
   bool contextualTabShown(const QString& id) const;
-  void setSelectFilters(const QList<QAction*>& filters, const QStringList& hints);
+  // The tab row's cluster, in this order whichever order they come in: quick access, search, the areas' widgets,
+  // settings. It is never squeezed: when the row cannot show every tab whole beside it, search shows as its icon alone.
+  QToolButton* addQuickAction(QAction* a, QMenu* steps = nullptr);  // an icon; with steps a split button (Undo ▾)
+  void addTabRowWidget(QWidget* w);  // an area's (a branch chip, AreaServices::addTabRowWidget), before settings
   void setSearchAction(QAction* a);
-  void setSettingsAction(QAction* a);
-  void setSettingsMenu(QAction* a, QMenu* menu);
+  void setSettingsMenu(QAction* a, QMenu* menu = nullptr);
+  // The strip's trailing end: "Select ▾" (dropping `more`), then the filters as icon segments with their keys (hints).
+  void setSelectFilters(const QList<QAction*>& filters, const QStringList& hints, QMenu* more = nullptr);
+  QWidget* tabRow() const { return m_tabRow; }
+  QWidget* cluster() const { return m_cluster; }
+  SearchField* searchField() const { return m_search; }
+  QToolButton* selectButton() const { return m_selectButton; }  // "Select ▾"
+  QWidget* strip() const { return m_strip; }
+  static constexpr int kRowMargin = 8, kChipGap = 12, kClusterGap = 16;  // tab row: its ends, after the chip, before the cluster
   void setCurrentTab(int index) { m_tabs->setCurrentIndex(index); }
   int currentTab() const { return m_tabs->currentIndex(); }
   QStringList tabIds() const;  // the current workspace's tabs as the row shows them
@@ -199,8 +219,12 @@ class RibbonBar : public QWidget {
  signals:
   void workspaceChanged(int index);
 
+ protected:
+  void resizeEvent(QResizeEvent*) override;
+
  private:
   void showWorkspaceMenu();
+  void fitTabRow();  // search whole or as its icon, whichever lets every tab show whole
   void refillTabs();  // the current workspace's row: shown contextual tabs first, then the others
   struct Entry {
     QString id, title;
@@ -219,6 +243,11 @@ class RibbonBar : public QWidget {
   bool m_filling = false;
   WorkspaceChip* m_chip;
   QTabBar* m_tabs;
+  QWidget* m_tabRow;
+  QWidget* m_cluster;
+  QHBoxLayout *m_quick, *m_searchSlot, *m_corner, *m_settingsSlot;  // the cluster's parts, in order
+  SearchField* m_search = nullptr;
+  QToolButton* m_selectButton = nullptr;
   QStackedWidget* m_stack;
   QWidget* m_strip;
   QHBoxLayout* m_stripLayout;

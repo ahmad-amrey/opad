@@ -1,6 +1,6 @@
-// The shared UI contracts of UI-120 that every track builds on: the command registry, the ribbon's titled groups and
-// adaptive collapse, the panel footer, toasts and the semantic colour tokens. Offscreen; the in-app side is the
-// gui_benches cases ribbon, ribbon-rtl, toast and toast-rtl (app/ContractsBench.cpp).
+// The shared UI contracts of UI-120 that every track builds on: the command registry, the ribbon's titled groups,
+// adaptive collapse and tab row, the panel footer, toasts and the semantic colour tokens. Offscreen; the in-app side is
+// the gui_benches cases ribbon, ribbon-rtl, toast and toast-rtl (app/ContractsBench.cpp).
 #include <QAction>
 #include <QApplication>
 #include <QLabel>
@@ -327,6 +327,68 @@ TEST(ribbon_contextual_tab) {
   CHECK(bar.tabIds().first() == "design.explode" && bar.currentPage()->id() == "design.explode");
   CHECK(bar.setContextualTab("design.explode", false) && bar.tabIds() == QStringList({"design.solid", "design.view"}) && bar.currentPage()->id() == "design.view");
   CHECK(!bar.setContextualTab("design.solid", true) && !bar.setContextualTab("design.none", true) && bar.tabBar()->elideMode() == Qt::ElideNone);
+}
+
+TEST(ribbon_tab_row) {
+  QAction fit("Fit"), save("Save"), undo("Undo"), search("Search"), settings("Settings"), bodies("Bodies"), faces("Faces"), through("Through");
+  RibbonLayout layout;
+  layout.addWorkspace("design", {"Design", "component", "Ctrl+2", "", ""});
+  for (const char* t : {"Solid", "Modify", "Construct", "Assemble", "View", "Export"}) layout.addTab("design", QString("design.") + t, t, {{&fit}});
+  for (const Qt::LayoutDirection direction : {Qt::LeftToRight, Qt::RightToLeft}) {
+    QWidget host;  // a window would keep the bar at its layout's least width: in the app it sits in the ribbon's tool bar
+    host.resize(1700, 200);
+    auto* ribbon = new RibbonBar(&host);
+    RibbonBar& bar = *ribbon;
+    bar.setLayoutDirection(direction);
+    const int space = bar.addWorkspace(layout.spaces[0].workspace);
+    for (const RibbonLayout::Tab& tab : layout.spaces[0].tabs) bar.addTab(space, tab);
+    // The cluster's parts land in their slots whichever order they come in: quick access, search, areas' widgets, settings.
+    auto* branch = new QLabel("branch: main");
+    bar.addTabRowWidget(branch);
+    bar.setSettingsMenu(&settings);
+    bar.setSearchAction(&search);
+    QMenu steps;
+    QToolButton* undoButton = bar.addQuickAction(&undo, &steps);
+    QToolButton* saveButton = bar.addQuickAction(&save);
+    QMenu more;
+    more.addAction(&through);
+    bar.setSelectFilters({&bodies, &faces}, {"1", "2"}, &more);
+    bar.setWorkspace(space);
+    host.show();
+    auto settle = [&bar](int width) {
+      bar.resize(width, bar.sizeHint().height());
+      QApplication::processEvents();
+    };
+    settle(1600);
+    QToolButton* gear = bar.cluster()->findChild<QToolButton*>("ribbonSettings");
+    const QList<QWidget*> order{undoButton, saveButton, bar.searchField(), branch, gear};
+    const bool rtl = direction == Qt::RightToLeft;
+    auto inOrder = [&] {
+      for (int i = 1; i < order.size(); ++i)
+        if (rtl ? order[i]->geometry().right() >= order[i - 1]->x() : order[i]->x() <= order[i - 1]->geometry().right()) return false;
+      return true;
+    };
+    QTabBar* tabs = bar.tabBar();
+    auto whole = [&] { return tabs->width() >= tabs->sizeHint().width() && (rtl ? bar.cluster()->geometry().right() < tabs->x() : bar.cluster()->x() > tabs->geometry().right()); };
+    CHECK(tabs->count() == 6 && gear && branch->parentWidget() == bar.cluster() && undoButton->popupMode() == QToolButton::MenuButtonPopup && undoButton->menu() == &steps && !saveButton->menu());
+    CHECK(!bar.searchField()->compact() && bar.searchField()->width() == SearchField::kFull && inOrder() && whole());
+    CHECK(bar.selectButton()->menu() == &more && bar.strip()->isAncestorOf(bar.selectButton()) && !bar.strip()->isAncestorOf(bar.searchField()));
+    for (SegmentButton* b : bar.strip()->findChildren<SegmentButton*>()) {
+      SegmentButton labelled(b->defaultAction(), "1", false);  // as the filters showed before: the name and the key
+      CHECK(b->iconOnly() && b->sizeHint().width() < labelled.sizeHint().width());
+    }
+    // The width that just fits every tab and the whole cluster: a pixel less and search shows as its icon, the tabs whole.
+    const int lead = rtl ? bar.width() - tabs->geometry().right() - 1 : tabs->x();
+    const int need = lead + tabs->sizeHint().width() + RibbonBar::kClusterGap + bar.cluster()->width() + RibbonBar::kRowMargin;
+    settle(need);
+    CHECK(bar.width() == need && !bar.searchField()->compact() && whole() && inOrder());
+    settle(need - 1);
+    CHECK(bar.searchField()->compact() && bar.searchField()->width() == SearchField::kCompact && whole() && inOrder());
+    settle(need - 120);
+    CHECK(bar.searchField()->compact() && whole() && inOrder());
+    settle(1600);
+    CHECK(!bar.searchField()->compact() && inOrder());
+  }
 }
 
 int main(int argc, char** argv) {
