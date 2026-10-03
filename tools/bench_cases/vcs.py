@@ -139,6 +139,44 @@ def provenance(root, document, name="provenance"):
     return doc
 
 
+def conflicted(root, document, name="conflict"):
+    """A merge that stops on the document (UI-63): <name>/model.opad (a box) committed on main with .gitattributes asking for
+    OPAD's driver; the branch theirs renames the box "Theirs", colours it red, locks it and adds a note; main renames it
+    "Ours", colours it blue, locks it and adds a parameter (records appended as OPAD writes them). main is checked out."""
+    (root / name).mkdir(exist_ok=True)
+    doc = document(f"{name}/model", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+    git = shutil.which("git")
+    if not git:
+        return root / name / "no-git.opad"  # skipped: the case needs git
+    folder = root / name
+    (folder / ".gitattributes").write_bytes(b"*.opad text eol=lf merge=opad diff=opad\n")
+    quiet = dict(cwd=folder, check=True, capture_output=True)
+    commit = lambda message: subprocess.run([git, "-c", "user.name=bench", "-c", "user.email=bench@example.com", "commit", "-q", "-am", message], **quiet)
+    subprocess.run([git, "init", "-q", "-b", "main"], **quiet)
+    for key, value in (("user.name", "Bench"), ("user.email", "bench@example.com")):  # the merge commit's author: never asked
+        subprocess.run([git, "config", key, value], **quiet)
+    subprocess.run([git, "add", "-A"], **quiet)
+    commit("a box")
+    ops = [json.loads(line) for line in doc.read_text(encoding="utf-8").split("#ops\n")[1].split("#bodies")[0].splitlines() if line.startswith('{"op"')]
+    body = next(op for op in ops if op["op"] == "feature")["result"]["bodies"][0]["id"]
+
+    def append(*records):
+        text = doc.read_text(encoding="utf-8")
+        at = text.index("#bodies\n")
+        lines = "".join(json.dumps(dict(op=r[0], id=str(uuid.uuid4()), ts="2026-10-03T12:00:00Z", by=r[1], **r[2]), separators=(",", ":")) + "\n" for r in records)
+        doc.write_text(text[:at] + lines + text[at:], encoding="utf-8", newline="\n")
+
+    subprocess.run([git, "switch", "-q", "-c", "theirs"], **quiet)
+    append(("rename", "them", dict(target=body, name="Theirs")), ("appearance", "them", dict(target=body, color=[1, 0, 0], locked=True)),
+           ("annotation", "them", dict(anchor={"kind": "point", "point": [1, 2, 3]}, text="from theirs")))
+    commit("theirs")
+    subprocess.run([git, "switch", "-q", "main"], **quiet)
+    append(("rename", "me", dict(target=body, name="Ours")), ("appearance", "me", dict(target=body, color=[0, 0, 1], locked=True)),
+           ("param", "me", dict(name="wall", expr="3 mm")))
+    commit("ours")
+    return doc
+
+
 CASES = [
     ("external-change", external, {"OPAD_BENCH_EXTERNAL_CHANGE": "{prefix}", "OPAD_BENCH_CLI": "{cli}"}),
     # git without this machine's settings: a global config of the run's own (the bench sets the author there), no system one.
@@ -165,6 +203,10 @@ CASES = [
     # The toasts commands end with, on the Engine with its bodies on screen (skipped where the Engine is not beside the tree).
     ("toast-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_TOASTPERF": "6"}),
     ("recovery-diff", recovered, {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}"}),
+    # A merge stopped on the document, resolved here: per conflict, the rest of both sides merged, the merge committed.
+    ("conflict", conflicted, {"OPAD_BENCH_CONFLICT": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),
+    ("conflict-ar", lambda root, document: conflicted(root, document, "conflict-ar"),
+     {"OPAD_BENCH_CONFLICT": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
     # Who added which op, from git: the timeline's tooltips, Show in version history on a marker and on a body, a new commit
     # read alone; also right to left.
     ("provenance", provenance, {"OPAD_BENCH_PROVENANCE": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),

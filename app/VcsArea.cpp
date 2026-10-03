@@ -82,6 +82,7 @@ class Vcs : public AreaController {
     command("vcs.history", tr("History"), "history", {"git", "log", "commits", "restore", "older"}, [](VersionControl* v) { v->openPanel(VersionControl::History); });
     command("vcs.branches", tr("Branches"), "branch", {"git", "switch", "checkout", "merge"}, [](VersionControl* v) { v->openPanel(VersionControl::Branches); });
     command("vcs.pack", tr("Pack the repository"), "git", {"git", "gc", "maintenance", "size", "compress"}, [](VersionControl* v) { v->pack(); });
+    command("vcs.resolve", tr("Resolve conflicts…"), "merge", {"git", "merge", "conflict", "mine", "theirs"}, [](VersionControl* v) { v->resolveConflicts(); });
     // ] and [ step through the changes while Compare is open; elsewhere they do nothing.
     for (const auto& [id, label, key, delta] : {std::tuple{"vcs.nextChange", tr("Next change"), "]", 1}, std::tuple{"vcs.previousChange", tr("Previous change"), "[", -1}}) {
       CommandInfo step;
@@ -106,7 +107,8 @@ class Vcs : public AreaController {
     file->insertAction(before, services().action("vcs.unsavedChanges"));
     auto* version = new QMenu(tr("Version control"), file);
     version->setObjectName("versionMenu");
-    for (const char* id : {"vcs.panel", "vcs.commit", "vcs.pull", "vcs.push", "vcs.fetch", "-", "vcs.history", "vcs.branches", "vcs.newBranch", "-", "vcs.pack"})
+    for (const char* id : {"vcs.panel", "vcs.commit", "vcs.pull", "vcs.push", "vcs.fetch", "-", "vcs.history", "vcs.branches", "vcs.newBranch", "-",
+                           "vcs.resolve", "vcs.pack"})
       if (QString::fromLatin1(id) == "-") version->addSeparator();
       else version->addAction(services().action(QString::fromLatin1(id)));
     file->insertMenu(before, version);

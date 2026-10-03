@@ -78,6 +78,30 @@ std::vector<std::pair<std::string, std::string>> op_effects(const json& op) {
   return out;
 }
 
+json op_effect(const json& op, const std::string& target, const std::string& field) {
+  const json kind = op.contains("op") ? op["op"] : json();
+  const std::string type = kind.is_string() ? kind.get<std::string>() : std::string();
+  if (type == "delete") return json::array({kind, nullptr});
+  if (type == "param") {
+    json rest = op;
+    for (const char* k : {"id", "ts", "by"}) rest.erase(k);
+    return json::array({kind, rest});
+  }
+  if (type == "regen") return json::array({kind, op.contains("results") && op["results"].is_object() ? op["results"].value(target, json()) : json()});
+  if (type == "edit") {
+    json values = json::object();
+    if (op.contains("set") && op["set"].is_object())
+      for (const auto& [key, value] : op["set"].items())
+        if ((key == "geometry_delta" || key == "geometry" || key == "result" || key == "inputs" || key == "plane" ? "geometry" : key) == field) values[key] = value;
+    return json::array({kind, values});
+  }
+  return json::array({kind, op.contains(field) ? op[field] : json()});
+}
+
+bool same_effect(const json& a, const std::string& fieldA, const json& b, const std::string& fieldB, const std::string& target) {
+  return fieldA == fieldB && op_effect(a, target, fieldA) == op_effect(b, target, fieldB);
+}
+
 MergePlan plan_merge(const Manifest& base, const Document& ours, const Document& theirs) {
   MergePlan p;
   p.theirs = relation(base, theirs);
@@ -105,7 +129,7 @@ MergePlan plan_merge(const Manifest& base, const Document& ours, const Document&
   }
   p.incoming = fresh.size() - both.size();
   // Conflicts: what ours' unsaved ops and theirs' new ones both change.
-  std::map<std::string, std::vector<std::pair<std::string, std::string>>> changed;  // target -> (field, theirs op)
+  std::map<std::string, std::vector<std::pair<std::string, const Op*>>> changed;  // target -> (field, theirs op)
   std::unordered_map<std::string_view, const std::string*> types;
   for (const auto& o : theirs.ops) types.emplace(o.id, &o.type);
   for (size_t i : p.mine) types.emplace(ours.ops[i].id, &ours.ops[i].type);
@@ -119,7 +143,7 @@ MergePlan plan_merge(const Manifest& base, const Document& ours, const Document&
   for (size_t i = 0; i < theirs.ops.size(); ++i) {
     if (baseIds.count(theirs.ops[i].id) || both.count(i)) continue;
     theirsDesign = theirsDesign || design(theirs.ops[i]);
-    for (auto& [target, field] : op_effects(theirs.ops[i].data)) changed[target].emplace_back(field, theirs.ops[i].id);
+    for (auto& [target, field] : op_effects(theirs.ops[i].data)) changed[target].emplace_back(field, &theirs.ops[i]);
   }
   std::set<std::tuple<std::string, std::string, std::string, std::string>> seen;
   for (size_t i : p.mine) {
@@ -128,8 +152,8 @@ MergePlan plan_merge(const Manifest& base, const Document& ours, const Document&
       const auto it = changed.find(target);
       if (it == changed.end()) continue;
       for (const auto& [other, op] : it->second)
-        if (field == other || field == "*" || other == "*") {
-          MergeConflict c{target, field == "*" ? other : field, ours.ops[i].id, op};
+        if ((field == other || field == "*" || other == "*") && !same_effect(ours.ops[i].data, field, op->data, other, target)) {
+          MergeConflict c{target, field == "*" ? other : field, ours.ops[i].id, op->id};
           if (seen.emplace(c.target, c.field, c.ours, c.theirs).second) p.conflicts.push_back(std::move(c));
         }
     }
@@ -467,7 +491,7 @@ void FileMerge::write(std::ostream& out) const {
   for (const auto& p : pieces) out.write(p.data(), std::streamsize(p.size()));
 }
 
-FileMerge merge_files(std::string base, std::string ours, std::string theirs) {
+FileMerge merge_files(std::string base, std::string ours, std::string theirs, bool keep_conflicts) {
   FileMerge m;
   for (std::string* text : {&base, &ours, &theirs}) universal_newlines(*text);
   const auto o = std::make_shared<const std::string>(std::move(ours)), t = std::make_shared<const std::string>(std::move(theirs));
@@ -489,10 +513,10 @@ FileMerge merge_files(std::string base, std::string ours, std::string theirs) {
       if (const auto it = vt.at.find(r.id); it != vt.at.end() && !vb.at.count(r.id) && !same(r, vt.ops[it->second]))
         throw Error("conflicting operation ID " + r.id);
     // What the new ops of one side only change, against the other's.
-    std::map<std::string, std::vector<std::pair<std::string, const std::string*>>> changed;  // target -> field, theirs' op
+    std::map<std::string, std::vector<std::pair<std::string, const Record*>>> changed;  // target -> field, theirs' op
     for (const auto& r : vt.ops)
       if (!vb.at.count(r.id) && !vo.at.count(r.id))
-        for (auto& [target, field] : op_effects(r.data)) changed[target].emplace_back(std::move(field), &r.id);
+        for (auto& [target, field] : op_effects(r.data)) changed[target].emplace_back(std::move(field), &r);
     std::string concurrent;
     std::set<std::tuple<std::string, std::string, std::string, std::string>> seen;
     for (const auto& r : vo.ops) {
@@ -501,14 +525,14 @@ FileMerge merge_files(std::string base, std::string ours, std::string theirs) {
         const auto it = changed.find(target);
         if (it == changed.end()) continue;
         for (const auto& [other, op] : it->second)
-          if (field == other || field == "*" || other == "*") {
+          if ((field == other || field == "*" || other == "*") && !same_effect(r.data, field, op->data, other, target)) {
             if (concurrent.empty()) concurrent = "concurrent changes to " + target + "/" + field + "; manual review required";
-            MergeConflict c{target, field == "*" ? other : field, r.id, *op};
+            MergeConflict c{target, field == "*" ? other : field, r.id, op->id};
             if (seen.emplace(c.target, c.field, c.ours, c.theirs).second) m.conflicts.push_back(std::move(c));
           }
       }
     }
-    if (!concurrent.empty()) throw Error(concurrent);
+    if (!concurrent.empty() && !keep_conflicts) throw Error(concurrent);
     std::vector<const Record*> merged;
     merged.reserve(vo.ops.size() + vt.ops.size());
     for (const auto& r : vo.ops) merged.push_back(&r);
@@ -537,6 +561,32 @@ FileMerge merge_files(std::string base, std::string ours, std::string theirs) {
     m.pieces.clear();
   }
   return m;
+}
+
+std::string resolve_merge(std::string merged, const std::vector<MergeConflict>& conflicts, const std::vector<bool>& mine, const std::string& author) {
+  Document d = Document::parse_index(std::move(merged));
+  std::set<std::string> added;
+  auto tombstone = [&](std::string op) {
+    if (added.insert("delete " + op).second) d.append(json{{"op", "delete"}, {"target", std::move(op)}}, author);
+  };
+  for (size_t i = 0; i < conflicts.size(); ++i) {
+    const MergeConflict& c = conflicts[i];
+    const Op* ours = d.find_op(c.ours);
+    const Op* theirs = d.find_op(c.theirs);
+    if (!ours || !theirs) throw Error("the merge holds no operation " + (ours ? c.theirs : c.ours));
+    const bool oursDelete = ours->type == "delete", theirsDelete = theirs->type == "delete";
+    if (i < mine.size() && mine[i]) {
+      if (theirsDelete) tombstone(theirs->id);
+      else if (!oursDelete && added.insert("copy " + ours->id).second) {
+        json copy = ours->data;  // before append: it moves the log
+        for (const char* k : {"id", "ts", "by"}) copy.erase(k);
+        d.append(std::move(copy), author);
+      }
+    } else if (oursDelete && !theirsDelete) {
+      tombstone(ours->id);
+    }
+  }
+  return d.serialize();
 }
 
 int merge_driver(const std::vector<std::filesystem::path>& args) {

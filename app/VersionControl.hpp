@@ -11,6 +11,8 @@
 //             conflicts, design changed on both sides) with Preview in Compare and Merge.
 //   Branches  switch (unsaved and uncommitted changes asked about first), create (here or from a commit), delete, merge
 //             into the current one with the same incoming preview; Abort merge while one stopped on conflicts.
+//   Resolve   a merge that stopped on the document (UI-63, VersionResolve.cpp): what both sides changed, decided one by
+//             one (mine or theirs) or a whole side kept; the file written and added, Regenerate offered, then Commit.
 //   History   the commits of the document: compare with this session or with the commit before, open read-only (a
 //             write-protected copy in another window, opened with --read-only: AppDocument::readOnly), restore as new
 //             changes (append-only tombstones, one undo step), branch from here; narrowed to the commits that touched an op or
@@ -34,6 +36,10 @@ class AreaServices;
 class CompareMode;
 class DiskSync;
 class GitWatch;
+namespace opad {
+struct MergeConflict;
+struct Scene;
+}
 class OpProvenance;
 class QDialog;
 class QMenu;
@@ -60,6 +66,8 @@ class VersionControl : public QObject {
   void mergeBranch(const QString& name);
   void deleteBranch(const QString& name, bool force = false);
   void abortMerge();
+  void resolveConflicts();  // the document's index stages read and merged on a worker, then the Resolve conflicts dialog
+  static QString conflictText(const opad::MergeConflict& c, const opad::Scene& s);  // "Bracket: name"
   void pack();
   void compareWith(const git::Commit& commit);      // the commit (A) with this session (B)
   void comparePrevious(const git::Commit& commit);  // the commit before (A) with it (B)
@@ -129,6 +137,9 @@ class VersionControl : public QObject {
   DiskSync* m_disk;
   VersionPanel* m_panel = nullptr;
   ToolPanel* m_tool = nullptr;
+  struct Conflicts;  // a merge stopped on the document, as read (VersionResolve.cpp)
+  void showConflicts(std::shared_ptr<Conflicts> c);
+  void runResolve(std::shared_ptr<Conflicts> c, std::vector<bool> mine, int whole);  // whole: 2 ours, 3 theirs; 0 decided
   void applyFilter();  // the narrowed list again, from the index of HEAD (read first when it moved)
   QPointer<QDialog> m_incoming;
   OpProvenance* m_provenance;

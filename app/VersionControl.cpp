@@ -67,8 +67,10 @@ void dispose(std::shared_ptr<void> value) {
 
 [[noreturn]] void fail(const QString& text) { throw std::runtime_error(text.toUtf8().toStdString()); }
 
+}  // namespace
+
 // What both sides of a merge changed, as words: the thing's name in `doc` (a body, a feature, a sketch, a parameter).
-QString conflictText(const opad::MergeConflict& c, const opad::Scene& s) {
+QString VersionControl::conflictText(const opad::MergeConflict& c, const opad::Scene& s) {
   QString what = QString::fromStdString(c.target.substr(0, 8));
   if (c.target.rfind("parameter:", 0) == 0) what = QString::fromStdString(c.target.substr(10));
   else if (const opad::Node* n = s.node(c.target)) what = QString::fromStdString(n->name);
@@ -76,6 +78,8 @@ QString conflictText(const opad::MergeConflict& c, const opad::Scene& s) {
   else if (const opad::SketchItem* k = s.sketch(c.target)) what = QString::fromStdString(k->name);
   return VersionControl::tr("%1: %2").arg(what, c.field == "*" ? VersionControl::tr("everything") : QString::fromStdString(c.field));
 }
+
+namespace {
 
 // What merging `in.target` into HEAD brings, on a worker: the commits, and the document as the driver would merge it.
 void readIncoming(const git::Context& c, const QString& rel, VersionControl::Incoming& in, const QString& folder, const git::RunOptions& o) {
@@ -122,7 +126,7 @@ void readIncoming(const git::Context& c, const QString& rel, VersionControl::Inc
     if (!m.error.empty()) {
       in.error = QString::fromStdString(m.error);
       const opad::Scene scene = opad::resolve(ours);
-      for (const auto& conflict : m.conflicts) in.conflicts << conflictText(conflict, scene);
+      for (const auto& conflict : m.conflicts) in.conflicts << VersionControl::conflictText(conflict, scene);
     } else {
       merged = m.text();
     }
@@ -959,6 +963,9 @@ void VersionControl::runMerge(std::shared_ptr<Incoming> in) {
       m_disk->adopt();  // the file as git left it comes in
       if (!r.ok()) {
         if (!r.cancelled) failed(tr("Could not merge %1").arg(in->label), r.error());
+        if (r.out.contains("CONFLICT") && r.out.contains(m_git->repo().rel.toUtf8()))  // the document itself: decided here (UI-63)
+          say(tr("The merge stopped on changes both sides made to %1.").arg(QFileInfo(m_git->repo().rel).fileName()), tr("Resolve…"),
+              [this] { resolveConflicts(); }, 0);
         return done("merge", false, r.error());
       }
       if (m_incoming) m_incoming->close();
@@ -1258,5 +1265,7 @@ void VersionControl::extendMenu(QMenu* m) {
     QAction* a = m_services.action(QString::fromLatin1(id));
     if (a && (ready() || QString::fromLatin1(id) == "vcs.panel")) m->addAction(a);
   }
+  if (ready() && m_git->repo().doc() == git::Repo::Doc::Conflict)
+    if (QAction* a = m_services.action("vcs.resolve")) m->addAction(a);
   m->addSeparator();
 }

@@ -149,6 +149,7 @@ VersionPanel::VersionPanel(VersionControl* vc, QWidget* parent) : QWidget(parent
   mbl->setContentsMargins(0, 0, 0, 0);
   mbl->setSpacing(6);
   connect(addButton(mergeButtons, "vcsAbortMerge", tr("Abort merge")), &QPushButton::clicked, this, [this] { m_vc->abortMerge(); });
+  connect(addButton(mergeButtons, "vcsResolve", tr("Resolve conflicts…")), &QPushButton::clicked, this, [this] { m_vc->resolveConflicts(); });
   connect(addButton(mergeButtons, "vcsCommitMerge", tr("Commit the merge…")), &QPushButton::clicked, this, [this] { m_vc->commit(); });
   mbl->addStretch(1);
   mb->addWidget(mergeButtons);
@@ -469,6 +470,7 @@ void VersionPanel::showState() {
     m_mergeText->setText(conflicts ? span(t.red, tr("A merge stopped on changes both sides made. Files in conflict: %n.", nullptr, conflicts))
                                    : span(t.fg, tr("A merge is ready: commit it, or abort it.")));
   if (QPushButton* b = button("vcsCommitMerge")) b->setEnabled(r.merging && !conflicts);
+  if (QPushButton* b = button("vcsResolve")) b->setVisible(r.merging && r.doc() == D::Conflict);
   updateButtons();
 }
 

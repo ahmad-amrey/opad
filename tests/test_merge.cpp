@@ -318,6 +318,51 @@ TEST(file_merge_refuses_as_the_driver_does) {
   CHECK_EQ(refused(v.base_text, o, read_skipping(t, v.base, keys).serialize()), "body store was pruned; manual review required");
 }
 
+// UI-63: a merge git stopped on, made anyway (theirs win, the conflicts listed) and decided per conflict: ours' op again
+// after theirs', a delete of a delete to bring its target back; changes alike on both sides are no conflict.
+TEST(stopped_merge_resolved_per_conflict) {
+  Versions v = make_base();
+  const std::string importA = Document::parse(v.base_text).ops[0].id;
+  Document ours = Document::parse(v.base_text), theirs = Document::parse(v.base_text);
+  rename(ours, v.a, "Mine");
+  ours.append(json{{"op", "appearance"}, {"target", v.b}, {"color", {0, 0, 1}}, {"locked", true}});
+  ours.append(json{{"op", "delete"}, {"target", importA}});
+  rename(theirs, v.a, "Theirs");
+  theirs.append(json{{"op", "appearance"}, {"target", v.b}, {"color", {1, 0, 0}}, {"locked", true}});
+  theirs.append(json{{"op", "edit"}, {"target", importA}, {"set", {{"source", "x.step"}}}});
+  const std::string o = ours.serialize(), t = theirs.serialize();
+  CHECK(!merge_files(v.base_text, o, t).error.empty());
+  const FileMerge m = merge_files(v.base_text, o, t, true);
+  CHECK(m.error.empty() && !m.text().empty());
+  CHECK_EQ(m.conflicts.size(), 3u);  // the name, the colour (both lock it alike: no conflict), the import deleted / edited
+  CHECK(m.conflicts[0].field == "name" && m.conflicts[1].field == "color" && m.conflicts[2].target == importA);
+  const Scene asIs = resolve(Document::parse(m.text()));
+  CHECK(!asIs.node(v.a) && asIs.node(v.b)->color[0] == 1 && asIs.node(v.b)->locked);  // a delete wins as it is: its import stays deleted
+  // Ours for the name and the deleted import, theirs for the colour.
+  const Document mine = Document::parse(resolve_merge(m.text(), m.conflicts, {true, false, true}, "me"));
+  const Scene s = resolve(mine);
+  CHECK(!s.node(v.a) && s.node(v.b)->color[0] == 1 && s.node(v.b)->locked);
+  CHECK_EQ(mine.ops.size(), Document::parse(m.text()).ops.size() + 1);  // one copy: ours' delete already wins
+  CHECK(mine.ops.back().type == "rename" && mine.ops.back().data["by"] == "me" && mine.ops.back().id != ours.ops[2].id);
+  // Theirs for the import: ours' delete deleted, the import back with their edit.
+  const Document back = Document::parse(resolve_merge(m.text(), m.conflicts, {false, true, false}));
+  const Scene b = resolve(back);
+  CHECK(b.node(v.a) && b.node(v.a)->name == "Theirs" && b.node(v.b)->color[2] == 1);
+  CHECK(back.ops.back().type == "delete" && back.ops.back().data["target"] == ours.ops[4].id);
+  // Alike on both sides: no conflict at all.
+  Document left = Document::parse(v.base_text), right = Document::parse(v.base_text);
+  rename(left, v.a, "Same");
+  left.append(json{{"op", "delete"}, {"target", importA}});
+  right.append(json{{"op", "param"}, {"name", "w"}, {"expr", "1 mm"}});
+  rename(right, v.a, "Same");
+  right.append(json{{"op", "delete"}, {"target", importA}});
+  const FileMerge alike = merge_files(v.base_text, left.serialize(), right.serialize());
+  CHECK(alike.error.empty() && alike.conflicts.empty());
+  CHECK(same_effect(left.ops[2].data, "name", right.ops[3].data, "name", v.a) && !same_effect(ours.ops[2].data, "name", theirs.ops[2].data, "name", v.a));
+  std::vector<std::string> keys;
+  CHECK(plan_merge(v.base, left, read_skipping(right.serialize(), v.base, keys)).conflicts.empty());
+}
+
 TEST(merge_driver_writes_ours_only_when_merged) {
   Versions v = make_base();
   Document ours = Document::parse(v.base_text), theirs = Document::parse(v.base_text);

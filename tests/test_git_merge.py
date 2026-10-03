@@ -165,6 +165,15 @@ with tempfile.TemporaryDirectory(prefix="opad-merge-") as folder:
         "one id, two contents": (base, ours_edit, ours_edit.replace(b'"left"', b'"different"'),
                                  f"conflicting operation ID {json.loads(last_op(ours_edit))['id']}"),
         "same new op on both sides": (base, ours_edit, ours_edit, None),
+        # Changes alike from both sides (UI-63): no conflict, both kept.
+        # (each side through another command, so the two are different ops: deterministic ids follow the command)
+        "same edit on both sides": (base, version(edit("alike")), version(("append", {"op": {"op": "edit", "target": note, "set": {"text": "alike", "style": "ok"}}})), None),
+        "same delete on both sides": (base, version(("delete", {"target": note})), version(("append", {"op": {"op": "delete", "target": note}})), None),
+        "same parameter on both sides": (base, version(("param", {"name": "wall", "expr": "3 mm"})),
+                                         version(("append", {"op": {"op": "param", "name": "wall", "expr": "3 mm"}})), None),
+        "same parameter, another value": (base, version(("param", {"name": "wall", "expr": "3 mm"})),
+                                          version(("append", {"op": {"op": "param", "name": "wall", "expr": "4 mm"}})),
+                                          "concurrent changes to parameter:wall/*; manual review required"),
         "delete against edit": (base, version(("delete", {"target": note})), theirs_edit, f"concurrent changes to {note}/*; manual review required"),
         "one parameter": (base, version(param), version(("param", {"name": "wall", "expr": "3 mm"})),
                           "concurrent changes to parameter:wall/*; manual review required"),
