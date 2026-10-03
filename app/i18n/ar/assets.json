@@ -267,5 +267,7 @@
   "Apart now": "المسافة الآن",
   "Scaled by": "معامل التحجيم",
   "First pair apart": "بُعد الزوج الأول",
-  "Close canvas": "إغلاق الصورة المرجعية"
+  "Close canvas": "إغلاق الصورة المرجعية",
+  "%n picture(s) placed as image canvases on the sketch's plane": "وُضعت %n صورة كصور مرجعية على مستوى الرسم",
+  "Canvas %1": "الصورة المرجعية %1"
 }

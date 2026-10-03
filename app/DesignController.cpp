@@ -29,6 +29,7 @@
 
 #include "I18n.hpp"
 #include "Units.hpp"
+#include "opad/canvas.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/geometry.hpp"
 #include "opad/mesh.hpp"
@@ -189,7 +190,8 @@ void DesignController::setPanel(ToolPanel* panel, std::function<void(ToolPanel*)
 }
 
 // ---------------------------------------------------------------- applying changes
-void DesignController::applyOps(std::vector<opad::json> ops, const QString& label, std::function<void(bool, const QString&)> done) {
+void DesignController::applyOps(std::vector<opad::json> ops, const QString& label, std::function<void(bool, const QString&)> done,
+                                std::function<void(opad::Document&, opad::design::Plan&)> extend) {
   if (!m_doc->hasDocument || m_doc->browse) return;
   auto report = [this, done](bool ok, const QString& error) {
     if (done) done(ok, error);
@@ -201,9 +203,10 @@ void DesignController::applyOps(std::vector<opad::json> ops, const QString& labe
   const auto generation = m_doc->generation;
   auto plan = std::make_shared<Plan>();
   auto doc = std::make_shared<opad::Document>(m_doc->doc);
-  m_jobs->async(tr("Updating the design"), [doc, ops, plan](Progress p) {
+  m_jobs->async(tr("Updating the design"), [doc, ops, plan, extend](Progress p) {
     Reading reading;
     *plan = plan_ops(*doc, ops, true, [p] { return p.cancelled(); });
+    if (extend) extend(*doc, *plan);
   }, [this, plan, label, report, generation](bool ok, const QString& error) {
     whenNobodyReads(this, [this, plan, label, report, ok, error, generation] {
       if (generation != m_doc->generation) return;
@@ -976,13 +979,38 @@ void DesignController::finishSketch(std::function<void()> then) {
   };
   if (m_sketch->sketchId().empty() && m_sketch->empty()) return leave();  // nothing was drawn: no op
   if (!m_sketch->sketchId().empty() && !m_sketch->modified()) return leave();
-  opad::json op;
-  if (m_sketch->sketchId().empty()) op = make_sketch_op(m_sketch->name().toStdString(), m_sketch->plane(), m_sketch->geometry());
-  else op = make_edit_op(m_sketch->sketchId(), opad::json{{"geometry_delta", m_sketch->geometryDelta()}, {"plane", m_sketch->plane()}});
-  applyOps({op}, m_sketch->sketchId().empty() ? tr("sketch") : tr("edit sketch"), [this, leave](bool ok, const QString& error) {
+  // The pictures inserted while it was open become image canvases on its plane in the same step (UI-70: bytes stored once,
+  // moved by transform ops), never records of the sketch; the ones it already had stay (Backdrop images to canvases).
+  Sketch sk = Sketch::from_json(m_sketch->geometry());
+  std::set<int> had;
+  for (const auto& image : m_sketch->initialGeometry().value("images", opad::json::array())) had.insert(image.value("id", -1));
+  opad::json pictures = opad::json::array(), kept = opad::json::array();
+  for (const auto& image : sk.images) (had.count(image.value("id", -1)) ? kept : pictures).push_back(image);
+  if (!pictures.empty()) {
+    sk.id_watermark = std::max(sk.id_watermark, sk.next_id() - 1);  // their ids are never given again
+    sk.images = kept;
+  }
+  const opad::json geometry = sk.to_json();
+  std::vector<opad::json> ops;
+  if (m_sketch->sketchId().empty()) {
+    if (pictures.empty() || !sk.entities.empty() || !sk.images.empty() || !sk.points.empty()) ops.push_back(make_sketch_op(m_sketch->name().toStdString(), m_sketch->plane(), geometry));
+  } else {
+    ops.push_back(make_edit_op(m_sketch->sketchId(), opad::json{{"geometry_delta", sketch_delta(m_sketch->initialGeometry(), geometry)}, {"plane", m_sketch->plane()}}));
+  }
+  std::function<void(opad::Document&, Plan&)> canvases;
+  if (!pictures.empty())
+    canvases = [pictures, frame = m_sketch->frame()](opad::Document& doc, Plan& plan) {
+      opad::CanvasImports made = opad::canvas_imports(doc, pictures, frame);
+      plan.ops.insert(plan.ops.end(), made.ops.begin(), made.ops.end());
+      plan.bodies.insert(plan.bodies.end(), made.bodies.begin(), made.bodies.end());
+      plan.report["canvases"] = made.canvases;
+    };
+  const int placed = int(pictures.size());
+  applyOps(ops, m_sketch->sketchId().empty() ? tr("sketch") : tr("edit sketch"), [this, leave, placed](bool ok, const QString& error) {
     if (!ok) return emit failed(error);  // stay in the sketch so nothing drawn is lost
     leave();
-  });
+    if (placed > 0) emit status(tr("%n picture(s) placed as image canvases on the sketch's plane", nullptr, placed));
+  }, canvases);
 }
 
 void DesignController::cancelSketch() {

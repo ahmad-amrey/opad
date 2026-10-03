@@ -230,8 +230,9 @@ CASES = [
     # A linked board's missing models of KiCad's library: counted, offered, shown in Properties, downloaded, synced in
     # (<prefix>.properties.png).
     ("asset-kicad", asset_kicad, {"OPAD_BENCH_ASSET_KICAD": "{prefix}"}),
-    # Pictures (UI-71): a JPEG canvas decoded on a worker, a sketch backdrop kept as the file has it, a move storing only
-    # its fields (<prefix>.canvas.png).
+    # Pictures (UI-71): a JPEG canvas decoded on a worker; a picture inserted into a sketch kept as the file has it and a
+    # canvas on the sketch's plane once finished, traced by the sketch's Trace image (UI-70); an older file's backdrop
+    # moved storing only its fields (<prefix>.canvas.png).
     ("pictures", "empty", {"OPAD_BENCH_PICTURES": "{prefix}"}),
     # The image canvas (UI-70): inserted on XZ through the placer at a width, a corner dragged (live, one op), Shift on a
     # corner stretching it, digits into X,

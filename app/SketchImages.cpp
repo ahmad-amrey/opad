@@ -7,6 +7,7 @@
 #include "opad/design/sketch_modify.hpp"
 #include "opad/design/drawing_sketch.hpp"
 #include "opad/drawing_io.hpp"
+#include "opad/canvas.hpp"
 #include "opad/geometry.hpp"
 #include <AIS_TexturedShape.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
@@ -41,6 +42,13 @@ opad::json& backdrop(Sketch& sk,int id) {
   for(auto& image:sk.images)if(image.at("id").get<int>()==id)return image;
   throw opad::Error("choose a backdrop image first");
 }
+// Dark (or transparent-on-light) pixels as grey levels for trace_bitmap.
+std::vector<unsigned char> greyLevels(const QImage& image) {
+  std::vector<unsigned char> grey(size_t(image.width())*image.height());
+  for(int y=0;y<image.height();++y)for(int x=0;x<image.width();++x){const auto pixel=image.pixel(x,y);grey[size_t(y)*image.width()+x]=static_cast<unsigned char>((qGray(pixel)*qAlpha(pixel)+255*(255-qAlpha(pixel)))/255);}
+  return grey;
+}
+double columnLength(const opad::Mat4& m,int c){return std::sqrt(m.at(0,c)*m.at(0,c)+m.at(1,c)*m.at(1,c)+m.at(2,c)*m.at(2,c));}
 std::pair<double,double> imagePoint(const opad::json& image,double x,double y) {
   const double a=image.value("angle",0.0);return {image.at("position")[0].get<double>()+x*std::cos(a)-y*std::sin(a),image.at("position")[1].get<double>()+x*std::sin(a)+y*std::cos(a)};
 }
@@ -79,11 +87,25 @@ bool SketchEditor::applyImageTool() {
       runSketchEdit(tr("Remove image"),[id](Sketch& sk){sk.id_watermark=sk.next_id()-1;for(auto it=sk.images.begin();it!=sk.images.end();)if(it->at("id").get<int>()==id)it=sk.images.erase(it);else ++it;});
     } else if(m_tool=="image_trace") {
       TraceOptions options;options.threshold=params.count(option("threshold","128").toStdString());options.smoothing=params.count(option("smoothing","1").toStdString());options.noise=params.count(option("noise","8").toStdString());options.tolerance=params.number(option("traceTolerance","0.75").toStdString());options.corner_angle=params.number(option("cornerAngle","60").toStdString());options.invert=option("invert","0")=="1";
+      if(const QString source=option("imageId");source.startsWith("canvas:")) {  // an image canvas on the sketch's plane: its picture where it is shown
+        const std::string canvas=source.mid(7).toStdString();const opad::Node* n=m_doc->scene.node(canvas);
+        if(!n||!opad::is_canvas(*n)||!n->raster.contains("href"))throw opad::Error("choose a backdrop image first");
+        double bw=0,bh=0;opad::canvas_body_size(*n,bw,bh);
+        const auto data=std::make_shared<const std::string>(n->raster["href"].get<std::string>());const opad::Mat4 world=m_doc->scene.world(canvas);const auto flip=opad::CanvasFlags::of(n->canvas).flip;const auto frame=m_frame;
+        runSketchEdit(tr("Tracing image"),[data,world,bw,bh,flip,frame,options](Sketch& sk){
+          QImage image=decodePicture(QByteArray::fromBase64(QByteArray::fromStdString(data->substr(data->find(',')+1))),4096).convertToFormat(QImage::Format_ARGB32);
+          if(image.isNull())throw opad::Error("backdrop image could not be decoded");
+          if(flip[0]||flip[1])image=image.flipped((flip[0]?Qt::Horizontal:Qt::Orientations())|(flip[1]?Qt::Vertical:Qt::Orientations()));
+          auto traced=trace_bitmap(greyLevels(image),image.width(),image.height(),options);const double sx=bw/image.width(),sy=bh/image.height();
+          for(auto& p:traced.points){double u=0,v=0;frame.to_local(world.apply({p.x*sx,p.y*sy,0}),u,v);p.x=u;p.y=v;}
+          simplify_sketch(traced,std::max(1e-6,options.tolerance*std::min(sx*columnLength(world,0),sy*columnLength(world,1))));append_reference(sk,traced,{},"project",false);
+        });
+        return true;
+      }
       runSketchEdit(tr("Tracing image"),[id,options](Sketch& sk){
         const auto imageData=backdrop(sk,id);QImage image=decodePicture(QByteArray::fromBase64(QByteArray::fromStdString(imageData.at("data").get<std::string>())),4096).convertToFormat(QImage::Format_ARGB32);
-        if(image.isNull())throw opad::Error("backdrop image could not be decoded");std::vector<unsigned char> grey(size_t(image.width())*image.height());
-        for(int y=0;y<image.height();++y)for(int x=0;x<image.width();++x){const auto pixel=image.pixel(x,y);grey[size_t(y)*image.width()+x]=static_cast<unsigned char>((qGray(pixel)*qAlpha(pixel)+255*(255-qAlpha(pixel)))/255);}
-        auto traced=trace_bitmap(grey,image.width(),image.height(),options);const double sx=imageData.at("width").get<double>()/image.width(),sy=imageData.at("height").get<double>()/image.height();
+        if(image.isNull())throw opad::Error("backdrop image could not be decoded");
+        auto traced=trace_bitmap(greyLevels(image),image.width(),image.height(),options);const double sx=imageData.at("width").get<double>()/image.width(),sy=imageData.at("height").get<double>()/image.height();
         for(auto& p:traced.points){const auto at=imagePoint(imageData,p.x*sx,p.y*sy);p.x=at.first;p.y=at.second;}
         simplify_sketch(traced,std::max(1e-6,options.tolerance*std::min(sx,sy)));append_reference(sk,traced,{},"project",false);
       });
@@ -101,6 +123,18 @@ bool SketchEditor::applyImageTool() {
     }
   }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
   return true;
+}
+
+std::vector<std::pair<std::string,QString>> SketchEditor::planeCanvases() const {
+  std::vector<std::pair<std::string,QString>> found;const auto normal=m_frame.normal();
+  for(const auto& id:m_doc->scene.all_bodies())if(const opad::Node* n=m_doc->scene.node(id);n&&opad::is_canvas(*n)&&!n->body_missing&&n->raster.contains("href")) {
+    const opad::Mat4 w=m_doc->scene.world(id);const opad::Vec3 x=w.apply_dir({1,0,0}),y=w.apply_dir({0,1,0}),o=w.apply({0,0,0});
+    const opad::Vec3 c{x[1]*y[2]-x[2]*y[1],x[2]*y[0]-x[0]*y[2],x[0]*y[1]-x[1]*y[0]};const double l=std::sqrt(c[0]*c[0]+c[1]*c[1]+c[2]*c[2]);
+    if(!(l>0))continue;
+    const double facing=(c[0]*normal[0]+c[1]*normal[1]+c[2]*normal[2])/l,off=(o[0]-m_frame.origin[0])*normal[0]+(o[1]-m_frame.origin[1])*normal[1]+(o[2]-m_frame.origin[2])*normal[2];
+    if(std::fabs(facing)>1-1e-9&&std::fabs(off)<=1e-6*std::max({1.0,std::fabs(o[0]),std::fabs(o[1]),std::fabs(o[2])}))found.push_back({id,QString::fromStdString(n->name)});
+  }
+  return found;
 }
 
 void SketchEditor::refreshImages() {

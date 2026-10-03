@@ -40,6 +40,9 @@ class SketchEditor : public QObject, public SketchInput {
   const opad::Frame& frame() const { return m_frame; }
   opad::json geometry() const { return m_sk.to_json(); }
   opad::json geometryDelta() const { return opad::design::sketch_delta(m_initialGeometry, geometry()); }
+  const opad::json& initialGeometry() const { return m_initialGeometry; }  // as the sketch was opened
+  // The image canvases lying on the sketch's plane (Trace image takes them as well as its own backdrops): id and name.
+  std::vector<std::pair<std::string, QString>> planeCanvases() const;
   bool modified() const { return m_modified; }
   bool empty() const;  // nothing but the origin
   // Copies one entity per UI slice, then serializes on a worker. A changed sketch

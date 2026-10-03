@@ -198,24 +198,9 @@ design::Plan plan_canvas_replace(Document& doc, const std::string& id, const std
   return plan;
 }
 
-design::Plan plan_canvas_from_backdrop(Document& doc, const std::string& sketch, const std::vector<int>& images) {
-  const Scene scene = resolve(doc);
-  const SketchItem* item = scene.sketch(sketch);
-  if (!item) throw Error("no such sketch: " + sketch);
-  const design::Sketch before = design::Sketch::from_json(item->geometry);
-  design::Sketch after = before;
-  after.id_watermark = after.next_id() - 1;  // the images' ids are never given again
-  after.images = json::array();
-  std::vector<json> ops;
-  std::vector<design::NewBody> bodies;
-  json canvases = json::array();
-  const Frame& f = item->frame;
-  for (const auto& image : before.images) {
-    const int image_id = image.at("id").get<int>();
-    if (!images.empty() && std::find(images.begin(), images.end(), image_id) == images.end()) {
-      after.images.push_back(image);
-      continue;
-    }
+CanvasImports canvas_imports(Document& doc, const json& images, const Frame& f) {
+  CanvasImports out;
+  for (const auto& image : images) {
     const std::string encoded = image.at("data").get<std::string>();
     const std::filesystem::path source = path_from_utf8(image.value("name", std::string("backdrop")));
     detail::CanvasBody made = detail::canvas_body(base64_decode(encoded), utf8(source.stem().u8string()), image.at("width").get<double>(),
@@ -227,17 +212,32 @@ design::Plan plan_canvas_from_backdrop(Document& doc, const std::string& sketch,
     if (const double opacity = image.value("opacity", 0.5); opacity < 1) made.node["opacity"] = opacity;
     CanvasFlags flags;
     flags.plane = f.to_json();
-    canvases.push_back(made.node["id"]);
-    ops.push_back({{"op", "import"}, {"id", new_uuid()}, {"source", utf8(source.filename().u8string())}, {"units", "mm"}, {"nodes", json::array({made.node})}, {"canvas", flags.to_json()}});
+    out.canvases.push_back(made.node["id"]);
+    out.ops.push_back({{"op", "import"}, {"id", new_uuid()}, {"source", utf8(source.filename().u8string())}, {"units", "mm"}, {"nodes", json::array({made.node})}, {"canvas", flags.to_json()}});
     doc.add_body(made.body.key, std::string(made.body.brep), made.body.meta);
     cache_shape(doc, made.body.key, *made.body.shape);
-    bodies.push_back(std::move(made.body));
+    out.bodies.push_back(std::move(made.body));
   }
-  if (ops.empty()) throw Error("the sketch has no backdrop image to turn into a canvas");
+  return out;
+}
+
+design::Plan plan_canvas_from_backdrop(Document& doc, const std::string& sketch, const std::vector<int>& images) {
+  const Scene scene = resolve(doc);
+  const SketchItem* item = scene.sketch(sketch);
+  if (!item) throw Error("no such sketch: " + sketch);
+  const design::Sketch before = design::Sketch::from_json(item->geometry);
+  design::Sketch after = before;
+  after.id_watermark = after.next_id() - 1;  // the images' ids are never given again
+  after.images = json::array();
+  json moved = json::array();
+  for (const auto& image : before.images)
+    (images.empty() || std::find(images.begin(), images.end(), image.at("id").get<int>()) != images.end() ? moved : after.images).push_back(image);
+  if (moved.empty()) throw Error("the sketch has no backdrop image to turn into a canvas");
+  CanvasImports made = canvas_imports(doc, moved, item->frame);
   design::Plan plan = design::plan_ops(doc, {design::make_edit_op(sketch, {{"geometry_delta", design::sketch_delta(before.to_json(), after.to_json())}})}, false);
-  plan.ops.insert(plan.ops.begin(), ops.begin(), ops.end());
-  plan.bodies.insert(plan.bodies.begin(), bodies.begin(), bodies.end());
-  plan.report["canvases"] = canvases;
+  plan.ops.insert(plan.ops.begin(), made.ops.begin(), made.ops.end());
+  plan.bodies.insert(plan.bodies.begin(), made.bodies.begin(), made.bodies.end());
+  plan.report["canvases"] = made.canvases;
   return plan;
 }
 

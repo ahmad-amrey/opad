@@ -65,6 +65,15 @@ design::Plan plan_canvas_replace(Document& doc, const std::string& id, const std
 // A sketch's backdrop images (`images`: their ids; empty: all) as canvases where they lie, with their opacity, and taken out
 // of the sketch: one plan. The bytes go over as the sketch has them.
 design::Plan plan_canvas_from_backdrop(Document& doc, const std::string& sketch, const std::vector<int>& images = {});
+// Backdrop image records (as a sketch keeps them: data, name, position, width, height, angle, opacity) as canvases where they
+// lie on `frame`: an import op and a body each (staged in `doc`), the canvases' node ids. A sketch's image tools end here:
+// the pictures inserted while it was edited reach the document as canvases on its plane, never as its records.
+struct CanvasImports {
+  std::vector<json> ops;
+  std::vector<design::NewBody> bodies;
+  json canvases = json::array();
+};
+CanvasImports canvas_imports(Document& doc, const json& images, const Frame& frame);
 
 namespace detail {
 // A picture's canvas node without a document: a `w` x `h` mm rectangle (its body `key`, BREP text and meta) showing
