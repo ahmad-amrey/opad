@@ -147,6 +147,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   BodyLook bodyLook(const std::string& body) const;  // as composed now (whether displayed yet or not); a sketch's too
   BodyLook shownLook(const std::string& body) const;  // as applied to the displayed body or sketch (the default look if none)
   QString hoverName(const std::string& node) const;   // the status text of a hovered node: "Lid (inactive)" for a ghost
+  const QString& hoverText() const { return m_hover; }  // the status text of what picking finds under the mouse now
+  // The ghost drawn nearest under a point of the view (widget px), found as the orbit pivot is (ghosts are not picked):
+  // "" when there is none or a body that is no ghost is in front of it. One pick of the navigation selector.
+  std::string ghostAt(const QPointF& point);
   bool looksPending() const { return m_lookJob != nullptr || !m_lookQueue.empty(); }
   opad::json benchLookState(const std::string& body) const;  // OPAD_BENCH_LOOKS: what AIS holds for a displayed body or sketch
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none

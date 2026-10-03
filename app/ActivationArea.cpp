@@ -3,7 +3,9 @@
 // (Viewport::ghostsPickable: guided tools, feature inputs, sketch Project, a sketch plane being chosen); the browser has
 // a radio on the document and component rows (Alt+click on the row does the same), an 'active' pill on the active one,
 // dims what is outside, and its breadcrumb leads to it; the chips row names it with the way back to the root; the
-// timeline dims the ops that do not touch it. New sketches, features, bodies, imports and components go into
+// timeline dims the ops that do not touch it. A ghost under the resting mouse is named in the status bar with its
+// component, a double click on it activates that component (as SketchUp opens a group), and so does the right-click
+// menu there (Viewport::ghostAt: the navigation selector, which keeps ghosts). New sketches, features, bodies, imports and components go into
 // it (DesignController, AppDocument::startImport, design.newcomponent) and F frames it (view.fit). The one activated last
 // in a document is remembered (setting view/active/<uuid>) and active again when the document is opened again. Active
 // component visibility (setting view/activeVisibility) off draws and picks the rest as it is; Inactive opacity (setting
@@ -19,11 +21,14 @@
 #include <QMenuBar>
 #include <QMouseEvent>
 #include <QSettings>
+#include <QTimer>
 
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <set>
+#include <utility>
 
 #include "AreaController.hpp"
 #include "BrowserPanel.hpp"
@@ -139,6 +144,10 @@ class Activation : public AreaController {
     services().chips()->addChip(m_chip);
     services().browser()->addDecorator([this](const browser::Row& row, browser::Decoration& d) { decorate(row, d); });
     services().browser()->tree()->viewport()->installEventFilter(this);  // Alt+click on a component row activates it
+    services().viewport()->installEventFilter(this);  // a ghost's hover hint, right-click and double-click
+    m_hoverTimer.setSingleShot(true);
+    m_hoverTimer.setInterval(120);  // once the mouse rests: one pick of the navigation selector, not one per move
+    connect(&m_hoverTimer, &QTimer::timeout, this, &Activation::hoverHint);
     connect(doc, &AppDocument::activeComponentChanged, this, &Activation::refresh);
     // Choosing a sketch plane takes a face of another component too (a reference, as a guided tool's picks are).
     DesignController* design = services().design();
@@ -146,12 +155,20 @@ class Activation : public AreaController {
   }
 
   void contextMenu(const SelectionContext& selection, QMenu& menu) override {
-    if (selection.sketching || !services().document()->hasDocument) return;
-    const std::string& active = services().document()->activeComponent();
+    const std::optional<QPointF> at = std::exchange(m_menuAt, std::nullopt);  // a right-click in the view, there
+    AppDocument* doc = services().document();
+    if (selection.sketching || !doc->hasDocument) return;
+    const std::string& active = doc->activeComponent();
     const std::string id = target(selection);
     if (id.empty() && active.empty()) return;
     menu.addSeparator();
     if (!id.empty() && id != active) menu.addAction(m_activate);
+    // On a ghost: the component it is in (the root's is Activate root, below).
+    const opad::Node* ghost = at && m_ghosting ? doc->scene.node(services().viewport()->ghostAt(*at)) : nullptr;
+    if (ghost && !ghost->parent.empty() && ghost->parent != id && ghost->parent != active) {
+      QAction* a = menu.addAction(icons::themed("activate", 16), tr("Activate %1").arg(doc->nodeName(ghost->parent)));
+      connect(a, &QAction::triggered, this, [this, component = ghost->parent] { setActive(component); });
+    }
     if (!active.empty()) menu.addAction(m_root);
   }
 
@@ -176,6 +193,7 @@ class Activation : public AreaController {
       m_chipMenu->exec(static_cast<QContextMenuEvent*>(event)->globalPos());
       return true;
     }
+    if (object == services().viewport()) return viewEvent(event);
     BrowserTree* tree = services().browser()->tree();
     if (object == tree->viewport() && (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick)) {
       const auto* e = static_cast<QMouseEvent*>(event);
@@ -197,6 +215,62 @@ class Activation : public AreaController {
     if (const opad::Node* n = scene.node(selection.ids.front())) return n->kind == opad::Node::Kind::Component ? n->id : n->parent;
     const opad::SketchItem* sketch = scene.sketch(selection.ids.front());
     return sketch ? sketch->component : std::string();
+  }
+
+  // The view's events for ghosts (not picked, so the viewport does not see them): resting on one names it with the way to
+  // activate its component, a double click activates that, and the right-click menu offers it. True: consumed.
+  bool viewEvent(QEvent* event) {
+    Viewport* view = services().viewport();
+    const auto* e = dynamic_cast<const QMouseEvent*>(event);
+    const bool idle = m_ghosting && !view->ghostsPickable() && !services().design()->sketchActive() && !services().design()->featureActive();
+    switch (event->type()) {
+      case QEvent::MouseMove:
+        if (e->buttons() == Qt::NoButton && (idle || !m_hint.isEmpty())) {
+          m_hoverAt = e->position();
+          m_hoverTimer.start();
+        }
+        return false;
+      case QEvent::Leave:
+        m_hoverTimer.stop();
+        showHint({});
+        return false;
+      case QEvent::MouseButtonPress:
+        if (e->button() == Qt::RightButton) m_rightAt = e->position();
+        return false;
+      case QEvent::MouseButtonRelease:
+        if (e->button() == Qt::RightButton && m_ghosting && (e->position() - m_rightAt).manhattanLength() < 4) {
+          m_menuAt = e->position();  // the menu this release opens asks for it; gone if it opens none
+          QTimer::singleShot(0, this, [this] { m_menuAt.reset(); });
+        }
+        return false;
+      case QEvent::MouseButtonDblClick: {
+        const opad::Node* ghost = idle && e->button() == Qt::LeftButton && e->modifiers() == Qt::NoModifier ? services().document()->scene.node(view->ghostAt(e->position())) : nullptr;
+        if (!ghost) return false;
+        setActive(ghost->parent);  // a ghost at the root: the root
+        showHint({});
+        return true;
+      }
+      default:
+        return false;
+    }
+  }
+
+  void hoverHint() {
+    Viewport* view = services().viewport();
+    const bool idle = m_ghosting && !view->ghostsPickable() && !services().design()->sketchActive() && !services().design()->featureActive();
+    const opad::Node* ghost = idle && view->hoverText().isEmpty() ? services().document()->scene.node(view->ghostAt(m_hoverAt)) : nullptr;
+    const AppDocument* doc = services().document();
+    showHint(!ghost ? QString()
+             : ghost->parent.empty() ? tr("%1 (inactive) · double-click to activate the root").arg(doc->nodeName(ghost->id))
+                                     : tr("%1 (inactive, in %2) · double-click to activate %2").arg(doc->nodeName(ghost->id), doc->nodeName(ghost->parent)));
+  }
+
+  // In the status bar's hover text, over the viewport's own (which comes back when the hint goes).
+  void showHint(const QString& text) {
+    if (text == m_hint) return;
+    m_hint = text;
+    Viewport* view = services().viewport();
+    emit view->hoverChanged(text.isEmpty() ? view->hoverText() : text);
   }
 
   static QString rememberKey(const AppDocument& doc) { return "view/active/" + QString::fromStdString(doc.doc.header.uuid); }
@@ -258,6 +332,7 @@ class Activation : public AreaController {
     Viewport* view = services().viewport();
     if (ghosted || m_ghosting) view->setLookLayer(LookSource::Activation, std::move(layer));  // the root active: the layer left alone
     m_ghosting = ghosted;
+    if (!ghosted) showHint({});
     if (ghosted && !view->ghostsPickable()) {  // what was selected outside it is a ghost now: not selected any more
       const auto picked = view->selection();
       if (std::any_of(picked.begin(), picked.end(), [&](const opad::Ref& r) { return r.kind != opad::Ref::Kind::Point && !under(scene, r.body, active); })) view->clearSelection();
@@ -290,6 +365,10 @@ class Activation : public AreaController {
   QMenu* m_chipMenu = nullptr;      // the chip's right-click
   QLabel* m_chip = nullptr;
   bool m_ghosting = false;  // the Activation layer is ours and set (a component was active)
+  QTimer m_hoverTimer;
+  QPointF m_hoverAt, m_rightAt;
+  QString m_hint;                   // the ghost's hover hint shown
+  std::optional<QPointF> m_menuAt;  // where the view was right-clicked, for the menu that click opens
 };
 
 OPAD_AREA(Activation)

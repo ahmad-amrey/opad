@@ -78,6 +78,19 @@ QString Viewport::hoverName(const std::string& node) const {
   return m_doc->nodeName(node) + (it != m_items.end() && it->second.look.ghost ? tr(" (inactive)") : QString());
 }
 
+std::string Viewport::ghostAt(const QPointF& point) {
+  if (!m_initialised || m_navSelector.IsNull()) return {};
+  const Graphic3d_Vec2i at = devicePos(point);
+  m_navSelector->Pick(at.x(), at.y(), m_view);
+  for (int i = 1; i <= m_navSelector->NbPicked(); ++i) {  // nearest first
+    const auto node = m_navNodes.find(m_navSelector->Picked(i)->Selectable().get());
+    const auto item = node == m_navNodes.end() ? m_items.end() : m_items.find(node->second);
+    if (item == m_items.end() || !m_ctx->IsDisplayed(item->second.ais)) continue;
+    return item->second.look.ghost ? node->second : std::string();
+  }
+  return {};
+}
+
 gp_Vec Viewport::lookOffset(const std::string& node) const {
   std::array<double, 3> o{0, 0, 0};
   if (const auto it = m_items.find(node); it != m_items.end()) o = it->second.look.offset;  // as drawn

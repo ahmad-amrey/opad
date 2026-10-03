@@ -17,5 +17,8 @@
  "Active component visibility": "إبراز المكوّن النشط",
  "While a component is active the rest of the model is ghosted; off, it is drawn and picked as it is.": "ما دام مكوّن نشطًا يظهر باقي النموذج شفافًا باهتًا؛ وعند الإيقاف يُرسم ويُنتقى كما هو.",
  "Inactive opacity": "عتامة غير النشط",
- "%1 %": "%1٪"
+ "%1 %": "%1٪",
+ "Activate %1": "تنشيط %1",
+ "%1 (inactive) · double-click to activate the root": "%1 (غير نشط) · انقر نقرًا مزدوجًا لتنشيط الجذر",
+ "%1 (inactive, in %2) · double-click to activate %2": "%1 (غير نشط، في %2) · انقر نقرًا مزدوجًا لتنشيط %2"
 }

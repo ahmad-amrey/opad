@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QSignalBlocker>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QToolButton>
@@ -155,6 +156,19 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                       for (const auto& id : doc->scene.all_bodies()) (v->shownLook(id).ghost ? ghosts : inside) += 1;
                       require(done && ticker->worst < 250 && ghosts > 0 && inside > 0,
                               QString("activated in %1 ms, %2 ghosts, %3 inside, worst event-loop gap %4 ms").arg(ticker->phase.elapsed()).arg(ghosts).arg(inside).arg(ticker->worst));
+                      // The hover hint's pick (one per resting mouse): a 5 x 5 grid over the view.
+                      v->fitAll();
+                      v->benchPickAt(0, 0);
+                      qint64 slowest = 0;
+                      int found = 0;
+                      for (int j = 1; j <= 5; ++j)
+                        for (int i = 1; i <= 5; ++i) {
+                          QElapsedTimer pick;
+                          pick.start();
+                          found += !v->ghostAt(QPointF(v->width() * i / 6.0, v->height() * j / 6.0)).empty();
+                          slowest = std::max(slowest, pick.elapsed());
+                        }
+                      require(slowest < 50, QString("a ghost's hover pick: slowest of 25 %1 ms (%2 on a ghost)").arg(slowest).arg(found));
                       ticker->start();
                       doc->setActiveComponent({});
                     }, 60000});
@@ -330,8 +344,45 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                     for (QAction* preset : opacity ? opacity->actions() : QList<QAction*>())
                       if (preset->data().toDouble() == 0) preset->trigger();  // the theme's again
                   }});
+  // A ghost under the resting mouse is named in the status bar with the way to activate its component; the right-click
+  // menu there offers it; a double click on a ghost activates its component.
+  auto mouse = [v](QEvent::Type type, int x, int y, Qt::MouseButton button) {
+    const QPointF at(x / v->displayScale(), y / v->displayScale());
+    QMouseEvent e(type, at, v->mapToGlobal(at), button, type == QEvent::MouseButtonRelease || type == QEvent::MouseMove ? Qt::NoButton : button, Qt::NoModifier);
+    QCoreApplication::sendEvent(v, &e);
+  };
   list.push_back({[=] { return idle() && std::abs(v->benchLookState(s->boxA).value("transparency", 0.0) - (1 - v->tokens().ghost.alphaF())) < 1e-6; }, [=](bool themed) {
                     require(themed, "the Theme preset: the ghost at the theme's opacity again");
+                    mouse(QEvent::MouseMove, s->ax, s->ay, Qt::NoButton);
+                  }});
+  list.push_back({[=, &w] { return w.m_statusHover->text().contains("Housing"); }, [=, &w](bool named) {
+                    const QString hint = w.m_statusHover->text();
+                    require(named && hint.contains(doc->nodeName(s->boxA)), "resting on the Housing's ghost, the status names it and its component: " + hint);
+                    mouse(QEvent::MouseMove, s->bx, s->by, Qt::NoButton);
+                  }, 3000});
+  list.push_back({[=, &w] { return w.m_statusHover->text().isEmpty(); }, [=, &w](bool cleared) {
+                    require(cleared, "on the Lid's box (no ghost) the hint goes");
+                    QStringList entries;
+                    QAction* housing = nullptr;
+                    {
+                      const QSignalBlocker quiet(v);  // the menu this click opens is asked for below, not shown
+                      mouse(QEvent::MouseButtonPress, s->ax, s->ay, Qt::RightButton);
+                      mouse(QEvent::MouseButtonRelease, s->ax, s->ay, Qt::RightButton);
+                    }
+                    QMenu menu;
+                    for (AreaController* area : w.m_areas) area->contextMenu(SelectionContext(), menu);
+                    for (QAction* a : menu.actions()) {
+                      entries << (a->objectName().isEmpty() ? a->text() : a->objectName());
+                      if (a->objectName().isEmpty() && a->text().contains("Housing")) housing = a;
+                    }
+                    if (housing) housing->trigger();
+                    require(housing && doc->activeComponent() == s->housing, "right-click on the Housing's ghost offers to activate it: " + entries.join(", "));
+                  }});
+  list.push_back({[=] { return idle() && v->shownLook(s->boxB).ghost; }, [=](bool ghost) {
+                    mouse(QEvent::MouseButtonDblClick, s->bx, s->by, Qt::LeftButton);
+                    require(ghost && doc->activeComponent() == s->lid, "a double click on the Lid's box, a ghost now, activates the Lid again");
+                  }});
+  list.push_back({[=] { return idle() && !v->shownLook(s->boxB).ghost; }, [=](bool) {
                     v->benchClickAt(s->bx, s->by);  // the positive control: the same click on the Lid's box selects it
                   }});
   list.push_back({[=] { return picked() == std::vector<std::string>{s->boxB}; }, [=](bool selected) {
