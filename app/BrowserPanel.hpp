@@ -4,6 +4,7 @@
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QWidget>
+#include <functional>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -25,8 +26,11 @@ class BrowserTree : public QTreeWidget {
  protected:
   void dropEvent(QDropEvent* e) override;
   void mousePressEvent(QMouseEvent* e) override;
+  void mouseMoveEvent(QMouseEvent* e) override;
+  void mouseDoubleClickEvent(QMouseEvent* e) override;
   void drawBranches(QPainter* painter, const QRect& rect, const QModelIndex& index) const override;
  private:
+  std::function<void()> badgeClick(const QPoint& pos) const;  // a decorator's clickable badge under pos
   AppDocument* m_doc;
 };
 
@@ -45,6 +49,11 @@ class BrowserPanel : public QWidget {
   void scrollToSelected();
   void setViewerMode(bool on);  // no rename or drag-to-reparent (colours stay: a view setting)
   void setEditedSketch(const std::string& id,const QString& name,bool visible);
+  // Feature areas (BrowserDelegate.hpp): badges, icons and name styles per row, and top-level folders of their own.
+  void addDecorator(browser::Decorator decorator);  // repaints
+  void addFolder(browser::Folder folder);           // after the ones added before; rebuilds
+  void refreshDecorations();                        // repaints: a decorator's answer changed (a folder's items: rebuild())
+  BrowserTree* tree() const { return m_tree; }      // benches
 
  signals:
   void selectionChanged(const std::vector<std::string>& ids);
@@ -62,6 +71,7 @@ class BrowserPanel : public QWidget {
   void updateBreadcrumb();
   QTreeWidgetItem* itemFor(const std::string& id) const;
   QTreeWidgetItem* build(const std::string& id, QTreeWidgetItem* parent, std::set<std::string>& expanded);
+  const browser::Folder* providedFolder(const QTreeWidgetItem* item) const;  // the provided folder of a folder or provided row
 
   AppDocument* m_doc;
   BrowserTree* m_tree;
@@ -75,4 +85,5 @@ class BrowserPanel : public QWidget {
   std::string m_editedSketch;
   QString m_editedName;
   bool m_editedVisible=true;
+  std::vector<browser::Folder> m_folders;  // provided (addFolder)
 };

@@ -6,6 +6,7 @@
 #include <QHBoxLayout>
 #include <QItemSelection>
 #include <QItemSelectionModel>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QSettings>
@@ -68,13 +69,39 @@ void BrowserTree::dropEvent(QDropEvent* e) {
 void BrowserTree::mousePressEvent(QMouseEvent* e) {
   QModelIndex idx = indexAt(e->pos());
   if (idx.isValid() && e->button() == Qt::LeftButton) {
+    if (const auto click = badgeClick(e->pos())) { click(); return; }  // after this the row may be gone (a rebuild)
     QRect r = visualRect(idx);
     int x = e->pos().x() - r.left();
     std::string id = idx.data(kIdRole).toString().toStdString();
-    if (x >= kEyeX && x < kEyeX + 18) { emit eyeClicked(id); return; }
-    if (x >= kSwatchX - 2 && x < kSwatchX + 14) { emit swatchClicked(id); return; }
+    const QString folder = idx.data(browser::kFolderRole).toString();  // provided folders and rows have no eye or colour
+    if (folder.isEmpty() || folder == "sketches") {
+      if (x >= kEyeX && x < kEyeX + 18) { emit eyeClicked(id); return; }
+      if (x >= kSwatchX - 2 && x < kSwatchX + 14) { emit swatchClicked(id); return; }
+    }
   }
   QTreeWidget::mousePressEvent(e);
+}
+
+void BrowserTree::mouseMoveEvent(QMouseEvent* e) {
+  if (!(e->buttons() & Qt::LeftButton)) {
+    if (badgeClick(e->pos())) viewport()->setCursor(Qt::PointingHandCursor);
+    else viewport()->unsetCursor();
+  }
+  QTreeWidget::mouseMoveEvent(e);
+}
+
+void BrowserTree::mouseDoubleClickEvent(QMouseEvent* e) {
+  if (e->button() == Qt::LeftButton && badgeClick(e->pos())) return;  // the press clicked it already; no fit or edit
+  QTreeWidget::mouseDoubleClickEvent(e);
+}
+
+std::function<void()> BrowserTree::badgeClick(const QPoint& pos) const {
+  const QModelIndex idx = indexAt(pos);
+  auto* delegate = qobject_cast<BrowserDelegate*>(itemDelegate());
+  if (!idx.isValid() || !delegate) return {};
+  const browser::Decoration d = delegate->decoration(idx);
+  const browser::Badge* badge = delegate->badgeAt(d, idx, visualRect(idx), pos);
+  return badge ? badge->clicked : std::function<void()>();
 }
 
 void BrowserTree::drawBranches(QPainter* painter, const QRect& rect, const QModelIndex& index) const {
@@ -176,9 +203,23 @@ BrowserPanel::BrowserPanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
     updateBreadcrumb();
     emit selectionChanged(selectedIds());
   });
-  connect(m_tree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& p) { emit contextMenuRequested(m_tree->viewport()->mapToGlobal(p), selectedIds()); });
+  connect(m_tree, &QTreeWidget::customContextMenuRequested, this, [this](const QPoint& p) {
+    QTreeWidgetItem* it = m_tree->itemAt(p);
+    if (const browser::Folder* folder = providedFolder(it)) {  // its own menu, not the objects' one
+      if (!folder->contextMenu) return;
+      QMenu menu(this);
+      folder->contextMenu(it->data(0, Qt::UserRole).toString() == "provided" ? it->data(0, kIdRole).toString().toStdString() : std::string(), menu);
+      if (!menu.isEmpty()) menu.exec(m_tree->viewport()->mapToGlobal(p));
+      return;
+    }
+    emit contextMenuRequested(m_tree->viewport()->mapToGlobal(p), selectedIds());
+  });
   connect(m_tree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* it, int) {
     const std::string id = it->data(0, kIdRole).toString().toStdString();
+    if (const browser::Folder* folder = providedFolder(it)) {
+      if (folder->activated && !id.empty()) folder->activated(id);
+      return;
+    }
     if (it->data(0, Qt::UserRole).toString() == "sketch") emit sketchActivated(id);
     else if (!id.empty()) emit fitRequested({id});
   });
@@ -257,7 +298,7 @@ void BrowserPanel::rebuild() {
   std::set<std::string> expanded;
   std::vector<std::string> selected = selectedIds();
   std::function<void(QTreeWidgetItem*)> collect = [&](QTreeWidgetItem* it) {
-    if (it->isExpanded()) expanded.insert(it->data(0, Qt::UserRole).toString() == "folder" ? std::string("folder:sketches") : it->data(0, kIdRole).toString().toStdString());
+    if (it->isExpanded()) expanded.insert(it->data(0, Qt::UserRole).toString() == "folder" ? "folder:" + it->data(0, browser::kFolderRole).toString().toStdString() : it->data(0, kIdRole).toString().toStdString());
     for (int i = 0; i < it->childCount(); ++i) collect(it->child(i));
   };
   for (int i = 0; i < m_tree->topLevelItemCount(); ++i) collect(m_tree->topLevelItem(i));
@@ -277,6 +318,7 @@ void BrowserPanel::rebuild() {
       folder->setData(0, kIdRole, QString());
       folder->setData(0, kNameRole, tr("Sketches"));
       folder->setData(0, Qt::UserRole, "folder");
+      folder->setData(0, browser::kFolderRole, "sketches");
       folder->setFlags(folder->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled & ~Qt::ItemIsSelectable);
       for (const auto& s : m_doc->scene.sketches) {
         auto* item = new QTreeWidgetItem(folder);
@@ -303,6 +345,38 @@ void BrowserPanel::rebuild() {
     if(root->childCount()) category=root->child(0)->data(0,Qt::UserRole+4).toString();
     for(int i=1;i<root->childCount();++i) if(root->child(i)->data(0,Qt::UserRole+4).toString()!=category) {category.clear();break;}
     root->setData(0,Qt::UserRole+4,category);
+    // The areas' folders (addFolder), after Sketches: rows of their own, not nodes.
+    int at = root->childCount() && root->child(0)->data(0, Qt::UserRole).toString() == "folder" ? 1 : 0;
+    for (const browser::Folder& f : m_folders) {
+      const std::vector<browser::Item> items = f.items ? f.items() : std::vector<browser::Item>();
+      if (items.empty()) continue;
+      auto* folder = new QTreeWidgetItem();
+      root->insertChild(at++, folder);
+      folder->setText(0, f.title);
+      folder->setData(0, kIdRole, QString());
+      folder->setData(0, kNameRole, f.title);
+      folder->setData(0, Qt::UserRole, "folder");
+      folder->setData(0, browser::kFolderRole, f.id);
+      folder->setData(0, browser::kIconRole, f.icon);
+      folder->setFlags(folder->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled & ~Qt::ItemIsSelectable);
+      std::function<void(QTreeWidgetItem*, const browser::Item&)> add = [&](QTreeWidgetItem* parent, const browser::Item& item) {
+        auto* it = new QTreeWidgetItem(parent);
+        const QString id = QString::fromStdString(item.id);
+        it->setText(0, item.name);
+        it->setData(0, kIdRole, id);
+        it->setData(0, kNameRole, item.name);
+        it->setData(0, Qt::UserRole, "provided");
+        it->setData(0, browser::kFolderRole, f.id);
+        it->setData(0, browser::kIconRole, item.icon);
+        it->setToolTip(0, item.tooltip);
+        it->setFlags(it->flags() & ~Qt::ItemIsEditable & ~Qt::ItemIsDragEnabled & ~Qt::ItemIsDropEnabled);
+        m_index[item.id] = it;
+        for (const browser::Item& child : item.children) add(it, child);
+        it->setExpanded(expanded.empty() || expanded.count(item.id) > 0);
+      };
+      for (const browser::Item& item : items) add(folder, item);
+      folder->setExpanded(expanded.empty() || expanded.count("folder:" + f.id.toStdString()) > 0);
+    }
     root->setExpanded(true);
   }
   bool empty = !m_doc->hasDocument;
@@ -325,6 +399,25 @@ void BrowserPanel::applyFilter() {
     return self || child_match;
   };
   for (int i = 0; i < m_tree->topLevelItemCount(); ++i) visit(m_tree->topLevelItem(i));
+}
+
+void BrowserPanel::addDecorator(browser::Decorator decorator) {
+  if (auto* delegate = qobject_cast<BrowserDelegate*>(m_tree->itemDelegate())) delegate->addDecorator(std::move(decorator));
+  refreshDecorations();
+}
+
+void BrowserPanel::addFolder(browser::Folder folder) {
+  m_folders.push_back(std::move(folder));
+  rebuild();
+}
+
+void BrowserPanel::refreshDecorations() { m_tree->viewport()->update(); }
+
+const browser::Folder* BrowserPanel::providedFolder(const QTreeWidgetItem* item) const {
+  const QString id = item ? item->data(0, browser::kFolderRole).toString() : QString();
+  for (const browser::Folder& f : m_folders)
+    if (!id.isEmpty() && f.id == id) return &f;
+  return nullptr;
 }
 
 QTreeWidgetItem* BrowserPanel::itemFor(const std::string& id) const {
@@ -416,5 +509,13 @@ void BrowserPanel::updateBreadcrumb() {
     if (last) parts << QString("<span style='color:%1'>%2</span>").arg(t.fg.name(), name);
     else parts << QString("<a href='%1' style='color:%2;text-decoration:none'>%3</a>").arg(QString::fromStdString(path[i]).toHtmlEscaped(), t.fg2.name(), name);
   }
+  QTreeWidgetItem* it = path.empty() ? itemFor(ids.front()) : nullptr;
+  if (it && it->data(0, Qt::UserRole).toString() == "provided")  // a provided folder's row: the folder, then the rows above it
+    for (bool last = true; it && it->data(0, Qt::UserRole).toString() != "document"; it = it->parent(), last = false) {
+      const QString name = it->data(0, kNameRole).toString().toHtmlEscaped(), id = it->data(0, kIdRole).toString().toHtmlEscaped();
+      parts.prepend(last ? QString("<span style='color:%1'>%2</span>").arg(t.fg.name(), name)
+                    : id.isEmpty() ? QString("<span style='color:%1'>%2</span>").arg(t.fg2.name(), name)
+                                   : QString("<a href='%1' style='color:%2;text-decoration:none'>%3</a>").arg(id, t.fg2.name(), name));
+    }
   m_breadcrumb->setText(parts.join(QString("<span style='color:%1'> › </span>").arg(t.fg3.name())));
 }
