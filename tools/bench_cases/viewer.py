@@ -66,6 +66,21 @@ def boxes(root, document, notes=0):
     return path
 
 
+def lines_100k(root, document):
+    """A DXF with one layer of 100,000 short lines on a 5 mm grid (400 x 250, alternately along X and Y): design note E's
+    big drawing layer."""
+    out = ["0", "SECTION", "2", "ENTITIES"]
+    for i in range(400):
+        for j in range(250):
+            x, y = i * 5.0, j * 5.0
+            dx, dy = (3.0, 0.0) if (i + j) % 2 else (0.0, 3.0)
+            out += ["0", "LINE", "8", "Grid", "10", f"{x:.3f}", "20", f"{y:.3f}", "30", "0", "11", f"{x + dx:.3f}", "21", f"{y + dy:.3f}", "31", "0"]
+    out += ["0", "ENDSEC", "0", "EOF"]
+    path = root / "lines-100k.dxf"
+    path.write_text("\n".join(out) + "\n", encoding="ascii")
+    return path
+
+
 def boxes_with_notes(root, document):
     """The 1,000 boxes with five notes pinned to boxes (design note E's synthetic document; anchors measured on a worker)."""
     return boxes(root, document, notes=5)
@@ -115,6 +130,10 @@ CASES = [
     # Cancel on the strip as the bodies stream in stops the load and its pump at once.
     ("loading", boxes, {"OPAD_BENCH_LOADING": "{prefix}"}),
     ("loading-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_LOADING": "{prefix}"}),
+    # A big drawing layer (UI-42, UI-11): 100,000 lines open with no display step over 50 ms (the Edge filter picks them in
+    # groups built on the mesh worker); hover, click, Ctrl+click, crossing and window boxes and selectRefs reach exactly
+    # the right lines; the Body filter and back and closing it stay within the budget. <prefix>.png.
+    ("big-drawing", lines_100k, {"OPAD_BENCH_BIGDRAWING": "{prefix}"}),
     # Selection publishing (UI-06): nothing with agent access off; on, the selection at once with O(1) fields per ref,
     # a rubber band over every face capped at 2,000 refs and written off the UI thread; off again, the file goes.
     ("selection-publish", boxes, {"OPAD_BENCH_SELPUBLISH": "{prefix}"}),

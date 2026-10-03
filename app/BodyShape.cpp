@@ -99,17 +99,85 @@ class SegmentSet : public Select3D_SensitiveSet {
   }
   Standard_Real distanceToCOG(SelectBasics_SelectingVolumeManager& volume) override { return volume.DistToGeometryCenter(m_center); }
 
- private:
   const gp_Pnt& first(int i) const { return m_points[size_t(m_order[size_t(i)]) * 2]; }
   const gp_Pnt& second(int i) const { return m_points[size_t(m_order[size_t(i)]) * 2 + 1]; }
-  std::vector<gp_Pnt> m_points;
-  std::vector<int> m_order;
+  std::vector<gp_Pnt> m_points;  // segment s: 2s, 2s + 1
+  std::vector<int> m_order;      // the BVH's order of the segments
   Select3D_BndBox3d m_box;
   gp_Pnt m_center;
 };
 
-// Faces + edges above which a body's picking is built on the worker (BodyPrs::whole / edgeSensitives).
+// How close the segment ab comes to the pick ray (from its near to its far point).
+double rayDistance(const gp_Pnt& eye, const gp_Pnt& away, const gp_Pnt& a, const gp_Pnt& b) {
+  const gp_Vec u(eye, away), v(a, b), w(a, eye);
+  const double uu = u.Dot(u), uv = u.Dot(v), vv = v.Dot(v), uw = u.Dot(w), vw = v.Dot(w), det = uu * vv - uv * uv;
+  double t = det > 1e-18 * uu * vv ? (uu * vw - uv * uw) / det : (vv > 0 ? vw / vv : 0);  // along the segment
+  t = std::clamp(t, 0.0, 1.0);
+  const gp_Pnt on = a.Translated(v * t);
+  const double along = uu > 0 ? gp_Vec(eye, on).Dot(u) / uu : 0;
+  return on.Distance(eye.Translated(u * along));
+}
+
+// One group of a big drawing layer's edges (BodyPrs::edgeGroups, UI-42): their sampled segments under one BVH and the
+// edge each one belongs to. Built on the mesh worker; EdgeGroupSensitive puts each body's owners on it.
+class EdgeGroupSet : public SegmentSet {
+  DEFINE_STANDARD_RTTI_INLINE(EdgeGroupSet, SegmentSet)
+ public:
+  struct Edge { int ordinal, first, count; Select3D_BndBox3d box; };
+  EdgeGroupSet(std::vector<gp_Pnt> pairs, std::vector<int> edgeOf, std::vector<Edge> edges)
+      : SegmentSet(std::move(pairs)), m_edgeOf(std::move(edgeOf)), m_edges(std::move(edges)) {}
+  int firstOrdinal() const { return m_edges.front().ordinal; }
+  // A point pick: the ordinal of the edge nearest the pointer's ray among those in reach, -1 for none.
+  int pick(SelectBasics_SelectingVolumeManager& volume, SelectBasics_PickResult& result) {
+    m_best = -1;
+    m_bestDistance = RealLast();
+    if (!Select3D_SensitiveSet::Matches(volume, result) || m_best < 0) return -1;
+    return m_edges[size_t(m_edgeOf[size_t(m_best)])].ordinal;
+  }
+  // A box or polygon: the ordinals of the edges it takes, crossing (any part) or window (all of it).
+  void take(SelectBasics_SelectingVolumeManager& volume, std::vector<int>& out) const {
+    const bool crossing = volume.IsOverlapAllowed(), polyline = volume.GetActiveSelectionType() == SelectMgr_SelectionType_Polyline;
+    SelectBasics_PickResult unused;
+    for (const Edge& e : m_edges) {
+      bool inside = false;
+      if (!volume.OverlapsBox(e.box.CornerMin(), e.box.CornerMax(), &inside)) continue;
+      bool hit = inside;
+      for (int s = e.first; !hit && crossing && s < e.first + e.count; ++s) hit = volume.OverlapsSegment(m_points[size_t(s) * 2], m_points[size_t(s) * 2 + 1], unused);
+      if (!hit && !crossing) {
+        hit = true;
+        for (int s = e.first; hit && s < e.first + e.count; ++s) {
+          const gp_Pnt &a = m_points[size_t(s) * 2], &b = m_points[size_t(s) * 2 + 1];
+          hit = polyline ? volume.OverlapsSegment(a, b, unused) : volume.OverlapsPoint(a) && volume.OverlapsPoint(b);
+        }
+      }
+      if (hit) out.push_back(e.ordinal);
+    }
+  }
+
+ protected:
+  Standard_Boolean overlapsElement(SelectBasics_PickResult& result, SelectBasics_SelectingVolumeManager& volume, Standard_Integer i,
+                                   Standard_Boolean inside) override {
+    if (!SegmentSet::overlapsElement(result, volume, i, inside)) return false;
+    if (volume.GetActiveSelectionType() == SelectMgr_SelectionType_Point) {
+      const double d = rayDistance(volume.GetNearPickedPnt(), volume.GetFarPickedPnt(), first(i), second(i));
+      if (d < m_bestDistance) {
+        m_bestDistance = d;
+        m_best = m_order[size_t(i)];
+      }
+    }
+    return true;
+  }
+
+ private:
+  std::vector<int> m_edgeOf;  // segment -> index into m_edges
+  std::vector<Edge> m_edges;
+  int m_best = -1;  // the segment nearest the ray in the last point pick (UI thread only)
+  double m_bestDistance = 0;
+};
+
+// Faces + edges above which a body's picking is built on the worker (BodyPrs::whole / edgeSensitives / edgeGroups).
 constexpr int kBigBody = 3000;
+constexpr size_t kEdgeGroup = 256;  // edges per group
 }
 
 void SubShapeOwner::HilightWithColor(const Handle(PrsMgr_PresentationManager)& pm, const Handle(Prs3d_Drawer)& style, const Standard_Integer mode) {
@@ -203,7 +271,7 @@ size_t BodyPrs::triangleCount() const {
   return size_t(triangles->EdgeNumber() > 0 ? triangles->EdgeNumber() : triangles->VertexNumber()) / 3;
 }
 
-std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const Bnd_Box& box, bool drawingOnly) {
+std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const Bnd_Box& box, bool drawingOnly, bool drawing) {
   auto p = std::make_shared<BodyPrs>();
   p->box = box;
   p->triangles = StdPrs_ShadedShape::FillTriangles(meshedProto);
@@ -298,20 +366,23 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     p->circles.emplace(fit.index,Circle{rim,fit.circle.Location(),sensitive,fit.index,fit.circle.Radius(),fit.segments,fit.edges});
   }
   if (big) {
-    // Each edge's sensitive (the Edge filter wraps them with owners) and the whole body's: its triangles (the
-    // navigation set) and its free edges' segments in one set (the Body filter).
+    // Each edge's sensitive (the Edge filter wraps them with owners; a drawing layer's in groups) and the whole body's:
+    // its triangles (the navigation set) and its free edges' segments in one set (the Body filter).
     TopTools_IndexedDataMapOfShapeListOfShape faces;
     TopExp::MapShapesAndAncestors(meshedProto, TopAbs_EDGE, TopAbs_FACE, faces);
-    p->edgeSensitives.resize(size_t(edges.Extent()));
+    if (drawing) p->buildEdgeGroups(edges, box);
+    else p->edgeSensitives.resize(size_t(edges.Extent()));
     std::vector<gp_Pnt> loose;
     for (const auto& [index, points] : p->curves) {
       if (points->size() < 2) continue;
-      TColgp_Array1OfPnt array(1, int(points->size()));
-      for (int j = 1; j <= array.Length(); ++j) array(j) = (*points)[size_t(j - 1)];
-      Handle(Select3D_SensitiveCurve) sensitive = new Select3D_SensitiveCurve(nullptr, array);
-      sensitive->BVH();
-      sensitive->BoundingBox();  // computed once and kept: the selector asks for it on the UI thread otherwise
-      p->edgeSensitives[size_t(index)] = sensitive;
+      if (!drawing) {
+        TColgp_Array1OfPnt array(1, int(points->size()));
+        for (int j = 1; j <= array.Length(); ++j) array(j) = (*points)[size_t(j - 1)];
+        Handle(Select3D_SensitiveCurve) sensitive = new Select3D_SensitiveCurve(nullptr, array);
+        sensitive->BVH();
+        sensitive->BoundingBox();  // computed once and kept: the selector asks for it on the UI thread otherwise
+        p->edgeSensitives[size_t(index)] = sensitive;
+      }
       const TopoDS_Shape& edge = edges(index + 1);
       if (!faces.Contains(edge) || faces.FindFromKey(edge).IsEmpty())
         for (size_t j = 1; j < points->size(); ++j) { loose.push_back((*points)[j - 1]); loose.push_back((*points)[j]); }
@@ -492,6 +563,10 @@ void BodyShape::computeSubShapes(const Handle(SelectMgr_Selection)& selection, c
       selection->Add(new SharedSensitive(circleOwners.at(index),circle.sensitive));
     return;
   }
+  if(mode==AIS_Shape::SelectionMode(TopAbs_EDGE) && groupedEdges()) {  // a big drawing layer: one sensitive per group (UI-42)
+    for(const auto& group:m_prs->edgeGroups) selection->Add(new EdgeGroupSensitive(this,group));
+    return;
+  }
   if(m_prs && !m_prs->curves.empty() && mode==AIS_Shape::SelectionMode(TopAbs_EDGE)) {
     TopTools_IndexedMapOfShape edges;TopExp::MapShapes(myshape,TopAbs_EDGE,edges);
     for(const auto& [index,points]:m_prs->curves) {
@@ -542,6 +617,82 @@ void BodyShape::computeSubShapes(const Handle(SelectMgr_Selection)& selection, c
       for(TopExp_Explorer vertex(circle.edge,TopAbs_VERTEX);vertex.More();vertex.Next())
         selection->Add(new Select3D_SensitivePoint(owner,BRep_Tool::Pnt(TopoDS::Vertex(vertex.Current()))));
     }
+}
+
+// The edges in groups of kEdgeGroup lying near each other (the Morton order of their centres in the body's box), so a
+// group's box stays small and a pick tests few of them.
+void BodyPrs::buildEdgeGroups(const TopTools_IndexedMapOfShape& edges, const Bnd_Box& bounds) {
+  edgeShapes.reserve(size_t(edges.Extent()));
+  for (int i = 1; i <= edges.Extent(); ++i) edgeShapes.push_back(edges(i));
+  double x0 = 0, y0 = 0, z0 = 0, x1 = 1, y1 = 1, z1 = 1;
+  if (!bounds.IsVoid()) bounds.Get(x0, y0, z0, x1, y1, z1);
+  auto spread = [](uint64_t v) {  // 10 bits, two zeros after each
+    v &= 0x3ff;
+    v = (v | v << 16) & 0x30000ff;
+    v = (v | v << 8) & 0x300f00f;
+    v = (v | v << 4) & 0x30c30c3;
+    return (v | v << 2) & 0x9249249;
+  };
+  auto cell = [](double v, double lo, double hi) { return uint64_t(std::clamp((v - lo) / std::max(hi - lo, 1e-12), 0.0, 1.0) * 1023); };
+  std::vector<std::pair<uint64_t, int>> order;
+  for (const auto& [index, points] : curves) {
+    if (points->size() < 2) continue;
+    const gp_Pnt& a = points->front();
+    const gp_Pnt& b = (*points)[points->size() / 2];
+    const gp_XYZ c = (a.XYZ() + b.XYZ()) / 2;
+    order.emplace_back(spread(cell(c.X(), x0, x1)) | spread(cell(c.Y(), y0, y1)) << 1 | spread(cell(c.Z(), z0, z1)) << 2, index);
+  }
+  std::sort(order.begin(), order.end());
+  for (size_t from = 0; from < order.size(); from += kEdgeGroup) {
+    std::vector<gp_Pnt> pairs;
+    std::vector<int> edgeOf;
+    std::vector<EdgeGroupSet::Edge> group;
+    for (size_t k = from; k < std::min(order.size(), from + kEdgeGroup); ++k) {
+      const auto& points = *curves.at(order[k].second);
+      EdgeGroupSet::Edge e{order[k].second, int(pairs.size() / 2), int(points.size() - 1), {}};
+      for (size_t j = 1; j < points.size(); ++j) {
+        pairs.push_back(points[j - 1]);
+        pairs.push_back(points[j]);
+        edgeOf.push_back(int(group.size()));
+      }
+      for (const auto& q : points) e.box.Add(SelectMgr_Vec3(q.X(), q.Y(), q.Z()));
+      group.push_back(e);
+    }
+    Handle(EdgeGroupSet) set = new EdgeGroupSet(std::move(pairs), std::move(edgeOf), std::move(group));
+    set->BVH();
+    edgeGroups.push_back(set);
+  }
+}
+
+EdgeGroupSensitive::EdgeGroupSensitive(BodyShape* body, const Handle(Select3D_SensitiveEntity)& group)
+    : Select3D_SensitiveEntity(body->edgeOwner(Handle(EdgeGroupSet)::DownCast(group)->firstOrdinal())), m_body(body), m_group(group) {
+  SetSensitivityFactor(group->SensitivityFactor());
+}
+
+Standard_Boolean EdgeGroupSensitive::Matches(SelectBasics_SelectingVolumeManager& mgr, SelectBasics_PickResult& result) {
+  m_hits.clear();
+  auto& group = static_cast<EdgeGroupSet&>(*m_group);
+  if (mgr.GetActiveSelectionType() == SelectMgr_SelectionType_Point) {
+    const int edge = group.pick(mgr, result);
+    if (edge < 0) return false;
+    Set(m_body->edgeOwner(edge));  // the selector takes the owner after this
+    return true;
+  }
+  group.take(mgr, m_hits);
+  if (m_hits.empty()) return false;
+  Set(m_body->edgeOwner(m_hits.front()));
+  return true;
+}
+
+Handle(SubShapeOwner) BodyShape::edgeOwner(int index) {
+  if (!m_prs || index < 0 || size_t(index) >= m_prs->edgeShapes.size()) return nullptr;
+  if (m_edgeOwners.empty()) m_edgeOwners.resize(m_prs->edgeShapes.size());
+  Handle(SubShapeOwner)& owner = m_edgeOwners[size_t(index)];
+  if (owner.IsNull()) {
+    owner = new SubShapeOwner(m_prs->edgeShapes[size_t(index)], this, 7, index);
+    if (const auto curve = m_prs->curves.find(index); curve != m_prs->curves.end()) owner->curve = curve->second;
+  }
+  return owner;
 }
 
 void NavigationShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, Standard_Integer) {

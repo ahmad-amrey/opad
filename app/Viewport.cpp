@@ -1484,14 +1484,16 @@ double Viewport::deflectionFor(const std::string& key) { return deflectionForBox
 
 // Tessellation runs off the UI thread (F21); bodies appear once their mesh is ready.
 void Viewport::startMeshing(std::vector<std::string> keys) {
-  struct MeshJob { TopoDS_Shape shape; std::string key; };
+  struct MeshJob { TopoDS_Shape shape; std::string key; bool drawing; };
   std::vector<MeshJob> jobs;
   {
     std::lock_guard<std::mutex> lock(m_meshMu);
     for (const auto& k : keys) {
       if (m_meshed.count(k) || m_meshing.count(k) || m_meshSkipped.count(k)) continue;
       m_meshing.insert(k);
-      jobs.push_back({opad::body_shape(m_doc->doc, k), k});
+      const auto waiting = m_waiting.find(k);  // a drawing layer's edges are picked in groups (UI-42)
+      const opad::Node* n = waiting == m_waiting.end() || waiting->second.empty() ? nullptr : m_doc->scene.node(waiting->second.front());
+      jobs.push_back({opad::body_shape(m_doc->doc, k), k, n && n->representation == "drawing2d"});
     }
   }
   if (jobs.empty()) return;
@@ -1526,7 +1528,7 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
           trace::log(QString("mesh %1: status=%2 recovered=%3 incomplete cones=%4").arg(QString::fromStdString(j.key)).arg(mesh.status).arg(mesh.recovered_faces).arg(mesh.incomplete_cones));
         // The box from before the mesh is only good for the deflection: it follows the surfaces' poles, and one
         // small body with a 10 m box zoomed Fit All out of the whole Engine. The presentation gets the mesh's box.
-        prs = BodyPrs::build(j.shape, opad::refine_body_bbox(*cache, j.key, j.shape));  // so Display() on the UI thread is cheap
+        prs = BodyPrs::build(j.shape, opad::refine_body_bbox(*cache, j.key, j.shape), false, j.drawing);  // so Display() on the UI thread is cheap
         prs->deflection = deflectionForBox(box);
       } catch (...) {
       }
@@ -1934,6 +1936,7 @@ void Viewport::displayBody(const std::string& id) {
   if (!n || n->body_missing || m_items.count(id)) return;  // the scene moved on since this was queued
   QElapsedTimer t;
   t.start();
+  const qint64 cpu = trace::threadCpuMs();
   opad::Mat4 world = scene.world(id);
   TopoDS_Shape proto = opad::body_shape(m_doc->doc, n->body_key);
   std::shared_ptr<BodyPrs> prs;
@@ -2013,6 +2016,8 @@ void Viewport::displayBody(const std::string& id) {
   m_nodeOf[ais.get()] = id;
   activateSelection(ais);  // after m_items: its look may say not pickable
   if (trace::enabled() && t.elapsed() > 50) trace::log(QStringLiteral("displayBody %1: display %2 ms, selection %3 ms").arg(QString::fromStdString(n->name)).arg(displayMs).arg(t.elapsed() - displayMs));
+  m_longestDisplay = std::max(m_longestDisplay, t.elapsed());
+  m_longestDisplayCpu = std::max(m_longestDisplayCpu, trace::threadCpuMs() - cpu);
   if (prs && !prs->navigation.IsNull()) {
     Handle(NavigationShape) nav = new NavigationShape(prs->navigation);
     if (placed.Form() != gp_Identity) nav->SetLocalTransformation(placed);

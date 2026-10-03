@@ -12,6 +12,7 @@
 #include <Quantity_Color.hxx>
 #include <StdSelect_BRepOwner.hxx>
 #include <Select3D_SensitiveEntity.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <memory>
 #include <map>
 #include <vector>
@@ -39,42 +40,24 @@ struct BodyPrs {
   // edges; any meshed body without unmeshed faces or lone vertices) and, for a big body, each edge by ordinal (the Edge
   // filter; empty otherwise).
   std::vector<Handle(Select3D_SensitiveEntity)> whole, edgeSensitives;
+  // A big drawing layer's Edge filter instead (UI-42): groups of up to a few hundred edges lying near each other, one
+  // sensitive each (EdgeGroupSensitive), and the edges by ordinal for the owners made as they are picked. OCCT builds an
+  // object's picking BVH over its sensitives on the UI thread when a mode is activated: 0.5-1 s for 100,000 edges.
+  std::vector<Handle(Select3D_SensitiveEntity)> edgeGroups;
+  std::vector<TopoDS_Shape> edgeShapes;
+  void buildEdgeGroups(const TopTools_IndexedMapOfShape& edges, const Bnd_Box& box);  // worker: edgeGroups and edgeShapes
   bool closed = false;                           // closed solid: back faces can be culled
   std::vector<gp_Pnt> drawingSegments; // sampled pairs for drawing-only orbit fallback
   Bnd_Box box;                                   // of the prototype; spares Display() a pass over every vertex
   double deflection = 0;                         // chordal deflection the triangles were meshed with (mm)
   // Worker thread; needs triangulation. `drawingOnly` skips what only picking uses (circles, navigation BVH, curves):
-  // the zoom refinement's finer arrays are drawn, never picked.
-  static std::shared_ptr<BodyPrs> build(const TopoDS_Shape& meshedProto, const Bnd_Box& box, bool drawingOnly = false);
+  // the zoom refinement's finer arrays are drawn, never picked. `drawing`: a drawing layer, whose edges are picked in
+  // groups when there are many (edgeGroups).
+  static std::shared_ptr<BodyPrs> build(const TopoDS_Shape& meshedProto, const Bnd_Box& box, bool drawingOnly = false, bool drawing = false);
   // Worker thread: how every view path meshes a body before build() (whole-model display, zoom refinement, previews):
   // BRepMesh at `deflection`, then cylinders and extrusions of any curve as upright strips (test_body_prs pins it).
   static opad::MeshingReport meshForDisplay(const TopoDS_Shape& shape, double deflection);
   size_t triangleCount() const;
-};
-
-class BodyShape : public AIS_Shape {
-  DEFINE_STANDARD_RTTI_INLINE(BodyShape, AIS_Shape)
- public:
-  BodyShape(const TopoDS_Shape& proto, std::shared_ptr<const BodyPrs> prs) : AIS_Shape(proto), m_prs(std::move(prs)) {}
-
- public:
-  bool setRayBias(double offset) { if (offset==m_rayBias) return false; m_rayBias=offset; m_rayTriangles.Nullify(); SetToUpdate(); return true; }
-  // A finer mesh of the same body for the current zoom (Viewport::refineVisible), or nullptr for the base one. Only
-  // the drawn arrays change: picking, sub-shape ordinals and highlights keep using the prototype's own mesh.
-  bool setDisplayPrs(std::shared_ptr<const BodyPrs> prs) { if (prs==m_display) return false; m_display=std::move(prs); m_rayTriangles.Nullify(); SetToUpdate(); return true; }
-  const std::shared_ptr<const BodyPrs>& displayPrs() const { return m_display; }
-  const std::shared_ptr<const BodyPrs>& prs() const { return m_prs; }
- protected:
-  void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
-  // Sub-shape modes: the stock owners are swapped for SubShapeOwner. The Edge and Vertex modes also hold the body's
-  // faces under an OccluderOwner (UI-31).
-  void ComputeSelection(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode) override;
-
- private:
-  void computeSubShapes(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode);
-  std::shared_ptr<const BodyPrs> m_prs, m_display;
-  double m_rayBias=0;
-  Handle(Graphic3d_ArrayOfTriangles) m_rayTriangles;
 };
 
 // Owner of one face, edge or vertex of a BodyShape. It knows its ordinal within the body and leaves the
@@ -96,6 +79,57 @@ class SubShapeOwner : public StdSelect_BRepOwner {
 
  private:
   int m_index;
+};
+
+class BodyShape : public AIS_Shape {
+  DEFINE_STANDARD_RTTI_INLINE(BodyShape, AIS_Shape)
+ public:
+  BodyShape(const TopoDS_Shape& proto, std::shared_ptr<const BodyPrs> prs) : AIS_Shape(proto), m_prs(std::move(prs)) {}
+  // The owner of edge `index` of a big drawing layer in the Edge filter (BodyPrs::edgeGroups), made the first time it is
+  // picked and kept, so a pick of it again finds the same one (a second click takes it out). Null for any other body.
+  Handle(SubShapeOwner) edgeOwner(int index);
+  bool groupedEdges() const { return m_prs && !m_prs->edgeGroups.empty(); }
+
+ public:
+  bool setRayBias(double offset) { if (offset==m_rayBias) return false; m_rayBias=offset; m_rayTriangles.Nullify(); SetToUpdate(); return true; }
+  // A finer mesh of the same body for the current zoom (Viewport::refineVisible), or nullptr for the base one. Only
+  // the drawn arrays change: picking, sub-shape ordinals and highlights keep using the prototype's own mesh.
+  bool setDisplayPrs(std::shared_ptr<const BodyPrs> prs) { if (prs==m_display) return false; m_display=std::move(prs); m_rayTriangles.Nullify(); SetToUpdate(); return true; }
+  const std::shared_ptr<const BodyPrs>& displayPrs() const { return m_display; }
+  const std::shared_ptr<const BodyPrs>& prs() const { return m_prs; }
+ protected:
+  void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
+  // Sub-shape modes: the stock owners are swapped for SubShapeOwner. The Edge and Vertex modes also hold the body's
+  // faces under an OccluderOwner (UI-31).
+  void ComputeSelection(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode) override;
+
+ private:
+  void computeSubShapes(const Handle(SelectMgr_Selection)& selection, const Standard_Integer mode);
+  std::shared_ptr<const BodyPrs> m_prs, m_display;
+  double m_rayBias=0;
+  Handle(Graphic3d_ArrayOfTriangles) m_rayTriangles;
+  std::vector<Handle(SubShapeOwner)> m_edgeOwners;  // by edge ordinal, as picked (grouped edges only)
+};
+
+// One group of a big drawing layer's edges in the Edge filter of one body (UI-42): the worker's group (shared by the
+// body's instances) under the owner of the edge it found, which it takes on in Matches (OCCT's selector reads the owner
+// after Matches). A point pick finds the edge nearest the pointer's ray (a drawing is flat: depths tie); a box or polygon
+// keeps every edge of the group it takes in hits() (crossing: any part; window: all of it), for the box selection.
+class EdgeGroupSensitive : public Select3D_SensitiveEntity {
+  DEFINE_STANDARD_RTTI_INLINE(EdgeGroupSensitive, Select3D_SensitiveEntity)
+ public:
+  EdgeGroupSensitive(BodyShape* body, const Handle(Select3D_SensitiveEntity)& group);
+  Standard_Boolean Matches(SelectBasics_SelectingVolumeManager& mgr, SelectBasics_PickResult& result) override;
+  Standard_Integer NbSubElements() const override { return m_group->NbSubElements(); }
+  Select3D_BndBox3d BoundingBox() override { return m_group->BoundingBox(); }
+  gp_Pnt CenterOfGeometry() const override { return m_group->CenterOfGeometry(); }
+  Standard_Boolean ToBuildBVH() const override { return false; }
+  BodyShape* body() const { return m_body; }
+  const std::vector<int>& hits() const { return m_hits; }  // edge ordinals the last box or polygon test took
+ private:
+  BodyShape* m_body;  // the body whose selection holds this (as an owner's selectable)
+  Handle(Select3D_SensitiveEntity) m_group;
+  std::vector<int> m_hits;
 };
 
 // Circular rims discover and select a stable center reference in vertex mode.

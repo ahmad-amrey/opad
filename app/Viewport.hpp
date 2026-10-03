@@ -137,6 +137,12 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool benchTracking(const QString& prefix, bool endsOnly = false);
   // OPAD_BENCH_CROSSLOCK (ViewportCrossLockBench.cpp): lock on one anchor, acquire another, take where they line up (UI-32)
   bool benchCrossLock(const QString& prefix);
+  // OPAD_BENCH_BIGDRAWING (ViewportDrawingBench.cpp): a drawing layer of 100,000 lines is picked in groups (UI-42): hover,
+  // click, Ctrl+click, crossing and window boxes and selectRefs reach the right edges
+  bool benchBigDrawing(const QString& prefix);
+  // The longest displayBody so far, in wall and UI-thread CPU time (benches: no display step over 50 ms, UI-42).
+  qint64 longestDisplay() const { return m_longestDisplay; }
+  qint64 longestDisplayCpu() const { return m_longestDisplayCpu; }
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
   // Benches: a left click at a widget point as the mouse handlers deliver it (move, press, release and the frames that
   // handle them), with these modifiers held; then a plain move there.
@@ -577,6 +583,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QElapsedTimer m_streamFit;   // the last fit while streaming
   QPointer<Job> m_streamJob;
   int m_syncs = 0, m_partialSyncs = 0;
+  qint64 m_longestDisplay = 0, m_longestDisplayCpu = 0;
   qint64 m_syncMs = 0, m_syncCpuMs = 0;
   unsigned long long m_syncedRevision = 0;  // the document revision the last sync saw: the next one may take its change set
   Job* m_displayJob = nullptr;                    // the display pump's job while it runs

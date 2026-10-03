@@ -3,6 +3,8 @@
 #include "check.hpp"
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
 #include <BRep_Builder.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
@@ -266,6 +268,73 @@ TEST(body_mode_picks_through_the_worker_set) {
   CHECK(select(bare)->Entities().Size()>=6);  // OCCT's: a sensitive per face
   CHECK(build(dotted)->whole.empty());
   CHECK(!build(box)->whole.empty());
+}
+
+// UI-42: a big drawing layer's Edge filter is a few sensitives over groups of nearby lines, not one per line; a point pick
+// takes on the owner of the line nearest the pointer (the same owner every time), a box keeps every line it takes.
+TEST(big_drawing_layer_picks_its_lines_in_groups) {
+  struct TestBody : BodyShape { using BodyShape::BodyShape; using BodyShape::ComputeSelection; };
+  BRep_Builder builder;
+  TopoDS_Compound layer;
+  builder.MakeCompound(layer);
+  constexpr int columns = 70, rows = 50;  // 3,500 lines 1 mm long, 2 mm apart
+  for (int i = 0; i < columns; ++i)
+    for (int j = 0; j < rows; ++j) builder.Add(layer, BRepBuilderAPI_MakeEdge(gp_Pnt(i * 2, j * 2, 0), gp_Pnt(i * 2 + 1, j * 2, 0)).Edge());
+  Bnd_Box bounds;
+  BRepBndLib::Add(layer, bounds);
+  const auto plain = BodyPrs::build(layer, bounds);
+  CHECK(plain->edgeGroups.empty() && plain->edgeSensitives.size() == size_t(columns * rows));
+  const auto prs = BodyPrs::build(layer, bounds, false, true);
+  CHECK(prs->edgeSensitives.empty() && prs->edgeShapes.size() == size_t(columns * rows));
+  CHECK_EQ(prs->edgeGroups.size(), size_t((columns * rows + 255) / 256));
+  Handle(TestBody) body = new TestBody(layer, prs);
+  CHECK(body->groupedEdges());
+  Handle(SelectMgr_Selection) selection = new SelectMgr_Selection(AIS_Shape::SelectionMode(TopAbs_EDGE));
+  body->ComputeSelection(selection, AIS_Shape::SelectionMode(TopAbs_EDGE));
+  CHECK_EQ(selection->Entities().Size(), int(prs->edgeGroups.size()));
+  TopTools_IndexedMapOfShape edges;
+  TopExp::MapShapes(layer, TopAbs_EDGE, edges);
+  auto ordinal = [](int i, int j) { return i * rows + j; };  // as added
+  Handle(Graphic3d_Camera) camera = new Graphic3d_Camera();
+  camera->SetProjectionType(Graphic3d_Camera::Projection_Orthographic);
+  camera->SetEyeAndCenter(gp_Pnt(40.5, 50, 100), gp_Pnt(40.5, 50, 0));
+  camera->SetUp(gp::DY());
+  camera->SetScale(20);  // 50 px a millimetre
+  auto pickAt = [&](double x, double y) {
+    SelectMgr_SelectingVolumeManager point;
+    point.InitPointSelectingVolume(gp_Pnt2d(500 + (x - 40.5) * 50, 500 - (y - 50) * 50));
+    point.SetCamera(camera); point.SetWindowSize(1000, 1000); point.SetPixelTolerance(4); point.BuildSelectingVolume();
+    Handle(SubShapeOwner) found;
+    for (const auto& entity : selection->Entities()) {
+      SelectBasics_PickResult result;
+      if (entity->BaseSensitive()->Matches(point, result)) found = Handle(SubShapeOwner)::DownCast(entity->BaseSensitive()->OwnerId());
+    }
+    return found;
+  };
+  const auto first = pickAt(40.5, 50);  // the middle of line (20, 25)
+  CHECK(!first.IsNull() && first->index() == ordinal(20, 25) && first->Shape().IsSame(edges(ordinal(20, 25) + 1)) && first->curve);
+  CHECK(pickAt(40.5, 50) == first);       // the same owner again: a second click takes it out
+  CHECK(pickAt(40.9, 50.06)->index() == ordinal(20, 25));  // a little off it, still it (the next line is 1 mm away)
+  CHECK(pickAt(42.5, 50)->index() == ordinal(21, 25));
+  CHECK(pickAt(41.5, 51).IsNull());  // in the gaps: none
+  CHECK(body->edgeOwner(ordinal(20, 25)) == first);
+  // A crossing box from (39.6, 49.6) to (42.2, 52.4) takes lines (20|21, 25|26); a window box only (20, 25|26).
+  for (const bool crossing : {true, false}) {
+    SelectMgr_SelectingVolumeManager box;
+    box.InitBoxSelectingVolume(gp_Pnt2d(500 + (39.6 - 40.5) * 50, 500 - (52.4 - 50) * 50), gp_Pnt2d(500 + (42.2 - 40.5) * 50, 500 - (49.6 - 50) * 50));
+    box.SetCamera(camera); box.SetWindowSize(1000, 1000); box.AllowOverlapDetection(crossing); box.BuildSelectingVolume();
+    std::set<int> taken;
+    for (const auto& entity : selection->Entities()) {
+      SelectBasics_PickResult result;
+      if (!entity->BaseSensitive()->Matches(box, result)) continue;
+      const auto group = Handle(EdgeGroupSensitive)::DownCast(entity->BaseSensitive());
+      CHECK(!group.IsNull() && !group->hits().empty());
+      taken.insert(group->hits().begin(), group->hits().end());
+    }
+    const std::set<int> want = crossing ? std::set<int>{ordinal(20, 25), ordinal(20, 26), ordinal(21, 25), ordinal(21, 26)}
+                                        : std::set<int>{ordinal(20, 25), ordinal(20, 26)};
+    CHECK(taken == want);
+  }
 }
 
 CHECK_MAIN()
