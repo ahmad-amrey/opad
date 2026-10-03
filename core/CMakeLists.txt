@@ -34,6 +34,7 @@ add_library(opad_core STATIC
   src/drawing_io.cpp
   src/dxf_reader.cpp
   src/formats.cpp
+  src/kicad_pcb.cpp
   src/viewer_cache.cpp
   src/inspect.cpp
   src/render.cpp

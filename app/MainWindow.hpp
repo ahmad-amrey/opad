@@ -81,6 +81,7 @@ class MainWindow : public QMainWindow {
   bool benchLargeSketch();
   bool benchShortcuts();
   bool benchViewer();  // OPAD_BENCH_VIEWER
+  bool benchKicad();   // OPAD_BENCH_KICAD (KicadBench.cpp)
 
   void onViewportSelection();
   void onBrowserSelection(const std::vector<std::string>& ids);

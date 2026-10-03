@@ -354,7 +354,8 @@ void MainWindow::buildActions() {
     // openPath asks about unsaved changes once a file is chosen (asking here too asked twice after Discard).
     QString p = QFileDialog::getOpenFileName(this, tr("Open"), m_settings.value("ui/lastDir").toString(),
                                              tr("Design files (%1);;OPAD document (*.opad);;CAD models (*.step *.stp *.iges *.igs *.brep *.brp);;"
-                                                "Meshes (*.stl *.3mf *.obj *.ply *.gltf *.glb *.wrl *.vrml);;2D drawings (*.dxf *.dwg *.svg)").arg(fileFilter(true)));
+                                                "Meshes (*.stl *.3mf *.obj *.ply *.gltf *.glb *.wrl *.vrml);;2D drawings (*.dxf *.dwg *.svg)").arg(fileFilter(true)) +
+                                                ";;" + tr("KiCad boards (*.kicad_pcb)"));
     if (!p.isEmpty()) openPath(p);
   });
   addAction("file.import", tr("&Import…"), "import", QKeySequence("Ctrl+I"), [this] {
@@ -757,6 +758,17 @@ void MainWindow::buildRibbon() {
   viewerMode->setToolTip(tr("STEP, IGES, STL, 3MF, OBJ, DXF, SVG and the other formats open read-only and fast; Save makes them editable OPAD documents."));
   connect(viewerMode, &QAction::toggled, this, [this](bool on) { m_doc->viewerOpens = on; m_settings.setValue("files/viewerMode", on); });
   if (associations::supported()) settings->addAction(tr("File types…"), this, [this] { FileTypesDialog(this).exec(); });
+  // KiCad boards: footprints' 3D models are also looked for here, after KiCad's own folders (read at the next open).
+  settings->addAction(tr("KiCad 3D model folders…"), this, [this] {
+    bool ok = false;
+    const QString text = QInputDialog::getMultiLineText(this, tr("KiCad 3D model folders"), tr("Folders with 3D models (STEP) for KiCad boards, one per line. They are searched after KiCad's own:"),
+                                                        m_settings.value("kicad/modelDirs").toStringList().join('\n'), &ok);
+    if (!ok) return;
+    QStringList dirs;
+    for (const QString& line : text.split('\n'))
+      if (!line.trimmed().isEmpty()) dirs << QDir::fromNativeSeparators(line.trimmed());
+    m_settings.setValue("kicad/modelDirs", dirs);
+  });
   settings->addAction(action("panel.browser"));
   auto* autoBrowser = settings->addAction(tr("Auto-hide scene browser"));
   autoBrowser->setCheckable(true);
@@ -2467,7 +2479,7 @@ void MainWindow::showNodeGeometry(const std::string& id, const QString& title, c
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_RECOVERY");!mode.isEmpty()){m_recovery->bench(mode);return;}
-  if(benchViewer())return;
+  if(benchViewer() || benchKicad())return;
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_FILETYPES");!shot.isEmpty()){  // the dialog as drawn, nothing registered
     auto* dialog=new FileTypesDialog(this);dialog->show();
     QTimer::singleShot(300,this,[dialog,shot]{const bool saved=dialog->grab().save(shot);dialog->deleteLater();trace::log(QString("bench: file types dialog %1").arg(saved?"PASS":"FAIL"));QCoreApplication::exit(saved?0:2);});

@@ -1,0 +1,6 @@
+{
+  "KiCad boards (*.kicad_pcb)": "لوحات KiCad (*.kicad_pcb)",
+  "KiCad 3D model folders…": "مجلدات نماذج KiCad ثلاثية الأبعاد…",
+  "KiCad 3D model folders": "مجلدات نماذج KiCad ثلاثية الأبعاد",
+  "Folders with 3D models (STEP) for KiCad boards, one per line. They are searched after KiCad's own:": "مجلدات فيها نماذج ثلاثية الأبعاد (STEP) للوحات KiCad، مجلد في كل سطر. يُبحث فيها بعد مجلدات KiCad نفسه:"
+}

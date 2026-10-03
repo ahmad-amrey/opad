@@ -71,6 +71,10 @@ add_executable(opad-test-formats test_formats.cpp)
 target_link_libraries(opad-test-formats PRIVATE opad::core ZLIB::ZLIB)
 add_test(NAME formats COMMAND opad-test-formats)
 
+add_executable(opad-test-kicad test_kicad.cpp)
+target_link_libraries(opad-test-kicad PRIVATE opad::core)
+add_test(NAME kicad COMMAND opad-test-kicad)
+
 add_executable(opad-test-dxf test_dxf.cpp)
 target_link_libraries(opad-test-dxf PRIVATE opad::core)
 target_compile_definitions(opad-test-dxf PRIVATE OPAD_LIBREDWG_DATA="${PROJECT_SOURCE_DIR}/third_party/libredwg/test/test-data")

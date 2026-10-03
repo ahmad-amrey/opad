@@ -40,6 +40,8 @@ AppDocument::~AppDocument() { *m_alive = false; }
 opad::ImportOptions AppDocument::loadOptions(const std::shared_ptr<std::atomic<bool>>& cancel, const QString& file) {
   opad::ImportOptions o;
   o.author = QSettings().value("user/name").toString().trimmed().toStdString();
+  for (const QString& dir : QSettings().value("kicad/modelDirs").toStringList())  // Settings > KiCad 3D model folders
+    if (!dir.trimmed().isEmpty()) o.kicad.model_dirs.push_back(fsPath(dir.trimmed()));
   auto last = std::make_shared<std::pair<std::string, int>>("", -2);
   auto lastEmit = std::make_shared<QElapsedTimer>();
   lastEmit->start();
@@ -86,9 +88,10 @@ void AppDocument::startOpen(const QString& path) {
   o.viewer = viewer;  // viewer mode: nothing is prepared for saving (no healing, BREP text or hashing)
   const QString suffix = QFileInfo(path).suffix().toLower();
   o.center_drawing = suffix == "dxf" || suffix == "svg" || suffix == "dwg";  // opened on its own: centred on the grid
+  const bool cacheable = viewer && suffix != "kicad_pcb";  // a board's 3D models change without the board: never remembered
   auto alive = m_alive;
   emit loadProgress(external ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1);
-  std::thread([this, alive, cancel, path, external, viewer, o, token, current]() {
+  std::thread([this, alive, cancel, path, external, viewer, cacheable, o, token, current]() {
     auto result = std::make_shared<opad::Document>();
     QString error;
     QStringList warnings;
@@ -98,10 +101,10 @@ void AppDocument::startOpen(const QString& path) {
         *result = opad::Document::create();
         QElapsedTimer clock;
         clock.start();
-        if (!viewer || !opad::viewer_cache_load(*result, fsPath(path), o)) {
+        if (!cacheable || !opad::viewer_cache_load(*result, fsPath(path), o)) {
           const auto imported=opad::import_file(*result, fsPath(path), o);
           for(const auto& warning:imported.warnings) warnings.append(QString::fromStdString(warning));
-          slowRead = viewer && clock.elapsed() > 1500;
+          slowRead = cacheable && clock.elapsed() > 1500;
         }
       } else *result = opad::Document::load(fsPath(path));
       // Parse the bodies here rather than on the UI thread when they are first displayed.

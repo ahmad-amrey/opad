@@ -67,6 +67,7 @@ json ImportResult::to_json() const {
   j["new_entries"] = new_entries;
   j["healed"] = healed;
   j["warnings"] = warnings;
+  if (!info.is_null()) j["info"] = info;
   return j;
 }
 

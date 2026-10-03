@@ -358,15 +358,25 @@ void register_builtins() {
         return j;
       });
 
-  reg("import", "Import STEP, IGES, BREP, STL, 3MF, OBJ, PLY, glTF, VRML, DXF, DWG (converter) or SVG into the document",
-      {{"doc", "path"}, {"file", "path - .step/.iges/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
-       {"placement", "[16] - drawings: where the drawing's XY plane and origin go (row-major 4x4, mm)"}, {"plane", "object - drawings: place on this plane instead, {\"base\":\"xz\"} or {\"face\":ref}, its origin at the plane's"},
-       {"center", "bool - drawings: centre the drawing on its origin (default false)"}},
+  reg("import", "Import STEP, IGES, BREP, STL, 3MF, OBJ, PLY, glTF, VRML, DXF, DWG (converter), SVG or a KiCad board into the document",
+      {{"doc", "path"}, {"file", "path - .step/.iges/.brep/.stl/.3mf/.obj/.ply/.gltf/.glb/.wrl/.dxf/.dwg/.svg/.kicad_pcb"}, {"by", "string"}, {"parent", "uuid - component to import under"}, {"heal", "bool - default true"},
+       {"placement", "[16] - drawings and boards: where the file's XY plane and origin go (row-major 4x4, mm)"}, {"plane", "object - drawings: place on this plane instead, {\"base\":\"xz\"} or {\"face\":ref}, its origin at the plane's"},
+       {"center", "bool - drawings: centre the drawing on its origin (default false)"},
+       {"model_dirs", "string|array - KiCad boards: more folders to look for 3D models in, after KiCad's own"}, {"components", "bool - KiCad boards: the footprints' 3D models (default true)"},
+       {"dnp", "bool - KiCad boards: also footprints marked do-not-populate (default true)"}, {"vias", "bool - KiCad boards: drill the vias too (default false)"},
+       {"placeholder_height", "number - KiCad boards: mm, the box shown for a model that is not found (default 1)"}, {"origin", "auto|center|page - KiCad boards: where the board's origin goes: the drill/place origin when set, else the board centre (auto); the centre; KiCad's page origin"}},
       true, [](Document* d, const json& a) {
         ImportOptions o;
         o.author = a.value("by", "");
         o.parent = a.value("parent", "");
         o.heal = a.value("heal", true);
+        for (const auto& dir : str_list(a.value("model_dirs", json()))) o.kicad.model_dirs.push_back(path_from_utf8(dir));
+        o.kicad.components = a.value("components", true);
+        o.kicad.dnp = a.value("dnp", true);
+        o.kicad.vias = a.value("vias", false);
+        o.kicad.placeholder_height = a.value("placeholder_height", 1.0);
+        o.kicad.origin = a.value("origin", "auto");
+        if (o.kicad.origin != "auto" && o.kicad.origin != "center" && o.kicad.origin != "page") throw Error("origin is auto, center or page");
         if (a.contains("placement")) o.placement = Mat4::from_json(a["placement"]);
         if (a.contains("plane")) {  // resolved now, stored as the placement: replay never needs the plane again
           const Frame f = design::resolve_plane(need(d), resolve(need(d)), a["plane"]);

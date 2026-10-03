@@ -10,6 +10,17 @@
 
 namespace opad {
 
+// KiCad boards (.kicad_pcb, kicad_pcb.hpp): what to build and where footprints' 3D models are looked for after
+// ${KIPRJMOD}, the environment, KiCad's own configuration and its install folders.
+struct KicadOptions {
+  std::vector<std::filesystem::path> model_dirs;  // the user's own 3D model folders
+  bool components = true;                         // false: the bare board
+  bool dnp = true;                                // also footprints marked "do not populate"
+  bool vias = false;                              // drill the through vias too (thousands of holes on a dense board)
+  double placeholder_height = 1.0;                // mm: the box shown for a footprint whose model is not found
+  std::string origin = "auto";                    // auto (the drill/place origin when set, else the board's centre) | center | page
+};
+
 struct ImportOptions {
   bool heal = true;      // run ShapeFix on bodies that fail BRepCheck
   bool viewer = false;   // viewer mode: keep the reader's shapes live in the shape cache; no healing, no BREP
@@ -22,6 +33,7 @@ struct ImportOptions {
   // drawing's bounding-box centre to its origin (a drawing opened on its own is centred on the grid).
   Mat4 placement;
   bool center_drawing = false;
+  KicadOptions kicad;
 };
 
 struct ImportResult {
@@ -31,6 +43,7 @@ struct ImportResult {
   int new_entries = 0;   // body-store entries added (instances of existing keys are free)
   int healed = 0;
   std::vector<std::string> warnings;
+  json info;             // what a reader found beyond the bodies (KiCad: footprints, models, placeholders, holes)
   json to_json() const;
 };
 

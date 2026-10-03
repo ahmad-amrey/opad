@@ -1,4 +1,5 @@
 #include "opad/drawing_io.hpp"
+#include "opad/kicad_pcb.hpp"
 #include <set>
 #include "opad/design/sketch_geom.hpp"
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -486,7 +487,7 @@ std::string xml(const std::string& in) { std::string out; for(char c:in) { if(c=
 
 const std::vector<std::string>& importable_extensions() {
   static const std::vector<std::string> list = {".step", ".stp", ".iges", ".igs", ".brep", ".brp", ".stl", ".obj", ".3mf", ".ply",
-                                                ".gltf", ".glb", ".wrl", ".vrml", ".dxf", ".dwg", ".svg"};
+                                                ".gltf", ".glb", ".wrl", ".vrml", ".dxf", ".dwg", ".svg", ".kicad_pcb"};
   return list;
 }
 
@@ -501,6 +502,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     if(ext==".ply") return detail::import_ply(doc,file,options);
     if(ext==".3mf") return detail::import_3mf(doc,file,options);
     if(ext==".obj" || ext==".gltf" || ext==".glb" || ext==".wrl" || ext==".vrml") return detail::import_mesh_scene(doc,file,options);
+    if(ext==".kicad_pcb") return import_kicad_pcb(doc,file,options);
   } catch(const Standard_Failure& e) { throw Error("cannot read "+file.filename().string()+": "+e.GetMessageString()); }
   if(ext==".dwg") {
     Conversion work; auto name=file.stem(); name+=".dxf";  // keeps the drawing's own name

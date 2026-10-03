@@ -229,6 +229,11 @@ current document. Properties show a body's material as the file named it, its so
 solid, a mesh or a 2D drawing. DWG opens through LibreDWG's `dwg2dxf`, which the build compiles from the
 `third_party/libredwg` submodule and puts beside OPAD (the free ODA File Converter is used instead when installed); the
 DXF reader shows model space with its blocks, hatches, dimensions, text and colours ([details](docs/drawings.md)). `opad-cli probe <file> --viewer --mesh` reports what opening a file costs, phase by phase.
+A KiCad board (`.kicad_pcb`) opens as the board itself (its Edge.Cuts outline with the drills, thickness and solder-mask
+colour) and its footprints' 3D models, placed as KiCad places them and found as KiCad finds them (`${KIPRJMOD}`, the
+`KICAD*_3DMODEL_DIR` variables from the environment or KiCad's settings, KiCad's install folders, then Settings > KiCad
+3D model folders); a model that is not found shows as a translucent box over the footprint. KiCad's model libraries are
+not part of OPAD.
 Settings offers six rendering presets (Classic, Technical flat, Studio, Studio fine, ray traced
 shadows and ray traced reflections), four backgrounds and a configurable auto-hide scene browser.
 Unsupported ray tracing falls back to raster rendering. Coplanar faces receive a small display depth
