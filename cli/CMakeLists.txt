@@ -19,6 +19,7 @@ if(TARGET opad_paint)  # export --format pdf|png: a QGuiApplication on the offsc
   target_link_libraries(opad-cli PRIVATE opad_paint)
   target_compile_definitions(opad-cli PRIVATE OPAD_PAINT=1)
   if(OPAD_STATIC)
+    find_package(Qt6 COMPONENTS Gui REQUIRED)  # registers the platforms plugin type in this directory for qt_import_plugins
     qt_import_plugins(opad-cli INCLUDE_BY_TYPE platforms Qt6::QOffscreenIntegrationPlugin Qt6::QWindowsIntegrationPlugin EXCLUDE_BY_TYPE imageformats iconengines)
   endif()
 endif()
