@@ -285,9 +285,9 @@ TEST(help_menu_contents) {
     return out;
   };
   const auto groups = help::keyGroups({&fit, &line, &box}, false, "fusion");
-  CHECK_EQ(titles(groups), QStringList({"View", "Sketch", "Mouse", "In every tool"}));
+  CHECK_EQ(titles(groups), QStringList({"View", "Sketch", "Mouse", "Without the mouse", "In every tool"}));
   CHECK(groups[0].rows.size() == 1 && groups[0].rows[0].label == help::find("view.fit")->title && groups[0].rows[0].keys == "F");
-  CHECK_EQ(titles(help::keyGroups({&fit, &line, &box}, true, "fusion")), QStringList({"Sketch", "View", "Mouse", "In every tool"}));
+  CHECK_EQ(titles(help::keyGroups({&fit, &line, &box}, true, "fusion")), QStringList({"Sketch", "View", "Mouse", "Without the mouse", "In every tool"}));
   CHECK_EQ(help::problemReport("  It broke \n", {"OPAD 1", "Qt 6"}), QString("What happened:\nIt broke\n\nOPAD and this computer:\n- OPAD 1\n- Qt 6\n"));
   CHECK(help::problemReport("", {}).contains("(not described)"));
   for (const char* preset : {"fusion", "solidworks", "onshape", "blender"}) {

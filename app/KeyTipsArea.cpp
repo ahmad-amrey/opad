@@ -164,8 +164,7 @@ class KeyTipsArea : public AreaController {
         if (key->key() == Qt::Key_Alt && m_altClean && ours && QDateTime::currentMSecsSinceEpoch() - m_altAt < 1500) {
           m_altClean = false;
           if (m_level) clear();
-          else show(1);
-          return true;
+          else show(1);  // the release goes on: whoever follows the modifiers (the view) sees Alt go up
         }
         break;
       }
@@ -228,6 +227,7 @@ OPAD_AREA(KeyTipsArea)
 #include <QTimer>
 
 #include "BenchRegistry.hpp"
+#include "HelpWindows.hpp"
 #include "MainWindow.hpp"
 
 // OPAD_BENCH_KEYTIPS=<prefix> (a box): Alt tapped shows a key on every tab, the workspace chip and the tab row's buttons
@@ -280,6 +280,7 @@ OPAD_BENCH(OPAD_BENCH_KEYTIPS, keytips) {
     check(area->level() == 1 && tabTips == visibleTabs && numbered >= 3 && keys.size() == area->tips().size(),
           QString("Alt shows a key on each of the %1 tabs and %2 buttons of the tab row, none twice").arg(tabTips).arg(numbered));
     QKeyEvent over(QEvent::ShortcutOverride, Qt::Key_F, Qt::NoModifier, "f");
+    over.ignore();  // as Qt sends it
     QApplication::sendEvent(&w, &over);
     check(over.isAccepted(), "meanwhile a letter is the tips', not the window's shortcut (F)");
     QStringList tabKeys;  // in the tabs' order
@@ -313,6 +314,10 @@ OPAD_BENCH(OPAD_BENCH_KEYTIPS, keytips) {
     send(QEvent::KeyPress, Qt::Key_F, Qt::AltModifier, "f");
     send(QEvent::KeyRelease, Qt::Key_Alt, Qt::NoModifier);
     check(area->level() == 0, "Alt with another key (Alt+F) shows none");
+    bool listed = false;
+    for (const auto& g : help::keyGroups(w.m_actions, false, "fusion"))
+      for (const auto& r : g.rows) listed = listed || r.keys == "Alt";
+    check(listed, "the shortcuts cheat sheet lists them (Alt)");
     trace::log(QString("bench: key tips: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
     QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
   });

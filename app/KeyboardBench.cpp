@@ -136,6 +136,10 @@ OPAD_BENCH(OPAD_BENCH_KEYBOARD, keyboard) {
     key(w.m_timeline, Qt::Key_Menu);
     const QString edit = QCoreApplication::translate("MainWindow", "Edit feature"), suppress = QCoreApplication::translate("MainWindow", "Suppress");
     check(seen->contains(edit) && seen->contains(suppress), "the Menu key opens the marker's menu (" + seen->join(", ") + ")");
+    QKeyEvent f2(QEvent::ShortcutOverride, Qt::Key_F2, Qt::NoModifier);
+    f2.ignore();  // as Qt sends it: nobody wants the key until someone accepts it
+    QApplication::sendEvent(w.m_timeline, &f2);
+    check(f2.isAccepted(), "on a marker F2 is the timeline's (edit), not the window's Rename");
   }, [=, &w] { return idle() && !w.m_design->featureActive(); });
 
   // ---- what a screen reader finds

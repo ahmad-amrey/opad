@@ -51,6 +51,7 @@ class TimelineWidget : public QWidget {
   void leaveEvent(QEvent*) override;
   void resizeEvent(QResizeEvent*) override;
   void wheelEvent(QWheelEvent*) override;
+  bool event(QEvent* e) override;  // F2 is the marker's (edit), not the window's Rename
   void keyPressEvent(QKeyEvent*) override;
   void contextMenuEvent(QContextMenuEvent*) override;
 

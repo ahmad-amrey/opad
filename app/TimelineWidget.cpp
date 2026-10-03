@@ -150,6 +150,17 @@ void TimelineWidget::keyPressEvent(QKeyEvent* e) {
   e->accept();
 }
 
+bool TimelineWidget::event(QEvent* e) {
+  if (e->type() == QEvent::ShortcutOverride) {
+    auto* key = static_cast<QKeyEvent*>(e);
+    if (key->key() == Qt::Key_F2 && !(key->modifiers() & ~Qt::KeypadModifier) && currentMarker() >= 0) {
+      e->accept();
+      return true;
+    }
+  }
+  return QWidget::event(e);
+}
+
 void TimelineWidget::contextMenuEvent(QContextMenuEvent* e) {
   if (e->reason() != QContextMenuEvent::Keyboard) return e->ignore();  // the right button's press opened it already
   openMenu();

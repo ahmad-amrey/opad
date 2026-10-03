@@ -76,6 +76,10 @@ QList<KeyGroup> keyGroups(const QList<QAction*>& actions, bool sketching, const 
       return std::any_of(actions.begin(), actions.end(), [&](QAction* a) { return a && a->objectName().startsWith("sketch.") && a->property("commandGroup").toString() == g.title; });
     });
   groups << KeyGroup{QCoreApplication::translate("help", "Mouse"), mouseRows(preset)};
+  groups << KeyGroup{QCoreApplication::translate("help", "Without the mouse"),  // UI-124
+                     {{QCoreApplication::translate("help", "Key tips on the ribbon's tabs and tools"), "Alt"},
+                      {QCoreApplication::translate("help", "Show or hide the browser's rows, suppress a timeline marker"), QCoreApplication::translate("help", "Space")},
+                      {QCoreApplication::translate("help", "The menu of a browser row or a timeline marker"), QCoreApplication::translate("help", "Menu key") + " / Shift+F10"}}};
   groups << KeyGroup{QCoreApplication::translate("help", "In every tool"),
                      {{QCoreApplication::translate("help", "Step back, or leave the tool"), "Esc"},
                       {QCoreApplication::translate("help", "OK, or finish"), "Enter"},
