@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QDoubleSpinBox>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QListWidget>
 #include <QMenu>
@@ -90,6 +91,17 @@ OPAD_BENCH(OPAD_BENCH_PREFERENCES, preferences) {
       auto* undo = dialog->pageWidget("general")->findChild<QSpinBox*>("edit/undoDepth");
       undo->setValue(20);
       check(w.m_doc->undoLimit() == 20, "undo steps: the document keeps 20");
+      undo->setValue(50);
+      // Typed: nothing applies before Enter (the "2" of 200 would have dropped all but two undo steps for good).
+      undo->selectAll();
+      for (const QChar c : QString("200")) {
+        QKeyEvent digit(QEvent::KeyPress, Qt::Key_0 + c.digitValue(), Qt::NoModifier, QString(c));
+        QApplication::sendEvent(undo, &digit);
+      }
+      check(w.m_doc->undoLimit() == 50 && QSettings().value("edit/undoDepth").toInt() == 50, "typing 200 in Undo steps applies nothing at each keystroke");
+      QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+      QApplication::sendEvent(undo, &enter);
+      check(w.m_doc->undoLimit() == 200, "and 200 on Enter");
       undo->setValue(50);
       // Units.
       dialog->setPage("units");

@@ -186,6 +186,7 @@ QSpinBox* Form::integer(const QString& key, const QString& label, int fallback, 
   box->setObjectName(key);
   box->setRange(min, max);
   box->setSuffix(suffix);
+  box->setKeyboardTracking(false);  // typed values apply on Enter or leaving the box: "200" never passes through 2 (undo steps drop for good)
   bind(box, key, fallback);
   if (apply) QObject::connect(box, &QSpinBox::valueChanged, box, apply);
   form()->addRow(label, box);
@@ -199,6 +200,7 @@ QDoubleSpinBox* Form::number(const QString& key, const QString& label, double fa
   box->setRange(min, max);
   box->setDecimals(decimals);
   box->setSuffix(suffix);
+  box->setKeyboardTracking(false);
   bind(box, key, fallback);
   if (apply) QObject::connect(box, &QDoubleSpinBox::valueChanged, box, apply);
   form()->addRow(label, box);
