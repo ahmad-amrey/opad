@@ -373,6 +373,31 @@ void BodyShape::Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Han
     if(!m_prs->loosePoints.IsNull()) {auto g=prs->NewGroup();g->SetGroupPrimitivesAspect(myDrawer->PointAspect()->Aspect());g->AddPrimitiveArray(m_prs->loosePoints);}
     return;
   }
+  if (mode == AIS_Shaded && !shown && m_faceColors && !m_faceColors->empty()) {
+    // OCCT's shaded path, once per colour: the faces in the body's colour, then each face colour with the same look.
+    TopTools_IndexedMapOfShape faces;
+    TopExp::MapShapes(myshape, TopAbs_FACE, faces);
+    std::map<int, TopoDS_Compound> groups;
+    BRep_Builder builder;
+    for (int i = 1; i <= faces.Extent(); ++i) {
+      auto& group = groups[m_faceColors->at(i - 1)];
+      if (group.IsNull()) builder.MakeCompound(group);
+      builder.Add(group, faces(i));
+    }
+    for (const auto& [colour, group] : groups) {
+      Handle(Prs3d_Drawer) look = myDrawer;
+      if (colour >= 0) {
+        look = new Prs3d_Drawer();
+        look->SetLink(myDrawer);
+        Handle(Prs3d_ShadingAspect) shading = new Prs3d_ShadingAspect(new Graphic3d_AspectFillArea3d(*myDrawer->ShadingAspect()->Aspect()));
+        const auto& c = m_faceColors->colors[size_t(colour)];
+        shading->SetColor(Quantity_Color(c[0], c[1], c[2], Quantity_TOC_sRGB));
+        look->SetShadingAspect(shading);
+      }
+      StdPrs_ShadedShape::Add(prs, group, look);
+    }
+    return;
+  }
   if (mode != AIS_Shaded || !shown || shown->triangles.IsNull()) {
     AIS_Shape::Compute(mgr, prs, mode);  // wireframe/HLR, or nothing precomputed: the stock path
     return;

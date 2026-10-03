@@ -89,18 +89,8 @@ bool MainWindow::benchColors() {
     return true;
   };
   const auto bodies = m_doc->scene.all_bodies();
-  if (!m_doc->browse || bodies.size() != 1) return fail("one body in viewer mode expected");
-  const std::string id = bodies.front();
-  const opad::Node* n = m_doc->scene.node(id);
-  const opad::FaceColors faces = opad::face_colors(m_doc->doc, n->body_key);
-  const int painted = int(std::count_if(faces.face.begin(), faces.face.end(), [](int c) { return c >= 0; }));
   auto alike = [](const std::array<double, 3>& a, const std::array<double, 3>& b) {
     return std::abs(a[0] - b[0]) < 0.02 && std::abs(a[1] - b[1]) < 0.02 && std::abs(a[2] - b[2]) < 0.02;
-  };
-  const std::array<double, 3> grey{0.439, 0.439, 0.439}, gold{1.0, 0.766, 0.336}, red{1.0, 0.0, 0.0};
-  auto drawn = [this, id, alike](const std::array<double, 3>& c) {
-    const auto colors = m_viewport->drawnColors(id);
-    return std::any_of(colors.begin(), colors.end(), [&](const auto& d) { return alike(d, c); });
   };
   // Pixels of a hue: gold (warm, blue well below red) and red (green and blue well below red), whatever the shading.
   auto pixels = [](const QImage& image, bool goldish) {
@@ -113,15 +103,24 @@ bool MainWindow::benchColors() {
       }
     return count;
   };
-  trace::log(QString("bench: colors: body colour %1 %2 %3, %4 face colours on %5 faces, drawn in %6 groups")
-                 .arg(n->color[0]).arg(n->color[1]).arg(n->color[2]).arg(faces.colors.size()).arg(painted).arg(m_viewport->drawnColors(id).size()));
   // OPAD_BENCH_COLORS_PAINTED=1: the file is instead a Bambu Studio 3MF cube printed in filament 1 (#3060FF) with its top
-  // painted in filament 2 (#FF2020): the body takes the first, the painted top is a face of its own drawn in the second.
+  // painted in filament 2 (#FF2020), placed twice: as it is and stretched (a non-rigid placement, drawn by OCCT's own
+  // shaded path). Both bodies take the filament, their painted tops are faces of their own drawn in the paint's colour.
   if (qEnvironmentVariableIsSet("OPAD_BENCH_COLORS_PAINTED")) {
     const std::array<double, 3> blue{0x30 / 255.0, 0x60 / 255.0, 1.0}, paint{1.0, 0x20 / 255.0, 0x20 / 255.0};
-    if (!n->has_color || !alike(n->color, blue)) return fail("the body is not in its filament's colour");
-    if (faces.colors.size() != 1 || painted != 1 || !alike(faces.colors[0], paint)) return fail("the painted top is not a face colour");
-    if (m_viewport->drawnColors(id).size() != 2 || !drawn(blue) || !drawn(paint)) return fail("not drawn as a filament and a painted group");
+    if (!m_doc->browse || bodies.size() != 2) return fail("two bodies in viewer mode expected");
+    for (const auto& id : bodies) {
+      const opad::Node* n = m_doc->scene.node(id);
+      const opad::FaceColors faces = opad::face_colors(m_doc->doc, n->body_key);
+      const auto drawn = m_viewport->drawnColors(id);
+      auto has = [&](const std::array<double, 3>& c) { return std::any_of(drawn.begin(), drawn.end(), [&](const auto& d) { return alike(d, c); }); };
+      const int painted = int(std::count_if(faces.face.begin(), faces.face.end(), [](int c) { return c >= 0; }));
+      trace::log(QString("bench: colors: painted 3MF body: colour %1 %2 %3, %4 face colours on %5 faces, drawn in %6 groups")
+                     .arg(n->color[0]).arg(n->color[1]).arg(n->color[2]).arg(faces.colors.size()).arg(painted).arg(drawn.size()));
+      if (!n->has_color || !alike(n->color, blue)) return fail("a body is not in its filament's colour");
+      if (faces.colors.size() != 1 || painted != 1 || !alike(faces.colors[0], paint)) return fail("a painted top is not a face colour");
+      if (drawn.size() != 2 || !has(blue) || !has(paint)) return fail("a body is not drawn as a filament and a painted group");
+    }
     m_viewport->standardView("iso");
     m_viewport->fitAll();
     QTimer::singleShot(800, this, [this, shot, fail, pixels] {
@@ -134,12 +133,24 @@ bool MainWindow::benchColors() {
         }
       const int reddish = pixels(frame, false);
       trace::log(QString("bench: colors: painted 3MF: %1 painted pixels, %2 filament pixels").arg(reddish).arg(bluish));
-      if (!frame.save(shot) || reddish < 300 || bluish < 300) return (void)fail("the painted top or the filament body does not show");
-      trace::log("bench: colors 3MF painting drawn as a face group over the filament colour PASS");
+      if (!frame.save(shot) || reddish < 600 || bluish < 600) return (void)fail("the painted tops or the filament bodies do not show");
+      trace::log("bench: colors 3MF painting drawn as a face group over the filament colour, also through a non-rigid placement PASS");
       QCoreApplication::exit(0);
     });
     return true;
   }
+  if (!m_doc->browse || bodies.size() != 1) return fail("one body in viewer mode expected");
+  const std::string id = bodies.front();
+  const opad::Node* n = m_doc->scene.node(id);
+  const opad::FaceColors faces = opad::face_colors(m_doc->doc, n->body_key);
+  const int painted = int(std::count_if(faces.face.begin(), faces.face.end(), [](int c) { return c >= 0; }));
+  const std::array<double, 3> grey{0.439, 0.439, 0.439}, gold{1.0, 0.766, 0.336}, red{1.0, 0.0, 0.0};
+  auto drawn = [this, id, alike](const std::array<double, 3>& c) {
+    const auto colors = m_viewport->drawnColors(id);
+    return std::any_of(colors.begin(), colors.end(), [&](const auto& d) { return alike(d, c); });
+  };
+  trace::log(QString("bench: colors: body colour %1 %2 %3, %4 face colours on %5 faces, drawn in %6 groups")
+                 .arg(n->color[0]).arg(n->color[1]).arg(n->color[2]).arg(faces.colors.size()).arg(painted).arg(m_viewport->drawnColors(id).size()));
   if (!n->has_color || !alike(n->color, grey)) return fail("the grey material was not kept as the file shows it");
   if (faces.colors.size() != 1 || painted != 1 || !alike(faces.colors[0], gold)) return fail("the gold top is not a face colour");
   if (m_viewport->drawnColors(id).size() != 2 || !drawn(grey) || !drawn(gold)) return fail("not drawn as a grey and a gold group");

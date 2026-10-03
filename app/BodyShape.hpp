@@ -69,6 +69,8 @@ class BodyShape : public AIS_Shape {
   // the drawn arrays change: picking, sub-shape ordinals and highlights keep using the prototype's own mesh.
   bool setDisplayPrs(std::shared_ptr<const BodyPrs> prs) { if (prs==m_display) return false; m_display=std::move(prs); m_rayTriangles.clear(); SetToUpdate(); return true; }
   const std::shared_ptr<const BodyPrs>& displayPrs() const { return m_display; }
+  // The face colours of a body drawn without worker arrays (placed through a non-rigid transform: OCCT's own shaded path).
+  void setFaceColors(std::shared_ptr<const opad::FaceColors> colors) { m_faceColors = std::move(colors); SetToUpdate(); }
  protected:
   void Compute(const Handle(PrsMgr_PresentationManager)& mgr, const Handle(Prs3d_Presentation)& prs, const Standard_Integer mode) override;
   // Sub-shape modes: the stock owners are swapped for SubShapeOwner.
@@ -76,6 +78,7 @@ class BodyShape : public AIS_Shape {
 
  private:
   std::shared_ptr<const BodyPrs> m_prs, m_display;
+  std::shared_ptr<const opad::FaceColors> m_faceColors;
   double m_rayBias=0;
   std::map<const Graphic3d_ArrayOfTriangles*, Handle(Graphic3d_ArrayOfTriangles)> m_rayTriangles;  // drawn array -> its biased copy
 };

@@ -1700,6 +1700,9 @@ void Viewport::displayBody(const std::string& id) {
     prs.reset();
   }
   Handle(AIS_Shape) ais = new BodyShape(located, prs);
+  if (!rigid)
+    if (auto colors = std::make_shared<const opad::FaceColors>(opad::face_colors(m_doc->doc, n->body_key)); !colors->empty())
+      Handle(BodyShape)::DownCast(ais)->setFaceColors(colors);
   if (auto refined = m_refined.find(n->body_key); rigid && refined != m_refined.end())
     Handle(BodyShape)::DownCast(ais)->setDisplayPrs(refined->second.prs);  // zoomed in before: draw it fine at once
   if(!n->raster.is_null()) {

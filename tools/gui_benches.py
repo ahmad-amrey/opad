@@ -101,13 +101,15 @@ def main():
         corners = "".join(f"v {x} {y} {z}\n" for x, y, z in [(0, 0, 0), (20, 0, 0), (20, 0, 20), (0, 0, 20), (0, 20, 0), (20, 20, 0), (20, 20, 20), (0, 20, 20)])
         (colors / "cube.obj").write_text("mtllib cube.mtl\no Cube\n" + corners + "usemtl grey\nf 1 2 3 4\nf 1 5 6 2\nf 4 3 7 8\nf 1 4 8 5\nf 2 6 7 3\n"
                                          "usemtl gold\nf 5 8 7 6\n", encoding="utf-8")
-        # A Bambu Studio 3MF cube printed in filament 1, its top painted in filament 2 (state 2 of the paint bitstream).
+        # A Bambu Studio 3MF cube printed in filament 1, its top painted in filament 2 (state 2 of the paint bitstream), placed
+        # as it is and stretched twice as long (a non-rigid placement).
         corners = [(0, 0, 0), (20, 0, 0), (20, 20, 0), (0, 20, 0), (0, 0, 20), (20, 0, 20), (20, 20, 20), (0, 20, 20)]
         sides = [(0, 2, 1), (0, 3, 2), (4, 5, 6), (4, 6, 7), (0, 1, 5), (0, 5, 4), (3, 7, 6), (3, 6, 2), (0, 4, 7), (0, 7, 3), (1, 2, 6), (1, 6, 5)]
         cube = ('<model unit="millimeter"><resources><object id="1" type="model"><mesh><vertices>'
                 + "".join(f'<vertex x="{x}" y="{y}" z="{z}"/>' for x, y, z in corners) + "</vertices><triangles>"
                 + "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"' + (' paint_color="8"' if i in (2, 3) else "") + "/>" for i, (a, b, c) in enumerate(sides))
-                + '</triangles></mesh></object></resources><build><item objectid="1"/></build></model>')
+                + '</triangles></mesh></object></resources><build><item objectid="1"/>'
+                + '<item objectid="1" transform="2 0 0 0 1 0 0 0 1 30 0 0"/></build></model>')
         with zipfile.ZipFile(colors / "painted.3mf", "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr("_rels/.rels", '<Relationships><Relationship Target="/3D/3dmodel.model" Id="rel0" '
                                       'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')
