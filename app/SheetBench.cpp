@@ -286,3 +286,78 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
   QCoreApplication::exit(ok ? 0 : 2);
   return true;
 }
+
+// OPAD_BENCH_SHEET_LOADED=<prefix> (UI-78, a big model: the Engine): the loaded file gets a drawing (A2, front + top + side +
+// iso at an automatic scale) through the area's own path; times the frames, the first draft, every view final and a drag
+// of the base view afterwards (cached projections), with a 1 ms ticker whose worst gap is the longest the event loop was
+// held. <prefix>.png is the sheet once drawn.
+OPAD_BENCH(OPAD_BENCH_SHEET_LOADED, sheetLoaded) {
+  const QString& prefix = value;
+  DocsArea* docs = DocsArea::of(w.m_areas);
+  bool ok = docs && docs->sheetPage() && w.m_doc->hasDocument;
+  const auto check = [&](bool pass, const QString& what) {
+    trace::log(QString("bench: sheet-loaded: %1 %2").arg(what, pass ? "PASS" : "FAIL"));
+    ok = ok && pass;
+  };
+  if (!ok) {
+    check(false, "a loaded document");
+    QCoreApplication::exit(2);
+    return true;
+  }
+  SheetCanvas* canvas = docs->sheetPage()->canvas();
+  QElapsedTimer gap, clock;
+  qint64 worst = 0;
+  QTimer ticker;
+  ticker.setTimerType(Qt::PreciseTimer);
+  QObject::connect(&ticker, &QTimer::timeout, [&] { worst = std::max(worst, gap.restart()); });
+  const auto waitFor = [](const std::function<bool()>& done, int ms) {
+    QElapsedTimer t;
+    t.start();
+    while (!done() && t.elapsed() < ms) QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+    return done();
+  };
+  const auto settled = [&] {
+    const auto states = canvas->viewStates();
+    return !canvas->busy() && !w.m_doc->designBusy && !states.empty() && canvas->paperPictured() &&
+           std::all_of(states.begin(), states.end(), [](const SheetCanvas::ViewState& v) { return (v.final && (v.picture || v.prims == 0)) || !v.error.isEmpty(); });
+  };
+  w.action("workspace.drawings")->trigger();
+  gap.start();
+  clock.start();
+  ticker.start(1);
+  std::string sheet;
+  docs->createDrawing({{"size", "A2"}, {"orientation", "landscape"}, {"standard", "iso"}, {"projection", "first"}, {"scale", "auto"}, {"views", {"front", "top", "side", "iso"}}},
+                      [&](const std::string& id) { sheet = id; });
+  const bool added_ = waitFor([&] { return !sheet.empty(); }, 600000);  // before the message: arguments have no order
+  check(added_, QString("the drawing laid out on a worker and added in %1 ms (worst event-loop gap %2 ms)").arg(clock.elapsed()).arg(worst));
+  const qint64 added = clock.elapsed();
+  qint64 framed = -1, drafted = -1;
+  QObject::connect(canvas, &SheetCanvas::partsArrived, canvas, [&] {
+    if (framed < 0 && !canvas->viewStates().empty() && !canvas->viewStates()[0].frame.isEmpty()) framed = clock.elapsed();
+    if (drafted < 0 && canvas->draftsShown() > 0) drafted = clock.elapsed();
+  });
+  worst = 0;
+  gap.restart();
+  const bool done = waitFor(settled, 900000);
+  int curves = 0;
+  for (const auto& s : canvas->viewStates()) curves += s.prims;
+  check(done && worst < 250, QString("4 views drawn: frames at %1 ms, first draft at %2 ms, all final at %3 ms, %4 primitives; worst event-loop gap %5 ms")
+                                 .arg(framed - added).arg(drafted < 0 ? -1 : drafted - added).arg(clock.elapsed() - added).arg(curves).arg(worst));
+  for (const auto& s : canvas->viewStates())
+    trace::log(QString("bench: sheet-loaded: view %1: frame %2 x %3 mm, linework %4 x %5 mm").arg(QString::fromStdString(s.id.substr(0, 8))).arg(s.frame.width(), 0, 'f', 1)
+                   .arg(s.frame.height(), 0, 'f', 1).arg(s.linework.width(), 0, 'f', 1).arg(s.linework.height(), 0, 'f', 1));
+  docs->sheetPage()->grab().save(prefix + ".png");
+  if (const opad::Sheet* s = w.m_doc->scene.sheet(sheet); s && !s->views.empty()) {
+    worst = 0;
+    gap.restart();
+    clock.restart();
+    const size_t ops = w.m_doc->doc.ops.size();
+    canvas->benchDrag(s->views[0], {10, 5});
+    const bool moved = waitFor([&] { return w.m_doc->doc.ops.size() == ops + 1; }, 30000) && waitFor(settled, 120000);
+    check(moved && worst < 250, QString("the base view dragged: drawn again in %1 ms from cached projections; worst event-loop gap %2 ms").arg(clock.elapsed()).arg(worst));
+  }
+  ticker.stop();
+  trace::log(QString("bench: sheet-loaded: done %1").arg(ok ? "PASS" : "FAIL"));
+  QCoreApplication::exit(ok ? 0 : 2);
+  return true;
+}

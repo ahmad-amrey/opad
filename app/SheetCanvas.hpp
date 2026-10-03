@@ -68,7 +68,8 @@ class SheetCanvas : public QGraphicsView {
   // State for benches and the status bar.
   struct ViewState {
     std::string id;
-    QRectF frame;  // scene
+    QRectF frame;      // scene
+    QRectF linework;   // scene: what its display draws
     bool draft = false, final = false, picture = false;  // picture: drawn from a picture of its current linework
     int prims = 0;
     QString error;
@@ -116,7 +117,8 @@ class SheetCanvas : public QGraphicsView {
     std::vector<opad::drawing::ViewFrame> frames;
     std::string id;
     std::shared_ptr<const opad::drawing::Display> display;
-    std::array<double, 4> box{0, 0, 0, 0};  // the frame the view was drawn in (paper)
+    std::array<double, 4> box{0, 0, 0, 0};     // the frame the view was drawn in (paper)
+    std::array<double, 4> bounds{0, 0, 0, 0};  // the display's (measured on the worker)
     bool draft = false;
   };
   struct Outbox {

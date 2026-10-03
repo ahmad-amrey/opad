@@ -17,4 +17,7 @@ CASES = [
     # projected one (its gap), placing a base and a projected view, hidden lines, sheet properties, a DXF template, a new
     # sheet, PDF export, Del and Esc. <prefix>.empty.png, .sheet.png, .final.png, .window.png.
     ("sheet", "empty", {"OPAD_BENCH_SHEET": "{prefix}"}),
+    # The same workspace on the Engine (beside the repository; skipped where it is not): an A2 drawing of four views laid
+    # out on a worker, drawn and dragged with no event-loop gap over 250 ms. <prefix>.png.
+    ("sheet-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_SHEET_LOADED": "{prefix}"}),
 ]

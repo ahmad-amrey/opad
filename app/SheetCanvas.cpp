@@ -65,16 +65,13 @@ class SheetPartItem : public QGraphicsItem {
     update();
   }
   bool current() const { return display && !picture.isNull() && pictureOf == display.get(); }
-  void setDisplay(std::shared_ptr<const Display> d, double w, double h) {
+  // b: the display's bounds, measured on the worker (arcs and text sampled: too slow here for a big view).
+  void setDisplay(std::shared_ptr<const Display> d, double w, double h, const std::array<double, 4>& b = {0, 0, 0, 0}) {
     prepareGeometryChange();
     display = std::move(d);
     paperW = w, paperH = h;
     if (!display) picture = QImage(), pictureOf = nullptr;
-    displayRect = QRectF();
-    if (display && !display->prims.empty()) {
-      const auto b = display->bounds();
-      displayRect = QRectF(QPointF(b[0], h - b[3]), QPointF(b[2], h - b[1]));
-    }
+    displayRect = display && b[2] > b[0] ? QRectF(QPointF(b[0], h - b[3]), QPointF(b[2], h - b[1])) : QRectF();
     update();
   }
   void paintDisplay(QPainter* p) {
@@ -132,14 +129,14 @@ class SheetViewItem : public SheetPartItem {
     }
     update();
   }
-  void show(std::shared_ptr<const Display> d, const QRectF& box, bool isDraft, double w, double h) {
+  void show(std::shared_ptr<const Display> d, const std::array<double, 4>& bounds, const QRectF& box, bool isDraft, double w, double h) {
     prepareGeometryChange();
     pictureRect.translate(pos());  // the last picture stays where it was seen until the new one comes
     drawn = box;
     setPos(0, 0);
     draft = isDraft;
     final = !isDraft;
-    setDisplay(std::move(d), w, h);
+    setDisplay(std::move(d), w, h, bounds);
   }
   QRectF boundingRect() const override { return (drawn | displayRect | pictureRect).adjusted(-3, -3, 3, 3); }
   QPainterPath shape() const override {
@@ -375,6 +372,7 @@ void SheetCanvas::start() {
         Part pp;
         pp.kind = Part::Paper;
         pp.display = paper;
+        pp.bounds = paper->bounds();
         send(std::move(pp));
         for (size_t i = 0; i < frames.size(); ++i) {
           if (p.cancelled()) return;
@@ -395,12 +393,15 @@ void SheetCanvas::start() {
             vp.id = fr.id;
             vp.display = out;
             vp.box = fr.box;
+            vp.bounds = out->bounds();
             vp.draft = draft;
             send(std::move(vp));
           };
           auto g = cached_projection(doc, scene, spec);
           if (!g) {
-            if (spec.quality != Quality::Draft) {  // never projected as it is now: a quick draft first
+            // Never projected as it is now: a quick draft first where the final linework comes from the exact tier (slow from
+            // a few hundred faces on); a big model's hybrid tier is quicker than meshing it for a draft.
+            if (spec.quality != Quality::Draft && choose_tier(doc, scene, spec) == Quality::Exact) {
               ViewSpec draft = spec;
               draft.quality = Quality::Draft;
               part(*project(doc, scene, draft, progress), true);
@@ -456,11 +457,11 @@ void SheetCanvas::apply(Part& part) {
     if (m_drag.active)  // the user is dragging: keep what they see
       for (const auto& [it, o] : m_drag.origins) it->setPos(o + m_drag.delta);
   } else if (part.kind == Part::Paper) {
-    m_paper->setDisplay(part.display, m_paperW, m_paperH);
+    m_paper->setDisplay(part.display, m_paperW, m_paperH, part.bounds);
     renderPictures();
   } else if (SheetViewItem* item = viewItem(part.id)) {
     if (!part.draft || !item->final) {
-      item->show(part.display, sceneBox(part.box), part.draft, m_paperW, m_paperH);
+      item->show(part.display, part.bounds, sceneBox(part.box), part.draft, m_paperW, m_paperH);
       m_draftsShown += part.draft;
       partLog.push_back({part.id, part.draft});
       renderPictures();
@@ -984,7 +985,8 @@ std::vector<SheetCanvas::ViewState> SheetCanvas::viewStates() const {
   if (!s) return out;
   for (const auto& id : s->views)
     if (SheetViewItem* item = viewItem(id))
-      out.push_back({id, item->frame(), item->draft, item->final, item->current(), item->display ? static_cast<int>(item->display->prims.size()) : 0, item->error});
+      out.push_back({id, item->frame(), item->displayRect.translated(item->pos()), item->draft, item->final, item->current(),
+                     item->display ? static_cast<int>(item->display->prims.size()) : 0, item->error});
   return out;
 }
 

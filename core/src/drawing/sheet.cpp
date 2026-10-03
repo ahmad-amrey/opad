@@ -328,7 +328,12 @@ std::array<double, 4> view_extent(const Document& doc, const Scene& scene, const
   Vec3 x, y, z;
   view_axes(spec, x, y, z);
   std::array<double, 4> e{1e300, 1e300, -1e300, -1e300};
-  for (const auto& [node, world] : view_bodies(scene, spec)) {
+  const auto bodies = view_bodies(scene, spec);
+  std::vector<std::string> keys;  // measured side by side first (the Engine's boxes one by one: minutes)
+  for (const auto& [node, world] : bodies)
+    if (const Node* n = scene.node(node)) keys.push_back(n->body_key);
+  warm_tight_bboxes(doc, keys);
+  for (const auto& [node, world] : bodies) {
     const Bnd_Box b = node_tight_bbox(doc, scene, node, false);
     if (b.IsVoid()) continue;
     const Mat4 placed = scene.world(node);
