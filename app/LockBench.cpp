@@ -65,6 +65,22 @@ const browser::Badge* lockBadge(BrowserTree* tree, const std::string& id, browse
   return nullptr;
 }
 
+// The longest the event loop was held while something ran: a 1 ms ticker's worst gap.
+struct Ticker {
+  QTimer timer;
+  QElapsedTimer gap;
+  qint64 worst = 0;
+  Ticker() {
+    timer.setTimerType(Qt::PreciseTimer);
+    QObject::connect(&timer, &QTimer::timeout, [this] { worst = std::max(worst, gap.restart()); });
+  }
+  void start() {
+    worst = 0;
+    gap.start();
+    timer.start(1);
+  }
+};
+
 void click(QWidget* widget, const QPoint& at) {
   for (const QEvent::Type type : {QEvent::MouseButtonPress, QEvent::MouseButtonRelease}) {
     QMouseEvent e(type, QPointF(at), QPointF(widget->mapToGlobal(at)), Qt::LeftButton, type == QEvent::MouseButtonPress ? Qt::LeftButton : Qt::NoButton, Qt::NoModifier);
@@ -122,6 +138,72 @@ OPAD_BENCH(OPAD_BENCH_LOCK, lock) {
   auto steps = std::make_shared<std::vector<Step>>();
   auto& list = *steps;
   const auto bodies = doc->scene.all_bodies();
+  if (bodies.size() > 16) {
+    // A big assembly (the Engine): a component holding about half of the bodies locked and unlocked, each with no
+    // event-loop gap over 250 ms (the Lock layer applied by the sliced look job); a locked body's hover pick under 50 ms.
+    for (const auto& root : doc->scene.roots)  // the Engine .opad keeps its root hidden: shown here, in memory
+      if (const auto* n = doc->scene.node(root); n && !n->visible) doc->run("appearance", {{"target", root}, {"visible", true}});
+    auto ticker = std::make_shared<Ticker>();
+    auto settled = [v, doc, idle] {
+      int expected = 0;
+      for (const auto& id : doc->scene.all_bodies()) expected += doc->scene.effectively_visible(id) && !doc->scene.node(id)->body_missing;
+      return idle() && v->displayedCount() + v->skippedCount() >= expected && v->displayedCount() > 0;
+    };
+    list.push_back({settled, [=, &w](bool shown) {
+                      const size_t total = doc->scene.all_bodies().size();
+                      size_t best = 0;
+                      for (const auto& [id, n] : doc->scene.nodes)
+                        if (n.kind == opad::Node::Kind::Component && !n.parent.empty()) {
+                          const size_t in = doc->scene.bodies_under(id).size();
+                          if (std::min(in, total - in) > best) best = std::min(in, total - in), s->housing = id;
+                        }
+                      require(shown && !s->housing.empty(), QString("%1 bodies displayed; %2 holds %3").arg(v->displayedCount()).arg(doc->nodeName(s->housing)).arg(best));
+                      w.m_browser->selectIds({s->housing});
+                      ticker->start();
+                      QElapsedTimer clock;
+                      clock.start();
+                      lock->trigger();
+                      s->ax = static_cast<int>(clock.elapsed());
+                    }, 220000});
+    auto faded = [doc, v, s](bool on) {
+      const auto under = doc->scene.bodies_under(s->housing);
+      return !v->looksPending() && std::all_of(under.begin(), under.end(), [&](const std::string& b) {
+        const auto state = v->benchLookState(b);
+        return state.empty() || (state.value("activated", -1) == 0) == on;
+      });
+    };
+    list.push_back({[=] { return faded(true); }, [=, &w](bool done) {
+                      ticker->timer.stop();
+                      require(done && ticker->worst < 250 && doc->scene.node(s->housing)->locked,
+                              QString("locked in %1 ms, its bodies faded and not picked, worst event-loop gap %2 ms").arg(s->ax).arg(ticker->worst));
+                      v->fitNodes({s->housing});
+                      v->benchFlush();  // the frame that fits the picker's depth range to the view
+                      qint64 slowest = 0;
+                      int found = 0;
+                      for (int j = 1; j <= 5; ++j)
+                        for (int i = 1; i <= 5; ++i) {
+                          QElapsedTimer pick;
+                          pick.start();
+                          const std::string at = v->drawnAt(QPointF(v->width() * i / 6.0, v->height() * j / 6.0));
+                          found += !at.empty() && doc->scene.effectively_locked(at);
+                          slowest = std::max(slowest, pick.elapsed());
+                        }
+                      require(slowest < 50, QString("a locked body's hover pick, framed: slowest of 25 %1 ms (%2 on a locked body, the rest in front of it)").arg(slowest).arg(found));
+                      ticker->start();
+                      QElapsedTimer clock;
+                      clock.start();
+                      lock->trigger();  // Unlock: the component is still selected
+                      s->ax = static_cast<int>(clock.elapsed());
+                      w.m_browser->selectIds({});
+                    }, 60000});
+    list.push_back({[=] { return faded(false); }, [=](bool done) {
+                      ticker->timer.stop();
+                      require(done && ticker->worst < 250 && !doc->scene.node(s->housing)->locked,
+                              QString("unlocked in %1 ms, picked again, worst event-loop gap %2 ms").arg(s->ax).arg(ticker->worst));
+                    }, 60000});
+    runSteps(&w, steps, 0, [all] { QCoreApplication::exit(*all ? 0 : 2); });
+    return true;
+  }
   if (!bodies.empty() && std::all_of(bodies.begin(), bodies.end(), [doc](const std::string& id) { return doc->scene.node(id)->representation == "drawing2d"; })) {
     // A drawing with a locked layer (Walls) and a plain one, viewed: the layer's state from the file.
     list.push_back({[=] { return idle() && v->displayedCount() == static_cast<int>(doc->scene.all_bodies().size()); }, [=, &w](bool shown) {

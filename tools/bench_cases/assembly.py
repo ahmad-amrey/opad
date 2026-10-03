@@ -59,6 +59,9 @@ CASES = [
     # A DXF with a locked layer in viewer mode: its lines faded towards the background and not picked, the plain layer's
     # picked; the layer row's badge unlocks it (a view change). <prefix>.drawing.png.
     ("lock-drawing", locked_drawing, {"OPAD_BENCH_LOCK": "{prefix}"}),
+    # The Engine (skipped where it is not): a component with about half of the bodies locked and unlocked with no
+    # event-loop gap over 250 ms; a locked body's hover pick under 50 ms.
+    ("lock-engine", engine(), {"OPAD_BENCH_LOCK": "{prefix}"}),
     # Activate component (UI-33) on two components made by the bench (Housing and Lid, a box made in each) and a sketch at
     # the root: the Lid activated by its browser radio, Alt+click on rows, the breadcrumb; the Housing ghosted and refused
     # by a click, picked by a guided tool; chip, browser pill, timeline (dimmed, or only the Lid's ops), live_state;
