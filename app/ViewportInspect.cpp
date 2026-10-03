@@ -1,4 +1,5 @@
 #include "Viewport.hpp"
+#include "Units.hpp"
 
 #include <Graphic3d_ArrayOfSegments.hxx>
 #include <Graphic3d_ArrayOfPoints.hxx>
@@ -16,7 +17,6 @@
 namespace {
 Quantity_Color color(const QColor& c) { return Quantity_Color(c.redF(), c.greenF(), c.blueF(), Quantity_TOC_sRGB); }
 gp_Pnt point(const opad::json& j) { return gp_Pnt(j[0].get<double>(), j[1].get<double>(), j[2].get<double>()); }
-QString number(double v) { return QString::number(std::abs(v) < 0.0005 ? 0.0 : v, 'f', 3); }
 bool samePoint(const gp_Pnt& a, const gp_Pnt& b) { return a.SquareDistance(b) <= 1e-14; }
 int componentCount(const gp_Pnt& a, const gp_Pnt& b) {
   int count = 0;
@@ -96,6 +96,7 @@ void Viewport::clearDimension() {
   if (!m_initialised) return;
   for (const auto& o : m_dimension) m_ctx->Remove(o, Standard_False);
   m_dimension.clear();
+  m_measureCaptions.clear();
   refreshMeasurement(true);
   redrawScene();
 }
@@ -164,6 +165,7 @@ void Viewport::refreshMeasurement(bool force) {
   m_measureSize = pixels;
   for (const auto& o : m_dimension) m_ctx->Remove(o, Standard_False);
   m_dimension.clear();
+  m_measureCaptions.clear();
 
   Handle(Graphic3d_SequenceOfHClipPlane) noClip = new Graphic3d_SequenceOfHClipPlane();
   noClip->SetOverrideGlobal(Standard_True);
@@ -226,6 +228,7 @@ void Viewport::refreshMeasurement(bool force) {
     const double px = pixelAt(anchor);
     gp_Pnt at = anchor.Translated(right * ((box.center().x() - screen.x()) * px) + up * ((screen.y() - box.center().y()) * px));
     if (anchor.Distance(at) > 22 * px) graphic->lines.push_back({anchor, at, m_tokens.fg3});
+    m_measureCaptions << caption;
     Handle(AIS_TextLabel) text = new AIS_TextLabel();
     text->SetText(TCollection_ExtendedString((" " + caption + " ").toUtf8().constData(), Standard_True));
     text->SetPosition(at);
@@ -272,7 +275,7 @@ void Viewport::refreshMeasurement(bool force) {
       if (clearance(normal) < 8 && clearance(-normal) > clearance(normal)) normal = -normal;
       arrow(a, b, m_tokens.fg, kind == "distance");
       beside(gp_Pnt((a.X()+b.X())/2, (a.Y()+b.Y())/2, (a.Z()+b.Z())/2),
-            (kind == "distance" ? tr("Distance %1 mm") : tr("R %1 mm")).arg(number(r["value"].get<double>())), m_tokens.fg, normal, kind == "distance" ? 36 : 16);
+            (kind == "distance" ? tr("Distance %1") : tr("R %1")).arg(units::format(units::Kind::Length, r["value"].get<double>())), m_tokens.fg, normal, kind == "distance" ? 36 : 16);
     }
     label(a, kind == "distance" ? (a.Distance(b) < 1e-9 ? tr("1 = 2") : tr("1")) : tr("Center"), m_tokens.fg2, -16, -19);
     if (a.Distance(b) > 1e-9) label(b, kind == "distance" ? tr("2") : tr("Radius"), m_tokens.fg2, 16, -19);
@@ -285,10 +288,10 @@ void Viewport::refreshMeasurement(bool force) {
         // Zero components stay in the result table, without extra viewport labels.
         if (std::abs(delta) <= Precision::Confusion()) { start = end; continue; }
         arrow(start, end, axes[i]);
-        const QString value = (delta >= 0.0005 ? "+" : "") + number(delta);
+        const QString value = (delta > 0 && units::number(units::Kind::Length, delta) != units::number(units::Kind::Length, 0) ? "+" : "") + units::format(units::Kind::Length, delta);
         const QPointF normal = screenNormal(start, end);
         beside(gp_Pnt((start.X()+end.X())/2, (start.Y()+end.Y())/2, (start.Z()+end.Z())/2),
-              tr("Δ%1 %2 mm").arg(QChar("XYZ"[i])).arg(value), axes[i], -normal, 12);
+              QString("Δ%1 %2").arg(QChar("XYZ"[i])).arg(value), axes[i], -normal, 12);
         start = end;
       }
     }
@@ -306,7 +309,7 @@ void Viewport::refreshMeasurement(bool force) {
       arrow(lo, end, axes[i], true);
       const QPointF normal = screenNormal(lo, end);
       beside(gp_Pnt((lo.X()+end.X())/2, (lo.Y()+end.Y())/2, (lo.Z()+end.Z())/2),
-            tr("%1 %2 mm").arg(QChar("XYZ"[i])).arg(number(hi.Coord(i+1)-lo.Coord(i+1))), axes[i], -normal, 12);
+            QString("%1 %2").arg(QChar("XYZ"[i])).arg(units::format(units::Kind::Length, hi.Coord(i+1)-lo.Coord(i+1))), axes[i], -normal, 12);
     }
   } else if (kind == "angle" && r.contains("origin")) {
     // With a construction from the core the diagram sits on the objects: rays from the vertex where they meet,
@@ -356,7 +359,7 @@ void Viewport::refreshMeasurement(bool force) {
       arrow(origin.Translated((a * std::cos(before) + tangent * std::sin(before)) * radius), last, m_tokens.hov);
     }
     label(origin.Translated((a * std::cos(angle / 2) + tangent * std::sin(angle / 2)) * radius),
-          tr("%1°").arg(number(r["value"].get<double>())), m_tokens.fg, 0, 24);
+          units::format(units::Kind::Angle, r["value"].get<double>()), m_tokens.fg, 0, 24);
     label(built ? point(r["point_a"]) : origin.Translated(a * radius * 1.3), tr("1"), m_tokens.sel, -15, -18);
     label(built ? point(r["point_b"]) : origin.Translated(b * radius * 1.3), tr("2"), m_tokens.amber, 15, -18);
   }

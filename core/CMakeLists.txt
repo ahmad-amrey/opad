@@ -20,50 +20,11 @@ if(NOT "${opad_guide_old}" STREQUAL "${opad_guide_cpp}")
   file(WRITE ${opad_guide_out} "${opad_guide_cpp}")
 endif()
 
-add_library(opad_core STATIC
-  src/util.cpp
-  src/document.cpp
-  src/scene.cpp
-  src/geometry.cpp
-  src/mass.cpp
-  src/mesh_circles.cpp
-  src/cache.cpp
-  src/mesh.cpp
-  src/mesh_recovery.cpp
-  src/step_io.cpp
-  src/drawing_io.cpp
-  src/dxf_reader.cpp
-  src/formats.cpp
-  src/viewer_cache.cpp
-  src/inspect.cpp
-  src/render.cpp
-  src/diff.cpp
-  src/merge.cpp
-  src/commands.cpp
-  src/command_schema.cpp
-  src/agent_context.cpp
-  src/checks.cpp
-  src/live.cpp
-  src/plugin_host.cpp
-  src/design/expr.cpp
-  src/design/sketch.cpp
-  src/design/sketch_records.cpp
-  src/design/sketch_create.cpp
-  src/design/sketch_shapes.cpp
-  src/design/sketch_text.cpp
-  src/design/sketch_modify.cpp
-  src/design/sketch_pattern.cpp
-  src/design/sketch_curve.cpp
-  src/design/sketch_reference.cpp
-  src/design/sketch_trace.cpp
-  src/design/drawing_sketch.cpp
-  src/design/solver.cpp
-  src/design/sketch_edit.cpp
-  src/design/sketch_geom.cpp
-  src/design/engine.cpp
-  src/design/features.cpp
-  src/design/commands_design.cpp
-  ${CMAKE_CURRENT_BINARY_DIR}/agent_guide.cpp)
+# Every src/**/*.cpp is part of the core (CONFIGURE_DEPENDS re-globs at each build): a new file or folder needs no edit
+# here. Anything to leave out goes into list(REMOVE_ITEM) here.
+file(GLOB_RECURSE opad_core_sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp)
+list(SORT opad_core_sources)
+add_library(opad_core STATIC ${opad_core_sources} ${CMAKE_CURRENT_BINARY_DIR}/agent_guide.cpp)
 add_library(opad::core ALIAS opad_core)
 
 target_include_directories(opad_core

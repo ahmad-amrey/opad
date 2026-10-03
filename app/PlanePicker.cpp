@@ -1,5 +1,6 @@
 #include "PlanePicker.hpp"
 #include "GuidedTool.hpp"
+#include "Units.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include <BRepBuilderAPI_MakeEdge.hxx>
@@ -62,11 +63,12 @@ PlanePicker::PlanePicker(AppDocument* doc,Viewport* view,JobRunner* jobs,QWidget
   m_construction=new QCheckBox(tr("Show construction planes"),body);m_construction->setObjectName("constructionPlanes");layout->addWidget(m_construction);
   connect(m_construction,&QCheckBox::toggled,this,[this]{constructionPlanes();});
   m_originControls=new QWidget(body);auto* form=new QFormLayout(m_originControls);form->setContentsMargins(0,0,0,0);
-  m_u=new QLineEdit(body);m_v=new QLineEdit(body);form->addRow(tr("Plane X (mm)"),m_u);form->addRow(tr("Plane Y (mm)"),m_v);
+  m_u=new QLineEdit(body);m_v=new QLineEdit(body);form->addRow(tr("Plane X"),m_u);form->addRow(tr("Plane Y"),m_v);  // in the shown unit
   auto* explanation=new QLabel(tr("Coordinates use the selected plane's original axes and origin. Off-plane references are projected onto it."),body);explanation->setWordWrap(true);form->addRow(explanation);
   auto* reset=new QPushButton(tr("Reset origin"),body);form->addRow(reset);layout->addWidget(m_originControls);
   connect(reset,&QPushButton::clicked,this,[this]{++m_serial;if(m_job)m_job->cancel();m_job=nullptr;m_origin={{"world",{0,0,0}}};m_frame=m_supportFrame;double u,v;m_supportFrame.to_local({0,0,0},u,v);m_frame.origin=m_supportFrame.to_world(u,v);refresh();});
-  auto numeric=[this]{if(m_refreshing)return;try{std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});ParamTable params(defs);setOrigin(params.length(m_u->text().toStdString()),params.length(m_v->text().toStdString()));}catch(const std::exception& e){m_status->setText(QString::fromUtf8(e.what()));m_apply->setEnabled(false);}};
+  // A box left as shown keeps its value: its text is rounded to the shown unit.
+  auto numeric=[this]{if(m_refreshing||(!m_u->isModified()&&!m_v->isModified()))return;try{std::vector<ParamDef> defs;for(const auto& p:m_doc->scene.params)defs.push_back({p.id,p.name,p.expr,p.comment});ParamTable params(defs,units::current().length);double u,v;m_supportFrame.to_local(m_frame.origin,u,v);if(m_u->isModified())u=params.length(m_u->text().toStdString());if(m_v->isModified())v=params.length(m_v->text().toStdString());m_u->setModified(false);m_v->setModified(false);setOrigin(u,v);}catch(const std::exception& e){m_status->setText(QString::fromUtf8(e.what()));m_apply->setEnabled(false);}};
   connect(m_u,&QLineEdit::editingFinished,this,numeric);connect(m_v,&QLineEdit::editingFinished,this,numeric);
   m_status=new QLabel(body);m_status->setWordWrap(true);layout->addWidget(m_status);layout->addStretch();auto* footer=new QHBoxLayout;layout->addLayout(footer);
   m_back=new QPushButton(tr("Back"),body);m_apply=new QPushButton(tr("OK"),body);m_apply->setObjectName("primary");auto* cancelButton=new QPushButton(tr("Cancel"),body);m_back->setToolTip(tr("Return to plane selection"));m_apply->setToolTip(tr("Use this plane and close"));cancelButton->setToolTip(tr("Cancel without applying changes"));footer->addWidget(m_back);footer->addWidget(m_apply);footer->addWidget(cancelButton);
@@ -121,7 +123,7 @@ void PlanePicker::refresh(){
   if(m_positionOrigin)steps.push_back({tr("Position sketch origin"),{}});
   m_steps->setSteps(steps,{});
   m_panel->findChild<QLabel*>("planeHint")->setVisible(!m_originStage);m_originControls->setVisible(m_originStage);m_construction->setVisible(!m_originStage);m_apply->setVisible(m_originStage);m_apply->setEnabled(!m_job);m_back->setVisible(m_originStage);
-  if(m_originStage){double u,v;m_supportFrame.to_local(m_frame.origin,u,v);m_u->setText(QString::number(u,'g',14));m_v->setText(QString::number(v,'g',14));preview(&m_frame);}m_refreshing=false;
+  if(m_originStage){double u,v;m_supportFrame.to_local(m_frame.origin,u,v);m_u->setText(units::editable(units::Kind::Length,u));m_v->setText(units::editable(units::Kind::Length,v));preview(&m_frame);}m_refreshing=false;
 }
 void PlanePicker::constructionPlanes(){
   const int serial=++m_candidateSerial;if(!m_active||m_originStage)return;m_view->clearCandidates();

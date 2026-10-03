@@ -1,6 +1,7 @@
 #include "opad/document.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <set>
 #include <sstream>
@@ -63,6 +64,11 @@ const std::vector<std::string>& Document::op_types() {
   return t;
 }
 
+bool Document::known_type(const std::string& type) {
+  const auto& types = op_types();
+  return std::find(types.begin(), types.end(), type) != types.end();
+}
+
 static void require(const json& op, const char* key, const char* type) {
   if (!op.contains(key)) throw Error(std::string("op '") + op.value("op", "?") + "' is missing field '" + key + "'");
   const json& v = op[key];
@@ -97,8 +103,7 @@ void Document::validate_op(const json& op) {
   if (!op.is_object()) throw Error("op must be a JSON object");
   if (!op.contains("op") || !op["op"].is_string()) throw Error("op is missing the 'op' type field");
   std::string type = op["op"].get<std::string>();
-  const auto& types = op_types();
-  if (std::find(types.begin(), types.end(), type) == types.end()) throw Error("unknown op type: " + type);
+  if (!known_type(type)) throw Error("unknown op type: " + type);
   if (op.contains("id")) require(op, "id", "uuid");
   if(type=="units") {
     require(op,"length","string");const std::set<std::string> units={"mm","cm","m","um","in","ft"};
@@ -219,6 +224,7 @@ const Op& Document::append(json op, const std::string& author) {
     throw Error(out["op"].get<std::string>() + ": target op not found: " + out["target"].get<std::string>());
   if (out["op"] == "edit") {
     const auto* target = find_op(out["target"].get<std::string>());
+    if (target && !known_type(target->type)) throw Error("edit: op '" + target->type + "' needs a newer OPAD; this build cannot edit it");
     if (target && target->type == "annotation") {
       json effective = target->data;
       for (const auto& e : effective_ops(*this)) if (e.op->id == target->id) effective = e.data();
@@ -350,6 +356,17 @@ static void collect_keys(const json& nodes, std::set<std::string>& keys) {
   }
 }
 
+// An op of a newer build: any string that is, or starts with, a body key of the store keeps that entry ("<key>", a
+// "<key>/edge/3" token), wherever the record holds it.
+static void collect_mentioned_keys(const json& j, const std::unordered_map<std::string, size_t>& store, std::set<std::string>& keys) {
+  if (j.is_string()) {
+    const std::string& s = j.get_ref<const std::string&>();
+    if (s.size() >= 64 && (s.size() == 64 || !std::isxdigit(static_cast<unsigned char>(s[64]))) && store.count(s.substr(0, 64))) keys.insert(s.substr(0, 64));
+  } else if (j.is_structured()) {
+    for (const auto& v : j) collect_mentioned_keys(v, store, keys);
+  }
+}
+
 std::vector<std::string> Document::gc() {
   std::set<std::string> live;
   // Feature results keep every intermediate state alive (the body before a fillet is what the fillet is
@@ -358,14 +375,15 @@ std::vector<std::string> Document::gc() {
     if (o.op->type == "import") collect_keys(o.data().value("nodes", json::array()), live);
     else if (o.op->type == "feature" && o.data().contains("result"))
       for (const auto& b : o.data()["result"].value("bodies", json::array())) live.insert(b.value("key", ""));
+    else if (!known_type(o.op->type)) collect_mentioned_keys(o.data(), bodies_index_, live);
   }
   std::vector<std::string> removed;
-  std::vector<BodyEntry> kept;
-  for (auto& b : bodies_) {
-    if (live.count(b.key)) kept.push_back(std::move(b));
-    else removed.push_back(b.key);
-  }
-  if (!removed.empty()) {
+  for (const auto& b : bodies_)
+    if (!live.count(b.key)) removed.push_back(b.key);
+  if (!removed.empty()) {  // only then are the entries moved: moved-from ones kept in place had lost their BREP text
+    std::vector<BodyEntry> kept;
+    for (auto& b : bodies_)
+      if (live.count(b.key)) kept.push_back(std::move(b));
     bodies_ = std::move(kept);
     bodies_index_.clear();
     for (size_t i = 0; i < bodies_.size(); ++i) bodies_index_[bodies_[i].key] = i;
@@ -535,7 +553,13 @@ Document Document::parse_text(std::string_view text, const std::filesystem::path
     }
     try {
       o.data = json::parse(record);
-      validate_op(o.data);
+      // An op type of a newer build is kept as it is (an opaque record: written back byte for byte, never applied, not
+      // editable here); only its envelope is checked.
+      if (o.data.is_object() && o.data.contains("op") && o.data["op"].is_string() && !known_type(o.data["op"].get<std::string>())) {
+        if (o.data.contains("id")) require(o.data, "id", "uuid");
+      } else {
+        validate_op(o.data);
+      }
     } catch (const json::exception& e) {
       fail(i, std::string("bad op: ") + e.what());
     } catch (const Error& e) {

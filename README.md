@@ -402,6 +402,10 @@ opad-cli diff model.opad --text                  # what changed since the last c
 opad-cli diff --a git:main~3 model.opad          # JSON; --metrics adds volume and area of changed bodies
 ```
 
+A record of a type this build does not know (written by a newer OPAD, such as a drawing sheet) is kept as it is: the
+file opens, the record is listed as needing a newer OPAD, is never applied or edited, and is saved back byte for byte.
+Builds older than this tolerant loader refuse such files with "unknown op type"; open them with a current build.
+
 ## Python
 
 ```python
