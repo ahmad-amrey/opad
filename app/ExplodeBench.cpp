@@ -651,6 +651,29 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     require(measured && std::abs(got - drawn) < 1e-6 && drawn > assembled + 5 && w.m_lastMeasure.value("exploded", false) && !w.action("inspect.pin")->isEnabled(),
                             QString("the distance tool measures lid to shell where they are drawn: %1 mm (exploded %2, assembled %3), not pinned").arg(got).arg(drawn).arg(assembled));
                     w.cancelTool();
+                    // Section > Pick face on a face of the moved lid across its way out: the plane goes through it where it is drawn.
+                    const opad::Vec3 lift = v->shownOffset(s->lid);
+                    double model = 0, expected = 0, along = 0;
+                    opad::Vec3 normal{0, 0, 1};
+                    for (int i = 0; i < 6 && std::abs(along) < 5; ++i) {
+                      opad::Ref face;
+                      face.body = s->lid;
+                      face.kind = opad::Ref::Kind::Face;
+                      face.index = i;
+                      const opad::json info = opad::inspect_ref(doc->doc, doc->scene, face);
+                      if (!info.contains("normal") || !info.contains("center")) continue;
+                      normal = info["normal"].get<opad::Vec3>();
+                      const opad::Vec3 c = info["center"].get<opad::Vec3>();
+                      along = lift[0] * normal[0] + lift[1] * normal[1] + lift[2] * normal[2];
+                      model = c[0] * normal[0] + c[1] * normal[1] + c[2] * normal[2];
+                      expected = model + along;
+                      if (std::abs(along) >= 5) w.sectionFromFace(face);
+                    }
+                    const opad::Vec3 o = w.m_section->origin();
+                    const double cut = o[0] * normal[0] + o[1] * normal[1] + o[2] * normal[2];
+                    require(std::abs(along) >= 5 && w.m_section->enabled() && std::abs(cut - expected) < 0.01 * std::abs(along),
+                            QString("Section > Pick face on the moved lid: the plane at %1 along the face's normal, where it is drawn (%2; in the model %3)").arg(cut, 0, 'f', 2).arg(expected, 0, 'f', 2).arg(model, 0, 'f', 2));
+                    w.m_section->setEnabled(false);
                     w.m_browser->selectIds({s->screw[0], s->screw[1]});
                   }});
   // Groups.
