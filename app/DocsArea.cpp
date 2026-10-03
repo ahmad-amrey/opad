@@ -204,7 +204,7 @@ void DocsArea::exportBom(std::vector<std::string> ids) {
   dialog->open();
 }
 
-void DocsArea::exportSheet(const std::string& id) {
+void DocsArea::exportSheet(const std::string& id, const std::string& issue) {
   AppDocument* doc = services().document();
   QString stem;
   int sheets = 0;
@@ -216,6 +216,7 @@ void DocsArea::exportSheet(const std::string& id) {
     stem = QString::fromStdString(sheet->name);
   }
   if (!sheets) throw opad::Error("That sheet is gone.");
+  if (!issue.empty()) stem += tr(" rev %1 as issued").arg(QString::fromStdString(issue));
   for (const QChar c : QString("<>:\"/\\|?*")) stem.replace(c, '_');
   QSettings settings;
   const QString last = sheets > 1 ? "pdf" : settings.value("export/sheetFormat", "pdf").toString();
@@ -238,9 +239,11 @@ void DocsArea::exportSheet(const std::string& id) {
   settings.setValue("ui/lastDir", QFileInfo(out).absolutePath());
   if (sheets == 1) settings.setValue("export/sheetFormat", format);
   QPointer<DocsArea> self(this);
-  whenFree([this, self, doc, format, out, id] {  // after the sheet canvas's worker
+  opad::json args = {{"format", format.toStdString()}, {"out", out.toStdString()}, {"sheet", id}};
+  if (!issue.empty()) args["issue"] = issue;
+  whenFree([this, self, doc, args, out] {  // after the sheet canvas's worker
     services().guarded([&] {
-      exportJob(doc, services().jobs(), services().window(), {{"format", format.toStdString()}, {"out", out.toStdString()}, {"sheet", id}}, out,
+      exportJob(doc, services().jobs(), services().window(), args, out,
                 [self](const opad::json& result) {
                   if (self) self->lastExport = result;
                 });

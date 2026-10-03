@@ -79,6 +79,7 @@ struct ExportOptions {
   int decimals = 6;                   // 2D coordinates
   int dpi = 300;                      // PNG
   std::string sheet;                  // 2D: a drawing sheet (id or name) as drawn, or "drawing:<name>": its sheets (PDF pages)
+  std::string issue;                  // with sheet: as that revision was issued (its frozen linework; drawing/tables.hpp)
   std::function<bool(double, const std::string&)> progress;  // 2D views: return false to cancel
 };
 

@@ -1,6 +1,7 @@
 #include "opad/drawing_io.hpp"
 #include "opad/drawing/display.hpp"
 #include "opad/drawing/sheet.hpp"
+#include "opad/drawing/tables.hpp"
 #include <functional>
 #include <set>
 #include "opad/design/sketch_geom.hpp"
@@ -641,7 +642,14 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
     for(size_t i=0;i<sheets.size();++i) {
       json report;
       const double n=double(sheets.size());
-      pages[i]=drawing::sheet_display(doc,scene,*sheets[i],[&](double f,const std::string& phase){ return !options.progress || options.progress(f<0?-1:(double(i)+f)/n,phase); },&report);
+      const auto progress=[&](double f,const std::string& phase){ return !options.progress || options.progress(f<0?-1:(double(i)+f)/n,phase); };
+      if(!options.issue.empty()) {  // as issued: its frozen linework
+        const SheetItem* issue=drawing::find_issue(scene,*sheets[i],options.issue);
+        if(!issue) throw Error("revision "+options.issue+" was never issued (sheet_info lists the issues)");
+        pages[i]=drawing::issued_display(doc,scene,*sheets[i],*issue,progress);
+        report={{"views",sheets[i]->views.size()},{"items",sheets[i]->items.size()},{"bodies",0},{"skipped",json::array()}};
+        details["issue"]=issue->def.value("rev","");
+      } else pages[i]=drawing::sheet_display(doc,scene,*sheets[i],progress,&report);
       drawn.push_back({{"id",sheets[i]->id},{"name",sheets[i]->name},{"views",report["views"]},{"items",report["items"]}});
       for(const auto& s:report["skipped"]) skipped.push_back(s);
       bodies+=report["bodies"].get<int>();

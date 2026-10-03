@@ -41,6 +41,7 @@ class SheetPage : public QWidget {
   void sheetShown(const std::string& id);
   void reattachRequested(const std::string& item);
   void issueRequested();
+  void exportIssueRequested(const std::string& rev);  // the drawing as that revision was issued
 
  private:
   void rebuildTabs();

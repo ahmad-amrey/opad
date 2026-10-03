@@ -41,7 +41,8 @@ class DocsArea : public AreaController {
   void documentProperties();
   // A sheet as PDF, SVG, DXF, DWG or PNG, a drawing ("drawing:<name>") as the PDF pages of its sheets (UI-86): the file's
   // type is the format, the views projected on a worker (ExportJob.hpp); OPAD_BENCH_EXPORT_OUT skips the file dialog.
-  void exportSheet(const std::string& id);
+  // issue: a revision of it as it was issued (its frozen linework, drawing::issued_display).
+  void exportSheet(const std::string& id, const std::string& issue = {});
   void rowMenu(const std::string& id, QMenu& menu);  // the Drawings folder's menu of a row
   opad::json lastExport;  // the last sheet export's result, or {"error"} (benches)
   static DocsArea* of(const std::vector<AreaController*>& areas);  // the window's one (benches)

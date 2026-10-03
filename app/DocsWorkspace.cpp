@@ -165,6 +165,7 @@ void DocsArea::readyDrawings() {
   connect(m_page, &SheetPage::newSheetRequested, this, [this] { services().guarded([&] { newSheet(); }); });
   connect(m_page, &SheetPage::sheetShown, this, [this] { services().updateCommands(); });
   connect(m_page, &SheetPage::issueRequested, this, [this] { services().guarded([&] { issueRevision(); }); });
+  connect(m_page, &SheetPage::exportIssueRequested, this, [this](const std::string& rev) { services().guarded([&] { exportSheet(m_page->sheet(), rev); }); });
   connect(canvas, &SheetCanvas::selectionChanged, this, [this](const std::vector<std::string>& views) {
     services().browser()->selectIds(views);  // the window's selection follows: Properties, the status bar, the commands
     syncStyleActions();

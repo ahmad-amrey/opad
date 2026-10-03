@@ -463,5 +463,9 @@
   "Drawing the sheets": "رسم اللوحات",
   "Preparing to print": "التحضير للطباعة",
   "%n sheets sent to %1": "أُرسلت %n لوحات إلى %1",
-  "%n sheets printed to %1": "طُبعت %n لوحات إلى %1"
+  "%n sheets printed to %1": "طُبعت %n لوحات إلى %1",
+  " rev %1 as issued": " المراجعة %1 كما أُصدرت",
+  "Issue the next revision…": "إصدار المراجعة التالية…",
+  "Export revision %1 as issued…": "تصدير المراجعة %1 كما أُصدرت…",
+  "Its views as they were frozen when it was issued, with the values it was issued with": "مساقطها كما حُفظت عند إصدارها، بالقيم التي أُصدرت بها"
 }

@@ -18,6 +18,7 @@
 #include "SheetAnnotate.hpp"
 #include "SheetCanvas.hpp"
 #include "Theme.hpp"
+#include "opad/drawing/tables.hpp"
 
 SheetPage::SheetPage(AppDocument* doc, JobRunner* jobs, QWidget* parent) : QWidget(parent), m_doc(doc) {
   setObjectName("sheetPage");
@@ -138,6 +139,8 @@ SheetPage::SheetPage(AppDocument* doc, JobRunner* jobs, QWidget* parent) : QWidg
   m_issue->setObjectName("sheetIssue");
   m_issue->setAutoRaise(true);
   m_issue->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  m_issue->setPopupMode(QToolButton::MenuButtonPopup);
+  m_issue->setMenu(new QMenu(m_issue));
   m_issue->hide();
   connect(m_issue, &QToolButton::clicked, this, &SheetPage::issueRequested);
   connect(m_canvas, &SheetCanvas::issueChanged, this, &SheetPage::updateIssue);
@@ -247,6 +250,17 @@ void SheetPage::updateIssue() {
   if (gone) tip << tr("%n views or annotations are gone", nullptr, gone);
   tip << tr("Click to issue the next revision.");
   m_issue->setToolTip(tip.join('\n'));
+  QMenu* menu = m_issue->menu();  // every revision, to export as it was issued
+  menu->clear();
+  menu->addAction(icons::themed("issueRevision", 16), tr("Issue the next revision…"), this, &SheetPage::issueRequested);
+  menu->addSeparator();
+  if (const opad::Sheet* s = m_doc->scene.sheet(m_canvas->sheet()))
+    for (const opad::SheetItem* t : opad::drawing::drawing_issues(m_doc->scene, *s)) {
+      const std::string r = t->def.value("rev", "");
+      QAction* a = menu->addAction(tr("Export revision %1 as issued…").arg(QString::fromStdString(r)), this, [this, r] { emit exportIssueRequested(r); });
+      a->setObjectName(QString::fromStdString("sheet.exportIssue." + r));
+      a->setToolTip(tr("Its views as they were frozen when it was issued, with the values it was issued with"));
+    }
 }
 
 void SheetPage::updateInfo() {

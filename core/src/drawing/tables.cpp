@@ -3,12 +3,14 @@
 #include "opad/drawing/tables.hpp"
 
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRep_Builder.hxx>
 #include <Geom_BSplineCurve.hxx>
 #include <Standard_Failure.hxx>
 #include <TColStd_Array1OfInteger.hxx>
 #include <TColStd_Array1OfReal.hxx>
 #include <TColgp_Array1OfPnt.hxx>
+#include <TopoDS_Iterator.hxx>
 #include <TopoDS.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Edge.hxx>
@@ -632,6 +634,77 @@ json issue_changes(const Document& doc, const Scene& scene, const SheetItem& iss
     }
   }
   return {{"views", views}, {"values", values}, {"gone", gone}};
+}
+
+const SheetItem* find_issue(const Scene& scene, const Sheet& sheet, const std::string& rev) {
+  for (const SheetItem* t : drawing_issues(scene, sheet))
+    if (t->id == rev || t->def.value("rev", "") == rev) return t;
+  return nullptr;
+}
+
+Display issued_display(const Document& doc, const Scene& live, const Sheet& sheet, const SheetItem& issue, const ProjectionProgress& progress) {
+  // The scene as of the issue: later issues left out (title block, revision table), dimensions writing the issued values.
+  Scene scene = live;
+  bool later = false;
+  std::set<std::string> after;
+  for (const auto& t : live.sheet_items) {
+    if (later && t.kind == "issue") after.insert(t.id);
+    later = later || t.id == issue.id;
+  }
+  std::erase_if(scene.sheet_items, [&](const SheetItem& t) { return after.count(t.id) > 0; });
+  for (auto& s : scene.sheets) std::erase_if(s.items, [&](const std::string& id) { return after.count(id) > 0; });
+  const json values = issue.def.value("values", json::object());
+  for (auto& t : scene.sheet_items)
+    if (t.kind == "dimension" && values.contains(t.id) && values[t.id].is_string()) t.def["text"] = values[t.id];
+  const Sheet& s = *scene.sheet(sheet.id);
+  Display d;
+  d.title = s.name;
+  d.paper = {0, 0, s.width, s.height};
+  for (const auto& l : std::vector<Layer>{{"Frame", kInk, LineType::Continuous, 0.7}, {"Visible", kInk, LineType::Continuous, 0.5}, {"Tangent", kInk, LineType::Continuous, 0.25},
+                                          {"Hidden", kInk, LineType::Hidden, 0.25}, {"Dimensions", kInk, LineType::Continuous, 0.25}, {"Text", kInk, LineType::Continuous, 0.25}})
+    d.layer(l);
+  draw_paper(d, doc, scene, s);
+  // The views where they stood, drawn from what was frozen.
+  auto frames = layout(doc, scene, s);
+  const json placed = issue.def.value("frames", json::object()), frozen = issue.def.value("frozen", json::object());
+  for (auto& f : frames) {
+    if (!placed.contains(f.id)) continue;
+    const json& p = placed[f.id];
+    f.at = vec2(p.value("at", json()), f.at);
+    f.centre = vec2(p.value("centre", json()), f.centre);
+    f.scale = p.value("scale", f.scale);
+    f.error.clear();
+  }
+  json skipped = json::array();
+  for (size_t i = 0; i < frames.size(); ++i) {
+    const ViewFrame& f = frames[i];
+    const SheetView* v = scene.sheet_view(f.id);
+    if (!v) continue;
+    const size_t from = d.prims.size();
+    const std::string key = frozen.value(f.id, "");
+    if (!key.empty() && doc.has_body(key)) {
+      gp_Trsf scale, move;
+      scale.SetScale(gp::Origin(), f.scale);
+      move.SetTranslation(gp_Vec(f.at[0] - f.scale * f.centre[0], f.at[1] - f.scale * f.centre[1], 0));
+      const TopoDS_Shape lines = BRepBuilderAPI_Transform(body_shape(doc, key), move * scale, true).Shape();
+      const json style = v->def.value("style", json::object());
+      const bool thin = !style.is_object() || !style.contains("tangent") || style["tangent"] != "show";
+      const int layers[3] = {d.layer({"Visible"}), d.layer({thin ? "Tangent" : "Visible"}), d.layer({"Hidden"})};
+      int k = 0;
+      for (TopoDS_Iterator it(lines); it.More() && k < 3; it.Next(), ++k) add_shape(d, layers[k], it.Value(), 0.01);
+    } else if (f.error.empty() && v->error.empty()) {
+      const auto g = project(doc, scene, view_spec(scene, *v), [&](double t, const std::string& phase) {
+        return !progress || progress(t < 0 ? -1 : (static_cast<double>(i) + t) / static_cast<double>(frames.size()), phase);
+      });
+      draw_view(d, f, *v, *g, &doc, &scene);
+    }
+    for (size_t k = from; k < d.prims.size(); ++k) d.prims[k].source = f.id;
+  }
+  std::vector<std::string> owners;
+  for (const auto& id : s.items)
+    if (const SheetItem* t = scene.sheet_item(id); t && std::find(owners.begin(), owners.end(), t->view) == owners.end()) owners.push_back(t->view);
+  for (const auto& owner : owners) draw_items(d, doc, scene, s, frames, owner, skipped);
+  return d;
 }
 
 // ---------------------------------------------------------------- drawing

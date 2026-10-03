@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <set>
 
 #include "check.hpp"
@@ -282,6 +283,43 @@ TEST(issued_revisions) {
   const Scene ahead = with_issue(s, planned);
   CHECK_EQ(title_values(a.doc, ahead, *ahead.sheet(a.sheet))["revision"], "10");
   CHECK_EQ(title_values(a.doc, s, *s.sheet(a.sheet))["revision"], "9");
+}
+
+// A sheet drawn as it was issued: the views from their frozen linework where they stood then (not as the model is now), the
+// revision table without later issues, a dimension writing its issued value; the export command takes the revision.
+TEST(issued_revision_drawn_as_issued) {
+  Assembly a;
+  run(a.doc, "sheet_item", {{"sheet", a.sheet}, {"kind", "revision_table"}});
+  const std::string plate = id_of(a.scene(), "Plate"), bracket = id_of(a.scene(), "Bracket");
+  const std::string dim = run(a.doc, "sheet_item", {{"sheet", a.sheet}, {"view", a.front}, {"kind", "dimension"}, {"type", "horizontal"}, {"refs", {plate + "/vertex/0", bracket + "/vertex/0"}}})["id"];
+  const Scene before = a.scene();
+  const Display then = sheet_display(a.doc, before, *before.sheet(a.sheet));
+  run(a.doc, "sheet_issue", {{"sheet", a.sheet}, {"description", "First"}});
+  a.doc.append({{"op", "transform"}, {"target", bracket}, {"matrix", Mat4{{1, 0, 0, -45, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}}.to_json()}});
+  run(a.doc, "sheet_issue", {{"sheet", a.sheet}, {"description", "Second"}});
+  const Scene s = a.scene();
+  const SheetItem* issue = find_issue(s, *s.sheet(a.sheet), "A");
+  CHECK(issue && find_issue(s, *s.sheet(a.sheet), issue->id) == issue && !find_issue(s, *s.sheet(a.sheet), "Z"));
+  const Display now = sheet_display(a.doc, s, *s.sheet(a.sheet));
+  const Display issued = issued_display(a.doc, s, *s.sheet(a.sheet), *issue);
+  const auto lines = [&](const Display& d) {  // the front view's visible lines
+    Display v;
+    const int visible = static_cast<int>(std::find_if(d.layers.begin(), d.layers.end(), [](const Layer& l) { return l.name == "Visible"; }) - d.layers.begin());
+    for (const auto& p : d.prims)
+      if (p.source == a.front && p.layer == visible && p.kind == Prim::Kind::Curve) v.prims.push_back(p);
+    return v.bounds();
+  };
+  const auto b0 = lines(then), b1 = lines(issued), b2 = lines(now);
+  for (int i = 0; i < 4; ++i) CHECK_NEAR(b1[i], b0[i], 1e-6);
+  CHECK(std::fabs(b2[0] - b0[0]) > 1);  // the bracket is further left now
+  CHECK(has_text(issued, "First") && !has_text(issued, "Second") && has_text(now, "Second"));
+  const std::string was = issue->def["values"][dim];
+  CHECK(has_text(issued, was) && !has_text(now, was));
+  const auto out = std::filesystem::temp_directory_path() / "opad-issued.svg";
+  const json e = run(a.doc, "export", {{"format", "svg"}, {"out", out.string()}, {"sheet", a.sheet}, {"issue", "A"}});
+  CHECK_EQ(e["issue"], "A");
+  CHECK_THROWS(run(a.doc, "export", {{"format", "svg"}, {"out", out.string()}, {"sheet", a.sheet}, {"issue", "Q"}}));
+  std::filesystem::remove(out);
 }
 
 // The records' checks: item numbers, sheets, a balloon's list; the kinds are known and the outline names an issue by its
