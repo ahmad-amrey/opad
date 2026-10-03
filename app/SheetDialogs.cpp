@@ -430,6 +430,10 @@ SheetPropertiesDialog::SheetPropertiesDialog(AppDocument* doc, const std::string
   if (t.is_object() && t.contains("title_block"))
     for (const auto& f : t["title_block"].value("fields", opad::json::array()))
       if (f.value("key", "") != "projection") fields.push_back({f.value("key", ""), f.value("label", "")});
+  if (t.is_object())  // the template's own (a template file's attributes and placeholders, fields placed by hand)
+    for (const auto& f : t.value("fields", opad::json::array()))
+      if (f.is_object() && f.value("key", "") != "projection" && !f.value("key", "").empty())
+        fields.push_back({f.value("key", ""), !f.value("label", "").empty() ? f.value("label", "") : f.value("tag", f.value("key", ""))});
   if (fields.empty())
     for (const char* k : {"title", "number", "owner", "author", "revision"}) fields.push_back({k, k});
   for (const auto& [key, label] : fields) {

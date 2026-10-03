@@ -274,7 +274,9 @@ void SheetCanvas::refresh() {
     m_outbox.reset();
     return;
   }
+  const bool resized = s->width != m_paperW || s->height != m_paperH;
   setPaperSize(s->width, s->height);
+  if (resized && m_fitted) fitSheet();  // another paper (a template file's, Sheet properties): all of it in view again
   syncFromScene();
   for (auto& [id, item] : m_views) item->markStale();
   QTimer::singleShot(300, viewport(), [vp = viewport()] { vp->update(); });  // the marks of those still waiting

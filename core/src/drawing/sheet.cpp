@@ -241,6 +241,20 @@ void validate_record(const json& op) {
     if (op.contains("template") && op["template"].contains("geometry") && !op["template"]["geometry"].is_null() &&
         !body_key(op["template"]["geometry"]))
       fail("a template's geometry is a body key");
+    if (op.contains("template") && op["template"].contains("fields")) {
+      const json& fields = op["template"]["fields"];
+      if (!fields.is_array()) fail("a template's fields are a list");
+      for (const auto& f : fields) {
+        const json rect = f.is_object() ? f.value("rect", json()) : json();
+        const bool cell = rect.is_array() && rect.size() == 4 && std::all_of(rect.begin(), rect.end(), [](const json& v) { return finite(v); });
+        if (!f.is_object() || !f.value("key", json()).is_string() || !(cell || point2(f.value("at", json()))))
+          fail("a template field is {key, rect [x, y, w, h] or at [x, y], ...}");
+        for (const char* k : {"height", "w", "angle"})
+          if (f.contains(k) && !finite(f[k])) fail(std::string("a template field's ") + k + " is a number");
+        for (const char* k : {"label", "align", "valign"})
+          if (f.contains(k) && !f[k].is_string()) fail(std::string("a template field's ") + k + " is text");
+      }
+    }
   } else if (type == "sheet_view" || type == "sheet_item") {
     if (!op.contains("sheet")) fail("needs its sheet");
     if (!op.contains("kind")) fail("needs a kind");

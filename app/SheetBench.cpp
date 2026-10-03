@@ -7,11 +7,13 @@
 #include <QFile>
 #include <QKeyEvent>
 #include <QListWidget>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QTabBar>
 
 #include <cmath>
+#include <map>
 #include <filesystem>
 #include <set>
 
@@ -20,6 +22,7 @@
 #include "SheetCanvas.hpp"
 #include "SheetDialogs.hpp"
 #include "SheetPage.hpp"
+#include "TemplateFields.hpp"
 #include "opad/cache.hpp"
 #include "opad/drawing/sheet.hpp"
 
@@ -29,9 +32,10 @@
 // view's draft before its final linework once the projections are not cached, the base view dragged on the canvas
 // takes its projected views along (alignment kept) and a projected view drags only along its axis (its gap), Ctrl+Z, a
 // base and a projected view placed with the mouse path, hidden lines from the ribbon, the sheet's properties (A2: the
-// template follows), Document properties (Approved by in the title block), a template from a DXF file, a new sheet in the
-// drawing, the browser's row opening its sheet, PDF export, Del and Esc on the canvas, and back to Design.
-// <prefix>.empty.png, .sheet.png, .final.png, .window.png.
+// template follows), Document properties (Approved by in the title block), a template from a DXF file (its placeholders
+// filled in), Title block fields (a field added and one moved with the mouse), a new sheet in the drawing, the browser's
+// row opening its sheet, PDF export, Del and Esc on the canvas, and back to Design. <prefix>.empty.png, .sheet.png,
+// .final.png, .window.png, .fields.png, .template.png.
 OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
   const QString& prefix = value;
   DocsArea* docs = DocsArea::of(w.m_areas);
@@ -271,10 +275,69 @@ OPAD_BENCH(OPAD_BENCH_SHEET, sheet) {
       company.polyline(ink, {{10, 10}, {410, 10}, {410, 287}, {10, 287}}, true);
       company.polyline(ink, {{250, 10}, {410, 10}, {410, 50}, {250, 50}}, true);
       company.text(ink, "OPAD BENCH WORKS", {260, 30}, 6);
+      company.text(ink, "{title}", {260, 40}, 5);  // placeholders: the title block's fields
+      company.text(ink, "<DWG_NO>", {260, 14}, 3.5);
       opad::write_text_file(std::filesystem::path((prefix + ".company.dxf").toStdU16String()), opad::drawing::dxf_text(company));
       docs->templateFromFile(prefix + ".company.dxf");
       check(waitFor([&] { return w.m_doc->scene.sheet(sheetId)->def["template"].value("id", "") == "file"; }, 15000) && w.m_doc->scene.sheet(sheetId)->width == 420,
             "Template from DXF: the company frame on A3, its geometry in the body store");
+      const opad::json fields = w.m_doc->scene.sheet(sheetId)->def["template"].value("fields", opad::json::array());
+      opad::drawing::Display paper;
+      opad::drawing::draw_paper(paper, w.m_doc->doc, w.m_doc->scene, *w.m_doc->scene.sheet(sheetId));
+      std::map<std::string, opad::drawing::Vec2> texts;
+      for (const auto& p : paper.prims)
+        if (p.kind == opad::drawing::Prim::Kind::Text) texts[p.text] = p.at;
+      check(fields.size() == 2 && fields[0]["key"] == "title" && fields[1]["key"] == "number" && texts.count("OP-2001") && std::fabs(texts["OP-2001"][0] - 260) < 0.01 &&
+                std::fabs(texts["OP-2001"][1] - 14) < 0.01 && !texts.count("<DWG_NO>"),
+            QString("its placeholders became fields, the part number written where <DWG_NO> stood (%1 fields)").arg(fields.size()));
+    }
+    // Title block fields…: the template behind the fields, a drag adds one, a drag moves one; one edit.
+    {
+      w.action("drawings.templateFields")->trigger();
+      TemplateFieldsDialog* tf = nullptr;
+      waitFor([&] {
+        for (QWidget* t : QApplication::topLevelWidgets())
+          if (auto* d = qobject_cast<TemplateFieldsDialog*>(t); d && d->isVisible()) tf = d;
+        return tf != nullptr;
+      }, 3000);
+      check(tf && tf->count() == 2, "Title block fields… opens with the template's two fields");
+      if (tf) {
+        check(waitFor([&] { return tf->pictured(); }, 10000), "the template drawn on a worker behind them");
+        QCoreApplication::processEvents();
+        QWidget* vp = tf->view()->viewport();
+        const auto mouse = [&](QEvent::Type type, opad::drawing::Vec2 at) {
+          const QPoint p = tf->at(at);
+          QMouseEvent e(type, QPointF(p), QPointF(vp->mapToGlobal(p)), type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                        type == QEvent::MouseButtonRelease ? Qt::NoButton : Qt::LeftButton, Qt::NoModifier);
+          QApplication::sendEvent(vp, &e);
+        };
+        const auto dragOn = [&](opad::drawing::Vec2 a, opad::drawing::Vec2 b) {
+          mouse(QEvent::MouseButtonPress, a);
+          mouse(QEvent::MouseMove, {(a[0] + b[0]) / 2, (a[1] + b[1]) / 2});
+          mouse(QEvent::MouseMove, b);
+          mouse(QEvent::MouseButtonRelease, b);
+        };
+        tf->keyBox()->setCurrentIndex(tf->keyBox()->findData("project"));
+        dragOn({30, 270}, {90, 262});
+        const opad::json added = tf->count() == 3 ? tf->field(2) : opad::json();
+        const double mm = 1.5 / std::max(tf->view()->transform().m11(), 1e-6);  // a pixel or so
+        check(added.value("key", "") == "project" && std::fabs(added["rect"][0].get<double>() - 30) < mm && std::fabs(added["rect"][1].get<double>() - 262) < mm &&
+                  std::fabs(added["rect"][2].get<double>() - 60) < 2 * mm && std::fabs(added["rect"][3].get<double>() - 8) < 2 * mm,
+              "a drag on the paper adds a project field there: " + QString::fromStdString(added.dump()));
+        dragOn({270, 42}, {280, 46});
+        const opad::json moved = tf->field(0);
+        check(moved["key"] == "title" && !moved.contains("at") && moved.contains("rect") && std::fabs(moved["rect"][0].get<double>() - 270) < mm + 0.01,
+              "a drag on the title field moves it (its anchor becomes a box): " + QString::fromStdString(moved.dump()));
+        tf->grab().save(prefix + ".fields.png");
+        const size_t before = w.m_doc->doc.ops.size();
+        tf->accept();
+        check(waitFor([&] { return w.m_doc->doc.ops.size() == before + 1; }, 5000) &&
+                  w.m_doc->scene.sheet(sheetId)->def["template"]["fields"].size() == 3 &&
+                  opad::drawing::title_values(w.m_doc->doc, w.m_doc->scene, *w.m_doc->scene.sheet(sheetId), false).value("project", "") == "Bench pump",
+              "Apply is one edit; the project field shows the document's project");
+        waitFor(settled, 10000);
+        page->grab().save(prefix + ".template.png");
+      }
     }
     // A new sheet in the drawing, its tab, the browser's row opening the first again.
     w.action("drawings.newSheet")->trigger();

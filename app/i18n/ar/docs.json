@@ -259,5 +259,19 @@
   "Checked by": "دققه",
   "More properties (=doc:name in a title block field)": "خصائص أخرى (‎=doc:name في حقل من جدول العنوان)",
   "Add property": "إضافة خاصية",
-  "Empty fields are filled in from the sheet, the part and the document properties; =key looks a value up (=scale, =prop:finish, =doc:project).": "تُملأ الحقول الفارغة من اللوحة والقطعة وخصائص المستند؛ ‎=key يبحث عن قيمة (‎=scale، ‎=prop:finish، ‎=doc:project)."
+  "Empty fields are filled in from the sheet, the part and the document properties; =key looks a value up (=scale, =prop:finish, =doc:project).": "تُملأ الحقول الفارغة من اللوحة والقطعة وخصائص المستند؛ ‎=key يبحث عن قيمة (‎=scale، ‎=prop:finish، ‎=doc:project).",
+  "Title block fields…": "حقول جدول العنوان…",
+  "Title block fields": "حقول جدول العنوان",
+  "Template fields filled in from the drawing: %1": "حقول القالب التي تُملأ من الرسم: %1",
+  "The template has no fields: place them with Title block fields…": "لا حقول في القالب: ضعها من «حقول جدول العنوان…»",
+  "General tolerances": "التفاوتات العامة",
+  "Drag on the paper to add a field, drag a field to move it, its corner to resize it. Del removes the chosen one.": "اسحب على الورقة لإضافة حقل، واسحب الحقل لنقله، وزاويته لتغيير حجمه. Del يحذف الحقل المختار.",
+  "Field": "الحقل",
+  "Left": "يسار",
+  "Right": "يمين",
+  "Alignment": "المحاذاة",
+  "Remove field": "حذف الحقل",
+  "Drawing the template": "رسم القالب",
+  "This sheet has no template: choose one in Sheet properties first.": "لا قالب لهذه اللوحة: اختر قالبًا من خصائص اللوحة أولًا.",
+  "Centred": "في الوسط"
 }

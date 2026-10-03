@@ -47,6 +47,7 @@ class DocsArea : public AreaController {
   void newSheet();         // one more sheet in the shown sheet's drawing, on its paper and template
   void sheetProperties();  // the dialog, then one sheet_edit
   void templateFromFile(const QString& file = {});  // read on a worker; the sheet takes its frame, title block and paper
+  void templateFields();   // the shown sheet's template fields placed with the mouse (TemplateFields.hpp), one sheet_edit
   void placeView(const std::string& orient);  // a base view placed with the mouse (front, top, ..., iso)
   void placeProjected();                      // a view projected from the selected one, placed with the mouse
   void setViewStyle(const std::vector<std::string>& views, const opad::json& style);  // merged into each view's style

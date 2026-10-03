@@ -325,4 +325,82 @@ TEST(template_from_a_dxf_file) {
   std::filesystem::remove_all(dir, e);
 }
 
+TEST(template_fields_from_a_dxf_file) {
+  // A company title block with placeholders ({title}, <DWG_NO>, {prop:finish}) and an attribute definition (DRAWN_BY), as
+  // CAD templates carry them; its labels are plain text.
+  Display company;
+  const int ink = company.layer({"Border", kInk, LineType::Continuous, 0.5});
+  company.polyline(ink, {{10, 10}, {287, 10}, {287, 200}, {10, 200}}, true);
+  company.polyline(ink, {{187, 10}, {287, 10}, {287, 40}, {187, 40}}, true);
+  company.text(ink, "TITLE", {189, 36}, 2);
+  company.text(ink, "{title}", {189, 28}, 5);
+  company.text(ink, "<DWG_NO>", {189, 14}, 3.5);
+  company.text(ink, "{prop:finish}", {270, 14}, 2.5, 0, 1);
+  std::string dxf = dxf_text(company);
+  const size_t entities = dxf.find("ENTITIES\n"), end = dxf.find("  0\nENDSEC\n", entities);
+  CHECK(entities != std::string::npos && end != std::string::npos);
+  dxf.insert(end, "  0\nATTDEF\n  5\nFFF1\n100\nAcDbEntity\n  8\n0\n100\nAcDbText\n 10\n240.0\n 20\n30.0\n 30\n0.0\n 40\n2.5\n  1\nNOBODY\n100\n"
+                  "AcDbAttributeDefinition\n  3\nDrawn by\n  2\nDRAWN_BY\n 70\n0\n");
+  const auto dir = std::filesystem::temp_directory_path() / new_uuid();
+  std::filesystem::create_directories(dir);
+  write_text_file(dir / "fields.dxf", dxf);
+  std::string brep;
+  const json t = read_template_file(dir / "fields.dxf", brep);
+  CHECK(t.contains("fields"));
+  std::map<std::string, json> by;
+  for (const auto& f : t["fields"]) by[f["key"].get<std::string>()] = f;
+  CHECK_EQ(by.size(), 4u);
+  CHECK(by.count("title") && by.count("number") && by.count("prop:finish") && by.count("author"));
+  CHECK_NEAR(by["title"]["at"][0].get<double>(), 189, 1e-6);
+  CHECK_NEAR(by["title"]["at"][1].get<double>(), 28, 1e-6);
+  CHECK_NEAR(by["title"]["height"].get<double>(), 5, 1e-6);
+  CHECK_EQ(by["number"]["tag"], "DWG_NO");
+  CHECK_EQ(by["author"]["tag"], "DRAWN_BY");
+  CHECK_EQ(by["prop:finish"]["align"], "center");
+  // The sheet fills them in where the placeholders stood; the placeholders themselves are not drawn.
+  Document doc = Document::create();
+  const std::string body = box(doc, 60, 40, 10);
+  run(doc, "rename", {{"target", body}, {"name", "Bracket"}});
+  run(doc, "part_properties", {{"target", body}, {"set", {{"part_number", "OP-7"}, {"finish", "anodised"}}}});
+  const json made = run(doc, "sheet", {{"template", t}, {"template_brep", brep}, {"views", "front"}, {"by", "Ada"}});
+  Scene s = resolve(doc);
+  const Sheet& sheet = *s.sheet(made["id"].get<std::string>());
+  const json values = title_values(doc, s, sheet, false);
+  CHECK_EQ(values["title"], "Bracket");
+  CHECK_EQ(values["number"], "OP-7");
+  CHECK_EQ(values["author"], "Ada");
+  CHECK_EQ(values["prop:finish"], "anodised");
+  const Display d = sheet_display(doc, s, sheet);
+  std::map<std::string, Vec2> at;
+  for (const auto& p : d.prims)
+    if (p.kind == Prim::Kind::Text) at[p.text] = p.at;
+  CHECK(at.count("Bracket") && at.count("OP-7") && at.count("Ada") && at.count("anodised"));
+  CHECK_NEAR(at["Bracket"][0], 189, 1e-6);
+  CHECK_NEAR(at["Bracket"][1], 28, 1e-6);
+  int outlines = 0;  // the label TITLE is drawn as the file's geometry; no placeholder is
+  for (const auto& p : d.prims) outlines += d.layers[size_t(p.layer)].name == "Template";
+  CHECK(outlines >= 8);
+  CHECK(!at.count("{title}") && !at.count("<DWG_NO>"));
+  // The same through the command's own read, and the sheet keeps the fields through sheet_edit to another paper.
+  const json direct = run(doc, "sheet", {{"template_file", (dir / "fields.dxf").string()}});
+  s = resolve(doc);
+  CHECK_EQ(s.sheet(direct["id"].get<std::string>())->def["template"]["fields"].size(), 4u);
+  // Fields placed by hand on a built-in template stay when it is made again for another paper.
+  const std::string iso = run(doc, "sheet", {{"size", "A3"}})["id"];
+  json withField = resolve(doc).sheet(iso)->def["template"];
+  withField["fields"] = json::array({{{"key", "project"}, {"rect", {30, 20, 60, 8}}, {"height", 3.5}}});
+  run(doc, "sheet_edit", {{"target", iso}, {"set", {{"template", withField}}}});
+  run(doc, "part_properties", {{"document", true}, {"set", {{"project", "Pump"}}}});
+  run(doc, "sheet_edit", {{"target", iso}, {"set", {{"size", "A2"}}}});
+  s = resolve(doc);
+  CHECK_EQ(s.sheet(iso)->def["template"]["fields"].size(), 1u);
+  CHECK_EQ(s.sheet(iso)->def["template"]["zones"]["x"], 12);
+  CHECK(texts(sheet_display(doc, s, *s.sheet(iso)), "Title block").count("Pump"));
+  json bad = withField;
+  bad["fields"] = json::array({{{"key", "x"}}});
+  CHECK_THROWS(run(doc, "sheet_edit", {{"target", iso}, {"set", {{"template", bad}}}}));
+  std::error_code e;
+  std::filesystem::remove_all(dir, e);
+}
+
 CHECK_MAIN()

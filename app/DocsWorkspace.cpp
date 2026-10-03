@@ -26,6 +26,7 @@
 #include "SheetCanvas.hpp"
 #include "SheetDialogs.hpp"
 #include "SheetPage.hpp"
+#include "TemplateFields.hpp"
 #include "opad/drawing/sheet.hpp"
 
 OPAD_ICON_TABLE(sheets,
@@ -37,7 +38,8 @@ OPAD_ICON_TABLE(sheets,
                 {"viewIso", R"(<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/><path d="M2 2h4M2 2v4" opacity=".55"/>)"},
                 {"hiddenLines", R"(<rect x="4" y="5" width="16" height="14"/><path d="M4 12h16" stroke-dasharray="3 2"/>)"},
                 {"tangentEdges", R"(<path d="M3 19h7a7 7 0 0 0 7-7V4"/><path d="M8.5 15.5a6 6 0 0 0 5-5" opacity=".55"/>)"},
-                {"viewsUpdate", R"(<rect x="3" y="5" width="11" height="9" rx="1"/><path d="M21 13a5 5 0 1 1-1.5-3.6M21 7.5v3h-3"/>)"});
+                {"viewsUpdate", R"(<rect x="3" y="5" width="11" height="9" rx="1"/><path d="M21 13a5 5 0 1 1-1.5-3.6M21 7.5v3h-3"/>)"},
+                {"templateFields", R"(<rect x="3" y="4" width="18" height="16" rx="1" opacity=".55"/><rect x="6" y="12" width="12" height="5" stroke-dasharray="2 1.5"/><path d="M9 13.5v2" />)"});
 
 namespace {
 std::vector<std::string> nodesIn(AppDocument* doc, std::vector<std::string> ids) {  // bodies and components
@@ -84,6 +86,7 @@ void DocsArea::buildDrawingCommands() {
   add("drawings.sheetProperties", tr("Sheet properties…"), "sheetProperties", [this] { sheetProperties(); }, sheetShown,
       {"title block", "paper", "size", "scale", "first angle", "third angle"});
   add("drawings.templateFile", tr("Template from DXF or DWG…"), "templateFile", [this] { templateFromFile(); }, sheetShown, {"frame", "title block", "company"});
+  add("drawings.templateFields", tr("Title block fields…"), "templateFields", [this] { templateFields(); }, sheetShown, {"template", "attributes", "placeholders"});
   add("drawings.baseView", tr("Base view"), "viewBase", [this] { placeView("front"); }, sheetShown, {"front view", "place view"});
   for (const auto& [orient, label] : baseViews())
     add(("drawings.baseView." + orient).c_str(), label, "viewBase", [this, o = orient] { placeView(o); }, sheetShown);
@@ -114,7 +117,7 @@ void DocsArea::drawingsRibbon(RibbonLayout& layout) {
     layout.addGroup("drawings.drawing", id, title);
     for (const char* a : ids) layout.addAction(id, services().action(a));
   };
-  group("sheet", tr("Sheet"), {"drawings.new", "drawings.newSheet", "drawings.sheetProperties", "file.documentProperties", "drawings.templateFile"});
+  group("sheet", tr("Sheet"), {"drawings.new", "drawings.newSheet", "drawings.sheetProperties", "file.documentProperties", "drawings.templateFile", "drawings.templateFields"});
   layout.addGroup("drawings.drawing", "drawings.drawing.views", tr("Views"));
   QList<QAction*> bases;
   for (const auto& [orient, label] : baseViews()) bases << services().action(QString::fromStdString("drawings.baseView." + orient));
@@ -338,8 +341,25 @@ void DocsArea::templateFromFile(const QString& given) {
         if (!ok) return self->services().guarded([&] { throw opad::Error(error.toStdString()); });
         opad::json set = {{"template", *t}, {"template_brep", *brep}};
         if (t->contains("size")) set["size"] = (*t)["size"];  // its paper
-        self->run("sheet_edit", {{"target", sheet}, {"set", set}});
+        const int fields = static_cast<int>(t->value("fields", opad::json::array()).size());
+        self->run("sheet_edit", {{"target", sheet}, {"set", set}}, [self, fields](const opad::json& out) {
+          if (!self || out.is_null()) return;
+          self->services().showMessage(fields ? tr("Template fields filled in from the drawing: %1").arg(fields)
+                                              : tr("The template has no fields: place them with Title block fields…"), 8000);
+        });
       });
+}
+
+void DocsArea::templateFields() {
+  const std::string sheet = m_page ? m_page->sheet() : std::string();
+  if (sheet.empty()) throw opad::Error("Open a sheet first.");
+  auto* dialog = new TemplateFieldsDialog(services().document(), services().jobs(), sheet, services().window());
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  connect(dialog, &QDialog::accepted, this, [this, dialog, sheet] {
+    const opad::json set = dialog->change();
+    if (!set.is_null()) run("sheet_edit", {{"target", sheet}, {"set", set}});
+  });
+  dialog->open();
 }
 
 void DocsArea::placeView(const std::string& orient) {
@@ -395,7 +415,7 @@ void DocsArea::openSheet(const std::string& row) {
 void DocsArea::viewMenu(const std::vector<std::string>& views, QMenu& menu) {
   const opad::Scene& s = services().document()->scene;
   if (views.empty()) {  // on the paper: what goes onto it
-    for (const char* id : {"drawings.baseView", "drawings.isoView", "drawings.sheetProperties", "drawings.newSheet", "drawings.exportSheet"})
+    for (const char* id : {"drawings.baseView", "drawings.isoView", "drawings.sheetProperties", "drawings.templateFields", "drawings.newSheet", "drawings.exportSheet"})
       if (QAction* a = services().action(id)) menu.addAction(a);
     return;
   }

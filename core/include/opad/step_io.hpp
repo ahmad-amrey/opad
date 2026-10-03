@@ -22,6 +22,10 @@ struct ImportOptions {
   // drawing's bounding-box centre to its origin (a drawing opened on its own is centred on the grid).
   Mat4 placement;
   bool center_drawing = false;
+  // DXF read as a drawing template (UI-78): model space attributes (ATTDEF, ATTRIB) and texts that are a placeholder ({title},
+  // <DWG_NO>) are returned here where they stand instead of drawn: {tag, sample, at [x, y] mm, height, halign 0-2, valign
+  // 0 baseline-3 top, angle, w}.
+  std::vector<json>* text_fields = nullptr;
 };
 
 struct ImportResult {

@@ -115,7 +115,10 @@ int draw_items(Display& d, const Document& doc, const Scene& scene, const Sheet&
 //    "zones": {x, y, from: top-left (ISO: numbers from the left, letters from the top) | bottom-right (ASME)},
 //    "title_block": {w, h, label_height, lines: [[x1, y1, x2, y2, width]], fields: [{key, label, rect: [x, y, w, h],
 //    height, align left|center, valign bottom|middle|top}]} (in the block: mm from its bottom-left corner, which sits in
-//    the frame's bottom-right corner), "geometry": a body key of a template file's drawing, "at": [x, y] where it goes}
+//    the frame's bottom-right corner), "geometry": a body key of a template file's drawing, "at": [x, y] where it goes,
+//    "fields": the template's own fields in paper mm: cells {key, rect, height, align, valign, label?} placed in the editor
+//    or text anchors {key, at, height, align left|center|right, valign baseline|bottom|middle|top, angle?, w?, tag?} that a
+//    template file's attributes (ATTDEF, ATTRIB) and placeholder texts ({title}, <DWG_NO>) became}
 // make_template: the ISO 5457 border (20 mm filing margin, 10 mm elsewhere, centring marks, zones of about 50 mm) with an
 // ISO 7200 style block 180 mm wide, or the ASME style border with a block holding a general tolerance note; throws for
 // another standard or a paper too small.
@@ -133,7 +136,9 @@ std::array<double, 4> drawing_room(const json& sheet);
 json title_values(const Document& doc, const Scene& scene, const Sheet& sheet, bool measure = true);  // measure=false: no mass (the UI thread)
 // A company's frame and title block from a DXF or DWG file: its 2D geometry goes into the body store (gc keeps it for the
 // sheet) and the returned template draws it, on the smallest standard paper that holds it ("size"), moved onto it when it
-// was drawn elsewhere ("at"). Throws Error when the file has no 2D geometry.
+// was drawn elsewhere ("at"); its attributes and placeholder texts become fields filled in like the built-in blocks' (a tag
+// such as DWG_NO, DRAWN_BY or COMPANY names the field it stands for, others keep their own name). Throws Error when the
+// file has no 2D geometry.
 json template_from_file(Document& doc, const std::filesystem::path& file);
 // The same in two steps, for an app that reads the file on a worker: the template without its geometry and the geometry
 // as BREP text; then the commands take both (sheet / sheet_edit: template + template_brep) and store the geometry.

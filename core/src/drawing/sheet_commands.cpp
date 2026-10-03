@@ -357,7 +357,11 @@ void register_sheet_commands(const std::function<void(const CommandInfo&, Handle
           if (remake.empty() && set.contains("size") && !set.contains("template") && was.is_object() && (was.value("id", "") == "iso" || was.value("id", "") == "ansi"))
             remake = was["id"].get<std::string>();
           if (remake == "none") set["template"] = nullptr;
-          else if (!remake.empty()) set["template"] = drawing::make_template(remake, size.value("w", 0.0), size.value("h", 0.0));
+          else if (!remake.empty()) {
+            set["template"] = drawing::make_template(remake, size.value("w", 0.0), size.value("h", 0.0));
+            if (was.is_object() && was.contains("fields") && (was.value("id", "") == "iso" || was.value("id", "") == "ansi"))
+              set["template"]["fields"] = was["fields"];  // placed on the sheet by hand: kept
+          }
         }
         if (set.contains("refs")) set["refs"] = references(doc, scene, set["refs"], set.value("aspects", json()));
         set.erase("aspects");
