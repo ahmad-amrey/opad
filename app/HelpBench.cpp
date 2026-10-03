@@ -25,6 +25,8 @@
 #include <QStatusBar>
 #include <QToolButton>
 #include <QToolTip>
+#include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 
 // OPAD_BENCH_RICHTIP=<prefix>: every command has its help record (translated in a translated run); the rich card on
 // real ribbon buttons through synthesised events: nothing before 450 ms, compact after, expanded after +1200 ms,
@@ -624,12 +626,37 @@ OPAD_BENCH(OPAD_BENCH_REFERENCE, reference) {
     check(ids.contains("design.offset_face"), "the palette finds commands by keyword (" + ids.join(' ') + ")");
     edit->setText("fit");
   });
+  // Left open, its rows follow the commands (availability, keys); Esc closes it.
+  auto keyWas = std::make_shared<QKeySequence>();
+  auto row = [&w](const QString& id) -> QTreeWidgetItem* {
+    auto* list = w.findChild<CommandReference*>()->findChild<QTreeWidget*>("referenceList");
+    for (QTreeWidgetItemIterator it(list); *it; ++it)
+      if ((*it)->data(0, Qt::UserRole).toString() == id) return *it;
+    return nullptr;
+  };
   add(400, [=, &w] {
     auto* palette = w.findChild<CommandPalette*>();
     if (palette) {
       palette->grab().save(prefix + ".palette.png");
       palette->close();
     }
+    w.action("help.reference")->trigger();
+    QTreeWidgetItem* item = row("view.unisolate");
+    check(item && item->foreground(0).color() == theme::current().fg3, "Exit isolate is greyed in the guide (nothing is isolated)");
+    *keyWas = w.action("view.unisolate")->shortcut();
+    w.action("view.unisolate")->setEnabled(true);
+    w.action("view.unisolate")->setShortcut(QKeySequence("Ctrl+Alt+F11"));
+  });
+  add(300, [=, &w] {
+    QTreeWidgetItem* item = row("view.unisolate");
+    check(item && item->foreground(0).color() != theme::current().fg3 && item->text(1) == QKeySequence("Ctrl+Alt+F11").toString(QKeySequence::NativeText),
+          "left open, its row follows the command's availability and key (" + (item ? item->text(1) : QString()) + ")");
+    w.action("view.unisolate")->setEnabled(false);
+    w.action("view.unisolate")->setShortcut(*keyWas);
+    auto* reference = w.findChild<CommandReference*>();
+    QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(reference->findChild<QLineEdit*>("paletteInput"), &esc);
+    check(!reference->isVisible(), "Esc in its search field closes it");
     trace::log(QString("bench: reference: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
     QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
   });

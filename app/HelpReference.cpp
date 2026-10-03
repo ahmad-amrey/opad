@@ -195,7 +195,32 @@ CommandReference::CommandReference(std::function<QAction*(const QString&)> looku
   auto restyle = [rule] { rule->setStyleSheet(QString("background: %1;").arg(theme::css(theme::current().line))); };
   restyle();
   connect(theme::notifier(), &theme::Notifier::changed, this, [this, restyle] { restyle(); refill(); });
+  m_stale.setSingleShot(true);
+  m_stale.setInterval(100);
+  connect(&m_stale, &QTimer::timeout, this, [this] { if (isVisible()) updateItems(); });
   refill();
+}
+
+void CommandReference::keyPressEvent(QKeyEvent* e) {
+  if (e->key() == Qt::Key_Escape) close();
+  else QWidget::keyPressEvent(e);
+}
+
+void CommandReference::showEvent(QShowEvent* e) {
+  QWidget::showEvent(e);
+  updateItems();  // changed while it was closed
+}
+
+void CommandReference::updateItems() {
+  const Tokens& t = theme::current();
+  for (QTreeWidgetItemIterator it(m_list); *it; ++it) {
+    const QString id = (*it)->data(0, Qt::UserRole).toString();
+    QAction* a = id.isEmpty() || !m_lookup ? nullptr : m_lookup(id);
+    if (!a) continue;
+    (*it)->setText(1, a->shortcut().toString(QKeySequence::NativeText));
+    if (a->isEnabled()) (*it)->setData(0, Qt::ForegroundRole, QVariant());
+    else (*it)->setForeground(0, t.fg3);
+  }
 }
 
 bool CommandReference::eventFilter(QObject* o, QEvent* e) {
@@ -239,6 +264,7 @@ void CommandReference::refill() {
     const QString icon = a ? a->data().toString() : QString();
     item->setIcon(0, icons::has(icon) ? icons::icon(icon, t.fg2) : QIcon());
     if (a && !a->isEnabled()) item->setForeground(0, t.fg3);  // not available now: its card says what it needs
+    if (a) connect(a, &QAction::changed, &m_stale, qOverload<>(&QTimer::start), Qt::UniqueConnection);
   }
   for (QTreeWidgetItem* g : groups) g->setHidden(g->childCount() == 0);
   m_list->expandAll();
