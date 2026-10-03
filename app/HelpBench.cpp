@@ -513,8 +513,8 @@ OPAD_BENCH(OPAD_BENCH_GUIDE, guide) {
   return true;
 }
 
-// OPAD_BENCH_REFERENCE=<prefix> (a document with a box): Help > Command reference and the command palette's preview
-// (UI-107). F1 opens the reference listing every command by area; with the Distance tool running it opens at Distance,
+// OPAD_BENCH_REFERENCE=<prefix> (a document with a box): Help > Tool guide and the command palette's preview
+// (UI-107/108). It lists every command by area; F1 with the Distance tool running opens it at Distance,
 // whose clip plays and whose steps loop one by one; the search finds commands by their keywords; a command not
 // available now says what it needs. The palette shows the current command's card and clip beside its list and finds
 // commands by keyword; its group column names the area. Saved as <prefix>.reference/.reference-search/.palette.png.
@@ -535,11 +535,15 @@ OPAD_BENCH(OPAD_BENCH_REFERENCE, reference) {
     w.action("help.reference")->trigger();
     auto* reference = w.findChild<CommandReference*>();
     check(reference && reference->isVisible() && reference->shown().size() == listed && !reference->current().isEmpty(),
-          QString("F1 opens the reference with every command (%1 of %2)").arg(reference ? reference->shown().size() : 0).arg(listed));
+          QString("the Tool guide opens with every command (%1 of %2)").arg(reference ? reference->shown().size() : 0).arg(listed));
     if (reference) reference->hide();
     w.startTool("distance");
-    w.action("help.reference")->trigger();
+    check(w.action("help.current")->shortcut() == QKeySequence("F1"), "Help for this tool is F1");
+    w.action("help.current")->trigger();
     check(reference && reference->isVisible() && reference->current() == "inspect.distance", "F1 while measuring opens it at Distance (" + (reference ? reference->current() : QString()) + ")");
+    reference->hide();
+    w.action("help.reference")->trigger();
+    check(reference->isVisible() && reference->current() == "inspect.distance", "the Tool guide opens where it was");
     ClipView* clip = reference ? reference->preview()->clip() : nullptr;
     check(clip && clip->isVisible() && clip->playing() && clip->clip() == "inspect.distance", "its clip plays");
     QListWidget* list = reference ? reference->preview()->steps() : nullptr;
@@ -561,7 +565,7 @@ OPAD_BENCH(OPAD_BENCH_REFERENCE, reference) {
     reference->grab().save(prefix + ".reference-search.png");
     reference->open("view.unisolate");
     check(reference->current() == "view.unisolate" && reference->shown().size() == listed && reference->preview()->showsRequirement(), "a command not available now says what it needs");
-    if (i18n::current() != "en") check(reference->layoutDirection() == Qt::RightToLeft && reference->windowTitle() != "Command reference", "the reference in the UI language and direction");
+    if (i18n::current() != "en") check(reference->layoutDirection() == Qt::RightToLeft && reference->windowTitle() != "Tool guide", "the reference in the UI language and direction");
     reference->close();
     check(help::group("design.extrude") == opGroup(w.action("design.extrude")) && opGroup(w.action("sketch.line")) != opGroup(w.action("help.about")), "the palette groups commands by area");
     auto* palette = new CommandPalette(w.m_actions, &w);

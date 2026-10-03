@@ -6,6 +6,7 @@
 #include "GuidedTool.hpp"
 #include "HelpClip.hpp"
 #include "HelpReference.hpp"
+#include "HelpWindows.hpp"
 #include "I18n.hpp"
 #include "RichTip.hpp"
 #include "Theme.hpp"
@@ -135,7 +136,8 @@ TEST(help_area_strings_are_translated) {
   const QJsonObject fragment = QJsonDocument::fromJson(source("app/i18n/ar/help.json").toUtf8()).object();
   CHECK(!fragment.isEmpty() && i18n::table("ar", {":/i18n"}) == arabic);  // the fragment is embedded, as it is in the tree
   QStringList strings;
-  for (const char* file : {"app/RichTip.cpp", "app/RichTip.hpp", "app/CommandHelp.cpp", "app/HelpBench.cpp", "app/HelpClip.cpp", "app/HelpClip.hpp", "app/HelpReference.cpp"})
+  for (const char* file : {"app/RichTip.cpp", "app/RichTip.hpp", "app/CommandHelp.cpp", "app/HelpBench.cpp", "app/HelpClip.cpp", "app/HelpClip.hpp", "app/HelpReference.cpp",
+                           "app/HelpArea.cpp", "app/HelpWindows.cpp", "app/CommandPalette.cpp"})
     for (const auto& m : QRegularExpression(R"re(\b(?:tr\(|translate\("help", )"((?:[^"\\]|\\.)*)"\))re").globalMatch(source(file))) strings << m.captured(1);
   CHECK(strings.size() >= 2);
   for (const QString& s : strings)
@@ -237,6 +239,53 @@ TEST(palette_recent_commands) {
   CHECK_EQ(palette::recent().size(), palette::kRecent);
   CHECK_EQ(palette::recent().first(), QString("x.19"));
   QSettings().remove("palette/recent");
+}
+
+// The Help menu's windows (UI-108): key caps, the mouse of each navigation preset as Viewport::setNavPreset binds it,
+// the cheat sheet's groups (keyed commands only, the sketch's first while sketching, then the mouse and every tool's
+// keys), the problem report's text and the Getting started lessons (each clip and command there).
+TEST(help_menu_contents) {
+  help::load("en");
+  CHECK_EQ(help::keyCaps("Ctrl+Shift+U"), QStringList({"Ctrl", "Shift", "U"}));
+  CHECK_EQ(help::keyCaps("Ctrl++"), QStringList({"Ctrl", "+"}));
+  CHECK_EQ(help::keyCaps("F1"), QStringList({"F1"}));
+  auto mouse = [](const QString& preset, int row) { return help::mouseRows(preset).value(row).keys; };
+  CHECK_EQ(mouse("fusion", 0), QString("Shift+Middle drag"));
+  CHECK_EQ(mouse("fusion", 1), QString("Middle drag"));
+  CHECK_EQ(mouse("solidworks", 0), QString("Middle drag"));
+  CHECK_EQ(mouse("solidworks", 1), QString("Ctrl+Middle drag"));
+  CHECK_EQ(mouse("onshape", 0), QString("Right drag"));
+  CHECK_EQ(mouse("blender", 1), QString("Shift+Middle drag"));
+  QAction fit("Fit"), line("Line"), box("Box");
+  fit.setObjectName("view.fit");
+  fit.setShortcut(QKeySequence("F"));
+  fit.setProperty("commandGroup", "View");
+  line.setObjectName("sketch.line");
+  line.setShortcut(QKeySequence("L"));
+  line.setProperty("commandGroup", "Sketch");
+  box.setObjectName("design.box");  // no key: not on the sheet
+  auto titles = [](const QList<help::KeyGroup>& groups) {
+    QStringList out;
+    for (const auto& g : groups) out << g.title;
+    return out;
+  };
+  const auto groups = help::keyGroups({&fit, &line, &box}, false, "fusion");
+  CHECK_EQ(titles(groups), QStringList({"View", "Sketch", "Mouse", "In every tool"}));
+  CHECK(groups[0].rows.size() == 1 && groups[0].rows[0].label == help::find("view.fit")->title && groups[0].rows[0].keys == "F");
+  CHECK_EQ(titles(help::keyGroups({&fit, &line, &box}, true, "fusion")), QStringList({"Sketch", "View", "Mouse", "In every tool"}));
+  CHECK_EQ(help::problemReport("  It broke \n", {"OPAD 1", "Qt 6"}), QString("What happened:\nIt broke\n\nOPAD and this computer:\n- OPAD 1\n- Qt 6\n"));
+  CHECK(help::problemReport("", {}).contains("(not described)"));
+  for (const char* preset : {"fusion", "solidworks", "onshape", "blender"}) {
+    const auto lessons = GettingStarted::lessons(preset);
+    CHECK_EQ(lessons.size(), qsizetype(6));
+    CHECK_EQ(lessons[0].clip, QString("nav.") + preset);
+    for (const auto& l : lessons) {
+      if (!clips::has(l.clip)) throw check::Failure("no clip " + l.clip.toStdString());
+      if (!l.command.isEmpty() && !help::find(l.command)) throw check::Failure("no help for " + l.command.toStdString());
+      CHECK(!l.title.isEmpty() && l.text.count('.') >= 2);
+    }
+  }
+  CHECK(GettingStarted::lessons("onshape")[0].text.contains("Right drag"));
 }
 
 // Menu entries that are commands with help show their card beside the menu; other entries (no id, a submenu) none.

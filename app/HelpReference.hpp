@@ -1,5 +1,5 @@
 #pragma once
-// Help > Command reference (UI-107/108, design notes B §4 "where clips appear" 3 and 4). Every command's help, searched
+// Help > Tool guide (UI-107/108, design notes B §4 "where clips appear" 3 and 4). Every command's help, searched
 // by title, keywords or summary and listed by area; the selected command shows its card: icon, title, key caps,
 // summary, the animated clip with its steps (a click on a step loops it), details, and in amber what it needs when it
 // is not available now. CommandPreview is that card alone; the command palette shows it, compact, beside its list.

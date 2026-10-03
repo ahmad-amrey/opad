@@ -658,11 +658,39 @@
    "keywords": ["preferences", "options", "configuration", "gear"]
   },
   {
+   "id": "help.current",
+   "title": "Help for this tool",
+   "summary": "Opens the guide of the tool you are using: what it does, its keys and its animated steps.",
+   "details": "With no tool running it opens the tool guide where you left it. Over a ribbon button or a menu entry, F1 expands that command's card instead.",
+   "keywords": ["F1", "help", "how to", "current tool", "guide"]
+  },
+  {
    "id": "help.reference",
-   "title": "Command reference",
-   "summary": "Every command with what it does, its keys and an animated guide; F1 opens it at the tool you are using.",
-   "details": "Search by name or by what you want to do; pick a command to see its card and its clip, and click a step to loop it. Over a ribbon button, F1 expands that button's card instead.",
-   "keywords": ["help", "manual", "documentation", "how to", "guide", "tutorial", "F1"]
+   "title": "Tool guide",
+   "summary": "Every command with what it does, its keys and an animated guide, searchable.",
+   "details": "Search by name or by what you want to do; pick a command to see its card and its clip, and click a step to loop it. A command not available now says what it needs.",
+   "keywords": ["help", "reference", "manual", "documentation", "how to", "all commands", "tutorial"]
+  },
+  {
+   "id": "help.shortcuts",
+   "title": "Shortcuts cheat sheet",
+   "summary": "Lists every keyboard shortcut and mouse gesture at a glance.",
+   "details": "The keys are grouped as in the command search, with the mouse of your navigation preset and the keys every tool knows. Search by name or key; Change shortcuts opens the editor, and Esc or Ctrl+/ closes the sheet.",
+   "keywords": ["keys", "keyboard", "hotkeys", "cheat sheet", "mouse", "Ctrl+/"]
+  },
+  {
+   "id": "help.start",
+   "title": "Getting started",
+   "summary": "Six short animated lessons: move around, open, measure, sketch, make a solid and find any command.",
+   "details": "Each lesson shows its clip and a Try it button that runs the command it teaches. The navigation lesson follows your mouse preset.",
+   "keywords": ["tutorial", "first steps", "learn", "introduction", "basics", "onboarding"]
+  },
+  {
+   "id": "help.report",
+   "title": "Report a problem",
+   "summary": "Writes a problem report with what happened and the facts about OPAD and this computer.",
+   "details": "Nothing is sent by itself: copy the report or save it as a text file, or open the issue page and paste it there. The report names the document's kind and size, never its path or name.",
+   "keywords": ["bug", "issue", "feedback", "crash", "support", "error"]
   },
   {
    "id": "help.about",

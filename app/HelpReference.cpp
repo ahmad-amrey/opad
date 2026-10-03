@@ -146,7 +146,7 @@ void CommandPreview::refresh() {
 CommandReference::CommandReference(std::function<QAction*(const QString&)> lookup, QWidget* parent)
     : QWidget(parent, Qt::Window), m_lookup(std::move(lookup)) {
   setObjectName("commandReference");
-  setWindowTitle(tr("Command reference"));
+  setWindowTitle(tr("Tool guide"));
   setAttribute(Qt::WA_StyledBackground);
   resize(940, 640);
   auto* h = new QHBoxLayout(this);

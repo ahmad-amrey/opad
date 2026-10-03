@@ -3,7 +3,7 @@
 if(TARGET opad)
   target_sources(${target} PRIVATE ../app/CommandHelp.cpp ../app/RichTip.cpp ../app/RichTip.hpp ../app/Theme.cpp ../app/Theme.hpp
                  ../app/HelpClip.cpp ../app/HelpClip.hpp ../app/GuidedTool.cpp ../app/GuidedTool.hpp ../app/PanelFooter.cpp ../app/PanelFooter.hpp ../app/HelpReference.cpp ../app/HelpReference.hpp
-                 ../app/CommandPalette.cpp ../app/CommandPalette.hpp
+                 ../app/CommandPalette.cpp ../app/CommandPalette.hpp ../app/HelpWindows.cpp ../app/HelpWindows.hpp
                  ../app/Icons.cpp ../app/I18n.cpp ../app/help.qrc ${OPAD_I18N_QRC})
   set_target_properties(${target} PROPERTIES AUTOMOC ON AUTORCC ON)
   target_include_directories(${target} PRIVATE ../app)

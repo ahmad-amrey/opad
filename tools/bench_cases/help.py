@@ -21,7 +21,7 @@ CASES = [
     # UI-107: the tool, feature and sketch panels play the running command's clip at the step it waits for.
     ("tool-guide", guided, {"OPAD_BENCH_GUIDE": "{prefix}"}),
     ("tool-guide-ar", guided, {"OPAD_BENCH_GUIDE": "{prefix}", "OPAD_LANG": "ar"}),
-    # UI-107: Help > Command reference (F1 at the running tool, search, steps) and the palette's preview pane.
+    # UI-107/108: Help > Tool guide (F1 at the running tool, search, steps) and the palette's preview pane.
     ("reference", "box", {"OPAD_BENCH_REFERENCE": "{prefix}"}),
     ("reference-ar", "box", {"OPAD_BENCH_REFERENCE": "{prefix}", "OPAD_LANG": "ar"}),
     # UI-106: the command palette's recent commands, summaries and what a command not available now needs.
@@ -30,4 +30,7 @@ CASES = [
     # UI-108: the "?" in every tool panel's header opens the guide of the panel's command.
     ("panel-help", "box", {"OPAD_BENCH_PANELHELP": "{prefix}"}),
     ("panel-help-ar", "box", {"OPAD_BENCH_PANELHELP": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-108: the Help menu: F1, the tool guide, the shortcuts cheat sheet, Getting started, Report a problem.
+    ("help-menu", "box", {"OPAD_BENCH_HELPMENU": "{prefix}"}),
+    ("help-menu-ar", "box", {"OPAD_BENCH_HELPMENU": "{prefix}", "OPAD_LANG": "ar"}),
 ]
