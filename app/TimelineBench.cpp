@@ -331,7 +331,7 @@ OPAD_BENCH(OPAD_BENCH_TIMELINE, timeline) {
 // OPAD_BENCH_TIMELINEPERF=1 (UI-99 on a big model; case timeline-engine, the Engine beside the repository): its hidden
 // root shown first (an appearance step), then the pointer rests on every marker (an import's bodies tinted, what a feature
 // made found on a worker), the model is rolled back before the last step and forward again by the playhead, names and the
-// design history toggled; no event-loop gap over 250 ms meanwhile.
+// design history toggled, the History list on (a row selected) and off; no event-loop gap over 250 ms meanwhile.
 OPAD_BENCH(OPAD_BENCH_TIMELINEPERF, timelineperf) {
   struct State {
     int phase = 0, ticks = 0;
@@ -408,6 +408,13 @@ OPAD_BENCH(OPAD_BENCH_TIMELINEPERF, timelineperf) {
           state->clock.start();
           for (const char* id : {"timeline.names", "timeline.designOnly", "timeline.designOnly", "timeline.names"}) w.action(id)->trigger();
           trace::log(QString("bench: timelineperf: names and the design history toggled in %1 ms PASS").arg(state->clock.elapsed()));
+          state->clock.start();
+          w.action("timeline.historyList")->trigger();
+          const qint64 on = state->clock.restart();
+          w.m_browser->selectIds({"history:" + state->markers[2]});
+          w.action("timeline.historyList")->trigger();
+          if (on > 250 || state->clock.elapsed() > 250) throw opad::Error("the History list took " + std::to_string(on) + " / " + std::to_string(state->clock.elapsed()) + " ms");
+          trace::log(QString("bench: timelineperf: the History list on in %1 ms (a row selected, off again in %2 ms) PASS").arg(on).arg(state->clock.elapsed()));
           if (state->gap > 250) throw opad::Error("the event loop waited " + std::to_string(state->gap) + " ms");
           trace::log(QString("bench: timelineperf: longest event-loop gap %1 ms PASS").arg(state->gap));
           timer->stop();
