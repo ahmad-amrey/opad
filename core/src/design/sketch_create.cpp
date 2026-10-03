@@ -223,7 +223,9 @@ std::vector<int> create_primitive(Sketch& sketch,const std::string& kind,const s
     const V a=get(end),b=at(1),n=normal(unit(get(e->p[1])-get(e->p[0]))),d=b-a;
     const double denominator=2*dot(d,n);if(std::fabs(denominator)<1e-9)throw Error("arc endpoint must lie off the tangent line");
     const V center=a+n*(dot(d,d)/denominator);int o=point(center),last=point(b);
-    const int madeArc=cross(a-center,b-center)>=0?arc(o,end,last):arc(o,last,end);
+    // "smooth": the arc that goes on from the line's end the way the line went, past half a turn too; else the shorter one.
+    const bool ccw=options.value("smooth",false)?cross(a-center,a-get(e->p[e->p[0]==end?1:0]))>0:cross(a-center,b-center)>=0;
+    const int madeArc=ccw?arc(o,end,last):arc(o,last,end);
     sk.add_constraint(SkConstraint::Type::Tangent,{id,madeArc});
   } else throw Error("unknown sketch primitive: "+kind);
   sk.validate();sketch=std::move(sk);return made;

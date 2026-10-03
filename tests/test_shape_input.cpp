@@ -67,6 +67,9 @@ TEST(a_tangent_arc_leaves_the_line_end_along_it_to_the_pointers_side) {
   // Nothing typed: the circle through the pointer, tangent at the end (centre (0, 5) for a pointer at (5, 5)).
   CHECK(near(tangentArc({0, 0}, t, {5, 5}, nullptr, nullptr), 5, 5));
   CHECK(near(tangentArc({0, 0}, t, {3, 9}, &r, nullptr), 10 * 3 / std::hypot(3.0, -1.0), 10 - 10 / std::hypot(3.0, -1.0)));  // a radius alone: towards the pointer
+  const double most = 3 * pi / 2;
+  CHECK(near(tangentArc({0, 0}, t, {5, 3}, &r, &most), -10, 10));  // past half a turn: three quarters round to behind the end
+  CHECK(std::fabs(turned(-pi / 2, pi, 1) - 3 * pi / 2) < 1e-12 && std::fabs(turned(-pi / 2, pi, -1) - pi / 2) < 1e-12 && turned(1, 1, 1) == 0);
 }
 
 TEST(a_typed_angle_holds_the_line_along_an_axis_or_against_the_line_before) {

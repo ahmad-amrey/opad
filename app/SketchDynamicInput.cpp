@@ -90,7 +90,7 @@ QList<DynamicInput::Field> SketchEditor::shapeFields() const {
       const double off = (u - au) * -tv + (v - av) * tu, r = std::fabs(off) > 1e-12 ? ((u - au) * (u - au) + (v - av) * (v - av)) / (2 * std::fabs(off)) : 0;
       const shapeinput::P end = shapeinput::tangentArc({au, av}, {tu, tv}, {u, v}, nullptr, nullptr);
       const double cu = au - (off < 0 ? -1 : 1) * tv * r, cv = av + (off < 0 ? -1 : 1) * tu * r;
-      const double turn = std::fabs(std::remainder(std::atan2(end.v - cv, end.u - cu) - std::atan2(av - cv, au - cu), 2 * M_PI));
+      const double turn = shapeinput::turned(std::atan2(av - cv, au - cu), std::atan2(end.v - cv, end.u - cu), off < 0 ? -1 : 1);
       return {field("radius", tr("Radius"), number(r)), field("sweep", tr("Sweep angle"), QString::number(turn * 180 / M_PI, 'f', 1) + QStringLiteral("°"))};
     }
     if (m_tool == "circle")  // the switch after the box: diameter or radius (saved)
@@ -346,7 +346,7 @@ void SketchEditor::retype() {
         }
         const double value = angleKey(key) ? table->angle(text.replace(QStringLiteral("°"), QStringLiteral(" deg")).toStdString()) : table->length(text.toStdString());
         if (kSizes.contains(key) && std::fabs(value) < 1e-9) throw opad::Error("a size must not be zero");
-        if (key == "sweep" && m_tool == "tangent_arc" && std::fabs(value) >= M_PI - 1e-9) throw opad::Error("a tangent arc turns through less than half a turn");
+        if (key == "sweep" && m_tool == "tangent_arc" && (value <= 1e-9 || value >= 2 * M_PI - 1e-9)) throw opad::Error("the sweep must be above 0 and under a full turn");
         if (key == "radius" && (m_tool == "arc3" || m_tool == "circle3") && m_clicks.size() == 2 &&
             std::fabs(value) < std::hypot(m_clicks[1].u - m_clicks[0].u, m_clicks[1].v - m_clicks[0].v) / 2 - 1e-9)
           throw opad::Error("the radius is less than half the distance between the ends");
@@ -602,7 +602,7 @@ std::vector<SketchEditor::Readout> SketchEditor::readouts() const {
       if (radius < 1e-12) return out;
       const double ou = au - side * tv * radius, ov = av + side * tu * radius, from = direction(ou, ov, au, av);
       along("radius", ou, ov, cu, cv, QStringLiteral("R "), 1, true);
-      angle("sweep", ou, ov, from, std::remainder(direction(ou, ov, cu, cv) - from, 2 * M_PI));
+      angle("sweep", ou, ov, from, side * shapeinput::turned(from, direction(ou, ov, cu, cv), side));  // on from the line: past half a turn too
       return out;
     }
     if (m_tool == "circle") {

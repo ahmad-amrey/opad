@@ -56,7 +56,14 @@ inline bool bulge(P a, P b, P pointer, double radius, P& out) {
 }
 
 // The end of an arc that leaves `a` along the unit direction `t` (tangent to it there) and turns to the pointer's side:
-// with `radius` and `sweep` (radians) when typed, else the circle through the pointer and the pointer's place on it.
+// with `radius` and `sweep` (radians, under a full turn) when typed, else the circle through the pointer and the pointer's
+// place on it.
+// How far a direction turns from `from` to `to` (radians) going the way `side` says (+1 counter-clockwise), 0..2pi.
+inline double turned(double from, double to, double side) {
+  const double full = 2 * std::acos(-1.0), turn = std::fmod(side * (to - from), full);
+  return turn < 0 ? turn + full : turn;
+}
+
 inline P tangentArc(P a, P t, P pointer, const double* radius, const double* sweep) {
   const double lx = -t.v, ly = t.u, du = pointer.u - a.u, dv = pointer.v - a.v, off = du * lx + dv * ly, side = off < 0 ? -1 : 1;
   const double r = radius ? std::fabs(*radius) : std::fabs(off) > 1e-12 ? (du * du + dv * dv) / (2 * std::fabs(off)) : 0;

@@ -45,6 +45,14 @@ TEST(tangent_primitives_preserve_tangency) {
   ids=create_primitive(sk,"tangent_arc",{{20,0},{30,10}},{{"line",l1}});
   CHECK(solve(sk).converged);auto* e=sk.entity(ids[0]);CHECK(e->type==E::Arc);
   CHECK_NEAR(sk.point(e->p[0])->x,20,1e-8);CHECK_NEAR(sk.point(e->p[0])->y,10,1e-8);
+  // Smooth: the arc goes on from the line's end the way the line went, so an end behind it is reached past half a turn
+  // (counter-clockwise from (20, 0) round the centre (20, 10) to (10, 10): three quarters); without it, the shorter arc.
+  Sketch smooth=sk,shorter=sk;
+  ids=create_primitive(smooth,"tangent_arc",{{20,0},{10,10}},{{"line",l1},{"smooth",true}});
+  e=smooth.entity(ids[0]);CHECK(e->type==E::Arc && solve(smooth).converged);
+  CHECK_NEAR(smooth.point(e->p[1])->x,20,1e-8);CHECK_NEAR(smooth.point(e->p[1])->y,0,1e-8);CHECK_NEAR(smooth.point(e->p[2])->x,10,1e-8);
+  ids=create_primitive(shorter,"tangent_arc",{{20,0},{10,10}},{{"line",l1}});
+  e=shorter.entity(ids[0]);CHECK_NEAR(shorter.point(e->p[1])->x,10,1e-8);CHECK_NEAR(shorter.point(e->p[2])->x,20,1e-8);
 }
 // TODO 10 B4: the basic shapes form exact, solvable profiles.
 TEST(basic_shapes_form_exact_profiles) {

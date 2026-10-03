@@ -352,6 +352,19 @@ void SketchEditor::benchShapes() {
     for (const auto& e : m_sk.entities)
       if (e.type == SkEntity::Type::Arc && at(e.p[0], 10, -75) && at(e.p[1], 10, -80) && at(e.p[2], 15, -75)) arc = e.id;
     check(arc && has(CT::Radius, {arc}, 5) && has(CT::Tangent, {plain, arc}), "a tangent arc of radius 5 from (10, -80) to (15, -75), its radius dimensioned");
+    // Past half a turn, off the line's other end: on the way the line goes (-X), round its left to three quarters.
+    type("0,-80");
+    enter();
+    type("4");
+    tab();
+    type("270");
+    check(m_input->problem("sweep").isEmpty() && held(4, -84) && reads(QString::fromUtf8("270°")) && primitivePreview().entities.size() == 1,
+          "0,-80 Enter 4 Tab 270: three quarters of a turn of radius 4, previewed " + where());
+    enter();
+    arc = 0;
+    for (const auto& e : m_sk.entities)
+      if (e.type == SkEntity::Type::Arc && at(e.p[0], 0, -84) && at(e.p[1], 0, -80) && at(e.p[2], 4, -84)) arc = e.id;
+    check(arc && has(CT::Tangent, {plain, arc}) && m_solved.converged, "a counter-clockwise arc from (0, -80) round to (4, -84), smooth with the line");
     send(Qt::Key_Escape);
   });
 

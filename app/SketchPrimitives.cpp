@@ -87,7 +87,7 @@ opad::json SketchEditor::primitiveOptions() const {
   if(m_tool=="tangent_circle") {options["radius"]=table.length(option("radius","2 mm").toStdString());options["lines"]=m_picked;}
   if(m_tool=="conic")options["rho"]=table.number(option("rho","0.5").toStdString());
   if(m_tool=="control_spline")options["degree"]=table.count(option("degree","3").toStdString());
-  if(m_tool=="tangent_arc")options["line"]=m_picked.at(0);
+  if(m_tool=="tangent_arc"){options["line"]=m_picked.at(0);options["smooth"]=true;}  // on from the line, past half a turn too
   return options;
 }
 

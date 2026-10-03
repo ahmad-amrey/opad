@@ -69,5 +69,6 @@
  "Copies": "النسخ",
  "X and Y offsets": "إزاحتا X وY",
  "Offset by": "الإزاحة بواسطة",
- "the count of copies must be 1 to 1000": "يجب أن يكون عدد النسخ من 1 إلى 1000"
+ "the count of copies must be 1 to 1000": "يجب أن يكون عدد النسخ من 1 إلى 1000",
+ "the sweep must be above 0 and under a full turn": "يجب أن تكون زاوية القوس أكبر من 0 وأقل من دورة كاملة"
 }
