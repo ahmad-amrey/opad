@@ -7,6 +7,7 @@
 
 #include "opad/design/expr.hpp"
 #include "opad/design/sketch.hpp"
+#include "opad/drawing/annotate.hpp"
 #include "opad/drawing/sheet.hpp"
 
 namespace opad {
@@ -585,8 +586,7 @@ struct SceneBuilder::Impl {
         unresolved(v.id, "sheet_view", (v.name.empty() ? std::string("view") : v.name) + ": " + why);
       }
     }
-    static const std::set<std::string> kinds = {"dimension", "note"};
-    static const std::set<std::string> dimensions = {"horizontal", "vertical", "aligned", "radius", "diameter", "angle"};
+    static const std::set<std::string> typed = {"dimension", "dimension_set"};
     for (auto& t : scene.sheet_items) {
       const auto fail = [&](const std::string& why) {
         if (t.error.empty()) t.error = why;
@@ -596,8 +596,8 @@ struct SceneBuilder::Impl {
       if (!sheet_at.count(t.sheet)) fail("sheet " + t.sheet + " does not exist");
       else if (!t.view.empty() && view == view_at.end()) fail("view " + t.view + " does not exist");
       else if (!t.view.empty() && scene.sheet_views[view->second].sheet != t.sheet) fail("its view is on another sheet");
-      if (!kinds.count(t.kind)) fail("needs a newer OPAD (sheet_item kind '" + t.kind + "')");
-      else if (t.kind == "dimension" && !dimensions.count(t.type)) fail("needs a newer OPAD (dimension type '" + t.type + "')");
+      if (!drawing::known_item(t.kind, t.type))
+        fail(typed.count(t.kind) ? "needs a newer OPAD (" + t.kind + " type '" + t.type + "')" : "needs a newer OPAD (sheet_item kind '" + t.kind + "')");
       for (const auto& r : t.refs)
         if (!ref_ok(r)) {
           t.unresolved = true;

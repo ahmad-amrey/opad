@@ -1,18 +1,11 @@
 // Drawing sheets (TODO 11 UI-76): paper sizes and scales, the records' checks, a view's projection and its place on the
-// sheet, and dimension values.
+// sheet (annotations and their values: annotate.cpp).
 #include "opad/drawing/sheet.hpp"
 
-#include <BRepAdaptor_Curve.hxx>
-#include <BRepAdaptor_Surface.hxx>
-#include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
-#include <TopoDS.hxx>
-#include <gp_Circ.hxx>
-#include <gp_Cylinder.hxx>
 #include <OSD_Parallel.hxx>
 #include <Standard_Failure.hxx>
 #include <TopLoc_Location.hxx>
-#include <gp_Elips.hxx>
 #include <gp_Trsf.hxx>
 
 #include <algorithm>
@@ -24,7 +17,7 @@
 #include <set>
 #include <unordered_map>
 
-#include "../design/engine.hpp"
+#include "opad/drawing/symbols.hpp"
 #include "opad/geometry.hpp"
 #include "opad/render.hpp"
 
@@ -163,6 +156,27 @@ ViewSpec spec_of(const Scene& scene, const SheetView& v, int depth) {
   if (d.contains("source")) apply_source(scene, s, d["source"]);
   apply_style(s, d.value("style", json()));
   return s;
+}
+
+// An item's name in the outline: what it showed when it was made (a dimension's value, a callout, a set's values), a
+// note's text, a datum's letter, a frame's characteristic and tolerance, a surface's requirement.
+std::string item_name(const SheetItem& t) {
+  const json& d = t.def;
+  const json shown = d.value("result", json::object()).value("shown", json());
+  if (shown.is_string()) return shown.get<std::string>();
+  if (shown.is_array()) {
+    std::string out;
+    for (const auto& s : shown)
+      if (s.is_string()) out += (out.empty() ? "" : ", ") + s.get<std::string>();
+    return out;
+  }
+  if (t.kind == "note") return d.value("text", "");
+  if (t.kind == "datum") return d.value("letter", "");
+  const json v = d.value("value", json());
+  const std::string value = v.is_string() ? v.get<std::string>() : v.is_number() ? number(v.get<double>(), 4) : std::string();
+  if (t.kind == "fcf") return characteristic_glyph(d.value("characteristic", "")) + " " + (d.value("zone", "") == "diameter" ? "⌀" : "") + value;
+  if (t.kind == "surface") return value;
+  return "";
 }
 
 }  // namespace
@@ -314,7 +328,7 @@ std::vector<OutlineRow> outline(const Scene& scene) {
     }
     for (const auto& id : s.items) {
       const SheetItem* t = items.at(id);
-      std::string name = t->kind == "dimension" ? t->def.value("result", json::object()).value("shown", "") : t->def.value("text", "");
+      std::string name = item_name(*t);
       name = name.substr(0, name.find('\n'));
       OutlineRow row{id, "item", name, "", t->error, {}};
       if (const auto at = view_rows.find(t->view); at != view_rows.end()) sheet.children[at->second].children.push_back(std::move(row));
@@ -614,169 +628,11 @@ json plan_views(const Document& doc, const Scene& scene, const json& sheet, cons
       const Planned& b = plan[0];
       const double between = p.cy == 0 ? std::fabs(cx[p.cx] - cx[0]) - (b.w + p.w) * s / 2 : std::fabs(cy[p.cy] - cy[0]) - (b.h + p.h) * s / 2;
       record = {{"op", "sheet_view"}, {"kind", "projected"}, {"parent", "base"}, {"side", p.side}, {"gap", r2(std::max(1.0, between))}};
+      if (style.is_object() && style.value("centermarks", false)) record["style"] = {{"centermarks", true}};  // drawn by each view itself
     }
     out.push_back({{"view", p.view}, {"record", record}});
   }
   return {{"scale", scale_text(s)}, {"views", out}};
-}
-
-// ---------------------------------------------------------------- dimensions
-std::string format_value(double value, const json& item) {
-  const int precision = std::clamp(item.value("precision", 2), 0, 8);
-  const std::string type = item.value("type", "");
-  std::string shown = number(value, precision);
-  if (item.contains("text") && item["text"].is_string()) {  // "<>" stands for the value, as drafting tools write it
-    std::string text = item["text"].get<std::string>();
-    if (const size_t at = text.find("<>"); at != std::string::npos) text.replace(at, 2, shown);
-    return text;
-  }
-  shown = (type == "diameter" ? "⌀" : type == "radius" ? "R" : "") + shown + (type == "angle" ? "°" : "");
-  if (item.contains("tol") && item["tol"].is_object()) {
-    const json& t = item["tol"];
-    const double plus = t.value("plus", 0.0), minus = t.value("minus", -plus);
-    const int decimals = std::max(precision, 3);
-    const auto sign = [&](double x) { return (x < 0 ? "-" : "+") + number(std::fabs(x), decimals); };
-    shown += t.value("type", "sym") == "sym" ? " ±" + number(std::fabs(plus), decimals) : " " + sign(plus) + "/" + sign(minus);
-  }
-  return item.value("prefix", "") + shown + item.value("suffix", "");
-}
-
-json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, const SheetItem& item, const ViewFrame& frame) {
-  if (item.kind != "dimension") throw Error("only dimensions have a value");
-  if (!frame.error.empty()) throw Error("its view cannot be drawn: " + frame.error);
-  std::vector<design::ParamDef> defs;
-  for (const auto& p : scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
-  const design::ParamTable params(defs);
-  const std::map<std::string, TopoDS_Shape> fresh;
-  json notes = json::object();
-  const design::Ctx ctx{doc, params, scene, fresh, {}, &notes};
-
-  // What a reference gives a dimension: a point (its aspect), and the line, circle or cylinder it lies on.
-  struct Pick {
-    Vec3 p{0, 0, 0}, a{0, 0, 0}, b{0, 0, 0}, centre{0, 0, 0}, axis{0, 0, 1};
-    bool edge = false, line = false, circle = false, cylinder = false;
-    double r = 0;
-  };
-  const auto pick = [&](json r) {
-    Pick k;
-    if (r.is_string()) r = Ref::parse(r.get<std::string>()).to_json();
-    std::string aspect = r.value("aspect", "");
-    if (r.value("kind", "") == "center") r["kind"] = "edge", aspect = "center";
-    if (r.value("kind", "") == "point") {
-      k.p = Ref::from_json(r).point;
-      return k;
-    }
-    const TopoDS_Shape s = ctx.resolve(r).sub;
-    if (s.ShapeType() == TopAbs_VERTEX) {
-      k.p = of(BRep_Tool::Pnt(TopoDS::Vertex(s)));
-      return k;
-    }
-    if (s.ShapeType() == TopAbs_FACE) {
-      const BRepAdaptor_Surface f(TopoDS::Face(s));
-      if (f.GetType() != GeomAbs_Cylinder) throw Error("a dimension takes edges and vertices (a cylindrical face for a diameter)");
-      const gp_Cylinder c = f.Cylinder();
-      k.cylinder = true, k.r = c.Radius(), k.p = k.centre = of(c.Location()), k.axis = of(c.Axis().Direction());
-      return k;
-    }
-    if (s.ShapeType() != TopAbs_EDGE) throw Error("a dimension takes edges and vertices");
-    const TopoDS_Edge e = TopoDS::Edge(s);
-    const BRepAdaptor_Curve c(e);
-    const double t0 = c.FirstParameter(), t1 = c.LastParameter();
-    k.edge = true;
-    k.a = of(c.Value(t0)), k.b = of(c.Value(t1));
-    if (e.Orientation() == TopAbs_REVERSED) std::swap(k.a, k.b);
-    k.line = c.GetType() == GeomAbs_Line;
-    const bool conic = c.GetType() == GeomAbs_Circle || c.GetType() == GeomAbs_Ellipse;
-    if (c.GetType() == GeomAbs_Circle) {
-      const gp_Circ ci = c.Circle();
-      k.circle = true, k.r = ci.Radius(), k.centre = of(ci.Location()), k.axis = of(ci.Axis().Direction());
-    } else if (c.GetType() == GeomAbs_Ellipse) {
-      k.centre = of(c.Ellipse().Location());
-    }
-    if (aspect == "start") k.p = k.a;
-    else if (aspect == "end") k.p = k.b;
-    else if (aspect == "mid" || (aspect.empty() && !conic)) k.p = of(c.Value((t0 + t1) / 2));
-    else if (aspect == "center" || aspect.empty()) {
-      if (!conic) throw Error("only a circle or an ellipse has a centre");
-      k.p = k.centre;
-    } else throw Error("aspect is start, end, mid or center, not '" + aspect + "'");
-    return k;
-  };
-
-  std::vector<Pick> picks;
-  for (const auto& r : item.def.value("refs", json::array())) picks.push_back(pick(r));
-  const std::string& type = item.type;
-  const double units = sheet.def.value("units", "mm") == "in" ? 1 / 25.4 : 1;
-  double value = 0;
-  Vec3 anchor{0, 0, 0};
-  // What it measures on paper, for drawing it (paper mm from the view's centre, as the anchor).
-  json geometry = json::object();
-  const auto paper_of = [&](const Vec2& v) { return json::array({frame.scale * (v[0] - frame.centre[0]), frame.scale * (v[1] - frame.centre[1])}); };
-  if (type == "horizontal" || type == "vertical" || type == "aligned") {
-    Vec2 a, b;
-    if (picks.size() == 1 && picks[0].edge) {
-      a = frame.view(picks[0].a), b = frame.view(picks[0].b);
-      anchor = scaled(plus3(picks[0].a, picks[0].b), 0.5);
-    } else if (picks.size() == 2) {
-      a = frame.view(picks[0].p), b = frame.view(picks[1].p);
-      anchor = scaled(plus3(picks[0].p, picks[1].p), 0.5);
-    } else {
-      throw Error("a " + type + " dimension takes two references or one edge");
-    }
-    value = type == "horizontal" ? std::fabs(b[0] - a[0]) : type == "vertical" ? std::fabs(b[1] - a[1]) : std::hypot(b[0] - a[0], b[1] - a[1]);
-    geometry = {{"from", paper_of(a)}, {"to", paper_of(b)}};
-    if (type == "aligned" && picks.size() == 2 && picks[0].line && picks[1].line) {  // two parallel lines: across them
-      const Vec2 a0 = frame.view(picks[0].a), a1 = frame.view(picks[0].b), b0 = frame.view(picks[1].a), b1 = frame.view(picks[1].b);
-      const double la = std::hypot(a1[0] - a0[0], a1[1] - a0[1]), lb = std::hypot(b1[0] - b0[0], b1[1] - b0[1]);
-      if (la > 1e-9 && lb > 1e-9) {
-        const Vec2 u{(a1[0] - a0[0]) / la, (a1[1] - a0[1]) / la}, w{(b1[0] - b0[0]) / lb, (b1[1] - b0[1]) / lb};
-        if (std::fabs(u[0] * w[1] - u[1] * w[0]) < 1e-6) {
-          value = std::fabs(u[0] * (b0[1] - a0[1]) - u[1] * (b0[0] - a0[0]));
-          const Vec2 m{(a0[0] + a1[0]) / 2, (a0[1] + a1[1]) / 2};  // from the middle of the first line straight across
-          const double t = (m[0] - b0[0]) * w[0] + (m[1] - b0[1]) * w[1];
-          geometry = {{"from", paper_of(m)}, {"to", paper_of({b0[0] + w[0] * t, b0[1] + w[1] * t})}};
-        }
-      }
-    }
-  } else if (type == "radius" || type == "diameter") {
-    if (picks.size() != 1 || !(picks[0].circle || picks[0].cylinder)) throw Error("a " + type + " takes one circle or cylinder");
-    const double along = std::fabs(dot3(picks[0].axis, frame.dir));
-    if (picks[0].circle && along < 0.9999) throw Error("the circle is foreshortened in this view: dimension it in a view along its axis");
-    if (picks[0].cylinder && along < 0.9999 && along > 1e-4) throw Error("the cylinder is seen at a slant: dimension it in a view along or across its axis");
-    value = type == "radius" ? picks[0].r : 2 * picks[0].r;
-    anchor = picks[0].centre;
-    const Vec2 c = frame.view(picks[0].centre);
-    if (along >= 0.9999) {
-      geometry = {{"centre", paper_of(c)}, {"r", picks[0].r * frame.scale}};
-    } else {  // a cylinder seen from the side: across it, square to its axis
-      Vec2 n = frame.view(picks[0].axis);
-      const double l = std::hypot(n[0], n[1]);
-      n = {-n[1] / l, n[0] / l};
-      const double r = picks[0].r;
-      geometry = {{"from", paper_of(type == "radius" ? c : Vec2{c[0] - n[0] * r, c[1] - n[1] * r})}, {"to", paper_of({c[0] + n[0] * r, c[1] + n[1] * r})}};
-    }
-  } else if (type == "angle") {
-    if (picks.size() != 2 || !picks[0].line || !picks[1].line) throw Error("an angle takes two straight edges");
-    Vec2 d[2];
-    for (int i = 0; i < 2; ++i) {
-      const Vec3 e = unit(minus3(picks[size_t(i)].b, picks[size_t(i)].a));
-      if (std::fabs(dot3(e, frame.dir)) > 1e-4) throw Error("an edge is foreshortened in this view: dimension the angle in a view normal to both");
-      const Vec2 u = frame.view(e);
-      const double l = std::hypot(u[0], u[1]);
-      d[i] = {u[0] / l, u[1] / l};
-    }
-    value = std::acos(std::clamp(std::fabs(d[0][0] * d[1][0] + d[0][1] * d[1][1]), 0.0, 1.0)) * 180 / M_PI;
-    if (item.def.value("obtuse", false)) value = 180 - value;
-    anchor = scaled(plus3(plus3(picks[0].a, picks[0].b), plus3(picks[1].a, picks[1].b)), 0.25);
-    geometry = {{"lines", {{paper_of(frame.view(picks[0].a)), paper_of(frame.view(picks[0].b))}, {paper_of(frame.view(picks[1].a)), paper_of(frame.view(picks[1].b))}}}};
-  } else {
-    throw Error("needs a newer OPAD (dimension type '" + type + "')");
-  }
-  if (type != "angle") value *= units;
-  const Vec2 at = frame.paper(anchor);
-  json out = {{"value", value}, {"shown", format_value(value, item.def)}, {"anchor", {at[0] - frame.at[0], at[1] - frame.at[1]}}, {"geometry", geometry}};
-  if (notes.contains("rehinted")) out["rehinted"] = notes["rehinted"];
-  return out;
 }
 
 }  // namespace opad::drawing

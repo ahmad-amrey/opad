@@ -438,7 +438,7 @@ void SheetCanvas::start() {
           };
           const auto part = [&](const ViewGeometry& g, bool draft) {
             auto out = std::make_shared<Display>();
-            draw_view(*out, fr, *v, g);
+            draw_view(*out, fr, *v, g, &doc, &scene);
             if (!draft) draw_items(*out, doc, scene, *sheet, frames, fr.id, skipped);
             Part vp;
             vp.kind = Part::View;

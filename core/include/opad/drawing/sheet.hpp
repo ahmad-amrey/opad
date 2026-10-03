@@ -97,7 +97,9 @@ json evaluate_item(const Document& doc, const Scene& scene, const Sheet& sheet, 
 // the value it was made with in magenta; a view or item of a newer OPAD is left out. report (optional): {"views",
 // "items", "bodies", "skipped": [{"id", "error"}]}. Projects every view: workers only; progress as project() takes it.
 Display sheet_display(const Document& doc, const Scene& scene, const Sheet& sheet, const ProjectionProgress& progress = {}, json* report = nullptr);
-std::string format_value(double value, const json& item);  // precision, prefix, tolerance and suffix of an item
+// An item's value as shown: precision, prefix, tolerance (tol: sym ±, dev +/-, limits stacked) and suffix; numbers as the
+// sheet writes them (annotate.hpp format_number).
+std::string format_value(double value, const json& item, const Sheet* sheet = nullptr);
 // The parts of sheet_display, for an editor that shows each as soon as it is ready (UI-78); each primitive's source is the
 // view or item that drew it. draw_paper: the paper's own drawing, its template (frame, zones, title block with its values,
 // a template file's geometry) or for a sheet without one the plain ISO 5457 frame (title values may measure the part's
@@ -105,7 +107,8 @@ std::string format_value(double value, const json& item);  // precision, prefix,
 // view ("" those on the sheet itself), dimensions measured now (a dangling one in magenta with the value it was made with,
 // listed in skipped as {id, error}); returns how many it drew.
 void draw_paper(Display& d, const Document& doc, const Scene& scene, const Sheet& sheet);
-void draw_view(Display& d, const ViewFrame& frame, const SheetView& view, const ViewGeometry& g);
+// With the document (a worker), a view with style centermarks also draws the axes of the cylinders it sees from the side.
+void draw_view(Display& d, const ViewFrame& frame, const SheetView& view, const ViewGeometry& g, const Document* doc = nullptr, const Scene* scene = nullptr);
 int draw_items(Display& d, const Document& doc, const Scene& scene, const Sheet& sheet, const std::vector<ViewFrame>& frames, const std::string& view,
                json& skipped);
 

@@ -117,8 +117,8 @@ TEST(sheet_records_checked_and_forward_compatible) {
   const std::string text = "#opad 2\n" + json{{"uuid", new_uuid()}, {"units", "mm"}, {"created", ""}, {"generator", ""}}.dump() + "\n#ops\n"
       "{\"op\":\"sheet\",\"id\":\"" + s + "\",\"ts\":\"\",\"by\":\"\",\"name\":\"S\",\"size\":{\"w\":420,\"h\":297},\"standard\":\"jis\",\"scale\":\"1:1\"}\n"
       "{\"op\":\"sheet_view\",\"id\":\"" + v + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"kind\":\"section\",\"cut\":[[0,0],[1,1]]}\n"
-      "{\"op\":\"sheet_item\",\"id\":\"" + new_uuid() + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"view\":\"" + v + "\",\"kind\":\"hole_callout\"}\n"
-      "{\"op\":\"sheet_item\",\"id\":\"" + new_uuid() + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"kind\":\"dimension\",\"type\":\"ordinate\"}\n"
+      "{\"op\":\"sheet_item\",\"id\":\"" + new_uuid() + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"view\":\"" + v + "\",\"kind\":\"weld\"}\n"
+      "{\"op\":\"sheet_item\",\"id\":\"" + new_uuid() + "\",\"ts\":\"\",\"by\":\"\",\"sheet\":\"" + s + "\",\"kind\":\"dimension\",\"type\":\"arc_length\"}\n"
       "#bodies\n";
   const Document doc = Document::parse(text);
   CHECK_EQ(doc.serialize(), text);
@@ -369,7 +369,7 @@ TEST(sheet_draws_as_a_drawing) {
   std::map<std::string, const Prim*> texts;
   for (const auto& prim : d.prims)
     if (prim.kind == Prim::Kind::Text) texts[prim.text] = &prim;
-  CHECK(texts.count("60") && texts.count("⌀10") && texts.count("90°") && texts.count("BREAK SHARP EDGES") && texts.count("7"));
+  CHECK(texts.count("60") && texts.count("10") && texts.count("90°") && texts.count("BREAK SHARP EDGES") && texts.count("7"));
   CHECK_NEAR(texts["60"]->at[0], 80, 1e-6);  // over the middle of the front view's top edge (50..110 on paper)
   CHECK(texts["60"]->at[1] > 180);
   CHECK_EQ(texts["7"]->rgb, 0xFF00FFu);

@@ -18,6 +18,7 @@
 #include <map>
 
 #include "opad/drawing/sheet.hpp"
+#include "opad/drawing/symbols.hpp"
 #include "opad/util.hpp"
 #include "projection_internal.hpp"
 #include "writer_common.hpp"
@@ -336,7 +337,7 @@ void linear_dimension(Display& d, int layer, Vec2 a, Vec2 b, Vec2 axis, Vec2 pla
   }
   const double angle = readable(std::atan2(along[1], along[0]));
   const Vec2 up = left({std::cos(angle), std::sin(angle)});
-  d.text(layer, text, add(mul(add(a1, b1), 0.5), mul(up, gap)), s.text * s.scale, angle, 1, 0);
+  rich_text(d, layer, text, add(mul(add(a1, b1), 0.5), mul(up, gap)), s.text * s.scale, angle, 1, 0);
 }
 
 void radial_dimension(Display& d, int layer, Vec2 centre, double r, Vec2 place, const std::string& text, bool diameter, const DimStyle& s) {
@@ -347,8 +348,8 @@ void radial_dimension(Display& d, int layer, Vec2 centre, double r, Vec2 place, 
   if (diameter) arrowhead(d, layer, sub(centre, mul(dir, r)), mul(dir, -1), s);
   const double angle = readable(std::atan2(dir[1], dir[0]));
   const Vec2 up = left({std::cos(angle), std::sin(angle)});
-  const Vec2 at = far == rim ? add(centre, mul(dir, r * 0.5)) : sub(far, mul(dir, 0.5 * s.text * s.scale * 0.7 * static_cast<double>(text.size())));
-  d.text(layer, text, add(at, mul(up, s.gap * s.scale)), s.text * s.scale, angle, 1, 0);
+  const Vec2 at = far == rim ? add(centre, mul(dir, r * 0.5)) : sub(far, mul(dir, 0.5 * text_width(text, s.text * s.scale)));
+  rich_text(d, layer, text, add(at, mul(up, s.gap * s.scale)), s.text * s.scale, angle, 1, 0);
 }
 
 void angular_dimension(Display& d, int layer, std::array<Vec2, 2> a, std::array<Vec2, 2> b, Vec2 place, const std::string& text, const DimStyle& s) {
@@ -356,7 +357,7 @@ void angular_dimension(Display& d, int layer, std::array<Vec2, 2> a, std::array<
   const Vec2 da = sub(a[1], a[0]), db = sub(b[1], b[0]);
   const double c = cross(da, db), h = s.text * s.scale, gap = s.gap * s.scale;
   if (std::abs(c) <= 1e-9 * len(da) * len(db)) {
-    d.text(layer, text, place, h, 0, 1, 0);
+    rich_text(d, layer, text, place, h, 0, 1, 0);
     return;
   }
   const Vec2 v = add(a[0], mul(da, cross(sub(b[0], a[0]), db) / c));  // where the lines meet
@@ -377,7 +378,7 @@ void angular_dimension(Display& d, int layer, std::array<Vec2, 2> a, std::array<
   }
   const double mid = t0 + std::remainder(t1 - t0, 2 * M_PI) / 2;  // the sweep is under a half turn
   const double along = mid - M_PI / 2, angle = readable(along);
-  d.text(layer, text, add(v, mul({std::cos(mid), std::sin(mid)}, r + gap)), h, angle, 1, std::abs(std::remainder(angle - along, 2 * M_PI)) > 1e-9 ? 3 : 0);
+  rich_text(d, layer, text, add(v, mul({std::cos(mid), std::sin(mid)}, r + gap)), h, angle, 1, std::abs(std::remainder(angle - along, 2 * M_PI)) > 1e-9 ? 3 : 0);
 }
 
 // ---------------------------------------------------------------- files
