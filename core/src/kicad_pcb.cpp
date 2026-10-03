@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -1282,8 +1283,16 @@ class Builder {
     o.heal = opt.heal;
     o.progress = [this, phase](double, const std::string&) { return !opt.progress || opt.progress(-1, phase); };
     try {
-      if (is_vrml(path)) detail::import_mesh_scene(part_doc, path, o, true);  // KiCad's own VRML: 0.1 inch units, Z up
-      else import_file(part_doc, path, o);
+      // Read as the viewer reads (a linked board): a slow model is remembered per file, so reading the board again after a
+      // change (a sync) translates only the models that changed.
+      const bool remember = opt.viewer && !is_vrml(path);
+      const auto start = std::chrono::steady_clock::now();
+      if (is_vrml(path)) {
+        detail::import_mesh_scene(part_doc, path, o, true);  // KiCad's own VRML: 0.1 inch units, Z up
+      } else if (!remember || !viewer_cache_load(part_doc, path, o)) {
+        import_file(part_doc, path, o);
+        if (remember && std::chrono::steady_clock::now() - start > std::chrono::milliseconds(100)) viewer_cache_store(part_doc, path, o);
+      }
     } catch (const std::exception& e) {
       if (std::string(e.what()) == "import cancelled") throw;
       res.warnings.push_back("3D model " + utf8(path.filename()) + " could not be read: " + e.what());
