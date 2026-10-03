@@ -59,7 +59,7 @@ void MainWindow::buildMenus() {
     }
   };
   QMenu* file = menuBar()->addMenu(tr("&File"));
-  add(file, {"file.new", "file.open", "file.clone", "file.import", "file.importdoc"});
+  add(file, {"file.new", "file.open", "file.import", "file.importdoc"});
   m_recentMenu = file->addMenu(tr("Recent"));
   m_recentMenu->setObjectName("recent");
   add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});

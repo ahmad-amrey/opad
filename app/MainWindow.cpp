@@ -2,8 +2,6 @@
 #include "AgentBridge.hpp"
 #include "CheckPanel.hpp"
 #include "RecoveryManager.hpp"
-#include "DiskSync.hpp"
-#include "GitWatch.hpp"
 
 #include <QCloseEvent>
 #include <QInputDialog>
@@ -41,7 +39,6 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   buildStatusBar();
   buildDesign();
   m_recovery=new RecoveryManager(m_doc,m_design,m_jobs,this);
-  new DiskSync(m_doc,m_jobs,m_viewport,this);  // the file changed on disk: merged or reported, never overwritten (UI-56)
   m_agent=new AgentBridge(m_doc,m_design,m_viewport,m_jobs,this);
   m_agent->bench();
   auto* agentStatus=new QToolButton(this);
@@ -91,7 +88,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   // Viewer mode -> editable: the same shapes under content keys, so what is on screen stays (no second tessellation).
   connect(m_doc, &AppDocument::bodyKeysRenamed, m_viewport, &Viewport::renameBodyKeys);
   connect(m_chips, &ViewportChips::saveToEditRequested, this, [this] { guarded([this] { saveViewerAs(); }); });
-  connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); refreshGit(); });
+  connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); });
   connect(m_doc, &AppDocument::message, this, [this](const QString& t) { statusBar()->showMessage(t, 6000); });
   connect(m_viewport, &Viewport::selectionChanged, this, &MainWindow::onViewportSelection);
   connect(m_viewport, &Viewport::hoverChanged, m_statusHover, &QLabel::setText);

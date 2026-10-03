@@ -54,6 +54,7 @@ void AreaServices::openPanel(ToolPanel* panel) {
 bool AreaServices::requireEditable(std::function<void()> resume) { return m_window->requireEditable(std::move(resume)); }
 void AreaServices::guarded(const std::function<void()>& fn) { m_window->guarded(fn); }
 void AreaServices::showMessage(const QString& text, int ms) { m_window->statusBar()->showMessage(text, ms); }
+void AreaServices::open(const QString& path) { m_window->openPath(path); }
 void AreaServices::toast(const QString& text, const QString& actionText, std::function<void()> callback, int ms) {
   m_window->m_toasts->toast(text, actionText, std::move(callback), ms);
 }

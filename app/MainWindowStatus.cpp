@@ -1,6 +1,5 @@
 // The status bar (path, git, hover, selection, snapping toggles, progress) and git: branch state, an op's git log.
 #include "MainWindow.hpp"
-#include "GitWatch.hpp"
 
 #include <QDialog>
 #include <QDir>
@@ -31,10 +30,7 @@ void MainWindow::buildStatusBar() {
   m_progress = new ProgressStrip(this);
   m_jobs = new JobRunner(m_progress, this);
   m_viewport->setJobs(m_jobs);
-  m_git = new GitWatch(m_jobs, this, m_viewport);
-  connect(m_git, &GitWatch::openRequested, this, &MainWindow::openPath);
-  statusBar()->addWidget(m_statusPath);
-  statusBar()->addWidget(m_git->chip());
+  statusBar()->addWidget(m_statusPath);  // the git chip follows it (VcsArea.cpp)
   // Permanent: QStatusBar hides normal widgets while a temporary message shows and re-shows them after,
   // which fought with the strip's own show/hide and drew the message across the bars.
   statusBar()->addPermanentWidget(m_statusHover, 1);
@@ -174,11 +170,6 @@ QString MainWindow::newerRecords() const {
       if (!types.contains(QString::fromStdString(op.type))) types << QString::fromStdString(op.type);
     }
   return count ? tr("This file has %1 records from a newer OPAD (%2); they are kept and saved back unchanged.").arg(count).arg(types.join(", ")) : QString();
-}
-
-// ---------------------------------------------------------------- git status (F33, UI-61: GitWatch follows events)
-void MainWindow::refreshGit() {
-  m_git->setFile(m_doc->hasDocument && !m_doc->browse && !m_doc->doc.path.empty() ? m_doc->path() : QString());
 }
 
 void MainWindow::showOpGitLog(const std::string& opId,const QString& path) {

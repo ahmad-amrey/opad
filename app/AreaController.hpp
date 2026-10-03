@@ -82,6 +82,7 @@ class AreaServices {
   bool requireEditable(std::function<void()> resume = {});  // viewer mode: offers to save as OPAD first; false until then
   void guarded(const std::function<void()>& fn);           // runs fn; an exception becomes a message box
   void showMessage(const QString& text, int ms = 4000);    // status bar
+  void open(const QString& path);  // opens a file as File > Open… does (unsaved changes are asked about first)
   // A toast at the bottom centre of the viewport (Toast.hpp): a result or a warning, with an optional action ("Undo")
   // whose callback runs when it is clicked; ms 0 keeps it until it is closed. From ribbon on.
   void toast(const QString& text, const QString& actionText = QString(), std::function<void()> callback = {}, int ms = 4000);

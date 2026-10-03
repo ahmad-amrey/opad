@@ -2,9 +2,7 @@
 #include "MainWindow.hpp"
 #include "BenchRegistry.hpp"
 #include "CheckPanel.hpp"
-#include "DiskSync.hpp"
 #include "FileAssociations.hpp"
-#include "GitWatch.hpp"
 #include "RecoveryManager.hpp"
 
 #include <QApplication>
@@ -65,8 +63,6 @@ void MainWindow::setBenchSelect(bool on) {
 void MainWindow::runBench() {
   if(bench::run(*this))return;  // the benches registered from their own files (OPAD_BENCH) first
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_RECOVERY");!mode.isEmpty()){m_recovery->bench(mode);return;}
-  if(auto* disk=findChild<DiskSync*>();disk && disk->bench())return;
-  if(m_git->bench())return;
   if(benchViewer())return;
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_FILETYPES");!shot.isEmpty()){  // the dialog as drawn, nothing registered
     auto* dialog=new FileTypesDialog(this);dialog->show();

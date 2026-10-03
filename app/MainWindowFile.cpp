@@ -1,6 +1,5 @@
 // Files: open, import, save, viewer mode (save to edit), recent files, load progress, drag and drop.
 #include "MainWindow.hpp"
-#include "GitWatch.hpp"
 
 #include <QDir>
 #include <QDragEnterEvent>
@@ -28,7 +27,6 @@ void MainWindow::buildFileActions() {
                                                 "Meshes (*.stl *.3mf *.obj *.ply *.gltf *.glb *.wrl *.vrml);;2D drawings (*.dxf *.dwg *.svg)").arg(fileFilter(true)));
     if (!p.isEmpty()) openPath(p);
   });
-  addAction("file.clone", tr("Clone repository…"), "git", QKeySequence(), [this] { m_git->cloneRepository(); });
   addAction("file.import", tr("&Import…"), "import", QKeySequence("Ctrl+I"), [this] {
     QString p = QFileDialog::getOpenFileName(this, tr("Import design"), m_settings.value("ui/lastDir").toString(), tr("Design files (%1)").arg(fileFilter(false)));
     if (p.isEmpty()) return;

@@ -23,7 +23,6 @@
 #include "Viewport.hpp"
 #include "BrowserOverlay.hpp"
 class RecoveryManager;
-class GitWatch;
 class AgentBridge;
 class QToolButton;
 template <class Tag>
@@ -94,7 +93,6 @@ class MainWindow : public QMainWindow {
   void updateTitle();
   QString newerRecords() const;  // what of the file only a newer build reads (UI-65): one sentence, empty when nothing
   void updateChips();
-  void refreshGit();
   void showOpGitLog(const std::string& opId,const QString& path);
   void saveLastView();
   QString m_viewPath;
@@ -240,7 +238,6 @@ class MainWindow : public QMainWindow {
   QMenu* m_viewsMenu = nullptr;
   QMenu* m_recentMenu = nullptr;
   QLabel* m_statusPath = nullptr;
-  GitWatch* m_git = nullptr;  // the status chip and its event-driven refresh (UI-61)
   QLabel* m_statusHover = nullptr;
   QLabel* m_statusSel = nullptr;
   QToolButton* m_statusUnits = nullptr;  // the shown length unit (UI-123): a click offers the document's

@@ -12,7 +12,8 @@ Besides the cases below, every tools/bench_cases/<area>.py module adds its CASES
 (name, document, switches[, settings]) as here, where document is a fixture name ("empty", "box", "cylinder",
 "drawing", "overlap", "overhang", "screw", "far"), a path (relative to the repository) or a callable (root, document)
 -> path that makes its own file (document(name, *cli commands) runs opad-cli as below); switches are the environment
-("{prefix}" = the output prefix of the case, OPAD_LANG may be overridden); settings is the OPAD.ini text to start with.
+("{prefix}" = the output prefix of the case, "{root}" the run's scratch folder, "{cli}" opad-cli; OPAD_LANG may be
+overridden); settings is the OPAD.ini text to start with.
 """
 import argparse
 import importlib.util
@@ -67,11 +68,6 @@ def main():
                                ("feature", "--kind", "cylinder", "--inputs", '{"x":"8 mm","diameter":"10 mm","height":"20 mm"}'))
         overhang = document("overhang", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'),
                             ("feature", "--kind", "box", "--inputs", '{"plane":{"origin":[0,0,10],"normal":[0,0,1]},"length":"30 mm","width":"10 mm","height":"2 mm","operation":"join"}'))
-        # Changed on disk while open (UI-56): a document of its own, since the bench appends to it and rewrites it.
-        external = document("external", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
-        # Git (UI-61): a document in a folder of its own, outside any repository, and git without this machine's config.
-        (root / "git").mkdir()
-        versioned = document("git/model")
         screw = ROOT / "tests" / "corpus" / "occt-screw.step"
         # A 30 x 20 x 12 m block 600 m from the origin, Y up, as SketchUp exports a house with its site coordinates.
         far = root / "far-block.obj"
@@ -95,9 +91,6 @@ def main():
             ("zoom-refinement", round_part, {"OPAD_BENCH_SCENE": "{prefix}.png", "OPAD_BENCH_VIEW": "iso", "OPAD_BENCH_ZOOM": "40"}),
             ("interference", overlapping, {"OPAD_BENCH_CHECK": "interference", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
-            ("external-change", external, {"OPAD_BENCH_EXTERNAL_CHANGE": "{prefix}", "OPAD_BENCH_CLI": str(cli)}),
-            ("git", versioned, {"OPAD_BENCH_GIT": "{prefix}", "OPAD_BENCH_CLI": str(cli), "GIT_CONFIG_GLOBAL": str(root / "git-global"),
-                                "GIT_CONFIG_NOSYSTEM": "1"}),
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))
@@ -143,7 +136,7 @@ def main():
             log.write_text("", encoding="utf-8")
             env = {key: value for key, value in os.environ.items() if not key.startswith("OPAD_BENCH_")}
             env.update(OPAD_LANG="en", OPAD_BENCH_SETTINGS=str(root / f"{name}-settings"), OPAD_TRACE=str(log))
-            env.update({key: value.format(prefix=output / name) for key, value in switches.items()})
+            env.update({key: value.format(prefix=output / name, root=root, cli=cli) for key, value in switches.items()})
             if name in settings:
                 ini = root / f"{name}-settings" / "opad" / "OPAD.ini"
                 ini.parent.mkdir(parents=True, exist_ok=True)
