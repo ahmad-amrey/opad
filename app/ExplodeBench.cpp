@@ -377,10 +377,13 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     const auto board = offset(s->board), chip = offset(s->chip), cap = offset(s->cap);
                     require(done && same(board, chip) && same(board, cap) && length(board) > 0, "kept: the PCB moves whole at level 2 " + vec(board));
                     w.m_browser->grab().save(prefix + ".browser.png");
+                    w.m_browser->selectIds({s->pcb});  // the palette and shortcuts toggle Keep / Explode its parts from what they show
+                    require(w.action("assembly.explodeKeep")->isChecked() && !w.action("assembly.explodeSplit")->isChecked(), "the kept PCB selected: Keep together shows checked");
                     area->setLevels(1);
                     w.m_browser->selectIds({s->screws});
                   }});
   list.push_back({[=, &w] { return laidOut() && w.action("assembly.explodeSplit")->isEnabled(); }, [=, &w](bool enabled) {
+                    require(!w.action("assembly.explodeKeep")->isChecked() && !w.action("assembly.explodeSplit")->isChecked(), "the Screws selected (following the level): neither shows checked");
                     SelectionContext context = w.selectionContext();
                     QMenu menu;
                     for (AreaController* a : w.m_areas) a->contextMenu(context, menu);
@@ -389,8 +392,7 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                       if (!a->objectName().isEmpty()) entries << a->objectName();
                     require(enabled && entries.contains("assembly.explodeKeep") && entries.contains("assembly.explodeSplit"), "the Screws' context menu: " + entries.join(' '));
                     QAction* split = w.action("assembly.explodeSplit");
-                    split->setChecked(false);
-                    split->trigger();  // checkable: on, as a click in the menu turns it
+                    split->trigger();  // checkable: on, as a click in the menu or the palette turns it
                     require(area->spec().split.count(s->screws) > 0, "Explode its parts on the Screws");
                     w.m_browser->selectIds({});
                   }});

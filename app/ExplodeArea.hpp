@@ -17,6 +17,7 @@
 
 #include <array>
 #include <functional>
+#include <set>
 #include <unordered_map>
 #include <string>
 #include <vector>
@@ -108,6 +109,7 @@ class Explode : public AreaController {
   void showTrails(const std::vector<opad::Vec3>& moves);
   void placeHandle();  // on the selected unit, where it is drawn
   void refreshPanel();
+  void checkRules(const SelectionContext& selection);  // Keep together / Explode its parts checked as the selected components are
   void refreshChip();
   void tick();
   void fitIfOutside();
@@ -138,6 +140,7 @@ class Explode : public AreaController {
   QPointer<Job> m_job;
   QPointer<Job> m_measure;
   bool m_measureRefused = false, m_exact = false;
+  std::set<std::string> m_unmeasured;  // shape keys a measuring pass could not fill (not cached): the view's boxes, not measured again
   std::shared_ptr<opad::FastenerAxes> m_axes = std::make_shared<opad::FastenerAxes>();  // by shape key, this document's
   int m_serial = 0;
   QTimer m_tick;
