@@ -78,7 +78,7 @@ def main():
             time.sleep(.05)
         else:
             raise AssertionError(selection)
-        desktop.action("geometry_select", body=bodies[-1], image=str((root / "geometry-selection.png").resolve()))
+        desktop.action("select_similar")  # the whole body: its top perimeter first
         for attempt in range(100):
             selection = client.state()["selection"]
             if len(selection) == 4 and all(item.get("type") == "edge" for item in selection):

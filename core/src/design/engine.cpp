@@ -24,6 +24,7 @@
 
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
+#include "opad/recognize.hpp"
 #include "opad/design/sketch_pattern.hpp"
 #include "opad/design/sketch_curve.hpp"
 
@@ -205,10 +206,19 @@ std::vector<ResolvedRef> select_entities(const Ctx& ctx, const json& j) {
   if (map.Extent() > 20000) throw Error("a rule selector scans at most 20000 entities; this body has " + std::to_string(map.Extent()));
   const json& filters = j.at("select");
   const double tolerance = j.value("tolerance_mm", 1e-5);
+  // TODO 11 UI-97: {"recognized":"hole","diameter":6}: the faces of the matching recognised groups, then the filters.
+  const auto [recognition, rest] = split_recognized(filters);
+  std::vector<int> candidates;
+  if (!recognition.is_null()) {
+    if (kind != Ref::Kind::Face) throw Error("a \"recognized\" rule picks faces: give kind \"face\"");
+    candidates = recognized_faces(shape, recognition, tolerance, ctx.cancel);
+  } else {
+    for (int i = 0; i < map.Extent(); ++i) candidates.push_back(i);
+  }
   std::vector<ResolvedRef> out;
-  for (int i = 1; i <= map.Extent(); ++i) {
+  for (int i : candidates) {
     ctx.check_cancel();
-    if (entity_matches(describe_entity(map(i)), filters, tolerance)) out.push_back({body, map(i), i - 1});
+    if (entity_matches(describe_entity(map(i + 1)), rest, tolerance)) out.push_back({body, map(i + 1), i});
   }
   const std::string what = std::string(Ref::kind_name(kind)) + (out.size() == 1 ? "" : "s");
   if (out.empty()) throw Error("the rule " + filters.dump() + " matches no " + Ref::kind_name(kind) + " of the body");

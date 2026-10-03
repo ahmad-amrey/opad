@@ -70,6 +70,12 @@ with tempfile.TemporaryDirectory(prefix="opad-mcp-") as folder:
         assert len(ids) == 1, tree
         props = call("properties", doc=doc, node=ids[0])
         assert abs(props["volume"] - (24000 - math.pi * 250)) < 1e-5, props
+        # TODO 11 UI-94: the hole's wall is the cut's, and a round cut is a hole.
+        assert tools["related"]["annotations"]["readOnlyHint"] and tools["related"]["inputSchema"]["required"] == ["doc", "refs"]
+        wall = call("query_entities", doc=doc, body=ids[0], kind="face", filters={"surface": "cylinder"})["items"][0]["reference"]["ref"]
+        related = call("related", doc=doc, refs=[wall])
+        assert related["candidates"][0]["name"] == "Through hole" and related["candidates"][0]["category"] == "hole", related
+        assert call("entity_details", doc=doc, ref=wall)["created_by"]["name"] == "Through hole"
         assert call("context", doc=doc)["bodies"] == 1
         assert "ai_agent" in tools["annotate"]["inputSchema"]["properties"]["style"]["enum"]
         drawing = {"plane": {"origin": [0, 0, 15], "x": [1, 0, 0], "y": [0, 1, 0]},

@@ -84,7 +84,7 @@ void MainWindow::buildMenus() {
   add(nav, {"nav.fusion", "nav.solidworks", "nav.onshape", "nav.blender"});
   add(view, {"view.dark", "-", "workspace.review", "workspace.design", "-", "panel.browser", "panel.annotations", "panel.section", "panel.timeline", "panel.reset"});
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
-  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.geometry", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip"});
+  add(inspect, {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.pin", "inspect.clear", "-", "inspect.properties", "select.similar", "-", "inspect.interference", "inspect.printcheck", "-", "inspect.section", "inspect.flip"});
   QMenu* designMenu = menuBar()->addMenu(tr("&Design"));
   add(designMenu, {"design.sketch", "design.convertDrawing", "design.parameters", "-"});
   for (const char* group : {"create", "modify", "combine", "pattern", "body", "construct"}) {
@@ -244,7 +244,7 @@ void MainWindow::buildRibbon() {
   });
   // The compact Select control: the filters as icons with their keys, the rest of selecting under "Select ▾".
   auto* selectMore = new QMenu(this);
-  selectMore->addActions(acts({"select.through", "select.geometry", "edit.selectparent"}));
+  selectMore->addActions(acts({"select.through", "select.similar", "edit.selectparent"}));
   m_ribbon->setSelectFilters(acts({"select.bodies", "select.faces", "select.edges", "select.vertices"}), {"1", "2", "3", "4"}, selectMore);
   // The tab row's cluster: quick access (Save, Undo ▾, Redo ▾), search, the areas' widgets, settings.
   m_ribbon->addQuickAction(action("file.save"));

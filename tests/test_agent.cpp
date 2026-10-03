@@ -80,8 +80,8 @@ int main(){try {
   const size_t live=agent::live_tools().dump().size();
   size_t headless=0;for(const auto& c:commands::list())headless+=agent::command_schema(c).dump().size()+c.description.size();
   std::printf("tools/list: live %zu bytes, headless schemas %zu bytes\n",live,headless);
-  CHECK(live<108000);  // +2.5 KB: explode (TODO 11 UI-35); +0.5 KB: component on feature, sketch and batches (UI-33)
-  CHECK(headless<61600);  // +500 for project (hidden-line drawing views, TODO 11 UI-77), +5.5 KB for the drawing sheet commands (UI-76), +500 for materials (UI-140), +500 for bom (UI-83), +500 for export views (UI-87), +800 for sheet templates and laid-out views (UI-78), +100 for document properties (UI-78); +2 KB explode and component (UI-35, UI-33); +1.2 KB the KiCad commands and linked assets (asset, import's link)
+  CHECK(live<110000);  // +2.5 KB: explode (TODO 11 UI-35); +0.5 KB: component on feature, sketch and batches (UI-33); +2 KB for related (UI-94: its refs carry the reference schema)
+  CHECK(headless<63100);  // +500 for project (hidden-line drawing views, TODO 11 UI-77), +5.5 KB for the drawing sheet commands (UI-76), +500 for materials (UI-140), +500 for bom (UI-83), +500 for export views (UI-87), +800 for sheet templates and laid-out views (UI-78), +100 for document properties (UI-78); +2 KB explode and component (UI-35, UI-33); +1.2 KB the KiCad commands and linked assets (asset, import's link); +1.5 KB related (UI-94)
   // Trimmed for the list, still checked in full: sketch_edit's geometry.
   CHECK(agent::live_schema("sketch_edit")["properties"]["geometry"]==agent::live_schema("sketch")["properties"]["geometry"]);
   agent::validate_input(agent::live_output_schema("feature"),{{"result",{{"feature_id","history"},{"body_ids",{"body"}}}}});

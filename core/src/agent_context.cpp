@@ -3,7 +3,9 @@
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 #include "opad/mass.hpp"
+#include "opad/recognize.hpp"
 #include "opad/design/feature.hpp"
+#include "opad/design/provenance.hpp"
 #include "opad/design/sketch_geom.hpp"
 #include "opad/design/sketch_modify.hpp"
 #include <BRepCheck_Analyzer.hxx>
@@ -113,7 +115,13 @@ json entity_details(const Document& doc,const Scene& scene,const json& args) {
   }
   const auto ref=Ref::from_json(args.at("ref"));auto out=inspect_ref(doc,scene,ref);
   for(const char* key:{"edges","vertices","adjacent_faces","modified_by","path"})if(out.contains(key)&&out[key].is_array())out[key]=slice(out[key],args);
-  out["reference"]=reference_token(doc,scene,ref);return out;
+  out["reference"]=reference_token(doc,scene,ref);
+  // TODO 11 UI-94: the feature that made it, so an agent can act on "the boss" (related lists its faces).
+  if(ref.kind==Ref::Kind::Face || ref.kind==Ref::Kind::Edge)try{
+    design::Provenance provenance(doc);const auto owners=ref.kind==Ref::Kind::Face?provenance.face_owners(ref.body):provenance.edge_owners(ref.body);
+    if(ref.index>=0 && size_t(ref.index)<owners.size())out["created_by"]=provenance.describe(owners[size_t(ref.index)]);
+  }catch(...){}  // optional evidence: the details stand without it
+  return out;
 }
 json query_entities(const Document& doc,const Scene& scene,const json& args,const std::function<bool()>& cancelled) {
   const auto body=args.at("body").get<std::string>();
@@ -123,14 +131,17 @@ json query_entities(const Document& doc,const Scene& scene,const json& args,cons
   const auto refKind=kind=="face"?Ref::Kind::Face:kind=="vertex"?Ref::Kind::Vertex:Ref::Kind::Edge;
   const auto shape=node_world_shape(doc,scene,body);const int entities=subshape_count(shape,refKind);
   if(entities>10000)throw Error("Body exceeds query budget of 10000 entities");
-  const auto filters=args.value("filters",json::object());
+  const auto [recognition,filters]=split_recognized(args.value("filters",json::object()));
   const double tolerance=args.value("tolerance_mm",1e-5);
+  std::vector<int> recognized;  // TODO 11 UI-97: {"recognized":"hole","diameter":6} narrows the scan to those groups' faces
+  if(!recognition.is_null()){if(refKind!=Ref::Kind::Face)throw Error("a \"recognized\" filter picks faces: give kind \"face\"");recognized=recognized_faces(shape,recognition,tolerance,cancelled);}
   if(filters.contains("radius_min") && filters.contains("radius_max") && filters["radius_min"].get<double>()>filters["radius_max"].get<double>())throw Error("radius_min exceeds radius_max");
   auto axis=[](const std::string& a){return a=="x"?0:a=="y"?1:2;};
   if(filters.contains("bounds"))for(int i=0;i<3;++i)if(filters["bounds"]["min"][i].get<double>()>filters["bounds"]["max"][i].get<double>())throw Error("Invalid bounding region");
   size_t count=0;json items=json::array();
   for(int i=0;i<entities;++i){
     if(cancelled && cancelled())throw Error("cancelled");
+    if(!recognition.is_null() && !std::binary_search(recognized.begin(),recognized.end(),i))continue;
     Ref ref;ref.body=body;ref.kind=refKind;ref.index=i;
     auto detail=inspect_ref(doc,scene,ref);
     if(!entity_matches(detail,filters,tolerance))continue;  // the same filters rule selectors use (TODO 10 B7)

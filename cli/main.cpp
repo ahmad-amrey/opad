@@ -369,7 +369,7 @@ int main(int argc, char** argv) {
       }
     } else if (command == "inspect") {
       for (; pi < positional.size(); ++pi) uuids.push_back(positional[pi]);
-    } else if (command == "measure") {
+    } else if (command == "measure" || command == "related") {
       for (; pi < positional.size(); ++pi) uuids.push_back(positional[pi]);
       if (!uuids.empty() && !args.contains("refs")) { args["refs"] = uuids; uuids.clear(); }
     } else if (command == "annotate") {

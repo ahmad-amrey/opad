@@ -66,13 +66,14 @@ class MainWindow : public QMainWindow {
   // Feature areas (AreaController.hpp, MainWindowAreas.cpp): made after the built-in commands, hooks called from here.
   void createAreas();
   SelectionContext selectionContext() const;
+  // An area takes this built-in command for the selection, or for a timeline marker (AreaController::command).
+  bool areaCommand(const QString& id, const std::string& op = {});
   template <class Hook>
   void forEachArea(Hook hook) {  // the hooks that run once the window is built
     if (m_areasReady)
       for (AreaController* area : m_areas) hook(area);
   }
   void buildMenus();
-  void selectGeometry();
   void buildRibbon();
   void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")
   void buildDesign();         // the controller, its floating panel and the wiring
@@ -128,7 +129,14 @@ class MainWindow : public QMainWindow {
   bool closeTopPanel();              // Esc: hides one unpinned panel
   void bindPanel(QAction* a, ToolPanel* panel);
   void showContextMenu(const QPoint& globalPos, std::vector<std::string> ids);
+  // The context menu by what it is about (UI-100): picked faces, edges or vertices, bodies, components, sketches, nothing;
+  // the areas add theirs (smart selection the history of the picks after the title, "contextTitle"). Benches fill one.
+  void buildContextMenu(QMenu& menu, const std::vector<std::string>& ids);
+  QAction* repeatAction();  // edit.repeat worded for the last tool started ("Repeat Fillet"); null when there is none to offer
+  bool repeatable(const QString& id) const;  // a tool worth repeating: a feature, a sketch tool, a measurement, a note
+  QString m_lastCommand;
   void timelineMenu(const std::string& opId, const QPoint& globalPos);
+  void buildTimelineMenu(QMenu& menu, const std::string& opId);  // what timelineMenu shows (benches fill one without showing it)
   // Guided tools: the tool is started first and asks for its picks one step at a time (see GuidedTool.hpp).
   void toggleTool(const QString& id);  // distance, angle, radius, bbox, note, sectionface
   void startTool(const QString& id);
@@ -162,6 +170,10 @@ class MainWindow : public QMainWindow {
   void deleteOp(const std::string& opId);
   void restoreOp(const std::string& opId);
   void deleteCurrent();
+  // Del on objects (UI-04): what the selection covers and nothing more (smart::routeDelete), one undo step, a toast with
+  // Undo instead of a question. Faces and edges never come here: they go to smart selection (SmartSelect).
+  void deleteNodes(const std::vector<std::string>& ids);
+  void undoToast(const QString& text);  // a result toast whose Undo takes back that step (not one made after it)
   void writeSelectionFile();
   void positionOverlays();
   void setLoading(bool on);  // shade + spinner over the workspace, input blocked, until the load job ends

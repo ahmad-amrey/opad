@@ -146,6 +146,10 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   `ambiguity: "unique"`) fails the feature instead of guessing. The result's `selected` records what each rule
   matched. Example: the four top edges of a box of height 20: `{"curve": "line", "at_plane": {"axis": "z", "value":
   20}}` with `"expect": 4`.
+- Recognised details as a rule (faces only): `"select": {"recognized": "hole", "diameter": 6, "through": true}` is
+  every face of the body's holes of that size; also `fillet` (`radius`), `chamfer` (`distance`), `wall`
+  (`thickness`), `boss`, `pocket`; hole `type` simple|counterbore|countersink, `depth`, `cb_diameter`,
+  `cs_diameter`. `query_entities` takes the same keys in `filters`.
 - Live server: a face/edge/vertex input is accepted when the connection was given that reference (by
   `entity_details`, `query_entities`, the selection or a change list) and its body still has the same key and
   placement; otherwise put its token in the call's `references`. A token needs only `ref`, `geometry` and
@@ -246,6 +250,19 @@ servers as the resource `opad://guide/agent` and by `live_diagnostics` with `inc
   asset` command.
 - Pictures (`.png .jpg .bmp .gif .webp`) import as a flat canvas on XY at the picture's resolution (96 dpi unless the
   file says); `transform` places and scales it.
+- Which feature made a face: `entity_details` of a face or edge has `created_by` (`op`, `name`, `kind`, `category`:
+  body, boss, pocket, hole, groove, fillet, chamfer, shell, draft, press_pull, pattern, mirror, combine, split,
+  transform or imported). `related` with `refs` lists, for the picked faces/edges, each owning feature with every
+  face it made on those bodies (`refs`, `count`), the one holding the whole selection first: "delete the boss" is a
+  `delete` of that feature's `op`. Copies (pattern, mirror, move with copy) are the copying feature's, with `via`
+  naming the source's feature; `merged` marks a face that a Boolean made one with an older coplanar face (it is
+  listed under the older feature). Imported bodies have no history: their faces belong to the import.
+- `related` also lists what the geometry shows, on any solid (imported ones too): `hole` (params diameter, depth,
+  through, type, cb_/cs_diameter), `fillet` chains (radius, convex), `chamfer`, `boss`, `pocket`, `wall` (thickness),
+  `tangent` chains, `loop`s of edges, and `similar` rules ("All holes Ø6 through"). Groups holding the picks come
+  after a feature that made part of the body and before the one that made all of it. A body picked whole with
+  `kinds` lists every group of those kinds. To delete a detail of an imported body, run the feature `remove_faces`
+  with its faces (or a `recognized` rule): the faces around it are extended to close the gap.
 
 ## Checking the result
 

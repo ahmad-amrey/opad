@@ -543,6 +543,16 @@ QPoint Viewport::widgetPoint(const opad::Vec3& world) const {
   return QPoint(qRound(px / scale.x()), qRound(py / scale.y()));
 }
 
+std::function<QPointF(const opad::Vec3&)> Viewport::projector() const {
+  if (!m_initialised) return {};
+  const Handle(Graphic3d_Camera) camera = new Graphic3d_Camera(m_view->Camera());
+  const double w = width(), h = height();
+  return [camera, w, h](const opad::Vec3& p) {
+    const gp_Pnt n = camera->Project(gp_Pnt(p[0], p[1], p[2]));  // normalised device coordinates, y up
+    return QPointF((n.X() + 1) / 2 * w, (1 - n.Y()) / 2 * h);
+  };
+}
+
 void Viewport::mouseDoubleClickEvent(QMouseEvent* e) {
   if (m_blocked) return;
   double u, v;

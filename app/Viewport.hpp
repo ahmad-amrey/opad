@@ -143,6 +143,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void benchBand();                        // OPAD_BENCH_BAND: rubber band over the whole view in the current mode
   void benchSubShot(const QString& path);  // OPAD_BENCH_SUBSHOT: frame from behind the picked sub-shape (X-ray check)
   void benchClick(double fx, double fy);  // OPAD_BENCH_TOOL: a left click at this fraction of the view, as the mouse handlers deliver it
+  void benchFlush();  // what the next frame does with the input the mouse handlers queued (picks, hover): a hidden window never paints
   bool benchPicking();  // OPAD_BENCH_PICKING: circle discovery, locking, exact picks and orbit regression
   // OPAD_BENCH_TRACKING (ViewportTrackingBench.cpp): what is behind a face is never hovered, acquired or offered (UI-31)
   bool benchTracking(const QString& prefix, bool endsOnly = false);
@@ -254,6 +255,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // adds to the selection (or takes a picked item out again) instead of replacing it, so selection() is the
   // tool's ordered pick list.
   void setPickAccumulate(bool on, bool retainPicks = false);
+  bool pickAccumulate() const { return m_pickAccumulate; }  // a guided tool or a design input owns the picks
   void deselectLast();      // one step back
   void keepLastSelected();  // a pick after the last step starts over from that pick
   bool lastPickPoint(opad::Vec3& p) const;  // where the last click hit the geometry
@@ -291,6 +293,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // Makes the context selection exactly these (bodies, faces/edges/vertices by ordinal, candidates).
   void selectRefs(const std::vector<opad::Ref>& refs, const std::vector<std::string>& candidates = {});
   void setBodiesPickable(bool on);  // off: only candidates can be picked (choosing a sketch plane, a profile)
+  // Smart selection's candidate (UI-95, ViewportCandidates.cpp): what a click on its chip would select, in the candidate
+  // amber, on top like the selection. Faces and edges are one object copied from the bodies' meshes (a sliced job when
+  // there are many), whole bodies take the look compositor's candidate layer. Empty: nothing shown.
+  void showCandidateRefs(const std::vector<opad::Ref>& refs);
+  size_t candidateRefsShown() const { return m_candidateShown; }  // faces and edges drawn now (benches)
   // Feature preview: these shapes (world coordinates, already meshed by the worker) are drawn in place of the
   // nodes they change; `hidden` nodes are not drawn at all (consumed tools, removed bodies).
   void setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_Shape>>& shapes, const std::vector<std::string>& hidden);
@@ -301,6 +308,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // stretch while the exact preview is computed.
   void setPreviewDisplay(const std::vector<std::shared_ptr<const BodyPrs>>& arrays);
   void clearPreviewBodies();
+  size_t previewBodyCount() const { return m_previewBodies.size(); }  // bench checks: a feature preview is on screen
   void setPreparedPreview(const TopoDS_Shape& shape,std::shared_ptr<const BodyPrs> prs,const std::vector<std::string>& hidden);
   // Sketch editing.
   void beginSketchInput(SketchInput* input, const opad::Frame& frame, const std::string& hiddenSketch);
@@ -317,6 +325,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   double renderScale() const;  // the render's size over the view's (Studio quality: 1.25)
   opad::Vec3 viewDirection() const;            // unit direction the camera looks along (into the scene)
   QPoint widgetPoint(const opad::Vec3& world) const;
+  // widgetPoint for a worker: a copy of the camera as it is now (fractional widget coordinates; empty before the view is up).
+  std::function<QPointF(const opad::Vec3&)> projector() const;
   // Notes: NoteCards places one card per open note and tells the view where each pointer ends (widget
   // coordinates); notesMoved() follows every camera move or scene change so it can place them again.
   bool noteAnchor(const std::string& opId, QPoint& out) const;  // false: unknown, or behind the eye
@@ -644,6 +654,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QTimer m_syncTimer;
   Job* m_selJob = nullptr;                        // in-flight selectNodes
   Handle(SubHighlight) m_subHl;                   // every selected sub-shape, one object in the Topmost layer
+  Handle(SubHighlight) m_candidateHl;             // showCandidateRefs' faces and edges
+  Job* m_candidateJob = nullptr;
+  size_t m_candidateShown = 0;
+  std::vector<opad::Ref> m_candidateRefs;
   std::map<const AIS_InteractiveObject*,Handle(SubHighlight)> m_bodyGlows;
   Job* m_bodyGlowJob=nullptr;
   Job* m_subJob = nullptr;                        // in-flight refreshSubHighlight

@@ -1762,6 +1762,13 @@ void Viewport::benchClick(double fx, double fy) {
   trace::log(QStringLiteral("bench: mouse click posted at %1,%2").arg(pt.x()).arg(pt.y()));
 }
 
+void Viewport::benchFlush() {
+  if (!m_initialised || m_flushingViewEvents) return;
+  m_view->Redraw();  // see benchPick: the picker needs a frame after a camera change
+  QScopedValueRollback<bool> flushing(m_flushingViewEvents, true);
+  FlushViewEvents(m_ctx, m_view, Standard_True);
+}
+
 void Viewport::benchPick() {
   if (!m_initialised) return;
   m_view->Redraw();  // a frame first: the picker clips to the camera z range, which only Redraw (AutoZFit) updates

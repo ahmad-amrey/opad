@@ -12,7 +12,6 @@
 #include <QTabWidget>
 #include <QScrollBar>
 #include <QKeyEvent>
-#include <QInputDialog>
 #include <QAction>
 #include "Panels.hpp"
 // Explicit, isolated acceptance harness. No control files are consumed in ordinary runs.
@@ -40,15 +39,9 @@ void AgentBridge::bench(){
         if(data.contains("image"))timeline->grab().save(QString::fromStdString(data["image"].get<std::string>()));
         result={{"current",timeline->currentOp()},{"scroll",scroll->value()},{"maximum",scroll->maximum()},{"page",scroll->pageStep()}};
       }
-      else if(action=="geometry_select"){
-        QTimer::singleShot(0,this,[this,data]{
-          for(auto* dialog:m_window->findChildren<QInputDialog*>()){
-            if(data.contains("image"))dialog->grab().save(QString::fromStdString(data["image"].get<std::string>()));
-            dialog->setTextValue(dialog->comboBoxItems().at(data.value("mode",0)));dialog->accept();
-          }
-        });
-        auto* action=m_window->findChild<QAction*>("select.geometry");
-        if(!action)throw opad::Error("Geometry selection action unavailable");
+      else if(action=="select_similar"){  // Select similar on the selection (a body: top perimeter first, again: the next rule)
+        auto* action=m_window->findChild<QAction*>("select.similar");
+        if(!action)throw opad::Error("Select similar action unavailable");
         action->trigger();
       }
       else if(action=="state")result=liveState();

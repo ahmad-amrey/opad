@@ -66,6 +66,11 @@ class AppDocument : public QObject {
   // model as it was when that op was computed, which is what its references mean. Empty = the whole log.
   void setRollback(const std::string& opId);
   const std::string& rollback() const { return m_rollback; }
+  // The same, asked for by the user (the timeline's playhead, Roll back to here, UI-99): the model as it was before that
+  // op, until it is rolled forward (empty). Nothing is inserted at the marker (UI-130): a step appended meanwhile rolls
+  // forward first, so it shows. An editor's setRollback takes over from it.
+  void rollBackTo(const std::string& opId);
+  bool rolledBack() const { return m_userRollback && !m_rollback.empty(); }
 
   // Long loads run off the UI thread; progress and the result come back through the signals below. A file other than
   // .opad opens in viewer mode. Opening while a load runs drops that load (it finishes in the background, unseen).
@@ -203,6 +208,7 @@ class AppDocument : public QObject {
   static QString labelFor(const std::string& command, const opad::json& args);
   void checkActive();  // the active component still a component of the (whole) scene, else the root
   std::string m_rollback, m_active;
+  bool m_userRollback = false;  // m_rollback is the user's (rollBackTo), not an editor's
   std::vector<Step> m_undo, m_redo;
   int m_undoLimit = 50;
   std::vector<std::string> m_savedIds;

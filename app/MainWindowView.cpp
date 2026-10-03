@@ -139,13 +139,6 @@ void MainWindow::buildNavigationActions() {
     }, true);
     if (f == Viewport::SelFilter::Body) a->setChecked(true);
   }
-  // A feature input, a guided tool or a sketch sets the filter it picks with: the chips show what the view picks,
-  // whoever chose it (they stayed on Bodies while a pipe's path picked edges).
-  connect(m_viewport, &Viewport::filterApplied, this, [this] {
-    const Viewport::SelFilter f = m_viewport->selectionFilter();
-    for (const auto& [name, filter] : std::vector<std::pair<QString, Viewport::SelFilter>>{{"bodies", Viewport::SelFilter::Body}, {"faces", Viewport::SelFilter::Face}, {"edges", Viewport::SelFilter::Edge}, {"vertices", Viewport::SelFilter::Vertex}})
-      if (QAction* a = action("select." + name)) a->setChecked(filter == f);
-  });
 }
 
 void MainWindow::refreshIcons() {
@@ -164,6 +157,14 @@ void MainWindow::buildCentral() {
   m_viewport = new Viewport(m_doc, m_stack);
   m_viewport->setSelectThrough(action("select.through")->isChecked());
   ToolPanel::setKeyboardHome(m_viewport);  // a click on a panel's button leaves the keys with the view (UI-05)
+  // A feature input, a guided tool, a sketch or Select similar sets the filter it picks with: the chips show what the
+  // view picks, whoever chose it (they stayed on Bodies while a pipe's path picked edges). Here, not in buildActions:
+  // there the viewport did not exist yet and the connection was never made.
+  connect(m_viewport, &Viewport::filterApplied, this, [this] {
+    const Viewport::SelFilter f = m_viewport->selectionFilter();
+    for (const auto& [name, filter] : std::vector<std::pair<QString, Viewport::SelFilter>>{{"bodies", Viewport::SelFilter::Body}, {"faces", Viewport::SelFilter::Face}, {"edges", Viewport::SelFilter::Edge}, {"vertices", Viewport::SelFilter::Vertex}})
+      if (QAction* a = action("select." + name)) a->setChecked(filter == f);
+  });
   m_stack->addWidget(m_empty);
   m_stack->addWidget(m_viewport);
   setCentralWidget(m_stack);

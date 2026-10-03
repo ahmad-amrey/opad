@@ -184,7 +184,9 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     if (!ok || finalName.isEmpty()) return;
     guarded([&] { m_doc->run("section", opad::json{{"name", finalName.toStdString()}, {"origin", o}, {"normal", n}}); });
   });
-  connect(m_timeline, &TimelineWidget::opClicked, this, &MainWindow::selectOpTargets);
+  connect(m_timeline, &TimelineWidget::opClicked, this, [this](const std::string& id) {
+    if (!areaCommand("timeline.select", id)) selectOpTargets(id);  // a feature that changed bodies: the faces it made (SmartSelect)
+  });
   connect(m_timeline, &TimelineWidget::contextRequested, this, [this](const std::string& id,const QPoint& point) { guarded([&] { timelineMenu(id,point); }); });
   connect(m_toolSteps, &ToolStepsPanel::pinRequested, this, [this] { guarded([this] { pinMeasurement(); }); });
   connect(m_toolSteps, &ToolStepsPanel::clearRequested, this, &MainWindow::toolEscape);
@@ -304,6 +306,14 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
       requireEditable([a] { a->trigger(); });
       return;
     }
+    // Rolled back with the timeline's marker (UI-99): a change goes at the end, so the model is rolled forward first,
+    // and picks on the bodies as they were with it (TimelineArea).
+    if (m_doc->rolledBack() && m_commands.editsDocument(id))
+      if (QAction* forward = action("timeline.rollForward")) {
+        forward->trigger();
+        statusBar()->showMessage(tr("Rolled forward to the end of the timeline: the change is added there."), 6000);
+      }
+    if (repeatable(id)) m_lastCommand = id;  // Repeat, first in the context menus (UI-100)
     guarded(fn);
   });
   m_commands.add(info, a);

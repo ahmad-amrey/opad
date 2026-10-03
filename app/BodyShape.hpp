@@ -181,6 +181,8 @@ class SubHighlight : public AIS_InteractiveObject {
   DEFINE_STANDARD_RTTI_INLINE(SubHighlight, AIS_InteractiveObject)
  public:
   explicit SubHighlight(const Quantity_Color& color) : m_color(color) {}
+  float fillAlpha = 0.18f;  // the faces' tint
+  bool glow = true;         // a white glow over faces and around lines (the selection); off: the colour alone (a candidate)
   std::vector<Handle(Graphic3d_ArrayOfTriangles)> m_triangles;
   std::vector<Handle(Graphic3d_ArrayOfSegments)> m_segments;
   std::vector<Handle(Graphic3d_ArrayOfPoints)> m_points;

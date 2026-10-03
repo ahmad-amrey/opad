@@ -7,6 +7,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QRegularExpression>
+#include <QStatusBar>
 
 #include <algorithm>
 #include <functional>
@@ -14,6 +15,7 @@
 
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "SmartRules.hpp"
 
 void MainWindow::buildEditActions() {
   addAction("edit.undo", tr("&Undo"), "rollLeft", QKeySequence::Undo, [this] {
@@ -54,8 +56,10 @@ void MainWindow::buildEditActions() {
     if (!hidden.empty()) m_doc->run("appearance", opad::json{{"targets", hidden}, {"visible", true}});
   });
   addAction("edit.filter", tr("Filter objects"), "search", QKeySequence("Ctrl+F"), [this] { m_browserOverlay->reveal(); m_browser->focusFilter(); });
-  addAction("edit.selectparent", tr("Select parent"), "chevronUp", QKeySequence("Ctrl+Up"), [this] { m_browser->selectParent(); });
-  addAction("edit.delete", tr("Delete (tombstone)"), "delete", QKeySequence::Delete, [this] { deleteCurrent(); });
+  addAction("edit.selectparent", tr("Select parent"), "chevronUp", QKeySequence("Ctrl+Up"), [this] {
+    if (!areaCommand("edit.selectparent")) m_browser->selectParent();  // picked faces grow to their feature (SmartSelect)
+  });
+  addAction("edit.delete", tr("Delete"), "delete", QKeySequence::Delete, [this] { deleteCurrent(); });
   addAction("edit.restore", tr("Restore"), "restore", QKeySequence("Shift+Del"), [this] {
     std::string id = m_timeline->currentOp();
     if (id.empty()) throw opad::Error("Select a tombstoned marker on the timeline first.");
@@ -64,43 +68,57 @@ void MainWindow::buildEditActions() {
   addAction("edit.selecttouched", tr("Select what it touches"), "isolate", QKeySequence("T"), [this] {
     if (!m_timeline->currentOp().empty()) selectOpTargets(m_timeline->currentOp());
   });
+  // The last tool again (UI-100): first in the context menus as "Repeat Fillet"; no key of its own unless one is set.
+  addAction("edit.repeat", tr("Repeat last command"), "repeat", QKeySequence(), [this] {
+    QAction* last = m_lastCommand.isEmpty() ? nullptr : action(m_lastCommand);
+    if (!last || !last->isEnabled()) return statusBar()->showMessage(tr("Nothing to repeat yet: start a feature, a sketch tool or a measurement first."), 5000);
+    last->trigger();
+  })->setProperty("shortcutHint", tr("Starts the last feature, sketch tool, measurement or note again."));
 }
 
 void MainWindow::timelineMenu(const std::string& requestedId, const QPoint& globalPos) {
+  QMenu menu(this);
+  buildTimelineMenu(menu, requestedId);
+  menu.exec(globalPos);
+}
+
+// A marker's actions, then the roll-back marker and how the timeline shows; on no marker (empty id) only the latter.
+void MainWindow::buildTimelineMenu(QMenu& menu, const std::string& requestedId) {
   const std::string opId=requestedId;
   const auto generation=m_doc->generation;
-  bool deleted = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) != m_doc->scene.deleted_ops.end();
-  QMenu menu(this);
   menu.setMinimumWidth(232);  // not fixed: that cut the shortcuts off ("Shift+" for Shift+Del)
-  const opad::Op* menuOp = m_doc->doc.find_op(opId);
-  // Tombstoning a delete op brings back what it deleted (docs/format.md), so on a delete marker that entry is offered
-  // as what it does; once undone, the delete can be applied again.
-  const bool deleteMarker = menuOp && menuOp->type == "delete";
-  QAction* del = menu.addAction(icons::themed(deleteMarker ? "restore" : "delete", 16), deleteMarker ? tr("Restore what it deleted\tDel") : tr("Delete (tombstone)\tDel"));
-  del->setEnabled(!deleted);
-  QAction* restore = menu.addAction(icons::themed(deleteMarker ? "delete" : "restore", 16), deleteMarker ? tr("Delete it again\tShift+Del") : tr("Restore\tShift+Del"));
-  restore->setEnabled(deleted);
-  const bool designOp = menuOp && (menuOp->type == "feature" || menuOp->type == "sketch") && !deleted;
-  const opad::Feature* feat = m_doc->scene.feature(opId);
-  const bool suppressed=feat && feat->suppressed;
-  QAction* editOp = designOp ? menu.addAction(icons::themed("rename", 16), menuOp->type == "sketch" ? tr("Edit sketch") : tr("Edit feature")) : nullptr;
-  QAction* suppress = designOp && feat ? menu.addAction(icons::themed(feat->suppressed ? "eye" : "hide", 16), feat->suppressed ? tr("Unsuppress") : tr("Suppress")) : nullptr;
-  QAction* exportSketch=designOp && menuOp->type=="sketch" ? menu.addAction(icons::themed("export",16),tr("Export sketch")) : nullptr;
-  if (designOp) menu.addSeparator();
-  QAction* sel = menu.addAction(icons::themed("isolate", 16), tr("Select what it touches\tT"));
-  menu.addSeparator();
-  QAction* copy = menu.addAction(icons::themed("commit", 16), tr("Copy op id\tCtrl+C"));
-  QAction* log = menu.addAction(icons::themed("git", 16), tr("Show in git log"));
-  QAction* chosen = menu.exec(globalPos);
-  if (!chosen || generation!=m_doc->generation) return;
-  if (chosen == exportSketch) exportDialog({opId});
-  else if (chosen == editOp) m_design->editOp(opId);
-  else if (chosen == suppress) m_design->setSuppressed(opId, !suppressed);
-  else if (chosen == del) deleteOp(opId);
-  else if (chosen == restore) restoreOp(opId);
-  else if (chosen == sel) selectOpTargets(opId);
-  else if (chosen == copy) QApplication::clipboard()->setText(QString::fromStdString(opId));
-  else if (chosen == log) showOpGitLog(opId,m_doc->path());
+  // Each entry acts only on the document it was offered for (a load may replace it while the menu is open).
+  auto entry = [&](const QString& icon, const QString& text, const char* name, std::function<void()> fn) {
+    QAction* a = icon.isEmpty() ? menu.addAction(text) : menu.addAction(icons::themed(icon, 16), text);
+    a->setObjectName(name);
+    connect(a, &QAction::triggered, this, [this, generation, fn] { if (generation == m_doc->generation) guarded(fn); });
+    return a;
+  };
+  if (const opad::Op* menuOp = m_doc->doc.find_op(opId)) {
+    const bool deleted = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) != m_doc->scene.deleted_ops.end();
+    // Tombstoning a delete op brings back what it deleted (docs/format.md), so on a delete marker that entry is offered
+    // as what it does; once undone, the delete can be applied again.
+    const bool deleteMarker = menuOp->type == "delete";
+    entry(deleteMarker ? "restore" : "delete", deleteMarker ? tr("Restore what it deleted\tDel") : tr("Delete (tombstone)\tDel"), "timelineDelete", [this, opId] { deleteOp(opId); })->setEnabled(!deleted);
+    entry(deleteMarker ? "delete" : "restore", deleteMarker ? tr("Delete it again\tShift+Del") : tr("Restore\tShift+Del"), "timelineRestore", [this, opId] { restoreOp(opId); })->setEnabled(deleted);
+    const bool designOp = (menuOp->type == "feature" || menuOp->type == "sketch") && !deleted;
+    const opad::Feature* feat = m_doc->scene.feature(opId);
+    if (designOp) entry("rename", menuOp->type == "sketch" ? tr("Edit sketch") : tr("Edit feature"), "timelineEdit", [this, opId] { m_design->editOp(opId); });
+    if (designOp && feat) entry(feat->suppressed ? "eye" : "hide", feat->suppressed ? tr("Unsuppress") : tr("Suppress"), "timelineSuppress", [this, opId, on = !feat->suppressed] { m_design->setSuppressed(opId, on); });
+    if (designOp && menuOp->type == "sketch") entry("export", tr("Export sketch"), "timelineExport", [this, opId] { exportDialog({opId}); });
+    if (designOp) menu.addSeparator();
+    entry("isolate", tr("Select what it touches\tT"), "timelineTouched", [this, opId] { selectOpTargets(opId); });
+    // The model as it was right after this step (UI-99): the playhead goes after its marker.
+    if (!deleted && !m_doc->browse)
+      entry("rollBack", tr("Roll back to here"), "timelineRollBack", [this, opId] { emit m_timeline->rollbackRequested(m_timeline->rollPointAfter(opId)); })
+          ->setEnabled(!m_timeline->rollPointAfter(opId).empty() || m_doc->rolledBack());
+    menu.addSeparator();
+    entry("commit", tr("Copy op id\tCtrl+C"), "timelineCopy", [opId] { QApplication::clipboard()->setText(QString::fromStdString(opId)); });
+    entry("git", tr("Show in git log"), "timelineLog", [this, opId] { showOpGitLog(opId, m_doc->path()); });
+    menu.addSeparator();
+  }
+  for (const char* id : {"timeline.rollForward", "timeline.names", "timeline.designOnly"})
+    if (QAction* a = action(id); a && (std::string(id) != "timeline.rollForward" || m_doc->rolledBack())) menu.addAction(a);
 }
 
 void MainWindow::updateUndoActions() {
@@ -142,6 +160,10 @@ QMenu* MainWindow::historyMenu(bool undo) {
 
 void MainWindow::deleteOp(const std::string& requestedId) {
   const std::string opId=requestedId; // Rebuilding cards can destroy the signal sender during this operation.
+  // A feature or a sketch: what depends on it is asked about first, the result previewed (smart selection, UI-96).
+  const opad::Op* op = m_doc->doc.find_op(opId);
+  const bool live = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) == m_doc->scene.deleted_ops.end();
+  if (op && live && (op->type == "feature" || op->type == "sketch") && areaCommand("timeline.delete", opId)) return m_timeline->setCurrentOp(opId);
   // With a design history a tombstone changes what later features produce: planned on a worker.
   if (!m_doc->scene.features.empty() || !m_doc->scene.sketches.empty()) {
     m_design->applyOps({opad::json{{"op", "delete"}, {"target", opId}}}, tr("delete"));
@@ -170,15 +192,39 @@ void MainWindow::deleteCurrent() {
   std::string id = m_timeline->currentOp();
   if (!id.empty() && m_timeline->hasFocus()) return deleteOp(id);
   if (!m_selRows.empty() && m_browser->removeRows(m_selRows)) return;  // an area's rows (the Drawings folder's): its folder deletes them
-  std::set<std::string> ops;
+  // Picked faces and edges go with what made them: smart selection deletes a feature's whole face set and offers the
+  // rest (UI-04). Never the body's source op.
+  if (areaCommand("edit.delete")) return;
+  if (std::any_of(m_selRefs.begin(), m_selRefs.end(), [](const opad::Ref& r) { return r.kind != opad::Ref::Kind::Body; }))
+    throw opad::Error("Faces and edges are deleted through the feature that made them: select it with Ctrl+Up, or use Remove faces.");
   const auto selected = currentNodeIds();
-  for (const auto& nid : selected) if (const opad::Node* n = m_doc->node(nid)) ops.insert(n->source_op);
-  if (ops.empty()) {  // the timeline's marker only when nothing is selected (an area's row or a sketch is not that marker)
-    if (id.empty() || !selected.empty() || !m_selRows.empty()) throw opad::Error("Select objects, or a marker on the timeline, to tombstone.");
+  if (selected.empty()) {  // the timeline's marker only when nothing is selected (an area's row is not that marker)
+    if (id.empty() || !m_selRows.empty()) throw opad::Error("Select objects, or a marker on the timeline, to delete.");
     return deleteOp(id);
   }
-  if (QMessageBox::question(this, tr("Delete"), tr("Tombstone %1 import operation(s)? History is kept; Shift+Del on the timeline restores.").arg(ops.size())) != QMessageBox::Yes) return;
-  for (const auto& op : ops) deleteOp(op);
+  deleteNodes(selected);
+}
+
+void MainWindow::deleteNodes(const std::vector<std::string>& ids) {
+  const smart::Deletion d = smart::routeDelete(m_doc->scene, ids);
+  if (d.empty()) throw opad::Error("Nothing selected can be deleted.");
+  QString what = ids.size() == 1 ? m_doc->nodeName(ids.front()) : tr("%1 objects").arg(ids.size());
+  if (const opad::SketchItem* s = ids.size() == 1 ? m_doc->scene.sketch(ids.front()) : nullptr) what = QString::fromStdString(s->name);
+  const QString text = d.remove.empty() ? tr("Deleted %1").arg(what) : tr("Removed %1: a Remove step on the timeline keeps its history").arg(what);
+  m_design->applyOps(smart::deletionOps(d, m_doc->scene), tr("delete"), [this, text](bool ok, const QString& error) {
+    if (!ok) return guarded([&] { throw opad::Error(error.toStdString()); });
+    undoToast(text);
+  });
+}
+
+void MainWindow::undoToast(const QString& text) {
+  const auto depth = m_doc->undoLabels().size();
+  const QString step = m_doc->undoLabel();
+  const auto generation = m_doc->generation;
+  m_toasts->toast(text, tr("Undo"), [this, depth, step, generation] {
+    if (m_doc->generation == generation && m_doc->canUndo() && m_doc->undoLabels().size() == depth && m_doc->undoLabel() == step) return m_doc->undo();
+    statusBar()->showMessage(tr("Other changes came after it: undo those first (Ctrl+Z)."), 6000);
+  }, 8000);
 }
 
 void MainWindow::selectOpTargets(const std::string& opId) {
