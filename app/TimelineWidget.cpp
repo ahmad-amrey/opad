@@ -138,6 +138,12 @@ void TimelineWidget::setEditingOp(const std::string& id) {
   else update();
 }
 
+void TimelineWidget::setMarkedOps(std::map<std::string, QColor Tokens::*> marks, const QString& legend) {
+  m_marks = std::move(marks);
+  m_markLegend = legend.isEmpty() ? QStringLiteral("%1") : legend;
+  update();
+}
+
 void TimelineWidget::step(int delta) {
   const auto& ops = m_doc->doc.ops;
   if (m_shown.empty()) return;
@@ -254,6 +260,7 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     const opad::Feature* feat = ops[i].type == "feature" ? m_doc->scene.feature(ops[i].id) : nullptr;
     if (beyond || (feat && feat->suppressed)) iconColor = t.fg3;
     p.drawPixmap(r.left() + 3, r.top() + 3, icons::pixmap(iconFor(ops[i]), iconColor, 12, dpr));
+    if (const auto mark = m_marks.find(ops[i].id); mark != m_marks.end()) p.fillRect(QRect(r.left(), r.bottom() + 3, r.width(), 3), t.*mark->second);
     // A reference was taken by its nearest match after the body changed (TODO 10 B7): worth a look.
     if (feat && !deleted && !feat->result.value("rehinted", opad::json::array()).empty()) {
       p.setPen(QPen(t.bg2, 1));
@@ -305,7 +312,15 @@ void TimelineWidget::mouseMoveEvent(QMouseEvent* e) {
                             }() + (op.id == m_editing ? tr("being edited · the change applies from here in the history")
                             : m_deleted.count(op.id) ? (op.type == "delete" ? tr("undone · right-click to delete it again") : tr("tombstoned · right-click to restore"))
                             : isUnresolved(op.id) ? tr("unresolved · kept, never hidden")
-                            : op.type == "delete" ? tr("right-click to restore what it deleted") : tr("Right-click for actions")));
+                            : op.type == "delete" ? tr("right-click to restore what it deleted") : tr("Right-click for actions")) +
+                            [&] {
+                              const auto mark = m_marks.find(op.id);
+                              if (mark == m_marks.end()) return QString();
+                              for (const theme::Cue& c : theme::cues())
+                                if (c.colour == mark->second)
+                                  return QString("<div style='color:%1'>%2 %3</div>").arg((t.*c.colour).name(), QString::fromUtf8(c.mark), m_markLegend.arg(i18n::t(c.label)).toHtmlEscaped());
+                              return QString();
+                            }());
     QToolTip::showText(e->globalPosition().toPoint() + QPoint(0, 8), html, this);
   } else {
     QToolTip::hideText();

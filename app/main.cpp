@@ -17,6 +17,7 @@
 #include <QTimer>
 #include <QSurfaceFormat>
 
+#include "CompareMode.hpp"
 #include "CrashLog.hpp"
 #include "GitWatch.hpp"
 #include "I18n.hpp"
@@ -136,7 +137,10 @@ int main(int argc, char** argv) {
   QCommandLineOption bench("bench-select", "Select every root once the file has loaded, log the timing (OPAD_TRACE) and quit");
   bench.setFlags(QCommandLineOption::HiddenFromHelp);
   parser.addOption(bench);
+  QCommandLineOption compare("compare", "Compare a version (an .opad file, or git:REV of the file) with the file opened: opad --compare a b", "version");
+  parser.addOption(compare);
   parser.process(app);
+  if (parser.isSet(compare)) CompareMode::setStartup(parser.value(compare));  // once the file is open (CompareMode.hpp)
 
   MainWindow win;
   app.installEventFilter(new FileOpenEvents(&win));

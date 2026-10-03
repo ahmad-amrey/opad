@@ -1,4 +1,4 @@
-// Version control benches (VcsArea.cpp): the file changed on disk while open, and the git chip with its dialogs.
+// Version control benches (VcsArea.cpp): the file changed on disk while open, the git chip with its dialogs, Compare.
 #include <QCoreApplication>
 #include <QLayout>
 #include <QMenu>
@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "BenchRegistry.hpp"
+#include "CompareMode.hpp"
 #include "DiskSync.hpp"
 #include "GitWatch.hpp"
 #include "Jobs.hpp"
@@ -49,4 +50,10 @@ OPAD_BENCH(OPAD_BENCH_GIT, git) {
     }
   }
   return git && git->bench();
+}
+
+// OPAD_BENCH_COMPARE=<prefix> on tools/bench_cases/vcs.py's compare/model.opad (CompareMode::bench, CompareBench.cpp).
+OPAD_BENCH(OPAD_BENCH_COMPARE, compare) {
+  auto* compare = w.findChild<CompareMode*>();
+  return compare && compare->bench(value);
 }

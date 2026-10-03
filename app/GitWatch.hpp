@@ -43,7 +43,8 @@ class GitWatch : public QObject {
   // A git command as a job (the strip after 0.5 s, Cancel), then `done` on the UI thread and a refresh. The default
   // options stop git after 60 s: network commands pass git::RunOptions::network().
   Job* command(const QString& title, const QStringList& args, std::function<void(const git::Result&)> done = {}, git::RunOptions o = {});
-  // The chip's actions by object name: git.setup, git.driver, git.identity, git.trust, git.clone, git.locate, git.refresh.
+  // The chip's actions by object name: git.compare, git.setup, git.driver, git.identity, git.trust, git.clone, git.locate,
+  // git.refresh.
   QMenu* menu(QWidget* parent);
   void setUp();        // the Set up repository dialog
   void setUpDriver();  // this clone's merge and diff driver (and LFS hooks when the attributes use LFS)
@@ -62,6 +63,7 @@ class GitWatch : public QObject {
  signals:
   void changed();
   void openRequested(const QString& file);  // a document of a new clone
+  void compareRequested();  // the menu's Compare with the last commit… (CompareMode, UI-58)
  private:
   void schedule(bool probe, int ms = 250);
   void watch();

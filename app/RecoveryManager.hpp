@@ -5,6 +5,8 @@
 #include <functional>
 #include <memory>
 #include <atomic>
+#include <string>
+#include <vector>
 #include "opad/core.hpp"
 
 class AppDocument;
@@ -23,6 +25,12 @@ class RecoveryManager : public QObject {
   void saveNow(std::function<void(bool,const QString&)> done = {});
   void finishSession(std::function<void()> done);
   void bench(const QString& mode);
+  // Compare (UI-58): the snapshots of the document whose header uuid this is, in every session folder (this one's too),
+  // newest first, from their metadata; and the document a snapshot holds, checksums checked. Both read files: workers.
+  struct Snapshot { QString file, title, time; };
+  static QString recoveryRoot();  // where the session folders are (from the settings)
+  static std::vector<Snapshot> snapshotsOf(const QString& root, const std::string& uuid);
+  static std::string snapshotText(const QString& file);
  signals:
   void status(const QString& text);
  private:

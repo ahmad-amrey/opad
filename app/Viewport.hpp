@@ -150,6 +150,32 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
   bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
 
+  // Compare (ViewportCompare.cpp, UI-58): another version drawn with the model. Parts are bodies the model does not draw
+  // as they are: ghosts of the other version (a removed body, a moved one's old place, a modified one's old geometry) and
+  // the compared version's own bodies when it is not the session; arrows run from a moved body's old centre to its new
+  // one, dashed. Never pickable; Fit frames the parts. A part's arrays come from the model's meshes (displayArrays) or
+  // from a worker (BodyPrs::build); a part whose world placement is not rigid comes baked, at identity.
+  struct ComparePart {
+    std::string id;  // its node id in its version
+    TopoDS_Shape shape;  // the prototype, meshed
+    std::shared_ptr<const BodyPrs> prs;
+    opad::Mat4 world;
+    std::array<double, 3> color{0.5, 0.5, 0.5};
+    double opacity = 1;
+    bool visible = true;
+  };
+  struct CompareArrow {
+    opad::Vec3 from{0, 0, 0}, to{0, 0, 0};
+    bool visible = true;
+  };
+  void setCompare(const std::vector<ComparePart>& parts, const std::vector<CompareArrow>& arrows, const QColor& arrowColor);
+  // The same parts and arrows, in the same order, in other colours, opacities or visibility: aspects in place.
+  void restyleCompare(const std::vector<ComparePart>& parts, const std::vector<CompareArrow>& arrows);
+  void clearCompare();
+  std::shared_ptr<const BodyPrs> displayArrays(const std::string& key) const;  // the arrays a displayed body key was drawn from; null: none
+  void fitBox(const Bnd_Box& box);  // frames a world box as Fit does; void: Fit All
+  opad::json benchCompareState() const;  // OPAD_BENCH_COMPARE: each part's id, whether drawn, colour, transparency; the arrows
+
   // Section: the clip plane, and its gizmo (ViewportSection.cpp): the plane's outline over the model, edges only,
   // sized to the model's extent in the plane. A strip inside each side is a drag handle: hovering it shows a
   // two-headed arrow along the normal, dragging moves the plane and reports the new origin (sectionDragged).
@@ -309,7 +335,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   CursorWarpGate m_warpGate;
   void updateGridExtent();
   void placeGrid(double u, double v, double step, double extent);  // centred on (u, v) of the privileged plane
-  // The box Fit All, Home and the load-time fit frame: displayed bodies, sketches, their images and a feature preview
+  // The box Fit All, Home and the load-time fit frame: displayed bodies, sketches, their images, a feature preview, Compare's parts
   // (never the grid, gizmos, overlays or annotations); the default grid square when there is nothing (void if !fallback).
   Bnd_Box fitBounds(bool fallback = true) const;
   void applySelectionFilter(SelFilter f);  // setSelectionFilter's work, also for the filter already set (re-activates)
@@ -525,6 +551,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_candidates;
   std::vector<Handle(AIS_Shape)> m_pointMarks;  // markPickedPoints
   std::vector<Handle(AIS_Shape)> m_previewBodies;
+  std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_compareParts;  // ViewportCompare.cpp
+  Handle(AIS_InteractiveObject) m_compareArrows;
+  void styleComparePart(const Handle(AIS_Shape)& ais, const ComparePart& part);
   std::vector<Handle(AIS_InteractiveObject)> m_overlays;  // showOverlay's: Fit frames the finite ones (a drawing being placed)
   std::set<std::string> m_previewHidden;  // nodes whose own object is erased while the preview shows
   bool m_bodiesPickable = true;

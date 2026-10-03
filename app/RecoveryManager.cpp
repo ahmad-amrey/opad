@@ -26,6 +26,7 @@
 #include <QStandardPaths>
 #include <QUuid>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <mutex>
 #include <set>
 
@@ -99,9 +100,7 @@ void prune(const QString& directory,const QString& prefix) {
 
 RecoveryManager::RecoveryManager(AppDocument* doc,DesignController* design,JobRunner* jobs,QWidget* window)
   :QObject(window),m_doc(doc),m_design(design),m_jobs(jobs),m_window(window),m_session(std::make_shared<Session>()) {
-  const QSettings settings;
-  const QString data=settings.format()==QSettings::IniFormat?QFileInfo(settings.fileName()).absolutePath():QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-  m_session->root=data+"/recovery";
+  m_session->root=recoveryRoot();
   m_session->directory=m_session->root+"/"+QUuid::createUuid().toString(QUuid::WithoutBraces);
   connect(&m_timer,&QTimer::timeout,this,[this]{saveNow();});configureTimer();
   connect(doc,&AppDocument::aboutToReplace,this,&RecoveryManager::discardCurrent);
@@ -115,6 +114,23 @@ RecoveryManager::RecoveryManager(AppDocument* doc,DesignController* design,JobRu
     offerRecovery();
   });
 }
+QString RecoveryManager::recoveryRoot() {
+  const QSettings settings;
+  const QString data=settings.format()==QSettings::IniFormat?QFileInfo(settings.fileName()).absolutePath():QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+  return data+"/recovery";
+}
+std::vector<RecoveryManager::Snapshot> RecoveryManager::snapshotsOf(const QString& root,const std::string& uuid) {
+  std::vector<Snapshot> out;const auto prefix=QString::fromStdString(digest(uuid));
+  for(const auto& folder:QDir(root).entryList(QDir::Dirs|QDir::NoDotAndDotDot))
+    for(const auto& file:QDir(root+"/"+folder).entryList({prefix+"_*.opad-recovery"},QDir::Files)) {
+      const auto path=root+"/"+folder+"/"+file;
+      try{const auto meta=readMetadata(path);out.push_back({path,QString::fromStdString(meta.value("title","")),QString::fromStdString(meta.value("time",""))});}
+      catch(const std::exception& e){trace::log(QString("recovery: skipped %1: %2").arg(path,e.what()));}
+    }
+  std::sort(out.begin(),out.end(),[](const Snapshot& a,const Snapshot& b){return a.time>b.time;});
+  return out;
+}
+std::string RecoveryManager::snapshotText(const QString& file){return readRecord(file).at("document").get<std::string>();}
 void RecoveryManager::requestCheckpoint() {
   ++m_checkpoint;if(!QSettings().value("recovery/enabled",true).toBool())return;
   const auto generation=m_doc->generation;auto* retry=new QTimer(this);retry->setInterval(250);

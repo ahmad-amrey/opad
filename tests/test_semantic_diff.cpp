@@ -151,6 +151,41 @@ TEST(bodies_and_components) {
   CHECK(has(text, "  ~ C: colour default -> #ff0000, hidden\n"));
 }
 
+TEST(bodies_as_a_viewer_overlays_them) {  // Compare (UI-58): world placement, both sides, hidden bodies
+  Tree t;
+  const std::string base = t.doc.serialize();
+  Document b = Document::parse(base);
+  b.append(json{{"op", "transform"}, {"target", t.asm_id}, {"matrix", {1, 0, 0, 0, 0, 1, 0, 7, 0, 0, 1, 0, 0, 0, 0, 1}}});  // A and B move with it
+  const std::string kc = b.add_body(brep(9), json::object());
+  b.append(json{{"op", "edit"}, {"target", t.import_c}, {"set", {{"nodes", json::array({body_node(t.c, "C", kc)})}}}});
+  b.append(json{{"op", "delete"}, {"target", t.import_d}});
+  const std::string e = new_uuid(), hidden = new_uuid();
+  b.append(json{{"op", "import"}, {"source", "e.step"}, {"nodes", json::array({body_node(e, "E", b.add_body(brep(5), json::object())),
+                                                                                 body_node(hidden, "H", b.add_body(brep(6), json::object()))})}});
+  b.append(json{{"op", "appearance"}, {"target", hidden}, {"visible", false}});
+  const Scene sa = resolve(t.doc), sb = resolve(b);
+  const auto changes = body_changes(sa, sb);
+  std::map<std::string, const BodyChange*> by;
+  for (const auto& c : changes) by[c.id] = &c;
+  CHECK_EQ(changes.size(), 5u);  // H: only on a side where it is hidden
+  CHECK(!by.count(hidden));
+  CHECK(by[t.a]->kind == BodyChange::Kind::Moved && by[t.b]->kind == BodyChange::Kind::Moved);  // the component's move
+  CHECK_EQ(by[t.a]->world_b.at(1, 3), 7.0);
+  CHECK_EQ(by[t.a]->world_a.at(1, 3), 0.0);
+  CHECK(by[t.c]->kind == BodyChange::Kind::Modified && by[t.c]->key_b == kc && by[t.c]->key_a != kc);
+  CHECK(by[t.d]->kind == BodyChange::Kind::Removed && by[t.d]->shown_a && !by[t.d]->shown_b);
+  CHECK(by[e]->kind == BodyChange::Kind::Added && by[e]->key_a.empty());
+  CHECK_EQ(std::string(body_change_name(changes.back().kind)), "removed");  // a's removed bodies come last
+  // Hidden on one side: kept, drawn on the other.
+  Document c = Document::parse(b.serialize());
+  c.append(json{{"op", "appearance"}, {"target", e}, {"visible", false}});
+  const auto again = body_changes(sb, resolve(c));
+  const auto it = std::find_if(again.begin(), again.end(), [&](const BodyChange& x) { return x.id == e; });
+  CHECK(it != again.end() && it->kind == BodyChange::Kind::Unchanged && it->shown_a && !it->shown_b);
+  // The diff of scenes resolved once is the diff of the documents.
+  CHECK_EQ(semantic_diff(t.doc, sa, b, sb)["changes"], semantic_diff(t.doc, b)["changes"]);
+}
+
 TEST(relations_between_histories) {
   Tree t;
   const std::string base = t.doc.serialize();

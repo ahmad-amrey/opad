@@ -328,6 +328,9 @@ QMenu* GitWatch::menu(QWidget* parent) {
     a->setObjectName(QString::fromLatin1(id));
     connect(a, &QAction::triggered, this, fn);
   };
+  using D = git::Repo::Doc;
+  if (m_repo.doc() == D::Clean || m_repo.doc() == D::Modified || m_repo.doc() == D::Conflict)
+    add("git.compare", tr("Compare with the last commit…"), [this] { emit compareRequested(); });
   if (m_repo.state == S::NotRepo) add("git.setup", tr("Set up repository…"), [this] { setUp(); });
   if (m_repo.state == S::Ready) add("git.setup", tr("Set up OPAD in this repository…"), [this] { setUp(); });
   if (m_repo.needsDriver() || m_repo.driverStale()) add("git.driver", tr("Set up OPAD merging for this clone"), [this] { setUpDriver(); });

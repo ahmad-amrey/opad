@@ -782,8 +782,9 @@ std::string change_line(const json& c) {
 
 }  // namespace
 
-json semantic_diff(const Document& a, const Document& b, const DiffOptions& opt) {
-  const Scene sa = resolve(a), sb = resolve(b);
+json semantic_diff(const Document& a, const Document& b, const DiffOptions& opt) { return semantic_diff(a, resolve(a), b, resolve(b), opt); }
+
+json semantic_diff(const Document& a, const Scene& sa, const Document& b, const Scene& sb, const DiffOptions& opt) {
   Sides d{a, b, sa, sb};
   for (const auto& o : a.ops) d.ops_a.insert(o.id);
   for (const auto& o : b.ops) d.ops_b.insert(o.id);
@@ -879,6 +880,54 @@ json semantic_diff(const Document& a, const Document& b, const DiffOptions& opt)
   }
   j["geometry"] = {{"added_or_moved", geom_added}, {"removed_or_moved", geom_removed}, {"moved", geom_moved}, {"changed", geom_changed}};
   return j;
+}
+
+bool same_placement(const Mat4& x, const Mat4& y) { return same_matrix(x, y); }
+
+const char* body_change_name(BodyChange::Kind kind) {
+  switch (kind) {
+    case BodyChange::Kind::Added: return "added";
+    case BodyChange::Kind::Removed: return "removed";
+    case BodyChange::Kind::Modified: return "modified";
+    case BodyChange::Kind::Moved: return "moved";
+    case BodyChange::Kind::Unchanged: return "unchanged";
+  }
+  return "";
+}
+
+std::vector<BodyChange> body_changes(const Scene& a, const Scene& b) {
+  std::vector<BodyChange> out;
+  for (const auto& id : b.all_bodies()) {
+    const Node& y = *b.node(id);
+    const Node* x = a.node(id);
+    if (x && x->kind != Node::Kind::Body) x = nullptr;
+    BodyChange c;
+    c.id = id;
+    c.name = y.name;
+    c.key_b = y.body_key;
+    c.world_b = b.world(id);
+    c.shown_b = b.effectively_visible(id);
+    if (x) {
+      c.key_a = x->body_key;
+      c.world_a = a.world(id);
+      c.shown_a = a.effectively_visible(id);
+      c.kind = x->body_key != y.body_key ? BodyChange::Kind::Modified : !same_matrix(c.world_a, c.world_b) ? BodyChange::Kind::Moved : BodyChange::Kind::Unchanged;
+    } else c.kind = BodyChange::Kind::Added;
+    if (c.shown_a || c.shown_b) out.push_back(std::move(c));
+  }
+  for (const auto& id : a.all_bodies()) {
+    const Node* y = b.node(id);
+    if (y && y->kind == Node::Kind::Body) continue;
+    BodyChange c;
+    c.kind = BodyChange::Kind::Removed;
+    c.id = id;
+    c.name = a.node(id)->name;
+    c.key_a = a.node(id)->body_key;
+    c.world_a = a.world(id);
+    c.shown_a = a.effectively_visible(id);
+    if (c.shown_a) out.push_back(std::move(c));
+  }
+  return out;
 }
 
 std::string diff_text(const json& d) {

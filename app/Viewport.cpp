@@ -1134,6 +1134,7 @@ Bnd_Box Viewport::fitBounds(bool fallback) const {
     for (const auto& image : wire.backdrops) add(image);
   }
   for (const auto& preview : m_previewBodies) add(preview);
+  for (const auto& [id, part] : m_compareParts) add(part);  // null: not drawable
   for (const auto& overlay : m_overlays) if (!overlay->IsInfinite() && overlay->TransformPersistence().IsNull()) add(overlay);
   if (fallback && bounds.IsVoid()) {  // nothing to frame: the default grid, as Home does
     const double extent = std::max(1.0, QSettings().value("view/gridExtent", 100.0).toDouble());

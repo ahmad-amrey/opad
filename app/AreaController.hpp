@@ -36,6 +36,7 @@ class QMenu;
 class QMenuBar;
 class QStatusBar;
 class QWidget;
+class TimelineWidget;
 class ToolPanel;
 class Viewport;
 class ViewportChips;
@@ -65,6 +66,7 @@ class AreaServices {
   BrowserPanel* browser() const;        // row decorations and folders
   PropertiesPanel* properties() const;  // property sections
   ViewportChips* chips() const;         // the chips row over the viewport (addChip)
+  TimelineWidget* timeline() const;     // the op markers under the viewport (setMarkedOps)
   // A widget in the ribbon's tab row (a branch chip): in the cluster after search, before settings; from ribbon on.
   void addTabRowWidget(QWidget* widget);
   QAction* action(const QString& id) const;  // any command by id: "file.open", "view.fit", an area's own; null if none

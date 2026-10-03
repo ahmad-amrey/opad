@@ -30,7 +30,25 @@ struct DiffOptions {
 //   summary     one line naming the main changes ("Edit Extrude 1 distance; add Fillet 2"), a commit message draft
 //   ops, bodies, geometry   the op-level lists, body-store keys and geometry counts of the first diff (kept for callers)
 json semantic_diff(const Document& a, const Document& b, const DiffOptions& opt = {});
+// The same with both versions resolved already (a viewer needs the scenes as well).
+json semantic_diff(const Document& a, const Scene& sa, const Document& b, const Scene& sb, const DiffOptions& opt = {});
 inline json diff_documents(const Document& a, const Document& b) { return semantic_diff(a, b); }
+
+// The bodies of two versions as a viewer draws one over the other (Compare, UI-58), matched by node id in world placement:
+// added (only in b), removed (only in a), modified (another body key), moved (the same key placed elsewhere in the world,
+// so also a body whose component moved), unchanged. shown_a / shown_b: effectively visible on that side; a body shown on
+// neither side is left out, and so is one that exists only on a side where it is hidden. In b's tree order, then a's
+// removed bodies in a's.
+struct BodyChange {
+  enum class Kind { Added, Removed, Modified, Moved, Unchanged };
+  Kind kind = Kind::Unchanged;
+  std::string id, name, key_a, key_b;
+  Mat4 world_a, world_b;
+  bool shown_a = false, shown_b = false;
+};
+std::vector<BodyChange> body_changes(const Scene& a, const Scene& b);
+const char* body_change_name(BodyChange::Kind kind);  // "added", "removed", "modified", "moved", "unchanged"
+bool same_placement(const Mat4& x, const Mat4& y);     // equal within 1e-9 per entry
 // A semantic diff as text, one change per line under a heading per kind (opad-cli diff --text).
 std::string diff_text(const json& diff);
 // One document as line-oriented text for git's textconv (`diff=opad`): history, parameters, sketches, features, the
