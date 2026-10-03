@@ -8,7 +8,6 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QImage>
-#include <QTimer>
 
 #include <algorithm>
 #include <cmath>
@@ -70,21 +69,21 @@ OPAD_BENCH(OPAD_BENCH_NOTEANCHORS, noteanchors) {
   for (const auto& anchor : anchors)
     timed(QString("a note pinned to %1").arg(QString::fromStdString(anchor.size() > 36 ? anchor.substr(0, 8) + anchor.substr(36) : anchor.substr(0, 8))),
           [&] { notes.push_back(doc->run("annotate", {{"anchor", anchor}, {"text", "Check this"}}).value("id", "")); }, runBudget);
-  // Measured on a worker: the event loop keeps turning (a 1 ms ticker's worst gap), and each anchor once.
+  // Measured on a worker: the event loop keeps turning (the worst time between two turns), and each anchor once. A 1 ms
+  // timer never fired inside this nested loop, so a measure longer than 100 ms under load failed with no gap seen.
   QElapsedTimer gap, measuring;
   qint64 worst = 0;
-  int ticked = 0;
-  QTimer ticker;
-  ticker.setTimerType(Qt::PreciseTimer);
-  QObject::connect(&ticker, &QTimer::timeout, &w, [&] { worst = std::max(worst, gap.restart()); ++ticked; });
+  int turns = 0;
   gap.start();
   measuring.start();
-  ticker.start(1);
-  const bool measured = waitUntil([v] { return !v->notesPending(); }, 120000) && v->anchorsMeasured() == 3;
-  ticker.stop();
-  require(measured && (ticked > 0 || measuring.elapsed() < 100) && worst < 2000,
-          QString("three anchors measured on a worker in %1 ms (%2 measured), worst event-loop gap %3 ms over %4 ticks")
-              .arg(measuring.elapsed()).arg(v->anchorsMeasured()).arg(worst).arg(ticked));
+  while (v->notesPending() && measuring.elapsed() < 120000) {
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    worst = std::max(worst, gap.restart());
+    ++turns;
+  }
+  const bool measured = !v->notesPending() && v->anchorsMeasured() == 3;
+  require(measured && worst < 2000, QString("three anchors measured on a worker in %1 ms (%2 measured), worst event-loop gap %3 ms over %4 turns")
+                                        .arg(measuring.elapsed()).arg(v->anchorsMeasured()).arg(worst).arg(turns));
   // Where annotation_anchor puts a note (body notes: cached boxes by now; the face once, here: on the Engine's largest
   // body that is seconds of the bench's own time), shifted by `by`.
   auto expect = [doc](const std::string& anchor) {
