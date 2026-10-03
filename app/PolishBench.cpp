@@ -28,7 +28,7 @@ OPAD_BENCH(OPAD_BENCH_POLISH, polish) {
     if (!ok) *failed << what;
   };
   const bool arabic = i18n::current() == "ar";
-  auto tr = [](const char* text) { return QCoreApplication::translate("MainWindow", text); };
+  auto tr = [](const char* text) { return MainWindow::tr(text); };
   struct Step { int delay; std::function<void()> fn; };
   auto steps = std::make_shared<std::vector<Step>>();
   auto add = [steps](int delay, std::function<void()> fn) { steps->push_back({delay, std::move(fn)}); };
