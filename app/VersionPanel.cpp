@@ -190,6 +190,22 @@ VersionPanel::VersionPanel(VersionControl* vc, QWidget* parent) : QWidget(parent
   auto* hp = new QVBoxLayout(historyPage);
   hp->setContentsMargins(0, 0, 0, 0);
   hp->setSpacing(6);
+  m_filterBar = new QWidget(historyPage);  // the history narrowed to an op or a node (VersionControl::showHistoryOf)
+  m_filterBar->setObjectName("historyFilter");
+  auto* fb = new QHBoxLayout(m_filterBar);
+  fb->setContentsMargins(0, 0, 0, 0);
+  fb->setSpacing(6);
+  m_filterText = new QLabel(m_filterBar);
+  m_filterText->setWordWrap(true);
+  fb->addWidget(m_filterText, 1);
+  auto* all = new QToolButton(m_filterBar);
+  all->setObjectName("historyFilterClear");
+  all->setText(tr("Show all"));
+  all->setAutoRaise(true);
+  fb->addWidget(all);
+  connect(all, &QToolButton::clicked, this, [this] { m_vc->showHistoryOf({}, {}); });
+  m_filterBar->hide();
+  hp->addWidget(m_filterBar);
   m_history = makeTree(historyPage, "versionHistory", 3);
   m_history->setAccessibleName(tr("History of the document"));
   m_history->header()->setSectionResizeMode(0, QHeaderView::Fixed);
@@ -330,8 +346,8 @@ bool VersionPanel::showsRepository() const { return m_stack->currentIndex() == 0
 const git::Commit* VersionPanel::commitOf(QTreeWidgetItem* item) const {
   if (!item) return nullptr;
   const int i = item->data(0, Qt::UserRole).toInt();
-  return i >= 0 && size_t(i) < m_vc->history().size() && item->data(1, Qt::UserRole).toString() == m_vc->history()[size_t(i)].hash ? &m_vc->history()[size_t(i)]
-                                                                                                                                  : nullptr;
+  const auto& shown = m_vc->shownHistory();
+  return i >= 0 && size_t(i) < shown.size() && item->data(1, Qt::UserRole).toString() == shown[size_t(i)].hash ? &shown[size_t(i)] : nullptr;
 }
 
 const git::Branch* VersionPanel::branchOf(QTreeWidgetItem* item) const {
@@ -478,7 +494,10 @@ void VersionPanel::updateButtons() {
 
 void VersionPanel::showLists() {
   const Tokens& t = theme::current();
-  const auto& history = m_vc->history();
+  const auto& history = m_vc->shownHistory();
+  const QString filter = m_vc->historyFilter();
+  m_filterBar->setVisible(!filter.isEmpty());
+  m_filterText->setText(tr("Only the commits that touched %1").arg(filter));
   const QString keep = m_history->currentItem() ? m_history->currentItem()->data(1, Qt::UserRole).toString() : QString();
   m_history->clear();
   QTreeWidgetItem* current = nullptr;
@@ -507,7 +526,8 @@ void VersionPanel::showLists() {
   }
   if (history.empty()) {
     auto* none = new QTreeWidgetItem(m_history);
-    none->setText(1, m_vc->ready() ? tr("No commits of this document yet: Commit… makes the first.") : QString());
+    none->setText(1, !filter.isEmpty() ? (m_vc->historyFilterRead() ? tr("No commit touched it yet.") : tr("Reading who changed what in git…"))
+                     : m_vc->ready() ? tr("No commits of this document yet: Commit… makes the first.") : QString());
     none->setForeground(1, t.fg3);
     none->setFlags(Qt::NoItemFlags);
     none->setData(0, Qt::UserRole, -2);

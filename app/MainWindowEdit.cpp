@@ -89,7 +89,6 @@ void MainWindow::timelineMenu(const std::string& requestedId, const QPoint& glob
   QAction* sel = menu.addAction(icons::themed("isolate", 16), tr("Select what it touches\tT"));
   menu.addSeparator();
   QAction* copy = menu.addAction(icons::themed("commit", 16), tr("Copy op id\tCtrl+C"));
-  QAction* log = menu.addAction(icons::themed("git", 16), tr("Show in git log"));
   forEachArea([&](AreaController* area) { area->timelineMenu(opId, menu); });
   QAction* chosen = menu.exec(globalPos);
   if (!chosen || generation!=m_doc->generation) return;
@@ -101,7 +100,6 @@ void MainWindow::timelineMenu(const std::string& requestedId, const QPoint& glob
   else if (chosen == restore) restoreOp(opId);
   else if (chosen == sel) selectOpTargets(opId);
   else if (chosen == copy) QApplication::clipboard()->setText(QString::fromStdString(opId));
-  else if (chosen == log) showOpGitLog(opId,m_doc->path());
 }
 
 void MainWindow::updateUndoActions() {

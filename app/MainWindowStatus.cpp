@@ -1,17 +1,11 @@
-// The status bar (path, git, hover, selection, snapping toggles, progress) and git: branch state, an op's git log.
+// The status bar (the path and its chips, messages, hover, selection, snapping toggles, units, progress).
 #include "MainWindow.hpp"
 
-#include <QDialog>
 #include <QDir>
-#include <QFileInfo>
 #include <QLabel>
 #include <QMenu>
-#include <QPlainTextEdit>
-#include <QProcess>
 #include <QStatusBar>
-#include <QTimer>
 #include <QToolButton>
-#include <QVBoxLayout>
 
 #include "I18n.hpp"
 #include "StatusRow.hpp"
@@ -198,31 +192,4 @@ QString MainWindow::newerRecords() const {
       if (!types.contains(QString::fromStdString(op.type))) types << QString::fromStdString(op.type);
     }
   return count ? tr("This file has %1 records from a newer OPAD (%2); they are kept and saved back unchanged.").arg(count).arg(types.join(", ")) : QString();
-}
-
-void MainWindow::showOpGitLog(const std::string& opId,const QString& path) {
-  auto* dialog=new QDialog(this); dialog->setObjectName("opGitLog"); dialog->setAttribute(Qt::WA_DeleteOnClose);
-  dialog->setWindowTitle(tr("git log for op %1").arg(QString::fromStdString(opId.substr(0,8)))); dialog->resize(700,400);
-  auto* layout=new QVBoxLayout(dialog); auto* output=new QPlainTextEdit(dialog); output->setReadOnly(true); layout->addWidget(output);
-  dialog->show();
-  if(path.isEmpty()) { output->setPlainText(tr("Save the document in a git repository first.")); dialog->setProperty("finished",true); return; }
-  output->setPlainText(tr("Reading Git history..."));
-  auto* git=new QProcess(this); const QFileInfo file(path); git->setWorkingDirectory(file.absolutePath());
-  auto* timeout=new QTimer(git); timeout->setSingleShot(true);
-  connect(timeout,&QTimer::timeout,git,[git] {git->setProperty("timedOut",true);git->kill();});
-  connect(dialog,&QObject::destroyed,git,[git] { if(git->state()!=QProcess::NotRunning) git->kill(); });
-  connect(git,&QProcess::errorOccurred,dialog,[=](QProcess::ProcessError error) {
-    if(error==QProcess::FailedToStart) { output->setPlainText(git->errorString()); dialog->setProperty("finished",true); git->deleteLater(); }
-  });
-  connect(git,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),dialog,[=](int code,QProcess::ExitStatus status) {
-    timeout->stop();
-    QString text=QString::fromUtf8(git->readAllStandardOutput()).trimmed();
-    if(git->property("timedOut").toBool()) text=tr("Git history timed out.");
-    else if(code!=0 || status!=QProcess::NormalExit) text=QString::fromUtf8(git->readAllStandardError()).trimmed();
-    else if(text.isEmpty()) text=tr("Not committed yet.");
-    output->setPlainText(text); dialog->setProperty("finished",true);
-  });
-  connect(git,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),git,&QObject::deleteLater);
-  git->start("git",{"log","--format=%h %ad %an  %s","--date=short","-S",QString::fromStdString(opId),"--",file.fileName()});
-  timeout->start(10000);
 }

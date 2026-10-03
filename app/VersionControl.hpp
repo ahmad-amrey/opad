@@ -13,7 +13,8 @@
 //             into the current one with the same incoming preview; Abort merge while one stopped on conflicts.
 //   History   the commits of the document: compare with this session or with the commit before, open read-only (a
 //             write-protected copy in another window, opened with --read-only: AppDocument::readOnly), restore as new
-//             changes (append-only tombstones, one undo step), branch from here.
+//             changes (append-only tombstones, one undo step), branch from here; narrowed to the commits that touched an op or
+//             a node (UI-64: showHistoryOf, from OpProvenance's index, which also gives the timeline its "Added by" lines).
 // The file on disk changes under the session (switch, merge, pull): DiskSync::adopt takes it in. git runs on workers
 // (GitWatch::job / command), versions are read, merged and diffed on workers; dialogs are window-modal and never block.
 #include <QHash>
@@ -33,6 +34,7 @@ class AreaServices;
 class CompareMode;
 class DiskSync;
 class GitWatch;
+class OpProvenance;
 class QDialog;
 class QMenu;
 class ToolPanel;
@@ -65,11 +67,18 @@ class VersionControl : public QObject {
   static QStringList readOnlyArguments(const QString& file) { return {QStringLiteral("--read-only"), file}; }  // that window's
   void restore(const git::Commit& commit);          // the document as it was there, as new changes
   void moreHistory();
+  // The History page showing only the commits that touched these ops or nodes (their ops, edits, deletes, renames, ...),
+  // newest first, under "Only the commits that touched <label>"; no ids: every commit again.
+  void showHistoryOf(const QString& label, const std::vector<std::string>& ids);
+  const std::vector<git::Commit>& shownHistory() const { return m_filterLabel.isEmpty() ? m_history : m_filtered; }
+  QString historyFilter() const { return m_filterLabel; }
+  bool historyFilterRead() const { return m_filterRead; }  // the narrowed list is there (the index was read)
+  OpProvenance* provenance() const { return m_provenance; }
   void extendMenu(QMenu* menu);  // the git chip's menu: the panel, Commit…, Pull, Push
   const std::vector<git::Commit>& history() const { return m_history; }
   const std::vector<git::Branch>& branches() const { return m_branches; }
   const QStringList& remotes() const { return m_remotes; }
-  bool hasMoreHistory() const { return m_moreHistory; }  // a page was full: older commits may follow
+  bool hasMoreHistory() const { return m_moreHistory && m_filterLabel.isEmpty(); }  // a page was full: older commits may follow
   QString lastOpened() const { return m_lastOpened; }    // the read-only copy written last (benches)
   QString documentPath() const;  // the document relative to the repository's top; empty: not in one
   bool ready() const;            // the document is in a repository git can read
@@ -120,7 +129,14 @@ class VersionControl : public QObject {
   DiskSync* m_disk;
   VersionPanel* m_panel = nullptr;
   ToolPanel* m_tool = nullptr;
+  void applyFilter();  // the narrowed list again, from the index of HEAD (read first when it moved)
   QPointer<QDialog> m_incoming;
+  OpProvenance* m_provenance;
+  QString m_filterLabel;
+  std::vector<std::string> m_filterIds;
+  std::vector<git::Commit> m_filtered;
+  bool m_filterRead = false;
+  QString m_filterHead;  // the commit it was narrowed at
   std::vector<git::Commit> m_history;
   std::vector<git::Branch> m_branches;
   QStringList m_remotes;

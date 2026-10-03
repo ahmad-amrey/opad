@@ -96,7 +96,6 @@ class MainWindow : public QMainWindow {
   void updateTitle();
   QString newerRecords() const;  // what of the file only a newer build reads (UI-65): one sentence, empty when nothing
   void updateChips();
-  void showOpGitLog(const std::string& opId,const QString& path);
   void saveLastView();
   QString m_viewPath;
   void guarded(const std::function<void()>& fn);

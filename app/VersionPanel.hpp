@@ -35,6 +35,7 @@ class VersionPanel : public QWidget {
   QLabel* syncLabel() const { return m_sync; }
   QLabel* documentLabel() const { return m_doc; }
   QLabel* emptyLabel() const { return m_emptyText; }
+  QWidget* filterBar() const { return m_filterBar; }  // "Only the commits that touched …" over the history (UI-64)
   QPushButton* button(const QString& action) const;  // by its "action" property
   PanelFooter* footer() const { return m_footer; }
   bool showsRepository() const;  // else the page that offers to set one up
@@ -47,7 +48,8 @@ class VersionPanel : public QWidget {
  private:
   QPushButton* addButton(QWidget* parent, const QString& action, const QString& text, const QString& icon = {});
   void updateButtons();
-  QLabel *m_branch, *m_sync, *m_doc, *m_mergeText, *m_emptyText;
+  QLabel *m_branch, *m_sync, *m_doc, *m_mergeText, *m_emptyText, *m_filterText;
+  QWidget* m_filterBar;
   QWidget* m_mergeBar;
   QStackedWidget *m_stack, *m_pages;
   QToolButton *m_historyTab, *m_branchesTab;

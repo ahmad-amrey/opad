@@ -32,6 +32,7 @@
 #include "Toast.hpp"
 #include "ToolPanel.hpp"
 #include "VersionControl.hpp"
+#include "OpProvenance.hpp"
 #include "VersionPanel.hpp"
 #include "Viewport.hpp"
 
@@ -219,6 +220,15 @@ bool VersionControl::bench(const QString& prefix) {
       [=, this] {
         if (!idle() || !finished("pack")) return false;
         timed("packed");
+        clock->start();
+        m_provenance->ensure();  // who added each op (UI-64): every version read to its #bodies, packed (deltas rebuilt)
+        return true;
+      },
+      [=, this] {
+        if (!m_provenance->ready()) return false;
+        const ophistory::Index& ix = m_provenance->index();
+        timed(QStringLiteral("who added each op: %1 commits, %2 versions read (%3 MB of them), %4 ops").arg(ix.commits.size()).arg(ix.blobsRead)
+                  .arg(ix.bytesRead / 1048576.0, 0, 'f', 1).arg(ix.ops.size()));
         return true;
       },
   };

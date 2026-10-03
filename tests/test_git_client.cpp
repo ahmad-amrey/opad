@@ -5,7 +5,8 @@
 // sentences, safe.directory, the environment (BatchMode ssh, no inherited GIT_DIR), opad.exe answering git's sign-in
 // prompts as GIT_ASKPASS, the author, Locate git, warnings before a push. UI-62 against a host: Git LFS files going up
 // to a remote's LFS store and down into a new clone; push, clone, fetch and pull over smart HTTP behind a sign-in (a
-// host on this machine), OPAD answering git's prompts, a refused sign-in as a sentence. Temporary repositories only;
+// host on this machine), OPAD answering git's prompts, a refused sign-in as a sentence. UI-64: who brought which op in
+// which commit, read once per version (OpHistory.cpp). Temporary repositories only;
 // git's global and system config are left out.
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -26,6 +27,7 @@
 #include <atomic>
 
 #include "Git.hpp"
+#include "OpHistory.hpp"
 #include "check.hpp"
 #include "opad/core.hpp"
 
@@ -705,6 +707,66 @@ TEST(history_and_branches) {
   git_(dir, {"gc", "-q"});
   const git::Objects packed = git::countObjects(in(dir));
   CHECK(packed.loose < objects.loose && packed.packs >= 1);
+}
+
+// UI-64: the op records of a version up to #bodies (fed in pieces, multiline records), and the index of who brought which
+// op in which commit: four commits by three authors, an edit counted per commit, a node touched by the ops that name it,
+// a big version read only to its #bodies, everything from the cache the second time, an empty index before any commit.
+TEST(op_history_index) {
+  const std::string a = "11111111-1111-4111-8111-111111111111", b = "22222222-2222-4222-8222-222222222222", key(64, 'a');
+  const std::string text = "#opad 2\n{\"uuid\":\"" + a + "\"}\n#ops\n{\"op\":\"sketch\",\"id\":\"" + a + "\",\"ts\":\"t\",\"by\":\"x\",\"geometry\":[\n" +
+                           " {\"ref\":\"" + b + "\"},\n]}\n{\"op\":\"edit\",\"id\":\"" + b + "\",\"ts\":\"t\",\"by\":\"y\",\"target\":\"" + a +
+                           "\",\"set\":{\"key\":\"" + key + "\"}}\n#bodies\n{\"op\":\"edit\",\"id\":\"" + a + "\"}\n";
+  ophistory::Reader reader;
+  for (size_t i = 0; i < text.size(); i += 7) reader.feed(std::string_view(text).substr(i, 7));
+  CHECK(reader.done());
+  const auto records = reader.finish();
+  CHECK_EQ(records.size(), size_t(2));
+  CHECK(records[0].type == "sketch" && records[0].id == a && records[0].mentions == std::vector<std::string>{b});
+  CHECK(records[1].type == "edit" && records[1].target == a && records[1].mentions.empty());  // a body key is no UUID
+
+  QTemporaryDir tmp;
+  const QString dir = tmp.path() + "/project", cache = tmp.path() + "/cache";
+  QDir().mkpath(dir);
+  git_(dir, {"init", "-q", "-b", "main"});
+  CHECK(ophistory::build(in(dir), dir, "model.opad", cache).commits.empty());  // nothing committed yet
+  const QString path = dir + "/model.opad";
+  opad::Document d = opad::Document::create();
+  const std::string brep = "DBRep_DrawableShape\n\nCASCADE Topology V1, (c) Matra-Datavision\nLocations 0\n";
+  const std::string body = opad::new_uuid(), part = d.add_body(brep, opad::json::object());
+  const std::string import = d.append({{"op", "import"}, {"source", "x.step"}, {"nodes", {{{"type", "body"}, {"id", body}, {"name", "Part"}, {"key", part}}}}}).id;
+  auto commit = [&](const char* author, const char* message) {
+    d.save_as(path.toStdU16String());
+    git_(dir, {"add", "model.opad"});
+    git_(dir, {"commit", "-q", "--author", QString::fromLatin1(author), "-m", QString::fromLatin1(message)});
+  };
+  commit("Alice <alice@x.org>", "a part");
+  const std::string rename = d.append({{"op", "rename"}, {"target", body}, {"name", "Bracket"}}).id;
+  commit("Bob <bob@x.org>", "renamed");
+  const std::string note = d.append({{"op", "annotation"}, {"anchor", body}, {"text", "deburr"}}).id;
+  d.append({{"op", "edit"}, {"target", note}, {"set", {{"text", "deburr all"}}}});
+  d.add_body(brep + std::string(1500000, ' ') + "\n", opad::json::object());  // over 1 MB: read on its own, to #bodies only
+  commit("Carol <carol@x.org>", "a note");
+  d.append({{"op", "edit"}, {"target", note}, {"set", {{"text", "deburr every edge"}}}});
+  d.append({{"op", "edit"}, {"target", note}, {"set", {{"style", "issue"}}}});
+  commit("Alice <alice@x.org>", "the note again");
+
+  const ophistory::Index ix = ophistory::build(in(dir), dir, "model.opad", cache);
+  CHECK_EQ(ix.commits.size(), size_t(4));
+  CHECK(ix.commits[0].author == "Alice" && ix.commits[1].author == "Bob" && ix.commits[2].author == "Carol" && ix.commits[3].subject == "the note again");
+  CHECK(ix.head == git::revParse(in(dir), "HEAD") && ix.blobs == 4 && ix.blobsRead == 4);
+  CHECK(ix.bytesRead < qint64(4) * 1500000);  // the two big versions were not read to their end
+  CHECK(ix.find(import)->added == 0 && ix.find(rename)->added == 1 && ix.find(note)->added == 2);
+  CHECK(ix.find(note)->edits == 2 && ix.find(note)->lastEdit == 3 && ix.find(import)->edits == 0);
+  CHECK(ix.touching({body}) == (std::vector<int>{0, 1, 2}));  // created, renamed, noted
+  CHECK(ix.touching({note}) == (std::vector<int>{2, 3}) && ix.touching({rename, note}) == (std::vector<int>{1, 2, 3}));
+  CHECK(!ix.find(opad::new_uuid()));
+  const ophistory::Index again = ophistory::build(in(dir), dir, "model.opad", cache);
+  CHECK(again.blobsRead == 0 && again.bytesRead == 0 && again.find(note)->lastEdit == 3);  // every version from the cache
+  CHECK_EQ(QDir(cache).entryList(QDir::Files).size(), 4);
+  bool stopped = false;
+  QDir(cache).removeRecursively();
+  CHECK(ophistory::build(in(dir), dir, "model.opad", cache, [&stopped] { return stopped = true; }).ops.empty() && stopped);  // cancelled
 }
 
 // UI-62 Push and UI-61 Clone with Git LFS: files under assets/ go up through git-lfs's pre-push hook into the remote's LFS

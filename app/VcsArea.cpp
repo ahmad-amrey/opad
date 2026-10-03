@@ -2,7 +2,9 @@
 // UI-56) and its repository (GitWatch, UI-61 / UI-136): the status chip beside the path, File > Clone repository…;
 // Compare (CompareMode, UI-58): File > Compare versions…, Inspect > Versions, the git chip's Compare with the last commit,
 // the Recovery offer's Compare…; Show unsaved changes (UI-59), also the unsaved-changes question's Review changes…;
-// the Version control panel and its commands (VersionControl, UI-62): File > Version control, Alt+4, the chip's menu.
+// the Version control panel and its commands (VersionControl, UI-62): File > Version control, Alt+4, the chip's menu;
+// who added each op in which commit (OpProvenance, UI-64): the timeline's tooltips, and Show in version history on a
+// marker or an object (the History page narrowed to the commits that touched it).
 #include <QAction>
 #include <QMainWindow>
 #include <QMenu>
@@ -14,8 +16,11 @@
 #include "CompareMode.hpp"
 #include "DiskSync.hpp"
 #include "GitWatch.hpp"
+#include "Icons.hpp"
+#include "OpProvenance.hpp"
 #include "RecoveryManager.hpp"
 #include "Ribbon.hpp"
+#include "TimelineWidget.hpp"
 #include "VersionControl.hpp"
 #include "Viewport.hpp"
 
@@ -129,12 +134,32 @@ class Vcs : public AreaController {
     });
     m_compare = new CompareMode(services(), m_git);
     m_version = new VersionControl(services(), m_git, m_compare, disk);
+    services().timeline()->addTipProvider([this](const opad::Op& op) { return m_version->provenance()->tip(op); });
     if (auto* recovery = services().window()->findChild<RecoveryManager*>())  // the Recovery offer's Compare…: the file, then the snapshot
       connect(recovery, &RecoveryManager::compareRequested, this, [this](const QString& source, const QString& snapshot, const QString& time) {
         m_compare->compareIn(source, CompareMode::savedVersion(source), CompareMode::recoveryVersion(snapshot, time));
       });
   }
   void selectionChanged(const SelectionContext& selection) override { m_compare->selectionChanged(selection); }
+  // Show in version history: the History page narrowed to the commits that touched a marker's op or one object.
+  void historyEntry(QMenu& menu, const QString& label, const std::string& id) {
+    if (!m_version || !m_version->ready()) return;  // a saved document in a repository
+    menu.addSeparator();
+    QAction* a = menu.addAction(icons::themed("history", 16), tr("Show in version history"));
+    a->setObjectName("vcs.opHistory");
+    a->setToolTip(tr("The commits that touched %1").arg(label));
+    connect(a, &QAction::triggered, this, [this, label, id] { m_version->showHistoryOf(label, {id}); });
+  }
+  void timelineMenu(const std::string& opId, QMenu& menu) override {
+    if (const opad::Op* op = services().document()->doc.find_op(opId)) historyEntry(menu, services().timeline()->describe(*op), opId);
+  }
+  void contextMenu(const SelectionContext& selection, QMenu& menu) override {
+    if (selection.document || selection.sketching || selection.ids.size() != 1) return;
+    const std::string& id = selection.ids.front();
+    const AppDocument* doc = services().document();
+    if (doc->node(id)) historyEntry(menu, doc->nodeName(id), id);
+    else if (const opad::SketchItem* s = doc->scene.sketch(id)) historyEntry(menu, QString::fromStdString(s->name), id);
+  }
   void documentChanged(bool replaced) override { m_compare->documentChanged(replaced); }
 
  private:

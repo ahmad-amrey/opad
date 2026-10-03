@@ -593,5 +593,19 @@
  "Open location of %1": "فتح موقع %1",
  "Open the folder %1 was in": "فتح المجلد الذي كان فيه %1",
  "Copy path of %1": "نسخ مسار %1",
- "Copy relative path of %1": "نسخ المسار النسبي لـ %1"
+ "Copy relative path of %1": "نسخ المسار النسبي لـ %1",
+ "Reading who changed what in git": "قراءة من غيّر ماذا في git",
+ "Reading version %1 of %2": "قراءة النسخة %1 من %2",
+ "Not committed yet": "لم يُودَع بعد",
+ "Reading who added it in git…": "قراءة من أضافه في git…",
+ "The git history could not be read: %1": "تعذّرت قراءة سجل git: %1",
+ "Added by %1 in %2 · %3": "أضافه %1 في %2 · %3",
+ "Edited in %n commit(s), last by %1 in %2 · %3": "عُدّل في %n إيداع، آخرها بواسطة %1 في %2 · %3",
+ "Deleted by %1 in %2": "حذفه %1 في %2",
+ "Show in version history": "إظهار في سجل النسخ",
+ "The commits that touched %1": "الإيداعات التي مسّت %1",
+ "Show all": "إظهار الكل",
+ "Only the commits that touched %1": "الإيداعات التي مسّت %1 فقط",
+ "No commit touched it yet.": "لم يمسّه أي إيداع بعد.",
+ "Reading who changed what in git…": "قراءة من غيّر ماذا في git…"
 }

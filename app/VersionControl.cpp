@@ -38,6 +38,7 @@
 #include "Icons.hpp"
 #include "Jobs.hpp"
 #include "ToolPanel.hpp"
+#include "OpProvenance.hpp"
 #include "VersionPanel.hpp"
 #include "opad/diff.hpp"
 #include "opad/geometry.hpp"
@@ -147,7 +148,8 @@ void readIncoming(const git::Context& c, const QString& rel, VersionControl::Inc
 }  // namespace
 
 VersionControl::VersionControl(AreaServices& services, GitWatch* git, CompareMode* compare, DiskSync* disk)
-    : QObject(services.window()), m_services(services), m_git(git), m_compare(compare), m_disk(disk) {
+    : QObject(services.window()), m_services(services), m_git(git), m_compare(compare), m_disk(disk),
+      m_provenance(new OpProvenance(git, services.jobs(), this)) {
   m_reload.setSingleShot(true);
   m_reload.setInterval(150);
   connect(&m_reload, &QTimer::timeout, this, &VersionControl::reload);
@@ -160,7 +162,12 @@ VersionControl::VersionControl(AreaServices& services, GitWatch* git, CompareMod
       m_remotes.clear();
       m_moreHistory = false;
       m_listed = listed;
+      m_filterLabel.clear();
+      m_filterIds.clear();
+      m_filtered.clear();
       if (m_panel) m_panel->showLists();
+    } else if (!m_filterLabel.isEmpty() && m_git->repo().status.oid != m_filterHead) {
+      applyFilter();  // HEAD moved: what touched it may have grown
     }
     if (m_panel) m_panel->showState();
     scheduleReload();
@@ -284,6 +291,28 @@ void VersionControl::moreHistory() {
                              if (m_panel) m_panel->showLists();
                              emit listsChanged();
                            });
+}
+
+void VersionControl::showHistoryOf(const QString& label, const std::vector<std::string>& ids) {
+  m_filterLabel = ids.empty() ? QString() : label;
+  m_filterIds = ids;
+  m_filtered.clear();
+  if (!ids.empty()) openPanel(History);
+  applyFilter();
+}
+
+void VersionControl::applyFilter() {
+  m_filterRead = false;
+  m_filterHead = m_git->repo().status.oid;
+  if (m_panel) m_panel->showLists();  // "reading" meanwhile
+  if (m_filterLabel.isEmpty()) return;
+  m_provenance->whenReady([this, self = QPointer<VersionControl>(this), label = m_filterLabel, ids = m_filterIds] {
+    if (!self || m_filterLabel != label || m_filterIds != ids) return;
+    m_filtered = m_provenance->commitsTouching(ids);
+    m_filterRead = true;
+    if (m_panel) m_panel->showLists();
+    emit listsChanged();
+  });
 }
 
 void VersionControl::failed(const QString& title, const QString& text) {

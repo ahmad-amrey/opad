@@ -5,6 +5,7 @@ import os
 import shutil
 import stat
 import subprocess
+import uuid
 
 
 def external(root, document):
@@ -108,6 +109,36 @@ def located(root, document, name="paths"):
     return document(f"{name}/doc/model", ("import", "--file", str(stl)))
 
 
+def provenance(root, document, name="provenance"):
+    """Who added which op (UI-64): <name>/model.opad with a box committed by Alice, a rename of its body by Bob and an edit of
+    the box's name by Carol (records appended as a later OPAD writes them)."""
+    (root / name).mkdir(exist_ok=True)
+    doc = document(f"{name}/model", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+    git = shutil.which("git")
+    if not git:
+        return root / name / "no-git.opad"  # skipped: the case needs git
+    folder = root / name
+    quiet = dict(cwd=folder, check=True, capture_output=True)
+    subprocess.run([git, "init", "-q", "-b", "main"], **quiet)
+
+    def commit(author, message, record=None):
+        if record:
+            text = doc.read_text(encoding="utf-8")
+            at = text.index("#bodies\n")
+            doc.write_text(text[:at] + json.dumps(record, separators=(",", ":")) + "\n" + text[at:], encoding="utf-8", newline="\n")
+        subprocess.run([git, "add", "model.opad"], **quiet)
+        subprocess.run([git, "-c", "user.name=bench", "-c", "user.email=bench@example.com", "commit", "-q", "--author", author, "-m", message], **quiet)
+
+    ops = [json.loads(line) for line in doc.read_text(encoding="utf-8").split("#ops\n")[1].split("#bodies")[0].splitlines() if line.startswith('{"op"')]
+    feature = next(op for op in ops if op["op"] == "feature")
+    body = feature["result"]["bodies"][0]["id"]
+    commit("Alice <alice@example.com>", "a box")
+    stamp = dict(ts="2026-10-03T12:00:00Z")
+    commit("Bob <bob@example.com>", "renamed", dict(op="rename", id=str(uuid.uuid4()), **stamp, by="bob", target=body, name="Block"))
+    commit("Carol <carol@example.com>", "the box renamed", dict(op="edit", id=str(uuid.uuid4()), **stamp, by="carol", target=feature["id"], set={"name": "Big box"}))
+    return doc
+
+
 CASES = [
     ("external-change", external, {"OPAD_BENCH_EXTERNAL_CHANGE": "{prefix}", "OPAD_BENCH_CLI": "{cli}"}),
     # git without this machine's settings: a global config of the run's own (the bench sets the author there), no system one.
@@ -134,6 +165,11 @@ CASES = [
     # The toasts commands end with, on the Engine with its bodies on screen (skipped where the Engine is not beside the tree).
     ("toast-engine", "../opad_resources/bench_step_files/Engine V8-XT Turbo.opad", {"OPAD_BENCH_TOASTPERF": "6"}),
     ("recovery-diff", recovered, {"OPAD_BENCH_RECOVERY_DIFF": "{prefix}"}),
+    # Who added which op, from git: the timeline's tooltips, Show in version history on a marker and on a body, a new commit
+    # read alone; also right to left.
+    ("provenance", provenance, {"OPAD_BENCH_PROVENANCE": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),
+    ("provenance-ar", lambda root, document: provenance(root, document, "provenance-ar"),
+     {"OPAD_BENCH_PROVENANCE": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1", "OPAD_LANG": "ar"}),
     # Open file location and Copy path from File, the status path, the browser's document row, an import's marker and the
     # recent files' menus (the file manager never starts: the bench records what would run); also right to left.
     ("paths", located, {"OPAD_BENCH_PATHS": "{prefix}", "GIT_CONFIG_GLOBAL": "{root}/git-global", "GIT_CONFIG_NOSYSTEM": "1"}),
