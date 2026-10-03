@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <QMetaObject>
 #include <QPointer>
+#include <QThread>
 #include <thread>
 
 namespace {
@@ -123,6 +124,7 @@ void AppDocument::startOpen(const QString& path) {
       emit aboutToReplace();
       ++generation;
       m_rollback.clear();
+      disposeOld();
       doc = std::move(*result);
       browse = viewer;
       viewing = viewer ? QFileInfo(path).absoluteFilePath() : QString();
@@ -220,6 +222,7 @@ void AppDocument::newDocument() {
   emit aboutToReplace();
   ++generation;
   m_rollback.clear();
+  disposeOld();
   doc = opad::Document::create();
   browse = false;
   hasDocument = true;
@@ -235,6 +238,7 @@ void AppDocument::closeDocument() {
   emit aboutToReplace();
   ++generation;
   m_rollback.clear();
+  disposeOld();
   doc = opad::Document();
   browse = false;
   hasDocument = false;
@@ -261,6 +265,7 @@ void AppDocument::open(const QString& path) {
   emit aboutToReplace();
   ++generation;
   m_rollback.clear();
+  disposeOld();
   doc = std::move(next);
   browse = false;
   hasDocument = true;
@@ -361,6 +366,15 @@ void AppDocument::setRollback(const std::string& opId) {
   refresh();
 }
 
+// The document being replaced and its scene are freed on a worker (UI-41): the Engine's are op JSON trees, 322 MB of BREP
+// text and the parsed shapes, many small deallocations. What the view still draws keeps its shapes alive meanwhile.
+void AppDocument::disposeOld() {
+  auto old = std::make_shared<std::pair<opad::Document, opad::Scene>>(std::move(doc), std::move(scene));
+  QThread* t = QThread::create([old = std::move(old)]() mutable { old.reset(); });
+  connect(t, &QThread::finished, t, &QObject::deleteLater);
+  t->start(QThread::LowPriority);
+}
+
 void AppDocument::refresh() {
   if (!m_rollback.empty() && !doc.find_op(m_rollback)) m_rollback.clear();  // undone or closed
   scene = hasDocument ? opad::resolve(doc, m_rollback) : opad::Scene{};
@@ -374,7 +388,7 @@ void AppDocument::refresh() {
 
 void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved) {
   if(loading || designBusy)throw opad::Error("Document is busy; try recovery again shortly.");
-  emit aboutToReplace();++generation;++revision;m_rollback.clear();
+  emit aboutToReplace();++generation;++revision;m_rollback.clear();disposeOld();
   doc=std::move(document);doc.path.clear();doc.dirty=true;scene=std::move(resolved);
   browse=false;hasDocument=true;clearHistory();m_savedIds.clear();m_savedBodies=0;
   emit changed();emit pathChanged();

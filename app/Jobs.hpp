@@ -12,6 +12,7 @@
 #include <QElapsedTimer>
 #include <QObject>
 #include <QString>
+#include <QThread>
 #include <QTimer>
 #include <atomic>
 #include <functional>
@@ -104,6 +105,14 @@ class JobRunner : public QObject {
   QTimer m_showTimer;
   Job* m_shown = nullptr;
 };
+
+// Drops the last reference to `value` on a worker thread (UI-41): freeing large data (a replaced document, its display
+// arrays) is many small deallocations that would otherwise hold the UI thread. Nothing else may still use it.
+inline void disposeLater(std::shared_ptr<void> value) {
+  QThread* t = QThread::create([value = std::move(value)]() mutable { value.reset(); });
+  QObject::connect(t, &QThread::finished, t, &QObject::deleteLater);
+  t->start(QThread::LowPriority);
+}
 
 // Timing/diagnostic output, enabled by OPAD_TRACE (see above). Cheap no-ops otherwise.
 namespace trace {

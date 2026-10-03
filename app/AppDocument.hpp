@@ -124,6 +124,7 @@ class AppDocument : public QObject {
     size_t count = 0;            // ops on the log while the step sits on the undo stack
     std::vector<opad::Op> ops;   // the ops themselves while it sits on the redo stack
   };
+  void disposeOld();  // the document and scene being replaced, to a worker (moved out: both are empty afterwards)
   void recordStep(const QString& label, size_t opsBefore);
   void clearHistory();
   void markSaved();      // snapshot the state the file holds (or the empty state of a new document)

@@ -421,6 +421,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void activateSelection(const Handle(AIS_Shape)& ais);
   void startMeshing(std::vector<std::string> keys);
   void displayBody(const std::string& id);
+  // Objects of bodies no longer shown (UI-41): erased by retire(), removed from the context by removeRetired's background
+  // job, a few per slice.
+  struct Retired { Handle(AIS_Shape) ais; Handle(NavigationShape) navigation; };
+  std::deque<Retired> m_retired;
+  Job* m_retireJob = nullptr;
+  void retire(const Item& item);
+  void removeRetired();
   void finishSync(int pendingCount, bool added);
   void showShade(const std::vector<std::string>& ids);
   void refreshSubHighlight();   // rebuilds m_subHl from the context's selected faces/edges/vertices (sliced)

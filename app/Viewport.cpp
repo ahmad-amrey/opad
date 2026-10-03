@@ -1658,6 +1658,8 @@ void Viewport::sync() {
       m_activeCache = cache;
       m_meshed.clear();
       m_meshSkipped.clear();
+      // The last document's display arrays are freed on a worker (UI-41): the Engine's are hundreds of MB in many blocks.
+      disposeLater(std::make_shared<std::pair<decltype(m_prs), decltype(m_refined)>>(std::move(m_prs), std::move(m_refined)));
       m_prs.clear();
       m_refined.clear();
     }
@@ -1712,16 +1714,13 @@ void Viewport::sync() {
   bool removed = false;
   for (auto it = m_items.begin(); it != m_items.end();) {
     if (keep.count(it->first) && !replace.count(it->first)) { ++it; continue; }
-    clearCenters();  // topology, placement or visibility changed: no stale source circles
-    if (!it->second.navigation.IsNull()) {
-      m_navNodes.erase(it->second.navigation.get());
-      m_navSelection->Remove(it->second.navigation);
-    }
-    m_ctx->Remove(it->second.ais, Standard_False);
+    if (!removed) clearCenters();  // topology, placement or visibility changed: no stale source circles
+    retire(it->second);
     m_nodeOf.erase(it->second.ais.get());
     it = m_items.erase(it);
     removed = true;
   }
+  if (removed) removeRetired();
   if (recoloredSelected) m_ctx->HilightSelected(Standard_False);  // its highlight was on the old presentation
   if(removed) applySelectionLayers();
   if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // Remove() dropped that body's selected sub-shapes
@@ -1753,6 +1752,50 @@ void Viewport::sync() {
   }, [this, pendingCount](bool completed) {
     m_displayJob = nullptr;
     if (completed) finishSync(pendingCount, true);
+  });
+}
+
+// A displayed body that goes (UI-41): erased at once, which only hides it and turns its picking off, and removed from the
+// context later by removeRetired. Removing frees its presentation and selection structures, ~2 ms a body on the Engine:
+// one by one in sync, a new document waited 2.6 s for the old one's 1,295 bodies.
+void Viewport::retire(const Item& item) {
+  m_ctx->Erase(item.ais, Standard_False);
+  if (!item.navigation.IsNull()) {
+    m_navNodes.erase(item.navigation.get());
+    m_navSelection->Deactivate(item.navigation);
+  }
+  m_retired.push_back({item.ais, item.navigation});
+}
+
+void Viewport::removeRetired() {
+  if (m_retireJob || m_retired.empty() || !m_jobs) return;
+  // What the objects alone still hold (their shapes with the meshes, their arrays and picking structures) is freed on a
+  // worker, a batch at a time: freeing one big body took up to 400 ms here.
+  struct Batch { std::vector<TopoDS_Shape> shapes; std::vector<std::shared_ptr<const BodyPrs>> prs; };
+  auto batch = std::make_shared<std::shared_ptr<Batch>>(std::make_shared<Batch>());
+  auto flush = [batch] {
+    if ((*batch)->shapes.empty()) return;
+    disposeLater(std::move(*batch));
+    *batch = std::make_shared<Batch>();
+  };
+  m_retireJob = m_jobs->sliced(tr("Clearing the view"), [this, batch, flush](Job&) {
+    if (m_retired.empty()) return false;
+    Retired r = std::move(m_retired.front());
+    m_retired.pop_front();
+    if (!r.navigation.IsNull()) m_navSelection->Remove(r.navigation);
+    m_ctx->Remove(r.ais, Standard_False);
+    (*batch)->shapes.push_back(r.ais->Shape());
+    if (const auto body = Handle(BodyShape)::DownCast(r.ais); !body.IsNull()) {
+      (*batch)->prs.push_back(body->prs());
+      (*batch)->prs.push_back(body->displayPrs());
+    }
+    r = {};
+    if ((*batch)->shapes.size() >= 64) flush();
+    return !m_retired.empty();
+  }, [this, flush](bool) {
+    flush();
+    m_retireJob = nullptr;
+    if (!m_retired.empty()) QTimer::singleShot(0, this, &Viewport::removeRetired);  // cancelled: the rest later
   });
 }
 
