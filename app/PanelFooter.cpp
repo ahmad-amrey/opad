@@ -29,8 +29,19 @@ PanelFooter::PanelFooter(QWidget* parent) : QWidget(parent) {
   m_primary->setObjectName("primary");  // the accent (QPushButton#primary)
   m_row->addWidget(m_cancel);
   m_row->addWidget(m_primary);
+  m_back = button(tr("Back"), QString());
+  auto* arrow = new QLabel(QString(QChar(0x2039)), m_back);  // "‹", a mirrored character: "›" in a right-to-left UI
+  arrow->setAttribute(Qt::WA_TransparentForMouseEvents);
+  static_cast<QHBoxLayout*>(m_back->layout())->insertWidget(0, arrow);
+  m_back->hide();
+  m_hint = new QLabel(this);
+  m_hint->setObjectName("secondary");
+  m_hint->hide();
+  m_row->insertWidget(0, m_back);
+  m_row->insertWidget(1, m_hint);
   connect(m_cancel, &QPushButton::clicked, this, &PanelFooter::cancelled);
   connect(m_primary, &QPushButton::clicked, this, &PanelFooter::accepted);
+  connect(m_back, &QPushButton::clicked, this, &PanelFooter::backRequested);
 }
 
 QPushButton* PanelFooter::button(const QString& text, const QString& key) {
@@ -65,8 +76,21 @@ void PanelFooter::relabel(QPushButton* b, const QString& text, const QString& ke
 
 QPushButton* PanelFooter::addSecondary(const QString& text, const QString& key) {
   QPushButton* b = button(text, key);
-  m_row->insertWidget(m_secondaries++, b);
+  m_row->insertWidget(2 + m_secondaries++, b);  // after Back and the hint
   return b;
+}
+
+QPushButton* PanelFooter::setBack(const QString& text, const QString& key) {
+  relabel(m_back, text.isEmpty() ? tr("Back") : text, key);
+  m_back->show();
+  return m_back;
+}
+
+void PanelFooter::setBackVisible(bool on) { m_back->setVisible(on); }
+
+void PanelFooter::setHint(const QString& text) {
+  m_hint->setText(text);
+  m_hint->setVisible(!text.isEmpty());
 }
 
 void PanelFooter::setPrimary(Primary kind, const QString& key) { relabel(m_primary, kind == Primary::Close ? tr("OK") : tr("Apply"), key); }

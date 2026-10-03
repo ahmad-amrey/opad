@@ -150,6 +150,23 @@ OPAD_BENCH(OPAD_BENCH_FOOTER, footer) {
              QString("feature panel: the footer spans the panel's bottom, buttons whole and in reading order (%1)").arg(f->layoutDirection() == Qt::RightToLeft ? "rtl" : "ltr"));
   const QString shot = qEnvironmentVariable("OPAD_BENCH_UISHOT");  // <shot>.feature.png, <shot>.tool.png
   if (!shot.isEmpty()) w.m_featurePanel->grab().save(shot + ".feature.png");
+  {  // a multi-page flow's Back and a hint lead the footer (mirrored in a right-to-left UI); off again for the feature
+    QPushButton* back = f->setBack({}, "Alt+Left");
+    f->setHint("Hint");
+    f->layout()->activate();
+    int backs = 0;
+    const auto counted = QObject::connect(f, &PanelFooter::backRequested, [&backs] { ++backs; });
+    back->click();
+    QObject::disconnect(counted);
+    const bool rtl = f->layoutDirection() == Qt::RightToLeft;
+    const QRect hint = f->hint()->geometry();
+    const bool between = rtl ? hint.right() < back->x() && hint.left() > f->cancel()->geometry().right() : hint.left() > back->geometry().right() && hint.right() < f->cancel()->x();
+    (*require)(back->isVisibleTo(f) && PanelFooter::text(back) == QObject::tr("Back") && inReadingOrder(f, {back, f->cancel(), f->primary()}) && between && backs == 1,
+               "feature panel: Back, then the hint, lead the footer; Back signals backRequested");
+    f->setBackVisible(false);
+    f->setHint({});
+    f->layout()->activate();
+  }
   const size_t ops = w.m_doc->doc.ops.size();
   f->cancel()->click();
   (*require)(!w.m_design->featureActive() && !w.m_featurePanel->isVisible() && w.m_doc->doc.ops.size() == ops, "Cancel leaves the feature, nothing is committed");

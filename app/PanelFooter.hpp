@@ -1,6 +1,6 @@
 #pragma once
-// The one footer of every tool panel (UI-120 c). Leading side: secondary actions ("Copy", "Undo point"), in the order
-// added. Trailing side: Cancel, then the primary button, each with its key ("Esc", "Enter"). The primary is accent-styled
+// The one footer of every tool panel (UI-120 c). Leading side: "‹ Back" in multi-page flows (setBack; hidden until set),
+// a short hint (setHint), then secondary actions ("Copy", "Undo point"), in the order added. Trailing side: Cancel, then the primary button, each with its key ("Esc", "Enter"). The primary is accent-styled
 // and named by what it does: OK when it commits and closes the panel, Apply when it commits and the panel stays open, or
 // a verb of its own ("Place", "Pin to document"). A right-to-left UI mirrors it (secondary right, primary far left).
 //
@@ -27,6 +27,11 @@ class PanelFooter : public QWidget {
   enum class Primary { Close, Stay };  // OK: commits and closes the panel; Apply: commits, the panel stays open
   explicit PanelFooter(QWidget* parent = nullptr);
   QPushButton* addSecondary(const QString& text, const QString& key = QString());  // leading side, after the ones before
+  // Multi-page flows: Back (tr("Back") when text is empty) and its key at the leading end, its arrow mirrored in a
+  // right-to-left UI; shown from the first call, backRequested() on a click.
+  QPushButton* setBack(const QString& text = QString(), const QString& key = QString());
+  void setBackVisible(bool on);
+  void setHint(const QString& text);  // after Back, before the secondary actions, in the dimmer text; empty: none
   void setPrimary(Primary kind, const QString& key = QStringLiteral("Enter"));
   void setPrimary(const QString& verb, const QString& key = QStringLiteral("Enter"));
   void setCancel(const QString& text, const QString& key = QStringLiteral("Esc"));  // "Cancel" unless set: "Clear" where Esc clears
@@ -37,6 +42,8 @@ class PanelFooter : public QWidget {
   void setKeysStayWithWindow(bool on);
   QPushButton* primary() const { return m_primary; }
   QPushButton* cancel() const { return m_cancel; }
+  QPushButton* back() const { return m_back; }
+  QLabel* hint() const { return m_hint; }
   QString primaryText() const;  // the label without its key
   QString cancelText() const;
   static QString text(QPushButton* button);  // a footer button's label
@@ -44,6 +51,7 @@ class PanelFooter : public QWidget {
  signals:
   void accepted();
   void cancelled();
+  void backRequested();
  protected:
   void paintEvent(QPaintEvent*) override;  // the divider above it
  private:
@@ -53,4 +61,6 @@ class PanelFooter : public QWidget {
   int m_secondaries = 0;
   QPushButton* m_cancel;
   QPushButton* m_primary;
+  QPushButton* m_back;
+  QLabel* m_hint;
 };

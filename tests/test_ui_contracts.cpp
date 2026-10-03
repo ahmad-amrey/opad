@@ -119,8 +119,12 @@ TEST(panel_footer) {
           PanelFooter::key(footer->primary()) == "Enter" && footer->primary()->objectName() == "primary");
     footer->setPrimary(PanelFooter::Primary::Stay);
     CHECK(footer->primaryText() == "Apply" && PanelFooter::key(footer->primary()) == "Enter");
+    CHECK(!footer->back()->isVisibleTo(footer) && !footer->hint()->isVisibleTo(footer));  // only in flows that set them
     QPushButton* copy = footer->addSecondary("Copy");
     QPushButton* undo = footer->addSecondary("Undo point", "Ctrl+Z");
+    QPushButton* back = footer->setBack({}, "Alt+Left");
+    footer->setHint("Pick a face");
+    CHECK(back == footer->back() && PanelFooter::text(back) == "Back" && PanelFooter::key(back) == "Alt+Left" && footer->hint()->text() == "Pick a face");
     footer->setCancel("Clear");
     footer->setPrimary("Pin to document", "P");
     CHECK(footer->cancelText() == "Clear" && PanelFooter::key(footer->cancel()) == "Esc" && PanelFooter::text(undo) == "Undo point" &&
@@ -130,21 +134,26 @@ TEST(panel_footer) {
     panel.resize(width, 44);
     panel.show();
     QApplication::processEvents();
-    // Reading order: secondaries on the leading side, then Cancel, then the primary at the trailing end.
+    // Reading order: Back, the hint and the secondaries on the leading side, then Cancel, then the primary at the trailing end.
     QList<int> x;
-    for (QPushButton* b : {copy, undo, footer->cancel(), footer->primary()}) x << b->geometry().center().x();
+    for (QWidget* b : std::initializer_list<QWidget*>{back, footer->hint(), copy, undo, footer->cancel(), footer->primary()}) x << b->geometry().center().x();
     const bool ltr = direction == Qt::LeftToRight;
     CHECK(ltr ? std::is_sorted(x.begin(), x.end()) : std::is_sorted(x.rbegin(), x.rend()));
     CHECK(ltr ? footer->primary()->geometry().right() > width - 40 : footer->primary()->geometry().left() < 40);
-    for (QPushButton* b : {copy, undo, footer->cancel(), footer->primary()}) CHECK(b->width() >= b->sizeHint().width());  // labels whole
-    int accepted = 0, cancelled = 0;
+    for (QPushButton* b : {back, copy, undo, footer->cancel(), footer->primary()}) CHECK(b->width() >= b->sizeHint().width());  // labels whole
+    int accepted = 0, cancelled = 0, backs = 0;
     QObject::connect(footer, &PanelFooter::accepted, [&] { ++accepted; });
     QObject::connect(footer, &PanelFooter::cancelled, [&] { ++cancelled; });
+    QObject::connect(footer, &PanelFooter::backRequested, [&] { ++backs; });
     footer->primary()->click();
     footer->cancel()->click();
+    back->click();
     footer->setPrimaryEnabled(false);
     footer->primary()->click();
-    CHECK(accepted == 1 && cancelled == 1);
+    CHECK(accepted == 1 && cancelled == 1 && backs == 1);
+    footer->setBackVisible(false);
+    footer->setHint({});
+    CHECK(!back->isVisibleTo(footer) && !footer->hint()->isVisibleTo(footer));
     CHECK(footer->primary()->focusPolicy() != Qt::NoFocus);
     footer->setKeysStayWithWindow(true);
     CHECK(footer->primary()->focusPolicy() == Qt::NoFocus && footer->cancel()->focusPolicy() == Qt::NoFocus && copy->focusPolicy() != Qt::NoFocus);
