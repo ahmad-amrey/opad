@@ -118,6 +118,10 @@ void SketchEditor::benchShapes() {
     const int first = lineBetween(0, 0, x1, y1);
     check(first && m_chain.size() == 2, "Line 50 Tab 30 Enter: a line from the origin to exactly 50 at 30 degrees");
     check(has(CT::Distance, {first}, 50), "its typed length is its driving dimension, 50");
+    int axis = 0;
+    for (const auto& e : m_sk.entities)
+      if (e.type == SkEntity::Type::Line && e.fixed && e.construction && at(e.p[0], 0, 0) && at(e.p[1], 1, 0)) axis = e.id;
+    check(axis && has(CT::Angle, {axis, first}, 30 * degree), "its typed 30 degrees is held against a fixed line along the X axis");
     type("40");
     tab();
     type("120");
@@ -138,6 +142,17 @@ void SketchEditor::benchShapes() {
     enter();
     const int third = lineBetween(x2, y2, x3, y3);
     check(third && has(CT::Distance, {third}, 20) && has(CT::Angle, {second, third}, 45 * degree), "and is held at 45 degrees to it");
+    // @-10,5: ΔX and ΔY from the last point, kept as its signed horizontal and vertical distances.
+    send(Qt::Key_At, Qt::ShiftModifier, "@");
+    type("-10,5");
+    enter();
+    const int fourth = lineBetween(x3, y3, x3 - 10, y3 + 5), from = pointAtXY(x3, y3), to = pointAtXY(x3 - 10, y3 + 5);
+    bool across = false, up = false;
+    for (const auto& c : m_sk.constraints) {
+      across = across || (c.type == CT::HDistance && c.is_signed && c.refs == std::vector<int>{from, to} && same(c.value, -10));
+      up = up || (c.type == CT::VDistance && c.is_signed && c.refs == std::vector<int>{from, to} && same(c.value, 5));
+    }
+    check(fourth && across && up && m_solved.converged, "@-10,5 Enter: 10 left and 5 up, held by its signed horizontal and vertical distances");
     if (QToolButton* c = chip()) c->click();
     check(!m_angleRelative, "the switch back: from the X axis");
     send(Qt::Key_Escape);
@@ -317,6 +332,21 @@ void SketchEditor::benchShapes() {
     for (const auto& e : m_sk.entities)
       if (e.type == SkEntity::Type::Arc && at(e.p[0], 150, 120) && at(e.p[1], 160, 120) && at(e.p[2], 150, 110)) arc = e.id;
     check(arc && has(CT::Radius, {arc}, 10), "a counter-clockwise arc of 270 degrees from (160, 120) to (150, 110), its radius dimensioned");
+    const SkConstraint* sweep = nullptr;
+    int radius = 0;
+    for (const auto& c : m_sk.constraints) {
+      if (c.type == CT::ArcLength && c.refs == std::vector<int>{arc}) sweep = &c;
+      if (c.type == CT::Radius && c.refs == std::vector<int>{arc}) radius = c.id;
+    }
+    check(sweep && sweep->expr == QString("d%1 * 270 deg").arg(radius).toStdString() && same(sweep->value, 15 * M_PI) && !has(CT::Vertical, {pointAtXY(150, 120), pointAtXY(150, 110)}),
+          "its sweep is held as its length, the radius times 270 degrees: " + QString::fromStdString(sweep ? sweep->expr : std::string()));
+    begin_change();  // the radius edited: the sweep stays
+    m_sk.constraint(radius)->value = 20;
+    end_change("radius");
+    const SkEntity* e = m_sk.entity(arc);
+    const SkPoint *o = e ? m_sk.point(e->p[0]) : nullptr, *s = e ? m_sk.point(e->p[1]) : nullptr, *t = e ? m_sk.point(e->p[2]) : nullptr;
+    const double turned = o ? std::fmod(std::atan2(t->y - o->y, t->x - o->x) - std::atan2(s->y - o->y, s->x - o->x) + 4 * M_PI, 2 * M_PI) : 0;
+    check(o && std::abs(std::hypot(s->x - o->x, s->y - o->y) - 20) < 1e-6 && std::abs(turned - 1.5 * M_PI) < 1e-6, QString("its radius made 20, it still sweeps 270 degrees (%1)").arg(turned * 180 / M_PI));
     send(Qt::Key_Escape);
   });
 

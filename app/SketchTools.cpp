@@ -213,6 +213,12 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
       keepDirection(s, "angle", {line}, std::atan2(to->y - from->y, to->x - from->x), line, previous);
       if (const auto it = s.typed.find("dx"); it != s.typed.end() && std::fabs(it->second.first) < 1e-12 && !s.vertical) keepDirection(s, "dx", {line}, M_PI / 2);
       if (const auto it = s.typed.find("dy"); it != s.typed.end() && std::fabs(it->second.first) < 1e-12 && !s.horizontal) keepDirection(s, "dy", {line}, 0);
+      for (const char* key : {"dx", "dy"})  // a typed ΔX (ΔY) that is not 0: the signed horizontal (vertical) distance from the last point
+        if (const auto it = s.typed.find(key); it != s.typed.end() && std::fabs(it->second.first) >= 1e-12)
+          if (SkConstraint* c = m_sk.constraint(keepTyped(s, key, key[1] == 'x' ? CT::HDistance : CT::VDistance, {m_chain.back(), p}))) {
+            c->is_signed = true;
+            c->value = it->second.first;
+          }
     }
     const bool closes = p == m_chain.front() && m_chain.size() > 1;
     if (!end_change(tr("Line"))) return;
@@ -261,8 +267,10 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     begin_change();
     rectangle(a.u, a.v, c.u, c.v, &a, &c);
     const double mu = (a.u + c.u) / 2, mv = (a.v + c.v) / 2, out = 24 * m_viewport->pixelSize();
-    labelOff(keepTyped(c, "width", CT::Distance, {sides[0]}), sides[0], mu, mv, out);
-    labelOff(keepTyped(c, "height", CT::Distance, {sides[1]}), sides[1], mu, mv, out);
+    // Its width and height typed, or the corner typed as ΔX and ΔY from the first ('@'): its sides.
+    const int width = keepTyped(c, "width", CT::Distance, {sides[0]}), height = keepTyped(c, "height", CT::Distance, {sides[1]});
+    labelOff(width ? width : keepTyped(c, "dx", CT::Distance, {sides[0]}), sides[0], mu, mv, out);
+    labelOff(height ? height : keepTyped(c, "dy", CT::Distance, {sides[1]}), sides[1], mu, mv, out);
     return done(tr("Rectangle"));
   }
   if (m_tool == "crect" && n == 2) {
@@ -274,8 +282,9 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     const int centre = pointFor(o);
     const int diagonal = m_sk.add_line(corners[0], corners[2], true);
     m_sk.add_constraint(CT::Midpoint, {centre, diagonal});
-    labelOff(keepTyped(c, "width", CT::Distance, {sides[0]}), sides[0], o.u, o.v, 24 * m_viewport->pixelSize());
-    labelOff(keepTyped(c, "height", CT::Distance, {sides[1]}), sides[1], o.u, o.v, 24 * m_viewport->pixelSize());
+    const int width = keepTyped(c, "width", CT::Distance, {sides[0]}), height = keepTyped(c, "height", CT::Distance, {sides[1]});
+    labelOff(width ? width : keepTyped(c, "dx", CT::Distance, {sides[0]}, 2), sides[0], o.u, o.v, 24 * m_viewport->pixelSize());  // ΔX from the centre: half of it
+    labelOff(height ? height : keepTyped(c, "dy", CT::Distance, {sides[1]}, 2), sides[1], o.u, o.v, 24 * m_viewport->pixelSize());
     return done(tr("Rectangle"));
   }
   if (m_tool == "circle" && n == 2) {
@@ -326,9 +335,11 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
     while (sweep <= -M_PI) sweep += 2 * M_PI;
     if (const auto typed = s.typed.find("sweep"); typed != s.typed.end()) sweep = typed->second.first;  // past half a turn too
     const int arc = m_sk.add_arc(centre, sweep > 0 ? ps : pe, sweep > 0 ? pe : ps);
-    keepTyped(a, "radius", CT::Radius, {arc});
+    const int radius = keepTyped(a, "radius", CT::Radius, {arc});
     keepDirection(a, "angle", {centre, ps}, std::atan2(a.v - c.v, a.u - c.u));  // the start along an axis
-    keepDirection(s, "sweep", {centre, pe}, std::atan2(m_sk.point(pe)->y - c.v, m_sk.point(pe)->x - c.u));  // the end too
+    // The sweep typed with the radius: held as the arc's length, that radius times the sweep (a radius edited later keeps the
+    // sweep, past half a turn too); without it, its end along an axis.
+    if (!keepSweep(s, arc, radius, r)) keepDirection(s, "sweep", {centre, pe}, std::atan2(m_sk.point(pe)->y - c.v, m_sk.point(pe)->x - c.u));
     return done(tr("Arc"));
   }
   if (m_tool == "polygon" && n == 2) {
@@ -464,8 +475,45 @@ void SketchEditor::keepDirection(const Snap& s, const char* key, std::vector<int
       c->pos[1] = corner->y + reach * std::sin(middle);
       break;
     }
-    case Hold::None: break;
+    case Hold::None: {  // the first line: against the sketch's X axis (a fixed reference line, made once)
+      const SkEntity* l = axis.size() == 1 ? m_sk.entity(axis[0]) : nullptr;
+      if (!l || l->type != ET::Line || key != std::string("angle")) break;
+      const SkPoint *corner = m_sk.point(l->p[0]), *end = m_sk.point(l->p[1]);
+      const int id = m_sk.add_constraint(CT::Angle, {referenceX(), axis[0]}, shapeinput::between(angle));
+      const double reach = std::min(40 * m_viewport->pixelSize(), 0.6 * std::hypot(end->x - corner->x, end->y - corner->y)), middle = std::remainder(angle, 2 * M_PI) / 2;
+      labelAt(id, corner->x + reach * std::cos(middle), corner->y + reach * std::sin(middle));
+      break;
+    }
   }
+}
+
+// A fixed line along +X that angles typed from the X axis are held against: one already there (Mirror's X axis, a projected
+// horizontal edge), else one made beside the origin as Mirror makes it.
+int SketchEditor::referenceX() {
+  for (const auto& e : m_sk.entities)
+    if (e.type == ET::Line && e.fixed && e.p.size() == 2) {
+      const SkPoint *a = m_sk.point(e.p[0]), *b = m_sk.point(e.p[1]);
+      if (a && b && a->fixed && b->fixed && b->x - a->x > 1e-9 && std::fabs(b->y - a->y) < 1e-12) return e.id;
+    }
+  const int line = m_sk.add_line(m_sk.add_point(0, 0, true), m_sk.add_point(1, 0, true), true);
+  m_sk.entity(line)->fixed = true;
+  return line;
+}
+
+// A centre arc's typed sweep, with its radius kept as dimension `radius`: the arc's length, that radius times the sweep
+// (an expression as typed). False: not kept.
+bool SketchEditor::keepSweep(const Snap& s, int arc, int radius, double r) {
+  const auto it = s.typed.find("sweep");
+  if (!radius || it == s.typed.end() || !QSettings().value("sketch/input/addDimensions", true).toBool()) return false;
+  const double turn = std::fabs(it->second.first);
+  QString expr = QStringLiteral("d%1 * %2 deg").arg(radius).arg(turn * 180 / M_PI, 0, 'g', 15);
+  if (!plainValue(it->second.second) && it->second.first > 0) try {
+      const Quantity q = sketch_parameters(m_sk, paramTable(m_doc->scene)).eval(it->second.second.toStdString());
+      expr = QStringLiteral("d%1 * (%2)%3").arg(radius).arg(it->second.second, q.angle ? QString() : QStringLiteral(" * 1 deg"));
+    } catch (const std::exception&) {  // evaluated when it was typed; kept as its value
+    }
+  m_sk.add_constraint(CT::ArcLength, {arc}, r * turn, expr.toStdString());
+  return true;
 }
 
 // ---------------------------------------------------------------- constraints

@@ -182,6 +182,8 @@ class SketchEditor : public QObject, public SketchInput {
   // A typed angle (`angle` the direction it made, radians from X): horizontal or vertical (`axis`: a line, or two points),
   // else against the line before (`line` after `previous`).
   void keepDirection(const Snap& s, const char* key, std::vector<int> axis, double angle, int line = 0, int previous = 0);
+  int referenceX();                                   // a fixed line along +X to hold an angle from the X axis against
+  bool keepSweep(const Snap& s, int arc, int radius, double r);  // a typed sweep as the arc's length, radius dimension times it
   int pointAt(double u, double v) const;              // an existing point exactly there (typed values land on it)
   bool tangentStart(double& u, double& v, double& tu, double& tv) const;  // a tangent arc's line end and the way it leaves it
   std::vector<std::pair<double, double>> filletPreview(int corner) const;  // the fillet's arc at a corner (empty: none fits)

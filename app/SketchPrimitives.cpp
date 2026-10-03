@@ -65,6 +65,12 @@ void SketchEditor::finishPrimitive() {
       const size_t sides=made.size()-1;const auto* guide=m_sk.entity(made.back());
       if(sides%2==0)keepTyped(second,"diameter",SkConstraint::Type::Distance,{made[0],made[sides/2]});
       else keepTyped(second,"diameter",SkConstraint::Type::Distance,{guide->p[0],made[0]},0.5);
+    } else if(m_tool=="arcslot" && made.size()>=4) {  // its centre line's radius, its start (and end) along an axis
+      const bool swapped=sweep!=m_clicks.back().typed.end() && sweep->second.first<0;
+      const int centre=m_sk.entity(made[0])->p[0],start=m_sk.entity(made[swapped?2:3])->p[0],end=m_sk.entity(made[swapped?3:2])->p[0];
+      keepTyped(second,"radius",SkConstraint::Type::Distance,{centre,start});
+      keepDirection(second,"angle",{centre,start},direction(centre,start));
+      keepDirection(last,"sweep",{centre,end},direction(centre,end));
     } else if(m_tool=="cslot" && made.size()>=4) {
       const int c1=m_sk.entity(made[2])->p[0],c2=m_sk.entity(made[3])->p[0];const auto *p=m_sk.point(c1),*q=m_sk.point(c2);
       const double r=std::hypot(m_sk.point(m_sk.entity(made[2])->p[1])->x-p->x,m_sk.point(m_sk.entity(made[2])->p[1])->y-p->y),l=std::max(1e-12,std::hypot(q->x-p->x,q->y-p->y));
