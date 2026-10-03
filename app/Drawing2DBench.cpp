@@ -7,6 +7,7 @@
 #include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QStatusBar>
@@ -21,6 +22,7 @@
 #include <memory>
 #include <optional>
 
+#include "AreaController.hpp"
 #include "BenchRegistry.hpp"
 #include "BrowserDelegate.hpp"
 #include "BrowserPanel.hpp"
@@ -158,6 +160,9 @@ OPAD_BENCH(OPAD_BENCH_LAYERS, layers) {
     QAction* open = w.action("drawing2d.layers");
     require(shown && panel && open && open->isEnabled(), "the drawing is shown and the Layers command is there");
     if (!shown || !panel || !open) return QCoreApplication::exit(2);
+    bool grouped = true;  // the palette's and the shortcut editor's group: View, as in the menu
+    for (const char* id : {"drawing2d.layers", "drawing2d.layerWalk", "drawing2d.isolateLayer"}) grouped = grouped && w.m_commands.find(id)->group == QObject::tr("View");
+    require(grouped, "Layers, Layer walk and Isolate layer are in the View group of the palette and the shortcut editor");
     auto layer = [panel](const std::string& name) {
       for (const auto& l : panel->layers())
         if (l.name == name) return l;
@@ -212,8 +217,24 @@ OPAD_BENCH(OPAD_BENCH_LAYERS, layers) {
     });
     script->add("thaw Plain", [panel, layer] { clickCell(panel->tree(), panel->item(layer("Plain").id), LayersPanel::Freeze); },
                 [layer, drawn, settled] { return !layer("Plain").frozen && layer("Plain").on && settled() && drawn(layer("Plain")); });
-    script->add("thaw Old", [panel, layer] { clickCell(panel->tree(), panel->item(layer("Old").id), LayersPanel::Freeze); },
-                [layer, drawn, settled] { return !layer("Old").frozen && settled() && drawn(layer("Old")); });
+    // A frozen layer is thawed from its context menu (its browser row), which offers Thaw and Turn off, not a greyed Freeze.
+    script->add("thaw Old from its context menu", [&w, layer, require] {
+      SelectionContext context;
+      context.ids = {layer("Old").id};
+      QMenu menu;
+      w.forEachArea([&](AreaController* area) { area->contextMenu(context, menu); });
+      QAction* thaw = nullptr;
+      bool off = false, freeze = false;
+      for (QAction* entry : menu.actions())
+        if (entry->menu())
+          for (QAction* a : entry->menu()->actions()) {
+            if (a->text() == QObject::tr("Thaw layer")) thaw = a;
+            off = off || a->text() == QObject::tr("Turn layer off");
+            freeze = freeze || a->text() == QObject::tr("Freeze layer");
+          }
+      require(thaw && thaw->isEnabled() && off && !freeze, "a frozen layer's context menu offers Thaw layer and Turn layer off");
+      if (thaw) thaw->trigger();
+    }, [layer, drawn, settled] { return !layer("Old").frozen && settled() && drawn(layer("Old")); });
     script->add("unlock Walls, plot Notes", [panel, layer] {
       clickCell(panel->tree(), panel->item(layer("Walls").id), LayersPanel::Lock);
       clickCell(panel->tree(), panel->item(layer("Notes").id), LayersPanel::Plot);

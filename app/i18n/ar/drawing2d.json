@@ -176,5 +176,8 @@
  "(its own)": "(خاص به)",
  "Select an object": "حدد عنصرًا",
  "point or center": "نقطة أو مركز",
- "perimeter %1": "المحيط %1"
+ "perimeter %1": "المحيط %1",
+ "Turn layer off": "إطفاء الطبقة",
+ "Turn layer on": "تشغيل الطبقة",
+ "Thaw layer": "إلغاء تجميد الطبقة"
 }

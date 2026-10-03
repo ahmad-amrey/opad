@@ -83,10 +83,12 @@ class Drawing2DArea : public AreaController {
     auto has = [this](const CommandContext& c) { return c.document && m_hasLayers; };
     CommandInfo layers{"drawing2d.layers", tr("Layers"), "layers"};
     layers.checkable = true;
+    layers.group = tr("View");  // where the View menu has them (else the area's id names the palette group)
     layers.keywords = {"layer manager", "layer properties", "freeze", "thaw", "lock", "linetype", "lineweight", "plot", "layer state"};
     layers.enabledWhen = has;
     m_layersAction = services().addCommand(layers, [this] { showLayers(m_layersAction->isChecked()); });
     CommandInfo walk{"drawing2d.layerWalk", tr("Layer walk"), "layerWalk"};
+    walk.group = tr("View");
     walk.keywords = {"laywalk", "step through layers", "one layer at a time"};
     walk.enabledWhen = has;
     m_walkAction = services().addCommand(walk, [this] {
@@ -94,6 +96,7 @@ class Drawing2DArea : public AreaController {
       m_layers->walking() ? m_layers->stopWalk() : m_layers->startWalk();
     });
     CommandInfo isolate{"drawing2d.isolateLayer", tr("Isolate layer"), "isolate"};
+    isolate.group = tr("View");
     isolate.keywords = {"layiso", "show only this layer"};
     isolate.enabledWhen = [this](const CommandContext& c) { return c.document && m_hasLayers && !selectedLayers(c.selection).empty(); };
     m_isolateAction = services().addCommand(isolate, [this] { m_layers->isolate(selectedLayers(services().selection())); });
@@ -295,10 +298,15 @@ class Drawing2DArea : public AreaController {
     QMenu* sub = menu.addMenu(icons::themed("layers", 16), tr("Layer %1").arg(QString::fromStdString(l->name)));
     sub->addAction(m_isolateAction);
     const std::string id = l->id;
-    sub->addAction(icons::themed("freeze", 16), tr("Freeze layer"), this, [this, id] {
+    // On and Freeze both ways: a layer turned off or frozen is found by its browser row and brought back from here.
+    sub->addAction(icons::themed(l->on ? "hide" : "eye", 16), l->on ? tr("Turn layer off") : tr("Turn layer on"), this, [this, id] {
+      m_layers->rebuild();
+      m_layers->toggle(id, LayersPanel::On);
+    });
+    sub->addAction(icons::themed(l->frozen ? "thaw" : "freeze", 16), l->frozen ? tr("Thaw layer") : tr("Freeze layer"), this, [this, id] {
       m_layers->rebuild();
       m_layers->toggle(id, LayersPanel::Freeze);
-    })->setEnabled(!l->frozen);
+    });
     sub->addAction(icons::themed(l->locked ? "unlock" : "lock", 16), l->locked ? tr("Unlock layer") : tr("Lock layer"), this, [this, id] {
       m_layers->rebuild();
       m_layers->toggle(id, LayersPanel::Lock);
