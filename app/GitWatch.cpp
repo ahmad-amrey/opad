@@ -1,5 +1,15 @@
 #include "GitWatch.hpp"
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <shellapi.h>
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #include <QApplication>
 #include <QCheckBox>
 #include <QDialog>
@@ -8,8 +18,10 @@
 #include <QElapsedTimer>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMessageBox>
@@ -17,9 +29,12 @@
 #include <QPointer>
 #include <QProcess>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QSettings>
 #include <QStatusBar>
 #include <QTextDocumentFragment>
 #include <QVBoxLayout>
+#include <cstdio>
 #include <memory>
 #include <stdexcept>
 
@@ -86,9 +101,13 @@ GitWatch::GitWatch(JobRunner* jobs, QWidget* window) : QObject(window), m_jobs(j
 }
 
 git::Context GitWatch::context() const {
+  using S = git::Repo::State;
   git::Context c;
   c.program = m_program;
-  c.dir = m_repo.state == git::Repo::State::Ready ? m_repo.top : QFileInfo(m_file).absolutePath();
+  c.dir = m_repo.state == S::Ready ? m_repo.top : QFileInfo(m_file).absolutePath();
+  // Sign-in through the credential helper when there is one (it has windows of its own), else a dialog of OPAD's.
+  if (m_repo.state != S::None && m_repo.state != S::GitMissing && m_repo.helper.isEmpty()) c.askpass = QCoreApplication::applicationFilePath();
+  c.sshBatch = m_repo.sshCommand.isEmpty();
   return c;
 }
 
@@ -228,7 +247,7 @@ void GitWatch::render() {
     case S::None: text = span(t.fg3, QStringLiteral("…")); break;
     case S::GitMissing:
       text = span(t.fg3, tr("git not found"));
-      tip << tr("OPAD keeps versions with git and did not find it. Install Git (git-scm.com), then choose Refresh in this menu.");
+      tip << tr("OPAD keeps versions with git and did not find it. Install Git (git-scm.com) and choose Refresh, or show OPAD a git program with Locate git…");
       if (!r.error.isEmpty()) tip << r.error;
       break;
     case S::NotRepo:
@@ -274,6 +293,10 @@ void GitWatch::render() {
       const int others = int(s.entries.size()) - (doc == "clean" || doc == "ignored" ? 0 : 1);
       if (others > 0) tip << tr("Other changes in the repository: %1").arg(others);
       if (r.needsDriver()) tip << tr("This clone has no OPAD merge driver: merging .opad files would write conflict markers into them.");
+      tip << (r.userName.trimmed().isEmpty() || r.userEmail.trimmed().isEmpty()
+                  ? tr("No author yet: git needs a name and an email address before the first commit.")
+                  : tr("Author: %1 <%2>").arg(r.userName, r.userEmail));
+      tip << (r.lfsVersion.isEmpty() ? tr("git %1; Git LFS is not installed").arg(r.version) : tr("git %1, Git LFS %2").arg(r.version, r.lfsVersion));
       break;
     }
   }
@@ -297,7 +320,11 @@ QMenu* GitWatch::menu(QWidget* parent) {
   if (m_repo.state == S::NotRepo) add("git.setup", tr("Set up repository…"), [this] { setUp(); });
   if (m_repo.state == S::Ready) add("git.setup", tr("Set up OPAD in this repository…"), [this] { setUp(); });
   if (m_repo.needsDriver() || m_repo.driverStale()) add("git.driver", tr("Set up OPAD merging for this clone"), [this] { setUpDriver(); });
+  if (m_repo.state == S::Ready)
+    add("git.identity", m_repo.userName.trimmed().isEmpty() ? tr("Your name for commits…") : tr("Author: %1…").arg(m_repo.userName), [this] { editIdentity(); });
+  if (m_repo.state == S::Untrusted) add("git.trust", tr("Trust this folder…"), [this] { trustFolder(); });
   if (!m->isEmpty()) m->addSeparator();
+  add("git.locate", tr("Locate git…"), [this] { locateGit(); });
   add("git.refresh", tr("Refresh"), [this] {
     git::forgetTools();
     refresh(true);
@@ -311,7 +338,8 @@ void GitWatch::status(const QString& text) {
 }
 
 void GitWatch::failed(const QString& title, const QString& text) {
-  if (trace::enabled()) trace::log("git: " + title + ": " + text);
+  m_lastFailure = title + ": " + text;
+  if (trace::enabled()) trace::log("git: " + m_lastFailure);
   auto* box = new QMessageBox(QMessageBox::Warning, title, text, QMessageBox::Ok, m_window);
   box->setAttribute(Qt::WA_DeleteOnClose);
   box->open();
@@ -320,15 +348,25 @@ void GitWatch::failed(const QString& title, const QString& text) {
 Job* GitWatch::command(const QString& title, const QStringList& args, std::function<void(const git::Result&)> done, git::RunOptions o) {
   auto result = std::make_shared<git::Result>();
   const git::Context c = context();
+#ifdef _WIN32
+  if (!c.askpass.isEmpty()) AllowSetForegroundWindow(ASFW_ANY);  // the sign-in dialog, another process, comes to the front
+#endif
   ++m_busy;
   return m_jobs->async(title, [result, c, args, o](Progress p) mutable {
     o.cancelled = [p] { return p.cancelled(); };
     o.progress = [p](const QString& phase, int percent) { p.setPhase(phase, percent); };
     *result = git::run(c, args, o);
-  }, [self = QPointer<GitWatch>(this), result, done](bool, const QString&) {
+  }, [self = QPointer<GitWatch>(this), result, done](bool ok, const QString& error) {
     if (!self) return;
     --self->m_busy;
-    if (done) done(*result);
+    git::Result r;
+    if (ok) r = *result;  // after a Cancel the worker may still be writing it (it ends git within 50 ms)
+    else {
+      r.started = true;
+      r.cancelled = error == "cancelled";
+      r.err = error.toUtf8();
+    }
+    if (done) done(r);
     self->refresh(true);
   });
 }
@@ -418,6 +456,7 @@ void GitWatch::runSetUp(const QString& folder, const git::SetupOptions& o) {
     if (ok) self->status(tr("Version control is set up in %1").arg(QDir::toNativeSeparators(folder)));
     else self->failed(tr("Could not set up version control"), error);
     self->refresh(true);
+    if (ok) self->ensureIdentity();  // before the first commit
   });
 }
 
@@ -439,6 +478,200 @@ void GitWatch::setUpDriver() {
   });
 }
 
+void GitWatch::locateGit() {
+#ifdef _WIN32
+  const QString filter = tr("git (git.exe)");
+#else
+  const QString filter = tr("git (git)");
+#endif
+  const QString start = m_program.isEmpty() ? QCoreApplication::applicationDirPath() : QFileInfo(m_program).absolutePath();
+  const QString path = QFileDialog::getOpenFileName(m_window, tr("Locate git"), start, filter);
+  if (!path.isEmpty()) useProgram(path);
+}
+
+void GitWatch::useProgram(const QString& path) {
+  auto version = std::make_shared<QString>(), error = std::make_shared<QString>();
+  ++m_busy;
+  m_jobs->async(tr("Checking %1").arg(QFileInfo(path).fileName()), [path, version, error](Progress) { *error = git::checkProgram(path, version.get()); },
+                [self = QPointer<GitWatch>(this), path, version, error](bool ok, const QString& failure) {
+                  if (!self) return;
+                  --self->m_busy;
+                  if (!ok || !error->isEmpty()) {
+                    self->failed(tr("Locate git"), ok ? *error : failure);
+                    return;
+                  }
+                  // Inside OPAD's folder it is kept relative to it, so a portable copy with its own git can move.
+                  const QString relative = QDir(QCoreApplication::applicationDirPath()).relativeFilePath(path);
+                  QSettings().setValue("git/path", relative.startsWith("..") || QDir::isAbsolutePath(relative) ? QDir::cleanPath(path) : relative);
+                  self->status(tr("OPAD uses %1 (git %2).").arg(QDir::toNativeSeparators(path), *version));
+                  git::forgetTools();
+                  self->refresh(true);
+                });
+}
+
+void GitWatch::trustFolder() {
+  const QString folder = m_repo.unsafe.isEmpty() ? QFileInfo(m_file).absolutePath() : m_repo.unsafe;
+  auto* box = new QMessageBox(QMessageBox::Question, tr("Trust this folder?"),
+                              tr("Git refuses %1: it belongs to another user account, and a repository's settings and hooks can run commands as you. "
+                                 "Trust it only if you know where it came from.")
+                                  .arg(QDir::toNativeSeparators(folder)),
+                              QMessageBox::Cancel, m_window);
+  box->setObjectName("gitTrust");
+  box->setAttribute(Qt::WA_DeleteOnClose);
+  QPushButton* yes = box->addButton(tr("Trust"), QMessageBox::AcceptRole);
+  connect(box, &QMessageBox::buttonClicked, this, [this, yes, folder](QAbstractButton* clicked) {
+    if (clicked != yes) return;
+    const git::Context c = context();
+    ++m_busy;
+    m_jobs->async(tr("Trusting %1").arg(QDir::toNativeSeparators(folder)), [c, folder](Progress) { git::trust(c, folder); },
+                  [self = QPointer<GitWatch>(this)](bool ok, const QString& error) {
+                    if (!self) return;
+                    --self->m_busy;
+                    if (!ok) self->failed(tr("Trust this folder"), error);
+                    self->refresh(true);
+                  });
+  });
+  box->open();
+}
+
+void GitWatch::ensureIdentity(std::function<void()> then) {
+  if (!m_repo.userName.trimmed().isEmpty() && !m_repo.userEmail.trimmed().isEmpty()) {
+    if (then) then();
+    return;
+  }
+  editIdentity(std::move(then));
+}
+
+void GitWatch::editIdentity(std::function<void()> then) {
+  auto* d = new QDialog(m_window);
+  d->setObjectName("gitIdentity");
+  d->setAttribute(Qt::WA_DeleteOnClose);
+  d->setWindowTitle(tr("Author of your commits"));
+  d->setMinimumWidth(440);
+  auto* col = new QVBoxLayout(d);
+  auto* why = new QLabel(tr("Git writes a name and an email address into every commit. They go into git's settings, not into the document, "
+                            "and everyone who can read the repository sees them."),
+                         d);
+  why->setWordWrap(true);
+  col->addWidget(why);
+  auto* form = new QFormLayout;
+  auto* name = new QLineEdit(m_repo.userName, d);
+  name->setObjectName("name");
+  name->setPlaceholderText(tr("Your name"));
+  auto* email = new QLineEdit(m_repo.userEmail, d);
+  email->setObjectName("email");
+  email->setPlaceholderText(QStringLiteral("name@example.com"));
+  form->addRow(tr("Name"), name);
+  form->addRow(tr("Email"), email);
+  col->addLayout(form);
+  auto* everywhere = new QCheckBox(tr("For every repository on this computer"), d);
+  everywhere->setObjectName("global");
+  everywhere->setChecked(true);
+  everywhere->setEnabled(m_repo.state == git::Repo::State::Ready);  // outside a repository there is only the global one
+  col->addWidget(everywhere);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, d);
+  auto* save = new QPushButton(tr("Save"), d);
+  save->setObjectName("primary");
+  save->setProperty("action", "gitIdentitySave");
+  save->setDefault(true);
+  buttons->addButton(save, QDialogButtonBox::AcceptRole);
+  col->addWidget(buttons);
+  auto valid = [name, email, save] { save->setEnabled(!name->text().trimmed().isEmpty() && email->text().contains('@')); };
+  valid();
+  connect(name, &QLineEdit::textChanged, d, valid);
+  connect(email, &QLineEdit::textChanged, d, valid);
+  connect(buttons, &QDialogButtonBox::rejected, d, &QDialog::reject);
+  connect(save, &QPushButton::clicked, d, [this, d, name, email, everywhere, then] {
+    const QString who = name->text().trimmed(), address = email->text().trimmed();
+    const bool global = everywhere->isChecked();
+    d->accept();
+    const git::Context c = context();
+    ++m_busy;
+    m_jobs->async(tr("Saving the git author"), [c, who, address, global](Progress) { git::setIdentity(c, who, address, global); },
+                  [self = QPointer<GitWatch>(this), who, address, then](bool ok, const QString& error) {
+                    if (!self) return;
+                    --self->m_busy;
+                    if (ok) self->status(tr("Git writes %1 <%2> into your commits.").arg(who, address));
+                    else self->failed(tr("Could not save the git author"), error);
+                    self->refresh(true);
+                    if (ok && then) then();
+                  });
+  });
+  d->open();
+}
+
+bool GitWatch::isAskpass(int argc, char** argv) {
+  if (argc >= 2 && std::string_view(argv[1]) == "--askpass") return true;
+  return argc == 2 && qEnvironmentVariableIsSet("OPAD_ASKPASS") && !QFileInfo::exists(QString::fromLocal8Bit(argv[1]));
+}
+
+int GitWatch::askpassDialog(int argc, char** argv) {
+  QString prompt = argc >= 2 ? QString::fromLocal8Bit(argv[argc - 1]) : QString();
+#ifdef _WIN32
+  int n = 0;  // the prompt as UTF-16: the narrow argv is in the ANSI code page
+  if (LPWSTR* wide = CommandLineToArgvW(GetCommandLineW(), &n)) {
+    if (n >= 2) prompt = QString::fromWCharArray(wide[n - 1]);
+    LocalFree(wide);
+  }
+  _setmode(_fileno(stdout), _O_BINARY);
+#endif
+  if (prompt == "--askpass") prompt.clear();
+  theme::apply(QSettings().value("ui/dark", true).toBool());
+  static const QRegularExpression user(QStringLiteral("^Username for '(.+)': *$")), password(QStringLiteral("^Password for '(.+)': *$")),
+      passphrase(QStringLiteral("^Enter passphrase for key '(.+)': *$"));
+  QString text = prompt.trimmed();
+  bool secret = text.contains("password", Qt::CaseInsensitive) || text.contains("passphrase", Qt::CaseInsensitive) ||
+                text.contains("token", Qt::CaseInsensitive) || text.contains("PIN");
+  if (const auto m = user.match(prompt); m.hasMatch()) text = tr("User name for %1").arg(m.captured(1));
+  else if (const auto m = password.match(prompt); m.hasMatch()) text = tr("Password for %1").arg(m.captured(1));
+  else if (const auto m = passphrase.match(prompt); m.hasMatch()) text = tr("Passphrase of the SSH key %1").arg(m.captured(1));
+  if (text.endsWith(':')) text.chop(1);
+  QDialog d;
+  d.setObjectName("gitAskpass");
+  d.setWindowTitle(tr("Git sign-in"));
+  d.setWindowFlag(Qt::WindowStaysOnTopHint);
+  auto* col = new QVBoxLayout(&d);
+  auto* label = new QLabel(text, &d);
+  label->setWordWrap(true);
+  label->setTextFormat(Qt::PlainText);
+  col->addWidget(label);
+  auto* answer = new QLineEdit(&d);
+  answer->setObjectName("answer");
+  answer->setMinimumWidth(380);
+  if (secret) answer->setEchoMode(QLineEdit::Password);
+  col->addWidget(answer);
+  auto* note = new QLabel(tr("git asks for this to reach the remote. OPAD hands it to git and keeps nothing; a credential helper such as Git "
+                             "Credential Manager can remember it."),
+                          &d);
+  note->setObjectName("tertiary");
+  note->setWordWrap(true);
+  col->addWidget(note);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, &d);
+  auto* ok = new QPushButton(tr("Continue"), &d);
+  ok->setObjectName("primary");
+  ok->setDefault(true);
+  buttons->addButton(ok, QDialogButtonBox::AcceptRole);
+  col->addWidget(buttons);
+  QObject::connect(buttons, &QDialogButtonBox::accepted, &d, &QDialog::accept);
+  QObject::connect(buttons, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+  if (qEnvironmentVariableIsSet("OPAD_BENCH_ASKPASS")) {  // tests: answer by itself, in an offscreen window
+    QTimer::singleShot(300, &d, [&d, answer, secret] {
+      answer->setText(qEnvironmentVariable("OPAD_BENCH_ASKPASS"));
+      if (const QString shot = qEnvironmentVariable("OPAD_BENCH_ASKPASS_SHOT"); !shot.isEmpty()) d.grab().save(shot);
+      trace::log(secret ? QStringLiteral("askpass: password field") : QStringLiteral("askpass: text field"));
+      d.accept();
+    });
+  }
+  d.show();
+  d.raise();
+  d.activateWindow();
+  if (d.exec() != QDialog::Accepted) return 1;
+  const QByteArray out = answer->text().toUtf8() + '\n';
+  std::fwrite(out.constData(), 1, size_t(out.size()), stdout);
+  std::fflush(stdout);
+  return 0;
+}
+
 // OPAD_BENCH_GIT=<prefix>, on a saved document in a folder of its own outside any repository (gui_benches gives git an
 // empty global config): set up from the chip's dialog, then git run from outside as a terminal would (commit, edit,
 // push to a bare remote, commit again, switch branch, break and drop the driver config) and the chip following each
@@ -452,8 +685,10 @@ bool GitWatch::bench() {
     size_t step = 0;
     int wait = 0, ticks = 0, runs = 0, exit = 0;
     bool running = false;
-    QString file, dir, error;
+    QString file, dir, error, git;
+    QByteArray out;
     std::vector<QStringList> pending;
+    std::shared_ptr<git::Result> result;
     std::function<void()> next;
     QElapsedTimer clock;
   };
@@ -483,6 +718,7 @@ bool GitWatch::bench() {
     st->pending = std::move(commands);
     st->running = true;
     st->exit = 0;
+    st->out.clear();
     st->next = [this, st] {
       if (st->pending.empty() || st->exit != 0) {
         st->running = false;
@@ -494,6 +730,7 @@ bool GitWatch::bench() {
       p->setWorkingDirectory(st->dir);
       connect(p, &QProcess::finished, this, [st, p, c](int code) {
         st->exit = code;
+        st->out += p->readAllStandardOutput();
         if (code) st->error = c.join(' ') + ": " + QString::fromUtf8(p->readAllStandardError());
         p->deleteLater();
         st->next();
@@ -510,12 +747,49 @@ bool GitWatch::bench() {
     };
     st->next();
   };
+  auto commandResult = [this, st](const QString& title, const QStringList& args, git::RunOptions o = {}) {
+    st->result.reset();
+    st->clock.start();
+    return command(title, args, [st](const git::Result& r) { st->result = std::make_shared<git::Result>(r); }, o);
+  };
   auto finished = [st] {
     if (st->running) return false;
     if (st->exit != 0) throw std::runtime_error(st->error.toStdString());
     return true;
   };
   const std::vector<std::function<bool()>> steps = {
+      [=, this] {  // UI-136: no git where OPAD looks
+        if (!settled()) return false;
+        st->git = git::findProgram();
+        require(!st->git.isEmpty(), "git on this machine");
+        qputenv("OPAD_GIT", QFile::encodeName(st->dir + "/no-git.exe"));
+        refresh(true);
+        return true;
+      },
+      [=, this] {
+        if (!settled() || m_repo.state != S::GitMissing) return false;
+        require(m_chip->property("state") == "missing" && text() == tr("git not found"), "the chip: git not found");
+        std::unique_ptr<QMenu> m(menu(m_window));
+        require(m->findChild<QAction*>("git.locate") && !m->findChild<QAction*>("git.setup"), "git not found: Locate git…, nothing to set up");
+        shot(m_chip, ".chip-missing.png");
+        pass("git not found");
+        qunsetenv("OPAD_GIT");
+        useProgram(st->dir + "/no-git.exe");  // a wrong pick
+        return true;
+      },
+      [=, this] {
+        if (!settled()) return false;
+        require(QSettings().value("git/path").toString().isEmpty() && m_lastFailure.contains("no-git.exe"), "a wrong pick refused, with the reason");
+        useProgram(st->git);
+        return true;
+      },
+      [=, this] {
+        if (!settled() || m_repo.state != S::NotRepo) return false;
+        const QString kept = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QSettings().value("git/path").toString());
+        require(QFileInfo(kept).canonicalFilePath() == QFileInfo(st->git).canonicalFilePath(), "Locate git… keeps the git that runs");
+        pass("Locate git… checks the program and keeps it");
+        return true;
+      },
       [=, this] {
         if (!settled()) return false;
         require(!st->file.isEmpty(), "a saved document");
@@ -532,6 +806,31 @@ bool GitWatch::bench() {
         shot(d, ".setup.png");
         for (QPushButton* b : d->findChildren<QPushButton*>())
           if (b->property("action") == "gitSetupRun") b->click();
+        return true;
+      },
+      [=, this] {  // UI-136: no author in git's settings yet: asked right after the set up
+        auto* d = m_window->findChild<QDialog*>("gitIdentity");
+        if (!d || !d->isVisible()) return false;
+        require(m_repo.userName.isEmpty(), "no author before");
+        auto* name = d->findChild<QLineEdit*>("name");
+        auto* email = d->findChild<QLineEdit*>("email");
+        QPushButton* save = nullptr;
+        for (QPushButton* b : d->findChildren<QPushButton*>())
+          if (b->property("action") == "gitIdentitySave") save = b;
+        require(name && email && save && !save->isEnabled(), "the author dialog waits for a name and an address");
+        name->setText("OPAD Bench");
+        email->setText("bench@example.com");
+        require(save->isEnabled(), "a name and an address: Save");
+        shot(d, ".identity.png");
+        save->click();
+        return true;
+      },
+      [=, this] {
+        if (!settled() || m_repo.userName != "OPAD Bench") return false;
+        QFile global(qEnvironmentVariable("GIT_CONFIG_GLOBAL"));
+        require(m_repo.userEmail == "bench@example.com" && global.open(QIODevice::ReadOnly) && global.readAll().contains("OPAD Bench"),
+                "the author in git's global settings");
+        pass("author asked after the set up");
         return true;
       },
       [=, this] {
@@ -562,6 +861,38 @@ bool GitWatch::bench() {
         if (++st->ticks < 14) return false;  // 2 s
         require(m_runs == st->runs, "nothing reads git while nothing changes");
         pass("idle: git not run");
+        // UI-136: no credential helper here, so git asks opad.exe (GIT_ASKPASS), which answers by itself offscreen.
+        require(context().askpass == QCoreApplication::applicationFilePath() && context().sshBatch, "sign-in through OPAD, ssh in BatchMode");
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+        qputenv("OPAD_BENCH_ASKPASS", "s3cret");
+        qputenv("OPAD_BENCH_ASKPASS_SHOT", QFile::encodeName(prefix + ".askpass.png"));
+        git::RunOptions o;
+        o.input = "protocol=https\nhost=example.com\n\n";
+        commandResult(QStringLiteral("git credential fill"), {"credential", "fill"}, o);
+        return true;
+      },
+      [=, this] {
+        if (!st->result) return false;
+        for (const char* k : {"QT_QPA_PLATFORM", "OPAD_BENCH_ASKPASS", "OPAD_BENCH_ASKPASS_SHOT"}) qunsetenv(k);
+        require(st->result->ok() && st->result->out.contains("username=s3cret\n") && st->result->out.contains("password=s3cret\n"),
+                "git took the answers of the sign-in dialog");
+        require(QFileInfo::exists(prefix + ".askpass.png"), "the sign-in dialog drawn");
+        pass(QStringLiteral("sign-in through opad.exe --askpass (%1 ms)").arg(st->clock.elapsed()));
+        Job* j = commandResult(QStringLiteral("bench nap"), {"-c", "alias.nap=!sleep 5", "nap"});
+        QTimer::singleShot(300, j, [j] { j->cancel(); });  // the strip's Cancel
+        return true;
+      },
+      [=, this] {
+        if (!st->result) return false;
+        require(st->result->cancelled && st->clock.elapsed() < 2000, "Cancel ends git");
+        pass(QStringLiteral("Cancel ends git (%1 ms)").arg(st->clock.elapsed()));
+        commandResult(QStringLiteral("git ls-remote"), {"ls-remote", "ssh://git@127.0.0.1:1/none.git"});
+        return true;
+      },
+      [=, this] {
+        if (!st->result) return false;
+        require(!st->result->ok() && !st->result->timedOut && st->result->error() == git::explain("Connection refused"), "ssh fails at once, in a sentence");
+        pass(QStringLiteral("ssh in BatchMode: \"%1\" (%2 ms)").arg(st->result->error()).arg(st->clock.elapsed()));
         external({box(40)});
         return true;
       },

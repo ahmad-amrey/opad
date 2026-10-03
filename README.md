@@ -382,6 +382,14 @@ running installation (`opad.managed=true`; OPAD rewrites them when that installa
 `.gitattributes` asks for `merge=opad` but has no driver configured shows "set up merging" on the chip. The chip
 follows git by file events (HEAD, index, config, refs, the document's folder), not by polling.
 
+OPAD runs the git command line (Git for Windows, or the `git` on PATH; a portable `git/` or `PortableGit/` folder
+beside OPAD is found too, and **Locate git…** on the chip points it at any other). git never waits on a terminal:
+sign-in goes through your credential helper (Git Credential Manager) or, without one, through a small OPAD dialog
+(`opad.exe` is git's `GIT_ASKPASS`, nothing is stored); SSH runs in BatchMode unless you set `core.sshCommand`, so a
+key that needs a passphrase must be loaded into ssh-agent or Pageant. OPAD asks for your name and email before the
+first commit when git has none, offers **Trust this folder** when git refuses a repository owned by another account
+(`safe.directory`), and explains git's errors in plain words.
+
 `opad-cli diff` compares two versions semantically: parameters, sketch entities and dimensions, feature inputs
 before -> after, bodies added, removed, moved, renamed, restyled, reparented or with new geometry, notes resolved or
 answered, and how the histories relate. A side is a file or `git:REV[:path]`; one file alone is compared with `HEAD`.

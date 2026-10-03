@@ -1,13 +1,17 @@
 // GitClient (app/Git.cpp, UI-61): porcelain v2, the repository as the chip sees it in a fresh, committed, pushed and
 // cloned repository, setting one up (init -b main, .gitattributes, .gitignore, LFS hooks, the managed driver) and that
 // driver merging and diffing for real through opad-cli and through opad.exe alone, timeouts and Cancel ending git with
-// everything it started, clone progress. Temporary repositories only; git's global and system config are left out.
+// everything it started, clone progress. UI-136: errors as sentences, safe.directory, the environment (BatchMode ssh,
+// no inherited GIT_DIR), opad.exe answering git's sign-in prompts as GIT_ASKPASS, the author, Locate git, warnings
+// before a push. Temporary repositories only; git's global and system config are left out.
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QRandomGenerator>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QUrl>
@@ -278,13 +282,151 @@ TEST(timeout_and_cancel_end_the_whole_tree) {
   r = git::run(none, {"--version"});
   CHECK(!r.started && !r.error().isEmpty());
   r = git::run(in(tmp.path()), {"rev-parse", "--show-toplevel"});
-  CHECK(r.started && r.code == 128 && r.error().contains("not a git repository"));
+  CHECK(r.started && r.code == 128 && r.error() == "This folder is not in a git repository.");
   CHECK_THROWS(git::check(in(tmp.path()), {"rev-parse", "--show-toplevel"}));
+}
+
+// UI-136: what git says, as sentences; the folder a safe.directory refusal names, and trusting it.
+TEST(explain_and_safe_directory) {
+  CHECK(git::explain("fatal: could not read Username for 'https://github.com': terminal prompts disabled").contains("credential helper"));
+  CHECK(git::explain("git@github.com: Permission denied (publickey).\r\nfatal: Could not read from remote repository.").contains("ssh-agent"));
+  CHECK(git::explain("Host key verification failed.\nfatal: Could not read from remote repository.").contains("host key"));
+  CHECK(git::explain("ssh: connect to host 127.0.0.1 port 1: Connection refused\nfatal: Could not read from remote repository.").contains("did not answer"));
+  CHECK(git::explain("fatal: unable to access 'https://nowhere.invalid/x.git/': Could not resolve host: nowhere.invalid").contains("host name"));
+  CHECK(git::explain("remote: error: GH001: Large files detected. You may want to try Git Large File Storage").contains("Git LFS"));
+  CHECK(git::explain("batch response: This repository is over its data quota.").contains("quota"));
+  CHECK(git::explain("fatal: Unable to create 'C:/x/.git/index.lock': File exists.").contains("index.lock"));
+  CHECK(git::explain("Author identity unknown\n\n*** Please tell me who you are.").contains("name and email"));
+  CHECK(git::explain(" ! [rejected]        main -> main (fetch first)\nerror: failed to push some refs").contains("pull first"));
+  CHECK(git::explain("fatal: Authentication failed for 'https://example.com/x.git/'").contains("refused the sign-in"));
+  CHECK_EQ(git::explain("hint: something\nfatal: something new\n"), QString("something new"));  // anything else: git's own line
+  const QString owned =
+      "fatal: detected dubious ownership in repository at 'D:/shared/project'\n'D:/shared/project' is owned by:\n\tBUILTIN/Administrators (S-1-5-32-544)\n"
+      "but the current user is:\n\tPC/me (S-1-5-21-1)\nTo add an exception for this directory, call:\n\n\tgit config --global --add safe.directory D:/shared/project\n";
+  CHECK(git::explain(owned).contains("does not trust"));
+  CHECK_EQ(git::unsafeDirectory(owned), QString("D:/shared/project"));
+  CHECK_EQ(git::unsafeDirectory("fatal: detected dubious ownership in repository at '//server/share/p'\n"), QString("//server/share/p"));
+  QTemporaryDir tmp;
+  git::trust(in(tmp.path()), "D:/shared/project");
+  CHECK(QString::fromUtf8(git_(tmp.path(), {"config", "--global", "--get-all", "safe.directory"})).contains("D:/shared/project"));
+}
+
+// UI-136: the environment of every git: no terminal prompt, no inherited GIT_DIR, ssh in BatchMode unless the user set an
+// ssh command, OPAD as the askpass when asked; ssh to nowhere fails at once with a sentence.
+TEST(environment_and_ssh_batch_mode) {
+  QTemporaryDir tmp;
+  git::Context c = in(tmp.path());
+  QProcessEnvironment e = c.environment(false);
+  CHECK(e.value("GIT_TERMINAL_PROMPT") == "0" && e.value("GIT_OPTIONAL_LOCKS") == "0" && e.value("LC_ALL") == "C");
+  CHECK(e.value("GIT_SSH_COMMAND") == "ssh -o BatchMode=yes" && !e.contains("OPAD_ASKPASS"));
+  qputenv("GIT_DIR", "C:/elsewhere/.git");  // a hook that started OPAD
+  CHECK(!c.environment().contains("GIT_DIR"));
+  qunsetenv("GIT_DIR");
+  qputenv("GIT_SSH_COMMAND", "ssh -i mykey");
+  CHECK(c.environment().value("GIT_SSH_COMMAND") == "ssh -i mykey");  // the user's own
+  qunsetenv("GIT_SSH_COMMAND");
+  c.sshBatch = false;  // core.sshCommand set
+  CHECK(!c.environment().contains("GIT_SSH_COMMAND"));
+  c.askpass = bin("opad");
+  e = c.environment();
+  CHECK(e.value("OPAD_ASKPASS") == "1" && QDir::fromNativeSeparators(e.value("GIT_ASKPASS")) == bin("opad"));
+  QElapsedTimer clock;
+  clock.start();
+  const git::Result r = git::run(in(tmp.path()), {"ls-remote", "ssh://git@127.0.0.1:1/none.git"}, git::RunOptions{30000});
+  CHECK(r.started && !r.ok() && !r.timedOut && clock.elapsed() < 20000);
+  CHECK(r.error().contains("did not answer"));
+}
+
+// UI-136: no credential helper, so git asks opad.exe (GIT_ASKPASS) for the user name and the password; it answers
+// in its dialog (offscreen here, answered by OPAD_BENCH_ASKPASS) and git gets both. Without it: a sentence, no prompt.
+TEST(askpass_answers_git) {
+  QTemporaryDir tmp;
+  const QString log = tmp.filePath("askpass.log");
+  qputenv("QT_QPA_PLATFORM", "offscreen");
+  qputenv("OPAD_BENCH_ASKPASS", "s3cret");
+  qputenv("OPAD_TRACE", QFile::encodeName(log));
+  git::Context c = in(tmp.path());
+  c.askpass = bin("opad");
+  git::RunOptions o;
+  o.input = "protocol=https\nhost=example.com\n\n";
+  const git::Result r = git::run(c, {"credential", "fill"}, o);
+  for (const char* k : {"QT_QPA_PLATFORM", "OPAD_BENCH_ASKPASS", "OPAD_TRACE"}) qunsetenv(k);
+  CHECK(r.ok());
+  CHECK(r.out.contains("username=s3cret\n") && r.out.contains("password=s3cret\n"));
+  const QString trace = read(log);
+  CHECK(trace.contains("askpass: text field") && trace.contains("askpass: password field"));
+  const git::Result none = git::run(in(tmp.path()), {"credential", "fill"}, o);
+  CHECK(!none.ok() && none.error().contains("credential helper"));
+}
+
+// UI-136: the author asked before the first commit lands in git's settings; Locate git keeps a program that runs as
+// git (relative to OPAD's folder when inside it) and refuses anything else; a located git that went away falls back.
+TEST(identity_and_locate_git) {
+  QTemporaryDir tmp;
+  const QString dir = tmp.path();
+  git_(dir, {"init", "-q", "-b", "main"});
+  git::setIdentity(in(dir), "Local Person", "local@example.com", false);
+  git::Repo r = git::probe(in(dir), dir + "/model.opad");
+  CHECK(r.state == git::Repo::State::Ready && r.userName == "Local Person" && r.userEmail == "local@example.com");
+  git::setIdentity(in(dir), " Global Person ", "global@example.com", true);
+  CHECK_EQ(QString::fromUtf8(git_(tmp.path(), {"config", "--global", "user.name"})).trimmed(), QString("Global Person"));
+  const QString real = git::findProgram();
+  QString version;
+  CHECK(git::checkProgram(real, &version).isEmpty() && !version.isEmpty());
+  CHECK(git::checkProgram(dir + "/nothing.exe").contains("not a program"));
+  CHECK(!git::checkProgram(bin("opad-cli")).isEmpty());  // runs, but is not git
+  QSettings().setValue("git/path", QDir(QCoreApplication::applicationDirPath()).relativeFilePath(real));
+  CHECK_EQ(git::findProgram(), QDir::cleanPath(real));
+  QSettings().setValue("git/path", dir + "/nothing.exe");
+  CHECK_EQ(git::findProgram(), real);  // gone: the usual places again
+  QSettings().remove("git/path");
+  qputenv("OPAD_GIT", QFile::encodeName(dir + "/nothing.exe"));
+  CHECK(git::findProgram().isEmpty());
+  qunsetenv("OPAD_GIT");
+  git::Context none = in(dir);
+  none.program.clear();
+  CHECK(git::probe(none, dir + "/model.opad").state == git::Repo::State::GitMissing);
+}
+
+// UI-136: before a push, files too big for the history itself are named and Git LFS uploads over the limit counted;
+// once pushed, nothing is left to warn about.
+TEST(push_warnings) {
+  QTemporaryDir tmp;
+  const QString dir = tmp.path() + "/work";
+  QDir().mkpath(dir + "/assets");
+  const QString doc = dir + "/model.opad";
+  cli({"new", doc});
+  git::setUp(in(dir), dir, fromBuild(true), git::SetupOptions{});
+  auto noise = [](const QString& path) {
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly)) throw check::Failure("cannot write " + path.toStdString());
+    QByteArray bytes(8192, '\0');
+    for (char& b : bytes) b = char(QRandomGenerator::global()->generate());
+    f.write(bytes);
+  };
+  noise(dir + "/big.bin");
+  noise(dir + "/assets/board.step");
+  git_(dir, {"add", "-A"});
+  git_(dir, {"commit", "-q", "-m", "files"});
+  const bool lfs = !git::probe(in(dir), doc).lfsVersion.isEmpty();
+  const QString warned = git::pushWarnings(in(dir), 4096, 1024).join('\n');
+  CHECK(warned.contains("big.bin (") && warned.contains("Keep it in Git LFS"));
+  CHECK_EQ(warned.contains("assets/board.step ("), !lfs);  // in LFS only a pointer goes into the history
+  CHECK_EQ(warned.contains("in 1 Git LFS files go up"), lfs);
+  CHECK(git::pushWarnings(in(dir)).isEmpty());  // the real limits: nothing big here
+  git_(tmp.path(), {"init", "-q", "--bare", "-b", "main", tmp.path() + "/remote.git"});
+  git_(dir, {"remote", "add", "origin", tmp.path() + "/remote.git"});
+  git_(dir, {"push", "-q", "--no-verify", "-u", "origin", "main"});  // no LFS server here: the pre-push hook would want one
+  CHECK(git::pushWarnings(in(dir), 4096, 1024).isEmpty());
 }
 
 int main(int argc, char** argv) {
   QCoreApplication app(argc, argv);
   QTemporaryDir home;
+  QCoreApplication::setOrganizationName("opad-test");
+  QCoreApplication::setApplicationName("git-client");
+  QSettings::setDefaultFormat(QSettings::IniFormat);  // Locate git's setting in the temporary home, not the registry
+  QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, home.path());
   // Nothing from this machine's git config (identity, default branch, credential helper, a driver of its own).
   qputenv("GIT_CONFIG_GLOBAL", QFile::encodeName(home.filePath("gitconfig")));
   qputenv("GIT_CONFIG_NOSYSTEM", "1");

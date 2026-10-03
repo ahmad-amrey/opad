@@ -18,6 +18,7 @@
 #include <QSurfaceFormat>
 
 #include "CrashLog.hpp"
+#include "GitWatch.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Jobs.hpp"
@@ -88,6 +89,7 @@ int textconv(int argc, char** argv) {
 int main(int argc, char** argv) {
   if (argc >= 2 && std::string_view(argv[1]) == "--merge-driver") return mergeDriver(argc, argv);
   if (argc >= 2 && std::string_view(argv[1]) == "--textconv") return textconv(argc, argv);
+  const bool askpass = GitWatch::isAskpass(argc, argv);  // git's GIT_ASKPASS: one dialog, no window, no file
   trace::log("startup: main");
   installCrashHandler();
   // Derived ids are for scripted builds (gap log #15): a desktop session restarted on the same document would derive
@@ -123,6 +125,7 @@ int main(int argc, char** argv) {
       qputenv("OPAD_CACHE_DIR", QDir::toNativeSeparators(dataDir + "/cache").toLocal8Bit());
   }
   i18n::install(app);  // before any widget exists: translator and layout direction (needs the names above for QSettings)
+  if (askpass) return GitWatch::askpassDialog(argc, argv);
   trace::log("startup: application");
 
   QCommandLineParser parser;

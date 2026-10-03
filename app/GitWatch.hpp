@@ -7,6 +7,11 @@
 // with the strip and Cancel for anything that may take long. The chip's menu sets up a repository (init -b main,
 // .gitattributes, .gitignore, Git LFS, the managed merge and diff driver) or only this clone's driver config, and a
 // managed driver config whose OPAD moved is repaired by itself.
+//
+// UI-136: "git not found" offers Locate git… (checked on a worker, kept in the setting git/path); a folder git refuses
+// as owned by someone else offers Trust this folder; the author (user.name, user.email) is asked for after a set up
+// and by ensureIdentity before anything commits; commands get this opad.exe as GIT_ASKPASS when no credential helper
+// is configured (askpassDialog, in its own process) and ssh in BatchMode, and their errors as sentences.
 #include <QDateTime>
 #include <QFileSystemWatcher>
 #include <QObject>
@@ -33,10 +38,21 @@ class GitWatch : public QObject {
   git::Context context() const;
   // A git command as a job (the strip after 0.5 s, Cancel), then `done` on the UI thread and a refresh.
   Job* command(const QString& title, const QStringList& args, std::function<void(const git::Result&)> done = {}, git::RunOptions o = {});
-  QMenu* menu(QWidget* parent);  // the chip's actions by object name: git.setup, git.driver, git.refresh
-  void setUp();                  // the Set up repository dialog
-  void setUpDriver();            // this clone's merge and diff driver (and LFS hooks when the attributes use LFS)
-  bool bench();                  // OPAD_BENCH_GIT=<prefix>
+  // The chip's actions by object name: git.setup, git.driver, git.identity, git.trust, git.locate, git.refresh.
+  QMenu* menu(QWidget* parent);
+  void setUp();        // the Set up repository dialog
+  void setUpDriver();  // this clone's merge and diff driver (and LFS hooks when the attributes use LFS)
+  void locateGit();    // a file dialog, then useProgram
+  void useProgram(const QString& path);  // kept as git/path when it runs as git, else said why not
+  void trustFolder();  // asks, then safe.directory
+  // Runs `then` once git knows the author; asks for a name and an email address first when it does not.
+  void ensureIdentity(std::function<void()> then = {});
+  void editIdentity(std::function<void()> then = {});
+  bool bench();  // OPAD_BENCH_GIT=<prefix>
+  // opad.exe as git's GIT_ASKPASS: `opad.exe --askpass <prompt>`, or the one argument git gives when OPAD_ASKPASS is set.
+  static bool isAskpass(int argc, char** argv);
+  // The prompt in a dialog of its own process (the caller made the QApplication); the answer goes to stdout. 0: answered.
+  static int askpassDialog(int argc, char** argv);
  signals:
   void changed();
  private:
@@ -61,4 +77,5 @@ class GitWatch : public QObject {
   int m_runs = 0;  // reads started: benches check nothing polls
   QDateTime m_configStamp, m_attributesStamp;
   QSet<QString> m_repaired;  // tops whose stale driver config was rewritten this session
+  QString m_lastFailure;     // the last error shown (benches)
 };

@@ -21,6 +21,7 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QSettings>
 #include <QStandardPaths>
 #include <algorithm>
 #include <stdexcept>
@@ -153,6 +154,8 @@ const char* const kIgnored[] = {"*.opad.tmp", "*.opad.orig", "opad-data/", "/dat
 QString findProgram() {
   if (qEnvironmentVariableIsSet("OPAD_GIT")) return executable(qEnvironmentVariable("OPAD_GIT"));
   const QString dir = QCoreApplication::applicationDirPath();
+  if (const QString located = QSettings().value("git/path").toString(); !located.isEmpty())  // Locate git…
+    if (const QString f = executable(QDir(dir).absoluteFilePath(located)); !f.isEmpty()) return f;
 #ifdef _WIN32
   for (const QString& p : {dir + "/git/cmd/git.exe", dir + "/PortableGit/cmd/git.exe"})
     if (const QString f = executable(p); !f.isEmpty()) return f;
@@ -193,6 +196,17 @@ QString findProgram() {
 #endif
 }
 
+QString checkProgram(const QString& path, QString* version) {
+  Context c;
+  c.program = executable(path);
+  if (c.program.isEmpty()) return tr("%1 is not a program.").arg(QDir::toNativeSeparators(path));
+  const Result v = run(c, {"--version"}, RunOptions{10000});
+  if (!v.ok()) return v.error();
+  if (!v.out.startsWith("git version ")) return tr("%1 is not git.").arg(QDir::toNativeSeparators(path));
+  if (version) *version = QString::fromUtf8(v.out.mid(12)).trimmed();
+  return {};
+}
+
 QProcessEnvironment Context::environment(bool optionalLocks) const {
   QProcessEnvironment e = QProcessEnvironment::systemEnvironment();
   // A hook or a terminal that started OPAD may have pointed git elsewhere.
@@ -202,6 +216,12 @@ QProcessEnvironment Context::environment(bool optionalLocks) const {
   e.insert("GIT_TERMINAL_PROMPT", "0");
   e.insert("LC_ALL", "C");
   if (!optionalLocks) e.insert("GIT_OPTIONAL_LOCKS", "0");
+  if (!askpass.isEmpty()) {  // a dialog instead of the terminal nobody sees; OPAD_ASKPASS tells opad.exe what it is for
+    e.insert("GIT_ASKPASS", QDir::toNativeSeparators(askpass));
+    e.insert("OPAD_ASKPASS", "1");
+  }
+  // A key with a passphrase, an unknown host key: ssh would ask on a terminal and wait forever. BatchMode fails at once.
+  if (sshBatch && !e.contains("GIT_SSH_COMMAND") && !e.contains("GIT_SSH")) e.insert("GIT_SSH_COMMAND", "ssh -o BatchMode=yes");
   return e;
 }
 
@@ -210,7 +230,7 @@ QString Result::error() const {
   if (cancelled) return tr("Cancelled.");
   if (timedOut) return tr("git did not finish in time and was stopped.");
   if (code == 0) return {};
-  const QString m = message(err);
+  const QString m = explain(QString::fromUtf8(err));
   return m.isEmpty() ? tr("git failed (exit code %1).").arg(code) : m;
 }
 
@@ -406,26 +426,7 @@ Repo probe(const Context& base, const QString& file) {
   RunOptions quick;
   quick.timeoutMs = 20000;
   quick.optionalLocks = false;
-  const Result where = run(c, {"rev-parse", "--show-toplevel", "--absolute-git-dir", "--git-common-dir"}, quick);
-  if (!where.ok()) {
-    const QString err = QString::fromUtf8(where.err);
-    r.state = err.contains("not a git repository") ? Repo::State::NotRepo
-              : err.contains("dubious ownership")  ? Repo::State::Untrusted
-                                                   : Repo::State::Failed;
-    if (r.state != Repo::State::NotRepo) r.error = where.error();
-    return r;
-  }
-  const QStringList lines = QString::fromUtf8(where.out).split('\n', Qt::SkipEmptyParts);
-  if (lines.size() < 3) {
-    r.state = Repo::State::Failed;
-    r.error = tr("git rev-parse said: %1").arg(QString::fromUtf8(where.out).trimmed());
-    return r;
-  }
-  r.top = QDir::cleanPath(lines[0].trimmed());
-  r.gitDir = QDir::cleanPath(lines[1].trimmed());
-  r.commonDir = QDir::cleanPath(QDir(c.dir).absoluteFilePath(lines[2].trimmed()));
-  if (!QFileInfo(r.commonDir + "/objects").isDir()) r.commonDir = QDir::cleanPath(QDir(r.top).absoluteFilePath(lines[2].trimmed()));  // older git: relative to the top
-  r.rel = QDir(QFileInfo(r.top).canonicalFilePath()).relativeFilePath(QFileInfo(file).canonicalFilePath());
+  // The config first: outside a repository it is the global one (the identity, a credential helper, an ssh command).
   if (const Result config = run(c, {"config", "-l", "-z"}, quick); config.ok()) {
     for (const QByteArray& record : config.out.split('\0')) {
       const qsizetype nl = record.indexOf('\n');
@@ -440,6 +441,27 @@ Repo probe(const Context& base, const QString& file) {
       else if (key == "opad.managed") r.managed = value == "true";
     }
   }
+  const Result where = run(c, {"rev-parse", "--show-toplevel", "--absolute-git-dir", "--git-common-dir"}, quick);
+  if (!where.ok()) {
+    const QString err = QString::fromUtf8(where.err);
+    r.state = err.contains("not a git repository") ? Repo::State::NotRepo
+              : err.contains("dubious ownership")  ? Repo::State::Untrusted
+                                                   : Repo::State::Failed;
+    if (r.state != Repo::State::NotRepo) r.error = where.error();
+    if (r.state == Repo::State::Untrusted) r.unsafe = unsafeDirectory(err);
+    return r;
+  }
+  const QStringList lines = QString::fromUtf8(where.out).split('\n', Qt::SkipEmptyParts);
+  if (lines.size() < 3) {
+    r.state = Repo::State::Failed;
+    r.error = tr("git rev-parse said: %1").arg(QString::fromUtf8(where.out).trimmed());
+    return r;
+  }
+  r.top = QDir::cleanPath(lines[0].trimmed());
+  r.gitDir = QDir::cleanPath(lines[1].trimmed());
+  r.commonDir = QDir::cleanPath(QDir(c.dir).absoluteFilePath(lines[2].trimmed()));
+  if (!QFileInfo(r.commonDir + "/objects").isDir()) r.commonDir = QDir::cleanPath(QDir(r.top).absoluteFilePath(lines[2].trimmed()));  // older git: relative to the top
+  r.rel = QDir(QFileInfo(r.top).canonicalFilePath()).relativeFilePath(QFileInfo(file).canonicalFilePath());
   const QString name = QFileInfo(file).fileName();  // pathspecs are relative to c.dir, the file's folder
   if (const Result attr = run(c, {"check-attr", "-z", "merge", "--", name}, quick); attr.ok()) {
     const QList<QByteArray> f = attr.out.split('\0');
@@ -591,5 +613,108 @@ QString phaseText(const QString& p) {
   if (p == "Downloading LFS objects") return tr("Downloading LFS objects");
   if (p == "Filtering content") return tr("Filtering content");
   return p;
+}
+QString explain(const QString& text) {
+  auto has = [&text](const char* s) { return text.contains(QLatin1String(s), Qt::CaseInsensitive); };
+  if (has("dubious ownership"))
+    return tr("Git does not trust this folder: it belongs to another user account, and its settings could run commands as you. Trust it only if you know where it came from.");
+  if (has("terminal prompts disabled") || has("could not read Username") || has("could not read Password"))
+    return tr("The remote wants a user name and a password, and none was given: set up a credential helper (Git Credential Manager) or answer when OPAD asks.");
+  if (has("Authentication failed") || has("HTTP Basic: Access denied") || has("Invalid username or password") || has("returned error: 401") ||
+      has("returned error: 403"))
+    return tr("The remote refused the sign-in: check the user name and the password or access token.");
+  if (has("Permission denied (publickey") || has("Permission denied, please try again"))
+    return tr("The SSH server refused the key. OPAD cannot type a key's passphrase: load the key into ssh-agent or Pageant, or use the remote's HTTPS address.");
+  if (has("Host key verification failed"))
+    return tr("This computer does not know the SSH server's host key yet: connect once from a terminal (ssh -T and the host) and accept it.");
+  if (has("Could not resolve host")) return tr("The remote's host name could not be found: check the address and the network.");
+  if (has("Connection refused") || has("Connection timed out") || has("Failed to connect") || has("Operation timed out") || has("Network is unreachable"))
+    return tr("The remote did not answer: check the address, the network, a proxy or a VPN.");
+  if (has("Repository not found") || has("does not appear to be a git repository"))
+    return tr("The remote repository was not found, or this account cannot see it.");
+  if (has("index.lock"))
+    return tr("Another git command is running in this repository, or one stopped halfway and left .git/index.lock behind: wait, or delete that file when no git runs.");
+  if (has("Please tell me who you are") || has("Author identity unknown") || has("empty ident name"))
+    return tr("Git does not know who you are yet: set your name and email address first.");
+  if (has("non-fast-forward") || (has("[rejected]") && has("fetch first")))
+    return tr("The remote has commits this clone does not have yet: pull first, then push.");
+  if (has("GH001") || has("exceeds GitHub's file size limit") || has("file size limit"))
+    return tr("The remote refuses files this large: keep them in Git LFS.");
+  if (has("over its data quota") || has("LFS budget") || has("bandwidth quota") || has("exceeded its LFS"))
+    return tr("The remote's Git LFS quota is used up: big files cannot go up or come down until it is raised.");
+  if (has("'lfs' is not a git command") || has("git-lfs: command not found") || has("git-lfs was not found"))
+    return tr("Git LFS is not installed: install it (git-lfs.com) to work with files kept in LFS.");
+  if (has("not a git repository")) return tr("This folder is not in a git repository.");
+  return message(text.toUtf8());
+}
+
+QString unsafeDirectory(const QString& text) {
+  static const QRegularExpression add(QStringLiteral("safe\\.directory\\s+(\\S[^\\r\\n]*)")), at(QStringLiteral("repository at '([^']+)'"));
+  if (const auto m = add.match(text); m.hasMatch()) return m.captured(1).trimmed();
+  if (const auto m = at.match(text); m.hasMatch()) return m.captured(1);
+  return {};
+}
+
+void trust(const Context& c, const QString& folder) { check(c, {"config", "--global", "--add", "safe.directory", QDir::fromNativeSeparators(folder)}); }
+
+void setIdentity(const Context& c, const QString& name, const QString& email, bool global) {
+  const QString scope = global ? QStringLiteral("--global") : QStringLiteral("--local");
+  check(c, {"config", scope, "user.name", name.trimmed()});
+  check(c, {"config", scope, "user.email", email.trimmed()});
+}
+
+QStringList pushWarnings(const Context& c, qint64 fileLimit, qint64 lfsLimit) {
+  RunOptions o;
+  o.timeoutMs = 120000;
+  const Result objects = run(c, {"rev-list", "--objects", "HEAD", "--not", "--remotes"}, o);
+  if (!objects.ok()) return {};  // no commit yet: nothing goes up
+  QHash<QByteArray, QString> paths;  // object -> the path it is at
+  QByteArray ids;
+  for (const QByteArray& line : objects.out.split('\n')) {
+    const qsizetype space = line.indexOf(' ');
+    if (space <= 0) continue;  // commits have no path
+    paths.insert(line.left(space), QString::fromUtf8(line.mid(space + 1)));
+    ids += line.left(space) + '\n';
+  }
+  if (ids.isEmpty()) return {};
+  o.input = ids;
+  const Result sizes = run(c, {"cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"}, o);
+  if (!sizes.ok()) return {};
+  QStringList out;
+  QByteArray small;  // blobs that may be Git LFS pointers
+  for (const QByteArray& line : sizes.out.split('\n')) {
+    const QList<QByteArray> f = line.split(' ');
+    if (f.size() != 3 || f[1] != "blob") continue;
+    const qint64 size = f[2].toLongLong();
+    if (size > fileLimit)
+      out << tr("%1 (%2 MB) goes into the history itself: hosting services refuse files over 100 MB. Keep it in Git LFS.")
+                 .arg(paths.value(f[0]))
+                 .arg(double(size) / (1 << 20), 0, 'f', 1);
+    else if (size < 1024)
+      small += f[0] + '\n';
+  }
+  qint64 lfs = 0;
+  int files = 0;
+  if (!small.isEmpty()) {
+    o.input = small;
+    static const QRegularExpression pointer(QStringLiteral("^version https://git-lfs\\.github\\.com/spec/v1\\noid sha256:[0-9a-f]+\\nsize (\\d+)"));
+    const Result blobs = run(c, {"cat-file", "--batch"}, o);
+    for (qsizetype at = 0; blobs.ok() && at < blobs.out.size();) {  // "<oid> blob <size>\n<content>\n"
+      const qsizetype nl = blobs.out.indexOf('\n', at);
+      if (nl < 0) break;
+      const qint64 size = blobs.out.mid(at, nl - at).split(' ').value(2).toLongLong();
+      const auto m = pointer.match(QString::fromUtf8(blobs.out.mid(nl + 1, size)));
+      if (m.hasMatch()) {
+        lfs += m.captured(1).toLongLong();
+        ++files;
+      }
+      at = nl + 1 + size + 1;
+    }
+  }
+  if (files && lfs > lfsLimit)
+    out << tr("%1 MB in %2 Git LFS files go up: Git LFS storage and bandwidth count against the remote's quota (1 GB on GitHub's free plan).")
+               .arg(double(lfs) / (1 << 20), 0, 'f', 1)
+               .arg(files);
+  return out;
 }
 }  // namespace git

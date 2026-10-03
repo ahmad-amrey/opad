@@ -8,6 +8,12 @@
 // also GIT_OPTIONAL_LOCKS=0, so it never holds index.lock against the user's own git nor wakes the watcher by itself.
 // Cancel and timeouts end the whole process tree (a Windows job object, a process group elsewhere): killing git alone
 // leaves git-remote-https, ssh or git-lfs running.
+//
+// The environment it meets (UI-136): git found where a portable build keeps it or where the user pointed ("Locate
+// git…", the setting git/path), git-lfs detected; sign-in through the credential helper, else this opad.exe as
+// GIT_ASKPASS (a dialog, never a terminal); SSH in BatchMode unless the user set their own ssh command, so a key that
+// wants a passphrase fails with a sentence instead of hanging; errors as sentences (explain): sign-in, SSH host keys,
+// network, safe.directory ownership, index.lock, identity, size limits and LFS quotas.
 #include <QByteArray>
 #include <QProcessEnvironment>
 #include <QString>
@@ -17,13 +23,18 @@
 
 namespace git {
 
-// Where git is: OPAD_GIT (only that one, for tests), git beside OPAD (a portable git/ or PortableGit/ folder), PATH,
-// then the usual install folders. Empty when there is none.
+// Where git is: OPAD_GIT (only that one, for tests), the setting git/path ("Locate git…", relative to OPAD's folder when
+// inside it, so a portable copy can move), git beside OPAD (a portable git/ or PortableGit/ folder), PATH, then the
+// usual install folders. Empty when there is none.
 QString findProgram();
+// Whether `path` runs as git: empty, or why not. Fills `version`. Runs it: workers only.
+QString checkProgram(const QString& path, QString* version = nullptr);
 
 struct Context {
-  QString program;  // git
-  QString dir;      // working directory
+  QString program;       // git
+  QString dir;           // working directory
+  QString askpass;       // GIT_ASKPASS: this opad.exe when no credential helper is configured (OPAD_ASKPASS=1 tells it so)
+  bool sshBatch = true;  // ssh -o BatchMode=yes, unless GIT_SSH(_COMMAND) or core.sshCommand is the user's own
   QProcessEnvironment environment(bool optionalLocks = true) const;
 };
 
@@ -73,7 +84,8 @@ struct Repo {
   enum class Doc { None, Clean, Untracked, Added, Modified, Conflict, Ignored };
   enum class Sync { Local, Synced, Ahead, Behind, Diverged, Gone };
   State state = State::None;
-  QString error;  // Untrusted, Failed: why
+  QString error;   // Untrusted, Failed: why
+  QString unsafe;  // Untrusted: the folder git would need in safe.directory
   QString program, version, lfsVersion;  // lfsVersion empty: no git-lfs
   QString file, top, gitDir, commonDir, rel;  // rel: the file relative to top
   QString helper, sshCommand, userName, userEmail;  // effective config
@@ -115,4 +127,14 @@ void configureDriver(const Context& c, const Install& in);  // merge.opad.*, dif
 Result clone(const Context& c, const QString& url, const QString& folder, const RunOptions& o = {});
 
 QString phaseText(const QString& gitPhase);  // "Receiving objects" -> its translation
+
+QString explain(const QString& gitStderr);          // what git said, as a sentence a user can act on
+QString unsafeDirectory(const QString& gitStderr);  // the folder a "dubious ownership" refusal names
+void trust(const Context& c, const QString& folder);  // git config --global --add safe.directory
+void setIdentity(const Context& c, const QString& name, const QString& email, bool global);
+
+// Before a push: what goes up that is big. Files over `fileLimit` stored in the history itself (hosting services refuse
+// 100 MB), and the Git LFS files going up when they come to more than `lfsLimit` (they count against the remote's
+// quota). Commits not on any remote-tracking branch; local reads only. Sentences, empty when nothing is big.
+QStringList pushWarnings(const Context& c, qint64 fileLimit = qint64(50) << 20, qint64 lfsLimit = qint64(500) << 20);
 }  // namespace git
