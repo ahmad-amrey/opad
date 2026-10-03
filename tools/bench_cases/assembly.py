@@ -36,7 +36,8 @@ CASES = [
     ("activate-engine", engine(), {"OPAD_BENCH_ACTIVATE": "{prefix}"}),
     # Exploded view (UI-36) on an enclosure made by the bench (shell, lid, a PCB subassembly with a board, a chip and a
     # capacitor, four screws in a Screws component): the command plays the parts out frame by frame and the camera glides
-    # to frame them, the first-use hint at the top centre goes for good once a badge is used, level 1 moves the PCB
+    # to frame them, the first-use hint at the top centre goes for good once a badge is used, the units laid out again from
+    # the measured tight boxes are opad-cli explode's, level 1 moves the PCB
     # whole, the PCB activated explodes alone, level 2 splits it (the capacitor rides on the board), the PCB's browser badge
     # keeps it whole, Explode its parts on the Screws, the slider at 50 %, a click on the board selects the PCB's unit, the
     # lid's handle dragged and a value typed over the view, One after another staged again without a layout when the
@@ -50,7 +51,7 @@ CASES = [
     ("explode-rtl", lambda root, document: document("explode-rtl"), {"OPAD_BENCH_EXPLODE": "{prefix}", "OPAD_LANG": "ar"}),
     # A STEP file (two boxes exported by opad-cli) in viewer mode: exploded and collapsed; Save as view writes nothing.
     ("explode-viewer", viewed_step, {"OPAD_BENCH_EXPLODE": "{prefix}"}),
-    # The Engine (skipped where it is not): laid out, level 2, 60 ticks from 0 to 1 each timed until every body moved, and
-    # collapsed, with no event-loop gap over 250 ms.
+    # The Engine (skipped where it is not): laid out, level 2, the tight boxes measured on a worker and laid out again, 60
+    # ticks from 0 to 1 each timed until every body moved, and collapsed, with no event-loop gap over 250 ms.
     ("explode-engine", engine(), {"OPAD_BENCH_EXPLODE": "{prefix}"}),
 ]

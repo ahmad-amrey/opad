@@ -35,6 +35,7 @@
 #include <mutex>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace opad {
 
@@ -258,6 +259,16 @@ void warm_tight_bboxes(const Document& doc, const std::vector<std::string>& keys
   std::lock_guard<std::mutex> lock(cache.mu);
   for (size_t i = 0; i < missing.size(); ++i)
     if (done[i]) cache.tight[missing[i]] = boxes[i];
+}
+
+std::vector<std::string> missing_tight_bboxes(const Document& doc, const std::vector<std::string>& keys) {
+  auto& cache = *doc.shape_cache;
+  std::vector<std::string> out;
+  std::unordered_set<std::string> seen;
+  std::lock_guard<std::mutex> lock(cache.mu);
+  for (const auto& k : keys)
+    if (!cache.tight.count(k) && seen.insert(k).second) out.push_back(k);
+  return out;
 }
 
 Bnd_Box node_tight_bbox(const Document& doc, const Scene& scene, const std::string& node_id, bool exact) {

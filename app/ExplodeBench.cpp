@@ -171,6 +171,13 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
     list.push_back({laidOut, [=, &w](bool done) {
                       ticker->timer.stop();
                       require(done && ticker->worst < 250, QString("level 2 in %1 ms: %2 units, worst event-loop gap %3 ms").arg(ticker->phase.elapsed()).arg(area->units().size()).arg(ticker->worst));
+                      ticker->start();
+                    }, 60000});
+    // The parts' tight boxes measured on a worker (once per session), then laid out again as opad-cli would.
+    list.push_back({[=] { return laidOut() && !area->measuring() && area->exactBoxes(); }, [=, &w](bool exact) {
+                      ticker->timer.stop();
+                      require(exact && ticker->worst < 250, QString("tight boxes measured and laid out again in %1 ms: %2 units from them, worst event-loop gap %3 ms")
+                                                                .arg(ticker->phase.elapsed()).arg(area->units().size()).arg(ticker->worst));
                       // 60 ticks, each timed from setT until the looks job has moved every body.
                       struct Ticks {
                         int i = 0;
@@ -212,7 +219,7 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                         area->setOn(false);
                       });
                       poll->start(20);
-                    }, 60000});
+                    }, 240000});
     list.push_back({[=] { return !area->isOn() && !area->playing() && !v->looksPending(); }, [=, &w](bool off) {
                       ticker->timer.stop();
                       size_t moved = v->shownOffsets().size();
@@ -323,6 +330,17 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     require(!area->hint()->isHidden() && std::abs(hintAt.x() + area->hint()->width() / 2 - v->width() / 2) <= 1 && !QSettings().value("hints/explode", false).toBool(),
                             QString("the first time: a hint at the top centre of the view (%1, %2)").arg(hintAt.x()).arg(hintAt.y()));
                     area->hint()->grab().save(prefix + ".hint.png");
+                  }});
+  // Once the parts' tight boxes are measured (a worker), the units are the ones opad-cli lays out for the same spec.
+  list.push_back({[=] { return laidOut() && !area->measuring() && area->exactBoxes(); }, [=, &w](bool exact) {
+                    const auto cli = opad::explode_units(doc->doc, doc->scene, area->spec());
+                    const auto& app = area->units();
+                    double worst = cli.size() == app.size() ? 0 : 1e9;
+                    for (size_t i = 0; i < std::min(cli.size(), app.size()); ++i) {
+                      worst = std::max(worst, cli[i].id == app[i].id && cli[i].bodies == app[i].bodies ? std::abs(cli[i].distance - app[i].distance) : 1e9);
+                      for (size_t k = 0; k < 3; ++k) worst = std::max({worst, std::abs(cli[i].dir[k] - app[i].dir[k]), std::abs(cli[i].centre[k] - app[i].centre[k])});
+                    }
+                    require(exact && worst < 1e-9, QString("laid out again from the measured tight boxes: %1 units as opad-cli explode lays them out (worst difference %2)").arg(app.size()).arg(worst));
                     doc->setActiveComponent(s->pcb);  // the explode follows the active component
                   }});
   list.push_back({[=] { return laidOut() && area->spec().root == s->pcb; }, [=, &w](bool followed) {

@@ -103,6 +103,7 @@ Explode::Explode(AreaServices& services) : AreaController(services), m_spec(fres
 
 Explode::~Explode() {
   if (m_job) m_job->cancel();
+  if (m_measure) m_measure->cancel();
 }
 
 void Explode::buildActions() {
@@ -534,22 +535,34 @@ void Explode::layout() {
     return;
   }
   m_relayout = false;
-  // The boxes the view holds (cached world boxes, refined to the meshes it draws: O(1) per body here), the units on a
-  // worker from a copy of the tree.
+  // The units on a worker from a copy of the tree, from the parts' tight boxes as `opad-cli explode`, renders and
+  // drawings lay them out (the same places for a saved view), once those are measured (cached per shape; a worker
+  // measures what is missing, about 20 s once for the Engine). Meanwhile from the boxes the view holds (cached world
+  // boxes, refined to the meshes it draws: O(1) per body here), and again when the measuring ends.
   const AppDocument* doc = services().document();
   auto scene = std::make_shared<opad::Scene>();
   scene->nodes = doc->scene.nodes;
   scene->roots = doc->scene.roots;
   auto boxes = std::make_shared<std::unordered_map<std::string, Bnd_Box>>();
   const std::string root = opad::explode_root(doc->scene, m_spec);
+  std::vector<std::string> bodies, keys;
   for (const auto& id : root.empty() ? doc->scene.all_bodies() : doc->scene.bodies_under(root)) {
     const opad::Node* n = doc->scene.node(id);
     if (!n || n->body_missing || !doc->scene.effectively_visible(id)) continue;
-    try {
-      (*boxes)[id] = opad::node_world_bbox(doc->doc, doc->scene, id);
-    } catch (const std::exception&) {
-    }
+    bodies.push_back(id);
+    keys.push_back(n->body_key);
   }
+  const std::vector<std::string> missing = opad::missing_tight_bboxes(doc->doc, keys);
+  const bool exact = missing.empty();
+  if (!exact) {
+    for (const auto& id : bodies) try {
+        (*boxes)[id] = opad::node_world_bbox(doc->doc, doc->scene, id);
+      } catch (const std::exception&) {
+      }
+    measureBoxes(missing);
+  }
+  auto measured = std::make_shared<opad::Document>();  // the shapes and their boxes, cached
+  measured->shape_cache = doc->doc.shape_cache;
   const opad::ExplodeSpec spec = m_spec;
   const int serial = ++m_serial;
   struct Out {
@@ -558,20 +571,21 @@ void Explode::layout() {
     std::string root;
   };
   auto out = std::make_shared<Out>();
-  m_job = services().jobs()->async(tr("Laying out the exploded view"), [scene, boxes, spec, out](Progress) {
-    const opad::Document none;  // the boxes are given
-    out->units = opad::explode_units(none, *scene, spec, [boxes](const std::string& id) {
-      const auto it = boxes->find(id);
-      return it == boxes->end() ? Bnd_Box() : it->second;
-    });
+  m_job = services().jobs()->async(tr("Laying out the exploded view"), [scene, boxes, spec, out, measured, exact](Progress) {
+    out->units = exact ? opad::explode_units(*measured, *scene, spec)
+                       : opad::explode_units(*measured, *scene, spec, [boxes](const std::string& id) {
+                           const auto it = boxes->find(id);
+                           return it == boxes->end() ? Bnd_Box() : it->second;
+                         });
     out->depth = opad::explode_depth(*scene, spec);
     out->root = opad::explode_root(*scene, spec);
-  }, [this, serial, out](bool ok, const QString& error) {
+  }, [this, serial, out, exact](bool ok, const QString& error) {
     if (serial != m_serial) return;
     m_job = nullptr;
     if (m_relayout) return layout();  // the spec or the document changed meanwhile
     if (!ok) return services().showMessage(error, 6000);
     m_units = std::move(out->units);
+    m_exact = exact;
     m_bodyUnits = opad::explode_body_units(m_units);
     m_depth = std::max(1, out->depth);
     m_root = out->root;
@@ -586,6 +600,19 @@ void Explode::layout() {
     services().browser()->refreshDecorations();
     emit laidOut();
     if (m_target >= 0) playTo(std::exchange(m_target, -1.0), -1, true);
+  });
+}
+
+void Explode::measureBoxes(const std::vector<std::string>& keys) {
+  if (m_measure || m_measureRefused) return;
+  auto measured = std::make_shared<opad::Document>();
+  measured->shape_cache = services().document()->doc.shape_cache;
+  m_measure = services().jobs()->async(tr("Measuring the parts for the exploded view"), [measured, keys](Progress p) {
+    opad::warm_tight_bboxes(*measured, keys, [p] { return p.cancelled(); });
+  }, [this](bool ok, const QString&) {
+    m_measure = nullptr;
+    if (!ok) m_measureRefused = true;  // cancelled: the view's boxes for this document
+    else if (m_on) layout();
   });
 }
 
@@ -814,6 +841,9 @@ void Explode::documentChanged(bool replaced) {
     m_tick.stop();
     if (m_job) m_job->cancel();
     m_job = nullptr;
+    if (m_measure) m_measure->cancel();
+    m_measure = nullptr;
+    m_measureRefused = m_exact = false;
     ++m_serial;
     m_on = m_offAfter = m_relayout = false;
     m_rootFollows = true;

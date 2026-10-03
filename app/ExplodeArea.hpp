@@ -72,6 +72,8 @@ class Explode : public AreaController {
   double t() const { return m_t; }
   bool playing() const { return m_tick.isActive(); }
   bool layingOut() const { return m_job != nullptr || m_relayout; }
+  bool measuring() const { return m_measure != nullptr; }  // the parts' tight boxes, on a worker
+  bool exactBoxes() const { return m_exact; }  // the units come from tight boxes, as opad-cli lays them out
   const opad::ExplodeSpec& spec() const { return m_spec; }
   const std::vector<opad::ExplodeUnit>& units() const { return m_units; }
   int unitOf(const std::string& id) const;  // explode_unit_of over the current units
@@ -101,6 +103,7 @@ class Explode : public AreaController {
  private:
   void edit(const std::function<void(opad::ExplodeSpec&)>& change, bool relayout = true);
   void layout();       // the units for the spec, on a worker
+  void measureBoxes(const std::vector<std::string>& keys);  // their tight boxes on a worker, then layout() again
   void apply();        // offsets at t to the view, trails, handle, chip
   void showTrails(const std::vector<opad::Vec3>& moves);
   void placeHandle();  // on the selected unit, where it is drawn
@@ -133,6 +136,8 @@ class Explode : public AreaController {
   bool m_fitAfter = false;  // the play that opened the explode (or a view) frames the parts if they left the view
   std::string m_viewId;  // the view the spec came from or was saved as
   QPointer<Job> m_job;
+  QPointer<Job> m_measure;
+  bool m_measureRefused = false, m_exact = false;
   int m_serial = 0;
   QTimer m_tick;
   QElapsedTimer m_clock;
