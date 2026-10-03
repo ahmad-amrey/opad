@@ -7,6 +7,8 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QMouseEvent>
 #include <QSettings>
 #include <QTimer>
 #include <QToolButton>
@@ -159,6 +161,41 @@ void SketchEditor::benchCommandLine() {
   check(m_tool == "trim", "TR is trim");
   enter("u");
   check(m_tool == "select" && count(SkEntity::Type::Circle) == 0, "U undoes the circle");
+
+  auto* list = line->completions();
+  auto* log = line->findChild<QLabel*>("commandLog");
+  type("ta");
+  QStringList listed;
+  for (int i = 0; i < list->count(); ++i) listed << list->item(i)->text().simplified();
+  check(list->isVisible() && list->count() == 3 && list->item(0)->data(Qt::UserRole).toString() == "tan" && list->currentRow() == 0 && !log->isVisible() &&
+            line->height() == line->sizeHint().height(),
+        "typing TA lists the commands it may become, in the log's place, the strip as tall as they are: " + listed.join(" | "));
+  line->grab().save(prefix + ".completions.png");
+  send(Qt::Key_Down);
+  check(list->currentRow() == 1 && edit->text() == "ta", "Down chooses the next one; the line keeps what is typed");
+  send(Qt::Key_Return);
+  check(m_tool == "tangent_arc" && list->isHidden() && edit->text().isEmpty() && log->isVisible(), "Enter runs the one chosen (the tangent arc), the log comes back");
+  send(Qt::Key_Escape);
+  type("rot");
+  send(Qt::Key_Tab);
+  check(edit->text() == "rotate" && list->isHidden() && match->text().contains(tr("Rotate")) && window->focusWidget() == edit, "Tab puts the command chosen into the line");
+  send(Qt::Key_Escape);
+  type("mo");
+  if (list->count() == 1) {
+    const QPoint at = list->visualItemRect(list->item(0)).center();
+    QMouseEvent press(QEvent::MouseButtonPress, at, list->viewport()->mapToGlobal(at), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent release(QEvent::MouseButtonRelease, at, list->viewport()->mapToGlobal(at), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(list->viewport(), &press);
+    QApplication::sendEvent(list->viewport(), &release);
+  }
+  check(m_tool == "move" && list->isHidden() && window->focusWidget() == edit, "a click on a listed command runs it, the keyboard stays in the line");
+  send(Qt::Key_Escape);
+  type("12");
+  check(list->isHidden(), "a value lists nothing");
+  send(Qt::Key_Escape);
+  send(Qt::Key_Up);
+  check(edit->text() == "move" && list->isHidden(), "Up on a line not being typed recalls, as before");
+  send(Qt::Key_Escape);
 
   line->grab().save(prefix + ".png");
   window->grab().save(prefix + ".view.png");

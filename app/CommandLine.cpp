@@ -6,6 +6,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPainterPath>
 #include <QSettings>
 #include <QToolButton>
@@ -39,6 +40,14 @@ CommandLine::CommandLine(QWidget* view) : QFrame(view), m_view(view) {
   m_log->setObjectName("commandLog");
   m_log->setTextFormat(Qt::RichText);
   m_log->hide();
+  m_list = new QListWidget(this);
+  m_list->setObjectName("commandCompletions");
+  m_list->setFocusPolicy(Qt::NoFocus);  // the keyboard stays in the line; Up, Down and Tab choose
+  m_list->setFrameShape(QFrame::NoFrame);
+  m_list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  m_list->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  m_list->hide();
+  column->addWidget(m_list);
   column->addWidget(m_log);
   auto* row = new QHBoxLayout;
   row->setSpacing(6);
@@ -49,7 +58,7 @@ CommandLine::CommandLine(QWidget* view) : QFrame(view), m_view(view) {
   m_edit->setObjectName("commandEdit");
   m_edit->setFrame(false);
   m_edit->setPlaceholderText(tr("Command or point: x,y  @dx,dy  @length<angle"));
-  m_edit->setToolTip(tr("Type a command (L, C, REC, TR, O, M ...) or a point, then Enter · ↑/↓ earlier entries · Enter on an empty line ends the step · Esc clears, then steps back"));
+  m_edit->setToolTip(tr("Type a command (L, C, REC, TR, O, M ...) or a point, then Enter · while a word is typed ↑/↓ choose among the commands listed and Tab completes · else ↑/↓ earlier entries · Enter on an empty line ends the step · Esc clears, then steps back"));
   m_edit->installEventFilter(this);
   m_match = new QLabel(this);
   m_match->setObjectName("commandMatch");
@@ -65,7 +74,8 @@ CommandLine::CommandLine(QWidget* view) : QFrame(view), m_view(view) {
   row->addWidget(m_close);
   column->addLayout(row);
   connect(m_close, &QToolButton::clicked, this, &CommandLine::closeRequested);
-  connect(m_edit, &QLineEdit::textEdited, this, [this] { showMatch(); });
+  connect(m_edit, &QLineEdit::textEdited, this, [this] { showMatch(true); });
+  connect(m_list, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) { submit(item->data(Qt::UserRole).toString()); });
   connect(theme::notifier(), &theme::Notifier::changed, this, &CommandLine::restyle);
   view->installEventFilter(this);
   restyle();
@@ -79,6 +89,9 @@ void CommandLine::restyle() {
                         "#commandEdit { background: transparent; color: %4; font-family: '%5'; font-size: 12px; selection-background-color: %6; }"
                         "#commandMatch { color: %7; font-size: 11px; }"
                         "#commandLog { color: %7; font-family: '%5'; font-size: 11px; }"
+                        "#commandCompletions { background: transparent; color: %4; font-family: '%5'; font-size: 12px; }"
+                        "#commandCompletions::item { padding: 1px 2px; }"
+                        "#commandCompletions::item:selected { background: %6; color: %4; }"
                         "#commandClose { background: transparent; border: none; }")
                     .arg(theme::css(t.bg2), theme::css(t.line), theme::css(t.fg2), theme::css(t.fg), theme::mono().family(), theme::css(t.selbg), theme::css(t.fg3)));
   auto palette = m_edit->palette();
@@ -112,7 +125,7 @@ void CommandLine::layoutLines() {
     shown << (m_problems.contains(m_lines[i]) ? QString("<span style=\"color:%1\">%2</span>").arg(theme::css(t.red), text) : text);
   }
   m_log->setText(shown.join("<br>"));
-  m_log->setVisible(!shown.isEmpty());
+  m_log->setVisible(!shown.isEmpty() && m_list->isHidden());
   place();
 }
 
@@ -123,9 +136,35 @@ void CommandLine::remember(const QString& entry) {
   m_draft.clear();
 }
 
-void CommandLine::showMatch() {
-  const auto* c = sketchcommands::find(m_edit->text().toStdString());
+void CommandLine::showMatch(bool complete) {
+  const std::string text = m_edit->text().toStdString();
+  const auto* c = sketchcommands::find(text);
   m_match->setText(c ? QStringLiteral("→ ") + i18n::t(c->name) : QString());
+  const auto found = complete ? sketchcommands::complete(text) : std::vector<sketchcommands::Completion>();
+  m_list->clear();
+  m_chosen = false;
+  size_t pad = 0;
+  for (const auto& f : found) pad = std::max(pad, f.word.size());
+  for (const auto& f : found) {
+    auto* item = new QListWidgetItem(QString::fromStdString(f.word).toUpper().leftJustified(int(pad) + 2) + i18n::t(f.command->name), m_list);
+    item->setData(Qt::UserRole, QString::fromStdString(f.word));
+  }
+  if (!found.empty()) {
+    m_list->setCurrentRow(0);
+    m_list->ensurePolished();  // the style sheet's font and padding, before the rows are measured
+    m_list->setFixedHeight(int(found.size()) * m_list->sizeHintForRow(0) + 2);
+  }
+  if (found.empty() && m_list->isHidden()) return;
+  m_list->setVisible(!found.empty());
+  m_log->setVisible(found.empty() && !m_log->text().isEmpty());  // the commands in the log's place while a word is typed
+  place();
+}
+
+void CommandLine::submit(const QString& text) {
+  m_edit->clear();
+  showMatch();
+  m_recall = int(m_history.size());
+  emit entered(text);
 }
 
 void CommandLine::focusLine() {
@@ -141,6 +180,7 @@ void CommandLine::focusLine() {
 void CommandLine::place() {
   if (!m_view) return;
   const int width = std::min(kMaxWidth, std::max(240, m_view->width() - 2 * kMargin));
+  layout()->invalidate();  // a line shown or hidden just now
   layout()->activate();
   const int height = std::max(30, layout()->heightForWidth(width) > 0 ? layout()->heightForWidth(width) : sizeHint().height());
   setGeometry(kMargin, m_view->height() - kMargin - height, width, height);
@@ -168,27 +208,35 @@ bool CommandLine::eventFilter(QObject* target, QEvent* event) {
     case Qt::Key_Return:
     case Qt::Key_Enter:
       key->accept();
-      if (press) {
-        const QString text = m_edit->text();
-        m_edit->clear();
-        m_match->clear();
-        m_recall = int(m_history.size());
-        emit entered(text);
-      }
+      if (press) submit(m_chosen && m_list->currentItem() ? m_list->currentItem()->data(Qt::UserRole).toString() : m_edit->text());
       return true;
     case Qt::Key_Escape:
       key->accept();
       if (press) {
         if (empty) emit escaped();
         m_edit->clear();
-        m_match->clear();
+        showMatch();
         m_recall = int(m_history.size());
+      }
+      return true;
+    case Qt::Key_Tab:  // the command chosen, into the line
+      if (m_list->isHidden() || !m_list->currentItem()) return false;
+      key->accept();
+      if (press) {
+        m_edit->setText(m_list->currentItem()->data(Qt::UserRole).toString());
+        showMatch();
       }
       return true;
     case Qt::Key_Up:
     case Qt::Key_Down: {
       key->accept();
       if (!press) return true;
+      if (m_list->isVisible()) {  // through the commands listed
+        const int row = m_list->currentRow() + (key->key() == Qt::Key_Up ? -1 : 1);
+        if (row >= 0 && row < m_list->count()) m_list->setCurrentRow(row);
+        m_chosen = true;
+        return true;
+      }
       if (m_recall >= int(m_history.size())) m_draft = m_edit->text();
       m_recall = sketchcommands::recall(m_recall, int(m_history.size()), key->key() == Qt::Key_Up);
       if (m_recall >= 0) m_edit->setText(m_recall < int(m_history.size()) ? m_history[m_recall] : m_draft);

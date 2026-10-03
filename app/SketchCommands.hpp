@@ -141,6 +141,44 @@ inline bool bare(const std::string& text) {
   return !t.empty() && t.find_first_of(",<@#") == std::string::npos;
 }
 
+// The commands a word being typed may become, best first, at most `most`: an exact word, then a word or an id it begins, then
+// a name (spaces and dashes aside) it begins; the shorter word first, else the table's order. `word` is what completes it
+// (a short form when that is what was typed, else the command's first word). Nothing for a value (digits, '@', ',' ...).
+struct Completion {
+  const Command* command;
+  std::string word;
+};
+inline std::vector<Completion> complete(const std::string& text, size_t most = 6) {
+  const std::string typed = lower(trimmed(text));
+  std::vector<Completion> out;
+  if (typed.empty() || !std::isalpha(static_cast<unsigned char>(typed[0])) ||
+      !std::all_of(typed.begin(), typed.end(), [](unsigned char c) { return std::isalnum(c) || c == '_' || c == ':'; }))
+    return out;
+  auto begins = [&typed](const std::string& w) { return w.compare(0, typed.size(), typed) == 0; };
+  std::vector<std::pair<int, Completion>> ranked;  // rank: 0 exact, 1 + length of the word begun, 1000 a name begun
+  for (const Command& c : commands()) {
+    int rank = -1;
+    std::string word;
+    for (const std::string w : c.words)
+      if (begins(w) && (rank < 0 || int(w.size()) + 1 < rank)) rank = w == typed ? 0 : int(w.size()) + 1, word = w;
+    const std::string id = c.id;
+    if (id == typed) rank = 0, word = c.words.empty() ? id : c.words.front();
+    if (rank < 0 && begins(id) && (id.find(':') == std::string::npos || typed.find(':') != std::string::npos))  // "c" is no constraint's
+      rank = int(id.size()) + 1, word = c.words.empty() ? id : c.words.front();
+    if (rank < 0) {
+      std::string name;
+      for (const char* n = c.name; *n; ++n)
+        if (*n != ' ' && *n != '-') name += char(std::tolower(static_cast<unsigned char>(*n)));
+      if (begins(name)) rank = 1000, word = c.words.empty() ? c.id : c.words.front();
+    }
+    if (rank >= 0) ranked.push_back({rank, {&c, word}});
+  }
+  std::stable_sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+  for (const auto& [rank, completion] : ranked)
+    if (out.size() < most) out.push_back(completion);
+  return out;
+}
+
 // Up and Down through what was entered: the entry `index` steps to (history.size(): the line being typed), -1 none.
 inline int recall(int index, int size, bool up) {
   if (size <= 0) return -1;

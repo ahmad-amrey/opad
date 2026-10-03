@@ -126,6 +126,35 @@ TEST(the_keys_fill_the_boxes_as_typed_over_the_view) {
   CHECK(b.entry == Entry::Absolute && b.text[0] == "5" && b.text[1] == "6");
 }
 
+TEST(a_word_being_typed_offers_the_commands_it_may_become) {
+  auto ids = [](const std::string& text) {
+    std::vector<std::string> out;
+    for (const auto& c : complete(text)) out.push_back(c.command->id);
+    return out;
+  };
+  auto words = [](const std::string& text) {
+    std::vector<std::string> out;
+    for (const auto& c : complete(text)) out.push_back(c.word);
+    return out;
+  };
+  const auto c = ids("c");
+  CHECK(c.size() == 6 && c[0] == "circle");  // the exact word first, then the shorter words begun
+  CHECK(words("c")[0] == "c");
+  CHECK(ids("ci")[0] == "circle" && words("ci")[0] == "circle");
+  CHECK(ids("TR").size() >= 1 && ids("TR")[0] == "trim");
+  CHECK(ids("rect")[0] == "rect" && words("rect")[0] == "rectangle");  // the id begun: the command's first word
+  const auto per = ids("perp");
+  CHECK(per.size() == 1 && per[0] == "c:perpendicular");
+  CHECK(ids("break")[0] == "break" && words("break")[0] == "breakall");
+  const auto tangent = ids("tangent");
+  CHECK(tangent.size() == 3 && tangent[0] == "c:tangent");  // tangent, then tangentarc and tangentcircle
+  CHECK(ids("fin")[0] == "finish");
+  CHECK(ids("3p").empty() && ids("@1").empty() && ids("10").empty() && ids("").empty() && ids("w/2").empty());
+  CHECK(ids("zzz").empty());
+  CHECK(complete("c", 2).size() == 2);
+  for (const auto& found : complete("s")) CHECK(find(found.word) == found.command);  // what completes it runs it
+}
+
 TEST(up_and_down_go_through_what_was_entered) {
   // Three entries; 3 is the line being typed.
   CHECK_EQ(recall(3, 3, true), 2);
