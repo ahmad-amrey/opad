@@ -800,5 +800,7 @@
  "Space": "مسافة",
  "The menu of a browser row or a timeline marker": "قائمة صف في المستعرض أو علامة في الخط الزمني",
  "Menu key": "مفتاح القائمة",
- "The design is being recomputed; try again in a moment.": "يُعاد حساب التصميم؛ حاول مرة أخرى بعد لحظات."
+ "The design is being recomputed; try again in a moment.": "يُعاد حساب التصميم؛ حاول مرة أخرى بعد لحظات.",
+ "That operation is already tombstoned.": "هذه العملية محذوفة بالفعل.",
+ "Repeat the last tool, in the view while nothing runs": "تكرار آخر أداة، في العرض حين لا يعمل شيء"
 }

@@ -208,6 +208,8 @@ QMenu* MainWindow::historyMenu(bool undo) {
 
 void MainWindow::deleteOp(const std::string& requestedId) {
   const std::string opId=requestedId; // Rebuilding cards can destroy the signal sender during this operation.
+  // Once is enough: a second tombstone (Repeat, Del again on the same marker) would need two restores.
+  if (m_doc->doc.is_deleted(opId)) throw opad::UserHint("That operation is already tombstoned.");
   // With a design history a tombstone changes what later features produce: planned on a worker.
   if (!m_doc->scene.features.empty() || !m_doc->scene.sketches.empty()) {
     m_design->applyOps({opad::json{{"op", "delete"}, {"target", opId}}}, tr("delete"));

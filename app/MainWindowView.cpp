@@ -312,8 +312,12 @@ bool MainWindow::eventFilter(QObject* o, QEvent* e) {
 
 // Enter in the view while nothing runs repeats the last command, as in SOLIDWORKS and AutoCAD (UI-111). While a tool, a
 // feature, a sketch, a note or a plane pick runs, Enter is theirs (OK, finish, the typed value); a held key does nothing.
+// Delete, Restore, Hide and Show all repeat only from Repeat itself (Shift+Enter, the menu): a stray Enter must not act on
+// whatever is selected now.
 bool MainWindow::repeatOnEnter(const QKeyEvent* key) {
-  if ((key->key() != Qt::Key_Return && key->key() != Qt::Key_Enter) || (key->modifiers() & ~Qt::KeypadModifier) || key->isAutoRepeat()) return false;
+  static const QStringList asked{"edit.delete", "edit.restore", "edit.hide", "edit.showall"};
+  if ((key->key() != Qt::Key_Return && key->key() != Qt::Key_Enter) || (key->modifiers() & ~Qt::KeypadModifier) || key->isAutoRepeat() || asked.contains(m_lastCommand))
+    return false;
   if (!m_doc->hasDocument || !m_tool.id.isEmpty() || m_annotationEditor || m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane() ||
       m_design->planePicker()->active() || m_drawingPlacer->active() || m_toolPanel->isVisible())
     return false;

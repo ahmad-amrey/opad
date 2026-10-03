@@ -132,6 +132,10 @@ OPAD_BENCH(OPAD_BENCH_KEYBOARD, keyboard) {
   }, idle);
   add(100, [=, &w] {
     check(deleted(feature), "Del tombstones the marker's op");
+    const size_t ops = w.m_doc->doc.ops.size();
+    bool refused = false;
+    try { w.deleteOp(feature); } catch (const opad::UserHint&) { refused = true; }
+    check(refused && w.m_doc->doc.ops.size() == ops, "a marker already tombstoned is not tombstoned again (Repeat, a second Del)");
     key(w.m_timeline, Qt::Key_Delete, Qt::ShiftModifier);
   }, [=] { return idle() && deleted(feature); });
   add(100, [=, &w] {

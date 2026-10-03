@@ -148,6 +148,25 @@ OPAD_BENCH(OPAD_BENCH_STANDARDKEYS, standardkeys) {
     });
     w.showContextMenu(w.m_viewport->mapToGlobal(w.m_viewport->rect().center()), {});
   }, idle);
+  // Hide (as Delete, Restore, Show all) repeats from Repeat only: Enter never acts on what is selected now.
+  auto pick = [&w](const std::string& id) {
+    w.m_browser->setSelectedIds({id});
+    w.onBrowserSelection({id});
+  };
+  add(500, [=] { if (bodies->size() == 2) pick((*bodies)[1]); }, idle);
+  add(100, [=, &w] {
+    if (bodies->size() != 2) return;
+    w.action("edit.hide")->trigger();
+    check(w.m_lastCommand == "edit.hide" && !w.m_doc->node((*bodies)[1])->visible, "Hide hides the selected body");
+    pick((*bodies)[0]);
+  }, idle);
+  add(100, [=, &w] {
+    if (bodies->size() != 2) return;
+    QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QCoreApplication::sendEvent(w.m_viewport, &press);
+    check(w.m_doc->node((*bodies)[0])->visible, "after Hide, Enter in the view does not hide the next selection");
+    w.m_doc->run("appearance", opad::json{{"target", (*bodies)[1]}, {"visible", true}});
+  }, idle);
   add(300, [=, &w] {
     const auto& sketches = w.m_doc->scene.sketches;
     check(!sketches.empty(), "the document has a sketch");
