@@ -84,6 +84,7 @@ Sheet collect(const opad::Document& doc, const opad::Scene& scene, const opad::F
     const drawing2d::LineStyle line = drawing2d::lineStyle(scene, *node);  // its layer's, or its own (UI-92)
     style.weight = line.lineweight;
     style.dashes = drawing2d::dashes(line.linetype, line.pattern);
+    for (double& d : style.dashes) d *= line.scale;
     auto found = std::find(sheet.styles.begin(), sheet.styles.end(), style);
     if (found == sheet.styles.end()) found = sheet.styles.insert(sheet.styles.end(), style);
     shapes.push_back({opad::node_world_shape(doc, scene, id), int(found - sheet.styles.begin())});

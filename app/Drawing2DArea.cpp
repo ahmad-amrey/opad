@@ -7,6 +7,7 @@
 #include <QCursor>
 #include <QGuiApplication>
 #include <QLabel>
+#include <QLocale>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
@@ -431,7 +432,8 @@ class Drawing2DArea : public AreaController {
     if (layer) {  // the object's: its layer's, or its own
       const drawing2d::LineStyle line = drawing2d::lineStyle(scene, *body);
       const QString own = " " + tr("(its own)");
-      rows += row(tr("Linetype"), (line.linetype.empty() ? tr("Continuous") : QString::fromStdString(line.linetype)).toHtmlEscaped() + (line.ownType ? own : QString()));
+      const QString scaled = line.scale != 1 && !line.linetype.empty() ? QString(" %1%2").arg(QChar(0x00D7)).arg(QLocale().toString(line.scale, 'g', 4)) : QString();
+      rows += row(tr("Linetype"), (line.linetype.empty() ? tr("Continuous") : QString::fromStdString(line.linetype)).toHtmlEscaped() + scaled + (line.ownType ? own : QString()));
       rows += row(tr("Lineweight"), LayersPanel::weightText(line.lineweight) + (line.ownWeight ? own : QString()));
     }
     if (m_hovered.contains("radius")) rows += row(tr("Radius"), units::format(units::Kind::Length, m_hovered["radius"].get<double>()));

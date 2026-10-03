@@ -163,8 +163,9 @@ OPAD_BENCH(OPAD_BENCH_TEXT2D, text2d) {
 // OPAD_BENCH_PENS=<prefix> on a DXF whose Walls layer is dashed and 0.5 mm wide (tools/bench_cases/drawing2d.py
 // pens_file): a line on it in a linetype of its own (CENTER) is drawn in its own dashes and the layer's width, one with a
 // lineweight of its own (1.00 mm) in the layer's dashes and its own width, the layer's other lines in the layer's; a block
-// line by block takes its insert's (HIDDEN on Plain). The layer turned HIDDEN and 0.35 mm in one step: its own lines keep
-// what is theirs. <prefix>.png
+// line by block takes its insert's (HIDDEN on Plain), one with a linetype scale of its own (0.5) in the layer's dashes at
+// half their size. The layer turned HIDDEN and 0.35 mm in one step: its own lines keep what is theirs, the scaled one
+// takes HIDDEN at half size. <prefix>.png
 OPAD_BENCH(OPAD_BENCH_PENS, pens) {
   auto all = std::make_shared<bool>(true);
   Check require = [all](bool ok, const QString& what) {
@@ -189,26 +190,40 @@ OPAD_BENCH(OPAD_BENCH_PENS, pens) {
       }
       return std::string();
     };
-    auto drawnAs = [v](const std::string& id, const char* linetype, double mm) {
+    auto drawnAs = [v](const std::string& id, const char* linetype, double mm, double scale = 1) {
       const opad::json state = v->benchLookState(id);
-      const drawing2d::LinePattern p = drawing2d::linePattern(drawing2d::dashes(linetype), drawing2d::kPatternPixelsPerMm * v->displayScale() * v->renderScale());
+      const drawing2d::LinePattern p = drawing2d::linePattern(drawing2d::dashes(linetype), drawing2d::kPatternPixelsPerMm * scale * v->displayScale() * v->renderScale());
       return state.is_object() && state.value("linePattern", 0) == p.bits && state.value("lineFactor", 0) == p.factor &&
              state.value("lineWidth", 0.0) == v->lineWidth(drawing2d::linePoints(mm));
     };
     const std::string byLayer = body("Walls", opad::json()), center = body("Walls", {{"linetype", "CENTER"}}),
-                      heavy = body("Walls", {{"lineweight", 1.0}}), byBlock = body("Plain", {{"linetype", "HIDDEN"}});
-    require(shown && !byLayer.empty() && !center.empty() && !heavy.empty() && !byBlock.empty(),
+                      heavy = body("Walls", {{"lineweight", 1.0}}), byBlock = body("Plain", {{"linetype", "HIDDEN"}}),
+                      scaled = body("Walls", {{"scale", 0.5}});
+    require(shown && !byLayer.empty() && !center.empty() && !heavy.empty() && !byBlock.empty() && !scaled.empty(),
             QString("the drawing is shown, its lines with styles of their own in bodies of their own (%1 bodies)").arg(v->displayedCount()));
-    if (!shown || byLayer.empty() || center.empty() || heavy.empty() || byBlock.empty()) return QCoreApplication::exit(2);
+    if (!shown || byLayer.empty() || center.empty() || heavy.empty() || byBlock.empty() || scaled.empty()) return QCoreApplication::exit(2);
     require(drawnAs(byLayer, "DASHED", 0.5) && drawnAs(center, "CENTER", 0.5) && drawnAs(heavy, "DASHED", 1.0) && drawnAs(byBlock, "HIDDEN", -1),
             "the layer's lines dashed and 0.5 mm, CENTER of its own, 1.00 mm of its own, the block line in its insert's HIDDEN");
+    auto dash = [v](const std::string& id) {  // the longest dash the view draws, in pixels: on bits in a row times the factor
+      const opad::json state = v->benchLookState(id);
+      const int bits = state.value("linePattern", 0xFFFF), factor = state.value("lineFactor", 1);
+      int longest = 0;
+      for (int start = 0; start < 16; ++start) {
+        int n = 0;
+        while (n < 16 && (bits >> ((start + n) % 16) & 1)) ++n;
+        longest = std::max(longest, n);
+      }
+      return longest * factor;
+    };
+    require(drawnAs(scaled, "DASHED", 0.5, 0.5) && dash(scaled) > 0 && dash(scaled) <= 0.65 * dash(byLayer),
+            QString("the line with a linetype scale of its own (0.5) in the layer's dashes at half their size (%1 px against %2)").arg(dash(scaled)).arg(dash(byLayer)));
     v->fitAll();
     const drawing2d::Layer walls = *drawing2d::layerAt(w.m_doc->scene, byLayer);
     w.m_doc->runAll({{"appearance", drawing2d::setLinetype(walls, "HIDDEN")}, {"appearance", drawing2d::setLineweight(walls, 0.35)}}, "layer pens");
     pollUntil(&w, [v, drawnAs, byLayer] { return !v->looksPending() && drawnAs(byLayer, "HIDDEN", 0.35); }, 10000,
-              [&w, v, require, all, value, drawnAs, byLayer, center, heavy](bool changed) {
-      require(changed && drawnAs(center, "CENTER", 0.35) && drawnAs(heavy, "HIDDEN", 1.0),
-              "the layer turned HIDDEN and 0.35 mm: its lines follow, the CENTER line keeps its dashes and the heavy one its width");
+              [&w, v, require, all, value, drawnAs, byLayer, center, heavy, scaled](bool changed) {
+      require(changed && drawnAs(center, "CENTER", 0.35) && drawnAs(heavy, "HIDDEN", 1.0) && drawnAs(scaled, "HIDDEN", 0.35, 0.5),
+              "the layer turned HIDDEN and 0.35 mm: its lines follow (the scaled one at half size), the CENTER line keeps its dashes and the heavy one its width");
       v->grabImage().save(value + ".png");
       QCoreApplication::exit(*all ? 0 : 2);
     });

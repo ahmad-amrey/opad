@@ -18,14 +18,15 @@
 namespace opad::detail {
 
 // A drawing read from a file: per layer, its geometry grouped by colour (edges for curves, faces for fills and text)
-// and, for DXF entities that set their own, linetype and lineweight.
+// and, for DXF entities that set their own, linetype, lineweight and linetype scale.
 struct Drawing {
   static constexpr uint32_t kNoColor = 0xFF000000u;  // drawn in the viewer's own drawing colour
   struct Pen {
     uint32_t color = kNoColor;  // 0xRRGGBB or kNoColor
     std::string linetype;       // its own linetype ("" by layer): the body's `line` (Node::line)
     int lineweight = -1;        // its own in 1/100 mm, -3 the default; -1 by layer
-    bool operator<(const Pen& o) const { return std::tie(color, linetype, lineweight) < std::tie(o.color, o.linetype, o.lineweight); }
+    double scale = 1;           // its dashes times this (DXF 48, CELTSCALE)
+    bool operator<(const Pen& o) const { return std::tie(color, linetype, lineweight, scale) < std::tie(o.color, o.linetype, o.lineweight, o.scale); }
   };
   std::map<std::string, std::map<Pen, TopoDS_Compound>> layers;  // layer -> how it is drawn -> geometry
   std::map<std::string, std::vector<double>> patterns;  // DXF: dashes of the linetypes bodies name, as Node::layer's pattern
@@ -39,7 +40,7 @@ struct Drawing {
   gp_XYZ origin{0, 0, 0};
   BRep_Builder builder;
   Mat4 transform;  // SVG: the current element's transform, applied by add()
-  void add(const std::string& layer, const TopoDS_Shape& shape, uint32_t color = kNoColor) { add(layer, shape, Pen{color, {}, -1}); }
+  void add(const std::string& layer, const TopoDS_Shape& shape, uint32_t color = kNoColor) { add(layer, shape, Pen{color, {}, -1, 1}); }
   void add(const std::string& layer, const TopoDS_Shape& shape, const Pen& pen);
   void line(const std::string& layer, double x, double y, double u, double v);
   void circle(const std::string& layer, double x, double y, double r);

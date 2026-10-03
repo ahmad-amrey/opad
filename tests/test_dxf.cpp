@@ -517,6 +517,36 @@ TEST(entity_linetypes_and_lineweights_reach_their_bodies) {
   }
 }
 
+// TODO 11 UI-92: an entity's linetype scale (48, CELTSCALE) puts it in a body of its own that carries it (line.scale), on
+// its layer's linetype or its own; by block it is the block entity's times the insert's; on a continuous line it is moot.
+TEST(entity_linetype_scales_reach_their_bodies) {
+  Files f;
+  auto line = [](const char* layer, double y, Groups extra) {
+    Groups g{{0, "LINE"}, {8, layer}, {10, "0"}, {20, std::to_string(y)}, {11, "10"}, {21, std::to_string(y)}};
+    g.insert(g.end(), extra.begin(), extra.end());
+    return g;
+  };
+  Groups entities;
+  for (const auto& g : {line("Walls", 0, {}), line("Walls", 1, {{48, "0.5"}}), line("Walls", 2, {{6, "CENTER"}, {48, "0.5"}}), line("Plain", 3, {{48, "0.5"}}),
+                        Groups{{0, "INSERT"}, {8, "Plain"}, {6, "HIDDEN"}, {48, "2"}, {2, "K"}, {10, "0"}, {20, "10"}}})
+    entities.insert(entities.end(), g.begin(), g.end());
+  write_text_file(f.dir / "scales.dxf",
+                  section("TABLES", {{0, "TABLE"}, {2, "LAYER"}, {0, "LAYER"}, {2, "Walls"}, {62, "1"}, {70, "0"}, {6, "DASHED"},
+                                     {0, "LAYER"}, {2, "Plain"}, {62, "5"}, {70, "0"}, {0, "ENDTAB"}}) +
+                      section("BLOCKS", {{0, "BLOCK"}, {2, "K"}, {70, "0"}, {10, "0"}, {20, "0"}, {0, "LINE"}, {8, "0"}, {6, "BYBLOCK"}, {48, "0.25"},
+                                         {10, "0"}, {20, "0"}, {11, "1"}, {21, "0"}, {0, "ENDBLK"}}) +
+                      section("ENTITIES", entities) + kEof);
+  for (bool viewer : {true, false}) {
+    const Scene s = resolve(import(f.dir / "scales.dxf", viewer));
+    std::map<std::string, std::vector<json>> lines;
+    for (const auto& id : s.all_bodies()) lines[s.node(id)->name].push_back(s.node(id)->line);
+    for (auto& [name, list] : lines) std::sort(list.begin(), list.end());
+    auto sorted = [](std::vector<json> v) { std::sort(v.begin(), v.end()); return v; };
+    CHECK(lines["Walls"] == sorted({json(), json({{"scale", 0.5}}), json({{"linetype", "CENTER"}, {"scale", 0.5}})}));
+    CHECK(lines["Plain"] == sorted({json(), json({{"linetype", "HIDDEN"}, {"scale", 0.5}})}));
+  }
+}
+
 // TODO 11 UI-89: the body of a layer's BYLAYER entities says so (by_layer), so a colour given to the layer reaches it and
 // not the entities drawn in colours of their own; a block's layer-0 BYLAYER entities follow the insert's layer.
 TEST(by_layer_bodies_are_marked) {

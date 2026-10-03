@@ -81,11 +81,12 @@ constexpr double kPatternPixelsPerMm = 1.25;  // logical pixels per pattern mill
 double linePoints(double lineweight);
 
 // How a drawing body's lines are drawn (UI-92): its own linetype and lineweight (DXF entities that set them, Node::line)
-// over its layer's (the parent's Node::layer, as the Layers panel leaves it).
+// over its layer's (the parent's Node::layer, as the Layers panel leaves it), its dashes in its own scale.
 struct LineStyle {
   std::string linetype;  // "" continuous
   std::vector<double> pattern;  // the file's dashes for it; empty: by its name
   double lineweight = -1;  // mm; < 0 the default
+  double scale = 1;  // its dashes times this (DXF CELTSCALE), whichever linetype it takes
   bool ownType = false, ownWeight = false;  // the body's own, not its layer's
 };
 LineStyle lineStyle(const opad::Scene& scene, const opad::Node& body);

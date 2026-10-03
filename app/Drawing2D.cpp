@@ -151,6 +151,7 @@ LineStyle lineStyle(const opad::Scene& scene, const opad::Node& body) {
       s.lineweight = (*f)["lineweight"].get<double>();
       s.ownWeight = own;
     }
+    if (own && f->contains("scale") && (*f)["scale"].is_number() && (*f)["scale"].get<double>() > 0) s.scale = (*f)["scale"].get<double>();
   }
   if (upper(s.linetype) == "CONTINUOUS") s.linetype.clear(), s.pattern.clear();
   return s;

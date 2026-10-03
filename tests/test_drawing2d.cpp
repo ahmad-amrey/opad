@@ -256,7 +256,8 @@ TEST(linetypes_draw_as_their_dashes) {
 }
 
 // UI-92: a body's own linetype and lineweight (DXF entities that set them) win over its layer's, also after the layer
-// changes; the rest follow the layer; a plot draws each in its own.
+// changes; the rest follow the layer; a plot draws each in its own. A linetype scale of its own (CELTSCALE) sizes the
+// dashes of whichever linetype it takes.
 TEST(own_linetypes_and_lineweights_win_over_the_layers) {
   const auto dir = std::filesystem::temp_directory_path() / ("opad-2d-" + opad::new_uuid());
   std::filesystem::create_directory(dir);
@@ -267,30 +268,33 @@ TEST(own_linetypes_and_lineweights_win_over_the_layers) {
   g(0, "LINE"), g(8, "Walls"), g(10, "0"), g(20, "0"), g(11, "10"), g(21, "0");
   g(0, "LINE"), g(8, "Walls"), g(6, "CENTER"), g(10, "0"), g(20, "1"), g(11, "10"), g(21, "1");
   g(0, "LINE"), g(8, "Walls"), g(370, "100"), g(10, "0"), g(20, "2"), g(11, "10"), g(21, "2");
+  g(0, "LINE"), g(8, "Walls"), g(48, "0.5"), g(10, "0"), g(20, "3"), g(11, "10"), g(21, "3");
   g(0, "ENDSEC"), g(0, "EOF");
   opad::write_text_file(dir / "own.dxf", out.str());
   opad::Document doc = opad::Document::create();
   opad::import_file(doc, dir / "own.dxf");
   auto styles = [&doc] {
     const opad::Scene scene = opad::resolve(doc);
-    std::multiset<std::tuple<std::string, double, bool, bool>> out;
+    std::multiset<std::tuple<std::string, double, bool, bool, double>> out;
     for (const auto& id : scene.all_bodies()) {
       const LineStyle s = lineStyle(scene, *scene.node(id));
-      out.insert({s.linetype, s.lineweight, s.ownType, s.ownWeight});
+      out.insert({s.linetype, s.lineweight, s.ownType, s.ownWeight, s.scale});
     }
     return out;
   };
-  using Styles = std::multiset<std::tuple<std::string, double, bool, bool>>;
-  CHECK(styles() == (Styles{{"DASHED", 0.5, false, false}, {"CENTER", 0.5, true, false}, {"DASHED", 1.0, false, true}}));
+  using Styles = std::multiset<std::tuple<std::string, double, bool, bool, double>>;
+  CHECK(styles() == (Styles{{"DASHED", 0.5, false, false, 1}, {"CENTER", 0.5, true, false, 1}, {"DASHED", 1.0, false, true, 1}, {"DASHED", 0.5, false, false, 0.5}}));
   const opad::Scene scene = opad::resolve(doc);
   opad::commands::run("appearance", setLinetype(byName(scene)["Walls"], "HIDDEN"), &doc);
   opad::commands::run("appearance", setLineweight(byName(opad::resolve(doc))["Walls"], 0.35), &doc);
-  CHECK(styles() == (Styles{{"HIDDEN", 0.35, false, false}, {"CENTER", 0.35, true, false}, {"HIDDEN", 1.0, false, true}}));
+  CHECK(styles() == (Styles{{"HIDDEN", 0.35, false, false, 1}, {"CENTER", 0.35, true, false, 1}, {"HIDDEN", 1.0, false, true, 1}, {"HIDDEN", 0.35, false, false, 0.5}}));
   const opad::Scene now = opad::resolve(doc);
   const plot::Sheet sheet = plot::collect(doc, now, plot::plane(doc, now, opad::Frame{}));
   std::set<std::pair<std::vector<double>, double>> drawn;
   for (const auto& s : sheet.styles) drawn.insert({s.dashes, s.weight});
-  CHECK(drawn == (std::set<std::pair<std::vector<double>, double>>{{dashes("HIDDEN"), 0.35}, {dashes("CENTER"), 0.35}, {dashes("HIDDEN"), 1.0}}));
+  std::vector<double> half = dashes("HIDDEN");
+  for (double& d : half) d *= 0.5;
+  CHECK(drawn == (std::set<std::pair<std::vector<double>, double>>{{dashes("HIDDEN"), 0.35}, {dashes("CENTER"), 0.35}, {dashes("HIDDEN"), 1.0}, {half, 0.35}}));
   std::error_code error;
   std::filesystem::remove_all(dir, error);
 }

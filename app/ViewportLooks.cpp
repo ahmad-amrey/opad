@@ -49,7 +49,7 @@ BodyLook Viewport::composeLook(const opad::Node& body) const {
     if (!body.has_color) base.color = drawingInk();  // DXF colour 7 and no colour: light on dark, dark on light
     const drawing2d::LineStyle style = drawing2d::lineStyle(m_doc->scene, body);  // or its own (UI-92)
     base.lineWidth = lineWidth(drawing2d::linePoints(style.lineweight));  // hairlines at least one screen pixel wide on any display and render scale
-    const drawing2d::LinePattern dashes = linePatternOf(style, drawing2d::kPatternPixelsPerMm * displayScale() * renderScale());
+    const drawing2d::LinePattern dashes = linePatternOf(style, drawing2d::kPatternPixelsPerMm * style.scale * displayScale() * renderScale());
     base.linePattern = dashes.bits;
     base.lineFactor = dashes.factor;
   }

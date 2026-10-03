@@ -412,10 +412,10 @@ struct Ocs {
   gp_XYZ to_wcs(const gp_XYZ& p) const { return to_wcs(p.X(), p.Y(), p.Z()); }
 };
 
-// Geometry by (layer as written, colour key, linetype, lineweight): model space, or a block's content in its own
-// coordinates. Linetype "" and lineweight -1 are by layer, "BYBLOCK" and -2 by block.
+// Geometry by (layer as written, colour key, linetype, lineweight, linetype scale): model space, or a block's content in
+// its own coordinates. Linetype "" and lineweight -1 are by layer, "BYBLOCK" and -2 by block.
 struct Space {
-  std::map<std::tuple<std::string, uint32_t, std::string, int>, TopoDS_Compound> groups;
+  std::map<std::tuple<std::string, uint32_t, std::string, int, double>, TopoDS_Compound> groups;
 };
 
 // Where an entity's geometry goes and how its points map: drawing units -> mm, minus the model-space shift, z dropped.
@@ -504,6 +504,7 @@ class Reader {
     uint32_t color;
     std::string linetype;  // "" by layer, "BYBLOCK", else its own (6)
     int weight = -1;       // 1/100 mm; -1 by layer, -2 by block, -3 the default (370)
+    double scale = 1;      // its linetype's scale (48, CELTSCALE)
   };
 
   void load(const std::filesystem::path& file);
@@ -530,7 +531,7 @@ class Reader {
 
   gp_Pnt pnt(const Place& at, const gp_XYZ& wcs) const { return gp_Pnt(wcs.X() * m_unit - at.sx, wcs.Y() * m_unit - at.sy, 0); }
   void add(const Out& o, const TopoDS_Shape& s) {
-    auto& c = o.space->groups[{o.layer, o.color, o.linetype, o.weight}];
+    auto& c = o.space->groups[{o.layer, o.color, o.linetype, o.weight, o.scale}];
     if (c.IsNull()) m_builder.MakeCompound(c);
     m_builder.Add(c, s);
   }
@@ -658,6 +659,7 @@ Reader::Out Reader::out(const Fields& f, Space* space) {
   if (const auto u = upper(type); !u.empty() && u != "BYLAYER") o.linetype = u == "BYBLOCK" ? "BYBLOCK" : type;
   const int weight = f.integer(370, -1);
   o.weight = weight >= -3 && weight <= 211 ? weight : -1;
+  if (const double scale = f.num(48, 1); scale > 0 && std::abs(scale - 1) > 1e-9) o.scale = std::round(scale * 1e6) / 1e6;
   return o;
 }
 
@@ -857,11 +859,15 @@ void Reader::insert(const Fields& f, const Out& o, const Place& at, std::string_
       const auto p = placement(a11, a12, a21, a22, tx + m11 * ox + m12 * oy, ty + m21 * ox + m22 * oy);
       if (p.kind == Placement::None) return;
       for (const auto& [key, shape] : content.groups) {
-        const auto& [layer, color, linetype, weight] = key;
-        Out target{o.space, layer == "0" ? o.layer : layer, color, linetype, weight};
+        const auto& [layer, color, linetype, weight, scale] = key;
+        Out target{o.space, layer == "0" ? o.layer : layer, color, linetype, weight, scale};
         if (color == kByBlock) target.color = o.color == kByLayer && o.layer != "0" ? layer_color(o.layer) : o.color;
-        // By block: the insert's own, or by layer its layer's (named, when the content lies on a layer of its own).
-        if (linetype == "BYBLOCK") target.linetype = o.linetype.empty() && target.layer != o.layer ? layer_linetype(o.layer) : o.linetype;
+        // By block: the insert's own, or by layer its layer's (named, when the content lies on a layer of its own); its
+        // dashes in the insert's scale too.
+        if (linetype == "BYBLOCK") {
+          target.linetype = o.linetype.empty() && target.layer != o.layer ? layer_linetype(o.layer) : o.linetype;
+          target.scale = std::round(scale * o.scale * 1e6) / 1e6;
+        }
         if (weight == -2) target.weight = o.weight == -1 && target.layer != o.layer ? layer_weight(o.layer) : o.weight;
         add(target, placed(shape, p));
       }
@@ -1586,12 +1592,14 @@ Drawing Reader::read() {
   std::map<std::string, std::vector<double>> patterns;  // by the upper-case decoded name
   for (const auto& [name, d] : m_linetypes) patterns[upper(decode(name))] = d;
   for (const auto& [key, shape] : model.groups) {
-    const auto& [layer, color, linetype, weight] = key;
+    const auto& [layer, color, linetype, weight, scale] = key;
     const uint32_t rgb = color == kByLayer ? layer_color(layer) : color == kByBlock ? kNoColor : color;
-    // Its own linetype and lineweight (by block in model space: continuous and the default); the layer's own are by layer.
-    Drawing::Pen pen{rgb, linetype == "BYBLOCK" ? "Continuous" : linetype, weight == -2 ? -3 : weight};
+    // Its own linetype, lineweight and linetype scale (by block in model space: continuous and the default); the layer's
+    // own are by layer. The scale only where it has dashes.
+    Drawing::Pen pen{rgb, linetype == "BYBLOCK" ? "Continuous" : linetype, weight == -2 ? -3 : weight, scale};
     if (!pen.linetype.empty() && upper(pen.linetype) == upper(layer_linetype(layer))) pen.linetype.clear();
     if (pen.lineweight != -1 && pen.lineweight == layer_weight(layer)) pen.lineweight = -1;
+    if (upper(pen.linetype.empty() ? layer_linetype(layer) : pen.linetype) == "CONTINUOUS") pen.scale = 1;
     if (const auto p = patterns.find(upper(pen.linetype)); !pen.linetype.empty() && p != patterns.end()) out.patterns[pen.linetype] = p->second;
     out.add(layer, shape, pen);
     if (color == kByLayer) out.by_layer[layer] = rgb;

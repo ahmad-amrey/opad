@@ -133,8 +133,8 @@ def text_file(root, document=None):
 
 
 def pens_file(root, document=None):
-    """Walls red, DASHED and 0.5 mm: a line in its style, one in CENTER of its own, one 1.00 mm of its own; Plain blue: a
-    block whose line is by block, inserted in HIDDEN."""
+    """Walls red, DASHED and 0.5 mm: a line in its style, one in CENTER of its own, one 1.00 mm of its own, one at linetype
+    scale 0.5; Plain blue: a block whose line is by block, inserted in HIDDEN."""
     line = lambda layer, y, extra=(): [(0, "LINE"), (8, layer)] + list(extra) + [(10, 0), (20, y), (11, 100), (21, y)]
     pairs = [(0, "SECTION"), (2, "HEADER"), (9, "$INSUNITS"), (70, "4"), (0, "ENDSEC"), (0, "SECTION"), (2, "TABLES"),
              (0, "TABLE"), (2, "LTYPE"), (0, "LTYPE"), (2, "DASHED"), (73, 2), (49, 12.7), (49, -6.35),
@@ -144,7 +144,7 @@ def pens_file(root, document=None):
              (0, "LAYER"), (2, "Plain"), (70, 0), (62, 5), (0, "ENDTAB"), (0, "ENDSEC"),
              (0, "SECTION"), (2, "BLOCKS"), (0, "BLOCK"), (2, "K"), (70, 0), (10, 0), (20, 0)] + line("0", 0, [(6, "BYBLOCK")]) + \
             [(0, "ENDBLK"), (0, "ENDSEC"), (0, "SECTION"), (2, "ENTITIES")]
-    pairs += line("Walls", 0) + line("Walls", 10, [(6, "CENTER")]) + line("Walls", 20, [(370, 100)])
+    pairs += line("Walls", 0) + line("Walls", 10, [(6, "CENTER")]) + line("Walls", 20, [(370, 100)]) + line("Walls", 40, [(48, 0.5)])
     pairs += [(0, "INSERT"), (8, "Plain"), (6, "HIDDEN"), (2, "K"), (10, 0), (20, 30), (0, "ENDSEC"), (0, "EOF")]
     path = root / "pens.dxf"
     path.write_text("".join(f"{code}\n{value}\n" for code, value in pairs), encoding="ascii")
