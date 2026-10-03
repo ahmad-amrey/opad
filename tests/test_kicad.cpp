@@ -4,7 +4,13 @@
 // placed as KiCad places them (top and bottom, turned, offset, rotated, scaled, legacy inches), found through the
 // environment, ${KIPRJMOD}, a VRML name's STEP sibling and the user's folders, shared between footprints, with boxes
 // for the ones that are missing.
+#include <BRepAdaptor_Surface.hxx>
 #include <BRepBndLib.hxx>
+#include <BRep_Builder.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <TopoDS_Compound.hxx>
+#include <gp_Cylinder.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepClass3d_SolidClassifier.hxx>
 #include <BRepGProp.hxx>
@@ -360,6 +366,69 @@ TEST(panels_open_outlines_and_errors) {
   CHECK_THROWS(import_file(d, p, {}));
   write(p, "(kicad_pcb (version 1) (gr_line (start 0 0)");
   CHECK_THROWS(import_file(d, p, {}));
+}
+
+// A through-hole part's pins must go down its own drills, whichever side and turn: a 2x3 header model (pins only, pin 1
+// at its origin, KiCad's 3D frame: +y is up the page) on footprints turned 0/90/180/270 on top, and the same footprints
+// flipped to the bottom as KiCad stores them (pads mirrored in y, orientation negated, B.Cu). Each pin's centre must
+// sit on a drill of the board solid, and the pins must cross the board from the part's side.
+TEST(pins_go_down_their_drills) {
+  Files files;
+  BRep_Builder bb;
+  TopoDS_Compound pins;
+  bb.MakeCompound(pins);
+  const double pitch = 2.54;
+  for (int c = 0; c < 2; ++c)
+    for (int r = 0; r < 3; ++r) bb.Add(pins, BRepPrimAPI_MakeBox(gp_Pnt(c * pitch - 0.25, -r * pitch - 0.25, -3), 0.5, 0.5, 3.5).Shape());
+  STEPControl_Writer w;
+  w.Transfer(pins, STEPControl_AsIs);
+  const auto model_file = files.dir / "header.step";
+  CHECK(w.Write(model_file.string().c_str()) == IFSelect_RetDone);
+  std::string text = "(kicad_pcb (version 20241229) (general (thickness 1.6))\n  (gr_rect (start 0 0) (end 100 60) (layer \"Edge.Cuts\"))\n";
+  int index = 0;
+  for (const bool bottom : {false, true})
+    for (const int turn : {0, 90, 180, 270}) {
+      std::string pads;
+      for (int c = 0; c < 2; ++c)
+        for (int r = 0; r < 3; ++r)
+          pads += "    (pad \"" + std::to_string(c * 3 + r + 1) + "\" thru_hole circle (at " + std::to_string(c * pitch) + " " + std::to_string((bottom ? -1 : 1) * r * pitch) +
+                  ") (size 1.7 1.7) (drill 1) (layers \"*.Cu\"))\n";
+      const std::string at = std::to_string(15 + 22 * (index % 4)) + " " + std::to_string(bottom ? 40 : 15) + " " + std::to_string(bottom ? -turn : turn);
+      text += footprint("Test:Header", "J" + std::to_string(++index), at + (bottom ? "|B.Cu" : ""), pads + model(model_file.generic_string()));
+    }
+  const auto board = files.dir / "pins.kicad_pcb";
+  write(board, text + ")\n");
+  Document d = Document::create();
+  ImportOptions o;
+  o.kicad.origin = "page";
+  import_file(d, board, o);
+  const Scene s = resolve(d);
+  std::vector<gp_Pnt> drills;
+  for (TopExp_Explorer e(body_shape(d, named(s, "Board")->body_key), TopAbs_FACE); e.More(); e.Next()) {
+    BRepAdaptor_Surface face(TopoDS::Face(e.Current()));
+    if (face.GetType() == GeomAbs_Cylinder) drills.push_back(face.Cylinder().Location());
+  }
+  int pinsChecked = 0;
+  for (int i = 1; i <= 8; ++i) {
+    const Node* part = named(s, "J" + std::to_string(i) + " Header");
+    CHECK(part && !part->children.empty() && !s.node(part->children[0])->body_missing && s.node(part->children[0])->opacity >= 1);
+    BRep_Builder parts;
+    TopoDS_Compound all;
+    parts.MakeCompound(all);
+    for (const auto& id : part->children) parts.Add(all, node_world_shape(d, s, id));
+    for (TopExp_Explorer e(all, TopAbs_SOLID); e.More(); e.Next()) {
+      Bnd_Box box;
+      BRepBndLib::Add(e.Current(), box);
+      double x0, y0, z0, x1, y1, z1;
+      box.Get(x0, y0, z0, x1, y1, z1);
+      const double x = (x0 + x1) / 2, y = (y0 + y1) / 2;
+      const bool inDrill = std::any_of(drills.begin(), drills.end(), [&](const gp_Pnt& p) { return std::hypot(p.X() - x, p.Y() - y) < 0.01; });
+      CHECK(inDrill);
+      CHECK(i <= 4 ? (z0 < 0 && about(z1, 2.1, 0.01)) : (z1 > 1.6 && about(z0, -0.5, 0.01)));  // through the board from the part's side
+      ++pinsChecked;
+    }
+  }
+  CHECK(pinsChecked == 48);
 }
 
 // A board with more drills than the default triangulator handles in time (it grew about quadratically with the holes of
