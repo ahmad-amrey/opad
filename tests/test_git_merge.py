@@ -132,4 +132,36 @@ with tempfile.TemporaryDirectory(prefix="opad-merge-") as folder:
     assert merged["properties"] == {"owner": "ACME", "project": "Pump"} and merged["unresolved"] == 0, merged
     assert not merges(lambda p: opad("part_properties", p, document=True, set={"approved": "A. B."}),
                       lambda p: opad("part_properties", p, document=True, set={"approved": "C. D."}))
+    # Parts lists (UI-84): item numbers settled on both sides merge number by number. Each side adds a part and balloons it
+    # (number 2 on both): ours keeps 2, theirs' part is numbered after the highest and its balloon follows. The same number
+    # changed differently on both sides is refused.
+    listed = root / "listed.opad"
+    shutil.copyfile(drawn, listed)
+    parts = opad("sheet_item", listed, sheet=sheet, kind="parts_list")["id"]
+    opad("sheet_balloons", listed, sheet=sheet, view=front)
+
+    def settle(path, size, x):
+        body = opad("feature", path, kind="box", inputs={"plane": {"origin": [x, 0, 0], "normal": [0, 0, 1]}, "length": size,
+                                                          "width": size, "height": size, "operation": "new"})["body_ids"][0]
+        assert opad("sheet_balloons", path, sheet=sheet, view=front)["ids"]
+        return body
+
+    def shown(path):  # body -> the number its balloon shows
+        return {i["refs"][0]["body"]: i["current"]["shown"] for i in opad("sheet_info", path, sheet=sheet)["items"] if i["kind"] == "balloon"}
+
+    for path in (ours, theirs):
+        shutil.copyfile(listed, path)
+    mine, yours = settle(ours, 8, 100), settle(theirs, 6, -100)
+    assert shown(ours)[mine] == "2" and shown(theirs)[yours] == "2"
+    result = subprocess.run([sys.executable, str(driver), str(listed), str(ours), str(theirs)], capture_output=True)
+    assert result.returncode == 0, result.stderr
+    numbers = shown(ours)
+    assert numbers[box] == "1" and numbers[mine] == "2" and numbers[yours] == "3", numbers
+    assert opad("ops", ours)[-1]["by"] == "merge" and opad("info", ours)["unresolved"] == 0
+    first = [e for e in opad("sheet_info", listed, sheet=sheet)["items"] if e["id"] == parts][0]["numbers"]
+    for path, identity in ((ours, "left"), (theirs, "right")):
+        shutil.copyfile(listed, path)
+        opad("sheet_edit", path, target=parts, set={"numbers": [dict(first[0], identity=identity)]})
+    result = subprocess.run([sys.executable, str(driver), str(listed), str(ours), str(theirs)], capture_output=True)
+    assert result.returncode == 1 and b"item 1 of parts list" in result.stderr, result.stderr
 print("Git merge: multiline drawings/sketches/comments and drawing sheets retained; overlapping edits rejected")
