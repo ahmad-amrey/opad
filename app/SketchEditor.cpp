@@ -550,12 +550,24 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   }
   sketchsnap::Guide ray{0,0,1,0,from?from->id:0};
   const bool angled=from && enabled("angle") && sketchsnap::angleRay(from->x,from->y,pu,pv,QSettings().value("sketch/angleStep",15).toDouble()*M_PI/180,t,ray);
-  // The lines, circles and arcs under the pointer: it lands on the nearest, or where a guide crosses one.
+  // The lines, circles and arcs under the pointer: it lands on the nearest, or where a guide crosses one. Locked: those
+  // along the locked line within reach (the view's diagonal) of where the stops are counted from, the pointer (or where
+  // it was when a Shift tap showed one).
+  const double reach=std::hypot(m_viewport->width(),m_viewport->height())*m_viewport->pixelSize();
+  double su=u,sv=v;
+  if(m_lock && m_lock->stop>=0){su=m_lock->su;sv=m_lock->sv;}
+  SketchGeometryCache::Query reached;
+  if(m_lock) {
+    const auto& g=m_lock->line;
+    double fu,fv;
+    sketchsnap::project(g,su,sv,0,fu,fv);
+    reached=m_geometry->query(fu-reach*std::fabs(g.dx)-t,fv-reach*std::fabs(g.dy)-t,fu+reach*std::fabs(g.dx)+t,fv+reach*std::fabs(g.dy)+t);
+  }
   std::vector<sketchsnap::Curve> curves;
   std::vector<int> curveIds;
-  if(enabled("nearest"))for(size_t index:localCandidates.entities) {
+  if(enabled("nearest"))for(size_t index:(m_lock?reached:localCandidates).entities) {
     const auto& e=m_sk.entities[index];
-    if((e.type!=SkEntity::Type::Line && e.type!=SkEntity::Type::Circle && e.type!=SkEntity::Type::Arc) || distanceTo(e,pu,pv)>=t)continue;
+    if((e.type!=SkEntity::Type::Line && e.type!=SkEntity::Type::Circle && e.type!=SkEntity::Type::Arc) || (!m_lock && distanceTo(e,pu,pv)>=t))continue;
     const SkPoint *a=m_sk.point(e.p[0]),*b=e.p.size()>1?m_sk.point(e.p[1]):nullptr,*end=e.p.size()>2?m_sk.point(e.p[2]):nullptr;
     sketchsnap::Curve c;
     if(!a || (e.type==SkEntity::Type::Line && !b) || (e.type==SkEntity::Type::Arc && !end))continue;
@@ -568,9 +580,30 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   using By=sketchsnap::Pick::By;
   if(m_lock) {  // along the locked line: where another guide, the angle ray or a curve crosses it, else a grid line
     if(angled)guide(ray,{Snap::Kind::Angle,from->id,false,false});
-    const auto pick=sketchsnap::along(m_lock->line,u,v,t,step,guides,curves);
+    // Its stops in the view: the nearest holds the pointer within the capture; Shift taps on a lock that stays show the
+    // others (the view: its corners on the sketch plane, unless one misses it).
+    auto all=sketchsnap::stops(m_lock->line,su,sv,reach,guides,curves);
+    std::array<std::pair<double,double>,4> view;
+    const double w=m_viewport->width(),h=m_viewport->height();
+    bool framed=true;
+    for(int i=0;i<4;++i)framed=framed && m_viewport->planePoint(QPointF(i==1 || i==2?w:0,i>=2?h:0),m_frame,view[size_t(i)].first,view[size_t(i)].second);
+    auto inView=[&](const sketchsnap::Pick& p){
+      int sides=0;
+      for(size_t i=0;i<4;++i) {
+        const auto &a=view[i],&b=view[(i+1)%4];
+        const double c=(b.first-a.first)*(p.v-a.second)-(b.second-a.second)*(p.u-a.first);
+        sides|=c>0?1:c<0?2:0;
+      }
+      return sides!=3;
+    };
+    if(framed)all.erase(std::remove_if(all.begin(),all.end(),[&](const sketchsnap::Pick& p){return !inView(p);}),all.end());
+    const int shown=m_lock->stop>=0 && !all.empty()?m_lock->stop%int(all.size()):-1;
+    const auto pick=shown>=0?all[size_t(shown)]:sketchsnap::along(m_lock->line,u,v,t,step,guides,curves);
+    int at=shown;
+    for(size_t i=0;at<0 && pick.by==By::Cross && i<all.size();++i)if(all[i].u==pick.u && all[i].v==pick.v)at=int(i);
     s.u=pick.u;s.v=pick.v;s.kind=Snap::Kind::Locked;s.target=m_lock->line.anchor;s.line=m_lock->line;s.onLine=true;
     s.horizontal=m_lock->horizontal;s.vertical=m_lock->vertical;s.grid=step>0 && pick.by==By::Guide;
+    s.stops=int(all.size());s.stop=at;
     if(pick.other>=0){const auto& m=meaning[size_t(pick.other)];s.horizontal|=m.horizontal;s.vertical|=m.vertical;s.other=guides[size_t(pick.other)].anchor;}
     if(pick.curve>=0){s.curve=curveIds[size_t(pick.curve)];s.entity=automatic?s.curve:0;}
     s.point=pointAt(s.u,s.v);  // a point already there (one the locked line runs through): that one
@@ -742,6 +775,7 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
   const Hit h = hitTest(u, v);
   const bool shift=mods.testFlag(Qt::ShiftModifier);
   m_lastU=u;m_lastV=v;m_lastMods=mods;m_inView=true;
+  if(m_lock && m_lock->stop>=0 && std::hypot(u-m_lock->su,v-m_lock->sv)>tol())m_lock->stop=-1;  // moved on: the pointer leads again
   if(!shift){m_shiftDown=m_shiftSpent=false;if(m_lock && !m_lock->sticky)unlock();}  // Shift let go where its key release was not seen
   else if(!m_lock && !m_shiftSpent)lockOn();
   // Resting on a point acquires it (UI-19), also while the lock keeps the pointer's snap on its line.
@@ -806,7 +840,8 @@ void SketchEditor::unlock() {
 }
 
 // Shift (UI-19): pressed, it locks; let go at once (a tap) the lock stays until a click or Esc, held it lasts while Shift
-// is down. A tap on a lock that stays lets it go. Shift with another key or a click is no tap.
+// is down. A tap on a lock that stays shows its next stop (sketchkeys::shift), with none it lets go. Shift with another
+// key or a click is no tap.
 void SketchEditor::shiftKey(bool pressed) {
   if (!m_active || pressed == m_shiftDown) return;
   m_shiftDown = pressed;
@@ -819,7 +854,12 @@ void SketchEditor::shiftKey(bool pressed) {
   } else {
     const bool tap = !m_shiftUsed && m_shiftClock.isValid() && m_shiftClock.elapsed() < 300;
     m_shiftSpent = false;
-    if (m_lock && (m_lock->sticky ? m_unstick && tap : !tap)) unlock();
+    if (m_lock && m_lock->sticky && m_unstick && tap) {
+      if (sketchkeys::shift(keyState()) == sketchkeys::Shift::NextStop) {
+        if (m_lock->stop < 0) m_lock->su = m_lastU, m_lock->sv = m_lastV;  // counted from here while the pointer stays
+        m_lock->stop = (m_pointer.stop + 1) % m_pointer.stops;
+      } else unlock();
+    } else if (m_lock && !m_lock->sticky && !tap) unlock();
     else if (m_lock && tap && !m_lock->sticky) {
       m_lock->sticky = true;
       emit changed();  // the prompt offers Esc to let go
@@ -1439,7 +1479,11 @@ void SketchEditor::updateTransient() {
         d.dashed.push_back({W(g.x, g.y), W(cu + g.dx * past, cv + g.dy * past), snapColor});
         if (const auto* other = m_geometry->point(m_sk, m_cursor.other)) d.dashed.push_back({W(other->x, other->y), W(cu, cv), snapColor});
         if (m_cursor.curve) curve(m_cursor.curve);
-        label = m_cursor.other ? tr("Locked ∩ tracking") : m_cursor.curve ? tr("Locked ∩ curve") : m_lock && m_lock->sticky ? tr("Locked · Shift or Esc lets go") : tr("Locked");
+        const bool sticky = m_lock && m_lock->sticky;
+        if (m_cursor.other || m_cursor.curve) {  // on a stop: which of them, when Shift taps go through more
+          label = m_cursor.other ? tr("Locked ∩ tracking") : tr("Locked ∩ curve");
+          if (sticky && m_cursor.stops > 1 && m_cursor.stop >= 0) label += QStringLiteral(" · %1/%2").arg(m_cursor.stop + 1).arg(m_cursor.stops);
+        } else label = !sticky ? tr("Locked") : m_cursor.stops ? tr("Locked · Shift goes to the next stop") : tr("Locked · Shift or Esc lets go");
         break;
       }
       case K::Grid: label = tr("Grid"); break;

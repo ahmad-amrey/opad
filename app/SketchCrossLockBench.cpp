@@ -15,8 +15,9 @@ using namespace opad::design;
 // points offer their crossing (A.x, B.y); the user's case: acquire A, follow A's vertical, hold Shift (the lock), rest
 // on B while locked (acquired), go back level with B far off the line, click: exactly (A.x, B.y); a Shift tap leaves the
 // lock on until Esc (the polyline goes on) or the click; the locked line stops on a circle (and the point lands on it)
-// and on grid lines (a slanted lock where it crosses them); at most six tracked points, the oldest out; resting again
-// lets one go; a new tool starts afresh.
+// and on grid lines (a slanted lock where it crosses them); Shift taps on a lock that stays go through the stops along
+// it, nearest first, and the click lands on the one shown (a tap lets go where there is none); at most six tracked
+// points, the oldest out; resting again lets one go; a new tool starts afresh.
 void SketchEditor::benchCrossLock() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_CROSSLOCK");
   bool ok = true;
@@ -164,7 +165,8 @@ void SketchEditor::benchCrossLock() {
   for (const auto& k : m_sk.constraints) onCircle |= k.type == SkConstraint::Type::Coincident && k.refs == std::vector<int>{y, circle};
   check(m_chain.size() == 3 && std::abs(m_sk.point(y)->x - cx) < 1e-6 && std::abs(m_sk.point(y)->y - ay) < 1e-6 && onCircle && !m_lock, "the click lands there, on the circle, and lets go of the lock");
 
-  // With grid snapping the locked line stops on the grid lines it crosses; a tap lets go of a lock that stays.
+  // With grid snapping the locked line stops on the grid lines it crosses; a tap on a lock that stays shows its nearest
+  // stop (never a grid line), Esc lets go.
   f9->trigger();
   sketchMove(ax + 27, ay + 2 * px, Qt::NoModifier, false);
   shift(true);
@@ -175,8 +177,50 @@ void SketchEditor::benchCrossLock() {
         QString("on the grid line it crosses (%1, %2; step %3)").arg(m_cursor.u).arg(m_cursor.v).arg(step));
   shift(true);
   shift(false);
-  check(!m_lock, "a Shift tap lets go of a lock that stays");
+  check(m_lock && m_cursor.kind == Snap::Kind::Locked && m_cursor.other == b && exact(m_cursor.u, bx) && exact(m_cursor.v, ay),
+        QString("a Shift tap shows the nearest stop, B's vertical, not a grid line (%1, %2)").arg(m_cursor.u).arg(m_cursor.v));
+  key(QEvent::KeyPress, Qt::Key_Escape);
+  check(!m_lock && m_tool == "line" && m_chain.size() == 3, "Esc lets go, the polyline goes on");
   f9->trigger();
+
+  // The stops along a lock that stays: A's vertical is crossed in the view by the last point's horizontal (at A) and by
+  // B's horizontal and the polyline (at its corner (A.x, B.y)); D's horizontal crosses it below the view, no stop. Shift
+  // taps go through them nearest first while the pointer stays, and round again; moving on lets the pointer lead; the
+  // click lands on the stop shown.
+  dwell(d);
+  check((m_tracked == Tracked{a, b, d}), "D acquired");
+  sketchMove(ax + 2 * px, 0, Qt::NoModifier, false);
+  check(m_cursor.kind == Snap::Kind::Aligned && m_cursor.target == a && exact(m_cursor.u, ax), "the pointer follows A's vertical");
+  shift(true);
+  shift(false);
+  check(m_lock && m_lock->sticky && m_cursor.kind == Snap::Kind::Locked && exact(m_cursor.v, 0) && m_pointer.stops == 2 && m_pointer.stop == -1 &&
+            transientTexts().contains("Locked · Shift goes to the next stop"),
+        QString("a Shift tap locks onto it: %1 stops in the view (not D's, below it), none under the pointer, \"Locked · Shift goes to the next stop\"").arg(m_pointer.stops));
+  shift(true);
+  shift(false);
+  check(m_cursor.stop == 0 && m_cursor.point == a && exact(m_cursor.u, ax) && exact(m_cursor.v, ay) && transientTexts().contains("Locked ∩ tracking · 1/2"),
+        "the next tap shows the nearest stop: A, where the last point's horizontal crosses (\"Locked ∩ tracking · 1/2\")");
+  shot(".stop.png");
+  shift(true);
+  shift(false);
+  check(m_cursor.stop == 1 && m_cursor.point == x && m_cursor.other == b && m_cursor.curve && exact(m_cursor.u, ax) && exact(m_cursor.v, by) && transientTexts().contains("Locked ∩ tracking · 2/2"),
+        "the next: the polyline's corner, where B's horizontal crosses too (2/2)");
+  shift(true);
+  shift(false);
+  check(m_lock && m_cursor.stop == 0 && m_cursor.point == a, "and round again to A");
+  sketchMove(ax + 2 * px + 0.3 * tol(), 0, Qt::NoModifier, false);
+  check(m_cursor.stop == 0 && m_cursor.point == a, "the pointer trembling within the capture keeps the stop shown");
+  sketchMove(ax + 20, 21, Qt::NoModifier, false);
+  check(m_lock && m_lock->sticky && m_cursor.stop == -1 && exact(m_cursor.u, ax) && exact(m_cursor.v, 21), "moved on, the pointer leads along the line again");
+  shift(true);
+  shift(false);
+  check(m_cursor.stop == 0 && m_cursor.point == x, "counted from there, the corner is the nearest now");
+  shift(true);
+  shift(false);
+  check(m_cursor.stop == 1 && m_cursor.point == a, "and A the next");
+  sketchPress(ax + 20, 21, Qt::NoModifier);
+  sketchRelease(ax + 20, 21, Qt::NoModifier);
+  check(m_chain.size() == 4 && m_chain.back() == a && !m_lock, "the click lands on the stop shown, A itself, and lets go");
 
   // At most six tracked points, the oldest out; resting on one again lets it go; a new tool starts afresh.
   setTool("line");
@@ -220,6 +264,18 @@ void SketchEditor::benchCrossLock() {
   rest(350);
   shift(false);
   f9->trigger();
+
+  // A lock that stays with no stop in the view (x = 45 from (45, -5): nothing crosses it there): a tap lets go.
+  key(QEvent::KeyPress, Qt::Key_Escape);
+  check(m_clicks.empty() && m_tool == "rect", "Esc drops the rectangle");
+  place(45, -5, Qt::AltModifier);
+  sketchMove(45, 10, Qt::NoModifier, false);
+  shift(true);
+  shift(false);
+  check(m_lock && m_lock->sticky && m_pointer.stops == 0 && transientTexts().contains("Locked · Shift or Esc lets go"), "a lock that stays where nothing crosses it: no stop, \"Shift or Esc lets go\"");
+  shift(true);
+  shift(false);
+  check(!m_lock, "a Shift tap then lets go");
   setTool("select");
   shot(".png");
   QCoreApplication::exit(ok ? 0 : 2);

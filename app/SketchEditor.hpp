@@ -149,6 +149,7 @@ class SketchEditor : public QObject, public SketchInput {
     int curve = 0;  // Cross, Locked: the curve a guide crosses there
     sketchsnap::Guide line;  // the guide or angle ray it lies on (onLine): what Shift locks onto
     bool onLine = false;
+    int stops = 0, stop = -1;  // Locked: the stops along the line in reach, the one it is on (-1: none)
     std::map<QString, std::pair<double, QString>> typed;  // the values typed for this click (mm, radians; as typed)
   };
   struct Hit {
@@ -309,11 +310,12 @@ class SketchEditor : public QObject, public SketchInput {
   bool m_angleRelative = false;  // setting sketch/input/angleRelative: a polyline's typed angles from its last segment
   bool m_circleRadius = false;   // setting sketch/input/circleRadius: a circle's box takes its radius, not its diameter
   // Cross-locking (UI-19): points acquired by resting on them (oldest first, at most 6) add their guides; Shift locks the
-  // pointer onto the guide it is on (or the way from the last point to it) while held, a tap until a click or Esc.
+  // pointer onto the guide it is on (or the way from the last point to it) while held, a tap until a click or Esc; then
+  // Shift taps go through the stops along the line (stop: the one shown, counted from where the pointer was, su sv).
   std::vector<int> m_tracked;
   int m_dwellPoint = 0;  // the point the pointer rests on
   QTimer m_dwellTimer;
-  struct Lock { sketchsnap::Guide line; bool horizontal = false, vertical = false, sticky = false; };
+  struct Lock { sketchsnap::Guide line; bool horizontal = false, vertical = false, sticky = false; int stop = -1; double su = 0, sv = 0; };
   std::optional<Lock> m_lock;
   bool m_shiftDown = false, m_shiftUsed = false, m_shiftSpent = false, m_unstick = false, m_inView = false;
   QElapsedTimer m_shiftClock;

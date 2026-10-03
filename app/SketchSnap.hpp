@@ -5,7 +5,8 @@
 // to the grid lines it crosses, any other (an extension, the angle ray) by whole steps from its anchor.
 // Cross-locking (UI-19): points acquired by resting the pointer on them (track) each add their guides, so two of them
 // cross at (A.x, B.y); Shift locks the pointer onto one guide, and along it (along) it stops where another guide, the
-// angle ray or a curve crosses it, else where it crosses a grid line (crossGrid: also a slanted lock).
+// angle ray or a curve crosses it (stops: every such place in reach, which Shift taps go through on a lock that stays),
+// else where it crosses a grid line (crossGrid: also a slanted lock).
 // No Qt and no sketch here: tests/test_sketch_snap.cpp.
 #include <algorithm>
 #include <cstddef>
@@ -216,19 +217,23 @@ inline void crossGrid(const Guide& g, double u, double v, double step, double& p
   }
 }
 
-// The pointer locked onto `lock`: its foot on the line, pulled within t along it to where another guide (not one of
-// the lock's own point) or a curve crosses the line, the nearest; else where it crosses a grid line (crossGrid), else
-// the foot. Cross: `other` the guide crossing it or `curve` the curve; Guide: on the lock alone (guide stays -1).
-inline Pick along(const Guide& lock, double u, double v, double t, double step, const std::vector<Guide>& guides, const std::vector<Curve>& curves) {
-  Pick p;
-  project(lock, u, v, 0, p.u, p.v);
-  const double fu = p.u, fv = p.v;
-  double best = t;
+// The places on the locked line within `reach` of the pointer's foot where another guide (not one of the lock's own
+// point) or a curve crosses it, nearest first, one per place (`other` the guide crossing there, `curve` the curve; both
+// when they meet there).
+inline std::vector<Pick> stops(const Guide& lock, double u, double v, double reach, const std::vector<Guide>& guides, const std::vector<Curve>& curves) {
+  double fu, fv;
+  project(lock, u, v, 0, fu, fv);
+  std::vector<std::pair<double, Pick>> found;
   auto cross = [&](double x, double y, int guide, int curve) {
-    if (const double d = std::hypot(x - fu, y - fv); d < best) {
-      best = d;
-      p = {Pick::By::Cross, x, y, -1, guide, curve};
-    }
+    const double d = std::hypot(x - fu, y - fv);
+    if (!(d < reach)) return;
+    for (auto& f : found)
+      if (Pick& p = f.second; std::hypot(p.u - x, p.v - y) < 1e-9 * (1 + std::abs(x) + std::abs(y))) {
+        if (p.other < 0) p.other = guide;
+        if (p.curve < 0) p.curve = curve;
+        return;
+      }
+    found.push_back({d, {Pick::By::Cross, x, y, -1, guide, curve}});
   };
   for (int i = 0; i < int(guides.size()); ++i) {
     const Guide& g = guides[size_t(i)];
@@ -241,9 +246,21 @@ inline Pick along(const Guide& lock, double u, double v, double t, double step, 
     double x[2], y[2];
     for (int n = meet(lock, curves[size_t(c)], x, y), m = 0; m < n; ++m) cross(x[m], y[m], -1, c);
   }
-  if (p.by == Pick::By::Cross) return p;
+  std::stable_sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+  std::vector<Pick> out;
+  for (const auto& f : found) out.push_back(f.second);
+  return out;
+}
+
+// The pointer locked onto `lock`: its foot on the line, pulled within t along it to the nearest of its stops; else where
+// it crosses a grid line (crossGrid), else the foot. Cross: `other` the guide crossing it and/or `curve` the curve;
+// Guide: on the lock alone (guide stays -1).
+inline Pick along(const Guide& lock, double u, double v, double t, double step, const std::vector<Guide>& guides, const std::vector<Curve>& curves) {
+  if (const auto held = stops(lock, u, v, t, guides, curves); !held.empty()) return held.front();
+  Pick p;
   p.by = Pick::By::Guide;
   if (step > 0) crossGrid(lock, u, v, step, p.u, p.v);
+  else project(lock, u, v, 0, p.u, p.v);
   return p;
 }
 }  // namespace sketchsnap

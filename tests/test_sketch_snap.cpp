@@ -267,4 +267,33 @@ TEST(a_slanted_lock_stops_where_it_crosses_a_grid_line) {
   CHECK(along(lock, 5.5, 18, 0.5, 10, {{0, 18.2, 1, 0, 2}}, {}).by == Pick::By::Cross);
 }
 
+TEST(the_stops_along_a_locked_line_are_every_crossing_in_reach_nearest_first) {
+  // Locked on A's vertical (A = (3.3, 1.7)), the pointer's foot at (3.3, 0): B's horizontal at y = 8.1, D's at y = -40,
+  // A's own horizontal never, a segment ending on the line at (3.3, 8.1) (one stop with B's horizontal there) and a
+  // circle about (0, 20) of radius 5 at y = 20 -+ sqrt(25 - 3.3^2).
+  const Guide lock{3.3, 1.7, 0, 1, 1};
+  const std::vector<Guide> guides = {{3.3, 1.7, 1, 0, 1}, {12.9, 8.1, 1, 0, 2}, {-7, -40, 1, 0, 3}};
+  const std::vector<Curve> curves = {{12.9, 8.1, 3.3, 8.1}, {0, 20, 0, 0, 5, 0, 2 * kPi}};
+  const double h = std::sqrt(25 - 3.3 * 3.3);
+  const auto all = stops(lock, 9, 0, 50, guides, curves);
+  CHECK(all.size() == 4);
+  CHECK(all[0].by == Pick::By::Cross && all[0].other == 1 && all[0].curve == 0);
+  CHECK_NEAR(all[0].u, 3.3, 1e-12);
+  CHECK_NEAR(all[0].v, 8.1, 1e-12);
+  CHECK(all[1].curve == 1 && all[1].other == -1);
+  CHECK_NEAR(all[1].v, 20 - h, 1e-12);
+  CHECK(all[2].curve == 1);
+  CHECK_NEAR(all[2].v, 20 + h, 1e-12);
+  CHECK(all[3].other == 2 && all[3].curve == -1);
+  CHECK_NEAR(all[3].v, -40, 1e-12);
+  // Only those within reach; counted from elsewhere, in another order.
+  CHECK(stops(lock, 9, 0, 30, guides, curves).size() == 3);
+  const auto far = stops(lock, -5, -35, 50, guides, curves);
+  CHECK(far.size() == 2 && far[0].other == 2 && far[1].other == 1);
+  // The nearest within the capture is what along() stops on, the same pick.
+  const Pick p = along(lock, 9, 8.3, 0.5, 0, guides, curves);
+  const auto held = stops(lock, 9, 8.3, 50, guides, curves);
+  CHECK(p.by == Pick::By::Cross && p.other == held[0].other && p.curve == held[0].curve && p.u == held[0].u && p.v == held[0].v);
+}
+
 CHECK_MAIN()

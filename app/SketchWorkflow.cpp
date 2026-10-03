@@ -194,6 +194,7 @@ sketchkeys::State SketchEditor::keyState() const {
   s.mirrorAxis=m_tool=="mirror" && option("mirrorStage","seed")=="axis";
   s.mirrorSeeds=m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && !s.mirrorAxis;
   s.typed=m_input && m_input->typed();s.applies=appliesOnEnter();s.locked=m_lock && m_lock->sticky;
+  if(s.locked && m_pointer.kind==Snap::Kind::Locked)s.stops=size_t(std::max(0,m_pointer.stops-(m_pointer.stop>=0?1:0)));
   return s;
 }
 
