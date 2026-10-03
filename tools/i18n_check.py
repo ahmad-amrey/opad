@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Lists the app's tr("...") strings that a translation does not cover yet.
 
-  python tools/i18n_check.py            # every app/i18n/<code>.json with its fragments app/i18n/<code>/*.json
+  python tools/i18n_check.py            # every app/i18n/<code>.json with its fragments app/i18n/<code>/*.json,
+                                        # the command help app/help/commands.<code>.json and the clip texts
   python tools/i18n_check.py --dump     # print all source strings as a JSON skeleton
 
 Translations are plain JSON (source text -> translation, see app/I18n.hpp); keys starting with "@" are
@@ -56,6 +57,95 @@ def language(path):
     return files, merged, clashes
 
 
+def help_missing():
+    """app/help/commands.json (English) against each commands.<code>.json: a record's text fields, translated by id."""
+    english = json.load(open(os.path.join(ROOT, 'app', 'help', 'commands.json'), encoding='utf-8'))['commands']
+    bad = 0
+    for path in sorted(glob.glob(os.path.join(ROOT, 'app', 'help', 'commands.*.json'))):
+        have = json.load(open(path, encoding='utf-8'))
+        missing = [(c['id'], field) for c in english for field in ('title', 'summary', 'details', 'requires', 'keywords')
+                   if c.get(field) and not have.get(c['id'], {}).get(field)]
+        print('%s: %d commands, %d fields missing' % (os.path.basename(path), len(english), len(missing)))
+        for command, field in missing:
+            print('  %-28s %s' % (command, field))
+        bad += len(missing)
+    return bad
+
+
+def clip_texts():
+    """The translatable English texts of app/help/clips.json, templates expanded as app/HelpClip.cpp does: step
+    captions, label and chip texts, card titles, buttons, row labels and word-only row values."""
+    data = json.load(open(os.path.join(ROOT, 'app', 'help', 'clips.json'), encoding='utf-8'))
+    templates = data.get('templates', {})
+    name = re.compile(r'\$([A-Za-z_][A-Za-z0-9_]*)')
+
+    def sub(v, args):
+        if isinstance(v, str):
+            if v.startswith('$') and v[1:] in args:
+                return args[v[1:]]
+            return name.sub(lambda m: str(args[m.group(1)]) if m.group(1) in args else m.group(0), v)
+        if isinstance(v, list):
+            return [sub(x, args) for x in v]
+        if isinstance(v, dict):
+            return {k: sub(x, args) for k, x in v.items()}
+        return v
+
+    def bound(template, given):
+        args = {k: v for k, v in template.get('params', {}).items() if v is not None}
+        args.update(given or {})
+        return args
+
+    def expand(items):
+        for item in items:
+            if 'use' in item:
+                template = templates.get(item['use'], {})
+                yield from expand(sub(template.get('items', []), bound(template, item.get('args'))))
+            else:
+                yield item
+
+    def wordy(s):
+        return isinstance(s, str) and not re.search(r'\d', s) and re.search(r'[A-Za-z]{2}', s)
+
+    found = {}
+    for clip in data.get('clips', []):
+        if 'template' in clip:
+            template = templates.get(clip['template'], {})
+            base = sub(template, bound(template, clip.get('args')))
+            clip = dict(base, **{k: v for k, v in clip.items() if k not in ('items', 'template', 'args')},
+                        items=base.get('items', []) + clip.get('items', []))
+        texts = [s.get('caption') for s in clip.get('steps', [])]
+        for item in expand(clip.get('items', [])):
+            for props in [item] + [k[1] for k in item.get('keys', []) if isinstance(k, list) and len(k) == 2 and isinstance(k[1], dict)]:
+                if item.get('el') in ('label', 'chip'):
+                    texts.append(props.get('text'))
+                if item.get('el') == 'card':
+                    texts += [props.get('title'), props.get('button')]
+                    for row in props.get('rows', []):
+                        text, value = (row + [None, None])[:2] if isinstance(row, list) else (row.get('text'), row.get('value'))
+                        texts.append(text)
+                        if wordy(value):
+                            texts.append(value)
+        for t in texts:
+            if isinstance(t, str) and t:
+                found.setdefault(t, clip['id'])
+    return found
+
+
+def clips_missing():
+    """Every clip text in each language: app/i18n/<code>.json plus its area fragments app/i18n/<code>/*.json."""
+    texts = clip_texts()
+    bad = 0
+    for path in sorted(glob.glob(os.path.join(ROOT, 'app', 'i18n', '*.json'))):
+        code = os.path.splitext(os.path.basename(path))[0]
+        have = language(path)[1]
+        missing = [t for t in texts if not have.get(t)]
+        print('clips (%s): %d texts, %d missing' % (code, len(texts), len(missing)))
+        for t in missing:
+            print('  %-22s %s' % (texts[t], json.dumps(t, ensure_ascii=False)))
+        bad += len(missing)
+    return bad
+
+
 def main():
     sys.stdout.reconfigure(encoding='utf-8')
     src = sources()
@@ -77,6 +167,8 @@ def main():
         for key, first, second in clashes:
             print('  clash: %s and %s translate %s differently' % (first, second, json.dumps(key, ensure_ascii=False)))
         bad += len(missing) + len(clashes)
+    bad += help_missing()
+    bad += clips_missing()
     return 1 if bad else 0
 
 

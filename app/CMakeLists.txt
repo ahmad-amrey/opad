@@ -29,7 +29,7 @@ endforeach()
 string(APPEND opad_i18n_qrc "  </qresource>\n</RCC>\n")
 set(OPAD_I18N_QRC ${CMAKE_CURRENT_BINARY_DIR}/i18n.qrc CACHE INTERNAL "")  # also in tests/test_seams
 file(CONFIGURE OUTPUT ${OPAD_I18N_QRC} CONTENT "${opad_i18n_qrc}" @ONLY)
-list(APPEND OPAD_APP_SOURCES res.qrc ${OPAD_I18N_QRC})
+list(APPEND OPAD_APP_SOURCES res.qrc help.qrc ${OPAD_I18N_QRC})  # help.qrc: the command help and clips (app/help)
 if(APPLE)
   list(APPEND OPAD_APP_SOURCES ViewportCocoa.mm)
   find_program(OPAD_SIPS NAMES sips REQUIRED)

@@ -107,6 +107,24 @@ bool ToolPanel::nativeEvent(const QByteArray& type, void* message, qintptr* resu
 #endif
 
 // ---------------------------------------------------------------- ToolPanel
+namespace {
+std::function<void(ToolPanel*)>& helpHook() {
+  static std::function<void(ToolPanel*)> hook;
+  return hook;
+}
+}  // namespace
+
+void ToolPanel::setHelpHook(std::function<void(ToolPanel*)> hook) {
+  helpHook() = std::move(hook);
+  for (QWidget* w : QApplication::topLevelWidgets())
+    if (auto* panel = qobject_cast<ToolPanel*>(w)) panel->m_help->setVisible(bool(helpHook()));
+}
+
+void ToolPanel::showEvent(QShowEvent*) {
+  m_help->setVisible(bool(helpHook()));
+  emit visibilityChanged(true);
+}
+
 // Right-anchored panels grow into the viewport from their bottom-left corner.
 class ToolPanelGrip : public QWidget {
  public:
@@ -187,12 +205,16 @@ ToolPanel::ToolPanel(const QString& id, const QString& icon, QColor Tokens::* ti
   m_context = new QLabel(header);
   m_context->setObjectName("toolPanelContext");
   m_context->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);  // truncates instead of widening the panel
+  m_help = new QToolButton(header);
+  m_help->setToolTip(tr("Guide for this tool"));
+  m_help->setAccessibleName(tr("Guide for this tool"));
+  m_help->setVisible(bool(helpHook()));
   m_pin = new QToolButton(header);
   m_pin->setCheckable(true);
   m_pin->setToolTip(tr("Keep open"));
   m_close = new QToolButton(header);
   m_close->setToolTip(tr("Close  (Esc)"));
-  for (QToolButton* b : {m_pin, m_close}) {
+  for (QToolButton* b : {m_help, m_pin, m_close}) {
     b->setObjectName("dockButton");
     b->setIconSize(QSize(16, 16));
     b->setFixedSize(20, 20);
@@ -201,6 +223,7 @@ ToolPanel::ToolPanel(const QString& id, const QString& icon, QColor Tokens::* ti
   h->addWidget(m_icon);
   h->addWidget(name);
   h->addWidget(m_context, 1);
+  h->addWidget(m_help);
   h->addWidget(m_pin);
   h->addWidget(m_close);
   outer->addWidget(header);
@@ -219,6 +242,7 @@ ToolPanel::ToolPanel(const QString& id, const QString& icon, QColor Tokens::* ti
   resize(settings.value(key + "/size", m_defaultSize).toSize());
 
   connect(m_close, &QToolButton::clicked, this, &QWidget::hide);
+  connect(m_help, &QToolButton::clicked, this, [this] { if (helpHook()) helpHook()(this); });
   connect(m_pin, &QToolButton::toggled, this, [this, key](bool on) {
     QSettings().setValue(key + "/pinned", on);
     refreshIcons();
@@ -230,6 +254,7 @@ ToolPanel::ToolPanel(const QString& id, const QString& icon, QColor Tokens::* ti
 void ToolPanel::refreshIcons() {
   const Tokens& t = theme::current();
   m_icon->setPixmap(icons::pixmap(m_iconName, t.*m_tint, 16, devicePixelRatioF()));
+  m_help->setIcon(icons::icon(icons::has("help") ? "help" : "issue", t.fg2));
   m_pin->setIcon(icons::icon("pin", m_pin->isChecked() ? t.sel : t.fg2));
   m_close->setIcon(icons::icon("close", t.fg2));
 }

@@ -3,19 +3,22 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QFile>
+#include <QGuiApplication>
 #include <QMetaObject>
 #include <QThread>
 #include <QtGlobal>
 #include <algorithm>
 #include <cstdio>
 #include <thread>
+#include <utility>
 
-#include "Panels.hpp"
+#include "ProgressStrip.hpp"
 
 namespace {
 constexpr int kStripDelayMs = 500;  // how long an operation may run before progress UI appears
 constexpr int kSliceMs = 10;        // budget per UI-thread slice; leaves room for input and painting at 60 Hz
 constexpr int kStallMs = 250;       // watchdog threshold
+constexpr int kBusyMs = 150;        // a job the user waits for this long turns the busy cursor on
 }  // namespace
 
 // ---------------------------------------------------------------- JobState / Progress
@@ -83,10 +86,39 @@ JobRunner::JobRunner(ProgressStrip* strip, QObject* parent) : QObject(parent), m
   m_showTimer.setInterval(kStripDelayMs);
   connect(&m_showTimer, &QTimer::timeout, this, &JobRunner::refreshStrip);
   connect(m_strip, &ProgressStrip::cancelRequested, this, [this] { if (Job* c = current()) c->cancel(); });
+  m_busyTimer.setSingleShot(true);
+  connect(&m_busyTimer, &QTimer::timeout, this, &JobRunner::updateBusy);
+}
+
+JobRunner::~JobRunner() {
+  if (m_busyCursor) QGuiApplication::restoreOverrideCursor();
+}
+
+QStringList JobRunner::titles() const {
+  QStringList out;
+  for (Job* j : m_jobs) out << j->title();
+  return out;
+}
+
+// On once the oldest job someone waits for has run kBusyMs and no mouse button is down (a drag would flicker); off when
+// no such job is left. A background job never counts.
+void JobRunner::updateBusy() {
+  qint64 oldest = -1;
+  for (Job* j : m_jobs)
+    if (j->active() && !j->background()) oldest = std::max(oldest, j->elapsedMs());
+  const bool on = oldest >= kBusyMs && (m_busyCursor || QGuiApplication::mouseButtons() == Qt::NoButton);
+  if (on != m_busyCursor) {
+    m_busyCursor = on;
+    if (on) QGuiApplication::setOverrideCursor(Qt::BusyCursor);
+    else QGuiApplication::restoreOverrideCursor();
+  }
+  if (oldest < 0 || on) m_busyTimer.stop();
+  else m_busyTimer.start(oldest >= kBusyMs ? 50 : static_cast<int>(kBusyMs - oldest));
 }
 
 Job* JobRunner::begin(const QString& title, bool twoBars) {
   Job* j = new Job(title, twoBars, this);
+  j->m_background = std::exchange(m_backgroundNext, false);
   m_jobs.push_back(j);
   connect(j, &Job::phaseChanged, this, [this, j](const QString& text, int pct) {
     j->m_lastPhase = text;
@@ -97,9 +129,10 @@ Job* JobRunner::begin(const QString& title, bool twoBars) {
     j->m_lastOverall = pct;
     if (j == m_shown) m_strip->setOverall(pct);
   });
-  connect(j, &Job::finished, this, [this, j] { onFinished(j); });
+  connect(j, &Job::finished, this, [this, j](bool ok, const QString& error) { onFinished(j, ok, error); });
   if (!m_shown && !m_showTimer.isActive()) m_showTimer.start();
   else if (m_shown) refreshStrip();  // a newer job takes over the strip
+  if (!m_busyCursor && !m_busyTimer.isActive()) m_busyTimer.start(kBusyMs);  // marked background by then, or it counts
   return j;
 }
 
@@ -177,9 +210,11 @@ void JobRunner::slice(Job* j) {
   j->finish(completed, completed ? QString() : QStringLiteral("cancelled"));
 }
 
-void JobRunner::onFinished(Job* j) {
+void JobRunner::onFinished(Job* j, bool ok, const QString& error) {
   m_jobs.erase(std::remove(m_jobs.begin(), m_jobs.end(), j), m_jobs.end());
+  emit done(j, ok, error);
   j->deleteLater();
+  updateBusy();
   if (m_jobs.empty()) {
     m_showTimer.stop();
     if (m_shown) {
@@ -192,14 +227,18 @@ void JobRunner::onFinished(Job* j) {
   refreshStrip();
 }
 
-// Shows the most recent job in the strip (only after the 0.5 s grace period has elapsed once).
+// Shows the most recent job in the strip (only after the 0.5 s grace period has elapsed once), and how many others run.
 void JobRunner::refreshStrip() {
   Job* c = current();
   if (!c) return;
   if (!m_shown && m_showTimer.isActive()) return;
+  QStringList others = titles();
+  others.removeLast();
+  m_strip->setOthers(others);
   if (c == m_shown) return;
   const bool wasShown = m_shown != nullptr;
   m_shown = c;
+  c->m_wasShown = true;
   m_strip->begin(c->title(), c->m_twoBars);
   if (!c->m_lastPhase.isEmpty()) m_strip->setPhase(c->m_lastPhase, c->m_lastPct);
   if (c->m_lastOverall >= 0) m_strip->setOverall(c->m_lastOverall);

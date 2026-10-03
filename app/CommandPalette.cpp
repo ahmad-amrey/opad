@@ -4,29 +4,44 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QPainter>
+#include <QSettings>
+#include <QStyle>
 #include <QStyledItemDelegate>
+#include <QFrame>
+#include <QHBoxLayout>
 #include <QVBoxLayout>
 
 #include <algorithm>
 
+#include "CommandHelp.hpp"
+#include "HelpReference.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
 
 QString opGroup(const QAction* a) {
   if (const QString group = a->property("commandGroup").toString(); !group.isEmpty()) return group;  // its record's (Commands.hpp)
-  QString id = a->objectName();
-  if (id.startsWith("file.")) return "File";
-  if (id.startsWith("view.")) return "View";
-  if (id.startsWith("nav.")) return "Navigation";
-  if (id.startsWith("select.")) return "Select";
-  if (id.startsWith("inspect.")) return "Inspect";
-  if (id.startsWith("annotate.") || id.startsWith("edit.")) return "Edit";
-  if (id.startsWith("tools.")) return "Tools";
-  return "Help";
+  return help::group(a->objectName());  // the help's area (UI-107), translated
 }
+
+namespace palette {
+QStringList remember(QStringList recent, const QString& id, int keep) {
+  if (id.isEmpty()) return recent;
+  recent.removeAll(id);
+  recent.prepend(id);
+  while (recent.size() > keep) recent.removeLast();
+  return recent;
+}
+QStringList recent() { return QSettings().value("palette/recent").toStringList(); }
+void noteRun(const QString& id) {
+  if (id == "tools.commands" || id == "edit.undo" || id == "edit.redo") return;  // the palette itself; undo is one key away
+  QSettings().setValue("palette/recent", remember(recent(), id));
+}
+}  // namespace palette
 
 // ---------------------------------------------------------------- CommandPalette
 namespace {
+constexpr int kRecentRole = Qt::UserRole + 1;
+
 int fuzzyScore(const QString& text, const QString& query, QList<int>* positions) {
   if (query.isEmpty()) return 1;
   int score = 0, qi = 0, last = -2;
@@ -43,6 +58,8 @@ int fuzzyScore(const QString& text, const QString& query, QList<int>* positions)
   return qi == lq.size() ? score : 0;
 }
 
+// Laid out left to right and mirrored for right-to-left languages: icon, name, summary (or what a command not available
+// now needs), group, key.
 class PaletteDelegate : public QStyledItemDelegate {
  public:
   QString query;
@@ -51,41 +68,70 @@ class PaletteDelegate : public QStyledItemDelegate {
     const Tokens& t = theme::current();
     auto* a = static_cast<QAction*>(index.data(Qt::UserRole).value<void*>());
     if (!a) return;
-    bool sel = opt.state & QStyle::State_Selected;
+    const bool sel = opt.state & QStyle::State_Selected;
+    const QRect row = opt.rect;
+    auto at = [&](const QRect& r) { return QStyle::visualRect(opt.direction, row, r); };
     p->save();
     p->setRenderHint(QPainter::Antialiasing);
-    if (sel) p->fillRect(opt.rect, t.sel);
-    else if (opt.state & QStyle::State_MouseOver) p->fillRect(opt.rect, t.bg4);
+    if (sel) p->fillRect(row, t.sel);
+    else if (opt.state & QStyle::State_MouseOver) p->fillRect(row, t.bg4);
     QColor fg = sel ? t.onsel : (a->isEnabled() ? t.fg : t.fg3);
-    QString iconName = a->data().toString();
-    if (!iconName.isEmpty()) p->drawPixmap(opt.rect.left() + 8, opt.rect.top() + 6, icons::pixmap(iconName, sel ? t.onsel : t.fg2, 16, p->device()->devicePixelRatioF()));
-    QString text = a->text().remove('&');
-    QList<int> pos;
-    fuzzyScore(text, query, &pos);
-    QFont normal = theme::ui(13), bold = theme::ui(13, QFont::DemiBold);
-    int x = opt.rect.left() + 32;
-    for (int i = 0; i < text.size(); ++i) {
-      bool hit = pos.contains(i);
-      p->setFont(hit ? bold : normal);
-      p->setPen(fg);
-      QString ch = text.mid(i, 1);
-      p->drawText(QRect(x, opt.rect.top(), 40, opt.rect.height()), Qt::AlignVCenter | Qt::AlignLeft, ch);
-      x += QFontMetrics(hit ? bold : normal).horizontalAdvance(ch);
-    }
-    p->setFont(theme::ui(11));
-    p->setPen(sel ? t.onsel : t.fg3);
-    p->drawText(QRect(x + 10, opt.rect.top(), 120, opt.rect.height()), Qt::AlignVCenter | Qt::AlignLeft, opGroup(a));
-    QString sc = a->shortcut().toString(QKeySequence::NativeText);
+    int left = row.left() + 8, right = row.right() - 8;
+    const QString iconName = a->data().toString();
+    if (!iconName.isEmpty()) p->drawPixmap(at(QRect(left, row.top() + 6, 16, 16)), icons::pixmap(iconName, sel ? t.onsel : t.fg2, 16, p->device()->devicePixelRatioF()));
+    left += 24;
+    const QString sc = a->shortcut().toString(QKeySequence::NativeText);
     if (!sc.isEmpty()) {
-      QFontMetrics mm(theme::mono(11));
-      int w = mm.horizontalAdvance(sc) + 10;
-      QRect key(opt.rect.right() - w - 8, opt.rect.top() + 6, w, 16);
+      const QFontMetrics mm(theme::mono(11));
+      const int w = mm.horizontalAdvance(sc) + 10;
+      const QRect key = at(QRect(right - w, row.top() + 6, w, 16));
       p->setPen(QPen(sel ? t.onsel : t.line, 1));
       p->setBrush(sel ? QColor(255, 255, 255, 40) : t.bg4);
       p->drawRoundedRect(key, 3, 3);
       p->setFont(theme::mono(11));
       p->setPen(sel ? t.onsel : t.fg2);
       p->drawText(key, Qt::AlignCenter, sc);
+      right -= w + 10;
+    }
+    const bool recent = index.data(kRecentRole).toBool();
+    const QString group = recent ? CommandPalette::tr("Recent") : opGroup(a);
+    const QFont small = theme::ui(11);
+    const int groupWidth = std::min(QFontMetrics(small).horizontalAdvance(group) + 4, 120);  // + rounding: never elided when it fits
+    p->setFont(small);
+    p->setPen(sel ? t.onsel : recent ? t.sel : t.fg3);
+    const int align = Qt::AlignVCenter | (opt.direction == Qt::RightToLeft ? Qt::AlignRight : Qt::AlignLeft);
+    p->drawText(at(QRect(right - groupWidth, row.top(), groupWidth, row.height())), align, QFontMetrics(small).elidedText(group, Qt::ElideRight, groupWidth));
+    right -= groupWidth + 12;
+    // The name: the letters the query found in bold (right-to-left text whole, its letters join).
+    const QString text = a->text().remove('&');
+    const QFont normal = theme::ui(13), bold = theme::ui(13, QFont::DemiBold);
+    const int nameWidth = std::min(QFontMetrics(query.isEmpty() ? normal : bold).horizontalAdvance(text) + 4, right - left);
+    const QRect name = at(QRect(left, row.top(), nameWidth, row.height()));
+    p->setPen(fg);
+    if (query.isEmpty() || text.isRightToLeft()) {
+      p->setFont(normal);
+      p->drawText(name, align, QFontMetrics(normal).elidedText(text, Qt::ElideRight, nameWidth));
+    } else {
+      QList<int> pos;
+      fuzzyScore(text, query, &pos);
+      int x = name.left();
+      for (int i = 0; i < text.size() && x < name.right(); ++i) {
+        const QFont& f = pos.contains(i) ? bold : normal;
+        p->setFont(f);
+        const QString ch = text.mid(i, 1);
+        p->drawText(QRect(x, row.top(), 40, row.height()), Qt::AlignVCenter | Qt::AlignLeft, ch);
+        x += QFontMetrics(f).horizontalAdvance(ch);
+      }
+    }
+    left += nameWidth + 12;
+    // What it does; for a command not available now, what it needs.
+    const CommandHelp* h = help::find(a->objectName());
+    const bool needs = !a->isEnabled() && h && !h->requirement.isEmpty();
+    const QString note = needs ? help::requirement(*h) : h ? h->summary : QString();
+    if (right - left > 40 && !note.isEmpty()) {
+      p->setFont(small);
+      p->setPen(sel ? QColor(t.onsel.red(), t.onsel.green(), t.onsel.blue(), 190) : needs ? t.amber : t.fg3);
+      p->drawText(at(QRect(left, row.top(), right - left, row.height())), align, QFontMetrics(small).elidedText(note, Qt::ElideRight, right - left));
     }
     p->restore();
   }
@@ -96,9 +142,22 @@ class PaletteDelegate : public QStyledItemDelegate {
 CommandPalette::CommandPalette(const QList<QAction*>& actions, QWidget* parent) : QDialog(parent, Qt::Popup | Qt::FramelessWindowHint), m_actions(actions) {
   setObjectName("overlay");
   setAttribute(Qt::WA_StyledBackground);
-  setFixedWidth(560);
-  auto* layout = new QVBoxLayout(this);
-  layout->setContentsMargins(1, 1, 1, 1);
+  // The list, and beside it the current command's card (UI-107): summary, keys, its clip, what it needs.
+  auto* row = new QHBoxLayout(this);
+  row->setContentsMargins(1, 1, 1, 1);
+  row->setSpacing(0);
+  auto* column = new QWidget(this);
+  column->setFixedWidth(620);
+  row->addWidget(column);
+  auto* rule = new QFrame(this);
+  rule->setFixedWidth(1);
+  rule->setStyleSheet(QString("background: %1;").arg(theme::css(theme::current().line)));
+  row->addWidget(rule);
+  m_preview = new CommandPreview(CommandPreview::Size::Compact, this);
+  m_preview->setFixedWidth(312);
+  row->addWidget(m_preview);
+  auto* layout = new QVBoxLayout(column);
+  layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(0);
   m_edit = new QLineEdit(this);
   m_edit->setObjectName("paletteInput");
@@ -111,16 +170,27 @@ CommandPalette::CommandPalette(const QList<QAction*>& actions, QWidget* parent) 
   m_list->setFixedHeight(28 * 9);
   layout->addWidget(m_edit);
   layout->addWidget(m_list);
-  auto* foot = new QLabel(tr("↑↓ navigate · Enter run · Esc close"), this);
-  foot->setObjectName("tertiary");
-  foot->setContentsMargins(12, 6, 12, 6);
-  layout->addWidget(foot);
+  m_foot = new QLabel(this);
+  m_foot->setObjectName("paletteFoot");
+  m_foot->setContentsMargins(12, 6, 12, 6);
+  layout->addWidget(m_foot);
+  setFoot(QString(), false);
   connect(m_edit, &QLineEdit::textChanged, this, &CommandPalette::refill);
   connect(m_edit, &QLineEdit::returnPressed, this, &CommandPalette::runCurrent);
   connect(m_list, &QListWidget::itemClicked, this, [this](QListWidgetItem*) { runCurrent(); });
+  connect(m_list, &QListWidget::currentItemChanged, this, [this](QListWidgetItem* it) {
+    auto* a = it ? static_cast<QAction*>(it->data(Qt::UserRole).value<void*>()) : nullptr;
+    m_preview->setCommand(a ? a->objectName() : QString(), a);
+    setFoot(QString(), false);
+  });
   m_edit->installEventFilter(this);
   refill(QString());
   m_edit->setFocus();
+}
+
+void CommandPalette::setFoot(const QString& text, bool warning) {
+  m_foot->setText(text.isEmpty() ? tr("↑↓ navigate · Enter run · Esc close") : text);
+  m_foot->setStyleSheet(QString("color: %1;").arg(theme::css(warning ? theme::current().amber : theme::current().fg3)));
 }
 
 bool CommandPalette::eventFilter(QObject* o, QEvent* e) {
@@ -136,19 +206,28 @@ bool CommandPalette::eventFilter(QObject* o, QEvent* e) {
 }
 
 void CommandPalette::refill(const QString& filter) {
-  static_cast<PaletteDelegate*>(m_list->itemDelegate())->query = filter;
+  const QString query = filter.trimmed();
+  static_cast<PaletteDelegate*>(m_list->itemDelegate())->query = query;
   m_list->clear();
+  const QStringList recent = palette::recent();
+  auto rank = [&recent](const QAction* a) { const qsizetype i = recent.indexOf(a->objectName()); return i < 0 ? recent.size() : i; };
   QList<QPair<int, QAction*>> scored;
   for (QAction* a : m_actions) {
     if (a->text().isEmpty() || a->isSeparator()) continue;
-    int s = fuzzyScore(a->text().remove('&'), filter, nullptr);
-    for (const QString& keyword : a->property("commandKeywords").toStringList()) s = std::max(s, (fuzzyScore(keyword, filter, nullptr) + 1) / 2);  // below a label match
+    int s = fuzzyScore(a->text().remove('&'), query, nullptr);
+    for (const QString& keyword : a->property("commandKeywords").toStringList()) s = std::max(s, (fuzzyScore(keyword, query, nullptr) + 1) / 2);  // below a label match
+    if (const CommandHelp* h = help::find(a->objectName())) {  // its help's keywords (the English name too), then its summary
+      for (const QString& keyword : h->keywords) s = std::max(s, (fuzzyScore(keyword, query, nullptr) + 1) / 2);
+      if (!s && help::matches(*h, query)) s = 1;
+    }
     if (s > 0) scored << qMakePair(s, a);
   }
-  std::stable_sort(scored.begin(), scored.end(), [](const auto& x, const auto& y) { return x.first > y.first; });
+  // Best match first; among equals (all of them with nothing typed) the recent commands, newest first.
+  std::stable_sort(scored.begin(), scored.end(), [&rank](const auto& x, const auto& y) { return x.first != y.first ? x.first > y.first : rank(x.second) < rank(y.second); });
   for (const auto& [s, a] : scored) {
     auto* it = new QListWidgetItem(m_list);
     it->setData(Qt::UserRole, QVariant::fromValue(static_cast<void*>(a)));
+    it->setData(kRecentRole, rank(a) < recent.size());
     it->setToolTip(a->toolTip());
   }
   if (m_list->count() > 0) m_list->setCurrentRow(0);
@@ -156,8 +235,14 @@ void CommandPalette::refill(const QString& filter) {
 
 void CommandPalette::runCurrent() {
   QListWidgetItem* it = m_list->currentItem();
-  if (!it) return;
-  auto* a = static_cast<QAction*>(it->data(Qt::UserRole).value<void*>());
+  auto* a = it ? static_cast<QAction*>(it->data(Qt::UserRole).value<void*>()) : nullptr;
+  if (!a) return;
+  if (!a->isEnabled()) {  // stays open and says why
+    const CommandHelp* h = help::find(a->objectName());
+    setFoot(QString::fromUtf8("⚠  ") + (h && !h->requirement.isEmpty() ? help::requirement(*h) : tr("%1 is not available right now.").arg(a->text().remove('&'))), true);
+    return;
+  }
+  palette::noteRun(a->objectName());
   accept();
-  if (a && a->isEnabled()) a->trigger();
+  a->trigger();
 }

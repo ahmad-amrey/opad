@@ -74,6 +74,9 @@ class MainWindow : public QMainWindow {
       for (AreaController* area : m_areas) hook(area);
   }
   void buildMenus();
+  std::vector<std::string> shownBodies() const;  // visible bodies (and their components), inside the isolation
+  void selectShown(bool invert);                 // Select all / Invert selection (UI-111)
+  void noteCommand(const QString& id);  // a command ran: Repeat runs it again
   void buildRibbon();
   void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")
   void buildDesign();         // the controller, its floating panel and the wiring
@@ -89,7 +92,11 @@ class MainWindow : public QMainWindow {
   void bindPanel(QAction* a, QDockWidget* dock);
   void resetLayout();
   void buildStatusBar();
+  void setPrompt(const QString& text);  // what the running tool waits for (a status-bar message goes first while it lasts)
+  QString m_promptText;
   void buildUnitsButton();
+  void toggleMenu(QToolButton* button, const QString& id);  // right-click on a drafting toggle (UI-112)
+  class CoordinateReadout* m_readout = nullptr;  // the cursor's X/Y/Z in the status bar
   void setDocumentUnit(const std::string& unit);
   void applyTheme(bool dark);
   void refreshIcons();
@@ -100,13 +107,25 @@ class MainWindow : public QMainWindow {
   void saveLastView();
   QString m_viewPath;
   void guarded(const std::function<void()>& fn);
-  bool maybeSave();
+  // A precondition not met (opad::UserHint, UI-109): a toast instead of a message box. pick: the command that raised it
+  // waits for the selection it asks for and runs again once there is one (resumePendingPick).
+  void hint(const QString& text, bool pick);
+  void resumePendingPick();
+  void cancelPendingPick();
+  void resultToast(const QString& text, const QString& folder = QString());  // a result; folder: an Open folder action
+  QString m_runningCommand, m_pendingPick;  // the command whose function runs now; the one waiting for a selection
+  QPointer<Toast> m_pendingToast;
+  // Before the document goes: unfinished work, then unsaved changes. resume: what asked, run again once a sketch the
+  // user chose to finish is in the document (finishing is a design job), so Open or New goes on by itself (UI-111).
+  bool maybeSave(std::function<void()> resume = {});
+  bool leaveSketch(std::function<void()> resume);  // an unfinished sketch: finish (then resume), discard, or stay
   // The unsaved-changes question, built but not shown (maybeSave runs it; a bench presses its buttons): Save, Discard,
   // Cancel and, while the file is on disk, Review changes… (UI-59: Compare, the saved file against this session).
   QMessageBox* unsavedPrompt();
   void showDocument(bool has);
   void showCentral();  // the start page, the viewport (also while loading) or an area's page; the browser floats over it
-  void beginLoad(std::function<void()> after);
+  // title: the job's and the shade's ("Opening box.step"); done: the completion toast, %1 = the bodies loaded.
+  void beginLoad(std::function<void()> after, const QString& title = QString(), const QString& done = QString());
   void setLoadPhase(const QString& phase, int pct);
   QString meshPhase() const;
   int overallPercent(const QString& phase, int pct) const;
@@ -260,7 +279,8 @@ class MainWindow : public QMainWindow {
   QMenu* m_viewsMenu = nullptr;
   QMenu* m_recentMenu = nullptr;
   QLabel* m_statusPath = nullptr;
-  QLabel* m_statusHover = nullptr;
+  QLabel* m_statusPrompt = nullptr;  // the prompt and status-bar messages (setPrompt)
+  QLabel* m_statusHover = nullptr;   // what is under the mouse (Viewport::hoverChanged)
   QLabel* m_statusSel = nullptr;
   QToolButton* m_statusUnits = nullptr;  // the shown length unit (UI-123): a click offers the document's
   QList<QAction*> m_actions;
@@ -288,6 +308,7 @@ class MainWindow : public QMainWindow {
   bool m_loadDocDone = false;
   int m_meshTotal = 0, m_meshRemaining = 0;
   std::function<void()> m_afterLoad;
+  QString m_loadDone;  // beginLoad's done text
   QTimer m_selFileTimer;
   bool m_benchSelect = false;
   BrowserOverlay* m_browserOverlay = nullptr;

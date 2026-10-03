@@ -81,6 +81,8 @@ class SketchEditor : public QObject, public SketchInput {
   void toggleReference();
   void selectConnected();
   void selectType();
+  void selectAll(bool invert = false);  // Ctrl+A: every curve that can be picked; invert: those not selected now (UI-111)
+  const std::vector<int>& selected() const { return m_sel; }
   void deleteNode();
   void redefinePlane(const opad::json& plane, const opad::Frame& frame);
   QString tool() const { return m_tool; }

@@ -31,6 +31,10 @@ void MainWindow::buildEditActions() {
     m_doc->redo();
   });
   connect(m_doc, &AppDocument::undoChanged, this, &MainWindow::updateUndoActions);
+  // Select all and Invert (UI-111): the sketch's curves while sketching, else the bodies on screen (visible, inside the
+  // isolation); a tool or a feature input owns the picks meanwhile.
+  addAction("edit.selectall", tr("Select all"), "", QKeySequence::SelectAll, [this] { selectShown(false); });
+  addAction("edit.invert", tr("Invert selection"), "", QKeySequence("Ctrl+Shift+I"), [this] { selectShown(true); });
   addAction("edit.rename", tr("Rename"), "rename", QKeySequence("F2"), [this] {
     auto ids = currentNodeIds();
     if (ids.size() == 1) return m_browser->startRename(ids.front());
@@ -62,18 +66,61 @@ void MainWindow::buildEditActions() {
   addAction("edit.delete", tr("Delete"), "delete", QKeySequence::Delete, [this] { deleteCurrent(); });
   addAction("edit.restore", tr("Restore"), "restore", QKeySequence("Shift+Del"), [this] {
     std::string id = m_timeline->currentOp();
-    if (id.empty()) throw opad::Error("Select a tombstoned marker on the timeline first.");
+    if (id.empty()) throw opad::UserHint("Select a tombstoned marker on the timeline first.", true);
     restoreOp(id);
   });
   addAction("edit.selecttouched", tr("Select what it touches"), "isolate", QKeySequence("T"), [this] {
     if (!m_timeline->currentOp().empty()) selectOpTargets(m_timeline->currentOp());
   });
-  // The last tool again (UI-100): first in the context menus as "Repeat Fillet"; no key of its own unless one is set.
-  addAction("edit.repeat", tr("Repeat last command"), "repeat", QKeySequence(), [this] {
+  // The last tool, feature, check or edit again (UI-100 / UI-111): Shift+Enter, the Edit menu, first in the context menus
+  // as "Repeat Fillet".
+  QAction* repeat = addAction("edit.repeat", tr("Repeat last command"), "repeat", QKeySequence("Shift+Return"), [this] {
     QAction* last = m_lastCommand.isEmpty() ? nullptr : action(m_lastCommand);
     if (!last || !last->isEnabled()) return statusBar()->showMessage(tr("Nothing to repeat yet: start a feature, a sketch tool or a measurement first."), 5000);
     last->trigger();
-  })->setProperty("shortcutHint", tr("Starts the last feature, sketch tool, measurement or note again."));
+  });
+  repeat->setProperty("shortcutHint", tr("Starts the last feature, sketch tool, measurement or note again."));
+  repeat->setEnabled(false);
+}
+
+std::vector<std::string> MainWindow::shownBodies() const {
+  std::set<std::string> isolated;
+  for (const auto& id : m_viewport->isolatedNodes())
+    for (const auto& b : m_doc->scene.bodies_under(id)) isolated.insert(b);
+  std::vector<std::string> out;
+  const std::function<void(const std::string&)> walk = [&](const std::string& id) {  // one pass down the tree
+    const opad::Node* n = m_doc->node(id);
+    if (!n || !n->visible) return;
+    if (n->kind == opad::Node::Kind::Body && (isolated.empty() || isolated.count(id))) out.push_back(id);
+    for (const auto& child : n->children) walk(child);
+  };
+  for (const auto& root : m_doc->scene.roots) walk(root);
+  return out;
+}
+
+void MainWindow::selectShown(bool invert) {
+  trace::Scope scope(invert ? "MainWindow: invert selection" : "MainWindow: select all");
+  if (m_design->sketchActive()) return m_design->sketch()->selectAll(invert);
+  if (!m_doc->hasDocument || m_design->ownsSelection() || !m_tool.id.isEmpty() || m_annotationEditor) return;
+  std::set<std::string> selected;
+  if (invert)
+    for (const auto& id : currentNodeIds())
+      for (const auto& b : m_doc->scene.bodies_under(id)) selected.insert(b);
+  std::vector<std::string> ids;
+  for (const auto& b : shownBodies())
+    if (!selected.count(b)) ids.push_back(b);
+  if (m_viewport->selectionFilter() != Viewport::SelFilter::Body) action("select.bodies")->trigger();
+  m_browser->setSelectedIds(ids);
+  onBrowserSelection(ids);
+}
+
+void MainWindow::noteCommand(const QString& id) {
+  if (!repeatable(id) || !action(id)) return;
+  m_lastCommand = id;
+  QAction* repeat = action("edit.repeat");
+  repeat->setText(tr("Repeat %1").arg(QString(action(id)->text()).remove('&').remove(QString::fromUtf8("…"))));
+  repeat->setEnabled(true);
+  shortcuts::updateTooltip(repeat);
 }
 
 void MainWindow::timelineMenu(const std::string& requestedId, const QPoint& globalPos) {
@@ -185,7 +232,7 @@ void MainWindow::restoreOp(const std::string& requestedId) {
       m_timeline->setCurrentOp(opId);
       return;
     }
-  throw opad::Error("That operation is not tombstoned.");
+  throw opad::UserHint("That operation is not tombstoned.");
 }
 
 void MainWindow::deleteCurrent() {
@@ -199,7 +246,7 @@ void MainWindow::deleteCurrent() {
     throw opad::Error("Faces and edges are deleted through the feature that made them: select it with Ctrl+Up, or use Remove faces.");
   const auto selected = currentNodeIds();
   if (selected.empty()) {  // the timeline's marker only when nothing is selected (an area's row is not that marker)
-    if (id.empty() || !m_selRows.empty()) throw opad::Error("Select objects, or a marker on the timeline, to delete.");
+    if (id.empty() || !m_selRows.empty()) throw opad::UserHint("Select objects, or a marker on the timeline, to delete.");
     return deleteOp(id);
   }
   deleteNodes(selected);

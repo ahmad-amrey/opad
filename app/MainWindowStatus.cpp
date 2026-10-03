@@ -6,23 +6,91 @@
 #include <QFileInfo>
 #include <QLabel>
 #include <QMenu>
+#include <QPainter>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QStatusBar>
+#include <QStyle>
+#include <QStyleOption>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "CoordinateReadout.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "Preferences.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
 
+OPAD_ICON_TABLE(status, {"orthoLines", R"(<path d="M5 4v15h15"/><path d="M5 13h6v6"/>)"},
+                {"polar", R"(<path d="M4 20h16"/><path d="M4 20 17 7"/><path d="M4 20 9.5 5.5"/><path d="M12.5 20a8.5 8.5 0 0 0-2.4-6"/>)"});
+
+namespace {
+// A status-bar text that gives way: elided to the room it gets down to `minimum` px, the whole text in its tooltip unless
+// the owner keeps the tooltip (tip false: the path's says what is unresolved).
+class StatusText : public QLabel {
+ public:
+  StatusText(Qt::TextElideMode mode, int minimum, bool tip, QWidget* parent) : QLabel(parent), m_mode(mode), m_minimum(minimum), m_tip(tip) {}
+  QSize minimumSizeHint() const override { return {std::min(m_minimum, sizeHint().width()), QLabel::minimumSizeHint().height()}; }
+ protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter p(this);
+    const QRect r = contentsRect();
+    const QString shown = fontMetrics().elidedText(text(), m_mode, r.width());
+    if (m_tip) setToolTip(shown == text() ? QString() : text());
+    style()->drawItemText(&p, r, int(QStyle::visualAlignment(layoutDirection(), alignment())) | Qt::TextSingleLine, palette(), isEnabled(), shown, foregroundRole());
+  }
+ private:
+  Qt::TextElideMode m_mode;
+  int m_minimum;
+  bool m_tip;
+};
+
+// QStatusBar hides its normal widgets (the path, the git chip) while a message shows and paints the message where they
+// were (UI-109). This one keeps them and paints no message: MainWindow::setPrompt shows it in the prompt instead, and
+// currentMessage() still says what it is.
+class StatusBar : public QStatusBar {
+ public:
+  explicit StatusBar(QWidget* parent) : QStatusBar(parent) {
+    connect(this, &QStatusBar::messageChanged, this, [this](const QString& text) {
+      if (text.isEmpty()) return;
+      for (QWidget* w : findChildren<QWidget*>(Qt::FindDirectChildrenOnly))  // hidden for the message, not by their owner
+        if (!w->isWindow() && w->isHidden() && !w->testAttribute(Qt::WA_WState_ExplicitShowHide)) w->show();
+    });
+  }
+ protected:
+  void paintEvent(QPaintEvent*) override {  // QStatusBar's, without the message
+    QPainter p(this);
+    QStyleOption panel;
+    panel.initFrom(this);
+    style()->drawPrimitive(QStyle::PE_PanelStatusBar, &panel, &p, this);
+    for (QWidget* w : findChildren<QWidget*>(Qt::FindDirectChildrenOnly)) {
+      if (w->isWindow() || !w->isVisible()) continue;
+      QStyleOption item(0);
+      item.rect = w->geometry().adjusted(-2, -1, 2, 1);
+      item.palette = palette();
+      item.state = QStyle::State_None;
+      style()->drawPrimitive(QStyle::PE_FrameStatusBarItem, &item, &p, w);
+    }
+  }
+};
+}  // namespace
+
+// Left to right: the path and the git chip, then the prompt (what the running tool waits for, or a message for its
+// seconds), the hover readout (what is under the mouse), the progress strip, the drafting toggles, the cursor's
+// coordinates, the selection, the units chip. The prompt and the hover keep their room while a job runs (UI-109).
 void MainWindow::buildStatusBar() {
-  m_statusPath = new QLabel(this);
+  setStatusBar(new StatusBar(this));
+  const Tokens& t = theme::current();
+  m_statusPath = new StatusText(Qt::ElideMiddle, 120, false, this);  // the folder gives way first, the file name stays
   m_statusPath->setFont(theme::mono(12));
   m_statusPath->setContentsMargins(12, 2, 4, 2);
-  m_statusHover = new QLabel(this);
+  m_statusPrompt = new StatusText(Qt::ElideRight, 140, true, this);
+  m_statusPrompt->setObjectName("statusPrompt");
+  m_statusPrompt->setAlignment(Qt::AlignLeading | Qt::AlignVCenter);
+  m_statusPrompt->setContentsMargins(8, 0, 4, 0);
+  m_statusHover = new StatusText(Qt::ElideRight, 100, true, this);
   m_statusHover->setAlignment(Qt::AlignCenter);
   m_statusHover->setObjectName("tertiary");
   m_statusSel = new QLabel(this);
@@ -31,15 +99,19 @@ void MainWindow::buildStatusBar() {
   m_jobs = new JobRunner(m_progress, this);
   m_viewport->setJobs(m_jobs);
   statusBar()->addWidget(m_statusPath);  // the git chip follows it (VcsArea.cpp)
-  // Permanent: QStatusBar hides normal widgets while a temporary message shows and re-shows them after,
-  // which fought with the strip's own show/hide and drew the message across the bars.
+  // Permanent, so that an area's widgets (the git chip) come before them.
+  statusBar()->addPermanentWidget(m_statusPrompt, 1);
   statusBar()->addPermanentWidget(m_statusHover, 1);
+  connect(statusBar(), &QStatusBar::messageChanged, this, [this] { setPrompt(m_promptText); });
   statusBar()->addPermanentWidget(m_progress, 1);
+  // The drafting toggles (UI-112 adds Ortho and Polar, the sketch's line directions): each a command with its key, its
+  // setting, and a right-click menu of its quick settings (toggleMenu).
   struct Toggle { const char* id; const char* label; const char* icon; const char* key; const char* setting; bool defaultOn; };
-  for(const auto& spec : {Toggle{"view.extensions","Extensions","extensions","F11","view/extensions",true},
+  for(const auto& spec : {Toggle{"view.orthoSnap","Ortho","orthoLines","F8","view/orthoSnap",false},
+      Toggle{"view.polarSnap","Polar","polar","F10","sketch/snap/angle",true},
+      Toggle{"view.extensions","Extensions","extensions","F11","view/extensions",true},
       Toggle{"view.tracking","Tracking","tracking","F12","view/tracking",true},
-      Toggle{"view.gridSnap","Grid snapping","grid","F9","view/gridSnap",false},
-      Toggle{"view.orthoSnap","Ortho mode","orthoSnap","F8","view/orthoSnap",false}}) {
+      Toggle{"view.gridSnap","Grid snapping","grid","F9","view/gridSnap",false}}) {
     CommandInfo info{spec.id,tr(spec.label),spec.icon,QKeySequence(spec.key)};info.checkable=true;
     if(info.id=="view.orthoSnap")info.keywords={tr("orthogonal"),tr("horizontal vertical lock")};
     auto* a=addCommand(info,[] {});
@@ -61,15 +133,65 @@ void MainWindow::buildStatusBar() {
     };
     connect(theme::notifier(),&theme::Notifier::changed,button,paint); connect(a,&QAction::toggled,button,paint); paint();
     button->setFocusPolicy(Qt::NoFocus); statusBar()->addPermanentWidget(button);
+    button->setObjectName(QString("toggle.") + spec.id);
+    button->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(button,&QToolButton::customContextMenuRequested,this,[this,button,id=QString(spec.id)]{toggleMenu(button,id);});
   }
   // One grid snapping switch: the sketch panel's checkbox turns the viewport's, and F9 follows (and saves it).
   connect(m_viewport,&Viewport::gridSnapChanged,this,[this](bool on){action("view.gridSnap")->setChecked(on);});
   connect(m_viewport,&Viewport::gridShownChanged,action("view.grid"),&QAction::setChecked);  // G shows the sketch's own grid state in a sketch
+  m_readout = new CoordinateReadout(m_viewport, [this](opad::Frame& frame) {
+    if (!m_design || !m_design->sketchActive()) return false;
+    frame = m_design->sketch()->frame();
+    return true;
+  }, this);
+  statusBar()->addPermanentWidget(m_readout);
   statusBar()->addPermanentWidget(m_statusSel);
   statusBar()->addPermanentWidget(m_statusUnits);
   statusBar()->setSizeGripEnabled(false);
-  connect(m_jobs, &JobRunner::stripShown, this, [this](bool shown) { m_statusHover->setVisible(!shown); });  // free room for the bars
   for (AreaController* area : m_areas) area->statusWidgets(statusBar());
+}
+
+// Right-click on a drafting toggle (UI-112): the toggle, its quick settings (grid spacing, Polar's angle step) and its
+// page of Preferences. A popup, so the status bar's toggle can be right-clicked again at once.
+void MainWindow::toggleMenu(QToolButton* button, const QString& id) {
+  auto* menu = new QMenu(this);
+  menu->setObjectName("toggleMenu");
+  menu->setAttribute(Qt::WA_DeleteOnClose);
+  menu->addAction(action(id));
+  if (id == "view.gridSnap") {
+    menu->addAction(action("view.grid"));
+    menu->addSection(tr("Grid spacing"));
+    const double spacing = m_settings.value("view/gridSpacing", 0).toDouble();
+    for (double shown : {0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0}) {  // in the shown unit
+      const double mm = units::fromDisplay(units::Kind::Length, shown);
+      QAction* a = menu->addAction(shown == 0 ? tr("Automatic") : units::compact(units::Kind::Length, mm));
+      a->setCheckable(true);
+      a->setChecked(std::abs(spacing - mm) < 1e-9);
+      connect(a, &QAction::triggered, this, [this, mm] {
+        m_viewport->configureGrid(mm, m_settings.value("view/gridExtent", 100).toDouble());
+        if (!action("view.grid")->isChecked()) action("view.grid")->setChecked(true);
+      });
+    }
+  } else if (id == "view.polarSnap") {
+    menu->addSection(tr("Angle step"));
+    const double step = m_settings.value("sketch/angleStep", 15).toDouble();
+    for (double deg : {5.0, 10.0, 15.0, 22.5, 30.0, 45.0, 90.0}) {
+      QAction* a = menu->addAction(units::compact(units::Kind::Angle, deg));
+      a->setCheckable(true);
+      a->setChecked(std::abs(step - deg) < 1e-9);
+      connect(a, &QAction::triggered, this, [this, deg] {
+        m_settings.setValue("sketch/angleStep", deg);
+        if (!action("view.polarSnap")->isChecked()) action("view.polarSnap")->setChecked(true);
+      });
+    }
+  }
+  menu->addSeparator();
+  static const QHash<QString, QPair<QString, QString>> pages{{"view.gridSnap", {"grid", "view/gridSpacing"}}, {"view.polarSnap", {"sketch", "sketch/angleStep"}}};
+  const auto page = pages.value(id, {"sketch", id});
+  menu->addAction(icons::themed("settings", 16), id == "view.gridSnap" ? tr("Grid settings…") : tr("Snap settings…"), this,
+                  [this, page] { PreferencesDialog::open(this, page.first, page.second); });
+  menu->popup(button->mapToGlobal(QPoint(0, 0)) - QPoint(0, menu->sizeHint().height()));
 }
 
 // The shown length unit (UI-123), live: the document's units op, or the session's in viewer mode. A click offers the
@@ -123,6 +245,8 @@ void MainWindow::buildUnitsButton() {
     radians->setCheckable(true);
     radians->setChecked(d.radians);
     connect(radians, &QAction::toggled, this, [](bool on) { units::setPrecision(units::current().decimals, on, units::current().fraction); });
+    menu->addSeparator();
+    menu->addAction(icons::themed("settings", 16), tr("Units and precision…"), this, [this] { PreferencesDialog::open(this, "units"); });
   });
   connect(m_doc, &AppDocument::aboutToReplace, this, [] { units::setSessionUnit({}); });
   connect(m_doc, &AppDocument::changed, this, [this] {
@@ -144,7 +268,7 @@ void MainWindow::setDocumentUnit(const std::string& unit) {
   if (!m_doc->hasDocument) return;
   if (m_doc->browse) {
     units::setSessionUnit(unit == units::documentUnit() ? std::string() : unit);
-    statusBar()->showMessage(tr("Lengths are shown in %1; the file is not changed (viewer mode).").arg(units::unitName(unit).toLower()), 6000);
+    resultToast(tr("Lengths are shown in %1; the file is not changed (viewer mode).").arg(units::unitName(unit).toLower()));
     return;
   }
   if (unit == m_doc->scene.units) return;
@@ -163,9 +287,19 @@ void MainWindow::updateTitle() {
   for (const auto& u : m_doc->scene.unresolved)
     if (opad::Document::known_type(u.op_type) && ++others <= 10) tip << QString("%1: %2").arg(QString::fromStdString(u.op_type), i18n::t(QString::fromStdString(u.reason)));
   if (others > 10) tip << tr("… and %1 more").arg(others - 10);
+  tip << path;  // the whole of it, last: the label elides the folder
   m_statusPath->setToolTip(tip.join('\n'));
-  if (!m_doc->hasDocument) m_statusHover->setText(tr("File › Open a design file (OPAD, STEP, STL, 3MF, DXF, …), or drop one here"));
-  else if (m_statusHover->text() == tr("File › Open a design file (OPAD, STEP, STL, 3MF, DXF, …), or drop one here")) m_statusHover->clear();
+  const QString start = tr("File › Open a design file (OPAD, STEP, STL, 3MF, DXF, …), or drop one here");
+  if (!m_doc->hasDocument) setPrompt(start);
+  else if (m_promptText == start) setPrompt({});
+}
+
+// The prompt: a status-bar message while it lasts (any showMessage; the status bar no longer hides the path for it),
+// else what the running tool waits for.
+void MainWindow::setPrompt(const QString& text) {
+  m_promptText = text;
+  const QString message = statusBar()->currentMessage();
+  m_statusPrompt->setText(message.isEmpty() ? text : message);
 }
 
 QString MainWindow::newerRecords() const {

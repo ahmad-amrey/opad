@@ -12,6 +12,7 @@
 #include <QStyle>
 #include <algorithm>
 
+#include "HelpClip.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
 
@@ -351,6 +352,7 @@ void ToolStepsPanel::setSteps(const QList<ToolStep>& steps, const QString& hover
     for (QWidget* w : {static_cast<QWidget*>(ring), static_cast<QWidget*>(label), static_cast<QWidget*>(row)}) w->show();  // counted by stepsHeight() at once
     row->ensurePolished();  // its style sheet's border too
   }
+  if (m_guide) m_guide->setWaiting(int(std::find_if(steps.begin(), steps.end(), [](const ToolStep& s) { return s.picked.isEmpty(); }) - steps.begin()), int(steps.size()));
   emit contentSizeChanged();
 }
 
@@ -359,6 +361,16 @@ void ToolStepsPanel::setSteps(const QList<ToolStep>& steps, const QString& hover
 int ToolStepsPanel::stepsHeight(int width) const {
   m_body->layout()->invalidate();
   return m_body->layout()->totalHeightForWidth(std::max(1, width));
+}
+
+void ToolStepsPanel::setGuide(const QString& command) {
+  if (!m_guide) {
+    m_guide = new ToolGuide(m_body);
+    m_guide->setContentsMargins(8, 0, 8, 0);
+    static_cast<QVBoxLayout*>(m_body->layout())->insertWidget(0, m_guide);
+    connect(m_guide, &ToolGuide::resized, this, &ToolStepsPanel::contentSizeChanged);
+  }
+  m_guide->setCommand(command);
 }
 
 void ToolStepsPanel::setSummary(const QString& title, const QString& subtitle, const QString& state) {

@@ -42,7 +42,7 @@ void MainWindow::resolveCurrentAnnotation() {
   std::string id = m_annotations->currentOpId();
   if (id.empty()) id = m_timeline->currentOp();
   const opad::Op* op = id.empty() ? nullptr : m_doc->doc.find_op(id);
-  if (!op || (op->type != "annotation" && op->type != "measurement")) throw opad::Error("Select a note in the Annotations panel or on the timeline first.");
+  if (!op || (op->type != "annotation" && op->type != "measurement")) throw opad::UserHint("Select a note in the Annotations panel or on the timeline first.");
   deleteOp(id);
 }
 

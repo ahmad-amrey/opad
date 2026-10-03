@@ -28,6 +28,12 @@ bool typesValue(const QKeySequence&);
 void suspendOutsideSketch(const QList<QAction*>&,bool sketching);
 QKeySequence binding(const QAction*);
 void bind(QAction*,const QKeySequence&);
+// Second keys a command answers to while it keeps its default (UI-111): Redo on Ctrl+Shift+Z beside Ctrl+Y. The editor
+// shows and changes the first key; a command given another key by the user has that key alone.
+QList<QKeySequence> alternates(const QString& id);
+// Drops every alternate that another command's key overlaps (Qt fires neither of two equal shortcuts): after all
+// commands are made and after the editor applies.
+void settleAlternates(const QList<QAction*>& actions);
 }
 
 class ShortcutEditor : public QDialog {

@@ -6,19 +6,16 @@
 #include "RecoveryManager.hpp"
 
 #include <QActionGroup>
-#include <QCheckBox>
-#include <QDialog>
-#include <QDialogButtonBox>
-#include <QDoubleSpinBox>
-#include <QInputDialog>
+#include <QDir>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QStatusBar>
 #include <QToolBar>
-#include <QVBoxLayout>
 
+#include "GuidedTool.hpp"
 #include "I18n.hpp"
+#include "Preferences.hpp"
 #include "Icons.hpp"
 #include "KicadBoards.hpp"
 #include "opad/design/feature.hpp"
@@ -26,27 +23,19 @@
 void MainWindow::buildToolsActions() {
   addAction("tools.commands", tr("Search commands"), "search", QKeySequence("S"), [this] {
     CommandPalette p(m_actions, this);
-    p.move(mapToGlobal(QPoint(width() / 2 - 280, 180)));
+    p.adjustSize();
+    p.move(mapToGlobal(QPoint((width() - p.width()) / 2, 180)));
     p.exec();
   });
   addAction("tools.shortcuts", tr("Keyboard shortcuts…"), "", QKeySequence("Ctrl+K"), [this] { ShortcutEditor(m_actions, this).exec(); });
-  addAction("tools.author", tr("Annotation author..."), "", QKeySequence(), [this] {
-    bool ok = false;
-    QString name = QInputDialog::getText(this, tr("Annotation author"), tr("Name recorded on annotations and changes:"),
-        QLineEdit::Normal, m_settings.value("user/name", QString::fromStdString(opad::default_author())).toString(), &ok);
-    if (ok) m_settings.setValue("user/name", name.trimmed());
-  });
+  // Both are rows of Preferences now (UI-110): the commands open it there.
+  addAction("tools.author", tr("Annotation author..."), "", QKeySequence(), [this] { PreferencesDialog::open(this, "general", "user/name"); });
   m_doc->setUndoLimit(m_settings.value("edit/undoDepth", 50).toInt());
-  addAction("tools.undodepth", tr("Undo history…"), "", QKeySequence(), [this] {
-    bool ok = false;
-    const int n = QInputDialog::getInt(this, tr("Undo history"), tr("Steps kept for undo (1–1000):"), m_doc->undoLimit(), 1, 1000, 1, &ok);
-    if (!ok) return;
-    m_settings.setValue("edit/undoDepth", n);
-    m_doc->setUndoLimit(n);
-  });
+  addAction("tools.undodepth", tr("Undo history…"), "", QKeySequence(), [this] { PreferencesDialog::open(this, "general", "edit/undoDepth"); });
   addAction("tools.cache", tr("Clear tessellation cache"), "", QKeySequence(), [this] {
     opad::json r = opad::commands::run("cache", opad::json{{"action", "clear"}});
-    statusBar()->showMessage(tr("Cache cleared: %1").arg(QString::fromStdString(r["dir"].get<std::string>())), 4000);
+    const QString dir = QString::fromStdString(r["dir"].get<std::string>());
+    resultToast(tr("Cache cleared: %1").arg(QDir::toNativeSeparators(dir)), dir);
   });
   auto help = [this](const QString& id, const QString& label, const QStringList& keywords, std::function<void()> fn) {
     CommandInfo info;  // with the words the palette finds it by
@@ -73,7 +62,7 @@ void MainWindow::buildMenus() {
   m_recentMenu->setObjectName("recent");
   add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
-  add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
+  add(edit, {"edit.undo", "edit.redo", "edit.repeat", "-", "edit.selectall", "edit.invert", "edit.selectparent", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = m_viewMenu = menuBar()->addMenu(tr("&View"));
   add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
@@ -244,7 +233,7 @@ void MainWindow::buildRibbon() {
   });
   // The compact Select control: the filters as icons with their keys, the rest of selecting under "Select ▾".
   auto* selectMore = new QMenu(this);
-  selectMore->addActions(acts({"select.through", "select.similar", "edit.selectparent"}));
+  selectMore->addActions(acts({"edit.selectall", "edit.invert", "select.through", "select.similar", "edit.selectparent"}));
   m_ribbon->setSelectFilters(acts({"select.bodies", "select.faces", "select.edges", "select.vertices"}), {"1", "2", "3", "4"}, selectMore);
   // The tab row's cluster: quick access (Save, Undo ▾, Redo ▾), search, the areas' widgets, settings.
   m_ribbon->addQuickAction(action("file.save"));
@@ -252,50 +241,21 @@ void MainWindow::buildRibbon() {
   m_ribbon->addQuickAction(action("edit.redo"), historyMenu(false));
   m_ribbon->setSearchAction(action("tools.commands"));
   QAction* settingsAction = addAction("tools.settings", tr("Settings"), "settings", QKeySequence(), [] {});
+  // The gear menu: Preferences (UI-110) for everything that is set once, then the switches used every day.
   auto* settings = new QMenu(this);
+  settings->addAction(action("tools.preferences"));
+  settings->addAction(action("tools.shortcuts"));
+  settings->addSeparator();
   settings->addAction(action("view.dark"));
-  settings->addAction(tr("Autosave and recovery"),this,[this]{m_recovery->settings();});
-  settings->addAction(tr("Recover documents"),this,[this]{m_recovery->offerRecovery();});
-  settings->addAction(tr("AI integration"),this,[this]{m_agent->settings();});
-  settings->addAction(tr("Agent activity"),this,[this]{m_agent->showActivity();});
-  auto* quality = settings->addMenu(tr("Rendering quality"));
-  auto* qualityGroup = new QActionGroup(quality);
-  const QStringList qualities = {tr("Draft"), tr("Studio"), tr("Realistic shadows")};
-  for (int i = 0; i < qualities.size(); ++i) {
-    auto* a = quality->addAction(qualities[i]);
-    a->setCheckable(true); qualityGroup->addAction(a);
-    a->setChecked(Viewport::savedRenderQuality() == i);
-    connect(a, &QAction::triggered, this, [this, i] { m_viewport->setRenderQuality(i); });
-  }
-  quality->setToolTipsVisible(true);
-  settings->addAction(tr("Hover highlighting"),this,[this]{
-    QDialog dialog(this);dialog.setWindowTitle(tr("Hover highlighting"));auto* layout=new QVBoxLayout(&dialog);
-    auto* enabled=new QCheckBox(tr("Fade hover highlight"),&dialog);enabled->setChecked(m_settings.value("view/hoverFade",true).toBool());layout->addWidget(enabled);
-    auto* seconds=new QDoubleSpinBox(&dialog);seconds->setRange(.1,60);seconds->setSuffix(tr(" seconds"));seconds->setValue(m_settings.value("view/hoverFadeSeconds",5).toDouble());layout->addWidget(seconds);
-    auto* buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog);layout->addWidget(buttons);connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
-    if(dialog.exec()==QDialog::Accepted)m_viewport->setHoverFade(enabled->isChecked(),seconds->value());
-  });
   settings->addAction(action("view.cubeEdgesCorners"));
-  for (auto* a : quality->actions()) a->setToolTip(tr("Ray tracing requires a compatible OpenGL driver; Studio is used when unavailable."));
-  auto* background = settings->addMenu(tr("Scene background"));
-  auto* backgroundGroup = new QActionGroup(background);
-  const QStringList backgrounds = {tr("Theme"), tr("Studio gradient"), tr("White"), tr("Dark slate")};
-  for (int i = 0; i < backgrounds.size(); ++i) {
-    auto* a = background->addAction(backgrounds[i]);
-    a->setCheckable(true); backgroundGroup->addAction(a);
-    a->setChecked(Viewport::savedSceneBackground() == i);
-    connect(a, &QAction::triggered, this, [this, i] { m_viewport->setSceneBackground(i); });
-  }
   QMenu* navMenu = settings->addMenu(tr("Navigation preset"));
   for (QAction* a : m_actions) if (a->objectName().startsWith("nav.")) navMenu->addAction(a);
+  QMenu* panels = settings->addMenu(tr("Panels"));
+  panels->addActions(acts({"panel.browser", "panel.annotations", "panel.timeline", "panel.reset"}));
   settings->addSeparator();
-  // Viewer mode for STEP, STL, DXF and the rest; off, they open as editable, unsaved documents (slower: prepared for saving).
-  auto* viewerMode = settings->addAction(tr("Open other formats read-only (viewer mode)"));
-  viewerMode->setCheckable(true);
-  viewerMode->setChecked(m_doc->viewerOpens);
-  viewerMode->setToolTip(tr("STEP, IGES, STL, 3MF, OBJ, DXF, SVG and the other formats open read-only and fast; Save makes them editable OPAD documents."));
-  connect(viewerMode, &QAction::toggled, this, [this](bool on) { m_doc->viewerOpens = on; m_settings.setValue("files/viewerMode", on); });
-  if (associations::supported()) settings->addAction(tr("File types…"), this, [this] { FileTypesDialog(this).exec(); });
+  settings->addAction(tr("Recover documents"),this,[this]{m_recovery->offerRecovery();});
+  settings->addAction(tr("Agent activity"),this,[this]{m_agent->showActivity();});
+  settings->addSeparator();
   legal::applySettings();  // the ODA File Converter is opt-in (its terms: non-members non-commercial only)
   CommandInfo odaInfo;
   odaInfo.id = "files.useOda";
@@ -309,32 +269,6 @@ void MainWindow::buildRibbon() {
   connect(oda, &QAction::toggled, this, [this, oda](bool on) { legal::setUseOda(this, oda, on); });
   // KiCad boards: what is built, where footprints' 3D models are looked for, downloads (read at the next open).
   settings->addAction(tr("KiCad boards…"), this, [this] { KicadDialog(this, false).exec(); });
-  settings->addAction(action("panel.browser"));
-  auto* autoBrowser = settings->addAction(tr("Auto-hide scene browser"));
-  autoBrowser->setCheckable(true);
-  autoBrowser->setChecked(m_settings.value("ui/browserAutoHide", true).toBool());
-  connect(autoBrowser, &QAction::toggled, this, [this](bool on) { m_browserOverlay->setAutoHide(on); });
-  settings->addAction(action("panel.annotations"));
-  settings->addAction(action("panel.timeline"));
-  settings->addAction(action("panel.reset"));
-  settings->addSeparator();
-  QMenu* langMenu = settings->addMenu(tr("Language"));
-  auto* langGroup = new QActionGroup(langMenu);
-  for (const i18n::Language& l : i18n::languages()) {
-    QAction* a = langMenu->addAction(l.name);
-    a->setCheckable(true);
-    a->setChecked(l.code == i18n::current());
-    langGroup->addAction(a);
-    connect(a, &QAction::triggered, this, [this, code = l.code] {
-      i18n::setLanguage(code);
-      if (code != i18n::current()) QMessageBox::information(this, tr("Language"), tr("The language changes the next time OPAD starts."));
-    });
-  }
-  settings->addSeparator();
-  settings->addAction(action("tools.author"));
-  settings->addAction(action("tools.shortcuts"));
-  settings->addAction(action("tools.undodepth"));
-  settings->addAction(action("tools.cache"));
   m_ribbon->setSettingsMenu(settingsAction, settings);
   auto* host = new QToolBar(tr("Ribbon"), this);
   host->setObjectName("ribbonHost");

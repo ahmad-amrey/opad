@@ -216,7 +216,10 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
 }
 
 void MainWindow::runExport(const opad::json& args, const QString& out) {
-  exportJob(m_doc, m_jobs, this, args, out, [this](const opad::json& result) { m_lastExport = result; });
+  exportJob(m_doc, m_jobs, this, args, out, [this, out](const opad::json& result) {
+    m_lastExport = result;
+    if (!result.contains("error")) resultToast(tr("Exported %1 objects to %2").arg(result.value("bodies", 0)).arg(QFileInfo(out).fileName()), QFileInfo(out).absolutePath());
+  });
 }
 
 void exportJob(AppDocument* doc, JobRunner* jobs, QMainWindow* window, const opad::json& args, const QString& out, std::function<void(const opad::json&)> done) {

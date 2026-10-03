@@ -19,6 +19,7 @@
 #include <QWidget>
 
 #include <array>
+#include <functional>
 
 #include "Theme.hpp"
 
@@ -215,6 +216,11 @@ class RibbonBar : public QWidget {
   RibbonPage* page(const QString& tabId) const;
   RibbonPage* currentPage() const;
   QTabBar* tabBar() const { return m_tabs; }
+  // Every command button the ribbon makes (tools and menu buttons, filters, quick access, search, settings) is handed to
+  // this with its command id as it is made: the window attaches the hover cards there (RichTip::attach, UI-106).
+  using CommandButtonHook = std::function<void(QWidget* button, const QString& commandId)>;
+  static void setCommandButtonHook(CommandButtonHook hook);
+  static void commandButton(QWidget* button, const QString& commandId);  // runs the hook (none set: nothing)
 
  signals:
   void workspaceChanged(int index);

@@ -11,6 +11,7 @@ class SketchEditor;
 class QPushButton;
 class QCheckBox;
 class QTabWidget;
+class ToolGuide;
 class SketchPanel : public QWidget {
   Q_OBJECT
  public:
@@ -39,6 +40,7 @@ class SketchPanel : public QWidget {
   QFormLayout* m_fields;
   QLabel *m_status, *m_state;
   ToolStepsPanel* m_steps;
+  ToolGuide* m_guide;  // UI-107: the tool's animated guide above its steps
   QTreeWidget* m_constraints;
   QString m_shown;
   bool m_refreshing = false;

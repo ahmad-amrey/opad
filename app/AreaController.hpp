@@ -96,6 +96,10 @@ class AreaServices {
   // Makes these the selection as if they were picked and tells the window and the areas (selectionChanged): faces, edges
   // and vertices in the view (its filter must be picking them), bodies and components as from the browser.
   void select(const std::vector<opad::Ref>& refs);
+  // The command whose tool runs now: a guided tool ("inspect.distance"), a check ("inspect.printcheck"), a note or hand
+  // drawing ("annotate.add"), a sketch tool ("sketch.line"), a feature's panel ("design.extrude"), a sketch's plane pick
+  // ("design.sketch"); empty when none.
+  QString activeCommand() const;
   void positionOverlays();  // lay the overlays out again (the areas' positionOverlays too)
   // The workspace shown, by RibbonLayout id: "review", "design", "sketch" (contextual, while a sketch is open) or an
   // area's; from statusWidgets on. setWorkspace("drawings") is what its command "workspace.drawings" does: an unknown id or

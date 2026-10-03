@@ -14,6 +14,8 @@
 
 #include "PanelFooter.hpp"
 
+class ToolGuide;
+
 struct ToolStep {
   QString label;   // "Select first face": follows the active selection filter
   QString picked;  // the picked target, empty while the step is open
@@ -59,6 +61,9 @@ class ToolStepsPanel : public QWidget {
   void setFooter(bool visible, bool canPin);
   void setComponentsState(bool visible, bool checked);
   void setAnchorOptions(const QStringList& labels, int current);
+  // UI-107: the command's animated guide above the steps, looping the waiting step (made on first use).
+  void setGuide(const QString& command);
+  ToolGuide* guide() const { return m_guide; }
   QSize preferredSize(int width);
   int stepsHeight(int width) const;  // what the scrolled part needs at that width, new step rows counted at once
   PanelFooter* footer() const { return m_footer; }
@@ -83,5 +88,6 @@ class ToolStepsPanel : public QWidget {
   QPushButton* m_copy;
   QScrollArea* m_scroll;
   QWidget* m_body;
+  ToolGuide* m_guide = nullptr;
   int m_nameWidth = 0, m_keyWidth = 80, m_valueWidth = 120;
 };

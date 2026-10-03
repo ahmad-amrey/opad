@@ -29,8 +29,12 @@ ProgressStrip::ProgressStrip(QWidget* parent) : QWidget(parent) {
   m_title->setObjectName("progressTitle");
   // The title takes every spare pixel (its width comes from the layout, not the text, so the bars never
   // shift as the phase changes); text longer than that is elided in the middle.
-  m_title->setMinimumWidth(240);
+  m_title->setMinimumWidth(80);  // elided: the prompt and the hover keep their room beside the strip
   m_title->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+  m_others = new QLabel(this);
+  m_others->setObjectName("progressOthers");
+  m_others->setFont(theme::mono(11));
+  m_others->hide();
   m_phaseBar = makeThinBar(this);
   m_phasePct = new QLabel(this);
   m_phasePct->setObjectName("tertiary");
@@ -50,6 +54,7 @@ ProgressStrip::ProgressStrip(QWidget* parent) : QWidget(parent) {
   m_cancel->setFocusPolicy(Qt::NoFocus);
   m_cancel->setCursor(Qt::PointingHandCursor);
   l->addWidget(m_title, 1);
+  l->addWidget(m_others);
   l->addWidget(m_phaseBar);
   l->addWidget(m_phasePct);
   l->addSpacing(16);
@@ -111,4 +116,18 @@ void ProgressStrip::setOverall(int percent) {
   m_overallPct->setText(QString::number(std::clamp(percent, 0, 100)) + "%");
 }
 
-void ProgressStrip::finish() { hide(); }
+void ProgressStrip::setOthers(const QStringList& titles) {
+  m_others->setVisible(!titles.isEmpty());
+  m_others->setText(titles.isEmpty() ? QString() : QStringLiteral("+%1").arg(titles.size()));
+  QStringList lines{tr("Also running:")};
+  for (const QString& t : titles) lines << QString::fromUtf8("· ") + t;
+  m_others->setToolTip(titles.isEmpty() ? QString() : lines.join(QChar('\n')));
+  m_others->setAccessibleName(titles.isEmpty() ? QString() : tr("%1 more jobs running").arg(titles.size()));
+}
+
+QString ProgressStrip::othersText() const { return m_others->isVisibleTo(this) ? m_others->text() : QString(); }
+
+void ProgressStrip::finish() {
+  setOthers({});
+  hide();
+}

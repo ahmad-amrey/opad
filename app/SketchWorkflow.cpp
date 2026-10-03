@@ -359,6 +359,13 @@ void SketchEditor::selectType() {
   rebuild();emit changed();
 }
 
+void SketchEditor::selectAll(bool invert) {
+  invalidatePreview();
+  std::vector<int> picked;
+  for(const auto& e:m_sk.entities)if(selectable(e.id) && (!invert || std::find(m_sel.begin(),m_sel.end(),e.id)==m_sel.end()))picked.push_back(e.id);
+  m_sel=std::move(picked);rebuild();emit changed();
+}
+
 void SketchEditor::redefinePlane(const opad::json& plane,const opad::Frame& frame) {
   begin_change();
   const auto normal=m_frame.normal();double separation=0,orientation=0;

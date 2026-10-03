@@ -22,6 +22,7 @@ void SketchEditor::captureRecovery(std::function<void(opad::json,const QString&)
   const auto total=points+entities+constraints+images+patterns;
   copy->points.reserve(points);copy->entities.reserve(entities);copy->constraints.reserve(constraints);copy->id_watermark=m_sk.id_watermark;
   QPointer<SketchEditor> self(this);
+  m_jobs->backgroundNext();
   m_jobs->sliced(tr("Capturing sketch"),[=,this](Job& job){
     if(!m_active || session!=m_session || revision!=m_modelRevision || busy() || m_dragging || m_inChange){*valid=false;return false;}
     if(*index>=total)return false;
@@ -36,6 +37,7 @@ void SketchEditor::captureRecovery(std::function<void(opad::json,const QString&)
   },[=,this](bool ok){
     if(!self)return;
     if(!ok || !*valid || session!=m_session || revision!=m_modelRevision){done({},tr("Sketch changed during capture; retrying later."));return;}
+    m_jobs->backgroundNext();
     m_jobs->async(tr("Preparing sketch recovery"),[copy,state](Progress){(*state)["geometry"]=copy->to_json();},
       [self,state,done](bool complete,const QString& error){if(self)done(complete?std::move(*state):opad::json{},error);});
   });

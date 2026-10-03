@@ -102,6 +102,19 @@ int RibbonLayout::index(const QString& id) const {
   return -1;
 }
 
+namespace {
+RibbonBar::CommandButtonHook& commandButtonHook() {
+  static RibbonBar::CommandButtonHook hook;
+  return hook;
+}
+}  // namespace
+
+void RibbonBar::setCommandButtonHook(CommandButtonHook hook) { commandButtonHook() = std::move(hook); }
+
+void RibbonBar::commandButton(QWidget* button, const QString& commandId) {
+  if (commandButtonHook() && !commandId.isEmpty()) commandButtonHook()(button, commandId);
+}
+
 // ---------------------------------------------------------------- SegmentButton
 SegmentButton::SegmentButton(QAction* action, const QString& hint, bool primary, QWidget* parent) : QToolButton(parent), m_hint(hint) {
   setObjectName(primary ? "segmentPrimary" : "segment");
@@ -111,6 +124,7 @@ SegmentButton::SegmentButton(QAction* action, const QString& hint, bool primary,
   setAutoRaise(true);
   setFocusPolicy(Qt::NoFocus);
   setFont(theme::ui(12));
+  RibbonBar::commandButton(this, action->objectName());
 }
 
 void SegmentButton::setIconOnly(bool on) {
@@ -372,6 +386,7 @@ RibbonGroup::RibbonGroup(const RibbonLayout::Group& group, QWidget* parent) : QW
         b->setPopupMode(QToolButton::MenuButtonPopup);
       }
     }
+    RibbonBar::commandButton(b, a->objectName());  // disabled buttons and menu buttons included
     m_menu->addAction(a);
     for (QAction* v : item.variants)
       if (v) m_menu->addAction(v);
@@ -816,6 +831,7 @@ QToolButton* RibbonBar::addQuickAction(QAction* a, QMenu* steps) {
     b->setPopupMode(QToolButton::MenuButtonPopup);
   }
   b->setFixedSize(steps ? 38 : 24, 24);
+  commandButton(b, a->objectName());
   m_quick->addWidget(b);
   fitTabRow();
   return b;
@@ -830,6 +846,7 @@ void RibbonBar::addTabRowWidget(QWidget* w) {
 void RibbonBar::setSearchAction(QAction* a) {
   m_search = new SearchField(m_cluster);
   connect(m_search, &QAbstractButton::clicked, a, &QAction::trigger);
+  commandButton(m_search, a->objectName());
   m_searchSlot->addWidget(m_search);
   fitTabRow();
 }
@@ -838,6 +855,7 @@ void RibbonBar::setSettingsMenu(QAction* a, QMenu* menu) {
   auto* b = new QToolButton(m_cluster);
   b->setObjectName("ribbonSettings");
   b->setDefaultAction(a);
+  commandButton(b, a->objectName());
   b->setToolButtonStyle(Qt::ToolButtonIconOnly);
   b->setIconSize(QSize(18, 18));
   b->setAutoRaise(true);

@@ -45,6 +45,7 @@ class RecoveryManager : public QObject {
   // newer ones when it has some; RestoreCopy: an unsaved copy, no path; MergeCurrent: the snapshot's changes added to the
   // open document (the same one) as one undo step; Compare: compareRequested; Discard: the snapshot deleted.
   void answerOffer(int result,const Entry& entry);
+  void configureTimer();  // after recovery/enabled or recovery/minutes changed (Preferences)
  signals:
   void status(const QString& text);
   void answered(bool ok,const QString& text);  // what an answer did, or why it could not (also shown)
@@ -57,7 +58,6 @@ class RecoveryManager : public QObject {
   void mergeInto(const Entry&,std::function<void(bool,QString)> done);
   bool sameDocument(const Entry&) const;  // the snapshot is of the open document
   void afterCapture(std::function<void()> fn,int tries=100);  // once no snapshot or save is copying the document (10 s at most)
-  void configureTimer();
   void discardCurrent();
   void requestCheckpoint();
   AppDocument* m_doc;

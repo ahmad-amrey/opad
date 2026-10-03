@@ -20,7 +20,7 @@
 #include "opad/drawing_io.hpp"
 
 void MainWindow::buildFileActions() {
-  addAction("file.new", tr("&New document"), "doc", QKeySequence::New, [this] { if (maybeSave()) m_doc->newDocument(); });
+  addAction("file.new", tr("&New document"), "doc", QKeySequence::New, [this] { if (maybeSave([this] { action("file.new")->trigger(); })) m_doc->newDocument(); });
   addAction("file.open", tr("&Open…"), "open", QKeySequence("Ctrl+O"), [this] {
     // openPath asks about unsaved changes once a file is chosen (asking here too asked twice after Discard).
     QString p = QFileDialog::getOpenFileName(this, tr("Open"), m_settings.value("ui/lastDir").toString(),
@@ -41,7 +41,7 @@ void MainWindow::buildFileActions() {
     const QString suffix = QFileInfo(p).suffix().toLower();
     if (suffix == "dxf" || suffix == "svg" || suffix == "dwg") return importDrawing(p, parent);
     if (suffix == "kicad_pcb" && KicadDialog(this, true).exec() != QDialog::Accepted) return;
-    beginLoad([this, p] { addRecent(p); m_viewport->fitWhenReady(); });
+    beginLoad([this, p] { addRecent(p); m_viewport->fitWhenReady(); }, tr("Importing %1").arg(QFileInfo(p).fileName()), tr("Imported %1 · %2 bodies").arg(QFileInfo(p).fileName()));
     m_doc->startImport(p, parent, {}, {}, suffix == "kicad_pcb" && KicadDialog::linked());  // KiCad's export: linked to its board
   });
   addAction("file.importdoc", tr("Save as OPAD document…"), "save", QKeySequence("Ctrl+Shift+E"), [this] { if (m_doc->browse) saveViewerAs(); });
@@ -62,7 +62,7 @@ void MainWindow::buildFileActions() {
   addAction("file.export", tr("&Export…"), "export", QKeySequence("Ctrl+E"), [this] { exportDialog(); });
   addAction("file.screenshot", tr("Save screens&hot…"), "export", QKeySequence("Ctrl+Shift+P"), [this] { screenshot(); });
   addAction("file.close", tr("&Close document"), "close", QKeySequence("Ctrl+W"), [this] {
-    if (!m_doc->hasDocument || m_doc->loading || !maybeSave()) return;
+    if (!m_doc->hasDocument || m_doc->loading || !maybeSave([this] { action("file.close")->trigger(); })) return;
     m_viewport->clearSelection();
     m_doc->closeDocument();  // AppDocument::changed -> showDocument(false) -> the start screen
     statusBar()->showMessage(tr("Document closed"), 4000);
@@ -129,7 +129,8 @@ void MainWindow::makeEditable(const QString& savePath, std::function<void()> the
     }
     updateViewerCard();
     if (savePath.isEmpty()) {
-      statusBar()->showMessage(tr("Editable copy: save it to keep your changes"), 8000);
+      statusBar()->clearMessage();
+      m_toasts->toast(tr("Editable copy: save it to keep your changes"), tr("Save"), [this] { action("file.save")->trigger(); }, 8000);
       if (then) then();
       return;
     }
@@ -138,7 +139,8 @@ void MainWindow::makeEditable(const QString& savePath, std::function<void()> the
         if (!saved) { QMessageBox::warning(this, tr("OPAD"), i18n::t(why)); return; }
         addRecent(savePath);
         m_viewPath = QFileInfo(savePath).absoluteFilePath();
-        statusBar()->showMessage(tr("Saved %1; it can be edited now").arg(QDir::toNativeSeparators(savePath)), 8000);
+        statusBar()->clearMessage();
+        resultToast(tr("Saved %1; it can be edited now").arg(QFileInfo(savePath).fileName()), QFileInfo(savePath).absolutePath());
         if (then) then();
       });
     });
@@ -159,7 +161,7 @@ void MainWindow::screenshot() {
   if (!out.endsWith(".png", Qt::CaseInsensitive)) out += ".png";
   QImage img = m_viewport->grabImage();
   if (img.isNull() || !img.save(out)) throw opad::Error("Screenshot failed");
-  statusBar()->showMessage(tr("Saved %1").arg(out), 5000);
+  resultToast(tr("Saved %1").arg(QFileInfo(out).fileName()), QFileInfo(out).absolutePath());
 }
 
 // ---------------------------------------------------------------- recent files
@@ -189,11 +191,12 @@ void MainWindow::rebuildRecentMenu() {
 void MainWindow::openPath(const QString& path) {
   // A load already running is dropped (the next file wins, as when stepping through a folder); the document on screen
   // has not changed since it was asked about.
-  if (!m_doc->loading && !maybeSave()) return;
+  if (!m_doc->loading && !maybeSave([this, path] { openPath(path); })) return;
   if (m_doc->loading && m_loadJob) m_loadJob->cancel();
   if (m_doc->loading) m_doc->cancelLoad();
   m_settings.setValue("ui/lastDir", QFileInfo(path).absolutePath());
-  beginLoad([this, path] { m_viewPath=QFileInfo(path).absoluteFilePath(); addRecent(path); m_viewport->fitWhenReady(); updateViewerCard(); });
+  beginLoad([this, path] { m_viewPath=QFileInfo(path).absoluteFilePath(); addRecent(path); m_viewport->fitWhenReady(); updateViewerCard(); },
+            tr("Opening %1").arg(QFileInfo(path).fileName()), tr("Opened %1 · %2 bodies").arg(QFileInfo(path).fileName()));
   // A drawing is picked by its edges (see loadFinished): set before its bodies are displayed, so each is activated once.
   if (const QString suffix = QFileInfo(path).suffix().toLower(); suffix == "dxf" || suffix == "dwg" || suffix == "svg")
     m_viewport->setSelectionFilter(Viewport::SelFilter::Edge);
@@ -202,13 +205,15 @@ void MainWindow::openPath(const QString& path) {
 
 // ---------------------------------------------------------------- load progress
 // One job spans the document worker (reading/translating/building) and the viewport's tessellation.
-void MainWindow::beginLoad(std::function<void()> after) {
+void MainWindow::beginLoad(std::function<void()> after, const QString& title, const QString& done) {
   if (m_loadJob) m_loadJob->cancel();
   m_afterLoad = std::move(after);
+  m_loadDone = done;
   m_loadDocDone = false;
   m_meshTotal = m_meshRemaining = 0;
   m_viewport->resetMeshing();
-  m_loadJob = m_jobs->begin(tr("Loading…"), true);
+  m_loadJob = m_jobs->begin(title.isEmpty() ? tr("Loading…") : title, true);
+  m_loadShade->setStatus(m_loadJob->title(), QString(), -1);
   setLoading(true);
   // OPAD_BENCH_LOADSHOT=<prefix>: the status bar every 2 s while the load runs (<prefix>-<n>.png).
   if (const QString shot = qEnvironmentVariable("OPAD_BENCH_LOADSHOT"); !shot.isEmpty()) {
@@ -229,7 +234,7 @@ void MainWindow::beginLoad(std::function<void()> after) {
     m_afterLoad = nullptr;
     setLoading(false);
     if (!ok) {
-      if (err.contains("cancel", Qt::CaseInsensitive)) statusBar()->showMessage(tr("Load cancelled"), 4000);
+      if (err.contains("cancel", Qt::CaseInsensitive)) resultToast(tr("Load cancelled"));
       else QMessageBox::warning(this, tr("OPAD"), i18n::message(err));
     }
     if(ok) {
@@ -244,7 +249,7 @@ void MainWindow::beginLoad(std::function<void()> after) {
         } catch(const std::exception&) { /* Ignore stale settings from another version. */ }
       }
     }
-    if (int skipped = m_viewport->skippedCount()) statusBar()->showMessage(tr("%1 bodies were not tessellated (cancelled); reopen the file to show them").arg(skipped), 8000);
+    if (int skipped = m_viewport->skippedCount()) m_toasts->toast(tr("%1 bodies were not tessellated (cancelled); reopen the file to show them").arg(skipped), QString(), {}, 8000);
     if (m_benchSelect && !ok && !m_doc->hasDocument) {  // nothing to run the benches on: say so instead of walking an empty scene
       trace::log("bench: load failed: " + err);
       QTimer::singleShot(0, qApp, [] { QCoreApplication::exit(3); });
@@ -261,6 +266,7 @@ void MainWindow::setLoadPhase(const QString& phase, int pct) {
   if (trace::enabled()) trace::log(QStringLiteral("load phase: %1 (%2%)").arg(phase).arg(pct));
   m_loadJob->setPhase(phase, pct);
   m_loadJob->setOverall(overallPercent(phase, pct));
+  m_loadShade->setStatus(m_loadJob->title(), phase, pct);
 }
 
 // Maps a phase name + within-phase percent to an overall 0-100 across reading -> building -> tessellating.

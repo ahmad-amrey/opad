@@ -1,0 +1,145 @@
+// Bench of Preferences (UI-110); the window is Preferences.cpp, its command and pages PreferencesArea.cpp.
+#include "MainWindow.hpp"
+#include "BenchRegistry.hpp"
+#include "I18n.hpp"
+#include "Preferences.hpp"
+#include "Units.hpp"
+
+#include <QApplication>
+#include <QCheckBox>
+#include <QDoubleSpinBox>
+#include <QLabel>
+#include <QListWidget>
+#include <QMenu>
+#include <QMenuBar>
+#include <QRadioButton>
+#include <QSettings>
+#include <QSpinBox>
+#include <QStackedWidget>
+
+// OPAD_BENCH_PREFERENCES=<prefix> (a document with a box): Ctrl+, opens Preferences, not modal, with its pages in order;
+// the Edit menu ends in it and the gear menu is short and starts with it. The search keeps the pages with a match and
+// marks the matching rows; nothing found says so. Rows change what they stand for at once: Show the grid is the Grid
+// command (both ways), a fixed spacing reaches the grid, undo steps the document, decimals the units service, the
+// angle step and recovery minutes their settings, viewer mode the document, the navigation radio the preset, and the
+// cache size arrives from a worker. The old commands lead to their row (Undo history: General, focused). Saved as
+// <prefix>.general.png, <prefix>.search.png, <prefix>.sketch.png.
+OPAD_BENCH(OPAD_BENCH_PREFERENCES, preferences) {
+  const QString prefix = value;
+  auto failed = std::make_shared<QStringList>();
+  auto check = [failed](bool ok, const QString& what) {
+    trace::log(QString("bench: preferences: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    if (!ok) *failed << what;
+  };
+  auto finish = [failed] {
+    trace::log(QString("bench: preferences: %1").arg(failed->isEmpty() ? "PASS" : "FAIL: " + failed->join("; ")));
+    QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
+  };
+  QTimer::singleShot(600, &w, [=, &w] {
+    try {
+      QAction* open = w.action("tools.preferences");
+      check(open && open->shortcut() == QKeySequence("Ctrl+,") && open->menuRole() == QAction::PreferencesRole, "Preferences on Ctrl+, (the application menu's on macOS)");
+      QMenu* edit = nullptr;
+      for (QAction* top : w.menuBar()->actions())
+        if (top->menu() && top->menu()->actions().contains(w.action("edit.undo"))) edit = top->menu();
+      check(edit && edit->actions().last() == open, "the Edit menu ends in it");
+      QToolButton* gear = w.m_ribbon->findChild<QToolButton*>("ribbonSettings");
+      QStringList entries;
+      for (QAction* a : gear && gear->menu() ? gear->menu()->actions() : QList<QAction*>()) if (!a->isSeparator()) entries << QString(a->text()).remove('&');
+      check(gear && gear->menu() && gear->menu()->actions().first() == open && entries.size() <= 8, "the gear menu starts with it and keeps " + QString::number(entries.size()) + " entries: " + entries.join(", "));
+      open->trigger();
+      auto* dialog = w.findChild<PreferencesDialog*>("preferences");
+      check(dialog && dialog->isVisible() && !QApplication::activeModalWidget(), "it opens, not modal");
+      if (!dialog) return finish();
+      check(dialog->pageIds() == QStringList({"general", "display", "units", "sketch", "grid", "files", "recovery", "vcs", "keyboard", "ai"}), "the pages: " + dialog->pageIds().join(' '));
+      if (i18n::current() != "en") check(dialog->layoutDirection() == Qt::RightToLeft && dialog->windowTitle() != "Preferences", "in the UI language and direction");
+      dialog->grab().save(prefix + ".general.png");
+      // Search.
+      const QString snap = i18n::current() == "en" ? "snap" : QCoreApplication::translate("help", "Grid snapping").section(' ', 0, 0);
+      dialog->setSearch(snap);
+      const QStringList found = dialog->visiblePages();
+      check(found.contains("sketch") && found.contains("grid") && !found.contains("ai") && !found.contains("vcs"), "\"" + snap + "\" keeps the snapping pages: " + found.join(' '));
+      check(!dialog->marked().isEmpty() && dialog->marked().join('\n').contains(snap, Qt::CaseInsensitive), "and marks the rows: " + dialog->marked().join(" | "));
+      dialog->grab().save(prefix + ".search.png");
+      dialog->setSearch("zzqx");
+      check(dialog->visiblePages().isEmpty() && dialog->findChild<QStackedWidget*>()->isHidden(), "nothing found: no page, a note says so");
+      dialog->setSearch(QString());
+      check(dialog->visiblePages().size() == dialog->pageIds().size(), "cleared: every page again");
+      // Grid.
+      dialog->setPage("grid");
+      QWidget* grid = dialog->pageWidget("grid");
+      auto* show = grid->findChild<QCheckBox*>("view.grid");
+      const bool before = w.action("view.grid")->isChecked();
+      show->click();
+      check(w.action("view.grid")->isChecked() != before, "Show the grid is the Grid command");
+      w.action("view.grid")->trigger();
+      check(show->isChecked() == before, "and follows it back");
+      auto* automatic = grid->findChild<QCheckBox*>("view/gridAutomatic");
+      auto* spacing = grid->findChild<QDoubleSpinBox*>("view/gridSpacing");
+      if (automatic->isChecked()) automatic->click();
+      spacing->setValue(units::toDisplay(units::Kind::Length, 5));
+      check(std::abs(QSettings().value("view/gridSpacing").toDouble() - 5) < 1e-9, "a fixed spacing of 5 mm reaches the grid");
+      automatic->click();
+      check(QSettings().value("view/gridSpacing").toDouble() == 0, "automatic again");
+      // General: undo steps.
+      dialog->setPage("general");
+      auto* undo = dialog->pageWidget("general")->findChild<QSpinBox*>("edit/undoDepth");
+      undo->setValue(20);
+      check(w.m_doc->undoLimit() == 20, "undo steps: the document keeps 20");
+      undo->setValue(50);
+      // Units.
+      dialog->setPage("units");
+      auto* decimals = dialog->pageWidget("units")->findChild<QSpinBox*>("units/decimals");
+      const int places = units::current().decimals;
+      decimals->setValue(places == 2 ? 4 : 2);
+      check(units::current().decimals == (places == 2 ? 4 : 2), "decimal places reach the units service");
+      units::setPrecision(places, units::current().radians, units::current().fraction);
+      check(decimals->value() == places, "and show what it says");
+      // Sketch and snaps.
+      dialog->setPage("sketch");
+      auto* step = dialog->pageWidget("sketch")->findChild<QDoubleSpinBox*>("sketch/angleStep");
+      step->setValue(30);
+      check(QSettings().value("sketch/angleStep").toDouble() == 30, "the angle step");
+      dialog->grab().save(prefix + ".sketch.png");
+      step->setValue(15);
+      // Recovery, files, keyboard.
+      dialog->setPage("recovery");
+      dialog->pageWidget("recovery")->findChild<QSpinBox*>("recovery/minutes")->setValue(7);
+      check(QSettings().value("recovery/minutes").toInt() == 7, "recovery minutes");
+      dialog->pageWidget("recovery")->findChild<QSpinBox*>("recovery/minutes")->setValue(2);
+      dialog->setPage("files");
+      auto* viewer = dialog->pageWidget("files")->findChild<QCheckBox*>("files/viewerMode");
+      const bool opens = w.m_doc->viewerOpens;
+      viewer->click();
+      check(w.m_doc->viewerOpens != opens, "viewer mode reaches the document");
+      viewer->click();
+      dialog->setPage("keyboard");
+      dialog->pageWidget("keyboard")->findChild<QRadioButton*>("nav.solidworks")->click();
+      check(w.action("nav.solidworks")->isChecked() && w.m_viewport->navPreset() == Viewport::NavPreset::SolidWorks, "the navigation radio sets the preset");
+      dialog->pageWidget("keyboard")->findChild<QRadioButton*>("nav.fusion")->click();
+      // The old command leads to its row.
+      dialog->setPage("display");
+      w.action("tools.undodepth")->trigger();
+      QWidget* focused = dialog->pageWidget("general")->findChild<QWidget*>("edit/undoDepth");
+      check(dialog->page() == "general" && focused && focused->property("prefMatch").toBool(), "Undo history opens General at its row, marked");
+    } catch (const std::exception& e) {
+      check(false, QString::fromUtf8(e.what()));
+    }
+    // The cache size comes from a worker.
+    auto* timer = new QTimer(&w);
+    auto tries = std::make_shared<int>(0);
+    QObject::connect(timer, &QTimer::timeout, &w, [=, &w] {
+      auto* dialog = w.findChild<PreferencesDialog*>("preferences");
+      auto* info = dialog ? dialog->pageWidget("files")->findChild<QLabel*>("files/cacheInfo") : nullptr;
+      const bool measured = info && info->text() != QCoreApplication::translate("help", "Measuring…");
+      if (!measured && ++*tries < 100) return;
+      timer->stop();
+      check(measured, "the cache size from a worker: " + (info ? info->text() : QString()));
+      if (dialog) dialog->close();
+      check(dialog && !dialog->isVisible(), "Close");
+      finish();
+    });
+    timer->start(100);
+  });
+  return true;
+}

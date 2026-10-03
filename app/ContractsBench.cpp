@@ -322,7 +322,7 @@ OPAD_BENCH(OPAD_BENCH_RIBBON, ribbon) {
     iconSegments = iconSegments && filters[i]->iconOnly() && filters[i]->width() >= filters[i]->sizeHint().width() &&
                    filters[i]->toolTip().contains(QString::number(i + 1)) && filters[i]->defaultAction() == w.action(QStringList({"select.bodies", "select.faces", "select.edges", "select.vertices"})[i]);
   require(iconSegments && select->menu() &&
-              select->menu()->actions() == QList<QAction*>({w.action("select.through"), w.action("select.similar"), w.action("edit.selectparent")}) &&
+              select->menu()->actions() == QList<QAction*>({w.action("edit.selectall"), w.action("edit.invert"), w.action("select.through"), w.action("select.similar"), w.action("edit.selectparent")}) &&
               select->text().startsWith(QObject::tr("Select")),
           "Select control: the four filters as icons with their keys (the name in the tooltip), the rest under Select ▾");
   // What is wrong with the tab row as it shows: tabs cut, the cluster over them or outside the row, or out of reading order.

@@ -125,6 +125,7 @@ void AgentBridge::read(const std::shared_ptr<Session>& session){
   if(session->receiving || !session->input.contains('\n'))return;
   const auto end=session->input.indexOf('\n');auto line=session->input.left(end);session->input.remove(0,end+1);session->receiving=true;session->requestTimer.start();
   struct Parsed{json request;std::string hash;};auto parsed=std::make_shared<Parsed>();
+  m_jobs->backgroundNext();
   m_jobs->async(tr("Reading agent request"),[line,parsed](Progress){
     parsed->request=json::parse(line.toStdString());const auto name=parsed->request.at("name").get<std::string>();
     validate_input(live_schema(name),parsed->request.value("arguments",json::object()));
@@ -134,6 +135,7 @@ void AgentBridge::read(const std::shared_ptr<Session>& session){
 void AgentBridge::reply(const std::shared_ptr<Session>& session,json result,const std::string& receipt){
   if(!result["structuredContent"].contains("elapsed_ms") && session->requestTimer.isValid())result["structuredContent"]["elapsed_ms"]=session->requestTimer.elapsed();
   auto bytes=std::make_shared<QByteArray>();auto given=std::make_shared<std::vector<std::pair<std::string,Known>>>();
+  m_jobs->backgroundNext();
   m_jobs->async(tr("Sending agent result"),[bytes,given,result=std::move(result)](Progress)mutable{
     // Remember the sub-shape references this reply hands out (TODO 10 B6).
     std::function<void(const json&)> tokens=[&](const json& v){
@@ -184,6 +186,7 @@ void AgentBridge::replyReceipt(const std::shared_ptr<Session>& session,const Rec
   }
   if(receipt.response.isEmpty()){reply(session,live_result({{"state",receipt.state}}));return;}
   auto bytes=std::make_shared<QByteArray>();
+  m_jobs->backgroundNext();
   m_jobs->async(tr("Sending agent result"),[bytes,receipt](Progress){
     auto result=json::parse(receipt.response.toStdString());result["structuredContent"]["state"]=receipt.state;
     if(receipt.revision)result["structuredContent"]["revision"]=receipt.revision;

@@ -78,7 +78,7 @@ void MainWindow::onBrowserSelection(const std::vector<std::string>& ids) {
   m_viewport->selectNodes(nodes);  // sliced; selectionApplied() writes selection.json when it settles
 }
 
-// The Properties panel belongs to one selection: it is opened from the context menu (or Ctrl+P), and a new
+// The Properties panel belongs to one selection: it is opened from the context menu (or Alt+Enter), and a new
 // selection closes it. Pinned, it stays and follows the selection. Nothing is inspected while it is closed.
 void MainWindow::selectionMoved(const std::vector<opad::Ref>& refs) {
   m_selRefs = refs;
@@ -91,6 +91,7 @@ void MainWindow::selectionMoved(const std::vector<opad::Ref>& refs) {
     for (AreaController* area : m_areas) area->selectionChanged(selection);
   }
   updateCommands();
+  if (!refs.empty() || !m_selRows.empty()) resumePendingPick();  // a command that asked for this selection (UI-109)
   if (!m_propsPanel->isVisible()) return;
   if (m_propsPanel->pinned()) showProperties(refs);  // O(1): only the first ref is inspected and geometry walks are deferred to a job
   else m_propsPanel->hide();
@@ -172,6 +173,7 @@ void MainWindow::writeSelectionFile() {
   auto st = std::make_shared<State>();
   st->refs = m_viewport->selection();
   const size_t kDetailCap = 200;  // inspect geometry for at most this many; the rest are listed by ref only
+  m_jobs->backgroundNext();
   m_selFileJob = m_jobs->sliced(tr("Publishing selection"), [this, st, kDetailCap](Job&) {
     if (st->i >= st->refs.size()) return false;
     const opad::Ref& r = st->refs[st->i];
@@ -408,6 +410,7 @@ void MainWindow::buildContextMenu(QMenu& menu, const std::vector<std::string>& i
     add("view.home");
     add("view.unisolate");
     add("edit.showall");
+    add("edit.selectall");
     menu.addSeparator();
     add("design.sketch");
     add("file.import");
@@ -428,15 +431,16 @@ QAction* MainWindow::repeatAction() {
   return repeat;
 }
 
+// What Repeat runs again (UI-100 / UI-111): a tool, feature, check, note or edit, not a view change, a file command, a
+// toggle of the window, a selection command or the sketch's Select.
 bool MainWindow::repeatable(const QString& id) const {
-  if (id.startsWith("sketch.")) {
-    const QAction* a = action(id);
-    return a && a->property("sketchTool").isValid() && a->property("sketchTool").toString() != "select";
-  }
-  if (id.startsWith("design.")) return id == "design.sketch" || opad::design::feature_spec(id.mid(7).toStdString()) != nullptr;
-  static const QStringList tools = {"inspect.distance", "inspect.angle", "inspect.radius", "inspect.bbox", "inspect.printcheck", "inspect.interference",
-                                    "annotate.add", "annotate.draw", "select.similar"};
-  return tools.contains(id);
+  static const QStringList never{"edit.undo", "edit.redo", "edit.repeat", "edit.selectall", "edit.invert", "edit.filter", "edit.selectparent", "edit.selecttouched",
+                                 "inspect.clear", "inspect.pin", "inspect.flip", "sketch.finish", "sketch.cancel", "sketch.panel", "annotate.show", "annotate.resolve"};
+  static const QStringList yes{"design.", "sketch.", "inspect.", "annotate.", "edit.", "select.similar", "view.isolate", "view.saveview", "file.import", "file.export", "file.screenshot"};
+  if (never.contains(id)) return false;
+  if (id.startsWith("sketch."))
+    if (const QAction* a = action(id); a && a->property("sketchTool").isValid() && a->property("sketchTool").toString() == "select") return false;
+  return std::any_of(yes.begin(), yes.end(), [&id](const QString& p) { return id.startsWith(p); });
 }
 
 // The bbox of a component walks every body under it; it is added to the panel by a sliced job.

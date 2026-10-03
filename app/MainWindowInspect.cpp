@@ -44,9 +44,9 @@ void MainWindow::buildInspectActions() {
     } else if (!m_tool.id.isEmpty()) toolEscape();
     else if (!closeTopPanel()) clearMeasurement();
   });  // Esc closes a tool panel first
-  addAction("inspect.properties", tr("Properties"), "doc", QKeySequence("Ctrl+P"), [this] {
+  addAction("inspect.properties", tr("Properties"), "doc", QKeySequence("Alt+Return"), [this] {  // Ctrl+P is Print's (UI-111)
     if (m_selRefs.empty() && m_selRows.empty()) m_selRefs = m_viewport->selection();
-    if (m_selRefs.empty() && m_selRows.empty()) throw opad::Error("Select something to see its properties.");
+    if (m_selRefs.empty() && m_selRows.empty()) throw opad::UserHint("Select something to see its properties.", true);
     showProperties(m_selRefs);
     openPanel(m_propsPanel);
   });
@@ -66,7 +66,7 @@ void MainWindow::sectionFromFace(const opad::Ref& face) {
     opad::json info = opad::inspect_ref(m_doc->doc, m_doc->scene, face);
     if (!info.contains("normal") || !info.contains("center")) {
       if (trace::enabled()) trace::log(QStringLiteral("section from face: not planar (%1)").arg(QString::fromStdString(info.value("surface", "?"))));
-      statusBar()->showMessage(tr("Section: that face is %1; pick a planar face").arg(QString::fromStdString(info.value("surface", "not planar"))), 5000);
+      hint(tr("Section: that face is %1; pick a planar face").arg(QString::fromStdString(info.value("surface", "not planar"))), false);
       return;
     }
     const opad::Vec3 o{info["center"][0].get<double>(), info["center"][1].get<double>(), info["center"][2].get<double>()};
@@ -74,10 +74,10 @@ void MainWindow::sectionFromFace(const opad::Ref& face) {
     if (trace::enabled()) trace::log(QStringLiteral("section from face: origin %1 %2 %3 normal %4 %5 %6").arg(o[0]).arg(o[1]).arg(o[2]).arg(n[0]).arg(n[1]).arg(n[2]));
     m_section->setFromFace(o, n);
     m_section->setEnabled(true);
-    statusBar()->showMessage(tr("Section plane set from the picked face (Shift+X flips it)"), 5000);
+    m_toasts->toast(tr("Section plane set from the picked face (Shift+X flips it)"), tr("Flip"), [this] { m_section->flip(); });
   } catch (const std::exception& e) {
     if (trace::enabled()) trace::log(QStringLiteral("section from face failed: %1").arg(QString::fromUtf8(e.what())));
-    statusBar()->showMessage(QString::fromUtf8(e.what()), 5000);
+    hint(QString::fromUtf8(e.what()), false);
   }
 }
 
@@ -147,6 +147,7 @@ void MainWindow::startTool(const QString& id) {
     action(a)->setChecked(id == QString(a).section('.', 1));
   if (toolMeasures()) {
     m_toolPanel->setHeader(m_tool.icon, m_tool.title);
+    m_toolSteps->setGuide("inspect." + id);  // UI-107
     openPanel(m_toolPanel);
   }
   if (wantEdges) {
@@ -252,7 +253,7 @@ void MainWindow::runToolMeasure() {
     if (run == m_toolRun) m_measureJob = nullptr;
     if (run != m_toolRun || m_tool.id.isEmpty()) return;  // the picks moved on
     if (!ok) {
-      statusBar()->showMessage(i18n::t(error), 6000);
+      hint(error, false);
       return m_viewport->deselectLast();  // that pick does not work for this tool: ask for it again
     }
     m_lastMeasure = *result;
@@ -380,7 +381,7 @@ void MainWindow::pinMeasurement() {
   op["result"] = m_lastMeasure;
   opad::json r = m_doc->run("append", opad::json{{"op", op}});
   if (r.contains("appended") && !r["appended"].empty()) m_timeline->setCurrentOp(r["appended"][0].get<std::string>());
-  statusBar()->showMessage(tr("Measurement pinned. Manage it in Annotations (Alt+2)."), 4000);
+  m_toasts->toast(tr("Measurement pinned. Manage it in Annotations (Alt+2)."), tr("Show"), [this] { if (!action("panel.annotations")->isChecked()) action("panel.annotations")->trigger(); });
   if (!m_tool.id.isEmpty()) m_viewport->clearSelection();  // the tool stays on for the next measurement
 }
 

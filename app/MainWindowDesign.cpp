@@ -37,7 +37,7 @@ void MainWindow::buildDesignActions() {
   addAction("design.edit", tr("Edit feature"), "rename", QKeySequence(), [this] {
     const std::string id = m_timeline->currentOp();
     const opad::Op* op = id.empty() ? nullptr : m_doc->doc.find_op(id);
-    if (!op || (op->type != "feature" && op->type != "sketch")) throw opad::Error("Select a feature or a sketch on the timeline first (or double-click it).");
+    if (!op || (op->type != "feature" && op->type != "sketch")) throw opad::UserHint("Select a feature or a sketch on the timeline first (or double-click it).", true);
     m_design->editOp(id);
   });
   addAction("design.newcomponent", tr("New component"), "plus", QKeySequence(), [this] {
@@ -52,7 +52,7 @@ void MainWindow::buildDesignActions() {
   });
   addAction("design.reparent", tr("Reparent"), "reparent", QKeySequence(), [this] {
     const auto ids = currentNodeIds();
-    if (ids.empty()) throw opad::Error("Select the objects to move under another component first.");
+    if (ids.empty()) throw opad::UserHint("Select the objects to move under another component first.", true);
     QStringList names{tr("(document root)")};
     std::vector<std::string> targets{""};
     for (const auto& [id, n] : m_doc->scene.nodes)
@@ -70,14 +70,14 @@ void MainWindow::buildDesignActions() {
   });
   addAction("design.colour", tr("Colour"), "shaded", QKeySequence(), [this] {
     const auto ids = currentNodeIds();
-    if (ids.empty()) throw opad::Error("Select the objects to colour first.");
+    if (ids.empty()) throw opad::UserHint("Select the objects to colour first.", true);
     const QColor c = QColorDialog::getColor(nodeColour(ids.front()), this, tr("Colour"));
     if (!c.isValid()) return;
     m_doc->run("appearance", opad::json{{"targets", ids}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
   });
   addAction("design.opacity", tr("Opacity"), "wireframe", QKeySequence(), [this] {
     const auto ids = currentNodeIds();
-    if (ids.empty()) throw opad::Error("Select the objects to make see-through first.");
+    if (ids.empty()) throw opad::UserHint("Select the objects to make see-through first.", true);
     bool ok = false;
     const opad::Node* n = m_doc->node(ids.front());
     const int pct = QInputDialog::getInt(this, tr("Opacity"), tr("Opacity (10–100 %):"), n ? static_cast<int>(n->opacity * 100) : 100, 10, 100, 10, &ok);
@@ -86,7 +86,7 @@ void MainWindow::buildDesignActions() {
   });
   addAction("design.lock", tr("Lock"), "lock", QKeySequence(), [this] {
     const auto ids = currentNodeIds();
-    if (ids.empty()) throw opad::Error("Select the objects to lock or unlock first.");
+    if (ids.empty()) throw opad::UserHint("Select the objects to lock or unlock first.", true);
     const opad::Node* n = m_doc->node(ids.front());
     for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"locked", !(n && n->locked)}});
   });
@@ -183,7 +183,8 @@ void MainWindow::buildDesign() {
   m_drawingPlacer = new DrawingPlacer(m_doc, m_viewport, m_jobs, this);
   m_panels << m_drawingPlacer->panel();
 
-  connect(m_design, &DesignController::status, this, [this](const QString& text) { m_statusHover->setText(text); });
+  connect(m_design, &DesignController::status, this, &MainWindow::setPrompt);
+  connect(m_design, &DesignController::notice, this, [this](const QString& text) { resultToast(text); });
   connect(m_design, &DesignController::failed, this, [this](const QString& error) { QMessageBox::warning(this, tr("OPAD"), i18n::t(error)); });
   connect(m_design, &DesignController::stateChanged, this, &MainWindow::updateDesignState);
   connect(m_design->sketch(), &SketchEditor::hintsChanged, this, [this] { if (m_design->sketchActive() && !m_design->pickingPlane()) updateSketchPrompt(); });

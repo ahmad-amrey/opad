@@ -17,6 +17,8 @@
 #include "PanelFooter.hpp"
 #include "opad/design/feature.hpp"
 
+class ToolGuide;
+
 // A line edit for an expression ("width / 2 + 3 mm") with its value, or what is wrong with it, underneath.
 class ExprEdit : public QWidget {
   Q_OBJECT
@@ -85,6 +87,7 @@ class FeaturePanel : public QWidget {
   // As tall as the rows this feature shows (a fillet's two no longer sat in an extrude-sized panel), and wide enough
   // for a pick box beside "By rule…" to say "3 selected" rather than "3 selec…".
   QSize preferredSize(int width) const;
+  ToolGuide* guide() const { return m_guide; }  // UI-107: a new feature's animated guide, at the pick it waits for
   PanelFooter* footer() const { return m_footer; }
  signals:
   void inputsChanged();                 // anything that changes the result
@@ -114,6 +117,7 @@ class FeaturePanel : public QWidget {
   QColor m_colour;  // invalid: automatic
   QLineEdit* m_name;
   QLabel* m_hint;
+  ToolGuide* m_guide;
   QLabel* m_status;
   QLabel* m_hiddenWarning;
   QVBoxLayout* m_rows;

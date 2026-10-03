@@ -16,12 +16,19 @@ class QLabel;
 // ---------------------------------------------------------------- floating tool panel
 // Replaces the fixed right dock (handoff: "Floating tool panel"). A frameless tool window owned by the main
 // window, so it sits over the OpenGL viewport and hides with it. Header 32 px (drag handle; double-click puts
-// it back at its default place): icon, title 500, context fg3, pin, close. Anchored to the viewport's top-right
+// it back at its default place): icon, title 500, context fg3, "?", pin, close. Anchored to the viewport's top-right
 // corner: MainWindow calls anchorTo() whenever the viewport moves. Place and size persist per panel id.
 class ToolPanel : public QWidget {
   Q_OBJECT
  public:
   ToolPanel(const QString& id, const QString& icon, QColor Tokens::* tint, const QString& title, QWidget* content, int preferredHeight, QWidget* owner);
+  QString id() const { return m_id; }
+  // The "?" in the header (UI-108) opens the guide of the panel's command: its help id when set, else what the help
+  // hook finds (the tool running in it). Every panel shows it while a hook is set (the help area's).
+  void setHelpId(const QString& id) { m_helpId = id; }
+  QString helpId() const { return m_helpId; }
+  QToolButton* helpButton() const { return m_help; }
+  static void setHelpHook(std::function<void(ToolPanel*)> hook);
   void setContext(const QString& text);
   void setEscapeHandler(std::function<void()> handler) { m_escapeHandler=std::move(handler); }
   void setHeader(const QString& icon, const QString& title);  // one panel serves every guided tool
@@ -61,18 +68,18 @@ class ToolPanel : public QWidget {
   void keyPressEvent(QKeyEvent* e) override;
   bool event(QEvent* e) override;
   void resizeEvent(QResizeEvent* e) override;
-  void showEvent(QShowEvent*) override { emit visibilityChanged(true); }
+  void showEvent(QShowEvent*) override;
   void hideEvent(QHideEvent*) override { emit visibilityChanged(false); }
  private:
   friend class ToolPanelGrip;
   void userPlacedNow();  // after a drag or a grip resize: remember where the panel is
   void refreshIcons();
   std::function<void()> m_escapeHandler;
-  QString m_id, m_iconName;
+  QString m_id, m_iconName, m_helpId;
   QColor Tokens::* m_tint;  // header icon colour: sel for inspect tools, amber for annotations, fg2 for selection
   QLabel *m_icon, *m_name, *m_context;
   QWidget* m_content;
-  QToolButton *m_pin, *m_close;
+  QToolButton *m_help, *m_pin, *m_close;
   QWidget* m_grip;
   QRect m_anchor;                    // the viewport, global
   QPoint m_offset{8, 186};           // frame's top-right corner: x px left of the viewport's right edge, y px below its top
