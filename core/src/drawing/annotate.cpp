@@ -1065,6 +1065,7 @@ json datum_dimensions(const Document& doc, const Scene& scene, const json& args)
   for (const auto& l : args.value("datums", json::array())) wanted.push_back(upper(l.get<std::string>()));
   json across, upright;  // the reference of the datum that is an upright line, and of the level one
   std::string acrossLetter, uprightLetter;
+  std::set<std::string> parts;  // the bodies the datums stand on
   for (const auto& id : sheet->items) {
     const SheetItem* t = scene.sheet_item(id);
     if (!t || t->kind != "datum" || t->view != viewId || !t->error.empty()) continue;
@@ -1077,15 +1078,16 @@ json datum_dimensions(const Document& doc, const Scene& scene, const json& args)
     } catch (const std::exception&) {
       continue;
     }
-    if (!k.line || k.point) continue;
+    if (!k.line) continue;
     const Vec2 u = unit(sub(paper(k.b), paper(k.a)));
     json r = ref;
     r["aspect"] = "mid";
-    if (std::fabs(u[0]) < 1e-6 && across.is_null()) across = r, acrossLetter = letter;
-    else if (std::fabs(u[1]) < 1e-6 && upright.is_null()) upright = r, uprightLetter = letter;
+    if (std::fabs(u[0]) < 1e-6 && across.is_null()) across = r, acrossLetter = letter, parts.insert(k.node);
+    else if (std::fabs(u[1]) < 1e-6 && upright.is_null()) upright = r, uprightLetter = letter, parts.insert(k.node);
   }
   if (across.is_null() && upright.is_null()) throw Error("the view has no datum on an upright or level straight edge: place datum symbols first");
-  // The features: given, else every circle of the view seen along its axis (its holes and bosses).
+  // The features: given, else every circle of the view seen along its axis on the part the datums stand on (its holes and
+  // bosses).
   json features = json::array();
   if (args.contains("refs")) {
     features = references(doc, scene, args["refs"], args.value("aspects", json()));
@@ -1094,6 +1096,7 @@ json datum_dimensions(const Document& doc, const Scene& scene, const json& args)
     std::vector<std::pair<Vec2, json>> found;
     for (const auto& c : g->curves) {
       if (c.type != Curve::Type::Arc || c.a1 - c.a0 < 2 * M_PI - 1e-6 || c.edge < 0 || c.body < 0) continue;
+      if (!parts.empty() && !parts.count(g->bodies[size_t(c.body)].node)) continue;
       const Vec2 at = c.c;
       if (std::any_of(found.begin(), found.end(), [&](const auto& f) { return len(sub(f.first, at)) < 1e-6; })) continue;  // concentric: one
       json r = design::make_ref(doc, scene, Ref{g->bodies[size_t(c.body)].node, Ref::Kind::Edge, c.edge});

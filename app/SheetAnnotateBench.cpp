@@ -320,12 +320,12 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ANNOTATE, sheetAnnotate) {
     QMenu* menu = page->danglingButton()->menu();
     QStringList why;
     for (const auto& [id, error] : canvas->dangling()) why << QString::fromStdString(id.substr(0, 8)) + ": " + error;
-    // The sets from the datums measured the pin's centre too: they dangle with it.
+    // The sets from the datums measured the plate's holes only (the datums stand on the plate): they stay.
     QAction* pinAction = nullptr;
     if (menu)
       for (QAction* a : menu->actions())
         if (a->text().contains(QString::fromUtf8("⌀8"))) pinAction = a;
-    check(menu && menu->actions().size() == 3 && pinAction, "its menu offers to re-attach it and the two sets that measured the pin: " + why.join("; "));
+    check(menu && menu->actions().size() == 1 && pinAction, "its menu offers to re-attach it: " + why.join("; "));
     if (pinAction) pinAction->trigger();
     check(tools->tool() == SheetAnnotator::Tool::Reattach, "Re-attach asks for its circle again");
     waitFor(settled, 15000);
@@ -335,17 +335,7 @@ OPAD_BENCH(OPAD_BENCH_SHEET_ANNOTATE, sheetAnnotate) {
     check(waitFor([&] { return !canvas->dangling().count(pinDim) && w.m_doc->scene.sheet_item(pinDim) &&
                                w.m_doc->scene.sheet_item(pinDim)->def["result"]["shown"] == "⌀6"; }, 30000) && waitFor(settled, 30000),
           "re-attached to the hole: measured again (⌀6), no longer dangling");
-    check(tools->tool() == SheetAnnotator::Tool::None && canvas->dangling().size() == 2, "the two sets still dangle");
-    {  // deleted with Del: the warning goes
-      std::vector<std::string> left;
-      for (const auto& [id, error] : canvas->dangling()) left.push_back(id);
-      canvas->selectItems(left);
-      canvas->setFocus();
-      key(Qt::Key_Delete);
-      check(waitFor([&] { return std::none_of(left.begin(), left.end(), [&](const std::string& id) { return w.m_doc->scene.sheet_item(id); }); }, 5000) &&
-                waitFor(settled, 30000) && canvas->dangling().empty() && !page->danglingButton()->isVisible(),
-            "the dangling sets deleted with Del: the sheet bar's warning goes");
-    }
+    check(!page->danglingButton()->isVisible() && canvas->dangling().empty() && tools->tool() == SheetAnnotator::Tool::None, "the sheet bar's warning goes");
     // Centre marks drawn by the views themselves.
     canvas->selectViews({});
     w.action("drawings.centerMarks")->setChecked(true);

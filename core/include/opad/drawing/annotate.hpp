@@ -63,7 +63,8 @@ json plan_item(const Document& doc, const Scene& scene, const json& args, json* 
 // a line and a point -> the three; the app takes the one the pointer's place says. Throws for picks that make none.
 json plan_dimension(const Document& doc, const Scene& scene, const json& args);
 // "Dimension from datums": the datum symbols of a view (letters, default the first two that are straight edges, one
-// upright and one level) as origins, and its features (refs; default every circle seen along its axis, i.e. the holes):
+// upright and one level) as origins, and its features (refs; default every circle seen along its axis on the bodies the
+// datums stand on, i.e. the part's holes):
 // a dimension_set record (type ordinate | baseline | chain) for each direction a datum measures. Returns {"ops": [...]}.
 json datum_dimensions(const Document& doc, const Scene& scene, const json& args);
 // The centre marks and centre lines a view with style centermarks draws itself (draw_view): a mark on every whole circle
