@@ -20,6 +20,7 @@
 #include "Viewport.hpp"
 #include "BrowserOverlay.hpp"
 class RecoveryManager;
+class GitWatch;
 class AgentBridge;
 
 class MainWindow : public QMainWindow {
@@ -194,8 +195,7 @@ class MainWindow : public QMainWindow {
   QMenu* m_viewsMenu = nullptr;
   QMenu* m_recentMenu = nullptr;
   QLabel* m_statusPath = nullptr;
-  QLabel* m_statusGitIcon = nullptr;
-  QLabel* m_statusGit = nullptr;
+  GitWatch* m_git = nullptr;  // the status chip and its event-driven refresh (UI-61)
   QLabel* m_statusHover = nullptr;
   QLabel* m_statusSel = nullptr;
   QLabel* m_statusUnits = nullptr;
@@ -222,6 +222,5 @@ class MainWindow : public QMainWindow {
   QDockWidget* m_timelineDock = nullptr;
   opad::json m_lastMeasure;
   QSettings m_settings;
-  QTimer m_gitTimer;
   bool m_syncing = false;
 };

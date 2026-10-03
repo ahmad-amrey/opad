@@ -369,9 +369,18 @@ text diffs/merges. The detailed [format guide](docs/format.md#git) explains the 
 parameters, sketches, features, the tree, notes, one line per body) instead of BREP text:
 
 ```sh
-git config diff.opad.textconv '"C:/path/to/opad-cli" textconv'
+git config diff.opad.textconv '"C:/path/to/opad-cli" textconv'   # or '"C:/path/to/OPAD/opad.exe" --textconv'
 git config diff.opad.cachetextconv true
 ```
+
+The desktop program does all of this for you: the git chip in the status bar (branch, untracked / uncommitted /
+conflict, ahead and behind its upstream, "not in git", "git not found") has **Set up repository…**, which runs
+`git init -b main` when needed, writes the `.gitattributes` line above (plus `assets/**` in Git LFS when git-lfs is
+installed, with `.opad` files kept out of LFS), a `.gitignore` for temporary saves, portable data, caches and recovery
+snapshots, runs `git lfs install --local`, and points this clone's `merge.opad.driver` and `diff.opad.textconv` at the
+running installation (`opad.managed=true`; OPAD rewrites them when that installation has moved). A clone whose
+`.gitattributes` asks for `merge=opad` but has no driver configured shows "set up merging" on the chip. The chip
+follows git by file events (HEAD, index, config, refs, the document's folder), not by polling.
 
 `opad-cli diff` compares two versions semantically: parameters, sketch entities and dimensions, feature inputs
 before -> after, bodies added, removed, moved, renamed, restyled, reparented or with new geometry, notes resolved or

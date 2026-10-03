@@ -105,6 +105,18 @@ Job* JobRunner::begin(const QString& title, bool twoBars) {
 
 Job* JobRunner::async(const QString& title, std::function<void(Progress)> work, std::function<void(bool, const QString&)> done) {
   Job* j = begin(title, false);
+  launch(j, std::move(work), std::move(done));
+  return j;
+}
+
+Job* JobRunner::quiet(const QString& title, std::function<void(Progress)> work, std::function<void(bool, const QString&)> done) {
+  Job* j = new Job(title, false, this);
+  connect(j, &Job::finished, j, &QObject::deleteLater);
+  launch(j, std::move(work), std::move(done));
+  return j;
+}
+
+void JobRunner::launch(Job* j, std::function<void(Progress)> work, std::function<void(bool, const QString&)> done) {
   if (done) connect(j, &Job::finished, j, [done](bool ok, const QString& e) { done(ok, e); });
   Progress p = j->progress();
   // Qt adopts std::threads that post progress. On MinGW/Qt 6.10 their TLS cleanup can fault on exit,
@@ -131,7 +143,6 @@ Job* JobRunner::async(const QString& title, std::function<void(Progress)> work, 
   });
   connect(worker, &QThread::finished, worker, &QObject::deleteLater);
   worker->start();
-  return j;
 }
 
 Job* JobRunner::sliced(const QString& title, std::function<bool(Job&)> step, std::function<void(bool)> done) {

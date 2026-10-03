@@ -4,6 +4,8 @@
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#include <fcntl.h>
+#include <io.h>
 #endif
 
 #include <QApplication>
@@ -54,10 +56,38 @@ int mergeDriver(int argc, char** argv) {
   for (int i = 2; i < argc; ++i) files.push_back(opad::path_from_utf8(argv[i]));
   return opad::merge_driver(files);
 }
+
+// git's diff driver (diff.opad.textconv "opad.exe --textconv"): the document as readable lines, like opad-cli textconv.
+int textconv(int argc, char** argv) {
+  if (argc < 3) return 2;
+  std::filesystem::path path = opad::path_from_utf8(argv[2]);
+#ifdef _WIN32
+  int n = 0;
+  if (LPWSTR* wide = CommandLineToArgvW(GetCommandLineW(), &n)) {
+    if (n > 2) path = wide[2];
+    LocalFree(wide);
+  }
+  _setmode(_fileno(stdout), _O_BINARY);  // LF, as git compares it
+#endif
+  std::string out;
+  try {
+    out = opad::document_outline(opad::Document::parse_index(opad::read_text_file(path), path));
+  } catch (const std::exception& e) {
+    try {
+      out = opad::text_outline(opad::read_text_file(path), e.what());
+    } catch (const std::exception&) {
+      return 1;
+    }
+  }
+  std::fwrite(out.data(), 1, out.size(), stdout);
+  std::fflush(stdout);
+  return 0;
+}
 }  // namespace
 
 int main(int argc, char** argv) {
   if (argc >= 2 && std::string_view(argv[1]) == "--merge-driver") return mergeDriver(argc, argv);
+  if (argc >= 2 && std::string_view(argv[1]) == "--textconv") return textconv(argc, argv);
   trace::log("startup: main");
   installCrashHandler();
   // Derived ids are for scripted builds (gap log #15): a desktop session restarted on the same document would derive

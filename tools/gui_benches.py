@@ -50,6 +50,9 @@ def main():
                             ("feature", "--kind", "box", "--inputs", '{"plane":{"origin":[0,0,10],"normal":[0,0,1]},"length":"30 mm","width":"10 mm","height":"2 mm","operation":"join"}'))
         # Changed on disk while open (UI-56): a document of its own, since the bench appends to it and rewrites it.
         external = document("external", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+        # Git (UI-61): a document in a folder of its own, outside any repository, and git without this machine's config.
+        (root / "git").mkdir()
+        versioned = document("git/model")
         screw = ROOT / "tests" / "corpus" / "occt-screw.step"
         cases = [
             ("design", empty, {"OPAD_BENCH_DESIGN": "{prefix}.png", "OPAD_BENCH_UISHOT": "{prefix}.ui.png", "OPAD_BENCH_RULE": "1"}),
@@ -66,6 +69,8 @@ def main():
             ("interference", overlapping, {"OPAD_BENCH_CHECK": "interference", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("external-change", external, {"OPAD_BENCH_EXTERNAL_CHANGE": "{prefix}", "OPAD_BENCH_CLI": str(cli)}),
+            ("git", versioned, {"OPAD_BENCH_GIT": "{prefix}", "OPAD_BENCH_CLI": str(cli), "GIT_CONFIG_GLOBAL": str(root / "git-global"),
+                                "GIT_CONFIG_NOSYSTEM": "1"}),
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))

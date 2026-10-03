@@ -5,6 +5,7 @@
 #include "DrawingPlacer.hpp"
 #include "RecoveryManager.hpp"
 #include "DiskSync.hpp"
+#include "GitWatch.hpp"
 #include "AgentBridge.hpp"
 
 #include <QToolButton>
@@ -279,10 +280,6 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_empty, &EmptyState::importRequested, action("file.new"), &QAction::trigger);
   connect(m_empty, &EmptyState::recentChosen, this, &MainWindow::openPath);
   connect(m_empty, &EmptyState::filesDropped, this, [this](const QStringList& paths) { openPath(paths.first()); });
-
-  m_gitTimer.setInterval(5000);
-  connect(&m_gitTimer, &QTimer::timeout, this, &MainWindow::refreshGit);
-  m_gitTimer.start();
 
   restoreGeometry(m_settings.value("ui/geometry").toByteArray());
   if (m_settings.value("ui/layoutVersion").toInt() == 3) restoreState(m_settings.value("ui/state").toByteArray());
@@ -626,7 +623,6 @@ void MainWindow::refreshIcons() {
     QString icon = a->data().toString();
     if (!icon.isEmpty()) a->setIcon(icons::themed(icon));
   }
-  if (m_statusGitIcon) m_statusGitIcon->setPixmap(icons::pixmap("git", theme::current().fg2, 14, devicePixelRatioF()));
   m_doc->refresh();
 }
 
@@ -1000,14 +996,9 @@ void MainWindow::resetLayout() {
 }
 
 void MainWindow::buildStatusBar() {
-  const Tokens& t = theme::current();
   m_statusPath = new QLabel(this);
   m_statusPath->setFont(theme::mono(12));
   m_statusPath->setContentsMargins(12, 2, 4, 2);
-  m_statusGitIcon = new QLabel(this);
-  m_statusGitIcon->setPixmap(icons::pixmap("git", t.fg2, 14, devicePixelRatioF()));
-  m_statusGit = new QLabel(this);
-  m_statusGit->setTextFormat(Qt::RichText);
   m_statusHover = new QLabel(this);
   m_statusHover->setAlignment(Qt::AlignCenter);
   m_statusHover->setObjectName("tertiary");
@@ -1018,9 +1009,9 @@ void MainWindow::buildStatusBar() {
   m_progress = new ProgressStrip(this);
   m_jobs = new JobRunner(m_progress, this);
   m_viewport->setJobs(m_jobs);
+  m_git = new GitWatch(m_jobs, this);
   statusBar()->addWidget(m_statusPath);
-  statusBar()->addWidget(m_statusGitIcon);
-  statusBar()->addWidget(m_statusGit);
+  statusBar()->addWidget(m_git->chip());
   // Permanent: QStatusBar hides normal widgets while a temporary message shows and re-shows them after,
   // which fought with the strip's own show/hide and drew the message across the bars.
   statusBar()->addPermanentWidget(m_statusHover, 1);
@@ -1481,40 +1472,9 @@ bool MainWindow::eventFilter(QObject* o, QEvent* e) {
   return QMainWindow::eventFilter(o, e);
 }
 
-// ---------------------------------------------------------------- git status (F33)
+// ---------------------------------------------------------------- git status (F33, UI-61: GitWatch follows events)
 void MainWindow::refreshGit() {
-  const Tokens& t = theme::current();
-  if (!m_doc->hasDocument || m_doc->browse || m_doc->doc.path.empty()) {
-    m_statusGit->clear();
-    m_statusGitIcon->hide();
-    return;
-  }
-  // git is queried asynchronously: waiting for it here blocked the UI for up to 0.8 s per query.
-  QFileInfo fi(m_doc->path());
-  auto notInGit = [this, t] {
-    m_statusGitIcon->show();
-    m_statusGit->setText(QString("<span style='color:%1'>%2</span>").arg(t.fg3.name(), tr("not in git")));
-  };
-  auto* git = new QProcess(this);
-  git->setWorkingDirectory(fi.absolutePath());
-  connect(git, &QProcess::errorOccurred, this, [git, notInGit](QProcess::ProcessError) { git->deleteLater(); notInGit(); });
-  connect(git, &QProcess::finished, this, [this, git, fi, t, notInGit](int code, QProcess::ExitStatus) {
-    git->deleteLater();
-    if (code != 0) { notInGit(); return; }
-    const QString branch = QString::fromUtf8(git->readAllStandardOutput()).trimmed();
-    auto* st = new QProcess(this);
-    st->setWorkingDirectory(fi.absolutePath());
-    connect(st, &QProcess::errorOccurred, this, [st](QProcess::ProcessError) { st->deleteLater(); });
-    connect(st, &QProcess::finished, this, [this, st, branch, t](int, QProcess::ExitStatus) {
-      st->deleteLater();
-      const QString status = QString::fromUtf8(st->readAllStandardOutput()).trimmed();
-      const QString state = status.isEmpty() ? QString() : status.startsWith("??") ? tr("untracked") : tr("modified");
-      m_statusGitIcon->show();
-      m_statusGit->setText(branch.toHtmlEscaped() + (state.isEmpty() ? QString() : QString(" <span style='color:%1'>· %2</span>").arg(t.amber.name(), state)));
-    });
-    st->start("git", {"status", "--porcelain", "--", fi.fileName()});
-  });
-  git->start("git", {"rev-parse", "--abbrev-ref", "HEAD"});
+  m_git->setFile(m_doc->hasDocument && !m_doc->browse && !m_doc->doc.path.empty() ? m_doc->path() : QString());
 }
 
 // ---------------------------------------------------------------- selection plumbing (F22/F25)
@@ -2470,6 +2430,7 @@ void MainWindow::showNodeGeometry(const std::string& id, const QString& title, c
 void MainWindow::runBench() {
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_RECOVERY");!mode.isEmpty()){m_recovery->bench(mode);return;}
   if(auto* disk=findChild<DiskSync*>();disk && disk->bench())return;
+  if(m_git->bench())return;
   if(benchViewer())return;
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_FILETYPES");!shot.isEmpty()){  // the dialog as drawn, nothing registered
     auto* dialog=new FileTypesDialog(this);dialog->show();
