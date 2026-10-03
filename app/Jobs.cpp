@@ -4,18 +4,28 @@
 #include <QDateTime>
 #include <QFile>
 #include <QMetaObject>
+#include <QStringList>
 #include <QThread>
 #include <QtGlobal>
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <thread>
+#include <utility>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <time.h>
+#endif
 
 #include "Panels.hpp"
 
 namespace {
 constexpr int kStripDelayMs = 500;  // how long an operation may run before progress UI appears
 constexpr int kSliceMs = 10;        // budget per UI-thread slice; leaves room for input and painting at 60 Hz
-constexpr int kStallMs = 250;       // watchdog threshold
+constexpr int kWarnMs = 250;        // the watchdog without OPAD_TRACE: stderr only, over this
+constexpr int kTickMs = 16;         // the watchdog's tick while tracing (a stall reads at most this much long)
 }  // namespace
 
 // ---------------------------------------------------------------- JobState / Progress
@@ -238,19 +248,89 @@ Scope::~Scope() {
   if (enabled()) log(QStringLiteral("%1: %2 ms").arg(m_name).arg(m_t.elapsed()));
 }
 
+namespace {
+struct StallLog {
+  Stalls since, all;
+  std::array<int, 6> buckets{};  // up to 100, 150, 250, 500, 1000 ms, longer
+};
+StallLog& stallLog() {
+  static StallLog s;
+  return s;
+}
+constexpr std::array<qint64, 5> kEdges{100, 150, 250, 500, 1000};
+}  // namespace
+
+int stallThreshold() {
+  static const int ms = [] {
+    bool ok = false;
+    const int v = qEnvironmentVariableIntValue("OPAD_TRACE_STALL_MS", &ok);
+    return ok && v > 0 ? v : 50;
+  }();
+  return enabled() ? ms : kWarnMs;
+}
+
+qint64 threadCpuMs() {
+#if defined(_WIN32)
+  // Cycles the thread ran (the invariant TSC) at the nominal clock: exact, where GetThreadTimes moves in 15.6 ms ticks.
+  static const double perMs = [] {
+    DWORD mhz = 0, size = sizeof(mhz);
+    RegGetValueW(HKEY_LOCAL_MACHINE, L"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", L"~MHz", RRF_RT_REG_DWORD, nullptr, &mhz, &size);
+    return mhz * 1000.0;
+  }();
+  ULONG64 cycles = 0;
+  if (perMs > 0 && QueryThreadCycleTime(GetCurrentThread(), &cycles)) return static_cast<qint64>(static_cast<double>(cycles) / perMs);
+  FILETIME created, exited, kernel, user;
+  if (!GetThreadTimes(GetCurrentThread(), &created, &exited, &kernel, &user)) return 0;
+  auto ticks = [](const FILETIME& f) { return (static_cast<qint64>(f.dwHighDateTime) << 32 | f.dwLowDateTime); };  // 100 ns
+  return (ticks(kernel) + ticks(user)) / 10000;
+#else
+  timespec t{};
+  clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+  return static_cast<qint64>(t.tv_sec) * 1000 + t.tv_nsec / 1000000;
+#endif
+}
+
+Stalls stalls() { return stallLog().since; }
+void resetStalls() { stallLog().since = {}; }
+
+QString stallHistogram() {
+  const StallLog& s = stallLog();
+  QStringList parts;
+  qint64 from = stallThreshold();
+  for (size_t i = 0; i < s.buckets.size(); ++i) {
+    parts << (i < kEdges.size() ? QStringLiteral("%1-%2 ms: %3").arg(from).arg(kEdges[i]).arg(s.buckets[i]) : QStringLiteral("%1+ ms: %2").arg(from).arg(s.buckets[i]));
+    if (i < kEdges.size()) from = std::max(from, kEdges[i]);
+  }
+  return QStringLiteral("stall histogram (over %1 ms): %2; %3 stalls, longest %4 ms, %5 ms in all")
+      .arg(stallThreshold()).arg(parts.join(", ")).arg(s.all.count).arg(s.all.longest).arg(s.all.total);
+}
+
 void installUiWatchdog(QObject* parent) {
   auto* timer = new QTimer(parent);
   auto last = std::make_shared<QElapsedTimer>();
+  auto lastCpu = std::make_shared<qint64>(threadCpuMs());
   last->start();
-  timer->setInterval(100);
-  QObject::connect(timer, &QTimer::timeout, parent, [last] {
-    const qint64 lag = last->restart() - 100;
-    if (lag > kStallMs) {
-      const QString msg = QStringLiteral("UI thread stalled for %1 ms").arg(lag + 100);
-      qWarning("%s", msg.toUtf8().constData());
-      log(msg);
+  timer->setTimerType(Qt::PreciseTimer);
+  timer->setInterval(enabled() ? kTickMs : 100);
+  // The time between two ticks is how long the event loop could not run, give or take one tick; the thread's CPU time in
+  // it tells work from waiting for a core on a busy machine.
+  QObject::connect(timer, &QTimer::timeout, parent, [last, lastCpu] {
+    const qint64 gap = last->restart();
+    const qint64 cpu = threadCpuMs(), work = cpu - std::exchange(*lastCpu, cpu);
+    if (gap <= stallThreshold()) return;
+    StallLog& s = stallLog();
+    for (Stalls* st : {&s.since, &s.all}) {
+      ++st->count;
+      st->longest = std::max(st->longest, gap);
+      st->longestCpu = std::max(st->longestCpu, work);
+      st->total += gap;
     }
+    ++s.buckets[static_cast<size_t>(std::upper_bound(kEdges.begin(), kEdges.end(), gap) - kEdges.begin())];
+    const QString msg = QStringLiteral("UI thread stalled for %1 ms (%2 ms of CPU)").arg(gap).arg(work);
+    if (gap > kWarnMs) qWarning("%s", msg.toUtf8().constData());
+    log(msg);
   });
+  if (enabled()) QObject::connect(qApp, &QCoreApplication::aboutToQuit, parent, [] { log(stallHistogram()); });
   timer->start();
 }
 }  // namespace trace

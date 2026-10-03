@@ -1,6 +1,8 @@
 """gui_benches cases of the viewer area (T2); the benches are in app/Viewport*Bench.cpp."""
 
+import json
 from pathlib import Path
+import uuid
 
 
 def beside(path):
@@ -39,6 +41,27 @@ def strokes(root, document):
     return path
 
 
+def boxes(root, document):
+    """1,000 boxes in ten components of 100, an editable .opad as an import of one box entry (instances): the evaluation's
+    large document without the 322 MB Engine. The box comes from opad-cli; the import op is written here."""
+    one = document("perf-box", ("feature", "--kind", "box", "--inputs", '{"length":"8 mm","width":"8 mm","height":"8 mm"}'))
+    lines = one.read_text(encoding="utf-8").split("\n")
+    at = lines.index("#bodies") + 1
+    key, count = lines[at].split(" ")[1], int(lines[at].split(" ")[2])
+    entry = lines[at:at + 1 + count]
+    header = json.loads(lines[1])
+    header["uuid"] = str(uuid.uuid4())
+    layers = []
+    for layer in range(10):
+        children = [{"type": "body", "id": str(uuid.uuid4()), "name": f"Box {layer * 100 + i + 1}", "key": key,
+                     "transform": [1, 0, 0, (i % 10) * 12, 0, 1, 0, (i // 10) * 12, 0, 0, 1, layer * 12, 0, 0, 0, 1]} for i in range(100)]
+        layers.append({"type": "component", "id": str(uuid.uuid4()), "name": f"Layer {layer + 1}", "children": children})
+    op = {"op": "import", "id": str(uuid.uuid4()), "ts": "2026-10-03T00:00:00Z", "by": "bench", "source": "boxes.step", "units": "mm", "nodes": layers}
+    path = root / "boxes-1000.opad"
+    path.write_text("\n".join([lines[0], json.dumps(header), "#ops", json.dumps(op), "#bodies"] + entry) + "\n", encoding="utf-8")
+    return path
+
+
 CASES = [
     # Occlusion-aware tracking (UI-31) on the as1 assembly with the Distance tool: no vertex or edge behind a face is
     # hovered, acquired or boxed, the ones in sight are (after the dwell; resting again releases), guide points behind a
@@ -70,4 +93,9 @@ CASES = [
     # typed name; Ctrl+N after viewing it leaves no 2D mode or viewer card; Ctrl+click adds and takes out; the hover text
     # follows a change; Ctrl+Shift+Z redoes; V right after a dialog closed is held back. <prefix>.png.
     ("state", strokes, {"OPAD_BENCH_STATE": "{prefix}"}),
+    # Latency budgets (UI-11): hide, undo, redo, Hide others and its undo, select all, the Face filter and back and a new
+    # document each keep every UI stall under 150 ms (OPAD_BENCH_PERF_BUDGET), from the command until it has settled. On
+    # 1,000 boxes and on the Engine.
+    ("perf", boxes, {"OPAD_BENCH_PERF": "{prefix}"}),
+    ("perf-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_PERF": "{prefix}"}),
 ]

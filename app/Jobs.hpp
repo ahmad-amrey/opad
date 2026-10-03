@@ -7,8 +7,8 @@
 //   JobRunner::sliced - UI-thread-only work (OCCT AIS calls, Qt widgets) run in ~10 ms slices between events
 //   JobRunner::begin  - a job driven by something with its own threading (AppDocument loads)
 //
-// A UI watchdog logs any event-loop stall over 250 ms so violations are visible; set OPAD_TRACE=1 (stderr)
-// or OPAD_TRACE=<file> to see those and the timing scopes.
+// A UI watchdog logs any event-loop stall over OPAD_TRACE_STALL_MS (default 50) so violations are visible; set
+// OPAD_TRACE=1 (stderr) or OPAD_TRACE=<file> to see those and the timing scopes.
 #include <QElapsedTimer>
 #include <QObject>
 #include <QString>
@@ -124,6 +124,17 @@ struct Scope {  // logs "<name>: N ms" when it goes out of scope
   QString m_name;
   QElapsedTimer m_t;
 };
-// Logs whenever the UI thread fails to service the event loop for more than 250 ms.
+// Logs whenever the UI thread fails to service the event loop for longer than OPAD_TRACE_STALL_MS (default 50; 250 and
+// stderr only without OPAD_TRACE), and keeps every such stall in a histogram that is logged when the app quits (UI-11).
 void installUiWatchdog(QObject* parent);
+struct Stalls {
+  int count = 0;
+  qint64 longest = 0, total = 0;  // ms, as the watchdog measured them (its tick is 16 ms while tracing)
+  qint64 longestCpu = 0;          // the most CPU time the UI thread spent in one stall (less than its length on a busy machine)
+};
+qint64 threadCpuMs();  // CPU time of the calling thread so far
+Stalls stalls();       // since the last resetStalls(): benches measure a step with it
+void resetStalls();
+int stallThreshold();  // ms
+QString stallHistogram();  // the whole run: "stalls over 50 ms: 50-100: 4, 100-150: 1, ...; longest 130 ms"
 }  // namespace trace
