@@ -51,8 +51,12 @@ def layers_document(root, document):
 
 
 def room_file(root, document=None):
-    """A 100 x 50 room split at x = 60 into two cells, every wall meeting the others at its ends (the Area tool's)."""
+    """The Area tool's: a 100 x 50 room split at x = 60 into two cells, every wall meeting the others at its ends; a second
+    room at x = 200 whose dividing wall (x = 240) meets the long walls in their middles; a 50 x 40 outline at x = 400 whose
+    four lines run 5 past each other's ends."""
     walls = [(0, 0, 60, 0), (60, 0, 100, 0), (100, 0, 100, 50), (100, 50, 60, 50), (60, 50, 0, 50), (0, 50, 0, 0), (60, 0, 60, 50)]
+    walls += [(200, 0, 300, 0), (300, 0, 300, 50), (300, 50, 200, 50), (200, 50, 200, 0), (240, 0, 240, 50)]
+    walls += [(395, 0, 455, 0), (450, -5, 450, 45), (455, 40, 395, 40), (400, 45, 400, -5)]
     return dxf(root / "room.dxf", [("Walls", 7, 0, ())], [line("Walls", *wall) for wall in walls])
 
 
@@ -93,7 +97,8 @@ CASES = [
     ("vocabulary", contrast_file, {"OPAD_BENCH_VOCABULARY": "{prefix}"}),
     ("vocabulary-rtl", contrast_file, {"OPAD_BENCH_VOCABULARY": "{prefix}", "OPAD_LANG": "ar"}),
     ("vocabulary-3d", "box", {"OPAD_BENCH_VOCABULARY": "{prefix}"}),
-    # UI-90: the Area tool on a room: a wall grows into its cell, an open boundary, a closed one pinned, three corners.
+    # UI-90: the Area tool on a room: a wall grows into its cell, an open boundary, a closed one pinned, a wall cut where
+    # another meets it in its middle, lines that overshoot their corners, three corners.
     # <prefix>.prompt.png, .panel.png, .viewport.png
     ("area", room_document, {"OPAD_BENCH_AREA": "{prefix}"}),
     ("area-viewer", room_file, {"OPAD_BENCH_AREA": "{prefix}"}),

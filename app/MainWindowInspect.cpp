@@ -243,7 +243,8 @@ void MainWindow::runToolMeasure() {
     else if (kind == "distance") *result = opad::measure_distance(*document, *scene, refs.at(0), refs.at(1), [progress] { return progress.cancelled(); });
     else if (kind == "angle") *result = opad::measure_angle(*document, *scene, refs.at(0), refs.at(1));
     else if (kind == "radius") *result = opad::measure_radius(*document, *scene, refs.at(0));
-    else if (kind == "area") *result = opad::measure_area(*document, *scene, refs, [progress] { return progress.cancelled(); });
+    else if (kind == "area") *result = opad::measure_area(*document, *scene, refs, [progress] { return progress.cancelled(); },
+                                                          pickedPoints.size() == 1 && pickedPoints[0].first ? std::optional(pickedPoints[0].second) : std::nullopt);
     else *result = opad::measure_bbox(*document, *scene, refs);
   }, [this, run, result](bool ok, const QString& error) {
     if (run == m_toolRun) m_measureJob = nullptr;

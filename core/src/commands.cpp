@@ -294,14 +294,15 @@ void register_builtins() {
         return j;
       });
 
-  reg("measure", "Distance, angle, radius or bbox between references; optionally pinned as a measurement op. A read unless pinned; queries measures several at once",
-      {{"doc", "path"}, {"kind", "distance|angle|radius|bbox"}, {"refs", "array - references"},
-       {"queries", "array - several measurements [{kind, refs}], answered in order as results (a failed one carries error)"},
+  reg("measure", "Distance, angle, radius, bbox or area between references; optionally pinned as a measurement op. A read unless pinned; queries measures several at once",
+      {{"doc", "path"}, {"kind", "distance|angle|radius|bbox|area"}, {"refs", "array - references"},
+       {"at", "[x,y,z] - area: where one drawing object was clicked (the part of it whose cell is measured)"},
+       {"queries", "array - several measurements [{kind, refs, at}], answered in order as results (a failed one carries error)"},
        {"pin", "bool - append a measurement op (each, with queries)"}, {"by", "string"}},
       true, [](Document* d, const json& a) {
         Document& doc = need(d);
         Scene s = resolve(doc);  // once for every query (gap log #4)
-        auto one = [&](const std::string& kind, const json& refArgs) {
+        auto one = [&](const std::string& kind, const json& refArgs, const json& at) {
           std::vector<Ref> refs;
           for (const auto& r : str_list(refArgs)) refs.push_back(Ref::parse(r));
           json res;
@@ -316,6 +317,8 @@ void register_builtins() {
             res = measure_radius(doc, s, refs[0]);
           } else if (kind == "bbox") {
             res = measure_bbox(doc, s, refs);
+          } else if (kind == "area") {
+            res = measure_area(doc, s, refs, {}, at.is_array() ? std::optional(at.get<Vec3>()) : std::nullopt);
           } else {
             throw Error("unknown measurement kind: " + kind);
           }
@@ -333,13 +336,13 @@ void register_builtins() {
         };
         if (!a.contains("queries")) {
           if (!a.contains("refs")) throw Error("measure: pass refs (with kind) or queries");
-          return one(a.value("kind", "distance"), a["refs"]);
+          return one(a.value("kind", "distance"), a["refs"], a.value("at", json()));
         }
         json results = json::array();
         for (const auto& q : a["queries"]) {
           const std::string kind = q.value("kind", "distance");
           try {
-            results.push_back(one(kind, q.value("refs", json())));
+            results.push_back(one(kind, q.value("refs", json()), q.value("at", json())));
           } catch (const Standard_Failure& e) {
             results.push_back({{"kind", kind}, {"refs", q.value("refs", json())}, {"error", std::string("the modelling kernel failed: ") + e.GetMessageString()}});
           } catch (const std::exception& e) {

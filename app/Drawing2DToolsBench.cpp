@@ -59,9 +59,10 @@ opad::Ref drawingRef(const opad::Document& doc, const opad::Scene& scene, opad::
 // OPAD_BENCH_AREA=<prefix> on a room of two cells (100 x 50 split at x = 60, the room.dxf of drawing2d.py). The Area tool
 // (Inspect menu, Review ribbon) switches a drawing's Groups filter to Objects; one wall grows into the cell it bounds (3000
 // mm², its outline and value drawn), Esc clears it; three walls of the other cell are open (two loose ends, nothing to pin),
-// the fourth closes it (2000 mm²), which pins as an area measurement in an .opad (viewer mode: no pin); with the Points
-// filter three corners make a triangle (2500 mm²); the command again ends the tool. <prefix>.prompt.png, .panel.png,
-// .viewport.png.
+// the fourth closes it (2000 mm²), which pins as an area measurement in an .opad (viewer mode: no pin); in a second room
+// whose wall meets the others in their middles (T) the long wall is cut there and grows into the part at its middle (3000,
+// not the smaller 2000); four lines drawn past each other's ends close once trimmed (2000); with the Points filter three
+// corners make a triangle (2500 mm²); the command again ends the tool. <prefix>.prompt.png, .panel.png, .viewport.png.
 OPAD_BENCH(OPAD_BENCH_AREA, area) {
   auto all = std::make_shared<bool>(true);
   Check require = [all](bool ok, const QString& what) {
@@ -139,11 +140,23 @@ OPAD_BENCH(OPAD_BENCH_AREA, area) {
       require(std::abs(r.value("value", 0.0) - 2000) < 1e-6 && !r.value("grown", false), QString("the fourth wall closes it: %1 mm²").arg(r.value("value", 0.0)));
       if (!w.m_doc->browse) w.pinMeasurement();
     }, [&w] { return w.m_doc->browse || !w.m_doc->scene.measurements.empty(); });
-    script->add("pinned", [&w, require] {
+    script->add("pinned", [&w, require, pick, edge] {
       if (!w.m_doc->browse) {
         const auto& m = w.m_doc->scene.measurements.back();
         require(m.kind == "area" && std::abs(m.result.value("value", 0.0) - 2000) < 1e-6 && m.refs.size() == 4, "pinned as an area measurement with its four walls");
       }
+      pick({edge(200, 0, 300, 0)});
+    }, measured);
+    script->add("tee", [&w, require, pick, edge] {
+      const opad::json& r = w.m_lastMeasure;
+      require(r.value("closed", false) && r.value("grown", false) && std::abs(r.value("value", 0.0) - 3000) < 1e-6 && std::abs(r.value("perimeter", 0.0) - 220) < 1e-6,
+              QString("a wall the dividing wall meets in its middle is cut there: the part at its middle grows into its room, %1 mm²").arg(r.value("value", 0.0)));
+      pick({edge(395, 0, 455, 0), edge(450, -5, 450, 45), edge(455, 40, 395, 40), edge(400, 45, 400, -5)});
+    }, measured);
+    script->add("overshoot", [&w, require] {
+      const opad::json& r = w.m_lastMeasure;
+      require(r.value("closed", false) && r.value("trimmed", false) && std::abs(r.value("value", 0.0) - 2000) < 1e-6 && std::abs(r.value("perimeter", 0.0) - 180) < 1e-6,
+              QString("four lines drawn past each other's ends close once trimmed: %1 mm², perimeter %2").arg(r.value("value", 0.0)).arg(r.value("perimeter", 0.0)));
       w.action("select.vertices")->trigger();
     }, [&w, v] { return v->selectionFilter() == Viewport::SelFilter::Vertex && w.m_toolPicks.empty(); });
     script->add("three corners", [doc, pick] {

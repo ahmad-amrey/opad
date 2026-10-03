@@ -1,6 +1,6 @@
 // The Area tool's measure (UI-90, core/src/measure_area.cpp): grown loops in a drawing (the cell on either side of an edge,
-// the smaller one, dangling lines left out), closed objects, picked boundaries open and closed, holes, the polygon
-// through points, fills.
+// the smaller one, dangling lines left out; objects cut where others meet or cross them, tangent ones told apart),
+// closed objects, picked boundaries open, closed and running past each other, holes, the polygon through points, fills.
 #include <BRepAdaptor_Curve.hxx>
 #include <TopExp.hxx>
 #include <TopTools_IndexedMapOfShape.hxx>
@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <optional>
 #include <sstream>
 
 #include "check.hpp"
@@ -172,6 +173,133 @@ TEST(points_fills_and_what_is_refused) {
   body.body = d.layer("Walls");
   CHECK_THROWS(d.area({body}));
   CHECK_THROWS(d.area({}));
+}
+
+// Objects that meet in the middle of others (T), cross them (X), touch a circle (a slot's tangent lines), run past their
+// corners, and an ellipse cut by lines.
+struct Crossings {
+  std::filesystem::path dir = std::filesystem::temp_directory_path() / ("opad-area-x-" + new_uuid());
+  Document doc = Document::create();
+  Scene scene;
+  std::string body;
+  Crossings() {
+    std::filesystem::create_directory(dir);
+    std::ostringstream out;
+    auto g = [&](int code, const std::string& value) { out << code << '\n' << value << '\n'; };
+    auto line = [&](double x0, double y0, double x1, double y1) {
+      g(0, "LINE"), g(8, "Plan"), g(10, std::to_string(x0)), g(20, std::to_string(y0)), g(11, std::to_string(x1)), g(21, std::to_string(y1));
+    };
+    g(0, "SECTION"), g(2, "ENTITIES");
+    // A 100 x 50 room of four walls with a wall from the bottom one to the top one at x = 60 (T at both ends).
+    line(0, 0, 100, 0), line(100, 0, 100, 50), line(100, 50, 0, 50), line(0, 50, 0, 0), line(60, 0, 60, 50);
+    // A slot: a circle with two lines leaving its top and bottom tangentially, closed by a line at x = 350.
+    g(0, "CIRCLE"), g(8, "Plan"), g(10, "300"), g(20, "0"), g(40, "10");
+    line(300, 10, 350, 10), line(300, -10, 350, -10), line(350, -10, 350, 10);
+    // A # of four lines around a 20 x 20 cell.
+    line(500, 10, 560, 10), line(500, 30, 560, 30), line(520, 0, 520, 40), line(540, 0, 540, 40);
+    // A 50 x 40 outline whose corners overshoot by 5.
+    line(595, 0, 655, 0), line(650, -5, 650, 45), line(655, 40, 595, 40), line(600, 45, 600, -5);
+    // An ellipse (semi-axes 40 and 20) cut along its major axis by a line ending on it and crossed by a longer one.
+    g(0, "ELLIPSE"), g(8, "Plan"), g(10, "900"), g(20, "0"), g(11, "40"), g(21, "0"), g(40, "0.5"), g(41, "0"), g(42, std::to_string(2 * M_PI));
+    line(860, 0, 940, 0), line(900, -30, 900, 30);
+    // Three lines that miss a common point by a hair: a speck of a triangle with 0.003 legs.
+    line(1990, 0, 2010, 0), line(2000, -10, 2000, 10), line(1990, 10.003, 2010, -9.997);
+    // A 1000 x 1000 square whose bottom has a 1 mm piece: its cell is far bigger than the first window around it.
+    line(3000, 0, 3500, 0), line(3500, 0, 3501, 0), line(3501, 0, 4000, 0), line(4000, 0, 4000, 1000), line(4000, 1000, 3000, 1000), line(3000, 1000, 3000, 0);
+    // A 200 x 100 outline whose left side has a 1 mm piece with small circles on both its ends (as a board outline's
+    // vertex marks): in the first window the walls leading on are cut off, and must not be taken for dead ends.
+    line(5000, 0, 5200, 0), line(5200, 0, 5200, 100), line(5200, 100, 5000, 100), line(5000, 100, 5000, 99), line(5000, 99, 5000, 0);
+    g(0, "CIRCLE"), g(8, "Plan"), g(10, "5000"), g(20, "99"), g(40, "0.3");
+    g(0, "CIRCLE"), g(8, "Plan"), g(10, "5000"), g(20, "100"), g(40, "0.3");
+    g(0, "ENDSEC"), g(0, "EOF");
+    write_text_file(dir / "plan.dxf", out.str());
+    import_file(doc, dir / "plan.dxf");
+    scene = resolve(doc);
+    body = scene.all_bodies().at(0);
+  }
+  ~Crossings() {
+    std::error_code e;
+    std::filesystem::remove_all(dir, e);
+  }
+  Ref edge(double x0, double y0, double x1, double y1) const {
+    TopTools_IndexedMapOfShape map;
+    TopExp::MapShapes(node_world_shape(doc, scene, body), TopAbs_EDGE, map);
+    for (int i = 1; i <= map.Extent(); ++i) {
+      const BRepAdaptor_Curve c(TopoDS::Edge(map(i)));
+      const gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
+      auto at = [](const gp_Pnt& p, double x, double y) { return std::hypot(p.X() - x, p.Y() - y) < 1e-6; };
+      if ((at(a, x0, y0) && at(b, x1, y1)) || (at(a, x1, y1) && at(b, x0, y0))) {
+        Ref r;
+        r.body = body;
+        r.kind = Ref::Kind::Edge;
+        r.index = i - 1;
+        return r;
+      }
+    }
+    throw Error("no such edge");
+  }
+  json area(const std::vector<Ref>& refs, std::optional<Vec3> clicked = std::nullopt) const { return measure_area(doc, scene, refs, {}, clicked); }
+};
+
+TEST(cells_between_objects_that_meet_in_the_middle) {
+  Crossings d;
+  const Ref bottom = d.edge(0, 0, 100, 0);
+  json r = d.area({bottom}, Vec3{30, 0, 0});  // the wall under the left room: cut at the T, the part clicked
+  CHECK(r["closed"].get<bool>() && r.value("grown", false));
+  CHECK_NEAR(r["value"].get<double>(), 3000, 1e-6);
+  CHECK_NEAR(r["perimeter"].get<double>(), 220, 1e-6);
+  CHECK_EQ(r["edges"].get<int>(), 4);
+  CHECK_NEAR(d.area({bottom}, Vec3{80, 0.5, 0})["value"].get<double>(), 2000, 1e-6);  // near the right room's part
+  CHECK_NEAR(d.area({bottom})["value"].get<double>(), 3000, 1e-6);                  // no click: the part at its middle
+  CHECK_NEAR(d.area({d.edge(60, 0, 60, 50)})["value"].get<double>(), 2000, 1e-6);    // the wall with a T at each end
+}
+
+TEST(tangent_objects_and_crossings) {
+  Crossings d;
+  // The slot's end: past the lines' tangent points the trace goes on along the half of the circle that bends towards the
+  // cell (curvature tells the tangent directions apart), not around the other half.
+  json r = d.area({d.edge(350, -10, 350, 10)});
+  CHECK(r["closed"].get<bool>());
+  CHECK_NEAR(r["value"].get<double>(), 1000 - 50 * M_PI, 1e-6);
+  CHECK_NEAR(r["perimeter"].get<double>(), 120 + 10 * M_PI, 1e-6);
+  CHECK_NEAR(d.area({d.edge(300, 10, 350, 10)}, Vec3{320, 10, 0})["value"].get<double>(), 1000 - 50 * M_PI, 1e-6);
+  // One line of the #: the cell its middle part bounds.
+  r = d.area({d.edge(500, 10, 560, 10)}, Vec3{530, 10, 0});
+  CHECK_NEAR(r["value"].get<double>(), 400, 1e-6);
+  CHECK_NEAR(r["perimeter"].get<double>(), 80, 1e-6);
+  CHECK(!d.area({d.edge(500, 10, 560, 10)}, Vec3{505, 10, 0})["closed"].get<bool>());  // its loose end bounds nothing
+  // The ellipse: cut where the lines end on it and cross it (refined on the curve), a quarter of it.
+  r = d.area({d.edge(860, 0, 940, 0)}, Vec3{880, 0, 0});
+  CHECK(r["closed"].get<bool>());
+  CHECK_NEAR(r["value"].get<double>(), 200 * M_PI, 1e-4);
+}
+
+TEST(specks_are_not_areas_and_big_cells_are_found_far_away) {
+  Crossings d;
+  CHECK(!d.area({d.edge(1990, 0, 2010, 0)}, Vec3{2000.0015, 0, 0})["closed"].get<bool>());  // the speck above, nothing below
+  json r = d.area({d.edge(3500, 0, 3501, 0)});
+  CHECK(r["closed"].get<bool>());
+  CHECK_NEAR(r["value"].get<double>(), 1e6, 1e-6);
+  CHECK_NEAR(r["perimeter"].get<double>(), 4000, 1e-6);
+  CHECK_EQ(r["edges"].get<int>(), 6);
+  r = d.area({d.edge(5000, 100, 5000, 99)});
+  CHECK(r["closed"].get<bool>());
+  CHECK_NEAR(r["value"].get<double>(), 20000 - 0.09 * M_PI * 3 / 4, 1e-6);  // less a half and a quarter of the circles
+}
+
+TEST(picked_objects_that_run_past_each_other) {
+  Crossings d;
+  json r = d.area({d.edge(500, 10, 560, 10), d.edge(500, 30, 560, 30), d.edge(520, 0, 520, 40), d.edge(540, 0, 540, 40)});
+  CHECK(r["closed"].get<bool>() && r.value("trimmed", false));
+  CHECK_NEAR(r["value"].get<double>(), 400, 1e-6);
+  CHECK_NEAR(r["perimeter"].get<double>(), 80, 1e-6);
+  r = d.area({d.edge(595, 0, 655, 0), d.edge(650, -5, 650, 45), d.edge(655, 40, 595, 40), d.edge(600, 45, 600, -5)});
+  CHECK(r["closed"].get<bool>());
+  CHECK_NEAR(r["value"].get<double>(), 2000, 1e-6);
+  CHECK_NEAR(r["perimeter"].get<double>(), 180, 1e-6);
+  r = d.area({d.edge(595, 0, 655, 0), d.edge(650, -5, 650, 45), d.edge(655, 40, 595, 40)});  // three sides: still open
+  CHECK(!r["closed"].get<bool>());
+  CHECK_EQ(r["open_ends"].get<int>(), 6);
 }
 
 CHECK_MAIN()

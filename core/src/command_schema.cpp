@@ -124,8 +124,10 @@ json command_schema(const commands::CommandInfo& command,bool live) {
   if(properties.contains("ref"))properties["ref"]=ref();
   if(properties.contains("refs"))properties["refs"]=array(ref(),1,100);
   if(name=="measure"){  // several measurements in one call (gap log #4)
-    properties["kind"]=choice({"distance","angle","radius","diameter","bbox"});
-    properties["queries"]=array(object({{"kind",choice({"distance","angle","radius","diameter","bbox"})},{"refs",array(ref(),1,100)}},{"refs"}),1,200);
+    properties["kind"]=choice({"distance","angle","radius","diameter","bbox","area"});
+    properties["at"]=vector(3);
+    properties["at"]["description"]="area: where one drawing object was clicked; its cell is measured on that part of it";
+    properties["queries"]=array(object({{"kind",choice({"distance","angle","radius","diameter","bbox","area"})},{"refs",array(ref(),1,100)},{"at",vector(3)}},{"refs"}),1,200);
     properties["queries"]["description"]="Several measurements, answered in order as results; a failed one carries error. Instead of kind and refs.";
   }
   if(properties.contains("anchor"))properties["anchor"]=ref();
