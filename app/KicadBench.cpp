@@ -1,12 +1,18 @@
 #include "MainWindow.hpp"
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QDoubleSpinBox>
+#include <QPushButton>
 #include <QTimer>
 #include <filesystem>
 #include <functional>
 #include <set>
 
 #include "Jobs.hpp"
+#include "KicadBoards.hpp"
 #include "Viewport.hpp"
 #include "opad/kicad_pcb.hpp"
 
@@ -15,7 +21,8 @@
 // served from a local copy through OPAD_KICAD_MODELS_URL, a mounting hole). It must show the board, the found model once
 // per footprint from one body entry and boxes for the missing ones, keep the 2D layers hidden; download the library model
 // (setting kicad/download=always) and read the board again with it; save an iso frame; opened again without the folder
-// setting, show boxes for those two and the downloaded model.
+// setting, show boxes for those two and the downloaded model; the KiCad boards dialog (Settings) then turns the components
+// off and puts the origin on KiCad's page, and the board read again must follow (its pictures: <png>.import.png, .dialog.png).
 bool MainWindow::benchKicad() {
   const QString shot = qEnvironmentVariable("OPAD_BENCH_KICAD");
   if (shot.isEmpty()) return false;
@@ -77,11 +84,44 @@ bool MainWindow::benchKicad() {
         openPath(m_doc->viewing);  // the same board again: runBench comes back here for phase 2
       });
       return true;
-    default:
+    case 2: {
       if (models != 1 || placeholders != 3) return fail("without the folder setting only the downloaded model should be found");
       trace::log("bench: kicad board, shared model from the settings folder, boxes for missing models, library model downloaded and shown, hidden layers, "
                  "setting off -> boxes PASS");
+      auto* asked = new KicadDialog(this, true);  // as File > Import asks
+      asked->show();
+      const QPushButton* go = nullptr;
+      for (auto* b : asked->findChild<QDialogButtonBox*>()->buttons())
+        if (asked->findChild<QDialogButtonBox*>()->buttonRole(b) == QDialogButtonBox::AcceptRole) go = qobject_cast<QPushButton*>(b);
+      if (!go || go->text() != tr("Import") || !asked->grab().save(QString(shot).replace(".png", ".import.png"))) return fail("import dialog");
+      asked->reject();
+      asked->deleteLater();
+      auto* dialog = new KicadDialog(this, false);  // Settings > KiCad boards
+      dialog->show();
+      auto* components = dialog->findChild<QCheckBox*>("components");
+      auto* origin = dialog->findChild<QComboBox*>("origin");
+      auto* height = dialog->findChild<QDoubleSpinBox*>("placeholderHeight");
+      if (!components || !origin || !height || !components->isChecked() || origin->currentData() != "auto" || height->value() != 1.0) return fail("dialog defaults");
+      components->setChecked(false);
+      origin->setCurrentIndex(origin->findData("page"));
+      height->setValue(2.5);
+      QTimer::singleShot(300, this, [this, dialog, shot, fail] {
+        if (!dialog->grab().save(QString(shot).replace(".png", ".dialog.png"))) return (void)fail("dialog picture");
+        for (auto* b : dialog->findChild<QDialogButtonBox*>()->buttons())
+          if (dialog->findChild<QDialogButtonBox*>()->buttonRole(b) == QDialogButtonBox::AcceptRole) b->click();
+        dialog->deleteLater();
+        if (m_settings.value("kicad/components").toBool() || m_settings.value("kicad/origin").toString() != "page" || m_settings.value("kicad/placeholderHeight").toDouble() != 2.5)
+          return (void)fail("the dialog did not save");
+        openPath(m_doc->viewing);  // runBench comes back for phase 3
+      });
+      return true;
+    }
+    default: {
+      const opad::json origin = import->data["kicad"].value("origin", opad::json());
+      if (models != 0 || placeholders != 0 || origin != opad::json::array({0.0, 0.0})) return fail("the dialog's choices were not used: " + QString::fromStdString(origin.dump()));
+      trace::log("bench: kicad import and settings dialog: components off and page origin read back PASS");
       QCoreApplication::exit(0);
       return true;
+    }
   }
 }

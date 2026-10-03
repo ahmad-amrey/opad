@@ -2,6 +2,7 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include "MainWindow.hpp"
+#include "KicadBoards.hpp"
 #include "DrawingPlacer.hpp"
 #include "RecoveryManager.hpp"
 #include "AgentBridge.hpp"
@@ -369,6 +370,7 @@ void MainWindow::buildActions() {
       parent = QString::fromStdString(ids[0]);
     const QString suffix = QFileInfo(p).suffix().toLower();
     if (suffix == "dxf" || suffix == "svg" || suffix == "dwg") return importDrawing(p, parent);
+    if (suffix == "kicad_pcb" && KicadDialog(this, true).exec() != QDialog::Accepted) return;
     beginLoad([this, p] { addRecent(p); m_viewport->fitWhenReady(); });
     m_doc->startImport(p, parent);
   });
@@ -758,17 +760,8 @@ void MainWindow::buildRibbon() {
   viewerMode->setToolTip(tr("STEP, IGES, STL, 3MF, OBJ, DXF, SVG and the other formats open read-only and fast; Save makes them editable OPAD documents."));
   connect(viewerMode, &QAction::toggled, this, [this](bool on) { m_doc->viewerOpens = on; m_settings.setValue("files/viewerMode", on); });
   if (associations::supported()) settings->addAction(tr("File types…"), this, [this] { FileTypesDialog(this).exec(); });
-  // KiCad boards: footprints' 3D models are also looked for here, after KiCad's own folders (read at the next open).
-  settings->addAction(tr("KiCad 3D model folders…"), this, [this] {
-    bool ok = false;
-    const QString text = QInputDialog::getMultiLineText(this, tr("KiCad 3D model folders"), tr("Folders with 3D models (STEP) for KiCad boards, one per line. They are searched after KiCad's own:"),
-                                                        m_settings.value("kicad/modelDirs").toStringList().join('\n'), &ok);
-    if (!ok) return;
-    QStringList dirs;
-    for (const QString& line : text.split('\n'))
-      if (!line.trimmed().isEmpty()) dirs << QDir::fromNativeSeparators(line.trimmed());
-    m_settings.setValue("kicad/modelDirs", dirs);
-  });
+  // KiCad boards: what is built, where footprints' 3D models are looked for, downloads (read at the next open).
+  settings->addAction(tr("KiCad boards…"), this, [this] { KicadDialog(this, false).exec(); });
   settings->addAction(action("panel.browser"));
   auto* autoBrowser = settings->addAction(tr("Auto-hide scene browser"));
   autoBrowser->setCheckable(true);

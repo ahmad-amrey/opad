@@ -231,8 +231,10 @@ solid, a mesh or a 2D drawing. DWG opens through LibreDWG's `dwg2dxf`, which the
 DXF reader shows model space with its blocks, hatches, dimensions, text and colours ([details](docs/drawings.md)). `opad-cli probe <file> --viewer --mesh` reports what opening a file costs, phase by phase.
 A KiCad board (`.kicad_pcb`) opens as the board itself (its Edge.Cuts outline with the drills, thickness and solder-mask
 colour) and its footprints' 3D models, placed as KiCad places them and found as KiCad finds them (`${KIPRJMOD}`, the
-`KICAD*_3DMODEL_DIR` variables from the environment or KiCad's settings, KiCad's install folders, then Settings > KiCad
-3D model folders); a model that is not found shows as a translucent box over the footprint. KiCad's model libraries are
+`KICAD*_3DMODEL_DIR` variables from the project, the environment or KiCad's settings, KiCad's install folders, then the
+folders in Settings > KiCad boards); a model that is not found shows as a translucent box over the footprint. Importing a
+board asks what to build (components, do-not-populate parts, vias, the origin, the boxes' height); Settings > KiCad
+boards keeps those choices for opening boards too. KiCad's model libraries are
 not part of OPAD: when a board names models of KiCad's library that are not installed, OPAD offers to download them from
 the library (gitlab.com/kicad/libraries/kicad-packages3D, CC-BY-SA 4.0 with KiCad's design exception) into your user
 cache, and shows them (`opad-cli kicad_models board.kicad_pcb [--download true]` lists and fetches them).

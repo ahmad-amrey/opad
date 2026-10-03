@@ -1,7 +1,20 @@
+#include "KicadBoards.hpp"
+
+#include <QCheckBox>
+#include <QComboBox>
+#include <QDialogButtonBox>
+#include <QDir>
+#include <QDoubleSpinBox>
+#include <QFileDialog>
 #include <QFileInfo>
+#include <QFormLayout>
+#include <QLabel>
 #include <QMessageBox>
+#include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSettings>
 #include <QStatusBar>
+#include <QVBoxLayout>
 #include <memory>
 
 #include "MainWindow.hpp"
@@ -10,6 +23,96 @@
 namespace {
 std::filesystem::path fsPath(const QString& path) { return std::filesystem::path(path.toStdU16String()); }
 }  // namespace
+
+KicadDialog::KicadDialog(QWidget* parent, bool import) : QDialog(parent) {
+  setObjectName("kicadDialog");
+  setWindowTitle(import ? tr("Import KiCad board") : tr("KiCad boards"));
+  QSettings settings;
+  auto* layout = new QVBoxLayout(this);
+  auto* form = new QFormLayout();
+  m_components = new QCheckBox(tr("Footprints' 3D models"), this);
+  m_components->setObjectName("components");
+  m_components->setChecked(settings.value("kicad/components", true).toBool());
+  m_dnp = new QCheckBox(tr("Parts marked do not populate"), this);
+  m_dnp->setObjectName("dnp");
+  m_dnp->setChecked(settings.value("kicad/dnp", true).toBool());
+  m_vias = new QCheckBox(tr("Drill the vias (slower on dense boards)"), this);
+  m_vias->setObjectName("vias");
+  m_vias->setChecked(settings.value("kicad/vias", false).toBool());
+  auto* include = new QVBoxLayout();
+  for (auto* box : {m_components, m_dnp, m_vias}) include->addWidget(box);
+  form->addRow(tr("Include"), include);
+  m_origin = new QComboBox(this);
+  m_origin->setObjectName("origin");
+  m_origin->addItem(tr("Drill/place origin, else the board's centre"), "auto");
+  m_origin->addItem(tr("The board's centre"), "center");
+  m_origin->addItem(tr("KiCad's page origin"), "page");
+  m_origin->setCurrentIndex(std::max(0, m_origin->findData(settings.value("kicad/origin", "auto").toString())));
+  form->addRow(tr("Origin"), m_origin);
+  m_height = new QDoubleSpinBox(this);
+  m_height->setObjectName("placeholderHeight");
+  m_height->setRange(0.1, 50);
+  m_height->setDecimals(2);
+  m_height->setSingleStep(0.5);
+  m_height->setSuffix(" mm");
+  m_height->setValue(settings.value("kicad/placeholderHeight", 1.0).toDouble());
+  m_height->setToolTip(tr("A footprint whose 3D model is not found shows as a translucent box over its courtyard, this tall unless it has a Height property."));
+  form->addRow(tr("Boxes for missing models"), m_height);
+  m_dirs = new QPlainTextEdit(this);
+  m_dirs->setObjectName("modelDirs");
+  m_dirs->setPlaceholderText(tr("Folders with 3D models (STEP or VRML), one per line"));
+  m_dirs->setPlainText(settings.value("kicad/modelDirs").toStringList().join('\n'));
+  m_dirs->setFixedHeight(m_dirs->fontMetrics().lineSpacing() * 4 + 12);
+  auto* add = new QPushButton(tr("Add folder…"), this);
+  connect(add, &QPushButton::clicked, this, [this] {
+    const QString dir = QFileDialog::getExistingDirectory(this, tr("3D model folder"));
+    if (!dir.isEmpty()) m_dirs->appendPlainText(QDir::fromNativeSeparators(dir));
+  });
+  auto* dirs = new QVBoxLayout();
+  dirs->addWidget(m_dirs);
+  dirs->addWidget(add, 0, Qt::AlignLeft);
+  form->addRow(tr("Model folders"), dirs);
+  m_download = new QComboBox(this);
+  m_download->setObjectName("download");
+  m_download->addItem(tr("Ask before downloading"), "ask");
+  m_download->addItem(tr("Download without asking"), "always");
+  m_download->addItem(tr("Never download"), "never");
+  m_download->setCurrentIndex(std::max(0, m_download->findData(settings.value("kicad/download", "ask").toString())));
+  form->addRow(tr("KiCad library models"), m_download);
+  layout->addLayout(form);
+  auto* note = new QLabel(tr("Models are looked for as KiCad does (the project, its variables, KiCad's settings and install), then in these folders. "
+                             "Models of KiCad's library that are not installed can be downloaded from gitlab.com/kicad/libraries/kicad-packages3D "
+                             "into OPAD's cache for you alone: CC-BY-SA 4.0 with KiCad's design exception, free to use in your own designs; "
+                             "they are not part of OPAD."),
+                          this);
+  note->setObjectName("secondary");
+  note->setWordWrap(true);
+  layout->addWidget(note);
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
+  QPushButton* ok = buttons->addButton(import ? tr("Import") : tr("Save"), QDialogButtonBox::AcceptRole);
+  ok->setDefault(true);
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, this, [this] {
+    save();
+    accept();
+  });
+  connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+  setMinimumWidth(520);
+}
+
+void KicadDialog::save() const {
+  QSettings settings;
+  settings.setValue("kicad/components", m_components->isChecked());
+  settings.setValue("kicad/dnp", m_dnp->isChecked());
+  settings.setValue("kicad/vias", m_vias->isChecked());
+  settings.setValue("kicad/origin", m_origin->currentData());
+  settings.setValue("kicad/placeholderHeight", m_height->value());
+  QStringList dirs;
+  for (const QString& line : m_dirs->toPlainText().split('\n'))
+    if (!line.trimmed().isEmpty()) dirs << QDir::fromNativeSeparators(line.trimmed());
+  settings.setValue("kicad/modelDirs", dirs);
+  settings.setValue("kicad/download", m_download->currentData());
+}
 
 // The models are KiCad's (CC-BY-SA 4.0 with its design exception): never bundled, fetched per user on consent into the
 // user cache, where the reader looks for them (opad::kicad_download_models). The download is a job on a worker.

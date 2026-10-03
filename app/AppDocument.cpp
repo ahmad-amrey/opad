@@ -39,8 +39,15 @@ AppDocument::~AppDocument() { *m_alive = false; }
 
 opad::KicadOptions AppDocument::kicadOptions() {
   opad::KicadOptions o;
-  for (const QString& dir : QSettings().value("kicad/modelDirs").toStringList())  // Settings > KiCad 3D model folders
+  QSettings s;  // Settings > KiCad boards (KicadDialog)
+  for (const QString& dir : s.value("kicad/modelDirs").toStringList())
     if (!dir.trimmed().isEmpty()) o.model_dirs.push_back(fsPath(dir.trimmed()));
+  o.components = s.value("kicad/components", true).toBool();
+  o.dnp = s.value("kicad/dnp", true).toBool();
+  o.vias = s.value("kicad/vias", false).toBool();
+  o.placeholder_height = std::clamp(s.value("kicad/placeholderHeight", 1.0).toDouble(), 0.01, 200.0);
+  const QString origin = s.value("kicad/origin", "auto").toString();
+  o.origin = origin == "center" || origin == "page" ? origin.toStdString() : "auto";
   return o;
 }
 
