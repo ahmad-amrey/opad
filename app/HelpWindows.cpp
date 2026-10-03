@@ -66,7 +66,10 @@ QList<KeyGroup> keyGroups(const QList<QAction*>& actions, bool sketching, const 
     label.remove('&').remove(QString::fromUtf8("…"));
     auto it = std::find_if(groups.begin(), groups.end(), [&](const KeyGroup& g) { return g.title == group; });
     if (it == groups.end()) it = groups.insert(groups.end(), KeyGroup{group, {}});
-    it->rows << KeyRow{label, a->shortcut().toString(QKeySequence::NativeText)};
+    QStringList keys;  // an alternate too (Redo: Ctrl+Y / Ctrl+Shift+Z)
+    for (const QKeySequence& key : a->shortcuts())
+      if (!key.isEmpty()) keys << key.toString(QKeySequence::NativeText);
+    it->rows << KeyRow{label, keys.join(" / ")};
   }
   if (sketching)  // the sketch's keys first
     std::stable_partition(groups.begin(), groups.end(), [&](const KeyGroup& g) {

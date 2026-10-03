@@ -86,6 +86,53 @@ TEST(alternate_keys) {
   CHECK(custom.shortcuts()==QList<QKeySequence>{QKeySequence("Ctrl+R")});
   s.clear();
 }
+// The editor's Alternate column and field: a second key of the user's stays beside the key (shortcutAlternates/<id>),
+// another command's key there is a conflict like any, taking Redo's alternate for another command clears it (saved as
+// none), Restore default brings both of Redo's keys back, and an alternate left alone becomes the key.
+TEST(editor_alternates) {
+  QSettings settings;settings.clear();QAction redo,fit,save;
+  init(redo,"edit.redo","Ctrl+Y");init(fit,"view.fit","F");init(save,"file.save","Ctrl+S");
+  QList<QAction*> actions{&redo,&fit,&save};
+  const auto text=[](const char* key){return QKeySequence(key).toString(QKeySequence::NativeText);};
+  {
+    ShortcutEditor dialog(actions);
+    auto* tree=dialog.findChild<QTreeWidget*>("shortcutTree");
+    auto* alternate=dialog.findChild<QKeySequenceEdit*>("shortcutAlternate");
+    CHECK(item(dialog,"edit.redo")->text(2)==text("Ctrl+Shift+Z"));
+    tree->setCurrentItem(item(dialog,"view.fit"));
+    alternate->setKeySequence(QKeySequence("Ctrl+Alt+F"));dialog.findChild<QPushButton*>("shortcutAssignAlternate")->click();
+    CHECK(item(dialog,"view.fit")->text(2)==text("Ctrl+Alt+F"));
+    alternate->setKeySequence(QKeySequence("Ctrl+S"));
+    bool seen=false;QTimer::singleShot(0,[&]{seen=answer("cancel");});
+    dialog.findChild<QPushButton*>("shortcutAssignAlternate")->click();CHECK(seen);
+    CHECK(item(dialog,"view.fit")->text(2)==text("Ctrl+Alt+F"));
+    alternate->setKeySequence(QKeySequence("Ctrl+Alt+F"));
+    choose(dialog,"view.fit","Ctrl+Shift+Z");assign(dialog,"shortcutReassign");
+    CHECK(item(dialog,"edit.redo")->text(2).isEmpty()&&item(dialog,"view.fit")->text(1)==text("Ctrl+Shift+Z"));
+    dialog.accept();
+  }
+  CHECK(fit.shortcuts()==QList<QKeySequence>({QKeySequence("Ctrl+Shift+Z"),QKeySequence("Ctrl+Alt+F")}));
+  CHECK(redo.shortcuts()==QList<QKeySequence>{QKeySequence("Ctrl+Y")});
+  CHECK(fit.toolTip().contains(text("Ctrl+Alt+F")));
+  CHECK(settings.value("shortcutAlternates/view.fit").toString()=="Ctrl+Alt+F");
+  CHECK(settings.contains("shortcutAlternates/edit.redo")&&settings.value("shortcutAlternates/edit.redo").toString().isEmpty());
+  QAction fitAgain,redoAgain;init(fitAgain,"view.fit","F");init(redoAgain,"edit.redo","Ctrl+Y");  // the next start
+  CHECK(fitAgain.shortcuts()==fit.shortcuts()&&redoAgain.shortcuts()==redo.shortcuts());
+  {
+    ShortcutEditor dialog(actions);
+    choose(dialog,"view.fit","F");dialog.findChild<QPushButton*>("shortcutAssign")->click();
+    dialog.findChild<QTreeWidget*>("shortcutTree")->setCurrentItem(item(dialog,"edit.redo"));
+    dialog.findChild<QPushButton*>("shortcutReset")->click();
+    CHECK(item(dialog,"edit.redo")->text(1)==text("Ctrl+Y")&&item(dialog,"edit.redo")->text(2)==text("Ctrl+Shift+Z"));
+    dialog.findChild<QTreeWidget*>("shortcutTree")->setCurrentItem(item(dialog,"view.fit"));
+    choose(dialog,"view.fit","");dialog.findChild<QPushButton*>("shortcutAssign")->click();
+    dialog.accept();
+  }
+  CHECK(redo.shortcuts()==QList<QKeySequence>({QKeySequence("Ctrl+Y"),QKeySequence("Ctrl+Shift+Z")})&&!settings.contains("shortcutAlternates/edit.redo"));
+  CHECK(fit.shortcuts()==QList<QKeySequence>{QKeySequence("Ctrl+Alt+F")}&&settings.value("shortcuts/view.fit").toString()=="Ctrl+Alt+F");
+  CHECK(!settings.contains("shortcutAlternates/view.fit"));
+  settings.clear();
+}
 TEST(editor_search_swap_reassign_cancel_and_persistence) {
   QSettings settings;settings.clear();QAction home,grid,sketch,measure;
   init(home,"view.home","H");init(grid,"view.grid","G");init(sketch,"sketch.dimension","D");init(measure,"inspect.distance","D");

@@ -2,20 +2,26 @@
 // second key, and Open/New going on after an unfinished sketch is finished. The commands are MainWindowEdit.cpp's.
 #include "MainWindow.hpp"
 #include "BenchRegistry.hpp"
+#include "HelpWindows.hpp"
+#include "ShortcutEditor.hpp"
 
 #include <QApplication>
 #include <QElapsedTimer>
+#include <QKeySequenceEdit>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSettings>
+#include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 
 // OPAD_BENCH_STANDARDKEYS=<prefix> (a box, a cylinder beside it and a sketch "Plate", started with Properties saved on
 // Ctrl+P as the old editor wrote it): the keys (Ctrl+A, Ctrl+Shift+I, Shift+Enter, Alt+Enter now and the setting gone,
 // F1, Ctrl+, and Redo also on Ctrl+Shift+Z); Select all takes the visible bodies only, in the body filter; Invert takes
 // the others; Repeat names and reruns the last tool and leads the view's context menu; in the sketch, Select all and
-// Invert work on its curves; an unfinished sketch whose question is answered Finish is saved as an op and then what
-// asked goes on.
+// Invert work on its curves; Keyboard shortcuts shows Redo's alternate and gives Repeat a second key that is kept, in its
+// tooltip and the cheat sheet, until Restore default (<prefix>.shortcut-editor.png); an unfinished sketch whose question
+// is answered Finish is saved as an op and then what asked goes on.
 OPAD_BENCH(OPAD_BENCH_STANDARDKEYS, standardkeys) {
   auto failed = std::make_shared<QStringList>();
   auto check = [failed](bool ok, const QString& what) {
@@ -42,6 +48,49 @@ OPAD_BENCH(OPAD_BENCH_STANDARDKEYS, standardkeys) {
           "Ctrl+A, Ctrl+Shift+I, Shift+Enter, F1, Ctrl+,");
     check(key("inspect.properties") == QKeySequence("Alt+Return") && !QSettings().contains("shortcuts/inspect.properties"), "Properties moved to Alt+Enter, the old Ctrl+P setting gone");
     check(w.action("edit.redo")->shortcuts().contains(QKeySequence("Ctrl+Shift+Z")) && w.action("edit.redo")->shortcut() == QKeySequence::Redo, "Redo also on Ctrl+Shift+Z");
+    // Keyboard shortcuts: an Alternate column and field; a second key of the user's is kept and shown everywhere keys are.
+    const QKeySequence second("Ctrl+Alt+Shift+R");
+    {
+      ShortcutEditor editor(w.m_actions, &w);
+      auto* tree = editor.findChild<QTreeWidget*>("shortcutTree");
+      QTreeWidgetItem* row = nullptr;
+      QTreeWidgetItem* redo = nullptr;
+      for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        if ((*it)->toolTip(0) == "edit.repeat") row = *it;
+        if ((*it)->toolTip(0) == "edit.redo") redo = *it;
+      }
+      check(row && redo && redo->text(2) == QKeySequence("Ctrl+Shift+Z").toString(QKeySequence::NativeText), "the editor shows Redo's alternate");
+      if (row) {
+        tree->setCurrentItem(row);
+        editor.findChild<QKeySequenceEdit*>("shortcutAlternate")->setKeySequence(second);
+        editor.findChild<QPushButton*>("shortcutAssignAlternate")->click();
+        check(row->text(2) == second.toString(QKeySequence::NativeText), "Repeat gets a second key in the editor");
+        editor.show();
+        editor.grab().save(value + ".shortcut-editor.png");
+        editor.accept();
+      }
+    }
+    const QStringList sheet = [&w] {
+      QStringList rows;
+      for (const auto& g : help::keyGroups(w.m_actions, false, "fusion"))
+        for (const auto& r : g.rows) rows << r.keys;
+      return rows;
+    }();
+    check(w.action("edit.repeat")->shortcuts() == QList<QKeySequence>({QKeySequence("Shift+Return"), second}) &&
+              QSettings().value("shortcutAlternates/edit.repeat").toString() == second.toString() &&
+              w.action("edit.repeat")->toolTip().contains(second.toString(QKeySequence::NativeText)) &&
+              sheet.contains(QKeySequence("Shift+Return").toString(QKeySequence::NativeText) + " / " + second.toString(QKeySequence::NativeText)),
+          "Repeat answers to both keys, saved, in its tooltip and the cheat sheet");
+    {
+      ShortcutEditor editor(w.m_actions, &w);
+      auto* tree = editor.findChild<QTreeWidget*>("shortcutTree");
+      for (QTreeWidgetItemIterator it(tree); *it; ++it)
+        if ((*it)->toolTip(0) == "edit.repeat") tree->setCurrentItem(*it);
+      editor.findChild<QPushButton*>("shortcutReset")->click();
+      editor.accept();
+    }
+    check(w.action("edit.repeat")->shortcuts() == QList<QKeySequence>{QKeySequence("Shift+Return")} && !QSettings().contains("shortcutAlternates/edit.repeat"),
+          "Restore default: Shift+Enter alone again");
     check(bodies->size() == 2, QString("two bodies (%1)").arg(bodies->size()));
     if (bodies->size() != 2) return;
     w.m_doc->run("appearance", opad::json{{"target", (*bodies)[1]}, {"visible", false}});

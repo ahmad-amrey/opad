@@ -699,5 +699,9 @@
  "Grid spacing": "تباعد الشبكة",
  "Grid settings…": "إعدادات الشبكة…",
  "Snap settings…": "إعدادات الالتقاط…",
- "Units and precision…": "الوحدات والدقة…"
+ "Units and precision…": "الوحدات والدقة…",
+ "Alternate": "البديل",
+ "Alternate shortcut:": "الاختصار البديل:",
+ "Assign alternate": "تعيين البديل",
+ "%1 (alternate)": "%1 (البديل)"
 }
