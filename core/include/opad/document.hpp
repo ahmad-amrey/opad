@@ -1,5 +1,6 @@
 #pragma once
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -46,8 +47,11 @@ class Document {
  public:
   Document();
   static Document create(const std::string& units = "mm");
-  static Document load(const std::filesystem::path& path);
-  static Document parse(const std::string& text, const std::filesystem::path& origin = {});
+  // `skip_body(key)` true leaves that body entry out, unread and unverified (a version compared with one already
+  // in memory needs only the bodies it does not have).
+  using BodyFilter = std::function<bool(const std::string& key)>;
+  static Document load(const std::filesystem::path& path, const BodyFilter& skip_body = {});
+  static Document parse(const std::string& text, const std::filesystem::path& origin = {}, const BodyFilter& skip_body = {});
 
   std::string serialize() const;
   void save();                                     // to `path`
@@ -66,6 +70,10 @@ class Document {
   std::vector<std::string> body_keys() const;
   size_t body_count() const { return bodies_.size(); }
   const std::vector<BodyEntry>& bodies() const { return bodies_; }
+  // Rebuilds the body store as `keys` in that order, each kept from this store or moved out of `from` (verified when
+  // that was parsed: nothing is hashed again), then this store's other entries when `keep_others`. Throws when a key
+  // is in neither.
+  void arrange_bodies(const std::vector<std::string>& keys, Document& from, bool keep_others);
 
   // Removes body entries that no live (non-tombstoned) op references. Returns removed keys.
   std::vector<std::string> gc();

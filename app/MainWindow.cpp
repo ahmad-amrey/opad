@@ -4,6 +4,7 @@
 #include "MainWindow.hpp"
 #include "DrawingPlacer.hpp"
 #include "RecoveryManager.hpp"
+#include "DiskSync.hpp"
 #include "AgentBridge.hpp"
 
 #include <QToolButton>
@@ -83,6 +84,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   buildStatusBar();
   buildDesign();
   m_recovery=new RecoveryManager(m_doc,m_design,m_jobs,this);
+  new DiskSync(m_doc,m_jobs,m_viewport,this);  // the file changed on disk: merged or reported, never overwritten (UI-56)
   m_agent=new AgentBridge(m_doc,m_design,m_viewport,m_jobs,this);
   m_agent->bench();
   auto* agentStatus=new QToolButton(this);
@@ -2467,6 +2469,7 @@ void MainWindow::showNodeGeometry(const std::string& id, const QString& title, c
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_RECOVERY");!mode.isEmpty()){m_recovery->bench(mode);return;}
+  if(auto* disk=findChild<DiskSync*>();disk && disk->bench())return;
   if(benchViewer())return;
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_FILETYPES");!shot.isEmpty()){  // the dialog as drawn, nothing registered
     auto* dialog=new FileTypesDialog(this);dialog->show();

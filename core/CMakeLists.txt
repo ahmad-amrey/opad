@@ -38,6 +38,7 @@ add_library(opad_core STATIC
   src/inspect.cpp
   src/render.cpp
   src/diff.cpp
+  src/merge.cpp
   src/commands.cpp
   src/command_schema.cpp
   src/agent_context.cpp

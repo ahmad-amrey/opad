@@ -14,6 +14,7 @@ set(CMAKE_AUTORCC ON)
 set(OPAD_APP_SOURCES
   main.cpp
   AppDocument.cpp AppDocument.hpp
+  Banner.cpp Banner.hpp DiskSync.cpp DiskSync.hpp
   AppSnapshot.cpp SketchRecovery.cpp RecoveryManager.cpp RecoveryManager.hpp
   AgentBridge.cpp AgentBridge.hpp AgentSettings.cpp AgentWork.cpp AgentBench.cpp AgentRegistration.cpp AgentRegistration.hpp
   Theme.cpp Theme.hpp

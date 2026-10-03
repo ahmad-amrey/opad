@@ -280,6 +280,37 @@ const BodyEntry* Document::body(const std::string& key) const {
   return it == bodies_index_.end() ? nullptr : &bodies_[it->second];
 }
 
+void Document::arrange_bodies(const std::vector<std::string>& keys, Document& from, bool keep_others) {
+  for (const auto& key : keys)
+    if (!bodies_index_.count(key) && !from.bodies_index_.count(key)) throw Error("body entry missing: " + key);
+  std::vector<BodyEntry> out;
+  out.reserve(keys.size() + (keep_others ? bodies_.size() : 0));
+  std::vector<bool> taken(bodies_.size());
+  std::set<std::string> placed;
+  for (const auto& key : keys) {
+    if (!placed.insert(key).second) continue;
+    if (auto it = bodies_index_.find(key); it != bodies_index_.end()) {
+      out.push_back(std::move(bodies_[it->second]));
+      taken[it->second] = true;
+    } else {
+      auto& entry = from.bodies_[from.bodies_index_.at(key)];
+      out.push_back(std::move(entry));
+      entry.key.clear();
+    }
+  }
+  if (keep_others)
+    for (size_t i = 0; i < bodies_.size(); ++i)
+      if (!taken[i]) out.push_back(std::move(bodies_[i]));
+  bodies_ = std::move(out);
+  bodies_index_.clear();
+  for (size_t i = 0; i < bodies_.size(); ++i) bodies_index_[bodies_[i].key] = i;
+  // `from` keeps what was not moved out
+  from.bodies_.erase(std::remove_if(from.bodies_.begin(), from.bodies_.end(), [](const BodyEntry& b) { return b.key.empty(); }), from.bodies_.end());
+  from.bodies_index_.clear();
+  for (size_t i = 0; i < from.bodies_.size(); ++i) from.bodies_index_[from.bodies_[i].key] = i;
+  dirty = true;
+}
+
 std::vector<std::string> Document::body_keys() const {
   std::vector<std::string> keys;
   keys.reserve(bodies_.size());
@@ -402,7 +433,7 @@ std::string Document::serialize() const {
   return out;
 }
 
-Document Document::parse(const std::string& text, const std::filesystem::path& origin) {
+Document Document::parse(const std::string& text, const std::filesystem::path& origin, const BodyFilter& skip_body) {
   Document d;
   d.path = origin;
   std::string where = origin.empty() ? std::string("<memory>") : origin.string();
@@ -499,6 +530,7 @@ Document Document::parse(const std::string& text, const std::filesystem::path& o
         fail(i, "bad body header");
       // Subtract before comparing: hostile counts must not overflow or trigger huge allocations.
       if (n > lines.size() - i - 1) fail(i, "truncated body entry");
+      if (skip_body && skip_body(key)) { i += n + 1; continue; }
       BodyEntry e;
       e.key = key;
       try {
@@ -525,8 +557,8 @@ Document Document::parse(const std::string& text, const std::filesystem::path& o
   return d;
 }
 
-Document Document::load(const std::filesystem::path& p) {
-  Document d = parse(read_text_file(p), p);
+Document Document::load(const std::filesystem::path& p, const BodyFilter& skip_body) {
+  Document d = parse(read_text_file(p), p, skip_body);
   d.path = p;
   return d;
 }

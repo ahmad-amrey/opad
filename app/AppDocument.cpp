@@ -9,6 +9,7 @@
 #include <QSettings>
 #include <Standard_Failure.hxx>
 #include <algorithm>
+#include <set>
 #include <QMetaObject>
 #include <QPointer>
 #include <thread>
@@ -93,6 +94,8 @@ void AppDocument::startOpen(const QString& path) {
     QString error;
     QStringList warnings;
     bool slowRead = false;  // worth remembering (viewer cache): the next open skips the translation
+    const DiskStat stat = external ? DiskStat{} : statFile(path);  // before reading: a change meanwhile is noticed later
+    std::shared_ptr<const opad::Manifest> manifest;
     try {
       if (external) {
         *result = opad::Document::create();
@@ -103,7 +106,10 @@ void AppDocument::startOpen(const QString& path) {
           for(const auto& warning:imported.warnings) warnings.append(QString::fromStdString(warning));
           slowRead = viewer && clock.elapsed() > 1500;
         }
-      } else *result = opad::Document::load(fsPath(path));
+      } else {
+        *result = opad::Document::load(fsPath(path));
+        manifest = std::make_shared<opad::Manifest>(opad::Manifest::of(*result));
+      }
       // Parse the bodies here rather than on the UI thread when they are first displayed.
       if (!*cancel) opad::warm_shape_cache(*result, [&](size_t i, size_t n) { return o.progress(n ? double(i) / double(n) : 1.0, "preparing"); });
       if (*cancel) error = QStringLiteral("cancelled");
@@ -113,7 +119,7 @@ void AppDocument::startOpen(const QString& path) {
       error = QString::fromUtf8(e.what());
     }
     if (!*alive || current->load() != token) return;  // dropped: freed here, off the UI thread
-    QMetaObject::invokeMethod(this, [this, result, error, path, external, viewer, warnings, token, current, slowRead, o] {
+    QMetaObject::invokeMethod(this, [this, result, error, path, external, viewer, warnings, token, current, slowRead, o, stat, manifest] {
       if (current->load() != token) return;
       loading = false;
       if (!error.isEmpty()) {
@@ -132,6 +138,8 @@ void AppDocument::startOpen(const QString& path) {
       clearHistory();
       markSaved();  // a viewed file is never "unsaved": closing it asks nothing
       if (external && !viewer) m_savedIds.clear();  // imported for editing: not saved as an OPAD document yet
+      if (external) setDisk({}, {}, {});
+      else setDisk(QFileInfo(path).absoluteFilePath(), stat, manifest);
       refresh();
       emit pathChanged();
       if (viewer) emit message(tr("Viewing %1 (read-only)").arg(QFileInfo(path).fileName()));
@@ -151,6 +159,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
     hasDocument = true;
     clearHistory();
     markSaved();  // an empty, unsaved document: anything imported makes it dirty
+    setDisk({}, {}, {});
     emit pathChanged();
   }
   loading = true;
@@ -225,6 +234,7 @@ void AppDocument::newDocument() {
   hasDocument = true;
   clearHistory();
   markSaved();
+  setDisk({}, {}, {});
   refresh();
   emit pathChanged();
   emit newDocumentCreated();
@@ -240,6 +250,7 @@ void AppDocument::closeDocument() {
   hasDocument = false;
   clearHistory();
   markSaved();
+  setDisk({}, {}, {});
   refresh();
   emit pathChanged();
 }
@@ -248,6 +259,7 @@ void AppDocument::open(const QString& path) {
   if (loading || designBusy) throw opad::Error("Document is busy; try again when the operation finishes.");
   QString ext = QFileInfo(path).suffix().toLower();
   opad::Document next;
+  const DiskStat stat = ext == "opad" ? statFile(path) : DiskStat{};
   if (ext != "opad") {
     next = opad::Document::create();
     opad::ImportOptions options;
@@ -267,6 +279,8 @@ void AppDocument::open(const QString& path) {
   clearHistory();
   markSaved();
   if (ext != "opad") m_savedIds.clear();
+  if (ext != "opad") setDisk({}, {}, {});
+  else setDisk(QFileInfo(path).absoluteFilePath(), stat, std::make_shared<opad::Manifest>(opad::Manifest::of(doc)));
   refresh();
   emit pathChanged();
 }
@@ -279,6 +293,7 @@ void AppDocument::importStep(const QString& path, const QString& parent) {
     hasDocument = true;
     clearHistory();
     markSaved();
+    setDisk({}, {}, {});
     emit pathChanged();
   }
   opad::json args;
@@ -291,24 +306,38 @@ void AppDocument::importStep(const QString& path, const QString& parent) {
                    .arg(r.value("new_entries", 0)));
 }
 
-void AppDocument::save() {
+bool AppDocument::save(bool overwriteDisk) {
   if (loading || m_capturing) throw opad::Error("Document snapshot is in progress; try saving again shortly.");
   if (browse) throw opad::Error("viewer mode: export to an OPAD document first");
+  if (!overwriteDisk && !doc.path.empty() && QFileInfo(path()) == QFileInfo(m_diskFile) && diskChanged()) {
+    emit message(tr("Not saved: %1 changed on disk").arg(QFileInfo(m_diskFile).fileName()));
+    emit saveBlocked();
+    return false;
+  }
   doc.save();
   markSaved();
+  wroteDisk();
   emit pathChanged();
   emit saved();
   emit message(tr("Saved %1").arg(path()));
+  return true;
 }
 
-void AppDocument::saveAs(const QString& path) {
+bool AppDocument::saveAs(const QString& path) {
   if (loading || m_capturing) throw opad::Error("Document snapshot is in progress; try saving again shortly.");
   if (browse) throw opad::Error("viewer mode: export to an OPAD document first");
+  if (QFileInfo(path) == QFileInfo(m_diskFile) && diskChanged()) {  // the open file chosen again: the same as Save
+    emit message(tr("Not saved: %1 changed on disk").arg(QFileInfo(m_diskFile).fileName()));
+    emit saveBlocked();
+    return false;
+  }
   doc.save_as(fsPath(path));
   markSaved();
+  wroteDisk();
   emit pathChanged();
   emit saved();
   emit message(tr("Saved %1").arg(path));
+  return true;
 }
 
 opad::json AppDocument::run(const std::string& command, opad::json args) {
@@ -352,7 +381,7 @@ void AppDocument::recover(opad::Document&& document,opad::Scene&& resolved) {
   if(loading || designBusy)throw opad::Error("Document is busy; try recovery again shortly.");
   emit aboutToReplace();++generation;++revision;m_rollback.clear();
   doc=std::move(document);doc.path.clear();doc.dirty=true;scene=std::move(resolved);
-  browse=false;hasDocument=true;clearHistory();m_savedIds.clear();m_savedBodies=0;
+  browse=false;hasDocument=true;clearHistory();m_savedIds.clear();m_savedBodies=0;setDisk({},{},{});
   emit changed();emit pathChanged();
 }
 
@@ -457,6 +486,115 @@ QString AppDocument::title() const {
 }
 
 QString AppDocument::path() const { return QString::fromStdU16String(doc.path.u16string()); }
+
+// ---------------------------------------------------------------- the file on disk (UI-56)
+AppDocument::DiskStat AppDocument::statFile(const QString& file) {
+  const QFileInfo info(file);
+  if (file.isEmpty() || !info.exists()) return {};
+  return {true, info.size(), info.lastModified().toMSecsSinceEpoch()};
+}
+
+AppDocument::DiskRead AppDocument::readDisk(const QString& file, std::shared_ptr<const opad::Manifest> base, std::shared_ptr<opad::ShapeCache> cache, bool skipKnown) {
+  DiskRead r;
+  r.file = file;
+  r.base = base;
+  r.stat = statFile(file);
+  if (!r.stat.exists) return r;
+  try {
+    std::set<std::string> listed;
+    auto doc = std::make_shared<opad::Document>(opad::Document::load(fsPath(file), [&](const std::string& key) {
+      if (listed.insert(key).second) r.bodies.push_back(key);
+      return skipKnown && base && base->bodies.count(key) > 0;
+    }));
+    auto manifest = std::make_shared<opad::Manifest>(opad::Manifest::of(*doc));
+    manifest->bodies.insert(r.bodies.begin(), r.bodies.end());
+    if (base) r.relation = opad::relation(*base, *doc);
+    if (cache) {  // the bodies read, parsed here rather than on the UI thread when they are displayed
+      doc->shape_cache = std::move(cache);
+      opad::warm_shape_cache(*doc);
+    }
+    r.doc = std::move(doc);
+    r.manifest = std::move(manifest);
+  } catch (const Standard_Failure& e) {
+    r.error = QString::fromUtf8(e.GetMessageString());
+  } catch (const std::exception& e) {
+    r.error = QString::fromUtf8(e.what());
+  }
+  return r;
+}
+
+bool AppDocument::diskChanged() const {
+  if (m_diskFile.isEmpty()) return false;
+  const DiskStat now = statFile(m_diskFile);
+  return now.exists && now != m_diskStat;
+}
+
+opad::MergePlan AppDocument::planDisk(const DiskRead& read) const {
+  opad::MergePlan plan;
+  if (!read.doc || !read.base || read.base != m_diskBase || QFileInfo(read.file) != QFileInfo(m_diskFile)) plan.error = "the file was read for another state of the document";
+  else plan = opad::plan_merge(*read.base, doc, *read.doc);
+  return plan;
+}
+
+opad::MergePlan AppDocument::mergeDisk(DiskRead&& read, const QString& label) {
+  if (loading || designBusy || m_capturing || m_converting) throw opad::Error("The document is busy; try again in a moment.");
+  opad::MergePlan plan = planDisk(read);
+  if (!plan.error.empty()) throw opad::Error(plan.error);
+  // Undo: the steps of the unsaved ops stay on top. Below them the merge is one step when it only inserted there;
+  // otherwise (the file's new ops sit between saved ones) what came before can no longer be undone.
+  const size_t mine = plan.mine.size();
+  size_t covered = 0, at = m_undo.size();
+  while (at > 0 && covered < mine) covered += m_undo[--at].count;
+  opad::apply_merge(doc, *read.doc, plan, read.bodies);
+  if (plan.shared || covered > mine) m_undo.clear();
+  else if (covered == mine && !plan.appended) m_undo.erase(m_undo.begin(), m_undo.begin() + static_cast<std::ptrdiff_t>(at));
+  else if (covered == mine && plan.incoming) m_undo.insert(m_undo.begin() + static_cast<std::ptrdiff_t>(at), Step{label, plan.incoming, {}});
+  while (static_cast<int>(m_undo.size()) > m_undoLimit) m_undo.erase(m_undo.begin());
+  m_redo.clear();
+  m_savedIds.clear();  // the file's state: everything but the unsaved ops, now last
+  for (size_t i = 0; i + mine < doc.ops.size(); ++i) m_savedIds.push_back(doc.ops[i].id);
+  m_savedBodies = read.bodies.size();
+  setDisk(read.file, read.stat, read.manifest);
+  refresh();
+  emit undoChanged();
+  return plan;
+}
+
+void AppDocument::reloadDisk(DiskRead&& read) {
+  if (loading || designBusy || m_capturing || m_converting) throw opad::Error("The document is busy; try again in a moment.");
+  if (!read.doc) throw opad::Error(read.error.isEmpty() ? std::string("the file could not be read") : read.error.toStdString());
+  for (const auto& key : read.bodies)
+    if (!doc.has_body(key) && !read.doc->has_body(key)) throw opad::Error("body entry missing: " + key);
+  emit aboutToReplace();
+  ++generation;
+  m_rollback.clear();
+  doc.arrange_bodies(read.bodies, *read.doc, false);
+  doc.ops = std::move(read.doc->ops);
+  doc.header = read.doc->header;
+  doc.path = fsPath(read.file);
+  clearHistory();
+  markSaved();
+  m_savedBodies = doc.body_count();
+  setDisk(read.file, read.stat, read.manifest);
+  refresh();
+  emit pathChanged();
+  emit message(tr("Reloaded %1 from disk").arg(QFileInfo(read.file).fileName()));
+}
+
+void AppDocument::acceptDisk(const DiskRead& read) {
+  if (read.manifest && QFileInfo(read.file) == QFileInfo(m_diskFile)) setDisk(read.file, read.stat, read.manifest);
+}
+
+void AppDocument::setDisk(const QString& file, const DiskStat& stat, std::shared_ptr<const opad::Manifest> base) {
+  m_diskFile = file;
+  m_diskStat = stat;
+  m_diskBase = std::move(base);
+}
+
+void AppDocument::wroteDisk() {
+  const QString file = QFileInfo(path()).absoluteFilePath();
+  setDisk(file, statFile(file), std::make_shared<opad::Manifest>(opad::Manifest::of(doc)));
+}
 
 QString AppDocument::nodeName(const std::string& id) const {
   const opad::Node* n = scene.node(id);
