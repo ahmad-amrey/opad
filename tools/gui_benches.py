@@ -65,6 +65,7 @@ def main():
             ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("drawings-browser", empty, {"OPAD_BENCH_DRAWINGS": "{prefix}"}),
             ("bom", empty, {"OPAD_BENCH_BOM": "{prefix}"}),
+            ("export-view", empty, {"OPAD_BENCH_EXPORT": "{prefix}"}),  # 2D views of solids from the Export dialog (UI-87)
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))

@@ -121,5 +121,19 @@
   "its geometry is missing": "هندسته مفقودة",
   "no material": "بلا مادة",
   "not a solid": "ليس مجسّمًا",
-  "a part in it has no mass": "إحدى قطعه بلا كتلة"
+  "a part in it has no mass": "إحدى قطعه بلا كتلة",
+  "2D VIEW": "مسقط ثنائي الأبعاد",
+  "Current view": "العرض الحالي",
+  "Hidden lines": "الخطوط المخفية",
+  "Tangent edges": "الحواف المماسّة",
+  "%1 · a 2D view of %2 objects · %3": "%1 · مسقط ثنائي الأبعاد لـ %2 عناصر · %3",
+  "Drawings and sketches are left out of a view of the model.": "الرسومات والمخططات لا تدخل في مسقط النموذج.",
+  "Exact lines and arcs at full size in mm; hidden lines go on their own layer.": "خطوط وأقواس دقيقة بالحجم الكامل بالمليمتر؛ والخطوط المخفية في طبقة خاصة بها.",
+  "Exporting": "جارٍ التصدير",
+  "Exporting a 2D view": "جارٍ تصدير مسقط ثنائي الأبعاد",
+  "Projecting the view": "جارٍ إسقاط المسقط",
+  "Nothing to project: a 2D view shows solids and meshes": "لا شيء للإسقاط: المسقط ثنائي الأبعاد يعرض المجسّمات والشبكات",
+  "mesh reference objects require STL, OBJ or GLB export, or a 2D view": "عناصر الشبكة المرجعية تُصدَّر بصيغة STL أو OBJ أو GLB، أو كمسقط ثنائي الأبعاد",
+  "Raster images require SVG export; DXF raster references are not supported": "الصور النقطية تتطلب التصدير بصيغة SVG؛ مراجع الصور في DXF غير مدعومة",
+  "No drawing objects selected for export": "لم تُحدَّد عناصر رسم للتصدير"
 }

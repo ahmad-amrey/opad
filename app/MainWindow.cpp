@@ -2538,6 +2538,7 @@ void MainWindow::runBench() {
   if(benchDrawingImport())return;
   if(benchDrawings())return;
   if(benchBom())return;
+  if(benchExport())return;
   if(benchTodo9())return;
   if(benchAnnotateLarge())return;
   if(qEnvironmentVariableIsSet("OPAD_BENCH_INSTANCES")) {

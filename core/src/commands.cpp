@@ -394,25 +394,14 @@ void register_builtins() {
         return import_brep(need(d), text, a.value("name", "Body"), o).to_json();
       });
 
-  reg("export", "Export selected objects (or everything) to step|obj|stl|glb|dxf|svg|dwg or a plugin format",
+  reg("export", "Export selected objects (or everything) to step|obj|stl|glb|dxf|svg|dwg or a plugin format (2D of solids: a hidden-line view)",
       {{"doc", "path"}, {"format", "step|obj|stl|glb|dxf|svg|dwg|..."}, {"out", "path"}, {"select", "array|csv - node uuids"}, {"schema", "AP214|AP242"},
-       {"tolerance", "number - mesh deflection mm"}, {"ascii", "bool - STL text"}, {"per_body", "bool - STL one file per body"}, {"mtl", "bool - OBJ materials"}},
+       {"tolerance", "number - mesh deflection mm"}, {"ascii", "bool - STL text"}, {"per_body", "bool - STL one file per body"}, {"mtl", "bool - OBJ materials"},
+       {"view", "2D: front|top|iso|..."}, {"dir", "[x,y,z]"}, {"up", "[x,y,z]"}, {"hidden", "bool"}, {"tangent", "bool"}, {"decimals", "int"}},
       false, [](Document* d, const json& a) {
         Document& doc = need(d);
-        std::string fmt = a.value("format", "step");
-        if (has_exporter(fmt)) return run_exporter(fmt, doc, a);
-        ExportOptions o;
-        o.format = fmt;
-        o.select = str_list(a.value("select", json()));
-        o.step_schema = a.value("schema", "AP214");
-        o.tolerance = a.value("tolerance", 0.1);
-        o.ascii = a.value("ascii", false);
-        o.per_body = a.value("per_body", false);
-        o.mtl = a.value("mtl", true);
-        std::string out = a.value("out", "");
-        if (out.empty()) throw Error("export: \"out\" path required");
-        if (fmt == "svg" || fmt == "dxf" || fmt == "dwg") return export_drawing(doc, resolve(doc), path_from_utf8(out), o).to_json();
-        return export_selection(doc, resolve(doc), path_from_utf8(out), o).to_json();
+        if (has_exporter(a.value("format", "step"))) return run_exporter(a.value("format", "step"), doc, a);
+        return export_document(doc, resolve(doc), a);
       });
 
   reg("render", "Headless screenshot (PNG). views puts several fitted views in one labelled grid; edge_lines draws the model's edges; highlight tints faces and edges; shading smooth uses vertex normals",
@@ -741,6 +730,30 @@ json run_exporter(const std::string& format, const Document& doc, const json& ar
     fn = it->second;
   }
   return fn(doc, args);
+}
+
+json export_document(const Document& doc, const Scene& scene, const json& a, const std::function<bool(double, const std::string&)>& progress) {
+  const std::string fmt = a.value("format", "step");
+  if (has_exporter(fmt)) return run_exporter(fmt, doc, a);
+  ExportOptions o;
+  o.format = fmt;
+  o.select = str_list(a.value("select", json()));
+  o.step_schema = a.value("schema", "AP214");
+  o.tolerance = a.value("tolerance", 0.1);
+  o.ascii = a.value("ascii", false);
+  o.per_body = a.value("per_body", false);
+  o.mtl = a.value("mtl", true);
+  if (a.contains("view") || a.contains("dir")) {
+    o.view = json::object();
+    for (const char* k : {"view", "dir", "up", "hidden", "tangent", "quality"})
+      if (a.contains(k)) o.view[k] = a[k];
+  }
+  o.decimals = std::clamp(a.value("decimals", 6), 0, 12);
+  o.progress = progress;
+  const std::string out = a.value("out", "");
+  if (out.empty()) throw Error("export: \"out\" path required");
+  if (fmt == "svg" || fmt == "dxf" || fmt == "dwg") return export_drawing(doc, scene, path_from_utf8(out), o).to_json();
+  return export_selection(doc, scene, path_from_utf8(out), o).to_json();
 }
 
 std::vector<std::string> exporter_formats() {

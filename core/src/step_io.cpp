@@ -76,6 +76,7 @@ json ExportResult::to_json() const {
   for (const auto& p : files) f.push_back(p.string());
   j["files"] = f;
   j["bodies"] = bodies;
+  for (const auto& [k, v] : details.items()) j[k] = v;
   return j;
 }
 

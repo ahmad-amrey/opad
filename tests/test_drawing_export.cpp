@@ -1,5 +1,6 @@
-// 2D writers (TODO 11 UI-86): the DXF R2000 and SVG writers read back by OPAD's own readers, the R2000 structure
-// (handles, owners, tables, objects), text for converters, and dimensions as geometry.
+// 2D writers and model-to-2D export (TODO 11 UI-86, UI-87): the DXF R2000 and SVG writers read back by OPAD's own
+// readers, the R2000 structure (handles, owners, tables, objects), text for converters, dimensions as geometry,
+// hidden-line views of solids written with exact arcs, and DWG through LibreDWG when a converter is at hand.
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepGProp.hxx>
@@ -304,6 +305,111 @@ TEST(dimensions_are_drawn_as_geometry) {
   linear_dimension(s, s.layer({"D"}), {0, 0}, {4, 0}, {1, 0}, {2, 10}, "4");
   CHECK(s.prims[2].curve.pts[0][0] < -5 && s.prims[2].curve.pts[1][0] > 9);
   CHECK(s.prims[3].loops[0][1][0] < 0);  // the left arrowhead's back lies outside, left of its tip at 0
+}
+
+TEST(view_export_draws_a_part_with_hidden_lines_and_exact_circles) {
+  Files f;
+  const TopoDS_Shape box = BRepPrimAPI_MakeBox(40, 30, 20).Shape();
+  const TopoDS_Shape hole = BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(20, 15, -1), gp_Dir(0, 0, 1)), 4, 22).Shape();
+  auto doc = Document::create();
+  import_brep(doc, brep_from_shape(BRepAlgoAPI_Cut(box, hole).Shape()), "Block");
+  const auto front = f.dir / "front.dxf";
+  auto r = commands::run("export", {{"format", "dxf"}, {"out", front.string()}, {"view", "front"}, {"hidden", true}}, &doc);
+  CHECK_EQ(r["bodies"], 1);
+  CHECK_EQ(r["layers"]["Visible"], 4);  // the outline
+  CHECK_EQ(r["layers"]["Hidden"], 2);   // the hole's sides
+  const auto es = entities_of(pairs_of(read_text_file(front)));
+  CHECK_EQ(count(es, "LINE", "Visible"), 4);
+  CHECK_EQ(count(es, "LINE", "Hidden"), 2);
+  auto round = Document::create();
+  import_file(round, front);
+  auto scene = resolve(round);
+  Bnd_Box all;
+  for (const auto& id : scene.all_bodies()) all.Add(node_world_bbox(round, scene, id));
+  double x0, y0, z0, x1, y1, z1;
+  all.Get(x0, y0, z0, x1, y1, z1);
+  CHECK_NEAR(x1 - x0, 40, 1e-3);
+  CHECK_NEAR(y1 - y0, 20, 1e-3);
+  // From the top the hole is one exact circle; no hidden lines unless asked for.
+  const auto top = f.dir / "top.dxf";
+  r = commands::run("export", {{"format", "dxf"}, {"out", top.string()}, {"view", "top"}}, &doc);
+  CHECK(!r["layers"].contains("Hidden") && r["entities"]["CIRCLE"] == 1);
+  for (const auto& e : entities_of(pairs_of(read_text_file(top))))
+    if (e.type == "CIRCLE") {
+      CHECK_NEAR(e.num(40), 4, 1e-6);
+      CHECK_NEAR(e.num(10), 20, 1e-6);
+      CHECK_NEAR(e.num(20), 15, 1e-6);
+    }
+  // Any direction (the app's current camera), and SVG.
+  const auto iso = f.dir / "iso.svg";
+  r = commands::run("export", {{"format", "svg"}, {"out", iso.string()}, {"dir", {1, -1, 1}}, {"up", {0, 0, 1}}}, &doc);
+  CHECK(r["entities"].value("ELLIPSE", 0) >= 2);  // the hole's rims seen at an angle
+  round = Document::create();
+  import_file(round, iso);
+  CHECK(!resolve(round).all_bodies().empty());
+  // Without a view the solid is seen from the top (where drawings lie); a mesh needs a view.
+  r = commands::run("export", {{"format", "dxf"}, {"out", (f.dir / "plain.dxf").string()}}, &doc);
+  CHECK(r["view"]["dir"][2].get<double>() > 0.99 && r["entities"]["CIRCLE"] == 1);
+  write_text_file(f.dir / "mesh.obj", "v 0 0 0\nv 10 0 0\nv 0 10 0\nv 0 0 10\nf 1 2 3\nf 1 2 4\nf 1 3 4\nf 2 3 4\n");
+  auto mesh = Document::create();
+  import_file(mesh, f.dir / "mesh.obj");
+  CHECK_THROWS(commands::run("export", {{"format", "dxf"}, {"out", (f.dir / "mesh.dxf").string()}}, &mesh));
+  r = commands::run("export", {{"format", "dxf"}, {"out", (f.dir / "mesh.dxf").string()}, {"view", "front"}}, &mesh);
+  CHECK(r["layers"]["Visible"].get<int>() >= 3);
+  // A cancelled view stops.
+  ExportOptions o;
+  o.format = "dxf";
+  o.view = {{"view", "right"}, {"quality", "exact"}};
+  o.progress = [](double, const std::string&) { return false; };
+  drawing::clear_projection_memory();
+  CHECK_THROWS(export_drawing(doc, resolve(doc), f.dir / "cancelled.dxf", o));
+}
+
+TEST(sketches_and_drawings_export_exactly_on_their_own_layers) {
+  Files f;
+  write_text_file(f.dir / "in.dxf",
+                  "0\nSECTION\n2\nENTITIES\n0\nARC\n8\nArcs\n62\n1\n10\n5\n20\n5\n40\n2\n50\n0\n51\n90\n0\nELLIPSE\n8\nArcs\n10\n0\n20\n0\n11\n10\n21\n0\n40\n0.5\n"
+                  "0\nLINE\n8\nOutline\n10\n0\n20\n0\n11\n20\n21\n10\n0\nENDSEC\n0\nEOF\n");
+  auto doc = Document::create();
+  import_file(doc, f.dir / "in.dxf");
+  const auto out = f.dir / "out.dxf";
+  const auto r = commands::run("export", {{"format", "dxf"}, {"out", out.string()}}, &doc);
+  CHECK_EQ(r["entities"]["ARC"], 1);  // not 128 segments any more
+  CHECK_EQ(r["entities"]["ELLIPSE"], 1);
+  CHECK_EQ(r["entities"]["LINE"], 1);
+  const auto es = entities_of(pairs_of(read_text_file(out)));
+  for (const auto& e : es) {
+    if (e.type == "ARC") CHECK(e.layer == "Arcs" && e.num(62, 256) == 256);  // red as its layer is
+    if (e.type == "LINE") CHECK_EQ(e.layer, "Outline");
+  }
+  CHECK(read_text_file(out).find("\nArcs\n 70\n0\n 62\n1\n") != std::string::npos);
+}
+
+TEST(dwg_through_libredwg_keeps_a_view) {
+  // A view as DWG and back, when a converter is at hand (LibreDWG beside the program, OPAD_DXF2DWG/OPAD_DWG2DXF, ODA).
+  Files f;
+  const TopoDS_Shape box = BRepPrimAPI_MakeBox(40, 30, 20).Shape();
+  const TopoDS_Shape hole = BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(20, 15, -1), gp_Dir(0, 0, 1)), 4, 22).Shape();
+  auto doc = Document::create();
+  import_brep(doc, brep_from_shape(BRepAlgoAPI_Cut(box, hole).Shape()), "Block");
+  ExportOptions o;
+  o.format = "dwg";
+  o.view = {{"view", "front"}, {"hidden", true}};
+  try {
+    export_drawing(doc, resolve(doc), f.dir / "front.dwg", o);
+  } catch (const Error& e) {
+    if (std::string(e.what()).find("needs a converter") == std::string::npos) throw;
+    std::printf("  (no DWG converter: skipped)\n");
+    return;
+  }
+  auto round = Document::create();
+  import_file(round, f.dir / "front.dwg");
+  const auto scene = resolve(round);
+  std::map<std::string, int> edges;
+  for (const auto& id : scene.all_bodies())
+    for (TopExp_Explorer e(node_world_shape(round, scene, id), TopAbs_EDGE); e.More(); e.Next()) ++edges[scene.node(id)->name];
+  CHECK_EQ(edges["Visible"], 4);
+  CHECK_EQ(edges["Hidden"], 2);
 }
 
 CHECK_MAIN()

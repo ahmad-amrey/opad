@@ -54,6 +54,7 @@ void print_usage() {
   std::printf("  inspect <doc> <ref>...        diff <a.opad> <b.opad>          export <doc> --format stl --out f.stl\n");
   std::printf("  render <doc> --out shot.png --view iso --size 1280x720\n");
   std::printf("  project <doc> --view front --out lines.json|preview.png   hidden-line projection (drawing views)\n");
+  std::printf("  export <doc> --format dxf|svg|dwg --view front|top|iso|... [--hidden true] --out f.dxf   a 2D view of the model\n");
   std::printf("  bom <doc> [--mode parts|top|indented] [--format csv] [--out bom.csv]   bill of materials (CSV on stdout without --out)\n");
   std::printf("  probe <file> [--viewer] [--mesh] [--cache]   reads any supported file as OPAD opens it; reports contents and timings\n");
   std::printf("  thumbnail <file> --out <png|bgra> [--size 256]   a picture of the file (Explorer thumbnails)\n");

@@ -5,6 +5,7 @@ usage: test_cli.py <path-to-opad-cli> <fixtures-dir>
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -125,6 +126,16 @@ def basic_workflow():
     png = os.path.join(tmp, "iso-lines.png")
     run("project", DOC, "--view", "iso", "--out", png, "--width", "400")
     assert open(png, "rb").read(4) == b"\x89PNG"
+    # a view of the model as a 2D drawing (DXF R2000 / SVG): visible and hidden lines on their layers, 6 decimals
+    dxf = os.path.join(tmp, "front.dxf")
+    v = run("export", DOC, "--format", "dxf", "--view", "front", "--hidden", "true", "--out", dxf)
+    assert v["bodies"] == 10 and v["layers"]["Visible"] > 0 and v["layers"]["Hidden"] > 0 and v["view"]["hidden"]
+    text = open(dxf, encoding="ascii").read()
+    assert "AC1015" in text and "\nHIDDEN\n" in text and "$INSUNITS" in text
+    assert not re.search(r"\n-?\d+\.\d{7,}\n", text)
+    svg = os.path.join(tmp, "iso.svg")
+    v = run("export", DOC, "--format", "svg", "--view", "iso", "--out", svg)
+    assert "Hidden" not in v["layers"] and open(svg, encoding="utf-8").read().startswith("<?xml")
     # delete (tombstone) the annotation: it disappears from the resolved list but stays in the log
     run("delete", DOC, "--target", a["id"])
     assert len(run("annotations", DOC)["annotations"]) == 0

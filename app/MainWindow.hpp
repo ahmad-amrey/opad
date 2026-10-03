@@ -79,6 +79,7 @@ class MainWindow : public QMainWindow {
   bool benchDrawingImport();
   bool benchDrawings();  // OPAD_BENCH_DRAWINGS: the browser's Drawings folder and the timeline without drawing ops
   bool benchBom();       // OPAD_BENCH_BOM: the Properties panel's PART section, its dialog and Export bill of materials
+  bool benchExport();    // OPAD_BENCH_EXPORT: 2D views of solids from the Export dialog (ExportBench.cpp)
   bool benchAnnotateLarge();  // OPAD_BENCH_ANNOTATE: the note / drawing editors on the loaded file's heaviest body
   bool benchLargeSketch();
   bool benchShortcuts();
@@ -113,6 +114,7 @@ class MainWindow : public QMainWindow {
   void resolveCurrentAnnotation();
   void restyleAnnotation(const std::string& opId, const std::string& style);  // an edit op on the note
   void exportDialog(std::vector<std::string> ids = {});
+  void runExport(const opad::json& args, const QString& out);  // ExportDialog.cpp: on a worker, the result in m_lastExport
   void editPartProperties(std::vector<std::string> ids);  // PartProperties.cpp: the nodes' part properties dialog
   void exportBom(std::vector<std::string> ids = {});      // BomExport.cpp: File > Export bill of materials
   void drawingToSketch();
@@ -225,6 +227,7 @@ class MainWindow : public QMainWindow {
   BrowserOverlay* m_browserOverlay = nullptr;
   QDockWidget* m_timelineDock = nullptr;
   opad::json m_lastMeasure;
+  opad::json m_lastExport;  // the last export's result, or {"error"}
   QSettings m_settings;
   QTimer m_gitTimer;
   bool m_syncing = false;
