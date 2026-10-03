@@ -96,9 +96,11 @@ bool ToolPanel::takesKeyboardAt(const QPoint& global) const { return keepsKeyboa
 
 #ifdef Q_OS_WIN
 bool ToolPanel::nativeEvent(const QByteArray& type, void* message, qintptr* result) {
-  // Windows activates a window on a click: not this one, unless the click is on a text field or a list.
+  // Windows activates a window on a click: not this one, unless the click is on a text field or a list. It comes to the
+  // front all the same, over another panel it overlaps (raise() does not activate).
   const MSG* msg = static_cast<const MSG*>(message);
   if (msg->message == WM_MOUSEACTIVATE && LOWORD(msg->lParam) == HTCLIENT && g_home && !takesKeyboardAt(QCursor::pos())) {
+    raise();
     *result = MA_NOACTIVATE;
     return true;
   }

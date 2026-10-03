@@ -1,6 +1,13 @@
 // Tool panels and the keyboard (TODO 11 UI-05), typed values outside the sketch (UI-122). Cases in
 // tools/bench_cases/sketch.py; keys and clicks are Qt events sent where the keyboard is, as a user's would arrive.
+#ifdef _WIN32  // first: OCCT's headers take it with the window functions left out
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include <QApplication>
+#include <QCursor>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -12,6 +19,7 @@
 #include <QSlider>
 #include <QTimer>
 #include <QToolButton>
+#include <QWindow>
 
 #include <cmath>
 #include <memory>
@@ -108,8 +116,9 @@ int topFace(const AppDocument* doc, const std::string& body) {
 // OPAD_BENCH_PANEL_FOCUS=1 on a document with a body (UI-05): the Section panel has the keyboard (a text field of it was
 // typed into). A click on its Y button gives the window and the keyboard back to the view, and so does one on its slider;
 // a click into its offset field keeps the keyboard there. A click activates a panel only on a text field or a list (not on a
-// button, the slider or the header). Esc typed while a button of the panel has the keyboard is the panel's: it closes (it
-// was ambiguous with the window's Esc, and nothing happened).
+// button, the slider or the header), on Windows asked by WM_MOUSEACTIVATE as the system asks (a button click raises the
+// panel all the same). Esc typed while a button of the panel has the keyboard is the panel's: it closes (it was ambiguous
+// with the window's Esc, and nothing happened).
 OPAD_BENCH(OPAD_BENCH_PANEL_FOCUS, panelFocus) {
   auto check = std::make_shared<Checks>(Checks{"panel focus"});
   auto finish = [check] { QCoreApplication::exit(check->all ? 0 : 2); };
@@ -132,6 +141,44 @@ OPAD_BENCH(OPAD_BENCH_PANEL_FOCUS, panelFocus) {
   (*check)(panel->takesKeyboardAt(at(field)) && panel->takesKeyboardAt(at(list)) && !panel->takesKeyboardAt(at(y)) && !panel->takesKeyboardAt(at(slider)) &&
                !panel->takesKeyboardAt(panel->mapToGlobal(QPoint(ToolPanel::kMargin + 60, ToolPanel::kMargin + 16))),
            "a click activates the panel on its text field and its list only (not a button, the slider or the header)");
+#ifdef Q_OS_WIN
+  {
+    // What Windows asks before a click activates a window, sent as the system sends it: the panel says MA_NOACTIVATE but on
+    // its text field or its list, and comes to the front over another panel all the same. A bench panel is never on the
+    // screen (Qt does not move its native window either): that is moved for the question, the pointer over the widget.
+    const HWND hwnd = reinterpret_cast<HWND>(panel->winId()), main = reinterpret_cast<HWND>(w.winId());
+    const HWND other = reinterpret_cast<HWND>(w.m_annotationsPanel->winId());
+    auto asked = [panel, hwnd, main](QWidget* target) {
+      RECT before{};
+      GetWindowRect(hwnd, &before);
+      const QPoint inside = target->mapTo(panel, target->rect().center()) * panel->windowHandle()->devicePixelRatio();  // device pixels
+      LRESULT answer = -1;
+      for (int attempt = 0; attempt < 5 && answer == -1; ++attempt) {
+        POINT pointer{}, after{};
+        GetCursorPos(&pointer);
+        SetWindowPos(hwnd, nullptr, pointer.x - inside.x(), pointer.y - inside.y(), 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        const LRESULT r = SendMessageW(hwnd, WM_MOUSEACTIVATE, WPARAM(main), MAKELPARAM(HTCLIENT, WM_LBUTTONDOWN));
+        GetCursorPos(&after);
+        if (after.x == pointer.x && after.y == pointer.y) answer = r;  // the pointer stayed where the panel was put
+      }
+      SetWindowPos(hwnd, nullptr, before.left, before.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+      return answer;
+    };
+    auto over = [](HWND top, HWND under) {
+      for (HWND h = GetWindow(top, GW_HWNDNEXT); h; h = GetWindow(h, GW_HWNDNEXT))
+        if (h == under) return true;
+      return false;
+    };
+    SetWindowPos(other, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    const bool behind = over(other, hwnd);
+    const LRESULT button = asked(y);
+    const bool front = over(hwnd, other);
+    const LRESULT text = asked(field), items = asked(list);
+    (*check)(button == MA_NOACTIVATE && text == MA_ACTIVATE && items == MA_ACTIVATE,
+             QString("WM_MOUSEACTIVATE: no activation on a button, activation on the text field and the list (%1 %2 %3)").arg(button).arg(text).arg(items));
+    (*check)(behind && front, "a click on a button of a panel behind another brings it to the front");
+  }
+#endif
 
   panelHasKeyboard(panel, field, away);
   (*check)(QApplication::activeWindow() == panel && QApplication::focusWidget() == field && w.focusWidget() == away, "the panel has the keyboard, in its offset field");
