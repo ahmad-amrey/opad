@@ -108,7 +108,7 @@ json resolve_reference(const Document& doc,const Scene& scene,const json& token,
   if(total==1)return {{"status","resolved"},{"reference",matches[0]},{"method","unique geometric signature"}};
   return {{"status",total>1?"ambiguous":"stale"},{"candidates",matches},{"matches",total},{"action","Select the intended entity again; no unique stable match was proved."}};
 }
-json entity_details(const Document& doc,const Scene& scene,const json& args) {
+json entity_details(const Document& doc,const Scene& scene,const json& args,design::Provenance* shared) {
   if(args.contains("feature")){
     const auto* feature=scene.feature(args["feature"].get<std::string>());if(!feature)throw Error("Unknown feature");
     return {{"id",feature->id},{"kind",feature->kind},{"name",feature->name},{"inputs",feature->inputs},{"error",feature->error}};
@@ -118,7 +118,8 @@ json entity_details(const Document& doc,const Scene& scene,const json& args) {
   out["reference"]=reference_token(doc,scene,ref);
   // TODO 11 UI-94: the feature that made it, so an agent can act on "the boss" (related lists its faces).
   if(ref.kind==Ref::Kind::Face || ref.kind==Ref::Kind::Edge)try{
-    design::Provenance provenance(doc);const auto owners=ref.kind==Ref::Kind::Face?provenance.face_owners(ref.body):provenance.edge_owners(ref.body);
+    std::unique_ptr<design::Provenance> own;if(!shared)own=std::make_unique<design::Provenance>(doc);design::Provenance& provenance=shared?*shared:*own;
+    const auto& owners=ref.kind==Ref::Kind::Face?provenance.face_owners(ref.body):provenance.edge_owners(ref.body);
     if(ref.index>=0 && size_t(ref.index)<owners.size())out["created_by"]=provenance.describe(owners[size_t(ref.index)]);
   }catch(...){}  // optional evidence: the details stand without it
   return out;
@@ -213,7 +214,7 @@ void register_agent_commands(const std::function<void(const CommandInfo&, Handle
     {"body",{{"type","string"}}},{"kind",{{"type","string"},{"enum",{"edge","face","vertex"}},{"default","edge"}}},{"filters",filters},
     {"ambiguity",{{"type","string"},{"enum",{"all","unique"}},{"default","all"}}},{"tolerance_mm",{{"type","number"},{"minimum",1e-7},{"maximum",1},{"default",1e-5}}}
   }),false},run([](const Document& d,const Scene& s,const json& a){return agent::query_entities(d,s,a);}));
-  add({"entity_details","Exact geometry and paged adjacency with a checked reference token",bounded({{"ref",{{"type",{"string","object"}}}},{"feature",{{"type","string"}}}}),false},run(agent::entity_details));
+  add({"entity_details","Exact geometry and paged adjacency with a checked reference token",bounded({{"ref",{{"type",{"string","object"}}}},{"feature",{{"type","string"}}}}),false},run([](const Document& d,const Scene& s,const json& a){return agent::entity_details(d,s,a);}));
   add({"resolve_reference","Check a reference token, optionally remap only a unique proven geometric match",{{"doc",{{"type","string"}}},{"reference",{{"type","object"},{"required",{"document","ref"}}}},{"remap",{{"type","boolean"},{"default",false}}}},false},run([](const Document& d,const Scene& s,const json& a){return agent::resolve_reference(d,s,a.at("reference"),a.value("remap",false));}));
   add({"validate","Exact solid counts, volumes, areas and kernel validity in bounded pages. checks adds interference (overlapping pairs with their overlap volume and box; with clearance_mm, pairs closer than that; ignore lists pairs meant to overlap) and print (overhangs past overhang_deg against build_direction, walls thinner than min_wall_mm, build-plate contact, thin features)",
     bounded({{"select",{{"type","array"},{"items",{{"type","string"}}}}},{"checks",{{"type","array"},{"items",{{"type","string"},{"enum",{"solid","interference","print"}}}},{"default",{"solid"}}}},

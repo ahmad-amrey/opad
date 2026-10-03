@@ -315,6 +315,7 @@ struct Provenance::Impl {
   std::unordered_map<std::string, std::vector<Event>> events;
   std::map<std::pair<std::string, int>, std::vector<FaceOwner>> memo;
   std::map<std::string, Known> now;
+  std::map<std::string, std::vector<FaceOwner>> edges;  // edge owners, per node
   Scene final;
 
   Impl(const Document& d, Cancel c) : doc(d), cancel(std::move(c)) {}
@@ -569,12 +570,13 @@ struct Provenance::Impl {
 Provenance::Provenance(const Document& doc, Cancel cancel) : m(std::make_unique<Impl>(doc, std::move(cancel))) {}
 Provenance::~Provenance() = default;
 
-std::vector<FaceOwner> Provenance::face_owners(const std::string& node) { return m->current(node).faces; }
+const std::vector<FaceOwner>& Provenance::face_owners(const std::string& node) { return m->current(node).faces; }
 
-std::vector<FaceOwner> Provenance::edge_owners(const std::string& node) {
+const std::vector<FaceOwner>& Provenance::edge_owners(const std::string& node) {
+  if (auto it = m->edges.find(node); it != m->edges.end()) return it->second;
   const Known& known = m->current(node);
   const std::vector<FaceOwner>& faces = known.faces;
-  if (faces.empty()) return {};
+  if (faces.empty()) return m->edges[node];
   const TopoDS_Shape shape = body_shape(m->doc, known.key);
   TopTools_IndexedMapOfShape face_map, edges;
   TopExp::MapShapes(shape, TopAbs_FACE, face_map);
@@ -584,6 +586,7 @@ std::vector<FaceOwner> Provenance::edge_owners(const std::string& node) {
   std::vector<FaceOwner> out;
   out.reserve(static_cast<size_t>(edges.Extent()));
   for (int i = 1; i <= edges.Extent(); ++i) {
+    if (m->cancel && i % 1024 == 0 && m->cancel()) throw Error("cancelled");
     FaceOwner best;
     bool have = false, differ = false;
     if (ancestors.Contains(edges(i)))
@@ -599,7 +602,7 @@ std::vector<FaceOwner> Provenance::edge_owners(const std::string& node) {
     if (differ) best.merged = false;
     out.push_back(best);
   }
-  return out;
+  return m->edges[node] = std::move(out);
 }
 
 int Provenance::order(const std::string& op) {
@@ -709,8 +712,9 @@ json related(const Document& doc, const json& args, const Cancel& cancel) {
     if (std::find(bodies.begin(), bodies.end(), ref.body) == bodies.end()) bodies.push_back(ref.body);
     if (ref.kind != Ref::Kind::Body) (ref.kind == Ref::Kind::Face ? subs[ref.body].first : subs[ref.body].second).push_back(ref.index);
     json item = {{"ref", ref.str()}};
+    if (cancel && cancel()) throw Error("cancelled");
     if (ref.kind != Ref::Kind::Body) {
-      const auto owners = ref.kind == Ref::Kind::Face ? p.face_owners(ref.body) : p.edge_owners(ref.body);
+      const auto& owners = ref.kind == Ref::Kind::Face ? p.face_owners(ref.body) : p.edge_owners(ref.body);  // once per body
       if (owners.empty()) {
         item["provenance"] = false;
       } else {
@@ -734,7 +738,7 @@ json related(const Document& doc, const json& args, const Cancel& cancel) {
   for (const auto& [b, ops] : picked) wanted.insert(ops.begin(), ops.end());
   std::map<std::string, size_t> face_total;
   for (const auto& b : bodies) {
-    const auto owners = p.face_owners(b);
+    const auto& owners = p.face_owners(b);
     face_total[b] = owners.size();
     if (owners.empty()) continue;
     TopTools_IndexedMapOfShape faces;

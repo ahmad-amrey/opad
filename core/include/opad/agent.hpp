@@ -2,6 +2,10 @@
 #include "commands.hpp"
 #include "scene.hpp"
 
+namespace opad::design {
+class Provenance;
+}
+
 namespace opad::agent {
 // Shared discovery/validation for headless MCP and the live bridge. Geometry and
 // context functions are worker-only; callers provide the cached resolved scene.
@@ -10,7 +14,8 @@ json feature_schema(const std::string& kind);
 void validate_input(const json& schema, const json& value, const std::string& path = "arguments");
 json context(const Document&, const Scene&, const json& args);
 json sketch_details(const Document&, const Scene&, const json& args);
-json entity_details(const Document&, const Scene&, const json& args);
+// `provenance` (optional): one for the document, kept across the calls of a whole selection (created_by found once per body).
+json entity_details(const Document&, const Scene&, const json& args, design::Provenance* provenance = nullptr);
 json reference_token(const Document&, const Scene&, const Ref&);
 json resolve_reference(const Document&, const Scene&, const json& token, bool remap = false);
 json query_entities(const Document&, const Scene&, const json& args, const std::function<bool()>& cancelled = {});
