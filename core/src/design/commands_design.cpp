@@ -52,11 +52,6 @@ std::string expression_text(const json& v) {
   throw Error("expr must be an expression such as \"20 mm\" or a number");
 }
 
-std::string title_case(std::string s) {
-  if (!s.empty()) s[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(s[0])));
-  return s;
-}
-
 // A feature's body_name / color / parent arguments (TODO 10 B14), checked against the scene before anything is
 // computed. The CLI hands every value over as text.
 json body_style(const Scene& scene, const json& a) {
@@ -256,7 +251,7 @@ void register_design_commands(const std::function<void(const CommandInfo&, Handl
         const Scene* scene = &scene_before;
         const json frame = plane_frame(doc, *scene, spec, inputs);
         const json style = styled ? body_style(*scene, a) : json::object();
-        const std::string name = a.contains("name") ? a["name"].get<std::string>() : design::next_name(*scene, title_case(spec.label.substr(0, spec.label.find(' '))));
+        const std::string name = a.contains("name") ? a["name"].get<std::string>() : design::next_name(*scene, design::name_prefix(spec));
         json feature_op = design::make_feature_op(kind, name, inputs);
         if (a.contains("suppress_if") && a["suppress_if"].is_string() && !a["suppress_if"].get<std::string>().empty()) feature_op["suppress_if"] = a["suppress_if"];  // gap log #9
         design::Plan plan = design::plan_ops(doc, {feature_op});

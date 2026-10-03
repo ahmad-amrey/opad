@@ -175,6 +175,12 @@ TEST(del_on_objects_takes_out_only_what_was_selected) {
   CHECK_EQ(ops.size(), size_t(1));
   CHECK_EQ(ops[0]["kind"], "remove");
   CHECK_EQ(ops[0]["name"], "Remove1");
+  // Remove faces is named apart from it (and the construction plane from the axis); one-word kinds keep their word.
+  CHECK_EQ(design::name_prefix(*design::feature_spec("remove_faces")), "RemoveFaces");
+  CHECK_EQ(design::name_prefix(*design::feature_spec("remove")), "Remove");
+  CHECK_EQ(design::name_prefix(*design::feature_spec("plane")), "ConstructionPlane");
+  CHECK_EQ(design::name_prefix(*design::feature_spec("offset_face")), "Press");
+  CHECK_EQ(design::name_prefix(*design::feature_spec("extrude")), "Extrude");
   const size_t before = p.doc.ops.size();
   design::apply_ops(p.doc, ops);
   scene = resolve(p.doc);

@@ -1034,6 +1034,24 @@ size_t style_new_bodies(Plan& plan, const std::string& feature_op, const json& s
   return ids.size();
 }
 
+std::string name_prefix(const FeatureSpec& spec) {
+  auto first = [](const std::string& label) { return label.substr(0, label.find(' ')); };
+  const std::string word = first(spec.label);
+  const auto& specs = feature_specs();
+  const bool shared = std::any_of(specs.begin(), specs.end(), [&](const FeatureSpec& o) { return o.kind != spec.kind && first(o.label) == word; });
+  std::string out;
+  bool upper = true;
+  for (const char c : shared ? spec.label : word) {
+    if (!std::isalnum(static_cast<unsigned char>(c))) {
+      upper = true;
+      continue;
+    }
+    out += upper ? static_cast<char>(std::toupper(static_cast<unsigned char>(c))) : c;
+    upper = false;
+  }
+  return out;
+}
+
 std::string next_name(const Scene& scene, const std::string& prefix) {
   std::set<std::string> used;
   for (const auto& f : scene.features) used.insert(f.name);

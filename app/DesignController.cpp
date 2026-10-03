@@ -59,8 +59,6 @@ Viewport::SelFilter filterFor(const std::string& type) {
   return Viewport::SelFilter::Body;
 }
 
-QString titleCase(const std::string& label) { return QString::fromStdString(label).section(' ', 0, 0); }
-
 gp_Pnt pnt(const opad::Vec3& v) { return gp_Pnt(v[0], v[1], v[2]); }
 
 // What a plan says the op `target` makes (its own result, or a regeneration's). An edit that changed nothing is not
@@ -280,7 +278,7 @@ void DesignController::startFeature(const QString& kind) {
   m_featureOn = true;
   m_filterBefore = m_viewport->selectionFilter();
   m_viewport->setPickAccumulate(true);
-  m_form->begin(*spec, inputs, QString::fromStdString(next_name(m_doc->scene, titleCase(spec->label).toStdString())), false);
+  m_form->begin(*spec, inputs, QString::fromStdString(next_name(m_doc->scene, name_prefix(*spec))), false);
   if (m_currentComponent) m_form->setBodyDefaults(m_currentComponent());
   if (m_panel) {
     m_panel->setHeader(QString::fromStdString(spec->icon), i18n::t(QString::fromStdString(spec->label)));
