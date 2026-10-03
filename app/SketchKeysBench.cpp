@@ -11,6 +11,7 @@
 #include <QSettings>
 #include <QToolButton>
 #include <QWheelEvent>
+#include "Units.hpp"
 #include <cmath>
 
 using namespace opad::design;
@@ -23,8 +24,9 @@ using namespace opad::design;
 // angle, Enter; "20,0" (a comma after a length: ΔX, ΔY); keypad digits and the keypad's Enter. A click takes the typed
 // values. Typed values hold the rubber band before Enter: X alone, X and Y (Tab locks X), a value that does not evaluate
 // (red, the pointer meanwhile), a length alone, an angle alone, the angle from the last line (the box's switch), '#'
-// absolute, "30<180", '@' relative in a rectangle, Esc going back to X/Y. Move: X, Tab, Y, Enter at once. Tab never takes
-// the keyboard off the view, and 5, 6 and 7 never switch the display style in a sketch (their keys are let go there).
+// absolute, "30<180" (and "10<3.14159265" while angles show in radians, UI-123), '@' relative in a rectangle, Esc going
+// back to X/Y. Move: X, Tab, Y, Enter at once. Tab never takes the keyboard off the view, and 5, 6 and 7 never switch the
+// display style in a sketch (their keys are let go there).
 void SketchEditor::benchKeys() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_SKETCH_KEYS");
   QWidget* window = m_viewport->window();
@@ -304,6 +306,21 @@ void SketchEditor::benchKeys() {
         check(m_input->current() == 1 && box(0) == "30" && box(1) == "180" && held(70, 120), "30<180: '<' moves on to the angle " + where());
         send(Qt::Key_Return);
         check(m_chain.size() == 5 && at(m_chain[4], 70, 120), "and Enter goes to (70, 120)");
+        {  // Angles shown in radians (units/angle, UI-123): the box and the readout read radians, a bare number typed is one.
+          const units::Display before = units::current();
+          units::setPrecision(before.decimals, true, before.fraction);
+          sketchMove(70, 140, Qt::NoModifier, false);
+          check(m_input->key(1) == "angle" && m_input->box(1)->placeholderText() == "1.571 rad", "in radians the angle box shows " + m_input->box(1)->placeholderText());
+          type("10");
+          send(Qt::Key_Less, Qt::ShiftModifier, "<");
+          type("3.14159265");
+          bool readout = false;
+          for (const auto& r : readouts()) readout = readout || (r.key == "angle" && r.text.startsWith("3.14159") && r.text.endsWith(" rad"));
+          check(held(60, 120 + 10 * std::sin(3.14159265)) && readout, "10<3.14159265 is half a turn: left, its readout in rad " + where());
+          send(Qt::Key_Return);
+          units::setPrecision(before.decimals, before.radians, before.fraction);
+          check(m_chain.size() == 6 && std::abs(m_sk.point(m_chain[5])->x - 60) < 1e-6, "Enter goes there; degrees again");
+        }
         send(Qt::Key_Escape);
         check(m_chain.empty() && m_tool == "line", "Esc ends the chain");
         // '@' first: ΔX and ΔY from the last point (a rectangle's opposite corner from its first).

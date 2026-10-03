@@ -12,6 +12,7 @@
 #include "InputKeys.hpp"
 #include "ShapeInput.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 #include "opad/design/expr.hpp"
 #include <QFontMetricsF>
 #include <QKeyEvent>
@@ -30,12 +31,28 @@ QString liveNumber(double value, double pixel) {
   if (text.startsWith('-') && text.toDouble() == 0) text.remove(0, 1);
   return text;
 }
+// An angle in the shown unit (UI-123): degrees to `decimals` ("12.5°"), radians to two more ("0.218 rad"); `exact` as
+// typed (ten digits).
+QString angleText(double radians, int decimals, bool exact = false) {
+  const bool rad = units::current().radians;
+  const double shown = rad ? radians : radians * 180 / M_PI;
+  QString text = exact ? QString::number(shown, 'g', 10) : QString::number(shown, 'f', rad ? decimals + 2 : decimals);
+  if (text.startsWith('-') && text.toDouble() == 0) text.remove(0, 1);
+  return text + (rad ? QStringLiteral(" ") : QString()) + units::symbol(units::Kind::Angle);
+}
 QString liveAngle(double radians) {
   double degrees = std::remainder(radians * 180 / M_PI, 360.0);
   if (degrees <= -180 + 1e-9) degrees += 360;
-  QString text = QString::number(degrees, 'f', 1);
-  if (text == "-0.0") text = "0.0";
-  return text + QStringLiteral("°");
+  return angleText(degrees * M_PI / 180, 1);
+}
+// A typed angle for the expression parser: ° is degrees, a bare number is in the shown unit (an expression without a unit
+// stays in degrees, as the parser and the kept dimensions take it).
+std::string angleExpression(QString text) {
+  text.replace(QStringLiteral("°"), QStringLiteral(" deg"));
+  bool plain = false;
+  text.trimmed().toDouble(&plain);
+  if (plain) text += units::current().radians ? QStringLiteral(" rad") : QStringLiteral(" deg");
+  return text.toStdString();
 }
 // Tools that place points: the next one can be typed (X and Y; a polyline goes on by length and angle).
 const QStringList kPointTools = {"point", "line", "spline", "rect", "crect", "circle", "circle2", "circle3", "arc3", "arcc", "polygon", "polygon_outer",
@@ -91,7 +108,7 @@ QList<DynamicInput::Field> SketchEditor::shapeFields() const {
       const shapeinput::P end = shapeinput::tangentArc({au, av}, {tu, tv}, {u, v}, nullptr, nullptr);
       const double cu = au - (off < 0 ? -1 : 1) * tv * r, cv = av + (off < 0 ? -1 : 1) * tu * r;
       const double turn = shapeinput::turned(std::atan2(av - cv, au - cu), std::atan2(end.v - cv, end.u - cu), off < 0 ? -1 : 1);
-      return {field("radius", tr("Radius"), number(r)), field("sweep", tr("Sweep angle"), QString::number(turn * 180 / M_PI, 'f', 1) + QStringLiteral("°"))};
+      return {field("radius", tr("Radius"), number(r)), field("sweep", tr("Sweep angle"), angleText(turn, 1))};
     }
     if (m_tool == "circle")  // the switch after the box: diameter or radius (saved)
       return {m_circleRadius ? field("radius", tr("Radius"), number(reach), tr("R")) : field("diameter", tr("Diameter"), number(2 * reach), tr("Ø"))};
@@ -125,9 +142,7 @@ QList<DynamicInput::Field> SketchEditor::shapeFields() const {
   // The centre arc's sweep from its start (signed, counter-clockwise positive); an arc slot always runs counter-clockwise.
   double sweep = std::remainder(std::atan2(dv, du) - std::atan2(bv, bu), 2 * M_PI);
   if (m_tool == "arcslot" && sweep <= 0) sweep += 2 * M_PI;
-  QString live = QString::number(sweep * 180 / M_PI, 'f', 1) + QStringLiteral("°");
-  if (live.startsWith("-0.0")) live = QStringLiteral("0.0°");
-  QList<Field> out{field("sweep", tr("Sweep angle"), live)};
+  QList<Field> out{field("sweep", tr("Sweep angle"), angleText(sweep, 1))};
   if (m_tool == "arcslot") out << Field{"width", tr("Width"), option("width", "2 mm"), true};
   return out;
 }
@@ -359,7 +374,7 @@ void SketchEditor::retype() {
           for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
           table = sketch_parameters(m_sk, ParamTable(defs, m_doc->scene.units));
         }
-        const double value = angleKey(key) ? table->angle(text.replace(QStringLiteral("°"), QStringLiteral(" deg")).toStdString()) : table->length(text.toStdString());
+        const double value = angleKey(key) ? table->angle(angleExpression(text)) : table->length(text.toStdString());
         if (kSizes.contains(key) && std::fabs(value) < 1e-9) throw opad::Error("a size must not be zero");
         if (key == "sweep" && m_tool == "tangent_arc" && (value <= 1e-9 || value >= 2 * M_PI - 1e-9)) throw opad::Error("the sweep must be above 0 and under a full turn");
         if (key == "radius" && (m_tool == "arc3" || m_tool == "circle3") && m_clicks.size() == 2 &&
@@ -597,9 +612,7 @@ std::vector<SketchEditor::Readout> SketchEditor::readouts() const {
     r.cu = x, r.cv = y, r.r = 40 * px, r.from = from, r.sweep = sweep;
     r.key = key;
     r.locked = typed(key);
-    QString text = QString::number(sweep * 180 / M_PI, r.locked ? 'g' : 'f', r.locked ? 10 : 1);
-    if (text == "-0" || text == "-0.0") text.remove(0, 1);
-    r.text = text + QStringLiteral("°");
+    r.text = angleText(sweep, 1, r.locked);
     place(r, x, y, std::cos(from + sweep / 2), std::sin(from + sweep / 2), 46);
     if (std::fabs(sweep) < M_PI / 3) {  // too narrow for a box: beside the arc's start, outside the angle (over no line)
       const double way = from - (sweep < 0 ? -1 : 1) * M_PI / 7;
