@@ -181,10 +181,12 @@ Index build(const git::Context& base, const QString& top, const QString& rel, co
   o.cancelled = cancelled;
   auto stop = [&] { return cancelled && cancelled(); };
   const git::Result head = git::run(c, {"rev-parse", "-q", "--verify", "HEAD^{commit}"}, o);
+  if (stop()) return Index{};
   if (!head.ok()) return ix;  // no commit yet
   ix.head = QString::fromLatin1(head.out).trimmed();
   // The commits that changed the document, oldest first.
   const git::Result log = git::run(c, {"log", "--topo-order", "--reverse", "-z", "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s", ix.head, "--", rel}, o);
+  if (stop()) return Index{};
   if (!log.ok()) throw std::runtime_error(utf8(log.error()));
   for (const QByteArray& record : log.out.split('\0')) {
     const QList<QByteArray> f = record.trimmed().split('\x1f');
@@ -205,6 +207,7 @@ Index build(const git::Context& base, const QString& top, const QString& rel, co
   git::RunOptions check = o;
   check.input = ask;
   const git::Result blobs = git::run(c, {"cat-file", "--batch-check"}, check);
+  if (stop()) return Index{};
   if (!blobs.ok()) throw std::runtime_error(utf8(blobs.error()));
   const QList<QByteArray> answers = blobs.out.split('\n');
   std::vector<QByteArray> blobOf(ix.commits.size());
