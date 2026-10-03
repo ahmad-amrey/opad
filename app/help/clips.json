@@ -1461,7 +1461,7 @@
    ]
   },
   {
-   "id": "select.geometry", "duration": 5.0, "view": "iso", "extent": [-32, -15, 32, 15],
+   "id": "select.similar", "duration": 5.0, "view": "iso", "extent": [-32, -15, 32, 15],
    "items": [
     {"el": "camera", "center": [-10, 0]},
     {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},

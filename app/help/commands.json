@@ -509,12 +509,12 @@
    "requires": "Select the objects first, in the view or in the browser."
   },
   {
-   "id": "select.geometry",
-   "title": "Select by geometry",
-   "summary": "Selects every face or edge that matches a rule, such as the same radius or direction.",
-   "details": "Choose a rule: circular edges, edges parallel to an axis, upward planar faces and others. Useful to pick every hole edge at once for a fillet.",
-   "keywords": ["similar", "same radius", "all holes", "smart select"],
-   "requires": "Open or create a document first; not available while a sketch is open."
+   "id": "select.similar",
+   "title": "Select similar",
+   "summary": "Selects every face or edge like the picked one: the same hole, fillet radius or direction; for a body picked whole, a rule.",
+   "details": "Pick a face or an edge of a solid, then Select similar: the matches are found on a worker and selected. For a body picked whole choose a rule: top or bottom perimeter, edges parallel to X, Y or Z, circular edges, upward planar faces. Useful to pick every hole edge at once for a fillet.",
+   "keywords": ["similar", "select by geometry", "same radius", "all holes", "smart select"],
+   "requires": "Pick a face or an edge of a solid, or a body, first; not available while a sketch is open."
   },
   {
    "id": "inspect.section",
