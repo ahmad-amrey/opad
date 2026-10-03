@@ -113,6 +113,23 @@ set(OPAD_ALLOW_GPL_DLLS ON)
 file(MAKE_DIRECTORY "${WORK}/local")
 opad_gpl_guard("test package" "${WORK}/local" avcodec-62.dll)
 check("allowed GPL libraries mark the package NOT FOR DISTRIBUTION" EXISTS "${WORK}/local/NOT-FOR-DISTRIBUTION.txt")
+file(READ "${WORK}/local/NOT-FOR-DISTRIBUTION.txt" marker)
+check("the marker says why" marker MATCHES "TKService toolkit")
+
+# The repaired wheel (cmake/wheel_guard.cmake): one whose libraries folder carries avcodec is refused, a clean one passes.
+file(WRITE "${WORK}/wheel/opad.cp312-win_amd64.pyd" "")
+file(WRITE "${WORK}/wheel/opad.libs/TKService-7.9.dll" "")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E tar cf "${WORK}/clean.whl" --format=zip opad.cp312-win_amd64.pyd opad.libs
+                WORKING_DIRECTORY "${WORK}/wheel")
+file(WRITE "${WORK}/wheel/opad.libs/avcodec-62.dll" "")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E tar cf "${WORK}/gpl.whl" --format=zip opad.cp312-win_amd64.pyd opad.libs
+                WORKING_DIRECTORY "${WORK}/wheel")
+execute_process(COMMAND "${CMAKE_COMMAND}" "-DWHEEL=${WORK}/clean.whl" -P "${SOURCE}/cmake/wheel_guard.cmake"
+                RESULT_VARIABLE clean_failed OUTPUT_VARIABLE clean_out ERROR_VARIABLE clean_out)
+execute_process(COMMAND "${CMAKE_COMMAND}" "-DWHEEL=${WORK}/gpl.whl" -P "${SOURCE}/cmake/wheel_guard.cmake"
+                RESULT_VARIABLE gpl_failed OUTPUT_VARIABLE gpl_out ERROR_VARIABLE gpl_out)
+check("a clean wheel passes the wheel guard (${clean_out})" NOT clean_failed AND clean_out MATCHES ": 2 files")
+check("a wheel carrying avcodec is refused" gpl_failed AND gpl_out MATCHES "avcodec-62.dll: do not distribute")
 
 if(failures)
   message(FATAL_ERROR "${failures} check(s) failed")
