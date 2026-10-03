@@ -2,7 +2,8 @@
 // git's HEAD and in first.opad beside it. The bench makes Box1 40 mm long and adds Sphere1 and saves, moves Box2 and
 // deletes Box3 without saving, then compares: the chips' counts, the colours of the session's bodies
 // and of A's ghosts, the arrow, the change rows and the details table, ] and [, the emphasis at both ends, an eye, the
-// timeline's marks, another A (the saved file, a recovery snapshot, another file), an edit while comparing, Esc; then `opad --compare
+// timeline's marks, side by side (the halves, which view shows what, the cameras together, navigation over A's view, back,
+// Esc, remembered), another A (the saved file, a recovery snapshot, another file), an edit while comparing, Esc; then `opad --compare
 // first.opad model.opad` in a hidden child of its own (the value <prefix>.cli runs that side).
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -21,10 +22,14 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLabel>
+#include <QMainWindow>
 #include <QProcess>
 #include <QSlider>
+#include <QMouseEvent>
 #include <QTableWidget>
+#include <QToolButton>
 #include <QTreeWidget>
+#include <QWheelEvent>
 #include <cmath>
 #include <functional>
 
@@ -60,6 +65,12 @@ bool CompareMode::bench(const QString& prefix) {
            std::abs(rgb[2].get<double>() - c.blueF()) < 0.02;
   };
   auto idle = [this, vp] { return settled() && !vp->looksPending(); };
+  auto sameCamera = [](const opad::json& a, const opad::json& b) {
+    for (const char* key : {"eye", "center", "up"})
+      for (size_t i = 0; i < 3; ++i)
+        if (std::abs(a[key][i].get<double>() - b[key][i].get<double>()) > 1e-6 * (1 + std::abs(a[key][i].get<double>()))) return false;
+    return std::abs(a["scale"].get<double>() - b["scale"].get<double>()) <= 1e-6 * a["scale"].get<double>();
+  };
   auto counts = [this] {
     QStringList n;
     for (int c = 0; c < ComparePanel::Categories; ++c) n << QString::number(m_panel->chip(Cat(c))->count());
@@ -124,6 +135,16 @@ bool CompareMode::bench(const QString& prefix) {
         [=, this] {
           if (!idle()) return false;
           trace::log(QStringLiteral("bench: compare: perf: drawn in %1 ms: %2 PASS").arg(clock->elapsed()).arg(counts()));
+          clock->start();
+          setSideBySide(true);
+          const qint64 on = clock->restart();
+          vp->benchSideState();  // a frame of both views
+          const qint64 frame = clock->restart();
+          setSideBySide(false);
+          const qint64 off = clock->restart();
+          vp->benchSideState();
+          trace::log(QStringLiteral("bench: compare: perf: side by side on %1 ms, first frame of both %2 ms, off %3 ms, a frame of one %4 ms PASS")
+                         .arg(on).arg(frame).arg(off).arg(clock->elapsed()));
           clock->start();
           m_services.action("inspect.clear")->trigger();
           return true;
@@ -279,6 +300,72 @@ bool CompareMode::bench(const QString& prefix) {
           if (!idle()) return false;
           require(vp->benchLookState(st->body["Box2"]).value("displayed", false) && vp->benchCompareState()["arrows"].get<int>() == 1, "shown again");
           pass("legend eye");
+          m_panel->layoutButton(true)->click();  // Side by side
+          return true;
+        },
+        [=, this] {  // A's view left of B's: each shows its version whole, the cameras together
+          if (!idle()) return false;
+          require(m_sideBySide && vp->sideBySide() && vp->sideWidget(), "Side by side makes A's view");
+          const opad::json s = vp->benchSideState();
+          const int sideW = s["sideRect"][2], mainW = s["rect"][2], hostW = s["host"][0];
+          require(s["sideRect"][0].get<int>() == 0 && std::abs(sideW - mainW) <= 1 && s["rect"][0].get<int>() == sideW + 2 && sideW + 2 + mainW == hostW,
+                  "the halves: " + QString::fromStdString(s.dump()).left(300));
+          require(s["caption"].get<std::string>() == tr("A · %1").arg(m_versions[size_t(m_a)].label).toStdString(), "A's view is named A");
+          require(m_chip->text() == tr("B · %1").arg(m_versions[size_t(m_b)].label), "the chip names B: " + m_chip->text());
+          require(sameCamera(s["main"], s["sideCamera"]), "the same camera");
+          auto partIn = [&](const std::string& id) {
+            for (const auto& p : s["parts"])
+              if (p.value("id", "") == id) return std::pair<bool, bool>{p.value("main", true), p.value("side", true)};
+            return std::pair<bool, bool>{true, true};
+          };
+          for (const char* name : {"Box1", "Box2", "Box3"}) require(partIn(st->body[name]) == std::pair<bool, bool>{false, true}, QString("A's %1 only in A's view").arg(name));
+          const opad::json& bodies = s["bodies"];
+          for (const char* name : {"Box1", "Box2", "Sphere1"})
+            require(bodies[st->body[name]].value("main", false) && !bodies[st->body[name]].value("side", true), QString("B's %1 only in B's view").arg(name));
+          require(bodies[st->body["Cylinder1"]].value("main", false) && bodies[st->body["Cylinder1"]].value("side", false), "Cylinder1 (unchanged) in both");
+          require(std::abs(partOf(st->body["Box3"])["transparency"].get<double>()) < 0.02 && !m_panel->slider()->isVisibleTo(m_panel), "A whole (opaque), no emphasis");
+          m_tool->grab().save(prefix + ".side.panel.png");
+          vp->grabSide().save(prefix + ".side-a.png");
+          vp->grabImage().save(prefix + ".side-b.png");
+          m_services.window()->grab().save(prefix + ".side.window.png");  // the widgets: A's caption, B's chip (the views blank)
+          pass("side by side: halves, captions, A's ghosts in A's view, B's changes in B's, the same camera");
+          // Navigation over A's view drives both: the wheel zooms, a middle drag pans; a left click selects nothing.
+          QWidget* side = vp->sideWidget();
+          const QPointF at(side->width() / 2.0, side->height() / 2.0);
+          const auto selected = vp->selection().size();
+          const double scale = s["main"]["scale"];
+          QWheelEvent wheel(at, side->mapToGlobal(at), QPoint(), QPoint(0, 240), Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+          QCoreApplication::sendEvent(side, &wheel);
+          const opad::json zoomed = vp->benchSideState();
+          require(std::abs(zoomed["main"]["scale"].get<double>() - scale) > scale * 0.05 && sameCamera(zoomed["main"], zoomed["sideCamera"]),
+                  QStringLiteral("the wheel over A zooms both: %1 -> %2").arg(scale).arg(zoomed["main"]["scale"].get<double>()));
+          QMouseEvent down(QEvent::MouseButtonPress, at, side->mapToGlobal(at), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+          QMouseEvent up(QEvent::MouseButtonRelease, at, side->mapToGlobal(at), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+          QCoreApplication::sendEvent(side, &down);
+          QCoreApplication::sendEvent(side, &up);
+          require(vp->benchSideState().is_object() && vp->selection().size() == selected, "a left click in A's view selects nothing");
+          const opad::json before = vp->benchSideState();
+          const QPointF to = at + QPointF(60, 0);
+          QMouseEvent press(QEvent::MouseButtonPress, at, side->mapToGlobal(at), Qt::MiddleButton, Qt::MiddleButton, Qt::NoModifier);
+          QMouseEvent move(QEvent::MouseMove, to, side->mapToGlobal(to), Qt::NoButton, Qt::MiddleButton, Qt::NoModifier);
+          QCoreApplication::sendEvent(side, &press);
+          QCoreApplication::sendEvent(side, &move);
+          const opad::json panned = vp->benchSideState();
+          QMouseEvent release(QEvent::MouseButtonRelease, to, side->mapToGlobal(to), Qt::MiddleButton, Qt::NoButton, Qt::NoModifier);
+          QCoreApplication::sendEvent(side, &release);
+          require(panned["main"]["center"] != before["main"]["center"] && sameCamera(panned["main"], panned["sideCamera"]), "a middle drag over A pans both");
+          pass("navigation over A's view drives both views");
+          m_panel->layoutButton(false)->click();  // Overlay again
+          return true;
+        },
+        [=, this] {
+          if (!idle()) return false;
+          const opad::json s = vp->benchSideState();
+          require(!m_sideBySide && !vp->sideBySide() && s["rect"][2] == s["host"][0] && s["rect"][0] == 0, "Overlay: one view, the whole width");
+          for (const auto& p : vp->benchCompareState()["parts"]) require(p.value("displayed", false), "A's ghosts in the one view again");
+          require(m_panel->slider()->isVisibleTo(m_panel) && m_chip->text() == tr("Compare: %1 → %2").arg(m_versions[size_t(m_a)].label, m_versions[size_t(m_b)].label),
+                  "the emphasis and the chip back");
+          pass("back to overlay");
           require(choose(0, Kind::Saved), "the saved file in A's list");
           return true;
         },
@@ -302,6 +389,11 @@ bool CompareMode::bench(const QString& prefix) {
         [=, this] {
           if (!idle() || change("body", "renamed", "Drum") < 0) return false;
           pass("an edit while comparing is compared again");
+          m_panel->layoutButton(true)->click();  // Esc while side by side
+          return true;
+        },
+        [=, this] {
+          if (!idle() || !vp->sideBySide()) return false;
           m_services.action("inspect.clear")->trigger();  // Esc
           return true;
         },
@@ -313,7 +405,24 @@ bool CompareMode::bench(const QString& prefix) {
           const opad::json box2 = vp->benchLookState(st->body["Box2"]);
           require(!sameColour(box2["color"], t.diffMoved) && box2["transparency"].get<double>() < 0.05, "Box2 back in its own colour");
           require(!m_services.action("vcs.nextChange")->isEnabled(), "] is off again");
+          const opad::json s = vp->benchSideState();
+          require(!vp->sideBySide() && s["rect"][2] == s["host"][0], "Esc ends side by side: one view, the whole width");
+          for (const auto& [id, body] : s["bodies"].items()) require(body.value("main", false), "every body in the view");
           pass("Esc ends Compare");
+          m_services.action("vcs.compare")->trigger();  // opens side by side, as it was left
+          return true;
+        },
+        [=, this] {
+          if (!idle()) return false;
+          require(vp->sideBySide() && m_panel->sideBySide(), "Compare opens side by side again: remembered");
+          pass("side by side remembered");
+          m_panel->layoutButton(false)->click();
+          m_services.action("inspect.clear")->trigger();
+          return true;
+        },
+        [=, this] {
+          if (m_active || vp->looksPending()) return false;
+          require(!vp->sideBySide(), "closed");
           // opad --compare first.opad model.opad, in a hidden child with settings of its own.
           st->childLog = prefix + ".cli.log";
           QFile::remove(st->childLog);

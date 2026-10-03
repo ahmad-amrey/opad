@@ -12,6 +12,7 @@
 #include <QFileInfo>
 #include <QLabel>
 #include <QMainWindow>
+#include <QSettings>
 #include <QThread>
 #include <algorithm>
 #include <cmath>
@@ -178,7 +179,7 @@ void CompareMode::makePanel() {
   if (m_tool) return;
   QWidget* window = m_services.window();
   m_panel = new ComparePanel(window);
-  m_tool = new ToolPanel("compare", "compare", &Tokens::sel, tr("Compare"), m_panel, 620, window);
+  m_tool = new ToolPanel("compare", "compare", &Tokens::sel, tr("Compare"), m_panel, 660, window);
   m_tool->setEscapeHandler([this] { close(); });
   m_services.addPanel(m_tool);
   connect(m_tool, &ToolPanel::visibilityChanged, this, [this](bool on) {
@@ -197,6 +198,7 @@ void CompareMode::makePanel() {
     showVersions();
     start();
   });
+  connect(m_panel, &ComparePanel::layoutChosen, this, &CompareMode::setSideBySide);
   connect(m_panel, &ComparePanel::emphasisChanged, this, [this] { m_restyle.start(); });
   connect(m_panel, &ComparePanel::categoryToggled, this, [this] { m_restyle.start(); });
   connect(m_panel, &ComparePanel::changeActivated, this, &CompareMode::activate);
@@ -229,10 +231,35 @@ void CompareMode::showVersions() {
   for (auto& v : m_versions)
     if (v.kind == Kind::Session) v.label = doc->isDirty() ? tr("This session (unsaved changes)") : tr("This session");
   m_panel->setVersions(m_versions, m_a, m_b);
-  if (m_chip) {
-    m_chip->setText(m_a >= 0 && m_b >= 0 ? tr("Compare: %1 → %2").arg(m_versions[size_t(m_a)].label, m_versions[size_t(m_b)].label) : tr("Compare"));
+  const QString a = m_a >= 0 ? m_versions[size_t(m_a)].label : QString(), b = m_b >= 0 ? m_versions[size_t(m_b)].label : QString();
+  if (m_chip) {  // side by side, each view names its own version
+    m_chip->setText(m_sideBySide && !b.isEmpty() ? tr("B · %1").arg(b) : !a.isEmpty() && !b.isEmpty() ? tr("Compare: %1 → %2").arg(a, b) : tr("Compare"));
     m_chip->setVisible(m_active);
   }
+  if (m_sideBySide) m_services.viewport()->setSideCaption(tr("A · %1").arg(a));
+}
+
+void CompareMode::setSideBySide(bool on) {
+  QSettings().setValue("compare/sideBySide", on);
+  m_panel->setSideBySide(on);
+  if (on == m_sideBySide || !m_active) return;
+  trace::Scope scope(on ? "Compare: side by side" : "Compare: overlay");
+  m_sideBySide = on;
+  Viewport* vp = m_services.viewport();
+  vp->setSideBySide(on, tr("A · %1").arg(m_a >= 0 ? m_versions[size_t(m_a)].label : QString()));
+  showVersions();
+  restyle();  // both whole, or weighted again
+  vp->fitAll();  // the view is half as wide (or twice): the model framed again
+}
+
+void CompareMode::sideHidden() {
+  std::vector<std::string> ids;
+  if (m_run) {
+    for (size_t i = 0; i < m_run->bodies.size(); ++i)
+      if (m_run->sessionDraws[i] && m_run->bodies[i].kind != opad::BodyChange::Kind::Unchanged) ids.push_back(m_run->bodies[i].id);
+    for (const auto& [id, category] : m_run->sketches) ids.push_back(id);
+  }
+  m_services.viewport()->setSideHidden(ids);
 }
 
 void CompareMode::open() {
@@ -278,6 +305,7 @@ void CompareMode::compare(const CompareVersion& a, const CompareVersion& b) {
   if (!was) {
     emit activeChanged(true);
     m_services.updateCommands();
+    setSideBySide(QSettings().value("compare/sideBySide", false).toBool());  // as it was left
   }
   start();
   if (list) listVersions();
@@ -341,6 +369,8 @@ void CompareMode::close() {
   m_partInfo.clear();
   m_arrows.clear();
   if (Viewport* vp = m_services.viewport()) {
+    if (std::exchange(m_sideBySide, false)) vp->setSideBySide(false);
+    vp->setSideHidden({});
     vp->clearLookLayer(LookSource::Compare);
     vp->clearCompare();
   }
@@ -358,6 +388,7 @@ void CompareMode::failed(const QString& error) {
   m_parts.clear();
   m_partInfo.clear();
   m_arrows.clear();
+  m_services.viewport()->setSideHidden({});
   m_services.viewport()->clearLookLayer(LookSource::Compare);
   m_services.viewport()->clearCompare();
   if (TimelineWidget* t = m_services.timeline()) t->setMarkedOps({});
@@ -549,6 +580,7 @@ void CompareMode::buildParts() {
     Viewport::ComparePart part;
     part.id = c.id;
     part.world = sideA ? c.world_a : c.world_b;
+    part.view = c.kind == opad::BodyChange::Kind::Unchanged ? 0 : sideA ? 'A' : 'B';
     const std::string& key = sideA ? c.key_a : c.key_b;
     if (auto arrays = vp->displayArrays(key)) try {  // the session draws this geometry already: its arrays, nothing to mesh
         part.shape = opad::body_shape(doc->doc, key);
@@ -567,6 +599,7 @@ void CompareMode::buildParts() {
     if (c.kind == K::Moved && !r.boxA[i].IsVoid() && !r.boxB[i].IsVoid()) m_arrows.push_back({centre(r.boxA[i]), centre(r.boxB[i])});
   }
   restyle();
+  sideHidden();
   vp->setCompare(m_parts, m_arrows, theme::current().diffMoved);
   if (needs->empty()) return release(m_run, false);
   // The other version's geometry, meshed on a worker; drawn once it is all there.
@@ -640,9 +673,10 @@ void CompareMode::restyle() {
   const Run& r = *m_run;
   const Tokens& t = theme::current();
   // The emphasis: B alone at 100, A alone at 0, both from the middle out; A's ghosts stay translucent while B is there.
-  const double e = m_panel->emphasis() / 100.0;
+  // Side by side, each view shows its version whole.
+  const double e = m_sideBySide ? 0.5 : m_panel->emphasis() / 100.0;
   const double wA = std::min(1.0, 2 * (1 - e)), wB = std::min(1.0, 2 * e);
-  const double opB = wB, opA = wA * (0.45 + 0.55 * (1 - wB));
+  const double opB = wB, opA = m_sideBySide ? 1.0 : wA * (0.45 + 0.55 * (1 - wB));
   constexpr double kGone = 0.04;
   auto rgb = [](const QColor& c) { return std::array<double, 3>{c.redF(), c.greenF(), c.blueF()}; };
   auto shown = [this](int c) { return m_panel->shown(Category(c)); };

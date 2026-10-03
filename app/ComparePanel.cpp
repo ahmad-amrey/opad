@@ -172,8 +172,32 @@ ComparePanel::ComparePanel(QWidget* parent) : QWidget(parent) {
   pickers->addWidget(m_swap, 0, 2, 2, 1);
   pickers->setColumnStretch(1, 1);
   b->addLayout(pickers);
+  // How they are shown: B over A in one view, or A's view beside B's.
+  auto* layouts = new QWidget(this);
+  layouts->setObjectName("segmented");
+  auto* sl = new QHBoxLayout(layouts);
+  sl->setContentsMargins(1, 1, 1, 1);
+  sl->setSpacing(0);
+  for (QToolButton** button : {&m_overlay, &m_sideBySide}) {
+    auto* s = *button = new QToolButton(layouts);
+    s->setObjectName("segment");
+    s->setCheckable(true);
+    s->setAutoExclusive(true);
+    s->setFixedHeight(26);
+    s->setAutoRaise(true);
+    s->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    sl->addWidget(s, 1);
+  }
+  m_overlay->setText(tr("Overlay"));
+  m_overlay->setToolTip(tr("B in one view with A's ghosts over it"));
+  m_overlay->setChecked(true);
+  m_sideBySide->setText(tr("Side by side"));
+  m_sideBySide->setToolTip(tr("A's view on the left, B's on the right, turning together"));
+  b->addWidget(layouts);
   // How much of each: A alone at the left end, B alone at the right one, both in the middle.
-  auto* weight = new QHBoxLayout();
+  m_weight = new QWidget(this);
+  auto* weight = new QHBoxLayout(m_weight);
+  weight->setContentsMargins(0, 0, 0, 0);
   weight->setSpacing(6);
   m_slider = new QSlider(Qt::Horizontal, this);
   m_slider->setRange(0, 100);
@@ -184,7 +208,7 @@ ComparePanel::ComparePanel(QWidget* parent) : QWidget(parent) {
   weight->addWidget(side("A", tr("Show A")));
   weight->addWidget(m_slider, 1);
   weight->addWidget(side("B", tr("Show B")));
-  b->addLayout(weight);
+  b->addWidget(m_weight);
   // The legend: one chip per kind of change, its count, and an eye.
   auto* legend = new QGridLayout();
   legend->setSpacing(4);
@@ -245,6 +269,11 @@ ComparePanel::ComparePanel(QWidget* parent) : QWidget(parent) {
   connect(m_footer, &PanelFooter::cancelled, this, &ComparePanel::doneRequested);
   connect(m_swap, &QToolButton::clicked, this, &ComparePanel::swapRequested);
   connect(m_slider, &QSlider::valueChanged, this, &ComparePanel::emphasisChanged);
+  for (QToolButton* s : {m_overlay, m_sideBySide})
+    connect(s, &QToolButton::clicked, this, [this] {
+      setSideBySide(m_sideBySide->isChecked());
+      emit layoutChosen(m_sideBySide->isChecked());
+    });
   connect(m_pickA, &QComboBox::activated, this, [this] { picked(0); });
   connect(m_pickB, &QComboBox::activated, this, [this] { picked(1); });
   connect(m_list, &QTreeWidget::currentItemChanged, this, [this](QTreeWidgetItem* item) {
@@ -322,6 +351,13 @@ void ComparePanel::clear() {
 }
 
 QString ComparePanel::status() const { return m_status->isVisible() ? m_status->text() : QString(); }
+
+void ComparePanel::setSideBySide(bool on) {
+  (on ? m_sideBySide : m_overlay)->setChecked(true);
+  m_weight->setVisible(!on);  // each view shows its version whole: nothing to weigh
+}
+
+bool ComparePanel::sideBySide() const { return m_sideBySide->isChecked(); }
 bool ComparePanel::shown(Category c) const { return m_chips[c]->isChecked(); }
 int ComparePanel::emphasis() const { return m_slider->value(); }
 
@@ -506,4 +542,4 @@ void ComparePanel::showDetails(const opad::json& c) {
   m_details->setVisible(!rows.empty());
 }
 
-QSize ComparePanel::preferredSize(int width) const { return QSize(width, 620); }
+QSize ComparePanel::preferredSize(int width) const { return QSize(width, 660); }

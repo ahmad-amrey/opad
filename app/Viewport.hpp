@@ -163,6 +163,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
     std::array<double, 3> color{0.5, 0.5, 0.5};
     double opacity = 1;
     bool visible = true;
+    char view = 0;  // side by side: 0 in both views, 'A' only in A's (the side), 'B' only in this one
   };
   struct CompareArrow {
     opad::Vec3 from{0, 0, 0}, to{0, 0, 0};
@@ -175,6 +176,17 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::shared_ptr<const BodyPrs> displayArrays(const std::string& key) const;  // the arrays a displayed body key was drawn from; null: none
   void fitBox(const Bnd_Box& box);  // frames a world box as Fit does; void: Fit All
   opad::json benchCompareState() const;  // OPAD_BENCH_COMPARE: each part's id, whether drawn, colour, transparency; the arrows
+  // Side by side: a second view of the same scene left of this one (it takes the left half of the parent), A's, whose
+  // camera is this view's after every frame. Parts show where their `view` says; setSideHidden names the session's bodies
+  // and sketches A's view leaves out (B's changes). Navigation over it (wheel, middle and right drags, the cube) drives
+  // this view; it selects nothing. Its caption names A.
+  void setSideBySide(bool on, const QString& caption = QString());
+  bool sideBySide() const { return m_side != nullptr; }
+  void setSideCaption(const QString& caption);
+  void setSideHidden(const std::vector<std::string>& ids);
+  QWidget* sideWidget() const;
+  QImage grabSide();
+  opad::json benchSideState();  // a frame as paint runs it, then: both cameras and sizes, the caption, where each part shows
 
   // Section: the clip plane, and its gizmo (ViewportSection.cpp): the plane's outline over the model, edges only,
   // sized to the model's extent in the plane. A strip inside each side is a drag handle: hovering it shows a
@@ -552,8 +564,19 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<Handle(AIS_Shape)> m_pointMarks;  // markPickedPoints
   std::vector<Handle(AIS_Shape)> m_previewBodies;
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_compareParts;  // ViewportCompare.cpp
+  std::vector<char> m_compareViews;                                       // each part's `view`
   Handle(AIS_InteractiveObject) m_compareArrows;
   void styleComparePart(const Handle(AIS_Shape)& ais, const ComparePart& part);
+  class SideView;  // side by side (ViewportCompare.cpp)
+  SideView* m_side = nullptr;
+  Handle(V3d_View) m_sideView;
+  std::set<std::string> m_sideHidden;
+  Graphic3d_WorldViewProjState m_sideCamera;
+  QMargins m_hostMargins;  // the parent's own, given back when the side goes
+  void layoutSide();
+  void drawSide(bool full);  // its camera this view's; full: everything again, else the immediate layer only
+  void applySideMasks();     // which view shows what (AIS view affinity), and the layers' boxes for the z range
+  void maskSide(const std::string& id, const Handle(AIS_InteractiveObject)& ais);  // a session object made while side by side
   std::vector<Handle(AIS_InteractiveObject)> m_overlays;  // showOverlay's: Fit frames the finite ones (a drawing being placed)
   std::set<std::string> m_previewHidden;  // nodes whose own object is erased while the preview shows
   bool m_bodiesPickable = true;

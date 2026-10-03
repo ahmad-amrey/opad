@@ -64,6 +64,9 @@ class ComparePanel : public QWidget {
   std::vector<int> order() const { return m_order; }  // the changes in the list's order (] and [)
   bool shown(Category c) const;
   int emphasis() const;  // 0 = A only, 100 = B only
+  // Overlay (B over A in one view, weighted by the emphasis) or side by side (A's view left of B's): no signal.
+  void setSideBySide(bool on);
+  bool sideBySide() const;
   QString status() const;
   QSize preferredSize(int width) const;
   // benches
@@ -73,8 +76,10 @@ class ComparePanel : public QWidget {
   QTableWidget* details() const { return m_details; }
   PanelFooter* footer() const { return m_footer; }
   QComboBox* picker(int side) const { return side == 0 ? m_pickA : m_pickB; }
+  QToolButton* layoutButton(bool sideBySide) const { return sideBySide ? m_sideBySide : m_overlay; }
  signals:
   void versionsChosen(int a, int b);  // indices into the versions
+  void layoutChosen(bool sideBySide);
   void otherFileRequested(int side);  // 0 = A, 1 = B
   void swapRequested();
   void emphasisChanged(int value);
@@ -88,6 +93,8 @@ class ComparePanel : public QWidget {
   void picked(int side);
   QComboBox *m_pickA, *m_pickB;
   QToolButton* m_swap;
+  QToolButton *m_overlay, *m_sideBySide;
+  QWidget* m_weight;  // the slider's row
   QSlider* m_slider;
   std::array<LegendChip*, Categories> m_chips{};
   QLabel* m_summary;

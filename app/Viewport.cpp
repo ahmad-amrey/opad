@@ -154,7 +154,10 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
 #endif
 }
 
-Viewport::~Viewport() { if(m_bodyGlowJob) m_bodyGlowJob->cancel(); if(m_lookJob) m_lookJob->cancel(); *m_alive = false; }
+Viewport::~Viewport() {
+  if(m_bodyGlowJob) m_bodyGlowJob->cancel(); if(m_lookJob) m_lookJob->cancel(); *m_alive = false;
+  if (m_side) { m_sideView->Remove(); delete sideWidget(); }  // the view goes before its window
+}
 
 void Viewport::setBlocked(bool on) {
   if (on) {
@@ -968,6 +971,7 @@ void Viewport::applySelectionLayers() {
       glow->SetZLayer(Graphic3d_ZLayerId_Topmost);
       glow->SetClipPlanes(ais->ClipPlanes());
       m_ctx->Display(glow,0,-1,false);
+      if(m_side) if(const auto node=m_nodeOf.find(ais.get());node!=m_nodeOf.end()) maskSide(node->second,glow);
     }
     glow->SetLocalTransformation(ais->Transformation());
   };
@@ -1043,7 +1047,10 @@ void Viewport::handleViewRedraw(const Handle(AIS_InteractiveContext)& ctx, const
   scheduleRefinement();
   trackHoverFade();
   if (m_twoDimensional) updateInfiniteGrid(false);
+  // Side by side: A's view is drawn after this one with its camera (the controller redraws it only when it is invalid).
+  const bool full = m_side && m_view->IsInvalidated() && !m_sideView->IsInvalidated();
   AIS_ViewController::handleViewRedraw(ctx, view);
+  if (m_side) drawSide(full);
   if (trace::enabled() && clock.elapsed() > 50) trace::log(QStringLiteral("slow frame part: redraw %1 ms").arg(clock.elapsed()));
 }
 
@@ -1816,6 +1823,7 @@ void Viewport::displayBody(const std::string& id) {
   }
   m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, -1, Standard_False);  // selection activated below, once
   if (!look.visible) m_ctx->Erase(ais, Standard_False);
+  if (m_side) maskSide(id, ais);  // side by side: one of B's changes stays out of A's view
   const qint64 displayMs = t.elapsed();
   m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located, {}, look, rigid};
   m_nodeOf[ais.get()] = id;

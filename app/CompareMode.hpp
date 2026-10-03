@@ -41,6 +41,10 @@ class CompareMode : public QObject {
   void compare(const CompareVersion& a, const CompareVersion& b);  // opens it too
   void close();
   void step(int delta);  // the next (1) or previous (-1) change, round the list
+  // Side by side: A in a view of its own left of B's, both whole, the cameras together (else B over A's ghosts). The
+  // choice is remembered (compare/sideBySide) for the next Compare.
+  void setSideBySide(bool on);
+  bool sideBySide() const { return m_sideBySide; }
   void documentChanged(bool replaced);
   void selectionChanged(const SelectionContext& selection);
   ToolPanel* toolPanel() const { return m_tool; }  // null until Compare first opens
@@ -82,7 +86,8 @@ class CompareMode : public QObject {
   QLabel* m_chip = nullptr;
   std::vector<CompareVersion> m_versions;
   int m_a = -1, m_b = -1;
-  bool m_active = false, m_running = false, m_again = false, m_meshing = false, m_selecting = false;
+  bool m_active = false, m_running = false, m_again = false, m_meshing = false, m_selecting = false, m_sideBySide = false;
+  void sideHidden();  // the session's bodies and sketches A's view leaves out: B's changes
   unsigned m_serial = 0;
   std::shared_ptr<Run> m_run;
   std::vector<Viewport::ComparePart> m_parts;
