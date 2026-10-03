@@ -76,5 +76,6 @@
  "Area": "المساحة",
  "fill": "تعبئة",
  "Frozen layer: click to see it in the Layers panel": "طبقة مجمّدة: انقر لعرضها في لوحة الطبقات",
- "Not plotted": "لا تُطبع"
+ "Not plotted": "لا تُطبع",
+ "Objects drawn in a colour of their own keep it": "الكائنات المرسومة بلون خاص بها تحتفظ به"
 }

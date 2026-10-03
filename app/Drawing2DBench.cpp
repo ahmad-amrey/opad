@@ -258,6 +258,19 @@ OPAD_BENCH(OPAD_BENCH_LAYERS, layers) {
                 [v, layer] { return v->shownLook(layer("Walls").bodies.at(0)).color == drawing2d::Rgb{0, 0.8, 0}; });
     script->add("Walls in its drawing colour again", [panel, layer] { panel->setDrawingColor(layer("Walls").id); },
                 [v, layer] { return v->shownLook(layer("Walls").bodies.at(0)).color == drawing2d::Rgb{1, 0, 0}; });
+    auto own = [layer] {  // Plain's colour-7 line: a colour of its own, not the layer's
+      const auto plain = layer("Plain");
+      for (const auto& b : plain.bodies)
+        if (std::find(plain.byLayer.begin(), plain.byLayer.end(), b) == plain.byLayer.end()) return b;
+      return std::string();
+    };
+    script->add("Plain red", [panel, layer] { panel->setColor(layer("Plain").id, {1, 0, 0}); },
+                [v, layer] { return v->shownLook(layer("Plain").byLayer.at(0)).color == drawing2d::Rgb{1, 0, 0}; });
+    script->add("its colour-7 line keeps the ink", [v, layer, own, require] {
+      const auto plain = layer("Plain");
+      require(plain.bodies.size() == 2 && plain.own == 1 && !own().empty() && v->shownLook(own()).color == v->drawingInk() && plain.colored && !plain.mixed,
+              "a layer colour reaches the lines drawn in the layer's colour, not those in a colour of their own (DXF colour 7 keeps the ink)");
+    });
     script->add("isolate Walls", [v, panel, layer, camera] {
       *camera = v->cameraJson();
       panel->isolate({layer("Walls").id});

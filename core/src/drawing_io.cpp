@@ -522,6 +522,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
         json meta={{"representation","drawing2d"},{"layer",name},{"source",file.filename().string()}};
         json body={{"type","body"},{"id",new_uuid()},{"name",name},{"representation","drawing2d"}};
         if(color!=Drawing::kNoColor) meta["color"]=body["color"]={((color>>16)&255)/255.0,((color>>8)&255)/255.0,(color&255)/255.0};
+        if(const auto by=drawing.by_layer.find(name);by!=drawing.by_layer.end() && by->second==color) body["by_layer"]=true;  // older builds ignore it
         body["key"]=detail::store_body(staged,shape,meta,options,false);
         if(bodies.empty() && drawing.images.count(name)) body["raster"]=drawing.images.at(name);
         bodies.push_back(std::move(body));

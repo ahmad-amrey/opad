@@ -12,6 +12,7 @@
 #include <gp_Circ.hxx>
 
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <sstream>
 #include <tuple>
@@ -94,8 +95,10 @@ TEST(a_drawings_layers_as_its_file_has_them) {
   CHECK(!all["Notes"].on && !all["Notes"].frozen && !all["Notes"].plot);
   CHECK(all["Old"].on && all["Old"].frozen);  // frozen, its On kept
   CHECK(all["Plain"].on && all["Plain"].plot && all["Plain"].linetype.empty() && all["Plain"].lineweight < 0);
-  CHECK(all["Walls"].colored && !all["Walls"].mixed && all["Walls"].color == hex(0xff0000));
-  CHECK(all["Plain"].mixed && all["Plain"].bodies.size() == 2);  // blue lines and a colour-7 one
+  CHECK(all["Walls"].colored && !all["Walls"].mixed && all["Walls"].color == hex(0xff0000) && all["Walls"].own == 0);
+  // Blue lines by layer and a colour-7 one: the layer's colour is blue, the colour-7 line keeps its own.
+  CHECK(all["Plain"].bodies.size() == 2 && all["Plain"].byLayer.size() == 1 && all["Plain"].own == 1);
+  CHECK(all["Plain"].colored && !all["Plain"].mixed && all["Plain"].color == hex(0x0000ff) && scene.node(all["Plain"].byLayer.at(0))->has_color);
   CHECK(all["Walls"].drawing == "layers");
   CHECK(layerOf(scene, all["Walls"].bodies.at(0)) == all["Walls"].id && layerOf(scene, all["Walls"].id) == all["Walls"].id);
   CHECK(layerOf(scene, scene.roots.at(0)).empty());
@@ -137,8 +140,14 @@ TEST(layer_changes_are_appearance_ops_an_earlier_build_reads) {
   CHECK(all["Notes"].plot);
   all = run(setColor(all["Plain"], {0, 1, 0}));
   CHECK(all["Plain"].colored && !all["Plain"].mixed && all["Plain"].color == Rgb({0, 1, 0}));
-  all = run(setDefaultColor(all["Plain"]));  // back to blue and the ink
-  CHECK(all["Plain"].mixed);
+  auto ownColour = [&](const Layer& l) {  // the colour-7 line's body: never given the layer's colour
+    for (const auto& b : l.bodies)
+      if (std::find(l.byLayer.begin(), l.byLayer.end(), b) == l.byLayer.end()) return opad::resolve(doc).node(b)->has_color;
+    return true;
+  };
+  CHECK(!ownColour(all["Plain"]));
+  all = run(setDefaultColor(all["Plain"]));  // back to blue
+  CHECK(all["Plain"].colored && all["Plain"].color == hex(0x0000ff) && !ownColour(all["Plain"]));
   // The command keeps visible along with a layer field given alone.
   const auto id = all["Plain"].id;
   opad::commands::run("appearance", {{"target", id}, {"layer", {{"plot", false}}}}, &doc);
@@ -156,8 +165,9 @@ TEST(layer_states_come_back_in_one_go) {
   const opad::json saved = captureState(opad::resolve(doc));
   opad::commands::run("view", {{"name", "As drawn"}, {"camera", {{"eye", {0, 0, 1}}, {"target", {0, 0, 0}}, {"up", {0, 1, 0}}}}, {"display", saved}}, &doc);
   auto all = byName(opad::resolve(doc));
+  CHECK(saved["layers"][all["Plain"].id]["color"] == opad::json({0.0, 0.0, 1.0}));  // the layer's colour, its colour-7 line aside
   for (const auto& args : {setOn(all["Notes"], true), setFrozen(all["Walls"], true), setLocked(all["Walls"], false), setLinetype(all["Plain"], "Dot"),
-                           setLineweight(all["Walls"], 1.0), setPlot(all["Notes"], true), setColor(all["Walls"], {0, 0, 1})})
+                           setLineweight(all["Walls"], 1.0), setPlot(all["Notes"], true), setColor(all["Walls"], {0, 0, 1}), setColor(all["Plain"], {0, 1, 0})})
     opad::commands::run("appearance", args, &doc);
   // Saved, loaded back: the view keeps its layers.
   const auto file = std::filesystem::temp_directory_path() / ("opad-2d-" + opad::new_uuid() + ".opad");
@@ -185,6 +195,28 @@ TEST(layer_states_come_back_in_one_go) {
   const auto byNames = restoreState(opad::resolve(again), saved);
   CHECK_EQ(byNames.size(), 1u);
   CHECK(byNames.at(0)["target"] == all["Notes"].id && byNames.at(0)["visible"] == false);
+}
+
+// An import that does not say which bodies are in their layer's colour (an earlier build's, an SVG): a layer colour is
+// given to all of its bodies, and a layer state keeps a colour only when they share one.
+TEST(a_layer_colour_without_by_layer_marks_colours_every_body) {
+  opad::Document doc = opad::Document::create();
+  opad::import_file(doc, layersDxf());
+  std::function<void(opad::json&)> unmark = [&](opad::json& nodes) {
+    for (auto& n : nodes) {
+      n.erase("by_layer");
+      if (n.contains("children")) unmark(n["children"]);
+    }
+  };
+  for (auto& op : doc.ops)
+    if (op.type == "import") unmark(op.data["nodes"]);
+  auto all = byName(opad::resolve(doc));
+  CHECK(all["Plain"].byLayer == all["Plain"].bodies && all["Plain"].own == 0 && all["Plain"].mixed);
+  CHECK(!captureState(opad::resolve(doc))["layers"][all["Plain"].id].contains("color"));
+  opad::commands::run("appearance", setColor(all["Plain"], {0, 1, 0}), &doc);
+  const opad::Scene scene = opad::resolve(doc);
+  for (const auto& b : all["Plain"].bodies) CHECK(scene.node(b)->has_color && scene.node(b)->color == Rgb({0, 1, 0}));
+  CHECK(captureState(scene)["layers"][all["Plain"].id]["color"] == opad::json({0.0, 1.0, 0.0}));
 }
 
 TEST(what_a_drawing_entity_is_called) {

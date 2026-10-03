@@ -254,9 +254,11 @@ void LayersPanel::rebuild() {
     row->setIcon(Lock, icons::icon(l.locked ? "lock" : "unlock", l.locked ? t.locked : t.fg3));
     row->setToolTip(Lock, l.locked ? tr("Locked: click to unlock") : tr("Unlocked: click to lock"));
     row->setIcon(Colour, swatch(l, dpr));
-    row->setToolTip(Colour, l.mixed ? tr("Several colours: click to give the layer one")
-                            : l.colored ? tr("%1: click to change").arg(qcolor(l.color).name())
-                                        : tr("Drawing colour (dark on a light background, light on a dark one): click to change"));
+    QString colourTip = l.mixed ? tr("Several colours: click to give the layer one")
+                        : l.colored ? tr("%1: click to change").arg(qcolor(l.color).name())
+                                    : tr("Drawing colour (dark on a light background, light on a dark one): click to change");
+    if (l.own > 0) colourTip += "\n" + tr("Objects drawn in a colour of their own keep it");
+    row->setToolTip(Colour, colourTip);
     row->setText(Linetype, l.linetype.empty() ? tr("Continuous") : QString::fromStdString(l.linetype));
     row->setText(Lineweight, weightText(l.lineweight));
     row->setIcon(Plot, icons::icon(l.plot ? "plot" : "noPlot", l.plot ? t.fg : t.fg3));

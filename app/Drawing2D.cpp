@@ -73,15 +73,21 @@ std::vector<Layer> layers(const opad::Scene& scene) {
       l.plot = f.value("plot", true);
       if (f.contains("linetype") && f["linetype"].is_string()) l.linetype = f["linetype"].get<std::string>();
       if (f.contains("lineweight") && f["lineweight"].is_number()) l.lineweight = f["lineweight"].get<double>();
-      bool first = true, uncolored = false;
       for (const auto& child : n->children)
         if (const opad::Node* b = scene.node(child); b && b->kind == opad::Node::Kind::Body && b->representation == "drawing2d") {
           l.bodies.push_back(child);
-          if (!b->has_color) uncolored = true;
-          else if (first || b->color == l.color) l.color = b->color, l.colored = true;
-          else l.mixed = true;
-          first = false;
+          if (b->by_layer) l.byLayer.push_back(child);
         }
+      if (l.byLayer.empty()) l.byLayer = l.bodies;
+      l.own = int(l.bodies.size() - l.byLayer.size());
+      bool first = true, uncolored = false;
+      for (const auto& child : l.byLayer) {
+        const opad::Node* b = scene.node(child);
+        if (!b->has_color) uncolored = true;
+        else if (first || b->color == l.color) l.color = b->color, l.colored = true;
+        else l.mixed = true;
+        first = false;
+      }
       if (l.colored && uncolored) l.mixed = true;
       if (n->has_color && !l.mixed) l.color = n->color, l.colored = true;
       out.push_back(std::move(l));
@@ -120,13 +126,13 @@ json setLocked(const Layer& layer, bool locked) { return {{"target", layer.id}, 
 
 json setColor(const Layer& layer, const Rgb& color) {
   json targets = json::array({layer.id});
-  for (const auto& b : layer.bodies) targets.push_back(b);
+  for (const auto& b : layer.byLayer) targets.push_back(b);
   return {{"targets", targets}, {"color", {color[0], color[1], color[2]}}};
 }
 
 json setDefaultColor(const Layer& layer) {
   json targets = json::array({layer.id});
-  for (const auto& b : layer.bodies) targets.push_back(b);
+  for (const auto& b : layer.byLayer) targets.push_back(b);
   return {{"targets", targets}, {"default_color", true}};
 }
 

@@ -28,8 +28,12 @@ constexpr Rgb kInkOnDark{0xe6 / 255.0, 0xe6 / 255.0, 0xe6 / 255.0}, kInkOnLight{
 struct Layer {
   std::string id, name, drawing;  // its component, its name, the drawing (its import's root) it belongs to
   std::vector<std::string> bodies;
+  // The bodies a colour given to the layer applies to: those drawn in the layer's colour (DXF BYLAYER, Node::by_layer);
+  // all of them when the file does not say (SVG, an earlier import, a layer whose entities all have colours of their own).
+  std::vector<std::string> byLayer;
   bool on = true, frozen = false, locked = false, plot = true;
-  bool colored = false, mixed = false;  // its bodies have a colour of their own (else the ink), several different ones
+  bool colored = false, mixed = false;  // the layer has a colour (else the ink); the bodies it applies to differ
+  int own = 0;  // bodies in colours of their own, which keep them
   Rgb color{0, 0, 0};
   std::string linetype;  // "" = continuous
   double lineweight = -1;  // mm; < 0 = the default
@@ -45,8 +49,8 @@ std::string layerOf(const opad::Scene& scene, const std::string& node);  // the 
 opad::json setOn(const Layer& layer, bool on);
 opad::json setFrozen(const Layer& layer, bool frozen);
 opad::json setLocked(const Layer& layer, bool locked);
-opad::json setColor(const Layer& layer, const Rgb& color);  // the layer and its bodies
-opad::json setDefaultColor(const Layer& layer);  // back to the colours they were imported in (none: the ink)
+opad::json setColor(const Layer& layer, const Rgb& color);  // the layer and its byLayer bodies
+opad::json setDefaultColor(const Layer& layer);  // back to the colour they were imported in (none: the ink)
 opad::json setLinetype(const Layer& layer, const std::string& linetype);  // "" or Continuous: back to continuous
 opad::json setLineweight(const Layer& layer, double mm);  // < 0: the default
 opad::json setPlot(const Layer& layer, bool plot);

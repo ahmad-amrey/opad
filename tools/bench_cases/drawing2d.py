@@ -30,9 +30,10 @@ def contrast_file(root, document):
 
 
 def layers_file(root, document=None):
-    """Walls locked, dashed and 0.5 mm; Notes off and not plotted; Old frozen; Plain as it comes. A line on each."""
+    """Walls locked, dashed and 0.5 mm; Notes off and not plotted; Old frozen; Plain as it comes. A line on each, and on
+    Plain a second one in colour 7 of its own (a layer colour leaves it)."""
     return dxf(root / "layers.dxf", [("Walls", 1, 4, [(6, "DASHED"), (370, "50")]), ("Notes", -3, 0, [(290, "0")]), ("Old", 2, 1, ()), ("Plain", 5, 0, ())],
-               [line(name, 0, 10 * i, 100, 10 * i + 5) for i, name in enumerate(["Walls", "Notes", "Old", "Plain"])])
+               [line(name, 0, 10 * i, 100, 10 * i + 5) for i, name in enumerate(["Walls", "Notes", "Old", "Plain"])] + [line("Plain", 0, 45, 100, 45, 7)])
 
 
 def layers_document(root, document):

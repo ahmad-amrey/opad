@@ -1459,6 +1459,7 @@ Drawing Reader::read() {
     const auto& [layer, color] = key;
     const uint32_t rgb = color == kByLayer ? layer_color(layer) : color == kByBlock ? kNoColor : color;
     out.add(layer, shape, rgb);
+    if (color == kByLayer) out.by_layer[layer] = rgb;
     const auto it = m_layers.find(upper(layer));
     out.visible[layer] = it == m_layers.end() || it->second.visible;
     if (it != m_layers.end()) out.layer_info[layer] = it->second.info();

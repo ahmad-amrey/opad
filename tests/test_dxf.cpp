@@ -292,6 +292,37 @@ TEST(layer_table_state_reaches_the_layer_nodes) {
   }
 }
 
+// TODO 11 UI-89: the body of a layer's BYLAYER entities says so (by_layer), so a colour given to the layer reaches it and
+// not the entities drawn in colours of their own; a block's layer-0 BYLAYER entities follow the insert's layer.
+TEST(by_layer_bodies_are_marked) {
+  Files f;
+  write_text_file(f.dir / "bylayer.dxf",
+                  section("TABLES", {{0, "TABLE"}, {2, "LAYER"}, {0, "LAYER"}, {2, "A"}, {62, "1"}, {70, "0"}, {0, "LAYER"}, {2, "B"}, {62, "7"}, {70, "0"},
+                                     {0, "LAYER"}, {2, "C"}, {62, "3"}, {70, "0"}, {0, "ENDTAB"}}) +
+                      section("BLOCKS", {{0, "BLOCK"}, {2, "K"}, {70, "0"}, {10, "0"}, {20, "0"}, {0, "LINE"}, {8, "0"}, {10, "0"}, {20, "0"}, {11, "1"}, {21, "0"},
+                                         {0, "ENDBLK"}}) +
+                      section("ENTITIES", {{0, "LINE"}, {8, "A"}, {10, "0"}, {20, "0"}, {11, "10"}, {21, "0"},              // by layer: red
+                                           {0, "LINE"}, {8, "A"}, {62, "5"}, {10, "0"}, {20, "5"}, {11, "10"}, {21, "5"},   // blue of its own
+                                           {0, "LINE"}, {8, "B"}, {10, "0"}, {20, "10"}, {11, "10"}, {21, "10"},            // by layer: the ink
+                                           {0, "LINE"}, {8, "B"}, {62, "1"}, {10, "0"}, {20, "15"}, {11, "10"}, {21, "15"}, // red of its own
+                                           {0, "LINE"}, {8, "C"}, {62, "5"}, {10, "0"}, {20, "20"}, {11, "10"}, {21, "20"}, // only its own colour
+                                           {0, "INSERT"}, {8, "B"}, {2, "K"}, {10, "0"}, {20, "30"}}) +
+                      kEof);
+  for (bool viewer : {true, false}) {
+    const Scene s = resolve(import(f.dir / "bylayer.dxf", viewer));
+    std::map<std::string, int> marked, own;
+    for (const auto& id : s.all_bodies()) {
+      const Node* n = s.node(id);
+      (n->by_layer ? marked : own)[n->name]++;
+      if (n->by_layer && n->name == "A") CHECK(n->has_color && n->color == (std::array<double, 3>{1, 0, 0}));
+      if (n->by_layer && n->name == "B") CHECK(!n->has_color);  // the ink, the block's line with it
+    }
+    CHECK(marked == (std::map<std::string, int>{{"A", 1}, {"B", 1}}));
+    CHECK(own == (std::map<std::string, int>{{"A", 1}, {"B", 1}, {"C", 1}}));
+    CHECK(s.tree_json(-1).dump().find("\"by_layer\":true") != std::string::npos);
+  }
+}
+
 #ifdef _WIN32
 TEST(old_code_pages_become_utf8) {
   Files f;
