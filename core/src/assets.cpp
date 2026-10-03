@@ -1,13 +1,24 @@
 // Linked assets (assets.hpp): imports by reference, read from their files on open, synced by an edit of their import op.
 #include "opad/assets.hpp"
 
+#include <BRepAdaptor_Curve.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepTools.hxx>
+#include <BRep_Tool.hxx>
 #include <OSD_Parallel.hxx>
+#include <Poly_Triangulation.hxx>
 #include <Standard_Failure.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS.hxx>
 #include <TopoDS_Shape.hxx>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <cwctype>
 #include <map>
 #include <set>
@@ -23,7 +34,96 @@ namespace opad {
 namespace {
 
 namespace fs = std::filesystem;
-constexpr const char* kKeyDomain = "opad-asset/1|";  // a derived key is never the hash of a body's BREP text
+constexpr const char* kKeyDomain = "opad-asset/2|";  // a derived key is never the hash of a body's BREP text
+
+// A body's geometry in a few bytes: its topology counts, its vertices, the type and middle point of every edge and face
+// (a mesh face: its nodes), each list sorted, to about 1e-6 mm. The same part in another version of the file gives the same
+// digest, so its key survives a sync (nothing that uses it is computed again) without the version synced at hand.
+std::string shape_digest(const TopoDS_Shape& s) {
+  using Rec = std::array<std::int64_t, 5>;
+  auto q = [](double v) { return std::isfinite(v) ? std::int64_t(std::llround(v * 1e6)) : std::int64_t(0); };
+  std::vector<std::int64_t> head;
+  std::vector<Rec> vertices, edges, faces;
+  TopTools_IndexedMapOfShape map;
+  for (TopAbs_ShapeEnum type : {TopAbs_SOLID, TopAbs_SHELL, TopAbs_WIRE}) {
+    map.Clear();
+    TopExp::MapShapes(s, type, map);
+    head.push_back(map.Extent());
+  }
+  map.Clear();
+  TopExp::MapShapes(s, TopAbs_VERTEX, map);
+  for (int i = 1; i <= map.Extent(); ++i) {
+    const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(map(i)));
+    vertices.push_back({q(p.X()), q(p.Y()), q(p.Z()), 0, 0});
+  }
+  map.Clear();
+  TopExp::MapShapes(s, TopAbs_EDGE, map);
+  for (int i = 1; i <= map.Extent(); ++i) {
+    const TopoDS_Edge& e = TopoDS::Edge(map(i));
+    Rec r{-1, 0, 0, 0, BRep_Tool::Degenerated(e) ? 1 : 0};
+    double a = 0, b = 0;
+    try {
+      if (!r[4] && !BRep_Tool::Curve(e, a, b).IsNull()) {
+        const BRepAdaptor_Curve c(e);
+        const gp_Pnt p = c.Value((c.FirstParameter() + c.LastParameter()) / 2);
+        r = {c.GetType(), q(p.X()), q(p.Y()), q(p.Z()), 0};
+      }
+    } catch (const Standard_Failure&) {
+      r[0] = -2;
+    }
+    edges.push_back(r);
+  }
+  map.Clear();
+  TopExp::MapShapes(s, TopAbs_FACE, map);
+  for (int i = 1; i <= map.Extent(); ++i) {
+    const TopoDS_Face& f = TopoDS::Face(map(i));
+    TopLoc_Location loc;
+    Rec r{-1, 0, 0, 0, f.Orientation()};
+    try {
+      if (BRep_Tool::Surface(f, loc).IsNull()) {
+        if (const Handle(Poly_Triangulation) t = BRep_Tool::Triangulation(f, loc); !t.IsNull()) {
+          std::uint64_t h = 1469598103934665603ull;  // FNV-1a over the nodes in their order
+          for (int k = 1; k <= t->NbNodes(); ++k) {
+            const gp_Pnt p = t->Node(k).Transformed(loc.Transformation());
+            for (const std::int64_t v : {q(p.X()), q(p.Y()), q(p.Z())}) h = (h ^ std::uint64_t(v)) * 1099511628211ull;
+          }
+          r = {-3, t->NbNodes(), t->NbTriangles(), std::int64_t(h), f.Orientation()};
+        }
+      } else {
+        double u0 = 0, u1 = 0, v0 = 0, v1 = 0;
+        BRepTools::UVBounds(f, u0, u1, v0, v1);
+        const BRepAdaptor_Surface a(f, false);
+        const gp_Pnt p = a.Value((u0 + u1) / 2, (v0 + v1) / 2);
+        r = {a.GetType(), q(p.X()), q(p.Y()), q(p.Z()), f.Orientation()};
+      }
+    } catch (const Standard_Failure&) {
+      r[0] = -2;
+    }
+    faces.push_back(r);
+  }
+  std::string bytes(reinterpret_cast<const char*>(head.data()), head.size() * sizeof(std::int64_t));
+  for (auto* list : {&vertices, &edges, &faces}) {
+    std::sort(list->begin(), list->end());
+    const std::int64_t n = std::int64_t(list->size());
+    bytes.append(reinterpret_cast<const char*>(&n), sizeof n);
+    bytes.append(reinterpret_cast<const char*>(list->data()), list->size() * sizeof(Rec));
+  }
+  return sha256_hex(bytes);
+}
+
+// The keys of a read's bodies, from their geometry (in parallel: a file of a thousand parts).
+std::vector<std::string> asset_keys(const std::vector<TopoDS_Shape>& shapes) {
+  std::vector<std::string> keys(shapes.size());
+  OSD_Parallel::For(0, static_cast<int>(shapes.size()), [&](int i) {
+    try {
+      keys[size_t(i)] = sha256_hex(kKeyDomain + shape_digest(shapes[size_t(i)]));
+    } catch (const Standard_Failure&) {
+    }
+  });
+  for (size_t i = 0; i < keys.size(); ++i)  // a shape the kernel cannot walk: a key of its own, never another's
+    if (keys[i].empty()) keys[i] = sha256_hex(kKeyDomain + new_uuid());
+  return keys;
+}
 
 std::string utf8(const fs::path& p) {
   const auto u = p.generic_u8string();
@@ -189,6 +289,20 @@ void each_body(J& nodes, const F& fn) {
 const json& nodes_of(const json& data) {
   static const json none = json::array();
   return data.contains("nodes") ? data["nodes"] : none;
+}
+
+// The bodies a read's nodes name (`order`: each once, as the nodes list them), each with the key of its geometry.
+std::map<std::string, std::string> derived_keys(const Document& scratch, const json& nodes, std::vector<std::string>& order) {
+  std::set<std::string> seen;
+  each_body(nodes, [&](const json& n) {
+    if (seen.insert(n.value("key", "")).second) order.push_back(n.value("key", ""));
+  });
+  std::vector<TopoDS_Shape> shapes;
+  for (const auto& from : order) shapes.push_back(body_shape(scratch, from));
+  const std::vector<std::string> keys = asset_keys(shapes);
+  std::map<std::string, std::string> out;
+  for (size_t i = 0; i < order.size(); ++i) out[order[i]] = keys[i];
+  return out;
 }
 
 std::vector<EffectiveOp> asset_imports(const Document& doc) {
@@ -434,16 +548,24 @@ std::vector<AssetState> load_assets(Document& doc, const AssetOptions& opt) {
         relabel(nodes, e.op->id, "", &nodes_of(e.data()));
         std::map<std::string, std::string> from;  // node id -> body in the read
         each_body(nodes, [&](const json& n) { from[n.value("id", "")] = n.value("key", ""); });
+        // In a changed file, a part whose geometry gives the key it had is the part synced, not stale.
+        std::vector<std::string> order;
+        std::map<std::string, std::string> derived;  // body in the read -> its key
+        if (stale) derived = derived_keys(scratch, nodes, order);
         st.unbound = 0;
+        int changed = 0;
         // Bound by place, under the keys the import names.
         each_body(nodes_of(e.data()), [&](const json& n) {
           const std::string key = n.value("key", "");
           if (doc.has_body(key)) return;
           const auto it = from.find(n.value("id", ""));
-          if (it == from.end()) ++st.unbound;
-          else bind_body(doc, scratch, it->second, key, e.op->id, stale);
+          if (it == from.end()) return void(++st.unbound);
+          const bool differs = stale && derived[it->second] != key;
+          changed += differs;
+          bind_body(doc, scratch, it->second, key, e.op->id, differs);
         });
-        if (st.unbound) st.reason = std::to_string(st.unbound) + " parts are no longer in the file";
+        if (stale) st.reason = changed ? std::to_string(changed) + " parts differ from the version synced" : "the parts are as synced";
+        if (st.unbound) st.reason = std::to_string(st.unbound) + " parts are no longer in the file" + (changed ? ", " + std::to_string(changed) + " differ" : "");
       } catch (const Standard_Failure& ex) {
         st.state = "error";
         st.reason = ex.GetMessageString();
@@ -484,19 +606,14 @@ ImportResult link_file(Document& doc, const fs::path& file, const ImportOptions&
   const std::string id = new_uuid();
   relabel(data["nodes"], id, "");
   ImportResult res;
-  std::map<std::string, std::string> keys;  // body in the read -> derived key
+  std::vector<std::string> order;
+  std::map<std::string, std::string> keys = derived_keys(scratch, data["nodes"], order);  // body in the read -> its key
   each_node(data["nodes"], [&](json& n) {
     if (n.value("type", "") != "body") return void(++res.components);
     ++res.bodies;
-    const std::string from = n.value("key", "");
-    auto it = keys.find(from);
-    if (it == keys.end()) {
-      const size_t ordinal = keys.size();
-      it = keys.emplace(from, sha256_hex(kKeyDomain + sha + "|" + std::to_string(ordinal))).first;
-    }
-    n["key"] = it->second;
+    n["key"] = keys[n.value("key", "")];
   });
-  for (const auto& [from, key] : keys) bind_body(doc, scratch, from, key, id);
+  for (const auto& from : order) bind_body(doc, scratch, from, keys[from], id);
   data["op"] = "import";
   data["id"] = id;
   data["asset"] = asset;
@@ -534,33 +651,35 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
   read_file(scratch, where, asset, sha, opt);
   json fresh = read_op(scratch);
   relabel(fresh["nodes"], id, "", &nodes_of(data));
-  // The keys the same places had, kept for a body whose geometry did not change (no needless regeneration downstream).
+  // A body whose geometry did not change keeps its key (no needless regeneration downstream): the key of its geometry is
+  // the one its place had, or the shape its place had is loaded, not stale and the same to the kernel's noise.
   std::map<std::string, std::string> was;  // node id -> key
   std::map<std::string, std::string> names;
   each_body(nodes_of(data), [&](const json& n) { was[n.value("id", "")] = n.value("key", ""); names[n.value("id", "")] = n.value("name", ""); });
   std::map<std::string, std::set<std::string>> before;  // body in the read -> the keys its places had
-  std::vector<std::string> order;
   each_body(fresh["nodes"], [&](const json& n) {
-    const std::string from = n.value("key", "");
-    if (std::find(order.begin(), order.end(), from) == order.end()) order.push_back(from);
-    if (const auto it = was.find(n.value("id", "")); it != was.end()) before[from].insert(it->second);
+    if (const auto it = was.find(n.value("id", "")); it != was.end()) before[n.value("key", "")].insert(it->second);
   });
-  std::map<std::string, std::string> keys;
+  std::vector<std::string> order;
+  std::map<std::string, std::string> keys = derived_keys(scratch, fresh["nodes"], order);
   int kept = 0;
   for (size_t i = 0; i < order.size(); ++i) {
     const std::string& from = order[i];
-    std::string key;
-    if (const auto it = before.find(from); it != before.end() && it->second.size() == 1 && doc.has_body(*it->second.begin()) &&
-                                            !doc.body(*it->second.begin())->meta.value("stale", false)) {
+    std::string& key = keys[from];
+    const auto it = before.find(from);
+    if (it == before.end()) continue;
+    if (it->second.count(key)) {
+      ++kept;
+      continue;
+    }
+    const std::string& old = *it->second.begin();
+    if (it->second.size() == 1 && doc.has_body(old) && !doc.body(old)->meta.value("stale", false)) {
       try {
-        if (design::same_shapes(body_shape(scratch, from), body_shape(doc, *it->second.begin()))) key = *it->second.begin();
+        if (design::same_shapes(body_shape(scratch, from), body_shape(doc, old))) key = old, ++kept;
       } catch (const Standard_Failure&) {
       } catch (const std::exception&) {
       }
     }
-    kept += !key.empty();
-    if (key.empty()) key = sha256_hex(kKeyDomain + sha + "|" + std::to_string(i));
-    keys[from] = key;
     if (opt.progress && !opt.progress(double(i + 1) / double(order.size()), "comparing")) throw Error("cancelled");
   }
   json added = json::array(), removed = json::array(), changed = json::array();
@@ -584,9 +703,11 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
     if (!fresh.contains(k) && k != "op" && k != "id" && k != "ts" && k != "by" && k != "parent") fresh[k] = nullptr;
   Document staged = doc;  // the plan's walk reads the new bodies from it
   std::vector<design::NewBody> bodies;
+  std::set<std::string> staging;
   for (const auto& from : order) {
     const std::string& key = keys[from];
-    if (doc.has_body(key)) continue;
+    // A key shown stale holds another version's shape (the shared cache gets the right one now: it is that key's geometry).
+    if ((doc.has_body(key) && !doc.body(key)->meta.value("stale", false)) || !staging.insert(key).second) continue;
     const TopoDS_Shape shape = body_shape(scratch, from);
     const json meta = body_meta(scratch, from, id);
     staged.add_external_body(key, meta);

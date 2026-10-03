@@ -231,13 +231,25 @@ TEST(sync_keeps_ids_and_regenerates_what_depends) {
   // Nothing changed: up to date, no ops.
   design::Plan none = plan_asset_sync(d, import_id);
   CHECK(none.ops.empty() && none.report["up_to_date"].get<bool>());
-  // Reopened with another file of the same shapes: "changed", the shapes marked stale (the version synced is not known).
+  // Reopened with another file of the same shapes: "changed", yet every part is as synced (its geometry gives its key).
+  AssetOptions uncached;
+  uncached.cache = false;  // the version synced is not remembered
   std::ofstream(step, std::ios::app) << "\n";
   Document reopened = Document::load(f.dir / "design.opad");
-  CHECK_EQ(load_assets(reopened)[0].state, "changed");
-  CHECK(reopened.body(key_b)->meta.value("stale", false));
+  AssetState st = load_assets(reopened, uncached)[0];
+  CHECK_EQ(st.state, "changed");
+  CHECK(!reopened.body(key_a)->meta.value("stale", false) && !reopened.body(key_b)->meta.value("stale", false));
+  CHECK(st.reason.find("as synced") != std::string::npos);
   two_boxes(step, 5, 38);  // A up 8 mm: 2 mm of it left in the block; B as it was
-  CHECK_EQ(plan_asset_sync(reopened, import_id).report["kept"], 0);  // nothing to compare with: every key new
+  // Without the version synced at hand B still keeps its key; A, read as it is now, is marked stale.
+  CHECK_EQ(plan_asset_sync(reopened, import_id, uncached).report["kept"], 1);
+  Document later = Document::load(f.dir / "design.opad");
+  st = load_assets(later, uncached)[0];
+  CHECK(later.body(key_a)->meta.value("stale", false) && !later.body(key_b)->meta.value("stale", false));
+  CHECK(st.reason.find("1 parts differ") != std::string::npos);
+  design::Plan from_later = plan_asset_sync(later, import_id, uncached);
+  CHECK_EQ(from_later.report["kept"], 1);
+  CHECK_EQ(from_later.report["regenerated"].size(), 1u);
   // The session that read the version synced keeps B's key.
   const size_t ops = d.ops.size();
   design::Plan plan = plan_asset_sync(d, import_id);
@@ -392,6 +404,10 @@ TEST(kicad_board_linked_and_synced) {
   Document reopened = Document::load(f.dir / "mech" / "enclosure.opad");
   CHECK_EQ(load_assets(reopened)[0].state, "changed");
   CHECK(kicad_sync_preview(reopened)["moved"].size() == 1);
+  // Synced from the reopened document (the board as it was never read there): the board keeps its key all the same.
+  design::Plan again = plan_asset_sync(reopened, import_id);
+  design::commit(reopened, std::move(again));
+  CHECK_EQ(resolve(reopened).node(board_body)->body_key, board_key);
   // Synced in the session that read the board as it was: the board's body, unchanged, keeps its key.
   const double was = resolve(d).world(r1).at(0, 3);
   design::Plan plan = plan_asset_sync(d, import_id);

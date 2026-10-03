@@ -273,7 +273,7 @@ bool Document::has_live_bodies() const {
 std::string Document::add_external_body(const std::string& key, json meta) {
   if (auto it = bodies_index_.find(key); it != bodies_index_.end()) {
     BodyEntry& e = bodies_[it->second];
-    if (e.brep.empty()) e.external = true;  // a live body read again as an asset's
+    if (e.brep.empty()) e.external = true, e.meta = std::move(meta);  // read again (a live body, a stale shape): as read now
     return key;
   }
   BodyEntry e;

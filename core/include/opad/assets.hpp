@@ -5,7 +5,8 @@
 //    "abs":"<absolute fallback>", "sha256":"<the file's>", "size":N, "storage":"linked|project|embedded",
 //    "builder":{"name":"opad","version":1,"options":{...how it was read}}, "synced":"<time>"}
 // and its bodies never enter the body store: they are read from the file whenever the document opens (load_assets, on the
-// load worker), as the viewer reads files, under keys derived from the file's content ("opad-asset/1|<sha256>|<ordinal>").
+// load worker), as the viewer reads files, under keys derived from each body's geometry ("opad-asset/2|<digest>": topology
+// counts, vertices, edge and face types and middle points), so a part a new version of the file leaves alone keeps its key.
 // Node ids are derived from the import op and each node's place in the file (names, a KiCad footprint's uuid), so a sync,
 // which is an `edit` of the import op with the new hash and nodes plus the regeneration of what depends on it, keeps them
 // and every rename, colour, placement or reference made since. Old builds open such a document: the asset's components
