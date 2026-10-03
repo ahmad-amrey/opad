@@ -32,7 +32,7 @@ void Viewport::clearTracking() {
   m_trackingAnchors.clear(); m_trackingCandidates.clear(); m_inferenceChoice = 0;
   m_dwelling = false; m_dwellTimer.stop();
   bool removed = false;
-  for (auto* object : {&m_trackingGuide, &m_anchorMarks}) {
+  for (auto* object : {&m_trackingGuide, &m_trackingGuideBehind, &m_anchorMarks}) {
     if (!object->IsNull() && m_initialised) { m_ctx->Remove(*object, false); removed = true; }
     object->Nullify();
   }
@@ -178,7 +178,10 @@ void Viewport::updateTracking() {
     candidate=m_trackingCandidates[std::max(0,chosen)]; found=true;
   }
   const bool hadGuide = !m_trackingGuide.IsNull();
-  if (hadGuide) { m_ctx->Remove(m_trackingGuide,false); m_trackingGuide.Nullify(); }
+  for (auto* object : {&m_trackingGuide, &m_trackingGuideBehind}) {
+    if (!object->IsNull()) m_ctx->Remove(*object,false);
+    object->Nullify();
+  }
   auto old=m_centers.find(m_trackingMarker);
   if(old!=m_centers.end() && !m_ctx->IsSelected(old->second.ais)) {
     m_centerObjects.erase(old->second.ais.get()); m_ctx->Remove(old->second.ais,false); m_centers.erase(old);
@@ -190,15 +193,30 @@ void Viewport::updateTracking() {
     if (m_trackingShown) { m_trackingShown = false; emit hoverChanged(m_hover); }  // the status speaks of guides only while one shows
     return;
   }
-  BRep_Builder builder; TopoDS_Compound guides; builder.MakeCompound(guides);
+  // Depth cue: the stretches of a guide behind a face are drawn faint and dotted, judged at the middle of every 8 px of it.
+  BRep_Builder builder; TopoDS_Compound seen, behind; builder.MakeCompound(seen); builder.MakeCompound(behind);
+  bool anyBehind = false;
   auto guide=[&](const gp_Pnt& from) {
-    if(from.Distance(candidate.point)>1e-9) builder.Add(guides,BRepBuilderAPI_MakeEdge(from,candidate.point).Edge());
+    if(from.Distance(candidate.point)<=1e-9) return;
+    const int pieces=std::clamp(int(QLineF(widgetPoint({from.X(),from.Y(),from.Z()}),widgetPoint({candidate.point.X(),candidate.point.Y(),candidate.point.Z()})).length()/8),1,32);
+    const gp_Vec step=gp_Vec(from,candidate.point)/pieces;
+    int start=0; bool hidden=!pointVisible(from.Translated(step*0.5));
+    for(int i=1;i<=pieces;++i) {
+      const bool next=i<pieces && !pointVisible(from.Translated(step*(i+0.5)));
+      if(i<pieces && next==hidden) continue;
+      builder.Add(hidden?behind:seen,BRepBuilderAPI_MakeEdge(from.Translated(step*start),from.Translated(step*i)).Edge());
+      anyBehind=anyBehind||hidden; start=i; hidden=next;
+    }
   };
   guide(candidate.anchor); if(candidate.intersection) guide(candidate.secondAnchor);
-  m_trackingGuide=new AIS_Shape(guides);
-  const QColor c=m_tokens.sel; const Quantity_Color color(c.redF(),c.greenF(),c.blueF(),Quantity_TOC_sRGB);
-  m_trackingGuide->Attributes()->SetWireAspect(new Prs3d_LineAspect(color,Aspect_TOL_DASH,m_trackingLocked?3.0:1.5));
-  m_trackingGuide->SetZLayer(Graphic3d_ZLayerId_Topmost); m_ctx->Display(m_trackingGuide,0,-1,false);
+  const QColor c=m_tokens.sel, faint=QColor::fromRgbF(c.redF()*.45+m_tokens.vp.redF()*.55,c.greenF()*.45+m_tokens.vp.greenF()*.55,c.blueF()*.45+m_tokens.vp.blueF()*.55);
+  auto show=[&](Handle(AIS_Shape)& object,const TopoDS_Compound& shape,const QColor& tone,Aspect_TypeOfLine line,double width) {
+    object=new AIS_Shape(shape);
+    object->Attributes()->SetWireAspect(new Prs3d_LineAspect(Quantity_Color(tone.redF(),tone.greenF(),tone.blueF(),Quantity_TOC_sRGB),line,width));
+    object->SetZLayer(Graphic3d_ZLayerId_Topmost); m_ctx->Display(object,0,-1,false);
+  };
+  show(m_trackingGuide,seen,c,Aspect_TOL_DASH,m_trackingLocked?3.0:1.5);
+  if(anyBehind) show(m_trackingGuideBehind,behind,faint,Aspect_TOL_DOT,1.0);
   opad::Ref ref; ref.kind=opad::Ref::Kind::Point; ref.point={candidate.point.X(),candidate.point.Y(),candidate.point.Z()};
   centerMarker(ref,candidate.point); m_trackingMarker=ref.str();
   refreshCenterStyles();

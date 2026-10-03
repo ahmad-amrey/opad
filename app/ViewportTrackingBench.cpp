@@ -43,7 +43,8 @@ std::vector<gp_Pnt> spread(const std::vector<gp_Pnt>& all, size_t n) {  // n of 
 // releases it. (2) The guide points of an anchor are offered where they can be seen, never behind a face. (3) Seen from
 // the opposite side the camera move drops the anchors it hides, keeps the others, and a vertex hidden before is acquired.
 // (4) Edge mode: no edge behind a face is hovered, the edges in sight are. (5) 2D mode with no tool taking points tracks
-// nothing; with the tool it does. <prefix>.anchor.png, <prefix>.guide.png, <prefix>.hidden.png.
+// nothing; with the tool it does. <prefix>.anchor.png, <prefix>.guide.png, <prefix>.cue.png (a guide faint behind a face),
+// <prefix>.hidden.png.
 bool Viewport::benchTracking(const QString& prefix) {
   bool all = true;
   auto require = [&](bool ok, const QString& what) {
@@ -234,8 +235,8 @@ bool Viewport::benchTracking(const QString& prefix) {
   if (!dwelt) require(false, "a vertex in sight to rest on");
 
   // (2) guide points: anchors set on vertices in sight, the pointer along their axes
-  int offered = 0, guideSeen = 0, guideBehind = 0, leaked = 0;
-  for (const auto& a : spread(visible, 10)) {
+  int offered = 0, guideSeen = 0, guideBehind = 0, leaked = 0, cued = 0, plain = 0, miscued = 0;
+  for (const auto& a : spread(visible, 24)) {
     m_trackingAnchors = {{a, {}, false}};
     for (const gp_Vec d : {gp_Vec(1, 0, 0), gp_Vec(0, 1, 0), gp_Vec(0, 0, 1)})
       for (int k = -60; k <= 60; ++k) {
@@ -251,6 +252,23 @@ bool Viewport::benchTracking(const QString& prefix) {
         });
         (s < 0 ? guideBehind : guideSeen) += 1;
         (s < 0 ? leaked : offered) += there;
+        // The depth cue of the guide shown: faint where it passes behind a face, judged at the same points as the tracker.
+        if (s > 0 && there && !m_trackingCandidates.empty() && !m_trackingGuide.IsNull()) {
+          const auto& shown = m_trackingCandidates[std::clamp(m_inferenceChoice, 0, int(m_trackingCandidates.size()) - 1)];
+          if (!shown.intersection && shown.point.Distance(p) < 3 * pixelSize()) {
+            const QPoint from = widgetPoint({a.X(), a.Y(), a.Z()}), to = widgetPoint({shown.point.X(), shown.point.Y(), shown.point.Z()});
+            const int pieces = std::clamp(int(QLineF(from, to).length() / 8), 1, 32);
+            int hiddenAt = 0, clearAt = 0;
+            for (int i = 0; i < pieces; ++i) {
+              const int at = seen(a.Translated(gp_Vec(a, shown.point) * ((i + 0.5) / pieces)));
+              hiddenAt += at < 0;
+              clearAt += at > 0;
+            }
+            if (hiddenAt && !cued) grabImage().save(prefix + ".cue.png");
+            if (hiddenAt) ++cued, miscued += m_trackingGuideBehind.IsNull();
+            else if (clearAt == pieces) ++plain, miscued += !m_trackingGuideBehind.IsNull();
+          }
+        }
         if (s < 0 && there) {
           const auto c = std::find_if(m_trackingCandidates.begin(), m_trackingCandidates.end(), [&](const TrackingCandidate& c) { return !c.intersection && c.point.Distance(p) < 3 * pixelSize(); });
           Standard_Integer x = 0, y = 0;
@@ -265,10 +283,12 @@ bool Viewport::benchTracking(const QString& prefix) {
                          .arg(c == m_trackingCandidates.end() ? -1.0 : c->point.Distance(p) / pixelSize(), 0, 'f', 2).arg(pointVisible(p)).arg(c == m_trackingCandidates.end() ? -1 : int(pointVisible(c->point))).arg(hits));
         }
       }
-    if (guideBehind >= 20 && guideSeen >= 20) break;
+    if (guideBehind >= 20 && guideSeen >= 20 && cued >= 3) break;
   }
   require(guideBehind > 0 && leaked == 0, QString("guide points behind a face: %1, offered %2").arg(guideBehind).arg(leaked));
   require(guideSeen > 0 && offered * 10 >= guideSeen * 9, QString("guide points in sight: %1 of %2 offered").arg(offered).arg(guideSeen));
+  require(cued > 0 && plain > 0 && miscued == 0,
+          QString("guides passing behind a face drawn faint there: %1, wholly in sight drawn plain: %2, wrong: %3").arg(cued).arg(plain).arg(miscued));
   for (int k = 10; k <= 60 && !visible.empty(); ++k) {  // a guide on screen for the picture
     m_trackingAnchors = {{visible.front(), {}, false}};
     hover(widget(visible.front().Translated(gp_Vec(1, 0, 0) * (k * 6 * pixelSize()))));

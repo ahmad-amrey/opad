@@ -357,7 +357,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QElapsedTimer m_dwellClock;
   QTimer m_dwellTimer;                 // a paint once the dwell is over, the pointer resting
   Graphic3d_WorldViewProjState m_trackingCamera;
-  Handle(AIS_Shape) m_trackingGuide, m_anchorMarks;
+  Handle(AIS_Shape) m_trackingGuide, m_trackingGuideBehind, m_anchorMarks;  // the guide where seen, where behind a face
   std::string m_trackingMarker, m_snapClick;
   bool m_ctrlCenterPick=false;
   void setCenterPicking(bool on,const QPointF& position);
