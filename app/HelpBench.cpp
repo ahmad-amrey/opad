@@ -1,4 +1,5 @@
 #include "MainWindow.hpp"
+#include "BenchRegistry.hpp"
 #include "CommandHelp.hpp"
 #include "DesignController.hpp"
 #include "GuidedTool.hpp"
@@ -27,9 +28,8 @@
 // real ribbon buttons through synthesised events: nothing before 450 ms, compact after, expanded after +1200 ms,
 // theme change, press hides, disabled button with its reason, Shift and F1 at once, browse mode, Qt's tooltip held
 // back, the clip slot, grace on leaving. Cards saved as <prefix>.compact/.expanded/.expanded-light/.disabled/.clip.png.
-bool MainWindow::benchRichTip() {
-  const QString prefix = qEnvironmentVariable("OPAD_BENCH_RICHTIP");
-  if (prefix.isEmpty()) return false;
+OPAD_BENCH(OPAD_BENCH_RICHTIP, richtip) {
+  const QString prefix = value;
   const bool translated = i18n::current() != "en";
   QStringList missing;
   int checked = 0;
@@ -38,17 +38,17 @@ bool MainWindow::benchRichTip() {
     const CommandHelp* h = help::find(id);
     if (!h || h->title.isEmpty() || h->summary.isEmpty() || h->details.isEmpty() || (translated && !h->translated)) missing << id;
   };
-  for (QAction* a : m_actions) if (!a->objectName().isEmpty()) need(a->objectName());
+  for (QAction* a : w.m_actions) if (!a->objectName().isEmpty()) need(a->objectName());
   for (const auto& tool : SketchPanel::tools()) need("sketch." + QString(tool.id).replace(':', '.'));
   for (const auto& spec : opad::design::feature_specs()) need("design." + QString::fromStdString(spec.kind));
   missing.removeDuplicates();
   trace::log(QString("bench: richtip: help for %1 command ids (%2), %3 missing %4 %5")
                  .arg(checked).arg(help::language()).arg(missing.size()).arg(missing.join(' ')).arg(missing.isEmpty() ? "PASS" : "FAIL"));
 
-  m_ribbon->setWorkspace(0);
-  m_ribbon->setCurrentTab(0);  // Review > View: Fit, Home, Exit isolate (disabled: nothing is isolated)
-  auto button = [this](const char* id) -> QToolButton* {
-    for (auto* b : m_ribbon->findChildren<QToolButton*>()) if (b->defaultAction() == action(id) && b->isVisibleTo(m_ribbon)) return b;
+  w.m_ribbon->setWorkspace(0);
+  w.m_ribbon->setCurrentTab(0);  // Review > View: Fit, Home, Exit isolate (disabled: nothing is isolated)
+  auto button = [&w](const char* id) -> QToolButton* {
+    for (auto* b : w.m_ribbon->findChildren<QToolButton*>()) if (b->defaultAction() == w.action(id) && b->isVisibleTo(w.m_ribbon)) return b;
     return nullptr;
   };
   QToolButton *fit = button("view.fit"), *home = button("view.home"), *unisolate = button("view.unisolate");
@@ -62,10 +62,10 @@ bool MainWindow::benchRichTip() {
   // each to its own command, which has help.
   QStringList unattached;
   int attached = 0;
-  QList<QAbstractButton*> commandButtons{m_ribbon->searchField()};
-  for (auto* g : m_ribbon->findChildren<RibbonGroup*>())
+  QList<QAbstractButton*> commandButtons{w.m_ribbon->searchField()};
+  for (auto* g : w.m_ribbon->findChildren<RibbonGroup*>())
     for (QToolButton* b : g->buttons()) commandButtons << b;
-  for (auto* b : m_ribbon->findChildren<QToolButton*>())
+  for (auto* b : w.m_ribbon->findChildren<QToolButton*>())
     if (QStringList{"segment", "segmentPrimary", "ribbonSettings", "ribbonQuick"}.contains(b->objectName())) commandButtons << b;
   for (QAbstractButton* b : commandButtons) {
     const QString id = RichTip::attachedId(b);
@@ -75,7 +75,7 @@ bool MainWindow::benchRichTip() {
   }
   for (const char* id : {"view.extensions", "view.tracking", "view.gridSnap"}) {
     bool found = false;
-    for (auto* b : statusBar()->findChildren<QToolButton*>()) found = found || (b->defaultAction() == action(id) && RichTip::attachedId(b) == id);
+    for (auto* b : w.statusBar()->findChildren<QToolButton*>()) found = found || (b->defaultAction() == w.action(id) && RichTip::attachedId(b) == id);
     if (found) ++attached; else unattached << id;
   }
   trace::log(QString("bench: richtip: %1 ribbon and status buttons show their command's card, %2 do not %3 %4").arg(attached).arg(unattached.size()).arg(unattached.join(' ')).arg(unattached.isEmpty() && attached > 60 ? "PASS" : "FAIL"));
@@ -112,17 +112,17 @@ bool MainWindow::benchRichTip() {
     run->compactHeight = tip->height();
     check(save("compact"), "compact card saved");
   });
-  add(1450, [=, this] {
+  add(1450, [=, &w] {
     check(tip->state() == State::Expanded && tip->height() > run->compactHeight, QString("expanded after +1200 ms (%1 -> %2 px)").arg(run->compactHeight).arg(tip->height()));
     check(save("expanded"), "expanded card saved");
     run->dark = tip->grab().toImage().pixelColor(RichTip::kMargin + 3, tip->height() / 2);
-    action("view.dark")->setChecked(!action("view.dark")->isChecked());
+    w.action("view.dark")->setChecked(!w.action("view.dark")->isChecked());
   });
-  add(200, [=, this] {
+  add(200, [=, &w] {
     const QColor light = tip->grab().toImage().pixelColor(RichTip::kMargin + 3, tip->height() / 2);
     check(light != run->dark && tip->state() == State::Expanded, QString("theme change repaints the card (%1 -> %2)").arg(run->dark.name(), light.name()));
     check(save("expanded-light"), "light card saved");
-    action("view.dark")->setChecked(!action("view.dark")->isChecked());
+    w.action("view.dark")->setChecked(!w.action("view.dark")->isChecked());
     QMouseEvent press(QEvent::MouseButtonPress, QPointF(4, 4), fit->mapToGlobal(QPointF(4, 4)), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
     QApplication::sendEvent(fit, &press);
     check(tip->state() == State::Hidden && !tip->isVisible(), "a press hides the card");
@@ -130,9 +130,9 @@ bool MainWindow::benchRichTip() {
     QApplication::sendEvent(fit, &release);
     move(fit);
   });
-  add(700, [=, this] {
+  add(700, [=, &w] {
     check(tip->state() == State::Hidden, "no card again on the pressed button");
-    move(statusBar());
+    move(w.statusBar());
     move(unisolate);
     key(unisolate, Qt::Key_Shift);
     check(tip->state() == State::Expanded && tip->commandId() == "view.unisolate", "Shift shows the expanded card at once");
@@ -144,7 +144,7 @@ bool MainWindow::benchRichTip() {
     QHelpEvent help(QEvent::ToolTip, QPoint(4, 4), fit->mapToGlobal(QPoint(4, 4)));
     QApplication::sendEvent(fit, &help);
     const bool held = !QToolTip::text().contains(fit->defaultAction()->toolTip());
-    auto* plain = new QToolButton(m_ribbon);  // a button that is no command keeps Qt's tooltip
+    auto* plain = new QToolButton(w.m_ribbon);  // a button that is no command keeps Qt's tooltip
     plain->setToolTip("Not a command");
     plain->setGeometry(0, 0, 20, 20);
     QHelpEvent other(QEvent::ToolTip, QPoint(4, 4), plain->mapToGlobal(QPoint(4, 4)));
@@ -160,7 +160,7 @@ bool MainWindow::benchRichTip() {
     check(!tip->clip(), "no clip in the compact card");
     RichTip::setClipFactory(nullptr);
     tip->hideTip();
-    move(statusBar());
+    move(w.statusBar());
     move(fit);
     const bool f1 = key(fit, Qt::Key_F1, QEvent::ShortcutOverride);
     key(fit, Qt::Key_F1);
@@ -169,21 +169,21 @@ bool MainWindow::benchRichTip() {
     check(tip->state() == State::Hidden, "another key hides the card");
     if (translated) check(tip->layoutDirection() == (QApplication::isRightToLeft() ? Qt::RightToLeft : Qt::LeftToRight) && help::find("view.fit")->translated, "card in the UI language and direction");
     if (translated) check(RichTip::tr("Shift or F1 for more") != QLatin1String("Shift or F1 for more"), "the card's own strings translated (app/i18n/ar/help.json)");
-    move(statusBar());
+    move(w.statusBar());
     move(home);
     key(home, Qt::Key_Shift);
-    move(statusBar());
+    move(w.statusBar());
     check(tip->state() == State::Expanded, "leaving keeps the card for a moment");
   });
-  add(450, [=, this] {
+  add(450, [=, &w] {
     check(tip->state() == State::Hidden, "the card hides 300 ms after leaving");
     trace::log(QString("bench: richtip: %1").arg(run->ok ? "PASS" : "FAIL: " + run->failed.join("; ")));
     QCoreApplication::exit(run->ok && missing.isEmpty() ? 0 : 2);
   });
   auto next = std::make_shared<std::function<void(size_t)>>();
-  *next = [this, steps, next, check](size_t i) {
+  *next = [&w, steps, next, check](size_t i) {
     if (i >= steps->size()) return;
-    QTimer::singleShot((*steps)[i].delay, this, [steps, next, check, i] {
+    QTimer::singleShot((*steps)[i].delay, &w, [steps, next, check, i] {
       try { (*steps)[i].fn(); } catch (const std::exception& e) { check(false, QString::fromUtf8(e.what())); }
       (*next)(i + 1);
     });
@@ -199,9 +199,8 @@ bool MainWindow::benchRichTip() {
 // of 3 renders: a median under 6 ms; frames over one 30 fps tick are listed). Then the player: it
 // animates only while visible, holds the still frame with reduced motion, loops one step, and plays in the expanded
 // rich card of a command that has a clip.
-bool MainWindow::benchClips() {
-  const QString dir = qEnvironmentVariable("OPAD_BENCH_CLIPS");
-  if (dir.isEmpty()) return false;
+OPAD_BENCH(OPAD_BENCH_CLIPS, clips) {
+  const QString dir = value;
   QDir().mkpath(dir);
   auto failed = std::make_shared<QStringList>();
   auto check = [failed](bool ok, const QString& what) {
@@ -339,24 +338,24 @@ bool MainWindow::benchClips() {
     *shot = view->grab().toImage();
     check(!view->playing() && view->still() && std::abs(view->time() - clips::stillTime(clip)) < 1e-6, "reduced motion: the still frame, no timer");
   });
-  add(250, [=, this] {
+  add(250, [=, &w] {
     check(view->grab().toImage() == *shot, "the still frame does not change");
     shot->save(dir + "/player-still.png");
     QSettings().remove("ui/tipAnimate");
     view->close();
     // The expanded rich card plays the command's clip; a command without a clip gets no slot.
-    auto* button = new QToolButton(this);
-    button->setDefaultAction(action("design.extrude"));
+    auto* button = new QToolButton(&w);
+    button->setDefaultAction(w.action("design.extrude"));
     button->setGeometry(40, 40, 40, 40);
-    RichTip::setActionLookup([this](const QString& id) { return action(id); });
+    RichTip::setActionLookup([&w](const QString& id) { return w.action(id); });
     RichTip::attach(button, "design.extrude");
     RichTip* tip = RichTip::instance();
     tip->showFor(button, RichTip::State::Expanded);
     auto* played = qobject_cast<ClipView*>(tip->clip());
     check(played && played->clip() == "design.extrude" && played->isVisible() && played->playing(), "the expanded card plays the command's clip");
     tip->grab().save(dir + "/richtip-clip.png");
-    auto* other = new QToolButton(this);
-    other->setDefaultAction(action("file.quit"));
+    auto* other = new QToolButton(&w);
+    other->setDefaultAction(w.action("file.quit"));
     RichTip::attach(other, "file.quit");
     tip->showFor(other, RichTip::State::Expanded);
     check(!clips::has("file.quit") && !tip->clip(), "no clip slot for a command without a clip");
@@ -367,9 +366,9 @@ bool MainWindow::benchClips() {
     QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
   });
   auto next = std::make_shared<std::function<void(size_t)>>();
-  *next = [this, steps, next](size_t i) {
+  *next = [&w, steps, next](size_t i) {
     if (i >= steps->size()) return;
-    QTimer::singleShot((*steps)[i].delay, this, [steps, next, i] {
+    QTimer::singleShot((*steps)[i].delay, &w, [steps, next, i] {
       (*steps)[i].fn();
       (*next)(i + 1);
     });
@@ -383,9 +382,8 @@ bool MainWindow::benchClips() {
 // than ToolGuide::kUses times starts folded and unfolding it is remembered; a new extrude plays design.extrude at its
 // profile pick and moves on to the distance once a profile is picked; the sketch panel plays the line tool's clip and
 // follows its clicks; ui/toolGuide off removes the slot. Panels saved as <prefix>.tool/.tool-picked/.feature/.sketch.png.
-bool MainWindow::benchGuide() {
-  const QString prefix = qEnvironmentVariable("OPAD_BENCH_GUIDE");
-  if (prefix.isEmpty()) return false;
+OPAD_BENCH(OPAD_BENCH_GUIDE, guide) {
+  const QString prefix = value;
   QSettings().setValue("ui/tipAnimate", true);
   auto failed = std::make_shared<QStringList>();
   auto check = [failed](bool ok, const QString& what) {
@@ -397,66 +395,66 @@ bool MainWindow::benchGuide() {
   struct Step { int delay; std::function<void()> fn; };
   auto steps = std::make_shared<std::vector<Step>>();
   auto add = [steps](int delay, std::function<void()> fn) { steps->push_back({delay, std::move(fn)}); };
-  const std::string sketch = m_doc->scene.sketches.empty() ? std::string() : m_doc->scene.sketches.front().id;
-  check(!sketch.empty() && !m_doc->scene.all_bodies().empty(), "the document has a body and a sketch");
+  const std::string sketch = w.m_doc->scene.sketches.empty() ? std::string() : w.m_doc->scene.sketches.front().id;
+  check(!sketch.empty() && !w.m_doc->scene.all_bodies().empty(), "the document has a body and a sketch");
   auto unfoldedHeight = std::make_shared<int>(0);
-  add(1500, [=, this] {
-    startTool("distance");
-    ToolGuide* g = m_toolSteps->guide();
+  add(1500, [=, &w] {
+    w.startTool("distance");
+    ToolGuide* g = w.m_toolSteps->guide();
     check(plays(g, "inspect.distance"), "the Distance panel plays its clip");
     check(g && g->view()->range() == qMakePair(0, 0), "at the first pick's step (" + range(g) + ")");
-    *unfoldedHeight = m_toolPanel->height();
-    m_toolPanel->grab().save(prefix + ".tool.png");
+    *unfoldedHeight = w.m_toolPanel->height();
+    w.m_toolPanel->grab().save(prefix + ".tool.png");
   });
-  add(300, [=, this] {  // a face of the box picked, as the viewport reports a click (a hidden window paints no frame to click in)
+  add(300, [=, &w] {  // a face of the box picked, as the viewport reports a click (a hidden window paints no frame to click in)
     opad::Ref face;
-    face.body = m_doc->scene.all_bodies().front();
+    face.body = w.m_doc->scene.all_bodies().front();
     face.kind = opad::Ref::Kind::Face;
     face.index = 1;
-    toolPicksChanged({face}, false);
+    w.toolPicksChanged({face}, false);
   });
-  add(300, [=, this] {
-    ToolGuide* g = m_toolSteps->guide();
-    check(m_toolPicks.size() == 1 && g && g->view()->range() == qMakePair(1, 1), QString("a pick moves it to the second pick's step (%1 picks, %2)").arg(m_toolPicks.size()).arg(range(g)));
-    m_toolPanel->grab().save(prefix + ".tool-picked.png");
-    cancelTool();
-    for (int i = 1; i < ToolGuide::kUses; ++i) { startTool("distance"); cancelTool(); }
-    startTool("distance");
+  add(300, [=, &w] {
+    ToolGuide* g = w.m_toolSteps->guide();
+    check(w.m_toolPicks.size() == 1 && g && g->view()->range() == qMakePair(1, 1), QString("a pick moves it to the second pick's step (%1 picks, %2)").arg(w.m_toolPicks.size()).arg(range(g)));
+    w.m_toolPanel->grab().save(prefix + ".tool-picked.png");
+    w.cancelTool();
+    for (int i = 1; i < ToolGuide::kUses; ++i) { w.startTool("distance"); w.cancelTool(); }
+    w.startTool("distance");
     check(g && g->shown() && !g->expanded() && !g->view()->isVisible(), QString("folded after %1 runs").arg(ToolGuide::kUses));
   });
-  add(300, [=, this] {
-    ToolGuide* g = m_toolSteps->guide();
-    check(m_toolPanel->height() < *unfoldedHeight, QString("the folded panel is shorter (%1 < %2 px)").arg(m_toolPanel->height()).arg(*unfoldedHeight));
+  add(300, [=, &w] {
+    ToolGuide* g = w.m_toolSteps->guide();
+    check(w.m_toolPanel->height() < *unfoldedHeight, QString("the folded panel is shorter (%1 < %2 px)").arg(w.m_toolPanel->height()).arg(*unfoldedHeight));
     if (auto* head = g ? g->findChild<QToolButton*>("guideHead") : nullptr) head->click();
     check(g && g->expanded() && g->view()->isVisible(), "the header unfolds it");
-    cancelTool();
-    startTool("distance");
+    w.cancelTool();
+    w.startTool("distance");
     check(g && g->expanded(), "unfolded by hand stays unfolded");
-    cancelTool();
-    m_design->startFeature("extrude");
-    ToolGuide* f = m_design->featurePanel()->guide();
+    w.cancelTool();
+    w.m_design->startFeature("extrude");
+    ToolGuide* f = w.m_design->featurePanel()->guide();
     check(plays(f, "design.extrude") && f->view()->range() == qMakePair(0, 0), "a new extrude plays its clip at the profile pick (" + range(f) + ")");
-    m_design->featurePanel()->setPicks("profiles", opad::json::array({opad::json{{"sketch", sketch}, {"at", {30.0, 5.0}}}}));
+    w.m_design->featurePanel()->setPicks("profiles", opad::json::array({opad::json{{"sketch", sketch}, {"at", {30.0, 5.0}}}}));
     check(f && f->view()->range() == qMakePair(1, 2), "a picked profile moves it on to the distance (" + range(f) + ")");
   });
-  add(600, [=, this] {
-    m_design->featurePanel()->grab().save(prefix + ".feature.png");
-    m_design->escape();
-    m_design->editOp(sketch);
+  add(600, [=, &w] {
+    w.m_design->featurePanel()->grab().save(prefix + ".feature.png");
+    w.m_design->escape();
+    w.m_design->editOp(sketch);
   });
-  add(900, [=, this] {
-    m_design->sketch()->setTool("line");
-    auto panels = findChildren<SketchPanel*>();
+  add(900, [=, &w] {
+    w.m_design->sketch()->setTool("line");
+    auto panels = w.findChildren<SketchPanel*>();
     ToolGuide* s = panels.isEmpty() ? nullptr : panels.front()->findChild<ToolGuide*>();
-    check(m_design->sketchActive() && plays(s, "sketch.line") && s->view()->range() == qMakePair(0, 0), "the sketch panel plays the line tool at its first point (" + range(s) + ")");
-    m_design->sketch()->placePrecise("0", "0", 0);
+    check(w.m_design->sketchActive() && plays(s, "sketch.line") && s->view()->range() == qMakePair(0, 0), "the sketch panel plays the line tool at its first point (" + range(s) + ")");
+    w.m_design->sketch()->placePrecise("0", "0", 0);
     check(s && s->view()->range() == qMakePair(1, 2), "a placed point moves it on (" + range(s) + ")");
   });
-  add(400, [=, this] {
-    auto panels = findChildren<SketchPanel*>();
+  add(400, [=, &w] {
+    auto panels = w.findChildren<SketchPanel*>();
     if (!panels.isEmpty()) panels.front()->grab().save(prefix + ".sketch.png");
     QSettings().setValue("ui/toolGuide", false);
-    m_design->sketch()->setTool("rect");
+    w.m_design->sketch()->setTool("rect");
     ToolGuide* s = panels.isEmpty() ? nullptr : panels.front()->findChild<ToolGuide*>();
     check(s && !s->shown(), "ui/toolGuide off: no slot");
     QSettings().remove("ui/toolGuide");
@@ -465,9 +463,9 @@ bool MainWindow::benchGuide() {
     QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
   });
   auto next = std::make_shared<std::function<void(size_t)>>();
-  *next = [this, steps, next, check](size_t i) {
+  *next = [&w, steps, next, check](size_t i) {
     if (i >= steps->size()) return;
-    QTimer::singleShot((*steps)[i].delay, this, [steps, next, check, i] {
+    QTimer::singleShot((*steps)[i].delay, &w, [steps, next, check, i] {
       try { (*steps)[i].fn(); } catch (const std::exception& e) { check(false, QString::fromUtf8(e.what())); }
       (*next)(i + 1);
     });
@@ -481,9 +479,8 @@ bool MainWindow::benchGuide() {
 // whose clip plays and whose steps loop one by one; the search finds commands by their keywords; a command not
 // available now says what it needs. The palette shows the current command's card and clip beside its list and finds
 // commands by keyword; its group column names the area. Saved as <prefix>.reference/.reference-search/.palette.png.
-bool MainWindow::benchReference() {
-  const QString prefix = qEnvironmentVariable("OPAD_BENCH_REFERENCE");
-  if (prefix.isEmpty()) return false;
+OPAD_BENCH(OPAD_BENCH_REFERENCE, reference) {
+  const QString prefix = value;
   QSettings().setValue("ui/tipAnimate", true);
   auto failed = std::make_shared<QStringList>();
   auto check = [failed](bool ok, const QString& what) {
@@ -495,14 +492,14 @@ bool MainWindow::benchReference() {
   auto add = [steps](int delay, std::function<void()> fn) { steps->push_back({delay, std::move(fn)}); };
   int listed = 0;
   for (const CommandHelp& h : help::all()) listed += !h.id.section('.', -1).startsWith("more");
-  add(1000, [=, this] {
-    action("help.reference")->trigger();
-    auto* reference = findChild<CommandReference*>();
+  add(1000, [=, &w] {
+    w.action("help.reference")->trigger();
+    auto* reference = w.findChild<CommandReference*>();
     check(reference && reference->isVisible() && reference->shown().size() == listed && !reference->current().isEmpty(),
           QString("F1 opens the reference with every command (%1 of %2)").arg(reference ? reference->shown().size() : 0).arg(listed));
     if (reference) reference->hide();
-    startTool("distance");
-    action("help.reference")->trigger();
+    w.startTool("distance");
+    w.action("help.reference")->trigger();
     check(reference && reference->isVisible() && reference->current() == "inspect.distance", "F1 while measuring opens it at Distance (" + (reference ? reference->current() : QString()) + ")");
     ClipView* clip = reference ? reference->preview()->clip() : nullptr;
     check(clip && clip->isVisible() && clip->playing() && clip->clip() == "inspect.distance", "its clip plays");
@@ -511,10 +508,10 @@ bool MainWindow::benchReference() {
     if (list) list->setCurrentRow(2);
     check(clip && clip->range() == qMakePair(1, 1), "a click on a step loops it");
   });
-  add(400, [=, this] {
-    auto* reference = findChild<CommandReference*>();
+  add(400, [=, &w] {
+    auto* reference = w.findChild<CommandReference*>();
     reference->grab().save(prefix + ".reference.png");
-    cancelTool();
+    w.cancelTool();
     reference->setFilter("push pull");
     const QStringList found = reference->shown();
     bool all = !found.isEmpty();
@@ -527,8 +524,8 @@ bool MainWindow::benchReference() {
     check(reference->current() == "view.unisolate" && reference->shown().size() == listed && reference->preview()->showsRequirement(), "a command not available now says what it needs");
     if (i18n::current() != "en") check(reference->layoutDirection() == Qt::RightToLeft && reference->windowTitle() != "Command reference", "the reference in the UI language and direction");
     reference->close();
-    check(help::group("design.extrude") == opGroup(action("design.extrude")) && opGroup(action("sketch.line")) != opGroup(action("help.about")), "the palette groups commands by area");
-    auto* palette = new CommandPalette(m_actions, this);
+    check(help::group("design.extrude") == opGroup(w.action("design.extrude")) && opGroup(w.action("sketch.line")) != opGroup(w.action("help.about")), "the palette groups commands by area");
+    auto* palette = new CommandPalette(w.m_actions, &w);
     palette->setAttribute(Qt::WA_DeleteOnClose);
     palette->show();
     auto* edit = palette->findChild<QLineEdit*>("paletteInput");
@@ -542,8 +539,8 @@ bool MainWindow::benchReference() {
     check(ids.contains("design.offset_face"), "the palette finds commands by keyword (" + ids.join(' ') + ")");
     edit->setText("fit");
   });
-  add(400, [=, this] {
-    auto* palette = findChild<CommandPalette*>();
+  add(400, [=, &w] {
+    auto* palette = w.findChild<CommandPalette*>();
     if (palette) {
       palette->grab().save(prefix + ".palette.png");
       palette->close();
@@ -552,9 +549,9 @@ bool MainWindow::benchReference() {
     QCoreApplication::exit(failed->isEmpty() ? 0 : 2);
   });
   auto next = std::make_shared<std::function<void(size_t)>>();
-  *next = [this, steps, next, check](size_t i) {
+  *next = [&w, steps, next, check](size_t i) {
     if (i >= steps->size()) return;
-    QTimer::singleShot((*steps)[i].delay, this, [steps, next, check, i] {
+    QTimer::singleShot((*steps)[i].delay, &w, [steps, next, check, i] {
       try { (*steps)[i].fn(); } catch (const std::exception& e) { check(false, QString::fromUtf8(e.what())); }
       (*next)(i + 1);
     });

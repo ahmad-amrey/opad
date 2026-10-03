@@ -58,6 +58,13 @@ void AreaServices::toast(const QString& text, const QString& actionText, std::fu
   m_window->m_toasts->toast(text, actionText, std::move(callback), ms);
 }
 SelectionContext AreaServices::selection() const { return m_window->selectionContext(); }
+QString AreaServices::activeCommand() const {
+  const MainWindow& w = *m_window;
+  if (!w.m_tool.id.isEmpty()) return w.m_tool.id == "sectionface" ? QString("inspect.section") : "inspect." + w.m_tool.id;
+  if (w.m_design && w.m_design->sketchActive()) return "sketch." + w.m_design->sketch()->tool().replace(':', '.');
+  if (w.m_design && w.m_design->featureActive()) return "design." + QString::fromStdString(w.m_design->featurePanel()->spec()->kind);
+  return {};
+}
 void AreaServices::positionOverlays() { m_window->positionOverlays(); }
 QString AreaServices::workspace() const { return m_window->workspaceId(); }
 void AreaServices::setWorkspace(const QString& id) { m_window->setWorkspace(id); }

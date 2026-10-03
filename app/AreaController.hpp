@@ -86,6 +86,9 @@ class AreaServices {
   // whose callback runs when it is clicked; ms 0 keeps it until it is closed. From ribbon on.
   void toast(const QString& text, const QString& actionText = QString(), std::function<void()> callback = {}, int ms = 4000);
   SelectionContext selection() const;                       // the current one
+  // The command whose tool runs now: a guided tool ("inspect.distance"), a sketch tool ("sketch.line"), a feature's panel
+  // ("design.extrude"); empty when none.
+  QString activeCommand() const;
   void positionOverlays();  // lay the overlays out again (the areas' positionOverlays too)
   // The workspace shown, by RibbonLayout id: "review", "design", "sketch" (contextual, while a sketch is open) or an
   // area's; from statusWidgets on. setWorkspace("drawings") is what its command "workspace.drawings" does: an unknown id or

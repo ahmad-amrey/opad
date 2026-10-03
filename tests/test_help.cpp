@@ -22,6 +22,7 @@
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTranslator>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <set>
@@ -40,6 +41,8 @@ std::set<QString> registeredIds() {
   QString main;
   for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"MainWindow*.cpp"}, QDir::Files, QDir::Name)) main += source("app/" + file);
   for (const auto& m : QRegularExpression(R"(addAction\("([a-z]+\.[A-Za-z0-9_.]+)\")").globalMatch(main)) ids.insert(m.captured(1));
+  for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"*Area.cpp"}, QDir::Files, QDir::Name))
+    for (const auto& m : QRegularExpression(R"(\.id = "([a-z]+\.[A-Za-z0-9_.]+)\")").globalMatch(source("app/" + file))) ids.insert(m.captured(1));
   for (const auto& m : QRegularExpression(R"re(\{"([a-z0-9_:]+)", tr\(")re").globalMatch(main)) ids.insert("sketch." + m.captured(1).replace(':', '.'));
   for (const auto& m : QRegularExpression(R"re(QObject::tr\("[^"]+"\),"([a-z0-9_:]+)")re").globalMatch(source("app/SketchPanel.cpp")))
     ids.insert("sketch." + m.captured(1).replace(':', '.'));
@@ -53,6 +56,17 @@ std::set<QString> registeredIds() {
   return ids;
 }
 
+// The app's Arabic as i18n::install sets it up while it lives: ar.json and its fragments from the embedded qrc.
+class Arabic : public QTranslator {
+ public:
+  Arabic() : m_table(i18n::table("ar", {":/i18n"})) { QCoreApplication::installTranslator(this); }
+  ~Arabic() override { QCoreApplication::removeTranslator(this); }
+  QString translate(const char*, const char* source, const char*, int) const override { return m_table.value(QString::fromUtf8(source)); }
+  bool isEmpty() const override { return m_table.isEmpty(); }
+ private:
+  QHash<QString, QString> m_table;
+};
+
 int sentences(const QString& text) { return static_cast<int>(text.count(QRegularExpression(R"([.!?](\s|$))"))); }
 QString clean(QString s) { return s.remove('&').remove(QString::fromUtf8("…")).remove("...").trimmed(); }
 }  // namespace
@@ -60,7 +74,7 @@ QString clean(QString s) { return s.remove('&').remove(QString::fromUtf8("…"))
 TEST(every_registered_command_has_help) {
   help::load("en");
   const auto ids = registeredIds();
-  CHECK(ids.size() > 200);
+  CHECK(ids.size() > 200 && ids.count("help.reference"));
   QStringList missing;
   for (const QString& id : ids) if (!help::find(id)) missing << id;
   if (!missing.isEmpty()) throw check::Failure("no help for " + missing.join(", ").toStdString());
@@ -112,22 +126,22 @@ TEST(arabic_covers_every_record) {
   help::load("en");
 }
 
-// The help area's own tr() strings have their Arabic in app/i18n/ar/help.json (or ar.json), and loading the Arabic help
-// makes them translate even before i18n::install merges the area fragments; English removes them again.
+// The help area's own tr() strings have their Arabic in the area's fragment app/i18n/ar/help.json (or ar.json), embedded
+// with the app's translations and merged by i18n::install; without the translator they stay English.
 TEST(help_area_strings_are_translated) {
-  QJsonObject arabic = QJsonDocument::fromJson(source("app/i18n/ar.json").toUtf8()).object();
+  const QHash<QString, QString> arabic = i18n::table("ar", {QStringLiteral(OPAD_SOURCE_DIR) + "/app/i18n"});
   const QJsonObject fragment = QJsonDocument::fromJson(source("app/i18n/ar/help.json").toUtf8()).object();
-  for (auto it = fragment.begin(); it != fragment.end(); ++it) arabic.insert(it.key(), it.value());
+  CHECK(!fragment.isEmpty() && i18n::table("ar", {":/i18n"}) == arabic);  // the fragment is embedded, as it is in the tree
   QStringList strings;
   for (const char* file : {"app/RichTip.cpp", "app/RichTip.hpp", "app/CommandHelp.cpp", "app/HelpBench.cpp", "app/HelpClip.cpp", "app/HelpClip.hpp", "app/HelpReference.cpp"})
     for (const auto& m : QRegularExpression(R"re(\b(?:tr\(|translate\("help", )"((?:[^"\\]|\\.)*)"\))re").globalMatch(source(file))) strings << m.captured(1);
   CHECK(strings.size() >= 2);
   for (const QString& s : strings)
-    if (arabic.value(s).toString().isEmpty()) throw check::Failure("no Arabic for \"" + s.toStdString() + "\" in app/i18n/ar/help.json");
-  help::load("ar");
-  for (const QString& s : strings)  // the fragment's at run time (the main file's come with the app's translator)
-    if (fragment.contains(s)) CHECK_EQ(RichTip::tr(s.toUtf8().constData()), arabic.value(s).toString());
-  help::load("en");
+    if (arabic.value(s).isEmpty()) throw check::Failure("no Arabic for \"" + s.toStdString() + "\" in app/i18n/ar/help.json");
+  {
+    Arabic on;
+    for (const QString& s : strings) CHECK_EQ(RichTip::tr(s.toUtf8().constData()), arabic.value(s));
+  }
   for (const QString& s : strings) CHECK_EQ(RichTip::tr(s.toUtf8().constData()), s);
 }
 
@@ -261,19 +275,20 @@ TEST(clips_render_and_move) {
 }
 
 // Every caption, label and card text of every clip is translated into Arabic (app/i18n/ar.json or the help area's
-// app/i18n/ar/help.json); the help area's own ones translate at run time once the Arabic help is loaded.
+// app/i18n/ar/help.json); with the app's translator they translate at run time.
 TEST(clip_texts_are_translated) {
-  QJsonObject arabic = QJsonDocument::fromJson(source("app/i18n/ar.json").toUtf8()).object();
+  const QHash<QString, QString> arabic = i18n::table("ar", {QStringLiteral(OPAD_SOURCE_DIR) + "/app/i18n"});
   const QJsonObject fragment = QJsonDocument::fromJson(source("app/i18n/ar/help.json").toUtf8()).object();
-  for (auto it = fragment.begin(); it != fragment.end(); ++it) arabic.insert(it.key(), it.value());
   clips::load();
   QStringList missing;
   for (const QString& id : clips::ids())
-    for (const QString& text : clips::texts(id)) if (arabic.value(text).toString().isEmpty()) missing << id + ": " + text;
+    for (const QString& text : clips::texts(id)) if (arabic.value(text).isEmpty()) missing << id + ": " + text;
   if (!missing.isEmpty()) throw check::Failure("no Arabic for " + missing.join(" | ").toStdString());
-  help::load("ar");
-  CHECK_EQ(i18n::t("Click the start point"), fragment.value("Click the start point").toString());
-  help::load("en");
+  {
+    Arabic on;
+    CHECK_EQ(i18n::t("Click the start point"), fragment.value("Click the start point").toString());
+  }
+  CHECK_EQ(i18n::t("Click the start point"), QString("Click the start point"));
 }
 
 // The loader names what is wrong, expands templates with arithmetic on their parameters, and keeps clip fields over

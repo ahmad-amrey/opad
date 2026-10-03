@@ -2,7 +2,6 @@
 #include "MainWindow.hpp"
 #include "AgentBridge.hpp"
 #include "FileAssociations.hpp"
-#include "HelpReference.hpp"
 #include "RecoveryManager.hpp"
 
 #include <QActionGroup>
@@ -21,7 +20,6 @@
 #include "GuidedTool.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
-#include "RichTip.hpp"
 #include "opad/design/feature.hpp"
 
 void MainWindow::buildToolsActions() {
@@ -49,18 +47,6 @@ void MainWindow::buildToolsActions() {
   addAction("tools.cache", tr("Clear tessellation cache"), "", QKeySequence(), [this] {
     opad::json r = opad::commands::run("cache", opad::json{{"action", "clear"}});
     statusBar()->showMessage(tr("Cache cleared: %1").arg(QString::fromStdString(r["dir"].get<std::string>())), 4000);
-  });
-  // UI-107: the command reference, at the command running now (a measure tool, a sketch tool, a feature) or whose card is
-  // up; F1 over a ribbon button expands its card instead (RichTip takes F1 there).
-  addAction("help.reference", tr("Command reference"), "list", QKeySequence("F1"), [this] {
-    QString id;
-    if (!m_tool.id.isEmpty()) id = m_tool.id == "sectionface" ? QString("inspect.section") : "inspect." + m_tool.id;
-    else if (m_design->sketchActive()) id = "sketch." + m_design->sketch()->tool().replace(':', '.');
-    else if (m_design->featureActive()) id = "design." + QString::fromStdString(m_design->featurePanel()->spec()->kind);
-    else if (RichTip::instance()->state() != RichTip::State::Hidden) id = RichTip::instance()->commandId();
-    auto* reference = findChild<CommandReference*>();
-    if (!reference) reference = new CommandReference([this](const QString& command) { return action(command); }, this);
-    reference->open(id);
   });
   addAction("help.about", tr("&About OPAD"), "", QKeySequence(), [this] {
     QMessageBox::about(this, tr("About OPAD"), tr("<b>OPAD %1</b><br>Git-native STEP viewer.<br>MIT licence. Built on Open CASCADE Technology and Qt.<br><br>Headless twin: <code>opad-cli</code>; Python: <code>import opad</code>.").arg(QString::fromStdString(opad::version_string())));
@@ -104,7 +90,7 @@ void MainWindow::buildMenus() {
   QMenu* tools = menuBar()->addMenu(tr("&Tools"));
   add(tools, {"tools.commands", "tools.shortcuts", "tools.cache"});
   QMenu* help = menuBar()->addMenu(tr("&Help"));
-  add(help, {"help.reference", "help.about"});
+  add(help, {"help.about"});
   const QMap<QString, QMenu*> menus{{"file", file}, {"edit", edit}, {"view", view}, {"inspect", inspect}, {"design", designMenu}, {"tools", tools}, {"help", help}};
   for (AreaController* area : m_areas) area->menus(menuBar(), menus);
   rebuildRecentMenu();

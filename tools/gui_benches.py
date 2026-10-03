@@ -67,9 +67,6 @@ def main():
                                ("feature", "--kind", "cylinder", "--inputs", '{"x":"8 mm","diameter":"10 mm","height":"20 mm"}'))
         overhang = document("overhang", ("feature", "--kind", "box", "--inputs", '{"length":"10 mm","width":"10 mm","height":"10 mm"}'),
                             ("feature", "--kind", "box", "--inputs", '{"plane":{"origin":[0,0,10],"normal":[0,0,1]},"length":"30 mm","width":"10 mm","height":"2 mm","operation":"join"}'))
-        # A box and a sketch beside it (rectangle 20 x 10 at x 20..40): pick targets for the guide bench.
-        guided = document("guided", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'),
-                          ("sketch", "--name", "Plate", "--plane", '{"base":"xy"}', "--geometry", '{"shapes":[{"kind":"rect2","picks":[[20,0],[40,10]]}]}'))
         screw = ROOT / "tests" / "corpus" / "occt-screw.step"
         # A 30 x 20 x 12 m block 600 m from the origin, Y up, as SketchUp exports a house with its site coordinates.
         far = root / "far-block.obj"
@@ -93,19 +90,6 @@ def main():
             ("zoom-refinement", round_part, {"OPAD_BENCH_SCENE": "{prefix}.png", "OPAD_BENCH_VIEW": "iso", "OPAD_BENCH_ZOOM": "40"}),
             ("interference", overlapping, {"OPAD_BENCH_CHECK": "interference", "OPAD_BENCH_UISHOT": "{prefix}"}),
             ("print-check", overhang, {"OPAD_BENCH_CHECK": "print", "OPAD_BENCH_UISHOT": "{prefix}"}),
-            # UI-106: help for every command, the rich hover card on ribbon buttons (English, then Arabic right to left).
-            ("richtip", box, {"OPAD_BENCH_RICHTIP": "{prefix}"}),
-            ("richtip-ar", box, {"OPAD_BENCH_RICHTIP": "{prefix}", "OPAD_LANG": "ar"}),
-            # UI-107: every animated help clip loads, moves and renders in budget (contact sheets in <output>/clips), the
-            # player runs only while visible, holds still with reduced motion and plays in the rich card; Arabic mirrored.
-            ("clips", empty, {"OPAD_BENCH_CLIPS": "{prefix}"}),
-            ("clips-ar", empty, {"OPAD_BENCH_CLIPS": "{prefix}", "OPAD_LANG": "ar"}),
-            # UI-107: the tool, feature and sketch panels play the running command's clip at the step it waits for.
-            ("tool-guide", guided, {"OPAD_BENCH_GUIDE": "{prefix}"}),
-            ("tool-guide-ar", guided, {"OPAD_BENCH_GUIDE": "{prefix}", "OPAD_LANG": "ar"}),
-            # UI-107: Help > Command reference (F1 at the running tool, search, steps) and the palette's preview pane.
-            ("reference", box, {"OPAD_BENCH_REFERENCE": "{prefix}"}),
-            ("reference-ar", box, {"OPAD_BENCH_REFERENCE": "{prefix}", "OPAD_LANG": "ar"}),
         ]
         if screw.exists():
             cases.append(("picking", screw, {"OPAD_BENCH_PICKING": "1"}))

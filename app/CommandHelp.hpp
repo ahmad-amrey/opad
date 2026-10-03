@@ -23,8 +23,8 @@ namespace help {
 // The record in the current language (i18n::current(), loaded on first use), English for any field not translated.
 const CommandHelp* find(const QString& id);
 const QList<CommandHelp>& all();
-// Reloads in `language` ("en", "ar"); `dir` replaces the built-in ":/help" (tests read the source tree). Also installs
-// the help area's own tr() strings (app/i18n/<language>/help.json) that no translator knows yet (until UI-119 merges).
+// Reloads in `language` ("en", "ar"); `dir` replaces the built-in ":/help" (tests read the source tree). The help area's
+// own tr() strings and clip texts are the fragment app/i18n/<language>/help.json, merged by i18n::install.
 void load(const QString& language, const QString& dir = QString());
 QString language();
 // The "requires" text with {name} replaced from args (unknown names stay as written).

@@ -167,10 +167,6 @@ void MainWindow::runBench() {
     return;
   }
   if(benchShortcuts())return;
-  if(benchRichTip())return;
-  if(benchClips())return;
-  if(benchGuide())return;
-  if(benchReference())return;
   if(benchDrawingImport())return;
   if(benchTodo9())return;
   if(benchAnnotateLarge())return;
