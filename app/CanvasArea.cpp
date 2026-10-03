@@ -112,6 +112,8 @@ void CanvasArea::buildActions() {
   command("canvas.align", tr("Align canvas to model…"), "alignto", {"scale relative", "match", "fit picture"}, one, onTarget([this] { align(); }));
   command("canvas.trace", tr("Trace canvas to sketch"), "trace", {"vectorize", "bitmap", "outline"}, one, onTarget([this] { trace(); }));
   command("canvas.replace", tr("Replace canvas picture…"), "image", {"swap", "relink", "picture"}, one, onTarget([this] { replace(); }));
+  command("canvas.finish", tr("Close canvas"), "finish", {"done", "finish", "leave"}, [this](const CommandContext&) { return m_editor && m_editor->active(); },
+          [this] { finish(); });
   command("canvas.fromBackdrop", tr("Backdrop images to canvases"), "canvas", {"sketch image", "convert", "picture"},
           [this](const CommandContext& c) {
             std::string sketch;
@@ -134,6 +136,15 @@ void CanvasArea::menus(QMenuBar*, const QMap<QString, QMenu*>& menus) {
 
 void CanvasArea::ribbon(RibbonLayout& layout) {
   layout.addAction("design.construct.construct", services().action("canvas.insert"));
+  // While a canvas is edited its own tab comes first in Design (edit shows it, finish hides it).
+  layout.addContextualTab("design", "design.canvas", tr("Canvas"));
+  auto group = [&](const char* id, const QString& title, std::initializer_list<const char*> commands) {
+    layout.addGroup("design.canvas", QString("design.canvas.") + id, title);
+    for (const char* command : commands) layout.addAction(QString("design.canvas.") + id, services().action(command));
+  };
+  group("place", tr("Place"), {"canvas.calibrate", "canvas.align"});
+  group("picture", tr("Picture"), {"canvas.trace", "canvas.replace", "canvas.insert"});
+  group("close", tr("Close"), {"canvas.finish"});
 }
 
 // ---------------------------------------------------------------- the panel
@@ -315,6 +326,7 @@ void CanvasArea::buildPanel() {
     if (!on && m_editor->active()) {
       endFlow();
       m_editor->stop();
+      services().setContextualTab("design.canvas", false);
     }
   });
   services().addPanel(m_panel);
@@ -625,12 +637,14 @@ void CanvasArea::edit(const std::string& canvas) {
   if (!m_editor->active()) return;
   fillPanel(true);
   services().openPanel(m_panel);
+  services().setContextualTab("design.canvas", true);
 }
 
 void CanvasArea::finish() {
   endFlow();
   if (m_editor) m_editor->stop();
   if (m_panel && m_panel->isVisible()) m_panel->hide();
+  services().setContextualTab("design.canvas", false);
 }
 
 // ---------------------------------------------------------------- Calibrate, Align to model

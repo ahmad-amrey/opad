@@ -37,6 +37,7 @@
 #include "MainWindow.hpp"
 #include "PanelFooter.hpp"
 #include "PropertiesPanel.hpp"
+#include "Ribbon.hpp"
 #include "ToolPanel.hpp"
 #include "Viewport.hpp"
 #include "opad/canvas.hpp"
@@ -209,13 +210,13 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
   // 1. Insert on XZ through the placer, 200 mm wide.
   steps.push_back([=, &w](std::function<void()> next) {
     DrawingPlacer* placer = area->placer();
-    QObject::connect(placer, &DrawingPlacer::ready, area, [=] {
+    QObject::connect(placer, &DrawingPlacer::ready, area, [=, &w] {
       check(placer->picture() && std::fabs(placer->imageWidth() - 400 * 25.4 / 96) < 1 , "the placer shows the picture at its own size");
       placer->setImageWidth(200);
       placer->panel()->grab().save(prefix + ".place.png");
       st->ops = doc->doc.ops.size();
       placer->panel()->findChild<QPushButton*>("primary")->click();  // Place
-      waitFor(area, [=] { return editor->active() && view->showsPicture(editor->canvas()) && !doc->loading; }, 20000, [=](bool ok) {
+      waitFor(area, [=] { return editor->active() && view->showsPicture(editor->canvas()) && !doc->loading; }, 20000, [=, &w](bool ok) {
         if (!check(ok, "Place imports the canvas, shown with its picture, its editor open")) return QCoreApplication::exit(2);
         st->canvas = editor->canvas();
         const opad::CanvasPlace p = opad::canvas_place(doc->scene, st->canvas);
@@ -224,6 +225,11 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
                   std::fabs(p.x) < 1e-9 && std::fabs(p.y) < 1e-9 && std::fabs(p.plane.normal()[1] - xz.normal()[1]) < 1e-12,
               "one import op: 200 mm wide, centred on the XZ plane's origin");
         check(area->panel()->isVisible() && area->field(2)->text().startsWith("200"), "the canvas panel shows its width");
+        w.setWorkspace("design");
+        QCoreApplication::processEvents();
+        w.m_ribbon->grab().save(prefix + ".ribbon.png");
+        const QStringList tabs = w.m_ribbon->tabIds();
+        check(w.m_ribbon->contextualTabShown("design.canvas") && tabs.value(0) == "design.canvas", "its Canvas tab comes first in Design: " + tabs.join(", "));
         next();
       });
     }, Qt::SingleShotConnection);
@@ -584,6 +590,7 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
   // 11. A picture dropped onto the window with a face selected: Insert canvas, the placer on its plane, centred on the face.
   steps.push_back([=, &w](std::function<void()> next) {
     area->finish();
+    check(!w.m_ribbon->contextualTabShown("design.canvas") && !w.m_ribbon->tabIds().contains("design.canvas"), "closed: its Canvas tab is gone");
     opad::Ref top;
     for (const auto& id : doc->scene.all_bodies())
       if (!opad::is_canvas(*doc->node(id)))
