@@ -14,5 +14,6 @@
  "Select the objects to keep shown first.": "حدد أولاً العناصر التي تبقى ظاهرة.",
  "Clearing the view": "تفريغ العرض",
  "Working in the background:": "يجري العمل في الخلفية:",
- "Still loading: “%1” runs once every body is shown": "ما زال التحميل جارياً: يُنفَّذ “%1” بعد عرض كل الأجسام"
+ "Still loading: “%1” runs once every body is shown": "ما زال التحميل جارياً: يُنفَّذ “%1” بعد عرض كل الأجسام",
+ "Parsing %1": "تحليل %1"
 }

@@ -24,6 +24,7 @@ std::filesystem::path fsPath(const QString& path) { return std::filesystem::path
 QString phaseLabel(const std::string& what, const QString& file) {
   if (what == "reading") return AppDocument::tr("Reading %1").arg(file);
   if (what == "opening") return AppDocument::tr("Opening %1").arg(file);
+  if (what == "parsing") return AppDocument::tr("Parsing %1").arg(file);
   if (what == "building") return AppDocument::tr("Building document");
   if (what == "preparing") return AppDocument::tr("Preparing bodies");
   if (what.rfind("translating", 0) == 0) {  // "translating" or "translating <scope> <i>/<n>" from the STEP reader
@@ -34,10 +35,12 @@ QString phaseLabel(const std::string& what, const QString& file) {
 }
 // Where a phase lies in the whole load (UI-40): its start and span in per cent. The bodies' display after the document is
 // built takes the rest, from displayStart(). Measured: the Engine .opad reads and parses in 2 s, prepares its bodies in 3 s
-// and displays them in 7 s; a large STEP file is mostly translation (21 of 23 s), meshes and drawings mostly reading.
+// and displays them in 7 s; a large STEP file is mostly translation (21 of 23 s: scanned by bytes in 0.4 s, parsed in 2.2
+// s), meshes and drawings mostly reading.
 std::pair<int, int> phaseSpan(const std::string& what, bool opad) {
   if (opad) return what == "preparing" ? std::pair{20, 25} : std::pair{0, 20};  // opening: read and parsed by bytes
-  if (what == "reading") return {0, 10};
+  if (what == "reading") return {0, 2};
+  if (what == "parsing") return {2, 8};
   if (what == "building") return {70, 10};
   if (what == "preparing") return {80, 5};
   return {10, 60};  // translating, reading a drawing
