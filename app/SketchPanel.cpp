@@ -272,7 +272,7 @@ void SketchPanel::refresh() {
   int stepsHeight=20;
   for(const auto& step:steps())stepsHeight+=fontMetrics().boundingRect(QRect(0,0,std::max(200,width()-90),1000),Qt::TextWordWrap,step.label).height()+14+(step.picked.isEmpty()?0:fontMetrics().height()+3);
   m_steps->setFixedHeight(stepsHeight);
-  m_state->setText((m_editor->visible()?QString():tr("This sketch is hidden. Show it in the browser to see your edits.")+"\n")+(m_editor->modified()?tr("Modified sketch"):tr("Sketch"))+tr(" · %1 degrees of freedom").arg(m_editor->dof()));
+  m_state->setText((m_editor->visible()?QString():tr("This sketch is hidden. Show it in the browser to see your edits.")+"\n")+(m_editor->modified()?tr("Modified sketch"):tr("Sketch"))+(m_editor->dof()==0?tr(" · fully defined"):tr(" · %1 degrees of freedom").arg(m_editor->dof())));
   const int selected=m_constraints->currentItem()?m_constraints->currentItem()->data(0,Qt::UserRole).toInt():0;
   m_constraints->clear();
   for(const auto& c:m_editor->m_sk.constraints) {
@@ -285,7 +285,10 @@ void SketchPanel::refresh() {
     }
     if(c.is_dimension())row->setText(2,m_editor->dimensionText(c));
     row->setHidden(!row->text(1).contains(m_editor->m_constraintFilter,Qt::CaseInsensitive));
-    if(m_editor->m_conflicts.count(c.id))row->setForeground(1,Qt::red);
+    if(m_editor->m_conflicts.count(c.id)){  // the colour and a mark and words (UI-124)
+      row->setText(1,"! "+row->text(1));row->setForeground(1,theme::current().error);
+      row->setToolTip(1,tr("In conflict with the others: the last change was refused"));
+    }
     if(c.id==selected)m_constraints->setCurrentItem(row);
   }
   m_refreshing=false;

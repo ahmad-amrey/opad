@@ -788,5 +788,7 @@
  "On": "تشغيل",
  "As the system (%1 %)": "كما في النظام (%1 %)",
  "Text size": "حجم النص",
- "High contrast takes the system's high-contrast colours. A larger text size makes the window's text, menus, the browser's rows, the timeline and the ribbon's tabs larger.": "التباين العالي يأخذ ألوان التباين العالي من النظام. حجم النص الأكبر يكبّر نص النافذة والقوائم وصفوف المستعرض والخط الزمني وألسنة الشريط."
+ "High contrast takes the system's high-contrast colours. A larger text size makes the window's text, menus, the browser's rows, the timeline and the ribbon's tabs larger.": "التباين العالي يأخذ ألوان التباين العالي من النظام. حجم النص الأكبر يكبّر نص النافذة والقوائم وصفوف المستعرض والخط الزمني وألسنة الشريط.",
+ " · fully defined": " · معرّف بالكامل",
+ "In conflict with the others: the last change was refused": "يتعارض مع القيود الأخرى: رُفض التغيير الأخير"
 }

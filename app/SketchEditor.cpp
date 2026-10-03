@@ -51,7 +51,7 @@ class SketchPrs : public AIS_InteractiveObject {
   struct Pt { opad::Vec3 p; QColor c; };
   struct Txt { opad::Vec3 p; QString s; QColor c; bool left = false; };  // left: starts at p (labels beside the cursor)
   std::vector<Seg> solid, dashed, thin;
-  std::vector<Pt> points, bigPoints;
+  std::vector<Pt> points, bigPoints, rings;  // rings: points that can still move (a shape besides the colour, UI-124)
   std::vector<Txt> texts;
   std::vector<opad::Vec3> fill;
   QColor fillColor, textBack;
@@ -89,15 +89,16 @@ class SketchPrs : public AIS_InteractiveObject {
     lines(thin, Aspect_TOL_SOLID, 1.0 * scale);
     lines(dashed, Aspect_TOL_DASH, 1.5 * scale);
     lines(solid, Aspect_TOL_SOLID, 2.0 * scale);
-    auto markers = [&](const std::vector<Pt>& pts, double scale) {
+    auto markers = [&](const std::vector<Pt>& pts, double scale, Aspect_TypeOfMarker type = Aspect_TOM_O_POINT) {
       if (pts.empty()) return;
       Handle(Graphic3d_ArrayOfPoints) arr = new Graphic3d_ArrayOfPoints(static_cast<int>(pts.size()), Standard_True);
       for (const auto& p : pts) arr->AddVertex(gp_Pnt(p.p[0], p.p[1], p.p[2]), occ(p.c));
       Handle(Graphic3d_Group) g = prs->NewGroup();
-      g->SetGroupPrimitivesAspect(new Graphic3d_AspectMarker3d(Aspect_TOM_O_POINT, occ(pts.front().c), scale));
+      g->SetGroupPrimitivesAspect(new Graphic3d_AspectMarker3d(type, occ(pts.front().c), scale));
       g->AddPrimitiveArray(arr);
     };
     markers(points, 2.0 * scale);
+    markers(rings, 2.0 * scale, Aspect_TOM_O);
     markers(bigPoints, 3.0 * scale);
     // One group per colour: a text aspect has a single colour.
     std::map<QRgb, Handle(Graphic3d_Group)> groups;
@@ -120,6 +121,18 @@ class SketchPrs : public AIS_InteractiveObject {
   }
   void ComputeSelection(const Handle(SelectMgr_Selection)&, const Standard_Integer) override {}
 };
+
+QMap<QString, QStringList> SketchEditor::drawn() const {
+  const SketchPrs& d = *static_cast<const SketchPrs*>(m_prs.get());
+  auto names = [](const std::vector<SketchPrs::Pt>& pts) {
+    QStringList out;
+    for (const auto& p : pts) out << p.c.name();
+    return out;
+  };
+  QStringList texts;
+  for (const auto& t : d.texts) texts << t.s;
+  return {{"points", names(d.points)}, {"rings", names(d.rings)}, {"bigPoints", names(d.bigPoints)}, {"texts", texts}};
+}
 
 // ---------------------------------------------------------------- life cycle
 SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs, QObject* parent) : QObject(parent), m_doc(doc), m_viewport(viewport), m_jobs(jobs) {
@@ -856,6 +869,7 @@ void SketchEditor::rebuild() {
   d.thin.clear();
   d.points.clear();
   d.bigPoints.clear();
+  d.rings.clear();
   d.texts.clear();
   d.fill = m_fill;
   d.fillColor = t.sel;
@@ -902,7 +916,7 @@ void SketchEditor::rebuild() {
   for (const auto& p : m_sk.points) {
     const bool hot = selected.count(p.id) || picked.count(p.id);
     const QColor c = hot ? t.hov : p.fixed ? t.green : freePts.count(p.id) ? t.sel : t.fg;
-    (hot ? d.bigPoints : d.points).push_back({W(p.x, p.y), c});
+    (hot ? d.bigPoints : !p.fixed && freePts.count(p.id) ? d.rings : d.points).push_back({W(p.x, p.y), c});  // free: a ring without its dot
     if(m_dangling.count(p.id)) d.bigPoints.push_back({W(p.x,p.y),t.red});
   }
 
@@ -948,7 +962,8 @@ void SketchEditor::rebuild() {
       }
       if (!shownGlyphs.insert({ref, glyph}).second && !selected.count(c.id) && !m_conflicts.count(c.id)) continue;
       const int k = stacked[ref]++;
-      d.texts.push_back({W(gu + (14 + 16 * k) * px, gv + 12 * px), QString::fromLatin1(glyph), m_conflicts.count(c.id)?t.red:selected.count(c.id) ? t.hov : t.green});
+      const bool conflict = m_conflicts.count(c.id) > 0;  // red and marked "!" (not by colour alone)
+      d.texts.push_back({W(gu + (14 + 16 * k) * px, gv + 12 * px), QString::fromLatin1(glyph) + (conflict ? QStringLiteral("!") : QString()), conflict ? t.red : selected.count(c.id) ? t.hov : t.green});
       m_glyphHits.push_back({c.id,gu+(14+16*k)*px,gv+12*px});
       if (c.type == SkConstraint::Type::Midpoint || c.type == SkConstraint::Type::Symmetric || c.type == SkConstraint::Type::Fix) break;  // one glyph is enough
     }
@@ -1100,7 +1115,7 @@ const std::vector<std::vector<std::pair<double, double>>>& SketchEditor::textPre
 void SketchEditor::updateTransient() {
   if(m_transientPrs.IsNull() || !m_geometry || m_geometryJob)return;
   auto& d=*static_cast<SketchPrs*>(m_transientPrs.get());
-  d.solid.clear();d.thin.clear();d.dashed.clear();d.points.clear();d.bigPoints.clear();d.texts.clear();
+  d.solid.clear();d.thin.clear();d.dashed.clear();d.points.clear();d.bigPoints.clear();d.rings.clear();d.texts.clear();
   const auto& t=m_viewport->tokens();d.textBack=t.bg2;d.scale=m_viewport->displayScale();d.font=theme::ui().family().toStdString();
   auto W=[&](double u,double v){return m_frame.to_world(u,v);};
   const double px=m_viewport->pixelSize();

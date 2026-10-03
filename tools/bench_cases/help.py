@@ -66,4 +66,7 @@ CASES = [
     # bar, menus); high contrast on and off; back at 100 %.
     ("text-size", guided, {"OPAD_BENCH_TEXTSIZE": "{prefix}"}, "[ui]\ntextScale=200\n"),
     ("text-size-ar", guided, {"OPAD_BENCH_TEXTSIZE": "{prefix}", "OPAD_LANG": "ar"}, "[ui]\ntextScale=200\n"),
+    # UI-124: states not told by colour alone: free sketch points are rings, the panel counts the degrees of freedom or
+    # says fully defined, a suppressed feature's marker is struck through and says so.
+    ("cues", guided, {"OPAD_BENCH_CUES": "{prefix}"}),
 ]

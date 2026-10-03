@@ -337,6 +337,20 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
     const opad::Feature* feat = ops[i].type == "feature" ? m_doc->scene.feature(ops[i].id) : nullptr;
     if (beyond || (feat && feat->suppressed)) iconColor = t.fg3;
     p.drawPixmap(r.left() + 3, r.top() + 3, icons::pixmap(iconFor(ops[i]), iconColor, 12, dpr));
+    // Not by colour alone (UI-124): a suppressed feature is struck through, a failed feature or an unresolved op carries "!".
+    if (feat && feat->suppressed && !deleted) {
+      p.setPen(QPen(t.fg2, 1.5));
+      p.drawLine(QPointF(r.left() + 2, r.bottom() - 2), QPointF(r.right() - 2, r.top() + 2));
+    }
+    if (!deleted && (unresolved || (feat && !feat->error.empty()))) {
+      const QPointF c(r.right() - 1, r.bottom() - 1);
+      p.setPen(QPen(t.bg2, 1));
+      p.setBrush(t.error);
+      p.drawEllipse(c, 4.5, 4.5);
+      p.setPen(QPen(QColor("#ffffff"), 1.4, Qt::SolidLine, Qt::RoundCap));
+      p.drawLine(QPointF(c.x(), c.y() - 2.5), QPointF(c.x(), c.y() + 0.5));
+      p.drawPoint(QPointF(c.x(), c.y() + 2.4));
+    }
     // A reference was taken by its nearest match after the body changed (TODO 10 B7): worth a look.
     if (feat && !deleted && !feat->result.value("rehinted", opad::json::array()).empty()) {
       p.setPen(QPen(t.bg2, 1));

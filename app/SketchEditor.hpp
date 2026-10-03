@@ -1,4 +1,5 @@
 #pragma once
+#include <QMap>
 // The sketch editor: draws and constrains one sketch on its plane. It takes the left mouse button and plain
 // keys from the viewport (SketchInput), keeps its own undo stack, solves after every change (a change the
 // solver cannot satisfy is refused, so a sketch is never left over-constrained) and draws everything itself
@@ -86,6 +87,8 @@ class SketchEditor : public QObject, public SketchInput {
   void undo();
   void redo();
   int dof() const { return m_solved.dof; }
+  // What the overlay draws now, for benches: "points", "rings" (free points), "bigPoints" and "texts" (glyphs, labels).
+  QMap<QString, QStringList> drawn() const;
   void bench(const QString& script);  // OPAD_BENCH_DESIGN: draws a dimensioned rectangle with a hole through the tool code paths
   void benchWorkflow();
   void benchPrimitives();
