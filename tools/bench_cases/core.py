@@ -38,7 +38,8 @@ CASES = [
     # A file of a newer build (unknown op types) opens, hides those records from the timeline and saves them back (UI-65).
     ("tolerant", newer_file, {"OPAD_BENCH_TOLERANT": "{prefix}.opad"}),
     # The units service (UI-123): the document switched to inches from the status bar, a Distance result in inches, live
-    # precision and fractions, undo back to millimetres. <prefix>.status.png, <prefix>.panel.png.
+    # precision and fractions, the overhang box in radians, feature and sketch-tool defaults and a sketch dimension in
+    # inches, undo back to millimetres. <prefix>.status.png, <prefix>.panel.png, <prefix>.sketch.png.
     ("units", "box", {"OPAD_BENCH_UNITS": "{prefix}"}),
     # The per-body look compositor (UI-121): ghost + tint on one body, a component's tint, ghosts pickable, an explode
     # offset picked where drawn, a candidate layer under the X-ray selection, everything cleared. <prefix>.ghost.png.
