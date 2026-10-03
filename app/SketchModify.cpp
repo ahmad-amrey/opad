@@ -128,11 +128,15 @@ bool SketchEditor::applyModify() {
       runSketchEdit(tr("Combine regions"),[a,b,operation](Sketch& sk){boolean_regions(sk,a.u,a.v,b.u,b.v,operation);});
     } else if(m_tool!="split" && m_tool!="extend") {
       SketchTransform transform;const bool copy=m_tool=="copy";
-      if(m_tool=="move"||copy){transform.x=length("dx","10 mm");transform.y=length("dy","0 mm");}
+      if((m_tool=="move"||copy) && option("moveMode","xy")=="polar") {
+        const double d=length("moveDistance","10 mm"),a=table.angle(option("moveAngle","0 deg").toStdString());transform.x=d*std::cos(a);transform.y=d*std::sin(a);
+      } else if(m_tool=="move"||copy){transform.x=length("dx","10 mm");transform.y=length("dy","0 mm");}
       if(m_tool=="rotate"||m_tool=="scale"){transform.cx=length("cx","0 mm");transform.cy=length("cy","0 mm");}
       if(m_tool=="rotate")transform.angle=table.angle(option("angle","45 deg").toStdString());
       if(m_tool=="scale")transform.scale=table.number(option("scale","2").toStdString());
-      runSketchEdit(tr("Transform geometry"),[ids,transform,copy](Sketch& sk){transform_entities(sk,ids,transform,copy);});
+      const int copies=copy?table.count(option("copies","1").toStdString()):1;  // a copy's count: one after the other
+      if(copies<1 || copies>1000)throw opad::Error("the count of copies must be 1 to 1000");
+      runSketchEdit(tr("Transform geometry"),[ids,transform,copy,copies](Sketch& sk){for(int i=1;i<=copies;++i){auto step=transform;step.x*=i;step.y*=i;transform_entities(sk,ids,step,copy);}});
     }
   }catch(const std::exception& e){emit status(QString::fromUtf8(e.what()));}
   return true;

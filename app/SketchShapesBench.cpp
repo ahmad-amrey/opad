@@ -402,6 +402,36 @@ void SketchEditor::benchShapes() {
     send(Qt::Key_Escape);
   });
 
+  // Copies from the keyboard: Shift+C, the Ø20 circle picked, 15<90 Tab 3 Enter: three copies 15 apart straight up.
+  step([=] {
+    send(Qt::Key_C, Qt::ShiftModifier, "C");
+    check(m_tool == "copy" && m_sel.empty(), "Shift+C starts the copy tool");
+    sketchPress(10, 60, Qt::NoModifier);
+    sketchRelease(10, 60, Qt::NoModifier);
+    check(m_sel.size() == 1 && m_sk.entity(m_sel[0]) && m_sk.entity(m_sel[0])->type == SkEntity::Type::Circle, "a click picks the circle");
+    check(m_input->count() == 3 && m_input->key(0) == "dx" && m_input->key(1) == "dy" && m_input->key(2) == "copies", "the copy's boxes: ΔX, ΔY and how many");
+    type("15");
+    send(Qt::Key_Less, Qt::ShiftModifier, "<");
+    type("90");
+    tab();
+    type("3");
+    check(option("moveMode") == "polar" && m_input->key(0) == "moveDistance" && option("moveDistance") == "15" && option("moveAngle") == "90" && option("copies") == "3",
+          "15<90 Tab 3: a distance of 15 at 90 degrees, three copies");
+    m_input->grab().save(prefix + ".copy-input.png");
+    enter();
+  });
+  step([=] {
+    int copies = 0;
+    for (const auto& e : m_sk.entities)
+      if (e.type == SkEntity::Type::Circle && same(e.r, 10) && (at(e.p[0], 0, 75) || at(e.p[0], 0, 90) || at(e.p[0], 0, 105))) ++copies;
+    check(copies == 3, "Enter makes three copies, 15, 30 and 45 above it");
+    if (QToolButton* c = chip()) c->click();
+    check(option("moveMode") == "xy" && m_input->key(0) == "dx" && std::abs(option("dx").remove(" mm").toDouble()) < 1e-9 && option("dy") == "15 mm",
+          "the switch back to ΔX and ΔY keeps the offset: " + option("dx") + ", " + option("dy"));
+    send(Qt::Key_Escape);
+    send(Qt::Key_Escape);
+  });
+
   // Text from the keyboard alone: every printable key goes into its words (L, the line's key, a comma and '@' too), Tab
   // goes on to its height, X and Y, Enter places it there.
   auto before = std::make_shared<std::set<int>>();

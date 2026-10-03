@@ -140,7 +140,7 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   connect(m_input,&DynamicInput::chipClicked,this,[this](const QString& key) {
     if(!m_active)return;
     if(key=="angle"){m_angleRelative=!m_angleRelative;QSettings().setValue("sketch/input/angleRelative",m_angleRelative);}
-    else if(m_tool=="chamfer" && (key=="second" || key=="chamferAngle"))return setChamferAngle(key=="second");
+    else if(key=="second" || key=="chamferAngle" || key=="dy" || key=="moveAngle")return setAngled(key=="second" || key=="dy");
     else if(key=="diameter" && (m_tool=="polygon" || m_tool=="polygon_outer")) {  // inscribed or circumscribed: the same centre, what is typed stays
       const auto clicks=m_clicks;
       setTool(m_tool=="polygon"?"polygon_outer":"polygon");

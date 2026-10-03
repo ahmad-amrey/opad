@@ -64,5 +64,10 @@
  "Chamfer by": "الشطف بواسطة",
  "Angle to the first line": "الزاوية مع الخط الأول",
  "pick a corner joining exactly two lines": "اختر زاوية تصل بين خطين بالضبط",
- "at that angle the chamfer never meets the other line": "بهذه الزاوية لا يلتقي الشطف بالخط الآخر"
+ "at that angle the chamfer never meets the other line": "بهذه الزاوية لا يلتقي الشطف بالخط الآخر",
+ "or ΔX ΔY": "أو ΔX ΔY",
+ "Copies": "النسخ",
+ "X and Y offsets": "إزاحتا X وY",
+ "Offset by": "الإزاحة بواسطة",
+ "the count of copies must be 1 to 1000": "يجب أن يكون عدد النسخ من 1 إلى 1000"
 }

@@ -242,7 +242,15 @@ void SketchPanel::buildFields() {
     auto* chain=new QCheckBox(tr("Select connected chain on click"),this);chain->setChecked(m_editor->option("chain",m_shown=="offset"?"1":"0")=="1");m_fields->addRow(chain);
     connect(chain,&QCheckBox::toggled,this,[this](bool on){m_editor->m_options["chain"]=on?"1":"0";});
   }
-  if(m_shown=="move"||m_shown=="copy"||m_shown=="rect_pattern") {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"0 mm");}
+  if(m_shown=="move"||m_shown=="copy") {
+    auto* mode=new QComboBox(this);mode->setObjectName("sketchOption-moveMode");mode->addItem(tr("X and Y offsets"),"xy");mode->addItem(tr("Distance and angle"),"polar");
+    mode->setCurrentIndex(std::max(0,mode->findData(m_editor->option("moveMode","xy"))));m_fields->addRow(tr("Offset by"),mode);
+    connect(mode,&QComboBox::currentIndexChanged,this,[this,mode]{QTimer::singleShot(0,this,[this,polar=mode->currentData().toString()=="polar"]{m_editor->setAngled(polar);});});
+    if(m_editor->option("moveMode","xy")=="polar"){field("moveDistance",tr("Distance"),"10 mm");field("moveAngle",tr("Angle"),"0 deg");}
+    else {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"0 mm");}
+    if(m_shown=="copy")field("copies",tr("Copies"),"1");
+  }
+  if(m_shown=="rect_pattern") {field("dx",tr("X offset"),"10 mm");field("dy",tr("Y offset"),"0 mm");}
   if(m_shown=="rotate"||m_shown=="scale"||m_shown=="polar_pattern") {field("cx",tr("Centre X"),"0 mm");field("cy",tr("Centre Y"),"0 mm");}
   if(m_shown=="rotate"||m_shown=="polar_pattern")field("angle",tr("Angle"),m_shown=="rotate"?"45 deg":"360 deg");
   if(m_shown=="scale")field("scale",tr("Scale factor"),"2");
@@ -251,7 +259,7 @@ void SketchPanel::buildFields() {
   if(m_shown=="chamfer") {
     auto* mode=new QComboBox(this);mode->setObjectName("sketchOption-chamferMode");mode->addItem(tr("Two distances"),"distance");mode->addItem(tr("Distance and angle"),"angle");
     mode->setCurrentIndex(std::max(0,mode->findData(m_editor->option("chamferMode","distance"))));m_fields->addRow(tr("Chamfer by"),mode);
-    connect(mode,&QComboBox::currentIndexChanged,this,[this,mode]{QTimer::singleShot(0,this,[this,angled=mode->currentData().toString()=="angle"]{m_editor->setChamferAngle(angled);});});
+    connect(mode,&QComboBox::currentIndexChanged,this,[this,mode]{QTimer::singleShot(0,this,[this,angled=mode->currentData().toString()=="angle"]{m_editor->setAngled(angled);});});
     field("first",tr("First distance"),"2 mm");
     if(m_editor->option("chamferMode","distance")=="angle")field("chamferAngle",tr("Angle to the first line"),"45 deg");else field("second",tr("Second distance"),"2 mm");
   }

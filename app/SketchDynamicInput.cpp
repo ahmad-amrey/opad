@@ -46,6 +46,8 @@ const QStringList kApplied = {"offset", "chamfer", "move", "copy", "rotate", "sc
 const QStringList kSized1 = {"rect", "crect", "circle", "circle2", "rect3", "arc3", "circle3", "slot", "cslot", "arcc", "arcslot", "ellipse", "polygon", "polygon_outer",
                              "tangent_arc"};
 const QStringList kSized2 = {"rect3", "arc3", "circle3", "slot", "cslot", "arcc", "arcslot", "ellipse"};
+// Option tools whose second box switches to an angle ('<' or its switch): a chamfer, a move.
+const QStringList kAngled = {"chamfer", "move", "copy"};
 // Boxes that take an angle; sizes that must not be zero.
 bool angleKey(const QString& key) { return key == "angle" || key == "sweep"; }
 const QStringList kSizes = {"length", "width", "height", "diameter", "radius", "minor"};
@@ -160,7 +162,13 @@ QList<DynamicInput::Field> SketchEditor::inputStage() const {
     if (option("chamferMode", "distance") == "angle") return {value("first", tr("Distance"), "2 mm"), Field{"chamferAngle", tr("Angle"), option("chamferAngle", "45 deg"), true, tr("or distance")}};
     return {value("first", tr("Distance 1"), "2 mm"), Field{"second", tr("Distance 2"), option("second", "2 mm"), true, tr("or angle")}};
   }
-  if (m_tool == "move" || m_tool == "copy") return {value("dx", tr("ΔX"), "10 mm"), value("dy", tr("ΔY"), "0 mm")};
+  if (m_tool == "move" || m_tool == "copy") {  // ΔX and ΔY, or (the switch, or '<' as in 10<30) a distance and an angle; a copy's count
+    QList<Field> out = option("moveMode", "xy") == "polar"
+                           ? QList<Field>{value("moveDistance", tr("Distance"), "10 mm"), Field{"moveAngle", tr("Angle"), option("moveAngle", "0 deg"), true, tr("or ΔX ΔY")}}
+                           : QList<Field>{value("dx", tr("ΔX"), "10 mm"), Field{"dy", tr("ΔY"), option("dy", "0 mm"), true, tr("or angle")}};
+    if (m_tool == "copy") out << value("copies", tr("Copies"), "1");
+    return out;
+  }
   if (m_tool == "rotate") return {value("angle", tr("Angle"), "45 deg"), value("cx", tr("Centre X"), "0 mm"), value("cy", tr("Centre Y"), "0 mm")};
   if (m_tool == "scale") return {value("scale", tr("Factor"), "2"), value("cx", tr("Centre X"), "0 mm"), value("cy", tr("Centre Y"), "0 mm")};
   if (m_tool == "rect_pattern") return {value("count", tr("Count"), "3"), value("dx", tr("Spacing X"), "10 mm"), value("rows", tr("Rows"), "1"), value("dy", tr("Spacing Y"), "10 mm")};
@@ -203,7 +211,7 @@ bool SketchEditor::typingKey(const QKeyEvent* e) const {
   const QString text = e->text();
   if (text.size() != 1 || m_tool == "select") return false;
   if (m_tool == "text" && text.front().isPrint()) return true;  // the text box takes every printable key
-  return inputkeys::valueChar(text.front().unicode()) || (inputkeys::entryChar(text.front().unicode()) && (kPointTools.contains(m_tool) || (m_tool == "chamfer" && text == "<")));
+  return inputkeys::valueChar(text.front().unicode()) || (inputkeys::entryChar(text.front().unicode()) && (kPointTools.contains(m_tool) || (kAngled.contains(m_tool) && text == "<")));
 }
 
 bool SketchEditor::sketchType(QKeyEvent* e) {
@@ -226,9 +234,12 @@ bool SketchEditor::sketchType(QKeyEvent* e) {
 // A prefix or a separator that switches how the point is typed (InputKeys.hpp): the boxes of the other entry, the number
 // typed so far carried over to the first one where it is the same distance.
 bool SketchEditor::entryKey(int box, QChar c) {
-  if (m_input && m_tool == "chamfer" && inputkeys::entryChar(c.unicode())) {  // 4<30: the distance, then the angle; '@' and '#' are nothing here
+  if (m_input && kAngled.contains(m_tool) && inputkeys::entryChar(c.unicode())) {  // 4<30: the distance, then the angle; '@' and '#' are nothing here
     if (c == '<') {
-      setChamferAngle(true);
+      const QString typed = m_input->text(m_input->key(0));
+      setAngled(true);
+      if (!typed.isEmpty()) m_options[m_input->key(0)] = typed;  // a move's ΔX typed: its distance now
+      updateInput();
       m_input->select(1);
     }
     return true;
@@ -260,9 +271,32 @@ bool SketchEditor::entryKey(int box, QChar c) {
   return false;
 }
 
-void SketchEditor::setChamferAngle(bool angled) {
-  if ((option("chamferMode", "distance") == "angle") == angled) return;
-  m_options["chamferMode"] = angled ? "angle" : "distance";
+// The second box's switch: a chamfer's second distance or its angle to the first line, a move's ΔX and ΔY or its distance
+// and angle (the offset stays what it was).
+void SketchEditor::setAngled(bool angled) {
+  if (m_tool == "chamfer") {
+    if ((option("chamferMode", "distance") == "angle") == angled) return;
+    m_options["chamferMode"] = angled ? "angle" : "distance";
+  } else if (kAngled.contains(m_tool)) {
+    if ((option("moveMode", "xy") == "polar") == angled) return;
+    m_options["moveMode"] = angled ? "polar" : "xy";
+    try {
+      const ParamTable table({}, m_doc->scene.units);
+      const auto mm = [](double value) { return QString::number(std::fabs(value) < 1e-12 ? 0 : value, 'g', 12) + " mm"; };
+      if (angled) {
+        const double dx = table.length(option("dx", "10 mm").toStdString()), dy = table.length(option("dy", "0 mm").toStdString());
+        m_options["moveDistance"] = mm(std::hypot(dx, dy));
+        m_options["moveAngle"] = QString::number(std::atan2(dy, dx) * 180 / M_PI, 'g', 12) + " deg";
+      } else {
+        const double d = table.length(option("moveDistance", "10 mm").toStdString()), a = table.angle(option("moveAngle", "0 deg").toStdString());
+        m_options["dx"] = mm(d * std::cos(a));
+        m_options["dy"] = mm(d * std::sin(a));
+      }
+    } catch (const std::exception&) {  // an expression with parameters: the other boxes keep what they had
+    }
+  } else {
+    return;
+  }
   m_panelFieldsDirty = true;
   updateInput();
   scheduleToolPreview();
