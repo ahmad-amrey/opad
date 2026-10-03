@@ -126,10 +126,11 @@ std::shared_ptr<opad::Document> readVersion(const CompareVersion& v, const std::
 }
 
 // Big documents (a 334 MB assembly read twice) are let go on a thread of their own: freeing them is work that scales with
-// the model, never the UI thread's.
+// the model, never the UI thread's. Reset there: QThread::create's callable is destroyed with the thread object, on the
+// UI thread.
 void dispose(std::shared_ptr<void> value) {
   if (!value) return;
-  auto* thread = QThread::create([value = std::move(value)] {});
+  auto* thread = QThread::create([value = std::move(value)]() mutable { value.reset(); });
   QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
   thread->start(QThread::LowPriority);
 }
