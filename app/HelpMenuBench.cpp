@@ -134,12 +134,12 @@ OPAD_BENCH(OPAD_BENCH_HELPMENU, helpmenu) {
   return true;
 }
 
-// OPAD_BENCH_COACH=<prefix> (an empty document beside box.opad): the coach card of an empty document (UI-108). It shows
+// OPAD_BENCH_COACH=<prefix> (an empty document beside coach-box.opad): the coach card of an empty document (UI-108). It shows
 // at the bottom centre of the view in Review and Design with its clip playing; New sketch switches to Design and asks for
 // a plane, Box opens the box's panel, and the card gives way to either and comes back when they are left; its × hides it
 // for this document only; a document with a body has none; Don't show again is for good. Saved as <prefix>.card.png.
 OPAD_BENCH(OPAD_BENCH_COACH, coach) {
-  static bool started = false;  // opening box.opad below finishes a load, which asks the benches again
+  static bool started = false;  // opening coach-box.opad below finishes a load, which asks the benches again
   if (std::exchange(started, true)) return true;
   const QString prefix = value;
   QSettings().setValue("ui/tipAnimate", true);
@@ -152,7 +152,7 @@ OPAD_BENCH(OPAD_BENCH_COACH, coach) {
   auto steps = std::make_shared<std::vector<Step>>();
   auto add = [steps](int delay, std::function<void()> fn) { steps->push_back({delay, std::move(fn)}); };
   auto card = [&w] { return w.m_viewport->findChild<CoachCard*>(); };
-  const QString box = QFileInfo(w.m_doc->path()).dir().filePath("box.opad");
+  const QString box = QFileInfo(w.m_doc->path()).dir().filePath("coach-box.opad");
   add(800, [=, &w] {
     CoachCard* c = card();
     check(c && c->isVisible() && w.workspaceId() == "review", "an empty document shows the coach card (in " + w.workspaceId() + ")");

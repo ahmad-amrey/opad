@@ -247,7 +247,7 @@ class HelpArea : public AreaController {
 
   CoachCard* m_coach = nullptr;
   QTimer m_coachPoll;
-  unsigned long long m_coachDismissed = 0;  // the document generation whose card was closed
+  unsigned long long m_coachDismissed = ~0ULL;  // the document generation whose card was closed (none)
 };
 
 OPAD_AREA(HelpArea)

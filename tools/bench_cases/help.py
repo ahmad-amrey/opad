@@ -10,6 +10,15 @@ def guided(root, document):
                     ("sketch", "--name", "Plate", "--plane", '{"base":"xy"}', "--geometry", '{"shapes":[{"kind":"rect2","picks":[[20,0],[40,10]]}]}'))
 
 
+def coach(root, document):
+    """An empty document of its own (the shared "empty" one gets a body from the design bench) beside one with a box."""
+    path = root / "coach.opad"
+    if path.exists():
+        return path
+    document("coach-box", ("feature", "--kind", "box", "--inputs", '{"length":"30 mm","width":"20 mm","height":"10 mm"}'))
+    return document("coach")
+
+
 CASES = [
     # UI-106: help for every command, the rich hover card on ribbon buttons (English, then Arabic right to left).
     ("richtip", "box", {"OPAD_BENCH_RICHTIP": "{prefix}"}),
@@ -33,7 +42,7 @@ CASES = [
     # UI-108: the Help menu: F1, the tool guide, the shortcuts cheat sheet, Getting started, Report a problem.
     ("help-menu", "box", {"OPAD_BENCH_HELPMENU": "{prefix}"}),
     ("help-menu-ar", "box", {"OPAD_BENCH_HELPMENU": "{prefix}", "OPAD_LANG": "ar"}),
-    # UI-108: the coach card of an empty document (box.opad beside it: a document with a body has none).
-    ("coach", "empty", {"OPAD_BENCH_COACH": "{prefix}"}),
-    ("coach-ar", "empty", {"OPAD_BENCH_COACH": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-108: the coach card of an empty document (coach-box.opad beside it: a document with a body has none).
+    ("coach", coach, {"OPAD_BENCH_COACH": "{prefix}"}),
+    ("coach-ar", coach, {"OPAD_BENCH_COACH": "{prefix}", "OPAD_LANG": "ar"}),
 ]
