@@ -14,6 +14,7 @@
 #include "I18n.hpp"
 #include "Icons.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 
 namespace {
 
@@ -75,7 +76,11 @@ void ExprEdit::evaluate() {
     const std::string text = m_edit->text().trimmed().toStdString();
     const double v = table.as(m_dim, text);
     opad::design::Quantity q{v, m_dim == opad::design::Dim::Length ? 1 : 0, m_dim == opad::design::Dim::Angle};
-    m_value->setText(QString::fromUtf8("= ") + QString::fromStdString(opad::design::format_quantity(q)));
+    // Lengths and angles in the shown unit and precision (UI-123), anything else as the expression engine says it.
+    const QString shown = m_dim == opad::design::Dim::Length  ? units::format(units::Kind::Length, v)
+                          : m_dim == opad::design::Dim::Angle ? units::format(units::Kind::Angle, v * 180 / M_PI)
+                                                              : QString::fromStdString(opad::design::format_quantity(q));
+    m_value->setText(QString::fromUtf8("= ") + shown);
     m_value->setStyleSheet(QString("color: %1;").arg(theme::css(t.fg3)));
     m_valid = true;
   } catch (const std::exception& e) {
@@ -124,8 +129,13 @@ void PickBox::mousePressEvent(QMouseEvent* e) {
 
 // ---------------------------------------------------------------- FeaturePanel
 FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent), m_doc(doc) {
-  auto* v = new QVBoxLayout(this);
-  v->setContentsMargins(12, 10, 12, 0);
+  auto* outer = new QVBoxLayout(this);
+  outer->setContentsMargins(0, 0, 0, 0);
+  outer->setSpacing(0);
+  auto* form = new QWidget(this);
+  outer->addWidget(form, 1);
+  auto* v = new QVBoxLayout(form);
+  v->setContentsMargins(12, 10, 12, 8);
   v->setSpacing(6);
   m_name = new QLineEdit(this);
   m_hint = new QLabel(this);
@@ -193,17 +203,10 @@ FeaturePanel::FeaturePanel(AppDocument* doc, QWidget* parent) : QWidget(parent),
   m_status->setObjectName("tertiary");
   m_status->setWordWrap(true);
   v->addWidget(m_status);
-  auto* footer = new QHBoxLayout();
-  footer->setContentsMargins(0, 6, 0, 10);
-  auto* cancel = new QPushButton(tr("Cancel   Esc"), this);
-  m_ok = new QPushButton(tr("OK   Enter"), this);
-  m_ok->setObjectName("primary");
-  footer->addStretch(1);
-  footer->addWidget(cancel);
-  footer->addWidget(m_ok);
-  v->addLayout(footer);
-  connect(cancel, &QPushButton::clicked, this, &FeaturePanel::cancelled);
-  connect(m_ok, &QPushButton::clicked, this, &FeaturePanel::accepted);
+  m_footer = new PanelFooter(this);  // Cancel (Esc) and OK (Enter): it commits and closes the panel
+  outer->addWidget(m_footer);
+  connect(m_footer, &PanelFooter::cancelled, this, &FeaturePanel::cancelled);
+  connect(m_footer, &PanelFooter::accepted, this, &FeaturePanel::accepted);
 }
 
 void FeaturePanel::setEditHidden(bool hidden){m_hiddenWarning->setVisible(hidden);}
@@ -250,7 +253,7 @@ void FeaturePanel::begin(const opad::design::FeatureSpec& spec, const opad::json
   }
   m_hint->setText(i18n::t(QString::fromStdString(spec.hint)));
   m_guide->setCommand(editing ? QString() : "design." + QString::fromStdString(spec.kind));
-  m_ok->setText(tr("OK   Enter"));setEditHidden(false);
+  m_footer->setPrimary(PanelFooter::Primary::Close);setEditHidden(false);
   setStatus(QString(), false);
   for (const auto& in : spec.inputs) {
     const QString key = QString::fromStdString(in.name);
@@ -502,7 +505,7 @@ QString FeaturePanel::statusText() const { return m_status->text(); }
 void FeaturePanel::setStatus(const QString& text, bool error) {
   const Tokens& t = theme::current();
   m_status->setText(text);
-  m_status->setStyleSheet(QString("color: %1;").arg(theme::css(error ? t.red : t.fg3)));
+  m_status->setStyleSheet(QString("color: %1;").arg(theme::css(error ? t.error : t.fg3)));
 }
 
 void FeaturePanel::activate(const QString& name) {

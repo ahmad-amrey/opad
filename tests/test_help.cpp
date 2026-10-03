@@ -12,6 +12,7 @@
 #include "opad/design/feature.hpp"
 #include <QAction>
 #include <QApplication>
+#include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -32,11 +33,12 @@ QString source(const QString& path) {
   return QString::fromUtf8(f.readAll());
 }
 
-// Command ids registered by MainWindow: literal addAction ids, the generated families, the sketch tool tables and
-// the feature kinds of the core spec table. The bench OPAD_BENCH_RICHTIP checks the live list of the running app.
+// Command ids registered by MainWindow (MainWindow*.cpp): literal addAction ids, the generated families, the sketch tool
+// tables and the feature kinds of the core spec table. The bench OPAD_BENCH_RICHTIP checks the live list of the running app.
 std::set<QString> registeredIds() {
   std::set<QString> ids;
-  const QString main = source("app/MainWindow.cpp");
+  QString main;
+  for (const QString& file : QDir(QStringLiteral(OPAD_SOURCE_DIR) + "/app").entryList({"MainWindow*.cpp"}, QDir::Files, QDir::Name)) main += source("app/" + file);
   for (const auto& m : QRegularExpression(R"(addAction\("([a-z]+\.[A-Za-z0-9_.]+)\")").globalMatch(main)) ids.insert(m.captured(1));
   for (const auto& m : QRegularExpression(R"re(\{"([a-z0-9_:]+)", tr\(")re").globalMatch(main)) ids.insert("sketch." + m.captured(1).replace(':', '.'));
   for (const auto& m : QRegularExpression(R"re(QObject::tr\("[^"]+"\),"([a-z0-9_:]+)")re").globalMatch(source("app/SketchPanel.cpp")))

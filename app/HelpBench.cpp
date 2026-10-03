@@ -57,16 +57,22 @@ bool MainWindow::benchRichTip() {
     QCoreApplication::exit(2);
     return true;
   }
-  // Attached as the window was built: every ribbon button (menu buttons too), the selection filters, the settings button
-  // and the status bar's toggles, each to its own command, which has help.
+  // Attached as the window was built: every ribbon tool of every group (menu buttons too; not a group's own title or
+  // collapsed button), the selection filters, quick access, search, the settings button and the status bar's toggles,
+  // each to its own command, which has help.
   QStringList unattached;
   int attached = 0;
+  QList<QAbstractButton*> commandButtons{m_ribbon->searchField()};
+  for (auto* g : m_ribbon->findChildren<RibbonGroup*>())
+    for (QToolButton* b : g->buttons()) commandButtons << b;
   for (auto* b : m_ribbon->findChildren<QToolButton*>())
-    if (QStringList{"ribbonTool", "segment", "segmentPrimary", "ribbonSettings"}.contains(b->objectName())) {
-      const QString id = RichTip::attachedId(b);
-      if (id.isEmpty() || !help::find(id) || (b->defaultAction() && b->defaultAction()->objectName() != id)) unattached << (id.isEmpty() ? b->text() : id);
-      else ++attached;
-    }
+    if (QStringList{"segment", "segmentPrimary", "ribbonSettings", "ribbonQuick"}.contains(b->objectName())) commandButtons << b;
+  for (QAbstractButton* b : commandButtons) {
+    const QString id = RichTip::attachedId(b);
+    auto* tool = qobject_cast<QToolButton*>(b);
+    if (id.isEmpty() || !help::find(id) || (tool && tool->defaultAction() && tool->defaultAction()->objectName() != id)) unattached << (id.isEmpty() ? b->text() : id);
+    else ++attached;
+  }
   for (const char* id : {"view.extensions", "view.tracking", "view.gridSnap"}) {
     bool found = false;
     for (auto* b : statusBar()->findChildren<QToolButton*>()) found = found || (b->defaultAction() == action(id) && RichTip::attachedId(b) == id);

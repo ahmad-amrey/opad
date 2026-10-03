@@ -29,6 +29,7 @@
 #include <cmath>
 
 #include "I18n.hpp"
+#include "Units.hpp"
 #include "Jobs.hpp"
 #include "opad/design/expr.hpp"
 #include "opad/design/sketch_geom.hpp"
@@ -128,6 +129,7 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
   connect(m_dimensionHandle,&DimensionHandle::valueChanged,this,[this](const QString& text){m_options["distance"]=text;scheduleToolPreview();emit workflowChanged();});
   m_dimensionHandle->setLabel(tr("Offset"));
   connect(m_dimensionHandle,&DimensionHandle::accepted,this,[this]{if(m_active && m_tool=="offset" && !m_sel.empty())applyTool();});
+  connect(units::notifier(),&units::Notifier::changed,this,[this]{if(m_active)rebuild();});  // dimension labels in the shown unit
   connect(m_viewport,&Viewport::notesMoved,this,[this] {
     if(!m_active) return;
     const double pixels=m_viewport->pixelSize();
@@ -1256,7 +1258,7 @@ void SketchEditor::updateTransient() {
         break;
       case K::Angle:
         if (const auto* from = m_geometry->point(m_sk, m_cursor.target))
-          label = QString::fromUtf8("%1°").arg(std::round(std::atan2(cv - from->y, cu - from->x) * 180 / M_PI));
+          label = units::format(units::Kind::Angle, std::round(std::atan2(cv - from->y, cu - from->x) * 180 / M_PI), units::current().radians ? 3 : 0);
         break;
       case K::Locked:
         d.dashed.push_back({W(m_lockX, m_lockY), W(cu, cv), snapColor});

@@ -343,6 +343,9 @@ void AppDocument::setRollback(const std::string& opId) {
 void AppDocument::refresh() {
   if (!m_rollback.empty() && !doc.find_op(m_rollback)) m_rollback.clear();  // undone or closed
   scene = hasDocument ? opad::resolve(doc, m_rollback) : opad::Scene{};
+  if (!m_rollback.empty())  // an earlier op edited: values are still shown and typed in the document's unit, the last one
+    for (const auto& e : opad::effective_ops(doc))
+      if (e.op->type == "units" && e.data().contains("length")) scene.units = e.data()["length"].get<std::string>();
   updateDirty();
   ++revision;
   emit changed();
@@ -376,28 +379,44 @@ void AppDocument::recordStep(const QString& label, size_t opsBefore) {
   emit undoChanged();
 }
 
-void AppDocument::undo() {
-  if(m_capturing){const auto identity=generation;QTimer::singleShot(10,this,[this,identity]{if(generation==identity)undo();});return;}
+void AppDocument::undo(int steps) {
+  if(m_capturing){const auto identity=generation;QTimer::singleShot(10,this,[this,identity,steps]{if(generation==identity)undo(steps);});return;}
   if (!canUndo()) return;
-  Step s = std::move(m_undo.back());
-  m_undo.pop_back();
-  s.ops = doc.truncate_ops(doc.ops.size() - std::min(s.count, doc.ops.size()));
-  m_redo.push_back(std::move(s));
+  for (; steps > 0 && !m_undo.empty(); --steps) {
+    Step s = std::move(m_undo.back());
+    m_undo.pop_back();
+    s.ops = doc.truncate_ops(doc.ops.size() - std::min(s.count, doc.ops.size()));
+    m_redo.push_back(std::move(s));
+  }
   refresh();
   emit undoChanged();
 }
 
-void AppDocument::redo() {
-  if(m_capturing){const auto identity=generation;QTimer::singleShot(10,this,[this,identity]{if(generation==identity)redo();});return;}
+void AppDocument::redo(int steps) {
+  if(m_capturing){const auto identity=generation;QTimer::singleShot(10,this,[this,identity,steps]{if(generation==identity)redo(steps);});return;}
   if (!canRedo()) return;
-  Step s = std::move(m_redo.back());
-  m_redo.pop_back();
-  s.count = s.ops.size();
-  doc.restore_ops(std::move(s.ops));
-  s.ops.clear();
-  m_undo.push_back(std::move(s));
+  for (; steps > 0 && !m_redo.empty(); --steps) {
+    Step s = std::move(m_redo.back());
+    m_redo.pop_back();
+    s.count = s.ops.size();
+    doc.restore_ops(std::move(s.ops));
+    s.ops.clear();
+    m_undo.push_back(std::move(s));
+  }
   refresh();
   emit undoChanged();
+}
+
+QStringList AppDocument::undoLabels() const {
+  QStringList out;
+  for (auto s = m_undo.rbegin(); s != m_undo.rend(); ++s) out << s->label;
+  return out;
+}
+
+QStringList AppDocument::redoLabels() const {
+  QStringList out;
+  for (auto s = m_redo.rbegin(); s != m_redo.rend(); ++s) out << s->label;
+  return out;
 }
 
 void AppDocument::setUndoLimit(int steps) {

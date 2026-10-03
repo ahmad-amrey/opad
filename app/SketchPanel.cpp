@@ -2,6 +2,7 @@
 #include "SketchEditor.hpp"
 #include "HelpClip.hpp"
 #include "I18n.hpp"
+#include "Units.hpp"
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QSpinBox>
@@ -143,6 +144,7 @@ SketchPanel::SketchPanel(SketchEditor* editor, QWidget* parent) : QWidget(parent
   connect(editor,&SketchEditor::changed,this,&SketchPanel::refresh);
   connect(editor,&SketchEditor::toolChanged,this,[this]{m_pages->setCurrentIndex(0);refresh();});
   connect(editor,&SketchEditor::workflowChanged,this,&SketchPanel::refresh);
+  connect(units::notifier(),&units::Notifier::changed,this,[this]{m_editor->m_panelFieldsDirty=true;refresh();});  // values and defaults in the shown unit
   connect(m_group,&QComboBox::currentIndexChanged,this,&SketchPanel::chooseGroup);
   connect(m_tools,&QComboBox::currentIndexChanged,this,&SketchPanel::chooseTool);
   chooseGroup();
@@ -202,8 +204,8 @@ void SketchPanel::buildFields() {
     connect(images,&QComboBox::currentIndexChanged,this,[this,images]{m_editor->m_options["imageId"]=images->currentData().toString();m_editor->invalidatePreview();m_editor->m_panelFieldsDirty=true;refresh();});
     if(m_shown=="image_edit") {
       for(const auto& image:m_editor->m_sk.images)if(image.at("id").get<int>()==id) {
-        m_editor->m_options["imageX"]=QString::number(image.at("position")[0].get<double>())+" mm";m_editor->m_options["imageY"]=QString::number(image.at("position")[1].get<double>())+" mm";
-        m_editor->m_options["imageWidth"]=QString::number(image.at("width").get<double>())+" mm";m_editor->m_options["imageAngle"]=QString::number(image.value("angle",0.0))+" rad";m_editor->m_options["imageOpacity"]=QString::number(image.value("opacity",.5));
+        m_editor->m_options["imageX"]=units::editable(units::Kind::Length,image.at("position")[0].get<double>());m_editor->m_options["imageY"]=units::editable(units::Kind::Length,image.at("position")[1].get<double>());
+        m_editor->m_options["imageWidth"]=units::editable(units::Kind::Length,image.at("width").get<double>());m_editor->m_options["imageAngle"]=units::editable(units::Kind::Angle,image.value("angle",0.0)*180/M_PI);m_editor->m_options["imageOpacity"]=QString::number(image.value("opacity",.5));
       }
       field("imageX",tr("X position"),"0 mm");field("imageY",tr("Y position"),"0 mm");field("imageWidth",tr("Image width"),"100 mm");field("imageAngle",tr("Rotation"),"0 deg");field("imageOpacity",tr("Opacity (0 to 1)"),"0.5");
     }

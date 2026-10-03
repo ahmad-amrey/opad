@@ -14,6 +14,7 @@
 #include <map>
 
 #include "AppDocument.hpp"
+#include "PanelFooter.hpp"
 #include "opad/design/feature.hpp"
 
 class ToolGuide;
@@ -87,6 +88,7 @@ class FeaturePanel : public QWidget {
   // for a pick box beside "By rule…" to say "3 selected" rather than "3 selec…".
   QSize preferredSize(int width) const;
   ToolGuide* guide() const { return m_guide; }  // UI-107: a new feature's animated guide, at the pick it waits for
+  PanelFooter* footer() const { return m_footer; }
  signals:
   void inputsChanged();                 // anything that changes the result
   void activeInputChanged(const QString& input);
@@ -119,7 +121,7 @@ class FeaturePanel : public QWidget {
   QLabel* m_status;
   QLabel* m_hiddenWarning;
   QVBoxLayout* m_rows;
-  QPushButton* m_ok;
+  PanelFooter* m_footer;
   struct Row {
     QWidget* row = nullptr;
     ExprEdit* expr = nullptr;
