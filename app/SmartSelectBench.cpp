@@ -24,8 +24,9 @@
 // chip names the boss with its five faces and Ctrl+Up as the way there, beside the picks and clear of the view cube;
 // hovering it draws the five in amber and pulses the boss's timeline marker. Ctrl+Up selects them (the chip turns into
 // the boss's actions), again the body; Ctrl+Down twice climbs back to the two faces. Shift+Space lists the candidates. A
-// double-click on the boss's top (real mouse events) selects the boss, another one opens it for editing. An edge
-// double-clicked: the loop on the face turned to the viewer; Alt on a straight edge says nothing continues it. The chip's
+// double-click on the boss's top (real mouse events) selects the boss, another one opens it for editing. An edge between
+// two faces seen from the view, double-clicked: the loop of the face on the pointer's side of it (the top's, then the
+// front's); Alt on a straight edge says nothing continues it. The chip's
 // Delete on the boss: the question names Round, which uses it, with the result previewed; deleting both leaves the base
 // alone, the toast's Undo brings them back. Deleting Round, which nothing uses, asks nothing. The chip's Find in timeline,
 // Isolate and Suppress (undone from its toast) on the boss. Shots: <prefix>.chip.png,
@@ -35,8 +36,9 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
     int phase = 0, ticks = 0, wait = 0;
     std::string body, boss, round;
     std::vector<opad::Ref> bossFaces, roundFaces, two;
-    opad::Ref top;  // the boss's top face
-    bool tangentAsked = false, tangent = false, quietAsked = false;
+    opad::Ref top;    // the boss's top face
+    opad::Ref front;  // the base's front top edge
+    bool frontSide = false, tangentAsked = false, tangent = false, quietAsked = false;
     size_t ops = 0;
     int faces = 0;
   };
@@ -78,9 +80,9 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
       // A double-click as the view reports it: the first click's pick, the double-click itself through the view's event
       // path (the view's own handling held back: a hidden window never paints, so OCCT would keep the clicks queued), the
       // second click's pick.
-      auto doubleClick = [&](const opad::Ref& face) {
+      auto doubleClick = [&](const opad::Ref& face, QPoint at = {}) {
         pick({face});
-        const QPoint at = w.m_viewport->rect().center();
+        if (at.isNull()) at = w.m_viewport->rect().center();
         w.m_viewport->setBlocked(true);
         QMouseEvent press(QEvent::MouseButtonDblClick, QPointF(at), QPointF(w.m_viewport->mapToGlobal(at)), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
         QApplication::sendEvent(w.m_viewport, &press);
@@ -257,28 +259,44 @@ OPAD_BENCH(OPAD_BENCH_SMARTSELECT, smartselect) {
         }
         case 13: {
           if (w.m_viewport->selectionFilter() != Viewport::SelFilter::Edge) return;
-          // The base's top edge along x at the back (y = 40): the loop of the top face (facing up, at the viewer).
+          // The base's top edge along x at the front (y = 0), between the top face and the front face, both seen from the
+          // iso view: double-clicked with the pointer on the top's side of it, then on the front's.
           TopTools_IndexedMapOfShape edges;
           TopExp::MapShapes(shape(), TopAbs_EDGE, edges);
-          int back = -1;
           for (int i = 1; i <= edges.Extent(); ++i) {
             BRepAdaptor_Curve c(TopoDS::Edge(edges(i)));
-            if (c.Value((c.FirstParameter() + c.LastParameter()) / 2).Distance(gp_Pnt(20, 40, 10)) < 1e-6) back = i - 1;
+            if (c.Value((c.FirstParameter() + c.LastParameter()) / 2).Distance(gp_Pnt(20, 0, 10)) < 1e-6) state->front = opad::Ref::parse(state->body + "/edge/" + std::to_string(i - 1));
           }
-          require(back >= 0, "the base's back top edge");
-          opad::Ref edge;
-          edge.body = state->body;
-          edge.kind = opad::Ref::Kind::Edge;
-          edge.index = back;
-          pick({edge});
-          area->doubleClicked(false);
+          require(state->front.index >= 0, "the base's front top edge");
+          const auto project = w.m_viewport->projector();
+          const QPointF p = project ? project({20, 0, 10}) : QPointF(-1e9, -1e9), q = w.m_viewport->widgetPoint({20, 0, 10});
+          require(std::hypot(p.x() - q.x(), p.y() - q.y()) < 1.5, "the worker's projection agrees with the view's");
+          doubleClick(state->front, w.m_viewport->widgetPoint({20, 3, 10}));
           break;
         }
         case 14: {
           const auto picks = w.m_viewport->selection();
           if (!waitFor(picks.size() == 4, "a double-click on an edge selects its loop")) return;
-          require(std::all_of(picks.begin(), picks.end(), [](const opad::Ref& r) { return r.kind == opad::Ref::Kind::Edge; }), "the loop is edges");
-          pass("a double-click on the base's top edge selected the top face's outer loop (4 edges)");
+          require(std::all_of(picks.begin(), picks.end(), [](const opad::Ref& r) { return r.kind == opad::Ref::Kind::Edge; }) &&
+                      std::any_of(picks.begin(), picks.end(), [&](const opad::Ref& r) { return r.index == state->front.index; }), "the loop is edges, the clicked one among them");
+          TopTools_IndexedMapOfShape edges;
+          TopExp::MapShapes(shape(), TopAbs_EDGE, edges);
+          auto all = [&](int axis, double value) {
+            return std::all_of(picks.begin(), picks.end(), [&](const opad::Ref& r) {
+              BRepAdaptor_Curve c(TopoDS::Edge(edges(r.index + 1)));
+              const gp_Pnt a = c.Value(c.FirstParameter()), b = c.Value(c.LastParameter());
+              return std::abs(a.Coord(axis) - value) < 1e-6 && std::abs(b.Coord(axis) - value) < 1e-6;
+            });
+          };
+          if (!state->frontSide) {
+            require(all(3, 10), "with the pointer on the top's side of the edge, the top face's outer loop (z = 10)");
+            pass("a double-click on the front top edge with the pointer over the top face selected the top's outer loop (4 edges)");
+            state->frontSide = true;
+            doubleClick(state->front, w.m_viewport->widgetPoint({20, 0, 7}));
+            return;
+          }
+          require(all(2, 0), "with the pointer on the front's side of the edge, the front face's loop (y = 0)");
+          pass("the same edge double-clicked with the pointer over the front face selected the front face's loop (4 edges)");
           pick({picks.front()});
           area->doubleClicked(true);  // Alt: the tangent chain of a straight edge between square corners is itself
           break;

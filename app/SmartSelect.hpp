@@ -7,7 +7,7 @@
 // Find in timeline, Isolate for a feature; Remove faces, Select similar, Isolate for a detail. ▾ (Shift+Space) lists
 // every candidate with those actions. Ctrl+Up climbs faces -> feature or detail -> body -> component -> parent and
 // Ctrl+Down climbs back. Double-click: a face -> its feature or detail (again on a face of it: edit the feature), an edge
-// -> the loop on the face turned to the viewer, Alt -> its tangent chain. Del on picked faces or edges never tombstones
+// -> the loop on the face on the pointer's side of it, Alt -> its tangent chain. Del on picked faces or edges never tombstones
 // the body's source (UI-04): a feature's whole face set deletes the feature (asking first when later features use it,
 // with the result previewed), anything else opens the menu. Everything comes from the related command (provenance and
 // rules: nothing is suggested by resemblance, D4), run on a worker over a document snapshot, newest selection only.
@@ -88,8 +88,9 @@ class SmartSelect : public AreaController {
   void documentChanged(bool replaced) override;
   bool command(const QString& id, const SelectionContext& selection) override;
 
-  // A double-click on the current pick (the viewport's lands here once its second click is processed).
-  void doubleClicked(bool alt);
+  // A double-click on the current pick (the viewport's lands here once its second click is processed), at `at` in the view
+  // (-1, -1: unknown): an edge's loop is the one on the face on that side of the edge.
+  void doubleClicked(bool alt, const QPoint& at = QPoint(-1, -1));
   void grow();    // Ctrl+Up on picked faces or edges
   void shrink();  // Ctrl+Down
   void showMenu(const QPoint& global = {});  // Shift+Space: at the chip, else at the pointer
@@ -113,7 +114,7 @@ class SmartSelect : public AreaController {
   void hover(int index);  // -1: nothing
   void choose(int index);  // selects it: one rung up
   void select(std::vector<opad::Ref> refs, std::function<void()> then = {});
-  void chain(const opad::Ref& edge, bool tangent);
+  void chain(const opad::Ref& edge, bool tangent, const QPoint& at);
   int focus() const;  // what the actions are for: the active candidate, else the offered one
   QList<QAction*> actionsFor(int index, QObject* parent);  // new actions for that candidate (the chip's buttons, the menus)
   void askDependents(const smart::Candidate& c, const std::vector<std::pair<std::string, std::string>>& deps, const std::vector<Viewport::PreviewPart>& parts,
@@ -148,6 +149,7 @@ class SmartSelect : public AreaController {
   } m_snap;
   // A double-click: its second click is processed (a selectionChanged) before it is acted on.
   bool m_doubleArmed = false, m_double = false, m_doubleAlt = false;
+  QPoint m_doubleAt{-1, -1};
   std::vector<opad::Ref> m_doubleBefore, m_doubleFirst;
   QTimer m_doubleTimer;
   QAction *m_shrink = nullptr, *m_related = nullptr, *m_suggest = nullptr;

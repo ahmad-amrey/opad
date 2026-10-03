@@ -5,6 +5,7 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Copy.hxx>
+#include <BRepClass_FaceClassifier.hxx>
 #include <BRepGProp_Face.hxx>
 #include <BRep_Tool.hxx>
 #include <Bnd_Box.hxx>
@@ -64,6 +65,41 @@ opad::json kinds(bool regions) {
 }
 bool has(const std::vector<opad::Ref>& refs, const opad::Ref& r) {
   return std::any_of(refs.begin(), refs.end(), [&](const opad::Ref& x) { return x.body == r.body && x.kind == r.kind && x.index == r.index; });
+}
+using Projector = std::function<QPointF(const opad::Vec3&)>;
+// How well a face of an edge answers a double-click on the edge near `middle`: a face seen from behind never does; with the
+// pointer off the edge on screen, the face whose inside lies towards it (2 + the cosine), else the one turned most to the
+// viewer (seen edge-on, the pointer right on the edge, no pointer).
+double pointerSide(const TopoDS_Face& face, const gp_Pnt& middle, const gp_Vec& along, const gp_Vec& towards, const Projector& project, const QPointF& pointer) {
+  GeomAPI_ProjectPointOnSurf onFace(middle, BRep_Tool::Surface(face));
+  if (onFace.NbPoints() == 0) return -4;
+  double u, v;
+  onFace.LowerDistanceParameters(u, v);
+  gp_Pnt at;
+  gp_Vec normal;
+  BRepGProp_Face(face).Normal(u, v, at, normal);  // facing out of the material
+  if (normal.Magnitude() < 1e-12) return -4;
+  normal.Normalize();
+  const double facing = normal.Dot(towards);
+  if (facing < -1e-3) return facing - 2;
+  gp_Vec across = normal.Crossed(along);
+  if (!project || across.Magnitude() < 1e-12) return facing;
+  across.Normalize();
+  // Into the face: the side of the edge where a point just off it lies on the face.
+  Bnd_Box box;
+  BRepBndLib::Add(face, box);
+  const double tol = BRep_Tool::Tolerance(face);
+  double step = box.IsVoid() ? 1e-3 : 0.02 * std::sqrt(box.SquareExtent()), inside = 0;
+  for (int i = 0; i < 10 && inside == 0; ++i, step /= 2)
+    for (double s : {step, -step})
+      if (inside == 0 && BRepClass_FaceClassifier(face, middle.Translated(across * s), tol).State() == TopAbs_IN) inside = s;
+  if (inside == 0) return facing;
+  const QPointF from = project({middle.X(), middle.Y(), middle.Z()});
+  const gp_Pnt in = middle.Translated(across * inside);
+  const QPointF into = project({in.X(), in.Y(), in.Z()}) - from, off = pointer - from;
+  const double li = std::hypot(into.x(), into.y()), lo = std::hypot(off.x(), off.y());
+  if (li < 1e-6 || lo < 1) return facing;
+  return 2 + QPointF::dotProduct(into, off) / (li * lo);
 }
 }  // namespace
 
@@ -234,7 +270,7 @@ void SmartSelect::ready() {
   m_doubleTimer.setSingleShot(true);
   m_doubleTimer.setInterval(300);  // the second click changed nothing the view reports: act anyway
   connect(&m_doubleTimer, &QTimer::timeout, this, [this] {
-    if (std::exchange(m_double, false)) doubleClicked(m_doubleAlt);
+    if (std::exchange(m_double, false)) doubleClicked(m_doubleAlt, m_doubleAt);
   });
   // The camera moves: the chip goes, and comes back beside the picks once the view is still.
   connect(v, &Viewport::notesMoved, this, [this] {
@@ -276,7 +312,7 @@ void SmartSelect::selectionChanged(const SelectionContext& selection) {
   hover(-1);
   if (std::exchange(m_double, false)) {  // the second click of a double-click has reached the selection
     m_doubleTimer.stop();
-    QTimer::singleShot(0, this, [this, alt = m_doubleAlt] { doubleClicked(alt); });
+    QTimer::singleShot(0, this, [this, alt = m_doubleAlt, at = m_doubleAt] { doubleClicked(alt, at); });
   }
   if (!idle() || !subPicks(m_current)) {
     m_pending = Pending::None;
@@ -730,12 +766,12 @@ void SmartSelect::documentChanged(bool replaced) {
   if (idle() && subPicks(m_current)) request(false);  // the picks may still stand
 }
 
-void SmartSelect::doubleClicked(bool alt) {
+void SmartSelect::doubleClicked(bool alt, const QPoint& at) {
   if (!idle()) return;
   const auto picks = services().viewport()->selection();
   if (picks.size() != 1) return;
   const opad::Ref r = picks.front();
-  if (r.kind == opad::Ref::Kind::Edge) return chain(r, alt);
+  if (r.kind == opad::Ref::Kind::Edge) return chain(r, alt, at);
   if (r.kind != opad::Ref::Kind::Face) return;
   // Again on a face of the feature chosen before: edit that feature. Before the double-click: what was selected before its
   // first click, whether that click had reached the selection when the second came or not.
@@ -764,15 +800,18 @@ void SmartSelect::tangentFaces() {
   services().showMessage(tr("No face continues this one tangentially."), 4000);
 }
 
-// An edge's loop on the face turned most to the viewer, or its tangent chain: found on a worker.
-void SmartSelect::chain(const opad::Ref& edge, bool tangent) {
-  const opad::Vec3 view = services().viewport()->viewDirection();
+// An edge's loop on the face on the pointer's side of it, or its tangent chain: found on a worker (pointerSide).
+void SmartSelect::chain(const opad::Ref& edge, bool tangent, const QPoint& at) {
+  const Viewport* v = services().viewport();
+  const opad::Vec3 view = v->viewDirection();
+  const auto project = at.x() >= 0 ? v->projector() : Projector();
+  const QPointF pointer(at);
   const unsigned token = ++m_chainToken;
-  withSnapshot([this, edge, tangent, view, token](std::shared_ptr<const opad::Document> document) {
+  withSnapshot([this, edge, tangent, view, project, pointer, token](std::shared_ptr<const opad::Document> document) {
     if (token != m_chainToken) return;
     auto result = std::make_shared<std::vector<int>>();
     if (m_chainJob) m_chainJob->cancel();
-    m_chainJob = services().jobs()->async(tangent ? tr("Finding the tangent chain") : tr("Finding the loop"), [document, edge, tangent, view, result](Progress progress) {
+    m_chainJob = services().jobs()->async(tangent ? tr("Finding the tangent chain") : tr("Finding the loop"), [document, edge, tangent, view, project, pointer, result](Progress progress) {
       const opad::Scene scene = opad::resolve(*document);
       const TopoDS_Shape shape = opad::node_world_shape(*document, scene, edge.body);
       opad::Recognizer recognizer(shape, [progress] { return progress.cancelled(); });
@@ -785,24 +824,26 @@ void SmartSelect::chain(const opad::Ref& edge, bool tangent) {
       TopExp::MapShapes(shape, TopAbs_FACE, faces);
       TopExp::MapShapes(shape, TopAbs_EDGE, edges);
       BRepAdaptor_Curve curve(TopoDS::Edge(edges(edge.index + 1)));
-      const gp_Pnt middle = curve.Value((curve.FirstParameter() + curve.LastParameter()) / 2);
+      const double t0 = curve.FirstParameter(), t1 = curve.LastParameter();
+      double t = (t0 + t1) / 2;
+      if (project) {  // the edge's point nearest the pointer on screen
+        double nearest = 1e300;
+        for (int i = 0; i <= 32; ++i) {
+          const double s = t0 + (t1 - t0) * i / 32;
+          const gp_Pnt p = curve.Value(s);
+          const QPointF d = project({p.X(), p.Y(), p.Z()}) - pointer;
+          if (const double l = QPointF::dotProduct(d, d); l < nearest) nearest = l, t = s;
+        }
+      }
+      gp_Pnt middle;
+      gp_Vec along;
+      curve.D1(t, middle, along);
       const gp_Vec towards(-view[0], -view[1], -view[2]);
-      double best = -2;
+      double best = -1e300;
       for (const auto& loop : recognizer.loops({edge.index})) {
         const int f = loop.params.value("face", -1);
         if (f < 0 || f >= faces.Extent()) continue;
-        const TopoDS_Face face = TopoDS::Face(faces(f + 1));
-        double score = -1;
-        GeomAPI_ProjectPointOnSurf onFace(middle, BRep_Tool::Surface(face));
-        if (onFace.NbPoints() > 0) {
-          double u, v;
-          onFace.LowerDistanceParameters(u, v);
-          gp_Pnt at;
-          gp_Vec normal;
-          BRepGProp_Face(face).Normal(u, v, at, normal);  // facing out of the material
-          if (normal.Magnitude() > 1e-12) score = normal.Normalized().Dot(towards);
-        }
-        if (score > best) {
+        if (const double score = pointerSide(TopoDS::Face(faces(f + 1)), middle, along, towards, project, pointer); score > best) {
           best = score;
           *result = loop.edges;
         }
@@ -837,6 +878,7 @@ bool SmartSelect::eventFilter(QObject* watched, QEvent* event) {
       if (e->button() == Qt::LeftButton && idle() && !services().viewport()->sketching()) {
         m_doubleArmed = true;
         m_doubleAlt = e->modifiers() & Qt::AltModifier;
+        m_doubleAt = e->position().toPoint();
         // The first click has reached the selection by now (or will with this one): what was selected before it.
         m_doubleBefore = m_previous;
         m_doubleFirst = m_current;

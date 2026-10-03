@@ -222,6 +222,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   double displayScale() const { return viewScale().x(); }  // device pixels per widget point: overlay text, markers, lines
   opad::Vec3 viewDirection() const;            // unit direction the camera looks along (into the scene)
   QPoint widgetPoint(const opad::Vec3& world) const;
+  // widgetPoint for a worker: a copy of the camera as it is now (fractional widget coordinates; empty before the view is up).
+  std::function<QPointF(const opad::Vec3&)> projector() const;
   // Notes: NoteCards places one card per open note and tells the view where each pointer ends (widget
   // coordinates); notesMoved() follows every camera move or scene change so it can place them again.
   bool noteAnchor(const std::string& opId, QPoint& out) const;  // false: unknown, or behind the eye
