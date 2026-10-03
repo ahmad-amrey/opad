@@ -7,6 +7,10 @@
 #include <QPalette>
 #include <QStyleFactory>
 
+#include <algorithm>
+#include <array>
+#include <cmath>
+
 namespace {
 Tokens g_tokens = theme::tokens(true);
 QString g_uiFamily, g_monoFamily;
@@ -30,6 +34,8 @@ Tokens tokens(bool dark) {
     t.amber = QColor("#e3a63a"); t.green = QColor("#4fbd6f"); t.red = QColor("#e2584c");
     t.mtop = QColor("#a2aab4"); t.mleft = QColor("#7f8791"); t.mright = QColor("#656d77"); t.medge = QColor("#1a1c1f");
     t.cap = QColor("#5d7fa8"); t.onsel = QColor("#ffffff");
+    t.selected3d = QColor("#4d9bff"); t.ghost = QColor(155, 158, 166, 90); t.locked = QColor("#8d96a8");
+    t.diffAdded = QColor("#40c8b0"); t.diffRemoved = QColor("#e0503f"); t.diffModified = QColor("#eec84a"); t.diffMoved = QColor("#6a8cf5");
   } else {
     t.bg = QColor("#ececee"); t.bg2 = QColor("#f8f8f9"); t.bg3 = QColor("#e0e1e4"); t.bg4 = QColor("#d2d4d8");
     t.line = QColor("#cfd1d5"); t.fg = QColor("#1e1f23"); t.fg2 = QColor("#5d616a"); t.fg3 = QColor("#a3a6ad");
@@ -37,7 +43,19 @@ Tokens tokens(bool dark) {
     t.amber = QColor("#b5720c"); t.green = QColor("#2d9550"); t.red = QColor("#cc3d31");
     t.mtop = QColor("#d3d7dc"); t.mleft = QColor("#b3b9c1"); t.mright = QColor("#949ba5"); t.medge = QColor("#4b5058");
     t.cap = QColor("#7fa0c9"); t.onsel = QColor("#ffffff");
+    t.selected3d = QColor("#1f6fe0"); t.ghost = QColor(93, 97, 106, 77); t.locked = QColor("#6b7380");
+    t.diffAdded = QColor("#169c8c"); t.diffRemoved = QColor("#b03024"); t.diffModified = QColor("#d9a51a"); t.diffMoved = QColor("#3b6fe0");
   }
+  // The same in both themes: hover is the white glow the user chose; candidate, warning and error are the amber and red
+  // the app already uses. Diff and asset hues sit on the blue-yellow axis and apart in lightness, so they stay distinct
+  // without the red-green difference (the plain green/red/amber set does not, see the test).
+  t.hover = QColor("#ffffff");
+  t.candidate = t.amber;
+  t.warning = t.amber;
+  t.error = t.red;
+  t.assetLinked = t.diffMoved;
+  t.assetStale = t.diffModified;
+  t.assetMissing = t.diffRemoved;
   return t;
 }
 
@@ -213,6 +231,56 @@ QString stylesheet(const Tokens& t) {
                "QListWidget#paletteList::item { height: 28px; padding-left: 4px; }\n").arg(bg3, line);
   s += QString("QLabel#keycap { background: %1; border: 1px solid %2; border-radius: 3px; padding: 0 4px; font-family: '%3'; font-size: 11px; color: %4; }\n").arg(bg4, line, monoF, fg2);
   return s;
+}
+
+const QList<Cue>& cues() {
+  static const QList<Cue> list = {
+      {"diffAdded", &Tokens::diffAdded, "+", QT_TRANSLATE_NOOP("theme", "Added")},
+      {"diffRemoved", &Tokens::diffRemoved, "−", QT_TRANSLATE_NOOP("theme", "Removed")},
+      {"diffModified", &Tokens::diffModified, "~", QT_TRANSLATE_NOOP("theme", "Modified")},
+      {"diffMoved", &Tokens::diffMoved, "→", QT_TRANSLATE_NOOP("theme", "Moved")},
+      {"assetLinked", &Tokens::assetLinked, "✓", QT_TRANSLATE_NOOP("theme", "Linked")},
+      {"assetStale", &Tokens::assetStale, "↻", QT_TRANSLATE_NOOP("theme", "Out of date")},
+      {"assetMissing", &Tokens::assetMissing, "?", QT_TRANSLATE_NOOP("theme", "Missing")},
+      {"locked", &Tokens::locked, "▣", QT_TRANSLATE_NOOP("theme", "Locked")},
+      {"error", &Tokens::error, "!", QT_TRANSLATE_NOOP("theme", "Error")},
+      {"warning", &Tokens::warning, "▲", QT_TRANSLATE_NOOP("theme", "Warning")},
+  };
+  return list;
+}
+
+const Cue* cue(const QString& state) {
+  for (const Cue& c : cues())
+    if (state == QLatin1String(c.state)) return &c;
+  return nullptr;
+}
+
+namespace {
+double linear(double c) { return c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4); }
+double encoded(double c) { return c <= 0.0031308 ? 12.92 * c : 1.055 * std::pow(c, 1 / 2.4) - 0.055; }
+std::array<double, 3> lab(const QColor& c) {
+  const double r = linear(c.redF()), g = linear(c.greenF()), b = linear(c.blueF());
+  const double x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047, y = 0.2126 * r + 0.7152 * g + 0.0722 * b,
+               z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883;
+  auto f = [](double t) { return t > 0.008856 ? std::cbrt(t) : 7.787 * t + 16.0 / 116; };
+  return {116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))};
+}
+}  // namespace
+
+QColor simulate(const QColor& c, Vision v) {
+  static const double protan[3][3] = {{0.152286, 1.052583, -0.204868}, {0.114503, 0.786281, 0.099216}, {-0.003882, -0.048116, 1.051998}};
+  static const double deutan[3][3] = {{0.367322, 0.860646, -0.227968}, {0.280085, 0.672501, 0.047413}, {-0.011820, 0.042940, 0.968881}};
+  if (v == Vision::Normal) return c;
+  const auto& m = v == Vision::Protanopia ? protan : deutan;
+  const double in[3] = {linear(c.redF()), linear(c.greenF()), linear(c.blueF())};
+  double out[3];
+  for (int i = 0; i < 3; ++i) out[i] = encoded(std::clamp(m[i][0] * in[0] + m[i][1] * in[1] + m[i][2] * in[2], 0.0, 1.0));
+  return QColor::fromRgbF(float(out[0]), float(out[1]), float(out[2]), c.alphaF());
+}
+
+double deltaE(const QColor& a, const QColor& b) {
+  const auto x = lab(a), y = lab(b);
+  return std::hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
 }
 
 void apply(bool dark) {

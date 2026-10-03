@@ -1,4 +1,11 @@
 {
  "%1 workspace": "مساحة عمل %1",
- "%1 workspace · %2 switch workspace": "مساحة عمل %1 · %2 للتبديل بين مساحات العمل"
+ "%1 workspace · %2 switch workspace": "مساحة عمل %1 · %2 للتبديل بين مساحات العمل",
+ "Added": "مُضاف",
+ "Removed": "محذوف",
+ "Modified": "معدَّل",
+ "Moved": "منقول",
+ "Linked": "مرتبط",
+ "Out of date": "غير محدَّث",
+ "Missing": "مفقود"
 }
