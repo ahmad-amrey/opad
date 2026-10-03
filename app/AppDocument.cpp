@@ -13,7 +13,6 @@
 #include <set>
 #include <QMetaObject>
 #include <QPointer>
-#include <thread>
 
 namespace {
 bool isExternalPath(const QString& path) {
@@ -29,6 +28,15 @@ void dispose(std::shared_ptr<opad::Document> old) {
   auto* thread = QThread::create([old = std::move(old)]() mutable { old.reset(); });
   QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
   thread->start(QThread::LowPriority);
+}
+// A load's worker: a QThread, never a std::thread (Qt adopts a foreign thread that posts to it, and on MinGW/Qt 6.10 its
+// TLS cleanup can fault at exit). Not parented: a load still running when the window goes is left to finish. Its callable
+// is destroyed with the thread object, on the UI thread: anything big is freed inside the work.
+template <class F>
+void start(F work) {
+  auto* thread = QThread::create(std::move(work));
+  QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+  thread->start();
 }
 QString phaseLabel(const std::string& what, const QString& file) {
   if (what == "reading") return AppDocument::tr("Reading %1").arg(file);
@@ -97,7 +105,7 @@ void AppDocument::startOpen(const QString& path, bool asked) {
   o.center_drawing = suffix == "dxf" || suffix == "svg" || suffix == "dwg";  // opened on its own: centred on the grid
   auto alive = m_alive;
   emit loadProgress(external ? tr("Reading %1").arg(file) : tr("Opening %1").arg(file), -1);
-  std::thread([this, alive, cancel, path, external, viewer, o, token, current, asked]() {
+  start([this, alive, cancel, path, external, viewer, o, token, current, asked]() {
     auto result = std::make_shared<opad::Document>();
     QString error;
     QStringList warnings;
@@ -159,7 +167,7 @@ void AppDocument::startOpen(const QString& path, bool asked) {
       if(!warnings.isEmpty()) emit message(warnings.join("; "));
       emit loadFinished(true, {});
     }, Qt::QueuedConnection);
-  }).detach();
+  });
 }
 
 void AppDocument::startImport(const QString& path, const QString& parent, const opad::Mat4& placement, const opad::json& plane) {
@@ -188,7 +196,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
   const unsigned token = ++*m_loadToken;
   auto current = m_loadToken;
   emit loadProgress(tr("Reading %1").arg(file), -1);
-  std::thread([this, alive, cancel, path, o, work, opsBefore, dirtyBefore, plane, token, current]() mutable {
+  start([this, alive, cancel, path, o, work, opsBefore, dirtyBefore, plane, token, current]() mutable {
     QString error;
     opad::json r;
     try {
@@ -207,7 +215,7 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
     } catch (const std::exception& e) {
       error = QString::fromUtf8(e.what());
     }
-    if (!*alive || current->load() != token) return;  // cancelled: the document never saw it
+    if (!*alive || current->load() != token) return work.reset();  // cancelled: the document never saw it; freed here
     QMetaObject::invokeMethod(this, [this, work, error, r, path, opsBefore, dirtyBefore, token, current] {
       if (current->load() != token) return;
       if (!error.isEmpty() && work->ops.size() > opsBefore) {
@@ -232,7 +240,8 @@ void AppDocument::startImport(const QString& path, const QString& parent, const 
       }
       emit loadFinished(true, {});
     }, Qt::QueuedConnection);
-  }).detach();
+    work.reset();  // the posted copy is the last one: never the thread's callable, which is freed on the UI thread
+  });
 }
 
 void AppDocument::newDocument() {

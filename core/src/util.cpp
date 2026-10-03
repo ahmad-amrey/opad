@@ -207,18 +207,31 @@ std::filesystem::path path_from_utf8(std::string_view utf8) {
   return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(utf8.data()), utf8.size()));
 }
 
+std::string path_to_utf8(const std::filesystem::path& p) {
+  const auto u = p.u8string();
+  return std::string(reinterpret_cast<const char*>(u.data()), u.size());
+}
+
 std::string read_text_file(const std::filesystem::path& p) {
   std::ifstream in(p, std::ios::binary);
-  if (!in) throw Error("cannot open file: " + p.string());
-  // In one read at its size (a stream copied through a string stream took 0.6 s for the 334 MB Engine), then whatever
-  // it grew by meanwhile.
+  if (!in) throw Error("cannot open file: " + path_to_utf8(p));
   std::error_code ec;
+  if (!std::filesystem::is_regular_file(p, ec)) {  // a pipe or a device has no size: to its end
+    std::string text;
+    char buf[1 << 16];
+    while (in.read(buf, sizeof buf) || in.gcount() > 0) text.append(buf, size_t(in.gcount()));
+    if (in.bad()) throw Error("cannot read file: " + path_to_utf8(p));
+    return text;
+  }
+  // In one read at its known size (a stream copied through a string stream took 0.6 s for the 334 MB Engine and peaked at
+  // 2-3x its size). Fewer bytes, or more after them, mean it changed while it was read: an error, never a cut text.
   const auto size = std::filesystem::file_size(p, ec);
-  std::string text(ec ? 0 : size_t(size), '\0');
+  if (ec) throw Error("cannot read the size of " + path_to_utf8(p) + ": " + ec.message());
+  std::string text(size_t(size), '\0');
   in.read(text.data(), std::streamsize(text.size()));
-  text.resize(size_t(in.gcount()));
-  char buf[1 << 16];
-  while (in && (in.read(buf, sizeof buf) || in.gcount() > 0)) text.append(buf, size_t(in.gcount()));
+  if (size_t(in.gcount()) != text.size())
+    throw Error("read " + std::to_string(in.gcount()) + " of " + std::to_string(size) + " bytes of " + path_to_utf8(p) + ": it changed while it was read");
+  if (in.peek() != std::ifstream::traits_type::eof()) throw Error(path_to_utf8(p) + " grew while it was read");
   return text;
 }
 

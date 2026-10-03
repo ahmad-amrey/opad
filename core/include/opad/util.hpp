@@ -34,6 +34,8 @@ void configure_kernel_logging(bool verbose = false);
 // A path given as UTF-8 text (JSON, the command line): std::filesystem reads a narrow string in the ANSI code page on
 // Windows, which garbled any name outside it (Arabic, Chinese).
 std::filesystem::path path_from_utf8(std::string_view utf8);
+std::string path_to_utf8(const std::filesystem::path& p);  // as given (separators kept), for JSON and messages
+// The whole file, read at its size: a short read, or a file that grows meanwhile, throws (never a cut text).
 std::string read_text_file(const std::filesystem::path& p);
 void write_text_file(const std::filesystem::path& p, std::string_view text);
 
