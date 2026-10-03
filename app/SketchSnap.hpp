@@ -3,7 +3,12 @@
 // the pointer: a crossing (two guides, a guide and the angle ray, or either of them and a curve) > a grid node > one
 // guide > the angle ray > a curve > the grid. With grid snapping on, a guide is quantised along itself: an axis guide
 // to the grid lines it crosses, any other (an extension, the angle ray, the Shift lock) by whole steps from its anchor.
+// Cross-locking (UI-19): points acquired by resting the pointer on them (track) each add their guides, so two of them
+// cross at (A.x, B.y); Shift locks the pointer onto one guide, and along it (along) it stops where another guide, the
+// angle ray or a curve crosses it, else at whole grid steps.
 // No Qt and no sketch here: tests/test_sketch_snap.cpp.
+#include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <vector>
 
@@ -173,6 +178,49 @@ inline Pick resolve(double u, double v, double t, double step, const std::vector
     p.u = onGrid(u, step);
     p.v = onGrid(v, step);
   }
+  return p;
+}
+
+// The tracking points, oldest first: resting on a point acquires it, at most `most` of them (the oldest goes first);
+// resting on a tracked one lets it go. Returns whether `id` is tracked now.
+inline bool track(std::vector<int>& tracked, int id, std::size_t most = 6) {
+  if (const auto it = std::find(tracked.begin(), tracked.end(), id); it != tracked.end()) {
+    tracked.erase(it);
+    return false;
+  }
+  tracked.push_back(id);
+  if (tracked.size() > most) tracked.erase(tracked.begin(), tracked.end() - std::ptrdiff_t(most));
+  return true;
+}
+
+// The pointer locked onto `lock`: its foot on the line, pulled within t along it to where another guide (not one of
+// the lock's own point) or a curve crosses the line, the nearest; else whole grid steps along it (project), else the
+// foot. Cross: `other` the guide crossing it or `curve` the curve; Guide: on the lock alone (guide stays -1).
+inline Pick along(const Guide& lock, double u, double v, double t, double step, const std::vector<Guide>& guides, const std::vector<Curve>& curves) {
+  Pick p;
+  project(lock, u, v, 0, p.u, p.v);
+  const double fu = p.u, fv = p.v;
+  double best = t;
+  auto cross = [&](double x, double y, int guide, int curve) {
+    if (const double d = std::hypot(x - fu, y - fv); d < best) {
+      best = d;
+      p = {Pick::By::Cross, x, y, -1, guide, curve};
+    }
+  };
+  for (int i = 0; i < int(guides.size()); ++i) {
+    const Guide& g = guides[size_t(i)];
+    const double den = lock.dx * g.dy - lock.dy * g.dx;
+    if (g.anchor == lock.anchor || std::abs(den) < 0.1) continue;
+    const double k = ((g.x - lock.x) * g.dy - (g.y - lock.y) * g.dx) / den;
+    cross(lock.x + k * lock.dx, lock.y + k * lock.dy, i, -1);
+  }
+  for (int c = 0; c < int(curves.size()); ++c) {
+    double x[2], y[2];
+    for (int n = meet(lock, curves[size_t(c)], x, y), m = 0; m < n; ++m) cross(x[m], y[m], -1, c);
+  }
+  if (p.by == Pick::By::Cross) return p;
+  p.by = Pick::By::Guide;
+  project(lock, u, v, step, p.u, p.v);
   return p;
 }
 }  // namespace sketchsnap

@@ -19,7 +19,9 @@
 #include "GuidedTool.hpp"
 #include "InputKeys.hpp"
 #include "SketchKeys.hpp"
+#include "SketchSnap.hpp"
 #include "opad/design/sketch.hpp"
+#include <QElapsedTimer>
 
 class JobRunner;
 class Job;
@@ -101,6 +103,7 @@ class SketchEditor : public QObject, public SketchInput {
   void benchLadder();
   void benchKeys();
   void benchShapes();
+  void benchCrossLock();
   void benchLarge(const QString& output, opad::json metrics);
 
   // SketchInput
@@ -142,8 +145,10 @@ class SketchEditor : public QObject, public SketchInput {
     bool grid = false;  // on a grid node, or whole grid steps along the inference
     // What the pointer was pulled to, for the display: that object is highlighted and named beside the cursor.
     enum class Kind { None, Point, Midpoint, Quadrant, Intersection, Curve, Extension, Aligned, Cross, Angle, Locked, Grid, Typed } kind = Kind::None;
-    int target = 0, other = 0;  // the point (Point, Aligned, Angle), the crossing guides' points (Cross) or the curves (the others)
-    int curve = 0;  // Cross: the curve a guide crosses there
+    int target = 0, other = 0;  // the point (Point, Aligned, Angle), the crossing guides' points (Cross, Locked) or the curves (the others)
+    int curve = 0;  // Cross, Locked: the curve a guide crosses there
+    sketchsnap::Guide line;  // the guide or angle ray it lies on (onLine): what Shift locks onto
+    bool onLine = false;
     std::map<QString, std::pair<double, QString>> typed;  // the values typed for this click (mm, radians; as typed)
   };
   struct Hit {
@@ -303,9 +308,22 @@ class SketchEditor : public QObject, public SketchInput {
   QString m_entryStep;
   bool m_angleRelative = false;  // setting sketch/input/angleRelative: a polyline's typed angles from its last segment
   bool m_circleRadius = false;   // setting sketch/input/circleRadius: a circle's box takes its radius, not its diameter
-  int m_trackingPoint = 0;
-  bool m_inferenceLocked = false;
-  double m_lockX = 0, m_lockY = 0, m_lockDx = 1, m_lockDy = 0;
+  // Cross-locking (UI-19): points acquired by resting on them (oldest first, at most 6) add their guides; Shift locks the
+  // pointer onto the guide it is on (or the way from the last point to it) while held, a tap until a click or Esc.
+  std::vector<int> m_tracked;
+  int m_dwellPoint = 0;  // the point the pointer rests on
+  QTimer m_dwellTimer;
+  struct Lock { sketchsnap::Guide line; bool horizontal = false, vertical = false, sticky = false; };
+  std::optional<Lock> m_lock;
+  bool m_shiftDown = false, m_shiftUsed = false, m_shiftSpent = false, m_unstick = false, m_inView = false;
+  QElapsedTimer m_shiftClock;
+  double m_lastU = 0, m_lastV = 0;
+  Qt::KeyboardModifiers m_lastMods;
+  bool placing() const;  // the tool places points: snapping, tracking and the lock apply
+  bool lockOn();         // locks onto what the pointer is on now; false: nothing to lock onto
+  void unlock();
+  void shiftKey(bool pressed);
+  void resnap();         // the pointer's snap again where it is (a point acquired, a lock taken or let go)
   // dragging with the select tool
   bool m_dragging = false, m_dragMoved = false;
   bool m_dragPending=false,m_dragReleased=false;double m_dragNextU=0,m_dragNextV=0;

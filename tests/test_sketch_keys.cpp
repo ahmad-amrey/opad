@@ -135,4 +135,22 @@ TEST(typed_values_come_first) {
   CHECK(escape(b) == Esc::CancelBox);
 }
 
+TEST(a_lock_left_on_by_a_shift_tap_is_the_next_esc) {
+  // UI-19: Esc lets go of the line and the chain goes on; typed values still go first; Enter and Backspace are as they were.
+  State s = tool("line");
+  s.chain = 2;
+  s.locked = true;
+  CHECK(escape(s) == Esc::Unlock);
+  CHECK(enter(s) == Enter::EndChain && backspace(s) == Back::UndoPoint);
+  s.typed = true;
+  CHECK(escape(s) == Esc::DropTyped);
+  s.typed = s.locked = false;
+  CHECK(escape(s) == Esc::EndChain);
+  State r = tool("rect");  // before the first corner too: then the tool closes
+  r.locked = true;
+  CHECK(escape(r) == Esc::Unlock);
+  r.locked = false;
+  CHECK(escape(r) == Esc::CloseTool);
+}
+
 CHECK_MAIN()

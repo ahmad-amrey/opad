@@ -8,6 +8,7 @@
 //     tool, then clears the selection. The same from the view, the tool panel and the main window.
 //   Values typed into the tool's boxes (UI-16) come first: Enter uses them, Esc drops them. With nothing typed, Enter
 //     applies a tool whose curves are picked (an offset, a move, a pattern), as its Apply button does.
+//   A lock that a Shift tap left on (UI-19) is the next Esc's: it lets go of the line, the step goes on.
 // No Qt and no sketch here: tests/test_sketch_keys.cpp.
 #include <cstddef>
 #include <string>
@@ -24,10 +25,11 @@ struct State {
   bool selection = false;
   bool typed = false;    // values typed into the tool's boxes and not used yet
   bool applies = false;  // the tool's Apply would act now: an offset, move, rotate, scale or pattern with its curves picked
+  bool locked = false;   // the pointer is locked onto a guide by a Shift tap (until a click or Esc)
 };
 enum class Back { None, UndoPoint, UndoPick, Delete };
 enum class Enter { None, UseTyped, EndChain, PickMirrorLine, Apply };
-enum class Esc { None, CancelBox, DropTyped, BackToCurves, EndChain, CancelStep, CloseTool, ClearSelection };
+enum class Esc { None, CancelBox, DropTyped, Unlock, BackToCurves, EndChain, CancelStep, CloseTool, ClearSelection };
 
 // Tools that draw a chain until Enter: Enter is their Done button.
 inline bool chainTool(const std::string& tool) { return tool == "line" || tool == "spline" || tool == "control_spline"; }
@@ -51,6 +53,7 @@ inline Enter enter(const State& s) {
 inline Esc escape(const State& s) {
   if (s.boxSelecting) return Esc::CancelBox;
   if (s.typed) return Esc::DropTyped;
+  if (s.locked) return Esc::Unlock;
   if (s.tool == "mirror" && s.mirrorAxis && !s.picks) return Esc::BackToCurves;
   if (inChain(s)) return Esc::EndChain;
   if (s.clicks || s.picks) return Esc::CancelStep;

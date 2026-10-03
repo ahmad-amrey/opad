@@ -162,6 +162,15 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
       m_dimEdit->move(at.x()-m_dimEdit->width()/2,at.y()-m_dimEdit->height()/2);
     }
   });
+  // Resting on a point acquires it as a tracking point (or lets it go); passing over it does not.
+  m_dwellTimer.setSingleShot(true);
+  m_dwellTimer.setInterval(350);
+  connect(&m_dwellTimer, &QTimer::timeout, this, [this] {
+    if (!m_active || !m_dwellPoint || m_hover.kind != Hit::Point || m_hover.id != m_dwellPoint) return;
+    if (!QSettings().value("view/tracking", true).toBool() && !QSettings().value("view/extensions", true).toBool()) return;  // F12 off: nothing uses them
+    sketchsnap::track(m_tracked, m_dwellPoint);
+    resnap();
+  });
   m_fillTimer.setSingleShot(true);
   m_fillTimer.setInterval(150);
   connect(&m_fillTimer, &QTimer::timeout, this, [this] {
@@ -215,7 +224,7 @@ void SketchEditor::setVisible(bool visible) {
 void SketchEditor::begin(const std::string& sketchId, const QString& name, const opad::json& plane, const opad::Frame& frame, const opad::json& geometry) {
   ++m_geometryRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   ++m_session;m_toolPreview.reset();m_previewRequested=false;
-  m_trackingPoint = 0; m_inferenceLocked = false;m_typedValues.clear();m_entry.reset();m_pointer=m_cursor={};m_angleRelative=QSettings().value("sketch/input/angleRelative",false).toBool();m_circleRadius=QSettings().value("sketch/input/circleRadius",false).toBool();m_dragging=false;m_dragMoved=false;m_dragPending=false;m_dragReleased=false;m_inChange=false;m_options.clear();m_conflicts.clear();
+  m_tracked.clear();m_dwellPoint=0;m_lock.reset();m_shiftDown=m_shiftSpent=m_inView=false;m_typedValues.clear();m_entry.reset();m_pointer=m_cursor={};m_angleRelative=QSettings().value("sketch/input/angleRelative",false).toBool();m_circleRadius=QSettings().value("sketch/input/circleRadius",false).toBool();m_dragging=false;m_dragMoved=false;m_dragPending=false;m_dragReleased=false;m_inChange=false;m_options.clear();m_conflicts.clear();
   m_id = sketchId;
   m_name = name;
   m_plane = plane;
@@ -252,7 +261,7 @@ void SketchEditor::begin(const std::string& sketchId, const QString& name, const
 
 void SketchEditor::end() {
   if (!m_active) return;
-  m_toolPreviewTimer.stop();m_dimensionHandle->hide();forgetTyped();m_input->setFields({});m_input->hide();
+  m_toolPreviewTimer.stop();m_dwellTimer.stop();m_dimensionHandle->hide();forgetTyped();m_input->setFields({});m_input->hide();
   m_viewport->removeOverlay(m_toolPreviewOverlay);m_toolPreviewOverlay.Nullify();
   ++m_geometryRevision;++m_fillRevision;if(m_geometryJob)m_geometryJob->cancel();m_geometryJob=nullptr;m_geometry.reset();
   m_viewport->setEdgeHover(false);
@@ -457,60 +466,62 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   s.v = v;
   if(!infer || !m_geometry || m_geometryJob)return s; // Alt suppresses inference, automatic coincidence and the grid
   const double t = tol(), step = m_viewport->gridSnap() ? m_viewport->gridStep() : 0;
-  const auto localCandidates=m_geometry->query(u-t*1.1,v-t*1.1,u+t*1.1,v+t*1.1);
+  // Locked (Shift, UI-19): the pointer's foot on the locked line stands in for it, and no object snap applies.
+  double pu = u, pv = v;
+  if (m_lock) sketchsnap::project(m_lock->line, u, v, 0, pu, pv);
+  const auto localCandidates=m_geometry->query(pu-t*1.1,pv-t*1.1,pu+t*1.1,pv+t*1.1);
   auto enabled=[](const char* name){return QSettings().value(QString("sketch/snap/")+name,true).toBool();};
   const bool automatic=enabled("inference");
   const bool extensions=QSettings().value("view/extensions",true).toBool(), tracking=QSettings().value("view/tracking",true).toBool();
-  if (m_inferenceLocked) {
-    sketchsnap::project({m_lockX,m_lockY,m_lockDx,m_lockDy},u,v,step,s.u,s.v);
-    s.grid=step>0; s.kind=Snap::Kind::Locked; return s;
-  }
 
-  double best = t;
-  std::set<int> centers;
-  for(const auto& e:m_sk.entities)if(e.type==SkEntity::Type::Circle || e.type==SkEntity::Type::Arc || e.type==SkEntity::Type::Ellipse)centers.insert(e.p[0]);
-  for (size_t index : localCandidates.points) {
-    const auto& p=m_sk.points[index];
-    if(!(centers.count(p.id)?enabled("center"):enabled("endpoint")))continue;
-    if (!m_chain.empty() && p.id == m_chain.back()) continue;  // not onto the point the segment starts at
-    const double d = std::hypot(p.x - u, p.y - v);
-    if (d < best) { best = d; s.point = p.id; s.u = p.x; s.v = p.y; s.kind = Snap::Kind::Point; s.target = p.id; }
-  }
-  if (s.point) return s;
-  auto candidate=[&](double x,double y,Snap::Kind kind,int a,int b){double d=std::hypot(x-u,y-v);if(d<best){best=d;s.u=x;s.v=y;s.kind=kind;s.target=a;s.other=b;}};
-  std::vector<const SkEntity*> nearby;
-  for(size_t index:localCandidates.entities) {
-    const auto& e=m_sk.entities[index];
-    if(e.type==SkEntity::Type::Line) {
-      const auto *a=m_sk.point(e.p[0]),*b=m_sk.point(e.p[1]);
-      if(enabled("midpoint"))candidate((a->x+b->x)/2,(a->y+b->y)/2,Snap::Kind::Midpoint,e.id,0);
-      if(enabled("intersection") && distanceTo(e,u,v)<t)nearby.push_back(&e);
-    } else if(e.type==SkEntity::Type::Circle || e.type==SkEntity::Type::Arc) {
-      const auto* c=m_sk.point(e.p[0]);
-      const double r=e.type==SkEntity::Type::Circle?e.r:std::hypot(m_sk.point(e.p[1])->x-c->x,m_sk.point(e.p[1])->y-c->y);
-      if(enabled("quadrant"))for(int q=0;q<4;++q) {
-        const double x=c->x+r*std::cos(q*M_PI/2),y=c->y+r*std::sin(q*M_PI/2);
-        if(distanceTo(e,x,y)<t)candidate(x,y,Snap::Kind::Quadrant,e.id,0);
+  if (!m_lock) {
+    double best = t;
+    std::set<int> centers;
+    for(const auto& e:m_sk.entities)if(e.type==SkEntity::Type::Circle || e.type==SkEntity::Type::Arc || e.type==SkEntity::Type::Ellipse)centers.insert(e.p[0]);
+    for (size_t index : localCandidates.points) {
+      const auto& p=m_sk.points[index];
+      if(!(centers.count(p.id)?enabled("center"):enabled("endpoint")))continue;
+      if (!m_chain.empty() && p.id == m_chain.back()) continue;  // not onto the point the segment starts at
+      const double d = std::hypot(p.x - u, p.y - v);
+      if (d < best) { best = d; s.point = p.id; s.u = p.x; s.v = p.y; s.kind = Snap::Kind::Point; s.target = p.id; }
+    }
+    if (s.point) return s;
+    auto candidate=[&](double x,double y,Snap::Kind kind,int a,int b){double d=std::hypot(x-u,y-v);if(d<best){best=d;s.u=x;s.v=y;s.kind=kind;s.target=a;s.other=b;}};
+    std::vector<const SkEntity*> nearby;
+    for(size_t index:localCandidates.entities) {
+      const auto& e=m_sk.entities[index];
+      if(e.type==SkEntity::Type::Line) {
+        const auto *a=m_sk.point(e.p[0]),*b=m_sk.point(e.p[1]);
+        if(enabled("midpoint"))candidate((a->x+b->x)/2,(a->y+b->y)/2,Snap::Kind::Midpoint,e.id,0);
+        if(enabled("intersection") && distanceTo(e,u,v)<t)nearby.push_back(&e);
+      } else if(e.type==SkEntity::Type::Circle || e.type==SkEntity::Type::Arc) {
+        const auto* c=m_sk.point(e.p[0]);
+        const double r=e.type==SkEntity::Type::Circle?e.r:std::hypot(m_sk.point(e.p[1])->x-c->x,m_sk.point(e.p[1])->y-c->y);
+        if(enabled("quadrant"))for(int q=0;q<4;++q) {
+          const double x=c->x+r*std::cos(q*M_PI/2),y=c->y+r*std::sin(q*M_PI/2);
+          if(distanceTo(e,x,y)<t)candidate(x,y,Snap::Kind::Quadrant,e.id,0);
+        }
+        if(enabled("intersection") && distanceTo(e,u,v)<t)nearby.push_back(&e);
       }
-      if(enabled("intersection") && distanceTo(e,u,v)<t)nearby.push_back(&e);
     }
-  }
-  for(size_t i=0;i<nearby.size();++i)for(size_t j=i+1;j<nearby.size();++j) {
-    // Local display polylines use the same quarter-pixel tolerance as picking; intersections snap to it.
-    const auto a=sampled(*nearby[i]),b=sampled(*nearby[j]);
-    for(size_t k=1;k<a.size();++k)for(size_t l=1;l<b.size();++l) {
-      const double ax=a[k-1].first,ay=a[k-1].second,dx=a[k].first-ax,dy=a[k].second-ay;
-      const double bx=b[l-1].first,by=b[l-1].second,ex=b[l].first-bx,ey=b[l].second-by,den=dx*ey-dy*ex;
-      if(std::fabs(den)<1e-15)continue;
-      const double ta=((bx-ax)*ey-(by-ay)*ex)/den,tb=((bx-ax)*dy-(by-ay)*dx)/den;
-      if(ta>=0 && ta<=1 && tb>=0 && tb<=1)candidate(ax+ta*dx,ay+ta*dy,Snap::Kind::Intersection,nearby[i]->id,nearby[j]->id);
+    for(size_t i=0;i<nearby.size();++i)for(size_t j=i+1;j<nearby.size();++j) {
+      // Local display polylines use the same quarter-pixel tolerance as picking; intersections snap to it.
+      const auto a=sampled(*nearby[i]),b=sampled(*nearby[j]);
+      for(size_t k=1;k<a.size();++k)for(size_t l=1;l<b.size();++l) {
+        const double ax=a[k-1].first,ay=a[k-1].second,dx=a[k].first-ax,dy=a[k].second-ay;
+        const double bx=b[l-1].first,by=b[l-1].second,ex=b[l].first-bx,ey=b[l].second-by,den=dx*ey-dy*ex;
+        if(std::fabs(den)<1e-15)continue;
+        const double ta=((bx-ax)*ey-(by-ay)*ex)/den,tb=((bx-ax)*dy-(by-ay)*dx)/den;
+        if(ta>=0 && ta<=1 && tb>=0 && tb<=1)candidate(ax+ta*dx,ay+ta*dy,Snap::Kind::Intersection,nearby[i]->id,nearby[j]->id);
+      }
     }
+    if(s.kind!=Snap::Kind::None)return s;
   }
-  if(s.kind!=Snap::Kind::None)return s;
 
   // Below the object snaps (sketchsnap::resolve): a crossing (of guides, the angle ray and curves), a grid node, one
   // guide, the angle ray, a curve, the grid. Guides: horizontal and vertical from the line's last point (constraints
-  // when automatic), the same from the tracked point, and the tracked point's lines extended past their ends.
+  // when automatic), the same from each tracked point (two of them cross at (A.x, B.y)), and the lines through a
+  // tracked point extended past their ends. Locked, they are what stops the pointer along the locked line.
   struct Meaning { Snap::Kind kind; int target; bool horizontal, vertical; };
   std::vector<sketchsnap::Guide> guides;
   std::vector<Meaning> meaning;
@@ -518,32 +529,33 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
   const SkPoint* from=m_tool=="line" && !m_chain.empty()?m_sk.point(m_chain.back()):nullptr;
   if(from && tracking) {
     const auto kind=automatic?Snap::Kind::None:Snap::Kind::Aligned;
-    if(std::fabs(u-from->x)>3*t)guide({from->x,from->y,1,0,from->id},{kind,from->id,automatic,false});
-    if(std::fabs(v-from->y)>3*t)guide({from->x,from->y,0,1,from->id},{kind,from->id,false,automatic});
+    if(std::fabs(pu-from->x)>3*t)guide({from->x,from->y,1,0,from->id},{kind,from->id,automatic,false});
+    if(std::fabs(pv-from->y)>3*t)guide({from->x,from->y,0,1,from->id},{kind,from->id,false,automatic});
   }
-  const SkPoint* tracked=m_sk.point(m_trackingPoint);
-  if(tracked && tracking && tracked!=from) {
-    guide({tracked->x,tracked->y,1,0,tracked->id},{Snap::Kind::Aligned,tracked->id,false,false});
-    guide({tracked->x,tracked->y,0,1,tracked->id},{Snap::Kind::Aligned,tracked->id,false,false});
+  if(tracking)for(int id:m_tracked)if(const SkPoint* p=m_sk.point(id);p && p!=from) {
+    guide({p->x,p->y,1,0,p->id},{Snap::Kind::Aligned,p->id,false,false});
+    guide({p->x,p->y,0,1,p->id},{Snap::Kind::Aligned,p->id,false,false});
   }
   // A tracked line's extension can be outside its finite bounding box.
-  if(tracked && extensions)for(const auto& e:m_sk.entities) {
-    if(e.type!=SkEntity::Type::Line || e.p.size()!=2 || (e.p[0]!=tracked->id && e.p[1]!=tracked->id))continue;
-    const auto *a=m_sk.point(e.p[0]),*b=m_sk.point(e.p[1]);
-    if(!a || !b)continue;
+  auto isTracked=[&](int id){return std::find(m_tracked.begin(),m_tracked.end(),id)!=m_tracked.end();};
+  if(!m_tracked.empty() && extensions)for(const auto& e:m_sk.entities) {
+    if(e.type!=SkEntity::Type::Line || e.p.size()!=2)continue;
+    const int end=isTracked(e.p[0])?e.p[0]:isTracked(e.p[1])?e.p[1]:0;
+    const auto *a=m_sk.point(e.p[0]),*b=m_sk.point(e.p[1]),*p=end?m_sk.point(end):nullptr;
+    if(!a || !b || !p)continue;
     const double dx=b->x-a->x,dy=b->y-a->y,len=std::hypot(dx,dy);
     if(len<1e-9)continue;
-    const double k=((u-a->x)*dx+(v-a->y)*dy)/(len*len);
-    if(k<0 || k>1)guide({tracked->x,tracked->y,dx/len,dy/len,tracked->id},{Snap::Kind::Extension,e.id,false,false});
+    const double k=((pu-a->x)*dx+(pv-a->y)*dy)/(len*len);
+    if(k<0 || k>1)guide({p->x,p->y,dx/len,dy/len,p->id},{Snap::Kind::Extension,e.id,false,false});
   }
   sketchsnap::Guide ray{0,0,1,0,from?from->id:0};
-  const bool angled=from && enabled("angle") && sketchsnap::angleRay(from->x,from->y,u,v,QSettings().value("sketch/angleStep",15).toDouble()*M_PI/180,t,ray);
+  const bool angled=from && enabled("angle") && sketchsnap::angleRay(from->x,from->y,pu,pv,QSettings().value("sketch/angleStep",15).toDouble()*M_PI/180,t,ray);
   // The lines, circles and arcs under the pointer: it lands on the nearest, or where a guide crosses one.
   std::vector<sketchsnap::Curve> curves;
   std::vector<int> curveIds;
   if(enabled("nearest"))for(size_t index:localCandidates.entities) {
     const auto& e=m_sk.entities[index];
-    if((e.type!=SkEntity::Type::Line && e.type!=SkEntity::Type::Circle && e.type!=SkEntity::Type::Arc) || distanceTo(e,u,v)>=t)continue;
+    if((e.type!=SkEntity::Type::Line && e.type!=SkEntity::Type::Circle && e.type!=SkEntity::Type::Arc) || distanceTo(e,pu,pv)>=t)continue;
     const SkPoint *a=m_sk.point(e.p[0]),*b=e.p.size()>1?m_sk.point(e.p[1]):nullptr,*end=e.p.size()>2?m_sk.point(e.p[2]):nullptr;
     sketchsnap::Curve c;
     if(!a || (e.type==SkEntity::Type::Line && !b) || (e.type==SkEntity::Type::Arc && !end))continue;
@@ -554,33 +566,44 @@ SketchEditor::Snap SketchEditor::snap(double u, double v, bool infer) const {
     curves.push_back(c);curveIds.push_back(e.id);
   }
   using By=sketchsnap::Pick::By;
-  const auto pick=sketchsnap::resolve(u,v,t,step,guides,angled?&ray:nullptr,curves);
-  s.u=pick.u;s.v=pick.v;
-  s.grid=step>0 && (pick.by==By::Node || pick.by==By::Guide || pick.by==By::Ray || pick.by==By::Grid);
-  auto follow=[&](int i){  // what a guide adds: its constraint, or the guide to draw
-    const auto& m=meaning[size_t(i)];
-    s.horizontal|=m.horizontal;s.vertical|=m.vertical;
-    if(m.kind!=Snap::Kind::None){s.kind=m.kind;s.target=m.target;}
-  };
-  switch(pick.by) {
-    case By::Cross:  // two of the guides and the ray, or one of them and a curve (which the point then lies on)
-      if(pick.guide>=0)follow(pick.guide);
-      if(pick.other>=0)follow(pick.other);
-      s.kind=Snap::Kind::Cross;
-      s.target=pick.guide>=0?guides[size_t(pick.guide)].anchor:from->id;
-      s.other=pick.other>=0?guides[size_t(pick.other)].anchor:pick.ray && pick.guide>=0?from->id:0;
-      if(pick.curve>=0){s.curve=curveIds[size_t(pick.curve)];s.entity=automatic?s.curve:0;}
-      break;
-    case By::Node:  // a guide or the angle ray through the node names it
-      s.kind=Snap::Kind::Grid;
-      if(pick.guide>=0)follow(pick.guide);
-      else if(pick.ray){s.kind=Snap::Kind::Angle;s.target=from->id;}
-      break;
-    case By::Guide: follow(pick.guide);break;
-    case By::Ray: s.kind=Snap::Kind::Angle;s.target=from->id;break;
-    case By::Curve: s.target=curveIds[size_t(pick.curve)];s.entity=automatic?s.target:0;s.kind=Snap::Kind::Curve;break;
-    case By::Grid: s.kind=Snap::Kind::Grid;break;
-    case By::Pointer: break;
+  if(m_lock) {  // along the locked line: where another guide, the angle ray or a curve crosses it, else whole grid steps
+    if(angled)guide(ray,{Snap::Kind::Angle,from->id,false,false});
+    const auto pick=sketchsnap::along(m_lock->line,u,v,t,step,guides,curves);
+    s.u=pick.u;s.v=pick.v;s.kind=Snap::Kind::Locked;s.target=m_lock->line.anchor;s.line=m_lock->line;s.onLine=true;
+    s.horizontal=m_lock->horizontal;s.vertical=m_lock->vertical;s.grid=step>0 && pick.by==By::Guide;
+    if(pick.other>=0){const auto& m=meaning[size_t(pick.other)];s.horizontal|=m.horizontal;s.vertical|=m.vertical;s.other=guides[size_t(pick.other)].anchor;}
+    if(pick.curve>=0){s.curve=curveIds[size_t(pick.curve)];s.entity=automatic?s.curve:0;}
+    s.point=pointAt(s.u,s.v);  // a point already there (one the locked line runs through): that one
+  } else {
+    const auto pick=sketchsnap::resolve(u,v,t,step,guides,angled?&ray:nullptr,curves);
+    s.u=pick.u;s.v=pick.v;
+    s.grid=step>0 && (pick.by==By::Node || pick.by==By::Guide || pick.by==By::Ray || pick.by==By::Grid);
+    auto follow=[&](int i){  // what a guide adds: its constraint, or the guide to draw; and the line Shift locks onto
+      const auto& m=meaning[size_t(i)];
+      s.horizontal|=m.horizontal;s.vertical|=m.vertical;
+      if(m.kind!=Snap::Kind::None){s.kind=m.kind;s.target=m.target;}
+      s.line=guides[size_t(i)];s.onLine=true;
+    };
+    switch(pick.by) {
+      case By::Cross:  // two of the guides and the ray, or one of them and a curve (which the point then lies on)
+        if(pick.guide>=0)follow(pick.guide);
+        if(pick.other>=0)follow(pick.other);
+        s.kind=Snap::Kind::Cross;s.onLine=false;
+        s.target=pick.guide>=0?guides[size_t(pick.guide)].anchor:from->id;
+        s.other=pick.other>=0?guides[size_t(pick.other)].anchor:pick.ray && pick.guide>=0?from->id:0;
+        if(pick.curve>=0){s.curve=curveIds[size_t(pick.curve)];s.entity=automatic?s.curve:0;}
+        break;
+      case By::Node:  // a guide or the angle ray through the node names it
+        s.kind=Snap::Kind::Grid;
+        if(pick.guide>=0)follow(pick.guide);
+        else if(pick.ray){s.kind=Snap::Kind::Angle;s.target=from->id;s.line=ray;s.onLine=true;}
+        break;
+      case By::Guide: follow(pick.guide);break;
+      case By::Ray: s.kind=Snap::Kind::Angle;s.target=from->id;s.line=ray;s.onLine=true;break;
+      case By::Curve: s.target=curveIds[size_t(pick.curve)];s.entity=automatic?s.target:0;s.kind=Snap::Kind::Curve;break;
+      case By::Grid: s.kind=Snap::Kind::Grid;break;
+      case By::Pointer: break;
+    }
   }
   if((s.horizontal || s.vertical) && s.kind==Snap::Kind::Grid)s.kind=Snap::Kind::None;  // the inference names it; the grid ring stays
   // Quantised back onto the line's last point: that point again, which the click ignores (no zero-length line).
@@ -641,6 +664,8 @@ void SketchEditor::sketchPress(double u, double v, Qt::KeyboardModifiers mods) {
     return;
   }
   const Snap s = snap(u, v, !mods.testFlag(Qt::AltModifier));
+  m_shiftUsed = true;  // Shift with a click is no tap
+  if (m_lock) m_shiftSpent = mods.testFlag(Qt::ShiftModifier) || m_shiftDown;  // the lock was this click's: Shift again for the next
   if (pointTyped()) { useTyped(&s); return; }  // the typed values win
   click(s, mods);
 }
@@ -716,15 +741,12 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
   }
   const Hit h = hitTest(u, v);
   const bool shift=mods.testFlag(Qt::ShiftModifier);
-  if(!shift) m_inferenceLocked=false;
-  if(h.kind==Hit::Point && !shift) m_trackingPoint=h.id;
-  if(shift && !m_inferenceLocked && m_haveCursor && m_tool!="select") {
-    const auto* base=m_sk.point(!m_chain.empty()?m_chain.back():m_trackingPoint);
-    if(base) {
-      const double dx=m_cursor.u-base->x,dy=m_cursor.v-base->y,len=std::hypot(dx,dy);
-      if(len>1e-9) { m_lockX=base->x;m_lockY=base->y;m_lockDx=dx/len;m_lockDy=dy/len;m_inferenceLocked=true; }
-    }
-  }
+  m_lastU=u;m_lastV=v;m_lastMods=mods;m_inView=true;
+  if(!shift){m_shiftDown=m_shiftSpent=false;if(m_lock && !m_lock->sticky)unlock();}  // Shift let go where its key release was not seen
+  else if(!m_lock && !m_shiftSpent)lockOn();
+  // Resting on a point acquires it (UI-19), also while the lock keeps the pointer's snap on its line.
+  if(placing() && h.kind==Hit::Point){if(h.id!=m_dwellPoint){m_dwellPoint=h.id;m_dwellTimer.start();}}
+  else{m_dwellPoint=0;m_dwellTimer.stop();}
   const Snap s = m_tool=="select"?Snap{u,v}:snap(u, v, !mods.testFlag(Qt::AltModifier));
   const bool redraw = h.kind != m_hover.kind || h.id != m_hover.id || m_tool != "select" || m_placingDim;
   const bool dimensionHover=h.kind==Hit::Dimension||m_hover.kind==Hit::Dimension;
@@ -739,10 +761,75 @@ void SketchEditor::sketchMove(double u, double v, Qt::KeyboardModifiers mods, bo
 
 // Off the view: no point or curve is under the pointer any more (a tool's rubber band keeps its last place).
 void SketchEditor::sketchLeave() {
+  m_inView = false;
+  m_dwellPoint = 0;
+  m_dwellTimer.stop();
   if (!m_active || m_hover.kind == Hit::None) return;
   const bool dimension = m_hover.kind == Hit::Dimension;
   m_hover = Hit{};
   if (dimension) rebuild();
+  else updateTransient();
+}
+
+bool SketchEditor::placing() const {
+  // Snapping only means something to tools that place points; trim, offset, constraints and the like pick curves.
+  static const QStringList tools = {"line", "rect", "crect", "circle", "circle2", "circle3", "arc3", "arcc", "polygon", "polygon_outer", "slot", "cslot", "arcslot",
+                                    "ellipse", "spline", "control_spline", "point", "text", "conic", "rect3", "image_insert", "image_calibrate"};
+  return tools.contains(m_tool);
+}
+
+// Shift locks the pointer onto the guide or angle ray it is on; off them, onto the way to it from the last point (of the
+// polyline, or the shape's last click), else from the newest tracked point.
+bool SketchEditor::lockOn() {
+  if (m_lock || !m_haveCursor || !placing()) return false;
+  Lock lock;
+  if (m_pointer.onLine) {
+    lock.line = m_pointer.line;
+    lock.horizontal = m_pointer.horizontal;
+    lock.vertical = m_pointer.vertical;
+  } else {
+    const SkPoint* p = m_sk.point(!m_chain.empty() ? m_chain.back() : !m_clicks.empty() ? m_clicks.back().point : m_tracked.empty() ? 0 : m_tracked.back());
+    if (!p && m_clicks.empty()) return false;
+    const double x = p ? p->x : m_clicks.back().u, y = p ? p->y : m_clicks.back().v, dx = m_pointer.u - x, dy = m_pointer.v - y, len = std::hypot(dx, dy);
+    if (!(len > 1e-9)) return false;
+    lock.line = {x, y, dx / len, dy / len, p ? p->id : 0};
+  }
+  m_lock = lock;
+  return true;
+}
+
+void SketchEditor::unlock() {
+  if (!m_lock) return;
+  const bool sticky = m_lock->sticky;
+  m_lock.reset();
+  if (sticky) emit changed();  // the prompt no longer offers Esc for it
+}
+
+// Shift (UI-19): pressed, it locks; let go at once (a tap) the lock stays until a click or Esc, held it lasts while Shift
+// is down. A tap on a lock that stays lets it go. Shift with another key or a click is no tap.
+void SketchEditor::shiftKey(bool pressed) {
+  if (!m_active || pressed == m_shiftDown) return;
+  m_shiftDown = pressed;
+  m_lastMods.setFlag(Qt::ShiftModifier, pressed);
+  if (pressed) {
+    m_shiftClock.start();
+    m_shiftUsed = false;
+    m_unstick = m_lock && m_lock->sticky;
+    if (!m_lock && m_inView && !m_shiftSpent) lockOn();
+  } else {
+    const bool tap = !m_shiftUsed && m_shiftClock.isValid() && m_shiftClock.elapsed() < 300;
+    m_shiftSpent = false;
+    if (m_lock && (m_lock->sticky ? m_unstick && tap : !tap)) unlock();
+    else if (m_lock && tap && !m_lock->sticky) {
+      m_lock->sticky = true;
+      emit changed();  // the prompt offers Esc to let go
+    }
+  }
+  resnap();
+}
+
+void SketchEditor::resnap() {
+  if (m_active && m_inView && m_haveCursor && !m_dragging && !m_boxSelecting && m_tool != "select") sketchMove(m_lastU, m_lastV, m_lastMods, false);
   else updateTransient();
 }
 
@@ -1293,10 +1380,7 @@ void SketchEditor::updateTransient() {
           d.thin.push_back({W(x + 2.5 * px * std::cos(i * M_PI / 8), y + h + 2.5 * px * std::sin(i * M_PI / 8)), W(x + 2.5 * px * std::cos((i + 1) * M_PI / 8), y + h + 2.5 * px * std::sin((i + 1) * M_PI / 8)), color});
       }
     }
-    // Snapping only means something to tools that place points; trim, offset, constraints and the like pick curves.
-    static const QStringList placing = {"line", "rect", "crect", "circle", "circle2", "circle3", "arc3", "arcc", "polygon", "polygon_outer", "slot", "cslot", "arcslot",
-                                        "ellipse", "spline", "control_spline", "point", "text", "conic", "rect3", "image_insert", "image_calibrate"};
-    if (!placing.contains(m_tool)) {
+    if (!placing()) {
       m_transientPrs->SetToUpdate();
       if (m_visible) m_viewport->updateOverlay(m_transientPrs);
       return;
@@ -1349,10 +1433,15 @@ void SketchEditor::updateTransient() {
         if (m_cursor.curve) curve(m_cursor.curve);
         label = m_cursor.curve ? tr("Intersection") : tr("Tracking");
         break;
-      case K::Locked:
-        d.dashed.push_back({W(m_lockX, m_lockY), W(cu, cv), snapColor});
-        label = tr("Locked");
+      case K::Locked: {  // the locked line from its anchor past the pointer, and what stops the pointer on it
+        const auto& g = m_cursor.line;
+        const double past = ((cu - g.x) * g.dx + (cv - g.y) * g.dy < 0 ? -40 : 40) * px;
+        d.dashed.push_back({W(g.x, g.y), W(cu + g.dx * past, cv + g.dy * past), snapColor});
+        if (const auto* other = m_geometry->point(m_sk, m_cursor.other)) d.dashed.push_back({W(other->x, other->y), W(cu, cv), snapColor});
+        if (m_cursor.curve) curve(m_cursor.curve);
+        label = m_cursor.other ? tr("Locked ∩ tracking") : m_cursor.curve ? tr("Locked ∩ curve") : m_lock && m_lock->sticky ? tr("Locked · Shift or Esc lets go") : tr("Locked");
         break;
+      }
       case K::Grid: label = tr("Grid"); break;
       case K::Typed: {  // what the typed values hold the point to, dashed: the X or Y line, the ΔX/ΔY legs, the angle's ray
         double bu = 0, bv = 0;
@@ -1384,12 +1473,13 @@ void SketchEditor::updateTransient() {
         if (const auto* from = m_geometry->point(m_sk, m_chain.back())) d.dashed.push_back({W(from->x, from->y), W(cu, cv), snapColor});
       label = m_cursor.horizontal ? tr("Horizontal") : tr("Vertical");
     }
-    // The acquired point that alignments are measured from: a cross, while it is not the point under the cursor.
-    if (const auto* reference = m_geometry->point(m_sk, m_trackingPoint); QSettings().value("view/tracking", true).toBool() && reference && m_cursor.point != m_trackingPoint) {
-      const double r = 6 * px;
-      d.solid.push_back({W(reference->x - r, reference->y), W(reference->x + r, reference->y), snapColor});
-      d.solid.push_back({W(reference->x, reference->y - r), W(reference->x, reference->y + r), snapColor});
-    }
+    // The acquired points that alignments are measured from: a cross each, while it is not the point under the cursor.
+    for (const int id : m_tracked)
+      if (const auto* reference = m_geometry->point(m_sk, id); reference && m_cursor.point != id) {
+        const double r = 6 * px;
+        d.solid.push_back({W(reference->x - r, reference->y), W(reference->x + r, reference->y), snapColor});
+        d.solid.push_back({W(reference->x, reference->y - r), W(reference->x, reference->y + r), snapColor});
+      }
     if (!label.isEmpty()) d.texts.push_back({W(cu + 14 * px, cv + 14 * px), label, snapColor, true});  // above right: the pointer covers below right
   }
   m_transientPrs->SetToUpdate();if(m_visible)m_viewport->updateOverlay(m_transientPrs);

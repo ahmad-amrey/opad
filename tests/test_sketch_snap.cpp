@@ -176,4 +176,68 @@ TEST(the_angle_ray_crosses_guides_and_curves_and_names_the_nodes_on_it) {
   CHECK(o.by == Pick::By::Node && !o.ray);
 }
 
+TEST(tracking_points_are_at_most_six_oldest_out_and_resting_again_lets_go) {
+  std::vector<int> tracked;
+  for (int id = 1; id <= 6; ++id) CHECK(track(tracked, id));
+  CHECK((tracked == std::vector<int>{1, 2, 3, 4, 5, 6}));
+  CHECK(track(tracked, 7));  // the seventh: the oldest goes
+  CHECK((tracked == std::vector<int>{2, 3, 4, 5, 6, 7}));
+  CHECK(!track(tracked, 4));  // resting on a tracked one lets it go
+  CHECK((tracked == std::vector<int>{2, 3, 5, 6, 7}));
+  CHECK(track(tracked, 4) && tracked.back() == 4);  // and again acquires it, as the newest
+  CHECK(track(tracked, 9, 2) && (tracked == std::vector<int>{4, 9}));
+}
+
+TEST(two_tracked_points_cross_at_a_x_b_y) {
+  // A = (3.3, 1.7) and B = (12.9, 8.1): A's vertical and B's horizontal meet at (3.3, 8.1), ahead of the grid and of each
+  // guide alone; B's vertical and A's horizontal at (12.9, 1.7).
+  const std::vector<Guide> guides = {{3.3, 1.7, 1, 0, 1}, {3.3, 1.7, 0, 1, 1}, {12.9, 8.1, 1, 0, 2}, {12.9, 8.1, 0, 1, 2}};
+  const Pick p = resolve(3.5, 8.0, 0.5, 1, guides, nullptr, {});
+  CHECK(p.by == Pick::By::Cross && guides[size_t(p.guide)].anchor != guides[size_t(p.other)].anchor);
+  CHECK_NEAR(p.u, 3.3, 1e-12);
+  CHECK_NEAR(p.v, 8.1, 1e-12);
+  const Pick q = resolve(12.7, 1.9, 0.5, 1, guides, nullptr, {});
+  CHECK(q.by == Pick::By::Cross);
+  CHECK_NEAR(q.u, 12.9, 1e-12);
+  CHECK_NEAR(q.v, 1.7, 1e-12);
+}
+
+TEST(a_locked_line_stops_where_other_guides_and_curves_cross_it) {
+  // Locked on A's vertical (A = (3.3, 1.7)); B = (12.9, 8.1) is tracked. The pointer far to the side of the line, a
+  // little below B's height: exactly (A.x, B.y), the crossing being B's horizontal.
+  const Guide lock{3.3, 1.7, 0, 1, 1};
+  const std::vector<Guide> guides = {{3.3, 1.7, 1, 0, 1}, {12.9, 8.1, 1, 0, 2}, {12.9, 8.1, 0, 1, 2}};
+  const Pick p = along(lock, 9.0, 7.8, 0.5, 0, guides, {});
+  CHECK(p.by == Pick::By::Cross && p.guide == -1 && p.other == 1 && p.curve == -1);
+  CHECK_NEAR(p.u, 3.3, 1e-12);
+  CHECK_NEAR(p.v, 8.1, 1e-12);
+  // Further from B's height than the capture: the foot on the line (no grid), or whole grid lines (an axis lock).
+  const Pick f = along(lock, 9.0, 6.4, 0.5, 0, guides, {});
+  CHECK(f.by == Pick::By::Guide && f.other == -1);
+  CHECK_NEAR(f.u, 3.3, 1e-12);
+  CHECK_NEAR(f.v, 6.4, 1e-12);
+  const Pick g = along(lock, 9.0, 6.4, 0.5, 1, guides, {});
+  CHECK(g.by == Pick::By::Guide);
+  CHECK_NEAR(g.u, 3.3, 1e-12);
+  CHECK_NEAR(g.v, 6, 1e-12);
+  // The lock's own point's horizontal crosses it at A: never a stop. A guide parallel to it never crosses.
+  CHECK(along(lock, 9.0, 1.8, 0.5, 0, {{3.3, 1.7, 1, 0, 1}, {7, 0, 0, 1, 3}}, {}).by == Pick::By::Guide);
+  // A circle of radius 5 about (0, 0) crosses x = 3.3 at y = +-sqrt(25 - 3.3^2); a segment from (0, 3) to (9, 3) at y = 3.
+  const double y = std::sqrt(25 - 3.3 * 3.3);
+  const Pick c = along(lock, -20, y + 0.3, 0.5, 1, {}, {{0, 0, 0, 0, 5, 0, 2 * kPi}});
+  CHECK(c.by == Pick::By::Cross && c.curve == 0 && c.other == -1);
+  CHECK_NEAR(c.u, 3.3, 1e-12);
+  CHECK_NEAR(c.v, y, 1e-12);
+  const Pick s = along(lock, 50, 2.8, 0.5, 0, {}, {{0, 3, 9, 3}});
+  CHECK(s.by == Pick::By::Cross && s.curve == 0);
+  CHECK_NEAR(s.v, 3, 1e-12);
+  CHECK(along(lock, 50, 2.8, 0.5, 0, {}, {{4, 3, 9, 3}}).by == Pick::By::Guide);  // the segment ends before the line
+  // A slanted lock (30 degrees from the origin) meets B's vertical at u = 12.9.
+  const double c30 = std::cos(kPi / 6), s30 = std::sin(kPi / 6);
+  const Pick o = along({0, 0, c30, s30, 4}, 12.8, 7.9, 0.5, 0, guides, {});
+  CHECK(o.by == Pick::By::Cross && o.other == 2);
+  CHECK_NEAR(o.u, 12.9, 1e-12);
+  CHECK_NEAR(o.v, 12.9 * s30 / c30, 1e-12);
+}
+
 CHECK_MAIN()

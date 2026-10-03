@@ -71,6 +71,7 @@ void SketchEditor::setTool(const QString& tool) {
   invalidatePreview();
   if (!m_chain.empty()) finishChain();
   cancel_change();
+  m_tracked.clear();m_dwellPoint=0;m_dwellTimer.stop();unlock();  // tracking points and the lock are the tool's
   m_clicks.clear();
   m_chain.clear();
   m_picked.clear();
@@ -158,6 +159,7 @@ void SketchEditor::finishChain() {
 
 void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
   invalidatePreview();
+  unlock();  // a lock lasts until the point it placed
   if(imageClick(s.u,s.v))return;
   if(m_tool=="project"||m_tool=="intersect_body"||m_tool=="silhouette"||m_tool=="include3d")return pickReference();
   if(modifyClick(s.u,s.v))return;
@@ -1257,6 +1259,13 @@ void SketchEditor::projectHovered() {
 }
 
 bool SketchEditor::eventFilter(QObject* o, QEvent* e) {
+  // Shift locks the pointer onto a guide (UI-19): its press and release wherever the view's keys go (seen as often as the
+  // event travels up, hence the state); any other key while it is down, a value box's too, makes it no tap.
+  if(m_active && (e->type()==QEvent::KeyPress || e->type()==QEvent::KeyRelease)) {
+    const auto* key=static_cast<QKeyEvent*>(e);
+    if(key->key()!=Qt::Key_Shift){if(e->type()==QEvent::KeyPress)m_shiftUsed=true;}
+    else if(!key->isAutoRepeat() && DynamicInput::takesKeysFrom(m_viewport,o))shiftKey(e->type()==QEvent::KeyPress);
+  }
   if(m_active && (e->type()==QEvent::ShortcutOverride || e->type()==QEvent::KeyPress)){
     auto* widget=qobject_cast<QWidget*>(o);auto* key=static_cast<QKeyEvent*>(e);
     if(widget && (widget==m_viewport || m_viewport->window()->isAncestorOf(widget)) && key->key()==Qt::Key_Z && key->modifiers().testFlag(Qt::ControlModifier)){
@@ -1295,6 +1304,7 @@ void SketchEditor::bench(const QString&) {
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_LADDER"))return benchLadder();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_KEYS"))return benchKeys();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_SHAPES"))return benchShapes();
+  if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_CROSSLOCK"))return benchCrossLock();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_MODIFY"))return benchModify();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_PRIMITIVES"))return benchPrimitives();
   if(qEnvironmentVariableIsSet("OPAD_BENCH_SKETCH_WORKFLOW"))return benchWorkflow();

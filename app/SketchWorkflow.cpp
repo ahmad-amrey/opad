@@ -193,7 +193,7 @@ sketchkeys::State SketchEditor::keyState() const {
   s.boxSelecting=m_boxSelecting;s.selection=!m_sel.empty();
   s.mirrorAxis=m_tool=="mirror" && option("mirrorStage","seed")=="axis";
   s.mirrorSeeds=m_tool=="mirror" && option("mirrorAxis","picked")=="picked" && !s.mirrorAxis;
-  s.typed=m_input && m_input->typed();s.applies=appliesOnEnter();
+  s.typed=m_input && m_input->typed();s.applies=appliesOnEnter();s.locked=m_lock && m_lock->sticky;
   return s;
 }
 
@@ -203,7 +203,7 @@ bool SketchEditor::undoPoint() {
   const Back back=sketchkeys::backspace(keyState());
   if(back==Back::None)return false;
   if(back==Back::Delete){deleteSelection();return true;}
-  invalidatePreview();
+  invalidatePreview();unlock();
   if(!m_chain.empty()) {
     // Chain-local: back to before the last point, drawing goes on from the one before. Each point of a chain is one
     // undo step until the chain ends (finishChain folds them into one), so the newest step holds the sketch to go back
@@ -211,8 +211,8 @@ bool SketchEditor::undoPoint() {
     if(m_undo.size()<=m_chainUndoStart){emit status(tr("That point is older than the undo history."));return false;}
     m_chain.pop_back();
     m_sk=m_undo.back().geometry;m_undo.pop_back();
-    if(!m_sk.point(m_trackingPoint))m_trackingPoint=0;
-    m_conflicts.clear();m_inferenceLocked=false;analyseSketch();scheduleFill();
+    m_tracked.erase(std::remove_if(m_tracked.begin(),m_tracked.end(),[this](int id){return !m_sk.point(id);}),m_tracked.end());
+    m_conflicts.clear();analyseSketch();scheduleFill();
   } else if(!m_clicks.empty()) {
     m_clicks.pop_back();
     if(m_clicks.empty() && (m_tool=="tangent_arc" || m_tool=="extend"))m_picked.clear();  // picked with that click
@@ -246,11 +246,13 @@ bool SketchEditor::escape() {
     case Esc::None:return false;
     case Esc::CancelBox:m_boxSelecting=false;break;
     case Esc::DropTyped:m_input->dropTyped();break;  // option values go back to what they were
+    case Esc::Unlock:unlock();resnap();break;  // the step goes on
     case Esc::BackToCurves:m_options["mirrorStage"]="seed";toolPrompt();break;
-    case Esc::EndChain:  // as Enter, and over for sure (a control-point spline with too few points is dropped)
+    case Esc::EndChain:  // as Enter, and over for sure (a control-point spline with too few points is dropped); tracking starts afresh
       if(m_tool=="control_spline"){finishPrimitive();m_clicks.clear();toolPrompt();}else finishChain();
+      m_tracked.clear();
       break;
-    case Esc::CancelStep:cancel_change();m_clicks.clear();m_picked.clear();m_placingDim=false;scheduleToolPreview();toolPrompt();break;
+    case Esc::CancelStep:cancel_change();m_clicks.clear();m_picked.clear();m_placingDim=false;m_tracked.clear();scheduleToolPreview();toolPrompt();break;
     case Esc::CloseTool:setTool("select");break;
     case Esc::ClearSelection:m_sel.clear();break;
   }
@@ -271,6 +273,7 @@ QString SketchEditor::keyHints() const {
   const Esc esc=sketchkeys::escape(s);
   if(sketchkeys::enter(s)==Enter::UseTyped)out<<tr("Enter use typed values");
   if(esc==Esc::DropTyped)out<<tr("Esc drop typed values");
+  else if(esc==Esc::Unlock)out<<tr("Esc release lock");
   else if(esc==Esc::EndChain)  // Enter does the same; only a second Esc goes on to close the tool
     out<<(m_tool!="line" && std::max(s.chain,s.clicks)>1?tr("Enter/Esc finish spline"):tr("Enter/Esc end chain"));
   else if(sketchkeys::enter(s)==Enter::PickMirrorLine)out<<tr("Enter pick mirror line");
