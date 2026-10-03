@@ -218,6 +218,52 @@ std::string mtext_plain(std::string_view s) {
 
 bool blank(const std::string& s) { return s.find_first_not_of(" \t\n") == std::string::npos; }
 
+// What MTEXT's leading formatting (before its first character) sets for all of it: \f a TrueType family with |b1 bold
+// and |i1 italic, \F a shape font, \H a height (2.5, or 1.5x the entity's), \W a width factor, \C a colour. Formatting
+// further on (runs in other fonts, sizes or colours) is dropped with the codes (mtext_plain).
+struct MtextFormat {
+  std::string font;
+  bool bold = false, italic = false;
+  double height = 0, relative = 1, width = 0;
+  int aci = 0;
+};
+MtextFormat mtext_format(std::string_view s) {
+  MtextFormat out;
+  for (size_t i = 0; i < s.size();) {
+    if (s[i] == '{') { ++i; continue; }
+    if (s[i] != '\\' || i + 1 >= s.size() || std::string_view("fFHWCQTA").find(s[i + 1]) == std::string_view::npos) break;
+    const size_t end = s.find(';', i + 2);
+    if (end == std::string_view::npos) break;
+    std::string_view value = s.substr(i + 2, end - i - 2);
+    const char k = s[i + 1];
+    try {
+      if (k == 'f' || k == 'F') {
+        size_t at = value.find('|');
+        out.font = std::string(trimmed(value.substr(0, at)));
+        while (at != std::string_view::npos) {
+          const size_t next = value.find('|', at + 1);
+          const auto part = value.substr(at + 1, next == std::string_view::npos ? std::string_view::npos : next - at - 1);
+          out.bold = out.bold || part == "b1";
+          out.italic = out.italic || part == "i1";
+          at = next;
+        }
+      } else if (k == 'H' || k == 'W') {
+        const bool times = !value.empty() && (value.back() == 'x' || value.back() == 'X');
+        if (times) value.remove_suffix(1);
+        const double v = parse_number(value);
+        if (k == 'W') out.width = v;
+        else if (times) out.relative = v;
+        else out.height = v;
+      } else if (k == 'C') {
+        out.aci = int(parse_number(value));
+      }
+    } catch (const Error&) {
+    }
+    i = end + 1;
+  }
+  return out;
+}
+
 // AutoCAD Color Index -> RGB: 1-9 fixed, 10-249 24 hues x 5 shades x full/half saturation, 250-255 greys.
 uint32_t aci_rgb(int i) {
   static const uint32_t fixed[10] = {0x000000, 0xFF0000, 0xFFFF00, 0x00FF00, 0x00FFFF, 0x0000FF, 0xFF00FF, 0xFFFFFF, 0x414141, 0x808080};
@@ -1330,6 +1376,14 @@ void Reader::mtext(const Fields& f, Out& o, const Place& at) {
   if (x.Modulus() < 1e-9) x = gp_XYZ(1, 0, 0);
   x.Normalize();
   TextRequest r = text_request(f.str(7, "STANDARD"), std::move(s), f.num(40));
+  const MtextFormat format = mtext_format(raw);
+  if (!format.font.empty()) r.font = format.font, r.family.clear();
+  r.bold = format.bold;
+  r.italic = format.italic;
+  if (format.height > 0) r.size = format.height * m_unit;
+  if (format.relative > 0) r.size *= format.relative;
+  if (format.width > 0) r.width = format.width;
+  if (format.aci >= 1 && format.aci <= 255) o.color = visible_color(aci_rgb(format.aci));
   r.wrap = f.num(41) * m_unit;
   const double factor = f.num(44, 1);
   r.spacing = 5.0 / 3.0 * r.size * (factor > 0 ? factor : 1);  // at 1.0, 5/3 of the text height from baseline to baseline

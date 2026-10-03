@@ -385,10 +385,10 @@ std::mutex& manager_lock() {
   static std::mutex lock;
   return lock;
 }
-// A family (or one of OCCT's aliases: sans-serif, serif, monospace); `any`: else whatever font the system has.
-std::optional<FontRef> family_font(const std::string& family, bool any) {
+// A family (or one of OCCT's aliases: sans-serif, serif, monospace) in this aspect, else its regular face; `any`: else
+// whatever font the system has.
+std::optional<FontRef> family_font(const std::string& family, bool any, Font_FontAspect aspect = Font_FontAspect_Regular) {
   std::lock_guard<std::mutex> guard(manager_lock());
-  Font_FontAspect aspect = Font_FontAspect_Regular;
   const Handle(Font_SystemFont) font = Font_FontMgr::GetInstance()->FindFont(
       TCollection_AsciiString(family.c_str()), any ? Font_StrictLevel_Any : Font_StrictLevel_Aliases, aspect, Standard_False);
   if (font.IsNull()) return std::nullopt;
@@ -464,8 +464,8 @@ const FontFile* load_font(const FontRef& ref) {
   return &f;
 }
 
-const FontFile* load_family(const std::string& family, bool any = false) {
-  const auto ref = family_font(family, any);
+const FontFile* load_family(const std::string& family, bool any = false, Font_FontAspect aspect = Font_FontAspect_Regular) {
+  const auto ref = family_font(family, any, aspect);
   return ref ? load_font(*ref) : nullptr;
 }
 
@@ -631,7 +631,9 @@ struct TextOutliner::Impl {
   ~Impl() { hb_buffer_destroy(buffer); }
 
   const FontFile* primary(const TextRequest& r) {
-    const std::string key = r.font + '\x1f' + r.family;
+    const std::string key = r.font + '\x1f' + r.family + (r.bold ? "\x1f" "b" : "") + (r.italic ? "\x1f" "i" : "");
+    const Font_FontAspect aspect = r.bold && r.italic ? Font_FontAspect_BoldItalic : r.bold ? Font_FontAspect_Bold
+                                   : r.italic ? Font_FontAspect_Italic : Font_FontAspect_Regular;
     if (const auto it = primaries.find(key); it != primaries.end()) return it->second;
     const FontFile* found = nullptr;
     const std::string name = trim(r.font);
@@ -641,11 +643,11 @@ struct TextOutliner::Impl {
       if (const auto ref = file_font(name, folders)) found = load_font(*ref);
     } else if (ext != ".shx" && ext != ".shp") {
       for (const auto& family : split_families(name))
-        if (!found) found = load_family(family);
+        if (!found) found = load_family(family, false, aspect);
     }
     for (const auto& family : split_families(r.family))
-      if (!found) found = load_family(family);
-    if (!found) found = load_family("Arial", true);  // shape fonts and fonts not found: a plain sans-serif stands in
+      if (!found) found = load_family(family, false, aspect);
+    if (!found) found = load_family("Arial", true, aspect);  // shape fonts and fonts not found: a plain sans-serif stands in
     return primaries[key] = found;
   }
 

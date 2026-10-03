@@ -269,6 +269,29 @@ TEST(shape_font_text_is_drawn_in_its_strokes) {
   if (const auto* gone = find(all, "Gone")) CHECK(gone->faces > 0);
 }
 
+// TODO 11 UI-92: MTEXT's leading formatting holds for all of it: a height (absolute, or times the entity's), a width
+// factor, a colour, a family in bold.
+TEST(mtext_leading_formatting_holds_for_all_of_it) {
+  Files f;
+  auto mtext = [](const char* layer, double y, const char* s) {
+    return Groups{{0, "MTEXT"}, {8, layer}, {10, "0"}, {20, std::to_string(y)}, {40, "5"}, {71, "7"}, {1, s}};
+  };
+  Groups entities;
+  for (const auto& g : {mtext("Plain", 0, "HELL"), mtext("Twice", 50, "\\H2x;HELL"), mtext("Tall", 100, "{\\H8;HELL}"), mtext("Wide", 150, "\\W2;HELL"),
+                        mtext("Red", 200, "{\\C1;HELL}"), mtext("Bold", 250, "{\\fArial|b1|i0|c0|p34;HELL}")})
+    entities.insert(entities.end(), g.begin(), g.end());
+  write_text_file(f.dir / "format.dxf", section("ENTITIES", entities) + kEof);
+  const auto all = bodies(import(f.dir / "format.dxf"));
+  const auto* plain = find(all, "Plain");
+  if (!plain) return;  // no font on this machine
+  const auto p = extent(plain->box), twice = extent(find(all, "Twice")->box), tall = extent(find(all, "Tall")->box);
+  const auto wide = extent(find(all, "Wide")->box), bold = extent(find(all, "Bold")->box);
+  CHECK(std::abs(p[3] - p[1] - 5) < 0.05 && std::abs(twice[3] - twice[1] - 10) < 0.05 && std::abs(tall[3] - tall[1] - 8) < 0.05);
+  CHECK(std::abs((wide[2] - wide[0]) / (p[2] - p[0]) - 2) < 0.1);
+  CHECK(find(all, "Red")->has_color && find(all, "Red")->color[0] == 1 && find(all, "Red")->color[1] == 0);
+  CHECK(bold[2] - bold[0] > (p[2] - p[0]) * 1.02);  // Arial Bold is wider
+}
+
 // Bodies share no sub-shapes (the view meshes them on several threads at once): the same text, or a block with a fill,
 // on two layers gives each layer's body its own edges, in a viewer (shapes kept as read) and in a document.
 TEST(bodies_share_no_edges) {

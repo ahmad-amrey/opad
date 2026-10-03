@@ -22,6 +22,7 @@ struct TextRequest {
   std::string font;    // a font file (.ttf, .ttc, .otf: a path, or a name looked up in the outliner's folders), a shape
                        // font (.shx, or a name without extension), else families separated by commas; one not found
   std::string family;  // (or a shape font lacking a character): the families of `family`, else the default sans-serif
+  bool bold = false, italic = false;  // the family's bold and italic faces (a font file is taken as it is)
   double size = 2.5;   // mm: the em, or with `cap` the height of the capitals (a DXF text height)
   bool cap = false;
   double width = 1;    // width factor
