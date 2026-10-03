@@ -3,7 +3,11 @@
 # Stages opad.exe (and opad-cli.exe) with everything they load into build/<preset>/portable/OPAD-<version>-windows-x64
 # and zips that folder. The folder runs from anywhere with no MSYS2, Qt or OCCT installed; the `opad.portable`
 # marker makes the app keep its settings and cache in <folder>/data (see app/main.cpp).
+# It refuses to stage the GPL FFmpeg, codec and FreeImage DLLs MSYS2's OCCT drags in (see portable_stage.cmake), so
+# with MSYS2's own OCCT it fails unless OPAD_ALLOW_GPL_DLLS=ON (a package that must never leave the machine).
 # Included from app/CMakeLists.txt, after the opad target exists.
+
+option(OPAD_ALLOW_GPL_DLLS "opad-portable: stage FFmpeg, codec, FreeImage and OpenVR DLLs anyway (local use only, never distribute)" OFF)
 
 get_target_property(_opad_qmake Qt6::qmake IMPORTED_LOCATION)
 get_filename_component(_opad_qt_bin "${_opad_qmake}" DIRECTORY)
@@ -41,6 +45,7 @@ add_custom_target(opad-portable
     "-DOPAD_OBJDUMP=${CMAKE_OBJDUMP}"
     "-DOPAD_SOURCE_DIR=${PROJECT_SOURCE_DIR}"
     "-DOPAD_DWG_PROGRAMS=${_opad_portable_dwg}"
+    "-DOPAD_ALLOW_GPL_DLLS=${OPAD_ALLOW_GPL_DLLS}"
     -P "${PROJECT_SOURCE_DIR}/cmake/portable_stage.cmake"
   DEPENDS ${_opad_portable_deps}
   COMMENT "Staging the portable package"

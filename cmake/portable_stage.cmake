@@ -50,6 +50,41 @@ foreach(_name IN LISTS _conflict_FILENAMES)  # same DLL in two search dirs: take
   list(GET _conflict_${_name} 0 _first)
   list(APPEND _resolved "${_first}")
 endforeach()
+
+# GPL guard (TODO 11 UI-14, decision D1). MSYS2's Open CASCADE links TKService against FFmpeg, FreeImage and OpenVR,
+# which OPAD never uses. That FFmpeg is GPLv3, built with the GPL x264/x265/xvid encoders, and FreeImage is GPLv2:
+# shipping them makes the whole folder a GPLv3 work whose every recipient is owed its complete source, and hands out
+# codecs under patent pools. So no package carries them unless OPAD_ALLOW_GPL_DLLS says it stays on this machine.
+set(_gpl "")
+file(GLOB_RECURSE _staged_dlls "${OPAD_STAGE}/*.dll")
+foreach(_dll IN LISTS _resolved _staged_dlls)
+  get_filename_component(_name "${_dll}" NAME)
+  string(TOLOWER "${_name}" _lower)
+  if(_lower MATCHES "^(avcodec|avformat|avutil|avfilter|avdevice|swscale|swresample|postproc|libx264|libx265|xvidcore|libfreeimage|libopenvr_api|openvr_api)")
+    list(APPEND _gpl "${_name}")
+  endif()
+endforeach()
+list(REMOVE_DUPLICATES _gpl)
+if(_gpl)
+  list(JOIN _gpl ", " _gpl_names)
+  string(CONCAT _gpl_why
+    "These come in only because MSYS2's Open CASCADE (TKService) is built against FFmpeg, FreeImage and OpenVR, and OPAD "
+    "uses none of them. FFmpeg there is GPLv3 with the GPL x264, x265 and xvid encoders, FreeImage is GPLv2: handing "
+    "this folder to anyone makes OPAD a GPLv3 work whose every recipient is owed its complete source, and distributes "
+    "codecs under patent pools. Build Open CASCADE without them (USE_FFMPEG=OFF USE_FREEIMAGE=OFF USE_OPENVR=OFF, as "
+    "cmake/occt_static.cmake does) or ship the single-file build (preset windows-static).")
+  if(NOT OPAD_ALLOW_GPL_DLLS)
+    file(REMOVE_RECURSE "${OPAD_STAGE}")
+    file(REMOVE "${OPAD_STAGE}.zip")
+    message(FATAL_ERROR "portable package: refusing to stage ${_gpl_names}.\n${_gpl_why}\n"
+                        "For local use that is never distributed: cmake --preset windows -DOPAD_ALLOW_GPL_DLLS=ON")
+  endif()
+  message(WARNING "portable package: ${_gpl_names} staged because OPAD_ALLOW_GPL_DLLS is on; NOT FOR DISTRIBUTION.")
+  file(WRITE "${OPAD_STAGE}/NOT-FOR-DISTRIBUTION.txt"
+    "This folder was staged with OPAD_ALLOW_GPL_DLLS=ON and contains ${_gpl_names}.\n\n${_gpl_why}\n\n"
+    "Do not give this folder or its zip to anyone.\n")
+endif()
+
 set(_copied 0)
 foreach(_dll IN LISTS _resolved)
   string(FIND "${_dll}" "${OPAD_STAGE}/" _inside)
@@ -69,21 +104,46 @@ file(WRITE "${OPAD_STAGE}/opad.portable"
   "Delete this file to use the registry and %LOCALAPPDATA% instead.\n")
 file(COPY "${OPAD_SOURCE_DIR}/LICENSE" DESTINATION "${OPAD_STAGE}")
 
-# DWG: LibreDWG's dwg2dxf / dxf2dwg (GPLv3) are separate programs OPAD runs; they travel with their licence and where
-# their source is.
+# DWG: LibreDWG's dwg2dxf / dxf2dwg (GPLv3) are separate programs OPAD runs. They travel with their licence and their
+# Corresponding Source (GPLv3 section 6): the source tree they were built from and OPAD's scripts that built them.
 if(OPAD_DWG_PROGRAMS)
   string(REPLACE "|" ";" OPAD_DWG_PROGRAMS "${OPAD_DWG_PROGRAMS}")
   file(COPY ${OPAD_DWG_PROGRAMS} DESTINATION "${OPAD_STAGE}")
   set(_ldwg "${OPAD_SOURCE_DIR}/third_party/libredwg")
-  file(MAKE_DIRECTORY "${OPAD_STAGE}/licenses")
-  configure_file("${_ldwg}/COPYING" "${OPAD_STAGE}/licenses/LibreDWG-COPYING.txt" COPYONLY)
+  set(_ldwg_out "${OPAD_STAGE}/licenses/LibreDWG")
+  file(MAKE_DIRECTORY "${_ldwg_out}/build")
+  configure_file("${_ldwg}/COPYING" "${_ldwg_out}/COPYING.txt" COPYONLY)
   execute_process(COMMAND git -C "${_ldwg}" describe --tags --always OUTPUT_VARIABLE _ldwg_version
                   OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-  file(WRITE "${OPAD_STAGE}/licenses/LibreDWG-NOTICE.txt"
-    "dwg2dxf.exe and dxf2dwg.exe are LibreDWG ${_ldwg_version}, unmodified, built by OPAD's build from\n"
-    "https://github.com/LibreDWG/libredwg (tag ${_ldwg_version}; third_party/libredwg in OPAD's source tree).\n"
-    "LibreDWG is free software under the GNU General Public License version 3 (LibreDWG-COPYING.txt).\n"
-    "OPAD runs them as separate programs to read and write DWG drawings; it does not link to LibreDWG.\n")
+  execute_process(COMMAND git -C "${_ldwg}" rev-parse HEAD OUTPUT_VARIABLE _ldwg_commit OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  # LF line ends as upstream; the sample drawings (test/test-data, 54 MB) are not needed to build and stay upstream.
+  execute_process(COMMAND git -c core.autocrlf=false -C "${_ldwg}" archive --format=zip "--prefix=libredwg-${_ldwg_version}/"
+                          -o "${_ldwg_out}/libredwg-${_ldwg_version}-source.zip" HEAD -- . ":(exclude)test/test-data"
+                  RESULT_VARIABLE _rc ERROR_VARIABLE _err)
+  if(NOT _rc EQUAL 0)
+    message(FATAL_ERROR "portable package: no LibreDWG source archive (${_rc}): ${_err}\nThe converters cannot ship without their source.")
+  endif()
+  file(COPY "${OPAD_SOURCE_DIR}/cmake/libredwg.cmake" "${OPAD_SOURCE_DIR}/cmake/libredwg_config.cmake" DESTINATION "${_ldwg_out}/build")
+  file(WRITE "${_ldwg_out}/NOTICE.txt"
+    "dwg2dxf.exe and dxf2dwg.exe are LibreDWG ${_ldwg_version} (commit ${_ldwg_commit}), free software under the GNU\n"
+    "General Public License version 3 or later (COPYING.txt). OPAD runs them as separate programs to read and write DWG\n"
+    "drawings; it does not link to LibreDWG, and OPAD's own licence does not apply to them.\n\n"
+    "Corresponding source, in this folder:\n"
+    "  libredwg-${_ldwg_version}-source.zip  the LibreDWG tree they were built from (git archive of that commit; the\n"
+    "      sample drawings in test/test-data are not needed to build and are left out, they are in the upstream tag)\n"
+    "  build/libredwg.cmake         how OPAD's build configures and builds them: LibreDWG's own CMake build with the\n"
+    "      options listed there (_ldwg_args: static, JSON reader off, no tests), MinGW-w64 GCC, targets dwg2dxf dxf2dwg,\n"
+    "      linked with -static -s\n"
+    "  build/libredwg_config.cmake  the one step between configure and build: in the generated src/config.h it drops the\n"
+    "      carriage returns a CRLF checkout leaves there and sets PACKAGE_VERSION / PACKAGE_STRING to `git describe` of\n"
+    "      the LibreDWG checkout. No LibreDWG source file is changed.\n\n"
+    "To rebuild: unpack the zip, then\n"
+    "  cmake -S libredwg-${_ldwg_version} -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF\n"
+    "        -DLIBREDWG_DISABLE_JSON=ON -DDISABLE_WERROR=ON -DENABLE_LTO=OFF -DBUILD_TESTING=OFF\n"
+    "        \"-DCMAKE_EXE_LINKER_FLAGS=-static -s\"\n"
+    "  cmake --build build --target dwg2dxf dxf2dwg\n"
+    "(the zip has LF line ends, so config.h needs no fixing; libredwg_config.cmake only sets the version string)\n\n"
+    "Upstream: https://github.com/LibreDWG/libredwg (tag ${_ldwg_version}), https://www.gnu.org/software/libredwg/\n")
 endif()
 
 get_filename_component(_parent "${OPAD_STAGE}" DIRECTORY)
