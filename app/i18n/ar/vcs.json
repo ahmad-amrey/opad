@@ -164,5 +164,6 @@
  "Passphrase of the SSH key %1": "عبارة مرور مفتاح SSH ‏%1",
  "Git sign-in": "تسجيل الدخول إلى git",
  "git asks for this to reach the remote. OPAD hands it to git and keeps nothing; a credential helper such as Git Credential Manager can remember it.": "يطلب git هذا للوصول إلى المستودع البعيد. يسلّمه OPAD إلى git ولا يحتفظ بشيء؛ ويمكن لمساعد بيانات اعتماد مثل Git Credential Manager أن يتذكّره.",
- "Continue": "متابعة"
+ "Continue": "متابعة",
+ "conflicts: %1": "تعارضات: %1"
 }

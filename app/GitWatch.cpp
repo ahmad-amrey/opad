@@ -278,6 +278,7 @@ void GitWatch::render() {
         case D::Ignored: parts << span(t.fg3, tr("ignored")); doc = "ignored"; break;
         default: doc = "clean"; break;
       }
+      if (const int conflicts = s.count('u'); conflicts && r.doc() != D::Conflict) parts << span(t.red, tr("conflicts: %1").arg(conflicts));
       if (r.merging) parts << span(t.amber, tr("merging"));
       else if (r.rebasing) parts << span(t.amber, tr("rebasing"));
       switch (r.sync()) {
@@ -733,10 +734,12 @@ bool GitWatch::bench() {
       st->pending.erase(st->pending.begin());
       auto* p = new QProcess(this);
       p->setWorkingDirectory(st->dir);
-      connect(p, &QProcess::finished, this, [st, p, c](int code) {
-        st->exit = code;
+      const bool mayFail = c.front().startsWith('?');
+      if (mayFail) c.front().remove(0, 1);
+      connect(p, &QProcess::finished, this, [st, p, c, mayFail](int code) {
+        st->exit = mayFail ? 0 : code;
         st->out += p->readAllStandardOutput();
-        if (code) st->error = c.join(' ') + ": " + QString::fromUtf8(p->readAllStandardError());
+        if (st->exit) st->error = c.join(' ') + ": " + QString::fromUtf8(p->readAllStandardError());
         p->deleteLater();
         st->next();
       });
@@ -954,6 +957,36 @@ bool GitWatch::bench() {
         if (!settled() || m_repo.needsDriver() || !m_repo.managed) return false;
         require(m_repo.driver == here.mergeDriver() && m_repo.textconv == here.textconv() && text() == "feature/x", "the driver set up again");
         pass("a clone without the driver, set up from the chip");
+        auto write = [st](const char* text) {
+          QFile notes(st->dir + "/notes.txt");
+          return notes.open(QIODevice::WriteOnly) && notes.write(text) > 0;
+        };
+        require(write("feature\n"), "notes.txt");
+        external({gitArgs({"add", "notes.txt"}), gitArgs({"commit", "-q", "-m", "notes on feature/x"}), gitArgs({"switch", "-q", "main"})});
+        return true;
+      },
+      [=, this] {
+        if (!finished() || !settled() || m_repo.status.branch != "main") return false;
+        QFile notes(st->dir + "/notes.txt");
+        require(notes.open(QIODevice::WriteOnly) && notes.write("main\n") > 0, "notes.txt");
+        notes.close();
+        QStringList merge = gitArgs({"merge", "-q", "--no-edit", "feature/x"});
+        merge.front().prepend('?');  // stops on the conflict
+        external({gitArgs({"add", "notes.txt"}), gitArgs({"commit", "-q", "-m", "notes on main"}), merge});
+        return true;
+      },
+      [=, this] {
+        if (!finished() || !settled() || !m_repo.merging || !m_repo.status.count('u')) return false;
+        require(m_repo.doc() == D::Clean && text().startsWith("main · " + tr("conflicts: %1").arg(1) + " · " + tr("merging")), "the chip: conflicts, merging");
+        shot(m_chip, ".chip-conflicts.png");
+        pass("a merge stopped on a conflict");
+        external({gitArgs({"merge", "--abort"})});
+        return true;
+      },
+      [=, this] {
+        if (!finished() || !settled() || m_repo.merging) return false;
+        require(text().startsWith("main") && !m_repo.status.count('u'), "merge aborted: no conflicts");
+        pass("merge aborted");
         return true;
       },
   };
