@@ -190,6 +190,27 @@ void Viewport::benchShot(const QString& path) {
   grabImage().save(path);
 }
 
+QString Viewport::benchCubePart(int dx, int dy) {
+  if (!m_initialised) return {};
+  Standard_Integer w = 0, h = 0;
+  m_view->Window()->Size(w, h);
+  m_view->Redraw();  // the picker's camera range
+  m_ctx->MoveTo(w - qRound(kCubeOffsetX * m_cubeScale) + qRound(dx * m_cubeScale), qRound((kCubeOffsetY + dy) * m_cubeScale), m_view, Standard_False);
+  const auto* owner = m_ctx->HasDetected() ? dynamic_cast<const AIS_ViewCubeOwner*>(m_ctx->DetectedOwner().get()) : nullptr;
+  const QString part = !owner ? QString() : AIS_ViewCube::IsBoxCorner(owner->MainOrientation()) ? "corner" : AIS_ViewCube::IsBoxEdge(owner->MainOrientation()) ? "edge" : "side";
+  m_ctx->ClearDetected(Standard_False);
+  return part;
+}
+
+void Viewport::setCubeEdgesCorners(bool on) {
+  const Handle(NavCube) cube = Handle(NavCube)::DownCast(m_cube);
+  if (cube.IsNull() || cube->edgesAndCorners() == on) return;
+  cube->setEdgesAndCorners(on);
+  m_ctx->ClearDetected(Standard_False);
+  m_ctx->RecomputeSelectionOnly(m_cube);
+  redrawScene();
+}
+
 // The displayed body with the most faces: where sub-shape picking is at its most expensive.
 std::string Viewport::benchHeaviest() const {
   std::string best;
@@ -290,7 +311,9 @@ void Viewport::initViewer() {
   m_navSelector->SetPickClosest(true);
   m_navSelector->SetDepthTolerance(SelectMgr_TypeOfDepthTolerance_Uniform, 0.0);
   m_navSelection = new SelectMgr_SelectionManager(m_navSelector);
-  m_cube = new NavCube();  // a plain cube whose edges and corners are still hover/click targets
+  Handle(NavCube) cube = new NavCube();  // a plain cube whose edges and corners are still hover/click targets
+  cube->setEdgesAndCorners(QSettings().value("view/cubeEdgesCorners", true).toBool());
+  m_cube = cube;
   m_cubeScale = viewScale().x();
   m_cube->SetSize(58 * m_cubeScale);
   m_cube->SetFontHeight(11 * m_cubeScale);

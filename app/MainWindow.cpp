@@ -450,7 +450,10 @@ void MainWindow::buildActions() {
   auto* through=addAction("select.through",tr("Select through objects"),"wireframe",QKeySequence("Alt+X"),[this]{},true);
   through->setChecked(m_settings.value("view/selectThrough",false).toBool());
   connect(through,&QAction::toggled,this,[this](bool on){m_settings.setValue("view/selectThrough",on);m_viewport->setSelectThrough(on);});
-  addAction("view.isolate", tr("Isolate"), "isolate", QKeySequence("I"), [this] { m_viewport->isolate(currentNodeIds()); });
+  auto* cubeParts=addAction("view.cubeEdgesCorners",tr("View cube edges and corners turn the view"),"",QKeySequence(),[this]{},true);  // off: faces only (UI-54)
+  cubeParts->setChecked(m_settings.value("view/cubeEdgesCorners",true).toBool());
+  connect(cubeParts,&QAction::toggled,this,[this](bool on){m_settings.setValue("view/cubeEdgesCorners",on);m_viewport->setCubeEdgesCorners(on);});
+  addAction("view.isolate",tr("Isolate"), "isolate", QKeySequence("I"), [this] { m_viewport->isolate(currentNodeIds()); });
   // macOS treats any action starting with "Exit" as Quit unless its menu role is explicit.
   addAction("view.unisolate", tr("Exit isolate"), "showAll", QKeySequence("Shift+I"), [this] { m_viewport->isolate({}); })->setMenuRole(QAction::NoRole);
   addAction("view.saveview", tr("Save view…"), "home", QKeySequence(), [this] { saveNamedView(); });
@@ -737,6 +740,7 @@ void MainWindow::buildRibbon() {
     auto* buttons=new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel,&dialog);layout->addWidget(buttons);connect(buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);connect(buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);
     if(dialog.exec()==QDialog::Accepted)m_viewport->setHoverFade(enabled->isChecked(),seconds->value());
   });
+  settings->addAction(action("view.cubeEdgesCorners"));
   for (auto* a : quality->actions()) a->setToolTip(tr("Ray tracing requires a compatible OpenGL driver; Studio is used when unavailable."));
   auto* background = settings->addMenu(tr("Scene background"));
   auto* backgroundGroup = new QActionGroup(background);
@@ -2468,6 +2472,7 @@ void MainWindow::showNodeGeometry(const std::string& id, const QString& title, c
 void MainWindow::runBench() {
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_RECOVERY");!mode.isEmpty()){m_recovery->bench(mode);return;}
   if(benchViewer())return;
+  if(benchIp())return;
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_FILETYPES");!shot.isEmpty()){  // the dialog as drawn, nothing registered
     auto* dialog=new FileTypesDialog(this);dialog->show();
     QTimer::singleShot(300,this,[dialog,shot]{const bool saved=dialog->grab().save(shot);dialog->deleteLater();trace::log(QString("bench: file types dialog %1").arg(saved?"PASS":"FAIL"));QCoreApplication::exit(saved?0:2);});

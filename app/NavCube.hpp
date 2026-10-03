@@ -28,6 +28,10 @@ class NavCube : public AIS_ViewCube {
   NavCube();
   void setOrbitPoint(const gp_Pnt& point) { m_orbitPoint = point; }
   const gp_Pnt& orbitPoint() const { return m_orbitPoint; }
+  // Off (setting view/cubeEdgesCorners): only the six faces are views, no edge or corner owners (IP: US 7,782,319,
+  // in force until 2029-03-06). Recompute the selection after a change.
+  void setEdgesAndCorners(bool on) { m_edgesCorners = on; }
+  bool edgesAndCorners() const { return m_edgesCorners; }
 
  protected:
   // A cube click changes orientation about the visible focus, preserving the user's zoom.
@@ -38,6 +42,7 @@ class NavCube : public AIS_ViewCube {
 
  private:
   gp_Pnt m_orbitPoint;
+  bool m_edgesCorners = true;
   // Sides from the base geometry; edges and corners as bands/squares in the face planes. Picking gives them
   // priority corner > edge > side, since coplanar entities tie on depth.
   void partTriangles(const Handle(Graphic3d_ArrayOfTriangles)& tris, Standard_Integer& nbNodes, Standard_Integer& nbTris, V3d_TypeOfOrientation dir) const;

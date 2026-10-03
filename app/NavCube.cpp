@@ -93,6 +93,7 @@ void NavCube::ComputeSelection(const Handle(SelectMgr_Selection)& selection, con
   if (mode != 0) return;
   for (Standard_Integer part = 0; part <= Standard_Integer(V3d_XnegYnegZneg); ++part) {
     const V3d_TypeOfOrientation ori = static_cast<V3d_TypeOfOrientation>(part);
+    if (!m_edgesCorners && !IsBoxSide(ori)) continue;
     Standard_Integer nbNodes = 0, nbTris = 0;
     partTriangles(Handle(Graphic3d_ArrayOfTriangles)(), nbNodes, nbTris, ori);
     if (nbNodes <= 0) continue;

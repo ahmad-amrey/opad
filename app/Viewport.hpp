@@ -80,6 +80,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setSceneBackground(int style);
   void setHoverFade(bool enabled,double seconds);
   void resetHoverFade();
+  void setCubeEdgesCorners(bool on);  // setting view/cubeEdgesCorners: off = only the cube's faces are views
   void setTwoDimensional(bool on);
   bool twoDimensional() const { return m_twoDimensional; }
   void setTracking(bool on);
@@ -108,6 +109,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void warmUp();  // create the OpenGL viewer now rather than on first paint
   void setBlocked(bool on);  // while a file loads: mouse input is ignored (the shade window covers the view)
   void benchShot(const QString& path);  // --bench-select with OPAD_BENCH_SHOT: hover the view cube, save a frame
+  QString benchCubePart(int dx, int dy);  // hover the cube this far from its centre (Qt points): "side", "edge", "corner" or ""
   std::string benchHeaviest() const;       // OPAD_BENCH_FILTER: the body with the most faces, the pick target
   void benchBand();                        // OPAD_BENCH_BAND: rubber band over the whole view in the current mode
   void benchSubShot(const QString& path);  // OPAD_BENCH_SUBSHOT: frame from behind the picked sub-shape (X-ray check)
