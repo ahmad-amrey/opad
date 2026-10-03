@@ -2739,6 +2739,339 @@
     {"to": 2.4, "caption": "Create sketch"},
     {"to": 4.8, "caption": "The curves become sketch geometry"}
    ]
+  },
+  {
+   "id": "annotate.add", "duration": 5, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"use": "pickFace", "args": {"face": [[-9, -6, 6], [9, -6, 6], [9, 6, 6], [-9, 6, 6]], "hover": 0.5, "pick": 0.9, "until": 3.4}},
+    {"el": "chip", "at": [-2, 0, 6], "dx": 30, "dy": 34, "icon": "annotate", "text": "Note · Face 3", "from": 1, "to": 3.4},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Note", "rows": [{"text": "Text", "entry": ""}], "from": 1.2, "to": 3.4, "keys": [[1.6, {"rows": [{"text": "Text", "entry": "Check"}], "ease": "step"}], [2, {"rows": [{"text": "Text", "entry": "Check the clearance"}], "ease": "step"}]]},
+    {"el": "key", "caps": ["Ctrl", "Enter"], "press": 3.3, "from": 2.95, "to": 3.8},
+    {"el": "poly", "points": [[-2, 0, 6], [-2, 0, 11]], "color": "amber", "width": 1.2, "from": 3.4, "fade": 0.2},
+    {"el": "label", "at": [-2, 0, 11], "dy": -10, "value": "Check the clearance", "box": "bg2", "color": "fg", "from": 3.4, "fade": 0.2},
+    {"el": "cursor", "badge": "annotate", "keys": [[0, {"pos": [16, -14, 0]}], [0.9, {"pos": [-2, 0, 6], "click": 1}], [1.5, {"pos": [14, -12, 4]}]]}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Click a face, edge or point"},
+    {"to": 3.3, "caption": "Type the note"},
+    {"to": 5, "caption": "Ctrl+Enter pins it to the model"}
+   ]
+  },
+  {
+   "id": "annotate.draw", "duration": 5.2, "view": "iso",
+   "items": [
+    {"el": "camera", "keys": [[2.6, {"az": -45, "elev": 35.26}], [3.8, {"az": -80, "elev": 28}]]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"use": "pickFace", "args": {"face": [[-9, -6, 6], [9, -6, 6], [9, 6, 6], [-9, 6, 6]], "hover": 0.4, "pick": 0.8, "until": 1.2}},
+    {"el": "poly", "points": [[8.5, 0, 6.05], [8.28, 1.39, 6.05], [7.64, 2.65, 6.05], [6.65, 3.64, 6.05], [5.39, 4.28, 6.05], [4, 4.5, 6.05], [2.61, 4.28, 6.05], [1.35, 3.64, 6.05], [0.36, 2.65, 6.05], [-0.28, 1.39, 6.05], [-0.5, 0, 6.05], [-0.28, -1.39, 6.05], [0.36, -2.65, 6.05], [1.35, -3.64, 6.05], [2.61, -4.28, 6.05], [4, -4.5, 6.05], [5.39, -4.28, 6.05], [6.65, -3.64, 6.05], [7.64, -2.65, 6.05], [8.28, -1.39, 6.05], [8.5, 0, 6.05]], "color": "red", "width": 2.4, "smooth": true, "from": 1.2, "fade": 0, "keys": [[1.2, {"progress": 0}], [2.4, {"progress": 1, "ease": "linear"}]]},
+    {"el": "chip", "screen": [0.03, 0.05], "icon": "pen", "text": "Hand drawing", "dot": "red", "from": 0.9, "to": 4.4},
+    {"el": "key", "caps": ["Ctrl", "Enter"], "press": 4.3, "from": 3.95, "to": 4.8},
+    {"el": "cursor", "kind": "cross", "keys": [[0, {"pos": [16, -14, 0]}], [0.8, {"pos": [0, -3, 6], "click": 1}], [1.2, {"pos": [8.5, 0, 6.05], "down": true}], [1.26, {"pos": [8.28, 1.39, 6.05]}], [1.32, {"pos": [7.64, 2.65, 6.05]}], [1.38, {"pos": [6.65, 3.64, 6.05]}], [1.44, {"pos": [5.39, 4.28, 6.05]}], [1.5, {"pos": [4, 4.5, 6.05]}], [1.56, {"pos": [2.61, 4.28, 6.05]}], [1.62, {"pos": [1.35, 3.64, 6.05]}], [1.68, {"pos": [0.36, 2.65, 6.05]}], [1.74, {"pos": [-0.28, 1.39, 6.05]}], [1.8, {"pos": [-0.5, 0, 6.05]}], [1.86, {"pos": [-0.28, -1.39, 6.05]}], [1.92, {"pos": [0.36, -2.65, 6.05]}], [1.98, {"pos": [1.35, -3.64, 6.05]}], [2.04, {"pos": [2.61, -4.28, 6.05]}], [2.1, {"pos": [4, -4.5, 6.05]}], [2.16, {"pos": [5.39, -4.28, 6.05]}], [2.22, {"pos": [6.65, -3.64, 6.05]}], [2.28, {"pos": [7.64, -2.65, 6.05]}], [2.34, {"pos": [8.28, -1.39, 6.05]}], [2.4, {"pos": [8.5, 0, 6.05]}], [2.5, {"pos": [8.5, 0, 6.05], "down": false}], [3.2, {"pos": [14, -10, 6]}]]}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Click the part to draw on"},
+    {"to": 2.5, "caption": "Drag to draw"},
+    {"to": 5.2, "caption": "Strokes stay put as you orbit; save"}
+   ]
+  },
+  {
+   "id": "annotate.resolve", "duration": 4.2, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"el": "poly", "points": [[-2, 0, 6], [-2, 0, 11]], "color": "amber", "width": 1.2, "keys": [[1.6, {"opacity": 1}], [2, {"opacity": 0.35}]]},
+    {"el": "label", "at": [-2, 0, 11], "dx": 40, "dy": -10, "value": "Check the clearance", "box": "bg2", "color": "fg", "keys": [[1.6, {"opacity": 1}], [2, {"opacity": 0.35}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Annotations", "rows": [{"text": "Check the clearance", "icon": "annotate", "dim": false}, {"label": "Ahmad · Issue", "dim": false}], "hl": 0, "keys": [[1.6, {"rows": [{"text": "Check the clearance", "icon": "check"}, {"label": "Ahmad · Issue"}], "ease": "step"}], [1.8, {"rows": [{"text": "Check the clearance", "icon": "check", "dim": true}, {"label": "Ahmad · Resolved", "dim": true}], "hl": -1, "ease": "step"}]]},
+    {"el": "key", "caps": ["Ctrl", "Enter"], "press": 1.6, "from": 1.25, "to": 2.1}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Select the note"},
+    {"to": 4.2, "caption": "Ctrl+Enter resolves it; it stays in history"}
+   ]
+  },
+  {
+   "id": "annotate.show", "duration": 3.8, "view": "iso", "extent": [-22, -12, 22, 20],
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"el": "poly", "points": [[-2, 0, 6], [-2, 0, 11]], "color": "amber", "width": 1.2, "to": 1.2, "fade": 0.4},
+    {"el": "label", "at": [-2, 0, 11], "dy": -10, "value": "Check the clearance", "box": "bg2", "color": "fg", "to": 1.2, "fade": 0.4},
+    {"el": "poly", "points": [[6, 4, 6], [10, 8, 9]], "color": "amber", "width": 1.2, "to": 1.2, "fade": 0.4},
+    {"el": "label", "at": [10, 8, 9], "dy": -10, "value": "Round this edge", "box": "bg2", "color": "fg", "to": 1.2, "fade": 0.4},
+    {"el": "chip", "screen": [0.03, 0.05], "icon": "annotate", "text": "Show notes", "dot": "sel", "keys": [[0.9, {"hl": true, "dot": "sel"}], [1, {"dot": "fg3", "ease": "step"}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.6]}], [0.8, {"screen": [0.1, 0.11]}], [0.9, {"screen": [0.1, 0.11], "click": 1}], [1.8, {"screen": [0.6, 0.65]}]]}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Toggle Show notes"},
+    {"to": 3.8, "caption": "The cards hide; the notes stay"}
+   ]
+  },
+  {
+   "id": "edit.undo", "duration": 3.8, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 4}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "keys": [[0.9, {"profile": {"rect": [0, 0, 18, 12], "round": 4}}], [1, {"profile": {"rect": [0, 0, 18, 12], "round": 0}, "ease": "step"}]]},
+    {"el": "timeline", "screen": [0.03, 0.8], "markers": ["sketch", "extrude", "fillet"], "states": ["", "", ""], "keys": [[0.9, {"markers": ["sketch", "extrude", "fillet"], "states": ["", "", ""]}], [1, {"markers": ["sketch", "extrude"], "states": ["", ""], "ease": "step"}]]},
+    {"el": "key", "caps": ["Ctrl", "Z"], "press": 0.95, "from": 0.6, "to": 1.45}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Press Ctrl+Z"},
+    {"to": 3.8, "caption": "The last step is taken back"}
+   ]
+  },
+  {
+   "id": "edit.redo", "duration": 3.8, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 0}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "keys": [[0.9, {"profile": {"rect": [0, 0, 18, 12], "round": 0}}], [1, {"profile": {"rect": [0, 0, 18, 12], "round": 4}, "ease": "step"}]]},
+    {"el": "timeline", "screen": [0.03, 0.8], "markers": ["sketch", "extrude"], "states": ["", ""], "keys": [[0.9, {"markers": ["sketch", "extrude"], "states": ["", ""]}], [1, {"markers": ["sketch", "extrude", "fillet"], "states": ["", "", ""], "ease": "step"}]]},
+    {"el": "key", "caps": ["Ctrl", "Y"], "press": 0.95, "from": 0.6, "to": 1.45}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Press Ctrl+Y"},
+    {"to": 3.8, "caption": "The undone step comes back"}
+   ]
+  },
+  {
+   "id": "edit.rename", "duration": 4.4, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "tone": "sel", "toneAmount": 0.35},
+    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Browser", "rows": [{"text": "Body 1", "icon": "body"}, {"text": "Body 2", "icon": "body"}], "from": 0.1, "hl": 0, "keys": [[1, {"rows": [{"entry": "", "icon": "body"}, {"text": "Body 2", "icon": "body"}], "ease": "step"}], [1.3, {"rows": [{"entry": "Brack", "icon": "body"}, {"text": "Body 2", "icon": "body"}], "ease": "step"}], [1.6, {"rows": [{"entry": "Bracket", "icon": "body"}, {"text": "Body 2", "icon": "body"}], "ease": "step"}], [2.2, {"rows": [{"label": "Bracket", "icon": "body"}, {"text": "Body 2", "icon": "body"}], "ease": "step"}]]},
+    {"el": "key", "caps": ["F2"], "press": 0.9, "from": 0.55, "to": 1.3},
+    {"el": "key", "caps": ["Enter"], "press": 2.1, "from": 1.8, "to": 2.6}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Select it and press F2"},
+    {"to": 2.2, "caption": "Type the name, Enter"},
+    {"to": 4.4, "caption": "Several at once: Leg {n} numbers them"}
+   ]
+  },
+  {
+   "id": "edit.hide", "duration": 3.8, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5},
+    {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0.4, "keys": [[1, {"opacity": 1}], [1.5, {"opacity": 0}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Browser", "rows": [{"text": "Base", "icon": "eye"}, {"text": "Post", "icon": "eye"}], "from": 0.1, "hl": 1, "keys": [[1, {"rows": [{"text": "Base", "icon": "eye"}, {"text": "Post", "icon": "hide", "dim": true}], "ease": "step"}]]},
+    {"el": "key", "caps": ["V"], "press": 0.95, "from": 0.6, "to": 1.45}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Select bodies and press V"},
+    {"to": 3.8, "caption": "They hide; the browser eye closes"}
+   ]
+  },
+  {
+   "id": "edit.showall", "duration": 3.8, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5},
+    {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "style": "wire", "to": 1.2, "fade": 0.3, "opacity": 0.5},
+    {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "from": 1, "fade": 0.4},
+    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Browser", "rows": [{"text": "Base", "icon": "eye"}, {"text": "Post", "icon": "hide", "dim": true}], "from": 0.1, "keys": [[1, {"rows": [{"text": "Base", "icon": "eye"}, {"text": "Post", "icon": "eye"}], "ease": "step"}]]},
+    {"el": "key", "caps": ["Shift", "V"], "press": 0.95, "from": 0.6, "to": 1.45}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Press Shift+V"},
+    {"to": 3.8, "caption": "Everything hidden shows again"}
+   ]
+  },
+  {
+   "id": "edit.filter", "duration": 4.2, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12]}, "height": 4},
+    {"el": "solid", "profile": {"circle": [-6, -3, 1.6]}, "at": [0, 0, 4], "height": 5, "tone": "sel", "toneAmount": 0, "keys": [[1.9, {"toneAmount": 0}], [2.1, {"toneAmount": 0.45}]]},
+    {"el": "solid", "profile": {"circle": [6, -3, 1.6]}, "at": [0, 0, 4], "height": 5, "tone": "sel", "toneAmount": 0, "keys": [[1.9, {"toneAmount": 0}], [2.1, {"toneAmount": 0.45}]]},
+    {"el": "solid", "profile": {"circle": [-6, 3, 1.6]}, "at": [0, 0, 4], "height": 5, "tone": "sel", "toneAmount": 0, "keys": [[1.9, {"toneAmount": 0}], [2.1, {"toneAmount": 0.45}]]},
+    {"el": "solid", "profile": {"circle": [6, 3, 1.6]}, "at": [0, 0, 4], "height": 5, "tone": "sel", "toneAmount": 0, "keys": [[1.9, {"toneAmount": 0}], [2.1, {"toneAmount": 0.45}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Browser", "rows": [{"entry": ""}, {"text": "Plate", "icon": "body"}, {"label": "Bolt 1", "icon": "body"}, {"label": "Bolt 2", "icon": "body"}], "from": 0.9, "keys": [[1.3, {"rows": [{"entry": "bo"}, {"text": "Plate", "icon": "body"}, {"label": "Bolt 1", "icon": "body"}, {"label": "Bolt 2", "icon": "body"}], "ease": "step"}], [1.6, {"rows": [{"entry": "bolt"}, {"label": "Bolt 1", "icon": "body"}, {"label": "Bolt 2", "icon": "body"}, {"label": "Bolt 3", "icon": "body"}], "ease": "step"}]]},
+    {"el": "key", "caps": ["Ctrl", "F"], "press": 0.8, "from": 0.45, "to": 1.3}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Press Ctrl+F"},
+    {"to": 2, "caption": "Type part of a name"},
+    {"to": 4.2, "caption": "The browser narrows to matches"}
+   ]
+  },
+  {
+   "id": "edit.selectparent", "duration": 3.8, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12]}, "height": 4, "tone": "sel", "toneAmount": 0, "keys": [[1, {"toneAmount": 0}], [1.1, {"toneAmount": 0.4}]]},
+    {"el": "solid", "profile": {"circle": [0, 0, 2.5]}, "at": [0, 0, 4], "height": 8, "tone": "sel", "toneAmount": 0.4},
+    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Browser", "rows": [{"text": "Assembly", "icon": "component"}, {"text": "Plate", "icon": "body", "indent": 1}, {"text": "Pin", "icon": "body", "indent": 1}], "from": 0.1, "hl": 2, "keys": [[1, {"hl": 0}]]},
+    {"el": "key", "caps": ["Ctrl", "↑"], "press": 0.95, "from": 0.6, "to": 1.45}
+   ],
+   "steps": [
+    {"to": 1, "caption": "With a body selected, press Ctrl+↑"},
+    {"to": 3.8, "caption": "Its component is selected"}
+   ]
+  },
+  {
+   "id": "edit.delete", "duration": 3.8, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5},
+    {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0.4, "keys": [[1, {"opacity": 1}], [1.5, {"opacity": 0}]]},
+    {"el": "timeline", "screen": [0.03, 0.8], "markers": ["box", "cylinder"], "states": ["", ""], "keys": [[1, {"markers": ["box", "cylinder"], "states": ["", ""]}], [1.05, {"markers": ["box", "cylinder", "delete"], "states": ["", "", "flash"], "ease": "step"}], [1.8, {"states": ["", "", ""]}]]},
+    {"el": "key", "caps": ["Del"], "press": 0.95, "from": 0.6, "to": 1.45}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Select it and press Del"},
+    {"to": 3.8, "caption": "It goes; a delete step keeps it restorable"}
+   ]
+  },
+  {
+   "id": "edit.restore", "duration": 4, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5},
+    {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "opacity": 0, "keys": [[1.6, {"opacity": 0}], [2.1, {"opacity": 1}]]},
+    {"el": "timeline", "screen": [0.03, 0.8], "markers": ["box", "cylinder", "delete"], "states": ["", "", ""], "keys": [[0.9, {"states": ["", "", "sel"], "ease": "step"}], [1.6, {"markers": ["box", "cylinder", "delete", "restore"], "states": ["", "", "struck", "flash"], "ease": "step"}], [2.3, {"states": ["", "", "struck", ""]}]]},
+    {"el": "key", "caps": ["Shift", "Del"], "press": 1.55, "from": 1.2, "to": 2.05},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.5]}], [0.8, {"screen": [0.22, 0.89]}], [0.9, {"screen": [0.22, 0.89], "click": 1}], [1.8, {"screen": [0.6, 0.6]}]]}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Click the delete step on the timeline"},
+    {"to": 4, "caption": "Shift+Del brings the objects back"}
+   ]
+  },
+  {
+   "id": "edit.selecttouched", "duration": 3.8, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5},
+    {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0, "keys": [[1.5, {"toneAmount": 0}], [1.6, {"toneAmount": 0.45}]]},
+    {"el": "timeline", "screen": [0.03, 0.8], "markers": ["box", "cylinder", "fillet"], "states": ["", "", ""], "keys": [[0.9, {"states": ["", "sel", ""], "ease": "step"}]]},
+    {"el": "key", "caps": ["T"], "press": 1.55, "from": 1.2, "to": 2.05},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.5]}], [0.8, {"screen": [0.15, 0.89]}], [0.9, {"screen": [0.15, 0.89], "click": 1}], [2, {"screen": [0.6, 0.6]}]]}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Click a step on the timeline"},
+    {"to": 3.8, "caption": "T selects what it changed"}
+   ]
+  },
+  {
+   "id": "file.import", "duration": 4.2, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [-4, 0, 12, 12]}, "height": 5},
+    {"el": "chip", "screen": [0.62, 0.05], "icon": "import", "value": "bracket.step", "to": 1.5, "keys": [[0.6, {"dy": 0}], [1.4, {"dy": 50}]]},
+    {"el": "solid", "profile": {"circle": [8, 0, 4]}, "height": 10, "tone": "sel", "toneAmount": 0.35, "from": 1.4, "fade": 0.5, "keys": [[2.6, {"toneAmount": 0.35}], [2.9, {"toneAmount": 0}]]},
+    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Browser", "rows": [{"text": "Base", "icon": "body"}], "from": 0.1, "keys": [[1.5, {"rows": [{"text": "Base", "icon": "body"}, {"label": "bracket", "icon": "component"}], "hl": 1, "ease": "step"}], [2.9, {"hl": -1}]], "hl": -1},
+    {"el": "key", "caps": ["Ctrl", "I"], "press": 0.5, "from": 0.15, "to": 1}
+   ],
+   "steps": [
+    {"to": 0.9, "caption": "Press Ctrl+I and choose a file"},
+    {"to": 4.2, "caption": "Its parts join this design"}
+   ]
+  },
+  {
+   "id": "file.importdoc", "duration": 4, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"el": "chip", "screen": [0.03, 0.05], "icon": "eye", "value": "bracket.step", "dot": "amber", "to": 1.3, "fade": 0},
+    {"el": "chip", "screen": [0.03, 0.05], "icon": "doc", "value": "bracket.opad", "dot": "green", "from": 1.3, "fade": 0},
+    {"el": "chip", "screen": [0.5, 0.05], "icon": "save", "text": "Save to edit", "to": 1.3, "keys": [[1, {"hl": true}]]},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.6]}], [0.9, {"screen": [0.62, 0.11]}], [1, {"screen": [0.62, 0.11], "click": 1}], [2, {"screen": [0.6, 0.65]}]]}
+   ],
+   "steps": [
+    {"to": 1.1, "caption": "A viewed file: Save to edit"},
+    {"to": 4, "caption": "It becomes an OPAD document you can edit"}
+   ]
+  },
+  {
+   "id": "file.save", "duration": 3.4, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"el": "chip", "screen": [0.03, 0.05], "icon": "doc", "value": "bracket.opad *", "dot": "amber", "to": 1, "fade": 0},
+    {"el": "chip", "screen": [0.03, 0.05], "icon": "doc", "value": "bracket.opad", "dot": "green", "from": 1, "fade": 0},
+    {"el": "key", "caps": ["Ctrl", "S"], "press": 0.95, "from": 0.6, "to": 1.45}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Press Ctrl+S"},
+    {"to": 3.4, "caption": "Saved: the asterisk clears"}
+   ]
+  },
+  {
+   "id": "file.saveas", "duration": 4.2, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Save as", "button": "Save", "press": 2.2, "from": 0.9, "to": 2.4, "rows": [{"text": "Name", "entry": "bracket"}], "keys": [[1.4, {"rows": [{"text": "Name", "entry": "bracket-v2"}], "ease": "step"}]]},
+    {"el": "chip", "screen": [0.62, 0.05], "icon": "doc", "value": "bracket.opad", "to": 2.3, "fade": 0},
+    {"el": "chip", "screen": [0.62, 0.05], "icon": "doc", "value": "bracket-v2.opad", "dot": "green", "from": 2.3, "fade": 0},
+    {"el": "key", "caps": ["Ctrl", "Shift", "S"], "press": 0.8, "from": 0.45, "to": 1.3},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [2, {"screen": [0.47, 0.44]}], [2.2, {"screen": [0.47, 0.44], "click": 1}], [3, {"screen": [0.7, 0.8]}]]}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Press Ctrl+Shift+S"},
+    {"to": 2.4, "caption": "Type the new name"},
+    {"to": 4.2, "caption": "You go on in the new file"}
+   ]
+  },
+  {
+   "id": "file.export", "duration": 4.6, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6, "tone": "sel", "toneAmount": 0.35},
+    {"el": "card", "screen": [0.03, 0.06], "w": 140, "title": "Export", "button": "Export", "press": 2.4, "from": 0.9, "to": 2.6, "hl": -1, "rows": [{"label": "STEP", "radio": true}, {"label": "STL", "radio": false}, {"label": "3MF", "radio": false}, {"label": "DXF", "radio": false}], "keys": [[1.6, {"hl": 1, "rows": [{"label": "STEP", "radio": false}, {"label": "STL", "radio": true}, {"label": "3MF", "radio": false}, {"label": "DXF", "radio": false}], "ease": "step"}]]},
+    {"el": "chip", "screen": [0.62, 0.05], "icon": "export", "value": "bracket.stl", "dot": "green", "from": 2.6},
+    {"el": "key", "caps": ["Ctrl", "E"], "press": 0.8, "from": 0.45, "to": 1.3},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [1.5, {"screen": [0.1, 0.4]}], [1.6, {"screen": [0.1, 0.4], "click": 1}], [2.2, {"screen": [0.4, 0.8]}], [2.4, {"screen": [0.4, 0.8], "click": 1}], [3.2, {"screen": [0.7, 0.85]}]]}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Press Ctrl+E"},
+    {"to": 2.5, "caption": "Choose the format"},
+    {"to": 4.6, "caption": "The file is written"}
+   ]
+  },
+  {
+   "id": "file.screenshot", "duration": 3.6, "view": "iso",
+   "items": [
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"el": "veil", "color": "white", "from": 0.95, "to": 1.25, "fade": 0.12, "opacity": 0.7},
+    {"el": "chip", "screen": [0.62, 0.05], "icon": "image", "value": "view.png", "dot": "green", "from": 1.4},
+    {"el": "key", "caps": ["Ctrl", "Shift", "P"], "press": 0.9, "from": 0.55, "to": 1.4}
+   ],
+   "steps": [
+    {"to": 1, "caption": "Press Ctrl+Shift+P"},
+    {"to": 3.6, "caption": "The view is saved as an image"}
+   ]
+  },
+  {
+   "id": "panel.annotations", "duration": 4.6, "view": "iso", "extent": [-26, -11, 26, 16],
+   "items": [
+    {"el": "camera", "center": [-10, 0]},
+    {"use": "isoScene", "args": {"area": [-20, -14, 20, 14]}},
+    {"el": "solid", "profile": {"rect": [0, 0, 18, 12], "round": 2}, "holes": [{"circle": [4, 0, 2.5]}], "height": 6},
+    {"el": "poly", "closed": true, "points": [[9, -6, 0], [9, 6, 0], [9, 6, 6], [9, -6, 6]], "color": "sel", "width": 1.6, "fill": "sel", "fillOpacity": 0.38, "from": 3, "fade": 0.15},
+    {"el": "card", "screen": [0.03, 0.06], "w": 150, "title": "Annotations", "hl": -1, "rows": [["Type", "All"], {"text": "Check the clearance", "icon": "annotate"}, {"text": "Round this edge", "icon": "annotate"}, {"text": "Hole too small", "icon": "issue"}], "keys": [[1.2, {"rows": [["Type", "Issue"], {"text": "Hole too small", "icon": "issue"}, {"text": "Wall too thin", "icon": "issue"}], "hl": 0, "ease": "step"}], [1.5, {"hl": -1}], [2.9, {"hl": 2}]]},
+    {"el": "key", "caps": ["Alt", "2"], "press": 0.5, "from": 0.15, "to": 1},
+    {"el": "cursor", "keys": [[0, {"screen": [0.6, 0.7]}], [1.1, {"screen": [0.4, 0.28]}], [1.2, {"screen": [0.4, 0.28], "click": 1}], [2.8, {"screen": [0.2, 0.52]}], [2.9, {"screen": [0.2, 0.52], "click": 1}], [3.8, {"screen": [0.7, 0.85]}]]}
+   ],
+   "steps": [
+    {"to": 1.3, "caption": "Open Annotations (Alt+2); filter"},
+    {"to": 2.9, "caption": "The list narrows"},
+    {"to": 4.6, "caption": "Click a card: its target lights up"}
+   ]
   }
  ]
 }
