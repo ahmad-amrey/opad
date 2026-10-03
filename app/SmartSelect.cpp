@@ -102,9 +102,14 @@ void SmartChip::setContent(const QString& icon, const QString& text, const QStri
   m_text->setText(text);
   m_hint->setText(hint);
   m_hint->setVisible(!hint.isEmpty());
-  qDeleteAll(m_buttons);
-  m_buttons.clear();
+  // The last ones go later, with their actions: this can run inside a button's own click (Isolate moves the selection).
   auto* row = static_cast<QHBoxLayout*>(layout());
+  for (QToolButton* b : std::exchange(m_buttons, {})) {
+    row->removeWidget(b);
+    b->hide();
+    if (QAction* a = b->defaultAction(); a && a->parent() == this) a->deleteLater();
+    b->deleteLater();
+  }
   for (QAction* a : actions) {
     auto* b = new QToolButton(this);
     b->setObjectName("smartChipAction");
