@@ -311,7 +311,7 @@ int main(int argc, char** argv) {
     if (command == "diff") {
       if (pi < positional.size() && !args.contains("a")) args["a"] = positional[pi++];
       if (pi < positional.size() && !args.contains("b")) args["b"] = positional[pi++];
-    } else if (command == "import" || command == "kicad_models") {
+    } else if (command == "import" || command == "kicad_models" || command == "kicad_sync_preview") {
       if (pi < positional.size() && !args.contains("file")) args["file"] = positional[pi++];
     } else if (command == "append") {
       if (pi < positional.size()) {

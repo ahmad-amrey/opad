@@ -410,6 +410,12 @@ void register_builtins() {
         return j;
       });
 
+  reg("kicad_sync_preview", "What reading a KiCad board again would change in its import: per reference designator moved (dx, dy, drot), flipped, models or footprint changed, added, removed; the board's thickness, drills and outline before/after",
+      {{"doc", "path"}, {"import", "uuid - the KiCad import op (default: the only one)"}, {"file", "path - the board now (default: the import's source beside the document)"}},
+      false, [](Document* d, const json& a) {
+        return kicad_sync_preview(need(d), a.value("import", ""), a.contains("file") ? path_from_utf8(a["file"].get<std::string>()) : std::filesystem::path());
+      });
+
   reg("import_brep", "Import a shape given as OCCT ASCII BREP text (build123d/CadQuery/OCP bridge)",
       {{"doc", "path"}, {"brep", "string - BREP text"}, {"file", "path - .brep file (alternative to brep)"}, {"name", "string"}, {"by", "string"}, {"parent", "uuid"}},
       true, [](Document* d, const json& a) {

@@ -460,6 +460,42 @@ TEST(embedded_models) {
 }
 #endif
 
+// What reading a changed board again would do to its import, per reference designator, matched by footprint uuid: moved,
+// turned, flipped, model changed, added, removed, unchanged; the board's thickness, drills and outline.
+TEST(sync_preview) {
+  Files files;
+  auto fp = [](const std::string& id, const std::string& ref, const std::string& at, const std::string& layer, const std::string& model_name) {
+    return "  (footprint \"Sync:" + ref.substr(0, 1) + "\" (layer \"" + layer + "\") (uuid \"" + id + "\") (at " + at + ")\n    (property \"Reference\" \"" + ref +
+           "\")\n    (model \"${KIPRJMOD}/" + model_name + "\"))\n";
+  };
+  const std::string hole = "  (footprint \"MountingHole\" (layer \"F.Cu\") (at 45 25) (pad \"\" np_thru_hole circle (at 0 0) (size 3 3) (drill 3)))\n";
+  const auto board = files.dir / "sync.kicad_pcb";
+  write(board, "(kicad_pcb (version 20241229) (general (thickness 1.6))\n  (gr_rect (start 0 0) (end 50 30) (layer \"Edge.Cuts\"))\n" +
+                   fp("aaaaaaaa-0000-0000-0000-000000000001", "R1", "10 10", "F.Cu", "m1.step") + fp("aaaaaaaa-0000-0000-0000-000000000002", "R2", "20 10 90", "F.Cu", "m1.step") +
+                   fp("aaaaaaaa-0000-0000-0000-000000000003", "U1", "30 10", "F.Cu", "m2.step") + fp("aaaaaaaa-0000-0000-0000-000000000004", "D1", "40 10", "F.Cu", "m1.step") +
+                   fp("aaaaaaaa-0000-0000-0000-000000000005", "C1", "10 20", "F.Cu", "m1.step") + hole + ")\n");
+  Document d = Document::create();
+  import_file(d, board, {});
+  const json same = kicad_sync_preview(d, {}, board);
+  CHECK(!same["changed"].get<bool>() && same["unchanged"] == 5 && same["added"].empty() && same["removed"].empty());
+  d.save_as(files.dir / "sync.opad");
+  const Document saved = Document::load(files.dir / "sync.opad");
+  write(board, "(kicad_pcb (version 20241229) (general (thickness 1.2))\n  (gr_rect (start 0 0) (end 50 32) (layer \"Edge.Cuts\"))\n" +
+                   fp("aaaaaaaa-0000-0000-0000-000000000001", "R1", "11 8", "F.Cu", "m1.step") + fp("aaaaaaaa-0000-0000-0000-000000000002", "R2", "20 10 180", "F.Cu", "m2.step") +
+                   fp("aaaaaaaa-0000-0000-0000-000000000004", "D1", "40 10", "B.Cu", "m1.step") + fp("aaaaaaaa-0000-0000-0000-000000000005", "C1", "10 20", "F.Cu", "m1.step") +
+                   fp("aaaaaaaa-0000-0000-0000-000000000006", "N1", "25 25", "F.Cu", "m1.step") + ")\n");
+  const json p = kicad_sync_preview(saved);  // the board beside the document, the only KiCad import
+  CHECK(p["changed"].get<bool>() && p["unchanged"] == 1);
+  CHECK(p["moved"].size() == 2 && p["moved"][0]["ref"] == "R1" && about(p["moved"][0]["dx"], 1) && about(p["moved"][0]["dy"], 2) && about(p["moved"][0]["drot"], 0));
+  CHECK(p["moved"][1]["ref"] == "R2" && about(p["moved"][1]["drot"], 90) && about(p["moved"][1]["dx"], 0));
+  CHECK(p["models_changed"].size() == 1 && p["models_changed"][0]["ref"] == "R2" && p["models_changed"][0]["after"][0] == "${KIPRJMOD}/m2.step");
+  CHECK(p["flipped"].size() == 1 && p["flipped"][0]["ref"] == "D1" && p["flipped"][0]["side"] == "bottom");
+  CHECK(p["added"].size() == 1 && p["added"][0]["ref"] == "N1" && p["removed"].size() == 1 && p["removed"][0]["ref"] == "U1");
+  CHECK(p["thickness"]["before"] == 1.6 && p["thickness"]["after"] == 1.2 && p["holes"]["before"] == 1 && p["holes"]["after"] == 0);
+  CHECK(about(p["outline"]["before"]["area"], 1500) && about(p["outline"]["after"]["area"], 1600));
+  CHECK_THROWS(kicad_sync_preview(Document::create()));
+}
+
 // A through-hole part's pins must go down its own drills, whichever side and turn: a 2x3 header model (pins only, pin 1
 // at its origin, KiCad's 3D frame: +y is up the page) on footprints turned 0/90/180/270 on top, and the same footprints
 // flipped to the bottom as KiCad stores them (pads mirrored in y, orientation negated, B.Cu). Each pin's centre must

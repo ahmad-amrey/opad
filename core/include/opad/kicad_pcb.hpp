@@ -37,4 +37,11 @@ json kicad_models(const std::filesystem::path& board, const KicadOptions& opt = 
 json kicad_download_models(const std::filesystem::path& board, const KicadOptions& opt = {},
                            const std::function<bool(double, const std::string&)>& progress = {});
 
+// What reading the board again would change in a KiCad import of `doc` (`import_id`, or the only one), in the import's own
+// frame and options, matched by footprint uuid, else reference: per reference designator "moved" (dx, dy mm, drot degrees),
+// "flipped", "models_changed", "footprint_changed", "added", "removed", a count of "unchanged", and the board's
+// "thickness", "holes" and "outline" (area, page box) before/after when they differ; "changed" when anything does.
+// `board` defaults to the import's source beside the document.
+json kicad_sync_preview(const Document& doc, const std::string& import_id = {}, const std::filesystem::path& board = {});
+
 }  // namespace opad

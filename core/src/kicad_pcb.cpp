@@ -38,6 +38,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -880,7 +881,8 @@ class Builder {
     json root_node = {{"type", "component"}, {"id", stable_id(op_id, "root")}, {"name", utf8(file.stem())}, {"children", children}};
     if (!opt.placement.is_identity()) root_node["transform"] = opt.placement.to_json();
     json op = {{"op", "import"}, {"id", op_id}, {"source", utf8(file.filename())}, {"units", "mm"}, {"nodes", json::array({root_node})},
-               {"kicad", {{"origin", {origin[0], origin[1]}}, {"thickness", thickness}}}};
+               {"kicad", {{"origin", {origin[0], origin[1]}}, {"thickness", thickness}, {"holes", holes.size()}, {"outline", outline()},
+                          {"options", {{"components", opt.kicad.components}, {"dnp", opt.kicad.dnp}, {"vias", opt.kicad.vias}}}}}};
     if (!opt.parent.empty()) op["parent"] = opt.parent;
     res.components += 1;
     res.op_id = doc.append(op, opt.author).id;
@@ -923,6 +925,19 @@ class Builder {
     return {{"models", list}, {"found", present}, {"missing", absent}, {"downloadable", library}, {"download_dir", utf8(kicad_download_dir())}};
   }
 
+  // The board as reading it would build it, without the geometry: the footprints that would be components (where, which
+  // side, which models) and the board's thickness, drills and outline. `page_origin` is the frame (page coordinates).
+  json summary(P2 page_origin) {
+    read(parse());
+    json parts = json::array();
+    if (opt.kicad.components)
+      for (const auto& f : footprints)
+        if (!f.models.empty() && (opt.kicad.dnp || !f.dnp))
+          parts.push_back({{"ref", f.ref}, {"uuid", f.uuid}, {"footprint", f.name}, {"side", f.bottom ? "bottom" : "top"}, {"models", model_names(f)},
+                           {"at", {f.place.x - page_origin[0], page_origin[1] - f.place.y, f.place.angle}}});
+    return {{"components", parts}, {"thickness", thickness}, {"holes", holes.size()}, {"outline", outline()}};
+  }
+
  private:
   Document& doc;
   std::filesystem::path file;
@@ -946,10 +961,18 @@ class Builder {
   std::map<std::string, std::string> boxes;            // placeholder size -> body key
   std::vector<std::string> missing;
   std::set<std::string> downloadable;  // missing models of KiCad's library
+  double outline_area = 0;
+  std::array<double, 4> outline_box{0, 0, 0, 0};
   int placed = 0, placeholders = 0;
 
   void report(double fraction, const std::string& what) {
     if (opt.progress && !opt.progress(fraction, what)) throw Error("import cancelled");
+  }
+  json outline() const { return {{"area", std::round(outline_area * 1e4) / 1e4}, {"box", outline_box}}; }
+  static json model_names(const Footprint& f) {
+    json names = json::array();
+    for (const auto& m : f.models) names.push_back(m.name);
+    return names;
   }
   Sx parse() {
     text = read_text_file(file);
@@ -1034,6 +1057,14 @@ class Builder {
     if (opt.kicad.origin == "page") origin = {0, 0};
     else if (aux && opt.kicad.origin != "center") origin = *aux;
     else if (x0 <= x1) origin = {(x0 + x1) / 2, (y0 + y1) / 2};
+    std::vector<std::vector<P2>> polys;  // the outline's area (cutouts taken off) and box on the page, for sync previews
+    for (const auto& l : page_loops) polys.push_back(polygon(l));
+    for (size_t i = 0; i < polys.size(); ++i) {
+      int depth = 0;
+      for (size_t j = 0; j < polys.size(); ++j) depth += i != j && std::abs(area(polys[j])) > std::abs(area(polys[i])) && inside(polys[j], polys[i][0]);
+      outline_area += (depth % 2 ? -1 : 1) * std::abs(area(polys[i]));
+    }
+    if (x0 <= x1 && !page_loops.empty()) outline_box = {x0, y0, x1, y1};
     for (auto& l : page_loops) {
       for (auto& s : l) to_board(s);
       loops.push_back(std::move(l));
@@ -1352,7 +1383,8 @@ class Builder {
       }
       const std::string short_name = f->name.substr(f->name.find(':') == std::string::npos ? 0 : f->name.find(':') + 1);
       json node = {{"type", "component"}, {"id", unique_id(key)}, {"name", f->ref.empty() ? short_name : f->ref + " " + short_name},
-                   {"children", bodies}, {"kicad", {{"ref", f->ref}, {"footprint", f->name}, {"side", f->bottom ? "bottom" : "top"}}}};
+                   {"children", bodies}, {"kicad", {{"ref", f->ref}, {"footprint", f->name}, {"side", f->bottom ? "bottom" : "top"}, {"models", model_names(*f)}}}};
+      if (!f->uuid.empty()) node["kicad"]["uuid"] = f->uuid;
       if (f->dnp) node["kicad"]["dnp"] = true;
       if (!absent.empty()) node["kicad"]["missing"] = absent;
       const Mat4 frame = Mat4::translation(at[0], at[1], 0) * rotation(2, f->place.angle);
@@ -1496,6 +1528,86 @@ json kicad_download_models(const std::filesystem::path& board, const KicadOption
     if (error.empty()) out["downloaded"].push_back(library);
     else out["failed"].push_back({{"model", library}, {"error", error}});
   }
+  return out;
+}
+
+json kicad_sync_preview(const Document& doc, const std::string& import_id, const std::filesystem::path& board) {
+  const Op* op = nullptr;
+  for (const auto& o : doc.ops)
+    if (o.type == "import" && o.data.contains("kicad") && (import_id.empty() || o.id == import_id)) {
+      if (op && import_id.empty()) throw Error("the document holds several KiCad boards: name the import");
+      op = &o;
+    }
+  if (!op) throw Error(import_id.empty() ? "the document holds no KiCad board" : "no KiCad board import " + import_id);
+  const json& was = op->data["kicad"];
+  std::filesystem::path file = board;
+  if (file.empty()) file = doc.path.parent_path() / path_from_utf8(op->data.value("source", ""));
+  ImportOptions o;
+  const json options = was.value("options", json::object());
+  o.kicad.components = options.value("components", true);
+  o.kicad.dnp = options.value("dnp", true);
+  o.kicad.vias = options.value("vias", false);
+  Document scratch = Document::create();
+  const json origin = was.value("origin", json::array({0.0, 0.0}));
+  json now;
+  try {
+    now = Builder(scratch, file, o).summary({origin[0].get<double>(), origin[1].get<double>()});
+  } catch (const Standard_Failure& e) {
+    throw Error("cannot read " + utf8(file.filename()) + ": " + e.GetMessageString());
+  }
+  // The components as imported: their carrier and placement.
+  std::vector<json> before;
+  std::function<void(const json&)> walk = [&](const json& nodes) {
+    for (const auto& n : nodes) {
+      if (n.contains("kicad") && n["kicad"].is_object()) {
+        const Mat4 m = n.contains("transform") ? Mat4::from_json(n["transform"]) : Mat4{};
+        json c = n["kicad"];
+        c["at"] = {m.at(0, 3), m.at(1, 3), std::atan2(m.at(1, 0), m.at(0, 0)) * 180 / kPi};
+        before.push_back(c);
+      }
+      if (n.contains("children")) walk(n["children"]);
+    }
+  };
+  walk(op->data.value("nodes", json::array()));
+  json out = {{"import", op->id}, {"board", utf8(file)}, {"moved", json::array()}, {"flipped", json::array()}, {"models_changed", json::array()},
+              {"footprint_changed", json::array()}, {"added", json::array()}, {"removed", json::array()}, {"unchanged", 0}};
+  std::vector<bool> matched(before.size());
+  auto find = [&](const json& c) -> int {
+    const std::string uuid = c.value("uuid", ""), ref = c.value("ref", "");
+    for (size_t i = 0; i < before.size(); ++i)
+      if (!matched[i] && !uuid.empty() && before[i].value("uuid", "") == uuid) return static_cast<int>(i);
+    for (size_t i = 0; i < before.size(); ++i)
+      if (!matched[i] && !ref.empty() && before[i].value("ref", "") == ref && (uuid.empty() || before[i].value("uuid", "").empty())) return static_cast<int>(i);
+    return -1;
+  };
+  auto rounded = [](double v) { return std::round(v * 1e4) / 1e4; };
+  for (const auto& c : now["components"]) {
+    const int i = find(c);
+    const std::string ref = c.value("ref", "");
+    if (i < 0) {
+      out["added"].push_back({{"ref", ref}, {"footprint", c["footprint"]}});
+      continue;
+    }
+    matched[static_cast<size_t>(i)] = true;
+    const json& b = before[static_cast<size_t>(i)];
+    bool same = true;
+    const double dx = c["at"][0].get<double>() - b["at"][0].get<double>(), dy = c["at"][1].get<double>() - b["at"][1].get<double>();
+    double turn = std::fmod(c["at"][2].get<double>() - b["at"][2].get<double>(), 360.0);
+    if (turn > 180) turn -= 360;
+    if (turn <= -180) turn += 360;
+    if (std::hypot(dx, dy) > 1e-4 || std::abs(turn) > 1e-3) out["moved"].push_back({{"ref", ref}, {"dx", rounded(dx)}, {"dy", rounded(dy)}, {"drot", rounded(turn)}}), same = false;
+    if (b.value("side", "top") != c.value("side", "top")) out["flipped"].push_back({{"ref", ref}, {"side", c["side"]}}), same = false;
+    if (b.contains("models") && b["models"] != c["models"]) out["models_changed"].push_back({{"ref", ref}, {"before", b["models"]}, {"after", c["models"]}}), same = false;
+    if (b.value("footprint", "") != c.value("footprint", "")) out["footprint_changed"].push_back({{"ref", ref}, {"before", b["footprint"]}, {"after", c["footprint"]}}), same = false;
+    out["unchanged"] = out["unchanged"].get<int>() + same;
+  }
+  for (size_t i = 0; i < before.size(); ++i)
+    if (!matched[i]) out["removed"].push_back({{"ref", before[i].value("ref", "")}, {"footprint", before[i].value("footprint", "")}});
+  if (std::abs(was.value("thickness", 0.0) - now["thickness"].get<double>()) > 1e-6) out["thickness"] = {{"before", was["thickness"]}, {"after", now["thickness"]}};
+  if (was.contains("holes") && was["holes"] != now["holes"]) out["holes"] = {{"before", was["holes"]}, {"after", now["holes"]}};
+  if (was.contains("outline") && was["outline"] != now["outline"]) out["outline"] = {{"before", was["outline"]}, {"after", now["outline"]}};
+  out["changed"] = !out["moved"].empty() || !out["flipped"].empty() || !out["models_changed"].empty() || !out["footprint_changed"].empty() ||
+                   !out["added"].empty() || !out["removed"].empty() || out.contains("thickness") || out.contains("holes") || out.contains("outline");
   return out;
 }
 
