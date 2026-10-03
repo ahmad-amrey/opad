@@ -17,6 +17,7 @@
 #include <functional>
 #include <map>
 #include <set>
+#include <unordered_map>
 
 #include "../design/engine.hpp"
 #include "opad/geometry.hpp"
@@ -248,8 +249,60 @@ void record_body_keys(const json& op, std::vector<std::string>& keys) {
       if (body_key(v)) keys.push_back(v.get<std::string>());
 }
 
+bool is_drawing_op(const std::string& op_type) { return is_sheet_record(op_type) || op_type == "properties"; }
+
 // ---------------------------------------------------------------- views
 ViewSpec view_spec(const Scene& scene, const SheetView& view) { return spec_of(scene, view, 0); }
+
+std::string view_orientation(const Scene& scene, const SheetView& view) {
+  if (!view.error.empty()) return "";
+  try {
+    const Vec3 dir = unit(view_spec(scene, view).dir);
+    for (const char* name : {"front", "top", "right", "left", "back", "bottom", "iso", "iso-back"})
+      if (dot3(dir, unit(Camera::preset(name).eye)) > 1 - 1e-9) return name;
+  } catch (const std::exception&) {
+  }
+  return "";
+}
+
+std::vector<OutlineRow> outline(const Scene& scene) {
+  std::vector<OutlineRow> out;
+  std::map<std::string, size_t> drawings;
+  std::unordered_map<std::string, const SheetView*> views;
+  std::unordered_map<std::string, const SheetItem*> items;
+  std::unordered_map<std::string, std::string> why;
+  for (const auto& v : scene.sheet_views) views[v.id] = &v;
+  for (const auto& t : scene.sheet_items) items[t.id] = &t;
+  for (const auto& u : scene.unresolved) why[u.op_id] = u.reason;
+  for (const auto& s : scene.sheets) {
+    OutlineRow sheet{s.id, "sheet", s.name, "", why.count(s.id) ? why[s.id] : "", {}};
+    std::map<std::string, size_t> view_rows;
+    for (const auto& id : s.views) {
+      const SheetView* v = views.at(id);
+      view_rows[id] = sheet.children.size();
+      sheet.children.push_back({id, "view", v->name, v->name.empty() ? view_orientation(scene, *v) : "", v->error, {}});
+    }
+    for (const auto& id : s.items) {
+      const SheetItem* t = items.at(id);
+      std::string name = t->kind == "dimension" ? t->def.value("result", json::object()).value("shown", "") : t->def.value("text", "");
+      name = name.substr(0, name.find('\n'));
+      OutlineRow row{id, "item", name, "", t->error, {}};
+      if (const auto at = view_rows.find(t->view); at != view_rows.end()) sheet.children[at->second].children.push_back(std::move(row));
+      else sheet.children.push_back(std::move(row));
+    }
+    if (s.drawing.empty()) {
+      out.push_back(std::move(sheet));
+      continue;
+    }
+    auto at = drawings.find(s.drawing);
+    if (at == drawings.end()) {
+      at = drawings.emplace(s.drawing, out.size()).first;
+      out.push_back({"drawing:" + s.drawing, "drawing", s.drawing, "", "", {}});
+    }
+    out[at->second].children.push_back(std::move(sheet));
+  }
+  return out;
+}
 
 Vec2 ViewFrame::view(const Vec3& p) const { return {dot3(p, x), dot3(p, y)}; }
 

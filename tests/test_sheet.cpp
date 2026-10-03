@@ -334,4 +334,58 @@ TEST(sheet_edits_and_auto_scale) {
   CHECK_THROWS(run(p.doc, "sheet_edit", {{"target", later}, {"set", {{"at", {1, 1}}}}}));
 }
 
+// The browser's Drawings folder: drawings > sheets > views with their items > the sheet's own items; unnamed views by the
+// standard view they show (first angle: the view right of the front is the left side). Drawing records are deleted and
+// restored without walking the design history.
+TEST(sheet_outline_for_the_browser) {
+  Plate p;
+  const std::string right = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"parent", p.front}, {"side", "right"}})["id"];
+  const std::string below = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"parent", p.front}, {"side", "bottom"}})["id"];
+  const std::string corner = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"parent", p.front}, {"side", "top-right"}})["id"];
+  const std::string named = run(p.doc, "sheet_view", {{"sheet", p.sheet}, {"name", "Detail"}, {"dir", {1, 2, 3}}, {"at", {40, 40}}})["id"];
+  const std::string width = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"view", p.front}, {"type", "horizontal"}, {"refs", {p.edge({0, -20, 10}, {1, 0, 0})}}})["id"];
+  const std::string note = run(p.doc, "sheet_item", {{"sheet", p.sheet}, {"text", "BREAK SHARP EDGES\nALL OVER"}})["id"];
+  const std::string later = p.doc.append({{"op", "sheet_item"}, {"sheet", p.sheet}, {"view", below}, {"kind", "balloon"}}).id;
+  const std::string housing = run(p.doc, "sheet", {{"name", "Cover"}, {"drawing", "Housing"}})["id"];
+  const std::string second = run(p.doc, "sheet", {{"name", "Parts"}, {"drawing", "Drawing 1"}})["id"];
+  const std::string loose = p.doc.append({{"op", "sheet"}, {"name", "Loose"}, {"size", {{"w", 297}, {"h", 210}}}}).id;
+  run(p.doc, "part_properties", {{"target", p.body}, {"set", {{"material", "PA12"}}}});
+  Scene s = resolve(p.doc);
+  auto rows = outline(s);
+  CHECK_EQ(rows.size(), 3u);
+  CHECK(rows[0].id == "drawing:Drawing 1" && rows[0].kind == "drawing" && rows[0].name == "Drawing 1");
+  CHECK_EQ(rows[0].children.size(), 2u);
+  CHECK(rows[1].name == "Housing" && rows[1].children.size() == 1 && rows[1].children[0].id == housing);
+  CHECK(rows[2].id == loose && rows[2].kind == "sheet" && rows[2].children.empty());
+  const OutlineRow& sheet = rows[0].children[0];
+  CHECK(sheet.id == p.sheet && sheet.kind == "sheet" && sheet.name == "Sheet 1" && sheet.error.empty());
+  CHECK_EQ(rows[0].children[1].id, second);
+  CHECK_EQ(sheet.children.size(), 6u);  // five views, then the note
+  CHECK(sheet.children[0].id == p.front && sheet.children[0].orient == "front" && sheet.children[0].name.empty());
+  CHECK(sheet.children[1].id == right && sheet.children[1].orient == "left");
+  CHECK(sheet.children[2].id == below && sheet.children[2].orient == "top");
+  CHECK(sheet.children[3].id == corner && sheet.children[3].orient == "iso");
+  CHECK(sheet.children[4].id == named && sheet.children[4].name == "Detail" && sheet.children[4].orient.empty());
+  CHECK(sheet.children[5].id == note && sheet.children[5].kind == "item" && sheet.children[5].name == "BREAK SHARP EDGES");
+  CHECK(sheet.children[0].children.size() == 1 && sheet.children[0].children[0].id == width && sheet.children[0].children[0].name == "60");
+  CHECK(sheet.children[2].children.size() == 1 && sheet.children[2].children[0].id == later);
+  CHECK(sheet.children[2].children[0].error.find("needs a newer OPAD") != std::string::npos);
+  run(p.doc, "sheet_edit", {{"target", p.sheet}, {"set", {{"projection", "third"}}}});
+  CHECK_EQ(outline(resolve(p.doc))[0].children[0].children[1].orient, "right");
+  CHECK(is_drawing_op("sheet") && is_drawing_op("sheet_view") && is_drawing_op("sheet_item") && is_drawing_op("properties"));
+  CHECK(!is_drawing_op("feature") && !is_drawing_op("delete") && !is_drawing_op("edit"));
+  // Deleting a view or restoring it is one op, never a walk of the features (no regeneration report).
+  const size_t ops = p.doc.ops.size();
+  const json gone = run(p.doc, "delete", {{"target", p.front}});
+  CHECK(!gone.contains("regenerated") && p.doc.ops.size() == ops + 1);
+  CHECK(outline(resolve(p.doc))[0].children[0].children.size() == 2u);  // the named view and the note
+  const json back = run(p.doc, "delete", {{"target", gone["id"]}});
+  CHECK(!back.contains("regenerated") && outline(resolve(p.doc))[0].children[0].children.size() == 6u);
+  const json renamed = run(p.doc, "sheet_edit", {{"target", p.sheet}, {"set", {{"name", "Plate"}}}});
+  CHECK_EQ(resolve(p.doc).sheet(p.sheet)->name, "Plate");
+  CHECK(!run(p.doc, "delete", {{"target", renamed["id"]}}).contains("regenerated"));
+  CHECK_EQ(resolve(p.doc).sheet(p.sheet)->name, "Sheet 1");
+  CHECK(run(p.doc, "delete", {{"target", p.box}}).contains("regenerated"));
+}
+
 CHECK_MAIN()

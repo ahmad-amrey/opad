@@ -40,12 +40,30 @@ const std::vector<double>& standard_scales();  // ISO 5455, largest first
 double fit_scale(double model_w, double model_h, double room_w, double room_h);
 
 bool is_sheet_record(const std::string& op_type);  // sheet | sheet_view | sheet_item
+// A sheet record or part properties: nothing the design history reads, so deleting one walks no features, and the
+// design timeline does not show them (the browser's Drawings folder and the Properties panel do).
+bool is_drawing_op(const std::string& op_type);
 void validate_record(const json& op);               // Document::validate_op's check of those; throws Error
 void record_body_keys(const json& op, std::vector<std::string>& keys);  // template geometry, frozen linework
 
 // What a view draws and from where: the orientation follows its parents (first or third angle), the source and the style
 // are its own or its base view's. Throws Error when it cannot be drawn.
 ViewSpec view_spec(const Scene& scene, const SheetView& view);
+// The standard view it shows, as Camera::preset names it (front, top, left, iso, ...): empty when it looks askew or cannot
+// be drawn. In first angle the view right of a front view is "left".
+std::string view_orientation(const Scene& scene, const SheetView& view);
+
+// The browser's Drawings folder: drawings (the sheets sharing `drawing`, in the order of their first sheet; a sheet with
+// none stands alone) > sheets > their views in log order, each with its items > the items on the sheet itself. Names are
+// the records' own; a dimension's is the value it was made with, a note's its first line; a view without one gets its
+// orientation (above) for the app to word. error: why it is not drawn (a kind of a newer OPAD, a missing parent, ...).
+struct OutlineRow {
+  std::string id;    // the op; a drawing: "drawing:" + its name
+  std::string kind;  // drawing | sheet | view | item
+  std::string name, orient, error;
+  std::vector<OutlineRow> children;
+};
+std::vector<OutlineRow> outline(const Scene& scene);
 
 // Where a view lands on its sheet: model point p -> at + scale * (view(p) - centre). Boxes come from the bodies' tight
 // boxes (walks the geometry the first time: workers only).

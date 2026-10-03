@@ -17,6 +17,7 @@
 #include "opad/step_io.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/drawing/projection.hpp"
+#include "opad/drawing/sheet.hpp"
 
 namespace opad::commands {
 
@@ -538,10 +539,15 @@ void register_builtins() {
   reg("delete", "Tombstone an earlier op (annotation resolved, rename undone, import removed...)",
       {{"doc", "path"}, {"target", "uuid - op id"}, {"by", "string"}}, true, [](Document* d, const json& a) {
         // Through the design engine: tombstoning (or restoring) a sketch or feature changes what the later
-        // features produce, and that is recomputed in the same step.
+        // features produce, and that is recomputed in the same step. Drawing records and part properties (and
+        // edits of them) are never read by the features: no walk for those (the app deletes them on the UI thread).
         json op = op_with_target("delete", a);
+        Document& doc = need(d);
+        const Op* t = op["target"].is_string() ? doc.find_op(op["target"].get<std::string>()) : nullptr;
+        while (t && (t->type == "delete" || t->type == "edit")) t = doc.find_op(t->data.value("target", ""));
+        if (t && drawing::is_drawing_op(t->type)) return json{{"id", doc.append(op, a.value("by", "")).id}};
         op["id"] = new_uuid();
-        json j = design::apply_ops(need(d), {op}, a.value("by", ""));
+        json j = design::apply_ops(doc, {op}, a.value("by", ""));
         j["id"] = op["id"];
         return j;
       });
