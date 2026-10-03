@@ -9,8 +9,14 @@ namespace opad {
 // the way KiCad places models (position, rotation, bottom-side flip, then the model's offset, rotation and scale); each
 // model is read once and shared by every footprint using it; a translucent box stands in for a model that is not found.
 // Models embedded in the footprint or the board (kicad-embed://, zstd + base64) are written once to the user cache and read.
-// Hidden 2D layers (Edge.Cuts with the drills, courtyards) are there for sketches. `opt.viewer` keeps the shapes live.
+// Hidden 2D layers for sketches: Edge.Cuts with the drills, the outline alone, courtyards, and each mounting hole as a body of
+// its own named after its footprint, which carries kicad {ref, uuid, footprint, hole: true} (UI-134: sketches project them by
+// node, which a sync keeps). The board's root carries "explode": "keep" (explode_keep_defaults). `opt.viewer` keeps the shapes live.
 ImportResult import_kicad_pcb(Document& doc, const std::filesystem::path& file, const ImportOptions& opt = {});
+
+// The components an exploded view keeps together unless it is told otherwise: nodes of imports marked "explode": "keep" (a
+// KiCad board and its parts), in log order.
+std::vector<std::string> explode_keep_defaults(const Document& doc);
 
 // The file a footprint's 3D model names on `board` (the .kicad_pcb), or empty: ${KIPRJMOD} is the board's folder;
 // KICAD<n>_3DMODEL_DIR, KISYS3DMOD and other variables come from the project's text variables (<board>.kicad_pro), the
@@ -42,11 +48,14 @@ json kicad_download_models(const std::filesystem::path& board, const KicadOption
 // "flipped", "models_changed", "footprint_changed", "added", "removed", a count of "unchanged", and the board's
 // "thickness", "holes" and "outline" (area, page box) before/after when they differ; "changed" when anything does.
 // `board` defaults to the import's source beside the document.
+// The mounting holes are listed with the parts, flagged "hole" (when the import has them: an older one does not).
 json kicad_sync_preview(const Document& doc, const std::string& import_id = {}, const std::filesystem::path& board = {});
+// The same for an import's effective data (a copy taken off the document: a worker reads the board), read from `board`.
+json kicad_sync_preview(const json& import_data, const std::string& import_id, const std::filesystem::path& board);
 
 // The board as the reader would place it, without its geometry, in the frame `opt` chooses: {"origin": [x, y] (on the page),
-// "components": [{"ref", "uuid", "footprint", "side", "models", "at": [x, y, degrees]}] (footprints with models), "thickness",
-// "holes", "outline": {"area", "box" (page)}}.
+// "components": [{"ref", "uuid", "footprint", "side", "models", "at": [x, y, degrees]}] (footprints with models), "mounting":
+// [{"ref", "uuid", "footprint", "at", "size": [w, h]}] (mounting holes), "thickness", "holes", "outline": {"area", "box" (page)}}.
 json kicad_board(const std::filesystem::path& board, const KicadOptions& opt = {});
 
 // ---------------------------------------------------------------- KiCad's own export (UI-73)

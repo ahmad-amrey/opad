@@ -29,6 +29,9 @@
 
 #include "check.hpp"
 #include "opad/assets.hpp"
+#include "opad/design/feature.hpp"
+#include "opad/design/sketch.hpp"
+#include "opad/design/sketch_reference.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/kicad_pcb.hpp"
@@ -253,24 +256,137 @@ TEST(footprints_placed_like_kicad) {
   CHECK(order == expected);
   CHECK(r.info["components"] == 9 && r.info["placeholders"] == 1 && r.info["models"] == 4 && r.info["footprints"] == 15);
   CHECK(r.warnings.size() == 1 && r.warnings[0].find("J2 (none.step)") != std::string::npos);
-  // The hidden 2D layers for sketches: the outline with the drills, the courtyards on top of the board and under it.
+  // The hidden 2D layers for sketches: the outline with the drills, the outline alone, the courtyards on top of the board and
+  // under it, the mounting holes (UI-134).
   const Node* layers = named(s, "Layers");
-  CHECK(layers && !layers->visible && layers->children.size() == 3);
+  CHECK(layers && !layers->visible && layers->children.size() == 5);
   std::vector<std::string> names;
   for (const auto& id : layers->children) {
     names.push_back(s.node(id)->name);
-    CHECK(s.node(id)->representation == "drawing2d");
+    CHECK(s.node(id)->representation == "drawing2d" || s.node(id)->name == "Mounting holes");
   }
-  CHECK(names == std::vector<std::string>({"Edge.Cuts", "F.Courtyard", "B.Courtyard"}));
+  CHECK(names == std::vector<std::string>({"Edge.Cuts", "Outline", "F.Courtyard", "B.Courtyard", "Mounting holes"}));
   CHECK(box_is(world_box(d, s, named(s, "U1 R")), 38.5, -13, -1.0, 39.5, -11, -0.5));
   Bnd_Box top;
-  BRepBndLib::Add(node_world_shape(d, s, layers->children[1]), top);
+  BRepBndLib::Add(node_world_shape(d, s, layers->children[2]), top);
   double x0, y0, z0, x1, y1, z1;
   top.Get(x0, y0, z0, x1, y1, z1);
   CHECK(about(z0 + top.GetGap(), 1.6) && about(z1 - top.GetGap(), 1.6));
   // Without do-not-populate parts.
   const Scene without = resolve(f.read(false, false));
   CHECK(!named(without, "D1 R") && named(without, "R1 R"));
+}
+
+// UI-134: each mounting hole a hidden 2D body of its own named after its footprint (at its drill, a kicad record flagged
+// hole), the outline without the drills as a layer of its own, the board's root kept together by an exploded view.
+TEST(mounting_holes_outline_and_explode) {
+  Fixture f;
+  const Document d = f.read();
+  const Scene s = resolve(d);
+  const Node* holes = named(s, "Mounting holes");
+  CHECK(holes && holes->children.size() == 1);
+  const Node* h1 = s.node(holes->children[0]);
+  CHECK(h1->name == "H1" && h1->representation == "drawing2d");
+  Bnd_Box b;
+  BRepBndLib::Add(node_world_shape(d, s, h1->id), b);
+  CHECK(box_is(b, 43.4, -6.6, 0, 46.6, -3.4, 0));
+  const Op* op = nullptr;
+  for (const auto& o : d.ops)
+    if (o.type == "import") op = &o;
+  json hole;
+  std::function<void(const json&)> find = [&](const json& nodes) {
+    for (const auto& n : nodes) {
+      if (n.value("id", "") == h1->id) hole = n;
+      if (n.contains("children")) find(n["children"]);
+    }
+  };
+  find(op->data["nodes"]);
+  CHECK(hole["kicad"]["ref"] == "H1" && hole["kicad"].value("hole", false) && !hole["kicad"].value("uuid", "").empty());
+  auto edges = [&](const char* name) {
+    int n = 0;
+    for (TopExp_Explorer e(node_world_shape(d, s, named(s, name)->id), TopAbs_EDGE); e.More(); e.Next()) ++n;
+    return n;
+  };
+  CHECK_EQ(edges("Edge.Cuts") - edges("Outline"), 8);  // the drills: H1, the slot's four pieces, TP2, TP1's two
+  Bnd_Box outline;
+  BRepBndLib::Add(node_world_shape(d, s, named(s, "Outline")->id), outline);
+  CHECK(box_is(outline, 0, -30, 0, 50, 0, 0));
+  CHECK(op->data["nodes"][0]["explode"] == "keep");
+  CHECK(explode_keep_defaults(d) == std::vector<std::string>({s.roots[0]}));
+  const json summary = kicad_board(f.board);
+  CHECK(summary["mounting"].size() == 1 && summary["mounting"][0]["ref"] == "H1" && about(summary["mounting"][0]["at"][0], 45) &&
+        about(summary["mounting"][0]["at"][1], -5) && about(summary["mounting"][0]["size"][0], 3.2));
+}
+
+// UI-134: a sketch projects a linked board's outline, a mounting hole and a connector by their nodes; a sync that changes the
+// outline (more pieces), moves the hole and turns the connector leaves the sketch following them without an error, and a
+// connector gone from the board is said by name of what it was.
+TEST(sketch_projection_follows_a_sync) {
+  Files files;
+  configure_kernel_logging(false);
+  const auto dir = files.dir / "hw";
+  const auto board = dir / "board.kicad_pcb";
+  step_box(dir / "conn.step", -2, -1, 0, 4, 2, 3);
+  auto text = [](const std::string& outline, const std::string& h1, const std::string& j1) {
+    std::string t = "(kicad_pcb (version 20241229) (general (thickness 1.6))\n" + outline +
+                    "  (footprint \"MountingHole:MountingHole_3.2mm\" (layer \"F.Cu\") (uuid \"bbbbbbbb-0000-0000-0000-000000000001\") (at " + h1 +
+                    ")\n    (property \"Reference\" \"H1\")\n    (pad \"\" np_thru_hole circle (at 0 0) (size 3.2 3.2) (drill 3.2)))\n";
+    if (!j1.empty())
+      t += "  (footprint \"Conn:USB\" (layer \"F.Cu\") (uuid \"bbbbbbbb-0000-0000-0000-000000000002\") (at " + j1 +
+           ")\n    (property \"Reference\" \"J1\")\n    (model \"${KIPRJMOD}/conn.step\"))\n";
+    return t + ")\n";
+  };
+  const std::string rect = "  (gr_rect (start 0 0) (end 50 30) (layer \"Edge.Cuts\"))\n";
+  const std::string notched = "  (gr_poly (pts (xy 0 0) (xy 50 0) (xy 50 30) (xy 30 30) (xy 30 25) (xy 20 25) (xy 20 30) (xy 0 30)) (layer \"Edge.Cuts\"))\n";
+  write(board, text(rect, "45 5", "10 15"));
+  Document d = Document::create();
+  d.save_as(dir / "enclosure.opad");
+  link_file(d, board);
+  std::string import_id;
+  for (const auto& o : d.ops)
+    if (o.type == "import") import_id = o.id;
+  Scene s = resolve(d);
+  design::Sketch sk;
+  for (const auto& [what, node] : std::vector<std::pair<std::string, std::string>>{{"outline", named(s, "Outline")->id}, {"hole", named(s, "H1")->id}, {"part", named(s, "J1 USB")->id}}) {
+    const json source = {{"asset", import_id}, {"kicad", what}, {"node", node}};
+    design::append_reference(sk, design::derive_sketch(d, s, Frame{}, source), source, "project", true);
+  }
+  design::apply_ops(d, {design::make_sketch_op("Enclosure", {{"base", "xy"}}, sk.to_json())});
+  // The sketch as the scene has it: lines, the hole's centre and radius, the part's corners.
+  struct Seen {
+    int lines = 0;
+    double cx = 1e9, cy = 1e9, r = 0, x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+    std::string error;
+  };
+  auto seen = [](const Document& doc) {
+    const Scene sc = resolve(doc);
+    Seen out;
+    CHECK(sc.sketches.size() == 1);
+    out.error = sc.sketches[0].error;
+    const design::Sketch g = design::Sketch::from_json(sc.sketches[0].geometry);
+    for (const auto& e : g.entities) {
+      if (e.type == design::SkEntity::Type::Circle) out.cx = g.point(e.p[0])->x, out.cy = g.point(e.p[0])->y, out.r = e.r;
+      if (e.type != design::SkEntity::Type::Line) continue;
+      ++out.lines;
+      if (e.source.value("ref", json()).value("kicad", "") != "part") continue;
+      for (int id : e.p) {
+        out.x0 = std::min(out.x0, g.point(id)->x), out.x1 = std::max(out.x1, g.point(id)->x);
+        out.y0 = std::min(out.y0, g.point(id)->y), out.y1 = std::max(out.y1, g.point(id)->y);
+      }
+    }
+    return out;
+  };
+  Seen a = seen(d);  // the frame starts at the outline's centre, page (25, 15)
+  CHECK(a.error.empty() && a.lines == 8 && about(a.cx, 20) && about(a.cy, 10) && about(a.r, 1.6));
+  CHECK(about(a.x0, -17) && about(a.x1, -13) && about(a.y0, -1) && about(a.y1, 1));
+  write(board, text(notched, "40 10", "12 15 90"));
+  design::commit(d, plan_asset_sync(d, import_id));
+  Seen b = seen(d);
+  CHECK(b.error.empty() && b.lines == 12 && about(b.cx, 15) && about(b.cy, 5) && about(b.r, 1.6));
+  CHECK(about(b.x0, -14) && about(b.x1, -12) && about(b.y0, -2) && about(b.y1, 2));
+  write(board, text(notched, "40 10", ""));
+  design::commit(d, plan_asset_sync(d, import_id));
+  CHECK(seen(d).error.find("KiCad part is no longer on the board") != std::string::npos);
 }
 
 TEST(saved_and_viewed) {
@@ -494,7 +610,8 @@ TEST(sync_preview) {
   CHECK(p["moved"][1]["ref"] == "R2" && about(p["moved"][1]["drot"], 90) && about(p["moved"][1]["dx"], 0));
   CHECK(p["models_changed"].size() == 1 && p["models_changed"][0]["ref"] == "R2" && p["models_changed"][0]["after"][0] == "${KIPRJMOD}/m2.step");
   CHECK(p["flipped"].size() == 1 && p["flipped"][0]["ref"] == "D1" && p["flipped"][0]["side"] == "bottom");
-  CHECK(p["added"].size() == 1 && p["added"][0]["ref"] == "N1" && p["removed"].size() == 1 && p["removed"][0]["ref"] == "U1");
+  CHECK(p["added"].size() == 1 && p["added"][0]["ref"] == "N1" && p["removed"].size() == 2 && p["removed"][0]["ref"] == "U1");
+  CHECK(p["removed"][1].value("hole", false) && p["removed"][1]["footprint"] == "MountingHole");  // the mounting hole went too
   CHECK(p["thickness"]["before"] == 1.6 && p["thickness"]["after"] == 1.2 && p["holes"]["before"] == 1 && p["holes"]["after"] == 0);
   CHECK(about(p["outline"]["before"]["area"], 1500) && about(p["outline"]["after"]["area"], 1600));
   CHECK_THROWS(kicad_sync_preview(Document::create()));

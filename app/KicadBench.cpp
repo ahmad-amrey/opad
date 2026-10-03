@@ -228,7 +228,8 @@ OPAD_BENCH(OPAD_BENCH_KICAD, kicad) {
                      "%9 downloadable, downloaded %10, model folders %11")
                  .arg(phase).arg(board).arg(models).arg(keys.size()).arg(placeholders).arg(layers).arg(w.m_viewport->displayedCount()).arg(shown)
                  .arg(downloadable).arg(downloaded).arg(dirs.join(';')));
-  if (!board || layers != 3 || w.m_viewport->displayedCount() != shown) return fail("board, layers or display");
+  // Edge.Cuts, Outline, the two courtyards and the mounting hole (UI-134)
+  if (!board || layers != 5 || w.m_viewport->displayedCount() != shown) return fail("board, layers or display");
   switch (phase++) {
     case 0:  // the settings folder's model on both footprints, boxes for the other two; the library one is fetched
       if (models != 2 || keys.size() != 1 || placeholders != 2 || dirs.isEmpty()) return fail("the model in the settings folder was not shared by both footprints");

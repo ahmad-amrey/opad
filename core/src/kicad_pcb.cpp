@@ -831,6 +831,10 @@ struct Footprint {
   std::map<std::string, std::string> embedded;  // its own embedded files (kicad-embed://name)
   std::array<std::vector<P2>, 3> outline;  // own coordinates: courtyard, fabrication outline, pads
   std::vector<Seg> courtyard;              // on the page
+  std::vector<Hole> drills;                // on the page
+  int pads = 0, npth = 0;                  // its pads, those unplated holes
+  // A mounting hole (UI-134): KiCad's MountingHole library, or a footprint of unplated holes only; its largest drill is it.
+  bool mounting() const { return !drills.empty() && (lower(name).find("mountinghole") != std::string::npos || pads == npth); }
 };
 
 double height_property(const std::string& value) {
@@ -881,7 +885,8 @@ class Builder {
     for (const auto& b : boards) children.push_back(b);
     if (opt.kicad.components) components(op_id, children);
     if (json layers = layers2d(op_id); !layers.is_null()) children.push_back(layers);
-    json root_node = {{"type", "component"}, {"id", stable_id(op_id, "root")}, {"name", utf8(file.stem())}, {"children", children}};
+    // An exploded view keeps a board and its parts together unless told otherwise (explode_keep_defaults).
+    json root_node = {{"type", "component"}, {"id", stable_id(op_id, "root")}, {"name", utf8(file.stem())}, {"explode", "keep"}, {"children", children}};
     if (!opt.placement.is_identity()) root_node["transform"] = opt.placement.to_json();
     json op = {{"op", "import"}, {"id", op_id}, {"source", utf8(file.filename())}, {"units", "mm"}, {"nodes", json::array({root_node})},
                {"kicad", {{"origin", {origin[0], origin[1]}}, {"thickness", thickness}, {"holes", holes.size()}, {"outline", outline()},
@@ -938,7 +943,10 @@ class Builder {
         if (!f.models.empty() && (opt.kicad.dnp || !f.dnp))
           parts.push_back({{"ref", f.ref}, {"uuid", f.uuid}, {"footprint", f.name}, {"side", f.bottom ? "bottom" : "top"}, {"models", model_names(f)},
                            {"at", {f.place.x - page_origin[0], page_origin[1] - f.place.y, f.place.angle}}});
-    return {{"components", parts}, {"thickness", thickness}, {"holes", holes.size()}, {"outline", outline()}};
+    json holes_at = json::array();
+    for (const auto& [f, h] : mounting_holes(page_origin))
+      holes_at.push_back({{"ref", f->ref}, {"uuid", f->uuid}, {"footprint", f->name}, {"at", {h.c[0], h.c[1], 0.0}}, {"size", {h.w, h.h}}});
+    return {{"components", parts}, {"mounting", holes_at}, {"thickness", thickness}, {"holes", holes.size()}, {"outline", outline()}};
   }
 
   // The page point the board's frame starts at, as reading it chooses it (a Builder reads its board once).
@@ -1148,6 +1156,8 @@ class Builder {
       for (const P2 d : {P2{-r, -r}, P2{r, r}}) f.outline[2].push_back({local[0] + d[0], local[1] + d[1]});
     }
     const std::string& type = c.text(2);
+    ++f.pads;
+    f.npth += type == "np_thru_hole";
     const Sx* drill = c.child("drill");
     if ((type != "thru_hole" && type != "np_thru_hole") || !drill) return;
     const bool oval = drill->text(1) == "oval";
@@ -1157,6 +1167,18 @@ class Builder {
     const P2 centre = f.place(local);
     const P2 offset = drill->child("offset") ? at2(drill->child("offset")) : P2{0, 0};
     page_holes.push_back({Place{centre[0], centre[1], angle}(offset), w, h, angle});
+    f.drills.push_back(page_holes.back());
+  }
+
+  // The mounting holes (Footprint::mounting), each with its footprint, in the frame starting at the page point `frame`.
+  std::vector<std::pair<const Footprint*, Hole>> mounting_holes(P2 frame) const {
+    std::vector<std::pair<const Footprint*, Hole>> out;
+    for (const auto& f : footprints) {
+      if (!f.mounting() || (!opt.kicad.dnp && f.dnp)) continue;
+      const Hole& h = *std::max_element(f.drills.begin(), f.drills.end(), [](const Hole& a, const Hole& b) { return a.w * a.h < b.w * b.h; });
+      out.push_back({&f, {{h.c[0] - frame[0], frame[1] - h.c[1]}, h.w, h.h > 0 ? h.h : h.w, h.angle}});
+    }
+    return out;
   }
 
   // The board: one prism per outer outline, its cutouts and the drills inside it as holes. A drill that crosses an
@@ -1440,7 +1462,8 @@ class Builder {
             {"transform", Mat4::translation((x0 + x1) / 2, (y0 + y1) / 2, f.bottom ? -kLift : thickness + kLift).to_json()}};
   }
 
-  // Hidden 2D layers for sketches: the outline with the drills (at the board's bottom), the courtyards on each side.
+  // Hidden 2D layers for sketches: the outline with the drills (at the board's bottom), the outline alone, the courtyards on
+  // each side, and each mounting hole as a body of its own named after its footprint (sketches project them by node: UI-134).
   json layers2d(const std::string& op_id) {
     BRep_Builder b;
     json bodies = json::array();
@@ -1459,6 +1482,12 @@ class Builder {
       for (const auto& h : holes) add_edges(b, cuts, hole_loop(h));
       layer("Edge.Cuts", cuts, 0);
     }
+    if (!loops.empty()) {
+      TopoDS_Compound outline;
+      b.MakeCompound(outline);
+      for (const auto& l : loops) add_edges(b, outline, l);
+      layer("Outline", outline, 0);
+    }
     for (const bool bottom : {false, true}) {
       TopoDS_Compound c;
       b.MakeCompound(c);
@@ -1471,6 +1500,31 @@ class Builder {
         any = true;
       }
       if (any) layer(bottom ? "B.Courtyard" : "F.Courtyard", c, bottom ? 0 : thickness);
+    }
+    // Each hole drawn about its own centre and placed there: holes of one size share their body, a moved hole keeps its key.
+    json mounts = json::array();
+    std::map<std::string, std::string> shared;
+    int unnamed = 0;
+    for (const auto& [f, h] : mounting_holes(origin)) {
+      Hole at = h;
+      at.c = {0, 0};
+      std::string& key = shared[json({h.w, h.h, h.angle}).dump()];
+      if (key.empty()) {
+        TopoDS_Compound c;
+        b.MakeCompound(c);
+        add_edges(b, c, hole_loop(at));
+        key = detail::store_body(doc, c, {{"representation", "drawing2d"}, {"layer", "Mounting holes"}, {"source", utf8(file.filename())}}, made, false, &res);
+      }
+      const std::string name = f->ref.empty() ? "Hole " + std::to_string(++unnamed) : f->ref;
+      json kicad = {{"ref", f->ref}, {"footprint", f->name}, {"hole", true}};
+      if (!f->uuid.empty()) kicad["uuid"] = f->uuid;
+      mounts.push_back({{"type", "body"}, {"id", stable_id(op_id, "hole/" + (f->uuid.empty() ? name : f->uuid))}, {"name", name}, {"representation", "drawing2d"},
+                        {"key", key}, {"transform", Mat4::translation(h.c[0], h.c[1], 0).to_json()}, {"kicad", kicad}});
+      ++res.bodies;
+    }
+    if (!mounts.empty()) {
+      bodies.push_back({{"type", "component"}, {"id", stable_id(op_id, "layer/Mounting holes")}, {"name", "Mounting holes"}, {"children", mounts}});
+      ++res.components;
     }
     if (bodies.empty()) return json();
     ++res.components;
@@ -1560,10 +1614,15 @@ json kicad_sync_preview(const Document& doc, const std::string& import_id, const
     }
   if (!op) throw Error(import_id.empty() ? "the document holds no KiCad board" : "no KiCad board import " + import_id);
   const json& data = op->data();
-  const json& was = data["kicad"];
   std::filesystem::path file = board;
   if (file.empty() && data.contains("asset")) file = locate_asset(doc, data["asset"]);
   if (file.empty()) file = doc.path.parent_path() / path_from_utf8(data.value("source", ""));
+  return kicad_sync_preview(data, op->op->id, file);
+}
+
+json kicad_sync_preview(const json& data, const std::string& import_id, const std::filesystem::path& file) {
+  if (!data.contains("kicad")) throw Error("not a KiCad board import");
+  const json& was = data["kicad"];
   ImportOptions o;
   const json options = was.value("options", json::object());
   o.kicad.components = options.value("components", true);
@@ -1577,22 +1636,23 @@ json kicad_sync_preview(const Document& doc, const std::string& import_id, const
   } catch (const Standard_Failure& e) {
     throw Error("cannot read " + utf8(file.filename()) + ": " + e.GetMessageString());
   }
-  // The components as imported: their carrier and placement.
-  std::vector<json> before;
+  // The components as imported: their carrier and placement; the mounting holes apart (UI-134: an older import has none).
+  std::vector<json> before, holes_before;
   std::function<void(const json&)> walk = [&](const json& nodes) {
     for (const auto& n : nodes) {
       if (n.contains("kicad") && n["kicad"].is_object()) {
         const Mat4 m = n.contains("transform") ? Mat4::from_json(n["transform"]) : Mat4{};
         json c = n["kicad"];
         c["at"] = {m.at(0, 3), m.at(1, 3), std::atan2(m.at(1, 0), m.at(0, 0)) * 180 / kPi};
-        before.push_back(c);
+        (c.value("hole", false) ? holes_before : before).push_back(c);
       }
       if (n.contains("children")) walk(n["children"]);
     }
   };
   walk(data.value("nodes", json::array()));
-  json out = {{"import", op->op->id}, {"board", utf8(file)}, {"moved", json::array()}, {"flipped", json::array()}, {"models_changed", json::array()},
+  json out = {{"import", import_id}, {"board", utf8(file)}, {"moved", json::array()}, {"flipped", json::array()}, {"models_changed", json::array()},
               {"footprint_changed", json::array()}, {"added", json::array()}, {"removed", json::array()}, {"unchanged", 0}};
+  auto rounded = [](double v) { return std::round(v * 1e4) / 1e4; };
   std::vector<bool> matched(before.size());
   auto find = [&](const json& c) -> int {
     const std::string uuid = c.value("uuid", ""), ref = c.value("ref", "");
@@ -1602,7 +1662,6 @@ json kicad_sync_preview(const Document& doc, const std::string& import_id, const
       if (!matched[i] && !ref.empty() && before[i].value("ref", "") == ref && (uuid.empty() || before[i].value("uuid", "").empty())) return static_cast<int>(i);
     return -1;
   };
-  auto rounded = [](double v) { return std::round(v * 1e4) / 1e4; };
   std::set<std::string> unplaced;  // KiCad's export had no part for them (no model found): there before, not new
   for (const auto& r : was.value("refdes", json::object()).value("unplaced", json::array())) unplaced.insert(r.get<std::string>());
   for (const auto& c : now["components"]) {
@@ -1631,11 +1690,48 @@ json kicad_sync_preview(const Document& doc, const std::string& import_id, const
   }
   for (size_t i = 0; i < before.size(); ++i)
     if (!matched[i]) out["removed"].push_back({{"ref", before[i].value("ref", "")}, {"footprint", before[i].value("footprint", "")}});
+  if (!holes_before.empty()) {  // matched by footprint uuid, else reference; each listed with "hole"
+    std::vector<bool> taken(holes_before.size());
+    for (const auto& h : now.value("mounting", json::array())) {
+      int i = -1;
+      for (size_t k = 0; k < holes_before.size() && i < 0; ++k)
+        if (!taken[k] && !h.value("uuid", "").empty() && holes_before[k].value("uuid", "") == h.value("uuid", "")) i = static_cast<int>(k);
+      for (size_t k = 0; k < holes_before.size() && i < 0; ++k)
+        if (!taken[k] && !h.value("ref", "").empty() && holes_before[k].value("ref", "") == h.value("ref", "")) i = static_cast<int>(k);
+      for (size_t k = 0; k < holes_before.size() && i < 0; ++k)  // neither: the same footprint where it was
+        if (!taken[k] && holes_before[k].value("footprint", "") == h.value("footprint", "") &&
+            std::hypot(holes_before[k]["at"][0].get<double>() - h["at"][0].get<double>(), holes_before[k]["at"][1].get<double>() - h["at"][1].get<double>()) < 1e-4)
+          i = static_cast<int>(k);
+      if (i < 0) {
+        out["added"].push_back({{"ref", h["ref"]}, {"footprint", h["footprint"]}, {"hole", true}});
+        continue;
+      }
+      taken[static_cast<size_t>(i)] = true;
+      const json& b = holes_before[static_cast<size_t>(i)];
+      const double dx = h["at"][0].get<double>() - b["at"][0].get<double>(), dy = h["at"][1].get<double>() - b["at"][1].get<double>();
+      if (std::hypot(dx, dy) > 1e-4) out["moved"].push_back({{"ref", h["ref"]}, {"dx", rounded(dx)}, {"dy", rounded(dy)}, {"drot", 0.0}, {"hole", true}});
+    }
+    for (size_t k = 0; k < holes_before.size(); ++k)
+      if (!taken[k]) out["removed"].push_back({{"ref", holes_before[k].value("ref", "")}, {"footprint", holes_before[k].value("footprint", "")}, {"hole", true}});
+  }
   if (std::abs(was.value("thickness", 0.0) - now["thickness"].get<double>()) > 1e-6) out["thickness"] = {{"before", was["thickness"]}, {"after", now["thickness"]}};
   if (was.contains("holes") && was["holes"] != now["holes"]) out["holes"] = {{"before", was["holes"]}, {"after", now["holes"]}};
   if (was.contains("outline") && was["outline"] != now["outline"]) out["outline"] = {{"before", was["outline"]}, {"after", now["outline"]}};
   out["changed"] = !out["moved"].empty() || !out["flipped"].empty() || !out["models_changed"].empty() || !out["footprint_changed"].empty() ||
                    !out["added"].empty() || !out["removed"].empty() || out.contains("thickness") || out.contains("holes") || out.contains("outline");
+  return out;
+}
+
+std::vector<std::string> explode_keep_defaults(const Document& doc) {
+  std::vector<std::string> out;
+  std::function<void(const json&)> walk = [&](const json& nodes) {
+    for (const auto& n : nodes) {
+      if (n.value("explode", "") == "keep" && n.contains("id")) out.push_back(n["id"].get<std::string>());
+      if (n.contains("children")) walk(n["children"]);
+    }
+  };
+  for (const auto& e : effective_ops(doc))
+    if (e.op->type == "import") walk(e.data().value("nodes", json::array()));
   return out;
 }
 
