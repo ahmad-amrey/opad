@@ -186,6 +186,13 @@ class MainWindow : public QMainWindow {
   void addRecent(const QString& path);
   QStringList recent() const;
   void rebuildRecentMenu();
+  // New from a template (UI-113, EmptyState.hpp templates): a built-in one ("builtin:in") or an .opad of the templates folder,
+  // opened as an untitled copy; saveAsTemplate puts a copy of this document there.
+  void newFromTemplate(const QString& id);
+  void saveAsTemplate();                    // asks for a name, then saveTemplate
+  void saveTemplate(const QString& path);  // on workers; a toast says when it is there
+  void rebuildTemplateMenu();              // File › New from template, as the menu opens
+  QMenu* m_templateMenu = nullptr;
   std::vector<std::string> currentNodeIds() const;
   QColor nodeColour(const std::string& id) const;  // its own colour, or the default body grey
   // Viewer mode (a file other than .opad shown read-only): edits ask to save it as an OPAD document first.

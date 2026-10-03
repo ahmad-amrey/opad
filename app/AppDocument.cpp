@@ -230,6 +230,14 @@ void AppDocument::newDocument() {
   emit newDocumentCreated();
 }
 
+void AppDocument::detachCopy() {
+  if (!hasDocument || browse) return;
+  doc.path.clear();
+  doc.header.uuid = opad::new_uuid();
+  doc.header.created = opad::now_iso8601();
+  emit pathChanged();
+}
+
 void AppDocument::closeDocument() {
   if (loading || designBusy) return;
   emit aboutToReplace();

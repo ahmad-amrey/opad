@@ -1,5 +1,5 @@
-"""gui_benches cases of the help area (UI-106/107/108, UI-116); the benches are in app/HelpBench.cpp, HelpMenuBench.cpp and
-PolishBench.cpp, the area in app/HelpArea.cpp."""
+"""gui_benches cases of the help area (UI-106/107/108, UI-113, UI-116); the benches are in app/HelpBench.cpp,
+HelpMenuBench.cpp, StartPageBench.cpp and PolishBench.cpp, the area in app/HelpArea.cpp."""
 
 
 def guided(root, document):
@@ -50,4 +50,8 @@ CASES = [
     # repeated summary in the tool panel; Ctrl+Z takes a feature's picks back; the value echo's own row.
     ("polish", guided, {"OPAD_BENCH_POLISH": "{prefix}"}),
     ("polish-ar", guided, {"OPAD_BENCH_POLISH": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-113: the start page: recent files as cards with pictures (opad-cli on a worker, then the cache), their menu (open,
+    # file location, copy path, remove), missing files, templates (built in, saved, new from one), Learn, a dropped file.
+    ("start-page", "box", {"OPAD_BENCH_STARTPAGE": "{prefix}"}),
+    ("start-page-ar", "box", {"OPAD_BENCH_STARTPAGE": "{prefix}", "OPAD_LANG": "ar"}),
 ]

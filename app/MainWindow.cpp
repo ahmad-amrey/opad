@@ -246,9 +246,16 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     m_viewport->showPreview(a, p, QString::fromUtf8("≈ %1").arg(units::format(units::Kind::Length, d)));
   });
   connect(m_empty, &EmptyState::openRequested, action("file.open"), &QAction::trigger);
-  connect(m_empty, &EmptyState::importRequested, action("file.new"), &QAction::trigger);
+  connect(m_empty, &EmptyState::newRequested, action("file.new"), &QAction::trigger);
   connect(m_empty, &EmptyState::recentChosen, this, &MainWindow::openPath);
   connect(m_empty, &EmptyState::filesDropped, this, [this](const QStringList& paths) { openPath(paths.first()); });
+  connect(m_empty, &EmptyState::recentChanged, this, [this](const QStringList& paths) {  // removed or located on the start page
+    m_settings.setValue("ui/recent", paths);
+    rebuildRecentMenu();
+  });
+  connect(m_empty, &EmptyState::templateChosen, this, [this](const QString& id) { guarded([&] { newFromTemplate(id); }); });
+  m_empty->setCommands([this](const QString& id) { return action(id); });
+  m_empty->setJobs(m_jobs);
 
   m_gitTimer.setInterval(5000);
   connect(&m_gitTimer, &QTimer::timeout, this, [this] {  // every git/refreshSeconds (Preferences, Version control)

@@ -36,6 +36,8 @@ class AppDocument : public QObject {
   bool loading = false;      // a worker thread owns the document content until loadFinished
 
   void newDocument();
+  // The document becomes an untitled copy with an identity of its own (New from template): Save asks where to put it.
+  void detachCopy();
   void closeDocument();  // back to the start screen; nothing is saved here (ask first)
   void open(const QString& path);  // .opad -> load; .step/.stp -> import into a new document
   void importStep(const QString& path, const QString& parent = {});

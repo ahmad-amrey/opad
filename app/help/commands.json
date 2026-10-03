@@ -48,6 +48,14 @@
    "requires": "Open or create a document first."
   },
   {
+   "id": "file.savetemplate",
+   "title": "Save as template",
+   "summary": "Keeps a copy of the document among the templates that New from template offers.",
+   "details": "The copy goes into the templates folder under the name you give, with an identity of its own. A document made from it starts as an untitled copy, so the template itself never changes.",
+   "keywords": ["template", "starting point", "default document"],
+   "requires": "Open or create a document first (a file in viewer mode cannot be a template until it is saved as OPAD)."
+  },
+  {
    "id": "file.export",
    "title": "Export",
    "summary": "Writes the selection or the whole design to STEP, STL, 3MF, OBJ, DXF, SVG and other formats.",
