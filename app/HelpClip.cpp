@@ -104,7 +104,7 @@ const QHash<QString, QStringList>& schema() {
         {"snap", {"kind", "at", "color"}},
         {"card", {"screen", "w", "title", "rows", "hl", "button", "press"}},
         {"picture", {"corners"}},
-        {"camera", {"az", "el", "zoom", "center"}},
+        {"camera", {"az", "elev", "zoom", "center"}},  // "elev": "el" names the element
     };
     for (auto it = h.begin(); it != h.end(); ++it) *it << "el" << "from" << "to" << "fade" << "opacity" << "keys" << "offset" << "rot" << "pivot" << "scale" << "note";
     return h;
@@ -325,7 +325,7 @@ void collectTexts(const QString& el, const QJsonObject& o, QStringList& out) {
 void checkValue(const QString& el, const QString& prop, const QJsonValue& v, const Problem& problem) {
   if (kColorProps.contains(prop) && v.isString() && !kTokens.contains(v.toString())) problem(QString("%1.%2: unknown colour %3").arg(el, prop, v.toString()));
   if (prop == "kind" && kKinds.contains(el) && !kKinds.value(el).contains(v.toString())) problem(QString("%1: unknown kind %2").arg(el, v.toString()));
-  if ((prop == "badge" || prop == "icon") && !icons::has(v.toString())) problem(QString("%1: no icon %2").arg(el, v.toString()));
+  if ((prop == "badge" || prop == "icon") && !v.toString().isEmpty() && !icons::has(v.toString())) problem(QString("%1: no icon %2").arg(el, v.toString()));
 }
 
 void parseItem(const QJsonObject& o, Clip& c, const Problem& problem) {
@@ -347,6 +347,9 @@ void parseItem(const QJsonObject& o, Clip& c, const Problem& problem) {
   it.fade = o.value("fade").toDouble(0.12);
   it.base = o;
   for (const char* k : {"el", "from", "to", "fade", "keys", "note"}) it.base.remove(k);
+  // States that start off: before its first key a button is up and a chip not highlighted.
+  if (it.el == "cursor" && !it.base.contains("down")) it.base.insert("down", false);
+  if (it.el == "chip" && !it.base.contains("hl")) it.base.insert("hl", false);
   collectTexts(it.el, it.base, c.texts);
   double last = -1e9;
   for (const QJsonValue& kv : o.value("keys").toArray()) {
@@ -409,7 +412,7 @@ void parseClip(QJsonObject raw, const QJsonObject& templates, Library& l) {
   if (raw.contains("view") && !QStringList{"iso", "plane"}.contains(raw.value("view").toString())) problem("view is iso or plane");
   const QJsonObject cam = raw.value("camera").toObject();
   c.az = cam.value("az").toDouble(c.az);
-  c.el = cam.value("el").toDouble(c.el);
+  c.el = cam.value("elev").toDouble(c.el);
   if (const QJsonArray e = raw.value("extent").toArray(); e.size() == 4) c.extent = QRectF(QPointF(e[0].toDouble(), e[1].toDouble()), QPointF(e[2].toDouble(), e[3].toDouble())).normalized();
   for (const QJsonValue& v : expand(raw.value("items").toArray(), templates, problem)) parseItem(v.toObject(), c, problem);
   double from = 0;
@@ -796,7 +799,9 @@ void solid(Ctx& c, const QJsonObject& o, const Xf& x) {
   }
   QList<double> depth{std::abs(h)};  // a hole with a "depth" under the height is a pocket from the top, with a floor
   for (const QJsonValue& v : o.value("holes").toArray()) {
-    loops << profile(v.toObject());
+    const Loop hole = profile(v.toObject());
+    if (area(hole.p) < 1e-3) continue;  // a hole about to open (radius 0) is not there yet
+    loops << hole;
     depth << std::clamp(v.toObject().value("depth").toDouble(std::abs(h)), 0.0, std::abs(h));
   }
   QVector<Face> faces;
@@ -1684,7 +1689,7 @@ void prepare(Ctx& c, const Clip& clip, double& zoom, QPointF& pan) {
     if (it.el == "camera") {
       const QJsonObject o = evaluate(it, c.t);
       az = o.value("az").toDouble(az);
-      el = o.value("el").toDouble(el);
+      el = o.value("elev").toDouble(el);
       zoom = o.value("zoom").toDouble(1);
       // The pan makes room for the screen chrome (cards, chips), which flips sides in right-to-left languages.
       pan = QPointF(vec(o.value("center")).x() * (c.rtl ? -1 : 1), vec(o.value("center")).y());
