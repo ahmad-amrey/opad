@@ -122,9 +122,9 @@ void Banner::place() {
 void Banner::restyle() {
   const Tokens& t = theme::current();
   const QColor accent = m_tone == Tone::Info ? t.sel : m_tone == Tone::Warning ? t.amber : t.red;
-  QString css = QString("QFrame#banner { background: %1; border: 1px solid %2; border-left: 3px solid %3; }"
+  QString css = QString("QFrame#banner { background: %1; border: 1px solid %2; border-%5: 3px solid %3; }"  // the stripe by the icon
                         "QLabel#bannerTitle { color: %4; font-weight: 600; }")
-                    .arg(theme::css(t.bg2), theme::css(m_flash ? accent : t.line), theme::css(accent), theme::css(t.fg));
+                    .arg(theme::css(t.bg2), theme::css(m_flash ? accent : t.line), theme::css(accent), theme::css(t.fg), isRightToLeft() ? "right" : "left");
   if (m_tone == Tone::Danger)  // the choice that loses something is red
     css += QString("QPushButton#primary { background: %1; border-color: %1; color: white; } QPushButton#primary:hover { background: %2; }")
                .arg(theme::css(t.red), theme::css(t.red.lighter(115)));

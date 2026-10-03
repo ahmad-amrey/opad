@@ -394,7 +394,7 @@ bool DiskSync::bench() {
         require(m_banner->state().isEmpty(), "merge: banner gone");
         require(m_doc->doc.ops.size() == st->ops + 1 && m_doc->doc.ops.back().type == "rename", "merge: the file's op, then the unsaved one");
         require(nameOf(st->a) == "Mine" && m_doc->node(st->b)->has_color, "merge: both changes");
-        require(m_doc->isDirty() && m_doc->undoLabel() == "rename", "merge: the unsaved rename tops the undo stack");
+        require(m_doc->isDirty() && m_doc->undoLabel() == tr("rename"), "merge: the unsaved rename tops the undo stack");
         trigger("file.save");
         require(!m_doc->isDirty() && sessionIds() == fileIds(), "merge: saved");
         pass("merge");
