@@ -195,6 +195,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // Makes the context selection exactly these (bodies, faces/edges/vertices by ordinal, candidates).
   void selectRefs(const std::vector<opad::Ref>& refs, const std::vector<std::string>& candidates = {});
   void setBodiesPickable(bool on);  // off: only candidates can be picked (choosing a sketch plane, a profile)
+  // Smart selection's candidate (UI-95, ViewportCandidates.cpp): what a click on its chip would select, in the candidate
+  // amber, on top like the selection. Faces and edges are one object copied from the bodies' meshes (a sliced job when
+  // there are many), whole bodies take the look compositor's candidate layer. Empty: nothing shown.
+  void showCandidateRefs(const std::vector<opad::Ref>& refs);
+  size_t candidateRefsShown() const { return m_candidateShown; }  // faces and edges drawn now (benches)
   // Feature preview: these shapes (world coordinates, already meshed by the worker) are drawn in place of the
   // nodes they change; `hidden` nodes are not drawn at all (consumed tools, removed bodies).
   void setPreviewBodies(const std::vector<std::pair<std::string, TopoDS_Shape>>& shapes, const std::vector<std::string>& hidden);
@@ -496,6 +501,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   QTimer m_syncTimer;
   Job* m_selJob = nullptr;                        // in-flight selectNodes
   Handle(SubHighlight) m_subHl;                   // every selected sub-shape, one object in the Topmost layer
+  Handle(SubHighlight) m_candidateHl;             // showCandidateRefs' faces and edges
+  Job* m_candidateJob = nullptr;
+  size_t m_candidateShown = 0;
+  std::vector<opad::Ref> m_candidateRefs;
   std::map<const AIS_InteractiveObject*,Handle(SubHighlight)> m_bodyGlows;
   Job* m_bodyGlowJob=nullptr;
   Job* m_subJob = nullptr;                        // in-flight refreshSubHighlight

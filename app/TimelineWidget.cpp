@@ -6,10 +6,12 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QScrollBar>
+#include <QTimer>
 #include <QToolTip>
 #include <QWheelEvent>
 
 #include <algorithm>
+#include <cmath>
 
 #include "I18n.hpp"
 #include "Icons.hpp"
@@ -131,6 +133,33 @@ void TimelineWidget::setCurrentOp(const std::string& id) {
   update();
 }
 
+void TimelineWidget::pulse(const std::string& id) {
+  if (!m_pulseTimer) {
+    m_pulseTimer = new QTimer(this);
+    m_pulseTimer->setInterval(50);
+    connect(m_pulseTimer, &QTimer::timeout, this, [this] {
+      if (++m_pulseTick >= 30) {  // 1.5 s
+        m_pulseTimer->stop();
+        m_pulse.clear();
+      }
+      update();
+    });
+  }
+  m_pulse = m_doc->doc.find_op(id) ? id : std::string();
+  m_pulseTick = 0;
+  if (m_pulse.empty()) {
+    m_pulseTimer->stop();
+    return update();
+  }
+  for (size_t i = 0; i < m_shown.size(); ++i)  // into view, the current marker left as it is
+    if (m_doc->doc.ops[m_shown[i]].id == id) {
+      const int x = int(i) * 26;
+      if (x < m_scroll->value() || x + 26 > m_scroll->value() + m_scroll->pageStep()) m_scroll->setValue(x + 13 - m_scroll->pageStep() / 2);
+    }
+  m_pulseTimer->start();
+  update();
+}
+
 void TimelineWidget::setEditingOp(const std::string& id) {
   if (id == m_editing) return;
   m_editing = id;
@@ -246,6 +275,15 @@ void TimelineWidget::paintEvent(QPaintEvent*) {
         if (ops[q].id == from) return i > q || (i == q && from != m_editing);
       return false;
     }();
+    if (ops[i].id == m_pulse) {  // pointed at: a ring that swells and fades three times
+      const double phase = std::fmod(m_pulseTick / 10.0, 1.0);
+      QColor ring = t.candidate;
+      ring.setAlphaF(1.0 - 0.7 * phase);
+      p.setBrush(Qt::NoBrush);
+      p.setPen(QPen(ring, 2.5));
+      const int grow = 2 + int(std::round(3 * phase));
+      p.drawRoundedRect(r.adjusted(-grow, -grow, grow, grow), 3 + grow / 2, 3 + grow / 2);
+    }
     if (ops[i].id == m_editing) {  // the edited op: a thick ring, "changes apply from here"
       p.setBrush(Qt::NoBrush);
       p.setPen(QPen(t.sel, 2.5));

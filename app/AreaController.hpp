@@ -6,7 +6,7 @@
 // MainWindow creates every registered area once, in name order, right after its own commands are built; it owns them
 // and deletes them first when it goes. It calls the hooks below at the matching points (the defaults do nothing):
 //   construction, in this order: buildActions, menus, ribbon, statusWidgets, ready;
-//   then, once ready: contextMenu, selectionChanged, positionOverlays, documentChanged, workspaceChanged, maybeClose.
+//   then, once ready: contextMenu, selectionChanged, positionOverlays, documentChanged, workspaceChanged, maybeClose, command.
 // What an area needs of the window comes through services(); its own state stays in the area. Browser rows and the
 // Properties panel take providers (BrowserPanel::addDecorator / addFolder, PropertiesPanel::addSectionProvider), the
 // chips row takes chips (ViewportChips::addChip), all registered in ready(); a workspace of its own is a RibbonLayout
@@ -36,6 +36,7 @@ class QMenu;
 class QMenuBar;
 class QStatusBar;
 class QWidget;
+class TimelineWidget;
 class ToolPanel;
 class Viewport;
 class ViewportChips;
@@ -64,6 +65,7 @@ class AreaServices {
   DesignController* design() const;
   BrowserPanel* browser() const;        // row decorations and folders
   PropertiesPanel* properties() const;  // property sections
+  TimelineWidget* timeline() const;     // the op markers (setCurrentOp, pulse)
   ViewportChips* chips() const;         // the chips row over the viewport (addChip)
   // A widget in the ribbon's tab row (a branch chip): in the cluster after search, before settings; from ribbon on.
   void addTabRowWidget(QWidget* widget);
@@ -85,7 +87,12 @@ class AreaServices {
   // A toast at the bottom centre of the viewport (Toast.hpp): a result or a warning, with an optional action ("Undo")
   // whose callback runs when it is clicked; ms 0 keeps it until it is closed. From ribbon on.
   void toast(const QString& text, const QString& actionText = QString(), std::function<void()> callback = {}, int ms = 4000);
+  // The toast of a change just made: its Undo takes back the document's last step, unless another came after it.
+  void undoToast(const QString& text);
   SelectionContext selection() const;                       // the current one
+  // Makes these the selection as if they were picked and tells the window and the areas (selectionChanged): faces, edges
+  // and vertices in the view (its filter must be picking them), bodies and components as from the browser.
+  void select(const std::vector<opad::Ref>& refs);
   void positionOverlays();  // lay the overlays out again (the areas' positionOverlays too)
   // The workspace shown, by RibbonLayout id: "review", "design", "sketch" (contextual, while a sketch is open) or an
   // area's; from statusWidgets on. setWorkspace("drawings") is what its command "workspace.drawings" does: an unknown id or
@@ -126,6 +133,10 @@ class AreaController : public QObject {
   // Before the document is replaced (open, new, close) or the window closes: false keeps it, e.g. when the user cancels
   // giving up unfinished work. Asked first, also in benches (which answer no other question).
   virtual bool maybeClose() { return true; }
+  // A built-in command about to act on the selection: "edit.delete" (Del) and "edit.selectparent" (Ctrl+Up). True: the
+  // area did it, the window does nothing more (smart selection takes Del on picked faces and grows them to their
+  // feature). Asked in area order; the first true wins.
+  virtual bool command(const QString& id, const SelectionContext& selection) { return false; }
 
  private:
   AreaServices& m_services;

@@ -23,6 +23,10 @@ class TimelineWidget : public QWidget {
   void setEditingOp(const std::string& id);
   void step(int delta);
   QString describe(const opad::Op& op) const;
+  // Points at an op's marker (smart selection's hover, Find in timeline): scrolled into view, a candidate-amber ring that
+  // pulses for about a second and a half. Empty: stops.
+  void pulse(const std::string& id);
+  std::string pulsing() const { return m_pulse; }
 
  signals:
   void opClicked(const std::string& opId);
@@ -55,6 +59,9 @@ class TimelineWidget : public QWidget {
   std::vector<size_t> m_shown;  // indices into doc.ops drawn as markers (see timelineShows)
   int m_hover = -1;             // marker index (into m_shown)
   std::string m_current, m_editing;
+  std::string m_pulse;
+  int m_pulseTick = 0;
+  class QTimer* m_pulseTimer = nullptr;
   QRect m_prevBtn, m_nextBtn;
 };
 

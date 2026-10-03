@@ -65,6 +65,7 @@ class MainWindow : public QMainWindow {
   // Feature areas (AreaController.hpp, MainWindowAreas.cpp): made after the built-in commands, hooks called from here.
   void createAreas();
   SelectionContext selectionContext() const;
+  bool areaCommand(const QString& id);  // an area takes this built-in command for the selection (AreaController::command)
   template <class Hook>
   void forEachArea(Hook hook) {  // the hooks that run once the window is built
     if (m_areasReady)
@@ -155,6 +156,7 @@ class MainWindow : public QMainWindow {
   void deleteOp(const std::string& opId);
   void restoreOp(const std::string& opId);
   void deleteCurrent();
+  void undoToast(const QString& text);  // a result toast whose Undo takes back that step (not one made after it)
   void writeSelectionFile();
   void positionOverlays();
   void setLoading(bool on);  // shade + spinner over the workspace, input blocked, until the load job ends

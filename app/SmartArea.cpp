@@ -175,8 +175,8 @@ void SmartArea::apply(size_t rule) {
   const QString text = tr("%1 · %2 selected").arg(similarText(r)).arg(refs.size()) + next;
   const QString log = QString("select similar: %1 %2 (%3 rules)").arg(QString::fromStdString(r.rule)).arg(refs.size()).arg(m_similar.rules.size());
   Viewport* viewport = services().viewport();
-  auto show = [this, viewport, refs, text, log] {
-    viewport->selectRefs(refs);
+  auto show = [this, refs, text, log] {
+    services().select(refs);  // as picked: the window, the browser and the other areas (the smart chip) hear of it
     services().showMessage(text, 8000);
     trace::log(log);
   };

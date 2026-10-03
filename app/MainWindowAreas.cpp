@@ -3,6 +3,7 @@
 
 #include <QStatusBar>
 
+#include <algorithm>
 #include <set>
 
 void MainWindow::createAreas() {
@@ -30,6 +31,7 @@ JobRunner* AreaServices::jobs() const { return m_window->m_jobs; }
 DesignController* AreaServices::design() const { return m_window->m_design; }
 BrowserPanel* AreaServices::browser() const { return m_window->m_browser; }
 PropertiesPanel* AreaServices::properties() const { return m_window->m_props; }
+TimelineWidget* AreaServices::timeline() const { return m_window->m_timeline; }
 ViewportChips* AreaServices::chips() const { return m_window->m_chips; }
 QAction* AreaServices::action(const QString& id) const { return m_window->action(id); }
 
@@ -57,7 +59,29 @@ void AreaServices::showMessage(const QString& text, int ms) { m_window->statusBa
 void AreaServices::toast(const QString& text, const QString& actionText, std::function<void()> callback, int ms) {
   m_window->m_toasts->toast(text, actionText, std::move(callback), ms);
 }
+void AreaServices::undoToast(const QString& text) { m_window->undoToast(text); }
 SelectionContext AreaServices::selection() const { return m_window->selectionContext(); }
+
+void AreaServices::select(const std::vector<opad::Ref>& refs) {
+  MainWindow* w = m_window;
+  if (std::all_of(refs.begin(), refs.end(), [](const opad::Ref& r) { return r.kind == opad::Ref::Kind::Body; })) {
+    std::vector<std::string> ids;
+    for (const auto& r : refs)
+      if (std::find(ids.begin(), ids.end(), r.body) == ids.end()) ids.push_back(r.body);
+    w->m_browser->setSelectedIds(ids);
+    return w->onBrowserSelection(ids);
+  }
+  w->m_viewport->selectRefs(refs);
+  w->onViewportSelection();
+}
+
+bool MainWindow::areaCommand(const QString& id) {
+  if (!m_areasReady) return false;
+  const SelectionContext selection = selectionContext();
+  for (AreaController* area : m_areas)
+    if (area->command(id, selection)) return true;
+  return false;
+}
 void AreaServices::positionOverlays() { m_window->positionOverlays(); }
 QString AreaServices::workspace() const { return m_window->workspaceId(); }
 void AreaServices::setWorkspace(const QString& id) { m_window->setWorkspace(id); }

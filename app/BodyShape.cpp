@@ -127,26 +127,32 @@ void SubHighlight::Compute(const Handle(PrsMgr_PresentationManager)&, const Hand
   if (!m_triangles.empty()) {
     Handle(Graphic3d_AspectFillArea3d) fill = new Graphic3d_AspectFillArea3d();
     fill->SetInteriorStyle(Aspect_IS_SOLID);
-    fill->SetInteriorColor(Quantity_ColorRGBA(m_color, 0.18f));
+    fill->SetInteriorColor(Quantity_ColorRGBA(m_color, fillAlpha));
     fill->SetAlphaMode(Graphic3d_AlphaMode_Blend);
     fill->SetShadingModel(Graphic3d_TypeOfShadingModel_Unlit);  // a flat tint: the arrays carry no normals
     Handle(Graphic3d_Group) g = prs->NewGroup();
     g->SetGroupPrimitivesAspect(fill);
     for (const auto& a : m_triangles) g->AddPrimitiveArray(a);
-    Handle(Graphic3d_AspectFillArea3d) glow = new Graphic3d_AspectFillArea3d(*fill);
-    glow->SetInteriorColor(Quantity_ColorRGBA(Quantity_NOC_WHITE,0.12f));
-    auto white=prs->NewGroup();white->SetGroupPrimitivesAspect(glow);
-    for(const auto& a:m_triangles) white->AddPrimitiveArray(a);
+    if (glow) {
+      Handle(Graphic3d_AspectFillArea3d) white = new Graphic3d_AspectFillArea3d(*fill);
+      white->SetInteriorColor(Quantity_ColorRGBA(Quantity_NOC_WHITE,0.12f));
+      auto group=prs->NewGroup();group->SetGroupPrimitivesAspect(white);
+      for(const auto& a:m_triangles) group->AddPrimitiveArray(a);
+    }
   }
   if (!m_segments.empty()) {
-    auto halo=prs->NewGroup();Handle(Graphic3d_AspectLine3d) glow=new Graphic3d_AspectLine3d(Quantity_NOC_WHITE,Aspect_TOL_SOLID,6);
-    glow->SetInteriorColor(Quantity_ColorRGBA(Quantity_NOC_WHITE,0.35f));glow->SetAlphaMode(Graphic3d_AlphaMode_Blend);halo->SetGroupPrimitivesAspect(glow);
-    for(const auto& a:m_segments) halo->AddPrimitiveArray(a);
+    if (glow) {
+      auto halo=prs->NewGroup();Handle(Graphic3d_AspectLine3d) aspect=new Graphic3d_AspectLine3d(Quantity_NOC_WHITE,Aspect_TOL_SOLID,6);
+      aspect->SetInteriorColor(Quantity_ColorRGBA(Quantity_NOC_WHITE,0.35f));aspect->SetAlphaMode(Graphic3d_AlphaMode_Blend);halo->SetGroupPrimitivesAspect(aspect);
+      for(const auto& a:m_segments) halo->AddPrimitiveArray(a);
+    }
     Handle(Graphic3d_Group) g = prs->NewGroup();
     g->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(m_color, Aspect_TOL_SOLID, 3.0));
     for (const auto& a : m_segments) g->AddPrimitiveArray(a);
-    auto white=prs->NewGroup();white->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(Quantity_NOC_WHITE,Aspect_TOL_SOLID,1.5));
-    for(const auto& a:m_segments) white->AddPrimitiveArray(a);
+    if (glow) {
+      auto white=prs->NewGroup();white->SetGroupPrimitivesAspect(new Graphic3d_AspectLine3d(Quantity_NOC_WHITE,Aspect_TOL_SOLID,1.5));
+      for(const auto& a:m_segments) white->AddPrimitiveArray(a);
+    }
   }
   if (!m_points.empty()) {
     auto halo=prs->NewGroup();Handle(Graphic3d_AspectMarker3d) glow=new Graphic3d_AspectMarker3d(Aspect_TOM_BALL,Quantity_NOC_WHITE,6.0);

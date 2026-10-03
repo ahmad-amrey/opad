@@ -7,6 +7,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QRegularExpression>
+#include <QStatusBar>
 
 #include <algorithm>
 #include <functional>
@@ -53,7 +54,9 @@ void MainWindow::buildEditActions() {
     if (!hidden.empty()) m_doc->run("appearance", opad::json{{"targets", hidden}, {"visible", true}});
   });
   addAction("edit.filter", tr("Filter objects"), "search", QKeySequence("Ctrl+F"), [this] { m_browserOverlay->reveal(); m_browser->focusFilter(); });
-  addAction("edit.selectparent", tr("Select parent"), "chevronUp", QKeySequence("Ctrl+Up"), [this] { m_browser->selectParent(); });
+  addAction("edit.selectparent", tr("Select parent"), "chevronUp", QKeySequence("Ctrl+Up"), [this] {
+    if (!areaCommand("edit.selectparent")) m_browser->selectParent();  // picked faces grow to their feature (SmartSelect)
+  });
   addAction("edit.delete", tr("Delete (tombstone)"), "delete", QKeySequence::Delete, [this] { deleteCurrent(); });
   addAction("edit.restore", tr("Restore"), "restore", QKeySequence("Shift+Del"), [this] {
     std::string id = m_timeline->currentOp();
@@ -177,6 +180,16 @@ void MainWindow::deleteCurrent() {
   }
   if (QMessageBox::question(this, tr("Delete"), tr("Tombstone %1 import operation(s)? History is kept; Shift+Del on the timeline restores.").arg(ops.size())) != QMessageBox::Yes) return;
   for (const auto& op : ops) deleteOp(op);
+}
+
+void MainWindow::undoToast(const QString& text) {
+  const auto depth = m_doc->undoLabels().size();
+  const QString step = m_doc->undoLabel();
+  const auto generation = m_doc->generation;
+  m_toasts->toast(text, tr("Undo"), [this, depth, step, generation] {
+    if (m_doc->generation == generation && m_doc->canUndo() && m_doc->undoLabels().size() == depth && m_doc->undoLabel() == step) return m_doc->undo();
+    statusBar()->showMessage(tr("Other changes came after it: undo those first (Ctrl+Z)."), 6000);
+  }, 8000);
 }
 
 void MainWindow::selectOpTargets(const std::string& opId) {
