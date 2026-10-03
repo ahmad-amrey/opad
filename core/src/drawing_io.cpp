@@ -57,6 +57,7 @@
 #include <fcntl.h>
 #include <spawn.h>
 #include <sys/wait.h>
+#include <signal.h>
 #include <unistd.h>
 extern char** environ;
 #endif
@@ -94,8 +95,13 @@ struct Conversion {
 };
 }  // namespace
 namespace detail {
-int run_program(const std::filesystem::path& program, const std::vector<std::filesystem::path>& args, const std::filesystem::path& cwd) {
+int run_program(const std::filesystem::path& program, const std::vector<std::filesystem::path>& args, const std::filesystem::path& cwd, const RunOptions& run) {
   int status = -1;
+  const auto started = std::chrono::steady_clock::now();
+  auto overdue = [&] {
+    return (run.cancelled && run.cancelled()) ||
+           std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count() > run.timeout_ms;
+  };
 #ifdef _WIN32
   std::wstring command;
   auto quote = [&](const std::wstring& a) {
@@ -110,16 +116,20 @@ int run_program(const std::filesystem::path& program, const std::vector<std::fil
   for (const auto& a : args) quote(a.wstring());
   STARTUPINFOW startup{}; startup.cb=sizeof(startup); startup.dwFlags=STARTF_USESTDHANDLES|STARTF_USESHOWWINDOW;
   startup.wShowWindow=0;  // SW_HIDE (the OCCT headers leave winuser.h out): converters with a window (ODA) stay out of sight
-  // Converters report progress on stdout and stderr, which nobody reads: both go to NUL.
+  // Converters report progress on stdout and stderr: to NUL, or to the output file when the caller reads it.
   SECURITY_ATTRIBUTES inherit{sizeof(inherit),nullptr,TRUE};
   HANDLE nul=CreateFileW(L"NUL",GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&inherit,OPEN_EXISTING,0,nullptr);
-  startup.hStdInput=startup.hStdOutput=startup.hStdError=nul;
+  HANDLE out=run.output.empty()?INVALID_HANDLE_VALUE:CreateFileW(run.output.c_str(),GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,&inherit,CREATE_ALWAYS,0,nullptr);
+  startup.hStdInput=nul; startup.hStdOutput=startup.hStdError=out!=INVALID_HANDLE_VALUE?out:nul;
   PROCESS_INFORMATION process{};
   if(CreateProcessW(nullptr,command.data(),nullptr,nullptr,TRUE,CREATE_NO_WINDOW,nullptr,cwd.empty()?nullptr:cwd.c_str(),&startup,&process)) {
-    if(WaitForSingleObject(process.hProcess,120000)==WAIT_OBJECT_0) { DWORD code; if(GetExitCodeProcess(process.hProcess,&code)) status=int(code); }
+    DWORD wait;
+    while((wait=WaitForSingleObject(process.hProcess,100))==WAIT_TIMEOUT && !overdue()) {}
+    if(wait==WAIT_OBJECT_0) { DWORD code; if(GetExitCodeProcess(process.hProcess,&code)) status=int(code); }
     else { TerminateProcess(process.hProcess,1); WaitForSingleObject(process.hProcess,5000); }
     CloseHandle(process.hThread); CloseHandle(process.hProcess);
   }
+  if(out!=INVALID_HANDLE_VALUE) CloseHandle(out);
   if(nul!=INVALID_HANDLE_VALUE) CloseHandle(nul);
 #else
   (void)cwd;  // callers pass absolute paths here
@@ -128,11 +138,18 @@ int run_program(const std::filesystem::path& program, const std::vector<std::fil
   std::vector<char*> ptrs; for (auto& a : text) ptrs.push_back(a.data()); ptrs.push_back(nullptr);
   pid_t pid;
   posix_spawn_file_actions_t actions; posix_spawn_file_actions_init(&actions);
-  posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);  // converter chatter: nobody reads it
-  posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+  const std::string sink = run.output.empty() ? std::string("/dev/null") : run.output.string();
+  posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, sink.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
   const int error = posix_spawnp(&pid, text[0].c_str(), &actions, nullptr, ptrs.data(), environ);
   posix_spawn_file_actions_destroy(&actions);
-  if (!error) { int code=0; while(waitpid(pid,&code,0)<0 && errno==EINTR) {} if(WIFEXITED(code)) status=WEXITSTATUS(code); }
+  if (!error) {
+    int code = 0;
+    pid_t done = 0;
+    while ((done = waitpid(pid, &code, WNOHANG)) == 0 && !overdue()) usleep(100000);
+    if (done == 0) { kill(pid, SIGKILL); while (waitpid(pid, &code, 0) < 0 && errno == EINTR) {} }
+    else if (done > 0 && WIFEXITED(code)) status = WEXITSTATUS(code);
+  }
 #endif
   return status;
 }
@@ -521,7 +538,7 @@ ImportResult import_file(Document& doc, const std::filesystem::path& file, const
     if(ext==".ply") return detail::import_ply(doc,file,options);
     if(ext==".3mf") return detail::import_3mf(doc,file,options);
     if(ext==".obj" || ext==".gltf" || ext==".glb" || ext==".wrl" || ext==".vrml") return detail::import_mesh_scene(doc,file,options);
-    if(ext==".kicad_pcb") return import_kicad_pcb(doc,file,options);
+    if(ext==".kicad_pcb") return options.kicad.kicad_cli?import_kicad_export(doc,file,options):import_kicad_pcb(doc,file,options);
     if(ext==".png" || ext==".jpg" || ext==".jpeg" || ext==".bmp" || ext==".gif" || ext==".webp") return detail::import_image(doc,file,options);
   } catch(const Standard_Failure& e) { throw Error("cannot read "+file.filename().string()+": "+e.GetMessageString()); }
   if(ext==".dwg") {

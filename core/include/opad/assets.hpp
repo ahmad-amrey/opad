@@ -33,9 +33,10 @@ struct AssetOptions {
   KicadOptions kicad;                          // this machine's KiCad model folders (a board's own options come from its op)
   std::function<bool(double, const std::string&)> progress;  // as ImportOptions::progress; false cancels
   // Makes an asset's derived file again from its source (the asset object says how: derived.builder) and returns where it
-  // is: when it is missing here, and on sync. Runs on the worker that reads the assets. Without it such an asset reads the
-  // derived file it finds, else it is missing.
-  std::function<std::filesystem::path(const json& asset, const std::filesystem::path& source)> derive;
+  // is: when it is missing here, and on sync. Runs on the worker that reads the assets (with `progress`). Without it such an
+  // asset reads the derived file it finds, else it is missing. derive_asset is OPAD's own (kicad-cli).
+  std::function<std::filesystem::path(const json& asset, const std::filesystem::path& source,
+                                      const std::function<bool(double, const std::string&)>& progress)> derive;
 };
 
 // One linked asset as this machine finds it.
@@ -56,12 +57,18 @@ struct AssetState {
 };
 
 // Imports `file` linked: read as the viewer reads it (no healing, BREP text or shape hashing), its bodies registered as
-// external, its op given the asset object. `opt` as import_file takes it (KiCad options, placement, parent).
+// external, its op given the asset object. `opt` as import_file takes it (KiCad options, placement, parent); a KiCad board
+// with opt.kicad.kicad_cli is read through KiCad's own STEP export (link_derived, builder "kicad-cli").
 ImportResult link_file(Document& doc, const std::filesystem::path& file, const ImportOptions& opt = {});
 // Links `file` read through `derived`, a file a converter made from it (`builder`: {"name","version","options"}, how to make
 // it again): the source is watched and synced, the derived file read (kicad-cli's STEP of a board, UI-73).
 ImportResult link_derived(Document& doc, const std::filesystem::path& file, const std::filesystem::path& derived, const json& builder,
                           const ImportOptions& opt = {});
+
+// The converters OPAD runs for AssetOptions::derive: "kicad-cli" (kicad_cli_export with the options the asset recorded, the
+// frame included); any other builder throws.
+std::filesystem::path derive_asset(const json& asset, const std::filesystem::path& source,
+                                   const std::function<bool(double, const std::string&)>& progress = {});
 
 // Whether the document links any file (an import op with a linked or project asset).
 bool has_assets(const Document& doc);

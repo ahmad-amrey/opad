@@ -176,6 +176,14 @@ KicadOptions kicad_options(const json& a) {
   o.placeholder_height = a.value("placeholder_height", 1.0);
   o.origin = a.value("origin", "auto");
   if (o.origin != "auto" && o.origin != "center" && o.origin != "page") throw Error("origin is auto, center or page");
+  if (a.contains("kicad_cli")) {  // KiCad's own export, with what it is asked to add
+    o.kicad_cli = true;
+    for (const auto& x : str_list(a["kicad_cli"]))
+      if (x == "tracks") o.tracks = true;
+      else if (x == "pads") o.pads = true;
+      else if (x == "silkscreen") o.silkscreen = true;
+      else if (x != "none") throw Error("kicad_cli takes tracks, pads, silkscreen or none");
+  }
   return o;
 }
 
@@ -184,6 +192,7 @@ AssetOptions asset_options(const json& a) {
   AssetOptions o;
   o.trust_all = a.value("trust_assets", false);
   o.kicad.model_dirs = kicad_options(a).model_dirs;
+  o.derive = derive_asset;  // a board read through kicad-cli: its STEP made again when missing or synced
   return o;
 }
 
@@ -388,6 +397,7 @@ void register_builtins() {
        {"center", "bool - drawings: centre the drawing on its origin (default false)"},
        {"model_dirs", "string|array - KiCad: model folders"}, {"components", "bool - KiCad: models (default true)"}, {"dnp", "bool - KiCad: do-not-populate parts"},
        {"vias", "bool - KiCad (default false)"}, {"placeholder_height", "number - KiCad: missing-model box, mm"}, {"origin", "auto|center|page - KiCad"},
+       {"kicad_cli", "string|array - KiCad: via kicad-cli, adding tracks,pads,silkscreen or none"},
        {"link", "bool - link the file (read from it on open, never stored; see asset)"}},
       true, [](Document* d, const json& a) {
         ImportOptions o;

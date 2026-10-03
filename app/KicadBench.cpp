@@ -7,6 +7,9 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
+#include <QStandardItemModel>
+#include <QFileInfo>
+#include <QFile>
 #include <QPushButton>
 #include <QTimer>
 #include <filesystem>
@@ -19,6 +22,7 @@
 #include "opad/cache.hpp"
 #include "opad/kicad_pcb.hpp"
 #include "opad/mesh.hpp"
+#include "opad/scene.hpp"
 
 // OPAD_BENCH_CACHE=<copy of the STEP>, OPAD_BENCH_CACHE_DXF=<drawing>: a STEP opened as a viewer (every read counts as a
 // minute's, so it is remembered whatever this machine takes) must be read, then stored in the viewer cache by a job after
@@ -280,6 +284,118 @@ bool MainWindow::benchKicad() {
       const opad::json origin = import->data["kicad"].value("origin", opad::json());
       if (models != 0 || placeholders != 0 || origin != opad::json::array({0.0, 0.0})) return fail("the dialog's choices were not used: " + QString::fromStdString(origin.dump()));
       trace::log("bench: kicad import and settings dialog: components off and page origin read back PASS");
+      QCoreApplication::exit(0);
+      return true;
+    }
+  }
+}
+
+// OPAD_BENCH_KICAD_CLI=<prefix> (UI-73), on a document beside a board (tools/gui_benches.py writes both, with a stand-in
+// kicad-cli as OPAD_KICAD_CLI and the settings kicad/reader=kicad-cli, kicad/tracks=true): the import dialog offers KiCad's
+// export with its extras (<prefix>.dialog.png); the board imported through it is linked, read from the STEP kicad-cli made
+// (asked for the tracks, at the reader's origin), every footprint a component named after it (<prefix>.png); saved and
+// reopened with that STEP gone, the read remembered shows it as synced; with the memory gone too, kicad-cli makes it again.
+bool MainWindow::benchKicadCli() {
+  const QString prefix = qEnvironmentVariable("OPAD_BENCH_KICAD_CLI");
+  if (prefix.isEmpty()) return false;
+  static int phase = 0;
+  auto fail = [](const QString& why) {
+    trace::log("bench: kicad-cli FAIL: " + why);
+    QCoreApplication::exit(2);
+    return true;
+  };
+  const QString board = QFileInfo(m_doc->path()).absolutePath() + "/board.kicad_pcb";
+  const QString log = qEnvironmentVariable("OPAD_FAKE_KICAD_LOG");
+  auto exports = [log] {
+    QFile f(log);
+    return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()).count("pcb export step") : 0;
+  };
+  const opad::Op* import = nullptr;
+  for (const auto& o : m_doc->doc.ops)
+    if (o.type == "import") import = &o;
+  QStringList refs;  // the components named after their footprints
+  for (const auto& e : opad::effective_ops(m_doc->doc))
+    if (e.op->type == "import")
+      for (const auto& n : e.data()["nodes"][0].value("children", opad::json::array()))
+        if (n.contains("kicad")) refs << QString::fromStdString(n["kicad"].value("ref", ""));
+  trace::log(QString("bench: kicad-cli: phase %1: %2 exports, components %3, %4 bodies displayed").arg(phase).arg(exports()).arg(refs.join(',')).arg(m_viewport->displayedCount()));
+  switch (phase++) {
+    case 0: {
+      auto* dialog = new KicadDialog(this, true);
+      dialog->show();
+      auto* reader = dialog->findChild<QComboBox*>("reader");
+      auto* tracks = dialog->findChild<QCheckBox*>("tracks");
+      auto* pads = dialog->findChild<QCheckBox*>("pads");
+      auto* vias = dialog->findChild<QCheckBox*>("vias");
+      const auto* items = reader ? qobject_cast<QStandardItemModel*>(reader->model()) : nullptr;
+      if (!reader || !items || !items->item(1)->isEnabled() || reader->currentData() != "kicad-cli") return fail("KiCad's export is not offered");
+      if (!tracks || !tracks->isEnabled() || !tracks->isChecked() || !pads->isEnabled() || vias->isEnabled()) return fail("KiCad's extras");
+      reader->setCurrentIndex(0);
+      if (tracks->isEnabled() || !vias->isEnabled()) return fail("the extras follow the reader");
+      reader->setCurrentIndex(1);
+      QTimer::singleShot(300, this, [this, dialog, prefix, board, fail] {
+        if (!dialog->grab().save(prefix + ".dialog.png")) return (void)fail("dialog picture");
+        dialog->reject();
+        dialog->deleteLater();
+        if (!KicadDialog::linked()) return (void)fail("a board read by KiCad is not imported linked");
+        beginLoad({});
+        m_doc->startImport(board, {}, {}, {}, true);  // runBench again
+      });
+      return true;
+    }
+    case 1: {
+      if (!import || !import->data.contains("asset")) return fail("no linked import");
+      const opad::json derived = import->data["asset"].value("derived", opad::json());
+      if (derived.value("builder", opad::json()).value("name", "") != "kicad-cli") return fail("not read through kicad-cli");
+      QFile f(log);
+      f.open(QIODevice::ReadOnly);
+      const QString said = QString::fromUtf8(f.readAll());
+      if (exports() != 1 || !said.contains("--include-tracks") || !said.contains("--user-origin 120.000000x110.000000mm")) return fail("kicad-cli's arguments: " + said);
+      if (refs.join(',') != "R1,R2,U1") return fail("components named after their footprints");
+      bool tracks = false;
+      for (const auto& id : m_doc->scene.all_bodies()) tracks = tracks || m_doc->node(id)->name == "tracks";
+      if (!tracks) return fail("the tracks KiCad was asked for");
+      auto* timer = new QTimer(this);
+      auto clock = std::make_shared<QElapsedTimer>();
+      clock->start();
+      connect(timer, &QTimer::timeout, this, [this, timer, clock, prefix, derived, fail] {
+        if (m_viewport->displayedCount() < 5 && clock->elapsed() < 15000) return;
+        timer->stop();
+        timer->deleteLater();
+        if (m_viewport->displayedCount() < 5) return (void)fail("the parts are not displayed");
+        m_viewport->standardView("iso");
+        m_viewport->fitAll();
+        QTimer::singleShot(600, this, [this, prefix, derived, fail] {
+          if (!m_viewport->grabImage().save(prefix + ".png")) return (void)fail("frame");
+          trace::log("bench: kicad-cli board read through KiCad's export, linked, parts named after their footprints PASS");
+          try {
+            m_doc->save();
+          } catch (const std::exception& e) {
+            return (void)fail(e.what());
+          }
+          std::error_code error;
+          std::filesystem::remove(opad::path_from_utf8(derived.value("abs", "")), error);
+          openPath(m_doc->path());  // runBench comes back for phase 2
+        });
+      });
+      timer->start(100);
+      return true;
+    }
+    default: {
+      std::string state;
+      bool missing = false;
+      for (const auto& s : m_doc->assetStates) state = s.value("state", "");
+      for (const auto& id : m_doc->scene.all_bodies()) missing = missing || m_doc->node(id)->body_missing;
+      if (state != "ok" || missing || refs.join(',') != "R1,R2,U1") return fail(QString("reopened: state %1").arg(QString::fromStdString(state)));
+      if (phase == 3) {  // the read remembered (the viewer cache): nothing exported
+        if (exports() != 1) return fail("exported again though the read was remembered");
+        std::error_code error;
+        std::filesystem::remove_all(opad::cache_dir() / "viewer", error);  // the bench's own cache
+        openPath(m_doc->path());  // runBench comes back for phase 3
+        return true;
+      }
+      if (exports() != 2) return fail("the STEP was not made again");
+      trace::log("bench: kicad-cli reopened without its STEP: from the read remembered, then made again by kicad-cli, as synced PASS");
       QCoreApplication::exit(0);
       return true;
     }

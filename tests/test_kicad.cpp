@@ -19,17 +19,21 @@
 #include <GProp_GProps.hxx>
 #include <STEPControl_Writer.hxx>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <map>
 
 #include "check.hpp"
+#include "opad/assets.hpp"
 #include "opad/drawing_io.hpp"
 #include "opad/geometry.hpp"
 #include "opad/kicad_pcb.hpp"
 #include "opad/mesh.hpp"
+#include "opad/scene.hpp"
 #ifdef OPAD_HAVE_ZSTD
 #include <zstd.h>
 #endif
@@ -584,6 +588,180 @@ TEST(many_drills_mesh) {
   }
   const double exact = (60 * 40 - 80 * kPi * 0.25) * 1.6;
   CHECK(std::abs(std::abs(volume) - exact) < exact * 1e-3);
+}
+
+// UI-73: KiCad's own export through kicad-cli (a stand-in, tests/fake_kicad_cli.cpp, writes what OPAD's reader builds the way
+// KiCad lays its STEP out). Its version picks the switches; the board lands where the reader puts it; the parts are named
+// after their footprints by reference, else by place; linked, the board is the source and the STEP is made again when gone.
+namespace {
+std::string log_text(const std::filesystem::path& log) {
+  std::error_code e;
+  return std::filesystem::exists(log, e) ? read_text_file(log) : std::string();
+}
+size_t lines(const std::filesystem::path& log) {
+  const std::string text = log_text(log);
+  return static_cast<size_t>(std::count(text.begin(), text.end(), '\n'));
+}
+// The node as the import op (and its edits) records it.
+json node_json(const Document& d, const std::string& id) {
+  json found;
+  std::function<void(const json&)> walk = [&](const json& list) {
+    for (const auto& n : list) {
+      if (n.value("id", "") == id) found = n;
+      if (n.contains("children")) walk(n["children"]);
+    }
+  };
+  for (const auto& e : effective_ops(d))
+    if (e.op->type == "import") walk(e.data().value("nodes", json::array()));
+  return found;
+}
+// A footprint's component: "R1" or "R1 <footprint>".
+const Node* component_for(const Scene& s, const std::string& ref) {
+  for (const auto& [id, n] : s.nodes)
+    if (n.kind == Node::Kind::Component && (n.name == ref || n.name.rfind(ref + " ", 0) == 0)) return &n;
+  return nullptr;
+}
+}  // namespace
+
+TEST(kicad_cli_found_and_its_switches) {
+  Fixture f;
+  const std::filesystem::path fake = OPAD_FAKE_KICAD_CLI, log = f.files.dir / "kicad.log";
+  set_env("OPAD_FAKE_KICAD_LOG", log);
+  set_env("OPAD_KICAD_CLI", f.files.dir / "none" / "kicad-cli.exe");
+  CHECK(kicad_cli().program.empty());
+  CHECK_THROWS(kicad_cli_export(f.board, json::object()));
+  set_env("OPAD_KICAD_CLI", fake);
+  CHECK(kicad_cli().program == fake && kicad_cli().version.empty());  // asking is a process: only when asked
+  CHECK(kicad_cli(true).version == "9.0.1" && kicad_cli(true).major() == 9);
+  // A KiCad 8 (another spelling of the program: asked anew): what it has, refusing what it has not.
+  set_env("OPAD_KICAD_CLI", fake.parent_path() / "." / fake.filename());
+  set_env("OPAD_FAKE_KICAD_VERSION", "8.0.4");
+  CHECK(kicad_cli(true).version == "8.0.4");
+  const json options = kicad_export_options(f.board, KicadOptions{});
+  CHECK(options["origin_at"] == json({100.0, 100.0}));  // the board's drill/place origin, as the reader takes it
+  json eight = options;
+  eight["dnp"] = false;
+  eight["components"] = false;
+  eight["tracks"] = true;
+  const auto step = kicad_cli_export(f.board, eight);
+  CHECK(std::filesystem::is_regular_file(step) && step.extension() == ".step");
+  const std::string said = log_text(log);
+  CHECK(said.find("pcb export step --subst-models --force --board-only --no-dnp --include-tracks --user-origin 100.000000x100.000000mm -o ") != std::string::npos);
+  eight["pads"] = true;
+  try {
+    kicad_cli_export(f.board, eight);
+    CHECK(false);
+  } catch (const std::exception& e) {
+    CHECK(std::string(e.what()).find("KiCad 9") != std::string::npos);
+  }
+  set_env("OPAD_FAKE_KICAD_VERSION", "");
+  set_env("OPAD_KICAD_CLI", fake);
+  json nine = options;
+  nine["components"] = false;
+  nine["pads"] = nine["silkscreen"] = true;
+  kicad_cli_export(f.board, nine);
+  CHECK(log_text(log).find("--no-components --include-pads --include-silkscreen") != std::string::npos);
+  // What KiCad says when it fails reaches the message.
+  set_env("OPAD_FAKE_KICAD_FAIL", "1");
+  try {
+    kicad_cli_export(f.board, options);
+    CHECK(false);
+  } catch (const std::exception& e) {
+    CHECK(std::string(e.what()).find("the file is damaged") != std::string::npos);
+  }
+  set_env("OPAD_FAKE_KICAD_FAIL", "");
+  set_env("OPAD_FAKE_KICAD_LOG", "");
+}
+
+TEST(kicad_export_named_after_the_footprints) {
+  Fixture f;
+  set_env("OPAD_KICAD_CLI", std::filesystem::path(OPAD_FAKE_KICAD_CLI));
+  const Document own = f.read();
+  const Scene mine = resolve(own);
+  for (const char* unnamed : {"", "1"}) {  // KiCad names its parts by reference; else they are found by place
+    set_env("OPAD_FAKE_KICAD_UNNAMED", unnamed);
+    Document d = Document::create();
+    ImportOptions o;
+    o.kicad.kicad_cli = true;
+    o.kicad.tracks = true;
+    const ImportResult r = import_file(d, f.board, o);
+    const Scene s = resolve(d);
+    CHECK(s.unresolved.empty());
+    CHECK(r.info[*unnamed ? "by_place" : "by_name"] == 7 && r.info[*unnamed ? "by_name" : "by_place"] == 0);
+    CHECK(r.info["unplaced"] == json({"J2", "O1"}));  // no model found: KiCad leaves them out
+    const Op& op = d.ops.back();
+    CHECK(op.data["source"] == "board.kicad_pcb" && op.data["kicad"]["reader"] == "kicad-cli" && op.data["kicad"]["origin"] == json({100.0, 100.0}));
+    CHECK(s.node(s.roots[0])->name == "board" && named(s, "tracks"));
+    // Each footprint a component at its place, as OPAD's own reader makes it: the same parts in the same places.
+    for (const char* ref : {"R1", "R2", "U1", "J1", "S1", "D1", "X1"}) {
+      const Node* c = component_for(s, ref);
+      const Node* theirs = component_for(mine, ref);
+      CHECK(c && theirs && c->name == theirs->name);
+      if (!c || !theirs) continue;
+      const json kc = node_json(d, c->id).value("kicad", json()), kt = node_json(own, theirs->id).value("kicad", json());
+      CHECK(kc.value("ref", "") == ref && kc.value("footprint", "") == kt.value("footprint", ""));
+      CHECK(!kc.value("uuid", "").empty() && kc["uuid"] == kt["uuid"]);
+      double a[6], b[6];
+      world_box(d, s, c).Get(a[0], a[1], a[2], a[3], a[4], a[5]);
+      world_box(own, mine, theirs).Get(b[0], b[1], b[2], b[3], b[4], b[5]);
+      for (int i = 0; i < 6; ++i) CHECK(about(a[i], b[i], 0.01));
+      CHECK(about(s.world(c->id).at(0, 3), mine.world(theirs->id).at(0, 3)) && about(s.world(c->id).at(1, 0), mine.world(theirs->id).at(1, 0)));
+    }
+    // The sync preview reads it as it reads the reader's.
+    CHECK(!kicad_sync_preview(d, {}, f.board)["changed"].get<bool>());
+  }
+  set_env("OPAD_FAKE_KICAD_UNNAMED", "");
+}
+
+TEST(kicad_export_linked) {
+  Fixture f;
+  const std::filesystem::path log = f.files.dir / "kicad.log";
+  set_env("OPAD_FAKE_KICAD_LOG", log);
+  set_env("OPAD_KICAD_CLI", std::filesystem::path(OPAD_FAKE_KICAD_CLI));
+  Document d = Document::create();
+  d.save_as(f.files.dir / "proj" / "design.opad");
+  ImportOptions o;
+  o.kicad.kicad_cli = true;
+  link_file(d, f.board, o);
+  const Op& op = d.ops.back();
+  const json asset = op.data["asset"];
+  CHECK(asset["kind"] == "kicad_pcb" && asset["path"] == "board.kicad_pcb");
+  CHECK(asset["derived"]["builder"]["name"] == "kicad-cli" && asset["derived"]["builder"]["kicad"] == "9.0.1" && asset["derived"]["kind"] == "step");
+  CHECK(asset["derived"]["builder"]["options"]["origin_at"] == json({100.0, 100.0}));
+  const std::filesystem::path made = path_from_utf8(asset["derived"]["abs"].get<std::string>());
+  CHECK(std::filesystem::is_regular_file(made));
+  Scene s = resolve(d);
+  const Node* r1 = component_for(s, "R1");
+  CHECK(r1 && node_json(d, r1->id)["kicad"]["ref"] == "R1");
+  const std::string r1_id = r1 ? r1->id : std::string();
+  d.save();
+  AssetOptions with;
+  with.derive = derive_asset;
+  with.cache = false;
+  // Reopened: the STEP made last is read; gone (a clone), it is made again by kicad-cli, missing without it.
+  Document again = Document::load(f.files.dir / "proj" / "design.opad");
+  CHECK(load_assets(again, with)[0].state == "ok" && resolve(again).node(r1_id));
+  std::filesystem::remove(made);
+  AssetOptions without = with;
+  without.derive = nullptr;
+  Document clone = Document::load(f.files.dir / "proj" / "design.opad");
+  CHECK(load_assets(clone, without)[0].state == "missing");
+  const size_t runs = lines(log);
+  clone = Document::load(f.files.dir / "proj" / "design.opad");
+  const AssetState st = load_assets(clone, with)[0];
+  CHECK(st.state == "ok" && st.unbound == 0 && std::filesystem::is_regular_file(made));
+  CHECK(lines(log) == runs + 1);
+  // R1 moved 2 mm on the board: a sync makes the STEP again and keeps R1's component.
+  std::string text = read_text_file(f.board);
+  text.replace(text.find("(at 110 120)"), 12, "(at 112 120)");
+  write(f.board, text);
+  CHECK(asset_status(clone, with)[0].state == "changed");
+  design::Plan plan = plan_asset_sync(clone, op.id, with);
+  CHECK(!plan.report["up_to_date"].get<bool>());
+  design::commit(clone, std::move(plan));
+  s = resolve(clone);
+  CHECK(s.node(r1_id) && about(s.world(r1_id).at(0, 3), 12) && asset_status(clone, with)[0].state == "ok");
+  set_env("OPAD_FAKE_KICAD_LOG", "");
 }
 
 int main(int argc, char** argv) {

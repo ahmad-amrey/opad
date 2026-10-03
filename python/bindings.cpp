@@ -66,6 +66,7 @@ opad::Document open_document(const std::string& path, bool trust_assets) {
   if (opad::has_assets(d)) {
     opad::AssetOptions o;
     o.trust_all = trust_assets;
+    o.derive = opad::derive_asset;
     opad::load_assets(d, o);
   }
   return d;

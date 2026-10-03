@@ -49,5 +49,18 @@
   "Sync linked file": "مزامنة الملف المرتبط",
   "linked": "مرتبط",
   "linked_file": "الملف المرتبط",
-  "Decoding pictures": "فك ترميز الصور"
+  "Decoding pictures": "فك ترميز الصور",
+  "KiCad is exporting %1": "يصدّر KiCad الملف %1",
+  "OPAD's board reader": "قارئ اللوحات في OPAD",
+  "KiCad's own STEP export (KiCad not found)": "تصدير STEP من KiCad نفسه (لم يُعثر على KiCad)",
+  "KiCad's own STEP export (kicad-cli)": "تصدير STEP من KiCad نفسه (kicad-cli)",
+  "KiCad's own STEP export (KiCad %1)": "تصدير STEP من KiCad نفسه (KiCad %1)",
+  "OPAD's reader is fast and shares each model between its footprints. KiCad's export is exactly what KiCad makes, with the copper and silkscreen on request; it takes longer, and the import stays linked to the board.": "قارئ OPAD سريع ويشارك كل نموذج بين بصماته. تصدير KiCad هو تمامًا ما يصنعه KiCad، مع النحاس وطبقة الطباعة عند الطلب؛ يستغرق وقتًا أطول، ويبقى الاستيراد مرتبطًا باللوحة.",
+  "Read with": "القراءة بواسطة",
+  "Copper tracks": "مسارات النحاس",
+  "Pads": "الوسادات",
+  "Silkscreen": "طبقة الطباعة",
+  "KiCad adds": "يضيف KiCad",
+  "KiCad finds the models itself and leaves out footprints whose model it cannot find. Imported, the board stays linked: it is watched and synced, and its STEP is made again where it is missing.": "يعثر KiCad على النماذج بنفسه ويستبعد البصمات التي لا يجد نموذجها. عند الاستيراد تبقى اللوحة مرتبطة: تُراقَب وتُزامَن، ويُعاد إنشاء ملف STEP الخاص بها حيث يكون مفقودًا.",
+  "KiCad's own export needs kicad-cli (KiCad 7 or later): install KiCad, or set OPAD_KICAD_CLI to its kicad-cli": "يحتاج تصدير KiCad نفسه إلى kicad-cli (KiCad 7 أو أحدث): ثبّت KiCad، أو اضبط OPAD_KICAD_CLI على kicad-cli الخاص به"
 }

@@ -76,6 +76,10 @@ add_test(NAME formats COMMAND opad-test-formats)
 
 add_executable(opad-test-kicad test_kicad.cpp)
 target_link_libraries(opad-test-kicad PRIVATE opad::core)
+add_executable(opad-fake-kicad-cli fake_kicad_cli.cpp)  # KiCad's export as the kicad test and the kicad-cli bench run it
+target_link_libraries(opad-fake-kicad-cli PRIVATE opad::core)
+add_dependencies(opad-test-kicad opad-fake-kicad-cli)
+target_compile_definitions(opad-test-kicad PRIVATE OPAD_FAKE_KICAD_CLI="$<TARGET_FILE:opad-fake-kicad-cli>")
 if(TARGET zstd::libzstd_static AND OPAD_STATIC)  # writes boards with embedded (compressed) models
   target_link_libraries(opad-test-kicad PRIVATE zstd::libzstd_static)
   target_compile_definitions(opad-test-kicad PRIVATE OPAD_HAVE_ZSTD=1)

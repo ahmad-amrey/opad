@@ -8,11 +8,13 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QStandardItemModel>
 #include <QStatusBar>
 #include <QVBoxLayout>
 #include <memory>
@@ -30,6 +32,52 @@ KicadDialog::KicadDialog(QWidget* parent, bool import) : QDialog(parent) {
   QSettings settings;
   auto* layout = new QVBoxLayout(this);
   auto* form = new QFormLayout();
+  // KiCad's own export when kicad-cli is installed (found by its install folder, PATH or OPAD_KICAD_CLI: no process here).
+  const opad::KicadCli cli = opad::kicad_cli();
+  m_reader = new QComboBox(this);
+  m_reader->setObjectName("reader");
+  m_reader->addItem(tr("OPAD's board reader"), "opad");
+  m_reader->addItem(cli.program.empty() ? tr("KiCad's own STEP export (KiCad not found)")
+                    : cli.version.empty() ? tr("KiCad's own STEP export (kicad-cli)")
+                                          : tr("KiCad's own STEP export (KiCad %1)").arg(QString::fromStdString(cli.version)),
+                    "kicad-cli");
+  if (cli.program.empty()) qobject_cast<QStandardItemModel*>(m_reader->model())->item(1)->setEnabled(false);
+  m_reader->setCurrentIndex(!cli.program.empty() && settings.value("kicad/reader", "opad").toString() == "kicad-cli" ? 1 : 0);
+  m_reader->setToolTip(tr("OPAD's reader is fast and shares each model between its footprints. KiCad's export is exactly what KiCad makes, "
+                          "with the copper and silkscreen on request; it takes longer, and the import stays linked to the board."));
+  form->addRow(tr("Read with"), m_reader);
+  m_tracks = new QCheckBox(tr("Copper tracks"), this);
+  m_tracks->setObjectName("tracks");
+  m_tracks->setChecked(settings.value("kicad/tracks", false).toBool());
+  m_pads = new QCheckBox(tr("Pads"), this);
+  m_pads->setObjectName("pads");
+  m_pads->setChecked(settings.value("kicad/pads", false).toBool());
+  m_silkscreen = new QCheckBox(tr("Silkscreen"), this);
+  m_silkscreen->setObjectName("silkscreen");
+  m_silkscreen->setChecked(settings.value("kicad/silkscreen", false).toBool());
+  auto* extras = new QHBoxLayout();
+  for (auto* box : {m_tracks, m_pads, m_silkscreen}) extras->addWidget(box);
+  extras->addStretch();
+  form->addRow(tr("KiCad adds"), extras);
+  m_readerNote = new QLabel(this);
+  m_readerNote->setObjectName("secondary");
+  m_readerNote->setWordWrap(true);
+  form->addRow(QString(), m_readerNote);
+  // Tracks came with KiCad 8, pads and silkscreen with KiCad 9 (an unknown version is taken as the newest).
+  const int major = cli.major();
+  auto update = [this, major] {
+    const bool kicad = m_reader->currentData().toString() == "kicad-cli";
+    m_tracks->setEnabled(kicad && (!major || major >= 8));
+    m_pads->setEnabled(kicad && (!major || major >= 9));
+    m_silkscreen->setEnabled(kicad && (!major || major >= 9));
+    m_vias->setEnabled(!kicad);
+    m_height->setEnabled(!kicad);
+    m_readerNote->setText(kicad ? tr("KiCad finds the models itself and leaves out footprints whose model it cannot find. Imported, the board stays "
+                                     "linked: it is watched and synced, and its STEP is made again where it is missing.")
+                                : QString());
+    m_readerNote->setVisible(kicad);
+  };
+  connect(m_reader, &QComboBox::currentIndexChanged, this, update);
   m_components = new QCheckBox(tr("Footprints' 3D models"), this);
   m_components->setObjectName("components");
   m_components->setChecked(settings.value("kicad/components", true).toBool());
@@ -98,6 +146,7 @@ KicadDialog::KicadDialog(QWidget* parent, bool import) : QDialog(parent) {
   });
   connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
   setMinimumWidth(520);
+  update();
 }
 
 void KicadDialog::save() const {
@@ -112,7 +161,13 @@ void KicadDialog::save() const {
     if (!line.trimmed().isEmpty()) dirs << QDir::fromNativeSeparators(line.trimmed());
   settings.setValue("kicad/modelDirs", dirs);
   settings.setValue("kicad/download", m_download->currentData());
+  settings.setValue("kicad/reader", m_reader->currentData());
+  settings.setValue("kicad/tracks", m_tracks->isChecked());
+  settings.setValue("kicad/pads", m_pads->isChecked());
+  settings.setValue("kicad/silkscreen", m_silkscreen->isChecked());
 }
+
+bool KicadDialog::linked() { return QSettings().value("kicad/reader", "opad").toString() == "kicad-cli" && !opad::kicad_cli().program.empty(); }
 
 // The models are KiCad's (CC-BY-SA 4.0 with its design exception): never bundled, fetched per user on consent into the
 // user cache, where the reader looks for them (opad::kicad_download_models). The download is a job on a worker.

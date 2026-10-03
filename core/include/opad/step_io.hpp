@@ -20,6 +20,10 @@ struct KicadOptions {
   double placeholder_height = 1.0;                // mm: the box shown for a footprint whose model is not found
   std::string origin = "auto";                    // auto (the drill/place origin when set, else the board's centre) | center | page
   std::vector<double> origin_at;                  // [x, y] on the page: this frame whatever `origin` says (a linked board's sync)
+  // Read through KiCad's own STEP export (kicad-cli, kicad_pcb.hpp) instead: KiCad's models and placement exactly, and on
+  // request the copper tracks, pads and silkscreen (KiCad 8/9); linked, the board is what is watched and synced.
+  bool kicad_cli = false;
+  bool tracks = false, pads = false, silkscreen = false;
 };
 
 struct ImportOptions {

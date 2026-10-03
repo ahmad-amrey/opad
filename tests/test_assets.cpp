@@ -460,7 +460,7 @@ TEST(derived_file_read_in_the_sources_place) {
   write(source, "30");
   int runs = 0;
   AssetOptions converter;
-  converter.derive = [&](const json& asset, const fs::path& from) {
+  converter.derive = [&](const json& asset, const fs::path& from, const std::function<bool(double, const std::string&)>&) {
     CHECK_EQ(asset["derived"]["builder"]["name"], "test-converter");
     ++runs;
     const fs::path out = f.dir / "made" / "part.step";
@@ -469,7 +469,7 @@ TEST(derived_file_read_in_the_sources_place) {
   };
   Document d = Document::create();
   d.save_as(f.dir / "design.opad");
-  link_derived(d, source, converter.derive(json{{"derived", {{"builder", {{"name", "test-converter"}}}}}}, source), {{"name", "test-converter"}, {"version", 1}});
+  link_derived(d, source, converter.derive(json{{"derived", {{"builder", {{"name", "test-converter"}}}}}}, source, {}), {{"name", "test-converter"}, {"version", 1}});
   const std::string import_id = last_import(d).id;
   const json asset = last_import(d).data["asset"];
   CHECK_EQ(asset["path"], "part.src");

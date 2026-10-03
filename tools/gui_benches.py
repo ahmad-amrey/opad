@@ -75,6 +75,19 @@ def main():
                          + footprint("D1", "104 114", "F", "library.step").replace("${OPAD_BENCH_UNSET_DIR}", "${KICAD9_3DMODEL_DIR}")
                          + '(footprint "MountingHole:MountingHole_3.2mm" (layer "F.Cu") (at 126 116) (pad "" np_thru_hole circle (at 0 0) (size 3.2 3.2) (drill 3.2)))\n)\n',
                          encoding="utf-8")
+        # KiCad's own export (UI-73) through a stand-in kicad-cli built with the tests: a board beside a document, its model
+        # found through ${KIPRJMOD}; its own cache and a log of what kicad-cli was asked.
+        fake_kicad = app.parent / ("opad-fake-kicad-cli.exe" if os.name == "nt" else "opad-fake-kicad-cli")
+        exact = root / "kicad-cli"
+        exact.mkdir()
+        subprocess.run([str(cli), "export", str(part), "--format", "step", "--out", str(exact / "part.step")], check=True, capture_output=True)
+        subprocess.run([str(cli), "new", str(exact / "design.opad")], check=True, capture_output=True)
+        (exact / "board.kicad_pcb").write_text(
+            '(kicad_pcb (version 20241229) (general (thickness 1.6))\n(gr_rect (start 100 100) (end 140 120) (layer "Edge.Cuts"))\n'
+            + "".join(f'(footprint "Bench:Part" (layer "{layer}.Cu") (at {at}) (property "Reference" "{ref}")\n'
+                      f'  (model "${{KIPRJMOD}}/part.step" (offset (xyz 0 0 0)) (scale (xyz 1 1 1)) (rotate (xyz 0 0 0))))\n'
+                      for ref, at, layer in [("R1", "108 106", "F"), ("R2", "120 106 90", "F"), ("U1", "130 114", "B")]) + ")\n", encoding="utf-8")
+        kicad_cli_env = {"OPAD_KICAD_CLI": str(fake_kicad), "OPAD_FAKE_KICAD_LOG": str(root / "kicad-cli.log"), "OPAD_CACHE_DIR": str(root / "kicad-cli-cache")}
         # Linked files: a document linking parts/part.step beside it (changed since) and ../outside/other.step, and a third
         # file in parts/ for a linked import; their own cache, so nothing reaches the user's.
         assets = root / "assets"
@@ -133,6 +146,7 @@ def main():
             ("kicad", board, {"OPAD_BENCH_KICAD": "{prefix}.png", **kicad_env}),
             ("assets", linked, {"OPAD_BENCH_ASSETS": "{prefix}.png", **assets_env}),
             ("pictures", empty, {"OPAD_BENCH_PICTURES": "{prefix}"}),
+            *([("kicad-cli", exact / "design.opad", {"OPAD_BENCH_KICAD_CLI": "{prefix}", **kicad_cli_env})] if fake_kicad.exists() else []),
             ("colors", colors / "cube.obj", {"OPAD_BENCH_COLORS": "{prefix}.png", "OPAD_CACHE_DIR": str(root / "colors-cache")}),
             ("colors-3mf", colors / "painted.3mf",
              {"OPAD_BENCH_COLORS": "{prefix}.png", "OPAD_BENCH_COLORS_PAINTED": "1", "OPAD_CACHE_DIR": str(root / "colors-cache")}),
@@ -156,7 +170,7 @@ def main():
                                                                   "OPAD_CACHE_DIR": str(root / "viewer-cache-dir")}))
         # These open a STEP or a drawing and then edit it: as with viewer mode turned off in the settings.
         editing = {"drawing-to-sketch", "picking"}
-        settings = {"kicad": f"[kicad]\nmodelDirs={models.as_posix()}\ndownload=always\n"}
+        settings = {"kicad": f"[kicad]\nmodelDirs={models.as_posix()}\ndownload=always\n", "kicad-cli": "[kicad]\nreader=kicad-cli\ntracks=true\n"}
         failures = []
         for name, doc, switches in cases:
             if args.only and name not in args.only:

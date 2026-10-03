@@ -372,7 +372,7 @@ void MainWindow::buildActions() {
     if (suffix == "dxf" || suffix == "svg" || suffix == "dwg") return importDrawing(p, parent);
     if (suffix == "kicad_pcb" && KicadDialog(this, true).exec() != QDialog::Accepted) return;
     beginLoad([this, p] { addRecent(p); m_viewport->fitWhenReady(); });
-    m_doc->startImport(p, parent);
+    m_doc->startImport(p, parent, {}, {}, suffix == "kicad_pcb" && KicadDialog::linked());  // KiCad's export: linked to its board
   });
   addAction("file.importdoc", tr("Save as OPAD document…"), "save", QKeySequence("Ctrl+Shift+E"), [this] { if (m_doc->browse) saveViewerAs(); });
   addAction("file.save", tr("&Save"), "save", QKeySequence("Ctrl+S"), [this] {
@@ -2473,7 +2473,7 @@ void MainWindow::showNodeGeometry(const std::string& id, const QString& title, c
 // --bench-select: select every root once the load has settled, log how long the selection takes, quit.
 void MainWindow::runBench() {
   if(const auto mode=qEnvironmentVariable("OPAD_BENCH_RECOVERY");!mode.isEmpty()){m_recovery->bench(mode);return;}
-  if(benchViewer() || benchKicad() || benchAssets() || benchColors() || benchCache() || benchPictures())return;
+  if(benchViewer() || benchKicad() || benchKicadCli() || benchAssets() || benchColors() || benchCache() || benchPictures())return;
   if(const QString shot=qEnvironmentVariable("OPAD_BENCH_FILETYPES");!shot.isEmpty()){  // the dialog as drawn, nothing registered
     auto* dialog=new FileTypesDialog(this);dialog->show();
     QTimer::singleShot(300,this,[dialog,shot]{const bool saved=dialog->grab().save(shot);dialog->deleteLater();trace::log(QString("bench: file types dialog %1").arg(saved?"PASS":"FAIL"));QCoreApplication::exit(saved?0:2);});

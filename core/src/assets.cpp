@@ -399,10 +399,14 @@ std::string content_of(const json& asset, const std::string& sha, const std::str
 // The file read into a document of its own (one import op, live bodies). Every read is remembered by its content (the
 // viewer cache, LRU): reopening is fast, a clone, a branch or a moved folder finds it again, and a file changed since
 // still shows the version synced, as the document's features were computed from it. True when the file itself was read.
-bool read_file(Document& scratch, const fs::path& file, const json& asset, const std::string& content, const AssetOptions& opt, bool store = true) {
+// `source`: the file a derived one was made from; kicad-cli's STEP of a board gets its parts named after the footprints.
+bool read_file(Document& scratch, const fs::path& file, const json& asset, const std::string& content, const AssetOptions& opt, bool store = true,
+               const fs::path& source = {}) {
   const ImportOptions o = read_options(asset, opt);
   if (opt.cache && detail::asset_cache_load(scratch, content, o)) return false;
   import_file(scratch, file, o);
+  if (const json b = asset.value("builder", json::object()); !source.empty() && b.value("name", "") == "kicad-cli")
+    kicad_label_export(scratch.ops.back().data, scratch, source, b.value("options", json::object()));
   if (opt.cache && store) detail::asset_cache_store(scratch, content);
   return true;
 }
@@ -480,7 +484,7 @@ fs::path derive_again(const json& asset, const fs::path& source, const AssetOpti
   const json& dv = *derived_of(asset);
   if (!opt.derive) throw Error("the file is read through " + builder_name(dv) + ", which is not available here: " + dv.value("path", dv.value("abs", std::string())));
   if (opt.progress && !opt.progress(-1, "converting")) throw Error("cancelled");
-  fs::path made = opt.derive(asset, source);
+  fs::path made = opt.derive(asset, source, opt.progress);
   std::error_code ec;
   if (made.empty() || !fs::is_regular_file(made, ec)) throw Error(builder_name(dv) + " made nothing from " + utf8(source.filename()));
   return fs::absolute(made).lexically_normal();
@@ -657,7 +661,7 @@ std::vector<AssetState> load_assets(Document& doc, const AssetOptions& opt) {
             st.derived_sha256 = file_sha256(st.derived);
           }
           stale = st.derived_sha256 != dv->value("sha256", "");
-          read_file(scratch, st.derived, view, content_of(view, st.derived_sha256, ""), opt);
+          read_file(scratch, st.derived, view, content_of(view, st.derived_sha256, ""), opt, true, st.file);
         } else {
           read_file(scratch, st.file, asset, content_of(asset, st.sha256, st.models), opt);
         }
@@ -684,6 +688,11 @@ std::vector<AssetState> load_assets(Document& doc, const AssetOptions& opt) {
         });
         if (stale) st.reason = changed ? std::to_string(changed) + " parts differ from the version synced" : "the parts are as synced";
         if (st.unbound) st.reason = std::to_string(st.unbound) + " parts are no longer in the file" + (changed ? ", " + std::to_string(changed) + " differ" : "");
+        // Made again from the file synced (a clone; kicad-cli writes the time into its STEP): the same parts, nothing to sync.
+        if (dv && !changed && !st.unbound && st.sha256 == asset.value("sha256", "") && st.models == asset.value("models_sha256", std::string())) {
+          st.state = "ok";
+          st.reason = "made again from the file synced";
+        }
       } catch (const Standard_Failure& ex) {
         st.state = "error";
         st.reason = ex.GetMessageString();
@@ -727,7 +736,7 @@ ImportResult link(Document& doc, const fs::path& file, const fs::path& derived, 
     const fs::path made = fs::absolute(derived).lexically_normal();
     json dv = {{"kind", kind_of(made)}, {"builder", builder.is_object() ? builder : json{{"name", "a converter"}}}};
     place_derived(dv, made, file_sha256(made), doc_dir(doc));
-    read_file(scratch, made, dv, content_of(dv, dv["sha256"], ""), read);
+    read_file(scratch, made, dv, content_of(dv, dv["sha256"], ""), read, true, abs);
     asset["derived"] = dv;
     data = read_op(scratch);
   } else {
@@ -762,7 +771,21 @@ ImportResult link(Document& doc, const fs::path& file, const fs::path& derived, 
 
 }  // namespace
 
-ImportResult link_file(Document& doc, const fs::path& file, const ImportOptions& opt) { return link(doc, file, {}, json(), opt); }
+ImportResult link_file(Document& doc, const fs::path& file, const ImportOptions& opt) {
+  if (!opt.kicad.kicad_cli || kind_of(file) != "kicad_pcb") return link(doc, file, {}, json(), opt);
+  // KiCad's own export of the board, linked: the board is watched and synced, the STEP made from it read (UI-73).
+  const json options = kicad_export_options(file, opt.kicad);
+  const fs::path step = kicad_cli_export(file, options, opt.progress);
+  ImportOptions o = opt;
+  o.kicad.kicad_cli = false;
+  return link(doc, file, step, {{"name", "kicad-cli"}, {"version", 1}, {"kicad", kicad_cli(true).version}, {"options", options}}, o);
+}
+
+fs::path derive_asset(const json& asset, const fs::path& source, const std::function<bool(double, const std::string&)>& progress) {
+  const json builder = asset.value("derived", json::object()).value("builder", json::object());
+  if (builder.value("name", "") == "kicad-cli") return kicad_cli_export(source, builder.value("options", json::object()), progress);
+  throw Error("the file is read through " + builder.value("name", std::string("a converter")) + ", which OPAD cannot run");
+}
 
 ImportResult link_derived(Document& doc, const fs::path& file, const fs::path& derived, const json& builder, const ImportOptions& opt) {
   return link(doc, file, derived, builder, opt);
@@ -802,7 +825,7 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
     const json view = *dv;
     if (opt.derive || made.empty() || !same) made = derive_again(asset, where, opt);
     const std::string derived_sha = file_sha256(made);
-    read_file(scratch, made, view, content_of(view, derived_sha, ""), opt);
+    read_file(scratch, made, view, content_of(view, derived_sha, ""), opt, true, where);
     place_derived(asset["derived"], made, derived_sha, doc_dir(doc));
   } else {
     read_file(scratch, where, asset, content_of(asset, sha, models), opt);

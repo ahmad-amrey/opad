@@ -1,6 +1,7 @@
 #include "AppDocument.hpp"
 
 #include "opad/assets.hpp"
+#include "opad/kicad_pcb.hpp"
 #include "opad/geometry.hpp"
 #include "opad/drawing_io.hpp"
 #include "Jobs.hpp"
@@ -27,6 +28,7 @@ QString phaseLabel(const std::string& what, const QString& file) {
   if (what == "building") return AppDocument::tr("Building document");
   if (what == "preparing") return AppDocument::tr("Preparing bodies");
   if (what == "linked") return AppDocument::tr("Reading linked files");
+  if (what.rfind("exporting with KiCad", 0) == 0) return AppDocument::tr("KiCad is exporting %1").arg(file);  // kicad-cli at work
   if (what.rfind("translating", 0) == 0) {  // "translating" or "translating <scope> <i>/<n>" from the STEP reader
     const QString detail = QString::fromStdString(what.substr(11)).trimmed();
     return detail.isEmpty() ? AppDocument::tr("Translating geometry") : AppDocument::tr("Translating %1").arg(detail);
@@ -50,6 +52,10 @@ opad::KicadOptions AppDocument::kicadOptions() {
   o.placeholder_height = std::clamp(s.value("kicad/placeholderHeight", 1.0).toDouble(), 0.01, 200.0);
   const QString origin = s.value("kicad/origin", "auto").toString();
   o.origin = origin == "center" || origin == "page" ? origin.toStdString() : "auto";
+  o.kicad_cli = s.value("kicad/reader", "opad").toString() == "kicad-cli" && !opad::kicad_cli().program.empty();  // else OPAD's reader
+  o.tracks = s.value("kicad/tracks", false).toBool();
+  o.pads = s.value("kicad/pads", false).toBool();
+  o.silkscreen = s.value("kicad/silkscreen", false).toBool();
   return o;
 }
 
@@ -58,6 +64,7 @@ opad::AssetOptions AppDocument::assetOptions() {
   for (const QString& dir : QSettings().value("assets/trusted").toStringList())  // folders the user said to trust
     if (!dir.trimmed().isEmpty()) o.trusted.push_back(fsPath(dir.trimmed()));
   o.kicad = kicadOptions();
+  o.derive = opad::derive_asset;  // a board read through kicad-cli: its STEP made again when missing here or synced
   return o;
 }
 

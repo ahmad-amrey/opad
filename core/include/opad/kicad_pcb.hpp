@@ -44,4 +44,42 @@ json kicad_download_models(const std::filesystem::path& board, const KicadOption
 // `board` defaults to the import's source beside the document.
 json kicad_sync_preview(const Document& doc, const std::string& import_id = {}, const std::filesystem::path& board = {});
 
+// The board as the reader would place it, without its geometry, in the frame `opt` chooses: {"origin": [x, y] (on the page),
+// "components": [{"ref", "uuid", "footprint", "side", "models", "at": [x, y, degrees]}] (footprints with models), "thickness",
+// "holes", "outline": {"area", "box" (page)}}.
+json kicad_board(const std::filesystem::path& board, const KicadOptions& opt = {});
+
+// ---------------------------------------------------------------- KiCad's own export (UI-73)
+// kicad-cli (KiCad 7 and later) on this machine: OPAD_KICAD_CLI when set, else the newest KiCad's installers put (Program
+// Files/KiCad/<version>/bin, the per-user install, the macOS bundle, /usr/bin), else on PATH. `version` comes from the install
+// folder; with `ask` and none there, from `kicad-cli version` (a process: workers only). Empty `program`: none found.
+struct KicadCli {
+  std::filesystem::path program;
+  std::string version;  // "9.0", "8.0.4"; empty when unknown
+  int major() const;
+};
+KicadCli kicad_cli(bool ask = false);
+
+// What KiCad's export of `board` is asked for, as a linked asset records it (derived.builder.options): components, dnp,
+// tracks, pads, silkscreen and "origin_at", the frame OPAD's reader picks for `opt` (so both readers put the board in one place).
+json kicad_export_options(const std::filesystem::path& board, const KicadOptions& opt);
+
+// The STEP KiCad itself makes of `board`: kicad-cli pcb export step --subst-models --force, origin at options.origin_at, the
+// switches the options ask for as this KiCad spells them (only these reach its command line, never text from a document),
+// written to OPAD's cache (one file per board and options, made again each time). Throws with what KiCad said when it fails;
+// `progress` returning false stops it.
+std::filesystem::path kicad_cli_export(const std::filesystem::path& board, const json& options,
+                                       const std::function<bool(double, const std::string&)>& progress = {});
+
+// Names the parts of a kicad-cli STEP after their footprints (an import op's `data`, read from that STEP into `shapes`): a part
+// KiCad named by its reference designator (R1, R1_2) is that footprint's, any other near a footprint without one on its side
+// is that one's by place; each footprint becomes a component "R1 R_0603" carrying kicad {ref, uuid, footprint, side, models}
+// at the footprint's place, as OPAD's own reader makes it (sync previews and stable ids by footprint uuid). The op gets the
+// board's name and its "kicad" record; returns {"by_name", "by_place", "unplaced" (references without a part)}.
+json kicad_label_export(json& data, const Document& shapes, const std::filesystem::path& board, const json& options);
+
+// A board read through KiCad's export (ImportOptions::kicad.kicad_cli): exported, read as a STEP, its parts named after their
+// footprints. link_file links it instead, the board the source and the STEP derived from it (assets.hpp).
+ImportResult import_kicad_export(Document& doc, const std::filesystem::path& board, const ImportOptions& opt = {});
+
 }  // namespace opad

@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -39,9 +40,16 @@ TopoDS_Face mesh_face(const std::vector<float>& xyz, const std::vector<uint32_t>
 TopoDS_Shape mesh_faces(const std::vector<float>& xyz, const std::vector<uint32_t>& triangles, bool weld, const std::vector<int>& colour,
                         const std::vector<std::array<double, 3>>& colours, json* meta = nullptr);
 
-// Runs a program and waits for it (two minutes at most); its exit status, or -1 when it did not start. Arguments go as
-// wide strings on Windows, so a file named in Arabic reaches the program intact; its output is dropped (drawing_io.cpp).
-int run_program(const std::filesystem::path& program, const std::vector<std::filesystem::path>& args, const std::filesystem::path& cwd = {});
+// How long run_program waits, where the program's output goes (dropped when empty) and when to stop it early.
+struct RunOptions {
+  std::filesystem::path output;   // stdout and stderr, written to this file
+  int timeout_ms = 120000;
+  std::function<bool()> cancelled;  // polled ten times a second; true stops the program
+};
+// Runs a program and waits for it; its exit status, or -1 when it did not start, ran out of time or was stopped. Arguments go
+// as wide strings on Windows, so a file named in Arabic reaches the program intact (drawing_io.cpp).
+int run_program(const std::filesystem::path& program, const std::vector<std::filesystem::path>& args, const std::filesystem::path& cwd = {},
+                const RunOptions& run = {});
 
 // The viewer cache keyed by content (viewer_cache.cpp): a linked asset's read, found again by its file's hash and how it was
 // read (`content`) wherever the file now is (a clone, a branch, a renamed folder). Same contract as viewer_cache_load/store.

@@ -82,6 +82,7 @@ class MainWindow : public QMainWindow {
   bool benchShortcuts();
   bool benchViewer();  // OPAD_BENCH_VIEWER
   bool benchKicad();   // OPAD_BENCH_KICAD (KicadBench.cpp)
+  bool benchKicadCli();  // OPAD_BENCH_KICAD_CLI (KicadBench.cpp)
   bool benchAssets();  // OPAD_BENCH_ASSETS (AssetLinks.cpp)
   bool benchColors();  // OPAD_BENCH_COLORS (KicadBench.cpp)
   bool benchCache();   // OPAD_BENCH_CACHE (KicadBench.cpp)
