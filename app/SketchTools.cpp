@@ -218,6 +218,10 @@ void SketchEditor::click(const Snap& s, Qt::KeyboardModifiers) {
           if (SkConstraint* c = m_sk.constraint(keepTyped(s, key, key[1] == 'x' ? CT::HDistance : CT::VDistance, {m_chain.back(), p}))) {
             c->is_signed = true;
             c->value = it->second.first;
+            const SkPoint *a = m_sk.point(m_chain.back()), *b = m_sk.point(p);
+            const double out = 24 * m_viewport->pixelSize();  // ΔX under the segment, ΔY right of it
+            if (key[1] == 'x') labelAt(c->id, (a->x + b->x) / 2, std::min(a->y, b->y) - out);
+            else labelAt(c->id, std::max(a->x, b->x) + out, (a->y + b->y) / 2);
           }
     }
     const bool closes = p == m_chain.front() && m_chain.size() > 1;
