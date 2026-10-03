@@ -8,6 +8,7 @@
 #include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QDoubleSpinBox>
 #include <QInputDialog>
 #include <QMenu>
@@ -46,7 +47,8 @@ void MainWindow::buildToolsActions() {
   });
   addAction("tools.cache", tr("Clear tessellation cache"), "", QKeySequence(), [this] {
     opad::json r = opad::commands::run("cache", opad::json{{"action", "clear"}});
-    statusBar()->showMessage(tr("Cache cleared: %1").arg(QString::fromStdString(r["dir"].get<std::string>())), 4000);
+    const QString dir = QString::fromStdString(r["dir"].get<std::string>());
+    resultToast(tr("Cache cleared: %1").arg(QDir::toNativeSeparators(dir)), dir);
   });
   addAction("help.about", tr("&About OPAD"), "", QKeySequence(), [this] {
     QMessageBox::about(this, tr("About OPAD"), tr("<b>OPAD %1</b><br>Git-native STEP viewer.<br>MIT licence. Built on Open CASCADE Technology and Qt.<br><br>Headless twin: <code>opad-cli</code>; Python: <code>import opad</code>.").arg(QString::fromStdString(opad::version_string())));

@@ -98,9 +98,18 @@ class MainWindow : public QMainWindow {
   void saveLastView();
   QString m_viewPath;
   void guarded(const std::function<void()>& fn);
+  // A precondition not met (opad::UserHint, UI-109): a toast instead of a message box. pick: the command that raised it
+  // waits for the selection it asks for and runs again once there is one (resumePendingPick).
+  void hint(const QString& text, bool pick);
+  void resumePendingPick();
+  void cancelPendingPick();
+  void resultToast(const QString& text, const QString& folder = QString());  // a result; folder: an Open folder action
+  QString m_runningCommand, m_pendingPick;  // the command whose function runs now; the one waiting for a selection
+  QPointer<Toast> m_pendingToast;
   bool maybeSave();
   void showDocument(bool has);
-  void beginLoad(std::function<void()> after);
+  // title: the job's and the shade's ("Opening box.step"); done: the completion toast, %1 = the bodies loaded.
+  void beginLoad(std::function<void()> after, const QString& title = QString(), const QString& done = QString());
   void setLoadPhase(const QString& phase, int pct);
   QString meshPhase() const;
   int overallPercent(const QString& phase, int pct) const;
@@ -262,6 +271,7 @@ class MainWindow : public QMainWindow {
   bool m_loadDocDone = false;
   int m_meshTotal = 0, m_meshRemaining = 0;
   std::function<void()> m_afterLoad;
+  QString m_loadDone;  // beginLoad's done text
   QTimer m_selFileTimer;
   bool m_benchSelect = false;
   BrowserOverlay* m_browserOverlay = nullptr;

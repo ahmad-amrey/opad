@@ -129,6 +129,7 @@ void RecoveryManager::discardCurrent() {
   if(!m_doc->hasDocument)return;
   const auto session=m_session;
   const auto prefix=QString::fromLatin1(QCryptographicHash::hash(QByteArray::fromStdString(m_doc->doc.header.uuid),QCryptographicHash::Sha256).toHex());
+  m_jobs->backgroundNext();
   m_jobs->async(tr("Clearing saved recovery snapshots"),[session,prefix](Progress){
     std::lock_guard guard(session->mutex);
     for(const auto& file:QDir(session->directory).entryList({prefix+"_*.opad-recovery",prefix+"_*.opad-recovery.meta",prefix+"_*.opad-base"},QDir::Files))QFile::remove(session->directory+"/"+file);
@@ -167,6 +168,7 @@ void RecoveryManager::saveNow(std::function<void(bool,const QString&)> done) {
       if(!self)return;
       if(!document || m_closing){m_running=false;fail(snapshotError);return;}
       auto written=std::make_shared<std::atomic<bool>>(false);
+      m_jobs->backgroundNext();
       m_jobs->async(tr("Saving recovery snapshot"),[session,document,edit,source,title,epoch,written,checkpoint](Progress progress){
         std::lock_guard guard(session->mutex);if(session->closed || progress.cancelled() || !epoch->load())return;
         if(!session->lock){
@@ -285,6 +287,7 @@ void RecoveryManager::offerRecovery() {
 void RecoveryManager::finishSession(std::function<void()> done) {
   m_closing=true;m_timer.stop();const auto session=m_session;const auto recovered=m_recoveredFiles;
   auto finished=std::make_shared<std::atomic<bool>>(false);
+  m_jobs->backgroundNext();
   m_jobs->async(tr("Closing recovery session"),[session,recovered,finished](Progress){
     std::lock_guard guard(session->mutex);session->closed=true;
     for(const auto& file:QDir(session->directory).entryList({"*.opad-recovery","*.opad-recovery.meta","*.opad-base"},QDir::Files))QFile::remove(session->directory+"/"+file);

@@ -605,5 +605,21 @@
  "Sketch on a plane, draw a closed profile, then extrude it into a solid. Or start from a box, or bring in a file.": "ارسم على مستوى مقطعًا مغلقًا ثم ابثقه إلى مجسم. أو ابدأ من صندوق، أو أحضر ملفًا.",
  "1  New sketch    2  Line L, Rectangle R, Circle C    3  Extrude E": "1  رسم تخطيطي جديد    2  خط L‏، مستطيل R‏، دائرة C‏    3  بثق E‏",
  "Import…": "استيراد…",
- "Don't show again": "لا تعرضها مجددًا"
+ "Don't show again": "لا تعرضها مجددًا",
+ "%1 · done in %2 s": "%1 · اكتمل خلال %2 ث",
+ "Select the objects to colour first.": "حدد أولًا العناصر المراد تلوينها.",
+ "Select the objects to make see-through first.": "حدد أولًا العناصر المراد جعلها شفافة.",
+ "Select a feature or a sketch on the timeline first (or double-click it).": "حدد أولًا ميزة أو رسمًا تخطيطيًا على الخط الزمني (أو انقر عليه نقرًا مزدوجًا).",
+ "Select one body to find matching geometry.": "حدد جسمًا واحدًا للبحث عن هندسة مطابقة.",
+ "Finish the current operation before selecting geometry.": "أنهِ العملية الحالية قبل تحديد الهندسة.",
+ "Select the objects to lock or unlock first.": "حدد أولًا العناصر المراد قفلها أو فتح قفلها.",
+ "Select the objects to move under another component first.": "حدد أولًا العناصر المراد نقلها تحت مكوّن آخر.",
+ "Open folder": "فتح المجلد",
+ "Show": "إظهار",
+ "Flip": "عكس",
+ "Importing %1": "استيراد %1",
+ "Imported %1 · %2 bodies": "تم استيراد %1 · %2 أجسام",
+ "Opened %1 · %2 bodies": "تم فتح %1 · %2 أجسام",
+ "Also running:": "يعمل أيضًا:",
+ "%1 more jobs running": "%1 مهام أخرى قيد التشغيل"
 }

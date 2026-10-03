@@ -83,6 +83,7 @@ void MainWindow::selectionMoved(const std::vector<opad::Ref>& refs) {
     for (AreaController* area : m_areas) area->selectionChanged(selection);
   }
   updateCommands();
+  if (!refs.empty() || !m_selRows.empty()) resumePendingPick();  // a command that asked for this selection (UI-109)
   if (!m_propsPanel->isVisible()) return;
   if (m_propsPanel->pinned()) showProperties(refs);  // O(1): only the first ref is inspected and geometry walks are deferred to a job
   else m_propsPanel->hide();
@@ -157,6 +158,7 @@ void MainWindow::writeSelectionFile() {
   auto st = std::make_shared<State>();
   st->refs = m_viewport->selection();
   const size_t kDetailCap = 200;  // inspect geometry for at most this many; the rest are listed by ref only
+  m_jobs->backgroundNext();
   m_selFileJob = m_jobs->sliced(tr("Publishing selection"), [this, st, kDetailCap](Job&) {
     if (st->i >= st->refs.size()) return false;
     const opad::Ref& r = st->refs[st->i];

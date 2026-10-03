@@ -15,6 +15,12 @@ namespace opad {
 struct Error : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
+// A precondition the user meets by doing something first ("Select the objects to colour first."): the app shows it as a
+// hint that goes away by itself, not as an error box (UI-109). pick: the command waits for that selection and then runs.
+struct UserHint : Error {
+  explicit UserHint(const std::string& what, bool pick = false) : Error(what), pick(pick) {}
+  bool pick;
+};
 
 std::string new_uuid();
 // Scripted builds (gap log #15): with OPAD_DETERMINISTIC=<seed> in the environment, new_uuid() derives UUIDs from the

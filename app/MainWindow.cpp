@@ -4,11 +4,16 @@
 #include "RecoveryManager.hpp"
 
 #include <QCloseEvent>
+#include <QDesktopServices>
+#include <QFileInfo>
 #include <QInputDialog>
+#include <QLocale>
 #include <QMessageBox>
 #include <QPointer>
+#include <QScopedValueRollback>
 #include <QStatusBar>
 #include <QToolButton>
+#include <QUrl>
 
 #include <algorithm>
 #include <cmath>
@@ -51,6 +56,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_doc, &AppDocument::aboutToReplace, this, [this] {
     saveLastView();
     m_viewPath.clear();
+    cancelPendingPick();
     cancelTool();
     clearMeasurement();
     m_viewport->clearPreviewBodies();
@@ -90,6 +96,10 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   connect(m_chips, &ViewportChips::saveToEditRequested, this, [this] { guarded([this] { saveViewerAs(); }); });
   connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); refreshGit(); });
   connect(m_doc, &AppDocument::message, this, [this](const QString& t) { statusBar()->showMessage(t, 6000); });
+  connect(m_doc, &AppDocument::saved, this, [this] {
+    const QFileInfo file(m_doc->path());
+    resultToast(tr("Saved %1").arg(file.fileName()), file.absolutePath());
+  });
   connect(m_viewport, &Viewport::selectionChanged, this, &MainWindow::onViewportSelection);
   connect(m_viewport, &Viewport::hoverChanged, m_statusHover, &QLabel::setText);
   connect(m_viewport, &Viewport::contextMenuRequested, this, [this](const QPoint& p) { showContextMenu(p, currentNodeIds()); });
@@ -137,6 +147,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     }
     if (m_afterLoad) m_afterLoad();
     m_afterLoad = nullptr;
+    if (!m_loadDone.isEmpty()) m_loadJob->setDoneText(m_loadDone.arg(QLocale().toString(static_cast<qulonglong>(m_doc->scene.all_bodies().size()))));
     if (m_meshRemaining > 0) setLoadPhase(meshPhase(), m_meshTotal > 0 ? (m_meshTotal - m_meshRemaining) * 100 / m_meshTotal : -1);
     else m_loadJob->finish();
   });
@@ -182,6 +193,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     guarded([&] { m_doc->run("section", opad::json{{"name", finalName.toStdString()}, {"origin", o}, {"normal", n}}); });
   });
   connect(m_timeline, &TimelineWidget::opClicked, this, &MainWindow::selectOpTargets);
+  connect(m_timeline, &TimelineWidget::opClicked, this, &MainWindow::resumePendingPick);  // a marker is what Edit feature waits for
   connect(m_timeline, &TimelineWidget::contextRequested, this, [this](const std::string& id,const QPoint& point) { guarded([&] { timelineMenu(id,point); }); });
   connect(m_toolSteps, &ToolStepsPanel::pinRequested, this, [this] { guarded([this] { pinMeasurement(); }); });
   connect(m_toolSteps, &ToolStepsPanel::clearRequested, this, &MainWindow::toolEscape);
@@ -300,11 +312,15 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
   connect(a, &QAction::triggered, this, [this, fn, id, a] {
     if (m_loadJob && !id.startsWith("file.") && !id.startsWith("panel.") && id != "view.dark") return;  // loading: workspace is locked
     m_viewport->resetHoverFade();
+    // Another command drops one waiting for its selection; looking around (view, filters, panels, help) does not.
+    static const QStringList looking{"view.", "select.", "nav.", "panel.", "help.", "workspace.", "edit.selectparent", "edit.filter", "edit.selectall", "edit.invert", "tools.commands"};
+    if (!m_pendingPick.isEmpty() && std::none_of(looking.begin(), looking.end(), [&id](const QString& p) { return id.startsWith(p); })) cancelPendingPick();
     if (m_doc->browse && m_commands.editsDocument(id)) {  // viewer mode: offered, and asks to save first
       if (a->isCheckable()) { QSignalBlocker block(a); a->setChecked(!a->isChecked()); }
       requireEditable([a] { a->trigger(); });
       return;
     }
+    QScopedValueRollback<QString> running(m_runningCommand, id);
     guarded(fn);
   });
   m_commands.add(info, a);
@@ -330,9 +346,47 @@ void MainWindow::updateCommands() { m_commands.updateEnabled(commandContext()); 
 void MainWindow::guarded(const std::function<void()>& fn) {
   try {
     fn();
+  } catch (const opad::UserHint& h) {
+    hint(QString::fromUtf8(h.what()), h.pick);
   } catch (const std::exception& e) {
     QMessageBox::warning(this, tr("OPAD"), i18n::t(QString::fromUtf8(e.what())));
   }
+}
+
+// "Select the objects to colour first." goes by itself. With pick, the command that raised it waits: the next selection
+// in the view or the browser, or a marker clicked on the timeline, runs it again; its toast stays until then, and its
+// Cancel, Esc or another command drop the wait. Without a view to show it over (start page), the status bar says it.
+void MainWindow::hint(const QString& text, bool pick) {
+  cancelPendingPick();
+  const QString shown = i18n::t(text);
+  if (!m_toasts || !m_viewport->isVisible()) return statusBar()->showMessage(shown, 6000);
+  if (!pick || m_runningCommand.isEmpty()) {
+    m_toasts->toast(shown, QString(), {}, 6000);
+    return;
+  }
+  m_pendingPick = m_runningCommand;
+  m_pendingToast = m_toasts->toast(shown, tr("Cancel"), [this] { m_pendingPick.clear(); }, 0);
+  m_pendingToast->setProperty("pendingCommand", m_pendingPick);
+  if (trace::enabled()) trace::log("hint: " + m_pendingPick + " waits for a selection");
+}
+
+void MainWindow::cancelPendingPick() {
+  m_pendingPick.clear();
+  if (m_pendingToast) m_pendingToast->dismiss();
+}
+
+void MainWindow::resumePendingPick() {
+  if (m_pendingPick.isEmpty()) return;
+  const QString id = std::exchange(m_pendingPick, QString());
+  if (m_pendingToast) m_pendingToast->dismiss();
+  if (trace::enabled()) trace::log("hint: " + id + " runs with the selection");
+  QTimer::singleShot(0, this, [this, id] { if (QAction* a = action(id); a && a->isEnabled()) a->trigger(); });  // after the selection has settled
+}
+
+void MainWindow::resultToast(const QString& text, const QString& folder) {
+  if (!m_toasts || !m_viewport->isVisible()) return statusBar()->showMessage(text, 6000);
+  if (folder.isEmpty()) m_toasts->toast(text);
+  else m_toasts->toast(text, tr("Open folder"), [folder] { QDesktopServices::openUrl(QUrl::fromLocalFile(folder)); });
 }
 
 // One builder per area, in this order: the order of m_actions is the command order (search palette).

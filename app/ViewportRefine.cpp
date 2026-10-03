@@ -94,6 +94,7 @@ void Viewport::refineVisible() {
   if (trace::enabled()) trace::log(QStringLiteral("refine: %1 bodies at %2 mm (pixel %3 mm)").arg(pass->size()).arg(pass->front().deflection).arg(pixel));
   QElapsedTimer started;
   started.start();
+  m_jobs->backgroundNext();
   m_refineJob = m_jobs->async(tr("Refining the view"), [pass, results](Progress p) {
     for (size_t i = 0; i < pass->size(); ++i) {
       if (p.cancelled()) return;

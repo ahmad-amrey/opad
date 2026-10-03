@@ -144,7 +144,7 @@ void MainWindow::setDocumentUnit(const std::string& unit) {
   if (!m_doc->hasDocument) return;
   if (m_doc->browse) {
     units::setSessionUnit(unit == units::documentUnit() ? std::string() : unit);
-    statusBar()->showMessage(tr("Lengths are shown in %1; the file is not changed (viewer mode).").arg(units::unitName(unit).toLower()), 6000);
+    resultToast(tr("Lengths are shown in %1; the file is not changed (viewer mode).").arg(units::unitName(unit).toLower()));
     return;
   }
   if (unit == m_doc->scene.units) return;

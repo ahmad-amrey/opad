@@ -12,6 +12,7 @@
 #include <QElapsedTimer>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 #include <atomic>
 #include <functional>
@@ -59,6 +60,14 @@ class Job : public QObject {
   void setOverall(int percent);
   void cancel();                                           // sets the flag, emits cancelRequested, finishes the job
   void finish(bool ok = true, const QString& error = {});  // idempotent; emits finished once, on the UI thread
+  // A job nobody waits for (recovery snapshots, zoom refinement, publishing the selection, agent traffic): it shows in
+  // the strip like the others but never turns the busy cursor on or ends in a completion toast (UI-109).
+  void setBackground(bool on) { m_background = on; }
+  bool background() const { return m_background; }
+  // What the completion toast says when the job ran long ("Opened engine.step · 1,295 bodies"); empty: from the title.
+  void setDoneText(const QString& text) { m_doneText = text; }
+  const QString& doneText() const { return m_doneText; }
+  bool wasShown() const { return m_wasShown; }  // the strip showed it at some point
  signals:
   void phaseChanged(const QString& text, int percent);
   void overallChanged(int percent);
@@ -75,6 +84,8 @@ class Job : public QObject {
   QElapsedTimer m_clock;
   QString m_lastPhase;                    // what the strip shows when it appears later than the update
   int m_lastPct = -1, m_lastOverall = -1;
+  bool m_background = false, m_wasShown = false;
+  QString m_doneText;
   std::function<bool(Job&)> m_step;       // sliced jobs only
   std::function<void(bool)> m_stepDone;
 };
@@ -93,16 +104,26 @@ class JobRunner : public QObject {
   Job* sliced(const QString& title, std::function<bool(Job&)> step, std::function<void(bool completed)> done = {});
   bool busy() const { return !m_jobs.empty(); }
   Job* current() const { return m_jobs.empty() ? nullptr : m_jobs.back(); }
+  QStringList titles() const;  // every job running, oldest first
+  void backgroundNext() { m_backgroundNext = true; }  // the next job begun is a background one (Job::setBackground)
+  // The busy cursor (arrow and hourglass: the app still takes input) is on while a job that is not a background one has
+  // run for 150 ms, until none is left; it waits while a mouse button is down, so a drag never flickers.
+  bool busyCursor() const { return m_busyCursor; }
+  ~JobRunner() override;
  signals:
   void stripShown(bool shown);  // the owner may hide status-bar widgets that compete for the space
+  // Every job, as it ends (before it is deleted): its title, background flag, done text, elapsedMs() and wasShown().
+  void done(Job* job, bool ok, const QString& error);
  private:
   void slice(Job* j);
-  void onFinished(Job* j);
+  void onFinished(Job* j, bool ok, const QString& error);
   void refreshStrip();
+  void updateBusy();
   ProgressStrip* m_strip;
   std::vector<Job*> m_jobs;
-  QTimer m_showTimer;
+  QTimer m_showTimer, m_busyTimer;
   Job* m_shown = nullptr;
+  bool m_busyCursor = false, m_backgroundNext = false;
 };
 
 // Timing/diagnostic output, enabled by OPAD_TRACE (see above). Cheap no-ops otherwise.

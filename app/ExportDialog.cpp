@@ -152,5 +152,5 @@ void MainWindow::exportDialog(std::vector<std::string> ids) {
   if (!b->property("schema").toString().isEmpty()) args["schema"] = b->property("schema").toString().toStdString();
   if (scopeSel->isChecked()) args["select"] = ids;
   opad::json r = opad::commands::run("export", args, &m_doc->doc);
-  statusBar()->showMessage(tr("Exported %1 objects to %2").arg(r.value("bodies", 0)).arg(out), 8000);
+  resultToast(tr("Exported %1 objects to %2").arg(r.value("bodies", 0)).arg(QFileInfo(out).fileName()), QFileInfo(out).absolutePath());
 }

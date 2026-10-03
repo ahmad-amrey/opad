@@ -1,6 +1,7 @@
 #pragma once
 #include <QLabel>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 
 // ---------------------------------------------------------------- progress strip (bottom of the window)
@@ -15,6 +16,8 @@ class ProgressStrip : public QWidget {
   void begin(const QString& title, bool twoBars);
   void setPhase(const QString& text, int percent);  // percent < 0: indeterminate
   void setOverall(int percent);
+  void setOthers(const QStringList& titles);  // the jobs running besides the one shown: "+2", named in its tooltip
+  QString othersText() const;
   void finish();
  signals:
   void cancelRequested();
@@ -24,6 +27,7 @@ class ProgressStrip : public QWidget {
   void setTitle(const QString& text);
   QString m_fullTitle;
   QLabel* m_title;
+  QLabel* m_others;
   QProgressBar* m_phaseBar;
   QLabel* m_phasePct;
   QLabel* m_overallLabel;

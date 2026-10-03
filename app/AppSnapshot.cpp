@@ -149,6 +149,7 @@ void AppDocument::storeViewerCache(JobRunner* jobs) {
   opad::ImportOptions options;
   options.center_drawing = m_cacheCenter;
   const std::filesystem::path file(source.toStdU16String());
+  jobs->backgroundNext();
   jobs->async(tr("Remembering %1 for faster opening").arg(QFileInfo(source).fileName()), [copy, file, options](Progress p) {
     opad::viewer_cache_store(*copy, file, options, [p] { return p.cancelled(); });
   });

@@ -57,7 +57,7 @@ void MainWindow::buildEditActions() {
   addAction("edit.delete", tr("Delete (tombstone)"), "delete", QKeySequence::Delete, [this] { deleteCurrent(); });
   addAction("edit.restore", tr("Restore"), "restore", QKeySequence("Shift+Del"), [this] {
     std::string id = m_timeline->currentOp();
-    if (id.empty()) throw opad::Error("Select a tombstoned marker on the timeline first.");
+    if (id.empty()) throw opad::UserHint("Select a tombstoned marker on the timeline first.", true);
     restoreOp(id);
   });
   addAction("edit.selecttouched", tr("Select what it touches"), "isolate", QKeySequence("T"), [this] {
@@ -162,7 +162,7 @@ void MainWindow::restoreOp(const std::string& requestedId) {
       m_timeline->setCurrentOp(opId);
       return;
     }
-  throw opad::Error("That operation is not tombstoned.");
+  throw opad::UserHint("That operation is not tombstoned.");
 }
 
 void MainWindow::deleteCurrent() {
@@ -172,7 +172,7 @@ void MainWindow::deleteCurrent() {
   const auto selected = currentNodeIds();
   for (const auto& nid : selected) if (const opad::Node* n = m_doc->node(nid)) ops.insert(n->source_op);
   if (ops.empty()) {  // the timeline's marker only when nothing is selected (an area's row or a sketch is not that marker)
-    if (id.empty() || !selected.empty() || !m_selRows.empty()) throw opad::Error("Select objects, or a marker on the timeline, to tombstone.");
+    if (id.empty() || !selected.empty() || !m_selRows.empty()) throw opad::UserHint("Select objects, or a marker on the timeline, to tombstone.");
     return deleteOp(id);
   }
   if (QMessageBox::question(this, tr("Delete"), tr("Tombstone %1 import operation(s)? History is kept; Shift+Del on the timeline restores.").arg(ops.size())) != QMessageBox::Yes) return;
