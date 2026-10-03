@@ -17,6 +17,9 @@
 #include <BRepAdaptor_Curve.hxx>
 #include <Select3D_SensitiveCurve.hxx>
 #include <Select3D_SensitivePrimitiveArray.hxx>
+#include <Select3D_SensitiveSet.hxx>
+#include <SelectBasics_SelectingVolumeManager.hxx>
+#include <TopTools_IndexedDataMapOfShapeListOfShape.hxx>
 #include <Graphic3d_AspectFillArea3d.hxx>
 #include <Graphic3d_AspectLine3d.hxx>
 #include <Graphic3d_AspectMarker3d.hxx>
@@ -52,6 +55,61 @@ class CurvePresentation : public StdSelect_Shape {
  private:
   std::shared_ptr<const std::vector<gp_Pnt>> m_points;
 };
+
+// The free edges of a big body as one picking entity: their sampled segments under one BVH, built on the mesh worker.
+class SegmentSet : public Select3D_SensitiveSet {
+  DEFINE_STANDARD_RTTI_INLINE(SegmentSet, Select3D_SensitiveSet)
+ public:
+  explicit SegmentSet(std::vector<gp_Pnt> pairs) : Select3D_SensitiveSet(nullptr), m_points(std::move(pairs)) {
+    m_order.resize(m_points.size() / 2);
+    for (size_t i = 0; i < m_order.size(); ++i) m_order[i] = int(i);
+    gp_XYZ sum(0, 0, 0);
+    for (const auto& p : m_points) {
+      m_box.Add(SelectMgr_Vec3(p.X(), p.Y(), p.Z()));
+      sum += p.XYZ();
+    }
+    if (!m_points.empty()) m_center = gp_Pnt(sum / double(m_points.size()));
+  }
+  Standard_Integer Size() const override { return int(m_order.size()); }
+  Select3D_BndBox3d Box(const Standard_Integer i) const override {
+    const gp_Pnt &a = first(i), &b = second(i);
+    return Select3D_BndBox3d(SelectMgr_Vec3(std::min(a.X(), b.X()), std::min(a.Y(), b.Y()), std::min(a.Z(), b.Z())),
+                             SelectMgr_Vec3(std::max(a.X(), b.X()), std::max(a.Y(), b.Y()), std::max(a.Z(), b.Z())));
+  }
+  Standard_Real Center(const Standard_Integer i, const Standard_Integer axis) const override {
+    return (first(i).Coord(axis + 1) + second(i).Coord(axis + 1)) / 2;
+  }
+  void Swap(const Standard_Integer i, const Standard_Integer j) override { std::swap(m_order[size_t(i)], m_order[size_t(j)]); }
+  Select3D_BndBox3d BoundingBox() override { return m_box; }
+  gp_Pnt CenterOfGeometry() const override { return m_center; }
+  Standard_Integer NbSubElements() const override { return Size(); }
+
+ protected:
+  Standard_Boolean overlapsElement(SelectBasics_PickResult& result, SelectBasics_SelectingVolumeManager& volume, Standard_Integer i,
+                                   Standard_Boolean inside) override {
+    return inside || volume.OverlapsSegment(first(i), second(i), result);
+  }
+  Standard_Boolean elementIsInside(SelectBasics_SelectingVolumeManager& volume, Standard_Integer i, Standard_Boolean inside) override {
+    if (inside) return true;
+    if (volume.GetActiveSelectionType() == SelectMgr_SelectionType_Polyline) {
+      SelectBasics_PickResult unused;
+      return volume.OverlapsSegment(first(i), second(i), unused);
+    }
+    return volume.OverlapsPoint(first(i)) && volume.OverlapsPoint(second(i));
+  }
+  Standard_Real distanceToCOG(SelectBasics_SelectingVolumeManager& volume) override { return volume.DistToGeometryCenter(m_center); }
+
+ private:
+  const gp_Pnt& first(int i) const { return m_points[size_t(m_order[size_t(i)]) * 2]; }
+  const gp_Pnt& second(int i) const { return m_points[size_t(m_order[size_t(i)]) * 2 + 1]; }
+  std::vector<gp_Pnt> m_points;
+  std::vector<int> m_order;
+  Select3D_BndBox3d m_box;
+  gp_Pnt m_center;
+};
+
+// Faces + edges above which a body's picking is built on the worker (BodyPrs::whole / edgeSensitives).
+constexpr int kBigBody = 3000;
 }
 
 void SubShapeOwner::HilightWithColor(const Handle(PrsMgr_PresentationManager)& pm, const Handle(Prs3d_Drawer)& style, const Standard_Integer mode) {
@@ -168,14 +226,21 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
   }
   TopTools_IndexedMapOfShape edges;
   TopExp::MapShapes(meshedProto, TopAbs_EDGE, edges);
+  // A big body (a drawing layer of text and lines: thousands of faces and edges) gets its picking built here as well:
+  // OCCT builds one sensitive per face and edge on the UI thread when a selection mode is activated (0.85 s for a
+  // DWG's text layer). Its edges are sampled for that, as a line-only body's always are.
+  int faceCount = 0;
+  for (TopExp_Explorer f(meshedProto, TopAbs_FACE); f.More() && faceCount <= kBigBody; f.Next()) ++faceCount;
+  const bool big = faceCount + edges.Extent() > kBigBody;
   for (int i = 1; i <= edges.Extent(); ++i) {
     if (BRep_Tool::Degenerated(TopoDS::Edge(edges(i)))) continue;
     BRepAdaptor_Curve curve(TopoDS::Edge(edges(i)));
-    if (p->triangles.IsNull()) {
+    if (p->triangles.IsNull() || big) {
       const double span=box.IsVoid()?1.0:std::sqrt(box.SquareExtent());
       auto samples=std::make_shared<const std::vector<gp_Pnt>>(curveSamples(TopoDS::Edge(edges(i)),std::max(1e-6,span*1e-5)));
       p->curves[i-1]=samples;
-      for(size_t j=1;j<samples->size();++j) {p->drawingSegments.push_back((*samples)[j-1]);p->drawingSegments.push_back((*samples)[j]);}
+      if (p->triangles.IsNull())
+        for(size_t j=1;j<samples->size();++j) {p->drawingSegments.push_back((*samples)[j-1]);p->drawingSegments.push_back((*samples)[j]);}
     }
     if (curve.GetType() != GeomAbs_Circle) continue;
     TColgp_Array1OfPnt points(1, 257);
@@ -231,6 +296,32 @@ std::shared_ptr<BodyPrs> BodyPrs::build(const TopoDS_Shape& meshedProto, const B
     points(fit.segments+1)=fit.rim.front();
     Handle(Select3D_SensitiveCurve) sensitive=new Select3D_SensitiveCurve(nullptr,points); sensitive->BVH();
     p->circles.emplace(fit.index,Circle{rim,fit.circle.Location(),sensitive,fit.index,fit.circle.Radius(),fit.segments,fit.edges});
+  }
+  if (big) {
+    // Each edge's sensitive (the Edge filter wraps them with owners) and the whole body's: its triangles (the
+    // navigation set) and its free edges' segments in one set (the Body filter).
+    TopTools_IndexedDataMapOfShapeListOfShape faces;
+    TopExp::MapShapesAndAncestors(meshedProto, TopAbs_EDGE, TopAbs_FACE, faces);
+    p->edgeSensitives.resize(size_t(edges.Extent()));
+    std::vector<gp_Pnt> loose;
+    for (const auto& [index, points] : p->curves) {
+      if (points->size() < 2) continue;
+      TColgp_Array1OfPnt array(1, int(points->size()));
+      for (int j = 1; j <= array.Length(); ++j) array(j) = (*points)[size_t(j - 1)];
+      Handle(Select3D_SensitiveCurve) sensitive = new Select3D_SensitiveCurve(nullptr, array);
+      sensitive->BVH();
+      sensitive->BoundingBox();  // computed once and kept: the selector asks for it on the UI thread otherwise
+      p->edgeSensitives[size_t(index)] = sensitive;
+      const TopoDS_Shape& edge = edges(index + 1);
+      if (!faces.Contains(edge) || faces.FindFromKey(edge).IsEmpty())
+        for (size_t j = 1; j < points->size(); ++j) { loose.push_back((*points)[j - 1]); loose.push_back((*points)[j]); }
+    }
+    if (!p->navigation.IsNull()) p->whole.push_back(p->navigation);
+    if (!loose.empty()) {
+      Handle(SegmentSet) set = new SegmentSet(std::move(loose));
+      set->BVH();
+      p->whole.push_back(set);
+    }
   }
   p->closed = false;
   for (TopExp_Explorer e(meshedProto, TopAbs_SHELL); e.More(); e.Next()) {
@@ -370,9 +461,18 @@ void BodyShape::ComputeSelection(const Handle(SelectMgr_Selection)& selection, c
     for(const auto& [index,points]:m_prs->curves) {
       if(points->size()<2) continue;
       Handle(SubShapeOwner) owner=new SubShapeOwner(edges(index+1),this,7,index);owner->curve=points;
+      if(size_t(index)<m_prs->edgeSensitives.size() && !m_prs->edgeSensitives[size_t(index)].IsNull()) {
+        selection->Add(new SharedSensitive(owner,m_prs->edgeSensitives[size_t(index)]));  // built on the worker
+        continue;
+      }
       TColgp_Array1OfPnt array(1,int(points->size()));for(int i=1;i<=array.Length();++i) array(i)=(*points)[i-1];
       selection->Add(new Select3D_SensitiveCurve(owner,array));
     }
+    return;
+  }
+  if (mode == 0 && m_prs && !m_prs->whole.empty()) {  // a big body: its picking was built on the worker
+    Handle(SelectMgr_EntityOwner) owner=new BodySelectionOwner(myshape,this,5);
+    for (const auto& sensitive : m_prs->whole) selection->Add(new SharedSensitive(owner,sensitive));
     return;
   }
   AIS_Shape::ComputeSelection(selection, mode);

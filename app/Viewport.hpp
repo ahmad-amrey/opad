@@ -284,6 +284,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Job* m_boxJob=nullptr;
   CursorWarpGate m_warpGate;
   void updateGridExtent();
+  void applySelectionFilter(SelFilter f);  // setSelectionFilter's work, also for the filter already set (re-activates)
   // 2D mode: the grid follows the view (its plane, the visible area, a spacing for the zoom), so it never ends.
   void updateInfiniteGrid(bool force);
   gp_Pnt drawingOrbitPoint(const QPointF* cursor=nullptr,bool* found=nullptr);

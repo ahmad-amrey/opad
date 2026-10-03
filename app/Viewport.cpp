@@ -600,6 +600,16 @@ void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
 }
 
 void Viewport::setSelectionFilter(SelFilter f) {
+  // The same filter again changes nothing: every body was activated in it as it was displayed (re-activating a big
+  // drawing layer's thousands of edges costs OCCT a few hundred ms per layer). Who waits for filterApplied still gets it.
+  if (f == m_filter && !m_filterJob && m_initialised) {
+    QTimer::singleShot(0, this, [this] { emit filterApplied(); });
+    return;
+  }
+  applySelectionFilter(f);
+}
+
+void Viewport::applySelectionFilter(SelFilter f) {
   resetHoverFade();
   m_filter = f;
   m_hoverOwner = nullptr;  // owners are rebuilt per mode; an address may be reused

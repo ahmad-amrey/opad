@@ -260,7 +260,7 @@ void Viewport::setBodiesPickable(bool on) {
   m_bodiesPickable = on;
   if (!on) clearCenters();
   if (!m_initialised) return;
-  if (on) return setSelectionFilter(m_filter);  // sliced: re-activates every body in the current mode
+  if (on) return applySelectionFilter(m_filter);  // sliced: re-activates every body in the current mode
   if (m_filterJob) m_filterJob->cancel();
   for (auto& [id, it] : m_items) m_ctx->Deactivate(it.ais);
   for (auto& [id, it] : m_sketchWires) m_ctx->Deactivate(it.ais);

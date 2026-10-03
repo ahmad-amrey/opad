@@ -2284,6 +2284,9 @@ void MainWindow::openPath(const QString& path) {
   if (m_doc->loading) m_doc->cancelLoad();
   m_settings.setValue("ui/lastDir", QFileInfo(path).absolutePath());
   beginLoad([this, path] { m_viewPath=QFileInfo(path).absoluteFilePath(); addRecent(path); m_viewport->fitWhenReady(); updateViewerCard(); });
+  // A drawing is picked by its edges (see loadFinished): set before its bodies are displayed, so each is activated once.
+  if (const QString suffix = QFileInfo(path).suffix().toLower(); suffix == "dxf" || suffix == "dwg" || suffix == "svg")
+    m_viewport->setSelectionFilter(Viewport::SelFilter::Edge);
   m_doc->startOpen(path);
 }
 
