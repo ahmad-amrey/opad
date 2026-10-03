@@ -29,7 +29,7 @@ struct Row {  // a row as decorators see it
 };
 
 // A trailing badge: an icon, a short text or both, in a pill when it has a fill. Badges go right to left after the
-// built-in ones (instance count, lock, missing body), and the name is cut short before them.
+// built-in ones (instance count, missing body), and the name is cut short before them.
 struct Badge {
   QString text, icon;
   QColor Tokens::* color = &Tokens::fg2;  // text and icon

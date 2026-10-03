@@ -20,6 +20,7 @@ BodyLook compose(BodyLook look, const std::array<const LookDelta*, kLookSources>
       look.opacity = std::min(look.opacity, d->ghostOpacity.value_or(ghost.opacity));
       look.pickable = ghostsPickable;
     }
+    if (d->reference) look.pickable = ghostsPickable;
     if (d->pickable) look.pickable = *d->pickable;
     if (d->layer) look.layer = *d->layer;
     for (int i = 0; i < 3; ++i) look.offset[i] += d->offset[i];

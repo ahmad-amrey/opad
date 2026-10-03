@@ -75,20 +75,26 @@ BodyLook Viewport::sketchLook(const std::string& id) const {
 
 QString Viewport::hoverName(const std::string& node) const {
   const auto it = m_items.find(node);
-  return m_doc->nodeName(node) + (it != m_items.end() && it->second.look.ghost ? tr(" (inactive)") : QString());
+  const bool ghost = it != m_items.end() && it->second.look.ghost;
+  return m_doc->nodeName(node) + (ghost ? tr(" (inactive)") : m_doc->scene.effectively_locked(node) ? tr(" (locked)") : QString());
 }
 
-std::string Viewport::ghostAt(const QPointF& point) {
+std::string Viewport::drawnAt(const QPointF& point) {
   if (!m_initialised || m_navSelector.IsNull()) return {};
   const Graphic3d_Vec2i at = devicePos(point);
   m_navSelector->Pick(at.x(), at.y(), m_view);
   for (int i = 1; i <= m_navSelector->NbPicked(); ++i) {  // nearest first
     const auto node = m_navNodes.find(m_navSelector->Picked(i)->Selectable().get());
     const auto item = node == m_navNodes.end() ? m_items.end() : m_items.find(node->second);
-    if (item == m_items.end() || !m_ctx->IsDisplayed(item->second.ais)) continue;
-    return item->second.look.ghost ? node->second : std::string();
+    if (item != m_items.end() && m_ctx->IsDisplayed(item->second.ais)) return node->second;
   }
   return {};
+}
+
+std::string Viewport::ghostAt(const QPointF& point) {
+  const std::string id = drawnAt(point);
+  const auto item = m_items.find(id);
+  return item != m_items.end() && item->second.look.ghost ? id : std::string();
 }
 
 gp_Vec Viewport::lookOffset(const std::string& node) const {

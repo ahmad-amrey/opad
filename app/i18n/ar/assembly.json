@@ -96,5 +96,14 @@
  "Drag the slider or a part · the badges in the browser choose what moves together": "اسحب المنزلق أو جزءًا · تحدّد الشارات في المستعرض ما يتحرك معًا",
  "Measuring the parts for the exploded view": "قياس الأجزاء للعرض المفكَّك",
  "Screws and pins along their axis": "البراغي والمسامير على امتداد محورها",
- "Radial: a screw, pin or bolt (or a folder of parallel ones) leaves along its own axis, the short way out": "شعاعي: يخرج البرغي أو المسمار أو المسمار الملولب (أو مجلد منها متوازية) على امتداد محوره، من أقصر طريق للخروج"
+ "Radial: a screw, pin or bolt (or a folder of parallel ones) leaves along its own axis, the short way out": "شعاعي: يخرج البرغي أو المسمار أو المسمار الملولب (أو مجلد منها متوازية) على امتداد محوره، من أقصر طريق للخروج",
+ "Locked objects are faded and not selected in the view, and edits leave them alone; they are still measured and snapped to.": "تظهر العناصر المقفلة باهتة ولا تُحدَّد في العرض، ولا تمسّها التعديلات؛ لكنها تبقى قابلة للقياس والالتقاط.",
+ "Unlock %1": "إلغاء قفل %1",
+ "Unlocked %1 too: the lock was there": "أُلغي قفل %1 أيضًا: كان القفل عليه",
+ "Locked: faded and not selected in the view, left alone by edits, still measured and snapped to. Click to unlock.": "مقفل: باهت ولا يُحدَّد في العرض، ولا تمسّه التعديلات، ويبقى قابلًا للقياس والالتقاط. انقر لإلغاء القفل.",
+ "Locked with %1. Click to unlock %1.": "مقفل مع %1. انقر لإلغاء قفل %1.",
+ "%1 is locked · right-click to unlock": "‏%1 مقفل · انقر بالزر الأيمن لإلغاء القفل",
+ "%1 is locked with %2 · right-click to unlock": "‏%1 مقفل مع %2 · انقر بالزر الأيمن لإلغاء القفل",
+ " (locked)": " (مقفل)",
+ "Select the objects to lock or unlock first.": "حدّد أولًا العناصر المراد قفلها أو إلغاء قفلها."
 }

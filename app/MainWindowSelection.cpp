@@ -252,12 +252,9 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
       m_doc->run("appearance", opad::json{{"targets", ids}, {"color", {c.redF(), c.greenF(), c.blueF()}}});
     });
     const opad::Node* n = m_doc->node(ids.front());
-    QAction* lock = menu.addAction(icons::themed("lock", 16), n && n->locked ? tr("Unlock") : tr("Lock"));
+    add("design.lock");  // Lock or Unlock, as the selection is (the Lock area)
     if(ids.size()==1 && n && !n->body_key.empty() && m_doc->scene.instance_count[n->body_key]>1)
       menu.addAction(tr("Browse linked instances"),this,[this,id=ids.front()]{browseInstances(id);});
-    connect(lock, &QAction::triggered, this, [this, ids, locked = n && n->locked] {
-      for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"locked", !locked}});
-    });
     menu.addSeparator();
     add("annotate.add");
     add("annotate.draw");

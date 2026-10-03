@@ -112,8 +112,8 @@ void BrowserDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const 
   p->restore();
 }
 
-// The trailing badges of a node row, right to left: instance count, lock, missing body. Paints them when `p` is set
-// (badgeAt lays them out without); returns the x left of the last one.
+// The trailing badges of a node row, right to left: instance count, missing body (a lock is the Lock area's badge).
+// Paints them when `p` is set (badgeAt lays them out without); returns the x left of the last one.
 int BrowserDelegate::builtinBadges(QPainter* p, const QRect& r, const opad::Node* n, const QColor& text) const {
   const Tokens& t = theme::current();
   const qreal dpr = p ? p->device()->devicePixelRatioF() : 1.0;
@@ -135,10 +135,6 @@ int BrowserDelegate::builtinBadges(QPainter* p, const QRect& r, const opad::Node
       }
       right -= w + 6;
     }
-  }
-  if (n->locked) {
-    if (p) p->drawPixmap(right - 12, r.top() + 8, icons::pixmap("lock", t.fg2, 12, dpr));
-    right -= 18;
   }
   if (n->body_missing) {
     QString msg = tr("missing body");

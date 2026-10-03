@@ -1,5 +1,5 @@
-"""gui_benches cases of the assembly area (T2b): components and exploded views. The benches are in app/ActivationBench.cpp
-and app/ExplodeBench.cpp."""
+"""gui_benches cases of the assembly area (T2b): components, lock and exploded views. The benches are in
+app/ActivationBench.cpp, app/LockBench.cpp and app/ExplodeBench.cpp."""
 from pathlib import Path
 
 
@@ -22,7 +22,30 @@ def viewed_step(root, document):
     return step
 
 
+def locked_drawing(root, document):
+    """A DXF whose Walls layer is locked by the file (layer flag 70 & 4) beside a plain layer, a 10 mm line on each."""
+    def groups(*pairs):
+        return "".join(f"{code}\n{value}\n" for code, value in pairs)
+    def section(name, *pairs):
+        return groups((0, "SECTION"), (2, name), *pairs, (0, "ENDSEC"))
+    path = root / "locked-layer.dxf"
+    path.write_text(section("TABLES", (0, "TABLE"), (2, "LAYER"), (0, "LAYER"), (2, "Walls"), (62, 1), (70, 4),
+                            (0, "LAYER"), (2, "Plain"), (62, 5), (70, 0), (0, "ENDTAB")) +
+                    section("ENTITIES", (0, "LINE"), (8, "Walls"), (10, 0), (20, 0), (11, 10), (21, 0),
+                            (0, "LINE"), (8, "Plain"), (10, 0), (20, 5), (11, 10), (21, 5)) + "0\nEOF\n", encoding="ascii")
+    return path
+
+
 CASES = [
+    # Lock (UI-37) on a box in a Housing component and a box at the root made by the bench: Lock is one step and the
+    # command says Unlock; the locked box faded to half and not picked (a click passes it), its browser row's lock
+    # badge, its name in the status bar when resting on it, Unlock in the right-click menu there, picked as a reference
+    # by a guided tool and not afterwards; the Housing locked holds its box (a dim badge naming it, whose click unlocks
+    # the Housing; Unlock on the box frees the Housing and says so). <prefix>.view.png, .browser.png.
+    ("lock", lambda root, document: document("lock"), {"OPAD_BENCH_LOCK": "{prefix}"}),
+    # A DXF with a locked layer in viewer mode: its lines faded towards the background and not picked, the plain layer's
+    # picked; the layer row's badge unlocks it (a view change). <prefix>.drawing.png.
+    ("lock-drawing", locked_drawing, {"OPAD_BENCH_LOCK": "{prefix}"}),
     # Activate component (UI-33) on two components made by the bench (Housing and Lid, a box made in each) and a sketch at
     # the root: the Lid activated by its browser radio, Alt+click on rows, the breadcrumb; the Housing ghosted and refused
     # by a click, picked by a guided tool; chip, browser pill, timeline (dimmed, or only the Lid's ops), live_state;

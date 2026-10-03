@@ -84,12 +84,6 @@ void MainWindow::buildDesignActions() {
     if (!ok) return;
     for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"opacity", pct / 100.0}});
   });
-  addAction("design.lock", tr("Lock"), "lock", QKeySequence(), [this] {
-    const auto ids = currentNodeIds();
-    if (ids.empty()) throw opad::Error("Select the objects to lock or unlock first.");
-    const opad::Node* n = m_doc->node(ids.front());
-    for (const auto& id : ids) m_doc->run("appearance", opad::json{{"target", id}, {"locked", !(n && n->locked)}});
-  });
 
   // Sketch mode.
   addAction("sketch.finish", tr("Finish sketch"), "finish", QKeySequence("Ctrl+Return"), [this] { m_design->finishSketch(); });
