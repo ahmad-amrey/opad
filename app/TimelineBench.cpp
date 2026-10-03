@@ -15,6 +15,7 @@
 #include "SmartSelect.hpp"
 #include "Theme.hpp"
 #include "TimelineArea.hpp"
+#include "Toast.hpp"
 #include "opad/design/feature.hpp"
 #include "opad/design/provenance.hpp"
 #include "opad/geometry.hpp"
@@ -27,14 +28,17 @@
 // clipboard is given back). Names on the markers make them wider; the design history alone hides the rename and the
 // colour. Roll back to here on Boss: the round is not there, the playhead between the two markers, the chip says so; the
 // playhead dragged to the end rolls forward, dragged before Boss rolls back past it; a change made then is appended and
-// rolls forward, so does a command that edits. The menu on no marker offers the view entries. Shots: <prefix>.hover.png,
-// .names.png, .design.png, .rolledback.png, .menu.png.
+// rolls forward, so does a command that edits. The menu on no marker offers the view entries. UI-96 from the timeline:
+// Delete on Boss's marker asks about Round with the result previewed and Remove its faces instead, Delete Boss only leaves
+// Round failing as one step undone from the toast; Round's marker, used by nothing, deletes at once. Shots:
+// <prefix>.hover.png, .names.png, .design.png, .rolledback.png, .menu.png, .question.png.
 OPAD_BENCH(OPAD_BENCH_TIMELINE, timeline) {
   struct State {
     int phase = 0, ticks = 0, wait = 0;
     std::string body, base, boss, round, rename, colour;
     std::vector<opad::Ref> bossFaces, roundFaces;
     std::unique_ptr<QMimeData> clipboard;
+    size_t ops = 0;
   };
   auto state = std::make_shared<State>();
   SmartSelect* area = nullptr;
@@ -255,6 +259,53 @@ OPAD_BENCH(OPAD_BENCH_TIMELINE, timeline) {
           require(entries == QStringList{"timeline.names", "timeline.designOnly"}, "on no marker the menu offers the view entries: " + entries.join(",").toStdString());
           menu.grab().save(prefix + ".menu.png");
           pass("the menu on no marker: names and the design history");
+          // UI-96 from the timeline: Delete on Boss's marker asks about Round, as Delete on its faces does.
+          state->ops = w.m_doc->doc.ops.size();
+          QMenu marker;
+          w.buildTimelineMenu(marker, state->boss);
+          marker.findChild<QAction*>("timelineDelete")->trigger();
+          break;
+        }
+        case 13: {
+          QMenu* question = area->openMenu();
+          if (!waitFor(question && question->isVisible() && question->objectName() == "smartDeleteQuestion", "Delete on Boss's marker asks about Round")) return;
+          QAction* all = question->findChild<QAction*>("deleteWithDependents");
+          QAction* only = question->findChild<QAction*>("deleteOnly");
+          require(all && all->text() == SmartSelect::tr("Delete %1 and %2").arg("Boss", "Round") && only, "the question names Round");
+          require(question->findChild<QAction*>("deleteFacesInstead"), "it offers removing Boss's faces instead (found from its marker)");
+          require(w.m_viewport->previewBodyCount() > 0 && w.m_doc->doc.ops.size() == state->ops, "the result previewed, nothing committed yet");
+          question->grab().save(prefix + ".question.png");
+          pass("Delete on Boss's marker asks \"" + all->text() + "\" with the result previewed");
+          only->trigger();
+          question->close();
+          break;
+        }
+        case 14: {
+          if (!waitFor(w.m_doc->doc.ops.size() > state->ops, "Delete Boss only is committed")) return;
+          const auto& deleted = w.m_doc->scene.deleted_ops;
+          const opad::Feature* round = w.m_doc->scene.feature(state->round);
+          require(std::count(deleted.begin(), deleted.end(), state->boss) && !std::count(deleted.begin(), deleted.end(), state->round), "Boss tombstoned, Round kept");
+          require(round && !round->error.empty(), "Round fails without the boss and says so");
+          require(w.m_doc->undoLabel() == SmartSelect::tr("delete %1").arg("Boss") && w.m_viewport->previewBodyCount() == 0, "one undo step, the preview gone");
+          Toast* toast = w.m_toasts->toasts().isEmpty() ? nullptr : w.m_toasts->toasts().back();
+          require(toast && toast->text() == SmartSelect::tr("Deleted %1").arg("Boss") && toast->actionButton(), "a toast with Undo");
+          pass("Delete Boss only: the boss is tombstoned as one step, Round is marked as failing; the toast offers Undo");
+          toast->actionButton()->click();
+          break;
+        }
+        case 15: {
+          if (!waitFor(w.m_doc->doc.ops.size() == state->ops && w.m_doc->scene.feature(state->boss), "the toast's Undo brings the boss back")) return;
+          require(w.m_doc->scene.feature(state->round)->error.empty(), "Round works again");
+          pass("the toast's Undo brought the boss back, Round works again");
+          QMenu marker;
+          w.buildTimelineMenu(marker, state->round);
+          marker.findChild<QAction*>("timelineDelete")->trigger();
+          break;
+        }
+        case 16: {
+          if (!waitFor(w.m_doc->doc.ops.size() > state->ops, "Round, used by nothing, is deleted from its marker")) return;
+          require(!area->openMenu() && std::count(w.m_doc->scene.deleted_ops.begin(), w.m_doc->scene.deleted_ops.end(), state->round), "no question, Round tombstoned");
+          pass("Round, which nothing uses, is deleted from its marker without a question");
           timer->stop();
           QCoreApplication::exit(0);
           return;

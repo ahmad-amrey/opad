@@ -100,7 +100,10 @@ class SmartSelect : public AreaController {
   void shrink();  // Ctrl+Down
   void showMenu(const QPoint& global = {});  // Shift+Space: at the chip, else at the pointer
   void deleteCandidate(int index);           // Delete on a feature: its dependents asked for first
+  // A feature (or a sketch: kind "sketch") deleted with its dependents asked for first and the result previewed, one undo
+  // step; without refs (from its timeline marker) the faces it made are found for "Remove its faces instead".
   void deleteFeature(const smart::Candidate& c);
+  bool deleteMarker(const std::string& op);  // command timeline.delete: a feature's or a sketch's marker, as deleteFeature
   // Select what depends on a feature (the menu's Select dependents): the faces of the later features that would fail
   // without it, their markers pulsed; named in the status bar (sketches and features without faces of their own too).
   void selectUsers(const smart::Candidate& c);

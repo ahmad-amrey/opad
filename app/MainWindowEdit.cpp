@@ -153,6 +153,10 @@ QMenu* MainWindow::historyMenu(bool undo) {
 
 void MainWindow::deleteOp(const std::string& requestedId) {
   const std::string opId=requestedId; // Rebuilding cards can destroy the signal sender during this operation.
+  // A feature or a sketch: what depends on it is asked about first, the result previewed (smart selection, UI-96).
+  const opad::Op* op = m_doc->doc.find_op(opId);
+  const bool live = std::find(m_doc->scene.deleted_ops.begin(), m_doc->scene.deleted_ops.end(), opId) == m_doc->scene.deleted_ops.end();
+  if (op && live && (op->type == "feature" || op->type == "sketch") && areaCommand("timeline.delete", opId)) return m_timeline->setCurrentOp(opId);
   // With a design history a tombstone changes what later features produce: planned on a worker.
   if (!m_doc->scene.features.empty() || !m_doc->scene.sketches.empty()) {
     m_design->applyOps({opad::json{{"op", "delete"}, {"target", opId}}}, tr("delete"));

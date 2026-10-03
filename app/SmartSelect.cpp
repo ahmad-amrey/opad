@@ -626,6 +626,7 @@ void SmartSelect::shrink() {
 bool SmartSelect::command(const QString& id, const SelectionContext& selection) {
   if (!idle()) return false;
   if (id == "timeline.select") return markerClicked(selection.op);
+  if (id == "timeline.delete") return deleteMarker(selection.op);
   if (id == "edit.selectparent") {
     if (subPicks(selection.refs)) {
       grow();
@@ -960,10 +961,31 @@ void SmartSelect::deleteCandidate(int index) {
   if (index >= 0 && index < int(m_found.candidates.size())) deleteFeature(m_found.candidates[size_t(index)]);
 }
 
+// Its marker's Delete (or Del on it) asks as Delete on its faces does (UI-96): what depends on it named, the result shown.
+bool SmartSelect::deleteMarker(const std::string& op) {
+  const opad::Scene& scene = services().document()->scene;
+  smart::Candidate c;
+  c.op = op;
+  if (const opad::Feature* f = scene.feature(op)) {
+    c.kind = "feature";
+    c.name = f->name;
+    c.featureKind = f->kind;
+    if (const auto* m = made(); m && m->count(op) && m->at(op).changes) c.refs = m->at(op).faces;
+  } else if (const opad::SketchItem* s = scene.sketch(op)) {
+    c.kind = "sketch";
+    c.name = s->name;
+  } else {
+    return false;
+  }
+  c.count = c.refs.size();
+  deleteFeature(c);
+  return true;
+}
+
 // Planned on a worker first: when later features would fail without it, they are named and the result is previewed
 // before anything is committed; the choice is to delete them too or to delete it alone.
 void SmartSelect::deleteFeature(const smart::Candidate& c) {
-  if (!c.feature() || !services().requireEditable([this, c] { deleteFeature(c); })) return;
+  if ((!c.feature() && c.kind != "sketch") || c.op.empty() || !services().requireEditable([this, c] { deleteFeature(c); })) return;
   AppDocument* doc = services().document();
   if (doc->designBusy && !m_capturing) return services().showMessage(tr("The design is still being recomputed; try again in a moment."), 5000);
   const auto revision = doc->revision, generation = doc->generation;
@@ -973,9 +995,15 @@ void SmartSelect::deleteFeature(const smart::Candidate& c) {
     auto plan = std::make_shared<opad::design::Plan>();
     auto parts = std::make_shared<std::vector<Viewport::PreviewPart>>();
     auto hidden = std::make_shared<std::vector<std::string>>();
-    services().jobs()->async(tr("Checking what deleting %1 changes").arg(QString::fromStdString(c.name)), [document, op = c.op, plan, parts, hidden](Progress p) {
+    auto faces = std::make_shared<std::vector<opad::Ref>>();
+    const bool findFaces = c.feature() && c.refs.empty();  // from its marker: what it made, for Remove its faces instead
+    services().jobs()->async(tr("Checking what deleting %1 changes").arg(QString::fromStdString(c.name)), [document, op = c.op, plan, parts, hidden, faces, findFaces](Progress p) {
       const opad::design::Cancel cancel = [p] { return p.cancelled(); };
       *plan = opad::design::plan_ops(*document, {{{"op", "delete"}, {"target", op}}}, false, cancel);
+      if (findFaces && !plan->report.value("errors", opad::json::array()).empty()) {  // asked only when something depends on it
+        const auto made = smart::madeBy(*document, cancel);
+        if (const auto it = made.find(op); it != made.end() && it->second.changes) *faces = it->second.faces;
+      }
       // The result: the plan committed to a copy (its own shape cache: nothing here touches what the view draws), and
       // every body that changes there meshed for the preview; the ones that go are hidden.
       opad::Document after = *document;
@@ -996,8 +1024,13 @@ void SmartSelect::deleteFeature(const smart::Candidate& c) {
         BodyPrs::meshForDisplay(shape, box.IsVoid() ? 0.1 : std::clamp(std::sqrt(box.SquareExtent()) * 0.002, 0.02, 2.0));
         parts->push_back({id, shape, BodyPrs::build(shape, box, true)});
       }
-    }, [this, c, token, plan, parts, hidden, revision, generation](bool ok, const QString& error) {
+    }, [this, found = c, token, plan, parts, hidden, faces, revision, generation](bool ok, const QString& error) {
       if (token != m_deleteToken) return;
+      smart::Candidate c = found;
+      if (c.refs.empty()) {
+        c.refs = *faces;
+        c.count = c.refs.size();
+      }
       if (!ok) {
         if (error != "cancelled") services().showMessage(i18n::t(error), 8000);
         return;
@@ -1078,15 +1111,17 @@ void SmartSelect::askDependents(const smart::Candidate& c, const std::vector<std
     *done = true;
     commitDelete(c, {c.op});
   });
-  QAction* faces = menu->addAction(icons::themed("removeFaces", 16), tr("Remove its faces instead (Remove faces, at the end of the timeline)"));
-  faces->setObjectName("deleteFacesInstead");
-  connect(faces, &QAction::triggered, this, [this, c, done] {
-    *done = true;
-    services().viewport()->clearPreviewBodies();
-    select(c.refs, [this] {
-      if (QAction* remove = services().action("design.remove_faces")) remove->trigger();
+  if (!c.refs.empty() && c.refs.front().kind == opad::Ref::Kind::Face) {  // a feature that made faces of its own
+    QAction* faces = menu->addAction(icons::themed("removeFaces", 16), tr("Remove its faces instead (Remove faces, at the end of the timeline)"));
+    faces->setObjectName("deleteFacesInstead");
+    connect(faces, &QAction::triggered, this, [this, c, done] {
+      *done = true;
+      services().viewport()->clearPreviewBodies();
+      select(c.refs, [this] {
+        if (QAction* remove = services().action("design.remove_faces")) remove->trigger();
+      });
     });
-  });
+  }
   menu->addSeparator();
   menu->addAction(tr("Cancel"))->setObjectName("deleteCancel");
   // Hidden without a choice (Esc, Cancel, a click elsewhere): the preview goes. A choice arrives after the hide.
