@@ -88,6 +88,21 @@ def osnap_sketch_document(root, document):
     return document("osnap-sketch", ("sketch", "--geometry", json.dumps({"points": points, "entities": entities})))
 
 
+def picture_file(root, document=None):
+    """A 200 x 100 mm frame and a red 8 x 8 PNG embedded at (20, 10), 60 x 40 (SVG y down)."""
+    import base64, struct, zlib
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+    rows = b"".join(b"\x00" + b"\xff\x00\x00" * 8 for _ in range(8))
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 8, 8, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+    href = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+    path = root / "picture.svg"
+    path.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="200mm" height="100mm" viewBox="0 0 200 100">'
+                    '<path d="M 0 0 L 200 0 L 200 100 L 0 100 Z" fill="none" stroke="black"/>'
+                    f'<image x="20" y="10" width="60" height="40" preserveAspectRatio="none" href="{href}"/></svg>', encoding="ascii")
+    return path
+
+
 def room_document(root, document):
     return document("room", ("import", "--file", str(room_file(root)), "--center", "true"))
 
@@ -119,8 +134,10 @@ CASES = [
     # UI-90: the cursor readout in the status bar: a far drawing's own coordinates (and a snapped point's), a model's X, Y, Z.
     ("readout", far_file, {"OPAD_BENCH_READOUT": "{prefix}"}),
     ("readout-3d", "box", {"OPAD_BENCH_READOUT": "{prefix}"}),
-    # UI-88: Plot: extents fit, monochrome, lineweights, 1:N and a scale that does not fit, display and window areas, a printer
+    # UI-88: Plot: extents fit, monochrome, lineweights, the plot stamp, 1:N and a scale that does not fit, display and window areas, a printer
     # (to a PDF file) and a PDF. <prefix>.dialog.png, .preview.png, .pdf, .printer.pdf
     ("plot", plot_file, {"OPAD_BENCH_PLOT": "{prefix}"}),
     ("plot-rtl", plot_file, {"OPAD_BENCH_PLOT": "{prefix}", "OPAD_LANG": "ar"}),
+    # UI-88: a drawing's raster image is plotted (red where it lies, grey in monochrome, an image in the PDF).
+    ("plot-image", picture_file, {"OPAD_BENCH_PLOT_IMAGE": "{prefix}"}),
 ]

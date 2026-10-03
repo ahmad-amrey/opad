@@ -45,6 +45,14 @@ int grey(const QImage& image, bool dark) {  // pixels without a hue; dark: darke
     }
   return n;
 }
+// Ink in the bottom margin of a page image (the plot stamp's band).
+int stampInk(const QImage& page, const plot::Settings& s) {
+  const double k = page.width() / s.paperWidth;
+  int n = 0;
+  for (int y = int((s.paperHeight - s.margin) * k) + 1; y < page.height() - 1; ++y)
+    for (int x = 0; x < page.width(); ++x) n += page.pixelColor(x, y).lightness() < 160;
+  return n;
+}
 // How many pixels down a column are ink near paper (x, y) mm, at `k` pixels per mm.
 int thickness(const QImage& image, double k, double x, double y) {
   int n = 0;
@@ -57,10 +65,65 @@ int thickness(const QImage& image, double k, double x, double y) {
 // OPAD_BENCH_PLOT=<prefix> on plot.dxf: a 200 x 100 frame (colour 7), a red 0.70 mm line, a blue fill and a green line on a
 // layer left out of plots. The Plot command (File menu, Export ribbon) opens the dialog: the extents fit A4 landscape, the
 // preview shows red and blue and no green (three bodies plotted); monochrome leaves no colour; the red line comes out
-// thicker than the frame with lineweights and as thin without; 1:2 is half size, 2:1 does not fit and says so; the display
+// thicker than the frame with lineweights and as thin without; the plot stamp is text along the bottom margin (file,
+// paper, scale) and nothing when off; 1:2 is half size, 2:1 does not fit and says so; the display
 // area is what the view shows; a window picked in the view (its prompt, the dialog away meanwhile) is plotted; a printer
-// (here printing to a PDF file) and a PDF come out as one vector page. <prefix>.dialog.png, .preview.png, .pdf,
-// .printer.pdf.
+// (here printing to a PDF file) and a PDF come out as one vector page. <prefix>.dialog.png, .preview.png, .stamp.png
+// (monochrome with the stamp), .pdf, .printer.pdf.
+// OPAD_BENCH_PLOT_IMAGE=<prefix> on picture.svg (gui_benches' plot-image): a 200 x 100 frame with a red picture embedded
+// at (20, 10), 60 x 40. The plot carries the image (one of two bodies): the preview shows it red where it lies on the
+// page, grey in monochrome, and the PDF holds it as an image. <prefix>.preview.png, .pdf.
+OPAD_BENCH(OPAD_BENCH_PLOT_IMAGE, plotImage) {
+  auto all = std::make_shared<bool>(true);
+  Check require = [all](bool ok, const QString& what) {
+    trace::log(QString("bench: plot-image: %1 %2").arg(what, ok ? "PASS" : "FAIL"));
+    *all = *all && ok;
+  };
+  Viewport* v = w.m_viewport;
+  AppDocument* doc = w.m_doc;
+  auto settled = [&w, v, doc] {
+    int expected = 0;
+    for (const auto& id : doc->scene.all_bodies()) expected += doc->scene.effectively_visible(id);
+    return !w.m_displayJob && w.m_meshRemaining == 0 && v->displayedCount() >= expected && expected > 1 && !v->looksPending();
+  };
+  pollUntil(&w, settled, 60000, [&w, require, all, value](bool shown) {
+    QAction* plotAction = w.action("drawing2d.plot");
+    require(shown && plotAction && plotAction->isEnabled(), "the drawing and its picture are shown and Plot is enabled");
+    if (!shown || !plotAction) return QCoreApplication::exit(2);
+    auto dialog = [&w] { return w.findChild<PlotDialog*>("plotDialog"); };
+    auto ready = [dialog] { return dialog() && dialog()->isVisible() && dialog()->previewReady(); };
+    auto script = std::make_shared<Script>();
+    script->add("open", [plotAction] { plotAction->trigger(); }, ready);
+    script->add("image", [dialog, require, value] {
+      PlotDialog* d = dialog();
+      const auto picture = d->picture();
+      const QImage preview = d->previewImage();
+      const plot::Placement p = d->placement();
+      // The picture's middle, 50 from the frame's left and 30 down from its top (the extents), on the page.
+      const double k = preview.width() / d->settings().paperWidth;
+      const double cx = (p.x + 50 * p.scale) * k, cy = (p.y + 30 * p.scale) * k;
+      const QColor middle = preview.pixelColor(int(cx), int(cy));
+      require(picture->sheet.images.size() == 1 && picture->images.size() == 1 && picture->sheet.bodies == 2 && coloured(preview, 0) > 200 && middle.red() > 200 && middle.green() < 60,
+              QString("the picture is plotted where it lies, red (%1 red pixels, its middle %2)").arg(coloured(preview, 0)).arg(middle.name()));
+      preview.save(value + ".preview.png");
+      static_cast<QCheckBox*>(d->findChild<QWidget*>("plotMonochrome"))->setChecked(true);
+    }, ready);
+    script->add("grey", [dialog, require, value] {
+      const QImage preview = dialog()->previewImage();
+      require(coloured(preview, 0) == 0 && grey(preview, true) > 200, "monochrome: the picture in grey");
+      static_cast<QCheckBox*>(dialog()->findChild<QWidget*>("plotMonochrome"))->setChecked(false);
+    }, ready);
+    script->add("to PDF", [dialog, value] { dialog()->plotToPdf(value + ".pdf"); }, [dialog] { return !dialog()->isVisible(); });
+    script->add("the PDF", [require, value] {
+      QFile f(value + ".pdf");
+      const QByteArray bytes = f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+      require(bytes.startsWith("%PDF") && bytes.contains("/Subtype /Image"), QString("the PDF holds the picture as an image (%1 bytes)").arg(bytes.size()));
+    });
+    Script::run(&w, script, 0, require, [all] { QCoreApplication::exit(*all ? 0 : 2); });
+  });
+  return true;
+}
+
 OPAD_BENCH(OPAD_BENCH_PLOT, plot) {
   auto all = std::make_shared<bool>(true);
   Check require = [all](bool ok, const QString& what) {
@@ -102,12 +165,19 @@ OPAD_BENCH(OPAD_BENCH_PLOT, plot) {
                   .arg(coloured(preview, 0)).arg(coloured(preview, 2)).arg(coloured(preview, 1)));
       preview.save(value + ".preview.png");
       d->grab().save(value + ".dialog.png");
+      require(stampInk(preview, d->settings()) == 0, "no plot stamp by default: the bottom margin is blank");
       static_cast<QCheckBox*>(d->findChild<QWidget*>("plotMonochrome"))->setChecked(true);
+      static_cast<QCheckBox*>(d->findChild<QWidget*>("plotStamp"))->setChecked(true);
     }, ready);
-    script->add("monochrome", [dialog, require] {
+    script->add("monochrome", [dialog, require, value] {
       const QImage preview = dialog()->previewImage();
+      preview.save(value + ".stamp.png");
       require(coloured(preview, 0) == 0 && coloured(preview, 2) == 0 && grey(preview, true) > 100, "monochrome: every colour black");
       PlotDialog* d = dialog();
+      const QString stamp = QString::fromStdString(d->settings().stamp);
+      require(stampInk(preview, d->settings()) > 20 && stamp.contains("plot.dxf") && stamp.contains("ISO A4") && stamp.contains(QString::fromStdString(plot::scaleText(d->placement().scale))),
+              QString("the plot stamp is printed along the bottom margin (%1 dark pixels): %2").arg(stampInk(preview, d->settings())).arg(stamp));
+      static_cast<QCheckBox*>(d->findChild<QWidget*>("plotStamp"))->setChecked(false);
       // The same paint at 10 pixels per mm: the 0.70 mm line against the frame's default 0.25 mm, then without lineweights.
       auto render = [d](bool lineweights) {
         plot::Settings s = d->settings();
@@ -129,6 +199,7 @@ OPAD_BENCH(OPAD_BENCH_PLOT, plot) {
     }, ready);
     script->add("1:2", [dialog, require] {
       PlotDialog* d = dialog();
+      require(d->settings().stamp.empty() && stampInk(d->previewImage(), d->settings()) == 0, "the stamp off again: the margin is blank");
       const plot::Placement p = d->placement();
       const auto* info = d->findChild<QLabel*>("plotInfo");
       require(std::abs(p.scale - 0.5) < 1e-12 && !p.clipped && info->text().contains("1:2") && !d->findChild<QLabel*>("plotWarning")->isVisible(), "1:2 draws the frame 100 mm wide: " + info->text());

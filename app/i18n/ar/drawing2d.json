@@ -169,5 +169,7 @@
  "Pick the first corner": "اختر الزاوية الأولى",
  "Pick the opposite corner": "اختر الزاوية المقابلة",
  "Esc back to Plot": "Esc للعودة إلى الطباعة",
- "First corner": "الزاوية الأولى"
+ "First corner": "الزاوية الأولى",
+ "Plot stamp": "ختم الطباعة",
+ "The file, the date and time, the paper and the scale along the bottom margin": "الملف والتاريخ والوقت والورق والمقياس على طول الهامش السفلي"
 }

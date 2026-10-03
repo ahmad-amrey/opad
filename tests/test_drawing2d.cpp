@@ -404,6 +404,38 @@ TEST(a_plot_fits_or_takes_its_scale) {
   CHECK(plot::scaleText(0.02) == "1:50" && plot::scaleText(2) == "2:1" && plot::scaleText(1 / 37.4249) == "1:37.42" && plot::scaleText(1) == "1:1");
 }
 
+// A drawing's raster image is plotted (UI-88): its data and corners where it is placed, inside the extents, left out with
+// its layer.
+TEST(a_plot_takes_a_drawings_images) {
+  const auto dir = std::filesystem::temp_directory_path() / ("opad-2d-" + opad::new_uuid());
+  std::filesystem::create_directory(dir);
+  const std::string png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
+  opad::write_text_file(dir / "picture.svg", "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200mm\" height=\"100mm\" viewBox=\"0 0 200 100\">"
+                                             "<path d=\"M 0 0 L 200 0 L 200 100 L 0 100 Z\" fill=\"none\" stroke=\"black\"/>"
+                                             "<image x=\"20\" y=\"10\" width=\"60\" height=\"40\" href=\"" + png + "\"/></svg>");
+  auto doc = opad::Document::create();
+  opad::import_file(doc, dir / "picture.svg");
+  auto scene = opad::resolve(doc);
+  const plot::Sheet sheet = plot::collect(doc, scene, plot::plane(doc, scene, opad::Frame{}));
+  CHECK_EQ(sheet.images.size(), 1u);
+  CHECK_EQ(sheet.bodies, 2);
+  if (!sheet.images.empty()) {
+    const plot::Image& image = sheet.images[0];
+    CHECK(image.href == png);
+    CHECK_NEAR(std::hypot(image.right[0] - image.origin[0], image.right[1] - image.origin[1]), 60, 1e-6);  // its frame, 60 x 40 mm
+    CHECK_NEAR(std::hypot(image.down[0] - image.origin[0], image.down[1] - image.origin[1]), 40, 1e-6);
+    CHECK_NEAR(image.origin[1] - image.down[1], 40, 1e-6);  // the picture's top above its bottom, as the drawing's y goes up
+    for (const auto& p : {image.origin, image.right, image.down})
+      CHECK(p[0] >= sheet.x0 - 1e-9 && p[0] <= sheet.x1 + 1e-9 && p[1] >= sheet.y0 - 1e-9 && p[1] <= sheet.y1 + 1e-9);
+  }
+  for (const Layer& layer : layers(scene))  // the image's layer left out of plots: no image
+    if (std::any_of(layer.bodies.begin(), layer.bodies.end(), [&](const std::string& id) { return !scene.node(id)->raster.is_null(); }))
+      opad::commands::run("appearance", setPlot(layer, false), &doc);
+  scene = opad::resolve(doc);
+  CHECK(plot::collect(doc, scene, plot::plane(doc, scene, opad::Frame{})).images.empty());
+  std::filesystem::remove_all(dir);
+}
+
 // The cursor readout's drawing coordinates (UI-90): a drawing read far from (0,0) keeps the offset on its root, so a world
 // point reads as the file has it whether the drawing was opened centred or placed where it is, and after a reload.
 TEST(drawing_coordinates_of_a_far_drawing) {

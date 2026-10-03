@@ -8,6 +8,7 @@
 #include <QPainterPath>
 #include <QPointer>
 #include <QTimer>
+#include <QTransform>
 
 #include <AIS_Shape.hxx>
 
@@ -37,10 +38,15 @@ struct PlotPicture {
   std::vector<QPainterPath> strokes;               // per style: every line of it
   std::vector<std::vector<QPainterPath>> fills;    // per style: each fill (its rings even-odd)
   std::vector<std::vector<QPointF>> dots;          // per style
+  struct Raster {
+    QImage image;      // decoded, fitted to its frame as the view shows it
+    QTransform place;  // its pixels to the plot plane
+  };
+  std::vector<Raster> images;
   static std::shared_ptr<const PlotPicture> build(plot::Sheet sheet);
 };
-// Paints the plot on paper of `unitsPerMm` device units per millimetre, the paper's top left at the painter's origin. Any
-// thread: the preview's image, a PDF and a printer get the same picture.
+// Paints the plot on paper of `unitsPerMm` device units per millimetre, the paper's top left at the painter's origin, and
+// the stamp along the bottom margin. Any thread: the preview's image, a PDF and a printer get the same picture.
 void paintPlot(QPainter& painter, const PlotPicture& picture, const plot::Settings& settings, const plot::Placement& placement, double unitsPerMm);
 
 // The page with the plot on it, as the worker rendered it.
@@ -113,7 +119,7 @@ class PlotDialog : public QDialog {
   QDoubleSpinBox *m_margin, *m_scale;
   QRadioButton *m_extents, *m_display, *m_windowRegion, *m_pdf, *m_printer;
   QPushButton* m_pick;
-  QCheckBox *m_fit, *m_monochrome, *m_lineweights;
+  QCheckBox *m_fit, *m_monochrome, *m_lineweights, *m_stampBox;
   QLabel *m_info, *m_warning, *m_scaleShown;
   PlotPreview* m_preview;
   PanelFooter* m_footer;
