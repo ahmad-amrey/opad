@@ -23,8 +23,12 @@ endif()
 # Third-party notices compiled in (TODO 11 UI-13): written at build time by cmake/notices.cmake from the link lines of
 # opad and opad-cli in build.ninja (rewritten only when they change), for Help > Third-party licences and `opad-cli
 # licenses`; the same text is <build>/THIRD-PARTY-NOTICES.txt, which the single-file package ships beside the exe.
+# MSYS2's pacman lies in <root>/usr/bin beside its runtime (msys-2.0.dll), the toolchain in <root>/mingw64/bin: an Arch
+# Linux /usr/bin/pacman beside /usr/bin/g++ is not it (Linux packages are looked up through dpkg).
 get_filename_component(_opad_msys "${CMAKE_CXX_COMPILER}" DIRECTORY)
-find_program(OPAD_PACMAN pacman HINTS "${_opad_msys}/../../usr/bin" NO_DEFAULT_PATH)
+if(MINGW AND EXISTS "${_opad_msys}/../../usr/bin/msys-2.0.dll")
+  find_program(OPAD_PACMAN pacman HINTS "${_opad_msys}/../../usr/bin" NO_DEFAULT_PATH)
+endif()
 set(opad_notices_cpp ${CMAKE_CURRENT_BINARY_DIR}/third_party_notices.cpp)
 set(opad_notices_stamp ${CMAKE_CURRENT_BINARY_DIR}/third_party_notices.stamp)
 set(_opad_notices_files "")
