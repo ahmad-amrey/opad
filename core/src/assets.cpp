@@ -353,18 +353,41 @@ ImportOptions read_options(const json& asset, const AssetOptions& opt) {
   return o;
 }
 
-bool cacheable(const json& asset, const AssetOptions& opt) { return opt.cache && asset.value("kind", "") != "kicad_pcb"; }  // a board's models change without it
-std::string content_of(const std::string& sha, const json& asset) { return sha + "|" + asset.value("builder", json::object()).dump(); }
+// What a KiCad board shows depends on its 3D models too: their names and contents as this machine finds them (a model
+// changes, is downloaded or goes missing without the board changing). Empty for any other kind.
+std::string models_of(const fs::path& file, const json& asset, const AssetOptions& opt) {
+  if (asset.value("kind", "") != "kicad_pcb") return {};
+  std::vector<std::string> lines;
+  for (const auto& m : kicad_models(file, read_options(asset, opt).kicad).value("models", json::array())) {
+    std::string line = m.value("name", "") + "|";
+    try {
+      if (m.contains("file")) line += file_sha256(path_from_utf8(m["file"].get<std::string>()));
+    } catch (const std::exception&) {
+      line += "?";
+    }
+    lines.push_back(line);
+  }
+  std::sort(lines.begin(), lines.end());
+  std::string all;
+  for (const auto& l : lines) all += l + "\n";
+  return sha256_hex(all);
+}
 
-// The file read into a document of its own (one import op, live bodies); a slow read is remembered by the file's content
-// and how it was read, so a clone, a branch or a moved folder finds it again.
-void read_file(Document& scratch, const fs::path& file, const json& asset, const std::string& sha, const AssetOptions& opt) {
+// A version of the asset as the content cache knows it: the file's hash, how it is read and (a board) its models'.
+std::string content_of(const json& asset, const std::string& sha, const std::string& models) {
+  return sha + "|" + asset.value("builder", json::object()).dump() + (models.empty() ? "" : "|" + models);
+}
+
+// The file read into a document of its own (one import op, live bodies). Every read is remembered by its content (the
+// viewer cache, LRU): reopening is fast, a clone, a branch or a moved folder finds it again, and a file changed since
+// still shows the version synced, as the document's features were computed from it.
+// Whether the file itself was read (not its remembered version).
+bool read_file(Document& scratch, const fs::path& file, const json& asset, const std::string& content, const AssetOptions& opt, bool store = true) {
   const ImportOptions o = read_options(asset, opt);
-  const std::string content = content_of(sha, asset);
-  if (cacheable(asset, opt) && detail::asset_cache_load(scratch, content, o)) return;
-  const auto start = std::chrono::steady_clock::now();
+  if (opt.cache && detail::asset_cache_load(scratch, content, o)) return false;
   import_file(scratch, file, o);
-  if (cacheable(asset, opt) && std::chrono::steady_clock::now() - start > std::chrono::milliseconds(800)) detail::asset_cache_store(scratch, content);
+  if (opt.cache && store) detail::asset_cache_store(scratch, content);
+  return true;
 }
 
 json read_op(const Document& scratch) {
@@ -442,7 +465,15 @@ AssetState status_of(const Document& doc, const EffectiveOp& e, const AssetOptio
   } else {
     try {
       st.sha256 = file_sha256(st.file);
+      st.models = models_of(st.file, a, opt);
       st.state = st.sha256 == a.value("sha256", "") ? "ok" : "changed";
+      if (st.state == "ok" && a.contains("models_sha256") && a.value("models_sha256", "") != st.models) {
+        st.state = "changed";
+        st.reason = "its 3D models changed";
+      }
+    } catch (const Standard_Failure& ex) {
+      st.state = "error";
+      st.reason = ex.GetMessageString();
     } catch (const std::exception& ex) {
       st.state = "error";
       st.reason = ex.what();
@@ -538,11 +569,12 @@ std::vector<AssetState> load_assets(Document& doc, const AssetOptions& opt) {
         const json& asset = e.data()["asset"];
         Document scratch = Document::create();
         bool stale = st.state == "changed";
-        if (stale && cacheable(asset, opt) && detail::asset_cache_load(scratch, content_of(asset.value("sha256", ""), asset), read_options(asset, opt))) {
+        const std::string synced = content_of(asset, asset.value("sha256", ""), asset.value("models_sha256", ""));
+        if (stale && opt.cache && detail::asset_cache_load(scratch, synced, read_options(asset, opt))) {
           stale = false;
           st.reason = "the version synced is shown (remembered); sync to take the file as it is now";
         } else {
-          read_file(scratch, st.file, asset, st.sha256, opt);
+          read_file(scratch, st.file, asset, content_of(asset, st.sha256, st.models), opt);
         }
         json nodes = read_op(scratch)["nodes"];
         relabel(nodes, e.op->id, "", &nodes_of(e.data()));
@@ -598,10 +630,14 @@ ImportResult link_file(Document& doc, const fs::path& file, const ImportOptions&
   read.kicad = opt.kicad;
   read.progress = opt.progress;
   Document scratch = Document::create();
-  read_file(scratch, abs, asset, sha, read);
+  const std::string models = models_of(abs, asset, read);
+  if (!models.empty()) asset["models_sha256"] = models;
+  const std::string first = content_of(asset, sha, models);
+  const bool fresh = read_file(scratch, abs, asset, first, read, false);
   json data = read_op(scratch);
   if (kind == "kicad_pcb" && data.contains("kicad") && data["kicad"].contains("origin"))
     asset["builder"]["options"]["origin_at"] = data["kicad"]["origin"];  // every later read keeps this frame
+  if (const std::string content = content_of(asset, sha, models); fresh || content != first) detail::asset_cache_store(scratch, content);
   asset["synced"] = now_iso8601();
   const std::string id = new_uuid();
   relabel(data["nodes"], id, "");
@@ -638,9 +674,10 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
     if (const std::string rel = relative_to(where, doc_dir(doc)); !rel.empty()) a["path"] = rel;
     else a.erase("path");
   };
+  const std::string models = models_of(where, asset, opt);
   design::Plan plan;
-  if (sha == asset.value("sha256", "")) {  // the file synced last: at most it moved
-    plan.report = {{"import", id}, {"sha256", sha}, {"up_to_date", true}};
+  if (sha == asset.value("sha256", "") && (!asset.contains("models_sha256") || models == asset.value("models_sha256", ""))) {
+    plan.report = {{"import", id}, {"sha256", sha}, {"up_to_date", true}};  // the file synced last: at most it moved
     if (!file.empty() && utf8(where) != asset.value("abs", "")) {
       place(asset);
       plan.ops.push_back(design::make_edit_op(id, {{"asset", asset}}));
@@ -648,7 +685,7 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
     return plan;
   }
   Document scratch = Document::create();
-  read_file(scratch, where, asset, sha, opt);
+  read_file(scratch, where, asset, content_of(asset, sha, models), opt);
   json fresh = read_op(scratch);
   relabel(fresh["nodes"], id, "", &nodes_of(data));
   // A body whose geometry did not change keeps its key (no needless regeneration downstream): the key of its geometry is
@@ -696,6 +733,7 @@ design::Plan plan_asset_sync(const Document& doc, const std::string& import_id, 
     if (!now.count(nid)) removed.push_back(names[nid]);
   asset["sha256"] = sha;
   asset["size"] = fs::file_size(where);
+  if (!models.empty()) asset["models_sha256"] = models;
   asset["synced"] = now_iso8601();
   place(asset);
   fresh["asset"] = asset;

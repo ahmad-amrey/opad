@@ -337,17 +337,8 @@ TEST(changed_file_shows_the_version_synced_when_remembered) {
   two_boxes(step, 5);
   Document d = Document::create();
   d.save_as(f.dir / "design.opad");
-  link_file(d, step);
+  link_file(d, step);  // remembered by the file's content and how it is read
   d.save();
-  const json asset = last_import(d).data["asset"];
-  {  // as a slow read is remembered: by the file's content and how it is read
-    Document read = Document::create();
-    ImportOptions o;
-    o.viewer = true;
-    o.heal = false;
-    import_file(read, step, o);
-    detail::asset_cache_store(read, asset["sha256"].get<std::string>() + "|" + asset["builder"].dump());
-  }
   two_boxes(step, 5, 38);
   Document reopened = Document::load(f.dir / "design.opad");
   const auto states = load_assets(reopened);
@@ -361,6 +352,54 @@ TEST(changed_file_shows_the_version_synced_when_remembered) {
   CHECK(!reopened.body(s.node(linked(s, 0))->body_key)->meta.value("stale", false));
   design::Plan plan = plan_asset_sync(reopened, last_import(reopened).id);
   CHECK_EQ(plan.report["kept"], 1);
+}
+
+// A board's look depends on its 3D models: a model that changes, appears or goes missing makes the board "changed" though
+// its file is the same; the version synced (board and models) is remembered and shown until the sync takes the new one.
+TEST(kicad_board_remembered_with_its_models) {
+  Files f;
+  const fs::path board = f.dir / "hw" / "board.kicad_pcb", model = f.dir / "hw" / "m1.step";
+  two_boxes(model, 0);
+  write(board, "(kicad_pcb (version 20241229) (general (thickness 1.6))\n  (gr_rect (start 0 0) (end 50 30) (layer \"Edge.Cuts\"))\n"
+               "  (footprint \"Sync:R\" (layer \"F.Cu\") (uuid \"aaaaaaaa-0000-0000-0000-000000000001\") (at 10 10)\n"
+               "    (property \"Reference\" \"R1\")\n    (model \"${KIPRJMOD}/m1.step\"))\n)\n");
+  Document d = Document::create();
+  d.save_as(f.dir / "hw" / "enclosure.opad");
+  link_file(d, board);
+  const std::string import_id = last_import(d).id;
+  CHECK(last_import(d).data["asset"].contains("models_sha256"));
+  d.save();
+  CHECK_EQ(asset_status(d)[0].state, "ok");
+  auto cube = [](const Document& doc, const Scene& s) {  // the model's 10 mm box
+    for (const auto& id : s.all_bodies())
+      if (about(volume(doc, s, id), 1000)) return id;
+    throw check::Failure("no 10 mm box");
+  };
+  auto bottom = [](const Document& doc, const Scene& s, const std::string& id) {
+    double x0, y0, z0, x1, y1, z1;
+    node_world_bbox(doc, s, id).Get(x0, y0, z0, x1, y1, z1);
+    return z0;
+  };
+  const double was = bottom(d, resolve(d), cube(d, resolve(d)));
+  two_boxes(model, 0, 50);  // the model's box 20 mm higher; the board file as it was
+  Document reopened = Document::load(f.dir / "hw" / "enclosure.opad");
+  const AssetState st = load_assets(reopened)[0];
+  CHECK_EQ(st.state, "changed");
+  CHECK(st.reason.find("remembered") != std::string::npos);
+  Scene s = resolve(reopened);
+  for (const auto& id : s.all_bodies()) CHECK(!s.node(id)->body_missing && !reopened.body(s.node(id)->body_key)->meta.value("stale", false));
+  CHECK(about(bottom(reopened, s, cube(reopened, s)), was, 0.01));  // as synced, not as the model is now
+  const std::string board_key = s.node(body_named(s, "Board"))->body_key;
+  design::Plan plan = plan_asset_sync(reopened, import_id);
+  CHECK(!plan.report["up_to_date"].get<bool>());
+  CHECK_EQ(plan.report["changed"].size(), 1u);  // the box; the model's other box and the board keep their keys
+  design::commit(reopened, std::move(plan));
+  s = resolve(reopened);
+  CHECK(about(bottom(reopened, s, cube(reopened, s)), was + 20, 0.01));
+  CHECK_EQ(s.node(body_named(s, "Board"))->body_key, board_key);
+  CHECK_EQ(asset_status(reopened)[0].state, "ok");
+  fs::remove(model);  // gone: a placeholder would stand in for it
+  CHECK_EQ(asset_status(reopened)[0].state, "changed");
 }
 
 TEST(embed_and_pack) {

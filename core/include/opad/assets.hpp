@@ -3,7 +3,8 @@
 // around without editing it. Its import op carries an `asset` object:
 //   {"v":1, "kind":"step|iges|brep|mesh|drawing|kicad_pcb", "path":"<relative to the document, forward slashes>",
 //    "abs":"<absolute fallback>", "sha256":"<the file's>", "size":N, "storage":"linked|project|embedded",
-//    "builder":{"name":"opad","version":1,"options":{...how it was read}}, "synced":"<time>"}
+//    "builder":{"name":"opad","version":1,"options":{...how it was read}}, "synced":"<time>",
+//    "models_sha256":"<a KiCad board: its 3D models' names and contents as found>"}
 // and its bodies never enter the body store: they are read from the file whenever the document opens (load_assets, on the
 // load worker), as the viewer reads files, under keys derived from each body's geometry ("opad-asset/2|<digest>": topology
 // counts, vertices, edge and face types and middle points), so a part a new version of the file leaves alone keeps its key.
@@ -24,7 +25,8 @@ namespace opad {
 struct AssetOptions {
   std::vector<std::filesystem::path> trusted;  // folders read without asking, besides the document's project
   bool trust_all = false;                      // the caller vouches for every path (the user's own recovery snapshot)
-  bool cache = true;                           // remember slow reads by content (the viewer cache)
+  bool cache = true;                           // remember every read by content (the viewer cache): fast reopening,
+                                               // and a file changed since still shows the version synced
   KicadOptions kicad;                          // this machine's KiCad model folders (a board's own options come from its op)
   std::function<bool(double, const std::string&)> progress;  // as ImportOptions::progress; false cancels
 };
@@ -39,6 +41,7 @@ struct AssetState {
   std::string state;
   std::string reason;
   std::string sha256;          // of the file found
+  std::string models;          // a KiCad board: the digest of its 3D models as found (names and contents)
   int bodies = 0, unbound = 0; // body nodes; those the file did not give (gone since the sync, or the file was not read)
   json to_json() const;
 };
