@@ -65,6 +65,7 @@ void AgentBridge::setAccess(bool enabled,bool edit){
   if(!m_enabled){m_server.close();const auto sessions=m_sessions;for(auto& session:sessions)if(session->socket)session->socket->disconnectFromServer();}
   publish();
 }
+bool AgentBridge::publishesSelection()const{return m_enabled || std::any_of(m_sessions.begin(),m_sessions.end(),[](const auto& s){return s->bound;});}
 bool AgentBridge::editorBusy()const{return m_doc->loading || m_doc->designBusy || m_doc->annotationEditing || m_design->sketchActive() || m_design->featureActive() || m_design->pickingPlane();}
 json AgentBridge::editingState()const {
   const std::string edit=m_doc->annotationEditing?"annotation":m_design->sketchActive()?"sketch":m_design->featureActive()?"feature":m_design->pickingPlane()?"plane":"none";

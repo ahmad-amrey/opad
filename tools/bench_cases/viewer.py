@@ -105,4 +105,7 @@ CASES = [
     # load and its pump at once.
     ("loading", boxes, {"OPAD_BENCH_LOADING": "{prefix}"}),
     ("loading-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_LOADING": "{prefix}"}),
+    # Selection publishing (UI-06): nothing with agent access off; on, the selection at once with O(1) fields per ref,
+    # a rubber band over every face capped at 2,000 refs and written off the UI thread; off again, the file goes.
+    ("selection-publish", boxes, {"OPAD_BENCH_SELPUBLISH": "{prefix}"}),
 ]

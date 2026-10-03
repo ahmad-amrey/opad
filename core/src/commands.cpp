@@ -585,8 +585,9 @@ void register_builtins() {
     return j;
   });
 
-  // F25: the running app publishes its selection to <cache>/selection.json; agents read it here.
-  reg("selection", "Current GUI selection (uuids + descriptors) as published by the running app", json::object(), false,
+  // F25: the running app publishes its selection to <cache>/selection.json while agent access is on (UI-06); agents read
+  // it here.
+  reg("selection", "Current GUI selection (refs, node names, types, body keys and boxes; at most 2,000, with the total) as published by the running app while its agent access is on", json::object(), false,
       [](Document*, const json&) {
         json j;
         std::filesystem::path p = cache_dir() / "selection.json";

@@ -6,6 +6,7 @@
 
 #include <QApplication>
 #include <QCloseEvent>
+#include <QFile>
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QPointer>
@@ -47,6 +48,13 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   statusBar()->addPermanentWidget(agentStatus);
   auto updateAgentStatus=[this,agentStatus]{agentStatus->setText(tr("AI: %1").arg(m_agent->statusSummary()));agentStatus->setToolTip(m_doc->title());};
   connect(m_agent,&AgentBridge::statusChanged,agentStatus,updateAgentStatus);updateAgentStatus();
+  // The selection is published only while agent access is on (UI-06): at once when it comes on, and the file goes with it.
+  connect(m_agent,&AgentBridge::statusChanged,this,[this]{
+    if(std::exchange(m_selPublishing,m_agent->publishesSelection())==m_selPublishing)return;
+    if(m_selPublishing)scheduleSelectionSync();
+    else{if(m_selFileJob)m_selFileJob->cancel();QFile::remove(QString::fromStdU16String((opad::cache_dir()/"selection.json").u16string()));}
+  });
+  m_selPublishing=m_agent->publishesSelection();
   connect(agentStatus,&QToolButton::clicked,m_agent,&AgentBridge::settings);
   connect(m_recovery,&RecoveryManager::status,this,[this](const QString& text){statusBar()->showMessage(text,8000);});
 
@@ -136,7 +144,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
       m_displayJob->finish();
     }
   });
-  // selection.json is written on a short debounce and off the hot selection path (it inspects geometry).
+  // selection.json is written on a short debounce, only while agent access is on, and by a worker (UI-06).
   m_selFileTimer.setSingleShot(true);
   m_selFileTimer.setInterval(250);
   connect(&m_selFileTimer, &QTimer::timeout, this, &MainWindow::writeSelectionFile);
