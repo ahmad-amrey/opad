@@ -46,9 +46,6 @@ OPAD_ICON_TABLE(drawing2d,
                 {"noPlot", R"(<path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8"/><path d="M7 14h10v7H7z"/><path d="M2 2l20 20"/>)"});
 
 namespace {
-// A lineweight is a pen's width on paper: in millimetres whatever the document's unit (as the Layers panel shows it).
-QString weightText(double mm) { return mm < 0 ? LayersPanel::tr("Default") : LayersPanel::tr("%1 mm").arg(mm, 0, 'f', 2); }
-
 // What is under the mouse in a drawing, after a moment's rest (a rollover tooltip): its type, layer, colour, linetype,
 // lineweight and size. A tooltip window of the main window; it never takes the focus or the mouse.
 class RolloverCard : public QLabel {
@@ -186,7 +183,7 @@ class Drawing2DArea : public AreaController {
       s.rows << qMakePair(tr("Name"), QString::fromStdString(l->name));
       s.rows << qMakePair(tr("Colour"), l->mixed ? tr("Several colours") : l->colored ? QColor::fromRgbF(l->color[0], l->color[1], l->color[2]).name() : tr("Drawing colour"));
       s.rows << qMakePair(tr("Linetype"), l->linetype.empty() ? tr("Continuous") : QString::fromStdString(l->linetype));
-      s.rows << qMakePair(tr("Lineweight"), weightText(l->lineweight));
+      s.rows << qMakePair(tr("Lineweight"), LayersPanel::weightText(l->lineweight));
       QString state = !l->on ? tr("Off") : l->frozen ? tr("Frozen") : tr("On");
       if (l->locked) state += " · " + tr("Locked");
       s.rows << qMakePair(tr("State"), state);
@@ -293,7 +290,7 @@ class Drawing2DArea : public AreaController {
     rows += row(tr("Colour"), colour.isValid() ? QString("<span style=\"color:%1\">&#9632;</span> %1").arg(colour.name()) : tr("Drawing colour").toHtmlEscaped());
     if (layer) {
       rows += row(tr("Linetype"), (layer->linetype.empty() ? tr("Continuous") : QString::fromStdString(layer->linetype)).toHtmlEscaped());
-      rows += row(tr("Lineweight"), layer->lineweight < 0 ? tr("Default") : weightText(layer->lineweight));
+      rows += row(tr("Lineweight"), LayersPanel::weightText(layer->lineweight));
     }
     if (m_hovered.contains("radius")) rows += row(tr("Radius"), units::format(units::Kind::Length, m_hovered["radius"].get<double>()));
     if (m_hovered.contains("length")) rows += row(tr("Length"), units::format(units::Kind::Length, m_hovered["length"].get<double>()));

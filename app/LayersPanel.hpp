@@ -32,6 +32,8 @@ class LayersPanel : public QWidget {
   void selectLayer(const std::string& layer);
   std::vector<std::string> selectedLayers() const;
   PanelFooter* footer() const { return m_footer; }
+  // A lineweight is a pen's width on paper: in millimetres whatever the document's unit ("Default" below 0).
+  static QString weightText(double mm);
 
   // Changes, each one step to undo; a cell's click and its menus do these.
   void toggle(const std::string& layer, int column);  // On, Freeze, Lock, Plot

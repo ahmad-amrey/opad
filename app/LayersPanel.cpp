@@ -57,7 +57,6 @@ QIcon swatch(const drawing2d::Layer& l, qreal dpr) {
   return QIcon(pixmap);
 }
 
-QString weightText(double mm) { return mm < 0 ? LayersPanel::tr("Default") : LayersPanel::tr("%1 mm").arg(mm, 0, 'f', 2); }
 }  // namespace
 
 LayersPanel::LayersPanel(AreaServices& services, QWidget* parent) : QWidget(parent), m_services(services) {
@@ -194,6 +193,8 @@ LayersPanel::LayersPanel(AreaServices& services, QWidget* parent) : QWidget(pare
   m_footer->setPrimary(tr("Done"), QString());
   layout->addWidget(m_footer);
 }
+
+QString LayersPanel::weightText(double mm) { return mm < 0 ? tr("Default") : tr("%1 mm").arg(mm, 0, 'f', 2); }
 
 QTreeWidgetItem* LayersPanel::item(const std::string& id) const {
   for (QTreeWidgetItemIterator it(m_tree); *it; ++it)
