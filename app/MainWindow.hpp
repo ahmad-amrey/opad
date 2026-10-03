@@ -11,6 +11,7 @@
 #include "AnnotationEditor.hpp"
 #include "AreaController.hpp"
 #include "AppDocument.hpp"
+#include "Commands.hpp"
 #include "DesignController.hpp"
 #include "EmptyState.hpp"
 #include "GuidedTool.hpp"
@@ -47,7 +48,10 @@ class MainWindow : public QMainWindow {
 
  private:
   QAction* addAction(const QString& id, const QString& text, const QString& icon, const QKeySequence& shortcut, std::function<void()> fn, bool checkable = false);
+  QAction* addCommand(const CommandInfo& info, std::function<void()> fn);  // every command is made here (Commands.hpp)
   QAction* action(const QString& id) const;
+  CommandContext commandContext() const;
+  void updateCommands();  // the commands with an enabledWhen: after document, selection, workspace or sketch changes
   void buildActions();  // the area builders below, in command order
   void buildFileActions();        // MainWindowFile.cpp
   void buildViewActions();        // MainWindowView.cpp: view.*, panel toggles, workspaces
@@ -232,6 +236,7 @@ class MainWindow : public QMainWindow {
   QLabel* m_statusSel = nullptr;
   QLabel* m_statusUnits = nullptr;
   QList<QAction*> m_actions;
+  CommandRegistry m_commands;  // the record of every action in m_actions, same order
   QAction* m_pinAction = nullptr;
   QAction* m_darkAction = nullptr;
   ProgressStrip* m_progress = nullptr;

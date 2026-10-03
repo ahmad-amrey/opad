@@ -61,14 +61,17 @@ void MainWindow::buildMenus() {
   QMenu* file = menuBar()->addMenu(tr("&File"));
   add(file, {"file.new", "file.open", "file.import", "file.importdoc"});
   m_recentMenu = file->addMenu(tr("Recent"));
+  m_recentMenu->setObjectName("recent");
   add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
   add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = m_viewMenu = menuBar()->addMenu(tr("&View"));
   add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
+  m_viewsMenu->setObjectName("views");
   view->addSeparator();
   QMenu* nav = view->addMenu(tr("Navigation preset"));
+  nav->setObjectName("navigation");
   add(nav, {"nav.fusion", "nav.solidworks", "nav.onshape", "nav.blender"});
   add(view, {"view.dark", "-", "workspace.review", "workspace.design", "-", "panel.browser", "panel.annotations", "panel.section", "panel.timeline", "panel.reset"});
   QMenu* inspect = menuBar()->addMenu(tr("&Inspect"));
@@ -77,6 +80,7 @@ void MainWindow::buildMenus() {
   add(designMenu, {"design.sketch", "design.convertDrawing", "design.parameters", "-"});
   for (const char* group : {"create", "modify", "combine", "pattern", "body", "construct"}) {
     QMenu* sub = designMenu->addMenu(i18n::t(QString(group).left(1).toUpper() + QString(group).mid(1)));
+    sub->setObjectName(group);
     for (const auto& spec : opad::design::feature_specs())
       if (spec.group == group) sub->addAction(action("design." + QString::fromStdString(spec.kind)));
   }
@@ -88,6 +92,16 @@ void MainWindow::buildMenus() {
   const QMap<QString, QMenu*> menus{{"file", file}, {"edit", edit}, {"view", view}, {"inspect", inspect}, {"design", designMenu}, {"tools", tools}, {"help", help}};
   for (AreaController* area : m_areas) area->menus(menuBar(), menus);
   rebuildRecentMenu();
+  // Each command's menu path, by menu ids ("design/create"): a top menu by its key above (an area's own by its title), a
+  // submenu by its object name, else its title.
+  const std::function<void(QMenu*, const QString&)> record = [&](QMenu* menu, const QString& path) {
+    for (QAction* a : menu->actions()) {
+      if (QMenu* sub = a->menu()) record(sub, path + "/" + (sub->objectName().isEmpty() ? QString(sub->title()).remove('&').toLower() : sub->objectName()));
+      if (!a->objectName().isEmpty()) m_commands.setMenuPath(a->objectName(), path);
+    }
+  };
+  for (QAction* top : menuBar()->actions())
+    if (QMenu* menu = top->menu()) record(menu, menus.key(menu, QString(menu->title()).remove('&').toLower()));
 }
 
 void MainWindow::setWorkspace(const QString& id) {
@@ -139,6 +153,7 @@ void MainWindow::buildRibbon() {
       for (QList<QAction*> group : tab.groups) {
         group.removeAll(nullptr);
         if (!group.isEmpty()) groups << group;
+        for (QAction* a : group) m_commands.addWorkspace(a->objectName(), space.id);
       }
       m_ribbon->addTab(index, tab.title, groups);
     }
@@ -174,6 +189,7 @@ void MainWindow::buildRibbon() {
     if (i != m_sketchWorkspace && m_design && m_design->sketchActive()) return m_ribbon->setWorkspace(m_sketchWorkspace);  // a sketch is open: finish it first
     const QString id = m_workspaceIds.value(i);
     if (std::exchange(m_workspaceId, id) != id) forEachArea([&id](AreaController* area) { area->workspaceChanged(id); });
+    updateCommands();
     if (m_ribbon->workspaceAt(i).contextual) return;  // entered and left with the sketch (or an area's mode), never remembered
     m_settings.setValue("ui/workspace", id);
     if (QAction* a = action("workspace." + id)) a->setChecked(true);

@@ -268,38 +268,62 @@ MainWindow::~MainWindow() {
   // widgets and C++ members are gone. Disconnect callbacks before base teardown.
   for(auto* child:findChildren<QObject*>())QObject::disconnect(child,nullptr,this,nullptr);
 }
+// A command whose record is made from the id (Commands.hpp): its group and scope by the id's area, editsDocument by
+// isEditAction.
 QAction* MainWindow::addAction(const QString& id, const QString& text, const QString& icon, const QKeySequence& shortcut, std::function<void()> fn, bool checkable) {
-  auto* a = new QAction(text, this);
+  CommandInfo info;
+  info.id = id;
+  info.label = text;
+  info.icon = icon;
+  info.key = shortcut;
+  info.checkable = checkable;
+  info.editsDocument = isEditAction(id);
+  return addCommand(info, std::move(fn));
+}
+
+// The one factory of the window's commands: the QAction is made from the record and both go into the registry.
+QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> fn) {
+  const QString id = info.id;
+  auto* a = new QAction(info.label, this);
   a->setObjectName(id);
-  a->setData(icon);
-  if (!icon.isEmpty()) a->setIcon(icons::themed(icon));
-  shortcuts::initialize(a,shortcut,m_settings);
-  a->setCheckable(checkable);
+  a->setData(info.icon);
+  if (!info.icon.isEmpty()) a->setIcon(icons::themed(info.icon));
+  shortcuts::initialize(a,info.key,m_settings);
+  a->setCheckable(info.checkable);
   a->setShortcutContext(Qt::WindowShortcut);
-  QString tip = text;
+  QString tip = info.label;
   tip.remove('&');
   if (!a->shortcut().isEmpty()) tip += "  (" + a->shortcut().toString(QKeySequence::NativeText) + ")";
   a->setToolTip(tip);
   connect(a, &QAction::triggered, this, [this, fn, id, a] {
     if (m_loadJob && !id.startsWith("file.") && !id.startsWith("panel.") && id != "view.dark") return;  // loading: workspace is locked
     m_viewport->resetHoverFade();
-    if (m_doc->browse && isEditAction(id)) {  // viewer mode: offered, and asks to save first
+    if (m_doc->browse && m_commands.editsDocument(id)) {  // viewer mode: offered, and asks to save first
       if (a->isCheckable()) { QSignalBlocker block(a); a->setChecked(!a->isChecked()); }
       requireEditable([a] { a->trigger(); });
       return;
     }
     guarded(fn);
   });
+  m_commands.add(info, a);
   m_actions << a;
   QMainWindow::addAction(a);
   return a;
 }
 
-QAction* MainWindow::action(const QString& id) const {
-  for (QAction* a : m_actions)
-    if (a->objectName() == id) return a;
-  return nullptr;
+QAction* MainWindow::action(const QString& id) const { return m_commands.action(id); }
+
+CommandContext MainWindow::commandContext() const {
+  CommandContext c;
+  c.document = m_doc->hasDocument;
+  c.viewer = m_doc->browse;
+  c.sketching = m_design && m_design->sketchActive();
+  c.workspace = m_workspaceId;
+  c.selection = selectionContext();
+  return c;
 }
+
+void MainWindow::updateCommands() { m_commands.updateEnabled(commandContext()); }
 
 void MainWindow::guarded(const std::function<void()>& fn) {
   try {
@@ -344,6 +368,7 @@ void MainWindow::showDocument(bool has) {
     if (!has || (p == m_annotationsPanel && m_doc->browse)) p->hide();
   if (m_doc->browse && m_timelineDock->isVisible()) { m_timelineDock->hide(); m_timelineHiddenByViewer = true; }
   else if (!m_doc->browse && m_timelineHiddenByViewer) { m_timelineDock->show(); m_timelineHiddenByViewer = false; }
+  updateCommands();
 }
 
 bool MainWindow::maybeSave() {

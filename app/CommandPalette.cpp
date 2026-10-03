@@ -13,6 +13,7 @@
 #include "Theme.hpp"
 
 QString opGroup(const QAction* a) {
+  if (const QString group = a->property("commandGroup").toString(); !group.isEmpty()) return group;  // its record's (Commands.hpp)
   QString id = a->objectName();
   if (id.startsWith("file.")) return "File";
   if (id.startsWith("view.")) return "View";
@@ -141,6 +142,7 @@ void CommandPalette::refill(const QString& filter) {
   for (QAction* a : m_actions) {
     if (a->text().isEmpty() || a->isSeparator()) continue;
     int s = fuzzyScore(a->text().remove('&'), filter, nullptr);
+    for (const QString& keyword : a->property("commandKeywords").toStringList()) s = std::max(s, (fuzzyScore(keyword, filter, nullptr) + 1) / 2);  // below a label match
     if (s > 0) scored << qMakePair(s, a);
   }
   std::stable_sort(scored.begin(), scored.end(), [](const auto& x, const auto& y) { return x.first > y.first; });

@@ -73,6 +73,7 @@ void MainWindow::selectionMoved(const std::vector<opad::Ref>& refs) {
     const SelectionContext selection = selectionContext();
     for (AreaController* area : m_areas) area->selectionChanged(selection);
   }
+  updateCommands();
   if (!m_propsPanel->isVisible()) return;
   if (m_propsPanel->pinned()) showProperties(refs);  // O(1): only the first ref is inspected and geometry walks are deferred to a job
   else m_propsPanel->hide();

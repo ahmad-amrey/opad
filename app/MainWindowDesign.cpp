@@ -221,4 +221,5 @@ void MainWindow::updateDesignState() {
     const int dof = m_design->sketch()->dof();
     m_statusSel->setText(dof == 0 ? tr("Sketch fully constrained") : tr("Sketch · %1 degrees of freedom").arg(dof));
   }
+  updateCommands();
 }

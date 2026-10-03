@@ -1,5 +1,6 @@
 #include "ShortcutEditor.hpp"
 #include <QDialogButtonBox>
+#include <QHash>
 #include <QHeaderView>
 #include <QKeySequenceEdit>
 #include <QKeyEvent>
@@ -14,7 +15,10 @@
 #include <functional>
 
 namespace shortcuts {
+static QHash<QString,Scope>& scopes() { static QHash<QString,Scope> given; return given; }
+void setScope(const QString& id,Scope scope) { scopes().insert(id,scope); }
 Scope scope(const QString& id) {
+  if(const auto it=scopes().constFind(id);it!=scopes().constEnd())return *it;
   if(id.startsWith("sketch."))return SketchOnly;
   if(id.startsWith("select.") || id.startsWith("annotate.") ||
       (id.startsWith("inspect.") && id!="inspect.clear") ||

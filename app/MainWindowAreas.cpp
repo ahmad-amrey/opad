@@ -31,6 +31,10 @@ PropertiesPanel* AreaServices::properties() const { return m_window->m_props; }
 ViewportChips* AreaServices::chips() const { return m_window->m_chips; }
 QAction* AreaServices::action(const QString& id) const { return m_window->action(id); }
 
+QAction* AreaServices::addCommand(const CommandInfo& info, std::function<void()> fn) { return m_window->addCommand(info, std::move(fn)); }
+const CommandRegistry& AreaServices::commands() const { return m_window->m_commands; }
+void AreaServices::updateCommands() { m_window->updateCommands(); }
+
 QAction* AreaServices::addAction(const QString& id, const QString& text, const QString& icon, const QKeySequence& shortcut, std::function<void()> fn,
                                  bool checkable) {
   return m_window->addAction(id, text, icon, shortcut, std::move(fn), checkable);

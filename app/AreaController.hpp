@@ -37,6 +37,8 @@ class QStatusBar;
 class ToolPanel;
 class Viewport;
 class ViewportChips;
+class CommandRegistry;
+struct CommandInfo;
 struct RibbonLayout;
 
 // The selection as the hooks see it: what the viewport or the browser reported last.
@@ -63,9 +65,14 @@ class AreaServices {
   ViewportChips* chips() const;         // the chips row over the viewport (addChip)
   QAction* action(const QString& id) const;  // any command by id: "file.open", "view.fit", an area's own; null if none
   // A command like the built-in ones: its shortcut from the user's settings, locked while a file loads, errors shown as
-  // a message box; in viewer mode it asks to save as OPAD first when MainWindow::isEditAction(id) says it edits.
+  // a message box; in viewer mode it asks to save as OPAD first when its record says it edits the document. addCommand
+  // takes the whole record (Commands.hpp: group, keywords, help id, workspaces, editsDocument, enabledWhen); addAction
+  // makes one from the id as the built-in commands do (editsDocument by MainWindow::isEditAction: false for an area's id).
+  QAction* addCommand(const CommandInfo& info, std::function<void()> fn);
   QAction* addAction(const QString& id, const QString& text, const QString& icon, const QKeySequence& shortcut, std::function<void()> fn,
                      bool checkable = false);
+  const CommandRegistry& commands() const;  // every command's record, the built-in ones and the areas'
+  void updateCommands();                    // re-asks every enabledWhen (it is asked on document, selection and workspace changes)
   void addPanel(ToolPanel* panel);   // a floating panel of the window: anchored to the viewport, closed by openPanel and Esc
   void openPanel(ToolPanel* panel);  // shows it over the viewport; the other unpinned panels close
   bool requireEditable(std::function<void()> resume = {});  // viewer mode: offers to save as OPAD first; false until then

@@ -1,13 +1,72 @@
 // The shared UI contracts of UI-120 that every track builds on: the command registry, the ribbon's titled groups and
 // adaptive collapse, the panel footer, toasts and the semantic colour tokens. Offscreen; the in-app side is the
 // gui_benches cases ribbon, ribbon-rtl, toast and toast-rtl (app/ContractsBench.cpp).
+#include <QAction>
 #include <QApplication>
 
 #include <algorithm>
 #include <utility>
 
+#include "Commands.hpp"
 #include "Theme.hpp"
 #include "check.hpp"
+
+TEST(command_registry) {
+  CommandRegistry r;
+  QAction extrude("Extrude"), fit("Fit"), sync("Sync"), again("Again");
+  CommandInfo e;
+  e.id = "design.extrude";
+  e.label = "Extrude";
+  e.editsDocument = true;
+  e.keywords = {"push pull"};
+  r.add(e, &extrude);
+  CommandInfo f;
+  f.id = "view.fit";
+  r.add(f, &fit);
+  CommandInfo s;
+  s.id = "assets.sync";
+  s.group = "Assets";
+  s.helpId = "assets.overview";
+  s.workspaces = {"design"};
+  s.scope = shortcuts::SketchOnly;
+  bool selected = false;
+  s.enabledWhen = [&selected](const CommandContext& c) { return c.document && selected; };
+  r.add(s, &sync);
+  CommandInfo twice;
+  twice.id = "view.fit";
+  r.add(twice, &again);
+  CHECK(r.ids() == QStringList({"design.extrude", "view.fit", "assets.sync"}) && r.clashes() == QStringList{"view.fit"});
+  CHECK(r.action("view.fit") == &fit && r.find("view.fit")->label.isEmpty() && !r.action("view.none") && !r.find("view.none"));
+  CHECK(r.actions() == QList<QAction*>({&extrude, &fit, &sync}));
+  // Groups: by the id's area unless given; the action carries it for the palette, with its keywords.
+  CHECK(r.find("design.extrude")->group == commands::defaultGroup("design.extrude") && commands::defaultGroup("design.x") == "Design");
+  CHECK(commands::defaultGroup("panel.browser") == commands::defaultGroup("workspace.review") && commands::defaultGroup("probe.command") == "Probe");
+  CHECK(r.groups() == QStringList({"Design", "View", "Assets"}) && r.inGroup("Assets") == QStringList{"assets.sync"});
+  CHECK(extrude.property("commandGroup").toString() == "Design" && extrude.property("commandKeywords").toStringList() == QStringList{"push pull"});
+  CHECK(r.editsDocument("design.extrude") && !r.editsDocument("view.fit") && !r.editsDocument("view.none"));
+  CHECK(r.helpId("assets.sync") == "assets.overview" && r.helpId("view.fit") == "view.fit");
+  CHECK(shortcuts::scope("assets.sync") == shortcuts::SketchOnly && shortcuts::scope("view.fit") == shortcuts::Everywhere);
+  // Workspaces: given ones, and the ribbon's placements added once each.
+  r.addWorkspace("view.fit", "review");
+  r.addWorkspace("view.fit", "design");
+  r.addWorkspace("view.fit", "review");
+  r.addWorkspace("view.none", "review");
+  CHECK(r.find("view.fit")->workspaces == QStringList({"review", "design"}));
+  CHECK(r.inWorkspace("design") == QStringList({"view.fit", "assets.sync"}) && r.inWorkspace("review") == QStringList{"view.fit"});
+  // The first menu that shows a command is its path.
+  r.setMenuPath("view.fit", "view");
+  r.setMenuPath("view.fit", "view/navigation");
+  CHECK(r.find("view.fit")->menuPath == "view" && r.find("design.extrude")->menuPath.isEmpty());
+  // enabledWhen: only the commands that have one are touched.
+  fit.setEnabled(false);
+  CommandContext c;
+  r.updateEnabled(c);
+  CHECK(!sync.isEnabled() && !fit.isEnabled() && extrude.isEnabled());
+  c.document = true;
+  selected = true;
+  r.updateEnabled(c);
+  CHECK(sync.isEnabled() && !fit.isEnabled());
+}
 
 TEST(semantic_tokens) {
   for (const bool dark : {true, false}) {
