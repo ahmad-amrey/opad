@@ -449,6 +449,9 @@ void Viewport::setNavPreset(NavPreset p) {
   map.Bind(L, AIS_MouseGesture_SelectRectangle);
   map.Bind(L | CTRL, AIS_MouseGesture_SelectRectangle);
   map.Bind(L | SHIFT, AIS_MouseGesture_SelectRectangle);
+  // Ctrl+click adds to the selection or takes a picked item out, as Shift+click does (UI-09: it selected nothing); a
+  // circle centre under Ctrl+hover is still taken first (mousePressEvent, m_ctrlCenterPick).
+  ChangeMouseSelectionSchemes().Bind(L | CTRL, AIS_SelectionScheme_XOR);
   switch (p) {
     case NavPreset::Fusion:
       map.Bind(M, AIS_MouseGesture_Pan);
@@ -1557,6 +1560,27 @@ void Viewport::benchClick(double fx, double fy) {
   for (int i = 1; i <= 160; ++i)  // ~8 s of hovering, back and forth across the neighbourhood: past a long body-to-body measure
     QTimer::singleShot(50 * i, this, [send, pt, i, w] { send(QEvent::MouseMove, Graphic3d_Vec2i(pt.x() + ((i % 20) - 10) * w / 50, pt.y() + (i % 5) * 9), Qt::NoButton, Qt::NoButton); });
   trace::log(QStringLiteral("bench: mouse click posted at %1,%2").arg(pt.x()).arg(pt.y()));
+}
+
+void Viewport::benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers) {
+  if (!m_initialised) return;
+  m_view->Redraw();  // the picker needs a frame after a camera change
+  auto send = [&](QEvent::Type type, Qt::MouseButton button, Qt::MouseButtons buttons, Qt::KeyboardModifiers held) {
+    QMouseEvent e(type, at, mapToGlobal(at), button, buttons, held);
+    QCoreApplication::sendEvent(this, &e);
+    paintEvent(nullptr);
+  };
+  send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton, modifiers);
+  send(QEvent::MouseButtonPress, Qt::LeftButton, Qt::LeftButton, modifiers);
+  send(QEvent::MouseButtonRelease, Qt::LeftButton, Qt::NoButton, modifiers);
+  send(QEvent::MouseMove, Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+}
+
+void Viewport::clearHover() {
+  m_hoverOwner = nullptr;  // the next frame labels what is under the pointer again
+  if (m_hover.isEmpty()) return;
+  m_hover.clear();
+  emit hoverChanged(m_hover);
 }
 
 void Viewport::benchPick() {

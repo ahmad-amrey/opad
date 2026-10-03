@@ -19,6 +19,7 @@ class BrowserTree : public QTreeWidget {
  public:
   explicit BrowserTree(AppDocument* doc, QWidget* parent = nullptr);
   using QTreeWidget::indexFromItem;  // BrowserPanel selects in one batch through the selection model
+  QWidget* renameEditor() const;  // the row editor while a name is being edited, else null
  signals:
   void reparentRequested(const std::vector<std::string>& ids, const std::string& parent, int index);
   void eyeClicked(const std::string& id);
@@ -42,7 +43,8 @@ class BrowserPanel : public QWidget {
   bool isProvided(const std::string& id) const;  // a row of an area's folder (addFolder), not a node or a sketch
   QString rowName(const std::string& id) const;  // as shown
   void setSelectedIds(const std::vector<std::string>& ids);
-  void startRename(const std::string& id);
+  void startRename(const std::string& id);  // the row's name editor, with the keyboard (its window activated)
+  QWidget* renameEditor() const { return m_tree->renameEditor(); }  // null unless a name is being edited
   void focusFilter();
   void selectIds(const std::vector<std::string>& ids);  // like a click: selects and emits selectionChanged
   void selectParent();  // replaces the selection by its parents

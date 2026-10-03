@@ -1,8 +1,10 @@
 #include "MainWindow.hpp"
 #include "AgentBridge.hpp"
 #include "CheckPanel.hpp"
+#include "KeyGuard.hpp"
 #include "RecoveryManager.hpp"
 
+#include <QApplication>
 #include <QCloseEvent>
 #include <QInputDialog>
 #include <QMessageBox>
@@ -60,11 +62,20 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   });
   connect(m_doc, &AppDocument::changed, this, [this] {
     trace::Scope scope("MainWindow: document changed");
+    const bool replaced = std::exchange(m_areaGeneration, m_doc->generation) != m_doc->generation;
+    // Nothing of the last document stays (UI-09): the viewer card, the 2D mode a viewed drawing turned on (Ctrl+N or a
+    // close after a DXF), what the status said was under the pointer (the next frame says it again).
+    if (replaced && m_autoTwoD && !viewingDrawing()) setAutoTwoD(false);
+    if (replaced && m_autoEdges && !m_loadJob) {  // Ctrl+N or a close (a file opened sets its own in openPath)
+      m_autoEdges = false;
+      m_viewport->setSelectionFilter(Viewport::SelFilter::Body);
+    }
+    m_viewport->clearHover();
     updateTitle();
     rebuildViewsMenu();
+    updateViewerCard();
     updateChips();
     showDocument(m_doc->hasDocument);
-    const bool replaced = std::exchange(m_areaGeneration, m_doc->generation) != m_doc->generation;
     forEachArea([replaced](AreaController* area) { area->documentChanged(replaced); });
   });
   connect(m_doc, &AppDocument::loadFinished, this, [this](bool ok, const QString&) {
@@ -74,20 +85,21 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     const bool drawing = !bodies.empty() && std::all_of(bodies.begin(), bodies.end(), [this](const auto& id) { return m_doc->scene.node(id)->representation == "drawing2d"; });
     // Drawing files get a useful initial view. Viewing one (DXF, DWG, SVG) also turns 2D mode on; the next file that
     // is not a drawing turns it off again, unless the toggle was changed by hand meanwhile.
-    if (drawing) { m_viewport->standardView("top"); m_viewport->setSelectionFilter(Viewport::SelFilter::Edge); }
-    QAction* flat = action("view.2d");
-    const bool viewingDrawing = drawing && m_doc->browse;
-    if (viewingDrawing != flat->isChecked() && (viewingDrawing || m_autoTwoD)) {
-      m_settingTwoD = true;
-      flat->setChecked(viewingDrawing);
-      m_settingTwoD = false;
-      m_autoTwoD = viewingDrawing;
+    if (drawing) {
+      m_viewport->standardView("top");
+      if (m_viewport->selectionFilter() != Viewport::SelFilter::Edge) m_autoEdges = true;
+      m_viewport->setSelectionFilter(Viewport::SelFilter::Edge);
     }
+    const bool viewing = drawing && m_doc->browse;
+    if (viewing != action("view.2d")->isChecked() && (viewing || m_autoTwoD)) setAutoTwoD(viewing);
   });
   connect(m_doc, &AppDocument::newDocumentCreated, m_viewport, &Viewport::home);
   // Viewer mode -> editable: the same shapes under content keys, so what is on screen stays (no second tessellation).
   connect(m_doc, &AppDocument::bodyKeysRenamed, m_viewport, &Viewport::renameBodyKeys);
-  connect(m_chips, &ViewportChips::saveToEditRequested, this, [this] { guarded([this] { saveViewerAs(); }); });
+  connect(m_chips, &ViewportChips::saveToEditRequested, this, [this] {  // a card left from a viewed file: gone, no silent no-op
+    if (m_doc->browse) guarded([this] { saveViewerAs(); });
+    else updateViewerCard();
+  });
   connect(m_doc, &AppDocument::pathChanged, this, [this] { if(!m_doc->loading && !m_doc->browse) m_viewPath=m_doc->path(); updateTitle(); refreshGit(); });
   connect(m_doc, &AppDocument::message, this, [this](const QString& t) { statusBar()->showMessage(t, 6000); });
   connect(m_viewport, &Viewport::selectionChanged, this, &MainWindow::onViewportSelection);
@@ -141,6 +153,9 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
     else m_loadJob->finish();
   });
   trace::installUiWatchdog(this);  // logs any UI-thread stall over 250 ms (OPAD_TRACE)
+  // A name typed into the browser is not taken as one-key commands (UI-09), nor one typed right after a dialog closed.
+  qApp->installEventFilter(new KeyGuard([browser = QPointer<BrowserPanel>(m_browser)] { return browser ? browser->renameEditor() : nullptr; }, this));
+  m_browserOverlay->setHold([browser = QPointer<BrowserPanel>(m_browser)] { return browser && browser->renameEditor(); });
   connect(m_browser, &BrowserPanel::selectionChanged, this, &MainWindow::onBrowserSelection);
   connect(m_browser, &BrowserPanel::contextMenuRequested, this, [this](const QPoint& p, const std::vector<std::string>& ids) { showContextMenu(p, ids); });
   connect(m_browser, &BrowserPanel::fitRequested, m_viewport, &Viewport::fitNodes);

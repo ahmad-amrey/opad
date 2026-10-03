@@ -125,6 +125,13 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // OPAD_BENCH_CROSSLOCK (ViewportCrossLockBench.cpp): lock on one anchor, acquire another, take where they line up (UI-32)
   bool benchCrossLock(const QString& prefix);
   void benchPick();  // --bench-select: pick at the view centre through the context and log what it hit
+  // Benches: a left click at a widget point as the mouse handlers deliver it (move, press, release and the frames that
+  // handle them), with these modifiers held; then a plain move there.
+  void benchClickAt(const QPointF& at, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
+  // The document changed: what the status said is under the pointer may be gone or renamed. Cleared; the next frame
+  // says it again for whatever is still there.
+  void clearHover();
+  QString hoverText() const { return m_hover; }
   void setJobs(JobRunner* jobs);  // long operations (selection, mode switches) run through the app's JobRunner
   std::vector<opad::Ref> selection() const;
   // Highlights the given nodes' bodies as a sliced job; emits selectionApplied() when it has settled. Sets

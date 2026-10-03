@@ -66,4 +66,8 @@ CASES = [
     ("batch", "tests/corpus/stepcode-as1-oc-214.stp", {"OPAD_BENCH_BATCH": "{prefix}"}, "[files]\nviewerMode=false\n"),
     ("batch-design", three_parts, {"OPAD_BENCH_BATCH": "{prefix}"}),
     ("batch-engine", beside("opad_resources/bench_step_files/Engine V8-XT Turbo.opad"), {"OPAD_BENCH_BATCH": "{prefix}"}),
+    # State and selection (UI-09), from a drawing in viewer mode: Rename after "Edit unsaved copy" has the editor and the
+    # typed name; Ctrl+N after viewing it leaves no 2D mode or viewer card; Ctrl+click adds and takes out; the hover text
+    # follows a change; Ctrl+Shift+Z redoes; V right after a dialog closed is held back. <prefix>.png.
+    ("state", strokes, {"OPAD_BENCH_STATE": "{prefix}"}),
 ]

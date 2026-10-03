@@ -6,6 +6,7 @@
 #include <QTimer>
 #include <QVariantAnimation>
 #include <QCursor>
+#include <functional>
 #include "Theme.hpp"
 
 // Attached to the scene but composited by the OS, just like the measurement
@@ -36,7 +37,7 @@ class BrowserOverlay : public QFrame {
       if (QApplication::mouseButtons()!=Qt::NoButton) return;
       QWidget* focus=QApplication::focusWidget();
       const bool active=rect().contains(mapFromGlobal(QCursor::pos())) || (isActiveWindow() && focus && isAncestorOf(focus));
-      expand(!m_auto || active || (isActiveWindow() && QApplication::activePopupWidget()));
+      expand(!m_auto || active || (isActiveWindow() && QApplication::activePopupWidget()) || (m_hold && m_hold()));
     });
     m_poll.start(); place(); snapshot(); m_browser->setVisible(m_expanded);
   }
@@ -51,7 +52,19 @@ class BrowserOverlay : public QFrame {
     m_browser->setGeometry(0,0,w,h);
     if(changed && !m_expanded) snapshot();
   }
-  void reveal() { setVisible(true); expand(true); raise(); }
+  // now: expanded at once, without the animation (which hides the tree while it runs), e.g. for a row's name editor.
+  void reveal(bool now = false) {
+    setVisible(true);
+    expand(true);
+    raise();
+    if (!now) return;
+    m_animation.stop();
+    m_progress = 1.0;
+    resize(width(), currentHeight());
+    m_browser->show();
+    update();
+  }
+  void setHold(std::function<bool()> hold) { m_hold = std::move(hold); }  // kept expanded while it says so (renaming)
   void refresh() { snapshot(); update(); }
   bool expanded() const { return m_expanded; }
  protected:
@@ -91,6 +104,7 @@ class BrowserOverlay : public QFrame {
   QPixmap m_snapshot;
   QVariantAnimation m_animation;
   QTimer m_poll;
+  std::function<bool()> m_hold;
   bool m_auto=true, m_expanded=false, m_requested=true;
   int m_expandedHeight=520;
   qreal m_progress=0;

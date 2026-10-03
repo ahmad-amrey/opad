@@ -192,8 +192,14 @@ void MainWindow::openPath(const QString& path) {
   m_settings.setValue("ui/lastDir", QFileInfo(path).absolutePath());
   beginLoad([this, path] { m_viewPath=QFileInfo(path).absoluteFilePath(); addRecent(path); m_viewport->fitWhenReady(); updateViewerCard(); });
   // A drawing is picked by its edges (see loadFinished): set before its bodies are displayed, so each is activated once.
-  if (const QString suffix = QFileInfo(path).suffix().toLower(); suffix == "dxf" || suffix == "dwg" || suffix == "svg")
+  const QString suffix = QFileInfo(path).suffix().toLower();
+  if (suffix == "dxf" || suffix == "dwg" || suffix == "svg") {
+    if (m_viewport->selectionFilter() != Viewport::SelFilter::Edge) m_autoEdges = true;
     m_viewport->setSelectionFilter(Viewport::SelFilter::Edge);
+  } else if (m_autoEdges) {  // the next file that is not a drawing picks bodies again, unless the filter was chosen meanwhile
+    m_autoEdges = false;
+    m_viewport->setSelectionFilter(Viewport::SelFilter::Body);
+  }
   m_doc->startOpen(path);
 }
 

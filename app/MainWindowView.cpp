@@ -15,6 +15,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 #include <tuple>
 #include <utility>
@@ -115,6 +116,7 @@ void MainWindow::buildNavigationActions() {
   }
   for (const auto& [name, f, key, icon] : std::vector<std::tuple<QString, Viewport::SelFilter, QString, QString>>{{"Bodies", Viewport::SelFilter::Body, "1", "filterBodies"}, {"Faces", Viewport::SelFilter::Face, "2", "filterFaces"}, {"Edges", Viewport::SelFilter::Edge, "3", "filterEdges"}, {"Vertices", Viewport::SelFilter::Vertex, "4", "filterVertices"}}) {
     QAction* a = addAction("select." + name.toLower(), i18n::t(name), icon, QKeySequence(key), [this, ff = f, n = name] {
+      m_autoEdges = false;  // chosen by hand: stays
       m_viewport->setSelectionFilter(ff);
       if (!m_tool.id.isEmpty()) {  // mid-tool: the steps are reworded for the new filter and start over
         m_viewport->clearSelection();
@@ -226,6 +228,19 @@ void MainWindow::applyTheme(bool dark) {
   theme::apply(dark);
   if (m_viewport) m_viewport->setTokens(theme::current());
   if (m_darkAction && m_darkAction->isChecked() != dark) m_darkAction->setChecked(dark);
+}
+
+bool MainWindow::viewingDrawing() const {
+  if (!m_doc->browse) return false;
+  const auto bodies = m_doc->scene.all_bodies();
+  return !bodies.empty() && std::all_of(bodies.begin(), bodies.end(), [this](const auto& id) { return m_doc->scene.node(id)->representation == "drawing2d"; });
+}
+
+void MainWindow::setAutoTwoD(bool on) {
+  m_settingTwoD = true;
+  action("view.2d")->setChecked(on);
+  m_settingTwoD = false;
+  m_autoTwoD = on;
 }
 
 void MainWindow::updateChips() {

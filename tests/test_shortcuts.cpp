@@ -1,5 +1,7 @@
+#include "KeyGuard.hpp"
 #include "ShortcutEditor.hpp"
 #include "check.hpp"
+#include <QDialog>
 #include <QApplication>
 #include <QKeySequenceEdit>
 #include <QLineEdit>
@@ -113,6 +115,35 @@ TEST(shift_digit_capture_and_lookup) {
   auto* binding=dialog.findChild<QKeySequenceEdit*>("shortcutBinding");
   QKeyEvent hash(QEvent::KeyPress,Qt::Key_NumberSign,Qt::ShiftModifier,"#");QApplication::sendEvent(binding,&hash);
   CHECK(binding->keySequence()==QKeySequence("Shift+3"));
+}
+// UI-09: one-key shortcuts are held back for a moment after a modal dialog closed, and while an inline editor is open its
+// keys go there; other keys pass.
+TEST(key_guard_holds_one_key_shortcuts) {
+  QKeyEvent v(QEvent::KeyPress,Qt::Key_V,Qt::NoModifier,"v"),shiftV(QEvent::KeyPress,Qt::Key_V,Qt::ShiftModifier,"V"),ctrlV(QEvent::KeyPress,Qt::Key_V,Qt::ControlModifier),
+      del(QEvent::KeyPress,Qt::Key_Delete,Qt::NoModifier),escape(QEvent::KeyPress,Qt::Key_Escape,Qt::NoModifier),f2(QEvent::KeyPress,Qt::Key_F2,Qt::NoModifier);
+  CHECK(KeyGuard::oneKey(&v) && KeyGuard::oneKey(&shiftV) && KeyGuard::oneKey(&del));
+  CHECK(!KeyGuard::oneKey(&ctrlV) && !KeyGuard::oneKey(&escape) && !KeyGuard::oneKey(&f2));
+  QWidget window;auto* target=new QWidget(&window);target->setFocusPolicy(Qt::StrongFocus);
+  QAction hide(&window),undo(&window);hide.setShortcut(QKeySequence("V"));undo.setShortcut(QKeySequence("Ctrl+Z"));window.addActions({&hide,&undo});
+  int hidden=0,undone=0;QObject::connect(&hide,&QAction::triggered,[&]{++hidden;});QObject::connect(&undo,&QAction::triggered,[&]{++undone;});
+  QLineEdit* editor=nullptr;
+  KeyGuard guard([&]()->QWidget*{return editor;});qApp->installEventFilter(&guard);
+  window.show();window.activateWindow();CHECK(QTest::qWaitForWindowActive(&window));target->setFocus();
+  QTest::keyClick(target,Qt::Key_V);CHECK_EQ(hidden,1);CHECK(!guard.quiet());
+  {QDialog dialog(&window);QTimer::singleShot(0,&dialog,&QDialog::accept);dialog.exec();}
+  window.activateWindow();CHECK(QTest::qWaitForWindowActive(&window));target->setFocus();
+  CHECK(guard.quiet());
+  QTest::keyClick(target,Qt::Key_V);QTest::keyClick(target,Qt::Key_Z,Qt::ControlModifier);
+  CHECK_EQ(hidden,1);CHECK_EQ(undone,1);  // V held back, Ctrl+Z not
+  QTest::qWait(KeyGuard::kQuietMs+50);
+  QTest::keyClick(target,Qt::Key_V);CHECK_EQ(hidden,2);
+  editor=new QLineEdit(&window);editor->show();  // open, but the keyboard is elsewhere
+  QTest::keyClick(target,Qt::Key_V);
+  CHECK_EQ(hidden,2);CHECK_EQ(editor->text(),QString("v"));CHECK(QApplication::focusWidget()==editor);  // it took the keyboard
+  QTest::keyClick(QApplication::focusWidget(),Qt::Key_N);CHECK_EQ(editor->text(),QString("vn"));
+  editor->setText("kept");editor->hide();editor=nullptr;  // closed: V is the shortcut again
+  QTest::keyClick(target,Qt::Key_V);CHECK_EQ(hidden,3);
+  qApp->removeEventFilter(&guard);
 }
 int main(int argc,char** argv) {
   QApplication app(argc,argv);QTemporaryDir settings;

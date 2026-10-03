@@ -22,16 +22,22 @@ void MainWindow::buildEditActions() {
     if (m_design->ownsSelection() || m_design->busy()) return;
     m_doc->undo();
   });
-  addAction("edit.redo", tr("&Redo"), "rollRight", QKeySequence::Redo, [this] {
+  QAction* redo = addAction("edit.redo", tr("&Redo"), "rollRight", QKeySequence::Redo, [this] {
     if (m_annotationEditor) return m_annotationEditor->redo();
     if (m_design->sketchActive()) return m_design->sketch()->redo();
     if (m_design->ownsSelection() || m_design->busy()) return;
     m_doc->redo();
   });
+  // Ctrl+Shift+Z as well (UI-09), as most apps take it, while the binding is the default one (Ctrl+Y here).
+  if (const QKeySequence other("Ctrl+Shift+Z"); redo->shortcut() == QKeySequence(QKeySequence::Redo) && redo->shortcut() != other)
+    redo->setShortcuts({redo->shortcut(), other});
   connect(m_doc, &AppDocument::undoChanged, this, &MainWindow::updateUndoActions);
   addAction("edit.rename", tr("Rename"), "rename", QKeySequence("F2"), [this] {
     auto ids = currentNodeIds();
-    if (ids.size() == 1) return m_browser->startRename(ids.front());
+    if (ids.size() == 1) {  // in the browser's row, expanded at once (the tree is hidden while it opens) and with the keyboard
+      m_browserOverlay->reveal(true);
+      return m_browser->startRename(ids.front());
+    }
     if (ids.empty()) return;
     // Several at once: one name, numbered in selection order (TODO 10 B15).
     QString base = m_doc->nodeName(ids.front());

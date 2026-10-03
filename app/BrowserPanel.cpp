@@ -6,6 +6,7 @@
 #include <QHBoxLayout>
 #include <QItemSelection>
 #include <QItemSelectionModel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
@@ -503,7 +504,21 @@ void BrowserPanel::collapseAll() {
 }
 
 void BrowserPanel::startRename(const std::string& id) {
-  if (auto* it = itemFor(id)) m_tree->editItem(it, 0);
+  auto* it = itemFor(id);
+  if (!it) return;
+  m_tree->scrollToItem(it);
+  m_tree->editItem(it, 0);
+  if (QWidget* editor = renameEditor()) {  // the panel floats in a window of its own: typed keys must come here (UI-09)
+    editor->window()->activateWindow();
+    editor->setFocus(Qt::OtherFocusReason);
+  }
+}
+
+QWidget* BrowserTree::renameEditor() const {
+  if (state() != EditingState) return nullptr;
+  for (auto* editor : viewport()->findChildren<QLineEdit*>())
+    if (!editor->isHidden()) return editor;  // a closed one is hidden until it is deleted
+  return nullptr;
 }
 
 void BrowserPanel::updateBreadcrumb() {
