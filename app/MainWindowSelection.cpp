@@ -70,7 +70,7 @@ void MainWindow::onBrowserSelection(const std::vector<std::string>& ids) {
   m_viewport->selectNodes(nodes);  // sliced; selectionApplied() writes selection.json when it settles
 }
 
-// The Properties panel belongs to one selection: it is opened from the context menu (or Ctrl+P), and a new
+// The Properties panel belongs to one selection: it is opened from the context menu (or Alt+Enter), and a new
 // selection closes it. Pinned, it stays and follows the selection. Nothing is inspected while it is closed.
 void MainWindow::selectionMoved(const std::vector<opad::Ref>& refs) {
   m_selRefs = refs;
@@ -225,6 +225,10 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
   }
   QMenu menu(this);
   auto add = [&](const char* id) { if (QAction* a = action(id)) menu.addAction(a); };  // viewer mode: editing entries ask to save first
+  if (action("edit.repeat")->isEnabled()) {  // "Repeat Extrude" first, as the last thing done is the likely next one (UI-111)
+    add("edit.repeat");
+    menu.addSeparator();
+  }
   if (!ids.empty()) {
     menu.addSection(ids.size() == 1 ? m_doc->nodeName(ids.front()) : tr("%1 objects").arg(ids.size()));
     QAction* fit = menu.addAction(icons::themed("fit", 16), tr("Fit to"));
@@ -279,6 +283,7 @@ void MainWindow::showContextMenu(const QPoint& globalPos, std::vector<std::strin
     add("view.home");
     add("view.unisolate");
     add("edit.showall");
+    add("edit.selectall");
     menu.addSeparator();
     add("file.import");
   }

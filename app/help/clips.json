@@ -1400,7 +1400,7 @@
    ],
    "steps": [
     {"to": 1.3, "caption": "Select a body and right-click"},
-    {"to": 2.3, "caption": "Choose Properties (Ctrl+P)"},
+    {"to": 2.3, "caption": "Choose Properties (Alt+Enter)"},
     {"to": 5.2, "caption": "Volume and area fill in"}
    ]
   },

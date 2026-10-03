@@ -244,7 +244,7 @@
  "Area": "المساحة",
  "Size": "الأبعاد",
  "Select a body and right-click": "حدد جسمًا وانقر بالزر الأيمن",
- "Choose Properties (Ctrl+P)": "اختر الخصائص (Ctrl+P)",
+ "Choose Properties (Alt+Enter)": "اختر الخصائص (Alt+Enter)",
  "Volume and area fill in": "يُملأ الحجم والمساحة",
  "All solids": "كل المجسمات",
  "Open Interference and run the check": "افتح التداخل وشغّل الفحص",
@@ -685,5 +685,8 @@
  "An AI client on this computer can read the open document through OPAD's MCP server and, when allowed, edit it live.": "يمكن لعميل ذكاء اصطناعي على هذا الحاسوب قراءة المستند المفتوح عبر خادم MCP في OPAD، وتحريره مباشرة عند السماح بذلك.",
  "Allow design edits": "السماح بتعديلات التصميم",
  "Connection and client setup…": "الاتصال وإعداد العميل…",
- "Draft (fast)": "مسودة (سريعة)"
+ "Draft (fast)": "مسودة (سريعة)",
+ "Repeat": "تكرار",
+ "Invert selection": "عكس التحديد",
+ "Repeat %1": "تكرار %1"
 }

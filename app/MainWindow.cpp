@@ -272,6 +272,7 @@ MainWindow::MainWindow() : m_doc(new AppDocument(this)) {
   updateTitle();
   updateChips();
   m_areaGeneration = m_doc->generation;
+  shortcuts::settleAlternates(m_actions);  // every command is made: an alternate key another one uses goes
   for (AreaController* area : m_areas) area->ready();
   m_areasReady = true;
   if (!m_areas.empty()) positionOverlays();
@@ -325,6 +326,7 @@ QAction* MainWindow::addCommand(const CommandInfo& info, std::function<void()> f
     }
     QScopedValueRollback<QString> running(m_runningCommand, id);
     guarded(fn);
+    noteCommand(id);
   });
   m_commands.add(info, a);
   m_actions << a;
@@ -430,18 +432,13 @@ void MainWindow::showDocument(bool has) {
   updateCommands();
 }
 
-bool MainWindow::maybeSave() {
+bool MainWindow::maybeSave(std::function<void()> resume) {
   if (m_areasReady)
     for (AreaController* area : m_areas)
       if (!area->maybeClose()) return false;  // unfinished work in an area that the user did not give up
   if (m_benchSelect) return true;  // benches run in hidden windows: a question here would pop up on the user's desktop
   if(m_doc->snapshotBusy()){statusBar()->showMessage(tr("A snapshot is being captured. Try again shortly."),4000);return false;}
-  if(m_design->sketchActive() && m_design->sketch()->modified()) {
-    const auto result=QMessageBox::question(this,tr("Unfinished sketch"),tr("Finish the sketch before continuing?"),QMessageBox::Save|QMessageBox::Discard|QMessageBox::Cancel);
-    if(result==QMessageBox::Cancel)return false;
-    if(result==QMessageBox::Save){m_design->finishSketch();statusBar()->showMessage(tr("Finish the sketch, then repeat this action."),6000);return false;}
-    m_design->sketch()->end();m_doc->setRollback({});
-  }
+  if (!leaveSketch(std::move(resume))) return false;
   if (!m_doc->isDirty()) return true;
   auto r = QMessageBox::question(this, tr("Unsaved changes"), tr("Save changes to %1?").arg(m_doc->path().isEmpty() ? tr("the document") : m_doc->path()),
                                  QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
@@ -459,9 +456,23 @@ bool MainWindow::maybeSave() {
   return true;
 }
 
+bool MainWindow::leaveSketch(std::function<void()> resume) {
+  if (!m_design->sketchActive() || !m_design->sketch()->modified()) return true;
+  const auto result = QMessageBox::question(this, tr("Unfinished sketch"), tr("Finish the sketch before continuing?"), QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+  if (result == QMessageBox::Discard) {
+    m_design->sketch()->end();
+    m_doc->setRollback({});
+    return true;
+  }
+  if (result != QMessageBox::Save) return false;  // Cancel, or the box closed some other way
+  QPointer<MainWindow> self(this);
+  m_design->finishSketch([self, resume] { if (self && resume) QTimer::singleShot(0, self, resume); });  // after the sketch op is in
+  return false;
+}
+
 void MainWindow::closeEvent(QCloseEvent* e) {
   if(m_closePending){e->ignore();return;}
-  if (!m_recoveryClosed && !maybeSave()) {
+  if (!m_recoveryClosed && !maybeSave([this] { close(); })) {
     e->ignore();
     return;
   }

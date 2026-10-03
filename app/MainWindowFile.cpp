@@ -19,7 +19,7 @@
 #include "opad/drawing_io.hpp"
 
 void MainWindow::buildFileActions() {
-  addAction("file.new", tr("&New document"), "doc", QKeySequence::New, [this] { if (maybeSave()) m_doc->newDocument(); });
+  addAction("file.new", tr("&New document"), "doc", QKeySequence::New, [this] { if (maybeSave([this] { action("file.new")->trigger(); })) m_doc->newDocument(); });
   addAction("file.open", tr("&Open…"), "open", QKeySequence("Ctrl+O"), [this] {
     // openPath asks about unsaved changes once a file is chosen (asking here too asked twice after Discard).
     QString p = QFileDialog::getOpenFileName(this, tr("Open"), m_settings.value("ui/lastDir").toString(),
@@ -59,7 +59,7 @@ void MainWindow::buildFileActions() {
   addAction("file.export", tr("&Export…"), "export", QKeySequence("Ctrl+E"), [this] { exportDialog(); });
   addAction("file.screenshot", tr("Save screens&hot…"), "export", QKeySequence("Ctrl+Shift+P"), [this] { screenshot(); });
   addAction("file.close", tr("&Close document"), "close", QKeySequence("Ctrl+W"), [this] {
-    if (!m_doc->hasDocument || m_doc->loading || !maybeSave()) return;
+    if (!m_doc->hasDocument || m_doc->loading || !maybeSave([this] { action("file.close")->trigger(); })) return;
     m_viewport->clearSelection();
     m_doc->closeDocument();  // AppDocument::changed -> showDocument(false) -> the start screen
     statusBar()->showMessage(tr("Document closed"), 4000);
@@ -188,7 +188,7 @@ void MainWindow::rebuildRecentMenu() {
 void MainWindow::openPath(const QString& path) {
   // A load already running is dropped (the next file wins, as when stepping through a folder); the document on screen
   // has not changed since it was asked about.
-  if (!m_doc->loading && !maybeSave()) return;
+  if (!m_doc->loading && !maybeSave([this, path] { openPath(path); })) return;
   if (m_doc->loading && m_loadJob) m_loadJob->cancel();
   if (m_doc->loading) m_doc->cancelLoad();
   m_settings.setValue("ui/lastDir", QFileInfo(path).absolutePath());

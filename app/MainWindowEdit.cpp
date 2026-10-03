@@ -29,6 +29,14 @@ void MainWindow::buildEditActions() {
     m_doc->redo();
   });
   connect(m_doc, &AppDocument::undoChanged, this, &MainWindow::updateUndoActions);
+  // Repeat (UI-111): the last tool, feature, check or edit run, from anywhere (key, menu, ribbon, palette).
+  addAction("edit.repeat", tr("Repeat"), "regen", QKeySequence("Shift+Return"), [this] {
+    if (QAction* a = action(m_lastCommand); a && a->isEnabled()) a->trigger();
+  })->setEnabled(false);
+  // Select all and Invert (UI-111): the sketch's curves while sketching, else the bodies on screen (visible, inside the
+  // isolation); a tool or a feature input owns the picks meanwhile.
+  addAction("edit.selectall", tr("Select all"), "", QKeySequence::SelectAll, [this] { selectShown(false); });
+  addAction("edit.invert", tr("Invert selection"), "", QKeySequence("Ctrl+Shift+I"), [this] { selectShown(true); });
   addAction("edit.rename", tr("Rename"), "rename", QKeySequence("F2"), [this] {
     auto ids = currentNodeIds();
     if (ids.size() == 1) return m_browser->startRename(ids.front());
@@ -63,6 +71,52 @@ void MainWindow::buildEditActions() {
   addAction("edit.selecttouched", tr("Select what it touches"), "isolate", QKeySequence("T"), [this] {
     if (!m_timeline->currentOp().empty()) selectOpTargets(m_timeline->currentOp());
   });
+}
+
+std::vector<std::string> MainWindow::shownBodies() const {
+  std::set<std::string> isolated;
+  for (const auto& id : m_viewport->isolatedNodes())
+    for (const auto& b : m_doc->scene.bodies_under(id)) isolated.insert(b);
+  std::vector<std::string> out;
+  for (const auto& b : m_doc->scene.all_bodies()) {
+    const auto path = m_doc->scene.path_to(b);
+    const bool visible = std::all_of(path.begin(), path.end(), [this](const std::string& id) { const opad::Node* n = m_doc->node(id); return n && n->visible; });
+    if (visible && (isolated.empty() || isolated.count(b))) out.push_back(b);
+  }
+  return out;
+}
+
+void MainWindow::selectShown(bool invert) {
+  if (m_design->sketchActive()) return m_design->sketch()->selectAll(invert);
+  if (!m_doc->hasDocument || m_design->ownsSelection() || !m_tool.id.isEmpty() || m_annotationEditor) return;
+  std::set<std::string> selected;
+  if (invert)
+    for (const auto& id : currentNodeIds())
+      for (const auto& b : m_doc->scene.bodies_under(id)) selected.insert(b);
+  std::vector<std::string> ids;
+  for (const auto& b : shownBodies())
+    if (!selected.count(b)) ids.push_back(b);
+  if (m_viewport->selectionFilter() != Viewport::SelFilter::Body) action("select.bodies")->trigger();
+  m_browser->setSelectedIds(ids);
+  onBrowserSelection(ids);
+}
+
+// What Repeat runs again: a tool, feature, check, note or edit, not a view change, a file command, a toggle of the
+// window or a selection command.
+bool MainWindow::repeatable(const QString& id) {
+  static const QStringList never{"edit.undo", "edit.redo", "edit.repeat", "edit.selectall", "edit.invert", "edit.filter", "edit.selectparent", "edit.selecttouched",
+                                 "inspect.clear", "inspect.pin", "inspect.flip", "sketch.finish", "sketch.cancel", "sketch.panel", "annotate.show", "annotate.resolve"};
+  static const QStringList yes{"design.", "sketch.", "inspect.", "annotate.", "edit.", "select.geometry", "view.isolate", "view.saveview", "file.import", "file.export", "file.screenshot"};
+  return !never.contains(id) && std::any_of(yes.begin(), yes.end(), [&id](const QString& p) { return id.startsWith(p); });
+}
+
+void MainWindow::noteCommand(const QString& id) {
+  if (!repeatable(id) || !action(id)) return;
+  m_lastCommand = id;
+  QAction* repeat = action("edit.repeat");
+  repeat->setText(tr("Repeat %1").arg(QString(action(id)->text()).remove('&').remove(QString::fromUtf8("…"))));
+  repeat->setEnabled(true);
+  shortcuts::updateTooltip(repeat);
 }
 
 void MainWindow::timelineMenu(const std::string& requestedId, const QPoint& globalPos) {

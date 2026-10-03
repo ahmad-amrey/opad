@@ -72,6 +72,11 @@ class MainWindow : public QMainWindow {
   }
   void buildMenus();
   void selectGeometry();
+  std::vector<std::string> shownBodies() const;  // visible bodies (and their components), inside the isolation
+  void selectShown(bool invert);                 // Select all / Invert selection (UI-111)
+  static bool repeatable(const QString& id);
+  void noteCommand(const QString& id);  // a command ran: Repeat runs it again
+  QString m_lastCommand;
   void buildRibbon();
   void buildDesignActions();  // design.* and sketch.* (MainWindow "design workspace")
   void buildDesign();         // the controller, its floating panel and the wiring
@@ -106,7 +111,10 @@ class MainWindow : public QMainWindow {
   void resultToast(const QString& text, const QString& folder = QString());  // a result; folder: an Open folder action
   QString m_runningCommand, m_pendingPick;  // the command whose function runs now; the one waiting for a selection
   QPointer<Toast> m_pendingToast;
-  bool maybeSave();
+  // Before the document goes: unfinished work, then unsaved changes. resume: what asked, run again once a sketch the
+  // user chose to finish is in the document (finishing is a design job), so Open or New goes on by itself (UI-111).
+  bool maybeSave(std::function<void()> resume = {});
+  bool leaveSketch(std::function<void()> resume);  // an unfinished sketch: finish (then resume), discard, or stay
   void showDocument(bool has);
   // title: the job's and the shade's ("Opening box.step"); done: the completion toast, %1 = the bodies loaded.
   void beginLoad(std::function<void()> after, const QString& title = QString(), const QString& done = QString());

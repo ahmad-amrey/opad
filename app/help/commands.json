@@ -567,6 +567,27 @@
    "requires": "Nothing to redo."
   },
   {
+   "id": "edit.repeat",
+   "title": "Repeat",
+   "summary": "Runs the last tool, feature, check or edit again.",
+   "details": "The menu entry names the command it repeats, and it is the first entry of the view's context menu. View changes, file commands and selection commands are never repeated.",
+   "keywords": ["again", "redo command", "last command", "repeat last"]
+  },
+  {
+   "id": "edit.selectall",
+   "title": "Select all",
+   "summary": "Selects every body on screen, or every curve of the sketch being edited.",
+   "details": "Hidden bodies and those outside an isolation stay out. In a face, edge or vertex filter the view goes back to bodies first; while a tool or a feature input is picking, nothing changes.",
+   "keywords": ["all", "everything", "ctrl a"]
+  },
+  {
+   "id": "edit.invert",
+   "title": "Invert selection",
+   "summary": "Selects the bodies on screen that are not selected, and lets go of those that are.",
+   "details": "In a sketch it swaps the selected and unselected curves. Use it to pick everything but a few parts: select those, then invert.",
+   "keywords": ["inverse", "swap", "everything else", "others"]
+  },
+  {
    "id": "edit.rename",
    "title": "Rename",
    "summary": "Renames the selection; several objects are numbered where {n} stands.",

@@ -41,7 +41,7 @@ void MainWindow::buildInspectActions() {
     } else if (!m_tool.id.isEmpty()) toolEscape();
     else if (!closeTopPanel()) clearMeasurement();
   });  // Esc closes a tool panel first
-  addAction("inspect.properties", tr("Properties"), "doc", QKeySequence("Ctrl+P"), [this] {
+  addAction("inspect.properties", tr("Properties"), "doc", QKeySequence("Alt+Return"), [this] {  // Ctrl+P is Print's (UI-111)
     if (m_selRefs.empty() && m_selRows.empty()) m_selRefs = m_viewport->selection();
     if (m_selRefs.empty() && m_selRows.empty()) throw opad::UserHint("Select something to see its properties.", true);
     showProperties(m_selRefs);

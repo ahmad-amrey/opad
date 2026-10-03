@@ -12,6 +12,7 @@
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <algorithm>
 #include <functional>
 
 namespace shortcuts {
@@ -37,6 +38,11 @@ void migrate(QSettings& settings) {
     if(settings.contains("shortcuts/annotate.draw")&&settings.value("shortcuts/annotate.draw").toString().isEmpty())settings.remove("shortcuts/annotate.draw");
     settings.setValue("shortcuts/annotationDefaultsVersion",1);
   }
+  if(settings.value("shortcuts/standardDefaultsVersion",0).toInt()<1) {
+    // Properties moved from Ctrl+P (Print's everywhere) to Alt+Enter (UI-111); the old editor saved every row.
+    if(QKeySequence(settings.value("shortcuts/inspect.properties").toString())==QKeySequence("Ctrl+P"))settings.remove("shortcuts/inspect.properties");
+    settings.setValue("shortcuts/standardDefaultsVersion",1);
+  }
   if(settings.value("shortcuts/viewDefaultsVersion",0).toInt()>=1)return;
   // The old editor saved every row, including untouched defaults. Keep actual custom bindings.
   const QList<QPair<QString,QString>> old{{"view.top","Ctrl+Alt+1"},{"view.front","Ctrl+Alt+2"},
@@ -57,15 +63,33 @@ void migrate(QSettings& settings) {
 }
 void updateTooltip(QAction* a) {
   QString text=a->text();text.remove('&');
-  if(!a->shortcut().isEmpty())text+="  ("+a->shortcut().toString(QKeySequence::NativeText)+")";
+  QStringList keys;for(const auto& key:a->shortcuts())if(!key.isEmpty())keys<<key.toString(QKeySequence::NativeText);
+  if(!keys.isEmpty())text+="  ("+keys.join(" / ")+")";
   if(!a->property("shortcutHint").toString().isEmpty())text+="\n"+a->property("shortcutHint").toString();
   a->setToolTip(text);
+}
+QList<QKeySequence> alternates(const QString& id) {
+  static const QHash<QString,QList<QKeySequence>> table{{"edit.redo",{QKeySequence("Ctrl+Shift+Z")}}};
+  return table.value(id);
 }
 void initialize(QAction* a,const QKeySequence& key,QSettings& settings) {
   a->setProperty("defaultShortcut",key.toString(QKeySequence::PortableText));
   const QString path="shortcuts/"+a->objectName();
-  a->setShortcut(settings.contains(path)?QKeySequence(settings.value(path).toString(),QKeySequence::PortableText):key);
+  if(settings.contains(path))a->setShortcut(QKeySequence(settings.value(path).toString(),QKeySequence::PortableText));
+  else a->setShortcuts(QList<QKeySequence>{key}+alternates(a->objectName()));
   updateTooltip(a);
+}
+void settleAlternates(const QList<QAction*>& actions) {
+  for(QAction* a:actions) {
+    QList<QKeySequence> keys=a->shortcuts();
+    if(keys.size()<2)continue;
+    const QKeySequence first=keys.takeFirst();
+    keys.erase(std::remove_if(keys.begin(),keys.end(),[&](const QKeySequence& alternate){
+      return std::any_of(actions.begin(),actions.end(),[&](QAction* other){
+        return other!=a&&overlaps(a->objectName(),other->objectName())&&conflicts(alternate,other->shortcut());});
+    }),keys.end());
+    a->setShortcuts(QList<QKeySequence>{first}+keys);updateTooltip(a);
+  }
 }
 }
 
@@ -243,11 +267,15 @@ void ShortcutEditor::accept() {
   // Resolve pre-existing conflicts too; no settings are written until the whole draft is valid.
   for(int n=0;n<m_entries.size();++n)if(!collisions(n,m_entries[n].key).isEmpty()&&!assign(n,m_entries[n].key))return;
   QSettings settings;
+  QList<QAction*> actions;
   for(const auto& e:m_entries) {
-    e.action->setShortcut(e.key);shortcuts::updateTooltip(e.action);
+    const bool standard=e.key==QKeySequence(e.action->property("defaultShortcut").toString());
+    e.action->setShortcuts(standard?QList<QKeySequence>{e.key}+shortcuts::alternates(e.action->objectName()):QList<QKeySequence>{e.key});
+    shortcuts::updateTooltip(e.action);actions<<e.action;
     const QString path="shortcuts/"+e.action->objectName();
-    if(e.key==QKeySequence(e.action->property("defaultShortcut").toString()))settings.remove(path);
+    if(standard)settings.remove(path);
     else settings.setValue(path,e.key.toString(QKeySequence::PortableText));
   }
+  shortcuts::settleAlternates(actions);
   QDialog::accept();
 }

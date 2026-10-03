@@ -52,7 +52,7 @@ void MainWindow::buildMenus() {
   m_recentMenu->setObjectName("recent");
   add(file, {"-", "file.close", "-", "file.save", "file.saveas", "-", "file.export", "file.screenshot", "-", "file.quit"});
   QMenu* edit = menuBar()->addMenu(tr("&Edit"));
-  add(edit, {"edit.undo", "edit.redo", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "edit.selectparent", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
+  add(edit, {"edit.undo", "edit.redo", "edit.repeat", "-", "edit.selectall", "edit.invert", "edit.selectparent", "-", "edit.rename", "edit.hide", "edit.showall", "edit.filter", "-", "annotate.add", "annotate.draw", "annotate.resolve", "annotate.show", "-", "edit.delete", "edit.restore", "edit.selecttouched", "-", "select.bodies", "select.faces", "select.edges", "select.vertices"});
   QMenu* view = m_viewMenu = menuBar()->addMenu(tr("&View"));
   add(view, {"view.fit", "view.fitall", "view.home", "view.rollleft", "view.rollright", "-", "view.top", "view.front", "view.right", "view.iso", "view.bottom", "view.back", "view.left", "-", "view.ortho", "view.shaded", "view.edges", "view.wire", "view.grid", "view.gridSettings", "select.through", "-", "view.isolate", "view.unisolate", "-", "view.saveview"});
   m_viewsMenu = view->addMenu(tr("Named views"));
@@ -223,7 +223,7 @@ void MainWindow::buildRibbon() {
   });
   // The compact Select control: the filters as icons with their keys, the rest of selecting under "Select ▾".
   auto* selectMore = new QMenu(this);
-  selectMore->addActions(acts({"select.through", "select.geometry", "edit.selectparent"}));
+  selectMore->addActions(acts({"edit.selectall", "edit.invert", "select.through", "select.geometry", "edit.selectparent"}));
   m_ribbon->setSelectFilters(acts({"select.bodies", "select.faces", "select.edges", "select.vertices"}), {"1", "2", "3", "4"}, selectMore);
   // The tab row's cluster: quick access (Save, Undo ▾, Redo ▾), search, the areas' widgets, settings.
   m_ribbon->addQuickAction(action("file.save"));

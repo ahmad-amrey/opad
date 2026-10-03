@@ -61,6 +61,31 @@ TEST(annotation_shortcut_migration) {
   s.clear();s.setValue("shortcuts/annotate.show","Alt+N");s.setValue("shortcuts/annotate.draw","Ctrl+Alt+N");
   shortcuts::migrate(s);CHECK(s.value("shortcuts/annotate.show").toString()=="Alt+N");CHECK(s.value("shortcuts/annotate.draw").toString()=="Ctrl+Alt+N");s.clear();
 }
+// UI-111: Properties leaves Ctrl+P (Print's) for Alt+Enter; a Ctrl+P the old editor saved goes, a key of the user's stays.
+TEST(properties_shortcut_migration) {
+  QSettings s;s.clear();s.setValue("shortcuts/inspect.properties","Ctrl+P");
+  shortcuts::migrate(s);CHECK(!s.contains("shortcuts/inspect.properties"));CHECK(s.value("shortcuts/standardDefaultsVersion").toInt()==1);
+  QAction properties;init(properties,"inspect.properties","Alt+Return");CHECK(properties.shortcut()==QKeySequence("Alt+Return"));
+  s.clear();s.setValue("shortcuts/inspect.properties","Ctrl+Shift+O");shortcuts::migrate(s);
+  CHECK(s.value("shortcuts/inspect.properties").toString()=="Ctrl+Shift+O");
+  s.setValue("shortcuts/inspect.properties","Ctrl+P");shortcuts::migrate(s);CHECK(s.value("shortcuts/inspect.properties").toString()=="Ctrl+P");  // once only
+  s.clear();
+}
+// Redo answers to Ctrl+Shift+Z too while it keeps its default; a key of the user's replaces both; another command on
+// Ctrl+Shift+Z takes it, since Qt fires neither of two equal shortcuts.
+TEST(alternate_keys) {
+  QSettings s;s.clear();
+  QAction redo;init(redo,"edit.redo","Ctrl+Y");
+  CHECK(redo.shortcuts()==QList<QKeySequence>({QKeySequence("Ctrl+Y"),QKeySequence("Ctrl+Shift+Z")}));
+  CHECK(redo.toolTip().contains("Ctrl+Shift+Z"));
+  QAction other;init(other,"view.fit","F");
+  shortcuts::settleAlternates({&redo,&other});CHECK(redo.shortcuts().size()==2);
+  other.setShortcut(QKeySequence("Ctrl+Shift+Z"));
+  shortcuts::settleAlternates({&redo,&other});CHECK(redo.shortcuts()==QList<QKeySequence>{QKeySequence("Ctrl+Y")});
+  s.setValue("shortcuts/edit.redo","Ctrl+R");QAction custom;init(custom,"edit.redo","Ctrl+Y");
+  CHECK(custom.shortcuts()==QList<QKeySequence>{QKeySequence("Ctrl+R")});
+  s.clear();
+}
 TEST(editor_search_swap_reassign_cancel_and_persistence) {
   QSettings settings;settings.clear();QAction home,grid,sketch,measure;
   init(home,"view.home","H");init(grid,"view.grid","G");init(sketch,"sketch.dimension","D");init(measure,"inspect.distance","D");
