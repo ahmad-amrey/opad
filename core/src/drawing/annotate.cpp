@@ -763,16 +763,38 @@ void draw_item(Display& d, const Sheet& sheet, const json& def, const json& m, V
   if (kind == "dimension") {
     const json& g = m["geometry"];
     const std::string text = m["shown"].get<std::string>(), type = def.value("type", "");
+    DimensionRecord r;  // the same, as a DXF DIMENSION keeps it
+    r.text = text;
+    r.value = m.value("value", 0.0);
+    r.p11 = place;
     if (g.contains("lines")) {
       const json& l = g["lines"];
       angular_dimension(d, dims, {P(l[0][0]), P(l[0][1])}, {P(l[1][0]), P(l[1][1])}, place, text, s);
+      r.type = 2, r.p13 = P(l[0][0]), r.p14 = P(l[0][1]), r.p15 = P(l[1][0]), r.p10 = P(l[1][1]), r.p16 = place, r.value *= M_PI / 180;
     } else if (g.contains("centre")) {
-      radial_dimension(d, dims, P(g["centre"]), g["r"].get<double>(), place, text, type == "diameter", s);
+      const Vec2 c = P(g["centre"]);
+      const double radius = g["r"].get<double>();
+      radial_dimension(d, dims, c, radius, place, text, type == "diameter", s);
+      const Vec2 dir = unit(sub(place, c));
+      r.type = type == "diameter" ? 3 : 4;
+      r.p10 = type == "diameter" ? sub(c, mul(dir, radius)) : c;
+      r.p15 = add(c, mul(dir, radius));
+      r.leader = std::max(0.0, len(sub(place, c)) - radius);
     } else {
       const Vec2 a = P(g["from"]), b = P(g["to"]);
       const Vec2 axis = type == "horizontal" ? Vec2{1, 0} : type == "vertical" ? Vec2{0, 1} : Vec2{b[0] - a[0], b[1] - a[1]};
       linear_dimension(d, dims, a, b, axis, place, text, s);
+      const Vec2 u = unit(axis), n = left(u);
+      const Vec2 a1 = add(a, mul(n, dot(sub(place, a), n))), b1 = add(b, mul(n, dot(sub(place, b), n)));
+      r.type = type == "horizontal" || type == "vertical" ? 0 : 1;
+      r.angle = std::atan2(u[1], u[0]);
+      r.p13 = a, r.p14 = b, r.p10 = b1;
+      double reading = std::atan2(b1[1] - a1[1], b1[0] - a1[0]);  // the text's middle: above the line, read from below or the right
+      while (reading > M_PI / 2 + 1e-9) reading -= M_PI;
+      while (reading <= -M_PI / 2 + 1e-9) reading += M_PI;
+      r.p11 = add(mul(add(a1, b1), 0.5), mul({-std::sin(reading), std::cos(reading)}, (s.gap + s.text / 2) * s.scale));
     }
+    d.dimensions.push_back(r);
     return;
   }
   if (kind == "note") {

@@ -1,6 +1,7 @@
 // 2D writers and model-to-2D export (TODO 11 UI-86, UI-87): the DXF R2000 and SVG writers read back by OPAD's own
-// readers, the R2000 structure (handles, owners, tables, objects), text for converters, dimensions as geometry,
-// hidden-line views of solids written with exact arcs, and DWG through LibreDWG when a converter is at hand.
+// readers, the R2000 structure (handles, owners, tables, objects), text for converters, dimensions as geometry and as
+// DIMENSION entities, hidden-line views of solids written with exact arcs, and DWG through LibreDWG when a converter is at
+// hand.
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepGProp.hxx>
@@ -264,6 +265,102 @@ TEST(dimensions_are_drawn_as_geometry) {
   linear_dimension(s, s.layer({"D"}), {0, 0}, {4, 0}, {1, 0}, {2, 10}, "4");
   CHECK(s.prims[2].curve.pts[0][0] < -5 && s.prims[2].curve.pts[1][0] > 9);
   CHECK(s.prims[3].loops[0][1][0] < 0);  // the left arrowhead's back lies outside, left of its tip at 0
+}
+
+TEST(dimensions_with_records_go_to_dxf_as_dimension_entities) {
+  // A sheet's dimensions keep a record (drawing::draw_item): DXF writes each as a DIMENSION over an anonymous block of what
+  // it draws, with its definition points, measurement, text and a linear scale for its view; the rest stays as it is.
+  Display d;
+  const int l = d.layer({"Dimensions", kInk, LineType::Continuous, 0.25});
+  d.line(d.layer({"Visible"}), {0, 0}, {100, 0});
+  const auto tagged = [&](const std::string& source, size_t from) {
+    for (size_t i = from; i < d.prims.size(); ++i) d.prims[i].source = source;
+  };
+  size_t from = d.prims.size();
+  linear_dimension(d, l, {0, 0}, {100, 0}, {1, 0}, {50, 10}, "50");  // a 50 mm edge drawn at 2:1
+  tagged("dim-a", from);
+  DimensionRecord a;
+  a.source = "dim-a", a.type = 0, a.p13 = {0, 0}, a.p14 = {100, 0}, a.p10 = {100, 10}, a.p11 = {50, 12.75}, a.value = 50, a.text = "50";
+  d.dimensions.push_back(a);
+  from = d.prims.size();
+  radial_dimension(d, l, {50, 50}, 20, {70, 70}, "\xE2\x8C\x80" "20 \xC2\xB1" "0.05", true);  // "⌀20 ±0.05" at 2:1
+  tagged("dim-b", from);
+  const double k = 20 / std::sqrt(2.0);
+  DimensionRecord b;
+  b.source = "dim-b", b.type = 3, b.p10 = {50 - k, 50 - k}, b.p15 = {50 + k, 50 + k}, b.p11 = {70, 70}, b.value = 20, b.leader = 8.28;
+  b.text = "\xE2\x8C\x80" "20 \xC2\xB1" "0.05";
+  d.dimensions.push_back(b);
+  DimensionRecord none;  // nothing drawn of it: nothing written
+  none.source = "dim-c";
+  d.dimensions.push_back(none);
+  const std::string text = dxf_text(d);
+  const auto p = pairs_of(text);
+  const auto es = entities_of(p);
+  CHECK_EQ(count(es, "DIMENSION"), 2);
+  CHECK_EQ(count(es, "LINE"), 1);  // the visible line alone: what the dimensions draw is in their blocks
+  CHECK_EQ(count(es, "SOLID") + count(es, "TEXT"), 0);
+  const auto group = [](const Entity& e, int code) {
+    std::vector<std::string> out;
+    for (const auto& g : e.groups)
+      if (g.code == code) out.push_back(g.value);
+    return out;
+  };
+  std::map<std::string, const Entity*> dims;
+  for (const auto& e : es)
+    if (e.type == "DIMENSION") dims[group(e, 2).at(0)] = &e;
+  CHECK(dims.count("*D1") && dims.count("*D2"));
+  if (dims.size() == 2) {
+    const Entity &da = *dims["*D1"], &db = *dims["*D2"];
+    CHECK(da.layer == "Dimensions" && group(da, 70) == std::vector<std::string>{"160"} && group(da, 1) == std::vector<std::string>{"50"} && group(da, 3)[0] == "Standard");
+    CHECK(group(da, 100) == (std::vector<std::string>{"AcDbEntity", "AcDbDimension", "AcDbAlignedDimension", "AcDbRotatedDimension"}));
+    CHECK(da.num(42) == 50 && da.num(13) == 0 && da.num(14) == 100 && da.num(10) == 100 && da.num(20) == 10 && da.num(50) == 0);
+    CHECK_NEAR(da.num(1040), 0.5, 1e-12);  // DIMLFAC: 100 mm on paper measure 50
+    CHECK(group(db, 70) == std::vector<std::string>{"163"} && group(db, 1) == std::vector<std::string>{"%%c20 %%p0.05"} && group(db, 100).back() == "AcDbDiametricDimension");
+    CHECK(db.num(42) == 20 && std::fabs(db.num(15) - (50 + k)) < 1e-6 && std::fabs(db.num(40) - 8.28) < 1e-9);
+    CHECK_NEAR(db.num(1040), 0.5, 1e-12);
+  }
+  // Each block: what its dimension draws (three lines, two arrowheads, its text), owned by its own block record.
+  std::map<std::string, std::string> records;
+  for (size_t i = 0; i + 5 < p.size(); ++i)
+    if (p[i].code == 0 && p[i].value == "BLOCK_RECORD") records[p[i + 5].value] = p[i + 1].value;
+  CHECK(records.count("*D1") && records.count("*D2") && records.size() == 4);
+  std::map<std::string, std::map<std::string, int>> inBlock;
+  std::string block;
+  bool owned = true;
+  for (size_t i = 0; i + 1 < p.size(); ++i) {
+    if (p[i].code == 0 && p[i].value == "BLOCK") {
+      for (size_t j = i + 1; j < p.size() && p[j].code != 0; ++j)
+        if (p[j].code == 2) block = p[j].value;
+    } else if (p[i].code == 0 && p[i].value == "ENDBLK") {
+      block.clear();
+    } else if (p[i].code == 0 && !block.empty() && block[0] == '*' && block[1] == 'D') {
+      ++inBlock[block][p[i].value];
+      for (size_t j = i + 1; j < p.size() && p[j].code != 0; ++j)
+        if (p[j].code == 330) owned = owned && p[j].value == records[block];
+    }
+  }
+  CHECK(inBlock["*D1"]["LINE"] == 3 && inBlock["*D1"]["SOLID"] == 2 && inBlock["*D1"]["TEXT"] == 1 && owned);
+  CHECK(inBlock["*D2"]["SOLID"] >= 2 && inBlock["*D2"]["TEXT"] == 1 && !inBlock.count("*D3"));
+  std::set<unsigned long> handles;
+  for (size_t i = 1; i < p.size(); ++i)
+    if ((p[i].code == 5 || p[i].code == 105) && p[i - 1].value != "$HANDSEED") CHECK(handles.insert(std::stoul(p[i].value, nullptr, 16)).second);
+  CHECK_EQ(dxf_text(d), text);
+  // As geometry (the DWG path): no DIMENSION, no blocks of them; read back, both give the same edges.
+  const std::string plain = dxf_text(d, 6, false, false);
+  const auto ep = entities_of(pairs_of(plain));
+  CHECK(count(ep, "DIMENSION") == 0 && count(ep, "LINE") >= 5 && plain.find("*D1") == std::string::npos);
+  Files f;
+  int edges[2] = {0, 0};
+  for (int i = 0; i < 2; ++i) {
+    write_text_file(f.dir / "dims.dxf", i ? plain : text);
+    auto doc = Document::create();
+    import_file(doc, f.dir / "dims.dxf");
+    const auto scene = resolve(doc);
+    for (const auto& id : scene.all_bodies())
+      if (scene.node(id)->name == "Dimensions")
+        for (TopExp_Explorer e(node_world_shape(doc, scene, id), TopAbs_EDGE); e.More(); e.Next()) ++edges[i];
+  }
+  CHECK(edges[0] > 6 && edges[0] == edges[1]);
 }
 
 TEST(view_export_draws_a_part_with_hidden_lines_and_exact_circles) {

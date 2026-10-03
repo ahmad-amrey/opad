@@ -650,9 +650,9 @@ ExportResult export_drawing(const Document& doc,const Scene& scene,const std::fi
     if(!skipped.empty()) details["skipped"]=skipped;
   }
   const drawing::Display& d=pages[0];
-  if(options.format=="dwg") {  // DXF R2000 through the converter; text of several lines as one TEXT a line
+  if(options.format=="dwg") {  // DXF R2000 through the converter; text of several lines as one TEXT a line, dimensions as their geometry
     Conversion work; const auto intermediate=work.directory/"drawing.dxf", converted=work.directory/"drawing.dwg";
-    write_text_file(intermediate,drawing::dxf_text(d,options.decimals,false));
+    write_text_file(intermediate,drawing::dxf_text(d,options.decimals,false,false));
     convert_dwg(intermediate,converted,true);
     if(file.has_parent_path()) std::filesystem::create_directories(file.parent_path());
     std::filesystem::copy_file(converted,file,std::filesystem::copy_options::overwrite_existing);

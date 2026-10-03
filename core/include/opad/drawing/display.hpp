@@ -3,8 +3,8 @@
 // primitives in drawing millimetres, y up. One list feeds every writer (DXF R2000, SVG, and through Qt PDF and PNG), so a
 // sheet, a quick view of the model and an exported sketch come out the same in each. Curves are the
 // projection's (lines, arcs, ellipses, splines, polylines: exact, never chopped into segments), fills are closed outlines
-// (holes inside outer ones, even-odd), text is UTF-8. Dimensions are written as their geometry (lines, filled arrowheads,
-// text), which every reader shows.
+// (holes inside outer ones, even-odd), text is UTF-8. Dimensions are drawn as their geometry (lines, filled arrowheads,
+// text), which every reader shows; DXF also keeps a sheet's dimensions as DIMENSION entities over that geometry.
 #include <array>
 #include <cstdint>
 #include <filesystem>
@@ -48,6 +48,19 @@ struct Prim {
   std::string source;                     // the sheet record that drew it (a view or an item); empty: the sheet's own
 };
 
+// A dimension as a DXF DIMENSION entity keeps it: the primitives tagged with its `source` are its block (what every
+// reader shows), the definition points let a CAD program edit it as a dimension. Points in drawing units, named by
+// their DXF group codes.
+struct DimensionRecord {
+  std::string source;
+  int type = 0;  // 0 rotated (horizontal, vertical: `angle`), 1 aligned, 2 angle between two lines, 3 diameter, 4 radius
+  Vec2 p10{0, 0}, p11{0, 0}, p13{0, 0}, p14{0, 0}, p15{0, 0}, p16{0, 0};
+  double angle = 0;   // a rotated dimension's direction (radians)
+  double value = 0;   // what it measures (an angle in radians)
+  double leader = 0;  // radius, diameter: the leader's length past the circle
+  std::string text;   // as drawn (UTF-8, lines split by newlines)
+};
+
 struct Display {
   std::string title;
   // Drawing units per paper mm for the pens: line widths and dash lengths are paper sizes times this (a model drawn 1:1
@@ -59,6 +72,7 @@ struct Display {
   bool has_paper() const { return paper[2] > paper[0] && paper[3] > paper[1]; }
   std::vector<Layer> layers;
   std::vector<Prim> prims;
+  std::vector<DimensionRecord> dimensions;  // DXF writes these as DIMENSION entities over their primitives
   int layer(const Layer& l);  // the index of the layer of that name, added as given when new
   void curve(int layer, const Curve& c, uint32_t rgb = kByLayer);
   void line(int layer, Vec2 a, Vec2 b, uint32_t rgb = kByLayer);
@@ -112,8 +126,10 @@ void angular_dimension(Display& d, int layer, std::array<Vec2, 2> a, std::array<
 // Standard text style), the model and paper space blocks, ENTITIES (LINE, ARC, CIRCLE, ELLIPSE, SPLINE, LWPOLYLINE,
 // TEXT/MTEXT, SOLID for small convex fills, solid HATCH) and the OBJECTS a reader expects (layouts, plot style names).
 // Text beyond ASCII is written as \U+XXXX. Images throw (DXF raster references need external files). mtext=false writes
-// a text of several lines as one TEXT a line (LibreDWG's DWG writer loses MTEXT heights).
-std::string dxf_text(const Display& d, int decimals = 6, bool mtext = true);
+// a text of several lines as one TEXT a line (LibreDWG's DWG writer loses MTEXT heights). Dimensions with a record
+// (Display::dimensions) are DIMENSION entities over an anonymous block (*D1, ...) of their primitives, with their
+// definition points, measurement and text (⌀ ± ° as %%c %%p %%d); dimensions=false writes their primitives as the rest.
+std::string dxf_text(const Display& d, int decimals = 6, bool mtext = true, bool dimensions = true);
 // SVG 1.1 written by hand (Qt Svg is not part of the build): width and height in mm with a mm viewBox, y flipped once; a
 // group per layer (an Inkscape layer, named) with its stroke colour, width and dash pattern; curves as one path per
 // layer (arcs and ellipses as arc commands, splines as cubic Béziers), full circles and ellipses as their elements, fills

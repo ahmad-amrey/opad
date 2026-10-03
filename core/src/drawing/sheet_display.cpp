@@ -64,7 +64,7 @@ int draw_items(Display& d, const Document& doc, const Scene& scene, const Sheet&
   for (const auto& id : sheet.items) {
     const SheetItem* t = scene.sheet_item(id);
     if (!t || t->view != view) continue;
-    const size_t from = d.prims.size();
+    const size_t from = d.prims.size(), records = d.dimensions.size();
     const ViewFrame* f = t->view.empty() ? nullptr : by_id.count(t->view) ? by_id[t->view] : nullptr;
     const Vec2 origin = f ? f->at : Vec2{0, 0};
     if (!known_item(t->kind, t->type) && t->kind != "note") {
@@ -78,6 +78,7 @@ int draw_items(Display& d, const Document& doc, const Scene& scene, const Sheet&
       ++items;
     } catch (const std::exception& e) {  // dangling: what it showed when it was made, in magenta, where it stood
       d.prims.resize(from);
+      d.dimensions.resize(records);
       const json& def = t->def;
       const json result = def.value("result", json::object());
       std::string shown = result.value("shown", json()).is_string() ? result["shown"].get<std::string>() : std::string();
@@ -89,6 +90,7 @@ int draw_items(Display& d, const Document& doc, const Scene& scene, const Sheet&
       skipped.push_back({{"id", id}, {"error", e.what()}});
     }
     tag(d, from, id);
+    for (size_t k = records; k < d.dimensions.size(); ++k) d.dimensions[k].source = id;
   }
   return items;
 }

@@ -50,7 +50,8 @@ json pick_reference(const Document& doc, const Scene& scene, const ViewFrame& fr
 // Workers: resolves references (a hole table walks the view's bodies).
 json measure_item(const Document& doc, const Scene& scene, const Sheet& sheet, const SheetItem& item, const ViewFrame* frame);
 // Draws an item from its measure: pure 2D (the sheet canvas previews an item being placed with it on every mouse move).
-// origin: its view's centre on paper. Layers: Dimensions, Text, Center.
+// origin: its view's centre on paper. Layers: Dimensions, Text, Center. A dimension also leaves its DimensionRecord (the
+// DIMENSION entity DXF writes over what it drew; the caller sets its source).
 void draw_item(Display& d, const Sheet& sheet, const json& def, const json& measured, Vec2 origin, const DimStyle& style = {});
 // The result an item keeps (what it showed when it was made), from its measure; null for kinds without one.
 json item_result(const json& def, const json& measured);

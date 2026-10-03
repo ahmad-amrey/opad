@@ -392,6 +392,13 @@ TEST(sheet_draws_as_a_drawing) {
   CHECK(text.find("width=\"297mm\" height=\"210mm\" viewBox=\"0 -210 297 210\"") != std::string::npos);
   const json dxf = run(p.doc, "export", {{"format", "dxf"}, {"sheet", "Sheet 1"}, {"out", (dir / "sheet.dxf").string()}});
   CHECK_EQ(dxf["sheet"]["id"], p.sheet);
+  {  // the three measured dimensions as DIMENSION entities (the dangling one is its text)
+    const std::string written = read_text_file(dir / "sheet.dxf");
+    size_t dims = 0;
+    for (size_t at = written.find("  0\nDIMENSION\n"); at != std::string::npos; at = written.find("  0\nDIMENSION\n", at + 1)) ++dims;
+    CHECK_EQ(dims, 3u);
+    CHECK(written.find("\n%%c10\n") != std::string::npos && written.find("\n90%%d\n") != std::string::npos);
+  }
   Document back = Document::create();
   import_file(back, dir / "sheet.dxf");
   std::set<std::string> layers;
