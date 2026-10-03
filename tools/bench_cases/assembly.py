@@ -18,6 +18,7 @@ CASES = [
     # chip, browser, timeline; F; a sketch, a box and an import made in the Lid; context menu; undo falls back to the root;
     # the chip's click activates the root. <prefix>.ghost.png, .browser.png, .chips.png, .timeline.png.
     ("activate", lambda root, document: document("activate"), {"OPAD_BENCH_ACTIVATE": "{prefix}"}),  # its own: benches save "empty"
+    ("activate-rtl", lambda root, document: document("activate-rtl"), {"OPAD_BENCH_ACTIVATE": "{prefix}", "OPAD_LANG": "ar"}),
     # The same on the Engine (skipped where it is not): a component with about half of the bodies activated and the root
     # again, no event-loop gap over 250 ms.
     ("activate-engine", engine(), {"OPAD_BENCH_ACTIVATE": "{prefix}"}),

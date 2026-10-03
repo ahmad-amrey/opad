@@ -214,7 +214,7 @@ OPAD_BENCH(OPAD_BENCH_ACTIVATE, activate) {
                             QString("the Housing's box is a ghost at %1 opacity, not pickable: %2").arg(alpha, 0, 'f', 2).arg(QString::fromStdString(a.dump())));
                     require(!v->shownLook(s->boxB).ghost && b.value("transparency", 1.0) == 0.0 && b.value("activated", 0) > 0, "the Lid's box is drawn and picked as it is");
                     require(v->shownLook(s->sketch).ghost && sk.value("activated", -1) == 0, "the root's sketch is ghosted too");
-                    require(v->benchPickAt(s->ax, s->ay) != s->boxA && v->benchPickAt(s->bx, s->by) == s->boxB && v->hoverName(s->boxA).endsWith("(inactive)"),
+                    require(v->benchPickAt(s->ax, s->ay) != s->boxA && v->benchPickAt(s->bx, s->by) == s->boxB && v->hoverName(s->boxA).endsWith(Viewport::tr(" (inactive)")),
                             "picking passes the ghost, finds the Lid's box");
                     QLabel* chip = nullptr;
                     for (QLabel* label : w.m_chips->findChildren<QLabel*>())
