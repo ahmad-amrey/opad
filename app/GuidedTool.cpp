@@ -260,26 +260,17 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
   layout->addLayout(gridRow);
   layout->addStretch(1);
 
-  m_footer = new QWidget(this);
-  m_footer->setFixedHeight(40);
-  m_footer->setObjectName("toolFooter");
-  auto* fl = new QHBoxLayout(m_footer);
-  fl->setContentsMargins(12, 0, 12, 0);
-  fl->setSpacing(8);
-  m_copy = new QPushButton(tr("Copy"), m_footer);
+  // Copy on the leading side; Clear (Esc: measure again) and Pin to document (P), which keeps the panel open.
+  m_footer = new PanelFooter(this);
+  m_copy = m_footer->addSecondary(tr("Copy"));
   m_copy->setToolTip(tr("Copy measurement values"));
-  auto* clear = new QPushButton(tr("Clear   Esc"), m_footer);
-  m_pin = new QPushButton(tr("Pin to document   P"), m_footer);
-  m_pin->setObjectName("primary");
-  for (QPushButton* b : {clear, m_pin}) b->setFocusPolicy(Qt::NoFocus);  // Esc / P / Enter stay with the main window
-  fl->addWidget(m_copy);
-  fl->addStretch(1);
-  fl->addWidget(clear);
-  fl->addWidget(m_pin);
+  m_footer->setCancel(tr("Clear"));
+  m_footer->setPrimary(tr("Pin to document"), QStringLiteral("P"));
+  m_footer->setKeysStayWithWindow(true);  // Esc / P / Enter stay with the main window
   outer->addWidget(m_footer);
   m_footer->hide();
-  connect(clear, &QPushButton::clicked, this, &ToolStepsPanel::clearRequested);
-  connect(m_pin, &QPushButton::clicked, this, &ToolStepsPanel::pinRequested);
+  connect(m_footer, &PanelFooter::cancelled, this, &ToolStepsPanel::clearRequested);
+  connect(m_footer, &PanelFooter::accepted, this, &ToolStepsPanel::pinRequested);
   connect(m_copy, &QPushButton::clicked, this, [this] {
     QStringList lines;
     for (int i = 0; i < m_grid->topLevelItemCount(); ++i) {
@@ -295,7 +286,6 @@ ToolStepsPanel::ToolStepsPanel(QWidget* parent) : QWidget(parent) {
     const Tokens& t = theme::current();
     rule->setStyleSheet(QString("background: %1;").arg(theme::css(t.line)));
     m_grid->setStyleSheet(QString("QTreeWidget::item { border-bottom: 1px solid %1; }").arg(theme::css(t.line)));
-    m_footer->setStyleSheet(QString("QWidget#toolFooter { border-top: 1px solid %1; }").arg(theme::css(t.line)));
     QList<QPair<QString, QString>> rows;
     for (int i = 0; i < m_grid->topLevelItemCount(); ++i) {
       auto* row = m_grid->topLevelItem(i);
@@ -408,7 +398,7 @@ void ToolStepsPanel::setResult(const QList<QPair<QString, QString>>& rows) {
 
 void ToolStepsPanel::setFooter(bool visible, bool canPin) {
   m_footer->setVisible(visible);
-  m_pin->setEnabled(canPin);
+  m_footer->setPrimaryEnabled(canPin);
   emit contentSizeChanged();
 }
 

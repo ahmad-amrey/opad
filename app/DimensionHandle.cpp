@@ -3,6 +3,7 @@
 #include "InputKeys.hpp"
 #include "Jobs.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 #include <QApplication>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -87,12 +88,15 @@ double dragStep(double pixel) {
   for(double m:{1.0,2.0,5.0,10.0})if(power*m>=raw)return power*m;
   return power*10;
 }
-QString millimetres(double value,double step) {
-  const int decimals=std::clamp(int(std::ceil(-std::log10(step)-1e-9)),0,6);
-  return QString::number(value,'f',decimals)+" mm";
+// The same, round in the shown unit (UI-123): 0.1 in rather than 2.54 mm.
+double shownStep(double pixel) {return units::fromDisplay(units::Kind::Length,dragStep(units::toDisplay(units::Kind::Length,pixel)));}
+// The value in the shown unit to the step's decimals, as the expression the feature stores: "12.5 mm", "0.49 in".
+QString lengthText(double value,double step) {
+  return QString::number(units::toDisplay(units::Kind::Length,value),'f',std::min(6,units::decimalsFor(step)))+' '+QString::fromStdString(units::current().length);
 }
 bool plainNumber(const QString& text) {
-  QString t=text.trimmed();if(t.endsWith("mm"))t.chop(2);
+  QString t=text.trimmed();const QString unit=QString::fromStdString(units::current().length);
+  if(t.endsWith(unit))t.chop(unit.size());else if(t.endsWith("mm"))t.chop(2);
   bool ok=false;t.trimmed().toDouble(&ok);return ok;
 }
 }
@@ -131,7 +135,7 @@ void DimensionHandle::setLabel(const QString& label){m_input->setFields({Dynamic
 void DimensionHandle::fit() {
   // Wide enough for what is typed; the evaluated value shows next to an expression.
   const bool expression=!plainNumber(text()) && !text().trimmed().isEmpty();
-  if(expression)m_result->setText(QString("= %1").arg(millimetres(m_value,dragStep(std::max(1e-6,m_view->pixelSize())))));
+  if(expression)m_result->setText(QString("= %1").arg(lengthText(m_value,shownStep(std::max(1e-6,m_view->pixelSize())))));
   m_result->setVisible(expression);
   adjustSize();  // the box is as wide as its text (DynamicInput)
 }
@@ -202,20 +206,18 @@ void DimensionHandle::mouseMoveEvent(QMouseEvent* e) {
   if(!m_dragging)return;
   const auto delta=e->globalPosition()-m_start;
   const double raw=m_startValue+QPointF::dotProduct(delta,m_screenAxis)/QPointF::dotProduct(m_screenAxis,m_screenAxis)/std::max(1e-9,m_scale);
-  const double step=dragStep(std::max(1e-6,m_view->pixelSize()));
+  const double step=shownStep(std::max(1e-6,m_view->pixelSize()));
   m_value=std::round(raw/step)*step;  // round values at this zoom, not 12.3456789 mm
-  setText(millimetres(m_value,step),false);reposition();emit valueChanged(text());e->accept();
+  setText(lengthText(m_value,step),false);reposition();emit valueChanged(text());e->accept();
 }
 void DimensionHandle::mouseReleaseEvent(QMouseEvent* e) {if(e->button()==Qt::LeftButton){m_dragging=false;restyle();reposition();e->accept();}}
 void DimensionHandle::wheelEvent(QWheelEvent* e) {nudge(e->angleDelta().y()>0?1:-1,e->modifiers());e->accept();}
 void DimensionHandle::nudge(double steps,Qt::KeyboardModifiers modifiers) {
-  const double step=inputkeys::step(modifiers.testFlag(Qt::ShiftModifier),modifiers.testFlag(Qt::ControlModifier));
+  const double step=units::fromDisplay(units::Kind::Length,inputkeys::step(modifiers.testFlag(Qt::ShiftModifier),modifiers.testFlag(Qt::ControlModifier)));  // in the shown unit
   // From the number in the box (typed a moment ago, the tool not back with it yet), else from the evaluated expression.
-  QString shown=text().trimmed();if(shown.endsWith("mm"))shown.chop(2);
-  bool number=false;const double typed=shown.trimmed().toDouble(&number);
-  if(number)m_value=typed;
+  if(plainNumber(text()))if(const auto typed=units::parse(units::Kind::Length,text()))m_value=*typed;
   m_value=std::round((m_value+steps*step)/step)*step;
-  setText(millimetres(m_value,step<1?0.1:1),true);reposition();
+  setText(lengthText(m_value,std::min(step,units::fromDisplay(units::Kind::Length,1))),true);reposition();
 }
 void DimensionHandle::type(const QString& text) {m_input->type(text);}  // the first key replaces the value, the next go on
 void DimensionHandle::focusValue() {m_input->cycle(false);}            // the box, its value selected

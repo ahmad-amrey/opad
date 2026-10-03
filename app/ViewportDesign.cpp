@@ -107,6 +107,8 @@ void Viewport::syncSketches() {
     activateSelection(ais); m_nodeOf[ais.get()]=s.id;
     m_sketchWires[s.id] = SketchWire{ais, prs, stamp,{}};
     if(prepared){m_sketchWires[s.id].backdrops=prepared->backdrops;for(const auto& image:prepared->backdrops)showBackdrop(image);}
+    SketchWire& wire=m_sketchWires[s.id];wire.look.color={m_tokens.sel.redF(),m_tokens.sel.greenF(),m_tokens.sel.blueF()};  // as drawn above
+    if(layered())applySketchLook(wire,sketchLook(s.id));
   }
   std::erase_if(m_preparedSketches,[&](const auto& entry) {return !keep.count(entry.first);});
   for (auto it = m_sketchWires.begin(); it != m_sketchWires.end();) {
@@ -334,7 +336,7 @@ void Viewport::clearPreviewBodies() {
   m_previewBodies.clear();
   for (const auto& node : m_previewHidden) {
     auto it = m_items.find(node);
-    if (it == m_items.end()) continue;
+    if (it == m_items.end() || !it->second.look.visible) continue;  // hidden by its look meanwhile (UI-121)
     m_ctx->Display(it->second.ais, m_style == Style::Wireframe ? AIS_WireFrame : AIS_Shaded, -1, Standard_False);
     activateSelection(it->second.ais);
   }
@@ -413,6 +415,8 @@ void Viewport::showOverlay(const Handle(AIS_InteractiveObject)& obj) {
   if (!m_initialised || obj.IsNull()) return;
   obj->SetZLayer(Graphic3d_ZLayerId_Topmost);
   m_ctx->Display(obj, 0, -1, Standard_False);
+  m_overlays.erase(std::remove_if(m_overlays.begin(), m_overlays.end(), [&](const Handle(AIS_InteractiveObject)& o) { return o == obj || !m_ctx->IsDisplayed(o); }), m_overlays.end());
+  m_overlays.push_back(obj);
   redrawScene();
 }
 
@@ -425,6 +429,7 @@ void Viewport::updateOverlay(const Handle(AIS_InteractiveObject)& obj) {
 void Viewport::removeOverlay(const Handle(AIS_InteractiveObject)& obj) {
   if (!m_initialised || obj.IsNull()) return;
   m_ctx->Remove(obj, Standard_False);
+  m_overlays.erase(std::remove(m_overlays.begin(), m_overlays.end(), obj), m_overlays.end());
   redrawScene();
 }
 
@@ -585,7 +590,7 @@ void Viewport::keyPressEvent(QKeyEvent* e) {
 
 void Viewport::benchDesignShot(const QString& path) {
   if (!m_initialised) return;
-  m_view->FitAll(0.1, Standard_False);
+  m_view->FitAll(fitBounds(), 0.1, Standard_False);
   m_view->Redraw();
   grabImage().save(path);
 }

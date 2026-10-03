@@ -31,6 +31,7 @@
 #include <cmath>
 
 #include "I18n.hpp"
+#include "Units.hpp"
 #include "Jobs.hpp"
 #include "opad/design/expr.hpp"
 #include "opad/design/sketch_geom.hpp"
@@ -181,6 +182,7 @@ SketchEditor::SketchEditor(AppDocument* doc, Viewport* viewport, JobRunner* jobs
     retype();updateInput();updateTransient();
   });
   m_input->setKeyHook([this](int box,QChar c){return m_active && entryKey(box,c);});
+  connect(units::notifier(),&units::Notifier::changed,this,[this]{if(m_active)rebuild();});  // dimension labels in the shown unit
   connect(m_viewport,&Viewport::notesMoved,this,[this] {
     if(!m_active) return;
     const double pixels=m_viewport->pixelSize();
@@ -1801,7 +1803,8 @@ void SketchEditor::updateTransient() {
         m_marker = M::Tracking;
         break;
       case K::Angle:
-        if (double x, y; anchor(m_cursor.target, x, y)) label = QString::fromUtf8("%1°").arg(std::round(std::atan2(cv - y, cu - x) * 180 / M_PI));
+        if (double x, y; anchor(m_cursor.target, x, y))
+          label = units::format(units::Kind::Angle, std::round(std::atan2(cv - y, cu - x) * 180 / M_PI), units::current().radians ? 3 : 0);
         break;
       case K::Cross:  // guides crossing (both drawn), or a guide meeting a curve (highlighted)
         towards(m_cursor.target);
