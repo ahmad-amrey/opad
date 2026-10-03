@@ -134,6 +134,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<std::string> isolatedNodes() const {return {m_isolated.begin(),m_isolated.end()};}
   int isolatedCount() const { return static_cast<int>(m_isolated.size()); }
   int displayedCount() const { return static_cast<int>(m_items.size()); }
+  // What the view did with bodies since the document opened (benches: a sync re-meshes only the shapes that changed, a
+  // moved part is relocated, never displayed again): bodies meshed (one per key), displayed, relocated in place.
+  struct DisplayStats { int meshed = 0, displayed = 0, relocated = 0; };
+  DisplayStats displayStats() const { return {m_meshCount.load(), m_displayCount, m_relocateCount}; }
   // The colours a displayed body's shaded presentation fills its groups with (sRGB): one, or the body's own and each face
   // colour (UI-74). Benches check what is drawn with it.
   std::vector<std::array<double, 3>> drawnColors(const std::string& nodeId) const;
@@ -507,6 +511,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   // Zoom refinement (ViewportRefine.cpp): finer drawing arrays per key for bodies seen close up, bounded in total.
   struct Refined { double deflection = 0; std::shared_ptr<const BodyPrs> prs; qint64 used = 0; };
   std::map<std::string, Refined> m_refined;
+  std::atomic<int> m_meshCount{0};
+  int m_displayCount = 0, m_relocateCount = 0;
   QTimer m_refineTimer;
   Graphic3d_WorldViewProjState m_refineCamera;
   Job* m_refineJob = nullptr;

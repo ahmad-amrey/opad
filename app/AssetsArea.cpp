@@ -498,6 +498,11 @@ void AssetsArea::filesChanged(const std::vector<std::string>&) {
   if (!all.empty() && QSettings().value("assets/autoSync", false).toBool()) return syncAll();  // queued behind a sync running
   if (all.empty() || m_busy) return;
   if (m_toast) m_toast->dismiss();
+  if (const AssetMonitor::Asset* a = m_monitor->asset(all.front()); all.size() == 1 && m_previewer && a && a->asset.value("kind", "") == "kicad_pcb") {
+    const std::string import = all.front();
+    m_toast = services().toast(tr("%1 changed since the last sync").arg(name(import)), tr("Show changes"), [this, import] { m_previewer(import); }, 15000);
+    return;
+  }
   m_toast = services().toast(all.size() == 1 ? tr("%1 changed since the last sync").arg(name(all.front())) : tr("%1 linked files changed since the last sync").arg(all.size()),
                              all.size() == 1 ? tr("Sync") : tr("Sync all"), [this] { syncAll(); }, 15000);
 }

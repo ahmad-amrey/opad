@@ -1628,6 +1628,7 @@ void Viewport::startMeshing(std::vector<std::string> keys) {
         std::lock_guard<std::mutex> lock(m_meshMu);
         m_meshing.erase(j.key);
         if (m_activeCache == cache.get()) {  // a newer document owns the bookkeeping otherwise
+          ++m_meshCount;
           m_meshed.insert(j.key);
           if (prs) m_prs[j.key] = std::move(prs);
         }
@@ -1781,6 +1782,7 @@ void Viewport::sync() {
       // displayed again, so it never blinks out for a frame.
       it->second.world = world;
       moved = true;
+      ++m_relocateCount;
     }
     if (it != m_items.end() && it->second.key == n->body_key && it->second.world.m == scene.world(id).m && it->second.raster == raster) {
       keep.insert(id);
@@ -2013,6 +2015,7 @@ void Viewport::displayBody(const std::string& id) {
   const qint64 displayMs = t.elapsed();
   m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located, {}, raster, look, rigid, stretch, placement};
   m_nodeOf[ais.get()] = id;
+  ++m_displayCount;
   activateSelection(ais);  // after m_items: its look may say not pickable
   if (trace::enabled() && t.elapsed() > 50) trace::log(QStringLiteral("displayBody %1: display %2 ms, selection %3 ms").arg(QString::fromStdString(n->name)).arg(displayMs).arg(t.elapsed() - displayMs));
   if (prs && !prs->navigation.IsNull()) {

@@ -78,6 +78,8 @@ class AssetsArea : public AreaController {
   void modelFolders();  // the KiCad settings (model folders), then the boards looked at again
   void link();                                // Link as asset…: a file dialog, then the file imported linked
   bool busy() const { return m_busy; }
+  // What shows a changed KiCad board's changes before it is synced (KicadArea's sync preview): its toast offers that.
+  void setPreviewer(std::function<void(const std::string&)> previewer) { m_previewer = std::move(previewer); }
   void decorate(const browser::Row& row, browser::Decoration& d);
   void section(const PropertySubject& subject, const opad::json& props, QList<PropertySection>& out);
 
@@ -109,4 +111,5 @@ class AssetsArea : public AreaController {
   QPointer<Toast> m_toast;
   QStringList m_offered;  // boards whose models were offered for download this session
   QPointer<Job> m_download;
+  std::function<void(const std::string&)> m_previewer;
 };
