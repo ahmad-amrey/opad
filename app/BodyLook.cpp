@@ -7,7 +7,7 @@ std::array<double, 3> mix(const std::array<double, 3>& a, const std::array<doubl
   return {a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t};
 }
 
-BodyLook compose(BodyLook look, const std::array<const LookDelta*, kLookSources>& layers, bool ghostsPickable) {
+BodyLook compose(BodyLook look, const std::array<const LookDelta*, kLookSources>& layers, bool ghostsPickable, const GhostStyle& ghost) {
   for (const LookDelta* d : layers) {
     if (!d) continue;
     if (d->visible) look.visible = *d->visible;
@@ -16,8 +16,8 @@ BodyLook compose(BodyLook look, const std::array<const LookDelta*, kLookSources>
     look.opacity *= d->fade;
     if (d->ghost) {
       look.ghost = true;
-      look.color = mix(look.color, kGhostGrey, 0.5);
-      look.opacity = std::min(look.opacity, kGhostOpacity);
+      look.color = mix(look.color, ghost.color, 0.5);
+      look.opacity = std::min(look.opacity, ghost.opacity);
       look.pickable = ghostsPickable;
     }
     if (d->pickable) look.pickable = *d->pickable;

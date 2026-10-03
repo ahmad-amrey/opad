@@ -104,7 +104,7 @@ void sketchLooks(QObject* context, AppDocument* doc, DesignController* design, V
       pollUntil(context, [v] { return !v->looksPending(); }, 10000, [=](bool) {
         const auto state = v->benchLookState(id);
         const QColor bg = v->tokens().vp;
-        const auto want = looks::mix(*red.color, {bg.redF(), bg.greenF(), bg.blueF()}, 1 - looks::kGhostOpacity);
+        const auto want = looks::mix(*red.color, {bg.redF(), bg.greenF(), bg.blueF()}, 1 - v->tokens().ghost.alphaF());
         bool faded = state.contains("color");
         for (int i = 0; i < 3 && faded; ++i) faded = std::abs(state["color"][i].get<double>() - want[i]) < 1e-3;
         require(faded && state.value("activated", -1) == 0 && state.value("displayed", false) && v->shownLook(id).ghost,
@@ -180,9 +180,10 @@ OPAD_BENCH(OPAD_BENCH_LOOKS, looks) {
       pollUntil(&w, [v] { return !v->looksPending(); }, 10000, [&w, v, require, finish, a, b, component, note, ax, ay, pixel, apart, before, base, red, green](bool applied) {
         const BodyLook la = v->shownLook(a), lb = v->shownLook(b);
         const auto sa = v->benchLookState(a), sb = v->benchLookState(b);
-        require(applied && la.color == *red.color && std::abs(la.opacity - looks::kGhostOpacity) < 1e-9 && la.ghost && !la.pickable && la == v->bodyLook(a),
-                "ghost under a compare tint: the tint at the ghost's opacity, not pickable");
-        require(std::abs(sa.value("transparency", 0.0) - (1 - looks::kGhostOpacity)) < 1e-6 && sa.value("activated", -1) == 0 && sa.value("displayed", false) &&
+        const double ghostAlpha = v->tokens().ghost.alphaF();  // the theme's ghost role
+        require(applied && la.color == *red.color && std::abs(la.opacity - ghostAlpha) < 1e-9 && la.ghost && !la.pickable && la == v->bodyLook(a),
+                "ghost under a compare tint: the tint at the theme ghost's opacity, not pickable");
+        require(std::abs(sa.value("transparency", 0.0) - (1 - ghostAlpha)) < 1e-6 && sa.value("activated", -1) == 0 && sa.value("displayed", false) &&
                     std::abs(sa["color"][0].get<double>() - 0.9) < 1e-3,
                 "the box's AIS: " + QString::fromStdString(sa.dump()));
         require(lb.color == *green.color && lb.opacity == 1 && lb.pickable && sb.value("activated", 0) > 0, "the component's tint reaches its cylinder, which stays pickable");
@@ -191,6 +192,16 @@ OPAD_BENCH(OPAD_BENCH_LOOKS, looks) {
         v->grabImage().save(qEnvironmentVariable("OPAD_BENCH_LOOKS") + ".ghost.png");
         const QColor ghosted = pixel();
         require(apart(ghosted, before) > 40, QString("drawn so: %1 -> %2").arg(before.name(), ghosted.name()));
+        // The other theme's ghost: its colour and alpha, and the looks are applied again; then back.
+        const bool dark = v->tokens().dark;
+        w.applyTheme(!dark);
+        const double otherAlpha = v->tokens().ghost.alphaF();
+        const BodyLook other = v->bodyLook(a);
+        const bool rescheduled = v->looksPending();
+        w.applyTheme(dark);
+        require(std::abs(other.opacity - otherAlpha) < 1e-9 && std::abs(otherAlpha - ghostAlpha) > 0.01 && rescheduled &&
+                    std::abs(v->bodyLook(a).opacity - ghostAlpha) < 1e-9,
+                QString("a theme switch: the ghost at %1 opacity in the other theme, %2 back").arg(otherAlpha, 0, 'f', 3).arg(ghostAlpha, 0, 'f', 3));
         v->setGhostsPickable(true);
         pollUntil(&w, [v] { return !v->looksPending(); }, 10000, [&w, v, require, finish, a, b, component, note, ax, ay, pixel, apart, before, base](bool) {
           require(v->shownLook(a).pickable && v->benchLookState(a).value("activated", 0) > 0 && v->benchPickAt(ax, ay) == a, "ghosts pickable on request");

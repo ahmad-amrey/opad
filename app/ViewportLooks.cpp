@@ -23,6 +23,7 @@ namespace {
 Quantity_Color rgb(const std::array<double, 3>& c) {
   return Quantity_Color(std::clamp(c[0], 0.0, 1.0), std::clamp(c[1], 0.0, 1.0), std::clamp(c[2], 0.0, 1.0), Quantity_TOC_sRGB);
 }
+looks::GhostStyle ghostOf(const Tokens& t) { return {{t.ghost.redF(), t.ghost.greenF(), t.ghost.blueF()}, t.ghost.alphaF()}; }  // the theme's role
 }  // namespace
 
 bool Viewport::layered() const {
@@ -46,7 +47,7 @@ BodyLook Viewport::composeLook(const opad::Node& body) const {
         }
     }
   }
-  return looks::compose(base, found, m_ghostsPickable);
+  return looks::compose(base, found, m_ghostsPickable, ghostOf(m_tokens));
 }
 
 BodyLook Viewport::bodyLook(const std::string& body) const {
@@ -66,7 +67,7 @@ BodyLook Viewport::sketchLook(const std::string& id) const {
   std::array<const LookDelta*, kLookSources> found{};
   for (size_t s = 0; s < kLookSources; ++s)
     if (const auto it = m_lookLayers[s].find(id); it != m_lookLayers[s].end()) found[s] = &it->second;
-  return looks::compose(base, found, m_ghostsPickable);
+  return looks::compose(base, found, m_ghostsPickable, ghostOf(m_tokens));
 }
 
 QString Viewport::hoverName(const std::string& node) const {

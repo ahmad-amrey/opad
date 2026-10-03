@@ -8,8 +8,9 @@
 // Composition, in LookSource order, each layer over what the earlier ones made:
 //   visible, color, opacity, pickable, layer   replaced when the delta has them
 //   fade                                       multiplies the opacity
-//   ghost                                      colour halfway to grey, opacity at most kGhostOpacity, not pickable
-//                                              (pickable while ghosts are, Viewport::setGhostsPickable)
+//   ghost                                      colour halfway to the ghost colour, opacity at most the ghost's, not
+//                                              pickable (pickable while ghosts are, Viewport::setGhostsPickable); the
+//                                              viewport passes the theme's ghost role (Tokens::ghost, its alpha)
 //   offset                                     added (a world translation; picking follows)
 // So an activation ghost under a compare tint is drawn in the tint at the ghost's opacity, a lock fade under a ghost
 // ends at the ghost's opacity, and a smart-select candidate on a ghost may set its own opacity and pickable.
@@ -46,9 +47,13 @@ struct BodyLook {
 };
 
 namespace looks {
-constexpr double kGhostOpacity = 0.15;  // other components while one is active
+constexpr double kGhostOpacity = 0.15;  // other components while one is active (without a theme)
 constexpr std::array<double, 3> kGhostGrey{0.62, 0.64, 0.68};
+struct GhostStyle {
+  std::array<double, 3> color = kGhostGrey;
+  double opacity = kGhostOpacity;
+};
 // `base` is the document's appearance; layers[s] is LookSource s's delta for the body (nullptr: none).
-BodyLook compose(BodyLook base, const std::array<const LookDelta*, kLookSources>& layers, bool ghostsPickable);
+BodyLook compose(BodyLook base, const std::array<const LookDelta*, kLookSources>& layers, bool ghostsPickable, const GhostStyle& ghost = {});
 std::array<double, 3> mix(const std::array<double, 3>& a, const std::array<double, 3>& b, double t);  // a + (b - a) t
 }  // namespace looks

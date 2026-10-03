@@ -35,6 +35,11 @@ TEST(activation_ghost_under_a_compare_tint) {
   // The ghost alone greys the document colour; ghosts become pickable while references are asked for.
   const BodyLook alone = looks::compose(base(), with({{LookSource::Activation, &ghost}}), true);
   CHECK(alone.color == looks::mix(base().color, looks::kGhostGrey, 0.5) && alone.pickable);
+  // The viewport's ghost is the theme's role (Tokens::ghost): its colour and alpha.
+  const looks::GhostStyle themed{{0.36, 0.38, 0.42}, 0.3};
+  const BodyLook light = looks::compose(base(), with({{LookSource::Activation, &ghost}}), false, themed);
+  CHECK(light.color == looks::mix(base().color, themed.color, 0.5));
+  CHECK_NEAR(light.opacity, 0.3, 1e-12);
 }
 
 TEST(lock_fade_explode_and_candidate) {

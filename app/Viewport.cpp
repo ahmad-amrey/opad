@@ -343,6 +343,7 @@ void Viewport::initViewer() {
 void Viewport::setTokens(const Tokens& t) {
   m_tokens = t;
   if (m_initialised) applyTokens();
+  if (layered()) scheduleLooks();  // ghosts take the theme's ghost colour and alpha
 }
 
 void Viewport::applyTokens() {
