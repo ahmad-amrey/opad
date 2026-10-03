@@ -46,7 +46,14 @@ class MainWindow : public QMainWindow {
  private:
   QAction* addAction(const QString& id, const QString& text, const QString& icon, const QKeySequence& shortcut, std::function<void()> fn, bool checkable = false);
   QAction* action(const QString& id) const;
-  void buildActions();
+  void buildActions();  // the area builders below, in command order
+  void buildFileActions();        // MainWindowFile.cpp
+  void buildViewActions();        // MainWindowView.cpp: view.*, panel toggles, workspaces
+  void buildNavigationActions();  // MainWindowView.cpp: layout reset, theme, navigation presets, selection filters
+  void buildInspectActions();     // MainWindowInspect.cpp
+  void buildAnnotateActions();    // MainWindowAnnotate.cpp
+  void buildEditActions();        // MainWindowEdit.cpp
+  void buildToolsActions();       // MainWindowRibbon.cpp: tools.*, help.*
   void buildMenus();
   void selectGeometry();
   void buildRibbon();
