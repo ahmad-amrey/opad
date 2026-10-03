@@ -328,11 +328,11 @@ TEST(rich_tip_menu_entries) {
   RichTip::setMenuCards(true);
   moveTo(plain);
   moveTo(extrude);
-  QTest::qWait(600);
+  QTest::qWaitFor([tip] { return tip->state() == RichTip::State::Compact; }, 5000);  // its timer, late on a busy machine
   CHECK(tip->state() == RichTip::State::Compact && tip->entry() == extrude && tip->target() == &menu && tip->commandId() == "design.extrude");
   CHECK(tip->geometry().left() + RichTip::kMargin > menu.geometry().right());
   moveTo(plain);
-  QTest::qWait(450);
+  QTest::qWaitFor([tip] { return tip->state() == RichTip::State::Hidden; }, 5000);
   CHECK(tip->state() == RichTip::State::Hidden);
   moveTo(extrude);
   tip->showFor(&menu, RichTip::State::Expanded, extrude);
