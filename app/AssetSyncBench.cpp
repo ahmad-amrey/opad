@@ -646,10 +646,10 @@ OPAD_BENCH(OPAD_BENCH_ASSET_KICAD, asset_kicad) {
   return true;
 }
 
-// OPAD_BENCH_ASSET_PERF=sync|embed on a document linking a big file (the Engine STEP; not a gui_benches case): once the file
-// is looked at and every body is displayed, the first linked file is synced (read again, forced: from its own path) or
-// embedded through the area as the user's click does; the trace shows the job's time and any stall of the UI thread
-// ("bench: asset-perf: <action> N ms").
+// OPAD_BENCH_ASSET_PERF=sync[:<file>]|embed on a document linking a big file (the Engine STEP; not a gui_benches case): once
+// the file is looked at and every body is displayed, the first linked file is synced (from <file> as Replace does: a changed
+// copy is read in full) or embedded through the area as the user's click does; the trace shows the job's time and any stall
+// of the UI thread ("bench: asset-perf: <action> N ms").
 OPAD_BENCH(OPAD_BENCH_ASSET_PERF, asset_perf) {
   static bool started = false;
   if (std::exchange(started, true)) return true;
@@ -662,7 +662,7 @@ OPAD_BENCH(OPAD_BENCH_ASSET_PERF, asset_perf) {
   AssetMonitor* monitor = area ? area->monitor() : nullptr;
   AppDocument* doc = w.m_doc;
   const std::string import = monitor && !monitor->assets().empty() ? monitor->assets().begin()->first : std::string();
-  (*require)(!import.empty() && (action == "sync" || action == "embed"), "a linked file, sync or embed");
+  (*require)(!import.empty() && (action.startsWith("sync") || action == "embed"), "a linked file, sync or embed");
   if (import.empty()) {
     QCoreApplication::exit(2);
     return true;
@@ -681,7 +681,7 @@ OPAD_BENCH(OPAD_BENCH_ASSET_PERF, asset_perf) {
       QTimer::singleShot(3000, &w, [require] { QCoreApplication::exit(require->all ? 0 : 2); });  // the display settles
     });
     if (action == "embed") area->embed(import);
-    else area->sync({import}, monitor->file(import));
+    else area->sync({import}, action.startsWith("sync:") ? action.mid(5) : monitor->file(import));
   });
   return true;
 }
