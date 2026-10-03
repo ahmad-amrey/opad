@@ -220,6 +220,23 @@ def licenses():
     assert "MIT licence" in p.stdout and "Trademarks" in p.stdout
     if "packages.msys2.org" in p.stdout:  # built against MSYS2: the packages and their licence texts are named
         assert "* opencascade " in p.stdout and "LGPL-2.1" in p.stdout and "Licence texts" in p.stdout
+    # A notices file beside the program wins only when it is OPAD's (a lone exe may land beside another product's).
+    alone = os.path.join(tmp, "alone")
+    os.makedirs(alone)
+    cli = os.path.join(alone, os.path.basename(CLI))
+    shutil.copy2(CLI, cli)
+    for name in os.listdir(os.path.dirname(CLI)):  # the toolchain runtime the build copies beside its programs
+        if name.lower().startswith(("libstdc++", "libgcc", "libwinpthread")):
+            shutil.copy2(os.path.join(os.path.dirname(CLI), name), alone)
+    beside = os.path.join(alone, "THIRD-PARTY-NOTICES.txt")
+    with open(beside, "w", encoding="utf-8") as f:
+        f.write("Other Tool third-party notices\n\nnot OPAD's\n")
+    other = subprocess.run([cli, "licenses"], capture_output=True, encoding="utf-8")
+    assert other.returncode == 0 and other.stdout == p.stdout, other.stdout[:200]
+    with open(beside, "w", encoding="utf-8") as f:
+        f.write("OPAD 9.9.9: third-party notices\n\npackaged\n")
+    packaged = subprocess.run([cli, "licenses"], capture_output=True, encoding="utf-8")
+    assert packaged.stdout.startswith("OPAD 9.9.9: third-party notices"), packaged.stdout[:200]
 
 
 test(basic_workflow)
