@@ -54,7 +54,7 @@ add_custom_command(OUTPUT ${opad_notices_stamp}
   BYPRODUCTS ${opad_notices_cpp} ${CMAKE_BINARY_DIR}/THIRD-PARTY-NOTICES.txt
   COMMAND ${CMAKE_COMMAND} "-DNOTICES_OUT=${CMAKE_BINARY_DIR}/THIRD-PARTY-NOTICES.txt" "-DNOTICES_CPP=${opad_notices_cpp}"
           "-DNOTICES_NINJA=${_opad_notices_ninja}" "-DNOTICES_TARGETS=^bin/opad(-cli)?([.](exe|cp[^/]*|so))?$"
-          "-DNOTICES_LIBDIRS=${_opad_notices_libdirs}" "-DNOTICES_LIBS=${_opad_notices_libs}" "-DNOTICES_OWN=${CMAKE_BINARY_DIR}" "-DNOTICES_OCCT=${_opad_notices_occt}"
+          "-DNOTICES_LIBDIRS=${_opad_notices_libdirs}" "-DNOTICES_LIBS=${_opad_notices_libs}" "-DNOTICES_STATIC=${OPAD_STATIC}" "-DNOTICES_OWN=${CMAKE_BINARY_DIR}" "-DNOTICES_OCCT=${_opad_notices_occt}"
           "-DNOTICES_FILES=${_opad_notices_files}" "-DNOTICES_PACMAN=${OPAD_PACMAN}" "-DNOTICES_VERSION=${PROJECT_VERSION}"
           "-DNOTICES_SCOPE=${_opad_notices_scope}" "-DNOTICES_EXTRA=${PROJECT_SOURCE_DIR}/cmake/notices_extra.txt"
           -P ${PROJECT_SOURCE_DIR}/cmake/notices.cmake

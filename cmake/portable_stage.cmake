@@ -123,7 +123,8 @@ set(NOTICES_OWN "${OPAD_BUILD_DIR}")
 set(NOTICES_PACMAN "${OPAD_PACMAN}")
 set(NOTICES_VERSION "${OPAD_VERSION}")
 set(NOTICES_EXTRA "${OPAD_SOURCE_DIR}/cmake/notices_extra.txt")
-set(NOTICES_SCOPE "This folder ships the DLLs listed below beside opad.exe. The LGPL libraries among them (Qt, Open CASCADE and others) are separate DLLs that you may replace with compatible builds of your own.")
+string(CONCAT NOTICES_SCOPE "This folder ships the DLLs listed below beside opad.exe. The LGPL libraries among them (Qt, "
+  "Open CASCADE and others) are separate DLLs that you may replace with compatible builds of your own.")
 include("${OPAD_SOURCE_DIR}/cmake/notices.cmake")
 
 # DWG: LibreDWG's dwg2dxf / dxf2dwg (GPLv3) are separate programs OPAD runs. They travel with their licence and their

@@ -8,21 +8,26 @@
 # Packages come from MSYS2's pacman (-Qo per file, -Qi for version, licence and home page, -Ql for the files under
 # share/licenses); without pacman the files are listed without packages.
 #
-# In: NOTICES_OUT (the text), NOTICES_FILES (binaries or headers, '|'-separated), NOTICES_NINJA + NOTICES_TARGETS (build.ninja
-# and a regex of the outputs whose LINK_LIBRARIES to read), NOTICES_LIBDIRS (-l search path), NOTICES_LIBS (more -l names), NOTICES_OWN (OPAD's build folder: its
-# files are skipped), NOTICES_OCCT ("<install dir>|<version>|<source url>|<source dir>" of an OCCT built here),
-# NOTICES_PACMAN, NOTICES_LICENSES_DIR (copy the licence files there instead of inlining them), NOTICES_SCOPE (what the
-# list covers), NOTICES_VERSION, NOTICES_EXTRA (a file appended), NOTICES_CPP (also that C++ source, written only when
-# it changed).
+# In: NOTICES_OUT (the text), NOTICES_FILES (binaries or headers, '|'-separated), NOTICES_NINJA + NOTICES_TARGETS
+# (build.ninja and a regex of the outputs whose LINK_LIBRARIES to read), NOTICES_LIBDIRS (-l search path), NOTICES_LIBS
+# (more -l names), NOTICES_STATIC, NOTICES_OWN (OPAD's build folder: its files are skipped), NOTICES_OCCT ("<install dir>|<version>|
+# <source url>|<source dir>" of an OCCT built here), NOTICES_PACMAN, NOTICES_LICENSES_DIR (copy the licence files there
+# instead of inlining them), NOTICES_SCOPE (what the list covers), NOTICES_VERSION, NOTICES_EXTRA (a file appended),
+# NOTICES_CPP (also that C++ source, written only when it changed).
 
 function(_opad_notices)
   string(REPLACE "|" ";" files "${NOTICES_FILES}")
   string(REPLACE "|" ";" libdirs "${NOTICES_LIBDIRS}")
-  # -lname: the first library of that name on the search path.
+  # -lname: the first library of that name on the search path, an archive first in a static build (as the linker does).
+  set(kinds "lib<>.dll.a" "lib<>.a" "<>.lib")
+  if(NOTICES_STATIC)
+    set(kinds "lib<>.a" "lib<>.dll.a" "<>.lib")
+  endif()
   macro(_opad_notice_lib name search)
     set(found "")
     foreach(dir IN LISTS ${search})
-      foreach(candidate "lib${name}.dll.a" "lib${name}.a" "${name}.lib")
+      foreach(kind IN LISTS kinds)
+        string(REPLACE "<>" "${name}" candidate "${kind}")
         if(NOT found AND EXISTS "${dir}/${candidate}")
           set(found "${dir}/${candidate}")
         endif()
