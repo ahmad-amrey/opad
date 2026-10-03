@@ -93,6 +93,9 @@ class Document {
 
   static void validate_op(const json& op);
   static const std::vector<std::string>& op_types();
+  // False for an op type of a newer build. Such an op loads as an opaque record (UI-65): saved back byte for byte,
+  // reported unresolved and never applied by replay, refused as an edit target; gc keeps the body keys it mentions.
+  static bool known_type(const std::string& type);
 
  private:
   std::vector<BodyEntry> bodies_;

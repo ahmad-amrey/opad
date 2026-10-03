@@ -390,6 +390,10 @@ editable bodies, or packs the file into `assets/` beside the document. A documen
 them: the linked parts are listed in the browser and their bodies shown as missing; editing and saving it there keeps the
 links.
 
+A record of a type this build does not know (written by a newer OPAD, such as a drawing sheet) is kept as it is: the
+file opens, the record is listed as needing a newer OPAD, is never applied or edited, and is saved back byte for byte.
+Builds older than this tolerant loader refuse such files with "unknown op type"; open them with a current build.
+
 ## Python
 
 ```python

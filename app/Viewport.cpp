@@ -3,6 +3,7 @@
 #include <TopExp_Explorer.hxx>
 #include <Prs3d_PointAspect.hxx>
 #include "Viewport.hpp"
+#include "Units.hpp"
 #include "opad/mesh.hpp"
 #include <V3d_DirectionalLight.hxx>
 #include "DepthBias.hpp"
@@ -32,6 +33,8 @@
 #include <Aspect_VKeyFlags.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepBndLib.hxx>
+#include <Bnd_Box2d.hxx>
+#include <gp_Pnt2d.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
@@ -40,6 +43,8 @@
 #include <Poly_PolygonOnTriangulation.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Bnd_Box.hxx>
+#include <Graphic3d_Structure.hxx>
+#include <Graphic3d_StructureManager.hxx>
 #include <Graphic3d_TransformPers.hxx>
 #include <Image_PixMap.hxx>
 #include <OpenGl_GraphicDriver.hxx>
@@ -132,6 +137,7 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
   setMinimumSize(200, 150);
   connect(doc, &AppDocument::changed, this, &Viewport::resetHoverFade);
   connect(doc, &AppDocument::changed, this, &Viewport::sync);
+  connect(units::notifier(), &units::Notifier::changed, this, [this] { refreshMeasurement(true); });  // labels in the shown unit
   m_syncTimer.setSingleShot(true);
   m_syncTimer.setInterval(50);
   connect(&m_syncTimer, &QTimer::timeout, this, &Viewport::sync);
@@ -153,7 +159,7 @@ Viewport::Viewport(AppDocument* doc, QWidget* parent)
 #endif
 }
 
-Viewport::~Viewport() { if(m_bodyGlowJob) m_bodyGlowJob->cancel(); *m_alive = false; }
+Viewport::~Viewport() { if(m_bodyGlowJob) m_bodyGlowJob->cancel(); if(m_lookJob) m_lookJob->cancel(); *m_alive = false; }
 
 void Viewport::setBlocked(bool on) {
   if (on) {
@@ -174,7 +180,7 @@ void Viewport::benchShot(const QString& path) {
   if (trace::enabled()) trace::log(QStringLiteral("bench: shot with %1 selected, layer of selected style %2").arg(m_ctx->NbSelected()).arg(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected)->ZLayer()));
   if (const QByteArray view = qgetenv("OPAD_BENCH_VIEW"); !view.isEmpty()) {  // an unanimated camera for the frame dump
     m_view->SetProj(view == "bottom" ? V3d_Zneg : view == "top" ? V3d_Zpos : V3d_XposYnegZpos);
-    m_view->FitAll(0.02, Standard_False);
+    m_view->FitAll(fitBounds(), 0.02, Standard_False);
     m_view->Redraw();
     emit notesMoved();  // the note cards follow the camera through a queued signal; the dump wants them placed now
   }
@@ -211,7 +217,7 @@ std::string Viewport::benchHeaviest() const {
 // A rubber band over the whole view in the current mode: the mass sub-shape selection case.
 void Viewport::benchBand() {
   if (!m_initialised) return;
-  m_view->FitAll(0.02, Standard_False);
+  m_view->FitAll(fitBounds(), 0.02, Standard_False);
   m_view->Redraw();
   Standard_Integer w = 0, h = 0;
   m_view->Window()->Size(w, h);
@@ -230,7 +236,7 @@ void Viewport::benchSubShot(const QString& path) {
   Standard_Real x = 0, y = 0, z = 0;
   m_view->Proj(x, y, z);
   m_view->SetProj(-x, -y, -z);
-  m_view->FitAll(0.02, Standard_False);
+  m_view->FitAll(fitBounds(), 0.02, Standard_False);
   m_view->Redraw();
   grabImage().save(path);
 }
@@ -342,6 +348,7 @@ void Viewport::initViewer() {
 void Viewport::setTokens(const Tokens& t) {
   m_tokens = t;
   if (m_initialised) applyTokens();
+  if (layered()) scheduleLooks();  // ghosts take the theme's ghost colour and alpha
 }
 
 void Viewport::applyTokens() {
@@ -493,10 +500,19 @@ void Viewport::twoDimensionalHint(const QPoint& global) {
 }
 
 // ---------------------------------------------------------------- display styles (F19)
-void Viewport::applyStyle(const Handle(AIS_Shape)& ais) {
+void Viewport::applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look) {
   Handle(Prs3d_Drawer) d = ais->Attributes();
   d->SetFaceBoundaryDraw(m_style == Style::ShadedEdges);
-  d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(m_tokens.medge), Aspect_TOL_SOLID, 1.0));
+  // Line aspects ignore alpha here: a ghost's edges are blended towards the background instead. The body's own aspect
+  // is changed in place, so the drawn groups (which share it) follow SynchronizeAspects as well as a recompute.
+  QColor edge = m_tokens.medge;
+  if (look && look->ghost) {
+    const double t = 1 - look->opacity;
+    edge = QColor::fromRgbF(edge.redF() + (m_tokens.vp.redF() - edge.redF()) * t, edge.greenF() + (m_tokens.vp.greenF() - edge.greenF()) * t,
+                            edge.blueF() + (m_tokens.vp.blueF() - edge.blueF()) * t);
+  }
+  if (d->HasOwnFaceBoundaryAspect()) d->FaceBoundaryAspect()->SetColor(occ(edge));
+  else d->SetFaceBoundaryAspect(new Prs3d_LineAspect(occ(edge), Aspect_TOL_SOLID, 1.0));
   m_ctx->SetDisplayMode(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, Standard_False);
 }
 
@@ -505,7 +521,7 @@ void Viewport::setStyle(Style s) {
   if (!m_initialised) return;
   bool selected = false;
   for (auto& [id, it] : m_items) {
-    applyStyle(it.ais);
+    applyStyle(it.ais, &it.look);
     m_ctx->RecomputePrsOnly(it.ais, Standard_False, Standard_True);  // not Redisplay: that dropped the body from the selection
     selected = selected || m_ctx->IsSelected(it.ais);
   }
@@ -526,21 +542,55 @@ void Viewport::updateGridExtent() {
   if (!m_initialised) return;
   m_gridSpacing=QSettings().value("view/gridSpacing",0.0).toDouble();
   if (m_twoDimensional) { updateInfiniteGrid(true); return; }
-  Bnd_Box bounds;
-  for (const auto& [id,item]:m_items) { Bnd_Box b; item.ais->BoundingBox(b); bounds.Add(b); }
-  for (const auto& [id,wire]:m_sketchWires) { Bnd_Box b; wire.ais->BoundingBox(b); bounds.Add(b); }
-  double extent=100;
+  // In 3D the grid is a patch under the model, in the grid plane: around the plane's origin while that square would be
+  // at most four times the model's own (most parts), else around the model's footprint. A house 600 m out (an OBJ keeping
+  // its site coordinates) got a 1.4 km sheet around (0,0,0), which also pulled box-less fits to the origin.
+  const gp_Ax3 plane=m_viewer->PrivilegedPlane();
+  const Bnd_Box bounds=fitBounds(false);
+  const double minimum=std::max(100.0,QSettings().value("view/gridExtent",100.0).toDouble());
+  double cx=0,cy=0,half=0;
   if (!bounds.IsVoid()) {
     const auto lo=bounds.CornerMin(), hi=bounds.CornerMax();
-    extent=std::max({extent,std::abs(lo.X()),std::abs(lo.Y()),std::abs(lo.Z()),std::abs(hi.X()),std::abs(hi.Y()),std::abs(hi.Z())})*1.1;
+    Bnd_Box2d footprint;
+    for (int i=0;i<8;++i) {
+      const gp_Vec rel(plane.Location(),gp_Pnt(i&1?hi.X():lo.X(),i&2?hi.Y():lo.Y(),i&4?hi.Z():lo.Z()));
+      footprint.Add(gp_Pnt2d(rel.Dot(gp_Vec(plane.XDirection())),rel.Dot(gp_Vec(plane.YDirection()))));
+    }
+    double u0,v0,u1,v1;
+    footprint.Get(u0,v0,u1,v1);
+    half=std::max(u1-u0,v1-v0)/2*1.1;
+    const double around=std::max({-u0,u1,-v0,v1})*1.1;  // the square around the origin that holds the model
+    if (around>std::max(minimum,4*half)) cx=(u0+u1)/2,cy=(v0+v1)/2;
+    else half=around;
   }
-  extent=std::max(extent,QSettings().value("view/gridExtent",100.0).toDouble());
+  double extent=std::max(half,minimum);
   const double custom=QSettings().value("view/gridSpacing",0.0).toDouble();
   const double step=custom>0?custom:std::pow(10.0,std::floor(std::log10(extent/10.0)));
+  // Every tenth line stays on a world multiple of ten steps (and snapping on multiples of the step).
+  const double major=10*step,ox=std::round(cx/major)*major,oy=std::round(cy/major)*major;
+  extent+=std::max(std::abs(ox-cx),std::abs(oy-cy));
   m_gridStep=step;
   m_gridShownStep=0;
-  m_viewer->SetRectangularGridValues(0,0,step,step,0);
+  placeGrid(ox,oy,step,extent);
+  if (trace::enabled()) trace::log(QStringLiteral("3D grid: spacing %1 around (%2, %3), %4 each way").arg(step).arg(ox).arg(oy).arg(extent));
+}
+
+// The grid centred on (u, v) of the privileged plane. V3d_RectangularGrid draws its lines around (-XOrigin, -YOrigin)
+// (UpdateDisplay translates by minus the origin) while Aspect_RectangularGrid::Compute snaps around (+XOrigin, +YOrigin);
+// OPAD snaps by itself, so the origin is handed over negated and the lines lie where they are meant to.
+void Viewport::placeGrid(double u, double v, double step, double extent) {
+  m_viewer->SetRectangularGridValues(-u,-v,step,step,0);
   m_viewer->SetRectangularGridGraphicValues(extent,extent,0);
+}
+
+Bnd_Box Viewport::benchGridBox() const {
+  Bnd_Box box;
+  if (!m_initialised) return box;
+  Graphic3d_MapOfStructure displayed;
+  m_viewer->StructureManager()->DisplayedStructures(displayed);
+  for (Graphic3d_MapOfStructure::Iterator it(displayed); it.More(); it.Next())
+    if (it.Key()->IsInfinite() && it.Key()->TransformPersistence().IsNull()) box.Add(it.Key()->MinMaxValues(Standard_True));
+  return box;
 }
 
 // OCCT's grid is a finite patch. In 2D mode it is laid out again around what the view shows whenever the view gets
@@ -564,8 +614,7 @@ void Viewport::updateInfiniteGrid(bool force) {
   m_gridShownX = ox;
   m_gridShownY = oy;
   m_gridShownExtent = extent;
-  m_viewer->SetRectangularGridValues(ox, oy, step, step, 0);
-  m_viewer->SetRectangularGridGraphicValues(extent, extent, 0);
+  placeGrid(ox, oy, step, extent);
   if (trace::enabled()) trace::log(QStringLiteral("2D grid: spacing %1 around (%2, %3), %4 each way").arg(step).arg(ox).arg(oy).arg(extent));
 }
 
@@ -594,6 +643,10 @@ void Viewport::activateSelection(const Handle(AIS_Shape)& ais) {
   m_ctx->Load(ais, -1);  // register with the selection manager (picking BVH); Display() with mode -1 does not
   m_ctx->Deactivate(ais);
   if (!m_bodiesPickable) return;  // sketching, or a feature input that only takes sketch regions / planes
+  if (const auto node = m_nodeOf.find(ais.get()); node != m_nodeOf.end()) {  // a ghost, a locked or a hidden body (its look)
+    if (const auto item = m_items.find(node->second); item != m_items.end() && !item->second.look.shownPickable()) return;
+    if (const auto wire = m_sketchWires.find(node->second); wire != m_sketchWires.end() && !wire->second.look.shownPickable()) return;
+  }
   TopAbs_ShapeEnum t = TopAbs_SHAPE;
   switch (m_filter) {
     case SelFilter::Body: t = TopAbs_SHAPE; break;
@@ -900,7 +953,9 @@ void Viewport::applySelectionLayers() {
   for(const auto& [ais,glow]:m_bodyGlows) if(!state->keep.count(ais)) state->stale.push_back(ais);
   auto update=[this](const Handle(AIS_Shape)& ais,const std::shared_ptr<BodyPrs>& prs) {
     const bool selected=m_ctx->IsSelected(ais);
-    const auto want=selected?Graphic3d_ZLayerId_Topmost:Graphic3d_ZLayerId_Default;
+    Graphic3d_ZLayerId rest=Graphic3d_ZLayerId_Default;  // where its look puts it (UI-121); selected: Topmost, the X-ray, last
+    if(const auto node=m_nodeOf.find(ais.get());node!=m_nodeOf.end()) if(const auto item=m_items.find(node->second);item!=m_items.end()) rest=item->second.look.layer;
+    const auto want=selected?Graphic3d_ZLayerId_Topmost:rest;
     if(ais->ZLayer()!=want) m_ctx->SetZLayer(ais,want);
     if(!selected || !prs) return;
     // A body a feature preview stands in for (moved, joined, cut) shows no glow where it was: it read as a copy left behind.
@@ -1064,9 +1119,38 @@ void Viewport::isolate(const std::vector<std::string>& ids) {
 }
 
 // ---------------------------------------------------------------- camera (F17/F18)
+// What Fit frames: the model as drawn (bodies, sketches and their images, a feature preview, finite overlays such as a
+// drawing being placed), never the grid, gizmos or annotations (infinite). V3d_View::FitAll(margin) boxes every
+// structure in the view, and OCCT 7.9 adds the centre of any *infinite* structure more than 500 m across
+// (Graphic3d_Layer::BoundingBox, centerOfinfiniteBndBox). The grid is one, and it used to reach from the world origin to
+// the farthest coordinate: a house 600 m out (an OBJ keeping its site coordinates) was framed together with (0,0,0), 9x
+// too small, in the corner under the cube.
+Bnd_Box Viewport::fitBounds(bool fallback) const {
+  Bnd_Box bounds;
+  auto add = [&](const Handle(AIS_InteractiveObject)& object) {
+    if (object.IsNull() || !m_ctx->IsDisplayed(object)) return;  // erased under a feature preview: the preview counts
+    Bnd_Box box;
+    object->BoundingBox(box);
+    bounds.Add(box);
+  };
+  for (const auto& [id, item] : m_items) add(item.ais);
+  for (const auto& [id, wire] : m_sketchWires) {
+    add(wire.ais);
+    for (const auto& image : wire.backdrops) add(image);
+  }
+  for (const auto& preview : m_previewBodies) add(preview);
+  for (const auto& overlay : m_overlays) if (!overlay->IsInfinite() && overlay->TransformPersistence().IsNull()) add(overlay);
+  if (fallback && bounds.IsVoid()) {  // nothing to frame: the default grid, as Home does
+    const double extent = std::max(1.0, QSettings().value("view/gridExtent", 100.0).toDouble());
+    bounds.Add(gp_Pnt(-extent, -extent, 0));
+    bounds.Add(gp_Pnt(extent, extent, 0));
+  }
+  return bounds;
+}
+
 void Viewport::fitAll() {
   if (!m_initialised) return;
-  m_view->FitAll(0.02, Standard_False);
+  m_view->FitAll(fitBounds(), 0.02, Standard_False);
   // A flat wire can make OCCT put an orthographic eye exactly on its target.
   // Keep a usable picking ray without changing the fitted on-screen scale.
   const auto camera=m_view->Camera();
@@ -1157,13 +1241,7 @@ void Viewport::home() {
   if(!m_initialised) return;
   myViewAnimation->Stop();m_needFit=false;
   if(!m_twoDimensional) m_view->SetProj(V3d_XposYnegZpos);
-  Bnd_Box bounds;
-  for(const auto& [id,item]:m_items) { Bnd_Box b; item.ais->BoundingBox(b); bounds.Add(b); }
-  for(const auto& [id,wire]:m_sketchWires) { Bnd_Box b; wire.ais->BoundingBox(b); bounds.Add(b); }
-  if(bounds.IsVoid()) {
-    const double extent=std::max(1.0,QSettings().value("view/gridExtent",100.0).toDouble());
-    bounds.Add(gp_Pnt(-extent,-extent,0)); bounds.Add(gp_Pnt(extent,extent,0));
-  }
+  const Bnd_Box bounds=fitBounds();
   const gp_Pnt center((bounds.CornerMin().XYZ()+bounds.CornerMax().XYZ())*.5);
   const auto camera=m_view->Camera();const gp_Vec shift(camera->Center(),center);
   camera->SetEyeAndCenter(camera->Eye().Translated(shift),center);
@@ -1686,8 +1764,7 @@ void Viewport::sync() {
       if (item.color != n->color || item.opacity != n->opacity) {
         item.color = n->color;
         item.opacity = n->opacity;
-        item.ais->SetColor(qcolor(n->color));
-        item.ais->SetTransparency(1.0 - n->opacity);
+        applyLook(id, item, composeLook(*n));  // the new appearance under the layers of looks (UI-121)
         // The presentation only: Redisplay also rebuilt the selection owners, which dropped the body from the selection
         // (a colour picked for the selection left it unselected, though the status bar still counted it).
         m_ctx->RecomputePrsOnly(item.ais, Standard_False);
@@ -1731,6 +1808,7 @@ void Viewport::sync() {
   if(removed) applySelectionLayers();
   if (removed && (!m_subHl.IsNull() || m_subJob)) refreshSubHighlight();  // Remove() dropped that body's selected sub-shapes
   if (!pending.empty()) startMeshing(pending);
+  if (layered()) scheduleLooks();  // the hierarchy under a layer's components may have changed
   syncSketches();
   applySelectionLayers();
   updateAnnotations();
@@ -1775,6 +1853,7 @@ void Viewport::displayBody(const std::string& id) {
     auto p = m_prs.find(n->body_key);
     if (p != m_prs.end()) prs = p->second;
   }
+  const BodyLook look = composeLook(*n);  // the document's appearance under the layers of looks (UI-121)
   // Rigid placements go on the object as a local transformation, so the prototype's precomputed arrays
   // (and sub-shape ordinals) are shared by every instance; anything else gets a transformed copy.
   TopoDS_Shape located = proto;
@@ -1800,7 +1879,10 @@ void Viewport::displayBody(const std::string& id) {
   } else if (r != m_rasters.end()) {
     emit hoverChanged(tr("Embedded image could not be decoded; showing its frame"));
   }
-  if (rigid && !world.is_identity()) ais->SetLocalTransformation(opad::trsf_from_mat(world));
+  gp_Trsf placed;
+  if (look.offset != std::array<double, 3>{0, 0, 0}) placed.SetTranslation(gp_Vec(look.offset[0], look.offset[1], look.offset[2]));  // an explode offset, after the placement
+  if (rigid && !world.is_identity()) placed.Multiply(opad::trsf_from_mat(world));
+  if (placed.Form() != gp_Identity) ais->SetLocalTransformation(placed);
   ais->Attributes()->SetTypeOfDeflection(Aspect_TOD_ABSOLUTE);
   ais->Attributes()->SetMaximalChordialDeviation(deflectionFor(n->body_key));
   ais->Attributes()->SetDeviationAngle(20.0 * M_PI / 180.0);
@@ -1809,9 +1891,10 @@ void Viewport::displayBody(const std::string& id) {
   // minutes on big bodies. Meshing happens once, on the worker; unmeshed faces get box sensitives.
   ais->Attributes()->SetAutoTriangulation(Standard_False);
   ais->SetMaterial(Graphic3d_NameOfMaterial_Plastified);
-  ais->SetColor(qcolor(n->color));
-  if (n->opacity < 1.0) ais->SetTransparency(1.0 - n->opacity);
-  applyStyle(ais);
+  ais->SetColor(qcolor(look.color));
+  if (look.opacity < 1.0) ais->SetTransparency(1.0 - look.opacity);
+  if (look.layer != Graphic3d_ZLayerId_Default) ais->SetZLayer(look.layer);
+  applyStyle(ais, &look);
   if(n->representation=="drawing2d" && n->raster.is_null()) {
     Handle(Prs3d_Drawer) selected=new Prs3d_Drawer();selected->SetLink(m_ctx->HighlightStyle(Prs3d_TypeOfHighlight_Selected));
     selected->SetDisplayMode(AIS_WireFrame);selected->SetColor(selectionTint());
@@ -1822,16 +1905,17 @@ void Viewport::displayBody(const std::string& id) {
     hover->SetDisplayMode(AIS_WireFrame);hover->SetColor(Quantity_NOC_WHITE);ais->SetDynamicHilightAttributes(hover);
   }
   m_ctx->Display(ais, m_style == Style::Wireframe ? AIS_WireFrame : !Handle(AIS_TexturedShape)::DownCast(ais).IsNull() ? 3 : AIS_Shaded, -1, Standard_False);  // selection activated below, once
+  if (!look.visible) m_ctx->Erase(ais, Standard_False);
   const qint64 displayMs = t.elapsed();
-  activateSelection(ais);
-  if (trace::enabled() && t.elapsed() > 50) trace::log(QStringLiteral("displayBody %1: display %2 ms, selection %3 ms").arg(QString::fromStdString(n->name)).arg(displayMs).arg(t.elapsed() - displayMs));
-  m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located, {}, raster};
+  m_items[id] = Item{ais, n->body_key, world, n->color, n->opacity, located, {}, raster, look, rigid};
   m_nodeOf[ais.get()] = id;
+  activateSelection(ais);  // after m_items: its look may say not pickable
+  if (trace::enabled() && t.elapsed() > 50) trace::log(QStringLiteral("displayBody %1: display %2 ms, selection %3 ms").arg(QString::fromStdString(n->name)).arg(displayMs).arg(t.elapsed() - displayMs));
   if (prs && !prs->navigation.IsNull()) {
     Handle(NavigationShape) nav = new NavigationShape(prs->navigation);
-    if (rigid && !world.is_identity()) nav->SetLocalTransformation(opad::trsf_from_mat(world));
+    if (placed.Form() != gp_Identity) nav->SetLocalTransformation(placed);
     m_navSelection->Load(nav, -1);
-    m_navSelection->Activate(nav, 0);
+    if (look.visible) m_navSelection->Activate(nav, 0);
     m_items[id].navigation = nav;
     m_navNodes[nav.get()] = id;
   }
@@ -1871,7 +1955,7 @@ void Viewport::finishSync(int pendingCount, bool added) {
   // every fit, orbit or zoom of theirs clears m_needFit so a later batch never snaps the view back.
   if(m_needFit && !m_fitNodesOnSync.empty()) {
     if(pendingCount==0){auto ids=std::move(m_fitNodesOnSync);m_fitNodesOnSync.clear();fitNodes(ids);}
-  }else if (added && m_needFit) m_view->FitAll(0.02, Standard_False);
+  }else if (added && m_needFit) m_view->FitAll(fitBounds(), 0.02, Standard_False);
   if(!m_needFit)m_fitNodesOnSync.clear();
   if (pendingCount == 0) m_needFit = false;
   if (m_sectionEnabled) updateSectionGizmo();  // the model's extent may have changed
@@ -1970,7 +2054,7 @@ void Viewport::paintEvent(QPaintEvent*) {
     Handle(AIS_InteractiveObject) obj = m_ctx->DetectedInteractive();
     auto it = m_nodeOf.find(obj.get());
     if (it != m_nodeOf.end()) {
-      hover = m_doc->nodeName(it->second);
+      hover = hoverName(it->second);
       Handle(StdSelect_BRepOwner) owner = Handle(StdSelect_BRepOwner)::DownCast(m_ctx->DetectedOwner());
       if (!owner.IsNull() && owner->HasShape() && m_filter != SelFilter::Body) {
         const TopoDS_Shape& sub = owner->Shape();
@@ -1981,7 +2065,7 @@ void Viewport::paintEvent(QPaintEvent*) {
           opad::Ref ref; ref.body=it->second; ref.kind=Handle(CircleOwner)::DownCast(mine).IsNull()?opad::Ref::Kind::Edge:opad::Ref::Kind::Center; ref.index=mine->index();
           if(sub.ShapeType()==TopAbs_EDGE || ref.kind==opad::Ref::Kind::Center) {
             const auto info=circleInfo(ref);
-            if(info.contains("diameter")) hover+=tr(" | Diameter %1 mm").arg(info["diameter"].get<double>(),0,'f',3);
+            if(info.contains("diameter")) hover+=tr(" | Diameter %1").arg(units::format(units::Kind::Length,info["diameter"].get<double>()));
             if(info.contains("segments")) hover+=tr(" | %1 segments (approximate)").arg(info["segments"].get<int>());
           }
         }

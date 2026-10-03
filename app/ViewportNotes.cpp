@@ -41,7 +41,7 @@ class NoteGraphic : public AIS_InteractiveObject {
   struct Stroke {std::vector<gp_Pnt> points;QColor color;double width;};
   std::vector<Stroke> strokes;
   // scale: backing pixels per widget point, so a stroke is as wide on screen as its sample in the editor
-  void addDrawing(const opad::json& drawing, double scale) {
+  void addDrawing(const opad::json& drawing, double scale, const gp_Vec& offset = gp_Vec()) {
     if(drawing.is_null()) return;
     for(const auto& stroke:drawing.at("strokes")) {
       const auto frame=opad::Frame::from_json(stroke.value("plane",drawing.at("plane")));
@@ -49,7 +49,7 @@ class NoteGraphic : public AIS_InteractiveObject {
       const QColor color=notes::penColor(name);
       const auto& points=stroke.at("points");
       Stroke line{{},color,stroke.at("width").get<double>()*scale};line.points.reserve(points.size());
-      for(const auto& point:points){const auto p=frame.to_world(point[0],point[1]);line.points.emplace_back(p[0],p[1],p[2]);}
+      for(const auto& point:points){const auto p=frame.to_world(point[0],point[1]);line.points.push_back(gp_Pnt(p[0],p[1],p[2]).Translated(offset));}
       strokes.push_back(std::move(line));
     }
   }
@@ -109,7 +109,7 @@ void Viewport::updateAnnotations() {
       }
     }
     if(!a.drawing.is_null()) {const auto& p=a.drawing.at("plane").at("origin");at=gp_Pnt(p[0],p[1],p[2]);}
-    m_notes[a.id] = {at, a.style, a.drawing};
+    m_notes[a.id] = {at, a.style, a.drawing, a.anchor.body};
   }
   m_noteCamera.Reset();  // so the next frame lays the cards out again
   QMetaObject::invokeMethod(this, [this] { emit notesMoved(); }, Qt::QueuedConnection);
@@ -118,7 +118,7 @@ void Viewport::updateAnnotations() {
 bool Viewport::noteAnchor(const std::string& id, QPoint& out) const {
   auto it = m_notes.find(id);
   if (it == m_notes.end() || !m_initialised) return false;
-  const gp_Pnt& p = it->second.at;
+  const gp_Pnt p = it->second.at.Translated(lookOffset(it->second.node));
   if (!m_view->Camera()->IsOrthographic() && gp_Vec(m_view->Camera()->Eye(), p).Dot(gp_Vec(m_view->Camera()->Direction())) <= 0) return false;  // behind the eye
   out = widgetPoint({p.X(), p.Y(), p.Z()});
   return true;
@@ -135,18 +135,20 @@ void Viewport::setNoteLeaders(const std::map<std::string, QPoint>& ends, bool sh
   Handle(NoteGraphic) g = new NoteGraphic();
   for (const auto& [id, note] : m_notes) {
     if(!m_noteTypeFilter.empty() && note.style!=m_noteTypeFilter) continue;
-    g->addDrawing(note.drawing, m_cubeScale);
+    const gp_Vec offset = lookOffset(note.node);
+    const gp_Pnt at = note.at.Translated(offset);
+    g->addDrawing(note.drawing, m_cubeScale, offset);
     const notes::Style& look = notes::style(note.style);
     const QColor color = m_tokens.*look.color;
-    g->dots.push_back({note.at, color});
+    g->dots.push_back({at, color});
     auto end = ends.find(id);
     if (end == ends.end()) continue;
     // World units per widget pixel at the anchor (perspective: at its depth, not the camera target's).
     double px = pixelSize();
-    if (!camera->IsOrthographic()) px *= std::max(gp_Vec(camera->Eye(), note.at).Dot(gp_Vec(camera->Direction())), camera->Distance() * 0.01) / camera->Distance();
-    const QPoint from = widgetPoint({note.at.X(), note.at.Y(), note.at.Z()});
-    const gp_Pnt to = note.at.Translated(right * ((end->second.x() - from.x()) * px) + up * ((from.y() - end->second.y()) * px));
-    g->leaders.push_back({note.at, to, color, look.line == Qt::SolidLine ? Aspect_TOL_SOLID : look.line == Qt::DashLine ? Aspect_TOL_DASH : Aspect_TOL_DOT, look.width});
+    if (!camera->IsOrthographic()) px *= std::max(gp_Vec(camera->Eye(), at).Dot(gp_Vec(camera->Direction())), camera->Distance() * 0.01) / camera->Distance();
+    const QPoint from = widgetPoint({at.X(), at.Y(), at.Z()});
+    const gp_Pnt to = at.Translated(right * ((end->second.x() - from.x()) * px) + up * ((from.y() - end->second.y()) * px));
+    g->leaders.push_back({at, to, color, look.line == Qt::SolidLine ? Aspect_TOL_SOLID : look.line == Qt::DashLine ? Aspect_TOL_DASH : Aspect_TOL_DOT, look.width});
   }
   Handle(Graphic3d_SequenceOfHClipPlane) noClip = new Graphic3d_SequenceOfHClipPlane();
   noClip->SetOverrideGlobal(Standard_True);

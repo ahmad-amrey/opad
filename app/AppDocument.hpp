@@ -3,6 +3,7 @@
 // the shared command layer (F36) so the UI never has private shortcuts to core state.
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -102,8 +103,10 @@ class AppDocument : public QObject {
   bool canRedo() const { return !m_redo.empty() && !loading && (!designBusy || m_capturing); }
   QString undoLabel() const { return m_undo.empty() ? QString() : m_undo.back().label; }
   QString redoLabel() const { return m_redo.empty() ? QString() : m_redo.back().label; }
-  void undo();
-  void redo();
+  QStringList undoLabels() const;  // every step, the next one to undo first (the Undo arrow's list)
+  QStringList redoLabels() const;
+  void undo(int steps = 1);  // several steps: one refresh
+  void redo(int steps = 1);
   void setUndoLimit(int steps);
   int undoLimit() const { return m_undoLimit; }
   const opad::Node* node(const std::string& id) const { return scene.node(id); }

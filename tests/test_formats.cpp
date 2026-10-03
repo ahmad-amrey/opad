@@ -544,6 +544,31 @@ TEST(step_face_colours_follow_the_faces) {
   CHECK(side[0] > side[1] + 60 && side[0] > side[2] + 60);      // red
 }
 
+// A mesh has no surfaces or curves: its triangles are what the Bounding box measure and Properties' size see (both
+// came out empty for every STL/OBJ body), also turned (OBJ is Y-up) and far from the origin.
+TEST(mesh_bodies_have_a_tight_box) {
+  Files f;
+  write_text_file(f.dir / "tetra.stl", kTetra);
+  write_text_file(f.dir / "far.obj", "v 24000 0 -601000\nv 54000 0 -601000\nv 54000 0 -621000\nv 24000 12000 -601000\nf 1 2 3\nf 1 2 4\n");
+  for (const auto& [file, size] : {std::pair<const char*, Vec3>{"tetra.stl", {10, 10, 10}}, {"far.obj", {30000, 20000, 12000}}}) {
+    for (bool viewer : {true, false}) {
+      const Document d = open(f.dir / file, viewer);
+      const Scene s = resolve(d);
+      const std::string body = s.all_bodies().front();
+      const json box = node_properties(d, s, body, true).value("bbox", json::object());
+      CHECK(box.contains("size"));
+      Ref r;
+      r.kind = Ref::Kind::Body;
+      r.body = body;
+      const json measured = measure_bbox(d, s, {r});
+      for (int i = 0; i < 3; ++i) {
+        CHECK_NEAR(box["size"][i].get<double>(), size[i], 1e-3);
+        CHECK_NEAR(measured["size"][i].get<double>(), size[i], 1e-3);
+      }
+    }
+  }
+}
+
 TEST(gltf_round_trip_keeps_millimetres) {
   Files f;
   Document source = Document::create();
