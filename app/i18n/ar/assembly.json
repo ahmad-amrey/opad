@@ -70,7 +70,6 @@
  "Radial: away from the centre · Along an axis: both ways along it · Stack: piled up along it": "شعاعي: بعيدًا عن المركز · على محور: في الاتجاهين على طوله · تكديس: بعضها فوق بعض على طوله",
  "View up": "أعلى العرض",
  "Times the automatic distance (in a stack, the gap)": "مضاعف المسافة التلقائية (في التكديس: الفجوة)",
- "Level by level": "مستوى بعد مستوى",
  "All together": "كلها معًا",
  "One after another": "واحدًا بعد الآخر",
  "The order the parts move in as the distance grows": "ترتيب تحرّك الأجزاء مع ازدياد المسافة",
@@ -92,5 +91,6 @@
  "Pause (Space)": "إيقاف مؤقت (مفتاح المسافة)",
  "No exploded view saved yet": "لا يوجد عرض مفكَّك محفوظ بعد",
  "Not saved": "غير محفوظ",
- "Pinned measurements are taken on the assembled model: collapse the exploded view, then measure again.": "تؤخذ القياسات المثبّتة على النموذج المجمّع: أعد تجميع العرض المفكَّك ثم قِس من جديد."
+ "Pinned measurements are taken on the assembled model: collapse the exploded view, then measure again.": "تؤخذ القياسات المثبّتة على النموذج المجمّع: أعد تجميع العرض المفكَّك ثم قِس من جديد.",
+ "Level by level (as saved)": "مستوى بعد مستوى (كما حُفظ)"
 }

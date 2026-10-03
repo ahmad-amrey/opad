@@ -119,7 +119,8 @@ ExplodePanel::ExplodePanel(QWidget* parent) : QWidget(parent) {
   m_spacing->setToolTip(tr("Times the automatic distance (in a stack, the gap)"));
   m_stages = new QComboBox(body);
   m_stages->setObjectName("explodeStages");
-  m_stages->addItem(tr("Level by level"), "levels");
+  // Every level at the distance the slider says, or the parts one after another. Not a slider cut into a stretch per
+  // level (IP design-around, TODO 11 D4): a spec that has it (made by the CLI) shows it while it is the one in use.
   m_stages->addItem(tr("All together"), "together");
   m_stages->addItem(tr("One after another"), "units");
   m_stages->setToolTip(tr("The order the parts move in as the distance grows"));
@@ -243,6 +244,9 @@ void ExplodePanel::showSpec(const opad::ExplodeSpec& spec, int depth, bool on, b
   m_axis->setCurrentIndex(axis);
   m_axis->setEnabled(spec.mode != "radial");
   m_spacing->setValue(spec.spacing);
+  const int levelled = m_stages->findData("levels");
+  if (spec.stages == "levels" && levelled < 0) m_stages->addItem(tr("Level by level (as saved)"), "levels");
+  else if (spec.stages != "levels" && levelled >= 0) m_stages->removeItem(levelled);
   m_stages->setCurrentIndex(std::max(0, m_stages->findData(QString::fromStdString(spec.stages))));
   m_attach->setChecked(spec.attach_small);
   m_lines->setChecked(lines);

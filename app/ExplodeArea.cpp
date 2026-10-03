@@ -81,7 +81,17 @@ opad::ExplodeRule nextRule(opad::ExplodeRule r) {
 }
 }  // namespace
 
-Explode::Explode(AreaServices& services) : AreaController(services) {
+namespace {
+// What a new explode starts from: every level moving with the distance at once (the core's default moves the levels in
+// turn, one stretch of the slider each: not offered here, TODO 11 D4).
+opad::ExplodeSpec fresh() {
+  opad::ExplodeSpec spec;
+  spec.stages = "together";
+  return spec;
+}
+}  // namespace
+
+Explode::Explode(AreaServices& services) : AreaController(services), m_spec(fresh()) {
   m_tick.setInterval(16);
   m_tick.setTimerType(Qt::PreciseTimer);
   connect(&m_tick, &QTimer::timeout, this, &Explode::tick);
@@ -763,7 +773,7 @@ void Explode::documentChanged(bool replaced) {
     ++m_serial;
     m_on = m_offAfter = m_relayout = false;
     m_rootFollows = true;
-    m_spec = {};
+    m_spec = fresh();
     m_t = 0;
     m_target = m_resume = -1;
     m_units.clear();

@@ -245,7 +245,7 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
     std::vector<std::string> screw;
     std::vector<double> rising;  // the lid's height while it plays out
     std::set<QString> chips;     // the chip's texts meanwhile
-    double spacing = 0;
+    double lidOut = 0;  // the lid's height at 100 %
     size_t ops = 0;
     int x = 0, y = 0;
   };
@@ -361,14 +361,16 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     std::set<std::string> spread;
                     for (const auto& id : s->screw) spread.insert(vec(offset(id)).toStdString());
                     require(done && spread.size() == 4 && area->spec().levels == 1, QString("level 1 with the Screws split: the four screws at %1 different places").arg(spread.size()));
+                    s->lidOut = offset(s->lid)[2];
                     form->slider()->setValue(500);
                   }});
   list.push_back({[=] { return !v->looksPending(); }, [=, &w](bool) {
-                    // Level by level: at 50 % the top level is out, the screws have only moved with their folder.
-                    std::set<std::string> spread;
-                    for (const auto& id : s->screw) spread.insert(vec(offset(id)).toStdString());
-                    require(std::abs(area->t() - 0.5) < 1e-9 && chipText().contains("50") && spread.size() == 1 && offset(s->lid)[2] > 5 && form->distanceBox()->text().startsWith("50"),
-                            QString("the slider at 50 %: the lid out, the screws together (%1 places), the chip '%2'").arg(spread.size()).arg(chipText()));
+                    // Every level at once (not a stretch of the slider per level): at 50 % the lid is half way out.
+                    QStringList orders;
+                    for (int i = 0; i < form->findChild<QComboBox*>("explodeStages")->count(); ++i) orders << form->findChild<QComboBox*>("explodeStages")->itemData(i).toString();
+                    require(std::abs(area->t() - 0.5) < 1e-9 && chipText().contains("50") && std::abs(offset(s->lid)[2] - 0.5 * s->lidOut) < 1e-6 && form->distanceBox()->text().startsWith("50") &&
+                                area->spec().stages == "together" && !orders.contains("levels"),
+                            QString("the slider at 50 %: the lid half way (%1 of %2), the chip '%3'; orders offered: %4").arg(offset(s->lid)[2]).arg(s->lidOut).arg(chipText(), orders.join(' ')));
                     form->slider()->setValue(1000);
                   }});
   list.push_back({[=] { return !v->looksPending(); }, [=, &w](bool) {
@@ -404,7 +406,6 @@ OPAD_BENCH(OPAD_BENCH_EXPLODE, explode) {
                     require(shown && dragging && travel.size() == 3 && travel[0] > before && travel[1] > travel[0] && travel[2] > travel[1] && area->spec().offsets.count(s->lid),
                             QString("dragging the lid's arrow up: its travel %1 -> %2, %3, %4 mm while the mouse moves (z %5)")
                                 .arg(before, 0, 'f', 1).arg(travel.empty() ? 0 : travel[0], 0, 'f', 1).arg(travel.size() > 1 ? travel[1] : 0, 0, 'f', 1).arg(travel.size() > 2 ? travel[2] : 0, 0, 'f', 1).arg(z0, 0, 'f', 1));
-                    s->spacing = travel.empty() ? 0 : travel.back();
                   }});
   list.push_back({[=] { return !v->looksPending(); }, [=, &w](bool) {
                     const auto& u = area->units()[static_cast<size_t>(area->dragUnit())];
