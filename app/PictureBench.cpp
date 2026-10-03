@@ -20,6 +20,7 @@
 #include "SketchEditor.hpp"
 #include "Viewport.hpp"
 #include "opad/design/feature.hpp"
+#include "opad/design/sketch.hpp"
 
 bool MainWindow::benchPictures() {
   const QString prefix = qEnvironmentVariable("OPAD_BENCH_PICTURES");
@@ -119,6 +120,11 @@ bool MainWindow::benchPictures() {
                 if (shown.size() != 1 || shown[0].value("data", "") != bytes || std::abs(shown[0]["position"][0].get<double>() - 12) > 1e-9 ||
                     std::abs(shown[0].value("opacity", 0.0) - 0.6) > 1e-9)
                   return (void)fail("the moved backdrop as replayed");
+                // What the viewport compares on every scene sync: the picture's samples, not its bytes.
+                const std::string stamp = opad::design::geometry_stamp(m_doc->scene.sketch(sketch)->geometry);
+                trace::log(QString("bench: pictures: sketch stamp %1 bytes, picture %2").arg(stamp.size()).arg(bytes.size()));
+                if (stamp.find(bytes.substr(bytes.size() / 2, 64)) != std::string::npos || stamp.size() * 2 > bytes.size())
+                  return (void)fail("the sketch's stamp carries the picture");
                 trace::log("bench: pictures sketch backdrop keeps the JPEG, a move stores only its fields PASS");
                 QCoreApplication::exit(0);
               });

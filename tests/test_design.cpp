@@ -591,6 +591,20 @@ TEST(sketch_backdrop_edits_never_store_the_picture_again) {
   before["image_fields"] = json::array({{{"id", 99}, {"width", 1}}});
   CHECK(!apply_sketch_delta(before, json::object()).contains("image_fields"));
   CHECK_THROWS(apply_sketch_delta(shown, {{"image_fields", json::array({{{"id", 99}, {"width", 1}}})}}));
+  // What the viewport compares on every sync: the picture by its samples, never its bytes; a move, a fade or another picture
+  // of the same length (bytes in the middle) changes it.
+  const std::string stamp = geometry_stamp(shown);
+  CHECK(stamp.size() < 2048 && stamp.find(std::string(64, 'A')) == std::string::npos);
+  CHECK(geometry_stamp(shown) == stamp);
+  json moved = shown, faded = shown, other = shown;
+  moved["images"][0]["position"] = {-3, 2};
+  faded["images"][0]["opacity"] = 0.2;
+  std::string middle = picture;
+  middle[picture.size() / 2] = 'B';
+  other["images"][0]["data"] = middle;
+  CHECK(geometry_stamp(moved) != stamp && geometry_stamp(faded) != stamp && geometry_stamp(other) != stamp);
+  shown["points"][1]["x"] = 61;
+  CHECK(geometry_stamp(shown) != stamp);
 }
 
 TEST(sketch_record_format_and_incremental_replay) {

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <set>
 #include <functional>
+#include <string_view>
 
 namespace opad::design {
 
@@ -28,16 +29,16 @@ json image_fields(const json& was, const json& now) {
 json sketch_delta(const json& before, const json& after) {
   json delta = json::object(), fields = json::array();
   for (const char* key : {"points", "entities", "constraints", "patterns", "images"}) {
-    std::map<int, json> old, now;
-    for (const auto& v : before.value(key, json::array())) old[v.at("id").get<int>()] = v;
-    for (const auto& v : after.value(key, json::array())) now[v.at("id").get<int>()] = v;
+    std::map<int, const json*> old, now;  // read in place: a picture is megabytes
+    if (const auto it = before.find(key); it != before.end() && it->is_array()) for (const auto& v : *it) old[v.at("id").get<int>()] = &v;
+    if (const auto it = after.find(key); it != after.end() && it->is_array()) for (const auto& v : *it) now[v.at("id").get<int>()] = &v;
     json changes = json::array();
     for (const auto& [id, v] : old) if (!now.count(id)) changes.push_back({{"id", id}, {"deleted", true}});
     for (const auto& [id, v] : now) {
       const auto was = old.find(id);
-      if (was != old.end() && was->second == v) continue;
-      if (was != old.end() && std::string(key) == "images" && same_picture(was->second, v)) fields.push_back(image_fields(was->second, v));
-      else changes.push_back(v);
+      if (was != old.end() && *was->second == *v) continue;
+      if (was != old.end() && std::string(key) == "images" && same_picture(*was->second, *v)) fields.push_back(image_fields(*was->second, *v));
+      else changes.push_back(*v);
     }
     std::sort(changes.begin(), changes.end(), [](const json& a, const json& b) { return a.at("id").get<int>() < b.at("id").get<int>(); });
     if (!changes.empty()) delta[key] = changes;
@@ -98,6 +99,39 @@ json solved_geometry(const json& data) {
   json solved = data["result"]["geometry"];
   if (!solved.contains("images") && given.contains("images")) solved["images"] = given["images"];
   return solved;
+}
+
+std::string geometry_stamp(const json& geometry) {
+  if (!geometry.is_object()) return geometry.dump();
+  std::string out;
+  for (const auto& [key, value] : geometry.items()) {
+    out += key + ':';
+    if (key != "images" || !value.is_array()) {
+      out += value.dump() + ',';
+      continue;
+    }
+    for (const auto& image : value) {
+      if (!image.is_object()) {
+        out += image.dump() + ',';
+        continue;
+      }
+      out += '{';
+      for (const auto& [field, v] : image.items()) {
+        out += field + ':';
+        if (field != "data" || !v.is_string()) {
+          out += v.dump() + ',';
+          continue;
+        }
+        const std::string_view bytes(v.get_ref<const std::string&>());  // its length, its first, middle and last 4 KB
+        const size_t edge = std::min<size_t>(bytes.size(), 4096);
+        out += std::to_string(bytes.size());
+        for (const size_t at : {size_t(0), (bytes.size() - edge) / 2, bytes.size() - edge}) out += '/' + std::to_string(std::hash<std::string_view>{}(bytes.substr(at, edge)));
+        out += ',';
+      }
+      out += "},";
+    }
+  }
+  return out;
 }
 
 double dimension_value(const Sketch& sk, const SkConstraint& c) {
