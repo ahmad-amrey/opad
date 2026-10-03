@@ -10,13 +10,22 @@
 #include <PrsMgr_PresentationManager.hxx>
 #include <SelectMgr_Selection.hxx>
 
+#include <BRepAdaptor_Curve.hxx>
+#include <BRep_Tool.hxx>
+#include <TopExp.hxx>
+#include <TopTools_IndexedMapOfShape.hxx>
+#include <TopoDS.hxx>
+
 #include <QKeyEvent>
 #include <QMouseEvent>
 
+#include <algorithm>
 #include <cmath>
 
 #include "AppDocument.hpp"
+#include "Jobs.hpp"
 #include "Viewport.hpp"
+#include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
 
 namespace {
@@ -74,7 +83,7 @@ std::array<std::pair<double, double>, 5> planeCorners(const opad::CanvasPlace& p
 }
 }  // namespace
 
-CanvasEditor::CanvasEditor(AppDocument* doc, Viewport* view, QObject* parent) : QObject(parent), m_doc(doc), m_view(view) {
+CanvasEditor::CanvasEditor(AppDocument* doc, Viewport* view, JobRunner* jobs, QObject* parent) : QObject(parent), m_doc(doc), m_view(view), m_jobs(jobs) {
   view->installEventFilter(this);
   connect(view, &Viewport::notesMoved, this, [this] {  // the camera moved: the knob keeps its distance on screen
     if (active() && !dragging()) show(m_place);
@@ -93,6 +102,9 @@ void CanvasEditor::stop() {
   if (dragging()) m_view->endPlacementPreview(m_canvas);
   m_drag = m_hover = Grip::None;
   if (m_pick != Pick::None) pick(Pick::None);
+  if (m_modelJob) m_modelJob->cancel();
+  m_model.reset();
+  m_modelStamp.clear();
   hideOverlay();
   if (!m_canvas.empty()) m_view->unsetCursor();
   m_canvas.clear();
@@ -110,6 +122,56 @@ void CanvasEditor::refresh() {
   if (dragging()) return;  // the drag's own place is shown until it is let go
   m_place = opad::canvas_place(m_doc->scene, m_canvas);
   show(m_place);
+  findModelPoints();
+}
+
+void CanvasEditor::findModelPoints() {
+  // What they depend on: the plane, and every other visible body's key and place (O(bodies), no geometry).
+  struct Body {
+    TopoDS_Shape shape;
+    opad::Mat4 world;
+  };
+  std::string stamp = m_place.plane.to_json().dump();
+  std::vector<std::pair<std::string, opad::Mat4>> found;
+  for (const auto& id : m_doc->scene.all_bodies())
+    if (const opad::Node* n = m_doc->scene.node(id); n && id != m_canvas && !n->body_missing && !opad::is_canvas(*n) && m_doc->scene.effectively_visible(id)) {
+      found.push_back({n->body_key, m_doc->scene.world(id)});
+      stamp += n->body_key.substr(0, 8) + opad::json(found.back().second.m).dump();
+    }
+  if (stamp == m_modelStamp) return;
+  m_modelStamp = stamp;
+  if (m_modelJob) m_modelJob->cancel();
+  auto bodies = std::make_shared<std::vector<Body>>();
+  for (const auto& [key, world] : found) bodies->push_back({opad::body_shape(m_doc->doc, key), world});  // cached since the load (as meshing takes them)
+  auto points = std::make_shared<PlanePoints>();
+  const opad::Frame plane = m_place.plane;
+  QPointer<CanvasEditor> self(this);
+  m_modelJob = m_jobs->async(tr("Finding snap points"), [bodies, points, plane](Progress progress) {
+    constexpr size_t kMax = 300000;
+    auto add = [&](const gp_Pnt& p, const opad::Mat4& world) {
+      double u, v;
+      plane.to_local(world.apply({p.X(), p.Y(), p.Z()}), u, v);
+      points->push_back({u, v});
+    };
+    for (const auto& b : *bodies) {
+      if (progress.cancelled() || points->size() >= kMax) break;
+      TopTools_IndexedMapOfShape vertices, edges;
+      TopExp::MapShapes(b.shape, TopAbs_VERTEX, vertices);
+      for (int i = 1; i <= vertices.Extent() && points->size() < kMax; ++i) add(BRep_Tool::Pnt(TopoDS::Vertex(vertices(i))), b.world);
+      TopExp::MapShapes(b.shape, TopAbs_EDGE, edges);
+      for (int i = 1; i <= edges.Extent() && points->size() < kMax; ++i) {
+        if (BRep_Tool::Degenerated(TopoDS::Edge(edges(i)))) continue;
+        const BRepAdaptor_Curve curve(TopoDS::Edge(edges(i)));
+        if (curve.GetType() == GeomAbs_Circle) add(curve.Circle().Location(), b.world);
+      }
+    }
+    std::sort(points->begin(), points->end());
+  }, [self, points, plane](bool ok, const QString&) {
+    if (!self || !ok) return;
+    self->m_modelJob = nullptr;
+    self->m_model = points;
+    self->m_modelPlane = plane;
+  });
 }
 
 void CanvasEditor::hideOverlay() {
@@ -177,17 +239,24 @@ CanvasEditor::Grip CanvasEditor::gripAt(const QPointF& at) const {
 
 bool CanvasEditor::snapMove(opad::CanvasPlace& place) const {
   const auto mine = planeCorners(place);
-  double best = 10 * 10, du = 0, dv = 0;
-  for (const auto& t : m_targets) {
+  std::array<QPointF, 5> at;
+  for (size_t i = 0; i < 5; ++i) at[i] = m_view->widgetPoint(place.plane.to_world(mine[i].first, mine[i].second));
+  double best = 10 * 10, du = 0, dv = 0;  // squared pixels
+  for (const auto& t : m_targets) {  // the other canvases' corners and centres
     const QPointF ts = m_view->widgetPoint(t);
     double tu, tv;
     place.plane.to_local(t, tu, tv);
-    for (const auto& [u, v] : mine) {
-      const QPointF ms = m_view->widgetPoint(place.plane.to_world(u, v));
-      const double d = (ts.x() - ms.x()) * (ts.x() - ms.x()) + (ts.y() - ms.y()) * (ts.y() - ms.y());
-      if (d < best) best = d, du = tu - u, dv = tv - v;
-    }
+    for (size_t i = 0; i < 5; ++i)
+      if (const double d = (ts.x() - at[i].x()) * (ts.x() - at[i].x()) + (ts.y() - at[i].y()) * (ts.y() - at[i].y()); d < best)
+        best = d, du = tu - mine[i].first, dv = tv - mine[i].second;
   }
+  const opad::Frame& p = place.plane;
+  const double px = m_view->pixelSize(), r = 10 * px;
+  if (m_model && px > 0 && m_modelPlane.origin == p.origin && m_modelPlane.x == p.x && m_modelPlane.y == p.y)  // the model, projected on the plane
+    for (const auto& [u, v] : mine)
+      for (auto it = std::lower_bound(m_model->begin(), m_model->end(), std::array<double, 2>{u - r, -1e300}); it != m_model->end() && (*it)[0] <= u + r; ++it)
+        if (const double d = ((*it)[0] - u) * ((*it)[0] - u) / (px * px) + ((*it)[1] - v) * ((*it)[1] - v) / (px * px); d < best)
+          best = d, du = (*it)[0] - u, dv = (*it)[1] - v;
   if (best < 100) {
     place.x += du, place.y += dv;
     return true;

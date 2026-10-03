@@ -74,6 +74,79 @@ QPointF blueCentre(const QImage& frame, int& count) {
 }
 }  // namespace
 
+// OPAD_BENCH_CANVAS_PERF=<prefix> on the Engine (not a gui_benches case: run it with OPAD_TRACE on Engine V8-XT Turbo.opad and
+// read the stalls): a 12 MP JPEG inserted as a canvas on XY among the Engine's bodies (unhidden in memory, never saved), the
+// model's snap points found, a 20-step drag with snapping and its release, X typed; each step's time is logged.
+OPAD_BENCH(OPAD_BENCH_CANVAS_PERF, canvasPerf) {
+  static bool running = false;
+  if (running) return true;
+  running = true;
+  CanvasArea* area = w.findChild<CanvasArea*>();
+  AppDocument* doc = w.m_doc;
+  Viewport* view = w.m_viewport;
+  const QString photo = value + ".photo.jpg";
+  {
+    QImage pixels(4000, 3000, QImage::Format_RGB32);
+    pixels.fill(Qt::white);
+    QPainter p(&pixels);
+    p.setBrush(Qt::black);
+    for (int i = 0; i < 40; ++i) p.drawEllipse(QRectF(100 * i, 70 * i, 300, 200));
+    p.end();
+    pixels.save(photo, "JPG", 90);
+  }
+  std::vector<std::string> hidden;  // collected first: every run() rebuilds the scene being iterated
+  for (const auto& [id, node] : doc->scene.nodes)
+    if (!node.visible) hidden.push_back(id);
+  QElapsedTimer clock;
+  clock.start();
+  for (const auto& id : hidden) doc->run("appearance", {{"target", id}, {"visible", true}});
+  trace::log(QString("bench: canvas perf: %1 nodes unhidden in memory in %2 ms").arg(hidden.size()).arg(clock.restart()));
+  waitFor(area, [&w, view] { return w.m_meshRemaining == 0 && view->displayedCount() > 0; }, 300000, [=, &w](bool) {
+    DrawingPlacer* placer = area->placer();
+    QObject::connect(placer, &DrawingPlacer::ready, area, [=] {
+      placer->setImageWidth(500);
+      auto t = std::make_shared<QElapsedTimer>();
+      t->start();
+      placer->panel()->findChild<QPushButton*>("primary")->click();
+      waitFor(area, [=] { return area->editor()->active() && view->showsPicture(area->editor()->canvas()) && !doc->loading; }, 120000, [=](bool shown) {
+        trace::log(QString("bench: canvas perf: placed and shown in %1 ms").arg(t->restart()));
+        if (!shown) {
+          trace::log("bench: canvas perf FAIL: not shown");
+          return QCoreApplication::exit(2);
+        }
+        CanvasEditor* editor = area->editor();
+        waitFor(area, [editor] { return editor->modelPoints() > 0; }, 120000, [=](bool) {
+          trace::log(QString("bench: canvas perf: %1 snap points of the model found in %2 ms").arg(editor->modelPoints()).arg(t->restart()));
+          view->benchDesignShot(value + ".png");
+          QPointF grip;
+          editor->gripPoint(CanvasEditor::Grip::Move, grip);
+          mouse(view, QEvent::MouseButtonPress, grip, Qt::LeftButton);
+          qint64 worst = 0;
+          for (int i = 1; i <= 20; ++i) {
+            QElapsedTimer step;
+            step.start();
+            mouse(view, QEvent::MouseMove, grip + QPointF(6 * i, -4 * i), Qt::LeftButton);
+            worst = std::max(worst, step.elapsed());
+          }
+          t->restart();
+          mouse(view, QEvent::MouseButtonRelease, grip + QPointF(120, -80), Qt::NoButton);
+          const qint64 release = t->restart();
+          area->field(0)->setText("50");
+          area->field(0)->setModified(true);
+          emit area->field(0)->returnPressed();
+          const qint64 typed = t->restart();
+          trace::log(QString("bench: canvas perf: drag steps worst %1 ms, let go (one transform op, the scene replayed) %2 ms, X typed %3 ms").arg(worst).arg(release).arg(typed));
+          trace::log(QString("bench: canvas perf %1").arg(worst < 50 ? "PASS" : "FAIL"));
+          area->finish();
+          QCoreApplication::exit(worst < 50 ? 0 : 2);
+        });
+      });
+    }, Qt::SingleShotConnection);
+    area->placeOn(photo, opad::Frame(), 0, 0, false);
+  });
+  return true;
+}
+
 OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
   static bool running = false;  // the registry asks again after every load: the canvas's own import too
   if (running) return true;
@@ -300,6 +373,25 @@ OPAD_BENCH(OPAD_BENCH_CANVAS, canvas) {
     lock->click();
     check(!doc->node(st->canvas)->locked, "unlocked");
     next();
+  });
+  // 6b. Moving snaps to the model: a corner let go a few pixels from a vertex of the box lands on it.
+  steps.push_back([=](std::function<void()> next) {
+    waitFor(area, [editor] { return editor->modelPoints() > 0; }, 10000, [=](bool found) {
+      if (!check(found, QString("the model's snap points found on a worker (%1)").arg(editor->modelPoints()))) return next();
+      view->benchDesignShot(prefix + ".fit5.png");
+      const opad::CanvasPlace p = editor->place();
+      const opad::Vec3 vertex{170, 0, 40}, corner = opad::canvas_points(canvasWorld(), p.body_w, p.body_h)[0];
+      QPointF grip;
+      editor->gripPoint(CanvasEditor::Grip::Move, grip);
+      const QPointF to = grip + QPointF(view->widgetPoint(vertex) - view->widgetPoint(corner)) + QPointF(3, -2);
+      mouse(view, QEvent::MouseButtonPress, grip, Qt::LeftButton);
+      mouse(view, QEvent::MouseMove, (grip + to) / 2, Qt::LeftButton);
+      mouse(view, QEvent::MouseMove, to, Qt::LeftButton);
+      mouse(view, QEvent::MouseButtonRelease, to, Qt::NoButton);
+      const opad::Vec3 landed = opad::canvas_points(canvasWorld(), p.body_w, p.body_h)[0];
+      check(gap(landed, vertex) < 1e-6, QString("a corner let go near a vertex of the box lands on it (%1, %2, %3)").arg(landed[0]).arg(landed[1]).arg(landed[2]));
+      next();
+    });
   });
   // 7. Flags: flipped left-right (drawn mirrored), shown through the model, not selectable in the view.
   steps.push_back([=](std::function<void()> next) {

@@ -81,7 +81,8 @@ class CanvasArea : public AreaController {
   void flowBack();
   void nextPick();
   void refreshPrompt();
-  void afterInsert();
+  void afterInsert();  // a linked picture loaded: its canvas edited
+  void commitInsert(std::shared_ptr<opad::design::Plan> plan, int waited = 0);  // a copy read on a worker: committed, then edited
   void toast(const QString& text, int ms = 5000);
   // Plans on a worker against a copy of the document and commits the plan as one undo step (`label`).
   void planned(const QString& title, const QString& label, std::function<opad::design::Plan(opad::Document&)> plan,

@@ -257,5 +257,7 @@
   "flipped left-right": "مقلوبة أفقيًا",
   "flipped upside down": "مقلوبة رأسيًا",
   "through the model": "عبر النموذج",
-  "not selectable in the view": "غير قابلة للتحديد في العرض"
+  "not selectable in the view": "غير قابلة للتحديد في العرض",
+  "insert canvas": "إدراج صورة مرجعية",
+  "Finding snap points": "البحث عن نقاط الالتقاط"
 }

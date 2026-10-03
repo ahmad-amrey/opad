@@ -131,7 +131,7 @@ void CanvasArea::ribbon(RibbonLayout& layout) {
 void CanvasArea::ready() {
   AppDocument* doc = services().document();
   Viewport* view = services().viewport();
-  m_editor = new CanvasEditor(doc, view, this);
+  m_editor = new CanvasEditor(doc, view, services().jobs(), this);
   m_placer = new DrawingPlacer(doc, view, services().jobs(), services().window());
   buildPanel();
   m_prompt = new PromptBar(view);
@@ -534,11 +534,42 @@ void CanvasArea::insert(const QString& given) {
 
 void CanvasArea::placeOn(const QString& file, const opad::Frame& plane, double u, double v, bool link) {
   m_placer->placed = [this, file, plane, link](const opad::Mat4& placement) {
-    services().importPlaced(file, placement, {{"plane", plane.to_json()}, {"width", m_placer->imageWidth()}, {"center", true}}, link, [this] { afterInsert(); });
+    const opad::json options = {{"plane", plane.to_json()}, {"width", m_placer->imageWidth()}, {"center", true}};
+    if (link) return services().importPlaced(file, placement, options, link, [this] { afterInsert(); });  // a linked picture: an asset's read
+    // A copy: read on a worker without the document (a big model is never copied for it), committed as one undo step.
+    opad::ImportOptions o;
+    o.placement = placement;
+    o.canvas = options;
+    o.author = QSettings().value("user/name").toString().trimmed().toStdString();
+    auto plan = std::make_shared<opad::design::Plan>();
+    const std::filesystem::path path(file.toStdU16String());
+    QPointer<CanvasArea> self(this);
+    services().jobs()->async(tr("Reading %1").arg(QFileInfo(file).fileName()), [plan, path, o](Progress) { *plan = opad::plan_canvas_import(path, o); },
+                             [self, plan](bool ok, const QString& error) {
+                               if (!self) return;
+                               if (!ok) return self->toast(i18n::t(error));
+                               self->commitInsert(plan);
+                             });
   };
   m_placer->back = [this, file] { QTimer::singleShot(0, this, [this, file] { insert(file); }); };
   m_placer->start(file, plane, [this](ToolPanel* panel) { services().openPanel(panel); });
   if (u != 0 || v != 0) m_placer->setOffset(u, v);
+}
+
+void CanvasArea::commitInsert(std::shared_ptr<opad::design::Plan> plan, int waited) {
+  AppDocument* doc = services().document();
+  if (doc->designBusy || doc->loading || doc->snapshotBusy()) {  // a change being planned against the document as it is: after it
+    if (waited < 300) QTimer::singleShot(100, this, [this, plan, waited] { commitInsert(plan, waited + 1); });
+    else toast(tr("The document is busy; try again in a moment."));
+    return;
+  }
+  const std::string canvas = plan->report.value("canvas", "");
+  try {
+    doc->commitPlan(std::move(*plan), tr("insert canvas"));
+  } catch (const std::exception& e) {
+    return toast(i18n::t(QString::fromUtf8(e.what())));
+  }
+  edit(canvas);
 }
 
 void CanvasArea::afterInsert() {
