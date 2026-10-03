@@ -4,7 +4,9 @@
 // clip survives JSON, pastes into another sketch and solves there; anything else is refused.
 #include "check.hpp"
 #include "opad/design/sketch_edit.hpp"
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 using namespace opad::design;
 using opad::json;
 using T = SkConstraint::Type;
@@ -98,6 +100,29 @@ TEST(a_clip_pastes_into_another_sketch) {
   const auto again = paste_entities(other, clip, 0, 0);
   CHECK(again[0] != made[0] && again[1] != made[1]);
   other.validate();
+}
+
+// A box selection of a converted drawing names every point as well as every curve: a point's point curve is found once,
+// not by scanning the curves per point (30,000 segments: seconds before).
+TEST(a_box_selection_of_a_large_sketch_copies_in_linear_time) {
+  Sketch sk;
+  std::vector<int> ids;
+  for (int i = 0; i < 30000; ++i) {
+    const int a = sk.add_point(i, 0), b = sk.add_point(i + 0.5, 1);
+    ids.push_back(sk.add_line(a, b)), ids.push_back(a), ids.push_back(b);
+  }
+  const int lone = sk.add_point(-5, -5);
+  SkEntity mark;
+  mark.type = SkEntity::Type::Point, mark.id = sk.next_id(), mark.p = {lone};
+  sk.entities.push_back(mark);
+  ids.push_back(lone);
+  const auto start = std::chrono::steady_clock::now();
+  const json clip = copy_entities(sk, ids, -5, -5);
+  const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  std::printf("copy of 30,000 segments and 60,001 points: %.3f s\n", seconds);
+  CHECK(seconds < 1.5);
+  CHECK_EQ(clip.at("sketch").at("entities").size(), size_t(30001));  // the lone point's curve came through its point
+  CHECK_EQ(clip.at("sketch").at("points").size(), size_t(60001));
 }
 
 TEST(only_a_sketch_clip_pastes) {

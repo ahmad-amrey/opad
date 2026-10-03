@@ -178,7 +178,7 @@ class SketchEditor : public QObject, public SketchInput {
     std::vector<std::vector<std::pair<double, double>>> outline;
   };
   std::shared_ptr<const Clip> m_clip;
-  int m_clipRevision = 0;
+  int m_clipRevision = 0, m_copies = 0;  // the paste read last, the copy made last
   bool copyFrom(const std::vector<int>& ids, double bu, double bv, bool cut);
   bool clipClick(const Snap& s);  // the paste and copybase tools' click
   struct Snap {

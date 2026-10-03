@@ -6,6 +6,8 @@
 #include <QElapsedTimer>
 #include <QMouseEvent>
 #include <QApplication>
+#include <QClipboard>
+#include <QMimeData>
 #include <QPaintEvent>
 #include <algorithm>
 
@@ -94,7 +96,18 @@ void SketchEditor::benchLarge(const QString& output,opad::json metrics) {
       if(m_sel.size()<m_sk.entities.size())throw opad::Error("window selection missed sketch entities");
       // The prompt and the panel count what the box selected (UI-25): by index, not a scan per item (it took 5.7 s).
       if(run->metrics["select_all_box_ms"].get<double>()>2000)throw opad::Error("selecting everything took "+run->metrics["select_all_box_ms"].dump()+" ms");
+      // Ctrl+C on it (UI-129): every point's id looked the curves up by scanning (seconds in the handler); the clip is made
+      // on a worker.
+      QApplication::clipboard()->clear();time.restart();
+      if(!copySelection(false))throw opad::Error("copying the box selection failed");
+      run->metrics["copy_all_ms"]=time.nsecsElapsed()/1e6;
+      if(run->metrics["copy_all_ms"].get<double>()>200)throw opad::Error("Ctrl+C on everything held the window "+run->metrics["copy_all_ms"].dump()+" ms");
     } else if(step==39) {  // UI-27: the line tool from a point, so every snap kind is looked for on each move
+      const QMimeData* mime=QApplication::clipboard()->mimeData();
+      if(!mime || !mime->hasFormat(kClipMime)){--run->step;return;}  // the copy's worker
+      const auto clip=opad::json::parse(mime->data(kClipMime).toStdString());
+      if(clip.at("sketch").at("entities").size()!=m_sk.entities.size())throw opad::Error("the clipboard did not get every curve selected");
+      trace::log(QString("bench: large sketch: Ctrl+C on a box selection of %1 curves holds the window %2 ms, the clip made on a worker PASS").arg(m_sk.entities.size()).arg(run->metrics["copy_all_ms"].get<double>()));
       m_sel.clear();setTool("line");
       const auto& p=m_sk.points[m_sk.points.size()/2];sketchPress(p.x,p.y,Qt::NoModifier);
       run->loads=m_settingsReads;

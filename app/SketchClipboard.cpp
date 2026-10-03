@@ -29,6 +29,7 @@
 #include "Jobs.hpp"
 #include "Ribbon.hpp"
 #include "SketchEditor.hpp"
+#include "SketchGeometryCache.hpp"
 #include "TimelineWidget.hpp"
 #include "Units.hpp"
 #include "opad/clipboard.hpp"
@@ -57,14 +58,14 @@ bool SketchEditor::copySelection(bool cut) {
   std::vector<int> ids;
   double bu = std::numeric_limits<double>::infinity(), bv = bu;
   auto extend = [&](double u, double v) { bu = std::min(bu, u), bv = std::min(bv, v); };
-  for (int id : m_sel) {
-    if (const SkEntity* e = m_sk.entity(id)) {
+  for (int id : m_sel) {  // indexed: a box selection names every point too, and a point's id misses the curves' search
+    if (const SkEntity* e = m_geometry ? m_geometry->entity(m_sk, id) : m_sk.entity(id)) {
       ids.push_back(id);
       if (e->type == SkEntity::Type::Point) {
-        if (const SkPoint* p = e->p.empty() ? nullptr : m_sk.point(e->p[0])) extend(p->x, p->y);
+        if (const SkPoint* p = e->p.empty() ? nullptr : pointOf(e->p[0])) extend(p->x, p->y);
       } else
         for (const auto& [u, v] : sampled(*e)) extend(u, v);
-    } else if (const SkPoint* p = m_sk.point(id)) {
+    } else if (const SkPoint* p = pointOf(id)) {
       ids.push_back(id);
       extend(p->x, p->y);
     }
@@ -83,18 +84,48 @@ void SketchEditor::copyWithBase() {
 }
 
 bool SketchEditor::copyFrom(const std::vector<int>& ids, double bu, double bv, bool cut) {
-  try {
-    const opad::json clip = copy_entities(m_sk, ids, bu, bv);
+  auto put = [this](const QByteArray& bytes, int curves, bool cut) {
     auto* mime = new QMimeData;
-    mime->setData(kClipMime, QByteArray::fromStdString(clip.dump()));
+    mime->setData(kClipMime, bytes);
     QApplication::clipboard()->setMimeData(mime);
-    const int curves = int(clip.at("sketch").at("entities").size());
     emit status(cut ? tr("Cut %1 curves; Ctrl+V pastes them").arg(curves) : tr("Copied %1 curves; Ctrl+V pastes them").arg(curves));
-  } catch (const std::exception& e) {
-    emit status(i18n::t(QString::fromUtf8(e.what())));
-    return false;
+  };
+  const int serial = ++m_copies;
+  if (ids.size() <= 2000) {
+    try {
+      const opad::json clip = copy_entities(m_sk, ids, bu, bv);
+      put(QByteArray::fromStdString(clip.dump()), int(clip.at("sketch").at("entities").size()), cut);
+    } catch (const std::exception& e) {
+      emit status(i18n::t(QString::fromUtf8(e.what())));
+      return false;
+    }
+    if (cut) deleteSelection();
+    return true;
   }
-  if (cut) deleteSelection();
+  // Many (a box selection of a converted drawing): the clip made and written out on a worker from the sketch as it is now,
+  // the last copy started is the one the clipboard gets; a cut takes the selection away then, if nothing changed meanwhile.
+  const auto sk = std::make_shared<const Sketch>(m_sk);
+  auto bytes = std::make_shared<QByteArray>();
+  auto curves = std::make_shared<int>(0);
+  const int revision = m_modelRevision, session = m_session;
+  const std::vector<int> selection = m_sel;
+  QPointer<SketchEditor> guard(this);
+  m_jobs->async(tr("Copying to the clipboard"), [sk, ids, bu, bv, bytes, curves](Progress) {
+    const opad::json clip = copy_entities(*sk, ids, bu, bv);
+    *curves = int(clip.at("sketch").at("entities").size());
+    *bytes = QByteArray::fromStdString(clip.dump());
+  }, [this, guard, put, bytes, curves, serial, revision, session, selection, cut](bool ok, const QString& error) {
+    if (!guard || serial != m_copies) return;
+    if (!ok) return emit status(i18n::t(error));
+    const bool same = m_active && session == m_session && revision == m_modelRevision && !m_editJob;
+    put(*bytes, *curves, cut && same);
+    if (cut && !same) return emit status(tr("The sketch changed while the curves were copied: they were copied, not cut"));
+    if (!cut) return;
+    m_sel = selection;
+    deleteSelection();
+    rebuild();
+    emit changed();
+  });
   return true;
 }
 

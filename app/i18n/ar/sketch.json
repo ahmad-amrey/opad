@@ -333,5 +333,6 @@
  "the curve is crossed only once; nothing to cut between": "لا يقطع المنحنى إلا مرة واحدة؛ لا شيء للقص بينهما",
  "the trimmed piece could not be made": "تعذر إنشاء الجزء المقصوص",
  "pick a curve to trim": "اختر منحنى لقصه",
- "that curve cannot be trimmed": "لا يمكن قص هذا المنحنى"
+ "that curve cannot be trimmed": "لا يمكن قص هذا المنحنى",
+ "The sketch changed while the curves were copied: they were copied, not cut": "تغيّر الرسم التخطيطي أثناء نسخ المنحنيات: نُسخت ولم تُقص"
 }

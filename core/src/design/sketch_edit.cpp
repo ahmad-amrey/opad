@@ -11,6 +11,7 @@
 #include <map>
 #include <regex>
 #include <set>
+#include <unordered_map>
 
 namespace opad::design {
 int add_cubic_spline(Sketch& sk,const std::vector<int>& nodes,bool construction) {
@@ -79,11 +80,11 @@ std::vector<int> dangling_vertices(const Sketch& sk,double tolerance) {
   return {result.begin(),result.end()};
 }
 json copy_entities(const Sketch& sk,const std::vector<int>& ids,double bx,double by) {
-  std::set<int> curves,kept;
-  for(int id:ids) {
-    if(sk.entity(id))curves.insert(id);
-    else if(sk.point(id))for(const auto& e:sk.entities)if(e.type==SkEntity::Type::Point && !e.p.empty() && e.p[0]==id)curves.insert(e.id);
-  }
+  // The curve each id names (itself, or a point's point curves), gathered once: a box selection names every point too, and
+  // a point's id missed the curves' binary search and scanned them per point (30,000 segments: seconds).
+  std::set<int> curves,kept;std::unordered_multimap<int,int> names;
+  for(const auto& e:sk.entities){names.emplace(e.id,e.id);if(e.type==SkEntity::Type::Point && !e.p.empty())names.emplace(e.p[0],e.id);}
+  for(int id:ids)for(auto [it,end]=names.equal_range(id);it!=end;++it)curves.insert(it->second);
   if(curves.empty())throw Error("select curves to copy");
   Sketch out;
   for(const auto& e:sk.entities)if(curves.count(e.id)) {
