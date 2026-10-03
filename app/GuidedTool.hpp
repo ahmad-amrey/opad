@@ -12,6 +12,8 @@
 #include <QComboBox>
 #include <QScrollArea>
 
+#include "PanelFooter.hpp"
+
 struct ToolStep {
   QString label;   // "Select first face": follows the active selection filter
   QString picked;  // the picked target, empty while the step is open
@@ -55,6 +57,7 @@ class ToolStepsPanel : public QWidget {
   void setComponentsState(bool visible, bool checked);
   void setAnchorOptions(const QStringList& labels, int current);
   QSize preferredSize(int width);
+  PanelFooter* footer() const { return m_footer; }
  signals:
   void clearRequested();
   void pinRequested();
@@ -69,8 +72,7 @@ class ToolStepsPanel : public QWidget {
   QVBoxLayout* m_stepRows;
   QLabel *m_title, *m_subtitle, *m_state;
   QTreeWidget* m_grid = nullptr;
-  QWidget* m_footer;
-  QPushButton* m_pin;
+  PanelFooter* m_footer;
   QCheckBox* m_components;
   QWidget* m_anchorRow;
   QComboBox* m_anchors;

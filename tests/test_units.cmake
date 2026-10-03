@@ -1,0 +1,10 @@
+# The units service (app/Units.cpp) on its own: formatting and parsing in every document unit. Needs the app's Qt.
+if(TARGET opad)
+  target_sources(${target} PRIVATE ../app/Units.cpp ../app/Units.hpp)
+  set_target_properties(${target} PROPERTIES AUTOMOC ON)
+  target_include_directories(${target} PRIVATE ../app)
+  target_link_libraries(${target} PRIVATE Qt6::Core)
+else()
+  set_target_properties(${target} PROPERTIES EXCLUDE_FROM_ALL ON)
+  set_tests_properties(${name} PROPERTIES DISABLED ON)
+endif()

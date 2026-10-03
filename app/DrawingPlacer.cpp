@@ -1,6 +1,7 @@
 #include "DrawingPlacer.hpp"
 #include "BodyShape.hpp"
 #include "Theme.hpp"
+#include "Units.hpp"
 #include "opad/design/expr.hpp"
 #include "opad/geometry.hpp"
 #include "opad/inspect.hpp"
@@ -43,8 +44,8 @@ DrawingPlacer::DrawingPlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, 
   m_v = new QLineEdit(body);
   m_u->setObjectName("placeOffsetX");
   m_v->setObjectName("placeOffsetY");
-  form->addRow(tr("Offset X (mm)"), m_u);
-  form->addRow(tr("Offset Y (mm)"), m_v);
+  form->addRow(tr("Offset X"), m_u);  // in the shown unit ("12.7 mm", "0.5 in"); a bare number is in it too
+  form->addRow(tr("Offset Y"), m_v);
   layout->addLayout(form);
   auto* row = new QHBoxLayout;
   m_snap = new QPushButton(tr("Snap a vertex"), body);
@@ -80,12 +81,16 @@ DrawingPlacer::DrawingPlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, 
     else cancel();
   });
   connect(m_panel, &ToolPanel::visibilityChanged, this, [this](bool on) { if (!on && m_active) cancel(); });
-  auto typed = [this] {
+  auto typed = [this] {  // a box left as shown keeps its value: "0.275591 in" would move a snapped drawing by 1e-5 mm
+    if (!m_u->isModified() && !m_v->isModified()) return;
     try {
       std::vector<opad::design::ParamDef> defs;
       for (const auto& p : m_doc->scene.params) defs.push_back({p.id, p.name, p.expr, p.comment});
-      const opad::design::ParamTable params(defs);
-      setOffset(params.length(m_u->text().toStdString()), params.length(m_v->text().toStdString()));
+      const opad::design::ParamTable params(defs, units::current().length);
+      const double u = m_u->isModified() ? params.length(m_u->text().toStdString()) : m_du, v = m_v->isModified() ? params.length(m_v->text().toStdString()) : m_dv;
+      m_u->setModified(false);
+      m_v->setModified(false);
+      setOffset(u, v);
     } catch (const std::exception& e) {
       m_status->setText(QString::fromUtf8(e.what()));
     }
@@ -106,6 +111,7 @@ DrawingPlacer::DrawingPlacer(AppDocument* doc, Viewport* view, JobRunner* jobs, 
     if (placed) placed(m);
   });
   connect(cancelButton, &QPushButton::clicked, this, &DrawingPlacer::cancel);
+  connect(units::notifier(), &units::Notifier::changed, this, [this] { if (m_active) refresh(); });
   view->installEventFilter(this);
 }
 
@@ -214,8 +220,8 @@ void DrawingPlacer::move() {
 }
 
 void DrawingPlacer::refresh() {
-  if (!m_u->hasFocus()) m_u->setText(QString::number(m_du, 'g', 12));
-  if (!m_v->hasFocus()) m_v->setText(QString::number(m_dv, 'g', 12));
+  if (!m_u->hasFocus()) m_u->setText(units::editable(units::Kind::Length, m_du));
+  if (!m_v->hasFocus()) m_v->setText(units::editable(units::Kind::Length, m_dv));
   m_place->setEnabled(m_loaded);
   m_snap->setEnabled(m_loaded);
   if (!m_loaded) return;

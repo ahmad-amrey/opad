@@ -18,17 +18,21 @@
 #include <QWidget>
 #include <array>
 #include <atomic>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <set>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <TopoDS_Shape.hxx>
 
 #include "AppDocument.hpp"
+#include "BodyLook.hpp"
 #include "BodyShape.hpp"
 #include "Theme.hpp"
 
@@ -72,6 +76,8 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void setGridSnap(bool on) { m_gridSnap=on; }
   bool gridSnap() const { return m_gridSnap; }
   double gridStep() const { return m_gridStep; }
+  Bnd_Box benchGridBox() const;  // where the grid is drawn (OCCT's structure, world box), for benches
+  Bnd_Box benchFitBox() const { return fitBounds(false); }  // what Fit frames, for benches
   opad::json circleInfo(const opad::Ref& ref) const;
   void setShadows(bool on);
   void setRenderQuality(int level);
@@ -130,6 +136,22 @@ class Viewport : public QWidget, protected AIS_ViewController {
   int isolatedCount() const { return static_cast<int>(m_isolated.size()); }
   int displayedCount() const { return static_cast<int>(m_items.size()); }
 
+  // Per-body looks (ViewportLooks.cpp, UI-121): each source owns one layer of deltas by node id (a component's covers the
+  // bodies under it; the nearest entry wins), composed over the document's appearance in LookSource order (BodyLook.hpp)
+  // and applied by a sliced job, aspects in place, never Redisplay. looksApplied() once every displayed body shows it.
+  // A sketch (no component) takes the entries under its own id: visible, colour, opacity or ghost (faded lines), pickable.
+  void setLookLayer(LookSource source, std::map<std::string, LookDelta> deltas);
+  void clearLookLayer(LookSource source) { setLookLayer(source, {}); }
+  void setGhostsPickable(bool on);  // feature inputs, sketch Project, measuring: ghosts can be picked as references
+  bool ghostsPickable() const { return m_ghostsPickable; }
+  BodyLook bodyLook(const std::string& body) const;  // as composed now (whether displayed yet or not); a sketch's too
+  BodyLook shownLook(const std::string& body) const;  // as applied to the displayed body or sketch (the default look if none)
+  QString hoverName(const std::string& node) const;   // the status text of a hovered node: "Lid (inactive)" for a ghost
+  bool looksPending() const { return m_lookJob != nullptr || !m_lookQueue.empty(); }
+  opad::json benchLookState(const std::string& body) const;  // OPAD_BENCH_LOOKS: what AIS holds for a displayed body or sketch
+  std::string benchPickAt(int x, int y, opad::Vec3* at = nullptr);  // the body picking finds at this point of the view (device pixels), "" none
+  bool benchBodyPoint(const std::string& body, int& x, int& y);  // a point of the view where picking finds this body
+
   // Section: the clip plane, and its gizmo (ViewportSection.cpp): the plane's outline over the model, edges only,
   // sized to the model's extent in the plane. A strip inside each side is a drag handle: hovering it shows a
   // two-headed arrow along the normal, dragging moves the plane and reports the new origin (sectionDragged).
@@ -143,6 +165,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool measurementHasMultipleAxes() const;
   void clearDimension();
   void setMeasurementSelectionLocked(bool locked) { m_measureSelectionLocked = locked; }
+  QStringList measurementCaptions() const { return m_measureCaptions; }  // the labels as drawn (benches)
 
   // Guided tools (distance, angle, ...: the tool asks for one pick per step). While accumulating, a plain click
   // adds to the selection (or takes a picked item out again) instead of replacing it, so selection() is the
@@ -246,6 +269,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   void meshingProgress(int remaining);
   void isolationChanged();  // entered, left, or left because every isolated object was deleted
   void sectionDragged(const opad::Vec3& origin);  // the section plane's handle was dragged here
+  void looksApplied();  // a setLookLayer (or a scene change under one) has reached every displayed body
 
  public slots:
   void sync();
@@ -286,6 +310,10 @@ class Viewport : public QWidget, protected AIS_ViewController {
   Job* m_boxJob=nullptr;
   CursorWarpGate m_warpGate;
   void updateGridExtent();
+  void placeGrid(double u, double v, double step, double extent);  // centred on (u, v) of the privileged plane
+  // The box Fit All, Home and the load-time fit frame: displayed bodies, sketches, their images and a feature preview
+  // (never the grid, gizmos, overlays or annotations); the default grid square when there is nothing (void if !fallback).
+  Bnd_Box fitBounds(bool fallback = true) const;
   void applySelectionFilter(SelFilter f);  // setSelectionFilter's work, also for the filter already set (re-activates)
   // 2D mode: the grid follows the view (its plane, the visible area, a spacing for the zoom), so it never ends.
   void updateInfiniteGrid(bool force);
@@ -322,7 +350,21 @@ class Viewport : public QWidget, protected AIS_ViewController {
     double opacity;
     TopoDS_Shape located;
     Handle(NavigationShape) navigation;
+    BodyLook look;      // as applied (ViewportLooks.cpp)
+    bool rigid = true;  // the world placement is the object's local transformation (else baked into `located`)
   };
+  // looks (ViewportLooks.cpp)
+  std::array<std::unordered_map<std::string, LookDelta>, kLookSources> m_lookLayers;
+  bool m_ghostsPickable = false;
+  Job* m_lookJob = nullptr;
+  std::deque<std::string> m_lookQueue;  // displayed bodies whose look may have changed, applied in this order
+  std::unordered_set<std::string> m_lookQueued;
+  BodyLook composeLook(const opad::Node& body) const;
+  bool layered() const;
+  // The AIS state of the look that differs from item.look: colour and opacity in place (SynchronizeAspects), erase or
+  // display, (de)activate, Z layer, location (SetLocation: picking follows). True when it moved the body.
+  bool applyLook(const std::string& id, Item& item, const BodyLook& look);
+  void scheduleLooks();  // every displayed body checked again by the sliced job
   void initViewer();
   void trackpadScroll(const QPointF& position, const QPointF& delta, bool orbit);
   void finishTrackpadScroll();
@@ -337,7 +379,7 @@ class Viewport : public QWidget, protected AIS_ViewController {
   gp_Pnt orbitPoint(const Graphic3d_Vec2i& cursor);
   void focusCube();
   void syncWindowSize();
-  void applyStyle(const Handle(AIS_Shape)& ais);
+  void applyStyle(const Handle(AIS_Shape)& ais, const BodyLook* look = nullptr);  // look: a ghost's edges fade with it
   void activateSelection(const Handle(AIS_Shape)& ais);
   void startMeshing(std::vector<std::string> keys);
   void displayBody(const std::string& id);
@@ -390,9 +432,11 @@ class Viewport : public QWidget, protected AIS_ViewController {
   std::vector<Handle(AIS_InteractiveObject)> m_labels;
   std::vector<Handle(AIS_InteractiveObject)> m_dimension;
   opad::json m_measurement;
+  QStringList m_measureCaptions;
   Graphic3d_WorldViewProjState m_measureCamera;
   QSize m_measureSize;
-  struct NoteMark { gp_Pnt at; std::string style; opad::json drawing; };
+  struct NoteMark { gp_Pnt at; std::string style; opad::json drawing; std::string node; };  // node: what it is pinned to
+  gp_Vec lookOffset(const std::string& node) const;  // how far a look moved it (an exploded part): its notes follow
   std::string m_noteTypeFilter;
   Handle(AIS_InteractiveObject) m_drawingPreview;
   Handle(AIS_InteractiveObject) m_annotationTarget;
@@ -470,14 +514,20 @@ class Viewport : public QWidget, protected AIS_ViewController {
     std::shared_ptr<BodyPrs> prs;
     std::string stamp;  // geometry + frame it was built from
     std::vector<Handle(AIS_InteractiveObject)> backdrops;
+    BodyLook look;  // as applied (ViewportLooks.cpp); colour = the selection blue it is drawn in
   };
   std::map<std::string, SketchWire> m_sketchWires;
+  // A sketch's look: the layers' entries under its own id over the sketch blue; faded lines are blended towards the
+  // background (line aspects ignore alpha). Applied in place like a body's, images included.
+  BodyLook sketchLook(const std::string& id) const;
+  void applySketchLook(SketchWire& wire, const BodyLook& look);
   struct PreparedSketch { std::string stamp; TopoDS_Shape shape; std::shared_ptr<BodyPrs> prs; std::vector<Handle(AIS_InteractiveObject)> backdrops; bool ready=false; };
   std::map<std::string,std::shared_ptr<PreparedSketch>> m_preparedSketches;
   std::string m_hiddenSketch;  // being edited: the editor draws it
   std::vector<std::pair<std::string, Handle(AIS_Shape)>> m_candidates;
   std::vector<Handle(AIS_Shape)> m_pointMarks;  // markPickedPoints
   std::vector<Handle(AIS_Shape)> m_previewBodies;
+  std::vector<Handle(AIS_InteractiveObject)> m_overlays;  // showOverlay's: Fit frames the finite ones (a drawing being placed)
   std::set<std::string> m_previewHidden;  // nodes whose own object is erased while the preview shows
   bool m_bodiesPickable = true;
   SketchInput* m_sketchInput = nullptr;
