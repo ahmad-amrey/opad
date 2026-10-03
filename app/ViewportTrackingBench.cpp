@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <set>
 
 #include "BenchRegistry.hpp"
 #include "Jobs.hpp"
@@ -43,9 +44,9 @@ std::vector<gp_Pnt> spread(const std::vector<gp_Pnt>& all, size_t n) {  // n of 
 // acquired; the vertices in sight are hovered; resting on one acquires it only after the dwell, resting on it again
 // releases it. (2) The guide points of an anchor are offered where they can be seen, never behind a face. (3) Seen from
 // the opposite side the camera move drops the anchors it hides, keeps the others, and a vertex hidden before is acquired.
-// (4) Edge mode: no edge behind a face is hovered, the edges in sight are. (5) 2D mode with no tool taking points tracks
+// (4) Edge mode: no edge behind a face is hovered or boxed, the edges in sight are. (5) 2D mode with no tool taking points tracks
 // nothing; with the tool it does. <prefix>.anchor.png, <prefix>.guide.png, <prefix>.cue.png (a guide faint behind a face),
-// <prefix>.hidden.png.
+// <prefix>.hidden.png, <prefix>.box.png (the edges a window over the view selects).
 bool Viewport::benchTracking(const QString& prefix) {
   bool all = true;
   auto require = [&](bool ok, const QString& what) {
@@ -350,45 +351,106 @@ bool Viewport::benchTracking(const QString& prefix) {
   sweep(visibleEdges, opad::Ref::Kind::Edge, behind, inSight);
   require(behind == 0 && !visibleEdges.empty() && inSight * 10 >= int(visibleEdges.size()) * 8,
           QString("edge mode: %1 of %2 edges in sight hovered, none behind").arg(inSight).arg(visibleEdges.size()));
+  // The box's verdict against the judgement above, over up to 400 edges wholly in it (nine points along each; 10 s): one whose
+  // middle is in sight is selected (once the scan finished), one behind a face at all nine points is not.
+  auto judgeBox = [&](const QRect& box, bool finished) {
+    std::set<std::pair<std::string, int>> chosen;
+    for (const auto& ref : selection())
+      if (ref.kind == opad::Ref::Kind::Edge) chosen.insert({ref.body, ref.index});
+    struct Edge { std::string body; int index; std::vector<gp_Pnt> along; };
+    std::vector<Edge> inside;
+    for (const auto& [id, item] : m_items) {
+      if (!m_ctx->IsDisplayed(item.ais)) continue;
+      TopTools_IndexedMapOfShape map;
+      TopExp::MapShapes(item.ais->Shape(), TopAbs_EDGE, map);
+      const gp_Trsf tr = item.ais->Transformation();
+      for (int i = 1; i <= map.Extent(); ++i) {
+        const TopoDS_Edge& edge = TopoDS::Edge(map(i));
+        Standard_Real first = 0, last = 0;
+        if (BRep_Tool::Degenerated(edge) || BRep_Tool::Curve(edge, first, last).IsNull()) continue;
+        const BRepAdaptor_Curve curve(edge);
+        auto at = [&](double t) { return curve.Value(first + (last - first) * t).Transformed(tr); };
+        auto in = [&](const gp_Pnt& p) { return box.adjusted(2, 2, -2, -2).contains(widget(p).toPoint()); };
+        if (!in(at(0)) || !in(at(1))) continue;
+        Edge e{id, i - 1, {}};
+        for (int k = 0; k <= 8; ++k) e.along.push_back(at(0.05 + 0.9 * k / 8));
+        if (std::all_of(e.along.begin(), e.along.end(), in)) inside.push_back(std::move(e));
+      }
+    }
+    int missed = 0, wrong = 0, inSight = 0, behind = 0;
+    const size_t stride = std::max<size_t>(1, inside.size() / 400);
+    QElapsedTimer judging;  // 10 s at most
+    judging.start();
+    for (size_t i = 0; i < inside.size() && judging.elapsed() < 10000; i += stride) {
+      const auto& e = inside[i];
+      const bool selected = chosen.count({e.body, e.index}) > 0;
+      if (seen(e.along[4]) > 0) ++inSight, missed += !selected;
+      else if (std::all_of(e.along.begin(), e.along.end(), [&](const gp_Pnt& p) { return seen(p) < 0; })) ++behind, wrong += selected;
+    }
+    return require(inSight > 0 && (!finished || missed == 0) && wrong == 0,
+                   QString("the box against the judgement: %1 edges in it, %2 in sight (%3 not selected%4), %5 behind a face everywhere (%6 selected)")
+                       .arg(inside.size()).arg(inSight).arg(missed).arg(finished ? "" : ", the scan stopped").arg(behind).arg(wrong));
+  };
   // A box (window, then crossing) around a part in edge mode: edges only, never the faces standing in for occlusion.
   if (!visibleEdges.empty()) {
     QSignalBlocker quiet(this);  // the Distance tool would take the boxed edges as its picks
+    struct Box { qint64 rectangle = 0, worst = 0, took = 0; bool finished = false; };
+    auto runBox = [&](const QPoint& from, const QPoint& to) {  // dragged from, to; then the visibility job (20 s at most)
+      Box out;
+      m_ctx->ClearSelected(false);
+      UpdateRubberBand(devicePos(from), devicePos(to));
+      myGL.Selection = myUI.Selection;
+      myGL.Selection.Scheme = AIS_SelectionScheme_Replace;
+      myGL.Selection.ToApplyTool = true;
+      QElapsedTimer t;
+      t.start();
+      handleSelectionPoly(m_ctx, m_view);  // OCCT's rectangle pick, synchronous; then the visibility job in slices
+      out.rectangle = t.restart();
+      QElapsedTimer gap;
+      gap.start();
+      QTimer ticker;
+      ticker.setTimerType(Qt::PreciseTimer);
+      QObject::connect(&ticker, &QTimer::timeout, [&] { out.worst = std::max(out.worst, gap.restart()); });
+      ticker.start(1);
+      while (m_boxJob && t.elapsed() < 20000) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+      ticker.stop();
+      out.took = t.elapsed();
+      out.finished = !m_boxJob;  // a big model's visibility scan may take longer: what it published so far counts
+      if (m_boxJob) m_boxJob->cancel();
+      return out;
+    };
     const QPoint c = widget(visibleEdges.front()).toPoint();
     for (const bool crossing : {false, true}) {
-      qint64 rectangle = 0, worst = 0, took = 0;
-      bool finished = false;
-      int faces = 0, edges = 0, other = 0;
+      Box box;
+      int faces = 0, edges = 0, other = 0, boxHalf = 0;
       for (const int half : {70, 140, 280}) {  // a window box takes whole edges only: larger until it holds some
-        m_ctx->ClearSelected(false);
+        boxHalf = half;
         const QPoint a = c - QPoint(half, half), b = c + QPoint(half, half);
-        UpdateRubberBand(devicePos(crossing ? b : a), devicePos(crossing ? a : b));
-        myGL.Selection = myUI.Selection;
-        myGL.Selection.Scheme = AIS_SelectionScheme_Replace;
-        myGL.Selection.ToApplyTool = true;
-        QElapsedTimer t;
-        t.start();
-        handleSelectionPoly(m_ctx, m_view);  // OCCT's rectangle pick, synchronous; then the visibility job in slices
-        rectangle = std::max(rectangle, t.restart());
-        QElapsedTimer gap;
-        gap.start();
-        QTimer ticker;
-        ticker.setTimerType(Qt::PreciseTimer);
-        QObject::connect(&ticker, &QTimer::timeout, [&] { worst = std::max(worst, gap.restart()); });
-        ticker.start(1);
-        while (m_boxJob && t.elapsed() < 20000) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-        ticker.stop();
-        took = t.elapsed();
-        finished = !m_boxJob;  // a big model's visibility scan may take longer: what it published so far counts
-        if (m_boxJob) m_boxJob->cancel();
+        const Box next = runBox(crossing ? b : a, crossing ? a : b);
+        box = {std::max(box.rectangle, next.rectangle), std::max(box.worst, next.worst), next.took, next.finished};
         faces = edges = other = 0;
         for (m_ctx->InitSelected(); m_ctx->MoreSelected(); m_ctx->NextSelected()) faces += !Handle(OccluderOwner)::DownCast(m_ctx->SelectedOwner()).IsNull();
         for (const auto& ref : selection()) (ref.kind == opad::Ref::Kind::Edge ? edges : other) += 1;
         if (edges > 0) break;
       }
       require(faces == 0 && other == 0 && edges > 0, QString("edge mode %1 box (%2 in %3 ms): %4 edges, %5 other picks, %6 occluding faces selected")
-                                                         .arg(crossing ? "crossing" : "window", finished ? "finished" : "stopped").arg(took).arg(edges).arg(other).arg(faces));
-      require(rectangle < 1000 && worst < 250, QString("edge mode %1 box: the rectangle pick %2 ms, then the event loop never held over %3 ms")
-                                                   .arg(crossing ? "crossing" : "window").arg(rectangle).arg(worst));
+                                                         .arg(crossing ? "crossing" : "window", box.finished ? "finished" : "stopped").arg(box.took).arg(edges).arg(other).arg(faces));
+      require(box.rectangle < 1000 && box.worst < 250, QString("edge mode %1 box: the rectangle pick %2 ms, then the event loop never held over %3 ms")
+                                                           .arg(crossing ? "crossing" : "window").arg(box.rectangle).arg(box.worst));
+      if (!crossing) judgeBox(QRect(c - QPoint(boxHalf, boxHalf), c + QPoint(boxHalf, boxHalf)), box.finished);
+    }
+    if (m_items.size() <= 200) {  // a window over the whole view (judging it on a big assembly takes minutes)
+      const QRect whole = rect().adjusted(40, 40, -40, -40);
+      const Box box = runBox(whole.topLeft(), whole.bottomRight());
+      int edges = 0;
+      for (const auto& ref : selection()) edges += ref.kind == opad::Ref::Kind::Edge;
+      require(box.worst < 250, QString("edge mode window over the view (%1 in %2 ms, %3 edges): the rectangle pick %4 ms (OCCT, synchronous), then the event loop never held over %5 ms")
+                                                           .arg(box.finished ? "finished" : "stopped").arg(box.took).arg(edges).arg(box.rectangle).arg(box.worst));
+      judgeBox(whole, box.finished);
+      QElapsedTimer t;
+      t.start();
+      while (m_subJob && t.elapsed() < 20000) QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+      grabImage().save(prefix + ".box.png");
     }
     myUI.Reset();
     myGL.Reset();

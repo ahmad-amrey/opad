@@ -7,6 +7,7 @@
 #include "opad/mesh.hpp"
 #include <V3d_DirectionalLight.hxx>
 #include "DepthBias.hpp"
+#include "CurveSamples.hpp"
 #include "CursorWrap.hpp"
 #include <QScreen>
 #include <QApplication>
@@ -877,25 +878,10 @@ void Viewport::refreshSubHighlight() {
       flush(false);return true;
     }
     auto appendEdge=[&](const TopoDS_Edge& e) {
-      TopLoc_Location loc;
-      std::vector<gp_Pnt> line;
-      Handle(Poly_PolygonOnTriangulation) poly;
-      Handle(Poly_Triangulation) t;
-      BRep_Tool::PolygonOnTriangulation(e, poly, t, loc);
-      if (!poly.IsNull() && !t.IsNull()) {
-        for (int n = 1; n <= poly->NbNodes(); ++n) line.push_back(t->Node(poly->Node(n)));
-      } else if (Handle(Poly_Polygon3D) p3 = BRep_Tool::Polygon3D(e, loc); !p3.IsNull()) {
-        for (int n = 1; n <= p3->NbNodes(); ++n) line.push_back(p3->Nodes().Value(n));
-      } else if (!BRep_Tool::Degenerated(e)) {  // unmeshed: a coarse sampling of the curve
-        loc = TopLoc_Location();
-        BRepAdaptor_Curve c(e);
-        constexpr int kSamples = 24;
-        for (int n = 0; n <= kSamples; ++n) line.push_back(c.Value(c.FirstParameter() + (c.LastParameter() - c.FirstParameter()) * n / kSamples));
-      }
-      const gp_Trsf w = body * loc.Transformation();
+      const std::vector<gp_Pnt> line = edgePolyline(e);
       for (size_t n = 1; n < line.size(); ++n) {
-        st->sv.push_back(line[n - 1].Transformed(w));
-        st->sv.push_back(line[n].Transformed(w));
+        st->sv.push_back(line[n - 1].Transformed(body));
+        st->sv.push_back(line[n].Transformed(body));
       }
     };
     TopLoc_Location loc;
