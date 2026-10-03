@@ -211,6 +211,9 @@ class Viewport : public QWidget, protected AIS_ViewController {
   bool sketching() const { return m_sketchInput != nullptr; }
   void lookAt(const opad::Frame& frame, bool fit = true, bool animate = true);  // camera along the plane normal, plane x to the right
   bool planePoint(const QPointF& widgetPos, const opad::Frame& frame, double& u, double& v) const;
+  // Where the mouse met the hovered body at the last detection (ViewportReadout.cpp); false: no body under it.
+  bool detectedPoint(opad::Vec3& p) const;
+  bool benchDetect(int x, int y);  // OPAD_BENCH_STATUSBAR: the detection under this point (device pixels), kept as hovering does
   double pixelSize() const;                    // world units per widget pixel at the view's focus
   double displayScale() const { return viewScale().x(); }  // device pixels per widget point: overlay text, markers, lines
   opad::Vec3 viewDirection() const;            // unit direction the camera looks along (into the scene)

@@ -13,10 +13,15 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "CoordinateReadout.hpp"
 #include "I18n.hpp"
 #include "Icons.hpp"
+#include "Preferences.hpp"
 #include "Theme.hpp"
 #include "Units.hpp"
+
+OPAD_ICON_TABLE(status, {"orthoLines", R"(<path d="M5 4v15h15"/><path d="M5 13h6v6"/>)"},
+                {"polar", R"(<path d="M4 20h16"/><path d="M4 20 17 7"/><path d="M4 20 9.5 5.5"/><path d="M12.5 20a8.5 8.5 0 0 0-2.4-6"/>)"});
 
 void MainWindow::buildStatusBar() {
   const Tokens& t = theme::current();
@@ -42,8 +47,12 @@ void MainWindow::buildStatusBar() {
   // which fought with the strip's own show/hide and drew the message across the bars.
   statusBar()->addPermanentWidget(m_statusHover, 1);
   statusBar()->addPermanentWidget(m_progress, 1);
+  // The drafting toggles (UI-112 adds Ortho and Polar, the sketch's line directions): each a command with its key, its
+  // setting, and a right-click menu of its quick settings (toggleMenu).
   struct Toggle { const char* id; const char* label; const char* icon; const char* key; const char* setting; bool defaultOn; };
-  for(const auto& spec : {Toggle{"view.extensions","Extensions","extensions","F11","view/extensions",true},
+  for(const auto& spec : {Toggle{"view.orthoSnap","Ortho","orthoLines","F8","sketch/ortho",false},
+      Toggle{"view.polarSnap","Polar","polar","F10","sketch/snap/angle",true},
+      Toggle{"view.extensions","Extensions","extensions","F11","view/extensions",true},
       Toggle{"view.tracking","Tracking","tracking","F12","view/tracking",true},
       Toggle{"view.gridSnap","Grid snapping","grid","F9","view/gridSnap",false}}) {
     auto* a=addAction(spec.id,tr(spec.label),spec.icon,QKeySequence(spec.key),[] {},true);
@@ -52,7 +61,7 @@ void MainWindow::buildStatusBar() {
       m_settings.setValue(spec.setting,on);
       if(QString(spec.id)=="view.extensions") m_viewport->setExtensionTracking(on);
       else if(QString(spec.id)=="view.tracking") m_viewport->setTracking(on);
-      else m_viewport->setGridSnap(on);
+      else if(QString(spec.id)=="view.gridSnap") m_viewport->setGridSnap(on);  // Ortho and Polar: the sketch reads the setting
     };
     connect(a,&QAction::toggled,this,apply); apply(a->isChecked());
     auto* button=new QToolButton(this); button->setDefaultAction(a); button->setToolButtonStyle(Qt::ToolButtonIconOnly);
@@ -64,12 +73,63 @@ void MainWindow::buildStatusBar() {
     };
     connect(theme::notifier(),&theme::Notifier::changed,button,paint); connect(a,&QAction::toggled,button,paint); paint();
     button->setFocusPolicy(Qt::NoFocus); statusBar()->addPermanentWidget(button);
+    button->setObjectName(QString("toggle.") + spec.id);
+    button->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(button,&QToolButton::customContextMenuRequested,this,[this,button,id=QString(spec.id)]{toggleMenu(button,id);});
   }
+  m_readout = new CoordinateReadout(m_viewport, [this](opad::Frame& frame) {
+    if (!m_design || !m_design->sketchActive()) return false;
+    frame = m_design->sketch()->frame();
+    return true;
+  }, this);
+  statusBar()->addPermanentWidget(m_readout);
   statusBar()->addPermanentWidget(m_statusSel);
   statusBar()->addPermanentWidget(m_statusUnits);
   statusBar()->setSizeGripEnabled(false);
   connect(m_jobs, &JobRunner::stripShown, this, [this](bool shown) { m_statusHover->setVisible(!shown); });  // free room for the bars
   for (AreaController* area : m_areas) area->statusWidgets(statusBar());
+}
+
+// Right-click on a drafting toggle (UI-112): the toggle, its quick settings (grid spacing, Polar's angle step) and its
+// page of Preferences. A popup, so the status bar's toggle can be right-clicked again at once.
+void MainWindow::toggleMenu(QToolButton* button, const QString& id) {
+  auto* menu = new QMenu(this);
+  menu->setObjectName("toggleMenu");
+  menu->setAttribute(Qt::WA_DeleteOnClose);
+  menu->addAction(action(id));
+  if (id == "view.gridSnap") {
+    menu->addAction(action("view.grid"));
+    menu->addSection(tr("Grid spacing"));
+    const double spacing = m_settings.value("view/gridSpacing", 0).toDouble();
+    for (double shown : {0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0}) {  // in the shown unit
+      const double mm = units::fromDisplay(units::Kind::Length, shown);
+      QAction* a = menu->addAction(shown == 0 ? tr("Automatic") : units::compact(units::Kind::Length, mm));
+      a->setCheckable(true);
+      a->setChecked(std::abs(spacing - mm) < 1e-9);
+      connect(a, &QAction::triggered, this, [this, mm] {
+        m_viewport->configureGrid(mm, m_settings.value("view/gridExtent", 100).toDouble());
+        if (!action("view.grid")->isChecked()) action("view.grid")->setChecked(true);
+      });
+    }
+  } else if (id == "view.polarSnap") {
+    menu->addSection(tr("Angle step"));
+    const double step = m_settings.value("sketch/angleStep", 15).toDouble();
+    for (double deg : {5.0, 10.0, 15.0, 22.5, 30.0, 45.0, 90.0}) {
+      QAction* a = menu->addAction(units::compact(units::Kind::Angle, deg));
+      a->setCheckable(true);
+      a->setChecked(std::abs(step - deg) < 1e-9);
+      connect(a, &QAction::triggered, this, [this, deg] {
+        m_settings.setValue("sketch/angleStep", deg);
+        if (!action("view.polarSnap")->isChecked()) action("view.polarSnap")->setChecked(true);
+      });
+    }
+  }
+  menu->addSeparator();
+  static const QHash<QString, QPair<QString, QString>> pages{{"view.gridSnap", {"grid", "view/gridSpacing"}}, {"view.polarSnap", {"sketch", "sketch/angleStep"}}};
+  const auto page = pages.value(id, {"sketch", id});
+  menu->addAction(icons::themed("settings", 16), id == "view.gridSnap" ? tr("Grid settings…") : tr("Snap settings…"), this,
+                  [this, page] { PreferencesDialog::open(this, page.first, page.second); });
+  menu->popup(button->mapToGlobal(QPoint(0, 0)) - QPoint(0, menu->sizeHint().height()));
 }
 
 // The shown length unit (UI-123), live: the document's units op, or the session's in viewer mode. A click offers the
@@ -123,6 +183,8 @@ void MainWindow::buildUnitsButton() {
     radians->setCheckable(true);
     radians->setChecked(d.radians);
     connect(radians, &QAction::toggled, this, [](bool on) { units::setPrecision(units::current().decimals, on, units::current().fraction); });
+    menu->addSeparator();
+    menu->addAction(icons::themed("settings", 16), tr("Units and precision…"), this, [this] { PreferencesDialog::open(this, "units"); });
   });
   connect(m_doc, &AppDocument::aboutToReplace, this, [] { units::setSessionUnit({}); });
   connect(m_doc, &AppDocument::changed, this, [this] {

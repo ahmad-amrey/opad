@@ -92,6 +92,8 @@ class MainWindow : public QMainWindow {
   void resetLayout();
   void buildStatusBar();
   void buildUnitsButton();
+  void toggleMenu(QToolButton* button, const QString& id);  // right-click on a drafting toggle (UI-112)
+  class CoordinateReadout* m_readout = nullptr;  // the cursor's X/Y/Z in the status bar
   void setDocumentUnit(const std::string& unit);
   void applyTheme(bool dark);
   void refreshIcons();

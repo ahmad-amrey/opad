@@ -688,5 +688,16 @@
  "Draft (fast)": "مسودة (سريعة)",
  "Repeat": "تكرار",
  "Invert selection": "عكس التحديد",
- "Repeat %1": "تكرار %1"
+ "Repeat %1": "تكرار %1",
+ "Ortho": "متعامد",
+ "Polar": "قطبي",
+ "Cursor coordinates": "إحداثيات المؤشر",
+ "The cursor on the model, in model coordinates": "المؤشر على النموذج، بإحداثيات النموذج",
+ "Nothing under the cursor: where it meets the XY plane": "لا شيء تحت المؤشر: حيث يلتقي بالمستوى XY",
+ "The cursor in the sketch's own X and Y": "المؤشر بمحوري X وY الخاصين بالرسم التخطيطي",
+ "The cursor on the view plane": "المؤشر على مستوى العرض",
+ "Grid spacing": "تباعد الشبكة",
+ "Grid settings…": "إعدادات الشبكة…",
+ "Snap settings…": "إعدادات الالتقاط…",
+ "Units and precision…": "الوحدات والدقة…"
 }

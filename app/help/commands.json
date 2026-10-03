@@ -306,6 +306,20 @@
    "keywords": ["snap to grid", "step", "increment"]
   },
   {
+   "id": "view.orthoSnap",
+   "title": "Ortho",
+   "summary": "Keeps each new line of a sketch horizontal or vertical.",
+   "details": "The next point lines up with the last one along whichever axis is nearer the cursor. Snaps to points and curves still win; with automatic constraints on, the line gets its horizontal or vertical constraint. Right-click the switch for its settings.",
+   "keywords": ["orthogonal", "horizontal", "vertical", "f8", "right angle"]
+  },
+  {
+   "id": "view.polarSnap",
+   "title": "Polar",
+   "summary": "Turns a sketch line's direction in fixed angle steps.",
+   "details": "Near a multiple of the angle step the line snaps to it. Right-click the switch to choose the step: 5, 10, 15, 22.5, 30, 45 or 90 degrees.",
+   "keywords": ["angle increments", "polar tracking", "f10", "angle snap"]
+  },
+  {
    "id": "view.cubeEdgesCorners",
    "title": "View cube edges and corners turn the view",
    "summary": "Lets a click on the view cube's edges and corners turn the view, besides its faces.",

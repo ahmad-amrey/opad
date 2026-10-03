@@ -27,4 +27,8 @@ CASES = [
     # Redo's second key, and an unfinished sketch finished before the action that asked goes on.
     ("standard-keys", two_bodies, {"OPAD_BENCH_STANDARDKEYS": "{prefix}"}, OLD_PROPERTIES_KEY),
     ("standard-keys-ar", two_bodies, {"OPAD_BENCH_STANDARDKEYS": "{prefix}", "OPAD_LANG": "ar"}, OLD_PROPERTIES_KEY),
+    # UI-112: the status bar for CAD work: Ortho (F8) and Polar (F10) with the other drafting toggles, their right-click
+    # menus, the cursor's coordinate readout (plane, model, live, sketch, 2D), Ortho in the Line tool; mirrored in Arabic.
+    ("status-bar", two_bodies, {"OPAD_BENCH_STATUSBAR": "{prefix}"}),
+    ("status-bar-ar", two_bodies, {"OPAD_BENCH_STATUSBAR": "{prefix}", "OPAD_LANG": "ar"}),
 ]

@@ -197,7 +197,7 @@ class PreferencesArea : public AreaController {
                                                                    {"grid", tr("Grid snapping")}, {"inference", tr("Automatic constraints")}})
       form.check("sketch/snap/" + key, label, true);
     form.section(tr("Directions"));
-    form.check("sketch/snap/angle", tr("Angle increments (Polar)"), true);
+    if (QAction* polar = action("view.polarSnap")) form.option(polar, tr("Angle increments (Polar)"));
     form.number("sketch/angleStep", tr("Angle step"), 15, 1, 90, 1, QString::fromUtf8("°"));
     if (QAction* ortho = action("view.orthoSnap")) form.option(ortho, tr("Ortho: lines horizontal or vertical"));
     form.option(action("view.extensions"), tr("Extensions"));
